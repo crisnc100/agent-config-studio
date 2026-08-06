@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Config Studio</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23d97757'/></svg>">
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark"></div>
+        <div>
+          <div class="brand-text">Agent Config Studio</div>
+          <div class="brand-sub" id="brand-sub">loading…</div>
+        </div>
+      </div>
+      <div class="search-wrap">
+        <input class="search" id="search" placeholder="Search all config…  ⌘K" autocomplete="off" spellcheck="false">
+      </div>
+      <nav class="tree" id="tree"></nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="title-block">
+          <div class="title" id="title">Agent Config Studio</div>
+          <div class="title-path" id="title-path"></div>
+        </div>
+        <div class="tabs" id="tabs"></div>
+        <button class="btn" id="btn-assist" title="Ask Claude to help edit this file">Assist</button>
+        <button class="btn primary" id="btn-save" disabled>Save</button>
+      </header>
+
+      <div class="filebar" id="filebar" hidden></div>
+      <div id="notice-slot"></div>
+      <div class="content" id="content"></div>
+
+      <footer class="statusbar">
+        <span id="status-left"></span>
+        <span class="spacer"></span>
+        <span id="status-right"></span>
+        <button class="btn ghost" id="btn-scope" style="padding:2px 8px;font-size:12px">Scope</button>
+        <button class="btn ghost" id="btn-theme" style="padding:2px 8px;font-size:12px">Theme</button>
+      </footer>
+    </main>
+  </div>
+
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <span class="drawer-title">Assist</span>
+      <select class="assist-model" id="assist-model">
+        <option value="claude-sonnet-5">Sonnet 5</option>
+        <option value="claude-opus-5">Opus 5</option>
+        <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+      </select>
+      <button class="btn ghost" id="drawer-close" style="padding:2px 9px">✕</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+    <div class="drawer-foot" id="drawer-foot"></div>
+  </aside>
+
+  <script src="/vendor/marked.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "agent-config-studio",
+  "version": "1.0.0",
+  "description": "Local web app to view, edit, and version every Claude Code + Codex config surface on this machine.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": { "node": ">=20" },
+  "private": true
+}
