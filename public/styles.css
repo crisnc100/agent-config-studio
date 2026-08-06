@@ -86,11 +86,19 @@ a { color: var(--accent); }
 
 .tree { flex: 1; overflow-y: auto; padding: 8px 8px 40px; }
 .group { margin-bottom: 4px; }
-.group-head {
-  display: flex; align-items: baseline; gap: 8px; width: 100%;
-  padding: 8px 8px 6px; border-radius: 7px; text-align: left;
-}
+.group-head { display: flex; align-items: center; width: 100%; border-radius: 7px; }
 .group-head:hover { background: var(--panel-2); }
+.group-toggle {
+  display: flex; align-items: baseline; gap: 8px; flex: 1; min-width: 0;
+  padding: 8px 4px 6px 8px; text-align: left;
+}
+.group-add {
+  width: 22px; height: 22px; margin-right: 6px; border-radius: 5px; flex: none;
+  color: var(--muted); font-size: 15px; line-height: 1;
+  opacity: 0; transition: opacity 0.12s;
+}
+.group-head:hover .group-add { opacity: 1; }
+.group-add:hover { background: var(--panel-3); color: var(--accent); }
 .group-title {
   font-size: 11px; font-weight: 600; letter-spacing: 0.07em;
   text-transform: uppercase; color: var(--muted);

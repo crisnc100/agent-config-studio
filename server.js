@@ -8,6 +8,7 @@ import { resolveSafe, kindOf, tilde, HOME, PROJECTS, STUDIO_HOME, CODEX_HOME } f
 import { buildRegistry, scopeChain } from './lib/registry.js';
 import { validate } from './lib/validate.js';
 import * as history from './lib/history.js';
+import * as mutate from './lib/mutate.js';
 import { runAssist, listActions } from './lib/assist.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -191,6 +192,12 @@ const ROUTES = {
   },
 
   'POST /api/snapshot': async () => history.snapshotAll('manual snapshot'),
+
+  'POST /api/create': async (req) => mutate.create(await readBody(req)),
+  'POST /api/create-file': async (req) => mutate.addFile(await readBody(req)),
+  'POST /api/delete': async (req) => mutate.remove(await readBody(req)),
+  'GET /api/trash': async () => ({ items: await mutate.listTrash() }),
+  'POST /api/trash/restore': async (req) => mutate.restoreTrash(await readBody(req)),
 
   'GET /api/scope': async (_req, url) => {
     const dir = url.searchParams.get('dir') || PROJECTS;

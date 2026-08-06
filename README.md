@@ -40,6 +40,25 @@ giant bogus heading Markdown would otherwise make of it.
 that are merely installed. Only skills from plugins actually enabled in
 `settings.json` are listed, because only those are ever loaded.
 
+**Create and delete.** Hover a group in the sidebar for a `+` — it scaffolds a
+new skill, hook, subagent or slash command with valid frontmatter already in
+place (the scaffold passes the app's own validator). `+ file` on a skill adds a
+reference doc. **Copy to Codex / Copy to Claude** seeds a skill in the other
+harness from the open one, retargeting the frontmatter `name`; the two are
+expected to diverge afterwards.
+
+**Deleting is never destructive.** A delete records the current contents in
+history, moves the item to `~/.agent-config-studio/trash/`, then commits the
+removal. Two independent ways back: **Trash** restores in one click, or
+`git show <sha>:<path>` in the history repo. Deleting a multi-file skill asks
+whether you mean the whole skill or just the open file.
+
+Two things are refused: plugin-cache skills (the plugin manager owns them and
+would restore them on its next update), and anything outside the allowed roots.
+The three always-loaded singletons — global `CLAUDE.md`, global `AGENTS.md`, the
+workspace `CLAUDE.md` — plus `settings.json` and friends delete only after you
+type their name.
+
 **Every save is a commit.** Writes go to the live file *and* to a shadow git repo
 at `~/.agent-config-studio/history`, mirrored under `home/`. The History tab on
 any file lists every version, diffs it against the current contents, and restores

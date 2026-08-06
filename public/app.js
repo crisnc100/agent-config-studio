@@ -94,6 +94,7 @@ async function boot() {
   // Deep links: #file=<path> for any file, #scope for the scope view.
   if (location.hash.startsWith('#scope')) return openScope();
   if (location.hash.startsWith('#mcp')) return openMcp();
+  if (location.hash.startsWith('#trash')) return openTrash();
   const m = location.hash.match(/file=([^&]+)/);
   if (m) {
     const p = decodeURIComponent(m[1]);
@@ -127,14 +128,25 @@ function renderSidebar() {
     if (!g.entries.length) continue;
     const wrap = el('div', 'group');
 
-    const head = el('button', 'group-head');
-    head.appendChild(el('span', 'group-title', g.title));
-    head.appendChild(el('span', 'group-count', String(g.entries.length)));
-    head.onclick = () => {
+    // A row, not a button — it holds its own "new" button, and nesting
+    // interactive elements inside a button is invalid.
+    const head = el('div', 'group-head');
+    const toggle = el('button', 'group-toggle');
+    toggle.appendChild(el('span', 'group-title', g.title));
+    toggle.appendChild(el('span', 'group-count', String(g.entries.length)));
+    toggle.onclick = () => {
       collapsed.has(g.id) ? collapsed.delete(g.id) : collapsed.add(g.id);
       localStorage.setItem('acs.collapsed', JSON.stringify([...collapsed]));
       renderSidebar();
     };
+    head.appendChild(toggle);
+
+    if (g.createKind) {
+      const add = el('button', 'group-add', '+');
+      add.title = `New ${g.title.replace(/s$/, '').toLowerCase()}`;
+      add.onclick = (ev) => { ev.stopPropagation(); createInGroup(g); };
+      head.appendChild(add);
+    }
     wrap.appendChild(head);
 
     if (!collapsed.has(g.id)) {
@@ -221,23 +233,51 @@ function renderTopbar() {
   } else if (S.view === 'mcp') {
     t.textContent = 'MCP servers';
     $('title-path').textContent = 'Model Context Protocol servers across both harnesses';
+  } else if (S.view === 'trash') {
+    t.textContent = 'Trash';
+    $('title-path').textContent = 'Deleted items — restorable';
   } else {
     t.textContent = 'Agent Config Studio';
     $('title-path').textContent = '';
   }
-  $('btn-assist').disabled = S.view !== 'entry' || !S.file;
+  const onEntry = S.view === 'entry' && !!S.file;
+  $('btn-assist').disabled = !onEntry;
+
+  const del = $('btn-delete');
+  del.hidden = !onEntry;
+  del.disabled = !onEntry || !S.entry?.deletable;
+  del.title = S.entry?.deletable === false
+    ? (S.entry.undeletableReason || 'Cannot be deleted')
+    : 'Delete (moves to trash, recoverable)';
+
+  // Copying a skill across harnesses is only meaningful for skills.
+  const copy = $('btn-copy');
+  const isSkill = S.entry?.kindLabel === 'skill' && /SKILL\.md$/.test(S.file?.path || '');
+  copy.hidden = !(onEntry && isSkill);
+  if (!copy.hidden) {
+    copy.textContent = S.entry.harness === 'claude' ? 'Copy to Codex' : 'Copy to Claude';
+  }
 }
 
 function renderFilebar() {
   const bar = $('filebar');
   const files = S.entry?.files || [];
-  if (S.view !== 'entry' || files.length < 2) { bar.hidden = true; return; }
+  const group = S.entry ? S.registry.groups.find((g) => g.entries.includes(S.entry)) : null;
+  const canAdd = !!group?.canAddFiles && S.entry?.kindLabel === 'skill';
+
+  if (S.view !== 'entry' || (files.length < 2 && !canAdd)) { bar.hidden = true; return; }
   bar.hidden = false;
   bar.innerHTML = '';
   for (const f of files) {
     const c = el('button', 'filechip' + (S.file?.path === f.path ? ' active' : ''), f.name);
     c.onclick = () => { if (confirmDiscard()) loadFile(f.path); };
     bar.appendChild(c);
+  }
+  if (canAdd) {
+    const add = el('button', 'filechip', '+ file');
+    add.title = 'Add a reference file to this skill';
+    add.onclick = addFileToEntry;
+    bar.appendChild(add);
   }
 }
 
@@ -283,6 +323,7 @@ function renderContent() {
   if (S.view === 'search') return;         // rendered directly by doSearch
   if (S.view === 'scope') return;          // rendered directly by openScope
   if (S.view === 'mcp') return;            // rendered directly by openMcp
+  if (S.view === 'trash') return;          // rendered directly by openTrash
   if (!S.file) return;
 
   if (S.tab === 'preview') return renderPreview(c);
@@ -679,6 +720,164 @@ async function openScope() {
   load();
 }
 
+/* ── create / delete ─────────────────────────────────────────────────── */
+
+async function refreshRegistry(selectPath) {
+  S.registry = await api('GET', '/api/registry');
+  renderSidebar();
+  const total = S.registry.groups.reduce(
+    (n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
+  $('brand-sub').textContent = `${total} files · ${S.registry.history.commits} versions`;
+  if (selectPath) {
+    const entry = entryForFile(selectPath);
+    if (entry) await openEntry(entry, selectPath);
+  }
+}
+
+async function createInGroup(group) {
+  const name = prompt(`New ${group.title.replace(/s$/, '').toLowerCase()} name\n\nLowercase letters, numbers and hyphens.`);
+  if (!name) return;
+  try {
+    const r = await api('POST', '/api/create', { kind: group.createKind, name });
+    await refreshRegistry(r.path);
+    S.tab = 'edit';
+    renderAll();
+    notice('ok', `Created ${r.display} — fill in the description, then Save.`);
+  } catch (e) {
+    notice('error', e.message, null, true);
+  }
+}
+
+/** Seed a new skill in the other harness from the open one. */
+async function copyToOtherHarness() {
+  const from = S.entry.harness;
+  const kind = from === 'claude' ? 'codex-skill' : 'claude-skill';
+  const name = prompt(`Copy "${S.entry.label}" into ${from === 'claude' ? 'Codex' : 'Claude'} skills as:`, S.entry.label);
+  if (!name) return;
+  try {
+    const r = await api('POST', '/api/create', { kind, name, sourcePath: S.file.path });
+    await refreshRegistry(r.path);
+    notice('ok', `Created ${r.display} as a copy — edit it freely, the two are expected to diverge.`);
+  } catch (e) {
+    notice('error', e.message, null, true);
+  }
+}
+
+async function addFileToEntry() {
+  const name = prompt('New file name inside this skill\n\ne.g. reference.md, config.example.json');
+  if (!name) return;
+  try {
+    const r = await api('POST', '/api/create-file', { dir: S.entry.dir, name });
+    await refreshRegistry(r.path);
+    notice('ok', `Created ${r.display}.`);
+  } catch (e) {
+    notice('error', e.message, null, true);
+  }
+}
+
+async function deleteTarget({ path: p, label, isWhole, protectedEntry }) {
+  if (protectedEntry) {
+    const typed = prompt(
+      `"${label}" is loaded by the harness on every session.\n\n` +
+      `Type its name to confirm deletion:`);
+    if (typed !== label) {
+      if (typed !== null) notice('warn', 'Name did not match — nothing was deleted.');
+      return;
+    }
+  } else if (!confirm(
+    `Delete ${label}?\n\n` +
+    `It moves to the studio's trash and is committed to history first, so you can restore it either way.`)) {
+    return;
+  }
+
+  try {
+    const r = await api('POST', '/api/delete', { path: p });
+    const wasOpen = S.file && (S.file.path === p || S.file.path.startsWith(p + '/'));
+    await refreshRegistry();
+    if (wasOpen || isWhole) {
+      S.entry = null; S.file = null; S.original = ''; S.draft = '';
+      S.view = 'welcome';
+      renderAll();
+    } else {
+      renderAll();
+    }
+    notice('ok', `Deleted ${r.display} (${r.files} file${r.files === 1 ? '' : 's'}). Recover it under Trash.`, null, true);
+  } catch (e) {
+    notice('error', e.message, null, true);
+  }
+}
+
+function deleteOpenEntry() {
+  const e = S.entry;
+  if (!e) return;
+  if (!e.deletable) { notice('warn', e.undeletableReason || 'This cannot be deleted.', null, true); return; }
+
+  const multi = e.files.length > 1;
+  // For a multi-file skill, make "this file" vs "the whole skill" an explicit choice.
+  if (multi && S.file) {
+    const whole = confirm(
+      `Delete the whole "${e.label}" skill (${e.files.length} files)?\n\n` +
+      `OK = delete the entire skill\nCancel = delete only ${S.file.display.split('/').pop()}`);
+    if (whole) {
+      return deleteTarget({ path: e.dir, label: e.label, isWhole: true, protectedEntry: e.protected });
+    }
+    return deleteTarget({ path: S.file.path, label: S.file.display.split('/').pop(), isWhole: false });
+  }
+  const target = e.files.length === 1 && !e.dir.endsWith(e.label) ? e.files[0].path : (e.primary || e.files[0]?.path);
+  return deleteTarget({
+    path: e.kindLabel === 'skill' ? e.dir : target,
+    label: e.label, isWhole: true, protectedEntry: e.protected,
+  });
+}
+
+/* ── trash view ──────────────────────────────────────────────────────── */
+async function openTrash() {
+  if (!confirmDiscard()) return;
+  S.view = 'trash';
+  S.entry = null;
+  window.history.replaceState(null, '', '#trash');
+  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
+  $('filebar').hidden = true;
+
+  const c = $('content');
+  c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span></div></div>';
+  const { items } = await api('GET', '/api/trash');
+  c.innerHTML = '';
+  const box = el('div', 'scope');
+  box.appendChild(el('h2', null, 'Trash'));
+  box.appendChild(el('div', 'scope-sub',
+    'Deleted items, newest first. Contents were committed to history before removal, so anything here is recoverable two ways.'));
+
+  if (!items.length) {
+    box.appendChild(el('div', 'scope-sub', 'Nothing deleted yet.'));
+    c.appendChild(box);
+    return;
+  }
+  for (const it of items) {
+    const row = el('div', 'scope-item');
+    row.appendChild(el('div', 'scope-rank', it.isDir ? 'DIR' : 'FILE'));
+    const body = el('div', 'scope-body');
+    body.appendChild(el('div', 'scope-path', it.display));
+    body.appendChild(el('div', 'scope-note',
+      `${new Date(it.deletedAt).toLocaleString()} · ${it.fileCount} file${it.fileCount === 1 ? '' : 's'}` +
+      (it.restorable ? '' : ' · something now exists at that path')));
+    row.appendChild(body);
+    const btn = el('button', 'btn ghost scope-open', 'Restore');
+    btn.disabled = !it.restorable;
+    btn.onclick = async () => {
+      try {
+        const r = await api('POST', '/api/trash/restore', { id: it.id });
+        await refreshRegistry();
+        notice('ok', `Restored ${r.display}.`);
+        openTrash();
+      } catch (e) { notice('error', e.message, null, true); }
+    };
+    row.appendChild(btn);
+    box.appendChild(row);
+  }
+  c.appendChild(box);
+}
+
 /* ── MCP view ────────────────────────────────────────────────────────── */
 async function openMcp() {
   if (!confirmDiscard()) return;
@@ -885,6 +1084,9 @@ $('drawer-close').onclick = closeDrawer;
 $('scrim').onclick = closeDrawer;
 $('btn-scope').onclick = openScope;
 $('btn-mcp').onclick = openMcp;
+$('btn-trash').onclick = openTrash;
+$('btn-delete').onclick = deleteOpenEntry;
+$('btn-copy').onclick = copyToOtherHarness;
 $('btn-theme').onclick = () => {
   const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
