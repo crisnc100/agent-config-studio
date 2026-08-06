@@ -59,6 +59,20 @@ The three always-loaded singletons — global `CLAUDE.md`, global `AGENTS.md`, t
 workspace `CLAUDE.md` — plus `settings.json` and friends delete only after you
 type their name.
 
+**It watches for changes made outside the studio.** Claude Code writes
+auto-memory, you install a skill from the terminal, an agent edits a CLAUDE.md —
+the sidebar updates live rather than going stale until a reload. The green dot
+in the status bar means the watch is connected.
+
+If the file you have open changes on disk, it reloads in place; if you have
+unsaved edits it warns instead, because the save would be refused anyway. If the
+open file is deleted, it tells you rather than leaving a phantom editor.
+
+Only the directories the registry cares about are watched (28 of them). A
+recursive watch on `~/.claude` would be a firehose — session transcripts,
+file-history and the plugin cache are nearly all of its ~2GB and churn
+constantly.
+
 **Every save is a commit.** Writes go to the live file *and* to a shadow git repo
 at `~/.agent-config-studio/history`, mirrored under `home/`. The History tab on
 any file lists every version, diffs it against the current contents, and restores

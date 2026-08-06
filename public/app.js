@@ -87,6 +87,7 @@ async function boot() {
   $('brand-sub').textContent = `${total} files · ${S.registry.history.commits} versions`;
 
   wireGlobalKeys();
+  connectEvents();
 
   // Deep links: #file=<path> for any file, #scope for the scope view.
   if (location.hash.startsWith('#scope')) return openScope();
@@ -721,6 +722,9 @@ async function openScope() {
 
 async function refreshRegistry(selectPath) {
   S.registry = await api('GET', '/api/registry');
+  // The rebuild produces fresh entry objects; re-point at the equivalent one so
+  // identity checks (active row, "can add files") keep working.
+  if (S.file) S.entry = entryForFile(S.file.path) ?? S.entry;
   renderSidebar();
   const total = S.registry.groups.reduce(
     (n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
@@ -728,6 +732,72 @@ async function refreshRegistry(selectPath) {
   if (selectPath) {
     const entry = entryForFile(selectPath);
     if (entry) await openEntry(entry, selectPath);
+  }
+}
+
+/* ── live file events ────────────────────────────────────────────────── */
+/**
+ * The corpus is edited by other things — Claude Code writing auto-memory, a
+ * skill installed from the terminal, an agent touching a CLAUDE.md. Without
+ * this the sidebar silently goes stale until a reload.
+ */
+function connectEvents() {
+  const es = new EventSource('/api/events');
+
+  es.onmessage = async (ev) => {
+    let d;
+    try { d = JSON.parse(ev.data); } catch { return; }
+    if (d.type !== 'files') return;
+
+    await refreshRegistry().catch(() => {});
+
+    const openPath = S.file?.path;
+    if (openPath && d.removedPaths?.includes(openPath)) {
+      S.entry = null; S.file = null; S.original = ''; S.draft = '';
+      S.view = 'welcome';
+      renderAll();
+      notice('warn', 'The file you had open was deleted outside the studio.', null, true);
+      return;
+    }
+
+    if (openPath && d.changedPaths?.includes(openPath)) {
+      if (isDirty()) {
+        // Never silently discard their edits — the save will 409 anyway.
+        notice('warn',
+          'This file changed on disk while you were editing it. Your unsaved changes are still here, but saving will be refused until you reload.',
+          null, true);
+      } else {
+        const f = await api('GET', `/api/file?path=${encodeURIComponent(openPath)}`).catch(() => null);
+        if (f) {
+          S.file = f; S.original = f.content; S.draft = f.content;
+          renderAll();
+          notice('ok', 'Reloaded — this file changed on disk.');
+        }
+      }
+      return;
+    }
+
+    // Only announce structural changes; a save you just made is not news.
+    const parts = [];
+    if (d.added?.length) parts.push(`${d.added.length} added`);
+    if (d.removed?.length) parts.push(`${d.removed.length} removed`);
+    if (parts.length) {
+      const names = [...(d.added || []), ...(d.removed || [])]
+        .slice(0, 3).map((p) => p.split('/').pop()).join(', ');
+      notice('ok', `${parts.join(', ')} outside the studio — ${names}${(d.added.length + d.removed.length) > 3 ? '…' : ''}`);
+    }
+    setLive(true);
+  };
+
+  es.onerror = () => setLive(false);
+  es.onopen = () => setLive(true);
+}
+
+function setLive(on) {
+  const dot = $('live-dot');
+  if (dot) {
+    dot.classList.toggle('on', !!on);
+    dot.title = on ? 'Watching for changes made outside the studio' : 'Live updates disconnected — reconnecting';
   }
 }
 

@@ -11,6 +11,7 @@ import * as history from './lib/history.js';
 import * as mutate from './lib/mutate.js';
 import { runAssist, listActions } from './lib/assist.js';
 import { streamTurn, parseEdits, resolveMentions } from './lib/chat.js';
+import { createWatcher, snapshotOf, diffSnapshots } from './lib/watch.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -317,6 +318,55 @@ async function handleChat(req, res) {
   res.end();
 }
 
+/* ── live file events ─────────────────────────────────────────────────── */
+
+const sseClients = new Set();
+let lastSnapshot = snapshotOf(buildRegistry());
+
+function broadcast(payload) {
+  const frame = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(frame); } catch { sseClients.delete(res); }
+  }
+}
+
+function handleEvents(req, res) {
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no',
+  });
+  res.write('retry: 2000\n\n');
+  sseClients.add(res);
+
+  // Keep intermediaries from closing an idle stream.
+  const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 25_000);
+  req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
+}
+
+/** Rebuild, diff, and tell every open tab what actually changed. */
+async function onFilesChanged() {
+  let registry;
+  try { registry = buildRegistry(); } catch { return; }
+  const next = snapshotOf(registry);
+  const delta = diffSnapshots(lastSnapshot, next);
+  lastSnapshot = next;
+
+  if (!delta.added.length && !delta.removed.length && !delta.changed.length) return;
+
+  broadcast({
+    type: 'files',
+    added: delta.added.map(tilde),
+    removed: delta.removed.map(tilde),
+    changed: delta.changed.map(tilde),
+    addedPaths: delta.added,
+    removedPaths: delta.removed,
+    changedPaths: delta.changed,
+    total: next.size,
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
@@ -327,9 +377,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Streams its own response rather than returning a JSON body.
+  // These stream their own responses rather than returning a JSON body.
   if (req.method === 'POST' && url.pathname === '/api/chat') {
     return void handleChat(req, res);
+  }
+  if (req.method === 'GET' && url.pathname === '/api/events') {
+    return void handleEvents(req, res);
   }
 
   if (url.pathname.startsWith('/api/')) {
@@ -361,6 +414,8 @@ await history.ensureRepo();
 // history repo is an honest record rather than only of studio-made edits.
 await history.snapshotAll('external changes since last run').catch(() => {});
 
+const watcher = createWatcher(onFilesChanged);
+
 server.listen(PORT, '127.0.0.1', () => {
   const { groups } = buildRegistry();
   const total = groups.reduce((n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
@@ -372,7 +427,12 @@ server.listen(PORT, '127.0.0.1', () => {
   tracking   ${total} files across ${groups.length} groups
   history    ${tilde(STUDIO_HOME)}/history
   roots      ~/.claude  ~/.codex  ${tilde(PROJECTS)}
+  watching   ${watcher.count} directories for live changes
 `);
 });
 
-process.on('SIGINT', () => { console.log('\n  stopped.'); process.exit(0); });
+process.on('SIGINT', () => {
+  watcher.close();
+  console.log('\n  stopped.');
+  process.exit(0);
+});
