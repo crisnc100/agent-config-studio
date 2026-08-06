@@ -130,6 +130,30 @@ default because Opus 5 took 107s on a whole-file review; Opus stays selectable
 for when you want the judgment. Follow-up turns resume the same CLI session, so
 the conversation keeps context without re-sending the files.
 
+**Sessions.** A session is one thread about one topic. It survives closing the
+drawer, switching files, and reloading the page — the CLI session outlives the
+tab. Up to **5** are kept; the switcher shows each with its remaining context,
+and you delete one with `×` before starting a sixth.
+
+The bar reports **% context left**, split honestly:
+
+    100% context left    0 turns · 0.0k conversation + 37k overhead
+
+That ~37k is Claude Code's own footprint — system prompt, tool definitions, your
+CLAUDE.md, the skills index — loaded before you type a word. Only the
+*conversation* half grows, at roughly 1.5k per turn, so a thread is good for
+~100 turns.
+
+**Compact** summarises the thread and continues it in a fresh context, keeping
+the same session on your side (the CLI session id underneath changes). It stays
+disabled until at least 15k of the context is actually conversation, because
+below that it reclaims nothing — measured: compacting a 2-turn thread moved
+38,143 tokens to 37,985.
+
+Claude Code's own `/compact` is not used: through `-p --resume` it reports
+success but the history is silently lost, verified by asking the model to recall
+what it had just been told.
+
 It shells out to your local `claude` CLI, riding your existing subscription auth
 — no API key is read or stored, and the server makes no outbound request of its
 own.

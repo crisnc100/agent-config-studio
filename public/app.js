@@ -88,6 +88,7 @@ async function boot() {
 
   wireGlobalKeys();
   connectEvents();
+  restoreSessions();
 
   // Deep links: #file=<path> for any file, #scope for the scope view.
   if (location.hash.startsWith('#scope')) return openScope();
@@ -1004,20 +1005,25 @@ async function openMcp() {
 
 /* ── assist chat ─────────────────────────────────────────────────────── */
 /**
- * Multi-turn chat over the config corpus. The user names the files; nothing is
- * ever edited that was not explicitly attached. Replies stream so a slow model
- * looks like work in progress rather than a hang.
+ * Sessions are the unit of work: one thread about one topic, kept across drawer
+ * open/close and page reloads. Up to MAX_SESSIONS are retained; the CLI session
+ * behind a thread is an implementation detail that changes when you compact,
+ * while the thread itself keeps its identity.
  */
+const MAX_SESSIONS = 5;
+const CONTEXT_LIMIT = 200_000;
+const SESSIONS_KEY = 'acs.sessions.v2';
+
 const C = {
-  messages: [],        // { role: 'user'|'assistant', text, proposals?, error? }
-  mentions: [],        // absolute paths the user has attached
-  sessionId: null,
+  sessions: [],
+  activeId: null,
   busy: false,
   stream: '',
   startedAt: 0,
   abort: null,
   draft: '',
-  picker: null,        // { query, index } while the @ list is open
+  picker: null,
+  model: 'claude-sonnet-5',
 };
 
 const PRESETS = [
@@ -1026,12 +1032,102 @@ const PRESETS = [
   ['Improve description', 'Improve only the `description` field in the frontmatter so the model loads this skill at the right moment. Leave everything else byte-identical.'],
 ];
 
+const COMPACT_PROMPT =
+  'Summarise this conversation so it can continue in a fresh context. Cover: what we are working on, ' +
+  'decisions made, edits already applied, and anything still pending. Be dense and specific — file paths, ' +
+  'exact wording we settled on, open questions. No preamble. This summary is the only thing that survives.';
+
+function newSession(mentions = []) {
+  return {
+    id: 's' + Math.random().toString(36).slice(2, 10),
+    title: 'New session',
+    cliSessionId: null,
+    seed: null,
+    mentions: [...mentions],
+    messages: [],
+    stats: { turns: 0, contextTokens: 0, costUsd: 0, baselineTokens: 0 },
+    compactions: 0,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+function active() {
+  return C.sessions.find((s) => s.id === C.activeId) || null;
+}
+
+function ensureSession() {
+  let s = active();
+  if (!s) {
+    if (!C.sessions.length) {
+      s = newSession(S.file ? [S.file.path] : []);
+      C.sessions.unshift(s);
+    } else {
+      s = C.sessions[0];
+    }
+    C.activeId = s.id;
+  }
+  return s;
+}
+
+function saveSessions() {
+  try {
+    localStorage.setItem(SESSIONS_KEY, JSON.stringify({
+      activeId: C.activeId,
+      model: C.model,
+      sessions: C.sessions.map((s) => ({
+        ...s,
+        // Proposals are dropped: by next load the file may have moved on, and a
+        // stale diff must never remain applyable.
+        messages: s.messages.map((m) => ({ role: m.role, text: m.text, error: m.error, note: m.note, mentions: m.mentions })),
+      })),
+    }));
+  } catch { /* quota or private mode */ }
+}
+
+function restoreSessions() {
+  try {
+    const raw = localStorage.getItem(SESSIONS_KEY);
+    if (!raw) return;
+    const t = JSON.parse(raw);
+    C.sessions = (t.sessions || []).slice(0, MAX_SESSIONS).map((s) => ({
+      ...s,
+      messages: (s.messages || []).map((m) => ({ ...m, proposals: [] })),
+    }));
+    C.activeId = t.activeId && C.sessions.some((s) => s.id === t.activeId) ? t.activeId : (C.sessions[0]?.id ?? null);
+    if (t.model) C.model = t.model;
+  } catch { /* corrupt store — start clean */ }
+}
+
+function contextPct(s) {
+  return Math.min(100, Math.round(((s?.stats.contextTokens || 0) / CONTEXT_LIMIT) * 100));
+}
+const contextLeft = (s) => 100 - contextPct(s);
+
+/** Tokens attributable to this conversation, excluding fixed harness overhead. */
+function conversationTokens(s) {
+  if (!s?.stats.baselineTokens) return 0;
+  return Math.max(0, (s.stats.contextTokens || 0) - s.stats.baselineTokens);
+}
+/** Below this, compaction frees less than it costs to run. */
+const COMPACT_WORTH_IT = 15_000;
+
+function titleFor(s) {
+  if (s.title && s.title !== 'New session') return s.title;
+  const firstUser = s.messages.find((m) => m.role === 'user');
+  if (firstUser) return firstUser.text.replace(/\s+/g, ' ').slice(0, 42);
+  if (s.mentions.length) return s.mentions[0].split('/').pop();
+  return 'New session';
+}
+
+/* ── drawer ──────────────────────────────────────────────────────────── */
 function openDrawer() {
   $('drawer').classList.add('open');
   $('scrim').classList.add('open');
-  // Default the target to whatever is open — still the user pointing at it,
-  // just without retyping what they are already looking at.
-  if (!C.mentions.length && S.file) C.mentions = [S.file.path];
+  const s = ensureSession();
+  // Default the target to whatever is open — still you pointing at it, just
+  // without retyping what you are already looking at.
+  if (!s.mentions.length && S.file) s.mentions = [S.file.path];
   renderChat();
   setTimeout(() => $('chat-input')?.focus(), 60);
 }
@@ -1051,16 +1147,165 @@ function allFiles() {
 }
 
 function renderChat() {
+  renderSessionBar();
   renderChatBody();
   renderCompose();
 }
 
+/* ── session bar ─────────────────────────────────────────────────────── */
+function renderSessionBar() {
+  const bar = $('session-bar');
+  const s = active();
+  bar.innerHTML = '';
+  if (!s) { bar.hidden = true; return; }
+  bar.hidden = false;
+
+  // Switcher
+  const row = el('div', 'sess-row');
+  const sel = el('select', 'sess-select');
+  C.sessions.forEach((x) => {
+    const o = el('option', null,
+      `${titleFor(x)}  ·  ${contextLeft(x)}% left${x.compactions ? ` · compacted ×${x.compactions}` : ''}`);
+    o.value = x.id;
+    if (x.id === C.activeId) o.selected = true;
+    sel.appendChild(o);
+  });
+  sel.onchange = () => { C.activeId = sel.value; C.draft = ''; saveSessions(); renderChat(); };
+  row.appendChild(sel);
+
+  const add = el('button', 'btn ghost sess-btn', '+');
+  add.title = `New session (${C.sessions.length}/${MAX_SESSIONS})`;
+  add.onclick = createSession;
+  row.appendChild(add);
+
+  const del = el('button', 'btn ghost sess-btn', '×');
+  del.title = 'Delete this session';
+  del.onclick = deleteSession;
+  row.appendChild(del);
+  bar.appendChild(row);
+
+  // Context meter — how much room is LEFT, which is the number that matters.
+  const left = contextLeft(s);
+  const label = el('div', 'sess-label');
+  const big = el('span', 'sess-left', `${left}% context left`);
+  if (left <= 15) big.classList.add('hot');
+  else if (left <= 35) big.classList.add('warm');
+  label.appendChild(big);
+  const conv = conversationTokens(s);
+  label.appendChild(el('span', 'sess-dim',
+    `${s.stats.turns} turn${s.stats.turns === 1 ? '' : 's'}` +
+    (s.stats.baselineTokens
+      ? ` · ${(conv / 1000).toFixed(1)}k conversation + ${(s.stats.baselineTokens / 1000).toFixed(0)}k overhead`
+      : ` · ${(s.stats.contextTokens / 1000).toFixed(1)}k / 200k`)));
+  if (s.stats.costUsd) label.appendChild(el('span', 'sess-dim', `$${s.stats.costUsd.toFixed(2)}`));
+
+  const convo = conversationTokens(s);
+  const compact = el('button', 'btn ghost sess-compact', 'Compact');
+  compact.disabled = C.busy || !s.cliSessionId || convo < COMPACT_WORTH_IT;
+  compact.title = convo < COMPACT_WORTH_IT
+    ? `Not worth it yet — only ${(convo / 1000).toFixed(1)}k of this context is the conversation. ` +
+      `The other ${(s.stats.baselineTokens / 1000).toFixed(0)}k is Claude Code's own overhead and compaction cannot reclaim it.`
+    : `Summarise ${(convo / 1000).toFixed(1)}k of conversation and continue in a fresh context. Same session.`;
+  compact.onclick = compactSession;
+  label.appendChild(compact);
+  bar.appendChild(label);
+
+  const meter = el('div', 'sess-meter');
+  const fill = el('div', 'sess-fill');
+  fill.style.width = `${Math.max(2, 100 - left)}%`;
+  if (left <= 15) fill.classList.add('hot');
+  else if (left <= 35) fill.classList.add('warm');
+  meter.appendChild(fill);
+  bar.appendChild(meter);
+
+  if (left <= 15) {
+    bar.appendChild(el('div', 'sess-warn',
+      'Nearly full. Auto-compaction is off in your settings, so compact this thread or start a new one before the next turn.'));
+  }
+}
+
+function createSession() {
+  if (C.sessions.length >= MAX_SESSIONS) {
+    notice('warn',
+      `You're at the ${MAX_SESSIONS}-session cap. Delete one with × before starting another.`, null, true);
+    return;
+  }
+  const s = newSession(S.file ? [S.file.path] : []);
+  C.sessions.unshift(s);
+  C.activeId = s.id;
+  C.draft = '';
+  saveSessions();
+  renderChat();
+}
+
+function deleteSession() {
+  const s = active();
+  if (!s) return;
+  if (s.messages.length && !confirm(`Delete "${titleFor(s)}"?\n\nThe conversation is discarded. Files and edits you already accepted are untouched.`)) return;
+  C.sessions = C.sessions.filter((x) => x.id !== s.id);
+  C.activeId = C.sessions[0]?.id ?? null;
+  if (!C.sessions.length) ensureSession();
+  saveSessions();
+  renderChat();
+}
+
+/**
+ * Manual compaction. Claude Code's own /compact does not work through
+ * `-p --resume` — it reports success but the history is gone, verified. So we
+ * ask for a summary, then continue the same thread on a fresh CLI session
+ * seeded with it. Same session to you; new session id underneath.
+ */
+async function compactSession() {
+  const s = active();
+  if (!s || C.busy || !s.cliSessionId) return;
+
+  C.busy = true;
+  C.stream = '';
+  C.startedAt = Date.now();
+  C.abort = new AbortController();
+  renderChat();
+
+  try {
+    const final = await streamChat({
+      message: COMPACT_PROMPT,
+      mentions: [],
+      sessionId: s.cliSessionId,
+      onDelta: () => renderChatBody(),
+    });
+    const summary = C.stream.trim();
+    if (!summary) throw new Error('Compaction returned nothing — thread left as it was.');
+
+    const turnsBefore = s.stats.turns;
+    s.seed = summary;
+    s.cliSessionId = null;                 // next turn starts fresh, seeded
+    s.compactions += 1;
+    s.stats.contextTokens = 0;
+    s.stats.baselineTokens = 0;
+    s.messages = [{
+      role: 'assistant',
+      note: `Compacted ${turnsBefore} turn${turnsBefore === 1 ? '' : 's'} into a summary. The thread continues from here.`,
+      text: summary,
+    }];
+    saveSessions();
+    notice('ok', `Compacted — ${contextLeft(s)}% context free again.`);
+  } catch (e) {
+    if (e.name !== 'AbortError') notice('error', `Compaction failed: ${e.message}`, null, true);
+  } finally {
+    C.busy = false;
+    C.stream = '';
+    C.abort = null;
+    renderChat();
+  }
+}
+
+/* ── transcript ──────────────────────────────────────────────────────── */
 function renderChatBody() {
   const body = $('drawer-body');
+  const s = active();
   const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
   body.innerHTML = '';
 
-  if (!C.messages.length && !C.busy) {
+  if (s && !s.messages.length && !C.busy) {
     const intro = el('div', 'chat-intro');
     intro.appendChild(el('p', 'assist-label', 'Ask for a change'));
     intro.appendChild(el('div', 'scope-sub',
@@ -1075,7 +1320,7 @@ function renderChatBody() {
     body.appendChild(intro);
   }
 
-  for (const m of C.messages) body.appendChild(renderMessage(m));
+  for (const m of s?.messages || []) body.appendChild(renderMessage(m));
 
   if (C.busy) {
     const live = el('div', 'msg assistant');
@@ -1093,13 +1338,15 @@ function renderChatBody() {
 function stripEditBlocks(text) {
   return text
     .replace(/^@@(EDIT|APPEND)[ \t]+.*$[\s\S]*?^@@END[ \t]*$/gm, '')
-    .replace(/^@@(EDIT|APPEND)[ \t]+.*$[\s\S]*/gm, '')   // a block still streaming
+    .replace(/^@@(EDIT|APPEND)[ \t]+.*$[\s\S]*/gm, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
 function renderMessage(m) {
   const wrap = el('div', `msg ${m.role}`);
+  if (m.note) wrap.appendChild(el('div', 'msg-note', m.note));
+
   if (m.role === 'user') {
     wrap.appendChild(el('div', 'msg-text', m.text));
     if (m.mentions?.length) {
@@ -1109,40 +1356,28 @@ function renderMessage(m) {
     }
     return wrap;
   }
+  if (m.error) { wrap.appendChild(el('div', 'notice error', m.error)); return wrap; }
 
-  if (m.error) {
-    wrap.appendChild(el('div', 'notice error', m.error));
-    return wrap;
-  }
   const prose = stripEditBlocks(m.text);
   if (prose) {
     const t = el('div', 'msg-text md');
     t.innerHTML = renderMarkdown(prose);
     wrap.appendChild(t);
   }
-  for (const p of m.proposals || []) wrap.appendChild(renderProposal(p, m));
+  for (const p of m.proposals || []) wrap.appendChild(renderProposal(p));
   return wrap;
 }
 
-function renderProposal(p, msg) {
+function renderProposal(p) {
   const card = el('div', 'prop');
   const head = el('div', 'prop-head');
   head.appendChild(el('span', 'prop-path', p.display));
   if (!p.error) head.appendChild(el('span', 'item-badge', `${p.edits} edit${p.edits === 1 ? '' : 's'}`));
   card.appendChild(head);
 
-  if (p.error) {
-    card.appendChild(el('div', 'prop-error', p.error));
-    return card;
-  }
-  if (p.state === 'accepted') {
-    card.appendChild(el('div', 'prop-ok', `Applied and versioned.`));
-    return card;
-  }
-  if (p.state === 'rejected') {
-    card.appendChild(el('div', 'prop-error', 'Rejected — nothing written.'));
-    return card;
-  }
+  if (p.error) { card.appendChild(el('div', 'prop-error', p.error)); return card; }
+  if (p.state === 'accepted') { card.appendChild(el('div', 'prop-ok', 'Applied and versioned.')); return card; }
+  if (p.state === 'rejected') { card.appendChild(el('div', 'prop-error', 'Rejected — nothing written.')); return card; }
 
   const d = diffView(p.current, p.proposed, 'now', 'proposed');
   d.style.padding = '0';
@@ -1150,7 +1385,7 @@ function renderProposal(p, msg) {
 
   const foot = el('div', 'prop-foot');
   const accept = el('button', 'btn primary', 'Accept');
-  accept.onclick = () => acceptProposal(p, msg);
+  accept.onclick = () => acceptProposal(p);
   const reject = el('button', 'btn ghost', 'Reject');
   reject.onclick = () => { p.state = 'rejected'; renderChatBody(); };
   const open = el('button', 'btn ghost', 'Open file');
@@ -1165,16 +1400,13 @@ function renderProposal(p, msg) {
 
 async function acceptProposal(p) {
   try {
-    const r = await api('PUT', '/api/file', {
-      path: p.path, content: p.proposed, mtime: p.mtime,
-    });
+    const r = await api('PUT', '/api/file', { path: p.path, content: p.proposed, mtime: p.mtime });
     if (!r.saved && r.errors?.length) {
       notice('error', `Not applied — ${p.display} would be invalid:`, r.errors, true);
       return;
     }
     p.state = 'accepted';
     renderChatBody();
-    // Keep the editor honest if the same file is open behind the drawer.
     if (S.file?.path === p.path) {
       S.file.mtime = r.mtime;
       S.original = p.proposed;
@@ -1188,23 +1420,24 @@ async function acceptProposal(p) {
   }
 }
 
+/* ── compose ─────────────────────────────────────────────────────────── */
 function renderCompose() {
   const box = $('drawer-compose');
+  const s = ensureSession();
   box.innerHTML = '';
 
-  // Attached files
   const chips = el('div', 'mention-row');
-  for (const p of C.mentions) {
+  for (const p of s.mentions) {
     const chip = el('span', 'mention-chip');
     chip.appendChild(el('span', null, p.split('/').pop()));
     const x = el('button', 'mention-x', '×');
     x.title = p;
-    x.onclick = () => { C.mentions = C.mentions.filter((q) => q !== p); renderCompose(); };
+    x.onclick = () => { s.mentions = s.mentions.filter((q) => q !== p); saveSessions(); renderCompose(); };
     chip.appendChild(x);
     chips.appendChild(chip);
   }
-  const add = el('button', 'mention-add', C.mentions.length ? '+ file' : '@ attach a file');
-  add.onclick = () => { C.draft += (C.draft.endsWith(' ') || !C.draft ? '' : ' ') + '@'; renderCompose(); openPicker(''); };
+  const add = el('button', 'mention-add', s.mentions.length ? '+ file' : '@ attach a file');
+  add.onclick = () => { C.draft += (C.draft.endsWith(' ') || !C.draft ? '' : ' ') + '@'; openPicker(''); };
   chips.appendChild(add);
   box.appendChild(chips);
 
@@ -1212,7 +1445,7 @@ function renderCompose() {
 
   const input = el('textarea', 'chat-input');
   input.id = 'chat-input';
-  input.placeholder = C.mentions.length
+  input.placeholder = s.mentions.length
     ? 'What should change in these files?'
     : 'Ask a question, or attach a file with @ to make edits…';
   input.value = C.draft;
@@ -1238,23 +1471,18 @@ function renderCompose() {
   const model = el('select', 'assist-model');
   for (const [v, label] of [['claude-sonnet-5', 'Sonnet 5 · fast'], ['claude-opus-5', 'Opus 5 · slower'], ['claude-haiku-4-5-20251001', 'Haiku 4.5']]) {
     const o = el('option', null, label); o.value = v;
-    if (v === (C.model || 'claude-sonnet-5')) o.selected = true;
+    if (v === C.model) o.selected = true;
     model.appendChild(o);
   }
-  model.onchange = () => { C.model = model.value; };
+  model.onchange = () => { C.model = model.value; saveSessions(); };
   row.appendChild(model);
   row.appendChild(el('span', 'spacer'));
 
   if (C.busy) {
     const cancel = el('button', 'btn danger', 'Cancel');
-    cancel.onclick = () => { C.abort?.abort(); };
+    cancel.onclick = () => C.abort?.abort();
     row.appendChild(cancel);
   } else {
-    if (C.messages.length) {
-      const clear = el('button', 'btn ghost', 'New thread');
-      clear.onclick = () => { C.messages = []; C.sessionId = null; C.stream = ''; renderChat(); };
-      row.appendChild(clear);
-    }
     const send = el('button', 'btn primary', 'Send');
     send.onclick = sendTurn;
     row.appendChild(send);
@@ -1270,13 +1498,13 @@ function openPicker(query, keepIndex) {
 }
 
 function pickerMatches() {
+  const s = active();
   const q = (C.picker?.query || '').toLowerCase();
-  const files = allFiles().filter((f) => !C.mentions.includes(f.path));
+  const files = allFiles().filter((f) => !s?.mentions.includes(f.path));
   if (!q) return files.slice(0, 12);
   return files
     .map((f) => {
-      const hay = `${f.entry} ${f.name} ${f.display}`.toLowerCase();
-      const i = hay.indexOf(q);
+      const i = `${f.entry} ${f.name} ${f.display}`.toLowerCase().indexOf(q);
       return i === -1 ? null : { f, score: i };
     })
     .filter(Boolean)
@@ -1302,9 +1530,11 @@ function renderPicker() {
 
 function choosePicker(f) {
   if (!f) return;
-  if (!C.mentions.includes(f.path)) C.mentions.push(f.path);
+  const s = ensureSession();
+  if (!s.mentions.includes(f.path)) s.mentions.push(f.path);
   C.draft = C.draft.replace(/@([^\s@]*)$/, '').replace(/\s+$/, '');
   C.picker = null;
+  saveSessions();
   renderCompose();
   $('chat-input')?.focus();
 }
@@ -1312,11 +1542,45 @@ function choosePicker(f) {
 /* ── sending ─────────────────────────────────────────────────────────── */
 let tickTimer;
 
+/** Shared streaming reader for both normal turns and compaction. */
+async function streamChat({ message, mentions, sessionId, seed, onDelta }) {
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ message, mentions, sessionId, seed, model: C.model }),
+    signal: C.abort.signal,
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', final = null;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) !== -1) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      if (!line.trim()) continue;
+      let ev;
+      try { ev = JSON.parse(line); } catch { continue; }
+      if (ev.t === 'delta') { C.stream += ev.text; onDelta?.(); }
+      else if (ev.t === 'done') final = ev;
+      else if (ev.t === 'error') throw new Error(ev.message);
+    }
+  }
+  return final;
+}
+
 async function sendTurn() {
   const text = C.draft.trim();
   if (!text || C.busy) return;
+  const s = ensureSession();
 
-  C.messages.push({ role: 'user', text, mentions: [...C.mentions] });
+  s.messages.push({ role: 'user', text, mentions: [...s.mentions] });
+  if (s.title === 'New session') s.title = titleFor(s);
   C.draft = '';
   C.picker = null;
   C.busy = true;
@@ -1328,58 +1592,42 @@ async function sendTurn() {
   tickTimer = setInterval(renderChatBody, 1000);
 
   try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        message: text,
-        mentions: C.mentions,
-        sessionId: C.sessionId,
-        model: C.model || 'claude-sonnet-5',
-      }),
-      signal: C.abort.signal,
+    const final = await streamChat({
+      message: text,
+      mentions: s.mentions,
+      sessionId: s.cliSessionId,
+      seed: s.cliSessionId ? null : s.seed,
+      onDelta: renderChatBody,
     });
-    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
 
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-    let final = null;
-
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let nl;
-      while ((nl = buf.indexOf('\n')) !== -1) {
-        const line = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        if (!line.trim()) continue;
-        let ev;
-        try { ev = JSON.parse(line); } catch { continue; }
-        if (ev.t === 'delta') { C.stream += ev.text; renderChatBody(); }
-        else if (ev.t === 'done') final = ev;
-        else if (ev.t === 'error') throw new Error(ev.message);
-      }
+    s.cliSessionId = final?.sessionId ?? s.cliSessionId;
+    if (final?.stats) {
+      s.stats.turns += 1;
+      s.stats.contextTokens = final.stats.contextTokens || s.stats.contextTokens;
+      s.stats.costUsd = (s.stats.costUsd || 0) + (final.stats.costUsd || 0);
+      // The first turn is almost entirely Claude Code's own overhead — system
+      // prompt, tool definitions, CLAUDE.md, skills index. Recording it lets us
+      // report how much of the context is actually *this conversation*.
+      if (!s.stats.baselineTokens) s.stats.baselineTokens = final.stats.contextTokens || 0;
     }
+    s.updatedAt = Date.now();
+    s.messages.push({ role: 'assistant', text: C.stream, proposals: final?.proposals ?? [] });
 
-    C.sessionId = final?.sessionId ?? C.sessionId;
-    C.messages.push({
-      role: 'assistant',
-      text: C.stream,
-      proposals: final?.proposals ?? [],
-    });
+    if (final?.rateLimit?.status && final.rateLimit.status !== 'allowed') {
+      notice('warn', `Usage limit: ${final.rateLimit.status}` +
+        (final.rateLimit.resetsAt ? ` — resets ${new Date(final.rateLimit.resetsAt).toLocaleTimeString()}` : ''), null, true);
+    }
   } catch (e) {
-    if (e.name === 'AbortError') {
-      C.messages.push({ role: 'assistant', text: '', error: 'Cancelled.' });
-    } else {
-      C.messages.push({ role: 'assistant', text: '', error: e.message });
-    }
+    s.messages.push({
+      role: 'assistant', text: '',
+      error: e.name === 'AbortError' ? 'Cancelled.' : e.message,
+    });
   } finally {
     clearInterval(tickTimer);
     C.busy = false;
     C.stream = '';
     C.abort = null;
+    saveSessions();
     renderChat();
   }
 }

@@ -293,6 +293,7 @@ async function handleChat(req, res) {
     message,
     mentions,
     sessionId: body.sessionId || null,
+    seed: body.seed || null,
     model: body.model || 'claude-sonnet-5',
     cwd: mentions.length ? path.dirname(mentions[0]) : HOME,
   }, (text) => send({ t: 'delta', text }));
@@ -301,7 +302,7 @@ async function handleChat(req, res) {
   req.on('close', () => { if (!res.writableEnded) turn.kill(); });
 
   try {
-    const { text, sessionId } = await turn.done;
+    const { text, sessionId, stats, rateLimit } = await turn.done;
     const proposals = parseEdits(text, mentions).map((p) => {
       let mtime = null;
       try { mtime = p.path ? fs.statSync(p.path).mtimeMs : null; } catch {}
@@ -311,7 +312,7 @@ async function handleChat(req, res) {
         current: p.current, proposed: p.proposed,
       };
     });
-    send({ t: 'done', sessionId, proposals });
+    send({ t: 'done', sessionId, proposals, stats, rateLimit });
   } catch (e) {
     send({ t: 'error', message: e.message });
   }
