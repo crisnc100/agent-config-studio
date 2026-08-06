@@ -7,17 +7,37 @@ DIR="${0:A:h}/.."
 PORT="${ACS_PORT:-8787}"
 URL="http://localhost:$PORT"
 
+# Identify the app by its health endpoint, never by "something owns the port" —
+# otherwise `acs stop` could kill an unrelated listener.
+is_acs() {
+  curl -sf --max-time 2 "$URL/api/health" 2>/dev/null | grep -q agent-config-studio
+}
+
 case "$1" in
   stop)
-    pid=$(lsof -ti:"$PORT" 2>/dev/null) && kill $=pid && echo "stopped." || echo "not running."
+    if is_acs; then
+      # Only kill processes LISTENING on the port, not clients connected to it.
+      pids=$(lsof -t -sTCP:LISTEN -i:"$PORT" 2>/dev/null)
+      if [ -n "$pids" ]; then kill $=pids && echo "stopped."; else echo "not running."; fi
+    elif lsof -ti:"$PORT" >/dev/null 2>&1; then
+      echo "port $PORT is in use by something else — not touching it." >&2
+      exit 1
+    else
+      echo "not running."
+    fi
     exit 0
     ;;
 esac
 
-if lsof -ti:"$PORT" >/dev/null 2>&1; then
+if is_acs; then
   echo "already running → $URL"
   open "$URL"
   exit 0
+fi
+
+if lsof -ti:"$PORT" >/dev/null 2>&1; then
+  echo "port $PORT is in use by another process. Set ACS_PORT to pick a different one." >&2
+  exit 1
 fi
 
 echo "starting Agent Config Studio…"

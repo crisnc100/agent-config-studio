@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { resolveSafe, kindOf, tilde, HOME, PROJECTS, STUDIO_HOME } from './lib/paths.js';
+import { resolveSafe, kindOf, tilde, HOME, PROJECTS, STUDIO_HOME, CODEX_HOME } from './lib/paths.js';
 import { buildRegistry, scopeChain } from './lib/registry.js';
 import { validate } from './lib/validate.js';
 import * as history from './lib/history.js';
@@ -42,6 +42,47 @@ async function readBody(req, limit = 8 * 1024 * 1024) {
 }
 
 const ROUTES = {
+  /** Identity probe so the launcher never kills an unrelated process on this port. */
+  'GET /api/health': async () => ({ app: 'agent-config-studio', pid: process.pid }),
+
+  /**
+   * Read-only view of configured MCP servers. Global servers live in
+   * ~/.claude.json next to oauth tokens, API-key responses and 44 projects of
+   * history — so only the mcpServers key is extracted, and that file is never
+   * exposed through the file API.
+   */
+  'GET /api/mcp': async () => {
+    const out = { global: [], codex: [], note: null };
+
+    try {
+      const raw = JSON.parse(await fsp.readFile(path.join(HOME, '.claude.json'), 'utf8'));
+      out.global = Object.entries(raw.mcpServers || {}).map(([name, cfg]) => ({
+        name, transport: cfg.type || (cfg.command ? 'stdio' : 'unknown'),
+        target: cfg.url || cfg.command || '', scope: 'global',
+      }));
+      for (const [proj, cfg] of Object.entries(raw.projects || {})) {
+        for (const [name, s] of Object.entries(cfg.mcpServers || {})) {
+          out.global.push({
+            name, transport: s.type || (s.command ? 'stdio' : 'unknown'),
+            target: s.url || s.command || '', scope: tilde(proj),
+          });
+        }
+      }
+      out.note = 'Global MCP is defined in ~/.claude.json, which also holds credentials — shown read-only. Use `claude mcp add/remove` to change it.';
+    } catch (e) {
+      out.note = `Could not read ~/.claude.json: ${e.message}`;
+    }
+
+    try {
+      const toml = await fsp.readFile(path.join(CODEX_HOME, 'config.toml'), 'utf8');
+      for (const m of toml.matchAll(/^\[mcp_servers\.([A-Za-z0-9_-]+)\]/gm)) {
+        out.codex.push({ name: m[1], scope: '~/.codex/config.toml' });
+      }
+    } catch { /* codex config is optional */ }
+
+    return out;
+  },
+
   'GET /api/registry': async () => ({
     ...buildRegistry(),
     history: await history.repoStats(),
@@ -84,10 +125,22 @@ const ROUTES = {
       return { saved: false, unchanged: true, ...check };
     }
 
+    // Capture whatever is on disk right now before replacing it, so there is
+    // always a version to diff and restore against.
+    await history.recordBaseline(abs, `state of ${tilde(abs)} before edit`).catch(() => {});
+
     await fsp.writeFile(abs, content, 'utf8');
-    const sha = await history.record(abs, `edit ${tilde(abs)}`);
     const after = await fsp.stat(abs);
-    return { saved: true, sha, mtime: after.mtimeMs, ...check };
+
+    // The write succeeded; a history failure must not be reported as a failed
+    // save, or the UI would claim the file is unchanged when it is not.
+    let sha = null, historyError = null;
+    try {
+      sha = await history.record(abs, `edit ${tilde(abs)}`);
+    } catch (e) {
+      historyError = e.message;
+    }
+    return { saved: true, sha, historyError, mtime: after.mtimeMs, ...check };
   },
 
   'POST /api/validate': async (req) => {
@@ -109,14 +162,32 @@ const ROUTES = {
   },
 
   'POST /api/history/restore': async (req) => {
-    const { path: p, sha } = await readBody(req);
+    const { path: p, sha, mtime } = await readBody(req);
     const abs = resolveSafe(p);
     if (!/^[0-9a-f]{7,40}$/.test(sha || '')) throw Object.assign(new Error('bad sha'), { status: 400 });
-    const content = await history.contentAt(abs, sha);
-    await fsp.writeFile(abs, content, 'utf8');
-    const newSha = await history.record(abs, `restore ${tilde(abs)} to ${sha.slice(0, 8)}`);
+
     const stat = await fsp.stat(abs);
-    return { restored: true, content, sha: newSha, mtime: stat.mtimeMs };
+    if (mtime && Math.abs(stat.mtimeMs - mtime) > 1) {
+      throw Object.assign(
+        new Error('This file changed on disk since you opened it. Reload before restoring.'),
+        { status: 409 }
+      );
+    }
+
+    const content = await history.contentAt(abs, sha);
+    // Preserve the current contents before overwriting, so a restore is itself
+    // reversible even if the current version was never saved through the studio.
+    await history.recordBaseline(abs, `state of ${tilde(abs)} before restore`).catch(() => {});
+
+    await fsp.writeFile(abs, content, 'utf8');
+    const after = await fsp.stat(abs);
+    let newSha = null, historyError = null;
+    try {
+      newSha = await history.record(abs, `restore ${tilde(abs)} to ${sha.slice(0, 8)}`);
+    } catch (e) {
+      historyError = e.message;
+    }
+    return { restored: true, content, sha: newSha, historyError, mtime: after.mtimeMs };
   },
 
   'POST /api/snapshot': async () => history.snapshotAll('manual snapshot'),

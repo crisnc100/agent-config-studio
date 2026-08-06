@@ -18,6 +18,8 @@ Then: <http://localhost:8787>
 | Claude skills | `~/.claude/skills/*` (follows the symlink into `~/.agents`) |
 | Codex skills | `~/.codex/skills/*` |
 | Plugin skills | enabled plugins only, read from the plugin cache |
+| Auto-memory | `~/.claude/projects/*/memory/*.md` — what the harness wrote itself, one bucket per project scope |
+| MCP servers | project `.mcp.json` (editable); global + Codex servers read-only under **MCP** |
 | Subagents | `~/.claude/agents/*.md` — appears once the directory exists |
 | Slash commands | `~/.claude/commands/*.md` — appears once the directory exists |
 | Hooks | `~/.claude/hooks/*.sh` |
@@ -47,9 +49,25 @@ outside the studio still land in the history.
 Deleting `~/.agent-config-studio` loses the history, never the live config.
 
 **Validation before write.** A save is refused outright if it would break the
-file: invalid JSON, malformed TOML, a `SKILL.md` with no frontmatter or missing
-`name` / `description`. Softer problems (no shebang on a hook, a 400-line memory
-file, a suspiciously short skill description) save with a warning.
+file: invalid JSON, malformed TOML, a `SKILL.md` with no frontmatter or with an
+empty `name` / `description`. Softer problems (no shebang on a hook, a 400-line
+memory file, a suspiciously short skill description) save with a warning.
+
+TOML is checked by a real scanner that understands comments, basic and literal
+strings, multi-line strings, and values spanning several lines — a line-by-line
+check rejected valid arrays while accepting unterminated strings. The rule
+throughout: error only on definite breakage, warn when merely unrecognised. A
+false rejection that blocks a legitimate save is worse than a missed problem.
+
+**Nothing executable renders.** Markdown is sanitized after parsing — script,
+iframe, `on*` handlers and `javascript:` URLs are stripped. The preview shows
+third-party plugin skills and model-generated assist output, and those would
+otherwise run with same-origin access to the write API.
+
+**Credentials stay out.** `~/.claude/.credentials.json` and `~/.codex/auth.json`
+are hard-blocked. `~/.claude.json` is never exposed through the file API either —
+it holds oauth tokens and API-key responses alongside the MCP config, so only its
+`mcpServers` key is extracted, read-only.
 
 **Scope chain.** The `Scope` button answers "what actually applies when an agent
 runs in this directory" — the global files plus every `CLAUDE.md`/`AGENTS.md` on

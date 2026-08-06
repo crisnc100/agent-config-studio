@@ -10,6 +10,31 @@ const el = (tag, cls, text) => {
 const esc = (s) => s.replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+/**
+ * Render markdown, then strip anything executable from the result.
+ * The preview shows third-party plugin skills and model-generated assist
+ * output, and marked passes raw HTML straight through — an `onerror` handler
+ * in a skill file would otherwise run with same-origin access to the write API.
+ */
+const DANGEROUS_TAGS = 'script,style,iframe,object,embed,link,meta,form,base';
+function renderMarkdown(src) {
+  const host = document.createElement('div');
+  host.innerHTML = marked.parse(src);
+  host.querySelectorAll(DANGEROUS_TAGS).forEach((n) => n.remove());
+  host.querySelectorAll('*').forEach((n) => {
+    for (const attr of [...n.attributes]) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value.replace(/\s+/g, '').toLowerCase();
+      if (name.startsWith('on')) n.removeAttribute(attr.name);
+      else if (/^(href|src|xlink:href|action|formaction)$/.test(name) &&
+               /^(javascript|vbscript|data:text\/html)/.test(value)) {
+        n.removeAttribute(attr.name);
+      }
+    }
+  });
+  return host.innerHTML;
+}
+
 const S = {
   registry: null,
   view: 'welcome',      // welcome | entry | search | scope
@@ -68,6 +93,7 @@ async function boot() {
 
   // Deep links: #file=<path> for any file, #scope for the scope view.
   if (location.hash.startsWith('#scope')) return openScope();
+  if (location.hash.startsWith('#mcp')) return openMcp();
   const m = location.hash.match(/file=([^&]+)/);
   if (m) {
     const p = decodeURIComponent(m[1]);
@@ -160,6 +186,7 @@ async function loadFile(p) {
     S.original = f.content;
     S.draft = f.content;
     S.tab = S.tab === 'history' || S.tab === 'compare' ? 'preview' : S.tab;
+    S.assistResult = null;   // a result belongs to the file it was run against
     window.history.replaceState(null, '', `#file=${encodeURIComponent(f.path)}`);
     renderAll();
   } catch (e) {
@@ -191,6 +218,9 @@ function renderTopbar() {
   } else if (S.view === 'scope') {
     t.textContent = 'Scope chain';
     $('title-path').textContent = 'What actually applies when an agent runs in a directory';
+  } else if (S.view === 'mcp') {
+    t.textContent = 'MCP servers';
+    $('title-path').textContent = 'Model Context Protocol servers across both harnesses';
   } else {
     t.textContent = 'Agent Config Studio';
     $('title-path').textContent = '';
@@ -240,7 +270,9 @@ function renderStatus() {
     L.textContent = S.registry ? `history: ${S.registry.history.path}` : '';
     R.textContent = '';
   }
-  $('btn-save').disabled = !isDirty();
+  // Save only ever acts on the open file — never leave it live on a view that
+  // isn't showing one.
+  $('btn-save').disabled = S.view !== 'entry' || !isDirty();
 }
 
 /* ── content panes ───────────────────────────────────────────────────── */
@@ -250,6 +282,7 @@ function renderContent() {
   if (S.view === 'welcome') return renderWelcome();
   if (S.view === 'search') return;         // rendered directly by doSearch
   if (S.view === 'scope') return;          // rendered directly by openScope
+  if (S.view === 'mcp') return;            // rendered directly by openMcp
   if (!S.file) return;
 
   if (S.tab === 'preview') return renderPreview(c);
@@ -280,7 +313,11 @@ function splitFrontmatter(text) {
   const end = text.indexOf('\n---', 3);
   if (end === -1) return { fields: null, body: text };
   const block = text.slice(3, end);
-  const body = text.slice(text.indexOf('\n', end + 1) + 1);
+  // The closing `---` may be the last line with no trailing newline; treating a
+  // missing newline as index 0 would hand the whole file back as the body and
+  // render the frontmatter as a heading all over again.
+  const nl = text.indexOf('\n', end + 1);
+  const body = nl === -1 ? '' : text.slice(nl + 1);
   const fields = [];
   for (const line of block.split('\n')) {
     const m = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
@@ -308,7 +345,7 @@ function renderPreview(c) {
     d.appendChild(card);
   }
   const bodyEl = el('div');
-  bodyEl.innerHTML = marked.parse(body);
+  bodyEl.innerHTML = renderMarkdown(body);
   d.appendChild(bodyEl);
   c.appendChild(d);
 }
@@ -385,9 +422,12 @@ async function showVersionDiff(sha) {
 }
 
 async function restoreVersion(sha) {
-  if (!confirm(`Restore this file to version ${sha.slice(0, 8)}?\n\nThe current contents are already committed, so this is reversible.`)) return;
+  if (isDirty() && !confirm('You have unsaved changes in the editor. Restoring will discard them.\n\nContinue?')) return;
+  if (!confirm(`Restore this file to version ${sha.slice(0, 8)}?\n\nThe current contents are recorded first, so this is reversible.`)) return;
   try {
-    const r = await api('POST', '/api/history/restore', { path: S.file.path, sha });
+    const r = await api('POST', '/api/history/restore', {
+      path: S.file.path, sha, mtime: S.file.mtime,
+    });
     S.file.content = r.content;
     S.file.mtime = r.mtime;
     S.original = r.content;
@@ -417,11 +457,11 @@ async function renderCompare(c) {
     grid.appendChild(col);
 
     if (content != null) {
-      body.innerHTML = marked.parse(content);
+      body.innerHTML = renderMarkdown(content);
     } else {
       const p = entry.primary;
       api('GET', `/api/file?path=${encodeURIComponent(p)}`)
-        .then((f) => { body.innerHTML = marked.parse(f.content); })
+        .then((f) => { body.innerHTML = renderMarkdown(f.content); })
         .catch((e) => { body.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`; });
       const open = el('button', 'btn ghost', 'Open →');
       open.style.cssText = 'padding:2px 9px;margin-left:auto';
@@ -492,23 +532,38 @@ function diffView(oldText, newText, oldLabel = 'before', newLabel = 'after') {
 /* ── save ────────────────────────────────────────────────────────────── */
 async function save() {
   if (!isDirty()) return;
+  // Snapshot exactly what is being sent. Anything typed during the round trip
+  // must stay dirty — assigning from the live draft afterwards would mark
+  // unwritten edits as saved.
+  const file = S.file;
+  const content = S.draft;
+
   const btn = $('btn-save');
   btn.disabled = true;
   btn.textContent = 'Saving…';
   try {
     const r = await api('PUT', '/api/file', {
-      path: S.file.path, content: S.draft, mtime: S.file.mtime,
+      path: file.path, content, mtime: file.mtime,
     });
+    const stillOpen = S.file && S.file.path === file.path;
+
     if (!r.saved && r.errors?.length) {
       notice('error', 'Not saved — this would break the file:', r.errors, true);
     } else if (r.unchanged) {
       notice('ok', 'No changes to save.');
     } else {
-      S.original = S.draft;
-      S.file.mtime = r.mtime;
-      if (r.warnings?.length) notice('warn', 'Saved, with notes:', r.warnings, true);
+      if (stillOpen) {
+        S.original = content;
+        S.file.mtime = r.mtime;
+      }
+      const notes = [...(r.warnings || [])];
+      if (r.historyError) notes.push(`File written, but not versioned: ${r.historyError}`);
+      if (notes.length) notice('warn', 'Saved, with notes:', notes, true);
       else notice('ok', `Saved · version ${r.sha?.slice(0, 8) ?? ''}`);
       S.registry.history.commits++;
+      if (stillOpen && S.draft !== content) {
+        notice('warn', 'Saved what was sent — you typed more since, so there are still unsaved changes.', null, true);
+      }
     }
   } catch (e) {
     notice('error', e.message, null, true);
@@ -624,6 +679,63 @@ async function openScope() {
   load();
 }
 
+/* ── MCP view ────────────────────────────────────────────────────────── */
+async function openMcp() {
+  if (!confirmDiscard()) return;
+  S.view = 'mcp';
+  S.entry = null;
+  window.history.replaceState(null, '', '#mcp');
+  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
+  $('filebar').hidden = true;
+
+  const c = $('content');
+  c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span> reading MCP config…</div></div>';
+  let m;
+  try { m = await api('GET', '/api/mcp'); }
+  catch (e) { c.innerHTML = `<div class="scope"><div class="scope-sub">${esc(e.message)}</div></div>`; return; }
+
+  c.innerHTML = '';
+  const box = el('div', 'scope');
+  box.appendChild(el('h2', null, 'MCP servers'));
+  box.appendChild(el('div', 'scope-sub', m.note || ''));
+
+  const section = (title, rows, empty) => {
+    box.appendChild(el('p', 'assist-label', title));
+    if (!rows.length) { box.appendChild(el('div', 'scope-sub', empty)); return; }
+    for (const s of rows) {
+      const row = el('div', 'scope-item');
+      row.appendChild(el('div', 'scope-rank', s.name.slice(0, 2).toUpperCase()));
+      const body = el('div', 'scope-body');
+      body.appendChild(el('div', 'scope-path', s.name));
+      const bits = [s.scope, s.transport, s.target].filter(Boolean);
+      body.appendChild(el('div', 'scope-note', bits.join(' · ')));
+      row.appendChild(body);
+      box.appendChild(row);
+    }
+  };
+
+  section('Claude Code — read-only', m.global, 'No MCP servers configured.');
+  section('Codex', m.codex, 'No MCP servers in config.toml.');
+
+  const editable = S.registry.groups.find((g) => g.id === 'mcp');
+  if (editable) {
+    box.appendChild(el('p', 'assist-label', 'Project .mcp.json — editable'));
+    for (const e of editable.entries) {
+      const row = el('div', 'scope-item');
+      row.appendChild(el('div', 'scope-rank', '{ }'));
+      const body = el('div', 'scope-body');
+      body.appendChild(el('div', 'scope-path', e.display));
+      body.appendChild(el('div', 'scope-note', e.description || ''));
+      row.appendChild(body);
+      const open = el('button', 'btn ghost scope-open', 'Open');
+      open.onclick = () => openEntry(e);
+      row.appendChild(open);
+      box.appendChild(row);
+    }
+  }
+  c.appendChild(box);
+}
+
 /* ── assist drawer ───────────────────────────────────────────────────── */
 function openDrawer() {
   if (!S.file) return;
@@ -676,7 +788,7 @@ function renderDrawer() {
       out.appendChild(el('p', 'assist-label', 'Findings'));
       const md = el('div', 'md');
       md.style.cssText = 'padding:0;font-size:13.5px';
-      md.innerHTML = marked.parse(S.assistResult.result);
+      md.innerHTML = renderMarkdown(S.assistResult.result);
       out.appendChild(md);
     } else {
       // The model occasionally answers with prose instead of file contents, or
@@ -705,8 +817,18 @@ function renderDrawer() {
   foot.appendChild(run);
 
   if (S.assistResult && !S.assistResult.readOnly) {
+    const stale = S.assistResult.forPath !== S.file.path;
     const apply = el('button', 'btn', 'Apply to editor');
+    apply.disabled = stale;
     apply.onclick = () => {
+      if (S.assistResult.forPath !== S.file.path) {
+        notice('error', 'That result was generated for a different file. Run assist again.', null, true);
+        return;
+      }
+      if (S.assistResult.forDraft !== S.draft &&
+          !confirm('The file has changed since this result was generated. Applying it will discard those edits.\n\nContinue?')) {
+        return;
+      }
       S.draft = S.assistResult.result;
       S.assistResult = null;
       S.tab = 'edit';
@@ -723,24 +845,36 @@ function renderDrawer() {
   }
 }
 
+let assistSeq = 0;
+
 async function runAssist(instruction) {
+  // Assist can take minutes and navigation stays enabled, so a result must
+  // carry the file and draft it was computed from — otherwise a slow rewrite
+  // can be applied to whatever file happens to be open when it lands.
+  const seq = ++assistSeq;
+  const forPath = S.file.path;
+  const forDraft = S.draft;
+
   S.assistBusy = true;
   S.assistResult = null;
   renderDrawer();
   try {
     const r = await api('POST', '/api/assist', {
-      path: S.file.path,
-      content: S.draft,
+      path: forPath,
+      content: forDraft,
       action: S.assistAction === 'custom' ? null : S.assistAction,
       instruction: instruction || null,
       model: $('assist-model').value,
     });
-    S.assistResult = r;
+    if (seq !== assistSeq) return;                  // superseded by a newer run
+    S.assistResult = { ...r, forPath, forDraft };
   } catch (e) {
-    notice('error', `Assist failed: ${e.message}`, null, true);
+    if (seq === assistSeq) notice('error', `Assist failed: ${e.message}`, null, true);
   } finally {
-    S.assistBusy = false;
-    renderDrawer();
+    if (seq === assistSeq) {
+      S.assistBusy = false;
+      renderDrawer();
+    }
   }
 }
 
@@ -750,6 +884,7 @@ $('btn-assist').onclick = openDrawer;
 $('drawer-close').onclick = closeDrawer;
 $('scrim').onclick = closeDrawer;
 $('btn-scope').onclick = openScope;
+$('btn-mcp').onclick = openMcp;
 $('btn-theme').onclick = () => {
   const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
@@ -760,7 +895,7 @@ document.documentElement.dataset.theme = localStorage.getItem('acs.theme') || 'd
 function wireGlobalKeys() {
   window.addEventListener('keydown', (e) => {
     const meta = e.metaKey || e.ctrlKey;
-    if (meta && e.key === 's') { e.preventDefault(); save(); }
+    if (meta && e.key === 's') { e.preventDefault(); if (S.view === 'entry') save(); }
     else if (meta && e.key === 'k') { e.preventDefault(); $('search').focus(); $('search').select(); }
     else if (meta && e.key === 'e' && S.file) {
       e.preventDefault();
