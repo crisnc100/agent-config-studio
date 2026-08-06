@@ -96,12 +96,29 @@ the path down, in the order they layer.
 Claude and Codex copies side by side. It does not judge them for differing —
 a Claude skill *should* describe Codex differently than the Codex copy does.
 
-**Assist.** Shells out to the local `claude` CLI (your existing subscription
-auth — no API key). Four actions: Tighten, Critique, Reformat, Improve
-description, plus free-form instructions. Results land in a diff you review;
-nothing reaches disk until you Apply and then Save. A rewrite that shrinks the
-file by more than half gets flagged, because the model occasionally answers with
-prose instead of file contents.
+**Assist is a chat, and you point it at the files.** Open it from anywhere —
+no need to navigate to a file first. Attach targets with `@` (autocomplete over
+all 719 files), say what you want, and edits come back as a **diff per file**
+that you Accept or Reject individually. Accepting goes through the same save
+path as manual editing, so it is validated and versioned like everything else.
+
+It never picks targets for you. Nothing outside the files you attached is ever
+edited — if the model references one you did not attach, that edit is dropped.
+
+Why it stays short: the model replies with anchored search/replace blocks, not
+whole-file rewrites, so a one-line rule change produces a few lines of output
+rather than re-emitting the file. Every block must match its anchor **exactly
+once**; ambiguous or overlapping edits are refused rather than guessed at.
+
+Replies stream token by token — first text lands in ~3s. There is a live elapsed
+timer and a Cancel button that kills the underlying process. Sonnet 5 is the
+default because Opus 5 took 107s on a whole-file review; Opus stays selectable
+for when you want the judgment. Follow-up turns resume the same CLI session, so
+the conversation keeps context without re-sending the files.
+
+It shells out to your local `claude` CLI, riding your existing subscription auth
+— no API key is read or stored, and the server makes no outbound request of its
+own.
 
 ## Shortcuts
 

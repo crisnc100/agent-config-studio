@@ -10,6 +10,7 @@ import { validate } from './lib/validate.js';
 import * as history from './lib/history.js';
 import * as mutate from './lib/mutate.js';
 import { runAssist, listActions } from './lib/assist.js';
+import { streamTurn, parseEdits, resolveMentions } from './lib/chat.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -264,6 +265,58 @@ const ROUTES = {
   },
 };
 
+/**
+ * Streaming chat turn. Emits newline-delimited JSON so the browser can render
+ * tokens as they arrive — a 100s wait behind a spinner reads as a hang.
+ */
+async function handleChat(req, res) {
+  let body;
+  try { body = await readBody(req); }
+  catch (e) { return json(res, e.status || 400, { error: e.message }); }
+
+  let mentions;
+  try { mentions = resolveMentions(body.mentions); }
+  catch (e) { return json(res, e.status || 400, { error: e.message }); }
+
+  const message = String(body.message || '').trim();
+  if (!message) return json(res, 400, { error: 'message required' });
+
+  res.writeHead(200, {
+    'content-type': 'application/x-ndjson; charset=utf-8',
+    'cache-control': 'no-cache',
+    'x-accel-buffering': 'no',
+  });
+  const send = (obj) => { if (!res.writableEnded) res.write(JSON.stringify(obj) + '\n'); };
+
+  const turn = streamTurn({
+    message,
+    mentions,
+    sessionId: body.sessionId || null,
+    model: body.model || 'claude-sonnet-5',
+    cwd: mentions.length ? path.dirname(mentions[0]) : HOME,
+  }, (text) => send({ t: 'delta', text }));
+
+  // If the browser aborts, kill the child rather than leaving it running.
+  req.on('close', () => { if (!res.writableEnded) turn.kill(); });
+
+  try {
+    const { text, sessionId } = await turn.done;
+    const proposals = parseEdits(text, mentions).map((p) => {
+      let mtime = null;
+      try { mtime = p.path ? fs.statSync(p.path).mtimeMs : null; } catch {}
+      return {
+        path: p.path, display: p.display, kind: p.kind,
+        error: p.error, edits: p.edits || 1, mtime,
+        current: p.current, proposed: p.proposed,
+      };
+    });
+    send({ t: 'done', sessionId, proposals });
+  } catch (e) {
+    send({ t: 'error', message: e.message });
+  }
+  res.end();
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
@@ -272,6 +325,11 @@ const server = http.createServer(async (req, res) => {
   if (!['localhost', '127.0.0.1', '[::1]', '::1'].includes(host)) {
     res.writeHead(403).end('agent-config-studio only serves localhost');
     return;
+  }
+
+  // Streams its own response rather than returning a JSON body.
+  if (req.method === 'POST' && url.pathname === '/api/chat') {
+    return void handleChat(req, res);
   }
 
   if (url.pathname.startsWith('/api/')) {

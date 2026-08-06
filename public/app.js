@@ -43,9 +43,6 @@ const S = {
   original: '',
   draft: '',
   tab: 'preview',
-  assistAction: 'tighten',
-  assistResult: null,
-  assistBusy: false,
 };
 
 /* ── api ─────────────────────────────────────────────────────────────── */
@@ -95,6 +92,7 @@ async function boot() {
   if (location.hash.startsWith('#scope')) return openScope();
   if (location.hash.startsWith('#mcp')) return openMcp();
   if (location.hash.startsWith('#trash')) return openTrash();
+  if (location.hash.startsWith('#assist')) { renderWelcome(); return openDrawer(); }
   const m = location.hash.match(/file=([^&]+)/);
   if (m) {
     const p = decodeURIComponent(m[1]);
@@ -184,7 +182,6 @@ async function openEntry(entry, filePath) {
   if (!confirmDiscard()) return;
   S.entry = entry;
   S.view = 'entry';
-  S.assistResult = null;
   clearNotice();
   renderSidebar();
   await loadFile(filePath || entry.primary || entry.files[0]?.path);
@@ -198,7 +195,6 @@ async function loadFile(p) {
     S.original = f.content;
     S.draft = f.content;
     S.tab = S.tab === 'history' || S.tab === 'compare' ? 'preview' : S.tab;
-    S.assistResult = null;   // a result belongs to the file it was run against
     window.history.replaceState(null, '', `#file=${encodeURIComponent(f.path)}`);
     renderAll();
   } catch (e) {
@@ -241,7 +237,8 @@ function renderTopbar() {
     $('title-path').textContent = '';
   }
   const onEntry = S.view === 'entry' && !!S.file;
-  $('btn-assist').disabled = !onEntry;
+  // Assist is a chat over the whole corpus — reachable with nothing open.
+  $('btn-assist').disabled = false;
 
   const del = $('btn-delete');
   del.hidden = !onEntry;
@@ -935,145 +932,385 @@ async function openMcp() {
   c.appendChild(box);
 }
 
-/* ── assist drawer ───────────────────────────────────────────────────── */
+/* ── assist chat ─────────────────────────────────────────────────────── */
+/**
+ * Multi-turn chat over the config corpus. The user names the files; nothing is
+ * ever edited that was not explicitly attached. Replies stream so a slow model
+ * looks like work in progress rather than a hang.
+ */
+const C = {
+  messages: [],        // { role: 'user'|'assistant', text, proposals?, error? }
+  mentions: [],        // absolute paths the user has attached
+  sessionId: null,
+  busy: false,
+  stream: '',
+  startedAt: 0,
+  abort: null,
+  draft: '',
+  picker: null,        // { query, index } while the @ list is open
+};
+
+const PRESETS = [
+  ['Tighten', 'Tighten the attached file. Cut filler and hedging. Preserve every rule, path, command and threshold exactly. Do not add rules.'],
+  ['Critique', 'Review the attached file and give me the three most important problems — ambiguous rules, contradictions, or anything stale. Be specific and quote the text. Do not rewrite it.'],
+  ['Improve description', 'Improve only the `description` field in the frontmatter so the model loads this skill at the right moment. Leave everything else byte-identical.'],
+];
+
 function openDrawer() {
-  if (!S.file) return;
   $('drawer').classList.add('open');
   $('scrim').classList.add('open');
-  renderDrawer();
+  // Default the target to whatever is open — still the user pointing at it,
+  // just without retyping what they are already looking at.
+  if (!C.mentions.length && S.file) C.mentions = [S.file.path];
+  renderChat();
+  setTimeout(() => $('chat-input')?.focus(), 60);
 }
 function closeDrawer() {
   $('drawer').classList.remove('open');
   $('scrim').classList.remove('open');
 }
 
-function renderDrawer() {
-  const body = $('drawer-body'), foot = $('drawer-foot');
-  body.innerHTML = ''; foot.innerHTML = '';
-
-  body.appendChild(el('p', 'assist-label', 'Quick actions'));
-  const acts = el('div', 'assist-actions');
-  for (const a of S.registry.assistActions) {
-    const chip = el('button', 'assist-chip' + (S.assistAction === a.id ? ' active' : ''), a.label);
-    chip.onclick = () => { S.assistAction = a.id; renderDrawer(); };
-    acts.appendChild(chip);
-  }
-  const custom = el('button', 'assist-chip' + (S.assistAction === 'custom' ? ' active' : ''), 'Custom…');
-  custom.onclick = () => { S.assistAction = 'custom'; renderDrawer(); };
-  acts.appendChild(custom);
-  body.appendChild(acts);
-
-  let input;
-  if (S.assistAction === 'custom') {
-    body.appendChild(el('p', 'assist-label', 'Instruction'));
-    input = el('textarea', 'assist-input');
-    input.placeholder = 'e.g. "Add a rule that Codex reviews run at high effort by default"';
-    input.id = 'assist-instruction';
-    body.appendChild(input);
-  }
-
-  body.appendChild(el('div', 'scope-sub',
-    `Runs the local claude CLI against ${S.file.display}. Nothing is written until you apply it.`));
-
-  if (S.assistBusy) {
-    const busy = el('div', 'assist-out');
-    busy.innerHTML = '<span class="spinner"></span> <span style="color:var(--muted)">thinking… this can take up to a minute</span>';
-    body.appendChild(busy);
-  }
-
-  if (S.assistResult) {
-    const out = el('div', 'assist-out');
-    if (S.assistResult.readOnly) {
-      out.appendChild(el('p', 'assist-label', 'Findings'));
-      const md = el('div', 'md');
-      md.style.cssText = 'padding:0;font-size:13.5px';
-      md.innerHTML = renderMarkdown(S.assistResult.result);
-      out.appendChild(md);
-    } else {
-      // The model occasionally answers with prose instead of file contents, or
-      // decides to gut the file. Both show up as a huge shrink — flag it loudly,
-      // because the diff alone is easy to skim past.
-      const before = S.draft.length, after = S.assistResult.result.length;
-      if (after < before * 0.5) {
-        const warn = el('div', 'notice warn');
-        warn.style.margin = '0 0 12px';
-        warn.textContent = after === 0
-          ? 'The model returned an empty file. Do not apply this unless you meant to clear it.'
-          : `This cuts the file by ${Math.round((1 - after / before) * 100)}% (${before.toLocaleString()} → ${after.toLocaleString()} chars). Read the diff carefully — the model may have answered with prose instead of file contents.`;
-        out.appendChild(warn);
-      }
-      out.appendChild(el('p', 'assist-label', 'Proposed changes'));
-      const d = diffView(S.draft, S.assistResult.result, 'current', 'proposed');
-      d.style.padding = '0';
-      out.appendChild(d);
+function allFiles() {
+  const out = [];
+  for (const g of S.registry.groups) {
+    for (const e of g.entries) {
+      for (const f of e.files) out.push({ ...f, group: g.title, entry: e.label, harness: e.harness });
     }
-    body.appendChild(out);
+  }
+  return out;
+}
+
+function renderChat() {
+  renderChatBody();
+  renderCompose();
+}
+
+function renderChatBody() {
+  const body = $('drawer-body');
+  const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
+  body.innerHTML = '';
+
+  if (!C.messages.length && !C.busy) {
+    const intro = el('div', 'chat-intro');
+    intro.appendChild(el('p', 'assist-label', 'Ask for a change'));
+    intro.appendChild(el('div', 'scope-sub',
+      'Attach the files you want changed with @, then say what you want. Edits come back as diffs you accept per file — nothing is written until you do.'));
+    const row = el('div', 'assist-actions');
+    for (const [label, text] of PRESETS) {
+      const chip = el('button', 'assist-chip', label);
+      chip.onclick = () => { C.draft = text; renderCompose(); $('chat-input')?.focus(); };
+      row.appendChild(chip);
+    }
+    intro.appendChild(row);
+    body.appendChild(intro);
   }
 
-  const run = el('button', 'btn primary', S.assistBusy ? 'Running…' : 'Run');
-  run.disabled = S.assistBusy;
-  run.onclick = () => runAssist(input?.value);
-  foot.appendChild(run);
+  for (const m of C.messages) body.appendChild(renderMessage(m));
 
-  if (S.assistResult && !S.assistResult.readOnly) {
-    const stale = S.assistResult.forPath !== S.file.path;
-    const apply = el('button', 'btn', 'Apply to editor');
-    apply.disabled = stale;
-    apply.onclick = () => {
-      if (S.assistResult.forPath !== S.file.path) {
-        notice('error', 'That result was generated for a different file. Run assist again.', null, true);
-        return;
-      }
-      if (S.assistResult.forDraft !== S.draft &&
-          !confirm('The file has changed since this result was generated. Applying it will discard those edits.\n\nContinue?')) {
-        return;
-      }
-      S.draft = S.assistResult.result;
-      S.assistResult = null;
-      S.tab = 'edit';
-      closeDrawer();
+  if (C.busy) {
+    const live = el('div', 'msg assistant');
+    const meta = el('div', 'msg-meta');
+    meta.appendChild(el('span', 'spinner'));
+    meta.appendChild(el('span', null, `${((Date.now() - C.startedAt) / 1000).toFixed(0)}s`));
+    live.appendChild(meta);
+    live.appendChild(el('div', 'msg-text', stripEditBlocks(C.stream) || '…'));
+    body.appendChild(live);
+  }
+  if (atBottom) body.scrollTop = body.scrollHeight;
+}
+
+/** Edit blocks are rendered as diffs below, so keep them out of the prose. */
+function stripEditBlocks(text) {
+  return text
+    .replace(/^@@(EDIT|APPEND)[ \t]+.*$[\s\S]*?^@@END[ \t]*$/gm, '')
+    .replace(/^@@(EDIT|APPEND)[ \t]+.*$[\s\S]*/gm, '')   // a block still streaming
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function renderMessage(m) {
+  const wrap = el('div', `msg ${m.role}`);
+  if (m.role === 'user') {
+    wrap.appendChild(el('div', 'msg-text', m.text));
+    if (m.mentions?.length) {
+      const chips = el('div', 'msg-chips');
+      for (const p of m.mentions) chips.appendChild(el('span', 'chip-mini', p.split('/').pop()));
+      wrap.appendChild(chips);
+    }
+    return wrap;
+  }
+
+  if (m.error) {
+    wrap.appendChild(el('div', 'notice error', m.error));
+    return wrap;
+  }
+  const prose = stripEditBlocks(m.text);
+  if (prose) {
+    const t = el('div', 'msg-text md');
+    t.innerHTML = renderMarkdown(prose);
+    wrap.appendChild(t);
+  }
+  for (const p of m.proposals || []) wrap.appendChild(renderProposal(p, m));
+  return wrap;
+}
+
+function renderProposal(p, msg) {
+  const card = el('div', 'prop');
+  const head = el('div', 'prop-head');
+  head.appendChild(el('span', 'prop-path', p.display));
+  if (!p.error) head.appendChild(el('span', 'item-badge', `${p.edits} edit${p.edits === 1 ? '' : 's'}`));
+  card.appendChild(head);
+
+  if (p.error) {
+    card.appendChild(el('div', 'prop-error', p.error));
+    return card;
+  }
+  if (p.state === 'accepted') {
+    card.appendChild(el('div', 'prop-ok', `Applied and versioned.`));
+    return card;
+  }
+  if (p.state === 'rejected') {
+    card.appendChild(el('div', 'prop-error', 'Rejected — nothing written.'));
+    return card;
+  }
+
+  const d = diffView(p.current, p.proposed, 'now', 'proposed');
+  d.style.padding = '0';
+  card.appendChild(d);
+
+  const foot = el('div', 'prop-foot');
+  const accept = el('button', 'btn primary', 'Accept');
+  accept.onclick = () => acceptProposal(p, msg);
+  const reject = el('button', 'btn ghost', 'Reject');
+  reject.onclick = () => { p.state = 'rejected'; renderChatBody(); };
+  const open = el('button', 'btn ghost', 'Open file');
+  open.onclick = () => {
+    const entry = entryForFile(p.path);
+    if (entry) { closeDrawer(); openEntry(entry, p.path); }
+  };
+  foot.append(accept, reject, open);
+  card.appendChild(foot);
+  return card;
+}
+
+async function acceptProposal(p) {
+  try {
+    const r = await api('PUT', '/api/file', {
+      path: p.path, content: p.proposed, mtime: p.mtime,
+    });
+    if (!r.saved && r.errors?.length) {
+      notice('error', `Not applied — ${p.display} would be invalid:`, r.errors, true);
+      return;
+    }
+    p.state = 'accepted';
+    renderChatBody();
+    // Keep the editor honest if the same file is open behind the drawer.
+    if (S.file?.path === p.path) {
+      S.file.mtime = r.mtime;
+      S.original = p.proposed;
+      S.draft = p.proposed;
       renderAll();
-      notice('warn', 'Applied to the editor — review it, then Save to write to disk.', null, true);
-    };
-    foot.appendChild(apply);
-  }
-  if (S.assistResult) {
-    const clear = el('button', 'btn ghost', 'Clear');
-    clear.onclick = () => { S.assistResult = null; renderDrawer(); };
-    foot.appendChild(clear);
+    }
+    S.registry.history.commits++;
+    notice('ok', `Applied to ${p.display} · version ${r.sha?.slice(0, 8) ?? ''}`);
+  } catch (e) {
+    notice('error', e.message, null, true);
   }
 }
 
-let assistSeq = 0;
+function renderCompose() {
+  const box = $('drawer-compose');
+  box.innerHTML = '';
 
-async function runAssist(instruction) {
-  // Assist can take minutes and navigation stays enabled, so a result must
-  // carry the file and draft it was computed from — otherwise a slow rewrite
-  // can be applied to whatever file happens to be open when it lands.
-  const seq = ++assistSeq;
-  const forPath = S.file.path;
-  const forDraft = S.draft;
+  // Attached files
+  const chips = el('div', 'mention-row');
+  for (const p of C.mentions) {
+    const chip = el('span', 'mention-chip');
+    chip.appendChild(el('span', null, p.split('/').pop()));
+    const x = el('button', 'mention-x', '×');
+    x.title = p;
+    x.onclick = () => { C.mentions = C.mentions.filter((q) => q !== p); renderCompose(); };
+    chip.appendChild(x);
+    chips.appendChild(chip);
+  }
+  const add = el('button', 'mention-add', C.mentions.length ? '+ file' : '@ attach a file');
+  add.onclick = () => { C.draft += (C.draft.endsWith(' ') || !C.draft ? '' : ' ') + '@'; renderCompose(); openPicker(''); };
+  chips.appendChild(add);
+  box.appendChild(chips);
 
-  S.assistBusy = true;
-  S.assistResult = null;
-  renderDrawer();
-  try {
-    const r = await api('POST', '/api/assist', {
-      path: forPath,
-      content: forDraft,
-      action: S.assistAction === 'custom' ? null : S.assistAction,
-      instruction: instruction || null,
-      model: $('assist-model').value,
-    });
-    if (seq !== assistSeq) return;                  // superseded by a newer run
-    S.assistResult = { ...r, forPath, forDraft };
-  } catch (e) {
-    if (seq === assistSeq) notice('error', `Assist failed: ${e.message}`, null, true);
-  } finally {
-    if (seq === assistSeq) {
-      S.assistBusy = false;
-      renderDrawer();
+  if (C.picker) box.appendChild(renderPicker());
+
+  const input = el('textarea', 'chat-input');
+  input.id = 'chat-input';
+  input.placeholder = C.mentions.length
+    ? 'What should change in these files?'
+    : 'Ask a question, or attach a file with @ to make edits…';
+  input.value = C.draft;
+  input.rows = 3;
+  input.oninput = () => {
+    C.draft = input.value;
+    const m = input.value.slice(0, input.selectionStart).match(/@([^\s@]*)$/);
+    if (m) openPicker(m[1], true); else if (C.picker) { C.picker = null; renderCompose(); }
+  };
+  input.onkeydown = (ev) => {
+    if (C.picker) {
+      const list = pickerMatches();
+      if (ev.key === 'ArrowDown') { ev.preventDefault(); C.picker.index = Math.min(C.picker.index + 1, list.length - 1); renderCompose(); return; }
+      if (ev.key === 'ArrowUp') { ev.preventDefault(); C.picker.index = Math.max(C.picker.index - 1, 0); renderCompose(); return; }
+      if (ev.key === 'Enter' || ev.key === 'Tab') { ev.preventDefault(); choosePicker(list[C.picker.index]); return; }
+      if (ev.key === 'Escape') { ev.preventDefault(); C.picker = null; renderCompose(); return; }
     }
+    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendTurn(); }
+  };
+  box.appendChild(input);
+
+  const row = el('div', 'compose-row');
+  const model = el('select', 'assist-model');
+  for (const [v, label] of [['claude-sonnet-5', 'Sonnet 5 · fast'], ['claude-opus-5', 'Opus 5 · slower'], ['claude-haiku-4-5-20251001', 'Haiku 4.5']]) {
+    const o = el('option', null, label); o.value = v;
+    if (v === (C.model || 'claude-sonnet-5')) o.selected = true;
+    model.appendChild(o);
+  }
+  model.onchange = () => { C.model = model.value; };
+  row.appendChild(model);
+  row.appendChild(el('span', 'spacer'));
+
+  if (C.busy) {
+    const cancel = el('button', 'btn danger', 'Cancel');
+    cancel.onclick = () => { C.abort?.abort(); };
+    row.appendChild(cancel);
+  } else {
+    if (C.messages.length) {
+      const clear = el('button', 'btn ghost', 'New thread');
+      clear.onclick = () => { C.messages = []; C.sessionId = null; C.stream = ''; renderChat(); };
+      row.appendChild(clear);
+    }
+    const send = el('button', 'btn primary', 'Send');
+    send.onclick = sendTurn;
+    row.appendChild(send);
+  }
+  box.appendChild(row);
+}
+
+/* ── @ file picker ───────────────────────────────────────────────────── */
+function openPicker(query, keepIndex) {
+  C.picker = { query, index: keepIndex && C.picker ? Math.min(C.picker.index, 20) : 0 };
+  renderCompose();
+  $('chat-input')?.focus();
+}
+
+function pickerMatches() {
+  const q = (C.picker?.query || '').toLowerCase();
+  const files = allFiles().filter((f) => !C.mentions.includes(f.path));
+  if (!q) return files.slice(0, 12);
+  return files
+    .map((f) => {
+      const hay = `${f.entry} ${f.name} ${f.display}`.toLowerCase();
+      const i = hay.indexOf(q);
+      return i === -1 ? null : { f, score: i };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 12)
+    .map((x) => x.f);
+}
+
+function renderPicker() {
+  const list = pickerMatches();
+  const box = el('div', 'picker');
+  if (!list.length) { box.appendChild(el('div', 'picker-empty', 'No file matches that.')); return box; }
+  list.forEach((f, i) => {
+    const row = el('button', 'picker-row' + (i === C.picker.index ? ' active' : ''));
+    row.appendChild(el('span', `item-dot ${f.harness}`));
+    row.appendChild(el('span', 'picker-name', f.entry === f.name ? f.name : `${f.entry} · ${f.name}`));
+    row.appendChild(el('span', 'picker-path', f.display));
+    row.onmousedown = (ev) => { ev.preventDefault(); choosePicker(f); };
+    box.appendChild(row);
+  });
+  return box;
+}
+
+function choosePicker(f) {
+  if (!f) return;
+  if (!C.mentions.includes(f.path)) C.mentions.push(f.path);
+  C.draft = C.draft.replace(/@([^\s@]*)$/, '').replace(/\s+$/, '');
+  C.picker = null;
+  renderCompose();
+  $('chat-input')?.focus();
+}
+
+/* ── sending ─────────────────────────────────────────────────────────── */
+let tickTimer;
+
+async function sendTurn() {
+  const text = C.draft.trim();
+  if (!text || C.busy) return;
+
+  C.messages.push({ role: 'user', text, mentions: [...C.mentions] });
+  C.draft = '';
+  C.picker = null;
+  C.busy = true;
+  C.stream = '';
+  C.startedAt = Date.now();
+  C.abort = new AbortController();
+  renderChat();
+  clearInterval(tickTimer);
+  tickTimer = setInterval(renderChatBody, 1000);
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        mentions: C.mentions,
+        sessionId: C.sessionId,
+        model: C.model || 'claude-sonnet-5',
+      }),
+      signal: C.abort.signal,
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    let final = null;
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        let ev;
+        try { ev = JSON.parse(line); } catch { continue; }
+        if (ev.t === 'delta') { C.stream += ev.text; renderChatBody(); }
+        else if (ev.t === 'done') final = ev;
+        else if (ev.t === 'error') throw new Error(ev.message);
+      }
+    }
+
+    C.sessionId = final?.sessionId ?? C.sessionId;
+    C.messages.push({
+      role: 'assistant',
+      text: C.stream,
+      proposals: final?.proposals ?? [],
+    });
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      C.messages.push({ role: 'assistant', text: '', error: 'Cancelled.' });
+    } else {
+      C.messages.push({ role: 'assistant', text: '', error: e.message });
+    }
+  } finally {
+    clearInterval(tickTimer);
+    C.busy = false;
+    C.stream = '';
+    C.abort = null;
+    renderChat();
   }
 }
 

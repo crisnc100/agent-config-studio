@@ -371,8 +371,93 @@ a { color: var(--accent); }
   display: flex; align-items: center; gap: 10px;
 }
 .drawer-title { font-weight: 600; flex: 1; }
+.drawer { width: 520px; }
 .drawer-body { flex: 1; overflow-y: auto; padding: 16px 18px; }
-.drawer-foot { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
+.drawer-compose { border-top: 1px solid var(--border); padding: 10px 14px 12px; background: var(--panel); }
+
+/* ── chat ────────────────────────────────────────────────────────────── */
+.chat-intro { padding: 4px 0 10px; }
+.msg { margin-bottom: 18px; }
+.msg.user .msg-text {
+  background: var(--panel-3); border-radius: 12px 12px 4px 12px;
+  padding: 9px 13px; font-size: 13.5px; line-height: 1.55;
+  margin-left: 32px; white-space: pre-wrap; word-break: break-word;
+}
+.msg.assistant .msg-text {
+  font-size: 13.5px; line-height: 1.62; color: var(--text-dim);
+  white-space: pre-wrap; word-break: break-word;
+}
+.msg.assistant .msg-text.md { white-space: normal; padding: 0; max-width: none; }
+.msg.assistant .msg-text.md > *:first-child { margin-top: 0; }
+.msg.assistant .msg-text.md h1,
+.msg.assistant .msg-text.md h2,
+.msg.assistant .msg-text.md h3 { font-size: 1.02em; margin: 1em 0 0.3em; }
+.msg-meta {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+  font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.msg-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 5px 0 0 32px; justify-content: flex-end; }
+.chip-mini {
+  font: 10px var(--mono); color: var(--muted);
+  background: var(--panel-2); padding: 1px 6px; border-radius: 4px;
+}
+
+/* proposed edits */
+.prop {
+  border: 1px solid var(--border); border-radius: 9px;
+  margin: 12px 0 0; overflow: hidden; background: var(--panel-2);
+}
+.prop-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border-soft);
+}
+.prop-path { font: 11px var(--mono); color: var(--text); flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.prop .diff { padding: 8px 10px; font-size: 11.5px; max-height: 320px; overflow-y: auto; }
+.prop-foot { display: flex; gap: 6px; padding: 9px 12px; border-top: 1px solid var(--border-soft); }
+.prop-foot .btn { padding: 4px 12px; font-size: 12.5px; }
+.prop-error { padding: 10px 12px; font-size: 12.5px; color: var(--amber); }
+.prop-ok { padding: 10px 12px; font-size: 12.5px; color: var(--green); }
+
+/* compose */
+.mention-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; align-items: center; }
+.mention-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--panel-3); border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px 4px 2px 8px; font: 11px var(--mono);
+}
+.mention-x { color: var(--muted); font-size: 13px; line-height: 1; padding: 0 3px; }
+.mention-x:hover { color: var(--red); }
+.mention-add {
+  font-size: 11.5px; color: var(--muted); padding: 3px 9px;
+  border: 1px dashed var(--border); border-radius: 6px;
+}
+.mention-add:hover { color: var(--accent); border-color: var(--accent-dim); }
+
+.chat-input {
+  width: 100%; resize: vertical; padding: 10px 12px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: var(--radius); outline: none; font-size: 13.5px; line-height: 1.55;
+}
+.chat-input:focus { border-color: var(--accent-dim); }
+.compose-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.compose-row .spacer { flex: 1; }
+.compose-row .btn { padding: 5px 14px; font-size: 13px; }
+
+.picker {
+  border: 1px solid var(--border); border-radius: 9px; background: var(--panel-2);
+  max-height: 240px; overflow-y: auto; margin-bottom: 8px;
+}
+.picker-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 10px; text-align: left;
+}
+.picker-row.active, .picker-row:hover { background: var(--panel-3); }
+.picker-name { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.picker-path {
+  font: 10px var(--mono); color: var(--muted); margin-left: auto;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%;
+}
+.picker-empty { padding: 10px; font-size: 12px; color: var(--muted); }
 .assist-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
 .assist-chip {
   padding: 6px 12px; border: 1px solid var(--border); border-radius: 20px;
