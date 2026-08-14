@@ -125,10 +125,19 @@ rather than re-emitting the file. Every block must match its anchor **exactly
 once**; ambiguous or overlapping edits are refused rather than guessed at.
 
 Replies stream token by token — first text lands in ~3s. There is a live elapsed
-timer and a Cancel button that kills the underlying process. Sonnet 5 is the
-default because Opus 5 took 107s on a whole-file review; Opus stays selectable
-for when you want the judgment. Follow-up turns resume the same CLI session, so
-the conversation keeps context without re-sending the files.
+timer and a Cancel button that kills the underlying process. Follow-up turns
+resume the same CLI session, so the conversation keeps context without
+re-sending the files.
+
+Four models are offered: **Sonnet 5** (default — Opus 5 took 107s on a whole-file
+review), **Opus 5**, **Haiku 4.5**, and **Fable 5** for judgment calls, which runs
+at effort `high` and costs roughly **$0.60 a turn** before it reads anything —
+the session's fixed overhead alone, billed at Fable's rate. The price is in the
+dropdown label so the choice is never accidental.
+
+The list lives in `lib/chat.js` and doubles as the allowlist: the model id is
+passed to the `claude` CLI, so an id that isn't on it falls back to the default
+instead of reaching the process.
 
 **Sessions.** A session is one thread about one topic. It survives closing the
 drawer, switching files, and reloading the page — the CLI session outlives the

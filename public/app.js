@@ -1469,9 +1469,16 @@ function renderCompose() {
 
   const row = el('div', 'compose-row');
   const model = el('select', 'assist-model');
-  for (const [v, label] of [['claude-sonnet-5', 'Sonnet 5 · fast'], ['claude-opus-5', 'Opus 5 · slower'], ['claude-haiku-4-5-20251001', 'Haiku 4.5']]) {
-    const o = el('option', null, label); o.value = v;
-    if (v === C.model) o.selected = true;
+  // The server owns the list — it is the same object used as the allowlist.
+  const choices = S.registry?.models?.length
+    ? S.registry.models
+    : [{ id: C.model, label: C.model }];
+  // A saved session may name a model that is no longer offered; don't let the
+  // dropdown show one thing while the server silently runs another.
+  if (!choices.some((c) => c.id === C.model)) C.model = choices[0].id;
+  for (const { id, label } of choices) {
+    const o = el('option', null, label); o.value = id;
+    if (id === C.model) o.selected = true;
     model.appendChild(o);
   }
   model.onchange = () => { C.model = model.value; saveSessions(); };

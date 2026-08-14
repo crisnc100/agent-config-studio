@@ -10,7 +10,7 @@ import { validate } from './lib/validate.js';
 import * as history from './lib/history.js';
 import * as mutate from './lib/mutate.js';
 import { runAssist, listActions } from './lib/assist.js';
-import { streamTurn, parseEdits, resolveMentions } from './lib/chat.js';
+import { streamTurn, parseEdits, resolveMentions, modelList, DEFAULT_MODEL } from './lib/chat.js';
 import { createWatcher, snapshotOf, diffSnapshots } from './lib/watch.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -90,6 +90,7 @@ const ROUTES = {
     ...buildRegistry(),
     history: await history.repoStats(),
     assistActions: listActions(),
+    models: modelList(),
   }),
 
   'GET /api/file': async (_req, url) => {
@@ -294,7 +295,7 @@ async function handleChat(req, res) {
     mentions,
     sessionId: body.sessionId || null,
     seed: body.seed || null,
-    model: body.model || 'claude-sonnet-5',
+    model: body.model || DEFAULT_MODEL,
     cwd: mentions.length ? path.dirname(mentions[0]) : HOME,
   }, (text) => send({ t: 'delta', text }));
 
