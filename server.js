@@ -8,6 +8,7 @@ import { resolveSafe, kindOf, tilde, HOME, PROJECTS, STUDIO_HOME, CODEX_HOME } f
 import { buildRegistry, scopeChain } from './lib/registry.js';
 import { validate } from './lib/validate.js';
 import * as history from './lib/history.js';
+import * as worktree from './lib/worktree.js';
 import * as mutate from './lib/mutate.js';
 import { runAssist, listActions } from './lib/assist.js';
 import { streamTurn, parseEdits, resolveMentions, modelList, DEFAULT_MODEL } from './lib/chat.js';
@@ -195,6 +196,19 @@ const ROUTES = {
   },
 
   'POST /api/snapshot': async () => history.snapshotAll('manual snapshot'),
+
+  'GET /api/worktree': async () => ({
+    registered: worktree.listRegistered(),
+    candidates: await worktree.listCandidates(),
+  }),
+  'GET /api/worktree/bases': async (_req, url) =>
+    worktree.listBases(url.searchParams.get('repo') || ''),
+  'POST /api/worktree/init': async (req) => {
+    const body = await readBody(req);
+    const r = await worktree.initProject(body);
+    await history.snapshotAll(`register worktree project ${body.key}`);
+    return r;
+  },
 
   'POST /api/create': async (req) => mutate.create(await readBody(req)),
   'POST /api/create-file': async (req) => mutate.addFile(await readBody(req)),

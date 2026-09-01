@@ -803,6 +803,8 @@ function setLive(on) {
 }
 
 async function createInGroup(group) {
+  // Worktrees are not a file scaffold — registering a project runs `wtinit`.
+  if (group.createKind === 'worktree-project') return openWorktreeForm();
   const name = prompt(`New ${group.title.replace(/s$/, '').toLowerCase()} name\n\nLowercase letters, numbers and hyphens.`);
   if (!name) return;
   try {
@@ -814,6 +816,160 @@ async function createInGroup(group) {
   } catch (e) {
     notice('error', e.message, null, true);
   }
+}
+
+
+/* ── register a worktree project ─────────────────────────────────────── */
+
+/**
+ * The + on Worktrees runs `wtinit` for a repo, so a new project gets its trunk,
+ * its layout and its own commands without dropping to a terminal.
+ */
+async function openWorktreeForm() {
+  let data;
+  try {
+    data = await api('GET', '/api/worktree');
+  } catch (e) {
+    return notice('error', e.message, null, true);
+  }
+  if (!data.candidates.length) {
+    return notice('ok', 'Every git repo found is already registered.');
+  }
+
+  const wrap = el('div', 'wt-overlay');
+  const card = el('div', 'wt-card');
+  wrap.appendChild(card);
+  card.appendChild(el('h2', 'wt-title', 'Register a project'));
+  card.appendChild(el('p', 'wt-sub',
+    'Creates the trunk, sets where worktrees go, and defines this project’s commands. Runs once per project.'));
+
+  const field = (label, control, hint) => {
+    const f = el('div', 'wt-field');
+    f.appendChild(el('label', null, label));
+    f.appendChild(control);
+    const h = el('div', 'wt-hint', hint || '');
+    f.appendChild(h);
+    card.appendChild(f);
+    return h;
+  };
+
+  const repo = el('select');
+  for (const c of data.candidates) {
+    const o = el('option', null, c.display);
+    o.value = c.path;
+    repo.appendChild(o);
+  }
+  field('Repository', repo);
+
+  const key = el('input');
+  key.type = 'text';
+  field('Project name', key,
+    'Names the trunk and the worktrees — kylie gives kylie-trunk and kylie-<name>.');
+
+  const cmd = el('input');
+  cmd.type = 'text';
+  const cmdHint = field('Command prefix', cmd, '');
+
+  const base = el('select');
+  field('Branch from', base, 'New worktrees are always cut from the latest of this branch.');
+
+  const layout = el('select');
+  for (const [v, t] of [
+    ['flat', 'Beside the trunk (kylie/kylie-alpha)'],
+    ['sub', 'In a subfolder (personal/airflo-wt/airflo-alpha)'],
+  ]) {
+    const o = el('option', null, t);
+    o.value = v;
+    layout.appendChild(o);
+  }
+  field('Where worktrees go', layout,
+    'Use a subfolder when the containing directory also holds other projects.');
+
+  const out = el('pre', 'wt-out');
+  out.hidden = true;
+  card.appendChild(out);
+
+  const row = el('div', 'wt-actions');
+  const cancel = el('button', 'btn ghost', 'Cancel');
+  const go = el('button', 'btn primary', 'Register');
+  row.appendChild(cancel);
+  row.appendChild(go);
+  card.appendChild(row);
+
+  const guessKey = (p) => p.split('/').pop().toLowerCase().replace(/[^a-z0-9-]/g, '');
+  const syncCmd = () => {
+    cmdHint.textContent = cmd.value
+      ? `Gives you ${cmd.value}new, ${cmd.value}ls, ${cmd.value}go — and ${cmd.value} to jump to the trunk.`
+      : 'Optional. Without one you use the generic wnew/wls inside the repo.';
+  };
+
+  const loadBases = async () => {
+    base.innerHTML = '';
+    try {
+      const b = await api('GET', `/api/worktree/bases?repo=${encodeURIComponent(repo.value)}`);
+      for (const name of b.bases) {
+        const o = el('option', null, name);
+        o.value = name;
+        if (name === b.suggested) o.selected = true;
+        base.appendChild(o);
+      }
+      if (!b.bases.length) base.appendChild(el('option', null, '(no origin branches found)'));
+    } catch {
+      base.appendChild(el('option', null, '(could not read branches)'));
+    }
+  };
+
+  const onRepo = () => {
+    key.value = guessKey(repo.value);
+    cmd.value = key.value;
+    syncCmd();
+    loadBases();
+  };
+  repo.onchange = onRepo;
+  cmd.oninput = syncCmd;
+  onRepo();
+
+  const close = () => {
+    document.removeEventListener('keydown', onKey);
+    wrap.remove();
+  };
+  const onKey = (ev) => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  cancel.onclick = close;
+  wrap.onclick = (ev) => { if (ev.target === wrap) close(); };
+
+  go.onclick = async () => {
+    go.disabled = true;
+    go.textContent = 'Running…';
+    out.hidden = false;
+    out.textContent = 'wtinit…';
+    const body = {
+      repoPath: repo.value,
+      key: key.value.trim(),
+      cmd: cmd.value.trim(),
+      base: base.value.startsWith('origin/') ? base.value : '',
+    };
+    if (layout.value === 'sub') {
+      const parent = repo.value.split('/').slice(0, -1).join('/');
+      body.root = `${parent}/${body.key}-wt`;
+    }
+    try {
+      const r = await api('POST', '/api/worktree/init', body);
+      out.textContent = r.output;
+      go.textContent = 'Done';
+      await refreshRegistry();
+      renderAll();
+      notice('ok', `${body.key} registered — open a new terminal to use ${body.cmd || 'wnew'}.`);
+      setTimeout(close, 2500);
+    } catch (e) {
+      out.textContent = e.message;
+      go.disabled = false;
+      go.textContent = 'Register';
+    }
+  };
+
+  document.body.appendChild(wrap);
+  key.focus();
 }
 
 /** Seed a new skill in the other harness from the open one. */
