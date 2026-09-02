@@ -100,9 +100,14 @@ function treeManifest(root) {
   return out;
 }
 
+/** Only these are genuinely harness-owned session/cache state. Ignoring EVERY
+ *  dot path let a harness create .env or .git in the fixture and still register
+ *  as a clean tree — which would have hidden the exact mutation this suite
+ *  exists to catch. Anything else hidden counts as a mutation. */
+const HARNESS_OWNED_TOP = new Set(['.claude', '.codex', '.grok']);
+
 function harnessOwned(rel) {
-  const top = rel.split(path.sep)[0];
-  return top.startsWith('.');
+  return HARNESS_OWNED_TOP.has(rel.split(path.sep)[0]);
 }
 
 function compareTrees(before, after) {
@@ -256,8 +261,18 @@ function assertClaudeWriteProbeAllowed(cwd) {
   assertThrowawayTempCwd(cwd, 'acs-claude-writeprobe-', 'claude write-demand probe');
 }
 
+/** Containment is the ALLOWLIST (`--tools`). Anything without it is uncontained —
+ *  including the default invocation, since grok defaults to bypassPermissions when
+ *  --permission-mode is omitted. Keying the guard off an explicit bypassPermissions
+ *  meant the plain default call skipped it entirely.
+ *  Residual, stated: a cwd check cannot stop a write to an absolute path outside
+ *  the fixture. Only an OS-level sandbox would, and that is not available here. */
+function isUncontained(extraArgs) {
+  return !extraArgs.includes('--tools');
+}
+
 function runGrokRaw({ binary, cwd, prompt, extraArgs = [], permissionMode }) {
-  if (permissionMode === 'bypassPermissions' || extraArgs.includes('bypassPermissions')) {
+  if (isUncontained(extraArgs)) {
     assertUncontainedSpawnAllowed(cwd);
   }
   const promptFile = path.join(cwd, '.acs-probe-prompt.txt');
@@ -290,7 +305,7 @@ function runGrokRaw({ binary, cwd, prompt, extraArgs = [], permissionMode }) {
 }
 
 function runClaudeRaw({ binary, cwd, prompt, extraArgs = [] }) {
-  if (extraArgs.includes('--dangerously-skip-permissions') || extraArgs.includes('bypassPermissions')) {
+  if (isUncontained(extraArgs)) {
     assertClaudeWriteProbeAllowed(cwd);
   }
   const args = [
