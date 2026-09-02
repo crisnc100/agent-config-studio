@@ -2,3 +2,7 @@ node_modules/
 reviews/
 *.log
 investigations/
+.tmp/
+.probe-tmp/
+builds/**/*-result.json
+builds/**/*.err

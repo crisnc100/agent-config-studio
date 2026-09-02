@@ -473,10 +473,15 @@ a { color: var(--accent); }
 .assist-input:focus { border-color: var(--accent-dim); }
 .assist-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin: 0 0 7px; }
 .assist-out { margin-top: 16px; }
-.assist-model {
+.assist-harness, .assist-model {
   padding: 6px 9px; background: var(--panel-2); border: 1px solid var(--border);
   border-radius: 7px; font-size: 12px; outline: none;
 }
+/* The harness leads the pair — it is the choice that decides who answers. */
+.assist-harness { font-weight: 600; max-width: 40%; }
+.assist-harness:disabled, .assist-model:disabled { color: var(--muted); opacity: 0.65; }
+/* Shown while a turn is running and no text has arrived yet. */
+.msg-wait { font-size: 13px; color: var(--muted); }
 
 .spinner {
   width: 15px; height: 15px; border: 2px solid var(--border);

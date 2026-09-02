@@ -89,6 +89,7 @@ async function boot() {
   wireGlobalKeys();
   connectEvents();
   restoreSessions();
+  resolveHarness();
 
   // Deep links: #file=<path> for any file, #scope for the scope view.
   if (location.hash.startsWith('#scope')) return openScope();
@@ -726,6 +727,7 @@ async function refreshRegistry(selectPath) {
   // The rebuild produces fresh entry objects; re-point at the equivalent one so
   // identity checks (active row, "can add files") keep working.
   if (S.file) S.entry = entryForFile(S.file.path) ?? S.entry;
+  resolveHarness();       // detection is re-run server-side on every rebuild
   renderSidebar();
   const total = S.registry.groups.reduce(
     (n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
@@ -1176,11 +1178,51 @@ const C = {
   busy: false,
   stream: '',
   startedAt: 0,
+  running: null,        // {harness, model} captured at submit — see sendTurn
   abort: null,
   draft: '',
   picker: null,
+  harness: null,        // reconciled against the server's detected list at boot
   model: 'claude-sonnet-5',
 };
+
+/* ── harness ─────────────────────────────────────────────────────────── */
+/**
+ * Which CLI runs Assist. The choice is explicit and sticky: it never follows
+ * the file you have open. A model that changes underneath you as you move
+ * between files produces "why did this answer get worse" reports that nobody
+ * can reproduce.
+ */
+const harnesses = () => S.registry?.harnesses ?? [];
+const harnessOf = (id) => harnesses().find((h) => h.id === id) || null;
+const harnessLabel = (id) => harnessOf(id)?.label ?? id ?? 'no harness';
+/** The server sends each harness's models as [{id,label}] — its own allowlist. */
+const modelsOf = (h) => h?.models ?? [];
+
+/**
+ * Reconcile the stored choice with what the server actually detected. A harness
+ * that has gone away is reported, not swapped out from under you — the whole
+ * point of the picker is that you know what answered.
+ */
+function resolveHarness() {
+  const list = harnesses();
+  if (!list.length) { C.harness = null; return; }
+  const want = C.harness;
+  const h = harnessOf(want) ?? harnessOf(S.registry.defaultHarness) ?? list[0];
+  if (want && h.id !== want) {
+    notice('warn', `${want} is no longer available here — Assist switched to ${h.label}.`, null, true);
+  }
+  if (h.id !== C.harness) {
+    C.harness = h.id;
+    // Moved off a harness you had chosen — its model means nothing here. With
+    // nothing stored (first run, or a session written before the picker) the
+    // model below is still valid and worth keeping.
+    if (want) C.model = h.defaultModel;
+  }
+  // A stored model may belong to a harness you have since left.
+  if (!modelsOf(h).some((m) => m.id === C.model)) C.model = h.defaultModel;
+  saveSessions();
+}
 
 const PRESETS = [
   ['Tighten', 'Tighten the attached file. Cut filler and hedging. Preserve every rule, path, command and threshold exactly. Do not add rules.'],
@@ -1197,15 +1239,34 @@ function newSession(mentions = []) {
   return {
     id: 's' + Math.random().toString(36).slice(2, 10),
     title: 'New session',
-    cliSessionId: null,
-    seed: null,
     mentions: [...mentions],
     messages: [],
-    stats: { turns: 0, contextTokens: 0, costUsd: 0, baselineTokens: 0 },
-    compactions: 0,
+    slots: {},            // harness id -> its CLI session, seed and stats
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
+}
+
+/**
+ * Per-harness CLI state inside one thread. The transcript is yours, but the CLI
+ * session under it belongs to whichever harness produced it: switching harness
+ * parks that slot and opens a fresh one, and switching back resumes where you
+ * were. A Claude session id is never offered to grok — the server refuses the
+ * pair, and the client has no business asking.
+ */
+function newSlot() {
+  return {
+    cliSessionId: null,
+    seed: null,
+    compactions: 0,
+    stats: { turns: 0, contextTokens: 0, costUsd: 0, baselineTokens: 0 },
+  };
+}
+const slotOf = (s, harness = C.harness) => s?.slots?.[harness || 'none'] ?? null;
+function slotFor(s, harness = C.harness) {
+  const key = harness || 'none';
+  s.slots ||= {};
+  return (s.slots[key] ||= newSlot());
 }
 
 function active() {
@@ -1230,12 +1291,16 @@ function saveSessions() {
   try {
     localStorage.setItem(SESSIONS_KEY, JSON.stringify({
       activeId: C.activeId,
+      harness: C.harness,
       model: C.model,
       sessions: C.sessions.map((s) => ({
         ...s,
         // Proposals are dropped: by next load the file may have moved on, and a
         // stale diff must never remain applyable.
-        messages: s.messages.map((m) => ({ role: m.role, text: m.text, error: m.error, note: m.note, mentions: m.mentions })),
+        messages: s.messages.map((m) => ({
+          role: m.role, text: m.text, error: m.error, note: m.note,
+          mentions: m.mentions, harness: m.harness,
+        })),
       })),
     }));
   } catch { /* quota or private mode */ }
@@ -1246,24 +1311,40 @@ function restoreSessions() {
     const raw = localStorage.getItem(SESSIONS_KEY);
     if (!raw) return;
     const t = JSON.parse(raw);
-    C.sessions = (t.sessions || []).slice(0, MAX_SESSIONS).map((s) => ({
-      ...s,
-      messages: (s.messages || []).map((m) => ({ ...m, proposals: [] })),
-    }));
+    C.sessions = (t.sessions || []).slice(0, MAX_SESSIONS).map((s) => {
+      // Sessions written before the picker have one flat CLI session, and it
+      // can only have come from Claude.
+      const { cliSessionId, seed, stats, compactions, ...rest } = s;
+      return {
+        ...rest,
+        slots: s.slots ?? {
+          claude: {
+            cliSessionId: cliSessionId ?? null,
+            seed: seed ?? null,
+            compactions: compactions ?? 0,
+            stats: { ...newSlot().stats, ...(stats || {}) },
+          },
+        },
+        messages: (s.messages || []).map((m) => ({ ...m, proposals: [] })),
+      };
+    });
     C.activeId = t.activeId && C.sessions.some((s) => s.id === t.activeId) ? t.activeId : (C.sessions[0]?.id ?? null);
+    if (t.harness) C.harness = t.harness;
     if (t.model) C.model = t.model;
   } catch { /* corrupt store — start clean */ }
 }
 
+/** Context is a property of the CLI session, so it is read per harness slot. */
 function contextPct(s) {
-  return Math.min(100, Math.round(((s?.stats.contextTokens || 0) / CONTEXT_LIMIT) * 100));
+  return Math.min(100, Math.round(((slotOf(s)?.stats.contextTokens || 0) / CONTEXT_LIMIT) * 100));
 }
 const contextLeft = (s) => 100 - contextPct(s);
 
 /** Tokens attributable to this conversation, excluding fixed harness overhead. */
 function conversationTokens(s) {
-  if (!s?.stats.baselineTokens) return 0;
-  return Math.max(0, (s.stats.contextTokens || 0) - s.stats.baselineTokens);
+  const st = slotOf(s)?.stats;
+  if (!st?.baselineTokens) return 0;
+  return Math.max(0, (st.contextTokens || 0) - st.baselineTokens);
 }
 /** Below this, compaction frees less than it costs to run. */
 const COMPACT_WORTH_IT = 15_000;
@@ -1320,8 +1401,9 @@ function renderSessionBar() {
   const row = el('div', 'sess-row');
   const sel = el('select', 'sess-select');
   C.sessions.forEach((x) => {
+    const comp = slotOf(x)?.compactions ?? 0;
     const o = el('option', null,
-      `${titleFor(x)}  ·  ${contextLeft(x)}% left${x.compactions ? ` · compacted ×${x.compactions}` : ''}`);
+      `${titleFor(x)}  ·  ${contextLeft(x)}% left${comp ? ` · compacted ×${comp}` : ''}`);
     o.value = x.id;
     if (x.id === C.activeId) o.selected = true;
     sel.appendChild(o);
@@ -1341,6 +1423,8 @@ function renderSessionBar() {
   bar.appendChild(row);
 
   // Context meter — how much room is LEFT, which is the number that matters.
+  // It describes the CURRENT harness's slot; switching harness shows that one.
+  const sl = slotFor(s);
   const left = contextLeft(s);
   const label = el('div', 'sess-label');
   const big = el('span', 'sess-left', `${left}% context left`);
@@ -1349,18 +1433,18 @@ function renderSessionBar() {
   label.appendChild(big);
   const conv = conversationTokens(s);
   label.appendChild(el('span', 'sess-dim',
-    `${s.stats.turns} turn${s.stats.turns === 1 ? '' : 's'}` +
-    (s.stats.baselineTokens
-      ? ` · ${(conv / 1000).toFixed(1)}k conversation + ${(s.stats.baselineTokens / 1000).toFixed(0)}k overhead`
-      : ` · ${(s.stats.contextTokens / 1000).toFixed(1)}k / 200k`)));
-  if (s.stats.costUsd) label.appendChild(el('span', 'sess-dim', `$${s.stats.costUsd.toFixed(2)}`));
+    `${sl.stats.turns} turn${sl.stats.turns === 1 ? '' : 's'}` +
+    (sl.stats.baselineTokens
+      ? ` · ${(conv / 1000).toFixed(1)}k conversation + ${(sl.stats.baselineTokens / 1000).toFixed(0)}k overhead`
+      : ` · ${(sl.stats.contextTokens / 1000).toFixed(1)}k / 200k`)));
+  if (sl.stats.costUsd) label.appendChild(el('span', 'sess-dim', `$${sl.stats.costUsd.toFixed(2)}`));
 
   const convo = conversationTokens(s);
   const compact = el('button', 'btn ghost sess-compact', 'Compact');
-  compact.disabled = C.busy || !s.cliSessionId || convo < COMPACT_WORTH_IT;
+  compact.disabled = C.busy || !sl.cliSessionId || convo < COMPACT_WORTH_IT;
   compact.title = convo < COMPACT_WORTH_IT
     ? `Not worth it yet — only ${(convo / 1000).toFixed(1)}k of this context is the conversation. ` +
-      `The other ${(s.stats.baselineTokens / 1000).toFixed(0)}k is Claude Code's own overhead and compaction cannot reclaim it.`
+      `The other ${(sl.stats.baselineTokens / 1000).toFixed(0)}k is ${harnessLabel(C.harness)}'s own overhead and compaction cannot reclaim it.`
     : `Summarise ${(convo / 1000).toFixed(1)}k of conversation and continue in a fresh context. Same session.`;
   compact.onclick = compactSession;
   label.appendChild(compact);
@@ -1413,32 +1497,44 @@ function deleteSession() {
  */
 async function compactSession() {
   const s = active();
-  if (!s || C.busy || !s.cliSessionId) return;
+  const req = { harness: C.harness, model: C.model };
+  const sl = slotFor(s ?? {}, req.harness);
+  if (!s || C.busy || !sl.cliSessionId) return;
 
   C.busy = true;
   C.stream = '';
   C.startedAt = Date.now();
+  C.running = req;
   C.abort = new AbortController();
   renderChat();
+  clearInterval(tickTimer);
+  tickTimer = setInterval(renderChatBody, 1000);
 
   try {
     const final = await streamChat({
       message: COMPACT_PROMPT,
       mentions: [],
-      sessionId: s.cliSessionId,
+      sessionId: sl.cliSessionId,
+      harness: req.harness,
+      model: req.model,
       onDelta: () => renderChatBody(),
     });
-    const summary = C.stream.trim();
+    // Fail closed: only an explicit ok:true is a success. The server has exactly one
+    // `done` sender and it always sets `ok`, so a missing field means a malformed or
+    // truncated stream — which must not persist a session id or render as a reply.
+    if (final?.ok !== true) throw new Error(final?.error || 'The turn failed.');
+    const summary = (C.stream || final?.text || '').trim();
     if (!summary) throw new Error('Compaction returned nothing — thread left as it was.');
 
-    const turnsBefore = s.stats.turns;
-    s.seed = summary;
-    s.cliSessionId = null;                 // next turn starts fresh, seeded
-    s.compactions += 1;
-    s.stats.contextTokens = 0;
-    s.stats.baselineTokens = 0;
+    const turnsBefore = sl.stats.turns;
+    sl.seed = summary;
+    sl.cliSessionId = null;                // next turn starts fresh, seeded
+    sl.compactions += 1;
+    sl.stats.contextTokens = 0;
+    sl.stats.baselineTokens = 0;
     s.messages = [{
       role: 'assistant',
+      harness: req.harness,
       note: `Compacted ${turnsBefore} turn${turnsBefore === 1 ? '' : 's'} into a summary. The thread continues from here.`,
       text: summary,
     }];
@@ -1447,8 +1543,10 @@ async function compactSession() {
   } catch (e) {
     if (e.name !== 'AbortError') notice('error', `Compaction failed: ${e.message}`, null, true);
   } finally {
+    clearInterval(tickTimer);
     C.busy = false;
     C.stream = '';
+    C.running = null;
     C.abort = null;
     renderChat();
   }
@@ -1479,15 +1577,35 @@ function renderChatBody() {
   for (const m of s?.messages || []) body.appendChild(renderMessage(m));
 
   if (C.busy) {
+    // Named for the harness that is actually running, not the one now picked —
+    // you may have switched the dropdown while this turn was in flight.
+    const run = C.running || { harness: C.harness };
+    const secs = (Date.now() - C.startedAt) / 1000;
     const live = el('div', 'msg assistant');
     const meta = el('div', 'msg-meta');
     meta.appendChild(el('span', 'spinner'));
-    meta.appendChild(el('span', null, `${((Date.now() - C.startedAt) / 1000).toFixed(0)}s`));
+    meta.appendChild(el('span', null, `${harnessLabel(run.harness)} · ${secs.toFixed(0)}s`));
     live.appendChild(meta);
-    live.appendChild(el('div', 'msg-text', stripEditBlocks(C.stream) || '…'));
+    const prose = stripEditBlocks(C.stream);
+    live.appendChild(prose
+      ? el('div', 'msg-text', prose)
+      : el('div', 'msg-wait', waitingLine(run.harness, secs)));
     body.appendChild(live);
   }
   if (atBottom) body.scrollTop = body.scrollHeight;
+}
+
+/**
+ * The silence before the first token is harness-sized — Claude's is ~5s, grok's
+ * has been measured at 37s — and a harness with streams:false has no first
+ * token at all, only the finished reply. Say which of those you are waiting on;
+ * an unexplained spinner reads as a hang.
+ */
+function waitingLine(harness, secs) {
+  if (harnessOf(harness)?.streams === false) {
+    return 'Working — this harness returns the whole reply at once, so nothing appears until it is done.';
+  }
+  return secs < 12 ? 'Working…' : 'Working — still waiting on the first token.';
 }
 
 /** Edit blocks are rendered as diffs below, so keep them out of the prose. */
@@ -1512,6 +1630,8 @@ function renderMessage(m) {
     }
     return wrap;
   }
+  // Threads can mix harnesses, so each reply says who wrote it.
+  if (m.harness) wrap.appendChild(el('div', 'msg-meta', harnessLabel(m.harness)));
   if (m.error) { wrap.appendChild(el('div', 'notice error', m.error)); return wrap; }
 
   const prose = stripEditBlocks(m.text);
@@ -1624,11 +1744,36 @@ function renderCompose() {
   box.appendChild(input);
 
   const row = el('div', 'compose-row');
+
+  // Harness first, then that harness's models. Only detected harnesses are
+  // offered — the server refuses the rest anyway.
+  const list = harnesses();
+  const harness = el('select', 'assist-harness');
+  harness.title = 'Which CLI answers. Sticky — it never changes with the file you open.';
+  if (!list.length) {
+    harness.appendChild(el('option', null, 'No harness detected'));
+    harness.disabled = true;
+  } else {
+    for (const h of list) {
+      const o = el('option', null, h.label); o.value = h.id;
+      if (h.id === C.harness) o.selected = true;
+      harness.appendChild(o);
+    }
+  }
+  harness.onchange = () => {
+    C.harness = harness.value;
+    C.model = harnessOf(C.harness)?.defaultModel ?? C.model;
+    saveSessions();
+    // The whole chat re-renders: context, cost and turns all belong to the new
+    // harness's slot, not the one you just left.
+    renderChat();
+  };
+  row.appendChild(harness);
+
+  const current = harnessOf(C.harness);
   const model = el('select', 'assist-model');
   // The server owns the list — it is the same object used as the allowlist.
-  const choices = S.registry?.models?.length
-    ? S.registry.models
-    : [{ id: C.model, label: C.model }];
+  const choices = current ? modelsOf(current) : [{ id: C.model, label: C.model }];
   // A saved session may name a model that is no longer offered; don't let the
   // dropdown show one thing while the server silently runs another.
   if (!choices.some((c) => c.id === C.model)) C.model = choices[0].id;
@@ -1637,6 +1782,7 @@ function renderCompose() {
     if (id === C.model) o.selected = true;
     model.appendChild(o);
   }
+  model.disabled = !current;
   model.onchange = () => { C.model = model.value; saveSessions(); };
   row.appendChild(model);
   row.appendChild(el('span', 'spacer'));
@@ -1647,6 +1793,8 @@ function renderCompose() {
     row.appendChild(cancel);
   } else {
     const send = el('button', 'btn primary', 'Send');
+    send.disabled = !C.harness;
+    if (!C.harness) send.title = 'No supported CLI was found on this machine.';
     send.onclick = sendTurn;
     row.appendChild(send);
   }
@@ -1706,11 +1854,13 @@ function choosePicker(f) {
 let tickTimer;
 
 /** Shared streaming reader for both normal turns and compaction. */
-async function streamChat({ message, mentions, sessionId, seed, onDelta }) {
+async function streamChat({ message, mentions, sessionId, seed, harness, model, onDelta }) {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ message, mentions, sessionId, seed, model: C.model }),
+    // harness and model are passed in, never read from C: the picker may move
+    // while this request is open and the turn must stay what it was at submit.
+    body: JSON.stringify({ message, mentions, sessionId, seed, model, harness }),
     signal: C.abort.signal,
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
@@ -1740,7 +1890,12 @@ async function streamChat({ message, mentions, sessionId, seed, onDelta }) {
 async function sendTurn() {
   const text = C.draft.trim();
   if (!text || C.busy) return;
+  if (!C.harness) { notice('error', 'No supported CLI was found on this machine.', null, true); return; }
   const s = ensureSession();
+  // Bound at submit: everything below writes back through these, so moving the
+  // picker mid-turn cannot land a reply or a session id in another harness.
+  const run = { harness: C.harness, model: C.model };
+  const sl = slotFor(s, run.harness);
 
   s.messages.push({ role: 'user', text, mentions: [...s.mentions] });
   if (s.title === 'New session') s.title = titleFor(s);
@@ -1749,7 +1904,10 @@ async function sendTurn() {
   C.busy = true;
   C.stream = '';
   C.startedAt = Date.now();
+  C.running = run;
   C.abort = new AbortController();
+  // The running state goes up NOW, not on the first delta: grok has taken 37s
+  // to say anything at all, and half a minute of dead UI reads as a crash.
   renderChat();
   clearInterval(tickTimer);
   tickTimer = setInterval(renderChatBody, 1000);
@@ -1758,37 +1916,58 @@ async function sendTurn() {
     const final = await streamChat({
       message: text,
       mentions: s.mentions,
-      sessionId: s.cliSessionId,
-      seed: s.cliSessionId ? null : s.seed,
+      sessionId: sl.cliSessionId,
+      seed: sl.cliSessionId ? null : sl.seed,
+      harness: run.harness,
+      model: run.model,
       onDelta: renderChatBody,
     });
 
-    s.cliSessionId = final?.sessionId ?? s.cliSessionId;
+    // A turn the server calls failed is a failure here too: no reply text, no
+    // session id kept. The server refuses to bind an id from a failed turn, so
+    // storing one would only guarantee the next turn is rejected.
+    // Fail closed: only an explicit ok:true is a success. The server has exactly one
+    // `done` sender and it always sets `ok`, so a missing field means a malformed or
+    // truncated stream — which must not persist a session id or render as a reply.
+    if (final?.ok !== true) throw new Error(final?.error || 'The turn failed.');
+
+    sl.cliSessionId = final?.sessionId ?? sl.cliSessionId;
     if (final?.stats) {
-      s.stats.turns += 1;
-      s.stats.contextTokens = final.stats.contextTokens || s.stats.contextTokens;
-      s.stats.costUsd = (s.stats.costUsd || 0) + (final.stats.costUsd || 0);
-      // The first turn is almost entirely Claude Code's own overhead — system
+      sl.stats.turns += 1;
+      sl.stats.contextTokens = final.stats.contextTokens || sl.stats.contextTokens;
+      sl.stats.costUsd = (sl.stats.costUsd || 0) + (final.stats.costUsd || 0);
+      // The first turn is almost entirely the harness's own overhead — system
       // prompt, tool definitions, CLAUDE.md, skills index. Recording it lets us
       // report how much of the context is actually *this conversation*.
-      if (!s.stats.baselineTokens) s.stats.baselineTokens = final.stats.contextTokens || 0;
+      if (!sl.stats.baselineTokens) sl.stats.baselineTokens = final.stats.contextTokens || 0;
     }
     s.updatedAt = Date.now();
-    s.messages.push({ role: 'assistant', text: C.stream, proposals: final?.proposals ?? [] });
+    s.messages.push({
+      role: 'assistant', harness: run.harness,
+      // Deltas when there were any; a harness with streams:false sends none and
+      // its whole reply arrives in the done event instead.
+      text: C.stream || final?.text || '',
+      proposals: final?.proposals ?? [],
+    });
 
     if (final?.rateLimit?.status && final.rateLimit.status !== 'allowed') {
       notice('warn', `Usage limit: ${final.rateLimit.status}` +
         (final.rateLimit.resetsAt ? ` — resets ${new Date(final.rateLimit.resetsAt).toLocaleTimeString()}` : ''), null, true);
     }
   } catch (e) {
+    // The server binds each session id to the harness that issued it. If it
+    // refuses ours the slot is dead — drop it so the next turn starts clean
+    // instead of re-offering an id that can only be rejected again.
+    if (/session is bound/i.test(e.message)) sl.cliSessionId = null;
     s.messages.push({
-      role: 'assistant', text: '',
+      role: 'assistant', harness: run.harness, text: '',
       error: e.name === 'AbortError' ? 'Cancelled.' : e.message,
     });
   } finally {
     clearInterval(tickTimer);
     C.busy = false;
     C.stream = '';
+    C.running = null;
     C.abort = null;
     saveSessions();
     renderChat();
