@@ -1,0 +1,445 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.dirname(fileURLToPath(new URL('.', import.meta.url)));
+const LIB = path.join(ROOT, 'lib');
+const SERVER = path.join(ROOT, 'server.js');
+const HARNESS = path.join(LIB, 'harness.js');
+
+const WHY = {
+  a: [
+    'Detection resolves an absolute real binary, then a login-shell spawn',
+    '(`zsh -lc \'claude "$@"\'`) re-resolves via PATH and can pick the cmux',
+    'shim we just rejected. Harness spawns must exec the resolved absolute',
+    'path. Do not delete this guard to "fix" a shell-string spawn — revert',
+    'the spawn.',
+  ].join(' '),
+  b: [
+    'composeArgv + spawnContained is the only place that may spawn a harness',
+    'binary for a turn. A second spawn in chat.js / assist.js / server.js is',
+    'an uncontained door beside a contained one. Do not delete this guard to',
+    'add a "simpler" spawn — route it through spawnContained.',
+  ].join(' '),
+  c: [
+    'A descriptor with empty containment is not shippable: composeArgv',
+    'refuses to spawn, and assertDescriptor throws at load. An empty array',
+    'is how a future harness gets added without a proven allowlist. Do not',
+    'delete this guard to land a descriptor "temporarily" — fill containment',
+    'with `--tools <read-only>` first.',
+  ].join(' '),
+  d: [
+    'Containment is an ALLOWLIST (`--tools`). Measured leaks: Claude wrote',
+    'via Workflow despite `--disallowedTools` naming every write builtin;',
+    '`--allowedTools Read` did not strip write tools at all; grok wrote via',
+    'spawn_subagent despite `--disallowed-tools` naming every write builtin;',
+    'grok ignored `--permission-mode plan` entirely. The only flag that held',
+    'is `--tools`. `--disallowed-tools` may appear only as a companion to',
+    '`--tools` to strip MCP meta-tools (search_tool, use_tool), never as the',
+    'write denylist. Do not delete this guard to restore a denylist — it leaked.',
+  ].join(' '),
+};
+
+const WRITEISH = new Set([
+  'write', 'search_replace', 'run_terminal_command', 'run_terminal_cmd',
+  'Edit', 'Write', 'Bash', 'NotebookEdit', 'Task',
+]);
+
+let failed = 0;
+let passed = 0;
+
+function ok(name) {
+  passed++;
+  console.log(`PASS  ${name}`);
+}
+function fail(name, detail, why) {
+  failed++;
+  console.error(`FAIL  ${name}`);
+  console.error(`  ${String(detail).replace(/\n/g, '\n  ')}`);
+  console.error(`  WHY: ${why}`);
+}
+function assert(cond, name, detail, why) {
+  if (cond) ok(name);
+  else fail(name, detail, why);
+}
+
+function listJs(dir) {
+  const out = [];
+  for (const name of fs.readdirSync(dir)) {
+    const abs = path.join(dir, name);
+    const st = fs.statSync(abs);
+    if (st.isDirectory()) out.push(...listJs(abs));
+    else if (/\.(js|mjs)$/.test(name)) out.push(abs);
+  }
+  return out;
+}
+
+function rel(abs) {
+  return path.relative(ROOT, abs);
+}
+
+function lineAt(src, index) {
+  return src.slice(0, index).split('\n').length;
+}
+
+/** Strip comments; keep string contents so a spawn command in a string still matches. */
+function stripComments(src) {
+  let out = '';
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    const n = src[i + 1];
+    if (c === '/' && n === '/') {
+      while (i < src.length && src[i] !== '\n') i++;
+      if (i < src.length) out += '\n';
+      continue;
+    }
+    if (c === '/' && n === '*') {
+      i += 2;
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) {
+        if (src[i] === '\n') out += '\n';
+        i++;
+      }
+      i++;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c;
+      out += c;
+      i++;
+      while (i < src.length && src[i] !== q) {
+        if (src[i] === '\\') { out += src[i]; i++; if (i < src.length) { out += src[i]; i++; } continue; }
+        out += src[i];
+        i++;
+      }
+      if (i < src.length) out += src[i];
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+
+function skipString(src, i) {
+  const q = src[i];
+  i++;
+  while (i < src.length && src[i] !== q) {
+    if (src[i] === '\\') i++;
+    i++;
+  }
+  return i;
+}
+
+function functionSpan(src, name) {
+  const needle = `function ${name}`;
+  const start = src.indexOf(needle);
+  if (start === -1) return null;
+  let i = start + needle.length;
+  while (i < src.length && src[i] !== '(') i++;
+  if (src[i] !== '(') return null;
+  let depth = 0;
+  for (; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === '`') { i = skipString(src, i); continue; }
+    if (c === '(') depth++;
+    else if (c === ')') {
+      depth--;
+      if (depth === 0) { i++; break; }
+    }
+  }
+  while (i < src.length && src[i] !== '{') i++;
+  if (src[i] !== '{') return null;
+  depth = 0;
+  for (; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === '`') { i = skipString(src, i); continue; }
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) return { start, end: i + 1 };
+    }
+  }
+  return null;
+}
+
+function inSpan(index, span) {
+  return span && index >= span.start && index < span.end;
+}
+
+const CALL_RE = /(?<![\w.])(spawnSync|execFile|exec|spawn)\s*\(/g;
+
+function childCalls(src) {
+  const out = [];
+  CALL_RE.lastIndex = 0;
+  let m;
+  while ((m = CALL_RE.exec(src))) {
+    out.push({ fn: m[1], index: m.index, line: lineAt(src, m.index) });
+  }
+  return out;
+}
+
+function calleeLiteral(src, call) {
+  const slice = src.slice(call.index);
+  const head = slice.match(/^(?:spawnSync|execFile|exec|spawn)\s*\(\s*/);
+  if (!head) return { kind: 'unknown', value: '' };
+  const after = slice.slice(head[0].length);
+  const lit = after.match(/^(['"`])([^'"`]+)\1/);
+  if (lit) return { kind: 'literal', value: lit[2] };
+  const id = after.match(/^([A-Za-z_$][\w$]*)/);
+  if (id) return { kind: 'ident', value: id[1] };
+  return { kind: 'other', value: after.slice(0, 48).replace(/\s+/g, ' ') };
+}
+
+function readStripped(abs) {
+  return stripComments(fs.readFileSync(abs, 'utf8'));
+}
+
+function scanTargets() {
+  return [...listJs(LIB), SERVER];
+}
+
+function guardA() {
+  const hits = [];
+  for (const abs of scanTargets()) {
+    const src = readStripped(abs);
+    const file = rel(abs);
+    for (const pat of [
+      /zsh\s+-lc/,
+      /bash\s+-lc/,
+      /(?:^|[^\w])sh\s+-lc/,
+      /['"`]zsh['"`]\s*,\s*\[\s*['"`]-lc['"`]/,
+      /['"`]bash['"`]\s*,\s*\[\s*['"`]-lc['"`]/,
+    ]) {
+      const m = src.match(pat);
+      if (m) hits.push(`${file}:${lineAt(src, m.index)} ${m[0]}`);
+    }
+    if (/\bchild_process\.exec\s*\(/.test(src)) {
+      hits.push(`${file} uses child_process.exec (shell-string spawn)`);
+    }
+    if (/import\s*\{[^}]*\bexec\b[^}]*\}\s*from\s*['"]node:child_process['"]/.test(src)) {
+      hits.push(`${file} imports exec from node:child_process (shell-string API)`);
+    }
+    for (const call of childCalls(src)) {
+      const cal = calleeLiteral(src, call);
+      if (cal.kind === 'literal' && /^(claude|grok|codex)$/.test(cal.value)) {
+        hits.push(`${file}:${call.line} ${call.fn}('${cal.value}') — PATH name, not the resolved absolute binary`);
+      }
+    }
+  }
+  assert(
+    hits.length === 0,
+    'guard a: no shell-string / login-shell harness spawn',
+    hits.join('\n') || 'ok',
+    WHY.a,
+  );
+}
+
+function guardB() {
+  const hits = [];
+  for (const abs of scanTargets()) {
+    const src = readStripped(abs);
+    const file = rel(abs);
+    const calls = childCalls(src);
+
+    if (abs === HARNESS) {
+      const contained = functionSpan(src, 'spawnContained');
+      const version = functionSpan(src, 'readVersion');
+      if (!contained) {
+        hits.push(`${file}: spawnContained is missing — the chokepoint is gone`);
+        continue;
+      }
+      for (const call of calls) {
+        if (call.fn === 'spawn') {
+          if (!inSpan(call.index, contained)) {
+            hits.push(`${file}:${call.line} spawn() outside spawnContained`);
+          } else {
+            const cal = calleeLiteral(src, call);
+            if (!(cal.kind === 'ident' && cal.value === 'binary')) {
+              hits.push(`${file}:${call.line} spawnContained must spawn(binary, …), got spawn(${cal.value})`);
+            }
+          }
+        } else if (call.fn === 'spawnSync') {
+          if (!inSpan(call.index, version)) {
+            hits.push(`${file}:${call.line} spawnSync() outside readVersion (only --version probes belong there)`);
+          }
+        } else {
+          hits.push(`${file}:${call.line} ${call.fn}() — harness.js may spawn only via spawnContained / readVersion`);
+        }
+      }
+      continue;
+    }
+
+    const allowed = {
+      'lib/history.js': { fns: new Set(['exec', 'execFile']), bins: new Set(['git']) },
+      'lib/worktree.js': { fns: new Set(['exec', 'execFile']), bins: new Set(['git', 'zsh']) },
+    }[file];
+
+    for (const call of calls) {
+      if (!allowed) {
+        hits.push(`${file}:${call.line} ${call.fn}() — harness binaries spawn only in lib/harness.js spawnContained`);
+        continue;
+      }
+      if (!allowed.fns.has(call.fn)) {
+        hits.push(`${file}:${call.line} ${call.fn}() is not allowed here`);
+        continue;
+      }
+      const cal = calleeLiteral(src, call);
+      if (cal.kind === 'literal' && !allowed.bins.has(cal.value)) {
+        hits.push(`${file}:${call.line} ${call.fn}('${cal.value}') — not an allowed binary for this file`);
+      }
+      if (cal.kind === 'literal' && /^(claude|grok|codex)$/.test(cal.value)) {
+        hits.push(`${file}:${call.line} ${call.fn}('${cal.value}') — harness spawn outside the chokepoint`);
+      }
+    }
+  }
+  assert(
+    hits.length === 0,
+    'guard b: spawnContained is the only harness-binary spawn site',
+    hits.join('\n') || 'ok',
+    WHY.b,
+  );
+}
+
+function parseContainmentArrays(src) {
+  const out = [];
+  const re = /\bcontainment\s*:\s*\[/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const start = m.index + m[0].length - 1;
+    let depth = 0;
+    let i = start;
+    for (; i < src.length; i++) {
+      const c = src[i];
+      if (c === '"' || c === "'" || c === '`') {
+        const q = c;
+        i++;
+        while (i < src.length && src[i] !== q) {
+          if (src[i] === '\\') i++;
+          i++;
+        }
+        continue;
+      }
+      if (c === '[') depth++;
+      else if (c === ']') {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    const raw = src.slice(start, i + 1);
+    const items = [];
+    const itemRe = /(['"`])([^'"`]*)\1/g;
+    let im;
+    while ((im = itemRe.exec(raw))) items.push(im[2]);
+    out.push({ line: lineAt(src, m.index), raw, items });
+  }
+  return out;
+}
+
+function guardC() {
+  const hits = [];
+  const src = readStripped(HARNESS);
+  const arrays = parseContainmentArrays(src);
+  if (arrays.length === 0) {
+    hits.push('lib/harness.js has no containment: [...] arrays');
+  }
+  for (const a of arrays) {
+    if (a.items.length === 0) {
+      hits.push(`lib/harness.js:${a.line} empty containment array ${a.raw}`);
+    }
+  }
+
+  assert(
+    hits.length === 0,
+    'guard c: every descriptor containment is a non-empty array (source)',
+    hits.join('\n') || 'ok',
+    WHY.c,
+  );
+}
+
+async function guardCRuntime() {
+  const hits = [];
+  let harnesses;
+  try {
+    ({ HARNESSES: harnesses } = await import('../lib/harness.js'));
+  } catch (e) {
+    fail(
+      'guard c: descriptors load with non-empty containment',
+      e && e.message ? e.message : e,
+      WHY.c,
+    );
+    return null;
+  }
+  for (const d of Object.values(harnesses)) {
+    if (!Array.isArray(d.containment) || d.containment.length === 0) {
+      hits.push(`${d.id}: containment is ${JSON.stringify(d.containment)}`);
+    }
+  }
+  assert(
+    hits.length === 0,
+    'guard c: every descriptor containment is a non-empty array (runtime)',
+    hits.join('\n') || 'ok',
+    WHY.c,
+  );
+  return harnesses;
+}
+
+function leakyAsContainment(items, id) {
+  const hits = [];
+  if (items.length === 0) return hits; // empty is guard c
+  const flags = new Set(items);
+  if (!flags.has('--tools')) {
+    hits.push(`${id}: containment has no --tools allowlist: ${JSON.stringify(items)}`);
+  }
+  for (const leak of ['--allowedTools', '--disallowedTools', '--permission-mode']) {
+    if (flags.has(leak)) {
+      hits.push(`${id}: ${leak} used as containment (measured leak)`);
+    }
+  }
+  const di = items.indexOf('--disallowed-tools');
+  if (di !== -1) {
+    const denied = String(items[di + 1] || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const writeish = denied.filter((t) => WRITEISH.has(t));
+    if (writeish.length) {
+      hits.push(`${id}: --disallowed-tools names write tools ${JSON.stringify(writeish)} — that denylist leaked via leftovers`);
+    }
+    if (!flags.has('--tools')) {
+      hits.push(`${id}: --disallowed-tools without --tools is a denylist, not containment`);
+    }
+  }
+  return hits;
+}
+
+async function guardD(harnesses) {
+  const hits = [];
+  const src = readStripped(HARNESS);
+  for (const a of parseContainmentArrays(src)) {
+    hits.push(...leakyAsContainment(a.items, `lib/harness.js:${a.line}`));
+  }
+  if (harnesses) {
+    for (const d of Object.values(harnesses)) {
+      hits.push(...leakyAsContainment(d.containment, d.id));
+    }
+  }
+  const uniq = [...new Set(hits)];
+  assert(
+    uniq.length === 0,
+    'guard d: containment is --tools allowlist, not a measured-leaky denylist',
+    uniq.join('\n') || 'ok',
+    WHY.d,
+  );
+}
+
+async function main() {
+  console.log('guards — static security properties this branch established\n');
+  guardA();
+  guardB();
+  guardC();
+  const harnesses = await guardCRuntime();
+  await guardD(harnesses);
+  console.log(`\n${passed} passed, ${failed} failed`);
+  if (failed) process.exit(1);
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

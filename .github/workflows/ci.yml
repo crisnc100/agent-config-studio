@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: node --check
+        run: |
+          set -euo pipefail
+          node --check server.js
+          find lib tests public \( -name '*.js' -o -name '*.mjs' \) -exec node --check {} +
+      - name: live containment is a local gate
+        if: always()
+        run: |
+          echo "============================================================"
+          echo "Live containment checks are a LOCAL gate (./verify.sh)"
+          echo "and were not run here."
+          echo "A green CI tick is not a containment pass."
+          echo "============================================================"
+
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: offline suite
+        env:
+          ACS_SUITE: offline
+        run: |
+          set -euo pipefail
+          node tests/phase1.mjs
+          node tests/phase2a.mjs
+      - name: live containment is a local gate
+        if: always()
+        run: |
+          echo "============================================================"
+          echo "Live containment checks are a LOCAL gate (./verify.sh)"
+          echo "and were not run here."
+          echo "A green CI tick is not a containment pass."
+          echo "============================================================"
+
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: static security guards
+        run: node tests/guards.mjs
+      - name: live containment is a local gate
+        if: always()
+        run: |
+          echo "============================================================"
+          echo "Live containment checks are a LOCAL gate (./verify.sh)"
+          echo "and were not run here."
+          echo "A green CI tick is not a containment pass."
+          echo "============================================================"

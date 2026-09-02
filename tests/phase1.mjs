@@ -22,6 +22,43 @@ const TURN_MS = 300_000;
 const WRITE_TOOLS_GROK = ['write', 'search_replace', 'run_terminal_command'];
 const ALLOWED_READ_TOOL = { claude: 'Read', grok: 'read_file' };
 
+// Offline mode runs only checks that need no harness binary and no network.
+// Default (unset) is the full local gate. Do not treat a green offline run as
+// a containment pass — tests/phase1.mjs fails closed when no harness is
+// detected, and that behavior is the point of the live suite.
+const OFFLINE = process.env.ACS_SUITE === 'offline';
+
+const OFFLINE_SKIPPED = [
+  '(a) detection: at least one harness, absolute real path, no cmux-cli-shims',
+  '(c) parseEdits accepts each harness reply; SEARCH matched exactly once',
+  '(a)+(b) spawn path + containment (live turn per detected harness)',
+  'claude containment prevention (write-demand probe: only Read, file unmutated)',
+  'grok containment prevention (write-demand probe: only read_file, file unmutated)',
+  'assist.js spawn path uses the same chokepoint (argv capture, killed)',
+  '(b) containment vacuous-pass guard (fails if no harness is detected)',
+];
+
+function printOfflineBanner() {
+  const bar = '!'.repeat(72);
+  console.log(`
+${bar}
+ACS_SUITE=offline
+CONTAINMENT IS NOT VERIFIED IN THIS MODE
+${bar}
+
+This is the offline subset: no harness binary, no network, no model call.
+A green tick here is NOT a containment pass. Live containment checks are
+a LOCAL gate (\`./verify.sh\`) and were NOT run.
+
+Checks that did NOT run:
+${OFFLINE_SKIPPED.map((n) => `  - ${n}`).join('\n')}
+
+A skipped containment test would pass vacuously — that is why this banner
+exists, and why CI must not be mistaken for ./verify.sh.
+${bar}
+`);
+}
+
 let failed = 0;
 let passed = 0;
 
@@ -362,6 +399,7 @@ async function awaitJsonlRaw(handle, label) {
 
 async function main() {
   console.log('phase1 — harness contract, containment, parser\n');
+  if (OFFLINE) printOfflineBanner();
 
   await check('contract: every shipped descriptor has all required fields and non-empty containment', () => {
     for (const d of Object.values(HARNESSES)) {
@@ -405,18 +443,20 @@ async function main() {
     assert(loadThrew, 'assertDescriptor must throw on empty containment');
   });
 
-  const detected = await detectHarnesses();
-  await check('(a) detection: at least one harness, absolute real path, no cmux-cli-shims', () => {
-    assert(detected.length > 0, 'no harnesses detected — a vacuous pass is forbidden');
-    for (const h of detected) {
-      assert(h.binary && path.isAbsolute(h.binary), `${h.id} binary not absolute: ${h.binary}`);
-      assert(!h.binary.includes('cmux-cli-shims'), `${h.id} resolved a shim: ${h.binary}`);
-      const real = fs.realpathSync(h.binary);
-      eq(real, h.binary, `${h.id} binary is not realpath`);
-      const st = fs.statSync(h.binary);
-      assert(st.isFile(), `${h.id} binary is not a file`);
-    }
-  });
+  const detected = OFFLINE ? [] : await detectHarnesses();
+  if (!OFFLINE) {
+    await check('(a) detection: at least one harness, absolute real path, no cmux-cli-shims', () => {
+      assert(detected.length > 0, 'no harnesses detected — a vacuous pass is forbidden');
+      for (const h of detected) {
+        assert(h.binary && path.isAbsolute(h.binary), `${h.id} binary not absolute: ${h.binary}`);
+        assert(!h.binary.includes('cmux-cli-shims'), `${h.id} resolved a shim: ${h.binary}`);
+        const real = fs.realpathSync(h.binary);
+        eq(real, h.binary, `${h.id} binary is not realpath`);
+        const st = fs.statSync(h.binary);
+        assert(st.isFile(), `${h.id} binary is not a file`);
+      }
+    });
+  }
 
   // (e) parser fixtures — offline, before live turns so a parser bug fails fast.
   await check('(e) non-JSON noise line is skipped, not fatal', () => {
@@ -518,7 +558,7 @@ async function main() {
     assert(det.installed === false, 'throwaway must not claim codex is installed');
   });
 
-  await check('(c) parseEdits accepts each harness reply; SEARCH matched exactly once', async () => {
+  if (!OFFLINE) await check('(c) parseEdits accepts each harness reply; SEARCH matched exactly once', async () => {
     const detectedNow = detected.length ? detected : await detectHarnesses();
     assert(detectedNow.length > 0, 'no harnesses for parseEdits');
     const dir = makeTemp('acs-edits-');
@@ -611,6 +651,13 @@ async function main() {
       rmTemp(dir);
     }
   });
+
+  if (OFFLINE) {
+    console.log(`\n${passed} passed, ${failed} failed`);
+    console.log('offline mode: containment was NOT verified (see banner above)');
+    if (failed) process.exit(1);
+    return;
+  }
 
   // (a)+(b) live spawn per detected harness — cannot pass vacuously.
   if (detected.length === 0) {
