@@ -245,6 +245,9 @@ async function withHiddenGrok(fn) {
 
 async function main() {
   console.log('phase2a — server harness routing, validation, session binding\n');
+  if (process.env.ACS_SUITE === 'offline') {
+    console.log('ACS_SUITE=offline — all 9 phase2a checks use mocked streamTurn + createApp; none spawn a harness.\n');
+  }
 
   await check('payload lists only currently detected harnesses', async () => {
     const live = await detectHarnesses();
