@@ -1,7 +1,11 @@
 name: CI
 
+# A bare `push:` fires on every branch, and the pull_request event fires on the
+# same commit — every check ran twice for no extra signal. Branch work is covered
+# by its PR; main is covered on merge.
 on:
   push:
+    branches: [main]
   pull_request:
 
 jobs:
