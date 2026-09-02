@@ -14,7 +14,11 @@ import { runAssist } from '../lib/assist.js';
 import { tilde } from '../lib/paths.js';
 
 const ROOT = path.dirname(fileURLToPath(new URL('.', import.meta.url)));
-const TURN_MS = 180_000;
+// 300s, not 180s: grok was measured at up to 133s on a realistic edit turn, so a
+// 180s budget sat only 1.35x above the observed max and flaked. This is headroom
+// around the assertion, not a relaxation of it — a turn that never completes still
+// FAILS, it just is not declared dead while it is legitimately still working.
+const TURN_MS = 300_000;
 const WRITE_TOOLS_GROK = ['write', 'search_replace', 'run_terminal_command'];
 const ALLOWED_READ_TOOL = { claude: 'Read', grok: 'read_file' };
 

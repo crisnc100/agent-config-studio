@@ -11,7 +11,8 @@ import * as history from './lib/history.js';
 import * as worktree from './lib/worktree.js';
 import * as mutate from './lib/mutate.js';
 import { runAssist, listActions } from './lib/assist.js';
-import { streamTurn, parseEdits, resolveMentions, modelList, DEFAULT_MODEL } from './lib/chat.js';
+import { streamTurn, parseEdits, resolveMentions } from './lib/chat.js';
+import { detectHarnesses, HARNESSES } from './lib/harness.js';
 import { createWatcher, snapshotOf, diffSnapshots } from './lib/watch.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -45,7 +46,147 @@ async function readBody(req, limit = 8 * 1024 * 1024) {
   catch { throw Object.assign(new Error('invalid JSON body'), { status: 400 }); }
 }
 
-const ROUTES = {
+const SESSION_LIMIT = 256;
+
+function launchedDirectly() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try { return path.resolve(entry) === fileURLToPath(import.meta.url); }
+  catch { return false; }
+}
+
+function detectedHarnessPayload(detected) {
+  const harnesses = detected.map((h) => ({
+    id: h.id,
+    label: h.label,
+    models: h.models,
+    defaultModel: h.defaultModel,
+    streams: h.streams,
+  }));
+  const defaultHarness = harnesses.some((h) => h.id === 'claude')
+    ? 'claude'
+    : (harnesses[0]?.id ?? 'claude');
+  return { harnesses, defaultHarness };
+}
+
+function normalizeHarnessId(value) {
+  if (value === undefined || value === null || value === '') return 'claude';
+  if (typeof value !== 'string') {
+    throw Object.assign(new Error('invalid harness'), { status: 400 });
+  }
+  return value;
+}
+
+function turnSucceeded(result) {
+  if (!result) return false;
+  if (result.code !== undefined && result.code !== 0) return false;
+  if (result.err) return false;
+  if (result.is_error === true) return false;
+  const text = typeof result.text === 'string' ? result.text.trim() : '';
+  return text.length > 0;
+}
+
+function rememberSession(sessions, sessionId, harnessId) {
+  if (!sessionId || typeof sessionId !== 'string') return;
+  if (sessions.has(sessionId)) sessions.delete(sessionId);
+  sessions.set(sessionId, harnessId);
+  while (sessions.size > SESSION_LIMIT) {
+    const oldest = sessions.keys().next().value;
+    sessions.delete(oldest);
+  }
+}
+
+async function resolveIncoming(body, { detectFn, sessions, checkSession }) {
+  const harness = normalizeHarnessId(body?.harness);
+  if (!Object.hasOwn(HARNESSES, harness)) {
+    throw Object.assign(new Error(`unknown harness: ${harness}`), { status: 400 });
+  }
+  const detected = await detectFn();
+  if (!detected.some((h) => h.id === harness)) {
+    throw Object.assign(new Error(`harness not detected: ${harness}`), { status: 400 });
+  }
+  const desc = HARNESSES[harness];
+  let model = body?.model;
+  if (model === undefined || model === null || model === '') {
+    model = desc.defaultModel;
+  } else if (typeof model !== 'string' || !Object.hasOwn(desc.models, model)) {
+    throw Object.assign(new Error(`model ${model} is not valid for harness ${harness}`), { status: 400 });
+  }
+
+  let sessionId = body?.sessionId || null;
+  if (checkSession && sessionId) {
+    sessionId = String(sessionId);
+    if (!sessions.has(sessionId)) {
+      sessionId = null;
+    } else if (sessions.get(sessionId) !== harness) {
+      throw Object.assign(
+        new Error(`session is bound to harness ${sessions.get(sessionId)}, not ${harness}`),
+        { status: 409 },
+      );
+    }
+  } else if (!checkSession) {
+    sessionId = null;
+  }
+
+  return { harness, model, sessionId, desc };
+}
+
+/* ── live file events ─────────────────────────────────────────────────── */
+
+const sseClients = new Set();
+let lastSnapshot = snapshotOf(buildRegistry());
+
+function broadcast(payload) {
+  const frame = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(frame); } catch { sseClients.delete(res); }
+  }
+}
+
+function handleEvents(req, res) {
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no',
+  });
+  res.write('retry: 2000\n\n');
+  sseClients.add(res);
+
+  // Keep intermediaries from closing an idle stream.
+  const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 25_000);
+  req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
+}
+
+/** Rebuild, diff, and tell every open tab what actually changed. */
+async function onFilesChanged() {
+  let registry;
+  try { registry = buildRegistry(); } catch { return; }
+  const next = snapshotOf(registry);
+  const delta = diffSnapshots(lastSnapshot, next);
+  lastSnapshot = next;
+
+  if (!delta.added.length && !delta.removed.length && !delta.changed.length) return;
+
+  broadcast({
+    type: 'files',
+    added: delta.added.map(tilde),
+    removed: delta.removed.map(tilde),
+    changed: delta.changed.map(tilde),
+    addedPaths: delta.added,
+    removedPaths: delta.removed,
+    changedPaths: delta.changed,
+    total: next.size,
+  });
+}
+
+export function createApp(opts = {}) {
+  const detectFn = opts.detectHarnesses || detectHarnesses;
+  const streamTurnFn = opts.streamTurn || streamTurn;
+  const runAssistFn = opts.runAssist || runAssist;
+  const sessions = new Map();
+
+  const ROUTES = {
   /** Identity probe so the launcher never kills an unrelated process on this port. */
   'GET /api/health': async () => ({ app: 'agent-config-studio', pid: process.pid }),
 
@@ -91,7 +232,7 @@ const ROUTES = {
     ...buildRegistry(),
     history: await history.repoStats(),
     assistActions: listActions(),
-    models: modelList(),
+    ...detectedHarnessPayload(await detectFn()),
   }),
 
   'GET /api/file': async (_req, url) => {
@@ -275,19 +416,31 @@ const ROUTES = {
   },
 
   'POST /api/assist': async (req) => {
-    const { path: p, content, action, instruction, model } = await readBody(req);
-    const abs = resolveSafe(p);
-    return runAssist({ action, instruction, filePath: abs, content: content ?? '', model });
+    const body = await readBody(req);
+    const { harness, model } = await resolveIncoming(body, { detectFn, sessions, checkSession: false });
+    const abs = resolveSafe(body.path);
+    return runAssistFn({
+      action: body.action,
+      instruction: body.instruction,
+      filePath: abs,
+      content: body.content ?? '',
+      model,
+      harness,
+    });
   },
-};
+  };
 
 /**
  * Streaming chat turn. Emits newline-delimited JSON so the browser can render
  * tokens as they arrive — a 100s wait behind a spinner reads as a hang.
  */
-async function handleChat(req, res) {
+  async function handleChat(req, res) {
   let body;
   try { body = await readBody(req); }
+  catch (e) { return json(res, e.status || 400, { error: e.message }); }
+
+  let resolved;
+  try { resolved = await resolveIncoming(body, { detectFn, sessions, checkSession: true }); }
   catch (e) { return json(res, e.status || 400, { error: e.message }); }
 
   let mentions;
@@ -304,20 +457,26 @@ async function handleChat(req, res) {
   });
   const send = (obj) => { if (!res.writableEnded) res.write(JSON.stringify(obj) + '\n'); };
 
-  const turn = streamTurn({
+  const turn = streamTurnFn({
     message,
     mentions,
-    sessionId: body.sessionId || null,
+    sessionId: resolved.sessionId,
     seed: body.seed || null,
-    model: body.model || DEFAULT_MODEL,
+    model: resolved.model,
     cwd: mentions.length ? path.dirname(mentions[0]) : HOME,
+    harness: resolved.harness,
   }, (text) => send({ t: 'delta', text }));
 
   // If the browser aborts, kill the child rather than leaving it running.
   req.on('close', () => { if (!res.writableEnded) turn.kill(); });
 
   try {
-    const { text, sessionId, stats, rateLimit } = await turn.done;
+    const result = await turn.done;
+    const text = result.text || '';
+    const sessionId = result.sessionId ?? null;
+    if (turnSucceeded(result) && sessionId) {
+      rememberSession(sessions, sessionId, resolved.harness);
+    }
     const proposals = parseEdits(text, mentions).map((p) => {
       let mtime = null;
       try { mtime = p.path ? fs.statSync(p.path).mtimeMs : null; } catch {}
@@ -327,63 +486,28 @@ async function handleChat(req, res) {
         current: p.current, proposed: p.proposed,
       };
     });
-    send({ t: 'done', sessionId, proposals, stats, rateLimit });
+    // The done event has to carry three things the browser cannot infer: the
+    // reply itself (a streams:false harness sends no deltas, so this is the
+    // only copy), whether the turn actually worked, and — only when it did —
+    // the session id. A refused id must not be handed back for the client to
+    // store and resume against.
+    const ok = turnSucceeded(result);
+    send({
+      t: 'done',
+      ok,
+      text,
+      sessionId: ok ? sessionId : null,
+      error: ok ? null : ((result.err || '').slice(0, 400) ||
+        `${resolved.harness} exited ${result.code ?? '?'} without a usable reply`),
+      proposals, stats: result.stats, rateLimit: result.rateLimit,
+    });
   } catch (e) {
     send({ t: 'error', message: e.message });
   }
   res.end();
-}
-
-/* ── live file events ─────────────────────────────────────────────────── */
-
-const sseClients = new Set();
-let lastSnapshot = snapshotOf(buildRegistry());
-
-function broadcast(payload) {
-  const frame = `data: ${JSON.stringify(payload)}\n\n`;
-  for (const res of sseClients) {
-    try { res.write(frame); } catch { sseClients.delete(res); }
   }
-}
 
-function handleEvents(req, res) {
-  res.writeHead(200, {
-    'content-type': 'text/event-stream; charset=utf-8',
-    'cache-control': 'no-cache',
-    connection: 'keep-alive',
-    'x-accel-buffering': 'no',
-  });
-  res.write('retry: 2000\n\n');
-  sseClients.add(res);
-
-  // Keep intermediaries from closing an idle stream.
-  const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 25_000);
-  req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
-}
-
-/** Rebuild, diff, and tell every open tab what actually changed. */
-async function onFilesChanged() {
-  let registry;
-  try { registry = buildRegistry(); } catch { return; }
-  const next = snapshotOf(registry);
-  const delta = diffSnapshots(lastSnapshot, next);
-  lastSnapshot = next;
-
-  if (!delta.added.length && !delta.removed.length && !delta.changed.length) return;
-
-  broadcast({
-    type: 'files',
-    added: delta.added.map(tilde),
-    removed: delta.removed.map(tilde),
-    changed: delta.changed.map(tilde),
-    addedPaths: delta.added,
-    removedPaths: delta.removed,
-    changedPaths: delta.changed,
-    total: next.size,
-  });
-}
-
-const server = http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
   // Local-only tool: refuse anything that did not originate from this machine.
@@ -423,19 +547,24 @@ const server = http.createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end('not found');
   }
-});
+  });
 
-await history.ensureRepo();
-// Catch up on anything edited outside the studio since last run, so the
-// history repo is an honest record rather than only of studio-made edits.
-await history.snapshotAll('external changes since last run').catch(() => {});
+  return { server, sessions };
+}
 
-const watcher = createWatcher(onFilesChanged);
+if (launchedDirectly()) {
+  await history.ensureRepo();
+  // Catch up on anything edited outside the studio since last run, so the
+  // history repo is an honest record rather than only of studio-made edits.
+  await history.snapshotAll('external changes since last run').catch(() => {});
 
-server.listen(PORT, '127.0.0.1', () => {
-  const { groups } = buildRegistry();
-  const total = groups.reduce((n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
-  console.log(`
+  const watcher = createWatcher(onFilesChanged);
+  const { server } = createApp();
+
+  server.listen(PORT, '127.0.0.1', () => {
+    const { groups } = buildRegistry();
+    const total = groups.reduce((n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
+    console.log(`
   Agent Config Studio
   ───────────────────────────────────────────────
   →  http://localhost:${PORT}
@@ -445,10 +574,11 @@ server.listen(PORT, '127.0.0.1', () => {
   roots      ~/.claude  ~/.codex  ${tilde(PROJECTS)}
   watching   ${watcher.count} directories for live changes
 `);
-});
+  });
 
-process.on('SIGINT', () => {
-  watcher.close();
-  console.log('\n  stopped.');
-  process.exit(0);
-});
+  process.on('SIGINT', () => {
+    watcher.close();
+    console.log('\n  stopped.');
+    process.exit(0);
+  });
+}
