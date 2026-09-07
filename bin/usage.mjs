@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {
   loadSeats, addSeat, removeSeat, detectSeats, saveSeats, snapshot, slugify, registryPath,
+  writeSnapshot,
 } from '../lib/usage/seats.js';
 
 /**
@@ -46,6 +47,9 @@ async function gauge(argv) {
     return 0;
   }
   const snap = await snapshot();
+  // Persist it: the web app renders this file rather than reading a credential
+  // of its own. Failing to write must not fail the gauge the user asked for.
+  try { writeSnapshot(snap); } catch { /* the reading is still valid unwritten */ }
   if (argv.includes('--json')) { console.log(JSON.stringify(snap, null, 2)); return 0; }
 
   const ranked = [...snap.seats].sort((a, b) => {

@@ -14,6 +14,7 @@ import { runAssist, listActions } from './lib/assist.js';
 import { streamTurn, parseEdits, resolveMentions } from './lib/chat.js';
 import { detectHarnesses, HARNESSES } from './lib/harness.js';
 import { createWatcher, snapshotOf, diffSnapshots } from './lib/watch.js';
+import { renderSnapshot } from './lib/usage/seats.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -196,6 +197,20 @@ export function createApp(opts = {}) {
    * history — so only the mcpServers key is extracted, and that file is never
    * exposed through the file API.
    */
+  /**
+   * Subscription headroom per seat.
+   *
+   * The studio never reads a credential — that rule is why `.credentials.json`
+   * and `auth.json` are hard-blocked in lib/paths.js, and this endpoint does not
+   * weaken it. Claude's headroom needs an OAuth token, so its reading comes from
+   * the snapshot the `acs-usage` CLI wrote, and carries its age. Codex needs no
+   * credential (it reads its own rollout logs), so it is refreshed live here.
+   */
+  'GET /api/usage': async () => {
+    try { return await renderSnapshot(); }
+    catch (e) { return { takenAt: Date.now(), storedAt: null, seats: [], error: e.message }; }
+  },
+
   'GET /api/mcp': async () => {
     const out = { global: [], codex: [], note: null };
 

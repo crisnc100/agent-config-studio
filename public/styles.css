@@ -582,3 +582,48 @@ a { color: var(--accent); }
   background: var(--bg); border: 1px solid var(--border-soft); border-radius: 6px;
 }
 .wt-actions { margin-top: 18px; display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ── Usage gauge ─────────────────────────────────────────────────────────
+   Meant to be left open, so it reads at a glance rather than rewarding study.
+   The route line is the answer; the per-seat cards are the evidence for it. */
+
+.usage-route {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  padding: 14px 16px; margin: 4px 0 22px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.usage-route-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+.usage-route-seat { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.usage-route-pct { color: var(--green); font: 12px var(--mono); }
+
+.usage-seat { margin-bottom: 20px; }
+.usage-seat-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 8px; }
+.usage-seat-name { font-size: 14px; font-weight: 600; }
+.usage-seat-meta { color: var(--muted); font: 11px var(--mono); }
+
+.usage-row { display: flex; align-items: center; gap: 10px; margin-bottom: 5px; }
+/* Tabular figures and a fixed width so the bars line up as a column even when
+   the percentages are 7% and 100%. */
+.usage-pct {
+  width: 38px; text-align: right; flex: none;
+  font: 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--text-dim);
+}
+.usage-track {
+  width: 190px; flex: none; height: 8px; border-radius: 999px;
+  background: var(--panel-3); overflow: hidden;
+}
+.usage-fill { height: 100%; border-radius: 999px; transition: width 260ms ease; background: var(--green); }
+/* Pressure, not vendor — the colour must mean the same thing on every gauge. */
+.usage-fill[data-level="mid"]  { background: var(--amber); }
+.usage-fill[data-level="high"] { background: var(--red); }
+.usage-label { font-size: 12px; color: var(--text-dim); }
+.usage-reset { color: var(--muted); }
+
+.usage-offline { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.usage-offline-tag {
+  font: 11px var(--mono); color: var(--amber);
+  border: 1px solid var(--amber); border-radius: 999px; padding: 1px 7px; opacity: 0.85;
+}
+.usage-offline-why { color: var(--muted); font-size: 12px; }
+.usage-note { color: var(--muted); font: 11px var(--mono); margin-top: 6px; }

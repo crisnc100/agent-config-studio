@@ -94,6 +94,7 @@ async function boot() {
   // Deep links: #file=<path> for any file, #scope for the scope view.
   if (location.hash.startsWith('#scope')) return openScope();
   if (location.hash.startsWith('#mcp')) return openMcp();
+  if (location.hash.startsWith('#usage')) return openUsage();
   if (location.hash.startsWith('#trash')) return openTrash();
   if (location.hash.startsWith('#assist')) { renderWelcome(); return openDrawer(); }
   const m = location.hash.match(/file=([^&]+)/);
@@ -323,6 +324,7 @@ function renderContent() {
   if (S.view === 'search') return;         // rendered directly by doSearch
   if (S.view === 'scope') return;          // rendered directly by openScope
   if (S.view === 'mcp') return;            // rendered directly by openMcp
+  if (S.view === 'usage') return;          // rendered directly by openUsage
   if (S.view === 'trash') return;          // rendered directly by openTrash
   if (!S.file) return;
 
@@ -1101,6 +1103,149 @@ async function openTrash() {
     row.appendChild(btn);
     box.appendChild(row);
   }
+  c.appendChild(box);
+}
+
+/* ── Usage view ──────────────────────────────────────────────────────── */
+
+/**
+ * Subscription headroom per seat.
+ *
+ * This is a routing gauge, not a dashboard: the question it answers is "which
+ * subscription should the next task go to", so seats sort by the headroom of
+ * their tightest window and the answer is the first line.
+ *
+ * The studio reads no credential of its own. Codex seats are read live from
+ * their own logs; Claude's reading comes from the snapshot the `acs-usage` CLI
+ * wrote, and its age is always shown rather than implied to be current.
+ */
+
+let usageTimer = null;
+
+/** A seat's headroom is set by its tightest window — the first one to stop you. */
+function seatHeadroom(s) {
+  if (!s.ok || !s.windows.length) return null;
+  return 100 - Math.max(...s.windows.map((w) => w.usedPercent));
+}
+
+function untilText(ts) {
+  if (!ts) return '';
+  const ms = ts - Date.now();
+  if (ms <= 0) return 'resetting';
+  const h = Math.floor(ms / 3.6e6), mn = Math.round((ms % 3.6e6) / 6e4);
+  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
+  return h ? `${h}h ${mn}m` : `${mn}m`;
+}
+
+const agoText = (ms) => (ms == null ? '' : ms < 60000 ? 'just now' : `${untilText(Date.now() + ms)} ago`);
+
+async function openUsage() {
+  if (!confirmDiscard()) return;
+  S.view = 'usage';
+  S.entry = null;
+  window.history.replaceState(null, '', '#usage');
+  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
+  $('filebar').hidden = true;
+
+  const c = $('content');
+  c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span> reading usage…</div></div>';
+  await paintUsage();
+
+  // Meant to be left open, so it keeps itself current. Cleared whenever the
+  // view changes so a closed panel is not polling forever.
+  clearInterval(usageTimer);
+  usageTimer = setInterval(() => {
+    if (S.view !== 'usage') { clearInterval(usageTimer); usageTimer = null; return; }
+    paintUsage();
+  }, 60_000);
+}
+
+async function paintUsage() {
+  const c = $('content');
+  let u;
+  try { u = await api('GET', '/api/usage'); }
+  catch (e) { c.innerHTML = `<div class="scope"><div class="scope-sub">${esc(e.message)}</div></div>`; return; }
+  if (S.view !== 'usage') return;   // the view changed while the request was in flight
+
+  const seats = [...(u.seats || [])].sort((a, b) => {
+    const ha = seatHeadroom(a), hb = seatHeadroom(b);
+    if (ha === null && hb === null) return 0;
+    if (ha === null) return 1;      // unreadable seats sink; they are not "full"
+    if (hb === null) return -1;
+    return hb - ha;
+  });
+
+  c.innerHTML = '';
+  const box = el('div', 'scope');
+  box.appendChild(el('h2', null, 'Subscription usage'));
+
+  if (!seats.length) {
+    box.appendChild(el('div', 'scope-sub',
+      'No seats registered. Run `acs-usage detect --save` to add the subscriptions on this machine.'));
+    c.appendChild(box);
+    return;
+  }
+
+  const best = seats.find((s) => seatHeadroom(s) !== null);
+  const head = el('div', 'usage-route');
+  if (best) {
+    head.appendChild(el('span', 'usage-route-label', 'Route to'));
+    head.appendChild(el('span', 'usage-route-seat', best.label));
+    head.appendChild(el('span', 'usage-route-pct', `${Math.round(seatHeadroom(best))}% headroom`));
+  } else {
+    head.appendChild(el('span', 'usage-route-label', 'No seat is reporting usable headroom'));
+  }
+  box.appendChild(head);
+
+  for (const s of seats) {
+    const card = el('div', 'usage-seat');
+    const title = el('div', 'usage-seat-head');
+    title.appendChild(el('span', 'usage-seat-name', s.label));
+    const meta = [s.vendor, s.planType, s.subscriptionType].filter(Boolean).join(' · ');
+    title.appendChild(el('span', 'usage-seat-meta', meta));
+    card.appendChild(title);
+
+    if (!s.ok) {
+      const why = el('div', 'usage-offline');
+      why.appendChild(el('span', 'usage-offline-tag', 'not connected'));
+      why.appendChild(el('span', 'usage-offline-why', s.reason || ''));
+      card.appendChild(why);
+    } else {
+      for (const w of s.windows) {
+        const row = el('div', 'usage-row');
+        const track = el('div', 'usage-track');
+        const fill = el('div', 'usage-fill');
+        fill.style.width = `${Math.min(100, Math.max(0, w.usedPercent))}%`;
+        // Tinting is by pressure, not by vendor: the colour has to mean the
+        // same thing on every gauge or it stops being readable at a glance.
+        fill.dataset.level = w.usedPercent >= 90 ? 'high' : w.usedPercent >= 70 ? 'mid' : 'low';
+        track.appendChild(fill);
+        row.appendChild(el('span', 'usage-pct', `${Math.round(w.usedPercent)}%`));
+        row.appendChild(track);
+        const lbl = el('span', 'usage-label', w.label);
+        if (w.resetsAt) lbl.appendChild(el('span', 'usage-reset', ` resets in ${untilText(w.resetsAt)}`));
+        row.appendChild(lbl);
+        card.appendChild(row);
+      }
+      const notes = [];
+      if (s.credits?.hasCredits) notes.push(`credits ${s.credits.balance}`);
+      if (s.extraUsage?.enabled) {
+        notes.push(`extra usage ${s.extraUsage.usedCredits}/${s.extraUsage.monthlyLimit} ${s.extraUsage.currency}`);
+      }
+      // A reading is only as good as its age. Codex readings come from the last
+      // turn that ran, so an idle seat's number can be hours old and still true.
+      if (s.readingAge != null && s.readingAge > 5 * 60_000) notes.push(`read ${agoText(s.readingAge)}`);
+      else if (s.observedAt && Date.now() - s.observedAt > 30 * 60_000) {
+        notes.push(`last recorded turn ${agoText(Date.now() - s.observedAt)}`);
+      }
+      if (notes.length) card.appendChild(el('div', 'usage-note', notes.join(' · ')));
+    }
+    box.appendChild(card);
+  }
+
+  box.appendChild(el('div', 'scope-sub',
+    'Codex reads its own logs live. Claude needs an OAuth token, which the studio never reads — ' +
+    'run `acs-usage` to refresh its reading.'));
   c.appendChild(box);
 }
 
@@ -1981,6 +2126,7 @@ $('drawer-close').onclick = closeDrawer;
 $('scrim').onclick = closeDrawer;
 $('btn-scope').onclick = openScope;
 $('btn-mcp').onclick = openMcp;
+$('btn-usage').onclick = openUsage;
 $('btn-trash').onclick = openTrash;
 $('btn-delete').onclick = deleteOpenEntry;
 $('btn-copy').onclick = copyToOtherHarness;
