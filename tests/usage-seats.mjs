@@ -5,7 +5,7 @@ import path from 'node:path';
 import {
   VENDORS, slugify, validateSeat, loadSeats, saveSeats, addSeat, removeSeat,
   detectSeats, readSeat, snapshot, createSeat, createCodexHome, uniqueSeatId, seatHomeRoot,
-  shellQuote, renderSnapshot, writeSnapshot, snapshotPath,
+  shellQuote, renderSnapshot, writeSnapshot, snapshotPath, snapshot as takeSnapshot,
 } from '../lib/usage/seats.js';
 
 let pass = 0, fail = 0;
@@ -311,6 +311,57 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
   ok('the first codex seat adopts ~/.codex even with no sessions yet',
      r.adopted === true && r.seat.home === path.join(dir, '.codex'), r.seat.home);
   ok('...so no second home is created for it', !fs.existsSync(path.join(seatHomeRoot(dir), r.seat.id)));
+}
+
+// --- a rate limit must not erase the number ---------------------------------
+{
+  // Pressing Refresh during a 429 overwrote the snapshot with a failure, so the
+  // reading vanished and never came back — latching on prior.ok alone is not
+  // enough once the bad write has landed.
+  const dir = fs.mkdtempSync(path.join(tmp, 'latch-'));
+  const snapFile = path.join(dir, 'usage-snapshot.json');
+  const seat = { id: 'c', vendor: 'claude', label: 'Claude' };
+  let mode = 'ok';
+  const fetchImpl = async () => (mode === 'ok'
+    ? { ok: true, status: 200, json: async () => ({ limits: [
+        { kind: 'session', group: 'session', percent: 42, resets_at: null, is_active: true } ] }) }
+    : { ok: false, status: 429, headers: { get: () => null } });
+  const take = async () => {
+    const snap = await takeSnapshot({ seats: [seat], snapshotFile: snapFile,
+                                  sources: [() => ({ token: 't', source: 'stub' })], fetchImpl });
+    writeSnapshot(snap, snapFile);
+    return snap.seats[0];
+  };
+
+  ok('a good reading is recorded', (await take()).windows[0].usedPercent === 42);
+  mode = '429';
+  const once = await take();
+  ok('a rate limit keeps the last good reading', once.ok === true && once.windows[0].usedPercent === 42, once.reason);
+  ok('...and says it is held over', /rate limiting/.test(once.staleReason || ''), once.staleReason);
+  const twice = await take();
+  ok('it survives repeated rate limits', twice.ok === true && twice.windows[0].usedPercent === 42);
+  ok('"retry in 0s" is never shown', !/retry in 0s/.test(JSON.stringify(twice)));
+}
+
+// --- a seat registered without a home still matches its stored reading ------
+{
+  // Readers fill `home` in, so a seat added without one produced a stored entry
+  // whose home did not match the registry — and the reading was dropped as if
+  // it belonged to another account.
+  const dir = fs.mkdtempSync(path.join(tmp, 'homematch-'));
+  const f = path.join(dir, 'seats.json');
+  const snapFile = path.join(dir, 'usage-snapshot.json');
+  saveSeats([{ id: 'g', vendor: 'grok', label: 'Grok' }], f);            // no home
+  writeSnapshot({ takenAt: Date.now(), seats: [
+    { seatId: 'g', vendor: 'grok', label: 'Grok', home: defaultGrokHomePath(), ok: true,
+      windows: [{ label: 'Weekly', usedPercent: 3 }] } ] }, snapFile);
+  const out = await renderSnapshot({ file: f, snapshotFile: snapFile });
+  const g = out.seats.find((x) => x.seatId === 'g');
+  ok('a home-less seat still matches its stored reading',
+     g.ok === true && g.windows[0]?.usedPercent === 3, g.reason);
+}
+function defaultGrokHomePath() {
+  return process.env.GROK_HOME || path.join(os.homedir(), '.grok');
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

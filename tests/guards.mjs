@@ -340,8 +340,9 @@ function guardB() {
         }
         const argvMatch = /^[^,]+,\s*(\[[^\]]*\])/.exec(text);
         const argv = argvMatch ? argvMatch[1].replace(/\s+/g, '') : null;
-        if (!argv || !/^\['login'(,'status')?\]$/.test(argv)) {
-          hits.push(`${file}:${call.line} argv must be a literal ['login'] or ['login','status'], ` +
+        if (!argv || !/^\['(login'(,'status')?|logout')\]$/.test(argv)) {
+          hits.push(`${file}:${call.line} argv must be a literal ['login'], ['login','status'] ` +
+                    `or ['logout'], ` +
                     `got ${argv ?? 'nothing parseable'} — a prompt or exec here would be an ` +
                     `uncontained model turn`);
         }

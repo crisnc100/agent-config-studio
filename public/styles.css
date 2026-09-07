@@ -668,3 +668,7 @@ a { color: var(--accent); }
 /* Signed in but idle is a waiting state, not a fault — it should not wear the
    same warning colour as a seat that was never connected. */
 .usage-offline-tag.waiting { color: var(--codex); border-color: var(--codex); }
+
+/* A duplicate seat is a configuration mistake to fix, not a transient state. */
+.usage-offline-tag.duplicate { color: var(--red); border-color: var(--red); opacity: 1; }
+.usage-hint-link { font-size: 12px; color: var(--accent); }

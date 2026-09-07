@@ -1136,15 +1136,15 @@ let usageTimer = null;
  * studio starts it, opens the URL, and polls until the seat has credentials.
  * The token lands in the seat's own auth.json — the studio never sees it.
  */
-function connectRow(seat) {
+function connectRow(seat, { reauth = false } = {}) {
   const row = el('div', 'usage-hint');
-  const btn = el('button', 'btn', 'Sign in with ChatGPT');
+  const btn = el('button', 'btn', reauth ? 'Sign in as a different account' : 'Sign in with ChatGPT');
   const status = el('span', 'usage-hint-label', '');
 
   btn.onclick = async () => {
     btn.disabled = true; status.textContent = 'starting sign-in…';
     let res;
-    try { res = await api('POST', '/api/usage/connect', { id: seat.seatId }); }
+    try { res = await api('POST', '/api/usage/connect', { id: seat.seatId, reauth }); }
     catch (e) { btn.disabled = false; status.textContent = ''; return notice('error', e.message); }
     if (res.error) { btn.disabled = false; status.textContent = ''; return notice('error', res.error); }
 
@@ -1362,13 +1362,16 @@ async function paintUsage() {
       // worked is the worst thing this panel could do.
       // Three states, not two. A seat whose vendor publishes no quota is
       // connected and working — calling it "not connected" is simply false.
-      const noQuota = s.noQuota === true && s.signedIn === true;
-      const waiting = !noQuota && s.signedIn === true;
+      const duplicate = Boolean(s.duplicateOf);
+      const noQuota = !duplicate && s.noQuota === true && s.signedIn === true;
+      const waiting = !duplicate && !noQuota && s.signedIn === true;
       const why = el('div', 'usage-offline');
       const tag = el('span', 'usage-offline-tag',
-        noQuota ? 'connected · no quota published'
+        duplicate ? 'duplicate account'
+          : noQuota ? 'connected · no quota published'
           : waiting ? 'signed in · no usage yet' : 'not connected');
       if (waiting || noQuota) tag.classList.add('waiting');
+      if (duplicate) tag.classList.add('duplicate');
       why.appendChild(tag);
       why.appendChild(el('span', 'usage-offline-why', s.reason || ''));
       card.appendChild(why);
@@ -1385,7 +1388,10 @@ async function paintUsage() {
         if (bits.length) card.appendChild(el('div', 'usage-note', bits.join(' · ')));
       }
       if (s.vendor === 'codex' && s.home) {
-        card.appendChild(waiting ? waitingHint() : connectRow(s));
+        // A duplicate is signed in — it just needs a DIFFERENT account, so the
+        // affordance is re-auth, not sign-in.
+        card.appendChild(s.duplicateOf ? connectRow(s, { reauth: true })
+          : waiting ? waitingHint() : connectRow(s));
       }
     } else {
       for (const w of s.windows) {
@@ -1414,6 +1420,8 @@ async function paintUsage() {
       }
       // A reading is only as good as its age. Codex readings come from the last
       // turn that ran, so an idle seat's number can be hours old and still true.
+      // A held-over reading must say so, or a stale number looks current.
+      if (s.staleReason) notes.push(`${s.staleReason} — showing the last good reading`);
       if (s.readingAge != null && s.readingAge > 5 * 60_000) notes.push(`read ${agoText(s.readingAge)}`);
       else if (s.observedAt && Date.now() - s.observedAt > 30 * 60_000) {
         notes.push(`last recorded turn ${agoText(Date.now() - s.observedAt)}`);

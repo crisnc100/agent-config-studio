@@ -199,7 +199,8 @@ ok('every source returns null rather than throwing on a bad path',
     skipped('live read of the real usage endpoint', 'no Claude credential available here');
   } else {
     const r = await readClaudeUsage();
-    if (!r.ok && /rejected|failed/.test(r.reason)) {
+    // A rate limit is the endpoint's state, not a regression in this code.
+    if (!r.ok && /rejected|failed|rate limiting/.test(r.reason)) {
       skipped('live read of the real usage endpoint', r.reason);
     } else {
       ok('live: endpoint returns windows', r.ok === true && r.windows.length > 0, r.reason || '');

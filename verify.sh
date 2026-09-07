@@ -8,6 +8,7 @@ node tests/guards.mjs
 node tests/usage-codex.mjs
 node tests/usage-claude.mjs
 node tests/usage-grok.mjs
+node tests/usage-identity.mjs
 node tests/usage-seats.mjs
 node tests/usage-routes.mjs
 node tests/usage-cli.mjs

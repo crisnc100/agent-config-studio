@@ -260,13 +260,13 @@ export function createApp(opts = {}) {
    * registry, never taken from the request.
    */
   'POST /api/usage/connect': async (req) => {
-    const { id } = await readBody(req);
+    const { id, reauth } = await readBody(req);
     const seat = loadSeats().seats.find((x) => x.id === id);
     if (!seat) { const e = new Error(`no seat with id "${id}"`); e.status = 404; throw e; }
     if (seat.vendor !== 'codex') {
       const e = new Error(`${seat.vendor} seats are not connected this way`); e.status = 400; throw e;
     }
-    return startLogin({ seatId: seat.id, home: seat.home });
+    return startLogin({ seatId: seat.id, home: seat.home, reauth: reauth === true });
   },
 
   'POST /api/usage/connect/state': async (req) => {
