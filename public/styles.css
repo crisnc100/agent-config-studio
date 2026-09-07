@@ -627,3 +627,40 @@ a { color: var(--accent); }
 }
 .usage-offline-why { color: var(--muted); font-size: 12px; }
 .usage-note { color: var(--muted); font: 11px var(--mono); margin-top: 6px; }
+
+.usage-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.usage-actions { display: flex; gap: 6px; flex: none; }
+.usage-actions .btn { padding: 3px 10px; font-size: 12px; }
+
+.usage-add {
+  margin: 14px 0 22px; padding: 14px 16px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.usage-add-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.usage-add-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.usage-add-vendor, .usage-add-label {
+  padding: 7px 10px; background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 7px; outline: none; font: 12px var(--sans);
+}
+.usage-add-label { flex: 1; min-width: 200px; }
+.usage-add-vendor:focus, .usage-add-label:focus { border-color: var(--accent-dim); }
+.usage-add-note { color: var(--muted); font-size: 11px; margin-top: 10px; line-height: 1.5; }
+
+/* Kept quiet and only meaningful on hover: removing a seat is rare, and a
+   prominent × next to live numbers invites a misclick. */
+.usage-drop {
+  margin-left: auto; flex: none; background: none; border: 0; cursor: pointer;
+  color: var(--muted); font-size: 15px; line-height: 1; padding: 0 4px; opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.usage-seat:hover .usage-drop { opacity: 0.6; }
+.usage-drop:hover { color: var(--red); opacity: 1; }
+
+.usage-hint { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.usage-hint-label { color: var(--muted); font-size: 11px; }
+.usage-hint-cmd {
+  font: 11px var(--mono); color: var(--text-dim);
+  background: var(--panel-3); border-radius: 5px; padding: 3px 8px;
+  overflow-x: auto; max-width: 100%;
+}
+.usage-hint-copy { padding: 2px 8px; font-size: 11px; }

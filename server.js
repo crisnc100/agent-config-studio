@@ -14,7 +14,8 @@ import { runAssist, listActions } from './lib/assist.js';
 import { streamTurn, parseEdits, resolveMentions } from './lib/chat.js';
 import { detectHarnesses, HARNESSES } from './lib/harness.js';
 import { createWatcher, snapshotOf, diffSnapshots } from './lib/watch.js';
-import { renderSnapshot } from './lib/usage/seats.js';
+import { renderSnapshot, createSeat, removeSeat } from './lib/usage/seats.js';
+import { refreshSnapshot } from './lib/usage/refresh.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -210,6 +211,44 @@ export function createApp(opts = {}) {
     try { return await renderSnapshot(); }
     catch (e) { return { takenAt: Date.now(), storedAt: null, seats: [], error: e.message }; }
   },
+
+  /**
+   * Register a seat. A codex seat gets its own CODEX_HOME created for it (or
+   * adopts ~/.codex if no seat has claimed it yet) and comes back with the one
+   * login command to run — the studio never performs the login itself, because
+   * the OAuth flow needs a browser and the credential must not pass through
+   * here.
+   *
+   * Only vendor and label are accepted. The home is always derived server-side
+   * from the generated id: taking a path from the request body would turn this
+   * into a directory-creation primitive.
+   */
+  'POST /api/usage/seats': async (req) => {
+    const { vendor, label } = await readBody(req);
+    try { return createSeat({ vendor, label }); }
+    catch (e) { const err = new Error(e.message); err.status = 400; throw err; }
+  },
+
+  /**
+   * Unregister a seat. The seat's home is deliberately left on disk — it holds
+   * a real login and its session history, and dropping a row from a list must
+   * never destroy credentials. Removing the directory stays a manual act.
+   */
+  'POST /api/usage/seats/remove': async (req) => {
+    const { id } = await readBody(req);
+    try { removeSeat(id); return { removed: id }; }
+    catch (e) { const err = new Error(e.message); err.status = 404; throw err; }
+  },
+
+  /**
+   * Take a fresh reading for the seats that need a credential.
+   *
+   * Spawned as a child process on purpose: the token is read by the CLI and
+   * written to the snapshot, and never enters this process. Same shape as the
+   * assist path, which shells out to the harness CLI rather than handling auth.
+   * Fixed argv — nothing from the request reaches it.
+   */
+  'POST /api/usage/refresh': async () => refreshSnapshot(),
 
   'GET /api/mcp': async () => {
     const out = { global: [], codex: [], note: null };

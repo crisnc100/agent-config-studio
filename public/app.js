@@ -1122,6 +1122,72 @@ async function openTrash() {
 
 let usageTimer = null;
 
+/**
+ * A command the user has to run in their own terminal.
+ *
+ * The studio never performs a login: the OAuth flow needs a browser, and the
+ * credential must not pass through here. So the honest affordance is the exact
+ * command, ready to copy.
+ */
+function loginHint(command) {
+  const row = el('div', 'usage-hint');
+  row.appendChild(el('span', 'usage-hint-label', 'run this to connect:'));
+  const code = el('code', 'usage-hint-cmd', command);
+  row.appendChild(code);
+  const copy = el('button', 'btn ghost usage-hint-copy', 'Copy');
+  copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(command); copy.textContent = 'Copied'; }
+    catch { copy.textContent = 'Copy failed'; }
+    setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
+  };
+  row.appendChild(copy);
+  return row;
+}
+
+function addSeatForm() {
+  const form = el('div', 'usage-add');
+  form.appendChild(el('div', 'usage-add-title', 'Track another subscription'));
+
+  const row = el('div', 'usage-add-row');
+  const vendor = document.createElement('select');
+  vendor.className = 'usage-add-vendor';
+  for (const [value, text] of [['codex', 'Codex (ChatGPT)'], ['claude', 'Claude'], ['grok', 'Grok']]) {
+    const o = document.createElement('option');
+    o.value = value; o.textContent = text;
+    vendor.appendChild(o);
+  }
+  const label = document.createElement('input');
+  label.className = 'usage-add-label';
+  label.placeholder = 'Name it — e.g. "Codex (work)"';
+  label.maxLength = 60;
+
+  const save = el('button', 'btn', 'Add');
+  const submit = async () => {
+    if (!label.value.trim()) return label.focus();
+    save.disabled = true;
+    let res;
+    try { res = await api('POST', '/api/usage/seats', { vendor: vendor.value, label: label.value.trim() }); }
+    catch (e) { save.disabled = false; return notice('error', e.message); }
+    S.usageAdding = false;
+    await paintUsage();
+    if (res.loginCommand) {
+      notice('info', `Seat added. Run the login command shown on "${res.seat.label}" to connect it.`);
+    } else if (res.note) {
+      notice('info', res.note);
+    }
+  };
+  save.onclick = submit;
+  label.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+
+  row.appendChild(vendor); row.appendChild(label); row.appendChild(save);
+  form.appendChild(row);
+  form.appendChild(el('div', 'usage-add-note',
+    'A second Codex seat gets its own home, sharing your config by symlink — only the login ' +
+    'and session history differ. Grok publishes no usage data, so it will read as not connected.'));
+  return form;
+}
+
+
 /** A seat's headroom is set by its tightest window — the first one to stop you. */
 function seatHeadroom(s) {
   if (!s.ok || !s.windows.length) return null;
@@ -1177,7 +1243,28 @@ async function paintUsage() {
 
   c.innerHTML = '';
   const box = el('div', 'scope');
-  box.appendChild(el('h2', null, 'Subscription usage'));
+
+  const panelHead = el('div', 'usage-head');
+  panelHead.appendChild(el('h2', null, 'Subscription usage'));
+  const actions = el('div', 'usage-actions');
+
+  const refresh = el('button', 'btn ghost', 'Refresh');
+  refresh.onclick = async () => {
+    refresh.disabled = true; refresh.textContent = 'Refreshing…';
+    // The reading Claude needs a token for is taken by a child process, so the
+    // credential never enters the studio. It can take a second.
+    try { await api('POST', '/api/usage/refresh'); } catch (e) { notice('error', e.message); }
+    await paintUsage();
+  };
+  actions.appendChild(refresh);
+
+  const addBtn = el('button', 'btn ghost', '+ Add seat');
+  addBtn.onclick = () => { S.usageAdding = !S.usageAdding; paintUsage(); };
+  actions.appendChild(addBtn);
+  panelHead.appendChild(actions);
+  box.appendChild(panelHead);
+
+  if (S.usageAdding) box.appendChild(addSeatForm());
 
   if (!seats.length) {
     box.appendChild(el('div', 'scope-sub',
@@ -1205,11 +1292,24 @@ async function paintUsage() {
     title.appendChild(el('span', 'usage-seat-meta', meta));
     card.appendChild(title);
 
+    const drop = el('button', 'usage-drop', '×');
+    drop.title = 'Stop tracking this seat';
+    drop.onclick = async () => {
+      // Unregisters only. The seat's home holds a real login and its history,
+      // so removing a row from a list must never destroy credentials.
+      if (!confirm(`Stop tracking "${s.label}"?\n\nIts login and history stay on disk.`)) return;
+      try { await api('POST', '/api/usage/seats/remove', { id: s.seatId }); }
+      catch (e) { return notice('error', e.message); }
+      paintUsage();
+    };
+    title.appendChild(drop);
+
     if (!s.ok) {
       const why = el('div', 'usage-offline');
       why.appendChild(el('span', 'usage-offline-tag', 'not connected'));
       why.appendChild(el('span', 'usage-offline-why', s.reason || ''));
       card.appendChild(why);
+      if (s.vendor === 'codex' && s.home) card.appendChild(loginHint(`CODEX_HOME=${s.home} codex login`));
     } else {
       for (const w of s.windows) {
         const row = el('div', 'usage-row');

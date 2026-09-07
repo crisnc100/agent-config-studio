@@ -271,6 +271,11 @@ function guardB() {
     const allowed = {
       'lib/history.js': { fns: new Set(['exec', 'execFile']), bins: new Set(['git']) },
       'lib/worktree.js': { fns: new Set(['exec', 'execFile']), bins: new Set(['git', 'zsh']) },
+      // The usage refresh runs our own CLI so a credential never enters the
+      // studio process. Held to a STRICTER rule than the entries above: the
+      // executable must be process.execPath literally, so it can never resolve
+      // a name on PATH and can never become a harness spawn.
+      'lib/usage/refresh.js': { fns: new Set(['spawn']), execPathOnly: true },
     }[file];
 
     for (const call of calls) {
@@ -283,6 +288,17 @@ function guardB() {
         continue;
       }
       const cal = calleeLiteral(src, call);
+      if (allowed.execPathOnly) {
+        // Must be the running node binary itself, with a fixed argv built from
+        // a module-local constant — never a name resolved on PATH, and never
+        // anything an HTTP request could influence.
+        const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
+        if (!/^process\.execPath\s*,\s*\[\s*CLI\s*,\s*'--json'\s*\]/.test(text)) {
+          hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 60)}…) — this file may spawn only ` +
+                    `process.execPath with the fixed argv [CLI, '--json']`);
+        }
+        continue;
+      }
       if (cal.kind === 'literal' && !allowed.bins.has(cal.value)) {
         hits.push(`${file}:${call.line} ${call.fn}('${cal.value}') — not an allowed binary for this file`);
       }
@@ -297,6 +313,25 @@ function guardB() {
     hits.join('\n') || 'ok',
     WHY.b,
   );
+}
+
+/** Full source text of a call's argument list, brackets and quotes respected. */
+function callArgsText(src, call) {
+  let i = src.indexOf('(', call.index);
+  if (i === -1) return null;
+  const start = i + 1;
+  let depth = 0;
+  for (; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c; i++;
+      while (i < src.length && src[i] !== q) { if (src[i] === '\\') i++; i++; }
+      continue;
+    }
+    if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') { depth--; if (depth === 0) return src.slice(start, i); }
+  }
+  return null;
 }
 
 function parseContainmentArrays(src) {

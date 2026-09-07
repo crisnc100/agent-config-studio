@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   VENDORS, slugify, validateSeat, loadSeats, saveSeats, addSeat, removeSeat,
-  detectSeats, readSeat, snapshot,
+  detectSeats, readSeat, snapshot, createSeat, createCodexHome, uniqueSeatId, seatHomeRoot,
 } from '../lib/usage/seats.js';
 
 let pass = 0, fail = 0;
@@ -140,6 +140,59 @@ function registryPathIn(h) { return path.join(h, '.agent-config-studio', 'seats.
 }
 
 ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,grok');
+
+// --- creating seats from the UI ---------------------------------------------
+{
+  const home = path.join(tmp, 'createhome');
+  const primary = path.join(home, '.codex');
+  fs.mkdirSync(path.join(primary, 'sessions'), { recursive: true });
+  fs.writeFileSync(path.join(primary, 'config.toml'), 'model = "x"\n');
+  fs.writeFileSync(path.join(primary, 'AGENTS.md'), '# agents\n');
+  const f = reg();
+
+  // The first codex seat adopts ~/.codex rather than demanding a second login
+  // the user does not need.
+  const first = createSeat({ vendor: 'codex', label: 'Codex (main)', file: f, home });
+  ok('first codex seat adopts the existing home', first.adopted === true && first.seat.home === primary, first.seat.home);
+  ok('adopting asks for no login', first.loginCommand === null);
+
+  const second = createSeat({ vendor: 'codex', label: 'Codex (work)', file: f, home });
+  ok('second codex seat gets its own home',
+     second.seat.home === path.join(seatHomeRoot(home), 'codex-work'), second.seat.home);
+  ok('second seat comes back with its login command', /codex login$/.test(second.loginCommand || ''));
+  ok('config is shared by symlink, not copied',
+     second.linked.includes('config.toml') && fs.lstatSync(path.join(second.seat.home, 'config.toml')).isSymbolicLink());
+  ok('the symlink resolves to the primary config',
+     fs.readFileSync(path.join(second.seat.home, 'config.toml'), 'utf8') === 'model = "x"\n');
+  // auth.json and sessions are what make it a separate seat.
+  ok('auth.json is NOT shared', !fs.existsSync(path.join(second.seat.home, 'auth.json')));
+  ok('sessions are NOT shared', !fs.existsSync(path.join(second.seat.home, 'sessions')));
+
+  const both = loadSeats(f).seats;
+  ok('both codex seats are registered with different homes',
+     both.length === 2 && both[0].home !== both[1].home);
+
+  // A caller-supplied path must never become a directory-creation primitive.
+  const sneaky = createSeat({ vendor: 'codex', label: '../../escape', file: f, home });
+  ok('a traversal label cannot escape the seat root',
+     sneaky.seat.home.startsWith(seatHomeRoot(home)) && !sneaky.seat.home.includes('..'), sneaky.seat.home);
+
+  let threw = null;
+  try { createSeat({ vendor: 'evil', label: 'x', file: f, home }); } catch (e) { threw = e; }
+  ok('an unknown vendor is refused', threw !== null && /vendor must be/.test(threw.message));
+  threw = null;
+  try { createSeat({ vendor: 'grok', label: '   ', file: f, home }); } catch (e) { threw = e; }
+  ok('a blank label is refused', threw !== null && /label is required/.test(threw.message));
+
+  const g = createSeat({ vendor: 'grok', label: 'Grok', file: f, home });
+  ok('a grok seat registers but says it can never report',
+     g.seat.vendor === 'grok' && /never|not connected/.test(g.note || ''), g.note);
+
+  const long = createSeat({ vendor: 'grok', label: 'x'.repeat(200), file: f, home });
+  ok('an overlong label is truncated, not stored whole', long.seat.label.length <= 60);
+
+  ok('ids never collide', uniqueSeatId('codex-work', f) !== 'codex-work');
+}
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed\n`);
