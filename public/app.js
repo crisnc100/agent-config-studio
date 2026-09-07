@@ -1148,8 +1148,19 @@ function connectRow(seat) {
     catch (e) { btn.disabled = false; status.textContent = ''; return notice('error', e.message); }
     if (res.error) { btn.disabled = false; status.textContent = ''; return notice('error', res.error); }
 
-    window.open(res.url, '_blank', 'noopener');
-    status.textContent = 'waiting for you to finish in the other tab…';
+    // The window.open happens after an await, so the browser's user-activation
+    // window may have expired and the popup be blocked silently. Always render
+    // the link too, so a blocked tab is a visible next step rather than a UI
+    // that claims to be waiting for something that never opened.
+    const opened = window.open(res.url, '_blank', 'noopener');
+    const link = el('a', 'usage-hint-link', 'Open the sign-in page');
+    link.href = res.url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    row.appendChild(link);
+    status.textContent = opened
+      ? 'waiting for you to finish in the other tab…'
+      : 'your browser blocked the popup — use the link';
 
     // Poll rather than hold a request open for the whole OAuth round trip.
     const started = Date.now();

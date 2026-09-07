@@ -7,8 +7,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  labelForWindow, listRollouts, lastRateLimits, readCodexUsage, defaultCodexHome, numericPercent,
+  labelForWindow, listRollouts, lastRateLimits, readCodexUsage, defaultCodexHome,
 } from '../lib/usage/codex.js';
+import { numericPercent } from '../lib/usage/percent.js';
 
 let pass = 0, fail = 0, skip = 0;
 const ok = (name, cond, detail = '') => {

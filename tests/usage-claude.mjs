@@ -5,8 +5,9 @@
  */
 import {
   labelForLimit, shapeUsage, resolveCredential, readClaudeUsage,
-  fromEnv, fromKeychain, fromCredentialsFile, DEFAULT_SOURCES, numericPercent,
+  fromEnv, fromKeychain, fromCredentialsFile, DEFAULT_SOURCES,
 } from '../lib/usage/claude.js';
+import { numericPercent } from '../lib/usage/percent.js';
 
 let pass = 0, fail = 0, skip = 0;
 const ok = (name, cond, detail = '') => {

@@ -83,6 +83,39 @@ ok('HOME is redirected', home !== realHome);
   ok('an unknown subcommand prints help and exits non-zero', /EXIT 2/.test(out), out.slice(0, 60));
 }
 
+// --- the advertised entrypoint exists ---------------------------------------
+{
+  // Onboarding prints `acs usage`. Testing bin/usage.mjs directly never
+  // exercised that, so the advertised command could stay unwired.
+  const acs = path.join(path.dirname(CLI), 'acs');
+  ok('bin/acs exists and is executable', fs.existsSync(acs) && (fs.statSync(acs).mode & 0o111) !== 0);
+  const out = (() => {
+    try {
+      return execFileSync(acs, ['usage', '--json'],
+        { encoding: 'utf8', env: { ...process.env, HOME: home, NO_COLOR: '1' } });
+    } catch (e) { return `EXIT ${e.status}\n${e.stdout || ''}${e.stderr || ''}`; }
+  })();
+  let parsed = null;
+  try { parsed = JSON.parse(out); } catch { /* stays null */ }
+  ok('`acs usage --json` runs the tracker', parsed !== null && Array.isArray(parsed.seats), out.slice(0, 120));
+}
+
+// --- codex-home must skip a preserved directory -----------------------------
+{
+  // Removal preserves the home. The CLI had its own id allocator that saw only
+  // the registry, so re-creating under the same label hit "already exists".
+  fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
+  const first = run('codex-home', 'Work');
+  ok('codex-home creates a seat', /created/.test(first), first.slice(0, 120));
+  const id = JSON.parse(run('--json')).seats.map((s2) => s2.seatId).find((x) => x.startsWith('work'));
+  run('rm', id);
+  const second = run('codex-home', 'Work');
+  ok('the same label works again after removal', /created/.test(second) && !/already exists/.test(second),
+     second.slice(0, 160));
+  const dirs = fs.readdirSync(path.join(home, '.codex-seats'));
+  ok('it got a fresh directory rather than colliding', dirs.length === 2, JSON.stringify(dirs));
+}
+
 fs.rmSync(home, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

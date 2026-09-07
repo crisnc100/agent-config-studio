@@ -67,6 +67,34 @@ const NOW = Date.parse('2026-09-07T18:00:00.000Z');
   ok('but every session is still counted as a session', r.activity.sessions === 2);
   // Opening every updates.jsonl on each 60s poll would be the wrong shape.
   ok('an out-of-window session is not opened', r.activity.turns === 1);
+
+  // The real bug: a RESUMED old session has a recent summary mtime, so it
+  // passes the prefilter — and summing the whole file dragged days of history
+  // into a figure labelled "the last 24 hours".
+  const resumed = mkHome('resumed');
+  fs.writeFileSync(path.join(resumed, 'auth.json'), '{"k":1}');
+  mkSession(resumed, 'p', 'long', [
+    turn(100000, 100000, NOW - 5 * 24 * 3600_000),   // last week
+    turn(100000, 100000, NOW - 3 * 24 * 3600_000),   // still old
+    turn(700, 50, NOW - 1800_000),                   // today
+  ], NOW - 1800_000);                                // resumed just now
+  const rr = readGrokUsage({ grokHome: resumed, now: NOW });
+  ok('a resumed session contributes only its in-window turns',
+     rr.activity.turns === 1 && rr.activity.inputTokens === 700,
+     `${rr.activity.turns} turns / ${rr.activity.inputTokens} tokens`);
+  ok('...and last-active still reflects the recent turn',
+     rr.lastActiveAt === NOW - 1800_000, String(rr.lastActiveAt));
+
+  // A turn with no usable timestamp cannot be placed in the window.
+  const undated = mkHome('undated');
+  fs.writeFileSync(path.join(undated, 'auth.json'), '{"k":1}');
+  const d = path.join(undated, 'sessions', 'p', 's');
+  fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(d, 'summary.json'), '{}');
+  fs.writeFileSync(path.join(d, 'updates.jsonl'),
+    JSON.stringify({ usage: { inputTokens: 999, outputTokens: 1 } }) + '\n');
+  const ru = readGrokUsage({ grokHome: undated, now: NOW });
+  ok('an undated turn is left out rather than assumed recent', ru.activity.inputTokens === 0);
 }
 
 // --- malformed input ---------------------------------------------------------
@@ -128,8 +156,17 @@ const NOW = Date.parse('2026-09-07T18:00:00.000Z');
 
   // The same null-percent trap as the other readers: Number(null) is 0, which
   // would paint a full green bar for a quota we could not read.
-  const nul = shapeBilling({ config: { ...REAL.config, creditUsagePercent: null } });
-  ok('a null percent is refused, not shown as 0%', nul.ok === false && /creditUsagePercent/.test(nul.reason), nul.reason);
+  // Every one of these coerces to 0 through Number(), and 0% is a full green
+  // bar meaning "nothing used" for a quota we could not read.
+  for (const bad of [null, undefined, '', '   ', [], [5], {}, false, true, 'abc', NaN]) {
+    const r2 = shapeBilling({ config: { ...REAL.config, creditUsagePercent: bad } });
+    ok(`creditUsagePercent ${JSON.stringify(bad) ?? 'undefined'} is refused, not shown as 0%`,
+       r2.ok === false, JSON.stringify(r2.windows));
+  }
+  ok('a numeric string is still accepted',
+     shapeBilling({ config: { ...REAL.config, creditUsagePercent: '37' } }).windows[0].usedPercent === 37);
+  ok('a real zero is still zero',
+     shapeBilling({ config: { ...REAL.config, creditUsagePercent: 0 } }).windows[0].usedPercent === 0);
   ok('a missing config is refused', shapeBilling({}).ok === false);
   ok('a garbage reply does not throw', shapeBilling(null).ok === false);
 

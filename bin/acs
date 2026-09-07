@@ -14,6 +14,12 @@ is_acs() {
 }
 
 case "$1" in
+  usage)
+    # The studio's onboarding tells people to run `acs usage`, so it has to
+    # exist. Everything after the subcommand is forwarded verbatim.
+    shift
+    exec node "$DIR/bin/usage.mjs" "$@"
+    ;;
   stop)
     if is_acs; then
       # Only kill processes LISTENING on the port, not clients connected to it.

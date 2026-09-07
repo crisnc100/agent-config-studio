@@ -5,7 +5,7 @@ import path from 'node:path';
 import {
   VENDORS, slugify, validateSeat, loadSeats, saveSeats, addSeat, removeSeat,
   detectSeats, readSeat, snapshot, createSeat, createCodexHome, uniqueSeatId, seatHomeRoot,
-  shellQuote,
+  shellQuote, renderSnapshot, writeSnapshot, snapshotPath,
 } from '../lib/usage/seats.js';
 
 let pass = 0, fail = 0;
@@ -248,6 +248,69 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
   const r = createCodexHome({ label: 'Spaced', file: f, home });
   ok('the generated login command quotes the home',
      /CODEX_HOME='[^']*Alex Smith[^']*' codex login/.test(r.loginCommand), r.loginCommand);
+}
+
+// --- a reused id must not inherit the old seat's reading --------------------
+{
+  // Ids come from the label, so removing Claude "Work" and adding Grok "Work"
+  // reuses the id. Matching a cached reading by id alone rendered the old
+  // Claude quota under the new Grok seat.
+  const dir = fs.mkdtempSync(path.join(tmp, 'snapmatch-'));
+  const f = path.join(dir, 'seats.json');
+  const snapFile = path.join(dir, 'usage-snapshot.json');
+  saveSeats([{ id: 'work', vendor: 'grok', label: 'Work', home: path.join(dir, 'grokhome') }], f);
+  fs.mkdirSync(path.join(dir, 'grokhome', 'sessions'), { recursive: true });
+  writeSnapshot({ takenAt: Date.now(), seats: [
+    { seatId: 'work', vendor: 'claude', label: 'Work', ok: true,
+      windows: [{ label: 'Weekly (all models)', usedPercent: 77 }] },
+  ] }, snapFile);
+
+  const out = await renderSnapshot({ file: f, snapshotFile: snapFile });
+  const work = out.seats.find((x) => x.seatId === 'work');
+  ok('a reused id does not inherit the previous vendor\'s reading',
+     work.vendor === 'grok' && work.windows.every((w) => w.usedPercent !== 77),
+     JSON.stringify(work.windows));
+  ok('...and the mismatched seat reports rather than showing stale data', work.ok === false);
+}
+{
+  // Removal should also drop the stored reading outright.
+  const dir = fs.mkdtempSync(path.join(tmp, 'snapdrop-'));
+  const f = path.join(dir, 'seats.json');
+  const snapFile = path.join(dir, 'usage-snapshot.json');
+  saveSeats([{ id: 'gone', vendor: 'claude', label: 'Gone' }], f);
+  writeSnapshot({ takenAt: Date.now(), seats: [{ seatId: 'gone', vendor: 'claude', ok: true, windows: [] }] }, snapFile);
+  removeSeat('gone', f, snapFile);
+  const after = JSON.parse(fs.readFileSync(snapFile, 'utf8'));
+  ok('removing a seat drops its stored reading', !after.seats.some((x) => x.seatId === 'gone'));
+}
+
+// --- one Claude account, one Claude seat ------------------------------------
+{
+  // Every Claude seat resolves the same default credential, so a second one
+  // would show the first account's quota under a different label.
+  const dir = fs.mkdtempSync(path.join(tmp, 'claudedup-'));
+  const f = path.join(dir, 'seats.json');
+  createSeat({ vendor: 'claude', label: 'Personal', file: f, home: dir });
+  let threw = null;
+  try { createSeat({ vendor: 'claude', label: 'Work', file: f, home: dir }); } catch (e) { threw = e; }
+  ok('a second credential-less Claude seat is refused', threw !== null && /already tracked/.test(threw.message),
+     threw?.message);
+  ok('...and the refusal explains what would be needed', threw !== null && /CLAUDE_CONFIG_DIR/.test(threw.message));
+  ok('the first Claude seat is untouched', loadSeats(f).seats.length === 1);
+}
+
+// --- a bare machine adopts ~/.codex --------------------------------------
+{
+  // Requiring an existing sessions dir put the FIRST seat in .codex-seats on a
+  // fresh machine, so signing in from the panel authenticated a home that a
+  // plain `codex` never reads, and the tracked seat stayed empty forever.
+  const dir = fs.mkdtempSync(path.join(tmp, 'barehome-'));
+  fs.mkdirSync(path.join(dir, '.codex'), { recursive: true });   // logged in, never run
+  const f = path.join(dir, 'seats.json');
+  const r = createSeat({ vendor: 'codex', label: 'Codex', file: f, home: dir });
+  ok('the first codex seat adopts ~/.codex even with no sessions yet',
+     r.adopted === true && r.seat.home === path.join(dir, '.codex'), r.seat.home);
+  ok('...so no second home is created for it', !fs.existsSync(path.join(seatHomeRoot(dir), r.seat.id)));
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

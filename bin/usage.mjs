@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {
   loadSeats, addSeat, removeSeat, detectSeats, saveSeats, snapshot, slugify, registryPath,
-  writeSnapshot,
+  writeSnapshot, createCodexHome, uniqueSeatId,
 } from '../lib/usage/seats.js';
 
 /**
@@ -171,18 +171,12 @@ function add(args) {
   const home = homeIdx === -1 ? undefined : rest[homeIdx + 1];
   const label = (homeIdx === -1 ? rest : rest.slice(0, homeIdx)).join(' ');
   if (!vendor || !label) { console.error('usage: acs-usage add <claude|codex|grok> <label> [--home <path>]'); return 2; }
-  const seat = { id: uniqueId(slugify(label, vendor)), vendor, label, ...(home ? { home: path.resolve(home) } : {}) };
+  const seat = { id: uniqueSeatId(slugify(label, vendor)), vendor, label, ...(home ? { home: path.resolve(home) } : {}) };
   addSeat(seat);
   console.log(`registered ${seat.id} (${seat.vendor})`);
   return 0;
 }
 
-const uniqueId = (base) => {
-  const taken = new Set(loadSeats().seats.map((s) => s.id));
-  if (!taken.has(base)) return base;
-  let n = 2; while (taken.has(`${base}-${n}`)) n++;
-  return `${base}-${n}`;
-};
 
 /**
  * Create a second Codex home that shares configuration by symlink.
@@ -193,31 +187,21 @@ const uniqueId = (base) => {
  */
 function newCodexHome(args) {
   const label = args.filter((a) => !a.startsWith('--')).join(' ');
-  if (!label) { console.error('usage: acs-usage codex-home <label>'); return 2; }
-  const id = uniqueId(slugify(label, 'codex'));
-  const primary = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
-  const home = path.join(os.homedir(), '.codex-seats', id);
+  if (!label) { console.error('usage: acs usage codex-home <label>'); return 2; }
 
-  if (fs.existsSync(home)) { console.error(`${home} already exists`); return 1; }
-  fs.mkdirSync(home, { recursive: true });
+  // Delegate to the shared creator so this path also skips ids whose directory
+  // was preserved by an earlier removal. The CLI had its own id allocator that
+  // considered only the registry, so re-creating a removed seat under its old
+  // label failed here while succeeding in the studio.
+  let created;
+  try { created = createCodexHome({ label }); }
+  catch (e) { console.error(e.message); return 1; }
 
-  // Shared by symlink: configuration and instructions. NOT auth.json, and not
-  // sessions — those are what make the seats distinct.
-  const shared = ['config.toml', 'AGENTS.md', 'skills', 'rules', 'plugins'];
-  const linked = [];
-  for (const name of shared) {
-    const src = path.join(primary, name);
-    if (!fs.existsSync(src)) continue;
-    fs.symlinkSync(src, path.join(home, name));
-    linked.push(name);
-  }
-
-  addSeat({ id, vendor: 'codex', label, home });
-  console.log(`\n  ${C.green('created')} ${home}`);
-  console.log(`  ${C.grey(`shared by symlink: ${linked.join(', ') || 'nothing to share'}`)}`);
+  console.log(`\n  ${C.green('created')} ${created.seat.home}`);
+  console.log(`  ${C.grey(`shared by symlink: ${created.linked.join(', ') || 'nothing to share'}`)}`);
   console.log(`  ${C.grey('auth.json and sessions stay separate — that is what makes it a second seat')}\n`);
-  console.log(`  ${C.bold('next:')} CODEX_HOME=${home} codex login`);
-  console.log(`  ${C.bold('then:')} CODEX_HOME=${home} codex   ${C.grey('(to work on this seat)')}\n`);
+  console.log(`  ${C.bold('next:')} ${created.loginCommand}`);
+  console.log(`  ${C.grey('or sign in from the studio: Usage → the seat card')}\n`);
   return 0;
 }
 
