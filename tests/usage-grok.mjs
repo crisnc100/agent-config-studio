@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readGrokUsage, listSessions, sessionUsage, defaultGrokHome } from '../lib/usage/grok.js';
+import { shapeBilling } from '../lib/usage/grok-billing.js';
 
 let pass = 0, fail = 0, skip = 0;
 const ok = (n, c, d = '') => { if (c) { pass++; console.log(`  ok   ${n}`); } else { fail++; console.log(`  FAIL ${n}${d ? ` — ${d}` : ''}`); } };
@@ -102,6 +103,43 @@ const NOW = Date.parse('2026-09-07T18:00:00.000Z');
   // scale can be settled later; a dollar figure now would be a guess on screen.
   ok('raw cost ticks are carried', r.activity.costTicks === 48144000);
   ok('no dollar figure is derived', !/usd|dollar|costUsd\b/i.test(JSON.stringify(r).replace(/costUsdTicks|costTicks/gi, '')));
+}
+
+// --- the weekly quota, shaped ------------------------------------------------
+// Captured verbatim from a real _x.ai/billing reply on 2026-09-07.
+{
+  const REAL = { config: {
+    creditUsagePercent: 1,
+    currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY',
+      start: '2026-09-07T12:46:34.445561+00:00', end: '2026-09-14T12:46:34.445561+00:00' },
+    onDemandCap: { val: 0 }, onDemandUsed: { val: 0 }, prepaidBalance: { val: 0 },
+    isUnifiedBillingUser: true,
+    billingPeriodStart: '2026-09-07T12:46:34.445561+00:00',
+    billingPeriodEnd: '2026-09-14T12:46:34.445561+00:00' },
+    subscription_tier: 'SuperGrok' };
+
+  const b = shapeBilling(REAL);
+  ok('a real billing reply yields one weekly window', b.ok === true && b.windows.length === 1);
+  ok('percent carried', b.windows[0].usedPercent === 1);
+  ok('weekly is 10080 minutes', b.windows[0].windowMinutes === 10080);
+  ok('reset parsed from the period end',
+     b.windows[0].resetsAt === Date.parse('2026-09-14T12:46:34.445561+00:00'));
+  ok('tier carried', b.tier === 'SuperGrok');
+
+  // The same null-percent trap as the other readers: Number(null) is 0, which
+  // would paint a full green bar for a quota we could not read.
+  const nul = shapeBilling({ config: { ...REAL.config, creditUsagePercent: null } });
+  ok('a null percent is refused, not shown as 0%', nul.ok === false && /creditUsagePercent/.test(nul.reason), nul.reason);
+  ok('a missing config is refused', shapeBilling({}).ok === false);
+  ok('a garbage reply does not throw', shapeBilling(null).ok === false);
+
+  // A non-weekly period must not be mislabelled Weekly.
+  const monthly = shapeBilling({ config: { creditUsagePercent: 50,
+    currentPeriod: { type: 'USAGE_PERIOD_TYPE_MONTHLY',
+      start: '2026-09-01T00:00:00Z', end: '2026-10-01T00:00:00Z' } } });
+  ok('a non-weekly period is not labelled Weekly',
+     monthly.windows[0].label === 'Current period' && monthly.windows[0].windowMinutes !== 10080,
+     JSON.stringify(monthly.windows[0]));
 }
 
 // --- live --------------------------------------------------------------------

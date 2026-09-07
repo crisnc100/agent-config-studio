@@ -1223,7 +1223,7 @@ function addSeatForm() {
   form.appendChild(el('div', 'usage-add-note',
     'A second Codex seat gets its own home, sharing your config by symlink — only the login and ' +
     'session history differ. You sign in from here; no terminal needed. ' +
-    'A Grok seat shows activity rather than headroom — xAI publishes no subscription quota.'));
+    'A Grok seat reads its weekly quota through the Grok CLI, so sign in with `grok login` first.'));
   return form;
 }
 

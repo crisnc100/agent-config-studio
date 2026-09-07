@@ -108,13 +108,16 @@ function registryPathIn(h) { return path.join(h, '.agent-config-studio', 'seats.
 
 // --- reading -----------------------------------------------------------------
 {
-  const r = await readSeat({ id: 'g', vendor: 'grok', label: 'Grok' });
-  // The invariant that matters: a quota-less vendor must never rank as
-  // headroom, however much activity data it has.
-  ok('a grok seat never claims headroom',
-     r.ok === false && r.windows.length === 0 && r.noQuota === true, r.reason);
-  ok('...and explains why rather than reading as broken',
-     /no subscription quota/.test(r.reason), r.reason);
+  // An explicit empty home: without one this reads the real ~/.grok and its
+  // live quota, making the result depend on the machine running the tests.
+  const bare = path.join(tmp, 'grok-bare');
+  fs.mkdirSync(path.join(bare, 'sessions'), { recursive: true });
+  const r = await readSeat({ id: 'g', vendor: 'grok', label: 'Grok', home: bare });
+  // A seat that is not signed in cannot have a quota, so it must not rank.
+  ok('a signed-out grok seat never claims headroom',
+     r.ok === false && r.windows.length === 0, r.reason);
+  ok('...and says to sign in rather than reading as broken',
+     /not signed in/.test(r.reason), r.reason);
   const u = await readSeat({ id: 'u', vendor: 'mystery', label: 'X' });
   ok('unknown vendor reports rather than throwing', u.ok === false && /unknown vendor/.test(u.reason));
   ok('every reading is stamped with its seat', r.seatId === 'g' && r.label === 'Grok');
@@ -128,7 +131,9 @@ function registryPathIn(h) { return path.join(h, '.agent-config-studio', 'seats.
   fs.writeFileSync(path.join(day, 'rollout-2026-09-07T10-00-00-a.jsonl'),
     JSON.stringify({ info: { rate_limits: { primary: { used_percent: 33, window_minutes: 10080, resets_at: 1789047414 } } } }) + '\n');
 
-  const seats = [codexSeat('codex-1', home), { id: 'grok-1', vendor: 'grok', label: 'Grok' }];
+  const grokBare = path.join(tmp, 'grok-snap');
+  fs.mkdirSync(path.join(grokBare, 'sessions'), { recursive: true });
+  const seats = [codexSeat('codex-1', home), { id: 'grok-1', vendor: 'grok', label: 'Grok', home: grokBare }];
   const snap = await snapshot({ seats });
   ok('snapshot covers every seat', snap.seats.length === 2);
   ok('snapshot is stamped', typeof snap.takenAt === 'number');
@@ -197,8 +202,8 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
   ok('a blank label is refused', threw !== null && /label is required/.test(threw.message));
 
   const g = createSeat({ vendor: 'grok', label: 'Grok', file: f, home });
-  ok('a grok seat registers with a note setting the right expectation',
-     g.seat.vendor === 'grok' && /activity/.test(g.note || '') && /not headroom/.test(g.note || ''), g.note);
+  ok('a grok seat registers with a note pointing at the login it needs',
+     g.seat.vendor === 'grok' && /grok login/.test(g.note || ''), g.note);
 
   const long = createSeat({ vendor: 'grok', label: 'x'.repeat(200), file: f, home });
   ok('an overlong label is truncated, not stored whole', long.seat.label.length <= 60);

@@ -282,6 +282,11 @@ function guardB() {
       // exists to protect. argv must be a literal ['login'] / ['login','status']
       // with no prompt, no exec, and nothing caller-supplied.
       'lib/usage/connect.js': { fns: new Set(['spawn']), loginOnly: true },
+      // Grok's weekly quota, read over the agent protocol. Also a harness
+      // binary, also pinned: ['agent','stdio'] starts a JSON-RPC endpoint, and
+      // this module only ever writes `initialize` and `_x.ai/billing`. No
+      // session is created and no prompt is sent, so no model turn can run.
+      'lib/usage/grok-billing.js': { fns: new Set(['spawn']), agentStdioOnly: true },
     }[file];
 
     for (const call of calls) {
@@ -294,6 +299,21 @@ function guardB() {
         continue;
       }
       const cal = calleeLiteral(src, call);
+      if (allowed.agentStdioOnly) {
+        const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
+        if (!/^found\.binary\s*,/.test(text)) {
+          hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 50)}…) — must spawn the detected ` +
+                    `absolute binary (found.binary), never a PATH name`);
+        }
+        const am = /^[^,]+,\s*(\[[^\]]*\])/.exec(text);
+        const argv = am ? am[1].replace(/\s+/g, '') : null;
+        if (!argv || argv !== "['agent','stdio']") {
+          hits.push(`${file}:${call.line} argv must be the literal ['agent','stdio'], got ` +
+                    `${argv ?? 'nothing parseable'} — a prompt or model flag here would be an ` +
+                    `uncontained model turn`);
+        }
+        continue;
+      }
       if (allowed.loginOnly) {
         const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
         // The binary must come from detection, never a bare name or a string.
