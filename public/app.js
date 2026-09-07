@@ -1129,9 +1129,9 @@ let usageTimer = null;
  * credential must not pass through here. So the honest affordance is the exact
  * command, ready to copy.
  */
-function loginHint(command) {
+function loginHint(command, label = 'run this to connect:') {
   const row = el('div', 'usage-hint');
-  row.appendChild(el('span', 'usage-hint-label', 'run this to connect:'));
+  row.appendChild(el('span', 'usage-hint-label', label));
   const code = el('code', 'usage-hint-cmd', command);
   row.appendChild(code);
   const copy = el('button', 'btn ghost usage-hint-copy', 'Copy');
@@ -1305,11 +1305,21 @@ async function paintUsage() {
     title.appendChild(drop);
 
     if (!s.ok) {
+      // A signed-in seat with no turns yet is a different state from one that
+      // was never connected, and telling someone to re-run a login that already
+      // worked is the worst thing this panel could do.
+      const waiting = s.signedIn === true;
       const why = el('div', 'usage-offline');
-      why.appendChild(el('span', 'usage-offline-tag', 'not connected'));
+      const tag = el('span', 'usage-offline-tag', waiting ? 'signed in · no usage yet' : 'not connected');
+      if (waiting) tag.classList.add('waiting');
+      why.appendChild(tag);
       why.appendChild(el('span', 'usage-offline-why', s.reason || ''));
       card.appendChild(why);
-      if (s.vendor === 'codex' && s.home) card.appendChild(loginHint(`CODEX_HOME=${s.home} codex login`));
+      if (s.vendor === 'codex' && s.home) {
+        card.appendChild(waiting
+          ? loginHint(`CODEX_HOME=${s.home} codex exec "hi" < /dev/null`, 'run one turn to record a reading:')
+          : loginHint(`CODEX_HOME=${s.home} codex login`));
+      }
     } else {
       for (const w of s.windows) {
         const row = el('div', 'usage-row');
@@ -1328,7 +1338,10 @@ async function paintUsage() {
         card.appendChild(row);
       }
       const notes = [];
-      if (s.credits?.hasCredits) notes.push(`credits ${s.credits.balance}`);
+      if (s.credits?.hasCredits) {
+        notes.push(`credits ${s.credits.unlimited ? 'unlimited'
+          : (s.credits.balance == null ? 'available' : s.credits.balance)}`);
+      }
       if (s.extraUsage?.enabled) {
         notes.push(`extra usage ${s.extraUsage.usedCredits}/${s.extraUsage.monthlyLimit} ${s.extraUsage.currency}`);
       }

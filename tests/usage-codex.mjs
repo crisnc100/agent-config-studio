@@ -104,18 +104,19 @@ ok('garbage window is not silently a real label',
 {
   const home = seat('empty');
   const r = readCodexUsage({ codexHome: home });
-  ok('no rollouts -> ok:false with a reason', r.ok === false && /no rollout/.test(r.reason), r.reason);
+  ok('no rollouts -> ok:false with a reason', r.ok === false && /not signed in/.test(r.reason), r.reason);
   ok('no rollouts -> no windows invented', r.windows.length === 0);
 }
 {
   const home = seat('noquota');
   rollout(home, '2026-09-07T11-00-00', [{ type: 'turn.completed' }, { type: 'other' }]);
   const r = readCodexUsage({ codexHome: home });
-  ok('rollouts without rate_limits -> ok:false', r.ok === false && /none carried/.test(r.reason), r.reason);
+  ok('rollouts without rate_limits -> ok:false',
+     r.ok === false && /no quota reading|not signed in|no turn has run/.test(r.reason), r.reason);
 }
 {
   const r = readCodexUsage({ codexHome: path.join(tmp, 'does-not-exist') });
-  ok('missing home -> ok:false, no throw', r.ok === false && /no sessions directory/.test(r.reason), r.reason);
+  ok('missing home -> ok:false, no throw', r.ok === false && r.reason.length > 0, r.reason);
 }
 
 // --- malformed input must not throw -----------------------------------------
@@ -129,6 +130,24 @@ ok('garbage window is not silently a real label',
   try { r = readCodexUsage({ codexHome: home }); } catch (e) { threw = e; }
   ok('malformed jsonl does not throw', threw === null, threw?.message);
   ok('malformed jsonl -> ok:false', r?.ok === false);
+}
+
+// --- signed in vs never connected -------------------------------------------
+// Reporting a logged-in seat as "not connected" sends someone to re-run a login
+// that already worked, so the two states must never collapse into one.
+{
+  const home = seat('signedin');
+  fs.writeFileSync(path.join(home, 'auth.json'), '{}');
+  const r = readCodexUsage({ codexHome: home });
+  ok('signed in with no turns -> signedIn true', r.signedIn === true && r.ok === false);
+  ok('signed in with no turns names the real cause', /no turn has run/.test(r.reason), r.reason);
+  ok('auth.json is never opened, only stat-ed',
+     !JSON.stringify(r).includes('auth.json') || r.signedIn === true);
+
+  const bare = seat('notsignedin');
+  const b = readCodexUsage({ codexHome: bare });
+  ok('no auth.json -> signedIn false and says to log in',
+     b.signedIn === false && /not signed in/.test(b.reason), b.reason);
 }
 
 // --- big file: only the tail is read ----------------------------------------

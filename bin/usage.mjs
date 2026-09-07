@@ -78,7 +78,12 @@ async function gauge(argv) {
         const reset = w.resetsAt ? C.grey(` resets in ${until(w.resetsAt)}`) : '';
         console.log(`    ${bar(w.usedPercent)} ${pct}  ${w.label}${reset}`);
       }
-      if (s.credits?.hasCredits) console.log(`    ${C.grey(`credits: ${s.credits.balance}`)}`);
+      if (s.credits?.hasCredits) {
+        // balance is null on plans that report credits without a figure.
+        const b = s.credits.unlimited ? 'unlimited'
+          : (s.credits.balance == null ? 'available' : s.credits.balance);
+        console.log(`    ${C.grey(`credits: ${b}`)}`);
+      }
       if (s.extraUsage?.enabled) {
         console.log(`    ${C.grey(`extra usage: ${s.extraUsage.usedCredits}/${s.extraUsage.monthlyLimit} ${s.extraUsage.currency}`)}`);
       }
@@ -179,7 +184,12 @@ function newCodexHome(args) {
   return 0;
 }
 
-const [cmd, ...rest] = process.argv.slice(2);
+// A leading flag is not a subcommand. `acs-usage --json` must take a reading,
+// not print help — the studio's Refresh invokes exactly that, and treating it
+// as an unknown command made Refresh a silent no-op.
+const argv = process.argv.slice(2);
+const cmd = argv[0]?.startsWith('-') ? undefined : argv[0];
+const rest = cmd === undefined ? argv : argv.slice(1);
 const run = async () => {
   switch (cmd) {
     case undefined: case 'gauge': return gauge(rest);

@@ -664,3 +664,7 @@ a { color: var(--accent); }
   overflow-x: auto; max-width: 100%;
 }
 .usage-hint-copy { padding: 2px 8px; font-size: 11px; }
+
+/* Signed in but idle is a waiting state, not a fault — it should not wear the
+   same warning colour as a seat that was never connected. */
+.usage-offline-tag.waiting { color: var(--codex); border-color: var(--codex); }

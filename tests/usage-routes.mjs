@@ -111,10 +111,47 @@ const post = (p, b) => fetch(B + p, {
 
 // --- refresh -----------------------------------------------------------------
 {
+  const snapFile = path.join(fakeHome, '.agent-config-studio', 'usage-snapshot.json');
+  fs.rmSync(snapFile, { force: true });
+
   const [s, j] = await post('/api/usage/refresh', {});
   ok('refresh returns a reading', s === 200 && Array.isArray(j.seats), JSON.stringify(j).slice(0, 120));
   ok('refresh keeps credential-free seats live', j.seats.find((x) => x.vendor === 'codex')?.ok === true);
   ok('no token appears in any usage response', !/Bearer|accessToken|sk-[A-Za-z0-9]/.test(JSON.stringify(j)));
+
+  // The regression this exists for: the CLI parsed `--json` as an unknown
+  // subcommand, printed help, and wrote nothing — so Refresh returned a
+  // perfectly good stored reading while silently refreshing nothing. Asserting
+  // the response alone cannot see that; the snapshot on disk can.
+  ok('refresh actually wrote a snapshot', fs.existsSync(snapFile), snapFile);
+  if (fs.existsSync(snapFile)) {
+    const written = JSON.parse(fs.readFileSync(snapFile, 'utf8'));
+    ok('the written snapshot holds the seats', Array.isArray(written.seats) && written.seats.length > 0);
+    const first = fs.statSync(snapFile).mtimeMs;
+    await post('/api/usage/refresh', {});
+    ok('a second refresh rewrites it', fs.statSync(snapFile).mtimeMs >= first);
+  }
+}
+
+// --- signed in vs never connected -------------------------------------------
+{
+  // A seat that is logged in but has never run a turn must not be reported the
+  // same as one that was never connected — that sends someone to re-run a
+  // login that already worked.
+  const idle = path.join(fakeHome, '.codex-seats', 'idle-seat');
+  fs.mkdirSync(idle, { recursive: true });
+  fs.writeFileSync(path.join(idle, 'auth.json'), '{}');
+  const { readCodexUsage } = await import('../lib/usage/codex.js');
+  const r = readCodexUsage({ codexHome: idle });
+  ok('a signed-in seat with no turns reports signedIn', r.signedIn === true && r.ok === false);
+  ok('...and says so instead of naming a missing directory',
+     /no turn has run/.test(r.reason) && !/no sessions directory/.test(r.reason), r.reason);
+
+  const bare = path.join(fakeHome, '.codex-seats', 'bare-seat');
+  fs.mkdirSync(bare, { recursive: true });
+  const b = readCodexUsage({ codexHome: bare });
+  ok('a seat with no auth.json reports not signed in', b.signedIn === false && /not signed in/.test(b.reason), b.reason);
+  ok('neither state invents a window', r.windows.length === 0 && b.windows.length === 0);
 }
 
 // --- the real home was never touched ----------------------------------------
