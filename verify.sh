@@ -6,5 +6,6 @@ cd "$(dirname "$0")"
 node tests/guards.mjs
 # Offline too, and it exercises the reader that the whole tracker rests on.
 node tests/usage-codex.mjs
+node tests/usage-claude.mjs
 node tests/phase1.mjs
 node tests/phase2a.mjs
