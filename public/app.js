@@ -1190,10 +1190,7 @@ function addSeatForm() {
   const row = el('div', 'usage-add-row');
   const vendor = document.createElement('select');
   vendor.className = 'usage-add-vendor';
-  // Grok is deliberately absent: xAI publishes no usage data anywhere — not on
-  // disk, not through the CLI — so a Grok seat could only ever read as "not
-  // connected". Offering it in a picker is a dead end, not a feature.
-  for (const [value, text] of [['codex', 'Codex (ChatGPT)'], ['claude', 'Claude']]) {
+  for (const [value, text] of [['codex', 'Codex (ChatGPT)'], ['claude', 'Claude'], ['grok', 'Grok']]) {
     const o = document.createElement('option');
     o.value = value; o.textContent = text;
     vendor.appendChild(o);
@@ -1226,7 +1223,7 @@ function addSeatForm() {
   form.appendChild(el('div', 'usage-add-note',
     'A second Codex seat gets its own home, sharing your config by symlink — only the login and ' +
     'session history differ. You sign in from here; no terminal needed. ' +
-    'Grok is not listed because xAI publishes no usage data for it to read.'));
+    'A Grok seat shows activity rather than headroom — xAI publishes no subscription quota.'));
   return form;
 }
 
@@ -1246,6 +1243,7 @@ function untilText(ts) {
   return h ? `${h}h ${mn}m` : `${mn}m`;
 }
 
+const fmtTokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 const agoText = (ms) => (ms == null ? '' : ms < 60000 ? 'just now' : `${untilText(Date.now() + ms)} ago`);
 
 async function openUsage() {
@@ -1351,13 +1349,30 @@ async function paintUsage() {
       // A signed-in seat with no turns yet is a different state from one that
       // was never connected, and telling someone to re-run a login that already
       // worked is the worst thing this panel could do.
-      const waiting = s.signedIn === true;
+      // Three states, not two. A seat whose vendor publishes no quota is
+      // connected and working — calling it "not connected" is simply false.
+      const noQuota = s.noQuota === true && s.signedIn === true;
+      const waiting = !noQuota && s.signedIn === true;
       const why = el('div', 'usage-offline');
-      const tag = el('span', 'usage-offline-tag', waiting ? 'signed in · no usage yet' : 'not connected');
-      if (waiting) tag.classList.add('waiting');
+      const tag = el('span', 'usage-offline-tag',
+        noQuota ? 'connected · no quota published'
+          : waiting ? 'signed in · no usage yet' : 'not connected');
+      if (waiting || noQuota) tag.classList.add('waiting');
       why.appendChild(tag);
       why.appendChild(el('span', 'usage-offline-why', s.reason || ''));
       card.appendChild(why);
+
+      if (noQuota && s.activity) {
+        const bits = [];
+        if (s.activity.turns) {
+          bits.push(`${s.activity.turns} turn${s.activity.turns === 1 ? '' : 's'} in the last 24h`);
+          bits.push(`${fmtTokens(s.activity.inputTokens + s.activity.outputTokens)} tokens`);
+        }
+        if (s.lastActiveAt) bits.push(`last used ${agoText(Date.now() - s.lastActiveAt)}`);
+        // Deliberately no dollar figure: the cost field is in "ticks" whose
+        // scale is unverified, and a wrong one would be a confident wrong number.
+        if (bits.length) card.appendChild(el('div', 'usage-note', bits.join(' · ')));
+      }
       if (s.vendor === 'codex' && s.home) {
         card.appendChild(waiting ? waitingHint() : connectRow(s));
       }

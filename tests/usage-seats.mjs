@@ -92,7 +92,14 @@ ok('the same path written differently still collides',
   const d = detectSeats({ home, env: {} });
   ok('detects a codex and a claude seat', d.length === 2 && d.some((s) => s.vendor === 'codex'));
   ok('detected codex seat carries its home', d.find((s) => s.vendor === 'codex').home === path.join(home, '.codex'));
-  ok('grok is never suggested — it has no usage ledger', !d.some((s) => s.vendor === 'grok'));
+  ok('grok is not suggested without a sessions dir', !d.some((x) => x.vendor === 'grok'));
+
+  fs.mkdirSync(path.join(home, '.grok', 'sessions'), { recursive: true });
+  const withGrok = detectSeats({ home, env: {} });
+  ok('grok IS suggested once it has sessions', withGrok.some((x) => x.vendor === 'grok'),
+     JSON.stringify(withGrok.map((x) => x.vendor)));
+  ok('the suggested grok seat carries its home',
+     withGrok.find((x) => x.vendor === 'grok')?.home === path.join(home, '.grok'));
   ok('detection does not write a registry', !fs.existsSync(registryPathIn(home)));
   const bare = detectSeats({ home: path.join(tmp, 'nothing-here'), env: {} });
   ok('a bare machine detects nothing rather than guessing', bare.length === 0);
@@ -102,8 +109,12 @@ function registryPathIn(h) { return path.join(h, '.agent-config-studio', 'seats.
 // --- reading -----------------------------------------------------------------
 {
   const r = await readSeat({ id: 'g', vendor: 'grok', label: 'Grok' });
-  ok('grok seat reports honestly, never a fake zero',
-     r.ok === false && /no local usage ledger/.test(r.reason) && r.windows.length === 0, r.reason);
+  // The invariant that matters: a quota-less vendor must never rank as
+  // headroom, however much activity data it has.
+  ok('a grok seat never claims headroom',
+     r.ok === false && r.windows.length === 0 && r.noQuota === true, r.reason);
+  ok('...and explains why rather than reading as broken',
+     /no subscription quota/.test(r.reason), r.reason);
   const u = await readSeat({ id: 'u', vendor: 'mystery', label: 'X' });
   ok('unknown vendor reports rather than throwing', u.ok === false && /unknown vendor/.test(u.reason));
   ok('every reading is stamped with its seat', r.seatId === 'g' && r.label === 'Grok');
@@ -186,8 +197,8 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
   ok('a blank label is refused', threw !== null && /label is required/.test(threw.message));
 
   const g = createSeat({ vendor: 'grok', label: 'Grok', file: f, home });
-  ok('a grok seat registers but says it can never report',
-     g.seat.vendor === 'grok' && /never|not connected/.test(g.note || ''), g.note);
+  ok('a grok seat registers with a note setting the right expectation',
+     g.seat.vendor === 'grok' && /activity/.test(g.note || '') && /not headroom/.test(g.note || ''), g.note);
 
   const long = createSeat({ vendor: 'grok', label: 'x'.repeat(200), file: f, home });
   ok('an overlong label is truncated, not stored whole', long.seat.label.length <= 60);

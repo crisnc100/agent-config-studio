@@ -21,6 +21,8 @@ const C = process.stdout.isTTY && !process.env.NO_COLOR
       red: (s) => `\x1b[31m${s}\x1b[0m`, grey: (s) => `\x1b[90m${s}\x1b[0m` }
   : new Proxy({}, { get: () => (s) => s });
 
+const fmtTokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
+
 const bar = (pct, width = 24) => {
   const filled = Math.round((Math.min(100, Math.max(0, pct)) / 100) * width);
   const tint = pct >= 90 ? C.red : pct >= 70 ? C.yellow : C.green;
@@ -80,7 +82,23 @@ async function gauge(argv) {
     const head = headroom(s);
     console.log(`  ${C.bold(s.label)} ${C.grey(`· ${s.vendor}${s.planType ? ` ${s.planType}` : ''}${s.subscriptionType ? ` ${s.subscriptionType}` : ''}`)}`);
     if (!s.ok) {
-      console.log(`    ${C.yellow('not connected')} ${C.grey(`— ${s.reason}`)}`);
+      // Three states. A vendor that publishes no quota is still connected and
+      // working; labelling it "not connected" is false.
+      const noQuota = s.noQuota === true && s.signedIn === true;
+      const tag = noQuota ? C.grey('connected · no quota published')
+        : s.signedIn ? C.grey('signed in · no usage yet')
+        : C.yellow('not connected');
+      console.log(`    ${tag} ${C.grey(`— ${s.reason}`)}`);
+      if (noQuota && s.activity) {
+        const bits = [];
+        if (s.activity.turns) {
+          bits.push(`${s.activity.turns} turn(s) in the last 24h`);
+          bits.push(`${fmtTokens(s.activity.inputTokens + s.activity.outputTokens)} tokens`);
+        }
+        if (s.lastActiveAt) bits.push(`last used ${until(Date.now() + (Date.now() - s.lastActiveAt))} ago`);
+        // No dollar figure: costUsdTicks has an unverified scale.
+        if (bits.length) console.log(`    ${C.grey(bits.join(' · '))}`);
+      }
     } else {
       for (const w of s.windows) {
         const pct = `${String(Math.round(w.usedPercent)).padStart(3)}%`;
