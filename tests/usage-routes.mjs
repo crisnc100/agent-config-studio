@@ -154,6 +154,44 @@ const post = (p, b) => fetch(B + p, {
   ok('neither state invents a window', r.windows.length === 0 && b.windows.length === 0);
 }
 
+// --- codex sign-in ----------------------------------------------------------
+{
+  const { startLogin, loginState, cancelLogin, isSignedIn } = await import('../lib/usage/connect.js');
+
+  const gone = path.join(fakeHome, 'no-such-seat');
+  const r = await startLogin({ seatId: 'gone', home: gone });
+  ok('a login for a missing home errors instead of spawning',
+     !!r.error && /no longer exists|not installed/.test(r.error), r.error);
+
+  const idle = path.join(fakeHome, '.codex-seats', 'signin-test');
+  fs.mkdirSync(idle, { recursive: true });
+  ok('a home with no auth.json is not signed in', isSignedIn(idle) === false);
+  fs.writeFileSync(path.join(idle, 'auth.json'), '{"tokens":{}}');
+  ok('a home with auth.json is signed in', isSignedIn(idle) === true);
+  // An empty auth.json is a failed login, not a successful one.
+  fs.writeFileSync(path.join(idle, 'auth.json'), '');
+  ok('an empty auth.json does not count as signed in', isSignedIn(idle) === false);
+
+  ok('state for an unknown seat is inert, not an error',
+     loginState({ seatId: 'never-started', home: idle }).running === false);
+  ok('cancelling a login that was never started is a no-op',
+     cancelLogin({ seatId: 'never-started' }).cancelled === false);
+}
+
+// --- connect routes ---------------------------------------------------------
+{
+  const [s1, j1] = await post('/api/usage/connect', { id: 'does-not-exist' });
+  ok('connecting an unknown seat is 404', s1 === 404, JSON.stringify(j1));
+
+  await post('/api/usage/seats', { vendor: 'claude', label: 'Claude' });
+  const claude = (await get('/api/usage'))[1].seats.find((x) => x.vendor === 'claude');
+  const [s2, j2] = await post('/api/usage/connect', { id: claude.seatId });
+  ok('a claude seat cannot be connected through the codex flow', s2 === 400 && /not connected this way/.test(j2.error), JSON.stringify(j2));
+
+  const [s3] = await post('/api/usage/connect/cancel', { id: 'anything' });
+  ok('cancel is safe to call for any id', s3 === 200);
+}
+
 // --- the real home was never touched ----------------------------------------
 {
   const realAfter = (() => {

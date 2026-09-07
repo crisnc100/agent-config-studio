@@ -276,6 +276,12 @@ function guardB() {
       // executable must be process.execPath literally, so it can never resolve
       // a name on PATH and can never become a harness spawn.
       'lib/usage/refresh.js': { fns: new Set(['spawn']), execPathOnly: true },
+      // Codex sign-in. This one DOES spawn a harness binary, which guard b
+      // otherwise bans — so it is pinned to the login subcommand. A login
+      // cannot run a model turn or touch a file, which is the property guard b
+      // exists to protect. argv must be a literal ['login'] / ['login','status']
+      // with no prompt, no exec, and nothing caller-supplied.
+      'lib/usage/connect.js': { fns: new Set(['spawn']), loginOnly: true },
     }[file];
 
     for (const call of calls) {
@@ -288,6 +294,22 @@ function guardB() {
         continue;
       }
       const cal = calleeLiteral(src, call);
+      if (allowed.loginOnly) {
+        const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
+        // The binary must come from detection, never a bare name or a string.
+        if (!/^found\.binary\s*,/.test(text)) {
+          hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 50)}…) — must spawn the detected ` +
+                    `absolute binary (found.binary), never a PATH name`);
+        }
+        const argvMatch = /^[^,]+,\s*(\[[^\]]*\])/.exec(text);
+        const argv = argvMatch ? argvMatch[1].replace(/\s+/g, '') : null;
+        if (!argv || !/^\['login'(,'status')?\]$/.test(argv)) {
+          hits.push(`${file}:${call.line} argv must be a literal ['login'] or ['login','status'], ` +
+                    `got ${argv ?? 'nothing parseable'} — a prompt or exec here would be an ` +
+                    `uncontained model turn`);
+        }
+        continue;
+      }
       if (allowed.execPathOnly) {
         // Must be the running node binary itself, with a fixed argv built from
         // a module-local constant — never a name resolved on PATH, and never

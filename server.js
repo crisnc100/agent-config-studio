@@ -16,6 +16,8 @@ import { detectHarnesses, HARNESSES } from './lib/harness.js';
 import { createWatcher, snapshotOf, diffSnapshots } from './lib/watch.js';
 import { renderSnapshot, createSeat, removeSeat } from './lib/usage/seats.js';
 import { refreshSnapshot } from './lib/usage/refresh.js';
+import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
+import { loadSeats } from './lib/usage/seats.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -249,6 +251,35 @@ export function createApp(opts = {}) {
    * Fixed argv — nothing from the request reaches it.
    */
   'POST /api/usage/refresh': async () => refreshSnapshot(),
+
+  /**
+   * Start a Codex sign-in for one seat and return the OAuth URL, so the user
+   * signs in in the browser they already have open instead of a terminal.
+   *
+   * Only a registered seat id crosses the wire; the home is looked up from the
+   * registry, never taken from the request.
+   */
+  'POST /api/usage/connect': async (req) => {
+    const { id } = await readBody(req);
+    const seat = loadSeats().seats.find((x) => x.id === id);
+    if (!seat) { const e = new Error(`no seat with id "${id}"`); e.status = 404; throw e; }
+    if (seat.vendor !== 'codex') {
+      const e = new Error(`${seat.vendor} seats are not connected this way`); e.status = 400; throw e;
+    }
+    return startLogin({ seatId: seat.id, home: seat.home });
+  },
+
+  'POST /api/usage/connect/state': async (req) => {
+    const { id } = await readBody(req);
+    const seat = loadSeats().seats.find((x) => x.id === id);
+    if (!seat) { const e = new Error(`no seat with id "${id}"`); e.status = 404; throw e; }
+    return loginState({ seatId: seat.id, home: seat.home });
+  },
+
+  'POST /api/usage/connect/cancel': async (req) => {
+    const { id } = await readBody(req);
+    return cancelLogin({ seatId: String(id || '') });
+  },
 
   'GET /api/mcp': async () => {
     const out = { global: [], codex: [], note: null };

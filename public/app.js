@@ -1116,8 +1116,8 @@ async function openTrash() {
  * their tightest window and the answer is the first line.
  *
  * The studio reads no credential of its own. Codex seats are read live from
- * their own logs; Claude's reading comes from the snapshot the `acs-usage` CLI
- * wrote, and its age is always shown rather than implied to be current.
+ * their own logs; Claude's reading is taken by a separate process and shown
+ * with its age rather than implied to be current.
  */
 
 let usageTimer = null;
@@ -1129,18 +1129,57 @@ let usageTimer = null;
  * credential must not pass through here. So the honest affordance is the exact
  * command, ready to copy.
  */
-function loginHint(command, label = 'run this to connect:') {
+/**
+ * Sign a Codex seat in without leaving the browser.
+ *
+ * `codex login` prints an OAuth URL and runs a local callback server, so the
+ * studio starts it, opens the URL, and polls until the seat has credentials.
+ * The token lands in the seat's own auth.json — the studio never sees it.
+ */
+function connectRow(seat) {
   const row = el('div', 'usage-hint');
-  row.appendChild(el('span', 'usage-hint-label', label));
-  const code = el('code', 'usage-hint-cmd', command);
-  row.appendChild(code);
-  const copy = el('button', 'btn ghost usage-hint-copy', 'Copy');
-  copy.onclick = async () => {
-    try { await navigator.clipboard.writeText(command); copy.textContent = 'Copied'; }
-    catch { copy.textContent = 'Copy failed'; }
-    setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
+  const btn = el('button', 'btn', 'Sign in with ChatGPT');
+  const status = el('span', 'usage-hint-label', '');
+
+  btn.onclick = async () => {
+    btn.disabled = true; status.textContent = 'starting sign-in…';
+    let res;
+    try { res = await api('POST', '/api/usage/connect', { id: seat.seatId }); }
+    catch (e) { btn.disabled = false; status.textContent = ''; return notice('error', e.message); }
+    if (res.error) { btn.disabled = false; status.textContent = ''; return notice('error', res.error); }
+
+    window.open(res.url, '_blank', 'noopener');
+    status.textContent = 'waiting for you to finish in the other tab…';
+
+    // Poll rather than hold a request open for the whole OAuth round trip.
+    const started = Date.now();
+    const poll = setInterval(async () => {
+      if (S.view !== 'usage') return clearInterval(poll);
+      let st;
+      try { st = await api('POST', '/api/usage/connect/state', { id: seat.seatId }); }
+      catch { return; }
+      if (st.signedIn) {
+        clearInterval(poll);
+        notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
+        paintUsage();
+      } else if (!st.running && Date.now() - started > 5000) {
+        clearInterval(poll);
+        btn.disabled = false;
+        status.textContent = 'sign-in was cancelled or did not complete';
+      }
+    }, 2000);
   };
-  row.appendChild(copy);
+
+  row.appendChild(btn);
+  row.appendChild(status);
+  return row;
+}
+
+/** Signed in, but Codex has not recorded a quota reading yet. */
+function waitingHint() {
+  const row = el('div', 'usage-hint');
+  row.appendChild(el('span', 'usage-hint-label',
+    'Connected. Codex reports quota only after a turn runs, so this fills in the first time you use this seat.'));
   return row;
 }
 
@@ -1151,7 +1190,10 @@ function addSeatForm() {
   const row = el('div', 'usage-add-row');
   const vendor = document.createElement('select');
   vendor.className = 'usage-add-vendor';
-  for (const [value, text] of [['codex', 'Codex (ChatGPT)'], ['claude', 'Claude'], ['grok', 'Grok']]) {
+  // Grok is deliberately absent: xAI publishes no usage data anywhere — not on
+  // disk, not through the CLI — so a Grok seat could only ever read as "not
+  // connected". Offering it in a picker is a dead end, not a feature.
+  for (const [value, text] of [['codex', 'Codex (ChatGPT)'], ['claude', 'Claude']]) {
     const o = document.createElement('option');
     o.value = value; o.textContent = text;
     vendor.appendChild(o);
@@ -1182,8 +1224,9 @@ function addSeatForm() {
   row.appendChild(vendor); row.appendChild(label); row.appendChild(save);
   form.appendChild(row);
   form.appendChild(el('div', 'usage-add-note',
-    'A second Codex seat gets its own home, sharing your config by symlink — only the login ' +
-    'and session history differ. Grok publishes no usage data, so it will read as not connected.'));
+    'A second Codex seat gets its own home, sharing your config by symlink — only the login and ' +
+    'session history differ. You sign in from here; no terminal needed. ' +
+    'Grok is not listed because xAI publishes no usage data for it to read.'));
   return form;
 }
 
@@ -1268,7 +1311,7 @@ async function paintUsage() {
 
   if (!seats.length) {
     box.appendChild(el('div', 'scope-sub',
-      'No seats registered. Run `acs-usage detect --save` to add the subscriptions on this machine.'));
+      'No subscriptions tracked yet — use + Add seat above.'));
     c.appendChild(box);
     return;
   }
@@ -1316,9 +1359,7 @@ async function paintUsage() {
       why.appendChild(el('span', 'usage-offline-why', s.reason || ''));
       card.appendChild(why);
       if (s.vendor === 'codex' && s.home) {
-        card.appendChild(waiting
-          ? loginHint(`CODEX_HOME=${s.home} codex exec "hi" < /dev/null`, 'run one turn to record a reading:')
-          : loginHint(`CODEX_HOME=${s.home} codex login`));
+        card.appendChild(waiting ? waitingHint() : connectRow(s));
       }
     } else {
       for (const w of s.windows) {
@@ -1357,8 +1398,8 @@ async function paintUsage() {
   }
 
   box.appendChild(el('div', 'scope-sub',
-    'Codex reads its own logs live. Claude needs an OAuth token, which the studio never reads — ' +
-    'run `acs-usage` to refresh its reading.'));
+    'Codex reads its own logs live. Claude needs an OAuth token, which the studio never handles ' +
+    'itself — Refresh takes that reading in a separate process.'));
   c.appendChild(box);
 }
 
