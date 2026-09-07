@@ -41,16 +41,25 @@ const headroom = (s) =>
 
 async function gauge(argv) {
   const { seats } = loadSeats();
+  const wantsJson = argv.includes('--json');
+
   if (seats.length === 0) {
-    console.log(`\nNo seats registered yet.\n\n  ${C.bold('acs-usage detect')}   suggest seats from this machine` +
-                `\n  ${C.bold('acs-usage add')} <vendor> <label>\n`);
+    // Still take and persist an empty reading. Printing onboarding prose to a
+    // --json consumer breaks it precisely on first run, and leaving the previous
+    // snapshot on disk after every seat is removed reports seats that are gone.
+    const empty = { takenAt: Date.now(), seats: [] };
+    try { writeSnapshot(empty); } catch { /* the reading is still valid unwritten */ }
+    if (wantsJson) { console.log(JSON.stringify(empty, null, 2)); return 0; }
+    console.log(`\nNo subscriptions tracked yet.\n\n  ${C.bold('acs usage detect')}   suggest seats from this machine` +
+                `\n  ${C.bold('acs usage add')} <vendor> <label>` +
+                `\n\n  or add them in the studio: ${C.bold('Usage → + Add seat')}\n`);
     return 0;
   }
   const snap = await snapshot();
   // Persist it: the web app renders this file rather than reading a credential
   // of its own. Failing to write must not fail the gauge the user asked for.
   try { writeSnapshot(snap); } catch { /* the reading is still valid unwritten */ }
-  if (argv.includes('--json')) { console.log(JSON.stringify(snap, null, 2)); return 0; }
+  if (wantsJson) { console.log(JSON.stringify(snap, null, 2)); return 0; }
 
   const ranked = [...snap.seats].sort((a, b) => {
     const ha = headroom(a), hb = headroom(b);
@@ -113,8 +122,12 @@ function listSeats() {
 function detect() {
   const found = detectSeats();
   const { seats } = loadSeats();
-  const known = new Set(seats.map((s) => s.id));
-  const fresh = found.filter((s) => !known.has(s.id));
+  // Deduplicating by generated id alone re-registers a home that is already
+  // tracked under a different label — the same subscription counted twice.
+  const knownIds = new Set(seats.map((s) => s.id));
+  const knownHomes = new Set(seats.filter((s) => s.home).map((s) => `${s.vendor}:${path.resolve(s.home)}`));
+  const fresh = found.filter((s) =>
+    !knownIds.has(s.id) && !(s.home && knownHomes.has(`${s.vendor}:${path.resolve(s.home)}`)));
   console.log('');
   if (!fresh.length) { console.log('  nothing new detected\n'); return 0; }
   for (const s of fresh) console.log(`  ${C.bold(s.id.padEnd(12))} ${s.vendor.padEnd(7)} ${s.label}${s.home ? C.grey(`  ${s.home}`) : ''}`);
@@ -122,8 +135,14 @@ function detect() {
   // someone holds is worse than asking.
   console.log(`\n  ${C.grey('to register these:')} acs-usage detect --save\n`);
   if (process.argv.includes('--save')) {
-    saveSeats([...seats, ...fresh]);
-    console.log(`  ${C.green('registered')} ${fresh.length} seat(s)\n`);
+    // Go through addSeat so each one is validated against the growing registry
+    // rather than written straight past the checks.
+    let added = 0;
+    for (const seat of fresh) {
+      try { addSeat(seat); added++; }
+      catch (e) { console.log(`  ${C.yellow('skipped')} ${seat.id}: ${e.message}`); }
+    }
+    console.log(`  ${C.green('registered')} ${added} seat(s)\n`);
   }
   return 0;
 }

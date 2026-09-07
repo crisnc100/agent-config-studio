@@ -9,5 +9,6 @@ node tests/usage-codex.mjs
 node tests/usage-claude.mjs
 node tests/usage-seats.mjs
 node tests/usage-routes.mjs
+node tests/usage-cli.mjs
 node tests/phase1.mjs
 node tests/phase2a.mjs

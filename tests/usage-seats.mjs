@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   VENDORS, slugify, validateSeat, loadSeats, saveSeats, addSeat, removeSeat,
   detectSeats, readSeat, snapshot, createSeat, createCodexHome, uniqueSeatId, seatHomeRoot,
+  shellQuote,
 } from '../lib/usage/seats.js';
 
 let pass = 0, fail = 0;
@@ -192,6 +193,45 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
   ok('an overlong label is truncated, not stored whole', long.seat.label.length <= 60);
 
   ok('ids never collide', uniqueSeatId('codex-work', f) !== 'codex-work');
+}
+
+// --- a removed seat must be addable again -----------------------------------
+{
+  const home = path.join(tmp, 'readd');
+  const primary = path.join(home, '.codex');
+  fs.mkdirSync(path.join(primary, 'sessions'), { recursive: true });
+  const f = reg();
+
+  createSeat({ vendor: 'codex', label: 'Main', file: f, home });          // adopts ~/.codex
+  const extra = createSeat({ vendor: 'codex', label: 'Work', file: f, home });
+  const dir = extra.seat.home;
+  removeSeat(extra.seat.id, f);
+  // Removal preserves the home on purpose — it holds a real login.
+  ok('the removed seat home is preserved', fs.existsSync(dir));
+
+  // The bug: uniqueSeatId considered only the registry, handed back the same
+  // id, and createCodexHome threw because the directory was still there — so a
+  // removed seat could never be added again under its own name.
+  let threw = null, again = null;
+  try { again = createSeat({ vendor: 'codex', label: 'Work', file: f, home }); } catch (e) { threw = e; }
+  ok('the same label can be added again after removal', threw === null, threw?.message);
+  ok('it gets a fresh home rather than colliding', again && again.seat.home !== dir, again?.seat?.home);
+  ok('the preserved login is left untouched', fs.existsSync(dir));
+}
+
+// --- shell quoting ----------------------------------------------------------
+{
+  // A home under "/Users/Alex Smith" split on the space, so the command handed
+  // to the user could not run.
+  ok('a path with a space is quoted', shellQuote('/Users/Alex Smith/.codex') === `'/Users/Alex Smith/.codex'`);
+  ok("a path with a quote is escaped", shellQuote("/tmp/o'brien").includes(`'\\''`), shellQuote("/tmp/o'brien"));
+
+  const home = path.join(tmp, 'Alex Smith');
+  fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
+  const f = reg();
+  const r = createCodexHome({ label: 'Spaced', file: f, home });
+  ok('the generated login command quotes the home',
+     /CODEX_HOME='[^']*Alex Smith[^']*' codex login/.test(r.loginCommand), r.loginCommand);
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

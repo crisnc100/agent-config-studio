@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  labelForWindow, listRollouts, lastRateLimits, readCodexUsage, defaultCodexHome,
+  labelForWindow, listRollouts, lastRateLimits, readCodexUsage, defaultCodexHome, numericPercent,
 } from '../lib/usage/codex.js';
 
 let pass = 0, fail = 0, skip = 0;
@@ -31,7 +31,8 @@ const rollout = (home, stamp, lines) => {
   fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
   return file;
 };
-const limits = (primary, secondary = null, extra = {}) => ({
+const limits = (primary, secondary = null, extra = {}, at = '2026-09-07T10:00:00.000Z') => ({
+  timestamp: at,
   type: 'turn.completed',
   info: { rate_limits: { limit_id: 'codex', primary, secondary, plan_type: 'prolite', ...extra } },
 });
@@ -75,18 +76,25 @@ ok('garbage window is not silently a real label',
   ok('credits carried', r.credits?.hasCredits === false && r.credits.balance === '0');
 }
 
-// --- freshness: newest reading wins, and it must beat mtime ------------------
+// --- freshness: the newest OBSERVATION wins ---------------------------------
+// The bug this replaces: candidates were ranked by the timestamp in the
+// filename, so RESUMING an old session hid its newer usage completely and an
+// idle newer session's stale number was reported as current — pointing you at a
+// seat that is actually nearly exhausted.
 {
   const home = seat('freshness');
-  const older = rollout(home, '2026-09-05T09-00-00', [limits(win(10, 10080, 1789000000))]);
-  rollout(home, '2026-09-07T09-00-00', [limits(win(90, 10080, 1789047414))]);
-  // A long-running OLD session touched most recently. Ranking by mtime would
-  // pick the stale 10% and tell Cris he has headroom he does not have.
-  const future = Date.now() + 60_000;
-  fs.utimesSync(older, future / 1000, future / 1000);
+  // Created later, but idle since: an old, low reading.
+  rollout(home, '2026-09-07T09-00-00', [limits(win(10, 10080, 1789000000), null, {}, '2026-09-07T09:05:00.000Z')]);
+  // Created EARLIER, but resumed just now with a much higher reading.
+  const resumed = rollout(home, '2026-09-05T08-00-00', [limits(win(95, 10080, 1789047414), null, {}, '2026-09-07T18:00:00.000Z')]);
+  const now = Date.now();
+  fs.utimesSync(resumed, now / 1000, now / 1000);   // resuming appends, so mtime is now
+
   const r = readCodexUsage({ codexHome: home });
-  ok('newest session wins over most-recently-touched', r.windows[0].usedPercent === 90,
-     `got ${r.windows[0]?.usedPercent}`);
+  ok('a resumed older session wins on its event timestamp', r.windows[0].usedPercent === 95,
+     `got ${r.windows[0]?.usedPercent} — an idle newer session masked the real usage`);
+  ok('observedAt is the event time, not the file time',
+     r.observedAt === Date.parse('2026-09-07T18:00:00.000Z'), new Date(r.observedAt).toISOString());
 }
 
 // --- last reading within a file wins ----------------------------------------
@@ -168,7 +176,33 @@ ok('garbage window is not silently a real label',
   ok('a quota only present BEFORE the tail window is missed, not guessed',
      lastRateLimits(buried, 2048) === null, JSON.stringify(lastRateLimits(buried, 2048)));
   ok('...and the same file DOES read with a tail big enough to reach it',
-     lastRateLimits(buried, 4 * 1024 * 1024)?.primary?.used_percent === 42);
+     lastRateLimits(buried, 4 * 1024 * 1024)?.limits?.primary?.used_percent === 42);
+}
+
+// --- a missing percent is never 0 -------------------------------------------
+// Number(null) is 0, and 0% renders as a full green bar — "we do not know"
+// displayed as "nothing used", which is the worst possible routing advice.
+{
+  ok('null is not a percent', numericPercent(null) === null);
+  ok('undefined is not a percent', numericPercent(undefined) === null);
+  ok('blank string is not a percent', numericPercent('   ') === null);
+  ok('false is not a percent', numericPercent(false) === null);
+  ok('a numeric string is a percent', numericPercent('42') === 42);
+  ok('zero really is zero', numericPercent(0) === 0);
+
+  const home = seat('nullpct');
+  rollout(home, '2026-09-07T10-00-00', [limits({ used_percent: null, window_minutes: 10080, resets_at: 1789047414 })]);
+  const r = readCodexUsage({ codexHome: home });
+  ok('a null used_percent yields no window rather than 0%', r.windows.length === 0, JSON.stringify(r.windows));
+  ok('...and the seat reports not-ok instead of full headroom', r.ok === false);
+
+  const mixed = seat('mixedpct');
+  rollout(mixed, '2026-09-07T10-00-00', [limits(
+    { used_percent: null, window_minutes: 300, resets_at: 1789000000 },
+    { used_percent: 77, window_minutes: 10080, resets_at: 1789047414 })]);
+  const m = readCodexUsage({ codexHome: mixed });
+  ok('a good window survives beside an unreadable one',
+     m.ok === true && m.windows.length === 1 && m.windows[0].usedPercent === 77, JSON.stringify(m.windows));
 }
 
 // --- seat isolation ----------------------------------------------------------

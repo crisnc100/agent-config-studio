@@ -5,7 +5,7 @@
  */
 import {
   labelForLimit, shapeUsage, resolveCredential, readClaudeUsage,
-  fromEnv, fromKeychain, fromCredentialsFile, DEFAULT_SOURCES,
+  fromEnv, fromKeychain, fromCredentialsFile, DEFAULT_SOURCES, numericPercent,
 } from '../lib/usage/claude.js';
 
 let pass = 0, fail = 0, skip = 0;
@@ -81,6 +81,25 @@ ok('shapeless input degrades', labelForLimit(null) === 'Unknown limit');
      JSON.stringify(s.windows.map((w) => w.label)));
 }
 
+// --- a missing percent is never 0 -------------------------------------------
+{
+  ok('null is not a percent', numericPercent(null) === null);
+  ok('blank is not a percent', numericPercent('') === null);
+  ok('zero really is zero', numericPercent(0) === 0);
+
+  // Number(null) is 0, so this limit would have rendered as a full green bar
+  // and handed the seat a 100%-headroom routing recommendation.
+  const s2 = shapeUsage({ limits: [
+    { kind: 'session', group: 'session', percent: null, resets_at: null, is_active: true },
+    { kind: 'weekly_all', group: 'weekly', percent: 8, resets_at: null, is_active: false },
+  ] });
+  ok('a null percent produces no window', s2.windows.length === 1, JSON.stringify(s2.windows));
+  ok('the good window survives', s2.windows[0].usedPercent === 8);
+
+  const none = shapeUsage({ limits: [{ kind: 'session', percent: null }] });
+  ok('all-null limits leave zero windows, not a zeroed gauge', none.windows.length === 0);
+}
+
 // --- credential resolution ---------------------------------------------------
 {
   const expired = () => ({ token: 'old', expiresAt: 1000, source: 'credentials-file' });
@@ -150,6 +169,26 @@ ok('every source returns null rather than throwing on a bad path',
       o.signal.addEventListener('abort', () => { aborted = true; rej(new Error('aborted')); })),
   });
   ok('a hung request is aborted by the timeout', aborted === true && r.ok === false, r.reason);
+}
+
+// --- the timeout must span the body, not just the headers -------------------
+{
+  // Clearing the abort timer once headers arrive lets a stalled body hang past
+  // the timeout. This runs inside the CLI the studio spawns, so a hang there is
+  // a refresh that never returns.
+  const started = Date.now();
+  const r = await readClaudeUsage({
+    sources: [cred()], timeoutMs: 150,
+    fetchImpl: async (_u, o) => ({
+      ok: true, status: 200,
+      json: () => new Promise((_res, rej) => {
+        o.signal.addEventListener('abort', () => rej(new Error('aborted')));
+      }),
+    }),
+  });
+  const took = Date.now() - started;
+  ok('a stalled body is aborted by the timeout', r.ok === false && took < 3000, `${took}ms`);
+  ok('and says it timed out', /timed out/.test(r.reason), r.reason);
 }
 
 // --- live, read-only ---------------------------------------------------------
