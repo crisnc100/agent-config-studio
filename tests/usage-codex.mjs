@@ -53,7 +53,9 @@ ok('garbage window is not silently a real label',
 {
   const home = seat('legacy');
   rollout(home, '2026-09-07T10-00-00', [limits(win(80, 300, 1789000000), win(20, 10080, 1789047414))]);
-  const r = readCodexUsage({ codexHome: home });
+  // Pin the clock just after the fixture's own event, or the 5h window ages out
+  // by the expiry rule and this stops testing the labelling it exists to test.
+  const r = readCodexUsage({ codexHome: home, now: Date.parse('2026-09-07T10:30:00.000Z') });
   const five = r.windows.find((w) => w.windowMinutes === 300);
   const week = r.windows.find((w) => w.windowMinutes === 10080);
   ok('legacy schema: 5h window labelled 5h despite being `primary`',
@@ -141,6 +143,65 @@ ok('garbage window is not silently a real label',
   ok('malformed jsonl -> ok:false', r?.ok === false);
 }
 
+// --- a re-auth must not inherit the previous account's numbers --------------
+{
+  // Rollouts carry no account identity. After signing a seat into a DIFFERENT
+  // subscription, the old account's rollouts are still on disk — reporting them
+  // under the new seat shows one subscription's quota as another's.
+  const home = seat('reauth');
+  rollout(home, '2026-09-07T10-00-00', [limits(win(1, 10080, 1789000000), null, {}, '2026-09-07T10:05:00.000Z')]);
+  const auth = path.join(home, 'auth.json');
+  fs.writeFileSync(auth, '{"tokens":{"account_id":"new"}}');
+  const loginAt = Date.parse('2026-09-07T12:00:00.000Z');       // signed in AFTER that rollout
+  fs.utimesSync(auth, loginAt / 1000, loginAt / 1000);
+
+  const r = readCodexUsage({ codexHome: home });
+  ok('a reading from before the current login is ignored', r.ok === false, JSON.stringify(r.windows));
+  ok('...and no window is carried over', r.windows.length === 0);
+  ok('...and it says a turn has not run since signing in',
+     /since it last signed in/.test(r.reason), r.reason);
+
+  // A turn after the login is this account's and must count.
+  rollout(home, '2026-09-07T13-00-00', [limits(win(7, 10080, 1789047414), null, {}, '2026-09-07T13:05:00.000Z')]);
+  const r2 = readCodexUsage({ codexHome: home });
+  ok('a reading from after the login is used', r2.ok === true && r2.windows[0].usedPercent === 7,
+     JSON.stringify(r2.windows));
+}
+
+// --- a session open across a re-auth keeps the OLD account -------------------
+{
+  // An interactive session holds the credentials it started with. Left open
+  // across a re-auth it keeps writing the previous account's quota into this
+  // home, with timestamps NEWER than the login — so filtering events by time
+  // is not enough; the whole session has to be excluded by its start.
+  const home = seat('openacross');
+  const auth = path.join(home, 'auth.json');
+  fs.writeFileSync(auth, '{"tokens":{"account_id":"new"}}');
+
+  // Codex writes the session start into the filename in LOCAL time, so the
+  // fixture has to be built the same way or the comparison is meaningless.
+  const localStamp = (d) => {
+    const p2 = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}` +
+           `T${p2(d.getHours())}-${p2(d.getMinutes())}-${p2(d.getSeconds())}`;
+  };
+  const loginAt = new Date('2026-09-07T12:00:00').getTime();       // local
+  fs.utimesSync(auth, loginAt / 1000, loginAt / 1000);
+
+  // Started BEFORE the login, still emitting AFTER it — the old account.
+  rollout(home, localStamp(new Date(loginAt - 2 * 3600_000)),
+          [limits(win(100, 300, 1789000000), null, {}, new Date(loginAt + 90 * 60_000).toISOString())]);
+  // Started after the login — genuinely this account.
+  rollout(home, localStamp(new Date(loginAt + 30 * 60_000)),
+          [limits(win(58, 10080, 1789047414), null, {}, new Date(loginAt + 35 * 60_000).toISOString())]);
+
+  const r = readCodexUsage({ codexHome: home });
+  ok('a session started before the login is excluded entirely',
+     r.ok === true && r.windows[0].usedPercent === 58,
+     `got ${r.windows.map((w) => w.usedPercent + '%').join(',')} — the old account won on recency`);
+  ok('...even though its events are newer', r.windows.every((w) => w.usedPercent !== 100));
+}
+
 // --- signed in vs never connected -------------------------------------------
 // Reporting a logged-in seat as "not connected" sends someone to re-run a login
 // that already worked, so the two states must never collapse into one.
@@ -178,6 +239,50 @@ ok('garbage window is not silently a real label',
      lastRateLimits(buried, 2048) === null, JSON.stringify(lastRateLimits(buried, 2048)));
   ok('...and the same file DOES read with a tail big enough to reach it',
      lastRateLimits(buried, 4 * 1024 * 1024)?.limits?.primary?.used_percent === 42);
+}
+
+// --- a window whose period already reset is not current usage ---------------
+{
+  // The panel showed 100% of a 5h limit that had reset hours earlier and was
+  // really 8%. A percentage only describes the window it was measured in.
+  const home = seat('expired');
+  const at = Date.parse('2026-09-07T10:00:00.000Z');
+  rollout(home, '2026-09-07T10-00-00', [limits(
+    win(100, 300, Math.floor((at + 3600_000) / 1000)),      // 5h window, resets an hour later
+    win(16, 10080, Math.floor((at + 7 * 86400_000) / 1000)), // weekly, still open
+    {}, '2026-09-07T10:00:00.000Z')]);
+
+  const later = at + 5 * 3600_000;   // past the 5h reset, inside the weekly
+  const r = readCodexUsage({ codexHome: home, now: later });
+  ok('an expired window is dropped', !r.windows.some((w) => w.windowMinutes === 300),
+     JSON.stringify(r.windows));
+  ok('the still-open window survives', r.windows.some((w) => w.usedPercent === 16));
+  ok('the drop is reported, not silent', r.expiredWindows === 1, String(r.expiredWindows));
+
+  // Every window expired -> there is nothing current to report at all.
+  const all = seat('allexpired');
+  rollout(all, '2026-09-07T10-00-00', [limits(win(100, 300, Math.floor((at + 60_000) / 1000)), null, {}, '2026-09-07T10:00:00.000Z')]);
+  const r2 = readCodexUsage({ codexHome: all, now: later });
+  ok('when every window has reset the seat reports no usage', r2.ok === false && r2.windows.length === 0);
+  ok('...and says to run a turn', /run a turn/.test(r2.reason), r2.reason);
+}
+
+// --- a stale reading is never routed on -------------------------------------
+{
+  // Window anchors move: a weekly reading can belong to a window that has
+  // already been replaced while its stored resets_at is still in the future,
+  // so expiry alone cannot catch it. Age has to disqualify it from ranking.
+  const home = seat('stale');
+  const at = Date.parse('2026-09-07T10:00:00.000Z');
+  rollout(home, '2026-09-07T10-00-00', [limits(
+    win(16, 10080, Math.floor((at + 7 * 86400_000) / 1000)), null, {}, '2026-09-07T10:00:00.000Z')]);
+
+  const fresh = readCodexUsage({ codexHome: home, now: at + 60_000 });
+  ok('a fresh reading is not stale', fresh.stale === false && fresh.ok === true);
+
+  const old = readCodexUsage({ codexHome: home, now: at + 21 * 3600_000 });
+  ok('a 21h-old reading is marked stale', old.stale === true, String(old.stale));
+  ok('...but its numbers are still shown, not discarded', old.ok === true && old.windows.length === 1);
 }
 
 // --- a missing percent is never 0 -------------------------------------------

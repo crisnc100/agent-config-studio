@@ -1241,7 +1241,8 @@ function addSeatForm() {
 
 /** A seat's headroom is set by its tightest window — the first one to stop you. */
 function seatHeadroom(s) {
-  if (!s.ok || !s.windows.length) return null;
+  // A stale reading is not headroom, it is a memory — never route on it.
+  if (!s.ok || s.stale || !s.windows.length) return null;
   return 100 - Math.max(...s.windows.map((w) => w.usedPercent));
 }
 
@@ -1422,6 +1423,12 @@ async function paintUsage() {
       // turn that ran, so an idle seat's number can be hours old and still true.
       // A held-over reading must say so, or a stale number looks current.
       if (s.staleReason) notes.push(`${s.staleReason} — showing the last good reading`);
+      if (s.stale && s.observedAt) {
+        const stale = el('div', 'usage-stale',
+          `as of ${agoText(Date.now() - s.observedAt)} — not current. Run a turn on this seat to refresh it.`);
+        card.appendChild(stale);
+      }
+      if (s.expiredWindows) notes.push(`${s.expiredWindows} window(s) hidden — already reset`);
       if (s.readingAge != null && s.readingAge > 5 * 60_000) notes.push(`read ${agoText(s.readingAge)}`);
       else if (s.observedAt && Date.now() - s.observedAt > 30 * 60_000) {
         notes.push(`last recorded turn ${agoText(Date.now() - s.observedAt)}`);

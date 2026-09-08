@@ -38,8 +38,13 @@ function until(ts) {
 }
 
 /** A seat's headroom is set by its tightest window — the first one to stop you. */
+/**
+ * A seat's headroom is set by its tightest window — but a stale reading is not
+ * headroom, it is a memory. Ranking on it is how the gauge recommended a pool
+ * that had been exhausted for hours.
+ */
 const headroom = (s) =>
-  s.ok && s.windows.length ? 100 - Math.max(...s.windows.map((w) => w.usedPercent)) : null;
+  s.ok && !s.stale && s.windows.length ? 100 - Math.max(...s.windows.map((w) => w.usedPercent)) : null;
 
 async function gauge(argv) {
   const { seats } = loadSeats();
@@ -117,8 +122,14 @@ async function gauge(argv) {
       // A reading is only as good as its age. Codex readings come from the last
       // turn that ran, so an idle seat's number can be hours old and still true.
       const age = s.observedAt ? Date.now() - s.observedAt : null;
-      if (age !== null && age > 30 * 60_000) {
+      if (s.stale) {
+        console.log(`    ${C.yellow(`as of ${until(Date.now() + age)} ago — not current; ` +
+          `run a turn on this seat to refresh`)}`);
+      } else if (age !== null && age > 30 * 60_000) {
         console.log(`    ${C.grey(`reading is ${until(Date.now() + age)} old (last recorded turn)`)}`);
+      }
+      if (s.expiredWindows) {
+        console.log(`    ${C.grey(`${s.expiredWindows} window(s) hidden — their period already reset`)}`);
       }
     }
     console.log('');

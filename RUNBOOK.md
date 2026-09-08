@@ -131,6 +131,34 @@ number is legitimately hours old — the panel says how old. Claude's endpoint i
 undocumented and can change shape without notice; a 200 carrying no recognisable
 `limits[]` is reported as broken rather than as an empty gauge.
 
+## Codex seats and account attribution
+
+Codex records **no account identity** in its rollout logs, so a home whose
+credentials change cannot be told apart from one that did not. Three rules
+follow, and each exists because it was measured failing:
+
+- **A reading written before the current login is ignored.** After re-authing a
+  seat, the previous account's rollouts are still on disk and would be reported
+  as the new account's quota.
+- **A session that STARTED before the current login is excluded entirely.** An
+  interactive session holds the credentials it began with, so one left open
+  across a re-auth keeps writing the old account's quota with timestamps newer
+  than the login. Filtering events by time does not catch this; the session has
+  to go. Symptom: the seat "resets back" to the old account on every refresh.
+- **Two seats on one account are detected and the staler one is demoted**
+  (`lib/usage/identity.js`, fingerprints only — see the spawn table above).
+  Undetected, the staler reading wins the routing line and sends work to a pool
+  that is already exhausted.
+
+**Quota ages out.** Codex writes quota only when a turn runs, so an idle seat
+reports the last turn's numbers. A window whose `resets_at` has passed, or whose
+reading is older than the window itself, is dropped — reporting a percentage for
+a window that no longer exists is how the panel claimed 100% of a 5h limit that
+had reset hours earlier and was actually 8%. Beyond `STALE_AFTER_MS` (1h) a
+reading is shown but never ranked: window anchors move, so a weekly reading can
+belong to a replaced window while its stored `resets_at` is still in the future.
+Refresh cannot fix this — only running a turn on that seat records new quota.
+
 ## Troubleshooting
 
 - **Grok is slow.** First token ~39s is normal. Total can hit 133s. The UI
