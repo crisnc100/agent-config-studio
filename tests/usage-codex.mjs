@@ -39,6 +39,16 @@ const limits = (primary, secondary = null, extra = {}, at = '2026-09-07T10:00:00
 });
 const win = (used, minutes, resets) => ({ used_percent: used, window_minutes: minutes, resets_at: resets });
 
+// Fixtures live in a fixed era, and every read below is pinned to a clock inside
+// it. Absolute wall-clock values here rot: once real time passes a fixture's
+// resets_at, the reading expires *by design* and assertions read undefined.
+// That has been misdiagnosed as a code bug twice — anchor, don't hardcode.
+const ERA = Date.parse('2026-09-07T00:00:00.000Z');
+const READ_AT = ERA + 10.5 * 3600_000;                       // 2026-09-07T10:30Z
+const RESET_A = Math.floor((ERA + 30 * 3600_000) / 1000);    // 2026-09-08T06:00Z
+const RESET_B = Math.floor((ERA + 78 * 3600_000) / 1000);    // 2026-09-10T06:00Z
+const read = (opts) => readCodexUsage({ now: READ_AT, ...opts });
+
 console.log('\nusage/codex');
 
 // --- labels come from duration, never from key position -----------------------
@@ -52,7 +62,7 @@ ok('garbage window is not silently a real label',
 // 5h window in `primary`. Reading it positionally mislabels it as the weekly.
 {
   const home = seat('legacy');
-  rollout(home, '2026-09-07T10-00-00', [limits(win(80, 300, 1789000000), win(20, 10080, 1789047414))]);
+  rollout(home, '2026-09-07T10-00-00', [limits(win(80, 300, RESET_A), win(20, 10080, RESET_B))]);
   // Pin the clock just after the fixture's own event, or the 5h window ages out
   // by the expiry rule and this stops testing the labelling it exists to test.
   const r = readCodexUsage({ codexHome: home, now: Date.parse('2026-09-07T10:30:00.000Z') });
@@ -68,13 +78,16 @@ ok('garbage window is not silently a real label',
 // --- current schema ----------------------------------------------------------
 {
   const home = seat('current');
-  rollout(home, '2026-09-07T12-00-00', [limits(win(56, 10080, 1789047414), null,
-    { credits: { has_credits: false, unlimited: false, balance: '0' } })]);
-  const r = readCodexUsage({ codexHome: home });
+  rollout(home, '2026-09-07T12-00-00', [limits(win(56, 10080, RESET_B), null,
+    { credits: { has_credits: false, unlimited: false, balance: '0' } }, '2026-09-07T12:00:00.000Z')]);
+  // Pin the clock inside the fixture's own window. Left unpinned, this test
+  // silently rots: once wall-clock passes the fixture's resets_at the reading
+  // expires by design and the assertions below read undefined.
+  const r = readCodexUsage({ codexHome: home, now: Date.parse('2026-09-07T12:30:00.000Z') });
   ok('current schema reads', r.ok === true && r.windows.length === 1, r.reason || '');
   ok('used_percent carried through', r.windows[0].usedPercent === 56);
   ok('resets_at converted seconds -> millis',
-     r.windows[0].resetsAt === 1789047414 * 1000, String(r.windows[0].resetsAt));
+     r.windows[0].resetsAt === RESET_B * 1000, String(r.windows[0].resetsAt));
   ok('plan_type carried', r.planType === 'prolite');
   ok('credits carried', r.credits?.hasCredits === false && r.credits.balance === '0');
 }
@@ -87,13 +100,13 @@ ok('garbage window is not silently a real label',
 {
   const home = seat('freshness');
   // Created later, but idle since: an old, low reading.
-  rollout(home, '2026-09-07T09-00-00', [limits(win(10, 10080, 1789000000), null, {}, '2026-09-07T09:05:00.000Z')]);
+  rollout(home, '2026-09-07T09-00-00', [limits(win(10, 10080, RESET_A), null, {}, '2026-09-07T09:05:00.000Z')]);
   // Created EARLIER, but resumed just now with a much higher reading.
-  const resumed = rollout(home, '2026-09-05T08-00-00', [limits(win(95, 10080, 1789047414), null, {}, '2026-09-07T18:00:00.000Z')]);
+  const resumed = rollout(home, '2026-09-05T08-00-00', [limits(win(95, 10080, RESET_B), null, {}, '2026-09-07T18:00:00.000Z')]);
   const now = Date.now();
   fs.utimesSync(resumed, now / 1000, now / 1000);   // resuming appends, so mtime is now
 
-  const r = readCodexUsage({ codexHome: home });
+  const r = read({ codexHome: home });
   ok('a resumed older session wins on its event timestamp', r.windows[0].usedPercent === 95,
      `got ${r.windows[0]?.usedPercent} — an idle newer session masked the real usage`);
   ok('observedAt is the event time, not the file time',
@@ -104,29 +117,29 @@ ok('garbage window is not silently a real label',
 {
   const home = seat('within');
   rollout(home, '2026-09-07T11-00-00', [
-    limits(win(11, 10080, 1789000000)),
+    limits(win(11, 10080, RESET_A)),
     { type: 'noise' },
-    limits(win(77, 10080, 1789047414)),
+    limits(win(77, 10080, RESET_B)),
   ]);
-  ok('last rate_limits in a file wins', readCodexUsage({ codexHome: home }).windows[0].usedPercent === 77);
+  ok('last rate_limits in a file wins', read({ codexHome: home }).windows[0].usedPercent === 77);
 }
 
 // --- never fake a zero -------------------------------------------------------
 {
   const home = seat('empty');
-  const r = readCodexUsage({ codexHome: home });
+  const r = read({ codexHome: home });
   ok('no rollouts -> ok:false with a reason', r.ok === false && /not signed in/.test(r.reason), r.reason);
   ok('no rollouts -> no windows invented', r.windows.length === 0);
 }
 {
   const home = seat('noquota');
   rollout(home, '2026-09-07T11-00-00', [{ type: 'turn.completed' }, { type: 'other' }]);
-  const r = readCodexUsage({ codexHome: home });
+  const r = read({ codexHome: home });
   ok('rollouts without rate_limits -> ok:false',
      r.ok === false && /no quota reading|not signed in|no turn has run/.test(r.reason), r.reason);
 }
 {
-  const r = readCodexUsage({ codexHome: path.join(tmp, 'does-not-exist') });
+  const r = read({ codexHome: path.join(tmp, 'does-not-exist') });
   ok('missing home -> ok:false, no throw', r.ok === false && r.reason.length > 0, r.reason);
 }
 
@@ -138,7 +151,7 @@ ok('garbage window is not silently a real label',
     '{"rate_limits": truncated\n\x00\x01 not json at all\n');
   let threw = null;
   let r;
-  try { r = readCodexUsage({ codexHome: home }); } catch (e) { threw = e; }
+  try { r = read({ codexHome: home }); } catch (e) { threw = e; }
   ok('malformed jsonl does not throw', threw === null, threw?.message);
   ok('malformed jsonl -> ok:false', r?.ok === false);
 }
@@ -149,21 +162,21 @@ ok('garbage window is not silently a real label',
   // subscription, the old account's rollouts are still on disk — reporting them
   // under the new seat shows one subscription's quota as another's.
   const home = seat('reauth');
-  rollout(home, '2026-09-07T10-00-00', [limits(win(1, 10080, 1789000000), null, {}, '2026-09-07T10:05:00.000Z')]);
+  rollout(home, '2026-09-07T10-00-00', [limits(win(1, 10080, RESET_A), null, {}, '2026-09-07T10:05:00.000Z')]);
   const auth = path.join(home, 'auth.json');
   fs.writeFileSync(auth, '{"tokens":{"account_id":"new"}}');
   const loginAt = Date.parse('2026-09-07T12:00:00.000Z');       // signed in AFTER that rollout
   fs.utimesSync(auth, loginAt / 1000, loginAt / 1000);
 
-  const r = readCodexUsage({ codexHome: home });
+  const r = read({ codexHome: home });
   ok('a reading from before the current login is ignored', r.ok === false, JSON.stringify(r.windows));
   ok('...and no window is carried over', r.windows.length === 0);
   ok('...and it says a turn has not run since signing in',
      /since it last signed in/.test(r.reason), r.reason);
 
   // A turn after the login is this account's and must count.
-  rollout(home, '2026-09-07T13-00-00', [limits(win(7, 10080, 1789047414), null, {}, '2026-09-07T13:05:00.000Z')]);
-  const r2 = readCodexUsage({ codexHome: home });
+  rollout(home, '2026-09-07T13-00-00', [limits(win(7, 10080, RESET_B), null, {}, '2026-09-07T13:05:00.000Z')]);
+  const r2 = read({ codexHome: home });
   ok('a reading from after the login is used', r2.ok === true && r2.windows[0].usedPercent === 7,
      JSON.stringify(r2.windows));
 }
@@ -190,12 +203,12 @@ ok('garbage window is not silently a real label',
 
   // Started BEFORE the login, still emitting AFTER it — the old account.
   rollout(home, localStamp(new Date(loginAt - 2 * 3600_000)),
-          [limits(win(100, 300, 1789000000), null, {}, new Date(loginAt + 90 * 60_000).toISOString())]);
+          [limits(win(100, 300, RESET_A), null, {}, new Date(loginAt + 90 * 60_000).toISOString())]);
   // Started after the login — genuinely this account.
   rollout(home, localStamp(new Date(loginAt + 30 * 60_000)),
-          [limits(win(58, 10080, 1789047414), null, {}, new Date(loginAt + 35 * 60_000).toISOString())]);
+          [limits(win(58, 10080, RESET_B), null, {}, new Date(loginAt + 35 * 60_000).toISOString())]);
 
-  const r = readCodexUsage({ codexHome: home });
+  const r = read({ codexHome: home });
   ok('a session started before the login is excluded entirely',
      r.ok === true && r.windows[0].usedPercent === 58,
      `got ${r.windows.map((w) => w.usedPercent + '%').join(',')} — the old account won on recency`);
@@ -208,14 +221,14 @@ ok('garbage window is not silently a real label',
 {
   const home = seat('signedin');
   fs.writeFileSync(path.join(home, 'auth.json'), '{}');
-  const r = readCodexUsage({ codexHome: home });
+  const r = read({ codexHome: home });
   ok('signed in with no turns -> signedIn true', r.signedIn === true && r.ok === false);
   ok('signed in with no turns names the real cause', /no turn has run/.test(r.reason), r.reason);
   ok('auth.json is never opened, only stat-ed',
      !JSON.stringify(r).includes('auth.json') || r.signedIn === true);
 
   const bare = seat('notsignedin');
-  const b = readCodexUsage({ codexHome: bare });
+  const b = read({ codexHome: bare });
   ok('no auth.json -> signedIn false and says to log in',
      b.signedIn === false && /not signed in/.test(b.reason), b.reason);
 }
@@ -226,15 +239,15 @@ ok('garbage window is not silently a real label',
   const dir = path.join(home, 'sessions', '2026', '09', '07');
   const file = path.join(dir, 'rollout-2026-09-07T14-00-00-big.jsonl');
   const filler = JSON.stringify({ type: 'noise', pad: 'x'.repeat(4096) }) + '\n';
-  fs.writeFileSync(file, filler.repeat(400) + JSON.stringify(limits(win(42, 10080, 1789047414))) + '\n');
-  ok('multi-MB rollout still reads its last quota', readCodexUsage({ codexHome: home }).windows[0].usedPercent === 42);
+  fs.writeFileSync(file, filler.repeat(400) + JSON.stringify(limits(win(42, 10080, RESET_B))) + '\n');
+  ok('multi-MB rollout still reads its last quota', read({ codexHome: home }).windows[0].usedPercent === 42);
 
   // Negative control: a quota that appears ONLY before the tail window must
   // come back null. Reading past the tail would make the whole-file cost of a
   // 40MB rollout the normal case; returning null lets the caller fall through
   // to the next session instead of guessing.
   const buried = path.join(dir, 'rollout-2026-09-07T14-30-00-buried.jsonl');
-  fs.writeFileSync(buried, JSON.stringify(limits(win(42, 10080, 1789047414))) + '\n' + filler.repeat(400));
+  fs.writeFileSync(buried, JSON.stringify(limits(win(42, 10080, RESET_B))) + '\n' + filler.repeat(400));
   ok('a quota only present BEFORE the tail window is missed, not guessed',
      lastRateLimits(buried, 2048) === null, JSON.stringify(lastRateLimits(buried, 2048)));
   ok('...and the same file DOES read with a tail big enough to reach it',
@@ -297,16 +310,16 @@ ok('garbage window is not silently a real label',
   ok('zero really is zero', numericPercent(0) === 0);
 
   const home = seat('nullpct');
-  rollout(home, '2026-09-07T10-00-00', [limits({ used_percent: null, window_minutes: 10080, resets_at: 1789047414 })]);
-  const r = readCodexUsage({ codexHome: home });
+  rollout(home, '2026-09-07T10-00-00', [limits({ used_percent: null, window_minutes: 10080, resets_at: RESET_B })]);
+  const r = read({ codexHome: home });
   ok('a null used_percent yields no window rather than 0%', r.windows.length === 0, JSON.stringify(r.windows));
   ok('...and the seat reports not-ok instead of full headroom', r.ok === false);
 
   const mixed = seat('mixedpct');
   rollout(mixed, '2026-09-07T10-00-00', [limits(
-    { used_percent: null, window_minutes: 300, resets_at: 1789000000 },
-    { used_percent: 77, window_minutes: 10080, resets_at: 1789047414 })]);
-  const m = readCodexUsage({ codexHome: mixed });
+    { used_percent: null, window_minutes: 300, resets_at: RESET_A },
+    { used_percent: 77, window_minutes: 10080, resets_at: RESET_B })]);
+  const m = read({ codexHome: mixed });
   ok('a good window survives beside an unreadable one',
      m.ok === true && m.windows.length === 1 && m.windows[0].usedPercent === 77, JSON.stringify(m.windows));
 }
@@ -314,9 +327,9 @@ ok('garbage window is not silently a real label',
 // --- seat isolation ----------------------------------------------------------
 {
   const a = seat('seat-a'); const b = seat('seat-b');
-  rollout(a, '2026-09-07T15-00-00', [limits(win(12, 10080, 1789000000))]);
-  rollout(b, '2026-09-07T15-00-00', [limits(win(88, 10080, 1789000000))]);
-  const ra = readCodexUsage({ codexHome: a }), rb = readCodexUsage({ codexHome: b });
+  rollout(a, '2026-09-07T15-00-00', [limits(win(12, 10080, RESET_A))]);
+  rollout(b, '2026-09-07T15-00-00', [limits(win(88, 10080, RESET_A))]);
+  const ra = read({ codexHome: a }), rb = read({ codexHome: b });
   ok('two homes report independently', ra.windows[0].usedPercent === 12 && rb.windows[0].usedPercent === 88);
   ok('result names the home it read', ra.home === a && rb.home === b);
 }
@@ -328,7 +341,7 @@ ok('garbage window is not silently a real label',
     skipped('live read of the real codex home', 'no ~/.codex/sessions on this machine');
   } else {
     const before = fs.statSync(path.join(home, 'sessions')).mtimeMs;
-    const r = readCodexUsage({ codexHome: home });
+    const r = read({ codexHome: home });
     ok('live: real codex home yields a reading', r.ok === true, r.reason || '');
     ok('live: every window has a sane percent',
        r.windows.every((w) => w.usedPercent >= 0 && w.usedPercent <= 100), JSON.stringify(r.windows));

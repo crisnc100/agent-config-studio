@@ -35,11 +35,15 @@ console.log('\nusage/routes');
 ok('HOME is redirected away from the real one', os.homedir() === fakeHome && fakeHome !== realHome, os.homedir());
 
 // A primary codex home with one quota reading, so a real seat can be adopted.
+// The window is derived from the clock, not hardcoded: these routes are asserted
+// to return a LIVE reading, and a fixed resets_at quietly expires the fixture
+// out from under them once real time passes it.
 const primary = path.join(fakeHome, '.codex', 'sessions', '2026', '09', '07');
 fs.mkdirSync(primary, { recursive: true });
+const openWindow = Math.floor(Date.now() / 1000) + 7 * 86400;
 fs.writeFileSync(path.join(primary, 'rollout-2026-09-07T10-00-00-a.jsonl'),
   JSON.stringify({ info: { rate_limits: {
-    primary: { used_percent: 44, window_minutes: 10080, resets_at: 1789047414 }, plan_type: 'prolite' } } }) + '\n');
+    primary: { used_percent: 44, window_minutes: 10080, resets_at: openWindow }, plan_type: 'prolite' } } }) + '\n');
 fs.writeFileSync(path.join(fakeHome, '.codex', 'config.toml'), 'model = "x"\n');
 
 const { createApp } = await import('../server.js');

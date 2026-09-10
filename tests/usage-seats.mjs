@@ -128,8 +128,12 @@ function registryPathIn(h) { return path.join(h, '.agent-config-studio', 'seats.
   const home = path.join(tmp, 'snaphome', '.codex');
   const day = path.join(home, 'sessions', '2026', '09', '07');
   fs.mkdirSync(day, { recursive: true });
+  // This seat exists to be a WORKING one, so its window has to still be open.
+  // Derived from the clock rather than hardcoded: a fixed resets_at silently
+  // turns this into an expired-window test the day real time passes it.
+  const openWindow = Math.floor(Date.now() / 1000) + 7 * 86400;
   fs.writeFileSync(path.join(day, 'rollout-2026-09-07T10-00-00-a.jsonl'),
-    JSON.stringify({ info: { rate_limits: { primary: { used_percent: 33, window_minutes: 10080, resets_at: 1789047414 } } } }) + '\n');
+    JSON.stringify({ info: { rate_limits: { primary: { used_percent: 33, window_minutes: 10080, resets_at: openWindow } } } }) + '\n');
 
   const grokBare = path.join(tmp, 'grok-snap');
   fs.mkdirSync(path.join(grokBare, 'sessions'), { recursive: true });
