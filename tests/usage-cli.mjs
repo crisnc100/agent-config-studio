@@ -89,6 +89,18 @@ ok('HOME is redirected', home !== realHome);
   // exercised that, so the advertised command could stay unwired.
   const acs = path.join(path.dirname(CLI), 'acs');
   ok('bin/acs exists and is executable', fs.existsSync(acs) && (fs.statSync(acs).mode & 0o111) !== 0);
+
+  // The launcher must not depend on a shell the target machine may not have.
+  // A zsh shebang passed every local test and then failed CI with exit 127 and
+  // a message naming zsh rather than this project — the least legible possible
+  // first-run failure for someone who just cloned it.
+  const shebang = fs.readFileSync(acs, 'utf8').split('\n')[0];
+  ok('bin/acs runs under a shell that always exists',
+     /^#!\/bin\/sh$|^#!\/usr\/bin\/env sh$/.test(shebang), shebang);
+  ok('bin/acs parses as POSIX sh', (() => {
+    try { execFileSync('sh', ['-n', acs], { stdio: 'pipe' }); return true; }
+    catch (e) { return String(e.stderr || e); }
+  })() === true);
   const out = (() => {
     try {
       return execFileSync(acs, ['usage', '--json'],
