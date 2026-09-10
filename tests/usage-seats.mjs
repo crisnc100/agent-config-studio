@@ -347,6 +347,52 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
   ok('...and comes back with a login to run', typeof second.loginCommand === 'string');
 }
 
+// --- snapshot resolves sign-in from the ACCOUNT, not auth.json's mtime ------
+{
+  // End-to-end wiring of the same bug: a token refresh moves auth.json's mtime
+  // with no login, and the reading it invalidates is the only one the seat has.
+  const dir = fs.mkdtempSync(path.join(tmp, 'acct-'));
+  const home = path.join(dir, 'home');
+  const day = path.join(home, 'sessions', '2026', '09', '07');
+  fs.mkdirSync(day, { recursive: true });
+  fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"acct-A"}}');
+  fs.writeFileSync(path.join(day, 'rollout-2026-09-07T10-00-00-a.jsonl'),
+    JSON.stringify({ timestamp: '2026-09-07T10:05:00.000Z', type: 'turn.completed',
+      info: { rate_limits: { primary: { used_percent: 61, window_minutes: 10080,
+        resets_at: Math.floor(Date.now() / 1000) + 7 * 86400 } } } }) + '\n');
+
+  // The login predates the rollout, as it must for the reading to be this
+  // account's at all. Filenames are LOCAL time and event stamps are UTC, so
+  // back-date well clear of both rather than to the boundary.
+  const loginAt = Date.parse('2026-09-06T00:00:00.000Z');
+  fs.utimesSync(path.join(home, 'auth.json'), loginAt / 1000, loginAt / 1000);
+
+  const seats = [{ id: 'codex-1', vendor: 'codex', label: 'Seat', home }];
+  const acctFile = path.join(dir, 'accounts.json');
+  const snapFile = path.join(dir, 'snap.json');
+
+  const first = await snapshot({ seats, snapshotFile: snapFile, accountsFile: acctFile });
+  ok('the seat reads on first snapshot', first.seats[0].ok === true, first.seats[0].reason || '');
+  ok('...and is not reported as an account change', !first.seats[0].accountChanged);
+
+  // The refresh: same account, mtime pushed past the only reading.
+  const future = Date.now();
+  fs.utimesSync(path.join(home, 'auth.json'), future / 1000, future / 1000);
+
+  const second = await snapshot({ seats, snapshotFile: snapFile, accountsFile: acctFile });
+  ok('a token refresh does not blank the seat', second.seats[0].ok === true,
+     second.seats[0].reason || '');
+  ok('...and still reports the real number', second.seats[0].windows[0]?.usedPercent === 61);
+  ok('...and is not flagged as an account change', !second.seats[0].accountChanged);
+
+  // A genuine re-auth to a different account MUST invalidate it.
+  fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"acct-B"}}');
+  const third = await snapshot({ seats, snapshotFile: snapFile, accountsFile: acctFile });
+  ok('a real account change invalidates the previous account\'s reading',
+     third.seats[0].ok === false, JSON.stringify(third.seats[0].windows));
+  ok('...and is flagged so the user can see it happened', third.seats[0].accountChanged === true);
+}
+
 // --- a rate limit must not erase the number ---------------------------------
 {
   // Pressing Refresh during a 429 overwrote the snapshot with a failure, so the

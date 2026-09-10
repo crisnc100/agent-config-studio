@@ -1484,6 +1484,17 @@ async function paintUsage() {
       why.appendChild(el('span', 'usage-offline-why', s.reason || ''));
       card.appendChild(why);
 
+      // An account change under a seat is either a deliberate re-auth or
+      // something else writing to that home. The second case is how a
+      // subscription gets spent without anyone noticing, so say it plainly
+      // rather than leaving the user to infer it from a blank card.
+      if (s.accountChanged) {
+        card.appendChild(el('div', 'usage-offline-why',
+          'This seat is signed in to a different account than last time. If you did not just ' +
+          're-authenticate it, something else is writing to this home — earlier readings have ' +
+          'been discarded because they belong to the previous account.'));
+      }
+
       if (noQuota && s.activity) {
         const bits = [];
         if (s.activity.turns) {
