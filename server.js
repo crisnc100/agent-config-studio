@@ -18,6 +18,11 @@ import { renderSnapshot, createSeat, removeSeat } from './lib/usage/seats.js';
 import { refreshSnapshot } from './lib/usage/refresh.js';
 import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
 import { loadSeats } from './lib/usage/seats.js';
+import {
+  syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
+  isInstalled as shortcutsInstalled, shortcutsFromSeats, shortcutsPath, zshenvPath,
+  validateWord, validateFlags, readShortcutConfig, writeShortcutConfig,
+} from './lib/usage/shell.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -251,6 +256,57 @@ export function createApp(opts = {}) {
    * Fixed argv — nothing from the request reaches it.
    */
   'POST /api/usage/refresh': async () => refreshSnapshot(),
+
+  /**
+   * Shell shortcuts: give each Codex seat a word you can type.
+   *
+   * The generated file is owned entirely by ACS and rewritten in full; the only
+   * touch to a human-owned file is a single `source` line appended once to
+   * ~/.zshenv (never .zshrc — zsh reads .zshenv for EVERY shell, which is why
+   * shortcuts installed elsewhere appear to work only "sometimes").
+   *
+   * Words and flags are validated against a strict allowlist before they are
+   * rendered. This output is executed by every terminal the user opens, so a
+   * value that merely looks odd is refused rather than escaped.
+   */
+  'GET /api/usage/shortcuts': async () => {
+    const { seats } = loadSeats();
+    const config = readShortcutConfig();
+    return {
+      installed: shortcutsInstalled(),
+      file: shortcutsPath(),
+      zshenv: zshenvPath(),
+      shortcuts: shortcutsFromSeats(seats, config),
+    };
+  },
+
+  'POST /api/usage/shortcuts': async (req) => {
+    const { words = {}, flags = {}, install: wantInstall } = await readBody(req);
+    const clean = { words: {}, flags: {} };
+    const problems = [];
+    for (const [id, word] of Object.entries(words)) {
+      if (word === '' || word == null) continue;          // blank = fall back to derived
+      const bad = validateWord(String(word));
+      if (bad) problems.push(`${id}: ${bad}`); else clean.words[id] = String(word);
+    }
+    for (const [id, f] of Object.entries(flags)) {
+      if (f === '' || f == null) continue;
+      const bad = validateFlags(String(f));
+      if (bad) problems.push(`${id}: ${bad}`); else clean.flags[id] = String(f);
+    }
+    if (problems.length) { const err = new Error(problems.join('; ')); err.status = 400; throw err; }
+
+    writeShortcutConfig(clean);
+    const r = syncShortcuts({ config: clean });
+    if (!r.ok) { const err = new Error(r.problems.join('; ')); err.status = 400; throw err; }
+    if (wantInstall === true) installShortcuts();
+    else if (wantInstall === false) uninstallShortcuts();
+    return {
+      ok: true, installed: shortcutsInstalled(), file: r.file,
+      shortcuts: r.shortcuts, zshenv: zshenvPath(),
+    };
+  },
+
 
   /**
    * Start a Codex sign-in for one seat and return the OAuth URL, so the user

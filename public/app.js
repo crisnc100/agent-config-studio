@@ -1194,6 +1194,90 @@ function waitingHint() {
   return row;
 }
 
+/**
+ * Shell shortcuts panel.
+ *
+ * The point of the whole feature: switching subscriptions should be a word you
+ * type, not a path you remember. Everything here is one screen of plain choices;
+ * the validation that makes it safe lives on the server, because this output is
+ * executed by every terminal the user opens.
+ */
+function shortcutsPanel(state) {
+  const form = el('div', 'usage-add');
+  form.appendChild(el('div', 'usage-add-title', 'Terminal shortcuts'));
+
+  if (!state.shortcuts.length) {
+    form.appendChild(el('div', 'usage-add-note',
+      'Shortcuts apply to Codex seats — they are the only ones whose account is chosen by ' +
+      'the terminal. Add a second Codex seat and it will appear here.'));
+    return form;
+  }
+
+  const edits = { words: {}, flags: {} };
+  for (const sc of state.shortcuts) {
+    const row = el('div', 'usage-add-row');
+    row.appendChild(el('span', 'usage-shortcut-seat', sc.label));
+
+    const word = document.createElement('input');
+    word.className = 'usage-add-label';
+    word.value = sc.word;
+    word.maxLength = 24;
+    word.placeholder = 'word to type';
+    word.oninput = () => { edits.words[sc.id] = word.value.trim(); };
+
+    const flags = document.createElement('input');
+    flags.className = 'usage-add-label';
+    flags.value = sc.flags || '';
+    flags.maxLength = 120;
+    flags.placeholder = 'always-on flags (e.g. --yolo)';
+    flags.oninput = () => { edits.flags[sc.id] = flags.value.trim(); };
+
+    row.appendChild(word); row.appendChild(flags);
+    form.appendChild(row);
+    form.appendChild(el('div', 'usage-add-note',
+      `Type “${sc.word}”, “codex ${sc.word}”, or “codex-${sc.word}” — each runs Codex on this seat.`));
+  }
+
+  const controls = el('div', 'usage-add-row');
+  const save = el('button', 'btn', state.installed ? 'Save' : 'Turn on shortcuts');
+  save.onclick = async () => {
+    save.disabled = true;
+    const words = { ...Object.fromEntries(state.shortcuts.map((s) => [s.id, s.word])), ...edits.words };
+    const flags = { ...Object.fromEntries(state.shortcuts.map((s) => [s.id, s.flags || ''])), ...edits.flags };
+    try {
+      const r = await api('POST', '/api/usage/shortcuts', { words, flags, install: true });
+      notice('info', `Shortcuts saved: ${r.shortcuts.map((s) => s.word).join(', ')}. ` +
+        'Open a new terminal tab to use them.');
+    } catch (e) { notice('error', e.message); }
+    save.disabled = false;
+    await paintUsage();
+  };
+  controls.appendChild(save);
+
+  if (state.installed) {
+    const off = el('button', 'btn ghost', 'Turn off');
+    off.onclick = async () => {
+      off.disabled = true;
+      try {
+        await api('POST', '/api/usage/shortcuts', { words: {}, flags: {}, install: false });
+        notice('info', 'Shortcuts removed from your shell. Existing tabs keep them until reopened.');
+      } catch (e) { notice('error', e.message); }
+      await paintUsage();
+    };
+    controls.appendChild(off);
+  }
+  form.appendChild(controls);
+
+  form.appendChild(el('div', 'usage-add-note',
+    state.installed
+      ? `Active in every terminal. Installed as one line in ${state.zshenv}, which zsh reads for ` +
+        'every shell — new tabs, scripts and all. Switching seats never asks you to sign in again.'
+      : 'Turning these on adds a single line to your shell profile. Nothing else on your machine changes.'));
+  form.appendChild(el('div', 'usage-add-note',
+    'Quit a running Codex session before switching — the account is fixed when it starts.'));
+  return form;
+}
+
 function addSeatForm() {
   const form = el('div', 'usage-add');
   form.appendChild(el('div', 'usage-add-title', 'Track another subscription'));
@@ -1314,10 +1398,19 @@ async function paintUsage() {
   const addBtn = el('button', 'btn ghost', '+ Add seat');
   addBtn.onclick = () => { S.usageAdding = !S.usageAdding; paintUsage(); };
   actions.appendChild(addBtn);
+
+  const scBtn = el('button', 'btn ghost', 'Shortcuts');
+  scBtn.onclick = () => { S.usageShortcuts = !S.usageShortcuts; paintUsage(); };
+  actions.appendChild(scBtn);
   panelHead.appendChild(actions);
   box.appendChild(panelHead);
 
   if (S.usageAdding) box.appendChild(addSeatForm());
+  if (S.usageShortcuts) {
+    let sc = null;
+    try { sc = await api('GET', '/api/usage/shortcuts'); } catch (e) { notice('error', e.message); }
+    if (sc) box.appendChild(shortcutsPanel(sc));
+  }
 
   if (!seats.length) {
     box.appendChild(el('div', 'scope-sub',

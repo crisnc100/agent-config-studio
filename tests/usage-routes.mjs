@@ -196,6 +196,36 @@ const post = (p, b) => fetch(B + p, {
   ok('cancel is safe to call for any id', s3 === 200);
 }
 
+// --- shell shortcuts ---------------------------------------------------------
+// This endpoint's output is executed by every terminal the user opens, so the
+// bar is that nothing typed here can become shell.
+{
+  const [bs, before] = await get('/api/usage/shortcuts');
+  ok('shortcuts endpoint answers', bs === 200 && Array.isArray(before.shortcuts),
+     JSON.stringify(before).slice(0, 140));
+  ok('it reports install state', typeof before.installed === 'boolean');
+  ok('it installs into .zshenv, not .zshrc', /\.zshenv$/.test(before.zshenv), before.zshenv);
+
+  const seatId = (before.shortcuts[0] || {}).id || 'codex-main';
+  for (const bad of ['te;am', 'te am', 'te$(id)', 'TEAM', 'rm', 'codex']) {
+    const [st] = await post('/api/usage/shortcuts', { words: { [seatId]: bad }, install: false });
+    ok(`a dangerous word is rejected: ${JSON.stringify(bad)}`, st === 400, `status ${st}`);
+  }
+  for (const bad of ['--yolo; id', '$(id)', '`id`', '--a|b']) {
+    const [st] = await post('/api/usage/shortcuts', { flags: { [seatId]: bad }, install: false });
+    ok(`dangerous flags are rejected: ${JSON.stringify(bad)}`, st === 400, `status ${st}`);
+  }
+
+  const [gs, good] = await post('/api/usage/shortcuts', { words: { [seatId]: 'work' }, install: false });
+  ok('a valid word is accepted', gs === 200, `status ${gs} ${JSON.stringify(good)}`);
+  ok('...and comes back in the shortcut list',
+     (good.shortcuts || []).some((s) => s.word === 'work'), JSON.stringify(good.shortcuts));
+  const generated = fs.readFileSync(good.file, 'utf8');
+  ok('a rejected word never reached the generated file', !generated.includes('$(id)'));
+  ok('the generated file warns against hand editing', /DO NOT EDIT/.test(generated));
+  ok('the generated file landed under the fake home', good.file.startsWith(fakeHome), good.file);
+}
+
 // --- the real home was never touched ----------------------------------------
 {
   const realAfter = (() => {

@@ -675,3 +675,12 @@ a { color: var(--accent); }
 
 /* A stale reading must not look like a current one. */
 .usage-stale { color: var(--amber); font: 11px var(--mono); margin-top: 6px; }
+
+/* Terminal shortcuts: seat name sits left of its two inputs so the row reads
+   "this subscription -> this word". */
+.usage-shortcut-seat {
+  min-width: 168px;
+  font-size: 12px;
+  color: var(--fg-dim, #888);
+  align-self: center;
+}
