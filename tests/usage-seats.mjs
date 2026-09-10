@@ -317,6 +317,36 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
   ok('...so no second home is created for it', !fs.existsSync(path.join(seatHomeRoot(dir), r.seat.id)));
 }
 
+// --- ~/.codex is never RE-adopted once a seat lives in a private home --------
+{
+  // The migration trap: moving a subscription out of ~/.codex into a private
+  // home, then adding the next seat, used to silently re-adopt ~/.codex —
+  // because "no seat currently claims it" was true again. The new seat needs
+  // no login, looks fine, and then changes account underneath the user the
+  // first time the desktop app or any long-lived process refreshes a token
+  // into that shared home. Adopting is only ever right on a fresh machine.
+  const dir = fs.mkdtempSync(path.join(tmp, 'readopt-'));
+  fs.mkdirSync(path.join(dir, '.codex'), { recursive: true });
+  const f = path.join(dir, 'seats.json');
+
+  const first = createSeat({ vendor: 'codex', label: 'Prolite', file: f, home: dir });
+  ok('the first seat still adopts ~/.codex on a fresh machine', first.adopted === true);
+
+  // Move it to a private home, the way the migration does.
+  const seats = loadSeats(f).seats.map((x) =>
+    (x.id === first.seat.id ? { ...x, home: path.join(seatHomeRoot(dir), 'private') } : x));
+  fs.mkdirSync(path.join(seatHomeRoot(dir), 'private'), { recursive: true });
+  saveSeats(seats, f);
+
+  const second = createSeat({ vendor: 'codex', label: 'Team', file: f, home: dir });
+  ok('a later seat does NOT re-adopt the now-unclaimed ~/.codex',
+     second.adopted !== true && path.resolve(second.seat.home) !== path.resolve(path.join(dir, '.codex')),
+     second.seat.home);
+  ok('...it gets its own private home instead',
+     second.seat.home.startsWith(seatHomeRoot(dir)), second.seat.home);
+  ok('...and comes back with a login to run', typeof second.loginCommand === 'string');
+}
+
 // --- a rate limit must not erase the number ---------------------------------
 {
   // Pressing Refresh during a 429 overwrote the snapshot with a failure, so the

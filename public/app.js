@@ -1213,7 +1213,7 @@ function shortcutsPanel(state) {
     return form;
   }
 
-  const edits = { words: {}, flags: {} };
+  const edits = { words: {}, flags: {}, defaultId: (state.shortcuts.find((s) => s.isDefault) || {}).id };
   for (const sc of state.shortcuts) {
     const row = el('div', 'usage-add-row');
     row.appendChild(el('span', 'usage-shortcut-seat', sc.label));
@@ -1232,10 +1232,23 @@ function shortcutsPanel(state) {
     flags.placeholder = 'always-on flags (e.g. --yolo)';
     flags.oninput = () => { edits.flags[sc.id] = flags.value.trim(); };
 
-    row.appendChild(word); row.appendChild(flags);
+    // Which seat a bare `codex` spends is an explicit choice — otherwise it
+    // would follow registry order, and reordering seats would quietly move a
+    // subscription's spend.
+    const def = document.createElement('label');
+    def.className = 'usage-shortcut-default';
+    const radio = document.createElement('input');
+    radio.type = 'radio'; radio.name = 'acs-default-seat';
+    radio.checked = !!sc.isDefault;
+    radio.onchange = () => { edits.defaultId = sc.id; };
+    def.appendChild(radio);
+    def.appendChild(document.createTextNode(' default'));
+
+    row.appendChild(word); row.appendChild(flags); row.appendChild(def);
     form.appendChild(row);
     form.appendChild(el('div', 'usage-add-note',
-      `Type “${sc.word}”, “codex ${sc.word}”, or “codex-${sc.word}” — each runs Codex on this seat.`));
+      `Type “${sc.word}”, “codex ${sc.word}”, or “codex-${sc.word}” — each runs Codex on this seat.` +
+      (sc.isDefault ? ' A plain “codex” runs this one.' : '')));
   }
 
   const controls = el('div', 'usage-add-row');
@@ -1245,7 +1258,8 @@ function shortcutsPanel(state) {
     const words = { ...Object.fromEntries(state.shortcuts.map((s) => [s.id, s.word])), ...edits.words };
     const flags = { ...Object.fromEntries(state.shortcuts.map((s) => [s.id, s.flags || ''])), ...edits.flags };
     try {
-      const r = await api('POST', '/api/usage/shortcuts', { words, flags, install: true });
+      const r = await api('POST', '/api/usage/shortcuts',
+        { words, flags, defaultId: edits.defaultId, install: true });
       notice('info', `Shortcuts saved: ${r.shortcuts.map((s) => s.word).join(', ')}. ` +
         'Open a new terminal tab to use them.');
     } catch (e) { notice('error', e.message); }

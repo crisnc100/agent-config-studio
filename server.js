@@ -281,8 +281,17 @@ export function createApp(opts = {}) {
   },
 
   'POST /api/usage/shortcuts': async (req) => {
-    const { words = {}, flags = {}, install: wantInstall } = await readBody(req);
-    const clean = { words: {}, flags: {} };
+    const { words = {}, flags = {}, defaultId = null, install: wantInstall } = await readBody(req);
+    const clean = { words: {}, flags: {}, defaultId: null };
+    // The default seat is an id from the registry, never a path: it decides
+    // which subscription a bare `codex` spends, so it must not be free text.
+    if (defaultId != null && defaultId !== '') {
+      const { seats } = loadSeats();
+      if (!seats.some((x) => x.id === defaultId && x.vendor === 'codex')) {
+        const err = new Error(`no codex seat with id "${defaultId}"`); err.status = 400; throw err;
+      }
+      clean.defaultId = defaultId;
+    }
     const problems = [];
     for (const [id, word] of Object.entries(words)) {
       if (word === '' || word == null) continue;          // blank = fall back to derived

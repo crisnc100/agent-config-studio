@@ -137,6 +137,44 @@ ok('shortcuts install into .zshenv, not .zshrc',
      run('CODEX_HOME=/custom codex').includes('HOME=/custom'), run('CODEX_HOME=/custom codex'));
 }
 
+// --- the default seat is chosen, never inherited from list order ------------
+{
+  // Registry order deciding which subscription bare `codex` bills is exactly
+  // the silent-automatic behaviour this whole feature exists to remove.
+  const h1 = homeDir('def1'), h2 = homeDir('def2');
+  const seats = [
+    { id: 'codex-1', vendor: 'codex', label: 'Personal', home: h1 },
+    { id: 'codex-2', vendor: 'codex', label: 'Team', home: h2 },
+  ];
+  const first = shortcutsFromSeats(seats);
+  ok('with nothing chosen, the first seat is the default',
+     first.find((s) => s.isDefault).id === 'codex-1');
+
+  const chosen = shortcutsFromSeats(seats, { defaultId: 'codex-2' });
+  ok('an explicit default wins', chosen.find((s) => s.isDefault).id === 'codex-2');
+  ok('...and only one seat is ever the default',
+     chosen.filter((s) => s.isDefault).length === 1);
+
+  // Reordering must not move the default off the chosen seat.
+  const reordered = shortcutsFromSeats([seats[1], seats[0]], { defaultId: 'codex-2' });
+  ok('reordering the registry does not change which seat bare codex bills',
+     reordered.find((s) => s.isDefault).id === 'codex-2');
+
+  const bogus = shortcutsFromSeats(seats, { defaultId: 'no-such-seat' });
+  ok('a stale defaultId falls back rather than leaving none',
+     bogus.filter((s) => s.isDefault).length === 1);
+
+  // The export is what reaches non-shell children (node spawns, scripts).
+  const text = renderShortcuts(chosen);
+  ok('the generated file exports CODEX_HOME for the default seat',
+     /^export CODEX_HOME=/m.test(text), text.split('\n').slice(0, 20).join('\n'));
+  const file = path.join(tmp, 'default.zsh');
+  fs.writeFileSync(file, text);
+  const out = execFileSync('zsh', ['-f', '-c',
+    `source ${JSON.stringify(file)}; printenv CODEX_HOME`], { encoding: 'utf8' }).trim();
+  ok('CODEX_HOME is exported to the chosen seat', out === h2, `${out} (wanted ${h2})`);
+}
+
 // --- install touches ~/.zshenv exactly once, and reversibly ------------------
 {
   const fakeHome = homeDir('zhome');
