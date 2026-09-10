@@ -94,6 +94,7 @@ async function boot() {
   // Deep links: #file=<path> for any file, #scope for the scope view.
   if (location.hash.startsWith('#scope')) return openScope();
   if (location.hash.startsWith('#mcp')) return openMcp();
+  if (location.hash.startsWith('#usage')) return openUsage();
   if (location.hash.startsWith('#trash')) return openTrash();
   if (location.hash.startsWith('#assist')) { renderWelcome(); return openDrawer(); }
   const m = location.hash.match(/file=([^&]+)/);
@@ -323,6 +324,7 @@ function renderContent() {
   if (S.view === 'search') return;         // rendered directly by doSearch
   if (S.view === 'scope') return;          // rendered directly by openScope
   if (S.view === 'mcp') return;            // rendered directly by openMcp
+  if (S.view === 'usage') return;          // rendered directly by openUsage
   if (S.view === 'trash') return;          // rendered directly by openTrash
   if (!S.file) return;
 
@@ -1101,6 +1103,344 @@ async function openTrash() {
     row.appendChild(btn);
     box.appendChild(row);
   }
+  c.appendChild(box);
+}
+
+/* ── Usage view ──────────────────────────────────────────────────────── */
+
+/**
+ * Subscription headroom per seat.
+ *
+ * This is a routing gauge, not a dashboard: the question it answers is "which
+ * subscription should the next task go to", so seats sort by the headroom of
+ * their tightest window and the answer is the first line.
+ *
+ * The studio reads no credential of its own. Codex seats are read live from
+ * their own logs; Claude's reading is taken by a separate process and shown
+ * with its age rather than implied to be current.
+ */
+
+let usageTimer = null;
+
+/**
+ * A command the user has to run in their own terminal.
+ *
+ * The studio never performs a login: the OAuth flow needs a browser, and the
+ * credential must not pass through here. So the honest affordance is the exact
+ * command, ready to copy.
+ */
+/**
+ * Sign a Codex seat in without leaving the browser.
+ *
+ * `codex login` prints an OAuth URL and runs a local callback server, so the
+ * studio starts it, opens the URL, and polls until the seat has credentials.
+ * The token lands in the seat's own auth.json — the studio never sees it.
+ */
+function connectRow(seat, { reauth = false } = {}) {
+  const row = el('div', 'usage-hint');
+  const btn = el('button', 'btn', reauth ? 'Sign in as a different account' : 'Sign in with ChatGPT');
+  const status = el('span', 'usage-hint-label', '');
+
+  btn.onclick = async () => {
+    btn.disabled = true; status.textContent = 'starting sign-in…';
+    let res;
+    try { res = await api('POST', '/api/usage/connect', { id: seat.seatId, reauth }); }
+    catch (e) { btn.disabled = false; status.textContent = ''; return notice('error', e.message); }
+    if (res.error) { btn.disabled = false; status.textContent = ''; return notice('error', res.error); }
+
+    // The window.open happens after an await, so the browser's user-activation
+    // window may have expired and the popup be blocked silently. Always render
+    // the link too, so a blocked tab is a visible next step rather than a UI
+    // that claims to be waiting for something that never opened.
+    const opened = window.open(res.url, '_blank', 'noopener');
+    const link = el('a', 'usage-hint-link', 'Open the sign-in page');
+    link.href = res.url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    row.appendChild(link);
+    status.textContent = opened
+      ? 'waiting for you to finish in the other tab…'
+      : 'your browser blocked the popup — use the link';
+
+    // Poll rather than hold a request open for the whole OAuth round trip.
+    const started = Date.now();
+    const poll = setInterval(async () => {
+      if (S.view !== 'usage') return clearInterval(poll);
+      let st;
+      try { st = await api('POST', '/api/usage/connect/state', { id: seat.seatId }); }
+      catch { return; }
+      if (st.signedIn) {
+        clearInterval(poll);
+        notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
+        paintUsage();
+      } else if (!st.running && Date.now() - started > 5000) {
+        clearInterval(poll);
+        btn.disabled = false;
+        status.textContent = 'sign-in was cancelled or did not complete';
+      }
+    }, 2000);
+  };
+
+  row.appendChild(btn);
+  row.appendChild(status);
+  return row;
+}
+
+/** Signed in, but Codex has not recorded a quota reading yet. */
+function waitingHint() {
+  const row = el('div', 'usage-hint');
+  row.appendChild(el('span', 'usage-hint-label',
+    'Connected. Codex reports quota only after a turn runs, so this fills in the first time you use this seat.'));
+  return row;
+}
+
+function addSeatForm() {
+  const form = el('div', 'usage-add');
+  form.appendChild(el('div', 'usage-add-title', 'Track another subscription'));
+
+  const row = el('div', 'usage-add-row');
+  const vendor = document.createElement('select');
+  vendor.className = 'usage-add-vendor';
+  for (const [value, text] of [['codex', 'Codex (ChatGPT)'], ['claude', 'Claude'], ['grok', 'Grok']]) {
+    const o = document.createElement('option');
+    o.value = value; o.textContent = text;
+    vendor.appendChild(o);
+  }
+  const label = document.createElement('input');
+  label.className = 'usage-add-label';
+  label.placeholder = 'Name it — e.g. "Codex (work)"';
+  label.maxLength = 60;
+
+  const save = el('button', 'btn', 'Add');
+  const submit = async () => {
+    if (!label.value.trim()) return label.focus();
+    save.disabled = true;
+    let res;
+    try { res = await api('POST', '/api/usage/seats', { vendor: vendor.value, label: label.value.trim() }); }
+    catch (e) { save.disabled = false; return notice('error', e.message); }
+    S.usageAdding = false;
+    await paintUsage();
+    if (res.loginCommand) {
+      notice('info', `Seat added. Run the login command shown on "${res.seat.label}" to connect it.`);
+    } else if (res.note) {
+      notice('info', res.note);
+    }
+  };
+  save.onclick = submit;
+  label.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+
+  row.appendChild(vendor); row.appendChild(label); row.appendChild(save);
+  form.appendChild(row);
+  form.appendChild(el('div', 'usage-add-note',
+    'A second Codex seat gets its own home, sharing your config by symlink — only the login and ' +
+    'session history differ. You sign in from here; no terminal needed. ' +
+    'A Grok seat reads its weekly quota through the Grok CLI, so sign in with `grok login` first.'));
+  return form;
+}
+
+
+/** A seat's headroom is set by its tightest window — the first one to stop you. */
+function seatHeadroom(s) {
+  // A stale reading is not headroom, it is a memory — never route on it.
+  if (!s.ok || s.stale || !s.windows.length) return null;
+  return 100 - Math.max(...s.windows.map((w) => w.usedPercent));
+}
+
+function untilText(ts) {
+  if (!ts) return '';
+  const ms = ts - Date.now();
+  if (ms <= 0) return 'resetting';
+  const h = Math.floor(ms / 3.6e6), mn = Math.round((ms % 3.6e6) / 6e4);
+  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
+  return h ? `${h}h ${mn}m` : `${mn}m`;
+}
+
+const fmtTokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
+const agoText = (ms) => (ms == null ? '' : ms < 60000 ? 'just now' : `${untilText(Date.now() + ms)} ago`);
+
+async function openUsage() {
+  if (!confirmDiscard()) return;
+  S.view = 'usage';
+  S.entry = null;
+  window.history.replaceState(null, '', '#usage');
+  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
+  $('filebar').hidden = true;
+
+  const c = $('content');
+  c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span> reading usage…</div></div>';
+  await paintUsage();
+
+  // Meant to be left open, so it keeps itself current. Cleared whenever the
+  // view changes so a closed panel is not polling forever.
+  clearInterval(usageTimer);
+  usageTimer = setInterval(() => {
+    if (S.view !== 'usage') { clearInterval(usageTimer); usageTimer = null; return; }
+    paintUsage();
+  }, 60_000);
+}
+
+async function paintUsage() {
+  const c = $('content');
+  let u;
+  try { u = await api('GET', '/api/usage'); }
+  catch (e) { c.innerHTML = `<div class="scope"><div class="scope-sub">${esc(e.message)}</div></div>`; return; }
+  if (S.view !== 'usage') return;   // the view changed while the request was in flight
+
+  const seats = [...(u.seats || [])].sort((a, b) => {
+    const ha = seatHeadroom(a), hb = seatHeadroom(b);
+    if (ha === null && hb === null) return 0;
+    if (ha === null) return 1;      // unreadable seats sink; they are not "full"
+    if (hb === null) return -1;
+    return hb - ha;
+  });
+
+  c.innerHTML = '';
+  const box = el('div', 'scope');
+
+  const panelHead = el('div', 'usage-head');
+  panelHead.appendChild(el('h2', null, 'Subscription usage'));
+  const actions = el('div', 'usage-actions');
+
+  const refresh = el('button', 'btn ghost', 'Refresh');
+  refresh.onclick = async () => {
+    refresh.disabled = true; refresh.textContent = 'Refreshing…';
+    // The reading Claude needs a token for is taken by a child process, so the
+    // credential never enters the studio. It can take a second.
+    try { await api('POST', '/api/usage/refresh'); } catch (e) { notice('error', e.message); }
+    await paintUsage();
+  };
+  actions.appendChild(refresh);
+
+  const addBtn = el('button', 'btn ghost', '+ Add seat');
+  addBtn.onclick = () => { S.usageAdding = !S.usageAdding; paintUsage(); };
+  actions.appendChild(addBtn);
+  panelHead.appendChild(actions);
+  box.appendChild(panelHead);
+
+  if (S.usageAdding) box.appendChild(addSeatForm());
+
+  if (!seats.length) {
+    box.appendChild(el('div', 'scope-sub',
+      'No subscriptions tracked yet — use + Add seat above.'));
+    c.appendChild(box);
+    return;
+  }
+
+  const best = seats.find((s) => seatHeadroom(s) !== null);
+  const head = el('div', 'usage-route');
+  if (best) {
+    head.appendChild(el('span', 'usage-route-label', 'Route to'));
+    head.appendChild(el('span', 'usage-route-seat', best.label));
+    head.appendChild(el('span', 'usage-route-pct', `${Math.round(seatHeadroom(best))}% headroom`));
+  } else {
+    head.appendChild(el('span', 'usage-route-label', 'No seat is reporting usable headroom'));
+  }
+  box.appendChild(head);
+
+  for (const s of seats) {
+    const card = el('div', 'usage-seat');
+    const title = el('div', 'usage-seat-head');
+    title.appendChild(el('span', 'usage-seat-name', s.label));
+    const meta = [s.vendor, s.planType, s.subscriptionType].filter(Boolean).join(' · ');
+    title.appendChild(el('span', 'usage-seat-meta', meta));
+    card.appendChild(title);
+
+    const drop = el('button', 'usage-drop', '×');
+    drop.title = 'Stop tracking this seat';
+    drop.onclick = async () => {
+      // Unregisters only. The seat's home holds a real login and its history,
+      // so removing a row from a list must never destroy credentials.
+      if (!confirm(`Stop tracking "${s.label}"?\n\nIts login and history stay on disk.`)) return;
+      try { await api('POST', '/api/usage/seats/remove', { id: s.seatId }); }
+      catch (e) { return notice('error', e.message); }
+      paintUsage();
+    };
+    title.appendChild(drop);
+
+    if (!s.ok) {
+      // A signed-in seat with no turns yet is a different state from one that
+      // was never connected, and telling someone to re-run a login that already
+      // worked is the worst thing this panel could do.
+      // Three states, not two. A seat whose vendor publishes no quota is
+      // connected and working — calling it "not connected" is simply false.
+      const duplicate = Boolean(s.duplicateOf);
+      const noQuota = !duplicate && s.noQuota === true && s.signedIn === true;
+      const waiting = !duplicate && !noQuota && s.signedIn === true;
+      const why = el('div', 'usage-offline');
+      const tag = el('span', 'usage-offline-tag',
+        duplicate ? 'duplicate account'
+          : noQuota ? 'connected · no quota published'
+          : waiting ? 'signed in · no usage yet' : 'not connected');
+      if (waiting || noQuota) tag.classList.add('waiting');
+      if (duplicate) tag.classList.add('duplicate');
+      why.appendChild(tag);
+      why.appendChild(el('span', 'usage-offline-why', s.reason || ''));
+      card.appendChild(why);
+
+      if (noQuota && s.activity) {
+        const bits = [];
+        if (s.activity.turns) {
+          bits.push(`${s.activity.turns} turn${s.activity.turns === 1 ? '' : 's'} in the last 24h`);
+          bits.push(`${fmtTokens(s.activity.inputTokens + s.activity.outputTokens)} tokens`);
+        }
+        if (s.lastActiveAt) bits.push(`last used ${agoText(Date.now() - s.lastActiveAt)}`);
+        // Deliberately no dollar figure: the cost field is in "ticks" whose
+        // scale is unverified, and a wrong one would be a confident wrong number.
+        if (bits.length) card.appendChild(el('div', 'usage-note', bits.join(' · ')));
+      }
+      if (s.vendor === 'codex' && s.home) {
+        // A duplicate is signed in — it just needs a DIFFERENT account, so the
+        // affordance is re-auth, not sign-in.
+        card.appendChild(s.duplicateOf ? connectRow(s, { reauth: true })
+          : waiting ? waitingHint() : connectRow(s));
+      }
+    } else {
+      for (const w of s.windows) {
+        const row = el('div', 'usage-row');
+        const track = el('div', 'usage-track');
+        const fill = el('div', 'usage-fill');
+        fill.style.width = `${Math.min(100, Math.max(0, w.usedPercent))}%`;
+        // Tinting is by pressure, not by vendor: the colour has to mean the
+        // same thing on every gauge or it stops being readable at a glance.
+        fill.dataset.level = w.usedPercent >= 90 ? 'high' : w.usedPercent >= 70 ? 'mid' : 'low';
+        track.appendChild(fill);
+        row.appendChild(el('span', 'usage-pct', `${Math.round(w.usedPercent)}%`));
+        row.appendChild(track);
+        const lbl = el('span', 'usage-label', w.label);
+        if (w.resetsAt) lbl.appendChild(el('span', 'usage-reset', ` resets in ${untilText(w.resetsAt)}`));
+        row.appendChild(lbl);
+        card.appendChild(row);
+      }
+      const notes = [];
+      if (s.credits?.hasCredits) {
+        notes.push(`credits ${s.credits.unlimited ? 'unlimited'
+          : (s.credits.balance == null ? 'available' : s.credits.balance)}`);
+      }
+      if (s.extraUsage?.enabled) {
+        notes.push(`extra usage ${s.extraUsage.usedCredits}/${s.extraUsage.monthlyLimit} ${s.extraUsage.currency}`);
+      }
+      // A reading is only as good as its age. Codex readings come from the last
+      // turn that ran, so an idle seat's number can be hours old and still true.
+      // A held-over reading must say so, or a stale number looks current.
+      if (s.staleReason) notes.push(`${s.staleReason} — showing the last good reading`);
+      if (s.stale && s.observedAt) {
+        const stale = el('div', 'usage-stale',
+          `as of ${agoText(Date.now() - s.observedAt)} — not current. Run a turn on this seat to refresh it.`);
+        card.appendChild(stale);
+      }
+      if (s.expiredWindows) notes.push(`${s.expiredWindows} window(s) hidden — already reset`);
+      if (s.readingAge != null && s.readingAge > 5 * 60_000) notes.push(`read ${agoText(s.readingAge)}`);
+      else if (s.observedAt && Date.now() - s.observedAt > 30 * 60_000) {
+        notes.push(`last recorded turn ${agoText(Date.now() - s.observedAt)}`);
+      }
+      if (notes.length) card.appendChild(el('div', 'usage-note', notes.join(' · ')));
+    }
+    box.appendChild(card);
+  }
+
+  box.appendChild(el('div', 'scope-sub',
+    'Codex reads its own logs live. Claude needs an OAuth token, which the studio never handles ' +
+    'itself — Refresh takes that reading in a separate process.'));
   c.appendChild(box);
 }
 
@@ -1981,6 +2321,7 @@ $('drawer-close').onclick = closeDrawer;
 $('scrim').onclick = closeDrawer;
 $('btn-scope').onclick = openScope;
 $('btn-mcp').onclick = openMcp;
+$('btn-usage').onclick = openUsage;
 $('btn-trash').onclick = openTrash;
 $('btn-delete').onclick = deleteOpenEntry;
 $('btn-copy').onclick = copyToOtherHarness;

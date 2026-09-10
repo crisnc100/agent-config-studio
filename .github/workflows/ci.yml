@@ -20,7 +20,7 @@ jobs:
         run: |
           set -euo pipefail
           node --check server.js
-          find lib tests public \( -name '*.js' -o -name '*.mjs' \) -exec node --check {} +
+          find lib tests public bin \( -name '*.js' -o -name '*.mjs' \) -exec node --check {} +
       - name: live containment is a local gate
         if: always()
         run: |
@@ -44,6 +44,13 @@ jobs:
           set -euo pipefail
           node tests/phase1.mjs
           node tests/phase2a.mjs
+          node tests/usage-codex.mjs
+          node tests/usage-claude.mjs
+          node tests/usage-grok.mjs
+          node tests/usage-identity.mjs
+          node tests/usage-seats.mjs
+          node tests/usage-routes.mjs
+          node tests/usage-cli.mjs
       - name: live containment is a local gate
         if: always()
         run: |

@@ -167,6 +167,48 @@ It shells out to your local `claude` CLI, riding your existing subscription auth
 — no API key is read or stored, and the server makes no outbound request of its
 own.
 
+## Subscription usage
+
+**Usage** in the top bar answers one question: which subscription should the
+next task go to. Seats sort by the headroom of their tightest window, so the
+line at the top is the answer and the cards below are the evidence.
+
+    Route to: Codex (second)  99% headroom
+
+Each seat is one *subscription*, not one vendor — two Codex plans and no Grok is
+a valid setup, and so is none at all. **+ Add seat** registers one; a second
+Codex seat gets its own `CODEX_HOME` under `~/.codex-seats/`, sharing
+`config.toml`, `AGENTS.md`, `skills`, `rules` and `plugins` by symlink, so only
+the login and session history differ. You sign in from the panel — it opens the
+OAuth tab and the card flips to connected on its own.
+
+Where each number comes from:
+
+| Vendor | Source | Windows |
+|---|---|---|
+| Codex | `rate_limits` in its own rollout logs — offline, no credential | weekly, plus a 5h rolling window on some plans |
+| Claude | `/api/oauth/usage` (undocumented) | session (5h), weekly all-models, weekly per-model |
+| Grok | the `_x.ai/billing` method over `grok agent stdio` | weekly |
+
+**The studio never reads a credential.** Codex needs none. Claude and Grok do,
+so their readings are taken by the `acs-usage` CLI in a separate process that
+writes a snapshot; the studio renders it and shows how old it is. **Refresh**
+retakes those readings. This is the same rule that hard-blocks
+`.credentials.json` and `auth.json` from the file API.
+
+Nothing is ever shown as a number it isn't. A seat that cannot be read says
+*not connected* with the reason; one that is signed in but has never run says
+*signed in · no usage yet*, because Codex records quota only when a turn runs.
+A window whose percentage is missing is dropped rather than drawn as 0% — a
+green bar meaning "we don't know" is worse than no bar.
+
+Removing a seat unregisters it and leaves its home on disk. That directory holds
+a real login and its history; dropping a row from a list must never delete
+credentials.
+
+From the terminal, `node bin/usage.mjs` prints the same gauge (`--json` for raw,
+`detect --save` to register what's on this machine).
+
 ## Shortcuts
 
 | Key | Action |

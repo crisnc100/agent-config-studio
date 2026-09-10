@@ -6,6 +6,7 @@ const ROOT = path.dirname(fileURLToPath(new URL('.', import.meta.url)));
 const LIB = path.join(ROOT, 'lib');
 const SERVER = path.join(ROOT, 'server.js');
 const HARNESS = path.join(LIB, 'harness.js');
+const BIN = path.join(ROOT, 'bin');
 
 const WHY = {
   a: [
@@ -27,6 +28,15 @@ const WHY = {
     'is how a future harness gets added without a proven allowlist. Do not',
     'delete this guard to land a descriptor "temporarily" — fill containment',
     'with `--tools <read-only>` first.',
+  ].join(' '),
+  e: [
+    'Pinning argv alone does not pin the boundary. `grok agent stdio` opens a',
+    'JSON-RPC endpoint: with the same argv, sending `session/new` and a prompt',
+    'runs an uncontained model turn. And lib/usage/refresh.js spawns',
+    'process.execPath, so whatever script it points at runs with no',
+    'containment at all. This guard pins the RPC methods that module may send',
+    'and the script that one may execute. Do not widen either list to add a',
+    '"quick" call — a new method is a new door.',
   ].join(' '),
   d: [
     'Containment is an ALLOWLIST (`--tools`). Measured leaks: Claude wrote',
@@ -193,8 +203,15 @@ function readStripped(abs) {
   return stripComments(fs.readFileSync(abs, 'utf8'));
 }
 
+/**
+ * Files the spawn guards read.
+ *
+ * bin/ is included: it is shipped code that the studio itself executes through
+ * lib/usage/refresh.js, so a spawn added there is exactly as reachable as one
+ * in lib/ — and it was previously unscanned.
+ */
 function scanTargets() {
-  return [...listJs(LIB), SERVER];
+  return [...listJs(LIB), ...listJs(BIN), SERVER];
 }
 
 function guardA() {
@@ -271,6 +288,22 @@ function guardB() {
     const allowed = {
       'lib/history.js': { fns: new Set(['exec', 'execFile']), bins: new Set(['git']) },
       'lib/worktree.js': { fns: new Set(['exec', 'execFile']), bins: new Set(['git', 'zsh']) },
+      // The usage refresh runs our own CLI so a credential never enters the
+      // studio process. Held to a STRICTER rule than the entries above: the
+      // executable must be process.execPath literally, so it can never resolve
+      // a name on PATH and can never become a harness spawn.
+      'lib/usage/refresh.js': { fns: new Set(['spawn']), execPathOnly: true },
+      // Codex sign-in. This one DOES spawn a harness binary, which guard b
+      // otherwise bans — so it is pinned to the login subcommand. A login
+      // cannot run a model turn or touch a file, which is the property guard b
+      // exists to protect. argv must be a literal ['login'] / ['login','status']
+      // with no prompt, no exec, and nothing caller-supplied.
+      'lib/usage/connect.js': { fns: new Set(['spawn']), loginOnly: true },
+      // Grok's weekly quota, read over the agent protocol. Also a harness
+      // binary, also pinned: ['agent','stdio'] starts a JSON-RPC endpoint, and
+      // this module only ever writes `initialize` and `_x.ai/billing`. No
+      // session is created and no prompt is sent, so no model turn can run.
+      'lib/usage/grok-billing.js': { fns: new Set(['spawn']), agentStdioOnly: true },
     }[file];
 
     for (const call of calls) {
@@ -283,6 +316,49 @@ function guardB() {
         continue;
       }
       const cal = calleeLiteral(src, call);
+      if (allowed.agentStdioOnly) {
+        const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
+        if (!/^found\.binary\s*,/.test(text)) {
+          hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 50)}…) — must spawn the detected ` +
+                    `absolute binary (found.binary), never a PATH name`);
+        }
+        const am = /^[^,]+,\s*(\[[^\]]*\])/.exec(text);
+        const argv = am ? am[1].replace(/\s+/g, '') : null;
+        if (!argv || argv !== "['agent','stdio']") {
+          hits.push(`${file}:${call.line} argv must be the literal ['agent','stdio'], got ` +
+                    `${argv ?? 'nothing parseable'} — a prompt or model flag here would be an ` +
+                    `uncontained model turn`);
+        }
+        continue;
+      }
+      if (allowed.loginOnly) {
+        const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
+        // The binary must come from detection, never a bare name or a string.
+        if (!/^found\.binary\s*,/.test(text)) {
+          hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 50)}…) — must spawn the detected ` +
+                    `absolute binary (found.binary), never a PATH name`);
+        }
+        const argvMatch = /^[^,]+,\s*(\[[^\]]*\])/.exec(text);
+        const argv = argvMatch ? argvMatch[1].replace(/\s+/g, '') : null;
+        if (!argv || !/^\['(login'(,'status')?|logout')\]$/.test(argv)) {
+          hits.push(`${file}:${call.line} argv must be a literal ['login'], ['login','status'] ` +
+                    `or ['logout'], ` +
+                    `got ${argv ?? 'nothing parseable'} — a prompt or exec here would be an ` +
+                    `uncontained model turn`);
+        }
+        continue;
+      }
+      if (allowed.execPathOnly) {
+        // Must be the running node binary itself, with a fixed argv built from
+        // a module-local constant — never a name resolved on PATH, and never
+        // anything an HTTP request could influence.
+        const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
+        if (!/^process\.execPath\s*,\s*\[\s*CLI\s*,\s*'--json'\s*\]/.test(text)) {
+          hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 60)}…) — this file may spawn only ` +
+                    `process.execPath with the fixed argv [CLI, '--json']`);
+        }
+        continue;
+      }
       if (cal.kind === 'literal' && !allowed.bins.has(cal.value)) {
         hits.push(`${file}:${call.line} ${call.fn}('${cal.value}') — not an allowed binary for this file`);
       }
@@ -297,6 +373,25 @@ function guardB() {
     hits.join('\n') || 'ok',
     WHY.b,
   );
+}
+
+/** Full source text of a call's argument list, brackets and quotes respected. */
+function callArgsText(src, call) {
+  let i = src.indexOf('(', call.index);
+  if (i === -1) return null;
+  const start = i + 1;
+  let depth = 0;
+  for (; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c; i++;
+      while (i < src.length && src[i] !== q) { if (src[i] === '\\') i++; i++; }
+      continue;
+    }
+    if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') { depth--; if (depth === 0) return src.slice(start, i); }
+  }
+  return null;
 }
 
 function parseContainmentArrays(src) {
@@ -428,11 +523,80 @@ async function guardD(harnesses) {
   );
 }
 
+/**
+ * Guard e — pin what the pinned-argv spawns are allowed to DO.
+ *
+ * Guard b proves lib/usage/{connect,grok-billing,refresh}.js spawn the right
+ * binary with the right argv. That is not sufficient on its own:
+ *   - `grok agent stdio` is a JSON-RPC endpoint. Same argv, different requests,
+ *     and `session/new` + a prompt is an uncontained turn.
+ *   - refresh.js spawns node itself; the containment lives entirely in WHICH
+ *     script it runs, which guard b never looked at.
+ */
+function guardE() {
+  const hits = [];
+
+  // --- grok-billing.js: only these two JSON-RPC methods may ever be sent ----
+  const BILLING_METHODS = new Set(['initialize', '_x.ai/billing']);
+  const billingPath = path.join(LIB, 'usage', 'grok-billing.js');
+  let billing = '';
+  try { billing = fs.readFileSync(billingPath, 'utf8'); } catch {
+    hits.push('lib/usage/grok-billing.js is missing — guard e cannot verify it');
+  }
+  for (const m of billing.matchAll(/\bmethod\s*:\s*(['"`])([^'"`]*)\1/g)) {
+    if (!BILLING_METHODS.has(m[2])) {
+      hits.push(`lib/usage/grok-billing.js sends JSON-RPC method '${m[2]}' — only ` +
+                `${[...BILLING_METHODS].join(', ')} are allowed; a session or prompt method ` +
+                `here is an uncontained model turn`);
+    }
+  }
+  // A computed method name would slip past the literal scan above.
+  for (const m of billing.matchAll(/\bmethod\s*:\s*([A-Za-z_$][\w$.]*)/g)) {
+    hits.push(`lib/usage/grok-billing.js builds a JSON-RPC method from the variable ` +
+              `'${m[1]}' — the method list must be literal`);
+  }
+
+  // --- refresh.js: the script it runs must be the repo's own CLI -----------
+  const refreshPath = path.join(LIB, 'usage', 'refresh.js');
+  let refresh = '';
+  try { refresh = fs.readFileSync(refreshPath, 'utf8'); } catch {
+    hits.push('lib/usage/refresh.js is missing — guard e cannot verify it');
+  }
+  const cliDef = /const\s+CLI\s*=\s*path\.join\(\s*HERE\s*,\s*'\.\.'\s*,\s*'\.\.'\s*,\s*'bin'\s*,\s*'usage\.mjs'\s*\)/;
+  if (refresh && !cliDef.test(refresh)) {
+    hits.push("lib/usage/refresh.js must define CLI as path.join(HERE, '..', '..', 'bin', " +
+              "'usage.mjs') — a computed or reassigned target means it can execute anything");
+  }
+  if (/\bCLI\s*=/.test(refresh.replace(cliDef, ''))) {
+    hits.push('lib/usage/refresh.js reassigns CLI — the spawn target must be fixed at module load');
+  }
+  if (refresh && !/const\s+HERE\s*=\s*path\.dirname\(fileURLToPath\(import\.meta\.url\)\)/.test(refresh)) {
+    hits.push('lib/usage/refresh.js must derive HERE from import.meta.url');
+  }
+
+  // --- connect.js: a login must never gain a prompt ------------------------
+  const connectPath = path.join(LIB, 'usage', 'connect.js');
+  let connect = '';
+  try { connect = fs.readFileSync(connectPath, 'utf8'); } catch {
+    hits.push('lib/usage/connect.js is missing — guard e cannot verify it');
+  }
+  // Only quoted argv-shaped tokens matter; `URL_RE.exec(...)` is not a spawn.
+  const connectCode = connect.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, '');
+  for (const m of connectCode.matchAll(/(['"`])(exec|-p|--prompt|--print)\1/g)) {
+    hits.push(`lib/usage/connect.js contains the argv token '${m[2]}' — a login spawn must never ` +
+              `carry a prompt or an exec subcommand`);
+  }
+
+  assert(hits.length === 0, 'guard e: pinned-argv spawns are pinned in what they may do',
+         hits.join('\n') || 'ok', WHY.e);
+}
+
 async function main() {
   console.log('guards — static security properties this branch established\n');
   guardA();
   guardB();
   guardC();
+  guardE();
   const harnesses = await guardCRuntime();
   await guardD(harnesses);
   console.log(`\n${passed} passed, ${failed} failed`);

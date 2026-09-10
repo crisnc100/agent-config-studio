@@ -90,6 +90,75 @@ actually succeeded (exit 0, non-empty reply) and that write tools were
 absent; if no harness is detected the live suite **fails** rather than skip
 ("a skipped containment test would pass vacuously").
 
+## Usage tracking
+
+Four spawn sites exist in this repo and `tests/guards.mjs` pins every one:
+
+| Site | May spawn | Pinned to |
+|---|---|---|
+| `lib/harness.js` `spawnContained` | claude, grok | containment allowlist, or it refuses |
+| `lib/usage/refresh.js` | `process.execPath` | argv `[CLI, '--json']` |
+| `lib/usage/connect.js` | the detected `codex` | argv `['login']` / `['login','status']` |
+| `lib/usage/grok-billing.js` | the detected `grok` | argv `['agent','stdio']` |
+
+The last two spawn a harness binary, which guard `b` otherwise bans. They are
+allowed because neither can run a model turn — but note **pinning argv is not
+enough on its own**, and a review found exactly that gap:
+
+- `grok agent stdio` opens a JSON-RPC endpoint. With identical argv, sending
+  `session/new` plus a prompt is an uncontained turn. **Guard `e`** pins the
+  methods that module may send to `initialize` and `_x.ai/billing`, and rejects
+  a method built from a variable.
+- `refresh.js` spawns `process.execPath`, so the containment is entirely in
+  *which script* it runs. Guard `e` pins `CLI` to a literal
+  `path.join(HERE, '..', '..', 'bin', 'usage.mjs')`.
+- `bin/` is scanned by the spawn guards. It was not, and it is shipped code the
+  studio executes.
+
+Prove the guards still bite before trusting them — each of these must fail
+`node tests/guards.mjs`: swapping `_x.ai/billing` for `session/new`; making the
+method a variable; pointing `CLI` at another path; adding `'-p'` to the login
+argv; adding a harness spawn to `bin/`.
+
+**The studio process must never read a credential.** Codex is credential-free
+and refreshed live; Claude and Grok are taken by the CLI child process, which
+writes `~/.agent-config-studio/usage-snapshot.json`. If you find yourself adding
+a credential read to `server.js` or a `lib/usage` module the server imports
+directly, that is the line being crossed.
+
+**Live readings drift.** Codex reports quota only on a turn, so an idle seat's
+number is legitimately hours old — the panel says how old. Claude's endpoint is
+undocumented and can change shape without notice; a 200 carrying no recognisable
+`limits[]` is reported as broken rather than as an empty gauge.
+
+## Codex seats and account attribution
+
+Codex records **no account identity** in its rollout logs, so a home whose
+credentials change cannot be told apart from one that did not. Three rules
+follow, and each exists because it was measured failing:
+
+- **A reading written before the current login is ignored.** After re-authing a
+  seat, the previous account's rollouts are still on disk and would be reported
+  as the new account's quota.
+- **A session that STARTED before the current login is excluded entirely.** An
+  interactive session holds the credentials it began with, so one left open
+  across a re-auth keeps writing the old account's quota with timestamps newer
+  than the login. Filtering events by time does not catch this; the session has
+  to go. Symptom: the seat "resets back" to the old account on every refresh.
+- **Two seats on one account are detected and the staler one is demoted**
+  (`lib/usage/identity.js`, fingerprints only — see the spawn table above).
+  Undetected, the staler reading wins the routing line and sends work to a pool
+  that is already exhausted.
+
+**Quota ages out.** Codex writes quota only when a turn runs, so an idle seat
+reports the last turn's numbers. A window whose `resets_at` has passed, or whose
+reading is older than the window itself, is dropped — reporting a percentage for
+a window that no longer exists is how the panel claimed 100% of a 5h limit that
+had reset hours earlier and was actually 8%. Beyond `STALE_AFTER_MS` (1h) a
+reading is shown but never ranked: window anchors move, so a weekly reading can
+belong to a replaced window while its stored `resets_at` is still in the future.
+Refresh cannot fix this — only running a turn on that seat records new quota.
+
 ## Troubleshooting
 
 - **Grok is slow.** First token ~39s is normal. Total can hit 133s. The UI

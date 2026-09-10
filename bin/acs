@@ -1,9 +1,13 @@
-#!/usr/bin/env zsh
+#!/bin/sh
 # Launch Agent Config Studio and open it in the browser.
 # If it is already running, just focus the tab.
+#
+# POSIX sh on purpose. This is the entry point people are told to run, so it has
+# to work wherever node does — a zsh-only launcher fails on a stock Linux box
+# (and in CI) with a bare "No such file or directory" that names zsh, not us.
 
 set -e
-DIR="${0:A:h}/.."
+DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
 PORT="${ACS_PORT:-8787}"
 URL="http://localhost:$PORT"
 
@@ -13,13 +17,47 @@ is_acs() {
   curl -sf --max-time 2 "$URL/api/health" 2>/dev/null | grep -q agent-config-studio
 }
 
+# Port check without lsof: it is absent on many Linux images, and a launcher
+# that mistakes "no lsof" for "port free" would start a second server.
+port_busy() {
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -ti:"$PORT" >/dev/null 2>&1
+  else
+    curl -sf --max-time 1 -o /dev/null "$URL" 2>/dev/null
+  fi
+}
+
+open_url() {
+  if command -v open >/dev/null 2>&1; then open "$1"
+  elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1" >/dev/null 2>&1
+  else echo "open $1 in your browser"
+  fi
+}
+
 case "$1" in
+  usage)
+    # The studio's onboarding tells people to run `acs usage`, so it has to
+    # exist. Everything after the subcommand is forwarded verbatim.
+    shift
+    exec node "$DIR/bin/usage.mjs" "$@"
+    ;;
   stop)
     if is_acs; then
       # Only kill processes LISTENING on the port, not clients connected to it.
-      pids=$(lsof -t -sTCP:LISTEN -i:"$PORT" 2>/dev/null)
-      if [ -n "$pids" ]; then kill $=pids && echo "stopped."; else echo "not running."; fi
-    elif lsof -ti:"$PORT" >/dev/null 2>&1; then
+      if command -v lsof >/dev/null 2>&1; then
+        pids=$(lsof -t -sTCP:LISTEN -i:"$PORT" 2>/dev/null || true)
+        if [ -n "$pids" ]; then
+          # Unquoted on purpose: several pids must word-split into arguments.
+          # shellcheck disable=SC2086
+          kill $pids && echo "stopped."
+        else
+          echo "not running."
+        fi
+      else
+        echo "cannot stop without lsof — quit the process that is serving $URL." >&2
+        exit 1
+      fi
+    elif port_busy; then
       echo "port $PORT is in use by something else — not touching it." >&2
       exit 1
     else
@@ -31,11 +69,11 @@ esac
 
 if is_acs; then
   echo "already running → $URL"
-  open "$URL"
+  open_url "$URL"
   exit 0
 fi
 
-if lsof -ti:"$PORT" >/dev/null 2>&1; then
+if port_busy; then
   echo "port $PORT is in use by another process. Set ACS_PORT to pick a different one." >&2
   exit 1
 fi
@@ -46,9 +84,11 @@ SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null' INT TERM
 
 # Wait for the port to accept connections before opening the browser.
-for _ in {1..40}; do
-  if lsof -ti:"$PORT" >/dev/null 2>&1; then break; fi
+n=0
+while [ "$n" -lt 40 ]; do
+  if port_busy; then break; fi
+  n=$((n + 1))
   sleep 0.25
 done
-open "$URL"
+open_url "$URL"
 wait $SERVER_PID
