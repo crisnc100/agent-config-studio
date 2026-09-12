@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   VENDORS, slugify, validateSeat, loadSeats, saveSeats, addSeat, removeSeat,
   detectSeats, readSeat, snapshot, createSeat, createCodexHome, uniqueSeatId, seatHomeRoot,
+  moveSeatToPrivateHome,
   shellQuote, renderSnapshot, writeSnapshot, snapshotPath, snapshot as takeSnapshot,
 } from '../lib/usage/seats.js';
 
@@ -391,6 +392,47 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
   ok('a real account change invalidates the previous account\'s reading',
      third.seats[0].ok === false, JSON.stringify(third.seats[0].windows));
   ok('...and is flagged so the user can see it happened', third.seats[0].accountChanged === true);
+}
+
+// --- moving a seat out of the shared home -----------------------------------
+{
+  // The migration that used to be a sequence of terminal commands. ~/.codex has
+  // writers a seat cannot control, so a subscription parked there gets silently
+  // re-pointed; a private home has exactly one writer.
+  const dir = fs.mkdtempSync(path.join(tmp, 'move-'));
+  const shared = path.join(dir, '.codex');
+  fs.mkdirSync(shared, { recursive: true });
+  fs.writeFileSync(path.join(shared, 'config.toml'), 'model = "x"\n');
+  fs.writeFileSync(path.join(shared, 'auth.json'), '{"tokens":{"account_id":"A"}}');
+  const f = path.join(dir, 'seats.json');
+  addSeat({ id: 'codex-1', vendor: 'codex', label: 'Primary', home: shared }, f);
+
+  const r = moveSeatToPrivateHome({ id: 'codex-1', file: f, home: dir });
+  ok('the seat gets a private home', path.resolve(r.seat.home) !== path.resolve(shared), r.seat.home);
+  ok('...under the seats root', r.seat.home.startsWith(seatHomeRoot(dir)), r.seat.home);
+  ok('...and the registry is repointed', loadSeats(f).seats[0].home === r.seat.home);
+  ok('config is shared by symlink', r.linked.includes('config.toml'));
+  ok('...and resolves to the original', fs.realpathSync(path.join(r.seat.home, 'config.toml'))
+     === fs.realpathSync(path.join(shared, 'config.toml')));
+
+  // The credential must NOT be copied: a refresh token in a second place on
+  // disk to save one click is a bad trade.
+  ok('the credential is NOT copied', !fs.existsSync(path.join(r.seat.home, 'auth.json')));
+  ok('...and the move says a login is needed', r.needsLogin === true);
+  ok('the original home keeps its own credential', fs.existsSync(path.join(shared, 'auth.json')));
+
+  // Repoint, not remove-and-add: an unclaimed ~/.codex is what the next seat
+  // would adopt, putting it straight back where it started.
+  ok('the seat count is unchanged', loadSeats(f).seats.length === 1);
+
+  let again = null;
+  try { moveSeatToPrivateHome({ id: 'codex-1', file: f, home: dir }); } catch (e) { again = e; }
+  ok('moving twice is refused', again !== null && /already has a private home/.test(again.message));
+
+  let wrong = null;
+  addSeat({ id: 'claude-1', vendor: 'claude', label: 'Claude' }, f);
+  try { moveSeatToPrivateHome({ id: 'claude-1', file: f, home: dir }); } catch (e) { wrong = e; }
+  ok('a non-codex seat is refused', wrong !== null && /only codex seats/.test(wrong.message));
 }
 
 // --- a rate limit must not erase the number ---------------------------------

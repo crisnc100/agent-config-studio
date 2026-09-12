@@ -14,9 +14,10 @@ import { runAssist, listActions } from './lib/assist.js';
 import { streamTurn, parseEdits, resolveMentions } from './lib/chat.js';
 import { detectHarnesses, HARNESSES } from './lib/harness.js';
 import { createWatcher, snapshotOf, diffSnapshots } from './lib/watch.js';
-import { renderSnapshot, createSeat, removeSeat } from './lib/usage/seats.js';
+import { renderSnapshot, createSeat, removeSeat, moveSeatToPrivateHome } from './lib/usage/seats.js';
 import { refreshSnapshot } from './lib/usage/refresh.js';
 import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
+import { codexProcessesUsingHome, stopProcesses } from './lib/usage/processes.js';
 import { loadSeats } from './lib/usage/seats.js';
 import {
   syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
@@ -332,6 +333,51 @@ export function createApp(opts = {}) {
       const e = new Error(`${seat.vendor} seats are not connected this way`); e.status = 400; throw e;
     }
     return startLogin({ seatId: seat.id, home: seat.home, reauth: reauth === true });
+  },
+
+  /**
+   * What is currently holding a seat's home open, and stopping it.
+   *
+   * A Codex process refreshes its credentials back into its home on its own
+   * schedule, so one left running across a sign-in silently undoes it. Telling
+   * people to "quit your session first" in a runbook does not work — they
+   * cannot see which processes those are. The studio finds them and offers.
+   */
+  /**
+   * Move a seat out of the shared ~/.codex into a private home.
+   *
+   * Only an id crosses the wire; the destination is derived server-side, the
+   * same rule as seat creation — a path from a request body would make this a
+   * directory-creation primitive. No credential is copied: the new home starts
+   * signed out and is connected from the panel.
+   */
+  'POST /api/usage/seats/move': async (req) => {
+    const { id } = await readBody(req);
+    try { return moveSeatToPrivateHome({ id }); }
+    catch (e) { const err = new Error(e.message); err.status = 400; throw err; }
+  },
+
+  'POST /api/usage/seats/conflicts': async (req) => {
+    const { id } = await readBody(req);
+    const seat = loadSeats().seats.find((x) => x.id === id);
+    if (!seat) { const e = new Error(`no seat with id "${id}"`); e.status = 404; throw e; }
+    if (!seat.home) return { conflicts: [] };
+    return { conflicts: await codexProcessesUsingHome(seat.home) };
+  },
+
+  /**
+   * Stop them. The pid list is a HINT, never an instruction: processes.js
+   * re-verifies each pid still holds THIS seat's home before signalling it, so
+   * a stale or forged pid cannot turn this into a remote-kill primitive.
+   * SIGTERM only — a Codex session asked to stop should get to save its work.
+   */
+  'POST /api/usage/seats/conflicts/stop': async (req) => {
+    const { id, pids } = await readBody(req);
+    const seat = loadSeats().seats.find((x) => x.id === id);
+    if (!seat) { const e = new Error(`no seat with id "${id}"`); e.status = 404; throw e; }
+    if (!seat.home) { const e = new Error('this seat has no home'); e.status = 400; throw e; }
+    const result = await stopProcesses(seat.home, pids);
+    return { ...result, remaining: await codexProcessesUsingHome(seat.home) };
   },
 
   'POST /api/usage/connect/state': async (req) => {

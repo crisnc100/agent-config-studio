@@ -1146,6 +1146,15 @@ function connectRow(seat, { reauth = false } = {}) {
     let res;
     try { res = await api('POST', '/api/usage/connect', { id: seat.seatId, reauth }); }
     catch (e) { btn.disabled = false; status.textContent = ''; return notice('error', e.message); }
+    // Something is holding this seat's home open. Signing in now would be
+    // undone the next time that process refreshes its token, so offer to stop
+    // it here rather than sending the user to a terminal to find pids.
+    if (res.conflicts?.length) {
+      btn.disabled = false;
+      status.textContent = '';
+      row.appendChild(conflictRow(seat, res.conflicts, res.error, () => btn.click()));
+      return;
+    }
     if (res.error) { btn.disabled = false; status.textContent = ''; return notice('error', res.error); }
 
     // The window.open happens after an await, so the browser's user-activation
@@ -1184,6 +1193,49 @@ function connectRow(seat, { reauth = false } = {}) {
   row.appendChild(btn);
   row.appendChild(status);
   return row;
+}
+
+/**
+ * A seat is busy: running Codex processes hold its home open.
+ *
+ * This is the UI for a failure that used to be a runbook instruction. A Codex
+ * process refreshes its credentials back into its home on its own schedule, so
+ * one left running across a sign-in silently undoes it minutes later. "Quit
+ * your session first" is not actionable — nobody can see which sessions those
+ * are. So: name them, and offer one button.
+ */
+function conflictRow(seat, conflicts, message, retry) {
+  const box = el('div', 'usage-conflict');
+  box.appendChild(el('div', 'usage-conflict-why', message
+    || 'Something is using this seat right now. Signing in would be undone when it next refreshes.'));
+
+  const list = el('div', 'usage-conflict-list');
+  for (const c of conflicts) {
+    list.appendChild(el('div', 'usage-conflict-item', `${c.command} · pid ${c.pid}`));
+  }
+  box.appendChild(list);
+
+  const stop = el('button', 'btn', conflicts.length === 1 ? 'Quit it and sign in' : 'Quit them and sign in');
+  stop.onclick = async () => {
+    stop.disabled = true;
+    stop.textContent = 'stopping…';
+    let r;
+    try { r = await api('POST', '/api/usage/seats/conflicts/stop', { id: seat.seatId, pids: conflicts.map((c) => c.pid) }); }
+    catch (e) { stop.disabled = false; stop.textContent = 'Quit them and sign in'; return notice('error', e.message); }
+    if (r.remaining?.length) {
+      stop.disabled = false;
+      stop.textContent = 'Try again';
+      return notice('error',
+        `${r.remaining.length} still running (${r.remaining.map((x) => x.pid).join(', ')}). ` +
+        'Some processes need to be closed from their own window.');
+    }
+    box.remove();
+    retry();
+  };
+  box.appendChild(stop);
+  box.appendChild(el('div', 'usage-conflict-note',
+    'They are asked to stop, not force-killed, so anything in progress gets to save.'));
+  return box;
 }
 
 /** Signed in, but Codex has not recorded a quota reading yet. */
@@ -1488,6 +1540,31 @@ async function paintUsage() {
       // something else writing to that home. The second case is how a
       // subscription gets spent without anyone noticing, so say it plainly
       // rather than leaving the user to infer it from a blank card.
+      // A seat still parked in the shared ~/.codex can be re-pointed at another
+      // account by things the user never sees. Offer the migration here, as a
+      // button, rather than as a sequence of terminal commands.
+      if (s.sharedHome) {
+        const warn = el('div', 'usage-conflict');
+        warn.appendChild(el('div', 'usage-conflict-why',
+          'This seat shares the default Codex folder with the ChatGPT app and every plain ' +
+          '`codex` command. Anything that signs in there changes this seat\'s account. ' +
+          'Moving it to its own folder means only you decide what it is signed in to.'));
+        const move = el('button', 'btn', 'Move to its own folder');
+        move.onclick = async () => {
+          move.disabled = true; move.textContent = 'moving…';
+          try {
+            await api('POST', '/api/usage/seats/move', { id: s.seatId });
+            notice('info', `${s.label} now has its own folder. Sign it in to finish.`);
+          } catch (e) { move.disabled = false; move.textContent = 'Move to its own folder'; return notice('error', e.message); }
+          await paintUsage();
+        };
+        warn.appendChild(move);
+        warn.appendChild(el('div', 'usage-conflict-note',
+          'Your settings stay shared. Only the sign-in and session history become private, ' +
+          'so you will sign in once more after this.'));
+        card.appendChild(warn);
+      }
+
       if (s.accountChanged) {
         card.appendChild(el('div', 'usage-offline-why',
           'This seat is signed in to a different account than last time. If you did not just ' +
