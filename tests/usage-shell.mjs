@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  validateWord, validateFlags, validateHome, shortcutsFromSeats, renderShortcuts,
+  validateWord, validateFlags, validateHome, validateLabel, shortcutsFromSeats, renderShortcuts,
   writeShortcuts, install, uninstall, isInstalled, syncShortcuts, shortcutsPath, zshenvPath,
 } from '../lib/usage/shell.js';
 import { saveSeats } from '../lib/usage/seats.js';
@@ -137,6 +137,68 @@ ok('shortcuts install into .zshenv, not .zshrc',
      run('CODEX_HOME=/custom codex').includes('HOME=/custom'), run('CODEX_HOME=/custom codex'));
 }
 
+// --- a LABEL is input too: it is rendered into the file ---------------------
+{
+  // Review finding: labels went into the generated file as comments with no
+  // validation. A newline ends the comment and the remainder executes in every
+  // shell that sources it. Reproduced by the reviewer as `x\necho PWNED`.
+  ok('a normal label passes', validateLabel('Codex (primary · prolite)') === null);
+  for (const bad of ['x\necho PWNED', 'x\rwhoami', 'x\u0000y', 'a'.repeat(81)]) {
+    ok(`label refused: ${JSON.stringify(bad).slice(0, 30)}`, validateLabel(bad) !== null,
+       'ACCEPTED — would reach the shell');
+  }
+
+  const h = homeDir('lbl');
+  const evil = [{ id: 'codex-1', vendor: 'codex', label: 'x\necho PWNED', home: h }];
+  const text = renderShortcuts(shortcutsFromSeats(evil));
+  ok('a newline never survives into the generated file', !/\necho PWNED/.test(text),
+     JSON.stringify(text.slice(0, 120)));
+  const file = path.join(tmp, 'evil.zsh');
+  fs.writeFileSync(file, text);
+  const out = execFileSync('zsh', ['-f', '-c', `source ${JSON.stringify(file)}; echo DONE`],
+    { encoding: 'utf8' });
+  ok('sourcing it executes nothing from the label', !/PWNED/.test(out), out.trim());
+}
+
+// --- word derivation must terminate ------------------------------------------
+{
+  // Review finding: `${base}${n++}`.slice(0, 24) leaves the word unchanged once
+  // base is already 24 chars, so the uniqueness loop spun forever — inside a
+  // route, blocking the whole studio.
+  const long = 'abcdefghijklmnopqrstuvwxyz';
+  const seats = [
+    { id: 'a', vendor: 'codex', label: long, home: homeDir('L1') },
+    { id: 'b', vendor: 'codex', label: long, home: homeDir('L2') },
+    { id: 'c', vendor: 'codex', label: long, home: homeDir('L3') },
+  ];
+  const started = Date.now();
+  const sc = shortcutsFromSeats(seats);
+  ok('long identical labels do not hang', Date.now() - started < 2000, `${Date.now() - started}ms`);
+  ok('...and still produce distinct words', new Set(sc.map((x) => x.word)).size === 3,
+     JSON.stringify(sc.map((x) => x.word)));
+  ok('...each within the length limit', sc.every((x) => x.word.length <= 24));
+}
+
+// --- a configured word cannot steal another seat's ---------------------------
+{
+  // Review finding: uniqueness was enforced only for DERIVED words, so a
+  // configured duplicate defined the function twice and routed one
+  // subscription to the other's account.
+  const seats = [
+    { id: 'a', vendor: 'codex', label: 'Team', home: homeDir('W1') },
+    { id: 'b', vendor: 'codex', label: 'Other', home: homeDir('W2') },
+  ];
+  const sc = shortcutsFromSeats(seats, { words: { b: 'team' } });
+  ok('a configured word that collides is not honoured',
+     new Set(sc.map((x) => x.word)).size === 2, JSON.stringify(sc.map((x) => x.word)));
+
+  const text = renderShortcuts(sc);
+  for (const w of sc.map((x) => x.word)) {
+    const defs = (text.match(new RegExp(`^${w}\\(\\) \\{`, 'gm')) || []).length;
+    ok(`${w}() is defined exactly once`, defs === 1, String(defs));
+  }
+}
+
 // --- the default seat is chosen, never inherited from list order ------------
 {
   // Registry order deciding which subscription bare `codex` bills is exactly
@@ -211,6 +273,41 @@ ok('shortcuts install into .zshenv, not .zshrc',
   ok('...and is valid zsh', (() => {
     try { execFileSync('zsh', ['-n', zshenv], { stdio: 'pipe' }); return true; } catch { return false; }
   })());
+}
+
+// --- uninstall is reversible even when the block is not last ----------------
+{
+  // Review finding: uninstall skipped EVERY following comment line and greedily
+  // stripped preceding blanks, so anything the user appended after the ACS
+  // block was eaten. This is the only edit made to a file a human owns.
+  const fakeHome = homeDir('zafter');
+  const zshenv = path.join(fakeHome, '.zshenv');
+  const before = '# mine\nexport EDITOR=vim\n\n';
+  const after = '\n# my own notes below\n# another note\nalias gs="git status"\n';
+  fs.writeFileSync(zshenv, before);
+  install({ zshenv, file: path.join(tmp, 'seats.zsh') });
+  fs.appendFileSync(zshenv, after);
+
+  uninstall({ zshenv });
+  const left = fs.readFileSync(zshenv, 'utf8');
+  ok('the user\'s own comments after the block survive', /my own notes below/.test(left), left);
+  ok('...and their alias survives', /alias gs=/.test(left), left);
+  ok('...and nothing of ours is left', !/agent-config-studio: seat shortcuts/.test(left));
+  ok('...and their own blank line is preserved',
+     left.startsWith('# mine\nexport EDITOR=vim\n\n'), JSON.stringify(left.slice(0, 40)));
+}
+
+// --- a seat word can never shadow a codex subcommand ------------------------
+{
+  // Review finding: the wrapper matches the first argument, so a seat labelled
+  // "Login" or "Review Team" derived a word that silently turned `codex login`
+  // into a seat switch.
+  for (const sub of ['login', 'logout', 'resume', 'exec', 'review', 'doctor', 'apply', 'fork']) {
+    ok(`"${sub}" is refused as a seat word`, validateWord(sub) !== null, 'ACCEPTED — shadows a subcommand');
+  }
+  const seats = [{ id: 'a', vendor: 'codex', label: 'Login Account', home: homeDir('sub1') }];
+  ok('a label starting with a subcommand does not derive one',
+     shortcutsFromSeats(seats)[0].word !== 'login', shortcutsFromSeats(seats)[0].word);
 }
 
 // --- sync from the registry --------------------------------------------------

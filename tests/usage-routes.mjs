@@ -196,6 +196,22 @@ const post = (p, b) => fetch(B + p, {
   ok('cancel is safe to call for any id', s3 === 200);
 }
 
+// --- what only the CLI can know must survive the live re-read ---------------
+{
+  // The review's top finding: GET /api/usage re-reads codex seats live, and
+  // dropped signedInAt / sharedHome / accountChanged — so the account-derived
+  // sign-in fix never reached the UI (it fell back to auth.json mtime, the very
+  // bug it removes), and the migration button could never render.
+  const [st, body] = await get('/api/usage');
+  ok('usage responds', st === 200);
+  const cx = (body.seats || []).find((x) => x.vendor === 'codex');
+  ok('a codex seat is present', Boolean(cx), JSON.stringify((body.seats || []).map((x) => x.vendor)));
+  ok('the live re-read still reports sharedHome',
+     cx && Object.prototype.hasOwnProperty.call(cx, 'sharedHome'), JSON.stringify(Object.keys(cx || {})));
+  ok('...so the migration button can render for a seat in ~/.codex',
+     cx && typeof cx.sharedHome === 'boolean');
+}
+
 // --- shell shortcuts ---------------------------------------------------------
 // This endpoint's output is executed by every terminal the user opens, so the
 // bar is that nothing typed here can become shell.

@@ -65,6 +65,25 @@ function launchedDirectly() {
   catch { return false; }
 }
 
+/**
+ * Keep the generated shell file in step with the registry.
+ *
+ * Without this, "Move to its own folder" leaves the seat's word and the bare
+ * `codex` export pointing at the home it just left — the shared one the move
+ * existed to escape. New seats get no word and removed seats keep one until
+ * someone happens to re-open the panel and press Save.
+ *
+ * Only regenerates when shortcuts are actually installed: it must not create
+ * shell config for someone who never asked for it, and a seat change must not
+ * fail because of shell wiring.
+ */
+function resyncShortcuts() {
+  try {
+    if (!shortcutsInstalled()) return;
+    syncShortcuts({ config: readShortcutConfig() });
+  } catch { /* advisory */ }
+}
+
 function detectedHarnessPayload(detected) {
   const harnesses = detected.map((h) => ({
     id: h.id,
@@ -233,8 +252,11 @@ export function createApp(opts = {}) {
    */
   'POST /api/usage/seats': async (req) => {
     const { vendor, label } = await readBody(req);
-    try { return createSeat({ vendor, label }); }
+    let res;
+    try { res = createSeat({ vendor, label }); }
     catch (e) { const err = new Error(e.message); err.status = 400; throw err; }
+    resyncShortcuts();
+    return res;
   },
 
   /**
@@ -244,8 +266,10 @@ export function createApp(opts = {}) {
    */
   'POST /api/usage/seats/remove': async (req) => {
     const { id } = await readBody(req);
-    try { removeSeat(id); return { removed: id }; }
+    try { removeSeat(id); }
     catch (e) { const err = new Error(e.message); err.status = 404; throw err; }
+    resyncShortcuts();
+    return { removed: id };
   },
 
   /**
@@ -306,8 +330,14 @@ export function createApp(opts = {}) {
     }
     if (problems.length) { const err = new Error(problems.join('; ')); err.status = 400; throw err; }
 
-    writeShortcutConfig(clean);
-    const r = syncShortcuts({ config: clean });
+    // Only rewrite preferences that were actually supplied. Turning shortcuts
+    // OFF posts empty maps, and writing those through would erase every chosen
+    // word, flag and default — so turning them back on would silently change
+    // which subscription a bare `codex` bills.
+    const supplied = Object.keys(words).length || Object.keys(flags).length || defaultId;
+    const merged = supplied ? clean : readShortcutConfig();
+    writeShortcutConfig(merged);
+    const r = syncShortcuts({ config: merged });
     if (!r.ok) { const err = new Error(r.problems.join('; ')); err.status = 400; throw err; }
     if (wantInstall === true) installShortcuts();
     else if (wantInstall === false) uninstallShortcuts();
@@ -353,8 +383,11 @@ export function createApp(opts = {}) {
    */
   'POST /api/usage/seats/move': async (req) => {
     const { id } = await readBody(req);
-    try { return moveSeatToPrivateHome({ id }); }
+    let res;
+    try { res = moveSeatToPrivateHome({ id }); }
     catch (e) { const err = new Error(e.message); err.status = 400; throw err; }
+    resyncShortcuts();
+    return res;
   },
 
   'POST /api/usage/seats/conflicts': async (req) => {
@@ -377,7 +410,17 @@ export function createApp(opts = {}) {
     if (!seat) { const e = new Error(`no seat with id "${id}"`); e.status = 404; throw e; }
     if (!seat.home) { const e = new Error('this seat has no home'); e.status = 400; throw e; }
     const result = await stopProcesses(seat.home, pids);
-    return { ...result, remaining: await codexProcessesUsingHome(seat.home) };
+    // SIGTERM is a request, and a Codex session takes a moment to flush and
+    // exit. Re-listing immediately reports a successful stop as a failure, so
+    // give them a few seconds to go before calling anything "still running".
+    let remaining = [];
+    for (let i = 0; i < 10; i++) {
+      try { remaining = await codexProcessesUsingHome(seat.home); }
+      catch { remaining = []; break; }        // unknown: let the login precheck decide
+      if (!remaining.length) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return { ...result, remaining };
   },
 
   'POST /api/usage/connect/state': async (req) => {

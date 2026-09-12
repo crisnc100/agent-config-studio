@@ -7,6 +7,8 @@
  * signalled that is not re-verified, at that moment, to be a codex process
  * holding THIS seat's home.
  */
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { processesUsingHome, codexProcessesUsingHome, stopProcesses } from '../lib/usage/processes.js';
 
@@ -51,6 +53,27 @@ console.log('\nusage/processes');
   ok('a sibling home with a shared prefix is not this home', !pids.includes(2), JSON.stringify(pids));
   ok('an unrelated path is excluded', !pids.includes(3));
   ok('a real file inside the home counts', pids.includes(4));
+}
+
+// --- a symlinked home still matches ------------------------------------------
+{
+  // Review finding: lsof reports the kernel's REAL path, while the comparison
+  // used path.resolve, which keeps symlinks. A user whose ~/.codex is a symlink
+  // (dotfiles setups) got zero conflicts and the silent overwrite this feature
+  // exists to prevent.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-link-'));
+  const real = path.join(dir, 'real');
+  const link = path.join(dir, 'link');
+  fs.mkdirSync(real, { recursive: true });
+  fs.symlinkSync(real, link);
+  const realReal = fs.realpathSync(real);
+
+  const rows = await processesUsingHome(link, {
+    lsof: fakeLsof([[77, 'codex', `${realReal}/logs_2.sqlite`]]),
+  });
+  ok('a symlinked home matches the real paths lsof reports', rows.some((r) => r.pid === 77),
+     JSON.stringify(rows));
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 // --- the studio never reports itself ----------------------------------------
@@ -105,6 +128,21 @@ console.log('\nusage/processes');
   killed.length = 0;
   const r3 = await stopProcesses(HOME, [10], { lsof: other, kill });
   ok('a process on another seat is refused', r3.refused.includes(10) && killed.length === 0, JSON.stringify(r3));
+}
+
+// --- an unknown answer must not look like a safe one -------------------------
+{
+  // Review finding: a timed-out or truncated lsof resolved with partial output,
+  // so "no conflicts" was a guess and the sign-in proceeded on top of a running
+  // session. Unknown has to be distinguishable from none.
+  let threw = null;
+  try {
+    await processesUsingHome(HOME, {
+      lsof: async () => { const e = new Error('boom'); e.incomplete = true; throw e; },
+    });
+  } catch (e) { threw = e; }
+  ok('an lsof failure propagates rather than reading as "nothing running"', threw !== null,
+     'returned normally — a partial scan would look safe');
 }
 
 // --- junk input --------------------------------------------------------------

@@ -62,6 +62,32 @@ console.log('\nusage/accounts');
   ok('...and it is only reported once, not every run', again.get('codex-1').changed === false);
 }
 
+// --- a change is dated from the login, not from when we noticed -------------
+{
+  // Review finding: `since = now` discarded any turn run between a re-auth and
+  // the next snapshot, and excluded a session started in that window for good.
+  // Snapshots only run when the CLI runs, so that window can be hours.
+  const f = path.join(tmp, 'when.json');
+  const s2 = [seat('codex-1')];
+  reconcile(s2, fpMap({ 'codex-1': 'aaaaaaaaaaaa' }), { file: f, now: 1000 });
+  const loginAt = 4000;
+  const noticedAt = 90000;
+  const r = reconcile(s2, fpMap({ 'codex-1': 'bbbbbbbbbbbb' }),
+    { file: f, now: noticedAt, fallbackFor: () => loginAt });
+  ok('a change is dated from the login, not the snapshot', r.get('codex-1').since === loginAt,
+     String(r.get('codex-1').since));
+  ok('...and is still reported as a change', r.get('codex-1').changed === true);
+
+  // If the file's own timestamp is somehow LATER than now, do not trust it past
+  // the present — that would discard readings that have already happened.
+  const f2 = path.join(tmp, 'when2.json');
+  reconcile(s2, fpMap({ 'codex-1': 'aaaaaaaaaaaa' }), { file: f2, now: 1000 });
+  const r2 = reconcile(s2, fpMap({ 'codex-1': 'cccccccccccc' }),
+    { file: f2, now: 5000, fallbackFor: () => 999999 });
+  ok('a future timestamp never pushes the sign-in past now', r2.get('codex-1').since === 5000,
+     String(r2.get('codex-1').since));
+}
+
 // --- unreadable or signed-out seats keep their history -----------------------
 {
   const f = path.join(tmp, 'd.json');
