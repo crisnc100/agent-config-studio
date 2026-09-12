@@ -21,6 +21,15 @@ const codexSeat = (id, home) => ({ id, vendor: 'codex', label: id, home: home ||
 
 console.log('\nusage/seats');
 
+// Every write this suite makes must land in a temp dir. The account-state file
+// had no such guard and a `snapshot({ seats: [] })` here pruned the user's real
+// one — a snapshot of seats that are not the registry's must never persist as
+// if they were.
+const REAL_ACCOUNTS = path.join(os.homedir(), '.agent-config-studio', 'accounts.json');
+const realAccountsBefore = (() => {
+  try { return fs.readFileSync(REAL_ACCOUNTS, 'utf8'); } catch { return null; }
+})();
+
 // --- slugs & validation ------------------------------------------------------
 ok('slugify normalises', slugify('Codex — Work Account!') === 'codex-work-account', slugify('Codex — Work Account!'));
 ok('slugify falls back rather than returning empty', slugify('!!!') === 'seat');
@@ -433,6 +442,84 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
      JSON.stringify(seatOut.windows));
 }
 
+// --- ~/.codex is not re-adopted after a split, even with no seats left ------
+{
+  // Review finding: the guard keyed only on "no codex seat exists", but
+  // removing a seat PRESERVES its private home — so someone who split their
+  // seats and then removed one to rename it landed straight back in the shared
+  // home with no login prompt.
+  const dir = fs.mkdtempSync(path.join(tmp, 'resplit-'));
+  fs.mkdirSync(path.join(dir, '.codex'), { recursive: true });
+  fs.mkdirSync(path.join(seatHomeRoot(dir), 'left-over'), { recursive: true });
+  const f = path.join(dir, 'seats.json');
+
+  const r = createSeat({ vendor: 'codex', label: 'Fresh', file: f, home: dir });
+  ok('a machine that has been split before does not re-adopt ~/.codex',
+     r.adopted !== true && path.resolve(r.seat.home) !== path.resolve(path.join(dir, '.codex')),
+     r.seat.home);
+  ok('...it gets its own home and a login', r.seat.home.startsWith(seatHomeRoot(dir))
+     && typeof r.loginCommand === 'string', r.seat.home);
+}
+
+// --- a blank seat says WHY, not just "no turns" -----------------------------
+{
+  // Review finding: falling back to mtime is the steady state on a shared home
+  // (several long-lived processes refresh the credential), so a bare "no turn
+  // has run since signing in" is both wrong and indistinguishable from a
+  // genuinely unused seat.
+  const dir = fs.mkdtempSync(path.join(tmp, 'why-'));
+  const home = path.join(dir, 'home');
+  const day = path.join(home, 'sessions', '2026', '09', '07');
+  fs.mkdirSync(day, { recursive: true });
+  fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"A"}}');
+  const loginAt = Date.parse('2026-09-06T00:00:00.000Z');
+  fs.utimesSync(path.join(home, 'auth.json'), loginAt / 1000, loginAt / 1000);
+  fs.writeFileSync(path.join(day, 'rollout-2026-09-07T10-00-00-a.jsonl'),
+    JSON.stringify({ timestamp: '2026-09-07T10:05:00.000Z', type: 'turn.completed',
+      info: { rate_limits: { primary: { used_percent: 61, window_minutes: 10080,
+        resets_at: Math.floor(Date.now() / 1000) + 7 * 86400 } } } }) + '\n');
+
+  const f = path.join(dir, 'seats.json');
+  addSeat({ id: 'codex-1', vendor: 'codex', label: 'Seat', home }, f);
+  const snapFile = path.join(dir, 'snap.json');
+  const snap = await snapshot({ file: f, snapshotFile: snapFile, accountsFile: path.join(dir, 'a.json') });
+  writeSnapshot(snap, snapFile);
+
+  // A token refresh: same account, mtime pushed past the snapshot.
+  const now = Date.now();
+  fs.utimesSync(path.join(home, 'auth.json'), now / 1000, now / 1000);
+
+  const rendered = await renderSnapshot({ file: f, snapshotFile: snapFile });
+  const seatOut = rendered.seats.find((x) => x.seatId === 'codex-1');
+  if (!seatOut.ok) {
+    ok('a withheld reading explains itself and points at Refresh',
+       /sign-in changed since the last reading/.test(seatOut.reason || ''), seatOut.reason);
+  } else {
+    ok('a withheld reading explains itself and points at Refresh', true);
+  }
+}
+
+// --- a caller-supplied seat list never persists account state ---------------
+{
+  // The isolation failure this suite itself caused: snapshot({ seats }) wrote
+  // and PRUNED the real ~/.agent-config-studio/accounts.json, so every seat on
+  // the machine was re-baselined at auth.json's mtime — the drifted value this
+  // branch exists to stop using.
+  const dir = fs.mkdtempSync(path.join(tmp, 'persist-'));
+  const home = path.join(dir, 'h');
+  fs.mkdirSync(path.join(home, 'sessions'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"Z"}}');
+  const acct = path.join(dir, 'accounts.json');
+
+  await snapshot({ seats: [{ id: 'x', vendor: 'codex', label: 'X', home }],
+                   snapshotFile: path.join(dir, 's.json') });
+  ok('an explicit seat list writes no account state at all', !fs.existsSync(acct));
+
+  await snapshot({ seats: [{ id: 'x', vendor: 'codex', label: 'X', home }],
+                   snapshotFile: path.join(dir, 's.json'), accountsFile: acct });
+  ok('...unless the caller names the file', fs.existsSync(acct));
+}
+
 // --- moving a seat out of the shared home -----------------------------------
 {
   // The migration that used to be a sequence of terminal commands. ~/.codex has
@@ -526,5 +613,11 @@ function defaultGrokHomePath() {
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });
+{
+  const after = (() => { try { return fs.readFileSync(REAL_ACCOUNTS, 'utf8'); } catch { return null; } })();
+  ok('the real accounts.json is byte-identical after this run', after === realAccountsBefore,
+     realAccountsBefore === null ? 'it did not exist before; it must still not exist' : 'it changed');
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

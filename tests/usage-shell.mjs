@@ -371,6 +371,37 @@ ok('shortcuts install into .zshenv, not .zshrc',
      fs.readFileSync(out, 'utf8').includes('Team'));
 }
 
+// --- a hostile label must never fail the whole panel ------------------------
+{
+  // Review finding: derivation could produce a word its own validator rejects
+  // ("Codex" -> codex, "2nd account" -> 2nd, id fallback codex-work), which
+  // failed syncShortcuts for EVERY seat — 400 on the panel, and the generated
+  // file left stale after an add/remove/move.
+  const reg = path.join(tmp, 'hostile.json');
+  const out = path.join(tmp, 'hostile', 'seats.zsh');
+  saveSeats([
+    { id: 'codex-work', vendor: 'codex', label: 'Codex', home: homeDir('H1') },
+    { id: 'b', vendor: 'codex', label: 'Login', home: homeDir('H2') },
+    { id: 'c', vendor: 'codex', label: '2nd account', home: homeDir('H3') },
+    { id: 'd', vendor: 'codex', label: 'Review', home: homeDir('H4') },
+    { id: 'e', vendor: 'codex', label: '!!!', home: homeDir('H5') },
+  ], reg);
+  const r = syncShortcuts({ file: reg, out });
+  ok('hostile labels still sync', r.ok === true, JSON.stringify(r.problems));
+  ok('...every derived word is valid', r.shortcuts.every((x) => validateWord(x.word) === null),
+     JSON.stringify(r.shortcuts.map((x) => x.word)));
+  ok('...and all distinct', new Set(r.shortcuts.map((x) => x.word)).size === r.shortcuts.length,
+     JSON.stringify(r.shortcuts.map((x) => x.word)));
+  ok('...and a useful segment is preferred over coercing a bad one',
+     r.shortcuts.find((x) => x.id === 'c').word === 'account',
+     r.shortcuts.find((x) => x.id === 'c').word);
+
+  const text = fs.readFileSync(out, 'utf8');
+  let syntaxOk = true;
+  try { execFileSync('zsh', ['-n', out], { stdio: 'pipe' }); } catch { syntaxOk = false; }
+  ok('...and the file is still valid zsh', syntaxOk, text.slice(0, 100));
+}
+
 // --- the real machine is untouched -------------------------------------------
 {
   ok('the real ~/.zshenv was never written by these tests',

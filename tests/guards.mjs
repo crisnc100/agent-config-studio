@@ -372,8 +372,8 @@ function guardB() {
                     `${argv ? argv.join(' ') : 'nothing parseable'} — a computed flag here is how ` +
                     `a read-only inspector stops being read-only`);
         }
-        if (argv && !argv.slice(0, -1).includes("'+D'")) {
-          hits.push(`${file}:${call.line} lsof must be scoped with +D to one directory`);
+        if (argv && !argv.slice(0, -1).some((a) => a === "'+D'" || a === "'+d'")) {
+          hits.push(`${file}:${call.line} lsof must be scoped with +d/+D to one directory`);
         }
         continue;
       }

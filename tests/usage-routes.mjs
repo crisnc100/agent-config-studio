@@ -259,6 +259,12 @@ const post = (p, b) => fetch(B + p, {
   const [cs] = await post2('/api/usage/refresh', {}, { 'sec-fetch-site': 'cross-site' });
   ok('Sec-Fetch-Site: cross-site is refused', cs === 403, `status ${cs}`);
 
+  // Sec-Fetch-Site says 'same-site' for a different localhost PORT, so the port
+  // has to be checked explicitly or any other local dev server qualifies.
+  const otherPort = B.replace(/:(\d+)$/, (m, n) => `:${Number(n) + 1}`);
+  const [ps] = await post2('/api/usage/refresh', {}, { origin: otherPort });
+  ok('a different localhost PORT is refused', ps === 403, `status ${ps} for ${otherPort}`);
+
   const [ok1] = await post2('/api/usage/refresh', {}, { origin: B });
   ok('a same-origin POST still works', ok1 === 200, `status ${ok1}`);
   const [ok2] = await post2('/api/usage/refresh', {});

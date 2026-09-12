@@ -767,7 +767,17 @@ export function createApp(opts = {}) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     const origin = req.headers.origin;
     const site = req.headers['sec-fetch-site'];
-    const originOk = !origin || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin);
+    // The PORT must match too. Sec-Fetch-Site reports 'same-site' for
+    // localhost:5173 -> localhost:8787 because site ignores port, so without
+    // this any other dev server the user has open — vite, storybook, a
+    // compromised dev dependency — reaches these endpoints.
+    //
+    // Compared against this request's own Host rather than the configured PORT:
+    // the server may be listening somewhere else entirely (an ephemeral port
+    // under test, or ACS_PORT), and Host is already proven to be localhost by
+    // the check above.
+    const originOk = !origin || origin === `http://${req.headers.host}`
+      || origin === `https://${req.headers.host}`;
     if (!originOk || (site && site === 'cross-site')) {
       res.writeHead(403).end('cross-origin requests are not accepted');
       return;
