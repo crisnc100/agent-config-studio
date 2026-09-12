@@ -306,7 +306,16 @@ export function createApp(opts = {}) {
   },
 
   'POST /api/usage/shortcuts': async (req) => {
-    const { words = {}, flags = {}, defaultId = null, install: wantInstall } = await readBody(req);
+    const body = await readBody(req);
+    const { defaultId = null, install: wantInstall } = body;
+    // Defaults only cover `undefined`; an explicit null reached Object.entries
+    // and became a 500 where the caller deserves a 400.
+    const isPlain = (v) => v === undefined || (v !== null && typeof v === 'object' && !Array.isArray(v));
+    if (!isPlain(body.words) || !isPlain(body.flags)) {
+      const err = new Error('words and flags must be objects'); err.status = 400; throw err;
+    }
+    const words = body.words ?? {};
+    const flags = body.flags ?? {};
     const clean = { words: {}, flags: {}, defaultId: null };
     // The default seat is an id from the registry, never a path: it decides
     // which subscription a bare `codex` spends, so it must not be free text.

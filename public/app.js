@@ -1244,6 +1244,47 @@ function conflictRow(seat, conflicts, message, retry) {
   return box;
 }
 
+/**
+ * A seat is still parked in the shared ~/.codex.
+ *
+ * Not an error — it usually reads fine — which is why this is offered on a
+ * healthy card too. The point is that its ACCOUNT can be changed by things the
+ * user never sees: the ChatGPT desktop app, a bare `codex login`, any
+ * long-lived process refreshing a token back into that folder.
+ */
+function sharedHomeNotice(s) {
+  const warn = el('div', 'usage-conflict');
+  warn.appendChild(el('div', 'usage-conflict-why',
+    'This seat shares the default Codex folder with the ChatGPT app and every plain ' +
+    '`codex` command. Anything that signs in there changes this seat\'s account. ' +
+    'Moving it to its own folder means only you decide what it is signed in to.'));
+  const move = el('button', 'btn', 'Move to its own folder');
+  move.onclick = async () => {
+    move.disabled = true; move.textContent = 'moving…';
+    try {
+      await api('POST', '/api/usage/seats/move', { id: s.seatId });
+      notice('info', `${s.label} now has its own folder. Sign it in to finish.`);
+    } catch (e) {
+      move.disabled = false; move.textContent = 'Move to its own folder';
+      return notice('error', e.message);
+    }
+    await paintUsage();
+  };
+  warn.appendChild(move);
+  warn.appendChild(el('div', 'usage-conflict-note',
+    'Your settings stay shared. Only the sign-in and session history become private, ' +
+    'so you will sign in once more after this.'));
+  return warn;
+}
+
+/** The seat's account changed since we last looked — deliberate, or not. */
+function accountChangedNotice() {
+  return el('div', 'usage-offline-why',
+    'This seat is signed in to a different account than last time. If you did not just ' +
+    're-authenticate it, something else is writing to this folder — earlier readings have ' +
+    'been discarded because they belong to the previous account.');
+}
+
 /** Signed in, but Codex has not recorded a quota reading yet. */
 function waitingHint() {
   const row = el('div', 'usage-hint');
@@ -1542,42 +1583,6 @@ async function paintUsage() {
       why.appendChild(el('span', 'usage-offline-why', s.reason || ''));
       card.appendChild(why);
 
-      // An account change under a seat is either a deliberate re-auth or
-      // something else writing to that home. The second case is how a
-      // subscription gets spent without anyone noticing, so say it plainly
-      // rather than leaving the user to infer it from a blank card.
-      // A seat still parked in the shared ~/.codex can be re-pointed at another
-      // account by things the user never sees. Offer the migration here, as a
-      // button, rather than as a sequence of terminal commands.
-      if (s.sharedHome) {
-        const warn = el('div', 'usage-conflict');
-        warn.appendChild(el('div', 'usage-conflict-why',
-          'This seat shares the default Codex folder with the ChatGPT app and every plain ' +
-          '`codex` command. Anything that signs in there changes this seat\'s account. ' +
-          'Moving it to its own folder means only you decide what it is signed in to.'));
-        const move = el('button', 'btn', 'Move to its own folder');
-        move.onclick = async () => {
-          move.disabled = true; move.textContent = 'moving…';
-          try {
-            await api('POST', '/api/usage/seats/move', { id: s.seatId });
-            notice('info', `${s.label} now has its own folder. Sign it in to finish.`);
-          } catch (e) { move.disabled = false; move.textContent = 'Move to its own folder'; return notice('error', e.message); }
-          await paintUsage();
-        };
-        warn.appendChild(move);
-        warn.appendChild(el('div', 'usage-conflict-note',
-          'Your settings stay shared. Only the sign-in and session history become private, ' +
-          'so you will sign in once more after this.'));
-        card.appendChild(warn);
-      }
-
-      if (s.accountChanged) {
-        card.appendChild(el('div', 'usage-offline-why',
-          'This seat is signed in to a different account than last time. If you did not just ' +
-          're-authenticate it, something else is writing to this home — earlier readings have ' +
-          'been discarded because they belong to the previous account.'));
-      }
-
       if (noQuota && s.activity) {
         const bits = [];
         if (s.activity.turns) {
@@ -1636,6 +1641,13 @@ async function paintUsage() {
       }
       if (notes.length) card.appendChild(el('div', 'usage-note', notes.join(' · ')));
     }
+    // Both notices live at CARD level, not inside the not-ok branch. A seat
+    // parked in the shared folder is usually reading perfectly well — that is
+    // exactly the state the offer is for — and an account change that already
+    // has a reading would otherwise be invisible.
+    if (s.sharedHome) card.appendChild(sharedHomeNotice(s));
+    if (s.accountChanged) card.appendChild(accountChangedNotice());
+
     box.appendChild(card);
   }
 

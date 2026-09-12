@@ -232,6 +232,12 @@ const post = (p, b) => fetch(B + p, {
     ok(`dangerous flags are rejected: ${JSON.stringify(bad)}`, st === 400, `status ${st}`);
   }
 
+  // Defaults only cover undefined; an explicit null used to 500.
+  for (const junk of [{ words: null }, { flags: null }, { words: [] }, { flags: 'x' }]) {
+    const [st] = await post('/api/usage/shortcuts', { ...junk, install: false });
+    ok(`junk shape is a 400, not a 500: ${JSON.stringify(junk)}`, st === 400, `status ${st}`);
+  }
+
   const [gs, good] = await post('/api/usage/shortcuts', { words: { [seatId]: 'work' }, install: false });
   ok('a valid word is accepted', gs === 200, `status ${gs} ${JSON.stringify(good)}`);
   ok('...and comes back in the shortcut list',

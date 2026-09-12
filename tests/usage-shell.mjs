@@ -334,6 +334,25 @@ ok('shortcuts install into .zshenv, not .zshrc',
      left.startsWith('# mine\nexport EDITOR=vim\n\n'), JSON.stringify(left.slice(0, 40)));
 }
 
+// --- uninstall removes only lines it recognises ------------------------------
+{
+  // Review finding: removing a fixed COUNT after the marker deleted one of the
+  // user's own lines if they had edited inside the block.
+  const fakeHome = homeDir('zedit');
+  const zshenv = path.join(fakeHome, '.zshenv');
+  fs.writeFileSync(zshenv, '# mine\n');
+  install({ zshenv, file: path.join(tmp, 'seats.zsh') });
+  // The user tidies up one of our comment lines, then adds their own.
+  const edited = fs.readFileSync(zshenv, 'utf8')
+    .replace('# words work in new tabs, scripts and non-interactive shells alike.\n', '');
+  fs.writeFileSync(zshenv, edited + 'alias gs="git status"\n');
+
+  uninstall({ zshenv });
+  const left = fs.readFileSync(zshenv, 'utf8');
+  ok('an edited block still loses nothing of the user\'s', /alias gs=/.test(left), JSON.stringify(left));
+  ok('...and our source line is gone', !/seats\.zsh/.test(left), JSON.stringify(left));
+}
+
 // --- a seat word can never shadow a codex subcommand ------------------------
 {
   // Review finding: the wrapper matches the first argument, so a seat labelled

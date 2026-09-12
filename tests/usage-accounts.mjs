@@ -88,6 +88,20 @@ console.log('\nusage/accounts');
      String(r2.get('codex-1').since));
 }
 
+// --- `since` never moves backwards -------------------------------------------
+{
+  // Review finding: a restore with preserved timestamps (rsync -a, dotfile
+  // sync) hands us an OLD mtime, and moving since backwards would let the
+  // previous account's readings pass the filter under the new one.
+  const f = path.join(tmp, 'back.json');
+  const s3 = [seat('codex-1')];
+  reconcile(s3, fpMap({ 'codex-1': 'aaaaaaaaaaaa' }), { file: f, now: 1000 });
+  const r = reconcile(s3, fpMap({ 'codex-1': 'bbbbbbbbbbbb' }),
+    { file: f, now: 5000, fallbackFor: () => 100 });
+  ok('an older file timestamp never rewinds the sign-in', r.get('codex-1').since >= 1000,
+     String(r.get('codex-1').since));
+}
+
 // --- unreadable or signed-out seats keep their history -----------------------
 {
   const f = path.join(tmp, 'd.json');
