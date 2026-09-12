@@ -394,6 +394,45 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
   ok('...and is flagged so the user can see it happened', third.seats[0].accountChanged === true);
 }
 
+// --- a stale sign-in must not survive a credential change -------------------
+{
+  // Review finding on the PREVIOUS fix: carrying signedInAt from the stored
+  // snapshot let the old account's readings pass the filter after a panel
+  // re-auth, showing the wrong subscription's headroom under the new one — and
+  // nothing runs the CLI after a login to correct it.
+  const dir = fs.mkdtempSync(path.join(tmp, 'restale-'));
+  const home = path.join(dir, 'home');
+  const day = path.join(home, 'sessions', '2026', '09', '07');
+  fs.mkdirSync(day, { recursive: true });
+  fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"acct-A"}}');
+  const loginAt = Date.parse('2026-09-06T00:00:00.000Z');
+  fs.utimesSync(path.join(home, 'auth.json'), loginAt / 1000, loginAt / 1000);
+  fs.writeFileSync(path.join(day, 'rollout-2026-09-07T10-00-00-a.jsonl'),
+    JSON.stringify({ timestamp: '2026-09-07T10:05:00.000Z', type: 'turn.completed',
+      info: { rate_limits: { primary: { used_percent: 61, window_minutes: 10080,
+        resets_at: Math.floor(Date.now() / 1000) + 7 * 86400 } } } }) + '\n');
+
+  const f = path.join(dir, 'seats.json');
+  addSeat({ id: 'codex-1', vendor: 'codex', label: 'Seat', home }, f);
+  const snapFile = path.join(dir, 'snap.json');
+  const acctFile = path.join(dir, 'accounts.json');
+
+  const snap = await snapshot({ file: f, snapshotFile: snapFile, accountsFile: acctFile });
+  writeSnapshot(snap, snapFile);
+  ok('the CLI snapshot reads account A', snap.seats[0].windows[0]?.usedPercent === 61,
+     snap.seats[0].reason || '');
+
+  // The panel re-auths to a DIFFERENT account. Only the CLI can see that, and
+  // it has not run yet.
+  fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"acct-B"}}');
+
+  const rendered = await renderSnapshot({ file: f, snapshotFile: snapFile });
+  const seatOut = rendered.seats.find((x) => x.seatId === 'codex-1');
+  ok('the UI does NOT report the previous account\'s number',
+     !(seatOut.ok === true && seatOut.windows?.[0]?.usedPercent === 61),
+     JSON.stringify(seatOut.windows));
+}
+
 // --- moving a seat out of the shared home -----------------------------------
 {
   // The migration that used to be a sequence of terminal commands. ~/.codex has

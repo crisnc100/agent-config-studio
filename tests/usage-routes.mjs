@@ -242,6 +242,32 @@ const post = (p, b) => fetch(B + p, {
   ok('the generated file landed under the fake home', good.file.startsWith(fakeHome), good.file);
 }
 
+// --- writes must come from this page, not merely this machine ---------------
+{
+  // Review finding: the Host check does not stop a cross-site POST — a browser
+  // sets Host to localhost for those too. These routes SIGTERM sessions, move
+  // seats and write to ~/.zshenv, so origin matters now.
+  const post2 = (p2, body, headers) => fetch(B + p2, {
+    method: 'POST', headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  }).then(async (r) => [r.status, await r.json().catch(() => null)]);
+
+  for (const bad of ['https://evil.example', 'http://evil.example:8787', 'null']) {
+    const [st] = await post2('/api/usage/refresh', {}, { origin: bad });
+    ok(`a cross-origin POST is refused: ${bad}`, st === 403, `status ${st}`);
+  }
+  const [cs] = await post2('/api/usage/refresh', {}, { 'sec-fetch-site': 'cross-site' });
+  ok('Sec-Fetch-Site: cross-site is refused', cs === 403, `status ${cs}`);
+
+  const [ok1] = await post2('/api/usage/refresh', {}, { origin: B });
+  ok('a same-origin POST still works', ok1 === 200, `status ${ok1}`);
+  const [ok2] = await post2('/api/usage/refresh', {});
+  ok('a POST with no Origin (curl, the CLI) still works', ok2 === 200, `status ${ok2}`);
+
+  const [gs] = await get('/api/usage');
+  ok('GET is unaffected', gs === 200);
+}
+
 // --- the real home was never touched ----------------------------------------
 {
   const realAfter = (() => {

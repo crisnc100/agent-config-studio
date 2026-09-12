@@ -275,6 +275,43 @@ ok('shortcuts install into .zshenv, not .zshrc',
   })());
 }
 
+// --- a word may not collide with another seat's prefixed form ---------------
+{
+  // Review finding: every seat also gets a `codex-<word>` function, so the word
+  // 'codex-team' defined codex-team() a second time and routed that form to
+  // the wrong seat.
+  ok('a codex- prefixed word is refused', validateWord('codex-team') !== null);
+  const seats = [
+    { id: 'a', vendor: 'codex', label: 'Team', home: homeDir('P1') },
+    { id: 'b', vendor: 'codex', label: 'Other', home: homeDir('P2') },
+  ];
+  const sc = shortcutsFromSeats(seats, { words: { b: 'codex-team' } });
+  ok('...and never reaches the generated file', !sc.some((x) => x.word.startsWith('codex-')),
+     JSON.stringify(sc.map((x) => x.word)));
+
+  const text = renderShortcuts(sc);
+  for (const w of sc.map((x) => x.word)) {
+    const defs = (text.match(new RegExp(`^codex-${w}\\(\\) \\{`, 'gm')) || []).length;
+    ok(`codex-${w}() is defined exactly once`, defs === 1, String(defs));
+  }
+}
+
+// --- an explicit word beats an earlier seat's derived one -------------------
+{
+  // Review finding: registry order let an unconfigured seat's derivation take
+  // the word a user had explicitly chosen for a later seat.
+  const seats = [
+    { id: 'a', vendor: 'codex', label: 'Team', home: homeDir('E1') },
+    { id: 'b', vendor: 'codex', label: 'Other', home: homeDir('E2') },
+  ];
+  const sc = shortcutsFromSeats(seats, { words: { b: 'team' } });
+  ok('the seat that asked for "team" gets it', sc.find((x) => x.id === 'b').word === 'team',
+     JSON.stringify(sc.map((x) => `${x.id}:${x.word}`)));
+  ok('...and the other seat is given a different word',
+     sc.find((x) => x.id === 'a').word !== 'team', sc.find((x) => x.id === 'a').word);
+  ok('...with no duplicates at all', new Set(sc.map((x) => x.word)).size === 2);
+}
+
 // --- uninstall is reversible even when the block is not last ----------------
 {
   // Review finding: uninstall skipped EVERY following comment line and greedily

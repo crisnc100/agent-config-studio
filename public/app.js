@@ -1180,6 +1180,12 @@ function connectRow(seat, { reauth = false } = {}) {
       catch { return; }
       if (st.signedIn) {
         clearInterval(poll);
+        // Reconcile through the CLI before repainting. It is the only process
+        // that can read account identity, so until it has run, the studio
+        // cannot know this seat changed account — and would keep filtering
+        // against the previous login.
+        status.textContent = 'signed in — checking this seat…';
+        try { await api('POST', '/api/usage/refresh'); } catch { /* the repaint still shows state */ }
         notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
         paintUsage();
       } else if (!st.running && Date.now() - started > 5000) {

@@ -756,6 +756,24 @@ export function createApp(opts = {}) {
     return;
   }
 
+  // ...and refuse anything that did not originate from this PAGE.
+  //
+  // The Host check alone does not do that: a browser sets Host to localhost for
+  // a cross-site request too, and readBody parses JSON whatever the
+  // content-type, so any page the user has open could post here with no CORS
+  // preflight. That was survivable when the routes only read files. It is not
+  // now: these endpoints SIGTERM codex sessions, move a seat out of ~/.codex,
+  // and append a source line to ~/.zshenv.
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    const origin = req.headers.origin;
+    const site = req.headers['sec-fetch-site'];
+    const originOk = !origin || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin);
+    if (!originOk || (site && site === 'cross-site')) {
+      res.writeHead(403).end('cross-origin requests are not accepted');
+      return;
+    }
+  }
+
   // These stream their own responses rather than returning a JSON body.
   if (req.method === 'POST' && url.pathname === '/api/chat') {
     return void handleChat(req, res);
