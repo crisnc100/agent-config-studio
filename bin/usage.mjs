@@ -5,6 +5,7 @@ import os from 'node:os';
 import {
   loadSeats, addSeat, removeSeat, detectSeats, saveSeats, snapshot, slugify, registryPath,
   writeSnapshot, createCodexHome, uniqueSeatId,
+  sharedCodexHome, isSharedCodexHome, seatHomeRoot,
 } from '../lib/usage/seats.js';
 
 /**
@@ -155,8 +156,20 @@ function detect() {
   // tracked under a different label — the same subscription counted twice.
   const knownIds = new Set(seats.map((s) => s.id));
   const knownHomes = new Set(seats.filter((s) => s.home).map((s) => `${s.vendor}:${path.resolve(s.home)}`));
+  // The shared ~/.codex is only ever adopted on a machine that has never been
+  // split. Filtering on "not currently registered" is not enough: moving a seat
+  // to a private home leaves the shared one unclaimed, so `detect --save` would
+  // register it again — no login prompt, and straight back into the folder the
+  // move existed to escape. Same rule as createSeat, which this path bypasses.
+  const shared = sharedCodexHome();
+  const everSplit = (() => {
+    try { return fs.readdirSync(seatHomeRoot()).length > 0; } catch { return false; }
+  })();
+  const hasCodexSeat = seats.some((s) => s.vendor === 'codex') || everSplit;
   const fresh = found.filter((s) =>
-    !knownIds.has(s.id) && !(s.home && knownHomes.has(`${s.vendor}:${path.resolve(s.home)}`)));
+    !knownIds.has(s.id)
+    && !(s.home && knownHomes.has(`${s.vendor}:${path.resolve(s.home)}`))
+    && !(s.vendor === 'codex' && hasCodexSeat && s.home && isSharedCodexHome(s.home)));
   console.log('');
   if (!fresh.length) { console.log('  nothing new detected\n'); return 0; }
   for (const s of fresh) console.log(`  ${C.bold(s.id.padEnd(12))} ${s.vendor.padEnd(7)} ${s.label}${s.home ? C.grey(`  ${s.home}`) : ''}`);

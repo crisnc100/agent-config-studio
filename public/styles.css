@@ -675,3 +675,38 @@ a { color: var(--accent); }
 
 /* A stale reading must not look like a current one. */
 .usage-stale { color: var(--amber); font: 11px var(--mono); margin-top: 6px; }
+
+/* Terminal shortcuts: seat name sits left of its two inputs so the row reads
+   "this subscription -> this word". */
+.usage-shortcut-seat {
+  min-width: 168px;
+  font-size: 12px;
+  color: var(--fg-dim, #888);
+  align-self: center;
+}
+
+.usage-shortcut-default {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--fg-dim, #888);
+  white-space: nowrap;
+}
+
+/* A seat is busy: processes hold its home open and would undo a sign-in. */
+.usage-conflict {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--warn-border, #7a5c1e);
+  border-radius: 6px;
+  background: var(--warn-bg, rgba(180, 130, 20, 0.08));
+}
+.usage-conflict-why { font-size: 13px; margin-bottom: 6px; }
+.usage-conflict-list { margin: 6px 0 10px; }
+.usage-conflict-item {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--fg-dim, #999);
+}
+.usage-conflict-note { font-size: 11px; color: var(--fg-dim, #888); margin-top: 6px; }

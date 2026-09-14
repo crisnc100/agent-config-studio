@@ -304,6 +304,13 @@ function guardB() {
       // this module only ever writes `initialize` and `_x.ai/billing`. No
       // session is created and no prompt is sent, so no model turn can run.
       'lib/usage/grok-billing.js': { fns: new Set(['spawn']), agentStdioOnly: true },
+      // Seat-conflict detection: which processes hold a seat's home open, so a
+      // sign-in is not silently undone by one that is still running. This is
+      // NOT a harness binary — it is an absolute system inspector, read-only,
+      // with argv fixed in source. Pinned anyway, because the reason guard b
+      // is strict is that any second spawn site is a door: an lsof call whose
+      // path or argv could drift is one edit away from being something else.
+      'lib/usage/processes.js': { fns: new Set(['execFile']), lsofOnly: true },
     }[file];
 
     for (const call of calls) {
@@ -345,6 +352,28 @@ function guardB() {
                     `or ['logout'], ` +
                     `got ${argv ?? 'nothing parseable'} — a prompt or exec here would be an ` +
                     `uncontained model turn`);
+        }
+        continue;
+      }
+      if (allowed.lsofOnly) {
+        const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
+        // Absolute path, so no PATH entry can substitute a different program.
+        if (!/^'\/usr\/sbin\/lsof'\s*,/.test(text)) {
+          hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 60)}…) — must be the absolute ` +
+                    `'/usr/sbin/lsof', never a PATH name`);
+        }
+        // Every argv element literal except the home being inspected. lsof has
+        // no flag that executes anything, but a caller-supplied FLAG (rather
+        // than a caller-supplied path) is how that would change.
+        const am = /^[^,]+,\s*\[([^\]]*)\]/.exec(text);
+        const argv = am ? am[1].split(',').map((x) => x.trim()).filter(Boolean) : null;
+        if (!argv || !argv.slice(0, -1).every((a) => /^'[^']*'$/.test(a))) {
+          hits.push(`${file}:${call.line} every lsof flag must be a string literal, got ` +
+                    `${argv ? argv.join(' ') : 'nothing parseable'} — a computed flag here is how ` +
+                    `a read-only inspector stops being read-only`);
+        }
+        if (argv && !argv.slice(0, -1).some((a) => a === "'+D'" || a === "'+d'")) {
+          hits.push(`${file}:${call.line} lsof must be scoped with +d/+D to one directory`);
         }
         continue;
       }

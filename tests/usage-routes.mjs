@@ -164,6 +164,9 @@ const post = (p, b) => fetch(B + p, {
 
   const gone = path.join(fakeHome, 'no-such-seat');
   const r = await startLogin({ seatId: 'gone', home: gone });
+  // Checked BEFORE the conflict scan: a home that does not exist has nothing
+  // using it, and a scan failure here would name the wrong problem — which is
+  // exactly what CI saw on a runner with no lsof.
   ok('a login for a missing home errors instead of spawning',
      !!r.error && /no longer exists|not installed/.test(r.error), r.error);
 
@@ -194,6 +197,90 @@ const post = (p, b) => fetch(B + p, {
 
   const [s3] = await post('/api/usage/connect/cancel', { id: 'anything' });
   ok('cancel is safe to call for any id', s3 === 200);
+}
+
+// --- what only the CLI can know must survive the live re-read ---------------
+{
+  // The review's top finding: GET /api/usage re-reads codex seats live, and
+  // dropped signedInAt / sharedHome / accountChanged — so the account-derived
+  // sign-in fix never reached the UI (it fell back to auth.json mtime, the very
+  // bug it removes), and the migration button could never render.
+  const [st, body] = await get('/api/usage');
+  ok('usage responds', st === 200);
+  const cx = (body.seats || []).find((x) => x.vendor === 'codex');
+  ok('a codex seat is present', Boolean(cx), JSON.stringify((body.seats || []).map((x) => x.vendor)));
+  ok('the live re-read still reports sharedHome',
+     cx && Object.prototype.hasOwnProperty.call(cx, 'sharedHome'), JSON.stringify(Object.keys(cx || {})));
+  ok('...so the migration button can render for a seat in ~/.codex',
+     cx && typeof cx.sharedHome === 'boolean');
+}
+
+// --- shell shortcuts ---------------------------------------------------------
+// This endpoint's output is executed by every terminal the user opens, so the
+// bar is that nothing typed here can become shell.
+{
+  const [bs, before] = await get('/api/usage/shortcuts');
+  ok('shortcuts endpoint answers', bs === 200 && Array.isArray(before.shortcuts),
+     JSON.stringify(before).slice(0, 140));
+  ok('it reports install state', typeof before.installed === 'boolean');
+  ok('it installs into .zshenv, not .zshrc', /\.zshenv$/.test(before.zshenv), before.zshenv);
+
+  const seatId = (before.shortcuts[0] || {}).id || 'codex-main';
+  for (const bad of ['te;am', 'te am', 'te$(id)', 'TEAM', 'rm', 'codex']) {
+    const [st] = await post('/api/usage/shortcuts', { words: { [seatId]: bad }, install: false });
+    ok(`a dangerous word is rejected: ${JSON.stringify(bad)}`, st === 400, `status ${st}`);
+  }
+  for (const bad of ['--yolo; id', '$(id)', '`id`', '--a|b']) {
+    const [st] = await post('/api/usage/shortcuts', { flags: { [seatId]: bad }, install: false });
+    ok(`dangerous flags are rejected: ${JSON.stringify(bad)}`, st === 400, `status ${st}`);
+  }
+
+  // Defaults only cover undefined; an explicit null used to 500.
+  for (const junk of [{ words: null }, { flags: null }, { words: [] }, { flags: 'x' }]) {
+    const [st] = await post('/api/usage/shortcuts', { ...junk, install: false });
+    ok(`junk shape is a 400, not a 500: ${JSON.stringify(junk)}`, st === 400, `status ${st}`);
+  }
+
+  const [gs, good] = await post('/api/usage/shortcuts', { words: { [seatId]: 'work' }, install: false });
+  ok('a valid word is accepted', gs === 200, `status ${gs} ${JSON.stringify(good)}`);
+  ok('...and comes back in the shortcut list',
+     (good.shortcuts || []).some((s) => s.word === 'work'), JSON.stringify(good.shortcuts));
+  const generated = fs.readFileSync(good.file, 'utf8');
+  ok('a rejected word never reached the generated file', !generated.includes('$(id)'));
+  ok('the generated file warns against hand editing', /DO NOT EDIT/.test(generated));
+  ok('the generated file landed under the fake home', good.file.startsWith(fakeHome), good.file);
+}
+
+// --- writes must come from this page, not merely this machine ---------------
+{
+  // Review finding: the Host check does not stop a cross-site POST — a browser
+  // sets Host to localhost for those too. These routes SIGTERM sessions, move
+  // seats and write to ~/.zshenv, so origin matters now.
+  const post2 = (p2, body, headers) => fetch(B + p2, {
+    method: 'POST', headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  }).then(async (r) => [r.status, await r.json().catch(() => null)]);
+
+  for (const bad of ['https://evil.example', 'http://evil.example:8787', 'null']) {
+    const [st] = await post2('/api/usage/refresh', {}, { origin: bad });
+    ok(`a cross-origin POST is refused: ${bad}`, st === 403, `status ${st}`);
+  }
+  const [cs] = await post2('/api/usage/refresh', {}, { 'sec-fetch-site': 'cross-site' });
+  ok('Sec-Fetch-Site: cross-site is refused', cs === 403, `status ${cs}`);
+
+  // Sec-Fetch-Site says 'same-site' for a different localhost PORT, so the port
+  // has to be checked explicitly or any other local dev server qualifies.
+  const otherPort = B.replace(/:(\d+)$/, (m, n) => `:${Number(n) + 1}`);
+  const [ps] = await post2('/api/usage/refresh', {}, { origin: otherPort });
+  ok('a different localhost PORT is refused', ps === 403, `status ${ps} for ${otherPort}`);
+
+  const [ok1] = await post2('/api/usage/refresh', {}, { origin: B });
+  ok('a same-origin POST still works', ok1 === 200, `status ${ok1}`);
+  const [ok2] = await post2('/api/usage/refresh', {});
+  ok('a POST with no Origin (curl, the CLI) still works', ok2 === 200, `status ${ok2}`);
+
+  const [gs] = await get('/api/usage');
+  ok('GET is unaffected', gs === 200);
 }
 
 // --- the real home was never touched ----------------------------------------

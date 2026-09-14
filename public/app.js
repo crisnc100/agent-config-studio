@@ -1146,6 +1146,15 @@ function connectRow(seat, { reauth = false } = {}) {
     let res;
     try { res = await api('POST', '/api/usage/connect', { id: seat.seatId, reauth }); }
     catch (e) { btn.disabled = false; status.textContent = ''; return notice('error', e.message); }
+    // Something is holding this seat's home open. Signing in now would be
+    // undone the next time that process refreshes its token, so offer to stop
+    // it here rather than sending the user to a terminal to find pids.
+    if (res.conflicts?.length) {
+      btn.disabled = false;
+      status.textContent = '';
+      row.appendChild(conflictRow(seat, res.conflicts, res.error, () => btn.click()));
+      return;
+    }
     if (res.error) { btn.disabled = false; status.textContent = ''; return notice('error', res.error); }
 
     // The window.open happens after an await, so the browser's user-activation
@@ -1171,6 +1180,12 @@ function connectRow(seat, { reauth = false } = {}) {
       catch { return; }
       if (st.signedIn) {
         clearInterval(poll);
+        // Reconcile through the CLI before repainting. It is the only process
+        // that can read account identity, so until it has run, the studio
+        // cannot know this seat changed account — and would keep filtering
+        // against the previous login.
+        status.textContent = 'signed in — checking this seat…';
+        try { await api('POST', '/api/usage/refresh'); } catch { /* the repaint still shows state */ }
         notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
         paintUsage();
       } else if (!st.running && Date.now() - started > 5000) {
@@ -1186,12 +1201,194 @@ function connectRow(seat, { reauth = false } = {}) {
   return row;
 }
 
+/**
+ * A seat is busy: running Codex processes hold its home open.
+ *
+ * This is the UI for a failure that used to be a runbook instruction. A Codex
+ * process refreshes its credentials back into its home on its own schedule, so
+ * one left running across a sign-in silently undoes it minutes later. "Quit
+ * your session first" is not actionable — nobody can see which sessions those
+ * are. So: name them, and offer one button.
+ */
+function conflictRow(seat, conflicts, message, retry) {
+  const box = el('div', 'usage-conflict');
+  box.appendChild(el('div', 'usage-conflict-why', message
+    || 'Something is using this seat right now. Signing in would be undone when it next refreshes.'));
+
+  const list = el('div', 'usage-conflict-list');
+  for (const c of conflicts) {
+    list.appendChild(el('div', 'usage-conflict-item', `${c.command} · pid ${c.pid}`));
+  }
+  box.appendChild(list);
+
+  const stop = el('button', 'btn', conflicts.length === 1 ? 'Quit it and sign in' : 'Quit them and sign in');
+  stop.onclick = async () => {
+    stop.disabled = true;
+    stop.textContent = 'stopping…';
+    let r;
+    try { r = await api('POST', '/api/usage/seats/conflicts/stop', { id: seat.seatId, pids: conflicts.map((c) => c.pid) }); }
+    catch (e) { stop.disabled = false; stop.textContent = 'Quit them and sign in'; return notice('error', e.message); }
+    if (r.remaining?.length) {
+      stop.disabled = false;
+      stop.textContent = 'Try again';
+      return notice('error',
+        `${r.remaining.length} still running (${r.remaining.map((x) => x.pid).join(', ')}). ` +
+        'Some processes need to be closed from their own window.');
+    }
+    box.remove();
+    retry();
+  };
+  box.appendChild(stop);
+  box.appendChild(el('div', 'usage-conflict-note',
+    'They are asked to stop, not force-killed, so anything in progress gets to save.'));
+  return box;
+}
+
+/**
+ * A seat is still parked in the shared ~/.codex.
+ *
+ * Not an error — it usually reads fine — which is why this is offered on a
+ * healthy card too. The point is that its ACCOUNT can be changed by things the
+ * user never sees: the ChatGPT desktop app, a bare `codex login`, any
+ * long-lived process refreshing a token back into that folder.
+ */
+function sharedHomeNotice(s) {
+  const warn = el('div', 'usage-conflict');
+  warn.appendChild(el('div', 'usage-conflict-why',
+    'This seat shares the default Codex folder with the ChatGPT app and every plain ' +
+    '`codex` command. Anything that signs in there changes this seat\'s account. ' +
+    'Moving it to its own folder means only you decide what it is signed in to.'));
+  const move = el('button', 'btn', 'Move to its own folder');
+  move.onclick = async () => {
+    move.disabled = true; move.textContent = 'moving…';
+    try {
+      await api('POST', '/api/usage/seats/move', { id: s.seatId });
+      notice('info', `${s.label} now has its own folder. Sign it in to finish.`);
+    } catch (e) {
+      move.disabled = false; move.textContent = 'Move to its own folder';
+      return notice('error', e.message);
+    }
+    await paintUsage();
+  };
+  warn.appendChild(move);
+  warn.appendChild(el('div', 'usage-conflict-note',
+    'Your settings stay shared. Only the sign-in and session history become private, ' +
+    'so you will sign in once more after this.'));
+  return warn;
+}
+
+/** The seat's account changed since we last looked — deliberate, or not. */
+function accountChangedNotice() {
+  return el('div', 'usage-offline-why',
+    'This seat is signed in to a different account than last time. If you did not just ' +
+    're-authenticate it, something else is writing to this folder — earlier readings have ' +
+    'been discarded because they belong to the previous account.');
+}
+
 /** Signed in, but Codex has not recorded a quota reading yet. */
 function waitingHint() {
   const row = el('div', 'usage-hint');
   row.appendChild(el('span', 'usage-hint-label',
     'Connected. Codex reports quota only after a turn runs, so this fills in the first time you use this seat.'));
   return row;
+}
+
+/**
+ * Shell shortcuts panel.
+ *
+ * The point of the whole feature: switching subscriptions should be a word you
+ * type, not a path you remember. Everything here is one screen of plain choices;
+ * the validation that makes it safe lives on the server, because this output is
+ * executed by every terminal the user opens.
+ */
+function shortcutsPanel(state) {
+  const form = el('div', 'usage-add');
+  form.appendChild(el('div', 'usage-add-title', 'Terminal shortcuts'));
+
+  if (!state.shortcuts.length) {
+    form.appendChild(el('div', 'usage-add-note',
+      'Shortcuts apply to Codex seats — they are the only ones whose account is chosen by ' +
+      'the terminal. Add a second Codex seat and it will appear here.'));
+    return form;
+  }
+
+  const edits = { words: {}, flags: {}, defaultId: (state.shortcuts.find((s) => s.isDefault) || {}).id };
+  for (const sc of state.shortcuts) {
+    const row = el('div', 'usage-add-row');
+    row.appendChild(el('span', 'usage-shortcut-seat', sc.label));
+
+    const word = document.createElement('input');
+    word.className = 'usage-add-label';
+    word.value = sc.word;
+    word.maxLength = 24;
+    word.placeholder = 'word to type';
+    word.oninput = () => { edits.words[sc.id] = word.value.trim(); };
+
+    const flags = document.createElement('input');
+    flags.className = 'usage-add-label';
+    flags.value = sc.flags || '';
+    flags.maxLength = 120;
+    flags.placeholder = 'always-on flags (e.g. --yolo)';
+    flags.oninput = () => { edits.flags[sc.id] = flags.value.trim(); };
+
+    // Which seat a bare `codex` spends is an explicit choice — otherwise it
+    // would follow registry order, and reordering seats would quietly move a
+    // subscription's spend.
+    const def = document.createElement('label');
+    def.className = 'usage-shortcut-default';
+    const radio = document.createElement('input');
+    radio.type = 'radio'; radio.name = 'acs-default-seat';
+    radio.checked = !!sc.isDefault;
+    radio.onchange = () => { edits.defaultId = sc.id; };
+    def.appendChild(radio);
+    def.appendChild(document.createTextNode(' default'));
+
+    row.appendChild(word); row.appendChild(flags); row.appendChild(def);
+    form.appendChild(row);
+    form.appendChild(el('div', 'usage-add-note',
+      `Type “${sc.word}”, “codex ${sc.word}”, or “codex-${sc.word}” — each runs Codex on this seat.` +
+      (sc.isDefault ? ' A plain “codex” runs this one.' : '')));
+  }
+
+  const controls = el('div', 'usage-add-row');
+  const save = el('button', 'btn', state.installed ? 'Save' : 'Turn on shortcuts');
+  save.onclick = async () => {
+    save.disabled = true;
+    const words = { ...Object.fromEntries(state.shortcuts.map((s) => [s.id, s.word])), ...edits.words };
+    const flags = { ...Object.fromEntries(state.shortcuts.map((s) => [s.id, s.flags || ''])), ...edits.flags };
+    try {
+      const r = await api('POST', '/api/usage/shortcuts',
+        { words, flags, defaultId: edits.defaultId, install: true });
+      notice('info', `Shortcuts saved: ${r.shortcuts.map((s) => s.word).join(', ')}. ` +
+        'Open a new terminal tab to use them.');
+    } catch (e) { notice('error', e.message); }
+    save.disabled = false;
+    await paintUsage();
+  };
+  controls.appendChild(save);
+
+  if (state.installed) {
+    const off = el('button', 'btn ghost', 'Turn off');
+    off.onclick = async () => {
+      off.disabled = true;
+      try {
+        await api('POST', '/api/usage/shortcuts', { words: {}, flags: {}, install: false });
+        notice('info', 'Shortcuts removed from your shell. Existing tabs keep them until reopened.');
+      } catch (e) { notice('error', e.message); }
+      await paintUsage();
+    };
+    controls.appendChild(off);
+  }
+  form.appendChild(controls);
+
+  form.appendChild(el('div', 'usage-add-note',
+    state.installed
+      ? `Active in every terminal. Installed as one line in ${state.zshenv}, which zsh reads for ` +
+        'every shell — new tabs, scripts and all. Switching seats never asks you to sign in again.'
+      : 'Turning these on adds a single line to your shell profile. Nothing else on your machine changes.'));
+  form.appendChild(el('div', 'usage-add-note',
+    'Quit a running Codex session before switching — the account is fixed when it starts.'));
+  return form;
 }
 
 function addSeatForm() {
@@ -1314,10 +1511,19 @@ async function paintUsage() {
   const addBtn = el('button', 'btn ghost', '+ Add seat');
   addBtn.onclick = () => { S.usageAdding = !S.usageAdding; paintUsage(); };
   actions.appendChild(addBtn);
+
+  const scBtn = el('button', 'btn ghost', 'Shortcuts');
+  scBtn.onclick = () => { S.usageShortcuts = !S.usageShortcuts; paintUsage(); };
+  actions.appendChild(scBtn);
   panelHead.appendChild(actions);
   box.appendChild(panelHead);
 
   if (S.usageAdding) box.appendChild(addSeatForm());
+  if (S.usageShortcuts) {
+    let sc = null;
+    try { sc = await api('GET', '/api/usage/shortcuts'); } catch (e) { notice('error', e.message); }
+    if (sc) box.appendChild(shortcutsPanel(sc));
+  }
 
   if (!seats.length) {
     box.appendChild(el('div', 'scope-sub',
@@ -1435,6 +1641,13 @@ async function paintUsage() {
       }
       if (notes.length) card.appendChild(el('div', 'usage-note', notes.join(' · ')));
     }
+    // Both notices live at CARD level, not inside the not-ok branch. A seat
+    // parked in the shared folder is usually reading perfectly well — that is
+    // exactly the state the offer is for — and an account change that already
+    // has a reading would otherwise be invisible.
+    if (s.sharedHome) card.appendChild(sharedHomeNotice(s));
+    if (s.accountChanged) card.appendChild(accountChangedNotice());
+
     box.appendChild(card);
   }
 

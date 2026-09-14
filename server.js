@@ -14,10 +14,16 @@ import { runAssist, listActions } from './lib/assist.js';
 import { streamTurn, parseEdits, resolveMentions } from './lib/chat.js';
 import { detectHarnesses, HARNESSES } from './lib/harness.js';
 import { createWatcher, snapshotOf, diffSnapshots } from './lib/watch.js';
-import { renderSnapshot, createSeat, removeSeat } from './lib/usage/seats.js';
+import { renderSnapshot, createSeat, removeSeat, moveSeatToPrivateHome } from './lib/usage/seats.js';
 import { refreshSnapshot } from './lib/usage/refresh.js';
 import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
+import { codexProcessesUsingHome, stopProcesses } from './lib/usage/processes.js';
 import { loadSeats } from './lib/usage/seats.js';
+import {
+  syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
+  isInstalled as shortcutsInstalled, shortcutsFromSeats, shortcutsPath, zshenvPath,
+  validateWord, validateFlags, readShortcutConfig, writeShortcutConfig,
+} from './lib/usage/shell.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -57,6 +63,25 @@ function launchedDirectly() {
   if (!entry) return false;
   try { return path.resolve(entry) === fileURLToPath(import.meta.url); }
   catch { return false; }
+}
+
+/**
+ * Keep the generated shell file in step with the registry.
+ *
+ * Without this, "Move to its own folder" leaves the seat's word and the bare
+ * `codex` export pointing at the home it just left — the shared one the move
+ * existed to escape. New seats get no word and removed seats keep one until
+ * someone happens to re-open the panel and press Save.
+ *
+ * Only regenerates when shortcuts are actually installed: it must not create
+ * shell config for someone who never asked for it, and a seat change must not
+ * fail because of shell wiring.
+ */
+function resyncShortcuts() {
+  try {
+    if (!shortcutsInstalled()) return;
+    syncShortcuts({ config: readShortcutConfig() });
+  } catch { /* advisory */ }
 }
 
 function detectedHarnessPayload(detected) {
@@ -227,8 +252,11 @@ export function createApp(opts = {}) {
    */
   'POST /api/usage/seats': async (req) => {
     const { vendor, label } = await readBody(req);
-    try { return createSeat({ vendor, label }); }
+    let res;
+    try { res = createSeat({ vendor, label }); }
     catch (e) { const err = new Error(e.message); err.status = 400; throw err; }
+    resyncShortcuts();
+    return res;
   },
 
   /**
@@ -238,8 +266,10 @@ export function createApp(opts = {}) {
    */
   'POST /api/usage/seats/remove': async (req) => {
     const { id } = await readBody(req);
-    try { removeSeat(id); return { removed: id }; }
+    try { removeSeat(id); }
     catch (e) { const err = new Error(e.message); err.status = 404; throw err; }
+    resyncShortcuts();
+    return { removed: id };
   },
 
   /**
@@ -251,6 +281,81 @@ export function createApp(opts = {}) {
    * Fixed argv — nothing from the request reaches it.
    */
   'POST /api/usage/refresh': async () => refreshSnapshot(),
+
+  /**
+   * Shell shortcuts: give each Codex seat a word you can type.
+   *
+   * The generated file is owned entirely by ACS and rewritten in full; the only
+   * touch to a human-owned file is a single `source` line appended once to
+   * ~/.zshenv (never .zshrc — zsh reads .zshenv for EVERY shell, which is why
+   * shortcuts installed elsewhere appear to work only "sometimes").
+   *
+   * Words and flags are validated against a strict allowlist before they are
+   * rendered. This output is executed by every terminal the user opens, so a
+   * value that merely looks odd is refused rather than escaped.
+   */
+  'GET /api/usage/shortcuts': async () => {
+    const { seats } = loadSeats();
+    const config = readShortcutConfig();
+    return {
+      installed: shortcutsInstalled(),
+      file: shortcutsPath(),
+      zshenv: zshenvPath(),
+      shortcuts: shortcutsFromSeats(seats, config),
+    };
+  },
+
+  'POST /api/usage/shortcuts': async (req) => {
+    const body = await readBody(req);
+    const { defaultId = null, install: wantInstall } = body;
+    // Defaults only cover `undefined`; an explicit null reached Object.entries
+    // and became a 500 where the caller deserves a 400.
+    const isPlain = (v) => v === undefined || (v !== null && typeof v === 'object' && !Array.isArray(v));
+    if (!isPlain(body.words) || !isPlain(body.flags)) {
+      const err = new Error('words and flags must be objects'); err.status = 400; throw err;
+    }
+    const words = body.words ?? {};
+    const flags = body.flags ?? {};
+    const clean = { words: {}, flags: {}, defaultId: null };
+    // The default seat is an id from the registry, never a path: it decides
+    // which subscription a bare `codex` spends, so it must not be free text.
+    if (defaultId != null && defaultId !== '') {
+      const { seats } = loadSeats();
+      if (!seats.some((x) => x.id === defaultId && x.vendor === 'codex')) {
+        const err = new Error(`no codex seat with id "${defaultId}"`); err.status = 400; throw err;
+      }
+      clean.defaultId = defaultId;
+    }
+    const problems = [];
+    for (const [id, word] of Object.entries(words)) {
+      if (word === '' || word == null) continue;          // blank = fall back to derived
+      const bad = validateWord(String(word));
+      if (bad) problems.push(`${id}: ${bad}`); else clean.words[id] = String(word);
+    }
+    for (const [id, f] of Object.entries(flags)) {
+      if (f === '' || f == null) continue;
+      const bad = validateFlags(String(f));
+      if (bad) problems.push(`${id}: ${bad}`); else clean.flags[id] = String(f);
+    }
+    if (problems.length) { const err = new Error(problems.join('; ')); err.status = 400; throw err; }
+
+    // Only rewrite preferences that were actually supplied. Turning shortcuts
+    // OFF posts empty maps, and writing those through would erase every chosen
+    // word, flag and default — so turning them back on would silently change
+    // which subscription a bare `codex` bills.
+    const supplied = Object.keys(words).length || Object.keys(flags).length || defaultId;
+    const merged = supplied ? clean : readShortcutConfig();
+    writeShortcutConfig(merged);
+    const r = syncShortcuts({ config: merged });
+    if (!r.ok) { const err = new Error(r.problems.join('; ')); err.status = 400; throw err; }
+    if (wantInstall === true) installShortcuts();
+    else if (wantInstall === false) uninstallShortcuts();
+    return {
+      ok: true, installed: shortcutsInstalled(), file: r.file,
+      shortcuts: r.shortcuts, zshenv: zshenvPath(),
+    };
+  },
+
 
   /**
    * Start a Codex sign-in for one seat and return the OAuth URL, so the user
@@ -267,6 +372,64 @@ export function createApp(opts = {}) {
       const e = new Error(`${seat.vendor} seats are not connected this way`); e.status = 400; throw e;
     }
     return startLogin({ seatId: seat.id, home: seat.home, reauth: reauth === true });
+  },
+
+  /**
+   * What is currently holding a seat's home open, and stopping it.
+   *
+   * A Codex process refreshes its credentials back into its home on its own
+   * schedule, so one left running across a sign-in silently undoes it. Telling
+   * people to "quit your session first" in a runbook does not work — they
+   * cannot see which processes those are. The studio finds them and offers.
+   */
+  /**
+   * Move a seat out of the shared ~/.codex into a private home.
+   *
+   * Only an id crosses the wire; the destination is derived server-side, the
+   * same rule as seat creation — a path from a request body would make this a
+   * directory-creation primitive. No credential is copied: the new home starts
+   * signed out and is connected from the panel.
+   */
+  'POST /api/usage/seats/move': async (req) => {
+    const { id } = await readBody(req);
+    let res;
+    try { res = moveSeatToPrivateHome({ id }); }
+    catch (e) { const err = new Error(e.message); err.status = 400; throw err; }
+    resyncShortcuts();
+    return res;
+  },
+
+  'POST /api/usage/seats/conflicts': async (req) => {
+    const { id } = await readBody(req);
+    const seat = loadSeats().seats.find((x) => x.id === id);
+    if (!seat) { const e = new Error(`no seat with id "${id}"`); e.status = 404; throw e; }
+    if (!seat.home) return { conflicts: [] };
+    return { conflicts: await codexProcessesUsingHome(seat.home) };
+  },
+
+  /**
+   * Stop them. The pid list is a HINT, never an instruction: processes.js
+   * re-verifies each pid still holds THIS seat's home before signalling it, so
+   * a stale or forged pid cannot turn this into a remote-kill primitive.
+   * SIGTERM only — a Codex session asked to stop should get to save its work.
+   */
+  'POST /api/usage/seats/conflicts/stop': async (req) => {
+    const { id, pids } = await readBody(req);
+    const seat = loadSeats().seats.find((x) => x.id === id);
+    if (!seat) { const e = new Error(`no seat with id "${id}"`); e.status = 404; throw e; }
+    if (!seat.home) { const e = new Error('this seat has no home'); e.status = 400; throw e; }
+    const result = await stopProcesses(seat.home, pids);
+    // SIGTERM is a request, and a Codex session takes a moment to flush and
+    // exit. Re-listing immediately reports a successful stop as a failure, so
+    // give them a few seconds to go before calling anything "still running".
+    let remaining = [];
+    for (let i = 0; i < 10; i++) {
+      try { remaining = await codexProcessesUsingHome(seat.home); }
+      catch { remaining = []; break; }        // unknown: let the login precheck decide
+      if (!remaining.length) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return { ...result, remaining };
   },
 
   'POST /api/usage/connect/state': async (req) => {
@@ -600,6 +763,34 @@ export function createApp(opts = {}) {
   if (!['localhost', '127.0.0.1', '[::1]', '::1'].includes(host)) {
     res.writeHead(403).end('agent-config-studio only serves localhost');
     return;
+  }
+
+  // ...and refuse anything that did not originate from this PAGE.
+  //
+  // The Host check alone does not do that: a browser sets Host to localhost for
+  // a cross-site request too, and readBody parses JSON whatever the
+  // content-type, so any page the user has open could post here with no CORS
+  // preflight. That was survivable when the routes only read files. It is not
+  // now: these endpoints SIGTERM codex sessions, move a seat out of ~/.codex,
+  // and append a source line to ~/.zshenv.
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    const origin = req.headers.origin;
+    const site = req.headers['sec-fetch-site'];
+    // The PORT must match too. Sec-Fetch-Site reports 'same-site' for
+    // localhost:5173 -> localhost:8787 because site ignores port, so without
+    // this any other dev server the user has open — vite, storybook, a
+    // compromised dev dependency — reaches these endpoints.
+    //
+    // Compared against this request's own Host rather than the configured PORT:
+    // the server may be listening somewhere else entirely (an ephemeral port
+    // under test, or ACS_PORT), and Host is already proven to be localhost by
+    // the check above.
+    const originOk = !origin || origin === `http://${req.headers.host}`
+      || origin === `https://${req.headers.host}`;
+    if (!originOk || (site && site === 'cross-site')) {
+      res.writeHead(403).end('cross-origin requests are not accepted');
+      return;
+    }
   }
 
   // These stream their own responses rather than returning a JSON body.

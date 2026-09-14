@@ -341,14 +341,28 @@ ok('garbage window is not silently a real label',
     skipped('live read of the real codex home', 'no ~/.codex/sessions on this machine');
   } else {
     const before = fs.statSync(path.join(home, 'sessions')).mtimeMs;
-    const r = read({ codexHome: home });
-    ok('live: real codex home yields a reading', r.ok === true, r.reason || '');
+    // The REAL clock. `read()` pins now to the fixture era, which is right for
+    // fixtures and wrong here: judging a live home against a date days in the
+    // past expires every window and makes this assert on nonsense.
+    const r = readCodexUsage({ codexHome: home });
+
+    // What is actually under test is the READER, not this machine's quota. A
+    // home with no current reading — expired window, or no turn since the last
+    // login — is a legitimate state the fixtures already cover deterministically
+    // (56 of them). Asserting ok===true here just makes the suite fail because
+    // of how recently someone happened to use Codex.
+    ok('live: reading the real home never throws and reports a state',
+       typeof r.ok === 'boolean' && typeof r.reason === 'string' || r.ok === true, JSON.stringify(r).slice(0, 120));
     ok('live: every window has a sane percent',
        r.windows.every((w) => w.usedPercent >= 0 && w.usedPercent <= 100), JSON.stringify(r.windows));
     ok('live: reading is not mutating anything',
        fs.statSync(path.join(home, 'sessions')).mtimeMs === before);
-    console.log(`       -> ${r.planType}: ` +
-      r.windows.map((w) => `${w.label} ${w.usedPercent}% (resets ${new Date(w.resetsAt).toISOString()})`).join(', '));
+    if (r.ok) {
+      console.log(`       -> ${r.planType}: ` +
+        r.windows.map((w) => `${w.label} ${w.usedPercent}% (resets ${new Date(w.resetsAt).toISOString()})`).join(', '));
+    } else {
+      skipped('live quota figures', r.reason);
+    }
   }
 }
 
