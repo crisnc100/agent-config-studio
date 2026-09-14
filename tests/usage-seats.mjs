@@ -19,6 +19,37 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-seats-'));
 const reg = () => path.join(fs.mkdtempSync(path.join(tmp, 'r-')), 'seats.json');
 const codexSeat = (id, home) => ({ id, vendor: 'codex', label: id, home: home || path.join(tmp, id) });
 
+/**
+ * A rollout that represents a RECENT turn.
+ *
+ * Every part is derived from the clock — the session-start filename (LOCAL
+ * time, as codex writes it), the event timestamp (UTC), and resets_at. A fixed
+ * date here rots twice over: first when wall-clock passes resets_at, then again
+ * when it passes the event by more than the window length, which is how these
+ * fixtures broke a week after being written. `loginAt` is returned so callers
+ * can back-date auth.json behind the session, as a real login is.
+ */
+function recentRollout(home, { usedPercent = 61, windowMinutes = 10080, agoMs = 60 * 60_000 } = {}) {
+  const at = Date.now() - agoMs;
+  const startedAt = at - 5 * 60_000;
+  const local = new Date(startedAt);
+  const p2 = (n) => String(n).padStart(2, '0');
+  const stamp = `${local.getFullYear()}-${p2(local.getMonth() + 1)}-${p2(local.getDate())}`
+    + `T${p2(local.getHours())}-${p2(local.getMinutes())}-${p2(local.getSeconds())}`;
+  const dir = path.join(home, 'sessions', String(local.getFullYear()),
+    p2(local.getMonth() + 1), p2(local.getDate()));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `rollout-${stamp}-a.jsonl`),
+    JSON.stringify({
+      timestamp: new Date(at).toISOString(), type: 'turn.completed',
+      info: { rate_limits: { primary: {
+        used_percent: usedPercent, window_minutes: windowMinutes,
+        resets_at: Math.floor((at + windowMinutes * 60_000) / 1000),
+      } } },
+    }) + '\n');
+  return { at, startedAt, loginAt: startedAt - 60 * 60_000 };
+}
+
 console.log('\nusage/seats');
 
 // Every write this suite makes must land in a temp dir. The account-state file
@@ -363,18 +394,11 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
   // with no login, and the reading it invalidates is the only one the seat has.
   const dir = fs.mkdtempSync(path.join(tmp, 'acct-'));
   const home = path.join(dir, 'home');
-  const day = path.join(home, 'sessions', '2026', '09', '07');
-  fs.mkdirSync(day, { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
   fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"acct-A"}}');
-  fs.writeFileSync(path.join(day, 'rollout-2026-09-07T10-00-00-a.jsonl'),
-    JSON.stringify({ timestamp: '2026-09-07T10:05:00.000Z', type: 'turn.completed',
-      info: { rate_limits: { primary: { used_percent: 61, window_minutes: 10080,
-        resets_at: Math.floor(Date.now() / 1000) + 7 * 86400 } } } }) + '\n');
-
   // The login predates the rollout, as it must for the reading to be this
-  // account's at all. Filenames are LOCAL time and event stamps are UTC, so
-  // back-date well clear of both rather than to the boundary.
-  const loginAt = Date.parse('2026-09-06T00:00:00.000Z');
+  // account's at all.
+  const { loginAt } = recentRollout(home, { usedPercent: 61 });
   fs.utimesSync(path.join(home, 'auth.json'), loginAt / 1000, loginAt / 1000);
 
   const seats = [{ id: 'codex-1', vendor: 'codex', label: 'Seat', home }];
@@ -411,15 +435,10 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
   // nothing runs the CLI after a login to correct it.
   const dir = fs.mkdtempSync(path.join(tmp, 'restale-'));
   const home = path.join(dir, 'home');
-  const day = path.join(home, 'sessions', '2026', '09', '07');
-  fs.mkdirSync(day, { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
   fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"acct-A"}}');
-  const loginAt = Date.parse('2026-09-06T00:00:00.000Z');
+  const { loginAt } = recentRollout(home, { usedPercent: 61 });
   fs.utimesSync(path.join(home, 'auth.json'), loginAt / 1000, loginAt / 1000);
-  fs.writeFileSync(path.join(day, 'rollout-2026-09-07T10-00-00-a.jsonl'),
-    JSON.stringify({ timestamp: '2026-09-07T10:05:00.000Z', type: 'turn.completed',
-      info: { rate_limits: { primary: { used_percent: 61, window_minutes: 10080,
-        resets_at: Math.floor(Date.now() / 1000) + 7 * 86400 } } } }) + '\n');
 
   const f = path.join(dir, 'seats.json');
   addSeat({ id: 'codex-1', vendor: 'codex', label: 'Seat', home }, f);
@@ -469,15 +488,10 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
   // genuinely unused seat.
   const dir = fs.mkdtempSync(path.join(tmp, 'why-'));
   const home = path.join(dir, 'home');
-  const day = path.join(home, 'sessions', '2026', '09', '07');
-  fs.mkdirSync(day, { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
   fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"A"}}');
-  const loginAt = Date.parse('2026-09-06T00:00:00.000Z');
+  const { loginAt } = recentRollout(home, { usedPercent: 61 });
   fs.utimesSync(path.join(home, 'auth.json'), loginAt / 1000, loginAt / 1000);
-  fs.writeFileSync(path.join(day, 'rollout-2026-09-07T10-00-00-a.jsonl'),
-    JSON.stringify({ timestamp: '2026-09-07T10:05:00.000Z', type: 'turn.completed',
-      info: { rate_limits: { primary: { used_percent: 61, window_minutes: 10080,
-        resets_at: Math.floor(Date.now() / 1000) + 7 * 86400 } } } }) + '\n');
 
   const f = path.join(dir, 'seats.json');
   addSeat({ id: 'codex-1', vendor: 'codex', label: 'Seat', home }, f);
