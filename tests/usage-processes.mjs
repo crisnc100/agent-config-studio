@@ -145,6 +145,29 @@ console.log('\nusage/processes');
      'returned normally — a partial scan would look safe');
 }
 
+// --- a platform without lsof is unsupported, not "nothing running" ----------
+{
+  // CI caught this: Linux has no /usr/sbin/lsof, so every sign-in was blocked
+  // with "the scan did not finish". Refusing to let anyone log in, to guard
+  // against a hazard the platform cannot even observe, is the wrong trade —
+  // but it must still be distinguishable from a scan that FAILED.
+  let e1 = null;
+  try {
+    await processesUsingHome(HOME, {
+      lsof: async () => { const e = new Error('spawn ENOENT'); e.unsupported = true; throw e; },
+    });
+  } catch (e) { e1 = e; }
+  ok('an injected unsupported error still propagates', e1 !== null);
+
+  let e2 = null;
+  try {
+    await processesUsingHome(HOME, {
+      lsof: async () => { throw new Error('scan died'); },
+    });
+  } catch (e) { e2 = e; }
+  ok('a failed scan also propagates, separately', e2 !== null);
+}
+
 // --- junk input --------------------------------------------------------------
 {
   const kill = () => { throw new Error('should not be called'); };

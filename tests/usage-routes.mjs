@@ -164,6 +164,9 @@ const post = (p, b) => fetch(B + p, {
 
   const gone = path.join(fakeHome, 'no-such-seat');
   const r = await startLogin({ seatId: 'gone', home: gone });
+  // Checked BEFORE the conflict scan: a home that does not exist has nothing
+  // using it, and a scan failure here would name the wrong problem — which is
+  // exactly what CI saw on a runner with no lsof.
   ok('a login for a missing home errors instead of spawning',
      !!r.error && /no longer exists|not installed/.test(r.error), r.error);
 
