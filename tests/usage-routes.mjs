@@ -283,6 +283,22 @@ const post = (p, b) => fetch(B + p, {
   ok('GET is unaffected', gs === 200);
 }
 
+// --- static assets must never be cached --------------------------------------
+// A browser given NO cache headers applies its own heuristic freshness and will
+// happily serve a stale app.js for days. That has already produced two separate
+// "the panel is broken" reports where the API was returning correct data the
+// whole time and only the page was old — a failure that is invisible from the
+// UI and nearly undiagnosable for a non-technical user. Asserting the header
+// here is what stops it coming back.
+{
+  for (const asset of ['/', '/app.js', '/styles.css']) {
+    const r = await fetch(B + asset);
+    const cc = r.headers.get('cache-control') || '';
+    ok(`${asset} is served no-store`, r.status === 200 && /no-store/.test(cc),
+       `status ${r.status}, cache-control ${JSON.stringify(cc)}`);
+  }
+}
+
 // --- the real home was never touched ----------------------------------------
 {
   const realAfter = (() => {

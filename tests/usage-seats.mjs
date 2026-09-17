@@ -167,14 +167,17 @@ function registryPathIn(h) { return path.join(h, '.agent-config-studio', 'seats.
 // --- snapshot ----------------------------------------------------------------
 {
   const home = path.join(tmp, 'snaphome', '.codex');
-  const day = path.join(home, 'sessions', '2026', '09', '07');
-  fs.mkdirSync(day, { recursive: true });
-  // This seat exists to be a WORKING one, so its window has to still be open.
-  // Derived from the clock rather than hardcoded: a fixed resets_at silently
-  // turns this into an expired-window test the day real time passes it.
-  const openWindow = Math.floor(Date.now() / 1000) + 7 * 86400;
-  fs.writeFileSync(path.join(day, 'rollout-2026-09-07T10-00-00-a.jsonl'),
-    JSON.stringify({ info: { rate_limits: { primary: { used_percent: 33, window_minutes: 10080, resets_at: openWindow } } } }) + '\n');
+  fs.mkdirSync(home, { recursive: true });
+  // Built by recentRollout, not by hand. This block used to write its own
+  // fixture with a hardcoded session filename and no auth.json at all, which
+  // rotted twice over: snapshot() resolves a seat's sign-in moment and then
+  // drops every session that STARTED before it, so a fixed 2026-09-07 filename
+  // silently became "no turn since signing in" and the working seat reported
+  // as signed-out. Every part of the fixture has to come off the clock, and a
+  // seat that is meant to be working has to actually be signed in.
+  const { loginAt } = recentRollout(home, { usedPercent: 33, windowMinutes: 10080 });
+  fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"acct-snap"}}');
+  fs.utimesSync(path.join(home, 'auth.json'), loginAt / 1000, loginAt / 1000);
 
   const grokBare = path.join(tmp, 'grok-snap');
   fs.mkdirSync(path.join(grokBare, 'sessions'), { recursive: true });

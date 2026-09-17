@@ -311,6 +311,16 @@ function guardB() {
       // is strict is that any second spawn site is a door: an lsof call whose
       // path or argv could drift is one edit away from being something else.
       'lib/usage/processes.js': { fns: new Set(['execFile']), lsofOnly: true },
+      // A Codex seat's live quota, read over the app-server protocol. Same
+      // argument as grok-billing above, and pinned the same way: ['app-server']
+      // starts a JSON-RPC endpoint, and this module only ever writes
+      // `initialize` and `account/rateLimits/read`. No thread is started and no
+      // prompt is sent, so no model turn can run. The alternative considered and
+      // rejected was spawning `codex exec` with a throwaway prompt to make a
+      // turn record quota — that IS a model turn, it would have needed this
+      // guard widened to permit a prompt, and it spent the user's subscription
+      // on every refresh.
+      'lib/usage/codex-limits.js': { fns: new Set(['spawn']), appServerOnly: true },
     }[file];
 
     for (const call of calls) {
@@ -335,6 +345,21 @@ function guardB() {
           hits.push(`${file}:${call.line} argv must be the literal ['agent','stdio'], got ` +
                     `${argv ?? 'nothing parseable'} — a prompt or model flag here would be an ` +
                     `uncontained model turn`);
+        }
+        continue;
+      }
+      if (allowed.appServerOnly) {
+        const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
+        if (!/^found\.binary\s*,/.test(text)) {
+          hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 50)}…) — must spawn the detected ` +
+                    `absolute binary (found.binary), never a PATH name`);
+        }
+        const am = /^[^,]+,\s*(\[[^\]]*\])/.exec(text);
+        const argv = am ? am[1].replace(/\s+/g, '') : null;
+        if (!argv || argv !== "['app-server']") {
+          hits.push(`${file}:${call.line} argv must be the literal ['app-server'], got ` +
+                    `${argv ?? 'nothing parseable'} — an exec subcommand or prompt here would be ` +
+                    `an uncontained model turn`);
         }
         continue;
       }
@@ -583,6 +608,37 @@ function guardE() {
   for (const m of billing.matchAll(/\bmethod\s*:\s*([A-Za-z_$][\w$.]*)/g)) {
     hits.push(`lib/usage/grok-billing.js builds a JSON-RPC method from the variable ` +
               `'${m[1]}' — the method list must be literal`);
+  }
+
+  // --- codex-limits.js: only these two JSON-RPC methods may ever be sent ---
+  // `codex app-server` is a full agent endpoint: with the very same argv, a
+  // thread/start plus a prompt is an uncontained model turn that can write
+  // files. Pinning argv is therefore not enough — the method list is the real
+  // boundary, exactly as it is for grok-billing.
+  const LIMIT_METHODS = new Set(['initialize', 'account/rateLimits/read']);
+  const limitsPath = path.join(LIB, 'usage', 'codex-limits.js');
+  let limits = '';
+  try { limits = fs.readFileSync(limitsPath, 'utf8'); } catch {
+    hits.push('lib/usage/codex-limits.js is missing — guard e cannot verify it');
+  }
+  for (const m of limits.matchAll(/\bmethod\s*:\s*(['"`])([^'"`]*)\1/g)) {
+    if (!LIMIT_METHODS.has(m[2])) {
+      hits.push(`lib/usage/codex-limits.js sends JSON-RPC method '${m[2]}' — only ` +
+                `${[...LIMIT_METHODS].join(', ')} are allowed; a thread or prompt method ` +
+                `here is an uncontained model turn`);
+    }
+  }
+  // A computed method name would slip past the literal scan above.
+  for (const m of limits.matchAll(/\bmethod\s*:\s*([A-Za-z_$][\w$.]*)/g)) {
+    hits.push(`lib/usage/codex-limits.js builds a JSON-RPC method from the variable ` +
+              `'${m[1]}' — the method list must be literal`);
+  }
+  // An exec/prompt token anywhere in this module means the spawn has stopped
+  // being a quota read, the same way it would in a login.
+  const limitsCode = limits.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, '');
+  for (const m of limitsCode.matchAll(/(['"`])(exec|-p|--prompt|--print)\1/g)) {
+    hits.push(`lib/usage/codex-limits.js contains the argv token '${m[2]}' — a quota read must ` +
+              `never carry a prompt or an exec subcommand`);
   }
 
   // --- refresh.js: the script it runs must be the repo's own CLI -----------

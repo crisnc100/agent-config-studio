@@ -24,9 +24,15 @@ const C = process.stdout.isTTY && !process.env.NO_COLOR
 
 const fmtTokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 
-const bar = (pct, width = 24) => {
-  const filled = Math.round((Math.min(100, Math.max(0, pct)) / 100) * width);
-  const tint = pct >= 90 ? C.red : pct >= 70 ? C.yellow : C.green;
+/**
+ * A gauge of what is LEFT, drawn like a fuel gauge: it drains as you spend and
+ * reddens as it empties. The panel and this CLI both used to show spent on the
+ * bar and remaining in the summary line, unlabelled, which made an untouched
+ * seat reading "0%" look empty rather than full.
+ */
+const bar = (left, width = 24) => {
+  const filled = Math.round((Math.min(100, Math.max(0, left)) / 100) * width);
+  const tint = left <= 10 ? C.red : left <= 30 ? C.yellow : C.green;
   return tint('█'.repeat(filled)) + C.grey('░'.repeat(width - filled));
 };
 
@@ -80,7 +86,7 @@ async function gauge(argv) {
   const best = ranked.find((s) => headroom(s) !== null);
   console.log('');
   console.log(best
-    ? `  ${C.bold('Route to:')} ${C.bold(best.label)}  ${C.green(`${Math.round(headroom(best))}% headroom`)}`
+    ? `  ${C.bold('Route to:')} ${C.bold(best.label)}  ${C.green(`${Math.round(headroom(best))}% left`)}`
     : `  ${C.yellow('No seat is reporting usable headroom.')}`);
   console.log('');
 
@@ -107,9 +113,10 @@ async function gauge(argv) {
       }
     } else {
       for (const w of s.windows) {
-        const pct = `${String(Math.round(w.usedPercent)).padStart(3)}%`;
+        const left = Math.min(100, Math.max(0, 100 - w.usedPercent));
+        const pct = `${String(Math.round(left)).padStart(3)}% left`;
         const reset = w.resetsAt ? C.grey(` resets in ${until(w.resetsAt)}`) : '';
-        console.log(`    ${bar(w.usedPercent)} ${pct}  ${w.label}${reset}`);
+        console.log(`    ${bar(left)} ${pct}  ${w.label}${reset}`);
       }
       if (s.credits?.hasCredits) {
         // balance is null on plans that report credits without a figure.

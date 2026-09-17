@@ -1537,7 +1537,7 @@ async function paintUsage() {
   if (best) {
     head.appendChild(el('span', 'usage-route-label', 'Route to'));
     head.appendChild(el('span', 'usage-route-seat', best.label));
-    head.appendChild(el('span', 'usage-route-pct', `${Math.round(seatHeadroom(best))}% headroom`));
+    head.appendChild(el('span', 'usage-route-pct', `${Math.round(seatHeadroom(best))}% left`));
   } else {
     head.appendChild(el('span', 'usage-route-label', 'No seat is reporting usable headroom'));
   }
@@ -1571,13 +1571,18 @@ async function paintUsage() {
       // connected and working — calling it "not connected" is simply false.
       const duplicate = Boolean(s.duplicateOf);
       const noQuota = !duplicate && s.noQuota === true && s.signedIn === true;
-      const waiting = !duplicate && !noQuota && s.signedIn === true;
+      // A seat whose window rolled over HAS usage — it is just too old to trust.
+      // Calling that "no usage yet" contradicted the reason line printed
+      // directly beneath it and sent people to re-run a login that had worked.
+      const rolled = !duplicate && !noQuota && s.windowRolledOver === true;
+      const waiting = !duplicate && !noQuota && !rolled && s.signedIn === true;
       const why = el('div', 'usage-offline');
       const tag = el('span', 'usage-offline-tag',
         duplicate ? 'duplicate account'
           : noQuota ? 'connected · no quota published'
+          : rolled ? 'signed in · reading out of date'
           : waiting ? 'signed in · no usage yet' : 'not connected');
-      if (waiting || noQuota) tag.classList.add('waiting');
+      if (waiting || noQuota || rolled) tag.classList.add('waiting');
       if (duplicate) tag.classList.add('duplicate');
       why.appendChild(tag);
       why.appendChild(el('span', 'usage-offline-why', s.reason || ''));
@@ -1605,12 +1610,18 @@ async function paintUsage() {
         const row = el('div', 'usage-row');
         const track = el('div', 'usage-track');
         const fill = el('div', 'usage-fill');
-        fill.style.width = `${Math.min(100, Math.max(0, w.usedPercent))}%`;
+        // Everything in this panel measures what is LEFT, never what is spent.
+        // Both directions used to appear here at once — an unlabelled "72%" on
+        // the bar meaning spent, and "97% headroom" in the summary meaning
+        // left — which put the conversion in the reader's head and got a seat
+        // read as empty when it was untouched. One direction, stated in words.
+        const left = Math.min(100, Math.max(0, 100 - w.usedPercent));
+        fill.style.width = `${left}%`;
         // Tinting is by pressure, not by vendor: the colour has to mean the
         // same thing on every gauge or it stops being readable at a glance.
-        fill.dataset.level = w.usedPercent >= 90 ? 'high' : w.usedPercent >= 70 ? 'mid' : 'low';
+        fill.dataset.level = left <= 10 ? 'high' : left <= 30 ? 'mid' : 'low';
         track.appendChild(fill);
-        row.appendChild(el('span', 'usage-pct', `${Math.round(w.usedPercent)}%`));
+        row.appendChild(el('span', 'usage-pct', `${Math.round(left)}% left`));
         row.appendChild(track);
         const lbl = el('span', 'usage-label', w.label);
         if (w.resetsAt) lbl.appendChild(el('span', 'usage-reset', ` resets in ${untilText(w.resetsAt)}`));
