@@ -818,7 +818,17 @@ export function createApp(opts = {}) {
   if (!file.startsWith(PUBLIC)) return void res.writeHead(403).end('nope');
   try {
     const buf = await fsp.readFile(file);
-    res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' });
+    // no-store, not a validator. This is a local single-user app whose assets
+    // are read off disk every request, so caching buys nothing — and with no
+    // cache headers at all a browser applies its own heuristic freshness and
+    // will serve a stale app.js indefinitely. That has already happened twice:
+    // the panel kept rendering an old build while the API returned new data,
+    // which reads as "the app is broken" and is nearly impossible to diagnose
+    // from the UI. Correctness over a saved kilobyte.
+    res.writeHead(200, {
+      'content-type': MIME[path.extname(file)] || 'application/octet-stream',
+      'cache-control': 'no-store, must-revalidate',
+    });
     res.end(buf);
   } catch {
     res.writeHead(404).end('not found');
