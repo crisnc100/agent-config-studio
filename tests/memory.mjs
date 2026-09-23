@@ -141,6 +141,29 @@ await (await import('../lib/history.js')).ensureRepo();
      inv.other.codex.count === null && /not present/.test(inv.other.codex.note) && inv.other.grok.count === null);
 }
 
+// ── freshness: one scan at a time, and the cache notices new writes ───────
+{
+  const p1 = mi.scanMemoryWrites();
+  const p2 = mi.scanMemoryWrites();
+  ok('concurrent callers share one scan', p1 === p2);
+  const first = await p1;
+  const again = await mi.scanMemoryWrites();
+  ok('a second scan reuses every unchanged transcript', again.stats.scanned === 0 && again.stats.reused === first.stats.transcripts,
+     JSON.stringify(again.stats));
+  const factB = path.join(fx.mem, 'fact-b.md');
+  const extra = path.join(PROJ, fx.slugs.alpha, 'session-new.jsonl');
+  fs.writeFileSync(extra, [
+    { type: 'assistant', timestamp: '2026-07-01T00:00:00.000Z', message: { content: [{ type: 'tool_use', id: 'toolu_new', name: 'Write', input: { file_path: factB, content: 'x' } }] } },
+    { type: 'user', timestamp: '2026-07-01T00:00:00.000Z', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_new', content: 'ok' }] } },
+  ].map((r) => JSON.stringify(r)).join('\n') + '\n');
+  const fresh = await mi.scanMemoryWrites();
+  ok('a new transcript is found by the listing and read', fresh.stats.scanned === 1 && fresh.byPath.get(factB)?.last === '2026-07-01T00:00:00.000Z',
+     JSON.stringify(fresh.stats));
+  fs.rmSync(extra);
+  const gone = await mi.scanMemoryWrites();
+  ok('…and a deleted one drops its evidence', !gone.byPath.has(factB));
+}
+
 // ── criterion 2: link-level index edits are exact ─────────────────────────
 {
   const text = alphaIndex();
