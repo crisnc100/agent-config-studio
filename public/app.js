@@ -101,6 +101,7 @@ async function boot() {
   if (location.hash.startsWith('#mcp')) return openMcp();
   if (location.hash.startsWith('#usage')) return openUsage();
   if (location.hash.startsWith('#trash')) return openTrash();
+  if (location.hash.startsWith('#skills')) return openSkills();
   if (location.hash.startsWith('#models')) return openModels();
   if (location.hash.startsWith('#assist')) { renderWelcome(); return openDrawer(); }
   const m = location.hash.match(/file=([^&]+)/);
@@ -245,6 +246,9 @@ function renderTopbar() {
   } else if (S.view === 'trash') {
     t.textContent = 'Trash';
     $('title-path').textContent = 'Deleted items — restorable';
+  } else if (S.view === 'skills') {
+    t.textContent = 'Skills';
+    $('title-path').textContent = 'Every skill on this machine — browse, select, download';
   } else {
     t.textContent = 'Agent Config Studio';
     $('title-path').textContent = '';
@@ -1115,6 +1119,289 @@ async function openTrash() {
     box.appendChild(row);
   }
   c.appendChild(box);
+}
+
+/* ── Skills view ─────────────────────────────────────────────────────── */
+
+/**
+ * Browse every skill on the machine and download a selection.
+ *
+ * The honesty rules below are load-bearing, not decoration. The usage number is
+ * name-level, Claude-Code-only and bounded by retained transcripts, so a row
+ * with no observations means UNKNOWN. Rendering that as "0 uses" would invite
+ * exactly the deletion the data cannot justify — hence the wording branch in
+ * usageLine(), the shared-count note, and the caveat printed in the panel body
+ * rather than parked in a title attribute nobody hovers.
+ */
+const SK = {
+  rows: [],
+  usage: null,
+  selected: new Set(),   // ids only — the client never holds a path
+};
+
+const SOURCE_LABELS = {
+  'global-claude': 'Claude — global',
+  'global-codex': 'Codex — global',
+  project: 'Projects',
+  'garman-homes': 'Garman Homes',
+};
+const SOURCE_ORDER = ['global-claude', 'global-codex', 'project', 'garman-homes'];
+
+const fmtSize = (n) => (n >= 1024 * 1024
+  ? `${(n / (1024 * 1024)).toFixed(1)} MB`
+  : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
+
+async function openSkills() {
+  if (!confirmDiscard()) return;
+  S.view = 'skills';
+  S.entry = null;
+  window.history.replaceState(null, '', '#skills');
+  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
+  $('filebar').hidden = true;
+
+  const c = $('content');
+  c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span></div></div>';
+  try {
+    const data = await api('GET', '/api/skills');
+    SK.rows = data.skills;
+    SK.usage = data.usage;
+    // Ids can disappear between opens (a skill edited changes its bundle hash),
+    // so drop anything selected that no longer exists rather than exporting it.
+    const live = new Set(SK.rows.map((r) => r.id));
+    for (const id of [...SK.selected]) if (!live.has(id)) SK.selected.delete(id);
+  } catch (e) {
+    c.innerHTML = '';
+    const box = el('div', 'scope');
+    box.appendChild(el('h2', null, 'Skills'));
+    box.appendChild(el('div', 'notice error', e.message));
+    c.appendChild(box);
+    return;
+  }
+  paintSkills();
+}
+
+function paintSkills() {
+  const c = $('content');
+  c.innerHTML = '';
+  const box = el('div', 'scope');
+
+  box.appendChild(el('h2', null, 'Skills'));
+  box.appendChild(el('div', 'scope-sub',
+    `${SK.rows.length} skills across both harnesses and every project. `
+    + 'Identical copies are collapsed into one row. Pick any set and download it — '
+    + 'one skill saves as a readable .md, several as a .zip.'));
+
+  box.appendChild(usageCaveatBanner());
+  const bar = selectionBar();
+  box.appendChild(bar);
+
+  const groups = new Map();
+  for (const r of SK.rows) {
+    if (!groups.has(r.source)) groups.set(r.source, []);
+    groups.get(r.source).push(r);
+  }
+  const order = [...SOURCE_ORDER.filter((s) => groups.has(s)),
+    ...[...groups.keys()].filter((s) => !SOURCE_ORDER.includes(s))];
+
+  for (const source of order) {
+    const rows = groups.get(source).slice().sort((a, b) =>
+      a.displayName.localeCompare(b.displayName));
+    box.appendChild(skillGroup(source, rows));
+  }
+
+  c.appendChild(box);
+  syncSkillSelectionUI();
+}
+
+/**
+ * The caveat, in the panel body.
+ *
+ * It ships as a field on the payload precisely so the UI cannot quietly drop
+ * it; putting it in a tooltip would be dropping it. If the usage read failed
+ * outright, say that instead — an absent signal is not a zero.
+ */
+function usageCaveatBanner() {
+  const n = el('div', 'notice warn sk-caveat');
+  if (SK.usage?.available === false) {
+    n.appendChild(el('div', null,
+      `Usage could not be read (${SK.usage.reason || 'unknown error'}), so no row below carries a count.`));
+  }
+  n.appendChild(el('div', null, SK.usage?.caveat?.text || ''));
+  return n;
+}
+
+function selectionBar() {
+  const bar = el('div', 'sk-bar');
+  bar.id = 'sk-bar';
+
+  const summary = el('div', 'sk-bar-summary');
+  summary.id = 'sk-summary';
+  bar.appendChild(summary);
+
+  const clear = el('button', 'btn ghost sk-bar-clear', 'Clear');
+  clear.id = 'sk-clear';
+  clear.onclick = () => { SK.selected.clear(); syncSkillSelectionUI(); };
+  bar.appendChild(clear);
+
+  const dl = el('button', 'btn primary', 'Download');
+  dl.id = 'sk-download';
+  dl.onclick = downloadSelectedSkills;
+  bar.appendChild(dl);
+  return bar;
+}
+
+function skillGroup(source, rows) {
+  const wrap = el('div', 'sk-group');
+  const head = el('div', 'sk-group-head');
+  head.appendChild(el('div', 'sk-group-name', SOURCE_LABELS[source] || source));
+
+  const selectable = rows.filter((r) => !r.broken);
+  head.appendChild(el('div', 'sk-group-count',
+    `${rows.length} skill${rows.length === 1 ? '' : 's'}`));
+
+  const all = el('button', 'btn ghost sk-group-act', 'Select all');
+  all.disabled = !selectable.length;
+  all.onclick = () => { selectable.forEach((r) => SK.selected.add(r.id)); syncSkillSelectionUI(); };
+  head.appendChild(all);
+
+  const none = el('button', 'btn ghost sk-group-act', 'None');
+  none.disabled = !selectable.length;
+  none.onclick = () => { selectable.forEach((r) => SK.selected.delete(r.id)); syncSkillSelectionUI(); };
+  head.appendChild(none);
+
+  wrap.appendChild(head);
+  for (const r of rows) wrap.appendChild(skillRow(r));
+  return wrap;
+}
+
+function skillRow(r) {
+  const row = el('label', 'sk-row' + (r.broken ? ' broken' : ''));
+  row.dataset.id = r.id;
+
+  const cb = el('input', 'sk-check');
+  cb.type = 'checkbox';
+  cb.checked = SK.selected.has(r.id);
+  // A broken row has no readable bundle, so it is not a thing that can be
+  // exported — disabled rather than hidden, with the reason attached, because
+  // "where did find-skills go" is a worse question than a greyed-out row.
+  cb.disabled = !!r.broken;
+  cb.onchange = () => {
+    if (cb.checked) SK.selected.add(r.id); else SK.selected.delete(r.id);
+    syncSkillSelectionUI();
+  };
+  row.appendChild(cb);
+
+  const body = el('div', 'sk-body');
+  const head = el('div', 'sk-head');
+  head.appendChild(el('span', 'sk-name', r.displayName));
+  head.appendChild(el('span', `sk-source ${r.source}`, SOURCE_LABELS[r.source] || r.source));
+  body.appendChild(head);
+
+  const fileCount = r.files.length;
+  body.appendChild(el('div', 'sk-meta',
+    `${fileCount} file${fileCount === 1 ? '' : 's'} · ${fmtSize(r.totalBytes)}`));
+
+  if (r.description) body.appendChild(el('div', 'sk-desc', r.description));
+
+  if (r.broken) {
+    body.appendChild(el('div', 'sk-broken',
+      `Unavailable — ${r.reason || 'this skill could not be read'}`));
+  }
+
+  // Collapsed copies: say how many other places hold the identical bundle
+  // rather than printing the same skill four times.
+  if (r.aliasCount) {
+    const where = r.aliasSources.map((s) => SOURCE_LABELS[s] || s).join(', ');
+    body.appendChild(el('div', 'sk-note',
+      `also in ${r.aliasCount} other place${r.aliasCount === 1 ? '' : 's'}`
+      + (where ? ` (${where})` : '') + ' — identical, downloaded once'));
+  }
+
+  const usage = usageLine(r);
+  if (usage) body.appendChild(usage);
+
+  row.appendChild(body);
+  return row;
+}
+
+/**
+ * The usage line for one row.
+ *
+ * Two branches, and the distinction between them is the whole point: an
+ * observed row gets a number, an unobserved row gets "no recorded use" and an
+ * explicit statement that this is not evidence of disuse. Never "0 uses".
+ */
+function usageLine(r) {
+  const u = r.usage;
+  if (!u) return null;
+  const line = el('div', 'sk-usage');
+
+  if (u.observed) {
+    const when = u.lastUsedAt ? new Date(u.lastUsedAt).toLocaleDateString() : 'unknown date';
+    line.appendChild(el('span', 'sk-usage-count',
+      `${u.count} invocation${u.count === 1 ? '' : 's'}`));
+    line.appendChild(el('span', 'sk-usage-when', `last seen ${when}`));
+  } else {
+    line.appendChild(el('span', 'sk-usage-none', 'no recorded use'));
+    line.appendChild(el('span', 'sk-usage-when', 'unknown, not unused'));
+  }
+
+  // A shared name means the count covers every copy of it, so it cannot speak
+  // for this row alone. Stated on the row, not only in the panel caveat.
+  if (u.nameShared) {
+    line.appendChild(el('span', 'sk-usage-shared',
+      `count is shared across ${u.nameSharedWith} skills named "${r.name}"`));
+  }
+  return line;
+}
+
+/**
+ * Repaint only what selection changes — checkboxes, the running total, and the
+ * Download button — so toggling a row does not rebuild 124 rows of DOM.
+ */
+function syncSkillSelectionUI() {
+  const byId = new Map(SK.rows.map((r) => [r.id, r]));
+  for (const cb of document.querySelectorAll('.sk-row .sk-check')) {
+    cb.checked = SK.selected.has(cb.parentElement.dataset.id);
+  }
+  const chosen = [...SK.selected].map((id) => byId.get(id)).filter(Boolean);
+  const bytes = chosen.reduce((n, r) => n + r.totalBytes, 0);
+
+  const summary = $('sk-summary');
+  if (summary) {
+    summary.textContent = chosen.length
+      ? `${chosen.length} selected · ${fmtSize(bytes)} · downloads as `
+        + (chosen.length === 1 ? `${chosen[0].displayName}.md` : 'a .zip')
+      : 'Nothing selected';
+  }
+  const dl = $('sk-download');
+  if (dl) dl.disabled = chosen.length === 0;
+  const clear = $('sk-clear');
+  if (clear) clear.disabled = chosen.length === 0;
+}
+
+/**
+ * Start the download.
+ *
+ * NOT through api(): that helper calls res.json() on every response and would
+ * turn an archive into a parse error. A browser only saves a response straight
+ * to disk from a navigation, so this is an anchor click — which is also why the
+ * export endpoint tolerates a request with no Origin header. The filename comes
+ * from the server's content-disposition; `download` is only the save hint.
+ */
+function downloadSelectedSkills() {
+  const ids = [...SK.selected];
+  if (!ids.length) return;
+  const a = el('a');
+  a.href = `/api/skills/export?ids=${ids.map(encodeURIComponent).join(',')}`;
+  a.download = '';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  notice('ok', ids.length === 1
+    ? 'Downloading one skill as a .md file.'
+    : `Downloading ${ids.length} skills as a .zip.`);
 }
 
 /* ── Usage view ──────────────────────────────────────────────────────── */
@@ -2817,6 +3104,7 @@ $('btn-scope').onclick = openScope;
 $('btn-mcp').onclick = openMcp;
 $('btn-usage').onclick = openUsage;
 $('btn-trash').onclick = openTrash;
+$('btn-skills').onclick = openSkills;
 $('btn-models').onclick = openModels;
 $('btn-delete').onclick = deleteOpenEntry;
 $('btn-copy').onclick = copyToOtherHarness;

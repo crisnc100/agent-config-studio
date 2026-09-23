@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url';
 
 import { resolveSafe, kindOf, tilde, HOME, PROJECTS, STUDIO_HOME, CODEX_HOME } from './lib/paths.js';
 import { buildRegistry, scopeChain } from './lib/registry.js';
+import { listSkills, resolveSkills, toPublic, readInSkill, parseFrontmatter, SKILL_LIMITS } from './lib/skills.js';
+import { readSkillUsage, attachUsage, USAGE_CAVEAT } from './lib/skill-usage.js';
+import { buildSkillsZip, ZIP_LIMITS } from './lib/zip.js';
+import { contentDisposition, assertSelectionFits } from './lib/download.js';
 import { validate } from './lib/validate.js';
 import * as history from './lib/history.js';
 import * as worktree from './lib/worktree.js';
@@ -46,6 +50,59 @@ const json = (res, code, body) => {
   res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(s) });
   res.end(s);
 };
+
+/**
+ * Did this request come from THIS page, rather than merely from this machine?
+ *
+ * The Host check the server does first does not answer that: a browser sets
+ * Host to localhost for a cross-site request too, and readBody parses JSON
+ * whatever the content-type, so any page the user has open could reach these
+ * endpoints with no CORS preflight. That was survivable when the routes only
+ * read files. It is not now: they SIGTERM codex sessions, move a seat out of
+ * ~/.codex, and append a source line to ~/.zshenv.
+ *
+ * The PORT must match too. Sec-Fetch-Site reports 'same-site' for
+ * localhost:5173 -> localhost:8787 because site ignores port, so without the
+ * Origin comparison any other dev server the user has open — vite, storybook, a
+ * compromised dev dependency — reaches these endpoints.
+ *
+ * Compared against this request's own Host rather than the configured PORT: the
+ * server may be listening somewhere else entirely (an ephemeral port under
+ * test, or ACS_PORT), and Host is already proven to be localhost by then.
+ *
+ * A missing Origin passes, and has to: a same-origin GET navigation — which is
+ * how a browser saves a file to disk — sends no Origin at all.
+ */
+function sameOriginRequest(req) {
+  const origin = req.headers.origin;
+  const site = req.headers['sec-fetch-site'];
+  const originOk = !origin || origin === `http://${req.headers.host}`
+    || origin === `https://${req.headers.host}`;
+  return originOk && !(site && site === 'cross-site');
+}
+
+/**
+ * The stricter check for the two skills endpoints, which are GETs and so are
+ * NOT covered by the global non-GET policy above.
+ *
+ * sameOriginRequest lets a missing Origin through with Sec-Fetch-Site:
+ * same-site, and same-site is exactly what another localhost port sends — so
+ * any dev server on this machine could fire an <img> at the export and make
+ * this process walk and read every project tree, or hit /api/skills and make
+ * it rescan 1.1GB of transcripts and rewrite the usage cache. Here only
+ * `same-origin` (this page's fetch or download link) and `none` (the user
+ * typed the URL) pass, and either way any Origin present must be this host.
+ * An absent header is a non-browser client — curl, the test suites — which a
+ * foreign page cannot impersonate: every browser that could be tricked into
+ * sending the request sends Sec-Fetch-Site to a localhost origin.
+ */
+function strictSameOrigin(req) {
+  const origin = req.headers.origin;
+  const site = req.headers['sec-fetch-site'];
+  const originOk = !origin || origin === `http://${req.headers.host}`
+    || origin === `https://${req.headers.host}`;
+  return originOk && (site === undefined || site === 'same-origin' || site === 'none');
+}
 
 async function readBody(req, limit = 8 * 1024 * 1024) {
   const chunks = [];
@@ -198,6 +255,129 @@ function handleEvents(req, res) {
   // Keep intermediaries from closing an idle stream.
   const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 25_000);
   req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
+}
+
+// A selection is a query string, and a query string is a header: Node's own
+// header cap is 16KB, so anything approaching that is an attempt to make the
+// server work, not a person picking skills. Both caps are refused before
+// listSkills() — which walks ~/Documents/Projects — is ever called.
+const MAX_EXPORT_QUERY_BYTES = 8 * 1024;
+const MAX_EXPORT_IDS = 256;
+
+// Exactly what skillId() produces. Nothing path-shaped can match it, which is
+// what makes "this endpoint accepts no filesystem path" a property of the
+// parser rather than a promise in a comment.
+const SKILL_ID = /^[0-9a-f]{12}$/;
+
+const bad = (msg, status) => Object.assign(new Error(msg), { status });
+
+/**
+ * GET /api/skills/export?ids=a,b,c — the download itself.
+ *
+ * WHY IT IS NOT IN THE ROUTES TABLE. The /api/ dispatcher wraps every handler
+ * in `json(res, 200, await handler(...))`. A route registered there can return
+ * a JSON body and nothing else, so an archive routed through it would arrive
+ * as a JSON-escaped string. handleChat and handleEvents already have this
+ * problem and already solve it the same way — matched ahead of the dispatcher,
+ * writing their own headers. The cost of stepping outside the dispatcher is
+ * that its try/catch does not cover this code either: readInSkill and the zip
+ * writer throw errors carrying .status (400/403/404/413), and with no catch
+ * here one of those would surface as an unhandled rejection and a socket that
+ * never closes instead of a clean error. Hence the wrapper below.
+ *
+ * WHY IT IS A GET. A browser can only save a response straight to disk from a
+ * navigation or an anchor — both GETs. A POST download has to be read into a
+ * Blob and handed to createObjectURL, which buffers the whole archive a second
+ * time inside the page. The endpoint is also read-only, which is the usual
+ * argument for a GET.
+ *
+ * That GET is why the origin check is applied HERE rather than inherited. The
+ * server's global check deliberately exempts GET, and for the read-only JSON
+ * routes that is fine. It is not fine for this one: same-origin policy stops a
+ * foreign page READING the response, but an <img> or a hidden iframe pointed at
+ * this URL still makes the server walk every project tree and hash every skill
+ * on the machine. Refusing a cross-site request costs nothing — a same-origin
+ * download navigation sends no Origin and Sec-Fetch-Site: same-origin — and it
+ * removes a free amplifier. This is a check on this endpoint only; the app's
+ * global policy is unchanged.
+ */
+async function handleSkillExport(req, res, url) {
+  try {
+    if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
+    if (Buffer.byteLength(req.url) > MAX_EXPORT_QUERY_BYTES) throw bad('request line is too long', 413);
+
+    // `ids` is the ONLY parameter read. A `path` or `name` alongside it is not
+    // rejected, it is simply never looked at — there is no code path in this
+    // handler that could turn a query value into a filesystem location.
+    const raw = (url.searchParams.get('ids') || '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (!raw.length) throw bad('ids is required', 400);
+    if (raw.length > MAX_EXPORT_IDS) throw bad(`at most ${MAX_EXPORT_IDS} skills can be exported at once`, 400);
+    for (const id of raw) {
+      if (!SKILL_ID.test(id)) throw bad(`not a skill id: ${JSON.stringify(id.slice(0, 40))}`, 400);
+    }
+    // Deduplicated here, before anything is looked up, so a repeated id cannot
+    // put the same bundle in the archive twice under a `-2` suffix.
+    const ids = [...new Set(raw)];
+
+    // Only the selected ids are resolved, from metadata: nothing is read or
+    // hashed until the selection has passed the caps below. listSkills() would
+    // read and hash every bundle on the machine first, and turn an oversized
+    // bundle into a broken row (409) instead of the 413 it is.
+    const byId = resolveSkills(ids);
+    const rows = ids.map((id) => {
+      const row = byId.get(id);
+      // Unknown ids 404 rather than being skipped: a selection that silently
+      // shrinks hands back an archive that looks complete and is not.
+      if (!row) throw bad(`no such skill: ${id}`, 404);
+      if (row.broken) throw bad(`skill cannot be exported: ${row.reason || 'broken'}`, 409);
+      if (!row.files.length) throw bad(`skill has no files: ${id}`, 409);
+      return row;
+    });
+
+    const limits = { ...ZIP_LIMITS, ...SKILL_LIMITS };
+    assertSelectionFits(rows, limits);
+
+    if (rows.length === 1) {
+      // The bar: a single skill arrives as `<skill-name>.md`, never SKILL.md,
+      // with its frontmatter untouched — so the bytes are shipped exactly as
+      // readInSkill returned them, with no re-serialisation in between. The
+      // display name comes from those same bytes.
+      const body = readInSkill(rows[0].dir, 'SKILL.md', { budget: { remaining: limits.maxBytes } });
+      const fmName = (parseFrontmatter(body.toString('utf8'))?.name || '').trim();
+      res.writeHead(200, {
+        'content-type': 'text/markdown; charset=utf-8',
+        'content-length': body.length,
+        'content-disposition': contentDisposition(fmName || rows[0].name, '.md'),
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      });
+      res.end(body);
+      return;
+    }
+
+    // readInSkill is passed as THE reader, so every byte in the archive crosses
+    // the containment rule on its way in. Nothing here touches fs directly.
+    const zip = buildSkillsZip(rows, { read: readInSkill, maxBytes: limits.maxBytes, maxEntries: limits.maxEntries });
+    res.writeHead(200, {
+      'content-type': 'application/zip',
+      'content-length': zip.length,
+      // What the archive does NOT reproduce, as a count: the names themselves
+      // are on each row's `excluded` in /api/skills, and a count is the only
+      // form of them that is safe to put in a header.
+      'x-skills-excluded': String(zip.excluded.length),
+      'content-disposition': contentDisposition(`skills-${rows.length}`, '.zip', 'skills'),
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    });
+    res.end(zip);
+  } catch (e) {
+    // headersSent can only be true if a throw happened after writeHead, which
+    // would mean a half-written body. Destroying the socket is the honest
+    // signal there — a truncated archive with a 200 on it is worse than a
+    // failed transfer, because the recipient cannot tell.
+    if (res.headersSent) { res.destroy(); return; }
+    json(res, e.status || 500, { error: e.message });
+  }
 }
 
 /** Rebuild, diff, and tell every open tab what actually changed. */
@@ -517,6 +697,32 @@ export function createApp(opts = {}) {
     // The Models button's badge, so it shows without a click.
     modelAlerts: await models.view().then((v) => v.pending, () => 0),
   }),
+
+  /**
+   * Every skill on the machine, labelled by source and with the copies
+   * collapsed. Rows carry an opaque id and no filesystem path — this endpoint
+   * takes no parameters, and the ones that follow it take ids only, so there is
+   * nothing here a page could hand back to reach a file of its choosing.
+   */
+  // The usage read is cached per transcript file, so the cost of a panel open
+  // is a stat of each transcript, not a re-read of 1.1GB. It is also allowed to
+  // fail: a skills list without the signal is useful, a 500 is not.
+  'GET /api/skills': async (req) => {
+    // A GET, so the global non-GET policy does not cover it — and it is not
+    // free: it walks every project tree and rescans the transcript corpus,
+    // rewriting the usage cache. See strictSameOrigin.
+    if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
+    const rows = listSkills().map(toPublic);
+    let usage;
+    try { usage = await readSkillUsage(); }
+    catch (e) {
+      return { skills: rows, usage: { available: false, reason: e.message, caveat: USAGE_CAVEAT } };
+    }
+    // `root` is deliberately dropped: the rest of this payload carries no
+    // filesystem path, and a test asserts exactly that.
+    const { root, ...stats } = usage.stats;
+    return { skills: attachUsage(rows, usage), usage: { available: true, caveat: USAGE_CAVEAT, stats } };
+  },
 
   /**
    * The Models panel. Catalogs are the CLIs' own on-disk caches, read at
@@ -847,24 +1053,9 @@ export function createApp(opts = {}) {
   // preflight. That was survivable when the routes only read files. It is not
   // now: these endpoints SIGTERM codex sessions, move a seat out of ~/.codex,
   // and append a source line to ~/.zshenv.
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    const origin = req.headers.origin;
-    const site = req.headers['sec-fetch-site'];
-    // The PORT must match too. Sec-Fetch-Site reports 'same-site' for
-    // localhost:5173 -> localhost:8787 because site ignores port, so without
-    // this any other dev server the user has open — vite, storybook, a
-    // compromised dev dependency — reaches these endpoints.
-    //
-    // Compared against this request's own Host rather than the configured PORT:
-    // the server may be listening somewhere else entirely (an ephemeral port
-    // under test, or ACS_PORT), and Host is already proven to be localhost by
-    // the check above.
-    const originOk = !origin || origin === `http://${req.headers.host}`
-      || origin === `https://${req.headers.host}`;
-    if (!originOk || (site && site === 'cross-site')) {
-      res.writeHead(403).end('cross-origin requests are not accepted');
-      return;
-    }
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOriginRequest(req)) {
+    res.writeHead(403).end('cross-origin requests are not accepted');
+    return;
   }
 
   // These stream their own responses rather than returning a JSON body.
@@ -873,6 +1064,9 @@ export function createApp(opts = {}) {
   }
   if (req.method === 'GET' && url.pathname === '/api/events') {
     return void handleEvents(req, res);
+  }
+  if (req.method === 'GET' && url.pathname === '/api/skills/export') {
+    return void handleSkillExport(req, res, url);
   }
 
   if (url.pathname.startsWith('/api/')) {

@@ -20,8 +20,12 @@ node tests/usage-shell.mjs
 node tests/usage-seats.mjs
 node tests/usage-routes.mjs
 node tests/usage-cli.mjs
+node tests/skills.mjs
 node tests/phase1.mjs
 node tests/phase2a.mjs
+node tests/zip.mjs
+node tests/export.mjs
+node tests/skill-usage.mjs
 node tests/models.mjs
 node tests/models-assist.mjs
 node tests/models-scripts.mjs

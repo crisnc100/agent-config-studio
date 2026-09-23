@@ -26,6 +26,16 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-shell-'));
 const realHome = os.homedir();
 const homeDir = (name) => { const p = path.join(tmp, name); fs.mkdirSync(p, { recursive: true }); return p; };
 
+/**
+ * The generated file deliberately honours a CODEX_HOME the caller already set
+ * (`${CODEX_HOME:-…}`), so a shell launched from a session that exports one
+ * routes to that home instead of the seat being asserted. That is correct
+ * product behaviour and a test-harness bug: these assertions are about which
+ * seat a CLEAN shell picks, so the shell they spawn gets a clean environment
+ * rather than whatever the developer's terminal happened to inherit.
+ */
+const cleanEnv = () => { const e = { ...process.env }; delete e.CODEX_HOME; return e; };
+
 console.log('\nusage/shell');
 
 // --- the file zsh actually always reads -------------------------------------
@@ -121,7 +131,7 @@ ok('shortcuts install into .zshenv, not .zshrc',
   fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\necho "HOME=$CODEX_HOME ARGS=$*"\n', { mode: 0o755 });
   const run = (cmd) => execFileSync('zsh', ['-f', '-c',
     `export PATH=${JSON.stringify(bin)}:$PATH; source ${JSON.stringify(file)}; ${cmd}`],
-    { encoding: 'utf8' }).trim();
+    { encoding: 'utf8', env: cleanEnv() }).trim();
 
   ok('bare codex uses the first seat', run('codex --help').includes(`HOME=${h1}`), run('codex --help'));
   ok('a seat word routes to its home', run('codex team').includes(`HOME=${h2}`), run('codex team'));
@@ -233,7 +243,7 @@ ok('shortcuts install into .zshenv, not .zshrc',
   const file = path.join(tmp, 'default.zsh');
   fs.writeFileSync(file, text);
   const out = execFileSync('zsh', ['-f', '-c',
-    `source ${JSON.stringify(file)}; printenv CODEX_HOME`], { encoding: 'utf8' }).trim();
+    `source ${JSON.stringify(file)}; printenv CODEX_HOME`], { encoding: 'utf8', env: cleanEnv() }).trim();
   ok('CODEX_HOME is exported to the chosen seat', out === h2, `${out} (wanted ${h2})`);
 }
 
