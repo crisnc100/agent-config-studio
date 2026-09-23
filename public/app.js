@@ -90,6 +90,10 @@ async function boot() {
   connectEvents();
   restoreSessions();
   resolveHarness();
+  if (S.registry.registryError) {
+    notice('warn', 'The model registry has a problem — Assist is using what it could:',
+      S.registry.registryError.split('\n'), true);
+  }
 
   // Deep links: #file=<path> for any file, #scope for the scope view.
   if (location.hash.startsWith('#scope')) return openScope();
@@ -1747,7 +1751,7 @@ const C = {
   draft: '',
   picker: null,
   harness: null,        // reconciled against the server's detected list at boot
-  model: 'claude-sonnet-5',
+  model: null,          // ...and so is this: the default is the harness's, from the registry
 };
 
 /* ── harness ─────────────────────────────────────────────────────────── */
@@ -1782,6 +1786,11 @@ function resolveHarness() {
     // nothing stored (first run, or a session written before the picker) the
     // model below is still valid and worth keeping.
     if (want) C.model = h.defaultModel;
+  }
+  // A stored id the registry has since replaced follows its family forward,
+  // rather than silently resetting to the default.
+  if (!modelsOf(h).some((m) => m.id === C.model) && Object.hasOwn(h.retired ?? {}, C.model)) {
+    C.model = h.retired[C.model];
   }
   // A stored model may belong to a harness you have since left.
   if (!modelsOf(h).some((m) => m.id === C.model)) C.model = h.defaultModel;
@@ -2337,7 +2346,7 @@ function renderCompose() {
   const current = harnessOf(C.harness);
   const model = el('select', 'assist-model');
   // The server owns the list — it is the same object used as the allowlist.
-  const choices = current ? modelsOf(current) : [{ id: C.model, label: C.model }];
+  const choices = current ? modelsOf(current) : [{ id: C.model ?? '', label: C.model ?? 'no model' }];
   // A saved session may name a model that is no longer offered; don't let the
   // dropdown show one thing while the server silently runs another.
   if (!choices.some((c) => c.id === C.model)) C.model = choices[0].id;
