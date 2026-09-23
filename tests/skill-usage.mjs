@@ -21,7 +21,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { snapshotRealHomes, assertRealHomesUnchanged } from './real-homes.mjs';
+import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 
 const realHome = os.homedir();
 
@@ -300,6 +300,10 @@ put(H('.claude', 'skills', 'techdebt', 'SKILL.md'), skillMd('Techdebt', 'never i
 // caveat exists for: one count covers both and cannot say which ran.
 put(H('Documents', 'Projects', 'p1', '.claude', 'skills', 'decision', 'SKILL.md'), skillMd('Decision', 'one'));
 put(H('Documents', 'Projects', 'p2', '.claude', 'skills', 'decision', 'SKILL.md'), skillMd('Decision', 'two — differs'));
+// P2: a synced skill sits in a folder its author never named; it is invoked
+// by its frontmatter name, which the corpus above records once (dumb-down).
+put(H('.claude', 'skills', 'synced', '7c1e0a9b-2222-4444-8888-000000000000', 'x7f3', 'SKILL.md'),
+    skillMd('dumb-down', 'renamed on sync'));
 
 {
   ok('the caveat names the granularity, the harness and what never-seen means',
@@ -324,6 +328,15 @@ put(H('Documents', 'Projects', 'p2', '.claude', 'skills', 'decision', 'SKILL.md'
      row('decision').length === 2 && row('decision').every((r) => r.usage.nameShared && r.usage.nameSharedWith === 2),
      J(row('decision').map((r) => r.usage)));
   ok('…and a row with a unique name is not', row('advisor')[0].usage.nameShared === false);
+
+  const synced = row('x7f3')[0];
+  ok('P2 a renamed synced dir is matched on its frontmatter name, not its folder',
+     synced?.displayName === 'dumb-down' && synced.usage.observed === true && synced.usage.count === 1
+       && synced.usage.matchedNames.join(',') === 'dumb-down',
+     J(synced && { d: synced.displayName, u: synced.usage }));
+  const fallback = attachUsage([{ name: 'advisor', displayName: 'Advisor' }], await full())[0];
+  ok('P2 …and a frontmatter name with no observations falls back to the dir name',
+     fallback.usage.count === 4 && fallback.usage.matchedNames.join(',') === 'advisor', J(fallback.usage));
 }
 
 // --- the route ---------------------------------------------------------------

@@ -15,44 +15,11 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { snapshotRealHomes, assertRealHomesUnchanged } from './real-homes.mjs';
+import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 
 const realHome = os.homedir();
 
-/**
- * Two kinds of real root, checked two different ways — because fingerprinting a
- * LIVE agent home by mtime does not test this suite, it tests whether anything
- * else on the machine happened to tick a file while the suite ran.
- *
- * Measured, with nothing of ours running: ~/.codex/logs_2.sqlite-wal moved in 3
- * of 5 idle 3-second windows; then its checkpoint moved logs_2.sqlite; and a
- * running Claude Code session appends to ~/.claude/history.jsonl throughout.
- * Each fix by exemption produced the next false alarm, which is the signal that
- * the rule itself is wrong. A tripwire that cries wolf trains you to ignore it,
- * and this is the one tripwire that must never be ignored.
- *
- * So: the trees this feature actually WALKS are still fingerprinted exactly,
- * recursively, by name + size + mtime — those are skill directories, nothing
- * else writes them, and a stray write shows instantly. The two live harness
- * homes are checked on the invariant that is both stable and the one that
- * matters: the SET OF ENTRY NAMES. Anything this suite could do wrong to them —
- * creating a seat, writing a registry, dropping a file — adds or removes a
- * name. Their internal churn is someone else's process and is not evidence
- * about us. The HOME assertion above already proves this code cannot address
- * the real home at all; this is the second line, not the only one.
- */
-/**
- * The names-only rule above cannot see an in-place write to a file that already
- * exists, so the handful of files inside those live homes that this app CAN
- * legitimately edit are additionally pinned byte-exactly. None of them is
- * touched by a background agent process — unlike the sqlite logs and
- * history.jsonl next to them — so they are stable enough to compare precisely,
- * and they are the ones where a silent edit would actually matter.
- */
-
-
-
-
+// The real-home tripwire (tests/real-home.mjs) says what it compares and how.
 const realBefore = snapshotRealHomes();
 
 // realpath'd: on macOS os.tmpdir() is /var/folders/… which is itself a symlink,
@@ -117,6 +84,11 @@ put(H('.claude', 'skills', 'crlf', 'SKILL.md'),
 // A name that reduces to a Windows device name once the unsafe characters go.
 put(H('.claude', 'skills', 'device', 'SKILL.md'), skillMd('CON', 'a reserved name'));
 
+// C3: 99 ASCII characters then an emoji. A code-unit slice to 100 cut the
+// emoji between its surrogates and encodeURIComponent threw — a 500.
+const EMOJI_NAME = `${'a'.repeat(99)}\u{1F600}`;
+put(H('.claude', 'skills', 'emoji', 'SKILL.md'), skillMd(EMOJI_NAME, 'long name, astral tail'));
+
 // The injection fixture, identical to tests/skills.mjs: a real skill with
 // links planted inside it, pointed at the three fake secrets above.
 const EVIL = H('.claude', 'skills', 'evil');
@@ -172,6 +144,23 @@ const { contentDisposition, cleanName, asciiName, assertSelectionFits } =
      asciiName(cleanName('CON')) === 'skill', asciiName(cleanName('CON')));
   ok('an empty name falls back rather than producing ".md"',
      contentDisposition('', '.md') === 'attachment; filename="skill.md"', contentDisposition('', '.md'));
+  ok('P2 a reserved name gets NO filename* restoring it — the fallback is the whole header',
+     contentDisposition('CON', '.md') === 'attachment; filename="skill.md"', contentDisposition('CON', '.md'));
+  for (const n of ['con.notes', 'Nul', 'LPT1 ', 'aux.tar']) {
+    const cd = contentDisposition(n, '.md');
+    ok(`P2 …nor for ${JSON.stringify(n)}, in either parameter`,
+       !/(^|["'])(con|nul|lpt1|aux)[.%"]/i.test(cd.replace(/^attachment; /, '')), cd);
+  }
+  {
+    let cd = null, threw = null;
+    try { cd = contentDisposition(EMOJI_NAME, '.md'); } catch (e) { threw = e; }
+    ok('C3 a 99-ASCII-plus-emoji name produces a header instead of throwing', threw === null, String(threw));
+    ok('C3 …whose filename* decodes to the whole name, emoji intact',
+       cd && decodeURIComponent(cd.split("filename*=UTF-8''")[1]) === `${EMOJI_NAME}.md`, cd);
+    const long = cleanName(`${'b'.repeat(99)}\u{1F468}\u200D\u{1F469}\u200D\u{1F467}tail`);
+    ok('C3 truncation keeps a ZWJ sequence whole rather than splitting it',
+       long === `${'b'.repeat(99)}\u{1F468}\u200D\u{1F469}\u200D\u{1F467}` && long.isWellFormed(), JSON.stringify(long.slice(95)));
+  }
   ok('a traversal name cannot name another directory',
      !contentDisposition('../../etc/passwd', '.md').includes('/'),
      contentDisposition('../../etc/passwd', '.md'));
@@ -186,8 +175,19 @@ const { contentDisposition, cleanName, asciiName, assertSelectionFits } =
   threw = null;
   try { assertSelectionFits(rows, { maxEntries: 1e9, maxBytes: 9 }); } catch (e) { threw = e; }
   ok('an over-byte selection is refused with 413 from metadata alone', threw?.status === 413, threw?.message);
-  ok('a selection inside the caps passes',
-     assertSelectionFits(rows, { maxEntries: 1e9, maxBytes: 1e9 }).entries === 5);
+  // 5 files plus the one directory record an archive gives them. This used to
+  // assert 5: the preflight counted files only, and an archive whose files
+  // fit could overflow the entry cap with its directory records (Grade C10).
+  ok('a selection inside the caps passes, counting its directory record',
+     assertSelectionFits(rows, { maxEntries: 1e9, maxBytes: 1e9 }).entries === 6);
+  const nested = [{ files: [{ rel: 'SKILL.md' }, { rel: 'a/b/c.md' }, { rel: 'a/d.md' }], totalBytes: 3 }];
+  let t2 = null;
+  try { assertSelectionFits(nested, { maxEntries: 5, maxBytes: 1e9 }); } catch (e) { t2 = e; }
+  ok('C10 3 files needing 3 directory records overflow a 5-entry cap', t2?.status === 413, t2?.message);
+  t2 = null;
+  try { assertSelectionFits([{ files: [{ rel: 'x', size: 9 }], totalBytes: 9 }], { maxEntries: 9, maxBytes: 1e9, maxFileBytes: 8 }); }
+  catch (e) { t2 = e; }
+  ok('C10 a file over the per-file cap is refused from metadata', t2?.status === 413, t2?.message);
 }
 
 // --- the HTTP surface --------------------------------------------------------
@@ -203,6 +203,7 @@ const raw = (p, init) => fetch(B + p, init).then(async (r) => ({
   status: r.status,
   type: r.headers.get('content-type') || '',
   disp: r.headers.get('content-disposition') || '',
+  excluded: r.headers.get('x-skills-excluded'),
   buf: Buffer.from(await r.arrayBuffer()),
 }));
 const err = async (p, init) => {
@@ -215,7 +216,7 @@ const err = async (p, init) => {
 const rows = listSkills();
 const id = (name) => rows.find((r) => r.name === name)?.id;
 ok('every fixture skill was discovered',
-   ['alpha', 'beta', 'nasty', 'crlf', 'device', 'evil', 'dangling'].every((n) => id(n)),
+   ['alpha', 'beta', 'nasty', 'crlf', 'device', 'emoji', 'evil', 'dangling'].every((n) => id(n)),
    JSON.stringify(rows.map((r) => r.name)));
 
 // --- one id -> a readable .md ------------------------------------------------
@@ -252,6 +253,19 @@ ok('every fixture skill was discovered',
      (await fetch(`${B}/api/skills/export?ids=${id('crlf')}`)).headers.get('set-cookie') === null);
 }
 
+{
+  const r = await raw(`/api/skills/export?ids=${id('emoji')}`);
+  ok('C3 a 99-ASCII-plus-emoji frontmatter name downloads 200, not 500', r.status === 200,
+     `${r.status} ${r.buf.toString('utf8').slice(0, 120)}`);
+  ok('C3 …with filename* carrying the emoji',
+     r.disp.includes('%F0%9F%98%80.md'), r.disp);
+}
+{
+  const r = await raw(`/api/skills/export?ids=${id('device')}`);
+  ok('P2 a skill named CON downloads as skill.md, with no filename* restoring CON.md',
+     r.status === 200 && r.disp === 'attachment; filename="skill.md"', r.disp);
+}
+
 // --- several ids -> a zip ----------------------------------------------------
 const zipOf = async (ids) => {
   const r = await raw(`/api/skills/export?ids=${ids.join(',')}`);
@@ -277,6 +291,7 @@ const zipOf = async (ids) => {
      fs.readdirSync(dest).join(','));
   ok('…preserving the executable bit',
      (fs.lstatSync(path.join(dest, 'alpha', 'scripts', 'run.sh')).mode & 0o111) !== 0);
+  ok('…and saying in a header that it shipped every name (none excluded)', r.excluded === '0', String(r.excluded));
 }
 
 // --- repeated ids ------------------------------------------------------------
@@ -369,6 +384,36 @@ const zipOf = async (ids) => {
   ok('the over-cap fixture is gone again', !fs.existsSync(BIG));
 }
 
+// --- C10: an oversized bundle is a 413, decided before any read ---------------
+{
+  // Sparse: 65MB by size, no blocks on disk. listSkills() flags it as a broken
+  // row (bundle over the 64MB cap), which is why routing the export through it
+  // answered 409; the export now resolves the id itself and refuses on size.
+  const FAT = H('.claude', 'skills', 'fat');
+  mk(FAT);
+  fs.writeFileSync(path.join(FAT, 'SKILL.md'), skillMd('Fat', 'a sparse 65MB companion'));
+  fs.writeFileSync(path.join(FAT, 'blob.bin'), '');
+  fs.truncateSync(path.join(FAT, 'blob.bin'), 65 * 1024 * 1024);
+  const { skillId } = await import('../lib/skills.js');
+  const fatId = skillId(fs.realpathSync(FAT));
+  ok('the sparse fixture is 65MB by size', fs.statSync(path.join(FAT, 'blob.bin')).size === 65 * 1024 * 1024);
+  ok('…and listSkills() marks it broken for size, the old 409 path',
+     listSkills().find((r) => r.id === fatId)?.broken === true);
+  const t0 = Date.now();
+  const r = await err(`/api/skills/export?ids=${fatId},${id('alpha')}`);
+  ok('C10 an oversized selection answers 413, not 409', r.status === 413, `${r.status} ${r.buf.toString('utf8').slice(0, 160)}`);
+  const r1 = await err(`/api/skills/export?ids=${fatId}`);
+  ok('C10 …on the single-skill path too', r1.status === 413, `${r1.status} ${r1.buf.toString('utf8').slice(0, 160)}`);
+  ok('C10 …decided from metadata, fast', Date.now() - t0 < 5000, `${Date.now() - t0}ms`);
+  fs.rmSync(FAT, { recursive: true, force: true });
+
+  const src = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const handler = src.slice(src.indexOf('async function handleSkillExport'), src.indexOf('\n}\n', src.indexOf('async function handleSkillExport')))
+    .split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n'); // code, not its comments
+  ok('C10 the export handler resolves only the selected ids — it never calls listSkills()',
+     handler.length > 200 && !/listSkills\(/.test(handler) && /resolveSkills\(/.test(handler));
+}
+
 // --- containment through the export path -------------------------------------
 {
   const r = await raw(`/api/skills/export?ids=${id('evil')}`);
@@ -378,6 +423,8 @@ const zipOf = async (ids) => {
 
   const z = await zipOf([id('evil'), id('alpha')]);
   ok('the injected skill zips without error', z.status === 200, String(z.status));
+  ok('C4 …and the response counts the names it refused to ship',
+     z.excluded === String(rows.find((r) => r.name === 'evil').excluded.length) && Number(z.excluded) >= 4, String(z.excluded));
   ok('…and no secret byte is in the zip response (compressed OR stored)',
      leaks(z.buf.toString('latin1')).length === 0, leaks(z.buf.toString('latin1')).join(','));
 
@@ -460,33 +507,39 @@ const zipOf = async (ids) => {
   ok('Sec-Fetch-Site: cross-site alone is refused, even with no Origin',
      crossSiteOnly.status === 403, String(crossSiteOnly.status));
 
-  // The contrast that makes the line above meaningful: the JSON routes still
-  // take a cross-site GET, so the refusal is this endpoint's own policy and
-  // not something that quietly changed for the whole app.
-  const listing = await fetch(`${B}/api/skills`, { headers: { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' } });
-  ok('the app\'s global GET exemption is unchanged (GET /api/skills still 200)',
-     listing.status === 200, String(listing.status));
+  const sameSiteOnly = await withHeaders({ 'sec-fetch-site': 'same-site' });
+  ok('P2 Sec-Fetch-Site: same-site with NO Origin is refused — another localhost port\'s <img>',
+     sameSiteOnly.status === 403, String(sameSiteOnly.status));
+  const sameOriginOnly = await withHeaders({ 'sec-fetch-site': 'same-origin' });
+  ok('P2 …while this page\'s own download link (same-origin, no Origin) is allowed',
+     sameOriginOnly.status === 200, String(sameOriginOnly.status));
+  const typed = await withHeaders({ 'sec-fetch-site': 'none' });
+  ok('P2 …and so is a URL the user typed (none)', typed.status === 200, String(typed.status));
+  const typedForeign = await withHeaders({ 'sec-fetch-site': 'none', origin: 'https://evil.example' });
+  ok('P2 …but not none with a foreign Origin', typedForeign.status === 403, String(typedForeign.status));
+
+  // /api/skills walks every project tree and rescans the transcript corpus, so
+  // it gets the same gate. This used to assert the OPPOSITE — that a cross-site
+  // GET /api/skills was answered 200 — which is the bug the Grade found (P2),
+  // not a property to preserve.
+  const listing = (h) => fetch(`${B}/api/skills`, { headers: h }).then((r) => r.status);
+  ok('P2 GET /api/skills refuses a cross-site request',
+     await listing({ origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' }) === 403);
+  ok('P2 GET /api/skills refuses same-site with no Origin (another localhost port)',
+     await listing({ 'sec-fetch-site': 'same-site' }) === 403);
+  ok('P2 GET /api/skills refuses another localhost port\'s Origin',
+     await listing({ origin: 'http://localhost:5173', 'sec-fetch-site': 'same-site' }) === 403);
+  ok('P2 GET /api/skills still answers this page (same-origin)',
+     await listing({ 'sec-fetch-site': 'same-origin' }) === 200);
+  // The global GET exemption for every OTHER JSON route is unchanged.
+  const other = await fetch(`${B}/api/harnesses`, { headers: { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' } });
+  ok('the app\'s global GET policy is otherwise unchanged (GET /api/harnesses still answers cross-site)',
+     other.status === 200, String(other.status));
 }
 
 // --- the real directories were never touched ---------------------------------
 server.close();
 {
-  // The comparison is exactly the one tests/skills.mjs makes. What is added is
-  // the DIFF in the failure message: "it changed" cannot be acted on, and this
-  // machine has at least one unrelated daemon (a codex log's sqlite WAL) whose
-  // mtime moves on its own every few seconds, so a reader needs to see which
-  // entry moved before concluding anything about this code.
-  const diff = (before, after) => {
-    const b = new Set((before || '').split('|'));
-    const a = new Set((after || '').split('|'));
-    const names = (set) => new Set([...set].map((e) => e.split(':')[0]));
-    const moved = [...names(a)].filter((n) => {
-      const bi = [...b].find((e) => e.startsWith(`${n}:`));
-      const ai = [...a].find((e) => e.startsWith(`${n}:`));
-      return bi !== ai;
-    });
-    return moved.join(',') || 'entries added or removed';
-  };
   assertRealHomesUnchanged(realBefore, ok);
 }
 

@@ -9,55 +9,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { snapshotRealHomes, assertRealHomesUnchanged } from './real-homes.mjs';
+import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 
 const realHome = os.homedir();
 
-/**
- * Tripwire on the real directories this feature can see.
- *
- * Content-hashing ~/Documents/Projects or ~/.claude/projects (1.1GB) on every
- * run is not affordable, so each root is fingerprinted by its entries' names,
- * sizes and mtimes — a directory's own mtime moves when a child is added or
- * removed, and a file's size and mtime move when it is written. The trees this
- * feature actually walks are fingerprinted recursively; the large ones at their
- * top level. Combined with the HOME assertion below (the code cannot address
- * the real home at all), this catches a write that escaped the redirection.
- */
-/**
- * Two kinds of real root, checked two different ways — because fingerprinting a
- * LIVE agent home by mtime does not test this suite, it tests whether anything
- * else on the machine happened to tick a file while the suite ran.
- *
- * Measured, with nothing of ours running: ~/.codex/logs_2.sqlite-wal moved in 3
- * of 5 idle 3-second windows; then its checkpoint moved logs_2.sqlite; and a
- * running Claude Code session appends to ~/.claude/history.jsonl throughout.
- * Each fix by exemption produced the next false alarm, which is the signal that
- * the rule itself is wrong. A tripwire that cries wolf trains you to ignore it,
- * and this is the one tripwire that must never be ignored.
- *
- * So: the trees this feature actually WALKS are still fingerprinted exactly,
- * recursively, by name + size + mtime — those are skill directories, nothing
- * else writes them, and a stray write shows instantly. The two live harness
- * homes are checked on the invariant that is both stable and the one that
- * matters: the SET OF ENTRY NAMES. Anything this suite could do wrong to them —
- * creating a seat, writing a registry, dropping a file — adds or removes a
- * name. Their internal churn is someone else's process and is not evidence
- * about us. The HOME assertion above already proves this code cannot address
- * the real home at all; this is the second line, not the only one.
- */
-/**
- * The names-only rule above cannot see an in-place write to a file that already
- * exists, so the handful of files inside those live homes that this app CAN
- * legitimately edit are additionally pinned byte-exactly. None of them is
- * touched by a background agent process — unlike the sqlite logs and
- * history.jsonl next to them — so they are stable enough to compare precisely,
- * and they are the ones where a silent edit would actually matter.
- */
-
-
-
-
+// The real-home tripwire (tests/real-home.mjs) says what it compares and how.
 const realBefore = snapshotRealHomes();
 
 // realpath'd: on macOS os.tmpdir() is /var/folders/… which is itself a symlink
@@ -137,6 +93,57 @@ put(path.join(VARIANT, 'scripts', 'run.sh'), '#!/bin/sh\necho decide DIFFERENTLY
 
 // A Garman-Homes file for the "existing routes did not widen" assertion.
 put(H('Documents', 'Garman-Homes', 'g1', 'notes.md'), 'client notes\n');
+
+// --- Grade fixtures (C1, C2, C4, C6) -----------------------------------------
+// C1: a dot-prefixed directory inside a skills root is a real skill container
+// (~/.codex/skills/.system/*); VCS and cache directories are not.
+put(H('.codex', 'skills', '.system', 'sys-skill', 'SKILL.md'), skillMd('Sys Skill', 'ships with codex'));
+put(H('.claude', 'skills', '.git', 'not-a-skill', 'SKILL.md'), skillMd('Git Ghost', 'inside .git'));
+put(H('.claude', 'skills', '.cache', 'cached', 'SKILL.md'), skillMd('Cache Ghost', 'inside .cache'));
+
+// C2: bundles the old `rel \0 bytes \0` hash could not tell apart. File `a`
+// holding `x\0b\0y` versus files a=x and b=y; and a script that differs only
+// in its executable bit.
+put(H('Documents', 'Projects', 'hash-a', '.claude', 'skills', 'collide', 'SKILL.md'), skillMd('Collide', 'same prose'));
+put(H('Documents', 'Projects', 'hash-a', '.claude', 'skills', 'collide', 'a'), 'x\0b\0y');
+put(H('Documents', 'Projects', 'hash-b', '.claude', 'skills', 'collide', 'SKILL.md'), skillMd('Collide', 'same prose'));
+put(H('Documents', 'Projects', 'hash-b', '.claude', 'skills', 'collide', 'a'), 'x');
+put(H('Documents', 'Projects', 'hash-b', '.claude', 'skills', 'collide', 'b'), 'y');
+for (const [proj, mode] of [['mode-x', 0o755], ['mode-r', 0o644]]) {
+  const f = H('Documents', 'Projects', proj, '.claude', 'skills', 'modal', 'run.sh');
+  put(H('Documents', 'Projects', proj, '.claude', 'skills', 'modal', 'SKILL.md'), skillMd('Modal', 'same bytes'));
+  put(f, '#!/bin/sh\necho same\n');
+  fs.chmodSync(f, mode);
+}
+
+// C4: a file past the bundle depth limit and an empty directory.
+const DEEP_SKILL = H('.claude', 'skills', 'deep-tree');
+put(path.join(DEEP_SKILL, 'SKILL.md'), skillMd('Deep Tree', 'has a very deep file'));
+put(path.join(DEEP_SKILL, ...Array.from({ length: 10 }, (_, i) => `d${i}`), 'buried.md'), 'buried\n');
+mk(path.join(DEEP_SKILL, 'empty-dir'));
+
+// C6 / P1: a project whose `.claude/skills` ROOT is a link out of the skill
+// roots, and one whose root links to a directory inside them.
+const ROOT_LINK_MARK = 'MARKER-ROOT-LINK-OUTSIDE-5e0d';
+put(H('outside-skills', 'leak', 'SKILL.md'), skillMd('Leak', ROOT_LINK_MARK));
+put(H('outside-skills', 'leak', 'secret.md'), `${ROOT_LINK_MARK}\n`);
+mk(H('Documents', 'Projects', 'p-link', '.claude'));
+fs.symlinkSync(H('outside-skills'), H('Documents', 'Projects', 'p-link', '.claude', 'skills'));
+put(H('Documents', 'Projects', 'shared-lib', 'skills', 'shared-one', 'SKILL.md'), skillMd('Shared One', 'via a linked root'));
+mk(H('Documents', 'Projects', 'p-shared', '.claude'));
+fs.symlinkSync(H('Documents', 'Projects', 'shared-lib', 'skills'), H('Documents', 'Projects', 'p-shared', '.claude', 'skills'));
+
+// C6 / P1: the intermediate-directory swap. `sub` is a real directory until
+// the fs double below replaces it with a link to OUTSIDE mid-read.
+const SWAP_MARK = 'MARKER-OUTSIDE-SKILL-SENTINEL-c41a';
+const SWAPPER = H('.claude', 'skills', 'swapper');
+put(path.join(SWAPPER, 'SKILL.md'), skillMd('Swapper', 'target of the swap probe'));
+put(path.join(SWAPPER, 'sub', 'doc.md'), 'INSIDE\n');
+put(H('outside-dir', 'doc.md'), `${SWAP_MARK}\n`);
+
+// C10: a file whose real size is past the budget handed to the reader.
+put(H('.claude', 'skills', 'grower', 'SKILL.md'), skillMd('Grower', 'reads are capped'));
+put(H('.claude', 'skills', 'grower', 'big.txt'), 'x'.repeat(24));
 
 // --- discovery ---------------------------------------------------------------
 const { listSkills, readInSkill, readTextInSkill, bundleHash, listSkillFiles, toPublic } =
@@ -292,6 +299,208 @@ const leaks = (s) => MARKS.filter((m) => String(s).includes(m));
   ok('collapsed rows are not the same id', canonical && variant && canonical.id !== variant.id);
 }
 
+// --- C1: dot-prefixed skill containers ---------------------------------------
+{
+  const sys = find('sys-skill', 'global-codex');
+  ok('C1 a skill under ~/.codex/skills/.system is discovered', Boolean(sys) && sys.broken === false,
+     JSON.stringify(rows.filter((r) => r.source === 'global-codex').map((r) => r.name)));
+  ok('C1 …named from its frontmatter', sys?.displayName === 'Sys Skill', sys?.displayName);
+  ok('C1 VCS and cache directories are still skipped',
+     !find('not-a-skill') && !find('cached'), JSON.stringify(rows.map((r) => r.name)));
+}
+
+// --- C2: the bundle hash is injective ----------------------------------------
+{
+  const collide = rows.filter((r) => r.name === 'collide');
+  ok('C2 file a=`x\\0b\\0y` and files a=x,b=y are two rows, not one',
+     collide.length === 2 && collide.every((r) => r.aliases.length === 0),
+     JSON.stringify(collide.map((r) => ({ f: r.files.map((f) => f.rel), a: r.aliases.length }))));
+  ok('C2 …because their bundle hashes differ', collide.length === 2 && collide[0].hash !== collide[1].hash);
+  const modal = rows.filter((r) => r.name === 'modal');
+  ok('C2 a script differing only in its executable bit is a different bundle',
+     modal.length === 2 && modal[0].hash !== modal[1].hash,
+     JSON.stringify(modal.map((r) => r.files.map((f) => f.mode.toString(8)))));
+}
+
+// --- C4: nothing is dropped silently -------------------------------------------
+{
+  const deep = find('deep-tree');
+  const why = (rel) => deep?.excluded.find((x) => x.rel === rel)?.reason;
+  ok('C4 a subtree past the bundle depth limit is an explicit exclusion',
+     /deeper than the 8-level bundle limit/.test(why('d0/d1/d2/d3/d4/d5/d6/d7/d8/') || ''),
+     JSON.stringify(deep?.excluded));
+  ok('C4 an empty directory is an explicit exclusion', why('empty-dir/') === 'empty directory',
+     JSON.stringify(deep?.excluded));
+  ok('C4 …and both survive the public mapping',
+     toPublic(deep).excluded.map((x) => x.rel).sort().join(',') === 'd0/d1/d2/d3/d4/d5/d6/d7/d8/,empty-dir/',
+     JSON.stringify(toPublic(deep).excluded));
+}
+
+// --- C6 / P1: containment is anchored to the descriptor ------------------------
+{
+  // Root links: the one pointing outside the skill roots yields no exportable
+  // row and none of its bytes; the one pointing inside them still works.
+  ok('C6 a skills ROOT linked outside the skill roots yields no exportable row',
+     !rows.some((r) => !r.broken && (r.name === 'leak' || fs.realpathSync(r.dir).startsWith(H('outside-skills')))),
+     JSON.stringify(rows.filter((r) => r.name === 'leak').map((r) => r.dir)));
+  ok('C6 …it is reported as a broken row with a reason',
+     rows.some((r) => r.broken && /skills root is a link that points outside the skill roots/.test(r.reason)),
+     JSON.stringify(rows.filter((r) => r.broken).map((r) => r.reason)));
+  ok('C6 …and none of its bytes reached the listing', !JSON.stringify(rows).includes(ROOT_LINK_MARK));
+  ok('C6 a skills root linked INSIDE the skill roots is still followed',
+     Boolean(find('shared-one', 'project')) && !find('shared-one').broken,
+     JSON.stringify(find('shared-one')));
+}
+{
+  // The id the leaked skill WOULD have had, had discovery followed the link.
+  const { resolveSkills, skillId } = await import('../lib/skills.js');
+  const leakId = skillId(fs.realpathSync(H('outside-skills', 'leak')));
+  ok('C6 the export lookup cannot resolve the outside-linked skill by id either',
+     !resolveSkills([leakId]).has(leakId), leakId);
+}
+{
+  const sub = path.join(SWAPPER, 'sub');
+  const swapIn = () => { fs.renameSync(sub, `${sub}.bak`); fs.symlinkSync(H('outside-dir'), sub); };
+  const swapBack = () => { fs.unlinkSync(sub); fs.renameSync(`${sub}.bak`, sub); };
+  const isSwapped = () => fs.lstatSync(sub).isSymbolicLink();
+
+  // An fs whose Nth call is preceded by the swap. 'stay' leaves the link in
+  // place for the rest of the read; 'flip' restores the real directory right
+  // after that one call — the window a check-then-open reader loses.
+  const swapping = (trigger, mode) => {
+    let n = 0;
+    return new Proxy(fs, {
+      get(t, k) {
+        const v = t[k];
+        if (typeof v !== 'function') return v;
+        return (...args) => {
+          const now = ++n;
+          if (now === trigger) swapIn();
+          try { return v.apply(t, args); }
+          finally { if (now === trigger && mode === 'flip') swapBack(); }
+        };
+      },
+    });
+  };
+  const counting = () => {
+    const c = { n: 0 };
+    c.io = new Proxy(fs, { get(t, k) { const v = t[k]; return typeof v === 'function' ? (...a) => { c.n++; return v.apply(t, a); } : v; } });
+    return c;
+  };
+
+  // The pre-fix reader, reproduced verbatim in shape: no-follow walk, lstat,
+  // open, compare fstat to that lstat. It is the negative control that proves
+  // the double reproduces the attack rather than being inert.
+  const oldReader = (io) => {
+    let cur = SWAPPER;
+    for (const seg of 'sub/doc.md'.split('/')) {
+      cur = path.join(cur, seg);
+      if (io.lstatSync(cur).isSymbolicLink()) throw new Error('symlink');
+    }
+    const before = io.lstatSync(cur);
+    const fd = io.openSync(cur, 'r');
+    try {
+      const st = io.fstatSync(fd);
+      if (st.ino !== before.ino || st.dev !== before.dev) throw new Error('changed');
+      const buf = Buffer.alloc(st.size);
+      io.readSync(fd, buf, 0, st.size, 0);
+      return buf;
+    } finally { io.closeSync(fd); }
+  };
+
+  const clean = counting();
+  const plain = readInSkill(SWAPPER, 'sub/doc.md', { io: clean.io });
+  ok('C6 swap probe: the undisturbed read returns the inside file', plain.toString() === 'INSIDE\n');
+
+  let oldLeaked = 0;
+  for (let k = 1; k <= 12; k++) {
+    for (const mode of ['stay', 'flip']) {
+      let buf = null;
+      try { buf = oldReader(swapping(k, mode)); } catch {}
+      if (isSwapped()) swapBack();
+      if (buf && buf.toString().includes(SWAP_MARK)) oldLeaked++;
+    }
+  }
+  ok('C6 negative control: the pre-fix check-then-open reader DOES leak under this swap',
+     oldLeaked > 0, `${oldLeaked} leaks`);
+
+  let leaked = 0, refused = 0, insides = 0, tried = 0;
+  for (let k = 1; k <= clean.n + 1; k++) {
+    for (const mode of ['stay', 'flip']) {
+      tried++;
+      let buf = null;
+      try { buf = readInSkill(SWAPPER, 'sub/doc.md', { io: swapping(k, mode) }); }
+      catch (e) { if (e.contained) refused++; else throw e; }
+      if (isSwapped()) swapBack();
+      if (buf && buf.toString().includes(SWAP_MARK)) leaked++;
+      else if (buf && buf.toString() === 'INSIDE\n') insides++;
+    }
+  }
+  ok(`C6 an intermediate-directory swap before ANY of the reader's ${clean.n} fs calls leaks no outside byte`,
+     leaked === 0, `${leaked} of ${tried} attempts leaked`);
+  ok('C6 …every attempt either refused or read the real inside file',
+     refused + insides === tried && refused > 0, `${refused} refused, ${insides} inside, ${tried} tried`);
+
+  const { buildSkillsZip } = await import('../lib/zip.js');
+  const { spawnSync } = await import('node:child_process');
+  const swapRow = rows.find((r) => r.name === 'swapper');
+  let zipLeaks = 0, zipsBuilt = 0;
+  const zdir = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-swap-zip-'));
+  for (let k = 1; k <= clean.n + 1; k++) {
+    for (const mode of ['stay', 'flip']) {
+      // Only the sub/doc.md read is attacked, at each of its fs calls in turn.
+      const read = (d, r, o) => readInSkill(d, r, r === 'sub/doc.md' ? { ...o, io: swapping(k, mode) } : o);
+      let buf = null;
+      try { buf = buildSkillsZip([swapRow, find('alpha')], { read }); } catch {}
+      if (isSwapped()) swapBack();
+      if (!buf) continue;
+      zipsBuilt++;
+      const zp = path.join(zdir, 'swap.zip');
+      fs.writeFileSync(zp, buf);
+      const u = spawnSync('unzip', ['-p', zp], { encoding: 'latin1' });
+      if ((u.stdout || '').includes(SWAP_MARK)) zipLeaks++;
+    }
+  }
+  fs.rmSync(zdir, { recursive: true, force: true });
+  ok('C6 …and through buildSkillsZip: no archive contains the outside sentinel',
+     zipLeaks === 0 && zipsBuilt > 0, `${zipLeaks} leaking archives of ${zipsBuilt} built`);
+  ok('C6 the swap fixture is back in its original shape', !isSwapped() && fs.existsSync(path.join(SWAPPER, 'sub', 'doc.md')));
+
+  // The deny check sees the REAL path. An fs whose realpath reports the
+  // credentials file stands in for any resolution that lands on one.
+  const lying = new Proxy(fs, {
+    get(t, k) {
+      if (k === 'realpathSync') return () => H('.claude', '.credentials.json');
+      const v = t[k]; return typeof v === 'function' ? v.bind(t) : v;
+    },
+  });
+  let threw = null;
+  try { readInSkill(SWAPPER, 'sub/doc.md', { io: lying }); } catch (e) { threw = e; }
+  ok('C6 a read whose realpath is not the path walked is refused',
+     threw?.status === 403, String(threw?.message));
+}
+
+// --- C10: the reader stops at its budget --------------------------------------
+{
+  const grower = find('grower');
+  let bytes = 0;
+  const io = new Proxy(fs, {
+    get(t, k) {
+      const v = t[k];
+      if (k === 'readSync') return (...a) => { const n = v.apply(t, a); bytes += n; return n; };
+      return typeof v === 'function' ? v.bind(t) : v;
+    },
+  });
+  let threw = null;
+  try { readInSkill(grower.dir, 'big.txt', { io, budget: { remaining: 4 } }); } catch (e) { threw = e; }
+  ok('C10 a 24-byte file read against a 4-byte budget is refused with 413', threw?.status === 413, String(threw?.message));
+  ok('C10 …after buffering at most budget + 1 bytes', bytes <= 5, `${bytes} bytes read`);
+  const budget = { remaining: 100 };
+  ok('C10 under budget it reads, and the budget is spent by what was read',
+     readInSkill(grower.dir, 'big.txt', { budget }).length === 24 && budget.remaining === 76,
+     JSON.stringify(budget));
+}
+
 // --- the HTTP surface --------------------------------------------------------
 const { createApp } = await import('../server.js');
 const { server } = createApp();
@@ -353,6 +562,55 @@ const get = (p) => fetch(B + p).then(async (r) => [r.status, await r.json()]);
   ok('…and a path handed to it changes nothing',
      JSON.stringify(body.skills) === JSON.stringify(await routeRows()));
   ok('…and leaks nothing', leaks(JSON.stringify(body)).length === 0);
+}
+
+// --- C14: the real-home tripwire bites on what it claims ----------------------
+{
+  // Run against a scratch HOME so the scenarios can mutate it. Each one is a
+  // change the old name+size+mtime print could not see, or a churn it must
+  // not cry wolf about.
+  const { spawnSync } = await import('node:child_process');
+  const TRIP = new URL('./real-home.mjs', import.meta.url).pathname;
+  const T = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-trip-')));
+  const tput = (rel, body) => { const f = path.join(T, rel); mk(path.dirname(f)); fs.writeFileSync(f, body); return f; };
+  tput('.claude/skills/s1/deep/notes.md', 'AAAA');
+  tput('.claude/history.jsonl', '{}\n');
+  tput('.codex/config.toml', 'model = "x"\n');
+  tput('Documents/Projects/app/.claude/skills/p1/ref/x.md', 'BBBB');
+  tput('Documents/Garman-Homes/g/.claude/skills/g1/SKILL.md', 'CCCC');
+  const snap = path.join(T, '..', `${path.basename(T)}.snap`);
+  const run = (cmd) => spawnSync(process.execPath, [TRIP, cmd, snap], { env: { ...process.env, HOME: T }, encoding: 'utf8' });
+  const scenario = (label, mutate, wantFail, undo) => {
+    run('save');
+    mutate();
+    const r = run('check');
+    ok(`C14 tripwire ${wantFail ? 'FAILS' : 'passes'} on ${label}`, (r.status !== 0) === wantFail, (r.stdout || '').trim().split('\n').slice(1, 4).join(' | '));
+    undo?.();
+    return r;
+  };
+  const sameShape = (f, body) => {
+    const st = fs.statSync(f, { bigint: true });
+    fs.writeFileSync(f, body);
+    fs.utimesSync(f, Number(st.atimeNs) / 1e9, Number(st.mtimeNs) / 1e9);
+  };
+  const clean = scenario('an untouched tree', () => {}, false);
+  ok('C14 …and its passing line says content is compared by sha256',
+     /byte-identical \(sha256\)/.test(clean.stdout) && /entry names unchanged \(contents not compared\)/.test(clean.stdout), clean.stdout);
+  const n1 = path.join(T, '.claude/skills/s1/deep/notes.md');
+  scenario('a nested skill-file edit with the same size and mtime', () => sameShape(n1, 'ZZZZ'), true, () => sameShape(n1, 'AAAA'));
+  const p1 = path.join(T, 'Documents/Projects/app/.claude/skills/p1/ref/x.md');
+  scenario('a nested edit inside a project skill tree', () => sameShape(p1, 'ZZZZ'), true, () => sameShape(p1, 'BBBB'));
+  const g1 = path.join(T, 'Documents/Garman-Homes/g/.claude/skills/g1/SKILL.md');
+  scenario('a nested edit inside a Garman-Homes skill tree', () => sameShape(g1, 'ZZZZ'), true, () => sameShape(g1, 'CCCC'));
+  const cfg = path.join(T, '.codex/config.toml');
+  scenario('an in-place edit of a pinned file', () => sameShape(cfg, 'model = "y"\n'), true, () => sameShape(cfg, 'model = "x"\n'));
+  scenario('a new entry name in a live home', () => tput('.codex/seat.json', '{}'), true, () => fs.rmSync(path.join(T, '.codex/seat.json')));
+  scenario('SQLite -wal/-shm siblings and an atomic-write temp name appearing', () => {
+    tput('.codex/logs_2.sqlite-wal', 'w'); tput('.codex/logs_2.sqlite-shm', 's'); tput('.claude/settings.json.tmp.123', 't');
+  }, false, () => ['.codex/logs_2.sqlite-wal', '.codex/logs_2.sqlite-shm', '.claude/settings.json.tmp.123'].forEach((f) => fs.rmSync(path.join(T, f))));
+  scenario('a live agent appending to an unpinned file in its home', () => fs.appendFileSync(path.join(T, '.claude/history.jsonl'), '{}\n'), false);
+  fs.rmSync(T, { recursive: true, force: true });
+  fs.rmSync(snap, { force: true });
 }
 
 // --- the real directories were never touched ---------------------------------

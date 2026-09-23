@@ -6,9 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 import { resolveSafe, kindOf, tilde, HOME, PROJECTS, STUDIO_HOME, CODEX_HOME } from './lib/paths.js';
 import { buildRegistry, scopeChain } from './lib/registry.js';
-import { listSkills, toPublic, readInSkill } from './lib/skills.js';
+import { listSkills, resolveSkills, toPublic, readInSkill, parseFrontmatter, SKILL_LIMITS } from './lib/skills.js';
 import { readSkillUsage, attachUsage, USAGE_CAVEAT } from './lib/skill-usage.js';
-import { buildSkillsZip } from './lib/zip.js';
+import { buildSkillsZip, ZIP_LIMITS } from './lib/zip.js';
 import { contentDisposition, assertSelectionFits } from './lib/download.js';
 import { validate } from './lib/validate.js';
 import * as history from './lib/history.js';
@@ -79,6 +79,29 @@ function sameOriginRequest(req) {
   const originOk = !origin || origin === `http://${req.headers.host}`
     || origin === `https://${req.headers.host}`;
   return originOk && !(site && site === 'cross-site');
+}
+
+/**
+ * The stricter check for the two skills endpoints, which are GETs and so are
+ * NOT covered by the global non-GET policy above.
+ *
+ * sameOriginRequest lets a missing Origin through with Sec-Fetch-Site:
+ * same-site, and same-site is exactly what another localhost port sends — so
+ * any dev server on this machine could fire an <img> at the export and make
+ * this process walk and read every project tree, or hit /api/skills and make
+ * it rescan 1.1GB of transcripts and rewrite the usage cache. Here only
+ * `same-origin` (this page's fetch or download link) and `none` (the user
+ * typed the URL) pass, and either way any Origin present must be this host.
+ * An absent header is a non-browser client — curl, the test suites — which a
+ * foreign page cannot impersonate: every browser that could be tricked into
+ * sending the request sends Sec-Fetch-Site to a localhost origin.
+ */
+function strictSameOrigin(req) {
+  const origin = req.headers.origin;
+  const site = req.headers['sec-fetch-site'];
+  const originOk = !origin || origin === `http://${req.headers.host}`
+    || origin === `https://${req.headers.host}`;
+  return originOk && (site === undefined || site === 'same-origin' || site === 'none');
 }
 
 async function readBody(req, limit = 8 * 1024 * 1024) {
@@ -280,7 +303,7 @@ const bad = (msg, status) => Object.assign(new Error(msg), { status });
  */
 async function handleSkillExport(req, res, url) {
   try {
-    if (!sameOriginRequest(req)) throw bad('cross-origin requests are not accepted', 403);
+    if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
     if (Buffer.byteLength(req.url) > MAX_EXPORT_QUERY_BYTES) throw bad('request line is too long', 413);
 
     // `ids` is the ONLY parameter read. A `path` or `name` alongside it is not
@@ -296,7 +319,11 @@ async function handleSkillExport(req, res, url) {
     // put the same bundle in the archive twice under a `-2` suffix.
     const ids = [...new Set(raw)];
 
-    const byId = new Map(listSkills().map((r) => [r.id, r]));
+    // Only the selected ids are resolved, from metadata: nothing is read or
+    // hashed until the selection has passed the caps below. listSkills() would
+    // read and hash every bundle on the machine first, and turn an oversized
+    // bundle into a broken row (409) instead of the 413 it is.
+    const byId = resolveSkills(ids);
     const rows = ids.map((id) => {
       const row = byId.get(id);
       // Unknown ids 404 rather than being skipped: a selection that silently
@@ -307,17 +334,20 @@ async function handleSkillExport(req, res, url) {
       return row;
     });
 
-    assertSelectionFits(rows);
+    const limits = { ...ZIP_LIMITS, ...SKILL_LIMITS };
+    assertSelectionFits(rows, limits);
 
     if (rows.length === 1) {
       // The bar: a single skill arrives as `<skill-name>.md`, never SKILL.md,
       // with its frontmatter untouched — so the bytes are shipped exactly as
-      // readInSkill returned them, with no re-serialisation in between.
-      const body = readInSkill(rows[0].dir, 'SKILL.md');
+      // readInSkill returned them, with no re-serialisation in between. The
+      // display name comes from those same bytes.
+      const body = readInSkill(rows[0].dir, 'SKILL.md', { budget: { remaining: limits.maxBytes } });
+      const fmName = (parseFrontmatter(body.toString('utf8'))?.name || '').trim();
       res.writeHead(200, {
         'content-type': 'text/markdown; charset=utf-8',
         'content-length': body.length,
-        'content-disposition': contentDisposition(rows[0].displayName || rows[0].name, '.md'),
+        'content-disposition': contentDisposition(fmName || rows[0].name, '.md'),
         'cache-control': 'no-store',
         'x-content-type-options': 'nosniff',
       });
@@ -327,10 +357,14 @@ async function handleSkillExport(req, res, url) {
 
     // readInSkill is passed as THE reader, so every byte in the archive crosses
     // the containment rule on its way in. Nothing here touches fs directly.
-    const zip = buildSkillsZip(rows, { read: readInSkill });
+    const zip = buildSkillsZip(rows, { read: readInSkill, maxBytes: limits.maxBytes, maxEntries: limits.maxEntries });
     res.writeHead(200, {
       'content-type': 'application/zip',
       'content-length': zip.length,
+      // What the archive does NOT reproduce, as a count: the names themselves
+      // are on each row's `excluded` in /api/skills, and a count is the only
+      // form of them that is safe to put in a header.
+      'x-skills-excluded': String(zip.excluded.length),
       'content-disposition': contentDisposition(`skills-${rows.length}`, '.zip', 'skills'),
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
@@ -673,7 +707,11 @@ export function createApp(opts = {}) {
   // The usage read is cached per transcript file, so the cost of a panel open
   // is a stat of each transcript, not a re-read of 1.1GB. It is also allowed to
   // fail: a skills list without the signal is useful, a 500 is not.
-  'GET /api/skills': async () => {
+  'GET /api/skills': async (req) => {
+    // A GET, so the global non-GET policy does not cover it — and it is not
+    // free: it walks every project tree and rescans the transcript corpus,
+    // rewriting the usage cache. See strictSameOrigin.
+    if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
     const rows = listSkills().map(toPublic);
     let usage;
     try { usage = await readSkillUsage(); }

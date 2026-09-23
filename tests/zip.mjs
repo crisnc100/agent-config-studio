@@ -17,7 +17,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { snapshotRealHomes, assertRealHomesUnchanged } from './real-homes.mjs';
+import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
@@ -558,6 +558,116 @@ const DANGEROUS = [
      bad([{ name: '../evil.md', data: Buffer.from('1') }])?.status === 400);
   ok('an empty archive is still a valid archive',
      buildZip([]).length === 22 && buildZip([]).readUInt32LE(0) === 0x06054b50);
+}
+
+// --- C5: collisions on the extraction key (NFC + case fold) ------------------
+{
+  const NFC = 'café';
+  const NFD = 'café';
+  const bad = (entries) => { try { buildZip(entries); return null; } catch (e) { return e; } };
+  ok('C5 buildZip refuses `café` spelled NFC and NFD as two entries',
+     bad([{ name: `${NFC}.md`, data: Buffer.from('1') }, { name: `${NFD}.md`, data: Buffer.from('2') }])?.status === 409);
+  ok('C5 …and a case-folded pair of directory records',
+     bad([{ name: 'Dir/', mode: 0o755 }, { name: 'dir/', mode: 0o755 }])?.status === 409);
+  ok('C5 buildZip refuses `a/b` THEN file `a` — the order the old check missed',
+     bad([{ name: 'a/b.md', data: Buffer.from('1') }, { name: 'a', data: Buffer.from('2') }])?.status === 409);
+  ok('C5 …and still refuses file `a` then `a/b`',
+     bad([{ name: 'a', data: Buffer.from('1') }, { name: 'a/b.md', data: Buffer.from('2') }])?.status === 409);
+  ok('C5 …while a directory record after its own child is fine',
+     bad([{ name: 'a/b.md', data: Buffer.from('1') }, { name: 'a/', mode: 0o755 }]) === null);
+
+  const out = resolveArchivePaths([`x/${NFC}.md`, `x/${NFD}.md`, 'x/STRASSE.md', 'x/straße.md']);
+  const keys = out.map((p) => p.normalize('NFC').toLowerCase());
+  ok('C5 resolveArchivePaths gives NFC/NFD and ß/SS spellings distinct extraction paths',
+     new Set(keys).size === 4, JSON.stringify(out));
+
+  // End to end: two skills whose directory names differ only in normalisation.
+  put(H('.claude', 'skills', NFC, 'SKILL.md'), skillMd('Cafe NFC', 'composed', 'nfc-body'));
+  put(H('Documents', 'Projects', 'pcafe', '.claude', 'skills', NFD, 'SKILL.md'), skillMd('Cafe NFD', 'decomposed', 'nfd-body'));
+  const cafes = listSkills().filter((r) => r.name.normalize('NFC') === NFC);
+  ok('C5 the two café skills are discovered as two rows', cafes.length === 2,
+     JSON.stringify(cafes.map((r) => r.name)));
+  const names = pyRead((() => {
+    const zp = path.join(caseDir(), 'cafe.zip');
+    fs.writeFileSync(zp, buildSkillsZip(cafes, { read: readInSkill }));
+    return zp;
+  })()).entries.map((e) => e.name);
+  ok('C5 every entry in the café archive is unique after NFC + case fold',
+     new Set(names.map((n) => n.normalize('NFC').toLowerCase())).size === names.length, JSON.stringify(names));
+
+  const D = caseDir();
+  const zp = path.join(D, 'cafe.zip');
+  fs.writeFileSync(zp, buildSkillsZip(cafes, { read: readInSkill }));
+  for (const [who, fn] of [['unzip', extractUnzip], ['ditto', extractDitto]]) {
+    const dest = path.join(D, who);
+    const r = fn(zp, dest);
+    const bodies = [];
+    const walk = (d) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name);
+        if (e.isDirectory()) walk(p); else bodies.push(fs.readFileSync(p, 'utf8'));
+      }
+    };
+    walk(dest);
+    ok(`C5 ${who}: both café skills survive extraction, neither overwrote the other`,
+       r.code === 0 && bodies.length === 2 && bodies.some((b) => b.includes('nfc-body')) && bodies.some((b) => b.includes('nfd-body')),
+       `${r.err.slice(0, 120)} ${bodies.length} files`);
+  }
+}
+
+// --- C10: the preflight counts directory records; reads stop at the cap -------
+{
+  let reads = 0;
+  const spy = (dir, rel, o) => { reads++; return readInSkill(dir, rel, o); };
+  const alpha = rows.find((r) => r.name === 'alpha');
+  const fileCount = alpha.files.length;
+  let threw = null;
+  try { buildSkillsZip([alpha], { read: spy, maxEntries: fileCount }); } catch (e) { threw = e; }
+  ok('C10 a selection whose FILES fit the entry cap but whose directory records do not is refused',
+     threw?.status === 413, String(threw));
+  ok('C10 …before a single file was read', reads === 0, `${reads} reads`);
+
+  // A file that grew after discovery: the recorded size is tiny, the real one
+  // is 1MB. The reader must stop at the cap, not buffer the whole file first.
+  const GROW = H('.claude', 'skills', 'grown');
+  put(path.join(GROW, 'SKILL.md'), skillMd('Grown', 'grew after discovery'));
+  put(path.join(GROW, 'blob.bin'), 'x');
+  const grown = listSkills().find((r) => r.name === 'grown');
+  fs.writeFileSync(path.join(GROW, 'blob.bin'), Buffer.alloc(1024 * 1024, 0x61));
+  let bytes = 0;
+  const io = new Proxy(fs, {
+    get(t, k) {
+      const v = t[k];
+      if (k === 'readSync') return (...a) => { const n = v.apply(t, a); bytes += n; return n; };
+      return typeof v === 'function' ? v.bind(t) : v;
+    },
+  });
+  threw = null;
+  try { buildSkillsZip([grown], { read: (d, r, o) => readInSkill(d, r, { ...o, io }), maxBytes: 4096 }); }
+  catch (e) { threw = e; }
+  ok('C10 a file that grew past the cap after discovery is refused with 413', threw?.status === 413, String(threw));
+  ok('C10 …having buffered no more than the cap + 1 byte', bytes <= 4097, `${bytes} bytes read`);
+
+  // A reader that ignores the budget is still caught after each file.
+  threw = null;
+  try { buildSkillsZip([grown], { read: (d, r) => readInSkill(d, r), maxBytes: 4096 }); } catch (e) { threw = e; }
+  ok('C10 …and caught after the file even by a reader that ignores the budget', threw?.status === 413, String(threw));
+  fs.rmSync(GROW, { recursive: true, force: true });
+}
+
+// --- C4: the archive result names what it did not ship ------------------------
+{
+  const PARTIAL = H('.claude', 'skills', 'partial');
+  put(path.join(PARTIAL, 'SKILL.md'), skillMd('Partial', 'has holes'));
+  put(path.join(PARTIAL, ...Array.from({ length: 10 }, (_, i) => `d${i}`), 'buried.md'), 'buried\n');
+  fs.mkdirSync(path.join(PARTIAL, 'empty-dir'));
+  const partial = listSkills().find((r) => r.name === 'partial');
+  const buf = buildSkillsZip([partial, rows.find((r) => r.name === 'alpha')], { read: readInSkill });
+  ok('C4 the archive result lists the too-deep subtree and the empty directory, by archive path',
+     buf.excluded.map((x) => `${x.rel}:${x.reason}`).sort().join(',')
+       === 'partial/d0/d1/d2/d3/d4/d5/d6/d7/d8/:deeper than the 8-level bundle limit,partial/empty-dir/:empty directory',
+     JSON.stringify(buf.excluded));
+  fs.rmSync(PARTIAL, { recursive: true, force: true });
 }
 
 // --- the library never shells out --------------------------------------------
