@@ -33,4 +33,5 @@ node tests/models-backup.mjs
 node tests/models-panel.mjs
 node tests/memory.mjs
 node tests/context-map.mjs
+node tests/own-writes.mjs
 node tests/real-home.mjs check "$REAL_HOME_SNAPSHOT"

@@ -938,6 +938,38 @@ for (const [label, hook] of [
   fs.unlinkSync(fx.mem); fs.renameSync(moved, fx.mem);
 }
 
+// ── round 5: short writes never publish a truncated index ────────────────
+{
+  V = await view();
+  const orig = fs.readFileSync(indexPath, 'utf8');
+  const [, pv] = await call('POST', '/api/memory/preview', { action: 'fix-links', ids: [V.findings.dangling.find((d) => d.target === 'gone-5.md').id] });
+  // At most 5 bytes per call, whatever form the caller writes in (Buffer + range, or a string).
+  const short = (fd, data, off = 0, len) => {
+    const b = Buffer.isBuffer(data) ? data : Buffer.from(String(data));
+    return fs.writeSync(fd, b, off, Math.min(len ?? b.length - off, 5));
+  };
+  const dribble = { writeSync: short };
+  ops._setOpIo(dribble);
+  const [st] = await call('POST', '/api/memory/accept', { opId: pv.opId });
+  ops._setOpIo(null);
+  ok('S1 Accept with writes of 5 bytes at a time publishes the complete index', st === 200 && fs.readFileSync(indexPath, 'utf8') === pv.diffs[0].after,
+     `${st} ${fs.readFileSync(indexPath, 'utf8').length} vs ${pv.diffs[0].after.length}`);
+  ops._setOpIo(dribble);
+  const [, rv] = await call('POST', '/api/memory/restore', { opId: pv.opId });
+  ops._setOpIo(null);
+  ok('S1 …and Restore with the same short writes puts back the complete pre-image', rv?.restored === true && fs.readFileSync(indexPath, 'utf8') === orig,
+     JSON.stringify(rv).slice(0, 160));
+
+  V = await view();
+  const [, p2] = await call('POST', '/api/memory/preview', { action: 'fix-links', ids: [V.findings.dangling.find((d) => d.target === 'gone-5.md').id] });
+  let calls = 0;
+  ops._setOpIo({ writeSync: (...args) => (++calls === 1 ? short(...args) : 0) });
+  const [st2] = await call('POST', '/api/memory/accept', { opId: p2.opId });
+  ops._setOpIo(null);
+  ok('S1 a write that stalls part-way fails the step and publishes nothing', st2 !== 200 && fs.readFileSync(indexPath, 'utf8') === orig
+     && !fs.readdirSync(fx.mem).some((n) => n.includes('.acs-')), `${st2} ${fs.readFileSync(indexPath, 'utf8').slice(0, 20)}`);
+}
+
 // ── criterion 11: the UI wording ──────────────────────────────────────────
 {
   const app = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
