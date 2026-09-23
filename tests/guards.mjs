@@ -56,6 +56,14 @@ const WHY = {
     'from the existing harness detection. Do not delete this guard to add a',
     'refresh — tell the user to run the CLI once instead, as the panel does.',
   ].join(' '),
+  h: [
+    'The Memory and Context views read memory files, transcripts, git metadata',
+    'and instruction files, and write only through lib/mutate.js and',
+    'lib/history.js, which already existed. They spawn nothing of their own: no',
+    'model CLI, no git, no sqlite binary (Codex memory is counted through',
+    'node:sqlite). Do not delete this guard to shell out for a count or a',
+    'repository lookup — read the file, the way lib/gitmeta.js does.',
+  ].join(' '),
   g: [
     'The CLI catalogs belong to the CLIs. tests/real-home.mjs lets a Codex or',
     'Grok catalog change during a run only when it was re-stamped by a CLI,',
@@ -881,6 +889,48 @@ function guardG() {
          hits.join('\n') || 'ok', WHY.g);
 }
 
+/**
+ * Guard h — the Memory and Context libraries spawn nothing.
+ *
+ * The same checks as guard f, over the modules this feature added: no
+ * child_process specifier, no computed import()/require(), no call by a
+ * child_process API name. They also may not import a module that spawns a
+ * model CLI (harness, chat, assist, usage/*): writes go through mutate.js and
+ * history.js, whose git calls predate this feature.
+ */
+const MEMORY_FILES = ['lib/gitmeta.js', 'lib/memory-index.js', 'lib/memory-ops.js', 'lib/context-map.js'];
+const MODEL_SPAWNERS = /^\.\/(harness|chat|assist)\.js$|^\.\/usage\//;
+
+function guardH() {
+  const hits = [];
+  for (const relPath of MEMORY_FILES) {
+    const abs = path.join(ROOT, relPath);
+    let src;
+    try { src = fs.readFileSync(abs, 'utf8'); } catch { hits.push(`${relPath} is missing — guard h cannot verify it`); continue; }
+    const { code, literals } = tokenizeJs(src);
+    for (const lit of literals) {
+      if (lit.kind !== 'regex' && /^(node:)?child_process$/.test(lit.text.trim())) {
+        hits.push(`${relPath}:${lit.line} names the child_process module`);
+      }
+    }
+    for (const m of code.matchAll(/(?<![\w$.])(import|require)\s*\(\s*([^)]*)\)/g)) {
+      const arg = m[2].trim();
+      if (!/^(['"])\1$/.test(arg)) {
+        hits.push(`${relPath}:${lineAt(code, m.index)} ${m[1]}(${arg.slice(0, 40)}) — a computed module name`);
+      }
+    }
+    for (const m of code.matchAll(SPAWN_NAME_RE)) {
+      hits.push(`${relPath}:${lineAt(code, m.index)} calls ${m[1]}() — a child_process API name`);
+    }
+    if (/\bprocess\.binding\s*\(/.test(code)) hits.push(`${relPath} reaches process.binding`);
+    for (const m of src.matchAll(/^\s*import\s[^'"]*['"]([^'"]+)['"]/gm)) {
+      if (MODEL_SPAWNERS.test(m[1])) hits.push(`${relPath} imports ${m[1]}, which spawns a model CLI`);
+    }
+  }
+  assert(hits.length === 0, 'guard h: the Memory and Context libraries never load child_process',
+         hits.join('\n') || 'ok', WHY.h);
+}
+
 async function main() {
   console.log('guards — static security properties this branch established\n');
   guardA();
@@ -889,6 +939,7 @@ async function main() {
   guardE();
   guardF();
   guardG();
+  guardH();
   const harnesses = await guardCRuntime();
   await guardD(harnesses);
   console.log(`\n${passed} passed, ${failed} failed`);

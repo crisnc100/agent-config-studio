@@ -96,6 +96,18 @@ const get = (p, headers) => fetch(B + p, { headers }).then(async (r) => [r.statu
 }
 server.close();
 
+// Trunk is the checkout whose .worktrees.conf names it, not necessarily git's
+// main checkout (on this machine airflo-trunk is itself a worktree).
+{
+  fs.writeFileSync(path.join(fx.wt, '.worktrees.conf'), `# test\nTRUNK="${fx.wt}"\nROOT="${path.dirname(fx.wt)}"\n`);
+  const t = contextMap().groups.find((g) => g.label === 'alpha');
+  const w = t.scopes.find((x) => x.scope === 'apps/web/CLAUDE.md');
+  ok('C9 the checkout named by .worktrees.conf is trunk: it opens first and drift is measured against it',
+     t.checkouts[0].display === tilde(fx.wt) && w.variants.find((x) => x.trunk).open.display === tilde(path.join(fx.wt, 'apps', 'web', 'CLAUDE.md'))
+     && w.variants.some((x) => x.drift && x.open.display === tilde(path.join(fx.web, 'CLAUDE.md'))), JSON.stringify(t.checkouts));
+  fs.rmSync(path.join(fx.wt, '.worktrees.conf'));
+}
+
 // The registry and sidebar are unchanged, and history keeps every copy.
 ok('C9 the registry is unchanged by the context map', strip(buildRegistry()) === registryBefore);
 const snap2 = await history.snapshotAll('after the context map');
