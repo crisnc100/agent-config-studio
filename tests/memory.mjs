@@ -204,8 +204,18 @@ await (await import('../lib/history.js')).ensureRepo();
 
   const entry = links.find((l) => l.rel === 'gone-entry.md');
   const noEntry = mi.editLinks(text, [{ start: entry.start, action: 'remove' }]);
-  ok('C2 an entry bullet whose only link is removed goes whole (with its newline)',
-     noEntry === text.replace('- [Gone entry](gone-entry.md) — a whole entry whose file is missing\n', ''));
+  // Corrected (grade bug 6): the old assertion blessed deleting the prose after the link.
+  ok('C2 B6 a bullet with prose after its only link keeps the prose (the link becomes its words)',
+     noEntry === text.replace('- [Gone entry](gone-entry.md) — a whole entry whose file is missing', '- Gone entry — a whole entry whose file is missing'),
+     JSON.stringify(noEntry.split('\n').find((l) => l.includes('whole entry'))));
+  const unrelated = '- [Missing](gone.md) — KEEP THIS UNRELATED PROSE\n';
+  ok('C2 B6 the grader\'s reproduction: unrelated prose on the bullet survives',
+     mi.editLinks(unrelated, [{ start: 2, action: 'remove' }]) === '- Missing — KEEP THIS UNRELATED PROSE\n');
+  const bare = 'a\n- [Only](only.md)\nb\n';
+  ok('C2 B6 a bullet holding nothing but the link goes whole', mi.editLinks(bare, [{ start: 4, action: 'remove' }]) === 'a\nb\n');
+  const sepOnly = '- [a](a.md) · [b](b.md)\n';
+  ok('C2 B6 a bullet left with only separators goes whole',
+     mi.editLinks(sepOnly, mi.parseLinks(sepOnly).map((l) => ({ start: l.start, action: 'remove' }))) === '');
   const prose = links.find((l) => l.label === 'the notes');
   ok('C2 a link inside prose keeps its words', mi.editLinks(text, [{ start: prose.start, action: 'remove' }])
      === text.replace('See also [the notes](live-1.md) for more.', 'See also the notes for more.'));
@@ -533,6 +543,202 @@ V = await view();
   const o = V.findings.oversized.find((x) => x.slug === fx.slugs.notes);
   ok('an index over 200 lines is flagged, with its line count', o?.lines === 201 && o.threshold === 200, JSON.stringify(V.findings.oversized));
   fs.rmSync(big);
+}
+
+// ── grade bugs: each reproduced before its fix ────────────────────────────
+const opsPath = path.join(ROOT, 'lib', 'memory-ops.js');
+/** Run `body` in a fresh process against the fake HOME; it may SIGKILL itself. */
+const child = (body) => spawnSync(process.execPath, ['--no-warnings', '--input-type=module', '-e',
+  `const ops = await import(${JSON.stringify(opsPath)}); const mutate = await import(${JSON.stringify(path.join(ROOT, 'lib', 'mutate.js'))});\n${body}`],
+  { env: { ...process.env, HOME: fakeHome }, encoding: 'utf8' });
+const opIdFrom = (r) => (/OP ([0-9a-f]{24})/.exec(r.stdout) || [])[1];
+const indexPath = path.join(fx.mem, 'MEMORY.md');
+
+// B1: a file named like the trash's own metadata keeps its bytes.
+{
+  const f = path.join(PROJ, fx.slugs.notes, 'memory', 'trash-meta.json');
+  fs.writeFileSync(f, 'PAYLOAD-BYTES\n');
+  const r = await mutate.remove({ path: f });
+  const listed = (await mutate.listTrash()).find((t) => t.id === r.id);
+  ok('B1 trashing a file named trash-meta.json keeps its entry listable', listed?.name === 'trash-meta.json', JSON.stringify(listed));
+  await mutate.restoreTrash({ id: r.id }).catch(() => {});
+  ok('B1 …and restores its own bytes, not the metadata', fs.existsSync(f) && fs.readFileSync(f, 'utf8') === 'PAYLOAD-BYTES\n',
+     fs.existsSync(f) ? fs.readFileSync(f, 'utf8').slice(0, 60) : 'missing');
+  fs.rmSync(f, { force: true });
+}
+
+// B2: an Accept killed after its step changed the file, before the step was recorded.
+{
+  const before = fs.readFileSync(indexPath, 'utf8');
+  const r = child(`
+    const v = await ops.memoryView();
+    const d = v.findings.dangling.find((x) => x.target === 'gone-1.md');
+    const p = ops.preview({ action: 'fix-links', ids: [d.id] });
+    console.log('OP ' + p.opId);
+    ops._setOpFault((pt) => { if (pt === 'after-mutation') process.kill(process.pid, 'SIGKILL'); });
+    await ops.accept(p.opId);`);
+  const opId = opIdFrom(r);
+  const changed = fs.readFileSync(indexPath, 'utf8');
+  ok('B2 the child was killed after the index changed', r.signal === 'SIGKILL' && changed !== before, `${r.signal} ${r.stderr.slice(0, 200)}`);
+  const [, rv] = await call('POST', '/api/memory/restore', { opId });
+  ok('B2 restore of that interrupted Accept really undoes it', rv?.restored === true && fs.readFileSync(indexPath, 'utf8') === before,
+     JSON.stringify(rv).slice(0, 300));
+  if (fs.readFileSync(indexPath, 'utf8') !== before) fs.writeFileSync(indexPath, before);
+}
+// B2: a trash step killed between the move and the record is still found by restore.
+{
+  const target = path.join(fx.mem, 'live-4.md');
+  const bytes = fs.readFileSync(target, 'utf8');
+  const indexBefore = fs.readFileSync(indexPath, 'utf8');
+  const r = child(`
+    const v = await ops.memoryView();
+    const row = v.rows.find((x) => x.rel === 'live-4.md' && x.slug === ${JSON.stringify(fx.slugs.alpha)});
+    const p = ops.preview({ action: 'trash-fact', ids: [row.id] });
+    console.log('OP ' + p.opId);
+    ops._setOpFault((pt) => { if (pt === 'after-mutation') process.kill(process.pid, 'SIGKILL'); });
+    await ops.accept(p.opId);`);
+  const opId = opIdFrom(r);
+  ok('B2 the child was killed right after the fact moved to the trash', r.signal === 'SIGKILL' && !fs.existsSync(target), r.stderr.slice(0, 200));
+  const [, rv] = await call('POST', '/api/memory/restore', { opId });
+  ok('B2 restore finds the unrecorded trash entry and puts the fact back', rv?.restored === true && fs.existsSync(target)
+     && fs.readFileSync(target, 'utf8') === bytes && fs.readFileSync(indexPath, 'utf8') === indexBefore, JSON.stringify(rv).slice(0, 300));
+}
+// B2: a Restore killed half-way, then retried, recognises the step it already undid.
+{
+  V = await view();
+  const target = path.join(fx.mem, 'live-5.md');
+  const bytes = fs.readFileSync(target, 'utf8');
+  const indexBefore = fs.readFileSync(indexPath, 'utf8');
+  const [, pv] = await call('POST', '/api/memory/preview', { action: 'trash-fact', ids: [row('live-5.md').id] });
+  await call('POST', '/api/memory/accept', { opId: pv.opId });
+  const r = child(`
+    ops._setOpFault((pt) => { if (pt === 'restore-after-step') process.kill(process.pid, 'SIGKILL'); });
+    await ops.restore(${JSON.stringify(pv.opId)});`);
+  ok('B2 the restoring child was killed after its first step', r.signal === 'SIGKILL' && fs.readFileSync(indexPath, 'utf8') === indexBefore && !fs.existsSync(target),
+     r.stderr.slice(0, 200));
+  const [, rv] = await call('POST', '/api/memory/restore', { opId: pv.opId });
+  ok('B2 …the retry completes instead of calling the restored index an outside edit',
+     rv?.restored === true && fs.readFileSync(target, 'utf8') === bytes && fs.readFileSync(indexPath, 'utf8') === indexBefore, JSON.stringify(rv).slice(0, 300));
+}
+
+// B3: something edits the index after Accept's up-front check, before its write.
+{
+  V = await view();
+  const [, pv] = await call('POST', '/api/memory/preview', { action: 'fix-links', ids: [V.findings.dangling.find((d) => d.target === 'gone-2.md').id] });
+  ops._setOpFault((pt, s) => { if (pt === 'before-step' && s.type === 'edit-index') fs.appendFileSync(indexPath, 'EXTERNAL EDIT\n'); });
+  const [st, body] = await call('POST', '/api/memory/accept', { opId: pv.opId });
+  ops._setOpFault(null);
+  const now = fs.readFileSync(indexPath, 'utf8');
+  ok('B3 an edit landing mid-Accept is not overwritten', now.endsWith('EXTERNAL EDIT\n') && now.includes('(gone-2.md)'), now.slice(-80));
+  ok('B3 …and the Accept reports the refusal', st === 409, `${st} ${JSON.stringify(body).slice(0, 200)}`);
+  fs.writeFileSync(indexPath, now.replace('EXTERNAL EDIT\n', ''));
+
+  V = await view();
+  const target = path.join(fx.mem, 'live-6.md');
+  const bytes = fs.readFileSync(target);
+  const decoy = path.join(fakeHome, 'decoy-2.md');
+  const [, p2] = await call('POST', '/api/memory/preview', { action: 'trash-fact', ids: [row('live-6.md').id] });
+  ops._setOpFault((pt, s) => {
+    if (pt === 'before-step' && s.type === 'trash') { fs.writeFileSync(decoy, bytes); fs.rmSync(target); fs.symlinkSync(decoy, target); }
+  });
+  const [st2] = await call('POST', '/api/memory/accept', { opId: p2.opId });
+  ops._setOpFault(null);
+  let isLink = false;
+  try { isLink = fs.lstatSync(target).isSymbolicLink(); } catch {}
+  ok('B3 a symlink swapped in mid-Accept is refused and left alone', st2 === 409 && isLink && fs.existsSync(decoy), String(st2));
+  fs.rmSync(target, { force: true }); fs.writeFileSync(target, bytes);
+}
+
+// B4: restoring a trashed fact must not follow a symlink planted where its folder was.
+{
+  V = await view();
+  const notesMem = path.join(PROJ, fx.slugs.notes, 'memory');
+  const jot = path.join(notesMem, 'jot.md');
+  const [, pv] = await call('POST', '/api/memory/preview', { action: 'trash-fact', ids: [row('jot.md', fx.slugs.notes).id] });
+  await call('POST', '/api/memory/accept', { opId: pv.opId });
+  const elsewhere = path.join(fakeHome, '.claude', 'hooks');
+  fs.mkdirSync(elsewhere, { recursive: true });
+  fs.renameSync(notesMem, `${notesMem}.real`);
+  fs.symlinkSync(elsewhere, notesMem);
+  const [, rv] = await call('POST', '/api/memory/restore', { opId: pv.opId });
+  ok('B4 restore refuses a memory folder swapped for a symlink', rv?.restored !== true && !fs.existsSync(path.join(elsewhere, 'jot.md')),
+     JSON.stringify(rv).slice(0, 200));
+  fs.unlinkSync(notesMem); fs.renameSync(`${notesMem}.real`, notesMem);
+  const [, rv2] = await call('POST', '/api/memory/restore', { opId: pv.opId });
+  ok('B4 …and restores normally once the folder is real again', rv2?.restored === true && fs.existsSync(jot), JSON.stringify(rv2).slice(0, 200));
+}
+
+// B5: a context-named symlink to a transcript never serves the transcript.
+{
+  const link = path.join(fx.alpha, 'apps', 'AGENTS.md');
+  fs.symlinkSync(path.join(fx.alphaSlug, 'session-2', 'subagents', 'agent-x.jsonl'), link);
+  const cm = await import('../lib/context-map.js');
+  const m = cm.contextMap();
+  const texts = [];
+  for (const g of m.groups) for (const sc of g.scopes) for (const v of sc.variants) {
+    try { texts.push(cm.contextFile(v.id).content); } catch {}
+  }
+  const [, body] = await call('GET', '/api/context');
+  ok('B5 the transcript behind an AGENTS.md link is not read or served',
+     !texts.some((t) => t.includes('toolu_sub')) && !JSON.stringify(body).includes('toolu_sub') && JSON.stringify(m.unreadable).includes('apps/AGENTS.md'),
+     JSON.stringify(m.unreadable));
+  fs.rmSync(link);
+}
+
+// B7: a finding that stopped being true is refused, at preview and at Accept.
+{
+  V = await view();
+  const g3 = V.findings.dangling.find((d) => d.target === 'gone-3.md');
+  fs.writeFileSync(path.join(fx.mem, 'gone-3.md'), 'I came back\n');
+  const [s1] = await call('POST', '/api/memory/preview', { action: 'fix-links', ids: [g3.id] });
+  ok('B7 a link whose file reappeared is not offered for removal', s1 === 409, String(s1));
+  fs.rmSync(path.join(fx.mem, 'gone-3.md'));
+  const [, p2] = await call('POST', '/api/memory/preview', { action: 'fix-links', ids: [g3.id] });
+  fs.writeFileSync(path.join(fx.mem, 'gone-3.md'), 'I came back\n');
+  const before = fs.readFileSync(indexPath, 'utf8');
+  const [s2] = await call('POST', '/api/memory/accept', { opId: p2.opId });
+  ok('B7 …nor removed at Accept when it reappears after the preview', s2 === 409 && fs.readFileSync(indexPath, 'utf8') === before, String(s2));
+  fs.rmSync(path.join(fx.mem, 'gone-3.md'));
+
+  const mv = V.findings.dangling.find((d) => d.target === 'moved.md');
+  const [, p3] = await call('POST', '/api/memory/preview', { action: 'fix-links', ids: [mv.id] });
+  const arch = path.join(fx.mem, '_archive', 'moved.md');
+  const archBytes = fs.readFileSync(arch);
+  fs.rmSync(arch);
+  const [s3] = await call('POST', '/api/memory/accept', { opId: p3.opId });
+  ok('B7 "point at archive" is refused when the archived file is gone', s3 === 409 && fs.readFileSync(indexPath, 'utf8') === before, String(s3));
+  fs.writeFileSync(arch, archBytes);
+
+  const un = V.findings.unindexed.find((u) => u.rel === 'unindexed.md');
+  fs.appendFileSync(indexPath, '- [Now linked](unindexed.md)\n');
+  const [s4] = await call('POST', '/api/memory/preview', { action: 'add-to-index', ids: [un.id] });
+  ok('B7 a file that got indexed meanwhile is not indexed twice', s4 === 409, String(s4));
+  fs.writeFileSync(indexPath, before);
+}
+
+// B8: the real-home comparator fails on additions it used to fail on.
+{
+  const { compareRealHomes, isLiveSuiteProbeSlug } = await import('./real-home.mjs');
+  const projects = path.join(realHome, '.claude', 'projects');
+  const docs = path.join(realHome, 'Documents', 'Projects');
+  const base = { [`slugs:${projects}`]: JSON.stringify(['-a']), [`context:${docs}`]: JSON.stringify([]), [path.join(projects, '-a')]: 'dir' };
+  const withCtx = { ...base, [`context:${docs}`]: JSON.stringify([path.join(docs, 'p', '.claude', 'skills', 't', 'CLAUDE.md')]), [path.join(docs, 'p', '.claude', 'skills', 't', 'CLAUDE.md')]: 'sha' };
+  ok('B8 a context file appearing during a run is a failure', compareRealHomes(base, withCtx).content.length > 0);
+  const slug = (n) => ({ ...base, [`slugs:${projects}`]: JSON.stringify(['-a', n]), [path.join(projects, n)]: 'dir', [path.join(projects, n, 'memory')]: 'dir' });
+  ok('B8 an arbitrary new slug is a failure', compareRealHomes(base, slug('-Users-x-new-project')).content.length > 0);
+  const tmp = fs.realpathSync(os.tmpdir()).replace(/[^A-Za-z0-9]/g, '-');
+  const probe = `${tmp}-acs-claude-writeprobe-Ab12Cd`;
+  ok('B8 only the phase1 probe slugs are exempt', isLiveSuiteProbeSlug(probe) && isLiveSuiteProbeSlug(`${tmp}-acs-contain-claude-Zz9Yy8`)
+     && !isLiveSuiteProbeSlug(`${tmp}-acs-anything-else-Ab12Cd`) && !isLiveSuiteProbeSlug(`${tmp}-acs-claude-writeprobe-Ab12Cd-x`)
+     && compareRealHomes(base, slug(probe)).content.length === 0);
+}
+
+// B9: a populated temp probe is not a project.
+{
+  V = await view();
+  ok('B9 a temp probe holding memory is hidden from the project list and the queue',
+     !V.groups.some((g) => g.slugs.some((sl) => mi.isTempProbe(sl.slug))) && !V.rows.some((r) => mi.isTempProbe(r.slug))
+     && !V.findings.unindexed.some((u) => mi.isTempProbe(u.slug)) && V.hiddenProbeFiles === 1, JSON.stringify(V.hiddenProbeFiles));
 }
 
 // ── criterion 11: the UI wording ──────────────────────────────────────────

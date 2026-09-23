@@ -56,6 +56,10 @@ ok('C9 …the AGENTS.md symlink is marked as a link, not a second file',
 ok('C9 …and the editor opens the trunk copy first', root.variants[0].open.display === tilde(path.join(fx.alpha, 'CLAUDE.md')));
 ok('C9 files at different scopes are never merged, even with identical bytes',
    scope('docs/CLAUDE.md')?.variants.length === 1 && scope('docs/CLAUDE.md').variants[0].copies === 1);
+const docsLink = scope('docs/AGENTS.md');
+ok('C9 B9 a link at a different scope (docs/AGENTS.md → ../CLAUDE.md) stays its own entry',
+   docsLink?.variants.length === 1 && docsLink.variants[0].linksTo === tilde(path.join(fx.alpha, 'CLAUDE.md'))
+   && !paths.includes(tilde(path.join(fx.alpha, 'docs', 'AGENTS.md'))), JSON.stringify(docsLink));
 ok('C9 .cursor/rules/*.mdc is found', scope('.cursor/rules/style.mdc')?.kind === 'cursor-rule');
 ok('C9 a worktree under .worktrees/ is found (and joins the repository)',
    paths.includes(tilde(path.join(fx.inner, 'CLAUDE.md'))) && alpha.checkouts.some((c) => c.label === 'inner'));

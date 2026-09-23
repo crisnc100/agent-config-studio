@@ -116,6 +116,7 @@ export function seedMemoryHome(home) {
   put(path.join(alpha, 'CLAUDE.md'), trunkClaude);
   fs.symlinkSync('CLAUDE.md', path.join(alpha, 'AGENTS.md'));
   put(path.join(alpha, 'docs', 'CLAUDE.md'), trunkClaude);          // same bytes, different scope
+  fs.symlinkSync('../CLAUDE.md', path.join(alpha, 'docs', 'AGENTS.md')); // a link at ANOTHER scope: its own entry
   put(path.join(web, 'CLAUDE.md'), '# Web\n\n## Run\n\nnpm run dev\n');
   put(path.join(alpha, '.cursor', 'rules', 'style.mdc'), '---\ndescription: style\n---\n\n# Style rule\n\nUse tabs.\n');
   put(path.join(alpha, 'node_modules', 'pkg', 'CLAUDE.md'), '# vendored — must never be listed\n');
@@ -187,6 +188,8 @@ export function seedMemoryHome(home) {
   const probeBusy = H('.claude', 'projects', '-private-tmp-claude-501-scratch-Zz9');
   fs.mkdirSync(path.join(probeBusy, 'memory'), { recursive: true });
   put(path.join(probeBusy, 'p.jsonl'), jsonl([{ type: 'user', message: { content: 'probe' } }]));
+  // A populated probe: its memory is real, but a scratch session is not a project.
+  put(path.join(probeBusy, 'memory', 'probe-fact.md'), fm.flat('probe-fact', 'Written by a scratch session', 'project') + 'Scratch.\n');
   // A symlinked memory dir and a symlinked slug: refused, never listed.
   const linkedMem = H('.claude', 'projects', enc(P('linked-mem')));
   fs.mkdirSync(linkedMem, { recursive: true });
