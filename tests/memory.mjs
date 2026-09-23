@@ -525,6 +525,16 @@ V = await view();
   ok('review: the state lives in the ACS state dir', Object.values(review.keeps).some((k) => typeof k.sha256 === 'string'));
 }
 
+// ── an oversized index is flagged, and offered nothing ────────────────────
+{
+  const big = path.join(PROJ, fx.slugs.notes, 'memory', 'MEMORY.md');
+  fs.writeFileSync(big, '- [jot](jot.md) — the note\n' + 'filler line\n'.repeat(200));
+  V = await view();
+  const o = V.findings.oversized.find((x) => x.slug === fx.slugs.notes);
+  ok('an index over 200 lines is flagged, with its line count', o?.lines === 201 && o.threshold === 200, JSON.stringify(V.findings.oversized));
+  fs.rmSync(big);
+}
+
 // ── criterion 11: the UI wording ──────────────────────────────────────────
 {
   const app = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');

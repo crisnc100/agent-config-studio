@@ -1458,6 +1458,9 @@ async function openMemory() {
   if (!confirmDiscard()) return;
   S.view = 'memory';
   S.entry = null;
+  // Nothing stays open behind this view, or a cleanup that trashes the file
+  // last opened would make the live-change handler leave the view.
+  S.file = null; S.original = ''; S.draft = '';
   window.history.replaceState(null, '', '#memory');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -1964,6 +1967,9 @@ async function openContext() {
   if (!confirmDiscard()) return;
   S.view = 'context';
   S.entry = null;
+  // Nothing stays open behind this view, or a cleanup that trashes the file
+  // last opened would make the live-change handler leave the view.
+  S.file = null; S.original = ''; S.draft = '';
   window.history.replaceState(null, '', '#context');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
