@@ -1,0 +1,4440 @@
+{
+  "capturedAt": "2026-09-23T00:00:04.982Z",
+  "home": "/Users/cortega",
+  "files": [
+    {
+      "file": "~/.claude/skills/.DS_Store",
+      "sha256": "eb62f8c5c9ad6d944e32dd9cd2d6cb207550e06718d47edbe252518f95ed3186",
+      "binary": true,
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/.gitignore",
+      "sha256": "cf237c7aff44efbe6e502e645c3e06da03a69d7bdeb43392108ef3348143417e",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/advisor/SKILL.md",
+      "sha256": "824548f640299c8a9740a74f66e9bafa4f7f2a7558bcb14ca3c9cb4ba3324488",
+      "sites": [
+        {
+          "line": 3,
+          "text": "description: Consult a stronger model for objective, consultant-style feedback on the session's scope and direction — a second brain for the seat, not a code reviewer. Use when the seat is a lower-tier model (Opus/Sonnet) facing a scope, architecture, or direction call, or when the user asks for \"fable's take\" / \"codex's take\" / \"get an advisor read\". Methods: fable (Fable, the wise-owl judgment seat — Cris's default for advice; costs extra usage, which he accepts here) | astra (Astra high — cross-vendor judgment, when Cris names it or the seat is Fable) | both (dual blind advisory, Fable + Astra in parallel). Returns a scope verdict, advisory deltas, and ONLY questions that are genuinely undecidable from the repo and conversation.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 15,
+          "text": "- The seat is Opus/Sonnet and about to commit to a non-trivial direction (scope, architecture, cut lines, sequencing).",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 16,
+          "text": "- The user asks for it: \"what would fable say about this scope?\", \"get codex's take\", \"/advisor\".",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 23,
+          "text": "- When the seat IS Fable: the fable method is pointless (same brain advising itself). Use **astra** for a cross-vendor second opinion instead.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 27,
+          "text": "Resolution order: **spoken choice → `~/.claude/advisor-config.json` → built-in default (fable)**. Judgment-tier models are canonical in the model lanes in `~/.claude/CLAUDE.md`.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 29,
+          "text": "Temperament rule (Cris, 2026-07-10): **advice is owl work.** Fable is the wise owl — the smartest judgment seat — so it is Cris's advisor default despite the extra usage; that cost is accepted HERE specifically. Astra high shares the judgment tier — same tier as Fable until evidence separates them. Legacy Sol, when named, advises at **XHIGH** (advice deserves its top reasoning; the execution lanes are the ones that run high).",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 33,
+          "text": "| `fable` | Fable | headless CLI (Step 2), `--effort high` (raise only on explicit ask) | **Cris's default for advice.** The owl: scope verdicts, direction, what-to-cut judgment. |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 34,
+          "text": "| `astra` | Astra at **high** (model from config) | `codex exec` read-only | When Cris names it (\"advisory astra\"), when the seat IS Fable (cross-vendor second opinion), or when the advice should ride the ChatGPT pool. |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 35,
+          "text": "| `both` | Fable + Astra high, blind, in parallel | both invocations in Step 2 | When Cris says \"both\". See Dual advisory below. |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 36,
+          "text": "| `sol` | Sol at **xhigh** (legacy) | `codex exec -m \"$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)\"` read-only | Only when Cris names it. |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": "xhigh"
+            },
+            {
+              "kind": "model-id",
+              "token": "sol",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 38,
+          "text": "First-time users (no config file exists): ask once via AskUserQuestion (codex — needs `npm i -g @openai/codex` + auth | fable | claude opus), then save the choice to `~/.claude/advisor-config.json`. Copy `advisor-config.example.json` from this skill's folder as the starting point. A spoken one-run choice never changes the saved default.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 42,
+          "text": "\"Advisory both\" runs **fable and astra blind, in parallel** on the same brief — no rebuttal rounds, no negotiated compromise. The seat then resolves factual disagreements itself against the repo, and presents judgment disagreements to Cris steelmanned, both sides — it never picks the winner. (Canonical protocol: the model-lanes table in `~/.claude/CLAUDE.md`.)",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 58,
+          "text": "**astra** (brief lives at an absolute path; verdict on stdout, logs on stderr):",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 60,
+          "text": "codex exec --skip-git-repo-check --sandbox read-only -m \"$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)\" -c model_reasoning_effort=high \\",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 65,
+          "text": "**fable** — headless CLI, **NEVER the Agent tool**: Agent-tool `model: fable` spawns silently downgrade to sonnet in some harnesses (verified via session logs, 2026-07-11). The CLI is the proven path — same mechanism as `/code-review fable` and the Atlas fable lane:",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 68,
+          "text": "  --model \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" --effort high --output-format json \\",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 71,
+          "text": "Parse the JSON envelope: the advisory text is `.result`, and the `modelUsage` keys **must include the resolved id** — check it, never eyeball it: `jq -e --arg m \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" '.modelUsage | has($m)'` on the envelope. If it fails, the call ran on the wrong model — abort, tell the user, and never present another model's output as fable. Check `.is_error` is false before trusting `.result`, and never branch on `$?` — piping the output masks a failed call as exit 0.",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 112,
+          "text": "{ \"method\": \"fable\", \"codexModel\": \"astra\", \"codexEffort\": \"high\" }",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 114,
+          "text": "Precedence: spoken choice for one run → this file → built-in default (fable). `codexModel` names a registry family (`model-id --table` shows the current ids); a new model's release is one edit to the registry (`~/.agent-config-studio/models.json`), and nothing in the skill hardcodes it.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 119,
+          "text": "- **The advisor never edits.** Read-only sandbox for codex; no Edit/Write for the fable agent.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 120,
+          "text": "- **Prove the model.** Every fable call verifies the envelope's `modelUsage` contains the resolved id (`jq -e --arg m \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" '.modelUsage | has($m)'`). A silent downgrade is a failed call, not an answer — report it, don't relabel it.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 121,
+          "text": "- **Fable is deliberate, never default.** It costs extra usage; auto-selecting it silently is a bug in the seat's judgment.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/advisor/advisor-config.example.json",
+      "sha256": "ba8c393c1feba6a6940d6603a32ad5a5795bf448fd7a5447e9b5bd9e896b3af3",
+      "sites": [
+        {
+          "line": 2,
+          "text": "  \"method\": \"fable\",",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 3,
+          "text": "  \"codexModel\": \"astra\",",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 4,
+          "text": "  \"codexEffort\": \"high\"",
+          "spans": [],
+          "efforts": [
+            "high"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/advisor/advisor-contract.md",
+      "sha256": "3c2aca3567c9bbb707221997891cb9af6743b711174da420003bf81088b4ac97",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/agent-self-scheduling/SKILL.md",
+      "sha256": "07f094bb99bced1ed68bc9acc02eff010107a034335c39a19aab58203dde448c",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/agent-team/SKILL.md",
+      "sha256": "57be81c2db548cab83a90258c838f22e349d662ea7f2bb136fe80bbb71e473bd",
+      "sites": [
+        {
+          "line": 107,
+          "text": "  model: \"sonnet\",",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/anti-sleep/SKILL.md",
+      "sha256": "39d6dbdc5817936cef471d28905a64ccfdac45c8ef486f35e4ddfc4372cf2db9",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/atlas-context/SKILL.md",
+      "sha256": "ba62eee6a75a814538438e840f2767c70f8053142c160acef919448f10293393",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/brain-to-docs/SKILL.md",
+      "sha256": "52a332d2c406e3c59bb0f1c5bdb9c49af0491742fa2f454b4110c2e9e5bbf343",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/build/SKILL.md",
+      "sha256": "5cf1f1555d988f08f1307d468a2f1224f35383d4b94ca1f25fc58afce558eebf",
+      "sites": [
+        {
+          "line": 3,
+          "text": "description: Build something through the Frame -> Bar -> Judge loop. Runs four phases (Understand, Shape, Build, Judge) — the session model orchestrates and advises, implementer subagents type per the model-lanes doctrine (guided phases, callbacks on demand), Astra high independently attacks the plan (Bounce) and grades the result (Grade), and the human judges. Pick the implementer with \"/build astra|sol|grok|opus|sonnet\" (or plain English); unspecified means the orchestrator routes by the lanes doctrine. Use for any real build where you want it done right and self-correcting. Scales down: a lightweight mode handles small single-outcome work (one implementer call, no plan/Bounce/Grade scaffold) so small-but-real tasks route here too — only true two-minute edits stay out.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "grok",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 41,
+          "text": "**The session model orchestrates and guides. A cheaper implementer types. A different brain verifies. The human judges.** (Doctrine v3, 2026-07-08.) Roles follow the seat: whatever model is running this session (Fable when Cris set it, Opus otherwise) is the orchestrator, and it does NOT type the bulk of the code. Pick the implementer lane per the **model-lanes doctrine** in `~/.claude/CLAUDE.md` (Astra medium default, Sol medium legacy backup, Opus for taste-heavy work, Sonnet only as an Opus orchestrator's subagent). Whoever implements never grades their own work.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "medium"
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": "medium"
+            },
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 45,
+          "text": "| Understand (explore) | orchestrator + Explore subagents (sonnet) | conclusions only come back; bulk file dumps stay out of the orchestrator's context |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 47,
+          "text": "| Shape: **Bounce** (attack the plan) | Astra high | `codex exec` (read-only) |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 48,
+          "text": "| Build (guided steps) | implementer — **Astra medium default, Sol medium legacy backup** (via codex CLI), Opus for taste-heavy work (frontend, design, copy); user's spoken lane wins (below) | the guided-step loop below |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "medium"
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": "medium"
+            },
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 49,
+          "text": "| **Grade** (verify build vs bar) | Astra high (flips to a Claude grader — fable — when a GPT lane implemented; see below) | `codex exec` (read-only) |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 52,
+          "text": "### Choosing the implementer — `/build astra | sol | grok | opus | sonnet`",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "grok",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 54,
+          "text": "Name the lane and it wins for this run: `/build astra`, `/build sol`, or plain English (\"build this with opus\"). **A named lane is binding for the entire run — every phase, start to finish.** The orchestrator does not re-route mid-build, does not \"upgrade\" a phase it finds hard, and does not silently fall back. No lane named → the orchestrator routes by the model lanes in `~/.claude/CLAUDE.md` and says which lane it picked and why in one line.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 56,
+          "text": "**Unnamed routing** (lanes update, Cris, 2026-09-04): default → **astra** (Astra medium); sustained \"keep going until it's done\" grinds → **sol** (the legacy workhorse; watch for overbuilding); frontend, UI, design, copy → **opus**; mechanical single-file work → **sonnet**; **grok** only when Cris names it (benched until there's data). Record which lane won or lost — the ranking earns itself.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "medium"
+            },
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "grok",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 61,
+          "text": "- **Grader swap (grader is never the author, at the model-family level):** claude-lane implementers (sonnet/opus) → Astra high grades, the default. **GPT implementer (astra/sol) → the Grade flips to a Claude brain** (Fable via headless CLI — `claude -p --model \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" --effort high`, never an Agent-tool spawn, which silently downgrades to sonnet; verify with `jq -e --arg m \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" '.modelUsage | has($m)'`) so no family grades its own work. **Grok implementer → Astra high grades** (a third family; either non-grok judgment model is valid).",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Grok",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "grok",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 62,
+          "text": "- Fable is not an implementer lane — the Judgment lane types specs and verdicts, not code (and it burns extra usage). An explicit user demand still wins, as always, but the skill never routes there on its own.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 83,
+          "text": "This keeps the expensive model's tokens on judgment (briefs, callback answers, checkpoint reviews — all small) and the volume tokens on the cheap implementer. **Standing escalation — but fix the brief before the builder:** if the implementer misses the bar twice on the same step, first re-read the phase brief; if the spec under-determined the choice, sharpen the brief and re-issue at the same lane (a better brief is cheaper than a bigger model). If the brief was adequate, redo the step on the other default builder (astra ↔ sol); if both miss the same criterion, that is the mis-scope signal — stop and surface it to the driver rather than climbing further. Judge the output, not the price tag. **Without asking when the orchestrator picked the lane; ask first when the user named it** (`/build codex` and friends) — a named lane is the user's decision, so surface the stuck criterion and let them choose to escalate or hold.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 93,
+          "text": "codex exec --skip-git-repo-check --sandbox read-only -m \"$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)\" -c model_reasoning_effort=high \\",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 99,
+          "text": "codex exec --skip-git-repo-check --sandbox workspace-write -m \"$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)\" -c model_reasoning_effort=medium \\",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "medium"
+          ]
+        },
+        {
+          "line": 114,
+          "text": "codex exec resume <thread_id> --skip-git-repo-check -m \"$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)\" -c model_reasoning_effort=medium \\",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "medium"
+          ]
+        },
+        {
+          "line": 118,
+          "text": "`resume` does NOT accept `-s/--sandbox` — it inherits the sandbox policy from the session it resumes, which is why phase 1 must be the one that sets `workspace-write`. It does accept `-m`, `-c`, `-o`, `--json`, `--skip-git-repo-check`. Prefer an explicit `thread_id` over `--last`: the Bounce and Grade gates run in the same cwd, so `--last` can silently resume the wrong session. On the sol lane, swap `-m \"$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)\"` into the build calls (same efforts); the gates stay on the judgment tier regardless of lane.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "sol",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 122,
+          "text": "codex exec --skip-git-repo-check --sandbox read-only -m \"$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)\" -c model_reasoning_effort=high \\",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 142,
+          "text": "2. **Shape** (orchestrator drafts, Astra attacks). Draft `plan.md`: the outcome, the steps, and a checklist of acceptance criteria where **each criterion is checkable by a command, test, or observable behavior**, plus how each will be verified. Then run the **Bounce** (codex command above), fold its real gaps into the plan, and show the driver the criteria to sharpen and approve (Bar).",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 143,
+          "text": "3. **Build** (implementer lane — Astra medium default, Sol/Opus per the doctrine or the user's `/build <lane>` choice). Implement against `plan.md`. After each step, run the deterministic checks (`verify.sh` / tests), read pass/fail, fix, repeat. Log decisions to `log.md`. When the deterministic checks pass, run the **Grade** (codex command above) for the independent verdict. If Grade returns any FAIL, fix and re-grade. Loop until Grade is clean or the cap is hit. **QA option:** when acceptance criteria include browser-observable behavior a script can't assert, `/qa-tester` (per `~/.claude/skills/qa-tester/SKILL.md`) is available between Grade and Judge — hand it the target URL, the browser-checkable criteria verbatim, and setup steps. Not mandatory: run it when manual verification would cost the driver real time; skip it when Grade plus the deterministic checks already cover the bar — and state which in the Judge handoff, so a skipped QA run is a visible choice, never a silent one.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "medium"
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/cmux/SKILL.md",
+      "sha256": "b0bffdc252209878386ae21849587456a4ff143368af1fde01061006135e4404",
+      "sites": [
+        {
+          "line": 54,
+          "text": "Agent lifecycle is published to `~/.cmuxterm/events.jsonl`. **Read state from the event bus, not from the screen.** Both lanes emit regardless of vendor — Codex CLI (Sol) and Claude Code both appear as `source`; Claude Code hooks are injected automatically by the cmux Claude wrapper, other agents via `cmux hooks setup`.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 218,
+          "text": "cmux hooks setup codex|grok|antigravity|opencode             # specific agent",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "grok",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 222,
+          "text": "Native session-resume supported for: Claude Code, Codex, Grok, OpenCode, Pi, Amp, Cursor CLI, Gemini, Antigravity, Rovo Dev, Hermes, Copilot, CodeBuddy, Factory, Qoder.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Grok",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/code-review/SKILL.md",
+      "sha256": "5a92e8820920b6e120f04f2256dbbfd1f8f878dcf51d909c8007faf6fe5e8c85",
+      "sites": [
+        {
+          "line": 3,
+          "text": "description: Single-pass code review of the current branch's diff. Reviewer tiers picked by how you invoke it — Astra high default (efficient), \"fable\" for the premium Fable judgment pass, \"both\" for a dual Astra+Fable review, \"sol\" for the legacy Sol pass, \"claude\" for the opus+sonnet+sonnet team. It reports findings; you confirm which to fix and the agent applies them in-context. No auto-fix, no loop — one review pass, you stay in control.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 9,
+          "text": "Review the committed diff for **code correctness** — bugs, regressions, edge cases, error handling, data integrity — judged against what the branch was supposed to do. **One review pass** with Astra high (the default reviewer), then the findings come back to *me* and **you decide what to fix**. I apply the confirmed fixes in-context — fast, no re-spawning a model, no loop.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 28,
+          "text": "- Default reviewer = **Codex Astra high** (the judgment-tier default — canonical lanes in `~/.claude/CLAUDE.md`). `REVIEW_REVIEWER=claude` uses the **Claude multi-agent** reviewer instead (parallel lenses; also for when Codex isn't installed → `npm i -g @openai/codex`). Codex effort default is **high**; `REVIEW_EFFORT=xhigh` raises it for one run.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            }
+          ],
+          "efforts": [
+            "xhigh"
+          ]
+        },
+        {
+          "line": 54,
+          "text": "| `/code-review` (or `codex`) | Codex Astra high — **one agent** | The efficient default. Everyday PRs. Saying \"codex\" picks it explicitly. |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 55,
+          "text": "| `/code-review sol` | Sol high (`REVIEW_MODEL=\"$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)\"`) — one agent | The legacy reviewer. A second GPT flavor without spending Fable. |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": "high"
+            },
+            {
+              "kind": "model-id",
+              "token": "sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 56,
+          "text": "| `/code-review fable` | **Fable — ONE agent, one comprehensive pass, never a team** (`REVIEW_REVIEWER=claude REVIEW_CLAUDE_MODEL=\"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\"`), **effort high by default** (`REVIEW_FABLE_EFFORT=high` or \"fable on high\" to raise for one run) | The premium judgment pass. Costs extra usage on Max; reserve for changes where being wrong is expensive (payments, order logic, auth, migrations). Single session, same as the Atlas fable lane. |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 57,
+          "text": "| `/code-review both` | Astra high **and** Fable | Maximum confidence: run the astra pass, then the fable pass, and present ONE merged list — findings both models flagged first (near-certain real), then each model's uniques. |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 58,
+          "text": "| `/code-review claude` | Claude multi-agent team (**opus + sonnet + sonnet lenses, all at effort xhigh**) — the ONLY multi-agent tier | Small/routine diffs, or a cheap second flavor. |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 60,
+          "text": "**Plain English works too** — \"code review this with fable\", \"review it with both\" — the phrase picks the tier for that run via the env overrides. These one-run choices never change the durable default (env var → config file → built-in default precedence).",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 64,
+          "text": "- Everything else → **astra** (the default).",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 65,
+          "text": "- Risk paths (payments, money math, auth, migrations, order-correctness, security) or >400 changed lines → **fable**; the very highest stakes → **both**.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 68,
+          "text": "For `both`: run the script twice (once with the codex env, once with the fable env — each writes its own `reviews/<ts>/` report), then merge the two findings lists in-context before Step 2. Do not double-fix: one merged list, one confirmation round.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 70,
+          "text": "**Codex reasoning default is high** (Cris, 2026-07-10). Raise it for one run by saying so (\"review on xhigh\") or `REVIEW_EFFORT=xhigh`; the durable default stays high.",
+          "spans": [],
+          "efforts": [
+            "xhigh"
+          ]
+        },
+        {
+          "line": 81,
+          "text": "- **Astra high (default):** `{ \"reviewer\": \"codex\", \"model\": \"astra\", \"effort\": \"high\" }`",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 82,
+          "text": "- **Sol high (legacy):** `{ \"reviewer\": \"codex\", \"model\": \"sol\", \"effort\": \"high\" }`",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 84,
+          "text": "- **Claude team (opus + sonnet + sonnet):** `{ \"reviewer\": \"claude\" }` — the default claudeModel (sonnet) runs the mixed team; an explicit different claudeModel (e.g. `fable`) runs **one comprehensive agent** on that model instead — premium tiers are always a single session, never a team.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/code-review/review-config.example.json",
+      "sha256": "00a7d3e40bdf7120b51ba9bf13cb76fec437a5abca2de079598d40bab7c2222a",
+      "sites": [
+        {
+          "line": 7,
+          "text": "    \"astra-high (default)\": { \"reviewer\": \"codex\", \"model\": \"astra\", \"effort\": \"high\" },",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 8,
+          "text": "    \"sol-high (legacy)\": { \"reviewer\": \"codex\", \"model\": \"sol\", \"effort\": \"high\" },",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 9,
+          "text": "    \"a-newer-model-later\": { \"reviewer\": \"codex\", \"model\": \"<family, after its registry edit>\", \"effort\": \"high\" },",
+          "spans": [],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 10,
+          "text": "    \"fable-judgment (premium, extra usage)\": { \"reviewer\": \"claude\", \"claudeModel\": \"fable\" },",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 11,
+          "text": "    \"claude-multi-agent\": { \"reviewer\": \"claude\", \"claudeModel\": \"sonnet\" }",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 14,
+          "text": "  \"model\": \"astra\",",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 15,
+          "text": "  \"effort\": \"high\",",
+          "spans": [],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 16,
+          "text": "  \"claudeModel\": \"sonnet\",",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/code-review/review.mjs",
+      "sha256": "c2d9a7f4463d68b76f1ed3444d45b0690b734e997c44479fd198f261819c5feb",
+      "sites": [
+        {
+          "line": 5,
+          "text": " * Astra high (default) or Claude reviews the committed diff vs a base and emits",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 17,
+          "text": " *   REVIEW_EFFORT=xhigh node scripts/review.mjs               # raise codex reasoning for one run",
+          "spans": [],
+          "efforts": [
+            "xhigh"
+          ]
+        },
+        {
+          "line": 18,
+          "text": " *   REVIEW_MODEL=sol REVIEW_BASE=origin/main node scripts/review.mjs",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 63,
+          "text": "const MODEL = modelId(cfg('REVIEW_MODEL', 'model', 'astra'))",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 64,
+          "text": "const EFFORT = cfg('REVIEW_EFFORT', 'effort', 'high')",
+          "spans": [],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 65,
+          "text": "const CLAUDE_MODEL = cfg('REVIEW_CLAUDE_MODEL', 'claudeModel', 'sonnet')",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 66,
+          "text": "// Effort doctrine: codex = astra at HIGH (raise per run when asked);",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": "high"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 67,
+          "text": "// fable = HIGH (he raises explicitly); opus/sonnet team lenses = XHIGH always.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 68,
+          "text": "const FABLE_EFFORT = cfg('REVIEW_FABLE_EFFORT', 'fableEffort', 'high')",
+          "spans": [],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 69,
+          "text": "const TEAM_EFFORT = cfg('REVIEW_TEAM_EFFORT', 'teamEffort', 'xhigh')",
+          "spans": [],
+          "efforts": [
+            "xhigh"
+          ]
+        },
+        {
+          "line": 276,
+          "text": "// The Claude tier is a mixed team (Cris, 2026-07-08): one opus lead lens + two sonnet lenses.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 277,
+          "text": "// An explicitly non-default claudeModel (e.g. the fable tier) overrides the mix for ALL lenses.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 281,
+          "text": "    model: modelId('opus'),",
+          "spans": [
+            {
+              "kind": "modelId",
+              "token": "opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 286,
+          "text": "    model: 'sonnet',",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 291,
+          "text": "    model: 'sonnet',",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 326,
+          "text": "  // An explicit non-default claudeModel (the fable tier) runs as ONE agent, one",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 328,
+          "text": "  // the Atlas fable lane, which is also a single session).",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 330,
+          "text": "    CLAUDE_MODEL !== 'sonnet'",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 342,
+          "text": "      const lensModel = lens.model || 'sonnet'",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 349,
+          "text": "        String(lensModel).includes('fable') ? FABLE_EFFORT : TEAM_EFFORT,",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 415,
+          "text": "      ? CLAUDE_MODEL !== 'sonnet'",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 417,
+          "text": "        : 'claude-team(opus+sonnet+sonnet)'",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/create-skill/SKILL.md",
+      "sha256": "604ab863e5c1b725f86eed600b51a4f95ab1ce59b9c2fc993e71417e774990de",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/database-access/SKILL.md",
+      "sha256": "f1976e20cb32599e935768d7afe556ac0fab037dcaa80302b5dc0847d9458590",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/deep-review/SKILL.md",
+      "sha256": "6e5fef467bbaceac8cba7ef14123de6670c0be37a887186916cf8014faf0b964",
+      "sites": [
+        {
+          "line": 26,
+          "text": "The deterministic engine lives in `scripts/review-loop.mjs` (Codex Astra xhigh reviewer, default) and `scripts/review-loop-claude.mjs` (Claude multi-agent reviewer, fallback). The control flow — the round loop, the cap, the high/medium severity gate, \"commit then re-review\", the report, the exit codes — is in code (`scripts/lib/reviewLoopCore.mjs`); the model is invoked only at the fuzzy leaves (review, verify-findings, fix). Each round, a **cross-family verifier** re-derives every finding against the actual code and drops what it can refute BEFORE the fixer runs — only confirmed findings get fixed, so the loop never \"fixes\" a speculative finding into defensive bloat. That's the point: the loop is *deterministic*, the LLM only does the parts that need judgment.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "xhigh"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 47,
+          "text": "   - Other knobs: `REVIEW_MAX_ROUNDS` (default 3), `REVIEW_VERIFIER_MODEL` (the cross-family finding-verifier on the Codex runner, default `$(model-id opus || echo MODEL-ID-UNRESOLVED-opus)`). **Cross-model fixing is the DEFAULT** — Astra reviews, Claude fixes, Astra re-grades, so the grader is never the author of the fix. `REVIEW_FIXER=codex` opts back into self-contained fixing; a missing `claude` CLI falls back to it loudly.",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/deep-review/lib/fixers.mjs",
+      "sha256": "971c859a23490f1216c273ce338b59fa276950e053ab19165e789f9644f5b8d0",
+      "sites": [
+        {
+          "line": 7,
+          "text": " * CROSS-MODEL fix: Sol reviews, Claude fixes, Sol re-reviews — so the model",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/deep-review/lib/reviewLoopCore.mjs",
+      "sha256": "0a24a21fc92b8f54c0ffd3959667a7f995983649bf87edf9befcc29f8ad738d5",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/deep-review/review-loop-claude.mjs",
+      "sha256": "c38c7000d520028d86ca0b408f091dfabcd775fa76879dc3df75acfa01a99ff6",
+      "sites": [
+        {
+          "line": 16,
+          "text": " *   REVIEW_CLAUDE_MODEL=sonnet REVIEW_BASE=origin/main node scripts/review-loop-claude.mjs",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 23,
+          "text": "const MODEL = cfg('REVIEW_CLAUDE_MODEL', 'claudeModel', 'sonnet')",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 24,
+          "text": "// Effort doctrine: fable = HIGH (he raises explicitly); opus/sonnet team lenses = XHIGH",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 26,
+          "text": "const FABLE_EFFORT = cfg('REVIEW_FABLE_EFFORT', 'fableEffort', 'high')",
+          "spans": [],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 27,
+          "text": "const TEAM_EFFORT = cfg('REVIEW_TEAM_EFFORT', 'teamEffort', 'xhigh')",
+          "spans": [],
+          "efforts": [
+            "xhigh"
+          ]
+        },
+        {
+          "line": 30,
+          "text": "const CODEX_MODEL = modelId(cfg('REVIEW_MODEL', 'model', 'astra'))",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 31,
+          "text": "const CODEX_EFFORT = cfg('REVIEW_EFFORT', 'effort', 'high')",
+          "spans": [],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 39,
+          "text": "// Mixed team (Cris, 2026-07-08): one opus lead lens + two sonnet lenses. An explicitly",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 40,
+          "text": "// non-default claudeModel (e.g. fable) overrides the mix for ALL lenses.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 44,
+          "text": "    model: modelId('opus'),",
+          "spans": [
+            {
+              "kind": "modelId",
+              "token": "opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 49,
+          "text": "    model: 'sonnet',",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 54,
+          "text": "    model: 'sonnet',",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 76,
+          "text": "  // Explicit non-default model (the fable tier) = ONE comprehensive agent, never a team",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 77,
+          "text": "  // (Cris, 2026-07-09; matches the Atlas fable lane's single session).",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 79,
+          "text": "    MODEL !== 'sonnet'",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 91,
+          "text": "      const lensModel = lens.model || 'sonnet'",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 98,
+          "text": "        String(lensModel).includes('fable') ? FABLE_EFFORT : TEAM_EFFORT,",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 180,
+          "text": "const fix = claudeFixer({ model: MODEL !== 'sonnet' ? modelId(MODEL) : MODEL })",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 183,
+          "text": "  reviewerLabel: MODEL !== 'sonnet' ? `claude-solo-${MODEL}` : 'claude-team-opus+sonnet+sonnet',",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/deep-review/review-loop.mjs",
+      "sha256": "2b3a2b9ce7ae77f6d9b255afbbc9f18874b8a854e4963314ee42d4d6180b9818",
+      "sites": [
+        {
+          "line": 3,
+          "text": " * review-loop.mjs — code review loop with Codex Astra xhigh as the reviewer,",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "xhigh"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 16,
+          "text": " *   REVIEW_MODEL=sol REVIEW_EFFORT=high REVIEW_BASE=origin/main node scripts/review-loop.mjs",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 24,
+          "text": "const MODEL = modelId(cfg('REVIEW_MODEL', 'model', 'astra'))",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 27,
+          "text": "const EFFORT = cfg('REVIEW_EFFORT', 'effort', 'xhigh')",
+          "spans": [],
+          "efforts": [
+            "xhigh"
+          ]
+        },
+        {
+          "line": 28,
+          "text": "const VERIFIER_MODEL = modelId(cfg('REVIEW_VERIFIER_MODEL', 'verifierModel', 'opus'))",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 29,
+          "text": "const CLAUDE_FIX_MODEL = cfg('REVIEW_FIX_CLAUDE_MODEL', 'fixClaudeModel', 'sonnet')",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 103,
+          "text": "      String(VERIFIER_MODEL).includes('fable') ? 'high' : 'xhigh',",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 127,
+          "text": "// Fix leaf is pluggable: CROSS-MODEL by default (Astra reviews, Claude fixes, Astra",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/delegating-to-agents/SKILL.md",
+      "sha256": "4d790ccbea4f6724438f22f371c002129d1abe71fb33e3d7571c829d3f992342",
+      "sites": [
+        {
+          "line": 3,
+          "text": "description: How to delegate work to another AI agent (Grok, Codex, Claude Code, Hermes) — picking the right agent, sending prompts to TUI agents, polling progress. Read BEFORE any `cmux send`/`tmux send-keys` to an agent, or whenever delegating, relaying, spawning, or orchestrating agent-to-agent work.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Grok",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 14,
+          "text": "**Two lanes type; the rest talk.** Astra medium (default) and Sol medium (legacy backup) are the builders. Opus and Sonnet narrate and critique instead of shipping, so a diff is not their deliverable — except frontend, which is Opus's. Grok is benched until there's data. Fable never builds. (Lanes update, Cris, 2026-09-04.)",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "medium"
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": "medium"
+            },
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Grok",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 16,
+          "text": "- **Default build → Codex CLI, Astra medium.** Different strengths (subagents, end-to-end autonomy), still unproven as a builder — record wins and losses so the ranking earns itself. On a ChatGPT Pro plan — effectively unlimited, **don't ration it**; bulk grind spends there instead of the shared Claude Max pool.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "medium"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 18,
+          "text": "  codex exec --skip-git-repo-check -m \"$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)\" -c model_reasoning_effort=medium \\",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "medium"
+          ]
+        },
+        {
+          "line": 21,
+          "text": "- **Sustained \"keep going until it's done\" grinds → Codex CLI, Sol medium (legacy).** The relentless workhorse; watch its diff for overbuilding. Swap `-m \"$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)\"` into the command above. `terra` is the cheaper everyday tier if Cris asks for it.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": "medium"
+            },
+            {
+              "kind": "model-id",
+              "token": "sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "terra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 22,
+          "text": "- **Grok CLI, Grok high — only when Cris names it** (benched until there's data; capable, ranks above Opus as a builder). **`--always-approve` is required**: with only `--permission-mode acceptEdits` the headless turn announces the edit and returns `stopReason: cancelled` having written nothing.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Grok",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Grok",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 24,
+          "text": "  grok -p \"<self-contained brief>\" -m \"$(model-id grok || echo MODEL-ID-UNRESOLVED-grok)\" --effort high --always-approve \\",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "grok",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "grok",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 27,
+          "text": "- **Reviewing, grading, attacking a plan → Codex CLI, Astra high.** The **default** reviewer across the board: `/build`'s Bounce and Grade gates and `/code-review`'s default tier. Always `--sandbox read-only` — the verifier never edits. **Never route a review to Grok** — it is a build lane only.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "Grok",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 28,
+          "text": "- **Frontend / design / copy taste, and anything where a cheap-model miss is expensive → Opus subagent** (Agent tool, `model: opus`). The one build domain Opus keeps, and it is better than Grok there.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Grok",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 29,
+          "text": "- **Mechanical, spec-fully-determined single-file work → Sonnet subagent** (Agent tool, `model: sonnet`). Bottom of the stack; not a lane for anything with a design call in it.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 30,
+          "text": "- **Specs, commitment boundaries, premium review verdicts → Fable**, via headless CLI only (`claude -p --model \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" --effort high`). Never the Agent tool — `model: fable` silently downgrades to sonnet. Cost-gated: deliberate, never default.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 33,
+          "text": "**The grader is never the author, at the model-family level.** Claude implemented → Astra high grades. GPT implemented (Astra/Sol) → a Claude brain (Fable) grades. Grok implemented → either non-grok judgment model grades. Never route both sides of a build to the same vendor.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Grok",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "grok",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/diagnose/SKILL.md",
+      "sha256": "de0038dc6b09eccc197477bf5bbd9c4989b90d98cdd877df58569175acf78161",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/dumb-down/SKILL.md",
+      "sha256": "f4776ae6d0163239be707c350649f2e85a2dde4b49f1cf328b47f8d119addc62",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/effective-agent-skills/SKILL.md",
+      "sha256": "c1c45f68f8ec6d674f22ccd7e2b6254c6768f467be2ade033849243c55a3ec68",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/fable-safe-prompt/SKILL.md",
+      "sha256": "b3607e372a77efdbc0b20a352e326342dfba02ede9bbea2731ec3504d44e668a",
+      "sites": [
+        {
+          "line": 2,
+          "text": "name: fable-safe-prompt",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 3,
+          "text": "description: Rewrite a user's prompt to reduce the chance it trips Claude Fable's server-side safety classifiers (cyber/bio guardrails that force-route to Opus or return stop_reason \"refusal\"). Use when the user hands you a prompt that touches cybersecurity, auth, exploits, malware, pentesting, or other dual-use topics and asks to make it \"Fable-safe\", \"guardrail-safe\", \"won't get flagged/refused/downgraded\", or to rewrite it so Fable won't block it.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 7,
+          "text": "# Fable-Safe Prompt",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 9,
+          "text": "Return the user's prompt back **in full, verbatim**, changing ONLY the specific sentences/phrases most likely to trip Fable's cyber/bio classifiers. Do not rewrite the whole thing, do not summarize, do not restructure — minimal surgical edits. Keep the actual goal and all benign text exactly as written. This lowers false positives — it does **not** guarantee no trigger.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 11,
+          "text": "Fable runs 3 input classifiers: **cyber**, **bio/chem**, **reasoning_extraction**. Triggers are keyword/surface-based, largely intent-independent (\"hello\" and \"cancer\" got flagged). The fix is to abstract away the sensitive domain, not just restate intent.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 56,
+          "text": "4. If the task is genuinely offensive (pentest, exploit repro, malware analysis): say plainly no edit makes it Fable-safe — use an Opus fallback or vetted Mythos, not Fable.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 58,
+          "text": "**Hard truth:** you can't reliably stop Fable guardrails. Robust API setups also treat `stop_reason: \"refusal\"` (HTTP 200, `stop_details.category` = `cyber`/`bio`) as a route to an Opus fallback — mention only if the user controls the integration.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/goal/SKILL.md",
+      "sha256": "d072b072ca1c03f172ae200cac6bdc93a3052c222ef679677bfaa8f19c793e5f",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/grill-me/SKILL.md",
+      "sha256": "e564261fc7cedde198985daad0a3f65b929eb7f998bdeb5c6adfb227f18088fd",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/handoff/SKILL.md",
+      "sha256": "c408c51858a5d43272ef0d94e11914d1e8c1559f030c9176e42cc50faf6bf4db",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/interview-style-doc-building/SKILL.md",
+      "sha256": "448d2fbd1121f9ce209463c647cc14059309c15eacdca4790b939051a813d406",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/investigate/SKILL.md",
+      "sha256": "e340f7fe0d6843fdf3b9129a4584bc798d6707476c2ec105449a36f8b65bdeb0",
+      "sites": [
+        {
+          "line": 3,
+          "text": "description: Run an evidence-based investigation loop to reach a defensible conclusion (root cause, \"is X true?\", \"which option is actually better\", \"did this change cause that?\"). Forces a proof-bar up front, verifies every claim with a real command or query, runs an adversarial disprove pass in a fresh context, and writes the evidence to files. Investigator method is selectable — codex (Astra high, the default) | claude team | fable — via \"/investigate <method>\" or plain English (\"investigate this with fable\"). Use for any question where being right matters and a confident guess would be costly.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 48,
+          "text": "| 2. Explore | orchestrator + Explore subagents (sonnet) | conclusions only come back; bulk file/log dumps stay out of the orchestrator's context |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 50,
+          "text": "| 4. Verify | fan-out subagents (sonnet default, opus for concurrency/subtle checks) | one subagent per hypothesis, in parallel, each carrying the 5-part contract; returns CONFIRMED, KILLED, or UNVERIFIED plus the pasted evidence, never a raw log dump |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 58,
+          "text": "The investigation engine is selectable, same pattern as the `/code-review` tiers. Say it in the invocation (\"investigate this with fable\") or pass it explicitly: `/investigate codex|claude|fable`.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 63,
+          "text": "| `claude` | Agent team, same mix as the review team: one **opus** lead (sharpens hypotheses, pressure-tests the synthesis) + two **sonnet** verifiers fanning out per the Model architecture table. | codex (Astra high) |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 64,
+          "text": "| `fable` | Premium judgment: Fable runs Scope, Hypotheses, and Conclude (the seat itself when the seat is Fable, else the **headless CLI** at effort high: `claude -p --model \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" --effort high --output-format json` with the step's brief — NEVER an Agent-tool `model: fable` spawn, which silently downgrades to sonnet; verify the envelope with `jq -e --arg m \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" '.modelUsage | has($m)'`. Costs extra usage, so deliberate use only). Verify volume stays on the sonnet fan-out. | codex (Astra high) |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 69,
+          "text": "{ \"method\": \"codex\", \"codexModel\": \"astra\", \"codexEffort\": \"high\" }",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 72,
+          "text": "Resolution: spoken method → repo config → global config. **First-time user (no config anywhere): do not silently pick.** Ask with AskUserQuestion — codex (recommended: Astra high, the cross-vendor judgment default), claude team (opus + sonnet + sonnet, stays on the Claude plan), fable (premium judgment, extra usage) — then offer to save the choice by writing the global config file.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/jev/SKILL.md",
+      "sha256": "a51fd5f9d66a4a9a640402ad0f59d7ea6098727e018b0cb0dc0774eec7e7c3ff",
+      "sites": [
+        {
+          "line": 81,
+          "text": "**Delegated-work done-check** — when a builder (subagent or Atlas PR) reports done, before relaying \"done\" to Cris: state = `{outcome, acceptance_criteria, git diff}` (diff only, never full files). Questions: `spec_match` (score 0–4), `test_gap` (score 0–4), `out_of_scope_changes` (noul — the Sol-overbuild detector). Low `spec_match` or `out_of_scope_changes` ≥ 0.85 → bounce to the builder with the typed reason instead of spending a review cycle. Cross-family review still runs on everything that passes; this only decides whether the diff is ready for it.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/skills/jev/scripts/jev.py",
+      "sha256": "6aea5410f84f06a7747295a8c15e48ab6308e4f65c23bd71c63a9ab690218b5f",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/lean-comments/SKILL.md",
+      "sha256": "b99f39a9f2d0e373e73780942db4c4588c81409831ddc9a74720f4443d1484f5",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/markdown-rendering/SKILL.md",
+      "sha256": "03bf7f97ae2ec89d2c573c153e650dd6a06e1c5fa21d759e64705e3518a06c1c",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/project-init/SKILL.md",
+      "sha256": "8bed240068953e950d84d5f12c2c22f2006f37106019a4dffba6b39b36da610e",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/qa-tester/SKILL.md",
+      "sha256": "b18b486cb4deb2d068fae3c1eef683bb0d6b0989f2540efd4603c437a1a8d724",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/teach/GLOSSARY-FORMAT.md",
+      "sha256": "d177def491519d97873291f2e860d8f1d60ead78feecb82eee022177958069c6",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/teach/LEARNING-RECORD-FORMAT.md",
+      "sha256": "855f81017625256584bbf62bd5edb9b0c86605c4cc1139c56acc36b802595d17",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/teach/MISSION-FORMAT.md",
+      "sha256": "8da6d3ac84eb2eb19f17c260b6acf01c560d3ac7a4501c415eea0e985602f4d7",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/teach/RESOURCES-FORMAT.md",
+      "sha256": "2bc634a64b0d0daa10904f9222e7aa0d361420dfacabbf092fbe3a72222edc08",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/teach/SKILL.md",
+      "sha256": "7a210e5caf9ec1d367dad8695e4c1069edc1f05598cc4cbb2363b77d30b0e2ce",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/skills/techdebt/SKILL.md",
+      "sha256": "a61b45fa48475711d9abb490326bf06a59e76c58eeef179aaa4c52e98247af73",
+      "sites": []
+    },
+    {
+      "file": "~/.codex/skills/advisor/SKILL.md",
+      "sha256": "765dacee06f50acc2be26868c1e70a067462de24cc6179bd3eeba403b5865e36",
+      "sites": [
+        {
+          "line": 3,
+          "text": "description: Rent a stronger, cross-family brain for scope and direction before committing — a second brain for the codex seat, not a code reviewer. Use at scope-shaping moments (what to build, how far, which architecture, what to cut) or when Cris asks for \"fable's take\" / \"an advisor read\". Default method is fable (Fable, the wise owl, headless claude CLI) because the seat is already GPT — same-family advice is the seat advising itself. Returns a scope verdict, advisory deltas, and ONLY the questions a human must decide.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 20,
+          "text": "(\"what would fable say about this scope?\", \"get an advisor read\"); a `build` phase or `goal` contract feels mushy",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 27,
+          "text": "## Method selection — fable is the default from this seat",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 29,
+          "text": "Resolution order: **spoken choice → `~/.claude/advisor-config.json` → fable**.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 31,
+          "text": "Temperament rule (Cris, 2026-07-10): **advice is owl work.** Sol is the workhorse — supreme at executing —",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 32,
+          "text": "and Fable is the wise owl, the smartest judgment seat. From a codex seat the cross-family rule and the temperament",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 33,
+          "text": "rule point the same way, so **fable is the default here**, not the exception. Its extra usage is accepted for advice",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 38,
+          "text": "| `fable` | Fable | `claude -p`, `--effort high` (raise only on explicit ask) | **Default.** Scope verdicts, direction, what-to-cut judgment. |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 39,
+          "text": "| `opus` | Opus | `claude -p --model \"$(model-id opus || echo MODEL-ID-UNRESOLVED-opus)\"` | Cross-family advice when the call is real but doesn't warrant Fable's usage — or when Fable plan access is unavailable. |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 40,
+          "text": "| `codex` | Sol at **xhigh**, fresh session, no seat context | `codex exec --sandbox read-only` | **Degraded only.** The Claude pool is exhausted. Flag it to Cris — same-family advice is the seat advising itself. |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": "xhigh"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 41,
+          "text": "| `both` | Fable + Astra high, blind, in parallel | fable via `claude -p` + a fresh `codex exec -m \"$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)\" -c model_reasoning_effort=high` (no seat context) | When Cris says \"both\". Resolve factual disagreements against the repo yourself; present judgment disagreements to Cris steelmanned, both sides — never pick the winner. Flag that astra is same-vendor as this seat. |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 67,
+          "text": "**fable** (default) — headless claude CLI. Both flags below are load-bearing; verified 2026-08-04 on",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 71,
+          "text": "claude -p \"$PROMPT\" --model \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" --effort high \\",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 76,
+          "text": "jq -e --arg m \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" '.modelUsage | has($m)' /tmp/advisor-out.json   # MUST print true (exit 0)",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 92,
+          "text": "**Prove the model.** If that `jq -e` check for `$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)` fails, the call ran on the wrong model — abort, tell",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 93,
+          "text": "Cris, and never present another model's output as fable. For `opus`, swap `--model \"$(model-id opus || echo MODEL-ID-UNRESOLVED-opus)\"` (drop `--effort`)",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 94,
+          "text": "and check `jq -e --arg m \"$(model-id opus || echo MODEL-ID-UNRESOLVED-opus)\" '.modelUsage | has($m)'` instead.",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 119,
+          "text": "codex exec --skip-git-repo-check --sandbox read-only -m \"$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)\" \\",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "sol",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 120,
+          "text": "  -c model_reasoning_effort=xhigh \"$PROMPT\" </dev/null 2>/dev/null",
+          "spans": [],
+          "efforts": [
+            "xhigh"
+          ]
+        },
+        {
+          "line": 165,
+          "text": "{ \"method\": \"fable\", \"codexModel\": \"sol\", \"codexEffort\": \"xhigh\" }",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "xhigh"
+          ]
+        },
+        {
+          "line": 167,
+          "text": "Precedence: spoken choice for one run → this file → fable. A spoken one-run choice never rewrites the saved default.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 175,
+          "text": "- **Prove the model, prove the run.** Every fable call verifies `is_error` is false AND `modelUsage` contains",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 176,
+          "text": "  the resolved id (`jq -e --arg m \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" '.modelUsage | has($m)'`). A silent downgrade or an ENOTFOUND is a failed call, not an answer — report it, don't relabel it.",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.codex/skills/advisor/advisor-contract.md",
+      "sha256": "3c2aca3567c9bbb707221997891cb9af6743b711174da420003bf81088b4ac97",
+      "sites": []
+    },
+    {
+      "file": "~/.codex/skills/build/SKILL.md",
+      "sha256": "40e3a20a57be723598b2e0671a10725c49e23278fe5a09e9e632fd163d51ebd0",
+      "sites": [
+        {
+          "line": 21,
+          "text": "| Build | codex (workhorse default) or delegate taste work to Claude/Opus | the phase loop below |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 25,
+          "text": "**Cross-family rule:** codex is the seat and usually the implementer, so the Bounce and the Grade go to a Claude brain — no family grades its own work. `/build`-style lane overrides still apply: taste-heavy work (frontend, copy) can be delegated to Opus, in which case codex grades instead. (The seat model resolves from `~/.codex/config.toml` — Astra high; build phases run Astra medium, with Sol medium as the legacy builder swap.)",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "medium"
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": "medium"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 39,
+          "text": "  --model \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" --effort high --output-format json --dangerously-skip-permissions --tools Read,Grep,Glob",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 45,
+          "text": "  --model \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" --effort high --output-format json --dangerously-skip-permissions --tools Read,Grep,Glob",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 47,
+          "text": "Parse `.result` from the JSON envelope and verify the model with `jq -e --arg m \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" '.modelUsage | has($m)'`. When Fable usage runs low, drop to the cheap fallback: swap in `--model \"$(model-id opus || echo MODEL-ID-UNRESOLVED-opus)\"` (drop `--effort`) and check `jq -e --arg m \"$(model-id opus || echo MODEL-ID-UNRESOLVED-opus)\" '.modelUsage | has($m)'` instead.",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 57,
+          "text": "  `codex exec --skip-git-repo-check --sandbox read-only -m \"$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)\" -c model_reasoning_effort=xhigh \"<same prompt>\" </dev/null`",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "sol",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "xhigh"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "~/.codex/skills/code-review/SKILL.md",
+      "sha256": "70c07f06782afa8cf80fa47c19230e82d690fc5a728823ffdc840b947016a220",
+      "sites": [
+        {
+          "line": 23,
+          "text": "- If **codex** (this seat) built the branch → review with Fable: `REVIEW_REVIEWER=claude REVIEW_CLAUDE_MODEL=\"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" node \"$SCRIPT\" \"...\"` (bare `REVIEW_REVIEWER=claude` runs the cheap sonnet team — fine for small mechanical diffs, not the default for GPT-built work).",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 24,
+          "text": "- If **Claude** built it → the default codex reviewer (Astra high) is correct.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 27,
+          "text": "Per-run knobs (env → config file → built-in): `REVIEW_EFFORT=xhigh` (raise reasoning), `REVIEW_BASE=origin/master` (non-standard default branch). Check active config: `node \"$SCRIPT\" --show-config`.",
+          "spans": [],
+          "efforts": [
+            "xhigh"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "~/.codex/skills/deep-review/SKILL.md",
+      "sha256": "6e5fef467bbaceac8cba7ef14123de6670c0be37a887186916cf8014faf0b964",
+      "sites": [
+        {
+          "line": 26,
+          "text": "The deterministic engine lives in `scripts/review-loop.mjs` (Codex Astra xhigh reviewer, default) and `scripts/review-loop-claude.mjs` (Claude multi-agent reviewer, fallback). The control flow — the round loop, the cap, the high/medium severity gate, \"commit then re-review\", the report, the exit codes — is in code (`scripts/lib/reviewLoopCore.mjs`); the model is invoked only at the fuzzy leaves (review, verify-findings, fix). Each round, a **cross-family verifier** re-derives every finding against the actual code and drops what it can refute BEFORE the fixer runs — only confirmed findings get fixed, so the loop never \"fixes\" a speculative finding into defensive bloat. That's the point: the loop is *deterministic*, the LLM only does the parts that need judgment.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "xhigh"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 47,
+          "text": "   - Other knobs: `REVIEW_MAX_ROUNDS` (default 3), `REVIEW_VERIFIER_MODEL` (the cross-family finding-verifier on the Codex runner, default `$(model-id opus || echo MODEL-ID-UNRESOLVED-opus)`). **Cross-model fixing is the DEFAULT** — Astra reviews, Claude fixes, Astra re-grades, so the grader is never the author of the fix. `REVIEW_FIXER=codex` opts back into self-contained fixing; a missing `claude` CLI falls back to it loudly.",
+          "spans": [
+            {
+              "kind": "model-id",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.codex/skills/diagnose/SKILL.md",
+      "sha256": "de0038dc6b09eccc197477bf5bbd9c4989b90d98cdd877df58569175acf78161",
+      "sites": []
+    },
+    {
+      "file": "~/.codex/skills/dumb-down/SKILL.md",
+      "sha256": "f4776ae6d0163239be707c350649f2e85a2dde4b49f1cf328b47f8d119addc62",
+      "sites": []
+    },
+    {
+      "file": "~/.codex/skills/effective-agent-skills/SKILL.md",
+      "sha256": "c7385b053f6c165738b262bb44eae6c73bb4c572f4e38132d113c19c01003d0d",
+      "sites": []
+    },
+    {
+      "file": "~/.codex/skills/grill-me/SKILL.md",
+      "sha256": "e564261fc7cedde198985daad0a3f65b929eb7f998bdeb5c6adfb227f18088fd",
+      "sites": []
+    },
+    {
+      "file": "~/.codex/skills/handoff/SKILL.md",
+      "sha256": "2ec28c34d05ad4fd1ca531ab636e2091af09c3ec85cc7cb0cf76a52a41894146",
+      "sites": []
+    },
+    {
+      "file": "~/.codex/skills/investigate/SKILL.md",
+      "sha256": "e340f7fe0d6843fdf3b9129a4584bc798d6707476c2ec105449a36f8b65bdeb0",
+      "sites": [
+        {
+          "line": 3,
+          "text": "description: Run an evidence-based investigation loop to reach a defensible conclusion (root cause, \"is X true?\", \"which option is actually better\", \"did this change cause that?\"). Forces a proof-bar up front, verifies every claim with a real command or query, runs an adversarial disprove pass in a fresh context, and writes the evidence to files. Investigator method is selectable — codex (Astra high, the default) | claude team | fable — via \"/investigate <method>\" or plain English (\"investigate this with fable\"). Use for any question where being right matters and a confident guess would be costly.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 48,
+          "text": "| 2. Explore | orchestrator + Explore subagents (sonnet) | conclusions only come back; bulk file/log dumps stay out of the orchestrator's context |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 50,
+          "text": "| 4. Verify | fan-out subagents (sonnet default, opus for concurrency/subtle checks) | one subagent per hypothesis, in parallel, each carrying the 5-part contract; returns CONFIRMED, KILLED, or UNVERIFIED plus the pasted evidence, never a raw log dump |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 58,
+          "text": "The investigation engine is selectable, same pattern as the `/code-review` tiers. Say it in the invocation (\"investigate this with fable\") or pass it explicitly: `/investigate codex|claude|fable`.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 63,
+          "text": "| `claude` | Agent team, same mix as the review team: one **opus** lead (sharpens hypotheses, pressure-tests the synthesis) + two **sonnet** verifiers fanning out per the Model architecture table. | codex (Astra high) |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 64,
+          "text": "| `fable` | Premium judgment: Fable runs Scope, Hypotheses, and Conclude (the seat itself when the seat is Fable, else the **headless CLI** at effort high: `claude -p --model \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" --effort high --output-format json` with the step's brief — NEVER an Agent-tool `model: fable` spawn, which silently downgrades to sonnet; verify the envelope with `jq -e --arg m \"$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)\" '.modelUsage | has($m)'`. Costs extra usage, so deliberate use only). Verify volume stays on the sonnet fan-out. | codex (Astra high) |",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "model-id",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 69,
+          "text": "{ \"method\": \"codex\", \"codexModel\": \"astra\", \"codexEffort\": \"high\" }",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 72,
+          "text": "Resolution: spoken method → repo config → global config. **First-time user (no config anywhere): do not silently pick.** Ask with AskUserQuestion — codex (recommended: Astra high, the cross-vendor judgment default), claude team (opus + sonnet + sonnet, stays on the Claude plan), fable (premium judgment, extra usage) — then offer to save the choice by writing the global config file.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.codex/skills/jev/SKILL.md",
+      "sha256": "a51fd5f9d66a4a9a640402ad0f59d7ea6098727e018b0cb0dc0774eec7e7c3ff",
+      "sites": [
+        {
+          "line": 81,
+          "text": "**Delegated-work done-check** — when a builder (subagent or Atlas PR) reports done, before relaying \"done\" to Cris: state = `{outcome, acceptance_criteria, git diff}` (diff only, never full files). Questions: `spec_match` (score 0–4), `test_gap` (score 0–4), `out_of_scope_changes` (noul — the Sol-overbuild detector). Low `spec_match` or `out_of_scope_changes` ≥ 0.85 → bounce to the builder with the typed reason instead of spending a review cycle. Cross-family review still runs on everything that passes; this only decides whether the diff is ready for it.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.codex/skills/qa-tester/SKILL.md",
+      "sha256": "f128187bce3d8ded392223a23b3226ef2c69b869edb56e01fd0fa1d92d804999",
+      "sites": []
+    },
+    {
+      "file": "~/.codex/skills/research-prompt/SKILL.md",
+      "sha256": "2affcf2e49e206ab8ce2ce059bcc223626b94087670b3eb4c5ac4c181ff0cd3a",
+      "sites": []
+    },
+    {
+      "file": "~/.codex/skills/short/SKILL.md",
+      "sha256": "ba9e62f3fbc07710d7032caff5688025866718fa57f7028e5c0bb841d73a4897",
+      "sites": []
+    },
+    {
+      "file": "~/.claude/CLAUDE.md",
+      "sha256": "8fd0c0ed74da68f5cb1469076be09b585fc14a0cbf911b750e786e5d0f1dc45e",
+      "sites": [
+        {
+          "line": 22,
+          "text": "- **Real build work** — multi-file, unclear blast radius, anything worth reviewing: delegate the typing. `/build` for supervised local work, subagents or GPT-6 Sol medium / Opus 5.5 medium for the implementation pass.",
+          "spans": [
+            {
+              "kind": "versioned",
+              "token": "GPT-6 Sol",
+              "effort": "medium"
+            },
+            {
+              "kind": "versioned",
+              "token": "Opus 5.5",
+              "effort": "medium"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 73,
+          "text": "Atlas is Cris's agent harness on the VPS (`ssh atlas`): Hermes orchestrates, Claude Code builders execute in isolated worktrees, Codex (gpt-5.6-sol high) reviews, an autoloop turns REQUEST_CHANGES into fix tasks (max 3 cycles), and nothing ever merges except Cris. Builders coordinate through the kanban board, never through shared terminals.",
+          "spans": [
+            {
+              "kind": "raw",
+              "token": "gpt-5.6-sol",
+              "effort": "high"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 114,
+          "text": "**Judgment tier (advise and review, never build)** — Fable 5.1 (`claude -p --model claude-fable-5-1 --effort high`) and GPT-6 Astra high (`codex exec -m gpt-6-astra -c model_reasoning_effort=high` — always name `-m` for judgment work: bare `codex exec` resolves to GPT-6 Sol high via `~/.codex/config.toml`, not Astra). Same tier until evidence separates them. These are the only advisors — /advisor, /diagnose, and build gates (Bounce/Grade) — and they also review.",
+          "spans": [
+            {
+              "kind": "versioned",
+              "token": "Fable 5.1",
+              "effort": null
+            },
+            {
+              "kind": "raw",
+              "token": "claude-fable-5-1",
+              "effort": null
+            },
+            {
+              "kind": "versioned",
+              "token": "GPT-6 Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "raw",
+              "token": "gpt-6-astra",
+              "effort": null
+            },
+            {
+              "kind": "versioned",
+              "token": "GPT-6 Sol",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high",
+            "high"
+          ]
+        },
+        {
+          "line": 117,
+          "text": "1. **GPT-6 Sol medium** (`codex exec -m gpt-6-sol -c model_reasoning_effort=medium`) and **Opus 5.5 medium** (`claude-opus-5-5`) — co-default implementers, no ranking between them yet; record wins and losses so the ranking earns itself. Opus 5.5 fixes Opus 5's verbosity and slop — real taste, efficient, Sol-level, close enough to the judgment tier to challenge it (Fable is still smarter). GPT-5.6 Sol is retired.",
+          "spans": [
+            {
+              "kind": "versioned",
+              "token": "GPT-6 Sol",
+              "effort": "medium"
+            },
+            {
+              "kind": "raw",
+              "token": "gpt-6-sol",
+              "effort": null
+            },
+            {
+              "kind": "versioned",
+              "token": "Opus 5.5",
+              "effort": "medium"
+            },
+            {
+              "kind": "raw",
+              "token": "claude-opus-5-5",
+              "effort": null
+            },
+            {
+              "kind": "versioned",
+              "token": "Opus 5.5",
+              "effort": null
+            },
+            {
+              "kind": "versioned",
+              "token": "Opus 5",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "versioned",
+              "token": "GPT-5.6 Sol",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "medium"
+          ]
+        },
+        {
+          "line": 118,
+          "text": "2. **Grok 4.7** — a different flavor (logic-RL), below Opus 5.5 and Sol in intelligence; on the bench until there's data.",
+          "spans": [
+            {
+              "kind": "versioned",
+              "token": "Grok 4.7",
+              "effort": null
+            },
+            {
+              "kind": "versioned",
+              "token": "Opus 5.5",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 119,
+          "text": "- **Sonnet** — not used.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 121,
+          "text": "**Reviewer pool** — Fable 5.1, Astra high, GPT-6 Sol high, Opus 5.5 (via agent teams). Opus 5.5 and GPT-6 Sol review code but never advise — advice stays with Fable and Astra. Sol vs Opus 5.5 as reviewers: unranked; record outcomes.",
+          "spans": [
+            {
+              "kind": "versioned",
+              "token": "Fable 5.1",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "versioned",
+              "token": "GPT-6 Sol",
+              "effort": "high"
+            },
+            {
+              "kind": "versioned",
+              "token": "Opus 5.5",
+              "effort": null
+            },
+            {
+              "kind": "versioned",
+              "token": "Opus 5.5",
+              "effort": null
+            },
+            {
+              "kind": "versioned",
+              "token": "GPT-6 Sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": null
+            },
+            {
+              "kind": "versioned",
+              "token": "Opus 5.5",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 123,
+          "text": "**Skill defaults:** /advisor → Fable 5.1. /code-review → Astra high. /investigate → Astra high. Override by naming a flavor (\"advisory fable\", \"review with astra\"); \"both\" runs dual advisory.",
+          "spans": [
+            {
+              "kind": "versioned",
+              "token": "Fable 5.1",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 125,
+          "text": "**Dual advisory (\"both\"):** Fable and Astra run blind, in parallel — no rebuttal rounds, no negotiated compromise. Their reports go to the builder/orchestrator, which resolves factual disagreements itself against the repo and presents judgment disagreements to Cris steelmanned, both sides — it never picks the winner.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 127,
+          "text": "**Cross-family review (preferred, not a hard rule):** when it's available, pair across families — Sol- or Astra-built work → Fable or Opus 5.5 reviews; Opus-, Fable-, or Claude-built work → Astra or GPT-6 Sol reviews. When the other family is out of quota or it doesn't matter, same-family review is fine — say which grader ran.",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "versioned",
+              "token": "Opus 5.5",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Opus",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            },
+            {
+              "kind": "versioned",
+              "token": "GPT-6 Sol",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/advisor-config.json",
+      "sha256": "68c967a851aa07b9798051235e7bd91b14defa0359ffaa3a42b0088c7a6b308f",
+      "sites": [
+        {
+          "line": 2,
+          "text": "  \"_help\": \"Advisor-skill config. method: fable (Cris's default — the wise-owl judgment seat) | astra (Astra high — cross-vendor judgment) | both (dual blind advisory, Fable + Astra in parallel) | sol (legacy, Sol at XHIGH). Spoken choice overrides per run. codexModel is a registry family, resolved with `model-id` (see `model-id --table`); a new model is one edit to ~/.agent-config-studio/models.json, not here.\",",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": "high"
+            },
+            {
+              "kind": "family",
+              "token": "Fable",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "Sol",
+              "effort": "xhigh"
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 3,
+          "text": "  \"method\": \"fable\",",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 4,
+          "text": "  \"codexModel\": \"astra\",",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 5,
+          "text": "  \"codexEffort\": \"high\"",
+          "spans": [],
+          "efforts": [
+            "high"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/review-config.json",
+      "sha256": "9dc441dd37515ffa6732b65b573147fe581dfc9a043b9527469107e05c831ec2",
+      "sites": [
+        {
+          "line": 4,
+          "text": "    \"astra-high (default)\": { \"reviewer\": \"codex\", \"model\": \"astra\", \"effort\": \"high\" },",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 5,
+          "text": "    \"sol-high (legacy)\": { \"reviewer\": \"codex\", \"model\": \"sol\", \"effort\": \"high\" },",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "sol",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 6,
+          "text": "    \"raise-reasoning\": { \"reviewer\": \"codex\", \"model\": \"astra\", \"effort\": \"xhigh\" },",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "xhigh"
+          ]
+        },
+        {
+          "line": 7,
+          "text": "    \"terra-cheaper\": { \"reviewer\": \"codex\", \"model\": \"terra\", \"effort\": \"high\" },",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "terra",
+              "effort": null
+            },
+            {
+              "kind": "family",
+              "token": "terra",
+              "effort": null
+            }
+          ],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 8,
+          "text": "    \"claude-multi-agent\": { \"reviewer\": \"claude\", \"claudeModel\": \"sonnet\" }",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 11,
+          "text": "  \"model\": \"astra\",",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 12,
+          "text": "  \"effort\": \"high\",",
+          "spans": [],
+          "efforts": [
+            "high"
+          ]
+        },
+        {
+          "line": 13,
+          "text": "  \"claudeModel\": \"sonnet\",",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "sonnet",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/.claude/investigate-config.json",
+      "sha256": "773eb162607c16004dde85acabb8fc634dcf3ab6f96529da2925e4d365ca8322",
+      "sites": [
+        {
+          "line": 2,
+          "text": "  \"_help\": \"Investigate-skill config. method: codex | claude | fable. codexModel is a registry family (or a raw id), resolved with `model-id` — a newer model ships as one edit to ~/.agent-config-studio/models.json (see `model-id --table`), not here; the skill never hardcodes it.\",",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "fable",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 4,
+          "text": "  \"codexModel\": \"astra\",",
+          "spans": [
+            {
+              "kind": "family",
+              "token": "astra",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        },
+        {
+          "line": 5,
+          "text": "  \"codexEffort\": \"high\"",
+          "spans": [],
+          "efforts": [
+            "high"
+          ]
+        }
+      ]
+    }
+  ],
+  "acs": [
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/assist.js",
+      "sha256": "4048df12d71f64b3b19d92f31d2e7477cd56dddf21fbc9976160ae18405807c5",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/chat.js",
+      "sha256": "d6d47eef83002890f8113aa40f80fdec90260a420e7e08c291f3b0d513136bc9",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/harness.js",
+      "sha256": "2ea6a4421b08e547185ade2f29a1fd35e4ea748e0d6138cb4001965a41d32ad3",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/history.js",
+      "sha256": "589109b1093897ecf517ba666336ce500138e40d70b45a31c98ce2f35428da49",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/models.js",
+      "sha256": "b6fb649705ee7c7ba4ac9de86b7029d6d0a0f5a8dd30b8ce8ccee78cb50e55ab",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/mutate.js",
+      "sha256": "40db6fde5b9e6eb6819287dec78c22c94d9bb60e543fa622f8c900d4388f1d19",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/paths.js",
+      "sha256": "b1123a0739d96529f49352531c593322496be8bd8c04b201e213890af0b9c574",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/registry.js",
+      "sha256": "0e7f4c7ee6c33f015a8b21087ab1849b080d9f262b60169828ecee86b7ee68c3",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/usage/accounts.js",
+      "sha256": "d527e22f43a3fe54406f75920abf7840047a55d454543753b46ebf2b79b755dc",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/usage/claude.js",
+      "sha256": "24a3d47bda6fe7cfea25b4c7c9cf538b0d7bc33b8cd4332332525d56ba1badfb",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/usage/codex-limits.js",
+      "sha256": "a15091f523bdd443095ff545a5e93fb4dd49f735e46c58dd498757bbe752bb47",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/usage/codex.js",
+      "sha256": "5107a335c821489042ba655a60990ee8494a736b1b4b54ceb76b70c956c5048b",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/usage/connect.js",
+      "sha256": "454d7e4decef9c0374ccde140023c62a8a8ddbdd179459fcf36403698083b459",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/usage/grok-billing.js",
+      "sha256": "c5eabc94d30c70d0e7a5f085c328ae1dba190b5aac3d023b419342a108560949",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/usage/grok.js",
+      "sha256": "6852888512f5f3a19fd170b5d31fd547f74ef963f3bd3e574c7c7026166aed82",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/usage/identity.js",
+      "sha256": "8984ca89051973827cbee9b323db7639dda94a2768a2c6c80c417c737f192863",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/usage/percent.js",
+      "sha256": "0ce3513e62414fd8dca77b4ac96698e2e52d2848e7ae9596941016037fe7c83d",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/usage/processes.js",
+      "sha256": "a4f5b6f6901899c50a7ea114a059d1eb1b4238f6b42268306e969b1480a7575a",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/usage/refresh.js",
+      "sha256": "e6cebc98cd06e39082c4816cc14eec9cc2d4eb3c7955339ca3d8ec15ad50a4ac",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/usage/seats.js",
+      "sha256": "053f5398457da1950e27e4d3a2e81e77f89c8ec1607d255060a8cc7eaf265cdd",
+      "sites": [
+        {
+          "line": 142,
+          "text": "    found.push({ id: 'grok-1', vendor: 'grok', label: 'Grok', home: grokHome });",
+          "spans": [
+            {
+              "kind": "raw",
+              "token": "grok-1",
+              "effort": null
+            }
+          ],
+          "efforts": []
+        }
+      ]
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/usage/shell.js",
+      "sha256": "df747d0904bc9aad8265e300a30b2576596679a50a97befae230e5a590d556ef",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/validate.js",
+      "sha256": "2cd23114c2b17c8fe8ae1c2c3065c31308771fe92b346453556601d7ec2cc95a",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/watch.js",
+      "sha256": "877d3ccefb114748fee66394f3e2651b7850c8d9348ad3ddc22874e09f9a8874",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/lib/worktree.js",
+      "sha256": "fd6293af5ee011e54d6336a52621704c92c3ceccaccedad1d4a14c334c13d1ea",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/server.js",
+      "sha256": "de9d54af9e2c8eb18ce62e0c85e4981007c51ff20ee317546f9f6db78e8db175",
+      "sites": []
+    },
+    {
+      "file": "~/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-model-registry/public/app.js",
+      "sha256": "a51eb597e70c894400c274de160f3b9113e6d6e167671184fbcd995067882f8e",
+      "sites": []
+    }
+  ],
+  "assist": {
+    "claude": {
+      "defaultModel": "claude-sonnet-5",
+      "models": [
+        {
+          "id": "claude-sonnet-5",
+          "label": "Sonnet 5 · fast",
+          "effort": null
+        },
+        {
+          "id": "claude-opus-5",
+          "label": "Opus 5 · slower",
+          "effort": null
+        },
+        {
+          "id": "claude-haiku-4-5-20251001",
+          "label": "Haiku 4.5",
+          "effort": null
+        },
+        {
+          "id": "claude-fable-5-1",
+          "label": "Fable 5.1 · judgment, ~$0.60/turn",
+          "effort": "high"
+        }
+      ]
+    },
+    "grok": {
+      "defaultModel": "grok-4.6",
+      "models": [
+        {
+          "id": "grok-4.6",
+          "label": "Grok 4.6",
+          "effort": null
+        },
+        {
+          "id": "grok-4.5",
+          "label": "Grok 4.5",
+          "effort": null
+        }
+      ]
+    }
+  }
+}

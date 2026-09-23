@@ -16,13 +16,17 @@ import * as worktree from './lib/worktree.js';
 import * as mutate from './lib/mutate.js';
 import { runAssist, listActions } from './lib/assist.js';
 import { streamTurn, parseEdits, resolveMentions } from './lib/chat.js';
-import { detectHarnesses, HARNESSES } from './lib/harness.js';
+import { detectHarnesses, HARNESSES, modelsFor, registryError } from './lib/harness.js';
 import { createWatcher, snapshotOf, diffSnapshots } from './lib/watch.js';
 import { renderSnapshot, createSeat, removeSeat, moveSeatToPrivateHome } from './lib/usage/seats.js';
 import { refreshSnapshot } from './lib/usage/refresh.js';
 import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
 import { codexProcessesUsingHome, stopProcesses } from './lib/usage/processes.js';
 import { loadSeats } from './lib/usage/seats.js';
+import {
+  createModelsState, setModel, resetModel, dismiss, applySidecar, whereUsed,
+} from './lib/models-panel.js';
+import { loadRegistry } from './lib/models.js';
 import {
   syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
   isInstalled as shortcutsInstalled, shortcutsFromSeats, shortcutsPath, zshenvPath,
@@ -124,12 +128,15 @@ function detectedHarnessPayload(detected) {
     label: h.label,
     models: h.models,
     defaultModel: h.defaultModel,
+    retired: h.retired ?? {},
     streams: h.streams,
   }));
   const defaultHarness = harnesses.some((h) => h.id === 'claude')
     ? 'claude'
     : (harnesses[0]?.id ?? 'claude');
-  return { harnesses, defaultHarness };
+  // Read on every request, like the allowlist itself: a registry fixed on disk
+  // clears the warning without a restart.
+  return { harnesses, defaultHarness, registryError: registryError() };
 }
 
 function normalizeHarnessId(value) {
@@ -169,10 +176,16 @@ async function resolveIncoming(body, { detectFn, sessions, checkSession }) {
     throw Object.assign(new Error(`harness not detected: ${harness}`), { status: 400 });
   }
   const desc = HARNESSES[harness];
+  const { models, defaultModel } = modelsFor(desc);
   let model = body?.model;
   if (model === undefined || model === null || model === '') {
-    model = desc.defaultModel;
-  } else if (typeof model !== 'string' || !Object.hasOwn(desc.models, model)) {
+    // The default comes from a user-editable file, so it is held to the same
+    // allowlist as a model the browser names.
+    model = defaultModel;
+    if (typeof model !== 'string' || !Object.hasOwn(models, model)) {
+      throw Object.assign(new Error(`harness ${harness} has no valid default model`), { status: 500 });
+    }
+  } else if (typeof model !== 'string' || !Object.hasOwn(models, model)) {
     throw Object.assign(new Error(`model ${model} is not valid for harness ${harness}`), { status: 400 });
   }
 
@@ -360,6 +373,26 @@ export function createApp(opts = {}) {
   const streamTurnFn = opts.streamTurn || streamTurn;
   const runAssistFn = opts.runAssist || runAssist;
   const sessions = new Map();
+  const models = createModelsState({
+    detectFn,
+    codexHomes: () => loadSeats().seats.filter((x) => x.vendor === 'codex' && x.home).map((x) => x.home),
+  });
+
+  /** A family the registry knows, or a 400 — never a path or free text. */
+  const knownFamily = (family) => {
+    if (typeof family !== 'string' || !Object.hasOwn(loadRegistry().defaults.models, family)) {
+      throw Object.assign(new Error(`unknown model family "${family}"`), { status: 400 });
+    }
+    return family;
+  };
+
+  /** The live alert a request names, or a 409: accept and dismiss act only on what detection shows now. */
+  const liveAlert = async (family, key) => {
+    const row = (await models.view()).rows.find((r) => r.family === knownFamily(family));
+    const alert = row?.alerts.find((a) => a.key === key);
+    if (!alert) throw Object.assign(new Error('That alert no longer applies. Check again.'), { status: 409 });
+    return { row, alert };
+  };
 
   const ROUTES = {
   /** Identity probe so the launcher never kills an unrelated process on this port. */
@@ -627,6 +660,8 @@ export function createApp(opts = {}) {
     history: await history.repoStats(),
     assistActions: listActions(),
     ...detectedHarnessPayload(await detectFn()),
+    // The Models button's badge, so it shows without a click.
+    modelAlerts: await models.view().then((v) => v.pending, () => 0),
   }),
 
   /**
@@ -650,6 +685,45 @@ export function createApp(opts = {}) {
     const { root, ...stats } = usage.stats;
     return { skills: attachUsage(rows, usage), usage: { available: true, caveat: USAGE_CAVEAT, stats } };
   },
+
+  /**
+   * The Models panel. Catalogs are the CLIs' own on-disk caches, read at
+   * start and on "Check now" — no spawn, no network, no credential — and
+   * only projected fields leave lib/models-catalog.js.
+   */
+  'GET /api/models': async () => models.view(),
+  'POST /api/models/check': async () => { await models.check(); return models.view(); },
+  'GET /api/models/where': async (_req, url) => whereUsed(knownFamily(url.searchParams.get('family'))),
+
+  'POST /api/models/set': async (req) => {
+    const { family, id, confirm } = await readBody(req);
+    const s = await models.current();
+    return setModel({ family, id, confirm: confirm === true, catalogs: s.catalogs, claudeVersion: s.claudeVersion });
+  },
+  'POST /api/models/reset': async (req) => resetModel({ family: (await readBody(req)).family }),
+
+  /** Accepting writes exactly what a manual edit of the same id writes. */
+  'POST /api/models/accept': async (req) => {
+    const { family, key } = await readBody(req);
+    const { row, alert } = await liveAlert(family, key);
+    if (!alert.acceptable || !alert.candidate) {
+      throw Object.assign(new Error(alert.reason || 'This alert has nothing to accept.'), { status: 409 });
+    }
+    const s = await models.current();
+    return setModel({ family: row.family, id: alert.candidate, confirm: true, catalogs: s.catalogs, claudeVersion: s.claudeVersion });
+  },
+  'POST /api/models/dismiss': async (req) => {
+    const { family, key } = await readBody(req);
+    const { row, alert } = await liveAlert(family, key);
+    return { dismissed: await dismiss({ family: row.family, id: row.id, key: alert.key }) };
+  },
+  'POST /api/models/sidecar': async (req) => {
+    const { kind, from, to, mtime } = await readBody(req);
+    return applySidecar({ kind, from, to, mtime });
+  },
+
+  /** The Assist picker alone, without the file registry — what a model-registry edit changes. */
+  'GET /api/harnesses': async () => detectedHarnessPayload(await detectFn()),
 
   'GET /api/file': async (_req, url) => {
     const abs = resolveSafe(url.searchParams.get('path'));
@@ -991,7 +1065,7 @@ export function createApp(opts = {}) {
   }
   });
 
-  return { server, sessions };
+  return { server, sessions, models };
 }
 
 if (launchedDirectly()) {
@@ -1001,7 +1075,9 @@ if (launchedDirectly()) {
   await history.snapshotAll('external changes since last run').catch(() => {});
 
   const watcher = createWatcher(onFilesChanged);
-  const { server } = createApp();
+  const { server, models } = createApp();
+  // Detection runs once at start (and on "Check now"); there is no timer.
+  models.check().catch(() => {});
 
   server.listen(PORT, '127.0.0.1', () => {
     const { groups } = buildRegistry();

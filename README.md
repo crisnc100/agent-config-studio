@@ -6,6 +6,7 @@ config surface on this machine — in one place, rendered properly.
 ```
 acs          # start it and open the browser
 acs stop     # shut it down
+acs install-model-id   # put the model resolver on PATH (see Model registry)
 ```
 
 Then: <http://localhost:8787>
@@ -208,6 +209,37 @@ credentials.
 
 From the terminal, `node bin/usage.mjs` prints the same gauge (`--json` for raw,
 `detect --save` to register what's on this machine).
+
+## Model registry
+
+A model id lives in one file. `models.default.json` ships family → id
+(`fable`, `opus`, `astra`, `sol`, …); `~/.agent-config-studio/models.json`
+overrides it per key. Skills, skill scripts, skill configs and the Assist
+picker all resolve through it, so a new model release is a one-line edit.
+
+```
+model-id opus          # the current id for a family; a raw id passes through
+model-id --table       # every family and its id
+model-id --lint        # raw ids / versioned names that crept back into a skill
+model-id --sidecars    # ids in ~/.claude/settings.json and ~/.codex/config.toml that are no longer current
+```
+
+**`acs install-model-id`** copies the resolver out of this checkout into
+`~/.agent-config-studio/resolver/`, writes a small launcher at
+`~/.agent-config-studio/bin/model-id`, and symlinks `~/.local/bin/model-id` to it.
+It is a copy on purpose: skills keep resolving when a worktree is removed or a
+branch changes. The launcher runs the node that did the install, then `node` on
+PATH, then `/opt/homebrew/bin/node`.
+
+Re-run it:
+- after node moves (a Homebrew switch, a new machine);
+- after merging a change to `models.default.json`, `lib/models.js` or `bin/model-id` —
+  the installed copy does not follow the checkout.
+
+Until it has run, skills fail loudly rather than silently: every skill shell line
+reads `"$(model-id x || echo MODEL-ID-UNRESOLVED-x)"`, and the scripts do the same,
+so a CLI is handed an id it rejects, never an empty `-m ""` that falls through to
+its own default model.
 
 ## Shortcuts
 

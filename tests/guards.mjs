@@ -48,6 +48,22 @@ const WHY = {
     '`--tools` to strip MCP meta-tools (search_tool, use_tool), never as the',
     'write denylist. Do not delete this guard to restore a denylist — it leaked.',
   ].join(' '),
+  f: [
+    'The Models panel reads each CLI\'s catalog from the cache that CLI already',
+    'wrote, so it costs no spawn, no network and no token. A "refresh" that runs',
+    '`claude` / `codex` / `grok` to update the catalog is a model-CLI spawn outside',
+    'the chokepoint, and it was ruled out of scope. The Claude Code version comes',
+    'from the existing harness detection. Do not delete this guard to add a',
+    'refresh — tell the user to run the CLI once instead, as the panel does.',
+  ].join(' '),
+  g: [
+    'The CLI catalogs belong to the CLIs. tests/real-home.mjs lets a Codex or',
+    'Grok catalog change during a run only when it was re-stamped by a CLI,',
+    'and that exception is only safe because no ACS code can write one. Any',
+    'source file that names a catalog path must therefore hold no write API.',
+    'Do not delete this guard to "cache" or "repair" a catalog — ACS reads',
+    'them and never writes them.',
+  ].join(' '),
 };
 
 const WRITEISH = new Set([
@@ -676,12 +692,203 @@ function guardE() {
          hits.join('\n') || 'ok', WHY.e);
 }
 
+/**
+ * A JS tokenizer for guards f and g, separate from stripComments so the
+ * existing guards keep their exact behaviour. Unlike that one it knows regex
+ * literals (a quote inside `/"x"/` must not flip string parity) and template
+ * `${…}` expressions (code inside them is code, not string).
+ *
+ * Returns three views of the source, all the same length line-for-line:
+ *   code      comments removed, string and regex contents blanked, template
+ *             expressions kept as code
+ *   kept      comments removed, everything else verbatim
+ *   literals  every string / template-quasi / regex text, with its line
+ */
+const REGEX_AFTER_WORD = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await']);
+
+function tokenizeJs(src) {
+  let i = 0;
+  let line = 1;
+  const literals = [];
+  const nl = (t) => { for (const ch of t) if (ch === '\n') line++; };
+
+  // Whether a `/` here starts a regex, from the last significant code emitted.
+  const regexAllowed = (code) => {
+    const t = code.replace(/\s+$/, '');
+    if (!t) return true;
+    const last = t[t.length - 1];
+    if (/[(,=:[!&|?{};+\-*%<>~^]/.test(last)) return true;
+    const w = /([A-Za-z_$][\w$]*)$/.exec(t);
+    return !!(w && REGEX_AFTER_WORD.has(w[1]));
+  };
+
+  // Scan until `stop` (a closing brace at depth 0, for template expressions).
+  function scan(untilBrace) {
+    let code = '', kept = '', depth = 0;
+    while (i < src.length) {
+      const c = src[i], n = src[i + 1];
+      if (untilBrace) {
+        if (c === '{') depth++;
+        else if (c === '}') { if (depth === 0) { i++; return { code, kept }; } depth--; }
+      }
+      if (c === '/' && n === '/') {
+        while (i < src.length && src[i] !== '\n') i++;
+        continue;
+      }
+      if (c === '/' && n === '*') {
+        const endC = src.indexOf('*/', i + 2);
+        const body = src.slice(i, endC === -1 ? src.length : endC + 2);
+        const lines = body.split('\n').length - 1;
+        code += '\n'.repeat(lines); kept += '\n'.repeat(lines); line += lines;
+        i += body.length;
+        continue;
+      }
+      if (c === '"' || c === "'") {
+        const at = line;
+        let j = i + 1, text = '';
+        while (j < src.length && src[j] !== c && src[j] !== '\n') {
+          if (src[j] === '\\') { text += src[j] + (src[j + 1] ?? ''); j += 2; continue; }
+          text += src[j++];
+        }
+        literals.push({ text, line: at, kind: 'string' });
+        kept += src.slice(i, j + 1);
+        code += c + c;
+        i = j + 1;
+        continue;
+      }
+      if (c === '`') {
+        i++;
+        let quasi = '', exprCode = '', rawKept = '`', hasExpr = false, quasiNl = 0;
+        const at = line;
+        while (i < src.length && src[i] !== '`') {
+          if (src[i] === '\\') { quasi += src[i] + (src[i + 1] ?? ''); rawKept += src.slice(i, i + 2); if (src[i + 1] === '\n') { line++; quasiNl++; } i += 2; continue; }
+          if (src[i] === '$' && src[i + 1] === '{') {
+            hasExpr = true;
+            i += 2;
+            const inner = scan(true);
+            exprCode += ` ${inner.code} `;
+            rawKept += '${' + inner.kept + '}';
+            continue;
+          }
+          if (src[i] === '\n') { line++; quasiNl++; }
+          quasi += src[i]; rawKept += src[i]; i++;
+        }
+        i++;
+        literals.push({ text: quasi, line: at, kind: hasExpr ? 'template' : 'string' });
+        kept += rawKept + '`';
+        const blankLines = '\n'.repeat(quasiNl);
+        code += hasExpr ? `\`${exprCode}${blankLines}\`` : `""${blankLines}`;
+        continue;
+      }
+      if (c === '/' && regexAllowed(code)) {
+        let j = i + 1, inClass = false;
+        while (j < src.length && src[j] !== '\n') {
+          if (src[j] === '\\') { j += 2; continue; }
+          if (src[j] === '[') inClass = true;
+          else if (src[j] === ']') inClass = false;
+          else if (src[j] === '/' && !inClass) break;
+          j++;
+        }
+        if (src[j] === '/') {
+          j++;
+          while (j < src.length && /[a-z]/i.test(src[j])) j++;
+          literals.push({ text: src.slice(i, j), line, kind: 'regex' });
+          kept += src.slice(i, j);
+          code += '/./';
+          i = j;
+          continue;
+        }
+      }
+      if (c === '\n') line++;
+      code += c; kept += c; i++;
+    }
+    return { code, kept };
+  }
+
+  const { code, kept } = scan(false);
+  return { code, kept, literals };
+}
+
+/** Every call of a child_process API by name, however it was imported. */
+const SPAWN_NAME_RE = /(?<![\w$.])(spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\(/g;
+
+/**
+ * Guard f — the Models panel spawns nothing.
+ *
+ * Scans the panel's modules and server.js (which holds its routes) with the
+ * regex- and template-aware tokenizer above. Any string literal that is the
+ * child_process specifier fails, however it is imported or required; so does
+ * any import()/require() whose argument is not a plain literal, since that
+ * could name it at runtime; and so does any call by a child_process API name
+ * (spawn, exec, execFile, their Sync forms, fork) — guard b's CALL_RE does
+ * not list execSync, execFileSync or fork.
+ */
+const MODELS_PANEL_FILES = ['lib/models-catalog.js', 'lib/models-panel.js', 'lib/jsontext.js', 'server.js'];
+
+function guardF() {
+  const hits = [];
+  for (const relPath of MODELS_PANEL_FILES) {
+    const abs = path.join(ROOT, relPath);
+    let src;
+    try { src = fs.readFileSync(abs, 'utf8'); } catch { hits.push(`${relPath} is missing — guard f cannot verify it`); continue; }
+    const { code, literals } = tokenizeJs(src);
+    for (const lit of literals) {
+      if (lit.kind !== 'regex' && /^(node:)?child_process$/.test(lit.text.trim())) {
+        hits.push(`${relPath}:${lit.line} names the child_process module`);
+      }
+    }
+    for (const m of code.matchAll(/(?<![\w$.])(import|require)\s*\(\s*([^)]*)\)/g)) {
+      const arg = m[2].trim();
+      if (!/^(['"])\1$/.test(arg)) {
+        hits.push(`${relPath}:${lineAt(code, m.index)} ${m[1]}(${arg.slice(0, 40)}) — a computed module name`);
+      }
+    }
+    for (const m of code.matchAll(SPAWN_NAME_RE)) {
+      hits.push(`${relPath}:${lineAt(code, m.index)} calls ${m[1]}() — a child_process API name`);
+    }
+    if (/\bprocess\.binding\s*\(/.test(code)) hits.push(`${relPath} reaches process.binding`);
+  }
+  assert(hits.length === 0, 'guard f: the Models panel and its routes never load child_process',
+         hits.join('\n') || 'ok', WHY.f);
+}
+
+/**
+ * Guard g — no ACS source writes a CLI catalog.
+ *
+ * Every lib/, bin/ and server.js file whose code (comments stripped) names a
+ * catalog path — `models_cache.json`, `model-catalog`, `-cc.json` — may contain
+ * no write API at all: writeFile*, appendFile*, createWriteStream, rename*,
+ * copyFile*, cp*, truncate*, or an open() with a write/append flag. Naming the
+ * path is what makes it reachable, so a file that needs to write anything
+ * must not also know where the catalogs live.
+ */
+const CATALOG_PATH_RE = /models_cache\.json|model-catalog|-cc\.json/;
+const WRITE_API_RE = /\b(writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|renameSync|rename|copyFileSync|copyFile|cpSync|cp|truncateSync|truncate)\s*\(|\bopen(?:Sync)?\s*\([^)]*['"`][wa]\+?['"`]/g;
+
+function guardG() {
+  const hits = [];
+  let naming = 0;
+  for (const abs of scanTargets()) {
+    const src = tokenizeJs(fs.readFileSync(abs, 'utf8')).kept;
+    if (!CATALOG_PATH_RE.test(src)) continue;
+    naming++;
+    for (const m of src.matchAll(WRITE_API_RE)) {
+      hits.push(`${rel(abs)}:${lineAt(src, m.index)} ${m[0].trim()} — this file names a CLI catalog path`);
+    }
+  }
+  if (naming === 0) hits.push('no source file names a catalog path — guard g is scanning the wrong tree');
+  assert(hits.length === 0, 'guard g: no ACS source that names a CLI catalog can write a file',
+         hits.join('\n') || 'ok', WHY.g);
+}
+
 async function main() {
   console.log('guards — static security properties this branch established\n');
   guardA();
   guardB();
   guardC();
   guardE();
+  guardF();
+  guardG();
   const harnesses = await guardCRuntime();
   await guardD(harnesses);
   console.log(`\n${passed} passed, ${failed} failed`);

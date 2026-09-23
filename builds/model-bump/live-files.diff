@@ -1,0 +1,454 @@
+diff --git a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/CLAUDE.md b/Users/cortega/.claude/CLAUDE.md
+index f424222..01d8b56 100644
+--- a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/CLAUDE.md
++++ b/Users/cortega/.claude/CLAUDE.md
+@@ -19,7 +19,7 @@
+ You are the orchestrator: you hold the intent, the plan, and the thread with Cris. He is the operator deciding *what* should happen — your job is to shape it with him and route the execution, not to be the default typist.
+ 
+ - **Quick and known** — one file, a change you can hold in your head, a question, a config tweak: do it inline. Never build scaffolding for a two-minute edit.
+-- **Real build work** — multi-file, unclear blast radius, anything worth reviewing: delegate the typing. `/build` for supervised local work, subagents or GPT-6 Sol medium / Opus 5.5 medium for the implementation pass.
++- **Real build work** — multi-file, unclear blast radius, anything worth reviewing: delegate the typing. `/build` for supervised local work, subagents or Sol medium / Opus medium for the implementation pass.
+ - **Broad investigation** — a sweep across many files or unknown territory: delegate it, and have the agent report the conclusion back to you and to Cris. Narrow lookups in a file you already know: do them yourself.
+ - **Jev, quietly, for bounded decisions.** Jev is a typed classifier (Choice/Score/Noul + probabilities, sub-second, ~free) — instant and cost-efficient, not smart, below every lane. When a mid-task judgment has options you can list up front, batch one `jev` call per `~/.claude/skills/jev/SKILL.md` and narrate the numbers; middle band → ask Cris. It never writes, never reviews code, never replaces `/advisor` or Grade, and stays a background tool, never a centerpiece. Shadow trial (Cris, 2026-09-21): log a Jev lane-pick Choice at each delegation in the report — it decides nothing.
+ - **Review and advice always run outside this context.** `/code-review` for diffs, `/advisor` for scope and direction calls. Never re-derive a review inline.
+@@ -70,7 +70,7 @@ Switch to dispatcher mode when the work targets a pipeline-onboarded repo: do NO
+ 
+ # Atlas
+ 
+-Atlas is Cris's agent harness on the VPS (`ssh atlas`): Hermes orchestrates, Claude Code builders execute in isolated worktrees, Codex (gpt-5.6-sol high) reviews, an autoloop turns REQUEST_CHANGES into fix tasks (max 3 cycles), and nothing ever merges except Cris. Builders coordinate through the kanban board, never through shared terminals.
++Atlas is Cris's agent harness on the VPS (`ssh atlas`): Hermes orchestrates, Claude Code builders execute in isolated worktrees, Codex (Sol high — the VPS pins its own model id; the local registry does not set it) reviews, an autoloop turns REQUEST_CHANGES into fix tasks (max 3 cycles), and nothing ever merges except Cris. Builders coordinate through the kanban board, never through shared terminals.
+ 
+ ## Before dispatching — the task contract
+ 
+@@ -111,17 +111,19 @@ Full doctrine: `/Users/cortega/Documents/Projects/atlas-operator-playbook.md`
+ 
+ # Model lanes (canonical — skills reference this table, never copy it)
+ 
+-**Judgment tier (advise and review, never build)** — Fable 5.1 (`claude -p --model claude-fable-5-1 --effort high`) and GPT-6 Astra high (`codex exec -m gpt-6-astra -c model_reasoning_effort=high` — always name `-m` for judgment work: bare `codex exec` resolves to GPT-6 Sol high via `~/.codex/config.toml`, not Astra). Same tier until evidence separates them. These are the only advisors — /advisor, /diagnose, and build gates (Bounce/Grade) — and they also review.
++Names here are families; `model-id --table` prints the current id for each.
++
++**Judgment tier (advise and review, never build)** — Fable (`claude -p --model "$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)" --effort high`) and Astra high (`codex exec -m "$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)" -c model_reasoning_effort=high` — always name `-m` for judgment work: bare `codex exec` resolves to Sol high via `~/.codex/config.toml`, not Astra). Same tier until evidence separates them. These are the only advisors — /advisor, /diagnose, and build gates (Bounce/Grade) — and they also review.
+ 
+ **Builder tier** — every builder gets heavy guidance, /advisor when in doubt, and code review always:
+-1. **GPT-6 Sol medium** (`codex exec -m gpt-6-sol -c model_reasoning_effort=medium`) and **Opus 5.5 medium** (`claude-opus-5-5`) — co-default implementers, no ranking between them yet; record wins and losses so the ranking earns itself. Opus 5.5 fixes Opus 5's verbosity and slop — real taste, efficient, Sol-level, close enough to the judgment tier to challenge it (Fable is still smarter). GPT-5.6 Sol is retired.
+-2. **Grok 4.7** — a different flavor (logic-RL), below Opus 5.5 and Sol in intelligence; on the bench until there's data.
++1. **Sol medium** (`codex exec -m "$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)" -c model_reasoning_effort=medium`) and **Opus medium** (`"$(model-id opus || echo MODEL-ID-UNRESOLVED-opus)"`) — co-default implementers, no ranking between them yet; record wins and losses so the ranking earns itself. The current Opus fixes the previous Opus generation's verbosity and slop — real taste, efficient, Sol-level, close enough to the judgment tier to challenge it (Fable is still smarter). The previous Sol generation is retired.
++2. **Grok** — a different flavor (logic-RL), below Opus and Sol in intelligence; on the bench until there's data.
+ - **Sonnet** — not used.
+ 
+-**Reviewer pool** — Fable 5.1, Astra high, GPT-6 Sol high, Opus 5.5 (via agent teams). Opus 5.5 and GPT-6 Sol review code but never advise — advice stays with Fable and Astra. Sol vs Opus 5.5 as reviewers: unranked; record outcomes.
++**Reviewer pool** — Fable, Astra high, Sol high, Opus (via agent teams). Opus and Sol review code but never advise — advice stays with Fable and Astra. Sol vs Opus as reviewers: unranked; record outcomes.
+ 
+-**Skill defaults:** /advisor → Fable 5.1. /code-review → Astra high. /investigate → Astra high. Override by naming a flavor ("advisory fable", "review with astra"); "both" runs dual advisory.
++**Skill defaults:** /advisor → Fable. /code-review → Astra high. /investigate → Astra high. Override by naming a flavor ("advisory fable", "review with astra"); "both" runs dual advisory.
+ 
+ **Dual advisory ("both"):** Fable and Astra run blind, in parallel — no rebuttal rounds, no negotiated compromise. Their reports go to the builder/orchestrator, which resolves factual disagreements itself against the repo and presents judgment disagreements to Cris steelmanned, both sides — it never picks the winner.
+ 
+-**Cross-family review (preferred, not a hard rule):** when it's available, pair across families — Sol- or Astra-built work → Fable or Opus 5.5 reviews; Opus-, Fable-, or Claude-built work → Astra or GPT-6 Sol reviews. When the other family is out of quota or it doesn't matter, same-family review is fine — say which grader ran.
++**Cross-family review (preferred, not a hard rule):** when it's available, pair across families — Sol- or Astra-built work → Fable or Opus reviews; Opus-, Fable-, or Claude-built work → Astra or Sol reviews. When the other family is out of quota or it doesn't matter, same-family review is fine — say which grader ran.
+diff --git a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/settings.json b/Users/cortega/.claude/settings.json
+index 99f4251..005afc9 100644
+--- a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/settings.json
++++ b/Users/cortega/.claude/settings.json
+@@ -69,12 +69,9 @@
+   },
+   "effortLevel": "high",
+   "modelSettings": {
+-    "claude-opus-5": {
++    "claude-opus-5-5": {
+       "effortLevel": "medium"
+     },
+-    "claude-fable-5": {
+-      "effortLevel": "high"
+-    },
+     "claude-fable-5-1": {
+       "effortLevel": "high"
+     }
+diff --git a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/advisor-config.json b/Users/cortega/.claude/advisor-config.json
+index 5a08a8a..ee0f292 100644
+--- a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/advisor-config.json
++++ b/Users/cortega/.claude/advisor-config.json
+@@ -1,5 +1,5 @@
+ {
+-  "_help": "Advisor-skill config. method: fable (Cris's default — the wise-owl judgment seat) | astra (Astra high — cross-vendor judgment) | both (dual blind advisory, Fable + Astra in parallel) | sol (legacy, Sol at XHIGH). Spoken choice overrides per run. codexModel is a registry family, resolved with `model-id` (see `model-id --table`); a new model is one edit to ~/.agent-config-studio/models.json, not here.",
++  "_help": "Advisor-skill config. method: fable (Cris's default — the wise-owl judgment seat) | astra (Astra high — cross-vendor judgment) | both (dual blind advisory, Fable + Astra in parallel). Only Fable and Astra advise. Spoken choice overrides per run. codexModel is a registry family, resolved with `model-id` (see `model-id --table`); a new model is one edit to ~/.agent-config-studio/models.json, not here.",
+   "method": "fable",
+   "codexModel": "astra",
+   "codexEffort": "high"
+diff --git a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/skills/advisor/SKILL.md b/Users/cortega/.claude/skills/advisor/SKILL.md
+index 181f32c..74fe6ef 100644
+--- a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/skills/advisor/SKILL.md
++++ b/Users/cortega/.claude/skills/advisor/SKILL.md
+@@ -26,16 +26,15 @@ This is NOT a code review (that's `/code-review`), not an evidence investigation
+ 
+ Resolution order: **spoken choice → `~/.claude/advisor-config.json` → built-in default (fable)**. Judgment-tier models are canonical in the model lanes in `~/.claude/CLAUDE.md`.
+ 
+-Temperament rule (Cris, 2026-07-10): **advice is owl work.** Fable is the wise owl — the smartest judgment seat — so it is Cris's advisor default despite the extra usage; that cost is accepted HERE specifically. Astra high shares the judgment tier — same tier as Fable until evidence separates them. Legacy Sol, when named, advises at **XHIGH** (advice deserves its top reasoning; the execution lanes are the ones that run high).
++Temperament rule (Cris, 2026-07-10): **advice is owl work.** Fable is the wise owl — the smartest judgment seat — so it is Cris's advisor default despite the extra usage; that cost is accepted HERE specifically. Astra high shares the judgment tier — same tier as Fable until evidence separates them. They are the only advisors: Sol and Opus review code but never advise (model lanes, `~/.claude/CLAUDE.md`).
+ 
+ | Method | Model | Invocation | When |
+ |---|---|---|---|
+ | `fable` | Fable | headless CLI (Step 2), `--effort high` (raise only on explicit ask) | **Cris's default for advice.** The owl: scope verdicts, direction, what-to-cut judgment. |
+ | `astra` | Astra at **high** (model from config) | `codex exec` read-only | When Cris names it ("advisory astra"), when the seat IS Fable (cross-vendor second opinion), or when the advice should ride the ChatGPT pool. |
+ | `both` | Fable + Astra high, blind, in parallel | both invocations in Step 2 | When Cris says "both". See Dual advisory below. |
+-| `sol` | Sol at **xhigh** (legacy) | `codex exec -m "$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)"` read-only | Only when Cris names it. |
+ 
+-First-time users (no config file exists): ask once via AskUserQuestion (codex — needs `npm i -g @openai/codex` + auth | fable | claude opus), then save the choice to `~/.claude/advisor-config.json`. Copy `advisor-config.example.json` from this skill's folder as the starting point. A spoken one-run choice never changes the saved default.
++First-time users (no config file exists): ask once via AskUserQuestion (fable | astra — needs `npm i -g @openai/codex` + auth | both), then save the choice to `~/.claude/advisor-config.json`. Copy `advisor-config.example.json` from this skill's folder as the starting point. A spoken one-run choice never changes the saved default.
+ 
+ ### Dual advisory — "both"
+ 
+diff --git a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/skills/build/SKILL.md b/Users/cortega/.claude/skills/build/SKILL.md
+index 7cdc41b..618db22 100644
+--- a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/skills/build/SKILL.md
++++ b/Users/cortega/.claude/skills/build/SKILL.md
+@@ -1,6 +1,6 @@
+ ---
+ name: build
+-description: Build something through the Frame -> Bar -> Judge loop. Runs four phases (Understand, Shape, Build, Judge) — the session model orchestrates and advises, implementer subagents type per the model-lanes doctrine (guided phases, callbacks on demand), Astra high independently attacks the plan (Bounce) and grades the result (Grade), and the human judges. Pick the implementer with "/build astra|sol|grok|opus|sonnet" (or plain English); unspecified means the orchestrator routes by the lanes doctrine. Use for any real build where you want it done right and self-correcting. Scales down: a lightweight mode handles small single-outcome work (one implementer call, no plan/Bounce/Grade scaffold) so small-but-real tasks route here too — only true two-minute edits stay out.
++description: Build something through the Frame -> Bar -> Judge loop. Runs four phases (Understand, Shape, Build, Judge) — the session model orchestrates and advises, implementer subagents type per the model-lanes doctrine (guided phases, callbacks on demand), Astra high independently attacks the plan (Bounce) and grades the result (Grade), and the human judges. Pick the implementer with "/build sol|opus|grok" (or plain English); unspecified means the orchestrator routes by the lanes doctrine. Use for any real build where you want it done right and self-correcting. Scales down: a lightweight mode handles small single-outcome work (one implementer call, no plan/Bounce/Grade scaffold) so small-but-real tasks route here too — only true two-minute edits stay out.
+ ---
+ 
+ # /build — the Frame, Bar, Judge build loop
+@@ -32,33 +32,33 @@ In lightweight mode: state the outcome and the bar **inline in chat** (the drive
+ 
+ **Two things survive into lightweight mode and are never dropped:**
+ - **The bar.** An outcome with no checkable criterion isn't a small build, it's an unspecified one. If you can't name the command that proves it, you're not in lightweight mode — you're missing a plan.
+-- **A second brain on the result.** The full Grade is what gets skipped, not the grader-never-the-author rule. The orchestrator reads the diff itself before handing it over — that satisfies the rule for free, since the orchestrator didn't type it. On the codex lane this is a Claude brain reading codex's work, which is exactly the family split the full loop buys with a Grade call.
++- **A second brain on the result.** The full Grade is what gets skipped, not the rule that the builder never grades its own work. The orchestrator reads the diff itself before handing it over — that satisfies the rule for free, since the orchestrator didn't type it. On the Sol lane that is also a cross-family read — the split the full loop buys with a Grade call.
+ 
+ **Upgrade mid-flight rather than forcing it** the moment any of these shows up: a second file enters scope unexpectedly, a real design decision appears, the deterministic check fails twice on the same thing, or the implementer calls back with a question the contract didn't answer. Write `plan.md` and run the full loop from there. Downgrading a full build to lightweight, on the other hand, is never right — if you already judged it worth a plan, finish it with one.
+ 
+ ## Model architecture (who runs each stage)
+ 
+-**The session model orchestrates and guides. A cheaper implementer types. A different brain verifies. The human judges.** (Doctrine v3, 2026-07-08.) Roles follow the seat: whatever model is running this session (Fable when Cris set it, Opus otherwise) is the orchestrator, and it does NOT type the bulk of the code. Pick the implementer lane per the **model-lanes doctrine** in `~/.claude/CLAUDE.md` (Astra medium default, Sol medium legacy backup, Opus for taste-heavy work, Sonnet only as an Opus orchestrator's subagent). Whoever implements never grades their own work.
++**The session model orchestrates and guides. A cheaper implementer types. A different brain verifies. The human judges.** (Doctrine v3, 2026-07-08.) Roles follow the seat: whatever model is running this session (Fable when Cris set it, Opus otherwise) is the orchestrator, and it does NOT type the bulk of the code. Pick the implementer lane per the **model-lanes doctrine** in `~/.claude/CLAUDE.md` (Sol medium and Opus medium are the co-default builders, unranked; Astra and Fable never build; Grok only when Cris names it). Whoever implements never grades their own work.
+ 
+ | Stage | Runner | How |
+ |---|---|---|
+ | Understand (explore) | orchestrator + Explore subagents (sonnet) | conclusions only come back; bulk file dumps stay out of the orchestrator's context |
+ | Shape: draft spec + bar | orchestrator | native |
+ | Shape: **Bounce** (attack the plan) | Astra high | `codex exec` (read-only) |
+-| Build (guided steps) | implementer — **Astra medium default, Sol medium legacy backup** (via codex CLI), Opus for taste-heavy work (frontend, design, copy); user's spoken lane wins (below) | the guided-step loop below |
+-| **Grade** (verify build vs bar) | Astra high (flips to a Claude grader — fable — when a GPT lane implemented; see below) | `codex exec` (read-only) |
++| Build (guided steps) | implementer — **Sol medium** (codex CLI) or **Opus medium**, co-default and unranked; user's spoken lane wins (below) | the guided-step loop below |
++| **Grade** (verify build vs bar) | Astra high, or Fable when Sol implemented — cross-family preferred (see below) | `codex exec` (read-only) |
+ | Judge | the human | yes/no against the bar |
+ 
+-### Choosing the implementer — `/build astra | sol | grok | opus | sonnet`
++### Choosing the implementer — `/build sol | opus | grok`
+ 
+-Name the lane and it wins for this run: `/build astra`, `/build sol`, or plain English ("build this with opus"). **A named lane is binding for the entire run — every phase, start to finish.** The orchestrator does not re-route mid-build, does not "upgrade" a phase it finds hard, and does not silently fall back. No lane named → the orchestrator routes by the model lanes in `~/.claude/CLAUDE.md` and says which lane it picked and why in one line.
++Name the lane and it wins for this run: `/build sol`, `/build opus`, or plain English ("build this with opus"). **A named lane is binding for the entire run — every phase, start to finish.** The orchestrator does not re-route mid-build, does not "upgrade" a phase it finds hard, and does not silently fall back. No lane named → the orchestrator routes by the model lanes in `~/.claude/CLAUDE.md` and says which lane it picked and why in one line.
+ 
+-**Unnamed routing** (lanes update, Cris, 2026-09-04): default → **astra** (Astra medium); sustained "keep going until it's done" grinds → **sol** (the legacy workhorse; watch for overbuilding); frontend, UI, design, copy → **opus**; mechanical single-file work → **sonnet**; **grok** only when Cris names it (benched until there's data). Record which lane won or lost — the ranking earns itself.
++**Unnamed routing** (model lanes, `~/.claude/CLAUDE.md`): **Sol or Opus (co-default); the orchestrator picks and states why.** No ranking between them yet — Sol overbuilds, so give it boundaries; Opus has the taste for frontend, design and copy. **grok** only when Cris names it (benched until there's data). Astra and Fable are judgment tier and never build. Record which lane won or lost — the ranking earns itself.
+ 
+ The one exception is the standing escalation rule below, and with a named lane it is **not** silent: if the implementer misses the same criterion twice after the brief has been sharpened, the orchestrator says so and asks before changing lanes. The user chose the lane; leaving it is the user's call.
+ 
+ - The choice picks the **implementer only**. The orchestrator, the Bounce, and the human Judge don't move.
+-- **Grader swap (grader is never the author, at the model-family level):** claude-lane implementers (sonnet/opus) → Astra high grades, the default. **GPT implementer (astra/sol) → the Grade flips to a Claude brain** (Fable via headless CLI — `claude -p --model "$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)" --effort high`, never an Agent-tool spawn, which silently downgrades to sonnet; verify with `jq -e --arg m "$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)" '.modelUsage | has($m)'`) so no family grades its own work. **Grok implementer → Astra high grades** (a third family; either non-grok judgment model is valid).
++- **Grader swap (cross-family preferred, not a hard rule):** Opus implementer → Astra high grades, the default. **Sol implementer → the Grade prefers Fable** (headless CLI — `claude -p --model "$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)" --effort high`, never an Agent-tool spawn, which silently downgrades to sonnet; verify with `jq -e --arg m "$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)" '.modelUsage | has($m)'`); when Fable is unavailable, Astra high grades same-family. **Grok implementer → Astra high grades.** Gates are Fable or Astra only — never Sol or Opus — and the Judge handoff always says which grader ran, and when it was same-family.
+ - Fable is not an implementer lane — the Judgment lane types specs and verdicts, not code (and it burns extra usage). An explicit user demand still wins, as always, but the skill never routes there on its own.
+ - A one-run lane choice never changes the durable routing; edit the doctrine table to change defaults.
+ 
+@@ -80,7 +80,7 @@ The orchestrator plans in phases and advises when asked; the implementer works a
+ 
+ **/advisor consult points (orchestrator only).** Exactly two moments: (a) Understand/Shape while scope is still being set, before `plan.md` exists — once the plan is written, the Bounce is the adversarial gate, don't double-spend; (b) a builder callback raises a scope/architecture call the orchestrator itself is unsure of and the seat is a lower-tier model — consult `/advisor`, validate the advice, answer the builder in one line. Builders never invoke /advisor; a builder's route to advice IS the callback contract. One chain of command.
+ 
+-This keeps the expensive model's tokens on judgment (briefs, callback answers, checkpoint reviews — all small) and the volume tokens on the cheap implementer. **Standing escalation — but fix the brief before the builder:** if the implementer misses the bar twice on the same step, first re-read the phase brief; if the spec under-determined the choice, sharpen the brief and re-issue at the same lane (a better brief is cheaper than a bigger model). If the brief was adequate, redo the step on the other default builder (astra ↔ sol); if both miss the same criterion, that is the mis-scope signal — stop and surface it to the driver rather than climbing further. Judge the output, not the price tag. **Without asking when the orchestrator picked the lane; ask first when the user named it** (`/build codex` and friends) — a named lane is the user's decision, so surface the stuck criterion and let them choose to escalate or hold.
++This keeps the expensive model's tokens on judgment (briefs, callback answers, checkpoint reviews — all small) and the volume tokens on the cheap implementer. **Standing escalation — but fix the brief before the builder:** if the implementer misses the bar twice on the same step, first re-read the phase brief; if the spec under-determined the choice, sharpen the brief and re-issue at the same lane (a better brief is cheaper than a bigger model). If the brief was adequate, redo the step on the other co-default builder (sol ↔ opus); if both miss the same criterion, that is the mis-scope signal — stop and surface it to the driver rather than climbing further. Judge the output, not the price tag. **Without asking when the orchestrator picked the lane; ask first when the user named it** (`/build codex` and friends) — a named lane is the user's decision, so surface the stuck criterion and let them choose to escalate or hold.
+ 
+ The codex verifier is called at the **gates** (once after the plan is drafted, once after the build completes), never inside the per-step build loop. The cheap, fast, deterministic `verify.sh` / tests are what the builder loops against; codex is the expensive, independent, reasoned check on top. Two layers, not one.
+ 
+@@ -94,9 +94,9 @@ codex exec --skip-git-repo-check --sandbox read-only -m "$(model-id astra || ech
+   "Read plan.md and context.md in this folder. You are an adversarial reviewer with no attachment to this plan. Attack it: what is missing, what will break, what edge cases and failure modes did the author miss, and where is the acceptance bar too weak to catch a bad build? Be concrete. Do not rewrite the plan; list the gaps and why each matters." </dev/null 2>/dev/null
+ ```
+ 
+-**Build — phase 1 (the only call that starts a session).** `--json` so you can capture the `thread_id`; `-o` so the checkpoint lands in a file instead of buried in event noise. This is the ONLY codex call that gets `--sandbox workspace-write`:
++**Build — phase 1 (the only call that starts a session; Sol lane).** `--json` so you can capture the `thread_id`; `-o` so the checkpoint lands in a file instead of buried in event noise. This is the ONLY codex call that gets `--sandbox workspace-write`:
+ ```
+-codex exec --skip-git-repo-check --sandbox workspace-write -m "$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)" -c model_reasoning_effort=medium \
++codex exec --skip-git-repo-check --sandbox workspace-write -m "$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)" -c model_reasoning_effort=medium \
+   --json -o builds/<slug>/phase1-result.md \
+   "Objective: <what exists when this phase is done>
+    Read first: plan.md, context.md, <relevant files>
+@@ -111,11 +111,11 @@ Grab the session id from the first JSONL line: `{"type":"thread.started","thread
+ 
+ **Build — every later phase, and every callback answer** (same session, context intact):
+ ```
+-codex exec resume <thread_id> --skip-git-repo-check -m "$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)" -c model_reasoning_effort=medium \
++codex exec resume <thread_id> --skip-git-repo-check -m "$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)" -c model_reasoning_effort=medium \
+   -o builds/<slug>/phase<N>-result.md \
+   "<the next phase brief, or the one-line answer to the callback>" </dev/null 2>/dev/null
+ ```
+-`resume` does NOT accept `-s/--sandbox` — it inherits the sandbox policy from the session it resumes, which is why phase 1 must be the one that sets `workspace-write`. It does accept `-m`, `-c`, `-o`, `--json`, `--skip-git-repo-check`. Prefer an explicit `thread_id` over `--last`: the Bounce and Grade gates run in the same cwd, so `--last` can silently resume the wrong session. On the sol lane, swap `-m "$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)"` into the build calls (same efforts); the gates stay on the judgment tier regardless of lane.
++`resume` does NOT accept `-s/--sandbox` — it inherits the sandbox policy from the session it resumes, which is why phase 1 must be the one that sets `workspace-write`. It does accept `-m`, `-c`, `-o`, `--json`, `--skip-git-repo-check`. Prefer an explicit `thread_id` over `--last`: the Bounce and Grade gates run in the same cwd, so `--last` can silently resume the wrong session. On the opus lane the phases go to an Opus subagent at medium effort instead of these codex calls; the gates stay on the judgment tier regardless of lane.
+ 
+ Grade (verify the finished build against the bar). Use `codex exec` read-only reading the changed files. NOTE (learned in live testing): `codex review` does NOT accept `-m`, and its positional-prompt parsing was unreliable, so prefer `codex exec` for the grade.
+ ```
+@@ -140,7 +140,7 @@ Work in a folder for the task (e.g. `builds/<slug>/`). Files hold state so each
+ 
+ 1. **Understand** (orchestrator + Explore subagents). If the idea rests on unknowns, explore: read the relevant code, list paths, find how it connects — conclusions come back, not file dumps. Write `context.md`. Show the driver a short summary and confirm the **one-sentence outcome** (Frame).
+ 2. **Shape** (orchestrator drafts, Astra attacks). Draft `plan.md`: the outcome, the steps, and a checklist of acceptance criteria where **each criterion is checkable by a command, test, or observable behavior**, plus how each will be verified. Then run the **Bounce** (codex command above), fold its real gaps into the plan, and show the driver the criteria to sharpen and approve (Bar).
+-3. **Build** (implementer lane — Astra medium default, Sol/Opus per the doctrine or the user's `/build <lane>` choice). Implement against `plan.md`. After each step, run the deterministic checks (`verify.sh` / tests), read pass/fail, fix, repeat. Log decisions to `log.md`. When the deterministic checks pass, run the **Grade** (codex command above) for the independent verdict. If Grade returns any FAIL, fix and re-grade. Loop until Grade is clean or the cap is hit. **QA option:** when acceptance criteria include browser-observable behavior a script can't assert, `/qa-tester` (per `~/.claude/skills/qa-tester/SKILL.md`) is available between Grade and Judge — hand it the target URL, the browser-checkable criteria verbatim, and setup steps. Not mandatory: run it when manual verification would cost the driver real time; skip it when Grade plus the deterministic checks already cover the bar — and state which in the Judge handoff, so a skipped QA run is a visible choice, never a silent one.
++3. **Build** (implementer lane — Sol or Opus, co-default, per the doctrine or the user's `/build <lane>` choice). Implement against `plan.md`. After each step, run the deterministic checks (`verify.sh` / tests), read pass/fail, fix, repeat. Log decisions to `log.md`. When the deterministic checks pass, run the **Grade** (codex command above) for the independent verdict. If Grade returns any FAIL, fix and re-grade. Loop until Grade is clean or the cap is hit. **QA option:** when acceptance criteria include browser-observable behavior a script can't assert, `/qa-tester` (per `~/.claude/skills/qa-tester/SKILL.md`) is available between Grade and Judge — hand it the target URL, the browser-checkable criteria verbatim, and setup steps. Not mandatory: run it when manual verification would cost the driver real time; skip it when Grade plus the deterministic checks already cover the bar — and state which in the Judge handoff, so a skipped QA run is a visible choice, never a silent one.
+ 4. **Judge** (human). Hand the driver: the green checklist with evidence, the result, the codex Grade verdict, and anything tagged UNVERIFIED. The driver judges against the bar. Yes -> done. No -> point at the failed criterion (or the wrong bar) and return to Build or Bar.
+ 
+ ## cmux cockpit integration (when running inside cmux)
+@@ -154,7 +154,7 @@ If `$CMUX_WORKSPACE_ID` is set, report to the cockpit so the driver can look awa
+ ## Hard rules
+ 
+ - **The verifier never edits.** Every codex call at a *gate* — Bounce and Grade — runs `--sandbox read-only`. The grader observes; it does not fix. `--sandbox workspace-write` appears exactly once in a run: the phase-1 Build call on the codex lane (later phases inherit it via `resume`). If you are writing `workspace-write` on a Bounce or a Grade, you have wired the loop wrong.
+-- **The grader is never the author.** The implementer subagent builds; the cross-family judgment model grades; the orchestrator that guided the build is not the sole grader either. Never let the builder grade its own work; that is the weak self-critique the whole design avoids.
++- **The builder never grades its own work.** The implementer subagent builds; a judgment model grades — cross-family preferred, same-family (Astra on a Sol build) allowed when the other family is unavailable, and the Judge handoff says which grader ran. The orchestrator that guided the build is not the sole grader either; self-critique is the weak version the whole design avoids.
+ - **Never delete, skip, weaken, or narrow tests or checks to make a criterion pass.** A gamed check is a failed build, not a passed one. If a check seems wrong, surface it to the driver instead of dodging it.
+ - **Deterministic checks first, codex second.** The builder loops against fast local checks; codex is the reasoned gate on top, called sparingly to control cost.
+ - **A FAIL from Grade is not optional.** Either fix it, or surface to the driver why the criterion is wrong. Do not silently accept a FAIL.
+diff --git a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/skills/investigate/SKILL.md b/Users/cortega/.claude/skills/investigate/SKILL.md
+index 9265027..30ec0f7 100644
+--- a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/skills/investigate/SKILL.md
++++ b/Users/cortega/.claude/skills/investigate/SKILL.md
+@@ -48,7 +48,7 @@ Everything past this point is the skill's job, not yours. Your only other moment
+ | 2. Explore | orchestrator + Explore subagents (sonnet) | conclusions only come back; bulk file/log dumps stay out of the orchestrator's context |
+ | 3. Hypotheses | orchestrator | native — choosing candidate explanations is judgment, not volume |
+ | 4. Verify | fan-out subagents (sonnet default, opus for concurrency/subtle checks) | one subagent per hypothesis, in parallel, each carrying the 5-part contract; returns CONFIRMED, KILLED, or UNVERIFIED plus the pasted evidence, never a raw log dump |
+-| 5. Disprove | codex (the configured model + effort, read-only) | fresh cross-family context. No same-family fallback — if codex is unavailable, report Disprove as NOT RUN rather than substituting a Claude subagent, which re-runs the seat's own priors and tends to rubber-stamp them |
++| 5. Disprove | codex (the configured model + effort, read-only) | fresh context, cross-family preferred. If codex is unavailable, a fresh-context Claude subagent may run it same-family (weaker — it shares the seat's priors); the report says which adversary ran |
+ | 6. Conclude | orchestrator | native — synthesis is judgment |
+ 
+ Verify is the volume step, not a judgment step, so it must not run in the orchestrator's own context. Dispatch one subagent per hypothesis in parallel (single message, multiple Agent calls), each carrying the delegation contract: objective (confirm or kill hypothesis N), read-first (`context.md` and the hypothesis' phrasing), constraints (read-only unless the driver allowed writes), validation command (the specific check to run), stop condition (paste the actual output and return CONFIRMED, KILLED, or UNVERIFIED). The orchestrator collects the returned verdicts into `findings.md`; it does not re-run the checks itself unless a subagent's result looks off and needs a spot-check. In lightweight mode (one hypothesis, one command), the seat just runs the check itself — the delegation floor applies here too.
+@@ -73,7 +73,7 @@ Resolution: spoken method → repo config → global config. **First-time user (
+ 
+ **A spoken method is binding for the whole investigation** (same rule as `/build`'s implementer lane). `/investigate codex` means codex runs every Explore and Verify step, start to finish — the orchestrator does not re-route mid-loop, does not switch methods on a hypothesis it finds hard, and does not silently fall back when a check comes back UNVERIFIED. If a method is genuinely stuck (the same hypothesis returns UNVERIFIED twice after the brief has been sharpened), say so and ask before switching. The user chose the method; leaving it is the user's call. Config-resolved methods carry no such promise — the orchestrator may escalate those on its own judgment.
+ 
+-Whatever method investigates, the cross-family rule holds: the disprove adversary is never the same model family that produced the conclusion.
++Whatever method investigates, cross-family is preferred: the disprove adversary should be a different model family from the one that produced the conclusion. Same-family is allowed when the other family is unavailable — the report says which adversary ran.
+ 
+ ## The loop
+ 
+@@ -83,7 +83,7 @@ Work in a dedicated folder, `investigations/<slug>/`. Re-read the files at the s
+ 2. **Explore** → write `context.md`: the relevant paths, how the pieces connect, where the evidence actually lives. Wide and cheap; throwaway is fine.
+ 3. **Hypotheses** → write `hypotheses.md`: the candidate explanations, each phrased so it can be confirmed or killed by a specific check.
+ 4. **Verify** (the core, and the volume step — fan it out rather than hand-running it) → dispatch one subagent per hypothesis, in parallel, each carrying the 5-part contract (see Model architecture above): run a command, query, or reproduction that confirms or kills it, and return the ACTUAL output plus a CONFIRMED / KILLED / UNVERIFIED verdict. The orchestrator pastes each returned verdict and its evidence into `findings.md` next to the claim; it does not spend its own context running the checks. No claim without evidence. Anything a subagent cannot reproduce gets tagged `UNVERIFIED` with a note on what would verify it. A hypothesis only confirmable by driving a browser → dispatch `/qa-tester` as the verifier (observe-only: investigation's read-only default overrides its full-interaction mode); its per-criterion report is the evidence pasted into `findings.md`.
+-5. **Disprove** → before accepting a conclusion, a fresh context whose only job is to break it: find the counter-evidence, the missed case, the alternative cause. **Prefer a cross-family adversary:** run the disprove via `codex exec` (the configured codex model + effort, read-only, self-contained prompt with the conclusion + evidence chain) so a different brain attacks it; a fresh-context Claude subagent is the fallback when codex isn't available. **When the conclusion will drive a costly or hard-to-undo decision** (a merge, an Atlas dispatch, a production change), add a second pass framed differently from the first: a fresh Claude subagent given only `context.md` and the raw evidence in `findings.md` — not the conclusion — asked what the most likely explanation is. Independent convergence on the same answer is stronger proof than surviving one attack; divergence becomes a new hypothesis and sends you back to step 4. If either pass kills the conclusion, return to step 4.
++5. **Disprove** → before accepting a conclusion, a fresh context whose only job is to break it: find the counter-evidence, the missed case, the alternative cause. **Prefer a cross-family adversary:** run the disprove via `codex exec` (the configured codex model + effort, read-only, self-contained prompt with the conclusion + evidence chain) so a different brain attacks it; a fresh-context Claude subagent is the fallback when codex isn't available (same-family when the seat is Claude — say so in the report). **When the conclusion will drive a costly or hard-to-undo decision** (a merge, an Atlas dispatch, a production change), add a second pass framed differently from the first: a fresh Claude subagent given only `context.md` and the raw evidence in `findings.md` — not the conclusion — asked what the most likely explanation is. Independent convergence on the same answer is stronger proof than surviving one attack; divergence becomes a new hypothesis and sends you back to step 4. If either pass kills the conclusion, return to step 4.
+ 6. **Conclude** → write `conclusion.md`: the answer, the evidence chain, a confidence level, and an explicit list of what is still UNVERIFIED.
+ 
+ ## Hard rules
+diff --git a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/skills/code-review/SKILL.md b/Users/cortega/.claude/skills/code-review/SKILL.md
+index 900c37e..d55162f 100644
+--- a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/skills/code-review/SKILL.md
++++ b/Users/cortega/.claude/skills/code-review/SKILL.md
+@@ -1,6 +1,6 @@
+ ---
+ name: code-review
+-description: Single-pass code review of the current branch's diff. Reviewer tiers picked by how you invoke it — Astra high default (efficient), "fable" for the premium Fable judgment pass, "both" for a dual Astra+Fable review, "sol" for the legacy Sol pass, "claude" for the opus+sonnet+sonnet team. It reports findings; you confirm which to fix and the agent applies them in-context. No auto-fix, no loop — one review pass, you stay in control.
++description: Single-pass code review of the current branch's diff. Reviewer tiers picked by how you invoke it — Astra high default (efficient), "fable" for the premium Fable judgment pass, "both" for a dual Astra+Fable review, "sol" for a Sol pass, "claude" for the opus+sonnet+sonnet team. It reports findings; you confirm which to fix and the agent applies them in-context. No auto-fix, no loop — one review pass, you stay in control.
+ allowed-tools: Bash, Read, Edit, Write, Grep, Glob, AskUserQuestion
+ ---
+ 
+@@ -52,7 +52,7 @@ Then: run the project's linter/formatter on the changed files (in Kylie that's `
+ | Command | Reviewer | When |
+ |---|---|---|
+ | `/code-review` (or `codex`) | Codex Astra high — **one agent** | The efficient default. Everyday PRs. Saying "codex" picks it explicitly. |
+-| `/code-review sol` | Sol high (`REVIEW_MODEL="$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)"`) — one agent | The legacy reviewer. A second GPT flavor without spending Fable. |
++| `/code-review sol` | Sol high (`REVIEW_MODEL="$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)"`) — one agent | Reviewer pool. A second GPT flavor without spending Fable. |
+ | `/code-review fable` | **Fable — ONE agent, one comprehensive pass, never a team** (`REVIEW_REVIEWER=claude REVIEW_CLAUDE_MODEL="$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)"`), **effort high by default** (`REVIEW_FABLE_EFFORT=high` or "fable on high" to raise for one run) | The premium judgment pass. Costs extra usage on Max; reserve for changes where being wrong is expensive (payments, order logic, auth, migrations). Single session, same as the Atlas fable lane. |
+ | `/code-review both` | Astra high **and** Fable | Maximum confidence: run the astra pass, then the fable pass, and present ONE merged list — findings both models flagged first (near-certain real), then each model's uniques. |
+ | `/code-review claude` | Claude multi-agent team (**opus + sonnet + sonnet lenses, all at effort xhigh**) — the ONLY multi-agent tier | Small/routine diffs, or a cheap second flavor. |
+@@ -79,7 +79,7 @@ The skills and the loop **never change** — you swap models in one small JSON f
+ Copy `review-config.example.json`, rename it to one of the above, and edit the values. Precedence is **env var → that config file → built-in default**, so a quick `REVIEW_MODEL=… ` still overrides for one run, and `/code-review claude` switches the reviewer for one run.
+ 
+ - **Astra high (default):** `{ "reviewer": "codex", "model": "astra", "effort": "high" }`
+-- **Sol high (legacy):** `{ "reviewer": "codex", "model": "sol", "effort": "high" }`
++- **Sol high:** `{ "reviewer": "codex", "model": "sol", "effort": "high" }`
+ - **A newer model later:** one edit to the model registry (`~/.agent-config-studio/models.json`; `model-id --table` shows the current ids) — the config keeps naming the family.
+ - **Claude team (opus + sonnet + sonnet):** `{ "reviewer": "claude" }` — the default claudeModel (sonnet) runs the mixed team; an explicit different claudeModel (e.g. `fable`) runs **one comprehensive agent** on that model instead — premium tiers are always a single session, never a team.
+ 
+diff --git a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/skills/delegating-to-agents/SKILL.md b/Users/cortega/.claude/skills/delegating-to-agents/SKILL.md
+index 440d4ec..c83d647 100644
+--- a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.claude/skills/delegating-to-agents/SKILL.md
++++ b/Users/cortega/.claude/skills/delegating-to-agents/SKILL.md
+@@ -11,26 +11,24 @@ description: How to delegate work to another AI agent (Grok, Codex, Claude Code,
+ 
+ Route by the **model-lanes table** in `~/.claude/CLAUDE.md` — that table is the source of truth and this list is its delegation-flavored summary.
+ 
+-**Two lanes type; the rest talk.** Astra medium (default) and Sol medium (legacy backup) are the builders. Opus and Sonnet narrate and critique instead of shipping, so a diff is not their deliverable — except frontend, which is Opus's. Grok is benched until there's data. Fable never builds. (Lanes update, Cris, 2026-09-04.)
++**Two lanes type.** Sol medium and Opus medium are the co-default builders, unranked — record wins and losses so the ranking earns itself. Astra and Fable are judgment tier and never build. Grok is benched until there's data. Sonnet is not used.
+ 
+-- **Default build → Codex CLI, Astra medium.** Different strengths (subagents, end-to-end autonomy), still unproven as a builder — record wins and losses so the ranking earns itself. On a ChatGPT Pro plan — effectively unlimited, **don't ration it**; bulk grind spends there instead of the shared Claude Max pool.
++- **Build → Codex CLI, Sol medium (co-default).** The relentless workhorse; watch its diff for overbuilding. On a ChatGPT Pro plan — effectively unlimited, **don't ration it**; bulk grind spends there instead of the shared Claude Max pool.
+   ```bash
+-  codex exec --skip-git-repo-check -m "$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)" -c model_reasoning_effort=medium \
++  codex exec --skip-git-repo-check -m "$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)" -c model_reasoning_effort=medium \
+     "<self-contained brief>" </dev/null            # add --sandbox workspace-write to let it edit
+   ```
+-- **Sustained "keep going until it's done" grinds → Codex CLI, Sol medium (legacy).** The relentless workhorse; watch its diff for overbuilding. Swap `-m "$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)"` into the command above. `terra` is the cheaper everyday tier if Cris asks for it.
+-- **Grok CLI, Grok high — only when Cris names it** (benched until there's data; capable, ranks above Opus as a builder). **`--always-approve` is required**: with only `--permission-mode acceptEdits` the headless turn announces the edit and returns `stopReason: cancelled` having written nothing.
++- **Build → Opus medium (co-default).** Real taste, efficient; the natural pick for frontend, design and copy, and a full builder elsewhere. Agent tool `model: opus`, or headless `claude -p --model "$(model-id opus || echo MODEL-ID-UNRESOLVED-opus)" --effort medium` when the exact id matters. `terra` is the cheaper codex tier if Cris asks for it.
++- **Grok CLI, Grok high — only when Cris names it** (benched until there's data; a different flavor — logic-RL — below Opus and Sol). **`--always-approve` is required**: with only `--permission-mode acceptEdits` the headless turn announces the edit and returns `stopReason: cancelled` having written nothing.
+   ```bash
+   grok -p "<self-contained brief>" -m "$(model-id grok || echo MODEL-ID-UNRESOLVED-grok)" --effort high --always-approve \
+     --output-format json                            # --cwd <dir> to target a repo
+   ```
+-- **Reviewing, grading, attacking a plan → Codex CLI, Astra high.** The **default** reviewer across the board: `/build`'s Bounce and Grade gates and `/code-review`'s default tier. Always `--sandbox read-only` — the verifier never edits. **Never route a review to Grok** — it is a build lane only.
+-- **Frontend / design / copy taste, and anything where a cheap-model miss is expensive → Opus subagent** (Agent tool, `model: opus`). The one build domain Opus keeps, and it is better than Grok there.
+-- **Mechanical, spec-fully-determined single-file work → Sonnet subagent** (Agent tool, `model: sonnet`). Bottom of the stack; not a lane for anything with a design call in it.
++- **Reviewing, grading, attacking a plan → Codex CLI, Astra high.** The **default** reviewer across the board: `/build`'s Bounce and Grade gates and `/code-review`'s default tier. Sol and Opus may review code, but only Fable and Astra advise or gate. Always `--sandbox read-only` — the verifier never edits. **Never route a review to Grok** — it is a build lane only.
+ - **Specs, commitment boundaries, premium review verdicts → Fable**, via headless CLI only (`claude -p --model "$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)" --effort high`). Never the Agent tool — `model: fable` silently downgrades to sonnet. Cost-gated: deliberate, never default.
+ - **Heavy multi-step work:** you as orchestrator + Codex CLI executing in a right-hand cmux pane is a solid default setup.
+ 
+-**The grader is never the author, at the model-family level.** Claude implemented → Astra high grades. GPT implemented (Astra/Sol) → a Claude brain (Fable) grades. Grok implemented → either non-grok judgment model grades. Never route both sides of a build to the same vendor.
++**The builder never grades its own work; cross-family grading is preferred, not a hard rule.** Opus implemented → Astra high grades. Sol implemented → Fable grades, or Astra high same-family when Fable is unavailable. Grok implemented → either judgment model grades. Always say which grader ran.
+ 
+ ## Sending prompts to a TUI agent
+ 
+diff --git a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.codex/skills/advisor/SKILL.md b/Users/cortega/.codex/skills/advisor/SKILL.md
+index 077b0b2..0297b3f 100644
+--- a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.codex/skills/advisor/SKILL.md
++++ b/Users/cortega/.codex/skills/advisor/SKILL.md
+@@ -1,6 +1,6 @@
+ ---
+ name: advisor
+-description: Rent a stronger, cross-family brain for scope and direction before committing — a second brain for the codex seat, not a code reviewer. Use at scope-shaping moments (what to build, how far, which architecture, what to cut) or when Cris asks for "fable's take" / "an advisor read". Default method is fable (Fable, the wise owl, headless claude CLI) because the seat is already GPT — same-family advice is the seat advising itself. Returns a scope verdict, advisory deltas, and ONLY the questions a human must decide.
++description: Rent a stronger, cross-family brain for scope and direction before committing — a second brain for the codex seat, not a code reviewer. Use at scope-shaping moments (what to build, how far, which architecture, what to cut) or when Cris asks for "fable's take" / "an advisor read". Default method is fable (Fable, the wise owl, headless claude CLI) because the seat is already GPT; Astra high is the same-family fallback. Only Fable and Astra advise. Returns a scope verdict, advisory deltas, and ONLY the questions a human must decide.
+ ---
+ 
+ # advisor — a stronger brain on scope, on demand (Codex seat edition)
+@@ -36,8 +36,7 @@ specifically.
+ | Method | Model | Invocation | When |
+ |---|---|---|---|
+ | `fable` | Fable | `claude -p`, `--effort high` (raise only on explicit ask) | **Default.** Scope verdicts, direction, what-to-cut judgment. |
+-| `opus` | Opus | `claude -p --model "$(model-id opus || echo MODEL-ID-UNRESOLVED-opus)"` | Cross-family advice when the call is real but doesn't warrant Fable's usage — or when Fable plan access is unavailable. |
+-| `codex` | Sol at **xhigh**, fresh session, no seat context | `codex exec --sandbox read-only` | **Degraded only.** The Claude pool is exhausted. Flag it to Cris — same-family advice is the seat advising itself. |
++| `astra` | Astra at **high**, fresh session, no seat context | `codex exec -m "$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)" --sandbox read-only` | **Fallback** when Fable is unreachable (Claude pool exhausted, ENOTFOUND), or when Cris names it. Same-family as this seat — say so with the verdict. If neither Fable nor Astra can run, advice is **NOT RUN**; Sol and Opus never advise. |
+ | `both` | Fable + Astra high, blind, in parallel | fable via `claude -p` + a fresh `codex exec -m "$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)" -c model_reasoning_effort=high` (no seat context) | When Cris says "both". Resolve factual disagreements against the repo yourself; present judgment disagreements to Cris steelmanned, both sides — never pick the winner. Flag that astra is same-vendor as this seat. |
+ 
+ ## Step 1 — Build the advisory brief (the quality lever)
+@@ -90,8 +89,7 @@ jq -r '.result'                /tmp/advisor-out.json   # the advisory text
+   non-interactive shell Codex spawns; use the full flag.
+ 
+ **Prove the model.** If that `jq -e` check for `$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)` fails, the call ran on the wrong model — abort, tell
+-Cris, and never present another model's output as fable. For `opus`, swap `--model "$(model-id opus || echo MODEL-ID-UNRESOLVED-opus)"` (drop `--effort`)
+-and check `jq -e --arg m "$(model-id opus || echo MODEL-ID-UNRESOLVED-opus)" '.modelUsage | has($m)'` instead.
++Cris, and never present another model's output as fable.
+ 
+ ### The sandbox gate — read this before the first call fails
+ 
+@@ -109,18 +107,18 @@ branch on `.is_error`, never on `$?`.
+ When you see ENOTFOUND, the advisor did not run. Do not report its "advice." Either:
+ 1. Re-run the command with **escalated permissions** (unsandboxed) — the least-privilege path; Codex asks Cris to
+    approve that one command, and he is at the keyboard anyway since advisor is an interactive-moment skill; or
+-2. Use the `codex` degraded method below and tell Cris the cross-family advisor was unreachable.
++2. Use the `astra` fallback below and tell Cris the cross-family advisor was unreachable.
+ 
+ If `~/.codex/config.toml` sets `[sandbox_workspace_write] network_access = true`, the call just works with no
+ escalation. Confirmed working end-to-end under `--sandbox danger-full-access`.
+ 
+-**codex** (degraded fallback only) — fresh session, no seat context, effort bumped:
++**astra** (fallback) — fresh session, no seat context:
+ ```bash
+-codex exec --skip-git-repo-check --sandbox read-only -m "$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)" \
+-  -c model_reasoning_effort=xhigh "$PROMPT" </dev/null 2>/dev/null
++codex exec --skip-git-repo-check --sandbox read-only -m "$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)" \
++  -c model_reasoning_effort=high "$PROMPT" </dev/null 2>/dev/null
+ ```
+ Model and effort come from `~/.claude/advisor-config.json` when it's present (resolve its family with
+-`-m "$(model-id <codexModel> || echo MODEL-ID-UNRESOLVED-<codexModel>)"`) — never hardcode a model id into a repo script. Tell Cris the advice ran same-family and is therefore weaker.
++`-m "$(model-id <codexModel> || echo MODEL-ID-UNRESOLVED-<codexModel>)"`) — never hardcode a model id into a repo script. Tell Cris the advice ran same-family and is therefore weaker. If Astra cannot run either, report the advice as NOT RUN — never substitute Sol or Opus.
+ 
+ ## The advisor contract (embedded verbatim in the prompt)
+ 
+@@ -162,7 +160,7 @@ The seat is not a courier. Before showing Cris anything:
+ 
+ `~/.claude/advisor-config.json` — shared with the Claude seat; model values are registry families (`model-id --table`):
+ ```json
+-{ "method": "fable", "codexModel": "sol", "codexEffort": "xhigh" }
++{ "method": "fable", "codexModel": "astra", "codexEffort": "high" }
+ ```
+ Precedence: spoken choice for one run → this file → fable. A spoken one-run choice never rewrites the saved default.
+ 
+diff --git a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.codex/skills/build/SKILL.md b/Users/cortega/.codex/skills/build/SKILL.md
+index 6c02ffa..df837ae 100644
+--- a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.codex/skills/build/SKILL.md
++++ b/Users/cortega/.codex/skills/build/SKILL.md
+@@ -17,12 +17,12 @@ Use for a real feature, script, tool, or change where correctness matters. NOT f
+ |---|---|---|
+ | Understand | codex (this seat) | read the code, map it, write `context.md` — conclusions, not dumps |
+ | Shape: draft plan + bar | codex | native |
+-| Shape: **Bounce** (attack the plan) | **cross-family: Claude** | `claude -p` read-only (see below) |
++| Shape: **Bounce** (attack the plan) | **Fable** (cross-family) → Astra high → NOT RUN | `claude -p` read-only (see below) |
+ | Build | codex (workhorse default) or delegate taste work to Claude/Opus | the phase loop below |
+-| **Grade** (verify vs bar) | **cross-family: Claude** | `claude -p` read-only |
++| **Grade** (verify vs bar) | **Fable** (cross-family) → Astra high → NOT RUN | `claude -p` read-only |
+ | Judge | Cris | yes/no against the bar |
+ 
+-**Cross-family rule:** codex is the seat and usually the implementer, so the Bounce and the Grade go to a Claude brain — no family grades its own work. `/build`-style lane overrides still apply: taste-heavy work (frontend, copy) can be delegated to Opus, in which case codex grades instead. (The seat model resolves from `~/.codex/config.toml` — Astra high; build phases run Astra medium, with Sol medium as the legacy builder swap.)
++**Cross-family preferred:** codex is the seat and usually the implementer, so the Bounce and the Grade go to Fable first — a different family grades best. Only Fable and Astra gate; Sol and Opus never do. `/build`-style lane overrides still apply: taste-heavy work (frontend, copy) can be delegated to Opus, in which case codex grades instead. (The seat model resolves from `~/.codex/config.toml` — Sol high; build phases run Sol medium. Astra is judgment tier and never builds.)
+ 
+ ## The four phases (state in `builds/<slug>/`, re-read each pass)
+ 
+@@ -44,23 +44,24 @@ claude -p "Read the changed files and grade against this bar. For EACH criterion
+ <paste criteria from plan.md>" \
+   --model "$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)" --effort high --output-format json --dangerously-skip-permissions --tools Read,Grep,Glob
+ ```
+-Parse `.result` from the JSON envelope and verify the model with `jq -e --arg m "$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)" '.modelUsage | has($m)'`. When Fable usage runs low, drop to the cheap fallback: swap in `--model "$(model-id opus || echo MODEL-ID-UNRESOLVED-opus)"` (drop `--effort`) and check `jq -e --arg m "$(model-id opus || echo MODEL-ID-UNRESOLVED-opus)" '.modelUsage | has($m)'` instead.
++Parse `.result` from the JSON envelope and verify the model with `jq -e --arg m "$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)" '.modelUsage | has($m)'`. When Fable is unavailable, fall back to Astra high (below) — never to Opus.
+ 
+ **The flags are load-bearing.** `--tools Read,Grep,Glob` (not `--allowedTools`) is what holds the gate read-only — it removes Write/Edit from existence rather than merely gating them, which is what makes skipping the permission prompts safe. A headless `claude -p` can't show a prompt, so without the skip flag a repo deny-rule or hook blocks a read silently and the gate grades files it never opened.
+ 
+ **Check `.is_error` is false before trusting `.result`, and never branch on `$?`** — piping the output masks a failure as exit 0. A call that never reached the API returns `API Error: Unable to connect to API (ENOTFOUND)`, which means Codex's sandbox denied it network (`network_access` under `[sandbox_workspace_write]` in `~/.codex/config.toml`, or run the call escalated). That is a gate that **did not run**: fix it or drop to degraded mode below — never report it as a pass.
+ 
+-## Degraded mode — when Claude usage is exhausted (the backup reason)
++## Fallback — when Fable is unavailable
+ 
+-If `claude -p` is unavailable (out of Max pool), the cross-family gate can't run. Do NOT skip the gate — run it same-family but honestly:
+-- Bounce and Grade run in a **fresh codex session with no build context**, effort bumped to **xhigh**:
+-  `codex exec --skip-git-repo-check --sandbox read-only -m "$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)" -c model_reasoning_effort=xhigh "<same prompt>" </dev/null`
+-- **Flag it to Cris in the handoff:** "Gate ran same-family (codex), degraded — no cross-vendor check available." A fresh-context adversarial pass is weaker than a different family, and he should know when a build shipped without the cross-vendor check.
++If `claude -p` is unavailable (out of Max pool, ENOTFOUND), the cross-family gate can't run. Do NOT skip the gate — the order is **Fable → Astra high → NOT RUN**:
++- Bounce and Grade run on **Astra high** in a **fresh codex session with no build context**:
++  `codex exec --skip-git-repo-check --sandbox read-only -m "$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)" -c model_reasoning_effort=high "<same prompt>" </dev/null`
++- **Say it in the handoff:** "Gate ran on Astra, same-family — no cross-vendor check." He should know when a build shipped without one.
++- If Astra cannot run either, the gate is **NOT RUN** — report it as NOT RUN, never as a pass. Sol and Opus never gate.
+ 
+ ## Hard rules
+ 
+ - The verifier never edits — all gate calls are read-only.
+-- The grader is never the author's context; cross-family when possible, fresh-context same-family only as a flagged fallback.
++- The grader is never the author's context. Cross-family (Fable) preferred; Astra high same-family is allowed and named in the handoff; otherwise the gate is NOT RUN.
+ - Never delete, skip, weaken, or narrow a test to make a criterion pass. A gamed check is a failed build.
+ - A FAIL from Grade is not optional: fix it, or surface to Cris why the criterion is wrong.
+ - Never merge, never push to a protected branch, never commit on Cris's behalf unless asked.
+diff --git a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.codex/skills/investigate/SKILL.md b/Users/cortega/.codex/skills/investigate/SKILL.md
+index 9265027..30ec0f7 100644
+--- a/Users/cortega/.agent-config-studio/backups/model-registry-2026-09-23T00-09-22-385Z/files/.codex/skills/investigate/SKILL.md
++++ b/Users/cortega/.codex/skills/investigate/SKILL.md
+@@ -48,7 +48,7 @@ Everything past this point is the skill's job, not yours. Your only other moment
+ | 2. Explore | orchestrator + Explore subagents (sonnet) | conclusions only come back; bulk file/log dumps stay out of the orchestrator's context |
+ | 3. Hypotheses | orchestrator | native — choosing candidate explanations is judgment, not volume |
+ | 4. Verify | fan-out subagents (sonnet default, opus for concurrency/subtle checks) | one subagent per hypothesis, in parallel, each carrying the 5-part contract; returns CONFIRMED, KILLED, or UNVERIFIED plus the pasted evidence, never a raw log dump |
+-| 5. Disprove | codex (the configured model + effort, read-only) | fresh cross-family context. No same-family fallback — if codex is unavailable, report Disprove as NOT RUN rather than substituting a Claude subagent, which re-runs the seat's own priors and tends to rubber-stamp them |
++| 5. Disprove | codex (the configured model + effort, read-only) | fresh context, cross-family preferred. If codex is unavailable, a fresh-context Claude subagent may run it same-family (weaker — it shares the seat's priors); the report says which adversary ran |
+ | 6. Conclude | orchestrator | native — synthesis is judgment |
+ 
+ Verify is the volume step, not a judgment step, so it must not run in the orchestrator's own context. Dispatch one subagent per hypothesis in parallel (single message, multiple Agent calls), each carrying the delegation contract: objective (confirm or kill hypothesis N), read-first (`context.md` and the hypothesis' phrasing), constraints (read-only unless the driver allowed writes), validation command (the specific check to run), stop condition (paste the actual output and return CONFIRMED, KILLED, or UNVERIFIED). The orchestrator collects the returned verdicts into `findings.md`; it does not re-run the checks itself unless a subagent's result looks off and needs a spot-check. In lightweight mode (one hypothesis, one command), the seat just runs the check itself — the delegation floor applies here too.
+@@ -73,7 +73,7 @@ Resolution: spoken method → repo config → global config. **First-time user (
+ 
+ **A spoken method is binding for the whole investigation** (same rule as `/build`'s implementer lane). `/investigate codex` means codex runs every Explore and Verify step, start to finish — the orchestrator does not re-route mid-loop, does not switch methods on a hypothesis it finds hard, and does not silently fall back when a check comes back UNVERIFIED. If a method is genuinely stuck (the same hypothesis returns UNVERIFIED twice after the brief has been sharpened), say so and ask before switching. The user chose the method; leaving it is the user's call. Config-resolved methods carry no such promise — the orchestrator may escalate those on its own judgment.
+ 
+-Whatever method investigates, the cross-family rule holds: the disprove adversary is never the same model family that produced the conclusion.
++Whatever method investigates, cross-family is preferred: the disprove adversary should be a different model family from the one that produced the conclusion. Same-family is allowed when the other family is unavailable — the report says which adversary ran.
+ 
+ ## The loop
+ 
+@@ -83,7 +83,7 @@ Work in a dedicated folder, `investigations/<slug>/`. Re-read the files at the s
+ 2. **Explore** → write `context.md`: the relevant paths, how the pieces connect, where the evidence actually lives. Wide and cheap; throwaway is fine.
+ 3. **Hypotheses** → write `hypotheses.md`: the candidate explanations, each phrased so it can be confirmed or killed by a specific check.
+ 4. **Verify** (the core, and the volume step — fan it out rather than hand-running it) → dispatch one subagent per hypothesis, in parallel, each carrying the 5-part contract (see Model architecture above): run a command, query, or reproduction that confirms or kills it, and return the ACTUAL output plus a CONFIRMED / KILLED / UNVERIFIED verdict. The orchestrator pastes each returned verdict and its evidence into `findings.md` next to the claim; it does not spend its own context running the checks. No claim without evidence. Anything a subagent cannot reproduce gets tagged `UNVERIFIED` with a note on what would verify it. A hypothesis only confirmable by driving a browser → dispatch `/qa-tester` as the verifier (observe-only: investigation's read-only default overrides its full-interaction mode); its per-criterion report is the evidence pasted into `findings.md`.
+-5. **Disprove** → before accepting a conclusion, a fresh context whose only job is to break it: find the counter-evidence, the missed case, the alternative cause. **Prefer a cross-family adversary:** run the disprove via `codex exec` (the configured codex model + effort, read-only, self-contained prompt with the conclusion + evidence chain) so a different brain attacks it; a fresh-context Claude subagent is the fallback when codex isn't available. **When the conclusion will drive a costly or hard-to-undo decision** (a merge, an Atlas dispatch, a production change), add a second pass framed differently from the first: a fresh Claude subagent given only `context.md` and the raw evidence in `findings.md` — not the conclusion — asked what the most likely explanation is. Independent convergence on the same answer is stronger proof than surviving one attack; divergence becomes a new hypothesis and sends you back to step 4. If either pass kills the conclusion, return to step 4.
++5. **Disprove** → before accepting a conclusion, a fresh context whose only job is to break it: find the counter-evidence, the missed case, the alternative cause. **Prefer a cross-family adversary:** run the disprove via `codex exec` (the configured codex model + effort, read-only, self-contained prompt with the conclusion + evidence chain) so a different brain attacks it; a fresh-context Claude subagent is the fallback when codex isn't available (same-family when the seat is Claude — say so in the report). **When the conclusion will drive a costly or hard-to-undo decision** (a merge, an Atlas dispatch, a production change), add a second pass framed differently from the first: a fresh Claude subagent given only `context.md` and the raw evidence in `findings.md` — not the conclusion — asked what the most likely explanation is. Independent convergence on the same answer is stronger proof than surviving one attack; divergence becomes a new hypothesis and sends you back to step 4. If either pass kills the conclusion, return to step 4.
+ 6. **Conclude** → write `conclusion.md`: the answer, the evidence chain, a confidence level, and an explicit list of what is still UNVERIFIED.
+ 
+ ## Hard rules
