@@ -219,6 +219,9 @@ const r1 = await ops.restore(p1.opId);
   ok('R8 typed during the fetch, disk differs → keep the draft and warn, never replace',
      decide({ sameFile: true, dirty: true, fetched: 'disk v2', original: 'v1' }) === 'conflict');
   ok('R8 …a different file opened meanwhile → leave it alone', decide({ sameFile: false, dirty: false, fetched: 'x', original: 'y' }) === 'none');
+  ok('R9 the fetch failed (413) with unsaved edits in the same file → conflict: keep the draft and warn',
+     decide({ sameFile: true, dirty: true, fetched: null, original: 'v1' }) === 'conflict');
+  ok('R9 the fetch failed with a clean editor → leave it as it is', decide({ sameFile: true, dirty: false, fetched: null, original: 'v1' }) === 'none');
   ok('R8 …still clean and still the same file → replace', decide({ sameFile: true, dirty: false, fetched: 'v2', original: 'v1' }) === 'replace');
   // 2. The bytes match: the metadata still has to be taken.
   ok('R8 disk equals what the tab holds → refresh metadata (dirty or not)',
