@@ -895,6 +895,49 @@ for (const [label, hook] of [
   ok('F …and a slug that is a link fails', compareRealHomes(base, withProbe({ [path.join(projects, probe)]: 'link:/x' })).content.length > 0);
 }
 
+// ── round 4 ───────────────────────────────────────────────────────────────
+// R1: a Memory trash that would cross devices is refused, not copied.
+{
+  V = await view();
+  const target = path.join(fx.mem, 'live-1.md');
+  const bytes = fs.readFileSync(target, 'utf8');
+  const indexBefore = fs.readFileSync(indexPath, 'utf8');
+  const [, pv] = await call('POST', '/api/memory/preview', { action: 'trash-fact', ids: [row('live-1.md').id] });
+  mutate._setTrashIo({ renameSync: () => { throw Object.assign(new Error('cross-device link not permitted'), { code: 'EXDEV' }); } });
+  const [st, body] = await call('POST', '/api/memory/accept', { opId: pv.opId });
+  mutate._setTrashIo(null);
+  ok('R1 a forced EXDEV in a memory op is refused with a clear message', st === 409 && /different volume/.test(body.error), `${st} ${JSON.stringify(body).slice(0, 200)}`);
+  ok('R1 …the source is intact and the index untouched', fs.existsSync(target) && fs.readFileSync(target, 'utf8') === bytes && fs.readFileSync(indexPath, 'utf8') === indexBefore);
+  const left = (await mutate.listTrash()).find((t) => t.originalPath === target);
+  ok('R1 …and no trash entry for it is left behind', !left);
+  if (left?.moved) {   // only on a failing build: undo the copy-and-remove so later checks run
+    fs.writeFileSync(indexPath, indexBefore);
+    await mutate.restoreTrash({ id: left.id });
+  }
+}
+
+// R2: memory swapped for a link to .claude/hooks during the history baseline.
+{
+  V = await view();
+  const [, pv] = await call('POST', '/api/memory/preview', { action: 'fix-links', ids: [V.findings.dangling.find((d) => d.target === 'gone-5.md').id] });
+  const hooks = path.join(fakeHome, '.claude', 'hooks');
+  fs.mkdirSync(hooks, { recursive: true });
+  const hooksBefore = treeHash(hooks);
+  const moved = `${fx.mem}.real`;
+  // `seen` is hooks as it is at every later await point, so a temp file that
+  // lands there and is cleaned up afterwards is still caught.
+  const seen = [];
+  ops._setOpFault((pt) => {
+    if (pt === 'after-baseline') { fs.renameSync(fx.mem, moved); fs.symlinkSync(hooks, fx.mem); }
+    else seen.push(treeHash(hooks));
+  });
+  const [st] = await call('POST', '/api/memory/accept', { opId: pv.opId });
+  ops._setOpFault(null);
+  ok('R2 memory swapped for a link during the baseline: refused, and nothing is ever created under hooks',
+     st === 409 && treeHash(hooks) === hooksBefore && seen.every((h) => h === hooksBefore), `${st} seen=${seen.length} ${seen.some((h) => h !== hooksBefore)}`);
+  fs.unlinkSync(fx.mem); fs.renameSync(moved, fx.mem);
+}
+
 // ── criterion 11: the UI wording ──────────────────────────────────────────
 {
   const app = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
