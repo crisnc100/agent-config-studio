@@ -1883,7 +1883,7 @@ function opsTab() {
     }
     row.appendChild(body);
     const btn = el('button', 'btn ghost scope-open', 'Restore');
-    btn.disabled = op.status === 'restored' || op.status === 'refused';
+    btn.disabled = ['restored', 'refused', 'unrecognised'].includes(op.status);
     btn.onclick = async () => {
       try {
         const r = await api('POST', '/api/memory/restore', { opId: op.id });
