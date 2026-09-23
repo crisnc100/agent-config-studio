@@ -23,11 +23,12 @@
  *    and every CLAUDE.md / AGENTS.md / .cursor/rules/*.mdc under
  *    ~/Documents/Projects, found the way lib/context-map.js finds them.
  *    Transcripts beside the memory trees are not hashed: live sessions append
- *    to them. A slug or a context file that APPEARS during the run is reported
- *    as a note, not a failure — the live-model suites start Claude sessions
- *    in temp directories, and Claude Code creates a slug with an empty
- *    memory/ for each — but one that existed at the start must be exactly as
- *    it was at the end.
+ *    to them. Anything that appears, disappears or changes there fails — with
+ *    ONE exemption: a new slug named exactly like the two temp directories
+ *    tests/phase1.mjs starts live Claude sessions in (`acs-contain-claude-`
+ *    at its line 670, `acs-claude-writeprobe-` at 738, both mkdtemp'd in
+ *    os.tmpdir()), since Claude Code gives every session's cwd a slug with an
+ *    empty memory/. No other new slug and no new context file is exempt.
  *  - ENTRY NAMES ONLY for the live agent homes ~/.claude, ~/.codex, ~/.grok and
  *    the top two levels of the two project roots (plus a hash of the loose
  *    files at their top). Running agents write inside those all
@@ -175,6 +176,15 @@ function contextFiles(root) {
   return out.sort();
 }
 
+/** A slug tests/phase1.mjs's live Claude runs create, and nothing else. */
+const PROBE_SLUG = (() => {
+  let tmp;
+  try { tmp = fs.realpathSync(os.tmpdir()); } catch { tmp = os.tmpdir(); }
+  const esc = tmp.replace(/[^A-Za-z0-9]/g, '-').replace(/[-]/g, '\\-');
+  return new RegExp(`^${esc}-acs-(contain-claude|claude-writeprobe)-[A-Za-z0-9]{6}$`);
+})();
+export const isLiveSuiteProbeSlug = (slug) => PROBE_SLUG.test(slug);
+
 export function snapshotRealHomes() {
   const out = {};
   const walk = (entry) => {
@@ -262,18 +272,16 @@ export function compareRealHomes(before, after) {
   const appeared = [];
   const list = (snap, key) => new Set(JSON.parse(snap[key] || '[]'));
   const slugKey = `slugs:${MEMORY_PROJECTS}`;
-  const beforeSlugs = list(before, slugKey);
-  const newSlugs = [...list(after, slugKey)].filter((x) => !beforeSlugs.has(x));
-  if (newSlugs.length) appeared.push(`${newSlugs.length} new ~/.claude/projects slug${newSlugs.length === 1 ? '' : 's'} (sessions started during the run): ${newSlugs.slice(0, 3).join(', ')}${newSlugs.length > 3 ? ', …' : ''}`);
   const ctxKey = `context:${PROJECT_ROOTS[0]}`;
-  const beforeCtx = list(before, ctxKey);
-  const newCtx = new Set([...list(after, ctxKey)].filter((x) => !beforeCtx.has(x)));
-  if (newCtx.size) appeared.push(`${newCtx.size} context file${newCtx.size === 1 ? '' : 's'} appeared under ~/Documents/Projects: ${[...newCtx].slice(0, 3).map(tilde).join(', ')}`);
+  const beforeSlugs = list(before, slugKey);
+  const probes = new Set([...list(after, slugKey)].filter((x) => !beforeSlugs.has(x) && isLiveSuiteProbeSlug(x)));
+  if (probes.size) appeared.push(`${probes.size} new phase1 probe slug${probes.size === 1 ? '' : 's'} (live Claude sessions in its temp dirs): ${[...probes].slice(0, 3).join(', ')}`);
   for (const k of new Set([...Object.keys(before), ...Object.keys(after)])) {
     if (k.startsWith('meta:')) continue;
+    // The lists themselves: every entry in them is its own key, compared below.
     if (k === slugKey || k === ctxKey) continue;
-    if (k.startsWith(MEMORY_PROJECTS + path.sep) && !beforeSlugs.has(k.slice(MEMORY_PROJECTS.length + 1).split(path.sep)[0])) continue;
-    if (newCtx.has(k) && before[k] === undefined) continue;
+    if (k.startsWith(MEMORY_PROJECTS + path.sep) && before[k] === undefined
+        && probes.has(k.slice(MEMORY_PROJECTS.length + 1).split(path.sep)[0])) continue;
     if (k.startsWith('names:')) {
       if (before[k] !== after[k]) {
         const b = new Set(JSON.parse(before[k] || 'null') || []);
