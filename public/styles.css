@@ -710,3 +710,72 @@ a { color: var(--accent); }
   color: var(--fg-dim, #999);
 }
 .usage-conflict-note { font-size: 11px; color: var(--fg-dim, #888); margin-top: 6px; }
+
+/* ── models view ─────────────────────────────────────────────────────── */
+.scope.models { max-width: 1040px; }
+.models-badge {
+  margin-left: 5px; font: 10px var(--sans); font-variant-numeric: tabular-nums;
+  color: var(--bg); background: var(--amber); padding: 0 5px; border-radius: 999px;
+}
+.item-dot.grok { background: var(--text-dim); }
+.models-error-text { font: 12px var(--mono); margin-top: 6px; white-space: pre-wrap; }
+.models-catalogs { display: flex; flex-direction: column; gap: 3px; margin: -8px 0 18px; }
+.models-catalog { font-size: 12px; color: var(--muted); display: flex; gap: 10px; }
+.models-catalog.stale, .models-catalog.missing { color: var(--amber); }
+.models-catalog-name { min-width: 52px; color: var(--text-dim); }
+
+.models-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.models-table th {
+  text-align: left; font-weight: 500; font-size: 11px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.04em; padding: 0 10px 8px; border-bottom: 1px solid var(--border);
+}
+.models-row td { padding: 10px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+.models-row { cursor: pointer; }
+.models-row:hover td, .models-row.open td { background: var(--panel); }
+/* Not display:flex — a flex <td> stops being a table cell and its border no longer spans the row. */
+.models-family { white-space: nowrap; }
+.models-family .item-dot { display: inline-block; vertical-align: middle; margin-right: 8px; }
+.models-family .item-badge { margin-left: 8px; }
+.models-id { font: 12px var(--mono); white-space: nowrap; }
+.models-name { color: var(--text-dim); white-space: nowrap; }
+.models-source { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.models-source.override { color: var(--accent); }
+.models-none { color: var(--muted); }
+
+/* Text first, buttons right-aligned on its line, and any reason on a line of
+   its own below — a reason sharing the row squeezed the text to a sliver. */
+.models-alert {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center;
+  column-gap: 6px; font-size: 12px;
+  padding: 3px 4px 3px 9px; margin-bottom: 4px; border-radius: 7px;
+  border: 1px solid var(--border);
+}
+.models-alert.update { color: var(--codex); border-color: color-mix(in srgb, var(--codex) 35%, transparent); background: color-mix(in srgb, var(--codex) 8%, transparent); }
+.models-alert.retiring { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 8%, transparent); }
+.models-alert.vanished { color: var(--red); border-color: color-mix(in srgb, var(--red) 35%, transparent); background: color-mix(in srgb, var(--red) 8%, transparent); }
+.models-alert-text { grid-column: 1; grid-row: 1; min-width: 0; overflow-wrap: anywhere; }
+.models-alert-why { grid-column: 1 / -1; grid-row: 2; color: var(--muted); font-size: 11px; padding-bottom: 2px; }
+.models-alert-btn { padding: 1px 8px; font-size: 11px; }
+
+.models-detail td { padding: 12px 10px 16px 28px; background: var(--panel); border-bottom: 1px solid var(--border); cursor: default; }
+.models-edit { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.models-input {
+  flex: 1; max-width: 360px; padding: 6px 10px; font: 12px var(--mono);
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 7px; outline: none;
+}
+.models-input:focus { border-color: var(--accent-dim); }
+.models-edit .btn { padding: 4px 12px; font-size: 12px; }
+.models-message { font-size: 12px; color: var(--amber); margin: 6px 0; white-space: pre-wrap; }
+.models-where { margin-top: 10px; }
+.models-where-hit { display: flex; gap: 12px; font-size: 12px; padding: 2px 0; min-width: 0; }
+.models-where-file { font: 11px var(--mono); color: var(--text-dim); flex: none; }
+.models-where-text { color: var(--muted); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.models-sidecars {
+  margin: 0 0 18px; padding: 12px 14px; border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.models-sidecars-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 12px; margin-bottom: 8px; }
+.models-sidecar { display: flex; align-items: center; gap: 10px; font-size: 12px; padding: 3px 0; flex-wrap: wrap; }
+.models-sidecar-what { flex: 1; min-width: 0; color: var(--text-dim); }

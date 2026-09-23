@@ -37,7 +37,7 @@ function renderMarkdown(src) {
 
 const S = {
   registry: null,
-  view: 'welcome',      // welcome | entry | search | scope
+  view: 'welcome',      // welcome | entry | search | scope | mcp | usage | trash | models
   entry: null,
   file: null,           // { path, kind, content, mtime, display }
   original: '',
@@ -90,6 +90,7 @@ async function boot() {
   connectEvents();
   restoreSessions();
   resolveHarness();
+  paintModelsBadge(S.registry.modelAlerts || 0);
   if (S.registry.registryError) {
     notice('warn', 'The model registry has a problem — Assist is using what it could:',
       S.registry.registryError.split('\n'), true);
@@ -100,6 +101,7 @@ async function boot() {
   if (location.hash.startsWith('#mcp')) return openMcp();
   if (location.hash.startsWith('#usage')) return openUsage();
   if (location.hash.startsWith('#trash')) return openTrash();
+  if (location.hash.startsWith('#models')) return openModels();
   if (location.hash.startsWith('#assist')) { renderWelcome(); return openDrawer(); }
   const m = location.hash.match(/file=([^&]+)/);
   if (m) {
@@ -237,6 +239,9 @@ function renderTopbar() {
   } else if (S.view === 'mcp') {
     t.textContent = 'MCP servers';
     $('title-path').textContent = 'Model Context Protocol servers across both harnesses';
+  } else if (S.view === 'models') {
+    t.textContent = 'Models';
+    $('title-path').textContent = 'Every model family, its current id, and what the CLIs offer';
   } else if (S.view === 'trash') {
     t.textContent = 'Trash';
     $('title-path').textContent = 'Deleted items — restorable';
@@ -330,6 +335,7 @@ function renderContent() {
   if (S.view === 'mcp') return;            // rendered directly by openMcp
   if (S.view === 'usage') return;          // rendered directly by openUsage
   if (S.view === 'trash') return;          // rendered directly by openTrash
+  if (S.view === 'models') return;         // rendered directly by openModels
   if (!S.file) return;
 
   if (S.tab === 'preview') return renderPreview(c);
@@ -734,6 +740,7 @@ async function refreshRegistry(selectPath) {
   // identity checks (active row, "can add files") keep working.
   if (S.file) S.entry = entryForFile(S.file.path) ?? S.entry;
   resolveHarness();       // detection is re-run server-side on every rebuild
+  paintModelsBadge(S.registry.modelAlerts || 0);
   renderSidebar();
   const total = S.registry.groups.reduce(
     (n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
@@ -1729,6 +1736,260 @@ async function openMcp() {
   c.appendChild(box);
 }
 
+/* ── Models view ─────────────────────────────────────────────────────── */
+/**
+ * Every registry family, where its id comes from and where it is used, and
+ * what the CLIs' own catalogs say about it. The studio proposes; nothing is
+ * applied until you press a button.
+ */
+const M = { open: new Set(), where: {}, drafts: {}, sidecars: [], data: null };
+
+function paintModelsBadge(n) {
+  const b = $('btn-models');
+  b.textContent = 'Models';
+  if (n > 0) {
+    const badge = el('span', 'models-badge', String(n));
+    badge.title = `${n} model alert${n === 1 ? '' : 's'}`;
+    b.appendChild(badge);
+  }
+}
+
+async function openModels() {
+  if (!confirmDiscard()) return;
+  S.view = 'models';
+  S.entry = null;
+  window.history.replaceState(null, '', '#models');
+  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
+  $('filebar').hidden = true;
+  $('content').innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span> reading model catalogs…</div></div>';
+  await paintModels(() => api('GET', '/api/models'));
+}
+
+async function paintModels(load) {
+  const c = $('content');
+  let m;
+  try { m = load ? await load() : M.data; }
+  catch (e) { c.innerHTML = `<div class="scope"><div class="scope-sub">${esc(e.message)}</div></div>`; return; }
+  if (S.view !== 'models') return;
+  M.data = m;
+  paintModelsBadge(m.pending);
+
+  c.innerHTML = '';
+  const box = el('div', 'scope models');
+  const head = el('div', 'usage-head');
+  head.appendChild(el('h2', null, 'Models'));
+  const actions = el('div', 'usage-actions');
+  const check = el('button', 'btn ghost', 'Check now');
+  check.onclick = async () => {
+    check.disabled = true; check.textContent = 'Checking…';
+    await paintModels(() => api('POST', '/api/models/check'));
+  };
+  actions.appendChild(check);
+  head.appendChild(actions);
+  box.appendChild(head);
+  box.appendChild(el('div', 'scope-sub',
+    `Read from each CLI's own catalog on disk — no network, no tokens. Checked ${agoText(Date.now() - m.checkedAt)}` +
+    (m.claudeVersion ? ` · Claude Code ${m.claudeVersion.split(' ')[0]}` : '') + '.'));
+
+  if (m.registryError) {
+    const n = el('div', 'notice error models-error');
+    n.appendChild(el('div', null, 'The model registry file is invalid. Defaults are in use, and edits are refused until it is fixed:'));
+    n.appendChild(el('div', 'models-error-text', m.registryError));
+    box.appendChild(n);
+  }
+
+  const cats = el('div', 'models-catalogs');
+  for (const cat of m.catalogs) {
+    const line = el('div', `models-catalog${cat.note ? (cat.ok ? ' stale' : ' missing') : ''}`);
+    line.appendChild(el('span', 'models-catalog-name', cat.label));
+    line.appendChild(el('span', null, cat.note ||
+      `${cat.count} models · fetched ${agoText(Date.now() - cat.fetchedAt)}`));
+    cats.appendChild(line);
+    if (cat.disagree) cats.appendChild(el('div', 'models-catalog stale', cat.disagree));
+  }
+  box.appendChild(cats);
+
+  if (M.sidecars.length) box.appendChild(sidecarStrip());
+
+  const table = el('table', 'models-table');
+  const thead = el('thead');
+  const hr = el('tr');
+  for (const h of ['Family', 'Current id', 'Name', 'Source', 'Alerts']) hr.appendChild(el('th', null, h));
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  const tbody = el('tbody');
+  for (const r of m.rows) {
+    const tr = el('tr', `models-row${M.open.has(r.family) ? ' open' : ''}`);
+    tr.dataset.family = r.family;
+    tr.onclick = (e) => {
+      if (e.target.closest('button')) return;
+      if (M.open.has(r.family)) M.open.delete(r.family); else M.open.add(r.family);
+      paintModels();
+    };
+    const fam = el('td', 'models-family');
+    fam.appendChild(el('span', `item-dot ${r.vendor === 'claude' ? 'claude' : r.vendor === 'codex' ? 'codex' : 'grok'}`));
+    fam.appendChild(document.createTextNode(r.family));
+    if (!r.track) fam.appendChild(el('span', 'item-badge', 'pinned'));
+    tr.appendChild(fam);
+    tr.appendChild(el('td', 'models-id', r.id));
+    tr.appendChild(el('td', 'models-name', r.displayName || '—'));
+    tr.appendChild(el('td', `models-source ${r.source}`, r.source === 'override' ? 'your override' : 'default'));
+    const al = el('td', 'models-alerts');
+    const live = r.alerts.filter((a) => !a.dismissed);
+    if (!live.length) al.appendChild(el('span', 'models-none', r.alerts.length ? 'dismissed' : '—'));
+    for (const a of live) al.appendChild(alertChip(r, a));
+    tr.appendChild(al);
+    tbody.appendChild(tr);
+    if (M.open.has(r.family)) tbody.appendChild(modelDetail(r, m));
+  }
+  table.appendChild(tbody);
+  box.appendChild(table);
+  c.appendChild(box);
+}
+
+function alertChip(row, a) {
+  const chip = el('div', `models-alert ${a.kind}`);
+  const text = a.kind === 'update'
+    ? `Newer: ${a.candidate}${a.displayName ? ` (${a.displayName})` : ''}`
+    : a.kind === 'retiring'
+      ? `Retiring${a.date ? ` ${new Date(a.date).toLocaleDateString()}` : ''}${a.candidate ? ` → ${a.candidate}` : ''}`
+      : 'No longer offered by the CLI';
+  chip.appendChild(el('span', 'models-alert-text', text));
+  if (a.message) chip.title = a.message;
+  if (a.reason) chip.appendChild(el('span', 'models-alert-why', a.reason));
+  if (a.candidate) {
+    const acc = el('button', 'btn ghost models-alert-btn', 'Accept');
+    acc.disabled = !a.acceptable || !!M.data.registryError;
+    acc.title = a.reason || `Set ${row.family} to ${a.candidate}`;
+    acc.onclick = () => modelWrite('/api/models/accept', { family: row.family, key: a.key },
+      `${row.family} is now ${a.candidate}.`);
+    chip.appendChild(acc);
+  }
+  const dis = el('button', 'btn ghost models-alert-btn', 'Dismiss');
+  dis.onclick = async () => {
+    try { await api('POST', '/api/models/dismiss', { family: row.family, key: a.key }); }
+    catch (e) { return notice('error', e.message, null, true); }
+    await paintModels(() => api('GET', '/api/models'));
+  };
+  chip.appendChild(dis);
+  return chip;
+}
+
+function modelDetail(r, m) {
+  const tr = el('tr', 'models-detail');
+  const td = el('td');
+  td.colSpan = 5;
+
+  const edit = el('div', 'models-edit');
+  const input = el('input', 'models-input');
+  // Kept across repaints: where-used arriving mid-typing must not wipe the draft.
+  input.value = M.drafts[r.family] ?? r.id;
+  input.oninput = () => { M.drafts[r.family] = input.value; };
+  input.spellcheck = false;
+  input.setAttribute('aria-label', `${r.family} model id`);
+  const save = el('button', 'btn primary', 'Save');
+  const reset = el('button', 'btn ghost', 'Reset to default');
+  const refused = !!m.registryError;
+  save.disabled = refused;
+  reset.disabled = refused || r.source !== 'override';
+  reset.title = r.source === 'override' ? `Remove your override; the default is ${r.defaultId}` : 'Already the default';
+  const submit = () => {
+    const id = input.value.trim();
+    if (!ID_SHAPE.test(id)) return notice('error', `${id || '(empty)'} is not a valid model id — lowercase letters, digits, "." and "-", up to 64 characters.`);
+    modelWrite('/api/models/set', { family: r.family, id }, `${r.family} is now ${id}.`);
+  };
+  save.onclick = submit;
+  input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+  reset.onclick = () => modelWrite('/api/models/reset', { family: r.family }, `${r.family} is back to the default, ${r.defaultId}.`);
+  edit.appendChild(input);
+  edit.appendChild(save);
+  edit.appendChild(reset);
+  td.appendChild(edit);
+  if (refused) td.appendChild(el('div', 'scope-note', 'Edits are refused while the registry file is invalid.'));
+
+  for (const a of r.alerts.filter((x) => x.message)) td.appendChild(el('div', 'models-message', a.message));
+
+  const where = el('div', 'models-where');
+  where.appendChild(el('p', 'assist-label', `Where model-id ${r.family} is used`));
+  const w = M.where[r.family];
+  if (!w) {
+    where.appendChild(el('div', 'scope-note', 'reading…'));
+    api('GET', `/api/models/where?family=${encodeURIComponent(r.family)}`)
+      .then((res) => { M.where[r.family] = res; if (S.view === 'models') paintModels(); })
+      .catch((e) => { M.where[r.family] = { hits: [], error: e.message }; if (S.view === 'models') paintModels(); });
+  } else if (w.error) {
+    where.appendChild(el('div', 'scope-note', w.error));
+  } else if (!w.hits.length) {
+    where.appendChild(el('div', 'scope-note', 'No skill, config or CLAUDE.md calls it.'));
+  } else {
+    for (const h of w.hits) {
+      const line = el('div', 'models-where-hit');
+      line.appendChild(el('span', 'models-where-file', `${h.file}:${h.line}`));
+      line.appendChild(el('span', 'models-where-text', h.text));
+      where.appendChild(line);
+    }
+    if (w.truncated) where.appendChild(el('div', 'scope-note', 'Showing the first matches only.'));
+  }
+  td.appendChild(where);
+  tr.appendChild(td);
+  return tr;
+}
+
+const ID_SHAPE = /^[a-z0-9][a-z0-9.\-]{0,63}$/;
+
+/** Set, reset or accept: one write path, with the server's confirm round-trip. */
+async function modelWrite(path, body, okText) {
+  let r;
+  try {
+    r = await api('POST', path, body);
+    if (r.needsConfirm) {
+      if (!confirm(`${r.warnings.join('\n')}\n\nSave ${r.family} = ${r.id} anyway?`)) return;
+      r = await api('POST', path, { ...body, confirm: true });
+    }
+  } catch (e) { return notice('error', e.message, null, true); }
+  if (r.unchanged) { notice('ok', 'Nothing to change.'); return; }
+  if (!r.saved) return notice('error', 'Not saved.', null, true);
+  notice('ok', okText + (r.historyError ? ` (history: ${r.historyError})` : ''));
+  M.sidecars = r.sidecars || [];
+  M.where = {};
+  M.drafts = {};
+  // The Assist picker reads the registry; refresh it so the change shows there too.
+  await refreshRegistry().catch(() => {});
+  await paintModels(() => api('GET', '/api/models'));
+}
+
+function sidecarStrip() {
+  const strip = el('div', 'models-sidecars');
+  const head = el('div', 'models-sidecars-head');
+  head.appendChild(el('span', null, 'Files the CLIs own still name the old id. Each edit changes only the part it names:'));
+  const close = el('button', 'btn ghost models-alert-btn', 'Done');
+  close.onclick = () => { M.sidecars = []; paintModels(); };
+  head.appendChild(close);
+  strip.appendChild(head);
+  for (const s of M.sidecars) {
+    const row = el('div', 'models-sidecar');
+    row.appendChild(el('span', 'models-where-file', s.file));
+    row.appendChild(el('span', 'models-sidecar-what', s.what));
+    const acc = el('button', 'btn ghost models-alert-btn', 'Accept');
+    acc.onclick = async () => {
+      let res;
+      try { res = await api('POST', '/api/models/sidecar', { kind: s.kind, from: s.from, to: s.to, mtime: s.mtime }); }
+      catch (e) { return notice('error', e.message, null, true); }
+      notice('ok', `Updated ${s.file}.`);
+      // This write is the only change since the others in the same file were
+      // proposed, so they carry its mtime forward rather than reading as a conflict.
+      M.sidecars = M.sidecars.filter((x) => x !== s).map((x) => (x.file === s.file ? { ...x, mtime: res.mtime } : x));
+      paintModels();
+    };
+    row.appendChild(acc);
+    const skip = el('button', 'btn ghost models-alert-btn', 'Skip');
+    skip.onclick = () => { M.sidecars = M.sidecars.filter((x) => x !== s); paintModels(); };
+    row.appendChild(skip);
+    strip.appendChild(row);
+  }
+  return strip;
+}
+
 /* ── assist chat ─────────────────────────────────────────────────────── */
 /**
  * Sessions are the unit of work: one thread about one topic, kept across drawer
@@ -2556,6 +2817,7 @@ $('btn-scope').onclick = openScope;
 $('btn-mcp').onclick = openMcp;
 $('btn-usage').onclick = openUsage;
 $('btn-trash').onclick = openTrash;
+$('btn-models').onclick = openModels;
 $('btn-delete').onclick = deleteOpenEntry;
 $('btn-copy').onclick = copyToOtherHarness;
 $('btn-theme').onclick = () => {
