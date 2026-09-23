@@ -72,8 +72,8 @@ console.log('\nmodels/resolver');
 
 // --- user file: per-key merge, unknown keys, malformed, bad values -------------
 {
-  const home = tempHome({ models: { opus: 'claude-opus-5-5' } });
-  ok('a file setting only opus changes opus', run(home, 'opus').out === 'claude-opus-5-5\n');
+  const home = tempHome({ models: { opus: 'claude-opus-6' } });
+  ok('a file setting only opus changes opus', run(home, 'opus').out === 'claude-opus-6\n');
   ok('...and keeps every other default', run(home, 'fable').out === `${DEFAULTS.models.fable}\n` &&
      run(home, 'astra').out === `${DEFAULTS.models.astra}\n`);
 
@@ -185,19 +185,19 @@ console.log('\nmodels/resolver');
 
 console.log('\nmodels/sidecars');
 {
-  const home = tempHome({ models: { opus: 'claude-opus-5-5' } });
+  const home = tempHome({ models: { opus: 'claude-opus-6' } });
   write(path.join(home, '.claude', 'settings.json'), JSON.stringify({
-    model: 'opus', modelSettings: { 'claude-opus-5': { effort: 'high' }, [DEFAULTS.models.fable]: {} },
+    model: 'opus', modelSettings: { [DEFAULTS.models.opus]: { effort: 'high' }, [DEFAULTS.models.fable]: {} },
   }));
   write(path.join(home, '.codex', 'config.toml'), `model = "${DEFAULTS.models.sol}"\n[profiles.x]\nmodel = "gpt-4.1"\n`);
   const r = run(home, '--sidecars');
-  ok('after an opus bump, settings.json modelSettings["claude-opus-5"] is flagged', r.out.includes('modelSettings["claude-opus-5"]'), r.out);
+  ok('after an opus bump, settings.json modelSettings[<shipped opus>] is flagged', r.out.includes(`modelSettings["${DEFAULTS.models.opus}"]`), r.out);
   ok('...a current id is not flagged', !r.out.includes(`modelSettings["${DEFAULTS.models.fable}"]`), r.out);
   ok('...a family alias as `model` is not flagged', !/settings\.json model:/.test(r.out), r.out);
   ok('...a stale config.toml model is flagged by line', /config\.toml line 3 model: gpt-4\.1/.test(r.out) && !r.out.includes('line 1'), r.out);
-  ok('--sidecars reports, it does not rewrite', JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).modelSettings['claude-opus-5']);
+  ok('--sidecars reports, it does not rewrite', JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).modelSettings[DEFAULTS.models.opus]);
   const clean = tempHome();
-  write(path.join(clean, '.claude', 'settings.json'), JSON.stringify({ modelSettings: { 'claude-opus-5': {} } }));
+  write(path.join(clean, '.claude', 'settings.json'), JSON.stringify({ modelSettings: { [DEFAULTS.models.opus]: {} } }));
   ok('with no bump the same entry is current', run(clean, '--sidecars').out === '');
 }
 
@@ -207,7 +207,7 @@ console.log('\nmodels/lint');
   const skill = path.join(home, '.claude', 'skills', 'demo', 'SKILL.md');
   write(skill, '---\nname: demo\n---\nRun `claude -p --model "$(model-id fable || echo MODEL-ID-UNRESOLVED-fable)" --effort high`.\n');
   write(path.join(home, '.codex', 'skills', 'demo', 'SKILL.md'), 'Astra high reviews.\n');
-  write(path.join(home, '.claude', 'CLAUDE.md'), 'Deferred for this build, so this raw id is not a hit: gpt-6-sol\n');
+  write(path.join(home, '.claude', 'CLAUDE.md'), 'Fable judges. Current ids: `model-id --table`.\n');
   // Out of scope by rule: these may carry anything.
   write(path.join(home, '.codex', 'skills', '.system', 'x', 'SKILL.md'), 'gpt-6-astra\n');
   write(path.join(home, '.claude', 'skills', 'synced', 'x', 'SKILL.md'), 'Opus 5\n');
@@ -215,7 +215,6 @@ console.log('\nmodels/lint');
   write(path.join(home, '.claude', 'skills', 'skills_retired', 'SKILL.md'), 'grok-4.6\n');
   const clean = run(home, '--lint');
   ok('clean scope → exit 0', clean.code === 0, clean.out + clean.err);
-  ok('--lint says out loud that ~/.claude/CLAUDE.md is not linted', /NOT linted: ~\/\.claude\/CLAUDE\.md — /.test(clean.err), clean.err);
 
   write(skill, '---\nname: demo\n---\nRun `codex exec -m gpt-6-astra`.\n');
   const raw = run(home, '--lint');
@@ -239,8 +238,10 @@ console.log('\nmodels/lint');
 
   const one = run(home, '--lint', path.join(home, '.claude', 'skills', 'demo', 'SKILL.md'));
   ok('--lint <path> lints only that path', one.code === 0, one.out);
-  const explicit = run(home, '--lint', path.join(home, '.claude', 'CLAUDE.md'));
-  ok('...and an explicit path to a deferred file is still linted', explicit.code === 1 && /CLAUDE\.md:1: gpt-6/.test(explicit.out), explicit.out);
+  write(path.join(home, '.claude', 'CLAUDE.md'), 'Builders: GPT-6 Sol medium.\n');
+  const doctrine = run(home, '--lint');
+  ok('~/.claude/CLAUDE.md is in the default scope again: a versioned name there → non-zero', doctrine.code === 1 && /CLAUDE\.md:1: GPT-6/.test(doctrine.out), doctrine.out);
+  write(path.join(home, '.claude', 'CLAUDE.md'), 'Fable judges. Current ids: `model-id --table`.\n');
 }
 
 // ACS's own source is held to the same rule by this test rather than by the
