@@ -94,6 +94,11 @@ put(H('.claude', 'skills', 'emoji', 'SKILL.md'), skillMd(EMOJI_NAME, 'long name,
 const ZALGO_NAME = `a${'\u0301'.repeat(10000)}`;
 put(H('.claude', 'skills', 'zalgo', 'SKILL.md'), skillMd(ZALGO_NAME, 'one enormous grapheme'));
 
+// C4: a bundle with a directory nobody can list, refused whole.
+put(H('.claude', 'skills', 'locked', 'SKILL.md'), skillMd('Locked', 'has an unreadable companion dir'));
+put(H('.claude', 'skills', 'locked', 'private', 'notes.md'), 'unreadable\n');
+fs.chmodSync(H('.claude', 'skills', 'locked', 'private'), 0o000);
+
 // C4: a bundle 33 directories deep, refused whole.
 put(H('.claude', 'skills', 'too-deep', ...Array.from({ length: 33 }, (_, i) => `d${i}`), 'x.md'), 'x\n');
 put(H('.claude', 'skills', 'too-deep', 'SKILL.md'), skillMd('Too Deep', 'past the depth limit'));
@@ -238,7 +243,7 @@ const err = async (p, init) => {
 const rows = listSkills();
 const id = (name) => rows.find((r) => r.name === name)?.id;
 ok('every fixture skill was discovered',
-   ['alpha', 'beta', 'nasty', 'crlf', 'device', 'emoji', 'zalgo', 'too-deep', 'evil', 'dangling'].every((n) => id(n)),
+   ['alpha', 'beta', 'nasty', 'crlf', 'device', 'emoji', 'zalgo', 'too-deep', 'locked', 'evil', 'dangling'].every((n) => id(n)),
    JSON.stringify(rows.map((r) => r.name)));
 
 // --- one id -> a readable .md ------------------------------------------------
@@ -305,6 +310,15 @@ ok('every fixture skill was discovered',
      /deeper than the 32-level limit.*refusing to export it partially/.test(r.body?.error || ''), r.body?.error);
   const z = await err(`/api/skills/export?ids=${id('too-deep')},${id('alpha')}`);
   ok('C4 …and a selection containing it is refused too, with no archive bytes',
+     z.status === 409 && z.buf.subarray(0, 2).toString('latin1') !== 'PK', String(z.status));
+}
+{
+  const r = await err(`/api/skills/export?ids=${id('locked')}`);
+  ok('C4 a skill with an unreadable directory is refused with 409, not exported without it',
+     r.status === 409 && /could not be read \(at private\/ \(EACCES\)\); refusing to hash or export it partially/.test(r.body?.error || ''),
+     `${r.status} ${r.body?.error}`);
+  const z = await err(`/api/skills/export?ids=${id('locked')},${id('alpha')}`);
+  ok('C4 …and a selection containing it gets no partial zip',
      z.status === 409 && z.buf.subarray(0, 2).toString('latin1') !== 'PK', String(z.status));
 }
 {
@@ -590,6 +604,7 @@ server.close();
   assertRealHomesUnchanged(realBefore, ok);
 }
 
+fs.chmodSync(H('.claude', 'skills', 'locked', 'private'), 0o755);
 fs.rmSync(fakeHome, { recursive: true, force: true });
 fs.rmSync(WORK, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed\n`);

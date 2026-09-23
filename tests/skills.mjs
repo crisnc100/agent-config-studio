@@ -133,6 +133,17 @@ for (const [proj, body] of [['deep-a', 'one'], ['deep-b', 'two']]) {
   put(path.join(d, ...dirs(10), 'buried.md'), `${body}\n`);
 }
 
+// C2/C4: two bundles that differ ONLY inside a directory nobody can list.
+// Skipping it would hash both as SKILL.md alone and collapse them.
+const LOCKED = [];
+for (const [proj, body] of [['locked-a', 'one'], ['locked-b', 'two']]) {
+  const d = H('Documents', 'Projects', proj, '.claude', 'skills', 'lockedpair');
+  put(path.join(d, 'SKILL.md'), skillMd('Locked Pair', 'same prose'));
+  put(path.join(d, 'locked', 'inside.md'), `${body}\n`);
+  fs.chmodSync(path.join(d, 'locked'), 0o000);
+  LOCKED.push(path.join(d, 'locked'));
+}
+
 // C6 / P1: a project whose `.claude/skills` ROOT is a link out of the skill
 // roots, and one whose root links to a directory inside them.
 const ROOT_LINK_MARK = 'MARKER-ROOT-LINK-OUTSIDE-5e0d';
@@ -157,7 +168,7 @@ put(H('.claude', 'skills', 'grower', 'SKILL.md'), skillMd('Grower', 'reads are c
 put(H('.claude', 'skills', 'grower', 'big.txt'), 'x'.repeat(24));
 
 // --- discovery ---------------------------------------------------------------
-const { listSkills, readInSkill, readTextInSkill, bundleHash, listSkillFiles, toPublic } =
+const { listSkills, readInSkill, readTextInSkill, bundleHash, listSkillFiles, toPublic, resolveSkills } =
   await import('../lib/skills.js');
 // Phase 5 hung a usage signal off the rows the route returns. The two
 // route-equals-library assertions below still compare the FULL payload — what
@@ -167,6 +178,7 @@ const { readSkillUsage, attachUsage } = await import('../lib/skill-usage.js');
 const routeRows = async () => attachUsage(listSkills().map(toPublic), await readSkillUsage());
 
 const rows = listSkills();
+const resolveSkillsFor = (id) => resolveSkills([id]).get(id);
 const find = (name, source) => rows.find((r) => r.name === name && (!source || r.source === source));
 
 {
@@ -348,6 +360,16 @@ const leaks = (s) => MARKS.filter((m) => String(s).includes(m));
      tooDeep?.broken === true && /deeper than the 32-level limit.*refusing to export it partially/.test(tooDeep.reason),
      JSON.stringify(tooDeep && { b: tooDeep.broken, r: tooDeep.reason }));
   ok('C4 …and carries no files that could be exported partially', tooDeep?.files.length === 0);
+  const locked = rows.filter((r) => r.name === 'lockedpair');
+  ok('C2 two bundles differing only inside an unreadable directory are never collapsed',
+     locked.length === 2 && locked.every((r) => r.aliases.length === 0),
+     JSON.stringify(locked.map((r) => ({ b: r.broken, a: r.aliases.length }))));
+  ok('C4 …each is a broken, unexportable row that says which directory could not be read',
+     locked.every((r) => r.broken === true && r.files.length === 0
+       && /part of the bundle could not be read \(at locked\/ \(EACCES\)\); refusing to hash or export it partially/.test(r.reason)),
+     JSON.stringify(locked.map((r) => r.reason)));
+  ok('C4 …and the export lookup refuses it the same way',
+     locked.every((r) => (() => { const got = resolveSkillsFor(r.id); return got?.broken === true && /could not be read/.test(got.reason); })()));
   const deepdiff = rows.filter((r) => r.name === 'deepdiff');
   ok('C2 bundles differing only in a companion 10 directories down are two rows',
      deepdiff.length === 2 && deepdiff.every((r) => r.aliases.length === 0 && r.files.length === 2),
@@ -610,6 +632,9 @@ const get = (p) => fetch(B + p).then(async (r) => [r.status, await r.json()]);
   tput('.claude/history.jsonl', '{}\n');
   tput('.codex/config.toml', 'model = "x"\n');
   tput('.agent-config-studio/seats.json', '{}');
+  tput('.zshenv', 'export A=1\n');
+  tput('.config/worktree/repos/acs', 'trunk=/x\n');
+  tput('.codex-seats/seat-a/config.toml', 'x');
   tput('Documents/Projects/app/.claude/skills/p1/ref/x.md', 'BBBB');
   tput('Documents/Garman-Homes/g/.claude/skills/g1/SKILL.md', 'CCCC');
   const snap = path.join(T, '..', `${path.basename(T)}.snap`);
@@ -655,6 +680,16 @@ const get = (p) => fetch(B + p).then(async (r) => [r.status, await r.json()]);
   const grokAgents = path.join(T, '.grok/AGENTS.md');
   scenario('an in-place edit of ~/.grok/AGENTS.md, which ACS lists and edits',
     () => sameShape(grokAgents, 'grok RULES\n'), true, () => sameShape(grokAgents, 'grok rules\n'));
+  const zshenv = path.join(T, '.zshenv');
+  scenario('an in-place edit of ~/.zshenv, which ACS appends to',
+    () => sameShape(zshenv, 'export B=1\n'), true, () => sameShape(zshenv, 'export A=1\n'));
+  const wtRepo = path.join(T, '.config/worktree/repos/acs');
+  scenario('an in-place edit of a file under ~/.config/worktree',
+    () => sameShape(wtRepo, 'trunk=/y\n'), true, () => sameShape(wtRepo, 'trunk=/x\n'));
+  scenario('a new seat directory under ~/.codex-seats',
+    () => mk(path.join(T, '.codex-seats', 'seat-b')), true, () => fs.rmSync(path.join(T, '.codex-seats', 'seat-b'), { recursive: true }));
+  scenario('a new entry linked into an existing seat home',
+    () => tput('.codex-seats/seat-a/AGENTS.md', 'x'), true, () => fs.rmSync(path.join(T, '.codex-seats/seat-a/AGENTS.md')));
   fs.rmSync(T, { recursive: true, force: true });
   fs.rmSync(snap, { force: true });
 }
@@ -665,6 +700,7 @@ server.close();
   assertRealHomesUnchanged(realBefore, ok);
 }
 
+for (const d of LOCKED) fs.chmodSync(d, 0o755);
 fs.rmSync(fakeHome, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

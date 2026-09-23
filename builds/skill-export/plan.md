@@ -84,8 +84,20 @@ Claude Code transcripts and when it was last seen, as a usage signal.
 13. `./verify.sh` passes in full; new suites registered; guards untouched and still passing.
 14. Every tree ACS reads or writes is compared by sha256; the live agent homes ~/.claude, ~/.codex,
     ~/.grok are compared by entry names, and the assertion says so (Cris, 2026-09-23).
-    Stated exclusions from sha256, because live processes write them continuously:
-    ~/.claude/projects (the transcript corpus), ~/.claude/plugins, ~/.grok beyond AGENTS.md, and
-    the project checkouts under ~/Documents/Projects. The checkouts are covered by entry names two
-    levels deep plus sha256 of their skill trees (orchestrator, 2026-09-23, per Cris's intent).
+    Stated exclusions from sha256, each because a live process writes it during any run. All are
+    compared by entry names, and the assertion says so:
+    - the rest of `~/.claude`, `~/.codex` and `~/.grok`, including `~/.claude/projects` (the
+      transcript corpus the usage scan reads) and `~/.claude/plugins` (the plugin cache the
+      registry reads);
+    - `~/.codex-seats` and each seat home in it — seat homes ACS creates, which become live
+      CODEX_HOMEs;
+    - the project checkouts under `~/Documents/Projects` and `~/Documents/Garman-Homes` beyond
+      their skill trees and top-level loose files. The file editor can write there, and they are
+      compared two levels deep.
+
+    Everything else ACS writes under HOME is sha-covered: `~/.agent-config-studio` (history,
+    trash, seats, accounts, shortcuts, caches), the skills/hooks/agents/commands trees, the pinned
+    config files, `~/.config/worktree` and `~/.zshenv`. This list comes from a sweep of every
+    write call in lib/ and server.js on 2026-09-23. (Exclusions list: orchestrator, 2026-09-23,
+    per Cris's intent; `~/.codex-seats` added from the write-path sweep.)
 15. `package.json` still has no `dependencies`.

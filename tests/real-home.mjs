@@ -51,6 +51,9 @@ const tilde = (p) => p.replace(HOME, '~');
 const ROOTS = [
   '.agent-config-studio', '.claude/skills', '.codex/skills', '.agents',
   '.claude/hooks', '.claude/agents', '.claude/commands', '.claude/skills_retired', '.codex/rules',
+  // The worktree conventions and registry: listed and edited by the registry
+  // (lib/registry.js), and a SAFE_ROOT the file editor can write.
+  '.config/worktree',
 ].map((r) => path.join(HOME, r));
 const PROJECT_ROOTS = [path.join(HOME, 'Documents', 'Projects'), path.join(HOME, 'Documents', 'Garman-Homes')];
 const LIVE_HOMES = ['.claude', '.codex', '.grok'].map((r) => path.join(HOME, r));
@@ -61,7 +64,16 @@ const EXACT = [
   path.join(HOME, '.codex', 'config.toml'),
   path.join(HOME, '.codex', 'AGENTS.md'),
   path.join(HOME, '.grok', 'AGENTS.md'),
+  // The one human-owned file ACS appends to (lib/usage/shell.js install/uninstall).
+  path.join(HOME, '.zshenv'),
 ];
+/**
+ * Seat homes ACS creates for extra Codex accounts (lib/usage/seats.js). Each is
+ * a live CODEX_HOME once a seat runs, so like the harness homes they are held
+ * to entry names — the root and each seat directory — which is what creating
+ * or moving a seat, or linking its shared files, changes.
+ */
+const SEAT_HOMES = path.join(HOME, '.codex-seats');
 const STAMP_KEYS = new Set(['fetched_at', 'renewed_at', 'fetchedAt', 'staleAt']);
 
 /**
@@ -156,6 +168,10 @@ export function snapshotRealHomes() {
     out[`names:${r}`] = JSON.stringify(names);
   };
   for (const r of LIVE_HOMES) nameSet(r);
+  nameSet(SEAT_HOMES);
+  try {
+    for (const d of fs.readdirSync(SEAT_HOMES, { withFileTypes: true })) if (d.isDirectory()) nameSet(path.join(SEAT_HOMES, d.name));
+  } catch {}
   // A project root one level deeper, which is what its entries' mtimes used
   // to stand for: a directory's mtime moves exactly when a child is added,
   // removed or renamed. Its loose files (a CLAUDE.md, a playbook) are hashed.
@@ -232,10 +248,11 @@ export function compareRealHomes(before, after) {
 
 const hashedCount = (snap) => Object.keys(snap).filter((k) => !/^(raw|meta|names|trees):/.test(k)).length;
 const CONTENT_LABEL = (n) => `${n} entries (files by sha256, directories by presence) under ~/.agent-config-studio, ` +
-  '~/.claude/{skills,hooks,agents,commands,skills_retired}, ~/.codex/{skills,rules}, ~/.agents, every project skill tree and the loose ' +
-  'files atop both project roots, plus the config files ACS edits (~/.claude settings, CLAUDE.md, *-config.json; ~/.codex config.toml, ' +
-  'AGENTS.md; ~/.grok AGENTS.md) and the CLI catalogs, are byte-identical (sha256)';
-const NAMES_LABEL = '~/.claude, ~/.codex, ~/.grok, and ~/Documents/Projects and ~/Documents/Garman-Homes two levels deep: entry names unchanged (contents not compared)';
+  '~/.claude/{skills,hooks,agents,commands,skills_retired}, ~/.codex/{skills,rules}, ~/.agents, ~/.config/worktree, every project skill ' +
+  'tree and the loose files atop both project roots, plus the files ACS edits (~/.claude settings, CLAUDE.md, *-config.json; ~/.codex ' +
+  'config.toml, AGENTS.md; ~/.grok AGENTS.md; ~/.zshenv) and the CLI catalogs, are byte-identical (sha256)';
+const NAMES_LABEL = '~/.claude, ~/.codex, ~/.grok, and ~/.codex-seats, ~/Documents/Projects and ~/Documents/Garman-Homes two levels deep: ' +
+  'entry names unchanged (contents not compared)';
 
 /** For the suites: call snapshotRealHomes() BEFORE redirecting HOME, this at the very end. */
 export function assertRealHomesUnchanged(before, ok) {

@@ -702,6 +702,53 @@ const DANGEROUS = [
   fs.rmSync(TOO, { recursive: true, force: true });
 }
 
+// --- P2: directory collisions are resolved, never merged or dropped ---------
+{
+  // Fabricated rows: APFS itself refuses to hold `Foo/` and `foo/` side by
+  // side, but a bundle from a case-sensitive volume can, and buildSkillsZip
+  // never touches the filesystem — `read` supplies the bytes.
+  const f = (rel) => ({ rel, size: rel.length, mode: 0o644, mtime: new Date('2024-01-01T00:00:00Z') });
+  const e = (rel) => ({ rel, mode: 0o755, mtime: new Date('2024-01-01T00:00:00Z') });
+  const row = {
+    id: 'dircollide01', name: 'dc', source: 'global-claude', dir: '/nonexistent', broken: false,
+    files: [f('Foo/x.md'), f('foo/y.md'), f('bar/z.md'), f('Baz'), f('baz/w.md')],
+    emptyDirs: [e('Bar/'), e('Qux/'), e('qux/')],
+    excluded: [],
+  };
+  const read = (dir, rel) => Buffer.from(`content of ${rel}\n`);
+  const direct = resolveArchivePaths(['p/Foo/', 'p/foo/', 'p/foo/a.md', 'p/Foo/b.md', 'p/FOO', `q/caf\u00e9/1`, `q/cafe\u0301/1`]);
+  ok('P2 resolveArchivePaths separates Foo/ vs foo/, a dir vs a file, and NFC vs NFD directories',
+     JSON.stringify(direct) === JSON.stringify(['p/Foo/', 'p/foo-2/', 'p/foo-2/a.md', 'p/Foo/b.md', 'p/FOO-3', `q/caf\u00e9/1`, `q/cafe\u0301-2/1`]),
+     JSON.stringify(direct));
+
+  const buf = buildSkillsZip([row], { read });
+  const D = caseDir();
+  const zp = path.join(D, 'dirs.zip');
+  fs.writeFileSync(zp, buf);
+  const names = pyRead(zp).entries.map((x) => x.name);
+  ok('P2 every entry name in the archive is distinct under NFC + case fold',
+     new Set(names.map((n) => n.normalize('NFC').toLowerCase())).size === names.length, JSON.stringify(names));
+  for (const [who, fn] of [['unzip', extractUnzip], ['ditto', extractDitto]]) {
+    const dest = path.join(D, who);
+    const r = fn(zp, dest);
+    const files = [], empties = [];
+    const walk = (d) => {
+      const kids = fs.readdirSync(d, { withFileTypes: true });
+      if (!kids.length) empties.push(path.relative(dest, d));
+      for (const k of kids) {
+        const p = path.join(d, k.name);
+        if (k.isDirectory()) walk(p); else files.push(fs.readFileSync(p, 'utf8'));
+      }
+    };
+    walk(dest);
+    ok(`P2 ${who}: all five files survive, each with its own bytes — Foo/ vs foo/, bar/ beside empty Bar/, file Baz beside baz/`,
+       r.code === 0 && files.length === 5 && ['Foo/x.md', 'foo/y.md', 'bar/z.md', 'Baz', 'baz/w.md'].every((rel) => files.includes(`content of ${rel}\n`)),
+       `${r.err.slice(0, 120)} ${JSON.stringify(files)}`);
+    ok(`P2 ${who}: all three empty directories survive as three directories — Bar/ beside bar/, Qux/ beside qux/`,
+       empties.length === 3, JSON.stringify(empties));
+  }
+}
+
 // --- C10: the per-bundle cap holds while reading ------------------------------
 {
   // Astra's stale-metadata probe: sizes recorded small, then one bundle grows

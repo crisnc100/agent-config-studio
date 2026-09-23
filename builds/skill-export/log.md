@@ -253,3 +253,43 @@ Cris decided the three disputed criteria on 2026-09-23; the fixes follow those d
 
 `./verify.sh` for this round: exit 0 twice in a row, 1406 passed / 0 failed across 24 suites both
 times.
+
+# Fix log — final-grade round (builds/skill-export/final-grade.md, 5 of 8 PASS)
+
+## C2/C4 — an unreadable companion directory refuses the bundle
+- **Fix:** `listSkillFiles` no longer skips a directory it cannot list, or an entry it cannot
+  stat. It records `unreadable` and stops. Both `describeSkill` and `listSkills` then produce a
+  broken row: "part of the bundle could not be read (at <rel> (<code>)); refusing to hash or
+  export it partially". Nothing is hashed, so two such bundles can never collapse, and the export
+  answers 409.
+- **Tests:**
+  - skills.mjs `C2 two bundles differing only inside an unreadable directory are never collapsed`
+    (chmod 000 in the temp HOME).
+  - skills.mjs `C4 …each is a broken, unexportable row that says which directory could not be read`.
+  - skills.mjs `C4 …and the export lookup refuses it the same way`.
+  - export.mjs `C4 a skill with an unreadable directory is refused with 409, not exported without
+    it` and `C4 …and a selection containing it gets no partial zip`.
+
+## P2 — directory collisions resolved, never merged or dropped
+- **Fix:** `resolveArchivePaths` now resolves one path segment at a time within each resolved
+  parent. Every distinct original name gets a pathKey-distinct name there, suffixed on a clash.
+  - Directories are assigned first, and once each; their descendants move with them.
+  - Files are assigned second, and never merged.
+  - This covers dir vs dir (`Foo/` vs `foo/`), empty vs populated, dir vs file, and NFC vs NFD.
+- **Tests:** zip.mjs:
+  - `P2 resolveArchivePaths separates Foo/ vs foo/, a dir vs a file, and NFC vs NFD directories`;
+  - `P2 unzip|ditto: all five files survive, each with its own bytes`;
+  - `P2 unzip|ditto: all three empty directories survive as three directories`.
+  These use fabricated rows, since APFS will not hold `Foo/` and `foo/` side by side.
+
+## C14 — ~/.zshenv, ~/.config/worktree, and the write-path sweep
+- **Pins added:** `~/.zshenv` (sha) and `~/.config/worktree` (whole tree, sha).
+- **Sweep:** every write call in lib/ and server.js. The one other HOME write target was
+  `~/.codex-seats` (lib/usage/seats.js creates seat homes and links their shared files). Seat
+  homes are live CODEX_HOMEs, so they are compared by entry names (the root and each seat).
+  plan.md criterion 14 now lists that exclusion, and the others, explicitly.
+- **Tests:** skills.mjs `C14 tripwire FAILS on an in-place edit of ~/.zshenv, which ACS appends
+  to`, `…of a file under ~/.config/worktree`, `…a new seat directory under ~/.codex-seats`, and
+  `…a new entry linked into an existing seat home`.
+
+`./verify.sh` for this round: exit 0 twice in a row, 1421 passed / 0 failed across 24 suites both times.
