@@ -1,0 +1,337 @@
+{
+  "capturedAt": "2026-09-23T00:00:09.105Z",
+  "scenarios": {
+    "live/review.mjs/default": {
+      "exit": 0,
+      "calls": [
+        {
+          "bin": "codex",
+          "role": "codex",
+          "model": "gpt-6-astra",
+          "effort": "high"
+        }
+      ],
+      "labels": [
+        "▶ review · codex-gpt-6-astra-high"
+      ],
+      "showConfig": {
+        "reviewer": "codex",
+        "model": "gpt-6-astra",
+        "effort": "high",
+        "claudeModel": "sonnet"
+      }
+    },
+    "live/review.mjs/claude-team": {
+      "exit": 0,
+      "calls": [
+        {
+          "bin": "claude",
+          "role": "lens:correctness",
+          "model": "claude-opus-5",
+          "effort": "xhigh"
+        },
+        {
+          "bin": "claude",
+          "role": "lens:inputs-and-edges",
+          "model": "sonnet",
+          "effort": "xhigh"
+        },
+        {
+          "bin": "claude",
+          "role": "lens:regressions",
+          "model": "sonnet",
+          "effort": "xhigh"
+        }
+      ],
+      "labels": [
+        "▶ review · claude-team(opus+sonnet+sonnet)"
+      ],
+      "showConfig": {
+        "reviewer": "claude",
+        "model": "gpt-6-astra",
+        "effort": "high",
+        "claudeModel": "sonnet"
+      }
+    },
+    "live/review.mjs/claude-fable-solo": {
+      "exit": 0,
+      "calls": [
+        {
+          "bin": "claude",
+          "role": "lens:comprehensive",
+          "model": "claude-fable-5-1",
+          "effort": "high"
+        }
+      ],
+      "labels": [
+        "▶ review · claude-solo(claude-fable-5-1)"
+      ],
+      "showConfig": {
+        "reviewer": "claude",
+        "model": "gpt-6-astra",
+        "effort": "high",
+        "claudeModel": "claude-fable-5-1"
+      }
+    },
+    "live/review-loop.mjs/default": {
+      "exit": 2,
+      "calls": [
+        {
+          "bin": "claude",
+          "role": "verifier",
+          "model": "claude-opus-5",
+          "effort": "xhigh"
+        },
+        {
+          "bin": "codex",
+          "role": "codex",
+          "model": "gpt-6-astra",
+          "effort": "high"
+        }
+      ],
+      "labels": [
+        "fixer: claude(sonnet) cross-model",
+        "▶ review-loop · codex-gpt-6-astra-high · fix:claude(sonnet) cross-model"
+      ]
+    },
+    "live/review-loop.mjs/fixer-claude": {
+      "exit": 2,
+      "calls": [
+        {
+          "bin": "claude",
+          "role": "verifier",
+          "model": "claude-opus-5",
+          "effort": "xhigh"
+        },
+        {
+          "bin": "codex",
+          "role": "codex",
+          "model": "gpt-6-astra",
+          "effort": "high"
+        }
+      ],
+      "labels": [
+        "fixer: claude(sonnet) cross-model",
+        "▶ review-loop · codex-gpt-6-astra-high · fix:claude(sonnet) cross-model"
+      ]
+    },
+    "live/review-loop-claude.mjs/default": {
+      "exit": 2,
+      "calls": [
+        {
+          "bin": "claude",
+          "role": "lens:correctness",
+          "model": "claude-opus-5",
+          "effort": "xhigh"
+        },
+        {
+          "bin": "claude",
+          "role": "lens:inputs-and-edges",
+          "model": "sonnet",
+          "effort": "xhigh"
+        },
+        {
+          "bin": "claude",
+          "role": "lens:regressions",
+          "model": "sonnet",
+          "effort": "xhigh"
+        },
+        {
+          "bin": "codex",
+          "role": "codex",
+          "model": "gpt-6-astra",
+          "effort": "high"
+        }
+      ],
+      "labels": [
+        "▶ review-loop · claude-team-opus+sonnet+sonnet"
+      ]
+    },
+    "live/review-loop-claude.mjs/fable-solo": {
+      "exit": 2,
+      "calls": [
+        {
+          "bin": "claude",
+          "role": "lens:comprehensive",
+          "model": "claude-fable-5-1",
+          "effort": "high"
+        },
+        {
+          "bin": "codex",
+          "role": "codex",
+          "model": "gpt-6-astra",
+          "effort": "high"
+        }
+      ],
+      "labels": [
+        "▶ review-loop · claude-solo-claude-fable-5-1"
+      ]
+    },
+    "none/review.mjs/default": {
+      "exit": 0,
+      "calls": [
+        {
+          "bin": "codex",
+          "role": "codex",
+          "model": "gpt-6-astra",
+          "effort": "high"
+        }
+      ],
+      "labels": [
+        "▶ review · codex-gpt-6-astra-high"
+      ],
+      "showConfig": {
+        "reviewer": "codex",
+        "model": "gpt-6-astra",
+        "effort": "high",
+        "claudeModel": "sonnet"
+      }
+    },
+    "none/review.mjs/claude-team": {
+      "exit": 0,
+      "calls": [
+        {
+          "bin": "claude",
+          "role": "lens:correctness",
+          "model": "claude-opus-5",
+          "effort": "xhigh"
+        },
+        {
+          "bin": "claude",
+          "role": "lens:inputs-and-edges",
+          "model": "sonnet",
+          "effort": "xhigh"
+        },
+        {
+          "bin": "claude",
+          "role": "lens:regressions",
+          "model": "sonnet",
+          "effort": "xhigh"
+        }
+      ],
+      "labels": [
+        "▶ review · claude-team(opus+sonnet+sonnet)"
+      ],
+      "showConfig": {
+        "reviewer": "claude",
+        "model": "gpt-6-astra",
+        "effort": "high",
+        "claudeModel": "sonnet"
+      }
+    },
+    "none/review.mjs/claude-fable-solo": {
+      "exit": 0,
+      "calls": [
+        {
+          "bin": "claude",
+          "role": "lens:comprehensive",
+          "model": "claude-fable-5-1",
+          "effort": "high"
+        }
+      ],
+      "labels": [
+        "▶ review · claude-solo(claude-fable-5-1)"
+      ],
+      "showConfig": {
+        "reviewer": "claude",
+        "model": "gpt-6-astra",
+        "effort": "high",
+        "claudeModel": "claude-fable-5-1"
+      }
+    },
+    "none/review-loop.mjs/default": {
+      "exit": 2,
+      "calls": [
+        {
+          "bin": "claude",
+          "role": "verifier",
+          "model": "claude-opus-5",
+          "effort": "xhigh"
+        },
+        {
+          "bin": "codex",
+          "role": "codex",
+          "model": "gpt-6-astra",
+          "effort": "xhigh"
+        }
+      ],
+      "labels": [
+        "fixer: claude(sonnet) cross-model",
+        "▶ review-loop · codex-gpt-6-astra-xhigh · fix:claude(sonnet) cross-model"
+      ]
+    },
+    "none/review-loop.mjs/fixer-claude": {
+      "exit": 2,
+      "calls": [
+        {
+          "bin": "claude",
+          "role": "verifier",
+          "model": "claude-opus-5",
+          "effort": "xhigh"
+        },
+        {
+          "bin": "codex",
+          "role": "codex",
+          "model": "gpt-6-astra",
+          "effort": "xhigh"
+        }
+      ],
+      "labels": [
+        "fixer: claude(sonnet) cross-model",
+        "▶ review-loop · codex-gpt-6-astra-xhigh · fix:claude(sonnet) cross-model"
+      ]
+    },
+    "none/review-loop-claude.mjs/default": {
+      "exit": 2,
+      "calls": [
+        {
+          "bin": "claude",
+          "role": "lens:correctness",
+          "model": "claude-opus-5",
+          "effort": "xhigh"
+        },
+        {
+          "bin": "claude",
+          "role": "lens:inputs-and-edges",
+          "model": "sonnet",
+          "effort": "xhigh"
+        },
+        {
+          "bin": "claude",
+          "role": "lens:regressions",
+          "model": "sonnet",
+          "effort": "xhigh"
+        },
+        {
+          "bin": "codex",
+          "role": "codex",
+          "model": "gpt-6-astra",
+          "effort": "high"
+        }
+      ],
+      "labels": [
+        "▶ review-loop · claude-team-opus+sonnet+sonnet"
+      ]
+    },
+    "none/review-loop-claude.mjs/fable-solo": {
+      "exit": 2,
+      "calls": [
+        {
+          "bin": "claude",
+          "role": "lens:comprehensive",
+          "model": "claude-fable-5-1",
+          "effort": "high"
+        },
+        {
+          "bin": "codex",
+          "role": "codex",
+          "model": "gpt-6-astra",
+          "effort": "high"
+        }
+      ],
+      "labels": [
+        "▶ review-loop · claude-solo-claude-fable-5-1"
+      ]
+    }
+  }
+}

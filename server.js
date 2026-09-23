@@ -12,7 +12,7 @@ import * as worktree from './lib/worktree.js';
 import * as mutate from './lib/mutate.js';
 import { runAssist, listActions } from './lib/assist.js';
 import { streamTurn, parseEdits, resolveMentions } from './lib/chat.js';
-import { detectHarnesses, HARNESSES } from './lib/harness.js';
+import { detectHarnesses, HARNESSES, modelsFor, registryError } from './lib/harness.js';
 import { createWatcher, snapshotOf, diffSnapshots } from './lib/watch.js';
 import { renderSnapshot, createSeat, removeSeat, moveSeatToPrivateHome } from './lib/usage/seats.js';
 import { refreshSnapshot } from './lib/usage/refresh.js';
@@ -90,12 +90,15 @@ function detectedHarnessPayload(detected) {
     label: h.label,
     models: h.models,
     defaultModel: h.defaultModel,
+    retired: h.retired ?? {},
     streams: h.streams,
   }));
   const defaultHarness = harnesses.some((h) => h.id === 'claude')
     ? 'claude'
     : (harnesses[0]?.id ?? 'claude');
-  return { harnesses, defaultHarness };
+  // Read on every request, like the allowlist itself: a registry fixed on disk
+  // clears the warning without a restart.
+  return { harnesses, defaultHarness, registryError: registryError() };
 }
 
 function normalizeHarnessId(value) {
@@ -135,10 +138,16 @@ async function resolveIncoming(body, { detectFn, sessions, checkSession }) {
     throw Object.assign(new Error(`harness not detected: ${harness}`), { status: 400 });
   }
   const desc = HARNESSES[harness];
+  const { models, defaultModel } = modelsFor(desc);
   let model = body?.model;
   if (model === undefined || model === null || model === '') {
-    model = desc.defaultModel;
-  } else if (typeof model !== 'string' || !Object.hasOwn(desc.models, model)) {
+    // The default comes from a user-editable file, so it is held to the same
+    // allowlist as a model the browser names.
+    model = defaultModel;
+    if (typeof model !== 'string' || !Object.hasOwn(models, model)) {
+      throw Object.assign(new Error(`harness ${harness} has no valid default model`), { status: 500 });
+    }
+  } else if (typeof model !== 'string' || !Object.hasOwn(models, model)) {
     throw Object.assign(new Error(`model ${model} is not valid for harness ${harness}`), { status: 400 });
   }
 
@@ -482,6 +491,9 @@ export function createApp(opts = {}) {
     assistActions: listActions(),
     ...detectedHarnessPayload(await detectFn()),
   }),
+
+  /** The Assist picker alone, without the file registry — what a model-registry edit changes. */
+  'GET /api/harnesses': async () => detectedHarnessPayload(await detectFn()),
 
   'GET /api/file': async (_req, url) => {
     const abs = resolveSafe(url.searchParams.get('path'));

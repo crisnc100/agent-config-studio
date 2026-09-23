@@ -10,3 +10,4 @@ builds/**/*.err
 # Branch-scoped handoffs — never committed; they would ride a PR into main
 # and then be inherited by every worktree cut afterwards.
 .handoffs/
+__pycache__/

@@ -41,6 +41,11 @@ case "$1" in
     shift
     exec node "$DIR/bin/usage.mjs" "$@"
     ;;
+  install-model-id)
+    # Copies the resolver out of this checkout and links ~/.local/bin/model-id,
+    # so skills keep resolving when a worktree is removed. Re-run after a pull.
+    exec node "$DIR/bin/model-id" --install
+    ;;
   stop)
     if is_acs; then
       # Only kill processes LISTENING on the port, not clients connected to it.
