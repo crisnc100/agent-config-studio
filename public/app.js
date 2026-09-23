@@ -609,7 +609,6 @@ async function save() {
   btn.disabled = true;
   btn.textContent = 'Saving…';
   try {
-    own.expect([file.display], 5_000);
     const r = await api('PUT', '/api/file', {
       path: file.path, content, mtime: file.mtime,
     });
@@ -772,17 +771,6 @@ async function refreshRegistry(selectPath) {
  * skill installed from the terminal, an agent touching a CLAUDE.md. Without
  * this the sidebar silently goes stale until a reload.
  */
-// The page's own writes (public/own-writes.js), and the events held while an
-// Accept or Restore is in flight, until its response says which paths it changed.
-const own = createOwnWrites();
-let heldEvents = null;
-const holdEvents = () => { heldEvents ||= []; };
-function releaseEvents() {
-  const held = heldEvents || [];
-  heldEvents = null;
-  for (const d of held) handleFileEvent(d);
-}
-
 function connectEvents() {
   const es = new EventSource('/api/events');
 
@@ -790,7 +778,6 @@ function connectEvents() {
     let d;
     try { d = JSON.parse(ev.data); } catch { return; }
     if (d.type !== 'files') return;
-    if (heldEvents) { heldEvents.push(d); return; }
     handleFileEvent(d);
   };
 
@@ -800,10 +787,11 @@ function connectEvents() {
 
 async function handleFileEvent(d) {
   await refreshRegistry().catch(() => {});
+  // The server tags the studio's own writes; they are not news.
+  if (d.origin === 'studio') { setLive(true); return; }
 
   const openPath = S.file?.path;
-  const ownOpen = S.file && own.has(S.file.display);
-  if (openPath && !ownOpen && d.removedPaths?.includes(openPath)) {
+  if (openPath && d.removedPaths?.includes(openPath)) {
     S.entry = null; S.file = null; S.original = ''; S.draft = '';
     S.view = 'welcome';
     renderAll();
@@ -811,7 +799,7 @@ async function handleFileEvent(d) {
     return;
   }
 
-  if (openPath && !ownOpen && d.changedPaths?.includes(openPath)) {
+  if (openPath && d.changedPaths?.includes(openPath)) {
     if (isDirty()) {
       // Never silently discard their edits — the save will 409 anyway.
       notice('warn',
@@ -829,8 +817,8 @@ async function handleFileEvent(d) {
   }
 
   // Only announce structural changes; a save you just made is not news.
-  const added = (d.added || []).filter((p) => !own.has(p));
-  const removed = (d.removed || []).filter((p) => !own.has(p));
+  const added = d.added || [];
+  const removed = d.removed || [];
   const parts = [];
   if (added.length) parts.push(`${added.length} added`);
   if (removed.length) parts.push(`${removed.length} removed`);
@@ -1906,12 +1894,7 @@ function opsTab() {
     btn.disabled = ['restored', 'refused', 'unrecognised'].includes(op.status);
     btn.onclick = async () => {
       try {
-        holdEvents();
-        let r;
-        try {
-          r = await api('POST', '/api/memory/restore', { opId: op.id });
-          own.expect(undonePaths(r.op));
-        } finally { releaseEvents(); }
+        const r = await api('POST', '/api/memory/restore', { opId: op.id });
         if (!r.restored) {
           MV.restoreRefusal = { opId: op.id, reason: r.reason, diffs: r.diffs };
           paintMemory();
@@ -1959,12 +1942,7 @@ function previewPanel() {
   accept.onclick = async () => {
     accept.disabled = true;
     try {
-      holdEvents();
-      let r;
-      try {
-        r = await api('POST', '/api/memory/accept', { opId: p.opId });
-        own.expect(appliedPaths(r));
-      } finally { releaseEvents(); }
+      const r = await api('POST', '/api/memory/accept', { opId: p.opId });
       MV.preview = null;
       for (const set of Object.values(MV.picked)) set.clear();
       const extra = [...r.skipped.map((s) => `Skipped ${s}`), ...(r.historyError ? [`History: ${r.historyError}`] : [])];

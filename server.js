@@ -1,4 +1,5 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -17,7 +18,7 @@ import * as mutate from './lib/mutate.js';
 import { runAssist, listActions } from './lib/assist.js';
 import { streamTurn, parseEdits, resolveMentions } from './lib/chat.js';
 import { detectHarnesses, HARNESSES, modelsFor, registryError } from './lib/harness.js';
-import { createWatcher, snapshotOf, diffSnapshots } from './lib/watch.js';
+import { createWatcher, snapshotOf, diffSnapshots, expectWrite, tagOrigin } from './lib/watch.js';
 import { renderSnapshot, createSeat, removeSeat, moveSeatToPrivateHome } from './lib/usage/seats.js';
 import { refreshSnapshot } from './lib/usage/refresh.js';
 import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
@@ -392,17 +393,26 @@ async function onFilesChanged() {
 
   if (!delta.added.length && !delta.removed.length && !delta.changed.length) return;
 
-  broadcast({
-    type: 'files',
-    added: delta.added.map(tilde),
-    removed: delta.removed.map(tilde),
-    changed: delta.changed.map(tilde),
-    addedPaths: delta.added,
-    removedPaths: delta.removed,
-    changedPaths: delta.changed,
-    total: next.size,
-  });
+  // The studio's own writes go out tagged, so the page can stay quiet about
+  // them; everything else is an outside change (lib/watch.js tagOrigin).
+  const { studio, outside } = tagOrigin(delta);
+  for (const [part, origin] of [[studio, 'studio'], [outside, 'outside']]) {
+    if (!part.added.length && !part.removed.length && !part.changed.length) continue;
+    broadcast({
+      type: 'files',
+      origin,
+      added: part.added.map(tilde),
+      removed: part.removed.map(tilde),
+      changed: part.changed.map(tilde),
+      addedPaths: part.added,
+      removedPaths: part.removed,
+      changedPaths: part.changed,
+      total: next.size,
+    });
+  }
 }
+
+const sha256Text = (text) => crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
 
 export function createApp(opts = {}) {
   const detectFn = opts.detectHarnesses || detectHarnesses;
@@ -846,6 +856,7 @@ export function createApp(opts = {}) {
     await history.recordBaseline(abs, `state of ${tilde(abs)} before edit`).catch(() => {});
 
     await fsp.writeFile(abs, content, 'utf8');
+    expectWrite(abs, 'changed', sha256Text(content));
     const after = await fsp.stat(abs);
 
     // The write succeeded; a history failure must not be reported as a failed
@@ -896,6 +907,7 @@ export function createApp(opts = {}) {
     await history.recordBaseline(abs, `state of ${tilde(abs)} before restore`).catch(() => {});
 
     await fsp.writeFile(abs, content, 'utf8');
+    expectWrite(abs, 'changed', sha256Text(content));
     const after = await fsp.stat(abs);
     let newSha = null, historyError = null;
     try {
