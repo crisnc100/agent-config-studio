@@ -27,6 +27,7 @@ import {
   createModelsState, setModel, resetModel, dismiss, applySidecar, whereUsed,
 } from './lib/models-panel.js';
 import { loadRegistry } from './lib/models.js';
+import * as memoryOps from './lib/memory-ops.js';
 import {
   syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
   isInstalled as shortcutsInstalled, shortcutsFromSeats, shortcutsPath, zshenvPath,
@@ -723,6 +724,33 @@ export function createApp(opts = {}) {
     const { root, ...stats } = usage.stats;
     return { skills: attachUsage(rows, usage), usage: { available: true, caveat: USAGE_CAVEAT, stats } };
   },
+
+  /**
+   * The Memory view: every auto-memory fact grouped by repository, plus the
+   * rot around it. A GET that rescans changed transcripts, so it takes the
+   * strict origin check for the same reason /api/skills does.
+   *
+   * Every memory route below takes ids and nothing else — `id`, `ids`,
+   * `opId`, `action`. No handler reads a path from the request, so there is
+   * no value a page could send that names a file of its choosing; the ids are
+   * random and resolved server-side (lib/memory-ops.js).
+   */
+  'GET /api/memory': async (req) => {
+    if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
+    return memoryOps.memoryView();
+  },
+  'GET /api/memory/file': async (req, url) => {
+    if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
+    return memoryOps.memoryFile(url.searchParams.get('id'));
+  },
+  'GET /api/memory/ops': async () => ({ ops: memoryOps.listOps() }),
+  'POST /api/memory/preview': async (req) => {
+    const { action, ids } = await readBody(req);
+    return memoryOps.preview({ action, ids });
+  },
+  'POST /api/memory/accept': async (req) => memoryOps.accept((await readBody(req)).opId),
+  'POST /api/memory/restore': async (req) => memoryOps.restore((await readBody(req)).opId),
+  'POST /api/memory/keep': async (req) => memoryOps.keep((await readBody(req)).id),
 
   /**
    * The Models panel. Catalogs are the CLIs' own on-disk caches, read at
