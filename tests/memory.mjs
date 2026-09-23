@@ -741,6 +741,160 @@ const indexPath = path.join(fx.mem, 'MEMORY.md');
      && !V.findings.unindexed.some((u) => mi.isTempProbe(u.slug)) && V.hiddenProbeFiles === 1, JSON.stringify(V.hiddenProbeFiles));
 }
 
+// ── regrade round 3 ───────────────────────────────────────────────────────
+const opsDir = path.join(fakeHome, '.agent-config-studio', 'memory-ops');
+const shaOf = (t) => crypto.createHash('sha256').update(t).digest('hex');
+
+// A: a record not in the current schema is refused, never acted on.
+{
+  const now = fs.readFileSync(indexPath, 'utf8');
+  const legacy = {
+    id: 'a'.repeat(24), action: 'fix-links', summary: 'legacy', status: 'applying', acceptedAt: new Date().toISOString(),
+    steps: [{ type: 'edit-index', abs: indexPath, before: 'OLD\n', after: now, beforeSha: shaOf('OLD\n'), afterSha: shaOf(now), done: false, label: 'MEMORY.md' }],
+  };
+  const legacySlug = {
+    id: 'b'.repeat(24), action: 'trash-empty-slugs', summary: 'legacy slug', status: 'applied', acceptedAt: new Date().toISOString(),
+    steps: [{ type: 'trash', abs: fx.emptyA, trashId: 'x', done: true, label: 'slug' }],
+  };
+  fs.mkdirSync(opsDir, { recursive: true });
+  fs.writeFileSync(path.join(opsDir, `${legacy.id}.json`), JSON.stringify(legacy));
+  fs.writeFileSync(path.join(opsDir, `${legacySlug.id}.json`), JSON.stringify(legacySlug));
+  const before = snapTree();
+  const [s1, j1] = await call('POST', '/api/memory/restore', { opId: legacy.id });
+  const [s2, j2] = await call('POST', '/api/memory/restore', { opId: legacySlug.id });
+  ok('A a legacy record (done:false, no schema) is refused as unrecognised, never restored:true',
+     s1 === 409 && /unrecognised/.test(j1.error) && j1.restored !== true, `${s1} ${JSON.stringify(j1)}`);
+  ok('A a legacy trash step with no target is refused, not guessed at', s2 === 409 && /unrecognised/.test(j2.error), `${s2} ${JSON.stringify(j2)}`);
+  ok('A …and nothing was touched', snapTree() === before && fs.readFileSync(indexPath, 'utf8') === now);
+  const [, list] = await call('GET', '/api/memory/ops');
+  ok('A unrecognised records list as unrecognised', list.ops.filter((o) => o.status === 'unrecognised').length === 2);
+  fs.rmSync(path.join(opsDir, `${legacy.id}.json`)); fs.rmSync(path.join(opsDir, `${legacySlug.id}.json`));
+}
+
+// B: an edit injected at every await point of an index write is refused.
+for (const point of ['before-step', 'after-baseline', 'after-temp-write']) {
+  V = await view();
+  const orig = fs.readFileSync(indexPath, 'utf8');
+  const [, pv] = await call('POST', '/api/memory/preview', { action: 'fix-links', ids: [V.findings.dangling.find((d) => d.target === 'gone-4.md').id] });
+  ops._setOpFault((pt, x) => { if (pt === point && (x.type === 'edit-index' || x.phase === 'accept')) fs.appendFileSync(indexPath, `INJECTED ${point}\n`); });
+  const [st] = await call('POST', '/api/memory/accept', { opId: pv.opId });
+  ops._setOpFault(null);
+  ok(`B an edit injected at ${point} is refused, and survives`, st === 409 && fs.readFileSync(indexPath, 'utf8') === `${orig}INJECTED ${point}\n`, String(st));
+  ok(`B …no temp file left behind (${point})`, !fs.readdirSync(fx.mem).some((n) => n.includes('.acs-')));
+  fs.writeFileSync(indexPath, orig);
+}
+{
+  // The memory folder swapped for a link during the temp write: nothing lands through it.
+  V = await view();
+  const [, pv] = await call('POST', '/api/memory/preview', { action: 'fix-links', ids: [V.findings.dangling.find((d) => d.target === 'gone-4.md').id] });
+  const elsewhere = path.join(fakeHome, '.claude', 'hooks');
+  const moved = `${fx.mem}.real`;
+  ops._setOpFault((pt) => {
+    if (pt === 'after-temp-write') { fs.renameSync(fx.mem, moved); fs.mkdirSync(elsewhere, { recursive: true }); fs.symlinkSync(elsewhere, fx.mem); }
+  });
+  const [st] = await call('POST', '/api/memory/accept', { opId: pv.opId });
+  ops._setOpFault(null);
+  ok('B a memory folder swapped for a link mid-write is refused, nothing written through it',
+     st === 409 && !fs.existsSync(path.join(elsewhere, 'MEMORY.md')), String(st));
+  fs.unlinkSync(fx.mem); fs.renameSync(moved, fx.mem);
+  for (const n of fs.readdirSync(fx.mem)) if (n.includes('.acs-')) fs.rmSync(path.join(fx.mem, n));
+}
+{
+  // Restore's own write: an edit injected during its temp write survives.
+  V = await view();
+  const orig = fs.readFileSync(indexPath, 'utf8');
+  const [, pv] = await call('POST', '/api/memory/preview', { action: 'fix-links', ids: [V.findings.dangling.find((d) => d.target === 'gone-4.md').id] });
+  await call('POST', '/api/memory/accept', { opId: pv.opId });
+  const applied = fs.readFileSync(indexPath, 'utf8');
+  ops._setOpFault((pt, x) => { if (pt === 'after-temp-write' && x.phase === 'restore') fs.appendFileSync(indexPath, 'INJECTED restore\n'); });
+  const [, rv] = await call('POST', '/api/memory/restore', { opId: pv.opId });
+  ops._setOpFault(null);
+  ok('B an edit injected during Restore\'s temp write is refused, and survives',
+     rv?.restored === false && fs.readFileSync(indexPath, 'utf8') === `${applied}INJECTED restore\n`, JSON.stringify(rv).slice(0, 200));
+  fs.writeFileSync(indexPath, applied);
+  const [, rv2] = await call('POST', '/api/memory/restore', { opId: pv.opId });
+  ok('B …and the retried Restore completes', rv2?.restored === true && fs.readFileSync(indexPath, 'utf8') === orig, JSON.stringify(rv2).slice(0, 200));
+}
+
+// C: a change to ANY participant refuses the next mutation — the grader's case.
+for (const [label, hook] of [
+  ['during the fact\'s history baseline', (m) => m._setTrashFault(async (pt) => { if (pt === 'after-pending-meta') fs.appendFileSync(indexPath, 'MID-TRASH\n'); })],
+  ['before the trash step', () => ops._setOpFault((pt, x) => { if (pt === 'before-step' && x.type === 'trash') fs.appendFileSync(indexPath, 'MID-TRASH\n'); })],
+]) {
+  V = await view();
+  const target = path.join(fx.mem, 'live-7.md');
+  const orig = fs.readFileSync(indexPath, 'utf8');
+  const [, pv] = await call('POST', '/api/memory/preview', { action: 'trash-fact', ids: [row('live-7.md').id] });
+  hook(mutate);
+  const [st] = await call('POST', '/api/memory/accept', { opId: pv.opId });
+  mutate._setTrashFault(null); ops._setOpFault(null);
+  ok(`C the index changed ${label} → the fact is NOT trashed`, st === 409 && fs.existsSync(target)
+     && !(await mutate.listTrash()).some((t) => t.originalPath === target && t.moved), String(st));
+  fs.writeFileSync(indexPath, orig);
+  if (!fs.existsSync(target)) {   // only on a failing build: put it back for the checks that follow
+    const t = (await mutate.listTrash()).find((x) => x.originalPath === target && x.moved);
+    if (t) await mutate.restoreTrash({ id: t.id });
+  }
+}
+
+// D: a refused restore creates nothing outside memory/.
+{
+  const notesMem = path.join(PROJ, fx.slugs.notes, 'memory');
+  fs.mkdirSync(path.join(notesMem, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(notesMem, 'sub', 'deep.md'), '---\nname: deep\n---\nDeep.\n');
+  V = await view();
+  const [, pv] = await call('POST', '/api/memory/preview', { action: 'trash-fact', ids: [row('sub/deep.md', fx.slugs.notes).id] });
+  await call('POST', '/api/memory/accept', { opId: pv.opId });
+  fs.rmdirSync(path.join(notesMem, 'sub'));
+  const hooks = path.join(fakeHome, '.claude', 'hooks');
+  fs.mkdirSync(hooks, { recursive: true });
+  const hooksBefore = treeHash(hooks);
+  fs.renameSync(notesMem, `${notesMem}.real`);
+  fs.symlinkSync(hooks, notesMem);
+  const [, rv] = await call('POST', '/api/memory/restore', { opId: pv.opId });
+  ok('D restore through a memory folder swapped for a link to .claude/hooks is refused',
+     rv?.restored !== true && !fs.existsSync(path.join(hooks, 'sub')) && treeHash(hooks) === hooksBefore, JSON.stringify(rv).slice(0, 200));
+  fs.unlinkSync(notesMem); fs.renameSync(`${notesMem}.real`, notesMem);
+  const [, rv2] = await call('POST', '/api/memory/restore', { opId: pv.opId });
+  ok('D …once the folder is real, restore re-creates sub/ inside memory and puts the fact back',
+     rv2?.restored === true && fs.readFileSync(path.join(notesMem, 'sub', 'deep.md'), 'utf8').includes('Deep.'), JSON.stringify(rv2).slice(0, 200));
+  fs.rmSync(path.join(notesMem, 'sub'), { recursive: true });
+}
+
+// E: a restore killed between linking the fact back and removing the trash copy.
+{
+  V = await view();
+  const target = path.join(fx.mem, 'live-8.md');
+  const bytes = fs.readFileSync(target, 'utf8');
+  const [, pv] = await call('POST', '/api/memory/preview', { action: 'trash-fact', ids: [row('live-8.md').id] });
+  await call('POST', '/api/memory/accept', { opId: pv.opId });
+  const r = child(`
+    mutate._setTrashFault((pt) => { if (pt === 'restore-after-link') process.kill(process.pid, 'SIGKILL'); });
+    await ops.restore(${JSON.stringify(pv.opId)});`);
+  const leftover = (await mutate.listTrash()).find((t) => t.originalPath === target);
+  ok('E the child was killed with the fact linked back and its trash copy still there',
+     r.signal === 'SIGKILL' && fs.readFileSync(target, 'utf8') === bytes && leftover?.moved === true, `${r.signal} ${r.stderr.slice(0, 200)}`);
+  const [, rv] = await call('POST', '/api/memory/restore', { opId: pv.opId });
+  ok('E the retry recognises identical bytes, finishes, and clears the trash copy',
+     rv?.restored === true && fs.readFileSync(target, 'utf8') === bytes && !(await mutate.listTrash()).some((t) => t.originalPath === target),
+     JSON.stringify(rv).slice(0, 200));
+}
+
+// F: the probe-slug exemption covers an empty memory/ and nothing else.
+{
+  const { compareRealHomes } = await import('./real-home.mjs');
+  const projects = path.join(realHome, '.claude', 'projects');
+  const docs = path.join(realHome, 'Documents', 'Projects');
+  const tmp = fs.realpathSync(os.tmpdir()).replace(/[^A-Za-z0-9]/g, '-');
+  const probe = `${tmp}-acs-claude-writeprobe-Qq11Ww`;
+  const base = { [`slugs:${projects}`]: JSON.stringify(['-a']), [`context:${docs}`]: JSON.stringify([]), [path.join(projects, '-a')]: 'dir' };
+  const withProbe = (extra) => ({ ...base, [`slugs:${projects}`]: JSON.stringify(['-a', probe]), [path.join(projects, probe)]: 'dir', [path.join(projects, probe, 'memory')]: 'dir', ...extra });
+  ok('F a probe slug holding an empty memory/ is exempt', compareRealHomes(base, withProbe({})).content.length === 0);
+  ok('F …but memory/UNEXPECTED.md under it fails', compareRealHomes(base, withProbe({ [path.join(projects, probe, 'memory', 'UNEXPECTED.md')]: 'sha' })).content.length > 0);
+  ok('F …and a memory/ that is a link fails', compareRealHomes(base, withProbe({ [path.join(projects, probe, 'memory')]: 'link:/x' })).content.length > 0);
+  ok('F …and a slug that is a link fails', compareRealHomes(base, withProbe({ [path.join(projects, probe)]: 'link:/x' })).content.length > 0);
+}
+
 // ── criterion 11: the UI wording ──────────────────────────────────────────
 {
   const app = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
