@@ -208,6 +208,42 @@ const r1 = await ops.restore(p1.opId);
      handler.includes('fileEventPlan(') && !/origin === 'studio'\) \{ setLive\(true\); return; \}/.test(handler));
 }
 
+// Round 8 — the grader's three repros.
+{
+  const vm = await import('node:vm');
+  const ctx = vm.createContext({});
+  const pub = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'public');
+  vm.runInContext(fs.readFileSync(path.join(pub, 'file-events.js'), 'utf8'), ctx);
+  const decide = (o) => ctx.reloadDecision(o);
+  // 1. The user types while the reload fetch is in flight.
+  ok('R8 typed during the fetch, disk differs → keep the draft and warn, never replace',
+     decide({ sameFile: true, dirty: true, fetched: 'disk v2', original: 'v1' }) === 'conflict');
+  ok('R8 …a different file opened meanwhile → leave it alone', decide({ sameFile: false, dirty: false, fetched: 'x', original: 'y' }) === 'none');
+  ok('R8 …still clean and still the same file → replace', decide({ sameFile: true, dirty: false, fetched: 'v2', original: 'v1' }) === 'replace');
+  // 2. The bytes match: the metadata still has to be taken.
+  ok('R8 disk equals what the tab holds → refresh metadata (dirty or not)',
+     decide({ sameFile: true, dirty: false, fetched: 'v1', original: 'v1' }) === 'meta' && decide({ sameFile: true, dirty: true, fetched: 'v1', original: 'v1' }) === 'meta');
+  const app = fs.readFileSync(path.join(pub, 'app.js'), 'utf8');
+  const h = app.slice(app.indexOf('async function handleFileEvent'), app.indexOf('\n}\n', app.indexOf('async function handleFileEvent')));
+  const fetchAt = h.indexOf("await api('GET', `/api/file");
+  ok('R8 the page decides after the fetch, from the dirty state then', fetchAt > 0 && h.indexOf('reloadDecision(', fetchAt) > fetchAt
+     && /reloadDecision\(\{[^}]*dirty: isDirty\(\)/.test(h.slice(fetchAt)));
+  ok('R8 on matching bytes the page takes the fetched mtime, so the next Save is not a 409', /what === 'meta'[\s\S]{0,80}S\.file\.mtime = f\.mtime/.test(h));
+
+  // 3. An expired expectation behind a live one in the list order.
+  const t0 = Date.now() + 100_000;
+  const A = path.join(fx.mem, 'order-a.md');
+  const Bp = path.join(fx.mem, 'order-b.md');
+  fs.writeFileSync(A, 'first\n');
+  expectWrite(A, 'changed', sha('first\n'), t0);        // lapses at t0+10s
+  expectWrite(Bp, 'changed', sha('b\n'), t0 + 6_000);  // lapses at t0+16s
+  expectWrite(A, 'changed', sha('second\n'), t0 + 7_000); // A moves behind B
+  const r = tagOrigin({ added: [], removed: [], changed: [A] }, t0 + 12_000);
+  ok('R8 an expired expectation is never matched, whatever its place in the list', isOutside(r, 'changed', A));
+  tagOrigin({}, t0 + 60_000);
+  fs.rmSync(A);
+}
+
 assertRealHomesUnchanged(realBefore, ok);
 unlockMemoryHome(fakeHome);
 fs.rmSync(fakeHome, { recursive: true, force: true });
