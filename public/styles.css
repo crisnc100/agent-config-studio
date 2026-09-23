@@ -710,3 +710,69 @@ a { color: var(--accent); }
   color: var(--fg-dim, #999);
 }
 .usage-conflict-note { font-size: 11px; color: var(--fg-dim, #888); margin-top: 6px; }
+
+/* ── skills view ─────────────────────────────────────────────────────── */
+.sk-caveat { margin-bottom: 16px; }
+.sk-caveat div + div { margin-top: 5px; }
+
+/* Sticky so the running total and Download stay reachable while scrolling a
+   list this long — the selection is the point of the panel. */
+.sk-bar {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; margin-bottom: 18px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.sk-bar-summary { flex: 1; min-width: 0; font-size: 13px; color: var(--text-dim); }
+.sk-bar-clear { font-size: 12px; padding: 4px 10px; }
+
+.sk-group { margin-bottom: 22px; }
+.sk-group-head {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 0 2px 7px; border-bottom: 1px solid var(--border-soft); margin-bottom: 9px;
+}
+.sk-group-name {
+  font-size: 12px; font-weight: 600; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.sk-group-count { flex: 1; font: 11px var(--mono); color: var(--muted); }
+.sk-group-act { font-size: 12px; padding: 2px 9px; color: var(--muted); }
+.sk-group-act:hover:not(:disabled) { color: var(--text); }
+
+.sk-row {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 12px 14px; margin-bottom: 7px;
+  border: 1px solid var(--border); border-radius: 9px;
+  background: var(--panel); cursor: pointer;
+}
+.sk-row:hover { border-color: var(--accent-dim); }
+.sk-row.broken { opacity: 0.55; cursor: default; }
+.sk-row.broken:hover { border-color: var(--border); }
+.sk-check { margin: 3px 0 0; accent-color: var(--accent); flex: none; }
+.sk-check:disabled { cursor: default; }
+.sk-body { flex: 1; min-width: 0; }
+
+.sk-head { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.sk-name { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.sk-source {
+  font: 10px var(--mono); color: var(--muted); background: var(--panel-2);
+  border: 1px solid var(--border-soft); border-radius: 5px; padding: 1px 6px;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.sk-source.global-claude { color: var(--claude); }
+.sk-source.global-codex { color: var(--codex); }
+.sk-meta { font: 11px var(--mono); color: var(--muted); margin-top: 4px; }
+.sk-desc {
+  font-size: 12.5px; color: var(--text-dim); margin-top: 5px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.sk-note { font-size: 12px; color: var(--muted); margin-top: 5px; }
+.sk-broken { font-size: 12px; color: var(--red); margin-top: 5px; }
+
+.sk-usage { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; font-size: 12px; }
+.sk-usage-count { color: var(--green); font-family: var(--mono); font-size: 11px; }
+/* Deliberately not red: an unobserved skill is unknown, not a problem. */
+.sk-usage-none { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+.sk-usage-when { color: var(--muted); }
+.sk-usage-shared { color: var(--amber); }
