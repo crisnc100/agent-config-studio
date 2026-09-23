@@ -22,7 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  DEFAULTS_PATH, homeDir, lint, LINT_DEFERRED, loadRegistry, resolveModel, sidecars, userPath,
+  DEFAULTS_PATH, homeDir, lint, loadRegistry, resolveModel, sidecars, userPath,
 } from '../lib/models.js';
 
 const args = process.argv.slice(2);
@@ -116,9 +116,6 @@ if (first === '--install') {
 } else if (first === '--lint') {
   const { files, hits } = lint(rest);
   for (const h of hits) process.stdout.write(`${tilde(h.file)}:${h.line}: ${h.match}  — ${h.text ?? ''}\n`);
-  if (!rest.length) {
-    for (const d of LINT_DEFERRED) process.stderr.write(`model-id --lint: NOT linted: ~/${d.rel} — ${d.why}\n`);
-  }
   process.stderr.write(`model-id --lint: ${hits.length} hit(s) in ${files} file(s)\n`);
   process.exit(hits.length ? 1 : 0);
 } else if (first === '--sidecars') {

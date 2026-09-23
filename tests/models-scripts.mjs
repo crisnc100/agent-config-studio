@@ -29,7 +29,7 @@ const bin = path.join(work, 'bin');
 fs.mkdirSync(bin);
 fs.symlinkSync(path.join(ROOT, 'bin', 'model-id'), path.join(bin, 'model-id'));
 const bump = path.join(work, 'models.json');
-fs.writeFileSync(bump, JSON.stringify({ models: { opus: 'claude-opus-5-5' } }));
+fs.writeFileSync(bump, JSON.stringify({ models: { opus: 'claude-opus-6' } }));
 
 const call = (res, key, role) => res[`none/${key}`]?.calls.find((c) => c.role === role);
 
@@ -40,11 +40,11 @@ ok('control: codex runs the registry astra at high', call(base, 'review.mjs/defa
    call(base, 'review.mjs/default', 'codex')?.effort === 'high');
 
 const bumped = inspect({ modelIdDir: bin, homes: ['none'], homeFile: bump });
-ok('one edit: review.mjs opus lens → claude-opus-5-5', call(bumped, 'review.mjs/claude-team', 'lens:correctness')?.model === 'claude-opus-5-5',
+ok('one edit: review.mjs opus lens → claude-opus-6', call(bumped, 'review.mjs/claude-team', 'lens:correctness')?.model === 'claude-opus-6',
    JSON.stringify(bumped['none/review.mjs/claude-team']));
-ok('one edit: review-loop.mjs verifier → claude-opus-5-5, effort unchanged', call(bumped, 'review-loop.mjs/default', 'verifier')?.model === 'claude-opus-5-5' &&
+ok('one edit: review-loop.mjs verifier → claude-opus-6, effort unchanged', call(bumped, 'review-loop.mjs/default', 'verifier')?.model === 'claude-opus-6' &&
    call(bumped, 'review-loop.mjs/default', 'verifier')?.effort === 'xhigh', JSON.stringify(bumped['none/review-loop.mjs/default']));
-ok('one edit: review-loop-claude.mjs opus lens → claude-opus-5-5', call(bumped, 'review-loop-claude.mjs/default', 'lens:correctness')?.model === 'claude-opus-5-5');
+ok('one edit: review-loop-claude.mjs opus lens → claude-opus-6', call(bumped, 'review-loop-claude.mjs/default', 'lens:correctness')?.model === 'claude-opus-6');
 ok('one edit: the sonnet lenses stay the `sonnet` alias', call(bumped, 'review.mjs/claude-team', 'lens:regressions')?.model === 'sonnet');
 ok('one edit: nothing else moved', call(bumped, 'review.mjs/default', 'codex')?.model === DEFAULTS.models.astra &&
    call(bumped, 'review-loop.mjs/fixer-claude', 'codex')?.model === DEFAULTS.models.astra);

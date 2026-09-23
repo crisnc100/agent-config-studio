@@ -28,14 +28,14 @@ const EXPECTED = {
     defaultModel: 'claude-sonnet-5',
     models: [
       { id: 'claude-sonnet-5', label: 'Sonnet 5 · fast' },
-      { id: 'claude-opus-5', label: 'Opus 5 · slower' },
+      { id: 'claude-opus-5-5', label: 'Opus 5.5 · slower' },
       { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
       { id: 'claude-fable-5-1', label: 'Fable 5.1 · judgment, ~$0.60/turn' },
     ],
   },
   grok: {
-    defaultModel: 'grok-4.6',
-    models: [{ id: 'grok-4.6', label: 'Grok 4.6' }, { id: 'grok-4.5', label: 'Grok 4.5' }],
+    defaultModel: 'grok-4.7',
+    models: [{ id: 'grok-4.7', label: 'Grok 4.7' }, { id: 'grok-4.6', label: 'Grok 4.6' }],
   },
 };
 
@@ -155,15 +155,15 @@ async function main() {
       ok('the retired id itself is no longer on the allowlist', old.status === 400);
 
       // Criterion 4: edit the user file only, same server process.
-      writeUser({ models: { opus: 'claude-opus-5-5' } });
+      writeUser({ models: { opus: 'claude-opus-6' } });
       const h1 = await getHarnesses(srv.base);
       const c1 = h1.body.harnesses.find((h) => h.id === 'claude');
-      ok('one edit reaches the running server: opus → claude-opus-5-5', c1.models.some((m) => m.id === 'claude-opus-5-5' && m.label === 'Opus 5.5 · slower') &&
-         !c1.models.some((m) => m.id === 'claude-opus-5'), JSON.stringify(c1.models));
-      ok('...every other entry unchanged', c1.models.filter((m) => m.id !== 'claude-opus-5-5').map((m) => m.id).join() ===
-         EXPECTED.claude.models.filter((m) => m.id !== 'claude-opus-5').map((m) => m.id).join());
-      const t1 = await chat(srv.base, { message: 'hi', harness: 'claude', model: 'claude-opus-5-5' });
-      ok('...and a turn on it spawns with the new id', t1.done?.ok === true && modelArg(argvLog(log).at(-1)) === 'claude-opus-5-5');
+      ok('one edit reaches the running server: opus → claude-opus-6', c1.models.some((m) => m.id === 'claude-opus-6' && m.label === 'Opus 6 · slower') &&
+         !c1.models.some((m) => m.id === 'claude-opus-5-5'), JSON.stringify(c1.models));
+      ok('...every other entry unchanged', c1.models.filter((m) => m.id !== 'claude-opus-6').map((m) => m.id).join() ===
+         EXPECTED.claude.models.filter((m) => m.id !== 'claude-opus-5-5').map((m) => m.id).join());
+      const t1 = await chat(srv.base, { message: 'hi', harness: 'claude', model: 'claude-opus-6' });
+      ok('...and a turn on it spawns with the new id', t1.done?.ok === true && modelArg(argvLog(log).at(-1)) === 'claude-opus-6');
 
       // Criterion 5: planted ids.
       fs.writeFileSync(log, '');
@@ -198,9 +198,9 @@ async function main() {
       writeUser({ assist: { claude: { default: 'x;rm', picker: [{ model: 'x;rm' }, { model: 'opus', note: 'slower' }, { model: 'haiku' }] } } });
       const h4 = await getHarnesses(srv.base);
       const c4 = h4.body.harnesses.find((h) => h.id === 'claude');
-      ok('default dropped → default is the first surviving entry', c4.defaultModel === 'claude-opus-5' && /default "x;rm" is not in the picker/.test(h4.body.registryError), `${c4.defaultModel} ${h4.body.registryError}`);
+      ok('default dropped → default is the first surviving entry', c4.defaultModel === 'claude-opus-5-5' && /default "x;rm" is not in the picker/.test(h4.body.registryError), `${c4.defaultModel} ${h4.body.registryError}`);
       const t4 = await chat(srv.base, { message: 'hi', harness: 'claude' });
-      ok('...and a default turn runs it', t4.done?.ok === true && modelArg(argvLog(log).at(-1)) === 'claude-opus-5');
+      ok('...and a default turn runs it', t4.done?.ok === true && modelArg(argvLog(log).at(-1)) === 'claude-opus-5-5');
 
       // Everything dropped → the shipped picker.
       writeUser({ assist: { claude: { default: '--help', picker: PLANTED.map((model) => ({ model })) } } });
@@ -245,7 +245,7 @@ async function main() {
       ok('...defaults served', JSON.stringify(shape(h.body.harnesses.find((x) => x.id === 'claude'))) === JSON.stringify(EXPECTED.claude));
       const t = await chat(srv.base, { message: 'hi', harness: 'grok' });
       const a = argvLog(log).at(-1) || [];
-      ok('...and a grok turn runs the default', t.done?.ok === true && a[a.indexOf('-m') + 1] === 'grok-4.6', JSON.stringify(a));
+      ok('...and a grok turn runs the default', t.done?.ok === true && a[a.indexOf('-m') + 1] === 'grok-4.7', JSON.stringify(a));
       const as = await fetch(`${srv.base}/api/assist`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ harness: 'claude', action: 'tighten', path: path.join(home, '.claude', 'CLAUDE.md'), content: 'x' }),
