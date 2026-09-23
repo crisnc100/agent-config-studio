@@ -1506,7 +1506,8 @@ function paintMemory() {
 
   const facts = el('div', 'mem-facts');
   const states = Object.entries(d.states).map(([k, n]) => `${n} ${SLUG_STATE_LABELS[k] || k}`).join(' · ');
-  facts.appendChild(el('div', null, `Project folders: ${states}. Temporary session folders are left out of the project list.`));
+  facts.appendChild(el('div', null, `Project folders: ${states}. Temporary session folders are left out of the project list`
+    + (d.hiddenProbeFiles ? `, with the ${d.hiddenProbeFiles} memory file${d.hiddenProbeFiles === 1 ? '' : 's'} in them.` : '.')));
   const o = d.other;
   const store = (label, s) => (s.count == null ? `${label}: ${s.note}` : `${label}: ${s.count} ${s.unit}${s.scopes != null ? ` in ${s.scopes} scope${s.scopes === 1 ? '' : 's'}` : ''} (${s.store}, read-only)`);
   facts.appendChild(el('div', null, `${store('Codex', o.codex)} · ${store('Grok', o.grok)}`));
@@ -1873,7 +1874,8 @@ function opsTab() {
       + (op.restoredAt ? ` · restored ${new Date(op.restoredAt).toLocaleString()}` : '')
       + (op.skipped.length ? ` · skipped: ${op.skipped.join('; ')}` : '')
       + (op.historyError ? ` · history: ${op.historyError}` : '')));
-    for (const s of op.steps) body.appendChild(el('div', 'mem-note', `${s.done ? '✓' : '·'} ${s.type} ${s.label}`));
+    for (const s of op.steps) body.appendChild(el('div', 'mem-note', `${s.restored ? '↺' : s.done ? '✓' : '·'} ${s.type} ${s.label}`));
+    if (op.error) body.appendChild(el('div', 'mem-flag', op.error));
     if (MV.restoreRefusal?.opId === op.id) {
       const r = MV.restoreRefusal;
       body.appendChild(el('div', 'notice error', r.reason));
@@ -1881,7 +1883,7 @@ function opsTab() {
     }
     row.appendChild(body);
     const btn = el('button', 'btn ghost scope-open', 'Restore');
-    btn.disabled = op.status === 'restored';
+    btn.disabled = op.status === 'restored' || op.status === 'refused';
     btn.onclick = async () => {
       try {
         const r = await api('POST', '/api/memory/restore', { opId: op.id });
