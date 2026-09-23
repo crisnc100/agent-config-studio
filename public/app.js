@@ -800,27 +800,27 @@ async function handleFileEvent(d) {
     return;
   }
 
-  if (plan.open === 'conflict') {
-    // The studio write may be this tab's own save, with more typed since:
-    // if disk holds exactly what this tab last saved, there is no conflict.
-    if (plan.studio) {
-      const f = await api('GET', `/api/file?path=${encodeURIComponent(openPath)}`).catch(() => null);
-      if (f && f.content === S.original) return;
-    }
+  const conflict = () => notice('warn',
     // Never silently discard their edits — the save will 409 anyway.
-    notice('warn',
-      'This file changed on disk while you were editing it. Your unsaved changes are still here, but saving will be refused until you reload.',
-      null, true);
-    return;
-  }
+    'This file changed on disk while you were editing it. Your unsaved changes are still here, but saving will be refused until you reload.',
+    null, true);
+  if (plan.open === 'conflict' && !plan.studio) { conflict(); return; }
 
-  if (plan.open === 'reload') {
+  if (plan.open === 'conflict' || plan.open === 'reload') {
+    // A studio write may be this tab's own save, with more typed since; and
+    // anything may have been typed while this fetch was in flight — so the
+    // decision is made after it, from the editor's state then.
     const f = await api('GET', `/api/file?path=${encodeURIComponent(openPath)}`).catch(() => null);
-    // The tab that wrote it already holds these bytes; nothing changes there.
-    if (f && S.file?.path === openPath && f.content !== S.original) {
+    const what = reloadDecision({ sameFile: S.file?.path === openPath, dirty: isDirty(), fetched: f?.content ?? null, original: S.original });
+    if (what === 'meta') {
+      S.file.mtime = f.mtime; S.file.size = f.size; S.file.lines = f.lines;
+      renderStatus();
+    } else if (what === 'replace') {
       S.file = f; S.original = f.content; S.draft = f.content;
       renderAll();
       if (!plan.studio) notice('ok', 'Reloaded — this file changed on disk.');
+    } else if (what === 'conflict') {
+      conflict();
     }
     return;
   }
