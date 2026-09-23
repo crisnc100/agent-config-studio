@@ -17,7 +17,19 @@
  *    and ~/.agents (symlinks by target, not followed); every project skill tree
  *    the skills feature walks under ~/Documents/Projects and
  *    ~/Documents/Garman-Homes, found the way discovery finds them; and the
- *    single files ACS edits inside the live homes (see EXACT).
+ *    single files ACS edits inside the live homes (see EXACT). Also every
+ *    ~/.claude/projects/<slug>/memory tree, with each slug directory recorded
+ *    by presence — the Memory view trashes empty slugs, indexes and facts —
+ *    and every CLAUDE.md / AGENTS.md / .cursor/rules/*.mdc under
+ *    ~/Documents/Projects, found the way lib/context-map.js finds them.
+ *    Transcripts beside the memory trees are not hashed: live sessions append
+ *    to them. Anything that appears, disappears or changes there fails — with
+ *    ONE exemption: a new slug named exactly like the two temp directories
+ *    tests/phase1.mjs starts live Claude sessions in (`acs-contain-claude-`
+ *    at its line 670, `acs-claude-writeprobe-` at 738, both mkdtemp'd in
+ *    os.tmpdir()), and within it only the slug folder and an EMPTY memory/ —
+ *    what Claude Code creates for every session's cwd. A file under that
+ *    memory/ fails, and so does any other new slug or new context file.
  *  - ENTRY NAMES ONLY for the live agent homes ~/.claude, ~/.codex, ~/.grok and
  *    the top two levels of the two project roots (plus a hash of the loose
  *    files at their top). Running agents write inside those all
@@ -58,6 +70,10 @@ const ROOTS = [
 const PROJECT_ROOTS = [path.join(HOME, 'Documents', 'Projects'), path.join(HOME, 'Documents', 'Garman-Homes')];
 const LIVE_HOMES = ['.claude', '.codex', '.grok'].map((r) => path.join(HOME, r));
 const CATALOG_DIR = path.join(HOME, '.claude', 'cache', 'model-catalog');
+const MEMORY_PROJECTS = path.join(HOME, '.claude', 'projects');
+// lib/context-map.js's walk, written out again for the same reason as
+// projectSkillTrees: a bug there must not also blind this check.
+const CONTEXT_SKIP = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.venv', 'venv', '__pycache__', '.cache', 'target', 'coverage', 'Pods', 'DerivedData', '.turbo', '.pnpm-store']);
 const EXACT = [
   ...['settings.json', 'settings.local.json', 'CLAUDE.md', 'advisor-config.json', 'investigate-config.json', 'review-config.json']
     .map((f) => path.join(HOME, '.claude', f)),
@@ -142,6 +158,34 @@ function projectSkillTrees(root) {
   return out.sort();
 }
 
+/** Every CLAUDE.md, AGENTS.md and .cursor/rules/*.mdc under `root`, links included, never followed. */
+function contextFiles(root) {
+  const out = [];
+  const walk = (dir, depth) => {
+    if (depth > 12) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const d of entries) {
+      const abs = path.join(dir, d.name);
+      if (d.isDirectory()) { if (!CONTEXT_SKIP.has(d.name)) walk(abs, depth + 1); continue; }
+      if (!d.isFile() && !d.isSymbolicLink()) continue;
+      const isRule = d.name.endsWith('.mdc') && path.basename(dir) === 'rules' && path.basename(path.dirname(dir)) === '.cursor';
+      if (d.name === 'CLAUDE.md' || d.name === 'AGENTS.md' || isRule) out.push(abs);
+    }
+  };
+  walk(root, 0);
+  return out.sort();
+}
+
+/** A slug tests/phase1.mjs's live Claude runs create, and nothing else. */
+const PROBE_SLUG = (() => {
+  let tmp;
+  try { tmp = fs.realpathSync(os.tmpdir()); } catch { tmp = os.tmpdir(); }
+  const esc = tmp.replace(/[^A-Za-z0-9]/g, '-').replace(/[-]/g, '\\-');
+  return new RegExp(`^${esc}-acs-(contain-claude|claude-writeprobe)-[A-Za-z0-9]{6}$`);
+})();
+export const isLiveSuiteProbeSlug = (slug) => PROBE_SLUG.test(slug);
+
 export function snapshotRealHomes() {
   const out = {};
   const walk = (entry) => {
@@ -162,6 +206,24 @@ export function snapshotRealHomes() {
     out[`trees:${r}`] = JSON.stringify(trees);
     for (const t of trees) walk(t);
   }
+  // Each slug directory by presence (link by target), and its memory/ tree in
+  // full. Walked per slug rather than from ~/.claude/projects, which would
+  // hash every transcript.
+  let slugs = [];
+  try { slugs = fs.readdirSync(MEMORY_PROJECTS).sort(); } catch {}
+  out[`slugs:${MEMORY_PROJECTS}`] = JSON.stringify(slugs);
+  for (const slug of slugs) {
+    const dir = path.join(MEMORY_PROJECTS, slug);
+    let st;
+    try { st = fs.lstatSync(dir); } catch { continue; }
+    if (st.isSymbolicLink()) { out[dir] = `link:${fs.readlinkSync(dir)}`; continue; }
+    if (!st.isDirectory()) continue;
+    out[dir] = 'dir';
+    walk(path.join(dir, 'memory'));
+  }
+  const ctx = contextFiles(PROJECT_ROOTS[0]);
+  out[`context:${PROJECT_ROOTS[0]}`] = JSON.stringify(ctx);
+  for (const f of ctx) walk(f);
   const nameSet = (r) => {
     let names = null;
     try { names = fs.readdirSync(r).filter((n) => !TRANSIENT.test(n)).sort(); } catch {}
@@ -208,8 +270,25 @@ export function compareRealHomes(before, after) {
   const names = [];
   const restamped = [];
   const rewrites = [];
+  const appeared = [];
+  const list = (snap, key) => new Set(JSON.parse(snap[key] || '[]'));
+  const slugKey = `slugs:${MEMORY_PROJECTS}`;
+  const ctxKey = `context:${PROJECT_ROOTS[0]}`;
+  const beforeSlugs = list(before, slugKey);
+  const probes = new Set([...list(after, slugKey)].filter((x) => !beforeSlugs.has(x) && isLiveSuiteProbeSlug(x)));
+  if (probes.size) appeared.push(`${probes.size} new phase1 probe slug${probes.size === 1 ? '' : 's'} (live Claude sessions in its temp dirs): ${[...probes].slice(0, 3).join(', ')}`);
   for (const k of new Set([...Object.keys(before), ...Object.keys(after)])) {
     if (k.startsWith('meta:')) continue;
+    // The lists themselves: every entry in them is its own key, compared below.
+    if (k === slugKey || k === ctxKey) continue;
+    // A probe slug is exempt only as what the live run leaves: the slug
+    // folder and an EMPTY memory/ inside it (its transcripts are never
+    // walked). Any entry under memory/, or either one being anything but a
+    // plain directory, still fails.
+    if (before[k] === undefined && after[k] === 'dir' && k.startsWith(MEMORY_PROJECTS + path.sep)) {
+      const [slug, ...rest] = k.slice(MEMORY_PROJECTS.length + 1).split(path.sep);
+      if (probes.has(slug) && (rest.length === 0 || (rest.length === 1 && rest[0] === 'memory'))) continue;
+    }
     if (k.startsWith('names:')) {
       if (before[k] !== after[k]) {
         const b = new Set(JSON.parse(before[k] || 'null') || []);
@@ -239,6 +318,7 @@ export function compareRealHomes(before, after) {
     }
   }
   const notes = [
+    ...appeared,
     ...rewrites,
     ...restamped.filter((x) => !rewrites.some((r) => r.startsWith(tilde(x))))
       .map((f) => `${tilde(f)}: freshness stamp changed during the run; every other byte identical`),
@@ -246,10 +326,11 @@ export function compareRealHomes(before, after) {
   return { content, names, notes };
 }
 
-const hashedCount = (snap) => Object.keys(snap).filter((k) => !/^(raw|meta|names|trees):/.test(k)).length;
+const hashedCount = (snap) => Object.keys(snap).filter((k) => !/^(raw|meta|names|trees|slugs|context):/.test(k)).length;
 const CONTENT_LABEL = (n) => `${n} entries (files by sha256, directories by presence) under ~/.agent-config-studio, ` +
   '~/.claude/{skills,hooks,agents,commands,skills_retired}, ~/.codex/{skills,rules}, ~/.agents, ~/.config/worktree, every project skill ' +
-  'tree and the loose files atop both project roots, plus the files ACS edits (~/.claude settings, CLAUDE.md, *-config.json; ~/.codex ' +
+  'tree and the loose files atop both project roots, every ~/.claude/projects slug directory and its memory/ tree, every CLAUDE.md / AGENTS.md / ' +
+  '.cursor rule under ~/Documents/Projects, plus the files ACS edits (~/.claude settings, CLAUDE.md, *-config.json; ~/.codex ' +
   'config.toml, AGENTS.md; ~/.grok AGENTS.md; ~/.zshenv) and the CLI catalogs, are byte-identical (sha256)';
 const NAMES_LABEL = '~/.claude, ~/.codex, ~/.grok, and ~/.codex-seats, ~/Documents/Projects and ~/Documents/Garman-Homes two levels deep: ' +
   'entry names unchanged (contents not compared)';

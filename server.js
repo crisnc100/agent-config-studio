@@ -1,4 +1,5 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -17,7 +18,7 @@ import * as mutate from './lib/mutate.js';
 import { runAssist, listActions } from './lib/assist.js';
 import { streamTurn, parseEdits, resolveMentions } from './lib/chat.js';
 import { detectHarnesses, HARNESSES, modelsFor, registryError } from './lib/harness.js';
-import { createWatcher, snapshotOf, diffSnapshots } from './lib/watch.js';
+import { createWatcher, snapshotOf, diffSnapshots, expectWrite, tagOrigin } from './lib/watch.js';
 import { renderSnapshot, createSeat, removeSeat, moveSeatToPrivateHome } from './lib/usage/seats.js';
 import { refreshSnapshot } from './lib/usage/refresh.js';
 import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
@@ -27,6 +28,8 @@ import {
   createModelsState, setModel, resetModel, dismiss, applySidecar, whereUsed,
 } from './lib/models-panel.js';
 import { loadRegistry } from './lib/models.js';
+import * as memoryOps from './lib/memory-ops.js';
+import { contextMap, contextFile } from './lib/context-map.js';
 import {
   syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
   isInstalled as shortcutsInstalled, shortcutsFromSeats, shortcutsPath, zshenvPath,
@@ -390,17 +393,26 @@ async function onFilesChanged() {
 
   if (!delta.added.length && !delta.removed.length && !delta.changed.length) return;
 
-  broadcast({
-    type: 'files',
-    added: delta.added.map(tilde),
-    removed: delta.removed.map(tilde),
-    changed: delta.changed.map(tilde),
-    addedPaths: delta.added,
-    removedPaths: delta.removed,
-    changedPaths: delta.changed,
-    total: next.size,
-  });
+  // The studio's own writes go out tagged, so the page can stay quiet about
+  // them; everything else is an outside change (lib/watch.js tagOrigin).
+  const { studio, outside } = tagOrigin(delta);
+  for (const [part, origin] of [[studio, 'studio'], [outside, 'outside']]) {
+    if (!part.added.length && !part.removed.length && !part.changed.length) continue;
+    broadcast({
+      type: 'files',
+      origin,
+      added: part.added.map(tilde),
+      removed: part.removed.map(tilde),
+      changed: part.changed.map(tilde),
+      addedPaths: part.added,
+      removedPaths: part.removed,
+      changedPaths: part.changed,
+      total: next.size,
+    });
+  }
 }
+
+const sha256Text = (text) => crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
 
 export function createApp(opts = {}) {
   const detectFn = opts.detectHarnesses || detectHarnesses;
@@ -725,6 +737,46 @@ export function createApp(opts = {}) {
   },
 
   /**
+   * The Memory view: every auto-memory fact grouped by repository, plus the
+   * rot around it. A GET that rescans changed transcripts, so it takes the
+   * strict origin check for the same reason /api/skills does.
+   *
+   * Every memory route below takes ids and nothing else — `id`, `ids`,
+   * `opId`, `action`. No handler reads a path from the request, so there is
+   * no value a page could send that names a file of its choosing; the ids are
+   * random and resolved server-side (lib/memory-ops.js).
+   */
+  'GET /api/memory': async (req) => {
+    if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
+    return memoryOps.memoryView();
+  },
+  'GET /api/memory/file': async (req, url) => {
+    if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
+    return memoryOps.memoryFile(url.searchParams.get('id'));
+  },
+  'GET /api/memory/ops': async () => ({ ops: memoryOps.listOps() }),
+  'POST /api/memory/preview': async (req) => {
+    const { action, ids } = await readBody(req);
+    return memoryOps.preview({ action, ids });
+  },
+  'POST /api/memory/accept': async (req) => memoryOps.accept((await readBody(req)).opId),
+  'POST /api/memory/restore': async (req) => memoryOps.restore((await readBody(req)).opId),
+  'POST /api/memory/keep': async (req) => memoryOps.keep((await readBody(req)).id),
+
+  /**
+   * The Context view: CLAUDE.md / AGENTS.md / .cursor rules per project, copies
+   * collapsed, drift flagged. Read-only; the diff fetches texts by id.
+   */
+  'GET /api/context': async (req) => {
+    if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
+    return contextMap();
+  },
+  'GET /api/context/file': async (req, url) => {
+    if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
+    return contextFile(url.searchParams.get('id'));
+  },
+
+  /**
    * The Models panel. Catalogs are the CLIs' own on-disk caches, read at
    * start and on "Check now" — no spawn, no network, no credential — and
    * only projected fields leave lib/models-catalog.js.
@@ -804,6 +856,7 @@ export function createApp(opts = {}) {
     await history.recordBaseline(abs, `state of ${tilde(abs)} before edit`).catch(() => {});
 
     await fsp.writeFile(abs, content, 'utf8');
+    expectWrite(abs, 'changed', sha256Text(content));
     const after = await fsp.stat(abs);
 
     // The write succeeded; a history failure must not be reported as a failed
@@ -854,6 +907,7 @@ export function createApp(opts = {}) {
     await history.recordBaseline(abs, `state of ${tilde(abs)} before restore`).catch(() => {});
 
     await fsp.writeFile(abs, content, 'utf8');
+    expectWrite(abs, 'changed', sha256Text(content));
     const after = await fsp.stat(abs);
     let newSha = null, historyError = null;
     try {

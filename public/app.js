@@ -37,7 +37,7 @@ function renderMarkdown(src) {
 
 const S = {
   registry: null,
-  view: 'welcome',      // welcome | entry | search | scope | mcp | usage | trash | models
+  view: 'welcome',      // welcome | entry | search | scope | mcp | usage | trash | models | skills | memory | context
   entry: null,
   file: null,           // { path, kind, content, mtime, display }
   original: '',
@@ -103,6 +103,8 @@ async function boot() {
   if (location.hash.startsWith('#trash')) return openTrash();
   if (location.hash.startsWith('#skills')) return openSkills();
   if (location.hash.startsWith('#models')) return openModels();
+  if (location.hash.startsWith('#memory')) return openMemory();
+  if (location.hash.startsWith('#context')) return openContext();
   if (location.hash.startsWith('#assist')) { renderWelcome(); return openDrawer(); }
   const m = location.hash.match(/file=([^&]+)/);
   if (m) {
@@ -249,6 +251,12 @@ function renderTopbar() {
   } else if (S.view === 'skills') {
     t.textContent = 'Skills';
     $('title-path').textContent = 'Every skill on this machine — browse, select, download';
+  } else if (S.view === 'memory') {
+    t.textContent = 'Memory';
+    $('title-path').textContent = 'Claude auto-memory by project — review, and clean up with a preview first';
+  } else if (S.view === 'context') {
+    t.textContent = 'Context';
+    $('title-path').textContent = 'What each project tells its agents — CLAUDE.md, AGENTS.md, Cursor rules';
   } else {
     t.textContent = 'Agent Config Studio';
     $('title-path').textContent = '';
@@ -340,6 +348,8 @@ function renderContent() {
   if (S.view === 'usage') return;          // rendered directly by openUsage
   if (S.view === 'trash') return;          // rendered directly by openTrash
   if (S.view === 'models') return;         // rendered directly by openModels
+  if (S.view === 'memory') return;         // rendered directly by openMemory
+  if (S.view === 'context') return;        // rendered directly by openContext
   if (!S.file) return;
 
   if (S.tab === 'preview') return renderPreview(c);
@@ -575,14 +585,14 @@ function diffView(oldText, newText, oldLabel = 'before', newLabel = 'after') {
   let skipped = 0;
   rows.forEach((r, i) => {
     if (!keep[i]) { skipped++; return; }
-    if (skipped) { wrap.appendChild(el('div', 'diff-skip', `⋯ ${skipped} unchanged lines`)); skipped = 0; }
+    if (skipped) { wrap.appendChild(el('div', 'diff-skip', `⋯ ${skipped} unchanged line${skipped === 1 ? '' : 's'}`)); skipped = 0; }
     const line = el('div', `diff-line ${r.type}`);
     line.appendChild(el('span', 'n', r.type === 'add' ? String(r.nb ?? '') : String(r.na ?? '')));
     const t = el('span', 't', (r.type === 'add' ? '+ ' : r.type === 'del' ? '- ' : '  ') + r.text);
     line.appendChild(t);
     wrap.appendChild(line);
   });
-  if (skipped) wrap.appendChild(el('div', 'diff-skip', `⋯ ${skipped} unchanged lines`));
+  if (skipped) wrap.appendChild(el('div', 'diff-skip', `⋯ ${skipped} unchanged line${skipped === 1 ? '' : 's'}`));
   return wrap;
 }
 
@@ -764,53 +774,69 @@ async function refreshRegistry(selectPath) {
 function connectEvents() {
   const es = new EventSource('/api/events');
 
-  es.onmessage = async (ev) => {
+  es.onmessage = (ev) => {
     let d;
     try { d = JSON.parse(ev.data); } catch { return; }
     if (d.type !== 'files') return;
-
-    await refreshRegistry().catch(() => {});
-
-    const openPath = S.file?.path;
-    if (openPath && d.removedPaths?.includes(openPath)) {
-      S.entry = null; S.file = null; S.original = ''; S.draft = '';
-      S.view = 'welcome';
-      renderAll();
-      notice('warn', 'The file you had open was deleted outside the studio.', null, true);
-      return;
-    }
-
-    if (openPath && d.changedPaths?.includes(openPath)) {
-      if (isDirty()) {
-        // Never silently discard their edits — the save will 409 anyway.
-        notice('warn',
-          'This file changed on disk while you were editing it. Your unsaved changes are still here, but saving will be refused until you reload.',
-          null, true);
-      } else {
-        const f = await api('GET', `/api/file?path=${encodeURIComponent(openPath)}`).catch(() => null);
-        if (f) {
-          S.file = f; S.original = f.content; S.draft = f.content;
-          renderAll();
-          notice('ok', 'Reloaded — this file changed on disk.');
-        }
-      }
-      return;
-    }
-
-    // Only announce structural changes; a save you just made is not news.
-    const parts = [];
-    if (d.added?.length) parts.push(`${d.added.length} added`);
-    if (d.removed?.length) parts.push(`${d.removed.length} removed`);
-    if (parts.length) {
-      const names = [...(d.added || []), ...(d.removed || [])]
-        .slice(0, 3).map((p) => p.split('/').pop()).join(', ');
-      notice('ok', `${parts.join(', ')} outside the studio — ${names}${(d.added.length + d.removed.length) > 3 ? '…' : ''}`);
-    }
-    setLive(true);
+    handleFileEvent(d);
   };
 
   es.onerror = () => setLive(false);
   es.onopen = () => setLive(true);
+}
+
+async function handleFileEvent(d) {
+  await refreshRegistry().catch(() => {});
+  const openPath = S.file?.path;
+  const plan = fileEventPlan(d, { openPath, dirty: isDirty() });
+
+  if (plan.open === 'closed') {
+    S.entry = null; S.file = null; S.original = ''; S.draft = '';
+    S.view = 'welcome';
+    renderAll();
+    notice('warn', plan.studio
+      ? 'The file you had open was moved to the studio trash.'
+      : 'The file you had open was deleted outside the studio.', null, true);
+    return;
+  }
+
+  const conflict = () => notice('warn',
+    // Never silently discard their edits — the save will 409 anyway.
+    'This file changed on disk while you were editing it. Your unsaved changes are still here, but saving will be refused until you reload.',
+    null, true);
+  if (plan.open === 'conflict' && !plan.studio) { conflict(); return; }
+
+  if (plan.open === 'conflict' || plan.open === 'reload') {
+    // A studio write may be this tab's own save, with more typed since; and
+    // anything may have been typed while this fetch was in flight — so the
+    // decision is made after it, from the editor's state then.
+    const f = await api('GET', `/api/file?path=${encodeURIComponent(openPath)}`).catch(() => null);
+    const what = reloadDecision({ sameFile: S.file?.path === openPath, dirty: isDirty(), fetched: f?.content ?? null, original: S.original });
+    if (what === 'meta') {
+      S.file.mtime = f.mtime; S.file.size = f.size; S.file.lines = f.lines;
+      renderStatus();
+    } else if (what === 'replace') {
+      S.file = f; S.original = f.content; S.draft = f.content;
+      renderAll();
+      if (!plan.studio) notice('ok', 'Reloaded — this file changed on disk.');
+    } else if (what === 'conflict') {
+      conflict();
+    }
+    return;
+  }
+
+  // Only announce structural changes made outside the studio.
+  const added = plan.announce ? d.added || [] : [];
+  const removed = plan.announce ? d.removed || [] : [];
+  const parts = [];
+  if (added.length) parts.push(`${added.length} added`);
+  if (removed.length) parts.push(`${removed.length} removed`);
+  if (parts.length) {
+    const names = [...added, ...removed]
+      .slice(0, 3).map((p) => p.split('/').pop()).join(', ');
+    notice('ok', `${parts.join(', ')} outside the studio — ${names}${(added.length + removed.length) > 3 ? '…' : ''}`);
+  }
+  setLive(true);
 }
 
 function setLive(on) {
@@ -1402,6 +1428,669 @@ function downloadSelectedSkills() {
   notice('ok', ids.length === 1
     ? 'Downloading one skill as a .md file.'
     : `Downloading ${ids.length} skills as a .zip.`);
+}
+
+/* ── Memory view ─────────────────────────────────────────────────────── */
+
+/**
+ * Claude auto-memory, grouped by repository, with the rot around it.
+ *
+ * Wording is load-bearing here the same way it is in the Skills view: the only
+ * activity signal is a successful write found in retained transcripts, so a
+ * fact with none shows "last written: unknown" — never a word that implies
+ * nobody reads it. Every cleanup is previewed as a diff or a list and applied
+ * only on Accept, and every applied one can be restored from Operations.
+ *
+ * The client holds ids, never paths: `openPath` is only ever handed to the
+ * existing editor, and every memory action names an id.
+ */
+const MV = {
+  data: null,
+  ops: [],
+  tab: 'review',
+  age: 0,                  // days; 0 = any age
+  picked: {},              // finding kind -> Set of ids
+  preview: null,           // { opId, summary, diffs, items }
+  compare: null,           // { orphan, rows }
+  diff: null,              // { key, before, after, labels }
+  restoreRefusal: null,    // { opId, reason, diffs }
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString() : null);
+const daysAgo = (iso) => (iso ? Math.floor((Date.now() - Date.parse(iso)) / DAY_MS) : null);
+const picked = (kind) => (MV.picked[kind] ||= new Set());
+
+const SLUG_STATE_LABELS = {
+  resolved: 'git repository',
+  'non-git': 'folder, not a repository',
+  ambiguous: 'ambiguous — more than one folder fits',
+  inaccessible: 'inaccessible — could not look',
+  missing: 'project folder not found',
+  'temp-probe': 'temporary session folder',
+};
+
+async function openMemory() {
+  if (!confirmDiscard()) return;
+  S.view = 'memory';
+  S.entry = null;
+  // Nothing stays open behind this view, or a cleanup that trashes the file
+  // last opened would make the live-change handler leave the view.
+  S.file = null; S.original = ''; S.draft = '';
+  window.history.replaceState(null, '', '#memory');
+  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
+  $('filebar').hidden = true;
+
+  const c = $('content');
+  c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span> Reading memory and transcripts…</div></div>';
+  try {
+    const [data, ops] = await Promise.all([api('GET', '/api/memory'), api('GET', '/api/memory/ops')]);
+    MV.data = data;
+    MV.ops = ops.ops;
+    // A finding id survives a reload only while its finding does.
+    const live = new Set([
+      ...data.findings.emptySlugs, ...data.findings.dangling, ...data.findings.unindexed,
+    ].map((f) => f.id));
+    for (const set of Object.values(MV.picked)) for (const id of [...set]) if (!live.has(id)) set.delete(id);
+  } catch (e) {
+    c.innerHTML = '';
+    const box = el('div', 'scope');
+    box.appendChild(el('h2', null, 'Memory'));
+    box.appendChild(el('div', 'notice error', e.message));
+    c.appendChild(box);
+    return;
+  }
+  paintMemory();
+}
+
+function paintMemory() {
+  if (S.view !== 'memory' || !MV.data) return;
+  const d = MV.data;
+  const c = $('content');
+  const scroll = c.scrollTop;
+  c.innerHTML = '';
+  const box = el('div', 'scope mem');
+
+  box.appendChild(el('h2', null, 'Memory'));
+  box.appendChild(el('div', 'scope-sub',
+    `${d.rows.length} memory files in ${d.groups.length} projects, from ${d.slugCount} Claude Code project folders. `
+    + 'Grouped by repository, so a project\'s worktrees and subfolders roll up together.'));
+
+  const caveat = el('div', 'notice warn mem-caveat');
+  caveat.appendChild(el('div', null, d.caveat.text));
+  box.appendChild(caveat);
+
+  const facts = el('div', 'mem-facts');
+  const states = Object.entries(d.states).map(([k, n]) => `${n} ${SLUG_STATE_LABELS[k] || k}`).join(' · ');
+  facts.appendChild(el('div', null, `Project folders: ${states}. Temporary session folders are left out of the project list`
+    + (d.hiddenProbeFiles ? `, with the ${d.hiddenProbeFiles} memory file${d.hiddenProbeFiles === 1 ? '' : 's'} in them.` : '.')));
+  const o = d.other;
+  const store = (label, s) => (s.count == null ? `${label}: ${s.note}` : `${label}: ${s.count} ${s.unit}${s.scopes != null ? ` in ${s.scopes} scope${s.scopes === 1 ? '' : 's'}` : ''} (${s.store}, read-only)`);
+  facts.appendChild(el('div', null, `${store('Codex', o.codex)} · ${store('Grok', o.grok)}`));
+  facts.appendChild(el('div', null,
+    `Transcripts: ${d.scan.transcripts} (${d.scan.scanned} read, ${d.scan.reused} from cache) in ${d.scan.ms} ms.`));
+  box.appendChild(facts);
+
+  const f = d.findings;
+  const queue = d.rows.filter((r) => r.inQueue);
+  const cleanups = f.emptySlugs.length + f.dangling.length + f.unindexed.length + f.oversized.length;
+  const tabs = [
+    ['review', `Review (${queue.length})`],
+    ['cleanups', `Cleanups (${cleanups})`],
+    ['orphans', `Orphans & duplicates (${f.orphans.length + f.duplicates.length})`],
+    ['projects', `Projects (${d.groups.length})`],
+    ['ops', `Operations (${MV.ops.length})`],
+  ];
+  const bar = el('div', 'mem-tabs');
+  for (const [id, label] of tabs) {
+    const b = el('button', 'tab' + (MV.tab === id ? ' active' : ''), label);
+    b.onclick = () => { MV.tab = id; MV.compare = null; MV.diff = null; paintMemory(); };
+    bar.appendChild(b);
+  }
+  box.appendChild(bar);
+
+  if (MV.preview) box.appendChild(previewPanel());
+
+  if (MV.tab === 'review') box.appendChild(reviewTab());
+  else if (MV.tab === 'cleanups') box.appendChild(cleanupsTab());
+  else if (MV.tab === 'orphans') box.appendChild(orphansTab());
+  else if (MV.tab === 'projects') box.appendChild(projectsTab());
+  else if (MV.tab === 'ops') box.appendChild(opsTab());
+
+  c.appendChild(box);
+  c.scrollTop = scroll;
+}
+
+const groupLabel = (id) => MV.data.groups.find((g) => g.id === id)?.label ?? '(project)';
+const rowById = (id) => MV.data.rows.find((r) => r.id === id);
+
+/** "modified …" and "last written …" — the two dates, each with where it came from. */
+function factDates(r) {
+  const line = el('div', 'mem-dates');
+  const mod = el('span', null, `modified ${fmtDate(r.modified)}`
+    + (r.modifiedSource === 'mtime' ? ' (file time)' : ''));
+  line.appendChild(mod);
+  if (r.modifiedFlag) {
+    line.appendChild(el('span', 'mem-flag',
+      r.modifiedFlag === 'future' ? 'frontmatter date is in the future' : 'frontmatter date unreadable'));
+  }
+  if (r.lastWrite) {
+    line.appendChild(el('span', 'mem-written',
+      `last written ${fmtDate(r.lastWrite)}${r.writeCount > 1 ? ` · ${r.writeCount} recorded writes` : ''}`));
+  } else {
+    line.appendChild(el('span', 'mem-unknown', 'last written: unknown'));
+  }
+  return line;
+}
+
+function openInEditor(p, display) {
+  const entry = entryForFile(p) || {
+    id: `adhoc:${p}`, label: display.split('/').pop(), kindLabel: 'memory', harness: 'claude',
+    dir: p.slice(0, p.lastIndexOf('/')), display, files: [{ name: display.split('/').pop(), path: p, display }],
+    primary: p, deletable: false, undeletableReason: 'Delete memory from the Memory view, where it is restorable with its index link.',
+  };
+  openEntry(entry, p);
+}
+
+function reviewTab() {
+  const wrap = el('div');
+  const d = MV.data;
+  const head = el('div', 'mem-row-head');
+  head.appendChild(el('div', 'scope-sub', 'Oldest first, by the later of "modified" and "last written". '
+    + `Keep hides a fact for ${d.keepDays} days, or until its content changes. Nothing here edits a memory file.`));
+  const sel = el('select', 'scope-select');
+  for (const [v, label] of [[0, 'Any age'], [30, 'Older than 30 days'], [90, 'Older than 90 days'], [180, 'Older than 180 days'], [365, 'Older than a year']]) {
+    const opt = el('option', null, label);
+    opt.value = String(v);
+    if (MV.age === v) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  sel.onchange = () => { MV.age = Number(sel.value); paintMemory(); };
+  head.appendChild(sel);
+  wrap.appendChild(head);
+
+  const kept = d.rows.filter((r) => !r.archived && !r.inQueue).length;
+  const rows = d.rows.filter((r) => r.inQueue && (!MV.age || daysAgo(r.activity) >= MV.age))
+    .sort((a, b) => (a.activity < b.activity ? -1 : a.activity > b.activity ? 1 : 0));
+  if (kept) wrap.appendChild(el('div', 'mem-note', `${kept} kept fact${kept === 1 ? '' : 's'} hidden.`));
+  if (!rows.length) { wrap.appendChild(el('div', 'scope-sub', 'Nothing to review at this age.')); return wrap; }
+  for (const r of rows) wrap.appendChild(factRow(r, { review: true }));
+  return wrap;
+}
+
+function factRow(r, { review = false, trash = true } = {}) {
+  const row = el('div', 'mem-fact');
+  row.dataset.id = r.id;
+  const body = el('div', 'sk-body');
+  const top = el('div', 'sk-head');
+  top.appendChild(el('span', 'sk-name', r.name));
+  if (r.type) top.appendChild(el('span', 'sk-source', r.type));
+  top.appendChild(el('span', 'mem-where', `${groupLabel(r.group)} · ${r.rel}`));
+  if (r.archived) top.appendChild(el('span', 'mem-badge', 'archived'));
+  if (r.kept?.contentChanged) top.appendChild(el('span', 'mem-badge warn', 'changed since kept'));
+  body.appendChild(top);
+  if (r.description) body.appendChild(el('div', 'sk-desc', r.description));
+  body.appendChild(factDates(r));
+  row.appendChild(body);
+
+  const acts = el('div', 'mem-acts');
+  const open = el('button', 'btn ghost', 'Open');
+  open.onclick = () => openInEditor(r.openPath, r.display);
+  acts.appendChild(open);
+  if (review) {
+    const keep = el('button', 'btn', 'Keep');
+    keep.onclick = async () => {
+      try {
+        const k = await api('POST', '/api/memory/keep', { id: r.id });
+        notice('ok', `Kept ${r.name} until ${fmtDate(k.until)} (sooner if it changes).`);
+        await openMemory();
+      } catch (e) { notice('error', e.message, null, true); }
+    };
+    acts.appendChild(keep);
+  }
+  if (trash) {
+    const t = el('button', 'btn danger', 'Trash…');
+    t.onclick = () => startPreview('trash-fact', [r.id]);
+    acts.appendChild(t);
+  }
+  row.appendChild(acts);
+  return row;
+}
+
+/* Cleanups: each finding kind is a checklist that previews as one operation. */
+function findingList(kind, title, sub, items, render, action, actLabel) {
+  const wrap = el('div', 'sk-group');
+  const head = el('div', 'sk-group-head');
+  head.appendChild(el('div', 'sk-group-name', title));
+  head.appendChild(el('div', 'sk-group-count', `${items.length}`));
+  const set = picked(kind);
+  const all = el('button', 'btn ghost sk-group-act', 'Select all');
+  all.disabled = !items.length;
+  all.onclick = () => { items.forEach((x) => set.add(x.id)); paintMemory(); };
+  head.appendChild(all);
+  const none = el('button', 'btn ghost sk-group-act', 'None');
+  none.disabled = !items.length;
+  none.onclick = () => { set.clear(); paintMemory(); };
+  head.appendChild(none);
+  const go = el('button', 'btn primary sk-group-act', actLabel);
+  go.disabled = ![...set].length;
+  go.onclick = () => startPreview(action, [...set]);
+  head.appendChild(go);
+  wrap.appendChild(head);
+  if (sub) wrap.appendChild(el('div', 'mem-note', sub));
+  if (!items.length) wrap.appendChild(el('div', 'mem-note', 'None found.'));
+  for (const x of items) {
+    const row = el('label', 'sk-row');
+    const cb = el('input', 'sk-check');
+    cb.type = 'checkbox';
+    cb.checked = set.has(x.id);
+    cb.onchange = () => { if (cb.checked) set.add(x.id); else set.delete(x.id); paintMemory(); };
+    row.appendChild(cb);
+    row.appendChild(render(x));
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
+function cleanupsTab() {
+  const f = MV.data.findings;
+  const wrap = el('div');
+  wrap.appendChild(findingList('empty', 'Empty project folders',
+    'Only folders holding nothing but an empty memory/ are listed — never one with a transcript in it. Each moves to the ACS trash.',
+    f.emptySlugs, (x) => {
+      const b = el('div', 'sk-body');
+      b.appendChild(el('div', 'scope-path', x.slug));
+      b.appendChild(el('div', 'mem-note', x.probe ? 'temporary session folder' : (SLUG_STATE_LABELS[x.state] || x.state)));
+      return b;
+    }, 'trash-empty-slugs', 'Preview trash'));
+
+  wrap.appendChild(findingList('dangling', 'Index links to missing files',
+    'Only the link itself is removed; every other link and all text on the line stay byte-for-byte. '
+    + 'Where the file now sits in _archive/, the link is pointed there instead.',
+    f.dangling, (x) => {
+      const b = el('div', 'sk-body');
+      const h = el('div', 'sk-head');
+      h.appendChild(el('span', 'sk-name', x.label || x.target));
+      h.appendChild(el('span', 'mem-where', `${groupLabel(x.group)} · MEMORY.md:${x.line} → ${x.target}`));
+      h.appendChild(el('span', 'mem-badge', x.offer === 'archive' ? `point at ${x.archiveRel}` : 'remove link'));
+      b.appendChild(h);
+      b.appendChild(el('div', 'mem-line', x.lineText.length > 220 ? x.lineText.slice(0, 220) + '…' : x.lineText));
+      return b;
+    }, 'fix-links', 'Preview repair'));
+
+  wrap.appendChild(findingList('unindexed', 'Files missing from their index',
+    'Each gets one index entry built from its own frontmatter. A folder with no MEMORY.md gets one created. Archived files are never offered.',
+    f.unindexed, (x) => {
+      const b = el('div', 'sk-body');
+      const r = rowById(x.row);
+      const h = el('div', 'sk-head');
+      h.appendChild(el('span', 'sk-name', r?.name || x.rel));
+      h.appendChild(el('span', 'mem-where', `${groupLabel(x.group)} · ${x.rel}`));
+      if (x.createsIndex) h.appendChild(el('span', 'mem-badge', 'creates MEMORY.md'));
+      b.appendChild(h);
+      return b;
+    }, 'add-to-index', 'Preview entries'));
+
+  if (f.oversized.length) {
+    const warn = el('div', 'notice warn');
+    warn.appendChild(el('div', null, `Index files over ${f.oversized[0].threshold} lines — the harness may cut the rest off:`));
+    const ul = el('ul');
+    for (const o of f.oversized) ul.appendChild(el('li', null, `${groupLabel(o.group)}: ${o.lines} lines`));
+    warn.appendChild(ul);
+    wrap.appendChild(warn);
+  }
+  return wrap;
+}
+
+function orphansTab() {
+  const f = MV.data.findings;
+  const wrap = el('div');
+  wrap.appendChild(el('div', 'scope-sub',
+    'Memory whose project folder could not be found, each with how sure that is. Review only: moving memory '
+    + 'between folders is not offered yet. The one action is trashing a single file, with its index link.'));
+  if (!f.orphans.length) wrap.appendChild(el('div', 'mem-note', 'No orphaned memory.'));
+  for (const o of f.orphans) {
+    const card = el('div', 'mem-card');
+    const h = el('div', 'sk-head');
+    h.appendChild(el('span', 'sk-name', groupLabel(o.group)));
+    h.appendChild(el('span', `mem-badge state-${o.state}`, SLUG_STATE_LABELS[o.state] || o.state));
+    card.appendChild(h);
+    card.appendChild(el('div', 'scope-path', o.slug));
+    if (o.nearest) card.appendChild(el('div', 'mem-note', `Deepest folder that still exists on that path: ${o.nearest}`));
+    if (o.candidates.length) card.appendChild(el('div', 'mem-note', `Could be: ${o.candidates.join(' · ')}`));
+    const acts = el('div', 'mem-acts');
+    for (const cp of o.counterparts) {
+      const b = el('button', 'btn', `Compare with ${groupLabel(cp)}`);
+      b.onclick = () => { MV.compare = { orphan: o.group, other: cp }; MV.diff = null; paintMemory(); };
+      acts.appendChild(b);
+    }
+    const solo = el('button', 'btn ghost', 'Show files');
+    solo.onclick = () => { MV.compare = { orphan: o.group, other: null }; MV.diff = null; paintMemory(); };
+    acts.appendChild(solo);
+    card.appendChild(acts);
+    if (MV.compare?.orphan === o.group) card.appendChild(sideBySide(MV.compare.orphan, MV.compare.other));
+    wrap.appendChild(card);
+  }
+
+  const dh = el('h3', 'mem-h3', `Same name in more than one project (${f.duplicates.length})`);
+  wrap.appendChild(dh);
+  if (!f.duplicates.length) wrap.appendChild(el('div', 'mem-note', 'None.'));
+  for (const dup of f.duplicates) {
+    const card = el('div', 'mem-card');
+    card.appendChild(el('div', 'sk-name', dup.name));
+    const rows = dup.rows.map(rowById).filter(Boolean);
+    for (const r of rows) card.appendChild(factRow(r));
+    if (rows.length >= 2) {
+      const key = `dup:${dup.name}`;
+      const b = el('button', 'btn ghost', 'Diff the first two');
+      b.onclick = () => showMemoryDiff(key, rows[0], rows[1]);
+      card.appendChild(b);
+      if (MV.diff?.key === key) card.appendChild(diffBlock());
+    }
+    wrap.appendChild(card);
+  }
+  return wrap;
+}
+
+/** The orphan's files beside its counterpart's, matched by relative path. */
+function sideBySide(orphanGroup, otherGroup) {
+  const rows = MV.data.rows;
+  const mine = rows.filter((r) => r.group === orphanGroup);
+  const theirs = otherGroup ? rows.filter((r) => r.group === otherGroup) : [];
+  const rels = [...new Set([...mine, ...theirs].map((r) => r.rel))].sort();
+  const t = el('table', 'mem-table');
+  const hr = el('tr');
+  for (const h of ['File', groupLabel(orphanGroup) + ' (orphan)', otherGroup ? groupLabel(otherGroup) : '', '']) hr.appendChild(el('th', null, h));
+  t.appendChild(hr);
+  for (const rel of rels) {
+    const a = mine.find((r) => r.rel === rel);
+    const b = theirs.find((r) => r.rel === rel);
+    const tr = el('tr');
+    tr.appendChild(el('td', 'scope-path', rel));
+    tr.appendChild(el('td', null, a ? `${fmtDate(a.modified)} · ${a.size} B` : '—'));
+    tr.appendChild(el('td', null, otherGroup ? (b ? `${fmtDate(b.modified)} · ${b.size} B` : '—') : ''));
+    const acts = el('td', 'mem-acts');
+    if (a && b) {
+      const d = el('button', 'btn ghost', 'Diff');
+      d.onclick = () => showMemoryDiff(`side:${rel}`, a, b);
+      acts.appendChild(d);
+    }
+    if (a) {
+      const x = el('button', 'btn danger', 'Trash…');
+      x.onclick = () => startPreview('trash-fact', [a.id]);
+      acts.appendChild(x);
+    }
+    tr.appendChild(acts);
+    t.appendChild(tr);
+  }
+  const wrap = el('div', 'mem-compare');
+  wrap.appendChild(t);
+  if (MV.diff?.key?.startsWith('side:')) wrap.appendChild(diffBlock());
+  return wrap;
+}
+
+async function showMemoryDiff(key, a, b) {
+  try {
+    const [fa, fb] = await Promise.all([
+      api('GET', `/api/memory/file?id=${encodeURIComponent(a.id)}`),
+      api('GET', `/api/memory/file?id=${encodeURIComponent(b.id)}`),
+    ]);
+    MV.diff = { key, before: fa.content, after: fb.content, labels: [fa.display, fb.display] };
+    paintMemory();
+    document.querySelector('.mem-diff')?.scrollIntoView({ block: 'start' });
+  } catch (e) { notice('error', e.message, null, true); }
+}
+
+function diffBlock() {
+  const w = el('div', 'mem-diff');
+  w.appendChild(diffView(MV.diff.before, MV.diff.after, MV.diff.labels[0], MV.diff.labels[1]));
+  return w;
+}
+
+function projectsTab() {
+  const wrap = el('div');
+  for (const g of MV.data.groups) {
+    const card = el('details', 'mem-card');
+    const sum = el('summary', 'sk-head');
+    sum.appendChild(el('span', 'sk-name', g.label));
+    sum.appendChild(el('span', `mem-badge state-${g.state}`, SLUG_STATE_LABELS[g.state] || g.state));
+    sum.appendChild(el('span', 'mem-where', `${g.rowCount} file${g.rowCount === 1 ? '' : 's'} · ${g.display}`));
+    card.appendChild(sum);
+    for (const s of g.slugs) {
+      const line = el('div', 'mem-note', `${s.worktree ? 'worktree' : 'folder'} ${s.display || s.slug}`
+        + (s.memoryFiles ? ` · memory/ holds ${s.memoryFiles}` : ''));
+      card.appendChild(line);
+      for (const x of s.excluded) card.appendChild(el('div', 'mem-flag', `not read: ${x.rel} (${x.reason})`));
+    }
+    for (const ix of g.indexes) {
+      card.appendChild(el('div', ix.oversized ? 'mem-flag' : 'mem-note', `MEMORY.md: ${ix.lines} lines${ix.oversized ? ' — over the limit' : ''}`));
+    }
+    card.ontoggle = () => {
+      if (!card.open || card.dataset.filled) return;
+      card.dataset.filled = '1';
+      for (const r of MV.data.rows.filter((x) => x.group === g.id)) card.appendChild(factRow(r));
+    };
+    wrap.appendChild(card);
+  }
+  return wrap;
+}
+
+function opsTab() {
+  const wrap = el('div');
+  wrap.appendChild(el('div', 'scope-sub',
+    'Every cleanup Accepted here, newest first. Restore puts back everything the operation changed — '
+    + 'unless a file was edited since, in which case it shows what changed and restores nothing.'));
+  if (!MV.ops.length) wrap.appendChild(el('div', 'mem-note', 'No operations yet.'));
+  for (const op of MV.ops) {
+    const row = el('div', 'scope-item');
+    row.appendChild(el('div', 'mem-badge mem-status', op.status));
+    const body = el('div', 'scope-body');
+    body.appendChild(el('div', 'scope-path', op.summary));
+    body.appendChild(el('div', 'scope-note',
+      `${new Date(op.acceptedAt).toLocaleString()} · ${op.steps.filter((s) => s.done).length}/${op.steps.length} steps`
+      + (op.restoredAt ? ` · restored ${new Date(op.restoredAt).toLocaleString()}` : '')
+      + (op.skipped.length ? ` · skipped: ${op.skipped.join('; ')}` : '')
+      + (op.historyError ? ` · history: ${op.historyError}` : '')));
+    for (const s of op.steps) body.appendChild(el('div', 'mem-note', `${s.restored ? '↺' : s.done ? '✓' : '·'} ${s.type} ${s.label}`));
+    if (op.error) body.appendChild(el('div', 'mem-flag', op.error));
+    if (MV.restoreRefusal?.opId === op.id) {
+      const r = MV.restoreRefusal;
+      body.appendChild(el('div', 'notice error', r.reason));
+      for (const dff of r.diffs) body.appendChild(diffView(dff.before, dff.after, `${dff.label} as the cleanup left it`, 'now'));
+    }
+    row.appendChild(body);
+    const btn = el('button', 'btn ghost scope-open', 'Restore');
+    btn.disabled = ['restored', 'refused', 'unrecognised'].includes(op.status);
+    btn.onclick = async () => {
+      try {
+        const r = await api('POST', '/api/memory/restore', { opId: op.id });
+        if (!r.restored) {
+          MV.restoreRefusal = { opId: op.id, reason: r.reason, diffs: r.diffs };
+          paintMemory();
+          return;
+        }
+        MV.restoreRefusal = null;
+        notice('ok', `Restored: ${op.summary}.` + (r.historyError ? ` (history: ${r.historyError})` : ''));
+        await refreshRegistry();
+        await openMemory();
+      } catch (e) { notice('error', e.message, null, true); }
+    };
+    row.appendChild(btn);
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
+async function startPreview(action, ids) {
+  try {
+    MV.preview = await api('POST', '/api/memory/preview', { action, ids });
+    MV.restoreRefusal = null;
+    paintMemory();
+    $('content').scrollTop = 0;
+  } catch (e) { notice('error', e.message, null, true); }
+}
+
+function previewPanel() {
+  const p = MV.preview;
+  const panel = el('div', 'mem-preview');
+  panel.appendChild(el('h3', 'mem-h3', `Preview — ${p.summary}`));
+  panel.appendChild(el('div', 'mem-note',
+    'Nothing has changed yet. Accept re-checks every file first and refuses if any changed since this preview. '
+    + 'Anything trashed goes to the ACS trash, and the whole operation can be restored from Operations.'));
+  if (p.items.length) {
+    const ul = el('ul', 'mem-items');
+    for (const it of p.items) ul.appendChild(el('li', null, it));
+    panel.appendChild(ul);
+  }
+  for (const d of p.diffs) {
+    panel.appendChild(el('div', 'scope-path', d.label));
+    panel.appendChild(diffView(d.before, d.after, 'now', 'after Accept'));
+  }
+  const acts = el('div', 'mem-acts');
+  const accept = el('button', 'btn primary', 'Accept');
+  accept.onclick = async () => {
+    accept.disabled = true;
+    try {
+      const r = await api('POST', '/api/memory/accept', { opId: p.opId });
+      MV.preview = null;
+      for (const set of Object.values(MV.picked)) set.clear();
+      const extra = [...r.skipped.map((s) => `Skipped ${s}`), ...(r.historyError ? [`History: ${r.historyError}`] : [])];
+      notice(extra.length ? 'warn' : 'ok', `${r.summary} — done. Restorable from Operations.`, extra, extra.length > 0);
+      await refreshRegistry();
+      await openMemory();
+    } catch (e) {
+      MV.preview = null;
+      notice('error', e.message, null, true);
+      await openMemory();
+    }
+  };
+  acts.appendChild(accept);
+  const cancel = el('button', 'btn ghost', 'Cancel');
+  cancel.onclick = () => { MV.preview = null; paintMemory(); };
+  acts.appendChild(cancel);
+  panel.appendChild(acts);
+  return panel;
+}
+
+/* ── Context view ────────────────────────────────────────────────────── */
+
+/**
+ * What each project tells its agents, without opening the codebase: every
+ * CLAUDE.md / AGENTS.md / .cursor rule per repository, with a heading outline.
+ * Identical copies (worktrees, AGENTS.md links) are one entry that still lists
+ * every path; a worktree copy that differs from trunk is flagged and diffs.
+ */
+const CX = { data: null, diff: null };
+
+async function openContext() {
+  if (!confirmDiscard()) return;
+  S.view = 'context';
+  S.entry = null;
+  // Nothing stays open behind this view, or a cleanup that trashes the file
+  // last opened would make the live-change handler leave the view.
+  S.file = null; S.original = ''; S.draft = '';
+  window.history.replaceState(null, '', '#context');
+  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
+  $('filebar').hidden = true;
+  const c = $('content');
+  c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span></div></div>';
+  try {
+    CX.data = await api('GET', '/api/context');
+  } catch (e) {
+    c.innerHTML = '';
+    const box = el('div', 'scope');
+    box.appendChild(el('h2', null, 'Context'));
+    box.appendChild(el('div', 'notice error', e.message));
+    c.appendChild(box);
+    return;
+  }
+  paintContext();
+}
+
+function paintContext() {
+  if (S.view !== 'context' || !CX.data) return;
+  const d = CX.data;
+  const c = $('content');
+  const scroll = c.scrollTop;
+  c.innerHTML = '';
+  const box = el('div', 'scope mem');
+  box.appendChild(el('h2', null, 'Context'));
+  box.appendChild(el('div', 'scope-sub',
+    `${d.totals.files} instruction files under ~/Documents/Projects, shown as ${d.totals.entries} entries: `
+    + `${d.totals.collapsedCopies} identical copies collapsed, ${d.totals.drifted} drifted from trunk. `
+    + 'Every copy\'s path is still listed; Open edits the trunk copy first.'));
+  for (const u of d.unreadable) box.appendChild(el('div', 'mem-flag', `not read: ${u.display} (${u.reason})`));
+
+  for (const g of d.groups) {
+    const card = el('div', 'mem-card');
+    const h = el('div', 'sk-head');
+    h.appendChild(el('span', 'sk-name', g.label));
+    h.appendChild(el('span', 'mem-where', g.display));
+    if (g.checkouts.length > 1) h.appendChild(el('span', 'mem-badge', `${g.checkouts.length} checkouts`));
+    card.appendChild(h);
+    for (const s of g.scopes) card.appendChild(contextScope(s));
+    box.appendChild(card);
+  }
+  c.appendChild(box);
+  c.scrollTop = scroll;
+}
+
+function contextScope(s) {
+  const wrap = el('div', 'cx-scope');
+  const h = el('div', 'sk-head');
+  h.appendChild(el('span', 'scope-path', s.scope));
+  h.appendChild(el('span', 'sk-source', s.kind === 'cursor-rule' ? 'cursor rule' : s.kind === 'agents' ? 'AGENTS.md' : 'CLAUDE.md'));
+  if (s.drift) h.appendChild(el('span', 'mem-badge warn', 'drifted'));
+  wrap.appendChild(h);
+
+  for (const v of s.variants) {
+    const box = el('div', 'cx-variant' + (v.drift ? ' drift' : ''));
+    const top = el('div', 'sk-head');
+    top.appendChild(el('span', 'mem-where',
+      `${v.trunk ? 'trunk' : v.drift ? 'differs from trunk' : 'copy'} · ${v.lines} lines`
+      + (v.copies > 1 ? ` · ${v.copies - 1} identical cop${v.copies === 2 ? 'y' : 'ies'} collapsed` : '')));
+    const open = el('button', 'btn ghost', 'Open');
+    open.onclick = () => openInEditor(v.open.path, v.open.display);
+    top.appendChild(open);
+    if (v.drift && s.trunkId) {
+      const diffBtn = el('button', 'btn', 'Diff vs trunk');
+      diffBtn.onclick = () => showContextDiff(s.trunkId, v.id);
+      top.appendChild(diffBtn);
+    }
+    box.appendChild(top);
+    const paths = el('div', 'cx-paths');
+    for (const p of v.paths) {
+      paths.appendChild(el('div', 'mem-note', `${p.display}${p.trunk ? ' (trunk)' : ''}${p.alias ? ` — link ${p.alias}` : ''}`));
+    }
+    box.appendChild(paths);
+    if (v.outline.length) {
+      const ol = el('div', 'cx-outline');
+      for (const o of v.outline) {
+        const line = el('div', 'cx-head', `${'  '.repeat(o.level - 1)}${o.text}`);
+        line.appendChild(el('span', 'cx-lines', `${o.lines} line${o.lines === 1 ? '' : 's'}`));
+        ol.appendChild(line);
+      }
+      box.appendChild(ol);
+    } else {
+      box.appendChild(el('div', 'mem-note', 'No headings.'));
+    }
+    if (CX.diff?.id === v.id) {
+      box.appendChild(diffView(CX.diff.before, CX.diff.after, CX.diff.labels[0], CX.diff.labels[1]));
+    }
+    wrap.appendChild(box);
+  }
+  return wrap;
+}
+
+async function showContextDiff(trunkId, id) {
+  try {
+    const [a, b] = await Promise.all([
+      api('GET', `/api/context/file?id=${encodeURIComponent(trunkId)}`),
+      api('GET', `/api/context/file?id=${encodeURIComponent(id)}`),
+    ]);
+    CX.diff = { id, before: a.content, after: b.content, labels: [a.display, b.display] };
+    paintContext();
+  } catch (e) { notice('error', e.message, null, true); }
 }
 
 /* ── Usage view ──────────────────────────────────────────────────────── */
@@ -3106,6 +3795,8 @@ $('btn-usage').onclick = openUsage;
 $('btn-trash').onclick = openTrash;
 $('btn-skills').onclick = openSkills;
 $('btn-models').onclick = openModels;
+$('btn-memory').onclick = openMemory;
+$('btn-context').onclick = openContext;
 $('btn-delete').onclick = deleteOpenEntry;
 $('btn-copy').onclick = copyToOtherHarness;
 $('btn-theme').onclick = () => {
@@ -3133,6 +3824,12 @@ function wireGlobalKeys() {
     if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
   });
 }
+
+// Following a link or typing #memory / #context switches the view, not only a reload.
+window.addEventListener('hashchange', () => {
+  if (location.hash.startsWith('#memory') && S.view !== 'memory') openMemory();
+  else if (location.hash.startsWith('#context') && S.view !== 'context') openContext();
+});
 
 boot().catch((e) => {
   document.body.innerHTML =
