@@ -27,8 +27,9 @@
  *    ONE exemption: a new slug named exactly like the two temp directories
  *    tests/phase1.mjs starts live Claude sessions in (`acs-contain-claude-`
  *    at its line 670, `acs-claude-writeprobe-` at 738, both mkdtemp'd in
- *    os.tmpdir()), since Claude Code gives every session's cwd a slug with an
- *    empty memory/. No other new slug and no new context file is exempt.
+ *    os.tmpdir()), and within it only the slug folder and an EMPTY memory/ —
+ *    what Claude Code creates for every session's cwd. A file under that
+ *    memory/ fails, and so does any other new slug or new context file.
  *  - ENTRY NAMES ONLY for the live agent homes ~/.claude, ~/.codex, ~/.grok and
  *    the top two levels of the two project roots (plus a hash of the loose
  *    files at their top). Running agents write inside those all
@@ -280,8 +281,14 @@ export function compareRealHomes(before, after) {
     if (k.startsWith('meta:')) continue;
     // The lists themselves: every entry in them is its own key, compared below.
     if (k === slugKey || k === ctxKey) continue;
-    if (k.startsWith(MEMORY_PROJECTS + path.sep) && before[k] === undefined
-        && probes.has(k.slice(MEMORY_PROJECTS.length + 1).split(path.sep)[0])) continue;
+    // A probe slug is exempt only as what the live run leaves: the slug
+    // folder and an EMPTY memory/ inside it (its transcripts are never
+    // walked). Any entry under memory/, or either one being anything but a
+    // plain directory, still fails.
+    if (before[k] === undefined && after[k] === 'dir' && k.startsWith(MEMORY_PROJECTS + path.sep)) {
+      const [slug, ...rest] = k.slice(MEMORY_PROJECTS.length + 1).split(path.sep);
+      if (probes.has(slug) && (rest.length === 0 || (rest.length === 1 && rest[0] === 'memory'))) continue;
+    }
     if (k.startsWith('names:')) {
       if (before[k] !== after[k]) {
         const b = new Set(JSON.parse(before[k] || 'null') || []);
