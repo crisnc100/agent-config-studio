@@ -655,19 +655,79 @@ const DANGEROUS = [
   fs.rmSync(GROW, { recursive: true, force: true });
 }
 
-// --- C4: the archive result names what it did not ship ------------------------
+// --- C4: complete recovery — empty dirs and a 20-deep file ------------------
 {
-  const PARTIAL = H('.claude', 'skills', 'partial');
-  put(path.join(PARTIAL, 'SKILL.md'), skillMd('Partial', 'has holes'));
-  put(path.join(PARTIAL, ...Array.from({ length: 10 }, (_, i) => `d${i}`), 'buried.md'), 'buried\n');
-  fs.mkdirSync(path.join(PARTIAL, 'empty-dir'));
-  const partial = listSkills().find((r) => r.name === 'partial');
-  const buf = buildSkillsZip([partial, rows.find((r) => r.name === 'alpha')], { read: readInSkill });
-  ok('C4 the archive result lists the too-deep subtree and the empty directory, by archive path',
-     buf.excluded.map((x) => `${x.rel}:${x.reason}`).sort().join(',')
-       === 'partial/d0/d1/d2/d3/d4/d5/d6/d7/d8/:deeper than the 8-level bundle limit,partial/empty-dir/:empty directory',
-     JSON.stringify(buf.excluded));
-  fs.rmSync(PARTIAL, { recursive: true, force: true });
+  const COMPLETE = H('.claude', 'skills', 'complete');
+  const deepRel = [...Array.from({ length: 20 }, (_, i) => `d${i}`), 'buried.md'];
+  put(path.join(COMPLETE, 'SKILL.md'), skillMd('Complete', 'every shape'));
+  put(path.join(COMPLETE, ...deepRel), 'buried twenty deep\n');
+  put(path.join(COMPLETE, 'bin', 'run.sh'), '#!/bin/sh\necho ok\n', 0o755);
+  fs.mkdirSync(path.join(COMPLETE, 'empty-dir'));
+  fs.mkdirSync(path.join(COMPLETE, 'nest', 'inner-empty'), { recursive: true });
+  fs.chmodSync(path.join(COMPLETE, 'nest', 'inner-empty'), 0o700);
+  const complete = listSkills().find((r) => r.name === 'complete');
+  ok('C4 the complete fixture is an ordinary exportable row', complete && !complete.broken, complete?.reason);
+
+  const D = caseDir();
+  const zp = path.join(D, 'complete.zip');
+  const buf = buildSkillsZip([complete, rows.find((r) => r.name === 'alpha')], { read: readInSkill });
+  fs.writeFileSync(zp, buf);
+  ok('C4 nothing was excluded from the complete bundle', buf.excluded.length === 0, JSON.stringify(buf.excluded));
+
+  // Source tree, in the same shape snapshot() produces, under the archive prefix.
+  const source = new Map([...snapshot(COMPLETE)].map(([k, v]) => [`complete/${k}`, v]));
+  source.set('complete/', 'dir');
+  for (const [who, fn] of [['unzip', extractUnzip], ['ditto', extractDitto]]) {
+    const dest = path.join(D, who);
+    const r = fn(zp, dest);
+    ok(`C4 ${who}: extracts`, r.code === 0, r.err.slice(0, 200));
+    const got = new Map([...snapshot(dest)].filter(([k]) => k === 'complete/' || k.startsWith('complete/')));
+    ok(`C4 ${who}: the recovered tree is identical to the source — paths, bytes, modes, empty dirs, the 20-deep file`,
+       asText(got) === asText(source), `\n--- source\n${asText(source)}\n--- ${who}\n${asText(got)}`);
+    ok(`C4 ${who}: the empty directories are really empty`,
+       fs.readdirSync(path.join(dest, 'complete', 'empty-dir')).length === 0
+       && fs.readdirSync(path.join(dest, 'complete', 'nest', 'inner-empty')).length === 0);
+    ok(`C4 ${who}: an empty directory keeps its mode`,
+       (fs.lstatSync(path.join(dest, 'complete', 'nest', 'inner-empty')).mode & 0o777) === 0o700,
+       (fs.lstatSync(path.join(dest, 'complete', 'nest', 'inner-empty')).mode & 0o777).toString(8));
+  }
+  fs.rmSync(COMPLETE, { recursive: true, force: true });
+
+  // 33 deep: refused whole, never packed partially.
+  const TOO = H('.claude', 'skills', 'too-deep-zip');
+  put(path.join(TOO, 'SKILL.md'), skillMd('Too Deep Zip', 'past the limit'));
+  put(path.join(TOO, ...Array.from({ length: 33 }, (_, i) => `d${i}`), 'x.md'), 'x\n');
+  const too = listSkills().find((r) => r.name === 'too-deep-zip');
+  ok('C4 a 33-deep bundle is refused whole: broken, no files', too?.broken === true && too.files.length === 0, too?.reason);
+  fs.rmSync(TOO, { recursive: true, force: true });
+}
+
+// --- C10: the per-bundle cap holds while reading ------------------------------
+{
+  // Astra's stale-metadata probe: sizes recorded small, then one bundle grows
+  // to 75MB across files each under the 8MB file cap. Sparse, so it is fast.
+  const STALE = H('.claude', 'skills', 'stale');
+  put(path.join(STALE, 'SKILL.md'), skillMd('Stale', 'grew after discovery'));
+  for (let k = 0; k < 10; k++) put(path.join(STALE, `part${k}.bin`), 'x');
+  const stale = listSkills().find((r) => r.name === 'stale');
+  for (let k = 0; k < 10; k++) fs.truncateSync(path.join(STALE, `part${k}.bin`), 7.5 * 1024 * 1024);
+  let bytes = 0;
+  const io = new Proxy(fs, {
+    get(t, k) {
+      const v = t[k];
+      if (k === 'readSync') return (...a) => { const n = v.apply(t, a); bytes += n; return n; };
+      return typeof v === 'function' ? v.bind(t) : v;
+    },
+  });
+  let threw = null;
+  try { buildSkillsZip([stale], { read: (d, r, o) => readInSkill(d, r, { ...o, io }) }); } catch (e) { threw = e; }
+  ok('C10 a 75MB bundle whose metadata said a few bytes is refused with 413 at the 64MiB bundle cap',
+     threw?.status === 413, String(threw));
+  ok('C10 …having buffered no more than the bundle cap + 1 byte', bytes <= 64 * 1024 * 1024 + 1, `${bytes} bytes read`);
+  threw = null;
+  try { buildSkillsZip([stale], { read: (d, r) => readInSkill(d, r) }); } catch (e) { threw = e; }
+  ok('C10 …and caught after the file even by a reader that ignores the budget', threw?.status === 413, String(threw));
+  fs.rmSync(STALE, { recursive: true, force: true });
 }
 
 // --- the library never shells out --------------------------------------------

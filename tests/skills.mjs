@@ -116,11 +116,22 @@ for (const [proj, mode] of [['mode-x', 0o755], ['mode-r', 0o644]]) {
   fs.chmodSync(f, mode);
 }
 
-// C4: a file past the bundle depth limit and an empty directory.
+// C4: a file 20 directories down and an empty directory are part of the
+// bundle; a bundle 33 directories deep is refused whole.
+const dirs = (n) => Array.from({ length: n }, (_, i) => `d${i}`);
 const DEEP_SKILL = H('.claude', 'skills', 'deep-tree');
 put(path.join(DEEP_SKILL, 'SKILL.md'), skillMd('Deep Tree', 'has a very deep file'));
-put(path.join(DEEP_SKILL, ...Array.from({ length: 10 }, (_, i) => `d${i}`), 'buried.md'), 'buried\n');
+put(path.join(DEEP_SKILL, ...dirs(20), 'buried.md'), 'buried\n');
 mk(path.join(DEEP_SKILL, 'empty-dir'));
+const TOO_DEEP = H('.claude', 'skills', 'too-deep');
+put(path.join(TOO_DEEP, 'SKILL.md'), skillMd('Too Deep', 'past the limit'));
+put(path.join(TOO_DEEP, ...dirs(33), 'x.md'), 'x\n');
+// C2: two bundles that differ ONLY in a companion ten directories down.
+for (const [proj, body] of [['deep-a', 'one'], ['deep-b', 'two']]) {
+  const d = H('Documents', 'Projects', proj, '.claude', 'skills', 'deepdiff');
+  put(path.join(d, 'SKILL.md'), skillMd('Deep Diff', 'same prose'));
+  put(path.join(d, ...dirs(10), 'buried.md'), `${body}\n`);
+}
 
 // C6 / P1: a project whose `.claude/skills` ROOT is a link out of the skill
 // roots, and one whose root links to a directory inside them.
@@ -322,18 +333,25 @@ const leaks = (s) => MARKS.filter((m) => String(s).includes(m));
      JSON.stringify(modal.map((r) => r.files.map((f) => f.mode.toString(8)))));
 }
 
-// --- C4: nothing is dropped silently -------------------------------------------
+// --- C4: bundles are complete, or refused whole ---------------------------------
 {
   const deep = find('deep-tree');
-  const why = (rel) => deep?.excluded.find((x) => x.rel === rel)?.reason;
-  ok('C4 a subtree past the bundle depth limit is an explicit exclusion',
-     /deeper than the 8-level bundle limit/.test(why('d0/d1/d2/d3/d4/d5/d6/d7/d8/') || ''),
-     JSON.stringify(deep?.excluded));
-  ok('C4 an empty directory is an explicit exclusion', why('empty-dir/') === 'empty directory',
-     JSON.stringify(deep?.excluded));
-  ok('C4 …and both survive the public mapping',
-     toPublic(deep).excluded.map((x) => x.rel).sort().join(',') === 'd0/d1/d2/d3/d4/d5/d6/d7/d8/,empty-dir/',
-     JSON.stringify(toPublic(deep).excluded));
+  const buried = `${dirs(20).join('/')}/buried.md`;
+  ok('C4 a file 20 directories down is part of the bundle',
+     deep && !deep.broken && deep.files.some((f) => f.rel === buried), JSON.stringify(deep?.files.map((f) => f.rel)));
+  ok('C4 an empty directory is part of the bundle, not an exclusion',
+     deep?.emptyDirs.map((d) => d.rel).join(',') === 'empty-dir/' && deep.excluded.length === 0,
+     JSON.stringify({ e: deep?.emptyDirs, x: deep?.excluded }));
+  ok('C4 …and it survives the public mapping', toPublic(deep).emptyDirs.join(',') === 'empty-dir/');
+  const tooDeep = find('too-deep');
+  ok('C4 a bundle 33 directories deep is refused whole: broken, with the reason',
+     tooDeep?.broken === true && /deeper than the 32-level limit.*refusing to export it partially/.test(tooDeep.reason),
+     JSON.stringify(tooDeep && { b: tooDeep.broken, r: tooDeep.reason }));
+  ok('C4 …and carries no files that could be exported partially', tooDeep?.files.length === 0);
+  const deepdiff = rows.filter((r) => r.name === 'deepdiff');
+  ok('C2 bundles differing only in a companion 10 directories down are two rows',
+     deepdiff.length === 2 && deepdiff.every((r) => r.aliases.length === 0 && r.files.length === 2),
+     JSON.stringify(deepdiff.map((r) => ({ a: r.aliases.length, f: r.files.length }))));
 }
 
 // --- C6 / P1: containment is anchored to the descriptor ------------------------
@@ -476,8 +494,23 @@ const leaks = (s) => MARKS.filter((m) => String(s).includes(m));
   });
   let threw = null;
   try { readInSkill(SWAPPER, 'sub/doc.md', { io: lying }); } catch (e) { threw = e; }
-  ok('C6 a read whose realpath is not the path walked is refused',
-     threw?.status === 403, String(threw?.message));
+  ok('C6 a read whose REALPATH is protected is refused BY THE DENY CHECK (lexical path is not protected)',
+     threw?.status === 403 && threw.reason === 'protected' && /protected path/.test(threw.message),
+     String(threw?.message));
+  // The contrast: the same lie pointing at an unprotected outside file is
+  // refused by the containment comparison instead, so the line above is
+  // the deny check and not the equality check under another name.
+  const elsewhere = new Proxy(fs, {
+    get(t, k) {
+      if (k === 'realpathSync') return () => H('outside-dir', 'doc.md');
+      const v = t[k]; return typeof v === 'function' ? v.bind(t) : v;
+    },
+  });
+  threw = null;
+  try { readInSkill(SWAPPER, 'sub/doc.md', { io: elsewhere }); } catch (e) { threw = e; }
+  ok('C6 …while an unprotected outside realpath is refused by containment, not deny',
+     threw?.status === 403 && threw.reason === undefined && /resolves outside the skill/.test(threw.message),
+     String(threw?.message));
 }
 
 // --- C10: the reader stops at its budget --------------------------------------
@@ -576,6 +609,7 @@ const get = (p) => fetch(B + p).then(async (r) => [r.status, await r.json()]);
   tput('.claude/skills/s1/deep/notes.md', 'AAAA');
   tput('.claude/history.jsonl', '{}\n');
   tput('.codex/config.toml', 'model = "x"\n');
+  tput('.agent-config-studio/seats.json', '{}');
   tput('Documents/Projects/app/.claude/skills/p1/ref/x.md', 'BBBB');
   tput('Documents/Garman-Homes/g/.claude/skills/g1/SKILL.md', 'CCCC');
   const snap = path.join(T, '..', `${path.basename(T)}.snap`);
@@ -609,6 +643,18 @@ const get = (p) => fetch(B + p).then(async (r) => [r.status, await r.json()]);
     tput('.codex/logs_2.sqlite-wal', 'w'); tput('.codex/logs_2.sqlite-shm', 's'); tput('.claude/settings.json.tmp.123', 't');
   }, false, () => ['.codex/logs_2.sqlite-wal', '.codex/logs_2.sqlite-shm', '.claude/settings.json.tmp.123'].forEach((f) => fs.rmSync(path.join(T, f))));
   scenario('a live agent appending to an unpinned file in its home', () => fs.appendFileSync(path.join(T, '.claude/history.jsonl'), '{}\n'), false);
+  // The ignore rule is two anchored suffix shapes, not a substring.
+  scenario('a persistent name that merely CONTAINS .tmp (important.tmpbackup)',
+    () => tput('.codex/important.tmpbackup', 'x'), true, () => fs.rmSync(path.join(T, '.codex/important.tmpbackup')));
+  scenario('a persistent name that merely ENDS in -wal without being a database sibling (notes-wal)',
+    () => tput('.grok/notes-wal', 'x'), true, () => fs.rmSync(path.join(T, '.grok/notes-wal')));
+  scenario('an empty directory appearing under ~/.agent-config-studio',
+    () => mk(path.join(T, '.agent-config-studio', 'empty')), true,
+    () => fs.rmSync(path.join(T, '.agent-config-studio', 'empty'), { recursive: true }));
+  tput('.grok/AGENTS.md', 'grok rules\n');
+  const grokAgents = path.join(T, '.grok/AGENTS.md');
+  scenario('an in-place edit of ~/.grok/AGENTS.md, which ACS lists and edits',
+    () => sameShape(grokAgents, 'grok RULES\n'), true, () => sameShape(grokAgents, 'grok rules\n'));
   fs.rmSync(T, { recursive: true, force: true });
   fs.rmSync(snap, { force: true });
 }

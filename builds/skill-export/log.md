@@ -162,3 +162,94 @@ logic unchanged, so the fs double could reach it.
 - **Test:** skill-usage.mjs `P2 a renamed synced dir is matched on its frontmatter name, not its
   folder`, using `synced/<uuid>/x7f3` whose frontmatter name is `dumb-down`. Before:
   `observed:false, count:null`.
+
+# Fix log — re-grade round (Astra, builds/skill-export/regrade.md, 6 of 8 FAIL)
+
+Cris decided the three disputed criteria on 2026-09-23; the fixes follow those decisions.
+
+## C6 — repeated in-skill swap: ACCEPTED LIMIT (Cris, 2026-09-23)
+- Not chased further. The comment at `readInSkill` was wrong: it said the residual race needed
+  access ABOVE the skill root. It now says what Astra showed: a repeated swap needs only write
+  access to a subdirectory INSIDE the skill. Closing it needs openat, and Node on macOS has none.
+  The limit is recorded under criterion 6 in plan.md.
+- The "realpath deny" test did not isolate the deny check: equality failed first. The deny check
+  now runs on the realpath BEFORE the equality and containment comparisons, and a protected hit
+  is tagged `reason:'protected'`. Tests in skills.mjs:
+  - `C6 a read whose REALPATH is protected is refused BY THE DENY CHECK (lexical path is not protected)`
+    asserts `reason === 'protected'`;
+  - `C6 …while an unprotected outside realpath is refused by containment, not deny` is the contrast
+    showing the two checks are distinct.
+
+## C2 / C4 — complete archives (Cris, 2026-09-23)
+- **Depth:** `BUNDLE_DEPTH` is now 32. A bundle deeper than that is REFUSED whole: a broken row
+  whose reason reads "bundle is deeper than the 32-level limit (at …); refusing to export it
+  partially". The export answers 409 with that message.
+- **Empty directories:** they are part of the bundle (`emptyDirs`, with mode). They enter
+  `bundleHash` and are written as ZIP directory records with their own mode. They go through the
+  same path resolution as files, so an empty `Foo/` and a file `foo` are de-conflicted.
+- **Only exclusions left:** links, protected names and non-regular files, which containment
+  refuses by design.
+- **Tests that asserted the omissions were REPLACED with tests asserting recovery.** This is not a
+  weakening: the old tests encoded the Grade's C4 defect.
+  - zip.mjs `C4 unzip|ditto: the recovered tree is identical to the source — paths, bytes, modes,
+    empty dirs, the 20-deep file`, plus `…the empty directories are really empty` and `…an empty
+    directory keeps its mode` (0700).
+  - zip.mjs `C4 a 33-deep bundle is refused whole: broken, no files`.
+  - skills.mjs `C4 a file 20 directories down is part of the bundle`,
+    `C4 an empty directory is part of the bundle, not an exclusion`, and
+    `C4 a bundle 33 directories deep is refused whole: broken, with the reason`.
+  - export.mjs `C4 a 33-deep skill is refused, not exported partially` (409) and
+    `C4 …with a message that says why`.
+  - skills.mjs `C2 bundles differing only in a companion 10 directories down are two rows`
+    (Astra's C2 probe).
+
+## C14 — criterion reworded (Cris, 2026-09-23)
+- plan.md criterion 14 now reads: "Every tree ACS reads or writes is compared by sha256; the live
+  agent homes ~/.claude, ~/.codex, ~/.grok are compared by entry names, and the assertion says so."
+- **More sha256 coverage:** `~/.claude/{hooks,agents,commands,skills_retired}` and `~/.codex/rules`
+  (listed in lib/registry.js and lib/mutate.js), plus the single files ACS lists or edits:
+  - `~/.claude/{settings.json, settings.local.json, CLAUDE.md, advisor-config.json, investigate-config.json, review-config.json}`
+  - `~/.codex/{config.toml, AGENTS.md}`
+  - `~/.grok/AGENTS.md`
+- **Directories** are recorded in the snapshot, so an empty directory added under
+  `~/.agent-config-studio` shows.
+- **Ignore rule narrowed** to two anchored whole-suffix shapes:
+  `/\.(sqlite3?|db)-(wal|shm|journal)$|.\.tmp(\.[A-Za-z0-9]+)?$/`. The SQLite part is anchored to
+  a database name because `notes-wal` must count; the evidence is that the six `~/.codex` siblings
+  are all `<name>.sqlite-wal|-shm`.
+- **Tests:** skills.mjs `C14 tripwire FAILS on a persistent name that merely CONTAINS .tmp
+  (important.tmpbackup)`, `…ENDS in -wal without being a database sibling (notes-wal)`, `…an
+  empty directory appearing under ~/.agent-config-studio`, and `…an in-place edit of
+  ~/.grok/AGENTS.md`.
+
+## C10 — per-bundle cap enforced during reading
+- **Fix:**
+  - `ZIP_LIMITS.maxBundleBytes` is 64 MiB, and `lib/skills.js` takes its cap from it.
+  - `buildSkillsZip` hands each read a budget of `min(selection left, bundle left)` and checks both
+    running totals after every file. Its preflight also checks recorded bundle size.
+  - `listSkills` hashing reads against a 64 MiB budget too.
+- **Test:** zip.mjs `C10 a 75MB bundle whose metadata said a few bytes is refused with 413 at the
+  64MiB bundle cap` and `…having buffered no more than the bundle cap + 1 byte`. This is Astra's
+  stale-metadata probe: 10 sparse 7.5MB files recorded as 1 byte each.
+
+## P2 — Content-Disposition bounded by bytes
+- **Fix:** `cleanName` keeps at most 100 graphemes AND at most 600 percent-encoded bytes, cut on
+  grapheme boundaries. A grapheme over the budget by itself is dropped. `contentDisposition`
+  refuses anything over `MAX_HEADER_BYTES` (1024).
+- **Tests:** export.mjs:
+  - `P2 Content-Disposition stays within 1024 bytes for every oversized name`;
+  - `P2 …a grapheme that alone exceeds the budget is dropped, not cut`;
+  - `P2 a name of a + 10,000 combining accents downloads 200 through a Node HTTP client`, which
+    uses `node:http.get`, the client that hit HPE_HEADER_OVERFLOW;
+  - `P2 …with a Content-Disposition under 1KB`.
+
+## Found while proving the tripwire: silent no-op on a linked path
+- `tests/real-home.mjs` decided whether it was run directly by comparing an unresolved `argv[1]`
+  with the resolved `import.meta.url`. Invoked through a linked path (`/var` → `/private/var`), it
+  skipped the whole check and exited 0. verify.sh was unaffected, since it runs from the repo path,
+  which is not linked. Both sides are now compared by realpath.
+- Probe: a `check` through `$TMPDIR` now prints `FAIL entry names changed: ~/.codex:
+  +important.tmpbackup`. Before, it printed nothing and exited 0.
+
+`./verify.sh` for this round: exit 0 twice in a row, 1406 passed / 0 failed across 24 suites both
+times.

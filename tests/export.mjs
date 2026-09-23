@@ -89,6 +89,15 @@ put(H('.claude', 'skills', 'device', 'SKILL.md'), skillMd('CON', 'a reserved nam
 const EMOJI_NAME = `${'a'.repeat(99)}\u{1F600}`;
 put(H('.claude', 'skills', 'emoji', 'SKILL.md'), skillMd(EMOJI_NAME, 'long name, astral tail'));
 
+// One grapheme of unbounded size: `a` plus 10,000 combining accents. Counting
+// graphemes let it through as a 60KB header.
+const ZALGO_NAME = `a${'\u0301'.repeat(10000)}`;
+put(H('.claude', 'skills', 'zalgo', 'SKILL.md'), skillMd(ZALGO_NAME, 'one enormous grapheme'));
+
+// C4: a bundle 33 directories deep, refused whole.
+put(H('.claude', 'skills', 'too-deep', ...Array.from({ length: 33 }, (_, i) => `d${i}`), 'x.md'), 'x\n');
+put(H('.claude', 'skills', 'too-deep', 'SKILL.md'), skillMd('Too Deep', 'past the depth limit'));
+
 // The injection fixture, identical to tests/skills.mjs: a real skill with
 // links planted inside it, pointed at the three fake secrets above.
 const EVIL = H('.claude', 'skills', 'evil');
@@ -161,6 +170,19 @@ const { contentDisposition, cleanName, asciiName, assertSelectionFits } =
     ok('C3 truncation keeps a ZWJ sequence whole rather than splitting it',
        long === `${'b'.repeat(99)}\u{1F468}\u200D\u{1F469}\u200D\u{1F467}` && long.isWellFormed(), JSON.stringify(long.slice(95)));
   }
+  {
+    const { MAX_HEADER_BYTES } = await import('../lib/download.js');
+    const worst = [ZALGO_NAME, '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}'.repeat(100), '\u00e9'.repeat(5000), 'x'.repeat(5000), `${'b'.repeat(99)}${'\u0301'.repeat(5000)}`];
+    const sizes = worst.map((n) => Buffer.byteLength(contentDisposition(n, '.md')));
+    ok(`P2 Content-Disposition stays within ${MAX_HEADER_BYTES} bytes for every oversized name`,
+       sizes.every((n) => n <= MAX_HEADER_BYTES), JSON.stringify(sizes));
+    ok('P2 …a grapheme that alone exceeds the budget is dropped, not cut',
+       !contentDisposition(ZALGO_NAME, '.md').includes('filename*'), contentDisposition(ZALGO_NAME, '.md').slice(0, 80));
+    const fam = contentDisposition('\u{1F468}\u200D\u{1F469}\u200D\u{1F467}'.repeat(100), '.md');
+    ok('P2 …and a long run of graphemes is cut on a grapheme boundary',
+       decodeURIComponent(fam.split("filename*=UTF-8''")[1]).replace(/\.md$/, '').split('\u{1F468}\u200D\u{1F469}\u200D\u{1F467}').every((p) => p === ''),
+       fam.slice(-60));
+  }
   ok('a traversal name cannot name another directory',
      !contentDisposition('../../etc/passwd', '.md').includes('/'),
      contentDisposition('../../etc/passwd', '.md'));
@@ -216,7 +238,7 @@ const err = async (p, init) => {
 const rows = listSkills();
 const id = (name) => rows.find((r) => r.name === name)?.id;
 ok('every fixture skill was discovered',
-   ['alpha', 'beta', 'nasty', 'crlf', 'device', 'emoji', 'evil', 'dangling'].every((n) => id(n)),
+   ['alpha', 'beta', 'nasty', 'crlf', 'device', 'emoji', 'zalgo', 'too-deep', 'evil', 'dangling'].every((n) => id(n)),
    JSON.stringify(rows.map((r) => r.name)));
 
 // --- one id -> a readable .md ------------------------------------------------
@@ -259,6 +281,31 @@ ok('every fixture skill was discovered',
      `${r.status} ${r.buf.toString('utf8').slice(0, 120)}`);
   ok('C3 …with filename* carrying the emoji',
      r.disp.includes('%F0%9F%98%80.md'), r.disp);
+}
+{
+  // Parsed by node:http itself (default 16KB header limit) — the client that
+  // failed with HPE_HEADER_OVERFLOW on the unbounded header.
+  const http = await import('node:http');
+  const got = await new Promise((resolve) => {
+    http.get(`${B}/api/skills/export?ids=${id('zalgo')}`, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, disp: res.headers['content-disposition'], body: Buffer.concat(chunks) }));
+    }).on('error', (e) => resolve({ error: e.code || e.message }));
+  });
+  ok('P2 a name of a + 10,000 combining accents downloads 200 through a Node HTTP client',
+     got.status === 200 && !got.error, JSON.stringify({ s: got.status, e: got.error }));
+  ok('P2 …with a Content-Disposition under 1KB', got.disp && Buffer.byteLength(got.disp) <= 1024, String(got.disp?.length));
+  ok('P2 …and the file itself intact', got.body?.equals(fs.readFileSync(H('.claude', 'skills', 'zalgo', 'SKILL.md'))));
+}
+{
+  const r = await err(`/api/skills/export?ids=${id('too-deep')}`);
+  ok('C4 a 33-deep skill is refused, not exported partially', r.status === 409, `${r.status}`);
+  ok('C4 …with a message that says why',
+     /deeper than the 32-level limit.*refusing to export it partially/.test(r.body?.error || ''), r.body?.error);
+  const z = await err(`/api/skills/export?ids=${id('too-deep')},${id('alpha')}`);
+  ok('C4 …and a selection containing it is refused too, with no archive bytes',
+     z.status === 409 && z.buf.subarray(0, 2).toString('latin1') !== 'PK', String(z.status));
 }
 {
   const r = await raw(`/api/skills/export?ids=${id('device')}`);

@@ -65,6 +65,11 @@ Claude Code transcripts and when it was last seen, as a usage signal.
 6. A symlink inside a skill folder pointing anywhere outside that skill's own directory is excluded
    at DISCOVERY, at hash, at single-md and from the zip — four injection tests, one per read path.
    Targets include `~/.ssh/id_rsa`, `~/.claude/.credentials.json`, and a sibling project's `.env`.
+   **Accepted limit (Cris, 2026-09-23):** a REPEATED swap of a subdirectory inside the skill —
+   link for the open and the leaf stats, real directory for the directory stats and the realpath —
+   passes every post-open check. It needs only write access to a subdirectory INSIDE the skill,
+   and closing it needs a descriptor-relative walk (openat per component), which Node on macOS
+   does not have. Documented at `readInSkill` in lib/skills.js; not pursued further.
 7. Adding the skills root list does NOT widen any existing route: `GET /api/file` still 403s on a
    Garman-Homes path after this change. Asserted.
 8. Client sends only opaque ids; the NEW endpoints accept no filesystem path. Asserted.
@@ -77,5 +82,6 @@ Claude Code transcripts and when it was last seen, as a usage signal.
 12. A warm usage read of the real 1.1GB corpus completes without loading a whole file into memory
     and without exhausting file descriptors; cold and warm timings both reported.
 13. `./verify.sh` passes in full; new suites registered; guards untouched and still passing.
-14. All seven real directories in B18 are byte-identical after the suite.
+14. Every tree ACS reads or writes is compared by sha256; the live agent homes ~/.claude, ~/.codex,
+    ~/.grok are compared by entry names, and the assertion says so (Cris, 2026-09-23).
 15. `package.json` still has no `dependencies`.

@@ -11,13 +11,13 @@
  *
  * Three kinds of evidence, and each assertion says which one it is:
  *
- *  - CONTENT, by sha256, for everything this app or the skills feature reads
- *    or can write and nothing else churns: every file under
- *    ~/.agent-config-studio, ~/.claude/skills, ~/.codex/skills and ~/.agents
- *    (symlinks by target, not followed); every project skill tree the skills
- *    feature walks under ~/Documents/Projects and ~/Documents/Garman-Homes,
- *    found the way discovery finds them; and the files the app can edit inside
- *    the live homes — settings.json, CLAUDE.md, config.toml, AGENTS.md.
+ *  - CONTENT, by sha256, for every tree ACS reads or writes that nothing else
+ *    churns: every file and directory under ~/.agent-config-studio, the skills
+ *    trees, ~/.claude/{hooks,agents,commands,skills_retired}, ~/.codex/rules
+ *    and ~/.agents (symlinks by target, not followed); every project skill tree
+ *    the skills feature walks under ~/Documents/Projects and
+ *    ~/Documents/Garman-Homes, found the way discovery finds them; and the
+ *    single files ACS edits inside the live homes (see EXACT).
  *  - ENTRY NAMES ONLY for the live agent homes ~/.claude, ~/.codex, ~/.grok and
  *    the top two levels of the two project roots (plus a hash of the loose
  *    files at their top). Running agents write inside those all
@@ -45,28 +45,39 @@ import { scan } from '../lib/jsontext.js';
 
 const HOME = os.homedir();
 const tilde = (p) => p.replace(HOME, '~');
-const ROOTS = ['.agent-config-studio', '.claude/skills', '.codex/skills', '.agents'].map((r) => path.join(HOME, r));
+// Every tree ACS reads or writes that no live agent churns: the studio's own
+// home, the skills trees, and the Claude/Codex config trees the registry lists
+// and the editor can write (lib/registry.js, lib/mutate.js).
+const ROOTS = [
+  '.agent-config-studio', '.claude/skills', '.codex/skills', '.agents',
+  '.claude/hooks', '.claude/agents', '.claude/commands', '.claude/skills_retired', '.codex/rules',
+].map((r) => path.join(HOME, r));
 const PROJECT_ROOTS = [path.join(HOME, 'Documents', 'Projects'), path.join(HOME, 'Documents', 'Garman-Homes')];
 const LIVE_HOMES = ['.claude', '.codex', '.grok'].map((r) => path.join(HOME, r));
 const CATALOG_DIR = path.join(HOME, '.claude', 'cache', 'model-catalog');
 const EXACT = [
-  path.join(HOME, '.claude', 'settings.json'),
-  path.join(HOME, '.claude', 'CLAUDE.md'),
+  ...['settings.json', 'settings.local.json', 'CLAUDE.md', 'advisor-config.json', 'investigate-config.json', 'review-config.json']
+    .map((f) => path.join(HOME, '.claude', f)),
   path.join(HOME, '.codex', 'config.toml'),
   path.join(HOME, '.codex', 'AGENTS.md'),
+  path.join(HOME, '.grok', 'AGENTS.md'),
 ];
 const STAMP_KEYS = new Set(['fetched_at', 'renewed_at', 'fetchedAt', 'staleAt']);
 
 /**
  * Entry names another process creates and deletes on its own, ignored in the
- * NAME-SET check and nowhere else. A class rule, not a list of files: SQLite
- * makes `-wal`, `-shm` and `-journal` siblings as connections open and close
- * (the ~/.codex listing carries six, from codex's live databases), and an
- * atomic write goes through a `*.tmp*` name before its rename. Neither churned
- * in a 20-second sample of all three homes on 2026-09-23; the rule exists so
- * that the day one does, this check does not cry wolf and get ignored.
+ * NAME-SET check and nowhere else. Two anchored whole-suffix shapes, not a
+ * list of files and not a substring:
+ *  - a SQLite database's `-wal`, `-shm` or `-journal` sibling, which SQLite
+ *    creates and removes as connections open and close. Only on a database
+ *    name (`.sqlite`, `.sqlite3`, `.db`) — the ~/.codex listing carries six,
+ *    all `<name>.sqlite-wal|-shm` — so `notes-wal` is still a name that counts;
+ *  - an atomic-write temp, `<name>.tmp` or `<name>.tmp.<token>`, which lives
+ *    only until its rename. `important.tmpbackup` is not one.
+ * Neither churned in a 20-second sample of all three homes on 2026-09-23; the
+ * rule exists so that the day one does, this check does not cry wolf.
  */
-const TRANSIENT = /(-wal|-shm|-journal)$|\.tmp/;
+const TRANSIENT = /\.(sqlite3?|db)-(wal|shm|journal)$|.\.tmp(\.[A-Za-z0-9]+)?$/;
 
 /** The text with only TOP-LEVEL stamp values blanked; a stamp nested in a model entry still counts. */
 function blankStamps(text) {
@@ -127,6 +138,8 @@ export function snapshotRealHomes() {
     if (st.isSymbolicLink()) { out[entry] = `link:${fs.readlinkSync(entry)}`; return; }
     if (st.isFile()) { out[entry] = sha(fs.readFileSync(entry)); return; }
     if (!st.isDirectory()) return;
+    // Directories are recorded too, so an EMPTY one added or removed shows.
+    out[entry] = 'dir';
     let names;
     try { names = fs.readdirSync(entry); } catch { return; }
     for (const name of names) walk(path.join(entry, name));
@@ -218,8 +231,10 @@ export function compareRealHomes(before, after) {
 }
 
 const hashedCount = (snap) => Object.keys(snap).filter((k) => !/^(raw|meta|names|trees):/.test(k)).length;
-const CONTENT_LABEL = (n) => `${n} files under ~/.agent-config-studio, ~/.claude/skills, ~/.codex/skills, ~/.agents, ` +
-  'every project skill tree and the loose files atop both project roots, plus settings.json, CLAUDE.md, config.toml, AGENTS.md and the CLI catalogs, are byte-identical (sha256)';
+const CONTENT_LABEL = (n) => `${n} entries (files by sha256, directories by presence) under ~/.agent-config-studio, ` +
+  '~/.claude/{skills,hooks,agents,commands,skills_retired}, ~/.codex/{skills,rules}, ~/.agents, every project skill tree and the loose ' +
+  'files atop both project roots, plus the config files ACS edits (~/.claude settings, CLAUDE.md, *-config.json; ~/.codex config.toml, ' +
+  'AGENTS.md; ~/.grok AGENTS.md) and the CLI catalogs, are byte-identical (sha256)';
 const NAMES_LABEL = '~/.claude, ~/.codex, ~/.grok, and ~/Documents/Projects and ~/Documents/Garman-Homes two levels deep: entry names unchanged (contents not compared)';
 
 /** For the suites: call snapshotRealHomes() BEFORE redirecting HOME, this at the very end. */
@@ -230,7 +245,14 @@ export function assertRealHomesUnchanged(before, ok) {
   ok(NAMES_LABEL, names.length === 0, names.join('; '));
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Compared by realpath: import.meta.url is resolved and argv[1] is not, so a
+// run through a linked path (/var -> /private/var) would otherwise skip the
+// whole check and exit 0 — a tripwire that silently passes.
+const launchedDirectly = (() => {
+  try { return Boolean(process.argv[1]) && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); }
+  catch { return false; }
+})();
+if (launchedDirectly) {
   const [cmd, file] = process.argv.slice(2);
   if (cmd === 'save') {
     fs.writeFileSync(file, JSON.stringify(snapshotRealHomes()));
