@@ -1845,7 +1845,7 @@ async function showMemoryDiff(key, a, b) {
     ]);
     MV.diff = { key, before: fa.content, after: fb.content, labels: [fa.display, fb.display] };
     paintMemory();
-    document.querySelector('.mem-diff')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    document.querySelector('.mem-diff')?.scrollIntoView({ block: 'start' });
   } catch (e) { notice('error', e.message, null, true); }
 }
 
