@@ -787,38 +787,47 @@ function connectEvents() {
 
 async function handleFileEvent(d) {
   await refreshRegistry().catch(() => {});
-  // The server tags the studio's own writes; they are not news.
-  if (d.origin === 'studio') { setLive(true); return; }
-
   const openPath = S.file?.path;
-  if (openPath && d.removedPaths?.includes(openPath)) {
+  const plan = fileEventPlan(d, { openPath, dirty: isDirty() });
+
+  if (plan.open === 'closed') {
     S.entry = null; S.file = null; S.original = ''; S.draft = '';
     S.view = 'welcome';
     renderAll();
-    notice('warn', 'The file you had open was deleted outside the studio.', null, true);
+    notice('warn', plan.studio
+      ? 'The file you had open was moved to the studio trash.'
+      : 'The file you had open was deleted outside the studio.', null, true);
     return;
   }
 
-  if (openPath && d.changedPaths?.includes(openPath)) {
-    if (isDirty()) {
-      // Never silently discard their edits — the save will 409 anyway.
-      notice('warn',
-        'This file changed on disk while you were editing it. Your unsaved changes are still here, but saving will be refused until you reload.',
-        null, true);
-    } else {
+  if (plan.open === 'conflict') {
+    // The studio write may be this tab's own save, with more typed since:
+    // if disk holds exactly what this tab last saved, there is no conflict.
+    if (plan.studio) {
       const f = await api('GET', `/api/file?path=${encodeURIComponent(openPath)}`).catch(() => null);
-      if (f) {
-        S.file = f; S.original = f.content; S.draft = f.content;
-        renderAll();
-        notice('ok', 'Reloaded — this file changed on disk.');
-      }
+      if (f && f.content === S.original) return;
+    }
+    // Never silently discard their edits — the save will 409 anyway.
+    notice('warn',
+      'This file changed on disk while you were editing it. Your unsaved changes are still here, but saving will be refused until you reload.',
+      null, true);
+    return;
+  }
+
+  if (plan.open === 'reload') {
+    const f = await api('GET', `/api/file?path=${encodeURIComponent(openPath)}`).catch(() => null);
+    // The tab that wrote it already holds these bytes; nothing changes there.
+    if (f && S.file?.path === openPath && f.content !== S.original) {
+      S.file = f; S.original = f.content; S.draft = f.content;
+      renderAll();
+      if (!plan.studio) notice('ok', 'Reloaded — this file changed on disk.');
     }
     return;
   }
 
-  // Only announce structural changes; a save you just made is not news.
-  const added = d.added || [];
-  const removed = d.removed || [];
+  // Only announce structural changes made outside the studio.
+  const added = plan.announce ? d.added || [] : [];
+  const removed = plan.announce ? d.removed || [] : [];
   const parts = [];
   if (added.length) parts.push(`${added.length} added`);
   if (removed.length) parts.push(`${removed.length} removed`);
