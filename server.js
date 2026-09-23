@@ -28,6 +28,7 @@ import {
 } from './lib/models-panel.js';
 import { loadRegistry } from './lib/models.js';
 import * as memoryOps from './lib/memory-ops.js';
+import { contextMap, contextFile } from './lib/context-map.js';
 import {
   syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
   isInstalled as shortcutsInstalled, shortcutsFromSeats, shortcutsPath, zshenvPath,
@@ -751,6 +752,19 @@ export function createApp(opts = {}) {
   'POST /api/memory/accept': async (req) => memoryOps.accept((await readBody(req)).opId),
   'POST /api/memory/restore': async (req) => memoryOps.restore((await readBody(req)).opId),
   'POST /api/memory/keep': async (req) => memoryOps.keep((await readBody(req)).id),
+
+  /**
+   * The Context view: CLAUDE.md / AGENTS.md / .cursor rules per project, copies
+   * collapsed, drift flagged. Read-only; the diff fetches texts by id.
+   */
+  'GET /api/context': async (req) => {
+    if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
+    return contextMap();
+  },
+  'GET /api/context/file': async (req, url) => {
+    if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
+    return contextFile(url.searchParams.get('id'));
+  },
 
   /**
    * The Models panel. Catalogs are the CLIs' own on-disk caches, read at
