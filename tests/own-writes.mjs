@@ -27,7 +27,8 @@ const ok = (name, cond, detail = '') => {
 console.log('\nown writes');
 
 const fx = seedMemoryHome(fakeHome);
-const { expectWrite, tagOrigin } = await import('../lib/watch.js');
+const { expectWrite, tagOrigin, _expectationCount } = await import('../lib/watch.js');
+const mutate = await import('../lib/mutate.js');
 const ops = await import('../lib/memory-ops.js');
 await (await import('../lib/history.js')).ensureRepo();
 const sha = (t) => crypto.createHash('sha256').update(t).digest('hex');
@@ -140,6 +141,71 @@ const r1 = await ops.restore(p1.opId);
   fs.appendFileSync(f, 'then someone else\n');
   ok('…and the next outside edit of it is not', isOutside(tag({ changed: [f] }), 'changed', f));
   server.close();
+}
+
+// Round 7 — 1: a trash registers one removal per path, and a mismatch cancels.
+{
+  const f = path.join(fx.mem, 'gone-soon.md');
+  fs.writeFileSync(f, 'studio bytes\n');
+  await mutate.remove({ path: f });
+  ok('R7 the trash itself is tagged studio', isStudio(tag({ removed: [f] }), 'removed', f));
+  fs.writeFileSync(f, 'someone else\n');
+  ok('R7 an outside recreation with different bytes is announced', isOutside(tag({ added: [f] }), 'added', f));
+  fs.rmSync(f);
+  ok('R7 …and its outside deletion within 10 s is announced too (no second removal left over)', isOutside(tag({ removed: [f] }), 'removed', f));
+
+  const g = path.join(fx.mem, 'bounce.md');
+  fs.writeFileSync(g, 'studio\n');
+  expectWrite(g, 'changed', sha('studio\n'));
+  fs.writeFileSync(g, 'theirs\n');
+  ok('R7 a mismatching event cancels the expectation', isOutside(tag({ changed: [g] }), 'changed', g));
+  fs.writeFileSync(g, 'studio\n');
+  ok('R7 …so a later return to the studio\'s exact bytes is not tagged studio', isOutside(tag({ changed: [g] }), 'changed', g));
+  fs.rmSync(g);
+}
+
+// Round 7 — 2: expectations are reclaimed, and capped.
+{
+  tagOrigin({}, Date.now() + 60_000);   // clear whatever the tests above left open
+  const dir = path.join(fx.mem, 'bulk');
+  fs.mkdirSync(dir);
+  for (let i = 0; i < 200; i++) fs.writeFileSync(path.join(dir, `f${i}.md`), `n${i}\n`);
+  await mutate.remove({ path: dir });
+  ok('R7 a 200-file trash registers one expectation per path (plus the folder)', _expectationCount() === 201, String(_expectationCount()));
+  const files = Array.from({ length: 200 }, (_, i) => path.join(dir, `f${i}.md`));
+  const r = tag({ removed: files });
+  ok('R7 …its 200 removals are tagged studio and consumed', r.studio.removed.length === 200 && _expectationCount() === 1, String(_expectationCount()));
+  tagOrigin({}, Date.now() + 11_000);
+  ok('R7 …and after the window nothing is left', _expectationCount() === 0, String(_expectationCount()));
+  const t0 = Date.now();
+  for (let i = 0; i < 6_000; i++) expectWrite(path.join(fx.mem, `cap-${i}.md`), 'changed', sha(String(i)), t0);
+  ok('R7 the open expectations are capped at 5,000', _expectationCount() === 5_000, String(_expectationCount()));
+  fs.writeFileSync(path.join(fx.mem, 'cap-0.md'), '0');
+  fs.writeFileSync(path.join(fx.mem, 'cap-5999.md'), '5999');
+  const rc = tag({ changed: [path.join(fx.mem, 'cap-0.md'), path.join(fx.mem, 'cap-5999.md')] });
+  ok('R7 …evicting the oldest first', rc.outside.changed.includes(path.join(fx.mem, 'cap-0.md')) && rc.studio.changed.includes(path.join(fx.mem, 'cap-5999.md')));
+  tagOrigin({}, t0 + 60_000);
+}
+
+// Round 7 — 3: a studio event still syncs other tabs; only the wording changes.
+{
+  const vm = await import('node:vm');
+  const ctx = vm.createContext({});
+  vm.runInContext(fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'public', 'file-events.js'), 'utf8'), ctx);
+  const plan = (d, o) => JSON.parse(JSON.stringify(ctx.fileEventPlan(d, o)));
+  const f = '/x/memory/fact.md';
+  ok('R7 a studio change to a clean open file is reloaded, quietly',
+     JSON.stringify(plan({ origin: 'studio', changedPaths: [f] }, { openPath: f, dirty: false })) === JSON.stringify({ open: 'reload', studio: true }));
+  ok('R7 a studio change to a dirty open file still gets the conflict warning',
+     plan({ origin: 'studio', changedPaths: [f] }, { openPath: f, dirty: true }).open === 'conflict');
+  ok('R7 a studio removal of the open file closes it', plan({ origin: 'studio', removedPaths: [f] }, { openPath: f }).open === 'closed');
+  ok('R7 an outside change is reloaded and announced', JSON.stringify(plan({ origin: 'outside', changedPaths: [f] }, { openPath: f })) === JSON.stringify({ open: 'reload', studio: false }));
+  ok('R7 studio adds/removes elsewhere are not announced; outside ones are',
+     plan({ origin: 'studio', added: ['~/a'] }, { openPath: f }).announce === false && plan({ origin: 'outside', added: ['~/a'] }, { openPath: f }).announce === true);
+  const app = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'public', 'app.js'), 'utf8');
+  const handler = app.slice(app.indexOf('async function handleFileEvent'), app.indexOf('\n}\n', app.indexOf('async function handleFileEvent')));
+  ok('R7 the page acts on that plan and no longer returns early for studio events',
+     handler.includes('fileEventPlan(') && !/origin === 'studio'\) \{ setLive\(true\); return; \}/.test(handler));
 }
 
 assertRealHomesUnchanged(realBefore, ok);
