@@ -609,7 +609,7 @@ async function save() {
   btn.disabled = true;
   btn.textContent = 'Saving…';
   try {
-    expectOwnWrites([file.display], 5_000);
+    own.expect([file.display], 5_000);
     const r = await api('PUT', '/api/file', {
       path: file.path, content, mtime: file.mtime,
     });
@@ -772,79 +772,74 @@ async function refreshRegistry(selectPath) {
  * skill installed from the terminal, an agent touching a CLAUDE.md. Without
  * this the sidebar silently goes stale until a reload.
  */
-/**
- * Paths this page is changing itself. The watcher cannot tell the studio's
- * own writes from anyone else's, so a save, a memory cleanup and its restore
- * register what they touch here, and the live-change handler neither reloads
- * nor reports those as changes made outside the studio.
- */
-const ownWrites = new Map();   // display path -> expiry
-function expectOwnWrites(displays, ms = 15_000) {
-  const until = Date.now() + ms;
-  for (const d of displays || []) if (d) ownWrites.set(d.replace(/\/$/, ''), until);
-}
-function isOwnWrite(display) {
-  const now = Date.now();
-  for (const [d, until] of ownWrites) {
-    if (until < now) { ownWrites.delete(d); continue; }
-    if (display === d || display.startsWith(d + '/')) return true;
-  }
-  return false;
+// The page's own writes (public/own-writes.js), and the events held while an
+// Accept or Restore is in flight, until its response says which paths it changed.
+const own = createOwnWrites();
+let heldEvents = null;
+const holdEvents = () => { heldEvents ||= []; };
+function releaseEvents() {
+  const held = heldEvents || [];
+  heldEvents = null;
+  for (const d of held) handleFileEvent(d);
 }
 
 function connectEvents() {
   const es = new EventSource('/api/events');
 
-  es.onmessage = async (ev) => {
+  es.onmessage = (ev) => {
     let d;
     try { d = JSON.parse(ev.data); } catch { return; }
     if (d.type !== 'files') return;
-
-    await refreshRegistry().catch(() => {});
-
-    const openPath = S.file?.path;
-    const ownOpen = S.file && isOwnWrite(S.file.display);
-    if (openPath && !ownOpen && d.removedPaths?.includes(openPath)) {
-      S.entry = null; S.file = null; S.original = ''; S.draft = '';
-      S.view = 'welcome';
-      renderAll();
-      notice('warn', 'The file you had open was deleted outside the studio.', null, true);
-      return;
-    }
-
-    if (openPath && !ownOpen && d.changedPaths?.includes(openPath)) {
-      if (isDirty()) {
-        // Never silently discard their edits — the save will 409 anyway.
-        notice('warn',
-          'This file changed on disk while you were editing it. Your unsaved changes are still here, but saving will be refused until you reload.',
-          null, true);
-      } else {
-        const f = await api('GET', `/api/file?path=${encodeURIComponent(openPath)}`).catch(() => null);
-        if (f) {
-          S.file = f; S.original = f.content; S.draft = f.content;
-          renderAll();
-          notice('ok', 'Reloaded — this file changed on disk.');
-        }
-      }
-      return;
-    }
-
-    // Only announce structural changes; a save you just made is not news.
-    const added = (d.added || []).filter((p) => !isOwnWrite(p));
-    const removed = (d.removed || []).filter((p) => !isOwnWrite(p));
-    const parts = [];
-    if (added.length) parts.push(`${added.length} added`);
-    if (removed.length) parts.push(`${removed.length} removed`);
-    if (parts.length) {
-      const names = [...added, ...removed]
-        .slice(0, 3).map((p) => p.split('/').pop()).join(', ');
-      notice('ok', `${parts.join(', ')} outside the studio — ${names}${(added.length + removed.length) > 3 ? '…' : ''}`);
-    }
-    setLive(true);
+    if (heldEvents) { heldEvents.push(d); return; }
+    handleFileEvent(d);
   };
 
   es.onerror = () => setLive(false);
   es.onopen = () => setLive(true);
+}
+
+async function handleFileEvent(d) {
+  await refreshRegistry().catch(() => {});
+
+  const openPath = S.file?.path;
+  const ownOpen = S.file && own.has(S.file.display);
+  if (openPath && !ownOpen && d.removedPaths?.includes(openPath)) {
+    S.entry = null; S.file = null; S.original = ''; S.draft = '';
+    S.view = 'welcome';
+    renderAll();
+    notice('warn', 'The file you had open was deleted outside the studio.', null, true);
+    return;
+  }
+
+  if (openPath && !ownOpen && d.changedPaths?.includes(openPath)) {
+    if (isDirty()) {
+      // Never silently discard their edits — the save will 409 anyway.
+      notice('warn',
+        'This file changed on disk while you were editing it. Your unsaved changes are still here, but saving will be refused until you reload.',
+        null, true);
+    } else {
+      const f = await api('GET', `/api/file?path=${encodeURIComponent(openPath)}`).catch(() => null);
+      if (f) {
+        S.file = f; S.original = f.content; S.draft = f.content;
+        renderAll();
+        notice('ok', 'Reloaded — this file changed on disk.');
+      }
+    }
+    return;
+  }
+
+  // Only announce structural changes; a save you just made is not news.
+  const added = (d.added || []).filter((p) => !own.has(p));
+  const removed = (d.removed || []).filter((p) => !own.has(p));
+  const parts = [];
+  if (added.length) parts.push(`${added.length} added`);
+  if (removed.length) parts.push(`${removed.length} removed`);
+  if (parts.length) {
+    const names = [...added, ...removed]
+      .slice(0, 3).map((p) => p.split('/').pop()).join(', ');
+    notice('ok', `${parts.join(', ')} outside the studio — ${names}${(added.length + removed.length) > 3 ? '…' : ''}`);
+  }
+  setLive(true);
 }
 
 function setLive(on) {
@@ -1911,8 +1906,12 @@ function opsTab() {
     btn.disabled = ['restored', 'refused', 'unrecognised'].includes(op.status);
     btn.onclick = async () => {
       try {
-        expectOwnWrites(op.steps.map((st) => st.path));
-        const r = await api('POST', '/api/memory/restore', { opId: op.id });
+        holdEvents();
+        let r;
+        try {
+          r = await api('POST', '/api/memory/restore', { opId: op.id });
+          own.expect(undonePaths(r.op));
+        } finally { releaseEvents(); }
         if (!r.restored) {
           MV.restoreRefusal = { opId: op.id, reason: r.reason, diffs: r.diffs };
           paintMemory();
@@ -1960,8 +1959,12 @@ function previewPanel() {
   accept.onclick = async () => {
     accept.disabled = true;
     try {
-      expectOwnWrites(p.touches);
-      const r = await api('POST', '/api/memory/accept', { opId: p.opId });
+      holdEvents();
+      let r;
+      try {
+        r = await api('POST', '/api/memory/accept', { opId: p.opId });
+        own.expect(appliedPaths(r));
+      } finally { releaseEvents(); }
       MV.preview = null;
       for (const set of Object.values(MV.picked)) set.clear();
       const extra = [...r.skipped.map((s) => `Skipped ${s}`), ...(r.historyError ? [`History: ${r.historyError}`] : [])];
