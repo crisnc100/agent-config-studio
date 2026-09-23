@@ -11,6 +11,9 @@
     "grok": "grok-4.7",
     "grok-prev": "grok-4.6"
   },
+  "families": {
+    "grok-prev": { "track": false }
+  },
   "assist": {
     "claude": {
       "default": "sonnet",
