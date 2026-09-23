@@ -585,14 +585,14 @@ function diffView(oldText, newText, oldLabel = 'before', newLabel = 'after') {
   let skipped = 0;
   rows.forEach((r, i) => {
     if (!keep[i]) { skipped++; return; }
-    if (skipped) { wrap.appendChild(el('div', 'diff-skip', `⋯ ${skipped} unchanged lines`)); skipped = 0; }
+    if (skipped) { wrap.appendChild(el('div', 'diff-skip', `⋯ ${skipped} unchanged line${skipped === 1 ? '' : 's'}`)); skipped = 0; }
     const line = el('div', `diff-line ${r.type}`);
     line.appendChild(el('span', 'n', r.type === 'add' ? String(r.nb ?? '') : String(r.na ?? '')));
     const t = el('span', 't', (r.type === 'add' ? '+ ' : r.type === 'del' ? '- ' : '  ') + r.text);
     line.appendChild(t);
     wrap.appendChild(line);
   });
-  if (skipped) wrap.appendChild(el('div', 'diff-skip', `⋯ ${skipped} unchanged lines`));
+  if (skipped) wrap.appendChild(el('div', 'diff-skip', `⋯ ${skipped} unchanged line${skipped === 1 ? '' : 's'}`));
   return wrap;
 }
 
@@ -609,6 +609,7 @@ async function save() {
   btn.disabled = true;
   btn.textContent = 'Saving…';
   try {
+    expectOwnWrites([file.display], 5_000);
     const r = await api('PUT', '/api/file', {
       path: file.path, content, mtime: file.mtime,
     });
@@ -771,6 +772,26 @@ async function refreshRegistry(selectPath) {
  * skill installed from the terminal, an agent touching a CLAUDE.md. Without
  * this the sidebar silently goes stale until a reload.
  */
+/**
+ * Paths this page is changing itself. The watcher cannot tell the studio's
+ * own writes from anyone else's, so a save, a memory cleanup and its restore
+ * register what they touch here, and the live-change handler neither reloads
+ * nor reports those as changes made outside the studio.
+ */
+const ownWrites = new Map();   // display path -> expiry
+function expectOwnWrites(displays, ms = 15_000) {
+  const until = Date.now() + ms;
+  for (const d of displays || []) if (d) ownWrites.set(d.replace(/\/$/, ''), until);
+}
+function isOwnWrite(display) {
+  const now = Date.now();
+  for (const [d, until] of ownWrites) {
+    if (until < now) { ownWrites.delete(d); continue; }
+    if (display === d || display.startsWith(d + '/')) return true;
+  }
+  return false;
+}
+
 function connectEvents() {
   const es = new EventSource('/api/events');
 
@@ -782,7 +803,8 @@ function connectEvents() {
     await refreshRegistry().catch(() => {});
 
     const openPath = S.file?.path;
-    if (openPath && d.removedPaths?.includes(openPath)) {
+    const ownOpen = S.file && isOwnWrite(S.file.display);
+    if (openPath && !ownOpen && d.removedPaths?.includes(openPath)) {
       S.entry = null; S.file = null; S.original = ''; S.draft = '';
       S.view = 'welcome';
       renderAll();
@@ -790,7 +812,7 @@ function connectEvents() {
       return;
     }
 
-    if (openPath && d.changedPaths?.includes(openPath)) {
+    if (openPath && !ownOpen && d.changedPaths?.includes(openPath)) {
       if (isDirty()) {
         // Never silently discard their edits — the save will 409 anyway.
         notice('warn',
@@ -808,13 +830,15 @@ function connectEvents() {
     }
 
     // Only announce structural changes; a save you just made is not news.
+    const added = (d.added || []).filter((p) => !isOwnWrite(p));
+    const removed = (d.removed || []).filter((p) => !isOwnWrite(p));
     const parts = [];
-    if (d.added?.length) parts.push(`${d.added.length} added`);
-    if (d.removed?.length) parts.push(`${d.removed.length} removed`);
+    if (added.length) parts.push(`${added.length} added`);
+    if (removed.length) parts.push(`${removed.length} removed`);
     if (parts.length) {
-      const names = [...(d.added || []), ...(d.removed || [])]
+      const names = [...added, ...removed]
         .slice(0, 3).map((p) => p.split('/').pop()).join(', ');
-      notice('ok', `${parts.join(', ')} outside the studio — ${names}${(d.added.length + d.removed.length) > 3 ? '…' : ''}`);
+      notice('ok', `${parts.join(', ')} outside the studio — ${names}${(added.length + removed.length) > 3 ? '…' : ''}`);
     }
     setLive(true);
   };
@@ -1821,6 +1845,7 @@ async function showMemoryDiff(key, a, b) {
     ]);
     MV.diff = { key, before: fa.content, after: fb.content, labels: [fa.display, fb.display] };
     paintMemory();
+    document.querySelector('.mem-diff')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   } catch (e) { notice('error', e.message, null, true); }
 }
 
@@ -1866,7 +1891,7 @@ function opsTab() {
   if (!MV.ops.length) wrap.appendChild(el('div', 'mem-note', 'No operations yet.'));
   for (const op of MV.ops) {
     const row = el('div', 'scope-item');
-    row.appendChild(el('div', 'scope-rank', op.status.toUpperCase()));
+    row.appendChild(el('div', 'mem-badge mem-status', op.status));
     const body = el('div', 'scope-body');
     body.appendChild(el('div', 'scope-path', op.summary));
     body.appendChild(el('div', 'scope-note',
@@ -1886,6 +1911,7 @@ function opsTab() {
     btn.disabled = ['restored', 'refused', 'unrecognised'].includes(op.status);
     btn.onclick = async () => {
       try {
+        expectOwnWrites(op.steps.map((st) => st.path));
         const r = await api('POST', '/api/memory/restore', { opId: op.id });
         if (!r.restored) {
           MV.restoreRefusal = { opId: op.id, reason: r.reason, diffs: r.diffs };
@@ -1934,6 +1960,7 @@ function previewPanel() {
   accept.onclick = async () => {
     accept.disabled = true;
     try {
+      expectOwnWrites(p.touches);
       const r = await api('POST', '/api/memory/accept', { opId: p.opId });
       MV.preview = null;
       for (const set of Object.values(MV.picked)) set.clear();
@@ -2031,7 +2058,7 @@ function contextScope(s) {
     const top = el('div', 'sk-head');
     top.appendChild(el('span', 'mem-where',
       `${v.trunk ? 'trunk' : v.drift ? 'differs from trunk' : 'copy'} · ${v.lines} lines`
-      + (v.copies > 1 ? ` · ${v.copies} identical copies` : '')));
+      + (v.copies > 1 ? ` · ${v.copies - 1} identical cop${v.copies === 2 ? 'y' : 'ies'} collapsed` : '')));
     const open = el('button', 'btn ghost', 'Open');
     open.onclick = () => openInEditor(v.open.path, v.open.display);
     top.appendChild(open);
@@ -3807,6 +3834,12 @@ function wireGlobalKeys() {
     if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
   });
 }
+
+// Following a link or typing #memory / #context switches the view, not only a reload.
+window.addEventListener('hashchange', () => {
+  if (location.hash.startsWith('#memory') && S.view !== 'memory') openMemory();
+  else if (location.hash.startsWith('#context') && S.view !== 'context') openContext();
+});
 
 boot().catch((e) => {
   document.body.innerHTML =

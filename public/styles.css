@@ -895,3 +895,7 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .cx-outline { font: 12px var(--mono); color: var(--text-dim); margin-top: 4px; }
 .cx-head { white-space: pre; display: flex; gap: 10px; }
 .cx-lines { color: var(--muted); font-size: 11px; }
+.mem-status { flex: none; align-self: flex-start; text-transform: uppercase; white-space: nowrap; }
+.mem-row-head { align-items: center; flex-wrap: wrap; }
+.mem-row-head .scope-sub { flex: 1 1 320px; min-width: 0; margin-bottom: 12px; }
+.mem-row-head .scope-select { width: auto; flex: none; margin-bottom: 12px; }
