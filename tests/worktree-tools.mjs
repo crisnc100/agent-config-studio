@@ -251,6 +251,17 @@ const verdict = (v, name) => v.worktrees.find((w) => w.name === name) || { statu
   p.fetch();
   const reuse = branch('reuse');
   const fork = branch('fork');
+  // `behind`: the PR got another commit pushed from elsewhere, then merged.
+  const behind = branch('behind');
+  sb.git(p.scratch, 'fetch', '-q', 'origin');
+  sb.git(p.scratch, 'checkout', '-q', '-B', 'behind', 'origin/behind');
+  fs.writeFileSync(path.join(p.scratch, 'fixup.txt'), 'review fix\n');
+  sb.git(p.scratch, 'add', '.');
+  sb.git(p.scratch, 'commit', '-q', '-m', 'review fix');
+  sb.git(p.scratch, 'push', '-q', 'origin', 'behind');
+  const behindHead = sb.git(p.scratch, 'rev-parse', 'HEAD');
+  p.squash('behind');
+  const unseen = branch('unseen');
   const wrongb = branch('wrongb');
   // Ancestor of BASE: merged with a real merge commit, no gh needed.
   const anc = branch('anc');
@@ -265,6 +276,8 @@ const verdict = (v, name) => v.worktrees.find((w) => w.name === name) || { statu
     reuse: [pr(13, old.head)],
     fork: [pr(14, fork.head, { owner: 'someone-else' })],
     wrongb: [pr(15, wrongb.head, { base: 'develop' })],
+    behind: [pr(16, behindHead)],
+    unseen: [pr(17, 'f'.repeat(40))],
     __pretty: true,
   });
   let v = verdicts(sb, p.trunk);
@@ -272,7 +285,11 @@ const verdict = (v, name) => v.worktrees.find((w) => w.name === name) || { statu
   ok('8 a commit after the merged PR → not done, and says so', verdict(v, 'after').status === 'not-done' &&
      verdict(v, 'after').reason === '1 commit after merged PR #12', JSON.stringify(verdict(v, 'after')));
   ok('8 a reused branch name with an older merged PR → not done', verdict(v, 'reuse').status === 'not-done' &&
-     verdict(v, 'reuse').reason === 'merged PR #13 was for an older commit of reuse', JSON.stringify(verdict(v, 'reuse')));
+     verdict(v, 'reuse').reason === 'merged PR #13 was for a different commit of reuse', JSON.stringify(verdict(v, 'reuse')));
+  ok('8 a checkout behind its merged PR\'s head (more was pushed elsewhere) → not done, and says so', verdict(v, 'behind').status === 'not-done' &&
+     verdict(v, 'behind').reason === 'behind merged PR #16 — its head has commits this checkout lacks (pull, then re-check)', JSON.stringify(verdict(v, 'behind')));
+  ok('8 a merged PR head this checkout does not have → not done, and says so', verdict(v, 'unseen').status === 'not-done' &&
+     verdict(v, 'unseen').reason === "merged PR #17's head is not in this checkout (fetch, then re-check)", JSON.stringify(verdict(v, 'unseen')));
   ok('8 a fork PR with the same head name (and even the same sha) → not done', verdict(v, 'fork').status === 'not-done' &&
      verdict(v, 'fork').reason === 'merged PR #14 came from another fork', JSON.stringify(verdict(v, 'fork')));
   ok('8 a PR into the wrong base → not done', verdict(v, 'wrongb').status === 'not-done' &&

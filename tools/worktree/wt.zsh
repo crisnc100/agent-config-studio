@@ -970,7 +970,7 @@ _wt_base_branch() {
 _wt_verdict() {
   local p="${1:A}" b="$2" fl="$3" here="${PWD:A}" out gd op h cur rc f line
   local -a prs
-  local num oid owner base match="" after="" older="" fork="" wrong="" wrong_base="" n
+  local num oid owner base match="" after="" behind="" absent="" older="" fork="" wrong="" wrong_base="" n
   V_status=not-done V_reason="" V_via="" V_head="" V_oid="" V_pr=""
   if [[ "$p" == "${TRUNK:A}" ]]; then V_reason="trunk"; return 0; fi
   if [[ "$p" == "$_wt_primary" ]]; then V_reason="primary checkout"; return 0; fi
@@ -1032,9 +1032,13 @@ _wt_verdict() {
       elif [[ "$oid" == "$h" ]]; then
         match="$num" V_oid="$oid"
         break
-      elif [[ -n "$oid" ]] && git -C "$p" merge-base --is-ancestor "$oid" "$h" 2>/dev/null; then
+      elif [[ -z "$oid" ]] || ! git -C "$p" cat-file -e "$oid^{commit}" 2>/dev/null; then
+        absent="${absent:-$num}"
+      elif git -C "$p" merge-base --is-ancestor "$oid" "$h" 2>/dev/null; then
         after="${after:-$num}"
         [[ -z "$n" ]] && n=$(git -C "$p" rev-list --count "$oid..$h" 2>/dev/null)
+      elif git -C "$p" merge-base --is-ancestor "$h" "$oid" 2>/dev/null; then
+        behind="${behind:-$num}"
       else
         older="${older:-$num}"
       fi
@@ -1043,8 +1047,12 @@ _wt_verdict() {
       V_via="merged PR #$match" V_pr="$match"
     elif [[ -n "$after" ]]; then
       V_reason="${n:-some} commit$([[ "$n" == 1 ]] || echo s) after merged PR #$after"; return 0
+    elif [[ -n "$behind" ]]; then
+      V_reason="behind merged PR #$behind — its head has commits this checkout lacks (pull, then re-check)"; return 0
+    elif [[ -n "$absent" ]]; then
+      V_reason="merged PR #$absent's head is not in this checkout (fetch, then re-check)"; return 0
     elif [[ -n "$older" ]]; then
-      V_reason="merged PR #$older was for an older commit of $b"; return 0
+      V_reason="merged PR #$older was for a different commit of $b"; return 0
     elif [[ -n "$wrong" ]]; then
       V_reason="merged PR #$wrong went into $wrong_base, not $_wt_bbranch"; return 0
     elif [[ -n "$fork" ]]; then
