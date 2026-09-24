@@ -2069,7 +2069,7 @@ function contextScope(s) {
     box.appendChild(top);
     const paths = el('div', 'cx-paths');
     for (const p of v.paths) {
-      paths.appendChild(el('div', 'mem-note', `${p.display}${p.trunk ? ' (trunk)' : ''}${p.alias ? ` — link ${p.alias}` : ''}`));
+      paths.appendChild(el('div', 'mem-note', `${p.display}${p.trunk ? ' (trunk)' : ''}${p.readOnly && !v.readOnly ? ' (read-only)' : ''}${p.alias ? ` — link ${p.alias}` : ''}`));
     }
     box.appendChild(paths);
     if (v.outline.length) {

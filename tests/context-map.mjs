@@ -201,6 +201,29 @@ ok('C9 …and the worktree copy the view collapsed is still mirrored as its own 
      served === null && err && !String(err.message).includes('toolu_'), served ? served.slice(0, 80) : String(err?.message));
   fs.unlinkSync(victim); fs.renameSync(`${victim}.orig`, victim);
 
+  // X2: a repo spanning both roots — a Projects trunk with a Garman worktree copy.
+  const spanWt = path.join(G, '05-Development', 'alpha-in-garman');
+  const spanMeta = path.join(fx.alpha, '.git', 'worktrees', 'alpha-in-garman');
+  gPut(path.join(spanMeta, 'commondir'), '../..\n');
+  gPut(path.join(spanWt, '.git'), `gitdir: ${spanMeta}\n`);
+  gPut(path.join(spanWt, 'CLAUDE.md'), fs.readFileSync(path.join(fx.alpha, 'CLAUDE.md')));
+  // X3: a Projects file that links into Garman-Homes.
+  fs.mkdirSync(path.join(fx.alpha, 'apps', 'garman'), { recursive: true });
+  fs.symlinkSync(path.join(gMain, 'CLAUDE.md'), path.join(fx.alpha, 'apps', 'garman', 'CLAUDE.md'));
+
+  const m2 = await contextMap();
+  const alpha2 = m2.groups.find((g) => g.label === 'alpha');
+  const rootV = alpha2.scopes.find((x) => x.scope === 'CLAUDE.md').variants.find((v) => v.trunk);
+  const gCopy = rootV.paths.find((p) => p.display === tilde(path.join(spanWt, 'CLAUDE.md')));
+  const pCopy = rootV.paths.find((p) => p.display === tilde(path.join(fx.alpha, 'CLAUDE.md')));
+  ok('X2 the Garman worktree copy of a Projects repo collapses with trunk, marked read-only per copy',
+     gCopy?.readOnly === true && gCopy.root === 'garman-homes' && pCopy?.readOnly === false && pCopy.root === 'projects', JSON.stringify(rootV.paths));
+  ok('X2 …and counts under Garman-Homes, not Projects', m2.roots['garman-homes'].files === m.roots['garman-homes'].files + 1
+     && m2.roots.projects.files === m.roots.projects.files + 1, JSON.stringify(m2.roots));
+  const linkV = alpha2.scopes.find((x) => x.scope === 'apps/garman/CLAUDE.md')?.variants[0];
+  ok('X3 a Projects file linking into Garman-Homes is read-only and has no editor path',
+     linkV?.readOnly === true && !('path' in linkV.open), JSON.stringify(linkV));
+  ok('X3 …and still opens in the context viewer by id', linkV && (await contextFile(linkV.id)).content === gClaude);
 }
 
 // G4: the real-home tripwire sha-covers Garman context files, like Projects.
