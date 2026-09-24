@@ -216,10 +216,18 @@ _wt_ledger_write() {
     [[ ! -e "$l" && ! -L "$l" ]]
     return
   fi
-  if print -rl -- "$@" 2>/dev/null > "$tmp" && mv -f -- "$tmp" "$l" 2>/dev/null; then
-    return 0
+  # The temp file is created exclusively: anything already at its name — a
+  # planted link above all — is refused, never opened, and never removed.
+  if [[ -e "$tmp" || -L "$tmp" ]]; then
+    echo "wenv: ${tmp:t} already exists — not writing through it"
+    return 1
   fi
-  rm -f -- "$tmp" 2>/dev/null
+  if ( setopt no_clobber; print -rl -- "$@" > "$tmp" ) 2>/dev/null; then
+    if [[ -f "$tmp" && ! -L "$tmp" ]] && mv -f -- "$tmp" "$l" 2>/dev/null; then
+      return 0
+    fi
+    [[ -f "$tmp" && ! -L "$tmp" ]] && rm -f -- "$tmp" 2>/dev/null
+  fi
   return 1
 }
 
@@ -1322,8 +1330,10 @@ wclean() {
       continue
     fi
     tip=$(git -C "$TRUNK" rev-parse --verify --quiet "refs/heads/$b" 2>/dev/null)
+    # The branch goes only on the same proof as the worktree: its tip is the
+    # exact merged PR head, or is in a BASE fetched just now.
     if [[ -n "$tip" ]] && { [[ -n "$done_oid[j]" && "$tip" == "$done_oid[j]" ]] ||
-        git -C "$TRUNK" merge-base --is-ancestor "$tip" "$BASE" 2>/dev/null; }; then
+        { [[ -z "$_wt_fresh" ]] && git -C "$TRUNK" merge-base --is-ancestor "$tip" "$BASE" 2>/dev/null; }; }; then
       # Deleted only if it still points at the tip just checked; then its
       # branch.<b>.* config goes too, as `git branch -D` would drop it.
       if git -C "$TRUNK" update-ref -d "refs/heads/$b" "$tip" >/dev/null 2>&1; then
@@ -1332,6 +1342,8 @@ wclean() {
       else
         echo "  removed $label; kept branch $b — its tip moved"
       fi
+    elif [[ -n "$tip" && -n "$_wt_fresh" ]] && git -C "$TRUNK" merge-base --is-ancestor "$tip" "$BASE" 2>/dev/null; then
+      echo "  removed $label; kept branch $b — its tip moved, and $BASE $( [[ "$_wt_fresh" == "not fetched" ]] && echo "was not fetched" || echo "could not be fetched"), so being in it proves nothing"
     else
       echo "  removed $label; kept branch $b — its tip moved"
     fi

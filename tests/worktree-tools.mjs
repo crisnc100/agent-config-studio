@@ -711,6 +711,94 @@ if (DIRENV) {
      r.out.includes('refused: .env — git ls-files failed'), r.out);
 }
 
+/* ── Re-grade fixes (builds/worktree-tools/regrade.md) ───────────────── */
+{
+  const sb = make('regrade');
+  const p = project(sb);
+  const hasBranch = (name) => { try { sb.git(p.trunk, 'rev-parse', '--verify', '-q', `refs/heads/${name}`); return true; } catch { return false; } };
+
+  // H1: an exact PR removes the worktree at A; the branch then moves to B,
+  // which only a stale local origin/main contains. B is kept.
+  sb.zsh(p.trunk, 'wnew hx');
+  const hx = p.wt('hx');
+  fs.writeFileSync(path.join(hx, 'hx.txt'), 'hx\n');
+  sb.git(hx, 'add', '.');
+  sb.git(hx, 'commit', '-q', '-m', 'hx');
+  sb.git(hx, 'push', '-q', 'origin', 'hx:hx');
+  p.squash('hx');
+  p.fetch();
+  const a = sb.git(hx, 'rev-parse', 'HEAD');
+  sb.gh({ hx: [pr(50, a)] });
+  // B: a commit on top of origin/main that the remote never gets.
+  sb.git(p.scratch, 'fetch', '-q', 'origin');
+  sb.git(p.scratch, 'checkout', '-q', '-B', 'side', 'origin/main');
+  fs.writeFileSync(path.join(p.scratch, 'side.txt'), 'side\n');
+  sb.git(p.scratch, 'add', '.');
+  sb.git(p.scratch, 'commit', '-q', '-m', 'only in a stale base');
+  sb.git(p.scratch, 'push', '-q', 'origin', 'side:side');
+  p.fetch();
+  const bOid = sb.git(p.trunk, 'rev-parse', 'origin/side');
+  sb.git(p.trunk, 'update-ref', 'refs/remotes/origin/main', bOid);
+  sb.git(p.trunk, 'update-ref', 'refs/heads/hx-target', bOid);
+  let r = sb.zsh(p.trunk, 'wclean --remove --no-fetch', { input: 'y\n',
+    extraEnv: { WT_TEST_MOVE_BRANCH: 'hx', WT_TEST_MOVE_TO: 'hx-target', WT_TEST_TRUNK: p.trunk } });
+  ok('H1 --no-fetch: the exact-PR worktree is removed, but a branch moved to a commit only a stale base holds is kept',
+     !fs.existsSync(hx) && hasBranch('hx') && sb.git(p.trunk, 'rev-parse', 'hx') === bOid &&
+     r.out.includes('kept branch hx — its tip moved, and origin/main was not fetched, so being in it proves nothing'), r.out);
+
+  // H1b: same, with a fetch that fails.
+  try { sb.git(p.trunk, 'branch', '-D', 'hx'); } catch { /* the pre-fix code already deleted it */ }
+  sb.zsh(p.trunk, 'wnew hy');
+  const hy = p.wt('hy');
+  fs.writeFileSync(path.join(hy, 'hy.txt'), 'hy\n');
+  sb.git(hy, 'add', '.');
+  sb.git(hy, 'commit', '-q', '-m', 'hy');
+  sb.git(hy, 'push', '-q', 'origin', 'hy:hy');
+  sb.gh({ hy: [pr(51, sb.git(hy, 'rev-parse', 'HEAD'))] });
+  // The fetch fails because origin is unreachable; the URL (and so the gh repo) is unchanged.
+  sb.git(p.trunk, 'update-ref', 'refs/remotes/origin/main', bOid);
+  fs.renameSync(p.origin, `${p.origin}.away`);
+  r = sb.zsh(p.trunk, 'wclean --remove', { input: 'y\n',
+    extraEnv: { WT_TEST_MOVE_BRANCH: 'hy', WT_TEST_MOVE_TO: 'hx-target', WT_TEST_TRUNK: p.trunk } });
+  fs.renameSync(`${p.origin}.away`, p.origin);
+  ok('H1 a failed fetch: same — the moved branch is kept', !fs.existsSync(hy) && hasBranch('hy') &&
+     r.out.includes('kept branch hy — its tip moved, and origin/main could not be fetched, so being in it proves nothing'), r.out);
+
+  // H1c control: a fresh fetch and a tip that stayed on the exact PR head still deletes.
+  p.fetch();
+  sb.zsh(p.trunk, 'wnew hz');
+  const hz = p.wt('hz');
+  fs.writeFileSync(path.join(hz, 'hz.txt'), 'hz\n');
+  sb.git(hz, 'add', '.');
+  sb.git(hz, 'commit', '-q', '-m', 'hz');
+  sb.git(hz, 'push', '-q', 'origin', 'hz:hz');
+  sb.gh({ hz: [pr(52, sb.git(hz, 'rev-parse', 'HEAD'))] });
+  r = sb.zsh(p.trunk, 'wclean --remove --no-fetch', { input: 'y\n' });
+  ok('H1 control: --no-fetch with the tip still at the exact PR head deletes the branch', !fs.existsSync(hz) && !hasBranch('hz') &&
+     r.out.includes('removed hz and branch hz'), r.out);
+
+  // H2: a symlink planted at the ledger's temp name is refused, never written through.
+  sb.zsh(p.trunk, 'wnew hl');
+  const hl = p.wt('hl');
+  const sentinel = path.join(sb.root, 'ledger-sentinel');
+  fs.writeFileSync(sentinel, 'untouched\n');
+  const dangling = path.join(sb.root, 'never-created');
+  for (const [label, target, check] of [
+    ['an existing outside file', sentinel, () => fs.readFileSync(sentinel, 'utf8') === 'untouched\n'],
+    ['a dangling outside path', dangling, () => !exists(dangling)],
+  ]) {
+    fs.rmSync(path.join(hl, '.worktree-detached'), { force: true });
+    if (!isLink(path.join(hl, '.env'))) sb.zsh(hl, 'wenv --link --force .env');
+    r = sb.zsh(hl, `ln -s ${JSON.stringify(target)} "$PWD/.worktree-detached.wt-tmp.$$" && wenv --detach .env; st=$?; rm -f "$PWD/.worktree-detached.wt-tmp.$$"; exit $st`);
+    ok(`H2 a symlink at the ledger's temp name (to ${label}) is refused, and nothing is written through it`,
+       r.code !== 0 && check() && isLink(path.join(hl, '.env')) && !exists(path.join(hl, '.worktree-detached')), r.out);
+  }
+  fs.rmSync(path.join(hl, '.worktree-detached'), { force: true });
+  if (!isLink(path.join(hl, '.env'))) sb.zsh(hl, 'wenv --link --force .env');
+  r = sb.zsh(hl, 'wenv --detach .env');
+  ok('H2 control: with no planted file the detach works', r.code === 0 && fs.readFileSync(path.join(hl, '.worktree-detached'), 'utf8') === '.env\n', r.out);
+}
+
 /* ── 6. Secrets never printed ─────────────────────────────────────────── */
 {
   const sb = make('secrets');
