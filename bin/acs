@@ -41,6 +41,12 @@ case "$1" in
     shift
     exec node "$DIR/bin/usage.mjs" "$@"
     ;;
+  install-worktree)
+    # Copies tools/worktree into ~/.config/worktree and makes ~/.zshrc source
+    # it. Exits here: installing never starts the studio. Re-run after a pull.
+    shift
+    exec node "$DIR/bin/install-worktree.mjs" "$@"
+    ;;
   install-model-id)
     # Copies the resolver out of this checkout and links ~/.local/bin/model-id,
     # so skills keep resolving when a worktree is removed. Re-run after a pull.
