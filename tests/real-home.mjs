@@ -334,7 +334,7 @@ const hashedCount = (snap) => Object.keys(snap).filter((k) => !/^(raw|meta|names
 const CONTENT_LABEL = (n) => `${n} entries (files by sha256, directories by presence) under ~/.agent-config-studio, ` +
   '~/.claude/{skills,hooks,agents,commands,skills_retired}, ~/.codex/{skills,rules}, ~/.agents, ~/.config/worktree, every project skill ' +
   'tree and the loose files atop both project roots, every ~/.claude/projects slug directory and its memory/ tree, every CLAUDE.md / AGENTS.md / ' +
-  '.cursor rule under ~/Documents/Projects, plus the files ACS edits (~/.claude settings, CLAUDE.md, *-config.json; ~/.codex ' +
+  '.cursor rule under ~/Documents/Projects and ~/Documents/Garman-Homes, plus the files ACS edits (~/.claude settings, CLAUDE.md, *-config.json; ~/.codex ' +
   'config.toml, AGENTS.md; ~/.grok AGENTS.md; ~/.zshenv) and the CLI catalogs, are byte-identical (sha256)';
 const NAMES_LABEL = '~/.claude, ~/.codex, ~/.grok, and ~/.codex-seats, ~/Documents/Projects and ~/Documents/Garman-Homes two levels deep: ' +
   'entry names unchanged (contents not compared)';
