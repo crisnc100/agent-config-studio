@@ -41,7 +41,7 @@ const GH_STUB = `#!${process.execPath}
 // Every call is appended to $WT_TEST_GH_LOG with the GH_REPO it saw.
 const fs = require('fs');
 const a = process.argv.slice(2);
-fs.appendFileSync(process.env.WT_TEST_GH_LOG, JSON.stringify({ argv: a, GH_REPO: process.env.GH_REPO ?? null }) + '\\n');
+fs.appendFileSync(process.env.WT_TEST_GH_LOG, JSON.stringify({ argv: a, GH_REPO: process.env.GH_REPO ?? null, GIT_OPTIONAL_LOCKS: process.env.GIT_OPTIONAL_LOCKS ?? null }) + '\\n');
 const at = (f) => (a.indexOf(f) >= 0 ? a[a.indexOf(f) + 1] : undefined);
 if (a[0] !== 'pr' || a[1] !== 'list' || at('--state') !== 'merged' || !at('--head') || !at('--repo')) {
   process.stderr.write('stub: unexpected call ' + a.join(' ') + '\\n'); process.exit(2);
@@ -54,10 +54,12 @@ const out = prs.map((p) => Object.fromEntries(fields.sort().filter((f) => f in p
 process.stdout.write(table.__pretty ? JSON.stringify(out, null, 2) + '\\n' : JSON.stringify(out) + '\\n');
 `;
 
-// Logs every git call, then runs the real one. Two fault hooks, for the
-// removal races only: WT_TEST_FAIL_REMOVE makes \`worktree remove\` fail, and
+// Logs every git call, then runs the real one. Fault hooks, for the removal
+// races only: WT_TEST_FAIL_REMOVE makes \`worktree remove\` fail;
 // WT_TEST_MOVE_BRANCH=<branch> advances that branch the moment a removal
-// succeeds — the window between removing the worktree and deleting its branch.
+// succeeds (before its tip is read); WT_TEST_ADVANCE_ON_DELETE=<branch>
+// advances it at the delete itself — after the tip was read and checked.
+// Both move it to $WT_TEST_MOVE_TO.
 const gitShim = (git) => `#!/bin/sh
 printf '%s\\n' "$*" >> "$WT_TEST_GIT_LOG"
 case " $* " in
@@ -67,6 +69,11 @@ case " $* " in
       ${git} "$@" || exit $?
       ${git} -C "$WT_TEST_TRUNK" update-ref "refs/heads/$WT_TEST_MOVE_BRANCH" "$(${git} -C "$WT_TEST_TRUNK" rev-parse "$WT_TEST_MOVE_TO")"
       exit 0
+    fi
+    ;;
+  *" branch -D $WT_TEST_ADVANCE_ON_DELETE "*|*" update-ref -d refs/heads/$WT_TEST_ADVANCE_ON_DELETE "*)
+    if [ -n "$WT_TEST_ADVANCE_ON_DELETE" ]; then
+      ${git} -C "$WT_TEST_TRUNK" update-ref "refs/heads/$WT_TEST_ADVANCE_ON_DELETE" "$(${git} -C "$WT_TEST_TRUNK" rev-parse "$WT_TEST_MOVE_TO")"
     fi
     ;;
 esac

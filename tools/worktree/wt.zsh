@@ -154,10 +154,12 @@ _wt_env_bad_path() {
 _wt_env_bad_git() {
   local f="$1" dir="$2" rc
   REPLY=""
-  if git -C "$dir" ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
-    REPLY="tracked by git"
-    return 0
-  fi
+  # 1 is "not tracked"; anything else (a corrupt index, an I/O error) is not
+  # an answer, and check-ignore --no-index below would never notice.
+  git -C "$dir" ls-files --error-unmatch -- "$f" >/dev/null 2>&1
+  rc=$?
+  if (( rc == 0 )); then REPLY="tracked by git"; return 0; fi
+  if (( rc != 1 )); then REPLY="git ls-files failed"; return 0; fi
   git -C "$dir" check-ignore -q --no-index -- "$f" 2>/dev/null
   rc=$?
   (( rc == 0 )) && return 0
@@ -176,8 +178,54 @@ _wt_env_refused() {
   _wt_env_bad_git "$1" "$2"
 }
 
+# ---- .worktree-detached: the ledger of intentional copies -----------------
+# Read only when it is a plain file git does not track; written only by temp
+# file + rename, and a failed write fails the command before anything else
+# changes. A ledger that is a link, a directory, or tracked is refused: it
+# would write through to somewhere else, or put this Mac's choices in a branch.
+
+# REPLY = why checkout $1's ledger cannot be trusted, or "".
+_wt_ledger_bad() {
+  local l="$1/.worktree-detached" rc
+  REPLY=""
+  if [[ -L "$l" ]]; then REPLY=".worktree-detached is a symlink"; return 0; fi
+  if [[ -e "$l" && ! -f "$l" ]]; then REPLY=".worktree-detached is not a regular file"; return 0; fi
+  git -C "$1" ls-files --error-unmatch -- .worktree-detached >/dev/null 2>&1
+  rc=$?
+  if (( rc == 0 )); then REPLY=".worktree-detached is tracked by git"
+  elif (( rc != 1 )); then REPLY=".worktree-detached cannot be checked (git ls-files failed)"
+  fi
+  return 0
+}
+
+# reply = the entries in checkout $1's ledger (none when it is unsafe).
+_wt_ledger_read() {
+  local l="$1/.worktree-detached"
+  reply=()
+  [[ -f "$l" && ! -L "$l" ]] || return 0
+  reply=("${(@f)$(<"$l")}")
+  reply=("${(@)reply:#}")
+}
+
+# Replace checkout $1's ledger with the remaining arguments; none removes it.
+_wt_ledger_write() {
+  local dir="$1" l="$1/.worktree-detached" tmp="$1/.worktree-detached.wt-tmp.$$"
+  shift
+  if (( $# == 0 )); then
+    rm -f -- "$l" 2>/dev/null
+    [[ ! -e "$l" && ! -L "$l" ]]
+    return
+  fi
+  if print -rl -- "$@" 2>/dev/null > "$tmp" && mv -f -- "$tmp" "$l" 2>/dev/null; then
+    return 0
+  fi
+  rm -f -- "$tmp" 2>/dev/null
+  return 1
+}
+
 _wt_detached_has() {
-  [[ -f "$2/.worktree-detached" ]] && grep -qxF -- "$1" "$2/.worktree-detached"
+  _wt_ledger_read "$2"
+  (( ${reply[(Ie)$1]} ))
 }
 
 # REPLY = the state of entry $1 in checkout $2:
@@ -621,36 +669,44 @@ _wt_env_entry() {
 _wt_env_detach() {
   local dir="$1" f="$2"
   [[ -n "$f" ]] || { echo "usage: wenv --detach <file>"; return 1; }
+  local state copy=0
+  local -a before
   _wt_env_entry "$f" || return 1
   _wt_env_refused "$f" "$dir"
   [[ -n "$REPLY" ]] && { echo "  refused: $f — $REPLY"; return 1; }
+  _wt_ledger_bad "$dir"
+  [[ -n "$REPLY" ]] && { echo "  refused: $REPLY"; return 1; }
   _wt_env_state "$f" "$dir"
-  case "$REPLY" in
+  state="$REPLY"
+  case "$state" in
     linked|missing|broken)
       [[ -f "$TRUNK/$f" ]] || { echo "wenv: the trunk has no $f to copy"; return 1; }
-      mkdir -p "${dir}/${f:h}"
-      _wt_copy_one "$f" "$dir" || { echo "wenv: could not copy $f"; return 1; }
+      copy=1
       ;;
     copy|stale|detached) ;;
     foreign) echo "wenv: $f links outside the trunk — remove it first"; return 1 ;;
     absent) echo "wenv: neither this worktree nor the trunk has $f"; return 1 ;;
     *) echo "wenv: $f is not a file"; return 1 ;;
   esac
-  _wt_detached_has "$f" "$dir" || echo "$f" >> "$dir/.worktree-detached"
+  # The intent is recorded first: a copy that exists but is not in the
+  # ledger is one the next migration may relink.
+  _wt_ledger_read "$dir"
+  before=("${reply[@]}")
+  if (( ! ${before[(Ie)$f]} )) && ! _wt_ledger_write "$dir" "${before[@]}" "$f"; then
+    echo "wenv: could not record $f in .worktree-detached — nothing changed"
+    return 1
+  fi
+  if (( copy )); then
+    if ! mkdir -p "${dir}/${f:h}" 2>/dev/null || ! _wt_copy_one "$f" "$dir"; then
+      _wt_ledger_write "$dir" "${before[@]}" || echo "wenv: and .worktree-detached could not be restored — it lists $f"
+      echo "wenv: could not copy $f — nothing changed"
+      return 1
+    fi
+  fi
   _wt_exclude "$dir" .worktree-detached
   echo "  detached $f — a real copy here; relinks leave it alone (wenv --link $f to undo)"
 }
 
-_wt_env_undetach() {
-  local list="$2/.worktree-detached" rest
-  [[ -f "$list" ]] || return 0
-  rest=$(grep -vxF -- "$1" "$list")
-  if [[ -z "$rest" ]]; then
-    rm -f -- "$list"
-  else
-    print -r -- "$rest" > "$list"
-  fi
-}
 
 _wt_env_link() {
   local dir="$1" f="$2" force="$3"
@@ -662,10 +718,14 @@ _wt_env_link() {
   _wt_env_refused "$f" "$dir"
   [[ -n "$REPLY" ]] && { echo "  refused: $f — $REPLY"; return 1; }
   [[ -f "$TRUNK/$f" ]] || { echo "wenv: the trunk has no $f — seed it: wenv --to-trunk"; return 1; }
+  _wt_ledger_bad "$dir"
+  [[ -n "$REPLY" ]] && { echo "  refused: $REPLY"; return 1; }
+  local relink=1
+  local -a before
   _wt_env_state "$f" "$dir"
   case "$REPLY" in
-    linked) ;;
-    missing|broken|copy) _wt_link_one "$f" "$dir" || return 1 ;;
+    linked) relink=0 ;;
+    missing|broken|copy) ;;
     detached|stale|foreign)
       if [[ "$REPLY" == detached ]] && cmp -s -- "$TRUNK/$f" "$dir/$f"; then
         :
@@ -673,11 +733,21 @@ _wt_env_link() {
         echo "  refused: $f differs from trunk — keep it (wenv --detach $f), or discard it (wenv --link --force $f)"
         return 1
       fi
-      _wt_link_one "$f" "$dir" || return 1
       ;;
     *) echo "wenv: $f is not a file"; return 1 ;;
   esac
-  _wt_env_undetach "$f" "$dir"
+  # Ledger first, so a failure leaves the copy and its record as they were.
+  _wt_ledger_read "$dir"
+  before=("${reply[@]}")
+  if (( ${before[(Ie)$f]} )) && ! _wt_ledger_write "$dir" "${(@)before:#${(b)f}}"; then
+    echo "wenv: could not update .worktree-detached — nothing changed"
+    return 1
+  fi
+  if (( relink )) && ! _wt_link_one "$f" "$dir"; then
+    (( ${before[(Ie)$f]} )) && { _wt_ledger_write "$dir" "${before[@]}" || echo "wenv: and .worktree-detached could not be restored"; }
+    echo "wenv: could not link $f"
+    return 1
+  fi
   echo "  linked $f"
 }
 
@@ -696,6 +766,13 @@ _wt_env_link_all() {
     label="${dir:t}"
     if [[ ! -d "$dir" ]]; then
       echo "  missing-worktree: $label (git worktree prune)"
+      continue
+    fi
+    # Without a ledger to trust, an identical copy may be an intended override.
+    _wt_ledger_bad "$dir"
+    if [[ -n "$REPLY" ]]; then
+      echo "  refused: $label — $REPLY; nothing here was converted"
+      rc=1
       continue
     fi
     _wt_env_list
@@ -965,12 +1042,13 @@ _wt_base_branch() {
 
 # The verdict on one worktree, into V_status (done | not-done | unknown),
 # V_reason, V_via, V_head and V_oid (the merged PR head, when that is the proof).
-# $1 path, $2 branch, $3 flags. Needs _wt_primary, _wt_bbranch and the gh state
-# set by wclean.
+# $1 path, $2 branch, $3 flags. Needs _wt_primary, _wt_bbranch, the gh state
+# and _wt_fresh / _wt_strict set by wclean: an ancestor of a BASE that was not
+# freshly fetched is only reported (labelled stale), never removable.
 _wt_verdict() {
   local p="${1:A}" b="$2" fl="$3" here="${PWD:A}" out gd op h cur rc f line
   local -a prs
-  local num oid owner base match="" after="" behind="" absent="" older="" fork="" wrong="" wrong_base="" n
+  local num oid owner base match="" after="" behind="" absent="" older="" fork="" wrong="" wrong_base="" n stale_anc=0
   V_status=not-done V_reason="" V_via="" V_head="" V_oid="" V_pr=""
   if [[ "$p" == "${TRUNK:A}" ]]; then V_reason="trunk"; return 0; fi
   if [[ "$p" == "$_wt_primary" ]]; then V_reason="primary checkout"; return 0; fi
@@ -1008,11 +1086,13 @@ _wt_verdict() {
   # 2. Merged, exactly.
   git -C "$TRUNK" merge-base --is-ancestor "$h" "$BASE" 2>/dev/null
   rc=$?
-  if (( rc == 0 )); then
-    V_via="in $BASE"
-  elif (( rc != 1 )); then
+  (( rc == 0 && _wt_strict )) && [[ -n "$_wt_fresh" ]] && stale_anc=1
+  if (( rc == 0 && ! stale_anc )); then
+    V_via="in $BASE${_wt_fresh:+ ($_wt_fresh — stale)}"
+  elif (( rc != 0 && rc != 1 )); then
     V_status=unknown V_reason="unknown — not removable: git merge-base failed"; return 0
   elif [[ -n "$_wt_gh_why" ]]; then
+    if (( stale_anc )); then V_status=unknown V_reason="unknown — $_wt_fresh, not removable"; return 0; fi
     V_reason="not in $BASE (ancestor check only: $_wt_gh_why)"; return 0
   else
     out=$(unset GH_REPO GH_HOST; GH_PROMPT_DISABLED=1 gh pr list --repo "$_wt_gh_repo" --state merged --head "$b" \
@@ -1020,6 +1100,7 @@ _wt_verdict() {
     rc=$?
     if (( rc != 0 )) || ! _wt_prs_parse "$out"; then
       (( rc != 0 )) && _wt_gh_fail="gh failed: ${out%%$'\n'*}" || _wt_gh_fail="gh output not understood"
+      if (( stale_anc )); then V_status=unknown V_reason="unknown — $_wt_fresh, not removable"; return 0; fi
       V_reason="not in $BASE (ancestor check only: $_wt_gh_fail)"; return 0
     fi
     prs=("${reply[@]}")
@@ -1045,6 +1126,8 @@ _wt_verdict() {
     done
     if [[ -n "$match" ]]; then
       V_via="merged PR #$match" V_pr="$match"
+    elif (( stale_anc )); then
+      V_status=unknown V_reason="unknown — $_wt_fresh, not removable"; return 0
     elif [[ -n "$after" ]]; then
       V_reason="${n:-some} commit$([[ "$n" == 1 ]] || echo s) after merged PR #$after"; return 0
     elif [[ -n "$behind" ]]; then
@@ -1078,11 +1161,17 @@ _wt_verdict() {
     return 0
   fi
 
-  # 4. No env data the trunk lacks.
+  # 4. No env data the trunk lacks. An entry that cannot be inspected, or a
+  # ledger that cannot be trusted, blocks: what it names may be the only copy.
+  _wt_ledger_bad "$p"
+  if [[ -n "$REPLY" ]]; then V_status=unknown V_reason="$REPLY — not removable" V_via=""; return 0; fi
   _wt_env_list
   for f in "${reply[@]}"; do
     _wt_env_bad_path "$f" "$p"
-    [[ -n "$REPLY" ]] && continue
+    if [[ -n "$REPLY" ]]; then
+      V_status=unknown V_reason="ENV_FILES entry \"$f\" cannot be checked ($REPLY) — not removable" V_via=""
+      return 0
+    fi
     _wt_env_state "$f" "$p"
     case "$REPLY" in
       detached) V_reason="detached $f — wenv --to-trunk or delete it first" ;;
@@ -1102,7 +1191,7 @@ wclean() {
   _wt_conf || return 1
   setopt local_options local_traps
   local remove=0 json=0 fetch=1 a i sep="" common lock rc=0 ans label out verdict
-  local -a notes done_i done_h done_oid done_via
+  local -a notes done_p done_b done_h done_oid
   for a in "$@"; do
     case "$a" in
       --remove) remove=1 ;;
@@ -1133,12 +1222,19 @@ wclean() {
     trap "rm -rf -- ${(q)lock}" EXIT INT TERM
   fi
 
-  if (( fetch )); then
-    _wt_fetch 2>/dev/null || notes+=("fetch failed — merge status is against a local $BASE")
-  else
-    notes+=("not fetched — merge status is against the local $BASE")
+  typeset -g _wt_gh_repo _wt_gh_owner _wt_gh_why="" _wt_gh_fail="" _wt_bbranch _wt_primary _wt_fresh="" _wt_strict=$remove
+  if (( ! fetch )); then
+    _wt_fresh="not fetched"
+  elif ! _wt_fetch 2>/dev/null; then
+    _wt_fresh="fetch failed"
   fi
-  typeset -g _wt_gh_repo _wt_gh_owner _wt_gh_why="" _wt_gh_fail="" _wt_bbranch _wt_primary
+  if [[ -n "$_wt_fresh" ]]; then
+    if (( remove )); then
+      notes+=("$_wt_fresh — being in a local $BASE proves nothing, so only merged-PR matches can be removed")
+    else
+      notes+=("$_wt_fresh — merge status is against the local $BASE (stale)")
+    fi
+  fi
   if (( ! $+commands[gh] )); then
     _wt_gh_why="gh not installed"
   elif ! _wt_gh_origin; then
@@ -1170,8 +1266,9 @@ wclean() {
       if [[ "$V_status" == done ]]; then verdict="done ($V_via)"; else verdict="$V_reason"; fi
       printf '  %-26s %-24s %s\n' "$label" "[${_wt_b[i]:-detached}]" "$verdict"
     fi
+    # What is approved is this exact (path, branch, HEAD), never a list position.
     if [[ "$V_status" == done ]]; then
-      done_i+=("$i") done_h+=("$V_head") done_oid+=("$V_oid") done_via+=("$V_via")
+      done_p+=("${_wt_p[i]:A}") done_b+=("$_wt_b[i]") done_h+=("$V_head") done_oid+=("$V_oid")
     fi
   done
   [[ -n "$_wt_gh_why" ]] && notes+=("$_wt_gh_why — squash merges are not detected, only ancestors of $BASE")
@@ -1186,14 +1283,14 @@ wclean() {
   fi
   for a in "${notes[@]}"; do echo "wclean: $a"; done
   if (( ! remove )); then
-    (( ${#done_i} )) && echo "done: ${#done_i} — remove them:  wclean --remove"
+    (( ${#done_p} )) && echo "done: ${#done_p} — remove them:  wclean --remove"
     return 0
   fi
-  if (( ! ${#done_i} )); then
+  if (( ! ${#done_p} )); then
     echo "nothing to remove"
     return 0
   fi
-  printf 'Remove %d done worktree%s and their branches? [y/N] ' ${#done_i} "$( (( ${#done_i} == 1 )) || echo s)"
+  printf 'Remove %d done worktree%s and their branches? [y/N] ' ${#done_p} "$( (( ${#done_p} == 1 )) || echo s)"
   read -r ans
   if [[ "$ans" != [yY] ]]; then
     echo "nothing removed"
@@ -1202,19 +1299,20 @@ wclean() {
 
   # Everything is checked again right before its removal: the prompt may have
   # waited long enough for a commit, an edit or a new env file.
-  local j k p b tip
-  for (( j = 1; j <= ${#done_i}; j++ )); do
-    i=$done_i[j]
-    p="${_wt_p[i]:A}" b="$_wt_b[i]" label="${p:t}"
+  local j k p b h tip
+  for (( j = 1; j <= ${#done_p}; j++ )); do
+    p="$done_p[j]" b="$done_b[j]" h="$done_h[j]" label="${p:t}"
     [[ -n "$PREFIX" && "$label" == "$PREFIX"?* ]] && label="${label#$PREFIX}"
     _wt_list || { echo "wclean: git worktree list failed — stopping"; return 1; }
-    for (( k = 1; k <= ${#_wt_p}; k++ )); do [[ "${_wt_p[k]:A}" == "$p" ]] && break; done
-    if (( k > ${#_wt_p} )) || [[ "$_wt_b[k]" != "$b" ]]; then
-      echo "  skipped $label — no longer the same worktree"
+    for (( k = 1; k <= ${#_wt_p}; k++ )); do
+      [[ "${_wt_p[k]:A}" == "$p" && "$_wt_b[k]" == "$b" && "$_wt_h[k]" == "$h" ]] && break
+    done
+    if (( k > ${#_wt_p} )); then
+      echo "  skipped $label — no longer the same worktree (path, branch and HEAD approved)"
       continue
     fi
     _wt_verdict "$_wt_p[k]" "$_wt_b[k]" "$_wt_fl[k]"
-    if [[ "$V_status" != done || "$V_head" != "$done_h[j]" ]]; then
+    if [[ "$V_status" != done || "$V_head" != "$h" ]]; then
       echo "  skipped $label — changed since the list: ${V_reason:-HEAD moved}"
       continue
     fi
@@ -1226,10 +1324,13 @@ wclean() {
     tip=$(git -C "$TRUNK" rev-parse --verify --quiet "refs/heads/$b" 2>/dev/null)
     if [[ -n "$tip" ]] && { [[ -n "$done_oid[j]" && "$tip" == "$done_oid[j]" ]] ||
         git -C "$TRUNK" merge-base --is-ancestor "$tip" "$BASE" 2>/dev/null; }; then
-      if git -C "$TRUNK" branch -D "$b" >/dev/null 2>&1; then
+      # Deleted only if it still points at the tip just checked; then its
+      # branch.<b>.* config goes too, as `git branch -D` would drop it.
+      if git -C "$TRUNK" update-ref -d "refs/heads/$b" "$tip" >/dev/null 2>&1; then
+        git -C "$TRUNK" config --remove-section "branch.$b" >/dev/null 2>&1
         echo "  removed $label and branch $b"
       else
-        echo "  removed $label; could not delete branch $b"
+        echo "  removed $label; kept branch $b — its tip moved"
       fi
     else
       echo "  removed $label; kept branch $b — its tip moved"

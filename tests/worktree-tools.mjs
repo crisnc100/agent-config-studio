@@ -4,6 +4,7 @@
  * answers with gh's own JSON shapes. Criteria 2–10 of
  * builds/worktree-tools/plan.md; each check names its criterion.
  */
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { sandbox, project, pr, tests, requireZsh, DIRENV, TOOLKIT } from './worktree-sandbox.mjs';
@@ -322,7 +323,7 @@ const verdict = (v, name) => v.worktrees.find((w) => w.name === name) || { statu
   ok('8 gh missing → the ancestor one is still done', verdict(v, 'anc').status === 'done');
   ok('8 gh missing → a note says squash merges are not detected', v.notes.some((n) => n.startsWith('gh not installed — squash merges are not detected')), JSON.stringify(v.notes));
   const text = sb.zsh(p.trunk, 'wclean --no-fetch');
-  ok('8 the text form prints every worktree, done or its reason, and the note', /anc\s+\[anc\]\s+done \(in origin\/main\)/.test(text.out) &&
+  ok('8 the text form prints every worktree, done or its reason, and the note', /anc\s+\[anc\]\s+done \(in origin\/main \(not fetched — stale\)\)/.test(text.out) &&
      /sq\s+\[sq\]\s+not in origin\/main/.test(text.out) && text.out.includes('wclean: gh not installed'), text.out);
   sb.restoreGh();
   sb.gh({ sq: [pr(11, sq.head)] });
@@ -422,7 +423,7 @@ const verdict = (v, name) => v.worktrees.find((w) => w.name === name) || { statu
   live.child.stdin.end('y\n');
   await live.exited;
   ok('9 a commit made during the prompt skips that worktree', fs.existsSync(c.wt) && hasBranch('rc') &&
-     live.out.includes('skipped rc — changed since the list: 1 commit after merged PR #30'), live.out);
+     live.out.includes('skipped rc — no longer the same worktree (path, branch and HEAD approved)'), live.out);
   ok('9 …and the others still go', !fs.existsSync(a.wt) && live.out.includes('removed ra and branch ra'), live.out);
 
   // Two removers at once: the second refuses while the first waits at its prompt.
@@ -553,6 +554,161 @@ if (DIRENV) {
   ok('B direnv\'s allow list lives in the sandbox', fs.existsSync(allowDir) && fs.readdirSync(allowDir).length >= 1);
 } else {
   console.log('  SKIP B direnv checks — direnv is not installed (the rest of the suite does not need it)');
+}
+
+/* ── Grade fixes (builds/worktree-tools/grade.md, bugs 1–6) ───────────── */
+{
+  const sb = make('grade');
+  const p = project(sb);
+  const drop = (wt, b) => {   // cleanup between cases; tolerant, the case itself has been asserted
+    try { sb.git(p.trunk, 'worktree', 'remove', '--force', wt); } catch {}
+    try { sb.git(p.trunk, 'branch', '-D', b); } catch {}
+  };
+  const hasBranch = (name) => { try { sb.git(p.trunk, 'rev-parse', '--verify', '-q', `refs/heads/${name}`); return true; } catch { return false; } };
+
+  // G1: A, B, C done at the same sha, D locked; D is unlocked while the prompt waits.
+  for (const n of ['ga', 'gb', 'gc', 'gd']) sb.zsh(p.trunk, `wnew ${n}`);
+  sb.git(p.trunk, 'worktree', 'lock', p.wt('gd'));
+  let live = sb.zshLive(p.trunk, 'wclean --remove');
+  await live.until('[y/N]');
+  ok('G1 the prompt offers exactly A, B and C', live.out.includes('Remove 3 done worktrees') && /gd\s+\[gd\]\s+locked/.test(live.out), live.out);
+  sb.git(p.trunk, 'worktree', 'unlock', p.wt('gd'));
+  live.child.stdin.end('y\n');
+  await live.exited;
+  ok('G1 approving A, B, C removes A, B, C — never D, which was not approved',
+     ['ga', 'gb', 'gc'].every((n) => !fs.existsSync(p.wt(n)) && !hasBranch(n)) && fs.existsSync(p.wt('gd')) && hasBranch('gd') &&
+     !live.out.includes('removed gd'), live.out);
+
+  // G1b: an approved worktree removed and re-created under the same path and branch
+  // at another commit is not the tuple that was approved.
+  for (const n of ['ge', 'gf']) sb.zsh(p.trunk, `wnew ${n}`);
+  live = sb.zshLive(p.trunk, 'wclean --remove');
+  await live.until('[y/N]');
+  sb.git(p.trunk, 'worktree', 'remove', p.wt('ge'));
+  sb.git(p.trunk, 'branch', '-D', 'ge');
+  p.advance('g1b.txt'); p.fetch();
+  sb.git(p.trunk, 'worktree', 'add', '-q', p.wt('ge'), '-b', 'ge', 'origin/main');
+  live.child.stdin.end('y\n');
+  await live.exited;
+  ok('G1 a worktree re-created at the same path during the prompt is skipped, not removed',
+     fs.existsSync(p.wt('ge')) && hasBranch('ge') && live.out.includes('skipped ge') && !fs.existsSync(p.wt('gf')), live.out);
+  drop(p.wt('ge'), 'ge');
+
+  // G2: an invalid entry naming a real file with unique data blocks removal.
+  const conf = fs.readFileSync(p.conf, 'utf8');
+  fs.writeFileSync(p.conf, conf.replace(/^ENV_FILES=.*$/m, 'ENV_FILES=(".env" "private env")'));
+  sb.zsh(p.trunk, 'wnew gpriv');
+  fs.writeFileSync(path.join(p.wt('gpriv'), 'private env'), 'ONLY_HERE=1\n');
+  const common = sb.git(p.trunk, 'rev-parse', '--path-format=absolute', '--git-common-dir');
+  fs.appendFileSync(path.join(common, 'info', 'exclude'), 'private env\n');
+  let v = verdicts(sb, p.trunk);
+  ok('G2 an invalid ENV_FILES entry blocks removal, with its reason', verdict(v, 'gpriv').status !== 'done' &&
+     verdict(v, 'gpriv').reason === 'ENV_FILES entry "private env" cannot be checked (contains whitespace) — not removable', JSON.stringify(verdict(v, 'gpriv')));
+  let r = sb.zsh(p.trunk, 'wclean --remove', { input: 'y\n' });
+  ok('G2 …and wclean --remove leaves it and its data', fs.existsSync(path.join(p.wt('gpriv'), 'private env')), r.out);
+  fs.writeFileSync(p.conf, conf);
+  drop(p.wt('gpriv'), 'gpriv');
+
+  // G3: the .worktree-detached ledger.
+  sb.zsh(p.trunk, 'wnew gled');
+  const wt = p.wt('gled');
+  const ledger = path.join(wt, '.worktree-detached');
+  const sentinel = path.join(sb.root, 'outside-sentinel');
+  fs.writeFileSync(sentinel, 'untouched\n');
+  fs.symlinkSync(sentinel, ledger);
+  r = sb.zsh(wt, 'wenv --detach .env');
+  ok('G3 a symlinked ledger is refused: non-zero, nothing written through it, .env still linked', r.code !== 0 &&
+     fs.readFileSync(sentinel, 'utf8') === 'untouched\n' && isLink(path.join(wt, '.env')) && r.out.includes('.worktree-detached is a symlink'), r.out);
+  fs.rmSync(ledger);
+  fs.mkdirSync(ledger);
+  r = sb.zsh(wt, 'wenv --detach .env');
+  ok('G3 a ledger that is not a regular file is refused', r.code !== 0 && isLink(path.join(wt, '.env')) && r.out.includes('.worktree-detached is not a regular file'), r.out);
+  fs.rmSync(ledger, { recursive: true });
+  fs.writeFileSync(ledger, '');
+  sb.git(wt, 'add', '-f', '.worktree-detached');
+  sb.git(wt, 'commit', '-q', '-m', 'track the ledger');
+  r = sb.zsh(wt, 'wenv --detach .env');
+  ok('G3 a tracked ledger is refused', r.code !== 0 && isLink(path.join(wt, '.env')) && r.out.includes('.worktree-detached is tracked by git'), r.out);
+  v = verdicts(sb, p.trunk);
+  ok('G3 an unsafe ledger blocks removal', verdict(v, 'gled').status !== 'done', JSON.stringify(verdict(v, 'gled')));
+  r = sb.zsh(p.trunk, 'wenv --link-all');
+  ok('G3 --link-all skips a worktree whose ledger is unsafe', r.out.includes('refused: app-gled — .worktree-detached is tracked by git'), r.out);
+  drop(wt, 'gled');
+
+  // G3: a ledger write that fails fails the command and leaves nothing half-done.
+  const conf2 = conf.replace(/^ENV_FILES=.*$/m, 'ENV_FILES=".env sub/.env"');
+  fs.writeFileSync(p.conf, conf2);
+  fs.mkdirSync(path.join(p.trunk, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(p.trunk, 'sub', '.env'), 'SUB=1\n');
+  fs.appendFileSync(path.join(common, 'info', 'exclude'), 'sub/.env\n');
+  sb.zsh(p.trunk, 'wnew gro');
+  const ro = p.wt('gro');
+  ok('G3 control: sub/.env is linked', isLink(path.join(ro, 'sub', '.env')));
+  fs.chmodSync(ro, 0o555);
+  r = sb.zsh(ro, 'wenv --detach sub/.env');
+  fs.chmodSync(ro, 0o755);
+  ok('G3 a failed ledger write exits non-zero, and sub/.env is still the link', r.code !== 0 && isLink(path.join(ro, 'sub', '.env')) &&
+     !fs.existsSync(path.join(ro, '.worktree-detached')) && !r.out.includes('detached sub/.env —'), r.out);
+  r = sb.zsh(ro, 'wenv --detach sub/.env');
+  ok('G3 control: with a writable worktree the same detach works', r.code === 0 && !isLink(path.join(ro, 'sub', '.env')) &&
+     fs.readFileSync(path.join(ro, '.worktree-detached'), 'utf8') === 'sub/.env\n', r.out);
+  fs.chmodSync(ro, 0o555);
+  r = sb.zsh(ro, 'wenv --link --force sub/.env');
+  fs.chmodSync(ro, 0o755);
+  ok('G3 a ledger rewrite that fails during --link exits non-zero', r.code !== 0, r.out);
+  fs.writeFileSync(p.conf, conf);
+  drop(ro, 'gro');
+
+  // G4: the branch advances between the tip check and the delete.
+  sb.zsh(p.trunk, 'wnew gtip');
+  sb.zsh(p.trunk, 'wnew gother');
+  const other = p.wt('gother');
+  fs.writeFileSync(path.join(other, 'x.txt'), 'x\n');
+  sb.git(other, 'add', '.');
+  sb.git(other, 'commit', '-q', '-m', 'not in base');
+  sb.git(p.trunk, 'config', 'branch.gtip.description', 'metadata git branch -D would drop');
+  r = sb.zsh(p.trunk, 'wclean --remove', { input: 'y\n', extraEnv: { WT_TEST_ADVANCE_ON_DELETE: 'gtip', WT_TEST_MOVE_TO: 'gother', WT_TEST_TRUNK: p.trunk } });
+  ok('G4 a branch advanced at the moment of deletion is kept, and it says so', !fs.existsSync(p.wt('gtip')) && hasBranch('gtip') &&
+     sb.git(p.trunk, 'rev-parse', 'gtip') === sb.git(p.trunk, 'rev-parse', 'gother') && r.out.includes('kept branch gtip — its tip moved'), r.out);
+  drop(p.wt('gtip'), 'gtip');
+  sb.zsh(p.trunk, 'wnew gcfg');
+  sb.git(p.trunk, 'config', 'branch.gcfg.description', 'x');
+  sb.git(p.trunk, 'config', 'branch.gcfg.remote', 'origin');
+  r = sb.zsh(p.trunk, 'wclean --remove', { input: 'y\n' });
+  const cfg = spawnSync('git', ['-C', p.trunk, 'config', '--get-regexp', '^branch\\.gcfg\\.'], { env: sb.env, encoding: 'utf8' });
+  ok('G4 a deleted branch loses its branch.<b>.* config, as git branch -D would', !hasBranch('gcfg') && cfg.stdout === '' &&
+     r.out.includes('removed gcfg and branch gcfg'), r.out + cfg.stdout);
+  ok('G4 the delete is conditional on the inspected oid', / update-ref -d refs\/heads\/gcfg [0-9a-f]{40}/.test(sb.gitLog()));
+
+  // G5: freshness. A failed or skipped fetch never authorises an ancestor-based removal.
+  sb.zsh(p.trunk, 'wnew gstale');
+  const url = sb.git(p.trunk, 'config', '--get', 'remote.origin.url');
+  sb.git(p.trunk, 'config', 'remote.origin.url', path.join(sb.root, 'no-such-origin.git'));
+  v = verdicts(sb, p.trunk);
+  ok('G5 report mode, fetch failed: still reported done, labelled stale', verdict(v, 'gstale').status === 'done' &&
+     /stale/.test(verdict(v, 'gstale').via) && v.notes.some((n) => n.startsWith('fetch failed')), JSON.stringify(verdict(v, 'gstale')));
+  r = sb.zsh(p.trunk, 'wclean --remove', { input: 'y\n' });
+  ok('G5 --remove with a failed fetch: the ancestor-only worktree is unknown, not removable', fs.existsSync(p.wt('gstale')) &&
+     r.out.includes('unknown — fetch failed, not removable'), r.out);
+  sb.git(p.trunk, 'config', 'remote.origin.url', url);
+  r = sb.zsh(p.trunk, 'wclean --remove --no-fetch', { input: 'y\n' });
+  ok('G5 --remove --no-fetch: same — skipping the fetch is not freshness', fs.existsSync(p.wt('gstale')) &&
+     r.out.includes('unknown — not fetched, not removable'), r.out);
+  v = verdicts(sb, p.trunk, '--json --no-fetch');
+  ok('G5 --json --no-fetch (the panel) still reports done, labelled stale', verdict(v, 'gstale').status === 'done' && /stale/.test(verdict(v, 'gstale').via),
+     JSON.stringify(verdict(v, 'gstale')));
+  r = sb.zsh(p.trunk, 'wclean --remove', { input: 'y\n' });
+  ok('G5 control: with a fetch that works, it is removed', !fs.existsSync(p.wt('gstale')), r.out);
+
+  // G6: a tracked-file check that fails refuses the entry.
+  sb.zsh(p.trunk, 'wnew gidx');
+  const gi = p.wt('gidx');
+  fs.rmSync(path.join(gi, '.env'));
+  const gitdir = sb.git(gi, 'rev-parse', '--absolute-git-dir');
+  fs.writeFileSync(path.join(gitdir, 'index'), 'this is not an index\n');
+  r = sb.zsh(gi, 'wenv');
+  ok('G6 a corrupt index refuses the entry instead of linking it', !exists(path.join(gi, '.env')) &&
+     r.out.includes('refused: .env — git ls-files failed'), r.out);
 }
 
 /* ── 6. Secrets never printed ─────────────────────────────────────────── */
