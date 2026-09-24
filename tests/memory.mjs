@@ -673,10 +673,10 @@ const indexPath = path.join(fx.mem, 'MEMORY.md');
   const link = path.join(fx.alpha, 'apps', 'AGENTS.md');
   fs.symlinkSync(path.join(fx.alphaSlug, 'session-2', 'subagents', 'agent-x.jsonl'), link);
   const cm = await import('../lib/context-map.js');
-  const m = cm.contextMap();
+  const m = await cm.contextMap();
   const texts = [];
   for (const g of m.groups) for (const sc of g.scopes) for (const v of sc.variants) {
-    try { texts.push(cm.contextFile(v.id).content); } catch {}
+    try { texts.push((await cm.contextFile(v.id)).content); } catch {}
   }
   const [, body] = await call('GET', '/api/context');
   ok('B5 the transcript behind an AGENTS.md link is not read or served',

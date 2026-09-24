@@ -2058,7 +2058,7 @@ function previewPanel() {
  * Identical copies (worktrees, AGENTS.md links) are one entry that still lists
  * every path; a worktree copy that differs from trunk is flagged and diffs.
  */
-const CX = { data: null, diff: null };
+const CX = { data: null, diff: null, view: null };
 
 async function openContext() {
   if (!confirmDiscard()) return;
@@ -2093,13 +2093,21 @@ function paintContext() {
   c.innerHTML = '';
   const box = el('div', 'scope mem');
   box.appendChild(el('h2', null, 'Context'));
+  const perRoot = Object.values(d.roots || {})
+    .map((r) => `${r.label}: ${r.files} files as ${r.entries} entries, ${r.drifted} drifted`).join(' · ');
   box.appendChild(el('div', 'scope-sub',
-    `${d.totals.files} instruction files under ~/Documents/Projects, shown as ${d.totals.entries} entries: `
+    `${d.totals.files} instruction files, shown as ${d.totals.entries} entries: `
     + `${d.totals.collapsedCopies} identical copies collapsed, ${d.totals.drifted} drifted from trunk. `
-    + 'Every copy\'s path is still listed; Open edits the trunk copy first.'));
+    + `${perRoot}. Every copy's path is still listed. Projects files open in the editor, trunk copy first; `
+    + 'Garman Homes files are client work and open here, read-only.'));
   for (const u of d.unreadable) box.appendChild(el('div', 'mem-flag', `not read: ${u.display} (${u.reason})`));
 
+  let lastRoot = null;
   for (const g of d.groups) {
+    if (g.root !== lastRoot) {
+      lastRoot = g.root;
+      box.appendChild(el('h3', 'mem-h3', g.readOnly ? `${g.rootLabel} — read-only` : g.rootLabel));
+    }
     const card = el('div', 'mem-card');
     const h = el('div', 'sk-head');
     h.appendChild(el('span', 'sk-name', g.label));
@@ -2127,9 +2135,10 @@ function contextScope(s) {
     top.appendChild(el('span', 'mem-where',
       `${v.trunk ? 'trunk' : v.drift ? 'differs from trunk' : 'copy'} · ${v.lines} lines`
       + (v.copies > 1 ? ` · ${v.copies - 1} identical cop${v.copies === 2 ? 'y' : 'ies'} collapsed` : '')));
-    const open = el('button', 'btn ghost', 'Open');
-    open.onclick = () => openInEditor(v.open.path, v.open.display);
+    const open = el('button', 'btn ghost', v.readOnly ? (CX.view?.id === v.id ? 'Close' : 'View') : 'Open');
+    open.onclick = () => (v.readOnly ? toggleContextView(v.id) : openInEditor(v.open.path, v.open.display));
     top.appendChild(open);
+    if (v.readOnly) top.appendChild(el('span', 'mem-badge', 'read-only'));
     if (v.drift && s.trunkId) {
       const diffBtn = el('button', 'btn', 'Diff vs trunk');
       diffBtn.onclick = () => showContextDiff(s.trunkId, v.id);
@@ -2138,7 +2147,7 @@ function contextScope(s) {
     box.appendChild(top);
     const paths = el('div', 'cx-paths');
     for (const p of v.paths) {
-      paths.appendChild(el('div', 'mem-note', `${p.display}${p.trunk ? ' (trunk)' : ''}${p.alias ? ` — link ${p.alias}` : ''}`));
+      paths.appendChild(el('div', 'mem-note', `${p.display}${p.trunk ? ' (trunk)' : ''}${p.readOnly && !v.readOnly ? ' (read-only)' : ''}${p.alias ? ` — link ${p.alias}` : ''}`));
     }
     box.appendChild(paths);
     if (v.outline.length) {
@@ -2152,12 +2161,27 @@ function contextScope(s) {
     } else {
       box.appendChild(el('div', 'mem-note', 'No headings.'));
     }
+    if (CX.view?.id === v.id) {
+      const view = el('div', 'cx-read md');
+      view.innerHTML = renderMarkdown(CX.view.content);
+      box.appendChild(view);
+    }
     if (CX.diff?.id === v.id) {
       box.appendChild(diffView(CX.diff.before, CX.diff.after, CX.diff.labels[0], CX.diff.labels[1]));
     }
     wrap.appendChild(box);
   }
   return wrap;
+}
+
+/** A read-only root's file, shown in place by id — it never goes to the editor. */
+async function toggleContextView(id) {
+  if (CX.view?.id === id) { CX.view = null; paintContext(); return; }
+  try {
+    const f = await api('GET', `/api/context/file?id=${encodeURIComponent(id)}`);
+    CX.view = { id, content: f.content };
+    paintContext();
+  } catch (e) { notice('error', e.message, null, true); }
 }
 
 async function showContextDiff(trunkId, id) {

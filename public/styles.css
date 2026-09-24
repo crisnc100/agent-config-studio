@@ -909,3 +909,4 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .mem-row-head { align-items: center; flex-wrap: wrap; }
 .mem-row-head .scope-sub { flex: 1 1 320px; min-width: 0; margin-bottom: 12px; }
 .mem-row-head .scope-select { width: auto; flex: none; margin-bottom: 12px; }
+.cx-read { margin: 8px 0 4px; padding: 14px 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); max-width: none; }
