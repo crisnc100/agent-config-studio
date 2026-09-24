@@ -17,7 +17,10 @@
  *    and ~/.agents (symlinks by target, not followed); every project skill tree
  *    the skills feature walks under ~/Documents/Projects and
  *    ~/Documents/Garman-Homes, found the way discovery finds them; and the
- *    single files ACS edits inside the live homes (see EXACT). Also every
+ *    single files ACS edits inside the live homes (see EXACT: ~/.zshrc is
+ *    read through a link, and the link's target pinned too). ~/.config/worktree
+ *    is walked THROUGH its links, since `acs install-worktree` writes there and
+ *    a dotfiles-managed wt.zsh is a link to the bytes that matter. Also every
  *    ~/.claude/projects/<slug>/memory tree, with each slug directory recorded
  *    by presence — the Memory view trashes empty slugs, indexes and facts —
  *    and every CLAUDE.md / AGENTS.md / .cursor/rules/*.mdc under
@@ -83,7 +86,21 @@ const EXACT = [
   path.join(HOME, '.grok', 'AGENTS.md'),
   // The one human-owned file ACS appends to (lib/usage/shell.js install/uninstall).
   path.join(HOME, '.zshenv'),
+  // The other: `acs install-worktree` appends its source stanza here. Read
+  // through a link, so a dotfiles-managed .zshrc is compared by the bytes the
+  // shell loads; the link itself is pinned by ZSHRC_LINKS below.
+  path.join(HOME, '.zshrc'),
+  ...(process.env.ZDOTDIR ? [path.join(process.env.ZDOTDIR, '.zshrc')] : []),
 ];
+/** A symlinked .zshrc: its target, so re-pointing the link is a change too. */
+const ZSHRC_LINKS = EXACT.filter((f) => path.basename(f) === '.zshrc');
+/**
+ * Trees walked THROUGH their links. `acs install-worktree` writes here, and a
+ * dotfiles checkout often links wt.zsh or the whole directory elsewhere — a
+ * walk that records only the link target would miss a write to the file the
+ * shell actually sources.
+ */
+const FOLLOWED = new Set([path.join(HOME, '.config', 'worktree')]);
 /**
  * Seat homes ACS creates for extra Codex accounts (lib/usage/seats.js). Each is
  * a live CODEX_HOME once a seat runs, so like the harness homes they are held
@@ -189,19 +206,38 @@ export const isLiveSuiteProbeSlug = (slug) => PROBE_SLUG.test(slug);
 
 export function snapshotRealHomes() {
   const out = {};
-  const walk = (entry) => {
+  const walk = (entry, follow = false, seen = new Set()) => {
     let st;
     try { st = fs.lstatSync(entry); } catch { return; }
-    if (st.isSymbolicLink()) { out[entry] = `link:${fs.readlinkSync(entry)}`; return; }
+    if (st.isSymbolicLink()) {
+      out[entry] = `link:${fs.readlinkSync(entry)}`;
+      if (!follow) return;
+      // Followed: the target's content under its own key, once per real path.
+      let real;
+      try { real = fs.realpathSync(entry); } catch { return; }
+      if (seen.has(real)) return;
+      seen.add(real);
+      try { st = fs.statSync(real); } catch { return; }
+      if (st.isFile()) { out[`via:${entry}`] = sha(fs.readFileSync(real)); return; }
+      if (!st.isDirectory()) return;
+      out[`via:${entry}`] = 'dir';
+      let names;
+      try { names = fs.readdirSync(real); } catch { return; }
+      for (const name of names) walk(path.join(entry, name), follow, seen);
+      return;
+    }
     if (st.isFile()) { out[entry] = sha(fs.readFileSync(entry)); return; }
     if (!st.isDirectory()) return;
     // Directories are recorded too, so an EMPTY one added or removed shows.
     out[entry] = 'dir';
     let names;
     try { names = fs.readdirSync(entry); } catch { return; }
-    for (const name of names) walk(path.join(entry, name));
+    for (const name of names) walk(path.join(entry, name), follow, seen);
   };
-  for (const r of ROOTS) walk(r);
+  for (const r of ROOTS) walk(r, FOLLOWED.has(r));
+  for (const f of ZSHRC_LINKS) {
+    try { if (fs.lstatSync(f).isSymbolicLink()) out[`link:${f}`] = fs.readlinkSync(f); } catch { /* absent */ }
+  }
   for (const r of PROJECT_ROOTS) {
     const trees = projectSkillTrees(r);
     out[`trees:${r}`] = JSON.stringify(trees);
@@ -332,10 +368,10 @@ export function compareRealHomes(before, after) {
 
 const hashedCount = (snap) => Object.keys(snap).filter((k) => !/^(raw|meta|names|trees|slugs|context):/.test(k)).length;
 const CONTENT_LABEL = (n) => `${n} entries (files by sha256, directories by presence) under ~/.agent-config-studio, ` +
-  '~/.claude/{skills,hooks,agents,commands,skills_retired}, ~/.codex/{skills,rules}, ~/.agents, ~/.config/worktree, every project skill ' +
+  '~/.claude/{skills,hooks,agents,commands,skills_retired}, ~/.codex/{skills,rules}, ~/.agents, ~/.config/worktree (links followed), every project skill ' +
   'tree and the loose files atop both project roots, every ~/.claude/projects slug directory and its memory/ tree, every CLAUDE.md / AGENTS.md / ' +
   '.cursor rule under ~/Documents/Projects and ~/Documents/Garman-Homes, plus the files ACS edits (~/.claude settings, CLAUDE.md, *-config.json; ~/.codex ' +
-  'config.toml, AGENTS.md; ~/.grok AGENTS.md; ~/.zshenv) and the CLI catalogs, are byte-identical (sha256)';
+  'config.toml, AGENTS.md; ~/.grok AGENTS.md; ~/.zshenv; ~/.zshrc, through a link) and the CLI catalogs, are byte-identical (sha256)';
 const NAMES_LABEL = '~/.claude, ~/.codex, ~/.grok, and ~/.codex-seats, ~/Documents/Projects and ~/Documents/Garman-Homes two levels deep: ' +
   'entry names unchanged (contents not compared)';
 
