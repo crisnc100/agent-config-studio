@@ -57,7 +57,7 @@ fs.symlinkSync(path.join(fakeHome, '.ssh', 'id_garman'), path.join(gMain, 'ext',
 
 const { buildRegistry } = await import('../lib/registry.js');
 const history = await import('../lib/history.js');
-const { contextMap, outlineOf } = await import('../lib/context-map.js');
+const { contextMap, contextFile, outlineOf } = await import('../lib/context-map.js');
 
 const strip = (r) => JSON.stringify(r.groups);
 const registryBefore = strip(buildRegistry());
@@ -182,6 +182,26 @@ ok('G2 the history inventory is unchanged: nothing from Garman-Homes is mirrored
    && !registryBefore.includes('Garman-Homes'));
 ok('C9 …and the worktree copy the view collapsed is still mirrored as its own file',
    mirrored(path.join(fx.wt, 'CLAUDE.md')) && mirrored(path.join(fx.alpha, 'CLAUDE.md')));
+
+// Grade round 1 — each reproduced before its fix.
+{
+  const cm = await import('../lib/context-map.js');
+  // X1: a context file swapped for a transcript link between validation and the read.
+  const victim = path.join(gMain, 'CLAUDE.md');
+  const transcript = path.join(fx.alphaSlug, 'session-2', 'subagents', 'agent-x.jsonl');
+  const m1 = await contextMap();
+  const gv = m1.groups.find((g) => g.label === 'client-app').scopes.find((x) => x.scope === 'CLAUDE.md').variants.find((v) => v.trunk);
+  cm._setContextReadHook((real) => {
+    if (real === victim) { fs.renameSync(victim, `${victim}.orig`); fs.symlinkSync(transcript, victim); }
+  });
+  let served = null, err = null;
+  try { served = (await contextFile(gv.id)).content; } catch (e) { err = e; }
+  cm._setContextReadHook(null);
+  ok('X1 a file swapped for a transcript link after validation is refused, never served',
+     served === null && err && !String(err.message).includes('toolu_'), served ? served.slice(0, 80) : String(err?.message));
+  fs.unlinkSync(victim); fs.renameSync(`${victim}.orig`, victim);
+
+}
 
 // G4: the real-home tripwire sha-covers Garman context files, like Projects.
 {
