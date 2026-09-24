@@ -43,8 +43,15 @@ fs.mkdirSync(notProject);
 fs.writeFileSync(path.join(repos, 'broken.conf'), `CMD=\nTRUNK="${notProject}"\n`);
 const slow = path.join(sb.root, 'slow-trunk');
 fs.mkdirSync(slow);
-fs.writeFileSync(path.join(slow, '.worktrees.conf'), `sleep 5\nTRUNK="${slow}"\nROOT="${sb.root}"\n`);
+fs.writeFileSync(path.join(slow, '.worktrees.conf'), `sleep 30\nTRUNK="${slow}"\nROOT="${sb.root}"\n`);
 fs.writeFileSync(path.join(repos, 'slow.conf'), `CMD=\nTRUNK="${slow}"\n`);
+
+// A prefixless registration whose trunk path has a space, under $HOME (so its
+// display form starts with ~): the command it shows must run as printed.
+const spaced = path.join(sb.home, 'My Projects', 'app trunk');
+fs.mkdirSync(path.dirname(spaced), { recursive: true });
+fs.symlinkSync(p.trunk, spaced);
+fs.writeFileSync(path.join(repos, 'spaced.conf'), `CMD=\nTRUNK="${spaced}"\n`);
 
 const freePort = () => new Promise((resolve, reject) => {
   const s = net.createServer();
@@ -55,7 +62,7 @@ async function start(extraEnv) {
   const port = await freePort();
   const base = `http://localhost:${port}`;
   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
-    cwd: ROOT, env: { ...sb.env, PORT: String(port), ACS_WORKTREE_STATUS_MS: '2500', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: ROOT, env: { ...sb.env, PORT: String(port), ACS_WORKTREE_STATUS_MS: '6000', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';
   child.stdout.on('data', (d) => { log += d; });
@@ -95,7 +102,15 @@ const elapsed = Date.now() - t0;
 const proj = (k) => all.json?.projects?.find((x) => x.key === k);
 const app = proj('app');
 const row = (name) => app?.worktrees?.find((w) => w.name === `app-${name}`);
-ok('11 GET /api/worktree returns every registered project', all.status === 200 && ['app', 'broken', 'slow'].every((k) => proj(k)), all.text.slice(0, 400));
+ok('11 GET /api/worktree returns every registered project', all.status === 200 && ['app', 'broken', 'slow', 'spaced'].every((k) => proj(k)), all.text.slice(0, 400));
+const spacedCmd = proj('spaced')?.worktrees?.find((w) => w.name === 'app-finished')?.removeCmd;
+const cdPart = spacedCmd?.replace(/ && wclean --remove$/, ' && pwd -P');
+const cdRun = cdPart ? spawnSync('/bin/sh', ['-c', cdPart], { env: sb.env, encoding: 'utf8' }) : null;
+ok('G8 a prefixless command is built from the absolute trunk, shell-quoted, and runs as shown',
+   typeof spacedCmd === 'string' && spacedCmd.endsWith(' && wclean --remove') && !spacedCmd.includes('~') &&
+   cdRun?.status === 0 && cdRun.stdout.trim() === fs.realpathSync(p.trunk), `${spacedCmd} → ${cdRun?.stdout}${cdRun?.stderr}`);
+ok('G9 the panel\'s toolkit calls run with GIT_OPTIONAL_LOCKS=0', sb.ghCalls().length > 0 && sb.ghCalls().every((c) => c.GIT_OPTIONAL_LOCKS === '0'),
+   JSON.stringify(sb.ghCalls().map((c) => c.GIT_OPTIONAL_LOCKS)));
 ok('11 a project reads ok, with its base and notes', app?.status === 'ok' && app.base === 'origin/main' &&
    app.notes.some((n) => n.startsWith('not fetched')), JSON.stringify(app).slice(0, 400));
 ok('11 each worktree carries its branch', row('finished')?.branch === 'finished' && row('wip')?.branch === 'wip' &&
@@ -114,7 +129,7 @@ ok('11 no fetch from a GET: the toolkit ran with --no-fetch', ran.some((l) => / 
 ok('11 a trunk that is not a project → that project is unknown, with the reason', proj('broken')?.status === 'unknown' &&
    /no \.worktrees\.conf/.test(proj('broken').error), JSON.stringify(proj('broken')));
 ok('11 a toolkit call that hangs → unknown, timed out; the others still answer', proj('slow')?.status === 'unknown' &&
-   proj('slow').error === 'timed out after 2.5s' && app?.status === 'ok' && elapsed < 10000, `${JSON.stringify(proj('slow'))} in ${elapsed}ms`);
+   proj('slow').error === 'timed out after 6s' && app?.status === 'ok' && elapsed < 15000, `${JSON.stringify(proj('slow'))} in ${elapsed}ms`);
 
 const one = await call('/api/worktree?project=app');
 ok('11 ?project=<key> narrows to that one', one.status === 200 && one.json.projects.length === 1 && one.json.projects[0].key === 'app');
@@ -132,7 +147,7 @@ for (const [label, headers] of [['a foreign Origin', { origin: 'http://evil.exam
 ok('11 …and the refused requests ran no toolkit (no gh, no worktree git)', sb.ghCalls().length === ghBefore && toolkitGit(gitBefore).length === 0, toolkitGit(gitBefore).join('; '));
 const quick = await call('/api/worktree?status=0', { headers: { origin: 'http://evil.example' } });
 ok('11 status=0 (the register form) lists without running the toolkit', quick.status === 200 && quick.json.projects === undefined &&
-   quick.json.registered.length === 3 && sb.ghCalls().length === ghBefore);
+   quick.json.registered.length === 4 && sb.ghCalls().length === ghBefore);
 
 ok('11 no response ever carried an env value', bodies.every((b) => !b.includes(p.secret) && !b.includes('API_KEY')), bodies.find((b) => b.includes(p.secret))?.slice(0, 300));
 
