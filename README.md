@@ -7,6 +7,7 @@ config surface on this machine — in one place, rendered properly.
 acs          # start it and open the browser
 acs stop     # shut it down
 acs install-model-id   # put the model resolver on PATH (see Model registry)
+acs install-worktree   # optional: the worktree toolkit (see Optional: worktree tools)
 ```
 
 Then: <http://localhost:8787>
@@ -240,6 +241,78 @@ Until it has run, skills fail loudly rather than silently: every skill shell lin
 reads `"$(model-id x || echo MODEL-ID-UNRESOLVED-x)"`, and the scripts do the same,
 so a CLI is handed an id it rejects, never an empty `-m ""` that falls through to
 its own default model.
+
+## Optional: worktree tools
+
+`tools/worktree/wt.zsh` is a zsh toolkit for parallel git worktrees: each
+project gets a *trunk* (a checkout parked on its base branch, holding the env
+files), and worktrees are cut from the latest base beside it.
+
+```
+./bin/acs install-worktree [--dry-run] [--replace-defaults]
+```
+
+copies `wt.zsh` and `defaults.conf` into `~/.config/worktree` (`$WT_HOME`) and
+adds one marked `source` stanza to `~/.zshrc` (`$ZDOTDIR/.zshrc` when set) —
+unless an uncommented line there already sources a `wt.zsh`. A file that differs
+is backed up to `~/.agent-config-studio/backups/<ts>/` first; if the backup fails,
+nothing is written. A `defaults.conf` that differs is treated as yours and kept
+without `--replace-defaults`. `repos/` is never touched. Re-run after a pull: the
+installed copy does not follow the checkout.
+
+Then, once per repository: `wtinit` (or `wtinit --cmd k` for `knew`, `kls`, … from
+any directory; `wtinit --register --cmd k` adds a prefix to a project configured
+earlier).
+
+| Command | What it does |
+|---|---|
+| `wnew <name>` | fresh worktree off the latest base, env files linked, a port claimed, then `cd` in |
+| `wls` | every worktree: branch, port, uncommitted count, env (`--json` for tools) |
+| `wgo <name>` / `wtrunk` | `cd` to a worktree / the trunk |
+| `wenv` | relink this worktree's env files that are links or missing |
+| `wenv --status` | each env file's state here |
+| `wenv --detach <f>` / `wenv --link <f> [--force]` | keep a private copy / go back to the trunk's |
+| `wenv --link-all [--dry-run]` | migrate every worktree: identical copies become links, the rest are listed |
+| `wenv --to-trunk [<dir>]` | seed the trunk's env files from a checkout that already runs |
+| `wclean` | every worktree, `done` or why not (`--json`, `--no-fetch`) |
+| `wclean --remove` | ask once, re-check each, remove the done ones and their branches |
+| `wdev`, `wrm <name>`, `wtreg` | dev server on the claimed port, remove one, list registered prefixes |
+
+**The env model.** Each `ENV_FILES` entry in a worktree is a symlink to the trunk's
+file, so a secret is changed once, in the trunk. An entry is refused by name — and
+nothing is created for it — when it is absolute, has a `..` or whitespace, sits
+under a directory that resolves outside the checkout, or is tracked or not
+ignored by git there (a committed link would carry this Mac's path). A worktree
+that needs its own value runs `wenv --detach <f>`: a real copy, recorded in
+`.worktree-detached`, that no relink touches. Existing worktrees keep their copies
+until `wenv --link-all` converts the ones identical to trunk; a differing one is
+listed as `stale-or-override` with both ways to resolve it. No command prints a
+file's contents.
+
+- **Running dev servers** (Next.js, Vite) read env at startup: restart after
+  changing the trunk's env.
+- **Docker:** a build context or a container mount of only the worktree cannot
+  follow a link into the trunk. `wenv --detach` those files for container workflows.
+- **direnv:** `.envrc` can be an entry. `wnew` runs `direnv allow` once for a new
+  worktree and says so if it fails. Editing the shared `.envrc` blocks it everywhere
+  until each worktree is allowed again — relinking never re-allows — and `wls` shows
+  `envrc:blocked`.
+
+**What `done` means.** `wclean` calls a worktree done only when every check passes,
+and a check that cannot run makes it unknown, never done: it is not the trunk, the
+primary checkout, or where you are standing, and is not locked, detached or
+mid-rebase, and has no submodules; the exact commit it sits on is an ancestor of
+the base, or is the head of a merged PR from origin's owner into the base's branch
+(asked of `gh`; without `gh`, only ancestors count, and it says so); the tree is
+clean, untracked files included; and every env file is a link to trunk, absent, or
+identical to trunk. `--remove` re-runs all of that just before each removal, never
+uses `--force`, and deletes a branch only if its tip is still the merged commit.
+Ignored files other than env files (`node_modules`, build output) are removed with
+the worktree.
+
+The **Worktrees** button in the studio shows the same per project — env summary and
+done or why not, from `wls --json` and `wclean --json --no-fetch` — read-only. A
+done row shows the command to run.
 
 ## Shortcuts
 

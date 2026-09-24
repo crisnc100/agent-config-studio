@@ -101,6 +101,7 @@ async function boot() {
   if (location.hash.startsWith('#mcp')) return openMcp();
   if (location.hash.startsWith('#usage')) return openUsage();
   if (location.hash.startsWith('#trash')) return openTrash();
+  if (location.hash.startsWith('#worktrees')) return openWorktrees();
   if (location.hash.startsWith('#skills')) return openSkills();
   if (location.hash.startsWith('#models')) return openModels();
   if (location.hash.startsWith('#memory')) return openMemory();
@@ -245,6 +246,9 @@ function renderTopbar() {
   } else if (S.view === 'models') {
     t.textContent = 'Models';
     $('title-path').textContent = 'Every model family, its current id, and what the CLIs offer';
+  } else if (S.view === 'worktrees') {
+    t.textContent = 'Worktrees';
+    $('title-path').textContent = 'Every registered project’s worktrees — env, and which are provably done';
   } else if (S.view === 'trash') {
     t.textContent = 'Trash';
     $('title-path').textContent = 'Deleted items — restorable';
@@ -347,6 +351,7 @@ function renderContent() {
   if (S.view === 'mcp') return;            // rendered directly by openMcp
   if (S.view === 'usage') return;          // rendered directly by openUsage
   if (S.view === 'trash') return;          // rendered directly by openTrash
+  if (S.view === 'worktrees') return;      // rendered directly by openWorktrees
   if (S.view === 'models') return;         // rendered directly by openModels
   if (S.view === 'memory') return;         // rendered directly by openMemory
   if (S.view === 'context') return;        // rendered directly by openContext
@@ -873,7 +878,7 @@ async function createInGroup(group) {
 async function openWorktreeForm() {
   let data;
   try {
-    data = await api('GET', '/api/worktree');
+    data = await api('GET', '/api/worktree?status=0');
   } catch (e) {
     return notice('error', e.message, null, true);
   }
@@ -1097,6 +1102,79 @@ function deleteOpenEntry() {
     path: e.kindLabel === 'skill' ? e.dir : target,
     label: e.label, isWhole: true, protectedEntry: e.protected,
   });
+}
+
+/* ── worktrees view ──────────────────────────────────────────────────── */
+
+/**
+ * Read-only on purpose. The verdicts come from the toolkit's own `wclean
+ * --json`, and removal stays in the terminal: a done row shows the command
+ * to run, never a button. `wclean --remove` re-checks every worktree right
+ * before removing it, which a click here could not promise.
+ */
+async function openWorktrees() {
+  if (!confirmDiscard()) return;
+  S.view = 'worktrees';
+  S.entry = null;
+  window.history.replaceState(null, '', '#worktrees');
+  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
+  $('filebar').hidden = true;
+
+  const c = $('content');
+  c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span> Asking the toolkit…</div></div>';
+  let data;
+  try {
+    data = await api('GET', '/api/worktree');
+  } catch (e) {
+    c.innerHTML = '';
+    return notice('error', e.message, null, true);
+  }
+  if (S.view !== 'worktrees') return;
+  c.innerHTML = '';
+  const box = el('div', 'scope');
+  box.appendChild(el('h2', null, 'Worktrees'));
+  box.appendChild(el('div', 'scope-sub',
+    'Env shows how each worktree gets its env files: linked to the trunk, or a copy. Done means the exact commit was merged, '
+    + 'nothing is uncommitted, and no env file holds anything the trunk lacks. Merge status is against the last fetch.'));
+  if (!data.projects?.length) {
+    box.appendChild(el('div', 'scope-sub', 'No registered projects. Register one with + on Worktrees in the sidebar.'));
+    c.appendChild(box);
+    return;
+  }
+  for (const p of data.projects) {
+    const head = el('div', 'wt-proj');
+    head.appendChild(el('h3', null, p.key));
+    head.appendChild(el('span', 'scope-note', `${p.display}${p.base ? ` · off ${p.base}` : ''}${p.cmd ? ` · ${p.cmd}new / ${p.cmd}ls` : ''}`));
+    box.appendChild(head);
+    if (p.status !== 'ok') {
+      box.appendChild(el('div', 'scope-note wt-unknown', `unknown — ${p.error}`));
+      continue;
+    }
+    for (const n of p.notes) box.appendChild(el('div', 'scope-note', n));
+    for (const w of p.worktrees) {
+      const row = el('div', 'scope-item');
+      const done = w.verdict.status === 'done';
+      row.appendChild(el('div', `scope-rank wt-${w.trunk ? 'trunk' : w.verdict.status}`,
+        w.trunk ? 'TRUNK' : done ? 'DONE' : w.verdict.status === 'unknown' ? '?' : '—'));
+      const body = el('div', 'scope-body');
+      body.appendChild(el('div', 'scope-path', `${w.name}  [${w.branch || 'detached'}]`));
+      const bits = [`env: ${w.env}`];
+      if (w.envrc === 'blocked') bits.push('envrc: blocked');
+      if (w.dirty) bits.push(`${w.dirty} uncommitted`);
+      if (w.port) bits.push(`port ${w.port}`);
+      if (w.offBook) bits.push('off-book');
+      body.appendChild(el('div', 'scope-note', bits.join(' · ')));
+      if (!w.trunk) body.appendChild(el('div', 'scope-note', done ? `done — ${w.verdict.via}` : w.verdict.reason));
+      if (w.removeCmd) {
+        const cmd = el('code', 'wt-cmd', w.removeCmd);
+        cmd.title = 'Run this in a terminal — it asks once, and re-checks each worktree before removing it';
+        body.appendChild(cmd);
+      }
+      row.appendChild(body);
+      box.appendChild(row);
+    }
+  }
+  c.appendChild(box);
 }
 
 /* ── trash view ──────────────────────────────────────────────────────── */
@@ -3793,6 +3871,7 @@ $('btn-scope').onclick = openScope;
 $('btn-mcp').onclick = openMcp;
 $('btn-usage').onclick = openUsage;
 $('btn-trash').onclick = openTrash;
+$('btn-worktrees').onclick = openWorktrees;
 $('btn-skills').onclick = openSkills;
 $('btn-models').onclick = openModels;
 $('btn-memory').onclick = openMemory;

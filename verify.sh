@@ -43,4 +43,8 @@ node tests/models-backup.mjs
 node tests/models-panel.mjs
 node tests/memory.mjs
 node tests/context-map.mjs
+# The worktree toolkit, its installer and the read-only panel: temp HOME, temp repos.
+node tests/worktree-install.mjs
+node tests/worktree-tools.mjs
+node tests/worktree-panel.mjs
 node tests/own-writes.mjs

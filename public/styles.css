@@ -582,6 +582,16 @@ a { color: var(--accent); }
   background: var(--bg); border: 1px solid var(--border-soft); border-radius: 6px;
 }
 .wt-actions { margin-top: 18px; display: flex; justify-content: flex-end; gap: 8px; }
+.wt-proj { display: flex; align-items: baseline; gap: 10px; margin: 22px 0 8px; }
+.wt-proj h3 { margin: 0; font-size: 14px; }
+.scope-rank.wt-done, .scope-rank.wt-trunk { width: auto; padding: 0 6px; }
+.scope-rank.wt-done { color: var(--green); }
+.wt-unknown { margin-bottom: 8px; }
+.wt-cmd {
+  display: inline-block; margin-top: 6px; padding: 3px 7px; font: 11.5px var(--mono);
+  color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px;
+  user-select: all;
+}
 
 /* ── Usage gauge ─────────────────────────────────────────────────────────
    Meant to be left open, so it reads at a glance rather than rewarding study.

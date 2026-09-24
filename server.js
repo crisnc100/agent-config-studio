@@ -920,10 +920,18 @@ export function createApp(opts = {}) {
 
   'POST /api/snapshot': async () => history.snapshotAll('manual snapshot'),
 
-  'GET /api/worktree': async () => ({
-    registered: worktree.listRegistered(),
-    candidates: await worktree.listCandidates(),
-  }),
+  // `projects` runs the toolkit per registered project (zsh, git, gh), so it
+  // takes the strict origin check a GET download does: a cross-site <img>
+  // must not be able to set those off. `status=0` is the register form's
+  // quick read; `project=<key>` narrows to one, validated against repos/.
+  'GET /api/worktree': async (req, url) => {
+    const out = { registered: worktree.listRegistered(), candidates: await worktree.listCandidates() };
+    if (url.searchParams.get('status') === '0') return out;
+    if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
+    const one = url.searchParams.get('project');
+    out.projects = one === null ? await worktree.allProjectStatus() : [await worktree.projectStatus(one)];
+    return out;
+  },
   'GET /api/worktree/bases': async (_req, url) =>
     worktree.listBases(url.searchParams.get('repo') || ''),
   'POST /api/worktree/init': async (req) => {
