@@ -793,6 +793,21 @@ if (DIRENV) {
     ok(`H2 a symlink at the ledger's temp name (to ${label}) is refused, and nothing is written through it`,
        r.code !== 0 && check() && isLink(path.join(hl, '.env')) && !exists(path.join(hl, '.worktree-detached')), r.out);
   }
+  // H3: a write that fails after its redirection created the temp file (here
+  // `print` fails — nothing else on the detach path calls it) cleans up that
+  // temp, so a retry in the same shell — same temp name — works instead of
+  // being refused forever.
+  fs.rmSync(path.join(hl, '.worktree-detached'), { force: true });
+  if (!isLink(path.join(hl, '.env'))) sb.zsh(hl, 'wenv --link --force .env');
+  r = sb.zsh(hl, `( print() { return 1; }; wenv --detach .env ); first=$?
+    leftover=$(ls -A "$PWD" | grep -c 'wt-tmp' || true)
+    wenv --detach .env; second=$?
+    print -r -- "first=$first leftover=$leftover second=$second"`);
+  ok('H3 a failed ledger write removes the temp file it created, and a retry succeeds',
+     /first=[1-9]\d* leftover=0 second=0/.test(r.out) && !isLink(path.join(hl, '.env')) &&
+     fs.readFileSync(path.join(hl, '.worktree-detached'), 'utf8') === '.env\n' &&
+     !fs.readdirSync(hl).some((n) => n.includes('wt-tmp')), r.out);
+
   fs.rmSync(path.join(hl, '.worktree-detached'), { force: true });
   if (!isLink(path.join(hl, '.env'))) sb.zsh(hl, 'wenv --link --force .env');
   r = sb.zsh(hl, 'wenv --detach .env');

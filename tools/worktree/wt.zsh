@@ -222,12 +222,14 @@ _wt_ledger_write() {
     echo "wenv: ${tmp:t} already exists — not writing through it"
     return 1
   fi
-  if ( setopt no_clobber; print -rl -- "$@" > "$tmp" ) 2>/dev/null; then
-    if [[ -f "$tmp" && ! -L "$tmp" ]] && mv -f -- "$tmp" "$l" 2>/dev/null; then
-      return 0
-    fi
-    [[ -f "$tmp" && ! -L "$tmp" ]] && rm -f -- "$tmp" 2>/dev/null
+  if ( setopt no_clobber; print -rl -- "$@" > "$tmp" ) 2>/dev/null &&
+      [[ -f "$tmp" && ! -L "$tmp" ]] && mv -f -- "$tmp" "$l" 2>/dev/null; then
+    return 0
   fi
+  # Nothing was at this name before, so a plain file there now is the one this
+  # call created — removed even when the write itself failed, or every retry
+  # from this shell would be refused. A link that appeared meanwhile is not ours.
+  [[ -f "$tmp" && ! -L "$tmp" ]] && rm -f -- "$tmp" 2>/dev/null
   return 1
 }
 
