@@ -179,6 +179,25 @@ console.log('\nworktree/install');
   ok('1 an unknown flag is refused, and still no server', bad.code === 2 && !bad.out.includes('starting') && !(await listening(t.env.ACS_PORT)), bad.out);
 }
 
+// G7: a WT_HOME whose path holds shell syntax stays a literal path in the stanza.
+if (ZSH) {
+  const nasty = 'wt $HOSTNAME `touch PWNED` $(touch PWNED2) "dq" \'sq\' back\\slash';
+  for (const [where, under] of [['under $HOME', true], ['outside $HOME', false]]) {
+    const t = home();
+    const wtHome = under ? path.join(t.h, 'cfg', nasty) : path.join(tmp, `out${n}`, nasty);
+    const env = { ...t.env, WT_HOME: wtHome };
+    const run = (...a) => spawnSync('/bin/sh', [ACS, 'install-worktree', ...a], { env, encoding: 'utf8', timeout: 30000 });
+    const r = run();
+    const z = spawnSync(ZSH, ['-f', '-c', `source ${JSON.stringify(t.rc)}; whence -w wnew`], { cwd: t.h, env, encoding: 'utf8' });
+    const pwned = ['PWNED', 'PWNED2'].some((f) => fs.existsSync(path.join(t.h, f)) || fs.existsSync(path.join(ROOT, f)));
+    ok(`G7 a WT_HOME ${where} containing $, backticks, $(), " and ' installs and sources as a literal path`,
+       r.status === 0 && fs.readFileSync(path.join(wtHome, 'wt.zsh')).equals(OURS['wt.zsh']) && z.stdout.includes('wnew: function') && !pwned,
+       `${r.stdout}${r.stderr} | ${z.stdout}${z.stderr} | pwned=${pwned}`);
+    ok(`G7 …and ${where} a second run recognises its own stanza`, run().stdout.includes('already sources wt.zsh'), read(t.rc));
+    if (under) ok('G7 …with $HOME the only expansion left in it', /^\[ -f "\$HOME"'\/cfg\/wt \$HOSTNAME/m.test(read(t.rc)), read(t.rc));
+  }
+}
+
 // The first commit of tools/worktree/wt.zsh is the live file, byte for byte.
 {
   const git = (...a) => spawnSync('git', ['-C', ROOT, ...a], { encoding: 'buffer' });

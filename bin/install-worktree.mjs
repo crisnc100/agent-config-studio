@@ -46,6 +46,9 @@ const target = (p) => { try { return fs.realpathSync(p); } catch { return p; } }
 /** Any uncommented line that sources a wt.zsh — the guarded `[ -f … ] && source …` form included. */
 function sourcesToolkit(text) {
   const lines = text.split('\n');
+  // Our own stanza, whatever its quoting: the line after the marker.
+  const own = lines.findIndex((l) => l.trim() === MARK_BEGIN);
+  if (own >= 0 && lines[own + 1] && !lines[own + 1].trim().startsWith('#') && /\bsource\b.*wt\.zsh/.test(lines[own + 1])) return own + 2;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line || line.startsWith('#')) continue;
@@ -55,11 +58,18 @@ function sourcesToolkit(text) {
   return 0;
 }
 
-/** $WT_HOME/wt.zsh as the stanza names it: under $HOME when it is, so the line survives a moved home. */
+/** `s` as one single-quoted shell word: nothing inside it expands. */
+const sq = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * $WT_HOME/wt.zsh as the stanza names it. Under $HOME it is `"$HOME"'<rest>'`,
+ * so the line survives a moved home and $HOME is the ONLY expansion; the rest
+ * is single-quoted, so a path holding $, backticks or quotes stays a path.
+ */
 function stanza() {
   const lib = path.join(WT_HOME, 'wt.zsh');
-  const shown = lib.startsWith(HOME + path.sep) ? `$HOME${lib.slice(HOME.length)}` : lib;
-  return `${MARK_BEGIN}\n[ -f "${shown}" ] && source "${shown}"\n${MARK_END}\n`;
+  const shown = lib.startsWith(HOME + path.sep) ? `"$HOME"${sq(lib.slice(HOME.length))}` : sq(lib);
+  return `${MARK_BEGIN}\n[ -f ${shown} ] && source ${shown}\n${MARK_END}\n`;
 }
 
 const plan = [];   // { name, dest, ours, action, backup }
