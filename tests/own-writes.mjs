@@ -137,7 +137,11 @@ const r1 = await ops.restore(p1.opId);
   const file = await (await fetch(`${B}/api/file?path=${encodeURIComponent(f)}`)).json();
   const content = file.content + 'saved in the editor\n';
   const put = await fetch(`${B}/api/file`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: f, content, mtime: file.mtime }) });
-  ok('an editor save is tagged studio', put.ok && isStudio(tag({ changed: [f] }), 'changed', f));
+  // The condition is unchanged; the detail only explains a failure.
+  const putBody = await put.text().catch((e) => `<unreadable: ${e.message}>`);
+  const saved = tag({ changed: [f] });
+  ok('an editor save is tagged studio', put.ok && isStudio(saved, 'changed', f),
+     `PUT ${put.status} ${putBody.slice(0, 300)} · tagOrigin ${JSON.stringify(saved)}`);
   fs.appendFileSync(f, 'then someone else\n');
   ok('…and the next outside edit of it is not', isOutside(tag({ changed: [f] }), 'changed', f));
   server.close();

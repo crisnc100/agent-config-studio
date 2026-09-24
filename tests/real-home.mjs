@@ -21,7 +21,8 @@
  *    ~/.claude/projects/<slug>/memory tree, with each slug directory recorded
  *    by presence — the Memory view trashes empty slugs, indexes and facts —
  *    and every CLAUDE.md / AGENTS.md / .cursor/rules/*.mdc under
- *    ~/Documents/Projects, found the way lib/context-map.js finds them.
+ *    ~/Documents/Projects and ~/Documents/Garman-Homes, found the way
+ *    lib/context-map.js finds them.
  *    Transcripts beside the memory trees are not hashed: live sessions append
  *    to them. Anything that appears, disappears or changes there fails — with
  *    ONE exemption: a new slug named exactly like the two temp directories
@@ -221,9 +222,12 @@ export function snapshotRealHomes() {
     out[dir] = 'dir';
     walk(path.join(dir, 'memory'));
   }
-  const ctx = contextFiles(PROJECT_ROOTS[0]);
-  out[`context:${PROJECT_ROOTS[0]}`] = JSON.stringify(ctx);
-  for (const f of ctx) walk(f);
+  // Both roots lib/context-map.js reads: Projects, and Garman-Homes (read-only there).
+  for (const r of PROJECT_ROOTS) {
+    const ctx = contextFiles(r);
+    out[`context:${r}`] = JSON.stringify(ctx);
+    for (const f of ctx) walk(f);
+  }
   const nameSet = (r) => {
     let names = null;
     try { names = fs.readdirSync(r).filter((n) => !TRANSIENT.test(n)).sort(); } catch {}
@@ -273,14 +277,14 @@ export function compareRealHomes(before, after) {
   const appeared = [];
   const list = (snap, key) => new Set(JSON.parse(snap[key] || '[]'));
   const slugKey = `slugs:${MEMORY_PROJECTS}`;
-  const ctxKey = `context:${PROJECT_ROOTS[0]}`;
+  const ctxKeys = new Set(PROJECT_ROOTS.map((r) => `context:${r}`));
   const beforeSlugs = list(before, slugKey);
   const probes = new Set([...list(after, slugKey)].filter((x) => !beforeSlugs.has(x) && isLiveSuiteProbeSlug(x)));
   if (probes.size) appeared.push(`${probes.size} new phase1 probe slug${probes.size === 1 ? '' : 's'} (live Claude sessions in its temp dirs): ${[...probes].slice(0, 3).join(', ')}`);
   for (const k of new Set([...Object.keys(before), ...Object.keys(after)])) {
     if (k.startsWith('meta:')) continue;
     // The lists themselves: every entry in them is its own key, compared below.
-    if (k === slugKey || k === ctxKey) continue;
+    if (k === slugKey || ctxKeys.has(k)) continue;
     // A probe slug is exempt only as what the live run leaves: the slug
     // folder and an EMPTY memory/ inside it (its transcripts are never
     // walked). Any entry under memory/, or either one being anything but a
@@ -330,7 +334,7 @@ const hashedCount = (snap) => Object.keys(snap).filter((k) => !/^(raw|meta|names
 const CONTENT_LABEL = (n) => `${n} entries (files by sha256, directories by presence) under ~/.agent-config-studio, ` +
   '~/.claude/{skills,hooks,agents,commands,skills_retired}, ~/.codex/{skills,rules}, ~/.agents, ~/.config/worktree, every project skill ' +
   'tree and the loose files atop both project roots, every ~/.claude/projects slug directory and its memory/ tree, every CLAUDE.md / AGENTS.md / ' +
-  '.cursor rule under ~/Documents/Projects, plus the files ACS edits (~/.claude settings, CLAUDE.md, *-config.json; ~/.codex ' +
+  '.cursor rule under ~/Documents/Projects and ~/Documents/Garman-Homes, plus the files ACS edits (~/.claude settings, CLAUDE.md, *-config.json; ~/.codex ' +
   'config.toml, AGENTS.md; ~/.grok AGENTS.md; ~/.zshenv) and the CLI catalogs, are byte-identical (sha256)';
 const NAMES_LABEL = '~/.claude, ~/.codex, ~/.grok, and ~/.codex-seats, ~/Documents/Projects and ~/Documents/Garman-Homes two levels deep: ' +
   'entry names unchanged (contents not compared)';
