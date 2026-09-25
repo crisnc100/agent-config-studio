@@ -130,6 +130,20 @@ const CLEAN = {
     const m = run(`attentionModel({ ...clean, worktrees: { state: 'ok', data: { projects: [{ key: 'app', status: 'unknown', error: 'x' }] } } })`);
     return m.clear === false && /status unknown for app/.test(m.partial[0].text);
   })());
+  ok('G1 Models answering with registryError is a partial source: no empty state, and it is said', (() => {
+    const m = run(`attentionModel({ ...clean, models: { state: 'ok', data: { ...clean.models.data, registryError: 'Unexpected token } in models.json' } } })`);
+    return m.clear === false && m.partial.some((x) => x.id === 'models' && /registry file is invalid/.test(x.text));
+  })());
+  ok('G1 a catalog that failed to load is a partial source', (() => {
+    const m = run(`attentionModel({ ...clean, models: { state: 'ok', data: { ...clean.models.data, catalogs: [
+      { label: 'Claude', ok: true, note: null }, { label: 'Grok', ok: false, note: 'Grok catalog could not be read (EACCES)' }] } } })`);
+    return m.clear === false && m.partial.some((x) => x.id === 'models' && /Grok catalog could not be read/.test(x.text));
+  })());
+  ok('G1 Context with unreadable files is a partial source', (() => {
+    const m = run(`attentionModel({ ...clean, context: { state: 'ok', data: { ...clean.context.data, unreadable: [{ display: '~/p/CLAUDE.md', reason: 'EACCES' }] } } })`);
+    return m.clear === false && m.partial.some((x) => x.id === 'context' && /1 instruction file could not be read/.test(x.text));
+  })());
+  ok('G1 …while healthy catalogs and no unreadable files still allow the empty state', run(`attentionModel({ ...clean, models: { state: 'ok', data: { ...clean.models.data, catalogs: [{ label: 'Claude', ok: true, note: null }] } } })`).clear === true);
   ok('10 …a source never asked is loading, not clear', run('attentionModel({})').clear === false && run('attentionModel({})').loading.length === 4);
 
   ctx.harn = { harnesses: [{ id: 'claude', label: 'Claude', models: [{}, {}] }] };
@@ -311,6 +325,47 @@ const homeRoutes = (over = {}) => routesFor({
   await settle(20);
   ok('10 …and not when one source failed', !/Nothing needs you/.test(p.text(card(oneDown, 'attention'))) && /Context unavailable: walk failed/.test(p.text(card(oneDown, 'attention'))));
   ok('10 the Models badge follows /api/models', p.text(p.$('btn-models').querySelector('.nav-badge')) === '3');
+}
+
+// ── Grade fixes (PR B) ─────────────────────────────────────────────────────
+const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.entries(CLEAN).map(([k, v]) => [`GET /api/${k === 'worktrees' ? 'worktree' : k}`, () => v])), ...over });
+{
+  const p = await boot({ routes: cleanRoutes({ 'GET /api/models': () => ({ ...CLEAN.models, registryError: 'bad models.json' }) }) });
+  await settle(20);
+  ok('G1 page: a Models registryError keeps "Nothing needs you" away and says why',
+     !/Nothing needs you/.test(p.text(card(p, 'attention'))) && /registry file is invalid/.test(p.text(card(p, 'attention'))));
+  const q = await boot({ routes: cleanRoutes({ 'GET /api/context': () => ({ ...CONTEXT, unreadable: [{ display: '~/p/CLAUDE.md', reason: 'EACCES' }] }) }) });
+  await settle(20);
+  ok('G1 page: unreadable context files keep it away too', !/Nothing needs you/.test(p.text(card(q, 'attention'))) && /could not be read/.test(p.text(card(q, 'attention'))));
+}
+{
+  const p = await boot({ routes: homeRoutes({ 'GET /api/registry': () => { throw { status: 500, body: { error: 'registry exploded' } }; } }) });
+  await settle(20);
+  ok('G7 a failed registry shows history unavailable on Recent, not a spinner',
+     /History unavailable: registry exploded/.test(p.text(card(p, 'recent'))) && !/Reading history/.test(p.text(card(p, 'recent'))));
+  ok('G8 …and all-cards-loaded is still recorded (the card has its answer)', typeof p.eval('HOME.timing.settled') === 'number');
+  p.$('btn-files').click();
+  await settle(5);
+  ok('G7 …and the Files page says the file list is unavailable, not loading', /file list is unavailable: registry exploded/i.test(p.text(p.$('content')))
+     && !/Loading files/.test(p.text(p.$('content'))) && !!p.$('search'));
+}
+{
+  const reg = deferred();
+  const p = await boot({ routes: homeRoutes({ 'GET /api/registry': () => reg.promise }) });
+  await settle(30);
+  ok('G8 with every route answered but the registry still out, all-cards-loaded is not recorded yet',
+     p.eval('HOME.timing.settled') === null && /Reading history/.test(p.text(card(p, 'recent'))));
+  reg.resolve(registry());
+  await settle(10);
+  ok('G8 …and it is once Recent has its history', typeof p.eval('HOME.timing.settled') === 'number' && p.eval('HOME.timing.settled') >= p.eval('HOME.timing.painted'));
+}
+{
+  const reg = deferred();
+  const p = await boot({ hash: '#models-not-a-view', routes: homeRoutes({ 'GET /api/registry': () => reg.promise }) });
+  ok('G9 an unknown hash that prefixes a view still paints Home before the registry', p.eval('S.view') === 'home' && !!card(p, 'accounts') && p.eval('S.registry') === null);
+  reg.resolve(registry());
+  await settle(10);
+  ok('G9 …and stays on Home once it lands', p.eval('S.view') === 'home');
 }
 
 for (const p of pages) p.done();

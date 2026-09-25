@@ -156,8 +156,8 @@ async function boot() {
   // link needs the registry, so it routes once that is in.
   const hash = location.hash;
   const early = landsOnHome(hash);
-  if (early) routeHash(hash, { cold: true });
   registryReady = loadRegistry();
+  if (early) routeHash(hash, { cold: true });
   if (!(await registryReady)) { if (!early) goHome(); return; }
   connectEvents();
   resolveHarness();
@@ -168,15 +168,23 @@ async function boot() {
     notice('warn', 'The model registry has a problem — Assist is using what it could:',
       S.registry.registryError.split('\n'), true);
   }
-  if (!early) routeHash(hash, { cold: true });
+  // The latest hash, not the one at start: a link followed during boot was
+  // held until now (see the hashchange handler).
+  const pending = S.pendingHash;
+  S.pendingHash = null;
+  if (!early) routeHash(location.hash, { cold: true });
+  else if (pending != null) routeHash(pending);
 }
 
 async function loadRegistry() {
   try {
     S.registry = await api('GET', '/api/registry');
   } catch (e) {
+    S.registryFailed = e.message;
+    renderSidebar();
     $('brand-sub').textContent = 'registry unavailable';
     notice('error', `Could not load the config registry: ${e.message}. Reload to try again.`, null, true);
+    if (S.view === 'home') paintHome(['recent']);
     return false;
   }
   seedCollapsed();
@@ -191,8 +199,8 @@ async function loadRegistry() {
 
 /** Whether routeHash would land this hash on Home: no file, no drawer, no view. */
 function landsOnHome(hash) {
-  if (hash.startsWith('#assist') || /^#file=/.test(hash)) return false;
-  const v = VIEWS.find((x) => x.hash && hash.startsWith(x.hash));
+  if (hashIs(hash, '#assist') || /^#file=/.test(hash)) return false;
+  const v = VIEWS.find((x) => x.hash && hashIs(hash, x.hash));
   return !v || v.id === 'home';
 }
 
@@ -426,7 +434,11 @@ function paintFilesBody() {
   body.innerHTML = '';
   if (FILES.query.length >= 2) return paintSearch(body, FILES.query);
   body.appendChild(recentCard());
-  if (!S.registry) { body.appendChild(el('div', 'scope-sub', 'Loading files…')); return; }
+  if (!S.registry) {
+    body.appendChild(el('div', 'scope-sub', S.registryFailed
+      ? `The file list is unavailable: ${S.registryFailed}. Reload to try again.` : 'Loading files…'));
+    return;
+  }
   const model = filesModel(S.registry);
   if (FILES.unfold === 'pending') {
     FILES.unfold = model.flatMap((t) => t.types).find((t) => t.entries.some((e) => e.id === S.lastEntryId))?.key ?? null;
@@ -3171,7 +3183,9 @@ function loadHome() {
       });
     });
   };
-  Promise.all(Object.keys(HOME_ROUTES).map(ask)).then((stored) => {
+  // Recent's history line is the registry's, so "all loaded" waits for it too.
+  const history = registryReady.then(() => S.view === 'home');
+  Promise.all([...Object.keys(HOME_ROUTES).map(ask), history]).then((stored) => {
     if (!stored.every(Boolean)) return;
     HOME.settledAt = Date.now();
     if (HOME.timing && HOME.timing.settled == null) HOME.timing.settled = Math.round(performance.now());
@@ -3362,7 +3376,8 @@ function paintRecent(body) {
   const m = recentModel(t?.state === 'ok' ? t.data : null, hist);
 
   const last = el('div', 'home-recent-last');
-  if (!S.registry) last.appendChild(homeLoading('Reading history…'));
+  if (!S.registry && S.registryFailed) last.appendChild(homeFailed('History', S.registryFailed));
+  else if (!S.registry) last.appendChild(homeLoading('Reading history…'));
   else if (!m.last) last.appendChild(el('span', 'home-muted', 'No versions recorded yet.'));
   else {
     last.appendChild(el('div', 'home-recent-subject', m.last.subject || '(no message)'));
@@ -4553,7 +4568,8 @@ function wireGlobalKeys() {
 // Following a link or typing a hash switches the view, not only a reload. A
 // cancelled discard puts the old hash back, so the URL keeps naming what is shown.
 window.addEventListener('hashchange', (e) => {
-  if (!S.registry) return;
+  // Before the registry is in, only remember it: boot routes it once it lands.
+  if (!S.registry) { S.pendingHash = location.hash; return; }
   if (isDirty() && !hashIs(location.hash, '#assist')) {
     if (!confirmDiscard()) {
       const old = e.oldURL ? new URL(e.oldURL).hash : '';

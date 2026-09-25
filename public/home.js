@@ -80,7 +80,9 @@ function contextItems(d) {
 /**
  * The Needs-attention card. "Nothing needs you" is allowed only when every
  * source answered and none had anything — a failed or pending source is
- * silence, not good news.
+ * silence, not good news. So is a source that answered in part: an invalid
+ * model registry or an unreadable catalog means some alerts were never
+ * computed, and an unreadable instruction file was never checked for drift.
  */
 function attentionModel(sources) {
   const items = [];
@@ -91,9 +93,18 @@ function attentionModel(sources) {
     const s = sources[id] || { state: 'loading' };
     if (s.state === 'loading') { loading.push({ id, label }); continue; }
     if (s.state === 'error') { failed.push({ id, label, error: s.error }); continue; }
-    if (id === 'models') items.push(...modelItems(s.data));
-    else if (id === 'memory') items.push(...memoryItems(s.data));
-    else if (id === 'context') items.push(...contextItems(s.data));
+    if (id === 'models') {
+      items.push(...modelItems(s.data));
+      if (s.data.registryError) partial.push({ id, label, text: 'the model registry file is invalid — defaults are in use' });
+      for (const c of (s.data.catalogs || []).filter((x) => !x.ok)) {
+        partial.push({ id, label, text: c.note || `the ${c.label} catalog could not be read` });
+      }
+    } else if (id === 'memory') items.push(...memoryItems(s.data));
+    else if (id === 'context') {
+      items.push(...contextItems(s.data));
+      const n = (s.data.unreadable || []).length;
+      if (n) partial.push({ id, label, text: `${plural(n, 'instruction file')} could not be read` });
+    }
     else if (id === 'worktrees') {
       const w = worktreeItems(s.data);
       items.push(...w.items);
