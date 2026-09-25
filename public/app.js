@@ -168,12 +168,12 @@ async function boot() {
     notice('warn', 'The model registry has a problem — Assist is using what it could:',
       S.registry.registryError.split('\n'), true);
   }
-  // The latest hash, not the one at start: a link followed during boot was
-  // held until now (see the hashchange handler).
-  const pending = S.pendingHash;
-  S.pendingHash = null;
-  if (!early) routeHash(location.hash, { cold: true });
-  else if (pending != null) routeHash(pending);
+  // The newest navigation asked for while the registry was out — a sidebar
+  // click or a hash change, whichever came last — and only that one.
+  const want = S.pendingNav;
+  S.pendingNav = null;
+  if (want != null) routeHash(want);
+  else if (!early) routeHash(location.hash, { cold: true });
 }
 
 async function loadRegistry() {
@@ -288,11 +288,13 @@ function navButton(v) {
     badge.hidden = true;
     b.appendChild(badge);
   }
+  // Other views need the registry. A click before it lands only takes the one
+  // pending-navigation slot (see boot), so a newer click or link replaces it.
   b.onclick = () => {
     if (v.kind !== 'action') setNavOverlay(false);
-    // Other views need the registry; a click before it lands waits for it.
-    if (S.registry || v.kind === 'action' || v.id === 'home' || v.id === 'files') return v.open();
-    registryReady.then((ready) => { if (ready) v.open(); });
+    if (!S.registry && v.kind !== 'action' && v.id !== 'home' && v.id !== 'files') return void (S.pendingNav = v.hash);
+    if (v.kind !== 'action') S.pendingNav = null;
+    v.open();
   };
   return b;
 }
@@ -4572,7 +4574,7 @@ function wireGlobalKeys() {
 // cancelled discard puts the old hash back, so the URL keeps naming what is shown.
 window.addEventListener('hashchange', (e) => {
   // Before the registry is in, only remember it: boot routes it once it lands.
-  if (!S.registry) { S.pendingHash = location.hash; return; }
+  if (!S.registry) { S.pendingNav = location.hash; return; }
   if (isDirty() && !hashIs(location.hash, '#assist')) {
     if (!confirmDiscard()) {
       const old = e.oldURL ? new URL(e.oldURL).hash : '';

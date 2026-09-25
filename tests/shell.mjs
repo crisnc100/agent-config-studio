@@ -617,6 +617,20 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
   reg2.resolve(registry());
   await settle(20);
   ok('R4 Models, then a newer #context, during boot → Context', q.eval('S.view') === 'context' && q.location.hash === '#context', q.eval('S.view'));
+  const reg3 = deferred();
+  const h = await boot({ routes: routesFor({ 'GET /api/registry': () => reg3.promise }) });
+  h.$('btn-memory').click();
+  h.$('btn-home').click();
+  reg3.resolve(registry());
+  await settle(20);
+  ok('R4 Memory, then Home, during boot → stays on Home (the earlier click is dropped)', h.eval('S.view') === 'home', h.eval('S.view'));
+  const reg4 = deferred();
+  const k = await boot({ routes: routesFor({ 'GET /api/registry': () => reg4.promise }) });
+  k.navigate('#models');
+  k.$('btn-context').click();
+  reg4.resolve(registry());
+  await settle(20);
+  ok('R4 #models, then a Context click, during boot → Context', k.eval('S.view') === 'context', k.eval('S.view'));
 }
 {
   // QA1: the closed drawer is out of the tab order, and closing returns focus.
