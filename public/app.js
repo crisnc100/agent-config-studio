@@ -64,7 +64,7 @@ const S = {
  */
 const VIEWS = [
   { id: 'home', label: 'Home', group: 'home', icon: 'home', hash: '#home',
-    title: 'Agent Config Studio', sub: '', open: openHome, render: renderWelcome },
+    title: 'Home', sub: 'What is connected, what is left, and what needs you', open: openHome, render: renderHome },
   { id: 'files', label: 'Files', group: 'configure', icon: 'files', hash: '#files',
     title: 'Files', sub: 'Every config file, by the tool that reads it', open: () => openFiles(), render: renderFiles },
   { id: 'skills', label: 'Skills', group: 'configure', icon: 'skills', hash: '#skills',
@@ -143,20 +143,23 @@ function notice(kind, text, list, sticky) {
 const clearNotice = () => { clearTimeout(noticeTimer); $('notice-slot').innerHTML = ''; };
 
 /* ── boot ────────────────────────────────────────────────────────────── */
+/** Resolves true once the registry is in, false if it could not be read. */
+let registryReady = Promise.resolve(false);
+
 async function boot() {
   marked.setOptions({ gfm: true, breaks: false, mangle: false, headerIds: false });
   renderNav();
-  S.registry = await api('GET', '/api/registry');
-  seedCollapsed();
-  renderSidebar();
-
-  const total = S.registry.groups.reduce(
-    (n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
-  $('brand-sub').textContent = `${total} files · ${S.registry.history.commits} versions`;
-
   wireGlobalKeys();
-  connectEvents();
   restoreSessions();
+  // The shell paints before the registry resolves: the registry waits on model
+  // inspection, and Home's cards fetch their own sources. Every other deep
+  // link needs the registry, so it routes once that is in.
+  const hash = location.hash;
+  const early = landsOnHome(hash);
+  if (early) routeHash(hash, { cold: true });
+  registryReady = loadRegistry();
+  if (!(await registryReady)) { if (!early) goHome(); return; }
+  connectEvents();
   resolveHarness();
   // Assist may have been opened while detection was still out: repaint it with the harnesses.
   if ($('drawer').classList.contains('open')) renderChat();
@@ -165,8 +168,32 @@ async function boot() {
     notice('warn', 'The model registry has a problem — Assist is using what it could:',
       S.registry.registryError.split('\n'), true);
   }
+  if (!early) routeHash(hash, { cold: true });
+}
 
-  routeHash(location.hash, { cold: true });
+async function loadRegistry() {
+  try {
+    S.registry = await api('GET', '/api/registry');
+  } catch (e) {
+    $('brand-sub').textContent = 'registry unavailable';
+    notice('error', `Could not load the config registry: ${e.message}. Reload to try again.`, null, true);
+    return false;
+  }
+  seedCollapsed();
+  renderSidebar();
+  const total = S.registry.groups.reduce(
+    (n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
+  $('brand-sub').textContent = `${total} files · ${S.registry.history.commits} versions`;
+  renderStatus();
+  if (S.view === 'home') paintHome(['recent']);
+  return true;
+}
+
+/** Whether routeHash would land this hash on Home: no file, no drawer, no view. */
+function landsOnHome(hash) {
+  if (hash.startsWith('#assist') || /^#file=/.test(hash)) return false;
+  const v = VIEWS.find((x) => x.hash && hash.startsWith(x.hash));
+  return !v || v.id === 'home';
 }
 
 /**
@@ -204,7 +231,7 @@ function routeHash(hash, { cold = false } = {}) {
 }
 
 function entryForFile(p) {
-  for (const g of S.registry.groups) {
+  for (const g of S.registry?.groups || []) {
     const e = g.entries.find((x) => x.files.some((f) => f.path === p));
     if (e) return e;
   }
@@ -255,7 +282,9 @@ function navButton(v) {
   }
   b.onclick = () => {
     if (v.kind !== 'action') setNavOverlay(false);
-    v.open();
+    // Other views need the registry; a click before it lands waits for it.
+    if (S.registry || v.kind === 'action' || v.id === 'home' || v.id === 'files') return v.open();
+    registryReady.then((ready) => { if (ready) v.open(); });
   };
   return b;
 }
@@ -527,7 +556,7 @@ function renderSidebar() {
 }
 
 function findEntry(id) {
-  for (const g of S.registry.groups) {
+  for (const g of S.registry?.groups || []) {
     const e = g.entries.find((x) => x.id === id);
     if (e) return e;
   }
@@ -704,18 +733,6 @@ function goHome() {
 function openHome() {
   if (!confirmDiscard()) return;
   goHome();
-}
-
-function renderWelcome() {
-  const c = $('content');
-  c.innerHTML = '';
-  const w = el('div', 'empty');
-  w.appendChild(el('div', 'empty-title', 'Pick a view on the left, or open Files to read or edit any config file.'));
-  const hint = el('div');
-  hint.innerHTML = 'Every save is committed to a shadow git repo, so nothing is ever lost. ' +
-    'Press <span class="kbd">⌘K</span> to search across every config file at once.';
-  w.appendChild(hint);
-  c.appendChild(w);
 }
 
 /**
@@ -2822,21 +2839,8 @@ function addSeatForm() {
 }
 
 
-/** A seat's headroom is set by its tightest window — the first one to stop you. */
-function seatHeadroom(s) {
-  // A stale reading is not headroom, it is a memory — never route on it.
-  if (!s.ok || s.stale || !s.windows.length) return null;
-  return 100 - Math.max(...s.windows.map((w) => w.usedPercent));
-}
-
-function untilText(ts) {
-  if (!ts) return '';
-  const ms = ts - Date.now();
-  if (ms <= 0) return 'resetting';
-  const h = Math.floor(ms / 3.6e6), mn = Math.round((ms % 3.6e6) / 6e4);
-  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
-  return h ? `${h}h ${mn}m` : `${mn}m`;
-}
+// seatHeadroom, rankSeats, routeSeat, seatState, seatConnect, windowLeft,
+// pressure and untilText live in usage-view.js: Home reads seats the same way.
 
 const fmtTokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 const agoText = (ms) => (ms == null ? '' : ms < 60000 ? 'just now' : `${untilText(Date.now() + ms)} ago`);
@@ -2869,13 +2873,7 @@ async function paintUsage() {
   catch (e) { c.innerHTML = `<div class="scope"><div class="scope-sub">${esc(e.message)}</div></div>`; return; }
   if (S.view !== 'usage') return;   // the view changed while the request was in flight
 
-  const seats = [...(u.seats || [])].sort((a, b) => {
-    const ha = seatHeadroom(a), hb = seatHeadroom(b);
-    if (ha === null && hb === null) return 0;
-    if (ha === null) return 1;      // unreadable seats sink; they are not "full"
-    if (hb === null) return -1;
-    return hb - ha;
-  });
+  const seats = rankSeats(u.seats);
 
   c.innerHTML = '';
   const box = el('div', 'scope');
@@ -2915,15 +2913,16 @@ async function paintUsage() {
     box.appendChild(el('div', 'scope-sub',
       'No subscriptions tracked yet — use + Add seat above.'));
     c.appendChild(box);
+    revealUsageFocus(box);
     return;
   }
 
-  const best = seats.find((s) => seatHeadroom(s) !== null);
+  const route = routeSeat(seats);
   const head = el('div', 'usage-route');
-  if (best) {
+  if (route) {
     head.appendChild(el('span', 'usage-route-label', 'Route to'));
-    head.appendChild(el('span', 'usage-route-seat', best.label));
-    head.appendChild(el('span', 'usage-route-pct', `${Math.round(seatHeadroom(best))}% left`));
+    head.appendChild(el('span', 'usage-route-seat', route.seat.label));
+    head.appendChild(el('span', 'usage-route-pct', `${route.left}% left`));
   } else {
     head.appendChild(el('span', 'usage-route-label', 'No seat is reporting usable headroom'));
   }
@@ -2931,6 +2930,7 @@ async function paintUsage() {
 
   for (const s of seats) {
     const card = el('div', 'usage-seat');
+    card.dataset.seat = s.seatId;
     const title = el('div', 'usage-seat-head');
     title.appendChild(el('span', 'usage-seat-name', s.label));
     const meta = [s.vendor, s.planType, s.subscriptionType].filter(Boolean).join(' · ');
@@ -2952,24 +2952,13 @@ async function paintUsage() {
     if (!s.ok) {
       // A signed-in seat with no turns yet is a different state from one that
       // was never connected, and telling someone to re-run a login that already
-      // worked is the worst thing this panel could do.
-      // Three states, not two. A seat whose vendor publishes no quota is
-      // connected and working — calling it "not connected" is simply false.
-      const duplicate = Boolean(s.duplicateOf);
-      const noQuota = !duplicate && s.noQuota === true && s.signedIn === true;
-      // A seat whose window rolled over HAS usage — it is just too old to trust.
-      // Calling that "no usage yet" contradicted the reason line printed
-      // directly beneath it and sent people to re-run a login that had worked.
-      const rolled = !duplicate && !noQuota && s.windowRolledOver === true;
-      const waiting = !duplicate && !noQuota && !rolled && s.signedIn === true;
+      // worked is the worst thing this panel could do. seatState() holds the
+      // distinctions; they are shared with Home.
+      const st = seatState(s);
+      const noQuota = st.kind === 'noQuota';
       const why = el('div', 'usage-offline');
-      const tag = el('span', 'usage-offline-tag',
-        duplicate ? 'duplicate account'
-          : noQuota ? 'connected · no quota published'
-          : rolled ? 'signed in · reading out of date'
-          : waiting ? 'signed in · no usage yet' : 'not connected');
-      if (waiting || noQuota || rolled) tag.classList.add('waiting');
-      if (duplicate) tag.classList.add('duplicate');
+      const tag = el('span', 'usage-offline-tag', st.tag);
+      if (st.tone) tag.classList.add(st.tone);
       why.appendChild(tag);
       why.appendChild(el('span', 'usage-offline-why', s.reason || ''));
       card.appendChild(why);
@@ -2988,8 +2977,8 @@ async function paintUsage() {
       if (s.vendor === 'codex' && s.home) {
         // A duplicate is signed in — it just needs a DIFFERENT account, so the
         // affordance is re-auth, not sign-in.
-        card.appendChild(s.duplicateOf ? connectRow(s, { reauth: true })
-          : waiting ? waitingHint() : connectRow(s));
+        const connect = seatConnect(s);
+        card.appendChild(connect ? connectRow(s, { reauth: connect === 'reauth' }) : waitingHint());
       }
     } else {
       for (const w of s.windows) {
@@ -3001,11 +2990,11 @@ async function paintUsage() {
         // the bar meaning spent, and "97% headroom" in the summary meaning
         // left — which put the conversion in the reader's head and got a seat
         // read as empty when it was untouched. One direction, stated in words.
-        const left = Math.min(100, Math.max(0, 100 - w.usedPercent));
+        const left = windowLeft(w);
         fill.style.width = `${left}%`;
         // Tinting is by pressure, not by vendor: the colour has to mean the
         // same thing on every gauge or it stops being readable at a glance.
-        fill.dataset.level = left <= 10 ? 'high' : left <= 30 ? 'mid' : 'low';
+        fill.dataset.level = pressure(left);
         track.appendChild(fill);
         row.appendChild(el('span', 'usage-pct', `${Math.round(left)}% left`));
         row.appendChild(track);
@@ -3052,6 +3041,347 @@ async function paintUsage() {
     'Codex reads its own logs live. Claude needs an OAuth token, which the studio never handles ' +
     'itself — Refresh takes that reading in a separate process.'));
   c.appendChild(box);
+  revealUsageFocus(box);
+}
+
+/**
+ * Arriving from Home's Connect or Add account: show that seat, or the Add
+ * form, and put focus on its first control. The flow itself runs here —
+ * connectRow polls only while this view is open.
+ */
+function revealUsageFocus(box) {
+  const want = S.usageFocus;
+  S.usageFocus = null;
+  if (!want) return;
+  if (want.add) {
+    const input = box.querySelector('.usage-add-label');
+    input?.scrollIntoView?.({ block: 'center' });
+    return input?.focus();
+  }
+  const card = [...box.querySelectorAll('.usage-seat')].find((x) => x.dataset.seat === want.seat);
+  if (!card) return;
+  card.classList.add('usage-seat-focus');
+  card.scrollIntoView?.({ block: 'center' });
+  card.querySelector('.usage-hint .btn')?.focus();
+}
+
+/* ── Home view ───────────────────────────────────────────────────────── */
+
+/**
+ * Where to start: what is connected, how much is left, and what needs you.
+ *
+ * Each card calls the existing route it needs and paints on its own — a slow
+ * or failing source shows a spinner or "unavailable" on its card and nowhere
+ * else. There is no aggregate endpoint. The memory index and `wclean` are the
+ * slow ones, so they start after first paint. What the cards say is decided
+ * in home.js; this paints it.
+ */
+const HOME = {
+  src: {},             // source id -> { state, data, error }
+  inflight: {},        // source id -> its pending request, shared by re-renders
+  settledAt: 0,        // when every source of the last full load answered
+  body: {},            // card id -> its body element, for the current render
+  timing: null,        // { painted, settled } ms since page start, first load only
+};
+const HOME_ROUTES = {
+  usage: '/api/usage', models: '/api/models', context: '/api/context',
+  trash: '/api/trash', harnesses: '/api/harnesses',
+  memory: '/api/memory', worktrees: '/api/worktree',
+};
+const HOME_SLOW = new Set(['memory', 'worktrees']);
+const HOME_CARDS_OF = {
+  usage: ['accounts', 'clis'], harnesses: ['clis'], trash: ['recent'],
+  models: ['attention'], memory: ['attention'], worktrees: ['attention'], context: ['attention'],
+};
+/** Revisiting Home within this long repaints what it has rather than asking again. */
+const HOME_FRESH_MS = 30_000;
+
+function renderHome(c) {
+  const box = el('div', 'home');
+
+  const accounts = homeCard('accounts', 'Accounts & usage');
+  const addBtn = el('button', 'btn ghost', 'Add account');
+  addBtn.onclick = () => goUsage({ add: true });
+  const usageBtn = el('button', 'btn ghost', 'Open Usage');
+  usageBtn.onclick = () => goUsage(null);
+  accounts.tools.append(addBtn, usageBtn);
+
+  const attention = homeCard('attention', 'Needs attention');
+  const refresh = el('button', 'btn ghost', 'Refresh');
+  refresh.onclick = () => { HOME.settledAt = 0; renderContent(); };
+  attention.tools.appendChild(refresh);
+
+  const clis = homeCard('clis', 'CLIs');
+  const recent = homeCard('recent', 'Recent');
+  const trashBtn = el('button', 'btn ghost', 'Open Trash');
+  trashBtn.onclick = () => openTrash();
+  recent.tools.appendChild(trashBtn);
+
+  box.appendChild(accounts.card);
+  const grid = el('div', 'home-grid');
+  const side = el('div', 'home-col');
+  side.append(clis.card, recent.card);
+  grid.append(attention.card, side);
+  box.appendChild(grid);
+  c.appendChild(box);
+
+  HOME.body = { accounts: accounts.body, attention: attention.body, clis: clis.body, recent: recent.body };
+  paintHome(Object.keys(HOME.body));
+  if (!HOME.timing) HOME.timing = { painted: Math.round(performance.now()), settled: null };
+
+  if (HOME.settledAt && Date.now() - HOME.settledAt < HOME_FRESH_MS) return;
+  loadHome();
+}
+
+function homeCard(id, title) {
+  const card = el('section', `home-card home-${id}`);
+  card.setAttribute('aria-labelledby', `home-${id}-title`);
+  const head = el('div', 'home-card-head');
+  const h = el('h2', 'home-card-title', title);
+  h.id = `home-${id}-title`;
+  const tools = el('div', 'home-card-tools');
+  head.append(h, tools);
+  const body = el('div', 'home-card-body');
+  body.setAttribute('aria-live', 'polite');
+  card.append(head, body);
+  return { card, tools, body };
+}
+
+/**
+ * Ask every source, fast ones now and slow ones once the page has painted.
+ * A source keeps its last answer on screen until the new one lands, and an
+ * answer that lands after you left Home is dropped rather than painted.
+ */
+function loadHome() {
+  const afterPaint = new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+  const ask = (id) => {
+    if (!HOME.src[id]) HOME.src[id] = { state: 'loading' };
+    const start = HOME_SLOW.has(id) ? afterPaint : Promise.resolve();
+    return start.then(() => {
+      if (S.view !== 'home') return false;
+      HOME.inflight[id] ||= api('GET', HOME_ROUTES[id])
+        .then(homeSource, (e) => ({ state: 'error', error: e.message }))
+        .finally(() => { HOME.inflight[id] = null; });
+      return HOME.inflight[id].then((res) => {
+        if (S.view !== 'home') return false;
+        HOME.src[id] = res;
+        if (id === 'models' && res.state === 'ok') paintModelsBadge(res.data.pending || 0);
+        paintHome(HOME_CARDS_OF[id]);
+        return true;
+      });
+    });
+  };
+  Promise.all(Object.keys(HOME_ROUTES).map(ask)).then((stored) => {
+    if (!stored.every(Boolean)) return;
+    HOME.settledAt = Date.now();
+    if (HOME.timing && HOME.timing.settled == null) HOME.timing.settled = Math.round(performance.now());
+  });
+}
+
+function paintHome(cards) {
+  if (S.view !== 'home') return;
+  const painters = { accounts: paintAccounts, attention: paintAttention, clis: paintClis, recent: paintRecent };
+  for (const id of new Set(cards)) {
+    const body = HOME.body[id];
+    if (!body) continue;
+    body.innerHTML = '';
+    painters[id](body);
+  }
+}
+
+const homeLoading = (text) => {
+  const row = el('div', 'home-state');
+  row.appendChild(el('span', 'spinner'));
+  row.appendChild(el('span', null, text));
+  return row;
+};
+const homeFailed = (label, error) => {
+  const row = el('div', 'home-state home-failed');
+  row.appendChild(el('span', 'home-dash', '—'));
+  row.appendChild(el('span', null, `${label} unavailable${error ? `: ${error}` : ''}`));
+  return row;
+};
+
+/** Home's Connect and Add account go to Usage, which runs the flow. */
+function goUsage(focus) {
+  if (!confirmDiscard()) return;
+  S.usageFocus = focus;
+  if (focus?.add) S.usageAdding = true;
+  openUsage();
+}
+
+function homeAction(action) {
+  if (!confirmDiscard()) return;
+  if (action.view === 'memory' && action.tab) MV.tab = action.tab;
+  viewById(action.view).open();
+}
+
+function paintAccounts(body) {
+  const src = HOME.src.usage;
+  if (!src || src.state === 'loading') return body.appendChild(homeLoading('Reading usage…'));
+  if (src.state === 'error') return body.appendChild(homeFailed('Usage', src.error));
+  const { route, rows } = accountsModel(src.data);
+  if (!rows.length) {
+    const empty = el('div', 'home-state');
+    empty.appendChild(el('span', null, 'No subscriptions tracked yet.'));
+    const add = el('button', 'btn', 'Add account');
+    add.onclick = () => goUsage({ add: true });
+    empty.appendChild(add);
+    return body.appendChild(empty);
+  }
+
+  const head = el('div', 'home-route');
+  if (route) {
+    head.appendChild(el('span', 'usage-route-label', 'Route to'));
+    head.appendChild(el('span', 'home-route-seat', route.seat.label));
+    head.appendChild(el('span', 'usage-route-pct', `${route.left}% left`));
+  } else {
+    head.appendChild(el('span', 'usage-route-label', 'No seat is reporting usable headroom'));
+  }
+  body.appendChild(head);
+
+  for (const r of rows) {
+    const row = el('div', 'home-seat');
+    row.dataset.seat = r.id;
+    const who = el('div', 'home-seat-who');
+    who.appendChild(el('div', 'home-seat-name', r.label));
+    if (r.meta) who.appendChild(el('div', 'home-seat-meta', r.meta));
+    row.appendChild(who);
+
+    const read = el('div', 'home-seat-read');
+    if (r.state.kind === 'reading') {
+      if (!r.windows.length) read.appendChild(el('span', 'home-muted', 'connected · no quota windows reported'));
+      for (const w of r.windows) {
+        const win = el('div', 'home-win');
+        win.appendChild(el('span', 'usage-pct', `${w.left}% left`));
+        const track = el('div', 'usage-track home-track');
+        const fill = el('div', 'usage-fill');
+        fill.style.width = `${w.left}%`;
+        fill.dataset.level = w.level;
+        track.appendChild(fill);
+        win.appendChild(track);
+        const lbl = el('span', 'usage-label', w.label);
+        if (w.resetsAt) lbl.appendChild(el('span', 'usage-reset', ` · resets in ${untilText(w.resetsAt)}`));
+        win.appendChild(lbl);
+        read.appendChild(win);
+      }
+      if (r.stale) {
+        read.appendChild(el('div', 'usage-stale',
+          `as of ${r.observedAt ? agoText(Date.now() - r.observedAt) : 'an earlier reading'} — not current`));
+      }
+    } else {
+      const line = el('div', 'home-seat-state');
+      const tag = el('span', 'usage-offline-tag', r.state.tag);
+      if (r.state.tone) tag.classList.add(r.state.tone);
+      line.appendChild(tag);
+      if (r.reason) line.appendChild(el('span', 'home-muted', r.reason));
+      read.appendChild(line);
+    }
+    row.appendChild(read);
+
+    const act = el('div', 'home-seat-act');
+    if (r.connect) {
+      const b = el('button', 'btn', r.connect === 'reauth' ? 'Sign in again' : 'Connect');
+      b.title = 'Opens this seat in Usage, where the sign-in runs';
+      b.onclick = () => goUsage({ seat: r.id });
+      act.appendChild(b);
+    }
+    row.appendChild(act);
+    body.appendChild(row);
+  }
+}
+
+function paintAttention(body) {
+  const m = attentionModel(HOME.src);
+  for (const it of m.items) {
+    const row = el('div', `home-item ${it.kind}`);
+    row.appendChild(el('span', 'home-item-dot'));
+    row.appendChild(el('span', 'home-item-text', it.text));
+    const b = el('button', 'btn ghost home-item-btn', it.action.label);
+    b.onclick = () => homeAction(it.action);
+    row.appendChild(b);
+    body.appendChild(row);
+  }
+  for (const p of m.partial) {
+    const row = el('div', 'home-state home-failed');
+    row.appendChild(el('span', 'home-dash', '—'));
+    row.appendChild(el('span', null, `${p.label}: ${p.text}`));
+    body.appendChild(row);
+  }
+  for (const f of m.failed) body.appendChild(homeFailed(f.label, f.error));
+  if (m.loading.length) body.appendChild(homeLoading(`Checking ${m.loading.map((x) => x.label.toLowerCase()).join(', ')}…`));
+  if (m.clear) {
+    const ok = el('div', 'home-clear');
+    ok.appendChild(el('div', 'home-clear-title', 'Nothing needs you.'));
+    ok.appendChild(el('div', 'home-muted', 'Models, memory, worktrees and context all checked.'));
+    body.appendChild(ok);
+  }
+}
+
+function paintClis(body) {
+  const h = HOME.src.harnesses;
+  const { rows, codex } = cliModel(h?.state === 'ok' ? h.data : null, HOME.src.usage);
+  if (!h || h.state === 'loading') body.appendChild(homeLoading('Detecting CLIs…'));
+  else if (h.state === 'error') body.appendChild(homeFailed('Detection', h.error));
+  else if (!rows.length) body.appendChild(el('div', 'home-state', 'No CLI that Assist can run was found.'));
+  for (const r of rows) {
+    const row = el('div', 'home-cli');
+    const top = el('div', 'home-cli-top');
+    top.appendChild(el('span', 'home-cli-name', r.label));
+    top.appendChild(el('span', 'home-chip ok', 'detected'));
+    row.appendChild(top);
+    row.appendChild(el('div', 'home-muted', `version unknown · sign-in unknown · ${r.note}`));
+    body.appendChild(row);
+  }
+
+  const row = el('div', 'home-cli');
+  const top = el('div', 'home-cli-top');
+  top.appendChild(el('span', 'home-cli-name', 'Codex'));
+  row.appendChild(top);
+  if (codex.state === 'loading') row.appendChild(homeLoading('from Usage…'));
+  else if (codex.state === 'error') row.appendChild(homeFailed('Usage', codex.error));
+  else if (!codex.seats) row.appendChild(el('div', 'home-muted', 'no Codex seat tracked in Usage'));
+  else {
+    top.appendChild(el('span', `home-chip ${codex.signIn ? 'warn' : 'ok'}`, codex.signIn ? 'needs sign-in' : 'signed in'));
+    row.appendChild(el('div', 'home-muted',
+      `${codex.seats} seat${codex.seats === 1 ? '' : 's'} in Usage · ${codex.reading} reading` +
+      (codex.signIn ? ` · ${codex.signIn} to sign in` : '')));
+    if (codex.signIn) {
+      const fix = el('button', 'btn ghost home-item-btn', 'Sign in from Usage');
+      fix.onclick = () => goUsage(null);
+      top.appendChild(fix);
+    }
+  }
+  body.appendChild(row);
+  body.appendChild(el('div', 'home-foot', 'Lists the CLIs this studio detects. Version and sign-in are not reported, so they read unknown.'));
+}
+
+function paintRecent(body) {
+  const t = HOME.src.trash;
+  const hist = S.registry?.history ?? null;
+  const m = recentModel(t?.state === 'ok' ? t.data : null, hist);
+
+  const last = el('div', 'home-recent-last');
+  if (!S.registry) last.appendChild(homeLoading('Reading history…'));
+  else if (!m.last) last.appendChild(el('span', 'home-muted', 'No versions recorded yet.'));
+  else {
+    last.appendChild(el('div', 'home-recent-subject', m.last.subject || '(no message)'));
+    last.appendChild(el('div', 'home-muted',
+      `last version ${m.last.at ? agoText(Date.now() - m.last.at) : ''} · ${m.last.commits} kept`));
+  }
+  body.appendChild(last);
+
+  body.appendChild(el('div', 'home-sub', 'Recently deleted'));
+  if (!t || t.state === 'loading') return body.appendChild(homeLoading('Reading trash…'));
+  if (t.state === 'error') return body.appendChild(homeFailed('Trash', t.error));
+  if (!m.trash.length) return body.appendChild(el('div', 'home-muted home-pad', 'Nothing deleted.'));
+  for (const it of m.trash) {
+    const row = el('div', 'home-trash');
+    row.appendChild(el('span', 'home-trash-path', it.display));
+    row.appendChild(el('span', 'home-muted', agoText(Date.now() - new Date(it.deletedAt).getTime())));
+    body.appendChild(row);
+  }
+  if (m.more) body.appendChild(el('div', 'home-muted home-pad', `and ${m.more} more in Trash`));
 }
 
 /* ── MCP view ────────────────────────────────────────────────────────── */

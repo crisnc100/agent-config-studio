@@ -225,7 +225,7 @@ const item = (page, id) => page.querySelectorAll('.files-item').find((b) => b.da
   const perView = /S\.view === '(scope|mcp|models|worktrees|trash|skills|memory|context|usage|welcome|home)'/;
   ok('3 renderTopbar and renderContent read VIEWS, not a per-view chain', !perView.test(topbar) && !perView.test(content)
      && topbar.includes('viewById(') && content.includes('viewById('));
-  ok('3 boot routes through the same table', /routeHash\(location\.hash, \{ cold: true \}\)/.test(code) && /VIEWS\.find\(\(x\) => x\.hash/.test(code));
+  ok('3 boot routes through the same table', /routeHash\(hash, \{ cold: true \}\)/.test(code) && /VIEWS\.find\(\(x\) => x\.hash/.test(code));
   ok('3 there is no \'welcome\' view left', !/'welcome'/.test(code));
 
   const probe = await boot();
@@ -240,7 +240,7 @@ const item = (page, id) => page.querySelectorAll('.files-item').find((b) => b.da
        `${cold.eval('S.view')} / ${warm.eval('S.view')}`);
   }
   const unknown = await boot({ hash: '#nope' });
-  ok('3 an unknown hash lands on Home (cold)', unknown.eval('S.view') === 'home' && unknown.$('content').querySelector('.empty'));
+  ok('3 an unknown hash lands on Home (cold)', unknown.eval('S.view') === 'home' && unknown.$('content').querySelector('.home-card'));
   unknown.$('btn-skills').click();
   await settle(5);
   unknown.navigate('#nope-again');
