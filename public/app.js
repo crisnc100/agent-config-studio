@@ -47,7 +47,7 @@ const store = {
 
 const S = {
   registry: null,
-  view: 'home',         // 'entry', 'search', or a content view's id in VIEWS
+  view: 'home',         // 'entry', or a content view's id in VIEWS
   entry: null,
   file: null,           // { path, kind, content, mtime, display }
   original: '',
@@ -65,7 +65,8 @@ const S = {
 const VIEWS = [
   { id: 'home', label: 'Home', group: 'home', icon: 'home', hash: '#home',
     title: 'Agent Config Studio', sub: '', open: openHome, render: renderWelcome },
-  { id: 'files', label: 'Files', group: 'configure', icon: 'files', kind: 'action', open: toggleFiles },
+  { id: 'files', label: 'Files', group: 'configure', icon: 'files', hash: '#files',
+    title: 'Files', sub: 'Every config file, by the tool that reads it', open: () => openFiles(), render: renderFiles },
   { id: 'skills', label: 'Skills', group: 'configure', icon: 'skills', hash: '#skills',
     title: 'Skills', sub: 'Every skill on this machine — browse, select, download', open: openSkills },
   { id: 'mcp', label: 'MCP', group: 'configure', icon: 'mcp', hash: '#mcp',
@@ -86,7 +87,6 @@ const VIEWS = [
   { id: 'trash', label: 'Trash', group: 'footer', icon: 'trash', hash: '#trash',
     title: 'Trash', sub: 'Deleted items — restorable', open: openTrash },
   { id: 'theme', label: 'Theme', group: 'footer', icon: 'theme', kind: 'action', open: toggleTheme },
-  { id: 'search', label: 'Search', group: null, title: 'Search results', sub: '' },
 ];
 const viewById = (id) => VIEWS.find((v) => v.id === id) || null;
 const NAV_GROUPS = [['home', null], ['configure', 'Configure'], ['review', 'Review']];
@@ -190,7 +190,7 @@ function routeHash(hash, { cold = false } = {}) {
     const entry = p && entryForFile(p);
     if (entry) {
       if (!cold && S.view === 'entry' && S.file?.path === p) return;
-      return openEntry(entry, p, { reveal: !cold });
+      return openEntry(entry, p);
     }
     return cold ? goHome() : openHome();
   }
@@ -212,15 +212,9 @@ function entryForFile(p) {
 }
 
 /* ── navigation ──────────────────────────────────────────────────────── */
-/**
- * The sidebar is built once, from VIEWS, and then only re-marked: rebuilding
- * it on every view change would detach the search box mid-keystroke.
- */
+/** The sidebar is navigation only: built once from VIEWS, then only re-marked. */
 const UI = {
   rail: store.get('acs.rail') === 'collapsed' ? 'collapsed' : 'expanded',
-  files: false,                                   // collapsed on every load, by design
-  revealPending: false,                           // a reveal waiting for the rail or overlay to open
-  reveal: store.get('acs.revealFiles') !== 'off',
 };
 const narrow = () => !!window.matchMedia?.('(max-width: 900px)').matches;
 
@@ -230,10 +224,7 @@ function renderNav() {
   for (const [group, title] of NAV_GROUPS) {
     const sec = el('div', 'nav-group');
     if (title) sec.appendChild(el('div', 'nav-group-title', title));
-    for (const v of VIEWS.filter((x) => x.group === group)) {
-      sec.appendChild(navButton(v));
-      if (v.id === 'files') sec.appendChild($('files-panel'));
-    }
+    for (const v of VIEWS.filter((x) => x.group === group)) sec.appendChild(navButton(v));
     nav.appendChild(sec);
   }
   const foot = $('nav-foot');
@@ -244,13 +235,8 @@ function renderNav() {
   $('nav-menu').innerHTML = ICONS.menu;
   $('nav-menu').onclick = () => setNavOverlay(!$('app').classList.contains('nav-open'));
   $('nav-scrim').onclick = () => setNavOverlay(false);
-  $('reveal-files').checked = UI.reveal;
-  $('reveal-files').onchange = (e) => {
-    UI.reveal = e.target.checked;
-    store.set('acs.revealFiles', UI.reveal ? 'on' : 'off');
-  };
   setRail(UI.rail, { save: false });
-  setFilesOpen(false);
+  syncNav();
 }
 
 function navButton(v) {
@@ -267,12 +253,6 @@ function navButton(v) {
     badge.hidden = true;
     b.appendChild(badge);
   }
-  if (v.id === 'files') {
-    b.setAttribute('aria-controls', 'files-panel');
-    const chev = el('span', 'nav-chev');
-    chev.innerHTML = ICONS.chevron;
-    b.appendChild(chev);
-  }
   b.onclick = () => {
     if (v.kind !== 'action') setNavOverlay(false);
     v.open();
@@ -280,7 +260,7 @@ function navButton(v) {
   return b;
 }
 
-/** Re-mark the sidebar: the current view, badges, and the two toggles' states. */
+/** Re-mark the sidebar: the current view, badges, and the theme toggle. */
 function syncNav() {
   for (const v of VIEWS) {
     const b = $(`btn-${v.id}`);
@@ -296,8 +276,6 @@ function syncNav() {
       b.title = n > 0 ? `${v.label} — ${n} alert${n === 1 ? '' : 's'}` : v.label;
     }
   }
-  const files = $('btn-files');
-  if (files) files.setAttribute('aria-expanded', String(UI.files));
   const theme = $('btn-theme');
   if (theme) {
     const dark = document.documentElement.dataset.theme !== 'light';
@@ -317,67 +295,20 @@ function setRail(mode, { save = true } = {}) {
   t.title = collapsedRail ? 'Expand sidebar' : 'Collapse sidebar';
   t.setAttribute('aria-pressed', String(collapsedRail));
   if (save) store.set('acs.rail', mode);
-  if (!collapsedRail && UI.revealPending) showReveal();
 }
 
 function setNavOverlay(open, { focusNav = true } = {}) {
   $('app').classList.toggle('nav-open', open);
   $('nav-menu').setAttribute('aria-expanded', String(open));
   $('nav-menu').setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
-  if (open && UI.revealPending) showReveal();
-  if (open && focusNav) setTimeout(() => $('sidebar').querySelector('.nav-item')?.focus(), 0);
+  // Only while it is still open: closing it before the timer runs must not steal focus back.
+  if (open && focusNav) setTimeout(() => { if ($('app').classList.contains('nav-open')) $('sidebar').querySelector('.nav-item')?.focus(); }, 0);
 }
 
-function setFilesOpen(open) {
-  UI.files = open;
-  $('files-panel').hidden = !open;
-  syncNav();
-}
-
-/** The Files item: the tree, search and "+" create, shown in place under it. */
-function toggleFiles() {
-  if (UI.rail === 'collapsed' && !narrow()) { setRail('expanded'); return setFilesOpen(true); }
-  setFilesOpen(!UI.files);
-}
-
-/** ⌘K: search lives in the Files panel, so the panel opens to reach it. */
+/** ⌘K: search lives at the top of the Files page, so it opens that page. */
 function focusSearch() {
-  if (narrow()) setNavOverlay(true, { focusNav: false });
-  else if (UI.rail === 'collapsed') setRail('expanded');
-  setFilesOpen(true);
-  $('search').focus();
-  $('search').select();
-}
-
-/**
- * Show where a file opened from a panel lives: expand its group, open the
- * panel, scroll to it. Turned off by the "Show opened files here" setting.
- * The icon rail and the narrow overlay were not asked to open, so there the
- * group is expanded now and the rest waits for the next expand of the rail
- * or the overlay. A file with no tree entry (a synthetic memory entry) keeps
- * its path in the topbar and no more.
- */
-function revealInTree(entry) {
-  if (!UI.reveal || !S.registry) return;
-  const group = S.registry.groups.find((g) => g.entries.some((e) => e.id === entry.id));
-  if (!group) return;
-  if (collapsed.has(group.id)) {
-    collapsed.delete(group.id);
-    store.set('acs.collapsed', JSON.stringify([...collapsed]));
-  }
-  if (UI.rail === 'collapsed' || narrow()) {
-    UI.revealPending = true;
-    return renderSidebar();
-  }
-  showReveal();
-}
-
-function showReveal() {
-  UI.revealPending = false;
-  if (!UI.reveal || S.view !== 'entry' || !S.entry) return;
-  if (!UI.files) setFilesOpen(true);
-  renderSidebar();
-  $('tree').querySelector('.item.active')?.scrollIntoView?.({ block: 'nearest' });
+  setNavOverlay(false);
+  openFiles({ focus: true });
 }
 
 function toggleTheme() {
@@ -387,61 +318,210 @@ function toggleTheme() {
   syncNav();
 }
 
-/* ── file tree ───────────────────────────────────────────────────────── */
+/* ── Files page ──────────────────────────────────────────────────────── */
+/**
+ * Every config file on one page: search first, then what you opened lately,
+ * then each tool's files by type. Hooks, subagents, commands and settings
+ * have no other panel, so this is their home, and each type keeps its "+".
+ */
 const stored = store.get('acs.collapsed');
 const collapsed = new Set((() => {
   try { const v = stored ? JSON.parse(stored) : []; return Array.isArray(v) ? v : []; } catch { return []; }
 })());
-/** First run: start with the groups the server marks as low-traffic collapsed. */
+/** First run: low-traffic groups (the server marks them) start folded. */
 function seedCollapsed() {
   if (stored) return;
-  S.registry.groups.filter((g) => g.collapsed).forEach((g) => collapsed.add(g.id));
+  for (const tool of filesModel(S.registry)) {
+    for (const t of tool.types) if (t.group.collapsed) collapsed.add(t.key);
+  }
 }
 
+const RECENT_KEY = 'acs.recentFiles';
+/** Recently opened, kept in this browser only. It records opens, never edits. */
+function recentFiles() {
+  try { const v = JSON.parse(store.get(RECENT_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function rememberOpened(f, entry) {
+  store.set(RECENT_KEY, JSON.stringify(pushRecent(recentFiles(), {
+    path: f.path, display: f.display, label: entry?.label ?? f.display.split('/').pop(),
+    synthetic: !!entry?.id?.startsWith('adhoc:'),
+  })));
+}
+
+const FILES = { query: '', timer: null, scrolled: false, unfold: null };
+
+function openFiles({ focus = false } = {}) {
+  if (S.view !== 'files') {
+    if (!confirmDiscard()) return;
+    S.view = 'files';
+    S.entry = null;
+    FILES.query = '';
+    FILES.scrolled = false;
+    FILES.unfold = 'pending';       // the open file's type shows this visit, even if folded
+    window.history.replaceState(null, '', '#files');
+    renderSidebar();
+    renderAll();
+  }
+  if (focus) { $('search')?.focus(); $('search')?.select(); }
+}
+
+function renderFiles(c) {
+  const page = el('div', 'files');
+  const top = el('div', 'files-search-wrap');
+  const input = el('input', 'search files-search');
+  input.id = 'search';
+  input.placeholder = 'Search all config…  ⌘K';
+  input.setAttribute('aria-label', 'Search all config');
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.value = FILES.query;
+  input.addEventListener('input', () => {
+    clearTimeout(FILES.timer);
+    FILES.query = input.value.trim();
+    if (FILES.query.length < 2) return paintFilesBody();
+    FILES.timer = setTimeout(paintFilesBody, 220);
+  });
+  top.appendChild(input);
+  page.appendChild(top);
+  const body = el('div', 'files-body');
+  body.id = 'files-body';
+  page.appendChild(body);
+  c.appendChild(page);
+  paintFilesBody();
+}
+
+/** The part below the search box: results while searching, else recent + tools. */
+function paintFilesBody() {
+  const body = $('files-body');
+  if (!body || S.view !== 'files') return;
+  body.innerHTML = '';
+  if (FILES.query.length >= 2) return paintSearch(body, FILES.query);
+  body.appendChild(recentCard());
+  if (!S.registry) { body.appendChild(el('div', 'scope-sub', 'Loading files…')); return; }
+  const model = filesModel(S.registry);
+  if (FILES.unfold === 'pending') {
+    FILES.unfold = model.flatMap((t) => t.types).find((t) => t.entries.some((e) => e.id === S.lastEntryId))?.key ?? null;
+  }
+  const tools = el('div', 'files-tools');
+  for (const tool of model) tools.appendChild(toolCard(tool));
+  body.appendChild(tools);
+  const here = tools.querySelector('.files-item.active');
+  if (here && !FILES.scrolled) { FILES.scrolled = true; here.scrollIntoView?.({ block: 'center' }); }
+}
+
+function recentCard() {
+  const card = el('section', 'home-card files-recent');
+  const head = el('div', 'home-card-head');
+  head.appendChild(el('h2', 'home-card-title', 'Recently opened'));
+  card.appendChild(head);
+  const row = el('div', 'files-recent-row');
+  const items = recentFiles().filter((r) => r.synthetic || entryForFile(r.path));
+  if (!items.length) row.appendChild(el('div', 'home-muted', 'Files you open appear here — in this browser only.'));
+  for (const r of items) {
+    const b = el('button', 'files-recent-item');
+    const entry = entryForFile(r.path);
+    b.appendChild(el('span', `item-dot ${entry?.harness || 'claude'}`));
+    b.appendChild(el('span', 'files-item-label', r.synthetic ? r.display.split('/').pop() : (entry?.label ?? r.label)));
+    b.title = r.display;
+    b.onclick = () => (entry ? openEntry(entry, r.path) : openInEditor(r.path, r.display));
+    row.appendChild(b);
+  }
+  card.appendChild(row);
+  return card;
+}
+
+function toolCard(tool) {
+  const card = el('section', `home-card files-tool files-tool-${tool.id}`);
+  const head = el('div', 'home-card-head');
+  head.appendChild(el('h2', 'home-card-title', tool.label));
+  head.appendChild(el('span', 'files-count', `${tool.count} file${tool.count === 1 ? '' : 's'}`));
+  card.appendChild(head);
+  for (const t of tool.types) {
+    const sec = el('div', 'files-type');
+    // A row, not a button — it holds its own "+" button, and nesting
+    // interactive elements inside a button is invalid.
+    const row = el('div', 'files-type-head');
+    const toggle = el('button', 'files-type-toggle');
+    const folded = collapsed.has(t.key) && FILES.unfold !== t.key;
+    toggle.setAttribute('aria-expanded', String(!folded));
+    toggle.appendChild(el('span', 'files-type-name', t.label));
+    toggle.appendChild(el('span', 'files-type-count', String(t.entries.length)));
+    toggle.onclick = () => {
+      if (FILES.unfold === t.key) { FILES.unfold = null; if (!collapsed.has(t.key)) collapsed.add(t.key); }
+      else if (collapsed.has(t.key)) collapsed.delete(t.key); else collapsed.add(t.key);
+      store.set('acs.collapsed', JSON.stringify([...collapsed]));
+      paintFilesBody();
+    };
+    row.appendChild(toggle);
+    if (t.create) {
+      const add = el('button', 'files-add', '+');
+      add.title = `New ${t.group.title.replace(/s$/, '').toLowerCase()}`;
+      add.setAttribute('aria-label', add.title);
+      add.onclick = () => createInGroup(t.group);
+      row.appendChild(add);
+    }
+    sec.appendChild(row);
+    const list = el('div', 'files-entries');
+    list.hidden = folded;
+    for (const e of t.entries) {
+      const b = el('button', 'files-item' + (S.lastEntryId === e.id ? ' active' : ''));
+      b.dataset.entry = e.id;
+      b.appendChild(el('span', `item-dot ${e.harness}`));
+      b.appendChild(el('span', 'files-item-label', e.label));
+      if (e.extraFiles > 0) b.appendChild(el('span', 'item-badge', `+${e.extraFiles}`));
+      b.title = e.description ? `${e.display}\n\n${e.description}` : e.display;
+      b.onclick = () => openEntry(e);
+      list.appendChild(b);
+    }
+    sec.appendChild(list);
+    card.appendChild(sec);
+  }
+  return card;
+}
+
+async function paintSearch(body, q) {
+  body.appendChild(el('div', 'scope-sub', '')).innerHTML = '<span class="spinner"></span> searching…';
+  let data;
+  try { data = await api('GET', `/api/search?q=${encodeURIComponent(q)}`); }
+  catch (e) { if (FILES.query === q) { body.innerHTML = ''; body.appendChild(el('div', 'scope-sub', e.message)); } return; }
+  // Typed on since, or left the page: this answer is for a query nobody holds.
+  if (FILES.query !== q || S.view !== 'files') return;
+  body.innerHTML = '';
+  const box = el('div', 'results');
+  box.appendChild(el('div', 'scope-sub',
+    data.hits.length ? `${data.hits.length} files contain “${q}”` : `Nothing matches “${q}”.`));
+  const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig');
+
+  for (const h of data.hits) {
+    const b = el('button', 'result');
+    const head = el('div', 'result-head');
+    head.appendChild(el('span', `item-dot ${h.harness}`));
+    head.appendChild(el('span', 'result-name', `${h.entryLabel}${h.file !== 'SKILL.md' ? ' · ' + h.file : ''}`));
+    head.appendChild(el('span', 'item-badge', h.group));
+    head.appendChild(el('span', 'result-path', h.display));
+    b.appendChild(head);
+    for (const m of h.matches) {
+      const line = el('div', 'result-line');
+      line.innerHTML = `<span class="result-ln">${m.line}</span>` +
+        esc(m.text).replace(rx, (x) => `<b>${x}</b>`);
+      b.appendChild(line);
+    }
+    if (h.total > h.matches.length) {
+      b.appendChild(el('div', 'result-line', `  +${h.total - h.matches.length} more`));
+    }
+    b.onclick = () => {
+      const entry = findEntry(h.entryId);
+      if (entry) openEntry(entry, h.path);
+    };
+    box.appendChild(b);
+  }
+  body.appendChild(box);
+}
+
+/** Every opener calls this: re-mark the sidebar, and keep an open Files page current. */
 function renderSidebar() {
   syncNav();
-  const tree = $('tree');
-  if (!S.registry) return;
-  tree.innerHTML = '';
-  for (const g of S.registry.groups) {
-    if (!g.entries.length) continue;
-    const wrap = el('div', 'group');
-
-    // A row, not a button — it holds its own "new" button, and nesting
-    // interactive elements inside a button is invalid.
-    const head = el('div', 'group-head');
-    const toggle = el('button', 'group-toggle');
-    toggle.appendChild(el('span', 'group-title', g.title));
-    toggle.appendChild(el('span', 'group-count', String(g.entries.length)));
-    toggle.onclick = () => {
-      collapsed.has(g.id) ? collapsed.delete(g.id) : collapsed.add(g.id);
-      store.set('acs.collapsed', JSON.stringify([...collapsed]));
-      renderSidebar();
-    };
-    head.appendChild(toggle);
-
-    if (g.createKind) {
-      const add = el('button', 'group-add', '+');
-      add.title = `New ${g.title.replace(/s$/, '').toLowerCase()}`;
-      add.onclick = (ev) => { ev.stopPropagation(); createInGroup(g); };
-      head.appendChild(add);
-    }
-    wrap.appendChild(head);
-
-    if (!collapsed.has(g.id)) {
-      if (g.subtitle) wrap.appendChild(el('div', 'group-sub', g.subtitle));
-      for (const e of g.entries) {
-        const b = el('button', 'item' + (S.entry?.id === e.id ? ' active' : ''));
-        b.appendChild(el('span', `item-dot ${e.harness}`));
-        b.appendChild(el('span', 'item-label', e.label));
-        if (e.extraFiles > 0) b.appendChild(el('span', 'item-badge', `+${e.extraFiles}`));
-        b.title = e.description ? `${e.display}\n\n${e.description}` : e.display;
-        b.onclick = () => openEntry(e);
-        wrap.appendChild(b);
-      }
-    }
-    tree.appendChild(wrap);
-  }
+  if (S.view === 'files') paintFilesBody();
 }
 
 function findEntry(id) {
@@ -459,13 +539,13 @@ function confirmDiscard() {
 }
 const isDirty = () => S.file && S.draft !== S.original;
 
-async function openEntry(entry, filePath, { reveal = true } = {}) {
+async function openEntry(entry, filePath) {
   if (!confirmDiscard()) return;
   S.entry = entry;
+  S.lastEntryId = entry.id;         // what the Files page highlights when you go there
   S.view = 'entry';
   clearNotice();
   renderSidebar();
-  if (reveal) revealInTree(entry);
   await loadFile(filePath || entry.primary || entry.files[0]?.path);
 }
 
@@ -478,6 +558,7 @@ async function loadFile(p) {
     S.draft = f.content;
     S.tab = S.tab === 'history' || S.tab === 'compare' ? 'preview' : S.tab;
     window.history.replaceState(null, '', `#file=${encodeURIComponent(f.path)}`);
+    rememberOpened(f, S.entry);
     renderAll();
   } catch (e) {
     notice('error', e.message, null, true);
@@ -893,62 +974,6 @@ async function save() {
     btn.textContent = 'Save';
     renderStatus();
   }
-}
-
-/* ── search ──────────────────────────────────────────────────────────── */
-let searchTimer;
-$('search').addEventListener('input', (e) => {
-  clearTimeout(searchTimer);
-  const q = e.target.value.trim();
-  if (q.length < 2) {
-    if (S.view !== 'search') return;
-    // Search opens over unsaved edits without asking, so clearing it goes back to them.
-    if (isDirty()) { S.view = 'entry'; renderSidebar(); renderAll(); } else goHome();
-    return;
-  }
-  searchTimer = setTimeout(() => doSearch(q), 220);
-});
-
-async function doSearch(q) {
-  S.view = 'search';
-  renderTopbar(); renderTabs(); renderStatus();
-  $('filebar').hidden = true;
-  const c = $('content');
-  c.innerHTML = '<div class="results"><div class="scope-sub"><span class="spinner"></span> searching…</div></div>';
-  let data;
-  try { data = await api('GET', `/api/search?q=${encodeURIComponent(q)}`); }
-  catch (e) { c.innerHTML = `<div class="results"><div class="scope-sub">${esc(e.message)}</div></div>`; return; }
-
-  c.innerHTML = '';
-  const box = el('div', 'results');
-  box.appendChild(el('div', 'scope-sub',
-    data.hits.length ? `${data.hits.length} files contain “${q}”` : `Nothing matches “${q}”.`));
-  const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig');
-
-  for (const h of data.hits) {
-    const b = el('button', 'result');
-    const head = el('div', 'result-head');
-    head.appendChild(el('span', `item-dot ${h.harness}`));
-    head.appendChild(el('span', 'result-name', `${h.entryLabel}${h.file !== 'SKILL.md' ? ' · ' + h.file : ''}`));
-    head.appendChild(el('span', 'item-badge', h.group));
-    head.appendChild(el('span', 'result-path', h.display));
-    b.appendChild(head);
-    for (const m of h.matches) {
-      const line = el('div', 'result-line');
-      line.innerHTML = `<span class="result-ln">${m.line}</span>` +
-        esc(m.text).replace(rx, (x) => `<b>${x}</b>`);
-      b.appendChild(line);
-    }
-    if (h.total > h.matches.length) {
-      b.appendChild(el('div', 'result-line', `  +${h.total - h.matches.length} more`));
-    }
-    b.onclick = () => {
-      const entry = findEntry(h.entryId);
-      if (entry) openEntry(entry, h.path);
-    };
-    box.appendChild(b);
-  }
-  c.appendChild(box);
 }
 
 /* ── scope view ──────────────────────────────────────────────────────── */

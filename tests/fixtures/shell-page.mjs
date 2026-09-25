@@ -24,32 +24,48 @@ export const PATHS = {
   claudeMd: `${H}/Documents/Projects/app/CLAUDE.md`,
   memory: `${H}/.claude/projects/-app/memory/fact.md`,
   synthetic: `${H}/.claude/projects/-gone/memory/orphan.md`,
+  grokAgents: `${H}/.grok/AGENTS.md`,
+  codexConfig: `${H}/.codex/config.toml`,
+  codexRules: `${H}/.codex/rules/default.rules`,
+  wtDefaults: `${H}/.config/worktree/defaults.conf`,
 };
 
 export function registry(over = {}) {
   return {
     groups: [
       { id: 'skills', title: 'Skills', createKind: 'claude-skill', canAddFiles: true, entries: [
-        { id: 'skill:alpha', label: 'alpha', harness: 'claude', kindLabel: 'skill', display: '~/.claude/skills/alpha',
+        { id: 'skill:alpha', scope: 'global', label: 'alpha', harness: 'claude', kindLabel: 'skill', display: '~/.claude/skills/alpha',
           dir: `${H}/.claude/skills/alpha`, primary: PATHS.skill, deletable: true,
           files: [file('.claude/skills/alpha/SKILL.md'), file('.claude/skills/alpha/ref.md')] },
       ] },
       { id: 'memory', title: 'Memory', createKind: null, entries: [
-        { id: 'md:app', label: 'app', harness: 'both', kindLabel: 'memory', display: '~/Documents/Projects/app/CLAUDE.md',
+        { id: 'md:grok', label: 'Global · Grok', harness: 'grok', kindLabel: 'memory', display: '~/.grok/AGENTS.md', scope: 'global',
+          dir: `${H}/.grok`, primary: PATHS.grokAgents, deletable: true, files: [file('.grok/AGENTS.md')] },
+        { id: 'md:app', label: 'app', harness: 'both', kindLabel: 'memory', display: '~/Documents/Projects/app/CLAUDE.md', scope: 'project',
           dir: `${H}/Documents/Projects/app`, primary: PATHS.claudeMd, deletable: true, files: [file('Documents/Projects/app/CLAUDE.md')] },
-        { id: 'am:fact', label: 'fact', harness: 'claude', kindLabel: 'memory', display: '~/.claude/projects/-app/memory/fact.md',
+      ] },
+      { id: 'auto-memory', title: 'Auto-memory', collapsed: true, createKind: null, entries: [
+        { id: 'am:fact', label: 'fact', harness: 'claude', kindLabel: 'auto-memory', display: '~/.claude/projects/-app/memory/fact.md', scope: 'global',
           dir: `${H}/.claude/projects/-app/memory`, primary: PATHS.memory, deletable: true, files: [file('.claude/projects/-app/memory/fact.md')] },
       ] },
       { id: 'hooks', title: 'Hooks', collapsed: true, createKind: 'claude-hook', entries: [
-        { id: 'hook:pre', label: 'pre tool', harness: 'claude', kindLabel: 'hook', display: '~/.claude/hooks/pre tool.sh',
+        { id: 'hook:pre', scope: 'global', label: 'pre tool', harness: 'claude', kindLabel: 'hook', display: '~/.claude/hooks/pre tool.sh',
           dir: `${H}/.claude/hooks`, primary: PATHS.hook, deletable: true, files: [file('.claude/hooks/pre tool.sh')] },
       ] },
+      { id: 'settings', title: 'Settings & config', createKind: null, entries: [
+        { id: 'cfg:codex', label: 'Codex config', harness: 'codex', kindLabel: 'config', display: '~/.codex/config.toml', scope: 'global',
+          dir: `${H}/.codex`, primary: PATHS.codexConfig, deletable: false, files: [file('.codex/config.toml')] },
+        { id: 'cfg:rules', label: 'rules/default.rules', harness: 'codex', kindLabel: 'config', display: '~/.codex/rules/default.rules', scope: 'global',
+          dir: `${H}/.codex/rules`, primary: PATHS.codexRules, deletable: true, files: [file('.codex/rules/default.rules')] },
+      ] },
       { id: 'mcp', title: 'MCP', createKind: null, entries: [
-        { id: 'mcp:app', label: 'app', harness: 'claude', kindLabel: 'mcp', display: '~/Documents/Projects/app/.mcp.json',
+        { id: 'mcp:app', scope: 'project', label: 'app', harness: 'claude', kindLabel: 'mcp', display: '~/Documents/Projects/app/.mcp.json',
           dir: `${H}/Documents/Projects/app`, primary: PATHS.mcp, deletable: false, files: [file('Documents/Projects/app/.mcp.json')] },
       ] },
       { id: 'worktrees', title: 'Worktrees', createKind: 'worktree-project', entries: [
-        { id: 'wt:conf', label: 'app', harness: 'both', kindLabel: 'config', display: '~/Documents/Projects/app-trunk/.worktrees.conf',
+        { id: 'wt:defaults', label: 'Defaults template', harness: 'shell', kindLabel: 'worktree', display: '~/.config/worktree/defaults.conf', scope: 'global',
+          dir: `${H}/.config/worktree`, primary: PATHS.wtDefaults, deletable: false, files: [file('.config/worktree/defaults.conf')] },
+        { id: 'wt:conf', scope: 'project', label: 'app', harness: 'both', kindLabel: 'config', display: '~/Documents/Projects/app-trunk/.worktrees.conf',
           dir: `${H}/Documents/Projects/app-trunk`, primary: `${H}/Documents/Projects/app-trunk/.worktrees.conf`, deletable: false,
           files: [file('Documents/Projects/app-trunk/.worktrees.conf')] },
       ] },

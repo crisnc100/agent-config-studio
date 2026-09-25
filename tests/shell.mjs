@@ -68,64 +68,92 @@ const noErrors = (p) => p.errors.length === 0;
   ok('1 no page errors', noErrors(p), p.errors.join(' | '));
 }
 
-// ── 2. Files: collapsed on every load; opens on click and on search; reveals ──
+// ── 2. Files: its own page — every file reachable, create, open, search ──
+const filesPage = async (p) => { p.$('btn-files').click(); await settle(5); return p.$('content').querySelector('.files'); };
+const item = (page, id) => page.querySelectorAll('.files-item').find((b) => b.dataset.entry === id);
 {
   const p = await boot();
-  ok('2 the Files panel is collapsed on first load', p.$('files-panel').hidden && p.$('btn-files').getAttribute('aria-expanded') === 'false');
-  p.$('btn-files').click();
-  ok('2 it opens on click', !p.$('files-panel').hidden && p.$('btn-files').getAttribute('aria-expanded') === 'true');
-  ok('2 …holding the tree', p.$('files-panel').querySelectorAll('.group').length > 0);
+  const page = await filesPage(p);
+  ok('2 Files is a page, not a panel: the sidebar holds navigation only',
+     p.eval('S.view') === 'files' && !!page && p.location.hash === '#files' && !p.$('sidebar').querySelector('input') && !p.$('sidebar').querySelector('.files-item'));
+  ok('2 the search box is first on the page', page.children[0]?.querySelector('input')?.getAttribute('id') === 'search');
+  const all = registry().groups.flatMap((g) => g.entries);
+  const shown = page.querySelectorAll('.files-item').map((b) => b.dataset.entry);
+  ok('2 every registry file is on the page, exactly once', shown.length === all.length && all.every((e) => shown.includes(e.id)), `${shown.length}/${all.length}`);
+  const tools = page.querySelectorAll('.files-tool').map((t) => p.text(t.querySelector('.home-card-title')));
+  ok('2 grouped by tool, in order: Claude Code, Codex, Grok, Projects, Shared', JSON.stringify(tools) === JSON.stringify(['Claude Code', 'Codex', 'Grok', 'Projects', 'Shared']), tools.join(', '));
+  const types = (tool) => page.querySelectorAll('.files-tool').find((t) => p.text(t.querySelector('.home-card-title')) === tool)
+    .querySelectorAll('.files-type-name').map((x) => p.text(x));
+  ok('2 within a tool, by type: Claude Code has Skills, Auto-memory, Hooks', JSON.stringify(types('Claude Code')) === JSON.stringify(['Skills', 'Auto-memory', 'Hooks']), types('Claude Code').join(', '));
+  ok('2 Codex settings and rules are separate types', JSON.stringify(types('Codex')) === JSON.stringify(['Settings', 'Rules']), types('Codex').join(', '));
+  ok('2 instruction files are named for the tool that reads them: AGENTS.md for Grok, CLAUDE.md & AGENTS.md for Projects',
+     types('Grok')[0] === 'AGENTS.md' && types('Projects')[0] === 'CLAUDE.md & AGENTS.md', `${types('Grok')} / ${types('Projects')}`);
+  ok('2 each type shows its count', page.querySelectorAll('.files-type').every((t) => /^\d+$/.test(p.text(t.querySelector('.files-type-count')))));
+  const hook = item(page, 'hook:pre');
+  ok('2 files show short names, with the full path in the tooltip', p.text(hook.querySelector('.files-item-label')) === 'pre tool'
+     && hook.title.includes('~/.claude/hooks/pre tool.sh') && !p.text(page.querySelector('.files-tools')).includes('~/'));
+  ok('2 a low-traffic type (Auto-memory) starts folded, its count still shown', !item(page, 'am:fact') || item(page, 'am:fact').closest('.files-entries').hidden);
+  const am = page.querySelectorAll('.files-type').find((t) => /Auto-memory/.test(p.text(t)));
+  am.querySelector('.files-type-toggle').click();
   const again = await boot({ carry: p.store });
-  ok('2 and is collapsed again on reload, with the same storage', again.$('files-panel').hidden);
-  again.key('k', { meta: true });
-  ok('2 ⌘K opens it and focuses search', !again.$('files-panel').hidden && again.doc.activeElement === again.$('search'));
-
-  // Opening a file from each panel still works, and reveals it in the tree.
+  const page2 = await filesPage(again);
+  ok('2 unfolding a type is remembered', !item(page2, 'am:fact').closest('.files-entries').hidden);
+  hook.click();
+  await settle(10);
+  ok('2 clicking a file opens the editor as before, full path in the topbar', p.eval('S.view') === 'entry' && p.eval('S.file.path') === PATHS.hook
+     && p.text(p.$('title-path')) === '~/.claude/hooks/pre tool.sh');
+  ok('2 no page errors', noErrors(p) && noErrors(again), [...p.errors, ...again.errors].join(' | '));
+}
+{
+  // Search on the page, and ⌘K from anywhere.
+  const p = await boot({ hash: '#skills' });
+  await settle(5);
+  p.key('k', { meta: true });
+  await settle(20);
+  ok('2 ⌘K from another view opens Files and focuses its search', p.eval('S.view') === 'files' && p.doc.activeElement === p.$('search'));
+  const box = p.$('search');
+  p.input(box, 'pre');
+  await settle(260);
+  ok('2 typing searches in place: results on the page, the view and the search box stay', p.eval('S.view') === 'files' && p.$('search') === box
+     && !!p.$('content').querySelector('.result') && !p.$('content').querySelector('.files-tool'));
+  p.input(box, '');
+  ok('2 clearing search brings the files back', !!p.$('content').querySelector('.files-tool') && !p.$('content').querySelector('.result'));
+  p.input(box, 'pre');
+  await settle(260);
+  p.$('content').querySelector('.result').click();
+  await settle(10);
+  ok('2 a search result opens its file', p.eval('S.view') === 'entry' && p.eval('S.file.path') === PATHS.hook);
+}
+{
+  // Opening from each panel works as before; Files highlights the open file when you go there.
   const opened = async (q, label) => {
     await settle(10);
     const good = q.eval('S.view') === 'entry' && !!q.eval('S.file');
     ok(`2 ${label}: the file opens`, good, `${q.eval('S.view')}`);
+    const id = q.eval('S.entry?.id');
+    const page = await filesPage(q);
+    const hit = page && item(page, id);
+    ok(`2 ${label}: going to Files highlights that file and scrolls to it, unfolding its type if folded`,
+       !!hit && hit.classList.contains('active') && !hit.closest('.files-entries').hidden && q.doc.scrolledIntoView.includes(hit), id);
     return good;
   };
-  {
-    const q = await boot();
-    q.input(q.$('search'), 'pre');
-    await settle(260);
-    q.$('content').querySelector('.result').click();
-    await opened(q, 'search');
-    ok('2 search: the file is revealed — panel open, its collapsed group expanded, scrolled to',
-       !q.$('files-panel').hidden && q.$('tree').querySelector('.item.active')?.textContent.includes('pre tool')
-       && q.doc.scrolledIntoView.includes(q.$('tree').querySelector('.item.active')));
-  }
   {
     const q = await boot({ hash: '#mcp' });
     await settle(5);
     q.$('content').querySelector('.scope-open').click();
     await opened(q, 'MCP');
-    ok('2 MCP: revealed in the tree', !q.$('files-panel').hidden && !!q.$('tree').querySelector('.item.active'));
   }
   {
     const q = await boot({ hash: '#memory' });
     await settle(5);
-    const open = q.$('content').querySelectorAll('.mem-fact').find((r) => r.dataset.id === 'r1').querySelector('button');
-    open.click();
+    q.$('content').querySelectorAll('.mem-fact').find((r) => r.dataset.id === 'r1').querySelector('button').click();
     await opened(q, 'Memory');
-    ok('2 Memory: revealed in the tree', !q.$('files-panel').hidden && !!q.$('tree').querySelector('.item.active'));
-  }
-  {
-    const q = await boot({ hash: '#memory' });
-    await settle(5);
-    q.$('content').querySelectorAll('.mem-fact').find((r) => r.dataset.id === 'r2').querySelector('button').click();
-    await settle(10);
-    ok('2 Memory: a synthetic entry (not in the tree) opens and keeps its path display',
-       q.eval('S.view') === 'entry' && q.text(q.$('title-path')) === '~/.claude/projects/-gone/memory/orphan.md' && !q.$('tree').querySelector('.item.active'));
   }
   {
     const q = await boot({ hash: '#context' });
     await settle(5);
     q.$('content').querySelector('.cx-variant button').click();
     await opened(q, 'Context');
-    ok('2 Context: revealed in the tree', !q.$('files-panel').hidden && !!q.$('tree').querySelector('.item.active'));
   }
   {
     const q = await boot();
@@ -134,28 +162,56 @@ const noErrors = (p) => p.errors.length === 0;
       C.activeId = 'sx';`);
     q.$('btn-assist').click();
     ok('2 Assist: the drawer opens', q.$('drawer').classList.contains('open'));
-    const btn = q.$('drawer-body').querySelectorAll('button').find((b) => b.textContent === 'Open file');
-    btn.click();
+    q.$('drawer-body').querySelectorAll('button').find((b) => b.textContent === 'Open file').click();
+    ok('2 Assist: "Open file" closes the drawer', !q.$('drawer').classList.contains('open'));
     await opened(q, 'Assist "Open file"');
-    ok('2 Assist: the drawer closes and the file is revealed', !q.$('drawer').classList.contains('open') && !!q.$('tree').querySelector('.item.active'));
   }
   {
-    const q = await boot();
-    q.$('btn-files').click();
-    q.$('reveal-files').click();
-    q.$('btn-files').click();
-    const r = await boot({ carry: q.store, hash: '#mcp' });
+    const q = await boot({ hash: '#memory' });
     await settle(5);
-    r.$('content').querySelector('.scope-open').click();
+    q.$('content').querySelectorAll('.mem-fact').find((r) => r.dataset.id === 'r2').querySelector('button').click();
     await settle(10);
-    ok('2 with "Show opened files here" off, opening a file leaves the panel shut (remembered)',
-       r.eval('S.view') === 'entry' && r.$('files-panel').hidden && r.$('reveal-files').checked === false);
+    ok('2 Memory: a synthetic entry (not in the registry) opens and keeps its path display',
+       q.eval('S.view') === 'entry' && q.text(q.$('title-path')) === '~/.claude/projects/-gone/memory/orphan.md');
   }
   {
     const q = await boot({ hash: `#file=${encodeURIComponent(PATHS.hook)}` });
     await settle(10);
-    ok('2 a cold #file= link opens the file but not the panel', q.eval('S.file?.path') === PATHS.hook && q.$('files-panel').hidden);
+    ok('2 a cold #file= link opens the file', q.eval('S.file?.path') === PATHS.hook && q.eval('S.view') === 'entry');
   }
+}
+{
+  // Recently opened: per browser, labelled exactly that.
+  const p = await boot();
+  let page = await filesPage(p);
+  const recent = () => p.$('content').querySelector('.files-recent');
+  ok('2 a "Recently opened" row sits under the search box, empty to start', p.text(recent().querySelector('.home-card-title')) === 'Recently opened'
+     && /appear here/.test(p.text(recent())) && page.querySelector('#files-body').children[0] === recent());
+  p.eval(`openEntry(findEntry('hook:pre'))`);
+  await settle(10);
+  p.eval(`openEntry(findEntry('md:app'))`);
+  await settle(10);
+  p.eval(`openInEditor(${JSON.stringify(PATHS.synthetic)}, '~/.claude/projects/-gone/memory/orphan.md')`);
+  await settle(10);
+  page = await filesPage(p);
+  const chips = () => recent().querySelectorAll('.files-recent-item');
+  ok('2 it lists opened files, most recent first, by short name', JSON.stringify(chips().map((c) => p.text(c.querySelector('.files-item-label')))) === JSON.stringify(['orphan.md', 'app', 'pre tool']),
+     chips().map((c) => p.text(c)).join(' / '));
+  ok('2 each shows its path in a tooltip', chips()[2].title.includes('~/.claude/hooks/pre tool.sh'));
+  const r = await boot({ carry: p.store });
+  await filesPage(r);
+  ok('2 it survives a reload (this browser only)', r.$('content').querySelectorAll('.files-recent-item').length === 3);
+  r.$('content').querySelectorAll('.files-recent-item')[0].click();
+  await settle(10);
+  ok('2 a synthetic memory entry in it reopens with its path display', r.eval('S.view') === 'entry' && r.text(r.$('title-path')) === '~/.claude/projects/-gone/memory/orphan.md');
+  const blocked = await boot({ storage: 'throws' });
+  await filesPage(blocked);
+  blocked.eval(`openEntry(findEntry('hook:pre'))`);
+  await settle(10);
+  await filesPage(blocked);
+  ok('2 with storage blocked the page still renders, the row just stays empty', !!blocked.$('content').querySelector('.files-tool') && noErrors(blocked), blocked.errors.join(' | '));
+  const src = APP.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok('2 it is never called "recent edits"', !/recent(ly)?[ -]edit/i.test(src + HTML));
 }
 
 // ── 3. one VIEWS table; every hash; unknown → Home; special hashes ────────────
@@ -232,7 +288,7 @@ const noErrors = (p) => p.errors.length === 0;
 // ── 4. no inline styles on nav; tokens only ────────────────────────────────
 {
   ok('4 index.html has no inline style= at all', !/\sstyle=/.test(HTML));
-  const nav = APP.slice(APP.indexOf('/* ── navigation'), APP.indexOf('/* ── file tree'));
+  const nav = APP.slice(APP.indexOf('/* ── navigation'), APP.indexOf('/* ── opening files'));
   ok('4 the sidebar code sets no inline styles', nav.length > 1000 && !/\.style\b|cssText/.test(nav));
   const outside = CSS.replace(/:root(\[data-theme="light"\])?\s*\{[^}]*\}/g, '');
   const hex = outside.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
@@ -254,7 +310,8 @@ const noErrors = (p) => p.errors.length === 0;
   const again = await boot({ carry: p.store });
   ok('5 …and stays collapsed across a reload', again.$('app').classList.contains('rail-collapsed'));
   again.$('btn-files').click();
-  ok('5 Files on the icon rail expands the rail and opens the panel', !again.$('app').classList.contains('rail-collapsed') && !again.$('files-panel').hidden);
+  await settle(5);
+  ok('5 Files on the icon rail opens the Files page, the rail left as it is', again.$('app').classList.contains('rail-collapsed') && again.eval('S.view') === 'files');
   const blocked = await boot({ storage: 'throws', hash: '#skills' });
   ok('5 with localStorage throwing, the page still boots and renders the sidebar',
      blocked.eval('S.view') === 'skills' && blocked.$('sidebar').querySelectorAll('.nav-item').length === 12 && noErrors(blocked), blocked.errors.join(' | '));
@@ -271,17 +328,23 @@ const noErrors = (p) => p.errors.length === 0;
 {
   const p = await boot();
   p.$('btn-files').click();
-  const adds = p.$('tree').querySelectorAll('.group-add');
+  await settle(5);
+  const adds = p.$('content').querySelectorAll('.files-add');
   ok('F every group with a createKind keeps its + button', adds.length === 3, `${adds.length}`);
   p.ctx.prompt = () => 'newskill';
   adds.find((b) => b.title === 'New skill').click();
   await settle(10);
+  ok('F each + sits on its own type, once per registry group', JSON.stringify(adds.map((b) => b.title)) === JSON.stringify(['New skill', 'New hook', 'New worktree']), adds.map((b) => b.title).join(', '));
   ok('F + on Skills still creates, and opens the new file in Edit', p.requests.some((r) => r.path === '/api/create' && r.body.kind === 'claude-skill' && r.body.name === 'newskill')
      && p.eval('S.tab') === 'edit');
-  adds.find((b) => b.title === 'New hook').click();
+  p.$('btn-files').click();
+  await settle(5);
+  p.$('content').querySelectorAll('.files-add').find((b) => b.title === 'New hook').click();
   await settle(10);
   ok('F + on Hooks still creates its own kind', p.requests.some((r) => r.path === '/api/create' && r.body.kind === 'claude-hook'));
-  adds.find((b) => b.title === 'New worktree').click();
+  p.$('btn-files').click();
+  await settle(5);
+  p.$('content').querySelectorAll('.files-add').find((b) => b.title === 'New worktree').click();
   await settle(10);
   ok('F + on Worktrees still opens the registration form, not a file scaffold',
      p.requests.some((r) => r.path === '/api/worktree' && r.search === '?status=0') && !!p.doc.body.querySelector('.wt-overlay'));
@@ -301,21 +364,15 @@ const noErrors = (p) => p.errors.length === 0;
   ok('F the Theme item names the theme it switches to', /theme/i.test(t.text(t.$('btn-theme'))));
 }
 {
-  // Search clear, external delete and local delete all land on Home.
-  const p = await boot();
-  p.input(p.$('search'), 'pre');
-  await settle(260);
-  ok('F search shows results', p.eval('S.view') === 'search');
-  p.input(p.$('search'), '');
-  ok('F clearing search lands on Home', p.eval('S.view') === 'home');
+  // External delete and local delete land on Home.
 
   const e = await boot({ hash: `#file=${encodeURIComponent(PATHS.claudeMd)}` });
   await settle(10);
   const es = e.sources[0];
   es.onmessage({ data: JSON.stringify({ type: 'files', origin: 'outside', removed: [PATHS.claudeMd], removedPaths: [PATHS.claudeMd], added: [], changed: [] }) });
   await settle(10);
-  ok('F an outside delete of the open file (Files closed) lands on Home and keeps its sticky notice',
-     e.$('files-panel').hidden && e.eval('S.view') === 'home' && /deleted outside/.test(e.text(e.$('notice-slot'))));
+  ok('F an outside delete of the open file lands on Home and keeps its sticky notice',
+     e.eval('S.view') === 'home' && /deleted outside/.test(e.text(e.$('notice-slot'))));
 
   const l = await boot({ hash: `#file=${encodeURIComponent(PATHS.hook)}` });
   await settle(10);
@@ -373,14 +430,17 @@ const noErrors = (p) => p.errors.length === 0;
   p.key('Escape');
   ok('F keyboard: Escape closes Assist', !p.$('drawer').classList.contains('open'));
   p.key('k', { meta: true });
+  await settle(5);
   p.key('Escape');
-  ok('F keyboard: Escape leaves search', p.doc.activeElement !== p.$('search'));
+  ok('F keyboard: Escape leaves search', !!p.$('search') && p.doc.activeElement !== p.$('search'));
 
   const n = await boot({ width: 800 });
   n.$('nav-menu').click();
   ok('F narrow: the menu button opens the sidebar overlay', n.$('app').classList.contains('nav-open') && n.$('nav-menu').getAttribute('aria-expanded') === 'true');
   n.$('btn-files').click();
-  ok('F narrow: Files opens inside the overlay without closing it', n.$('app').classList.contains('nav-open') && !n.$('files-panel').hidden);
+  await settle(5);
+  ok('F narrow: Files is a view like the rest — the overlay closes and the page opens', !n.$('app').classList.contains('nav-open') && n.eval('S.view') === 'files');
+  n.$('nav-menu').click();
   n.$('btn-usage').click();
   await settle(5);
   ok('F narrow: choosing a view closes the overlay and opens it', !n.$('app').classList.contains('nav-open') && n.eval('S.view') === 'usage');
@@ -391,7 +451,8 @@ const noErrors = (p) => p.errors.length === 0;
   n.$('nav-scrim').click();
   ok('F narrow: the scrim closes it', !n.$('app').classList.contains('nav-open'));
   n.key('k', { meta: true });
-  ok('F narrow: ⌘K opens the overlay to the search box', n.$('app').classList.contains('nav-open') && n.doc.activeElement === n.$('search'));
+  await settle(5);
+  ok('F narrow: ⌘K opens Files with search focused, the overlay left shut', !n.$('app').classList.contains('nav-open') && n.doc.activeElement === n.$('search'));
   const r = await boot({ width: 800, hash: '#mcp' });
   await settle(5);
   r.$('content').querySelector('.scope-open').click();
@@ -429,11 +490,12 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
   await settle(10);
   q.eval(`S.tab = 'edit'; renderContent();`);
   q.input(q.$('content').querySelector('textarea'), 'unsaved');
-  q.input(q.$('search'), 'pre');
-  await settle(260);
-  q.input(q.$('search'), '');
-  ok('G2 clearing search with unsaved edits goes back to the file, edits intact, not to Home',
-     q.eval('S.view') === 'entry' && q.eval('S.draft') === 'unsaved' && !!q.$('content').querySelector('textarea'));
+  let qa = 0;
+  q.confirm = () => { qa++; return false; };
+  q.key('k', { meta: true });
+  await settle(5);
+  ok('G2 ⌘K over unsaved edits asks first; cancelling stays in the editor, edits intact',
+     qa === 1 && q.eval('S.view') === 'entry' && q.eval('S.draft') === 'unsaved' && !!q.$('content').querySelector('textarea'));
 }
 {
   // G3: Assist before the registry has loaded.
@@ -456,7 +518,7 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
   const n = await boot({ width: 800 });
   n.key('k', { meta: true });
   await settle(20);
-  ok('G4 narrow: after the overlay opens, ⌘K\'s focus is still on search', n.doc.activeElement === n.$('search'),
+  ok('G4 narrow: ⌘K\'s focus is still on search once every timer has run', n.doc.activeElement === n.$('search'),
      n.doc.activeElement?.getAttribute?.('id'));
   n.key('Escape');
   n.$('nav-menu').click();
@@ -471,36 +533,6 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
   reg.resolve(registry());
   await settle(10);
   ok('G5 a hash changed during boot opens that view once the registry is in', p.eval('S.view') === 'context' && p.location.hash === '#context');
-}
-{
-  // G6: reveal on the icon rail and in the narrow overlay — deferred to the next expand.
-  const p = await boot();
-  p.$('rail-toggle').click();
-  p.eval(`openEntry(findEntry('hook:pre'))`);
-  await settle(10);
-  ok('G6 rail: opening a file expands its group now, without widening the rail',
-     p.eval(`collapsed.has('hooks')`) === false && p.$('app').classList.contains('rail-collapsed'));
-  p.$('rail-toggle').click();
-  const active = p.$('tree').querySelector('.item.active');
-  ok('G6 rail: the next expand opens Files scrolled to that file',
-     !p.$('files-panel').hidden && active?.textContent.includes('pre tool') && p.doc.scrolledIntoView.includes(active));
-  const n = await boot({ width: 800, hash: '#mcp' });
-  await settle(5);
-  n.$('content').querySelector('.scope-open').click();
-  await settle(10);
-  ok('G6 narrow: opening a file leaves the overlay shut', !n.$('app').classList.contains('nav-open'));
-  n.$('nav-menu').click();
-  const nActive = n.$('tree').querySelector('.item.active');
-  ok('G6 narrow: the next time the overlay opens, Files shows that file', !n.$('files-panel').hidden && !!nActive && n.doc.scrolledIntoView.includes(nActive));
-  const off = await boot();
-  off.$('btn-files').click();
-  off.$('reveal-files').click();
-  off.$('btn-files').click();
-  off.$('rail-toggle').click();
-  off.eval(`openEntry(findEntry('hook:pre'))`);
-  await settle(10);
-  off.$('rail-toggle').click();
-  ok('G6 with reveal off, nothing is revealed on expand', off.$('files-panel').hidden && off.eval(`collapsed.has('hooks')`));
 }
 {
   // G9: hashes match exactly — a prefix of a view name is not that view.

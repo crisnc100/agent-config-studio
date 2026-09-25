@@ -118,31 +118,12 @@ a { color: var(--accent); }
   font: 600 10px var(--sans); font-variant-numeric: tabular-nums;
   color: var(--bg); background: var(--amber); padding: 1px 6px; border-radius: 999px;
 }
-.nav-chev { flex: none; color: var(--muted); transition: transform 0.15s; display: grid; }
-.nav-chev svg { width: 12px; height: 12px; }
-.nav-item[aria-expanded="true"] .nav-chev { transform: rotate(90deg); }
-
-.files-panel {
-  margin: 4px 0 8px 17px; padding-left: 8px;
-  border-left: 1px solid var(--border);
-}
-.files-panel .search-wrap { padding: 4px 0 6px; border-bottom: 0; }
-.files-panel .tree { max-height: 48vh; overflow-y: auto; padding: 0 0 4px; }
-.files-reveal {
-  display: flex; align-items: center; gap: 6px; padding: 6px 2px 2px;
-  font-size: 11px; color: var(--muted); cursor: pointer;
-}
-.files-reveal input { accent-color: var(--accent); margin: 0; }
-.files-empty { font-size: 12px; color: var(--muted); padding: 6px 4px; }
-
 .nav-foot { border-top: 1px solid var(--border-soft); padding: 8px; display: flex; flex-direction: column; gap: 2px; }
 
 /* Icon rail: labels leave the layout but stay the buttons' accessible names. */
 #app.rail-collapsed .brand { padding: 14px 0 12px; flex-direction: column; gap: 8px; }
 #app.rail-collapsed .brand-words,
-#app.rail-collapsed .nav-group-title,
-#app.rail-collapsed .files-panel,
-#app.rail-collapsed .nav-chev { display: none; }
+#app.rail-collapsed .nav-group-title { display: none; }
 #app.rail-collapsed .nav-group + .nav-group { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
 #app.rail-collapsed .nav-item { justify-content: center; padding: 0; height: 36px; }
 #app.rail-collapsed .nav-label {
@@ -166,51 +147,14 @@ a { color: var(--accent); }
 .search:focus { border-color: var(--accent-dim); }
 .search::placeholder { color: var(--muted); }
 
-.group { margin-bottom: 4px; }
-.group-head { display: flex; align-items: center; width: 100%; border-radius: 7px; }
-.group-head:hover { background: var(--panel-2); }
-.group-toggle {
-  display: flex; align-items: baseline; gap: 8px; flex: 1; min-width: 0;
-  padding: 8px 4px 6px 8px; text-align: left;
-}
-.group-add {
-  width: 22px; height: 22px; margin-right: 6px; border-radius: 5px; flex: none;
-  color: var(--muted); font-size: 15px; line-height: 1;
-  opacity: 0; transition: opacity 0.12s;
-}
-.group-head:hover .group-add { opacity: 1; }
-.group-add:hover { background: var(--panel-3); color: var(--accent); }
-.group-title {
-  font-size: 11px; font-weight: 600; letter-spacing: 0.07em;
-  text-transform: uppercase; color: var(--muted);
-}
-.group-count {
-  font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums;
-  margin-left: auto; opacity: 0.7;
-}
-.group-sub { font-size: 11px; color: var(--muted); padding: 0 8px 6px; opacity: 0.75; }
-
-.item {
-  display: flex; align-items: center; gap: 8px; width: 100%;
-  padding: 6px 8px; border-radius: 7px; text-align: left;
-  color: var(--text-dim); line-height: 1.35;
-}
-.item:hover { background: var(--panel-2); color: var(--text); }
-.item.active { background: var(--panel-3); color: var(--text); }
-.item.active .item-label { font-weight: 550; }
 .item-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
 .item-dot.claude { background: var(--claude); }
 .item-dot.codex { background: var(--codex); }
 .item-dot.both { background: linear-gradient(90deg, var(--claude) 50%, var(--codex) 50%); }
-.item-label {
-  flex: 1; min-width: 0; font-size: 13px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .item-badge {
   font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums;
   background: var(--panel-3); padding: 1px 5px; border-radius: 4px;
 }
-.item.active .item-badge { background: var(--bg); }
 
 /* ── main ────────────────────────────────────────────────────────────── */
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -599,8 +543,7 @@ a { color: var(--accent); }
   .nav-menu { display: grid; }
   /* The rail preference is a desktop choice: the overlay always shows labels. */
   #app.rail-collapsed .brand { padding: 14px 10px 12px 16px; flex-direction: row; gap: 10px; }
-  #app.rail-collapsed .brand-words, #app.rail-collapsed .nav-group-title, #app.rail-collapsed .nav-chev { display: revert; }
-  #app.rail-collapsed .files-panel:not([hidden]) { display: block; }
+  #app.rail-collapsed .brand-words, #app.rail-collapsed .nav-group-title { display: revert; }
   #app.rail-collapsed .nav-item { justify-content: flex-start; padding: 0 10px; height: 32px; }
   #app.rail-collapsed .nav-label { position: static; width: auto; height: auto; clip: auto; }
   #app.rail-collapsed .nav-badge { position: static; padding: 1px 6px; font-size: 10px; line-height: inherit; }
@@ -1015,3 +958,70 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .mem-row-head .scope-sub { flex: 1 1 320px; min-width: 0; margin-bottom: 12px; }
 .mem-row-head .scope-select { width: auto; flex: none; margin-bottom: 12px; }
 .cx-read { margin: 8px 0 4px; padding: 14px 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); max-width: none; }
+
+/* ── cards ───────────────────────────────────────────────────────────────
+   The panel surface Files and Home share: a titled card, tools on the right. */
+.home-card {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); min-width: 0;
+}
+.home-card-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--border-soft); min-height: 46px;
+}
+.home-card-title { margin: 0; flex: 1; font-size: 13px; font-weight: 600; letter-spacing: 0.01em; }
+.home-muted { font-size: 12px; color: var(--muted); }
+
+/* ── Files ───────────────────────────────────────────────────────────────
+   Search first, then what you opened lately, then each tool's files by type. */
+.files { padding: 24px 28px 80px; max-width: 1180px; }
+.files-search-wrap { margin-bottom: 16px; }
+.files-search { padding: 11px 14px; font-size: 14px; }
+.files-body { display: flex; flex-direction: column; gap: 16px; }
+.files-tools { display: flex; flex-direction: column; gap: 16px; }
+.files-count { font: 11px var(--mono); color: var(--muted); }
+
+.files-recent-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 16px; }
+.files-recent-item {
+  display: inline-flex; align-items: center; gap: 7px; max-width: 260px;
+  padding: 5px 11px; border-radius: 999px; font-size: 12.5px; color: var(--text-dim);
+  background: var(--panel-2); border: 1px solid var(--border-soft);
+}
+.files-recent-item:hover { color: var(--text); border-color: var(--accent-dim); }
+
+.files-type { padding: 4px 12px 8px 16px; }
+.files-type + .files-type { border-top: 1px solid var(--border-soft); }
+.files-type-head { display: flex; align-items: center; gap: 6px; }
+.files-type-toggle {
+  display: flex; align-items: baseline; gap: 8px; flex: 1; min-width: 0;
+  padding: 8px 0 6px; text-align: left;
+}
+.files-type-name {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted);
+}
+.files-type-toggle:hover .files-type-name { color: var(--text-dim); }
+.files-type-toggle[aria-expanded="false"] .files-type-name::after { content: " ▸"; }
+.files-type-count { font: 11px var(--mono); color: var(--muted); }
+.files-add {
+  width: 24px; height: 24px; border-radius: 6px; flex: none;
+  color: var(--muted); font-size: 15px; line-height: 1;
+}
+.files-add:hover { background: var(--panel-3); color: var(--accent); }
+.files-entries {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 2px 8px;
+  padding-bottom: 4px;
+}
+.files-item {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 6px 8px; border-radius: 7px; text-align: left;
+  color: var(--text-dim); font-size: 13px;
+}
+.files-item:hover { background: var(--panel-2); color: var(--text); }
+.files-item.active { background: var(--panel-3); color: var(--text); font-weight: 550; box-shadow: inset 2px 0 0 var(--accent); }
+.files-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-body .results { padding: 0; max-width: none; }
+
+@media (max-width: 700px) {
+  .files { padding: 16px 14px 72px; }
+  .files-entries { grid-template-columns: minmax(0, 1fr); }
+}
