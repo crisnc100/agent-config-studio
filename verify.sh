@@ -53,3 +53,5 @@ node tests/shell.mjs
 node tests/home.mjs
 # What the registry tells the Files page (temp HOME).
 node tests/files-registry.mjs
+# The MCP route's note on a machine with no ~/.claude.json (temp HOME).
+node tests/mcp-route.mjs
