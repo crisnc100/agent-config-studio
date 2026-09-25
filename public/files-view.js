@@ -72,28 +72,35 @@ function filesModel(registry) {
 
 /**
  * The label each entry shows in its type: its own, unless another entry in
- * the same type has the same one. Then a label that is the tail of its
- * folder's path takes the next parent segment (apps/web → alpha/apps/web)
- * until they differ; any other label gets its folder's name after it.
+ * the same type has the same one. Then the colliding entries grow parent
+ * context together (a label that is its folder's tail takes the next parent:
+ * lib/production → dealer-portal/lib/production → airflo-trunk/…) until every
+ * pair in different folders differs. Entries still alike share a folder, so
+ * the filename tells them apart instead.
  */
 function shownLabels(entries) {
   const out = {};
-  const counts = new Map();
-  for (const e of entries) counts.set(e.label, (counts.get(e.label) || 0) + 1);
-  for (const e of entries) {
-    if (counts.get(e.label) < 2) { out[e.id] = e.label; continue; }
-    const where = (e.where || e.display.replace(/\/[^/]*$/, '')).replace(/^~\//, '').split('/').filter(Boolean);
+  const parts = (p) => p.replace(/^~\//, '').split('/').filter(Boolean);
+  const info = entries.map((e) => {
+    const full = parts(e.display || '');
+    const dir = e.where ? parts(e.where) : full.slice(0, -1);
     const own = e.label.split('/');
-    const tail = where.slice(-own.length).join('/') === e.label;
-    out[e.id] = tail ? where.slice(-(own.length + 1)).join('/') : `${e.label} · ${where[where.length - 1] || ''}`;
-  }
-  // A second pass for anything the first still left identical.
-  const seen = new Map();
-  for (const e of entries) seen.set(out[e.id], (seen.get(out[e.id]) || 0) + 1);
-  for (const e of entries) {
-    if (seen.get(out[e.id]) < 2) continue;
-    const where = (e.where || e.display.replace(/\/[^/]*$/, '')).replace(/^~\//, '').split('/').filter(Boolean);
-    out[e.id] = where.slice(-3).join('/');
+    return { e, dir, key: dir.join('/'), file: full[full.length - 1] || '', own, tail: dir.slice(-own.length).join('/') === e.label };
+  });
+  const at = (x, k) => (k === 0 ? x.e.label
+    : x.tail ? x.dir.slice(-(x.own.length + k)).join('/') : `${x.e.label} · ${x.dir.slice(-k).join('/')}`);
+  const groups = new Map();
+  for (const x of info) groups.set(x.e.label, [...(groups.get(x.e.label) || []), x]);
+  for (const group of groups.values()) {
+    if (group.length === 1) { out[group[0].e.id] = group[0].e.label; continue; }
+    const apart = (labels) => group.every((x, i) => group.every((y, j) => i === j || x.key === y.key || labels[i] !== labels[j]));
+    const max = Math.max(...group.map((x) => x.dir.length));
+    let k = 0;
+    let labels = group.map((x) => at(x, 0));
+    while (!apart(labels) && k < max) { k++; labels = group.map((x) => at(x, k)); }
+    const seen = new Map();
+    for (const l of labels) seen.set(l, (seen.get(l) || 0) + 1);
+    group.forEach((x, i) => { out[x.e.id] = seen.get(labels[i]) > 1 ? `${labels[i]} · ${x.file}` : labels[i]; });
   }
   return out;
 }

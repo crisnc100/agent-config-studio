@@ -660,6 +660,15 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
   const page = await filesPage(p);
   const web = ['md:web1', 'md:web2'].map((id) => p.text(item(page, id).querySelector('.files-item-label')));
   ok('QA3 two "apps/web" entries are told apart by their parent', JSON.stringify(web) === JSON.stringify(['alpha/apps/web', 'alpha-feature/apps/web']), web.join(' | '));
+  const af = ['md:af-trunk', 'md:af-wt'].map((id) => p.text(item(page, id).querySelector('.files-item-label')));
+  ok('F2 a trunk and its worktree grow parent context until they differ', JSON.stringify(af) === JSON.stringify(['airflo-trunk/dealer-portal/lib/production', 'airflo-feature/dealer-portal/lib/production']), af.join(' | '));
+  const boat = ['md:boat-agents', 'md:boat-claude'].map((id) => p.text(item(page, id).querySelector('.files-item-label')));
+  ok('F2 two files in the same folder are told apart by filename, without growing the path', JSON.stringify(boat) === JSON.stringify(['personal/boat-app-project · AGENTS.md', 'personal/boat-app-project · CLAUDE.md']), boat.join(' | '));
+  const dups = page.querySelectorAll('.files-type').flatMap((t) => {
+    const labels = t.querySelectorAll('.files-item-label').map((x) => p.text(x));
+    return labels.filter((l, i) => labels.indexOf(l) !== i);
+  });
+  ok('F2 within every type on the page, every label is unique', dups.length === 0, dups.join(', '));
   ok('QA3 …and a unique label is left alone', p.text(item(page, 'hook:pre').querySelector('.files-item-label')) === 'pre tool');
 }
 {
