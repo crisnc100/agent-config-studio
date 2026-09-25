@@ -83,12 +83,15 @@ function contextItems(d) {
  * silence, not good news. So is a source that answered in part: an invalid
  * model registry or an unreadable catalog means some alerts were never
  * computed, and an unreadable instruction file was never checked for drift.
+ * A catalog that is merely missing — that CLI is not installed or was never
+ * run — is not a failure: it is said quietly and the empty state stands.
  */
 function attentionModel(sources) {
   const items = [];
   const loading = [];
   const failed = [];
   const partial = [];
+  const quiet = [];
   for (const [id, label] of ATTENTION_SOURCES) {
     const s = sources[id] || { state: 'loading' };
     if (s.state === 'loading') { loading.push({ id, label }); continue; }
@@ -97,7 +100,8 @@ function attentionModel(sources) {
       items.push(...modelItems(s.data));
       if (s.data.registryError) partial.push({ id, label, text: 'the model registry file is invalid — defaults are in use' });
       for (const c of (s.data.catalogs || []).filter((x) => !x.ok)) {
-        partial.push({ id, label, text: c.note || `the ${c.label} catalog could not be read` });
+        if (c.missing) quiet.push({ id, label, text: `${c.label}: not installed — not checked` });
+        else partial.push({ id, label, text: c.note || `the ${c.label} catalog could not be read` });
       }
     } else if (id === 'memory') items.push(...memoryItems(s.data));
     else if (id === 'context') {
@@ -112,7 +116,7 @@ function attentionModel(sources) {
     }
   }
   const clear = !items.length && !loading.length && !failed.length && !partial.length;
-  return { items, loading, failed, partial, clear };
+  return { items, loading, failed, partial, quiet, clear };
 }
 
 /** The Accounts & usage card: the configured seats, ranked and labelled as Usage does. */

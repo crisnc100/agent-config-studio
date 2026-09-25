@@ -3327,9 +3327,12 @@ function paintAttention(body) {
   if (m.clear) {
     const ok = el('div', 'home-clear');
     ok.appendChild(el('div', 'home-clear-title', 'Nothing needs you.'));
-    ok.appendChild(el('div', 'home-muted', 'Models, memory, worktrees and context all checked.'));
+    ok.appendChild(el('div', 'home-muted', m.quiet.length
+      ? 'Everything installed was checked: models, memory, worktrees and context.'
+      : 'Models, memory, worktrees and context all checked.'));
     body.appendChild(ok);
   }
+  for (const q of m.quiet) body.appendChild(el('div', 'home-muted home-pad home-quiet', q.text));
 }
 
 function paintClis(body) {

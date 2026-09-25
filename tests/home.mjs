@@ -9,6 +9,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import vm from 'node:vm';
 import { bootPage, routesFor, registry, MEMORY, CONTEXT, PUB, ROOT, settle } from './fixtures/shell-page.mjs';
 
@@ -142,6 +143,16 @@ const CLEAN = {
   ok('G1 Context with unreadable files is a partial source', (() => {
     const m = run(`attentionModel({ ...clean, context: { state: 'ok', data: { ...clean.context.data, unreadable: [{ display: '~/p/CLAUDE.md', reason: 'EACCES' }] } } })`);
     return m.clear === false && m.partial.some((x) => x.id === 'context' && /1 instruction file could not be read/.test(x.text));
+  })());
+  ok('G1b a MISSING catalog (CLI not installed or never run) does not block the empty state, and says so quietly', (() => {
+    const m = run(`attentionModel({ ...clean, models: { state: 'ok', data: { ...clean.models.data, catalogs: [
+      { label: 'Claude', ok: true, note: null }, { label: 'Codex', ok: false, missing: true, note: 'No Codex catalog on this machine' }] } } })`);
+    return m.clear === true && m.partial.length === 0 && m.quiet.some((x) => x.text === 'Codex: not installed — not checked');
+  })());
+  ok('G1b a catalog that FAILED to load (ok:false, not missing) still blocks it', (() => {
+    const m = run(`attentionModel({ ...clean, models: { state: 'ok', data: { ...clean.models.data, catalogs: [
+      { label: 'Codex', ok: false, missing: false, note: 'Codex catalog could not be read (EACCES)' }] } } })`);
+    return m.clear === false && m.partial.some((x) => /could not be read/.test(x.text)) && !m.quiet.length;
   })());
   ok('G1 …while healthy catalogs and no unreadable files still allow the empty state', run(`attentionModel({ ...clean, models: { state: 'ok', data: { ...clean.models.data, catalogs: [{ label: 'Claude', ok: true, note: null }] } } })`).clear === true);
   ok('10 …a source never asked is loading, not clear', run('attentionModel({})').clear === false && run('attentionModel({})').loading.length === 4);
@@ -337,6 +348,33 @@ const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.ent
   const q = await boot({ routes: cleanRoutes({ 'GET /api/context': () => ({ ...CONTEXT, unreadable: [{ display: '~/p/CLAUDE.md', reason: 'EACCES' }] }) }) });
   await settle(20);
   ok('G1 page: unreadable context files keep it away too', !/Nothing needs you/.test(p.text(card(q, 'attention'))) && /could not be read/.test(p.text(card(q, 'attention'))));
+}
+{
+  const p = await boot({ routes: cleanRoutes({ 'GET /api/models': () => ({ ...CLEAN.models, catalogs: [
+    { label: 'Claude', ok: true, note: null }, { label: 'Grok', ok: false, missing: true, note: 'No Grok catalog on this machine' }] }) }) });
+  await settle(20);
+  const t = p.text(card(p, 'attention'));
+  ok('G1b page: a missing catalog shows "Grok: not installed — not checked" and still "Nothing needs you"', /Nothing needs you/.test(t) && /Grok: not installed — not checked/.test(t), t);
+  ok('G1b page: …without claiming everything was checked', !/all checked/.test(t) && /Everything installed was checked/.test(t), t);
+  const q = await boot({ routes: cleanRoutes({ 'GET /api/models': () => ({ ...CLEAN.models, catalogs: [
+    { label: 'Grok', ok: false, missing: false, note: 'Grok catalog could not be read (bad JSON)' }] }) }) });
+  await settle(20);
+  const u = p.text(card(q, 'attention'));
+  ok('G1b page: a failed catalog keeps the empty state away and names the failure', !/Nothing needs you/.test(u) && /could not be read/.test(u), u);
+}
+{
+  // The server tells the two apart: readCatalogs marks a missing catalog, not a broken one.
+  const { readCatalogs } = await import('../lib/models-catalog.js');
+  const { writeClaudeCatalog, defaultCatalogs } = await import('./fixtures/models-home.mjs');
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-home-cat-')));
+  writeClaudeCatalog(tmp, defaultCatalogs().claude, Date.now());
+  fs.mkdirSync(path.join(tmp, '.grok'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, '.grok', 'models_cache.json'), '{ not json');
+  const c = readCatalogs({ home: tmp });
+  ok('G1b server: no Codex catalog → ok:false, missing:true', c.codex.ok === false && c.codex.missing === true, JSON.stringify({ ok: c.codex.ok, missing: c.codex.missing }));
+  ok('G1b server: an unreadable Grok catalog → ok:false, missing:false', c.grok.ok === false && c.grok.missing === false && /could not be read/.test(c.grok.note), JSON.stringify({ ok: c.grok.ok, missing: c.grok.missing, note: c.grok.note }));
+  ok('G1b server: a good Claude catalog → ok, not missing', c.claude.ok === true && c.claude.missing === false);
+  fs.rmSync(tmp, { recursive: true, force: true });
 }
 {
   const p = await boot({ routes: homeRoutes({ 'GET /api/registry': () => { throw { status: 500, body: { error: 'registry exploded' } }; } }) });
