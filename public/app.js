@@ -158,6 +158,8 @@ async function boot() {
   connectEvents();
   restoreSessions();
   resolveHarness();
+  // Assist may have been opened while detection was still out: repaint it with the harnesses.
+  if ($('drawer').classList.contains('open')) renderChat();
   paintModelsBadge(S.registry.modelAlerts || 0);
   if (S.registry.registryError) {
     notice('warn', 'The model registry has a problem — Assist is using what it could:',
@@ -173,8 +175,11 @@ async function boot() {
  * lands on Home. On a cold load the Files panel stays shut even for a file
  * link: it is collapsed on every load.
  */
+/** A hash names a view exactly, optionally followed by &-parameters: #models-x is not #models. */
+const hashIs = (hash, h) => hash === h || hash.startsWith(`${h}&`);
+
 function routeHash(hash, { cold = false } = {}) {
-  if (hash.startsWith('#assist')) {
+  if (hashIs(hash, '#assist')) {
     if (cold) goHome();
     return openDrawer();
   }
@@ -189,7 +194,7 @@ function routeHash(hash, { cold = false } = {}) {
     }
     return cold ? goHome() : openHome();
   }
-  const v = VIEWS.find((x) => x.hash && hash.startsWith(x.hash));
+  const v = VIEWS.find((x) => x.hash && hashIs(hash, x.hash));
   if (v) {
     if (!cold && S.view === v.id) return;
     return v.open();
@@ -214,6 +219,7 @@ function entryForFile(p) {
 const UI = {
   rail: store.get('acs.rail') === 'collapsed' ? 'collapsed' : 'expanded',
   files: false,                                   // collapsed on every load, by design
+  revealPending: false,                           // a reveal waiting for the rail or overlay to open
   reveal: store.get('acs.revealFiles') !== 'off',
 };
 const narrow = () => !!window.matchMedia?.('(max-width: 900px)').matches;
@@ -311,13 +317,15 @@ function setRail(mode, { save = true } = {}) {
   t.title = collapsedRail ? 'Expand sidebar' : 'Collapse sidebar';
   t.setAttribute('aria-pressed', String(collapsedRail));
   if (save) store.set('acs.rail', mode);
+  if (!collapsedRail && UI.revealPending) showReveal();
 }
 
-function setNavOverlay(open) {
+function setNavOverlay(open, { focusNav = true } = {}) {
   $('app').classList.toggle('nav-open', open);
   $('nav-menu').setAttribute('aria-expanded', String(open));
   $('nav-menu').setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
-  if (open) setTimeout(() => $('sidebar').querySelector('.nav-item')?.focus(), 0);
+  if (open && UI.revealPending) showReveal();
+  if (open && focusNav) setTimeout(() => $('sidebar').querySelector('.nav-item')?.focus(), 0);
 }
 
 function setFilesOpen(open) {
@@ -334,7 +342,7 @@ function toggleFiles() {
 
 /** ⌘K: search lives in the Files panel, so the panel opens to reach it. */
 function focusSearch() {
-  if (narrow()) setNavOverlay(true);
+  if (narrow()) setNavOverlay(true, { focusNav: false });
   else if (UI.rail === 'collapsed') setRail('expanded');
   setFilesOpen(true);
   $('search').focus();
@@ -342,19 +350,31 @@ function focusSearch() {
 }
 
 /**
- * Show where a file opened from a panel lives: open the panel, expand its
- * group, scroll to it. Skipped when turned off, on the icon rail and in the
- * narrow overlay — none of those asked for the tree. A file with no tree
- * entry (a synthetic memory entry) keeps its path in the topbar and no more.
+ * Show where a file opened from a panel lives: expand its group, open the
+ * panel, scroll to it. Turned off by the "Show opened files here" setting.
+ * The icon rail and the narrow overlay were not asked to open, so there the
+ * group is expanded now and the rest waits for the next expand of the rail
+ * or the overlay. A file with no tree entry (a synthetic memory entry) keeps
+ * its path in the topbar and no more.
  */
 function revealInTree(entry) {
-  if (!UI.reveal || UI.rail === 'collapsed' || narrow() || !S.registry) return;
+  if (!UI.reveal || !S.registry) return;
   const group = S.registry.groups.find((g) => g.entries.some((e) => e.id === entry.id));
   if (!group) return;
   if (collapsed.has(group.id)) {
     collapsed.delete(group.id);
     store.set('acs.collapsed', JSON.stringify([...collapsed]));
   }
+  if (UI.rail === 'collapsed' || narrow()) {
+    UI.revealPending = true;
+    return renderSidebar();
+  }
+  showReveal();
+}
+
+function showReveal() {
+  UI.revealPending = false;
+  if (!UI.reveal || S.view !== 'entry' || !S.entry) return;
   if (!UI.files) setFilesOpen(true);
   renderSidebar();
   $('tree').querySelector('.item.active')?.scrollIntoView?.({ block: 'nearest' });
@@ -581,7 +601,9 @@ function renderContent() {
 /** Home, without the confirm: for transitions whose file is already gone. */
 function goHome() {
   S.view = 'home';
-  S.entry = null;
+  // Nothing stays open behind Home: every caller either confirmed the discard
+  // or had no file left to lose.
+  S.entry = null; S.file = null; S.original = ''; S.draft = '';
   window.history.replaceState(null, '', location.pathname + location.search);
   renderSidebar();
   renderAll();
@@ -878,7 +900,12 @@ let searchTimer;
 $('search').addEventListener('input', (e) => {
   clearTimeout(searchTimer);
   const q = e.target.value.trim();
-  if (q.length < 2) { if (S.view === 'search') goHome(); return; }
+  if (q.length < 2) {
+    if (S.view !== 'search') return;
+    // Search opens over unsaved edits without asking, so clearing it goes back to them.
+    if (isDirty()) { S.view = 'entry'; renderSidebar(); renderAll(); } else goHome();
+    return;
+  }
   searchTimer = setTimeout(() => doSearch(q), 220);
 });
 
@@ -3508,7 +3535,7 @@ function closeDrawer() {
 
 function allFiles() {
   const out = [];
-  for (const g of S.registry.groups) {
+  for (const g of S.registry?.groups || []) {
     for (const e of g.entries) {
       for (const f of e.files) out.push({ ...f, group: g.title, entry: e.label, harness: e.harness });
     }
@@ -3884,7 +3911,7 @@ function renderCompose() {
   const harness = el('select', 'assist-harness');
   harness.title = 'Which CLI answers. Sticky — it never changes with the file you open.';
   if (!list.length) {
-    harness.appendChild(el('option', null, 'No harness detected'));
+    harness.appendChild(el('option', null, S.registry ? 'No harness detected' : 'Detecting…'));
     harness.disabled = true;
   } else {
     for (const h of list) {
@@ -3960,6 +3987,7 @@ function pickerMatches() {
 function renderPicker() {
   const list = pickerMatches();
   const box = el('div', 'picker');
+  if (!S.registry) { box.appendChild(el('div', 'picker-empty', 'Loading files…')); return box; }
   if (!list.length) { box.appendChild(el('div', 'picker-empty', 'No file matches that.')); return box; }
   list.forEach((f, i) => {
     const row = el('button', 'picker-row' + (i === C.picker.index ? ' active' : ''));
@@ -4140,7 +4168,7 @@ function wireGlobalKeys() {
 // cancelled discard puts the old hash back, so the URL keeps naming what is shown.
 window.addEventListener('hashchange', (e) => {
   if (!S.registry) return;
-  if (isDirty() && !location.hash.startsWith('#assist')) {
+  if (isDirty() && !hashIs(location.hash, '#assist')) {
     if (!confirmDiscard()) {
       const old = e.oldURL ? new URL(e.oldURL).hash : '';
       window.history.replaceState(null, '', old || location.pathname + location.search);

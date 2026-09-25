@@ -404,6 +404,119 @@ const noErrors = (p) => p.errors.length === 0;
   ok('F focus is visible: a :focus-visible outline is defined', /:focus-visible\s*\{\s*outline: 2px solid var\(--accent\)/.test(CSS));
 }
 
+// ── Grade fixes (PR A) ─────────────────────────────────────────────────────
+const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
+{
+  // G2: an accepted Home entry leaves nothing open behind it.
+  const p = await boot({ hash: `#file=${encodeURIComponent(PATHS.claudeMd)}` });
+  await settle(10);
+  p.eval(`S.tab = 'edit'; renderContent();`);
+  p.input(p.$('content').querySelector('textarea'), 'unsaved');
+  let asked = 0;
+  p.confirm = () => { asked++; return true; };
+  p.$('btn-home').click();
+  await settle(5);
+  ok('G2 accepting the discard on the way Home clears the open file and its draft',
+     asked === 1 && p.eval('S.view') === 'home' && p.eval('S.file') === null && !p.eval('isDirty()') && p.eval('S.draft') === '');
+  p.$('btn-skills').click();
+  await settle(5);
+  ok('G2 …so the next navigation does not ask again', asked === 1 && p.eval('S.view') === 'skills');
+  p.$('btn-home').click();
+  p.$('btn-assist').click();
+  ok('G2 …and Assist opened from Home attaches no old file', p.eval('active().mentions.length') === 0);
+
+  const q = await boot({ hash: `#file=${encodeURIComponent(PATHS.claudeMd)}` });
+  await settle(10);
+  q.eval(`S.tab = 'edit'; renderContent();`);
+  q.input(q.$('content').querySelector('textarea'), 'unsaved');
+  q.input(q.$('search'), 'pre');
+  await settle(260);
+  q.input(q.$('search'), '');
+  ok('G2 clearing search with unsaved edits goes back to the file, edits intact, not to Home',
+     q.eval('S.view') === 'entry' && q.eval('S.draft') === 'unsaved' && !!q.$('content').querySelector('textarea'));
+}
+{
+  // G3: Assist before the registry has loaded.
+  const reg = deferred();
+  const routes = routesFor({ 'GET /api/registry': () => reg.promise });
+  const p = await boot({ routes });
+  p.$('btn-assist').click();
+  p.$('drawer-compose').querySelector('.mention-add').click();
+  ok('G3 "@ attach a file" before the registry loads says so and does not throw',
+     p.errors.length === 0 && /Loading files/.test(p.text(p.$('drawer-compose').querySelector('.picker'))), p.errors.join(' | '));
+  reg.resolve(registry());
+  await settle(10);
+  const sel = p.$('drawer-compose').querySelector('.assist-harness');
+  const send = p.$('drawer-compose').querySelectorAll('button').find((b) => b.textContent === 'Send');
+  ok('G3 once the registry lands, the open drawer is repainted with its harness enabled',
+     sel && !sel.disabled && sel.value === 'claude' && send && !send.disabled && p.errors.length === 0, p.errors.join(' | '));
+}
+{
+  // G4: narrow ⌘K keeps the focus it asked for, past the overlay's focus timer.
+  const n = await boot({ width: 800 });
+  n.key('k', { meta: true });
+  await settle(20);
+  ok('G4 narrow: after the overlay opens, ⌘K\'s focus is still on search', n.doc.activeElement === n.$('search'),
+     n.doc.activeElement?.getAttribute?.('id'));
+  n.key('Escape');
+  n.$('nav-menu').click();
+  await settle(20);
+  ok('G4 narrow: the menu button still focuses the first nav item', n.doc.activeElement === n.$('btn-home'));
+}
+{
+  // G5: a hash changed while the registry is still loading is routed once it lands.
+  const reg = deferred();
+  const p = await boot({ routes: routesFor({ 'GET /api/registry': () => reg.promise }) });
+  p.navigate('#context');
+  reg.resolve(registry());
+  await settle(10);
+  ok('G5 a hash changed during boot opens that view once the registry is in', p.eval('S.view') === 'context' && p.location.hash === '#context');
+}
+{
+  // G6: reveal on the icon rail and in the narrow overlay — deferred to the next expand.
+  const p = await boot();
+  p.$('rail-toggle').click();
+  p.eval(`openEntry(findEntry('hook:pre'))`);
+  await settle(10);
+  ok('G6 rail: opening a file expands its group now, without widening the rail',
+     p.eval(`collapsed.has('hooks')`) === false && p.$('app').classList.contains('rail-collapsed'));
+  p.$('rail-toggle').click();
+  const active = p.$('tree').querySelector('.item.active');
+  ok('G6 rail: the next expand opens Files scrolled to that file',
+     !p.$('files-panel').hidden && active?.textContent.includes('pre tool') && p.doc.scrolledIntoView.includes(active));
+  const n = await boot({ width: 800, hash: '#mcp' });
+  await settle(5);
+  n.$('content').querySelector('.scope-open').click();
+  await settle(10);
+  ok('G6 narrow: opening a file leaves the overlay shut', !n.$('app').classList.contains('nav-open'));
+  n.$('nav-menu').click();
+  const nActive = n.$('tree').querySelector('.item.active');
+  ok('G6 narrow: the next time the overlay opens, Files shows that file', !n.$('files-panel').hidden && !!nActive && n.doc.scrolledIntoView.includes(nActive));
+  const off = await boot();
+  off.$('btn-files').click();
+  off.$('reveal-files').click();
+  off.$('btn-files').click();
+  off.$('rail-toggle').click();
+  off.eval(`openEntry(findEntry('hook:pre'))`);
+  await settle(10);
+  off.$('rail-toggle').click();
+  ok('G6 with reveal off, nothing is revealed on expand', off.$('files-panel').hidden && off.eval(`collapsed.has('hooks')`));
+}
+{
+  // G9: hashes match exactly — a prefix of a view name is not that view.
+  const cold = await boot({ hash: '#models-not-a-view' });
+  ok('G9 #models-not-a-view lands on Home (cold)', cold.eval('S.view') === 'home');
+  const warm = await boot();
+  warm.navigate('#memoryx');
+  await settle(5);
+  ok('G9 …and #memoryx at runtime', warm.eval('S.view') === 'home');
+  const as = await boot({ hash: '#assistant' });
+  ok('G9 #assistant is not #assist', !as.$('drawer').classList.contains('open'));
+  const qs = await boot({ hash: '#memory&tab=ops' });
+  await settle(5);
+  ok('G9 a view hash with &-parameters still opens its view', qs.eval('S.view') === 'memory');
+}
+
 for (const p of pages) { p.done(); for (const s of p.sources) s.close(); }
 const stray = pages.flatMap((p) => p.errors);
 ok('no page errors across every page booted', stray.length === 0, stray.slice(0, 3).join(' | '));
