@@ -9,22 +9,23 @@
 </head>
 <body>
   <div id="app">
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar" aria-label="Navigation">
       <div class="brand">
         <div class="brand-mark"></div>
-        <div>
+        <div class="brand-words">
           <div class="brand-text">Agent Config Studio</div>
           <div class="brand-sub" id="brand-sub">loading…</div>
         </div>
+        <button class="icon-btn rail-toggle" id="rail-toggle" aria-label="Collapse sidebar" title="Collapse sidebar"></button>
       </div>
-      <div class="search-wrap">
-        <input class="search" id="search" placeholder="Search all config…  ⌘K" autocomplete="off" spellcheck="false">
-      </div>
-      <nav class="tree" id="tree"></nav>
+      <nav class="nav" id="nav" aria-label="Main"></nav>
+      <div class="nav-foot" id="nav-foot"></div>
     </aside>
+    <div class="nav-scrim" id="nav-scrim"></div>
 
     <main class="main">
       <header class="topbar">
+        <button class="icon-btn nav-menu" id="nav-menu" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false" title="Menu"></button>
         <div class="title-block">
           <div class="title" id="title">Agent Config Studio</div>
           <div class="title-path" id="title-path"></div>
@@ -45,25 +46,15 @@
         <span id="status-left"></span>
         <span class="spacer"></span>
         <span id="status-right"></span>
-        <button class="btn ghost" id="btn-skills" style="padding:2px 8px;font-size:12px">Skills</button>
-        <button class="btn ghost" id="btn-memory" style="padding:2px 8px;font-size:12px">Memory</button>
-        <button class="btn ghost" id="btn-context" style="padding:2px 8px;font-size:12px">Context</button>
-        <button class="btn ghost" id="btn-worktrees" style="padding:2px 8px;font-size:12px">Worktrees</button>
-        <button class="btn ghost" id="btn-trash" style="padding:2px 8px;font-size:12px">Trash</button>
-        <button class="btn ghost" id="btn-models" style="padding:2px 8px;font-size:12px">Models</button>
-        <button class="btn ghost" id="btn-usage" style="padding:2px 8px;font-size:12px">Usage</button>
-        <button class="btn ghost" id="btn-mcp" style="padding:2px 8px;font-size:12px">MCP</button>
-        <button class="btn ghost" id="btn-scope" style="padding:2px 8px;font-size:12px">Scope</button>
-        <button class="btn ghost" id="btn-theme" style="padding:2px 8px;font-size:12px">Theme</button>
       </footer>
     </main>
   </div>
 
   <div class="scrim" id="scrim"></div>
-  <aside class="drawer" id="drawer">
+  <aside class="drawer" id="drawer" inert aria-hidden="true">
     <div class="drawer-head">
       <span class="drawer-title">Assist</span>
-      <button class="btn ghost" id="drawer-close" style="padding:2px 9px">✕</button>
+      <button class="btn ghost drawer-close" id="drawer-close" aria-label="Close Assist" title="Close (Esc)">✕</button>
     </div>
     <div class="session-bar" id="session-bar" hidden></div>
     <div class="drawer-body" id="drawer-body"></div>
@@ -72,6 +63,7 @@
 
   <script src="/vendor/marked.min.js"></script>
   <script src="/file-events.js"></script>
+  <script src="/files-view.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -35,14 +35,81 @@ function renderMarkdown(src) {
   return host.innerHTML;
 }
 
+/**
+ * localStorage, fail-soft. A private window or blocked site data makes the
+ * accessor itself throw, and every value kept here is a convenience the page
+ * must still start without.
+ */
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* quota, private mode, blocked */ } },
+};
+
 const S = {
   registry: null,
-  view: 'welcome',      // welcome | entry | search | scope | mcp | usage | trash | models | skills | memory | context
+  view: 'home',         // 'entry', or a content view's id in VIEWS
   entry: null,
   file: null,           // { path, kind, content, mtime, display }
   original: '',
   draft: '',
   tab: 'preview',
+  badges: { models: 0 },
+};
+
+/**
+ * Every place the sidebar can take you, in one table: boot's deep links, the
+ * runtime hash router, the topbar title, renderContent and the sidebar itself
+ * all read it. `kind: 'action'` rows (Files, Theme) act in place rather than
+ * switch the view; `group: null` rows are views with no sidebar item.
+ */
+const VIEWS = [
+  { id: 'home', label: 'Home', group: 'home', icon: 'home', hash: '#home',
+    title: 'Agent Config Studio', sub: '', open: openHome, render: renderWelcome },
+  { id: 'files', label: 'Files', group: 'configure', icon: 'files', hash: '#files',
+    title: 'Files', sub: 'Every config file, by the tool that reads it', open: () => openFiles(), render: renderFiles },
+  { id: 'skills', label: 'Skills', group: 'configure', icon: 'skills', hash: '#skills',
+    title: 'Skills', sub: 'Every skill on this machine — browse, select, download', open: openSkills },
+  { id: 'mcp', label: 'MCP', group: 'configure', icon: 'mcp', hash: '#mcp',
+    title: 'MCP servers', sub: 'Model Context Protocol servers across both harnesses', open: openMcp },
+  { id: 'models', label: 'Models', group: 'configure', icon: 'models', hash: '#models',
+    title: 'Models', sub: 'Every model family, its current id, and what the CLIs offer', open: openModels,
+    badge: () => S.badges.models },
+  { id: 'memory', label: 'Memory', group: 'review', icon: 'memory', hash: '#memory',
+    title: 'Memory', sub: 'Claude auto-memory by project — review, and clean up with a preview first', open: openMemory },
+  { id: 'context', label: 'Context', group: 'review', icon: 'context', hash: '#context',
+    title: 'Context', sub: 'What each project tells its agents — CLAUDE.md, AGENTS.md, Cursor rules', open: openContext },
+  { id: 'worktrees', label: 'Worktrees', group: 'review', icon: 'worktrees', hash: '#worktrees',
+    title: 'Worktrees', sub: 'Every registered project’s worktrees — env, and which are provably done', open: openWorktrees },
+  { id: 'usage', label: 'Usage', group: 'review', icon: 'usage', hash: '#usage',
+    title: 'Usage', sub: 'Subscription headroom per seat — where the next task should go', open: openUsage },
+  { id: 'scope', label: 'Scope', group: 'review', icon: 'scope', hash: '#scope',
+    title: 'Scope chain', sub: 'What actually applies when an agent runs in a directory', open: openScope },
+  { id: 'trash', label: 'Trash', group: 'footer', icon: 'trash', hash: '#trash',
+    title: 'Trash', sub: 'Deleted items — restorable', open: openTrash },
+  { id: 'theme', label: 'Theme', group: 'footer', icon: 'theme', kind: 'action', open: toggleTheme },
+];
+const viewById = (id) => VIEWS.find((v) => v.id === id) || null;
+const NAV_GROUPS = [['home', null], ['configure', 'Configure'], ['review', 'Review']];
+
+/* Stroke icons, 16px, drawn in currentColor so both themes colour them. */
+const svg = (d) => `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const ICONS = {
+  home: svg('<path d="M2.5 7.2 8 2.8l5.5 4.4V13a.5.5 0 0 1-.5.5H9.5V10h-3v3.5H3a.5.5 0 0 1-.5-.5z"/>'),
+  files: svg('<path d="M2.5 4a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>'),
+  skills: svg('<path d="M8 2.2l1.6 3.3 3.6.5-2.6 2.5.6 3.6L8 10.4l-3.2 1.7.6-3.6-2.6-2.5 3.6-.5z"/>'),
+  mcp: svg('<path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11.5v2"/>'),
+  models: svg('<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 1.8v2.2M9.5 1.8v2.2M6.5 12v2.2M9.5 12v2.2M1.8 6.5H4M1.8 9.5H4M12 6.5h2.2M12 9.5h2.2"/>'),
+  memory: svg('<path d="M3 3.5A1.5 1.5 0 0 1 4.5 2h8v10.5h-8A1.5 1.5 0 0 0 3 14zM3 14V3.5M6 5h4"/>'),
+  context: svg('<path d="M8 2 2.5 5 8 8l5.5-3zM2.5 8 8 11l5.5-3M2.5 11 8 14l5.5-3"/>'),
+  worktrees: svg('<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5.5" r="1.5"/><path d="M4.5 5v6M11.5 7c0 2.5-3 2.5-5.5 4"/>'),
+  usage: svg('<path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5 10.5 7"/>'),
+  scope: svg('<circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2"/>'),
+  trash: svg('<path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.6 8.6a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.6"/>'),
+  sun: svg('<circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/>'),
+  moon: svg('<path d="M13.2 9.6A5.5 5.5 0 0 1 6.4 2.8a5.5 5.5 0 1 0 6.8 6.8z"/>'),
+  chevron: svg('<path d="M6 3.5 10.5 8 6 12.5"/>'),
+  rail: svg('<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M6 2.5v11"/>'),
+  menu: svg('<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>'),
 };
 
 /* ── api ─────────────────────────────────────────────────────────────── */
@@ -78,6 +145,7 @@ const clearNotice = () => { clearTimeout(noticeTimer); $('notice-slot').innerHTM
 /* ── boot ────────────────────────────────────────────────────────────── */
 async function boot() {
   marked.setOptions({ gfm: true, breaks: false, mangle: false, headerIds: false });
+  renderNav();
   S.registry = await api('GET', '/api/registry');
   seedCollapsed();
   renderSidebar();
@@ -90,30 +158,49 @@ async function boot() {
   connectEvents();
   restoreSessions();
   resolveHarness();
+  // Assist may have been opened while detection was still out: repaint it with the harnesses.
+  if ($('drawer').classList.contains('open')) renderChat();
   paintModelsBadge(S.registry.modelAlerts || 0);
   if (S.registry.registryError) {
     notice('warn', 'The model registry has a problem — Assist is using what it could:',
       S.registry.registryError.split('\n'), true);
   }
 
-  // Deep links: #file=<path> for any file, #scope for the scope view.
-  if (location.hash.startsWith('#scope')) return openScope();
-  if (location.hash.startsWith('#mcp')) return openMcp();
-  if (location.hash.startsWith('#usage')) return openUsage();
-  if (location.hash.startsWith('#trash')) return openTrash();
-  if (location.hash.startsWith('#worktrees')) return openWorktrees();
-  if (location.hash.startsWith('#skills')) return openSkills();
-  if (location.hash.startsWith('#models')) return openModels();
-  if (location.hash.startsWith('#memory')) return openMemory();
-  if (location.hash.startsWith('#context')) return openContext();
-  if (location.hash.startsWith('#assist')) { renderWelcome(); return openDrawer(); }
-  const m = location.hash.match(/file=([^&]+)/);
-  if (m) {
-    const p = decodeURIComponent(m[1]);
-    const entry = entryForFile(p);
-    if (entry) return openEntry(entry, p);
+  routeHash(location.hash, { cold: true });
+}
+
+/**
+ * Deep links. `#file=<encoded path>` opens a file, `#assist` opens the drawer
+ * over Home, and every VIEWS row with a hash opens its view. Anything else
+ * lands on Home. On a cold load the Files panel stays shut even for a file
+ * link: it is collapsed on every load.
+ */
+/** A hash names a view exactly, optionally followed by &-parameters: #models-x is not #models. */
+const hashIs = (hash, h) => hash === h || hash.startsWith(`${h}&`);
+
+function routeHash(hash, { cold = false } = {}) {
+  if (hashIs(hash, '#assist')) {
+    if (cold) goHome();
+    return openDrawer();
   }
-  renderWelcome();
+  const m = hash.match(/^#file=([^&]+)/);
+  if (m) {
+    let p = null;
+    try { p = decodeURIComponent(m[1]); } catch { /* a malformed escape is an unknown link */ }
+    const entry = p && entryForFile(p);
+    if (entry) {
+      if (!cold && S.view === 'entry' && S.file?.path === p) return;
+      return openEntry(entry, p);
+    }
+    return cold ? goHome() : openHome();
+  }
+  const v = VIEWS.find((x) => x.hash && hashIs(hash, x.hash));
+  if (v) {
+    if (!cold && S.view === v.id) return;
+    return v.open();
+  }
+  if (cold) return goHome();
+  if (S.view !== 'home') openHome(); else window.history.replaceState(null, '', location.pathname + location.search);
 }
 
 function entryForFile(p) {
@@ -124,57 +211,319 @@ function entryForFile(p) {
   return null;
 }
 
-/* ── sidebar ─────────────────────────────────────────────────────────── */
-const stored = localStorage.getItem('acs.collapsed');
-const collapsed = new Set(stored ? JSON.parse(stored) : []);
-/** First run: start with the groups the server marks as low-traffic collapsed. */
-function seedCollapsed() {
-  if (stored) return;
-  S.registry.groups.filter((g) => g.collapsed).forEach((g) => collapsed.add(g.id));
+/* ── navigation ──────────────────────────────────────────────────────── */
+/** The sidebar is navigation only: built once from VIEWS, then only re-marked. */
+const UI = {
+  rail: store.get('acs.rail') === 'collapsed' ? 'collapsed' : 'expanded',
+};
+const narrow = () => !!window.matchMedia?.('(max-width: 900px)').matches;
+
+function renderNav() {
+  const nav = $('nav');
+  nav.innerHTML = '';
+  for (const [group, title] of NAV_GROUPS) {
+    const sec = el('div', 'nav-group');
+    if (title) sec.appendChild(el('div', 'nav-group-title', title));
+    for (const v of VIEWS.filter((x) => x.group === group)) sec.appendChild(navButton(v));
+    nav.appendChild(sec);
+  }
+  const foot = $('nav-foot');
+  foot.innerHTML = '';
+  for (const v of VIEWS.filter((x) => x.group === 'footer')) foot.appendChild(navButton(v));
+
+  $('rail-toggle').onclick = () => setRail(UI.rail === 'collapsed' ? 'expanded' : 'collapsed');
+  $('nav-menu').innerHTML = ICONS.menu;
+  $('nav-menu').onclick = () => setNavOverlay(!$('app').classList.contains('nav-open'));
+  $('nav-scrim').onclick = () => setNavOverlay(false);
+  setRail(UI.rail, { save: false });
+  syncNav();
 }
 
-function renderSidebar() {
-  const tree = $('tree');
-  tree.innerHTML = '';
-  for (const g of S.registry.groups) {
-    if (!g.entries.length) continue;
-    const wrap = el('div', 'group');
-
-    // A row, not a button — it holds its own "new" button, and nesting
-    // interactive elements inside a button is invalid.
-    const head = el('div', 'group-head');
-    const toggle = el('button', 'group-toggle');
-    toggle.appendChild(el('span', 'group-title', g.title));
-    toggle.appendChild(el('span', 'group-count', String(g.entries.length)));
-    toggle.onclick = () => {
-      collapsed.has(g.id) ? collapsed.delete(g.id) : collapsed.add(g.id);
-      localStorage.setItem('acs.collapsed', JSON.stringify([...collapsed]));
-      renderSidebar();
-    };
-    head.appendChild(toggle);
-
-    if (g.createKind) {
-      const add = el('button', 'group-add', '+');
-      add.title = `New ${g.title.replace(/s$/, '').toLowerCase()}`;
-      add.onclick = (ev) => { ev.stopPropagation(); createInGroup(g); };
-      head.appendChild(add);
-    }
-    wrap.appendChild(head);
-
-    if (!collapsed.has(g.id)) {
-      if (g.subtitle) wrap.appendChild(el('div', 'group-sub', g.subtitle));
-      for (const e of g.entries) {
-        const b = el('button', 'item' + (S.entry?.id === e.id ? ' active' : ''));
-        b.appendChild(el('span', `item-dot ${e.harness}`));
-        b.appendChild(el('span', 'item-label', e.label));
-        if (e.extraFiles > 0) b.appendChild(el('span', 'item-badge', `+${e.extraFiles}`));
-        b.title = e.description ? `${e.display}\n\n${e.description}` : e.display;
-        b.onclick = () => openEntry(e);
-        wrap.appendChild(b);
-      }
-    }
-    tree.appendChild(wrap);
+function navButton(v) {
+  const b = el('button', 'nav-item');
+  b.id = `btn-${v.id}`;
+  b.dataset.view = v.id;
+  b.title = v.label;
+  const icon = el('span', 'nav-icon');
+  icon.innerHTML = ICONS[v.icon] || '';
+  b.appendChild(icon);
+  b.appendChild(el('span', 'nav-label', v.label));
+  if (v.badge) {
+    const badge = el('span', 'nav-badge');
+    badge.hidden = true;
+    b.appendChild(badge);
   }
+  b.onclick = () => {
+    if (v.kind !== 'action') setNavOverlay(false);
+    v.open();
+  };
+  return b;
+}
+
+/** Re-mark the sidebar: the current view, badges, and the theme toggle. */
+function syncNav() {
+  for (const v of VIEWS) {
+    const b = $(`btn-${v.id}`);
+    if (!b) continue;
+    const here = v.kind !== 'action' && S.view === v.id;
+    b.classList.toggle('active', here);
+    if (here) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    if (v.badge) {
+      const n = v.badge() || 0;
+      const badge = b.querySelector('.nav-badge');
+      badge.hidden = n <= 0;
+      badge.textContent = n > 0 ? String(n) : '';
+      b.title = n > 0 ? `${v.label} — ${n} alert${n === 1 ? '' : 's'}` : v.label;
+    }
+  }
+  const theme = $('btn-theme');
+  if (theme) {
+    const dark = document.documentElement.dataset.theme !== 'light';
+    theme.querySelector('.nav-icon').innerHTML = dark ? ICONS.sun : ICONS.moon;
+    theme.querySelector('.nav-label').textContent = dark ? 'Light theme' : 'Dark theme';
+    theme.title = dark ? 'Switch to the light theme' : 'Switch to the dark theme';
+  }
+}
+
+function setRail(mode, { save = true } = {}) {
+  UI.rail = mode;
+  const collapsedRail = mode === 'collapsed';
+  $('app').classList.toggle('rail-collapsed', collapsedRail);
+  const t = $('rail-toggle');
+  t.innerHTML = ICONS.rail;
+  t.setAttribute('aria-label', collapsedRail ? 'Expand sidebar' : 'Collapse sidebar');
+  t.title = collapsedRail ? 'Expand sidebar' : 'Collapse sidebar';
+  t.setAttribute('aria-pressed', String(collapsedRail));
+  if (save) store.set('acs.rail', mode);
+}
+
+function setNavOverlay(open, { focusNav = true } = {}) {
+  $('app').classList.toggle('nav-open', open);
+  $('nav-menu').setAttribute('aria-expanded', String(open));
+  $('nav-menu').setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+  // Only while it is still open: closing it before the timer runs must not steal focus back.
+  if (open && focusNav) setTimeout(() => { if ($('app').classList.contains('nav-open')) $('sidebar').querySelector('.nav-item')?.focus(); }, 0);
+}
+
+/** ⌘K: search lives at the top of the Files page, so it opens that page. */
+function focusSearch() {
+  setNavOverlay(false);
+  openFiles({ focus: true });
+}
+
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  store.set('acs.theme', next);
+  syncNav();
+}
+
+/* ── Files page ──────────────────────────────────────────────────────── */
+/**
+ * Every config file on one page: search first, then what you opened lately,
+ * then each tool's files by type. Hooks, subagents, commands and settings
+ * have no other panel, so this is their home, and each type keeps its "+".
+ */
+const stored = store.get('acs.collapsed');
+const collapsed = new Set((() => {
+  try { const v = stored ? JSON.parse(stored) : []; return Array.isArray(v) ? v : []; } catch { return []; }
+})());
+/** First run: low-traffic groups (the server marks them) start folded. */
+function seedCollapsed() {
+  if (stored) return;
+  for (const tool of filesModel(S.registry)) {
+    for (const t of tool.types) if (t.group.collapsed) collapsed.add(t.key);
+  }
+}
+
+const RECENT_KEY = 'acs.recentFiles';
+/** Recently opened, kept in this browser only. It records opens, never edits. */
+function recentFiles() {
+  try { const v = JSON.parse(store.get(RECENT_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function rememberOpened(f, entry) {
+  store.set(RECENT_KEY, JSON.stringify(pushRecent(recentFiles(), {
+    path: f.path, display: f.display, label: entry?.label ?? f.display.split('/').pop(),
+    synthetic: !!entry?.id?.startsWith('adhoc:'),
+  })));
+}
+
+const FILES = { query: '', timer: null, scrolled: false, unfold: null };
+
+function openFiles({ focus = false } = {}) {
+  if (S.view !== 'files') {
+    if (!confirmDiscard()) return;
+    S.view = 'files';
+    leaveEditor();
+    FILES.query = '';
+    FILES.scrolled = false;
+    FILES.unfold = 'pending';       // the open file's type shows this visit, even if folded
+    window.history.replaceState(null, '', '#files');
+    renderSidebar();
+    renderAll();
+  }
+  if (focus) { $('search')?.focus(); $('search')?.select(); }
+}
+
+function renderFiles(c) {
+  const page = el('div', 'files');
+  const top = el('div', 'files-search-wrap');
+  const input = el('input', 'search files-search');
+  input.id = 'search';
+  input.placeholder = 'Search all config…  ⌘K';
+  input.setAttribute('aria-label', 'Search all config');
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.value = FILES.query;
+  input.addEventListener('input', () => {
+    clearTimeout(FILES.timer);
+    FILES.query = input.value.trim();
+    if (FILES.query.length < 2) return paintFilesBody();
+    FILES.timer = setTimeout(paintFilesBody, 220);
+  });
+  top.appendChild(input);
+  page.appendChild(top);
+  const body = el('div', 'files-body');
+  body.id = 'files-body';
+  page.appendChild(body);
+  c.appendChild(page);
+  paintFilesBody();
+}
+
+/** The part below the search box: results while searching, else recent + tools. */
+function paintFilesBody() {
+  const body = $('files-body');
+  if (!body || S.view !== 'files') return;
+  body.innerHTML = '';
+  if (FILES.query.length >= 2) return paintSearch(body, FILES.query);
+  body.appendChild(recentCard());
+  if (!S.registry) { body.appendChild(el('div', 'scope-sub', 'Loading files…')); return; }
+  const model = filesModel(S.registry);
+  if (FILES.unfold === 'pending') {
+    FILES.unfold = model.flatMap((t) => t.types).find((t) => t.entries.some((e) => e.id === S.lastEntryId))?.key ?? null;
+  }
+  const tools = el('div', 'files-tools');
+  for (const tool of model) tools.appendChild(toolCard(tool));
+  body.appendChild(tools);
+  const here = tools.querySelector('.files-item.active');
+  if (here && !FILES.scrolled) { FILES.scrolled = true; here.scrollIntoView?.({ block: 'center' }); }
+}
+
+function recentCard() {
+  const card = el('section', 'home-card files-recent');
+  const head = el('div', 'home-card-head');
+  head.appendChild(el('h2', 'home-card-title', 'Recently opened'));
+  card.appendChild(head);
+  const row = el('div', 'files-recent-row');
+  const items = recentFiles().filter((r) => r.synthetic || entryForFile(r.path));
+  if (!items.length) row.appendChild(el('div', 'home-muted', 'Files you open appear here — in this browser only.'));
+  for (const r of items) {
+    const b = el('button', 'files-recent-item');
+    const entry = entryForFile(r.path);
+    b.appendChild(el('span', `item-dot ${entry?.harness || 'claude'}`));
+    b.appendChild(el('span', 'files-item-label', r.synthetic ? r.display.split('/').pop() : (entry?.label ?? r.label)));
+    b.title = r.display;
+    b.onclick = () => (entry ? openEntry(entry, r.path) : openInEditor(r.path, r.display));
+    row.appendChild(b);
+  }
+  card.appendChild(row);
+  return card;
+}
+
+function toolCard(tool) {
+  const card = el('section', `home-card files-tool files-tool-${tool.id}`);
+  const head = el('div', 'home-card-head');
+  head.appendChild(el('h2', 'home-card-title', tool.label));
+  head.appendChild(el('span', 'files-count', `${tool.count} file${tool.count === 1 ? '' : 's'}`));
+  card.appendChild(head);
+  for (const t of tool.types) {
+    const sec = el('div', 'files-type');
+    // A row, not a button — it holds its own "+" button, and nesting
+    // interactive elements inside a button is invalid.
+    const row = el('div', 'files-type-head');
+    const toggle = el('button', 'files-type-toggle');
+    const folded = collapsed.has(t.key) && FILES.unfold !== t.key;
+    toggle.setAttribute('aria-expanded', String(!folded));
+    toggle.appendChild(el('span', 'files-type-name', t.label));
+    toggle.appendChild(el('span', 'files-type-count', String(t.entries.length)));
+    toggle.onclick = () => {
+      if (FILES.unfold === t.key) { FILES.unfold = null; if (!collapsed.has(t.key)) collapsed.add(t.key); }
+      else if (collapsed.has(t.key)) collapsed.delete(t.key); else collapsed.add(t.key);
+      store.set('acs.collapsed', JSON.stringify([...collapsed]));
+      paintFilesBody();
+    };
+    row.appendChild(toggle);
+    if (t.create) {
+      const add = el('button', 'files-add', '+');
+      add.title = `New ${t.group.title.replace(/s$/, '').toLowerCase()}`;
+      add.setAttribute('aria-label', add.title);
+      add.onclick = () => createInGroup(t.group);
+      row.appendChild(add);
+    }
+    sec.appendChild(row);
+    const list = el('div', 'files-entries');
+    list.hidden = folded;
+    if (!t.entries.length) list.appendChild(el('div', 'files-empty', 'Empty — + creates the first one.'));
+    for (const e of t.entries) {
+      const b = el('button', 'files-item' + (S.lastEntryId === e.id ? ' active' : ''));
+      b.dataset.entry = e.id;
+      b.appendChild(el('span', `item-dot ${e.harness}`));
+      b.appendChild(el('span', 'files-item-label', t.labels[e.id]));
+      if (e.extraFiles > 0) b.appendChild(el('span', 'item-badge', `+${e.extraFiles}`));
+      const where = e.where ? `${e.where}\n${e.display}` : e.display;
+      b.title = e.description ? `${where}\n\n${e.description}` : where;
+      b.onclick = () => openEntry(e);
+      list.appendChild(b);
+    }
+    sec.appendChild(list);
+    card.appendChild(sec);
+  }
+  return card;
+}
+
+async function paintSearch(body, q) {
+  body.appendChild(el('div', 'scope-sub', '')).innerHTML = '<span class="spinner"></span> searching…';
+  let data;
+  try { data = await api('GET', `/api/search?q=${encodeURIComponent(q)}`); }
+  catch (e) { if (FILES.query === q) { body.innerHTML = ''; body.appendChild(el('div', 'scope-sub', e.message)); } return; }
+  // Typed on since, or left the page: this answer is for a query nobody holds.
+  if (FILES.query !== q || S.view !== 'files') return;
+  body.innerHTML = '';
+  const box = el('div', 'results');
+  box.appendChild(el('div', 'scope-sub',
+    data.hits.length ? `${data.hits.length} files contain “${q}”` : `Nothing matches “${q}”.`));
+  const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig');
+
+  for (const h of data.hits) {
+    const b = el('button', 'result');
+    const head = el('div', 'result-head');
+    head.appendChild(el('span', `item-dot ${h.harness}`));
+    head.appendChild(el('span', 'result-name', `${h.entryLabel}${h.file !== 'SKILL.md' ? ' · ' + h.file : ''}`));
+    head.appendChild(el('span', 'item-badge', h.group));
+    head.appendChild(el('span', 'result-path', h.display));
+    b.appendChild(head);
+    for (const m of h.matches) {
+      const line = el('div', 'result-line');
+      line.innerHTML = `<span class="result-ln">${m.line}</span>` +
+        esc(m.text).replace(rx, (x) => `<b>${x}</b>`);
+      b.appendChild(line);
+    }
+    if (h.total > h.matches.length) {
+      b.appendChild(el('div', 'result-line', `  +${h.total - h.matches.length} more`));
+    }
+    b.onclick = () => {
+      const entry = findEntry(h.entryId);
+      if (entry) openEntry(entry, h.path);
+    };
+    box.appendChild(b);
+  }
+  body.appendChild(box);
+}
+
+/** Every opener calls this: re-mark the sidebar, and keep an open Files page current. */
+function renderSidebar() {
+  syncNav();
+  if (S.view === 'files') paintFilesBody();
 }
 
 function findEntry(id) {
@@ -195,6 +544,7 @@ const isDirty = () => S.file && S.draft !== S.original;
 async function openEntry(entry, filePath) {
   if (!confirmDiscard()) return;
   S.entry = entry;
+  S.lastEntryId = entry.id;         // what the Files page highlights when you go there
   S.view = 'entry';
   clearNotice();
   renderSidebar();
@@ -210,6 +560,7 @@ async function loadFile(p) {
     S.draft = f.content;
     S.tab = S.tab === 'history' || S.tab === 'compare' ? 'preview' : S.tab;
     window.history.replaceState(null, '', `#file=${encodeURIComponent(f.path)}`);
+    rememberOpened(f, S.entry);
     renderAll();
   } catch (e) {
     notice('error', e.message, null, true);
@@ -229,41 +580,15 @@ function renderTopbar() {
   const t = $('title');
   t.innerHTML = '';
   if (S.view === 'entry' && S.entry) {
-    t.appendChild(document.createTextNode(S.entry.label));
+    t.appendChild(el('span', 'title-text', S.entry.label));
     const tag = el('span', `harness-tag ${S.entry.harness}`,
       S.entry.harness === 'both' ? 'shared' : S.entry.harness);
     t.appendChild(tag);
     $('title-path').textContent = S.file?.display || S.entry.display;
-  } else if (S.view === 'search') {
-    t.textContent = 'Search results';
-    $('title-path').textContent = '';
-  } else if (S.view === 'scope') {
-    t.textContent = 'Scope chain';
-    $('title-path').textContent = 'What actually applies when an agent runs in a directory';
-  } else if (S.view === 'mcp') {
-    t.textContent = 'MCP servers';
-    $('title-path').textContent = 'Model Context Protocol servers across both harnesses';
-  } else if (S.view === 'models') {
-    t.textContent = 'Models';
-    $('title-path').textContent = 'Every model family, its current id, and what the CLIs offer';
-  } else if (S.view === 'worktrees') {
-    t.textContent = 'Worktrees';
-    $('title-path').textContent = 'Every registered project’s worktrees — env, and which are provably done';
-  } else if (S.view === 'trash') {
-    t.textContent = 'Trash';
-    $('title-path').textContent = 'Deleted items — restorable';
-  } else if (S.view === 'skills') {
-    t.textContent = 'Skills';
-    $('title-path').textContent = 'Every skill on this machine — browse, select, download';
-  } else if (S.view === 'memory') {
-    t.textContent = 'Memory';
-    $('title-path').textContent = 'Claude auto-memory by project — review, and clean up with a preview first';
-  } else if (S.view === 'context') {
-    t.textContent = 'Context';
-    $('title-path').textContent = 'What each project tells its agents — CLAUDE.md, AGENTS.md, Cursor rules';
   } else {
-    t.textContent = 'Agent Config Studio';
-    $('title-path').textContent = '';
+    const v = viewById(S.view) || viewById('home');
+    t.textContent = v.title;
+    $('title-path').textContent = v.sub;
   }
   const onEntry = S.view === 'entry' && !!S.file;
   // Assist is a chat over the whole corpus — reachable with nothing open.
@@ -325,7 +650,8 @@ function renderStatus() {
   const L = $('status-left'), R = $('status-right');
   if (S.view === 'entry' && S.file) {
     const lines = S.draft.split('\n').length;
-    L.textContent = `${lines} lines · ${S.draft.length.toLocaleString()} chars · ${S.file.kind}`;
+    L.textContent = `${lines} lines · ${S.draft.length.toLocaleString()} chars · ${S.file.kind}`
+      + (S.tab === 'edit' ? ' · Esc leaves the editor' : '');
     R.innerHTML = '';
     if (isDirty()) {
       R.appendChild(el('span', 'dot-dirty', '● unsaved'));
@@ -339,22 +665,16 @@ function renderStatus() {
   // Save only ever acts on the open file — never leave it live on a view that
   // isn't showing one.
   $('btn-save').disabled = S.view !== 'entry' || !isDirty();
+  $('btn-save').hidden = S.view !== 'entry' || !S.file;
 }
 
 /* ── content panes ───────────────────────────────────────────────────── */
 function renderContent() {
   const c = $('content');
   c.innerHTML = '';
-  if (S.view === 'welcome') return renderWelcome();
-  if (S.view === 'search') return;         // rendered directly by doSearch
-  if (S.view === 'scope') return;          // rendered directly by openScope
-  if (S.view === 'mcp') return;            // rendered directly by openMcp
-  if (S.view === 'usage') return;          // rendered directly by openUsage
-  if (S.view === 'trash') return;          // rendered directly by openTrash
-  if (S.view === 'worktrees') return;      // rendered directly by openWorktrees
-  if (S.view === 'models') return;         // rendered directly by openModels
-  if (S.view === 'memory') return;         // rendered directly by openMemory
-  if (S.view === 'context') return;        // rendered directly by openContext
+  // Every other view either renders here (Home) or is painted by its own
+  // open function (search by doSearch), which owns its loading state.
+  if (S.view !== 'entry') return viewById(S.view)?.render?.(c);
   if (!S.file) return;
 
   if (S.tab === 'preview') return renderPreview(c);
@@ -363,11 +683,34 @@ function renderContent() {
   if (S.tab === 'compare') return renderCompare(c);
 }
 
+/**
+ * Every accepted navigation away from a file leaves the editor this way:
+ * nothing stays open behind another view, so the discard prompt cannot
+ * repeat and Assist cannot attach a file that is no longer on screen.
+ * S.lastEntryId stays, for the Files page to highlight.
+ */
+function leaveEditor() {
+  S.entry = null; S.file = null; S.original = ''; S.draft = '';
+}
+
+/** Home, without the confirm: for transitions whose file is already gone. */
+function goHome() {
+  S.view = 'home';
+  leaveEditor();
+  window.history.replaceState(null, '', location.pathname + location.search);
+  renderSidebar();
+  renderAll();
+}
+function openHome() {
+  if (!confirmDiscard()) return;
+  goHome();
+}
+
 function renderWelcome() {
   const c = $('content');
   c.innerHTML = '';
   const w = el('div', 'empty');
-  w.appendChild(el('div', 'empty-title', 'Pick anything on the left to read or edit it.'));
+  w.appendChild(el('div', 'empty-title', 'Pick a view on the left, or open Files to read or edit any config file.'));
   const hint = el('div');
   hint.innerHTML = 'Every save is committed to a shadow git repo, so nothing is ever lost. ' +
     'Press <span class="kbd">⌘K</span> to search across every config file at once.';
@@ -436,6 +779,13 @@ function renderEditor(c) {
       ta.selectionStart = ta.selectionEnd = s + 2;
       S.draft = ta.value;
       renderStatus();
+    } else if (ev.key === 'Escape') {
+      // Leave the editor without touching the draft: to Save when there is
+      // something to save, else to the active tab.
+      ev.preventDefault();
+      const save = $('btn-save');
+      if (!save.hidden && !save.disabled) save.focus();
+      else $('tabs').querySelector('.tab.active')?.focus();
     }
   };
   wrap.appendChild(ta);
@@ -645,62 +995,11 @@ async function save() {
   }
 }
 
-/* ── search ──────────────────────────────────────────────────────────── */
-let searchTimer;
-$('search').addEventListener('input', (e) => {
-  clearTimeout(searchTimer);
-  const q = e.target.value.trim();
-  if (q.length < 2) { if (S.view === 'search') { S.view = 'welcome'; renderAll(); } return; }
-  searchTimer = setTimeout(() => doSearch(q), 220);
-});
-
-async function doSearch(q) {
-  S.view = 'search';
-  renderTopbar(); renderTabs(); renderStatus();
-  $('filebar').hidden = true;
-  const c = $('content');
-  c.innerHTML = '<div class="results"><div class="scope-sub"><span class="spinner"></span> searching…</div></div>';
-  let data;
-  try { data = await api('GET', `/api/search?q=${encodeURIComponent(q)}`); }
-  catch (e) { c.innerHTML = `<div class="results"><div class="scope-sub">${esc(e.message)}</div></div>`; return; }
-
-  c.innerHTML = '';
-  const box = el('div', 'results');
-  box.appendChild(el('div', 'scope-sub',
-    data.hits.length ? `${data.hits.length} files contain “${q}”` : `Nothing matches “${q}”.`));
-  const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig');
-
-  for (const h of data.hits) {
-    const b = el('button', 'result');
-    const head = el('div', 'result-head');
-    head.appendChild(el('span', `item-dot ${h.harness}`));
-    head.appendChild(el('span', 'result-name', `${h.entryLabel}${h.file !== 'SKILL.md' ? ' · ' + h.file : ''}`));
-    head.appendChild(el('span', 'item-badge', h.group));
-    head.appendChild(el('span', 'result-path', h.display));
-    b.appendChild(head);
-    for (const m of h.matches) {
-      const line = el('div', 'result-line');
-      line.innerHTML = `<span class="result-ln">${m.line}</span>` +
-        esc(m.text).replace(rx, (x) => `<b>${x}</b>`);
-      b.appendChild(line);
-    }
-    if (h.total > h.matches.length) {
-      b.appendChild(el('div', 'result-line', `  +${h.total - h.matches.length} more`));
-    }
-    b.onclick = () => {
-      const entry = findEntry(h.entryId);
-      if (entry) openEntry(entry, h.path);
-    };
-    box.appendChild(b);
-  }
-  c.appendChild(box);
-}
-
 /* ── scope view ──────────────────────────────────────────────────────── */
 async function openScope() {
   if (!confirmDiscard()) return;
   S.view = 'scope';
-  S.entry = null;
+  leaveEditor();
   window.history.replaceState(null, '', '#scope');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -797,8 +1096,7 @@ async function handleFileEvent(d) {
 
   if (plan.open === 'closed') {
     S.entry = null; S.file = null; S.original = ''; S.draft = '';
-    S.view = 'welcome';
-    renderAll();
+    goHome();
     notice('warn', plan.studio
       ? 'The file you had open was moved to the studio trash.'
       : 'The file you had open was deleted outside the studio.', null, true);
@@ -1070,8 +1368,7 @@ async function deleteTarget({ path: p, label, isWhole, protectedEntry }) {
     await refreshRegistry();
     if (wasOpen || isWhole) {
       S.entry = null; S.file = null; S.original = ''; S.draft = '';
-      S.view = 'welcome';
-      renderAll();
+      goHome();
     } else {
       renderAll();
     }
@@ -1115,7 +1412,7 @@ function deleteOpenEntry() {
 async function openWorktrees() {
   if (!confirmDiscard()) return;
   S.view = 'worktrees';
-  S.entry = null;
+  leaveEditor();
   window.history.replaceState(null, '', '#worktrees');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -1181,7 +1478,7 @@ async function openWorktrees() {
 async function openTrash() {
   if (!confirmDiscard()) return;
   S.view = 'trash';
-  S.entry = null;
+  leaveEditor();
   window.history.replaceState(null, '', '#trash');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -1258,7 +1555,7 @@ const fmtSize = (n) => (n >= 1024 * 1024
 async function openSkills() {
   if (!confirmDiscard()) return;
   S.view = 'skills';
-  S.entry = null;
+  leaveEditor();
   window.history.replaceState(null, '', '#skills');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -1551,7 +1848,7 @@ const SLUG_STATE_LABELS = {
 async function openMemory() {
   if (!confirmDiscard()) return;
   S.view = 'memory';
-  S.entry = null;
+  leaveEditor();
   // Nothing stays open behind this view, or a cleanup that trashes the file
   // last opened would make the live-change handler leave the view.
   S.file = null; S.original = ''; S.draft = '';
@@ -2063,7 +2360,7 @@ const CX = { data: null, diff: null, view: null };
 async function openContext() {
   if (!confirmDiscard()) return;
   S.view = 'context';
-  S.entry = null;
+  leaveEditor();
   // Nothing stays open behind this view, or a cleanup that trashes the file
   // last opened would make the live-change handler leave the view.
   S.file = null; S.original = ''; S.draft = '';
@@ -2547,7 +2844,7 @@ const agoText = (ms) => (ms == null ? '' : ms < 60000 ? 'just now' : `${untilTex
 async function openUsage() {
   if (!confirmDiscard()) return;
   S.view = 'usage';
-  S.entry = null;
+  leaveEditor();
   window.history.replaceState(null, '', '#usage');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -2761,7 +3058,7 @@ async function paintUsage() {
 async function openMcp() {
   if (!confirmDiscard()) return;
   S.view = 'mcp';
-  S.entry = null;
+  leaveEditor();
   window.history.replaceState(null, '', '#mcp');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -2823,19 +3120,14 @@ async function openMcp() {
 const M = { open: new Set(), where: {}, drafts: {}, sidecars: [], data: null };
 
 function paintModelsBadge(n) {
-  const b = $('btn-models');
-  b.textContent = 'Models';
-  if (n > 0) {
-    const badge = el('span', 'models-badge', String(n));
-    badge.title = `${n} model alert${n === 1 ? '' : 's'}`;
-    b.appendChild(badge);
-  }
+  S.badges.models = n || 0;
+  syncNav();
 }
 
 async function openModels() {
   if (!confirmDiscard()) return;
   S.view = 'models';
-  S.entry = null;
+  leaveEditor();
   window.history.replaceState(null, '', '#models');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -3271,7 +3563,11 @@ function titleFor(s) {
 
 /* ── drawer ──────────────────────────────────────────────────────────── */
 function openDrawer() {
-  $('drawer').classList.add('open');
+  const d = $('drawer');
+  if (!d.classList.contains('open') && !d.contains(document.activeElement)) C.opener = document.activeElement;
+  d.classList.add('open');
+  d.inert = false;
+  d.removeAttribute('aria-hidden');
   $('scrim').classList.add('open');
   const s = ensureSession();
   // Default the target to whatever is open — still you pointing at it, just
@@ -3280,14 +3576,22 @@ function openDrawer() {
   renderChat();
   setTimeout(() => $('chat-input')?.focus(), 60);
 }
+/** Closed, the drawer leaves the tab order, and focus goes back to what opened it. */
 function closeDrawer() {
-  $('drawer').classList.remove('open');
+  const d = $('drawer');
+  if (!d.classList.contains('open')) return;
+  d.classList.remove('open');
+  d.inert = true;
+  d.setAttribute('aria-hidden', 'true');
   $('scrim').classList.remove('open');
+  const back = C.opener && document.body.contains(C.opener) && C.opener !== document.body ? C.opener : $('btn-assist');
+  C.opener = null;
+  back.focus();
 }
 
 function allFiles() {
   const out = [];
-  for (const g of S.registry.groups) {
+  for (const g of S.registry?.groups || []) {
     for (const e of g.entries) {
       for (const f of e.files) out.push({ ...f, group: g.title, entry: e.label, harness: e.harness });
     }
@@ -3663,7 +3967,7 @@ function renderCompose() {
   const harness = el('select', 'assist-harness');
   harness.title = 'Which CLI answers. Sticky — it never changes with the file you open.';
   if (!list.length) {
-    harness.appendChild(el('option', null, 'No harness detected'));
+    harness.appendChild(el('option', null, S.registry ? 'No harness detected' : 'Detecting…'));
     harness.disabled = true;
   } else {
     for (const h of list) {
@@ -3739,6 +4043,7 @@ function pickerMatches() {
 function renderPicker() {
   const list = pickerMatches();
   const box = el('div', 'picker');
+  if (!S.registry) { box.appendChild(el('div', 'picker-empty', 'Loading files…')); return box; }
   if (!list.length) { box.appendChild(el('div', 'picker-empty', 'No file matches that.')); return box; }
   list.forEach((f, i) => {
     const row = el('button', 'picker-row' + (i === C.picker.index ? ' active' : ''));
@@ -3891,35 +4196,22 @@ $('btn-save').onclick = save;
 $('btn-assist').onclick = openDrawer;
 $('drawer-close').onclick = closeDrawer;
 $('scrim').onclick = closeDrawer;
-$('btn-scope').onclick = openScope;
-$('btn-mcp').onclick = openMcp;
-$('btn-usage').onclick = openUsage;
-$('btn-trash').onclick = openTrash;
-$('btn-worktrees').onclick = openWorktrees;
-$('btn-skills').onclick = openSkills;
-$('btn-models').onclick = openModels;
-$('btn-memory').onclick = openMemory;
-$('btn-context').onclick = openContext;
 $('btn-delete').onclick = deleteOpenEntry;
 $('btn-copy').onclick = copyToOtherHarness;
-$('btn-theme').onclick = () => {
-  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = next;
-  localStorage.setItem('acs.theme', next);
-};
-document.documentElement.dataset.theme = localStorage.getItem('acs.theme') || 'dark';
+document.documentElement.dataset.theme = store.get('acs.theme') === 'light' ? 'light' : 'dark';
 
 function wireGlobalKeys() {
   window.addEventListener('keydown', (e) => {
     const meta = e.metaKey || e.ctrlKey;
     if (meta && e.key === 's') { e.preventDefault(); if (S.view === 'entry') save(); }
-    else if (meta && e.key === 'k') { e.preventDefault(); $('search').focus(); $('search').select(); }
+    else if (meta && e.key === 'k') { e.preventDefault(); focusSearch(); }
     else if (meta && e.key === 'e' && S.file) {
       e.preventDefault();
       S.tab = S.tab === 'edit' ? 'preview' : 'edit';
       renderContent(); renderTabs();
     } else if (e.key === 'Escape') {
       closeDrawer();
+      if ($('app').classList.contains('nav-open')) { setNavOverlay(false); $('nav-menu').focus(); }
       if (document.activeElement === $('search')) $('search').blur();
     }
   });
@@ -3928,10 +4220,19 @@ function wireGlobalKeys() {
   });
 }
 
-// Following a link or typing #memory / #context switches the view, not only a reload.
-window.addEventListener('hashchange', () => {
-  if (location.hash.startsWith('#memory') && S.view !== 'memory') openMemory();
-  else if (location.hash.startsWith('#context') && S.view !== 'context') openContext();
+// Following a link or typing a hash switches the view, not only a reload. A
+// cancelled discard puts the old hash back, so the URL keeps naming what is shown.
+window.addEventListener('hashchange', (e) => {
+  if (!S.registry) return;
+  if (isDirty() && !hashIs(location.hash, '#assist')) {
+    if (!confirmDiscard()) {
+      const old = e.oldURL ? new URL(e.oldURL).hash : '';
+      window.history.replaceState(null, '', old || location.pathname + location.search);
+      return;
+    }
+    S.draft = S.original;   // discarded: the opener below must not ask again
+  }
+  routeHash(location.hash);
 });
 
 boot().catch((e) => {
