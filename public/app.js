@@ -3184,7 +3184,12 @@ function homeCard(id, title) {
  * answer that lands after you left Home is dropped rather than painted.
  */
 function loadHome() {
-  const afterPaint = new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+  // After first paint — or after 50 ms if no frame comes, since a background
+  // tab runs none. Whichever is first; the promise settles once either way.
+  const afterPaint = new Promise((r) => {
+    requestAnimationFrame(() => setTimeout(r, 0));
+    setTimeout(r, 50);
+  });
   const ask = (id) => {
     if (!HOME.src[id]) HOME.src[id] = { state: 'loading' };
     const start = HOME_SLOW.has(id) ? afterPaint : Promise.resolve();

@@ -447,6 +447,20 @@ const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.ent
   ok('G9 …and stays on Home once it lands', p.eval('S.view') === 'home');
 }
 
+{
+  // A background tab runs no animation frames: the slow sources must still start.
+  const p = await boot({ routes: homeRoutes(), raf: 'never' });
+  await settle(120);
+  const asked = (x) => p.requests.filter((r) => r.path === x).length;
+  ok('QA-bg with requestAnimationFrame never firing, memory and wclean are still asked — once each',
+     asked('/api/memory') === 1 && asked('/api/worktree') === 1, `${asked('/api/memory')} / ${asked('/api/worktree')}`);
+  ok('QA-bg …and their items land on the card', /empty project folders/.test(p.text(card(p, 'attention'))) && /finished worktree/.test(p.text(card(p, 'attention'))));
+  const q = await boot({ routes: homeRoutes() });
+  await settle(120);
+  ok('QA-bg with frames running as usual they are still asked exactly once', q.requests.filter((r) => r.path === '/api/memory').length === 1
+     && q.requests.filter((r) => r.path === '/api/worktree').length === 1);
+}
+
 // ── Browser QA polish (PR B) ───────────────────────────────────────────────
 {
   const p = await boot({ routes: homeRoutes() });
