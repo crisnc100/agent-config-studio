@@ -548,11 +548,15 @@ a { color: var(--accent); }
   #app.rail-collapsed .nav-label { position: static; width: auto; height: auto; clip: auto; }
   #app.rail-collapsed .nav-badge { position: static; padding: 1px 6px; font-size: 10px; line-height: inherit; }
   #app.rail-collapsed .nav-group + .nav-group { margin-top: 16px; padding-top: 0; border-top: 0; }
-  .topbar { flex-wrap: wrap; padding: 10px 14px; gap: 8px; }
-  .title-block { min-width: 50%; }
+  /* One line: the title truncates, the actions keep their place. */
+  .topbar { flex-wrap: nowrap; padding: 10px 14px; gap: 8px; }
+  .title-block { flex: 1 1 0; min-width: 0; }
+  .topbar .btn { padding: 5px 10px; }
   .compare { grid-template-columns: 1fr; }
 }
 @media (max-width: 520px) {
+  /* Only the tabs move to a second line; title and actions stay on the first. */
+  .topbar { flex-wrap: wrap; }
   .tabs { order: 10; width: 100%; }
   .md { padding: 24px 18px 80px; }
   .editor, .raw { padding: 18px 16px 80px; }
@@ -1022,6 +1026,7 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .files-item.active { background: var(--panel-3); color: var(--text); font-weight: 550; box-shadow: inset 2px 0 0 var(--accent); }
 .files-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .files-body .results { padding: 0; max-width: none; }
+.files-empty { font-size: 12px; color: var(--muted); padding: 2px 8px 6px; }
 
 @media (max-width: 700px) {
   .files { padding: 16px 14px 72px; }

@@ -200,7 +200,7 @@ function routeHash(hash, { cold = false } = {}) {
     return v.open();
   }
   if (cold) return goHome();
-  if (S.view !== 'home') openHome();
+  if (S.view !== 'home') openHome(); else window.history.replaceState(null, '', location.pathname + location.search);
 }
 
 function entryForFile(p) {
@@ -354,7 +354,7 @@ function openFiles({ focus = false } = {}) {
   if (S.view !== 'files') {
     if (!confirmDiscard()) return;
     S.view = 'files';
-    S.entry = null;
+    leaveEditor();
     FILES.query = '';
     FILES.scrolled = false;
     FILES.unfold = 'pending';       // the open file's type shows this visit, even if folded
@@ -463,13 +463,15 @@ function toolCard(tool) {
     sec.appendChild(row);
     const list = el('div', 'files-entries');
     list.hidden = folded;
+    if (!t.entries.length) list.appendChild(el('div', 'files-empty', 'Empty — + creates the first one.'));
     for (const e of t.entries) {
       const b = el('button', 'files-item' + (S.lastEntryId === e.id ? ' active' : ''));
       b.dataset.entry = e.id;
       b.appendChild(el('span', `item-dot ${e.harness}`));
-      b.appendChild(el('span', 'files-item-label', e.label));
+      b.appendChild(el('span', 'files-item-label', t.labels[e.id]));
       if (e.extraFiles > 0) b.appendChild(el('span', 'item-badge', `+${e.extraFiles}`));
-      b.title = e.description ? `${e.display}\n\n${e.description}` : e.display;
+      const where = e.where ? `${e.where}\n${e.display}` : e.display;
+      b.title = e.description ? `${where}\n\n${e.description}` : where;
       b.onclick = () => openEntry(e);
       list.appendChild(b);
     }
@@ -648,7 +650,8 @@ function renderStatus() {
   const L = $('status-left'), R = $('status-right');
   if (S.view === 'entry' && S.file) {
     const lines = S.draft.split('\n').length;
-    L.textContent = `${lines} lines · ${S.draft.length.toLocaleString()} chars · ${S.file.kind}`;
+    L.textContent = `${lines} lines · ${S.draft.length.toLocaleString()} chars · ${S.file.kind}`
+      + (S.tab === 'edit' ? ' · Esc leaves the editor' : '');
     R.innerHTML = '';
     if (isDirty()) {
       R.appendChild(el('span', 'dot-dirty', '● unsaved'));
@@ -662,6 +665,7 @@ function renderStatus() {
   // Save only ever acts on the open file — never leave it live on a view that
   // isn't showing one.
   $('btn-save').disabled = S.view !== 'entry' || !isDirty();
+  $('btn-save').hidden = S.view !== 'entry' || !S.file;
 }
 
 /* ── content panes ───────────────────────────────────────────────────── */
@@ -679,12 +683,20 @@ function renderContent() {
   if (S.tab === 'compare') return renderCompare(c);
 }
 
+/**
+ * Every accepted navigation away from a file leaves the editor this way:
+ * nothing stays open behind another view, so the discard prompt cannot
+ * repeat and Assist cannot attach a file that is no longer on screen.
+ * S.lastEntryId stays, for the Files page to highlight.
+ */
+function leaveEditor() {
+  S.entry = null; S.file = null; S.original = ''; S.draft = '';
+}
+
 /** Home, without the confirm: for transitions whose file is already gone. */
 function goHome() {
   S.view = 'home';
-  // Nothing stays open behind Home: every caller either confirmed the discard
-  // or had no file left to lose.
-  S.entry = null; S.file = null; S.original = ''; S.draft = '';
+  leaveEditor();
   window.history.replaceState(null, '', location.pathname + location.search);
   renderSidebar();
   renderAll();
@@ -767,6 +779,13 @@ function renderEditor(c) {
       ta.selectionStart = ta.selectionEnd = s + 2;
       S.draft = ta.value;
       renderStatus();
+    } else if (ev.key === 'Escape') {
+      // Leave the editor without touching the draft: to Save when there is
+      // something to save, else to the active tab.
+      ev.preventDefault();
+      const save = $('btn-save');
+      if (!save.hidden && !save.disabled) save.focus();
+      else $('tabs').querySelector('.tab.active')?.focus();
     }
   };
   wrap.appendChild(ta);
@@ -980,7 +999,7 @@ async function save() {
 async function openScope() {
   if (!confirmDiscard()) return;
   S.view = 'scope';
-  S.entry = null;
+  leaveEditor();
   window.history.replaceState(null, '', '#scope');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -1393,7 +1412,7 @@ function deleteOpenEntry() {
 async function openWorktrees() {
   if (!confirmDiscard()) return;
   S.view = 'worktrees';
-  S.entry = null;
+  leaveEditor();
   window.history.replaceState(null, '', '#worktrees');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -1459,7 +1478,7 @@ async function openWorktrees() {
 async function openTrash() {
   if (!confirmDiscard()) return;
   S.view = 'trash';
-  S.entry = null;
+  leaveEditor();
   window.history.replaceState(null, '', '#trash');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -1536,7 +1555,7 @@ const fmtSize = (n) => (n >= 1024 * 1024
 async function openSkills() {
   if (!confirmDiscard()) return;
   S.view = 'skills';
-  S.entry = null;
+  leaveEditor();
   window.history.replaceState(null, '', '#skills');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -1829,7 +1848,7 @@ const SLUG_STATE_LABELS = {
 async function openMemory() {
   if (!confirmDiscard()) return;
   S.view = 'memory';
-  S.entry = null;
+  leaveEditor();
   // Nothing stays open behind this view, or a cleanup that trashes the file
   // last opened would make the live-change handler leave the view.
   S.file = null; S.original = ''; S.draft = '';
@@ -2341,7 +2360,7 @@ const CX = { data: null, diff: null, view: null };
 async function openContext() {
   if (!confirmDiscard()) return;
   S.view = 'context';
-  S.entry = null;
+  leaveEditor();
   // Nothing stays open behind this view, or a cleanup that trashes the file
   // last opened would make the live-change handler leave the view.
   S.file = null; S.original = ''; S.draft = '';
@@ -2825,7 +2844,7 @@ const agoText = (ms) => (ms == null ? '' : ms < 60000 ? 'just now' : `${untilTex
 async function openUsage() {
   if (!confirmDiscard()) return;
   S.view = 'usage';
-  S.entry = null;
+  leaveEditor();
   window.history.replaceState(null, '', '#usage');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -3039,7 +3058,7 @@ async function paintUsage() {
 async function openMcp() {
   if (!confirmDiscard()) return;
   S.view = 'mcp';
-  S.entry = null;
+  leaveEditor();
   window.history.replaceState(null, '', '#mcp');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -3108,7 +3127,7 @@ function paintModelsBadge(n) {
 async function openModels() {
   if (!confirmDiscard()) return;
   S.view = 'models';
-  S.entry = null;
+  leaveEditor();
   window.history.replaceState(null, '', '#models');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -3544,7 +3563,11 @@ function titleFor(s) {
 
 /* ── drawer ──────────────────────────────────────────────────────────── */
 function openDrawer() {
-  $('drawer').classList.add('open');
+  const d = $('drawer');
+  if (!d.classList.contains('open') && !d.contains(document.activeElement)) C.opener = document.activeElement;
+  d.classList.add('open');
+  d.inert = false;
+  d.removeAttribute('aria-hidden');
   $('scrim').classList.add('open');
   const s = ensureSession();
   // Default the target to whatever is open — still you pointing at it, just
@@ -3553,9 +3576,17 @@ function openDrawer() {
   renderChat();
   setTimeout(() => $('chat-input')?.focus(), 60);
 }
+/** Closed, the drawer leaves the tab order, and focus goes back to what opened it. */
 function closeDrawer() {
-  $('drawer').classList.remove('open');
+  const d = $('drawer');
+  if (!d.classList.contains('open')) return;
+  d.classList.remove('open');
+  d.inert = true;
+  d.setAttribute('aria-hidden', 'true');
   $('scrim').classList.remove('open');
+  const back = C.opener && document.body.contains(C.opener) && C.opener !== document.body ? C.opener : $('btn-assist');
+  C.opener = null;
+  back.focus();
 }
 
 function allFiles() {

@@ -50,3 +50,5 @@ node tests/worktree-panel.mjs
 node tests/own-writes.mjs
 # The front end, in a node VM against stubbed routes: no server, no HOME.
 node tests/shell.mjs
+# What the registry tells the Files page (temp HOME).
+node tests/files-registry.mjs

@@ -41,6 +41,10 @@ export function registry(over = {}) {
       { id: 'memory', title: 'Memory', createKind: null, entries: [
         { id: 'md:grok', label: 'Global · Grok', harness: 'grok', kindLabel: 'memory', display: '~/.grok/AGENTS.md', scope: 'global',
           dir: `${H}/.grok`, primary: PATHS.grokAgents, deletable: true, files: [file('.grok/AGENTS.md')] },
+        { id: 'md:web1', label: 'apps/web', harness: 'claude', kindLabel: 'memory', display: '~/Documents/Projects/alpha/apps/web/CLAUDE.md', scope: 'project',
+          dir: `${H}/Documents/Projects/alpha/apps/web`, primary: `${H}/Documents/Projects/alpha/apps/web/CLAUDE.md`, deletable: true, files: [file('Documents/Projects/alpha/apps/web/CLAUDE.md')] },
+        { id: 'md:web2', label: 'apps/web', harness: 'claude', kindLabel: 'memory', display: '~/Documents/Projects/alpha-wt/alpha-feature/apps/web/CLAUDE.md', scope: 'project',
+          dir: `${H}/Documents/Projects/alpha-wt/alpha-feature/apps/web`, primary: `${H}/Documents/Projects/alpha-wt/alpha-feature/apps/web/CLAUDE.md`, deletable: true, files: [file('Documents/Projects/alpha-wt/alpha-feature/apps/web/CLAUDE.md')] },
         { id: 'md:app', label: 'app', harness: 'both', kindLabel: 'memory', display: '~/Documents/Projects/app/CLAUDE.md', scope: 'project',
           dir: `${H}/Documents/Projects/app`, primary: PATHS.claudeMd, deletable: true, files: [file('Documents/Projects/app/CLAUDE.md')] },
       ] },

@@ -43,6 +43,7 @@ class Node {
     return n;
   }
   remove() { this.parentNode?.removeChild(this); }
+  contains(n) { while (n) { if (n === this) return true; n = n.parentNode; } return false; }
   get textContent() { return this.childNodes.map((c) => c.textContent).join(''); }
   set textContent(v) {
     for (const c of this.childNodes) c.parentNode = null;
@@ -74,7 +75,7 @@ class ClassList {
 }
 
 const PROPS = ['id', 'title', 'type', 'placeholder', 'href', 'target', 'rel', 'download', 'name'];
-const BOOLS = ['hidden', 'disabled', 'checked', 'selected', 'open', 'spellcheck'];
+const BOOLS = ['hidden', 'disabled', 'checked', 'selected', 'open', 'spellcheck', 'inert'];
 
 class Element extends Node {
   constructor(doc, tag) {

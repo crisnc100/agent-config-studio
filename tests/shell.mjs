@@ -549,6 +549,139 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
   ok('G9 a view hash with &-parameters still opens its view', qs.eval('S.view') === 'memory');
 }
 
+// ── Re-grade and browser QA (PR A) ─────────────────────────────────────────
+{
+  // R2: a registry group that can create is shown even when it is empty.
+  const routes = routesFor();
+  const groups = registry().groups.map((g) => (g.id === 'worktrees' ? { ...g, entries: [] } : g));
+  groups.push({ id: 'claude-skills', title: 'Claude skills', createKind: 'claude-skill', canAddFiles: true, entries: [] });
+  groups.push({ id: 'codex-skills', title: 'Codex skills', createKind: 'codex-skill', canAddFiles: true, entries: [] });
+  routes.reg.current = registry({ groups });
+  const p = await boot({ routes });
+  const page = await filesPage(p);
+  const adds = page.querySelectorAll('.files-add').map((b) => b.title);
+  ok('R2 empty Claude skills, Codex skills and Worktrees groups keep their +', ['New claude skill', 'New codex skill', 'New worktree'].every((t) => adds.includes(t)), adds.join(', '));
+  const sec = (title) => page.querySelectorAll('.files-type').find((t) => t.querySelector('.files-add')?.title === title);
+  ok('R2 …each under its own tool, with a count of 0 and an "empty" hint',
+     sec('New claude skill').closest('.files-tool') && p.text(sec('New claude skill').closest('.files-tool').querySelector('.home-card-title')) === 'Claude Code'
+     && p.text(sec('New codex skill').closest('.files-tool').querySelector('.home-card-title')) === 'Codex'
+     && p.text(sec('New claude skill').querySelector('.files-type-count')) === '0' && /empty/i.test(p.text(sec('New claude skill'))));
+  p.ctx.prompt = () => 'first';
+  sec('New claude skill').querySelector('.files-add').click();
+  await settle(10);
+  ok('R2 the first Claude skill can be created', p.requests.some((r) => r.path === '/api/create' && r.body.kind === 'claude-skill' && r.body.name === 'first'));
+  await filesPage(p);
+  p.$('content').querySelectorAll('.files-add').find((b) => b.title === 'New codex skill').click();
+  await settle(10);
+  ok('R2 …and the first Codex skill', p.requests.some((r) => r.path === '/api/create' && r.body.kind === 'codex-skill'));
+  await filesPage(p);
+  p.$('content').querySelectorAll('.files-add').find((b) => b.title === 'New worktree').click();
+  await settle(10);
+  ok('R2 …and the first project registered, with no Worktrees files yet', !!p.doc.body.querySelector('.wt-overlay'));
+}
+{
+  // R3: every accepted navigation away from a file leaves the editor the same way.
+  for (const [label, go] of [['Files', (p) => p.$('btn-files').click()], ['Skills', (p) => p.$('btn-skills').click()], ['Usage', (p) => p.$('btn-usage').click()]]) {
+    const p = await boot({ hash: `#file=${encodeURIComponent(PATHS.hook)}` });
+    await settle(10);
+    p.eval(`S.tab = 'edit'; renderContent();`);
+    p.input(p.$('content').querySelector('textarea'), 'unsaved');
+    let asked = 0;
+    p.confirm = () => { asked++; return true; };
+    go(p);
+    await settle(10);
+    ok(`R3 edit → ${label} → accept discard: nothing dirty, nothing open`, asked === 1 && !p.eval('isDirty()') && p.eval('S.file') === null && p.eval('S.draft') === '');
+    p.$('btn-assist').click();
+    ok(`R3 …Assist from ${label} attaches nothing`, p.eval('active().mentions.length') === 0);
+    p.key('Escape');
+    p.$('btn-home').click();
+    await settle(5);
+    ok(`R3 …and Home does not ask again`, asked === 1 && p.eval('S.view') === 'home');
+    const page = await filesPage(p);
+    ok(`R3 …while Files still highlights the file last opened`, item(page, 'hook:pre')?.classList.contains('active'));
+  }
+}
+{
+  // R4: the newest navigation during boot wins, clicks and hashes alike.
+  const reg = deferred();
+  const p = await boot({ routes: routesFor({ 'GET /api/registry': () => reg.promise }) });
+  p.$('btn-context').click();
+  p.$('btn-files').click();
+  reg.resolve(registry());
+  await settle(20);
+  ok('R4 Context, then Files, during boot → Files', p.eval('S.view') === 'files', p.eval('S.view'));
+  const reg2 = deferred();
+  const q = await boot({ routes: routesFor({ 'GET /api/registry': () => reg2.promise }) });
+  q.$('btn-models').click();
+  q.navigate('#context');
+  reg2.resolve(registry());
+  await settle(20);
+  ok('R4 Models, then a newer #context, during boot → Context', q.eval('S.view') === 'context' && q.location.hash === '#context', q.eval('S.view'));
+}
+{
+  // QA1: the closed drawer is out of the tab order, and closing returns focus.
+  const p = await boot();
+  const d = p.$('drawer');
+  ok('QA1 the closed drawer is inert and aria-hidden', d.inert === true && d.getAttribute('aria-hidden') === 'true');
+  p.$('btn-assist').focus();
+  p.$('btn-assist').click();
+  ok('QA1 open, it is neither', d.inert === false && !d.hasAttribute('aria-hidden'));
+  p.key('Escape');
+  ok('QA1 Escape closes it: inert again, focus back on Assist', d.inert === true && d.getAttribute('aria-hidden') === 'true' && p.doc.activeElement === p.$('btn-assist'));
+  p.$('btn-assist').click();
+  p.$('drawer-close').click();
+  ok('QA1 the close button does the same', d.inert === true && p.doc.activeElement === p.$('btn-assist'));
+}
+{
+  // QA2: Escape leaves the editor without discarding anything; Tab still indents.
+  const p = await boot({ hash: `#file=${encodeURIComponent(PATHS.claudeMd)}` });
+  await settle(10);
+  p.key('e', { meta: true });
+  await settle(5);
+  const ta = p.$('content').querySelector('textarea');
+  ta.focus();
+  p.input(ta, 'typed');
+  const tab = p.key('Tab');
+  ok('QA2 Tab still indents in the editor', tab.defaultPrevented && p.eval('S.draft').includes('  '));
+  p.key('Escape');
+  ok('QA2 Escape moves focus out to Save, edits kept', p.doc.activeElement === p.$('btn-save') && p.eval('isDirty()') && p.eval('S.tab') === 'edit');
+  ok('QA2 the editor status says how', /Esc/.test(p.text(p.$('status-left'))));
+  const q = await boot({ hash: `#file=${encodeURIComponent(PATHS.claudeMd)}` });
+  await settle(10);
+  q.key('e', { meta: true });
+  await settle(5);
+  q.$('content').querySelector('textarea').focus();
+  q.key('Escape');
+  ok('QA2 with nothing to save, Escape lands on the active tab instead', q.doc.activeElement?.classList?.contains('tab') && q.doc.activeElement.classList.contains('active'));
+}
+{
+  // QA3: labels that collide get their parent segment.
+  const p = await boot();
+  const page = await filesPage(p);
+  const web = ['md:web1', 'md:web2'].map((id) => p.text(item(page, id).querySelector('.files-item-label')));
+  ok('QA3 two "apps/web" entries are told apart by their parent', JSON.stringify(web) === JSON.stringify(['alpha/apps/web', 'alpha-feature/apps/web']), web.join(' | '));
+  ok('QA3 …and a unique label is left alone', p.text(item(page, 'hook:pre').querySelector('.files-item-label')) === 'pre tool');
+}
+{
+  // QA4: Save only where there is a file.
+  const p = await boot();
+  const hidden = [];
+  for (const v of ['home', 'files', 'usage', 'skills']) { p.$(`btn-${v}`).click(); await settle(5); hidden.push(p.$('btn-save').hidden); }
+  ok('QA4 Save is hidden on Home, Files, Usage and Skills', hidden.every(Boolean), hidden.join(','));
+  p.eval(`openEntry(findEntry('hook:pre'))`);
+  await settle(10);
+  ok('QA4 on an open file it shows, disabled until there is something to save', !p.$('btn-save').hidden && p.$('btn-save').disabled);
+}
+{
+  // QA5 and the runtime unknown hash.
+  const css = CSS.slice(CSS.indexOf('@media (max-width: 900px)'));
+  ok('QA5 at ≤900px the topbar stays on one line, the title truncating', /\.topbar\s*\{[^}]*flex-wrap:\s*nowrap/.test(css) && /\.title-block\s*\{[^}]*min-width:\s*0/.test(css));
+  const p = await boot();
+  p.navigate('#bogus');
+  await settle(5);
+  ok('R9 an unknown hash typed on Home is cleared, as on a cold load', p.eval('S.view') === 'home' && p.location.hash === '');
+}
+
 for (const p of pages) { p.done(); for (const s of p.sources) s.close(); }
 const stray = pages.flatMap((p) => p.errors);
 ok('no page errors across every page booted', stray.length === 0, stray.slice(0, 3).join(' | '));
