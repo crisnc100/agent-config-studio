@@ -55,6 +55,13 @@ const noErrors = (p) => p.errors.length === 0;
     if (p.eval('S.view') === v.id) hits++;
   }
   ok('1 clicking each view button opens that view', hits === views.filter((x) => x.group && x.kind !== 'action').length, `${hits}`);
+  const wtBefore = p.requests.filter((r) => r.path === '/api/worktree').length;
+  p.$('btn-worktrees').click();
+  await settle(5);
+  ok('1 the generated Worktrees button runs openWorktrees (its view asks /api/worktree)', p.eval('S.view') === 'worktrees'
+     && p.requests.filter((r) => r.path === '/api/worktree').length === wtBefore + 1 && p.text(p.$('title')) === 'Worktrees');
+  p.$('btn-trash').click();
+  await settle(5);
   ok('1 …and marks it current', p.$('btn-trash').getAttribute('aria-current') === 'page' && !p.$('btn-home').hasAttribute('aria-current'));
   ok('1 the Models badge shows the registry alert count', p.text(p.$('btn-models').querySelector('.nav-badge')) === '2'
      && !p.$('btn-models').querySelector('.nav-badge').hidden);
