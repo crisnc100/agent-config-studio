@@ -287,7 +287,7 @@ class Document extends Node {
  * (method, path, body) → value | Promise, where a thrown `{ status, body }`
  * becomes that HTTP response.
  */
-export function makePage({ html, routes, hash = '', storage = 'memory', width = 1440, confirm = () => true } = {}) {
+export function makePage({ html, routes, hash = '', storage = 'memory', width = 1440, confirm = () => true, raf = 'timer' } = {}) {
   const doc = new Document();
   const [htmlEl] = parseHTML(doc, html.replace(/^[\s\S]*?(<html)/i, '$1')).filter((n) => n.nodeType === 1);
   htmlEl.parentNode = doc;
@@ -361,7 +361,8 @@ export function makePage({ html, routes, hash = '', storage = 'memory', width = 
       error: (...a) => errors.push(a.map(String).join(' ')),
     },
     setTimeout, clearTimeout, setInterval, clearInterval,
-    requestAnimationFrame: (f) => setTimeout(() => f(Date.now()), 0),
+    // 'never' is a hidden tab: Chrome runs no animation frames there at all.
+    requestAnimationFrame: raf === 'never' ? () => 0 : (f) => setTimeout(() => f(Date.now()), 0),
     performance: { now: () => performance.now(), mark() {}, measure() {} },
     getComputedStyle: () => ({}),
     TextDecoder, AbortController, Date, Math, JSON, Promise, Error, Map, Set, Array, Object, Number, String, RegExp, Uint32Array, Proxy, Symbol, Boolean, Buffer: undefined,

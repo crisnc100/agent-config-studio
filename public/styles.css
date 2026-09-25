@@ -1032,3 +1032,101 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
   .files { padding: 16px 14px 72px; }
   .files-entries { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ── Home ────────────────────────────────────────────────────────────────
+   Where to start. Cards, not counts: each says what is going on and has the
+   button that takes you there. Loading and failure stay on their own card. */
+.home { padding: 24px 28px 80px; max-width: 1180px; }
+.home-grid {
+  display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 16px; margin-top: 16px; align-items: start;
+}
+.home-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.home-card-tools { display: flex; gap: 4px; flex: none; }
+.home-needs {
+  font: 600 11px var(--sans); padding: 2px 9px; border-radius: 999px; white-space: nowrap;
+  color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, transparent);
+}
+.home-card-tools .btn { padding: 3px 10px; font-size: 12px; }
+.home-card-body { padding: 4px 0; }
+
+.home-state {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 12px 16px; font-size: 13px; color: var(--muted);
+}
+.home-state .btn { padding: 3px 10px; font-size: 12px; }
+.home-failed { color: var(--text-dim); }
+.home-dash { font: 600 13px var(--mono); color: var(--muted); }
+.home-pad { padding: 4px 16px 10px; }
+.home-sub {
+  padding: 12px 16px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--muted);
+}
+.home-foot { padding: 8px 16px 10px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border-soft); }
+
+/* Accounts: the route line first, then one row per configured seat. */
+.home-route {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  padding: 12px 16px 10px;
+}
+.home-route-seat { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.home-seat {
+  display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) auto;
+  gap: 16px; align-items: center; padding: 10px 16px;
+  border-top: 1px solid var(--border-soft);
+}
+.home-seat-name { font-size: 13.5px; font-weight: 550; color: var(--text); }
+.home-seat-meta { font: 11px var(--mono); color: var(--muted); margin-top: 2px; }
+.home-seat-read { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.home-seat-read .usage-stale { margin-top: 0; }
+.home-seat-state { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.home-seat-state .home-muted { min-width: 0; overflow-wrap: anywhere; }
+.home-win { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.home-win .usage-pct { width: 64px; }
+.home-track { width: 140px; height: 6px; }
+.home-win .usage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-seat-act .btn { padding: 4px 12px; font-size: 12px; }
+
+/* Needs attention: a line per thing to do, its button at the end. */
+.home-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 16px;
+  font-size: 13px; color: var(--text-dim);
+}
+.home-item + .home-item { border-top: 1px solid var(--border-soft); }
+.home-item-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--codex); }
+.home-item.warn .home-item-dot { background: var(--amber); }
+.home-item-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.home-item-btn { padding: 3px 10px; font-size: 12px; flex: none; }
+.home-clear { padding: 22px 16px; text-align: center; }
+.home-clear-title { font-size: 14px; font-weight: 550; color: var(--green); margin-bottom: 4px; }
+
+.home-cli { padding: 10px 16px; }
+.home-cli + .home-cli { border-top: 1px solid var(--border-soft); }
+.home-cli-top { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.home-cli-top .home-item-btn { margin-left: auto; }
+.home-cli-name { font-size: 13px; font-weight: 550; }
+.home-cli .home-state { padding: 4px 0; }
+.home-chip {
+  font: 10.5px var(--mono); padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--muted);
+}
+.home-chip.ok { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, transparent); }
+.home-chip.warn { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 40%, transparent); }
+
+.home-recent-last { padding: 10px 16px 4px; }
+.home-recent-last .home-state { padding: 0; }
+.home-recent-subject { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-trash { display: flex; align-items: baseline; gap: 10px; padding: 5px 16px; }
+.home-trash-path { flex: 1; min-width: 0; font: 11.5px var(--mono); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Arriving in Usage from Home's Connect: the seat it meant. */
+.usage-seat-focus { outline: 1px solid var(--accent-dim); outline-offset: 8px; border-radius: 4px; }
+
+@media (max-width: 1100px) {
+  .home-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 700px) {
+  .home { padding: 16px 14px 72px; }
+  .home-seat { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .home-track { width: 96px; }
+}

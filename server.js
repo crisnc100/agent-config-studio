@@ -688,7 +688,8 @@ export function createApp(opts = {}) {
       }
       out.note = 'Global MCP is defined in ~/.claude.json, which also holds credentials — shown read-only. Use `claude mcp add/remove` to change it.';
     } catch (e) {
-      out.note = `Could not read ~/.claude.json: ${e.message}`;
+      // No file yet is how a fresh machine starts, not an error to show raw.
+      out.note = e.code === 'ENOENT' ? 'No MCP servers configured yet.' : `Could not read ~/.claude.json: ${e.message}`;
     }
 
     try {

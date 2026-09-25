@@ -225,7 +225,7 @@ const item = (page, id) => page.querySelectorAll('.files-item').find((b) => b.da
   const perView = /S\.view === '(scope|mcp|models|worktrees|trash|skills|memory|context|usage|welcome|home)'/;
   ok('3 renderTopbar and renderContent read VIEWS, not a per-view chain', !perView.test(topbar) && !perView.test(content)
      && topbar.includes('viewById(') && content.includes('viewById('));
-  ok('3 boot routes through the same table', /routeHash\(location\.hash, \{ cold: true \}\)/.test(code) && /VIEWS\.find\(\(x\) => x\.hash/.test(code));
+  ok('3 boot routes through the same table', /routeHash\(hash, \{ cold: true \}\)/.test(code) && /VIEWS\.find\(\(x\) => x\.hash/.test(code));
   ok('3 there is no \'welcome\' view left', !/'welcome'/.test(code));
 
   const probe = await boot();
@@ -240,7 +240,7 @@ const item = (page, id) => page.querySelectorAll('.files-item').find((b) => b.da
        `${cold.eval('S.view')} / ${warm.eval('S.view')}`);
   }
   const unknown = await boot({ hash: '#nope' });
-  ok('3 an unknown hash lands on Home (cold)', unknown.eval('S.view') === 'home' && unknown.$('content').querySelector('.empty'));
+  ok('3 an unknown hash lands on Home (cold)', unknown.eval('S.view') === 'home' && unknown.$('content').querySelector('.home-card'));
   unknown.$('btn-skills').click();
   await settle(5);
   unknown.navigate('#nope-again');
@@ -617,6 +617,27 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
   reg2.resolve(registry());
   await settle(20);
   ok('R4 Models, then a newer #context, during boot → Context', q.eval('S.view') === 'context' && q.location.hash === '#context', q.eval('S.view'));
+  const reg3 = deferred();
+  const h = await boot({ routes: routesFor({ 'GET /api/registry': () => reg3.promise }) });
+  h.$('btn-memory').click();
+  h.$('btn-home').click();
+  reg3.resolve(registry());
+  await settle(20);
+  ok('R4 Memory, then Home, during boot → stays on Home (the earlier click is dropped)', h.eval('S.view') === 'home', h.eval('S.view'));
+  const reg4 = deferred();
+  const k = await boot({ routes: routesFor({ 'GET /api/registry': () => reg4.promise }) });
+  k.navigate('#models');
+  k.$('btn-context').click();
+  reg4.resolve(registry());
+  await settle(20);
+  ok('R4 #models, then a Context click, during boot → Context', k.eval('S.view') === 'context', k.eval('S.view'));
+  const reg5 = deferred();
+  const c = await boot({ routes: routesFor({ 'GET /api/registry': () => reg5.promise }) });
+  c.$('btn-context').click();
+  c.key('k', { meta: true });
+  reg5.resolve(registry());
+  await settle(20);
+  ok('R4 Context, then ⌘K, during boot → Files, search focused', c.eval('S.view') === 'files' && c.doc.activeElement === c.$('search'), c.eval('S.view'));
 }
 {
   // QA1: the closed drawer is out of the tab order, and closing returns focus.
