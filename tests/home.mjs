@@ -374,6 +374,47 @@ const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.ent
   ok('G1b server: no Codex catalog → ok:false, missing:true', c.codex.ok === false && c.codex.missing === true, JSON.stringify({ ok: c.codex.ok, missing: c.codex.missing }));
   ok('G1b server: an unreadable Grok catalog → ok:false, missing:false', c.grok.ok === false && c.grok.missing === false && /could not be read/.test(c.grok.note), JSON.stringify({ ok: c.grok.ok, missing: c.grok.missing, note: c.grok.note }));
   ok('G1b server: a good Claude catalog → ok, not missing', c.claude.ok === true && c.claude.missing === false);
+
+  // R1: only ENOENT is missing. A permission or I/O failure is a failed read, and blocks the empty state.
+  const { _setCatalogIo } = await import('../lib/models-catalog.js');
+  const fail = (code, match) => ({
+    readFileSync: (f, enc) => { if (match.test(f)) throw Object.assign(new Error(code), { code }); return fs.readFileSync(f, enc); },
+    readdirSync: (d, o) => { if (match.test(d)) throw Object.assign(new Error(code), { code }); return fs.readdirSync(d, o); },
+  });
+  const hv = vm.createContext({});
+  for (const f of ['usage-view.js', 'home.js']) vm.runInContext(fs.readFileSync(path.join(PUB, f), 'utf8'), hv);
+  hv.clean = Object.fromEntries(Object.entries(CLEAN).map(([k, v]) => [k, { state: 'ok', data: v }]));
+  const verdict = (cats) => {
+    hv.cats = Object.values(cats).map(({ models, ...c }) => c);
+    return vm.runInContext(`attentionModel({ ...clean, models: { state: 'ok', data: { ...clean.models.data, catalogs: cats } } })`, hv);
+  };
+  for (const code of ['EACCES', 'EIO']) {
+    _setCatalogIo(fail(code, /\.grok\/models_cache\.json$/));
+    const g = readCatalogs({ home: tmp }).grok;
+    ok(`R1 server: ${code} reading the Grok catalog → ok:false, missing:false, the code in its note`, g.ok === false && g.missing === false && g.note.includes(code), JSON.stringify({ missing: g.missing, note: g.note }));
+    _setCatalogIo(fail(code, /model-catalog$/));
+    const cl = readCatalogs({ home: tmp }).claude;
+    ok(`R1 server: ${code} scanning Claude's catalog directory → a failed read, not missing`, cl.ok === false && cl.missing === false && cl.note.includes(code), JSON.stringify({ missing: cl.missing, note: cl.note }));
+    _setCatalogIo(fail(code, /\.codex\/models_cache\.json$/));
+    const all = readCatalogs({ home: tmp });
+    ok(`R1 server: ${code} on the Codex catalog → a failed read`, all.codex.ok === false && all.codex.missing === false, JSON.stringify({ missing: all.codex.missing, note: all.codex.note }));
+    const m = verdict(all);
+    ok(`R1 Home: that ${code} keeps "Nothing needs you" away`, m.clear === false && m.partial.some((x) => x.id === 'models'), JSON.stringify(m.partial));
+  }
+  _setCatalogIo(null);
+  const none = readCatalogs({ home: fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-home-none-'))) });
+  ok('R1 server: with nothing there at all (ENOENT everywhere) all three are missing', ['claude', 'codex', 'grok'].every((v) => none[v].ok === false && none[v].missing === true));
+  ok('R1 Home: …and that still allows the empty state', verdict(none).clear === true);
+  if (process.getuid?.() !== 0) {
+    const real = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-home-eacces-')));
+    fs.mkdirSync(path.join(real, '.grok'), { recursive: true });
+    fs.writeFileSync(path.join(real, '.grok', 'models_cache.json'), '{}');
+    fs.chmodSync(path.join(real, '.grok', 'models_cache.json'), 0o000);
+    const g = readCatalogs({ home: real }).grok;
+    ok('R1 server: a real unreadable file (mode 000) is a failed read too', g.ok === false && g.missing === false, JSON.stringify({ missing: g.missing, note: g.note }));
+    fs.chmodSync(path.join(real, '.grok', 'models_cache.json'), 0o600);
+    fs.rmSync(real, { recursive: true, force: true });
+  }
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 {
