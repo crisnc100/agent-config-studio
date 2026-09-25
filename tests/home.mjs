@@ -94,6 +94,15 @@ const CLEAN = {
   ok('9 no seat reporting headroom → no route', run(`accountsModel({ seats: SEATS.filter((s) => !s.ok || s.stale) })`).route === null);
   ok('9 a missing seats list is no seats, not a crash', run('accountsModel({})').rows.length === 0);
 
+  const until = (min) => run(`untilText(Date.now() + ${min * 60_000})`);
+  ok('reset times: 59.5 minutes reads "1h 0m", not "60m"', until(59.5) === '1h 0m', until(59.5));
+  ok('reset times: 2h 59m 40s reads "3h 0m", not "2h 60m"', until(179 + 40 / 60) === '3h 0m', until(179 + 40 / 60));
+  const sixty = [];
+  for (let m = 0.5; m < 26 * 60; m += 0.25) if (/(^|\s)60m$|(^|\s)24h$/.test(until(m))) sixty.push(`${m}→${until(m)}`);
+  ok('reset times: no duration from 30s to 26h ever reads 60m or 24h', sixty.length === 0, sixty.slice(0, 3).join(' '));
+  ok('reset times: the Usage format is kept — minutes, h m, d h, resetting', until(12) === '12m' && until(125) === '2h 5m'
+     && until(3 * 1440 + 125) === '3d 2h' && run('untilText(Date.now() - 1)') === 'resetting');
+
   ok('8 an HTTP 200 carrying `error` is a failure', run(`homeSource({ seats: [], error: 'boom' })`).state === 'error' && run('homeSource({ seats: [] })').state === 'ok');
 
   ctx.src = { models: { state: 'ok', data: MODELS }, memory: { state: 'ok', data: MEMORY_DIRTY }, worktrees: { state: 'ok', data: WORKTREES }, context: { state: 'ok', data: CONTEXT_DRIFT } };

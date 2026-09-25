@@ -67,7 +67,10 @@ function untilText(ts) {
   if (!ts) return '';
   const ms = ts - Date.now();
   if (ms <= 0) return 'resetting';
-  const h = Math.floor(ms / 3.6e6), mn = Math.round((ms % 3.6e6) / 6e4);
+  // Round the whole duration to minutes first: rounding only the remainder
+  // turned 2h 59m 40s into "2h 60m".
+  const total = Math.round(ms / 6e4);
+  const h = Math.floor(total / 60), mn = total % 60;
   if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
   return h ? `${h}h ${mn}m` : `${mn}m`;
 }
