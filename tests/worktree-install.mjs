@@ -198,22 +198,25 @@ if (ZSH) {
   }
 }
 
-// The first commit of tools/worktree/wt.zsh is the live file, byte for byte.
+// The vendored baseline was the real live toolkit, byte for byte. Pinned by
+// the sha256 of the files as first vendored (3559a99), not found through git
+// history: once the branch was squash-merged, "the commit that added
+// wt.zsh" became the squash, which holds the final file, not the original.
 {
-  const git = (...a) => spawnSync('git', ['-C', ROOT, ...a], { encoding: 'buffer' });
-  const first = git('log', '--diff-filter=A', '--format=%H', '--', 'tools/worktree/wt.zsh').stdout?.toString().trim().split('\n').pop();
+  const ORIGINAL = {
+    'wt.zsh': '90ac56a5210deea5d7a3ffca3695cac06411a8f10373473b3ce7f7082ffa52d0',
+    'defaults.conf': 'a23d10331277c783ee926ee428641e86b3523a7cb7a4bf57dbaf84e35cd97eef',
+  };
+  const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
   const live = path.join(os.homedir(), '.config', 'worktree');
-  if (!first) {
-    console.log('  SKIP 1 first-commit identity — no git history here; NOT checked');
-  } else if (!fs.existsSync(path.join(live, 'wt.zsh'))) {
+  if (!fs.existsSync(path.join(live, 'wt.zsh'))) {
     console.log('  SKIP 1 first-commit identity — no live ~/.config/worktree/wt.zsh on this machine; NOT checked');
   } else if (fs.readFileSync(path.join(live, 'wt.zsh')).equals(OURS['wt.zsh'])) {
     console.log('  SKIP 1 first-commit identity — the live toolkit is already this checkout\'s (installed); NOT re-checked');
   } else {
     for (const f of ['wt.zsh', 'defaults.conf']) {
-      const committed = git('show', `${first}:tools/worktree/${f}`).stdout;
-      ok(`1 the first commit's tools/worktree/${f} is byte-identical to the live ~/.config/worktree/${f}`,
-         Buffer.isBuffer(committed) && committed.equals(fs.readFileSync(path.join(live, f))));
+      ok(`1 the live ~/.config/worktree/${f} is the originally vendored file (sha256 pinned from 3559a99)`,
+         sha(fs.readFileSync(path.join(live, f))) === ORIGINAL[f]);
     }
   }
 }
