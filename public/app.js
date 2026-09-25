@@ -289,15 +289,23 @@ function navButton(v) {
     badge.hidden = true;
     b.appendChild(badge);
   }
-  // Other views need the registry. A click before it lands only takes the one
-  // pending-navigation slot (see boot), so a newer click or link replaces it.
   b.onclick = () => {
     if (v.kind !== 'action') setNavOverlay(false);
-    if (!S.registry && v.kind !== 'action' && v.id !== 'home' && v.id !== 'files') return void (S.pendingNav = v.hash);
-    if (v.kind !== 'action') S.pendingNav = null;
-    v.open();
+    if (navNow(v)) v.open();
   };
   return b;
+}
+
+/**
+ * The gate every navigation passes — sidebar clicks and ⌘K alike. Other
+ * views need the registry: before it lands a request only takes the one
+ * pending-navigation slot (see boot), so a newer one replaces it. Views that
+ * open at once (Home, Files) supersede whatever was pending.
+ */
+function navNow(v) {
+  if (!S.registry && v.kind !== 'action' && v.id !== 'home' && v.id !== 'files') { S.pendingNav = v.hash; return false; }
+  if (v.kind !== 'action') S.pendingNav = null;
+  return true;
 }
 
 /** Re-mark the sidebar: the current view, badges, and the theme toggle. */
@@ -348,7 +356,7 @@ function setNavOverlay(open, { focusNav = true } = {}) {
 /** ⌘K: search lives at the top of the Files page, so it opens that page. */
 function focusSearch() {
   setNavOverlay(false);
-  openFiles({ focus: true });
+  if (navNow(viewById('files'))) openFiles({ focus: true });
 }
 
 function toggleTheme() {

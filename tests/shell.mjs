@@ -631,6 +631,13 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
   reg4.resolve(registry());
   await settle(20);
   ok('R4 #models, then a Context click, during boot → Context', k.eval('S.view') === 'context', k.eval('S.view'));
+  const reg5 = deferred();
+  const c = await boot({ routes: routesFor({ 'GET /api/registry': () => reg5.promise }) });
+  c.$('btn-context').click();
+  c.key('k', { meta: true });
+  reg5.resolve(registry());
+  await settle(20);
+  ok('R4 Context, then ⌘K, during boot → Files, search focused', c.eval('S.view') === 'files' && c.doc.activeElement === c.$('search'), c.eval('S.view'));
 }
 {
   // QA1: the closed drawer is out of the tab order, and closing returns focus.
