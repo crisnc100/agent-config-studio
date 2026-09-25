@@ -64,7 +64,8 @@ const S = {
  */
 const VIEWS = [
   { id: 'home', label: 'Home', group: 'home', icon: 'home', hash: '#home',
-    title: 'Home', sub: 'What is connected, what is left, and what needs you', open: openHome, render: renderHome },
+    title: 'Home', sub: 'What is connected, what is left, and what needs you', open: openHome, render: renderHome,
+    titleExtra: homeNeedsChip },
   { id: 'files', label: 'Files', group: 'configure', icon: 'files', hash: '#files',
     title: 'Files', sub: 'Every config file, by the tool that reads it', open: () => openFiles(), render: renderFiles },
   { id: 'skills', label: 'Skills', group: 'configure', icon: 'skills', hash: '#skills',
@@ -632,6 +633,8 @@ function renderTopbar() {
     const v = viewById(S.view) || viewById('home');
     t.textContent = v.title;
     $('title-path').textContent = v.sub;
+    const extra = v.titleExtra?.();
+    if (extra) t.appendChild(extra);
   }
   const onEntry = S.view === 'entry' && !!S.file;
   // Assist is a chat over the whole corpus — reachable with nothing open.
@@ -3147,6 +3150,12 @@ function renderHome(c) {
   loadHome();
 }
 
+/** "Needs you: N" beside the Home title — what Needs attention lists, hidden at zero. */
+function homeNeedsChip() {
+  const n = attentionModel(HOME.src).items.length;
+  return n ? el('span', 'home-needs', `Needs you: ${n}`) : null;
+}
+
 function homeCard(id, title) {
   const card = el('section', `home-card home-${id}`);
   card.setAttribute('aria-labelledby', `home-${id}-title`);
@@ -3335,6 +3344,7 @@ function paintAttention(body) {
     body.appendChild(ok);
   }
   for (const q of m.quiet) body.appendChild(el('div', 'home-muted home-pad home-quiet', q.text));
+  renderTopbar();
 }
 
 function paintClis(body) {
@@ -3349,7 +3359,7 @@ function paintClis(body) {
     top.appendChild(el('span', 'home-cli-name', r.label));
     top.appendChild(el('span', 'home-chip ok', 'detected'));
     row.appendChild(top);
-    row.appendChild(el('div', 'home-muted', `version unknown · sign-in unknown · ${r.note}`));
+    row.appendChild(el('div', 'home-muted', r.note));
     body.appendChild(row);
   }
 
@@ -3372,7 +3382,7 @@ function paintClis(body) {
     }
   }
   body.appendChild(row);
-  body.appendChild(el('div', 'home-foot', 'Lists the CLIs this studio detects. Version and sign-in are not reported, so they read unknown.'));
+  body.appendChild(el('div', 'home-foot', 'The CLIs this studio detects. Version and sign-in are not reported.'));
 }
 
 function paintRecent(body) {

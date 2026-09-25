@@ -184,7 +184,7 @@ const homeRoutes = (over = {}) => routesFor({
   await settle(20);
   ok('8 with no hash, Home is the view and the sidebar marks it', p.eval('S.view') === 'home' && p.$('btn-home').getAttribute('aria-current') === 'page');
   ok('8 all four cards are there', ['accounts', 'attention', 'clis', 'recent'].every((id) => card(p, id)));
-  ok('8 the topbar says Home', p.text(p.$('title')) === 'Home');
+  ok('8 the topbar says Home', p.$('title').firstChild?.textContent === 'Home');
   ok('8 no page errors', p.errors.length === 0, p.errors.join(' | '));
 }
 {
@@ -445,6 +445,24 @@ const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.ent
   reg.resolve(registry());
   await settle(10);
   ok('G9 …and stays on Home once it lands', p.eval('S.view') === 'home');
+}
+
+// ── Browser QA polish (PR B) ───────────────────────────────────────────────
+{
+  const p = await boot({ routes: homeRoutes() });
+  await settle(20);
+  const chip = () => p.$('title').querySelector('.home-needs');
+  const n = p.$('content').querySelectorAll('.home-item').length;
+  ok('QA6 the Home header shows "Needs you: N", N the actionable attention items', !!chip() && p.text(chip()) === `Needs you: ${n}` && n === 10, p.text(chip()));
+  p.$('btn-skills').click();
+  await settle(5);
+  ok('QA6 …only on Home', !chip());
+  const clean = await boot({ routes: cleanRoutes() });
+  await settle(20);
+  ok('QA6 …and not when nothing needs you', !clean.$('title').querySelector('.home-needs') && /Nothing needs you/.test(clean.text(card(clean, 'attention'))));
+  const clis = p.$('btn-home').click() || (await settle(20), p.text(card(p, 'clis')));
+  ok('QA7 the CLIs card says it once: version and sign-in not reported, no "unknown" per row',
+     (clis.match(/not reported/g) || []).length === 1 && !/unknown/i.test(clis), clis);
 }
 
 for (const p of pages) p.done();

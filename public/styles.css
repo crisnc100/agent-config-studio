@@ -1043,6 +1043,10 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 }
 .home-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .home-card-tools { display: flex; gap: 4px; flex: none; }
+.home-needs {
+  font: 600 11px var(--sans); padding: 2px 9px; border-radius: 999px; white-space: nowrap;
+  color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, transparent);
+}
 .home-card-tools .btn { padding: 3px 10px; font-size: 12px; }
 .home-card-body { padding: 4px 0; }
 
