@@ -35,14 +35,81 @@ function renderMarkdown(src) {
   return host.innerHTML;
 }
 
+/**
+ * localStorage, fail-soft. A private window or blocked site data makes the
+ * accessor itself throw, and every value kept here is a convenience the page
+ * must still start without.
+ */
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* quota, private mode, blocked */ } },
+};
+
 const S = {
   registry: null,
-  view: 'welcome',      // welcome | entry | search | scope | mcp | usage | trash | models | skills | memory | context
+  view: 'home',         // 'entry', 'search', or a content view's id in VIEWS
   entry: null,
   file: null,           // { path, kind, content, mtime, display }
   original: '',
   draft: '',
   tab: 'preview',
+  badges: { models: 0 },
+};
+
+/**
+ * Every place the sidebar can take you, in one table: boot's deep links, the
+ * runtime hash router, the topbar title, renderContent and the sidebar itself
+ * all read it. `kind: 'action'` rows (Files, Theme) act in place rather than
+ * switch the view; `group: null` rows are views with no sidebar item.
+ */
+const VIEWS = [
+  { id: 'home', label: 'Home', group: 'home', icon: 'home', hash: '#home',
+    title: 'Agent Config Studio', sub: '', open: openHome, render: renderWelcome },
+  { id: 'files', label: 'Files', group: 'configure', icon: 'files', kind: 'action', open: toggleFiles },
+  { id: 'skills', label: 'Skills', group: 'configure', icon: 'skills', hash: '#skills',
+    title: 'Skills', sub: 'Every skill on this machine — browse, select, download', open: openSkills },
+  { id: 'mcp', label: 'MCP', group: 'configure', icon: 'mcp', hash: '#mcp',
+    title: 'MCP servers', sub: 'Model Context Protocol servers across both harnesses', open: openMcp },
+  { id: 'models', label: 'Models', group: 'configure', icon: 'models', hash: '#models',
+    title: 'Models', sub: 'Every model family, its current id, and what the CLIs offer', open: openModels,
+    badge: () => S.badges.models },
+  { id: 'memory', label: 'Memory', group: 'review', icon: 'memory', hash: '#memory',
+    title: 'Memory', sub: 'Claude auto-memory by project — review, and clean up with a preview first', open: openMemory },
+  { id: 'context', label: 'Context', group: 'review', icon: 'context', hash: '#context',
+    title: 'Context', sub: 'What each project tells its agents — CLAUDE.md, AGENTS.md, Cursor rules', open: openContext },
+  { id: 'worktrees', label: 'Worktrees', group: 'review', icon: 'worktrees', hash: '#worktrees',
+    title: 'Worktrees', sub: 'Every registered project’s worktrees — env, and which are provably done', open: openWorktrees },
+  { id: 'usage', label: 'Usage', group: 'review', icon: 'usage', hash: '#usage',
+    title: 'Usage', sub: 'Subscription headroom per seat — where the next task should go', open: openUsage },
+  { id: 'scope', label: 'Scope', group: 'review', icon: 'scope', hash: '#scope',
+    title: 'Scope chain', sub: 'What actually applies when an agent runs in a directory', open: openScope },
+  { id: 'trash', label: 'Trash', group: 'footer', icon: 'trash', hash: '#trash',
+    title: 'Trash', sub: 'Deleted items — restorable', open: openTrash },
+  { id: 'theme', label: 'Theme', group: 'footer', icon: 'theme', kind: 'action', open: toggleTheme },
+  { id: 'search', label: 'Search', group: null, title: 'Search results', sub: '' },
+];
+const viewById = (id) => VIEWS.find((v) => v.id === id) || null;
+const NAV_GROUPS = [['home', null], ['configure', 'Configure'], ['review', 'Review']];
+
+/* Stroke icons, 16px, drawn in currentColor so both themes colour them. */
+const svg = (d) => `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const ICONS = {
+  home: svg('<path d="M2.5 7.2 8 2.8l5.5 4.4V13a.5.5 0 0 1-.5.5H9.5V10h-3v3.5H3a.5.5 0 0 1-.5-.5z"/>'),
+  files: svg('<path d="M2.5 4a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>'),
+  skills: svg('<path d="M8 2.2l1.6 3.3 3.6.5-2.6 2.5.6 3.6L8 10.4l-3.2 1.7.6-3.6-2.6-2.5 3.6-.5z"/>'),
+  mcp: svg('<path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11.5v2"/>'),
+  models: svg('<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 1.8v2.2M9.5 1.8v2.2M6.5 12v2.2M9.5 12v2.2M1.8 6.5H4M1.8 9.5H4M12 6.5h2.2M12 9.5h2.2"/>'),
+  memory: svg('<path d="M3 3.5A1.5 1.5 0 0 1 4.5 2h8v10.5h-8A1.5 1.5 0 0 0 3 14zM3 14V3.5M6 5h4"/>'),
+  context: svg('<path d="M8 2 2.5 5 8 8l5.5-3zM2.5 8 8 11l5.5-3M2.5 11 8 14l5.5-3"/>'),
+  worktrees: svg('<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5.5" r="1.5"/><path d="M4.5 5v6M11.5 7c0 2.5-3 2.5-5.5 4"/>'),
+  usage: svg('<path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5 10.5 7"/>'),
+  scope: svg('<circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2"/>'),
+  trash: svg('<path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.6 8.6a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.6"/>'),
+  sun: svg('<circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/>'),
+  moon: svg('<path d="M13.2 9.6A5.5 5.5 0 0 1 6.4 2.8a5.5 5.5 0 1 0 6.8 6.8z"/>'),
+  chevron: svg('<path d="M6 3.5 10.5 8 6 12.5"/>'),
+  rail: svg('<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M6 2.5v11"/>'),
+  menu: svg('<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>'),
 };
 
 /* ── api ─────────────────────────────────────────────────────────────── */
@@ -78,6 +145,7 @@ const clearNotice = () => { clearTimeout(noticeTimer); $('notice-slot').innerHTM
 /* ── boot ────────────────────────────────────────────────────────────── */
 async function boot() {
   marked.setOptions({ gfm: true, breaks: false, mangle: false, headerIds: false });
+  renderNav();
   S.registry = await api('GET', '/api/registry');
   seedCollapsed();
   renderSidebar();
@@ -96,24 +164,38 @@ async function boot() {
       S.registry.registryError.split('\n'), true);
   }
 
-  // Deep links: #file=<path> for any file, #scope for the scope view.
-  if (location.hash.startsWith('#scope')) return openScope();
-  if (location.hash.startsWith('#mcp')) return openMcp();
-  if (location.hash.startsWith('#usage')) return openUsage();
-  if (location.hash.startsWith('#trash')) return openTrash();
-  if (location.hash.startsWith('#worktrees')) return openWorktrees();
-  if (location.hash.startsWith('#skills')) return openSkills();
-  if (location.hash.startsWith('#models')) return openModels();
-  if (location.hash.startsWith('#memory')) return openMemory();
-  if (location.hash.startsWith('#context')) return openContext();
-  if (location.hash.startsWith('#assist')) { renderWelcome(); return openDrawer(); }
-  const m = location.hash.match(/file=([^&]+)/);
-  if (m) {
-    const p = decodeURIComponent(m[1]);
-    const entry = entryForFile(p);
-    if (entry) return openEntry(entry, p);
+  routeHash(location.hash, { cold: true });
+}
+
+/**
+ * Deep links. `#file=<encoded path>` opens a file, `#assist` opens the drawer
+ * over Home, and every VIEWS row with a hash opens its view. Anything else
+ * lands on Home. On a cold load the Files panel stays shut even for a file
+ * link: it is collapsed on every load.
+ */
+function routeHash(hash, { cold = false } = {}) {
+  if (hash.startsWith('#assist')) {
+    if (cold) goHome();
+    return openDrawer();
   }
-  renderWelcome();
+  const m = hash.match(/^#file=([^&]+)/);
+  if (m) {
+    let p = null;
+    try { p = decodeURIComponent(m[1]); } catch { /* a malformed escape is an unknown link */ }
+    const entry = p && entryForFile(p);
+    if (entry) {
+      if (!cold && S.view === 'entry' && S.file?.path === p) return;
+      return openEntry(entry, p, { reveal: !cold });
+    }
+    return cold ? goHome() : openHome();
+  }
+  const v = VIEWS.find((x) => x.hash && hash.startsWith(x.hash));
+  if (v) {
+    if (!cold && S.view === v.id) return;
+    return v.open();
+  }
+  if (cold) return goHome();
+  if (S.view !== 'home') openHome();
 }
 
 function entryForFile(p) {
@@ -124,9 +206,172 @@ function entryForFile(p) {
   return null;
 }
 
-/* ── sidebar ─────────────────────────────────────────────────────────── */
-const stored = localStorage.getItem('acs.collapsed');
-const collapsed = new Set(stored ? JSON.parse(stored) : []);
+/* ── navigation ──────────────────────────────────────────────────────── */
+/**
+ * The sidebar is built once, from VIEWS, and then only re-marked: rebuilding
+ * it on every view change would detach the search box mid-keystroke.
+ */
+const UI = {
+  rail: store.get('acs.rail') === 'collapsed' ? 'collapsed' : 'expanded',
+  files: false,                                   // collapsed on every load, by design
+  reveal: store.get('acs.revealFiles') !== 'off',
+};
+const narrow = () => !!window.matchMedia?.('(max-width: 900px)').matches;
+
+function renderNav() {
+  const nav = $('nav');
+  nav.innerHTML = '';
+  for (const [group, title] of NAV_GROUPS) {
+    const sec = el('div', 'nav-group');
+    if (title) sec.appendChild(el('div', 'nav-group-title', title));
+    for (const v of VIEWS.filter((x) => x.group === group)) {
+      sec.appendChild(navButton(v));
+      if (v.id === 'files') sec.appendChild($('files-panel'));
+    }
+    nav.appendChild(sec);
+  }
+  const foot = $('nav-foot');
+  foot.innerHTML = '';
+  for (const v of VIEWS.filter((x) => x.group === 'footer')) foot.appendChild(navButton(v));
+
+  $('rail-toggle').onclick = () => setRail(UI.rail === 'collapsed' ? 'expanded' : 'collapsed');
+  $('nav-menu').innerHTML = ICONS.menu;
+  $('nav-menu').onclick = () => setNavOverlay(!$('app').classList.contains('nav-open'));
+  $('nav-scrim').onclick = () => setNavOverlay(false);
+  $('reveal-files').checked = UI.reveal;
+  $('reveal-files').onchange = (e) => {
+    UI.reveal = e.target.checked;
+    store.set('acs.revealFiles', UI.reveal ? 'on' : 'off');
+  };
+  setRail(UI.rail, { save: false });
+  setFilesOpen(false);
+}
+
+function navButton(v) {
+  const b = el('button', 'nav-item');
+  b.id = `btn-${v.id}`;
+  b.dataset.view = v.id;
+  b.title = v.label;
+  const icon = el('span', 'nav-icon');
+  icon.innerHTML = ICONS[v.icon] || '';
+  b.appendChild(icon);
+  b.appendChild(el('span', 'nav-label', v.label));
+  if (v.badge) {
+    const badge = el('span', 'nav-badge');
+    badge.hidden = true;
+    b.appendChild(badge);
+  }
+  if (v.id === 'files') {
+    b.setAttribute('aria-controls', 'files-panel');
+    const chev = el('span', 'nav-chev');
+    chev.innerHTML = ICONS.chevron;
+    b.appendChild(chev);
+  }
+  b.onclick = () => {
+    if (v.kind !== 'action') setNavOverlay(false);
+    v.open();
+  };
+  return b;
+}
+
+/** Re-mark the sidebar: the current view, badges, and the two toggles' states. */
+function syncNav() {
+  for (const v of VIEWS) {
+    const b = $(`btn-${v.id}`);
+    if (!b) continue;
+    const here = v.kind !== 'action' && S.view === v.id;
+    b.classList.toggle('active', here);
+    if (here) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    if (v.badge) {
+      const n = v.badge() || 0;
+      const badge = b.querySelector('.nav-badge');
+      badge.hidden = n <= 0;
+      badge.textContent = n > 0 ? String(n) : '';
+      b.title = n > 0 ? `${v.label} — ${n} alert${n === 1 ? '' : 's'}` : v.label;
+    }
+  }
+  const files = $('btn-files');
+  if (files) files.setAttribute('aria-expanded', String(UI.files));
+  const theme = $('btn-theme');
+  if (theme) {
+    const dark = document.documentElement.dataset.theme !== 'light';
+    theme.querySelector('.nav-icon').innerHTML = dark ? ICONS.sun : ICONS.moon;
+    theme.querySelector('.nav-label').textContent = dark ? 'Light theme' : 'Dark theme';
+    theme.title = dark ? 'Switch to the light theme' : 'Switch to the dark theme';
+  }
+}
+
+function setRail(mode, { save = true } = {}) {
+  UI.rail = mode;
+  const collapsedRail = mode === 'collapsed';
+  $('app').classList.toggle('rail-collapsed', collapsedRail);
+  const t = $('rail-toggle');
+  t.innerHTML = ICONS.rail;
+  t.setAttribute('aria-label', collapsedRail ? 'Expand sidebar' : 'Collapse sidebar');
+  t.title = collapsedRail ? 'Expand sidebar' : 'Collapse sidebar';
+  t.setAttribute('aria-pressed', String(collapsedRail));
+  if (save) store.set('acs.rail', mode);
+}
+
+function setNavOverlay(open) {
+  $('app').classList.toggle('nav-open', open);
+  $('nav-menu').setAttribute('aria-expanded', String(open));
+  $('nav-menu').setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+  if (open) setTimeout(() => $('sidebar').querySelector('.nav-item')?.focus(), 0);
+}
+
+function setFilesOpen(open) {
+  UI.files = open;
+  $('files-panel').hidden = !open;
+  syncNav();
+}
+
+/** The Files item: the tree, search and "+" create, shown in place under it. */
+function toggleFiles() {
+  if (UI.rail === 'collapsed' && !narrow()) { setRail('expanded'); return setFilesOpen(true); }
+  setFilesOpen(!UI.files);
+}
+
+/** ⌘K: search lives in the Files panel, so the panel opens to reach it. */
+function focusSearch() {
+  if (narrow()) setNavOverlay(true);
+  else if (UI.rail === 'collapsed') setRail('expanded');
+  setFilesOpen(true);
+  $('search').focus();
+  $('search').select();
+}
+
+/**
+ * Show where a file opened from a panel lives: open the panel, expand its
+ * group, scroll to it. Skipped when turned off, on the icon rail and in the
+ * narrow overlay — none of those asked for the tree. A file with no tree
+ * entry (a synthetic memory entry) keeps its path in the topbar and no more.
+ */
+function revealInTree(entry) {
+  if (!UI.reveal || UI.rail === 'collapsed' || narrow() || !S.registry) return;
+  const group = S.registry.groups.find((g) => g.entries.some((e) => e.id === entry.id));
+  if (!group) return;
+  if (collapsed.has(group.id)) {
+    collapsed.delete(group.id);
+    store.set('acs.collapsed', JSON.stringify([...collapsed]));
+  }
+  if (!UI.files) setFilesOpen(true);
+  renderSidebar();
+  $('tree').querySelector('.item.active')?.scrollIntoView?.({ block: 'nearest' });
+}
+
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  store.set('acs.theme', next);
+  syncNav();
+}
+
+/* ── file tree ───────────────────────────────────────────────────────── */
+const stored = store.get('acs.collapsed');
+const collapsed = new Set((() => {
+  try { const v = stored ? JSON.parse(stored) : []; return Array.isArray(v) ? v : []; } catch { return []; }
+})());
 /** First run: start with the groups the server marks as low-traffic collapsed. */
 function seedCollapsed() {
   if (stored) return;
@@ -134,7 +379,9 @@ function seedCollapsed() {
 }
 
 function renderSidebar() {
+  syncNav();
   const tree = $('tree');
+  if (!S.registry) return;
   tree.innerHTML = '';
   for (const g of S.registry.groups) {
     if (!g.entries.length) continue;
@@ -148,7 +395,7 @@ function renderSidebar() {
     toggle.appendChild(el('span', 'group-count', String(g.entries.length)));
     toggle.onclick = () => {
       collapsed.has(g.id) ? collapsed.delete(g.id) : collapsed.add(g.id);
-      localStorage.setItem('acs.collapsed', JSON.stringify([...collapsed]));
+      store.set('acs.collapsed', JSON.stringify([...collapsed]));
       renderSidebar();
     };
     head.appendChild(toggle);
@@ -192,12 +439,13 @@ function confirmDiscard() {
 }
 const isDirty = () => S.file && S.draft !== S.original;
 
-async function openEntry(entry, filePath) {
+async function openEntry(entry, filePath, { reveal = true } = {}) {
   if (!confirmDiscard()) return;
   S.entry = entry;
   S.view = 'entry';
   clearNotice();
   renderSidebar();
+  if (reveal) revealInTree(entry);
   await loadFile(filePath || entry.primary || entry.files[0]?.path);
 }
 
@@ -229,41 +477,15 @@ function renderTopbar() {
   const t = $('title');
   t.innerHTML = '';
   if (S.view === 'entry' && S.entry) {
-    t.appendChild(document.createTextNode(S.entry.label));
+    t.appendChild(el('span', 'title-text', S.entry.label));
     const tag = el('span', `harness-tag ${S.entry.harness}`,
       S.entry.harness === 'both' ? 'shared' : S.entry.harness);
     t.appendChild(tag);
     $('title-path').textContent = S.file?.display || S.entry.display;
-  } else if (S.view === 'search') {
-    t.textContent = 'Search results';
-    $('title-path').textContent = '';
-  } else if (S.view === 'scope') {
-    t.textContent = 'Scope chain';
-    $('title-path').textContent = 'What actually applies when an agent runs in a directory';
-  } else if (S.view === 'mcp') {
-    t.textContent = 'MCP servers';
-    $('title-path').textContent = 'Model Context Protocol servers across both harnesses';
-  } else if (S.view === 'models') {
-    t.textContent = 'Models';
-    $('title-path').textContent = 'Every model family, its current id, and what the CLIs offer';
-  } else if (S.view === 'worktrees') {
-    t.textContent = 'Worktrees';
-    $('title-path').textContent = 'Every registered project’s worktrees — env, and which are provably done';
-  } else if (S.view === 'trash') {
-    t.textContent = 'Trash';
-    $('title-path').textContent = 'Deleted items — restorable';
-  } else if (S.view === 'skills') {
-    t.textContent = 'Skills';
-    $('title-path').textContent = 'Every skill on this machine — browse, select, download';
-  } else if (S.view === 'memory') {
-    t.textContent = 'Memory';
-    $('title-path').textContent = 'Claude auto-memory by project — review, and clean up with a preview first';
-  } else if (S.view === 'context') {
-    t.textContent = 'Context';
-    $('title-path').textContent = 'What each project tells its agents — CLAUDE.md, AGENTS.md, Cursor rules';
   } else {
-    t.textContent = 'Agent Config Studio';
-    $('title-path').textContent = '';
+    const v = viewById(S.view) || viewById('home');
+    t.textContent = v.title;
+    $('title-path').textContent = v.sub;
   }
   const onEntry = S.view === 'entry' && !!S.file;
   // Assist is a chat over the whole corpus — reachable with nothing open.
@@ -345,16 +567,9 @@ function renderStatus() {
 function renderContent() {
   const c = $('content');
   c.innerHTML = '';
-  if (S.view === 'welcome') return renderWelcome();
-  if (S.view === 'search') return;         // rendered directly by doSearch
-  if (S.view === 'scope') return;          // rendered directly by openScope
-  if (S.view === 'mcp') return;            // rendered directly by openMcp
-  if (S.view === 'usage') return;          // rendered directly by openUsage
-  if (S.view === 'trash') return;          // rendered directly by openTrash
-  if (S.view === 'worktrees') return;      // rendered directly by openWorktrees
-  if (S.view === 'models') return;         // rendered directly by openModels
-  if (S.view === 'memory') return;         // rendered directly by openMemory
-  if (S.view === 'context') return;        // rendered directly by openContext
+  // Every other view either renders here (Home) or is painted by its own
+  // open function (search by doSearch), which owns its loading state.
+  if (S.view !== 'entry') return viewById(S.view)?.render?.(c);
   if (!S.file) return;
 
   if (S.tab === 'preview') return renderPreview(c);
@@ -363,11 +578,24 @@ function renderContent() {
   if (S.tab === 'compare') return renderCompare(c);
 }
 
+/** Home, without the confirm: for transitions whose file is already gone. */
+function goHome() {
+  S.view = 'home';
+  S.entry = null;
+  window.history.replaceState(null, '', location.pathname + location.search);
+  renderSidebar();
+  renderAll();
+}
+function openHome() {
+  if (!confirmDiscard()) return;
+  goHome();
+}
+
 function renderWelcome() {
   const c = $('content');
   c.innerHTML = '';
   const w = el('div', 'empty');
-  w.appendChild(el('div', 'empty-title', 'Pick anything on the left to read or edit it.'));
+  w.appendChild(el('div', 'empty-title', 'Pick a view on the left, or open Files to read or edit any config file.'));
   const hint = el('div');
   hint.innerHTML = 'Every save is committed to a shadow git repo, so nothing is ever lost. ' +
     'Press <span class="kbd">⌘K</span> to search across every config file at once.';
@@ -650,7 +878,7 @@ let searchTimer;
 $('search').addEventListener('input', (e) => {
   clearTimeout(searchTimer);
   const q = e.target.value.trim();
-  if (q.length < 2) { if (S.view === 'search') { S.view = 'welcome'; renderAll(); } return; }
+  if (q.length < 2) { if (S.view === 'search') goHome(); return; }
   searchTimer = setTimeout(() => doSearch(q), 220);
 });
 
@@ -797,8 +1025,7 @@ async function handleFileEvent(d) {
 
   if (plan.open === 'closed') {
     S.entry = null; S.file = null; S.original = ''; S.draft = '';
-    S.view = 'welcome';
-    renderAll();
+    goHome();
     notice('warn', plan.studio
       ? 'The file you had open was moved to the studio trash.'
       : 'The file you had open was deleted outside the studio.', null, true);
@@ -1070,8 +1297,7 @@ async function deleteTarget({ path: p, label, isWhole, protectedEntry }) {
     await refreshRegistry();
     if (wasOpen || isWhole) {
       S.entry = null; S.file = null; S.original = ''; S.draft = '';
-      S.view = 'welcome';
-      renderAll();
+      goHome();
     } else {
       renderAll();
     }
@@ -2823,13 +3049,8 @@ async function openMcp() {
 const M = { open: new Set(), where: {}, drafts: {}, sidecars: [], data: null };
 
 function paintModelsBadge(n) {
-  const b = $('btn-models');
-  b.textContent = 'Models';
-  if (n > 0) {
-    const badge = el('span', 'models-badge', String(n));
-    badge.title = `${n} model alert${n === 1 ? '' : 's'}`;
-    b.appendChild(badge);
-  }
+  S.badges.models = n || 0;
+  syncNav();
 }
 
 async function openModels() {
@@ -3891,35 +4112,22 @@ $('btn-save').onclick = save;
 $('btn-assist').onclick = openDrawer;
 $('drawer-close').onclick = closeDrawer;
 $('scrim').onclick = closeDrawer;
-$('btn-scope').onclick = openScope;
-$('btn-mcp').onclick = openMcp;
-$('btn-usage').onclick = openUsage;
-$('btn-trash').onclick = openTrash;
-$('btn-worktrees').onclick = openWorktrees;
-$('btn-skills').onclick = openSkills;
-$('btn-models').onclick = openModels;
-$('btn-memory').onclick = openMemory;
-$('btn-context').onclick = openContext;
 $('btn-delete').onclick = deleteOpenEntry;
 $('btn-copy').onclick = copyToOtherHarness;
-$('btn-theme').onclick = () => {
-  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = next;
-  localStorage.setItem('acs.theme', next);
-};
-document.documentElement.dataset.theme = localStorage.getItem('acs.theme') || 'dark';
+document.documentElement.dataset.theme = store.get('acs.theme') === 'light' ? 'light' : 'dark';
 
 function wireGlobalKeys() {
   window.addEventListener('keydown', (e) => {
     const meta = e.metaKey || e.ctrlKey;
     if (meta && e.key === 's') { e.preventDefault(); if (S.view === 'entry') save(); }
-    else if (meta && e.key === 'k') { e.preventDefault(); $('search').focus(); $('search').select(); }
+    else if (meta && e.key === 'k') { e.preventDefault(); focusSearch(); }
     else if (meta && e.key === 'e' && S.file) {
       e.preventDefault();
       S.tab = S.tab === 'edit' ? 'preview' : 'edit';
       renderContent(); renderTabs();
     } else if (e.key === 'Escape') {
       closeDrawer();
+      if ($('app').classList.contains('nav-open')) { setNavOverlay(false); $('nav-menu').focus(); }
       if (document.activeElement === $('search')) $('search').blur();
     }
   });
@@ -3928,10 +4136,19 @@ function wireGlobalKeys() {
   });
 }
 
-// Following a link or typing #memory / #context switches the view, not only a reload.
-window.addEventListener('hashchange', () => {
-  if (location.hash.startsWith('#memory') && S.view !== 'memory') openMemory();
-  else if (location.hash.startsWith('#context') && S.view !== 'context') openContext();
+// Following a link or typing a hash switches the view, not only a reload. A
+// cancelled discard puts the old hash back, so the URL keeps naming what is shown.
+window.addEventListener('hashchange', (e) => {
+  if (!S.registry) return;
+  if (isDirty() && !location.hash.startsWith('#assist')) {
+    if (!confirmDiscard()) {
+      const old = e.oldURL ? new URL(e.oldURL).hash : '';
+      window.history.replaceState(null, '', old || location.pathname + location.search);
+      return;
+    }
+    S.draft = S.original;   // discarded: the opener below must not ask again
+  }
+  routeHash(location.hash);
 });
 
 boot().catch((e) => {
