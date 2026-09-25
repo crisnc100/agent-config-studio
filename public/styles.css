@@ -841,6 +841,8 @@ a { color: var(--accent); }
 /* ── models view ─────────────────────────────────────────────────────── */
 .scope.models { max-width: 1040px; }
 .item-dot.grok { background: var(--text-dim); }
+/* The worktree toolkit's files belong to no harness. */
+.item-dot.shell { background: var(--muted); }
 .models-error-text { font: 12px var(--mono); margin-top: 6px; white-space: pre-wrap; }
 .models-catalogs { display: flex; flex-direction: column; gap: 3px; margin: -8px 0 18px; }
 .models-catalog { font-size: 12px; color: var(--muted); display: flex; gap: 10px; }
