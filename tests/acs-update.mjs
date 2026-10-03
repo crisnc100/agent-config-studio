@@ -110,7 +110,7 @@ ok('HOME is redirected', tmp !== os.homedir());
   git(co, 'remote', 'set-url', 'origin', path.join(tmp, 'gone.git'));
   const r = acs(co);
   ok('origin unreachable: exits 0, names the commit it will start',
-     r.code === 0 && git(co, 'rev-parse', 'HEAD') === before && /could not update/.test(r.out)
+     r.code === 0 && git(co, 'rev-parse', 'HEAD') === before && /could not reach origin/.test(r.out)
        && r.out.includes(before.slice(0, 7)), r.out);
   git(co, 'remote', 'set-url', 'origin', origin);
 }
@@ -124,7 +124,7 @@ ok('HOME is redirected', tmp !== os.homedir());
   const r = acs(co, { GIT_SSH_COMMAND: 'sleep 30 #', ACS_UPDATE_TIMEOUT: '1' });
   const took = Date.now() - t0;
   ok('a remote that never answers is given up on at the deadline, not waited out',
-     r.code === 0 && took < 10000 && /could not update/.test(r.out) && git(co, 'rev-parse', 'HEAD') === before,
+     r.code === 0 && took < 10000 && /could not reach origin/.test(r.out) && git(co, 'rev-parse', 'HEAD') === before,
      `${took}ms ${r.out}`);
   git(co, 'remote', 'set-url', 'origin', origin);
 }
@@ -149,7 +149,23 @@ ok('HOME is redirected', tmp !== os.homedir());
   merge('app.txt', 'v5\n', 'v5');
   const before = git(co, 'rev-parse', 'HEAD');
   const r = acs(co);
-  ok('a diverged main is never merged or rebased', git(co, 'rev-parse', 'HEAD') === before && /could not update/.test(r.out), r.out);
+  ok('a diverged main is never merged or rebased', git(co, 'rev-parse', 'HEAD') === before && /has diverged from origin/.test(r.out), r.out);
+}
+
+{
+  // A configured fsmonitor hook that hangs must not stall startup: the
+  // clean-check and fast-forward run with fsmonitor off.
+  const hook = path.join(tmp, 'slow-fsmonitor.sh');
+  fs.writeFileSync(hook, '#!/bin/sh\nsleep 30\n');
+  fs.chmodSync(hook, 0o755);
+  git(co, 'reset', '-q', '--hard', 'origin/main');
+  merge('app.txt', 'v6\n', 'v6');
+  git(co, 'config', 'core.fsmonitor', hook);
+  const t0 = Date.now();
+  const r = acs(co);
+  const took = Date.now() - t0;
+  ok('a hanging fsmonitor hook does not stall the update', took < 10000 && /updated to \w+ v6/.test(r.out), `${took}ms ${r.out}`);
+  git(co, 'config', '--unset', 'core.fsmonitor');
 }
 
 {

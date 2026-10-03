@@ -45,28 +45,36 @@ update_checkout() {
   base=${base#origin/}
   branch=$(git -C "$DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   [ "$branch" = "$base" ] || return 0
-  if [ -n "$(git -C "$DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+  # fsmonitor is off on every git call that reads the index: a configured hook
+  # that hangs would otherwise stall startup, and only the fetch has a deadline.
+  if [ -n "$(git -C "$DIR" -c core.fsmonitor=false status --porcelain --untracked-files=no 2>/dev/null)" ]; then
     echo "not updating: this checkout has local changes — starting it as it is."
     return 0
   fi
   before=$(git -C "$DIR" rev-parse HEAD)
-  # Nothing may prompt, and the whole pull gets a deadline: an SSH host that
+  # Only the network half runs under the deadline, so killing it can never
+  # interrupt a change to the checkout. Nothing may prompt: an SSH host that
   # never answers or a credential helper that waits would otherwise hold the
-  # launcher forever. On the deadline git is killed and startup continues.
+  # launcher. SSH's own timeouts end a stalled connection even if the fetch
+  # that started it was killed.
   GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_ASKPASS=/bin/false SSH_ASKPASS=/bin/false \
-    GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes -o ConnectTimeout=8" \
-    git -C "$DIR" -c credential.interactive=never -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
-    pull --ff-only --quiet origin "$base" >/dev/null 2>&1 </dev/null &
-  pull_pid=$!
-  ( sleep "${ACS_UPDATE_TIMEOUT:-20}"; kill "$pull_pid" 2>/dev/null ) >/dev/null 2>&1 &
+    GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=5 -o ServerAliveCountMax=2" \
+    git -C "$DIR" -c core.fsmonitor=false -c credential.interactive=never -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
+    fetch --quiet origin "$base" >/dev/null 2>&1 </dev/null &
+  fetch_pid=$!
+  ( sleep "${ACS_UPDATE_TIMEOUT:-20}"; kill "$fetch_pid" 2>/dev/null ) >/dev/null 2>&1 &
   watch_pid=$!
-  pull_rc=0
+  fetch_rc=0
   # The waits' stderr carries the shell's "Terminated" job notices.
-  wait "$pull_pid" 2>/dev/null || pull_rc=$?
+  wait "$fetch_pid" 2>/dev/null || fetch_rc=$?
   kill "$watch_pid" 2>/dev/null || true
   wait "$watch_pid" 2>/dev/null || true
-  if [ "$pull_rc" -ne 0 ]; then
-    echo "could not update from origin (offline, timed out, or $base has diverged) — starting $(git -C "$DIR" rev-parse --short HEAD) as it is."
+  if [ "$fetch_rc" -ne 0 ]; then
+    echo "could not reach origin (offline or timed out) — starting $(git -C "$DIR" rev-parse --short HEAD) as it is."
+    return 0
+  fi
+  if ! git -C "$DIR" -c core.fsmonitor=false merge --ff-only --quiet "origin/$base" >/dev/null 2>&1; then
+    echo "not updating: $base has diverged from origin — starting $(git -C "$DIR" rev-parse --short HEAD) as it is."
     return 0
   fi
   after=$(git -C "$DIR" rev-parse HEAD)
