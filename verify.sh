@@ -41,6 +41,8 @@ node tests/models-assist.mjs
 node tests/models-scripts.mjs
 node tests/models-backup.mjs
 node tests/models-panel.mjs
+# Check now refreshing every Codex home: a fake codex, temp HOMEs.
+node tests/models-refresh.mjs
 node tests/memory.mjs
 node tests/context-map.mjs
 # The worktree toolkit, its installer and the read-only panel: temp HOME, temp repos.

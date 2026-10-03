@@ -3531,7 +3531,7 @@ async function paintModels(load) {
   head.appendChild(actions);
   box.appendChild(head);
   box.appendChild(el('div', 'scope-sub',
-    `Read from each CLI's own catalog on disk — no network, no tokens. Checked ${agoText(Date.now() - m.checkedAt)}` +
+    `Read from each CLI's own catalog on disk; Check now first has Codex refresh its catalogs — no tokens. Checked ${agoText(Date.now() - m.checkedAt)}` +
     (m.claudeVersion ? ` · Claude Code ${m.claudeVersion.split(' ')[0]}` : '') + '.'));
 
   if (m.registryError) {
@@ -3549,6 +3549,7 @@ async function paintModels(load) {
       `${cat.count} models · fetched ${agoText(Date.now() - cat.fetchedAt)}`));
     cats.appendChild(line);
     if (cat.disagree) cats.appendChild(el('div', 'models-catalog stale', cat.disagree));
+    if (cat.refreshNote) cats.appendChild(el('div', 'models-catalog stale', cat.refreshNote));
   }
   box.appendChild(cats);
 
