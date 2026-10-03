@@ -4,8 +4,9 @@ A local web app for reading, editing, and versioning every Claude Code and Codex
 config surface on this machine — in one place, rendered properly.
 
 ```
-acs          # start it and open the browser
+acs          # pull the latest main (clean checkout only), start it, open the browser
 acs stop     # shut it down
+acs update   # just the pull; ACS_NO_UPDATE=1 acs skips it
 acs install-model-id   # put the model resolver on PATH (see Model registry)
 acs install-worktree   # optional: the worktree toolkit (see Optional: worktree tools)
 ```
