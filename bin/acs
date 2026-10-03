@@ -35,7 +35,13 @@ update_checkout() {
   [ -z "${ACS_NO_UPDATE:-}" ] || return 0
   command -v git >/dev/null 2>&1 || return 0
   git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
-  base=$(git -C "$DIR" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)
+  git -C "$DIR" remote get-url origin >/dev/null 2>&1 || return 0
+  # Never guess the default branch: a guessed "main" could fast-forward a
+  # branch that is not the one that ships.
+  if ! base=$(git -C "$DIR" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null); then
+    echo "not updating: origin's default branch is unknown — run: git -C \"$DIR\" remote set-head origin --auto"
+    return 0
+  fi
   base=${base#origin/}
   branch=$(git -C "$DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   [ "$branch" = "$base" ] || return 0
@@ -44,11 +50,23 @@ update_checkout() {
     return 0
   fi
   before=$(git -C "$DIR" rev-parse HEAD)
-  # GIT_TERMINAL_PROMPT=0 and the low-speed limit keep a dead network or a
-  # credential prompt from hanging the launcher.
-  if ! GIT_TERMINAL_PROMPT=0 git -C "$DIR" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
-      pull --ff-only --quiet origin "$base" >/dev/null 2>&1; then
-    echo "could not update from origin (offline, or $base has diverged) — starting $(git -C "$DIR" rev-parse --short HEAD) as it is."
+  # Nothing may prompt, and the whole pull gets a deadline: an SSH host that
+  # never answers or a credential helper that waits would otherwise hold the
+  # launcher forever. On the deadline git is killed and startup continues.
+  GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_ASKPASS=/bin/false SSH_ASKPASS=/bin/false \
+    GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes -o ConnectTimeout=8" \
+    git -C "$DIR" -c credential.interactive=never -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
+    pull --ff-only --quiet origin "$base" >/dev/null 2>&1 </dev/null &
+  pull_pid=$!
+  ( sleep "${ACS_UPDATE_TIMEOUT:-20}"; kill "$pull_pid" 2>/dev/null ) >/dev/null 2>&1 &
+  watch_pid=$!
+  pull_rc=0
+  # The waits' stderr carries the shell's "Terminated" job notices.
+  wait "$pull_pid" 2>/dev/null || pull_rc=$?
+  kill "$watch_pid" 2>/dev/null || true
+  wait "$watch_pid" 2>/dev/null || true
+  if [ "$pull_rc" -ne 0 ]; then
+    echo "could not update from origin (offline, timed out, or $base has diverged) — starting $(git -C "$DIR" rev-parse --short HEAD) as it is."
     return 0
   fi
   after=$(git -C "$DIR" rev-parse HEAD)

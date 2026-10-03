@@ -116,6 +116,32 @@ ok('HOME is redirected', tmp !== os.homedir());
 }
 
 {
+  // An SSH remote that never answers: the deadline kills the pull and the
+  // launcher carries on. The ssh stand-in sleeps; `#` drops the -o flags.
+  const before = git(co, 'rev-parse', 'HEAD');
+  git(co, 'remote', 'set-url', 'origin', 'ssh://acs-test.invalid/repo.git');
+  const t0 = Date.now();
+  const r = acs(co, { GIT_SSH_COMMAND: 'sleep 30 #', ACS_UPDATE_TIMEOUT: '1' });
+  const took = Date.now() - t0;
+  ok('a remote that never answers is given up on at the deadline, not waited out',
+     r.code === 0 && took < 10000 && /could not update/.test(r.out) && git(co, 'rev-parse', 'HEAD') === before,
+     `${took}ms ${r.out}`);
+  git(co, 'remote', 'set-url', 'origin', origin);
+}
+
+{
+  // No origin/HEAD: the default branch is unknown, so nothing is guessed.
+  merge('app.txt', 'v4b\n', 'v4b');
+  const before = git(co, 'rev-parse', 'HEAD');
+  git(co, 'remote', 'set-head', 'origin', '-d');
+  const r = acs(co);
+  ok('origin/HEAD unknown: main is not assumed, and it says how to fix it',
+     git(co, 'rev-parse', 'HEAD') === before && /default branch is unknown/.test(r.out) && /set-head origin --auto/.test(r.out), r.out);
+  git(co, 'remote', 'set-head', 'origin', 'main');
+  ok('with origin/HEAD restored it updates again', /updated to \w+ v4b/.test(acs(co).out));
+}
+
+{
   // Diverged: a local commit on main that origin does not have.
   fs.writeFileSync(path.join(co, 'local.txt'), 'mine\n');
   git(co, 'add', 'local.txt');
