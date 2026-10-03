@@ -27,6 +27,69 @@ port_busy() {
   fi
 }
 
+# Bring this checkout up to the remote's default branch before starting, so
+# `acs` after a merge runs the merged code. Only a clean checkout sitting on
+# that branch is fast-forwarded; a feature branch, local edits or no network
+# start what is here, and the last two say why. Returns 10 when it moved HEAD.
+update_checkout() {
+  [ -z "${ACS_NO_UPDATE:-}" ] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  git -C "$DIR" remote get-url origin >/dev/null 2>&1 || return 0
+  # Never guess the default branch: a guessed "main" could fast-forward a
+  # branch that is not the one that ships.
+  if ! base=$(git -C "$DIR" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null); then
+    echo "not updating: origin's default branch is unknown — run: git -C \"$DIR\" remote set-head origin --auto"
+    return 0
+  fi
+  base=${base#origin/}
+  branch=$(git -C "$DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  [ "$branch" = "$base" ] || return 0
+  # fsmonitor is off on every git call that reads the index: a configured hook
+  # that hangs would otherwise stall startup, and only the fetch has a deadline.
+  if [ -n "$(git -C "$DIR" -c core.fsmonitor=false status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    echo "not updating: this checkout has local changes — starting it as it is."
+    return 0
+  fi
+  before=$(git -C "$DIR" rev-parse HEAD)
+  # Only the network half runs under the deadline, so killing it can never
+  # interrupt a change to the checkout. Nothing may prompt: an SSH host that
+  # never answers or a credential helper that waits would otherwise hold the
+  # launcher. SSH's own timeouts end a stalled connection even if the fetch
+  # that started it was killed.
+  GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_ASKPASS=/bin/false SSH_ASKPASS=/bin/false \
+    GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=5 -o ServerAliveCountMax=2" \
+    git -C "$DIR" -c core.fsmonitor=false -c credential.interactive=never -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
+    fetch --quiet origin "$base" >/dev/null 2>&1 </dev/null &
+  fetch_pid=$!
+  ( sleep "${ACS_UPDATE_TIMEOUT:-20}"; kill "$fetch_pid" 2>/dev/null ) >/dev/null 2>&1 &
+  watch_pid=$!
+  fetch_rc=0
+  # The waits' stderr carries the shell's "Terminated" job notices.
+  wait "$fetch_pid" 2>/dev/null || fetch_rc=$?
+  kill "$watch_pid" 2>/dev/null || true
+  wait "$watch_pid" 2>/dev/null || true
+  if [ "$fetch_rc" -ne 0 ]; then
+    echo "could not reach origin (offline or timed out) — starting $(git -C "$DIR" rev-parse --short HEAD) as it is."
+    return 0
+  fi
+  if ! git -C "$DIR" -c core.fsmonitor=false merge --ff-only --quiet "origin/$base" >/dev/null 2>&1; then
+    echo "not updating: $base has diverged from origin — starting $(git -C "$DIR" rev-parse --short HEAD) as it is."
+    return 0
+  fi
+  after=$(git -C "$DIR" rev-parse HEAD)
+  [ "$before" != "$after" ] || return 0
+  echo "updated to $(git -C "$DIR" log -1 --format='%h %s' "$after")"
+  # Installed copies live outside this checkout and do not follow a pull.
+  if git -C "$DIR" diff --quiet "$before" "$after" -- tools/worktree; then :; else
+    echo "  tools/worktree changed — run: acs install-worktree"
+  fi
+  if git -C "$DIR" diff --quiet "$before" "$after" -- bin/model-id models.default.json; then :; else
+    echo "  the model-id resolver changed — run: acs install-model-id"
+  fi
+  return 10
+}
+
 open_url() {
   if command -v open >/dev/null 2>&1; then open "$1"
   elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1" >/dev/null 2>&1
@@ -51,6 +114,11 @@ case "$1" in
     # Copies the resolver out of this checkout and links ~/.local/bin/model-id,
     # so skills keep resolving when a worktree is removed. Re-run after a pull.
     exec node "$DIR/bin/model-id" --install
+    ;;
+  update)
+    # Pull only; never starts the studio.
+    update_checkout || [ $? -eq 10 ]
+    exit 0
     ;;
   stop)
     if is_acs; then
@@ -88,6 +156,11 @@ if port_busy; then
   echo "port $PORT is in use by another process. Set ACS_PORT to pick a different one." >&2
   exit 1
 fi
+
+rc=0
+update_checkout || rc=$?
+# The pull may have replaced this very script: start the new one, once.
+if [ "$rc" -eq 10 ]; then ACS_NO_UPDATE=1 exec "$0" "$@"; fi
 
 echo "starting Agent Config Studio…"
 PORT="$PORT" node "$DIR/server.js" &
