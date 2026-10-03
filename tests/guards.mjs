@@ -634,12 +634,13 @@ function guardE() {
               `'${m[1]}' — the method list must be literal`);
   }
 
-  // --- codex-limits.js: only these two JSON-RPC methods may ever be sent ---
+  // --- codex-limits.js: only these three JSON-RPC methods may ever be sent -
   // `codex app-server` is a full agent endpoint: with the very same argv, a
   // thread/start plus a prompt is an uncontained model turn that can write
   // files. Pinning argv is therefore not enough — the method list is the real
-  // boundary, exactly as it is for grok-billing.
-  const LIMIT_METHODS = new Set(['initialize', 'account/rateLimits/read']);
+  // boundary, exactly as it is for grok-billing. `model/list` (approved by Cris)
+  // only has the CLI re-fetch its own model catalog; it starts no thread.
+  const LIMIT_METHODS = new Set(['initialize', 'account/rateLimits/read', 'model/list']);
   const limitsPath = path.join(LIB, 'usage', 'codex-limits.js');
   let limits = '';
   try { limits = fs.readFileSync(limitsPath, 'utf8'); } catch {

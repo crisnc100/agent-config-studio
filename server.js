@@ -21,6 +21,7 @@ import { detectHarnesses, HARNESSES, modelsFor, registryError } from './lib/harn
 import { createWatcher, snapshotOf, diffSnapshots, expectWrite, tagOrigin } from './lib/watch.js';
 import { renderSnapshot, createSeat, removeSeat, moveSeatToPrivateHome } from './lib/usage/seats.js';
 import { refreshSnapshot } from './lib/usage/refresh.js';
+import { refreshCodexCatalogs } from './lib/usage/codex-limits.js';
 import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
 import { codexProcessesUsingHome, stopProcesses } from './lib/usage/processes.js';
 import { loadSeats } from './lib/usage/seats.js';
@@ -422,6 +423,7 @@ export function createApp(opts = {}) {
   const models = createModelsState({
     detectFn,
     codexHomes: () => loadSeats().seats.filter((x) => x.vendor === 'codex' && x.home).map((x) => x.home),
+    refreshCodex: opts.refreshCodexCatalogs || refreshCodexCatalogs,
   });
 
   /** A family the registry knows, or a 400 — never a path or free text. */
@@ -779,11 +781,12 @@ export function createApp(opts = {}) {
 
   /**
    * The Models panel. Catalogs are the CLIs' own on-disk caches, read at
-   * start and on "Check now" — no spawn, no network, no credential — and
-   * only projected fields leave lib/models-catalog.js.
+   * start and on "Check now", and only projected fields leave
+   * lib/models-catalog.js. "Check now" first has Codex refresh its catalogs
+   * through lib/usage/codex-limits.js; ACS reads no credential either way.
    */
   'GET /api/models': async () => models.view(),
-  'POST /api/models/check': async () => { await models.check(); return models.view(); },
+  'POST /api/models/check': async () => { await models.check({ refresh: true }); return models.view(); },
   'GET /api/models/where': async (_req, url) => whereUsed(knownFamily(url.searchParams.get('family'))),
 
   'POST /api/models/set': async (req) => {
