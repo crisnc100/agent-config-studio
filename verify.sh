@@ -39,6 +39,7 @@ node tests/roots.mjs
 node tests/roots-routes.mjs
 node tests/roots-revoke.mjs
 node tests/roots-history.mjs
+node tests/roots-builtins.mjs
 node tests/roots-live.mjs
 node tests/skills.mjs
 node tests/phase1.mjs

@@ -438,7 +438,11 @@ function rootsView() {
   return {
     state: r.state, error: r.error, file: tilde(r.path),
     roots: r.roots.map((x) => ({ id: x.id, label: x.label, access: x.access, status: x.status, display: tilde(x.path) })),
-    invalid: r.invalid.map((x) => ({ id: typeof x.entry?.id === 'string' ? x.entry.id : null, reason: x.reason })),
+    invalid: [
+      ...r.invalid.map((x) => ({ id: typeof x.entry?.id === 'string' ? x.entry.id : null, reason: x.reason })),
+      // A built-in home ignored for where it really points, named as such.
+      ...r.builtinInvalid.map((b) => ({ id: b.name, reason: `${b.name} is ignored: ${b.reason}` })),
+    ],
     addHint: 'acs roots add <path>',
   };
 }
@@ -1256,10 +1260,11 @@ export function createApp(opts = {}) {
  */
 function rootsBanner() {
   const r = currentRoots();
-  if (r.state === 'error') return `  folders    ${r.error} — no project folders active`;
+  const ignored = r.builtinInvalid.map((b) => `\n  ignored    ${b.name}: ${b.reason}`).join('');
+  if (r.state === 'error') return `  folders    ${r.error} — no project folders active${ignored}`;
   const lines = r.roots.map((x) => `${x.access.padEnd(5)} ${tilde(x.path)}${x.status === 'missing' ? '  (missing)' : ''}`);
-  if (!lines.length) return '  folders    no project folders yet — run: acs roots add <path>';
-  return lines.map((l, i) => `  ${i ? '         ' : 'folders  '}  ${l}`).join('\n');
+  if (!lines.length) return `  folders    no project folders yet — run: acs roots add <path>${ignored}`;
+  return lines.map((l, i) => `  ${i ? '         ' : 'folders  '}  ${l}`).join('\n') + ignored;
 }
 
 if (launchedDirectly()) {
