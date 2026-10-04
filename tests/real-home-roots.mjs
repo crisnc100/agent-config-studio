@@ -57,6 +57,7 @@ console.log('\nreal-home tripwire, following roots.json');
   const realShared = path.join(T, 'volumes', 'shared');
   const sharedMcp = put('volumes/shared/client/.mcp.json', '{"mcpServers":{"b":{}}}\n');
   const sharedClaude = put('volumes/shared/client/CLAUDE.md', '# client AAAA\n');
+  const sharedWt = put('volumes/shared/client/.worktrees.conf', 'TRUNK=/s\n');
   fs.symlinkSync(realShared, path.join(T, 'shared-link'));
   put('.agent-config-studio/roots.json', JSON.stringify({ version: 1, roots: [
     { id: 'work', path: path.join(T, 'code', 'work'), label: 'Work', access: 'edit' },
@@ -70,6 +71,7 @@ console.log('\nreal-home tripwire, following roots.json');
   scenario('an in-place edit of a CLAUDE.md under a custom root', () => sameShape(claude, '# app ZZZZ\n'), true, () => sameShape(claude, '# app AAAA\n'));
   scenario('an edit to the target of a symlinked instruction file', () => sameShape(target, '# rules ZZZZ\n'), true, () => sameShape(target, '# rules AAAA\n'));
   scenario('an in-place edit of a .mcp.json under a root whose path is a symlink', () => sameShape(sharedMcp, '{"mcpServers":{"z":{}}}\n'), true, () => sameShape(sharedMcp, '{"mcpServers":{"b":{}}}\n'));
+  scenario('an in-place edit of a .worktrees.conf under a root whose path is a symlink', () => sameShape(sharedWt, 'TRUNK=/t\n'), true, () => sameShape(sharedWt, 'TRUNK=/s\n'));
   scenario('an in-place edit of a CLAUDE.md under a root whose path is a symlink', () => sameShape(sharedClaude, '# client ZZZZ\n'), true, () => sameShape(sharedClaude, '# client AAAA\n'));
   scenario('a new .worktrees.conf appearing under a custom root', () => put('code/work/other/.worktrees.conf', 'x\n'), true, () => fs.rmSync(path.join(T, 'code', 'work', 'other'), { recursive: true }));
   cleanup();

@@ -118,6 +118,24 @@ const revokeAtWrite = () => _setBeforeWriteCheck(() => {
   ok('…which works once the folder is editable again', again.status === 200 && fs.readFileSync(f, 'utf8') === '# doomed\n', again.text);
 }
 
+// Trash restore into a parent folder that no longer exists: revoking at the
+// first write check must stop it before the folder is recreated.
+{
+  const sub = path.join(app, 'gone-sub');
+  const f = path.join(sub, 'deep.md');
+  fs.mkdirSync(sub, { recursive: true });
+  fs.writeFileSync(f, '# deep\n');
+  const del = await call('/api/delete', 'POST', { path: f });
+  fs.rmSync(sub, { recursive: true, force: true });
+  ok('a file trashed, then its folder removed (the probe works)', del.status === 200 && !fs.existsSync(sub), del.text);
+  const firedBefore = fired;
+  revokeAtWrite();
+  const r = await call('/api/trash/restore', 'POST', { id: del.json.id });
+  ok('B5 trash restore into a missing parent under a revoked root: 403, and no folder is created',
+     fired === firedBefore + 1 && r.status === 403 && !fs.existsSync(sub), r.text);
+  add();
+}
+
 // Turning the folder read-only is a revocation too.
 {
   const f = path.join(app, 'CLAUDE.md');
