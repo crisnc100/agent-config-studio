@@ -110,6 +110,50 @@ fs.writeFileSync(tmpl, tmplText);
   fs.unlinkSync(path.join(reposDir, 'app2.conf'));
 }
 
+// One test per write site wtinit can make (lib/worktree.js writeSites), each
+// linked into the read root in a fresh edit-root repo: 403, and nothing in
+// the read root changes. The `..` case resolves the way the kernel would.
+{
+  const jump = path.join(work, 'jump');
+  fs.mkdirSync(path.join(client, 'sub'), { recursive: true });
+  fs.symlinkSync(path.join(client, 'sub'), jump);
+  const clientNow = () => JSON.stringify([listing(client), listing(path.join(client, 'sub'))]);
+  const site = async (label, key, arrange, body = {}) => {
+    const app = repo(path.join(work, key));
+    const extra = arrange(app) || {};
+    const before = clientNow();
+    const r = await srv.call('/api/worktree/init', { method: 'POST', body: { repoPath: app, key, ...extra, ...body } });
+    ok(`B4 write site: ${label} linked into the read root: 403, nothing created there`,
+       r.status === 403 && /read-only folder|cannot tell/.test(r.json?.error) && clientNow() === before
+       && !fs.existsSync(path.join(work, `${key}-trunk`)), `${r.status} ${r.text.slice(0, 300)}`);
+  };
+  await site('the trunk\'s .worktrees.conf via jump/../ (the kernel lands it in the read root)', 'dotdot', () => {
+    const t = path.join(work, 'dotdot-pre');
+    fs.mkdirSync(t, { recursive: true });
+    fs.symlinkSync(`${jump}/../new.conf`, path.join(t, '.worktrees.conf'));
+    return { trunk: t };
+  });
+  await site('the git folder itself (.git a link into the read root)', 'gitdir', (app) => {
+    fs.renameSync(path.join(app, '.git'), path.join(client, 'gitdir.git'));
+    fs.symlinkSync(path.join(client, 'gitdir.git'), path.join(app, '.git'));
+  });
+  const site2 = (label, key, arrange) => site(label, key, (app) => { arrange(path.join(app, '.git')); });
+  await site2('.git/info (wt.zsh 1531)', 'ginfo', (g) => { fs.rmSync(path.join(g, 'info'), { recursive: true, force: true }); fs.symlinkSync(path.join(client, 'info-dir'), path.join(g, 'info')); });
+  await site2('.git/info/exclude (wt.zsh 1534)', 'gexcl', (g) => { fs.mkdirSync(path.join(g, 'info'), { recursive: true }); fs.rmSync(path.join(g, 'info', 'exclude'), { force: true }); fs.symlinkSync(path.join(client, 'exclude'), path.join(g, 'info', 'exclude')); });
+  await site2('.git/info/exclude via jump/.. (the kernel lands it in the read root)', 'gexcl2', (g) => { fs.mkdirSync(path.join(g, 'info'), { recursive: true }); fs.rmSync(path.join(g, 'info', 'exclude'), { force: true }); fs.symlinkSync(`${jump}/../exclude2`, path.join(g, 'info', 'exclude')); });
+  await site2('.git/worktrees, git\'s worktree admin dir (wt.zsh 1486)', 'gwts', (g) => { fs.symlinkSync(path.join(client, 'wts-admin'), path.join(g, 'worktrees')); });
+  await site2('.git/config, where checkout -B records the upstream (wt.zsh 1489)', 'gcfg', (g) => { fs.copyFileSync(path.join(g, 'config'), path.join(client, 'sub', 'gcfg.config')); fs.rmSync(path.join(g, 'config')); fs.symlinkSync(path.join(client, 'sub', 'gcfg.config'), path.join(g, 'config')); });
+  await site2('a ref under .git/refs/heads (wt.zsh 1489)', 'gref', (g) => { fs.symlinkSync(path.join(client, 'ref-x'), path.join(g, 'refs', 'heads', 'main-x')); });
+  const reposLinked = path.join(sb.env.WT_HOME, 'repos');
+  const reposBackup = `${reposLinked}.bak`;
+  await site('the registry folder ~/.config/worktree/repos (wt.zsh 1563)', 'greg', () => {
+    fs.renameSync(reposLinked, reposBackup);
+    fs.symlinkSync(path.join(client, 'repos-x'), reposLinked);
+  });
+  fs.unlinkSync(reposLinked);
+  fs.renameSync(reposBackup, reposLinked);
+}
+
 const r3 = await srv.call('/api/worktree/init', { method: 'POST', body: { repoPath: editApp, key: 'app', cmd: 'ap' } });
 ok('B4 a project in an edit root still runs wtinit: trunk created, project registered',
    r3.status === 200 && r3.json?.ok && fs.existsSync(path.join(work, 'app-trunk', '.worktrees.conf'))
