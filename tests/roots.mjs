@@ -147,6 +147,127 @@ ok('the real HOME is never the one under test', !temps.includes(realHome));
   ok('R a symlink into a built-in home is rejected by where it really is', /inside ~\/\.claude/.test(viaLink || ''), viaLink);
 }
 
+/* ── AC3: every protected folder, by every spelling (typed, real, linked) ── */
+{
+  // Each built-in home and ~/.agent-config-studio is a link into its own
+  // store, so an ancestor or descendant of its REAL location belongs to that
+  // one rule alone — removing any single entry from the guard list fails here.
+  const H = mkHome('matrix');
+  const names = ['.claude', '.codex', '.agents', '.grok', path.join('.config', 'worktree'), '.agent-config-studio'];
+  const store = (n) => path.join(H, 'store', n.replace(/[/.]/g, '_'));
+  for (const n of names) {
+    mk(store(n), 'real', 'sub');
+    fs.mkdirSync(path.dirname(path.join(H, n)), { recursive: true });
+    fs.symlinkSync(path.join(store(n), 'real'), path.join(H, n));
+  }
+  const okRoot = mk(H, 'code', 'ok');
+  ok('AC3 seed: an ordinary folder is accepted beside linked homes', cli(H, ['add', okRoot]).code === 0);
+  const existing = R.loadRoots({ home: H }).roots;
+  const before = read(R.rootsPath(H));
+  const cases = [];
+  for (const n of names) {
+    const shown = `~/${n}`.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    cases.push([`a folder inside ${n} by its typed path`, path.join(H, n, 'sub'), new RegExp(`is inside ${shown},`)]);
+    cases.push([`a folder inside ${n}'s real location`, path.join(store(n), 'real', 'sub'), new RegExp(`is inside ${shown},`)]);
+    cases.push([`${n}'s real location itself`, path.join(store(n), 'real'), new RegExp(`is inside ${shown},`)]);
+    cases.push([`an ancestor of ${n}'s real location`, store(n), new RegExp(`contains ${shown},`)]);
+  }
+  mk(H, '.config', 'other');
+  cases.push(['~/.config, the typed ancestor of ~/.config/worktree', path.join(H, '.config'), /contains ~\/\.config\/worktree,/]);
+  for (const [what, p, re] of cases) {
+    const why = R.validateRoot({ id: 'candidate', label: 'Candidate', path: p, access: 'read' }, existing, { home: H });
+    ok(`AC3 validateRoot rejects ${what}`, typeof why === 'string' && re.test(why), why);
+    const r = cli(H, ['add', p]);
+    ok(`AC3 the CLI rejects ${what}, and roots.json is unchanged`, r.code !== 0 && re.test(r.out) && read(R.rootsPath(H)) === before, r.out);
+  }
+}
+{
+  // The same rules on plain (unlinked) homes, for the two the main matrix lacks.
+  const H = mkHome('matrix-plain');
+  for (const n of ['.grok', '.agents']) {
+    mk(H, n, 'sub');
+    const why = R.validateRoot({ id: 'c', label: 'C', path: path.join(H, n, 'sub'), access: 'read' }, [], { home: H });
+    ok(`AC3 validateRoot rejects a folder inside ~/${n}`, new RegExp(`is inside ~/\\${n},`).test(why || ''), why);
+    const whyIt = R.validateRoot({ id: 'c', label: 'C', path: path.join(H, n), access: 'read' }, [], { home: H });
+    ok(`AC3 validateRoot rejects ~/${n} itself`, new RegExp(`is inside ~/\\${n},`).test(whyIt || ''), whyIt);
+  }
+}
+
+/* ── a symlinked ~/.ssh is protected where it really is ──────────────────── */
+{
+  const H = mkHome('sshlink');
+  mk(H, 'key-store', 'old');
+  fs.writeFileSync(path.join(H, 'key-store', 'id_ed25519'), 'PRIVATE KEY\n');
+  fs.symlinkSync(path.join(H, 'key-store'), path.join(H, '.ssh'));
+  mk(H, 'vault', 'keys');
+  const before = read(R.rootsPath(H));
+  const why = R.validateRoot({ id: 'ks', label: 'KS', path: path.join(H, 'key-store'), access: 'edit' }, [], { home: H });
+  ok('SSH ~/.ssh -> ~/key-store: adding ~/key-store as edit is rejected by validateRoot', /~\/\.ssh holds your keys/.test(why || ''), why);
+  const r = cli(H, ['add', path.join(H, 'key-store'), '--edit']);
+  ok('SSH …and by the CLI, leaving roots.json as it was', r.code !== 0 && /~\/\.ssh holds your keys/.test(r.out) && read(R.rootsPath(H)) === before, r.out);
+  const sub = R.validateRoot({ id: 'old', label: 'Old', path: path.join(H, 'key-store', 'old'), access: 'read' }, [], { home: H });
+  ok('SSH …and so is a folder inside it', /is inside ~\/\.ssh/.test(sub || ''), sub);
+  const H2 = mkHome('sshlink2');
+  mk(H2, 'vault', 'keys');
+  fs.symlinkSync(path.join(H2, 'vault', 'keys'), path.join(H2, '.ssh'));
+  const parent = R.validateRoot({ id: 'vault', label: 'Vault', path: path.join(H2, 'vault'), access: 'read' }, [], { home: H2 });
+  ok('SSH a folder CONTAINING where ~/.ssh really is is rejected too', /contains ~\/\.ssh/.test(parent || ''), parent);
+}
+
+/* ── P1: a registered root re-pointed after it was accepted ──────────────── */
+{
+  const H = mkHome('retarget');
+  mk(H, '.ssh'); fs.writeFileSync(path.join(H, '.ssh', 'id_rsa'), 'KEY\n');
+  mk(H, '.claude');
+  const real = mk(H, 'code', 'real');
+  const link = path.join(H, 'code-link');
+  fs.symlinkSync(real, link);
+  R.addRoot({ path: link, access: 'edit', label: 'Code', id: 'code' }, { home: H });
+  ok('RT the linked root is accepted and active at first', R.derive({ home: H }).editRoots.includes(real));
+  for (const [what, target, re] of [
+    ['HOME', H, /home folder itself.*resolves to/],
+    ['~/.ssh', path.join(H, '.ssh'), /~\/\.ssh holds your keys.*resolves to/],
+    ['a built-in home (~/.claude)', path.join(H, '.claude'), /is inside ~\/\.claude.*resolves to/],
+  ]) {
+    fs.unlinkSync(link);
+    fs.symlinkSync(target, link);
+    const d = R.derive({ home: H });
+    const bad = d.invalid.find((x) => x.entry.id === 'code');
+    // ~/.claude is a safe root in its own right; HOME and ~/.ssh never are.
+    const builtin = d.builtinHomes.includes(target);
+    ok(`RT re-pointed at ${what}: derive does not activate it — no edit root, nothing new in safeRoots`,
+       !d.editRoots.length && !d.allRoots.length && !d.active.some((x) => x.id === 'code')
+       && (builtin || !d.safeRoots.includes(target)) && d.safeRoots.length === d.builtinHomes.length, JSON.stringify(d.safeRoots));
+    ok(`RT …and it is reported invalid with the reason, for Folders`, Boolean(bad) && re.test(bad.reason), bad?.reason);
+  }
+  fs.unlinkSync(link);
+  fs.symlinkSync(real, link);
+  ok('RT pointed back at a safe folder, it is active again', R.derive({ home: H }).editRoots.includes(real));
+}
+
+/* ── B8: a roots.json that becomes unreadable (a real read failure) ──────── */
+{
+  const H = mkHome('unreadable');
+  const work = mk(H, 'code', 'w');
+  R.addRoot({ path: work, access: 'edit' }, { home: H });
+  const f = R.rootsPath(H);
+  ok('B8 readable: the root is active (the probe works)', R.derive({ home: H }).editRoots.includes(work));
+  const st = fs.statSync(f);
+  fs.chmodSync(f, 0o000);
+  const same = fs.statSync(f);
+  if (process.getuid?.() === 0) {
+    console.log('  SKIP B8 chmod 000 cannot make a file unreadable for root — the unreadable-file checks did not run');
+  } else {
+    const d = R.derive({ home: H });
+    ok('B8 chmod 000 (inode, mtime and size unchanged) puts roots into an error state at once',
+       same.ino === st.ino && same.size === st.size && d.state === 'error' && /could not be read: EACCES/.test(d.error) && d.editRoots.length === 0, d.error);
+    const r = cli(H, ['add', mk(H, 'code', 'x')]);
+    ok('B8 …the CLI refuses to change it', r.code !== 0 && /could not be read/.test(r.out), r.out);
+  }
+  fs.chmodSync(f, 0o600);
+  ok('B8 readable again: the root is back', R.derive({ home: H }).editRoots.includes(work));
+}
+
 /* ── B11: reserved ids, through the CLI and in a hand-edited file ──────── */
 {
   const H = mkHome('reserved');

@@ -289,6 +289,34 @@ ok('the real HOME is never a test HOME', !temps.includes(realHome));
   await srv.stop();
 }
 
+/* ── P1: a registered root's link re-pointed at HOME while the server runs ── */
+{
+  const home = mkTemp('retarget');
+  seedGlobals(home);
+  fs.mkdirSync(path.join(home, '.ssh'), { recursive: true });
+  const key = path.join(home, '.ssh', 'id_rsa');
+  fs.writeFileSync(key, 'SSH-PRIVATE-KEY-MARKER\n');
+  const real = path.join(home, 'code', 'real');
+  seedProjectTree(real, 'real');
+  const link = path.join(home, 'code-link');
+  fs.symlinkSync(real, link);
+  writeRoots(home, [{ id: 'code', path: link, label: 'Code', access: 'edit' }]);
+  const srv = await startServer(home, { root: ROOT });
+  ok('RT the server boots with a linked edit root', srv.up && (await srv.call('/api/roots')).json.roots[0]?.status === 'ok');
+  for (const [what, target] of [['HOME', home], ['~/.ssh', path.join(home, '.ssh')]]) {
+    fs.unlinkSync(link);
+    fs.symlinkSync(target, link);
+    const g = await srv.call(`/api/file?path=${encodeURIComponent(key)}`);
+    ok(`RT re-pointed at ${what}: the editor still cannot read ~/.ssh/id_rsa`, g.status === 403 && !g.text.includes('SSH-PRIVATE-KEY-MARKER'), g.text);
+    const put = await srv.call('/api/file', { method: 'PUT', body: { path: key, content: 'x' } });
+    ok(`RT …nor write it`, put.status === 403 && fs.readFileSync(key, 'utf8') === 'SSH-PRIVATE-KEY-MARKER\n', put.text);
+    const roots = (await srv.call('/api/roots')).json;
+    ok(`RT …and Folders reports the root skipped, with why`,
+       roots.roots.length === 0 && roots.invalid.some((x) => x.id === 'code' && /resolves to/.test(x.reason)), JSON.stringify(roots.invalid));
+  }
+  await srv.stop();
+}
+
 for (const t of temps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} }
 assertRealHomesUnchanged(realBefore, ok);
 console.log(`\n${pass} passed, ${fail} failed`);
