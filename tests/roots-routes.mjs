@@ -317,6 +317,42 @@ ok('the real HOME is never a test HOME', !temps.includes(realHome));
   await srv.stop();
 }
 
+/* ── the registry resolves links as the kernel does (jump/.. shapes) ────── */
+{
+  const home = mkTemp('kernel');
+  const other = mkTemp('kernel-read');
+  seedGlobals(home);
+  const W = path.join(home, 'code', 'work');
+  const RS = path.join(other, 'shared', 'sub');
+  fs.mkdirSync(RS, { recursive: true });
+  fs.mkdirSync(path.join(W, 'deep', 'inner'), { recursive: true });
+  fs.mkdirSync(path.join(W, 'a'), { recursive: true });
+  fs.mkdirSync(path.join(W, 'b'), { recursive: true });
+  fs.symlinkSync(RS, path.join(W, 'jump'));                         // into the read root
+  fs.symlinkSync(path.join(W, 'deep', 'inner'), path.join(W, 'jump2')); // within the edit root
+  fs.writeFileSync(path.join(W, 'decoy.md'), 'LEXICAL-DECOY\n');
+  fs.writeFileSync(path.join(other, 'shared', 'decoy.md'), 'READ-ROOT-BYTES\n');
+  fs.writeFileSync(path.join(W, 't.md'), 'LEXICAL-T\n');
+  fs.writeFileSync(path.join(W, 'deep', 't.md'), 'TRUE-T\n');
+  fs.symlinkSync(`${W}/jump/../decoy.md`, path.join(W, 'a', 'CLAUDE.md'));   // kernel: <read>/shared/decoy.md
+  fs.symlinkSync(`${W}/jump2/../t.md`, path.join(W, 'b', 'CLAUDE.md'));      // kernel: <work>/deep/t.md
+  writeRoots(home, [
+    { id: 'work', path: W, label: 'Work', access: 'edit' },
+    { id: 'shared', path: path.join(other, 'shared'), label: 'Shared', access: 'read' },
+  ]);
+  const srv = await startServer(home, { root: ROOT });
+  const paths = registryPaths((await srv.call('/api/registry')).json);
+  ok('KR a CLAUDE.md -> jump/../x into the read root is dropped (B1), never listed as the lexical file',
+     !paths.includes(path.join(W, 'decoy.md')) && !paths.some((p) => p.startsWith(other)), JSON.stringify(paths));
+  ok('KR a CLAUDE.md -> jump2/../t.md within the edit root lists its true target, not the lexical one',
+     paths.includes(path.join(W, 'deep', 't.md')) && !paths.includes(path.join(W, 't.md')), JSON.stringify(paths));
+  const g = await srv.call(`/api/file?path=${encodeURIComponent(path.join(W, 'deep', 't.md'))}`);
+  ok('KR …and the editor opens those true bytes', g.status === 200 && g.json.content === 'TRUE-T\n', g.text);
+  const hits = (await srv.call('/api/search?q=LEXICAL')).json.hits;
+  ok('KR search finds neither lexical decoy through the links', !hits.length, JSON.stringify(hits));
+  await srv.stop();
+}
+
 for (const t of temps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} }
 assertRealHomesUnchanged(realBefore, ok);
 console.log(`\n${pass} passed, ${fail} failed`);
