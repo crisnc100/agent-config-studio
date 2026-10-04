@@ -58,3 +58,5 @@ node tests/home.mjs
 node tests/files-registry.mjs
 # The MCP route's note on a machine with no ~/.claude.json (temp HOME).
 node tests/mcp-route.mjs
+# A stranger's machine: empty temp HOME, no agent CLI on PATH, every GET route.
+node tests/fresh-home.mjs

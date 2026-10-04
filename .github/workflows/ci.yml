@@ -51,6 +51,7 @@ jobs:
           node tests/usage-seats.mjs
           node tests/usage-routes.mjs
           node tests/usage-cli.mjs
+          node tests/fresh-home.mjs
       - name: live containment is a local gate
         if: always()
         run: |
