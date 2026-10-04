@@ -1051,6 +1051,7 @@ export function createApp(opts = {}) {
     if (q.length < 2) return { hits: [] };
     const needle = q.toLowerCase();
     const { groups } = buildRegistry();
+    const safe = currentRoots().safeRoots;
     const hits = [];
     for (const g of groups) {
       for (const e of g.entries) {
@@ -1060,7 +1061,7 @@ export function createApp(opts = {}) {
           // ago is not a licence to read a path that has since become a link.
           let text;
           try {
-            const abs = resolveSafe(f.path);
+            const abs = resolveSafe(f.path, safe);
             if (isDenied(abs)) continue;
             text = await fsp.readFile(abs, 'utf8');
           } catch { continue; }
