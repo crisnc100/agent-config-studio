@@ -1010,6 +1010,7 @@ export function createApp(opts = {}) {
   'POST /api/worktree/init': async (req) => {
     const body = await readBody(req);
     await worktree.refuseReadRoots(body);
+    await worktree.refuseSymlinkedRepos(body);
     const r = await worktree.initProject(body);
     await history.snapshotAll(`register worktree project ${body.key}`);
     return r;

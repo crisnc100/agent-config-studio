@@ -184,8 +184,51 @@ fs.writeFileSync(tmpl, tmplText);
   fs.rmSync(zshenv);
 }
 
+// Cris, 2026-10-04: a repo containing symlinks is refused outright — in any
+// commit wtinit could check out, or anywhere in its .git.
+{
+  const snap = () => JSON.stringify([listing(client), listing(reposDir)]);
+  const refused = async (label, key, arrange) => {
+    const app = repo(path.join(work, key));
+    arrange(app);
+    const before = snap();
+    const r = await srv.call('/api/worktree/init', { method: 'POST', body: { repoPath: app, key } });
+    ok(`B4 symlinks: ${label}: 403 "contains symlinks", nothing created`,
+       r.status === 403 && /^This repo contains symlinks, so ACS won't set up worktrees for it — run in a terminal: cd '[^']+' && wtinit --key /.test(r.json?.error || '')
+       && snap() === before && !fs.existsSync(path.join(work, `${key}-trunk`)), `${r.status} ${r.text.slice(0, 300)}`);
+  };
+  const commitLink = (app, name, target) => {
+    fs.symlinkSync(target, path.join(app, name));
+    sb.git(app, 'add', name);
+    sb.git(app, 'commit', '-q', '-m', `link ${name}`);
+  };
+  await refused('a committed .worktrees.conf linked into the read root (regrade 3 #1)', 'commitconf',
+    (app) => commitLink(app, '.worktrees.conf', path.join(client, 'cl.conf')));
+  await refused('.git/refs a link to a refstore whose heads link into the read root (regrade 3 #2)', 'refstore', (app) => {
+    const g = path.join(app, '.git');
+    const store = path.join(work, 'refstore-store');
+    fs.renameSync(path.join(g, 'refs'), store);
+    fs.symlinkSync(store, path.join(g, 'refs'));
+    fs.renameSync(path.join(store, 'heads'), path.join(client, 'heads-x'));
+    fs.symlinkSync(path.join(client, 'heads-x'), path.join(store, 'heads'));
+  });
+  await refused('an unrelated committed symlink (README.link -> a.txt)', 'unrelated',
+    (app) => commitLink(app, 'README.link', 'a.txt'));
+  await refused('a symlink only in the planned base (origin/main), not in HEAD', 'basebranch', (app) => {
+    commitLink(app, 'x.link', 'a.txt');
+    sb.git(app, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    sb.git(app, 'reset', '-q', '--hard', 'HEAD~1');
+  });
+  await refused('a symlink deep in .git/objects', 'gitobjects', (app) => {
+    fs.mkdirSync(path.join(app, '.git', 'objects', 'info'), { recursive: true });
+    fs.symlinkSync(path.join(app, 'a.txt'), path.join(app, '.git', 'objects', 'info', 'stray'));
+  });
+  await refused('a symlink anywhere else in .git (an unused file)', 'gitstray',
+    (app) => fs.symlinkSync('description', path.join(app, '.git', 'description-link')));
+}
+
 const r3 = await srv.call('/api/worktree/init', { method: 'POST', body: { repoPath: editApp, key: 'app', cmd: 'ap' } });
-ok('B4 a project in an edit root still runs wtinit: trunk created, project registered',
+ok('B4 a symlink-free project in an edit root still runs wtinit: trunk created, project registered',
    r3.status === 200 && r3.json?.ok && fs.existsSync(path.join(work, 'app-trunk', '.worktrees.conf'))
    && r3.json.registered.some((x) => x.key === 'app' && x.cmd === 'ap'), r3.text.slice(0, 400));
 
