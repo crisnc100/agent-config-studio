@@ -56,6 +56,7 @@ jobs:
           node tests/roots-revoke.mjs
           node tests/roots-history.mjs
           node tests/roots-builtins.mjs
+          node tests/roots-resolver.mjs
           node tests/roots-live.mjs
           node tests/roots-ui.mjs
           node tests/real-home-roots.mjs
