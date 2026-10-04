@@ -33,6 +33,9 @@ node tests/usage-cli.mjs
 node tests/acs-update.mjs
 # The folder registry and `acs roots`: temp HOMEs only.
 node tests/roots.mjs
+# The same, through the real server: custom, legacy and symlinked roots.
+node tests/roots-routes.mjs
+node tests/roots-revoke.mjs
 node tests/skills.mjs
 node tests/phase1.mjs
 node tests/phase2a.mjs

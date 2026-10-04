@@ -5,7 +5,8 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { resolveSafe, kindOf, tilde, HOME, PROJECTS, STUDIO_HOME, CODEX_HOME } from './lib/paths.js';
+import { resolveSafe, assertWritable, isDenied, kindOf, tilde, currentRoots, HOME, STUDIO_HOME, CODEX_HOME } from './lib/paths.js';
+import { migrateRoots } from './lib/roots.js';
 import { buildRegistry, scopeChain } from './lib/registry.js';
 import { listSkills, resolveSkills, toPublic, readInSkill, parseFrontmatter, SKILL_LIMITS } from './lib/skills.js';
 import { readSkillUsage, attachUsage, USAGE_CAVEAT } from './lib/skill-usage.js';
@@ -264,7 +265,7 @@ function handleEvents(req, res) {
 // A selection is a query string, and a query string is a header: Node's own
 // header cap is 16KB, so anything approaching that is an attempt to make the
 // server work, not a person picking skills. Both caps are refused before
-// listSkills() — which walks ~/Documents/Projects — is ever called.
+// listSkills() — which walks every project folder — is ever called.
 const MAX_EXPORT_QUERY_BYTES = 8 * 1024;
 const MAX_EXPORT_IDS = 256;
 
@@ -704,6 +705,21 @@ export function createApp(opts = {}) {
     return out;
   },
 
+  /**
+   * The project folders as roots.json says now, for the Folders section and
+   * every label the page shows. Read-only: folders are added with
+   * `acs roots add`. Paths go out in display form only.
+   */
+  'GET /api/roots': async () => {
+    const r = currentRoots();
+    return {
+      state: r.state, error: r.error, file: tilde(r.path),
+      roots: r.roots.map((x) => ({ id: x.id, label: x.label, access: x.access, status: x.status, display: tilde(x.path) })),
+      invalid: r.invalid.map((x) => ({ id: typeof x.entry?.id === 'string' ? x.entry.id : null, reason: x.reason })),
+      addHint: 'acs roots add <path>',
+    };
+  },
+
   'GET /api/registry': async () => ({
     ...buildRegistry(),
     history: await history.repoStats(),
@@ -859,6 +875,7 @@ export function createApp(opts = {}) {
     // always a version to diff and restore against.
     await history.recordBaseline(abs, `state of ${tilde(abs)} before edit`).catch(() => {});
 
+    assertWritable(abs);
     await fsp.writeFile(abs, content, 'utf8');
     expectWrite(abs, 'changed', sha256Text(content));
     const after = await fsp.stat(abs);
@@ -910,6 +927,7 @@ export function createApp(opts = {}) {
     // reversible even if the current version was never saved through the studio.
     await history.recordBaseline(abs, `state of ${tilde(abs)} before restore`).catch(() => {});
 
+    assertWritable(abs);
     await fsp.writeFile(abs, content, 'utf8');
     expectWrite(abs, 'changed', sha256Text(content));
     const after = await fsp.stat(abs);
@@ -940,6 +958,7 @@ export function createApp(opts = {}) {
     worktree.listBases(url.searchParams.get('repo') || ''),
   'POST /api/worktree/init': async (req) => {
     const body = await readBody(req);
+    await worktree.refuseReadRoots(body);
     const r = await worktree.initProject(body);
     await history.snapshotAll(`register worktree project ${body.key}`);
     return r;
@@ -952,14 +971,19 @@ export function createApp(opts = {}) {
   'POST /api/trash/restore': async (req) => mutate.restoreTrash(await readBody(req)),
 
   'GET /api/scope': async (_req, url) => {
-    const dir = url.searchParams.get('dir') || PROJECTS;
+    // No folder named and no edit folder registered: nothing to walk, and no
+    // phantom default — a stranger has no ~/Documents/Projects.
+    const dir = url.searchParams.get('dir') || currentRoots().editRoots[0];
+    if (!dir) return { dir: null, display: null, chain: [] };
     const abs = resolveSafe(dir);
     return { dir: abs, display: tilde(abs), chain: scopeChain(abs) };
   },
 
   'GET /api/scope/dirs': async () => {
-    // Candidate directories worth checking a scope chain for.
-    const out = new Set([PROJECTS]);
+    // Candidate directories worth checking a scope chain for: every edit
+    // folder and the two levels beneath it.
+    const editRoots = currentRoots().editRoots;
+    const out = new Set(editRoots);
     const walk = (root, depth) => {
       if (depth > 2) return;
       let ents;
@@ -971,7 +995,7 @@ export function createApp(opts = {}) {
         walk(d, depth + 1);
       }
     };
-    walk(PROJECTS, 0);
+    for (const r of editRoots) walk(r, 0);
     return { dirs: [...out].sort().map((d) => ({ path: d, display: tilde(d) })) };
   },
 
@@ -985,8 +1009,14 @@ export function createApp(opts = {}) {
       for (const e of g.entries) {
         for (const f of e.files) {
           if (f.size > 1024 * 1024) continue;
+          // Re-proved per file, as the editor would: a registry built a moment
+          // ago is not a licence to read a path that has since become a link.
           let text;
-          try { text = await fsp.readFile(f.path, 'utf8'); } catch { continue; }
+          try {
+            const abs = resolveSafe(f.path);
+            if (isDenied(abs)) continue;
+            text = await fsp.readFile(abs, 'utf8');
+          } catch { continue; }
           const lines = text.split('\n');
           const matches = [];
           for (let i = 0; i < lines.length && matches.length < 4; i++) {
@@ -1172,7 +1202,22 @@ export function createApp(opts = {}) {
   return { server, sessions, models };
 }
 
+/**
+ * The startup banner's folder lines: the real roots, or how to add one. Never
+ * a default folder a stranger does not have.
+ */
+function rootsBanner() {
+  const r = currentRoots();
+  if (r.state === 'error') return `  folders    ${r.error} — no project folders active`;
+  const lines = r.roots.map((x) => `${x.access.padEnd(5)} ${tilde(x.path)}${x.status === 'missing' ? '  (missing)' : ''}`);
+  if (!lines.length) return '  folders    no project folders yet — run: acs roots add <path>';
+  return lines.map((l, i) => `  ${i ? '         ' : 'folders  '}  ${l}`).join('\n');
+}
+
 if (launchedDirectly()) {
+  // First start writes roots.json (and the setup marker when it seeds the
+  // legacy folders). An unreadable file is left alone and reported.
+  try { migrateRoots(); } catch (e) { console.error(`roots.json: ${e.message}`); }
   await history.ensureRepo();
   // Catch up on anything edited outside the studio since last run, so the
   // history repo is an honest record rather than only of studio-made edits.
@@ -1193,7 +1238,7 @@ if (launchedDirectly()) {
 
   tracking   ${total} files across ${groups.length} groups
   history    ${tilde(STUDIO_HOME)}/history
-  roots      ~/.claude  ~/.codex  ${tilde(PROJECTS)}
+${rootsBanner()}
   watching   ${watcher.count} directories for live changes
 `);
   });

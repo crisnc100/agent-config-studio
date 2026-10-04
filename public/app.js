@@ -1585,10 +1585,30 @@ const SK = {
 const SOURCE_LABELS = {
   'global-claude': 'Claude — global',
   'global-codex': 'Codex — global',
-  project: 'Projects',
-  'garman-homes': 'Garman Homes',
 };
-const SOURCE_ORDER = ['global-claude', 'global-codex', 'project', 'garman-homes'];
+
+/**
+ * The project folders, from roots.json via /api/roots: the only place the page
+ * learns a folder's name. Every edit folder's skills are source 'project'; a
+ * read folder's are its own id (lib/skills.js sources()).
+ */
+const FOLDERS = { data: null };
+async function loadFolders() {
+  try { FOLDERS.data = await api('GET', '/api/roots'); } catch { /* labels fall back to ids */ }
+  return FOLDERS.data;
+}
+const folderRows = () => FOLDERS.data?.roots || [];
+function sourceLabel(source) {
+  if (SOURCE_LABELS[source]) return SOURCE_LABELS[source];
+  if (source === 'project') {
+    const edit = folderRows().filter((r) => r.access === 'edit');
+    return edit.length === 1 ? edit[0].label : 'Edit folders';
+  }
+  const root = folderRows().find((r) => r.access === 'read' && (r.id === source || `read-${r.id}` === source));
+  return root ? root.label : source;
+}
+const sourceOrder = () => ['global-claude', 'global-codex', 'project',
+  ...folderRows().filter((r) => r.access === 'read').map((r) => r.id)];
 
 const fmtSize = (n) => (n >= 1024 * 1024
   ? `${(n / (1024 * 1024)).toFixed(1)} MB`
@@ -1605,7 +1625,7 @@ async function openSkills() {
   const c = $('content');
   c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span></div></div>';
   try {
-    const data = await api('GET', '/api/skills');
+    const [data] = await Promise.all([api('GET', '/api/skills'), loadFolders()]);
     SK.rows = data.skills;
     SK.usage = data.usage;
     // Ids can disappear between opens (a skill edited changes its bundle hash),
@@ -1643,8 +1663,9 @@ function paintSkills() {
     if (!groups.has(r.source)) groups.set(r.source, []);
     groups.get(r.source).push(r);
   }
-  const order = [...SOURCE_ORDER.filter((s) => groups.has(s)),
-    ...[...groups.keys()].filter((s) => !SOURCE_ORDER.includes(s))];
+  const known = sourceOrder();
+  const order = [...known.filter((s) => groups.has(s)),
+    ...[...groups.keys()].filter((s) => !known.includes(s))];
 
   for (const source of order) {
     const rows = groups.get(source).slice().sort((a, b) =>
@@ -1696,7 +1717,7 @@ function selectionBar() {
 function skillGroup(source, rows) {
   const wrap = el('div', 'sk-group');
   const head = el('div', 'sk-group-head');
-  head.appendChild(el('div', 'sk-group-name', SOURCE_LABELS[source] || source));
+  head.appendChild(el('div', 'sk-group-name', sourceLabel(source)));
 
   const selectable = rows.filter((r) => !r.broken);
   head.appendChild(el('div', 'sk-group-count',
@@ -1737,7 +1758,7 @@ function skillRow(r) {
   const body = el('div', 'sk-body');
   const head = el('div', 'sk-head');
   head.appendChild(el('span', 'sk-name', r.displayName));
-  head.appendChild(el('span', `sk-source ${r.source}`, SOURCE_LABELS[r.source] || r.source));
+  head.appendChild(el('span', `sk-source ${r.source}`, sourceLabel(r.source)));
   body.appendChild(head);
 
   const fileCount = r.files.length;
@@ -1754,7 +1775,7 @@ function skillRow(r) {
   // Collapsed copies: say how many other places hold the identical bundle
   // rather than printing the same skill four times.
   if (r.aliasCount) {
-    const where = r.aliasSources.map((s) => SOURCE_LABELS[s] || s).join(', ');
+    const where = r.aliasSources.map(sourceLabel).join(', ');
     body.appendChild(el('div', 'sk-note',
       `also in ${r.aliasCount} other place${r.aliasCount === 1 ? '' : 's'}`
       + (where ? ` (${where})` : '') + ' — identical, downloaded once'));
@@ -2437,8 +2458,8 @@ function paintContext() {
   box.appendChild(el('div', 'scope-sub',
     `${d.totals.files} instruction files, shown as ${d.totals.entries} entries: `
     + `${d.totals.collapsedCopies} identical copies collapsed, ${d.totals.drifted} drifted from trunk. `
-    + `${perRoot}. Every copy's path is still listed. Projects files open in the editor, trunk copy first; `
-    + 'Garman Homes files are client work and open here, read-only.'));
+    + `${perRoot}. Every copy's path is still listed. Files in edit folders open in the editor, trunk copy first; `
+    + 'files in read folders open here, read-only.'));
   for (const u of d.unreadable) box.appendChild(el('div', 'mem-flag', `not read: ${u.display} (${u.reason})`));
 
   let lastRoot = null;
