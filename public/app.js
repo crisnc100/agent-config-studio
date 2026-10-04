@@ -842,11 +842,17 @@ function renderEditor(c) {
   ta.value = S.draft;
   ta.spellcheck = false;
   // A revoked folder: the draft can still be selected and copied, not edited.
+  // readOnly stops typing, not code — so every path that changes the text
+  // checks it too, and an input that got through anyway is put back.
   ta.readOnly = !!S.revoked;
-  ta.oninput = () => { S.draft = ta.value; renderStatus(); };
+  ta.oninput = () => {
+    if (S.revoked) { ta.value = S.draft; return; }
+    S.draft = ta.value; renderStatus();
+  };
   ta.onkeydown = (ev) => {
     if (ev.key === 'Tab') {
       ev.preventDefault();
+      if (S.revoked) return;
       const s = ta.selectionStart, e = ta.selectionEnd;
       ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(e);
       ta.selectionStart = ta.selectionEnd = s + 2;
@@ -917,6 +923,7 @@ async function showVersionDiff(sha) {
 }
 
 async function restoreVersion(sha) {
+  if (S.revoked) return notice('warn', 'This folder is no longer editable — copy your changes first.', null, true);
   if (isDirty() && !confirm('You have unsaved changes in the editor. Restoring will discard them.\n\nContinue?')) return;
   if (!confirm(`Restore this file to version ${sha.slice(0, 8)}?\n\nThe current contents are recorded first, so this is reversible.`)) return;
   try {
@@ -4430,7 +4437,7 @@ async function acceptProposal(p) {
     }
     p.state = 'accepted';
     renderChatBody();
-    if (S.file?.path === p.path) {
+    if (S.file?.path === p.path && !S.revoked) {
       S.file.mtime = r.mtime;
       S.original = p.proposed;
       S.draft = p.proposed;

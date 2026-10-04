@@ -72,6 +72,17 @@ console.log('\nroots in the page');
   p.eval('save()');
   await settle(5);
   ok('B2 app: …and a save attempt (⌘S) sends nothing', p.requests.filter((r) => r.method === 'PUT').length === puts);
+  // Every other way to change the text: Tab (which indents in place), an
+  // input event as a paste or a programmatic insert fires, and a restore.
+  const ta = p.$('content').querySelector('textarea');
+  ta.selectionStart = 0; ta.selectionEnd = ta.value.length;
+  ta.onkeydown({ key: 'Tab', preventDefault() {} });
+  ok('B2 app: Tab over a selection in the revoked editor leaves the draft byte-identical', p.eval('S.draft') === 'my unsaved draft' && ta.value === 'my unsaved draft', JSON.stringify(p.eval('S.draft')));
+  p.input(ta, 'pasted over it');
+  ok('B2 app: a paste or programmatic insert (an input event) is put back, draft byte-identical', p.eval('S.draft') === 'my unsaved draft' && ta.value === 'my unsaved draft', JSON.stringify(p.eval('S.draft')));
+  p.eval(`restoreVersion('abcdef1234')`);
+  await settle(5);
+  ok('B2 app: a version restore is refused before anything is sent', p.eval('S.draft') === 'my unsaved draft' && !p.requests.some((r) => r.path === '/api/history/restore'));
   p.confirm = () => false;
   p.$('btn-skills').click();
   await settle(5);
