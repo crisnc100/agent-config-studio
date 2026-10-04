@@ -18,6 +18,8 @@ trap finish EXIT
 node tests/guards.mjs
 # Before any worktree test: proves the tripwire sees each path the installer writes.
 node tests/worktree-tripwire.mjs
+# …and every project folder roots.json lists, its config files and linked instructions.
+node tests/real-home-roots.mjs
 # Offline too, and it exercises the reader that the whole tracker rests on.
 node tests/usage-codex.mjs
 node tests/usage-codex-limits.mjs
@@ -36,6 +38,7 @@ node tests/roots.mjs
 # The same, through the real server: custom, legacy and symlinked roots.
 node tests/roots-routes.mjs
 node tests/roots-revoke.mjs
+node tests/roots-live.mjs
 node tests/skills.mjs
 node tests/phase1.mjs
 node tests/phase2a.mjs
@@ -59,6 +62,7 @@ node tests/own-writes.mjs
 # The front end, in a node VM against stubbed routes: no server, no HOME.
 node tests/shell.mjs
 node tests/home.mjs
+node tests/roots-ui.mjs
 # What the registry tells the Files page (temp HOME).
 node tests/files-registry.mjs
 # The MCP route's note on a machine with no ~/.claude.json (temp HOME).

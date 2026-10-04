@@ -10,6 +10,7 @@
  *         never reaches the registry, search hits or the history repo
  *   B3    under a symlinked HOME: save → commit → versions → restore, byte-identical
  *   B4    worktree init refuses a project in a read root, naming the command
+ *   AC7   hand-edited bad entries and invalid JSON never crash boot (B8)
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -242,6 +243,49 @@ ok('the real HOME is never a test HOME', !temps.includes(realHome));
   const st = fs.statSync(target);
   const rest = await srv.call('/api/history/restore', { method: 'POST', body: { path: target, sha: baseline, mtime: st.mtimeMs } });
   ok('B3 …and restore puts them back byte-identical', rest.status === 200 && rest.json.restored && fs.readFileSync(target, 'utf8') === v1 && !rest.json.historyError, rest.text);
+  await srv.stop();
+}
+
+/* ── AC7 / B8: a hand-edited or corrupt roots.json never crashes boot ──── */
+{
+  const home = mkTemp('handedit');
+  seedGlobals(home);
+  const work = path.join(home, 'code', 'work');
+  const w = seedProjectTree(work, 'work');
+  fs.mkdirSync(path.join(home, '.ssh'), { recursive: true });
+  writeRoots(home, [
+    { id: 'work', path: work, label: 'Work', access: 'edit' },
+    { id: 'keys', path: path.join(home, '.ssh'), label: 'Keys', access: 'read' },
+    { id: 'rel', path: 'code/other', label: 'Rel', access: 'read' },
+    { id: 'gone', path: path.join(home, 'unplugged'), label: 'Gone', access: 'read' },
+  ]);
+  const before = fs.readFileSync(path.join(home, '.agent-config-studio', 'roots.json'), 'utf8');
+  const srv = await startServer(home, { root: ROOT });
+  ok('AC7 the server boots with entries failing validation', srv.up, srv.log().slice(-400));
+  const r = (await srv.call('/api/roots')).json;
+  ok('AC7 bad entries are dropped and reported for the Folders view, each with its reason',
+     r.invalid.length === 2 && r.invalid.some((x) => x.id === 'keys' && /\.ssh/.test(x.reason)) && r.invalid.some((x) => x.id === 'rel' && /absolute/.test(x.reason)), JSON.stringify(r.invalid));
+  ok('AC7 valid entries still load; B8 a missing one is listed as missing, not dropped',
+     r.roots.map((x) => `${x.id}:${x.status}`).join() === 'work:ok,gone:missing', JSON.stringify(r.roots));
+  ok('AC7 …and the registry lists the valid root\'s files', registryPaths((await srv.call('/api/registry')).json).includes(path.join(w.app, 'CLAUDE.md')));
+  ok('B8 the server never rewrites a hand-edited file', fs.readFileSync(path.join(home, '.agent-config-studio', 'roots.json'), 'utf8') === before);
+  await srv.stop();
+}
+{
+  const home = mkTemp('corrupt');
+  seedGlobals(home);
+  legacyHome(home);
+  fs.mkdirSync(path.join(home, '.agent-config-studio'), { recursive: true });
+  const f = path.join(home, '.agent-config-studio', 'roots.json');
+  fs.writeFileSync(f, '{"version":1,"roots":[{"id":');
+  const srv = await startServer(home, { root: ROOT });
+  ok('AC7 the server boots with invalid JSON in roots.json', srv.up, srv.log().slice(-400));
+  const r = (await srv.call('/api/roots')).json;
+  ok('B8 roots go into an error state the Folders view can show', r.state === 'error' && /not valid/.test(r.error) && r.roots.length === 0, JSON.stringify(r));
+  ok('B8 …the banner says so', /roots\.json is not valid/.test(srv.log()), srv.log());
+  const reg = (await srv.call('/api/registry')).json;
+  ok('B8 …no project folder is active (not even the legacy ones on disk)', !registryPaths(reg).some((p) => p.includes(`${path.sep}Documents${path.sep}`)));
+  ok('B8 …and the file is never overwritten, migration included', fs.readFileSync(f, 'utf8') === '{"version":1,"roots":[{"id":');
   await srv.stop();
 }
 

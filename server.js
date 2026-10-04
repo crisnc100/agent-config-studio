@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveSafe, assertWritable, isDenied, kindOf, tilde, currentRoots, HOME, STUDIO_HOME, CODEX_HOME } from './lib/paths.js';
-import { migrateRoots } from './lib/roots.js';
+import { migrateRoots, rootsPath } from './lib/roots.js';
 import { buildRegistry, scopeChain } from './lib/registry.js';
 import { listSkills, resolveSkills, toPublic, readInSkill, parseFrontmatter, SKILL_LIMITS } from './lib/skills.js';
 import { readSkillUsage, attachUsage, USAGE_CAVEAT } from './lib/skill-usage.js';
@@ -385,6 +385,17 @@ async function handleSkillExport(req, res, url) {
   }
 }
 
+/**
+ * A path that left the registry while its file is still on disk, because
+ * the path is no longer allowed: its folder was removed from roots.json or
+ * made read-only. That is an access change, not a deletion, and the page must
+ * not close an editor with unsaved work over it.
+ */
+function isRevoked(p) {
+  if (!fs.existsSync(p)) return false;
+  try { resolveSafe(p); return false; } catch { return true; }
+}
+
 /** Rebuild, diff, and tell every open tab what actually changed. */
 async function onFilesChanged() {
   let registry;
@@ -395,23 +406,67 @@ async function onFilesChanged() {
 
   if (!delta.added.length && !delta.removed.length && !delta.changed.length) return;
 
+  const revoked = delta.removed.filter(isRevoked);
+  delta.removed = delta.removed.filter((p) => !revoked.includes(p));
+
   // The studio's own writes go out tagged, so the page can stay quiet about
   // them; everything else is an outside change (lib/watch.js tagOrigin).
   const { studio, outside } = tagOrigin(delta);
+  outside.revoked = revoked;
   for (const [part, origin] of [[studio, 'studio'], [outside, 'outside']]) {
-    if (!part.added.length && !part.removed.length && !part.changed.length) continue;
+    const gone = part.revoked || [];
+    if (!part.added.length && !part.removed.length && !part.changed.length && !gone.length) continue;
     broadcast({
       type: 'files',
       origin,
       added: part.added.map(tilde),
       removed: part.removed.map(tilde),
       changed: part.changed.map(tilde),
+      revoked: gone.map(tilde),
       addedPaths: part.added,
       removedPaths: part.removed,
       changedPaths: part.changed,
+      revokedPaths: gone,
       total: next.size,
     });
   }
+}
+
+/** The folder list as the page sees it: display paths, statuses, problems. */
+function rootsView() {
+  const r = currentRoots();
+  return {
+    state: r.state, error: r.error, file: tilde(r.path),
+    roots: r.roots.map((x) => ({ id: x.id, label: x.label, access: x.access, status: x.status, display: tilde(x.path) })),
+    invalid: r.invalid.map((x) => ({ id: typeof x.entry?.id === 'string' ? x.entry.id : null, reason: x.reason })),
+    addHint: 'acs roots add <path>',
+  };
+}
+
+/**
+ * Call `onChange` whenever roots.json is written, replaced or removed. The
+ * studio's folder is watched flat — the CLI writes a temp file and renames it
+ * over roots.json — and the file's identity decides, so a lock file or a
+ * seats.json write next to it is not a roots change.
+ */
+function watchRoots(onChange, { debounceMs = 150 } = {}) {
+  const sig = () => { try { const st = fs.statSync(rootsPath()); return `${st.ino}:${st.mtimeMs}:${st.size}`; } catch { return 'absent'; } };
+  let last = sig();
+  let timer = null;
+  let w = null;
+  try {
+    fs.mkdirSync(STUDIO_HOME, { recursive: true });
+    w = fs.watch(STUDIO_HOME, { persistent: false }, () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const now = sig();
+        if (now === last) return;
+        last = now;
+        onChange();
+      }, debounceMs);
+    });
+  } catch { /* without a watch, roots apply on the next start */ }
+  return { close() { clearTimeout(timer); try { w?.close(); } catch {} } };
 }
 
 const sha256Text = (text) => crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
@@ -710,15 +765,7 @@ export function createApp(opts = {}) {
    * every label the page shows. Read-only: folders are added with
    * `acs roots add`. Paths go out in display form only.
    */
-  'GET /api/roots': async () => {
-    const r = currentRoots();
-    return {
-      state: r.state, error: r.error, file: tilde(r.path),
-      roots: r.roots.map((x) => ({ id: x.id, label: x.label, access: x.access, status: x.status, display: tilde(x.path) })),
-      invalid: r.invalid.map((x) => ({ id: typeof x.entry?.id === 'string' ? x.entry.id : null, reason: x.reason })),
-      addHint: 'acs roots add <path>',
-    };
-  },
+  'GET /api/roots': async () => rootsView(),
 
   'GET /api/registry': async () => ({
     ...buildRegistry(),
@@ -972,7 +1019,7 @@ export function createApp(opts = {}) {
 
   'GET /api/scope': async (_req, url) => {
     // No folder named and no edit folder registered: nothing to walk, and no
-    // phantom default — a stranger has no ~/Documents/Projects.
+    // phantom default folder a stranger does not have.
     const dir = url.searchParams.get('dir') || currentRoots().editRoots[0];
     if (!dir) return { dir: null, display: null, chain: [] };
     const abs = resolveSafe(dir);
@@ -1223,7 +1270,16 @@ if (launchedDirectly()) {
   // history repo is an honest record rather than only of studio-made edits.
   await history.snapshotAll('external changes since last run').catch(() => {});
 
-  const watcher = createWatcher(onFilesChanged);
+  let watcher = createWatcher(onFilesChanged);
+  // roots.json changed: the derived lists already follow it, so re-aim the
+  // file watchers at the new folders, diff the registry (revoked files go out
+  // as such), then tell every tab to reload what it shows.
+  const rootsWatch = watchRoots(async () => {
+    watcher.close();
+    watcher = createWatcher(onFilesChanged);
+    await onFilesChanged().catch(() => {});
+    broadcast({ type: 'roots', ...rootsView() });
+  });
   const { server, models } = createApp();
   // Detection runs once at start (and on "Check now"); there is no timer.
   models.check().catch(() => {});
@@ -1244,6 +1300,7 @@ ${rootsBanner()}
   });
 
   process.on('SIGINT', () => {
+    rootsWatch.close();
     watcher.close();
     console.log('\n  stopped.');
     process.exit(0);

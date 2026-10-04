@@ -54,6 +54,9 @@ jobs:
           node tests/roots.mjs
           node tests/roots-routes.mjs
           node tests/roots-revoke.mjs
+          node tests/roots-live.mjs
+          node tests/roots-ui.mjs
+          node tests/real-home-roots.mjs
           node tests/fresh-home.mjs
       - name: live containment is a local gate
         if: always()

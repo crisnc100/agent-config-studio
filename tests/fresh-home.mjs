@@ -13,6 +13,11 @@
  * Nothing may land outside the temp HOME: the real config trees are compared
  * by tests/real-home.mjs, the checkout by `git status`, and the server's
  * TMPDIR is a sibling of the HOME that must still be empty at the end.
+ *
+ * With zero project folders (builds/configurable-roots, criterion 5): no
+ * route mentions a folder this machine does not have, the banner says how to
+ * add one, and the page's Folders view renders its empty state — the real
+ * front end, booted in the test VM against this real server.
  */
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -21,6 +26,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { bootPage, settle } from './fixtures/shell-page.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
@@ -59,13 +65,15 @@ ok('no agent CLI on the server\'s PATH',
   !PATH.split(':').some((d) => CLIS.some((c) => fs.existsSync(path.join(d, c)))), PATH);
 
 let stderr = '';
+let stdout = '';
 let exited = null;
 const child = spawn(process.execPath, ['--no-warnings', path.join(ROOT, 'server.js')], {
   cwd: ROOT,
   env: { HOME: home, PORT: String(port), PATH, TMPDIR: tmp },
-  stdio: ['ignore', 'ignore', 'pipe'],
+  stdio: ['ignore', 'pipe', 'pipe'],
 });
 child.stderr.on('data', (b) => { stderr += b; });
+child.stdout.on('data', (b) => { stdout += b; });
 child.on('exit', (code, signal) => { exited = { code, signal }; });
 
 let healthy = null;
@@ -103,6 +111,11 @@ ok('routes were found in server.js', routes.length > 10 && direct.length > 0, `$
 
 if (healthy) {
   console.log('\nGET routes');
+  const phantom = [];
+  // This checkout and the main one it is a worktree of (what `git` reports as primary).
+  let primary = null;
+  try { primary = path.dirname(execFileSync('git', ['-C', ROOT, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim()); } catch {}
+  const CHECKOUTS = [ROOT, primary].filter(Boolean).sort((a, b) => b.length - a.length);
   const json = async (p) => {
     const r = await get(p);
     if (r.status === 0) return ok(`GET ${p}`, false, `no response (${r.error})`);
@@ -110,6 +123,11 @@ if (healthy) {
     try { body = await r.res.json(); } catch {}
     ok(`GET ${p}`, r.status < 500 && body !== null,
       `${r.status} ${body?.error ?? (body === null ? `not JSON (${r.type})` : '')}`);
+    // ACS's own checkout may itself sit under ~/Documents/Projects — and
+    // /api/worktree/bases falls back to it with no repo given (F3, build 2) —
+    // so its path is taken out first: it is the server's cwd, not a root.
+    const text = CHECKOUTS.reduce((t, c) => t.split(c).join('<checkout>'), JSON.stringify(body));
+    if (/Documents\/Projects|garman/i.test(text)) phantom.push(`${p}: ${text.match(/.{0,60}(Documents\/Projects|garman).{0,60}/i)[0]}`);
   };
   for (const r of routes) {
     await json(r.path);
@@ -127,6 +145,32 @@ if (healthy) {
       await json(p);
     }
   }
+
+  ok('no route mentions ~/Documents/Projects or Garman on a machine with no project folders', phantom.length === 0, phantom.join(' | '));
+
+  console.log('\nzero project folders');
+  // The banner prints from listen's callback; give it a moment past health.
+  for (let i = 0; i < 20 && !/watching/.test(stdout); i++) await new Promise((r) => setTimeout(r, 50));
+  ok('the startup banner says there are no folders and how to add one',
+     /no project folders yet — run: acs roots add <path>/.test(stdout) && !/Documents\/Projects/.test(stdout), stdout);
+  const studio = path.join(home, '.agent-config-studio');
+  ok('the first start wrote an empty roots.json and no setup marker (setup still to run)',
+     JSON.parse(fs.readFileSync(path.join(studio, 'roots.json'), 'utf8')).roots.length === 0 && !fs.existsSync(path.join(studio, 'setup.json')));
+  // The real front end against this real server: every request the page
+  // makes is forwarded, so the view renders exactly what the routes say.
+  const proxy = async (method, p, body, u) => {
+    const r = await fetch(`${base}${p}${u?.search || ''}`, { method, headers: body ? { 'content-type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined });
+    const data = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+    if (!r.ok) throw { status: r.status, body: data };
+    return data;
+  };
+  const view = await bootPage({ routes: proxy, hash: '#folders' });
+  await settle(40);
+  const folders = view.text(view.$('content'));
+  ok('the Folders view renders its empty state with the add command',
+     view.eval('S.view') === 'folders' && /No project folders yet/.test(folders) && /acs roots add <path>/.test(folders), folders.slice(0, 300));
+  ok('…with no page errors', view.errors.length === 0, view.errors.join(' | '));
+  view.done();
 
   console.log('\nthe page');
   const page = await get('/');

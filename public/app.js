@@ -72,6 +72,9 @@ const VIEWS = [
     title: 'Skills', sub: 'Every skill on this machine — browse, select, download', open: openSkills },
   { id: 'mcp', label: 'MCP', group: 'configure', icon: 'mcp', hash: '#mcp',
     title: 'MCP servers', sub: 'Model Context Protocol servers across both harnesses', open: openMcp },
+  // No sidebar item: reached from the Files page's folder line, and #folders.
+  { id: 'folders', label: 'Folders', group: null, icon: 'folders', hash: '#folders',
+    title: 'Folders', sub: 'The project folders the studio reads and edits', open: openFolders },
   { id: 'models', label: 'Models', group: 'configure', icon: 'models', hash: '#models',
     title: 'Models', sub: 'Every model family, its current id, and what the CLIs offer', open: openModels,
     badge: () => S.badges.models },
@@ -99,6 +102,7 @@ const ICONS = {
   files: svg('<path d="M2.5 4a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>'),
   skills: svg('<path d="M8 2.2l1.6 3.3 3.6.5-2.6 2.5.6 3.6L8 10.4l-3.2 1.7.6-3.6-2.6-2.5 3.6-.5z"/>'),
   mcp: svg('<path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11.5v2"/>'),
+  folders: svg('<path d="M2.5 5a1 1 0 0 1 1-1h2.5l1.2 1.2h5.3a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/><path d="M2.5 7.5h11"/>'),
   models: svg('<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 1.8v2.2M9.5 1.8v2.2M6.5 12v2.2M9.5 12v2.2M1.8 6.5H4M1.8 9.5H4M12 6.5h2.2M12 9.5h2.2"/>'),
   memory: svg('<path d="M3 3.5A1.5 1.5 0 0 1 4.5 2h8v10.5h-8A1.5 1.5 0 0 0 3 14zM3 14V3.5M6 5h4"/>'),
   context: svg('<path d="M8 2 2.5 5 8 8l5.5-3zM2.5 8 8 11l5.5-3M2.5 11 8 14l5.5-3"/>'),
@@ -445,6 +449,7 @@ function paintFilesBody() {
   body.innerHTML = '';
   if (FILES.query.length >= 2) return paintSearch(body, FILES.query);
   body.appendChild(recentCard());
+  body.appendChild(foldersLine());
   if (!S.registry) {
     body.appendChild(el('div', 'scope-sub', S.registryFailed
       ? `The file list is unavailable: ${S.registryFailed}. Reload to try again.` : 'Loading files…'));
@@ -459,6 +464,29 @@ function paintFilesBody() {
   body.appendChild(tools);
   const here = tools.querySelector('.files-item.active');
   if (here && !FILES.scrolled) { FILES.scrolled = true; here.scrollIntoView?.({ block: 'center' }); }
+}
+
+/** One line under Recent: which project folders the file list comes from. */
+function foldersLine() {
+  const line = el('div', 'scope-sub files-folders');
+  if (FOLDERS.data) fillFoldersLine(line, FOLDERS.data);
+  // Filled in place when the list arrives, so the page around it (scroll,
+  // the unfolded type) is not repainted for it.
+  else loadFolders().then((d) => { if (d && line.isConnected !== false) fillFoldersLine(line, d); });
+  return line;
+}
+
+function fillFoldersLine(line, d) {
+  line.innerHTML = '';
+  const more = el('button', 'btn ghost', 'Folders');
+  more.onclick = () => openFolders();
+  if (d.state === 'error') line.appendChild(el('span', null, `Project folders unavailable: ${d.error}. `));
+  else if (!d.roots.length) line.appendChild(el('span', null, 'No project folders yet — run acs roots add <path>. '));
+  else {
+    line.appendChild(el('span', null, `Project folders: ${d.roots.map((r) => `${r.label} (${r.status === 'missing' ? 'missing' : r.access === 'edit' ? 'edit' : 'read-only'})`).join(' · ')} `));
+  }
+  line.appendChild(more);
+  return line;
 }
 
 function recentCard() {
@@ -610,6 +638,7 @@ async function loadFile(p) {
     S.file = f;
     S.original = f.content;
     S.draft = f.content;
+    S.revoked = false;
     S.tab = S.tab === 'history' || S.tab === 'compare' ? 'preview' : S.tab;
     window.history.replaceState(null, '', `#file=${encodeURIComponent(f.path)}`);
     rememberOpened(f, S.entry);
@@ -718,7 +747,7 @@ function renderStatus() {
   }
   // Save only ever acts on the open file — never leave it live on a view that
   // isn't showing one.
-  $('btn-save').disabled = S.view !== 'entry' || !isDirty();
+  $('btn-save').disabled = S.view !== 'entry' || !isDirty() || !!S.revoked;
   $('btn-save').hidden = S.view !== 'entry' || !S.file;
 }
 
@@ -744,7 +773,7 @@ function renderContent() {
  * S.lastEntryId stays, for the Files page to highlight.
  */
 function leaveEditor() {
-  S.entry = null; S.file = null; S.original = ''; S.draft = '';
+  S.entry = null; S.file = null; S.original = ''; S.draft = ''; S.revoked = false;
 }
 
 /** Home, without the confirm: for transitions whose file is already gone. */
@@ -812,6 +841,8 @@ function renderEditor(c) {
   const ta = el('textarea', 'editor');
   ta.value = S.draft;
   ta.spellcheck = false;
+  // A revoked folder: the draft can still be selected and copied, not edited.
+  ta.readOnly = !!S.revoked;
   ta.oninput = () => { S.draft = ta.value; renderStatus(); };
   ta.onkeydown = (ev) => {
     if (ev.key === 'Tab') {
@@ -995,7 +1026,7 @@ function diffView(oldText, newText, oldLabel = 'before', newLabel = 'after') {
 
 /* ── save ────────────────────────────────────────────────────────────── */
 async function save() {
-  if (!isDirty()) return;
+  if (!isDirty() || S.revoked) return;
   // Snapshot exactly what is being sent. Anything typed during the round trip
   // must stay dirty — assigning from the live draft afterwards would mark
   // unwritten edits as saved.
@@ -1123,6 +1154,7 @@ function connectEvents() {
   es.onmessage = (ev) => {
     let d;
     try { d = JSON.parse(ev.data); } catch { return; }
+    if (d.type === 'roots') return void handleRootsEvent(d);
     if (d.type !== 'files') return;
     handleFileEvent(d);
   };
@@ -1135,6 +1167,17 @@ async function handleFileEvent(d) {
   await refreshRegistry().catch(() => {});
   const openPath = S.file?.path;
   const plan = fileEventPlan(d, { openPath, dirty: isDirty() });
+
+  if (plan.open === 'revoked') {
+    // Not a deletion: the file is still there, the studio may no longer save
+    // it. Closing would throw the draft away, so it stays, read-only.
+    S.revoked = true;
+    renderAll();
+    notice('warn', plan.dirty
+      ? 'This folder is no longer editable — copy your changes. They are still here, but the studio can no longer save this file.'
+      : 'This folder is no longer editable — the file is shown read-only.', null, true);
+    return;
+  }
 
   if (plan.open === 'closed') {
     S.entry = null; S.file = null; S.original = ''; S.draft = '';
@@ -1609,6 +1652,99 @@ function sourceLabel(source) {
 }
 const sourceOrder = () => ['global-claude', 'global-codex', 'project',
   ...folderRows().filter((r) => r.access === 'read').map((r) => r.id)];
+
+/**
+ * The Folders view: what roots.json holds, read-only. Folders are added and
+ * removed with `acs roots`; the page shows the result live (the 'roots'
+ * event). A missing folder stays listed and inactive; an entry that failed
+ * validation is listed with why; an unreadable roots.json is the whole story.
+ */
+async function openFolders() {
+  if (!confirmDiscard()) return;
+  S.view = 'folders';
+  leaveEditor();
+  window.history.replaceState(null, '', '#folders');
+  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
+  $('filebar').hidden = true;
+  $('content').innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span></div></div>';
+  await loadFolders();
+  paintFolders();
+}
+
+function paintFolders() {
+  if (S.view !== 'folders') return;
+  const c = $('content');
+  c.innerHTML = '';
+  const box = el('div', 'scope folders');
+  box.appendChild(el('h2', null, 'Folders'));
+  const d = FOLDERS.data;
+  if (!d) {
+    box.appendChild(el('div', 'notice error', 'Could not read the folder list. Reload to try again.'));
+    c.appendChild(box);
+    return;
+  }
+  box.appendChild(el('div', 'scope-sub',
+    'Edit folders open in the editor and keep history. Read folders are listed in Context, Skills and Worktrees, '
+    + `and the studio never writes there. The list lives in ${d.file}; change it from a terminal.`));
+  const cmd = (text) => { const code = el('code', 'folders-cmd', text); return code; };
+  if (d.state === 'error') {
+    const n = el('div', 'notice error folders-error');
+    n.appendChild(el('div', null, `${d.error}. No project folders are active until it is fixed or removed.`));
+    box.appendChild(n);
+  } else if (!d.roots.length) {
+    const empty = el('div', 'folders-empty');
+    empty.appendChild(el('div', null, 'No project folders yet. Add the folder your projects live in:'));
+    empty.appendChild(cmd('acs roots add <path>'));
+    empty.appendChild(el('div', 'scope-sub', 'Read-only unless you add --edit. Then:'));
+    empty.appendChild(cmd('acs roots add <path> --edit'));
+    box.appendChild(empty);
+  } else {
+    for (const r of d.roots) {
+      const row = el('div', 'mem-card folders-row');
+      const top = el('div', 'folders-top');
+      top.appendChild(el('span', 'folders-label', r.label));
+      top.appendChild(el('span', `mem-badge folders-${r.access}`, r.access === 'edit' ? 'edit' : 'read-only'));
+      if (r.status === 'missing') top.appendChild(el('span', 'mem-badge folders-missing', 'missing'));
+      row.appendChild(top);
+      row.appendChild(el('div', 'mem-note', r.display));
+      if (r.status === 'missing') {
+        row.appendChild(el('div', 'mem-note', 'The folder is not there right now (unmounted or moved). It stays listed and comes back when it does.'));
+      }
+      box.appendChild(row);
+    }
+    box.appendChild(el('div', 'scope-sub', 'Add another with:'));
+    box.appendChild(cmd('acs roots add <path> [--edit]'));
+  }
+  if (d.invalid?.length) {
+    const bad = el('div', 'notice warn folders-invalid');
+    bad.appendChild(el('div', null, `${d.invalid.length} ${d.invalid.length === 1 ? 'entry was' : 'entries were'} skipped:`));
+    const ul = el('ul');
+    for (const x of d.invalid) ul.appendChild(el('li', null, `${x.id ?? 'an entry'}: ${x.reason}`));
+    bad.appendChild(ul);
+    box.appendChild(bad);
+  }
+  c.appendChild(box);
+}
+
+/**
+ * roots.json changed (B6). The event carries the new list; everything that
+ * shows folders reloads its data. The editor itself is handled by the files
+ * event that precedes this one (a revoked file stays open, read-only).
+ */
+async function handleRootsEvent(d) {
+  FOLDERS.data = { state: d.state, error: d.error, file: d.file, roots: d.roots, invalid: d.invalid, addHint: d.addHint };
+  await refreshRegistry().catch(() => {});
+  if (S.view === 'folders') paintFolders();
+  else if (S.view === 'files') paintFilesBody();
+  else if (S.view === 'home') { HOME.settledAt = 0; renderContent(); }
+  else if (S.view === 'context') {
+    try { CX.data = await api('GET', '/api/context'); } catch { return; }
+    paintContext();
+  } else if (S.view === 'skills') {
+    try { const data = await api('GET', '/api/skills'); SK.rows = data.skills; SK.usage = data.usage; } catch { return; }
+    if (S.view === 'skills') paintSkills();
+  }
+}
 
 const fmtSize = (n) => (n >= 1024 * 1024
   ? `${(n / (1024 * 1024)).toFixed(1)} MB`
