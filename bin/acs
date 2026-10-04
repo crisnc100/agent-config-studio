@@ -104,6 +104,12 @@ case "$1" in
     shift
     exec node "$DIR/bin/usage.mjs" "$@"
     ;;
+  roots)
+    # Which project folders the studio reads and edits. A running studio
+    # picks up the change by itself.
+    shift
+    exec node "$DIR/bin/roots.mjs" "$@"
+    ;;
   install-worktree)
     # Copies tools/worktree into ~/.config/worktree and makes ~/.zshrc source
     # it. Exits here: installing never starts the studio. Re-run after a pull.

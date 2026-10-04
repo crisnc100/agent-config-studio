@@ -31,6 +31,8 @@ node tests/usage-seats.mjs
 node tests/usage-routes.mjs
 node tests/usage-cli.mjs
 node tests/acs-update.mjs
+# The folder registry and `acs roots`: temp HOMEs only.
+node tests/roots.mjs
 node tests/skills.mjs
 node tests/phase1.mjs
 node tests/phase2a.mjs
