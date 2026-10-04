@@ -7,9 +7,10 @@
  * judged where they really are: a trunk or root through a link into the read
  * root, and the ones the toolkit's template would pick when none is given.
  */
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { sandbox, tests, requireZsh, ROOT } from './worktree-sandbox.mjs';
+import { sandbox, tests, requireZsh, ROOT, ZSH } from './worktree-sandbox.mjs';
 import { startServer } from './fixtures/roots-home.mjs';
 
 requireZsh('roots/worktree init');
@@ -50,6 +51,15 @@ ok('B4 …and nothing was written there: no .worktrees.conf, no trunk beside it'
    && JSON.stringify(listing(client)) === JSON.stringify(clientBefore) && JSON.stringify(listing(readApp)) === JSON.stringify(capBefore),
    JSON.stringify(listing(client)));
 ok('B4 …and no registration', !listing(reposDir).some((f) => f.startsWith('capp')), JSON.stringify(listing(reposDir)));
+// The command it suggests must run as printed: an absolute path, quoted, from anywhere.
+{
+  const cmd = (r.json?.error || '').split('run in a terminal: ')[1] || '';
+  const cdOnly = cmd.replace(/ && wtinit .*$/, ' && pwd -P');
+  const elsewhere = fs.mkdtempSync(path.join(sb.root, 'cwd-'));
+  const run = spawnSync(ZSH, ['-f', '-c', cdOnly], { cwd: elsewhere, env: sb.env, encoding: 'utf8' });
+  ok('B4 the suggested command is absolute and shell-quoted, and its cd works from another folder under zsh -f',
+     !cmd.includes('~') && /^cd '/.test(cmd) && run.status === 0 && run.stdout.trim() === fs.realpathSync(readApp), `${cmd} → ${run.status} ${run.stdout}${run.stderr}`);
+}
 
 const r2 = await srv.call('/api/worktree/init', { method: 'POST', body: { repoPath: editApp, key: 'app', trunk: path.join(client, 'app-trunk') } });
 ok('B4 an edit-root project asking for its trunk inside a read root: 403, nothing written',
@@ -79,6 +89,26 @@ for (const [how, base] of [['directly', client], ['through the alias', alias]]) 
      && JSON.stringify(listing(client)) === JSON.stringify(clientBefore) && !listing(reposDir).some((f) => f.startsWith('app')), r6.text);
 }
 fs.writeFileSync(tmpl, tmplText);
+
+// A leaf file wtinit writes through: an allowed trunk whose .worktrees.conf is
+// a DANGLING link into the read root (the toolkit would create the target),
+// and a repos/<key>.conf linked the same way.
+{
+  const preTrunk = path.join(work, 'pre-trunk');
+  fs.mkdirSync(preTrunk, { recursive: true });
+  fs.symlinkSync(path.join(client, 'new.conf'), path.join(preTrunk, '.worktrees.conf'));
+  const r7 = await srv.call('/api/worktree/init', { method: 'POST', body: { repoPath: editApp, key: 'app', trunk: preTrunk } });
+  ok('B4 an allowed trunk whose .worktrees.conf dangles into the read root: 403, and the target is never created',
+     r7.status === 403 && /read-only folder/.test(r7.json?.error) && !fs.existsSync(path.join(client, 'new.conf'))
+     && JSON.stringify(listing(client)) === JSON.stringify(clientBefore), r7.text);
+  fs.rmSync(preTrunk, { recursive: true });
+  fs.mkdirSync(reposDir, { recursive: true });
+  fs.symlinkSync(path.join(client, 'reg.conf'), path.join(reposDir, 'app2.conf'));
+  const r8 = await srv.call('/api/worktree/init', { method: 'POST', body: { repoPath: editApp, key: 'app2' } });
+  ok('B4 …and a repos/<key>.conf linked into the read root: 403, target never created',
+     r8.status === 403 && !fs.existsSync(path.join(client, 'reg.conf')) && !fs.existsSync(path.join(work, 'app2-trunk')), r8.text);
+  fs.unlinkSync(path.join(reposDir, 'app2.conf'));
+}
 
 const r3 = await srv.call('/api/worktree/init', { method: 'POST', body: { repoPath: editApp, key: 'app', cmd: 'ap' } });
 ok('B4 a project in an edit root still runs wtinit: trunk created, project registered',
