@@ -154,6 +154,36 @@ fs.writeFileSync(tmpl, tmplText);
   fs.renameSync(reposBackup, reposLinked);
 }
 
+// Code wtinit would run: a post-checkout hook in .git/hooks, one through a
+// repo-local core.hooksPath, and ~/.zshenv — each would write into the read
+// root. None may run, and init still succeeds.
+{
+  const hook = (dir, mark) => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'post-checkout'), `#!/bin/sh\necho ran > "${path.join(client, mark)}"\n`, { mode: 0o755 });
+  };
+  const zshenv = path.join(sb.home, '.zshenv');
+  fs.writeFileSync(zshenv, `echo ran > "${path.join(client, 'ZSHENV-RAN')}"\n`);
+  const a = repo(path.join(work, 'hooked'));
+  hook(path.join(a, '.git', 'hooks'), 'HOOK-DEFAULT-RAN');
+  const ra = await srv.call('/api/worktree/init', { method: 'POST', body: { repoPath: a, key: 'hooked' } });
+  ok('B4 a post-checkout hook in .git/hooks never runs, and init still succeeds',
+     ra.status === 200 && ra.json?.ok && fs.existsSync(path.join(work, 'hooked-trunk', '.worktrees.conf'))
+     && !fs.existsSync(path.join(client, 'HOOK-DEFAULT-RAN')), ra.text.slice(0, 300));
+  const b = repo(path.join(work, 'hooked2'));
+  hook(path.join(b, 'myhooks'), 'HOOK-LOCAL-RAN');
+  sb.git(b, 'config', 'core.hooksPath', path.join(b, 'myhooks'));
+  const rb = await srv.call('/api/worktree/init', { method: 'POST', body: { repoPath: b, key: 'hooked2' } });
+  ok('B4 …nor one set by the repo\'s own core.hooksPath',
+     rb.status === 200 && rb.json?.ok && !fs.existsSync(path.join(client, 'HOOK-LOCAL-RAN')), rb.text.slice(0, 300));
+  ok('B4 …and ~/.zshenv is not read by the init shell', !fs.existsSync(path.join(client, 'ZSHENV-RAN')));
+  // The hooks are live outside ACS — the probe is real.
+  sb.git(b, 'checkout', '-q', '-b', 'probe');
+  ok('B4 (probe) the same hook does run for a plain git checkout', fs.existsSync(path.join(client, 'HOOK-LOCAL-RAN')));
+  fs.rmSync(path.join(client, 'HOOK-LOCAL-RAN'), { force: true });
+  fs.rmSync(zshenv);
+}
+
 const r3 = await srv.call('/api/worktree/init', { method: 'POST', body: { repoPath: editApp, key: 'app', cmd: 'ap' } });
 ok('B4 a project in an edit root still runs wtinit: trunk created, project registered',
    r3.status === 200 && r3.json?.ok && fs.existsSync(path.join(work, 'app-trunk', '.worktrees.conf'))
