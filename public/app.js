@@ -1647,7 +1647,7 @@ function sourceLabel(source) {
     const edit = folderRows().filter((r) => r.access === 'edit');
     return edit.length === 1 ? edit[0].label : 'Edit folders';
   }
-  const root = folderRows().find((r) => r.access === 'read' && (r.id === source || `read-${r.id}` === source));
+  const root = folderRows().find((r) => r.access === 'read' && r.id === source);
   return root ? root.label : source;
 }
 const sourceOrder = () => ['global-claude', 'global-codex', 'project',

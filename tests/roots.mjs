@@ -134,6 +134,10 @@ ok('the real HOME is never the one under test', !temps.includes(realHome));
      /id must be/.test(R.validateRoot({ id: 'Bad Id', label: 'x', path: work, access: 'read' }, [], { home: H }))
      && /label must be/.test(R.validateRoot({ id: 'x', label: '', path: work, access: 'read' }, [], { home: H }))
      && /access must be/.test(R.validateRoot({ id: 'x', label: 'x', path: work, access: 'write' }, [], { home: H })));
+  for (const id of ['project', 'global-claude', 'global-codex', 'global-agents', 'global', 'codex', 'agents']) {
+    const why = R.validateRoot({ id, label: 'X', path: mk(H, 'reserved', id), access: 'read' }, existing, { home: H });
+    ok(`R B11 validateRoot rejects the reserved id "${id}" (a skill source or export token)`, /is reserved/.test(why || ''), why);
+  }
   ok('R a relative path is refused by validateRoot (B10: roots.json holds absolute paths only)',
      /not an absolute path/.test(R.validateRoot({ id: 'x', label: 'x', path: 'code/work', access: 'read' }, [], { home: H })));
 
@@ -141,6 +145,23 @@ ok('the real HOME is never the one under test', !temps.includes(realHome));
   fs.symlinkSync(path.join(H, '.claude', 'skills'), path.join(H, 'sneaky'));
   const viaLink = R.validateRoot({ id: 'sneaky', label: 'Sneaky', path: path.join(H, 'sneaky'), access: 'read' }, existing, { home: H });
   ok('R a symlink into a built-in home is rejected by where it really is', /inside ~\/\.claude/.test(viaLink || ''), viaLink);
+}
+
+/* ── B11: reserved ids, through the CLI and in a hand-edited file ──────── */
+{
+  const H = mkHome('reserved');
+  const proj = mk(H, 'code', 'project');
+  const r = cli(H, ['add', proj]);
+  const r2 = cli(H, ['add', mk(H, 'code', 'x'), '--label', 'Codex']);
+  const ids = JSON.parse(read(R.rootsPath(H))).roots.map((x) => x.id);
+  ok('B11 a folder named "project" gets a free id, never the reserved one', r.code === 0 && ids.includes('project-2') && !ids.includes('project'), `${r.out} ${ids}`);
+  ok('B11 …and a label "Codex" does not become the id "codex"', r2.code === 0 && ids.includes('codex-2') && !ids.includes('codex'), `${r2.out} ${ids}`);
+  const f = JSON.parse(read(R.rootsPath(H)));
+  f.roots.push({ id: 'global-claude', path: mk(H, 'code', 'sneaky'), label: 'Sneaky', access: 'read' });
+  fs.writeFileSync(R.rootsPath(H), JSON.stringify(f));
+  const l = R.loadRoots({ home: H });
+  ok('B11 a hand-edited entry with a reserved id is reported invalid and skipped',
+     l.invalid.some((x) => x.entry.id === 'global-claude' && /reserved/.test(x.reason)) && !l.roots.some((x) => x.id === 'global-claude'));
 }
 
 /* ── B10: the CLI anchors relative and ~ paths before validating ───────── */
