@@ -8,10 +8,12 @@
  * projects tree. The real front end, booted in the test VM, drives it the way
  * a person would:
  *
- *   setup opens → the CLIs are detected → a seat is added from a suggestion
- *   → Refresh shows its numbers → a scan finds the tree → that folder is
- *   added as edit, through the confirm → Finish → Home shows the folder count,
- *   each CLI and the seat; the folder's context is served.
+ *   setup opens → the CLIs are detected → (Next, Back, Next) → a seat is
+ *   added from a suggestion → it signs in through the fake `codex login`,
+ *   polled by setup → Refresh shows its numbers → a scan finds the tree →
+ *   that folder is added as edit, through the confirm → Finish → Home shows
+ *   the folder count, each CLI and the seat; the folder's context is served.
+ *   Steps change only through the real Next / Back / Finish buttons.
  *
  * Nothing reaches a Keychain or the network: no `security` call is recorded,
  * the real config trees are unchanged, and nothing lands outside the sandbox.
@@ -91,16 +93,32 @@ ok('1 setup opens on first run', await until(() => page.eval('S.view') === 'setu
 ok('2 the three CLIs are detected, with the versions they printed',
    await until(() => ['claude', 'codex', 'grok'].every((c) => text().includes(`${c} 3.0.0 (fake)`))), text().slice(0, 400));
 
-page.eval("setupGo('accounts')");
+// Steps change through the real Next / Back buttons, as a person clicks them.
+const step = () => page.eval('SETUP.step');
+btn('Next').click();
+ok('Next moves from CLIs to Accounts', await until(() => step() === 'accounts'));
+btn('Back').click();
+ok('Back returns to CLIs', await until(() => step() === 'clis' && /Recheck/.test(text())));
+btn('Next').click();
+await until(() => step() === 'accounts');
 ok('4 S2 accounts are suggested from the installed CLIs alone', await until(() => !!page.$('content').querySelector('[data-suggestion="codex"] button')), text().slice(0, 300));
 page.$('content').querySelector('[data-suggestion="codex"] button').click();
 ok('4 a seat is added from the suggestion', await until(() => !!page.$('content').querySelector('[data-seat]')));
 const seats = JSON.parse(fs.readFileSync(path.join(home, '.agent-config-studio', 'seats.json'), 'utf8')).seats;
 ok('S3 seats.json holds exactly the detected home', seats.length === 1 && seats[0].vendor === 'codex' && seats[0].home === path.join(home, '.codex'), JSON.stringify(seats));
+// The Codex sign-in, from setup, against the fake `codex login`: it prints the
+// URL, then writes auth.json; setup's own poller sees the seat signed in.
+await until(() => !!btn('Sign in with ChatGPT'));
+btn('Sign in with ChatGPT').click();
+ok('4 the sign-in starts from setup and shows its link', await until(() => /Open the sign-in page/.test(text())), text().slice(0, 300));
+ok('4 …and reaches signed in through the UI', await until(() => /is signed in/.test(page.text(page.$('notice-slot'))), 10_000), page.text(page.$('notice-slot')));
+ok('4 …the credential landed in the seat\'s own home', fs.statSync(path.join(home, '.codex', 'auth.json')).size > 0);
+await until(() => !!btn('Refresh'));
 btn('Refresh').click();
 ok('4 Refresh shows the seat\'s numbers', await until(() => /Weekly \(fixture\): 75% left/.test(text())), text().slice(0, 500));
 
-page.eval("setupGo('folders')");
+btn('Next').click();
+ok('Next moves to Project folders', await until(() => step() === 'folders'));
 await until(() => !!btn('Scan for projects'));
 btn('Scan for projects').click();
 ok('6 the scan finds the projects tree', await until(() => !!page.$('content').querySelector('[data-folder="~/code/work"]')), text().slice(0, 400));
@@ -117,7 +135,8 @@ ok('5 the folder is added as edit', await until(() => {
   try { return JSON.parse(fs.readFileSync(path.join(home, '.agent-config-studio', 'roots.json'), 'utf8')).roots.some((r) => r.path === work && r.access === 'edit'); } catch { return false; }
 }));
 
-page.eval("setupGo('done')");
+btn('Next').click();
+ok('Next moves to Done', await until(() => step() === 'done'));
 await until(() => !!btn('Finish'));
 ok('S16 Done names this checkout\'s bin/acs (acs is not on this PATH)', text().includes(path.join(ROOT, 'bin', 'acs')));
 btn('Finish').click();
@@ -138,7 +157,9 @@ again.done();
 
 console.log('\nisolation');
 ok('S8 no `security` (Keychain) call was made', !/security/.test(calls(bin)), calls(bin));
-ok('S8 the fake CLIs were asked --version and nothing that reaches a service', calls(bin).split('\n').filter(Boolean).every((l) => / --version$/.test(l)), calls(bin));
+const cliCalls = calls(bin).split('\n').filter(Boolean);
+ok('S8 the fake CLIs were asked --version, and codex once to log in — nothing that reaches a service',
+   cliCalls.every((l) => / --version$/.test(l) || l === 'codex login') && cliCalls.filter((l) => l === 'codex login').length === 1, calls(bin));
 child.kill('SIGINT');
 await new Promise((r) => (exited ? r() : child.once('exit', r)));
 ok('nothing written to the server\'s TMPDIR', fs.readdirSync(tmp).length === 0, fs.readdirSync(tmp).join(', '));
