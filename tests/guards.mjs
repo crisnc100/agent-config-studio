@@ -335,6 +335,12 @@ function guardB() {
       // is strict is that any second spawn site is a door: an lsof call whose
       // path or argv could drift is one edit away from being something else.
       'lib/usage/processes.js': { fns: new Set(['execFile']), lsofOnly: true },
+      // The login shell's PATH, read on the setup screen's Recheck so a CLI
+      // installed in a new terminal is found. Not a harness binary, and pinned
+      // like lsof: the shell is a variable (its path comes from /etc/shells),
+      // but argv is exactly ['-lc', LOGIN_PATH_SCRIPT] and that constant is a
+      // single fixed literal — no caller can add a word to what the shell runs.
+      'lib/login-path.js': { fns: new Set(['execFile']), loginPathOnly: true },
       // A Codex seat's live quota, read over the app-server protocol. Same
       // argument as grok-billing above, and pinned the same way: ['app-server']
       // starts a JSON-RPC endpoint, and this module only ever writes
@@ -407,9 +413,10 @@ function guardB() {
       if (allowed.lsofOnly) {
         const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
         // Absolute path, so no PATH entry can substitute a different program.
-        if (!/^'\/usr\/sbin\/lsof'\s*,/.test(text)) {
+        // Either system location (Linux ships it in /usr/bin), still a literal.
+        if (!/^'\/usr\/s?bin\/lsof'\s*,/.test(text)) {
           hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 60)}…) — must be the absolute ` +
-                    `'/usr/sbin/lsof', never a PATH name`);
+                    `'/usr/sbin/lsof' or '/usr/bin/lsof', never a PATH name`);
         }
         // Every argv element literal except the home being inspected. lsof has
         // no flag that executes anything, but a caller-supplied FLAG (rather
@@ -423,6 +430,18 @@ function guardB() {
         }
         if (argv && !argv.slice(0, -1).some((a) => a === "'+D'" || a === "'+d'")) {
           hits.push(`${file}:${call.line} lsof must be scoped with +d/+D to one directory`);
+        }
+        continue;
+      }
+      if (allowed.loginPathOnly) {
+        const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
+        if (!/^shell\s*,\s*\[\s*'-lc'\s*,\s*LOGIN_PATH_SCRIPT\s*\]\s*,/.test(text)) {
+          hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 60)}…) — must be exactly ` +
+                    `execFile(shell, ['-lc', LOGIN_PATH_SCRIPT], …)`);
+        }
+        const defs = [...src.matchAll(/\bLOGIN_PATH_SCRIPT\s*=/g)];
+        if (defs.length !== 1 || !/const\s+LOGIN_PATH_SCRIPT\s*=\s*'[^'\n]*'\s*;/.test(src)) {
+          hits.push(`${file} LOGIN_PATH_SCRIPT must be one const single-quoted literal, assigned once`);
         }
         continue;
       }

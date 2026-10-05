@@ -109,21 +109,25 @@ const clis = async (q = '') => {
 
 {
   fs.rmSync(path.join(bin, 'grok'));
-  let { by } = await clis('?recheck=1');
+  let { by } = await clis();
   ok('2 a CLI removed from PATH shows not installed, with commands.md\'s install command',
      by.grok.installed === false && by.grok.version === null && by.grok.fix.install === table['install.grok'].command, JSON.stringify(by.grok));
-  fakeCli(path.join(home, '.npm-global', 'bin'), 'grok', { version: 'grok 2.0.0 (fake)' });
+  // Installed the way an installer does it: a new directory, added to PATH in
+  // the login shell's startup file. The server's own PATH never changes.
+  const newbin = path.join(home, 'newbin');
+  fakeCli(newbin, 'grok', { version: 'grok 2.0.0 (fake)' });
+  fs.writeFileSync(path.join(home, '.profile'), `PATH="${newbin}:$PATH"\nexport PATH\n`);
   ({ by } = await clis());
   ok('S10 a CLI installed somewhere the server\'s PATH lacks is not seen without Recheck', by.grok.installed === false);
   ({ by } = await clis('?recheck=1'));
-  ok('S10 …and Recheck finds it, with its version', by.grok.installed === true && by.grok.version === 'grok 2.0.0 (fake)', JSON.stringify(by.grok));
+  ok('S10 …and Recheck, reading the login shell\'s PATH, finds it with its version', by.grok.installed === true && by.grok.version === 'grok 2.0.0 (fake)', JSON.stringify(by.grok));
 }
 
 {
   for (const c of ['claude', 'codex']) fakeCli(bin, c, { slowMs: 10_000 });
-  fakeCli(path.join(home, '.npm-global', 'bin'), 'grok', { slowMs: 10_000 });
+  fakeCli(bin, 'grok', { slowMs: 10_000 });
   const t0 = Date.now();
-  const pending = clis('?recheck=1');
+  const pending = clis();
   let worst = 0;
   while (Date.now() - t0 < 2500) {
     const h0 = Date.now();

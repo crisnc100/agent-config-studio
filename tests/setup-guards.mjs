@@ -9,8 +9,14 @@
  *   creds  the setup modules never open a credential file: every mention of
  *          auth.json or .credentials.json is the argument of a stat, and no
  *          read API appears beside one.
+ *   pins   the two spawns this build added to tests/guards.mjs's allow table
+ *          (lib/login-path.js, and lsof's /usr/bin location) are pinned: run
+ *          against a copy of the tree with each variant planted, guards.mjs
+ *          fails; against the unmodified copy, it passes.
  */
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -72,6 +78,38 @@ console.log('setup guards\n');
     const lines = body.split('\n').filter((l) => CRED.test(l) && (CRED.lastIndex = 0, true));
     ok(`creds: seats.js ${fn}() only stats credential files`, body && lines.every((l) => /statSync\(/.test(l) && !READ.test(l)), lines.join(' | ') || (body ? '' : 'not found'));
   }
+}
+
+/* ── the new guard-b pins reject their variants ───────────────────────── */
+{
+  const copy = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-guard-pins-')));
+  for (const p of ['lib', 'bin', 'server.js', 'models.default.json', 'package.json']) fs.cpSync(path.join(ROOT, p), path.join(copy, p), { recursive: true });
+  fs.mkdirSync(path.join(copy, 'tests'));
+  fs.copyFileSync(path.join(ROOT, 'tests', 'guards.mjs'), path.join(copy, 'tests', 'guards.mjs'));
+  const guards = () => spawnSync(process.execPath, [path.join(copy, 'tests', 'guards.mjs')], { encoding: 'utf8' });
+  const lp = path.join(copy, 'lib', 'login-path.js');
+  const pr = path.join(copy, 'lib', 'usage', 'processes.js');
+  const origLp = fs.readFileSync(lp, 'utf8');
+  const origPr = fs.readFileSync(pr, 'utf8');
+  const control = guards();
+  ok('pins: guards.mjs passes on the unmodified copy (control)', control.status === 0, control.stderr.slice(-400));
+  const variants = [
+    ['login-path: a caller-supplied argument after the script', lp, origLp, (t) => t.replace("execFile(shell, ['-lc', LOGIN_PATH_SCRIPT]", "execFile(shell, ['-lc', LOGIN_PATH_SCRIPT, env.SHELL]")],
+    ['login-path: a non-literal script', lp, origLp, (t) => t.replace("execFile(shell, ['-lc', LOGIN_PATH_SCRIPT]", "execFile(shell, ['-lc', `${LOGIN_PATH_SCRIPT}; ${env.X}`]")],
+    ['login-path: the script built from a template', lp, origLp, (t) => t.replace(/const LOGIN_PATH_SCRIPT = '[^']*';/, 'const LOGIN_PATH_SCRIPT = `printf %s ${process.env.X}`;')],
+    ['login-path: the script reassigned', lp, origLp, (t) => t.replace('const TIMEOUT_MS', "let LOGIN_PATH_SCRIPT2 = 1; LOGIN_PATH_SCRIPT = 'x';\nconst TIMEOUT_MS")],
+    ['login-path: a different flag', lp, origLp, (t) => t.replace("execFile(shell, ['-lc', LOGIN_PATH_SCRIPT]", "execFile(shell, ['-ilc', LOGIN_PATH_SCRIPT]")],
+    ['lsof: a third location', pr, origPr, (t) => t.replace("execFile('/usr/bin/lsof', ['-F', 'pcn', '-w', '+d'", "execFile('/usr/local/bin/lsof', ['-F', 'pcn', '-w', '+d'")],
+    ['lsof: a PATH name', pr, origPr, (t) => t.replace("execFile('/usr/bin/lsof', ['-F', 'pcn', '-w', '+D'", "execFile('lsof', ['-F', 'pcn', '-w', '+D'")],
+  ];
+  for (const [what, file, orig, plant] of variants) {
+    const planted = plant(orig);
+    fs.writeFileSync(file, planted);
+    const r = guards();
+    fs.writeFileSync(file, orig);
+    ok(`pins: guards.mjs rejects ${what}`, planted !== orig && r.status !== 0 && /FAIL\s+guard b/.test(r.stderr), planted === orig ? 'the variant did not apply' : r.stderr.slice(-300));
+  }
+  fs.rmSync(copy, { recursive: true, force: true });
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
