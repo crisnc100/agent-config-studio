@@ -163,6 +163,28 @@ function cliModel(harnesses, usage) {
   return { rows, codex };
 }
 
+/**
+ * The CLIs card, from /api/setup/clis: installed or not, the version the CLI
+ * printed, and the sign-in state as the server worded it — never upgraded
+ * here. A missing version reads "version unknown" only because the route
+ * returned none.
+ */
+function clisCardModel(data) {
+  return (data?.clis || []).map((c) => ({
+    id: c.id, label: c.label, installed: !!c.installed,
+    version: c.installed ? (c.version || 'version unknown') : null,
+    signIn: c.installed ? c.signIn?.label || 'unknown' : null,
+    tone: !c.installed ? 'warn' : ['verified', 'present'].includes(c.signIn?.state) ? 'ok' : 'warn',
+  }));
+}
+
+/** "Project folders: N (edit) · M (read)", from /api/roots — active folders only. */
+function folderCountText(roots) {
+  const active = (roots?.roots || []).filter((r) => r.status === 'ok');
+  const edit = active.filter((r) => r.access === 'edit').length;
+  return `Project folders: ${edit} (edit) · ${active.length - edit} (read)`;
+}
+
 /** The Recent card: trash entries and the last history summary — no edit feed exists. */
 function recentModel(trash, history, max = 4) {
   const items = (trash?.items || []).slice(0, max).map((it) => ({

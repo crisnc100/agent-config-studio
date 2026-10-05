@@ -84,3 +84,6 @@ node tests/setup-clis.mjs
 node tests/setup-scan.mjs
 node tests/setup-accounts.mjs
 node tests/setup-commands.mjs
+# The setup screen in the page (VM), then the whole flow offline against a real server.
+node tests/setup-ui.mjs
+node tests/setup-walkthrough.mjs

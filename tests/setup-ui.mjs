@@ -1,0 +1,282 @@
+/**
+ * The setup screen in the page (builds/setup-screen criteria 1, 2, 4, 6, S14,
+ * S15), in the node VM against stubbed routes (tests/fixtures/shell-page.mjs).
+ * No server, no HOME.
+ *
+ *   1 / S14  boot lands on #setup only with no setup.json, only as the default
+ *            landing, and only if nobody navigated meanwhile; a deep link wins;
+ *            a reload mid-setup returns to its step; a malformed setup.json is
+ *            a notice, never a redirect loop; Skip and Finish write it; a
+ *            failed Finish keeps you on setup with the error
+ *   2        the CLI cards show the route's versions, sign-in and commands;
+ *            Recheck repaints them without a reload
+ *   4        suggestions are never added without a click; the Codex sign-in
+ *            polls from setup and shows the unchecked warning
+ *   6        no scan request on load or on opening the step — only on the click;
+ *            switching to edit asks a confirm naming the real path, a cancel
+ *            leaves it read and sends nothing
+ *   S15      Finish forgets Home's caches; Home shows the folder count, each
+ *            CLI's state, and links back to setup
+ */
+import { bootPage, routesFor, settle } from './fixtures/shell-page.mjs';
+
+let pass = 0, fail = 0;
+const ok = (name, cond, detail = '') => {
+  if (cond) { pass++; console.log(`  ok   ${name}`); }
+  else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
+};
+const pages = [];
+const boot = async (o) => { const p = await bootPage(o); pages.push(p); return p; };
+const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
+const btn = (p, text, root = p.$('content')) => root.querySelectorAll('button').find((b) => b.textContent === text);
+
+const CLIS = (over = {}) => ({
+  clis: [
+    { id: 'claude', label: 'Claude Code', installed: true, binary: '~/.local/bin/claude', version: '2.1.0 (Claude Code)',
+      signIn: { state: 'unknown', label: 'unknown — refresh', detail: null }, fix: { signIn: 'claude auth login' } },
+    { id: 'codex', label: 'Codex', installed: true, binary: '/opt/homebrew/bin/codex', version: 'codex-cli 0.1',
+      signIn: { state: 'present', label: 'credentials present', detail: 'in ~/.codex' }, fix: {} },
+    { id: 'grok', label: 'Grok', installed: false, binary: null, version: null,
+      signIn: { state: 'none', label: 'not signed in', detail: null }, fix: { install: 'curl -fsSL https://x.ai/cli/install.sh | bash' } },
+  ],
+  acsOnPath: false,
+  next: [
+    { key: 'next.model-id', command: '/src/acs/bin/acs install-model-id', note: 'Lets skills resolve model ids.', platforms: null },
+    { key: 'next.worktree', command: '/src/acs/bin/acs install-worktree', note: 'The worktree helpers.', platforms: 'zsh/macOS only' },
+  ],
+  ...over,
+});
+const ROOTS = (roots = []) => ({ state: 'ok', error: null, file: '~/.agent-config-studio/roots.json', roots, invalid: [], addHint: 'acs roots add <path>' });
+
+/** Stubs for every setup route, with a writable setup state. */
+function setupRoutes(over = {}) {
+  const st = { setup: { state: 'none' }, seats: [], roots: [], clis: CLIS() };
+  const routes = routesFor({
+    'GET /api/setup/status': () => st.setup,
+    'POST /api/setup/complete': (b) => { st.setup = { state: b.completed }; return st.setup; },
+    'GET /api/setup/clis': () => st.clis,
+    'GET /api/setup/accounts': () => ({ suggestions: [
+      { key: 'codex', vendor: 'codex', label: 'Codex (primary)', home: '~/.codex', added: st.seats.some((s) => s.vendor === 'codex'), seatId: null },
+      { key: 'claude', vendor: 'claude', label: 'Claude', home: null, added: false, seatId: null },
+    ] }),
+    'POST /api/setup/seats': (b) => {
+      const seat = { id: b.key || b.vendor, vendor: b.key || b.vendor, label: b.label || 'Codex (primary)', home: '/h/.codex' };
+      st.seats.push(seat);
+      return { seat, already: false };
+    },
+    'GET /api/usage': () => ({ seats: st.seats.map((s) => ({ seatId: s.id, label: s.label, vendor: s.vendor, home: s.home, ok: false, signedIn: false, windows: [], reason: 'not signed in' })) }),
+    'POST /api/usage/refresh': () => ({ seats: [] }),
+    'POST /api/usage/connect': () => ({ url: 'https://auth.openai.com/oauth/authorize?x=1', unchecked: 'lsof is not installed, so running Codex sessions cannot be detected — quit any Codex session using this seat before signing in, or it may undo the sign-in' }),
+    'POST /api/usage/connect/state': () => ({ signedIn: false, running: true, url: 'https://auth.openai.com/oauth/authorize?x=1' }),
+    'GET /api/roots': () => ROOTS(st.roots),
+    'GET /api/setup/scan': () => ({ suggestions: [
+      { path: '/h/code/work', display: '~/code/work', repos: 2, contextFiles: 1, status: 'new' },
+      { path: '/h/code/old', display: '~/code/old', repos: 1, contextFiles: 0, status: 'covered', coveredBy: '~/code' },
+    ], blocked: [{ path: '~/Documents/locked', reason: 'permission denied — macOS may ask for access' }], truncated: false, scanned: {} }),
+    'POST /api/roots/preview': (b) => ({ canonical: `/real${b.path}`, display: '~/real/work', typed: b.path, label: 'work', access: { edit: null, read: null }, grants: 'The studio may now open, save…' }),
+    'POST /api/roots/add': (b) => {
+      const r = { id: 'work', label: 'work', access: b.access, status: 'ok', display: '~/code/work' };
+      st.roots.push(r);
+      return { added: r, roots: ROOTS(st.roots) };
+    },
+    ...over,
+  });
+  routes.st = st;
+  return routes;
+}
+
+console.log('\nsetup in the page');
+
+/* ── 1 / S14: boot routing ─────────────────────────────────────────────── */
+{
+  const p = await boot({ routes: setupRoutes() });
+  await settle(20);
+  ok('1 with no setup.json, the default landing opens #setup', p.eval('S.view') === 'setup' && /^#setup&step=clis$/.test(p.location.hash), `${p.eval('S.view')} ${p.location.hash}`);
+  ok('1 …with no sidebar item for it (the nav count stays 12)', p.$('sidebar').querySelectorAll('.nav-item').length === 12);
+  ok('6 no scan request on page load', !p.requests.some((r) => r.path === '/api/setup/scan'));
+  ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
+}
+{
+  const routes = setupRoutes();
+  routes.st.setup = { state: 'migrated' };
+  const p = await boot({ routes });
+  await settle(20);
+  ok('1 with setup.json present (migrated), it lands on Home', p.eval('S.view') === 'home');
+}
+{
+  const p = await boot({ routes: setupRoutes(), hash: '#skills' });
+  await settle(20);
+  ok('1 a deep link to another view still works on first run', p.eval('S.view') === 'skills');
+}
+{
+  const gate = deferred();
+  const p = await boot({ routes: setupRoutes({ 'GET /api/setup/status': () => gate.promise }) });
+  await settle(10);
+  p.$('btn-files').click();
+  await settle(5);
+  gate.resolve({ state: 'none' });
+  await settle(20);
+  ok('S14 navigating before the status answers cancels the redirect', p.eval('S.view') === 'files', p.eval('S.view'));
+}
+{
+  const p = await boot({ routes: setupRoutes(), hash: '#setup&step=folders' });
+  await settle(20);
+  ok('S14 a reload mid-setup returns to its step', p.eval('S.view') === 'setup' && p.eval('SETUP.step') === 'folders' && /Project folders/.test(p.text(p.$('content'))));
+  ok('6 opening the folders step does not scan either', !p.requests.some((r) => r.path === '/api/setup/scan'));
+}
+{
+  const routes = setupRoutes();
+  routes.st.setup = { state: 'error', error: 'setup.json is not valid: Unexpected end of JSON input' };
+  const p = await boot({ routes });
+  await settle(20);
+  ok('S14 a malformed setup.json: no redirect, a notice on Home', p.eval('S.view') === 'home' && /setup.json is not valid/.test(p.text(p.$('notice-slot'))));
+  p.eval("openSetup()");
+  await settle(20);
+  ok('S14 …setup itself says so and offers to rewrite it', /not valid/.test(p.text(p.$('content'))) && !!btn(p, 'Rewrite it as done'));
+  btn(p, 'Rewrite it as done').click();
+  await settle(20);
+  ok('S14 …which writes completed: done and stays put', routes.st.setup.state === 'done' && p.eval('S.view') === 'setup'
+     && p.requests.some((r) => r.path === '/api/setup/complete' && r.body.completed === 'done'));
+}
+{
+  const routes = setupRoutes();
+  const p = await boot({ routes });
+  await settle(20);
+  btn(p, 'Skip setup').click();
+  await settle(20);
+  ok('1 Skip writes completed: skipped and lands on Home', routes.st.setup.state === 'skipped' && p.eval('S.view') === 'home');
+  p.eval("openSetup()");
+  await settle(20);
+  ok('1 #setup is reachable afterwards', p.eval('S.view') === 'setup');
+  const writes = p.requests.filter((r) => r.method === 'POST' && r.path !== '/api/setup/complete').length;
+  ok('1 …and re-running changes nothing until the user acts (no write on open)', writes === 0, String(writes));
+}
+{
+  const routes = setupRoutes({ 'POST /api/setup/complete': () => { throw { status: 500, body: { error: 'setup.json could not be written: EACCES' } }; } });
+  const p = await boot({ routes, hash: '#setup&step=done' });
+  await settle(20);
+  btn(p, 'Finish').click();
+  await settle(20);
+  ok('S14 a failed Finish keeps you on setup with the error', p.eval('S.view') === 'setup' && /could not be saved: setup.json could not be written: EACCES/.test(p.text(p.$('notice-slot'))));
+}
+
+/* ── 2: the CLI cards ──────────────────────────────────────────────────── */
+{
+  const routes = setupRoutes();
+  const p = await boot({ routes });
+  await settle(20);
+  const card = (id) => p.$('content').querySelector(`[data-cli="${id}"]`);
+  ok('2 each card shows installed and its version', /installed/.test(p.text(card('claude'))) && /2\.1\.0 \(Claude Code\)/.test(p.text(card('claude'))) && /codex-cli 0\.1/.test(p.text(card('codex'))));
+  ok('2 sign-in is the route\'s wording', /sign-in: unknown — refresh/.test(p.text(card('claude'))) && /sign-in: credentials present/.test(p.text(card('codex'))));
+  ok('2 a missing CLI shows not installed with the route\'s install command', /not installed/.test(p.text(card('grok'))) && /curl -fsSL https:\/\/x\.ai\/cli\/install\.sh \| bash/.test(p.text(card('grok'))));
+  ok('2 a CLI needing sign-in shows the route\'s sign-in command', /claude auth login/.test(p.text(card('claude'))));
+  routes.st.clis = CLIS({ clis: CLIS().clis.map((c) => (c.id === 'grok' ? { ...c, installed: true, version: 'grok 1.0', binary: '~/.grok/bin/grok', signIn: { state: 'present', label: 'credentials present' }, fix: {} } : c)) });
+  btn(p, 'Recheck').click();
+  await settle(20);
+  ok('2 Recheck asks again with recheck=1 and turns the card green without a reload',
+     p.requests.some((r) => r.path === '/api/setup/clis' && r.search === '?recheck=1') && /installed/.test(p.text(card('grok'))) && !/not installed/.test(p.text(card('grok'))) && /grok 1\.0/.test(p.text(card('grok'))));
+}
+
+/* ── 4: accounts ───────────────────────────────────────────────────────── */
+{
+  const routes = setupRoutes();
+  const p = await boot({ routes, hash: '#setup&step=accounts' });
+  await settle(20);
+  const content = () => p.text(p.$('content'));
+  ok('4 suggestions appear', /Codex \(primary\)/.test(content()) && /~\/\.codex/.test(content()) && /Claude/.test(content()));
+  ok('4 …and none is added without a click', !p.requests.some((r) => r.path === '/api/setup/seats'));
+  ok('S2 the manual "Add an account" is always there', /Add an account/.test(content()));
+  p.$('content').querySelector('[data-suggestion="codex"] button').click();
+  await settle(20);
+  ok('4 clicking Add sends exactly that suggestion\'s key', p.requests.some((r) => r.path === '/api/setup/seats' && r.body.key === 'codex' && !r.body.home));
+  ok('4 …then it reads added, and the seat is listed with its state', /added/.test(p.text(p.$('content').querySelector('[data-suggestion="codex"]'))) && !!p.$('content').querySelector('[data-seat="codex"]'));
+  const signIn = btn(p, 'Sign in with ChatGPT');
+  ok('4 a codex seat not signed in offers the in-browser sign-in', !!signIn);
+  signIn.click();
+  await settle(30);
+  ok('S7 the unchecked warning is shown in setup', /lsof is not installed/.test(content()));
+  await new Promise((r) => setTimeout(r, 2200));
+  ok('4 setup polls connect/state itself while it is open', p.requests.some((r) => r.path === '/api/usage/connect/state'));
+  btn(p, 'Refresh').click();
+  await settle(20);
+  ok('4 Refresh calls /api/usage/refresh and repaints', p.requests.some((r) => r.path === '/api/usage/refresh'));
+  p.$('btn-skills').click();
+  const n = p.requests.filter((r) => r.path === '/api/usage/connect/state').length;
+  await new Promise((r) => setTimeout(r, 2200));
+  ok('4 …and stops polling once setup is left', p.requests.filter((r) => r.path === '/api/usage/connect/state').length === n);
+}
+
+/* ── 6: folders ────────────────────────────────────────────────────────── */
+{
+  const routes = setupRoutes();
+  const p = await boot({ routes, hash: '#setup&step=folders' });
+  await settle(20);
+  ok('6 the scan button warns about the macOS prompt before it runs', /macOS, reading ~\/Documents can make your terminal ask/.test(p.text(p.$('content'))));
+  btn(p, 'Scan for projects').click();
+  await settle(20);
+  ok('6 the scan runs on the click', p.requests.filter((r) => r.path === '/api/setup/scan').length === 1);
+  const row = p.$('content').querySelector('[data-folder="~/code/work"]');
+  ok('6 suggestions show their counts', /2 repos · 1 with CLAUDE\.md \/ AGENTS\.md/.test(p.text(row)));
+  ok('6 a covered folder is shown as covered, not offered', /already covered by ~\/code/.test(p.text(p.$('content').querySelector('[data-folder="~/code/old"]'))) && !p.$('content').querySelector('[data-folder="~/code/old"] input'));
+  ok('6 a blocked folder is reported plainly', /~\/Documents\/locked: permission denied/.test(p.text(p.$('content'))));
+  const sel = row.querySelector('select');
+  ok('6 suggestions default to read', sel.value === 'read');
+  const asked = [];
+  p.confirm = (m) => { asked.push(m); return false; };
+  sel.value = 'edit'; sel.onchange();
+  await settle(20);
+  ok('6 switching to edit asks a confirm naming where it really leads', asked.length === 1 && /~\/real\/work/.test(asked[0]));
+  ok('6 …cancelled, it goes back to read and nothing is added', sel.value === 'read' && !p.requests.some((r) => r.path === '/api/roots/add'));
+  p.confirm = (m) => { asked.push(m); return true; };
+  sel.value = 'edit'; sel.onchange();
+  await settle(20);
+  btn(p, 'Add selected').click();
+  await settle(20);
+  const add = p.requests.find((r) => r.path === '/api/roots/add');
+  ok('6 confirmed, Add sends edit with confirm = the canonical path', add && add.body.access === 'edit' && add.body.confirm === '/real/h/code/work' && add.body.path === '/h/code/work', JSON.stringify(add?.body));
+  ok('6 …and the folder is listed as added', /work/.test(p.text(p.$('content').querySelector('[data-root="work"]'))));
+}
+
+/* ── S15: Finish lands on a Home that reflects setup ──────────────────── */
+{
+  const routes = setupRoutes();
+  routes.st.setup = { state: 'done' };
+  const p = await boot({ routes });
+  await settle(40);
+  ok('S15 Home shows the folder line', /Project folders: 0 \(edit\) · 0 \(read\)/.test(p.text(p.$('content'))), p.text(p.$('content')).slice(0, 200));
+  btn(p, 'Run setup again').click();
+  await settle(20);
+  ok('S15 "Run setup again" opens setup', p.eval('S.view') === 'setup');
+  routes.st.roots.push({ id: 'work', label: 'Work', access: 'edit', status: 'ok', display: '~/code/work' }, { id: 'r', label: 'R', access: 'read', status: 'ok', display: '~/r' });
+  routes.st.seats.push({ id: 'codex', vendor: 'codex', label: 'Codex (primary)', home: '/h/.codex' });
+  p.eval("setupGo('done')");
+  await settle(20);
+  ok('S16 the Done step shows the route\'s next commands, the worktree one marked zsh/macOS only',
+     /\/src\/acs\/bin\/acs install-model-id/.test(p.text(p.$('content'))) && /The worktree helpers\. \(zsh\/macOS only\)/.test(p.text(p.$('content'))));
+  btn(p, 'Finish').click();
+  await settle(40);
+  const home = p.text(p.$('content'));
+  ok('S15 Finish writes done and lands on #home', routes.st.setup.state === 'done' && p.eval('S.view') === 'home' && p.location.hash === '#home');
+  ok('S15 …with Home re-read, not cached: the new folder count', /Project folders: 1 \(edit\) · 1 \(read\)/.test(home), home.slice(0, 300));
+  ok('S15 …each CLI\'s state from /api/setup/clis', /Claude Code.*2\.1\.0 \(Claude Code\) · sign-in: unknown — refresh/.test(home) && /Codex.*sign-in: credentials present/.test(home) && /Grok.*not installed/.test(home));
+  ok('S15 …and the added seat', /Codex \(primary\)/.test(home));
+}
+
+/* ── keyboard: every setup control is a real control ──────────────────── */
+{
+  const p = await boot({ routes: setupRoutes() });
+  await settle(20);
+  for (const step of ['clis', 'accounts', 'folders', 'done']) {
+    p.eval(`setupGo('${step}')`);
+    await settle(20);
+    if (step === 'folders') { btn(p, 'Scan for projects').click(); await settle(20); }
+  }
+  const clickable = p.$('content').querySelectorAll('*').filter((n) => n.onclick && !['BUTTON', 'A', 'INPUT', 'SELECT'].includes(n.tagName));
+  ok('10 every clickable thing in setup is a button, link or form control (reachable by keyboard)', clickable.length === 0, clickable.map((n) => n.tagName).join());
+}
+
+for (const p of pages) p.done();
+const stray = pages.flatMap((p) => p.errors);
+ok('no page errors across every page booted', stray.length === 0, stray.slice(0, 3).join(' | '));
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

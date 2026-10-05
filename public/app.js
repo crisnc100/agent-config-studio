@@ -54,6 +54,7 @@ const S = {
   draft: '',
   tab: 'preview',
   badges: { models: 0 },
+  navs: 0,              // navigations asked for since load; first run checks it
 };
 
 /**
@@ -75,6 +76,9 @@ const VIEWS = [
   // No sidebar item: reached from the Files page's folder line, and #folders.
   { id: 'folders', label: 'Folders', group: null, icon: 'folders', hash: '#folders',
     title: 'Folders', sub: 'The project folders the studio reads and edits', open: openFolders },
+  // No sidebar item either: first run lands here, and Home links to it.
+  { id: 'setup', label: 'Setup', group: null, icon: 'home', hash: '#setup',
+    title: 'Setup', sub: 'CLIs, accounts and project folders — each step optional', open: openSetup },
   { id: 'models', label: 'Models', group: 'configure', icon: 'models', hash: '#models',
     title: 'Models', sub: 'Every model family, its current id, and what the CLIs offer', open: openModels,
     badge: () => S.badges.models },
@@ -160,9 +164,11 @@ async function boot() {
   // inspection, and Home's cards fetch their own sources. Every other deep
   // link needs the registry, so it routes once that is in.
   const hash = location.hash;
-  const early = landsOnHome(hash);
+  // Setup fetches its own sources, so it opens before the registry like Home.
+  const early = landsOnHome(hash) || hashIs(hash, '#setup');
   registryReady = loadRegistry();
   if (early) routeHash(hash, { cold: true });
+  firstRunCheck(hash);
   if (!(await registryReady)) { if (!early) goHome(); return; }
   connectEvents();
   resolveHarness();
@@ -200,6 +206,25 @@ async function loadRegistry() {
   renderStatus();
   if (S.view === 'home') paintHome(['recent']);
   return true;
+}
+
+/**
+ * First run: with no setup.json, the default landing is #setup. Only the
+ * default — a deep link is honoured — and only if nobody has navigated since
+ * the page loaded, so a slow answer never yanks someone out of a view they
+ * chose. A setup.json that cannot be read is said on Home, never a redirect
+ * loop: setup offers to rewrite it.
+ */
+function firstRunCheck(hash) {
+  const navs = S.navs;
+  api('GET', '/api/setup/status').then((st) => {
+    S.setupState = st.state;
+    if (st.state === 'error') {
+      notice('warn', `${st.error}. Open setup from Home to rewrite it.`, null, true);
+      return;
+    }
+    if (st.state === 'none' && S.navs === navs && S.view === 'home' && landsOnHome(hash)) openSetup();
+  }, () => { /* no answer: stay where we are */ });
 }
 
 /** Whether routeHash would land this hash on Home: no file, no drawer, no view. */
@@ -307,7 +332,8 @@ function navButton(v) {
  * open at once (Home, Files) supersede whatever was pending.
  */
 function navNow(v) {
-  if (!S.registry && v.kind !== 'action' && v.id !== 'home' && v.id !== 'files') { S.pendingNav = v.hash; return false; }
+  S.navs++;
+  if (!S.registry && v.kind !== 'action' && v.id !== 'home' && v.id !== 'files' && v.id !== 'setup') { S.pendingNav = v.hash; return false; }
   if (v.kind !== 'action') S.pendingNav = null;
   return true;
 }
@@ -1712,6 +1738,7 @@ function paintFolders() {
       top.appendChild(el('span', 'folders-label', r.label));
       top.appendChild(el('span', `mem-badge folders-${r.access}`, r.access === 'edit' ? 'edit' : 'read-only'));
       if (r.status === 'missing') top.appendChild(el('span', 'mem-badge folders-missing', 'missing'));
+      if (r.partial) top.appendChild(el('span', 'mem-badge folders-missing', 'large folder — partially indexed'));
       row.appendChild(top);
       row.appendChild(el('div', 'mem-note', r.display));
       if (r.status === 'missing') {
@@ -1742,6 +1769,7 @@ async function handleRootsEvent(d) {
   FOLDERS.data = { state: d.state, error: d.error, file: d.file, roots: d.roots, invalid: d.invalid, addHint: d.addHint };
   await refreshRegistry().catch(() => {});
   if (S.view === 'folders') paintFolders();
+  else if (S.view === 'setup') paintSetup();
   else if (S.view === 'files') paintFilesBody();
   else if (S.view === 'home') { HOME.settledAt = 0; renderContent(); }
   else if (S.view === 'context') {
@@ -2728,7 +2756,11 @@ let usageTimer = null;
  * studio starts it, opens the URL, and polls until the seat has credentials.
  * The token lands in the seat's own auth.json — the studio never sees it.
  */
-function connectRow(seat, { reauth = false } = {}) {
+/**
+ * `view` is the view that owns the row: polling stops once it is left (Usage,
+ * or the setup screen, which runs the same flow). `onSignedIn` repaints it.
+ */
+function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => paintUsage() } = {}) {
   const row = el('div', 'usage-hint');
   const btn = el('button', 'btn', reauth ? 'Sign in as a different account' : 'Sign in with ChatGPT');
   const status = el('span', 'usage-hint-label', '');
@@ -2748,6 +2780,9 @@ function connectRow(seat, { reauth = false } = {}) {
       return;
     }
     if (res.error) { btn.disabled = false; status.textContent = ''; return notice('error', res.error); }
+    // The conflict check could not run here (no lsof): sign-in goes ahead,
+    // and the person is told what that check would have caught.
+    if (res.unchecked) row.appendChild(el('div', 'usage-conflict-why connect-unchecked', res.unchecked));
 
     // The window.open happens after an await, so the browser's user-activation
     // window may have expired and the popup be blocked silently. Always render
@@ -2766,7 +2801,7 @@ function connectRow(seat, { reauth = false } = {}) {
     // Poll rather than hold a request open for the whole OAuth round trip.
     const started = Date.now();
     const poll = setInterval(async () => {
-      if (S.view !== 'usage') return clearInterval(poll);
+      if (S.view !== view) return clearInterval(poll);
       let st;
       try { st = await api('POST', '/api/usage/connect/state', { id: seat.seatId }); }
       catch { return; }
@@ -2779,7 +2814,7 @@ function connectRow(seat, { reauth = false } = {}) {
         status.textContent = 'signed in — checking this seat…';
         try { await api('POST', '/api/usage/refresh'); } catch { /* the repaint still shows state */ }
         notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
-        paintUsage();
+        onSignedIn();
       } else if (!st.running && Date.now() - started > 5000) {
         clearInterval(poll);
         btn.disabled = false;
@@ -3274,12 +3309,12 @@ const HOME = {
 };
 const HOME_ROUTES = {
   usage: '/api/usage', models: '/api/models', context: '/api/context',
-  trash: '/api/trash', harnesses: '/api/harnesses',
+  trash: '/api/trash', clis: '/api/setup/clis', roots: '/api/roots',
   memory: '/api/memory', worktrees: '/api/worktree',
 };
 const HOME_SLOW = new Set(['memory', 'worktrees']);
 const HOME_CARDS_OF = {
-  usage: ['accounts', 'clis'], harnesses: ['clis'], trash: ['recent'],
+  usage: ['accounts', 'clis'], clis: ['clis'], roots: ['folders'], trash: ['recent'],
   models: ['attention'], memory: ['attention'], worktrees: ['attention'], context: ['attention'],
 };
 /** Revisiting Home within this long repaints what it has rather than asking again. */
@@ -3306,6 +3341,10 @@ function renderHome(c) {
   trashBtn.onclick = () => openTrash();
   recent.tools.appendChild(trashBtn);
 
+  // One line for the folders, and the way back into setup.
+  const folders = el('div', 'home-folders');
+  folders.setAttribute('aria-live', 'polite');
+  box.appendChild(folders);
   box.appendChild(accounts.card);
   const grid = el('div', 'home-grid');
   const side = el('div', 'home-col');
@@ -3314,7 +3353,7 @@ function renderHome(c) {
   box.appendChild(grid);
   c.appendChild(box);
 
-  HOME.body = { accounts: accounts.body, attention: attention.body, clis: clis.body, recent: recent.body };
+  HOME.body = { folders, accounts: accounts.body, attention: attention.body, clis: clis.body, recent: recent.body };
   paintHome(Object.keys(HOME.body));
   if (!HOME.timing) HOME.timing = { painted: Math.round(performance.now()), settled: null };
 
@@ -3382,7 +3421,7 @@ function loadHome() {
 
 function paintHome(cards) {
   if (S.view !== 'home') return;
-  const painters = { accounts: paintAccounts, attention: paintAttention, clis: paintClis, recent: paintRecent };
+  const painters = { folders: paintFolderLine, accounts: paintAccounts, attention: paintAttention, clis: paintClis, recent: paintRecent };
   for (const id of new Set(cards)) {
     const body = HOME.body[id];
     if (!body) continue;
@@ -3524,25 +3563,38 @@ function paintAttention(body) {
   renderTopbar();
 }
 
+function paintFolderLine(body) {
+  const r = HOME.src.roots;
+  if (!r || r.state === 'loading') body.appendChild(el('span', 'home-muted', 'Project folders: …'));
+  else if (r.state === 'error') body.appendChild(el('span', 'home-muted', `Project folders unavailable: ${r.error}`));
+  else body.appendChild(el('span', 'home-folders-count', folderCountText(r.data)));
+  const open = el('button', 'btn ghost', 'Folders');
+  open.onclick = () => homeAction({ view: 'folders' });
+  const again = el('button', 'btn ghost', 'Run setup again');
+  again.onclick = () => homeAction({ view: 'setup' });
+  body.append(open, again);
+}
+
 function paintClis(body) {
-  const h = HOME.src.harnesses;
-  const { rows, codex } = cliModel(h?.state === 'ok' ? h.data : null, HOME.src.usage);
-  if (!h || h.state === 'loading') body.appendChild(homeLoading('Detecting CLIs…'));
-  else if (h.state === 'error') body.appendChild(homeFailed('Detection', h.error));
-  else if (!rows.length) body.appendChild(el('div', 'home-state', 'No CLI that Assist can run was found.'));
+  const src = HOME.src.clis;
+  const rows = clisCardModel(src?.state === 'ok' ? src.data : null);
+  if (!src || src.state === 'loading') body.appendChild(homeLoading('Detecting CLIs…'));
+  else if (src.state === 'error') body.appendChild(homeFailed('Detection', src.error));
   for (const r of rows) {
     const row = el('div', 'home-cli');
+    row.dataset.cli = r.id;
     const top = el('div', 'home-cli-top');
     top.appendChild(el('span', 'home-cli-name', r.label));
-    top.appendChild(el('span', 'home-chip ok', 'detected'));
+    top.appendChild(el('span', `home-chip ${r.installed ? 'ok' : 'warn'}`, r.installed ? 'installed' : 'not installed'));
     row.appendChild(top);
-    row.appendChild(el('div', 'home-muted', r.note));
+    row.appendChild(el('div', 'home-muted', r.installed ? `${r.version} · sign-in: ${r.signIn}` : 'install it from setup'));
     body.appendChild(row);
   }
 
+  const { codex } = cliModel(null, HOME.src.usage);
   const row = el('div', 'home-cli');
   const top = el('div', 'home-cli-top');
-  top.appendChild(el('span', 'home-cli-name', 'Codex'));
+  top.appendChild(el('span', 'home-cli-name', 'Codex seats'));
   row.appendChild(top);
   if (codex.state === 'loading') row.appendChild(homeLoading('from Usage…'));
   else if (codex.state === 'error') row.appendChild(homeFailed('Usage', codex.error));
@@ -3559,7 +3611,11 @@ function paintClis(body) {
     }
   }
   body.appendChild(row);
-  body.appendChild(el('div', 'home-foot', 'The CLIs this studio detects. Version and sign-in are not reported.'));
+  const again = el('button', 'btn ghost home-item-btn', 'Check in setup');
+  again.onclick = () => homeAction({ view: 'setup' });
+  const foot = el('div', 'home-foot', 'Installed CLIs, their versions and sign-in, as setup checks them. ');
+  foot.appendChild(again);
+  body.appendChild(foot);
 }
 
 function paintRecent(body) {
@@ -4761,8 +4817,9 @@ function wireGlobalKeys() {
 // Following a link or typing a hash switches the view, not only a reload. A
 // cancelled discard puts the old hash back, so the URL keeps naming what is shown.
 window.addEventListener('hashchange', (e) => {
+  S.navs++;
   // Before the registry is in, only remember it: boot routes it once it lands.
-  if (!S.registry) { S.pendingNav = location.hash; return; }
+  if (!S.registry && !hashIs(location.hash, '#setup')) { S.pendingNav = location.hash; return; }
   if (isDirty() && !hashIs(location.hash, '#assist')) {
     if (!confirmDiscard()) {
       const old = e.oldURL ? new URL(e.oldURL).hash : '';
