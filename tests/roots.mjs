@@ -36,6 +36,8 @@ function mkHome(tag, { raw = false } = {}) {
 }
 const mk = (...p) => { fs.mkdirSync(path.join(...p), { recursive: true }); return path.join(...p); };
 const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
+/** ACS ran here before roots.json existed (a seat registry): what makes the legacy folders this machine's own. */
+const usedBefore = (H) => { mk(H, '.agent-config-studio'); fs.writeFileSync(path.join(H, '.agent-config-studio', 'seats.json'), '{"version":1,"seats":[]}\n'); };
 
 const cliEnv = (home) => ({ ...process.env, HOME: home, NO_COLOR: '1', ACS_NO_UPDATE: '1' });
 function cli(home, args, { cwd = home } = {}) {
@@ -52,6 +54,7 @@ ok('the real HOME is never the one under test', !temps.includes(realHome));
 {
   const H = mkHome('legacy');
   mk(H, 'Documents', 'Projects'); mk(H, 'Documents', 'Garman-Homes');
+  usedBefore(H);
   const before = R.loadRoots({ home: H });
   ok('M1 with no roots.json, reads see the legacy folders without writing anything',
      before.state === 'absent' && before.roots.map((r) => `${r.id}:${r.access}`).join(',') === 'projects:edit,garman-homes:read'
@@ -81,11 +84,37 @@ ok('the real HOME is never the one under test', !temps.includes(realHome));
      r.code === 0 && JSON.parse(read(R.rootsPath(H2))).roots.length === 1 && !fs.existsSync(R.setupPath(H2)), r.out);
   const H3 = mkHome('legacy-add');
   mk(H3, 'Documents', 'Projects');
+  usedBefore(H3);
   const other = mk(H3, 'code', 'x');
   const r3 = cli(H3, ['add', other]);
   const ids = JSON.parse(read(R.rootsPath(H3)) || '{"roots":[]}').roots.map((x) => x.id);
   ok('M8 a CLI add before the first start seeds the legacy folder too (and marks setup, as migration would)',
      r3.code === 0 && ids.join(',') === 'projects,x' && fs.existsSync(R.setupPath(H3)), `${r3.out} ${ids}`);
+}
+
+/* ── S1 (build 2): only a machine that used ACS before is migrated ────── */
+{
+  const H = mkHome('first-time');
+  mk(H, 'Documents', 'Projects'); mk(H, 'Documents', 'Garman-Homes');
+  ok('S1 a first-time user with ~/Documents/Projects: reads see no folders',
+     R.loadRoots({ home: H }).roots.length === 0 && !R.usedBefore(H));
+  const m = R.migrateRoots({ home: H });
+  ok('S1 …migration writes an empty roots.json and NO setup marker, so setup opens',
+     m.migrated && m.seeded.length === 0 && JSON.parse(read(R.rootsPath(H))).roots.length === 0 && !fs.existsSync(R.setupPath(H)));
+  const H2 = mkHome('first-time-cli');
+  mk(H2, 'Documents', 'Projects');
+  const other = mk(H2, 'code', 'y');
+  const r = cli(H2, ['add', other]);
+  ok('S1 …and a first CLI add there seeds nothing and writes no marker',
+     r.code === 0 && JSON.parse(read(R.rootsPath(H2))).roots.map((x) => x.id).join() === 'y' && !fs.existsSync(R.setupPath(H2)), r.out);
+  const H3 = mkHome('history-before');
+  mk(H3, 'Documents', 'Projects'); mk(H3, '.agent-config-studio', 'history', '.git');
+  ok('S1 a history repo from an earlier run counts as prior use, and migrates as before',
+     R.usedBefore(H3) && R.migrateRoots({ home: H3 }).seeded.map((x) => x.id).join() === 'projects'
+     && JSON.parse(read(R.setupPath(H3))).completed === 'migrated');
+  const H4 = mkHome('history-not-git');
+  mk(H4, 'Documents', 'Projects'); mk(H4, '.agent-config-studio', 'history');
+  ok('S1 …but an empty history folder that is not a repo does not', !R.usedBefore(H4) && R.migrateRoots({ home: H4 }).seeded.length === 0);
 }
 
 /* ── every rejection rule, through validateRoot AND the CLI ────────────── */

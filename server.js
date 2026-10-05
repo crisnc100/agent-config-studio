@@ -6,7 +6,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveSafe, assertWritable, assertNotHardLinked, isDenied, kindOf, tilde, currentRoots, HOME, STUDIO_HOME, CODEX_HOME } from './lib/paths.js';
-import { migrateRoots, rootsPath } from './lib/roots.js';
+import { migrateRoots, rootsPath, previewRoot, addRoot, removeRoot, EDIT_GRANTS } from './lib/roots.js';
+import { readSetup, writeSetup } from './lib/setup-state.js';
+import { detectClis } from './lib/setup-clis.js';
+import { scanOnce } from './lib/setup-scan.js';
+import { nextSteps } from './lib/setup-commands.js';
+import { isPartial } from './lib/walk-budget.js';
+import { locateBinary, candidatesFor } from './lib/harness.js';
+import { loginPathDirs } from './lib/login-path.js';
 import { buildRegistry, scopeChain } from './lib/registry.js';
 import { listSkills, resolveSkills, toPublic, readInSkill, parseFrontmatter, SKILL_LIMITS } from './lib/skills.js';
 import { readSkillUsage, attachUsage, USAGE_CAVEAT } from './lib/skill-usage.js';
@@ -20,7 +27,7 @@ import { runAssist, listActions } from './lib/assist.js';
 import { streamTurn, parseEdits, resolveMentions } from './lib/chat.js';
 import { detectHarnesses, HARNESSES, modelsFor, registryError } from './lib/harness.js';
 import { createWatcher, snapshotOf, diffSnapshots, expectWrite, tagOrigin } from './lib/watch.js';
-import { renderSnapshot, createSeat, removeSeat, moveSeatToPrivateHome } from './lib/usage/seats.js';
+import { renderSnapshot, createSeat, removeSeat, moveSeatToPrivateHome, suggestSeats, addSuggestedSeat } from './lib/usage/seats.js';
 import { refreshSnapshot } from './lib/usage/refresh.js';
 import { refreshCodexCatalogs } from './lib/usage/codex-limits.js';
 import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
@@ -437,7 +444,8 @@ function rootsView() {
   const r = currentRoots();
   return {
     state: r.state, error: r.error, file: tilde(r.path),
-    roots: r.roots.map((x) => ({ id: x.id, label: x.label, access: x.access, status: x.status, display: tilde(x.path) })),
+    // `partial`: a discovery walk of this folder hit its cap (lib/walk-budget.js).
+    roots: r.roots.map((x) => ({ id: x.id, label: x.label, access: x.access, status: x.status, display: tilde(x.path), partial: Boolean(x.real && isPartial(x.real)) })),
     invalid: [
       ...r.invalid.map((x) => ({ id: typeof x.entry?.id === 'string' ? x.entry.id : null, reason: x.reason })),
       // A built-in home ignored for where it really points, named as such.
@@ -475,8 +483,53 @@ function watchRoots(onChange, { debounceMs = 150 } = {}) {
 
 const sha256Text = (text) => crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
 
+/** Refuse a request that did not come from this page — for the GETs and setup writes below. */
+const requireStrict = (req) => {
+  if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
+};
+
+/** The body as a plain object; an array, a string or null is not a request. */
+async function objectBody(req) {
+  const b = await readBody(req, 64 * 1024);
+  if (!b || typeof b !== 'object' || Array.isArray(b)) throw bad('the request body must be a JSON object', 400);
+  return b;
+}
+
+/** A string field, or a 400 naming it. Absent is allowed only when optional. */
+function field(body, name, { optional = false, max = 4096 } = {}) {
+  const v = body[name];
+  if (v === undefined && optional) return undefined;
+  if (typeof v !== 'string' || v.length > max) throw bad(`${name} must be a string`, 400);
+  return v;
+}
+
+/**
+ * A folder path typed in the browser: absolute, or from `~`. A relative path
+ * would resolve against the server's own working directory — this checkout —
+ * which is never what the person meant.
+ */
+function typedFolder(body) {
+  const p = field(body, 'path').trim();
+  if (!p) throw bad('a folder path is required', 400);
+  if (!(p.startsWith('/') || p === '~' || p.startsWith('~/'))) {
+    throw bad(`type the folder's full path, starting with / or ~/ — "${p.slice(0, 80)}" is relative`, 400);
+  }
+  return p;
+}
+
+/** The folders as registered, by realpath, for the scan's "already added / covered". */
+const registeredReal = () => currentRoots().roots.map((r) => r.real).filter(Boolean);
+
+/** Which agent CLIs are installed, for seat suggestions: located only, no --version run. */
+const installedClis = () => Object.fromEntries(['claude', 'codex', 'grok'].map((id) => [id, locateBinary(id).installed]));
+
 export function createApp(opts = {}) {
   const detectFn = opts.detectHarnesses || detectHarnesses;
+  // The usage collector: production reads the stored snapshot and spawns the
+  // acs-usage CLI to refresh it. Only an in-process caller can replace it —
+  // the offline walkthrough, so it never reaches a Keychain or the network.
+  // Nothing reads it from the environment or a request (tests/setup-guards.mjs).
+  const usage = opts.usageCollector || { render: () => renderSnapshot(), refresh: () => refreshSnapshot() };
   const streamTurnFn = opts.streamTurn || streamTurn;
   const runAssistFn = opts.runAssist || runAssist;
   const sessions = new Map();
@@ -522,7 +575,7 @@ export function createApp(opts = {}) {
    * credential (it reads its own rollout logs), so it is refreshed live here.
    */
   'GET /api/usage': async () => {
-    try { return await renderSnapshot(); }
+    try { return await usage.render(); }
     catch (e) { return { takenAt: Date.now(), storedAt: null, seats: [], error: e.message }; }
   },
 
@@ -567,7 +620,7 @@ export function createApp(opts = {}) {
    * assist path, which shells out to the harness CLI rather than handling auth.
    * Fixed argv — nothing from the request reaches it.
    */
-  'POST /api/usage/refresh': async () => refreshSnapshot(),
+  'POST /api/usage/refresh': async () => usage.refresh(),
 
   /**
    * Shell shortcuts: give each Codex seat a word you can type.
@@ -770,6 +823,97 @@ export function createApp(opts = {}) {
    * `acs roots add`. Paths go out in display form only.
    */
   'GET /api/roots': async () => rootsView(),
+
+  /**
+   * Adding a folder from the browser (the setup screen). Cris's decision,
+   * 2026-10-03: edit folders may be added here, behind the strict origin
+   * check, lib/roots.js's own reject list — the same rules as `acs roots add`,
+   * none repeated here — and a confirm naming the folder.
+   *
+   * preview says where a typed path really is and what each access would
+   * refuse. add for an edit folder needs `confirm` equal to preview's
+   * `canonical`, re-checked under the registry lock at write time, so a link
+   * re-pointed after the dialog adds nothing. Every field is type-checked
+   * first; a malformed body writes nothing.
+   */
+  'POST /api/roots/preview': async (req) => {
+    requireStrict(req);
+    const body = await objectBody(req);
+    const p = typedFolder(body);
+    const label = field(body, 'label', { optional: true, max: 200 });
+    const v = previewRoot({ path: p, label }, { home: HOME });
+    return { canonical: v.canonical, display: v.display, typed: v.typed, label: v.label, access: v.access, grants: EDIT_GRANTS };
+  },
+  'POST /api/roots/add': async (req) => {
+    requireStrict(req);
+    const body = await objectBody(req);
+    const p = typedFolder(body);
+    const access = body.access;
+    if (access !== 'edit' && access !== 'read') throw bad('access must be "edit" or "read"', 400);
+    const label = field(body, 'label', { optional: true, max: 200 });
+    const confirm = field(body, 'confirm', { optional: true });
+    if (access === 'edit' && confirm === undefined) {
+      throw bad('adding an edit folder needs a confirm naming it — preview it first', 400);
+    }
+    let added;
+    try { added = addRoot({ path: p, access, label, confirm }, { home: HOME }); }
+    catch (e) { throw bad(e.message, 400); }
+    return { added: { id: added.root.id, label: added.root.label, access: added.root.access, display: tilde(added.root.path) }, roots: rootsView() };
+  },
+  'POST /api/roots/remove': async (req) => {
+    requireStrict(req);
+    const id = field(await objectBody(req), 'id', { max: 100 });
+    try { removeRoot(id, { home: HOME }); }
+    catch (e) { throw bad(e.message, /no folder with id/.test(e.message) ? 404 : 400); }
+    return { removed: id, roots: rootsView() };
+  },
+
+  /**
+   * The setup screen. status is what boot routing reads; complete is Skip or
+   * Finish. clis and scan do real work (version probes, a filesystem walk),
+   * so — GETs or not — they take the strict origin check, like /api/skills:
+   * another page must not be able to set them off.
+   */
+  'GET /api/setup/status': async () => readSetup({ home: HOME }),
+  'POST /api/setup/complete': async (req) => {
+    requireStrict(req);
+    const { completed } = await objectBody(req);
+    if (completed !== 'done' && completed !== 'skipped') throw bad('completed must be "done" or "skipped"', 400);
+    try { return writeSetup(completed, { home: HOME }); }
+    catch (e) { throw bad(`setup.json could not be written: ${e.code || e.message}`, 500); }
+  },
+  'GET /api/setup/clis': async (req, url) => {
+    requireStrict(req);
+    const dirs = url.searchParams.get('recheck') === '1' ? await loginPathDirs() : [];
+    const clis = await detectClis({ home: HOME, dirs });
+    const acsOnPath = locateBinary('acs', candidatesFor('acs', dirs)).installed;
+    return { clis, acsOnPath, next: nextSteps({ acsOnPath }), checkedAt: Date.now() };
+  },
+  'GET /api/setup/scan': async (req) => {
+    requireStrict(req);
+    return scanOnce({ home: HOME, registered: registeredReal(), display: tilde });
+  },
+  'GET /api/setup/accounts': async (req) => {
+    requireStrict(req);
+    return { suggestions: suggestSeats({ home: HOME, binaries: installedClis() }).map((sg) => ({ ...sg, home: sg.home ? tilde(sg.home) : null })) };
+  },
+  /**
+   * Add an account from setup: a suggestion by its `key` — exactly the home
+   * detection found, re-detected here, never a path from the request — or a
+   * manual vendor + label, through the same createSeat as Usage.
+   */
+  'POST /api/setup/seats': async (req) => {
+    requireStrict(req);
+    const body = await objectBody(req);
+    const label = field(body, 'label', { optional: true, max: 200 });
+    let res;
+    try {
+      if (body.key !== undefined) res = addSuggestedSeat({ key: field(body, 'key', { max: 20 }), label, home: HOME, binaries: installedClis() });
+      else res = createSeat({ vendor: field(body, 'vendor', { max: 20 }), label: label ?? '' });
+    } catch (e) { throw bad(e.message, e.status || 400); }
+    resyncShortcuts();
+    return res;
+  },
 
   'GET /api/registry': async () => ({
     ...buildRegistry(),
@@ -1007,8 +1151,13 @@ export function createApp(opts = {}) {
     out.projects = one === null ? await worktree.allProjectStatus() : [await worktree.projectStatus(one)];
     return out;
   },
-  'GET /api/worktree/bases': async (_req, url) =>
-    worktree.listBases(url.searchParams.get('repo') || ''),
+  // No repo named is a bad request — never a fallback to the server's own
+  // checkout, which is where git would look with an empty path.
+  'GET /api/worktree/bases': async (_req, url) => {
+    const repo = url.searchParams.get('repo');
+    if (!repo) throw bad('repo required', 400);
+    return worktree.listBases(repo);
+  },
   'POST /api/worktree/init': async (req) => {
     const body = await readBody(req);
     await worktree.refuseReadRoots(body);
@@ -1265,12 +1414,18 @@ function rootsBanner() {
   const r = currentRoots();
   const ignored = r.builtinInvalid.map((b) => `\n  ignored    ${b.name}: ${b.reason}`).join('');
   if (r.state === 'error') return `  folders    ${r.error} — no project folders active${ignored}`;
-  const lines = r.roots.map((x) => `${x.access.padEnd(5)} ${tilde(x.path)}${x.status === 'missing' ? '  (missing)' : ''}`);
+  const lines = r.roots.map((x) => `${x.access.padEnd(5)} ${tilde(x.path)}${x.status === 'missing' ? '  (missing)' : ''}${x.real && isPartial(x.real) ? '  (large folder — partially indexed)' : ''}`);
   if (!lines.length) return `  folders    no project folders yet — run: acs roots add <path>${ignored}`;
   return lines.map((l, i) => `  ${i ? '         ' : 'folders  '}  ${l}`).join('\n') + ignored;
 }
 
-if (launchedDirectly()) {
+/**
+ * Start the studio as `acs` does: migration, history, watchers, the live
+ * roots event, then listen. `app` reaches createApp — only an in-process
+ * caller can pass it (the offline walkthrough's usage collector); launched
+ * directly, it is always empty.
+ */
+export async function startStudio({ port = PORT, app = {} } = {}) {
   // First start writes roots.json (and the setup marker when it seeds the
   // legacy folders). An unreadable file is left alone and reported.
   try { migrateRoots(); } catch (e) { console.error(`roots.json: ${e.message}`); }
@@ -1289,17 +1444,17 @@ if (launchedDirectly()) {
     await onFilesChanged().catch(() => {});
     broadcast({ type: 'roots', ...rootsView() });
   });
-  const { server, models } = createApp();
+  const { server, models } = createApp(app);
   // Detection runs once at start (and on "Check now"); there is no timer.
   models.check().catch(() => {});
 
-  server.listen(PORT, '127.0.0.1', () => {
+  server.listen(port, '127.0.0.1', () => {
     const { groups } = buildRegistry();
     const total = groups.reduce((n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
     console.log(`
   Agent Config Studio
   ───────────────────────────────────────────────
-  →  http://localhost:${PORT}
+  →  http://localhost:${port}
 
   tracking   ${total} files across ${groups.length} groups
   history    ${tilde(STUDIO_HOME)}/history
@@ -1314,4 +1469,7 @@ ${rootsBanner()}
     console.log('\n  stopped.');
     process.exit(0);
   });
+  return server;
 }
+
+if (launchedDirectly()) await startStudio();

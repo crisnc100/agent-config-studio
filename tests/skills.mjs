@@ -22,6 +22,10 @@ const realBefore = snapshotRealHomes();
 // root — and the 403 assertions below would then pass for the wrong reason.
 const fakeHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-skills-')));
 process.env.HOME = fakeHome;
+// ACS ran here before roots.json existed (builds/setup-screen S1), so the
+// legacy folders below are what migration — and absent-file reads — use.
+fs.mkdirSync(path.join(fakeHome, '.agent-config-studio'), { recursive: true });
+fs.writeFileSync(path.join(fakeHome, '.agent-config-studio', 'seats.json'), '{"version":1,"seats":[]}\n');
 process.env.ACS_SUITE = 'offline';
 // These tests control their own environment: an inherited CODEX_HOME would
 // point the codex reader somewhere outside the fake home.

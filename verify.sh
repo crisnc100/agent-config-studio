@@ -16,6 +16,8 @@ trap finish EXIT
 # Guards first: they are offline and instant, and a regressed security property
 # should stop the run before spending 80s of live model calls proving the rest.
 node tests/guards.mjs
+# The setup screen's own static guards (the usage seam, credentials stat-only).
+node tests/setup-guards.mjs
 # Before any worktree test: proves the tripwire sees each path the installer writes.
 node tests/worktree-tripwire.mjs
 # …and every project folder roots.json lists, its config files and linked instructions.
@@ -74,3 +76,9 @@ node tests/files-registry.mjs
 node tests/mcp-route.mjs
 # A stranger's machine: empty temp HOME, no agent CLI on PATH, every GET route.
 node tests/fresh-home.mjs
+# The setup screen's server half: temp HOMEs, fake CLIs, a fixture tree.
+node tests/setup-routes.mjs
+node tests/setup-clis.mjs
+node tests/setup-scan.mjs
+node tests/setup-accounts.mjs
+node tests/setup-commands.mjs

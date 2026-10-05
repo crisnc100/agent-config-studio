@@ -116,6 +116,13 @@ if (healthy) {
   let primary = null;
   try { primary = path.dirname(execFileSync('git', ['-C', ROOT, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim()); } catch {}
   const CHECKOUTS = [ROOT, primary].filter(Boolean).sort((a, b) => b.length - a.length);
+  // No route may hand back a path inside ACS's own checkout: it is the
+  // server's cwd, never a project folder (builds/setup-screen S16). The only
+  // exceptions are named here, by route, with the reason.
+  const CHECKOUT_OK = {
+    '/api/setup/clis': "the Done step's next-step commands name this checkout's bin/acs, because acs is not on this PATH (S16)",
+  };
+  const inCheckout = [];
   const json = async (p) => {
     const r = await get(p);
     if (r.status === 0) return ok(`GET ${p}`, false, `no response (${r.error})`);
@@ -123,10 +130,13 @@ if (healthy) {
     try { body = await r.res.json(); } catch {}
     ok(`GET ${p}`, r.status < 500 && body !== null,
       `${r.status} ${body?.error ?? (body === null ? `not JSON (${r.type})` : '')}`);
-    // ACS's own checkout may itself sit under ~/Documents/Projects — and
-    // /api/worktree/bases falls back to it with no repo given (F3, build 2) —
-    // so its path is taken out first: it is the server's cwd, not a root.
-    const text = CHECKOUTS.reduce((t, c) => t.split(c).join('<checkout>'), JSON.stringify(body));
+    let text = JSON.stringify(body);
+    const route = p.split('?')[0];
+    const hit = CHECKOUTS.find((c) => text.includes(c));
+    if (hit && !CHECKOUT_OK[route]) inCheckout.push(`${p}: ${text.slice(Math.max(0, text.indexOf(hit) - 40), text.indexOf(hit) + hit.length + 40)}`);
+    // An excepted route's checkout path may itself sit under ~/Documents/Projects;
+    // it is judged above, not as a phantom folder.
+    if (CHECKOUT_OK[route]) text = CHECKOUTS.reduce((t, c) => t.split(c).join('<checkout>'), text);
     if (/Documents\/Projects|garman/i.test(text)) phantom.push(`${p}: ${text.match(/.{0,60}(Documents\/Projects|garman).{0,60}/i)[0]}`);
   };
   for (const r of routes) {
@@ -147,6 +157,10 @@ if (healthy) {
   }
 
   ok('no route mentions ~/Documents/Projects or Garman on a machine with no project folders', phantom.length === 0, phantom.join(' | '));
+  ok('no route returns a path inside ACS\'s own checkout (exceptions named by route)', inCheckout.length === 0, inCheckout.join(' | '));
+  const bases = await get('/api/worktree/bases');
+  ok('F3 /api/worktree/bases with no repo is a 400 "repo required", not the checkout\'s branches',
+     bases.status === 400 && /repo required/.test((await bases.res.json()).error));
 
   console.log('\nzero project folders');
   // The banner prints from listen's callback; give it a moment past health.
