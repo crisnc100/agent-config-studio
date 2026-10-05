@@ -5,7 +5,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { resolveSafe, assertWritable, assertNotHardLinked, isDenied, kindOf, tilde, currentRoots, HOME, STUDIO_HOME, CODEX_HOME } from './lib/paths.js';
+import { resolveSafe, assertWritable, assertNotHardLinked, assertSingleName, isDenied, kindOf, tilde, currentRoots, HOME, STUDIO_HOME, CODEX_HOME } from './lib/paths.js';
 import { migrateRoots, rootsPath, previewRoot, addRoot, removeRoot, EDIT_GRANTS } from './lib/roots.js';
 import { readSetup, writeSetup } from './lib/setup-state.js';
 import { detectClis } from './lib/setup-clis.js';
@@ -1032,6 +1032,7 @@ export function createApp(opts = {}) {
 
   'GET /api/file': async (_req, url) => {
     const abs = resolveSafe(url.searchParams.get('path'));
+    assertSingleName(abs);
     const stat = await fsp.stat(abs);
     if (!stat.isFile()) throw Object.assign(new Error('not a file'), { status: 400 });
     if (stat.size > 4 * 1024 * 1024) throw Object.assign(new Error('file too large to edit here'), { status: 413 });
@@ -1219,6 +1220,7 @@ export function createApp(opts = {}) {
           try {
             const abs = resolveSafe(f.path, safe);
             if (isDenied(abs)) continue;
+            assertSingleName(abs);
             text = await fsp.readFile(abs, 'utf8');
           } catch { continue; }
           const lines = text.split('\n');
