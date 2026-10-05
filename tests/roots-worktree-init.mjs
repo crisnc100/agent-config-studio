@@ -227,6 +227,53 @@ fs.writeFileSync(tmpl, tmplText);
     (app) => fs.symlinkSync('description', path.join(app, '.git', 'description-link')));
 }
 
+// An explicit base fails closed: "-" (git worktree's @{-1}) and a ref that
+// names no commit are refused, never treated as "nothing to check".
+{
+  const before = JSON.stringify([listing(client), listing(reposDir)]);
+  for (const [what, base] of [['"-"', '-'], ['"--orphan"', '--orphan'], ['a ref that names no commit', 'no-such-branch']]) {
+    const app = repo(path.join(work, `base-${base.replace(/[^a-z]/g, '') || 'dash'}`));
+    const key = path.basename(app);
+    const r = await srv.call('/api/worktree/init', { method: 'POST', body: { repoPath: app, key, base } });
+    ok(`B4 base ${what}: 403, nothing created`, r.status === 403 && JSON.stringify([listing(client), listing(reposDir)]) === before
+       && !fs.existsSync(path.join(work, `${key}-trunk`)), `${r.status} ${r.text.slice(0, 200)}`);
+  }
+}
+
+// Hard links: a read-root file hard-linked to a file wtinit writes in place.
+{
+  const hard = async (label, key, arrange) => {
+    const app = repo(path.join(work, key));
+    const shared = arrange(app);
+    const bytes = fs.readFileSync(shared);
+    // The trunk case arranges the trunk folder itself; it must stay as made.
+    const trunkBefore = listing(path.join(work, `${key}-trunk`));
+    const r = await srv.call('/api/worktree/init', { method: 'POST', body: { repoPath: app, key } });
+    ok(`B4 hard link: ${label}: 403 with a plain message, the read-root copy unchanged`,
+       r.status === 403 && /has hard links, and wtinit writes it in place/.test(r.json?.error || '')
+       && fs.readFileSync(shared).equals(bytes)
+       && JSON.stringify(listing(path.join(work, `${key}-trunk`))) === JSON.stringify(trunkBefore), `${r.status} ${r.text.slice(0, 250)}`);
+  };
+  // Replace `inRepo` with a hard link to a new read-root file holding its bytes.
+  const linkFrom = (inRepo, name) => {
+    const shared = path.join(client, name);
+    fs.mkdirSync(path.dirname(inRepo), { recursive: true });
+    fs.writeFileSync(shared, fs.existsSync(inRepo) ? fs.readFileSync(inRepo) : 'shared\n');
+    fs.rmSync(inRepo, { force: true });
+    fs.linkSync(shared, inRepo);
+    return shared;
+  };
+  await hard('.git/info/exclude (appended, wt.zsh 1534)', 'hlexcl', (app) => linkFrom(path.join(app, '.git', 'info', 'exclude'), 'hl-exclude'));
+  await hard('.git/config (upstream, 1489)', 'hlcfg', (app) => linkFrom(path.join(app, '.git', 'config'), 'hl-config'));
+  await hard('.git/packed-refs', 'hlpacked', (app) => { sb.git(app, 'pack-refs', '--all'); return linkFrom(path.join(app, '.git', 'packed-refs'), 'hl-packed'); });
+  await hard('a ref file, .git/refs/heads/main', 'hlref', (app) => linkFrom(path.join(app, '.git', 'refs', 'heads', 'main'), 'hl-ref'));
+  await hard('a reflog, .git/logs/HEAD (appended)', 'hllog', (app) => linkFrom(path.join(app, '.git', 'logs', 'HEAD'), 'hl-log'));
+  await hard('an existing trunk .worktrees.conf (truncated, 1501)', 'hltrunk', (app) => linkFrom(path.join(work, 'hltrunk-trunk', '.worktrees.conf'), 'hl-wtconf'));
+  await hard('an existing repos/<key>.conf (truncated, 1567)', 'hlreg', () => linkFrom(path.join(reposDir, 'hlreg.conf'), 'hl-reg'));
+  for (const f of ['hltrunk-trunk']) fs.rmSync(path.join(work, f), { recursive: true, force: true });
+  fs.rmSync(path.join(reposDir, 'hlreg.conf'), { force: true });
+}
+
 const r3 = await srv.call('/api/worktree/init', { method: 'POST', body: { repoPath: editApp, key: 'app', cmd: 'ap' } });
 ok('B4 a symlink-free project in an edit root still runs wtinit: trunk created, project registered',
    r3.status === 200 && r3.json?.ok && fs.existsSync(path.join(work, 'app-trunk', '.worktrees.conf'))
