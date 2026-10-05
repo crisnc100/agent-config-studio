@@ -170,7 +170,19 @@ const CLEAN = {
 }
 
 // ── 8. Home is the default view; cards render independently ──────────────
+// The CLIs card's source (builds/setup-screen S15): one row per sign-in state,
+// a CLI whose version the route could not read, and one not installed.
+const SETUP_CLIS = { clis: [
+  { id: 'codex', label: 'Codex', installed: true, version: 'codex-cli 0.160.0', signIn: { state: 'present', label: 'credentials present' }, fix: {} },
+  { id: 'claude', label: 'Claude Code', installed: true, version: '2.1.289 (Claude Code)', signIn: { state: 'verified', label: 'verified' }, fix: {} },
+  { id: 'claude-work', label: 'Claude (work)', installed: true, version: '2.1.288 (Claude Code)', signIn: { state: 'rejected', label: 'rejected' }, fix: {} },
+  { id: 'grok', label: 'Grok', installed: true, version: 'grok 1.0.41', signIn: { state: 'none', label: 'not signed in' }, fix: {} },
+  { id: 'claude-old', label: 'Claude (old)', installed: true, version: '2.0.0 (Claude Code)', signIn: { state: 'unknown', label: 'unknown — refresh' }, fix: {} },
+  { id: 'mystery', label: 'Mystery CLI', installed: true, version: null, signIn: { state: 'present', label: 'credentials present' }, fix: {} },
+  { id: 'absent', label: 'Absent CLI', installed: false, version: null, signIn: { state: 'none', label: 'not signed in' }, fix: {} },
+], next: [] };
 const homeRoutes = (over = {}) => routesFor({
+  'GET /api/setup/clis': () => SETUP_CLIS,
   'GET /api/usage': () => ({ seats: SEATS }),
   'GET /api/models': () => MODELS,
   'GET /api/memory': () => MEMORY_DIRTY,
@@ -194,6 +206,7 @@ const homeRoutes = (over = {}) => routesFor({
     'GET /api/models': () => { throw { status: 500, body: { error: 'catalog read failed' } }; },
     'GET /api/trash': () => { throw { status: 503, body: { error: 'trash offline' } }; },
     'GET /api/harnesses': () => { throw { status: 500, body: { error: 'detect failed' } }; },
+    'GET /api/setup/clis': () => { throw { status: 500, body: { error: 'clis probe failed' } }; },
   }) });
   await settle(20);
   const acc = p.text(card(p, 'accounts'));
@@ -203,8 +216,14 @@ const homeRoutes = (over = {}) => routesFor({
   ok('8 Models failing shows on Needs attention, whose other sources still list their items',
      /Models unavailable: catalog read failed/.test(att) && /empty project folders/.test(att) && /finished worktree/.test(att) && !/Nothing needs you/.test(att));
   ok('8 Trash failing shows on Recent, with the history summary still there', /Trash unavailable: trash offline/.test(p.text(card(p, 'recent'))) && /save CLAUDE.md/.test(p.text(card(p, 'recent'))));
+  // S15: the card reads /api/setup/clis, so that route's failure is what it shows.
   ok('8 detection failing shows on CLIs, and Codex still reports (unavailable, from the failed Usage)',
-     /Detection unavailable: detect failed/.test(p.text(card(p, 'clis'))) && /Usage unavailable/.test(p.text(card(p, 'clis'))));
+     /Detection unavailable: clis probe failed/.test(p.text(card(p, 'clis'))) && /Usage unavailable/.test(p.text(card(p, 'clis'))));
+  const ok200 = await boot({ routes: homeRoutes({ 'GET /api/setup/clis': () => { throw { status: 500, body: { error: 'clis probe failed' } }; } }) });
+  await settle(20);
+  const codexLine = ok200.$('content').querySelectorAll('.home-clis .home-cli').find((r) => /Codex seats/.test(ok200.text(r)));
+  ok('8 …and with Usage answering, the Codex Usage line still reports on its own',
+     /Detection unavailable: clis probe failed/.test(ok200.text(card(ok200, 'clis'))) && /6 seats in Usage · 2 reading · 2 to sign in/.test(ok200.text(codexLine)), ok200.text(card(ok200, 'clis')));
   ok('8 a failing card never raises a page error or a notice', p.errors.length === 0 && p.text(p.$('notice-slot')) === '', p.errors.join(' | '));
 }
 {
@@ -303,7 +322,7 @@ const homeRoutes = (over = {}) => routesFor({
   const bad = files.flatMap((t) => t.match(/auth\.json|credentials?\b|keychain|security find|\btokens?\b|oauth/gi) || []);
   ok('9 no token, credential or keychain reads in the new code', bad.length === 0, bad.join(' '));
   const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-  ok('9 Home calls existing routes only — every one it asks is a server route', ['/api/usage', '/api/models', '/api/context', '/api/trash', '/api/harnesses', '/api/memory', '/api/worktree']
+  ok('9 Home calls existing routes only — every one it asks is a server route', ['/api/usage', '/api/models', '/api/context', '/api/trash', '/api/harnesses', '/api/memory', '/api/worktree', '/api/setup/clis']
     .every((r) => server.includes(`'GET ${r}'`)));
 }
 
@@ -474,9 +493,21 @@ const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.ent
   const clean = await boot({ routes: cleanRoutes() });
   await settle(20);
   ok('QA6 …and not when nothing needs you', !clean.$('title').querySelector('.home-needs') && /Nothing needs you/.test(clean.text(card(clean, 'attention'))));
-  const clis = p.$('btn-home').click() || (await settle(20), p.text(card(p, 'clis')));
-  ok('QA7 the CLIs card says it once: version and sign-in not reported, no "unknown" per row',
-     (clis.match(/not reported/g) || []).length === 1 && !/unknown/i.test(clis), clis);
+  p.$('btn-home').click();
+  await settle(20);
+  // S15 replaces "not reported": each row says what /api/setup/clis returned, verbatim.
+  const cliRow = (id) => p.text(p.$('content').querySelector(`.home-clis [data-cli="${id}"]`));
+  const verbatim = SETUP_CLIS.clis.filter((c) => c.installed && c.version)
+    .every((c) => cliRow(c.id).includes(`${c.version} · sign-in: ${c.signIn.label}`));
+  ok('QA7 each CLI row shows the route\'s version and sign-in label verbatim, one row per state',
+     verbatim && ['credentials present', 'verified', 'rejected', 'not signed in', 'unknown — refresh'].every((l) => SETUP_CLIS.clis.some((c) => c.version && c.signIn.label === l)),
+     SETUP_CLIS.clis.map((c) => cliRow(c.id)).join(' | '));
+  ok('QA7 "version unknown" only where the route returned no version',
+     /version unknown · sign-in: credentials present/.test(cliRow('mystery'))
+     && SETUP_CLIS.clis.filter((c) => c.version).every((c) => !/version unknown/.test(cliRow(c.id))), cliRow('mystery'));
+  ok('QA7 no row-level "unknown" where the route gave a value',
+     SETUP_CLIS.clis.filter((c) => c.installed && c.version && c.signIn.state !== 'unknown').every((c) => !/unknown/i.test(cliRow(c.id))));
+  ok('QA7 a CLI not installed says so, with no version or sign-in invented', /not installed/.test(cliRow('absent')) && !/sign-in/.test(cliRow('absent')));
 }
 
 for (const p of pages) p.done();
