@@ -95,7 +95,9 @@ const clis = async (q = '') => {
     ['a good reading older than 10 min → "unknown — refresh"', now - 11 * 60_000, { ok: true }, (s) => s.state === 'unknown' && s.label === 'unknown — refresh'],
     ['a rejected credential → rejected', now - 60_000, { ok: false, reason: 'credential rejected (HTTP 401) — run `claude` once to refresh it' }, (s) => s.state === 'rejected'],
     ['a network failure → unknown, with the reason', now - 60_000, { ok: false, reason: 'usage request failed: fetch failed' }, (s) => s.state === 'unknown' && /fetch failed/.test(s.detail)],
-    ['rate limited → verified (the credential was accepted), said so', now - 60_000, { ok: false, rateLimited: true, reason: 'the usage endpoint is rate limiting us' }, (s) => s.state === 'verified' && /rate limit/.test(s.detail)],
+    ['rate limited with no good reading → "unknown — rate limited", never verified', now - 60_000, { ok: false, rateLimited: true, reason: 'the usage endpoint is rate limiting us' }, (s) => s.state === 'unknown' && s.label === 'unknown — rate limited'],
+    ['rate limited carrying a good reading from 3 min ago → verified, said so', now - 60_000, { ok: true, rateLimited: true, staleReason: 'the usage endpoint is rate limiting us', lastGood: { windows: [], observedAt: now - 3 * 60_000 } }, (s) => s.state === 'verified' && /rate limit/.test(s.detail)],
+    ['rate limited carrying a good reading from 20 min ago → unknown — rate limited', now - 60_000, { ok: true, rateLimited: true, staleReason: 'the usage endpoint is rate limiting us', lastGood: { windows: [], observedAt: now - 20 * 60_000 } }, (s) => s.state === 'unknown' && s.label === 'unknown — rate limited'],
     ['no usable credential → not signed in', now - 60_000, { ok: false, reason: 'no usable Claude credential (fromEnv: none)' }, (s) => s.state === 'none'],
   ];
   for (const [what, takenAt, entry, check] of cases) {
