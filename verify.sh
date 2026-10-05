@@ -18,6 +18,8 @@ trap finish EXIT
 node tests/guards.mjs
 # The setup screen's own static guards (the usage seam, credentials stat-only).
 node tests/setup-guards.mjs
+# Credentials are never served through an alias: hard links, symlinks, chains.
+node tests/setup-credentials.mjs
 # Before any worktree test: proves the tripwire sees each path the installer writes.
 node tests/worktree-tripwire.mjs
 # …and every project folder roots.json lists, its config files and linked instructions.

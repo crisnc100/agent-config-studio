@@ -62,6 +62,7 @@ jobs:
           node tests/real-home-roots.mjs
           node tests/fresh-home.mjs
           node tests/setup-guards.mjs
+          node tests/setup-credentials.mjs
           node tests/setup-routes.mjs
           node tests/setup-clis.mjs
           node tests/setup-scan.mjs
