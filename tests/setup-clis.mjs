@@ -144,6 +144,16 @@ const clis = async (q = '') => {
 }
 
 await srv.stop();
+
+{
+  const { loginPathDirs } = await import('../lib/login-path.js');
+  const h = path.join(sandbox, 'broken-shell-home');
+  fs.mkdirSync(h);
+  fs.writeFileSync(path.join(h, '.profile'), 'exit 3\n');
+  const dirs = await loginPathDirs({ env: { HOME: h, PATH }, home: h });
+  ok('S10 a login shell that fails falls back to the installer directories',
+     dirs.includes(path.join(h, '.local', 'bin')) && dirs.includes('/opt/homebrew/bin'), JSON.stringify(dirs));
+}
 assertRealHomesUnchanged(realBefore, ok);
 fs.rmSync(sandbox, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
