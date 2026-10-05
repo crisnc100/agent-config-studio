@@ -3,8 +3,9 @@
  *
  *   - builds/setup-screen/commands.md lists each one with a verification
  *     source and the date it was checked, and the server reads it from there;
- *   - every install / sign-in / next-step command a route can hand the page
- *     is one of that file's entries, and no setup source spells one itself;
+ *   - the commands the real page renders — every CLI missing, then every CLI
+ *     signed out, then the Done step — are exactly that file's entries, and
+ *     no setup source spells one itself;
  *   - the Done step's commands run under `sh` — as `acs …` when acs is on
  *     PATH, and as this checkout's bin/acs when it is not — against a temp
  *     HOME (install-worktree as its --dry-run).
@@ -16,6 +17,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { readCommands, nextSteps, ACS_BIN, COMMANDS_FILE } from '../lib/setup-commands.js';
+import { startServer } from './fixtures/roots-home.mjs';
+import { bootPage, settle } from './fixtures/shell-page.mjs';
+import { fakeCli, isolatedPath } from './fixtures/setup-home.mjs';
 import { CLI_IDS } from '../lib/setup-clis.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -38,16 +42,50 @@ for (const k of keys) {
 ok('3 every source is a help output or a URL', Object.values(table).every((e) => /--help|https:\/\/|bin\/acs/.test(`${e.source} ${e.command}`)));
 ok('3 a command written with \\| reads back as a pipe', table['install.claude'].command === 'curl -fsSL https://claude.ai/install.sh | bash', table['install.claude'].command);
 
-// What the routes can hand the page: fix commands come only from the table
-// (lib/setup-clis.js fixFor), next steps only from nextSteps().
-const shown = new Set([
-  ...CLI_IDS.flatMap((c) => [table[`install.${c}`].command, table[`signin.${c}`].command, table[`docs.${c}`].command]),
-  ...nextSteps({ acsOnPath: true }).map((s) => s.command),
-  ...nextSteps({ acsOnPath: false }).map((s) => s.command),
-]);
-const listed = new Set(Object.values(table).map((e) => e.command));
-ok('3 every command a route can show is a commands.md entry (bin/acs spelled out where acs is not on PATH)',
-   [...shown].every((c) => listed.has(c) || listed.has(c.replace(ACS_BIN, 'acs').replace(`'${ACS_BIN}'`, 'acs'))), [...shown].join(' | '));
+// What the page actually renders. Two real servers — every CLI missing, then
+// every CLI installed and signed out — and the real front end in the test VM
+// on #setup; the commands read off the screen are compared with commands.md,
+// parsed here on its own (not through readCommands, the code under test).
+const md = Object.fromEntries([...fs.readFileSync(COMMANDS_FILE, 'utf8').matchAll(/^\| ((?:install|signin|docs|next)\.[a-z-]+) \| (.+?) \| .+ \| \d{4}-\d{2}-\d{2} \|$/gm)]
+  .map((m) => [m[1], m[2].replace(/\\\|/g, '|').replace(/^`|`$/g, '')]));
+ok('3 commands.md parses on its own to every key', keys.every((k) => md[k]), Object.keys(md).join());
+
+async function rendered(tag, makeBin) {
+  const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `acs-setup-cmd-${tag}-`)));
+  const home = path.join(sb, 'home');
+  fs.mkdirSync(home);
+  const PATH = isolatedPath(path.join(sb, 'bin'));
+  makeBin(path.join(sb, 'bin'));
+  const srv = await startServer(home, { root: ROOT, env: { PATH } });
+  const proxy = async (method, p, body, u) => {
+    const r = await fetch(`${srv.base}${p}${u?.search || ''}`, { method, headers: body ? { 'content-type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw { status: r.status, body: data };
+    return data;
+  };
+  const page = await bootPage({ routes: proxy, hash: '#setup&step=clis' });
+  const t0 = Date.now();
+  while (!page.$('content').querySelector('.setup-cli') && Date.now() - t0 < 8000) await settle(50);
+  const cards = Object.fromEntries(page.$('content').querySelectorAll('.setup-cli').map((c) => [c.dataset.cli, c.querySelectorAll('code').map((x) => x.textContent)]));
+  page.eval("setupGo('done')");
+  while (!page.$('content').querySelector('.setup-next') && Date.now() - t0 < 8000) await settle(50);
+  const next = page.$('content').querySelectorAll('.setup-next code').map((x) => x.textContent);
+  const errors = page.errors.slice();
+  page.done();
+  await srv.stop();
+  fs.rmSync(sb, { recursive: true, force: true });
+  return { cards, next, errors };
+}
+const missing = await rendered('missing', () => {});
+ok('3 every CLI missing: each card renders exactly commands.md\'s install command',
+   CLI_IDS.every((c) => JSON.stringify(missing.cards[c]) === JSON.stringify([md[`install.${c}`]])), JSON.stringify(missing.cards));
+const signedOut = await rendered('signed-out', (b) => { for (const c of CLI_IDS) fakeCli(b, c); });
+ok('3 every CLI installed and not signed in: each card renders exactly commands.md\'s sign-in command',
+   CLI_IDS.every((c) => JSON.stringify(signedOut.cards[c]) === JSON.stringify([md[`signin.${c}`]])), JSON.stringify(signedOut.cards));
+const nextMd = ['next.model-id', 'next.worktree'].map((k) => md[k].replace(/^acs(?= )/, ACS_BIN));
+ok('S16 the Done step renders commands.md\'s next steps, with this checkout\'s bin/acs (acs is not on PATH)',
+   JSON.stringify(missing.next) === JSON.stringify(nextMd) && JSON.stringify(signedOut.next) === JSON.stringify(nextMd), JSON.stringify(missing.next));
+ok('3 …with no page errors', !missing.errors.length && !signedOut.errors.length, [...missing.errors, ...signedOut.errors].join(' | '));
 
 // No setup source spells a command itself.
 const setupSources = [
