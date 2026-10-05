@@ -99,6 +99,11 @@ console.log('setup guards\n');
     ['login-path: the script built from a template', lp, origLp, (t) => t.replace(/const LOGIN_PATH_SCRIPT = '[^']*';/, 'const LOGIN_PATH_SCRIPT = `printf %s ${process.env.X}`;')],
     ['login-path: the script reassigned', lp, origLp, (t) => t.replace('const TIMEOUT_MS', "let LOGIN_PATH_SCRIPT2 = 1; LOGIN_PATH_SCRIPT = 'x';\nconst TIMEOUT_MS")],
     ['login-path: a different flag', lp, origLp, (t) => t.replace("execFile(shell, ['-lc', LOGIN_PATH_SCRIPT]", "execFile(shell, ['-ilc', LOGIN_PATH_SCRIPT]")],
+    ['login-path: a different literal', lp, origLp, (t) => t.replace(`const LOGIN_PATH_SCRIPT = 'printf "__ACS_PATH__%s__ACS_END__" "$PATH"';`, `const LOGIN_PATH_SCRIPT = 'printf "__ACS_PATH__%s__ACS_END__" "$HOME"';`)],
+    ['login-path: `codex exec …` as the literal', lp, origLp, (t) => t.replace(`const LOGIN_PATH_SCRIPT = 'printf "__ACS_PATH__%s__ACS_END__" "$PATH"';`, "const LOGIN_PATH_SCRIPT = 'codex exec arbitrary-prompt';")],
+    ['login-path: shell = process.env.SHELL', lp, origLp, (t) => t.replace('const shell = loginShell(env);', 'const shell = process.env.SHELL;')],
+    ['login-path: a second assignment to shell', lp, origLp, (t) => t.replace('const shell = loginShell(env);', 'let shell = loginShell(env); shell = env.SHELL;')],
+    ['login-path: the /etc/shells check removed from loginShell', lp, origLp, (t) => t.replace("return listed.includes(want) && fs.existsSync(want) ? want : '/bin/sh';", 'return want;')],
     ['lsof: a third location', pr, origPr, (t) => t.replace("execFile('/usr/bin/lsof', ['-F', 'pcn', '-w', '+d'", "execFile('/usr/local/bin/lsof', ['-F', 'pcn', '-w', '+d'")],
     ['lsof: a PATH name', pr, origPr, (t) => t.replace("execFile('/usr/bin/lsof', ['-F', 'pcn', '-w', '+D'", "execFile('lsof', ['-F', 'pcn', '-w', '+D'")],
   ];

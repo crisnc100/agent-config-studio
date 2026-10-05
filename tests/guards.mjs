@@ -274,6 +274,12 @@ function guardA() {
   );
 }
 
+/** What lib/login-path.js may ask a login shell to run, and how it picks the shell. */
+const LOGIN_PATH_SCRIPT = 'printf "__ACS_PATH__%s__ACS_END__" "$PATH"';
+const LOGIN_SHELL_FN = "function loginShell(env = process.env) { const want = env.SHELL; if (!want || !path.isAbsolute(want)) return '/bin/sh'; " +
+  "let listed = []; try { listed = fs.readFileSync('/etc/shells', 'utf8').split('\\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')); } catch {} " +
+  "return listed.includes(want) && fs.existsSync(want) ? want : '/bin/sh'; }";
+
 function guardB() {
   const hits = [];
   for (const abs of scanTargets()) {
@@ -439,9 +445,21 @@ function guardB() {
           hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 60)}…) — must be exactly ` +
                     `execFile(shell, ['-lc', LOGIN_PATH_SCRIPT], …)`);
         }
+        // The script is THIS literal — print PATH between markers, nothing else.
         const defs = [...src.matchAll(/\bLOGIN_PATH_SCRIPT\s*=/g)];
-        if (defs.length !== 1 || !/const\s+LOGIN_PATH_SCRIPT\s*=\s*'[^'\n]*'\s*;/.test(src)) {
-          hits.push(`${file} LOGIN_PATH_SCRIPT must be one const single-quoted literal, assigned once`);
+        if (defs.length !== 1 || !src.includes(`const LOGIN_PATH_SCRIPT = '${LOGIN_PATH_SCRIPT}';`)) {
+          hits.push(`${file} LOGIN_PATH_SCRIPT must be exactly '${LOGIN_PATH_SCRIPT}', assigned once`);
+        }
+        // `shell` comes only from loginShell(), whose body is pinned too:
+        // $SHELL only when /etc/shells lists it, else /bin/sh.
+        const shells = [...src.matchAll(/\bshell\s*=(?!=)/g)];
+        if (shells.length !== 1 || !/const shell = loginShell\(env\);/.test(src)) {
+          hits.push(`${file} shell must be assigned once, as const shell = loginShell(env)`);
+        }
+        const fn = functionSpan(src, 'loginShell');
+        const body = fn ? src.slice(fn.start, fn.end).replace(/\s+/g, ' ').trim() : null;
+        if (body !== LOGIN_SHELL_FN) {
+          hits.push(`${file} loginShell() is not the pinned /etc/shells selector — got ${String(body).slice(0, 80)}…`);
         }
         continue;
       }
