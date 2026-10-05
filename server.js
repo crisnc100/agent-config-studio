@@ -5,7 +5,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { resolveSafe, assertWritable, assertNotHardLinked, assertSingleName, isDenied, kindOf, tilde, currentRoots, HOME, STUDIO_HOME, CODEX_HOME } from './lib/paths.js';
+import { resolveSafe, assertWritable, assertNotHardLinked, openUserFile, readUserText, isCredential, isDenied, kindOf, tilde, currentRoots, HOME, STUDIO_HOME, CODEX_HOME } from './lib/paths.js';
 import { migrateRoots, rootsPath, previewRoot, addRoot, removeRoot, EDIT_GRANTS } from './lib/roots.js';
 import { readSetup, writeSetup } from './lib/setup-state.js';
 import { detectClis } from './lib/setup-clis.js';
@@ -13,7 +13,7 @@ import { scanOnce } from './lib/setup-scan.js';
 import { nextSteps } from './lib/setup-commands.js';
 import { isPartial } from './lib/walk-budget.js';
 import { locateBinary, candidatesFor } from './lib/harness.js';
-import { refreshLoginDirs, loginDirs } from './lib/login-path.js';
+import { refreshLoginDirs, loginDirs, loginDirsSettled } from './lib/login-path.js';
 import { buildRegistry, scopeChain } from './lib/registry.js';
 import { listSkills, resolveSkills, toPublic, readInSkill, parseFrontmatter, SKILL_LIMITS } from './lib/skills.js';
 import { readSkillUsage, attachUsage, USAGE_CAVEAT } from './lib/skill-usage.js';
@@ -788,7 +788,7 @@ export function createApp(opts = {}) {
     const out = { global: [], codex: [], note: null };
 
     try {
-      const raw = JSON.parse(await fsp.readFile(path.join(HOME, '.claude.json'), 'utf8'));
+      const raw = JSON.parse(readUserText(path.join(HOME, '.claude.json')));
       out.global = Object.entries(raw.mcpServers || {}).map(([name, cfg]) => ({
         name, transport: cfg.type || (cfg.command ? 'stdio' : 'unknown'),
         target: cfg.url || cfg.command || '', scope: 'global',
@@ -808,7 +808,7 @@ export function createApp(opts = {}) {
     }
 
     try {
-      const toml = await fsp.readFile(path.join(CODEX_HOME, 'config.toml'), 'utf8');
+      const toml = readUserText(path.join(CODEX_HOME, 'config.toml'));
       for (const m of toml.matchAll(/^\[mcp_servers\.([A-Za-z0-9_-]+)\]/gm)) {
         out.codex.push({ name: m[1], scope: '~/.codex/config.toml' });
       }
@@ -886,7 +886,11 @@ export function createApp(opts = {}) {
     requireStrict(req);
     // Recheck reads the login shell's PATH again (capped, so the answer fits
     // in about 4 s); the result is the server's from then on, for every lookup.
-    const pendingDirs = url.searchParams.get('recheck') === '1' ? refreshLoginDirs({ timeoutMs: 1500 }) : null;
+    const recheck = url.searchParams.get('recheck') === '1';
+    // Without Recheck, the read made at start is awaited (bounded): the first
+    // answer must already be about a new terminal's PATH.
+    if (!recheck) await loginDirsSettled(1500);
+    const pendingDirs = recheck ? refreshLoginDirs({ timeoutMs: 1500 }) : null;
     const clis = await detectClis({ home: HOME, pendingDirs });
     // acs on the PATH a new terminal has, not the one this server inherited:
     // a launcher-only PATH entry the profile drops must not count. Until the
@@ -1040,11 +1044,12 @@ export function createApp(opts = {}) {
 
   'GET /api/file': async (_req, url) => {
     const abs = resolveSafe(url.searchParams.get('path'));
-    assertSingleName(abs);
-    const stat = await fsp.stat(abs);
-    if (!stat.isFile()) throw Object.assign(new Error('not a file'), { status: 400 });
-    if (stat.size > 4 * 1024 * 1024) throw Object.assign(new Error('file too large to edit here'), { status: 413 });
-    const content = await fsp.readFile(abs, 'utf8');
+    // Judged and read through one descriptor (lib/paths.js openUserFile).
+    let opened;
+    try { opened = openUserFile(abs, { maxBytes: 4 * 1024 * 1024 }); }
+    catch (e) { throw e.status === 413 ? Object.assign(new Error('file too large to edit here'), { status: 413 }) : e; }
+    const { stat } = opened;
+    const content = opened.buf.toString('utf8');
     return {
       path: abs, display: tilde(abs), kind: kindOf(abs),
       content, size: stat.size, mtime: stat.mtimeMs,
@@ -1070,7 +1075,8 @@ export function createApp(opts = {}) {
     const check = validate(abs, content, kind);
     if (!check.ok) return { saved: false, ...check };
 
-    const before = await fsp.readFile(abs, 'utf8');
+    assertNotHardLinked(abs);   // the write would refuse it; say so before reading it
+    const before = readUserText(abs);
     if (before === content) {
       return { saved: false, unchanged: true, ...check };
     }
@@ -1108,9 +1114,13 @@ export function createApp(opts = {}) {
   },
 
   'GET /api/history/version': async (_req, url) => {
-    const abs = resolveSafe(url.searchParams.get('path'));
+    const raw = url.searchParams.get('path');
+    const abs = resolveSafe(raw);
     const sha = url.searchParams.get('sha');
     if (!/^[0-9a-f]{7,40}$/.test(sha || '')) throw Object.assign(new Error('bad sha'), { status: 400 });
+    // A version is content too: never one recorded under a denied name, nor
+    // for a path that is — by identity — a credential now.
+    if (isDenied(String(raw)) || isDenied(abs) || isCredential(abs)) throw Object.assign(new Error('path is protected'), { status: 403 });
     return { content: await history.contentAt(abs, sha), sha };
   },
 
@@ -1228,8 +1238,7 @@ export function createApp(opts = {}) {
           try {
             const abs = resolveSafe(f.path, safe);
             if (isDenied(abs)) continue;
-            assertSingleName(abs);
-            text = await fsp.readFile(abs, 'utf8');
+            text = readUserText(abs, { maxBytes: 1024 * 1024 });
           } catch { continue; }
           const lines = text.split('\n');
           const matches = [];

@@ -166,10 +166,15 @@ await srv.stop();
   fs.mkdirSync(launcherOnly);
   fs.writeFileSync(path.join(launcherOnly, 'acs'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const P2 = `${isolatedPath(b2)}:${launcherOnly}`;
-  fs.writeFileSync(path.join(h, '.profile'), 'PATH=/usr/bin:/bin\nexport PATH\n');
+  // A login shell that takes a moment: the first request lands while the
+  // startup read is still out, and must wait for it rather than guess.
+  fs.writeFileSync(path.join(h, '.profile'), 'sleep 1\nPATH=/usr/bin:/bin\nexport PATH\n');
   const s2 = await startServer(h, { root: ROOT, env: { PATH: P2 } });
   const get = async (p) => (await fetch(s2.base + p)).json();
   const post = async (p, body) => { const r = await fetch(s2.base + p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, json: await r.json() }; };
+  const first = await get('/api/setup/clis');
+  ok('S16 the very first request, with no Recheck, already judges acs by the login shell\'s PATH',
+     first.acsOnPath === false && first.next.every((n) => n.command.includes('/bin/acs ')), JSON.stringify(first.next));
   let c = await get('/api/setup/clis?recheck=1');
   ok('S16 acs only on the server\'s inherited PATH, dropped by the login profile: not "on PATH"',
      c.acsOnPath === false && c.next.every((n) => n.command.includes('/bin/acs ')), JSON.stringify(c.next));
