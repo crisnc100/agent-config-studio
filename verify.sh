@@ -18,6 +18,8 @@ trap finish EXIT
 node tests/guards.mjs
 # Before any worktree test: proves the tripwire sees each path the installer writes.
 node tests/worktree-tripwire.mjs
+# …and every project folder roots.json lists, its config files and linked instructions.
+node tests/real-home-roots.mjs
 # Offline too, and it exercises the reader that the whole tracker rests on.
 node tests/usage-codex.mjs
 node tests/usage-codex-limits.mjs
@@ -31,6 +33,15 @@ node tests/usage-seats.mjs
 node tests/usage-routes.mjs
 node tests/usage-cli.mjs
 node tests/acs-update.mjs
+# The folder registry and `acs roots`: temp HOMEs only.
+node tests/roots.mjs
+# The same, through the real server: custom, legacy and symlinked roots.
+node tests/roots-routes.mjs
+node tests/roots-revoke.mjs
+node tests/roots-history.mjs
+node tests/roots-builtins.mjs
+node tests/roots-resolver.mjs
+node tests/roots-live.mjs
 node tests/skills.mjs
 node tests/phase1.mjs
 node tests/phase2a.mjs
@@ -50,11 +61,16 @@ node tests/context-map.mjs
 node tests/worktree-install.mjs
 node tests/worktree-tools.mjs
 node tests/worktree-panel.mjs
+# Worktree init refuses read folders and still works in edit ones (B4).
+node tests/roots-worktree-init.mjs
 node tests/own-writes.mjs
 # The front end, in a node VM against stubbed routes: no server, no HOME.
 node tests/shell.mjs
 node tests/home.mjs
+node tests/roots-ui.mjs
 # What the registry tells the Files page (temp HOME).
 node tests/files-registry.mjs
 # The MCP route's note on a machine with no ~/.claude.json (temp HOME).
 node tests/mcp-route.mjs
+# A stranger's machine: empty temp HOME, no agent CLI on PATH, every GET route.
+node tests/fresh-home.mjs

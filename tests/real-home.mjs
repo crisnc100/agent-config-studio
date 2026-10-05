@@ -15,17 +15,18 @@
  *    churns: every file and directory under ~/.agent-config-studio, the skills
  *    trees, ~/.claude/{hooks,agents,commands,skills_retired}, ~/.codex/rules
  *    and ~/.agents (symlinks by target, not followed); every project skill tree
- *    the skills feature walks under ~/Documents/Projects and
- *    ~/Documents/Garman-Homes, found the way discovery finds them; and the
+ *    the skills feature walks under every project folder (each path in the
+ *    real roots.json, plus the legacy ~/Documents/Projects and
+ *    ~/Documents/Garman-Homes), found the way discovery finds them; and the
  *    single files ACS edits inside the live homes (see EXACT: ~/.zshrc is
  *    read through a link, and the link's target pinned too). ~/.config/worktree
  *    is walked THROUGH its links, since `acs install-worktree` writes there and
  *    a dotfiles-managed wt.zsh is a link to the bytes that matter. Also every
  *    ~/.claude/projects/<slug>/memory tree, with each slug directory recorded
  *    by presence — the Memory view trashes empty slugs, indexes and facts —
- *    and every CLAUDE.md / AGENTS.md / .cursor/rules/*.mdc under
- *    ~/Documents/Projects and ~/Documents/Garman-Homes, found the way
- *    lib/context-map.js finds them.
+ *    and every CLAUDE.md / AGENTS.md / .cursor/rules/*.mdc, .mcp.json and
+ *    .worktrees.conf under those folders, found the way lib/context-map.js
+ *    finds them, a symlinked one hashed through to its target.
  *    Transcripts beside the memory trees are not hashed: live sessions append
  *    to them. Anything that appears, disappears or changes there fails — with
  *    ONE exemption: a new slug named exactly like the two temp directories
@@ -35,7 +36,7 @@
  *    what Claude Code creates for every session's cwd. A file under that
  *    memory/ fails, and so does any other new slug or new context file.
  *  - ENTRY NAMES ONLY for the live agent homes ~/.claude, ~/.codex, ~/.grok and
- *    the top two levels of the two project roots (plus a hash of the loose
+ *    the top two levels of every project folder (plus a hash of the loose
  *    files at their top). Running agents write inside those all
  *    the time (a codex sqlite WAL moved in 3 of 5 idle 3-second windows, a
  *    Claude Code session appends to history.jsonl throughout), so comparing
@@ -71,7 +72,28 @@ const ROOTS = [
   // (lib/registry.js), and a SAFE_ROOT the file editor can write.
   '.config/worktree',
 ].map((r) => path.join(HOME, r));
-const PROJECT_ROOTS = [path.join(HOME, 'Documents', 'Projects'), path.join(HOME, 'Documents', 'Garman-Homes')];
+/**
+ * Every project folder ACS reads: each path in the real roots.json — parsed
+ * here with plain fs, never through lib/roots.js, so a bug there cannot also
+ * blind this check — plus the two folders it used to hardcode, so the checks
+ * never go silent before migration writes the file, or after a bad edit to
+ * it. An entry that is not an absolute path, or that is HOME or above it, is
+ * skipped: walking it would be walking the machine.
+ */
+const LEGACY_ROOTS = [path.join(HOME, 'Documents', 'Projects'), path.join(HOME, 'Documents', 'Garman-Homes')];
+const PROJECT_ROOTS = (() => {
+  let listed = [];
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(HOME, '.agent-config-studio', 'roots.json'), 'utf8'));
+    listed = (Array.isArray(j?.roots) ? j.roots : []).map((r) => r?.path)
+      .filter((p) => typeof p === 'string' && path.isAbsolute(p))
+      .map((p) => path.resolve(p))
+      .filter((p) => p !== path.parse(p).root && !(HOME === p || HOME.startsWith(p + path.sep)));
+  } catch { /* absent or unreadable: the legacy folders still count */ }
+  return [...new Set([...listed, ...LEGACY_ROOTS])];
+})();
+/** The per-project config files the registry lists and the editor writes. */
+const PROJECT_CONFIG_NAMES = new Set(['.mcp.json', '.worktrees.conf']);
 const LIVE_HOMES = ['.claude', '.codex', '.grok'].map((r) => path.join(HOME, r));
 const CATALOG_DIR = path.join(HOME, '.claude', 'cache', 'model-catalog');
 const MEMORY_PROJECTS = path.join(HOME, '.claude', 'projects');
@@ -176,8 +198,12 @@ function projectSkillTrees(root) {
   return out.sort();
 }
 
-/** Every CLAUDE.md, AGENTS.md and .cursor/rules/*.mdc under `root`, links included, never followed. */
-function contextFiles(root) {
+/**
+ * Every CLAUDE.md, AGENTS.md and .cursor/rules/*.mdc under `root` — or, with
+ * `names`, every file of those names — links included. Directory links are
+ * never descended; a file link is hashed through to its target by the caller.
+ */
+function contextFiles(root, names = null) {
   const out = [];
   const walk = (dir, depth) => {
     if (depth > 12) return;
@@ -187,6 +213,7 @@ function contextFiles(root) {
       const abs = path.join(dir, d.name);
       if (d.isDirectory()) { if (!CONTEXT_SKIP.has(d.name)) walk(abs, depth + 1); continue; }
       if (!d.isFile() && !d.isSymbolicLink()) continue;
+      if (names) { if (names.has(d.name)) out.push(abs); continue; }
       const isRule = d.name.endsWith('.mdc') && path.basename(dir) === 'rules' && path.basename(path.dirname(dir)) === '.cursor';
       if (d.name === 'CLAUDE.md' || d.name === 'AGENTS.md' || isRule) out.push(abs);
     }
@@ -258,11 +285,17 @@ export function snapshotRealHomes() {
     out[dir] = 'dir';
     walk(path.join(dir, 'memory'));
   }
-  // Both roots lib/context-map.js reads: Projects, and Garman-Homes (read-only there).
+  // Every root lib/context-map.js reads, edit and read folders alike. A
+  // symlinked instruction file is hashed through to its target as well: an
+  // edit to the target is an edit to what the agent reads. The same for the
+  // per-project .mcp.json and .worktrees.conf the registry lists.
   for (const r of PROJECT_ROOTS) {
     const ctx = contextFiles(r);
     out[`context:${r}`] = JSON.stringify(ctx);
-    for (const f of ctx) walk(f);
+    for (const f of ctx) walk(f, true);
+    const cfg = contextFiles(r, PROJECT_CONFIG_NAMES);
+    out[`config:${r}`] = JSON.stringify(cfg);
+    for (const f of cfg) walk(f, true);
   }
   const nameSet = (r) => {
     let names = null;
@@ -313,7 +346,7 @@ export function compareRealHomes(before, after) {
   const appeared = [];
   const list = (snap, key) => new Set(JSON.parse(snap[key] || '[]'));
   const slugKey = `slugs:${MEMORY_PROJECTS}`;
-  const ctxKeys = new Set(PROJECT_ROOTS.map((r) => `context:${r}`));
+  const ctxKeys = new Set(PROJECT_ROOTS.flatMap((r) => [`context:${r}`, `config:${r}`]));
   const beforeSlugs = list(before, slugKey);
   const probes = new Set([...list(after, slugKey)].filter((x) => !beforeSlugs.has(x) && isLiveSuiteProbeSlug(x)));
   if (probes.size) appeared.push(`${probes.size} new phase1 probe slug${probes.size === 1 ? '' : 's'} (live Claude sessions in its temp dirs): ${[...probes].slice(0, 3).join(', ')}`);
@@ -366,13 +399,14 @@ export function compareRealHomes(before, after) {
   return { content, names, notes };
 }
 
-const hashedCount = (snap) => Object.keys(snap).filter((k) => !/^(raw|meta|names|trees|slugs|context):/.test(k)).length;
+const hashedCount = (snap) => Object.keys(snap).filter((k) => !/^(raw|meta|names|trees|slugs|context|config):/.test(k)).length;
 const CONTENT_LABEL = (n) => `${n} entries (files by sha256, directories by presence) under ~/.agent-config-studio, ` +
   '~/.claude/{skills,hooks,agents,commands,skills_retired}, ~/.codex/{skills,rules}, ~/.agents, ~/.config/worktree (links followed), every project skill ' +
-  'tree and the loose files atop both project roots, every ~/.claude/projects slug directory and its memory/ tree, every CLAUDE.md / AGENTS.md / ' +
-  '.cursor rule under ~/Documents/Projects and ~/Documents/Garman-Homes, plus the files ACS edits (~/.claude settings, CLAUDE.md, *-config.json; ~/.codex ' +
+  'tree and the loose files atop every project folder, every ~/.claude/projects slug directory and its memory/ tree, every CLAUDE.md / AGENTS.md / ' +
+  `.cursor rule, .mcp.json and .worktrees.conf (links followed) under ${PROJECT_ROOTS.map(tilde).join(', ')}, ` +
+  'plus the files ACS edits (~/.claude settings, CLAUDE.md, *-config.json; ~/.codex ' +
   'config.toml, AGENTS.md; ~/.grok AGENTS.md; ~/.zshenv; ~/.zshrc, through a link) and the CLI catalogs, are byte-identical (sha256)';
-const NAMES_LABEL = '~/.claude, ~/.codex, ~/.grok, and ~/.codex-seats, ~/Documents/Projects and ~/Documents/Garman-Homes two levels deep: ' +
+const NAMES_LABEL = `~/.claude, ~/.codex, ~/.grok, and ~/.codex-seats, ${PROJECT_ROOTS.map(tilde).join(', ')} two levels deep: ` +
   'entry names unchanged (contents not compared)';
 
 /** For the suites: call snapshotRealHomes() BEFORE redirecting HOME, this at the very end. */

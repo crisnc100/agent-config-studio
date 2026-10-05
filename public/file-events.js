@@ -7,6 +7,9 @@
  * The server tags the studio's own writes `origin: "studio"` (lib/watch.js).
  * That changes only the WORDING, never the sync: another tab with the file
  * open still has to follow a studio save or trash. So:
+ *   - the open file's folder was revoked → keep it open read-only, draft and all:
+ *                                           the file still exists, the studio
+ *                                           just may no longer save it
  *   - the open file was removed          → close it (the wording says who)
  *   - the open file changed, and dirty   → keep the edits, warn of the conflict
  *   - the open file changed, and clean   → reload it if its content differs,
@@ -15,6 +18,7 @@
  */
 function fileEventPlan(d, { openPath = null, dirty = false } = {}) {
   const studio = d.origin === 'studio';
+  if (openPath && (d.revokedPaths || []).includes(openPath)) return { open: 'revoked', studio, dirty };
   if (openPath && (d.removedPaths || []).includes(openPath)) return { open: 'closed', studio };
   if (openPath && (d.changedPaths || []).includes(openPath)) return { open: dirty ? 'conflict' : 'reload', studio };
   return { open: 'none', studio, announce: !studio };
