@@ -143,9 +143,54 @@ const clis = async (q = '') => {
   ok('S10 three slow --version probes: /api/health stays responsive (< 500 ms each)', worst < 500, `worst ${worst} ms`);
   ok('S10 …and the route answers within 4 s, the CLIs installed with no version', took < 4000
      && ['claude', 'codex', 'grok'].every((c) => by[c].installed && by[c].version === null), `${took} ms ${JSON.stringify(by)}`);
+
+  // Recheck's worst case: a login shell that hangs AND three slow probes.
+  fs.writeFileSync(path.join(home, '.profile'), 'sleep 5\n');
+  const t1 = Date.now();
+  const re = await clis('?recheck=1');
+  const took2 = Date.now() - t1;
+  ok('S10 Recheck with a hanging login shell and three slow probes still answers within 4 s', took2 < 4000
+     && ['claude', 'codex', 'grok'].every((c) => re.by[c].installed), `${took2} ms`);
 }
 
 await srv.stop();
+
+/* ── one PATH for every lookup, and acs judged by a new terminal's PATH ── */
+{
+  const h = path.join(sandbox, 'home2');
+  const b2 = path.join(sandbox, 'bin2');
+  fs.mkdirSync(h);
+  fakeCli(b2, 'claude');
+  // acs on the server's own PATH only: a launcher-added entry the profile drops.
+  const launcherOnly = path.join(sandbox, 'launcher-only');
+  fs.mkdirSync(launcherOnly);
+  fs.writeFileSync(path.join(launcherOnly, 'acs'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const P2 = `${isolatedPath(b2)}:${launcherOnly}`;
+  fs.writeFileSync(path.join(h, '.profile'), 'PATH=/usr/bin:/bin\nexport PATH\n');
+  const s2 = await startServer(h, { root: ROOT, env: { PATH: P2 } });
+  const get = async (p) => (await fetch(s2.base + p)).json();
+  const post = async (p, body) => { const r = await fetch(s2.base + p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, json: await r.json() }; };
+  let c = await get('/api/setup/clis?recheck=1');
+  ok('S16 acs only on the server\'s inherited PATH, dropped by the login profile: not "on PATH"',
+     c.acsOnPath === false && c.next.every((n) => n.command.includes('/bin/acs ')), JSON.stringify(c.next));
+  // codex installed after start, into a directory only the login profile adds.
+  const later = path.join(h, 'later-bin');
+  fakeCli(later, 'codex', { loginMs: 30_000 });
+  fs.writeFileSync(path.join(later, 'acs'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(h, '.profile'), `PATH="${later}:/usr/bin:/bin"\nexport PATH\n`);
+  const sgBefore = await get('/api/setup/accounts');
+  ok('shared PATH: before Recheck, codex is not suggested', !sgBefore.suggestions.some((x) => x.key === 'codex'), JSON.stringify(sgBefore.suggestions));
+  c = await get('/api/setup/clis?recheck=1');
+  ok('shared PATH: Recheck finds codex in the new directory', c.clis.find((x) => x.id === 'codex').installed);
+  ok('S16 …and acs there, so the next steps say acs', c.acsOnPath === true && c.next.every((n) => n.command.startsWith('acs ')), JSON.stringify(c.next));
+  const sgAfter = await get('/api/setup/accounts');
+  ok('shared PATH: the account suggestions see it too', sgAfter.suggestions.some((x) => x.key === 'codex'));
+  const add = await post('/api/setup/seats', { key: 'codex' });
+  const conn = await post('/api/usage/connect', { id: add.json.seat?.id });
+  ok('shared PATH: a CLI found only by Recheck can then be connected', /^https:\/\/auth\.openai\.com/.test(conn.json.url || ''), JSON.stringify(conn.json));
+  await post('/api/usage/connect/cancel', { id: add.json.seat?.id });
+  await s2.stop();
+}
 
 {
   const { loginPathDirs } = await import('../lib/login-path.js');

@@ -13,7 +13,7 @@ import { scanOnce } from './lib/setup-scan.js';
 import { nextSteps } from './lib/setup-commands.js';
 import { isPartial } from './lib/walk-budget.js';
 import { locateBinary, candidatesFor } from './lib/harness.js';
-import { loginPathDirs } from './lib/login-path.js';
+import { refreshLoginDirs, loginDirs } from './lib/login-path.js';
 import { buildRegistry, scopeChain } from './lib/registry.js';
 import { listSkills, resolveSkills, toPublic, readInSkill, parseFrontmatter, SKILL_LIMITS } from './lib/skills.js';
 import { readSkillUsage, attachUsage, USAGE_CAVEAT } from './lib/skill-usage.js';
@@ -884,9 +884,15 @@ export function createApp(opts = {}) {
   },
   'GET /api/setup/clis': async (req, url) => {
     requireStrict(req);
-    const dirs = url.searchParams.get('recheck') === '1' ? await loginPathDirs() : [];
-    const clis = await detectClis({ home: HOME, dirs });
-    const acsOnPath = locateBinary('acs', candidatesFor('acs', dirs)).installed;
+    // Recheck reads the login shell's PATH again (capped, so the answer fits
+    // in about 4 s); the result is the server's from then on, for every lookup.
+    const pendingDirs = url.searchParams.get('recheck') === '1' ? refreshLoginDirs({ timeoutMs: 1500 }) : null;
+    const clis = await detectClis({ home: HOME, pendingDirs });
+    // acs on the PATH a new terminal has, not the one this server inherited:
+    // a launcher-only PATH entry the profile drops must not count. Until the
+    // login read has landed, the inherited PATH is all there is.
+    const login = loginDirs();
+    const acsOnPath = locateBinary('acs', login.length ? login.map((d) => path.join(d, 'acs')) : candidatesFor('acs', [])).installed;
     return { clis, acsOnPath, next: nextSteps({ acsOnPath }), checkedAt: Date.now() };
   },
   'GET /api/setup/scan': async (req) => {
@@ -1449,6 +1455,9 @@ export async function startStudio({ port = PORT, app = {} } = {}) {
     broadcast({ type: 'roots', ...rootsView() });
   });
   const { server, models } = createApp(app);
+  // The login shell's PATH, once, so `acs` and the CLIs are judged against
+  // what a new terminal would find. Recheck reads it again.
+  refreshLoginDirs().catch(() => {});
   // Detection runs once at start (and on "Check now"); there is no timer.
   models.check().catch(() => {});
 
