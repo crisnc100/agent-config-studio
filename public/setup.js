@@ -517,7 +517,7 @@ async function finishSetup(completed, { stay = false } = {}) {
     return notice('error', `Setup could not be saved: ${e.message}. You are still in setup — try again.`, null, true);
   }
   SETUP.finishing = false;
-  HOME.src = {}; HOME.inflight = {}; HOME.settledAt = 0;
+  HOME.src = {}; HOME.inflight = {}; HOME.settledAt = 0; HOME.gen++;
   FOLDERS.data = null;
   if (stay) { paintSetup(); return notice('ok', 'setup.json rewritten.'); }
   Object.assign(SETUP, { clis: null, accounts: null, usage: null, scan: null, picks: {} });

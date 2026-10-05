@@ -54,7 +54,7 @@ const S = {
   draft: '',
   tab: 'preview',
   badges: { models: 0 },
-  navs: 0,              // navigations asked for since load; first run checks it
+  navs: 0,              // navigations (and view changes) since load; first run's redirect yields to any
 };
 
 /**
@@ -649,6 +649,7 @@ const isDirty = () => S.file && S.draft !== S.original;
 
 async function openEntry(entry, filePath) {
   if (!confirmDiscard()) return;
+  S.navs++;
   S.entry = entry;
   S.lastEntryId = entry.id;         // what the Files page highlights when you go there
   S.view = 'entry';
@@ -799,6 +800,7 @@ function renderContent() {
  * S.lastEntryId stays, for the Files page to highlight.
  */
 function leaveEditor() {
+  S.navs++;          // every view change passes here: first run's redirect yields to it
   S.entry = null; S.file = null; S.original = ''; S.draft = ''; S.revoked = false;
 }
 
@@ -2760,10 +2762,66 @@ let usageTimer = null;
  * `view` is the view that owns the row: polling stops once it is left (Usage,
  * or the setup screen, which runs the same flow). `onSignedIn` repaints it.
  */
+/** One login poller per seat, owned by the row on screen that shows it. */
+const LOGIN_POLLS = new Map();
+
 function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => paintUsage() } = {}) {
   const row = el('div', 'usage-hint');
   const btn = el('button', 'btn', reauth ? 'Sign in as a different account' : 'Sign in with ChatGPT');
   const status = el('span', 'usage-hint-label', '');
+  // Every answer that arrives after an await must prove this row is still
+  // the one on screen — the view may have changed, or repainted it away.
+  const onScreen = () => S.view === view && document.body.contains(row);
+
+  /** The sign-in page link, and the lsof warning when the check could not run. */
+  const showWaiting = ({ url, unchecked }, opened) => {
+    // The conflict check could not run here (no lsof): sign-in goes ahead,
+    // and the person is told what that check would have caught.
+    if (unchecked) row.appendChild(el('div', 'usage-conflict-why connect-unchecked', unchecked));
+    const link = el('a', 'usage-hint-link', 'Open the sign-in page');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    row.appendChild(link);
+    status.textContent = opened
+      ? 'waiting for you to finish in the other tab…'
+      : 'your browser blocked the popup — use the link';
+  };
+
+  // Poll rather than hold a request open for the whole OAuth round trip. A
+  // new row for the same seat takes the poller over; the old one stops.
+  const poll = () => {
+    const prev = LOGIN_POLLS.get(seat.seatId);
+    if (prev) clearInterval(prev.timer);
+    const mine = { row, timer: null };
+    LOGIN_POLLS.set(seat.seatId, mine);
+    const owns = () => LOGIN_POLLS.get(seat.seatId) === mine && onScreen();
+    const stop = () => { clearInterval(mine.timer); if (LOGIN_POLLS.get(seat.seatId) === mine) LOGIN_POLLS.delete(seat.seatId); };
+    const started = Date.now();
+    mine.timer = setInterval(async () => {
+      if (!owns()) return stop();
+      let st;
+      try { st = await api('POST', '/api/usage/connect/state', { id: seat.seatId }); }
+      catch { return; }
+      if (!owns()) return stop();
+      if (st.signedIn) {
+        stop();
+        // Reconcile through the CLI before repainting. It is the only process
+        // that can read account identity, so until it has run, the studio
+        // cannot know this seat changed account — and would keep filtering
+        // against the previous login.
+        status.textContent = 'signed in — checking this seat…';
+        try { await api('POST', '/api/usage/refresh'); } catch { /* the repaint still shows state */ }
+        if (!onScreen()) return;
+        notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
+        onSignedIn();
+      } else if (!st.running && Date.now() - started > 5000) {
+        stop();
+        btn.disabled = false;
+        status.textContent = 'sign-in was cancelled or did not complete';
+      }
+    }, 2000);
+  };
 
   btn.onclick = async () => {
     btn.disabled = true; status.textContent = 'starting sign-in…';
@@ -2780,48 +2838,25 @@ function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => p
       return;
     }
     if (res.error) { btn.disabled = false; status.textContent = ''; return notice('error', res.error); }
-    // The conflict check could not run here (no lsof): sign-in goes ahead,
-    // and the person is told what that check would have caught.
-    if (res.unchecked) row.appendChild(el('div', 'usage-conflict-why connect-unchecked', res.unchecked));
 
     // The window.open happens after an await, so the browser's user-activation
     // window may have expired and the popup be blocked silently. Always render
     // the link too, so a blocked tab is a visible next step rather than a UI
     // that claims to be waiting for something that never opened.
     const opened = window.open(res.url, '_blank', 'noopener');
-    const link = el('a', 'usage-hint-link', 'Open the sign-in page');
-    link.href = res.url;
-    link.target = '_blank';
-    link.rel = 'noopener';
-    row.appendChild(link);
-    status.textContent = opened
-      ? 'waiting for you to finish in the other tab…'
-      : 'your browser blocked the popup — use the link';
-
-    // Poll rather than hold a request open for the whole OAuth round trip.
-    const started = Date.now();
-    const poll = setInterval(async () => {
-      if (S.view !== view) return clearInterval(poll);
-      let st;
-      try { st = await api('POST', '/api/usage/connect/state', { id: seat.seatId }); }
-      catch { return; }
-      if (st.signedIn) {
-        clearInterval(poll);
-        // Reconcile through the CLI before repainting. It is the only process
-        // that can read account identity, so until it has run, the studio
-        // cannot know this seat changed account — and would keep filtering
-        // against the previous login.
-        status.textContent = 'signed in — checking this seat…';
-        try { await api('POST', '/api/usage/refresh'); } catch { /* the repaint still shows state */ }
-        notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
-        onSignedIn();
-      } else if (!st.running && Date.now() - started > 5000) {
-        clearInterval(poll);
-        btn.disabled = false;
-        status.textContent = 'sign-in was cancelled or did not complete';
-      }
-    }, 2000);
+    showWaiting(res, opened);
+    poll();
   };
+
+  // Coming back to a seat whose sign-in is still waiting in the browser: show
+  // that one — its link and warning — rather than a fresh button that would
+  // start a second.
+  api('POST', '/api/usage/connect/state', { id: seat.seatId }).then((st) => {
+    if (!st?.running || !st.url || !onScreen() || btn.disabled) return;
+    btn.disabled = true;
+    showWaiting(st, true);
+    poll();
+  }, () => {});
 
   row.appendChild(btn);
   row.appendChild(status);
@@ -3304,6 +3339,7 @@ const HOME = {
   src: {},             // source id -> { state, data, error }
   inflight: {},        // source id -> its pending request, shared by re-renders
   settledAt: 0,        // when every source of the last full load answered
+  gen: 0,              // bumped by every render and by setup's Finish: an answer for an older one is dropped
   body: {},            // card id -> its body element, for the current render
   timing: null,        // { painted, settled } ms since page start, first load only
 };
@@ -3321,6 +3357,7 @@ const HOME_CARDS_OF = {
 const HOME_FRESH_MS = 30_000;
 
 function renderHome(c) {
+  HOME.gen++;
   const box = el('div', 'home');
 
   const accounts = homeCard('accounts', 'Accounts & usage');
@@ -3384,9 +3421,13 @@ function homeCard(id, title) {
 /**
  * Ask every source, fast ones now and slow ones once the page has painted.
  * A source keeps its last answer on screen until the new one lands, and an
- * answer that lands after you left Home is dropped rather than painted.
+ * answer that lands after you left Home is dropped rather than painted — as
+ * is one for an earlier visit (HOME.gen): a request from before setup's
+ * Finish must never paint over what Finish made true.
  */
 function loadHome() {
+  const gen = HOME.gen;
+  const mine = () => S.view === 'home' && HOME.gen === gen;
   // After first paint — or after 50 ms if no frame comes, since a background
   // tab runs none. Whichever is first; the promise settles once either way.
   const afterPaint = new Promise((r) => {
@@ -3397,12 +3438,15 @@ function loadHome() {
     if (!HOME.src[id]) HOME.src[id] = { state: 'loading' };
     const start = HOME_SLOW.has(id) ? afterPaint : Promise.resolve();
     return start.then(() => {
-      if (S.view !== 'home') return false;
-      HOME.inflight[id] ||= api('GET', HOME_ROUTES[id])
-        .then(homeSource, (e) => ({ state: 'error', error: e.message }))
-        .finally(() => { HOME.inflight[id] = null; });
+      if (!mine()) return false;
+      if (!HOME.inflight[id]) {
+        const req = api('GET', HOME_ROUTES[id])
+          .then(homeSource, (e) => ({ state: 'error', error: e.message }))
+          .finally(() => { if (HOME.inflight[id] === req) HOME.inflight[id] = null; });
+        HOME.inflight[id] = req;
+      }
       return HOME.inflight[id].then((res) => {
-        if (S.view !== 'home') return false;
+        if (!mine()) return false;
         HOME.src[id] = res;
         if (id === 'models' && res.state === 'ok') paintModelsBadge(res.data.pending || 0);
         paintHome(HOME_CARDS_OF[id]);
@@ -3411,7 +3455,7 @@ function loadHome() {
     });
   };
   // Recent's history line is the registry's, so "all loaded" waits for it too.
-  const history = registryReady.then(() => S.view === 'home');
+  const history = registryReady.then(() => mine());
   Promise.all([...Object.keys(HOME_ROUTES).map(ask), history]).then((stored) => {
     if (!stored.every(Boolean)) return;
     HOME.settledAt = Date.now();

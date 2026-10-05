@@ -66,8 +66,11 @@ function setupRoutes(over = {}) {
     },
     'GET /api/usage': () => ({ seats: st.seats.map((s) => ({ seatId: s.id, label: s.label, vendor: s.vendor, home: s.home, ok: false, signedIn: false, windows: [], reason: 'not signed in' })) }),
     'POST /api/usage/refresh': () => ({ seats: [] }),
-    'POST /api/usage/connect': () => ({ url: 'https://auth.openai.com/oauth/authorize?x=1', unchecked: 'lsof is not installed, so running Codex sessions cannot be detected — quit any Codex session using this seat before signing in, or it may undo the sign-in' }),
-    'POST /api/usage/connect/state': () => ({ signedIn: false, running: true, url: 'https://auth.openai.com/oauth/authorize?x=1' }),
+    // A login as the server keeps one: running from the start until signed in.
+    'POST /api/usage/connect': () => { st.login = { url: 'https://auth.openai.com/oauth/authorize?x=1', unchecked: 'lsof is not installed, so running Codex sessions cannot be detected — quit any Codex session using this seat before signing in, or it may undo the sign-in' }; return st.login; },
+    'POST /api/usage/connect/state': () => (st.login
+      ? { signedIn: !!st.signedIn, running: !st.signedIn, url: st.signedIn ? null : st.login.url, unchecked: st.login.unchecked }
+      : { signedIn: false, running: false, url: null }),
     'GET /api/roots': () => ROOTS(st.roots),
     'GET /api/setup/scan': () => ({ suggestions: [
       { path: '/h/code/work', display: '~/code/work', repos: 2, contextFiles: 1, status: 'new' },
@@ -204,6 +207,93 @@ console.log('\nsetup in the page');
   const n = p.requests.filter((r) => r.path === '/api/usage/connect/state').length;
   await new Promise((r) => setTimeout(r, 2200));
   ok('4 …and stops polling once setup is left', p.requests.filter((r) => r.path === '/api/usage/connect/state').length === n);
+}
+
+/* ── 4: the login poller belongs to the row on screen ─────────────────── */
+{
+  const routes = setupRoutes();
+  routes.st.seats.push({ id: 'codex', vendor: 'codex', label: 'Codex (primary)', home: '/h/.codex' });
+  const p = await boot({ routes, hash: '#setup&step=accounts' });
+  await settle(30);
+  btn(p, 'Sign in with ChatGPT').click();
+  await settle(30);
+  btn(p, 'Next').click();
+  await settle(30);
+  btn(p, 'Back').click();
+  await settle(40);
+  const row = () => p.$('content').querySelector('.usage-hint');
+  ok('4 Next then Back: the login in flight is shown again — its link and warning, the button not offered twice',
+     /Open the sign-in page/.test(p.text(row())) && /lsof is not installed/.test(p.text(row())) && btn(p, 'Sign in with ChatGPT')?.disabled === true, p.text(row()));
+  ok('4 …with exactly one poller for the seat', p.eval('LOGIN_POLLS.size') === 1);
+  const before = p.requests.filter((r) => r.path === '/api/usage/connect/state').length;
+  await new Promise((r) => setTimeout(r, 4300));
+  const ticks = p.requests.filter((r) => r.path === '/api/usage/connect/state').length - before;
+  ok('4 …polling once per tick (2 polls in two ticks, not 3)', ticks === 2, String(ticks));
+  p.$('btn-skills').click();
+  await new Promise((r) => setTimeout(r, 2200));
+  ok('4 leaving setup stops it', p.eval('LOGIN_POLLS.size') === 0);
+}
+{
+  // A signed-in answer still in flight when the person moves to Skills.
+  const routes = setupRoutes();
+  routes.st.seats.push({ id: 'codex', vendor: 'codex', label: 'Codex (primary)', home: '/h/.codex' });
+  let hold = null;
+  const base = routes.table['POST /api/usage/connect/state'];
+  routes.table['POST /api/usage/connect/state'] = (b) => {
+    if (routes.st.login && !hold) { hold = deferred(); return hold.promise; }
+    return base(b);
+  };
+  const p = await boot({ routes, hash: '#setup&step=accounts' });
+  await settle(30);
+  btn(p, 'Sign in with ChatGPT').click();
+  await new Promise((r) => setTimeout(r, 2200));
+  ok('4 (a poll is out)', !!hold);
+  p.$('btn-skills').click();
+  await settle(10);
+  hold.resolve({ signedIn: true, running: false, url: null });
+  await settle(40);
+  ok('4 a signed-in answer released after moving to Skills posts no refresh and shows no notice',
+     !p.requests.some((r) => r.path === '/api/usage/refresh') && !/is signed in/.test(p.text(p.$('notice-slot'))) && p.eval('S.view') === 'skills');
+}
+
+/* ── P2: every async answer proves it still owns the screen ─────────────── */
+{
+  // Home's first /api/roots answer is held; setup adds a folder and finishes; then the old answer lands.
+  const routes = setupRoutes();
+  routes.st.setup = { state: 'done' };
+  let first = null;
+  const roots = routes.table['GET /api/roots'];
+  routes.table['GET /api/roots'] = () => { if (!first) { first = deferred(); return first.promise; } return roots(); };
+  const p = await boot({ routes });
+  await settle(30);
+  btn(p, 'Run setup again').click();
+  await settle(20);
+  routes.st.roots.push({ id: 'work', label: 'Work', access: 'edit', status: 'ok', display: '~/code/work' });
+  p.eval("setupGo('done')");
+  await settle(20);
+  btn(p, 'Finish').click();
+  await settle(40);
+  ok('S15 after Finish, Home shows the new folder', /Project folders: 1 \(edit\)/.test(p.text(p.$('content'))), p.text(p.$('content')).slice(0, 120));
+  first.resolve(ROOTS([]));
+  await settle(40);
+  ok('S15 …and the old, held /api/roots answer cannot paint over it', /Project folders: 1 \(edit\)/.test(p.text(p.$('content'))), p.text(p.$('content')).slice(0, 120));
+}
+{
+  // The boot status is held at "none"; the person runs setup from Home and finishes; then it lands.
+  const routes = setupRoutes();
+  let gate = null;
+  routes.table['GET /api/setup/status'] = () => { if (!gate) { gate = deferred(); return gate.promise; } return routes.st.setup; };
+  const p = await boot({ routes });
+  await settle(30);
+  btn(p, 'Run setup again').click();
+  await settle(20);
+  p.eval("setupGo('done')");
+  await settle(20);
+  btn(p, 'Finish').click();
+  await settle(30);
+  gate.resolve({ state: 'none' });
+  await settle(40);
+  ok('S14 a stale boot status, released after Run setup again + Finish, leaves you on Home', p.eval('S.view') === 'home' && p.location.hash === '#home', `${p.eval('S.view')} ${p.location.hash}`);
 }
 
 /* ── 6: folders ────────────────────────────────────────────────────────── */
