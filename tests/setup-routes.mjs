@@ -301,6 +301,39 @@ ok('the real HOME is never a test HOME', !temps.includes(realHome));
   await srv.stop();
 }
 
+/* ── S12: the rest of lib/roots.js's rejection set, through the route ─── */
+{
+  const home = mkTemp('relocated');
+  seedGlobals(home);
+  mk(home, '.config', 'worktree');
+  // ~/.ssh and ~/.claude both live elsewhere, through links.
+  mk(home, 'stuff', 'keys');
+  fs.symlinkSync(path.join(home, 'stuff', 'keys'), path.join(home, '.ssh'));
+  fs.renameSync(path.join(home, '.claude'), path.join(home, 'dots-claude'));
+  mk(home, 'dots');
+  fs.renameSync(path.join(home, 'dots-claude'), path.join(home, 'dots', 'claude'));
+  fs.symlinkSync(path.join(home, 'dots', 'claude'), path.join(home, '.claude'));
+  mk(home, 'dots', 'claude', 'projects-x');
+  mk(home, 'stuff', 'keys', 'sub');
+  const srv = await startServer(home, { root: ROOT });
+  const api = call(srv.base);
+  const rootsFile = path.join(home, '.agent-config-studio', 'roots.json');
+  const snap = read(rootsFile);
+  for (const [what, body, pattern] of [
+    ['a folder containing a protected subtree (~/.config holds ~/.config/worktree)', { path: path.join(home, '.config'), access: 'read' }, /contains ~\/\.config\/worktree/],
+    ['a folder containing the relocated ~/.ssh target', { path: path.join(home, 'stuff'), access: 'read' }, /contains ~\/\.ssh/],
+    ['a folder inside the relocated ~/.ssh target', { path: path.join(home, 'stuff', 'keys', 'sub'), access: 'read' }, /inside ~\/\.ssh/],
+    ['a folder containing a relocated built-in home (~/.claude -> ~/dots/claude)', { path: path.join(home, 'dots'), access: 'read' }, /contains ~\/\.claude/],
+    ['a folder inside a relocated built-in home', { path: path.join(home, 'dots', 'claude', 'projects-x'), access: 'read' }, /inside ~\/\.claude/],
+  ]) {
+    const expected = R.validateRoot({ id: 'probe', path: body.path, label: path.basename(body.path), access: body.access }, [], { home });
+    const r = await api('/api/roots/add', { method: 'POST', body });
+    ok(`S12 refused through the route: ${what}`, r.status === 400 && expected && r.json?.error === expected && pattern.test(expected) && read(rootsFile) === snap,
+       `${r.status} ${r.json?.error} | expected ${expected}`);
+  }
+  await srv.stop();
+}
+
 assertRealHomesUnchanged(realBefore, ok);
 for (const t of temps) fs.rmSync(t, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
