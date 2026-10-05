@@ -63,6 +63,22 @@ console.log('\nsetup: accounts');
   try { S.addSuggestedSeat({ key: '../../etc', home: H, env, binaries: all, file: registry(H) }); } catch (e) { threw = e.message; }
   ok('S3 a key that is not a suggestion here is refused — no path is ever taken from the caller', /not a suggestion/.test(threw || ''), threw);
 
+  // A $CODEX_HOME alias (a link) of a registered home is that home.
+  const H3 = mkTemp('alias');
+  const realHomeDir = path.join(H3, 'real-codex');
+  S.addSuggestedSeat({ key: 'codex', home: H3, env: { CODEX_HOME: realHomeDir }, binaries: all, file: registry(H3) });
+  fs.symlinkSync(realHomeDir, path.join(H3, 'alias-codex'));
+  const aliasEnv = { CODEX_HOME: path.join(H3, 'alias-codex') };
+  const before = fs.readFileSync(registry(H3), 'utf8');
+  const listing = fs.readdirSync(H3).sort().join();
+  ok('S3 a $CODEX_HOME alias of a registered home shows as added',
+     S.suggestSeats({ home: H3, env: aliasEnv, binaries: all, file: registry(H3) }).find((x) => x.key === 'codex').added === true);
+  const viaAlias = S.addSuggestedSeat({ key: 'codex', home: H3, env: aliasEnv, binaries: all, file: registry(H3) });
+  ok('S3 …and adding it creates nothing', viaAlias.already === true && fs.readFileSync(registry(H3), 'utf8') === before && fs.readdirSync(H3).sort().join() === listing);
+  let dup = null;
+  try { S.addSeat({ id: 'codex-alias', vendor: 'codex', label: 'x', home: path.join(H3, 'alias-codex') }, registry(H3)); } catch (e) { dup = e.message; }
+  ok('S3 the registry itself refuses a second seat on the same home by another spelling', /already used/.test(dup || ''), dup);
+
   const H2 = mkTemp('split');
   fs.mkdirSync(path.join(H2, '.codex-seats', 'old'), { recursive: true });
   ok('S3 once Codex seats were split, the shared ~/.codex is not offered',
