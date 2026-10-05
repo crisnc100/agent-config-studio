@@ -5,7 +5,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { resolveSafe, assertWritable, isDenied, kindOf, tilde, currentRoots, HOME, STUDIO_HOME, CODEX_HOME } from './lib/paths.js';
+import { resolveSafe, assertWritable, assertNotHardLinked, isDenied, kindOf, tilde, currentRoots, HOME, STUDIO_HOME, CODEX_HOME } from './lib/paths.js';
 import { migrateRoots, rootsPath } from './lib/roots.js';
 import { buildRegistry, scopeChain } from './lib/registry.js';
 import { listSkills, resolveSkills, toPublic, readInSkill, parseFrontmatter, SKILL_LIMITS } from './lib/skills.js';
@@ -927,6 +927,7 @@ export function createApp(opts = {}) {
     await history.recordBaseline(abs, `state of ${tilde(abs)} before edit`).catch(() => {});
 
     assertWritable(abs);
+    assertNotHardLinked(abs);
     await fsp.writeFile(abs, content, 'utf8');
     expectWrite(abs, 'changed', sha256Text(content));
     const after = await fsp.stat(abs);
@@ -979,6 +980,7 @@ export function createApp(opts = {}) {
     await history.recordBaseline(abs, `state of ${tilde(abs)} before restore`).catch(() => {});
 
     assertWritable(abs);
+    assertNotHardLinked(abs);
     await fsp.writeFile(abs, content, 'utf8');
     expectWrite(abs, 'changed', sha256Text(content));
     const after = await fsp.stat(abs);

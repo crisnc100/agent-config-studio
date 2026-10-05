@@ -353,6 +353,40 @@ ok('the real HOME is never a test HOME', !temps.includes(realHome));
   await srv.stop();
 }
 
+/* ── the editor writes in place: a hard-linked file is refused ─────────── */
+{
+  const home = mkTemp('hardlink');
+  seedGlobals(home);
+  const W = path.join(home, 'code', 'work');
+  const shared = path.join(home, 'clients');
+  fs.mkdirSync(path.join(W, 'app'), { recursive: true });
+  fs.mkdirSync(shared, { recursive: true });
+  const readCopy = path.join(shared, 'CLAUDE.md');
+  fs.writeFileSync(readCopy, '# READ-ROOT-ORIGINAL\n');
+  const editName = path.join(W, 'app', 'CLAUDE.md');
+  fs.linkSync(readCopy, editName);                       // one inode, two names
+  const plain = path.join(W, 'CLAUDE.md');
+  fs.writeFileSync(plain, '# plain\n');
+  writeRoots(home, [
+    { id: 'work', path: W, label: 'Work', access: 'edit' },
+    { id: 'clients', path: shared, label: 'Clients', access: 'read' },
+  ]);
+  const srv = await startServer(home, { root: ROOT });
+  const g = await srv.call(`/api/file?path=${encodeURIComponent(editName)}`);
+  const put = await srv.call('/api/file', { method: 'PUT', body: { path: editName, content: '# overwritten\n', mtime: g.json?.mtime } });
+  ok('HL saving a file hard-linked to a read-root file is refused with the plain message, both names unchanged',
+     put.status === 403 && put.json?.error === "this file has hard links; ACS won't edit it"
+     && fs.readFileSync(readCopy, 'utf8') === '# READ-ROOT-ORIGINAL\n', put.text);
+  const log = (await srv.call(`/api/history?path=${encodeURIComponent(editName)}`)).json?.commits || [];
+  const sha = log[log.length - 1]?.sha;
+  const rest = sha ? await srv.call('/api/history/restore', { method: 'POST', body: { path: editName, sha, mtime: fs.statSync(editName).mtimeMs } }) : null;
+  ok('HL …and so is restoring a version into it', Boolean(sha) && (rest.status === 403 && fs.readFileSync(readCopy, 'utf8') === '# READ-ROOT-ORIGINAL\n'), rest?.text);
+  const gp = await srv.call(`/api/file?path=${encodeURIComponent(plain)}`);
+  const pp = await srv.call('/api/file', { method: 'PUT', body: { path: plain, content: '# plain edited\n', mtime: gp.json.mtime } });
+  ok('HL a file with one link still saves', pp.status === 200 && pp.json.saved, pp.text);
+  await srv.stop();
+}
+
 for (const t of temps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} }
 assertRealHomesUnchanged(realBefore, ok);
 console.log(`\n${pass} passed, ${fail} failed`);
