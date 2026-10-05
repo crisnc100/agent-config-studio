@@ -891,7 +891,9 @@ export function createApp(opts = {}) {
   },
   'GET /api/setup/scan': async (req) => {
     requireStrict(req);
-    return scanOnce({ home: HOME, registered: registeredReal(), display: tilde });
+    const r = await scanOnce({ home: HOME, registered: registeredReal(), display: tilde });
+    if (r.busy) throw bad('the last scan is still finishing on a slow folder — try again in a moment', 409);
+    return r;
   },
   'GET /api/setup/accounts': async (req) => {
     requireStrict(req);

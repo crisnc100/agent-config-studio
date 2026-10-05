@@ -5,7 +5,7 @@
  *   - a fixture tree yields exactly the expected suggestions, each the
  *     immediate parent of its projects, with direct-child counts; a `.git`
  *     file counts; dot-dirs, node_modules, symlinked dirs and repo insides are
- *     skipped; nested suggestions keep the inner one; starting folders are
+ *     skipped; nested suggestions are both kept (no collapse); starting folders are
  *     de-duplicated by realpath (a symlinked one followed once, a case alias
  *     folded); registered folders show as added or covered; an unreadable
  *     folder is reported as blocked; a symlink loop terminates; depth is 3
@@ -22,7 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { startServer } from './fixtures/roots-home.mjs';
-import { scan } from '../lib/setup-scan.js';
+import { scan, scanOnce } from '../lib/setup-scan.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realHome = os.homedir();
@@ -80,10 +80,11 @@ console.log('\nsetup: scan');
   fs.chmodSync(path.join(H, 'workspace', 'locked'), 0o700);
   const by = Object.fromEntries(r.suggestions.map((s) => [s.display, s]));
   const names = r.suggestions.map((s) => s.display).sort();
-  ok('6 S13 exactly the expected suggestions', JSON.stringify(names) === JSON.stringify(['~/GitHub/big', '~/code/work', '~/dev/workspace', '~/git/mine']), JSON.stringify(names));
+  ok('6 S13 exactly the expected suggestions', JSON.stringify(names) === JSON.stringify(['~/GitHub/big', '~/code/work', '~/dev', '~/dev/workspace', '~/git/mine']), JSON.stringify(names));
   ok('6 S13 counts are of direct children; a .git FILE counts as a repo',
      by['~/code/work']?.repos === 2 && by['~/code/work'].contextFiles === 1, JSON.stringify(by['~/code/work']));
-  ok('S13 nested suggestions keep the inner one (~/dev is not offered)', !by['~/dev'] && by['~/dev/workspace']?.repos === 1);
+  ok('S13 nested suggestions are both kept: ~/dev (for workspace\'s CLAUDE.md) and ~/dev/workspace (for its repo)',
+     by['~/dev']?.contextFiles === 1 && by['~/dev'].repos === 0 && by['~/dev/workspace']?.repos === 1);
   ok('6 dot-dirs, node_modules and symlinked dirs are ignored; repo insides are not walked',
      !names.some((n) => /hidden|node_modules|linked|outside|packages/.test(n)));
   ok('6 depth stops at 3', !names.some((n) => n.startsWith('~/src')));
@@ -105,6 +106,48 @@ console.log('\nsetup: scan');
     const r2 = await scan({ home: H, display });
     ok('S13 on a case-sensitive volume, ~/Code is its own folder', r2.suggestions.some((s) => s.display === '~/Code/side'));
   }
+}
+
+/* ── S13: every project's immediate parent, nothing collapsed ─────────── */
+{
+  const H = mkTemp('parents');
+  mk(H, 'code', 'one', '.git');
+  mk(H, 'code', 'group', 'two', '.git');
+  const display = (p) => '~' + p.slice(H.length);
+  const r = await scan({ home: H, display });
+  const names = r.suggestions.map((s) => s.display).sort();
+  ok('S13 code/one/.git and code/group/two/.git suggest both ~/code and ~/code/group', JSON.stringify(names) === JSON.stringify(['~/code', '~/code/group']), JSON.stringify(names));
+  const after = await scan({ home: H, display, registered: [path.join(H, 'code')] });
+  const by = Object.fromEntries(after.suggestions.map((s) => [s.display, s]));
+  ok('S13 once the outer one is added, the inner one reads covered', by['~/code']?.status === 'added' && by['~/code/group']?.status === 'covered', JSON.stringify(after.suggestions));
+}
+
+/* ── S4 / S5: the slot and the timer ───────────────────────────────────── */
+{
+  const H = mkTemp('slot');
+  for (let i = 0; i < 5; i++) mk(H, 'code', `d${i}`);
+  // fs.promises, but every opendir takes 400 ms: the walk outlives the answer.
+  let open = 0, most = 0;
+  const fsp = fs.promises;
+  const slow = { ...fsp, realpath: fsp.realpath, stat: fsp.stat,
+    opendir: async (d) => { open++; most = Math.max(most, open); try { await sleep(400); return await fsp.opendir(d); } finally { open--; } } };
+  const opts = { home: H, io: slow, limits: { timeMs: 100 } };
+  const t0 = Date.now();
+  const first = await scanOnce(opts);
+  const took = Date.now() - t0;
+  const second = await scanOnce(opts);
+  ok('S4 a timed-out scan answers on time, truncated', first.truncated && took < 1000, `${took} ms`);
+  ok('S4 a scan asked while that walk is still running gets busy — no second walk', second.busy === true && most === 1, `busy=${second.busy} most=${most}`);
+  while (open) await sleep(50);
+  await sleep(50);
+  const third = await scanOnce({ home: H });
+  ok('S4 once the walk has really ended, the slot is free again', !third.busy && Array.isArray(third.suggestions));
+
+  // Finding the starting folders is under the timer too.
+  const stuck = { ...fsp, realpath: async (p) => { await sleep(2000); return fsp.realpath(p); } };
+  const t1 = Date.now();
+  const r = await scan({ home: H, io: stuck, limits: { timeMs: 300 } });
+  ok('S5 a slow realpath on the starting folders still answers within the deadline', Date.now() - t1 < 1000 && r.truncated, `${Date.now() - t1} ms`);
 }
 
 /* ── the caps ──────────────────────────────────────────────────────────── */
