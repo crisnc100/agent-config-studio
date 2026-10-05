@@ -197,6 +197,31 @@ const PATH = isolatedPath(bin);
   ok('S7 …and on an already-running start', z2.alreadyRunning && /lsof/.test(z2.unchecked || ''));
   C.cancelLogin({ seatId: 'z' });
   C._setProcessCheck(null);
+
+  // S6: an attempt cancelled while its conflict check is out never signs out or in.
+  const R = seatHome('r');
+  fs.writeFileSync(path.join(R, 'auth.json'), '{"old":true}');
+  let release;
+  const held = new Promise((r) => { release = r; });
+  let first = true;
+  C._setProcessCheck(async () => { if (first) { first = false; await held; } return []; });
+  const before = calls(bin);
+  const stalePending = C.startLogin({ seatId: 'r', home: R, reauth: true });
+  await sleep(50);
+  C.cancelLogin({ seatId: 'r' });
+  const fresh = await C.startLogin({ seatId: 'r', home: R, reauth: true });
+  const afterFresh = calls(bin).slice(before.length);
+  release();
+  const staleResult = await stalePending;
+  await sleep(300);
+  const all = calls(bin).slice(before.length);
+  const count = (re) => (all.match(re) || []).length;
+  ok('S6 the replacement signs out and starts its login', /^https:/.test(fresh.url || '') && /codex logout/.test(afterFresh) && /codex login/.test(afterFresh), JSON.stringify(fresh));
+  ok('S6 the cancelled attempt, released afterwards, neither signs out nor logs in',
+     /cancelled/.test(staleResult.error || '') && count(/codex logout/g) === 1 && count(/codex login/g) === 1, `${JSON.stringify(staleResult)} ${JSON.stringify(all)}`);
+  ok('S6 …and the replacement is still the running login', C.loginState({ seatId: 'r', home: R }).running);
+  C.cancelLogin({ seatId: 'r' });
+  C._setProcessCheck(null);
 }
 
 assertRealHomesUnchanged(realBefore, ok);
