@@ -10,7 +10,7 @@ import { migrateRoots, rootsPath, previewRoot, addRoot, removeRoot, EDIT_GRANTS 
 import { readSetup, writeSetup } from './lib/setup-state.js';
 import { detectClis } from './lib/setup-clis.js';
 import { scanOnce } from './lib/setup-scan.js';
-import { nextSteps } from './lib/setup-commands.js';
+import { nextSteps, pathStep } from './lib/setup-commands.js';
 import { isPartial } from './lib/walk-budget.js';
 import { locateBinary } from './lib/harness.js';
 import { refreshLoginDirs, loginDirs, loginDirsKnown, loginDirsSettled, LOGIN_READ_MS } from './lib/login-path.js';
@@ -904,7 +904,7 @@ export function createApp(opts = {}) {
     const acsOnPath = loginDirsKnown()
       ? locateBinary('acs', loginDirs().map((d) => path.join(d, 'acs'))).installed
       : null;
-    return { clis, acsOnPath, next: nextSteps({ acsOnPath: acsOnPath === true }), checkedAt: Date.now() };
+    return { clis, acsOnPath, path: pathStep({ acsOnPath }), next: nextSteps({ acsOnPath: acsOnPath === true }), checkedAt: Date.now() };
   },
   'GET /api/setup/scan': async (req) => {
     requireStrict(req);

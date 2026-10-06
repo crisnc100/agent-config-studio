@@ -7,24 +7,85 @@
 # (and in CI) with a bare "No such file or directory" that names zsh, not us.
 
 set -e
-DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
+
+# This checkout, found through any chain of symlinks (`acs install` puts one on
+# PATH). `readlink -f` is GNU-only, so each link is followed by hand; a
+# relative target is relative to the link's own directory.
+self=$0
+case $self in */*) ;; *) self=$(command -v -- "$self") ;; esac
+hops=0
+while [ -L "$self" ]; do
+  hops=$((hops + 1))
+  if [ "$hops" -gt 40 ]; then
+    echo "acs: too many levels of symlinks resolving $0" >&2
+    exit 1
+  fi
+  target=$(readlink -- "$self")
+  case $target in
+    /*) self=$target ;;
+    *) self=$(dirname -- "$self")/$target ;;
+  esac
+done
+DIR=$(unset CDPATH; cd -P -- "$(dirname -- "$self")/.." && pwd -P)
 PORT="${ACS_PORT:-8787}"
 URL="http://localhost:$PORT"
 
-# Identify the app by its health endpoint, never by "something owns the port" —
-# otherwise `acs stop` could kill an unrelated listener.
-is_acs() {
-  curl -sf --max-time 2 "$URL/api/health" 2>/dev/null | grep -q agent-config-studio
+# printf, not a here-document: a here-document needs a writable temp dir.
+usage() {
+  printf '%s\n' \
+    'usage: acs [--no-open]          start the studio (or focus it) and open the browser' \
+    "       acs stop                 stop the studio on port $PORT" \
+    '       acs install              link acs into a directory on your PATH' \
+    '       acs uninstall            remove that link' \
+    '       acs update               fast-forward this checkout; never starts the studio' \
+    '       acs roots ls|add|rm      the project folders the studio reads and edits' \
+    '       acs usage [...]          seat usage in the terminal' \
+    '       acs install-model-id     install the model-id resolver' \
+    '       acs install-worktree     install the worktree helpers (zsh/macOS only)' \
+    '       acs help                 this text' \
+    '' \
+    'environment: ACS_PORT (default 8787), ACS_NO_OPEN=1 (never open a browser),' \
+    '             ACS_NO_UPDATE=1 (start without pulling)' \
+    "checkout:    $DIR"
 }
 
-# Port check without lsof: it is absent on many Linux images, and a launcher
-# that mistakes "no lsof" for "port free" would start a second server.
-port_busy() {
-  if command -v lsof >/dev/null 2>&1; then
-    lsof -ti:"$PORT" >/dev/null 2>&1
-  else
-    curl -sf --max-time 1 -o /dev/null "$URL" 2>/dev/null
+# Node is the one runtime the studio needs. Check it before anything uses it,
+# so an old or missing node says so instead of failing on a syntax error.
+need_node() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo "acs: Node.js 20 or newer is required, and node is not on PATH. Install it from https://nodejs.org" >&2
+    exit 1
   fi
+  v=$(node -p process.versions.node 2>/dev/null || true)
+  major=${v%%.*}
+  case $major in
+    ''|*[!0-9]*) echo "acs: could not read the Node.js version (node -p printed \"$v\"). Node 20 or newer is required." >&2; exit 1 ;;
+  esac
+  if [ "$major" -lt 20 ]; then
+    echo "acs: Node.js $v is too old — Node 20 or newer is required. Install it from https://nodejs.org" >&2
+    exit 1
+  fi
+}
+
+# Identify the app by its health endpoint, never by "something owns the port" —
+# otherwise `acs stop` could kill an unrelated listener. Prints the pid, and
+# only one that really is a node process running a server.js: a health answer
+# naming any other pid (stale, or not ours) is never signalled.
+acs_pid() {
+  pid=$(node "$DIR/bin/acs-net.mjs" health "$PORT" 2>/dev/null) || return 1
+  cmd=$(ps -o command= -p "$pid" 2>/dev/null) || return 1
+  case $cmd in
+    *node*server.js*) echo "$pid" ;;
+    *) return 1 ;;
+  esac
+}
+is_acs() {
+  acs_pid >/dev/null
+}
+
+# Anything at all accepting connections on the port, HTTP or not.
+port_busy() {
+  node "$DIR/bin/acs-net.mjs" busy "$PORT"
 }
 
 # Bring this checkout up to the remote's default branch before starting, so
@@ -90,14 +151,41 @@ update_checkout() {
   return 10
 }
 
+# A browser that fails to open is reported, never fatal: the server is
+# already up and the URL is printed either way.
 open_url() {
-  if command -v open >/dev/null 2>&1; then open "$1"
-  elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1" >/dev/null 2>&1
+  if [ -n "${ACS_NO_OPEN:-}" ]; then echo "open $1 in your browser"; return 0; fi
+  if command -v open >/dev/null 2>&1; then open "$1" || echo "could not open a browser — open $1 yourself"
+  elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1" >/dev/null 2>&1 || echo "could not open a browser — open $1 yourself"
   else echo "open $1 in your browser"
   fi
+  return 0
 }
 
-case "$1" in
+# Exported, so the restart after an update keeps it.
+if [ "${1:-}" = "--no-open" ]; then
+  ACS_NO_OPEN=1
+  export ACS_NO_OPEN
+  shift
+fi
+
+case "${1:-}" in
+  '') ;;
+  help|-h|--help)
+    usage
+    exit 0
+    ;;
+  update)
+    # Pull only; never starts the studio, and needs nothing but git.
+    update_checkout || [ $? -eq 10 ]
+    exit 0
+    ;;
+  *)
+    need_node
+    ;;
+esac
+
+case "${1:-}" in
   usage)
     # The studio's onboarding tells people to run `acs usage`, so it has to
     # exist. Everything after the subcommand is forwarded verbatim.
@@ -121,27 +209,16 @@ case "$1" in
     # so skills keep resolving when a worktree is removed. Re-run after a pull.
     exec node "$DIR/bin/model-id" --install
     ;;
-  update)
-    # Pull only; never starts the studio.
-    update_checkout || [ $? -eq 10 ]
-    exit 0
+  install|uninstall)
+    # A symlink to this checkout's bin/acs on PATH, and its removal. Never
+    # edits a shell profile.
+    exec node "$DIR/bin/acs-link.mjs" "$@"
     ;;
   stop)
-    if is_acs; then
-      # Only kill processes LISTENING on the port, not clients connected to it.
-      if command -v lsof >/dev/null 2>&1; then
-        pids=$(lsof -t -sTCP:LISTEN -i:"$PORT" 2>/dev/null || true)
-        if [ -n "$pids" ]; then
-          # Unquoted on purpose: several pids must word-split into arguments.
-          # shellcheck disable=SC2086
-          kill $pids && echo "stopped."
-        else
-          echo "not running."
-        fi
-      else
-        echo "cannot stop without lsof — quit the process that is serving $URL." >&2
-        exit 1
-      fi
+    # The pid comes from the studio's own health answer, so only the process
+    # that identified itself as the studio on this port is signalled.
+    if pid=$(acs_pid); then
+      kill "$pid" && echo "stopped."
     elif port_busy; then
       echo "port $PORT is in use by something else — not touching it." >&2
       exit 1
@@ -149,6 +226,12 @@ case "$1" in
       echo "not running."
     fi
     exit 0
+    ;;
+  '') ;;
+  *)
+    echo "acs: unknown command: $1" >&2
+    usage >&2
+    exit 2
     ;;
 esac
 
@@ -173,12 +256,7 @@ PORT="$PORT" node "$DIR/server.js" &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null' INT TERM
 
-# Wait for the port to accept connections before opening the browser.
-n=0
-while [ "$n" -lt 40 ]; do
-  if port_busy; then break; fi
-  n=$((n + 1))
-  sleep 0.25
-done
+# Wait (up to 10 s) for the port to accept connections before opening the browser.
+node "$DIR/bin/acs-net.mjs" wait "$PORT" || true
 open_url "$URL"
 wait $SERVER_PID

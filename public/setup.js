@@ -539,6 +539,13 @@ function setupDoneStep(body) {
   body.appendChild(h);
   body.appendChild(el('div', 'scope-sub', 'Optional extras, run in a terminal. Then Finish and you are on Home.'));
   if (!SETUP.clis) body.appendChild(homeLoading('Reading the commands…'));
+  const onPath = SETUP.clis?.path;
+  if (onPath) {
+    const row = el('div', 'setup-path');
+    row.appendChild(el('div', null, onPath.note));
+    row.appendChild(setupCommand(onPath.command));
+    body.appendChild(row);
+  }
   for (const s of SETUP.clis?.next || []) {
     const row = el('div', 'setup-next');
     row.appendChild(el('div', null, s.note + (s.platforms ? ` (${s.platforms})` : '')));

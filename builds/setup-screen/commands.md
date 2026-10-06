@@ -22,6 +22,7 @@ no verified command for a step gets its `docs.*` link instead.
 | docs.grok | https://docs.x.ai/build/overview | official Grok Build page | 2026-10-04 |
 | next.model-id | `acs install-model-id` | this repo's `bin/acs` (`install-model-id` case); run by `tests/setup-commands.mjs` under a temp HOME | 2026-10-04 |
 | next.worktree | `acs install-worktree` | this repo's `bin/acs` (`install-worktree` case); zsh/macOS only; `--dry-run` run by `tests/setup-commands.mjs` | 2026-10-04 |
+| next.path | `acs install` | this repo's `bin/acs` (`install` case, `bin/acs-link.mjs`); run through the README by `tests/stranger.mjs` under a temp HOME | 2026-10-06 |
 
 `|` inside a command is written `\|` so the table stays a table; the reader unescapes it.
 

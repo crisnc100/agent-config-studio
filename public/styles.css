@@ -1177,7 +1177,7 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .setup-seat-pct { font: 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--text-dim); overflow-wrap: anywhere; min-width: 0; }
 .setup-row select, .setup-typed select { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
 .setup-blocked { padding: 2px 0; }
-.setup-next { margin: 10px 0; display: flex; flex-direction: column; gap: 4px; }
+.setup-next, .setup-path { margin: 10px 0; display: flex; flex-direction: column; gap: 4px; }
 .setup-finish { margin-top: 14px; }
 .setup-nav { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .setup-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
