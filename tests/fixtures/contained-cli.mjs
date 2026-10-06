@@ -29,12 +29,18 @@ const mode = (() => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'mo
 fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ harness: HARNESS, argv: a, env: {
   GROK_CLAUDE_MCPS_ENABLED: process.env.GROK_CLAUDE_MCPS_ENABLED ?? null,
   GROK_CURSOR_MCPS_ENABLED: process.env.GROK_CURSOR_MCPS_ENABLED ?? null,
-} }) + '\\n');
+}, envHash: crypto.createHash('sha256').update(JSON.stringify(Object.entries(process.env).sort())).digest('hex') }) + '\\n');
 if (a[0] === '--version') { console.log('9.9.9 (fake)'); process.exit(0); }
 if (a[0] === 'inspect') {
   const i = mode.inspect ?? { mcpServers: [], plugins: [] };
   if (i === 'fail') { console.error('inspect failed'); process.exit(1); }
   if (i === 'hang') { setTimeout(() => {}, 60000); return; }
+  if (i === 'ignore-term') {
+    fs.writeFileSync(path.join(dir, 'inspect.pid'), String(process.pid));
+    process.on('SIGTERM', () => {});
+    setInterval(() => {}, 1000);
+    return;
+  }
   process.stdout.write(i === 'garbage' ? 'not json' : JSON.stringify(i));
   process.exit(0);
 }

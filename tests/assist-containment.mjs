@@ -25,7 +25,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { containedCli } from './fixtures/contained-cli.mjs';
-import { containmentHeld, createInitGate, grokMcpFromInspect } from '../lib/containment.js';
+import { containmentHeld, createInitGate, grokMcpFromInspect, grokMcpRefusal } from '../lib/containment.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
@@ -55,13 +55,31 @@ console.log('\nassist containment: the shared rule');
   g2.see({ type: 'system', subtype: 'init', tools: ['Read'] });
   ok('…refuses a second init', /second init/.test(g2.see({ type: 'system', subtype: 'init', tools: ['Read'] }) || ''));
   ok('…and a stream that ended with none', /never reported/.test(createInitGate('grok').end() || ''));
-  ok('inspect: an enabled server counts', grokMcpFromInspect({ mcpServers: [{ name: 'jev' }] }).join() === 'jev');
+  ok('inspect: an enabled server counts', grokMcpFromInspect({ mcpServers: [{ name: 'jev' }], plugins: [] }).join() === 'jev');
   ok('inspect: a compat-disabled or disabled server does not',
-     grokMcpFromInspect({ mcpServers: [{ name: 'a', compatibilityStatus: 'disabled' }, { name: 'b', enabled: false }] }).length === 0);
+     grokMcpFromInspect({ mcpServers: [{ name: 'a', compatibilityStatus: 'disabled' }, { name: 'b', enabled: false }], plugins: [] }).length === 0);
   ok('inspect: a plugin that brings MCP servers counts', grokMcpFromInspect({ mcpServers: [], plugins: [{ name: 'p', enabled: true, provides: { mcpServers: 1 } }] }).join() === 'p (plugin)');
-  let threw = false;
-  try { grokMcpFromInspect({ servers: [] }); } catch { threw = true; }
-  ok('inspect: an unknown shape is never read as "none"', threw);
+  ok('inspect: the exact known-good empty shape clears', grokMcpFromInspect({ mcpServers: [], plugins: [{ name: 'p', enabled: true, provides: { mcpServers: 0, skills: 3 } }] }).length === 0);
+  // Every schema error refuses — grade finding 2, by class.
+  for (const [what, doc] of [
+    ['an unknown top-level shape', { servers: [] }],
+    ['plugins missing', { mcpServers: [] }],
+    ['plugins an object (the grade\'s repro)', { mcpServers: [], plugins: { evil: { provides: { mcpServers: 1 } } } }],
+    ['a plugin count that is a string', { mcpServers: [], plugins: [{ name: 'p', provides: { mcpServers: '1' } }] }],
+    ['a plugin count that is fractional', { mcpServers: [], plugins: [{ name: 'p', provides: { mcpServers: 0.5 } }] }],
+    ['a plugin count that is negative', { mcpServers: [], plugins: [{ name: 'p', provides: { mcpServers: -1 } }] }],
+    ['a plugin with no provides', { mcpServers: [], plugins: [{ name: 'p' }] }],
+    ['a plugin with no name', { mcpServers: [], plugins: [{ provides: { mcpServers: 0 } }] }],
+    ['a plugin enabled flag that is a string', { mcpServers: [], plugins: [{ name: 'p', enabled: 'false', provides: { mcpServers: 1 } }] }],
+    ['a server with no name', { mcpServers: [{ compatibilityStatus: 'enabled' }], plugins: [] }],
+    ['a server enabled flag that is a string', { mcpServers: [{ name: 'x', enabled: 'false' }], plugins: [] }],
+    ['a server status that is not a string', { mcpServers: [{ name: 'x', compatibilityStatus: 0 }], plugins: [] }],
+    ['a server entry that is not an object', { mcpServers: ['jev'], plugins: [] }],
+  ]) {
+    let threw = false;
+    try { grokMcpFromInspect(doc); } catch { threw = true; }
+    ok(`B1 inspect schema: ${what} → refused, never "none"`, threw);
+  }
 
   const src = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
   ok('4 phase1.mjs imports containmentHeld from lib/containment.js, and defines no copy',
@@ -158,7 +176,15 @@ try {
   const inspectCall = env.find((c) => c.argv[0] === 'inspect');
   const turnCall = env.find((c) => c.argv.includes('--prompt-file'));
   ok('B1 the inspect and the spawn got the SAME environment, byte for byte (built once, passed to both)',
-     inspectCall && turnCall && inspectCall.envHash === turnCall.envHash, JSON.stringify([inspectCall?.envHash, turnCall?.envHash]));
+     typeof inspectCall?.envHash === 'string' && inspectCall.envHash.length === 64 && inspectCall.envHash === turnCall?.envHash,
+     JSON.stringify([inspectCall?.envHash, turnCall?.envHash]));
+  // The comparison can fail: claude's spawn from this same server gets no
+  // GROK_* switches, so its env hash must differ from grok's.
+  setMode('claude', { kind: 'ok' });
+  await chat(srv.base, { message: 'hi', harness: 'claude' });
+  const claudeTurn = calls('claude').find((c) => c.argv.includes('-p'));
+  ok('B1 …and the hash does tell environments apart (claude\'s spawn env differs from grok\'s)',
+     typeof claudeTurn?.envHash === 'string' && claudeTurn.envHash !== turnCall?.envHash, JSON.stringify([claudeTurn?.envHash, turnCall?.envHash]));
   ok('B1 …by construction: spawnContained spawns with the clearance\'s env, which clearForSpawn handed the preflight',
      /env: clearance\.env/.test(fs.readFileSync(path.join(ROOT, 'lib', 'harness.js'), 'utf8')) &&
      /const env = spawnEnv\(descriptor\);\s*const why = descriptor\.preflight \? await descriptor\.preflight\(\{ binary, cwd, env \}\)/.test(fs.readFileSync(path.join(ROOT, 'lib', 'harness.js'), 'utf8')));
@@ -231,6 +257,22 @@ console.log('\nassist containment: the init deadline');
   ok('B2 …promptly, not at the CLI\'s leisure', Date.now() - t0 < 5000, `${Date.now() - t0} ms`);
   await sleep(3500);
   ok('B2 …and the process group is gone (the grandchild never wrote)', read('claude', 'leaked.log') === '');
+}
+
+console.log('\nassist containment: the inspect deadline is hard');
+{
+  const { inspectGrok } = await import('../lib/harness.js');
+  setMode('grok', { inspect: 'ignore-term' });
+  const t0 = Date.now();
+  const r = await inspectGrok({ binary: bins.grok, cwd: home, env: process.env, timeout: 300 });
+  const took = Date.now() - t0;
+  ok('B1 an inspect that ignores SIGTERM: refused at the deadline', /timed out/.test(r.error || '') && grokMcpRefusal(r) !== null, JSON.stringify(r));
+  ok('B1 …within timeout + 500 ms', took < 800, `${took} ms`);
+  await sleep(200);
+  const pid = Number(read('grok', 'inspect.pid'));
+  let alive = true;
+  try { process.kill(pid, 0); } catch { alive = false; }
+  ok('B1 …and the inspect process is gone (its group was SIGKILLed)', pid > 0 && !alive, `pid ${pid} alive=${alive}`);
 }
 
 fs.rmSync(home, { recursive: true, force: true });
