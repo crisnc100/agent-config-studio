@@ -1430,6 +1430,12 @@ export function createApp(opts = {}) {
     res.writeHead(404).end('not found');
   }
   });
+  // An idle keep-alive socket must outlive the client's own idle timeout, or
+  // the server closes it just as the client reuses it. Node 20.0's fetch hits
+  // exactly that against the 5 s default (ECONNRESET / "other side closed" on
+  // the next request after a quiet spell). headersTimeout must stay above it.
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
 
   return { server, sessions, models };
 }
