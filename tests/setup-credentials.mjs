@@ -253,6 +253,57 @@ await scenario('dotdot', (home, work) => {
   ok('trash: an honest interrupted restore passes only with the recorded bytes', r.right === true && r.wrong === false, JSON.stringify(r));
 }
 
+/* ── regrade 3 ────────────────────────────────────────────────────────── */
+
+// A FIFO in an edit folder: the read refuses it at once, and the server never blocks.
+{
+  let mkfifo = null;
+  for (const c of ['/usr/bin/mkfifo', '/bin/mkfifo']) if (fs.existsSync(c)) mkfifo = c;
+  if (!mkfifo) console.log('  skip FIFO: no mkfifo on this machine');
+  else {
+    const home = mkTemp('fifo');
+    put(path.join(home, '.claude', 'CLAUDE.md'), '# global\n');
+    const work = path.join(home, 'code', 'work');
+    put(path.join(work, 'CLAUDE.md'), '# w\n');
+    put(path.join(home, '.agent-config-studio', 'roots.json'), JSON.stringify({ version: 1, roots: [{ id: 'work', path: work, label: 'Work', access: 'edit' }] }));
+    const fifo = path.join(work, 'pipe.md');
+    execFileSync(mkfifo, [fifo]);
+    const srv = await startServer(home, { root: ROOT });
+    const t0 = Date.now();
+    const r = await fetch(`${srv.base}${file(fifo)}`, { signal: AbortSignal.timeout(5000) }).then(async (x) => ({ status: x.status, text: await x.text() }), (e) => ({ status: 0, text: String(e) }));
+    const took = Date.now() - t0;
+    const h0 = Date.now();
+    const health = await fetch(`${srv.base}/api/health`, { signal: AbortSignal.timeout(3000) }).then((x) => x.ok, () => false);
+    ok('FIFO: GET /api/file on a named pipe with no writer answers 4xx within 1 s', r.status >= 400 && r.status < 500 && took < 1000, `${r.status} in ${took} ms: ${r.text.slice(0, 100)}`);
+    ok('FIFO: …and /api/health stays responsive', health && Date.now() - h0 < 1000);
+    await srv.stop();
+  }
+}
+
+// A trash entry whose data/ is a link to a folder outside the trash.
+{
+  const home = mkTemp('trash-alias');
+  const mem = path.join(home, '.claude', 'projects', '-x', 'memory');
+  put(path.join(mem, 'keep.md'), 'k\n');
+  put(path.join(home, 'outside', 'fact.md'), 'the fact');
+  const r = probe(home, `
+    const crypto = await import('node:crypto');
+    const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
+    const trash = path.join(H, '.agent-config-studio', 'trash');
+    const fact = path.join(${JSON.stringify(mem)}, 'fact.md');
+    const ext = path.join(H, 'outside', 'fact.md');
+    fs.mkdirSync(path.join(trash, 'alias'), { recursive: true });
+    fs.symlinkSync(path.join(H, 'outside'), path.join(trash, 'alias', 'data'));
+    fs.writeFileSync(path.join(trash, 'alias', 'trash-meta.json'), JSON.stringify({ name: 'fact.md', layout: 'data', originalPath: fact }));
+    fs.linkSync(ext, fact);
+    const link = M.isRestoreLink('alias', fact, sha('the fact'));
+    const listed = (await M.listTrash()).length;
+    let restore; try { restore = await M.restoreTrash({ id: 'alias' }); } catch (e) { restore = { error: e.message, status: e.status }; }
+    return { link, listed, restore, extStill: fs.existsSync(ext), content: fs.readFileSync(ext, 'utf8') };`);
+  ok('trash: a data/ linked to an outside folder is no restore link', r.link === false, JSON.stringify(r));
+  ok('trash: …is not listed, restore refuses it, and the outside payload survives', r.listed === 0 && r.restore.error && r.extStill && r.content === 'the fact', JSON.stringify(r));
+}
+
 assertRealHomesUnchanged(realBefore, ok);
 for (const t of temps) fs.rmSync(t, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);

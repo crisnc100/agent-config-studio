@@ -12,8 +12,8 @@ import { detectClis } from './lib/setup-clis.js';
 import { scanOnce } from './lib/setup-scan.js';
 import { nextSteps } from './lib/setup-commands.js';
 import { isPartial } from './lib/walk-budget.js';
-import { locateBinary, candidatesFor } from './lib/harness.js';
-import { refreshLoginDirs, loginDirs, loginDirsSettled } from './lib/login-path.js';
+import { locateBinary } from './lib/harness.js';
+import { refreshLoginDirs, loginDirs, loginDirsKnown, loginDirsSettled, LOGIN_READ_MS } from './lib/login-path.js';
 import { buildRegistry, scopeChain } from './lib/registry.js';
 import { listSkills, resolveSkills, toPublic, readInSkill, parseFrontmatter, SKILL_LIMITS } from './lib/skills.js';
 import { readSkillUsage, attachUsage, USAGE_CAVEAT } from './lib/skill-usage.js';
@@ -889,15 +889,17 @@ export function createApp(opts = {}) {
     const recheck = url.searchParams.get('recheck') === '1';
     // Without Recheck, the read made at start is awaited (bounded): the first
     // answer must already be about a new terminal's PATH.
-    if (!recheck) await loginDirsSettled(1500);
-    const pendingDirs = recheck ? refreshLoginDirs({ timeoutMs: 1500 }) : null;
+    if (!recheck) await loginDirsSettled(LOGIN_READ_MS);
+    const pendingDirs = recheck ? refreshLoginDirs({ timeoutMs: LOGIN_READ_MS }) : null;
     const clis = await detectClis({ home: HOME, pendingDirs });
-    // acs on the PATH a new terminal has, not the one this server inherited:
-    // a launcher-only PATH entry the profile drops must not count. Until the
-    // login read has landed, the inherited PATH is all there is.
-    const login = loginDirs();
-    const acsOnPath = locateBinary('acs', login.length ? login.map((d) => path.join(d, 'acs')) : candidatesFor('acs', [])).installed;
-    return { clis, acsOnPath, next: nextSteps({ acsOnPath }), checkedAt: Date.now() };
+    // acs on the PATH a new terminal has, not the one this server inherited
+    // (a launcher-only entry the profile drops must not count). When the
+    // login shell has not answered, it is unknown — null — and the Done step
+    // shows this checkout's absolute bin/acs, which works either way.
+    const acsOnPath = loginDirsKnown()
+      ? locateBinary('acs', loginDirs().map((d) => path.join(d, 'acs'))).installed
+      : null;
+    return { clis, acsOnPath, next: nextSteps({ acsOnPath: acsOnPath === true }), checkedAt: Date.now() };
   },
   'GET /api/setup/scan': async (req) => {
     requireStrict(req);

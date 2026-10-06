@@ -197,6 +197,24 @@ await srv.stop();
   await s2.stop();
 }
 
+/* ── S16: a login shell slower than the budget leaves acs "unknown" ───── */
+{
+  const h = path.join(sandbox, 'home3');
+  const b3 = path.join(sandbox, 'bin3');
+  fs.mkdirSync(h);
+  fakeCli(b3, 'claude');
+  const launcherOnly = path.join(sandbox, 'launcher-only-3');
+  fs.mkdirSync(launcherOnly);
+  fs.writeFileSync(path.join(launcherOnly, 'acs'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(h, '.profile'), 'sleep 3\nexport PATH\n');
+  const s3 = await startServer(h, { root: ROOT, env: { PATH: `${isolatedPath(b3)}:${launcherOnly}` } });
+  const r = await (await fetch(`${s3.base}/api/setup/clis`)).json();
+  ok('S16 with no login-shell answer inside the budget, acsOnPath is unknown (null), not a guess from the inherited PATH',
+     r.acsOnPath === null, JSON.stringify(r.acsOnPath));
+  ok('S16 …and the Done step shows the absolute bin/acs form', r.next.length === 2 && r.next.every((n) => n.command.includes('/bin/acs ') && !n.command.startsWith('acs ')), JSON.stringify(r.next));
+  await s3.stop();
+}
+
 {
   const { loginPathDirs } = await import('../lib/login-path.js');
   const h = path.join(sandbox, 'broken-shell-home');

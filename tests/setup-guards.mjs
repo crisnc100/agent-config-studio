@@ -82,47 +82,127 @@ console.log('setup guards\n');
 
 /* ── one read chokepoint: content reads go through lib/paths.js ───────── */
 {
-  // Every other file read in lib/, bin/ and server.js, each with why it is not
-  // a user file's content being handed out. A new readFileSync / readFile /
-  // createReadStream anywhere else fails until it is routed through
-  // openUserFile / readUserText or added here with its reason.
+  // The threat model: any read whose bytes — or any excerpt of them — reach
+  // an HTTP response, the history repo, or a file ACS writes goes through
+  // lib/paths.js openUserFile / readUserText. Everything else that reads a
+  // file in lib/, bin/ or server.js is listed here by its EXACT call text
+  // (receiver included, whitespace normalised), once per occurrence, with
+  // why it is allowed: the studio's own files, this checkout, the system,
+  // reads that only derive counts or metadata and never return or persist
+  // the bytes, and the usage CLI child's credential readers (a separate
+  // process by design). Anything new fails until it is routed or listed.
   const ALLOW = {
-    'lib/roots.js': [[/^readFile\(home\)/, 'its own function name: roots.json, the studio\'s registry'], [/^readFileSync\(file, 'utf8'\)/, 'roots.json, the studio\'s own registry']],
-    'lib/setup-state.js': [[/^readFileSync\(file, 'utf8'\)/, 'setup.json, the studio\'s own marker']],
-    'lib/setup-commands.js': [[/^readFileSync\(file, 'utf8'\)/, 'builds/setup-screen/commands.md, in this checkout']],
-    'lib/login-path.js': [[/^readFileSync\('\/etc\/shells'/, '/etc/shells, the system list of login shells']],
-    'lib/usage/seats.js': [[/^readFileSync\(file, 'utf8'\)/, 'seats.json and the usage snapshot, the studio\'s own']],
-    'lib/usage/accounts.js': [[/^readFileSync\(file, 'utf8'\)/, 'accounts.json, the studio\'s own']],
-    'lib/usage/shell.js': [[/^readFileSync\(zshenv, 'utf8'\)/, '~/.zshenv, only to find or place ACS\'s one source line: never returned, and a hard-linked dotfile must not read as empty and be rewritten'], [/^readFileSync\(file, 'utf8'\)/, 'shortcuts.json, the studio\'s own']],
-    'lib/usage/claude.js': [[/^readFileSync\(file, 'utf8'\)/, 'the Claude credential, read only inside the acs-usage CLI child (lib/usage/refresh.js) — never by the studio process']],
-    'lib/usage/identity.js': [[/^readFileSync\(path\.join\(codexHome, 'auth\.json'\)/, 'account identity, computed only inside the acs-usage CLI child; never returned'], [/^readFileSync\(path\.join\(grokHome, 'auth\.json'\)/, 'the same account identity, for Grok, in the CLI child only']],
-    'lib/memory-ops.js': [[/^readFileSync\(REVIEW_FILE/, 'the studio\'s own review state'], [/^readFileSync\(opFile\(id\)/, 'the studio\'s own operation records'], [/^readFileSync\(tmp\)/, 'a temp file this module just wrote']],
-    'lib/memory-index.js': [[/^readFileSync\(file, 'utf8'\)/, 'its own writes cache, in the studio folder']],
-    'lib/skill-usage.js': [[/^readFileSync\(file, 'utf8'\)/, 'its own usage cache, in the studio folder']],
-    'lib/models-panel.js': [[/^readFileSync\(userPath\(home\)/, 'models.json, the studio\'s own registry file'], [/^readFileSync\(dismissedPath\(home\)/, 'the studio\'s own dismissed alerts'], [/^readFileSync\(file, 'utf8'\)( : null|, family\))/, 'models.json again, before rewriting it']],
-    'lib/models.js': [[/^readFileSync\(file, 'utf8'\)$/, 'the model registry files'], [/^readFileSync\((file|settings|toml)/, 'the model-id CLI only (lint, sidecars), never behind a route; models.js is copied standalone into the resolver, so it imports nothing of the studio']],
-    'lib/models-catalog.js': [[/^readFileSync\(file, 'utf8'\)/, 'the injected test io; the real read is readUserText']],
-    'lib/history.js': [[/^readFileSync\(mirrored/, 'the history mirror, the studio\'s own copy']],
-    'lib/mutate.js': [[/^readFile\(path\.join\(dir, file\)/, 'trash metadata, the studio\'s own'], [/^readFileSync\(path\.join\(dir, file\)/, 'trash metadata, the studio\'s own'], [/^readFileSync\(p\)\)\.digest/, 'hashes for a restore\'s own payload, compared, never returned']],
-    'server.js': [[/^readFile\(file\)$/, 'the page\'s static assets, from this checkout\'s public/']],
-    'bin/install-worktree.mjs': [[/./, 'the installer: copies this checkout\'s tools/worktree, run from a terminal']],
-    'bin/model-id': [[/./, 'the resolver installer: copies files out of this checkout']],
+    'lib/roots.js': [
+      ['readFile(home)', 'not a file read: roots.js\'s own function of that name (its definition and two calls)'],
+      ['readFile(home)', 'not a file read: roots.js\'s own function of that name (its definition and two calls)'],
+      ['readFile(home)', 'not a file read: roots.js\'s own function of that name (its definition and two calls)'],
+      ["fs.readFileSync(file, 'utf8')", 'roots.json, the studio\'s own folder registry'],
+    ],
+    'lib/setup-state.js': [["fs.readFileSync(file, 'utf8')", 'setup.json, the studio\'s own first-run marker']],
+    'lib/setup-commands.js': [["fs.readFileSync(file, 'utf8')", 'builds/setup-screen/commands.md, in this checkout']],
+    'lib/login-path.js': [["fs.readFileSync('/etc/shells', 'utf8')", '/etc/shells, the system list of login shells']],
+    'lib/history.js': [["fs.readFileSync(mirrored, 'utf8')", 'the history mirror, the studio\'s own copy (the live side is openUserFile)']],
+    'lib/usage/seats.js': [
+      ["fs.readFileSync(file, 'utf8')", 'seats.json, the studio\'s own seat registry'],
+      ["fs.readFileSync(file, 'utf8')", 'usage-snapshot.json, the studio\'s own stored reading'],
+    ],
+    'lib/usage/accounts.js': [["fs.readFileSync(file, 'utf8')", 'accounts.json, the studio\'s own account state']],
+    'lib/usage/shell.js': [["fs.readFileSync(file, 'utf8')", 'shortcuts.json, the studio\'s own shortcut config (~/.zshenv is readUserText)']],
+    'lib/usage/claude.js': [["fs.readFileSync(file, 'utf8')", 'the Claude credential, read only inside the acs-usage CLI child (lib/usage/refresh.js), a separate process by design']],
+    'lib/usage/identity.js': [
+      ["fs.readFileSync(path.join(codexHome, 'auth.json'), 'utf8')", 'account identity, computed only inside the acs-usage CLI child; never returned'],
+      ["fs.readFileSync(path.join(grokHome, 'auth.json'), 'utf8')", 'account identity for Grok, computed only inside the acs-usage CLI child'],
+    ],
+    'lib/usage/codex.js': [['fs.readSync(fd, buf, 0, buf.length, start)', 'Codex rollout tails: only token counts and rate-limit numbers are derived; no bytes are returned or kept']],
+    'lib/memory-ops.js': [
+      ["fs.readFileSync(REVIEW_FILE, 'utf8')", 'the studio\'s own review state'],
+      ["fs.readFileSync(opFile(id), 'utf8')", 'the studio\'s own operation records'],
+      ['fs.readFileSync(tmp)', 'a temp file this module just wrote, read back to verify it'],
+    ],
+    'lib/memory-index.js': [
+      ["fs.readFileSync(file, 'utf8')", 'its own writes cache, in the studio folder'],
+      ['fh.read(buf, 0, CHUNK_BYTES, pos)', 'transcripts: only which memory files were written, and when, is derived; no bytes are returned or kept'],
+    ],
+    'lib/skill-usage.js': [
+      ["fs.readFileSync(file, 'utf8')", 'its own usage cache, in the studio folder'],
+      ['fh.read(buf, 0, CHUNK_BYTES, pos)', 'transcripts: only skill-use counts and times are derived; no bytes are returned or kept'],
+    ],
+    'lib/gitmeta.js': [['fs.readSync(fd, buf, 0, st.size, 0)', 'git metadata (HEAD, gitdir pointers): only branch and repo identity are derived']],
+    'lib/harness.js': [['fs.readSync(fd, buf, 0, 4096, 0)', 'an executable\'s first 4 KB, inspected for a wrapper-shim shebang; nothing is returned']],
+    'lib/registry.js': [['handle.readSync()', 'Dir.readSync: the next directory entry, not file bytes']],
+    'lib/skills.js': [['io.readSync(fd, buf, 0, want, total)', 'readInSkill, the descriptor reader for skills, Context and Memory: same checks as openUserFile, on its own fd']],
+    'lib/models-panel.js': [
+      ["fs.readFileSync(userPath(home), 'utf8')", 'models.json, the studio\'s own model registry file'],
+      ["fs.readFileSync(dismissedPath(home), 'utf8')", 'the studio\'s own dismissed alerts'],
+      ["fs.readFileSync(file, 'utf8')", 'models.json again (file = userPath(home)), before setModel rewrites it'],
+      ["fs.readFileSync(file, 'utf8')", 'models.json again (file = userPath(home)), before resetModel rewrites it'],
+    ],
+    'lib/models.js': [
+      ["fs.readFileSync(file, 'utf8')", 'the model registry: models.default.json in this checkout and the studio\'s models.json'],
+      ['fs.readFileSync(file)', 'model-id lint, a terminal CLI only, never behind a route; models.js is copied standalone into the resolver and imports nothing of the studio'],
+      ["fs.readFileSync(settings, 'utf8')", 'model-id sidecars, the terminal CLI only, same reason'],
+      ["fs.readFileSync(toml, 'utf8')", 'model-id sidecars, the terminal CLI only, same reason'],
+    ],
+    'lib/models-catalog.js': [["io.readFileSync(file, 'utf8')", 'the injected test io only; with the real fs the read is readUserText']],
+    'lib/mutate.js': [
+      ["fsp.readFile(path.join(dir, file), 'utf8')", 'trash metadata, the studio\'s own'],
+      ["fs.readFileSync(path.join(dir, file), 'utf8')", 'trash metadata, the studio\'s own'],
+      ['fs.readFileSync(p)', 'sha256Of: a payload inside the studio\'s own trash (contained by containedPayload); the hash only tags the studio\'s write'],
+    ],
+    'server.js': [['fsp.readFile(file)', 'the page\'s static assets, from this checkout\'s public/']],
+    'bin/install-worktree.mjs': [
+      ['fs.readFileSync(path.join(SRC, name))', 'this checkout\'s tools/worktree, the files being installed'],
+      ['fs.readFileSync(out)', 'the backup this installer just wrote, read back to verify it (the user\'s side is openUserFile)'],
+    ],
+    'bin/model-id': [
+      ["fs.readFileSync(path.join(src, 'bin', 'model-id'))", 'this checkout\'s resolver script, copied out by --install'],
+      ["fs.readFileSync(path.join(src, 'lib', 'models.js'))", 'this checkout\'s models.js, copied out by --install'],
+      ['fs.readFileSync(DEFAULTS_PATH)', 'this checkout\'s models.default.json, copied out by --install'],
+    ],
+  };
+  /** Every file-read call in `src`: receiver.name(args), args by balanced parens, whitespace normalised. */
+  const readCalls = (src) => {
+    const out = [];
+    const re = /(?:([\w$]+)\s*\.\s*)?(?<![\w$])(readFileSync|readFile|createReadStream|readSync|read)\s*\(/g;
+    for (let m; (m = re.exec(src));) {
+      if (m[2] === 'read' && !m[1]) continue;   // a bare read( is a local function, not a handle read
+      let i = src.indexOf('(', m.index), depth = 0, j = i;
+      for (; j < src.length; j++) { if (src[j] === '(') depth++; else if (src[j] === ')' && --depth === 0) break; }
+      out.push(`${m[1] ? `${m[1]}.` : ''}${m[2]}${src.slice(i, j + 1)}`.replace(/\s+/g, ' '));
+    }
+    return out;
+  };
+  /** Calls in `f` beyond what ALLOW lists for it, exact text, each entry used once. */
+  const offending = (f, src) => {
+    const left = (ALLOW[f] || []).map(([t]) => t);
+    const bad = [];
+    for (const c of readCalls(code(src))) {
+      const k = left.indexOf(c);
+      if (k === -1) bad.push(`${f}: ${c.slice(0, 80)}`); else left.splice(k, 1);
+    }
+    return bad;
   };
   const files = [
     ...fs.readdirSync(path.join(ROOT, 'lib'), { recursive: true }).filter((f) => /\.js$/.test(f)).map((f) => `lib/${f}`),
     'server.js', ...fs.readdirSync(path.join(ROOT, 'bin')).map((f) => `bin/${f}`),
   ].filter((f) => f !== 'lib/paths.js');
-  const offending = (f, src) => [...code(src).matchAll(/(?<![\w$])(readFileSync|readFile|createReadStream)\(([^\n;]{0,60})/g)]
-    .map((m) => `${m[1]}(${m[2]}`.trim())
-    .filter((call) => !(ALLOW[f] || []).some(([re]) => re.test(call)))
-    .map((call) => `${f}: ${call.slice(0, 70)}`);
-  const bad = files.flatMap((f) => offending(f, fs.readFileSync(path.join(ROOT, f), 'utf8')));
-  ok('reads: the check catches a planted direct read (registry, a new file, a stream)',
-     offending('lib/registry.js', "const raw = fs.readFileSync(abs, 'utf8');").length === 1
-     && offending('lib/new-thing.js', "fsp.readFile(p)").length === 1
-     && offending('server.js', "fs.createReadStream(abs)").length === 1);
-  ok('reads: every file read outside lib/paths.js is the studio\'s own, by an explicit reasoned list', bad.length === 0, bad.join(' | '));
-  ok('reads: the list carries a reason for each entry', Object.values(ALLOW).every((l) => l.every(([, why]) => why.length > 20)));
+  const real = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
+  const bad = files.flatMap((f) => offending(f, real(f)));
+  ok('reads: every read outside lib/paths.js is an exact, listed, reasoned call', bad.length === 0, bad.join(' | '));
+  ok('reads: every entry carries its reason', Object.values(ALLOW).every((l) => l.every(([, why]) => why.length > 20)));
+  const planted = (f, line) => offending(f, `${real(f)}\n${line}\n`).length > 0;
+  for (const [what, f, line] of [
+    ['a read in an installer (no wildcard any more)', 'bin/install-worktree.mjs', "fs.readFileSync(path.join(HOME, '.zshrc'))"],
+    ['an argument merely starting like an allowed one (no prefixes)', 'lib/models.js', "fs.readFileSync(fileOfUser, 'utf8')"],
+    ['the test-io call text with the real fs in production code', 'lib/models-catalog.js', "fs.readFileSync(file, 'utf8')"],
+    ['a live-file read for a byte comparison (sameBytes)', 'lib/mutate.js', 'fs.readFileSync(abs)'],
+    ['a descriptor read (readSync)', 'lib/registry.js', 'fs.readSync(fd, buf, 0, 10, 0)'],
+    ['a FileHandle read', 'lib/context-map.js', 'await handle.read(buf, 0, 64, 0)'],
+    ['a FileHandle readFile', 'server.js', 'await fh.readFile()'],
+    ['a stream', 'lib/registry.js', 'fs.createReadStream(abs)'],
+    ['one more of an allowed call than is listed', 'lib/setup-state.js', "fs.readFileSync(file, 'utf8')"],
+    ['a read in a new module', 'lib/new-thing.js', 'fs.readFileSync(p)'],
+  ]) ok(`reads: the check catches ${what}`, f === 'lib/new-thing.js' ? offending(f, line).length > 0 : planted(f, line));
 }
 
 /* ── the new guard-b pins reject their variants ───────────────────────── */
@@ -142,7 +222,7 @@ console.log('setup guards\n');
     ['login-path: a caller-supplied argument after the script', lp, origLp, (t) => t.replace("execFile(shell, ['-lc', LOGIN_PATH_SCRIPT]", "execFile(shell, ['-lc', LOGIN_PATH_SCRIPT, env.SHELL]")],
     ['login-path: a non-literal script', lp, origLp, (t) => t.replace("execFile(shell, ['-lc', LOGIN_PATH_SCRIPT]", "execFile(shell, ['-lc', `${LOGIN_PATH_SCRIPT}; ${env.X}`]")],
     ['login-path: the script built from a template', lp, origLp, (t) => t.replace(/const LOGIN_PATH_SCRIPT = '[^']*';/, 'const LOGIN_PATH_SCRIPT = `printf %s ${process.env.X}`;')],
-    ['login-path: the script reassigned', lp, origLp, (t) => t.replace('const TIMEOUT_MS', "let LOGIN_PATH_SCRIPT2 = 1; LOGIN_PATH_SCRIPT = 'x';\nconst TIMEOUT_MS")],
+    ['login-path: the script reassigned', lp, origLp, (t) => t.replace('export const LOGIN_READ_MS', "let LOGIN_PATH_SCRIPT2 = 1; LOGIN_PATH_SCRIPT = 'x';\nexport const LOGIN_READ_MS")],
     ['login-path: a different flag', lp, origLp, (t) => t.replace("execFile(shell, ['-lc', LOGIN_PATH_SCRIPT]", "execFile(shell, ['-ilc', LOGIN_PATH_SCRIPT]")],
     ['login-path: a different literal', lp, origLp, (t) => t.replace(`const LOGIN_PATH_SCRIPT = 'printf "__ACS_PATH__%s__ACS_END__" "$PATH"';`, `const LOGIN_PATH_SCRIPT = 'printf "__ACS_PATH__%s__ACS_END__" "$HOME"';`)],
     ['login-path: `codex exec …` as the literal', lp, origLp, (t) => t.replace(`const LOGIN_PATH_SCRIPT = 'printf "__ACS_PATH__%s__ACS_END__" "$PATH"';`, "const LOGIN_PATH_SCRIPT = 'codex exec arbitrary-prompt';")],
