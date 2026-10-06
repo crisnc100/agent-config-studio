@@ -179,7 +179,9 @@ if (healthy) {
     return data;
   };
   const view = await bootPage({ routes: proxy, hash: '#folders' });
-  await settle(40);
+  // The view waits for the registry before it paints; a slow runner needs
+  // more than a fixed beat. Bounded, and the assertion below is unchanged.
+  for (let i = 0; i < 100 && !/No project folders yet/.test(view.text(view.$('content'))); i++) await settle(50);
   const folders = view.text(view.$('content'));
   ok('the Folders view renders its empty state with the add command',
      view.eval('S.view') === 'folders' && /No project folders yet/.test(folders) && /acs roots add <path>/.test(folders), folders.slice(0, 300));
