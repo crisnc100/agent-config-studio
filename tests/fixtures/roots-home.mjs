@@ -33,8 +33,14 @@ export function seedGlobals(home) {
   put(path.join(home, '.codex', 'AGENTS.md'), '# codex global\n');
 }
 
+/**
+ * A machine as Cris's was before roots.json: the two legacy folders, and ACS
+ * used there already (a seat registry) — which is what lets migration seed
+ * them (builds/setup-screen S1).
+ */
 export function legacyHome(home) {
   seedGlobals(home);
+  put(path.join(home, '.agent-config-studio', 'seats.json'), '{"version":1,"seats":[]}\n');
   const projects = path.join(home, 'Documents', 'Projects');
   const garman = path.join(home, 'Documents', 'Garman-Homes');
   return { projects, garman, p: seedProjectTree(projects, 'proj'), g: seedProjectTree(garman, 'client') };

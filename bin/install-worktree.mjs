@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openUserFile } from '../lib/paths.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = path.join(ROOT, 'tools', 'worktree');
@@ -39,7 +40,10 @@ if (args.some((a) => a !== '--dry-run' && a !== '--replace-defaults')) {
 }
 
 const tilde = (p) => (p === HOME || p.startsWith(HOME + path.sep) ? '~' + p.slice(HOME.length) : p);
-const read = (p) => { try { return fs.readFileSync(p); } catch { return null; } };
+// The user's files (their wt.zsh, defaults.conf, ~/.zshrc) are read the way
+// every user file is — they are copied into backups. Missing is null; any
+// other refusal stops the install before anything changes.
+const read = (p) => { try { return openUserFile(p).buf; } catch (e) { if (e.status === 404) return null; throw e; } };
 /** Where a write to `p` lands: through a link, so a dotfiles-managed file stays linked. */
 const target = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
 
@@ -112,8 +116,9 @@ if (needBackup.length && !dry) {
     fs.mkdirSync(backupDir, { recursive: true });
     for (const p of needBackup) {
       const out = path.join(backupDir, p.name);
-      fs.copyFileSync(target(p.dest), out);
-      if (!fs.readFileSync(out).equals(fs.readFileSync(target(p.dest)))) throw new Error(`backup of ${p.name} does not match`);
+      const theirs = read(target(p.dest));
+      fs.writeFileSync(out, theirs);
+      if (!fs.readFileSync(out).equals(read(target(p.dest)))) throw new Error(`backup of ${p.name} does not match`);
     }
   } catch (e) {
     console.error(`install-worktree: backup failed (${e.message}) — nothing was changed`);

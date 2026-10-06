@@ -16,6 +16,10 @@ const realHome = os.homedir();
 const realBefore = snapshotRealHomes();
 const fakeHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-context-')));
 process.env.HOME = fakeHome;
+// ACS ran here before roots.json existed (builds/setup-screen S1), so the
+// legacy folders below are what migration — and absent-file reads — use.
+fs.mkdirSync(path.join(fakeHome, '.agent-config-studio'), { recursive: true });
+fs.writeFileSync(path.join(fakeHome, '.agent-config-studio', 'seats.json'), '{"version":1,"seats":[]}\n');
 process.env.ACS_SUITE = 'offline';
 delete process.env.CODEX_HOME;
 

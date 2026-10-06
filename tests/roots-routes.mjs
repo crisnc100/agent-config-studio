@@ -362,16 +362,19 @@ ok('the real HOME is never a test HOME', !temps.includes(realHome));
   fs.mkdirSync(path.join(W, 'app'), { recursive: true });
   fs.mkdirSync(shared, { recursive: true });
   const readCopy = path.join(shared, 'CLAUDE.md');
-  fs.writeFileSync(readCopy, '# READ-ROOT-ORIGINAL\n');
   const editName = path.join(W, 'app', 'CLAUDE.md');
-  fs.linkSync(readCopy, editName);                       // one inode, two names
+  fs.writeFileSync(editName, '# READ-ROOT-ORIGINAL\n');
   const plain = path.join(W, 'CLAUDE.md');
   fs.writeFileSync(plain, '# plain\n');
   writeRoots(home, [
     { id: 'work', path: W, label: 'Work', access: 'edit' },
     { id: 'clients', path: shared, label: 'Clients', access: 'read' },
   ]);
+  // The startup snapshot records a version while the file has one name; the
+  // second name comes after, since a hard-linked file is never mirrored (or
+  // read) at all — its other name could be anything.
   const srv = await startServer(home, { root: ROOT });
+  fs.linkSync(editName, readCopy);                       // one inode, two names
   const g = await srv.call(`/api/file?path=${encodeURIComponent(editName)}`);
   const put = await srv.call('/api/file', { method: 'PUT', body: { path: editName, content: '# overwritten\n', mtime: g.json?.mtime } });
   ok('HL saving a file hard-linked to a read-root file is refused with the plain message, both names unchanged',
