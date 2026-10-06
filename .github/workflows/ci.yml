@@ -31,17 +31,29 @@ jobs:
           echo "============================================================"
 
   offline:
+    # The declared minimum (package.json engines: >=20), pinned exactly, and
+    # the current LTS: a feature newer than 20.0 fails here, not on a
+    # stranger's machine.
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20.0.0', 'lts/*']
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ matrix.node }}
+      - name: shells the launcher must work under
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dash zsh
       - name: offline suite
         env:
           ACS_SUITE: offline
         run: |
           set -euo pipefail
+          node --version
           node tests/phase1.mjs
           node tests/phase2a.mjs
           node tests/usage-codex.mjs
@@ -70,6 +82,13 @@ jobs:
           node tests/setup-commands.mjs
           node tests/setup-ui.mjs
           node tests/setup-walkthrough.mjs
+          node tests/no-personal-paths.mjs
+          node tests/readme.mjs
+          node tests/models-roots.mjs
+          node tests/assist-containment.mjs
+          node tests/acs-update.mjs
+          node tests/acs-launcher.mjs
+          node tests/stranger.mjs
       - name: live containment is a local gate
         if: always()
         run: |
@@ -78,6 +97,29 @@ jobs:
           echo "and were not run here."
           echo "A green CI tick is not a containment pass."
           echo "============================================================"
+
+  stranger-macos:
+    # The README is written for a Mac: follow it there too, on the minimum
+    # Node and the current LTS.
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20.0.0', 'lts/*']
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: the launcher and the README, followed literally
+        env:
+          ACS_SUITE: offline
+        run: |
+          set -euo pipefail
+          node --version
+          node tests/acs-launcher.mjs
+          node tests/stranger.mjs
+          node tests/readme.mjs
 
   guards:
     runs-on: ubuntu-latest

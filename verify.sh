@@ -18,6 +18,9 @@ trap finish EXIT
 node tests/guards.mjs
 # The setup screen's own static guards (the usage seam, credentials stat-only).
 node tests/setup-guards.mjs
+# Nothing shipped names one person's machine; the README claims only what the code does.
+node tests/no-personal-paths.mjs
+node tests/readme.mjs
 # Credentials are never served through an alias: hard links, symlinks, chains.
 node tests/setup-credentials.mjs
 # Before any worktree test: proves the tripwire sees each path the installer writes.
@@ -37,6 +40,8 @@ node tests/usage-seats.mjs
 node tests/usage-routes.mjs
 node tests/usage-cli.mjs
 node tests/acs-update.mjs
+# The launcher from a stranger's shell: links, install/uninstall, no curl or lsof.
+node tests/acs-launcher.mjs
 # The folder registry and `acs roots`: temp HOMEs only.
 node tests/roots.mjs
 # The same, through the real server: custom, legacy and symlinked roots.
@@ -48,12 +53,15 @@ node tests/roots-resolver.mjs
 node tests/roots-live.mjs
 node tests/skills.mjs
 node tests/phase1.mjs
+# Assist containment, fail-closed: fake CLIs, a real server, temp HOME.
+node tests/assist-containment.mjs
 node tests/phase2a.mjs
 node tests/zip.mjs
 node tests/export.mjs
 node tests/skill-usage.mjs
 node tests/models.mjs
 node tests/models-assist.mjs
+node tests/models-roots.mjs
 node tests/models-scripts.mjs
 node tests/models-backup.mjs
 node tests/models-panel.mjs
@@ -87,3 +95,5 @@ node tests/setup-commands.mjs
 # The setup screen in the page (VM), then the whole flow offline against a real server.
 node tests/setup-ui.mjs
 node tests/setup-walkthrough.mjs
+# The README's Get started, followed literally by the production launcher, offline.
+node tests/stranger.mjs
