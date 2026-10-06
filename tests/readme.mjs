@@ -67,6 +67,59 @@ for (const { lines } of outside) {
 }
 ok('1 every fenced command outside Get started exists (acs help, model-id usage, wt.zsh)', unknown.length === 0 && outside.length > 0, unknown.join(' | '));
 ok('…and acs help lists what the README relies on', ['stop', 'install', 'uninstall', 'update', 'roots', 'usage', 'install-model-id', 'install-worktree', 'help'].every((s) => subs.has(s)), [...subs].join(','));
+// Inline commands in prose (criterion 1, grade C1): every code span that
+// starts with a command is run by tests/stranger.mjs (Get started's lines) or
+// checked to exist here — each acs subcommand and flag against `acs help` and
+// that subcommand's own usage text, model-id flags against its usage, the
+// worktree commands against wt.zsh, the vendor CLI commands against
+// commands.md or the probe record that ran their --help.
+const prose = text.replace(/^```[\s\S]*?^```$/gm, '');
+// A pipe in a table cell is written \| (as in commands.md).
+const spans = [...new Set([...prose.matchAll(/`([^`]+)`/g)].map((m) => m[1].replace(/\s+/g, ' ').replace(/\\\|/g, '|').trim()))];
+const CMD = /^(?:[A-Z_]+=\S+ )*(\.\/bin\/acs|acs|model-id|git|node|npm|curl|claude|codex|grok|gh|direnv|hash|wtinit|wnew|wls|wgo|wtrunk|wenv|wclean|wdev|wrm|wtreg)(?: |$)/;
+const commands = spans.filter((sp) => CMD.test(sp) && sp !== 'node:sqlite');
+const usageOf = {
+  roots: src('bin/roots.mjs'), usage: src('bin/usage.mjs'), 'install-worktree': src('bin/install-worktree.mjs'),
+  install: src('bin/acs-link.mjs'), uninstall: src('bin/acs-link.mjs'),
+};
+const executed = new Set(getStartedCommands());
+const knownVendor = new Map([
+  ...Object.values(table).map((e) => [e.command, 'commands.md']),
+  ['claude', 'the CLI itself'], ['grok', 'the CLI itself'], ['gh', 'the CLI itself'],
+  ['codex app-server', 'lib/usage/codex-limits.js runs it (argv pinned by guards.mjs)'],
+  ['grok agent stdio', 'lib/usage/grok-billing.js runs it (argv pinned by guards.mjs)'],
+  ['grok inspect', 'lib/harness.js inspectGrok runs it (argv pinned by guards.mjs)'],
+  ['grok mcp disable <name>', '`grok mcp disable --help`, recorded in builds/ready-for-strangers/grok-mcp.md'],
+  ['git show <sha>:<path>', 'git itself'], ['node --version', 'node itself'], ['node', 'node itself'], ['hash -r', 'a shell builtin'],
+  ['direnv allow', 'direnv itself, run by wt.zsh'],
+]);
+const unchecked = [];
+for (const sp of commands) {
+  if (executed.has(sp)) continue;
+  const words = sp.replace(/^(?:[A-Z_]+=\S+ )+/, '').split(' ');
+  if (words[0] === 'acs' || words[0] === './bin/acs') {
+    const sub = words[1] && !words[1].startsWith('-') ? words[1] : null;
+    if (sub && !subs.has(sub)) { unchecked.push(`${sp} (no such subcommand)`); continue; }
+    const flagsIn = sub ? (usageOf[sub] ?? help.stdout) : help.stdout;
+    for (const f of words.filter((w) => /^-{1,2}[a-z]/.test(w.replace(/^\[/, '')))) {
+      const flag = f.replace(/^\[|\]$/g, '');
+      if (!flagsIn.includes(flag)) unchecked.push(`${sp} (flag ${flag} not in its usage)`);
+    }
+    const env = sp.match(/^((?:[A-Z_]+=\S+ )+)/)?.[1].trim().split(' ').map((a) => a.split('=')[0]) || [];
+    for (const v of env) if (!help.stdout.includes(v)) unchecked.push(`${sp} (${v} not in acs help)`);
+  } else if (words[0] === 'model-id') {
+    if (words[1]?.startsWith('--') && !modelUsage.includes(words[1])) unchecked.push(sp);
+  } else if (wtFns.has(words[0])) {
+    for (const f of words.filter((w) => /^\[?--/.test(w))) {
+      if (!src('tools/worktree/wt.zsh').includes(f.replace(/^\[|\]$/g, ''))) unchecked.push(`${sp} (flag not in wt.zsh)`);
+    }
+  } else if (!knownVendor.has(sp)) {
+    unchecked.push(sp);
+  }
+}
+ok(`1 every inline command in the README (${commands.length}) is run by the stranger test or checked to exist`, commands.length > 40 && unchecked.length === 0, unchecked.join(' | '));
+ok('1 …the multi-line spans are read whole (`acs --no-open`, `acs help`, `wclean --json --no-fetch`)',
+   ['acs --no-open', 'acs help', 'wclean --json --no-fetch'].every((c) => commands.includes(c)), commands.filter((c) => /no-open|^acs help|no-fetch/.test(c)).join(' | '));
 for (const s of ['install', 'uninstall', 'install-worktree']) {
   const t = text.match(new RegExp(`\\bacs ${s}\\b`));
   ok(`the README names \`acs ${s}\``, !!t);
@@ -78,6 +131,8 @@ for (const [re, what] of [
   [/never phones? home|phones? home/i, 'never phones home'],
   [/no outbound|makes no (?:network|outbound)|never (?:calls|contacts) (?:the )?(?:network|internet)/i, 'no outbound requests'],
   [/everything is editable/i, '"Everything is editable"'],
+  [/these are all|all of its outbound/i, 'an exhaustive outbound list'],
+  [/nothing else is reachable/i, '"Nothing else is reachable"'],
   [/lives in `?lib\/chat\.js`?/i, 'the model list lives in chat.js'],
 ]) ok(`B3/B10 no "${what}" claim`, !re.test(text), (text.match(re) || [])[0]);
 for (const [re, what] of [
@@ -91,6 +146,16 @@ for (const [re, what] of [
   [/Assist runs your CLI/i, 'Assist runs your CLI'],
   [/editable regardless of your folder choices/i, 'the built-in homes are editable regardless of folders'],
   [/Grok Assist is unavailable while grok has MCP servers configured/, 'Grok Assist refuses when grok has MCP servers'],
+  [/runs `codex login`/, 'signing a Codex seat in runs codex login'],
+  [/`~\/\.codex-seats\/`/, 'a second Codex seat creates ~/.codex-seats'],
+  [/`~\/\.zshenv`/, 'Terminal shortcuts append to ~/.zshenv'],
+  [/asks `gh`/, 'the Worktrees view asks gh'],
+  [/runs `wtinit` there, which creates the project's\s+trunk checkout/, 'worktree setup creates a trunk checkout'],
+  [/`acs install` links `~\/\.local\/bin\/acs`/, 'acs install writes ~/.local/bin/acs'],
+  [/writes `~\/\.local\/bin\/model-id`/, 'install-model-id writes ~/.local/bin/model-id'],
+  [/adds\s+one line to `~\/\.zshrc`/, 'install-worktree adds a line to ~/.zshrc'],
+  [/Grok Assist\s+turn's prompt/, 'Grok prompt files in the temp folder'],
+  [/a run file per port/, 'the run file acs stop uses'],
 ]) ok(`B3 the README says: ${what}`, re.test(text));
 
 console.log('\nreadme: facts from the code');

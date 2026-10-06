@@ -97,33 +97,52 @@ checkout.
 
 ### What the studio reads, writes and sends
 
-There is no telemetry. These are all of its outbound calls:
+There is no telemetry. What reaches the network, and when:
 
 - **`acs` fetches git origin** on start, to fast-forward a clean checkout on
   the default branch. It skips this on any other branch, with local changes,
   or with `ACS_NO_UPDATE=1`. `acs update` runs the fetch on its own.
 - **Assist runs your CLI** (`claude` or `grok`), which talks to its vendor
   under your own sign-in.
-- **The usage collector** reads credentials, in a separate child process, so
+- **The usage collector** reads credentials in a separate child process, so
   the server never holds one. It runs when you press **Refresh** in Usage,
-  once after you sign a seat in, or as `acs usage`. It reads the Claude Code credential from the macOS Keychain
-  or `~/.claude/.credentials.json` and calls Anthropic's usage endpoint. It
-  reads the Codex and Grok `auth.json` files for account identity, and asks
-  `codex app-server` and `grok agent stdio` for their quota.
+  once after you sign a seat in, or as `acs usage`. It reads:
+  - the Claude Code credential, from the macOS Keychain or
+    `~/.claude/.credentials.json`, and calls Anthropic's usage endpoint;
+  - the Codex and Grok `auth.json` files, for account identity;
+  - quota, by asking `codex app-server` and `grok agent stdio`.
+- **Signing a Codex seat in** from Usage or setup runs `codex login`, which
+  opens OpenAI's sign-in page and writes that seat's `auth.json`.
 - **Check now** on the Models page runs `codex app-server` `model/list`, which
   fetches Codex's model catalog.
+- **The Worktrees view** runs the toolkit's `wclean`, which asks `gh` (when
+  installed) whether a branch's pull request was merged. It never fetches.
 
-What it can change:
+What it writes:
 
 - **Your CLIs' own homes** (`~/.claude`, `~/.codex`, `~/.agents`, `~/.grok`,
-  `~/.config/worktree`) are editable regardless of your folder choices.
-- **Inside project folders**, only the instruction files (`CLAUDE.md`,
-  `AGENTS.md`, `.mcp.json`, `.worktrees.conf`) in folders you marked **edit**.
-- **Its own folder,** `~/.agent-config-studio` (settings, history, trash).
+  `~/.config/worktree`): editable regardless of your folder choices.
+- **Inside project folders you marked edit:** the instruction files
+  (`CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `.worktrees.conf`). Setting a project
+  up under **Worktrees** also runs `wtinit` there, which creates the project's
+  trunk checkout.
+- **Its own folder,** `~/.agent-config-studio` (settings, history, trash, the
+  usage snapshot, and a run file per port for `acs stop`).
+- **When you add a second Codex seat:** its own home under `~/.codex-seats/`,
+  sharing `~/.codex`'s config, skills, rules and plugins by symlink.
+- **When you turn on Terminal shortcuts in Usage:** a generated file in
+  `~/.agent-config-studio`, plus one `source` line appended to `~/.zshenv`.
+- **Commands you run:** `acs install` links `~/.local/bin/acs`;
+  `acs install-model-id` writes `~/.local/bin/model-id` and its copy in the
+  studio folder; `acs install-worktree` writes `~/.config/worktree` and adds
+  one line to `~/.zshrc`.
+- **Your temp folder:** each Grok Assist turn's prompt, in a file that is
+  removed when the turn ends.
 
-Nothing else is reachable through it. The file API never serves
-`.credentials.json`, `auth.json` or `~/.claude.json`: only the `mcpServers` key
-of `~/.claude.json` is extracted, read-only. It listens on `127.0.0.1` only.
+The file API serves only files in those places and in your **read** folders,
+and never serves `.credentials.json`, `auth.json` or `~/.claude.json`. Only the
+`mcpServers` key of `~/.claude.json` is extracted, read-only. The server
+listens on `127.0.0.1` only.
 
 ### Linux
 
