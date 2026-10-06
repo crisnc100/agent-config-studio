@@ -80,6 +80,12 @@ for (const t of ['dirname', 'readlink']) fs.symlinkSync(which(t), path.join(noNo
 const none = run('/bin/sh', [ACS, 'stop'], { env: { PATH: noNodePath } });
 ok('B9 no node at all is named', none.code === 1 && /node is not on PATH/.test(none.out), none.out);
 ok('B9 help needs no node', run('/bin/sh', [ACS, 'help'], { env: { PATH: noNodePath } }).code === 0);
+for (const [what, args] of [['the default start', []], ['--no-open', ['--no-open']]]) {
+  const o = run('/bin/sh', [ACS, ...args], { env: { PATH: `${oldNode}:${SYS}`, ACS_NO_OPEN: '1' } });
+  ok(`B9 ${what} with Node 18: refused with the version, nothing started`, o.code === 1 && /Node\.js 18\.19\.0 is too old/.test(o.out) && !/starting/.test(o.out), o.out);
+  const n = run('/bin/sh', [ACS, ...args], { env: { PATH: noNodePath, ACS_NO_OPEN: '1' } });
+  ok(`B9 ${what} with no node: refused, naming it`, n.code === 1 && /node is not on PATH/.test(n.out) && !/starting/.test(n.out), n.out);
+}
 
 console.log('\nacs install / uninstall');
 function fresh(tag) {
@@ -142,6 +148,29 @@ for (const [what, plant] of [
   const r = run('/bin/sh', [ACS, 'install'], { env });
   ok('B7 an earlier acs on PATH that is not ours: refused, naming it', r.code === 1 && /bin-early\/acs/.test(r.out) && /comes first on PATH/.test(r.out) && !fs.existsSync(path.join(h.local, 'acs')), r.out);
 }
+for (const [what, lead] of [['"."', '.'], ['a relative "bin"', 'bin'], ['an empty entry', '']]) {
+  // The grade's repro: standing in a folder that holds a foreign acs, with
+  // PATH searching the current folder first.
+  const h = fresh(`rel-${what.replace(/\W+/g, '')}`);
+  const cwd = path.join(h.home, 'project');
+  fs.mkdirSync(path.join(cwd, 'bin'), { recursive: true });
+  for (const f of [path.join(cwd, 'acs'), path.join(cwd, 'bin', 'acs')]) fs.writeFileSync(f, '#!/bin/sh\necho foreign\n', { mode: 0o755 });
+  const env = { ...h.env, PATH: `${lead}:${h.local}:${nodeDir}:${SYS}` };
+  const r = run('/bin/sh', [ACS, 'install'], { env, cwd });
+  // Judged on a new terminal's PATH, as install is: a login shell may drop
+  // an empty entry (macOS path_helper does), and then nothing can shadow.
+  const login = run('/bin/sh', ['-lc', 'printf %s "$PATH"'], { env, cwd }).out.split(':');
+  const shadowing = login.slice(0, login.indexOf(h.local)).some((e) => !e.startsWith('/'));
+  ok(`B7 PATH with ${what} ahead of ~/.local/bin: ${shadowing ? 'install refuses, naming it' : 'the login shell dropped it, so install proceeds'}`,
+     shadowing ? r.code === 1 && /refusing/.test(r.out) && /PATH has/.test(r.out) && !fs.existsSync(path.join(h.local, 'acs'))
+               : r.code === 0, `${login.join(':')} — ${r.out}`);
+  if (lead === '.') ok('B7 …and "." survives into the login PATH here, so the refusal case is exercised', shadowing, login.join(':'));
+}
+{
+  const h = fresh('rel-after');
+  const r = run('/bin/sh', [ACS, 'install'], { env: { ...h.env, PATH: `${h.local}:${nodeDir}:${SYS}:.` } });
+  ok('B7 a relative entry AFTER the install dir does not block install', r.code === 0 && fs.existsSync(path.join(h.local, 'acs')), r.out);
+}
 {
   const h = fresh('offpath');
   const env = { HOME: h.home, PATH: `${nodeDir}:${SYS}` };
@@ -152,12 +181,12 @@ for (const [what, plant] of [
 }
 
 console.log('\nacs: no curl, no lsof — start, refuse, stop');
-// A PATH holding only what the launcher may need: node, git, ps, and the two
+// A PATH holding only what the launcher may need: node, git, ps, sed, and the two
 // file tools it uses to resolve its own path. No curl, no lsof.
 const tools = path.join(sb, 'tools');
 fs.mkdirSync(tools);
 fs.symlinkSync(process.execPath, path.join(tools, 'node'));
-for (const t of ['dirname', 'readlink', 'git', 'ps']) fs.symlinkSync(which(t), path.join(tools, t));
+for (const t of ['dirname', 'readlink', 'git', 'ps', 'sed']) fs.symlinkSync(which(t), path.join(tools, t));
 ok('B8 the launcher\'s source invokes neither curl nor lsof', !/\b(curl|lsof)\b\s+-/.test(fs.readFileSync(ACS, 'utf8')));
 const freePort = () => new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 const health = async (port) => { try { return (await (await fetch(`http://127.0.0.1:${port}/api/health`)).json()).app === 'agent-config-studio'; } catch { return false; } };
@@ -197,24 +226,40 @@ async function start(port, env) {
   ok('B8 acs stop stops it, and the launcher exits', stop.code === 0 && /stopped/.test(stop.out) && !(await health(port)), stop.out);
   ok('B8 acs stop when nothing runs says so', /not running/.test(run('/bin/sh', [ACS, 'stop'], { env: { HOME: home, PATH: tools, ACS_PORT: String(port) } }).out));
 }
-// Stop by pid only for a pid that is really the studio: a listener that
-// answers /api/health — saying it is ACS or not — with another process's pid
-// gets no signal.
-for (const [what, app] of [['claims to be ACS', 'agent-config-studio'], ['is some other app', 'other-app']]) {
-  const port = await freePort();
-  const victim = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
-  const liar = net.createServer((s) => {
-    s.on('error', () => {});
-    s.end(`HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nconnection: close\r\n\r\n${JSON.stringify({ app, pid: victim.pid })}`);
-  });
-  await new Promise((r) => liar.listen(port, '127.0.0.1', r));
-  const stop = run('/bin/sh', [ACS, 'stop'], { env: { HOME: home, PATH: tools, ACS_PORT: String(port) } });
-  let alive = true;
-  try { process.kill(victim.pid, 0); } catch { alive = false; }
-  ok(`B8 a health answer that ${what}, naming an unrelated pid: acs stop refuses and signals nothing`,
-     stop.code === 1 && /in use by something else/.test(stop.out) && alive, `${stop.code} ${stop.out} alive=${alive}`);
-  victim.kill('SIGKILL');
-  liar.close();
+// Stop by pid only for THIS checkout's studio: /api/health's pid and nonce,
+// the run file's pid and nonce, and the pid's argv being node running this
+// checkout's server.js must all agree. The victim is an unrelated
+// `node …/server.js` on another path — the shape a looser check accepted.
+{
+  const otherDir = path.join(sb, 'someone-else');
+  fs.mkdirSync(otherDir);
+  fs.writeFileSync(path.join(otherDir, 'server.js'), 'setTimeout(() => {}, 60000);\n');
+  const nonce = 'ab'.repeat(16);
+  for (const [what, app, plantRun] of [
+    ['claims to be ACS, no run file', 'agent-config-studio', false],
+    ['claims to be ACS, with a run file and nonce that match it', 'agent-config-studio', true],
+    ['is some other app', 'other-app', false],
+  ]) {
+    const port = await freePort();
+    const victim = spawn(process.execPath, [path.join(otherDir, 'server.js')], { stdio: 'ignore' });
+    const liar = net.createServer((s) => {
+      s.on('error', () => {});
+      s.end(`HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nconnection: close\r\n\r\n${JSON.stringify({ app, pid: victim.pid, nonce })}`);
+    });
+    await new Promise((r) => liar.listen(port, '127.0.0.1', r));
+    const runDir = path.join(home, '.agent-config-studio', 'run');
+    fs.rmSync(runDir, { recursive: true, force: true });
+    if (plantRun) { fs.mkdirSync(runDir, { recursive: true }); fs.writeFileSync(path.join(runDir, `${port}.json`), JSON.stringify({ pid: victim.pid, nonce, server: path.join(otherDir, 'server.js') })); }
+    const stop = run('/bin/sh', [ACS, 'stop'], { env: { HOME: home, PATH: tools, ACS_PORT: String(port) } });
+    await sleep(200);
+    let alive = true;
+    try { process.kill(victim.pid, 0); } catch { alive = false; }
+    ok(`B8 a health answer that ${what}, naming an unrelated \`node …/server.js\`: acs stop refuses and signals nothing`,
+       stop.code === 1 && /not touching it/.test(stop.out) && alive, `${stop.code} ${stop.out} alive=${alive}`);
+    victim.kill('SIGKILL');
+    liar.close();
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
 }
 {
   const port = await freePort();

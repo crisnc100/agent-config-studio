@@ -46,6 +46,14 @@ import {
 } from './lib/usage/shell.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * This start's identity, for `acs stop`: /api/health echoes the nonce, and
+ * the run file the listener writes (studio dir, mode 0600) records it with
+ * the pid. The launcher signals a pid only when both agree.
+ */
+const RUN_NONCE = crypto.randomBytes(16).toString('hex');
+const runFile = (port) => path.join(STUDIO_HOME, 'run', `${port}.json`);
 const PUBLIC = path.join(__dirname, 'public');
 const PORT = Number(process.env.PORT || 8787);
 
@@ -562,7 +570,7 @@ export function createApp(opts = {}) {
 
   const ROUTES = {
   /** Identity probe so the launcher never kills an unrelated process on this port. */
-  'GET /api/health': async () => ({ app: 'agent-config-studio', pid: process.pid }),
+  'GET /api/health': async () => ({ app: 'agent-config-studio', pid: process.pid, nonce: RUN_NONCE }),
 
   /**
    * Read-only view of configured MCP servers. Global servers live in
@@ -1494,7 +1502,16 @@ export async function startStudio({ port = PORT, app = {} } = {}) {
   // Detection runs once at start (and on "Check now"); there is no timer.
   models.check().catch(() => {});
 
+  let runIno = null;
   server.listen(port, '127.0.0.1', () => {
+    try {
+      const file = runFile(port);
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      const tmp = `${file}.tmp-${process.pid}`;
+      fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, nonce: RUN_NONCE, server: fileURLToPath(import.meta.url) }) + '\n', { mode: 0o600 });
+      fs.renameSync(tmp, file);
+      runIno = fs.statSync(file).ino;
+    } catch { /* without it, `acs stop` refuses rather than guesses */ }
     const { groups } = buildRegistry();
     const total = groups.reduce((n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
     console.log(`
@@ -1509,12 +1526,18 @@ ${rootsBanner()}
 `);
   });
 
-  process.on('SIGINT', () => {
+  // Only this start's own run file is removed (same inode): a newer start may own it now.
+  process.on('exit', () => {
+    try { if (runIno !== null && fs.statSync(runFile(port)).ino === runIno) fs.unlinkSync(runFile(port)); } catch {}
+  });
+  const stop = () => {
     rootsWatch.close();
     watcher.close();
     console.log('\n  stopped.');
     process.exit(0);
-  });
+  };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
   return server;
 }
 

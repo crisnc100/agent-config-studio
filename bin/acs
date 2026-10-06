@@ -67,20 +67,30 @@ need_node() {
   fi
 }
 
-# Identify the app by its health endpoint, never by "something owns the port" —
-# otherwise `acs stop` could kill an unrelated listener. Prints the pid, and
-# only one that really is a node process running a server.js: a health answer
-# naming any other pid (stale, or not ours) is never signalled.
+# Identify the app by its health endpoint, never by "something owns the port".
+is_acs() {
+  node "$DIR/bin/acs-net.mjs" health "$PORT" >/dev/null 2>&1
+}
+
+# The pid `acs stop` may signal: THIS checkout's studio on this port, proven
+# three ways — /api/health names the pid and this start's nonce, the run file
+# the studio wrote at start (studio dir, mode 0600) records the same pid and
+# nonce, and that pid's argv is node running this checkout's server.js. A
+# stale, spoofed or foreign answer prints nothing.
 acs_pid() {
-  pid=$(node "$DIR/bin/acs-net.mjs" health "$PORT" 2>/dev/null) || return 1
-  cmd=$(ps -o command= -p "$pid" 2>/dev/null) || return 1
-  case $cmd in
-    *node*server.js*) echo "$pid" ;;
+  answer=$(node "$DIR/bin/acs-net.mjs" health "$PORT" 2>/dev/null) || return 1
+  pid=${answer%% *}
+  nonce=${answer#* }
+  run="${HOME}/.agent-config-studio/run/$PORT.json"
+  [ -f "$run" ] || return 1
+  recorded=$(sed -n 's/.*"nonce":"\([0-9a-f]*\)".*/\1/p' "$run")
+  recorded_pid=$(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' "$run")
+  [ -n "$recorded" ] && [ "$nonce" = "$recorded" ] && [ "$pid" = "$recorded_pid" ] || return 1
+  args=$(ps -o args= -p "$pid" 2>/dev/null) || return 1
+  case $args in
+    *node*" $DIR/server.js") echo "$pid" ;;
     *) return 1 ;;
   esac
-}
-is_acs() {
-  acs_pid >/dev/null
 }
 
 # Anything at all accepting connections on the port, HTTP or not.
@@ -169,8 +179,8 @@ if [ "${1:-}" = "--no-open" ]; then
   shift
 fi
 
+# Every path but help and update runs node — the default start included.
 case "${1:-}" in
-  '') ;;
   help|-h|--help)
     usage
     exit 0
@@ -215,10 +225,11 @@ case "${1:-}" in
     exec node "$DIR/bin/acs-link.mjs" "$@"
     ;;
   stop)
-    # The pid comes from the studio's own health answer, so only the process
-    # that identified itself as the studio on this port is signalled.
     if pid=$(acs_pid); then
       kill "$pid" && echo "stopped."
+    elif is_acs; then
+      echo "port $PORT is served by an Agent Config Studio that is not this checkout's ($DIR) start — not touching it. Stop it with the acs that started it." >&2
+      exit 1
     elif port_busy; then
       echo "port $PORT is in use by something else — not touching it." >&2
       exit 1

@@ -58,8 +58,9 @@ function writable(dir) {
 const inHome = (d) => d.startsWith(HOME + path.sep);
 
 const login = await loginPathRead({ home: HOME });
-const pathDirs = [...new Set((login.fromShell ? login.dirs : (process.env.PATH || '').split(path.delimiter))
-  .filter((d) => path.isAbsolute(d)).map((d) => path.normalize(d)))];
+/** PATH as the shell searches it, every entry kept: an empty or relative one means "the current folder". */
+const entries = login.fromShell ? login.raw : (process.env.PATH || '').split(path.delimiter);
+const pathDirs = [...new Set(entries.filter((d) => path.isAbsolute(d)).map((d) => path.normalize(d)))];
 
 if (cmd === 'uninstall') {
   let removed = 0;
@@ -85,6 +86,17 @@ const candidates = [...PREFERRED.filter(onPath), ...pathDirs.filter((d) => inHom
 const dir = candidates.find(writable) ?? null;
 const dest = dir ?? PREFERRED[0];
 const file = path.join(dest, 'acs');
+
+// A relative or empty entry before ours is searched in whatever folder the
+// person is standing in, so any folder holding an `acs` would answer first.
+// Nothing here can rule that out; refuse and say which entry.
+const before = dir ? entries.slice(0, entries.findIndex((e) => path.isAbsolute(e) && path.normalize(e) === dir)) : entries;
+const relative = before.find((e) => !path.isAbsolute(e));
+if (relative !== undefined) {
+  console.error(`acs install: refusing — your PATH has ${relative === '' ? 'an empty entry' : `the relative entry "${relative}"`} ahead of ${dir ? tilde(dir) : 'any folder of yours'}, ` +
+    'so an `acs` in whatever folder you are in would answer instead of this one. Remove it from PATH (or put it last), then run this again.');
+  process.exit(1);
+}
 
 // An `acs` earlier on PATH answers before ours would.
 const order = dir ? pathDirs.slice(0, pathDirs.indexOf(dir)) : pathDirs;
