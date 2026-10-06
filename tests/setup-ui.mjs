@@ -256,6 +256,59 @@ console.log('\nsetup in the page');
      !p.requests.some((r) => r.path === '/api/usage/refresh') && !/is signed in/.test(p.text(p.$('notice-slot'))) && p.eval('S.view') === 'skills');
 }
 
+{
+  // A connect answer held until after Next, Back: the new row has resumed the
+  // login; the old, detached row's late answer must not take or stop it.
+  const routes = setupRoutes();
+  routes.st.seats.push({ id: 'codex', vendor: 'codex', label: 'Codex (primary)', home: '/h/.codex' });
+  let release;
+  const connect = routes.table['POST /api/usage/connect'];
+  routes.table['POST /api/usage/connect'] = (b) => { const res = connect(b); return new Promise((r) => { release = () => r(res); }); };
+  const p = await boot({ routes, hash: '#setup&step=accounts' });
+  await settle(30);
+  btn(p, 'Sign in with ChatGPT').click();
+  await settle(20);
+  btn(p, 'Next').click();
+  await settle(30);
+  btn(p, 'Back').click();
+  await settle(40);
+  ok('4 (the new row resumed the login while the old answer was still out)', p.eval('LOGIN_POLLS.size') === 1);
+  release();
+  await settle(40);
+  const row = () => p.$('content').querySelector('.usage-hint');
+  ok('4 a late connect answer for a detached row leaves exactly one live poller, owned by the row on screen',
+     p.eval('LOGIN_POLLS.size') === 1 && p.eval("document.body.contains([...LOGIN_POLLS.values()][0].row)"), String(p.eval('LOGIN_POLLS.size')));
+  ok('4 …and the visible row is progressing (its link shown), not stuck disabled with nothing behind it',
+     /Open the sign-in page/.test(p.text(row())) && /waiting/.test(p.text(row())), p.text(row()));
+  const before = p.requests.filter((r) => r.path === '/api/usage/connect/state').length;
+  await new Promise((r) => setTimeout(r, 2200));
+  ok('4 …which keeps polling', p.requests.filter((r) => r.path === '/api/usage/connect/state').length > before);
+  p.$('btn-skills').click();
+}
+{
+  // The sign-in finishes while the person is on Folders.
+  const routes = setupRoutes();
+  routes.st.seats.push({ id: 'codex', vendor: 'codex', label: 'Codex (primary)', home: '/h/.codex' });
+  const p = await boot({ routes, hash: '#setup&step=accounts' });
+  await settle(30);
+  btn(p, 'Sign in with ChatGPT').click();
+  await settle(30);
+  btn(p, 'Next').click();
+  await new Promise((r) => setTimeout(r, 2300));
+  ok('4 (on Folders, no poller is left running)', p.eval('LOGIN_POLLS.size') === 0);
+  routes.st.signedIn = true;
+  const usageBefore = p.requests.filter((r) => r.path === '/api/usage').length;
+  btn(p, 'Back').click();
+  await settle(60);
+  const refreshes = p.requests.filter((r) => r.path === '/api/usage/refresh').length;
+  ok('4 back on Accounts, a sign-in that finished off-screen is reconciled: usage re-read, one refresh, the signed-in notice',
+     p.requests.filter((r) => r.path === '/api/usage').length > usageBefore && refreshes === 1 && /is signed in/.test(p.text(p.$('notice-slot'))), `refreshes=${refreshes} ${p.text(p.$('notice-slot'))}`);
+  ok('4 …and no fresh sign-in button is offered over the completed login', !btn(p, 'Sign in with ChatGPT') && /signed in/.test(p.text(p.$('content').querySelector('.usage-hint'))));
+  await settle(60);
+  ok('4 …the refresh happens once, not on every repaint', p.requests.filter((r) => r.path === '/api/usage/refresh').length === 1);
+  p.$('btn-skills').click();
+}
+
 /* ── P2: every async answer proves it still owns the screen ─────────────── */
 {
   // Home's first /api/roots answer is held; setup adds a folder and finishes; then the old answer lands.

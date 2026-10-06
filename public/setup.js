@@ -60,7 +60,9 @@ function setupGo(step) {
 /** Fetch what the current step shows, once; Recheck and Refresh ask again. */
 function loadSetupStep() {
   if ((SETUP.step === 'clis' || SETUP.step === 'done') && !SETUP.clis && !SETUP.checking) loadSetupClis(false);
-  if (SETUP.step === 'accounts' && !SETUP.accounts) loadSetupAccounts();
+  // Accounts is read again on every entry: a sign-in may have finished while
+  // the person was on another step.
+  if (SETUP.step === 'accounts') loadSetupAccounts();
   if (SETUP.step === 'folders' && !FOLDERS.data) loadFolders().then(() => paintSetup());
 }
 

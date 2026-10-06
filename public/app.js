@@ -2764,6 +2764,8 @@ let usageTimer = null;
  */
 /** One login poller per seat, owned by the row on screen that shows it. */
 const LOGIN_POLLS = new Map();
+/** Seats whose finished sign-in has been reconciled (one refresh), until the next sign-in starts. */
+const LOGIN_RECONCILED = new Set();
 
 function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => paintUsage() } = {}) {
   const row = el('div', 'usage-hint');
@@ -2792,6 +2794,8 @@ function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => p
   // new row for the same seat takes the poller over; the old one stops.
   const poll = () => {
     const prev = LOGIN_POLLS.get(seat.seatId);
+    // A poller owned by another row still on screen is that row's: never taken.
+    if (prev && prev.row !== row && document.body.contains(prev.row)) return;
     if (prev) clearInterval(prev.timer);
     const mine = { row, timer: null };
     LOGIN_POLLS.set(seat.seatId, mine);
@@ -2806,6 +2810,7 @@ function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => p
       if (!owns()) return stop();
       if (st.signedIn) {
         stop();
+        LOGIN_RECONCILED.add(seat.seatId);
         // Reconcile through the CLI before repainting. It is the only process
         // that can read account identity, so until it has run, the studio
         // cannot know this seat changed account — and would keep filtering
@@ -2825,9 +2830,13 @@ function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => p
 
   btn.onclick = async () => {
     btn.disabled = true; status.textContent = 'starting sign-in…';
+    LOGIN_RECONCILED.delete(seat.seatId);
     let res;
     try { res = await api('POST', '/api/usage/connect', { id: seat.seatId, reauth }); }
-    catch (e) { btn.disabled = false; status.textContent = ''; return notice('error', e.message); }
+    catch (e) { if (onScreen()) { btn.disabled = false; status.textContent = ''; notice('error', e.message); } return; }
+    // Answered after this row left the screen: the row now showing this seat
+    // picks the login up from connect/state; this one must not touch it.
+    if (!onScreen()) return;
     // Something is holding this seat's home open. Signing in now would be
     // undone the next time that process refreshes its token, so offer to stop
     // it here rather than sending the user to a terminal to find pids.
@@ -2851,8 +2860,25 @@ function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => p
   // Coming back to a seat whose sign-in is still waiting in the browser: show
   // that one — its link and warning — rather than a fresh button that would
   // start a second.
-  api('POST', '/api/usage/connect/state', { id: seat.seatId }).then((st) => {
-    if (!st?.running || !st.url || !onScreen() || btn.disabled) return;
+  api('POST', '/api/usage/connect/state', { id: seat.seatId }).then(async (st) => {
+    if (!onScreen() || btn.disabled) return;
+    // Finished while nobody was watching (the person was on another step):
+    // show it as signed in and reconcile once — never a fresh sign-in over it.
+    if (!reauth && st?.signedIn && !st.running) {
+      btn.remove();
+      status.textContent = 'signed in';
+      if (LOGIN_RECONCILED.has(seat.seatId)) return;
+      LOGIN_RECONCILED.add(seat.seatId);
+      status.textContent = 'signed in — checking this seat…';
+      try { await api('POST', '/api/usage/refresh'); } catch { /* the repaint still shows state */ }
+      // The view, not this row: entering the step repaints rows meanwhile, and
+      // the reconcile is this seat's, done once — so the repaint must follow it.
+      if (S.view !== view) return;
+      notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
+      onSignedIn();
+      return;
+    }
+    if (!st?.running || !st.url) return;
     btn.disabled = true;
     showWaiting(st, true);
     poll();
