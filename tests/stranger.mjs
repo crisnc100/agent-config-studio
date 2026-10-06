@@ -73,7 +73,13 @@ async function machine(tag) {
   const tmp = path.join(sb, 'tmp');
   const elsewhere = path.join(sb, 'elsewhere');
   for (const d of [home, tmp, elsewhere, path.join(home, '.local', 'bin')]) fs.mkdirSync(d, { recursive: true });
-  for (const c of ['claude', 'codex', 'grok']) fakeCli(bin, c, { version: `${c} 4.0.0 (fake)` });
+  // Each fake sits where production discovery looks FIRST (lib/harness.js
+  // CLI_CANDIDATES): claude's and grok's fixed home locations come before
+  // /usr/local/bin and /opt/homebrew/bin, codex's PATH before those. A real
+  // CLI installed there can then never be picked; the resolved paths are
+  // asserted below all the same.
+  const cliDirs = { claude: path.join(home, '.local', 'bin'), grok: path.join(home, '.grok', 'bin'), codex: bin };
+  for (const [c, d] of Object.entries(cliDirs)) fakeCli(d, c, { version: `${c} 4.0.0 (fake)` });
   recorder(bin, 'security');
   const w = (rel, body) => { const f = path.join(home, rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, body); return f; };
   w('.claude/skills/hello-stranger/SKILL.md', '---\nname: hello-stranger\ndescription: Says hello. Use when greeting.\n---\n\nSay hello.\n');
@@ -86,7 +92,8 @@ async function machine(tag) {
     HOME: home, PATH: `${path.join(home, '.local', 'bin')}:${isolatedPath(bin)}`, SHELL: '/bin/sh', TMPDIR: tmp,
     ACS_PORT: String(port), ACS_NO_OPEN: '1', ...GIT_ENV,
   };
-  return { sb, home, bin, tmp, elsewhere, port, env };
+  const allCalls = () => [...new Set(Object.values(cliDirs))].map((d) => calls(d)).join('');
+  return { sb, root: sb, home, bin, tmp, elsewhere, port, env, allCalls };
 }
 
 /** Runs the README's Get started lines in order. `hooks` are the person's actions between them. */
@@ -183,6 +190,12 @@ console.log('\nstranger A: a copy of this working tree');
       const until = async (cond, ms = 10_000) => { const t = Date.now(); while (!cond() && Date.now() - t < ms) await settle(50); return cond(); };
       const step = () => page.eval('SETUP.step');
 
+      // Isolation, proven: every CLI the server resolved is one of the fakes.
+      const det = await proxy('GET', '/api/setup/clis');
+      const resolved = Object.fromEntries(det.clis.map((c) => [c.id, c.binary]));
+      const inside = (b) => typeof b === 'string' && (b.startsWith('~/') || b.startsWith(m.root + path.sep));
+      ok('B5 every CLI the server resolved is a fake inside the sandbox (no real claude, codex or grok)',
+         ['claude', 'codex', 'grok'].every((c) => inside(resolved[c])), JSON.stringify(resolved));
       ok('A the setup screen opens on first run', await until(() => page.eval('S.view') === 'setup'), page.eval('S.view'));
       ok('A it finds the three CLIs, with the versions they printed', await until(() => ['claude', 'codex', 'grok'].every((c) => text().includes(`${c} 4.0.0 (fake)`))), text().slice(0, 400));
       btn('Next').click();
@@ -204,7 +217,7 @@ console.log('\nstranger A: a copy of this working tree');
       }));
       btn('Next').click();
       await until(() => step() === 'done' && !!btn('Finish'));
-      const pathRow = page.$('content').querySelector('.setup-path code')?.textContent;
+      const pathRow = page.$('content').querySelector('.setup-path .setup-cmd code')?.textContent;
       ok('A Done shows how to put acs on PATH, with this checkout\'s bin/acs, quoted for its space',
          pathRow === `'${path.join(checkout, 'bin', 'acs')}' install`, pathRow);
       btn('Finish').click();
@@ -244,7 +257,7 @@ console.log('\nstranger A: a copy of this working tree');
 
   console.log('\nstranger A: isolation');
   ok('B5 no `security` (Keychain) call', !/security/.test(calls(m.bin)), calls(m.bin));
-  const cli = calls(m.bin).split('\n').filter(Boolean);
+  const cli = m.allCalls().split('\n').filter(Boolean);
   ok('B5 the fake CLIs were only asked --version (no sign-in, no usage, no Check now, no Assist)', cli.length > 0 && cli.every((l) => / --version$/.test(l)), cli.filter((l) => !/ --version$/.test(l)).join(' | '));
   ok('B5 no usage refresh ran (no stored reading)', !fs.existsSync(path.join(m.home, '.agent-config-studio', 'usage-snapshot.json')));
   fs.rmSync(path.dirname(m.sb), { recursive: true, force: true });
