@@ -160,6 +160,12 @@ console.log('setup guards\n');
       ["fs.readFileSync(path.join(src, 'lib', 'models.js'))", 'this checkout\'s models.js, copied out by --install'],
       ['fs.readFileSync(DEFAULTS_PATH)', 'this checkout\'s models.default.json, copied out by --install'],
     ],
+    // The same file: bin/model-id is a symlink to it (Node 20.0 loads ESM only by extension).
+    'bin/model-id.mjs': [
+      ["fs.readFileSync(path.join(src, 'bin', 'model-id'))", 'this checkout\'s resolver script, copied out by --install'],
+      ["fs.readFileSync(path.join(src, 'lib', 'models.js'))", 'this checkout\'s models.js, copied out by --install'],
+      ['fs.readFileSync(DEFAULTS_PATH)', 'this checkout\'s models.default.json, copied out by --install'],
+    ],
   };
   /** Every file-read call in `src`: receiver.name(args), args by balanced parens, whitespace normalised. */
   const readCalls = (src) => {

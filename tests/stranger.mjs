@@ -156,6 +156,16 @@ async function followReadme(m, { materialize, startEnv = {}, afterStart, onLine 
 }
 
 const byLine = (results, line) => results.find((r) => r.line === line);
+
+/** bin/model-id arrives as a symlink to model-id.mjs, and `acs install-model-id` works from it on this Node. */
+function modelIdChecks(m, checkout, tag) {
+  const link = path.join(checkout, 'bin', 'model-id');
+  ok(`${tag} bin/model-id arrives as a symlink to model-id.mjs`, fs.lstatSync(link).isSymbolicLink() && fs.readlinkSync(link) === 'model-id.mjs', fs.lstatSync(link).isSymbolicLink() ? fs.readlinkSync(link) : 'a file');
+  const inst = spawnSync('/bin/sh', ['-c', 'acs install-model-id'], { cwd: m.elsewhere, env: m.env, encoding: 'utf8' });
+  ok(`${tag} \`acs install-model-id\` runs on Node ${process.versions.node}`, inst.status === 0 && fs.existsSync(path.join(m.home, '.local', 'bin', 'model-id')), `${inst.stdout}${inst.stderr}`);
+  const r = spawnSync('/bin/sh', ['-c', 'model-id opus'], { cwd: m.elsewhere, env: m.env, encoding: 'utf8' });
+  ok(`${tag} …and the installed model-id resolves`, r.status === 0 && /^claude-/.test(r.stdout), `${r.stdout}${r.stderr}`);
+}
 const waitExit = (l) => new Promise((res) => (!l || l.exited !== null ? res() : l.child.once('exit', res)));
 
 /* ── A: a copy of the candidate, setup through the UI ─────────────────── */
@@ -252,6 +262,7 @@ console.log('\nstranger A: a copy of this working tree');
   ok('5 `acs stop` stops it, and the launcher started from the README exits', stop?.code === 0 && /stopped/.test(stop.out) && !(await healthy(m.port)) && flow.launcher().exited !== null, stop?.out);
   const help = byLine(results, 'acs help');
   ok('5 `acs help` through the link names the copied checkout', help?.code === 0 && help.out.includes(`checkout:    ${checkout}`), help?.out.slice(-200));
+  modelIdChecks(m, checkout, 'A');
   const un = spawnSync('/bin/sh', ['-c', 'acs uninstall'], { cwd: m.elsewhere, env: m.env, encoding: 'utf8' });
   ok('5 `acs uninstall` (the README\'s way off PATH) removes the link', un.status === 0 && !fs.existsSync(local), `${un.stdout}${un.stderr}`);
 
@@ -306,6 +317,7 @@ console.log('\nstranger B: a git clone of a local origin');
   ok('B6 `acs stop` stops it', stop?.code === 0 && !(await healthy(m.port)), stop?.out);
   const help = byLine(results, 'acs help');
   ok('B6 `acs help` names the clone', help?.out.includes(`checkout:    ${checkout}`), help?.out.slice(-200));
+  modelIdChecks(m, checkout, 'B');
   spawnSync('/bin/sh', ['-c', 'acs uninstall'], { cwd: m.elsewhere, env: m.env });
   ok('B6 uninstalled', !fs.existsSync(path.join(m.home, '.local', 'bin', 'acs')));
   ok('B5 no `security` call here either', !/security/.test(calls(m.bin)), calls(m.bin));
