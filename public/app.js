@@ -1255,8 +1255,8 @@ async function handleFileEvent(d) {
   if (added.length) parts.push(`${added.length} added`);
   if (removed.length) parts.push(`${removed.length} removed`);
   if (parts.length) {
-    const names = [...added, ...removed]
-      .slice(0, 3).map((p) => p.split('/').pop()).join(', ');
+    // The paths, in display form: two CLAUDE.md files are two different places.
+    const names = [...added, ...removed].slice(0, 3).join(', ');
     notice('ok', `${parts.join(', ')} outside the studio — ${names}${(added.length + removed.length) > 3 ? '…' : ''}`);
   }
   setLive(true);
@@ -2852,8 +2852,12 @@ function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => p
     // window may have expired and the popup be blocked silently. Always render
     // the link too, so a blocked tab is a visible next step rather than a UI
     // that claims to be waiting for something that never opened.
-    const opened = window.open(res.url, '_blank', 'noopener');
-    showWaiting(res, opened);
+    // No 'noopener' feature: with it, window.open returns null even when the
+    // tab opened, and the page would wrongly say the popup was blocked. The
+    // opener is cut by hand instead. Blocked means null, or closed at once.
+    const w = window.open(res.url, '_blank');
+    if (w) { try { w.opener = null; } catch { /* cross-origin already */ } }
+    showWaiting(res, Boolean(w) && !w.closed);
     poll();
   };
 
@@ -3376,7 +3380,7 @@ const HOME_ROUTES = {
 };
 const HOME_SLOW = new Set(['memory', 'worktrees']);
 const HOME_CARDS_OF = {
-  usage: ['accounts', 'clis'], clis: ['clis'], roots: ['folders'], trash: ['recent'],
+  usage: ['accounts', 'clis'], clis: ['clis', 'attention'], roots: ['folders'], trash: ['recent'],
   models: ['attention'], memory: ['attention'], worktrees: ['attention'], context: ['attention'],
 };
 /** Revisiting Home within this long repaints what it has rather than asking again. */

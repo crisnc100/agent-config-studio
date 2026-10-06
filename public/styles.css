@@ -298,6 +298,12 @@ a { color: var(--accent); }
   padding: 10px 14px; border-radius: 8px; margin: 12px 20px 0;
   font-size: 13px; border: 1px solid;
 }
+/* Toasts float over the page: showing or clearing one never moves the content. */
+#notice-slot {
+  position: fixed; top: 12px; right: 16px; z-index: 50;
+  width: min(520px, calc(100vw - 32px)); pointer-events: none;
+}
+#notice-slot .notice { margin: 0 0 8px; pointer-events: auto; background: var(--panel); box-shadow: 0 6px 24px var(--shadow); }
 .notice.error { color: var(--red); border-color: color-mix(in srgb, var(--red) 35%, transparent); background: color-mix(in srgb, var(--red) 9%, transparent); }
 .notice.warn { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 9%, transparent); }
 .notice.ok { color: var(--green); border-color: color-mix(in srgb, var(--green) 35%, transparent); background: color-mix(in srgb, var(--green) 9%, transparent); }
@@ -1167,7 +1173,8 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
   border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--panel-2);
 }
 .setup-row-main { flex: 1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; overflow-wrap: anywhere; }
-.setup-seat-read { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.setup-seat-read { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; flex: 1 1 260px; min-width: 0; justify-content: flex-end; }
+.setup-seat-pct { font: 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--text-dim); overflow-wrap: anywhere; min-width: 0; }
 .setup-row select, .setup-typed select { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
 .setup-blocked { padding: 2px 0; }
 .setup-next { margin: 10px 0; display: flex; flex-direction: column; gap: 4px; }

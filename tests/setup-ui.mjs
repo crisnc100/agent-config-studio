@@ -405,6 +405,137 @@ console.log('\nsetup in the page');
   ok('S15 …and the added seat', /Codex \(primary\)/.test(home));
 }
 
+/* ── browser QA fixes ──────────────────────────────────────────────────── */
+const focused = (p) => p.doc.activeElement;
+const onPage = (p, n) => n && n !== p.doc.body && p.doc.body.contains(n);
+{
+  // 1: focus survives the repaint each action causes; Enter submits a typed path.
+  const routes = setupRoutes();
+  const p = await boot({ routes });
+  await settle(30);
+  btn(p, 'Recheck').focus();
+  btn(p, 'Recheck').click();
+  await settle(30);
+  ok('QA1 after Recheck, focus is on Recheck again, not <body>', onPage(p, focused(p)) && focused(p).textContent === 'Recheck', focused(p)?.tagName);
+  p.eval("setupGo('folders')");
+  await settle(30);
+  btn(p, 'Scan for projects').click();
+  await settle(30);
+  ok('QA1 after Scan, focus is on the first result', onPage(p, focused(p)) && focused(p).dataset.focus === 'suggestion', focused(p)?.tagName);
+  const row = p.$('content').querySelector('[data-folder="~/code/work"]');
+  row.querySelector('input').click();
+  await settle(10);
+  btn(p, 'Add selected').click();
+  await settle(40);
+  ok('QA1 after Add selected, focus stays in the step, not <body>', onPage(p, focused(p)), focused(p)?.tagName);
+  const input = p.$('content').querySelector('[data-focus="typed-path"]');
+  input.focus();
+  p.input(input, '/h/code/notes');
+  p.key('Enter');
+  await settle(40);
+  ok('QA1 Enter in "Or type a folder" submits it', p.requests.some((r) => r.path === '/api/roots/add' && r.body.path === '/h/code/notes'));
+  ok('QA1 …and focus comes back to the field', onPage(p, focused(p)) && focused(p).dataset.focus === 'typed-path');
+  p.$('btn-skills').click();
+}
+{
+  // 2: the popup message tells the truth.
+  for (const [what, open, re] of [['opened', () => ({ closed: false }), /waiting for you to finish/], ['blocked (null)', () => null, /blocked the popup/], ['closed at once', () => ({ closed: true }), /blocked the popup/]]) {
+    const routes = setupRoutes();
+    routes.st.seats.push({ id: 'codex', vendor: 'codex', label: 'Codex (primary)', home: '/h/.codex' });
+    const p = await boot({ routes, hash: '#setup&step=accounts' });
+    await settle(30);
+    p.win.open = open;
+    btn(p, 'Sign in with ChatGPT').click();
+    await settle(30);
+    ok(`QA2 a popup that ${what}: ${re.source.includes('waiting') ? 'waiting' : 'blocked'} is said`, re.test(p.text(p.$('content').querySelector('.usage-hint'))), p.text(p.$('content').querySelector('.usage-hint')));
+    p.$('btn-skills').click();
+  }
+}
+{
+  // 3: Home never calls an installed CLI missing.
+  const routes = setupRoutes({
+    'GET /api/models': () => ({ rows: [], pending: 0, checkedAt: Date.now(), catalogs: [
+      { vendor: 'claude', label: 'Claude', ok: false, missing: true }, { vendor: 'codex', label: 'Codex', ok: false, missing: true },
+      { vendor: 'grok', label: 'Grok', ok: false, missing: true }] }),
+  });
+  routes.st.setup = { state: 'done' };
+  const p = await boot({ routes });
+  await settle(60);
+  const home = p.text(p.$('content'));
+  ok('QA3 Home says installed CLIs have no catalog yet — not "not installed"',
+     /Claude: installed, no model catalog yet/.test(home) && /Codex: installed, no model catalog yet/.test(home) && !/(Claude|Codex): not installed/.test(home), home.slice(0, 600));
+  ok('QA3 …and only the CLI setup did not find reads not installed', /Grok: not installed — not checked/.test(home));
+}
+{
+  // 4: a signed-in seat says so on its row.
+  const routes = setupRoutes({ 'GET /api/usage': () => ({ seats: [{ seatId: 'codex', label: 'Codex (primary)', vendor: 'codex', home: '/h/.codex', ok: false, signedIn: true, windows: [], reason: 'no turn has run since signing in' }] }) });
+  routes.st.seats.push({ id: 'codex', vendor: 'codex', label: 'Codex (primary)', home: '/h/.codex' });
+  const p = await boot({ routes, hash: '#setup&step=accounts' });
+  await settle(40);
+  ok('QA4 a signed-in seat shows "signed in" on its row', /signed in/.test(p.text(p.$('content').querySelector('[data-seat="codex"]'))), p.text(p.$('content').querySelector('[data-seat="codex"]')));
+  p.$('btn-skills').click();
+}
+{
+  // 5, 6, 7: typed add marks the suggestion; one word for read; a failed add keeps the input.
+  let failNext = false;
+  const routes = setupRoutes({
+    'POST /api/roots/preview': (b) => ({ canonical: b.path, display: b.path.replace('/h', '~'), typed: b.path, label: 'x', access: { edit: null, read: null }, grants: 'g' }),
+  });
+  const add = routes.table['POST /api/roots/add'];
+  routes.table['POST /api/roots/add'] = (b) => { if (failNext) { failNext = false; throw { status: 400, body: { error: 'nope, not that one' } }; } return add(b); };
+  const p = await boot({ routes, hash: '#setup&step=folders' });
+  await settle(30);
+  btn(p, 'Scan for projects').click();
+  await settle(30);
+  const opts = [...p.$('content').querySelector('[data-folder="~/code/work"] select').querySelectorAll('option')].map((o) => o.textContent);
+  ok('QA6 the access choice reads "read-only" / "edit", as Folders does', JSON.stringify(opts) === JSON.stringify(['read-only', 'edit']), JSON.stringify(opts));
+  const input = () => p.$('content').querySelector('[data-focus="typed-path"]');
+  p.input(input(), '/h/code/work');
+  btn(p, 'Add folder').click();
+  await settle(40);
+  ok('QA5 after a typed add, the matching scan suggestion shows "added"', /added/.test(p.text(p.$('content').querySelector('[data-folder="~/code/work"]'))), p.text(p.$('content').querySelector('[data-folder="~/code/work"]')));
+  failNext = true;
+  p.input(input(), '/h/code/bad');
+  btn(p, 'Add folder').click();
+  await settle(40);
+  ok('QA7 a failed add keeps the typed path', input().value === '/h/code/bad' && /nope, not that one/.test(p.text(p.$('notice-slot'))), input().value);
+  p.$('btn-skills').click();
+}
+{
+  // 8: Copied resets; 12: Done's Back and Finish sit where Back and Next do.
+  const p = await boot({ routes: setupRoutes(), hash: '#setup&step=done' });
+  await settle(30);
+  const copy = p.$('content').querySelector('.setup-cmd button');
+  copy.click();
+  await settle(10);
+  const said = copy.textContent;
+  await new Promise((r) => setTimeout(r, 2100));
+  ok('QA8 the Copy button\'s answer resets after ~2 s', said !== 'Copy' && copy.textContent === 'Copy', `${said} → ${copy.textContent}`);
+  const nav = [...p.$('content').querySelector('.setup-nav').querySelectorAll('button')].map((b) => b.textContent);
+  ok('QA12 on Done, Back and Finish sit together in the step nav, Finish where Next is', JSON.stringify(nav) === JSON.stringify(['Back', 'Finish']) && p.$('content').querySelectorAll('.setup-finish').length === 1, JSON.stringify(nav));
+  p.$('btn-skills').click();
+}
+{
+  // 10: the outside-change toast names the paths.
+  const p = await boot({ routes: setupRoutes({ 'GET /api/setup/status': () => ({ state: 'done' }) }) });
+  await settle(30);
+  p.sources[0].onmessage({ data: JSON.stringify({ type: 'files', origin: 'outside', added: ['~/a/CLAUDE.md', '~/b/CLAUDE.md'], removed: [], changed: [], revoked: [], addedPaths: ['/h/a/CLAUDE.md', '/h/b/CLAUDE.md'], removedPaths: [], changedPaths: [], revokedPaths: [] }) });
+  await settle(30);
+  ok('QA10 the toast names the paths, not two bare CLAUDE.md', /~\/a\/CLAUDE\.md, ~\/b\/CLAUDE\.md/.test(p.text(p.$('notice-slot'))), p.text(p.$('notice-slot')));
+}
+{
+  // 9, 11: layout, from the stylesheet (the VM has no layout engine).
+  const css = (await import('node:fs')).readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
+  const rule = (sel) => (css.match(new RegExp(`${sel.replace(/[.#]/g, '\\$&')}\\s*\\{([^}]*)\\}`)) || [])[1] || '';
+  ok('QA11 toasts are a fixed overlay: they never shift the page', /position:\s*fixed/.test(rule('#notice-slot')), rule('#notice-slot'));
+  ok('QA9 the seat reading may wrap as text in its own flexible column (no fixed 38px width)',
+     /min-width:\s*0/.test(rule('.setup-seat-pct')) && /flex:\s*1 1/.test(rule('.setup-seat-read')) && !/width:\s*38px/.test(rule('.setup-seat-pct')));
+  const p = await boot({ routes: setupRoutes({ 'GET /api/usage': () => ({ seats: [{ seatId: 'codex', label: 'Codex (primary)', vendor: 'codex', home: '/h/.codex', ok: true, windows: [{ label: 'Weekly (fixture)', usedPercent: 25, resetsAt: Date.now() + 1e8 }] }] }) }), hash: '#setup&step=accounts' });
+  await settle(40);
+  ok('QA9 …and the reading is rendered in that column, not the Usage panel\'s fixed-width cell', !!p.$('content').querySelector('[data-seat] .setup-seat-pct') && !p.$('content').querySelector('[data-seat] .usage-pct'));
+  p.$('btn-skills').click();
+}
+
 /* ── keyboard: every setup control is a real control ──────────────────── */
 {
   const p = await boot({ routes: setupRoutes() });

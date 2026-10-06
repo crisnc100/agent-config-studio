@@ -78,6 +78,18 @@ function contextItems(d) {
 }
 
 /**
+ * A CLI's model catalog is missing. That is "not installed" only when setup's
+ * own check (/api/setup/clis) has not found the CLI either: an installed CLI
+ * just has not written its catalog yet, and Home must never contradict the
+ * CLIs card about what is installed.
+ */
+function missingCatalogText(c, clis) {
+  const cli = clis?.state === 'ok' && c.vendor ? (clis.data.clis || []).find((x) => x.id === c.vendor) : null;
+  if (cli?.installed) return `${c.label}: installed, no model catalog yet — run it once to check`;
+  return `${c.label}: not installed — not checked`;
+}
+
+/**
  * The Needs-attention card. "Nothing needs you" is allowed only when every
  * source answered and none had anything — a failed or pending source is
  * silence, not good news. So is a source that answered in part: an invalid
@@ -100,7 +112,7 @@ function attentionModel(sources) {
       items.push(...modelItems(s.data));
       if (s.data.registryError) partial.push({ id, label, text: 'the model registry file is invalid — defaults are in use' });
       for (const c of (s.data.catalogs || []).filter((x) => !x.ok)) {
-        if (c.missing) quiet.push({ id, label, text: `${c.label}: not installed — not checked` });
+        if (c.missing) quiet.push({ id, label, text: missingCatalogText(c, sources.clis) });
         else partial.push({ id, label, text: c.note || `the ${c.label} catalog could not be read` });
       }
     } else if (id === 'memory') items.push(...memoryItems(s.data));

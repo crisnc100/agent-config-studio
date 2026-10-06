@@ -144,6 +144,8 @@ ok('1 Finish lands on Home', await until(() => page.eval('S.view') === 'home'));
 ok('1 …having written setup.json completed: done', JSON.parse(fs.readFileSync(path.join(home, '.agent-config-studio', 'setup.json'), 'utf8')).completed === 'done');
 ok('S15 Home shows the folder count', await until(() => /Project folders: 1 \(edit\) · 0 \(read\)/.test(text())), text().slice(0, 300));
 ok('S15 Home shows each CLI\'s state', await until(() => ['claude', 'codex', 'grok'].every((c) => text().includes(`${c} 3.0.0 (fake) · sign-in:`))), text());
+ok('QA3 nothing on Home calls an installed CLI missing (Needs attention agrees with the CLIs card)',
+   await until(() => /installed, no model catalog yet/.test(text())) && !/(Claude|Codex|Grok)[^:]*: not installed/.test(text()), text().slice(0, 600));
 ok('S15 Home shows the added seat', await until(() => page.text(page.$('content').querySelector('.home-accounts')).includes('Codex (primary)')));
 const ctx = await proxy('GET', '/api/context');
 ok('8 the folder\'s context is served (Context lists both repos\' CLAUDE.md)', ['~/code/work/app/CLAUDE.md', '~/code/work/lib/CLAUDE.md'].every((d) => JSON.stringify(ctx).includes(d)), JSON.stringify(ctx).slice(0, 300));

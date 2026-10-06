@@ -28,7 +28,16 @@ const SETUP = {
   picks: {},           // suggestion path -> { on, access, canonical }
   status: null,        // /api/setup/status answer
   finishing: false,
+  typed: { path: '', access: 'read' },   // "Or type a folder", kept across repaints
+  focus: null,         // selectors to focus after the next paint, first match wins
 };
+
+/**
+ * Keyboard focus survives a repaint. An action that re-renders the step
+ * names where focus belongs afterwards — the control itself, or what it
+ * produced — and paintSetup puts it there, so Tab never restarts at the top.
+ */
+const focusAfter = (...selectors) => { SETUP.focus = selectors; };
 
 /** The step a hash names, or the first. */
 function setupStepOf(hash) {
@@ -72,6 +81,7 @@ async function loadSetupClis(recheck) {
   try { SETUP.clis = await api('GET', `/api/setup/clis${recheck ? '?recheck=1' : ''}`); SETUP.clisError = null; }
   catch (e) { SETUP.clisError = e.message; }
   SETUP.checking = false;
+  if (recheck) focusAfter('[data-focus="recheck"]');
   paintSetup();
 }
 
@@ -126,9 +136,20 @@ function paintSetup() {
     const next = el('button', 'btn primary', 'Next');
     next.onclick = () => setupGo(SETUP_STEPS[i + 1][0]);
     nav.appendChild(next);
+  } else {
+    // Done: Finish stands where Next stands on every other step.
+    const finish = el('button', 'btn primary setup-finish', SETUP.finishing ? 'Finishing…' : 'Finish');
+    finish.disabled = SETUP.finishing;
+    finish.onclick = () => finishSetup('done');
+    nav.appendChild(finish);
   }
   box.appendChild(nav);
   c.appendChild(box);
+  if (SETUP.focus) {
+    const target = SETUP.focus.map((sel) => c.querySelector(sel)).find(Boolean);
+    SETUP.focus = null;
+    target?.focus?.();
+  }
 }
 
 /** setup.json could not be read: say so, and offer to write a good one. */
@@ -150,6 +171,7 @@ function setupCommand(text, note) {
   copy.onclick = async () => {
     try { await navigator.clipboard.writeText(text); copy.textContent = 'Copied'; }
     catch { copy.textContent = 'Select and copy it'; }
+    setTimeout(() => { copy.textContent = 'Copy'; }, 2000);
   };
   row.appendChild(copy);
   if (note) row.appendChild(el('span', 'home-muted', note));
@@ -164,6 +186,7 @@ function setupClisStep(body) {
   body.appendChild(el('div', 'scope-sub', 'The studio works with Claude Code, Codex and Grok. Install the ones you use, sign in, then Recheck — no reload needed.'));
   const tools = el('div', 'setup-tools');
   const recheck = el('button', 'btn', SETUP.checking ? 'Checking…' : 'Recheck');
+  recheck.dataset.focus = 'recheck';
   recheck.disabled = SETUP.checking;
   recheck.onclick = () => loadSetupClis(true);
   tools.appendChild(recheck);
@@ -254,13 +277,16 @@ function setupAccountsStep(body) {
       row.appendChild(who);
       const read = el('div', 'setup-seat-read');
       if (r.state.kind === 'reading') {
-        read.appendChild(el('span', 'usage-pct', r.windows.length ? r.windows.map((w) => `${w.label}: ${w.left}% left`).join(' · ') : 'connected · no quota windows reported'));
+        read.appendChild(el('span', 'setup-seat-pct', r.windows.length ? r.windows.map((w) => `${w.label}: ${w.left}% left`).join(' · ') : 'connected · no quota windows reported'));
       } else {
         const tag = el('span', 'usage-offline-tag', r.state.tag);
         if (r.state.tone) tag.classList.add(r.state.tone);
         read.appendChild(tag);
         if (r.reason) read.appendChild(el('span', 'home-muted', r.reason));
       }
+      // Signed in, by the reading's own account of it — the sign-in row has
+      // nothing left to say, so the seat says it.
+      if (!r.connect && seat.signedIn === true) read.appendChild(el('span', 'home-chip ok', 'signed in'));
       row.appendChild(read);
       body.appendChild(row);
       if (seat.vendor === 'codex' && seat.home && r.connect) {
@@ -315,7 +341,7 @@ function setupFoldersStep(body) {
   const h = el('h3', null, 'Project folders');
   h.tabIndex = -1;
   body.appendChild(h);
-  body.appendChild(el('div', 'scope-sub', 'The folders your projects live in. Read folders are listed in Context, Skills and Worktrees; edit folders also open in the editor, with history. Folders start as read.'));
+  body.appendChild(el('div', 'scope-sub', 'The folders your projects live in. Read-only folders are listed in Context, Skills and Worktrees; edit folders also open in the editor, with history. Folders start as read-only.'));
 
   const reg = FOLDERS.data?.roots || [];
   if (reg.length) {
@@ -337,6 +363,7 @@ function setupFoldersStep(body) {
 
   const tools = el('div', 'setup-tools');
   const scanBtn = el('button', 'btn', SETUP.scanning ? 'Scanning…' : 'Scan for projects');
+  scanBtn.dataset.focus = 'scan';
   scanBtn.disabled = SETUP.scanning;
   scanBtn.onclick = setupScan;
   tools.appendChild(scanBtn);
@@ -356,6 +383,7 @@ function setupFoldersStep(body) {
     const fresh = sc.suggestions.filter((s) => s.status === 'new');
     if (fresh.length) {
       const add = el('button', 'btn primary', 'Add selected');
+      add.dataset.focus = 'add-selected';
       add.onclick = () => setupAddPicked(add);
       body.appendChild(add);
     }
@@ -370,6 +398,7 @@ async function setupScan() {
   catch (e) { SETUP.scan = { error: e.message }; }
   SETUP.scanning = false;
   for (const s of SETUP.scan.suggestions || []) SETUP.picks[s.path] ||= { on: false, access: 'read', canonical: null };
+  focusAfter('[data-focus="suggestion"]', '[data-focus="typed-path"]');
   paintSetup();
 }
 
@@ -390,6 +419,7 @@ function setupSuggestionRow(sg) {
   const label = el('label', 'setup-row-main');
   const box = document.createElement('input');
   box.type = 'checkbox';
+  box.dataset.focus = 'suggestion';
   box.checked = pick.on;
   box.onchange = () => { pick.on = box.checked; };
   label.appendChild(box);
@@ -409,7 +439,7 @@ function setupSuggestionRow(sg) {
 
 function setupAccessSelect(value, onChange) {
   const sel = document.createElement('select');
-  for (const [v, t] of [['read', 'read'], ['edit', 'edit']]) {
+  for (const [v, t] of [['read', 'read-only'], ['edit', 'edit']]) {
     const o = document.createElement('option');
     o.value = v; o.textContent = t;
     sel.appendChild(o);
@@ -452,6 +482,7 @@ async function setupAddPicked(btn) {
   }
   if (failed.length) notice('error', 'Some folders were not added:', failed, true);
   else notice('ok', `${chosen.length} folder${chosen.length === 1 ? '' : 's'} added.`);
+  focusAfter('[data-focus="add-selected"]', '[data-focus="suggestion"]', '[data-focus="typed-path"]');
   paintSetup();
 }
 
@@ -461,25 +492,41 @@ function setupTypedFolder() {
   const row = el('div', 'usage-add-row');
   const input = document.createElement('input');
   input.className = 'usage-add-label';
+  input.dataset.focus = 'typed-path';
   input.setAttribute('aria-label', 'Folder path');
   input.placeholder = '~/code/work or /full/path';
-  const access = setupAccessSelect('read', () => {});
+  input.value = SETUP.typed.path;
+  input.oninput = () => { SETUP.typed.path = input.value; };
+  const access = setupAccessSelect(SETUP.typed.access, (to) => { SETUP.typed.access = to; });
   access.setAttribute('aria-label', 'Access for the typed folder');
   const add = el('button', 'btn', 'Add folder');
-  add.onclick = async () => {
+  const submit = async () => {
     const p = input.value.trim();
     if (!p) return input.focus();
+    // Where it really leads, for the edit confirm and to mark a matching
+    // scan suggestion as added.
+    let pv;
+    try { pv = await api('POST', '/api/roots/preview', { path: p }); }
+    catch (e) { return notice('error', e.message); }
     let canonical = null;
     if (access.value === 'edit') {
-      canonical = await setupConfirmEdit(p);
-      if (!canonical) return;
+      if (pv.access.edit) return notice('error', pv.access.edit);
+      if (!confirm(`Give the studio edit access to ${pv.display}?\n\n${pv.grants}`)) return;
+      canonical = pv.canonical;
     }
     add.disabled = true;
-    try { await setupAddRoot({ path: p, access: access.value, canonical }); notice('ok', `${p} added.`); input.value = ''; }
-    catch (e) { notice('error', e.message); }
+    try {
+      await setupAddRoot({ path: p, access: access.value, canonical });
+      notice('ok', `${p} added.`);
+      SETUP.typed = { path: '', access: 'read' };
+      for (const s of SETUP.scan?.suggestions || []) if (pv.canonical && s.path === pv.canonical) s.status = 'added';
+    } catch (e) { notice('error', e.message); }   // the typed path stays for another try
     add.disabled = false;
+    focusAfter('[data-focus="typed-path"]');
     paintSetup();
   };
+  add.onclick = submit;
+  input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
   row.append(input, access, add);
   form.appendChild(row);
   return form;
@@ -498,10 +545,6 @@ function setupDoneStep(body) {
     row.appendChild(setupCommand(s.command));
     body.appendChild(row);
   }
-  const finish = el('button', 'btn primary setup-finish', SETUP.finishing ? 'Finishing…' : 'Finish');
-  finish.disabled = SETUP.finishing;
-  finish.onclick = () => finishSetup('done');
-  body.appendChild(finish);
 }
 
 /**
