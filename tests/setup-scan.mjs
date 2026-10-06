@@ -209,6 +209,36 @@ const wide = mk(wideHome, 'git', 'wide');
   ok('S5 /api/health is never held for 3 s while it is added and indexed', worst < 3000, `worst ${worst} ms`);
   const roots = await get('/api/roots');
   ok('S5 Folders reports it as partially indexed', roots.json.roots.some((r) => r.id === 'wide' && r.partial === true), JSON.stringify(roots.json.roots));
+
+  // The same, on a loaded machine: two CPU hogs beside the server while a
+  // second 200,000-file folder is added and indexed. The server's own
+  // synchronous share must stay small however slow the machine is.
+  const wide2 = mk(wideHome, 'git', 'wide2');
+  for (let i = 0; i < 200_000; i++) fs.writeFileSync(path.join(wide2, `g${i}`), '');
+  const { spawn } = await import('node:child_process');
+  const hogs = [0, 1].map(() => spawn(process.execPath, ['-e', 'for (;;) {}'], { stdio: 'ignore' }));
+  let worst2 = 0; stop = false;
+  const probe2 = (async () => {
+    while (!stop) {
+      const h0 = Date.now();
+      try { await fetch(`${srv.base}/api/health`).then((r) => r.json()); } catch {}
+      worst2 = Math.max(worst2, Date.now() - h0);
+      await sleep(50);
+    }
+  })();
+  const pv2 = await fetch(`${srv.base}/api/roots/preview`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: wide2 }) }).then((r) => r.json());
+  const add2 = await fetch(`${srv.base}/api/roots/add`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: wide2, access: 'edit', confirm: pv2.canonical }) });
+  const reg2 = await get('/api/registry');
+  const ctx2 = await get('/api/context');
+  ok('S5 …the registry and Context still answer (200) while it is indexed', reg2.status === 200 && ctx2.status === 200, `${reg2.status} ${ctx2.status}`);
+  await sleep(4000);
+  ok('S5 …and after indexing too', (await get('/api/registry')).status === 200);
+  stop = true; await probe2;
+  for (const h of hogs) h.kill('SIGKILL');
+  ok('S5 under load (two CPU hogs), adding and indexing another 200,000-file folder holds /api/health under 1 s',
+     add2.status === 200 && worst2 < 1000, `worst ${worst2} ms`);
+  const roots2 = await get('/api/roots');
+  ok('S5 …and it too is reported as partially indexed', roots2.json.roots.some((r) => r.id === 'wide2' && r.partial === true), JSON.stringify(roots2.json.roots));
   await srv.stop();
 }
 

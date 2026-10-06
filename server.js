@@ -14,7 +14,7 @@ import { nextSteps } from './lib/setup-commands.js';
 import { isPartial } from './lib/walk-budget.js';
 import { locateBinary } from './lib/harness.js';
 import { refreshLoginDirs, loginDirs, loginDirsKnown, loginDirsSettled, LOGIN_READ_MS } from './lib/login-path.js';
-import { buildRegistry, scopeChain } from './lib/registry.js';
+import { buildRegistry, scopeChain, onWalkDone, staleLargeWalks } from './lib/registry.js';
 import { listSkills, resolveSkills, toPublic, readInSkill, parseFrontmatter, SKILL_LIMITS } from './lib/skills.js';
 import { readSkillUsage, attachUsage, USAGE_CAVEAT } from './lib/skill-usage.js';
 import { buildSkillsZip, ZIP_LIMITS } from './lib/zip.js';
@@ -403,8 +403,13 @@ function isRevoked(p) {
   try { resolveSafe(p); return false; } catch { return true; }
 }
 
-/** Rebuild, diff, and tell every open tab what actually changed. */
-async function onFilesChanged() {
+/**
+ * Rebuild, diff, and tell every open tab what actually changed. A change on
+ * disk also has large roots walked again, off the main path (lib/registry.js);
+ * the rebuild that walk's end triggers passes `fromWalk` and does not.
+ */
+async function onFilesChanged({ fromWalk = false } = {}) {
+  if (!fromWalk) staleLargeWalks();
   let registry;
   try { registry = buildRegistry(); } catch { return; }
   const next = snapshotOf(registry);
@@ -1459,10 +1464,19 @@ export async function startStudio({ port = PORT, app = {} } = {}) {
   // roots.json changed: the derived lists already follow it, so re-aim the
   // file watchers at the new folders, diff the registry (revoked files go out
   // as such), then tell every tab to reload what it shows.
-  const rootsWatch = watchRoots(async () => {
+  // A large root's off-path walk finished: re-aim the watchers at what it
+  // found and tell the tabs.
+  onWalkDone(async () => {
     watcher.close();
     watcher = createWatcher(onFilesChanged);
+    await onFilesChanged({ fromWalk: true }).catch(() => {});
+  });
+  const rootsWatch = watchRoots(async () => {
+    watcher.close();
+    // The rebuild first: it walks the new folders, and on Linux the watcher
+    // is aimed at what that walk found (lib/watch.js).
     await onFilesChanged().catch(() => {});
+    watcher = createWatcher(onFilesChanged);
     broadcast({ type: 'roots', ...rootsView() });
   });
   const { server, models } = createApp(app);
