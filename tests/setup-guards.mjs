@@ -142,6 +142,7 @@ console.log('setup guards\n');
       ['fs.readFileSync(file)', 'model-id lint, a terminal CLI only, never behind a route; models.js is copied standalone into the resolver and imports nothing of the studio'],
       ["fs.readFileSync(settings, 'utf8')", 'model-id sidecars, the terminal CLI only, same reason'],
       ["fs.readFileSync(toml, 'utf8')", 'model-id sidecars, the terminal CLI only, same reason'],
+      ["fs.readFileSync(path.join(home, '.agent-config-studio', 'roots.json'), 'utf8')", 'roots.json, the studio\'s own folder registry, read here because bin/model-id --install copies models.js standalone (review-config discovery, B11)'],
     ],
     'lib/models-catalog.js': [["io.readFileSync(file, 'utf8')", 'the injected test io only; with the real fs the read is readUserText']],
     'lib/mutate.js': [
@@ -216,6 +217,8 @@ console.log('setup guards\n');
   const pr = path.join(copy, 'lib', 'usage', 'processes.js');
   const origLp = fs.readFileSync(lp, 'utf8');
   const origPr = fs.readFileSync(pr, 'utf8');
+  const hj = path.join(copy, 'lib', 'harness.js');
+  const origHj = fs.readFileSync(hj, 'utf8');
   const control = guards();
   ok('pins: guards.mjs passes on the unmodified copy (control)', control.status === 0, control.stderr.slice(-400));
   const variants = [
@@ -230,6 +233,8 @@ console.log('setup guards\n');
     ['login-path: a second assignment to shell', lp, origLp, (t) => t.replace('const shell = loginShell(env);', 'let shell = loginShell(env); shell = env.SHELL;')],
     ['login-path: the /etc/shells check removed from loginShell', lp, origLp, (t) => t.replace("return listed.includes(want) && fs.existsSync(want) ? want : '/bin/sh';", 'return want;')],
     ['lsof: a third location', pr, origPr, (t) => t.replace("execFile('/usr/bin/lsof', ['-F', 'pcn', '-w', '+d'", "execFile('/usr/local/bin/lsof', ['-F', 'pcn', '-w', '+d'")],
+    ['inspectGrok: a different argv (a session prompt)', hj, origHj, (t) => t.replace("execFile(binary, ['inspect', '--json']", "execFile(binary, ['-p', 'hello']")],
+    ['inspectGrok: the same execFile outside inspectGrok', hj, origHj, (t) => t.replace('export function inspectGrok(', "export const inspectAgain = (binary) => execFile(binary, ['inspect', '--json'], {}, () => {});\nexport function inspectGrok(")],
     ['lsof: a PATH name', pr, origPr, (t) => t.replace("execFile('/usr/bin/lsof', ['-F', 'pcn', '-w', '+D'", "execFile('lsof', ['-F', 'pcn', '-w', '+D'")],
   ];
   for (const [what, file, orig, plant] of variants) {

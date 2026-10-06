@@ -16,7 +16,7 @@ _wt_source() {
 _wt_conf() {
   unset TRUNK ROOT PREFIX BASE ENV_FILES PORTS POST_CREATE WT_DEV_CMD
   local git_common primary conf d key line wt_path wt_list
-  # A per-project command (knew, stellanew, ...) names its own trunk, so it works
+  # A per-project command (mnew, appnew, ...) names its own trunk, so it works
   # from anywhere. Everything else discovers the project from the cwd.
   if [[ -n "$WT_PIN_TRUNK" ]]; then
     _wt_source "$WT_PIN_TRUNK/.worktrees.conf"
@@ -83,8 +83,8 @@ _wt_banner() {
 
 # ENV_FILES entries may be nested (backend/.env.local) — monorepos keep their
 # secrets per package, and a worktree without them does not run.
-# Fetch through direnv when an .envrc governs the trunk: repos under Garman-Homes
-# get their GitHub identity from one, and a non-interactive shell (every agent)
+# Fetch through direnv when an .envrc governs the trunk: a repo can get its
+# GitHub identity from one, and a non-interactive shell (every agent)
 # would otherwise authenticate as the wrong user, fail, and branch off a stale base.
 _wt_fetch() {
   local out
@@ -1414,7 +1414,7 @@ wtinit() {
     return 1
   }
   primary="${git_common:h}"
-  # The primary worktree is often a working checkout (kylie-main), not the project
+  # The primary worktree is often a working checkout (myapp-main), not the project
   # name — so --key/--trunk/--root exist rather than a cleverer guess.
   parent="${primary:h}"
   key="${key_override:-${(L)primary:t}}"
@@ -1579,7 +1579,7 @@ _wt_register() {
 # The project's real settings stay in $TRUNK/.worktrees.conf, read on call.
 _wt_bind() {
   local cmd="$1" trunk="$2" verb fn
-  # The bare name is the anchor: `airflo` drops you in the trunk, the way `kt` does.
+  # The bare name is the anchor: `myapp` drops you in the trunk, the way `mt` does.
   if ! whence -w "$cmd" >/dev/null 2>&1; then
     eval "$cmd() { cd \"$trunk\" && _wt_banner; }"
   elif [[ "$WT_QUIET" != 1 ]]; then

@@ -830,7 +830,7 @@ export function createApp(opts = {}) {
   'GET /api/roots': async () => rootsView(),
 
   /**
-   * Adding a folder from the browser (the setup screen). Cris's decision,
+   * Adding a folder from the browser (the setup screen). A maintainer decision,
    * 2026-10-03: edit folders may be added here, behind the strict origin
    * check, lib/roots.js's own reject list — the same rules as `acs roots add`,
    * none repeated here — and a confirm naming the folder.

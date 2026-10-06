@@ -231,6 +231,8 @@ console.log('\nmodels/lint');
 
   write(skill, '---\nname: demo\n---\nclean\n');
   const proj = path.join(home, 'Documents', 'Projects', 'personal', 'app', '.claude', 'review-config.json');
+  // Review configs are found in the roots.json folders (criterion 3), so this one is made a root.
+  write(path.join(home, '.agent-config-studio', 'roots.json'), JSON.stringify({ version: 1, roots: [{ id: 'projects', path: path.join(home, 'Documents', 'Projects'), label: 'Projects', access: 'edit' }] }));
   write(proj, '{\n  "model": "gpt-5.6-sol"\n}\n');
   const pr = run(home, '--lint');
   ok('a raw id in a project .claude/review-config.json → non-zero', pr.code === 1);
