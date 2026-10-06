@@ -68,6 +68,8 @@ jobs:
           node tests/setup-scan.mjs
           node tests/setup-accounts.mjs
           node tests/setup-commands.mjs
+          node tests/setup-ui.mjs
+          node tests/setup-walkthrough.mjs
       - name: live containment is a local gate
         if: always()
         run: |

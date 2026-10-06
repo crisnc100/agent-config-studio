@@ -54,6 +54,7 @@ const S = {
   draft: '',
   tab: 'preview',
   badges: { models: 0 },
+  navs: 0,              // navigations (and view changes) since load; first run's redirect yields to any
 };
 
 /**
@@ -75,6 +76,9 @@ const VIEWS = [
   // No sidebar item: reached from the Files page's folder line, and #folders.
   { id: 'folders', label: 'Folders', group: null, icon: 'folders', hash: '#folders',
     title: 'Folders', sub: 'The project folders the studio reads and edits', open: openFolders },
+  // No sidebar item either: first run lands here, and Home links to it.
+  { id: 'setup', label: 'Setup', group: null, icon: 'home', hash: '#setup',
+    title: 'Setup', sub: 'CLIs, accounts and project folders — each step optional', open: openSetup },
   { id: 'models', label: 'Models', group: 'configure', icon: 'models', hash: '#models',
     title: 'Models', sub: 'Every model family, its current id, and what the CLIs offer', open: openModels,
     badge: () => S.badges.models },
@@ -160,9 +164,11 @@ async function boot() {
   // inspection, and Home's cards fetch their own sources. Every other deep
   // link needs the registry, so it routes once that is in.
   const hash = location.hash;
-  const early = landsOnHome(hash);
+  // Setup fetches its own sources, so it opens before the registry like Home.
+  const early = landsOnHome(hash) || hashIs(hash, '#setup');
   registryReady = loadRegistry();
   if (early) routeHash(hash, { cold: true });
+  firstRunCheck(hash);
   if (!(await registryReady)) { if (!early) goHome(); return; }
   connectEvents();
   resolveHarness();
@@ -200,6 +206,25 @@ async function loadRegistry() {
   renderStatus();
   if (S.view === 'home') paintHome(['recent']);
   return true;
+}
+
+/**
+ * First run: with no setup.json, the default landing is #setup. Only the
+ * default — a deep link is honoured — and only if nobody has navigated since
+ * the page loaded, so a slow answer never yanks someone out of a view they
+ * chose. A setup.json that cannot be read is said on Home, never a redirect
+ * loop: setup offers to rewrite it.
+ */
+function firstRunCheck(hash) {
+  const navs = S.navs;
+  api('GET', '/api/setup/status').then((st) => {
+    S.setupState = st.state;
+    if (st.state === 'error') {
+      notice('warn', `${st.error}. Open setup from Home to rewrite it.`, null, true);
+      return;
+    }
+    if (st.state === 'none' && S.navs === navs && S.view === 'home' && landsOnHome(hash)) openSetup();
+  }, () => { /* no answer: stay where we are */ });
 }
 
 /** Whether routeHash would land this hash on Home: no file, no drawer, no view. */
@@ -307,7 +332,8 @@ function navButton(v) {
  * open at once (Home, Files) supersede whatever was pending.
  */
 function navNow(v) {
-  if (!S.registry && v.kind !== 'action' && v.id !== 'home' && v.id !== 'files') { S.pendingNav = v.hash; return false; }
+  S.navs++;
+  if (!S.registry && v.kind !== 'action' && v.id !== 'home' && v.id !== 'files' && v.id !== 'setup') { S.pendingNav = v.hash; return false; }
   if (v.kind !== 'action') S.pendingNav = null;
   return true;
 }
@@ -623,6 +649,7 @@ const isDirty = () => S.file && S.draft !== S.original;
 
 async function openEntry(entry, filePath) {
   if (!confirmDiscard()) return;
+  S.navs++;
   S.entry = entry;
   S.lastEntryId = entry.id;         // what the Files page highlights when you go there
   S.view = 'entry';
@@ -773,6 +800,7 @@ function renderContent() {
  * S.lastEntryId stays, for the Files page to highlight.
  */
 function leaveEditor() {
+  S.navs++;          // every view change passes here: first run's redirect yields to it
   S.entry = null; S.file = null; S.original = ''; S.draft = ''; S.revoked = false;
 }
 
@@ -1227,8 +1255,8 @@ async function handleFileEvent(d) {
   if (added.length) parts.push(`${added.length} added`);
   if (removed.length) parts.push(`${removed.length} removed`);
   if (parts.length) {
-    const names = [...added, ...removed]
-      .slice(0, 3).map((p) => p.split('/').pop()).join(', ');
+    // The paths, in display form: two CLAUDE.md files are two different places.
+    const names = [...added, ...removed].slice(0, 3).join(', ');
     notice('ok', `${parts.join(', ')} outside the studio — ${names}${(added.length + removed.length) > 3 ? '…' : ''}`);
   }
   setLive(true);
@@ -1712,6 +1740,7 @@ function paintFolders() {
       top.appendChild(el('span', 'folders-label', r.label));
       top.appendChild(el('span', `mem-badge folders-${r.access}`, r.access === 'edit' ? 'edit' : 'read-only'));
       if (r.status === 'missing') top.appendChild(el('span', 'mem-badge folders-missing', 'missing'));
+      if (r.partial) top.appendChild(el('span', 'mem-badge folders-missing', 'large folder — partially indexed'));
       row.appendChild(top);
       row.appendChild(el('div', 'mem-note', r.display));
       if (r.status === 'missing') {
@@ -1742,6 +1771,7 @@ async function handleRootsEvent(d) {
   FOLDERS.data = { state: d.state, error: d.error, file: d.file, roots: d.roots, invalid: d.invalid, addHint: d.addHint };
   await refreshRegistry().catch(() => {});
   if (S.view === 'folders') paintFolders();
+  else if (S.view === 'setup') paintSetup();
   else if (S.view === 'files') paintFilesBody();
   else if (S.view === 'home') { HOME.settledAt = 0; renderContent(); }
   else if (S.view === 'context') {
@@ -2728,16 +2758,85 @@ let usageTimer = null;
  * studio starts it, opens the URL, and polls until the seat has credentials.
  * The token lands in the seat's own auth.json — the studio never sees it.
  */
-function connectRow(seat, { reauth = false } = {}) {
+/**
+ * `view` is the view that owns the row: polling stops once it is left (Usage,
+ * or the setup screen, which runs the same flow). `onSignedIn` repaints it.
+ */
+/** One login poller per seat, owned by the row on screen that shows it. */
+const LOGIN_POLLS = new Map();
+/** Seats whose finished sign-in has been reconciled (one refresh), until the next sign-in starts. */
+const LOGIN_RECONCILED = new Set();
+
+function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => paintUsage() } = {}) {
   const row = el('div', 'usage-hint');
   const btn = el('button', 'btn', reauth ? 'Sign in as a different account' : 'Sign in with ChatGPT');
   const status = el('span', 'usage-hint-label', '');
+  // Every answer that arrives after an await must prove this row is still
+  // the one on screen — the view may have changed, or repainted it away.
+  const onScreen = () => S.view === view && document.body.contains(row);
+
+  /** The sign-in page link, and the lsof warning when the check could not run. */
+  const showWaiting = ({ url, unchecked }, opened) => {
+    // The conflict check could not run here (no lsof): sign-in goes ahead,
+    // and the person is told what that check would have caught.
+    if (unchecked) row.appendChild(el('div', 'usage-conflict-why connect-unchecked', unchecked));
+    const link = el('a', 'usage-hint-link', 'Open the sign-in page');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    row.appendChild(link);
+    status.textContent = opened
+      ? 'waiting for you to finish in the other tab…'
+      : 'your browser blocked the popup — use the link';
+  };
+
+  // Poll rather than hold a request open for the whole OAuth round trip. A
+  // new row for the same seat takes the poller over; the old one stops.
+  const poll = () => {
+    const prev = LOGIN_POLLS.get(seat.seatId);
+    // A poller owned by another row still on screen is that row's: never taken.
+    if (prev && prev.row !== row && document.body.contains(prev.row)) return;
+    if (prev) clearInterval(prev.timer);
+    const mine = { row, timer: null };
+    LOGIN_POLLS.set(seat.seatId, mine);
+    const owns = () => LOGIN_POLLS.get(seat.seatId) === mine && onScreen();
+    const stop = () => { clearInterval(mine.timer); if (LOGIN_POLLS.get(seat.seatId) === mine) LOGIN_POLLS.delete(seat.seatId); };
+    const started = Date.now();
+    mine.timer = setInterval(async () => {
+      if (!owns()) return stop();
+      let st;
+      try { st = await api('POST', '/api/usage/connect/state', { id: seat.seatId }); }
+      catch { return; }
+      if (!owns()) return stop();
+      if (st.signedIn) {
+        stop();
+        LOGIN_RECONCILED.add(seat.seatId);
+        // Reconcile through the CLI before repainting. It is the only process
+        // that can read account identity, so until it has run, the studio
+        // cannot know this seat changed account — and would keep filtering
+        // against the previous login.
+        status.textContent = 'signed in — checking this seat…';
+        try { await api('POST', '/api/usage/refresh'); } catch { /* the repaint still shows state */ }
+        if (!onScreen()) return;
+        notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
+        onSignedIn();
+      } else if (!st.running && Date.now() - started > 5000) {
+        stop();
+        btn.disabled = false;
+        status.textContent = 'sign-in was cancelled or did not complete';
+      }
+    }, 2000);
+  };
 
   btn.onclick = async () => {
     btn.disabled = true; status.textContent = 'starting sign-in…';
+    LOGIN_RECONCILED.delete(seat.seatId);
     let res;
     try { res = await api('POST', '/api/usage/connect', { id: seat.seatId, reauth }); }
-    catch (e) { btn.disabled = false; status.textContent = ''; return notice('error', e.message); }
+    catch (e) { if (onScreen()) { btn.disabled = false; status.textContent = ''; notice('error', e.message); } return; }
+    // Answered after this row left the screen: the row now showing this seat
+    // picks the login up from connect/state; this one must not touch it.
+    if (!onScreen()) return;
     // Something is holding this seat's home open. Signing in now would be
     // undone the next time that process refreshes its token, so offer to stop
     // it here rather than sending the user to a terminal to find pids.
@@ -2753,40 +2852,41 @@ function connectRow(seat, { reauth = false } = {}) {
     // window may have expired and the popup be blocked silently. Always render
     // the link too, so a blocked tab is a visible next step rather than a UI
     // that claims to be waiting for something that never opened.
-    const opened = window.open(res.url, '_blank', 'noopener');
-    const link = el('a', 'usage-hint-link', 'Open the sign-in page');
-    link.href = res.url;
-    link.target = '_blank';
-    link.rel = 'noopener';
-    row.appendChild(link);
-    status.textContent = opened
-      ? 'waiting for you to finish in the other tab…'
-      : 'your browser blocked the popup — use the link';
-
-    // Poll rather than hold a request open for the whole OAuth round trip.
-    const started = Date.now();
-    const poll = setInterval(async () => {
-      if (S.view !== 'usage') return clearInterval(poll);
-      let st;
-      try { st = await api('POST', '/api/usage/connect/state', { id: seat.seatId }); }
-      catch { return; }
-      if (st.signedIn) {
-        clearInterval(poll);
-        // Reconcile through the CLI before repainting. It is the only process
-        // that can read account identity, so until it has run, the studio
-        // cannot know this seat changed account — and would keep filtering
-        // against the previous login.
-        status.textContent = 'signed in — checking this seat…';
-        try { await api('POST', '/api/usage/refresh'); } catch { /* the repaint still shows state */ }
-        notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
-        paintUsage();
-      } else if (!st.running && Date.now() - started > 5000) {
-        clearInterval(poll);
-        btn.disabled = false;
-        status.textContent = 'sign-in was cancelled or did not complete';
-      }
-    }, 2000);
+    // No 'noopener' feature: with it, window.open returns null even when the
+    // tab opened, and the page would wrongly say the popup was blocked. The
+    // opener is cut by hand instead. Blocked means null, or closed at once.
+    const w = window.open(res.url, '_blank');
+    if (w) { try { w.opener = null; } catch { /* cross-origin already */ } }
+    showWaiting(res, Boolean(w) && !w.closed);
+    poll();
   };
+
+  // Coming back to a seat whose sign-in is still waiting in the browser: show
+  // that one — its link and warning — rather than a fresh button that would
+  // start a second.
+  api('POST', '/api/usage/connect/state', { id: seat.seatId }).then(async (st) => {
+    if (!onScreen() || btn.disabled) return;
+    // Finished while nobody was watching (the person was on another step):
+    // show it as signed in and reconcile once — never a fresh sign-in over it.
+    if (!reauth && st?.signedIn && !st.running) {
+      btn.remove();
+      status.textContent = 'signed in';
+      if (LOGIN_RECONCILED.has(seat.seatId)) return;
+      LOGIN_RECONCILED.add(seat.seatId);
+      status.textContent = 'signed in — checking this seat…';
+      try { await api('POST', '/api/usage/refresh'); } catch { /* the repaint still shows state */ }
+      // The view, not this row: entering the step repaints rows meanwhile, and
+      // the reconcile is this seat's, done once — so the repaint must follow it.
+      if (S.view !== view) return;
+      notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
+      onSignedIn();
+      return;
+    }
+    if (!st?.running || !st.url) return;
+    btn.disabled = true;
+    showWaiting(st, true);
+    poll();
+  }, () => {});
 
   row.appendChild(btn);
   row.appendChild(status);
@@ -3269,23 +3369,25 @@ const HOME = {
   src: {},             // source id -> { state, data, error }
   inflight: {},        // source id -> its pending request, shared by re-renders
   settledAt: 0,        // when every source of the last full load answered
+  gen: 0,              // bumped by every render and by setup's Finish: an answer for an older one is dropped
   body: {},            // card id -> its body element, for the current render
   timing: null,        // { painted, settled } ms since page start, first load only
 };
 const HOME_ROUTES = {
   usage: '/api/usage', models: '/api/models', context: '/api/context',
-  trash: '/api/trash', harnesses: '/api/harnesses',
+  trash: '/api/trash', clis: '/api/setup/clis', roots: '/api/roots',
   memory: '/api/memory', worktrees: '/api/worktree',
 };
 const HOME_SLOW = new Set(['memory', 'worktrees']);
 const HOME_CARDS_OF = {
-  usage: ['accounts', 'clis'], harnesses: ['clis'], trash: ['recent'],
+  usage: ['accounts', 'clis'], clis: ['clis', 'attention'], roots: ['folders'], trash: ['recent'],
   models: ['attention'], memory: ['attention'], worktrees: ['attention'], context: ['attention'],
 };
 /** Revisiting Home within this long repaints what it has rather than asking again. */
 const HOME_FRESH_MS = 30_000;
 
 function renderHome(c) {
+  HOME.gen++;
   const box = el('div', 'home');
 
   const accounts = homeCard('accounts', 'Accounts & usage');
@@ -3306,6 +3408,10 @@ function renderHome(c) {
   trashBtn.onclick = () => openTrash();
   recent.tools.appendChild(trashBtn);
 
+  // One line for the folders, and the way back into setup.
+  const folders = el('div', 'home-folders');
+  folders.setAttribute('aria-live', 'polite');
+  box.appendChild(folders);
   box.appendChild(accounts.card);
   const grid = el('div', 'home-grid');
   const side = el('div', 'home-col');
@@ -3314,7 +3420,7 @@ function renderHome(c) {
   box.appendChild(grid);
   c.appendChild(box);
 
-  HOME.body = { accounts: accounts.body, attention: attention.body, clis: clis.body, recent: recent.body };
+  HOME.body = { folders, accounts: accounts.body, attention: attention.body, clis: clis.body, recent: recent.body };
   paintHome(Object.keys(HOME.body));
   if (!HOME.timing) HOME.timing = { painted: Math.round(performance.now()), settled: null };
 
@@ -3345,9 +3451,13 @@ function homeCard(id, title) {
 /**
  * Ask every source, fast ones now and slow ones once the page has painted.
  * A source keeps its last answer on screen until the new one lands, and an
- * answer that lands after you left Home is dropped rather than painted.
+ * answer that lands after you left Home is dropped rather than painted — as
+ * is one for an earlier visit (HOME.gen): a request from before setup's
+ * Finish must never paint over what Finish made true.
  */
 function loadHome() {
+  const gen = HOME.gen;
+  const mine = () => S.view === 'home' && HOME.gen === gen;
   // After first paint — or after 50 ms if no frame comes, since a background
   // tab runs none. Whichever is first; the promise settles once either way.
   const afterPaint = new Promise((r) => {
@@ -3358,12 +3468,15 @@ function loadHome() {
     if (!HOME.src[id]) HOME.src[id] = { state: 'loading' };
     const start = HOME_SLOW.has(id) ? afterPaint : Promise.resolve();
     return start.then(() => {
-      if (S.view !== 'home') return false;
-      HOME.inflight[id] ||= api('GET', HOME_ROUTES[id])
-        .then(homeSource, (e) => ({ state: 'error', error: e.message }))
-        .finally(() => { HOME.inflight[id] = null; });
+      if (!mine()) return false;
+      if (!HOME.inflight[id]) {
+        const req = api('GET', HOME_ROUTES[id])
+          .then(homeSource, (e) => ({ state: 'error', error: e.message }))
+          .finally(() => { if (HOME.inflight[id] === req) HOME.inflight[id] = null; });
+        HOME.inflight[id] = req;
+      }
       return HOME.inflight[id].then((res) => {
-        if (S.view !== 'home') return false;
+        if (!mine()) return false;
         HOME.src[id] = res;
         if (id === 'models' && res.state === 'ok') paintModelsBadge(res.data.pending || 0);
         paintHome(HOME_CARDS_OF[id]);
@@ -3372,7 +3485,7 @@ function loadHome() {
     });
   };
   // Recent's history line is the registry's, so "all loaded" waits for it too.
-  const history = registryReady.then(() => S.view === 'home');
+  const history = registryReady.then(() => mine());
   Promise.all([...Object.keys(HOME_ROUTES).map(ask), history]).then((stored) => {
     if (!stored.every(Boolean)) return;
     HOME.settledAt = Date.now();
@@ -3382,7 +3495,7 @@ function loadHome() {
 
 function paintHome(cards) {
   if (S.view !== 'home') return;
-  const painters = { accounts: paintAccounts, attention: paintAttention, clis: paintClis, recent: paintRecent };
+  const painters = { folders: paintFolderLine, accounts: paintAccounts, attention: paintAttention, clis: paintClis, recent: paintRecent };
   for (const id of new Set(cards)) {
     const body = HOME.body[id];
     if (!body) continue;
@@ -3524,25 +3637,38 @@ function paintAttention(body) {
   renderTopbar();
 }
 
+function paintFolderLine(body) {
+  const r = HOME.src.roots;
+  if (!r || r.state === 'loading') body.appendChild(el('span', 'home-muted', 'Project folders: …'));
+  else if (r.state === 'error') body.appendChild(el('span', 'home-muted', `Project folders unavailable: ${r.error}`));
+  else body.appendChild(el('span', 'home-folders-count', folderCountText(r.data)));
+  const open = el('button', 'btn ghost', 'Folders');
+  open.onclick = () => homeAction({ view: 'folders' });
+  const again = el('button', 'btn ghost', 'Run setup again');
+  again.onclick = () => homeAction({ view: 'setup' });
+  body.append(open, again);
+}
+
 function paintClis(body) {
-  const h = HOME.src.harnesses;
-  const { rows, codex } = cliModel(h?.state === 'ok' ? h.data : null, HOME.src.usage);
-  if (!h || h.state === 'loading') body.appendChild(homeLoading('Detecting CLIs…'));
-  else if (h.state === 'error') body.appendChild(homeFailed('Detection', h.error));
-  else if (!rows.length) body.appendChild(el('div', 'home-state', 'No CLI that Assist can run was found.'));
+  const src = HOME.src.clis;
+  const rows = clisCardModel(src?.state === 'ok' ? src.data : null);
+  if (!src || src.state === 'loading') body.appendChild(homeLoading('Detecting CLIs…'));
+  else if (src.state === 'error') body.appendChild(homeFailed('Detection', src.error));
   for (const r of rows) {
     const row = el('div', 'home-cli');
+    row.dataset.cli = r.id;
     const top = el('div', 'home-cli-top');
     top.appendChild(el('span', 'home-cli-name', r.label));
-    top.appendChild(el('span', 'home-chip ok', 'detected'));
+    top.appendChild(el('span', `home-chip ${r.installed ? 'ok' : 'warn'}`, r.installed ? 'installed' : 'not installed'));
     row.appendChild(top);
-    row.appendChild(el('div', 'home-muted', r.note));
+    row.appendChild(el('div', 'home-muted', r.installed ? `${r.version} · sign-in: ${r.signIn}` : 'install it from setup'));
     body.appendChild(row);
   }
 
+  const { codex } = cliModel(null, HOME.src.usage);
   const row = el('div', 'home-cli');
   const top = el('div', 'home-cli-top');
-  top.appendChild(el('span', 'home-cli-name', 'Codex'));
+  top.appendChild(el('span', 'home-cli-name', 'Codex seats'));
   row.appendChild(top);
   if (codex.state === 'loading') row.appendChild(homeLoading('from Usage…'));
   else if (codex.state === 'error') row.appendChild(homeFailed('Usage', codex.error));
@@ -3559,7 +3685,11 @@ function paintClis(body) {
     }
   }
   body.appendChild(row);
-  body.appendChild(el('div', 'home-foot', 'The CLIs this studio detects. Version and sign-in are not reported.'));
+  const again = el('button', 'btn ghost home-item-btn', 'Check in setup');
+  again.onclick = () => homeAction({ view: 'setup' });
+  const foot = el('div', 'home-foot', 'Installed CLIs, their versions and sign-in, as setup checks them. ');
+  foot.appendChild(again);
+  body.appendChild(foot);
 }
 
 function paintRecent(body) {
@@ -4761,8 +4891,9 @@ function wireGlobalKeys() {
 // Following a link or typing a hash switches the view, not only a reload. A
 // cancelled discard puts the old hash back, so the URL keeps naming what is shown.
 window.addEventListener('hashchange', (e) => {
+  S.navs++;
   // Before the registry is in, only remember it: boot routes it once it lands.
-  if (!S.registry) { S.pendingNav = location.hash; return; }
+  if (!S.registry && !hashIs(location.hash, '#setup')) { S.pendingNav = location.hash; return; }
   if (isDirty() && !hashIs(location.hash, '#assist')) {
     if (!confirmDiscard()) {
       const old = e.oldURL ? new URL(e.oldURL).hash : '';

@@ -78,6 +78,18 @@ function contextItems(d) {
 }
 
 /**
+ * A CLI's model catalog is missing. That is "not installed" only when setup's
+ * own check (/api/setup/clis) has not found the CLI either: an installed CLI
+ * just has not written its catalog yet, and Home must never contradict the
+ * CLIs card about what is installed.
+ */
+function missingCatalogText(c, clis) {
+  const cli = clis?.state === 'ok' && c.vendor ? (clis.data.clis || []).find((x) => x.id === c.vendor) : null;
+  if (cli?.installed) return `${c.label}: installed, no model catalog yet — run it once to check`;
+  return `${c.label}: not installed — not checked`;
+}
+
+/**
  * The Needs-attention card. "Nothing needs you" is allowed only when every
  * source answered and none had anything — a failed or pending source is
  * silence, not good news. So is a source that answered in part: an invalid
@@ -100,7 +112,7 @@ function attentionModel(sources) {
       items.push(...modelItems(s.data));
       if (s.data.registryError) partial.push({ id, label, text: 'the model registry file is invalid — defaults are in use' });
       for (const c of (s.data.catalogs || []).filter((x) => !x.ok)) {
-        if (c.missing) quiet.push({ id, label, text: `${c.label}: not installed — not checked` });
+        if (c.missing) quiet.push({ id, label, text: missingCatalogText(c, sources.clis) });
         else partial.push({ id, label, text: c.note || `the ${c.label} catalog could not be read` });
       }
     } else if (id === 'memory') items.push(...memoryItems(s.data));
@@ -161,6 +173,28 @@ function cliModel(harnesses, usage) {
     codex = { state: 'ok', seats: seats.length, reading, signIn };
   }
   return { rows, codex };
+}
+
+/**
+ * The CLIs card, from /api/setup/clis: installed or not, the version the CLI
+ * printed, and the sign-in state as the server worded it — never upgraded
+ * here. A missing version reads "version unknown" only because the route
+ * returned none.
+ */
+function clisCardModel(data) {
+  return (data?.clis || []).map((c) => ({
+    id: c.id, label: c.label, installed: !!c.installed,
+    version: c.installed ? (c.version || 'version unknown') : null,
+    signIn: c.installed ? c.signIn?.label || 'unknown' : null,
+    tone: !c.installed ? 'warn' : ['verified', 'present'].includes(c.signIn?.state) ? 'ok' : 'warn',
+  }));
+}
+
+/** "Project folders: N (edit) · M (read)", from /api/roots — active folders only. */
+function folderCountText(roots) {
+  const active = (roots?.roots || []).filter((r) => r.status === 'ok');
+  const edit = active.filter((r) => r.access === 'edit').length;
+  return `Project folders: ${edit} (edit) · ${active.length - edit} (read)`;
 }
 
 /** The Recent card: trash entries and the last history summary — no edit feed exists. */
