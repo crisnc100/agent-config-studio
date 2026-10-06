@@ -7,8 +7,10 @@ import { fileURLToPath } from 'node:url';
 
 import {
   HARNESSES, assertDescriptor, composeArgv, createStreamDecoder, detectHarnesses,
-  getHarness, getLastSpawn, resumeArgs, argvIncludes, spawnContained, DESCRIPTOR_FIELDS,
+  getHarness, getLastSpawn, resumeArgs, argvIncludes, spawnContained, inspectGrok, DESCRIPTOR_FIELDS,
 } from '../lib/harness.js';
+// The one containment rule, shared with the runtime's init gate.
+import { GROK_ASSIST_ENV, containmentHeld, grokMcpRefusal } from '../lib/containment.js';
 import { parseEdits, streamTurn } from '../lib/chat.js';
 import { runAssist } from '../lib/assist.js';
 import { tilde } from '../lib/paths.js';
@@ -20,7 +22,6 @@ const ROOT = path.dirname(fileURLToPath(new URL('.', import.meta.url)));
 // FAILS, it just is not declared dead while it is legitimately still working.
 const TURN_MS = 300_000;
 const WRITE_TOOLS_GROK = ['write', 'search_replace', 'run_terminal_command'];
-const ALLOWED_READ_TOOL = { claude: 'Read', grok: 'read_file' };
 
 // Offline mode runs only checks that need no harness binary and no network.
 // Default (unset) is the full local gate. Do not treat a green offline run as
@@ -161,26 +162,6 @@ function compareTrees(before, after) {
     if (!harnessOwned(rel)) problems.push(`new project file: ${rel}`);
   }
   return problems;
-}
-
-function containmentHeld(init, id) {
-  if (!init) return { ok: false, why: 'no init event' };
-  const allowed = ALLOWED_READ_TOOL[id];
-  const pm = init.permissionMode;
-  if (!allowed) {
-    if (pm === 'plan' || pm === 'read-only') return { ok: true, why: `permissionMode=${pm}` };
-    return { ok: false, why: `unknown harness ${id}` };
-  }
-  const tools = Array.isArray(init.tools) ? init.tools : [];
-  const extras = tools.filter((t) => t !== allowed);
-  const count = init.toolCount ?? tools.length;
-  if (tools.length !== 1 || tools[0] !== allowed || extras.length > 0) {
-    return {
-      ok: false,
-      why: `effective tools ${JSON.stringify(tools)} (toolCount=${count}); want only ${allowed}`,
-    };
-  }
-  return { ok: true, why: `tools=[${allowed}] (toolCount=${count}; permissionMode=${pm})` };
 }
 
 function authFailed(text, err) {
@@ -324,7 +305,8 @@ function runGrokRaw({ binary, cwd, prompt, extraArgs = [], permissionMode }) {
   if (permissionMode) args.push('--permission-mode', permissionMode);
   const child = spawn(binary, args, {
     cwd,
-    env: process.env,
+    // The env production Assist gives grok (compat MCP sources off).
+    env: { ...process.env, ...GROK_ASSIST_ENV },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = Buffer.alloc(0);
@@ -692,6 +674,21 @@ async function main() {
           cwd: dir,
           harness: h.id,
         }, () => {});
+        // grok's preflight is async: the spawn (or the refusal) comes after it.
+        let refusedBeforeSpawn = null;
+        try { await handle.spawned; } catch (e) { refusedBeforeSpawn = e; }
+        if (refusedBeforeSpawn) {
+          assert(desc.preflight, `${h.id} has no preflight, yet its spawn failed: ${refusedBeforeSpawn.message}`);
+          assert(refusedBeforeSpawn.refused === true && refusedBeforeSpawn.status === 409,
+            `${h.id} spawn failed but not as a pre-spawn refusal: ${refusedBeforeSpawn.message}`);
+          assert(/MCP servers configured/.test(refusedBeforeSpawn.message), `${h.id} refused for another reason: ${refusedBeforeSpawn.message}`);
+          assert(handle.binary === null, `${h.id} refused before spawn, yet a binary was spawned`);
+          await handle.done.catch(() => {});
+          const problems = compareTrees(before, treeManifest(dir));
+          assert(problems.length === 0, `${h.id} temp tree mutated:\n  ${problems.join('\n  ')}`);
+          console.log(`    ${h.id}: refused before spawn (MCP configured) — ${refusedBeforeSpawn.message.slice(0, 160)}`);
+          return;
+        }
         assert(handle.binary, 'spawnfile missing');
         const spawnedReal = fs.realpathSync(handle.binary);
         eq(spawnedReal, h.binary, `${h.id} child spawnfile !== detected binary`);
@@ -780,6 +777,14 @@ async function main() {
           `grok probe target is not inside temp dir: ${realSkill} vs ${realDir}`,
         );
         const desc = getHarness('grok');
+        // The pre-spawn rule first, with the env production uses: with MCP
+        // configured this probe must not spawn grok at all.
+        const why = grokMcpRefusal(await inspectGrok({ binary: grokDetected.binary, cwd: dir, env: { ...process.env, ...GROK_ASSIST_ENV } }));
+        if (why) {
+          assert(/MCP servers configured/.test(why), `grok pre-spawn check failed for another reason: ${why}`);
+          console.log(`    grok write-demand: refused before spawn — ${why.slice(0, 160)}`);
+          return;
+        }
         const handle = runGrokRaw({
           binary: grokDetected.binary,
           cwd: dir,

@@ -1331,7 +1331,10 @@ export function createApp(opts = {}) {
     if (turnSucceeded(result) && sessionId) {
       rememberSession(sessions, sessionId, resolved.harness);
     }
-    const proposals = parseEdits(text, mentions).map((p) => {
+    // Edits are only ever read from a turn that worked: a refused or failed
+    // turn's text proposes nothing.
+    const ok = turnSucceeded(result);
+    const proposals = (ok ? parseEdits(text, mentions) : []).map((p) => {
       let mtime = null;
       try { mtime = p.path ? fs.statSync(p.path).mtimeMs : null; } catch {}
       return {
@@ -1345,7 +1348,6 @@ export function createApp(opts = {}) {
     // only copy), whether the turn actually worked, and — only when it did —
     // the session id. A refused id must not be handed back for the client to
     // store and resume against.
-    const ok = turnSucceeded(result);
     send({
       t: 'done',
       ok,

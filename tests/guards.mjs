@@ -290,6 +290,8 @@ function guardB() {
     if (abs === HARNESS) {
       const contained = functionSpan(src, 'spawnContained');
       const version = functionSpan(src, 'readVersion');
+      // grok's pre-spawn MCP check: discovery only, never a session.
+      const inspect = functionSpan(src, 'inspectGrok');
       if (!contained) {
         hits.push(`${file}: spawnContained is missing — the chokepoint is gone`);
         continue;
@@ -307,6 +309,11 @@ function guardB() {
         } else if (call.fn === 'spawnSync') {
           if (!inSpan(call.index, version)) {
             hits.push(`${file}:${call.line} spawnSync() outside readVersion (only --version probes belong there)`);
+          }
+        } else if (call.fn === 'execFile' && inspect && inSpan(call.index, inspect)) {
+          const text = src.slice(call.index, call.index + 120).replace(/\s+/g, ' ');
+          if (!/^execFile\(binary, \['inspect', '--json'\], /.test(text)) {
+            hits.push(`${file}:${call.line} inspectGrok must execFile(binary, ['inspect', '--json'], …), got ${text.slice(0, 60)}`);
           }
         } else {
           hits.push(`${file}:${call.line} ${call.fn}() — harness.js may spawn only via spawnContained / readVersion`);
