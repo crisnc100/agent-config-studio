@@ -516,6 +516,22 @@ const onPage = (p, n) => n && n !== p.doc.body && p.doc.body.contains(n);
   p.$('btn-skills').click();
 }
 {
+  // The Done step's PATH row (build 3 QA): a title, `acs` as code, and the
+  // Back / Finish pair centred on one line like every other step's nav.
+  const p = await boot({ routes: setupRoutes({ 'GET /api/setup/clis': () => CLIS({ path: { key: 'next.path', command: "'/src/my acs/bin/acs' install", note: 'Puts acs on your PATH, so `acs` starts the studio from any terminal. It never edits a shell profile.' } }) }), hash: '#setup&step=done' });
+  await settle(30);
+  const row = p.$('content').querySelector('.setup-path');
+  ok('QA the PATH row has its title', p.text(row?.querySelector('.setup-path-title') || row || p.$('content')) === 'Put acs on your PATH', row ? p.text(row) : 'no row');
+  const codes = row ? row.querySelectorAll('code').map((c) => c.textContent) : [];
+  ok('QA …`acs` in its description is a <code>, with no literal backticks', codes.includes('acs') && !p.text(row).includes('`'), JSON.stringify(codes));
+  ok('QA …and its command is the server\'s, with a Copy button', row?.querySelector('.setup-cmd code')?.textContent === "'/src/my acs/bin/acs' install" && !!row.querySelector('.setup-cmd button'));
+  const css = (await import('node:fs')).readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
+  const rule = (sel) => (css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.#]/g, '\\$&')}\\s*\\{([^}]*)\\}`)) || [])[1] || '';
+  ok('QA Done: the nav centres its buttons and Finish carries no extra top margin (Back and Finish the same height, one line)',
+     /align-items:\s*center/.test(rule('.setup-nav')) && !/\.setup-finish\s*\{[^}]*margin/.test(css), rule('.setup-nav'));
+  ok('QA the Copy button keeps its width when it says "Copied"', /min-width:\s*\d/.test(rule('.setup-cmd .btn')), rule('.setup-cmd .btn'));
+}
+{
   // 10: the outside-change toast names the paths.
   const p = await boot({ routes: setupRoutes({ 'GET /api/setup/status': () => ({ state: 'done' }) }) });
   await settle(30);
