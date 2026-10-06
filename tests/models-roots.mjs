@@ -52,6 +52,11 @@ const cases = [
   ['a root that is HOME itself is skipped', [root(home, 'home')], false, false],
   ['a root that no longer exists is skipped', [root(path.join(home, 'gone'))], false, false],
   ['a root removed from the file (revoked) is not scanned', [], false, false],
+  // The registry's own entry rules (entryProblem in lib/models.js, shared with lib/roots.js).
+  ['a root with an invalid access is skipped', [{ ...root(elsewhere), access: 'invalid' }], false, false],
+  ['a root with an invalid id is skipped', [{ ...root(elsewhere), id: 'Not An Id' }], false, false],
+  ['a root with a reserved id is skipped', [{ ...root(elsewhere), id: 'global' }], false, false],
+  ['a root with no label is skipped', [{ id: 'work', path: elsewhere, access: 'read' }], false, false],
 ];
 for (const [what, roots, wantIn, wantLegacy] of cases) {
   setRoots({ version: 1, roots });
@@ -64,6 +69,13 @@ for (const [what, roots, wantIn, wantLegacy] of cases) {
   ok(`B11 installed resolver, ${what}: exit ${wantIn || wantLegacy ? 1 : 0}`, r.code === (wantIn || wantLegacy ? 1 : 0), `${r.code} ${r.out}`);
 }
 
+{
+  const { loadRoots } = await import('../lib/roots.js');
+  const bad = [{ ...root(elsewhere), access: 'invalid' }, { ...root(elsewhere, 'global') }, { id: 'nolabel', path: elsewhere, access: 'read' }];
+  setRoots({ version: 1, roots: bad });
+  ok('B11 lib/roots.js rejects the same entries the resolver skips', loadRoots({ home }).roots.length === 0 && projectRoots(home).length === 0);
+  ok('B11 one validator: lib/roots.js takes entryProblem from lib/models.js', /import \{[^}]*entryProblem[^}]*\} from '\.\/models\.js'/.test(fs.readFileSync(path.join(ROOT, 'lib', 'roots.js'), 'utf8')));
+}
 for (const [what, body] of [['missing', null], ['not JSON', '{ "roots": '], ['no roots list', '{"version":1}'], ['roots not a list', '{"roots":{}}']]) {
   if (body === null) fs.rmSync(rootsFile, { force: true }); else setRoots(body);
   ok(`B11 roots.json ${what}: no project folder is scanned (server path)`, projectRoots(home).length === 0 && !lintScope(home).some((f) => f.endsWith('review-config.json') && f.includes(`${path.sep}app${path.sep}`)));
