@@ -1521,6 +1521,91 @@ function deleteOpenEntry() {
   });
 }
 
+/* ── multi-select (Memory facts, Context rows) ───────────────────────── */
+
+/**
+ * One selection per view. Only rows painted right now count: `shown` is
+ * rebuilt on every paint and pruneSelection drops anything not in it, so a
+ * row hidden by a filter, a tab or a closed card is never sent — the count
+ * on the bar is always exactly what Delete sends.
+ */
+const SELECT_CAP = 200;
+const newSelection = () => ({ ids: new Set(), labels: new Map(), shown: new Map(), busy: false, bar: null });
+
+/** A row's checkbox; `why` makes it a disabled one that says why. */
+function selectBox(sel, id, label, why = null) {
+  const wrap = el('span', 'sel-box');
+  const cb = el('input', 'sk-check sel-check');
+  cb.type = 'checkbox';
+  cb.setAttribute('aria-label', `Select ${label}`);
+  wrap.appendChild(cb);
+  if (why) {
+    cb.disabled = true;
+    // On the wrapper too: a disabled input gets no hover in some browsers.
+    cb.title = why; wrap.title = why;
+    return wrap;
+  }
+  sel.labels.set(id, label);
+  sel.shown.set(id, cb);
+  cb.checked = sel.ids.has(id);
+  cb.disabled = sel.busy;
+  cb.onchange = () => { if (cb.checked) sel.ids.add(id); else sel.ids.delete(id); paintSelectBar(sel); };
+  return wrap;
+}
+
+/** The sticky "N selected · Delete · Clear" bar. */
+function selectBar(sel, onDelete) {
+  const bar = el('div', 'sel-bar');
+  bar.setAttribute('role', 'toolbar');
+  bar.setAttribute('aria-label', 'Selection');
+  const count = el('span', 'sel-count');
+  const all = el('button', 'btn ghost', 'Select all (visible)');
+  all.onclick = () => {
+    const ids = [...sel.shown.keys()];
+    sel.ids = new Set(ids.slice(0, SELECT_CAP));
+    if (ids.length > SELECT_CAP) notice('warn', `Selected the first ${SELECT_CAP} of ${ids.length} — the most one delete takes.`);
+    paintSelectBar(sel);
+  };
+  const del = el('button', 'btn danger', 'Delete…');
+  del.onclick = () => onDelete([...sel.ids]);
+  const clear = el('button', 'btn ghost', 'Clear');
+  clear.onclick = () => { sel.ids.clear(); paintSelectBar(sel); };
+  bar.append(count, all, del, clear);
+  sel.bar = { bar, count, all, del, clear };
+  paintSelectBar(sel);
+  return bar;
+}
+
+function paintSelectBar(sel) {
+  for (const [id, cb] of sel.shown) { cb.checked = sel.ids.has(id); cb.disabled = sel.busy; }
+  const b = sel.bar;
+  if (!b) return;
+  const n = sel.ids.size;
+  b.count.textContent = n > SELECT_CAP ? `${n} selected — at most ${SELECT_CAP} at once` : `${n} selected`;
+  b.all.disabled = sel.busy || !sel.shown.size;
+  b.del.disabled = sel.busy || !n || n > SELECT_CAP;
+  b.clear.disabled = sel.busy || !n;
+  b.bar.classList.toggle('empty', !n);
+}
+
+/** Call at the start of a paint, then pruneSelection at its end. */
+function resetShown(sel) { sel.shown = new Map(); sel.bar = null; }
+function pruneSelection(sel) {
+  for (const id of [...sel.ids]) if (!sel.shown.has(id)) sel.ids.delete(id);
+  paintSelectBar(sel);
+}
+
+/** The editor showing a file a batch just removed closes, as single delete's does; any other draft stays. */
+function closeEditorOn(gone) {
+  const f = S.file;
+  if (!f) return;
+  const hit = gone.some((g) => (g.path && (f.path === g.path || f.path.startsWith(g.path + '/')))
+    || (g.display && (f.display === g.display || f.display?.startsWith(g.display + '/'))));
+  if (!hit) return;
+  S.entry = null; S.file = null; S.original = ''; S.draft = '';
+  if (S.view === 'entry') goHome();
+}
+
 /* ── worktrees view ──────────────────────────────────────────────────── */
 
 /**
@@ -2065,6 +2150,8 @@ const MV = {
   compare: null,           // { orphan, rows }
   diff: null,              // { key, before, after, labels }
   restoreRefusal: null,    // { opId, reason, diffs }
+  sel: newSelection(),     // fact row ids, for Delete selected (trash-fact)
+  outdated: null,          // why the last re-read failed, while the old rows stay shown
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -2083,6 +2170,7 @@ const SLUG_STATE_LABELS = {
 
 async function openMemory() {
   if (!confirmDiscard()) return;
+  if (S.view !== 'memory') MV.sel = newSelection();
   S.view = 'memory';
   leaveEditor();
   // Nothing stays open behind this view, or a cleanup that trashes the file
@@ -2095,14 +2183,7 @@ async function openMemory() {
   const c = $('content');
   c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span> Reading memory and transcripts…</div></div>';
   try {
-    const [data, ops] = await Promise.all([api('GET', '/api/memory'), api('GET', '/api/memory/ops')]);
-    MV.data = data;
-    MV.ops = ops.ops;
-    // A finding id survives a reload only while its finding does.
-    const live = new Set([
-      ...data.findings.emptySlugs, ...data.findings.dangling, ...data.findings.unindexed,
-    ].map((f) => f.id));
-    for (const set of Object.values(MV.picked)) for (const id of [...set]) if (!live.has(id)) set.delete(id);
+    takeMemory(...await Promise.all([api('GET', '/api/memory'), api('GET', '/api/memory/ops')]));
   } catch (e) {
     c.innerHTML = '';
     const box = el('div', 'scope');
@@ -2110,6 +2191,31 @@ async function openMemory() {
     box.appendChild(el('div', 'notice error', e.message));
     c.appendChild(box);
     return;
+  }
+  paintMemory();
+}
+
+function takeMemory(data, ops) {
+  MV.data = data;
+  MV.ops = ops.ops;
+  MV.outdated = null;
+  // A finding id survives a reload only while its finding does.
+  const live = new Set([
+    ...data.findings.emptySlugs, ...data.findings.dangling, ...data.findings.unindexed,
+  ].map((f) => f.id));
+  for (const set of Object.values(MV.picked)) for (const id of [...set]) if (!live.has(id)) set.delete(id);
+}
+
+/**
+ * Re-read the view after a change, staying on it: a failed read keeps the
+ * rows already shown, marked as from before the change, rather than
+ * replacing the view with an error.
+ */
+async function reloadMemory() {
+  try {
+    takeMemory(...await Promise.all([api('GET', '/api/memory'), api('GET', '/api/memory/ops')]));
+  } catch (e) {
+    MV.outdated = e.message;
   }
   paintMemory();
 }
@@ -2126,6 +2232,10 @@ function paintMemory() {
   box.appendChild(el('div', 'scope-sub',
     `${d.rows.length} memory files in ${d.groups.length} projects, from ${d.slugCount} Claude Code project folders. `
     + 'Grouped by repository, so a project\'s worktrees and subfolders roll up together.'));
+
+  if (MV.outdated) {
+    box.appendChild(el('div', 'notice warn', `Showing Memory as it was before the last change — reading it again failed (${MV.outdated}). Reopen Memory to try again.`));
+  }
 
   const caveat = el('div', 'notice warn mem-caveat');
   caveat.appendChild(el('div', null, d.caveat.text));
@@ -2155,12 +2265,15 @@ function paintMemory() {
   const bar = el('div', 'mem-tabs');
   for (const [id, label] of tabs) {
     const b = el('button', 'tab' + (MV.tab === id ? ' active' : ''), label);
-    b.onclick = () => { MV.tab = id; MV.compare = null; MV.diff = null; paintMemory(); };
+    b.onclick = () => { MV.tab = id; MV.compare = null; MV.diff = null; MV.sel.ids.clear(); paintMemory(); };
     bar.appendChild(b);
   }
   box.appendChild(bar);
 
   if (MV.preview) box.appendChild(previewPanel());
+
+  resetShown(MV.sel);
+  if (['review', 'orphans', 'projects'].includes(MV.tab)) box.appendChild(selectBar(MV.sel, trashSelectedFacts));
 
   if (MV.tab === 'review') box.appendChild(reviewTab());
   else if (MV.tab === 'cleanups') box.appendChild(cleanupsTab());
@@ -2168,8 +2281,17 @@ function paintMemory() {
   else if (MV.tab === 'projects') box.appendChild(projectsTab());
   else if (MV.tab === 'ops') box.appendChild(opsTab());
 
+  pruneSelection(MV.sel);
   c.appendChild(box);
   c.scrollTop = scroll;
+}
+
+/** Delete selected, in Memory: the trash-fact operation over every id, previewed like any other. */
+async function trashSelectedFacts(ids) {
+  MV.sel.busy = true;
+  paintSelectBar(MV.sel);
+  try { await startPreview('trash-fact', ids); }
+  finally { MV.sel.busy = false; paintSelectBar(MV.sel); }
 }
 
 const groupLabel = (id) => MV.data.groups.find((g) => g.id === id)?.label ?? '(project)';
@@ -2232,6 +2354,7 @@ function reviewTab() {
 function factRow(r, { review = false, trash = true } = {}) {
   const row = el('div', 'mem-fact');
   row.dataset.id = r.id;
+  row.appendChild(selectBox(MV.sel, r.id, r.display));
   const body = el('div', 'sk-body');
   const top = el('div', 'sk-head');
   top.appendChild(el('span', 'sk-name', r.name));
@@ -2476,10 +2599,21 @@ function projectsTab() {
     for (const ix of g.indexes) {
       card.appendChild(el('div', ix.oversized ? 'mem-flag' : 'mem-note', `MEMORY.md: ${ix.lines} lines${ix.oversized ? ' — over the limit' : ''}`));
     }
+    // Filled on first open. A closed card's rows are hidden, so they leave
+    // the selection; opened again, they come back unticked.
+    let boxes = null;
     card.ontoggle = () => {
-      if (!card.open || card.dataset.filled) return;
-      card.dataset.filled = '1';
-      for (const r of MV.data.rows.filter((x) => x.group === g.id)) card.appendChild(factRow(r));
+      if (card.open && !boxes) {
+        card.dataset.filled = '1';
+        const before = new Set(MV.sel.shown.keys());
+        for (const r of MV.data.rows.filter((x) => x.group === g.id)) card.appendChild(factRow(r));
+        boxes = [...MV.sel.shown].filter(([id]) => !before.has(id));
+      } else if (card.open) {
+        for (const [id, cb] of boxes) MV.sel.shown.set(id, cb);
+      } else if (boxes) {
+        for (const [id] of boxes) { MV.sel.shown.delete(id); MV.sel.ids.delete(id); }
+      }
+      paintSelectBar(MV.sel);
     };
     wrap.appendChild(card);
   }
@@ -2565,10 +2699,12 @@ function previewPanel() {
       const r = await api('POST', '/api/memory/accept', { opId: p.opId });
       MV.preview = null;
       for (const set of Object.values(MV.picked)) set.clear();
+      MV.sel.ids.clear();
+      closeEditorOn(r.steps.filter((s) => s.type === 'trash' && s.done).map((s) => ({ display: s.path })));
       const extra = [...r.skipped.map((s) => `Skipped ${s}`), ...(r.historyError ? [`History: ${r.historyError}`] : [])];
       notice(extra.length ? 'warn' : 'ok', `${r.summary} — done. Restorable from Operations.`, extra, extra.length > 0);
       await refreshRegistry();
-      await openMemory();
+      await reloadMemory();
     } catch (e) {
       MV.preview = null;
       notice('error', e.message, null, true);
@@ -2591,10 +2727,11 @@ function previewPanel() {
  * Identical copies (worktrees, AGENTS.md links) are one entry that still lists
  * every path; a worktree copy that differs from trunk is flagged and diffs.
  */
-const CX = { data: null, diff: null, view: null };
+const CX = { data: null, diff: null, view: null, sel: newSelection(), outdated: null };
 
 async function openContext() {
   if (!confirmDiscard()) return;
+  if (S.view !== 'context') CX.sel = newSelection();
   S.view = 'context';
   leaveEditor();
   // Nothing stays open behind this view, or a cleanup that trashes the file
@@ -2607,6 +2744,7 @@ async function openContext() {
   c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span></div></div>';
   try {
     CX.data = await api('GET', '/api/context');
+    CX.outdated = null;
   } catch (e) {
     c.innerHTML = '';
     const box = el('div', 'scope');
@@ -2634,6 +2772,11 @@ function paintContext() {
     + `${perRoot}. Every copy's path is still listed. Files in edit folders open in the editor, trunk copy first; `
     + 'files in read folders open here, read-only.'));
   for (const u of d.unreadable) box.appendChild(el('div', 'mem-flag', `not read: ${u.display} (${u.reason})`));
+  if (CX.outdated) {
+    box.appendChild(el('div', 'notice warn', `Showing Context as it was before the delete — reading it again failed (${CX.outdated}). Reopen Context to try again.`));
+  }
+  resetShown(CX.sel);
+  box.appendChild(selectBar(CX.sel, deleteContextSelection));
 
   let lastRoot = null;
   for (const g of d.groups) {
@@ -2650,8 +2793,71 @@ function paintContext() {
     for (const s of g.scopes) card.appendChild(contextScope(s));
     box.appendChild(card);
   }
+  pruneSelection(CX.sel);
   c.appendChild(box);
   c.scrollTop = scroll;
+}
+
+/**
+ * Why a Context row has no checkbox to tick. A row stands for every copy it
+ * collapsed, but selecting it selects only what single delete would remove:
+ * its editable representative, `open.path`.
+ */
+function contextUnselectable(v) {
+  if (v.readOnly || !v.open.path) return 'In a read-only folder: it can be viewed here, not deleted.';
+  if (v.protected) return 'Loaded on every session. Delete it on its own from the editor, where you type its name to confirm.';
+  return null;
+}
+
+/** Delete selected, in Context: one confirm, one POST /api/delete/batch, then per-item outcomes. */
+async function deleteContextSelection(paths) {
+  const sel = CX.sel;
+  if (!paths.length || sel.busy) return;
+  const shown = paths.map((p) => sel.labels.get(p) || p);
+  const list = shown.slice(0, 10).join('\n') + (shown.length > 10 ? `\n+${shown.length - 10} more` : '');
+  const n = paths.length;
+  if (!confirm(`Delete ${n} file${n === 1 ? '' : 's'}?\n\n${list}\n\n`
+    + `${n === 1 ? 'It moves' : 'They move'} to the studio's trash and ${n === 1 ? 'is' : 'are'} committed to history first, so you can restore ${n === 1 ? 'it' : 'them'} from Trash.`)) return;
+
+  sel.busy = true;
+  paintSelectBar(sel);
+  let r;
+  try {
+    r = await api('POST', '/api/delete/batch', { paths });
+  } catch (e) {
+    sel.busy = false;
+    paintSelectBar(sel);
+    return notice('error', e.message, null, true);
+  }
+  sel.busy = false;
+  sel.ids.clear();
+  closeEditorOn(r.results.filter((x) => x.status === 'trashed' || x.status === 'moved-but-unfinished'));
+
+  const extra = [];
+  try { await refreshRegistry(); } catch (e) { extra.push(`The file list could not be refreshed (${e.message}).`); }
+  try {
+    CX.data = await api('GET', '/api/context');
+    CX.outdated = null;
+  } catch (e) {
+    CX.outdated = e.message;
+    extra.push(`Context could not be read again (${e.message}) — it shows the files as they were before.`);
+  }
+  paintContext();
+  batchNotice(r, extra);
+}
+
+function batchNotice(r, extra) {
+  const done = r.results.filter((x) => x.status === 'trashed').length;
+  const lines = [];
+  for (const x of r.results) {
+    if (x.status === 'moved-but-unfinished') lines.push(`${x.display}: moved to Trash, but the delete did not finish (${x.error}). It can be restored from Trash.`);
+    else if (x.status === 'failed') lines.push(`${x.display}: not deleted — ${x.error}`);
+    else if (x.status === 'not-attempted') lines.push(`${x.display}: not attempted — the delete stopped at the failure above.`);
+  }
+  for (const w of r.historyWarnings) lines.push(`${w.display}: history not recorded — ${w.error}`);
+  lines.push(...extra);
+  notice(lines.length ? 'warn' : 'ok',
+    `Deleted ${done} file${done === 1 ? '' : 's'}. Recover ${done === 1 ? 'it' : 'them'} under Trash.`, lines, true);
 }
 
 function contextScope(s) {
@@ -2665,6 +2871,7 @@ function contextScope(s) {
   for (const v of s.variants) {
     const box = el('div', 'cx-variant' + (v.drift ? ' drift' : ''));
     const top = el('div', 'sk-head');
+    top.appendChild(selectBox(CX.sel, v.open.path, v.open.display, contextUnselectable(v)));
     top.appendChild(el('span', 'mem-where',
       `${v.trunk ? 'trunk' : v.drift ? 'differs from trunk' : 'copy'} · ${v.lines} lines`
       + (v.copies > 1 ? ` · ${v.copies - 1} identical cop${v.copies === 2 ? 'y' : 'ies'} collapsed` : '')));

@@ -72,6 +72,8 @@ jobs:
           node tests/roots-resolver.mjs
           node tests/roots-live.mjs
           node tests/roots-ui.mjs
+          node tests/batch-delete.mjs
+          node tests/batch-delete-ui.mjs
           node tests/real-home-roots.mjs
           node tests/fresh-home.mjs
           node tests/setup-guards.mjs
