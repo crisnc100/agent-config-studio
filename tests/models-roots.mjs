@@ -76,6 +76,17 @@ for (const [what, roots, wantIn, wantLegacy] of cases) {
   ok('B11 lib/roots.js rejects the same entries the resolver skips', loadRoots({ home }).roots.length === 0 && projectRoots(home).length === 0);
   ok('B11 one validator: lib/roots.js takes entryProblem from lib/models.js', /import \{[^}]*entryProblem[^}]*\} from '\.\/models\.js'/.test(fs.readFileSync(path.join(ROOT, 'lib', 'roots.js'), 'utf8')));
 }
+{
+  // The registry refuses an edit folder outside HOME; so does the resolver (regrade repro).
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-models-outside-')));
+  write(path.join(outside, 'app', '.claude', 'review-config.json'), '{\n  "model": "gpt-5.6-sol"\n}\n');
+  setRoots({ version: 1, roots: [{ ...root(outside, 'outside'), access: 'edit' }] });
+  ok('B11 an edit root outside HOME is not scanned (server path)', !projectRoots(home).includes(outside), JSON.stringify(projectRoots(home)));
+  ok('B11 …and not by the installed resolver', lint().code === 0);
+  setRoots({ version: 1, roots: [{ ...root(outside, 'outside'), access: 'read' }] });
+  ok('B11 the same folder as a read root is scanned', projectRoots(home).includes(outside), JSON.stringify(projectRoots(home)));
+  fs.rmSync(outside, { recursive: true, force: true });
+}
 for (const [what, body] of [['missing', null], ['not JSON', '{ "roots": '], ['no roots list', '{"version":1}'], ['roots not a list', '{"roots":{}}']]) {
   if (body === null) fs.rmSync(rootsFile, { force: true }); else setRoots(body);
   ok(`B11 roots.json ${what}: no project folder is scanned (server path)`, projectRoots(home).length === 0 && !lintScope(home).some((f) => f.endsWith('review-config.json') && f.includes(`${path.sep}app${path.sep}`)));

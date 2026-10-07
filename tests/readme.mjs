@@ -93,13 +93,19 @@ const knownVendor = new Map([
   ['git show <sha>:<path>', 'git itself'], ['node --version', 'node itself'], ['node', 'node itself'], ['hash -r', 'a shell builtin'],
   ['direnv allow', 'direnv itself, run by wt.zsh'],
 ]);
-const unchecked = [];
-for (const sp of commands) {
-  if (executed.has(sp)) continue;
+// Why a span fails the audit, or null. A function so a planted bad span can
+// prove the audit catches it (below).
+function spanProblem(sp) {
+  const unchecked = [];
   const words = sp.replace(/^(?:[A-Z_]+=\S+ )+/, '').split(' ');
   if (words[0] === 'acs' || words[0] === './bin/acs') {
     const sub = words[1] && !words[1].startsWith('-') ? words[1] : null;
-    if (sub && !subs.has(sub)) { unchecked.push(`${sp} (no such subcommand)`); continue; }
+    if (sub && !subs.has(sub)) return `${sp} (no such subcommand)`;
+    // A sub-subcommand (`acs roots add`) must be one its own usage names.
+    const verb = words[2];
+    if (sub && usageOf[sub] && verb && !/^[-<\[~/.$]/.test(verb) && !new RegExp(`(^|[\\s|(])${verb.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([\\s|)]|$)`, 'm').test(usageOf[sub])) {
+      return `${sp} (${sub} has no ${verb})`;
+    }
     const flagsIn = sub ? (usageOf[sub] ?? help.stdout) : help.stdout;
     for (const f of words.filter((w) => /^-{1,2}[a-z]/.test(w.replace(/^\[/, '')))) {
       const flag = f.replace(/^\[|\]$/g, '');
@@ -116,7 +122,16 @@ for (const sp of commands) {
   } else if (!knownVendor.has(sp)) {
     unchecked.push(sp);
   }
+  return unchecked.length ? unchecked.join(' | ') : null;
 }
+const unchecked = [];
+for (const sp of commands) {
+  if (executed.has(sp)) continue;
+  const why = spanProblem(sp);
+  if (why) unchecked.push(why);
+}
+ok('1 the inline audit catches a bad sub-subcommand (planted `acs roots surely-invalid`)', spanProblem('acs roots surely-invalid') !== null);
+ok('1 …and passes real ones (`acs roots add`, `acs roots ls`)', spanProblem('acs roots add') === null && spanProblem('acs roots ls') === null);
 ok(`1 every inline command in the README (${commands.length}) is run by the stranger test or checked to exist`, commands.length > 40 && unchecked.length === 0, unchecked.join(' | '));
 ok('1 …the multi-line spans are read whole (`acs --no-open`, `acs help`, `wclean --json --no-fetch`)',
    ['acs --no-open', 'acs help', 'wclean --json --no-fetch'].every((c) => commands.includes(c)), commands.filter((c) => /no-open|^acs help|no-fetch/.test(c)).join(' | '));

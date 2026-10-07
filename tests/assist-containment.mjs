@@ -69,6 +69,7 @@ console.log('\nassist containment: the shared rule');
     ['a plugin count that is fractional', { mcpServers: [], plugins: [{ name: 'p', provides: { mcpServers: 0.5 } }] }],
     ['a plugin count that is negative', { mcpServers: [], plugins: [{ name: 'p', provides: { mcpServers: -1 } }] }],
     ['a plugin with no provides', { mcpServers: [], plugins: [{ name: 'p' }] }],
+    ['a plugin whose provides has no mcpServers count (regrade repro)', { mcpServers: [], plugins: [{ name: 'p', enabled: true, provides: {} }] }],
     ['a plugin with no name', { mcpServers: [], plugins: [{ provides: { mcpServers: 0 } }] }],
     ['a plugin enabled flag that is a string', { mcpServers: [], plugins: [{ name: 'p', enabled: 'false', provides: { mcpServers: 1 } }] }],
     ['a server with no name', { mcpServers: [{ compatibilityStatus: 'enabled' }], plugins: [] }],

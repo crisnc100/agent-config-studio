@@ -155,7 +155,7 @@ update_checkout() {
   if git -C "$DIR" diff --quiet "$before" "$after" -- tools/worktree; then :; else
     echo "  tools/worktree changed — run: acs install-worktree"
   fi
-  if git -C "$DIR" diff --quiet "$before" "$after" -- bin/model-id models.default.json; then :; else
+  if git -C "$DIR" diff --quiet "$before" "$after" -- bin/model-id bin/model-id.mjs lib/models.js models.default.json package.json; then :; else
     echo "  the model-id resolver changed — run: acs install-model-id"
   fi
   return 10
