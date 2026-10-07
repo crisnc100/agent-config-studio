@@ -239,8 +239,8 @@ console.log('setup guards\n');
     ['login-path: a second assignment to shell', lp, origLp, (t) => t.replace('const shell = loginShell(env);', 'let shell = loginShell(env); shell = env.SHELL;')],
     ['login-path: the /etc/shells check removed from loginShell', lp, origLp, (t) => t.replace("return listed.includes(want) && fs.existsSync(want) ? want : '/bin/sh';", 'return want;')],
     ['lsof: a third location', pr, origPr, (t) => t.replace("execFile('/usr/bin/lsof', ['-F', 'pcn', '-w', '+d'", "execFile('/usr/local/bin/lsof', ['-F', 'pcn', '-w', '+d'")],
-    ['inspectGrok: a different argv (a session prompt)', hj, origHj, (t) => t.replace("execFile(binary, ['inspect', '--json']", "execFile(binary, ['-p', 'hello']")],
-    ['inspectGrok: the same execFile outside inspectGrok', hj, origHj, (t) => t.replace('export function inspectGrok(', "export const inspectAgain = (binary) => execFile(binary, ['inspect', '--json'], {}, () => {});\nexport function inspectGrok(")],
+    ['inspectGrok: a different argv (a session prompt)', hj, origHj, (t) => t.replace("spawn(binary, ['inspect', '--json']", "spawn(binary, ['-p', 'hello']")],
+    ['inspectGrok: the same spawn outside inspectGrok', hj, origHj, (t) => t.replace('export function inspectGrok(', "export const inspectAgain = (binary) => spawn(binary, ['inspect', '--json'], {});\nexport function inspectGrok(")],
     ['lsof: a PATH name', pr, origPr, (t) => t.replace("execFile('/usr/bin/lsof', ['-F', 'pcn', '-w', '+D'", "execFile('lsof', ['-F', 'pcn', '-w', '+D'")],
   ];
   for (const [what, file, orig, plant] of variants) {

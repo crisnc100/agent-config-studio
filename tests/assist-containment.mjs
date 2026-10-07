@@ -274,6 +274,11 @@ console.log('\nassist containment: the inspect deadline is hard');
   let alive = true;
   try { process.kill(pid, 0); } catch { alive = false; }
   ok('B1 …and the inspect process is gone (its group was SIGKILLed)', pid > 0 && !alive, `pid ${pid} alive=${alive}`);
+  const kid = Number(read('grok', 'inspect-child.pid'));
+  let kidAlive = true;
+  try { process.kill(kid, 0); } catch { kidAlive = false; }
+  ok('B1 …and so is a process inspect started (the regrade repro)', kid > 0 && !kidAlive, `pid ${kid} alive=${kidAlive}`);
+  if (kidAlive) try { process.kill(kid, 'SIGKILL'); } catch {}
 }
 
 fs.rmSync(home, { recursive: true, force: true });

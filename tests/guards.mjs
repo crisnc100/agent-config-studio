@@ -297,7 +297,13 @@ function guardB() {
         continue;
       }
       for (const call of calls) {
-        if (call.fn === 'spawn') {
+        if (call.fn === 'spawn' && inspect && inSpan(call.index, inspect)) {
+          // inspectGrok spawns detached so the deadline can SIGKILL its whole group.
+          const text = src.slice(call.index, call.index + 120).replace(/\s+/g, ' ');
+          if (!/^spawn\(binary, \['inspect', '--json'\], /.test(text)) {
+            hits.push(`${file}:${call.line} inspectGrok must spawn(binary, ['inspect', '--json'], …), got ${text.slice(0, 60)}`);
+          }
+        } else if (call.fn === 'spawn') {
           if (!inSpan(call.index, contained)) {
             hits.push(`${file}:${call.line} spawn() outside spawnContained`);
           } else {
@@ -309,11 +315,6 @@ function guardB() {
         } else if (call.fn === 'spawnSync') {
           if (!inSpan(call.index, version)) {
             hits.push(`${file}:${call.line} spawnSync() outside readVersion (only --version probes belong there)`);
-          }
-        } else if (call.fn === 'execFile' && inspect && inSpan(call.index, inspect)) {
-          const text = src.slice(call.index, call.index + 120).replace(/\s+/g, ' ');
-          if (!/^execFile\(binary, \['inspect', '--json'\], /.test(text)) {
-            hits.push(`${file}:${call.line} inspectGrok must execFile(binary, ['inspect', '--json'], …), got ${text.slice(0, 60)}`);
           }
         } else {
           hits.push(`${file}:${call.line} ${call.fn}() — harness.js may spawn only via spawnContained / readVersion`);

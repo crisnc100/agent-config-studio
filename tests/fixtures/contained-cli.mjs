@@ -14,6 +14,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 
 export function containedCli(file, harness) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -37,6 +38,9 @@ if (a[0] === 'inspect') {
   if (i === 'hang') { setTimeout(() => {}, 60000); return; }
   if (i === 'ignore-term') {
     fs.writeFileSync(path.join(dir, 'inspect.pid'), String(process.pid));
+    // A descendant holding the pipe, as a real inspect's helper might.
+    const kid = spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], { stdio: ['ignore', 'inherit', 'inherit'] });
+    fs.writeFileSync(path.join(dir, 'inspect-child.pid'), String(kid.pid));
     process.on('SIGTERM', () => {});
     setInterval(() => {}, 1000);
     return;
