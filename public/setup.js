@@ -539,6 +539,17 @@ function setupDoneStep(body) {
   body.appendChild(h);
   body.appendChild(el('div', 'scope-sub', 'Optional extras, run in a terminal. Then Finish and you are on Home.'));
   if (!SETUP.clis) body.appendChild(homeLoading('Reading the commands…'));
+  const onPath = SETUP.clis?.path;
+  if (onPath) {
+    const row = el('div', 'setup-path');
+    row.appendChild(el('div', 'setup-path-title', 'Put acs on your PATH'));
+    // The note marks code with backticks; each becomes a <code>, never literal text.
+    const note = el('div');
+    onPath.note.split('`').forEach((part, i) => note.appendChild(i % 2 ? el('code', null, part) : document.createTextNode(part)));
+    row.appendChild(note);
+    row.appendChild(setupCommand(onPath.command));
+    body.appendChild(row);
+  }
   for (const s of SETUP.clis?.next || []) {
     const row = el('div', 'setup-next');
     row.appendChild(el('div', null, s.note + (s.platforms ? ` (${s.platforms})` : '')));

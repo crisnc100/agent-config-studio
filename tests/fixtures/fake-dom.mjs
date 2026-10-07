@@ -322,10 +322,22 @@ export function makePage({ html, routes, hash = '', storage = 'memory', width = 
   };
   doc.defaultView = win;
 
-  const respond = (status, body) => ({
-    ok: status >= 200 && status < 300, status,
-    json: async () => (typeof body === 'string' ? JSON.parse(body) : body),
-  });
+  const respond = (status, body) => {
+    // A route answering ndjson(...) streams its lines, the way /api/chat does.
+    if (body && typeof body.__ndjson === 'string') {
+      const bytes = new TextEncoder().encode(body.__ndjson);
+      let sent = false;
+      return {
+        ok: status >= 200 && status < 300, status,
+        json: async () => ({}),
+        body: { getReader: () => ({ read: async () => (sent ? { done: true } : (sent = true, { done: false, value: bytes })) }) },
+      };
+    }
+    return {
+      ok: status >= 200 && status < 300, status,
+      json: async () => (typeof body === 'string' ? JSON.parse(body) : body),
+    };
+  };
   const fetch = async (url, opts = {}) => {
     const u = new URL(url, 'http://localhost');
     const method = opts.method || 'GET';
@@ -403,3 +415,6 @@ export function makePage({ html, routes, hash = '', storage = 'memory', width = 
 
 /** Let pending promises and 0 ms timers run. */
 export const settle = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+
+/** A route answer that the page reads as an ndjson stream (each event one line). */
+export const ndjson = (events) => ({ __ndjson: events.map((e) => JSON.stringify(e) + '\n').join('') });

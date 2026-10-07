@@ -48,13 +48,16 @@ function fakeCli(file, log) {
 const fs = require('fs');
 const a = process.argv.slice(2);
 if (a[0] === '--version') { console.log('9.9.9 (fake)'); process.exit(0); }
+// grok's pre-spawn MCP check (lib/harness.js inspectGrok): no servers here.
+if (a[0] === 'inspect') { process.stdout.write(JSON.stringify({ mcpServers: [], plugins: [] })); process.exit(0); }
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(a) + '\\n');
 process.stdin.resume(); process.stdin.on('data', () => {});
 const done = () => {
   const i = a.indexOf('--output-format');
   if (a[i + 1] === 'json') process.stdout.write(JSON.stringify({ result: 'fixed file' }));
   else {
-    console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1' }));
+    // The contained tool set the init gate requires (lib/containment.js).
+    console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1', tools: [a.includes('--prompt-file') ? 'read_file' : 'Read'], mcp_servers: [] }));
     console.log(JSON.stringify({ type: 'result', result: 'ok reply', session_id: 'sess-1', usage: {} }));
   }
   process.exit(0);

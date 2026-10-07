@@ -75,6 +75,11 @@ ok('HOME is redirected', tmp !== os.homedir());
      git(co, 'rev-parse', 'HEAD') === head && /acs install-worktree/.test(r.out) && !/install-model-id/.test(r.out), r.out);
   merge('models.default.json', '{}\n', 'models');
   ok('a pull that changes the resolver says to reinstall it', /acs install-model-id/.test(acs(co).out));
+  // The resolver's code lives in bin/model-id.mjs (bin/model-id is a link to it) and lib/models.js.
+  merge('bin/model-id.mjs', '// v2\n', 'resolver code');
+  ok('a pull that changes only bin/model-id.mjs says to reinstall it', /acs install-model-id/.test(acs(co).out));
+  merge('lib/models.js', '// v2\n', 'models code');
+  ok('a pull that changes only lib/models.js says to reinstall it', /acs install-model-id/.test(acs(co).out));
 }
 
 {

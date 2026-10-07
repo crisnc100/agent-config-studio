@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { bootPage, routesFor, registry, PATHS, PUB, HTML, settle } from './fixtures/shell-page.mjs';
+import { ndjson } from './fixtures/fake-dom.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -710,6 +711,32 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
   p.navigate('#bogus');
   await settle(5);
   ok('R9 an unknown hash typed on Home is cleared, as on a cold load', p.eval('S.view') === 'home' && p.location.hash === '');
+}
+
+{
+  // A refused Assist turn (builds/ready-for-strangers B1/B2) reads as a plain
+  // notice in the chat drawer and after a compaction — not a crash, and with
+  // no reply text or proposal kept.
+  const REFUSAL = 'Grok Assist is unavailable while grok has MCP servers configured (jev): grok starts them for every run, and ACS cannot keep them out.';
+  const chats = [];
+  const routes = routesFor({ 'POST /api/chat': (b) => { chats.push(b); return ndjson([{ t: 'error', message: REFUSAL }]); } });
+  const p = await boot({ routes });
+  await settle(20);
+  p.eval(`C.sessions = [{ id: 'sr', title: 't', mentions: [], createdAt: 0, updatedAt: 0, messages: [],
+    slots: { claude: { cliSessionId: 'old-1', seed: null, stats: { turns: 3, contextTokens: 90000, baselineTokens: 1000, costUsd: 0 } } } }];
+    C.activeId = 'sr';`);
+  p.$('btn-assist').click();
+  p.eval(`C.draft = 'tighten it'; sendTurn();`);
+  await settle(30);
+  const body = p.$('drawer-body');
+  const shown = body.querySelectorAll('.notice.error').map((n) => p.text(n));
+  ok('B2 a refused turn shows its reason as a plain notice in the chat drawer', chats.length === 1 && shown.some((t) => t.includes(REFUSAL)), shown.join(' | '));
+  ok('B2 …with no reply text and no proposal kept', p.eval(`active().messages.at(-1).text === '' && !active().messages.at(-1).proposals`) && !body.querySelectorAll('button').some((b) => b.textContent === 'Accept'));
+  ok('B2 …and the drawer is usable again (not stuck busy)', p.eval('C.busy') === false);
+  p.eval('compactSession()');
+  await settle(30);
+  ok('B2 a refused compaction says why, as a notice', /Compaction failed: Grok Assist is unavailable/.test(p.text(p.$('notice-slot'))), p.text(p.$('notice-slot')));
+  ok('B2 …and keeps the session it had', p.eval(`slotFor(active(), 'claude').cliSessionId`) === 'old-1');
 }
 
 for (const p of pages) { p.done(); for (const s of p.sources) s.close(); }

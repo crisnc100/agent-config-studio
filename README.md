@@ -1,37 +1,184 @@
 # Agent Config Studio
 
-A local web app for reading, editing, and versioning every Claude Code and Codex
-config surface on this machine — in one place, rendered properly.
+A local web app for reading, editing and versioning the config of the AI coding
+CLIs on your machine — Claude Code, Codex and Grok — in one place, rendered
+properly: instructions (`CLAUDE.md`, `AGENTS.md`), skills, MCP servers, hooks,
+settings, the models they use, and your subscription headroom.
 
-```
-acs          # pull the latest main (clean checkout only), start it, open the browser
-acs stop     # shut it down
-acs update   # just the pull; ACS_NO_UPDATE=1 acs skips it
-acs install-model-id   # put the model resolver on PATH (see Model registry)
-acs install-worktree   # optional: the worktree toolkit (see Optional: worktree tools)
+## Get started
+
+### What you need
+
+- **macOS.** On Linux the server and the browser UI work; the extras listed
+  under [Linux](#linux) are best-effort.
+- **Node.js 20 or newer** (`node --version`) and **git**. Nothing else is
+  installed: there are no npm dependencies.
+- **At least one of the CLIs**, installed and signed in:
+
+  | CLI | Install | Sign in |
+  |---|---|---|
+  | Claude Code | `curl -fsSL https://claude.ai/install.sh \| bash` | `claude auth login` |
+  | Codex | `npm install -g @openai/codex` | `codex login` |
+  | Grok | `curl -fsSL https://x.ai/cli/install.sh \| bash` | `grok login` |
+
+  The setup screen shows the same commands for whichever is missing, so you
+  can also install them after starting.
+
+### Steps
+
+```sh
+git clone https://github.com/crisnc100/agent-config-studio.git
+cd agent-config-studio
+./bin/acs
 ```
 
-Then: <http://localhost:8787>
+`./bin/acs` starts the studio at <http://localhost:8787> and opens it in your
+browser. The first time, it opens on the **setup screen**:
+
+1. **CLIs** — which of claude, codex and grok it found, their versions, and
+   whether each is signed in. Installed one just now? **Recheck**.
+2. **Accounts** — the subscriptions ("seats") to track in Usage, suggested
+   from the CLIs it found. Optional.
+3. **Project folders** — where your repos live. **Scan for projects** looks a
+   few levels into `~/Documents`, `~/code`, `~/Projects` and similar, or type a
+   path. Each folder is **read** (listed in Context, Skills and Worktrees) or
+   **edit** (its instruction files are also editable here).
+4. **Done** — optional next steps. **Finish** lands on **Home**.
+
+Leave that terminal open: the studio runs in it. Press Ctrl-C there, or run
+`acs stop` from another one, to stop it.
+
+### Put `acs` on your PATH
+
+```sh
+./bin/acs install
+```
+
+This links `acs` into `~/.local/bin` (or another folder of yours that is
+already on your PATH) and points it at this checkout. It never edits a shell
+profile. If none of your folders is on PATH, it prints the one line to add
+yourself. It refuses to replace an `acs` that is not a link to this checkout.
+
+Open a new terminal (or run `hash -r` in this one). From then on, from any
+folder:
+
+```sh
+acs
+acs stop
+acs help
+```
+
+`acs` starts the studio (or, if it is already running, just opens it). `acs
+help` lists every command and names the checkout that answered. To take `acs`
+off your PATH again, run `acs uninstall`; it removes only a link to this
+checkout.
+
+### Troubleshooting
+
+- **Port 8787 is in use.** `acs` says so and starts nothing. Use another port:
+  `ACS_PORT=8790 acs`.
+- **A CLI shows "not installed" but you have it.** The studio looks where the
+  installers put binaries, and on the PATH a new terminal gets. Install it, or
+  open a new terminal, then press **Recheck** on the setup screen.
+- **macOS asks whether your terminal may access Documents.** That is the folder
+  scan reading `~/Documents`. Allow it to have folders there suggested, or
+  decline and type the paths instead.
+- **Run setup again:** **Run setup again** on Home, or open
+  <http://localhost:8787/#setup>.
+- **No browser** (a remote or headless machine): `ACS_NO_OPEN=1 acs`, or `acs
+  --no-open`, then open the URL yourself.
+- **Node is too old or missing.** `acs` stops and says which version it found.
+- **Stop or uninstall:** `acs stop`, then `acs uninstall`. Delete the checkout
+  and `~/.agent-config-studio` (the studio's history and settings) to remove
+  everything. Your CLI config is never inside either.
+- **`acs` runs an old copy.** A shell alias or an earlier `acs` on PATH wins
+  over the link. `acs help` prints the checkout it came from. `acs install`
+  refuses, and names the file, when an earlier `acs` on PATH is not this one.
+
+### What the studio reads, writes and sends
+
+There is no telemetry. What reaches the network, and when:
+
+- **`acs` fetches git origin** on start, to fast-forward a clean checkout on
+  the default branch. It skips this on any other branch, with local changes,
+  or with `ACS_NO_UPDATE=1`. `acs update` runs the fetch on its own.
+- **Assist runs your CLI** (`claude` or `grok`), which talks to its vendor
+  under your own sign-in.
+- **The usage collector** reads credentials in a separate child process, so
+  the server never holds one. It runs when you press **Refresh** in Usage,
+  once after you sign a seat in, or as `acs usage`. It reads:
+  - the Claude Code credential, from the macOS Keychain or
+    `~/.claude/.credentials.json`, and calls Anthropic's usage endpoint;
+  - the Codex and Grok `auth.json` files, for account identity;
+  - quota, by asking `codex app-server` and `grok agent stdio`.
+- **Signing a Codex seat in** from Usage or setup runs `codex login`, which
+  opens OpenAI's sign-in page and writes that seat's `auth.json`.
+- **Check now** on the Models page runs `codex app-server` `model/list`, which
+  fetches Codex's model catalog.
+- **The Worktrees view** runs the toolkit's `wclean`, which asks `gh` (when
+  installed) whether a branch's pull request was merged. It never fetches.
+
+What it writes:
+
+- **Your CLIs' own homes** (`~/.claude`, `~/.codex`, `~/.agents`, `~/.grok`,
+  `~/.config/worktree`): editable regardless of your folder choices.
+- **Inside project folders you marked edit:** the instruction files
+  (`CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `.worktrees.conf`). Setting a project
+  up under **Worktrees** also runs `wtinit` there, which creates the project's
+  trunk checkout.
+- **Its own folder,** `~/.agent-config-studio` (settings, history, trash, the
+  usage snapshot, and a run file per port for `acs stop`).
+- **When you add a second Codex seat:** its own home under `~/.codex-seats/`,
+  sharing `~/.codex`'s config, skills, rules and plugins by symlink.
+- **When you turn on Terminal shortcuts in Usage:** a generated file in
+  `~/.agent-config-studio`, plus one `source` line appended to `~/.zshenv`.
+- **Commands you run:** `acs install` links `~/.local/bin/acs`;
+  `acs install-model-id` writes `~/.local/bin/model-id` and its copy in the
+  studio folder; `acs install-worktree` writes `~/.config/worktree` and adds
+  one line to `~/.zshrc`.
+- **Your temp folder:** each Grok Assist turn's prompt, in a file that is
+  removed when the turn ends.
+
+The file API serves only files in those places and in your **read** folders,
+and never serves `.credentials.json`, `auth.json` or `~/.claude.json`. Only the
+`mcpServers` key of `~/.claude.json` is extracted, read-only. The server
+listens on `127.0.0.1` only.
+
+### Linux
+
+- **Works, and is CI-tested on Ubuntu:** the server, the browser UI, setup, the
+  launcher (`acs`, `acs install`, `acs stop`) under sh, dash and zsh, and
+  Assist.
+- **Best-effort:**
+  - The worktree toolkit (`acs install-worktree`) is zsh and was built on
+    macOS.
+  - "Which sessions are running", in Usage, needs `lsof` in `/usr/sbin` or
+    `/usr/bin`.
+  - Claude Code usage needs a `~/.claude/.credentials.json`, since there is no
+    Keychain.
+  - The codex memory count needs Node 22.5 or newer (`node:sqlite`).
 
 ## What it manages
 
 | Group | Source |
 |---|---|
-| Memory | `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/Documents/Projects/CLAUDE.md`, every repo-level `CLAUDE.md` / `AGENTS.md` |
+| Memory | `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.grok/AGENTS.md`, and every `CLAUDE.md` / `AGENTS.md` in your **edit** folders |
 | Claude skills | `~/.claude/skills/*` (follows the symlink into `~/.agents`) |
 | Codex skills | `~/.codex/skills/*` |
 | Plugin skills | enabled plugins only, read from the plugin cache |
 | Auto-memory | `~/.claude/projects/*/memory/*.md` — what the harness wrote itself, one bucket per project scope |
-| MCP servers | project `.mcp.json` (editable); global + Codex servers read-only under **MCP** |
+| MCP servers | `.mcp.json` in your edit folders (editable); global and Codex servers read-only under **MCP** |
 | Subagents | `~/.claude/agents/*.md` — appears once the directory exists |
 | Slash commands | `~/.claude/commands/*.md` — appears once the directory exists |
 | Hooks | `~/.claude/hooks/*.sh` |
 | Settings & config | `settings.json`, `settings.local.json`, `advisor-config.json`, `investigate-config.json`, `review-config.json`, `~/.codex/config.toml`, `~/.codex/rules/*` |
+| Worktrees | `~/.config/worktree/defaults.conf`, `repos/*.conf`, and each `.worktrees.conf` in your edit folders |
 | Retired | `~/.claude/skills_retired/*` |
 
-Everything is editable. Nothing outside `~/.claude`, `~/.codex`, `~/.agents`, and
-`~/Documents/Projects` is reachable, and `.credentials.json` / `auth.json` are
-hard-blocked from both reads and writes.
+**Context** and **Skills** also list your **read** folders, without editing
+them. Change the folders any time under **Folders**, or with `acs roots ls`,
+`acs roots add <path> [--edit]`, and `acs roots rm <id>`. A running studio
+picks the change up by itself.
 
 ## The parts that matter
 
@@ -39,9 +186,9 @@ hard-blocked from both reads and writes.
 tables, code blocks. YAML frontmatter becomes a metadata card instead of the
 giant bogus heading Markdown would otherwise make of it.
 
-**Only what is loaded.** The plugin cache holds 230 skills across marketplaces
-that are merely installed. Only skills from plugins actually enabled in
-`settings.json` are listed, because only those are ever loaded.
+**Only what is loaded.** The plugin cache holds every skill of every plugin
+merely installed. Only skills from plugins actually enabled in `settings.json`
+are listed, because only those are ever loaded.
 
 **Create and delete.** Hover a group in the sidebar for a `+` — it scaffolds a
 new skill, hook, subagent or slash command with valid frontmatter already in
@@ -57,8 +204,9 @@ removal. Two independent ways back: **Trash** restores in one click, or
 whether you mean the whole skill or just the open file.
 
 Two things are refused: plugin-cache skills (the plugin manager owns them and
-would restore them on its next update), and anything outside the allowed roots.
-The three always-loaded singletons — global `CLAUDE.md`, global `AGENTS.md`, the
+would restore them on its next update), and anything outside the places listed
+under [What it can change](#what-the-studio-reads-writes-and-sends). The
+always-loaded singletons — global `CLAUDE.md`, global `AGENTS.md`, a folder's
 workspace `CLAUDE.md` — plus `settings.json` and friends delete only after you
 type their name.
 
@@ -71,10 +219,9 @@ If the file you have open changes on disk, it reloads in place; if you have
 unsaved edits it warns instead, because the save would be refused anyway. If the
 open file is deleted, it tells you rather than leaving a phantom editor.
 
-Only the directories the registry cares about are watched (28 of them). A
-recursive watch on `~/.claude` would be a firehose — session transcripts,
-file-history and the plugin cache are nearly all of its ~2GB and churn
-constantly.
+Only the directories the registry cares about are watched. A recursive watch on
+`~/.claude` would be a firehose — session transcripts, file-history and the
+plugin cache are nearly all of it and churn constantly.
 
 **Every save is a commit.** Writes go to the live file *and* to a shadow git repo
 at `~/.agent-config-studio/history`, mirrored under `home/`. The History tab on
@@ -90,8 +237,7 @@ empty `name` / `description`. Softer problems (no shebang on a hook, a 400-line
 memory file, a suspiciously short skill description) save with a warning.
 
 TOML is checked by a real scanner that understands comments, basic and literal
-strings, multi-line strings, and values spanning several lines — a line-by-line
-check rejected valid arrays while accepting unterminated strings. The rule
+strings, multi-line strings, and values spanning several lines. The rule
 throughout: error only on definite breakage, warn when merely unrecognised. A
 false rejection that blocks a legitimate save is worse than a missed problem.
 
@@ -99,11 +245,6 @@ false rejection that blocks a legitimate save is worse than a missed problem.
 iframe, `on*` handlers and `javascript:` URLs are stripped. The preview shows
 third-party plugin skills and model-generated assist output, and those would
 otherwise run with same-origin access to the write API.
-
-**Credentials stay out.** `~/.claude/.credentials.json` and `~/.codex/auth.json`
-are hard-blocked. `~/.claude.json` is never exposed through the file API either —
-it holds oauth tokens and API-key responses alongside the MCP config, so only its
-`mcpServers` key is extracted, read-only.
 
 **Scope chain.** The `Scope` button answers "what actually applies when an agent
 runs in this directory" — the global files plus every `CLAUDE.md`/`AGENTS.md` on
@@ -113,11 +254,14 @@ the path down, in the order they layer.
 Claude and Codex copies side by side. It does not judge them for differing —
 a Claude skill *should* describe Codex differently than the Codex copy does.
 
+## Assist
+
 **Assist is a chat, and you point it at the files.** Open it from anywhere —
 no need to navigate to a file first. Attach targets with `@` (autocomplete over
-all 719 files), say what you want, and edits come back as a **diff per file**
-that you Accept or Reject individually. Accepting goes through the same save
-path as manual editing, so it is validated and versioned like everything else.
+every file the studio lists), say what you want, and edits come back as a
+**diff per file** that you Accept or Reject individually. Accepting goes
+through the same save path as manual editing, so it is validated and versioned
+like everything else.
 
 It never picks targets for you. Nothing outside the files you attached is ever
 edited — if the model references one you did not attach, that edit is dropped.
@@ -127,56 +271,53 @@ whole-file rewrites, so a one-line rule change produces a few lines of output
 rather than re-emitting the file. Every block must match its anchor **exactly
 once**; ambiguous or overlapping edits are refused rather than guessed at.
 
-Replies stream token by token — first text lands in ~3s. There is a live elapsed
-timer and a Cancel button that kills the underlying process. Follow-up turns
-resume the same CLI session, so the conversation keeps context without
-re-sending the files.
+Replies stream token by token. There is a live elapsed timer and a Cancel
+button that kills the underlying process. Follow-up turns resume the same CLI
+session, so the conversation keeps context without re-sending the files.
 
-Four models are offered: **Sonnet 5** (default — Opus 5 took 107s on a whole-file
-review), **Opus 5**, **Haiku 4.5**, and **Fable 5** for judgment calls, which runs
-at effort `high` and costs roughly **$0.60 a turn** before it reads anything —
-the session's fixed overhead alone, billed at Fable's rate. The price is in the
-dropdown label so the choice is never accidental.
+**It runs your local `claude` or `grok`**, under your own sign-in; no API key is
+read or stored.
 
-The list lives in `lib/chat.js` and doubles as the allowlist: the model id is
-passed to the `claude` CLI, so an id that isn't on it falls back to the default
-instead of reaching the process.
+**The CLI can read, never write.** Each run gets one read tool and nothing else
+(`--tools Read --strict-mcp-config` for Claude, `--tools read_file` for Grok),
+so the only way a change reaches disk is your Accept. The CLI's first event
+reports the tools it started with; anything else ends the run before its reply
+is used.
+
+- **Grok Assist runs only when grok has no MCP servers enabled** — neither
+  its own nor ones a plugin brings. grok starts its MCP servers for every run
+  and has no switch to keep them out. So before each Grok run, the studio asks
+  `grok inspect` what it would load, and refuses if that includes any server.
+  The message names the servers and the fix (`grok mcp disable <name>`).
+  Grok Assist is unavailable while grok has MCP servers configured.
+- **Claude Code's and Cursor's MCP sources are switched off for Assist runs**
+  (grok imports `~/.claude.json` and Cursor's `mcp.json` by default), so
+  servers configured there do not count.
+- Claude Assist is unaffected; `--strict-mcp-config` loads no MCP server.
+
+**Which models.** The picker comes from the model registry (below), as do the
+default and the effort: `assist.claude` and `assist.grok` in
+`models.default.json`, overridable in `~/.agent-config-studio/models.json`. A
+model that is not on the picker never reaches the CLI's argv; the turn runs the
+default instead.
 
 **Sessions.** A session is one thread about one topic. It survives closing the
 drawer, switching files, and reloading the page — the CLI session outlives the
 tab. Up to **5** are kept; the switcher shows each with its remaining context,
 and you delete one with `×` before starting a sixth.
 
-The bar reports **% context left**, split honestly:
-
-    100% context left    0 turns · 0.0k conversation + 37k overhead
-
-That ~37k is Claude Code's own footprint — system prompt, tool definitions, your
-CLAUDE.md, the skills index — loaded before you type a word. Only the
-*conversation* half grows, at roughly 1.5k per turn, so a thread is good for
-~100 turns.
-
-**Compact** summarises the thread and continues it in a fresh context, keeping
-the same session on your side (the CLI session id underneath changes). It stays
-disabled until at least 15k of the context is actually conversation, because
-below that it reclaims nothing — measured: compacting a 2-turn thread moved
-38,143 tokens to 37,985.
-
-Claude Code's own `/compact` is not used: through `-p --resume` it reports
-success but the history is silently lost, verified by asking the model to recall
-what it had just been told.
-
-It shells out to your local `claude` CLI, riding your existing subscription auth
-— no API key is read or stored, and the server makes no outbound request of its
-own.
+The bar reports **% context left**, split into the conversation and the CLI's
+own overhead (system prompt, tool definitions, your `CLAUDE.md`, the skills
+index), which is loaded before you type a word. Only the conversation half
+grows. **Compact** summarises the thread and continues it in a fresh context,
+keeping the same session on your side; it stays disabled until enough of the
+context is conversation for compacting to reclaim anything.
 
 ## Subscription usage
 
 **Usage** in the top bar answers one question: which subscription should the
 next task go to. Seats sort by the headroom of their tightest window, so the
 line at the top is the answer and the cards below are the evidence.
-
-    Route to: Codex (second)  99% headroom
 
 Each seat is one *subscription*, not one vendor — two Codex plans and no Grok is
 a valid setup, and so is none at all. **+ Add seat** registers one; a second
@@ -193,11 +334,9 @@ Where each number comes from:
 | Claude | `/api/oauth/usage` (undocumented) | session (5h), weekly all-models, weekly per-model |
 | Grok | the `_x.ai/billing` method over `grok agent stdio` | weekly |
 
-**The studio never reads a credential.** Codex needs none. Claude and Grok do,
-so their readings are taken by the `acs-usage` CLI in a separate process that
-writes a snapshot; the studio renders it and shows how old it is. **Refresh**
-retakes those readings. This is the same rule that hard-blocks
-`.credentials.json` and `auth.json` from the file API.
+Readings that need a credential are taken by the usage collector in a child
+process, which writes a snapshot. The studio renders the snapshot and shows how
+old it is. **Refresh** retakes the readings.
 
 Nothing is ever shown as a number it isn't. A seat that cannot be read says
 *not connected* with the reason; one that is signed in but has never run says
@@ -209,7 +348,7 @@ Removing a seat unregisters it and leaves its home on disk. That directory holds
 a real login and its history; dropping a row from a list must never delete
 credentials.
 
-From the terminal, `node bin/usage.mjs` prints the same gauge (`--json` for raw,
+From the terminal, `acs usage` prints the same gauge (`--json` for raw,
 `detect --save` to register what's on this machine).
 
 ## Model registry
@@ -220,28 +359,40 @@ overrides it per key. Skills, skill scripts, skill configs and the Assist
 picker all resolve through it, so a new model release is a one-line edit.
 
 ```
-model-id opus          # the current id for a family; a raw id passes through
-model-id --table       # every family and its id
-model-id --lint        # raw ids / versioned names that crept back into a skill
-model-id --sidecars    # ids in ~/.claude/settings.json and ~/.codex/config.toml that are no longer current
+model-id opus
+model-id --table
+model-id --lint
+model-id --sidecars
 ```
 
-**`acs install-model-id`** copies the resolver out of this checkout into
-`~/.agent-config-studio/resolver/`, writes a small launcher at
-`~/.agent-config-studio/bin/model-id`, and symlinks `~/.local/bin/model-id` to it.
-It is a copy on purpose: skills keep resolving when a worktree is removed or a
-branch changes. The launcher runs the node that did the install, then `node` on
-PATH, then `/opt/homebrew/bin/node`.
+- `model-id opus` is the current id for a family; a raw id passes through.
+- `--table` lists every family and its id.
+- `--lint` finds raw ids and versioned names that crept back into your skills,
+  `~/.claude` configs, and the `.claude/review-config.json` of every project
+  folder.
+- `--sidecars` lists ids in `~/.claude/settings.json` and `~/.codex/config.toml`
+  that are no longer current.
+
+**`acs install-model-id`** puts `model-id` on your PATH:
+
+- It copies the resolver out of this checkout into
+  `~/.agent-config-studio/resolver/`, writes a small launcher at
+  `~/.agent-config-studio/bin/model-id`, and symlinks `~/.local/bin/model-id`
+  to it.
+- It is a copy on purpose: skills keep resolving when a worktree is removed or
+  a branch changes.
+- The launcher runs the node that did the install, then `node` on PATH, then
+  `/opt/homebrew/bin/node`.
 
 Re-run it:
 - after node moves (a Homebrew switch, a new machine);
 - after merging a change to `models.default.json`, `lib/models.js` or `bin/model-id` —
   the installed copy does not follow the checkout.
 
-Until it has run, skills fail loudly rather than silently: every skill shell line
-reads `"$(model-id x || echo MODEL-ID-UNRESOLVED-x)"`, and the scripts do the same,
-so a CLI is handed an id it rejects, never an empty `-m ""` that falls through to
-its own default model.
+Until it has run, skills fail loudly rather than silently. Every skill shell
+line reads `"$(model-id x || echo MODEL-ID-UNRESOLVED-x)"`, and the scripts do
+the same. So a CLI is handed an id it rejects, never an empty `-m ""` that falls
+through to its own default model.
 
 ## Optional: worktree tools
 
@@ -250,20 +401,25 @@ project gets a *trunk* (a checkout parked on its base branch, holding the env
 files), and worktrees are cut from the latest base beside it.
 
 ```
-./bin/acs install-worktree [--dry-run] [--replace-defaults]
+acs install-worktree --dry-run
+acs install-worktree
 ```
 
-copies `wt.zsh` and `defaults.conf` into `~/.config/worktree` (`$WT_HOME`) and
-adds one marked `source` stanza to `~/.zshrc` (`$ZDOTDIR/.zshrc` when set) —
-unless an uncommented line there already sources a `wt.zsh`. A file that differs
-is backed up to `~/.agent-config-studio/backups/<ts>/` first; if the backup fails,
-nothing is written. A `defaults.conf` that differs is treated as yours and kept
-without `--replace-defaults`. `repos/` is never touched. Re-run after a pull: the
-installed copy does not follow the checkout.
+- It copies `wt.zsh` and `defaults.conf` into `~/.config/worktree` (`$WT_HOME`).
+- It adds one marked `source` stanza to `~/.zshrc` (`$ZDOTDIR/.zshrc` when
+  set), unless an uncommented line there already sources a `wt.zsh`. **This is
+  the one command that edits a shell profile**, and `--dry-run` shows what it
+  would do.
+- A file that differs is backed up to `~/.agent-config-studio/backups/<ts>/`
+  first; if the backup fails, nothing is written.
+- A `defaults.conf` that differs is treated as yours and kept, unless you pass
+  `--replace-defaults`.
+- `repos/` is never touched.
+- Re-run after a pull: the installed copy does not follow the checkout.
 
-Then, once per repository: `wtinit` (or `wtinit --cmd k` for `knew`, `kls`, … from
-any directory; `wtinit --register --cmd k` adds a prefix to a project configured
-earlier).
+Then, once per repository: `wtinit` (or `wtinit --cmd m` for `mnew`, `mls`, …
+from any directory; `wtinit --register --cmd m` adds a prefix to a project
+configured earlier).
 
 | Command | What it does |
 |---|---|
@@ -279,41 +435,48 @@ earlier).
 | `wclean --remove` | ask once, re-check each, remove the done ones and their branches |
 | `wdev`, `wrm <name>`, `wtreg` | dev server on the claimed port, remove one, list registered prefixes |
 
-**The env model.** Each `ENV_FILES` entry in a worktree is a symlink to the trunk's
-file, so a secret is changed once, in the trunk. An entry is refused by name — and
-nothing is created for it — when it is absolute, has a `..` or whitespace, sits
-under a directory that resolves outside the checkout, or is tracked or not
-ignored by git there (a committed link would carry this Mac's path). A worktree
-that needs its own value runs `wenv --detach <f>`: a real copy, recorded in
-`.worktree-detached`, that no relink touches. Existing worktrees keep their copies
-until `wenv --link-all` converts the ones identical to trunk; a differing one is
-listed as `stale-or-override` with both ways to resolve it. No command prints a
-file's contents.
+**The env model.** Each `ENV_FILES` entry in a worktree is a symlink to the
+trunk's file, so a secret is changed once, in the trunk.
+
+An entry is refused by name, and nothing is created for it, when it:
+- is absolute, or has a `..` or whitespace;
+- sits under a directory that resolves outside the checkout;
+- is tracked, or not ignored, by git there (a committed link would carry this
+  machine's path).
+
+A worktree that needs its own value runs `wenv --detach <f>`. That makes a real
+copy, recorded in `.worktree-detached`, that no relink touches. Existing
+worktrees keep their copies until `wenv --link-all` converts the ones identical
+to trunk. A differing one is listed as `stale-or-override`, with both ways to
+resolve it. No command prints a file's contents.
 
 - **Running dev servers** (Next.js, Vite) read env at startup: restart after
   changing the trunk's env.
 - **Docker:** a build context or a container mount of only the worktree cannot
   follow a link into the trunk. `wenv --detach` those files for container workflows.
-- **direnv:** `.envrc` can be an entry. `wnew` runs `direnv allow` once for a new
-  worktree and says so if it fails. Editing the shared `.envrc` blocks it everywhere
-  until each worktree is allowed again — relinking never re-allows — and `wls` shows
-  `envrc:blocked`.
+- **direnv:** `.envrc` can be an entry.
+  - `wnew` runs `direnv allow` once for a new worktree, and says so if it fails.
+  - Editing the shared `.envrc` blocks it everywhere until each worktree is
+    allowed again. Relinking never re-allows, and `wls` shows `envrc:blocked`.
 
-**What `done` means.** `wclean` calls a worktree done only when every check passes,
-and a check that cannot run makes it unknown, never done: it is not the trunk, the
-primary checkout, or where you are standing, and is not locked, detached or
-mid-rebase, and has no submodules; the exact commit it sits on is an ancestor of
-the base, or is the head of a merged PR from origin's owner into the base's branch
-(asked of `gh`; without `gh`, only ancestors count, and it says so); the tree is
-clean, untracked files included; and every env file is a link to trunk, absent, or
-identical to trunk. `--remove` re-runs all of that just before each removal, never
-uses `--force`, and deletes a branch only if its tip is still the merged commit.
-Ignored files other than env files (`node_modules`, build output) are removed with
-the worktree.
+**What `done` means.** `wclean` calls a worktree done only when every check
+passes. A check that cannot run makes it unknown, never done. The checks:
+- It is not the trunk, the primary checkout, or where you are standing.
+- It is not locked, detached or mid-rebase, and has no submodules.
+- The exact commit it sits on is an ancestor of the base, or is the head of a
+  merged PR from origin's owner into the base's branch. That is asked of `gh`;
+  without `gh`, only ancestors count, and it says so.
+- The tree is clean, untracked files included.
+- Every env file is a link to trunk, absent, or identical to trunk.
 
-The **Worktrees** button in the studio shows the same per project — env summary and
-done or why not, from `wls --json` and `wclean --json --no-fetch` — read-only. A
-done row shows the command to run.
+`--remove` re-runs all of that just before each removal and never uses
+`--force`. It deletes a branch only if its tip is still the merged commit.
+Ignored files other than env files (`node_modules`, build output) are removed
+with the worktree.
+
+The **Worktrees** button in the studio shows the same, per project and
+read-only: the env summary and done (or why not), from `wls --json` and `wclean
+--json --no-fetch`. A done row shows the command to run.
 
 ## Shortcuts
 
@@ -329,8 +492,7 @@ done row shows the command to run.
 - Serves `127.0.0.1` only, and rejects any request whose `Host` is not localhost.
 - Saves are guarded against clobbering: if a file changed on disk after you
   opened it, the save is refused and asks you to reload.
-- Symlinks resolve to their real target. `airflo-parts-master/AGENTS.md` is a
-  symlink to its `CLAUDE.md`, so it shows as one entry serving both harnesses
-  rather than two copies.
+- Symlinks resolve to their real target. A repo whose `AGENTS.md` is a symlink
+  to its `CLAUDE.md` shows one entry serving both harnesses, not two copies.
 - No dependencies. Node stdlib server, one vendored file (`marked`) for markdown
   rendering.

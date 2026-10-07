@@ -1332,7 +1332,7 @@ async function openWorktreeForm() {
   const key = el('input');
   key.type = 'text';
   field('Project name', key,
-    'Names the trunk and the worktrees — kylie gives kylie-trunk and kylie-<name>.');
+    'Names the trunk and the worktrees — myapp gives myapp-trunk and myapp-<name>.');
 
   const cmd = el('input');
   cmd.type = 'text';
@@ -1343,8 +1343,8 @@ async function openWorktreeForm() {
 
   const layout = el('select');
   for (const [v, t] of [
-    ['flat', 'Beside the trunk (kylie/kylie-alpha)'],
-    ['sub', 'In a subfolder (personal/airflo-wt/airflo-alpha)'],
+    ['flat', 'Beside the trunk (myapp/myapp-alpha)'],
+    ['sub', 'In a subfolder (projects/myapp-wt/myapp-alpha)'],
   ]) {
     const o = el('option', null, t);
     o.value = v;

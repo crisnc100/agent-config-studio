@@ -74,7 +74,7 @@ function filesModel(registry) {
  * The label each entry shows in its type: its own, unless another entry in
  * the same type has the same one. Then the colliding entries grow parent
  * context together (a label that is its folder's tail takes the next parent:
- * lib/production → dealer-portal/lib/production → airflo-trunk/…) until every
+ * lib/production → web-app/lib/production → myapp-trunk/…) until every
  * pair in different folders differs. Entries still alike share a folder, so
  * the filename tells them apart instead.
  */

@@ -290,12 +290,20 @@ function guardB() {
     if (abs === HARNESS) {
       const contained = functionSpan(src, 'spawnContained');
       const version = functionSpan(src, 'readVersion');
+      // grok's pre-spawn MCP check: discovery only, never a session.
+      const inspect = functionSpan(src, 'inspectGrok');
       if (!contained) {
         hits.push(`${file}: spawnContained is missing — the chokepoint is gone`);
         continue;
       }
       for (const call of calls) {
-        if (call.fn === 'spawn') {
+        if (call.fn === 'spawn' && inspect && inSpan(call.index, inspect)) {
+          // inspectGrok spawns detached so the deadline can SIGKILL its whole group.
+          const text = src.slice(call.index, call.index + 120).replace(/\s+/g, ' ');
+          if (!/^spawn\(binary, \['inspect', '--json'\], /.test(text)) {
+            hits.push(`${file}:${call.line} inspectGrok must spawn(binary, ['inspect', '--json'], …), got ${text.slice(0, 60)}`);
+          }
+        } else if (call.fn === 'spawn') {
           if (!inSpan(call.index, contained)) {
             hits.push(`${file}:${call.line} spawn() outside spawnContained`);
           } else {

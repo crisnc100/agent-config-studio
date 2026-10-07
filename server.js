@@ -10,7 +10,7 @@ import { migrateRoots, rootsPath, previewRoot, addRoot, removeRoot, EDIT_GRANTS 
 import { readSetup, writeSetup } from './lib/setup-state.js';
 import { detectClis } from './lib/setup-clis.js';
 import { scanOnce } from './lib/setup-scan.js';
-import { nextSteps } from './lib/setup-commands.js';
+import { nextSteps, pathStep } from './lib/setup-commands.js';
 import { isPartial } from './lib/walk-budget.js';
 import { locateBinary } from './lib/harness.js';
 import { refreshLoginDirs, loginDirs, loginDirsKnown, loginDirsSettled, LOGIN_READ_MS } from './lib/login-path.js';
@@ -46,6 +46,14 @@ import {
 } from './lib/usage/shell.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * This start's identity, for `acs stop`: /api/health echoes the nonce, and
+ * the run file the listener writes (studio dir, mode 0600) records it with
+ * the pid. The launcher signals a pid only when both agree.
+ */
+const RUN_NONCE = crypto.randomBytes(16).toString('hex');
+const runFile = (port) => path.join(STUDIO_HOME, 'run', `${port}.json`);
 const PUBLIC = path.join(__dirname, 'public');
 const PORT = Number(process.env.PORT || 8787);
 
@@ -562,7 +570,7 @@ export function createApp(opts = {}) {
 
   const ROUTES = {
   /** Identity probe so the launcher never kills an unrelated process on this port. */
-  'GET /api/health': async () => ({ app: 'agent-config-studio', pid: process.pid }),
+  'GET /api/health': async () => ({ app: 'agent-config-studio', pid: process.pid, nonce: RUN_NONCE }),
 
   /**
    * Read-only view of configured MCP servers. Global servers live in
@@ -830,7 +838,7 @@ export function createApp(opts = {}) {
   'GET /api/roots': async () => rootsView(),
 
   /**
-   * Adding a folder from the browser (the setup screen). Cris's decision,
+   * Adding a folder from the browser (the setup screen). A maintainer decision,
    * 2026-10-03: edit folders may be added here, behind the strict origin
    * check, lib/roots.js's own reject list — the same rules as `acs roots add`,
    * none repeated here — and a confirm naming the folder.
@@ -904,7 +912,7 @@ export function createApp(opts = {}) {
     const acsOnPath = loginDirsKnown()
       ? locateBinary('acs', loginDirs().map((d) => path.join(d, 'acs'))).installed
       : null;
-    return { clis, acsOnPath, next: nextSteps({ acsOnPath: acsOnPath === true }), checkedAt: Date.now() };
+    return { clis, acsOnPath, path: pathStep({ acsOnPath }), next: nextSteps({ acsOnPath: acsOnPath === true }), checkedAt: Date.now() };
   },
   'GET /api/setup/scan': async (req) => {
     requireStrict(req);
@@ -1331,7 +1339,10 @@ export function createApp(opts = {}) {
     if (turnSucceeded(result) && sessionId) {
       rememberSession(sessions, sessionId, resolved.harness);
     }
-    const proposals = parseEdits(text, mentions).map((p) => {
+    // Edits are only ever read from a turn that worked: a refused or failed
+    // turn's text proposes nothing.
+    const ok = turnSucceeded(result);
+    const proposals = (ok ? parseEdits(text, mentions) : []).map((p) => {
       let mtime = null;
       try { mtime = p.path ? fs.statSync(p.path).mtimeMs : null; } catch {}
       return {
@@ -1345,7 +1356,6 @@ export function createApp(opts = {}) {
     // only copy), whether the turn actually worked, and — only when it did —
     // the session id. A refused id must not be handed back for the client to
     // store and resume against.
-    const ok = turnSucceeded(result);
     send({
       t: 'done',
       ok,
@@ -1428,6 +1438,12 @@ export function createApp(opts = {}) {
     res.writeHead(404).end('not found');
   }
   });
+  // An idle keep-alive socket must outlive the client's own idle timeout, or
+  // the server closes it just as the client reuses it. Node 20.0's fetch hits
+  // exactly that against the 5 s default (ECONNRESET / "other side closed" on
+  // the next request after a quiet spell). headersTimeout must stay above it.
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
 
   return { server, sessions, models };
 }
@@ -1486,7 +1502,16 @@ export async function startStudio({ port = PORT, app = {} } = {}) {
   // Detection runs once at start (and on "Check now"); there is no timer.
   models.check().catch(() => {});
 
+  let runIno = null;
   server.listen(port, '127.0.0.1', () => {
+    try {
+      const file = runFile(port);
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      const tmp = `${file}.tmp-${process.pid}`;
+      fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, nonce: RUN_NONCE, server: fileURLToPath(import.meta.url) }) + '\n', { mode: 0o600 });
+      fs.renameSync(tmp, file);
+      runIno = fs.statSync(file).ino;
+    } catch { /* without it, `acs stop` refuses rather than guesses */ }
     const { groups } = buildRegistry();
     const total = groups.reduce((n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
     console.log(`
@@ -1501,12 +1526,18 @@ ${rootsBanner()}
 `);
   });
 
-  process.on('SIGINT', () => {
+  // Only this start's own run file is removed (same inode): a newer start may own it now.
+  process.on('exit', () => {
+    try { if (runIno !== null && fs.statSync(runFile(port)).ino === runIno) fs.unlinkSync(runFile(port)); } catch {}
+  });
+  const stop = () => {
     rootsWatch.close();
     watcher.close();
     console.log('\n  stopped.');
     process.exit(0);
-  });
+  };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
   return server;
 }
 

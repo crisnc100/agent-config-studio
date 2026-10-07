@@ -18,9 +18,10 @@ not localhost.
 
 ## Harnesses
 
-Shipped: **claude**, **grok**. Codex is not wired yet; the descriptor contract
-already accommodates it (`streams: false`, buffered decode, resume as a
-subcommand).
+Shipped: **claude**, **grok**. Codex is not wired yet. A descriptor may
+declare a buffered decode, but `runContained` refuses to run one: the init
+check needs the CLI's init event, so a Codex adapter needs an init-bearing
+stream.
 
 Detection walks known install paths, then `PATH`, and returns the realpath of
 an executable file. It rejects anything whose path contains `cmux-cli-shims` or
@@ -63,6 +64,31 @@ MCP meta-tools that survive `--tools`. They are companions, not the write
 allowlist. Do not replace `--tools` with any of the leaky flags above.
 
 One chokepoint (`spawnContained`) is the only spawn site for a harness turn.
+Chat and the one-shot Assist both reach it through `runContained`
+(`lib/harness.js`). Two more layers sit around it:
+
+- **Before the spawn: the preflight.** grok starts every configured MCP server
+  on every run, and no flag or env keeps them out
+  (`builds/ready-for-strangers/grok-mcp.md` has the probes).
+  - So before each grok run, `inspectGrok` runs `grok inspect --json` in the
+    turn's cwd, with the turn's env. The turn is refused when that would load
+    any MCP server or plugin server, and also when the answer cannot be read.
+  - Every grok Assist spawn gets `GROK_CLAUDE_MCPS_ENABLED=0` and
+    `GROK_CURSOR_MCPS_ENABLED=0`, so servers configured for Claude Code or
+    Cursor do not count.
+  - `spawnContained` refuses without a clearance from `clearForSpawn` /
+    `clearNow` for that exact descriptor, binary and cwd.
+- **After the spawn: the init gate** (`lib/containment.js`, shared with
+  `tests/phase1.mjs`).
+  - Every stream event passes through it. A run must report exactly one init,
+    before any output, with `tools` equal to the one read tool, no MCP
+    servers, and a `toolCount` (if any) that agrees.
+  - Anything else refuses the turn. So does no init within 30 s.
+  - A refused turn kills the child's process group (it is spawned detached)
+    and returns no text, no session id and no proposals. The server parses
+    edits only from a turn that succeeded.
+  - This is defence in depth, not the containment: it cannot undo what a CLI
+    did before it printed init.
 
 ## Testing
 
@@ -92,11 +118,12 @@ absent; if no harness is detected the live suite **fails** rather than skip
 
 ## Usage tracking
 
-Four spawn sites exist in this repo and `tests/guards.mjs` pins every one:
+Five spawn sites exist in this repo and `tests/guards.mjs` pins every one:
 
 | Site | May spawn | Pinned to |
 |---|---|---|
-| `lib/harness.js` `spawnContained` | claude, grok | containment allowlist, or it refuses |
+| `lib/harness.js` `spawnContained` | claude, grok | containment allowlist and a pre-spawn clearance, or it refuses |
+| `lib/harness.js` `inspectGrok` | the detected `grok` | argv `['inspect', '--json']` — discovery only, no session |
 | `lib/usage/refresh.js` | `process.execPath` | argv `[CLI, '--json']` |
 | `lib/usage/connect.js` | the detected `codex` | argv `['login']` / `['login','status']` |
 | `lib/usage/grok-billing.js` | the detected `grok` | argv `['agent','stdio']` |
@@ -172,9 +199,10 @@ Refresh cannot fix this — only running a turn on that seat records new quota.
 
 ## Known residuals
 
-- Grok still **connects** MCP servers (Neon, postgres showed `status:
-  connected` on init). They are not in the effective tool set, so the model
-  cannot invoke them. There is no session flag to skip loading them.
+- Grok has no session flag to skip loading MCP servers, so Grok Assist is
+  refused before the spawn whenever `grok inspect` reports one. A server added
+  in the milliseconds between that check and the spawn is caught only by the
+  init gate, after grok has started it.
 - The uncontained-probe guard in the live suite checks cwd. It cannot stop a
   write to an absolute path outside the fixture. Only an OS-level sandbox
   would, and that is not available here.
