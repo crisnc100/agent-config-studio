@@ -257,6 +257,29 @@ async function refused(name, paths, { status = 400, re = null, headers } = {}) {
   ok('D2 restored, the Context payload is whole again', after.totals.files === ctx.totals.files, JSON.stringify(after.totals));
 }
 
+// ── one source of protection: the Context flag and the route agree ────────
+{
+  const { preflight } = await import('../lib/batch-delete.js');
+  const ctx = (await call('/api/context')).json;
+  const rows = ctx.groups.flatMap((g) => g.scopes.flatMap((s) => s.variants)).filter((v) => v.open.path);
+  const verdicts = rows.map((v) => {
+    let refusedAsProtected = false;
+    try { preflight({ paths: [v.open.path] }); } catch (e) { refusedAsProtected = /loaded on every session/.test(e.message); }
+    return { path: v.open.path, flag: v.protected, refusedAsProtected };
+  });
+  ok('D3 every Context row\'s protected flag matches the batch route\'s protected refusal', verdicts.length >= 2
+     && verdicts.some((v) => v.flag) && verdicts.some((v) => !v.flag) && verdicts.every((v) => v.flag === v.refusedAsProtected), JSON.stringify(verdicts));
+}
+
+// ── the error-body payload is opt-in: other routes' bodies are unchanged ──
+{
+  const r = await call('/api/delete', 'POST', { path: path.join(work, 'scratch', 'not-there.md') });
+  ok('POST /api/delete on a missing file still answers { error } and nothing else', r.status >= 400
+     && JSON.stringify(Object.keys(r.json || {})) === '["error"]', r.text);
+  const r2 = await call('/api/delete', 'POST', { path: path.join(home, 'elsewhere.md') });
+  ok('…and on a path outside the roots', r2.status === 403 && JSON.stringify(Object.keys(r2.json || {})) === '["error"]', r2.text);
+}
+
 // ── partial failures: before the move, after it, during metadata ──────────
 {
   const four = ['1', '2', '3', '4'].map((n) => scratch(`four/f${n}.md`, `f${n}\n`));

@@ -102,6 +102,68 @@ const [s2] = await call('POST', '/api/memory/accept', { opId: p2.opId });
 ok('D1 a fact edited after the preview refuses the batch, nothing changed', s2 === 409
    && [path.join(fx.mem, 'fact-b.md'), alphaIndex].map(sha).join() === treeBefore);
 
+fs.writeFileSync(path.join(fx.mem, 'fact-c.md'), fs.readFileSync(path.join(fx.mem, 'fact-c.md'), 'utf8').replace('edited meanwhile\n', ''));
+const ops = await import('../lib/memory-ops.js');
+
+// Freshness at preview: a fact gone since the view loaded refuses the whole preview, by name.
+{
+  V = await view();
+  const ids = [row('fact-b.md').id, row('future.md').id];
+  const futurePath = path.join(fx.mem, 'future.md');
+  const parked = `${futurePath}.parked`;
+  fs.renameSync(futurePath, parked);
+  const [s, j] = await call('POST', '/api/memory/preview', { action: 'trash-fact', ids });
+  fs.renameSync(parked, futurePath);
+  ok('D1 a fact gone since the view refuses the whole preview with 409, naming it', s === 409 && /future\.md is gone/.test(j?.error), JSON.stringify(j));
+  ok('D1 …and nothing changed', fs.existsSync(path.join(fx.mem, 'fact-b.md')) && fs.readFileSync(alphaIndex, 'utf8') === alphaText);
+}
+
+// One edit per index: three facts sharing alpha's MEMORY.md, one in the old copy's.
+const trio = ['fact-b.md', 'fact-c.md', 'live-1.md'];
+const shared = (rels) => {
+  const lines0 = alphaText.split('\n');
+  return lines0.filter((l) => !rels.some((r) => l.includes(`(${r})`)));
+};
+{
+  V = await view();
+  const ids = [...trio.map((r) => row(r).id), V.rows.find((r) => r.openPath === path.join(fx.oldAlpha, 'memory', 'fact-a.md')).id];
+  const [, p3] = await call('POST', '/api/memory/preview', { action: 'trash-fact', ids });
+  ok('D1 3 facts in one index + 1 in another: exactly two index diffs', p3.diffs.length === 2, JSON.stringify(p3.diffs.map((d) => d.label)));
+  const [as3, ar3] = await call('POST', '/api/memory/accept', { opId: p3.opId });
+  const editSteps = ar3.steps.filter((s) => s.type === 'edit-index');
+  ok('D1 …accepted as 4 trash steps and ONE edit-index step per index', as3 === 200 && ar3.steps.filter((s) => s.type === 'trash').length === 4
+     && editSteps.length === 2 && new Set(editSteps.map((s) => s.path)).size === 2, JSON.stringify(ar3.steps));
+  const after = fs.readFileSync(alphaIndex, 'utf8');
+  ok('D1 …every link to the three is gone from the shared index', trio.every((r) => !after.includes(`(${r})`)));
+  ok('D1 …and every line that held none of them is byte-identical', shared(trio).every((l) => after.split('\n').includes(l)), after);
+  ok('D1 …the other index lost its link', !fs.readFileSync(oldIndex, 'utf8').includes('(fact-a.md)'));
+  const [, rr3] = await call('POST', '/api/memory/restore', { opId: p3.opId });
+  ok('D1 restore: both indexes byte-identical to before, all 4 files back', rr3.restored && fs.readFileSync(alphaIndex, 'utf8') === alphaText
+     && sha(oldIndex) === before[oldIndex] && [...trio.map((r) => path.join(fx.mem, r)), path.join(fx.oldAlpha, 'memory', 'fact-a.md')].every((f) => fs.existsSync(f))
+     && sha(path.join(fx.mem, 'fact-b.md')) === before[path.join(fx.mem, 'fact-b.md')], JSON.stringify(rr3).slice(0, 200));
+}
+
+// A fault mid-accept leaves an operation Restore can undo.
+{
+  V = await view();
+  const ids = trio.map((r) => row(r).id);
+  const filesT = trio.map((r) => path.join(fx.mem, r));
+  const shas = filesT.map(sha);
+  const [, p4] = await call('POST', '/api/memory/preview', { action: 'trash-fact', ids });
+  let steps = 0;
+  ops._setOpFault((pt) => { if (pt === 'before-step' && ++steps === 3) throw new Error('injected mid-accept'); });
+  let s4, a4;
+  try { [s4, a4] = await call('POST', '/api/memory/accept', { opId: p4.opId }); } finally { ops._setOpFault(null); }
+  ok('D1 a fault before step 3 stops the accept with an error', s4 === 500 && /injected mid-accept/.test(a4?.error), JSON.stringify(a4));
+  ok('D1 …two facts are already trashed, the third and the index untouched', !fs.existsSync(filesT[0]) && !fs.existsSync(filesT[1])
+     && sha(filesT[2]) === shas[2] && fs.readFileSync(alphaIndex, 'utf8') === alphaText);
+  const [, list] = await call('GET', '/api/memory/ops');
+  ok('D1 …the operation is recorded as failed', list.ops.find((o) => o.id === p4.opId)?.status === 'failed');
+  const [, r4] = await call('POST', '/api/memory/restore', { opId: p4.opId });
+  ok('D1 …and Restore brings both back, byte-identical, index unchanged', r4.restored && filesT.every((f, i) => sha(f) === shas[i])
+     && fs.readFileSync(alphaIndex, 'utf8') === alphaText, JSON.stringify(r4).slice(0, 300));
+}
+
 await new Promise((r) => server.close(r));
 assertRealHomesUnchanged(realBefore, ok);
 unlockMemoryHome(fakeHome);
