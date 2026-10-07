@@ -402,9 +402,16 @@ async function refused(name, paths, { status = 400, re = null, headers } = {}) {
   }) });
   await settle(30);
   const pick = ['e2e-1', 'e2e-2', 'e2e-3'].map((n) => { const f = path.join(work, n, 'CLAUDE.md'); put(f, `# ${n}\n`); return f; });
-  page.eval('openContext()');
-  for (let i = 0; i < 50 && !page.$('content').querySelector('.sel-check'); i++) await settle(20);
   const box = (f) => page.$('content').querySelectorAll('.sel-check').find((b) => b.getAttribute('aria-label') === `Select ${'~' + f.slice(home.length)}`);
+  // Wait for the new files themselves, not for any checkbox: the rows from
+  // boot are already there, and a slow runner's re-read can land later. The
+  // server learns of new files through its watcher, so re-open until they show
+  // (bounded at ~5 s); the assertion below is unchanged.
+  page.eval('openContext()');
+  for (let i = 0; i < 100 && !pick.every(box); i++) {
+    await settle(50);
+    if (i % 10 === 9) page.eval('openContext()');
+  }
   ok('E2E the real Context payload renders a checkbox for each new file', pick.every(box), page.$('content').querySelectorAll('.sel-check').map((b) => b.getAttribute('aria-label')).join(' | '));
   for (const f of pick) box(f).click();
   let n = 0;
