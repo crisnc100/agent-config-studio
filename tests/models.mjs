@@ -157,11 +157,11 @@ console.log('\nmodels/resolver');
   // The copy keeps working when the checkout it came from is gone.
   const moved = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-models-src-'));
   temps.push(moved);
-  for (const rel of ['bin/model-id', 'lib/models.js', 'models.default.json', 'package.json']) {
+  for (const rel of ['bin/model-id', 'bin/model-id.mjs', 'lib/models.js', 'models.default.json', 'package.json']) {
     write(path.join(moved, rel), fs.readFileSync(path.join(ROOT, rel)));
   }
   const home2 = tempHome();
-  spawnSync(process.execPath, [path.join(moved, 'bin', 'model-id'), '--install'], { env: { HOME: home2, PATH: '/usr/bin:/bin' } });
+  spawnSync(process.execPath, [path.join(moved, 'bin', 'model-id.mjs'), '--install'], { env: { HOME: home2, PATH: '/usr/bin:/bin' } });
   fs.rmSync(moved, { recursive: true, force: true });
   const after = spawnSync('/bin/sh', ['-c', 'model-id opus'], {
     encoding: 'utf8', env: { HOME: home2, PATH: `/usr/bin:/bin:${path.join(home2, '.local', 'bin')}` },
