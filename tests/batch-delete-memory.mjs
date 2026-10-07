@@ -155,6 +155,9 @@ const shared = (rels) => {
   let s4, a4;
   try { [s4, a4] = await call('POST', '/api/memory/accept', { opId: p4.opId }); } finally { ops._setOpFault(null); }
   ok('D1 a fault before step 3 stops the accept with an error', s4 === 500 && /injected mid-accept/.test(a4?.error), JSON.stringify(a4));
+  ok('grade 4: the error body carries the op record, naming the two facts that moved', a4?.op?.status === 'failed'
+     && a4.op.steps.filter((x) => x.type === 'trash' && x.done).map((x) => x.path).join() === filesT.slice(0, 2).map((f) => '~' + f.slice(fakeHome.length)).join(),
+     JSON.stringify(a4?.op?.steps));
   ok('D1 …two facts are already trashed, the third and the index untouched', !fs.existsSync(filesT[0]) && !fs.existsSync(filesT[1])
      && sha(filesT[2]) === shas[2] && fs.readFileSync(alphaIndex, 'utf8') === alphaText);
   const [, list] = await call('GET', '/api/memory/ops');

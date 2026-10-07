@@ -73,6 +73,7 @@ jobs:
           node tests/roots-live.mjs
           node tests/roots-ui.mjs
           node tests/batch-delete.mjs
+          node tests/batch-delete-memory.mjs
           node tests/batch-delete-ui.mjs
           node tests/real-home-roots.mjs
           node tests/fresh-home.mjs

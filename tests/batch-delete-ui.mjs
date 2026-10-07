@@ -162,7 +162,7 @@ const requests = (p, path, method = 'GET') => p.requests.filter((r) => r.path ==
 }
 
 // ── while a batch is pending ──────────────────────────────────────────────
-const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
+const deferred = () => { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j; }); return { promise, resolve, reject }; };
 {
   const p = await boot({ ctx: contextOf(3) });
   const d = deferred();
@@ -251,8 +251,10 @@ async function bootMemory() {
       return { opId: 'a'.repeat(24), action: b.action, summary: `Trash ${b.ids.length} facts and their index links`,
         items: gone.map((r) => `${r.display} — moves to the ACS trash`), diffs: [] };
     },
-    'POST /api/memory/accept': (b) => {
+    'POST /api/memory/accept': async (b) => {
       m.accepts.push(b);
+      if (m.holdAccept) { const h = m.holdAccept; m.holdAccept = null; await h.promise; }
+      if (m.failAccept) throw m.failAccept;
       const ids = m.previews.at(-1).ids;
       const steps = m.rows.filter((r) => ids.includes(r.id)).map((r) => ({ type: 'trash', label: r.display, path: r.display, done: true, restored: false }));
       m.rows = m.rows.filter((r) => !ids.includes(r.id));
@@ -334,6 +336,129 @@ async function bootMemory() {
   ok('D8 Memory: a failed re-read keeps the rows shown, marked', p.eval('S.view') === 'memory' && boxes(p).length === 3
      && /Showing Memory as it was before the last change — reading it again failed \(transcripts unreadable\)/.test(p.text(p.$('content'))));
   ok('D8 …the result notice is still shown', /done\. Restorable from Operations/.test(noticeText(p)), noticeText(p));
+}
+
+// ── grade 1: an older Context read never overwrites a newer one ───────────
+{
+  let held = null, current = contextOf(2);
+  const p = await boot({ over: { 'GET /api/context': () => { if (held) { const h = held; held = null; return h.promise; } return current; } } });
+  const row = (i) => enabled(p).find((b) => b.getAttribute('aria-label') === `Select ~/p/e${i}/CLAUDE.md`);
+  row(0).click();
+  const old = deferred();
+  held = old;
+  barBtn(p, 'Delete').click();
+  await settle(10);
+  // Away and back: a fresh open reads B alone; then B is deleted and the newest read is empty.
+  p.$('btn-memory').click(); await settle(10);
+  current = { ...contextOf(0), groups: [{ ...contextOf(2).groups[0], scopes: contextOf(2).groups[0].scopes.filter((x) => x.scope !== 'e0') }] };
+  p.$('btn-context').click(); await settle(10);
+  ok('(setup) after returning, only B is selectable', enabled(p).length === 1 && row(1));
+  row(1).click();
+  current = contextOf(0);
+  barBtn(p, 'Delete').click();
+  await settle(10);
+  ok('(setup) the newest read is empty', enabled(p).length === 0);
+  old.resolve({ ...contextOf(0), groups: [{ ...contextOf(2).groups[0], scopes: contextOf(2).groups[0].scopes.filter((x) => x.scope !== 'e0') }] });
+  await settle(10);
+  ok('grade 1: the older read, answering last, is dropped — B does not come back', enabled(p).length === 0 && !row(1));
+  ok('no page errors', p.errors.length === 0, p.errors.join('; '));
+}
+
+// ── grade 2–4: Memory while Accept is out, and when it fails ──────────────
+async function memoryAccepting(p) {
+  enabled(p)[0].click(); enabled(p)[1].click();
+  barBtn(p, 'Delete').click();
+  await settle(10);
+}
+const acceptBtn = (p) => p.$('content').querySelector('.mem-preview')?.querySelectorAll('button').find((b) => p.text(b) === 'Accept');
+const failedOp = (rows) => ({ status: 500, body: { error: 'disk full — the steps that ran can be restored from Operations',
+  op: { id: 'a'.repeat(24), status: 'failed', steps: rows.map((r, i) => ({ type: 'trash', label: r.display, path: r.display, done: i === 0, restored: false })) } } });
+{
+  const p = await bootMemory();
+  const held = deferred();
+  await memoryAccepting(p);
+  ok('grade 3: with the preview open, the selection is frozen: checkboxes, Delete and the filter disabled',
+     boxes(p).every((b) => b.disabled) && barBtn(p, 'Delete').disabled && p.$('content').querySelector('select').disabled && !acceptBtn(p).disabled);
+  p.m.holdAccept = held;
+  acceptBtn(p).click();
+  await settle(5);
+  ok('grade 3: during Accept, Accept itself is disabled too', acceptBtn(p).disabled && boxes(p).every((b) => b.disabled) && barBtn(p, 'Delete').disabled);
+  p.eval('paintMemory()');
+  ok('grade 3: …and a repaint mid-Accept keeps every one of them disabled', acceptBtn(p).disabled && boxes(p).every((b) => b.disabled)
+     && barBtn(p, 'Delete').disabled && barBtn(p, 'Select all').disabled && p.$('content').querySelector('select').disabled);
+  held.resolve();
+  await settle(10);
+  ok('grade 3: settled, everything is live again', !barBtn(p, 'Select all').disabled && enabled(p).length > 0 && !p.$('content').querySelector('select').disabled);
+  ok('QA B: after Accept, focus is on the bar, not BODY', p.doc.activeElement !== p.doc.body && bar(p).contains(p.doc.activeElement), p.doc.activeElement?.tagName);
+}
+{
+  const p = await bootMemory();
+  const rows = p.m.rows.slice(0, 2);
+  await memoryAccepting(p);
+  const held = deferred();
+  p.m.holdAccept = held;
+  acceptBtn(p).click();
+  await settle(5);
+  p.$('btn-context').click();
+  await settle(10);
+  const gets = requests(p, '/api/memory').length;
+  held.reject(failedOp(rows));
+  await settle(10);
+  ok('grade 2: a late Accept failure does not navigate back to Memory', p.eval('S.view') === 'context' && p.$('content').querySelector('.cx-variant'));
+  ok('grade 2: …it reports, and does not read Memory again behind Context', /disk full/.test(noticeText(p)) && requests(p, '/api/memory').length === gets);
+}
+{
+  const p = await bootMemory();
+  const rows = p.m.rows.slice(0, 2);
+  await memoryAccepting(p);
+  const regs = requests(p, '/api/registry').length;
+  p.m.failAccept = failedOp(rows);
+  p.m.failRead = true;
+  acceptBtn(p).click();
+  await settle(10);
+  const t = noticeText(p);
+  ok('grade 4: a partial failure names the fact that moved, and where Restore is', new RegExp(`${rows[0].display.replace(/[.]/g, '\\.')}: moved to the ACS trash`).test(t)
+     && /Restore puts them back, under Operations/.test(t) && !t.includes(`${rows[1].display}: moved`), t);
+  ok('grade 4: …the registry is refreshed', requests(p, '/api/registry').length === regs + 1);
+  ok('grade 4: …and a failed re-read keeps the rows, marked — never an error screen', p.eval('S.view') === 'memory' && boxes(p).length === 3
+     && /Showing Memory as it was before the last change/.test(p.text(p.$('content'))));
+  ok('C: an error notice is an alert', p.$('notice-slot').querySelector('.notice.error')?.getAttribute('role') === 'alert');
+}
+{
+  const p = await bootMemory();
+  const rows = p.m.rows.slice(0, 2);
+  await memoryAccepting(p);
+  const held = deferred();
+  p.m.holdAccept = held;
+  acceptBtn(p).click();
+  await settle(5);
+  p.eval(`openInEditor(${JSON.stringify(rows[0].openPath)}, ${JSON.stringify(rows[0].display)})`);
+  await settle(10);
+  ok('(setup) the editor is open on the fact that will move', p.eval('S.view') === 'entry' && p.eval('S.file?.path') === rows[0].openPath);
+  held.reject(failedOp(rows));
+  await settle(10);
+  ok('grade 4: after a partial failure, the editor on a moved fact closes, as on success', p.eval('S.file') === null && p.eval('S.view') === 'home');
+}
+
+// ── QA A–C: the bar's modifier, focus, the live region ────────────────────
+{
+  const p = await boot();
+  const CSS = (await import('node:fs')).readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
+  ok('QA A: the empty bar is .is-empty, never .empty, so the global empty-state rule cannot match it',
+     bar(p).classList.contains('is-empty') && !bar(p).classList.contains('empty') && !bar(p).matches('.empty') && !/\.sel-bar\.empty\b/.test(CSS));
+  enabled(p)[0].click();
+  ok('QA A: …and ticking only drops the modifier', !bar(p).classList.contains('is-empty') && !bar(p).matches('.empty'));
+  barBtn(p, 'Clear').click();
+  ok('QA B: after Clear (which disables itself), focus is on Select all', p.doc.activeElement === barBtn(p, 'Select all'), p.doc.activeElement?.tagName);
+  enabled(p)[0].focus();
+  enabled(p)[0].click();
+  barBtn(p, 'Delete').focus();
+  barBtn(p, 'Delete').click();
+  await settle(10);
+  ok('QA B: after a keyboard-started delete repaints, focus is on the bar, not BODY', p.doc.activeElement !== p.doc.body && bar(p).contains(p.doc.activeElement), p.doc.activeElement?.tagName);
+  const slot = p.$('notice-slot');
+  ok('QA C: the notice slot is a polite live region', slot.getAttribute('role') === 'status' && slot.getAttribute('aria-live') === 'polite');
+  ok('no page errors', p.errors.length === 0, p.errors.join('; '));
 }
 
 for (const p of pages) p.done();

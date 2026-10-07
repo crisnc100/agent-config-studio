@@ -35,8 +35,10 @@ const treeHash = (root) => {
     if (st.isSymbolicLink()) { out[p] = `link:${fs.readlinkSync(p)}`; return; }
     if (st.isFile()) { out[p] = sha(p); return; }
     if (!st.isDirectory()) return;
+    let names;
+    try { names = fs.readdirSync(p); } catch { out[p] = 'dir (unreadable)'; return; }
     out[p] = 'dir';
-    for (const n of fs.readdirSync(p)) walk(path.join(p, n));
+    for (const n of names) walk(path.join(p, n));
   };
   walk(root);
   return JSON.stringify(out);
@@ -132,10 +134,13 @@ async function refused(name, paths, { status = 400, re = null, headers } = {}) {
   await refused('shape: an empty list is 400', []);
   await refused('shape: a non-string path is 400 (the valid one beside it stays)', [f, 42]);
   await refused('shape: a blank path is 400', [f, '  ']);
-  const many = Array.from({ length: 201 }, (_, i) => path.join(work, 'scratch', `n${i}.md`));
-  await refused('limit: 201 distinct paths is 400', many, { re: /201 after de-duplication/ });
-  const r = await batch(Array.from({ length: 250 }, () => f));
-  ok('D9 limit: 250 copies of one path count once, after de-duplication', r.status === 200 && r.json.results.length === 1
+  const many = Array.from({ length: 201 }, (_, i) => scratch(`many/n${i}.md`));
+  await refused('limit: 201 distinct existing paths is 400', many, { re: /201 after de-duplication/ });
+  fs.rmSync(path.join(work, 'scratch', 'many'), { recursive: true });
+  await refused('limit: over 10000 raw paths is 400, and says it is a per-request bound', Array.from({ length: 10001 }, () => f),
+    { re: /over 10000 before de-duplication/ });
+  const r = await batch(Array.from({ length: 1001 }, () => f));
+  ok('D9 limit: 1001 copies of one path count once, after de-duplication', r.status === 200 && r.json.results.length === 1
      && r.json.results[0].status === 'trashed', r.text.slice(0, 200));
 }
 
@@ -162,6 +167,27 @@ async function refused(name, paths, { status = 400, re = null, headers } = {}) {
   await refused('D4 refuse: a folder holding a hard-linked file', [good, hidden], { re: /holds .*deep\.md/ });
   fs.rmSync(hidden, { recursive: true });
   fs.rmSync(innocent);
+
+  // Every input is checked before a folder may swallow it.
+  const folder = path.join(work, 'scratch', 'swallow');
+  put(path.join(folder, 'kept.md'), 'kept\n');
+  const r5 = await refused('grade 5: [file, folder, folder/missing.md] refuses — the missing child is checked before collapse',
+    [good, folder, path.join(folder, 'missing.md')], { re: /missing\.md does not exist/ });
+  ok('grade 5: …the 400 names the missing child', r5.json?.path === path.join(folder, 'missing.md'), JSON.stringify(r5.json));
+  const sealed = path.join(folder, 'sealed');
+  fs.mkdirSync(sealed);
+  fs.writeFileSync(path.join(sealed, 'x.md'), 'x\n');
+  fs.chmodSync(sealed, 0o000);
+  let r6;
+  try { r6 = await refused('grade 6: a folder holding an unreadable folder is 400, not 500', [good, folder], { re: /cannot be read/ }); }
+  finally { fs.chmodSync(sealed, 0o755); }
+  ok('grade 6: …with the path in the body', r6.json?.path === folder && typeof r6.json.error === 'string', JSON.stringify(r6.json));
+  fs.rmSync(folder, { recursive: true });
+
+  // assertWritable runs in preflight too: a root gone by then refuses the whole batch.
+  _setBeforeWriteCheck((abs) => { if (abs === good) { _setBeforeWriteCheck(null); roots.removeRoot('work', { home }); } });
+  try { await refused('D4 preflight assertWritable: a root revoked during preflight refuses the whole batch', [good], { re: /cannot be changed here/ }); }
+  finally { _setBeforeWriteCheck(null); addWork(); }
   fs.rmSync(path.join(work, 'scratch', 'linked-twin.md'));
 
   await refused('D3 refuse: an allowed root itself', [good, work], { re: /folder itself/ });
@@ -330,8 +356,10 @@ async function refused(name, paths, { status = 400, re = null, headers } = {}) {
 // ── a root revoked between preflight and the move ─────────────────────────
 {
   const three = ['x', 'y', 'z'].map((n) => scratch(`rev/${n}.md`));
+  // The second check of item 2 is the one immediately before its move (the first is preflight's).
+  let seen = 0;
   _setBeforeWriteCheck((abs) => {
-    if (abs !== three[1]) return;
+    if (abs !== three[1] || ++seen < 2) return;
     _setBeforeWriteCheck(null);
     roots.removeRoot('work', { home });
   });

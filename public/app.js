@@ -129,7 +129,8 @@ async function api(method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  // The body rides along: a partial failure's error carries what did happen.
+  if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { status: res.status, body: data });
   return data;
 }
 
@@ -140,6 +141,8 @@ function notice(kind, text, list, sticky) {
   const slot = $('notice-slot');
   slot.innerHTML = '';
   const n = el('div', `notice ${kind}`);
+  // The slot is a polite live region; an error interrupts.
+  if (kind === 'error') n.setAttribute('role', 'alert');
   n.appendChild(el('div', null, text));
   if (list?.length) {
     const ul = el('ul');
@@ -1559,6 +1562,8 @@ function selectBar(sel, onDelete) {
   bar.setAttribute('role', 'toolbar');
   bar.setAttribute('aria-label', 'Selection');
   const count = el('span', 'sel-count');
+  // Focusable by script only: where focus lands once the button that had it is gone.
+  count.setAttribute('tabindex', '-1');
   const all = el('button', 'btn ghost', 'Select all (visible)');
   all.onclick = () => {
     const ids = [...sel.shown.keys()];
@@ -1569,7 +1574,7 @@ function selectBar(sel, onDelete) {
   const del = el('button', 'btn danger', 'Delete…');
   del.onclick = () => onDelete([...sel.ids]);
   const clear = el('button', 'btn ghost', 'Clear');
-  clear.onclick = () => { sel.ids.clear(); paintSelectBar(sel); };
+  clear.onclick = () => { sel.ids.clear(); paintSelectBar(sel); focusBar(sel); };
   bar.append(count, all, del, clear);
   sel.bar = { bar, count, all, del, clear };
   paintSelectBar(sel);
@@ -1585,7 +1590,15 @@ function paintSelectBar(sel) {
   b.all.disabled = sel.busy || !sel.shown.size;
   b.del.disabled = sel.busy || !n || n > SELECT_CAP;
   b.clear.disabled = sel.busy || !n;
-  b.bar.classList.toggle('empty', !n);
+  // Not `.empty`: that is the global empty-state rule, and it would restyle the bar.
+  b.bar.classList.toggle('is-empty', !n);
+}
+
+/** After a repaint or a self-disabling click: Select all, or the count when nothing is left to select. */
+function focusBar(sel) {
+  const b = sel.bar;
+  if (!b || !document.body.contains(b.bar)) return;
+  (b.all.disabled ? b.count : b.all).focus();
 }
 
 /** Call at the start of a paint, then pruneSelection at its end. */
@@ -2152,6 +2165,8 @@ const MV = {
   restoreRefusal: null,    // { opId, reason, diffs }
   sel: newSelection(),     // fact row ids, for Delete selected (trash-fact)
   outdated: null,          // why the last re-read failed, while the old rows stay shown
+  gen: 0,                  // bumped by every load: an answer from an older one is dropped
+  accepting: false,        // an Accept is in flight
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -2182,9 +2197,13 @@ async function openMemory() {
 
   const c = $('content');
   c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span> Reading memory and transcripts…</div></div>';
+  const gen = ++MV.gen;
   try {
-    takeMemory(...await Promise.all([api('GET', '/api/memory'), api('GET', '/api/memory/ops')]));
+    const got = await Promise.all([api('GET', '/api/memory'), api('GET', '/api/memory/ops')]);
+    if (gen !== MV.gen) return;
+    takeMemory(...got);
   } catch (e) {
+    if (gen !== MV.gen) return;
     c.innerHTML = '';
     const box = el('div', 'scope');
     box.appendChild(el('h2', null, 'Memory'));
@@ -2212,12 +2231,25 @@ function takeMemory(data, ops) {
  * replacing the view with an error.
  */
 async function reloadMemory() {
+  // Left meanwhile: the next openMemory reads it fresh.
+  if (S.view !== 'memory') return;
+  const gen = ++MV.gen;
   try {
-    takeMemory(...await Promise.all([api('GET', '/api/memory'), api('GET', '/api/memory/ops')]));
+    const got = await Promise.all([api('GET', '/api/memory'), api('GET', '/api/memory/ops')]);
+    if (gen !== MV.gen) return;
+    takeMemory(...got);
   } catch (e) {
+    if (gen !== MV.gen) return;
     MV.outdated = e.message;
   }
   paintMemory();
+}
+
+/** Where focus goes once Accept's repaint has removed the button that had it. */
+function focusMemory() {
+  if (S.view !== 'memory') return;
+  if (MV.sel.bar) focusBar(MV.sel);
+  else $('content').querySelector('.mem-tabs .tab.active')?.focus();
 }
 
 function paintMemory() {
@@ -2270,10 +2302,9 @@ function paintMemory() {
   }
   box.appendChild(bar);
 
-  if (MV.preview) box.appendChild(previewPanel());
-
   resetShown(MV.sel);
   if (['review', 'orphans', 'projects'].includes(MV.tab)) box.appendChild(selectBar(MV.sel, trashSelectedFacts));
+  if (MV.preview) box.appendChild(previewPanel());
 
   if (MV.tab === 'review') box.appendChild(reviewTab());
   else if (MV.tab === 'cleanups') box.appendChild(cleanupsTab());
@@ -2286,12 +2317,16 @@ function paintMemory() {
   c.scrollTop = scroll;
 }
 
-/** Delete selected, in Memory: the trash-fact operation over every id, previewed like any other. */
+/**
+ * Delete selected, in Memory: the trash-fact operation over every id,
+ * previewed like any other. The selection stays frozen from here until the
+ * preview is cancelled or its Accept has settled.
+ */
 async function trashSelectedFacts(ids) {
   MV.sel.busy = true;
   paintSelectBar(MV.sel);
-  try { await startPreview('trash-fact', ids); }
-  finally { MV.sel.busy = false; paintSelectBar(MV.sel); }
+  await startPreview('trash-fact', ids);
+  if (!MV.preview) { MV.sel.busy = false; paintSelectBar(MV.sel); }
 }
 
 const groupLabel = (id) => MV.data.groups.find((g) => g.id === id)?.label ?? '(project)';
@@ -2339,6 +2374,7 @@ function reviewTab() {
     sel.appendChild(opt);
   }
   sel.onchange = () => { MV.age = Number(sel.value); paintMemory(); };
+  sel.disabled = MV.sel.busy;
   head.appendChild(sel);
   wrap.appendChild(head);
 
@@ -2667,8 +2703,11 @@ function opsTab() {
 }
 
 async function startPreview(action, ids) {
+  const gen = MV.gen;
   try {
-    MV.preview = await api('POST', '/api/memory/preview', { action, ids });
+    const preview = await api('POST', '/api/memory/preview', { action, ids });
+    if (gen !== MV.gen || S.view !== 'memory') return;
+    MV.preview = preview;
     MV.restoreRefusal = null;
     paintMemory();
     $('content').scrollTop = 0;
@@ -2693,27 +2732,42 @@ function previewPanel() {
   }
   const acts = el('div', 'mem-acts');
   const accept = el('button', 'btn primary', 'Accept');
+  // Disabled from the state, not the click, so a repaint mid-Accept keeps it so.
+  accept.disabled = MV.accepting;
   accept.onclick = async () => {
-    accept.disabled = true;
+    MV.accepting = true;
+    MV.sel.busy = true;
+    paintMemory();
+    const trashed = (op) => op.steps.filter((s) => s.type === 'trash' && s.done);
     try {
       const r = await api('POST', '/api/memory/accept', { opId: p.opId });
       MV.preview = null;
       for (const set of Object.values(MV.picked)) set.clear();
       MV.sel.ids.clear();
-      closeEditorOn(r.steps.filter((s) => s.type === 'trash' && s.done).map((s) => ({ display: s.path })));
+      closeEditorOn(trashed(r).map((s) => ({ display: s.path })));
       const extra = [...r.skipped.map((s) => `Skipped ${s}`), ...(r.historyError ? [`History: ${r.historyError}`] : [])];
       notice(extra.length ? 'warn' : 'ok', `${r.summary} — done. Restorable from Operations.`, extra, extra.length > 0);
-      await refreshRegistry();
-      await reloadMemory();
     } catch (e) {
+      // A late answer never takes the screen back: it is reported, and the
+      // view — if it is still the one showing — is read again in place.
       MV.preview = null;
-      notice('error', e.message, null, true);
-      await openMemory();
+      const moved = e.body?.op ? trashed(e.body.op) : [];
+      closeEditorOn(moved.map((s) => ({ display: s.path })));
+      notice('error', e.message, moved.length
+        ? [...moved.map((s) => `${s.path}: moved to the ACS trash`), 'Restore puts them back, under Operations.']
+        : null, true);
+    } finally {
+      MV.accepting = false;
+      MV.sel.busy = false;
     }
+    try { await refreshRegistry(); } catch { /* the notice above already says what happened */ }
+    await reloadMemory();
+    focusMemory();
   };
   acts.appendChild(accept);
   const cancel = el('button', 'btn ghost', 'Cancel');
-  cancel.onclick = () => { MV.preview = null; paintMemory(); };
+  cancel.disabled = MV.accepting;
+  cancel.onclick = () => { MV.preview = null; MV.sel.busy = false; paintMemory(); };
   acts.appendChild(cancel);
   panel.appendChild(acts);
   return panel;
@@ -2727,7 +2781,8 @@ function previewPanel() {
  * Identical copies (worktrees, AGENTS.md links) are one entry that still lists
  * every path; a worktree copy that differs from trunk is flagged and diffs.
  */
-const CX = { data: null, diff: null, view: null, sel: newSelection(), outdated: null };
+// `gen` is bumped by every load: an answer from an older one is dropped.
+const CX = { data: null, diff: null, view: null, sel: newSelection(), outdated: null, gen: 0 };
 
 async function openContext() {
   if (!confirmDiscard()) return;
@@ -2742,10 +2797,14 @@ async function openContext() {
   $('filebar').hidden = true;
   const c = $('content');
   c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span></div></div>';
+  const gen = ++CX.gen;
   try {
-    CX.data = await api('GET', '/api/context');
+    const data = await api('GET', '/api/context');
+    if (gen !== CX.gen) return;
+    CX.data = data;
     CX.outdated = null;
   } catch (e) {
+    if (gen !== CX.gen) return;
     c.innerHTML = '';
     const box = el('div', 'scope');
     box.appendChild(el('h2', null, 'Context'));
@@ -2835,14 +2894,24 @@ async function deleteContextSelection(paths) {
 
   const extra = [];
   try { await refreshRegistry(); } catch (e) { extra.push(`The file list could not be refreshed (${e.message}).`); }
-  try {
-    CX.data = await api('GET', '/api/context');
-    CX.outdated = null;
-  } catch (e) {
-    CX.outdated = e.message;
-    extra.push(`Context could not be read again (${e.message}) — it shows the files as they were before.`);
+  // Read again only if Context is still showing, and keep the answer only if
+  // no later open or delete has asked since.
+  if (S.view === 'context') {
+    const gen = ++CX.gen;
+    let data = null;
+    try { data = await api('GET', '/api/context'); }
+    catch (e) {
+      if (gen === CX.gen) {
+        CX.outdated = e.message;
+        extra.push(`Context could not be read again (${e.message}) — it shows the files as they were before.`);
+      }
+    }
+    if (gen === CX.gen) {
+      if (data) { CX.data = data; CX.outdated = null; }
+      paintContext();
+      if (S.view === 'context') focusBar(CX.sel);
+    }
   }
-  paintContext();
   batchNotice(r, extra);
 }
 

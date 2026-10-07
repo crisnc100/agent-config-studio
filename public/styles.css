@@ -974,7 +974,7 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 }
 .sel-bar .btn { font-size: 12px; padding: 3px 10px; }
 .sel-count { font-size: 12px; color: var(--text-dim); margin-right: auto; font-variant-numeric: tabular-nums; }
-.sel-bar.empty .sel-count { color: var(--muted); }
+.sel-bar.is-empty .sel-count { color: var(--muted); }
 .sel-box { display: inline-flex; flex: none; padding-top: 1px; }
 .sel-box .sk-check { margin: 0; width: 15px; height: 15px; }
 .sel-box .sk-check:disabled { opacity: 0.45; }
