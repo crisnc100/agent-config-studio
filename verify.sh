@@ -69,6 +69,9 @@ node tests/models-panel.mjs
 node tests/models-refresh.mjs
 node tests/memory.mjs
 node tests/context-map.mjs
+# Multi-select delete: the batch route (temp HOME), and Memory's trash-fact over several ids.
+node tests/batch-delete.mjs
+node tests/batch-delete-memory.mjs
 # The worktree toolkit, its installer and the read-only panel: temp HOME, temp repos.
 node tests/worktree-install.mjs
 node tests/worktree-tools.mjs
@@ -80,6 +83,7 @@ node tests/own-writes.mjs
 node tests/shell.mjs
 node tests/home.mjs
 node tests/roots-ui.mjs
+node tests/batch-delete-ui.mjs
 # What the registry tells the Files page (temp HOME).
 node tests/files-registry.mjs
 # The MCP route's note on a machine with no ~/.claude.json (temp HOME).

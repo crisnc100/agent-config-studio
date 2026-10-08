@@ -14,7 +14,7 @@ import { nextSteps, pathStep } from './lib/setup-commands.js';
 import { isPartial } from './lib/walk-budget.js';
 import { locateBinary } from './lib/harness.js';
 import { refreshLoginDirs, loginDirs, loginDirsKnown, loginDirsSettled, LOGIN_READ_MS } from './lib/login-path.js';
-import { buildRegistry, scopeChain, onWalkDone, staleLargeWalks } from './lib/registry.js';
+import { buildRegistry, scopeChain, onWalkDone, staleLargeWalks, protectedFiles } from './lib/registry.js';
 import { listSkills, resolveSkills, toPublic, readInSkill, parseFrontmatter, SKILL_LIMITS } from './lib/skills.js';
 import { readSkillUsage, attachUsage, USAGE_CAVEAT } from './lib/skill-usage.js';
 import { buildSkillsZip, ZIP_LIMITS } from './lib/zip.js';
@@ -39,6 +39,7 @@ import {
 import { loadRegistry } from './lib/models.js';
 import * as memoryOps from './lib/memory-ops.js';
 import { contextMap, contextFile } from './lib/context-map.js';
+import { removeBatch } from './lib/batch-delete.js';
 import {
   syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
   isInstalled as shortcutsInstalled, shortcutsFromSeats, shortcutsPath, zshenvPath,
@@ -122,6 +123,22 @@ function strictSameOrigin(req) {
   const originOk = !origin || origin === `http://${req.headers.host}`
     || origin === `https://${req.headers.host}`;
   return originOk && (site === undefined || site === 'same-origin' || site === 'none');
+}
+
+/**
+ * Which Context rows the multi-select must not offer: the registry's
+ * protected files, matched by real path — the same set the batch route
+ * refuses (lib/batch-delete.js), so the checkbox and the server agree.
+ */
+function markProtected(map) {
+  const guarded = protectedFiles();
+  for (const g of map.groups) for (const s of g.scopes) for (const v of s.variants) {
+    if (!v.open.path) continue;
+    let real = v.open.path;
+    try { real = fs.realpathSync(v.open.path); } catch {}
+    v.protected = guarded.has(v.open.path) || guarded.has(real);
+  }
+  return map;
 }
 
 async function readBody(req, limit = 8 * 1024 * 1024) {
@@ -1010,7 +1027,7 @@ export function createApp(opts = {}) {
    */
   'GET /api/context': async (req) => {
     if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
-    return contextMap();
+    return markProtected(await contextMap());
   },
   'GET /api/context/file': async (req, url) => {
     if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
@@ -1204,6 +1221,12 @@ export function createApp(opts = {}) {
   'POST /api/create': async (req) => mutate.create(await readBody(req)),
   'POST /api/create-file': async (req) => mutate.addFile(await readBody(req)),
   'POST /api/delete': async (req) => mutate.remove(await readBody(req)),
+  // Context's multi-select (lib/batch-delete.js). Strict origin: one request
+  // moves up to 200 files.
+  'POST /api/delete/batch': async (req) => {
+    if (!strictSameOrigin(req)) throw bad('cross-origin requests are not accepted', 403);
+    return removeBatch(await readBody(req));
+  },
   'GET /api/trash': async () => ({ items: await mutate.listTrash() }),
   'POST /api/trash/restore': async (req) => mutate.restoreTrash(await readBody(req)),
 
@@ -1411,7 +1434,7 @@ export function createApp(opts = {}) {
     try {
       json(res, 200, await handler(req, url));
     } catch (e) {
-      json(res, e.status || 500, { error: e.message });
+      json(res, e.status || 500, { error: e.message, ...e.payload });
     }
     return;
   }
