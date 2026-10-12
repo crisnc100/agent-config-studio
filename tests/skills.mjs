@@ -643,7 +643,10 @@ const get = (p) => fetch(B + p).then(async (r) => [r.status, await r.json()]);
   tput('.config/worktree/repos/acs', 'trunk=/x\n');
   tput('.codex-seats/seat-a/config.toml', 'x');
   tput('Documents/Projects/app/.claude/skills/p1/ref/x.md', 'BBBB');
-  tput('Documents/Garman-Homes/g/.claude/skills/g1/SKILL.md', 'CCCC');
+  tput('code/shared/g/.claude/skills/g1/SKILL.md', 'CCCC');
+  tput('.agent-config-studio/roots.json', JSON.stringify({ version: 1, roots: [
+    { id: 'shared', path: path.join(T, 'code', 'shared'), label: 'Shared', access: 'read' },
+  ] }));
   const snap = path.join(T, '..', `${path.basename(T)}.snap`);
   const run = (cmd) => spawnSync(process.execPath, [TRIP, cmd, snap], { env: { ...process.env, HOME: T }, encoding: 'utf8' });
   const scenario = (label, mutate, wantFail, undo) => {
@@ -666,8 +669,8 @@ const get = (p) => fetch(B + p).then(async (r) => [r.status, await r.json()]);
   scenario('a nested skill-file edit with the same size and mtime', () => sameShape(n1, 'ZZZZ'), true, () => sameShape(n1, 'AAAA'));
   const p1 = path.join(T, 'Documents/Projects/app/.claude/skills/p1/ref/x.md');
   scenario('a nested edit inside a project skill tree', () => sameShape(p1, 'ZZZZ'), true, () => sameShape(p1, 'BBBB'));
-  const g1 = path.join(T, 'Documents/Garman-Homes/g/.claude/skills/g1/SKILL.md');
-  scenario('a nested edit inside a Garman-Homes skill tree', () => sameShape(g1, 'ZZZZ'), true, () => sameShape(g1, 'CCCC'));
+  const g1 = path.join(T, 'code/shared/g/.claude/skills/g1/SKILL.md');
+  scenario('a nested edit inside a read root\'s skill tree', () => sameShape(g1, 'ZZZZ'), true, () => sameShape(g1, 'CCCC'));
   const cfg = path.join(T, '.codex/config.toml');
   scenario('an in-place edit of a pinned file', () => sameShape(cfg, 'model = "y"\n'), true, () => sameShape(cfg, 'model = "x"\n'));
   scenario('a new entry name in a live home', () => tput('.codex/seat.json', '{}'), true, () => fs.rmSync(path.join(T, '.codex/seat.json')));

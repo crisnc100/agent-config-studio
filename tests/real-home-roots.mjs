@@ -77,14 +77,14 @@ console.log('\nreal-home tripwire, following roots.json');
   cleanup();
 }
 
-// No roots.json: the two legacy folders are still checked, config files included.
+// No roots.json: the legacy folder is still checked, config files included.
 {
   const { put, scenario, cleanup } = scratch('legacy');
   const mcp = put('Documents/Projects/app/.mcp.json', '{"mcpServers":{"a":{}}}\n');
-  const gconf = put('Documents/Garman-Homes/g/.worktrees.conf', 'TRUNK=/x\n');
   scenario('an untouched legacy tree', () => {}, false);
   scenario('an in-place .mcp.json edit under ~/Documents/Projects with no roots.json', () => sameShape(mcp, '{"mcpServers":{"z":{}}}\n'), true, () => sameShape(mcp, '{"mcpServers":{"a":{}}}\n'));
-  scenario('an in-place .worktrees.conf edit under ~/Documents/Garman-Homes with no roots.json', () => sameShape(gconf, 'TRUNK=/y\n'), true, () => sameShape(gconf, 'TRUNK=/x\n'));
+  const wconf = put('Documents/Projects/app/.worktrees.conf', 'TRUNK=/x\n');
+  scenario('an in-place .worktrees.conf edit under ~/Documents/Projects with no roots.json', () => sameShape(wconf, 'TRUNK=/y\n'), true, () => sameShape(wconf, 'TRUNK=/x\n'));
   cleanup();
 }
 

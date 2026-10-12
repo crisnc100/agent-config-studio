@@ -14,6 +14,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { CLIENT } from './fixtures/private-names.mjs';
 import vm from 'node:vm';
 import { bootPage, routesFor, PATHS, PUB, settle } from './fixtures/shell-page.mjs';
 
@@ -150,7 +151,7 @@ console.log('\nroots in the page');
   ok('skill groups are named by the folder list: the edit root by its label, the read root by its label',
      groups.includes('Work') && groups.includes('Shared') && !groups.includes('project') && !groups.includes('shared'), JSON.stringify(groups));
   const app = fs.readFileSync(path.join(PUB, 'app.js'), 'utf8');
-  ok('no folder name is hardcoded in the page', !/Garman/i.test(app) && !/Documents\/Projects/.test(app));
+  ok('no folder name is hardcoded in the page', !new RegExp(CLIENT, 'i').test(app) && !/Documents\/Projects/.test(app));
 }
 
 // ── B6: a roots event reloads what each view shows ─────────────────────────
