@@ -230,35 +230,80 @@ async function start(port, env) {
 // the run file's pid and nonce, and the pid's argv being node running this
 // checkout's server.js must all agree. The victim is an unrelated
 // `node …/server.js` on another path — the shape a looser check accepted.
+// The liar runs in its own process and the launcher runs asynchronously, so
+// every health answer arrives: each case is refused by the check it names,
+// never by a health request timing out into "something else holds the port".
 {
   const otherDir = path.join(sb, 'someone-else');
   fs.mkdirSync(otherDir);
   fs.writeFileSync(path.join(otherDir, 'server.js'), 'setTimeout(() => {}, 60000);\n');
+  const liarJs = path.join(sb, 'liar.cjs');
+  fs.writeFileSync(liarJs, [
+    "const net = require('net');",
+    'const [port, body] = process.argv.slice(2);',
+    "net.createServer((s) => { s.on('error', () => {}); s.on('data', () => s.end('HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\nconnection: close\\r\\n\\r\\n' + body)); })",
+    "  .listen(Number(port), '127.0.0.1', () => process.stdout.write('up\\n'));",
+    '',
+  ].join('\n'));
+  const runAsync = (args, env) => new Promise((resolve) => {
+    const c = spawn('/bin/sh', args, { cwd: sb, env: { PATH: `${nodeDir}:${SYS}`, HOME: path.join(sb, 'home'), ACS_NO_UPDATE: '1', SHELL: '/bin/sh', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    c.stdout.on('data', (d) => { out += d; });
+    c.stderr.on('data', (d) => { out += d; });
+    c.on('exit', (code) => resolve({ code, out }));
+  });
+  const runDir = path.join(home, '.agent-config-studio', 'run');
   const nonce = 'ab'.repeat(16);
-  for (const [what, app, plantRun] of [
-    ['claims to be ACS, no run file', 'agent-config-studio', false],
-    ['claims to be ACS, with a run file and nonce that match it', 'agent-config-studio', true],
-    ['is some other app', 'other-app', false],
+  const notOurs = /is served by an Agent Config Studio that is not this checkout's \(.*\) start — not touching it/;
+  for (const [what, app, plantRun, why, reason] of [
+    ['claims to be ACS, no run file', 'agent-config-studio', false, 'a studio, but not this checkout\'s start', notOurs],
+    ['claims to be ACS, with a run file and nonce that match it', 'agent-config-studio', true, 'a studio, but not this checkout\'s start (the argv check)', notOurs],
+    ['is some other app', 'other-app', false, 'not a studio: something else holds the port', /port \d+ is in use by something else — not touching it/],
   ]) {
     const port = await freePort();
     const victim = spawn(process.execPath, [path.join(otherDir, 'server.js')], { stdio: 'ignore' });
-    const liar = net.createServer((s) => {
-      s.on('error', () => {});
-      s.end(`HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nconnection: close\r\n\r\n${JSON.stringify({ app, pid: victim.pid, nonce })}`);
-    });
-    await new Promise((r) => liar.listen(port, '127.0.0.1', r));
-    const runDir = path.join(home, '.agent-config-studio', 'run');
+    const liar = spawn(process.execPath, [liarJs, String(port), JSON.stringify({ app, pid: victim.pid, nonce })], { stdio: ['ignore', 'pipe', 'inherit'] });
+    await new Promise((r) => { liar.stdout.once('data', r); liar.once('exit', r); });
     fs.rmSync(runDir, { recursive: true, force: true });
     if (plantRun) { fs.mkdirSync(runDir, { recursive: true }); fs.writeFileSync(path.join(runDir, `${port}.json`), JSON.stringify({ pid: victim.pid, nonce, server: path.join(otherDir, 'server.js') })); }
-    const stop = run('/bin/sh', [ACS, 'stop'], { env: { HOME: home, PATH: tools, ACS_PORT: String(port) } });
+    const stop = await runAsync([ACS, 'stop'], { HOME: home, PATH: tools, ACS_PORT: String(port) });
     await sleep(200);
     let alive = true;
     try { process.kill(victim.pid, 0); } catch { alive = false; }
     ok(`B8 a health answer that ${what}, naming an unrelated \`node …/server.js\`: acs stop refuses and signals nothing`,
        stop.code === 1 && /not touching it/.test(stop.out) && alive, `${stop.code} ${stop.out} alive=${alive}`);
+    ok(`B8 …refused for its own reason: ${why}`, reason.test(stop.out), stop.out);
     victim.kill('SIGKILL');
-    liar.close();
+    liar.kill('SIGKILL');
     fs.rmSync(runDir, { recursive: true, force: true });
+  }
+
+  // Controls, so the refusals are not vacuous. A run file and health answer
+  // naming a process that is exactly `node <this checkout>/server.js` are
+  // signalled (the pid path above, which refused only on the argv); and the
+  // genuine studio, started by this launcher, stops.
+  {
+    const port = await freePort();
+    fs.mkdirSync(path.join(sb, 'home-control'), { recursive: true });
+    const real = spawn(process.execPath, [path.join(ROOT, 'server.js')], { cwd: '/', env: { HOME: path.join(sb, 'home-control'), PORT: String(await freePort()), PATH: tools, TMPDIR: os.tmpdir() }, stdio: 'ignore' });
+    await sleep(1000);
+    const liar = spawn(process.execPath, [liarJs, String(port), JSON.stringify({ app: 'agent-config-studio', pid: real.pid, nonce })], { stdio: ['ignore', 'pipe', 'inherit'] });
+    await new Promise((r) => { liar.stdout.once('data', r); liar.once('exit', r); });
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, `${port}.json`), JSON.stringify({ pid: real.pid, nonce, server: path.join(ROOT, 'server.js') }));
+    const stop = await runAsync([ACS, 'stop'], { HOME: home, PATH: tools, ACS_PORT: String(port) });
+    const gone = await new Promise((r) => { if (real.exitCode !== null || real.signalCode) return r(true); const t = setTimeout(() => r(false), 5000); real.once('exit', () => { clearTimeout(t); r(true); }); });
+    ok('B8 control: the same records naming exactly `node <this checkout>/server.js`: stopped', stop.code === 0 && /stopped/.test(stop.out) && gone, `${stop.code} ${stop.out} gone=${gone}`);
+    real.kill('SIGKILL');
+    liar.kill('SIGKILL');
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+  {
+    const port = await freePort();
+    const r = await start(port, { ACS_NO_OPEN: '1' });
+    const stop = await runAsync([ACS, 'stop'], { HOME: home, PATH: tools, ACS_PORT: String(port) });
+    await new Promise((res) => (r.exited() !== null ? res() : r.child.once('exit', res)));
+    ok('B8 control: the genuine studio this checkout started is stopped', stop.code === 0 && /stopped/.test(stop.out) && !(await health(port)), stop.out);
   }
 }
 {
