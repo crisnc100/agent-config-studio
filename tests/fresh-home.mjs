@@ -27,6 +27,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { bootPage, settle } from './fixtures/shell-page.mjs';
+import { CLIENT } from './fixtures/private-names.mjs';
+
+const PHANTOM = new RegExp(`Documents\\/Projects|${CLIENT}`, 'i');
+const PHANTOM_CTX = new RegExp(`.{0,60}(Documents\\/Projects|${CLIENT}).{0,60}`, 'i');
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
@@ -137,7 +141,7 @@ if (healthy) {
     // An excepted route's checkout path may itself sit under ~/Documents/Projects;
     // it is judged above, not as a phantom folder.
     if (CHECKOUT_OK[route]) text = CHECKOUTS.reduce((t, c) => t.split(c).join('<checkout>'), text);
-    if (/Documents\/Projects|garman/i.test(text)) phantom.push(`${p}: ${text.match(/.{0,60}(Documents\/Projects|garman).{0,60}/i)[0]}`);
+    if (PHANTOM.test(text)) phantom.push(`${p}: ${text.match(PHANTOM_CTX)[0]}`);
   };
   for (const r of routes) {
     await json(r.path);
@@ -156,7 +160,7 @@ if (healthy) {
     }
   }
 
-  ok('no route mentions ~/Documents/Projects or Garman on a machine with no project folders', phantom.length === 0, phantom.join(' | '));
+  ok('no route mentions ~/Documents/Projects or the old client folder on a machine with no project folders', phantom.length === 0, phantom.join(' | '));
   ok('no route returns a path inside ACS\'s own checkout (exceptions named by route)', inCheckout.length === 0, inCheckout.join(' | '));
   const bases = await get('/api/worktree/bases');
   ok('F3 /api/worktree/bases with no repo is a 400 "repo required", not the checkout\'s branches',

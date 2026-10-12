@@ -1,8 +1,8 @@
 /**
  * Nothing that ships assumes one person's machine (builds/ready-for-strangers
  * item 3, B11): no source file outside tests/ and the migration names
- * `Documents/Projects`, `Garman`, `cortega`, `/Users/`, or the maintainer's
- * own projects — and none ASSEMBLES `Documents` + `Projects` into a path
+ * `Documents/Projects`, `/Users/`, the maintainer's username or client
+ * folder, or his own projects (tests/fixtures/private-names.mjs) — and none ASSEMBLES `Documents` + `Projects` into a path
  * (path.join / path.resolve, an array joined into a path, string
  * concatenation), which a literal search alone would miss.
  *
@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CLIENT, USERNAME, PROJECTS } from './fixtures/private-names.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -23,10 +24,10 @@ const ok = (name, cond, detail = '') => {
 
 const BANNED = [
   [/Documents[\\/]+Projects/, 'Documents/Projects'],
-  [/garman/i, 'Garman'],
-  [/cortega/i, 'cortega'],
+  [new RegExp(CLIENT, 'i'), 'the client folder'],
+  [new RegExp(USERNAME, 'i'), 'the maintainer\'s username'],
   [/\/Users\//, '/Users/'],
-  [/airflo|kylie|stellanew|dealer-portal/i, 'a maintainer project name'],
+  [new RegExp(PROJECTS.join('|'), 'i'), 'a maintainer project name'],
   [/\bCris\b|crisnc/i, 'the maintainer\'s name'],
 ];
 

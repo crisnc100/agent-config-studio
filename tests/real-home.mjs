@@ -16,8 +16,8 @@
  *    trees, ~/.claude/{hooks,agents,commands,skills_retired}, ~/.codex/rules
  *    and ~/.agents (symlinks by target, not followed); every project skill tree
  *    the skills feature walks under every project folder (each path in the
- *    real roots.json, plus the legacy ~/Documents/Projects and
- *    ~/Documents/Garman-Homes), found the way discovery finds them; and the
+ *    real roots.json, plus the folders ACS used to hardcode), found the way
+ *    discovery finds them; and the
  *    single files ACS edits inside the live homes (see EXACT: ~/.zshrc is
  *    read through a link, and the link's target pinned too). ~/.config/worktree
  *    is walked THROUGH its links, since `acs install-worktree` writes there and
@@ -59,6 +59,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from '../lib/jsontext.js';
+import { CLIENT_FOLDER } from './fixtures/private-names.mjs';
 
 const HOME = os.homedir();
 const tilde = (p) => p.replace(HOME, '~');
@@ -80,7 +81,7 @@ const ROOTS = [
  * it. An entry that is not an absolute path, or that is HOME or above it, is
  * skipped: walking it would be walking the machine.
  */
-const LEGACY_ROOTS = [path.join(HOME, 'Documents', 'Projects'), path.join(HOME, 'Documents', 'Garman-Homes')];
+const LEGACY_ROOTS = [path.join(HOME, 'Documents', 'Projects'), path.join(HOME, 'Documents', CLIENT_FOLDER)];
 const PROJECT_ROOTS = (() => {
   let listed = [];
   try {

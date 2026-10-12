@@ -233,15 +233,15 @@ ok('C9 …and the worktree copy the view collapsed is still mirrored as its own 
   ok('X3 …and still opens in the context viewer by id', linkV && (await contextFile(linkV.id)).content === gClaude);
 }
 
-// G4: the real-home tripwire sha-covers Garman context files, like Projects.
+// G4: the real-home tripwire sha-covers a project folder's context files.
 {
   const { compareRealHomes } = await import('./real-home.mjs');
-  const g = path.join(realHome, 'Documents', 'Garman-Homes');
+  const g = path.join(realHome, 'Documents', 'Projects');
   const f = path.join(g, 'client', 'CLAUDE.md');
   const before = { [`context:${g}`]: JSON.stringify([f]), [f]: 'sha-one' };
-  ok('G4 an edited Garman context file fails the tripwire', compareRealHomes(before, { ...before, [f]: 'sha-two' }).content.length > 0);
+  ok('G4 an edited context file fails the tripwire', compareRealHomes(before, { ...before, [f]: 'sha-two' }).content.length > 0);
   ok('G4 …and so does a new one', compareRealHomes(before, { ...before, [`context:${g}`]: JSON.stringify([f, `${f}.x`]), [`${f}.x`]: 'sha' }).content.length > 0);
-  ok('G4 the real snapshot lists a context key for Garman-Homes', Object.keys(realBefore).includes(`context:${g}`));
+  ok('G4 the real snapshot lists a context key for ~/Documents/Projects', Object.keys(realBefore).includes(`context:${g}`));
 }
 
 assertRealHomesUnchanged(realBefore, ok);
