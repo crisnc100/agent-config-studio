@@ -195,7 +195,7 @@ Releases go to npm through trusted publishing (`.github/workflows/publish.yml`),
 3. The Publish workflow checks that the tag matches `package.json` and that the commit is on main. It then packs the tarball, runs `tests/package.mjs` against it, and stages that same tarball with `npm stage publish`.
 4. Approve the staged release on npmjs.com, or with `npm stage list` then `npm stage approve <id>`, confirming with 2FA. Nothing is public until you approve it.
 
-npm's trusted-publisher settings must name `crisnc100/agent-config-studio` and the workflow file `publish.yml` exactly. Allow `npm stage publish` only, so every release goes through approval.
+npm's trusted-publisher settings must name this repository and the workflow file `publish.yml` exactly. Allow `npm stage publish` only, so every release goes through approval.
 
 ## Troubleshooting
 
