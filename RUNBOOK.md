@@ -186,6 +186,17 @@ reading is shown but never ranked: window anchors move, so a weekly reading can
 belong to a replaced window while its stored `resets_at` is still in the future.
 Refresh cannot fix this — only running a turn on that seat records new quota.
 
+## Releasing
+
+Releases go to npm through trusted publishing (`.github/workflows/publish.yml`), so no npm token exists anywhere.
+
+1. Bump `version` in `package.json` in a PR, and merge it.
+2. Tag the merged commit and push the tag: `git tag v1.2.3 origin/main && git push origin v1.2.3`.
+3. The Publish workflow checks that the tag matches `package.json` and that the commit is on main. It then packs the tarball, runs `tests/package.mjs` against it, and stages that same tarball with `npm stage publish`.
+4. Approve the staged release on npmjs.com, or with `npm stage list` then `npm stage approve <id>`, confirming with 2FA. Nothing is public until you approve it.
+
+npm's trusted-publisher settings must name `crisnc100/agent-config-studio` and the workflow file `publish.yml` exactly. Allow `npm stage publish` only, so every release goes through approval.
+
 ## Troubleshooting
 
 - **Grok is slow.** First token ~39s is normal. Total can hit 133s. The UI
