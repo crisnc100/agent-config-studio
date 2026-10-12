@@ -12,5 +12,7 @@ const rot13 = (s) => s.replace(/[a-z]/gi, (c) => {
 
 /** The client folder ACS used to hardcode. */
 export const CLIENT = rot13('tnezna');
+/** Its folder under ~/Documents, which the real-home tripwire still guards. */
+export const CLIENT_FOLDER = rot13('Tnezna-Ubzrf');
 export const USERNAME = rot13('pbegrtn');
 export const PROJECTS = ['nvesyb', 'xlyvr', 'fgryynarj', 'qrnyre-cbegny'].map(rot13);

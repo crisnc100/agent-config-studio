@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CLIENT_FOLDER } from './fixtures/private-names.mjs';
 
 const TRIP = path.join(path.dirname(fileURLToPath(import.meta.url)), 'real-home.mjs');
 
@@ -77,14 +78,14 @@ console.log('\nreal-home tripwire, following roots.json');
   cleanup();
 }
 
-// No roots.json: the legacy folder is still checked, config files included.
+// No roots.json: the two legacy folders are still checked, config files included.
 {
   const { put, scenario, cleanup } = scratch('legacy');
   const mcp = put('Documents/Projects/app/.mcp.json', '{"mcpServers":{"a":{}}}\n');
   scenario('an untouched legacy tree', () => {}, false);
   scenario('an in-place .mcp.json edit under ~/Documents/Projects with no roots.json', () => sameShape(mcp, '{"mcpServers":{"z":{}}}\n'), true, () => sameShape(mcp, '{"mcpServers":{"a":{}}}\n'));
-  const wconf = put('Documents/Projects/app/.worktrees.conf', 'TRUNK=/x\n');
-  scenario('an in-place .worktrees.conf edit under ~/Documents/Projects with no roots.json', () => sameShape(wconf, 'TRUNK=/y\n'), true, () => sameShape(wconf, 'TRUNK=/x\n'));
+  const wconf = put(`Documents/${CLIENT_FOLDER}/g/.worktrees.conf`, 'TRUNK=/x\n');
+  scenario('an in-place .worktrees.conf edit under the second legacy folder with no roots.json', () => sameShape(wconf, 'TRUNK=/y\n'), true, () => sameShape(wconf, 'TRUNK=/x\n'));
   cleanup();
 }
 
