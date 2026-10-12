@@ -1,0 +1,204 @@
+name: CI
+
+# A bare `push:` fires on every branch, and the pull_request event fires on the
+# same commit — every check ran twice for no extra signal. Branch work is covered
+# by its PR; main is covered on merge.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: node --check
+        run: |
+          set -euo pipefail
+          node --check server.js
+          find lib tests public bin \( -name '*.js' -o -name '*.mjs' \) -exec node --check {} +
+      - name: live containment is a local gate
+        if: always()
+        run: |
+          echo "============================================================"
+          echo "Live containment checks are a LOCAL gate (./verify.sh)"
+          echo "and were not run here."
+          echo "A green CI tick is not a containment pass."
+          echo "============================================================"
+
+  offline-node:
+    # The declared minimum (package.json engines: >=20), pinned exactly, and
+    # the current LTS: a feature newer than 20.0 fails here, not on a
+    # stranger's machine.
+    name: offline (${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20.0.0', 'lts/*']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: shells the launcher must work under
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dash zsh
+      - name: offline suite
+        env:
+          ACS_SUITE: offline
+        run: |
+          set -euo pipefail
+          node --version
+          node tests/phase1.mjs
+          node tests/phase2a.mjs
+          node tests/usage-codex.mjs
+          node tests/usage-claude.mjs
+          node tests/usage-grok.mjs
+          node tests/usage-identity.mjs
+          node tests/usage-seats.mjs
+          node tests/usage-routes.mjs
+          node tests/usage-cli.mjs
+          node tests/roots.mjs
+          node tests/roots-routes.mjs
+          node tests/roots-revoke.mjs
+          node tests/roots-history.mjs
+          node tests/roots-builtins.mjs
+          node tests/roots-resolver.mjs
+          node tests/roots-live.mjs
+          node tests/roots-ui.mjs
+          node tests/batch-delete.mjs
+          node tests/batch-delete-memory.mjs
+          node tests/batch-delete-ui.mjs
+          node tests/real-home-roots.mjs
+          node tests/fresh-home.mjs
+          node tests/setup-guards.mjs
+          node tests/setup-credentials.mjs
+          node tests/setup-routes.mjs
+          node tests/setup-clis.mjs
+          node tests/setup-scan.mjs
+          node tests/setup-accounts.mjs
+          node tests/setup-commands.mjs
+          node tests/setup-ui.mjs
+          node tests/setup-walkthrough.mjs
+          node tests/no-personal-paths.mjs
+          node tests/readme.mjs
+          node tests/models-roots.mjs
+          node tests/assist-containment.mjs
+          node tests/acs-update.mjs
+          node tests/acs-launcher.mjs
+          node tests/stranger.mjs
+      - name: live containment is a local gate
+        if: always()
+        run: |
+          echo "============================================================"
+          echo "Live containment checks are a LOCAL gate (./verify.sh)"
+          echo "and were not run here."
+          echo "A green CI tick is not a containment pass."
+          echo "============================================================"
+
+  # main's branch protection requires a check named exactly `offline`; the
+  # matrix reports `offline (<node>)`. This passes only when every Node did.
+  offline:
+    needs: offline-node
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: every Node version passed
+        run: test "${{ needs.offline-node.result }}" = success
+
+  stranger-macos:
+    # The README is written for a Mac: follow it there too. Current LTS only —
+    # the minimum Node is covered by offline (20.0.0), and macOS minutes bill
+    # at 10x on a private repo.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+      - name: the launcher and the README, followed literally
+        env:
+          ACS_SUITE: offline
+        run: |
+          set -euo pipefail
+          node --version
+          node tests/acs-launcher.mjs
+          node tests/stranger.mjs
+          node tests/readme.mjs
+
+  package:
+    # The npm package as a stranger gets it (tests/package.mjs): `npm pack`,
+    # installed into a temp prefix, through npx and into another repo, with a
+    # temp HOME and no network; read-only, and checked byte for byte after.
+    # The declared minimum Node and LTS on Ubuntu, LTS on macOS.
+    name: package (${{ matrix.os }}, ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, node: '20.0.0' }
+          - { os: ubuntu-latest, node: 'lts/*' }
+          - { os: macos-latest, node: 'lts/*' }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: what the tarball holds
+        run: npm pack --dry-run
+      - name: the packed tarball, installed and run
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          tgz=$(npm pack | tail -n 1)
+          node tests/package.mjs "$PWD/$tgz"
+
+  bunx:
+    # What this proves: bunx distribution with Node present. bunx fetches the
+    # tarball and runs bin/acs, which starts the studio with node — not that
+    # the studio runs on Bun's runtime.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.8'
+      - name: bunx runs the packed tarball
+        env:
+          ACS_REQUIRE_BUN: '1'
+        run: |
+          set -euo pipefail
+          bun --version
+          tgz=$(npm pack | tail -n 1)
+          node tests/bunx.mjs "$PWD/$tgz"
+
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: static security guards
+        run: |
+          node tests/guards.mjs
+          node tests/setup-guards.mjs
+      - name: live containment is a local gate
+        if: always()
+        run: |
+          echo "============================================================"
+          echo "Live containment checks are a LOCAL gate (./verify.sh)"
+          echo "and were not run here."
+          echo "A green CI tick is not a containment pass."
+          echo "============================================================"

@@ -1,0 +1,27 @@
+{
+  "name": "agent-config-studio",
+  "version": "1.0.0",
+  "description": "Local web app to view, edit, and version every Claude Code, Codex and Grok config surface on this machine.",
+  "keywords": ["claude-code", "codex", "grok", "agents", "config", "skills", "mcp", "cli"],
+  "homepage": "https://github.com/crisnc100/agent-config-studio#readme",
+  "bugs": { "url": "https://github.com/crisnc100/agent-config-studio/issues" },
+  "repository": { "type": "git", "url": "git+https://github.com/crisnc100/agent-config-studio.git" },
+  "license": "MIT",
+  "author": "Cristian Ortega",
+  "type": "module",
+  "main": "server.js",
+  "bin": { "acs": "bin/acs" },
+  "files": [
+    "server.js",
+    "lib/",
+    "public/",
+    "bin/",
+    "tools/",
+    "models.default.json"
+  ],
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": { "node": ">=20" }
+}

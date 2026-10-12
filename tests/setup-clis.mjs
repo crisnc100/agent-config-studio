@@ -1,0 +1,230 @@
+/**
+ * The setup screen's CLI cards (builds/setup-screen criterion 2, S9, S10),
+ * through a real `node server.js` on a temp HOME whose PATH holds only fake
+ * claude, codex and grok scripts:
+ *
+ *   - each card shows installed and the version the fake printed;
+ *   - a CLI removed from PATH shows not installed, with commands.md's install
+ *     command; Recheck finds one installed into a directory the server's own
+ *     PATH lacks;
+ *   - codex/grok sign-in is "credentials present" for a non-empty auth.json
+ *     and "not signed in" for an empty one — by stat alone: an unreadable
+ *     credential file reads the same;
+ *   - Claude's state follows the stored usage snapshot: verified when fresh,
+ *     "unknown — refresh" when older than 10 minutes, rejected, network
+ *     failure, rate limited;
+ *   - three slow --version probes leave /api/health responsive, and the route
+ *     answers within 4 s.
+ */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { startServer } from './fixtures/roots-home.mjs';
+import { fakeCli, isolatedPath } from './fixtures/setup-home.mjs';
+import { readCommands } from '../lib/setup-commands.js';
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const realHome = os.homedir();
+const realBefore = snapshotRealHomes();
+let pass = 0, fail = 0;
+const ok = (name, cond, detail = '') => {
+  if (cond) { pass++; console.log(`  ok   ${name}`); }
+  else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const table = readCommands();
+
+const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-setup-clis-')));
+const home = path.join(sandbox, 'home');
+const bin = path.join(sandbox, 'bin');
+fs.mkdirSync(home);
+for (const c of ['claude', 'codex', 'grok']) fakeCli(bin, c, { version: `${c} 1.2.3 (fake)` });
+const PATH = isolatedPath(bin);
+const studio = path.join(home, '.agent-config-studio');
+
+console.log('\nsetup: CLI cards');
+ok('the real HOME is never the test HOME', home !== realHome);
+const srv = await startServer(home, { root: ROOT, env: { PATH } });
+ok('the server boots', srv.up, srv.log().slice(-400));
+const clis = async (q = '') => {
+  const r = await fetch(`${srv.base}/api/setup/clis${q}`);
+  const j = await r.json();
+  return { status: r.status, json: j, by: Object.fromEntries((j.clis || []).map((c) => [c.id, c])) };
+};
+
+{
+  const { status, by } = await clis();
+  ok('2 every card shows installed with its version', status === 200
+     && ['claude', 'codex', 'grok'].every((c) => by[c]?.installed && by[c].version === `${c} 1.2.3 (fake)`), JSON.stringify(by));
+  ok('2 …and where it was found, in display form', by.codex.binary === path.join(bin, 'codex'), by.codex.binary);
+  ok('2 codex with no auth.json is "not signed in", and offers commands.md\'s sign-in',
+     by.codex.signIn.state === 'none' && by.codex.signIn.label === 'not signed in' && by.codex.fix.signIn === table['signin.codex'].command, JSON.stringify(by.codex));
+  ok('2 claude with no seat and no snapshot is unknown, and says how to check',
+     by.claude.signIn.state === 'unknown' && /Accounts/.test(by.claude.signIn.detail), JSON.stringify(by.claude.signIn));
+}
+
+{
+  fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
+  fs.mkdirSync(path.join(home, '.grok'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.codex', 'auth.json'), '{"tokens":"x"}');
+  fs.writeFileSync(path.join(home, '.grok', 'auth.json'), '{"k":"x"}');
+  let { by } = await clis();
+  ok('2 S9 a non-empty codex auth.json reads "credentials present" — never "signed in"',
+     by.codex.signIn.state === 'present' && by.codex.signIn.label === 'credentials present' && !by.codex.fix.signIn, JSON.stringify(by.codex.signIn));
+  ok('S9 …grok the same', by.grok.signIn.state === 'present', JSON.stringify(by.grok.signIn));
+  fs.chmodSync(path.join(home, '.codex', 'auth.json'), 0o000);
+  ({ by } = await clis());
+  ok('2 the credential is stat-ed, never opened: an unreadable auth.json still reads present',
+     by.codex.signIn.state === 'present', JSON.stringify(by.codex.signIn));
+  fs.chmodSync(path.join(home, '.codex', 'auth.json'), 0o600);
+  fs.writeFileSync(path.join(home, '.codex', 'auth.json'), '');
+  ({ by } = await clis());
+  ok('2 an empty codex auth.json reads "not signed in"', by.codex.signIn.state === 'none', JSON.stringify(by.codex.signIn));
+}
+
+{
+  fs.mkdirSync(studio, { recursive: true });
+  fs.writeFileSync(path.join(studio, 'seats.json'), JSON.stringify({ version: 1, seats: [{ id: 'claude', vendor: 'claude', label: 'Claude' }] }));
+  const snap = (takenAt, entry) => fs.writeFileSync(path.join(studio, 'usage-snapshot.json'),
+    JSON.stringify({ takenAt, seats: [{ seatId: 'claude', vendor: 'claude', label: 'Claude', windows: [], ...entry }] }));
+  const now = Date.now();
+  const cases = [
+    ['a fresh good reading → verified', now - 60_000, { ok: true }, (s) => s.state === 'verified' && s.label === 'verified'],
+    ['a good reading older than 10 min → "unknown — refresh"', now - 11 * 60_000, { ok: true }, (s) => s.state === 'unknown' && s.label === 'unknown — refresh'],
+    ['a rejected credential → rejected', now - 60_000, { ok: false, reason: 'credential rejected (HTTP 401) — run `claude` once to refresh it' }, (s) => s.state === 'rejected'],
+    ['a network failure → unknown, with the reason', now - 60_000, { ok: false, reason: 'usage request failed: fetch failed' }, (s) => s.state === 'unknown' && /fetch failed/.test(s.detail)],
+    ['rate limited with no good reading → "unknown — rate limited", never verified', now - 60_000, { ok: false, rateLimited: true, reason: 'the usage endpoint is rate limiting us' }, (s) => s.state === 'unknown' && s.label === 'unknown — rate limited'],
+    ['rate limited carrying a good reading from 3 min ago → verified, said so', now - 60_000, { ok: true, rateLimited: true, staleReason: 'the usage endpoint is rate limiting us', lastGood: { windows: [], observedAt: now - 3 * 60_000 } }, (s) => s.state === 'verified' && /rate limit/.test(s.detail)],
+    ['rate limited carrying a good reading from 20 min ago → unknown — rate limited', now - 60_000, { ok: true, rateLimited: true, staleReason: 'the usage endpoint is rate limiting us', lastGood: { windows: [], observedAt: now - 20 * 60_000 } }, (s) => s.state === 'unknown' && s.label === 'unknown — rate limited'],
+    ['no usable credential → not signed in', now - 60_000, { ok: false, reason: 'no usable Claude credential (fromEnv: none)' }, (s) => s.state === 'none'],
+  ];
+  for (const [what, takenAt, entry, check] of cases) {
+    snap(takenAt, entry);
+    const { by } = await clis();
+    ok(`2 S9 claude follows the stored snapshot: ${what}`, check(by.claude.signIn), JSON.stringify(by.claude.signIn));
+  }
+  const { by } = await clis();
+  ok('2 claude not verified offers commands.md\'s sign-in', by.claude.fix.signIn === table['signin.claude'].command, JSON.stringify(by.claude.fix));
+}
+
+{
+  fs.rmSync(path.join(bin, 'grok'));
+  let { by } = await clis();
+  ok('2 a CLI removed from PATH shows not installed, with commands.md\'s install command',
+     by.grok.installed === false && by.grok.version === null && by.grok.fix.install === table['install.grok'].command, JSON.stringify(by.grok));
+  // Installed the way an installer does it: a new directory, added to PATH in
+  // the login shell's startup file. The server's own PATH never changes.
+  const newbin = path.join(home, 'newbin');
+  fakeCli(newbin, 'grok', { version: 'grok 2.0.0 (fake)' });
+  fs.writeFileSync(path.join(home, '.profile'), `PATH="${newbin}:$PATH"\nexport PATH\n`);
+  ({ by } = await clis());
+  ok('S10 a CLI installed somewhere the server\'s PATH lacks is not seen without Recheck', by.grok.installed === false);
+  ({ by } = await clis('?recheck=1'));
+  ok('S10 …and Recheck, reading the login shell\'s PATH, finds it with its version', by.grok.installed === true && by.grok.version === 'grok 2.0.0 (fake)', JSON.stringify(by.grok));
+}
+
+{
+  for (const c of ['claude', 'codex']) fakeCli(bin, c, { slowMs: 10_000 });
+  fakeCli(bin, 'grok', { slowMs: 10_000 });
+  const t0 = Date.now();
+  const pending = clis();
+  let worst = 0;
+  while (Date.now() - t0 < 2500) {
+    const h0 = Date.now();
+    const r = await fetch(`${srv.base}/api/health`);
+    await r.json();
+    worst = Math.max(worst, Date.now() - h0);
+    await sleep(100);
+  }
+  const { by } = await pending;
+  const took = Date.now() - t0;
+  ok('S10 three slow --version probes: /api/health stays responsive (< 500 ms each)', worst < 500, `worst ${worst} ms`);
+  ok('S10 …and the route answers within 4 s, the CLIs installed with no version', took < 4000
+     && ['claude', 'codex', 'grok'].every((c) => by[c].installed && by[c].version === null), `${took} ms ${JSON.stringify(by)}`);
+
+  // Recheck's worst case: a login shell that hangs AND three slow probes.
+  fs.writeFileSync(path.join(home, '.profile'), 'sleep 5\n');
+  const t1 = Date.now();
+  const re = await clis('?recheck=1');
+  const took2 = Date.now() - t1;
+  ok('S10 Recheck with a hanging login shell and three slow probes still answers within 4 s', took2 < 4000
+     && ['claude', 'codex', 'grok'].every((c) => re.by[c].installed), `${took2} ms`);
+}
+
+await srv.stop();
+
+/* ── one PATH for every lookup, and acs judged by a new terminal's PATH ── */
+{
+  const h = path.join(sandbox, 'home2');
+  const b2 = path.join(sandbox, 'bin2');
+  fs.mkdirSync(h);
+  fakeCli(b2, 'claude');
+  // acs on the server's own PATH only: a launcher-added entry the profile drops.
+  const launcherOnly = path.join(sandbox, 'launcher-only');
+  fs.mkdirSync(launcherOnly);
+  fs.writeFileSync(path.join(launcherOnly, 'acs'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const P2 = `${isolatedPath(b2)}:${launcherOnly}`;
+  // A login shell that takes a moment: the first request lands while the
+  // startup read is still out, and must wait for it rather than guess.
+  fs.writeFileSync(path.join(h, '.profile'), 'sleep 1\nPATH=/usr/bin:/bin\nexport PATH\n');
+  const s2 = await startServer(h, { root: ROOT, env: { PATH: P2 } });
+  const get = async (p) => (await fetch(s2.base + p)).json();
+  const post = async (p, body) => { const r = await fetch(s2.base + p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, json: await r.json() }; };
+  const first = await get('/api/setup/clis');
+  ok('S16 the very first request, with no Recheck, already judges acs by the login shell\'s PATH',
+     first.acsOnPath === false && first.next.every((n) => n.command.includes('/bin/acs ')), JSON.stringify(first.next));
+  let c = await get('/api/setup/clis?recheck=1');
+  ok('S16 acs only on the server\'s inherited PATH, dropped by the login profile: not "on PATH"',
+     c.acsOnPath === false && c.next.every((n) => n.command.includes('/bin/acs ')), JSON.stringify(c.next));
+  // codex installed after start, into a directory only the login profile adds.
+  const later = path.join(h, 'later-bin');
+  fakeCli(later, 'codex', { loginMs: 30_000 });
+  fs.writeFileSync(path.join(later, 'acs'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(h, '.profile'), `PATH="${later}:/usr/bin:/bin"\nexport PATH\n`);
+  const sgBefore = await get('/api/setup/accounts');
+  ok('shared PATH: before Recheck, codex is not suggested', !sgBefore.suggestions.some((x) => x.key === 'codex'), JSON.stringify(sgBefore.suggestions));
+  c = await get('/api/setup/clis?recheck=1');
+  ok('shared PATH: Recheck finds codex in the new directory', c.clis.find((x) => x.id === 'codex').installed);
+  ok('S16 …and acs there, so the next steps say acs', c.acsOnPath === true && c.next.every((n) => n.command.startsWith('acs ')), JSON.stringify(c.next));
+  const sgAfter = await get('/api/setup/accounts');
+  ok('shared PATH: the account suggestions see it too', sgAfter.suggestions.some((x) => x.key === 'codex'));
+  const add = await post('/api/setup/seats', { key: 'codex' });
+  const conn = await post('/api/usage/connect', { id: add.json.seat?.id });
+  ok('shared PATH: a CLI found only by Recheck can then be connected', /^https:\/\/auth\.openai\.com/.test(conn.json.url || ''), JSON.stringify(conn.json));
+  await post('/api/usage/connect/cancel', { id: add.json.seat?.id });
+  await s2.stop();
+}
+
+/* ── S16: a login shell slower than the budget leaves acs "unknown" ───── */
+{
+  const h = path.join(sandbox, 'home3');
+  const b3 = path.join(sandbox, 'bin3');
+  fs.mkdirSync(h);
+  fakeCli(b3, 'claude');
+  const launcherOnly = path.join(sandbox, 'launcher-only-3');
+  fs.mkdirSync(launcherOnly);
+  fs.writeFileSync(path.join(launcherOnly, 'acs'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(h, '.profile'), 'sleep 3\nexport PATH\n');
+  const s3 = await startServer(h, { root: ROOT, env: { PATH: `${isolatedPath(b3)}:${launcherOnly}` } });
+  const r = await (await fetch(`${s3.base}/api/setup/clis`)).json();
+  ok('S16 with no login-shell answer inside the budget, acsOnPath is unknown (null), not a guess from the inherited PATH',
+     r.acsOnPath === null, JSON.stringify(r.acsOnPath));
+  ok('S16 …and the Done step shows the absolute bin/acs form', r.next.length === 2 && r.next.every((n) => n.command.includes('/bin/acs ') && !n.command.startsWith('acs ')), JSON.stringify(r.next));
+  await s3.stop();
+}
+
+{
+  const { loginPathDirs } = await import('../lib/login-path.js');
+  const h = path.join(sandbox, 'broken-shell-home');
+  fs.mkdirSync(h);
+  fs.writeFileSync(path.join(h, '.profile'), 'exit 3\n');
+  const dirs = await loginPathDirs({ env: { HOME: h, PATH }, home: h });
+  ok('S10 a login shell that fails falls back to the installer directories',
+     dirs.includes(path.join(h, '.local', 'bin')) && dirs.includes('/opt/homebrew/bin'), JSON.stringify(dirs));
+}
+assertRealHomesUnchanged(realBefore, ok);
+fs.rmSync(sandbox, { recursive: true, force: true });
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

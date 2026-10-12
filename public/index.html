@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Config Studio</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23d97757'/></svg>">
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar" id="sidebar" aria-label="Navigation">
+      <div class="brand">
+        <div class="brand-mark"></div>
+        <div class="brand-words">
+          <div class="brand-text">Agent Config Studio</div>
+          <div class="brand-sub" id="brand-sub">loading…</div>
+        </div>
+        <button class="icon-btn rail-toggle" id="rail-toggle" aria-label="Collapse sidebar" title="Collapse sidebar"></button>
+      </div>
+      <nav class="nav" id="nav" aria-label="Main"></nav>
+      <div class="nav-foot" id="nav-foot"></div>
+    </aside>
+    <div class="nav-scrim" id="nav-scrim"></div>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn nav-menu" id="nav-menu" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false" title="Menu"></button>
+        <div class="title-block">
+          <div class="title" id="title">Agent Config Studio</div>
+          <div class="title-path" id="title-path"></div>
+        </div>
+        <div class="tabs" id="tabs"></div>
+        <button class="btn" id="btn-copy" title="Copy this skill into the other harness" hidden>Copy to…</button>
+        <button class="btn danger" id="btn-delete" title="Delete">Delete</button>
+        <button class="btn" id="btn-assist" title="Ask Claude to help edit this file">Assist</button>
+        <button class="btn primary" id="btn-save" disabled>Save</button>
+      </header>
+
+      <div class="filebar" id="filebar" hidden></div>
+      <div id="notice-slot" role="status" aria-live="polite"></div>
+      <div class="content" id="content"></div>
+
+      <footer class="statusbar">
+        <span class="live-dot" id="live-dot"></span>
+        <span id="status-left"></span>
+        <span class="spacer"></span>
+        <span id="status-right"></span>
+      </footer>
+    </main>
+  </div>
+
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" inert aria-hidden="true">
+    <div class="drawer-head">
+      <span class="drawer-title">Assist</span>
+      <button class="btn ghost drawer-close" id="drawer-close" aria-label="Close Assist" title="Close (Esc)">✕</button>
+    </div>
+    <div class="session-bar" id="session-bar" hidden></div>
+    <div class="drawer-body" id="drawer-body"></div>
+    <div class="drawer-compose" id="drawer-compose"></div>
+  </aside>
+
+  <script src="/vendor/marked.min.js"></script>
+  <script src="/file-events.js"></script>
+  <script src="/files-view.js"></script>
+  <script src="/usage-view.js"></script>
+  <script src="/home.js"></script>
+  <script src="/setup.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

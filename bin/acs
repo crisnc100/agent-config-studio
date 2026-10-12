@@ -1,0 +1,393 @@
+#!/bin/sh
+# Launch Agent Config Studio and open it in the browser.
+# If it is already running, just focus the tab.
+#
+# POSIX sh on purpose. This is the entry point people are told to run, so it has
+# to work wherever node does — a zsh-only launcher fails on a stock Linux box
+# (and in CI) with a bare "No such file or directory" that names zsh, not us.
+
+set -e
+
+# This checkout, found through any chain of symlinks (`acs install` puts one on
+# PATH). `readlink -f` is GNU-only, so each link is followed by hand; a
+# relative target is relative to the link's own directory.
+self=$0
+case $self in */*) ;; *) self=$(command -v -- "$self") ;; esac
+hops=0
+while [ -L "$self" ]; do
+  hops=$((hops + 1))
+  if [ "$hops" -gt 40 ]; then
+    echo "acs: too many levels of symlinks resolving $0" >&2
+    exit 1
+  fi
+  target=$(readlink -- "$self")
+  case $target in
+    /*) self=$target ;;
+    *) self=$(dirname -- "$self")/$target ;;
+  esac
+done
+DIR=$(unset CDPATH; cd -P -- "$(dirname -- "$self")/.." && pwd -P)
+PORT="${ACS_PORT:-8787}"
+URL="http://localhost:$PORT"
+
+# How this copy was installed, each decided positively:
+#   checkout  $DIR is the top level of a git work tree that tracks bin/acs,
+#             server.js and package.json, and package.json names the package
+#             agent-config-studio: a clone of ACS, or a worktree of one whose
+#             .git is a file. Only this updates itself with git.
+#   npm       $DIR is a package inside a node_modules folder: npm i -g, npx's
+#             cache, bunx's, or a project's dependencies.
+#   copy      anything else, such as an unpacked tarball.
+# Never an ancestor's .git: a package installed inside someone's repo would
+# otherwise fetch and fast-forward that repo.
+install_mode() {
+  if command -v git >/dev/null 2>&1 &&
+    top=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null) &&
+    [ "$(unset CDPATH; cd -P -- "$top" 2>/dev/null && pwd -P)" = "$DIR" ] &&
+    git -C "$DIR" -c core.fsmonitor=false ls-files --error-unmatch -- bin/acs server.js package.json >/dev/null 2>&1 &&
+    grep -q '"name": *"agent-config-studio"' "$DIR/package.json" 2>/dev/null; then
+    echo checkout
+    return 0
+  fi
+  case ${DIR%/*} in
+    */node_modules) echo npm ;;
+    *) echo copy ;;
+  esac
+}
+MODE=$(install_mode)
+# How to spell `acs` in advice: npx and bunx put it on PATH only for their own run.
+case $MODE:$DIR in
+  npm:*/_npx/*) ACS_CMD='npx agent-config-studio' ;;
+  npm:*/bunx-*) ACS_CMD='bunx agent-config-studio' ;;
+  *) ACS_CMD=acs ;;
+esac
+
+# printf, not a here-document: a here-document needs a writable temp dir.
+usage() {
+  printf '%s\n' \
+    'usage: acs [--no-open]          start the studio (or focus it) and open the browser' \
+    "       acs stop                 stop the studio on port $PORT" \
+    '       acs install              link acs into a directory on your PATH (not under npm)' \
+    '       acs uninstall            remove that link' \
+    '       acs update               fast-forward this checkout; never starts the studio' \
+    '       acs roots ls|add|rm      the project folders the studio reads and edits' \
+    '       acs usage [...]          seat usage in the terminal' \
+    '       acs install-model-id     install the model-id resolver' \
+    '       acs install-worktree     install the worktree helpers (zsh/macOS only)' \
+    '       acs help                 this text' \
+    '' \
+    'environment: ACS_PORT (default 8787), ACS_NO_OPEN=1 (never open a browser),' \
+    '             ACS_NO_UPDATE=1 (start without pulling)' \
+    "checkout:    $DIR" \
+    "installed:   $(mode_label)"
+}
+
+mode_label() {
+  case $MODE in
+    checkout) echo 'git checkout (acs updates it from origin)' ;;
+    npm) echo 'npm package (update: npm install -g agent-config-studio, or npx agent-config-studio@latest)' ;;
+    *) echo 'a copy without git (acs never updates it)' ;;
+  esac
+}
+
+# Under npm the package manager owns install, PATH and updates.
+npm_refuses() {
+  case $1 in
+    install) echo "acs install is not needed: npm put acs on your PATH when it installed the package. Under npx, run: npm install -g agent-config-studio" >&2 ;;
+    uninstall) echo "acs uninstall does not apply to the npm package — remove it with: npm uninstall -g agent-config-studio" >&2 ;;
+    update) echo "acs update fast-forwards a git checkout; this is the npm package — update it with: npm install -g agent-config-studio (or run npx agent-config-studio@latest)" >&2 ;;
+  esac
+  exit 1
+}
+
+# Node is the one runtime the studio needs. Check it before anything uses it,
+# so an old or missing node says so instead of failing on a syntax error.
+need_node() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo "acs: Node.js 20 or newer is required, and node is not on PATH. Install it from https://nodejs.org" >&2
+    exit 1
+  fi
+  v=$(node -p process.versions.node 2>/dev/null || true)
+  major=${v%%.*}
+  case $major in
+    ''|*[!0-9]*) echo "acs: could not read the Node.js version (node -p printed \"$v\"). Node 20 or newer is required." >&2; exit 1 ;;
+  esac
+  if [ "$major" -lt 20 ]; then
+    echo "acs: Node.js $v is too old — Node 20 or newer is required. Install it from https://nodejs.org" >&2
+    exit 1
+  fi
+}
+
+# Identify the app by its health endpoint, never by "something owns the port".
+is_acs() {
+  node "$DIR/bin/acs-net.mjs" health "$PORT" >/dev/null 2>&1
+}
+
+# The pid `acs stop` may signal — only for a legacy run file, written by a
+# studio from before the stop token (any newer studio stops itself, below):
+# THIS install's studio on this port, proven three ways — /api/health names
+# the pid and that start's nonce, the run file (studio dir, mode 0600,
+# decoded as JSON) records the same pid and nonce, and that pid's command
+# line is exactly a node binary followed by this install's server.js, nothing
+# before or after it. A stale, spoofed or foreign answer prints nothing.
+acs_pid() {
+  answer=$(node "$DIR/bin/acs-net.mjs" health "$PORT" 2>/dev/null) || return 1
+  pid=${answer%% *}
+  nonce=${answer#* }
+  run="${HOME}/.agent-config-studio/run/$PORT.json"
+  [ -f "$run" ] || return 1
+  [ "$(node "$DIR/bin/acs-net.mjs" run "$PORT" < "$run" 2>/dev/null)" = "$pid $nonce legacy" ] || return 1
+  args=$(ps -o args= -p "$pid" 2>/dev/null) || return 1
+  binary=${args%" $DIR/server.js"}
+  [ "$binary" != "$args" ] || return 1
+  case $binary in
+    *' '*) return 1 ;;
+    node|*/node) echo "$pid" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Whether the run file for this port carries a stop token: a studio that
+# can stop itself, which is then never stopped by signalling a pid.
+run_has_token() {
+  run="${HOME}/.agent-config-studio/run/$PORT.json"
+  [ -f "$run" ] || return 1
+  case $(node "$DIR/bin/acs-net.mjs" run "$PORT" < "$run" 2>/dev/null) in
+    *' token') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Anything at all accepting connections on the port, HTTP or not.
+port_busy() {
+  node "$DIR/bin/acs-net.mjs" busy "$PORT"
+}
+
+# Bring this checkout up to the remote's default branch before starting, so
+# `acs` after a merge runs the merged code. Only a clean checkout sitting on
+# that branch is fast-forwarded; a feature branch, local edits or no network
+# start what is here, and the last two say why. Returns 10 when it moved HEAD.
+update_checkout() {
+  [ -z "${ACS_NO_UPDATE:-}" ] || return 0
+  [ "$MODE" = checkout ] || return 0
+  git -C "$DIR" remote get-url origin >/dev/null 2>&1 || return 0
+  # Never guess the default branch: a guessed "main" could fast-forward a
+  # branch that is not the one that ships.
+  if ! base=$(git -C "$DIR" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null); then
+    echo "not updating: origin's default branch is unknown — run: git -C \"$DIR\" remote set-head origin --auto"
+    return 0
+  fi
+  base=${base#origin/}
+  branch=$(git -C "$DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  [ "$branch" = "$base" ] || return 0
+  # fsmonitor is off on every git call that reads the index: a configured hook
+  # that hangs would otherwise stall startup, and only the fetch has a deadline.
+  if [ -n "$(git -C "$DIR" -c core.fsmonitor=false status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    echo "not updating: this checkout has local changes — starting it as it is."
+    return 0
+  fi
+  before=$(git -C "$DIR" rev-parse HEAD)
+  # Only the network half runs under the deadline, so killing it can never
+  # interrupt a change to the checkout. Nothing may prompt: an SSH host that
+  # never answers or a credential helper that waits would otherwise hold the
+  # launcher. SSH's own timeouts end a stalled connection even if the fetch
+  # that started it was killed.
+  GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_ASKPASS=/bin/false SSH_ASKPASS=/bin/false \
+    GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=5 -o ServerAliveCountMax=2" \
+    git -C "$DIR" -c core.fsmonitor=false -c credential.interactive=never -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
+    fetch --quiet origin "$base" >/dev/null 2>&1 </dev/null &
+  fetch_pid=$!
+  ( sleep "${ACS_UPDATE_TIMEOUT:-20}"; kill "$fetch_pid" 2>/dev/null ) >/dev/null 2>&1 &
+  watch_pid=$!
+  fetch_rc=0
+  # The waits' stderr carries the shell's "Terminated" job notices.
+  wait "$fetch_pid" 2>/dev/null || fetch_rc=$?
+  kill "$watch_pid" 2>/dev/null || true
+  wait "$watch_pid" 2>/dev/null || true
+  if [ "$fetch_rc" -ne 0 ]; then
+    echo "could not reach origin (offline or timed out) — starting $(git -C "$DIR" rev-parse --short HEAD) as it is."
+    return 0
+  fi
+  if ! git -C "$DIR" -c core.fsmonitor=false merge --ff-only --quiet "origin/$base" >/dev/null 2>&1; then
+    echo "not updating: $base has diverged from origin — starting $(git -C "$DIR" rev-parse --short HEAD) as it is."
+    return 0
+  fi
+  after=$(git -C "$DIR" rev-parse HEAD)
+  [ "$before" != "$after" ] || return 0
+  echo "updated to $(git -C "$DIR" log -1 --format='%h %s' "$after")"
+  # Installed copies live outside this checkout and do not follow a pull.
+  if git -C "$DIR" diff --quiet "$before" "$after" -- tools/worktree; then :; else
+    echo "  tools/worktree changed — run: acs install-worktree"
+  fi
+  if git -C "$DIR" diff --quiet "$before" "$after" -- bin/model-id bin/model-id.mjs lib/models.js models.default.json package.json; then :; else
+    echo "  the model-id resolver changed — run: acs install-model-id"
+  fi
+  return 10
+}
+
+# npm replaced the package, and the copies the install-* commands made did not
+# follow: name each installed copy whose bytes differ from this package's (a
+# checkout gets the same reminders from the pull's diff). Never installed says
+# nothing. defaults.conf is the user's to customise, so the worktree files
+# are judged against the record of what was installed, not the live copies.
+stale_copies() {
+  command -v cmp >/dev/null 2>&1 || return 0
+  r="$HOME/.agent-config-studio/resolver"
+  if [ -e "$r/bin/model-id.mjs" ] || [ -e "$r/lib/models.js" ] || [ -e "$r/models.default.json" ]; then
+    if ! cmp -s "$r/bin/model-id.mjs" "$DIR/bin/model-id.mjs" || ! cmp -s "$r/lib/models.js" "$DIR/lib/models.js" ||
+      ! cmp -s "$r/models.default.json" "$DIR/models.default.json"; then
+      echo "  the installed model-id resolver is older than this package — run: $ACS_CMD install-model-id"
+    fi
+  fi
+  # The worktree tools: what install-worktree last installed from (its record),
+  # each file it copies; an install from before that record, its wt.zsh.
+  src="$HOME/.agent-config-studio/worktree-source"
+  wt="${WT_HOME:-$HOME/.config/worktree}/wt.zsh"
+  if [ -d "$src" ]; then
+    for f in wt.zsh defaults.conf; do
+      if ! cmp -s "$src/$f" "$DIR/tools/worktree/$f"; then
+        echo "  the worktree tools changed in this package — run: $ACS_CMD install-worktree (a defaults.conf you changed is kept; --replace-defaults takes the new one)"
+        break
+      fi
+    done
+  elif [ -e "$wt" ] && ! cmp -s "$wt" "$DIR/tools/worktree/wt.zsh"; then
+    echo "  the installed worktree tools are older than this package — run: $ACS_CMD install-worktree"
+  fi
+}
+
+# A browser that fails to open is reported, never fatal: the server is
+# already up and the URL is printed either way.
+open_url() {
+  if [ -n "${ACS_NO_OPEN:-}" ]; then echo "open $1 in your browser"; return 0; fi
+  if command -v open >/dev/null 2>&1; then open "$1" || echo "could not open a browser — open $1 yourself"
+  elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1" >/dev/null 2>&1 || echo "could not open a browser — open $1 yourself"
+  else echo "open $1 in your browser"
+  fi
+  return 0
+}
+
+# Exported, so the restart after an update keeps it.
+if [ "${1:-}" = "--no-open" ]; then
+  ACS_NO_OPEN=1
+  export ACS_NO_OPEN
+  shift
+fi
+
+# Every path but help and update runs node — the default start included.
+case "${1:-}" in
+  help|-h|--help)
+    usage
+    exit 0
+    ;;
+  update)
+    # Pull only; never starts the studio, and needs nothing but git.
+    [ "$MODE" != npm ] || npm_refuses update
+    update_checkout || [ $? -eq 10 ]
+    exit 0
+    ;;
+  *)
+    need_node
+    ;;
+esac
+
+case "${1:-}" in
+  usage)
+    # The studio's onboarding tells people to run `acs usage`, so it has to
+    # exist. Everything after the subcommand is forwarded verbatim.
+    shift
+    exec node "$DIR/bin/usage.mjs" "$@"
+    ;;
+  roots)
+    # Which project folders the studio reads and edits. A running studio
+    # picks up the change by itself.
+    shift
+    exec node "$DIR/bin/roots.mjs" "$@"
+    ;;
+  install-worktree)
+    # Copies tools/worktree into ~/.config/worktree and makes ~/.zshrc source
+    # it. Exits here: installing never starts the studio. Re-run after a pull.
+    shift
+    exec node "$DIR/bin/install-worktree.mjs" "$@"
+    ;;
+  install-model-id)
+    # Copies the resolver out of this checkout and links ~/.local/bin/model-id,
+    # so skills keep resolving when a worktree is removed. Re-run after a pull.
+    exec node "$DIR/bin/model-id.mjs" --install
+    ;;
+  install|uninstall)
+    # A symlink to this checkout's bin/acs on PATH, and its removal. Never
+    # edits a shell profile.
+    [ "$MODE" != npm ] || npm_refuses "$1"
+    exec node "$DIR/bin/acs-link.mjs" "$@"
+    ;;
+  stop)
+    # A studio stops itself on its run file's token; a pid is signalled only
+    # for a legacy run file (acs_pid). A token stop that fails is reported,
+    # never retried with a signal.
+    if is_acs && run_has_token; then
+      rc=0
+      node "$DIR/bin/acs-net.mjs" stop "$PORT" < "${HOME}/.agent-config-studio/run/$PORT.json" >/dev/null 2>&1 || rc=$?
+      case $rc in
+        0) echo "stopped." ;;
+        2) echo "port $PORT answers as an Agent Config Studio that is not the one its run file names — not touching it." >&2; exit 1 ;;
+        3) echo "the studio on port $PORT refused the stop token in its run file — not touching it." >&2; exit 1 ;;
+        4) echo "asked the studio on port $PORT to stop; it accepted but is still listening." >&2; exit 1 ;;
+        *) echo "could not ask the studio on port $PORT to stop (exit $rc) — not touching it." >&2; exit 1 ;;
+      esac
+    elif pid=$(acs_pid); then
+      kill "$pid" && echo "stopped."
+    elif is_acs; then
+      echo "port $PORT is served by an Agent Config Studio that is not this checkout's ($DIR) start — not touching it. Stop it with the acs that started it." >&2
+      exit 1
+    elif port_busy; then
+      echo "port $PORT is in use by something else — not touching it." >&2
+      exit 1
+    else
+      echo "not running."
+    fi
+    exit 0
+    ;;
+  '') ;;
+  *)
+    echo "acs: unknown command: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
+
+if is_acs; then
+  echo "already running → $URL"
+  open_url "$URL"
+  exit 0
+fi
+
+if port_busy; then
+  echo "port $PORT is in use by another process. Set ACS_PORT to pick a different one." >&2
+  exit 1
+fi
+
+# The studio keeps the history of every config file it tracks in a git repo
+# of its own; npm does not bring git along.
+if ! command -v git >/dev/null 2>&1; then
+  echo "acs: git is required and is not on PATH — the studio keeps the history of your config files in a git repo (~/.agent-config-studio/history). Install git (https://git-scm.com/downloads), then run acs again." >&2
+  exit 1
+fi
+
+rc=0
+update_checkout || rc=$?
+# The pull may have replaced this very script: start the new one, once.
+if [ "$rc" -eq 10 ]; then ACS_NO_UPDATE=1 exec "$0" "$@"; fi
+if [ "$MODE" = npm ]; then
+  echo "npm package — update: npm install -g agent-config-studio (or npx agent-config-studio@latest)"
+  stale_copies
+fi
+
+echo "starting Agent Config Studio…"
+PORT="$PORT" node "$DIR/server.js" &
+SERVER_PID=$!
+trap 'kill $SERVER_PID 2>/dev/null' INT TERM
+
+# Wait (up to 10 s) for the port to accept connections before opening the browser.
+node "$DIR/bin/acs-net.mjs" wait "$PORT" || true
+open_url "$URL"
+wait $SERVER_PID
