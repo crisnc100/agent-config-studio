@@ -483,6 +483,33 @@ is written until you accept it. Flavor text becomes part of the instructions
 other agents are briefed with, so read a proposal before accepting it — it is
 the AI's reading of what you wrote, not a check of it.
 
+### Model guide
+
+The Models panel's **Model guide** section puts one generated block into each
+harness's global instruction file: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`
+and `~/.grok/AGENTS.md`. Every agent reads that file at the start of every
+session, so **the block's contents become instructions for every agent
+session** — the roles (which family does which job, at what effort, with its
+fallbacks and second opinion) and how to brief each family. It names families,
+never model ids, and points at `model-id` for the current id.
+
+- The block sits between `<!-- acs:model-guide v1 sep=… sha256:… -->` and
+  `<!-- /acs:model-guide -->`. ACS writes only inside it; the rest of the file
+  is kept byte for byte, line endings included. Edits made inside the block are
+  replaced the next time you update it, and the panel warns before that.
+- Adding it is a choice per file. **Add**, **Update** and **Remove** each show
+  the whole file before and after, and nothing is written until you accept.
+  Accept is refused if the file changed since the diff was made. Every write is
+  versioned in history.
+- After you change roles or flavor, the panel shows which files' guides are out
+  of date and offers the update as a diff. It never rewrites a file on its own.
+- A harness whose folder does not exist reads "Not installed"; ACS never
+  creates it. A missing file in an existing folder is created holding only the
+  block. A symlinked file is written in place, so the link stays a link. Broken
+  markers, a file that is not UTF-8, over 1 MB or hard-linked, and invalid
+  roles are each shown and refused (removing a block still works while the
+  roles are invalid). Hand-written text outside the block is never touched.
+
 ## Optional: worktree tools
 
 `tools/worktree/wt.zsh` is a zsh toolkit for parallel git worktrees: each

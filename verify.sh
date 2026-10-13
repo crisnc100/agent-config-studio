@@ -67,6 +67,9 @@ node tests/roles.mjs
 # …and through the server and in-process: edits, the write boundary, Describe with a fake claude (temp HOME).
 node tests/roles-routes.mjs
 node tests/roles-unit.mjs
+# The model guide block: renderer, markers, byte-exact edits (in-process), then through the server (temp HOME).
+node tests/model-guide.mjs
+node tests/model-guide-routes.mjs
 node tests/models-assist.mjs
 node tests/models-roots.mjs
 node tests/models-scripts.mjs
@@ -93,6 +96,7 @@ node tests/home-refresh.mjs
 node tests/roots-ui.mjs
 node tests/batch-delete-ui.mjs
 node tests/roles-ui.mjs
+node tests/model-guide-ui.mjs
 # What the registry tells the Files page (temp HOME).
 node tests/files-registry.mjs
 # The MCP route's note on a machine with no ~/.claude.json (temp HOME).

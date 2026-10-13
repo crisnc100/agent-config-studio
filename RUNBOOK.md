@@ -246,6 +246,34 @@ never reads it, so new data cannot break it.
   `runContained` `maxTextBytes`, killed the moment it is passed), 120 s, proposals kept 10
   minutes under a random id; Accept writes exactly the stored bytes.
 
+
+## Model guide block (`lib/model-guide.js`)
+
+- The block is rendered by `guideText` in `lib/roles.js` (pure, id-free, 8 KB
+  cap; it refuses rather than escapes text holding `<!--`, `-->` or
+  `acs:model-guide`, and refuses while the roles are invalid).
+  `model-id --roles` is unchanged.
+- Targets are the three keys `claude`, `codex`, `grok`, resolved server-side
+  from the harness homes in `lib/paths.js`; a request never names a path.
+  Reads go through `openUserFile` (1 MB cap, hard links refused); a file that
+  is not UTF-8 is never edited. Bytes outside the block are copied from the
+  file's buffer. `sep=` in the start marker records the newlines ACS added, so
+  remove gives back the original bytes, also after a restart.
+- Any line containing `acs:model-guide` is a marker and must match the grammar
+  exactly; otherwise the file is `malformed` and every action is refused with
+  the line numbers. install: absent; update: stale or edited; remove: current,
+  stale, edited, or an intact block while the roles are invalid.
+- Accept: the proposal (random id, 10 minutes, at most 3 live per target) holds
+  the real path, (dev, ino) and the raw-bytes sha256. Per real path, one at a
+  time: re-resolve, `recordBaseline` (skipped for a new file), then
+  synchronously re-resolve, re-read and compare identity and bytes, and write
+  through a descriptor opened with O_NOFOLLOW and checked by fstat (or `wx`
+  for a new file) — no await between the compare and the write. History
+  records the real path, the one the registry and snapshots use; its failures
+  come back as `warnings`.
+- Tests: `tests/model-guide.mjs` (in-process), `tests/model-guide-routes.mjs`
+  (server, temp HOME), `tests/model-guide-ui.mjs` (VM).
+
 ## Troubleshooting
 
 - **Grok is slow.** First token ~39s is normal. Total can hit 133s. The UI
