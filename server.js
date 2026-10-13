@@ -39,6 +39,7 @@ import {
 import { loadRegistry } from './lib/models.js';
 import { rolesView, setRole, resetRole, deleteRole, setFlavor, resetFlavor } from './lib/roles-panel.js';
 import { createDescribe, describeBackend, DESCRIBE_LIMITS } from './lib/describe.js';
+import { createModelGuide } from './lib/model-guide.js';
 import * as memoryOps from './lib/memory-ops.js';
 import { contextMap, contextFile } from './lib/context-map.js';
 import { removeBatch } from './lib/batch-delete.js';
@@ -579,6 +580,7 @@ export function createApp(opts = {}) {
   });
 
   const describer = createDescribe();
+  const guide = createModelGuide();
 
   /** A family the registry knows, or a 400 — never a path or free text. */
   const knownFamily = (family) => {
@@ -1145,6 +1147,29 @@ export function createApp(opts = {}) {
   'POST /api/models/roles/proposal/reject': async (req) => {
     requireStrict(req);
     return describer.reject({ id: (await objectBody(req)).id });
+  },
+
+  /**
+   * The model guide block in each harness's global instruction file
+   * (lib/model-guide.js). Strict same-origin, GET included; a target is a
+   * key, never a path, and nothing is written except an accepted proposal.
+   */
+  'GET /api/model-guide': async (req) => {
+    requireStrict(req);
+    return guide.status();
+  },
+  'POST /api/model-guide/propose': async (req) => {
+    requireStrict(req);
+    const { target, action } = await objectBody(req);
+    return guide.propose({ target, action });
+  },
+  'POST /api/model-guide/accept': async (req) => {
+    requireStrict(req);
+    return guide.accept({ id: (await objectBody(req)).id });
+  },
+  'POST /api/model-guide/reject': async (req) => {
+    requireStrict(req);
+    return guide.reject({ id: (await objectBody(req)).id });
   },
 
   /** The Assist picker alone, without the file registry — what a model-registry edit changes. */
