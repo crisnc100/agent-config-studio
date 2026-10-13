@@ -107,6 +107,29 @@ console.log('\nroles unit: R9 — parsing and normalizing a proposal');
   ok('a diff from nothing is all additions', lineDiff('', 'x\ny\n').every((l) => l.op === '+'));
 }
 
+console.log('\nroles unit: R5 — the tool-less containment rule, and the normal one unchanged');
+{
+  const { containmentHeld, createInitGate } = await import('../lib/containment.js');
+  const { HARNESSES, composeArgv } = await import('../lib/harness.js');
+  const init = (over) => ({ type: 'system', subtype: 'init', tools: [], mcp_servers: [], ...over });
+  const tl = { toolless: true };
+  ok('toolless: tools [] with no MCP holds', containmentHeld(init(), 'claude', tl).ok === true);
+  for (const [what, over] of [['the read tool', { tools: ['Read'] }], ['any tool', { tools: ['Bash'] }], ['an MCP server', { mcp_servers: [{ name: 'x' }] }],
+    ['a contradicting toolCount', { toolCount: 3 }], ['a non-list tools', { tools: 'none' }], ['a non-list mcp_servers', { mcp_servers: 'x' }]]) {
+    ok(`toolless: ${what} is refused`, containmentHeld(init(over), 'claude', tl).ok === false);
+  }
+  ok('the normal rule is unchanged: [Read] holds, [] is refused', containmentHeld(init({ tools: ['Read'] }), 'claude').ok === true && containmentHeld(init(), 'claude').ok === false);
+  ok('the init gate passes the mode through', createInitGate('claude', tl).see(init({ tools: ['Read'] })) !== null && createInitGate('claude', tl).see(init()) === null);
+  const argv = (o) => composeArgv(HARNESSES.claude, { model: 'm', ...o });
+  const normal = argv({});
+  ok('a normal Assist argv still ends in --tools Read --strict-mcp-config', normal.slice(-3).join(' ') === '--tools Read --strict-mcp-config' && !normal.includes(''));
+  const none = argv({ toolless: true });
+  ok('a tool-less argv ends in --tools "" --strict-mcp-config, with no Read', JSON.stringify(none.slice(-3)) === '["--tools","","--strict-mcp-config"]' && !none.includes('Read'));
+  let threw = null;
+  try { composeArgv(HARNESSES.grok, { model: 'm', toolless: true }); } catch (e) { threw = e.message; }
+  ok('grok has no tool-less mode: composeArgv refuses', /no tool-less mode/.test(threw || ''), threw);
+}
+
 console.log('\nroles unit: R10 — the 120 s timeout, at a test scale');
 {
   const bin = describeCli(path.join(home, '.local', 'bin', 'claude'));

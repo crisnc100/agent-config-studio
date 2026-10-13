@@ -9,7 +9,8 @@
  * for: none for `--tools ""`, as the real CLI does (probed), else [Read].
  *
  *   ok      init, the reply in small deltas, a result
- *   tools   init claims [Read, Bash] whatever argv said (containment refusal)
+ *   tools   init claims [Read, Bash] whatever argv said, then lingers (writes `pid`)
+ *   mcp     init lists an MCP server, then lingers (writes `pid`)
  *   flood   init, then 100 KB of deltas
  *   hang    init, then nothing; writes its pid to `pid` for the cancel test
  *   error   init, then a result with is_error
@@ -37,7 +38,10 @@ let prompt = '';
 process.stdin.on('data', (d) => { prompt += d; });
 process.stdin.on('end', () => {
   fs.writeFileSync(path.join(dir, 'prompt.txt'), prompt);
-  out({ type: 'system', subtype: 'init', session_id: 's1', tools, mcp_servers: [], permissionMode: 'default' });
+  // Before init: a refused turn may be killed the moment init is read.
+  fs.writeFileSync(path.join(dir, 'pid'), String(process.pid));
+  const mcp = mode.kind === 'mcp' ? [{ name: 'probe', status: 'pending' }] : [];
+  out({ type: 'system', subtype: 'init', session_id: 's1', tools, mcp_servers: mcp, permissionMode: 'default' });
   const delta = (text) => out({ type: 'stream_event', session_id: 's1', event: { type: 'content_block_delta', delta: { text } } });
   const reply = mode.reply ?? '{}';
   switch (mode.kind || 'ok') {
@@ -46,8 +50,9 @@ process.stdin.on('end', () => {
       out({ type: 'result', is_error: false, result: '', session_id: 's1' });
       done();
       break;
+    case 'tools':
+    case 'mcp':
     case 'hang':
-      fs.writeFileSync(path.join(dir, 'pid'), String(process.pid));
       setInterval(() => {}, 1000);
       break;
     case 'error':

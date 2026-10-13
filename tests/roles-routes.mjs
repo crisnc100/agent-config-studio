@@ -272,9 +272,15 @@ try {
     ok('R5 an exfiltration request still runs with zero tools', argv[argv.indexOf('--tools') + 1] === '');
     ok('R5 …the proposal is only schema data, shown before anything is written', inj.status === 200 && !inj.body.proposed.includes('PRIVATE-KEY-BYTES') && readRoles() === before);
     await post('/api/models/roles/proposal/reject', { id: inj.body.id });
-    setMode({ kind: 'tools', reply: JSON.stringify(GOOD) });
-    const t = await post('/api/models/roles/describe', { description: 'x' });
-    ok('R5 a CLI that starts with any tool is refused by the init gate', t.status === 502 && /did not start contained/.test(t.body.error) && /want none/.test(t.body.error), JSON.stringify(t.body));
+    const gone = async (pid) => { for (let i = 0; i < 30; i++) { try { process.kill(pid, 0); } catch { return true; } await sleep(100); } return false; };
+    for (const [kind, what, re] of [['tools', 'reports any tool', /want none/], ['mcp', 'lists an MCP server', /MCP servers started: probe/]]) {
+      setMode({ kind, reply: JSON.stringify(GOOD) });
+      const t = await post('/api/models/roles/describe', { description: 'x' });
+      ok(`R5 a tool-less turn whose init ${what} is refused by the init gate`, t.status === 502 && /did not start contained/.test(t.body.error) && re.test(t.body.error), JSON.stringify(t.body));
+      const pid = Number(readFake('pid'));
+      ok('…and the run is killed', pid > 0 && await gone(pid), `pid ${pid}`);
+      ok('…with nothing written', readRoles() === before);
+    }
     setMode({ kind: 'error' });
     const e = await post('/api/models/roles/describe', { description: 'x' });
     ok('a CLI error is reported, nothing written', e.status === 502 && /reported an error/.test(e.body.error) && readRoles() === before);
