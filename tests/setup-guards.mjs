@@ -144,6 +144,7 @@ console.log('setup guards\n');
       ["fs.readFileSync(toml, 'utf8')", 'model-id sidecars, the terminal CLI only, same reason'],
       ["fs.readFileSync(path.join(home, '.agent-config-studio', 'roots.json'), 'utf8')", 'roots.json, the studio\'s own folder registry, read here because bin/model-id --install copies models.js standalone (review-config discovery, B11)'],
     ],
+    'lib/roles.js': [["fs.readFileSync(file, 'utf8')", 'the roles registry: lib/roles.default.json in this checkout and the studio\'s roles.json (one helper, readText); roles.js is copied standalone into the resolver']],
     'lib/models-catalog.js': [["io.readFileSync(file, 'utf8')", 'the injected test io only; with the real fs the read is readUserText']],
     'lib/mutate.js': [
       ["fsp.readFile(path.join(dir, file), 'utf8')", 'trash metadata, the studio\'s own'],
@@ -156,12 +157,16 @@ console.log('setup guards\n');
       ['fs.readFileSync(out)', 'the backup this installer just wrote, read back to verify it (the user\'s side is openUserFile)'],
     ],
     'bin/model-id': [
+      ['fs.readFileSync(rolesSrc)', 'this checkout\'s lib/roles.js, copied out by --install'],
+      ['fs.readFileSync(rolesDefaults)', 'this checkout\'s lib/roles.default.json, copied out by --install'],
       ["fs.readFileSync(path.join(src, 'bin', 'model-id.mjs'))", 'this checkout\'s resolver script, copied out by --install'],
       ["fs.readFileSync(path.join(src, 'lib', 'models.js'))", 'this checkout\'s models.js, copied out by --install'],
       ['fs.readFileSync(DEFAULTS_PATH)', 'this checkout\'s models.default.json, copied out by --install'],
     ],
     // The same file: bin/model-id is a symlink to it (Node 20.0 loads ESM only by extension).
     'bin/model-id.mjs': [
+      ['fs.readFileSync(rolesSrc)', 'this checkout\'s lib/roles.js, copied out by --install'],
+      ['fs.readFileSync(rolesDefaults)', 'this checkout\'s lib/roles.default.json, copied out by --install'],
       ["fs.readFileSync(path.join(src, 'bin', 'model-id.mjs'))", 'this checkout\'s resolver script, copied out by --install'],
       ["fs.readFileSync(path.join(src, 'lib', 'models.js'))", 'this checkout\'s models.js, copied out by --install'],
       ['fs.readFileSync(DEFAULTS_PATH)', 'this checkout\'s models.default.json, copied out by --install'],

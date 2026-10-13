@@ -1204,3 +1204,47 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
   .setup-cards { grid-template-columns: 1fr; }
   .setup-row { flex-wrap: wrap; }
 }
+
+/* ── models view: roles, flavor, Describe ────────────────────────────── */
+.models-subhead { font-size: 15px; font-weight: 600; margin: 34px 0 6px; }
+.models-roles-sub { margin-bottom: 12px; }
+.roles-uses .roles-then { color: var(--muted); font-size: 12px; }
+.roles-id { color: var(--muted); margin-left: 6px; }
+.roles-warning { display: block; margin: 4px 0 0; }
+.roles-effort, .roles-alt { white-space: nowrap; }
+.roles-add { margin-top: 8px; }
+.roles-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 14px; margin-bottom: 10px; }
+.roles-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.roles-label { font-size: 11px; color: var(--muted); }
+.roles-field .models-input { max-width: none; width: 100%; box-sizing: border-box; color: var(--text); }
+.roles-field textarea.models-input { font-family: var(--sans); font-size: 12px; resize: vertical; }
+.roles-default { margin-top: 2px; }
+.models-flavor { margin-top: 14px; }
+.models-flavor .scope-note { margin-bottom: 8px; }
+.models-describe .describe-text {
+  display: block; width: 100%; max-width: none; box-sizing: border-box; color: var(--text);
+  font: 13px var(--sans); resize: vertical; margin-top: 8px;
+}
+.describe-count { text-align: right; margin: 2px 0 8px; }
+.describe-go .spinner { margin-right: 6px; }
+.describe-error { margin: 10px 0; }
+.describe-proposal {
+  margin-top: 12px; padding: 12px 14px; border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.describe-caveat { font-size: 12px; color: var(--amber); margin-bottom: 8px; }
+.describe-diff {
+  font: 12px var(--mono); background: var(--panel-2); border: 1px solid var(--border); border-radius: 7px;
+  padding: 8px 10px; margin: 6px 0 10px; overflow-x: auto; max-height: 420px; overflow-y: auto; white-space: pre;
+}
+.diff-line { color: var(--text-dim); }
+.diff-line.add { color: var(--green); background: color-mix(in srgb, var(--green) 10%, transparent); }
+.diff-line.del { color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
+@media (max-width: 700px) {
+  .roles-table th:nth-child(4), .roles-table td:nth-child(4) { display: none; }
+}
+
+/* ── home: Refresh usage ─────────────────────────────────────────────── */
+.home-refresh-usage .spinner { margin-right: 6px; }
+.home-refresh-note { margin-bottom: 8px; color: var(--amber); }

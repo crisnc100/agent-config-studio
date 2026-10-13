@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "roles": {
+    "advisor": { "use": "fable", "effort": "high", "alt": "astra", "note": "scope and direction calls; advises, never builds" },
+    "reviewer": { "use": "astra", "effort": "high", "note": "reads a diff and reports findings" },
+    "builder": { "use": ["opus", "sol"], "effort": "medium", "note": "implements from a brief" },
+    "judge": { "use": "fable", "effort": "high", "note": "grades finished work against its criteria" },
+    "investigator": { "use": "astra", "effort": "high", "note": "evidence-first root-cause and is-it-true questions" }
+  },
+  "flavor": {
+    "fable": {
+      "likes": ["open judgment calls", "weighing trade-offs", "plans that need a second brain"],
+      "quirks": ["costs more per turn than the others", "advises well; not meant for bulk typing"],
+      "brief": "Give it the goal, the constraints and the decision you need. Ask for a verdict and the reasons, not an implementation."
+    },
+    "opus": {
+      "likes": ["multi-file builds", "frontend and copy", "taste calls inside a clear spec"],
+      "quirks": ["may challenge a brief it disagrees with"],
+      "brief": "Name the files, the outcome and the checks to run. Say what is out of scope."
+    },
+    "sonnet": {
+      "likes": ["mechanical, fully specified edits"],
+      "quirks": ["weak on open-ended design"],
+      "brief": "Hand it one concrete, single-file task with the exact expected result."
+    },
+    "haiku": {
+      "likes": ["quick classification and short summaries"],
+      "quirks": ["shallow on long or subtle context"],
+      "brief": "Keep the input short and ask one narrow question."
+    },
+    "astra": {
+      "likes": ["review", "investigation", "finding the hole in a plan"],
+      "quirks": ["thorough, so slower on large diffs"],
+      "brief": "Give it the diff or the claim, the bar it must meet, and ask for findings with file:line evidence."
+    },
+    "sol": {
+      "likes": ["sustained implementation", "keep going until the checks pass"],
+      "quirks": ["tends to over-build without boundaries"],
+      "brief": "State the boundaries and the stop condition up front, and the validation command to run."
+    },
+    "terra": {
+      "likes": ["everyday edits at lower cost"],
+      "quirks": ["less depth than sol on hard problems"],
+      "brief": "Give it a bounded task with a clear done check."
+    },
+    "grok": {
+      "likes": ["backend and automation builds", "executing a brief as written"],
+      "quirks": ["under-fills a vague brief rather than asking"],
+      "brief": "Spell out every file, the full shape of the outcome and the edge cases; it will not fill gaps on its own."
+    }
+  }
+}

@@ -38,6 +38,8 @@ node tests/usage-accounts.mjs
 node tests/usage-shell.mjs
 node tests/usage-seats.mjs
 node tests/usage-routes.mjs
+# Refresh coalesces into one child and says when it did not refresh (temp HOME).
+node tests/usage-refresh.mjs
 node tests/usage-cli.mjs
 node tests/acs-update.mjs
 # The launcher from a stranger's shell: links, install/uninstall, no curl or lsof.
@@ -60,6 +62,11 @@ node tests/zip.mjs
 node tests/export.mjs
 node tests/skill-usage.mjs
 node tests/models.mjs
+# Roles and flavor in the resolver, against the pre-roles resolver kept as a fixture.
+node tests/roles.mjs
+# …and through the server and in-process: edits, the write boundary, Describe with a fake claude (temp HOME).
+node tests/roles-routes.mjs
+node tests/roles-unit.mjs
 node tests/models-assist.mjs
 node tests/models-roots.mjs
 node tests/models-scripts.mjs
@@ -82,8 +89,10 @@ node tests/own-writes.mjs
 # The front end, in a node VM against stubbed routes: no server, no HOME.
 node tests/shell.mjs
 node tests/home.mjs
+node tests/home-refresh.mjs
 node tests/roots-ui.mjs
 node tests/batch-delete-ui.mjs
+node tests/roles-ui.mjs
 # What the registry tells the Files page (temp HOME).
 node tests/files-registry.mjs
 # The MCP route's note on a machine with no ~/.claude.json (temp HOME).
