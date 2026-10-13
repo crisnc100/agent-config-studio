@@ -314,9 +314,19 @@ try {
     ok('…and nothing of ours is written', fs.readFileSync(files.claude, 'utf8') === 'changed during the baseline\n');
     const g2 = createModelGuide({ hist: quiet });
     const p = g2.propose({ target: 'claude', action: 'install' });
-    _setAcceptHook(() => { fs.rmSync(files.claude); fs.writeFileSync(files.claude, 'changed during the baseline\n'); });
+    // Write the replacement beside the original and rename it over, so both
+    // inodes exist at once: rm-then-write lets Linux hand back the same inode.
+    let swappedIno = null;
+    const oldIno = fs.statSync(files.claude).ino;
+    _setAcceptHook(() => {
+      const tmp = files.claude + '.swap';
+      fs.writeFileSync(tmp, 'changed during the baseline\n');
+      fs.renameSync(tmp, files.claude);
+      swappedIno = fs.statSync(files.claude).ino;
+    });
     const e2 = await rejects(() => g2.accept({ id: p.id }));
     _setAcceptHook(null);
+    ok('…the swap really produced a new inode', swappedIno !== null && swappedIno !== oldIno, `${oldIno} → ${swappedIno}`);
     ok('the same bytes under a new inode → 409', e2?.status === 409 && fs.readFileSync(files.claude, 'utf8') === 'changed during the baseline\n', e2?.message);
   }
 
