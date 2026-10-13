@@ -269,8 +269,13 @@ never reads it, so new data cannot break it.
   synchronously re-resolve, re-read and compare identity and bytes, and write
   through a descriptor opened with O_NOFOLLOW and checked by fstat (or `wx`
   for a new file) — no await between the compare and the write. History
-  records the real path, the one the registry and snapshots use; its failures
-  come back as `warnings`.
+  records the accepted bytes (`history.record(…, { content })`, never a later
+  re-read) under the real path, the one the registry and snapshots use; its
+  failures come back as `warnings`. A proposal whose result would pass the
+  1 MB cap is refused (413).
+- `model-id --roles`, `--role` and `--flavor` are pinned to 939c6fd's output
+  by `tests/fixtures/model-id-golden/cases.json`, over frozen data in the same
+  folder; regenerate it only with that commit's resolver.
 - Tests: `tests/model-guide.mjs` (in-process), `tests/model-guide-routes.mjs`
   (server, temp HOME), `tests/model-guide-ui.mjs` (VM).
 
