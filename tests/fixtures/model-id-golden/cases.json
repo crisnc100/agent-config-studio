@@ -1,0 +1,102 @@
+[
+  {
+    "home": "defaults",
+    "args": [
+      "--roles"
+    ],
+    "status": 0,
+    "stdout": "role          family  id                effort  alt\nadvisor       fable   claude-fable-5-1  high    astra\nbuilder       opus    claude-opus-5-5   medium  -\ninvestigator  astra   gpt-6-astra       high    -\njudge         fable   claude-fable-5-1  high    -\nreviewer      astra   gpt-6-astra       high    -\nroles source: <RESOLVER>/lib/roles.default.json (no ~/.agent-config-studio/roles.json)\n",
+    "stderr": ""
+  },
+  {
+    "home": "defaults",
+    "args": [
+      "--flavor",
+      "fable"
+    ],
+    "status": 0,
+    "stdout": "Briefing fable: Give it the goal, the constraints and the decision you need. Ask for a verdict and the reasons, not an implementation.\nGood at: open judgment calls; weighing trade-offs; plans that need a second brain.\nWatch for: costs more per turn than the others; advises well; not meant for bulk typing.\n",
+    "stderr": ""
+  },
+  {
+    "home": "defaults",
+    "args": [
+      "--role",
+      "builder"
+    ],
+    "status": 0,
+    "stdout": "family=opus id=claude-opus-5-5 effort=medium alt=\n",
+    "stderr": ""
+  },
+  {
+    "home": "user",
+    "args": [
+      "--roles"
+    ],
+    "status": 0,
+    "stdout": "role          family  id                         effort  alt\nadvisor       fable   claude-fable-5-1           high    astra\nbuilder       sol     gpt-6-sol                  xhigh   -\ninvestigator  astra   gpt-6-astra                high    -\njudge         fable   claude-fable-5-1           high    -\nreviewer      astra   gpt-6-astra                high    fable\nscout         haiku   claude-haiku-4-5-20251001  -       -\nroles source: ~/.agent-config-studio/roles.json\n",
+    "stderr": ""
+  },
+  {
+    "home": "user",
+    "args": [
+      "--roles",
+      "--json"
+    ],
+    "status": 0,
+    "stdout": "{\n  \"roles\": {\n    \"advisor\": {\n      \"role\": \"advisor\",\n      \"family\": \"fable\",\n      \"id\": \"claude-fable-5-1\",\n      \"effort\": \"high\",\n      \"alt\": \"astra\",\n      \"altId\": \"gpt-6-astra\",\n      \"altEffort\": \"high\",\n      \"use\": [\n        \"fable\"\n      ],\n      \"ids\": [\n        \"claude-fable-5-1\"\n      ],\n      \"note\": \"scope and direction calls; advises, never builds\",\n      \"custom\": false,\n      \"provenance\": {\n        \"use\": \"default\",\n        \"effort\": \"default\",\n        \"alt\": \"default\",\n        \"note\": \"default\"\n      },\n      \"source\": \"<TMP>/home-user/.agent-config-studio/roles.json\"\n    },\n    \"builder\": {\n      \"role\": \"builder\",\n      \"family\": \"sol\",\n      \"id\": \"gpt-6-sol\",\n      \"effort\": \"xhigh\",\n      \"alt\": \"\",\n      \"altId\": \"\",\n      \"altEffort\": \"\",\n      \"use\": [\n        \"sol\",\n        \"opus\"\n      ],\n      \"ids\": [\n        \"gpt-6-sol\",\n        \"claude-opus-5-5\"\n      ],\n      \"note\": \"implements from a brief\",\n      \"custom\": false,\n      \"provenance\": {\n        \"use\": \"user\",\n        \"effort\": \"cleared\",\n        \"note\": \"default\"\n      },\n      \"source\": \"<TMP>/home-user/.agent-config-studio/roles.json\"\n    },\n    \"investigator\": {\n      \"role\": \"investigator\",\n      \"family\": \"astra\",\n      \"id\": \"gpt-6-astra\",\n      \"effort\": \"high\",\n      \"alt\": \"\",\n      \"altId\": \"\",\n      \"altEffort\": \"\",\n      \"use\": [\n        \"astra\"\n      ],\n      \"ids\": [\n        \"gpt-6-astra\"\n      ],\n      \"note\": \"evidence-first root-cause and is-it-true questions\",\n      \"custom\": false,\n      \"provenance\": {\n        \"use\": \"default\",\n        \"effort\": \"default\",\n        \"note\": \"default\"\n      },\n      \"source\": \"<TMP>/home-user/.agent-config-studio/roles.json\"\n    },\n    \"judge\": {\n      \"role\": \"judge\",\n      \"family\": \"fable\",\n      \"id\": \"claude-fable-5-1\",\n      \"effort\": \"high\",\n      \"alt\": \"\",\n      \"altId\": \"\",\n      \"altEffort\": \"\",\n      \"use\": [\n        \"fable\"\n      ],\n      \"ids\": [\n        \"claude-fable-5-1\"\n      ],\n      \"note\": \"grades finished work against its criteria\",\n      \"custom\": false,\n      \"provenance\": {\n        \"use\": \"default\",\n        \"effort\": \"default\",\n        \"note\": \"default\"\n      },\n      \"source\": \"<TMP>/home-user/.agent-config-studio/roles.json\"\n    },\n    \"reviewer\": {\n      \"role\": \"reviewer\",\n      \"family\": \"astra\",\n      \"id\": \"gpt-6-astra\",\n      \"effort\": \"high\",\n      \"alt\": \"fable\",\n      \"altId\": \"claude-fable-5-1\",\n      \"altEffort\": \"high\",\n      \"use\": [\n        \"astra\"\n      ],\n      \"ids\": [\n        \"gpt-6-astra\"\n      ],\n      \"note\": \"pipes | stars * and `ticks`\",\n      \"custom\": false,\n      \"provenance\": {\n        \"use\": \"default\",\n        \"effort\": \"default\",\n        \"note\": \"user\",\n        \"alt\": \"user\"\n      },\n      \"source\": \"<TMP>/home-user/.agent-config-studio/roles.json\"\n    },\n    \"scout\": {\n      \"role\": \"scout\",\n      \"family\": \"haiku\",\n      \"id\": \"claude-haiku-4-5-20251001\",\n      \"effort\": \"\",\n      \"alt\": \"\",\n      \"altId\": \"\",\n      \"altEffort\": \"\",\n      \"use\": [\n        \"haiku\"\n      ],\n      \"ids\": [\n        \"claude-haiku-4-5-20251001\"\n      ],\n      \"note\": \"\",\n      \"custom\": true,\n      \"provenance\": {\n        \"use\": \"user\"\n      },\n      \"source\": \"<TMP>/home-user/.agent-config-studio/roles.json\"\n    }\n  },\n  \"flavor\": {\n    \"fable\": {\n      \"likes\": [\n        \"open judgment calls\",\n        \"weighing trade-offs\",\n        \"plans that need a second brain\"\n      ],\n      \"quirks\": [\n        \"costs more per turn than the others\",\n        \"advises well; not meant for bulk typing\"\n      ],\n      \"brief\": \"Give it the goal, the constraints and the decision you need. Ask for a verdict and the reasons, not an implementation.\"\n    },\n    \"opus\": {\n      \"likes\": [\n        \"multi-file builds\",\n        \"frontend and copy\",\n        \"taste calls inside a clear spec\"\n      ],\n      \"quirks\": [\n        \"may challenge a brief it disagrees with\"\n      ],\n      \"brief\": \"Name the files, the outcome and the checks to run. Say what is out of scope.\"\n    },\n    \"sonnet\": {\n      \"likes\": [\n        \"mechanical, fully specified edits\"\n      ],\n      \"quirks\": [\n        \"weak on open-ended design\"\n      ],\n      \"brief\": \"Hand it one concrete, single-file task with the exact expected result.\"\n    },\n    \"haiku\": {\n      \"likes\": [\n        \"quick classification and short summaries\"\n      ],\n      \"quirks\": [\n        \"shallow on long or subtle context\"\n      ],\n      \"brief\": \"Keep the input short and ask one narrow question.\"\n    },\n    \"astra\": {\n      \"likes\": [\n        \"review\",\n        \"investigation\",\n        \"finding the hole in a plan\"\n      ],\n      \"quirks\": [\n        \"thorough, so slower on large diffs\"\n      ],\n      \"brief\": \"Give it the diff or the claim, the bar it must meet, and ask for findings with file:line evidence.\"\n    },\n    \"sol\": {\n      \"likes\": [\n        \"sustained implementation\",\n        \"keep going until the checks pass\"\n      ],\n      \"quirks\": [\n        \"tends to over-build without boundaries\"\n      ],\n      \"effort\": \"xhigh\"\n    },\n    \"terra\": {\n      \"likes\": [\n        \"everyday edits at lower cost\"\n      ],\n      \"quirks\": [\n        \"less depth than sol on hard problems\"\n      ],\n      \"brief\": \"Give it a bounded task with a clear done check.\"\n    },\n    \"grok\": {\n      \"likes\": [\n        \"long builds\"\n      ],\n      \"brief\": \"Spell out every file, the full shape of the outcome and the edge cases; it will not fill gaps on its own.\"\n    }\n  },\n  \"provenance\": {\n    \"roles\": {\n      \"advisor\": {\n        \"use\": \"default\",\n        \"effort\": \"default\",\n        \"alt\": \"default\",\n        \"note\": \"default\"\n      },\n      \"reviewer\": {\n        \"use\": \"default\",\n        \"effort\": \"default\",\n        \"note\": \"user\",\n        \"alt\": \"user\"\n      },\n      \"builder\": {\n        \"use\": \"user\",\n        \"effort\": \"cleared\",\n        \"note\": \"default\"\n      },\n      \"judge\": {\n        \"use\": \"default\",\n        \"effort\": \"default\",\n        \"note\": \"default\"\n      },\n      \"investigator\": {\n        \"use\": \"default\",\n        \"effort\": \"default\",\n        \"note\": \"default\"\n      },\n      \"scout\": {\n        \"use\": \"user\"\n      }\n    },\n    \"flavor\": {\n      \"fable\": {\n        \"likes\": \"default\",\n        \"quirks\": \"default\",\n        \"brief\": \"default\"\n      },\n      \"opus\": {\n        \"likes\": \"default\",\n        \"quirks\": \"default\",\n        \"brief\": \"default\"\n      },\n      \"sonnet\": {\n        \"likes\": \"default\",\n        \"quirks\": \"default\",\n        \"brief\": \"default\"\n      },\n      \"haiku\": {\n        \"likes\": \"default\",\n        \"quirks\": \"default\",\n        \"brief\": \"default\"\n      },\n      \"astra\": {\n        \"likes\": \"default\",\n        \"quirks\": \"default\",\n        \"brief\": \"default\"\n      },\n      \"sol\": {\n        \"likes\": \"default\",\n        \"quirks\": \"default\",\n        \"brief\": \"cleared\",\n        \"effort\": \"user\"\n      },\n      \"terra\": {\n        \"likes\": \"default\",\n        \"quirks\": \"default\",\n        \"brief\": \"default\"\n      },\n      \"grok\": {\n        \"likes\": \"user\",\n        \"quirks\": \"cleared\",\n        \"brief\": \"default\"\n      }\n    }\n  },\n  \"source\": \"<TMP>/home-user/.agent-config-studio/roles.json\"\n}\n",
+    "stderr": ""
+  },
+  {
+    "home": "user",
+    "args": [
+      "--role",
+      "builder"
+    ],
+    "status": 0,
+    "stdout": "family=sol id=gpt-6-sol effort=xhigh alt=\n",
+    "stderr": ""
+  },
+  {
+    "home": "user",
+    "args": [
+      "--role",
+      "reviewer",
+      "--json"
+    ],
+    "status": 0,
+    "stdout": "{\n  \"role\": \"reviewer\",\n  \"family\": \"astra\",\n  \"id\": \"gpt-6-astra\",\n  \"effort\": \"high\",\n  \"alt\": \"fable\",\n  \"altId\": \"claude-fable-5-1\",\n  \"altEffort\": \"high\",\n  \"use\": [\n    \"astra\"\n  ],\n  \"ids\": [\n    \"gpt-6-astra\"\n  ],\n  \"note\": \"pipes | stars * and `ticks`\",\n  \"custom\": false,\n  \"provenance\": {\n    \"use\": \"default\",\n    \"effort\": \"default\",\n    \"note\": \"user\",\n    \"alt\": \"user\"\n  },\n  \"source\": \"<TMP>/home-user/.agent-config-studio/roles.json\"\n}\n",
+    "stderr": ""
+  },
+  {
+    "home": "user",
+    "args": [
+      "--flavor",
+      "sol"
+    ],
+    "status": 0,
+    "stdout": "Good at: sustained implementation; keep going until the checks pass.\nWatch for: tends to over-build without boundaries.\n",
+    "stderr": ""
+  },
+  {
+    "home": "user",
+    "args": [
+      "--flavor",
+      "grok",
+      "--json"
+    ],
+    "status": 0,
+    "stdout": "{\n  \"family\": \"grok\",\n  \"flavor\": {\n    \"likes\": [\n      \"long builds\"\n    ],\n    \"brief\": \"Spell out every file, the full shape of the outcome and the edge cases; it will not fill gaps on its own.\"\n  },\n  \"provenance\": {\n    \"likes\": \"user\",\n    \"quirks\": \"cleared\",\n    \"brief\": \"default\"\n  },\n  \"text\": \"Briefing grok: Spell out every file, the full shape of the outcome and the edge cases; it will not fill gaps on its own.\\nGood at: long builds.\\n\",\n  \"source\": \"<TMP>/home-user/.agent-config-studio/roles.json\"\n}\n",
+    "stderr": ""
+  },
+  {
+    "home": "user",
+    "args": [
+      "--role",
+      "nobody"
+    ],
+    "status": 2,
+    "stdout": "family=MODEL-ID-UNRESOLVED-nobody id=MODEL-ID-UNRESOLVED-nobody effort= alt=\n",
+    "stderr": "model-id: unknown role \"nobody\" (known: advisor, reviewer, builder, judge, investigator, scout)\n"
+  }
+]

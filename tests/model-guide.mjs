@@ -26,6 +26,7 @@ const guide = await import('../lib/model-guide.js');
 const { inspect, planEdit, renderBlock, ACTIONS, createModelGuide, GUIDE_LIMITS, _setAcceptHook } = guide;
 const history = await import('../lib/history.js');
 const { lineDiff } = await import('../lib/describe.js');
+const { GOLDEN, CASES, SOURCE_FILES, runCases } = await import('./fixtures/model-id-golden.mjs');
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -104,15 +105,23 @@ try {
     const copy = mkdir('shipped');
     fs.mkdirSync(path.join(copy, 'lib'));
     for (const f of ['lib/roles.js', 'lib/models.js', 'models.default.json']) fs.copyFileSync(path.join(ROOT, f), path.join(copy, f));
+    // ESM .js outside the checkout: without this, Node 20.0 reads them as CommonJS.
+    fs.writeFileSync(path.join(copy, 'package.json'), '{"type":"module"}\n');
     fs.writeFileSync(path.join(copy, 'lib', 'roles.default.json'), '{"version":1,"roles":{"x":{"use":"nobody"}}}');
     const broken = await import(path.join(copy, 'lib', 'roles.js'));
     const bl = broken.loadRoles({ home });
     ok('R3 invalid shipped defaults: loadRoles reports it', bl.error && bl.source === null, bl.error);
     ok('…and guideText refuses', (await rejects(() => broken.guideText(bl)))?.message.includes('roles are invalid'));
 
-    const before = fs.readFileSync(path.join(ROOT, 'bin', 'model-id.mjs'), 'utf8');
-    const r1 = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'model-id.mjs'), '--roles'], { encoding: 'utf8', env: { HOME: home, PATH: process.env.PATH } });
-    ok('model-id --roles still prints its table (the CLI is not refactored)', r1.status === 0 && /^role +family +id +effort +alt$/m.test(r1.stdout) && !/Model guide/.test(r1.stdout) && before.includes('function rolesSection(R)'), r1.stderr);
+    // The CLI is byte-identical to 939c6fd, the commit before the model guide (tests/fixtures/model-id-golden.mjs).
+    const golden = JSON.parse(fs.readFileSync(path.join(GOLDEN, 'cases.json'), 'utf8'));
+    const now = runCases(Object.fromEntries(SOURCE_FILES.map((f) => [f, fs.readFileSync(path.join(ROOT, f))])));
+    ok('(the golden captures cover every case)', golden.length === CASES.length && golden.length === now.length);
+    for (let i = 0; i < golden.length; i++) {
+      const [g, n] = [golden[i], now[i]];
+      ok(`model-id ${g.args.join(' ')} (${g.home}) is byte-identical to 939c6fd: stdout, stderr and exit`,
+        n.stdout === g.stdout && n.stderr === g.stderr && n.status === g.status, JSON.stringify({ now: n, was: g }).slice(0, 400));
+    }
   }
 
   console.log('\nmodel guide: G2 — inspect');
@@ -202,9 +211,18 @@ try {
       edited: `${block.replace('reads a diff', 'y')}\n`,
       malformed: '<!-- /acs:model-guide -->\n',
     };
+    // The contract (R8), written out here rather than read from ACTIONS.
+    const EXPECTED = {
+      absent: { install: true, update: false, remove: false },
+      current: { install: false, update: false, remove: true },
+      stale: { install: false, update: true, remove: true },
+      edited: { install: false, update: true, remove: true },
+      malformed: { install: false, update: false, remove: false },
+    };
+    ok('the table covers every action the module has', JSON.stringify(Object.keys(ACTIONS).sort()) === JSON.stringify(['install', 'remove', 'update']));
     for (const [status, text] of Object.entries(texts)) {
-      for (const action of Object.keys(ACTIONS)) {
-        const allowed = ACTIONS[action].includes(status);
+      for (const action of ['install', 'update', 'remove']) {
+        const allowed = EXPECTED[status][action];
         const e = await rejects(() => planEdit(B(text), action, body));
         ok(`${status} × ${action} → ${allowed ? 'allowed' : '409'}`, allowed ? e === null : e?.status === 409, e?.message);
       }
@@ -317,7 +335,24 @@ try {
     const pa = g.propose({ target: 'claude', action: 'install' });
     const pb = g.propose({ target: 'codex', action: 'install' });
     ok('a proposal on a shared file says so', JSON.stringify(pa.sharedWith) === '["codex"]');
-    const [ra, rb] = await Promise.allSettled([g.accept({ id: pa.id }), g.accept({ id: pb.id })]);
+    // The first baseline is held open: the second accept must not even start until the first is done.
+    const events = [];
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    let n = 0;
+    const held = {
+      recordBaseline: async () => { const k = ++n; events.push(`baseline ${k} start`); if (k === 1) await gate; events.push(`baseline ${k} end`); },
+      record: async () => { events.push('record'); },
+    };
+    const gq = createModelGuide({ hist: held });
+    const qa = gq.propose({ target: 'claude', action: 'install' });
+    const qb = gq.propose({ target: 'codex', action: 'install' });
+    const both = Promise.allSettled([gq.accept({ id: qa.id }), gq.accept({ id: qb.id })]);
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    ok('while the first baseline is held, the second accept has not started', JSON.stringify(events) === '["baseline 1 start"]', JSON.stringify(events));
+    release();
+    const [ra, rb] = await both;
+    ok('…it starts only after the first wrote and recorded', JSON.stringify(events) === '["baseline 1 start","baseline 1 end","record","baseline 2 start","baseline 2 end"]', JSON.stringify(events));
     ok('two accepts on aliases of one file queue: one writes, the other 409s', ra.status === 'fulfilled' && rb.status === 'rejected' && rb.reason.status === 409, `${ra.status} ${rb.status} ${rb.reason?.message}`);
     ok('…and the file holds exactly one block', (fs.readFileSync(files.claude, 'utf8').match(/acs:model-guide v1/g) || []).length === 1);
     ok('the link is still a link', fs.lstatSync(files.codex).isSymbolicLink());
@@ -360,6 +395,11 @@ try {
     ok('a folder in place of the file → error: directory', by.grok.status === 'error' && by.grok.reason === 'directory', JSON.stringify(by.grok));
     ok('over 1 MB → error: too large', by.claude.status === 'error' && by.claude.reason === 'too-large', JSON.stringify(by.claude));
     ok('R5 not UTF-8 → its own status, no proposals', by.codex.status === 'not-utf8' && (await rejects(() => g.propose({ target: 'codex', action: 'install' })))?.status === 409);
+    fs.writeFileSync(files.claude, `${'x'.repeat(GUIDE_LIMITS.fileBytes - 100)}\n`);
+    const near = g.status().targets.find((t) => t.key === 'claude');
+    const grow = await rejects(() => g.propose({ target: 'claude', action: 'install' }));
+    ok('a file just under 1 MB reads fine, but a guide that would take it over is refused at propose', near.status === 'absent' && grow?.status === 413 && /at most 1 MB/.test(grow.message) && grow.payload.reason === 'too-large', grow?.message);
+    ok('…and nothing was written', fs.statSync(files.claude).size === GUIDE_LIMITS.fileBytes - 99);
     fs.writeFileSync(files.claude, 'ok\n');
     fs.chmodSync(files.claude, 0o000);
     const perm = g.status().targets.find((t) => t.key === 'claude');
@@ -399,10 +439,36 @@ try {
     ok('the history entry survives a following snapshot', tip === fs.readFileSync(real, 'utf8'));
     ok('…as does the created file\'s', (await history.contentAt(files.claude, 'HEAD')) === fs.readFileSync(files.claude, 'utf8'));
 
+    // History busy, and an editor writes while the record waits: the commit holds the accepted bytes.
+    let edited = null;
+    const busy = {
+      recordBaseline: (f, m) => history.recordBaseline(f, m),
+      record: async (f, m, o) => {
+        const hold = history.snapshotAll('busy elsewhere');
+        fs.appendFileSync(files.claude, 'typed while history was busy\n');
+        edited = fs.readFileSync(files.claude, 'utf8');
+        await hold;
+        return history.record(f, m, o);
+      },
+    };
+    const gb = createModelGuide({ hist: busy });
+    const pu = gb.propose({ target: 'claude', action: 'remove' });
+    const rb = await gb.accept({ id: pu.id });
+    const committed = rb.sha ? await history.contentAt(files.claude, rb.sha).catch(() => null) : null;
+    ok('an edit landing while history is busy is not committed as the guide\'s write', rb.saved && committed === pu.proposed && edited !== pu.proposed && edited.endsWith('typed while history was busy\n'), JSON.stringify({ committed: committed?.slice(-60), proposed: pu.proposed.slice(-60) }));
+    ok('…the commit carries the model guide message', (await history.logFor(files.claude))[0]?.subject === `model guide: remove in ~/.claude/CLAUDE.md`);
+    ok('…and the live file keeps the editor\'s bytes', fs.readFileSync(files.claude, 'utf8') === edited);
+    fs.writeFileSync(files.claude, 'written by another caller\n');
+    const plain = await history.record(files.claude, 'a caller that names no content');
+    ok('history.record without content still reads the live file (other callers unchanged)', plain && (await history.contentAt(files.claude, plain)) === 'written by another caller\n');
+    fs.writeFileSync(files.claude, '');
+    const gp = createModelGuide({ hist: history });
+    await gp.accept({ id: gp.propose({ target: 'claude', action: 'install' }).id });
+
     const failing = { recordBaseline: async () => { throw new Error('baseline exploded'); }, record: async () => { throw new Error('history is read-only'); } };
     const gf = createModelGuide({ hist: failing });
     const r = await gf.accept({ id: gf.propose({ target: 'claude', action: 'remove' }).id });
-    ok('a history failure is a warning, the write still lands', r.saved && r.warnings.some((w) => /not versioned first: baseline exploded/.test(w)) && /history is read-only/.test(r.historyError) && fs.readFileSync(files.claude, 'utf8') === '');
+    ok('a history failure is a warning, the write still lands', r.saved && r.warnings.some((w) => /not versioned first: baseline exploded/.test(w)) && /history is read-only/.test(r.historyError) && fs.readFileSync(files.claude, 'utf8') === '', JSON.stringify({ warnings: r.warnings, file: fs.readFileSync(files.claude, 'utf8').slice(0, 80) }));
   }
 } finally {
   _setAcceptHook(null);

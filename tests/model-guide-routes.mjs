@@ -5,7 +5,7 @@
  * all three targets, the refusals, and history. Nothing outside the temp
  * HOME is written.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -75,7 +75,10 @@ fs.writeFileSync(files.claude, '# My rules\n\nBe brief.\n');
 fs.writeFileSync(path.join(home, '.agents', 'AGENTS.md'), 'codex notes\r\n');
 fs.symlinkSync(path.join(home, '.agents', 'AGENTS.md'), files.codex);
 const bytes = (f) => { try { return fs.readFileSync(f); } catch { return null; } };
-const historyCommits = () => { try { return fs.readdirSync(path.join(home, '.agent-config-studio', 'history', '.git', 'objects')).length; } catch { return 0; } };
+const historyCommits = () => {
+  const r = spawnSync('git', ['-C', path.join(home, '.agent-config-studio', 'history'), 'rev-list', '--count', 'HEAD'], { encoding: 'utf8' });
+  return r.status === 0 ? Number(r.stdout.trim()) : 0;
+};
 
 const srv = await startServer(home);
 const get = (route, headers) => call(srv.base, 'GET', route, undefined, headers);
@@ -95,6 +98,7 @@ try {
     await sleep(200);
     const live = (await post('/api/model-guide/propose', { target: 'claude', action: 'install' })).body;
     const before = { claude: bytes(files.claude), codex: bytes(files.codex), mtime: fs.statSync(files.claude).mtimeMs, commits: historyCommits() };
+    ok('(history has its startup commit to count from)', before.commits >= 1, String(before.commits));
     const bads = [
       ['a foreign origin', { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' }],
       ['another localhost port', { origin: 'http://localhost:5173', 'sec-fetch-site': 'same-site' }],
@@ -142,8 +146,10 @@ try {
 
     const p = sneaky.body;
     ok('propose returns current and proposed in full, the base and the status', p.proposed.startsWith('# My rules\n\nBe brief.\n\n<!-- acs:model-guide v1 sep=1 sha256:') && p.status === 'absent' && /^sha256:[0-9a-f]{64}$/.test(p.base) && p.newFile === false);
+    const commitsBefore = historyCommits();
     const acc = await post('/api/model-guide/accept', { id: p.id });
     ok('accept writes exactly the reviewed bytes', acc.status === 200 && acc.body.saved && fs.readFileSync(files.claude, 'utf8') === p.proposed, acc.text);
+    ok('G5 …one more commit in history', historyCommits() === commitsBefore + 1, `${commitsBefore} → ${historyCommits()}`);
     ok('G5 …and it is in history', acc.body.sha && (await get(`/api/history?path=${encodeURIComponent(files.claude)}`)).body.commits.some((c) => /model guide: install/.test(c.subject)));
     ok('a used id → 410', (await post('/api/model-guide/accept', { id: p.id })).status === 410);
 
