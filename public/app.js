@@ -3431,12 +3431,44 @@ async function openUsage() {
   }, 60_000);
 }
 
+/**
+ * POST /api/usage/refresh, shared: Home and Usage call this, and a click while
+ * one is in flight joins it rather than sending another (the server coalesces
+ * too, across tabs). It never hangs: past its timeoutMs it settles as a
+ * timeout. Resolves `{ ok, data?, error? }` — ok only when the server says the
+ * reading is fresh — and bumps USAGE_REFRESH.gen when it lands, so a GET that
+ * started before it is known to be older.
+ */
+const USAGE_REFRESH = { inflight: null, gen: 0, timeoutMs: 45_000 };
+function refreshUsage() {
+  if (USAGE_REFRESH.inflight) return USAGE_REFRESH.inflight;
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ ok: false, error: `the refresh did not answer within ${USAGE_REFRESH.timeoutMs / 1000}s` }), USAGE_REFRESH.timeoutMs);
+  });
+  const req = api('POST', '/api/usage/refresh').then(
+    (data) => ({ ok: data.fresh !== false && !data.error, data, error: data.error || (data.fresh === false ? 'the reading was not refreshed' : null) }),
+    (e) => ({ ok: false, error: e.message }),
+  );
+  const run = Promise.race([req, timeout]).then((r) => {
+    clearTimeout(timer);
+    USAGE_REFRESH.gen++;
+    return r;
+  });
+  USAGE_REFRESH.inflight = run;
+  run.finally(() => { if (USAGE_REFRESH.inflight === run) USAGE_REFRESH.inflight = null; });
+  return run;
+}
+
+let usagePaintGen = 0;
 async function paintUsage() {
   const c = $('content');
+  // Only the newest paint may land: the 60 s timer and a Refresh can overlap.
+  const gen = ++usagePaintGen;
   let u;
   try { u = await api('GET', '/api/usage'); }
-  catch (e) { c.innerHTML = `<div class="scope"><div class="scope-sub">${esc(e.message)}</div></div>`; return; }
-  if (S.view !== 'usage') return;   // the view changed while the request was in flight
+  catch (e) { if (gen === usagePaintGen) c.innerHTML = `<div class="scope"><div class="scope-sub">${esc(e.message)}</div></div>`; return; }
+  if (S.view !== 'usage' || gen !== usagePaintGen) return;   // the view changed, or a newer paint started
 
   const seats = rankSeats(u.seats);
 
@@ -3452,7 +3484,9 @@ async function paintUsage() {
     refresh.disabled = true; refresh.textContent = 'Refreshing…';
     // The reading Claude needs a token for is taken by a child process, so the
     // credential never enters the studio. It can take a second.
-    try { await api('POST', '/api/usage/refresh'); } catch (e) { notice('error', e.message); }
+    const r = await refreshUsage();
+    if (!r.ok) notice('error', `Usage was not refreshed: ${r.error}. Showing the last stored reading.`);
+    HOME.inflight.usage = null;
     await paintUsage();
   };
   actions.appendChild(refresh);
@@ -3644,6 +3678,9 @@ function revealUsageFocus(box) {
 const HOME = {
   src: {},             // source id -> { state, data, error }
   inflight: {},        // source id -> its pending request, shared by re-renders
+  refreshing: false,   // Refresh usage is in flight (the button shows it, across re-renders)
+  refreshNote: null,   // why the last Refresh usage did not refresh, shown in the card
+  refreshBtn: null,
   settledAt: 0,        // when every source of the last full load answered
   gen: 0,              // bumped by every render and by setup's Finish: an answer for an older one is dropped
   body: {},            // card id -> its body element, for the current render
@@ -3671,7 +3708,11 @@ function renderHome(c) {
   addBtn.onclick = () => goUsage({ add: true });
   const usageBtn = el('button', 'btn ghost', 'Open Usage');
   usageBtn.onclick = () => goUsage(null);
-  accounts.tools.append(addBtn, usageBtn);
+  const refreshUsageBtn = el('button', 'btn ghost home-refresh-usage');
+  HOME.refreshBtn = refreshUsageBtn;
+  paintRefreshButton();
+  refreshUsageBtn.onclick = homeRefreshUsage;
+  accounts.tools.append(refreshUsageBtn, addBtn, usageBtn);
 
   const attention = homeCard('attention', 'Needs attention');
   const refresh = el('button', 'btn ghost', 'Refresh');
@@ -3749,10 +3790,14 @@ function loadHome() {
         const req = api('GET', HOME_ROUTES[id])
           .then(homeSource, (e) => ({ state: 'error', error: e.message }))
           .finally(() => { if (HOME.inflight[id] === req) HOME.inflight[id] = null; });
+        req.refreshGen = USAGE_REFRESH.gen;
         HOME.inflight[id] = req;
       }
-      return HOME.inflight[id].then((res) => {
+      const req = HOME.inflight[id];
+      return req.then((res) => {
         if (!mine()) return false;
+        // A usage reading asked for before the last Refresh landed is older than what it painted.
+        if (id === 'usage' && req.refreshGen !== USAGE_REFRESH.gen) return true;
         HOME.src[id] = res;
         if (id === 'models' && res.state === 'ok') paintModelsBadge(res.data.pending || 0);
         paintHome(HOME_CARDS_OF[id]);
@@ -3807,7 +3852,48 @@ function homeAction(action) {
   viewById(action.view).open();
 }
 
+function paintRefreshButton() {
+  const b = HOME.refreshBtn;
+  if (!b) return;
+  b.innerHTML = '';
+  if (HOME.refreshing) b.appendChild(el('span', 'spinner'));
+  b.appendChild(document.createTextNode(HOME.refreshing ? 'Refreshing…' : 'Refresh usage'));
+  b.disabled = HOME.refreshing;
+  b.setAttribute('aria-busy', HOME.refreshing ? 'true' : 'false');
+}
+
+/**
+ * Home's Refresh usage: one request per click (a click while busy does
+ * nothing), the card repainted from the answer, and any failure — the
+ * server's "not fresh", an HTTP error, or the client timeout — said in the
+ * card, never a spinner left turning.
+ */
+async function homeRefreshUsage() {
+  if (HOME.refreshing) return;
+  HOME.refreshing = true;
+  HOME.refreshNote = null;
+  paintRefreshButton();
+  paintHome(['accounts']);
+  const r = await refreshUsage();
+  HOME.refreshing = false;
+  HOME.inflight.usage = null;
+  if (r.data) {
+    // The stored reading is still a reading; whether it is fresh is the note's to say.
+    const { fresh, error, at, ...reading } = r.data;
+    HOME.src.usage = homeSource(reading);
+  }
+  HOME.refreshNote = r.ok ? null : `Not refreshed: ${r.error}.${r.data ? ' Showing the last stored reading.' : ''}`;
+  paintRefreshButton();
+  paintHome(HOME_CARDS_OF.usage);
+}
+
 function paintAccounts(body) {
+  if (HOME.refreshNote) {
+    const n = el('div', 'home-state home-failed home-refresh-note');
+    n.setAttribute('role', 'alert');
+    n.appendChild(el('span', null, HOME.refreshNote));
+    body.appendChild(n);
+  }
   const src = HOME.src.usage;
   if (!src || src.state === 'loading') return body.appendChild(homeLoading('Reading usage…'));
   if (src.state === 'error') return body.appendChild(homeFailed('Usage', src.error));

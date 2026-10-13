@@ -63,6 +63,7 @@ jobs:
           node tests/usage-identity.mjs
           node tests/usage-seats.mjs
           node tests/usage-routes.mjs
+          node tests/usage-refresh.mjs
           node tests/usage-cli.mjs
           node tests/roots.mjs
           node tests/roots-routes.mjs
@@ -93,6 +94,7 @@ jobs:
           node tests/roles-routes.mjs
           node tests/roles-unit.mjs
           node tests/roles-ui.mjs
+          node tests/home-refresh.mjs
           node tests/assist-containment.mjs
           node tests/acs-update.mjs
           node tests/acs-launcher.mjs

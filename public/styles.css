@@ -1244,3 +1244,7 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 @media (max-width: 700px) {
   .roles-table th:nth-child(4), .roles-table td:nth-child(4) { display: none; }
 }
+
+/* ── home: Refresh usage ─────────────────────────────────────────────── */
+.home-refresh-usage .spinner { margin-right: 6px; }
+.home-refresh-note { margin-bottom: 8px; color: var(--amber); }

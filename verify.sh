@@ -38,6 +38,8 @@ node tests/usage-accounts.mjs
 node tests/usage-shell.mjs
 node tests/usage-seats.mjs
 node tests/usage-routes.mjs
+# Refresh coalesces into one child and says when it did not refresh (temp HOME).
+node tests/usage-refresh.mjs
 node tests/usage-cli.mjs
 node tests/acs-update.mjs
 # The launcher from a stranger's shell: links, install/uninstall, no curl or lsof.
@@ -87,6 +89,7 @@ node tests/own-writes.mjs
 # The front end, in a node VM against stubbed routes: no server, no HOME.
 node tests/shell.mjs
 node tests/home.mjs
+node tests/home-refresh.mjs
 node tests/roots-ui.mjs
 node tests/batch-delete-ui.mjs
 node tests/roles-ui.mjs
