@@ -9,14 +9,22 @@
  *   model-id --lint [paths]  raw ids / versioned names in the skill scope; exit 1 on any
  *   model-id --sidecars      ids in CLI-owned files that are not current registry values
  *   model-id --install       copy this resolver out of the checkout and link ~/.local/bin/model-id
+ *   model-id --role <name>   family=… id=… effort=… alt=…  (add --json for the whole role)
+ *   model-id --flavor <fam>  how to brief that family, as plain text
+ *   model-id --roles         every role → family, id, effort, alt
  *
  * A failed resolution NEVER prints an empty string. It exits 1, says why on
  * stderr, and prints MODEL-ID-UNRESOLVED-<name> — an id every CLI rejects
  * loudly — so an unchecked `-m "$(model-id x)"` cannot fall through to a CLI's
  * own default model.
  *
- * Imports lib/models.js only. Never lib/harness.js: that module sweeps temp
- * files at import, and this runs from every skill.
+ * The role flags (lib/roles.js) exit 2 on any failure instead, so a caller can
+ * tell "no such role" from the old resolver's usage error; --role still prints
+ * the unresolved id in place of every value.
+ *
+ * Imports lib/models.js, and lib/roles.js only when a role flag asks for it,
+ * so a family lookup never depends on roles. Never lib/harness.js: that
+ * module sweeps temp files at import, and this runs from every skill.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -61,6 +69,14 @@ function install() {
     fs.writeFileSync(tmp, body, { mode });
     fs.renameSync(tmp, dest);
   };
+  // The roles pair before the entry point that loads it. A source without
+  // them installs a copy that resolves families and refuses role flags.
+  const rolesSrc = path.join(src, 'lib', 'roles.js');
+  const rolesDefaults = path.join(src, 'lib', 'roles.default.json');
+  if (fs.existsSync(rolesSrc)) put('lib/roles.js', fs.readFileSync(rolesSrc));
+  else fs.rmSync(path.join(resolver, 'lib', 'roles.js'), { force: true });
+  if (fs.existsSync(rolesDefaults)) put('lib/roles.default.json', fs.readFileSync(rolesDefaults));
+  else fs.rmSync(path.join(resolver, 'lib', 'roles.default.json'), { force: true });
   put('bin/model-id.mjs', fs.readFileSync(path.join(src, 'bin', 'model-id.mjs')));
   put('lib/models.js', fs.readFileSync(path.join(src, 'lib', 'models.js')));
   put('models.default.json', fs.readFileSync(DEFAULTS_PATH));
@@ -101,9 +117,94 @@ function install() {
   process.stdout.write(`installed ${tilde(resolver)}\nlauncher  ${tilde(launcher)}\nlinked    ${tilde(link)} → ${tilde(launcher)}\n`);
 }
 
-const [first, ...rest] = args;
+/** lib/roles.js, or why this copy has none. */
+async function rolesLib() {
+  try { return await import('../lib/roles.js'); }
+  catch (e) { return { missing: `this resolver has no roles support (${e.code || e.message}) — run: acs install-model-id` }; }
+}
 
-if (first === '--install') {
+/** Every role, one row each, or the reason there are none. */
+function rolesRows(R) {
+  if (R.missing) return { error: R.missing };
+  const { loadRoles, resolveRole } = R;
+  const loaded = loadRoles();
+  if (loaded.error) return { error: loaded.error };
+  const rows = Object.keys(loaded.roles).sort().map((name) => {
+    const r = resolveRole(name);
+    return r.error ? [name, '?', `(${r.error})`, '', ''] : [name, r.family, r.id, r.effort || '-', r.alt || '-'];
+  });
+  return { rows, failed: rows.some((r) => r[1] === '?'), source: loaded.source };
+}
+
+function rolesSection(R) {
+  const { rows, error, failed, source } = rolesRows(R);
+  if (error) return { error };
+  const all = [['role', 'family', 'id', 'effort', 'alt'], ...rows];
+  const w = all[0].map((_, i) => Math.max(...all.map((r) => r[i].length)));
+  const lines = all.map((r) => r.map((c, i) => (i === r.length - 1 ? c : c.padEnd(w[i]))).join('  ').trimEnd());
+  const note = source === R.ROLES_DEFAULTS_PATH ? ` (no ${tilde(R.rolesUserPath())})` : '';
+  return { text: `${lines.join('\n')}\nroles source: ${tilde(source)}${note}\n`, failed };
+}
+
+/** An unchecked `eval "$(model-id --role x)"` still gets ids every CLI rejects. */
+function unresolvedRole(name) {
+  const u = `MODEL-ID-UNRESOLVED-${name.replace(/[^A-Za-z0-9._-]/g, '_') || 'missing'}`;
+  return `family=${u} id=${u} effort= alt=\n`;
+}
+
+/** --role / --flavor / --roles, with --json anywhere among them. */
+function rolesCli(argv, R) {
+  const die = (why, stdout = '') => {
+    process.stderr.write(`model-id: ${why}\n`);
+    process.stdout.write(stdout);
+    process.exit(2);
+  };
+  const opts = { json: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--json') opts.json = true;
+    else if (a === '--roles') opts.roles = true;
+    else if (a === '--role' || a === '--flavor') {
+      const v = argv[++i];
+      if (v === undefined || v.startsWith('-')) die(`${a} needs a name`);
+      opts[a.slice(2)] = v;
+    } else die(`unexpected argument ${JSON.stringify(a)} — the role flags are: --role <name> [--json] | --flavor <family> [--json] | --roles [--json]`);
+  }
+  if ([opts.role, opts.flavor, opts.roles].filter((v) => v !== undefined).length !== 1) {
+    die('ask one thing: --role <name> [--json] | --flavor <family> [--json] | --roles [--json]');
+  }
+  if (R.missing) die(R.missing, opts.role !== undefined && !opts.json ? unresolvedRole(opts.role) : '');
+  const { loadRoles, resolveFlavor, resolveRole } = R;
+  if (opts.role !== undefined) {
+    const r = resolveRole(opts.role);
+    if (r.error) die(r.error, opts.json ? '' : unresolvedRole(opts.role));
+    if (opts.json) process.stdout.write(JSON.stringify(r, null, 2) + '\n');
+    else process.stdout.write(`family=${r.family} id=${r.id} effort=${r.effort} alt=${r.alt}\n`);
+  } else if (opts.flavor !== undefined) {
+    const f = resolveFlavor(opts.flavor);
+    if (f.error) die(f.error);
+    if (opts.json) process.stdout.write(JSON.stringify(f, null, 2) + '\n');
+    else process.stdout.write(f.text);
+  } else if (opts.json) {
+    const loaded = loadRoles();
+    if (loaded.error) die(`roles are invalid — ${loaded.error}`);
+    const roles = Object.fromEntries(Object.keys(loaded.roles).sort().map((n) => [n, resolveRole(n)]));
+    process.stdout.write(JSON.stringify({ roles, flavor: loaded.flavor, provenance: loaded.provenance, source: loaded.source }, null, 2) + '\n');
+    if (Object.values(roles).some((r) => r.error)) process.exit(2);
+  } else {
+    const s = rolesSection(R);
+    if (s.error) die(R.missing || `roles are invalid — ${s.error}`);
+    process.stdout.write(s.text);
+    if (s.failed) process.exit(2);
+  }
+}
+
+const [first, ...rest] = args;
+const ROLE_FLAGS = new Set(['--role', '--flavor', '--roles']);
+
+if (ROLE_FLAGS.has(first) || (first === '--json' && rest.some((a) => ROLE_FLAGS.has(a)))) {
+  rolesCli(args, await rolesLib());
+} else if (first === '--install') {
   install();
 } else if (first === '--json') {
   const r = registryOrDie();
@@ -113,6 +214,12 @@ if (first === '--install') {
   const w = Math.max(...Object.keys(r.registry.models).map((k) => k.length));
   for (const [k, v] of Object.entries(r.registry.models)) process.stdout.write(`${k.padEnd(w)}  ${v}\n`);
   process.stdout.write(`\nsource: ${tilde(r.source)}${r.source === DEFAULTS_PATH ? ` (no ${tilde(userPath())})` : ''}\n`);
+  // Appended after the existing section, never interleaved: a parser of the
+  // lines above still sees them byte for byte.
+  const R = await rolesLib();
+  const s = rolesSection(R);
+  if (s.error) process.stderr.write(`model-id: ${R.missing || `roles are invalid — ${s.error}`}\n`);
+  else process.stdout.write(`\n${s.text}`);
 } else if (first === '--lint') {
   const { files, hits } = lint(rest);
   for (const h of hits) process.stdout.write(`${tilde(h.file)}:${h.line}: ${h.match}  — ${h.text ?? ''}\n`);
