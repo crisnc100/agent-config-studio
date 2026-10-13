@@ -37,6 +37,8 @@ import {
   createModelsState, setModel, resetModel, dismiss, applySidecar, whereUsed,
 } from './lib/models-panel.js';
 import { loadRegistry } from './lib/models.js';
+import { rolesView, setRole, resetRole, deleteRole, setFlavor, resetFlavor } from './lib/roles-panel.js';
+import { createDescribe, describeBackend, DESCRIBE_LIMITS } from './lib/describe.js';
 import * as memoryOps from './lib/memory-ops.js';
 import { contextMap, contextFile } from './lib/context-map.js';
 import { removeBatch } from './lib/batch-delete.js';
@@ -576,6 +578,8 @@ export function createApp(opts = {}) {
     refreshCodex: opts.refreshCodexCatalogs || refreshCodexCatalogs,
   });
 
+  const describer = createDescribe();
+
   /** A family the registry knows, or a 400 — never a path or free text. */
   const knownFamily = (family) => {
     if (typeof family !== 'string' || !Object.hasOwn(loadRegistry().defaults.models, family)) {
@@ -1088,6 +1092,59 @@ export function createApp(opts = {}) {
   'POST /api/models/sidecar': async (req) => {
     const { kind, from, to, mtime } = await readBody(req);
     return applySidecar({ kind, from, to, mtime });
+  },
+
+  /**
+   * Roles and flavor (lib/roles-panel.js, lib/describe.js). Every one of these
+   * is strict same-origin, GET included, and refuses before reading a body,
+   * spawning or writing. Each write names the base it was made against.
+   */
+  'GET /api/models/roles': async (req) => {
+    requireStrict(req);
+    const rows = (await models.view()).rows;
+    return { ...rolesView({ modelRows: rows }), describe: { ...describeBackend({ probe: false }), running: describer.running, limits: DESCRIBE_LIMITS } };
+  },
+  'POST /api/models/roles/set': async (req) => {
+    requireStrict(req);
+    const { name, fields, base } = await objectBody(req);
+    return setRole({ name, fields, base });
+  },
+  'POST /api/models/roles/reset': async (req) => {
+    requireStrict(req);
+    const { name, base } = await objectBody(req);
+    return resetRole({ name, base });
+  },
+  'POST /api/models/roles/delete': async (req) => {
+    requireStrict(req);
+    const { name, base } = await objectBody(req);
+    return deleteRole({ name, base });
+  },
+  'POST /api/models/flavor/set': async (req) => {
+    requireStrict(req);
+    const { family, fields, base } = await objectBody(req);
+    return setFlavor({ family, fields, base });
+  },
+  'POST /api/models/flavor/reset': async (req) => {
+    requireStrict(req);
+    const { family, base } = await objectBody(req);
+    return resetFlavor({ family, base });
+  },
+  'POST /api/models/roles/describe': async (req) => {
+    requireStrict(req);
+    const { description } = await objectBody(req);
+    return describer.describe({ description });
+  },
+  'POST /api/models/roles/describe/cancel': async (req) => {
+    requireStrict(req);
+    return describer.cancel();
+  },
+  'POST /api/models/roles/proposal/accept': async (req) => {
+    requireStrict(req);
+    return describer.accept({ id: (await objectBody(req)).id });
+  },
+  'POST /api/models/roles/proposal/reject': async (req) => {
+    requireStrict(req);
+    return describer.reject({ id: (await objectBody(req)).id });
   },
 
   /** The Assist picker alone, without the file registry — what a model-registry edit changes. */

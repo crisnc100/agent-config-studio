@@ -89,6 +89,9 @@ jobs:
           node tests/no-personal-paths.mjs
           node tests/readme.mjs
           node tests/models-roots.mjs
+          node tests/roles.mjs
+          node tests/roles-routes.mjs
+          node tests/roles-unit.mjs
           node tests/assist-containment.mjs
           node tests/acs-update.mjs
           node tests/acs-launcher.mjs

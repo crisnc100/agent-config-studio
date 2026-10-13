@@ -60,6 +60,11 @@ node tests/zip.mjs
 node tests/export.mjs
 node tests/skill-usage.mjs
 node tests/models.mjs
+# Roles and flavor in the resolver, against the pre-roles resolver kept as a fixture.
+node tests/roles.mjs
+# …and through the server and in-process: edits, the write boundary, Describe with a fake claude (temp HOME).
+node tests/roles-routes.mjs
+node tests/roles-unit.mjs
 node tests/models-assist.mjs
 node tests/models-roots.mjs
 node tests/models-scripts.mjs
