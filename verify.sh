@@ -89,6 +89,7 @@ node tests/shell.mjs
 node tests/home.mjs
 node tests/roots-ui.mjs
 node tests/batch-delete-ui.mjs
+node tests/roles-ui.mjs
 # What the registry tells the Files page (temp HOME).
 node tests/files-registry.mjs
 # The MCP route's note on a machine with no ~/.claude.json (temp HOME).
