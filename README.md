@@ -459,7 +459,7 @@ model-id --roles
   cleared).
 - `--flavor <family>` prints what the family is good at, its quirks and how to
   brief it, as plain text for a delegation brief.
-- `--table` lists the roles after the families.
+- `--table` is unchanged: families only. Roles are listed by `--roles`.
 - An unknown role or family, or an invalid `roles.json`, exits 2 and says why;
   `--role` then prints `MODEL-ID-UNRESOLVED-<name>` in place of every value. A
   family call keeps its old behaviour (exit 1).
@@ -472,11 +472,12 @@ retiring, gone, or has a malformed id.
 In the Models panel, the **Roles** table edits and resets each role (your own
 roles can be added and deleted), and each family's row edits its flavor. Every
 save is versioned in history and refused if `roles.json` changed since the
-panel read it.
+panel read it. A field the form does not know is refused, never dropped.
 
 **Describe your models** takes a plain-language description and has Claude,
 at the Assist registry's default model and with no tools at all, turn it into
-a proposed `roles.json`. The reply must be exactly one JSON object that passes
+a proposed `roles.json`. The reply must be exactly one JSON object (one code
+fence labelled json around it is allowed, no other) that passes
 the same checks as a hand edit; you see the whole change as a diff and nothing
 is written until you accept it. Flavor text becomes part of the instructions
 other agents are briefed with, so read a proposal before accepting it — it is

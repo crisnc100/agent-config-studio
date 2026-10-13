@@ -3453,6 +3453,13 @@ function refreshUsage() {
   const run = Promise.race([req, timeout]).then((r) => {
     clearTimeout(timer);
     USAGE_REFRESH.gen++;
+    // Home's cached reading follows every refresh, whichever view asked for it.
+    HOME.inflight.usage = null;
+    if (r.data) {
+      // The stored reading is still a reading; whether it is fresh is the caller's to say.
+      const { fresh, error, at, ...reading } = r.data;
+      HOME.src.usage = homeSource(reading);
+    }
     return r;
   });
   USAGE_REFRESH.inflight = run;
@@ -3486,7 +3493,6 @@ async function paintUsage() {
     // credential never enters the studio. It can take a second.
     const r = await refreshUsage();
     if (!r.ok) notice('error', `Usage was not refreshed: ${r.error}. Showing the last stored reading.`);
-    HOME.inflight.usage = null;
     await paintUsage();
   };
   actions.appendChild(refresh);
@@ -3876,12 +3882,6 @@ async function homeRefreshUsage() {
   paintHome(['accounts']);
   const r = await refreshUsage();
   HOME.refreshing = false;
-  HOME.inflight.usage = null;
-  if (r.data) {
-    // The stored reading is still a reading; whether it is fresh is the note's to say.
-    const { fresh, error, at, ...reading } = r.data;
-    HOME.src.usage = homeSource(reading);
-  }
   HOME.refreshNote = r.ok ? null : `Not refreshed: ${r.error}.${r.data ? ' Showing the last stored reading.' : ''}`;
   paintRefreshButton();
   paintHome(HOME_CARDS_OF.usage);
@@ -4414,8 +4414,12 @@ function sidecarStrip() {
 /** "yours" for a field the user file sets or clears, "default" otherwise. */
 const fieldSource = (prov, k) => (prov?.[k] === 'user' || prov?.[k] === 'cleared' ? 'yours' : 'default');
 
-/** One write to roles.json, against the base the panel last read; a 409 reloads it. */
-async function rolesWrite(path, body, okText) {
+/**
+ * One write to roles.json, against the base the panel last read; a 409 reloads
+ * it. `done` runs on success BEFORE the repaint — a draft it clears must not
+ * be painted back into the editor, or the next Save resubmits it.
+ */
+async function rolesWrite(path, body, okText, done) {
   let r;
   try { r = await api('POST', path, { ...body, base: M.roles?.base }); }
   catch (e) {
@@ -4426,6 +4430,7 @@ async function rolesWrite(path, body, okText) {
   if (r.unchanged) notice('ok', 'Nothing to change.');
   else notice('ok', okText + (r.warnings?.length ? ` (${r.warnings.join(' ')})` : ''));
   M.where = {};
+  done?.();
   await loadRoles();
   return true;
 }
@@ -4542,10 +4547,10 @@ function roleEditor(role) {
   save.onclick = async () => {
     const name = role ? role.name : d.name.trim();
     const fields = { use: d.use.split(',').map((x) => x.trim()).filter(Boolean), effort: d.effort, alt: d.alt, note: d.note.trim() };
-    if (await rolesWrite('/api/models/roles/set', { name, fields }, `Role ${name} saved.`)) {
+    await rolesWrite('/api/models/roles/set', { name, fields }, `Role ${name} saved.`, () => {
       delete M.roleDrafts[key];
       if (!role) M.adding = false;
-    }
+    });
   };
   bar.appendChild(save);
   if (role && !role.custom) {
@@ -4553,7 +4558,7 @@ function roleEditor(role) {
     const yours = Object.values(role.provenance || {}).some((p) => p !== 'default');
     reset.disabled = !!R.error || !yours;
     reset.title = yours ? 'Remove your fields; the default role comes back' : 'Already the default';
-    reset.onclick = async () => { if (await rolesWrite('/api/models/roles/reset', { name: role.name }, `Role ${role.name} is back to its default.`)) delete M.roleDrafts[key]; };
+    reset.onclick = () => rolesWrite('/api/models/roles/reset', { name: role.name }, `Role ${role.name} is back to its default.`, () => { delete M.roleDrafts[key]; });
     bar.appendChild(reset);
   }
   if (role?.custom) {
@@ -4561,7 +4566,7 @@ function roleEditor(role) {
     del.disabled = !!R.error;
     del.onclick = async () => {
       if (!confirm(`Delete the role ${role.name}? Skills that call model-id --role ${role.name} will fail until it exists again.`)) return;
-      if (await rolesWrite('/api/models/roles/delete', { name: role.name }, `Role ${role.name} deleted.`)) { delete M.roleDrafts[key]; M.roleOpen.delete(role.name); }
+      await rolesWrite('/api/models/roles/delete', { name: role.name }, `Role ${role.name} deleted.`, () => { delete M.roleDrafts[key]; M.roleOpen.delete(role.name); });
     };
     bar.appendChild(del);
   }
@@ -4615,11 +4620,11 @@ function flavorBlock(family) {
   save.disabled = !!R.error;
   save.onclick = async () => {
     const fields = { likes: lines(d.likes), quirks: lines(d.quirks), brief: d.brief.trim(), effort: d.effort };
-    if (await rolesWrite('/api/models/flavor/set', { family, fields }, `${family} flavor saved.`)) delete M.flavorDrafts[family];
+    await rolesWrite('/api/models/flavor/set', { family, fields }, `${family} flavor saved.`, () => { delete M.flavorDrafts[family]; });
   };
   const reset = el('button', 'btn ghost', 'Reset to default');
   reset.disabled = !!R.error || !Object.keys(f.provenance || {}).some((k) => fieldSource(f.provenance, k) === 'yours');
-  reset.onclick = async () => { if (await rolesWrite('/api/models/flavor/reset', { family }, `${family} flavor is back to its default.`)) delete M.flavorDrafts[family]; };
+  reset.onclick = () => rolesWrite('/api/models/flavor/reset', { family }, `${family} flavor is back to its default.`, () => { delete M.flavorDrafts[family]; });
   bar.appendChild(save);
   bar.appendChild(reset);
   box.appendChild(bar);

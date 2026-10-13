@@ -12,6 +12,7 @@
  *   tools   init claims [Read, Bash] whatever argv said, then lingers (writes `pid`)
  *   mcp     init lists an MCP server, then lingers (writes `pid`)
  *   flood   init, then 100 KB of deltas
+ *   bigresult  init, then one 100 KB result event and no delta, then lingers
  *   hang    init, then nothing; writes its pid to `pid` for the cancel test
  *   error   init, then a result with is_error
  */
@@ -49,6 +50,10 @@ process.stdin.on('end', () => {
       for (let i = 0; i < 100; i++) delta('x'.repeat(1024));
       out({ type: 'result', is_error: false, result: '', session_id: 's1' });
       done();
+      break;
+    case 'bigresult':
+      out({ type: 'result', is_error: false, result: '{"x":"' + 'y'.repeat(100 * 1024) + '"}', session_id: 's1' });
+      setInterval(() => {}, 1000);
       break;
     case 'tools':
     case 'mcp':

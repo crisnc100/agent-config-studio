@@ -62,10 +62,11 @@ Shipped argv (composed by `composeArgv`, which appends `containment` after
 **Tool-less turns (Models → Describe your models).** `runContained` with
 `opts.toolless` uses the descriptor's `toolless.containment` instead:
 claude `--tools "" --strict-mcp-config` (probed: init `tools=[]`,
-`mcp_servers=[]`), and the init gate then requires an empty tool list.
+`mcp_servers=[]`), and the init gate then requires both lists present and
+empty — a missing `mcp_servers` is refused.
 Grok has no tool-less mode, so Describe runs on claude only and composeArgv
 refuses `toolless` for grok. Describe also passes `maxOutputBytes` (a raw
-stream backstop) and caps the reply itself at 64 KB.
+stream backstop) and `maxTextBytes` (the reply itself, 64 KB).
 
 `--strict-mcp-config` and grok's `--disallowed-tools search_tool,use_tool` strip
 MCP meta-tools that survive `--tools`. They are companions, not the write
@@ -214,7 +215,7 @@ never reads it, so new data cannot break it.
 
 - `model-id --role <name>` → `family=… id=… effort=… alt=…` (`--json` for the
   whole entry with per-field provenance). `--flavor <family>` → plain text.
-  `--roles` lists every role.
+  `--roles` lists every role; `--table` stays byte-identical (families only).
 - The role flags exit **2** on any failure (unknown role or family, invalid
   `roles.json`, a malformed id anywhere in the role's `use` list or alt).
   `--role` still prints `MODEL-ID-UNRESOLVED-<name>` for every value. Family
@@ -227,12 +228,18 @@ never reads it, so new data cannot break it.
   A copy installed before this change has no role flags at all: it answers
   `--role` with its old usage error, exit 1, and `acs` names it as older than
   the package on start.
-- Writes go through `lib/roles-panel.js` `writeRoles` only: the fixed path,
-  no symlink at the file or its folder, an exclusively created temp file, and
-  the sha256 base checked again right before the rename (409 otherwise).
-  History failures are returned as `warnings`.
-- Describe (`lib/describe.js`): one run server-wide (409 for a second), Cancel
-  kills the process group, 4000 characters in, 120 s, proposals kept 10
+- Writes go through `lib/roles-panel.js` `writeRoles` only, one at a time in
+  this process (direct edits and Accept share the queue): the fixed path, no
+  symlink at the file or its folder, an exclusively created temp file. The
+  studio folder is pinned by dev/ino; right before the rename, synchronously
+  with no await in between, the folder must still be that one, the file not a
+  link, and its bytes still the sha256 base (409 otherwise). Node has no
+  renameat, so the residual is the syscall gap between the last lstat and
+  rename(2). History failures are returned as `warnings`.
+- Describe (`lib/describe.js`): one run server-wide (409 for a second; any
+  setup failure frees the slot), Cancel kills the process group, 4000
+  characters in, a 64 KB reply cap by any output path (deltas or a result
+  event; `runContained` `maxTextBytes`, killed the moment it is passed), 120 s, proposals kept 10
   minutes under a random id; Accept writes exactly the stored bytes.
 
 ## Troubleshooting

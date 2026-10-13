@@ -111,6 +111,21 @@ const refreshes = (p) => p.requests.filter((r) => r.method === 'POST' && r.path 
   ok('…and Usage reports a refresh that did not refresh', /Usage was not refreshed: the usage reader timed out after 30s/.test(p.text(p.$('notice-slot'))));
 }
 
+{
+  // Grade 6: a refresh from the Usage page updates Home's cached reading.
+  const p = await boot({ 'POST /api/usage/refresh': () => ({ ...NEW, fresh: true, at: Date.now() }) });
+  ok('(Home starts on the stored reading)', /Old Seat/.test(p.text(body(p))));
+  p.eval('openUsage()');
+  await settle(10);
+  p.$('content').querySelectorAll('button').find((b) => b.textContent === 'Refresh').click();
+  await settle(20);
+  const gets = p.requests.filter((r) => r.method === 'GET' && r.path === '/api/usage').length;
+  p.$('btn-home').click();
+  await settle(20);
+  ok('6 back on Home (inside its 30 s reuse window), the card shows the refreshed reading', /New Seat/.test(p.text(body(p))) && !/Old Seat/.test(p.text(body(p))), p.text(body(p)));
+  ok('…from the cache the refresh updated, not a new GET', p.requests.filter((r) => r.method === 'GET' && r.path === '/api/usage').length === gets);
+}
+
 for (const p of pages) p.done();
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

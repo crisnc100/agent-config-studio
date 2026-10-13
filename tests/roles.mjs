@@ -62,14 +62,11 @@ if (haveOld) {
     ['models.json plus a roles.json the old resolver never reads', { models: { models: { opus: 'claude-opus-6' } }, roles: { roles: { reviewer: { effort: 'max' } } } }],
   ]) {
     const home = tempHome(opts);
-    for (const args of [...Object.keys(MODELS.models).map((f) => [f]), ['gpt-5.6-sol'], ['claude-opus-5-5'], ['opuss'], [], ['--json'], ['--sidecars'], ['a', 'b'], ['--bogus']]) {
+    for (const args of [...Object.keys(MODELS.models).map((f) => [f]), ['gpt-5.6-sol'], ['claude-opus-5-5'], ['opuss'], [], ['--json'], ['--table'], ['--sidecars'], ['a', 'b'], ['--bogus']]) {
       const a = then(home, ...args), b = now(home, ...args);
       ok(`${label}: model-id ${args.join(' ') || '(nothing)'} — same status, stdout and stderr`, same(a, b), JSON.stringify({ old: a, new: b }).slice(0, 400));
     }
-    const a = then(home, '--table'), b = now(home, '--table');
-    const prefix = a.out.split(old).join(ROOT);
-    ok(`${label}: --table keeps the existing section byte for byte, then appends roles`,
-       a.code === b.code && b.out.startsWith(prefix) && /^\nrole\s+family\s+id\s+effort\s+alt\n/.test(b.out.slice(prefix.length)), JSON.stringify(b.out.slice(prefix.length, prefix.length + 120)));
+    ok(`${label}: --table names no role (roles are --roles only)`, !/^role\s/m.test(now(home, '--table').out));
   }
   const unk = now(tempHome(), 'opuss');
   ok('unknown family: still exit 1 with the sentinel', unk.code === 1 && unk.out === 'MODEL-ID-UNRESOLVED-opuss\n');
@@ -111,7 +108,7 @@ if (haveOld) {
      stale.status === 2 && /run: acs install-model-id/.test(stale.stderr) && /^family=MODEL-ID-UNRESOLVED-reviewer id=MODEL-ID-UNRESOLVED-reviewer /.test(stale.stdout), JSON.stringify(stale));
   ok('...while families still resolve', sh('model-id opus').stdout === `${MODELS.models.opus}\n`);
   const t = sh('model-id --table');
-  ok('...and --table prints the existing section, with the reason on stderr', t.status === 0 && /^opus\s/m.test(t.stdout) && /run: acs install-model-id/.test(t.stderr));
+  ok('...and --table is untouched by it (exit 0, families, nothing on stderr)', t.status === 0 && /^opus\s/m.test(t.stdout) && t.stderr === '', JSON.stringify(t.stderr));
   write(path.join(resolver, 'lib', 'roles.js'), fs.readFileSync(path.join(ROOT, 'lib', 'roles.js')));
   fs.rmSync(path.join(resolver, 'lib', 'roles.default.json'));
   const noDefaults = sh('model-id --role reviewer');
@@ -229,7 +226,7 @@ console.log('\nroles: A3 — every malformed case refused, with a precise messag
   ok('refuses roles.json that is not JSON', b.code === 2 && /not valid JSON/.test(b.err), b.err);
   ok('a broken roles.json never breaks a family lookup', now(broken, 'opus').out === `${MODELS.models.opus}\n`);
   const t = now(broken, '--table');
-  ok('...or --table (existing section printed, exit 0, reason on stderr)', t.code === 0 && /^opus\s/m.test(t.out) && /roles are invalid/.test(t.err));
+  ok('...or --table (exit 0, families, nothing on stderr — it never reads roles)', t.code === 0 && /^opus\s/m.test(t.out) && t.err === '');
 }
 
 console.log('\nroles: the shipped seed');

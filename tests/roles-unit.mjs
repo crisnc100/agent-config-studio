@@ -15,7 +15,7 @@ const realBefore = snapshotRealHomes();
 const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-roles-unit-')));
 process.env.HOME = home;
 
-const { writeRoles, rolesView, hashOf, setRole } = await import('../lib/roles-panel.js');
+const { writeRoles, rolesView, hashOf, setRole, setFlavor } = await import('../lib/roles-panel.js');
 const { parseProposal, normalizeProposal, lineDiff, createDescribe, DESCRIBE_LIMITS } = await import('../lib/describe.js');
 const { loadRoles, rolesUserPath } = await import('../lib/roles.js');
 const { whereUsed } = await import('../lib/models-panel.js');
@@ -51,6 +51,51 @@ console.log('\nroles unit: R3 — history failures are shown, a symlinked folder
   ok('…and nothing lands at its target', fs.readdirSync(other).length === 0);
   fs.rmSync(other, { recursive: true, force: true });
   fs.rmSync(linkedHome, { recursive: true, force: true });
+  fs.rmSync(file);
+}
+
+console.log('\nroles unit: grade fixes — serialized writes, a pinned folder, unknown keys');
+{
+  const file = rolesUserPath(home);
+  const quiet = { recordBaseline: async () => null, record: async () => null };
+  const w0 = await writeRoles({ text: '{"version":1}\n', base: 'absent', message: 't', home, hist: quiet });
+  // A's baseline is held open; B starts against the same base while A is mid-write.
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const slow = { recordBaseline: () => held, record: async () => null };
+  const A = writeRoles({ text: '{"version":1,"roles":{"judge":{"use":"sol"}}}\n', base: w0.base, message: 'a', home, hist: slow });
+  const B = writeRoles({ text: '{"version":1,"roles":{"judge":{"use":"astra"}}}\n', base: w0.base, message: 'b', home, hist: quiet });
+  await new Promise((r) => setTimeout(r, 20));
+  release();
+  const [ra, rb] = await Promise.allSettled([A, B]);
+  ok('1 two writers against one base: the first saves', ra.status === 'fulfilled' && ra.value.saved === true);
+  ok('1 …the second gets 409, never a second saved:true', rb.status === 'rejected' && rb.reason.status === 409, JSON.stringify(rb.value || rb.reason?.message));
+  ok('1 …and the first change is the one on disk', JSON.parse(fs.readFileSync(file, 'utf8')).roles.judge.use === 'sol');
+
+  const dir = path.dirname(file);
+  const before = fs.readFileSync(file, 'utf8');
+  const cur = hashOf(before);
+  const swapper = {
+    // Runs between the folder's pin and the rename: put a different folder in its place.
+    recordBaseline: async () => {
+      fs.renameSync(dir, `${dir}-moved`);
+      fs.mkdirSync(dir);
+      fs.writeFileSync(file, before);
+    },
+    record: async () => null,
+  };
+  const e = await rejects(writeRoles({ text: '{"version":1,"roles":{"judge":{"use":"opus"}}}\n', base: cur, message: 't', home, hist: swapper }));
+  ok('2 a studio folder swapped mid-write is refused', e?.status === 409 && /was replaced during the write/.test(e.message), e?.message);
+  ok('2 …the folder now in its place keeps its bytes', fs.readFileSync(file, 'utf8') === before);
+  ok('2 …and no temp file is left in either', [dir, `${dir}-moved`].every((d) => fs.readdirSync(d).every((f) => !f.includes('.tmp-'))));
+  fs.rmSync(`${dir}-moved`, { recursive: true, force: true });
+
+  const base = hashOf(fs.readFileSync(file, 'utf8'));
+  const k1 = await rejects(setRole({ name: 'judge', fields: { use: ['sol'], model: 'gpt' }, base, home }));
+  ok('4 a direct role edit with an unknown key is refused, naming it', k1?.status === 400 && /roles\.judge: unknown key "model" \(allowed: use, effort, alt, note\)/.test(k1.message), k1?.message);
+  const k2 = await rejects(setFlavor({ family: 'sol', fields: { brief: 'x', style: 'terse' }, base, home }));
+  ok('4 …and a flavor edit too', k2?.status === 400 && /flavor\.sol: unknown key "style"/.test(k2.message), k2?.message);
+  ok('4 …with nothing written', hashOf(fs.readFileSync(file, 'utf8')) === base);
   fs.rmSync(file);
 }
 
@@ -98,7 +143,9 @@ console.log('\nroles unit: R9 — parsing and normalizing a proposal');
   ok('a null that clears a default is kept', normalizeProposal({ roles: { advisor: { alt: null } } }, loaded.defaults).roles.advisor.alt === null);
   ok('the bytes are pretty JSON with a final newline', p('{"roles":{"judge":{"use":"sol"}}}').text === '{\n  "version": 1,\n  "roles": {\n    "judge": {\n      "use": "sol"\n    }\n  }\n}\n');
   ok('whitespace around the object is fine', !p('\n  {"roles":{}}  \n').error);
-  ok('a fence with no language is fine', !p('```\n{}\n```').error);
+  ok('R9 an unlabelled ``` fence is refused (only ```json)', /single ```json fence/.test(p('```\n{}\n```').error?.message));
+  ok('…and ```JSON or ```js too', /single ```json fence/.test(p('```js\n{}\n```').error?.message) && /single ```json fence/.test(p('```JSON\n{}\n```').error?.message));
+  ok('…while ```json is accepted', !p('```json\n{}\n```').error);
   ok('a fence with prose after it is refused', /single ```json fence/.test(p('```json\n{}\n```\nDone.').error?.message));
   ok('a string holding a brace does not end the object early', !p('{"flavor":{"sol":{"brief":"use } and { freely"}}}').error);
   ok('every refusal is a 422 that says nothing was written', p('nope').error?.status === 422 && /Nothing was written/.test(p('nope').error.message));
@@ -114,6 +161,10 @@ console.log('\nroles unit: R5 — the tool-less containment rule, and the normal
   const init = (over) => ({ type: 'system', subtype: 'init', tools: [], mcp_servers: [], ...over });
   const tl = { toolless: true };
   ok('toolless: tools [] with no MCP holds', containmentHeld(init(), 'claude', tl).ok === true);
+  const noMcp = init(); delete noMcp.mcp_servers;
+  ok('R5 toolless: an init with no mcp_servers field is refused (must be stated, and empty)', containmentHeld(noMcp, 'claude', tl).ok === false && /no mcp_servers list/.test(containmentHeld(noMcp, 'claude', tl).why));
+  const noTools = init(); delete noTools.tools;
+  ok('R5 toolless: an init with no tools field is refused', containmentHeld(noTools, 'claude', tl).ok === false);
   for (const [what, over] of [['the read tool', { tools: ['Read'] }], ['any tool', { tools: ['Bash'] }], ['an MCP server', { mcp_servers: [{ name: 'x' }] }],
     ['a contradicting toolCount', { toolCount: 3 }], ['a non-list tools', { tools: 'none' }], ['a non-list mcp_servers', { mcp_servers: 'x' }]]) {
     ok(`toolless: ${what} is refused`, containmentHeld(init(over), 'claude', tl).ok === false);
@@ -145,6 +196,14 @@ console.log('\nroles unit: R10 — the 120 s timeout, at a test scale');
   ok('…its process is gone', !alive);
   ok('…and the slot is free again', d.running === false);
   ok('…and nothing was written', !fs.existsSync(rolesUserPath(home)));
+  fs.writeFileSync(path.join(path.dirname(bin), 'mode.json'), JSON.stringify({ kind: 'ok', reply: '{"roles":{"judge":{"use":"sol"}}}' }));
+  let failOnce = true;
+  const flaky = createDescribe({ home, mkdtemp: (p) => { if (failOnce) { failOnce = false; throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }); } return fs.mkdtempSync(p); } });
+  const e1 = await rejects(flaky.describe({ description: 'x' }));
+  ok('5 a setup failure after the slot is taken (mkdtemp ENOSPC) fails that request', /ENOSPC/.test(e1?.message || ''), e1?.message);
+  ok('5 …and frees the slot', flaky.running === false);
+  const next = await flaky.describe({ description: 'x' }).catch((e) => e);
+  ok('5 …so the next request runs, not 409', next?.id && next.status !== 409, JSON.stringify(next?.message || next?.id));
   const ttl = createDescribe({ home, now: (() => { let t = 0; return () => (t += 11 * 60_000); })() });
   fs.writeFileSync(path.join(path.dirname(bin), 'mode.json'), JSON.stringify({ kind: 'ok', reply: '{"roles":{"judge":{"use":"sol"}}}' }));
   const prop = await ttl.describe({ description: 'x' });

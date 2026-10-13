@@ -11,7 +11,7 @@
  *   model-id --install       copy this resolver out of the checkout and link ~/.local/bin/model-id
  *   model-id --role <name>   family=… id=… effort=… alt=…  (add --json for the whole role)
  *   model-id --flavor <fam>  how to brief that family, as plain text
- *   model-id --roles         every role → family, id, effort, alt
+ *   model-id --roles         every role → family, id, effort, alt (--table is families only)
  *
  * A failed resolution NEVER prints an empty string. It exits 1, says why on
  * stderr, and prints MODEL-ID-UNRESOLVED-<name> — an id every CLI rejects
@@ -216,12 +216,6 @@ if (ROLE_FLAGS.has(first) || (first === '--json' && rest.some((a) => ROLE_FLAGS.
   const w = Math.max(...Object.keys(r.registry.models).map((k) => k.length));
   for (const [k, v] of Object.entries(r.registry.models)) process.stdout.write(`${k.padEnd(w)}  ${v}\n`);
   process.stdout.write(`\nsource: ${tilde(r.source)}${r.source === DEFAULTS_PATH ? ` (no ${tilde(userPath())})` : ''}\n`);
-  // Appended after the existing section, never interleaved: a parser of the
-  // lines above still sees them byte for byte.
-  const R = await rolesLib();
-  const s = rolesSection(R);
-  if (s.error) process.stderr.write(`model-id: ${R.missing || `roles are invalid — ${s.error}`}\n`);
-  else process.stdout.write(`\n${s.text}`);
 } else if (first === '--lint') {
   const { files, hits } = lint(rest);
   for (const h of hits) process.stdout.write(`${tilde(h.file)}:${h.line}: ${h.match}  — ${h.text ?? ''}\n`);

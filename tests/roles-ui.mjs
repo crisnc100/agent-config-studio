@@ -132,6 +132,40 @@ const posts = (p, path) => p.requests.filter((r) => r.method === 'POST' && r.pat
   ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
 }
 
+// ── grade 3: Reset clears the draft before repainting ──────────────────
+{
+  const p = await boot({
+    // No later repaint to hide behind: where-used never answers here.
+    'GET /api/models/where': () => new Promise(() => {}),
+    'POST /api/models/roles/reset': () => {
+      // After the reset the server's view has the default back.
+      const v = view();
+      const r = v.roles.find((x) => x.name === 'reviewer');
+      Object.assign(r, { effort: 'high', resolvedEffort: 'high', provenance: prov(['use', 'effort', 'note']) });
+      p.state.view = v;
+      return { saved: true, base: 'sha256:base-2', warnings: [] };
+    },
+  });
+  roleRow(p, 'reviewer').click();
+  await settle(5);
+  ok('(the editor starts at the override, max)', content(p).querySelector('.roles-detail .roles-effort-input').value === 'max');
+  button(content(p).querySelector('.roles-detail'), 'Reset to default').click();
+  await settle(10);
+  const ed = content(p).querySelector('.roles-detail');
+  ok('3 after Reset the editor shows the default, not the stale max', ed.querySelector('.roles-effort-input').value === 'high', ed.querySelector('.roles-effort-input').value);
+  button(ed, 'Save').click();
+  await settle(10);
+  const sent = posts(p, '/api/models/roles/set').pop();
+  ok('3 …and Save right after sends the default, not the stale value', sent?.body.fields.effort === 'high', JSON.stringify(sent?.body));
+
+  content(p).querySelectorAll('.models-row').find((r) => r.dataset.family === 'sol').click();
+  await settle(10);
+  p.input(content(p).querySelector('.models-flavor .flavor-brief'), 'stale draft');
+  button(content(p).querySelector('.models-flavor'), 'Reset to default').click();
+  await settle(10);
+  ok('3 Reset flavor clears its draft too', content(p).querySelector('.models-flavor .flavor-brief').value === 'Set limits.', content(p).querySelector('.models-flavor .flavor-brief').value);
+}
+
 // ── a stale base: the error shows and the roles are read again ─────────
 {
   const p = await boot({ 'POST /api/models/roles/set': () => { throw { status: 409, body: { error: 'roles.json changed since this was shown (another tab, an editor, or an accepted proposal). Reload and try again.' } }; } });

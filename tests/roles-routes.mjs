@@ -142,6 +142,8 @@ try {
     ok('A3 an invalid edit → 400 naming the field, nothing written', badEffort.status === 400 && /roles\.judge\.effort: "huge" is not one of/.test(badEffort.body.error) && readRoles() === before, JSON.stringify(badEffort.body));
     const badFam = await post('/api/models/roles/set', { name: 'judge', fields: { use: ['gpt'] }, base: v2.base });
     ok('A3 an unknown family → 400, nothing written', badFam.status === 400 && /unknown family "gpt"/.test(badFam.body.error) && readRoles() === before);
+    const extra = await post('/api/models/roles/set', { name: 'judge', fields: { use: ['fable'], model: 'x' }, base: v2.base });
+    ok('4 an unknown key in a direct edit → 400 naming it, nothing written', extra.status === 400 && /unknown key "model"/.test(extra.body.error) && readRoles() === before);
     const badName = await post('/api/models/roles/set', { name: 'Bad Name', fields: { use: ['sol'] }, base: v2.base });
     ok('A3 a bad role name → 400', badName.status === 400 && /must match/.test(badName.body.error));
 
@@ -297,6 +299,14 @@ try {
     setMode({ kind: 'flood' });
     const flood = await post('/api/models/roles/describe', { description: 'x' });
     ok('a reply over 64 KB is stopped and refused', flood.status === 502 && /64 KB/.test(flood.body.error), JSON.stringify(flood.body));
+    setMode({ kind: 'bigresult' });
+    const big = post('/api/models/roles/describe', { description: 'x' });
+    const bigRes = await Promise.race([big, sleep(8000).then(() => null)]);
+    ok('8 a result-only reply over 64 KB (no deltas) is refused at once, not at exit', bigRes && bigRes.status === 502 && /64 KB/.test(bigRes.body.error), JSON.stringify(bigRes?.body));
+    const bigPid = Number(readFake('pid'));
+    let bigAlive = true;
+    for (let i = 0; i < 20 && bigAlive; i++) { try { process.kill(bigPid, 0); await sleep(100); } catch { bigAlive = false; } }
+    ok('8 …and the still-running CLI is killed', !bigAlive);
     setMode({ kind: 'hang' });
     const first = post('/api/models/roles/describe', { description: 'x' });
     for (let i = 0; i < 50 && !readFake('pid'); i++) await sleep(100);
