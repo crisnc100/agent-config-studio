@@ -877,7 +877,7 @@ const SPAWN_NAME_RE = /(?<![\w$.])(spawn|spawnSync|exec|execSync|execFile|execFi
  * (spawn, exec, execFile, their Sync forms, fork) — guard b's CALL_RE does
  * not list execSync, execFileSync or fork.
  */
-const MODELS_PANEL_FILES = ['lib/models-catalog.js', 'lib/models-panel.js', 'lib/jsontext.js', 'server.js'];
+const MODELS_PANEL_FILES = ['lib/models-catalog.js', 'lib/models-panel.js', 'lib/jsontext.js', 'lib/model-guide.js', 'server.js'];
 
 function guardF() {
   const hits = [];
