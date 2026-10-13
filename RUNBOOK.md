@@ -59,6 +59,14 @@ Shipped argv (composed by `composeArgv`, which appends `containment` after
 - claude: `--tools Read --strict-mcp-config`
 - grok: `--tools read_file --disallowed-tools search_tool,use_tool`
 
+**Tool-less turns (Models → Describe your models).** `runContained` with
+`opts.toolless` uses the descriptor's `toolless.containment` instead:
+claude `--tools "" --strict-mcp-config` (probed: init `tools=[]`,
+`mcp_servers=[]`), and the init gate then requires an empty tool list.
+Grok has no tool-less mode, so Describe runs on claude only and composeArgv
+refuses `toolless` for grok. Describe also passes `maxOutputBytes` (a raw
+stream backstop) and caps the reply itself at 64 KB.
+
 `--strict-mcp-config` and grok's `--disallowed-tools search_tool,use_tool` strip
 MCP meta-tools that survive `--tools`. They are companions, not the write
 allowlist. Do not replace `--tools` with any of the leaky flags above.
@@ -196,6 +204,36 @@ Releases go to npm through trusted publishing (`.github/workflows/publish.yml`),
 4. Approve the staged release on npmjs.com, or with `npm stage list` then `npm stage approve <id>`, confirming with 2FA. Nothing is public until you approve it.
 
 npm's trusted-publisher settings must name this repository and the workflow file `publish.yml` exactly. Allow `npm stage publish` only, so every release goes through approval. A prerelease version (`1.2.0-beta.1`) is staged under the `next` dist-tag, never `latest`. A version lower than the newest stable release is refused by npm unless it gets its own tag, which this workflow does not do.
+
+## Roles and flavor (`model-id --role`, `--flavor`)
+
+Roles and flavor live in `lib/roles.default.json` and
+`~/.agent-config-studio/roles.json`, read by `lib/roles.js`. That is a file
+pair apart from `models.json` on purpose: a resolver installed before roles
+never reads it, so new data cannot break it.
+
+- `model-id --role <name>` → `family=… id=… effort=… alt=…` (`--json` for the
+  whole entry with per-field provenance). `--flavor <family>` → plain text.
+  `--roles` lists every role.
+- The role flags exit **2** on any failure (unknown role or family, invalid
+  `roles.json`, a malformed id anywhere in the role's `use` list or alt).
+  `--role` still prints `MODEL-ID-UNRESOLVED-<name>` for every value. Family
+  calls keep exit 1, byte for byte (`tests/roles.mjs` compares against the
+  pre-roles resolver in `tests/fixtures/pre-roles-resolver/`).
+- `bin/model-id.mjs` imports `lib/roles.js` only when a role flag asks. An
+  installed copy that lacks it (or `lib/roles.default.json`) still resolves
+  families and answers role flags with "run: acs install-model-id". A
+  `roles.json` whose `version` is newer than the resolver knows says the same.
+  A copy installed before this change has no role flags at all: it answers
+  `--role` with its old usage error, exit 1, and `acs` names it as older than
+  the package on start.
+- Writes go through `lib/roles-panel.js` `writeRoles` only: the fixed path,
+  no symlink at the file or its folder, an exclusively created temp file, and
+  the sha256 base checked again right before the rename (409 otherwise).
+  History failures are returned as `warnings`.
+- Describe (`lib/describe.js`): one run server-wide (409 for a second), Cancel
+  kills the process group, 4000 characters in, 120 s, proposals kept 10
+  minutes under a random id; Accept writes exactly the stored bytes.
 
 ## Troubleshooting
 

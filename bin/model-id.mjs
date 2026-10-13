@@ -34,6 +34,8 @@ import {
 } from '../lib/models.js';
 
 const args = process.argv.slice(2);
+/** The whole interface, said when a role flag is misused (the bare usage line below stays as it was). */
+const FULL_USAGE = 'usage: model-id <family|raw-id> | --table | --json | --lint [paths] | --sidecars | --install | --role <name> [--json] | --flavor <family> [--json] | --roles [--json]';
 const tilde = (p) => (p.startsWith(homeDir() + path.sep) ? '~' + p.slice(homeDir().length) : p);
 
 function unresolved(name, why) {
@@ -168,10 +170,10 @@ function rolesCli(argv, R) {
       const v = argv[++i];
       if (v === undefined || v.startsWith('-')) die(`${a} needs a name`);
       opts[a.slice(2)] = v;
-    } else die(`unexpected argument ${JSON.stringify(a)} — the role flags are: --role <name> [--json] | --flavor <family> [--json] | --roles [--json]`);
+    } else die(`unexpected argument ${JSON.stringify(a)} — ${FULL_USAGE}`);
   }
   if ([opts.role, opts.flavor, opts.roles].filter((v) => v !== undefined).length !== 1) {
-    die('ask one thing: --role <name> [--json] | --flavor <family> [--json] | --roles [--json]');
+    die(`ask one thing at a time — ${FULL_USAGE}`);
   }
   if (R.missing) die(R.missing, opts.role !== undefined && !opts.json ? unresolvedRole(opts.role) : '');
   const { loadRoles, resolveFlavor, resolveRole } = R;

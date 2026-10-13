@@ -370,7 +370,10 @@ Where each number comes from:
 
 Readings that need a credential are taken by the usage collector in a child
 process, which writes a snapshot. The studio renders the snapshot and shows how
-old it is. **Refresh** retakes the readings.
+old it is. **Refresh** retakes the readings; so does **Refresh usage** on Home's
+Accounts & usage card. One refresh runs at a time, however many tabs ask, and a
+refresh that could not run says so instead of passing off the stored reading
+as new.
 
 Nothing is ever shown as a number it isn't. A seat that cannot be read says
 *not connected* with the reason; one that is signed in but has never run says
@@ -420,8 +423,9 @@ model-id --sidecars
 
 Re-run it:
 - after node moves (a Homebrew switch, a new machine);
-- after merging a change to `models.default.json`, `lib/models.js` or `bin/model-id` —
-  the installed copy does not follow the checkout;
+- after merging a change to `models.default.json`, `lib/models.js`, `lib/roles.js`,
+  `lib/roles.default.json` or `bin/model-id` — the installed copy does not follow
+  the checkout;
 - after updating the npm package. The first start after an update says so
   when the installed copy differs from the package's.
 
@@ -429,6 +433,54 @@ Until it has run, skills fail loudly rather than silently. Every skill shell
 line reads `"$(model-id x || echo MODEL-ID-UNRESOLVED-x)"`, and the scripts do
 the same. So a CLI is handed an id it rejects, never an empty `-m ""` that falls
 through to its own default model.
+
+### Roles and flavor
+
+Beyond ids, the registry says which family does which job and how to brief
+each one. `lib/roles.default.json` ships the defaults (advisor, reviewer,
+builder, judge, investigator, and a short flavor per family);
+`~/.agent-config-studio/roles.json` overrides them. It is a separate file from
+`models.json`, so a resolver installed before roles existed keeps working.
+
+```
+model-id --role reviewer
+model-id --role builder --json
+model-id --flavor sol
+model-id --roles
+```
+
+- `--role <name>` prints one line, `family=… id=… effort=… alt=…`, ready for
+  `eval "$(model-id --role reviewer || true)"`. `use` is an ordered
+  preference list and the first entry is the answer; `alt` is a second-opinion
+  family a skill asks for on purpose, never a fallback. Effort is the role's,
+  else that family's flavor effort, else empty — never guessed.
+- `--json` (with `--role`, `--flavor` or `--roles`) gives the whole entry: every
+  `use` family and id, and where each field came from (default, yours, or
+  cleared).
+- `--flavor <family>` prints what the family is good at, its quirks and how to
+  brief it, as plain text for a delegation brief.
+- `--table` lists the roles after the families.
+- An unknown role or family, or an invalid `roles.json`, exits 2 and says why;
+  `--role` then prints `MODEL-ID-UNRESOLVED-<name>` in place of every value. A
+  family call keeps its old behaviour (exit 1).
+
+`roles.json` merges over the defaults field by field: a list replaces the
+default list, and `null` clears a default field. Nothing reads a catalog or
+swaps a family on its own; the Models panel only warns when a role's family is
+retiring, gone, or has a malformed id.
+
+In the Models panel, the **Roles** table edits and resets each role (your own
+roles can be added and deleted), and each family's row edits its flavor. Every
+save is versioned in history and refused if `roles.json` changed since the
+panel read it.
+
+**Describe your models** takes a plain-language description and has Claude,
+at the Assist registry's default model and with no tools at all, turn it into
+a proposed `roles.json`. The reply must be exactly one JSON object that passes
+the same checks as a hand edit; you see the whole change as a diff and nothing
+is written until you accept it. Flavor text becomes part of the instructions
+other agents are briefed with, so read a proposal before accepting it — it is
+the AI's reading of what you wrote, not a check of it.
 
 ## Optional: worktree tools
 
