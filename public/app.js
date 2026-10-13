@@ -4151,6 +4151,8 @@ const M = {
   // Roles, flavor and Describe (GET /api/models/roles). Drafts survive repaints.
   roles: null, rolesError: null, roleOpen: new Set(), roleDrafts: {}, flavorDrafts: {}, adding: false,
   describe: { text: '', busy: false, error: null, proposal: null },
+  // The model guide block per target (GET /api/model-guide), and any open proposal by target key.
+  guide: null, guideError: null, guideProposals: {},
 };
 
 function paintModelsBadge(n) {
@@ -4171,10 +4173,25 @@ async function openModels() {
   await loadRoles();
 }
 
-/** Roles and flavor, read on their own: a slow catalog never holds them up, nor they it. */
+/**
+ * Roles and flavor, read on their own: a slow catalog never holds them up, nor
+ * they it. The model guide's status comes with them — every roles write ends
+ * here, and a write can leave a guide out of date.
+ */
 async function loadRoles() {
-  try { M.roles = await api('GET', '/api/models/roles'); M.rolesError = null; }
-  catch (e) { M.rolesError = e.message; }
+  const [roles, guide] = await Promise.allSettled([api('GET', '/api/models/roles'), api('GET', '/api/model-guide')]);
+  if (roles.status === 'fulfilled') { M.roles = roles.value; M.rolesError = null; } else M.rolesError = roles.reason.message;
+  setGuide(guide);
+  if (S.view === 'models' && M.data) paintModels();
+}
+
+function setGuide(r) {
+  if (r.status === 'fulfilled') { M.guide = r.value; M.guideError = null; } else M.guideError = r.reason.message;
+}
+
+async function loadGuide() {
+  const [r] = await Promise.allSettled([api('GET', '/api/model-guide')]);
+  setGuide(r);
   if (S.view === 'models' && M.data) paintModels();
 }
 
@@ -4224,6 +4241,8 @@ async function paintModels(load) {
   box.appendChild(cats);
 
   if (M.sidecars.length) box.appendChild(sidecarStrip());
+  const stale = guideStrip();
+  if (stale) box.appendChild(stale);
 
   const table = el('table', 'models-table');
   const thead = el('thead');
@@ -4260,6 +4279,7 @@ async function paintModels(load) {
   box.appendChild(table);
   box.appendChild(rolesSection());
   box.appendChild(describeSection());
+  box.appendChild(guideSection());
   c.appendChild(box);
 }
 
@@ -4731,6 +4751,155 @@ function proposalView(p) {
   };
   bar.appendChild(acc);
   bar.appendChild(rej);
+  box.appendChild(bar);
+  return box;
+}
+
+/* ── the model guide block (lib/model-guide.js) ─────────────────────── */
+
+const GUIDE_CHIPS = {
+  absent: 'Not added', current: 'Up to date', stale: 'Out of date', edited: 'Edited by hand',
+  malformed: 'Markers broken', 'not-installed': 'Not installed', 'roles-invalid': 'Roles invalid',
+  'not-utf8': 'Not UTF-8', error: 'Can’t use',
+};
+const guideChip = (t) => (t.status === 'error' && t.reason === 'too-large' ? 'Too large' : GUIDE_CHIPS[t.status] || t.status);
+const guideByKey = (key) => M.guide?.targets.find((t) => t.key === key);
+
+/** Out of date in N files: one per real file, so two targets sharing one count once. */
+function staleGuides() {
+  const out = [];
+  for (const t of M.guide?.targets || []) {
+    if (t.status === 'stale' && !out.some((o) => t.sharedWith?.includes(o.key))) out.push(t);
+  }
+  return out;
+}
+
+function guideStrip() {
+  const stale = staleGuides();
+  if (!stale.length) return null;
+  const strip = el('div', 'guide-stale');
+  strip.setAttribute('role', 'status');
+  strip.appendChild(el('span', null, `Model guide is out of date in ${stale.length} file${stale.length === 1 ? '' : 's'} — `));
+  const go = el('button', 'btn ghost models-alert-btn guide-review', 'Review update');
+  go.onclick = async () => {
+    go.disabled = true;
+    for (const t of stale) if (!M.guideProposals[t.key]) await proposeGuide(t.key, 'update', false);
+    paintModels();
+  };
+  strip.appendChild(go);
+  return strip;
+}
+
+/** One proposal, shown as a diff; nothing is written until Accept. */
+async function proposeGuide(key, action, repaint = true) {
+  try { M.guideProposals[key] = await api('POST', '/api/model-guide/propose', { target: key, action }); }
+  catch (e) {
+    notice('error', e.message, null, true);
+    if (e.status === 409) await loadGuide();
+    return;
+  }
+  if (repaint) paintModels();
+}
+
+function guideSection() {
+  const sec = el('div', 'models-guide');
+  sec.appendChild(el('h3', 'models-subhead', 'Model guide'));
+  sec.appendChild(el('div', 'scope-sub models-roles-sub',
+    'Agents read this file at the start of every session. The block tells them which model does which job.'));
+  if (!M.guide) { sec.appendChild(el('div', 'scope-note', M.guideError || 'reading…')); return sec; }
+  if (M.guide.rolesError) {
+    const n = el('div', 'notice error guide-roles-error');
+    n.appendChild(el('div', null, 'Roles invalid — fix in Models → Roles. The guide can’t be added or updated until then; removing it still works.'));
+    n.appendChild(el('div', 'models-error-text', M.guide.rolesError));
+    sec.appendChild(n);
+  }
+  const list = el('div', 'guide-list');
+  for (const t of M.guide.targets) list.appendChild(guideRow(t));
+  sec.appendChild(list);
+  return sec;
+}
+
+function guideRow(t) {
+  const row = el('div', `guide-row ${t.status}`);
+  row.dataset.target = t.key;
+  const line = el('div', 'guide-line');
+  const where = el('span', 'guide-path', t.path);
+  line.appendChild(where);
+  if (t.linkedTo) line.appendChild(el('span', 'guide-link', `→ ${t.linkedTo}`));
+  line.appendChild(el('span', `guide-chip ${t.status}${t.reason ? ` ${t.reason}` : ''}`, guideChip(t)));
+  const acts = el('span', 'guide-actions');
+  const busy = !!M.guideProposals[t.key];
+  const blocked = !!M.guide.rolesError;
+  const button = (text, action, enabled) => {
+    const b = el('button', `btn ghost models-alert-btn guide-${action}`, text);
+    b.disabled = busy || !enabled;
+    b.onclick = () => proposeGuide(t.key, action);
+    acts.appendChild(b);
+  };
+  if (t.status === 'absent') button('Add', 'install', !blocked);
+  if (t.status === 'stale' || t.status === 'edited') button('Update', 'update', !blocked);
+  if (['current', 'stale', 'edited', 'roles-invalid'].includes(t.status)) button('Remove', 'remove', true);
+  line.appendChild(acts);
+  row.appendChild(line);
+
+  const note = (text, cls = '') => row.appendChild(el('div', `scope-note guide-note${cls ? ` ${cls}` : ''}`, text));
+  if (t.status === 'not-installed') note(`${t.label} isn’t installed here; ACS never creates its folder.`);
+  if (t.status === 'absent' && t.newFile) note('The file doesn’t exist yet; Add creates it holding only the block.');
+  if (t.status === 'malformed') note(`The markers are broken (${t.reason}, line${t.lines.length > 1 ? 's' : ''} ${t.lines.join(', ')}). Fix or delete those lines by hand.`, 'guide-warn');
+  if (t.status === 'edited') note('Someone edited the block by hand. Update or Remove replaces those edits.', 'guide-warn');
+  if (t.status === 'error' || t.status === 'not-utf8') note(t.message || 'This file can’t be used.', 'guide-warn');
+  if (t.sharedWith?.length) {
+    const others = t.sharedWith.map((k) => guideByKey(k)?.path || k).join(', ');
+    note(`Shared with ${others}: it is the same file, so a change here changes every target sharing it.`, 'guide-shared');
+  }
+  if (M.guideProposals[t.key]) row.appendChild(guideProposalView(M.guideProposals[t.key]));
+  return row;
+}
+
+function guideProposalView(p) {
+  const box = el('div', 'describe-proposal guide-proposal');
+  const verb = { install: 'Add the model guide to', update: 'Update the model guide in', remove: 'Remove the model guide from' }[p.action];
+  if (p.overwritesEdits) {
+    const w = el('div', 'notice error guide-overwrites');
+    w.setAttribute('role', 'alert');
+    w.appendChild(el('div', null, 'This block was edited by hand. Accepting replaces those edits with what ACS generates.'));
+    box.appendChild(w);
+  }
+  box.appendChild(el('div', 'scope-note', `${verb} ${p.path}${p.newFile ? ' (new file)' : ''}, before → after:`));
+  if (p.sharedWith?.length) box.appendChild(el('div', 'scope-note guide-shared', `This also changes ${p.sharedWith.map((k) => guideByKey(k)?.path || k).join(', ')}: the same file.`));
+  if (/\r\n/.test(p.current) || /\r\n/.test(p.proposed)) box.appendChild(el('div', 'scope-note guide-eol', 'This file uses CRLF line endings; they are kept.'));
+  const endsNl = (s) => s === '' || /\n$/.test(s);
+  if (p.current !== '' && endsNl(p.current) !== endsNl(p.proposed)) {
+    box.appendChild(el('div', 'scope-note guide-eol', `The file’s last line changes: before it ${endsNl(p.current) ? 'ends' : 'doesn’t end'} with a newline, after it ${endsNl(p.proposed) ? 'does' : 'doesn’t'}.`));
+  }
+  box.appendChild(diffView(p.current, p.proposed, p.newFile ? 'no file' : 'now', 'after'));
+  const bar = el('div', 'models-edit');
+  const acc = el('button', 'btn primary guide-accept', 'Accept');
+  acc.onclick = async () => {
+    acc.disabled = true;
+    let r;
+    try { r = await api('POST', '/api/model-guide/accept', { id: p.id }); }
+    catch (e) {
+      delete M.guideProposals[p.target];
+      notice('error', e.message, null, true);
+      await loadGuide();
+      return;
+    }
+    delete M.guideProposals[p.target];
+    for (const k of p.sharedWith || []) delete M.guideProposals[k];
+    const done = { install: 'Model guide added to', update: 'Model guide updated in', remove: 'Model guide removed from' }[p.action];
+    if (r.warnings?.length) notice('error', `${done} ${p.path}, with a warning:`, r.warnings, true);
+    else notice('ok', `${done} ${p.path}.`);
+    await loadGuide();
+  };
+  const cancel = el('button', 'btn ghost guide-cancel', 'Cancel');
+  cancel.onclick = async () => {
+    delete M.guideProposals[p.target];
+    try { await api('POST', '/api/model-guide/reject', { id: p.id }); } catch {}
+    paintModels();
+  };
+  bar.appendChild(acc);
+  bar.appendChild(cancel);
   box.appendChild(bar);
   return box;
 }

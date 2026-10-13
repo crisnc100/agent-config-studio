@@ -94,6 +94,9 @@ jobs:
           node tests/roles-routes.mjs
           node tests/roles-unit.mjs
           node tests/roles-ui.mjs
+          node tests/model-guide.mjs
+          node tests/model-guide-routes.mjs
+          node tests/model-guide-ui.mjs
           node tests/home-refresh.mjs
           node tests/assist-containment.mjs
           node tests/acs-update.mjs

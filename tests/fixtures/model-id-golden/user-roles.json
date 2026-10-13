@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "roles": {
+    "builder": { "use": ["sol", "opus"], "effort": null },
+    "reviewer": { "alt": "fable", "note": "pipes | stars * and `ticks`" },
+    "scout": { "use": "haiku" }
+  },
+  "flavor": {
+    "sol": { "effort": "xhigh", "brief": null },
+    "grok": { "likes": ["long builds"], "quirks": null }
+  }
+}
