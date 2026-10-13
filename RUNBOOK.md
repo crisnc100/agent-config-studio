@@ -228,8 +228,11 @@ never reads it, so new data cannot break it.
   A copy installed before this change has no role flags at all: it answers
   `--role` with its old usage error, exit 1, and `acs` names it as older than
   the package on start.
-- Writes go through `lib/roles-panel.js` `writeRoles` only, one at a time in
-  this process (direct edits and Accept share the queue): the fixed path, no
+- Writes go through `lib/roles-panel.js` `writeRoles` only. The
+  compare-and-rename runs one at a time in this process (direct edits and
+  Accept share the queue); history's baseline and record run outside it, so a
+  hung git call (killed by `lib/history.js` after 30 s, returned as a warning)
+  never holds later saves. The fixed path, no
   symlink at the file or its folder, an exclusively created temp file. The
   studio folder is pinned by dev/ino; right before the rename, synchronously
   with no await in between, the folder must still be that one, the file not a
@@ -238,8 +241,9 @@ never reads it, so new data cannot break it.
   rename(2). History failures are returned as `warnings`.
 - Describe (`lib/describe.js`): one run server-wide (409 for a second; any
   setup failure frees the slot), Cancel kills the process group, 4000
-  characters in, a 64 KB reply cap by any output path (deltas or a result
-  event; `runContained` `maxTextBytes`, killed the moment it is passed), 120 s, proposals kept 10
+  characters in, a 64 KB reply cap by any output path (deltas, a result
+  event, an event still arriving, or a last line with no newline;
+  `runContained` `maxTextBytes`, killed the moment it is passed), 120 s, proposals kept 10
   minutes under a random id; Accept writes exactly the stored bytes.
 
 ## Troubleshooting

@@ -13,6 +13,8 @@
  *   mcp     init lists an MCP server, then lingers (writes `pid`)
  *   flood   init, then 100 KB of deltas
  *   bigresult  init, then one 100 KB result event and no delta, then lingers
+ *   bigtail    init, then one 100 KB result event with no trailing newline, then exits
+ *   bigpartial init, then 100 KB of one event that never ends, and lingers
  *   hang    init, then nothing; writes its pid to `pid` for the cancel test
  *   error   init, then a result with is_error
  */
@@ -53,6 +55,14 @@ process.stdin.on('end', () => {
       break;
     case 'bigresult':
       out({ type: 'result', is_error: false, result: '{"x":"' + 'y'.repeat(100 * 1024) + '"}', session_id: 's1' });
+      setInterval(() => {}, 1000);
+      break;
+    case 'bigtail':
+      process.stdout.write(JSON.stringify({ type: 'result', is_error: false, result: '{"x":"' + 'y'.repeat(100 * 1024) + '"}', session_id: 's1' }));
+      done();
+      break;
+    case 'bigpartial':
+      process.stdout.write('{"type":"result","is_error":false,"result":"' + 'y'.repeat(100 * 1024));
       setInterval(() => {}, 1000);
       break;
     case 'tools':

@@ -15,7 +15,7 @@ const realBefore = snapshotRealHomes();
 const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-roles-unit-')));
 process.env.HOME = home;
 
-const { writeRoles, rolesView, hashOf, setRole, setFlavor } = await import('../lib/roles-panel.js');
+const { writeRoles, rolesView, hashOf, setRole, setFlavor, _setWriteHook } = await import('../lib/roles-panel.js');
 const { parseProposal, normalizeProposal, lineDiff, createDescribe, DESCRIBE_LIMITS } = await import('../lib/describe.js');
 const { loadRoles, rolesUserPath } = await import('../lib/roles.js');
 const { whereUsed } = await import('../lib/models-panel.js');
@@ -59,11 +59,12 @@ console.log('\nroles unit: grade fixes — serialized writes, a pinned folder, u
   const file = rolesUserPath(home);
   const quiet = { recordBaseline: async () => null, record: async () => null };
   const w0 = await writeRoles({ text: '{"version":1}\n', base: 'absent', message: 't', home, hist: quiet });
-  // A's baseline is held open; B starts against the same base while A is mid-write.
+  // A is held inside its compare-and-rename (temp written, not yet renamed); B starts against the same base.
   let release;
   const held = new Promise((r) => { release = r; });
-  const slow = { recordBaseline: () => held, record: async () => null };
-  const A = writeRoles({ text: '{"version":1,"roles":{"judge":{"use":"sol"}}}\n', base: w0.base, message: 'a', home, hist: slow });
+  _setWriteHook(() => { _setWriteHook(null); return held; });
+  const A = writeRoles({ text: '{"version":1,"roles":{"judge":{"use":"sol"}}}\n', base: w0.base, message: 'a', home, hist: quiet });
+  await new Promise((r) => setTimeout(r, 20));
   const B = writeRoles({ text: '{"version":1,"roles":{"judge":{"use":"astra"}}}\n', base: w0.base, message: 'b', home, hist: quiet });
   await new Promise((r) => setTimeout(r, 20));
   release();
@@ -75,20 +76,33 @@ console.log('\nroles unit: grade fixes — serialized writes, a pinned folder, u
   const dir = path.dirname(file);
   const before = fs.readFileSync(file, 'utf8');
   const cur = hashOf(before);
-  const swapper = {
-    // Runs between the folder's pin and the rename: put a different folder in its place.
-    recordBaseline: async () => {
-      fs.renameSync(dir, `${dir}-moved`);
-      fs.mkdirSync(dir);
-      fs.writeFileSync(file, before);
-    },
-    record: async () => null,
-  };
-  const e = await rejects(writeRoles({ text: '{"version":1,"roles":{"judge":{"use":"opus"}}}\n', base: cur, message: 't', home, hist: swapper }));
+  // Between the folder's pin and the rename: put a different folder in its place.
+  _setWriteHook(() => {
+    _setWriteHook(null);
+    fs.renameSync(dir, `${dir}-moved`);
+    fs.mkdirSync(dir);
+    fs.writeFileSync(file, before);
+  });
+  const e = await rejects(writeRoles({ text: '{"version":1,"roles":{"judge":{"use":"opus"}}}\n', base: cur, message: 't', home, hist: quiet }));
   ok('2 a studio folder swapped mid-write is refused', e?.status === 409 && /was replaced during the write/.test(e.message), e?.message);
   ok('2 …the folder now in its place keeps its bytes', fs.readFileSync(file, 'utf8') === before);
-  ok('2 …and no temp file is left in either', [dir, `${dir}-moved`].every((d) => fs.readdirSync(d).every((f) => !f.includes('.tmp-'))));
+  ok('2 …and no temp file is left in it', fs.readdirSync(dir).every((f) => !f.includes('.tmp-')));
+  // The temp went with the folder that was moved away: without renameat there is no handle left to remove it by.
+  ok('2 …the moved-away folder\'s roles.json is untouched too', fs.readFileSync(path.join(`${dir}-moved`, 'roles.json'), 'utf8') === before);
   fs.rmSync(`${dir}-moved`, { recursive: true, force: true });
+
+  // B (regrade): a history call that never returns holds only its own save.
+  const stuck = { recordBaseline: async () => null, record: () => new Promise(() => {}) };
+  const t1 = '{"version":1,"roles":{"judge":{"use":"haiku"}}}\n';
+  const hung = writeRoles({ text: t1, base: hashOf(before), message: 'hung', home, hist: stuck });
+  void hung;
+  await new Promise((r) => setTimeout(r, 20));
+  ok('B a save whose history record hangs has still written the file', fs.readFileSync(file, 'utf8') === t1);
+  const t2 = '{"version":1,"roles":{"judge":{"use":"sonnet"}}}\n';
+  const later = await Promise.race([writeRoles({ text: t2, base: hashOf(t1), message: 'later', home, hist: quiet }), new Promise((r) => setTimeout(() => r('stuck'), 3000))]);
+  ok('B …and a later save still completes', later?.saved === true, JSON.stringify(later));
+  const stale = await Promise.race([rejects(writeRoles({ text: t1, base: hashOf(t1), message: 'stale', home, hist: quiet })), new Promise((r) => setTimeout(() => r('stuck'), 3000))]);
+  ok('B …and a stale one still answers 409', stale?.status === 409, JSON.stringify(stale?.message || stale));
 
   const base = hashOf(fs.readFileSync(file, 'utf8'));
   const k1 = await rejects(setRole({ name: 'judge', fields: { use: ['sol'], model: 'gpt' }, base, home }));
@@ -197,8 +211,10 @@ console.log('\nroles unit: R10 — the 120 s timeout, at a test scale');
   ok('…and the slot is free again', d.running === false);
   ok('…and nothing was written', !fs.existsSync(rolesUserPath(home)));
   fs.writeFileSync(path.join(path.dirname(bin), 'mode.json'), JSON.stringify({ kind: 'ok', reply: '{"roles":{"judge":{"use":"sol"}}}' }));
-  let failOnce = true;
-  const flaky = createDescribe({ home, mkdtemp: (p) => { if (failOnce) { failOnce = false; throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }); } return fs.mkdtempSync(p); } });
+  // At the filesystem, as the failure would come: lib/describe.js calls fs.mkdtempSync on this same module.
+  const realMkdtemp = fs.mkdtempSync;
+  fs.mkdtempSync = (...a) => { fs.mkdtempSync = realMkdtemp; if (String(a[0]).includes('acs-describe-')) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }); return realMkdtemp(...a); };
+  const flaky = createDescribe({ home });
   const e1 = await rejects(flaky.describe({ description: 'x' }));
   ok('5 a setup failure after the slot is taken (mkdtemp ENOSPC) fails that request', /ENOSPC/.test(e1?.message || ''), e1?.message);
   ok('5 …and frees the slot', flaky.running === false);
@@ -210,6 +226,37 @@ console.log('\nroles unit: R10 — the 120 s timeout, at a test scale');
   const late = await rejects(ttl.accept({ id: prop.id }));
   ok('R2 a proposal past its TTL cannot be accepted (410)', late?.status === 410, late?.message);
   ok('…and wrote nothing', !fs.existsSync(rolesUserPath(home)));
+}
+
+console.log('\nroles unit: A — runContained caps the reply after the stream ends too');
+{
+  const { HARNESSES, runContained } = await import('../lib/harness.js');
+  const bin = path.join(home, '.local', 'bin', 'claude');
+  describeCli(bin);
+  fs.writeFileSync(path.join(path.dirname(bin), 'mode.json'), JSON.stringify({ kind: 'bigtail' }));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-cap-'));
+  const run = runContained({ descriptor: HARNESSES.claude, binary: bin, opts: { model: 'm', toolless: true }, prompt: 'x', cwd, maxTextBytes: 64 * 1024 });
+  const r = await run.done.then((v) => ({ resolved: v }), (e) => ({ rejected: e }));
+  ok('a 100 KB last event with no newline is refused at the harness, never resolved', r.rejected?.overflow === 'text' && /more than 64 KB/.test(r.rejected.message) && !r.resolved,
+     r.resolved ? `resolved with ${r.resolved.text.length} bytes` : r.rejected?.message);
+  fs.rmSync(cwd, { recursive: true, force: true });
+}
+
+console.log('\nroles unit: B — a hung history git call is stopped (30 s), and the save says so');
+{
+  const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-fake-git-'));
+  fs.writeFileSync(path.join(fakeBin, 'git'), '#!/bin/sh\nexec sleep 120\n', { mode: 0o755 });
+  const savedPath = process.env.PATH;
+  process.env.PATH = `${fakeBin}:${savedPath}`;
+  // A fresh history repo, so the first git call is the one that hangs.
+  fs.rmSync(path.join(home, '.agent-config-studio'), { recursive: true, force: true });
+  const t0 = Date.now();
+  const r = await writeRoles({ text: '{"version":1}\n', base: 'absent', message: 't', home });
+  process.env.PATH = savedPath;
+  ok('the save completes once git is stopped', r.saved === true && Date.now() - t0 < 45_000, `${Date.now() - t0} ms`);
+  ok('…with the timeout as its history warning', r.warnings.some((w) => /not versioned in history: history: git init did not finish within 30s and was stopped/.test(w)), JSON.stringify(r.warnings));
+  fs.rmSync(fakeBin, { recursive: true, force: true });
+  fs.rmSync(path.join(home, '.agent-config-studio'), { recursive: true, force: true });
 }
 
 assertRealHomesUnchanged(realBefore, ok);

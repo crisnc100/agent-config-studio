@@ -307,6 +307,16 @@ try {
     let bigAlive = true;
     for (let i = 0; i < 20 && bigAlive; i++) { try { process.kill(bigPid, 0); await sleep(100); } catch { bigAlive = false; } }
     ok('8 …and the still-running CLI is killed', !bigAlive);
+    setMode({ kind: 'bigtail' });
+    const tail = await post('/api/models/roles/describe', { description: 'x' });
+    ok('A a 100 KB final result with no trailing newline (read only at exit) is refused, not returned', tail.status === 502 && /64 KB/.test(tail.body.error) && !tail.body.proposed, JSON.stringify(tail.body).slice(0, 200));
+    setMode({ kind: 'bigpartial' });
+    const part = await Promise.race([post('/api/models/roles/describe', { description: 'x' }), sleep(8000).then(() => null)]);
+    ok('A an event still arriving counts while the CLI runs: 100 KB with no newline is refused at once', part && part.status === 502 && /64 KB/.test(part.body.error), JSON.stringify(part?.body));
+    const partPid = Number(readFake('pid'));
+    let partAlive = true;
+    for (let i = 0; i < 20 && partAlive; i++) { try { process.kill(partPid, 0); await sleep(100); } catch { partAlive = false; } }
+    ok('A …and that CLI is killed, not left to the timeout', !partAlive);
     setMode({ kind: 'hang' });
     const first = post('/api/models/roles/describe', { description: 'x' });
     for (let i = 0; i < 50 && !readFake('pid'); i++) await sleep(100);
