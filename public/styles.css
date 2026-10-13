@@ -1248,3 +1248,27 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 /* ── home: Refresh usage ─────────────────────────────────────────────── */
 .home-refresh-usage .spinner { margin-right: 6px; }
 .home-refresh-note { margin-bottom: 8px; color: var(--amber); }
+
+/* ── models view: the model guide block ──────────────────────────────── */
+.guide-list { display: flex; flex-direction: column; gap: 8px; }
+.guide-row { padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.guide-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.guide-path { font: 12.5px var(--mono); color: var(--text); overflow-wrap: anywhere; }
+.guide-link { font: 12px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.guide-chip {
+  font-size: 11px; padding: 1px 8px; border-radius: 999px; white-space: nowrap;
+  color: var(--muted); border: 1px solid var(--border);
+}
+.guide-chip.current { color: var(--green); border-color: color-mix(in srgb, var(--green) 35%, transparent); background: color-mix(in srgb, var(--green) 8%, transparent); }
+.guide-chip.stale, .guide-chip.edited { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 8%, transparent); }
+.guide-chip.malformed, .guide-chip.error, .guide-chip.not-utf8, .guide-chip.roles-invalid { color: var(--red); border-color: color-mix(in srgb, var(--red) 35%, transparent); background: color-mix(in srgb, var(--red) 8%, transparent); }
+.guide-actions { margin-left: auto; display: flex; gap: 6px; }
+.guide-note { margin-top: 4px; }
+.guide-warn { color: var(--amber); }
+.guide-overwrites { margin-bottom: 8px; }
+.guide-proposal .diff { padding: 8px 0; max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); margin: 6px 0 10px; }
+.guide-stale {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 10px 0; padding: 6px 12px; font-size: 13px;
+  border-radius: var(--radius); color: var(--amber);
+  border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
