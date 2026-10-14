@@ -64,6 +64,13 @@ const WHY = {
     'node:sqlite). Do not delete this guard to shell out for a count or a',
     'repository lookup — read the file, the way lib/gitmeta.js does.',
   ].join(' '),
+  i: [
+    'The audit reads every skill and instruction file and writes only an',
+    'accepted proposal, through lib/proposals.js and lib/history.js. It spawns',
+    'nothing of its own: no model CLI, no `model-id --lint`, no grep. Do not',
+    'delete this guard to shell out for a scan — read the file through the',
+    'contained readers, the way lib/audit.js does.',
+  ].join(' '),
   g: [
     'The CLI catalogs belong to the CLIs. tests/real-home.mjs lets a Codex or',
     'Grok catalog change during a run only when it was re-stamped by a CLI,',
@@ -977,6 +984,43 @@ function guardH() {
          hits.join('\n') || 'ok', WHY.h);
 }
 
+/**
+ * Guard i — the audit and its proposal writer spawn nothing.
+ *
+ * The same checks as guard h, over lib/audit.js and lib/proposals.js.
+ */
+const AUDIT_FILES = ['lib/audit.js', 'lib/proposals.js'];
+
+function guardI() {
+  const hits = [];
+  for (const relPath of AUDIT_FILES) {
+    const abs = path.join(ROOT, relPath);
+    let src;
+    try { src = fs.readFileSync(abs, 'utf8'); } catch { hits.push(`${relPath} is missing — guard i cannot verify it`); continue; }
+    const { code, literals } = tokenizeJs(src);
+    for (const lit of literals) {
+      if (lit.kind !== 'regex' && /^(node:)?child_process$/.test(lit.text.trim())) {
+        hits.push(`${relPath}:${lit.line} names the child_process module`);
+      }
+    }
+    for (const m of code.matchAll(/(?<![\w$.])(import|require)\s*\(\s*([^)]*)\)/g)) {
+      const arg = m[2].trim();
+      if (!/^(['"])\1$/.test(arg)) {
+        hits.push(`${relPath}:${lineAt(code, m.index)} ${m[1]}(${arg.slice(0, 40)}) — a computed module name`);
+      }
+    }
+    for (const m of code.matchAll(SPAWN_NAME_RE)) {
+      hits.push(`${relPath}:${lineAt(code, m.index)} calls ${m[1]}() — a child_process API name`);
+    }
+    if (/\bprocess\.binding\s*\(/.test(code)) hits.push(`${relPath} reaches process.binding`);
+    for (const m of src.matchAll(/^\s*import\s[^'"]*['"]([^'"]+)['"]/gm)) {
+      if (MODEL_SPAWNERS.test(m[1])) hits.push(`${relPath} imports ${m[1]}, which spawns a model CLI`);
+    }
+  }
+  assert(hits.length === 0, 'guard i: the audit and its proposal writer never load child_process',
+         hits.join('\n') || 'ok', WHY.i);
+}
+
 async function main() {
   console.log('guards — static security properties this branch established\n');
   guardA();
@@ -986,6 +1030,7 @@ async function main() {
   guardF();
   guardG();
   guardH();
+  guardI();
   const harnesses = await guardCRuntime();
   await guardD(harnesses);
   console.log(`\n${passed} passed, ${failed} failed`);

@@ -556,6 +556,16 @@ function setupDoneStep(body) {
     row.appendChild(setupCommand(s.command));
     body.appendChild(row);
   }
+  // Only once done is recorded (Run setup again): a first run finishes onto
+  // Home, whose Needs attention offers the audit from there.
+  if (SETUP.status?.state !== 'done') return;
+  const skills = S.registry?.groups?.find((g) => g.id === 'skills')?.entries?.length;
+  const audit = el('div', 'setup-next setup-audit');
+  audit.appendChild(el('div', null, `Audit your ${skills ? `${skills} skill${skills === 1 ? '' : 's'}` : 'skills'} and instruction files: where they hardcode a model or an effort, or name one that has gone stale.`));
+  const go = el('button', 'btn setup-audit-go', 'Open Audit');
+  go.onclick = () => openAudit();
+  audit.appendChild(go);
+  body.appendChild(audit);
 }
 
 /**

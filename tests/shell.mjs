@@ -315,7 +315,7 @@ const item = (page, id) => page.querySelectorAll('.files-item').find((b) => b.da
   ok('5 Files on the icon rail opens the Files page, the rail left as it is', again.$('app').classList.contains('rail-collapsed') && again.eval('S.view') === 'files');
   const blocked = await boot({ storage: 'throws', hash: '#skills' });
   ok('5 with localStorage throwing, the page still boots and renders the sidebar',
-     blocked.eval('S.view') === 'skills' && blocked.$('sidebar').querySelectorAll('.nav-item').length === 12 && noErrors(blocked), blocked.errors.join(' | '));
+     blocked.eval('S.view') === 'skills' && blocked.$('sidebar').querySelectorAll('.nav-item').length === 13 && noErrors(blocked), blocked.errors.join(' | '));
   blocked.$('rail-toggle').click();
   blocked.$('btn-theme').click();
   ok('5 …and the rail and theme toggles still work there', blocked.$('app').classList.contains('rail-collapsed')

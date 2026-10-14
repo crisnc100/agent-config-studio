@@ -288,6 +288,36 @@ never reads it, so new data cannot break it.
 - Tests: `tests/model-guide.mjs` (in-process), `tests/model-guide-routes.mjs`
   (server, temp HOME), `tests/model-guide-ui.mjs` (VM).
 
+## Audit (`lib/audit.js`, `lib/proposals.js`)
+
+- `lib/proposals.js` is the propose/accept core shared with the model guide:
+  a proposal store (random id, TTL, per-target cap), one accept at a time per
+  real path, the synchronous re-check (real path, (dev, ino), raw-bytes
+  sha256) and the in-place write. `writeInPlace` keeps the preimage, treats a
+  write that makes no progress as an error, re-reads the result, and on any
+  failure writes the preimage back and says whether that worked.
+- `lib/audit.js` walks the physical files itself (no `listSkills`, no Context
+  collapse), bounded while it walks (depth 6 from each inventory root, a
+  skill's own folders included; 2000 files; 1 MB per file and 32 MB in all,
+  counted on the bytes actually read) and reports what it cut. Shell
+  quoting is carried across lines, and a quoted here-document's body is
+  literal: no substitution fix there. Skill files are read with
+  `readInSkill`, everything else with `openUserFile`. A file's class comes
+  from its real path — vendor > plugin > read root > synced > user — and is
+  computed again at propose and at accept, the strictest winning.
+- Findings carry a 16-hex id: a hash of rule, file ref, line text, which copy
+  of that line, and which occurrence on it. File refs are opaque; responses
+  carry `~`-relative or `<root label>/…` display paths only.
+- Results are cached for 60 s and shared by concurrent requests; an accept, a
+  dismissal or a roots change drops the cache, and Home's summary turns stale.
+- Real-machine check, read-only, not in `./verify.sh`:
+  `node tests/audit-real-run.mjs [--vendor] [--clean <word>,…]` runs two passes
+  and fails if any scanned file's ctime moved during the first or its hash
+  changed across the second.
+- Tests: `tests/audit.mjs` (in-process), `tests/audit-routes.mjs` (server,
+  temp HOME), `tests/audit-ui.mjs` (VM). Guard i in `tests/guards.mjs` keeps
+  `child_process` out of both modules.
+
 ## Troubleshooting
 
 - **Grok is slow.** First token ~39s is normal. Total can hit 133s. The UI

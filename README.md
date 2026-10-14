@@ -522,6 +522,46 @@ never model ids, and points at `model-id` for the current id.
   roles are each shown and refused (removing a block still works while the
   roles are invalid). Hand-written text outside the block is never touched.
 
+## Audit
+
+The **Audit** view (Review) reads your skills and instruction files and shows
+where they write a model or an effort by hand, use a model id the registry has
+moved past, or keep a hand-written lanes section beside the generated model
+guide. It is a deterministic check: no model is called, and nothing changes
+until you accept a fix.
+
+- **What it reads:** `~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills`,
+  the enabled Claude plugins (newest cached version only), `.claude/skills`
+  under every project folder, the three global instruction files, and every
+  `CLAUDE.md` and `AGENTS.md` under your project folders. Codex plugins and
+  Grok's bundled skills are not read. One run reads at most 2000 files, 1 MB
+  each and 32 MB in all, six folders below each place it starts from (a
+  skill's own folders count); a run that hits a limit says it is
+  partial. Links inside a skill, hard-linked files and credential files are
+  refused and listed, never read.
+- **What it finds:** a model id written out (and whether it is stale), a
+  `-m` / `--model` flag or a `"model"` key with a literal id, a
+  `$(model-id …)` with no `|| echo MODEL-ID-UNRESOLVED-…` fallback, an effort
+  value no role in your roles uses for that family or role, and a lanes heading
+  next to the generated model guide. If the model registry or the roles are
+  invalid, the stale, effort and fix checks are off until they are fixed.
+- **Fixes:** offered only where they still run — a `-m` or `--model` argument
+  in a shell script, a bash/sh/zsh fence, or inline code that runs claude,
+  codex or grok (not single-quoted, not in a table row) becomes
+  `"$(model-id <family> || echo MODEL-ID-UNRESOLVED-<family>)"`; a fallback is
+  added to a bare `$(model-id …)`; and in prose an exact current id becomes
+  its family name. **Fix** shows the whole file before and after and writes
+  only that one file on **Accept**, in place, versioned in history. Identical
+  copies elsewhere are listed and left alone. The generated model guide is
+  never edited here.
+- **Who owns the file:** plugin files, files that ship with a CLI (`.system`)
+  and files in read folders show findings only. A synced skill can be fixed
+  after you confirm that the next sync overwrites it. Vendor files are hidden
+  unless you ask for them.
+- **Dismiss** hides a finding; the list is kept in
+  `~/.agent-config-studio/audit-dismissed.json`. Home's Needs attention shows
+  the last run's fixable count and never starts a run.
+
 ## Optional: worktree tools
 
 `tools/worktree/wt.zsh` is a zsh toolkit for parallel git worktrees: each

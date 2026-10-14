@@ -92,6 +92,8 @@ const VIEWS = [
     title: 'Usage', sub: 'Subscription headroom per seat — where the next task should go', open: openUsage },
   { id: 'scope', label: 'Scope', group: 'review', icon: 'scope', hash: '#scope',
     title: 'Scope chain', sub: 'What actually applies when an agent runs in a directory', open: openScope },
+  { id: 'audit', label: 'Audit', group: 'review', icon: 'audit', hash: '#audit',
+    title: 'Audit', sub: 'Hardcoded and stale models in skills and instruction files — every fix reviewed first', open: () => openAudit() },
   { id: 'trash', label: 'Trash', group: 'footer', icon: 'trash', hash: '#trash',
     title: 'Trash', sub: 'Deleted items — restorable', open: openTrash },
   { id: 'theme', label: 'Theme', group: 'footer', icon: 'theme', kind: 'action', open: toggleTheme },
@@ -113,6 +115,7 @@ const ICONS = {
   worktrees: svg('<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5.5" r="1.5"/><path d="M4.5 5v6M11.5 7c0 2.5-3 2.5-5.5 4"/>'),
   usage: svg('<path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5 10.5 7"/>'),
   scope: svg('<circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2"/>'),
+  audit: svg('<path d="M3.5 2.5h9v11h-9z"/><path d="M5.5 5.5l1 1 2-2M5.5 9.5l1 1 2-2M10 5.5h1M10 9.5h1"/>'),
   trash: svg('<path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.6 8.6a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.6"/>'),
   sun: svg('<circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/>'),
   moon: svg('<path d="M13.2 9.6A5.5 5.5 0 0 1 6.4 2.8a5.5 5.5 0 1 0 6.8 6.8z"/>'),
@@ -3695,12 +3698,12 @@ const HOME = {
 const HOME_ROUTES = {
   usage: '/api/usage', models: '/api/models', context: '/api/context',
   trash: '/api/trash', clis: '/api/setup/clis', roots: '/api/roots',
-  memory: '/api/memory', worktrees: '/api/worktree',
+  memory: '/api/memory', worktrees: '/api/worktree', audit: '/api/audit/summary',
 };
 const HOME_SLOW = new Set(['memory', 'worktrees']);
 const HOME_CARDS_OF = {
   usage: ['accounts', 'clis'], clis: ['clis', 'attention'], roots: ['folders'], trash: ['recent'],
-  models: ['attention'], memory: ['attention'], worktrees: ['attention'], context: ['attention'],
+  models: ['attention'], memory: ['attention'], worktrees: ['attention'], context: ['attention'], audit: ['attention'],
 };
 /** Revisiting Home within this long repaints what it has rather than asking again. */
 const HOME_FRESH_MS = 30_000;
@@ -3753,7 +3756,7 @@ function renderHome(c) {
 
 /** "Needs you: N" beside the Home title — what Needs attention lists, hidden at zero. */
 function homeNeedsChip() {
-  const n = attentionModel(HOME.src).items.length;
+  const n = attentionModel(HOME.src).items.length + (auditAttention(HOME.src.audit)?.source ? 1 : 0);
   return n ? el('span', 'home-needs', `Needs you: ${n}`) : null;
 }
 
@@ -3970,7 +3973,8 @@ function paintAccounts(body) {
 
 function paintAttention(body) {
   const m = attentionModel(HOME.src);
-  for (const it of m.items) {
+  const audit = auditAttention(HOME.src.audit);
+  for (const it of [...m.items, ...(audit?.source ? [audit] : [])]) {
     const row = el('div', `home-item ${it.kind}`);
     row.appendChild(el('span', 'home-item-dot'));
     row.appendChild(el('span', 'home-item-text', it.text));
@@ -3987,7 +3991,15 @@ function paintAttention(body) {
   }
   for (const f of m.failed) body.appendChild(homeFailed(f.label, f.error));
   if (m.loading.length) body.appendChild(homeLoading(`Checking ${m.loading.map((x) => x.label.toLowerCase()).join(', ')}…`));
-  if (m.clear) {
+  if (audit && !audit.source) {
+    const row = el('div', 'home-muted home-pad home-audit');
+    row.appendChild(el('span', null, audit.text));
+    const b = el('button', 'btn ghost home-item-btn', audit.action.label);
+    b.onclick = () => homeAction(audit.action);
+    row.appendChild(b);
+    body.appendChild(row);
+  }
+  if (m.clear && !audit?.source) {
     const ok = el('div', 'home-clear');
     ok.appendChild(el('div', 'home-clear-title', 'Nothing needs you.'));
     ok.appendChild(el('div', 'home-muted', m.quiet.length
@@ -5179,6 +5191,248 @@ function guideProposalView(p) {
   bar.appendChild(cancel);
   box.appendChild(bar);
   return box;
+}
+
+/* ── Audit view ──────────────────────────────────────────────────────── */
+
+/**
+ * The deterministic audit (lib/audit.js): findings grouped by file, each
+ * labelled with its rule, severity and the file's class. Fix shows the full
+ * diff of one file and writes only on Accept; Dismiss is remembered by the
+ * server. Plugin, vendor and read-only files show findings only.
+ */
+const AU = {
+  data: null, error: null, loading: false,
+  vendor: store.get('acs.audit.vendor') === '1',
+  dismissed: store.get('acs.audit.dismissed') === '1',
+  proposals: {},   // file ref -> proposal
+  ack: {},         // file ref -> the synced acknowledgement is ticked
+  busy: {},        // file ref -> a propose or accept in flight
+};
+const AUDIT_RULES = { D1: 'Model id', D2: 'Model flag', D3: 'No fallback', D4: 'Effort', D5: 'Lanes' };
+const AUDIT_CLASS = { user: 'yours', synced: 'synced', plugin: 'plugin', vendor: 'vendor', readonly: 'read-only' };
+const AUDIT_FINDINGS_ONLY = {
+  plugin: 'Findings only: this file belongs to a plugin, and the next plugin update replaces it.',
+  vendor: 'Findings only: this file ships with the CLI itself.',
+  readonly: 'Findings only: this file is in a read-only folder.',
+};
+
+async function openAudit({ refresh = false } = {}) {
+  if (S.view !== 'audit' && !confirmDiscard()) return;
+  S.view = 'audit';
+  leaveEditor();
+  window.history.replaceState(null, '', '#audit');
+  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
+  $('filebar').hidden = true;
+  AU.loading = true;
+  paintAudit();
+  try { AU.data = await api('GET', `/api/audit${refresh ? '?refresh=1' : ''}`); AU.error = null; }
+  catch (e) { AU.error = e.message; }
+  AU.loading = false;
+  if (S.view === 'audit') paintAudit();
+}
+
+/** The findings a card shows under the current filters. */
+const auditVisible = (f) => f.findings.filter((x) => AU.dismissed || !x.dismissed);
+const auditFixable = (f) => auditVisible(f).filter((x) => x.fixable && !x.dismissed);
+
+function paintAudit() {
+  const c = $('content');
+  c.innerHTML = '';
+  const box = el('div', 'scope audit');
+  const head = el('div', 'audit-head');
+  head.appendChild(el('h2', null, 'Audit'));
+  const again = el('button', 'btn ghost audit-run', AU.loading ? 'Auditing…' : 'Run again');
+  again.disabled = AU.loading;
+  again.onclick = () => openAudit({ refresh: true });
+  head.appendChild(again);
+  box.appendChild(head);
+  box.appendChild(el('div', 'scope-sub',
+    'Where your skills and instruction files write a model id or an effort by hand, use an id that has gone stale, or keep a lanes section beside the generated model guide. Nothing changes until you review a fix and accept it.'));
+
+  const filters = el('div', 'audit-filters');
+  const toggle = (label, key, cls) => {
+    const l = el('label', `audit-filter ${cls}`);
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = AU[key];
+    cb.onchange = () => { AU[key] = cb.checked; store.set(`acs.audit.${key}`, cb.checked ? '1' : '0'); paintAudit(); };
+    l.append(cb, document.createTextNode(` ${label}`));
+    filters.appendChild(l);
+  };
+  toggle('Show vendor', 'vendor', 'audit-show-vendor');
+  toggle('Show dismissed', 'dismissed', 'audit-show-dismissed');
+  box.appendChild(filters);
+
+  if (AU.loading && !AU.data) {
+    box.appendChild(el('div', 'scope-sub', 'Reading skills and instruction files…'));
+    c.appendChild(box);
+    return;
+  }
+  if (AU.error) {
+    const n = el('div', 'notice error audit-error');
+    n.setAttribute('role', 'alert');
+    n.appendChild(el('div', null, `The audit could not run: ${AU.error}`));
+    box.appendChild(n);
+    if (!AU.data) { c.appendChild(box); return; }
+  }
+  const d = AU.data;
+  if (d.policyError) {
+    const n = el('div', 'notice error audit-policy');
+    n.appendChild(el('div', null, 'The model registry or the roles are invalid, so stale ids, efforts and fixes are not checked until they are fixed in Models.'));
+    n.appendChild(el('div', 'models-error-text', d.policyError));
+    box.appendChild(n);
+  }
+  if (d.partial) {
+    const n = el('div', 'notice warn audit-partial');
+    n.appendChild(el('div', null, `This audit is partial: ${d.partialReasons.join('; ')}.`));
+    box.appendChild(n);
+  }
+  const vendorFindings = d.counts.byClass.vendor?.findings || 0;
+  const summary = el('div', 'audit-summary');
+  summary.textContent = `${d.counts.files} file${d.counts.files === 1 ? '' : 's'} read · ${d.counts.findings} finding${d.counts.findings === 1 ? '' : 's'} · ${d.counts.fixable} fixable`
+    + (!AU.vendor && vendorFindings ? ` · ${vendorFindings} in vendor files, hidden` : '');
+  box.appendChild(summary);
+  if (d.refusals.length) {
+    const det = el('details', 'audit-refusals');
+    det.appendChild(el('summary', null, `${d.counts.refused} file${d.counts.refused === 1 ? ' was' : 's were'} not read`));
+    for (const r of d.refusals) det.appendChild(el('div', 'scope-note', `${r.path} — ${r.reason}`));
+    box.appendChild(det);
+  }
+
+  const shown = d.files.filter((f) => (AU.vendor || f.cls !== 'vendor') && auditVisible(f).length);
+  if (!shown.length) box.appendChild(el('div', 'audit-clear', d.files.length ? 'Nothing to show with these filters.' : 'No findings: no hardcoded or stale models found.'));
+  const list = el('div', 'audit-list');
+  for (const f of shown) list.appendChild(auditCard(f));
+  box.appendChild(list);
+  c.appendChild(box);
+}
+
+function auditCard(f) {
+  const card = el('section', `audit-file ${f.cls}`);
+  card.dataset.ref = f.ref;
+  const top = el('div', 'audit-file-head');
+  top.appendChild(el('span', 'audit-path', f.display));
+  top.appendChild(el('span', `audit-class ${f.cls}`, AUDIT_CLASS[f.cls] || f.cls));
+  if (f.skill) top.appendChild(el('span', 'audit-kind', `skill · ${f.skill}`));
+  else top.appendChild(el('span', 'audit-kind', f.scope === 'global' ? 'global instructions' : 'instructions'));
+  const fixable = auditFixable(f);
+  const canFix = f.cls === 'user' || f.cls === 'synced';
+  if (canFix && fixable.length) {
+    const b = el('button', 'btn ghost audit-fix', `Fix ${fixable.length}`);
+    b.disabled = !!AU.busy[f.ref] || !!AU.proposals[f.ref] || (f.cls === 'synced' && !AU.ack[f.ref]);
+    b.onclick = () => proposeAudit(f, fixable);
+    top.appendChild(b);
+  }
+  card.appendChild(top);
+  if (!canFix) card.appendChild(el('div', 'scope-note audit-only', AUDIT_FINDINGS_ONLY[f.cls]));
+  if (f.cls === 'synced' && fixable.length) {
+    const l = el('label', 'audit-ack');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = !!AU.ack[f.ref];
+    cb.onchange = () => { AU.ack[f.ref] = cb.checked; paintAudit(); };
+    l.append(cb, document.createTextNode(' This skill is synced: the next sync overwrites a fix here. Fix it anyway.'));
+    card.appendChild(l);
+  }
+  if (f.copies.length) {
+    card.appendChild(el('div', 'scope-note audit-copies',
+      `Also in ${f.copies.length} identical cop${f.copies.length === 1 ? 'y' : 'ies'}: ${f.copies.map((x) => x.display).join(', ')}. A fix changes this file only.`));
+  }
+  if (f.aliases) card.appendChild(el('div', 'scope-note audit-aliases', `${f.aliases} link${f.aliases === 1 ? '' : 's'} point${f.aliases === 1 ? 's' : ''} to this file.`));
+  const rows = el('div', 'audit-findings');
+  for (const x of auditVisible(f)) rows.appendChild(auditRow(f, x));
+  card.appendChild(rows);
+  if (AU.proposals[f.ref]) card.appendChild(auditProposalView(f, AU.proposals[f.ref]));
+  return card;
+}
+
+function auditRow(f, x) {
+  const row = el('div', `audit-finding ${x.severity}${x.dismissed ? ' dismissed' : ''}`);
+  row.dataset.id = x.id;
+  const line = el('div', 'audit-finding-line');
+  line.appendChild(el('span', `audit-sev ${x.severity}`, x.severity === 'warn' ? 'warn' : 'info'));
+  line.appendChild(el('span', 'audit-rule', AUDIT_RULES[x.rule] || x.rule));
+  line.appendChild(el('span', 'audit-line', `line ${x.line}`));
+  line.appendChild(el('code', 'audit-match', x.match));
+  if (x.stale) line.appendChild(el('span', 'audit-stale', `stale → ${x.family}`));
+  if (x.guide) line.appendChild(el('span', 'audit-guide', 'model guide'));
+  const b = el('button', 'btn ghost audit-dismiss', x.dismissed ? 'Undismiss' : 'Dismiss');
+  b.onclick = () => dismissAudit(x, !x.dismissed);
+  line.appendChild(b);
+  row.appendChild(line);
+  row.appendChild(el('div', 'scope-note audit-message', x.message));
+  if (x.fixable && x.replacement != null && !x.dismissed) {
+    const fix = el('div', 'scope-note audit-replacement');
+    fix.append(document.createTextNode('Fix: '), el('code', null, x.replacement));
+    row.appendChild(fix);
+  }
+  return row;
+}
+
+async function proposeAudit(f, findings) {
+  AU.busy[f.ref] = true;
+  paintAudit();
+  try {
+    AU.proposals[f.ref] = await api('POST', '/api/audit/propose', {
+      fileRef: f.ref, findingIds: findings.map((x) => x.id), ...(f.cls === 'synced' ? { ackSync: AU.ack[f.ref] === true } : {}),
+    });
+  } catch (e) {
+    notice('error', e.message, null, true);
+    if (e.status === 409 && !/synced/.test(e.body?.reason || '')) { delete AU.busy[f.ref]; return openAudit({ refresh: true }); }
+  }
+  delete AU.busy[f.ref];
+  if (S.view === 'audit') paintAudit();
+}
+
+function auditProposalView(f, p) {
+  const box = el('div', 'describe-proposal audit-proposal');
+  box.appendChild(el('div', 'scope-note', `${p.fixes} fix${p.fixes === 1 ? '' : 'es'} in ${p.path}, before → after:`));
+  if (p.copies) box.appendChild(el('div', 'scope-note audit-copies', `The other ${p.copies} identical cop${p.copies === 1 ? 'y is' : 'ies are'} not changed.`));
+  if (p.cls === 'synced') box.appendChild(el('div', 'scope-note guide-warn', 'Synced skill: the next sync overwrites this.'));
+  if (/\r\n/.test(p.current)) box.appendChild(el('div', 'scope-note guide-eol', 'This file uses CRLF line endings; they are kept.'));
+  box.appendChild(diffView(p.current, p.proposed, 'now', 'after'));
+  const bar = el('div', 'models-edit');
+  const acc = el('button', 'btn primary audit-accept', 'Accept');
+  acc.disabled = !!AU.busy[f.ref];
+  acc.onclick = async () => {
+    AU.busy[f.ref] = true;
+    acc.disabled = true;
+    let r;
+    try { r = await api('POST', '/api/audit/accept', { id: p.id }); }
+    catch (e) {
+      delete AU.proposals[f.ref]; delete AU.busy[f.ref];
+      notice('error', e.message, null, true);
+      return openAudit({ refresh: true });
+    }
+    delete AU.proposals[f.ref]; delete AU.busy[f.ref];
+    HOME.settledAt = 0;
+    if (r.warnings?.length) notice('error', `Fixed ${p.path}, with a warning:`, r.warnings, true);
+    else notice('ok', `Fixed ${p.path}.`);
+    openAudit({ refresh: true });
+  };
+  const cancel = el('button', 'btn ghost audit-cancel', 'Cancel');
+  cancel.onclick = async () => {
+    delete AU.proposals[f.ref];
+    try { await api('POST', '/api/audit/reject', { id: p.id }); } catch {}
+    if (S.view === 'audit') paintAudit();
+  };
+  bar.append(acc, cancel);
+  box.appendChild(bar);
+  return box;
+}
+
+/** Dismiss or bring back one finding; the server keeps the list, the counts here follow at once. */
+async function dismissAudit(x, on) {
+  try { await api('POST', on ? '/api/audit/dismiss' : '/api/audit/undismiss', { id: x.id }); }
+  catch (e) { return notice('error', e.message, null, true); }
+  x.dismissed = on;
+  const counts = AU.data.counts;
+  const f = AU.data.files.find((y) => y.findings.includes(x));
+  const step = on ? -1 : 1;
+  if (f && f.cls !== 'vendor') { counts.findings += step; if (x.fixable) counts.fixable += step; }
+  HOME.settledAt = 0;
+  if (S.view === 'audit') paintAudit();
 }
 
 /* ── assist chat ─────────────────────────────────────────────────────── */

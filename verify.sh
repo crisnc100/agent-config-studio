@@ -70,6 +70,9 @@ node tests/roles-unit.mjs
 # The model guide block: renderer, markers, byte-exact edits (in-process), then through the server (temp HOME).
 node tests/model-guide.mjs
 node tests/model-guide-routes.mjs
+# The audit: rules, fixes, the class policy and the writer under faults (in-process), then through the server (temp HOME).
+node tests/audit.mjs
+node tests/audit-routes.mjs
 node tests/models-assist.mjs
 node tests/models-roots.mjs
 node tests/models-scripts.mjs
@@ -97,6 +100,7 @@ node tests/roots-ui.mjs
 node tests/batch-delete-ui.mjs
 node tests/roles-ui.mjs
 node tests/model-guide-ui.mjs
+node tests/audit-ui.mjs
 node tests/models-layout-ui.mjs
 # What the registry tells the Files page (temp HOME).
 node tests/files-registry.mjs

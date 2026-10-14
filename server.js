@@ -40,6 +40,7 @@ import { loadRegistry } from './lib/models.js';
 import { rolesView, setRole, resetRole, deleteRole, setFlavor, resetFlavor } from './lib/roles-panel.js';
 import { createDescribe, describeBackend, DESCRIBE_LIMITS } from './lib/describe.js';
 import { createModelGuide } from './lib/model-guide.js';
+import { createAudit } from './lib/audit.js';
 import * as memoryOps from './lib/memory-ops.js';
 import { contextMap, contextFile } from './lib/context-map.js';
 import { removeBatch } from './lib/batch-delete.js';
@@ -581,6 +582,7 @@ export function createApp(opts = {}) {
 
   const describer = createDescribe();
   const guide = createModelGuide();
+  const audit = createAudit();
 
   /** A family the registry knows, or a 400 — never a path or free text. */
   const knownFamily = (family) => {
@@ -1170,6 +1172,42 @@ export function createApp(opts = {}) {
   'POST /api/model-guide/reject': async (req) => {
     requireStrict(req);
     return guide.reject({ id: (await objectBody(req)).id });
+  },
+
+  /**
+   * The audit of skills and instruction files (lib/audit.js). Strict
+   * same-origin, GETs included: the scan reads every skill and project
+   * instruction file. A file is an opaque ref, a finding an id; nothing is
+   * written except an accepted proposal and the dismissed list.
+   */
+  'GET /api/audit': async (req, url) => {
+    requireStrict(req);
+    return audit.run({ refresh: url.searchParams.get('refresh') === '1' });
+  },
+  'GET /api/audit/summary': async (req) => {
+    requireStrict(req);
+    return audit.cached();
+  },
+  'POST /api/audit/propose': async (req) => {
+    requireStrict(req);
+    const { fileRef, findingIds, ackSync } = await objectBody(req);
+    return audit.propose({ fileRef, findingIds, ackSync });
+  },
+  'POST /api/audit/accept': async (req) => {
+    requireStrict(req);
+    return audit.accept({ id: (await objectBody(req)).id });
+  },
+  'POST /api/audit/reject': async (req) => {
+    requireStrict(req);
+    return audit.reject({ id: (await objectBody(req)).id });
+  },
+  'POST /api/audit/dismiss': async (req) => {
+    requireStrict(req);
+    return audit.dismiss({ id: (await objectBody(req)).id });
+  },
+  'POST /api/audit/undismiss': async (req) => {
+    requireStrict(req);
+    return audit.dismiss({ id: (await objectBody(req)).id, undo: true });
   },
 
   /** The Assist picker alone, without the file registry — what a model-registry edit changes. */
