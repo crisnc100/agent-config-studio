@@ -95,7 +95,7 @@ console.log('\nsetup in the page');
   const p = await boot({ routes: setupRoutes() });
   await settle(20);
   ok('1 with no setup.json, the default landing opens #setup', p.eval('S.view') === 'setup' && /^#setup&step=clis$/.test(p.location.hash), `${p.eval('S.view')} ${p.location.hash}`);
-  ok('1 …with no sidebar item for it (the nav count stays 12)', p.$('sidebar').querySelectorAll('.nav-item').length === 12);
+  ok('1 …with no sidebar item for it (the nav count stays 13)', p.$('sidebar').querySelectorAll('.nav-item').length === 13);
   ok('6 no scan request on page load', !p.requests.some((r) => r.path === '/api/setup/scan'));
   ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
 }
