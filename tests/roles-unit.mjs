@@ -259,6 +259,42 @@ console.log('\nroles unit: B — a hung history git call is stopped (30 s), and 
   fs.rmSync(path.join(home, '.agent-config-studio'), { recursive: true, force: true });
 }
 
+console.log('\nroles unit: avoid — the conflict table, unknown names, merging');
+{
+  const { roleConflicts, avoidWarnings, mergeRoles } = await import('../lib/roles.js');
+  const { newConflicts } = await import('../lib/describe.js');
+  const roles = {
+    builder: { use: ['opus', 'grok'] },
+    reviewer: { use: ['astra'], alt: 'fable' },
+    judge: { use: ['fable'] },
+  };
+  const table = [
+    ['a family in use avoids the role', { grok: { avoid: ['builder'] } }, [{ role: 'builder', family: 'grok', slot: 'use' }]],
+    ['the alt family avoids the role', { fable: { avoid: ['reviewer'] } }, [{ role: 'reviewer', family: 'fable', slot: 'alt' }]],
+    ['no conflict: the avoided role does not use the family', { sol: { avoid: ['builder'] }, grok: { avoid: ['judge'] } }, []],
+    ['an unknown role in avoid is no conflict', { grok: { avoid: ['nobody'] } }, []],
+    ['several, in role order', { fable: { avoid: ['judge', 'reviewer'] }, opus: { avoid: ['builder'] } },
+      [{ role: 'builder', family: 'opus', slot: 'use' }, { role: 'judge', family: 'fable', slot: 'use' }, { role: 'reviewer', family: 'fable', slot: 'alt' }]],
+  ];
+  for (const [what, flavor, want] of table) {
+    const got = roleConflicts({ roles, flavor });
+    ok(`conflicts: ${what}`, JSON.stringify(got) === JSON.stringify(want), JSON.stringify(got));
+  }
+  const loaded = { roles, flavor: { grok: { avoid: ['builder', 'nobody'] } }, families: ['opus', 'grok', 'astra', 'fable'] };
+  ok('an unknown role in avoid is a warning naming it', JSON.stringify(avoidWarnings(loaded)) === JSON.stringify(['flavor.grok.avoid names "nobody", which is not a role.']));
+  ok('…and none when every name is a role', avoidWarnings({ ...loaded, flavor: { grok: { avoid: ['builder'] } } }).length === 0);
+
+  const defaults = { roles: { builder: { use: ['opus', 'grok'] } }, flavor: { grok: { avoid: ['judge'] } } };
+  const m = mergeRoles(defaults, { flavor: { grok: { avoid: ['builder'] } } });
+  ok('a user avoid list replaces the default one, never concatenates', JSON.stringify(m.flavor.grok.avoid) === '["builder"]' && m.provenance.flavor.grok.avoid === 'user');
+  const c = mergeRoles(defaults, { flavor: { grok: { avoid: null } } });
+  ok('null clears it', c.flavor.grok.avoid === undefined && c.provenance.flavor.grok.avoid === 'cleared');
+
+  const cur = { ...mergeRoles(defaults, { flavor: { grok: { avoid: ['builder'] } } }), defaults, error: null };
+  const proposed = JSON.stringify({ version: 1, flavor: { grok: { avoid: ['builder'] }, opus: { avoid: ['builder'] } } });
+  ok('a proposal reports only the conflicts it adds', JSON.stringify(newConflicts(cur, proposed)) === JSON.stringify([{ role: 'builder', family: 'opus', slot: 'use' }]));
+}
+
 assertRealHomesUnchanged(realBefore, ok);
 fs.rmSync(home, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed\n`);

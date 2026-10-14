@@ -337,6 +337,33 @@ try {
     ok('after a cancel the next Describe runs', after.status === 200);
     await post('/api/models/roles/proposal/reject', { id: after.body.id });
   }
+
+  console.log('\nroles routes: avoid — conflicts in the view and in a Describe proposal');
+  {
+    let v = await view();
+    ok('the view carries conflicts, empty while nothing is avoided', Array.isArray(v.conflicts) && v.conflicts.length === 0 && Array.isArray(v.avoidWarnings), JSON.stringify(v.conflicts));
+    await post('/api/models/roles/set', { name: 'builder', fields: { use: ['opus', 'grok'], effort: 'medium', alt: '', note: 'implements from a brief' }, base: v.base });
+    v = await view();
+    const fs1 = await post('/api/models/flavor/set', { family: 'grok', fields: { avoid: ['builder', 'nobody'] }, base: v.base });
+    ok('a flavor save that creates a conflict still saves', fs1.status === 200 && fs1.body.saved === true, JSON.stringify(fs1.body));
+    ok('…as an avoid list in roles.json', JSON.parse(readRoles()).flavor.grok.avoid.join() === 'builder,nobody');
+    v = await view();
+    ok('GET /api/models/roles lists the conflict', JSON.stringify(v.conflicts) === JSON.stringify([{ role: 'builder', family: 'grok', slot: 'use' }]), JSON.stringify(v.conflicts));
+    ok('…and an unknown role in avoid is a warning, not an error', v.error === null && v.avoidWarnings.some((w) => /flavor\.grok\.avoid names "nobody"/.test(w)), JSON.stringify(v.avoidWarnings));
+    const dup = await post('/api/models/flavor/set', { family: 'grok', fields: { avoid: ['builder', 'builder'] }, base: v.base });
+    ok('a role named twice is refused (400)', dup.status === 400 && /flavor\.grok\.avoid: names a role twice/.test(dup.body.error), JSON.stringify(dup.body));
+
+    setMode({ kind: 'ok', reply: JSON.stringify({ version: 1, roles: { builder: { use: ['opus', 'grok'] } }, flavor: { grok: { avoid: ['builder', 'nobody'] }, sol: { avoid: ['reviewer'] }, astra: { avoid: ['reviewer'] } } }) });
+    const d = await post('/api/models/roles/describe', { description: 'sol and astra should not review' });
+    ok('a Describe proposal lists only the conflicts it would add',
+      d.status === 200 && JSON.stringify(d.body.conflicts) === JSON.stringify([{ role: 'reviewer', family: 'astra', slot: 'use' }]), JSON.stringify(d.body.conflicts ?? d.body));
+    await post('/api/models/roles/proposal/reject', { id: d.body.id });
+    v = await view();
+    await post('/api/models/flavor/reset', { family: 'grok', base: v.base });
+    v = await view();
+    await post('/api/models/roles/reset', { name: 'builder', base: v.base });
+    ok('reset: no conflicts left', (await view()).conflicts.length === 0);
+  }
 } finally {
   srv.child.kill('SIGKILL');
 }

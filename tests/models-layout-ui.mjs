@@ -140,7 +140,7 @@ const ids = (p) => content(p).querySelector('.models-ids');
   const c = card(p, 'grok');
   ok('a card per model: its name and id', c && p.text(c.querySelector('.model-card-name')) === 'Grok' && p.text(c.querySelector('.model-card-id')) === 'grok-id-1');
   ok('…Strengths, Weaknesses, Briefing tips and Default effort',
-    JSON.stringify(c.querySelectorAll('.model-field-label').map(txt)) === '["Strengths","Weaknesses","Briefing tips","Default effort"]'
+    JSON.stringify(c.querySelectorAll('.model-field-label').map(txt)) === '["Strengths","Weaknesses","Briefing tips","Default effort","Avoid for"]'
       && /backend/.test(p.text(c.querySelector('.model-field-likes'))) && /xhigh/.test(p.text(c.querySelector('.model-field-effort'))));
   ok('the one line of help is shown', /Agents read this when you hand them work — write it the way you’d brief them\./.test(p.text(content(p).querySelector('.models-families'))));
 
@@ -155,7 +155,7 @@ const ids = (p) => content(p).querySelector('.models-ids');
   await settle(10);
   const set = posts(p, '/api/models/flavor/set');
   ok('Save sends POST /api/models/flavor/set with the family, every field and the base',
-    set.length === 1 && JSON.stringify(set[0].body) === JSON.stringify({ family: 'grok', fields: { likes: ['backend'], quirks: ['under-fills', 'guesses'], brief: 'Spell it out.', effort: 'max' }, base: 'sha256:base-1' }),
+    set.length === 1 && JSON.stringify(set[0].body) === JSON.stringify({ family: 'grok', fields: { likes: ['backend'], quirks: ['under-fills', 'guesses'], brief: 'Spell it out.', effort: 'max', avoid: [] }, base: 'sha256:base-1' }),
     JSON.stringify(set));
   ok('…then the card is back to reading, and the roles are read again',
     !card(p, 'grok').querySelector('.models-flavor') && p.requests.filter((r) => r.path === '/api/models/roles').length >= 2);
@@ -206,6 +206,72 @@ const ids = (p) => content(p).querySelector('.models-ids');
   ids(q).querySelector('.ids-toggle').click();
   await settle(5);
   ok('folded by hand, the count still shows', !ids(q).querySelector('.models-table') && q.text(ids(q).querySelector('.ids-count')) === '1 alert');
+}
+
+// ── Avoid for: the picker, the warning line, a save that creates a conflict ──
+{
+  // Grok avoids builder, and builder uses grok: one conflict in a use slot.
+  // Astra avoids reviewer, where it is the second opinion: one in the alt slot.
+  const withAvoid = (v, conflicts) => {
+    v.flavor.find((f) => f.family === 'grok').flavor.avoid = ['builder', 'gone'];
+    v.flavor.find((f) => f.family === 'astra').flavor.avoid = ['reviewer'];
+    v.conflicts = conflicts;
+    return v;
+  };
+  const BOTH = [{ role: 'builder', family: 'grok', slot: 'use' }, { role: 'reviewer', family: 'astra', slot: 'alt' }];
+  const state = { view: withAvoid(view(), BOTH) };
+  const p = await boot(models(), {
+    'GET /api/models/roles': () => state.view,
+    'POST /api/models/flavor/set': (b) => {
+      // The server saves and reports the conflict the save created.
+      const v = withAvoid(view(), [...BOTH, { role: 'judge', family: 'fable', slot: 'use' }]);
+      v.flavor.find((f) => f.family === 'fable').flavor.avoid = b.fields.avoid;
+      state.view = v;
+      return { saved: true, base: 'sha256:base-2', warnings: [] };
+    },
+  });
+  ok('a job with a conflict shows the warning line', p.text(roleRow(p, 'builder').querySelector('.roles-conflict')) === "⚠ Grok is marked 'avoid for builder' on its card");
+  ok('…an alt-slot conflict says it is the second opinion', p.text(roleRow(p, 'reviewer').querySelector('.roles-conflict')) === "⚠ Astra (second opinion) is marked 'avoid for reviewer' on its card");
+  ok('…and a job without one shows none', !roleRow(p, 'judge').querySelector('.roles-conflict'));
+  ok('the card reads its avoid list, an unknown name flagged rather than dropped', /builder, gone \(not a role\)/.test(p.text(card(p, 'grok').querySelector('.model-field-avoid'))));
+
+  button(card(p, 'grok'), 'Edit').click();
+  await settle(5);
+  const boxes = card(p, 'grok').querySelectorAll('.avoid-picker input');
+  ok('Avoid for is a multi-select of every role name, plus the unknown one already listed',
+    JSON.stringify(boxes.map((b) => b.value)) === '["reviewer","builder","judge","gone"]'
+      && JSON.stringify(boxes.filter((b) => b.checked).map((b) => b.value)) === '["builder","gone"]', JSON.stringify(boxes.map((b) => [b.value, b.checked])));
+  button(card(p, 'grok').querySelector('.models-flavor'), 'Cancel').click();
+  await settle(5);
+
+  button(card(p, 'fable'), 'Edit').click();
+  await settle(5);
+  card(p, 'fable').querySelectorAll('.avoid-picker input').find((b) => b.value === 'judge').click();
+  button(card(p, 'fable').querySelector('.models-flavor'), 'Save').click();
+  await settle(15);
+  const sent = posts(p, '/api/models/flavor/set').pop();
+  ok('a save that creates a conflict is sent, the ticked role in avoid', JSON.stringify(sent?.body.fields.avoid) === '["judge"]', JSON.stringify(sent?.body));
+  ok('…the warning shows straight away on the job', p.text(roleRow(p, 'judge').querySelector('.roles-conflict')) === "⚠ Fable is marked 'avoid for judge' on its card");
+  const n = p.$('notice-slot').querySelector('.notice');
+  ok('…and the notice says it saved, naming only the new conflict', n?.classList.contains('warn') && /fable notes saved\. It saved, but now:/.test(p.text(n))
+    && n.querySelectorAll('li').length === 1 && /avoid for judge/.test(p.text(n)), p.text(n));
+  ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
+}
+
+// ── Describe: the conflicts a proposal would create ─────────────────────
+{
+  const PROPOSAL = {
+    id: 'a'.repeat(32), base: 'sha256:base-1', current: '{}\n', proposed: '{"version":1}\n', diff: [{ op: '+', line: '{"version":1}' }],
+    conflicts: [{ role: 'builder', family: 'grok', slot: 'use' }], backend: { harness: 'claude', model: 'm', modelLabel: 'M' },
+  };
+  const p = await boot(models(), { 'POST /api/models/roles/describe': () => PROPOSAL });
+  p.input(content(p).querySelector('.describe-text'), 'Grok should never build.');
+  button(content(p).querySelector('.models-describe'), 'Describe').click();
+  await settle(10);
+  const prop = content(p).querySelector('.describe-proposal');
+  ok('the proposal lists the conflicts it would create', /would create these conflicts/.test(p.text(prop.querySelector('.describe-conflicts')))
+    && p.text(prop.querySelector('.describe-conflicts .roles-conflict')) === "⚠ Grok is marked 'avoid for builder' on its card");
+  ok('…and Accept is still offered', !!button(prop, 'Accept') && !button(prop, 'Accept').disabled);
 }
 
 for (const p of pages) p.done();

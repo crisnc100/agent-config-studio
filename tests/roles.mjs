@@ -213,6 +213,11 @@ console.log('\nroles: A3 — every malformed case refused, with a precise messag
     ['a brief over 600 characters', { flavor: { sol: { brief: long(601) } } }, /flavor\.sol\.brief: is 601 characters; the limit is 600/],
     ['a brief hiding a bidi override', { flavor: { sol: { brief: 'safe ‮ text' } } }, /flavor\.sol\.brief: contains a control character/],
     ['a flavor effort that is not one', { flavor: { sol: { effort: 'turbo' } } }, /flavor\.sol\.effort: "turbo" is not one of/],
+    ['avoid that is not a list', { flavor: { grok: { avoid: 'builder' } } }, /flavor\.grok\.avoid: must be a list of role names/],
+    ['avoid naming a bad role name', { flavor: { grok: { avoid: ['Builder'] } } }, /flavor\.grok\.avoid\[0\]: role name "Builder" must match/],
+    ['avoid with a non-string', { flavor: { grok: { avoid: [7] } } }, /flavor\.grok\.avoid\[0\]: role name 7 must match/],
+    ['avoid naming a role twice', { flavor: { grok: { avoid: ['builder', 'builder'] } } }, /flavor\.grok\.avoid: names a role twice/],
+    ['avoid with 13 roles', { flavor: { grok: { avoid: Array.from({ length: 13 }, (_, i) => `r${i}`) } } }, /flavor\.grok\.avoid: has 13 roles; the limit is 12/],
     ['version 0', { version: 0 }, /version must be 1, got 0/],
     ['roles not an object', { roles: [] }, /"roles" must be an object/],
   ];
@@ -227,6 +232,22 @@ console.log('\nroles: A3 — every malformed case refused, with a precise messag
   ok('a broken roles.json never breaks a family lookup', now(broken, 'opus').out === `${MODELS.models.opus}\n`);
   const t = now(broken, '--table');
   ok('...or --table (exit 0, families, nothing on stderr — it never reads roles)', t.code === 0 && /^opus\s/m.test(t.out) && t.err === '');
+}
+
+console.log('\nroles: avoid — accepted, merged, and invisible to the plain flags');
+{
+  const home = tempHome({ roles: { version: 1, flavor: { grok: { avoid: ['builder', 'nobody'] } } } });
+  const r = now(home, '--role', 'builder');
+  ok('an avoid list (an unknown role name included) is valid: --role still resolves', r.code === 0 && r.err === '', r.err);
+  const f = now(home, '--flavor', 'grok');
+  ok('--flavor text is unchanged by avoid', f.code === 0 && f.out === `Briefing grok: ${ROLES.flavor.grok.brief}\nGood at: ${ROLES.flavor.grok.likes.join('; ')}.\nWatch for: ${ROLES.flavor.grok.quirks.join('; ')}.\n`, f.out);
+  const fj = json(now(home, '--flavor', 'grok', '--json'));
+  ok('--flavor --json carries it in the merged flavor, with its provenance', JSON.stringify(fj?.flavor?.avoid) === '["builder","nobody"]' && fj?.provenance?.avoid === 'user', JSON.stringify(fj));
+  const cleared = tempHome({ roles: { version: 1, flavor: { grok: { avoid: null } } } });
+  const cj = json(now(cleared, '--flavor', 'grok', '--json'));
+  ok('null clears it, like the other flavor lists (the defaults have none)', now(cleared, '--role', 'builder').code === 0 && cj?.flavor?.avoid === undefined && cj?.provenance?.avoid === 'cleared', JSON.stringify(cj));
+  const shipped = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'roles.default.json'), 'utf8'));
+  ok('the shipped defaults set no avoid list', Object.values(shipped.flavor).every((fl) => fl.avoid === undefined));
 }
 
 console.log('\nroles: the shipped seed');

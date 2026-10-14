@@ -4492,9 +4492,16 @@ async function rolesWrite(path, body, okText, done) {
   else notice('ok', okText + (r.warnings?.length ? ` (${r.warnings.join(' ')})` : ''));
   M.where = {};
   done?.();
+  const before = new Set((M.roles?.conflicts || []).map(conflictKey));
   await loadRoles();
+  // Saved either way: a conflict is a warning, never a refusal.
+  const added = (M.roles?.conflicts || []).filter((c) => !before.has(conflictKey(c)));
+  if (added.length) notice('warn', `${okText} It saved, but now:`, added.map(conflictText), true);
   return true;
 }
+
+const conflictKey = (c) => `${c.role}\0${c.family}\0${c.slot}`;
+const conflictText = (c) => `⚠ ${famLabel(c.family)}${c.slot === 'alt' ? ' (second opinion)' : ''} is marked 'avoid for ${c.role}' on its card`;
 
 function rolesSection() {
   const sec = el('div', 'models-roles');
@@ -4564,6 +4571,7 @@ function roleRow(role) {
     row.appendChild(alt);
   }
   for (const w of role.warnings) row.appendChild(el('div', 'models-alert retiring roles-warning', w));
+  for (const c of (M.roles.conflicts || []).filter((x) => x.role === role.name)) row.appendChild(el('div', 'roles-conflict', conflictText(c)));
   return row;
 }
 
@@ -4672,7 +4680,9 @@ function familiesSection() {
   return sec;
 }
 
-const FLAVOR_SHOWN = [['Strengths', 'likes'], ['Weaknesses', 'quirks'], ['Briefing tips', 'brief'], ['Default effort', 'effort']];
+const FLAVOR_SHOWN = [['Strengths', 'likes'], ['Weaknesses', 'quirks'], ['Briefing tips', 'brief'], ['Default effort', 'effort'], ['Avoid for', 'avoid']];
+/** An avoid entry no role has any more is shown as such, never dropped. */
+const avoidLabel = (name) => (M.roles.roles.some((r) => r.name === name) ? name : `${name} (not a role)`);
 
 function familyCard(f) {
   const R = M.roles;
@@ -4697,7 +4707,8 @@ function familyCard(f) {
       if (marked(k)) l.appendChild(changedMark());
       w.appendChild(l);
       const v = f.flavor[k];
-      if (Array.isArray(v) && v.length) {
+      if (k === 'avoid') w.appendChild(el('div', `model-field-text${v?.length ? '' : ' none'}`, v?.length ? v.map(avoidLabel).join(', ') : 'No job'));
+      else if (Array.isArray(v) && v.length) {
         const ul = el('ul', 'model-field-list');
         for (const x of v) ul.appendChild(el('li', null, x));
         w.appendChild(ul);
@@ -4735,6 +4746,7 @@ function flavorForm(f, marked) {
   const box = el('div', 'models-flavor');
   const d = M.flavorDrafts[family] ??= {
     likes: (f.flavor.likes || []).join('\n'), quirks: (f.flavor.quirks || []).join('\n'), brief: f.flavor.brief || '', effort: f.flavor.effort || '',
+    avoid: [...(f.flavor.avoid || [])],
   };
   const grid = el('div', 'roles-form flavor-form');
   const field = (label, input, k) => {
@@ -4757,12 +4769,13 @@ function flavorForm(f, marked) {
   for (const e of R.efforts) effort.appendChild(el('option', null, e)).value = e;
   effort.value = d.effort; effort.onchange = () => { d.effort = effort.value; };
   box.appendChild(grid);
+  box.appendChild(avoidPicker(d, marked('avoid')));
   const bar = el('div', 'models-edit model-card-buttons');
   const lines = (t) => t.split('\n').map((x) => x.trim()).filter(Boolean);
   const save = el('button', 'btn primary', 'Save');
   save.disabled = !!R.error;
   save.onclick = async () => {
-    const fields = { likes: lines(d.likes), quirks: lines(d.quirks), brief: d.brief.trim(), effort: d.effort };
+    const fields = { likes: lines(d.likes), quirks: lines(d.quirks), brief: d.brief.trim(), effort: d.effort, avoid: d.avoid };
     await rolesWrite('/api/models/flavor/set', { family, fields }, `${family} notes saved.`, () => { delete M.flavorDrafts[family]; M.flavorOpen.delete(family); });
   };
   const cancel = el('button', 'btn ghost', 'Cancel');
@@ -4771,6 +4784,28 @@ function flavorForm(f, marked) {
   bar.appendChild(cancel);
   bar.appendChild(flavorReset(f));
   box.appendChild(bar);
+  return box;
+}
+
+/** "Avoid for": one checkbox per role, plus any name already listed that no role has, so saving never drops it. */
+function avoidPicker(d, changed) {
+  const R = M.roles;
+  const box = el('fieldset', 'avoid-picker');
+  const legend = el('legend', 'roles-label', 'Avoid for (jobs this model should not be given)');
+  if (changed) legend.appendChild(changedMark());
+  box.appendChild(legend);
+  const names = [...R.roles.map((r) => r.name), ...d.avoid.filter((n) => !R.roles.some((r) => r.name === n))];
+  for (const name of names) {
+    const lab = el('label', 'avoid-option');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.value = name;
+    cb.checked = d.avoid.includes(name);
+    cb.onchange = () => { d.avoid = names.filter((n) => (n === name ? cb.checked : d.avoid.includes(n))); };
+    lab.appendChild(cb);
+    lab.appendChild(el('span', null, avoidLabel(name)));
+    box.appendChild(lab);
+  }
   return box;
 }
 
@@ -4884,6 +4919,12 @@ function proposalView(p) {
     pre.appendChild(line);
   }
   box.appendChild(pre);
+  if (p.conflicts?.length) {
+    const w = el('div', 'describe-conflicts');
+    w.appendChild(el('div', null, 'Accepting this would create these conflicts (it still saves):'));
+    for (const c of p.conflicts) w.appendChild(el('div', 'roles-conflict', conflictText(c)));
+    box.appendChild(w);
+  }
   const bar = el('div', 'models-edit');
   const acc = el('button', 'btn primary describe-accept', 'Accept');
   acc.onclick = async () => {
