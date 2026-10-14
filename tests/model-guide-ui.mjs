@@ -86,7 +86,7 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
       && txt(row(err, 'grok').querySelector('.guide-chip')) === 'Up to date');
   const inv = await boot({ guide: guide([target('claude', 'absent'), target('codex', 'roles-invalid')], 'roles.json: roles.x: unknown family') });
   ok('R3 roles invalid: the section says so, Add is disabled, Remove is not',
-    /Roles invalid — fix in Models → Roles/.test(inv.text(sec(inv))) && button(row(inv, 'claude'), 'Add').disabled === true && button(row(inv, 'codex'), 'Remove').disabled === false);
+    /Roles invalid — fix in Models → Jobs/.test(inv.text(sec(inv))) && button(row(inv, 'claude'), 'Add').disabled === true && button(row(inv, 'codex'), 'Remove').disabled === false);
   const shared = await boot({ guide: guide([target('claude', 'current', { sharedWith: ['codex'] }), target('codex', 'current', { sharedWith: ['claude'], linkedTo: '~/.claude/CLAUDE.md' })]) });
   ok('R2 a shared file says every target sharing it changes', /Shared with ~\/\.codex\/AGENTS\.md/.test(shared.text(row(shared, 'claude'))) && /→ ~\/\.claude\/CLAUDE\.md/.test(shared.text(row(shared, 'codex'))));
 }

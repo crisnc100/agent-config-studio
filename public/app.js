@@ -4150,6 +4150,8 @@ const M = {
   open: new Set(), where: {}, drafts: {}, sidecars: [], data: null,
   // Roles, flavor and Describe (GET /api/models/roles). Drafts survive repaints.
   roles: null, rolesError: null, roleOpen: new Set(), roleDrafts: {}, flavorDrafts: {}, adding: false,
+  // Model ids: null follows the alerts (open while any wait); a click pins it. Cards being edited, and cards showing Used by.
+  idsOpen: null, flavorOpen: new Set(), usedOpen: new Set(),
   describe: { text: '', busy: false, error: null, proposal: null },
   // The model guide block per target (GET /api/model-guide), and any open proposal by target key.
   guide: null, guideError: null, guideProposals: {},
@@ -4208,18 +4210,9 @@ async function paintModels(load) {
   const box = el('div', 'scope models');
   const head = el('div', 'usage-head');
   head.appendChild(el('h2', null, 'Models'));
-  const actions = el('div', 'usage-actions');
-  const check = el('button', 'btn ghost', 'Check now');
-  check.onclick = async () => {
-    check.disabled = true; check.textContent = 'Checking…';
-    await paintModels(() => api('POST', '/api/models/check'));
-  };
-  actions.appendChild(check);
-  head.appendChild(actions);
   box.appendChild(head);
   box.appendChild(el('div', 'scope-sub',
-    `Read from each CLI's own catalog on disk; Check now first has Codex refresh its catalogs — no tokens. Checked ${agoText(Date.now() - m.checkedAt)}` +
-    (m.claudeVersion ? ` · Claude Code ${m.claudeVersion.split(' ')[0]}` : '') + '.'));
+    'Which model does each job, what each model is like, and the exact ids they run on. Nothing changes until you press a button.'));
 
   if (m.registryError) {
     const n = el('div', 'notice error models-error');
@@ -4227,6 +4220,49 @@ async function paintModels(load) {
     n.appendChild(el('div', 'models-error-text', m.registryError));
     box.appendChild(n);
   }
+  const stale = guideStrip();
+  if (stale) box.appendChild(stale);
+
+  box.appendChild(rolesSection());
+  box.appendChild(describeSection());
+  box.appendChild(familiesSection());
+  box.appendChild(idsSection(m));
+  box.appendChild(guideSection());
+  box.appendChild(scriptsNote());
+  c.appendChild(box);
+}
+
+/** Alerts not yet dismissed, across every family. */
+const liveAlerts = (m) => m.rows.reduce((n, r) => n + r.alerts.filter((a) => !a.dismissed).length, 0);
+
+/**
+ * The family → id table, folded away by default: it is plumbing. It opens on
+ * its own while an alert or a sidecar strip waits, and its header counts the
+ * alerts either way, so one is never hidden.
+ */
+function idsSection(m) {
+  const sec = el('div', 'models-ids');
+  const alerts = liveAlerts(m);
+  const open = M.idsOpen ?? (alerts > 0 || M.sidecars.length > 0);
+  const head = el('div', 'models-section-head');
+  const toggle = el('button', `ids-toggle${open ? ' open' : ''}`);
+  toggle.setAttribute('aria-expanded', String(open));
+  toggle.appendChild(el('span', 'ids-caret', open ? '▾' : '▸'));
+  toggle.appendChild(el('span', 'models-subhead-text', 'Model ids'));
+  if (alerts) toggle.appendChild(el('span', 'ids-count', `${alerts} alert${alerts === 1 ? '' : 's'}`));
+  toggle.onclick = () => { M.idsOpen = !open; paintModels(); };
+  head.appendChild(toggle);
+  const check = el('button', 'btn ghost ids-check', 'Check now');
+  check.onclick = async () => {
+    check.disabled = true; check.textContent = 'Checking…';
+    await paintModels(() => api('POST', '/api/models/check'));
+  };
+  head.appendChild(check);
+  sec.appendChild(head);
+  sec.appendChild(el('div', 'scope-sub models-roles-sub',
+    `The exact model id each name points to. Read from each CLI's own catalog on disk; Check now first has Codex refresh its catalogs — no tokens. Checked ${agoText(Date.now() - m.checkedAt)}` +
+    (m.claudeVersion ? ` · Claude Code ${m.claudeVersion.split(' ')[0]}` : '') + '.'));
+  if (!open) return sec;
 
   const cats = el('div', 'models-catalogs');
   for (const cat of m.catalogs) {
@@ -4238,16 +4274,13 @@ async function paintModels(load) {
     if (cat.disagree) cats.appendChild(el('div', 'models-catalog stale', cat.disagree));
     if (cat.refreshNote) cats.appendChild(el('div', 'models-catalog stale', cat.refreshNote));
   }
-  box.appendChild(cats);
-
-  if (M.sidecars.length) box.appendChild(sidecarStrip());
-  const stale = guideStrip();
-  if (stale) box.appendChild(stale);
+  sec.appendChild(cats);
+  if (M.sidecars.length) sec.appendChild(sidecarStrip());
 
   const table = el('table', 'models-table');
   const thead = el('thead');
   const hr = el('tr');
-  for (const h of ['Family', 'Current id', 'Name', 'Source', 'Alerts']) hr.appendChild(el('th', null, h));
+  for (const h of ['Name', 'Current id', 'Catalog name', 'Source', 'Alerts']) hr.appendChild(el('th', null, h));
   thead.appendChild(hr);
   table.appendChild(thead);
   const tbody = el('tbody');
@@ -4260,7 +4293,7 @@ async function paintModels(load) {
       paintModels();
     };
     const fam = el('td', 'models-family');
-    fam.appendChild(el('span', `item-dot ${r.vendor === 'claude' ? 'claude' : r.vendor === 'codex' ? 'codex' : 'grok'}`));
+    fam.appendChild(el('span', `item-dot ${vendorDot(r.vendor)}`));
     fam.appendChild(document.createTextNode(r.family));
     if (!r.track) fam.appendChild(el('span', 'item-badge', 'pinned'));
     tr.appendChild(fam);
@@ -4276,11 +4309,20 @@ async function paintModels(load) {
     if (M.open.has(r.family)) tbody.appendChild(modelDetail(r, m));
   }
   table.appendChild(tbody);
-  box.appendChild(table);
-  box.appendChild(rolesSection());
-  box.appendChild(describeSection());
-  box.appendChild(guideSection());
-  c.appendChild(box);
+  sec.appendChild(table);
+  return sec;
+}
+
+const vendorDot = (v) => (v === 'claude' ? 'claude' : v === 'codex' ? 'codex' : 'grok');
+
+/** The one place the CLI is named: what skills and scripts call to read all of this. */
+function scriptsNote() {
+  const n = el('div', 'models-scripts');
+  n.appendChild(el('p', 'assist-label', 'For skills and scripts'));
+  n.appendChild(el('div', 'scope-note',
+    `model-id --role <job> prints a job's model, id and effort; model-id --flavor <model> prints its briefing notes; model-id <model> prints its id.` +
+    (M.roles?.userFile ? ` Jobs and model notes are saved in ${M.roles.userFile}.` : '')));
+  return n;
 }
 
 function alertChip(row, a) {
@@ -4344,30 +4386,6 @@ function modelDetail(r, m) {
   if (refused) td.appendChild(el('div', 'scope-note', 'Edits are refused while the registry file is invalid.'));
 
   for (const a of r.alerts.filter((x) => x.message)) td.appendChild(el('div', 'models-message', a.message));
-  td.appendChild(flavorBlock(r.family));
-
-  const where = el('div', 'models-where');
-  where.appendChild(el('p', 'assist-label', `Where model-id ${r.family} is used`));
-  const w = M.where[r.family];
-  if (!w) {
-    where.appendChild(el('div', 'scope-note', 'reading…'));
-    api('GET', `/api/models/where?family=${encodeURIComponent(r.family)}`)
-      .then((res) => { M.where[r.family] = res; if (S.view === 'models') paintModels(); })
-      .catch((e) => { M.where[r.family] = { hits: [], error: e.message }; if (S.view === 'models') paintModels(); });
-  } else if (w.error) {
-    where.appendChild(el('div', 'scope-note', w.error));
-  } else if (!w.hits.length) {
-    where.appendChild(el('div', 'scope-note', 'No skill, config or CLAUDE.md calls it.'));
-  } else {
-    for (const h of w.hits) {
-      const line = el('div', 'models-where-hit');
-      line.appendChild(el('span', 'models-where-file', `${h.file}:${h.line}`));
-      line.appendChild(el('span', 'models-where-text', h.text));
-      where.appendChild(line);
-    }
-    if (w.truncated) where.appendChild(el('div', 'scope-note', 'Showing the first matches only.'));
-  }
-  td.appendChild(where);
   tr.appendChild(td);
   return tr;
 }
@@ -4431,8 +4449,31 @@ function sidecarStrip() {
 
 /* ── roles and flavor (lib/roles-panel.js) ────────────────────────────── */
 
-/** "yours" for a field the user file sets or clears, "default" otherwise. */
-const fieldSource = (prov, k) => (prov?.[k] === 'user' || prov?.[k] === 'cleared' ? 'yours' : 'default');
+/** Your file sets or clears the field: what Reset to default removes. */
+const isYours = (prov, k) => prov?.[k] === 'user' || prov?.[k] === 'cleared';
+const normField = (k, v) => (v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length) ? null
+  : k === 'use' && typeof v === 'string' ? [v] : v);
+/** Yours, and to something other than the default — a value set equal to it is not a change. */
+const differs = (prov, k, value, dflt) => isYours(prov, k) && JSON.stringify(normField(k, value)) !== JSON.stringify(normField(k, dflt));
+const changedMark = () => {
+  const m = el('span', 'changed-mark', 'changed from default');
+  m.title = 'Differs from the shipped default; Reset to default brings it back';
+  return m;
+};
+const famLabel = (f) => (f ? f[0].toUpperCase() + f.slice(1) : '');
+const flavorOf = (family) => M.roles?.flavor.find((x) => x.family === family);
+/** The effort a model runs at in a job: the job's own, else that model's default — the resolver's rule. */
+const effortIn = (role, family) => role.effort || flavorOf(family)?.flavor.effort || '';
+
+/** A model as it runs in a job: "Opus · high". */
+function lineupChip(family, effort, id, cls = '') {
+  const chip = el('span', `job-chip${cls}`);
+  chip.dataset.family = family;
+  chip.appendChild(el('span', 'job-chip-name', famLabel(family)));
+  if (effort) chip.appendChild(el('span', 'job-chip-effort', ` · ${effort}`));
+  chip.title = `${id || '(no id)'}${effort ? `, ${effort} effort` : ', no effort set'}`;
+  return chip;
+}
 
 /**
  * One write to roles.json, against the base the panel last read; a 409 reloads
@@ -4457,61 +4498,73 @@ async function rolesWrite(path, body, okText, done) {
 
 function rolesSection() {
   const sec = el('div', 'models-roles');
-  sec.appendChild(el('h3', 'models-subhead', 'Roles'));
+  sec.appendChild(el('h3', 'models-subhead', 'Jobs'));
   const R = M.roles;
   if (!R) {
-    sec.appendChild(el('div', 'scope-note', M.rolesError || 'reading roles…'));
+    sec.appendChild(el('div', 'scope-note', M.rolesError || 'reading jobs…'));
     return sec;
   }
   sec.appendChild(el('div', 'scope-sub models-roles-sub',
-    `Which family does which job. Skills read these with model-id --role <name>; a field you set is marked yours, the rest come from the defaults. Saved in ${R.userFile}.`));
+    'Which model does each job, and how hard it thinks. Each chip shows the effort that actually applies: the job’s own, or the model’s default when the job sets none. Click a job to change it.'));
   if (R.error) {
     const n = el('div', 'notice error models-error');
     n.appendChild(el('div', null, 'roles.json is invalid. Defaults are in use, and edits are refused until it is fixed (or a Describe proposal replaces it):'));
     n.appendChild(el('div', 'models-error-text', R.error));
     sec.appendChild(n);
   }
-  const table = el('table', 'models-table roles-table');
-  const hr = el('tr');
-  for (const h of ['Role', 'Uses', 'Effort', 'Alt', 'Source']) hr.appendChild(el('th', null, h));
-  table.appendChild(el('thead')).appendChild(hr);
-  const tbody = el('tbody');
+  const list = el('div', 'roles-list');
   for (const role of R.roles) {
-    const tr = el('tr', `models-row roles-row${M.roleOpen.has(role.name) ? ' open' : ''}`);
-    tr.dataset.role = role.name;
-    tr.onclick = (e) => {
-      if (e.target.closest('button, input, select')) return;
-      if (M.roleOpen.has(role.name)) M.roleOpen.delete(role.name); else M.roleOpen.add(role.name);
-      paintModels();
-    };
-    const name = el('td', 'models-family', role.name);
-    if (role.custom) name.appendChild(el('span', 'item-badge', 'yours'));
-    tr.appendChild(name);
-    const uses = el('td', 'roles-uses');
-    role.use.forEach((f, i) => {
-      const u = el('div', i ? 'roles-then' : 'roles-first');
-      u.appendChild(document.createTextNode(i ? `then ${f}` : f));
-      u.appendChild(el('span', 'models-id roles-id', ` ${role.ids[i] ?? '?'}`));
-      uses.appendChild(u);
-    });
-    for (const w of role.warnings) uses.appendChild(el('div', 'models-alert retiring roles-warning', w));
-    tr.appendChild(uses);
-    tr.appendChild(el('td', 'roles-effort', role.resolvedEffort || '—'));
-    tr.appendChild(el('td', 'roles-alt', role.alt ? `${role.alt}` : '—'));
-    const yours = Object.keys(role.provenance || {}).filter((k) => fieldSource(role.provenance, k) === 'yours');
-    tr.appendChild(el('td', `models-source${yours.length ? ' override' : ''}`,
-      role.custom ? 'your role' : yours.length ? `yours: ${yours.join(', ')}` : 'default'));
-    tbody.appendChild(tr);
-    if (M.roleOpen.has(role.name)) tbody.appendChild(roleEditor(role));
+    list.appendChild(roleRow(role));
+    if (M.roleOpen.has(role.name)) list.appendChild(roleEditor(role));
   }
-  if (M.adding) tbody.appendChild(roleEditor(null));
-  table.appendChild(tbody);
-  sec.appendChild(table);
+  if (M.adding) list.appendChild(roleEditor(null));
+  sec.appendChild(list);
   const add = el('button', 'btn ghost roles-add', 'Add a role');
   add.disabled = !!R.error || M.adding;
   add.onclick = () => { M.adding = true; paintModels(); };
   sec.appendChild(add);
   return sec;
+}
+
+/** One job: what it is for, its lineup with the effort that applies, its second opinion. */
+function roleRow(role) {
+  const open = M.roleOpen.has(role.name);
+  const row = el('div', `roles-row${open ? ' open' : ''}`);
+  row.dataset.role = role.name;
+  row.setAttribute('tabindex', '0');
+  row.setAttribute('aria-expanded', String(open));
+  const toggle = () => {
+    if (M.roleOpen.has(role.name)) M.roleOpen.delete(role.name); else M.roleOpen.add(role.name);
+    paintModels();
+  };
+  row.onclick = (e) => { if (!e.target.closest('button, input, select')) toggle(); };
+  row.onkeydown = (e) => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggle(); } };
+  // A custom role is all yours: one badge says so, rather than a mark on every field.
+  const marked = (k) => !role.custom && differs(role.provenance, k, role[k], role.defaults?.[k]);
+
+  const top = el('div', 'roles-top');
+  top.appendChild(el('span', 'roles-name-text', role.name));
+  if (role.custom) top.appendChild(el('span', 'item-badge', 'your role'));
+  const note = el('span', 'roles-note-text', role.note || 'No description.');
+  top.appendChild(note);
+  if (marked('note')) top.appendChild(changedMark());
+  top.appendChild(el('span', 'roles-open-hint', open ? 'Close' : 'Edit'));
+  row.appendChild(top);
+
+  const lineup = el('div', 'roles-lineup');
+  role.use.forEach((f, i) => lineup.appendChild(lineupChip(f, effortIn(role, f), role.ids[i], i ? '' : ' first')));
+  if (marked('use') || marked('effort')) lineup.appendChild(changedMark());
+  row.appendChild(lineup);
+  if (role.use.length > 1) row.appendChild(el('div', 'scope-note roles-hint', 'First is the default; the rest are alternatives.'));
+  if (role.alt || marked('alt')) {
+    const alt = el('div', 'roles-second');
+    alt.appendChild(el('span', 'roles-second-label', role.alt ? 'Second opinion: ' : 'No second opinion'));
+    if (role.alt) alt.appendChild(lineupChip(role.alt, effortIn(role, role.alt), role.altId));
+    if (marked('alt')) alt.appendChild(changedMark());
+    row.appendChild(alt);
+  }
+  for (const w of role.warnings) row.appendChild(el('div', 'models-alert retiring roles-warning', w));
+  return row;
 }
 
 const familySelect = (families, value, blank) => {
@@ -4522,20 +4575,21 @@ const familySelect = (families, value, blank) => {
   return sel;
 };
 
-/** One role's edit row; `role` null is a new role. Drafts are kept in M.roleDrafts. */
+/** One role's edit form, right under its row; `role` null is a new role. Drafts are kept in M.roleDrafts. */
 function roleEditor(role) {
   const R = M.roles;
   const key = role ? role.name : '+new';
   const d = M.roleDrafts[key] ??= role
     ? { use: role.use.join(', '), effort: role.effort, alt: role.alt, note: role.note }
     : { name: '', use: '', effort: '', alt: '', note: '' };
-  const tr = el('tr', 'models-detail roles-detail');
-  const td = el('td');
-  td.colSpan = 5;
+  const box = el('div', 'models-detail roles-detail');
   const form = el('div', 'roles-form');
-  const field = (label, input) => {
+  const marked = (k) => role && !role.custom && differs(role.provenance, k, role[k], role.defaults?.[k]);
+  const field = (label, input, k) => {
     const f = el('label', 'roles-field');
-    f.appendChild(el('span', 'roles-label', label));
+    const l = el('span', 'roles-label', label);
+    if (k && marked(k)) l.appendChild(changedMark());
+    f.appendChild(l);
     f.appendChild(input);
     form.appendChild(f);
     return input;
@@ -4545,21 +4599,21 @@ function roleEditor(role) {
     name.value = d.name; name.placeholder = 'e.g. scout'; name.spellcheck = false;
     name.oninput = () => { d.name = name.value; };
   }
-  const use = field('Uses (first is the answer, comma-separated)', el('input', 'models-input roles-use'));
+  const use = field('Models, in order (first is the default; comma-separated)', el('input', 'models-input roles-use'), 'use');
   use.value = d.use; use.spellcheck = false; use.placeholder = R.families.slice(0, 2).join(', ');
   use.oninput = () => { d.use = use.value; };
-  const effort = field('Effort', el('select', 'models-input roles-select roles-effort-input'));
-  effort.appendChild(el('option', null, role?.defaults?.effort && !d.effort ? '(none — cleared)' : '(none)')).value = '';
+  const effort = field('Effort', el('select', 'models-input roles-select roles-effort-input'), 'effort');
+  effort.appendChild(el('option', null, role?.defaults?.effort && !d.effort ? '(each model’s default — cleared)' : '(each model’s default)')).value = '';
   for (const e of R.efforts) effort.appendChild(el('option', null, e)).value = e;
   effort.value = d.effort || '';
   effort.onchange = () => { d.effort = effort.value; };
-  const alt = field('Alt (second opinion, never automatic)', familySelect(R.families, d.alt, '(none)'));
+  const alt = field('Second opinion (optional, never automatic)', familySelect(R.families, d.alt, '(none)'), 'alt');
   alt.classList.add('roles-alt-input');
   alt.onchange = () => { d.alt = alt.value; };
-  const note = field('Note', el('input', 'models-input roles-note'));
+  const note = field('What this job is', el('input', 'models-input roles-note'), 'note');
   note.value = d.note; note.maxLength = R.limits.note;
   note.oninput = () => { d.note = note.value; };
-  td.appendChild(form);
+  box.appendChild(form);
 
   const bar = el('div', 'models-edit roles-buttons');
   const save = el('button', 'btn primary', 'Save');
@@ -4595,59 +4649,164 @@ function roleEditor(role) {
     cancel.onclick = () => { M.adding = false; delete M.roleDrafts[key]; paintModels(); };
     bar.appendChild(cancel);
   }
-  td.appendChild(bar);
+  box.appendChild(bar);
   if (role && !role.custom && role.defaults) {
     const dd = role.defaults;
-    td.appendChild(el('div', 'scope-note roles-default', `Default: ${[].concat(dd.use).join(', ')}${dd.effort ? ` · ${dd.effort}` : ''}${dd.alt ? ` · alt ${dd.alt}` : ''}`));
+    box.appendChild(el('div', 'scope-note roles-default', `Default: ${[].concat(dd.use).join(', ')}${dd.effort ? ` · ${dd.effort}` : ''}${dd.alt ? ` · second opinion ${dd.alt}` : ''}`));
   }
-  tr.appendChild(td);
-  return tr;
+  return box;
 }
 
-/** A family's flavor inside its Models row: likes, quirks, how to brief it, its effort. */
-function flavorBlock(family) {
-  const box = el('div', 'models-flavor');
-  box.appendChild(el('p', 'assist-label', `Flavor — what model-id --flavor ${family} prints`));
+/* ── Your models: one card per family (its flavor) ───────────────────── */
+
+function familiesSection() {
+  const sec = el('div', 'models-families');
+  sec.appendChild(el('h3', 'models-subhead', 'Your models'));
   const R = M.roles;
-  const f = R?.flavor.find((x) => x.family === family);
-  if (!f) { box.appendChild(el('div', 'scope-note', M.rolesError || 'reading…')); return box; }
+  if (!R) { sec.appendChild(el('div', 'scope-note', M.rolesError || 'reading…')); return sec; }
+  sec.appendChild(el('div', 'scope-sub models-roles-sub',
+    'What each model is good at, what to watch for, and how to brief it. Agents read this when you hand them work — write it the way you’d brief them.'));
+  const grid = el('div', 'model-cards');
+  for (const f of R.flavor) grid.appendChild(familyCard(f));
+  sec.appendChild(grid);
+  return sec;
+}
+
+const FLAVOR_SHOWN = [['Strengths', 'likes'], ['Weaknesses', 'quirks'], ['Briefing tips', 'brief'], ['Default effort', 'effort']];
+
+function familyCard(f) {
+  const R = M.roles;
+  const { family } = f;
+  const row = M.data?.rows.find((r) => r.family === family);
+  const editing = M.flavorOpen.has(family);
+  const card = el('div', `model-card${editing ? ' editing' : ''}`);
+  card.dataset.family = family;
+  const head = el('div', 'model-card-head');
+  if (row) head.appendChild(el('span', `item-dot ${vendorDot(row.vendor)}`));
+  head.appendChild(el('span', 'model-card-name', famLabel(family)));
+  if (row) head.appendChild(el('span', 'model-card-id', row.id));
+  card.appendChild(head);
+  const marked = (k) => differs(f.provenance, k, f.flavor[k], f.defaults?.[k]);
+
+  if (editing) card.appendChild(flavorForm(f, marked));
+  else {
+    const dl = el('div', 'model-card-fields');
+    for (const [label, k] of FLAVOR_SHOWN) {
+      const w = el('div', `model-field model-field-${k}`);
+      const l = el('div', 'model-field-label', label);
+      if (marked(k)) l.appendChild(changedMark());
+      w.appendChild(l);
+      const v = f.flavor[k];
+      if (Array.isArray(v) && v.length) {
+        const ul = el('ul', 'model-field-list');
+        for (const x of v) ul.appendChild(el('li', null, x));
+        w.appendChild(ul);
+      } else if (v && !Array.isArray(v)) w.appendChild(el('div', 'model-field-text', v));
+      else w.appendChild(el('div', 'model-field-text none', k === 'effort' ? 'None set — the job decides' : 'Nothing noted'));
+      dl.appendChild(w);
+    }
+    card.appendChild(dl);
+    const bar = el('div', 'models-edit model-card-buttons');
+    const edit = el('button', 'btn ghost', 'Edit');
+    edit.disabled = !!R.error;
+    edit.onclick = () => { M.flavorOpen.add(family); paintModels(); };
+    bar.appendChild(edit);
+    bar.appendChild(flavorReset(f));
+    card.appendChild(bar);
+  }
+  card.appendChild(usedBy(family));
+  return card;
+}
+
+const flavorYours = (f) => Object.keys(f.provenance || {}).some((k) => isYours(f.provenance, k));
+
+function flavorReset(f) {
+  const reset = el('button', 'btn ghost', 'Reset to default');
+  reset.disabled = !!M.roles.error || !flavorYours(f);
+  reset.title = flavorYours(f) ? 'Remove your notes for this model; the defaults come back' : 'Already the default';
+  reset.onclick = () => rolesWrite('/api/models/flavor/reset', { family: f.family }, `${f.family} notes are back to their default.`, () => { delete M.flavorDrafts[f.family]; });
+  return reset;
+}
+
+/** A card's edit form: likes, quirks, how to brief it, its effort. Drafts are kept in M.flavorDrafts. */
+function flavorForm(f, marked) {
+  const R = M.roles;
+  const { family } = f;
+  const box = el('div', 'models-flavor');
   const d = M.flavorDrafts[family] ??= {
     likes: (f.flavor.likes || []).join('\n'), quirks: (f.flavor.quirks || []).join('\n'), brief: f.flavor.brief || '', effort: f.flavor.effort || '',
   };
-  box.appendChild(el('div', 'scope-note', 'This text becomes part of the instructions other agents are briefed with, so write it as you would brief them. One item per line.'));
   const grid = el('div', 'roles-form flavor-form');
   const field = (label, input, k) => {
     const w = el('label', 'roles-field');
-    w.appendChild(el('span', 'roles-label', `${label} · ${fieldSource(f.provenance, k)}`));
+    const l = el('span', 'roles-label', label);
+    if (marked(k)) l.appendChild(changedMark());
+    w.appendChild(l);
     w.appendChild(input);
     grid.appendChild(w);
     return input;
   };
-  const likes = field('Good at', el('textarea', 'models-input flavor-likes'), 'likes');
+  const likes = field('Strengths (one per line)', el('textarea', 'models-input flavor-likes'), 'likes');
   likes.value = d.likes; likes.rows = 3; likes.oninput = () => { d.likes = likes.value; };
-  const quirks = field('Watch for', el('textarea', 'models-input flavor-quirks'), 'quirks');
+  const quirks = field('Weaknesses (one per line)', el('textarea', 'models-input flavor-quirks'), 'quirks');
   quirks.value = d.quirks; quirks.rows = 3; quirks.oninput = () => { d.quirks = quirks.value; };
-  const brief = field(`How to brief it (up to ${R.limits.brief} characters)`, el('textarea', 'models-input flavor-brief'), 'brief');
-  brief.value = d.brief; brief.rows = 2; brief.maxLength = R.limits.brief; brief.oninput = () => { d.brief = brief.value; };
-  const effort = field('Effort when a role sets none', el('select', 'models-input roles-select flavor-effort'), 'effort');
+  const brief = field(`Briefing tips (up to ${R.limits.brief} characters)`, el('textarea', 'models-input flavor-brief'), 'brief');
+  brief.value = d.brief; brief.rows = 3; brief.maxLength = R.limits.brief; brief.oninput = () => { d.brief = brief.value; };
+  const effort = field('Default effort (when a job sets none)', el('select', 'models-input roles-select flavor-effort'), 'effort');
   effort.appendChild(el('option', null, '(none)')).value = '';
   for (const e of R.efforts) effort.appendChild(el('option', null, e)).value = e;
   effort.value = d.effort; effort.onchange = () => { d.effort = effort.value; };
   box.appendChild(grid);
-  const bar = el('div', 'models-edit');
+  const bar = el('div', 'models-edit model-card-buttons');
   const lines = (t) => t.split('\n').map((x) => x.trim()).filter(Boolean);
-  const save = el('button', 'btn primary', 'Save flavor');
+  const save = el('button', 'btn primary', 'Save');
   save.disabled = !!R.error;
   save.onclick = async () => {
     const fields = { likes: lines(d.likes), quirks: lines(d.quirks), brief: d.brief.trim(), effort: d.effort };
-    await rolesWrite('/api/models/flavor/set', { family, fields }, `${family} flavor saved.`, () => { delete M.flavorDrafts[family]; });
+    await rolesWrite('/api/models/flavor/set', { family, fields }, `${family} notes saved.`, () => { delete M.flavorDrafts[family]; M.flavorOpen.delete(family); });
   };
-  const reset = el('button', 'btn ghost', 'Reset to default');
-  reset.disabled = !!R.error || !Object.keys(f.provenance || {}).some((k) => fieldSource(f.provenance, k) === 'yours');
-  reset.onclick = () => rolesWrite('/api/models/flavor/reset', { family }, `${family} flavor is back to its default.`, () => { delete M.flavorDrafts[family]; });
+  const cancel = el('button', 'btn ghost', 'Cancel');
+  cancel.onclick = () => { delete M.flavorDrafts[family]; M.flavorOpen.delete(family); paintModels(); };
   bar.appendChild(save);
-  bar.appendChild(reset);
+  bar.appendChild(cancel);
+  bar.appendChild(flavorReset(f));
   box.appendChild(bar);
+  return box;
+}
+
+/** Which jobs lean on a model, and which files call model-id for it — folded until asked for. */
+function usedBy(family) {
+  const R = M.roles;
+  const jobs = R.roles.filter((r) => r.use.includes(family) || r.alt === family)
+    .map((r) => (r.use[0] === family ? r.name : r.use.includes(family) ? `${r.name} (alternative)` : `${r.name} (second opinion)`));
+  const open = M.usedOpen.has(family);
+  const box = el('div', 'models-where model-used');
+  const toggle = el('button', 'model-used-toggle', `${open ? '▾' : '▸'} Used by ${jobs.length ? `${jobs.length} job${jobs.length === 1 ? '' : 's'}` : 'no job'}`);
+  toggle.setAttribute('aria-expanded', String(open));
+  toggle.onclick = () => { if (open) M.usedOpen.delete(family); else M.usedOpen.add(family); paintModels(); };
+  box.appendChild(toggle);
+  if (!open) return box;
+  box.appendChild(el('div', 'scope-note model-used-jobs', jobs.length ? `Jobs: ${jobs.join(', ')}` : 'No job uses it.'));
+  const w = M.where[family];
+  if (!w) {
+    box.appendChild(el('div', 'scope-note', 'reading files…'));
+    api('GET', `/api/models/where?family=${encodeURIComponent(family)}`)
+      .then((res) => { M.where[family] = res; if (S.view === 'models') paintModels(); })
+      .catch((e) => { M.where[family] = { hits: [], error: e.message }; if (S.view === 'models') paintModels(); });
+  } else if (w.error) {
+    box.appendChild(el('div', 'scope-note', w.error));
+  } else if (!w.hits.length) {
+    box.appendChild(el('div', 'scope-note', 'No skill, config or CLAUDE.md calls it.'));
+  } else {
+    box.appendChild(el('div', 'scope-note', 'Files that call it:'));
+    for (const h of w.hits) {
+      const line = el('div', 'models-where-hit');
+      line.appendChild(el('span', 'models-where-file', `${h.file}:${h.line}`));
+      line.appendChild(el('span', 'models-where-text', h.text));
+      box.appendChild(line);
+    }
+    if (w.truncated) box.appendChild(el('div', 'scope-note', 'Showing the first matches only.'));
+  }
   return box;
 }
 
@@ -4655,12 +4814,12 @@ function flavorBlock(family) {
 
 function describeSection() {
   const D = M.describe;
-  const sec = el('div', 'models-describe');
+  const sec = el('div', 'models-describe model-describe-card');
   sec.appendChild(el('h3', 'models-subhead', 'Describe your models'));
   const info = M.roles?.describe;
   if (!info) { sec.appendChild(el('div', 'scope-note', M.rolesError || 'reading…')); return sec; }
   sec.appendChild(el('div', 'scope-sub models-roles-sub',
-    'Say in plain words what each model is good at, its quirks, and who should advise, review or build. An AI turns that into roles and flavor, shown below as a change to roles.json; nothing is written until you accept it.'));
+    'Say in plain words what each model is good at, what to watch for, and who should advise, review or build. An AI turns that into jobs and model notes, shown as a change to roles.json; nothing is written until you accept it.'));
   sec.appendChild(el('div', 'scope-note describe-backend', info.ready
     ? `Runs ${info.label} ${info.modelLabel || info.model} with no tools — the Assist registry's default model, not the picker's last choice.`
     : `Describe is unavailable: ${info.why}`));
@@ -4809,7 +4968,7 @@ function guideSection() {
   if (!M.guide) { sec.appendChild(el('div', 'scope-note', M.guideError || 'reading…')); return sec; }
   if (M.guide.rolesError) {
     const n = el('div', 'notice error guide-roles-error');
-    n.appendChild(el('div', null, 'Roles invalid — fix in Models → Roles. The guide can’t be added or updated until then; removing it still works.'));
+    n.appendChild(el('div', null, 'Roles invalid — fix in Models → Jobs. The guide can’t be added or updated until then; removing it still works.'));
     n.appendChild(el('div', 'models-error-text', M.guide.rolesError));
     sec.appendChild(n);
   }

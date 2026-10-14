@@ -68,17 +68,21 @@ const content = (p) => p.$('content');
 const roleRow = (p, name) => content(p).querySelectorAll('.roles-row').find((r) => r.dataset.role === name);
 const button = (root, text) => root.querySelectorAll('button').find((b) => p0text(b) === text);
 const p0text = (b) => b.textContent.replace(/\s+/g, ' ').trim();
+const card = (p, family) => content(p).querySelector(`.model-card[data-family="${family}"]`);
+const chips = (root) => root.querySelectorAll('.roles-lineup .job-chip').map(p0text);
 const posts = (p, path) => p.requests.filter((r) => r.method === 'POST' && r.path === path);
 
 // ── the Roles table ─────────────────────────────────────────────────────
 {
   const p = await boot();
   const text = p.text(content(p));
-  ok('A4 the Roles section shows on the Models view', /Roles/.test(text) && content(p).querySelector('.roles-table'));
-  ok('…each role with its family and id, in order of preference', /opus opus-id-1/.test(p.text(roleRow(p, 'builder'))) && /then sol sol-id-1/.test(p.text(roleRow(p, 'builder'))));
+  ok('A4 the Roles section shows on the Models view', /Jobs/.test(text) && content(p).querySelector('.roles-list'));
+  ok('…each role with its family and id, in order of preference', JSON.stringify(chips(roleRow(p, 'builder'))) === '["Opus · medium","Sol · medium"]'
+     && JSON.stringify(roleRow(p, 'builder').querySelectorAll('.roles-lineup .job-chip').map((c) => c.title.split(',')[0])) === '["opus-id-1","sol-id-1"]',
+     JSON.stringify(chips(roleRow(p, 'builder'))));
   ok('…its resolved effort and alt', /max/.test(p.text(roleRow(p, 'reviewer'))) && /medium/.test(p.text(roleRow(p, 'builder'))));
-  ok('R7 provenance per field: an overridden field reads "yours: effort", an untouched role "default", a custom one "your role"',
-     /yours: effort/.test(p.text(roleRow(p, 'reviewer'))) && /default$/.test(p.text(roleRow(p, 'builder'))) && /your role/.test(p.text(roleRow(p, 'scout'))));
+  ok('R7 provenance per field: an overridden field is marked "changed from default", an untouched role is not, a custom one reads "your role"',
+     roleRow(p, 'reviewer').querySelector('.roles-lineup .changed-mark') && !roleRow(p, 'builder').querySelector('.changed-mark') && /your role/.test(p.text(roleRow(p, 'scout'))));
   ok('R8 a role on a retiring family carries the warning', /retiring on 2026-12-01/.test(p.text(roleRow(p, 'reviewer'))));
   ok('the file it saves to is named', /~\/\.agent-config-studio\/roles\.json/.test(text));
 
@@ -158,7 +162,7 @@ const posts = (p, path) => p.requests.filter((r) => r.method === 'POST' && r.pat
   const sent = posts(p, '/api/models/roles/set').pop();
   ok('3 …and Save right after sends the default, not the stale value', sent?.body.fields.effort === 'high', JSON.stringify(sent?.body));
 
-  content(p).querySelectorAll('.models-row').find((r) => r.dataset.family === 'sol').click();
+  button(card(p, 'sol'), 'Edit').click();
   await settle(10);
   p.input(content(p).querySelector('.models-flavor .flavor-brief'), 'stale draft');
   button(content(p).querySelector('.models-flavor'), 'Reset to default').click();
@@ -181,18 +185,18 @@ const posts = (p, path) => p.requests.filter((r) => r.method === 'POST' && r.pat
 // ── flavor, inside each family's row ──────────────────────────────────
 {
   const p = await boot();
-  content(p).querySelectorAll('.models-row').find((r) => r.dataset.family === 'sol').click();
+  button(card(p, 'sol'), 'Edit').click();
   await settle(10);
-  const fl = content(p).querySelector('.models-flavor');
+  const fl = card(p, 'sol').querySelector('.models-flavor');
   ok('A4 a family row shows its flavor', fl && fl.querySelector('.flavor-brief').value === 'Set limits.' && fl.querySelector('.flavor-likes').value === 'builds');
-  ok('…with where each field comes from', /How to brief it .* · yours/.test(p.text(fl)) && /Good at · default/.test(p.text(fl)));
-  ok('R5 …and says flavor text becomes other agents\' instructions', /becomes part of the instructions other agents are briefed with/.test(p.text(fl)));
+  ok('…with where each field comes from', fl.querySelector('.flavor-brief').parentNode.querySelector('.changed-mark') && !fl.querySelector('.flavor-likes').parentNode.querySelector('.changed-mark'));
+  ok('R5 …and says flavor text becomes other agents\' instructions', /Agents read this when you hand them work — write it the way you’d brief them\./.test(p.text(content(p).querySelector('.models-families'))));
   p.input(fl.querySelector('.flavor-likes'), 'builds\n  tests first \n\n');
-  button(fl, 'Save flavor').click();
+  button(fl, 'Save').click();
   await settle(10);
   const fs = posts(p, '/api/models/flavor/set');
   ok('A4 Save flavor sends one item per line, trimmed, empties dropped', fs.length === 1 && fs[0].body.family === 'sol' && JSON.stringify(fs[0].body.fields.likes) === '["builds","tests first"]' && fs[0].body.base === 'sha256:base-1', JSON.stringify(fs));
-  const fl2 = content(p).querySelector('.models-flavor');
+  const fl2 = card(p, 'sol');
   button(fl2, 'Reset to default').click();
   await settle(10);
   ok('A4 Reset flavor sends the family', posts(p, '/api/models/flavor/reset')[0]?.body.family === 'sol');
