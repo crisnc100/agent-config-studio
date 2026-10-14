@@ -78,6 +78,25 @@ function contextItems(d) {
 }
 
 /**
+ * The audit's line in Needs attention, from /api/audit/summary: the last
+ * run's counts, never a new scan. An item (with `source`) when it found
+ * something fixable; a quiet line when it has not run or ran only in part;
+ * null otherwise, or when the route did not answer — the audit is not one of
+ * the sources "Nothing needs you" waits for.
+ */
+function auditAttention(src) {
+  if (!src || src.state !== 'ok' || !src.data) return null;
+  const d = src.data;
+  if (d.state === 'not-audited') return { kind: 'muted', text: 'Skills and instruction files: not audited yet.', action: { view: 'audit', label: 'Audit' } };
+  const when = d.stale ? ' (as of the last audit)' : d.state === 'partial' ? ' (partial audit)' : '';
+  if (d.fixable > 0) {
+    return { source: 'audit', kind: 'warn', text: `${plural(d.fixable, 'fixable audit finding')} in skills and instruction files${when}`, action: { view: 'audit', label: 'Review' } };
+  }
+  if (d.state === 'partial') return { kind: 'muted', text: 'The last audit was partial: nothing fixable in what it read.', action: { view: 'audit', label: 'Open' } };
+  return null;
+}
+
+/**
  * A CLI's model catalog is missing. That is "not installed" only when setup's
  * own check (/api/setup/clis) has not found the CLI either: an installed CLI
  * just has not written its catalog yet, and Home must never contradict the

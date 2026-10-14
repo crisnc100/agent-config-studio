@@ -99,6 +99,7 @@ jobs:
           node tests/model-guide-ui.mjs
           node tests/audit.mjs
           node tests/audit-routes.mjs
+          node tests/audit-ui.mjs
           node tests/home-refresh.mjs
           node tests/assist-containment.mjs
           node tests/acs-update.mjs
