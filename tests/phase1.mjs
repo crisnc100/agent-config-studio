@@ -694,7 +694,7 @@ async function main() {
         eq(spawnedReal, h.binary, `${h.id} child spawnfile !== detected binary`);
         assert(!handle.binary.includes('cmux-cli-shims'), `${h.id} spawned a shim`);
         assert(!handle.argv.includes('zsh'), `${h.id} still spawned via zsh`);
-        assert(argvIncludes(handle.argv, desc.containment), `${h.id} spawn argv missing containment: ${handle.argv.join(' ')}`);
+        assert(argvIncludes(handle.argv, desc.toolless.containment), `${h.id} spawn argv missing containment: ${handle.argv.join(' ')}`);
         const watchdog = spawnTimeout(TURN_MS, () => handle.kill());
         let result;
         try {
@@ -714,7 +714,7 @@ async function main() {
           throw new Error(`${h.id} auth failure in reply: ${result.text.slice(0, 200)}`);
         }
 
-        const held = containmentHeld(result.init, h.id);
+        const held = containmentHeld(result.init, h.id, { toolless: true });
         assert(held.ok, `${h.id} write was not demonstrably prevented: ${held.why}`);
 
         const after = treeManifest(dir);

@@ -57,7 +57,9 @@ const done = () => {
   if (a[i + 1] === 'json') process.stdout.write(JSON.stringify({ result: 'fixed file' }));
   else {
     // The contained tool set the init gate requires (lib/containment.js).
-    console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1', tools: [a.includes('--prompt-file') ? 'read_file' : 'Read'], mcp_servers: [] }));
+    // Chat is tool-less: the real CLIs report no tools for that argv.
+    const toolless = a.includes('--prompt-file') ? (a[a.indexOf('--disallowed-tools') + 1] || '').split(',').includes('read_file') : a[a.indexOf('--tools') + 1] === '';
+    console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1', tools: toolless ? [] : [a.includes('--prompt-file') ? 'read_file' : 'Read'], mcp_servers: [] }));
     console.log(JSON.stringify({ type: 'result', result: 'ok reply', session_id: 'sess-1', usage: {} }));
   }
   process.exit(0);
