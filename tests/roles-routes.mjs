@@ -364,6 +364,32 @@ try {
     await post('/api/models/roles/reset', { name: 'builder', base: v.base });
     ok('reset: no conflicts left', (await view()).conflicts.length === 0);
   }
+
+  console.log('\nroles routes: avoid — a stale installed resolver refuses the save, before any write');
+  {
+    const resolverRoles = path.join(home, '.agent-config-studio', 'resolver', 'lib', 'roles.js');
+    fs.mkdirSync(path.dirname(resolverRoles), { recursive: true });
+    fs.writeFileSync(resolverRoles, '// an older roles.js\n');
+    let v = await view();
+    ok('the view says the installed resolver is stale', v.resolverStale === true);
+    const before = readRoles();
+    const direct = await post('/api/models/flavor/set', { family: 'grok', fields: { avoid: ['builder'] }, base: v.base });
+    ok('a direct avoid save → 409 naming the fix', direct.status === 409 && /installed model-id is older than this version of ACS.*Run: acs install-model-id, then save again/.test(direct.body.error), JSON.stringify(direct.body));
+    ok('…and nothing is written', readRoles() === before);
+    setMode({ kind: 'ok', reply: JSON.stringify({ version: 1, flavor: { grok: { avoid: ['builder'] } } }) });
+    const d = await post('/api/models/roles/describe', { description: 'grok should not build' });
+    const acc = await post('/api/models/roles/proposal/accept', { id: d.body.id });
+    ok('the same through Describe accept → 409', d.status === 200 && acc.status === 409 && /acs install-model-id/.test(acc.body.error), JSON.stringify(acc.body));
+    ok('…and nothing is written', readRoles() === before);
+    const plain = await post('/api/models/flavor/set', { family: 'grok', fields: { brief: 'Spell out every file.' }, base: (await view()).base });
+    ok('a save without avoid is unaffected while stale', plain.status === 200 && plain.body.saved === true && !/avoid/.test(readRoles()), JSON.stringify(plain.body));
+    fs.copyFileSync(path.join(ROOT, 'lib', 'roles.js'), resolverRoles);
+    v = await view();
+    const same = await post('/api/models/flavor/set', { family: 'grok', fields: { avoid: ['builder'] }, base: v.base });
+    ok('an identical installed resolver: the avoid save goes through', v.resolverStale === false && same.status === 200 && JSON.parse(readRoles()).flavor.grok.avoid.join() === 'builder', JSON.stringify(same.body));
+    fs.rmSync(path.join(home, '.agent-config-studio', 'resolver'), { recursive: true, force: true });
+    await post('/api/models/flavor/reset', { family: 'grok', base: (await view()).base });
+  }
 } finally {
   srv.child.kill('SIGKILL');
 }

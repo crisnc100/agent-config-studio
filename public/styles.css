@@ -1348,6 +1348,11 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .models-guide .guide-row { padding: 10px 14px; }
 .models-scripts { margin-top: 34px; padding-top: 12px; border-top: 1px solid var(--border-soft); }
 .models-scripts .scope-note { line-height: 1.6; }
+.models-write-error { margin-top: 8px; font-size: 12.5px; }
+.models-resolver-stale {
+  margin: 10px 0; padding: 6px 12px; font-size: 13px; border-radius: var(--radius); color: var(--amber);
+  border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
 .roles-conflict { margin-top: 6px; font-size: 12px; color: var(--amber); }
 .describe-conflicts {
   margin: 0 0 10px; padding: 6px 10px; border-radius: 7px; font-size: 12px; color: var(--text-dim);

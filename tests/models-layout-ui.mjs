@@ -74,6 +74,8 @@ const roleRow = (p, name) => content(p).querySelectorAll('.roles-row').find((r) 
 const card = (p, family) => content(p).querySelector(`.model-card[data-family="${family}"]`);
 const lineup = (r) => r.querySelectorAll('.roles-lineup .job-chip').map(txt);
 const posts = (p, path) => p.requests.filter((r) => r.method === 'POST' && r.path === path);
+/** The visible marker text in `root`. */
+const marks = (root) => (root ? root.querySelectorAll('.changed-mark').map(txt) : []);
 const ids = (p) => content(p).querySelector('.models-ids');
 
 // ── the order: Jobs, Describe, Your models, Model ids, Model guide ───────
@@ -118,18 +120,18 @@ const ids = (p) => content(p).querySelector('.models-ids');
 {
   const p = await boot();
   const rv = roleRow(p, 'reviewer');
-  ok('jobs: a changed lineup carries the mark', !!rv.querySelector('.roles-lineup .changed-mark'));
+  ok('jobs: a changed lineup carries the mark, reading "changed from default"', JSON.stringify(marks(rv.querySelector('.roles-lineup'))) === '["changed from default"]' && marks(rv).length === 1);
   ok('…an unchanged note and second opinion do not', !rv.querySelector('.roles-top .changed-mark') && !rv.querySelector('.roles-second .changed-mark'));
   ok('…an untouched job carries none', !roleRow(p, 'builder').querySelector('.changed-mark'));
   ok('…a field yours but equal to the default carries none', !roleRow(p, 'judge').querySelector('.changed-mark'));
   rv.click();
   await settle(5);
   const ed = content(p).querySelector('.roles-detail');
-  const marked = ed.querySelectorAll('.roles-field').filter((f) => f.querySelector('.changed-mark')).map((f) => f.querySelector('input, select').className);
+  const marked = ed.querySelectorAll('.roles-field').filter((f) => marks(f).join() === 'changed from default').map((f) => f.querySelector('input, select').className);
   ok('…in the editor, only the changed fields (models, effort) are marked',
     marked.length === 2 && /roles-use/.test(marked[0]) && /roles-effort-input/.test(marked[1]), JSON.stringify(marked));
   ok('models: only the differing field (Briefing tips) is marked on the card',
-    JSON.stringify(card(p, 'sol').querySelectorAll('.model-field').filter((f) => f.querySelector('.changed-mark')).map((f) => f.className)) === '["model-field model-field-brief"]');
+    JSON.stringify(card(p, 'sol').querySelectorAll('.model-field').filter((f) => marks(f).join() === 'changed from default').map((f) => f.className)) === '["model-field model-field-brief"]' && marks(card(p, 'sol')).length === 1);
   ok('…and an untouched card has none', !card(p, 'opus').querySelector('.changed-mark'));
   ok('no "default" or "yours" tag on every field', !/· (default|yours)\b/.test(p.text(content(p))));
 }
@@ -256,6 +258,31 @@ const ids = (p) => content(p).querySelector('.models-ids');
   ok('…and the notice says it saved, naming only the new conflict', n?.classList.contains('warn') && /fable notes saved\. It saved, but now:/.test(p.text(n))
     && n.querySelectorAll('li').length === 1 && /avoid for judge/.test(p.text(n)), p.text(n));
   ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
+}
+
+// ── a stale installed resolver: the banner, and the refused save shown in the card ──
+{
+  const STALE = "Your installed model-id is older than this version of ACS and would stop working with 'Avoid for'. Run: acs install-model-id, then save again.";
+  const p = await boot(models(), {
+    'GET /api/models/roles': () => ({ ...view(), resolverStale: true }),
+    'POST /api/models/flavor/set': () => { throw { status: 409, body: { error: STALE } }; },
+  });
+  ok('the Models page says the installed resolver is stale', /installed model-id is older than this version of ACS\. Run: acs install-model-id/.test(p.text(content(p).querySelector('.models-resolver-stale'))));
+  button(card(p, 'grok'), 'Edit').click();
+  await settle(5);
+  card(p, 'grok').querySelectorAll('.avoid-picker input').find((b) => b.value === 'builder').click();
+  button(card(p, 'grok').querySelector('.models-flavor'), 'Save').click();
+  await settle(15);
+  const form = card(p, 'grok').querySelector('.models-flavor');
+  ok('a refused save shows its reason inline, in the card', form && p.text(form.querySelector('.models-write-error')) === STALE && form.querySelector('.models-write-error').getAttribute('role') === 'alert');
+  ok('…the form stays open with the draft kept', form.querySelectorAll('.avoid-picker input').find((b) => b.value === 'builder').checked === true);
+  button(form, 'Cancel').click();
+  await settle(5);
+  button(card(p, 'grok'), 'Edit').click();
+  await settle(5);
+  ok('…and Cancel clears the message', !card(p, 'grok').querySelector('.models-write-error'));
+  const q = await boot();
+  ok('no banner when the resolver is current', !content(q).querySelector('.models-resolver-stale'));
 }
 
 // ── Describe: the conflicts a proposal would create ─────────────────────

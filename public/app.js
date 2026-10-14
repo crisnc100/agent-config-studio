@@ -4152,6 +4152,8 @@ const M = {
   roles: null, rolesError: null, roleOpen: new Set(), roleDrafts: {}, flavorDrafts: {}, adding: false,
   // Model ids: null follows the alerts (open while any wait); a click pins it. Cards being edited, and cards showing Used by.
   idsOpen: null, flavorOpen: new Set(), usedOpen: new Set(),
+  // A failed save's message, by the form that sent it (a family, or a role's draft key).
+  writeErrors: {},
   describe: { text: '', busy: false, error: null, proposal: null },
   // The model guide block per target (GET /api/model-guide), and any open proposal by target key.
   guide: null, guideError: null, guideProposals: {},
@@ -4222,6 +4224,11 @@ async function paintModels(load) {
   }
   const stale = guideStrip();
   if (stale) box.appendChild(stale);
+  if (M.roles?.resolverStale) {
+    const b = el('div', 'models-resolver-stale', 'Your installed model-id is older than this version of ACS. Run: acs install-model-id');
+    b.setAttribute('role', 'status');
+    box.appendChild(b);
+  }
 
   box.appendChild(rolesSection());
   box.appendChild(describeSection());
@@ -4480,11 +4487,14 @@ function lineupChip(family, effort, id, cls = '') {
  * it. `done` runs on success BEFORE the repaint — a draft it clears must not
  * be painted back into the editor, or the next Save resubmits it.
  */
-async function rolesWrite(path, body, okText, done) {
+async function rolesWrite(path, body, okText, done, errKey) {
   let r;
+  if (errKey) delete M.writeErrors[errKey];
   try { r = await api('POST', path, { ...body, base: M.roles?.base }); }
   catch (e) {
     notice('error', e.message, null, true);
+    // Also kept beside the form that sent it, which stays open with its draft.
+    if (errKey) M.writeErrors[errKey] = e.message;
     if (e.status === 409) await loadRoles();
     return false;
   }
@@ -4632,7 +4642,7 @@ function roleEditor(role) {
     await rolesWrite('/api/models/roles/set', { name, fields }, `Role ${name} saved.`, () => {
       delete M.roleDrafts[key];
       if (!role) M.adding = false;
-    });
+    }, key);
   };
   bar.appendChild(save);
   if (role && !role.custom) {
@@ -4658,12 +4668,19 @@ function roleEditor(role) {
     bar.appendChild(cancel);
   }
   box.appendChild(bar);
+  if (M.writeErrors[key]) box.appendChild(writeError(M.writeErrors[key]));
   if (role && !role.custom && role.defaults) {
     const dd = role.defaults;
     box.appendChild(el('div', 'scope-note roles-default', `Default: ${[].concat(dd.use).join(', ')}${dd.effort ? ` · ${dd.effort}` : ''}${dd.alt ? ` · second opinion ${dd.alt}` : ''}`));
   }
   return box;
 }
+
+const writeError = (text) => {
+  const n = el('div', 'notice error models-write-error', text);
+  n.setAttribute('role', 'alert');
+  return n;
+};
 
 /* ── Your models: one card per family (its flavor) ───────────────────── */
 
@@ -4776,14 +4793,15 @@ function flavorForm(f, marked) {
   save.disabled = !!R.error;
   save.onclick = async () => {
     const fields = { likes: lines(d.likes), quirks: lines(d.quirks), brief: d.brief.trim(), effort: d.effort, avoid: d.avoid };
-    await rolesWrite('/api/models/flavor/set', { family, fields }, `${family} notes saved.`, () => { delete M.flavorDrafts[family]; M.flavorOpen.delete(family); });
+    await rolesWrite('/api/models/flavor/set', { family, fields }, `${family} notes saved.`, () => { delete M.flavorDrafts[family]; M.flavorOpen.delete(family); }, family);
   };
   const cancel = el('button', 'btn ghost', 'Cancel');
-  cancel.onclick = () => { delete M.flavorDrafts[family]; M.flavorOpen.delete(family); paintModels(); };
+  cancel.onclick = () => { delete M.flavorDrafts[family]; delete M.writeErrors[family]; M.flavorOpen.delete(family); paintModels(); };
   bar.appendChild(save);
   bar.appendChild(cancel);
   bar.appendChild(flavorReset(f));
   box.appendChild(bar);
+  if (M.writeErrors[family]) box.appendChild(writeError(M.writeErrors[family]));
   return box;
 }
 

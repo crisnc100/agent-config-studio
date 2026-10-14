@@ -69,6 +69,12 @@ const roleRow = (p, name) => content(p).querySelectorAll('.roles-row').find((r) 
 const button = (root, text) => root.querySelectorAll('button').find((b) => p0text(b) === text);
 const p0text = (b) => b.textContent.replace(/\s+/g, ' ').trim();
 const card = (p, family) => content(p).querySelector(`.model-card[data-family="${family}"]`);
+/** The visible marker text in `root`: one "changed from default" per changed field, nothing else. */
+const marks = (root) => (root ? root.querySelectorAll('.changed-mark').map(p0text) : []);
+const MARK = '["changed from default"]';
+/** The editor fields carrying a marker, by their input's class. */
+const markedFields = (root) => root.querySelectorAll('.roles-field').filter((f) => marks(f).length)
+  .map((f) => [f.querySelector('input, select, textarea').className.split(' ').find((c) => /^(roles|flavor)-/.test(c) && c !== 'roles-select'), marks(f)]);
 const chips = (root) => root.querySelectorAll('.roles-lineup .job-chip').map(p0text);
 const posts = (p, path) => p.requests.filter((r) => r.method === 'POST' && r.path === path);
 
@@ -82,7 +88,9 @@ const posts = (p, path) => p.requests.filter((r) => r.method === 'POST' && r.pat
      JSON.stringify(chips(roleRow(p, 'builder'))));
   ok('…its resolved effort and alt', /max/.test(p.text(roleRow(p, 'reviewer'))) && /medium/.test(p.text(roleRow(p, 'builder'))));
   ok('R7 provenance per field: an overridden field is marked "changed from default", an untouched role is not, a custom one reads "your role"',
-     roleRow(p, 'reviewer').querySelector('.roles-lineup .changed-mark') && !roleRow(p, 'builder').querySelector('.changed-mark') && /your role/.test(p.text(roleRow(p, 'scout'))));
+     JSON.stringify(marks(roleRow(p, 'reviewer').querySelector('.roles-lineup'))) === MARK && JSON.stringify(marks(roleRow(p, 'reviewer'))) === MARK
+       && marks(roleRow(p, 'builder')).length === 0 && /your role/.test(p.text(roleRow(p, 'scout'))) && marks(roleRow(p, 'scout')).length === 0,
+     JSON.stringify([marks(roleRow(p, 'reviewer')), marks(roleRow(p, 'builder')), marks(roleRow(p, 'scout'))]));
   ok('R8 a role on a retiring family carries the warning', /retiring on 2026-12-01/.test(p.text(roleRow(p, 'reviewer'))));
   ok('the file it saves to is named', /~\/\.agent-config-studio\/roles\.json/.test(text));
 
@@ -90,6 +98,8 @@ const posts = (p, path) => p.requests.filter((r) => r.method === 'POST' && r.pat
   await settle(5);
   const editor = content(p).querySelector('.roles-detail');
   ok('A4 clicking a role opens its editor', !!editor && editor.querySelector('.roles-use').value === 'astra');
+  ok('R7 …where only the overridden field, effort, is marked "changed from default"',
+     JSON.stringify(markedFields(editor)) === '[["roles-effort-input",["changed from default"]]]', JSON.stringify(markedFields(editor)));
   const effort = editor.querySelector('.roles-effort-input');
   effort.value = 'xhigh';
   effort.dispatchEvent({ type: 'change', bubbles: false });
@@ -189,7 +199,8 @@ const posts = (p, path) => p.requests.filter((r) => r.method === 'POST' && r.pat
   await settle(10);
   const fl = card(p, 'sol').querySelector('.models-flavor');
   ok('A4 a family row shows its flavor', fl && fl.querySelector('.flavor-brief').value === 'Set limits.' && fl.querySelector('.flavor-likes').value === 'builds');
-  ok('…with where each field comes from', fl.querySelector('.flavor-brief').parentNode.querySelector('.changed-mark') && !fl.querySelector('.flavor-likes').parentNode.querySelector('.changed-mark'));
+  ok('…with where each field comes from: only the overridden brief is marked "changed from default"',
+     JSON.stringify(markedFields(fl)) === '[["flavor-brief",["changed from default"]]]' && marks(fl).length === 1, JSON.stringify(markedFields(fl)));
   ok('R5 …and says flavor text becomes other agents\' instructions', /Agents read this when you hand them work — write it the way you’d brief them\./.test(p.text(content(p).querySelector('.models-families'))));
   p.input(fl.querySelector('.flavor-likes'), 'builds\n  tests first \n\n');
   button(fl, 'Save').click();
