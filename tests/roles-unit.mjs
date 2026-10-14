@@ -259,6 +259,67 @@ console.log('\nroles unit: B — a hung history git call is stopped (30 s), and 
   fs.rmSync(path.join(home, '.agent-config-studio'), { recursive: true, force: true });
 }
 
+console.log('\nroles unit: avoid — the conflict table, unknown names, merging');
+{
+  const { roleConflicts, avoidWarnings, mergeRoles } = await import('../lib/roles.js');
+  const { newConflicts } = await import('../lib/describe.js');
+  const roles = {
+    builder: { use: ['opus', 'grok'] },
+    reviewer: { use: ['astra'], alt: 'fable' },
+    judge: { use: ['fable'] },
+  };
+  const table = [
+    ['a family in use avoids the role', { grok: { avoid: ['builder'] } }, [{ role: 'builder', family: 'grok', slot: 'use' }]],
+    ['the alt family avoids the role', { fable: { avoid: ['reviewer'] } }, [{ role: 'reviewer', family: 'fable', slot: 'alt' }]],
+    ['no conflict: the avoided role does not use the family', { sol: { avoid: ['builder'] }, grok: { avoid: ['judge'] } }, []],
+    ['an unknown role in avoid is no conflict', { grok: { avoid: ['nobody'] } }, []],
+    ['several, in role order', { fable: { avoid: ['judge', 'reviewer'] }, opus: { avoid: ['builder'] } },
+      [{ role: 'builder', family: 'opus', slot: 'use' }, { role: 'judge', family: 'fable', slot: 'use' }, { role: 'reviewer', family: 'fable', slot: 'alt' }]],
+  ];
+  for (const [what, flavor, want] of table) {
+    const got = roleConflicts({ roles, flavor });
+    ok(`conflicts: ${what}`, JSON.stringify(got) === JSON.stringify(want), JSON.stringify(got));
+  }
+  const loaded = { roles, flavor: { grok: { avoid: ['builder', 'nobody'] } }, families: ['opus', 'grok', 'astra', 'fable'] };
+  ok('an unknown role in avoid is a warning naming it', JSON.stringify(avoidWarnings(loaded)) === JSON.stringify(['flavor.grok.avoid names "nobody", which is not a role.']));
+  ok('…and none when every name is a role', avoidWarnings({ ...loaded, flavor: { grok: { avoid: ['builder'] } } }).length === 0);
+
+  const defaults = { roles: { builder: { use: ['opus', 'grok'] } }, flavor: { grok: { avoid: ['judge'] } } };
+  const m = mergeRoles(defaults, { flavor: { grok: { avoid: ['builder'] } } });
+  ok('a user avoid list replaces the default one, never concatenates', JSON.stringify(m.flavor.grok.avoid) === '["builder"]' && m.provenance.flavor.grok.avoid === 'user');
+  const c = mergeRoles(defaults, { flavor: { grok: { avoid: null } } });
+  ok('null clears it', c.flavor.grok.avoid === undefined && c.provenance.flavor.grok.avoid === 'cleared');
+
+  const cur = { ...mergeRoles(defaults, { flavor: { grok: { avoid: ['builder'] } } }), defaults, error: null };
+  const proposed = JSON.stringify({ version: 1, flavor: { grok: { avoid: ['builder'] }, opus: { avoid: ['builder'] } } });
+  ok('a proposal reports only the conflicts it adds', JSON.stringify(newConflicts(cur, proposed)) === JSON.stringify([{ role: 'builder', family: 'opus', slot: 'use' }]));
+}
+
+console.log('\nroles unit: avoid — the write boundary checks the installed resolver');
+{
+  const quiet = { recordBaseline: async () => null, record: async () => null };
+  const file = rolesUserPath(home);
+  const resolverRoles = path.join(home, '.agent-config-studio', 'resolver', 'lib', 'roles.js');
+  const AVOID = '{"version":1,"flavor":{"grok":{"avoid":["builder"]}}}\n';
+  const cur = () => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } };
+  fs.rmSync(path.dirname(file), { recursive: true, force: true });
+  const none = await writeRoles({ text: AVOID, base: 'absent', message: 't', home, hist: quiet });
+  ok('no installed resolver: an avoid save goes through', none.saved === true && cur() === AVOID);
+  fs.mkdirSync(path.dirname(resolverRoles), { recursive: true });
+  fs.writeFileSync(resolverRoles, '// older\n');
+  for (const [what, text] of [['a list', '{"version":1,"flavor":{"grok":{"avoid":["judge"]}}}\n'], ['an empty list', '{"version":1,"flavor":{"grok":{"avoid":[]}}}\n'], ['a null', '{"version":1,"flavor":{"grok":{"avoid":null}}}\n']]) {
+    const e = await rejects(writeRoles({ text, base: none.base, message: 't', home, hist: quiet }));
+    ok(`stale resolver, avoid as ${what} → 409, nothing written`, e?.status === 409 && /Run: acs install-model-id, then save again/.test(e.message) && cur() === AVOID, e?.message);
+  }
+  ok('no temp file is left behind', fs.readdirSync(path.dirname(file)).every((f) => !f.includes('.tmp-')));
+  const plain = await writeRoles({ text: '{"version":1}\n', base: none.base, message: 't', home, hist: quiet });
+  ok('stale resolver, a document without avoid: saves', plain.saved === true && cur() === '{"version":1}\n');
+  fs.copyFileSync(new URL('../lib/roles.js', import.meta.url), resolverRoles);
+  const same = await writeRoles({ text: AVOID, base: plain.base, message: 't', home, hist: quiet });
+  ok('an identical installed resolver: the avoid save goes through', same.saved === true && cur() === AVOID);
+  fs.rmSync(path.join(home, '.agent-config-studio'), { recursive: true, force: true });
+}
+
 assertRealHomesUnchanged(realBefore, ok);
 fs.rmSync(home, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed\n`);

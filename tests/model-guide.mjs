@@ -85,6 +85,14 @@ try {
     ok('R6 a quirks-only family is listed', /- \*\*haiku\*\*\n {2}- Watch for: shallow/.test(t) && !t.includes('Briefing haiku'));
     ok('R6 a family with nothing left is not', !t.includes('**terra**'));
     ok('R7 a note with | * backticks and < is kept as written, on one line', t.split('\n').includes('- **scout**: haiku at default effort — pipes | stars * `ticks` and <angles>'));
+    ok('no avoid list: no "Avoid for" line anywhere', !t.includes('Avoid for'));
+
+    // Avoid lists: one line under the family's briefing, and a family with only that is still listed.
+    writeRolesFile({ version: 1, flavor: { grok: { avoid: ['builder'] }, astra: { avoid: ['reviewer', 'investigator'] }, terra: { brief: null, likes: null, quirks: null, avoid: ['judge'] } } });
+    const av = guideText(loadRoles({ home }));
+    ok('avoid: "Avoid for: builder" is the last line of grok\'s briefing', /- \*\*grok\*\*\n(?: {2}- .*\n)*? {2}- Watch for: [^\n]*\n {2}- Avoid for: builder\n/.test(av), av.split('\n').filter((l) => /grok|Avoid/.test(l)).join(' | '));
+    ok('avoid: several roles in the order given', av.includes('  - Avoid for: reviewer, investigator'));
+    ok('avoid: a family with only an avoid list is listed', /- \*\*terra\*\*\n {2}- Avoid for: judge\n/.test(av));
 
     for (const [what, note] of [['-->', 'ends -->'], ['<!--', 'opens <!-- here'], ['the marker name', 'see acs:model-guide']]) {
       writeRolesFile({ version: 1, roles: { scout: { use: 'haiku', note } } });

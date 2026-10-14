@@ -1208,10 +1208,7 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 /* ── models view: roles, flavor, Describe ────────────────────────────── */
 .models-subhead { font-size: 15px; font-weight: 600; margin: 34px 0 6px; }
 .models-roles-sub { margin-bottom: 12px; }
-.roles-uses .roles-then { color: var(--muted); font-size: 12px; }
-.roles-id { color: var(--muted); margin-left: 6px; }
-.roles-warning { display: block; margin: 4px 0 0; }
-.roles-effort, .roles-alt { white-space: nowrap; }
+.roles-warning { display: block; margin: 6px 0 0; }
 .roles-add { margin-top: 8px; }
 .roles-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 14px; margin-bottom: 10px; }
 .roles-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -1241,9 +1238,6 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .diff-line { color: var(--text-dim); }
 .diff-line.add { color: var(--green); background: color-mix(in srgb, var(--green) 10%, transparent); }
 .diff-line.del { color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
-@media (max-width: 700px) {
-  .roles-table th:nth-child(4), .roles-table td:nth-child(4) { display: none; }
-}
 
 /* ── home: Refresh usage ─────────────────────────────────────────────── */
 .home-refresh-usage .spinner { margin-right: 6px; }
@@ -1271,4 +1265,103 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 10px 0; padding: 6px 12px; font-size: 13px;
   border-radius: var(--radius); color: var(--amber);
   border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
+
+/* ── models view: jobs, model cards, model ids ───────────────────────── */
+.models-subhead-text { font-size: 15px; font-weight: 600; }
+.changed-mark {
+  display: inline-block; margin-left: 8px; font-size: 10.5px; font-weight: 500; padding: 0 6px; border-radius: 999px;
+  white-space: nowrap; vertical-align: middle; color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.roles-label .changed-mark, .model-field-label .changed-mark { margin-left: 6px; text-transform: none; letter-spacing: 0; }
+
+.roles-list { display: flex; flex-direction: column; gap: 8px; }
+.roles-row {
+  padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel);
+  cursor: pointer; outline: none;
+}
+.roles-row:hover, .roles-row:focus-visible { border-color: var(--accent-dim); }
+.roles-row.open { border-color: var(--accent-dim); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.roles-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.roles-name-text { font-weight: 600; font-size: 13.5px; color: var(--text); }
+.roles-note-text { color: var(--text-dim); font-size: 13px; flex: 1 1 200px; min-width: 0; }
+.roles-open-hint { margin-left: auto; font-size: 11px; color: var(--muted); }
+.roles-row:hover .roles-open-hint { color: var(--accent); }
+.roles-lineup, .roles-second { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.roles-second { margin-top: 6px; }
+.roles-second-label { font-size: 12px; color: var(--muted); }
+.roles-hint { margin-top: 4px; }
+.job-chip {
+  display: inline-flex; align-items: baseline; font-size: 12px; padding: 2px 9px; border-radius: 999px; white-space: nowrap;
+  color: var(--text-dim); background: var(--panel-2); border: 1px solid var(--border);
+}
+.job-chip.first { color: var(--text); border-color: var(--accent-dim); }
+.job-chip-name { font-weight: 500; }
+.job-chip-effort { color: var(--muted); white-space: pre; }
+.job-chip.first .job-chip-effort { color: var(--accent); }
+.roles-detail {
+  margin-top: -8px; padding: 12px 14px 10px; border: 1px solid var(--accent-dim); border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius); background: var(--panel-2);
+}
+.roles-detail .roles-field .models-input { background: var(--panel); }
+
+.model-describe-card {
+  margin-top: 26px; padding: 4px 16px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel);
+}
+.model-describe-card .models-subhead { margin-top: 12px; }
+
+.model-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.model-card {
+  display: flex; flex-direction: column; gap: 10px; min-width: 0;
+  padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel);
+}
+.model-card.editing { border-color: var(--accent-dim); grid-column: 1 / -1; }
+.model-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.model-card-name { font-weight: 600; font-size: 14px; color: var(--text); }
+.model-card-id { font: 11px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.model-card-fields { display: flex; flex-direction: column; gap: 8px; }
+.model-field-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px; }
+.model-field-list { margin: 0; padding-left: 16px; font-size: 12.5px; color: var(--text-dim); }
+.model-field-list li { margin: 1px 0; }
+.model-field-text { font-size: 12.5px; color: var(--text-dim); overflow-wrap: anywhere; }
+.model-field-text.none { color: var(--muted); font-style: italic; }
+.model-card-buttons { margin: 0; flex-wrap: wrap; }
+.model-card .models-flavor { margin-top: 0; }
+.model-used { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--border-soft); }
+.model-used-toggle, .ids-toggle {
+  background: none; border: none; padding: 0; cursor: pointer; color: var(--muted); font: inherit; font-size: 12px; text-align: left;
+}
+.model-used-toggle:hover, .ids-toggle:hover { color: var(--text); }
+.model-used-jobs { margin-bottom: 4px; }
+
+.models-ids { margin-top: 34px; }
+.models-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.ids-toggle { display: inline-flex; align-items: center; gap: 8px; color: var(--text); }
+.ids-caret { width: 12px; color: var(--muted); }
+.ids-count {
+  font-size: 11px; padding: 1px 8px; border-radius: 999px; color: var(--amber);
+  border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
+.models-ids .models-catalogs { margin: 0 0 14px; }
+
+.models-guide .guide-row { padding: 10px 14px; }
+.models-scripts { margin-top: 34px; padding-top: 12px; border-top: 1px solid var(--border-soft); }
+.models-scripts .scope-note { line-height: 1.6; }
+.models-write-error { margin-top: 8px; font-size: 12.5px; }
+.models-resolver-stale {
+  margin: 10px 0; padding: 6px 12px; font-size: 13px; border-radius: var(--radius); color: var(--amber);
+  border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
+.roles-conflict { margin-top: 6px; font-size: 12px; color: var(--amber); }
+.describe-conflicts {
+  margin: 0 0 10px; padding: 6px 10px; border-radius: 7px; font-size: 12px; color: var(--text-dim);
+  border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
+.avoid-picker { border: none; margin: 0 0 10px; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.avoid-picker legend { padding: 0; margin-bottom: 4px; width: 100%; }
+.avoid-option { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text-dim); cursor: pointer; }
+@media (max-width: 700px) {
+  .model-cards { grid-template-columns: 1fr; }
+  .roles-open-hint { display: none; }
 }
