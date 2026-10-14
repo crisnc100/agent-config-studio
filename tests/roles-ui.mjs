@@ -288,6 +288,62 @@ const PROPOSAL = {
   ok('an invalid roles.json is shown, and edits are disabled', /roles\.json is invalid/.test(p.text(content(p))) && button(content(p), 'Add a role').disabled === true);
 }
 
+// ── per-model effort: chips, the per-member select, what Save sends ───
+{
+  const mem = (family, own, effort, source) => ({ family, own, effort, source });
+  const base = view();
+  const v = {
+    ...base,
+    roles: [
+      { ...base.roles[0], use: ['opus', 'sol'], ids: ['opus-id-1', 'sol-id-1'], effort: '', resolvedEffort: 'medium',
+        members: [mem('opus', 'medium', 'medium', 'member'), mem('sol', 'high', 'high', 'member')], altMember: null,
+        provenance: prov(['use', 'effort', 'note'], { use: 'user', effort: 'cleared' }), defaults: { use: ['opus', 'sol'], effort: 'medium', note: 'implements' } },
+      { ...base.roles[1], use: ['astra', 'sol'], ids: ['astra-id-1', 'sol-id-1'], effort: '', resolvedEffort: 'high', alt: 'opus', altId: 'opus-id-1',
+        members: [mem('astra', '', 'high', 'flavor'), mem('sol', '', 'xhigh', 'flavor')], altMember: mem('opus', 'low', 'low', 'member'),
+        provenance: prov(['use', 'effort', 'alt', 'note'], { use: 'user', effort: 'cleared', alt: 'user' }), defaults: { use: 'astra', effort: 'high', note: 'reads diffs' }, warnings: [] },
+      base.roles[2],
+    ],
+  };
+  const p = await boot({}, v);
+  ok('member effort: each chip shows the member\'s resolved effort', JSON.stringify(chips(roleRow(p, 'builder'))) === '["Opus · medium","Sol · high"]', JSON.stringify(chips(roleRow(p, 'builder'))));
+  ok('…the second opinion at its own effort', p.text(roleRow(p, 'reviewer').querySelector('.roles-second')).startsWith('Second opinion: Opus · low'), p.text(roleRow(p, 'reviewer').querySelector('.roles-second')));
+  ok('…and a lineup with member effort is "changed from default"', JSON.stringify(marks(roleRow(p, 'builder').querySelector('.roles-lineup'))) === MARK);
+
+  roleRow(p, 'builder').click();
+  await settle(5);
+  const ed = content(p).querySelector('.roles-detail');
+  const member = (root, f) => root.querySelector(`.roles-members .roles-member[data-family="${f}"]`);
+  const sel = (root, f) => member(root, f)?.querySelector('.roles-member-effort');
+  ok('the editor has one effort select per model, in order', JSON.stringify(ed.querySelectorAll('.roles-members .roles-member').map((m) => m.dataset.family)) === '["opus","sol"]');
+  ok('…starting at each model\'s own effort', sel(ed, 'opus').value === 'medium' && sel(ed, 'sol').value === 'high');
+  ok('…offering "job default" and every effort', JSON.stringify(sel(ed, 'opus').querySelectorAll('option').map((o) => o.textContent)) === '["job default","low","medium","high","xhigh","max"]');
+  ok('…a member effort the default role does not have is marked', JSON.stringify(marks(member(ed, 'opus'))) === MARK && JSON.stringify(marks(member(ed, 'sol'))) === MARK);
+  ok('…and the job-level effort select stays', !!ed.querySelector('.roles-effort-input'));
+  sel(ed, 'opus').value = '';
+  sel(ed, 'opus').dispatchEvent({ type: 'change', bubbles: false });
+  button(ed, 'Save').click();
+  await settle(10);
+  const set = posts(p, '/api/models/roles/set');
+  ok('Save writes the object form only for the model with an effort: "job default" is a plain name',
+    set.length === 1 && JSON.stringify(set[0].body.fields.use) === '["opus",{"family":"sol","effort":"high"}]', JSON.stringify(set[0]?.body));
+
+  roleRow(p, 'reviewer').click();
+  await settle(5);
+  const rv = content(p).querySelectorAll('.roles-detail').find((d) => d.querySelector('.roles-use').value === 'astra, sol');
+  ok('no member effort: every select reads "job default", unmarked', sel(rv, 'astra').value === '' && sel(rv, 'sol').value === '' && marks(member(rv, 'astra')).length === 0);
+  ok('the second opinion has its own select, at its effort', rv.querySelector('.roles-alt-own .roles-member-effort')?.value === 'low');
+  p.input(rv.querySelector('.roles-use'), 'astra, sol, grok');
+  await settle(2);
+  ok('adding a model to the list adds its select', !!sel(rv, 'grok') && sel(rv, 'grok').value === '');
+  sel(rv, 'grok').value = 'max';
+  sel(rv, 'grok').dispatchEvent({ type: 'change', bubbles: false });
+  button(rv, 'Save').click();
+  await settle(10);
+  const set2 = posts(p, '/api/models/roles/set').at(-1);
+  ok('…and Save sends only the set members and the alt as objects',
+    JSON.stringify(set2.body.fields.use) === '["astra","sol",{"family":"grok","effort":"max"}]' && JSON.stringify(set2.body.fields.alt) === '{"family":"opus","effort":"low"}', JSON.stringify(set2.body.fields));
+}
+
 for (const p of pages) p.done();
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

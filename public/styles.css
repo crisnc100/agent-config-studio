@@ -1213,6 +1213,10 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .roles-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 14px; margin-bottom: 10px; }
 .roles-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .roles-label { font-size: 11px; color: var(--muted); }
+.roles-members { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; }
+.roles-members-row { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.roles-member { display: flex; flex-direction: column; gap: 4px; min-width: 120px; }
+.roles-alt-own:empty { display: none; }
 .roles-field .models-input { max-width: none; width: 100%; box-sizing: border-box; color: var(--text); }
 .roles-field textarea.models-input { font-family: var(--sans); font-size: 12px; resize: vertical; }
 .roles-default { margin-top: 2px; }

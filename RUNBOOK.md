@@ -221,6 +221,15 @@ never reads it, so new data cannot break it.
   `--role` still prints `MODEL-ID-UNRESOLVED-<name>` for every value. Family
   calls keep exit 1, byte for byte (`tests/roles.mjs` compares against the
   pre-roles resolver in `tests/fixtures/pre-roles-resolver/`).
+- Per-model effort: a `use` or `alt` entry may be `{family, effort}` (both
+  keys, nothing else). Effort resolves member → role → family flavor → empty.
+  `--role --json` (and each role in `--roles --json`) carries `members` and
+  `altMember` (`{family, id, effort, source}`) **only when that role gives a
+  model an effort of its own**, so the golden captures stay byte-identical.
+  Consumers prefer `members` when present and otherwise fall back to
+  `use`/`ids` plus `--flavor <family>` effort (or the role's `effort`).
+  `writeRoles` refuses a document with any object member (409, "per-model
+  effort") while the installed resolver is stale, as it does for `avoid`.
 - `bin/model-id.mjs` imports `lib/roles.js` only when a role flag asks. An
   installed copy that lacks it (or `lib/roles.default.json`) still resolves
   families and answers role flags with "run: acs install-model-id". A
