@@ -344,6 +344,64 @@ const PROPOSAL = {
     JSON.stringify(set2.body.fields.use) === '["astra","sol",{"family":"grok","effort":"max"}]' && JSON.stringify(set2.body.fields.alt) === '{"family":"opus","effort":"low"}', JSON.stringify(set2.body.fields));
 }
 
+// ── per-model effort survives editing: a model swapped out, a second opinion switched away ──
+{
+  const mem = (family, own, effort, source) => ({ family, own, effort, source });
+  const base = view();
+  const v = {
+    ...base,
+    roles: [
+      { ...base.roles[0], use: ['opus'], ids: ['opus-id-1'], effort: 'medium', resolvedEffort: 'low', alt: 'astra', altId: 'astra-id-1',
+        members: [mem('opus', 'low', 'low', 'member')], altMember: mem('astra', 'max', 'max', 'member'),
+        provenance: prov(['use', 'effort', 'alt', 'note'], { use: 'user', alt: 'user' }) },
+      ...base.roles.slice(1),
+    ],
+  };
+  const p = await boot({}, v);
+  roleRow(p, 'builder').click();
+  await settle(5);
+  const ed = content(p).querySelector('.roles-detail');
+  const sel = (f) => ed.querySelector(`.roles-members .roles-member[data-family="${f}"] .roles-member-effort`);
+  const dropped = () => ed.querySelectorAll('.roles-members .roles-member-dropped').map(p0text);
+  ok('(no drop note while every model with an effort is listed)', dropped().length === 0);
+  p.input(ed.querySelector('.roles-use'), 'grok');
+  await settle(2);
+  ok('a model with its own effort taken out of the list: the editor says it will be dropped',
+    JSON.stringify(dropped()) === '["Opus’s own effort (low) will be dropped"]' && sel('grok')?.value === '', JSON.stringify(dropped()));
+  button(ed, 'Save').click();
+  await settle(10);
+  const s1 = posts(p, '/api/models/roles/set').at(-1);
+  ok('…and Save drops it on purpose: the new model goes as a plain name', JSON.stringify(s1?.body.fields.use) === '["grok"]', JSON.stringify(s1?.body.fields));
+
+  const p2 = await boot({}, v);
+  roleRow(p2, 'builder').click();
+  await settle(5);
+  const ed2 = content(p2).querySelector('.roles-detail');
+  const sel2 = (f) => ed2.querySelector(`.roles-members .roles-member[data-family="${f}"] .roles-member-effort`);
+  p2.input(ed2.querySelector('.roles-use'), 'grok');
+  await settle(2);
+  p2.input(ed2.querySelector('.roles-use'), 'grok, opus');
+  await settle(2);
+  ok('re-adding the model restores its effort and clears the note',
+    sel2('opus')?.value === 'low' && ed2.querySelectorAll('.roles-member-dropped').length === 0);
+  const alt = ed2.querySelector('.roles-alt-input');
+  const altSel = () => ed2.querySelector('.roles-alt-own .roles-member-effort');
+  ok('(the second opinion starts at its own effort)', altSel()?.value === 'max');
+  alt.value = 'sol';
+  alt.dispatchEvent({ type: 'change', bubbles: false });
+  await settle(2);
+  ok('switching the second opinion away: the new one starts at "job default"', altSel()?.value === '');
+  alt.value = 'astra';
+  alt.dispatchEvent({ type: 'change', bubbles: false });
+  await settle(2);
+  ok('…and back: its effort is restored', altSel()?.value === 'max');
+  button(ed2, 'Save').click();
+  await settle(10);
+  const s2 = posts(p2, '/api/models/roles/set').at(-1);
+  ok('…and Save keeps both efforts',
+    JSON.stringify(s2?.body.fields.use) === '["grok",{"family":"opus","effort":"low"}]' && JSON.stringify(s2?.body.fields.alt) === '{"family":"astra","effort":"max"}', JSON.stringify(s2?.body.fields));
+}
+
 for (const p of pages) p.done();
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

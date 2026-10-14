@@ -4613,9 +4613,9 @@ function roleEditor(role) {
     ? {
       use: role.use.join(', '),
       own: Object.fromEntries(membersOf(role).filter((m) => m.own).map((m) => [m.family, m.own])),
-      effort: role.effort, alt: role.alt, altOwn: altMemberOf(role)?.own || '', note: role.note,
+      effort: role.effort, alt: role.alt, altOwn: altMemberOf(role)?.own ? { [role.alt]: altMemberOf(role).own } : {}, note: role.note,
     }
-    : { name: '', use: '', own: {}, effort: '', alt: '', altOwn: '', note: '' };
+    : { name: '', use: '', own: {}, effort: '', alt: '', altOwn: {}, note: '' };
   const families = () => d.use.split(',').map((x) => x.trim()).filter(Boolean);
   const box = el('div', 'models-detail roles-detail');
   const form = el('div', 'roles-form');
@@ -4658,6 +4658,11 @@ function roleEditor(role) {
     const row = el('div', 'roles-members-row');
     for (const f of [...new Set(families())]) row.appendChild(ownSelect(f, d.own[f], 'use', (v) => { if (v) d.own[f] = v; else delete d.own[f]; }));
     members.appendChild(row);
+    // Efforts stay keyed by family while editing: one taken out of the list is dropped on Save, said here, and back if it returns.
+    const listed = new Set(families());
+    for (const [f, e] of Object.entries(d.own)) {
+      if (!listed.has(f)) members.appendChild(el('div', 'scope-note roles-member-dropped', `${famLabel(f)}’s own effort (${e}) will be dropped`));
+    }
   };
   use.oninput = () => { d.use = use.value; paintMembers(); };
   const effort = field('Effort', el('select', 'models-input roles-select roles-effort-input'), 'effort');
@@ -4670,9 +4675,9 @@ function roleEditor(role) {
   const altOwn = el('div', 'roles-alt-own');
   const paintAltOwn = () => {
     altOwn.textContent = '';
-    if (d.alt) altOwn.appendChild(ownSelect(d.alt, d.altOwn, 'alt', (v) => { d.altOwn = v; }));
+    if (d.alt) altOwn.appendChild(ownSelect(d.alt, d.altOwn[d.alt], 'alt', (v) => { if (v) d.altOwn[d.alt] = v; else delete d.altOwn[d.alt]; }));
   };
-  alt.onchange = () => { d.alt = alt.value; d.altOwn = ''; paintAltOwn(); };
+  alt.onchange = () => { d.alt = alt.value; paintAltOwn(); };
   form.appendChild(altOwn);
   paintAltOwn();
   const note = field('What this job is', el('input', 'models-input roles-note'), 'note');
@@ -4690,7 +4695,7 @@ function roleEditor(role) {
     // The object form only where a model has an effort of its own: the rest stay family names.
     const withOwn = (f, own) => (own ? { family: f, effort: own } : f);
     const fields = {
-      use: families().map((f) => withOwn(f, d.own[f])), effort: d.effort, alt: d.alt ? withOwn(d.alt, d.altOwn) : '', note: d.note.trim(),
+      use: families().map((f) => withOwn(f, d.own[f])), effort: d.effort, alt: d.alt ? withOwn(d.alt, d.altOwn[d.alt]) : '', note: d.note.trim(),
     };
     await rolesWrite('/api/models/roles/set', { name, fields }, `Role ${name} saved.`, () => {
       delete M.roleDrafts[key];
