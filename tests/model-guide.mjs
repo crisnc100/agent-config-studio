@@ -87,6 +87,21 @@ try {
     ok('R7 a note with | * backticks and < is kept as written, on one line', t.split('\n').includes('- **scout**: haiku at default effort — pipes | stars * `ticks` and <angles>'));
     ok('no avoid list: no "Avoid for" line anywhere', !t.includes('Avoid for'));
 
+    // Per-model effort: a member's own effort, over the role's and the flavor's, for that member only.
+    writeRolesFile({
+      version: 1,
+      roles: {
+        builder: { use: [{ family: 'opus', effort: 'medium' }, { family: 'sol', effort: 'high' }, 'grok'], effort: 'low', alt: { family: 'fable', effort: 'max' } },
+        reviewer: { use: ['opus', 'sol'], effort: null, alt: 'fable' },
+      },
+      flavor: { opus: { effort: 'high' }, sol: { effort: 'xhigh' }, fable: { effort: 'low' } },
+    });
+    const me = guideText(loadRoles({ home }));
+    ok('member effort: each member at its own effort, the rest at the role\'s, the alt at its own',
+      me.includes('- **builder**: opus at medium effort; fallbacks: sol at high effort, grok at low effort; second opinion: fable at max effort'), me.split('\n').find((l) => l.includes('builder')));
+    ok('…and another role on the same families keeps the flavor efforts',
+      me.includes('- **reviewer**: opus at high effort; fallbacks: sol at xhigh effort; second opinion: fable at low effort'), me.split('\n').find((l) => l.includes('reviewer')));
+
     // Avoid lists: one line under the family's briefing, and a family with only that is still listed.
     writeRolesFile({ version: 1, flavor: { grok: { avoid: ['builder'] }, astra: { avoid: ['reviewer', 'investigator'] }, terra: { brief: null, likes: null, quirks: null, avoid: ['judge'] } } });
     const av = guideText(loadRoles({ home }));

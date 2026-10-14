@@ -390,6 +390,76 @@ try {
     fs.rmSync(path.join(home, '.agent-config-studio', 'resolver'), { recursive: true, force: true });
     await post('/api/models/flavor/reset', { family: 'grok', base: (await view()).base });
   }
+
+  console.log('\nroles routes: per-model effort — save, read back, Describe');
+  {
+    const resolverDir = path.join(home, '.agent-config-studio', 'resolver');
+    ok('(no resolver is installed)', !fs.existsSync(resolverDir));
+    let v = await view();
+    const set = await post('/api/models/roles/set', {
+      name: 'builder',
+      fields: { use: [{ family: 'opus', effort: 'low' }, 'sol'], effort: 'medium', alt: { family: 'astra', effort: 'xhigh' }, note: ROLES.roles.builder.note },
+      base: v.base,
+    });
+    ok('no resolver installed: a save with member effort goes through', set.status === 200 && set.body.saved === true, JSON.stringify(set.body));
+    ok('…the object form only where a model has an effort, the rest stay family names',
+      JSON.stringify(JSON.parse(readRoles()).roles.builder) === '{"use":[{"family":"opus","effort":"low"},"sol"],"alt":{"family":"astra","effort":"xhigh"}}', readRoles());
+    v = await view();
+    const b = v.roles.find((r) => r.name === 'builder');
+    ok('GET reads it back: use stays names, members carry own and resolved effort with the source',
+      JSON.stringify(b.use) === '["opus","sol"]' && b.alt === 'astra' && b.resolvedEffort === 'low'
+        && JSON.stringify(b.members) === JSON.stringify([{ family: 'opus', own: 'low', effort: 'low', source: 'member' }, { family: 'sol', own: '', effort: 'medium', source: 'role' }])
+        && JSON.stringify(b.altMember) === JSON.stringify({ family: 'astra', own: 'xhigh', effort: 'xhigh', source: 'member' }), JSON.stringify(b));
+    const again = await post('/api/models/roles/set', {
+      name: 'builder', fields: { use: [{ family: 'opus', effort: 'low' }, 'sol'], effort: 'medium', alt: { family: 'astra', effort: 'xhigh' }, note: ROLES.roles.builder.note }, base: v.base,
+    });
+    ok('…and saving the same form again changes nothing', again.status === 200 && again.body.unchanged === true, JSON.stringify(again.body));
+    const dup = await post('/api/models/roles/set', { name: 'builder', fields: { use: ['opus', { family: 'opus', effort: 'high' }] }, base: v.base });
+    ok('a family twice across the two forms is refused (400)', dup.status === 400 && /roles\.builder\.use: names a family twice/.test(dup.body.error), JSON.stringify(dup.body));
+    await post('/api/models/roles/reset', { name: 'builder', base: v.base });
+
+    setMode({ kind: 'ok', reply: JSON.stringify({ version: 1, roles: { builder: { use: ['opus', { family: 'sol', effort: 'high' }] } } }) });
+    const d = await post('/api/models/roles/describe', { description: 'sol builds at high' });
+    ok('a Describe proposal can carry member effort', d.status === 200 && JSON.stringify(JSON.parse(d.body.proposed).roles.builder.use) === '["opus",{"family":"sol","effort":"high"}]', JSON.stringify(d.body));
+    ok('…and the prompt explains the member form', /\{"family": "<family>", "effort": "<effort>"\} with exactly those two keys/.test(readFake('prompt.txt')));
+    const acc = await post('/api/models/roles/proposal/accept', { id: d.body.id });
+    ok('…which accepts and resolves', acc.status === 200 && (await view()).roles.find((r) => r.name === 'builder').members[1].effort === 'high', JSON.stringify(acc.body));
+    setMode({ kind: 'ok', reply: JSON.stringify({ version: 1, roles: { builder: { use: [{ family: 'sol', effort: 'high', why: 'fast' }] } } }) });
+    const bad = await post('/api/models/roles/describe', { description: 'x' });
+    ok('a proposal member with an extra key is refused (422)', bad.status === 422 && /use\[0\]: unknown key "why"/.test(bad.body.error), JSON.stringify(bad.body));
+    await post('/api/models/roles/reset', { name: 'builder', base: (await view()).base });
+  }
+
+  console.log('\nroles routes: per-model effort — a stale installed resolver refuses the save, before any write');
+  {
+    const resolverRoles = path.join(home, '.agent-config-studio', 'resolver', 'lib', 'roles.js');
+    fs.mkdirSync(path.dirname(resolverRoles), { recursive: true });
+    fs.writeFileSync(resolverRoles, '// an older roles.js\n');
+    let v = await view();
+    ok('the view says the installed resolver is stale', v.resolverStale === true);
+    const before = readRoles();
+    const fields = { use: [{ family: 'opus', effort: 'low' }, 'sol'], effort: 'medium', alt: '', note: ROLES.roles.builder.note };
+    const direct = await post('/api/models/roles/set', { name: 'builder', fields, base: v.base });
+    ok('a direct member-effort save → 409 naming per-model effort and the fix',
+      direct.status === 409 && direct.body.error === 'Your installed model-id is older than this version of ACS and would stop working with per-model effort. Run: acs install-model-id, then save again.', JSON.stringify(direct.body));
+    ok('…and nothing is written', readRoles() === before);
+    const altOnly = await post('/api/models/roles/set', { name: 'advisor', fields: { use: ['fable'], alt: { family: 'astra', effort: 'max' } }, base: v.base });
+    ok('…an alt object alone is refused the same way', altOnly.status === 409 && /per-model effort/.test(altOnly.body.error) && readRoles() === before, JSON.stringify(altOnly.body));
+    setMode({ kind: 'ok', reply: JSON.stringify({ version: 1, roles: { builder: { use: ['opus', { family: 'sol', effort: 'high' }] } } }) });
+    const d = await post('/api/models/roles/describe', { description: 'sol builds at high' });
+    const acc = await post('/api/models/roles/proposal/accept', { id: d.body.id });
+    ok('the same through Describe accept → 409', d.status === 200 && acc.status === 409 && /per-model effort.*acs install-model-id/.test(acc.body.error), JSON.stringify(acc.body));
+    ok('…and nothing is written', readRoles() === before);
+    const plain = await post('/api/models/roles/set', { name: 'builder', fields: { ...fields, use: ['opus', 'sol'], effort: 'high' }, base: (await view()).base });
+    ok('a save without the member form is unaffected while stale', plain.status === 200 && plain.body.saved === true && !/"family"/.test(readRoles()), JSON.stringify(plain.body));
+    fs.copyFileSync(path.join(ROOT, 'lib', 'roles.js'), resolverRoles);
+    v = await view();
+    const same = await post('/api/models/roles/set', { name: 'builder', fields, base: v.base });
+    ok('an identical installed resolver: the member-effort save goes through',
+      v.resolverStale === false && same.status === 200 && JSON.parse(readRoles()).roles.builder.use[0].effort === 'low', JSON.stringify(same.body));
+    fs.rmSync(path.join(home, '.agent-config-studio', 'resolver'), { recursive: true, force: true });
+    await post('/api/models/roles/reset', { name: 'builder', base: (await view()).base });
+  }
 } finally {
   srv.child.kill('SIGKILL');
 }

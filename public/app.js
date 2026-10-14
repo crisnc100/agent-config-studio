@@ -4469,8 +4469,20 @@ const changedMark = () => {
 };
 const famLabel = (f) => (f ? f[0].toUpperCase() + f.slice(1) : '');
 const flavorOf = (family) => M.roles?.flavor.find((x) => x.family === family);
-/** The effort a model runs at in a job: the job's own, else that model's default — the resolver's rule. */
-const effortIn = (role, family) => role.effort || flavorOf(family)?.flavor.effort || '';
+/** The effort a model runs at in a job: its own there, else the job's, else that model's default — the resolver's rule. */
+const effortIn = (role, family, own = '') => own || role.effort || flavorOf(family)?.flavor.effort || '';
+/** A job's models as the view sends them, `{family, own, effort}`; worked out here for a view without them. */
+const membersOf = (role) => role.members || role.use.map((f) => ({ family: f, own: '', effort: effortIn(role, f) }));
+const altMemberOf = (role) => (role.alt ? role.altMember || { family: role.alt, own: '', effort: effortIn(role, role.alt) } : null);
+/** A member as roles.json holds it: the family name, or `{family, effort}` when it has an effort of its own. */
+const memberSpec = (m) => (m.own ? { family: m.family, effort: m.own } : m.family);
+/** A role's `use` and `alt` in the file's form, for comparing against the default's. */
+const roleValue = (role, k) => (k === 'use' ? membersOf(role).map(memberSpec) : k === 'alt' ? (role.alt ? memberSpec(altMemberOf(role)) : role.alt) : role[k]);
+/** A default role's own effort for one family in `use` or `alt`, or ''. */
+const defaultOwn = (dflt, k, family) => {
+  const m = [].concat(dflt?.[k] ?? []).find((x) => (typeof x === 'string' ? x : x.family) === family);
+  return m && typeof m === 'object' ? m.effort : '';
+};
 
 /** A model as it runs in a job: "Opus · high". */
 function lineupChip(family, effort, id, cls = '') {
@@ -4522,7 +4534,7 @@ function rolesSection() {
     return sec;
   }
   sec.appendChild(el('div', 'scope-sub models-roles-sub',
-    'Which model does each job, and how hard it thinks. Each chip shows the effort that actually applies: the job’s own, or the model’s default when the job sets none. Click a job to change it.'));
+    'Which model does each job, and how hard it thinks. Each chip shows the effort that actually applies: the model’s own in this job, else the job’s, else the model’s default. Click a job to change it.'));
   if (R.error) {
     const n = el('div', 'notice error models-error');
     n.appendChild(el('div', null, 'roles.json is invalid. Defaults are in use, and edits are refused until it is fixed (or a Describe proposal replaces it):'));
@@ -4557,7 +4569,7 @@ function roleRow(role) {
   row.onclick = (e) => { if (!e.target.closest('button, input, select')) toggle(); };
   row.onkeydown = (e) => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggle(); } };
   // A custom role is all yours: one badge says so, rather than a mark on every field.
-  const marked = (k) => !role.custom && differs(role.provenance, k, role[k], role.defaults?.[k]);
+  const marked = (k) => !role.custom && differs(role.provenance, k, roleValue(role, k), role.defaults?.[k]);
 
   const top = el('div', 'roles-top');
   top.appendChild(el('span', 'roles-name-text', role.name));
@@ -4569,14 +4581,14 @@ function roleRow(role) {
   row.appendChild(top);
 
   const lineup = el('div', 'roles-lineup');
-  role.use.forEach((f, i) => lineup.appendChild(lineupChip(f, effortIn(role, f), role.ids[i], i ? '' : ' first')));
+  membersOf(role).forEach((m, i) => lineup.appendChild(lineupChip(m.family, m.effort, role.ids[i], i ? '' : ' first')));
   if (marked('use') || marked('effort')) lineup.appendChild(changedMark());
   row.appendChild(lineup);
   if (role.use.length > 1) row.appendChild(el('div', 'scope-note roles-hint', 'First is the default; the rest are alternatives.'));
   if (role.alt || marked('alt')) {
     const alt = el('div', 'roles-second');
     alt.appendChild(el('span', 'roles-second-label', role.alt ? 'Second opinion: ' : 'No second opinion'));
-    if (role.alt) alt.appendChild(lineupChip(role.alt, effortIn(role, role.alt), role.altId));
+    if (role.alt) alt.appendChild(lineupChip(role.alt, altMemberOf(role).effort, role.altId));
     if (marked('alt')) alt.appendChild(changedMark());
     row.appendChild(alt);
   }
@@ -4598,11 +4610,31 @@ function roleEditor(role) {
   const R = M.roles;
   const key = role ? role.name : '+new';
   const d = M.roleDrafts[key] ??= role
-    ? { use: role.use.join(', '), effort: role.effort, alt: role.alt, note: role.note }
-    : { name: '', use: '', effort: '', alt: '', note: '' };
+    ? {
+      use: role.use.join(', '),
+      own: Object.fromEntries(membersOf(role).filter((m) => m.own).map((m) => [m.family, m.own])),
+      effort: role.effort, alt: role.alt, altOwn: altMemberOf(role)?.own ? { [role.alt]: altMemberOf(role).own } : {}, note: role.note,
+    }
+    : { name: '', use: '', own: {}, effort: '', alt: '', altOwn: {}, note: '' };
+  const families = () => d.use.split(',').map((x) => x.trim()).filter(Boolean);
   const box = el('div', 'models-detail roles-detail');
   const form = el('div', 'roles-form');
-  const marked = (k) => role && !role.custom && differs(role.provenance, k, role[k], role.defaults?.[k]);
+  const marked = (k) => role && !role.custom && differs(role.provenance, k, roleValue(role, k), role.defaults?.[k]);
+  /** A model's effort in this job: "job default" (none of its own) or one value. Marked where it differs from the default role's. */
+  const ownSelect = (family, value, k, onchange) => {
+    const f = el('label', 'roles-member');
+    f.dataset.family = family;
+    const l = el('span', 'roles-label', famLabel(family));
+    if (role && !role.custom && value && value !== defaultOwn(role.defaults, k, family)) l.appendChild(changedMark());
+    f.appendChild(l);
+    const sel = el('select', 'models-input roles-select roles-member-effort');
+    sel.appendChild(el('option', null, 'job default')).value = '';
+    for (const e of R.efforts) sel.appendChild(el('option', null, e)).value = e;
+    sel.value = value || '';
+    sel.onchange = () => onchange(sel.value);
+    f.appendChild(sel);
+    return f;
+  };
   const field = (label, input, k) => {
     const f = el('label', 'roles-field');
     const l = el('span', 'roles-label', label);
@@ -4619,7 +4651,20 @@ function roleEditor(role) {
   }
   const use = field('Models, in order (first is the default; comma-separated)', el('input', 'models-input roles-use'), 'use');
   use.value = d.use; use.spellcheck = false; use.placeholder = R.families.slice(0, 2).join(', ');
-  use.oninput = () => { d.use = use.value; };
+  const members = el('div', 'roles-members');
+  const paintMembers = () => {
+    members.textContent = '';
+    members.appendChild(el('span', 'roles-label', 'Effort per model (job default: the job’s effort, else the model’s default)'));
+    const row = el('div', 'roles-members-row');
+    for (const f of [...new Set(families())]) row.appendChild(ownSelect(f, d.own[f], 'use', (v) => { if (v) d.own[f] = v; else delete d.own[f]; }));
+    members.appendChild(row);
+    // Efforts stay keyed by family while editing: one taken out of the list is dropped on Save, said here, and back if it returns.
+    const listed = new Set(families());
+    for (const [f, e] of Object.entries(d.own)) {
+      if (!listed.has(f)) members.appendChild(el('div', 'scope-note roles-member-dropped', `${famLabel(f)}’s own effort (${e}) will be dropped`));
+    }
+  };
+  use.oninput = () => { d.use = use.value; paintMembers(); };
   const effort = field('Effort', el('select', 'models-input roles-select roles-effort-input'), 'effort');
   effort.appendChild(el('option', null, role?.defaults?.effort && !d.effort ? '(each model’s default — cleared)' : '(each model’s default)')).value = '';
   for (const e of R.efforts) effort.appendChild(el('option', null, e)).value = e;
@@ -4627,10 +4672,19 @@ function roleEditor(role) {
   effort.onchange = () => { d.effort = effort.value; };
   const alt = field('Second opinion (optional, never automatic)', familySelect(R.families, d.alt, '(none)'), 'alt');
   alt.classList.add('roles-alt-input');
-  alt.onchange = () => { d.alt = alt.value; };
+  const altOwn = el('div', 'roles-alt-own');
+  const paintAltOwn = () => {
+    altOwn.textContent = '';
+    if (d.alt) altOwn.appendChild(ownSelect(d.alt, d.altOwn[d.alt], 'alt', (v) => { if (v) d.altOwn[d.alt] = v; else delete d.altOwn[d.alt]; }));
+  };
+  alt.onchange = () => { d.alt = alt.value; paintAltOwn(); };
+  form.appendChild(altOwn);
+  paintAltOwn();
   const note = field('What this job is', el('input', 'models-input roles-note'), 'note');
   note.value = d.note; note.maxLength = R.limits.note;
   note.oninput = () => { d.note = note.value; };
+  paintMembers();
+  form.appendChild(members);
   box.appendChild(form);
 
   const bar = el('div', 'models-edit roles-buttons');
@@ -4638,7 +4692,11 @@ function roleEditor(role) {
   save.disabled = !!R.error;
   save.onclick = async () => {
     const name = role ? role.name : d.name.trim();
-    const fields = { use: d.use.split(',').map((x) => x.trim()).filter(Boolean), effort: d.effort, alt: d.alt, note: d.note.trim() };
+    // The object form only where a model has an effort of its own: the rest stay family names.
+    const withOwn = (f, own) => (own ? { family: f, effort: own } : f);
+    const fields = {
+      use: families().map((f) => withOwn(f, d.own[f])), effort: d.effort, alt: d.alt ? withOwn(d.alt, d.altOwn[d.alt]) : '', note: d.note.trim(),
+    };
     await rolesWrite('/api/models/roles/set', { name, fields }, `Role ${name} saved.`, () => {
       delete M.roleDrafts[key];
       if (!role) M.adding = false;
@@ -4671,7 +4729,8 @@ function roleEditor(role) {
   if (M.writeErrors[key]) box.appendChild(writeError(M.writeErrors[key]));
   if (role && !role.custom && role.defaults) {
     const dd = role.defaults;
-    box.appendChild(el('div', 'scope-note roles-default', `Default: ${[].concat(dd.use).join(', ')}${dd.effort ? ` · ${dd.effort}` : ''}${dd.alt ? ` · second opinion ${dd.alt}` : ''}`));
+    const spec = (m) => (typeof m === 'string' ? m : `${m.family} (${m.effort})`);
+    box.appendChild(el('div', 'scope-note roles-default', `Default: ${[].concat(dd.use).map(spec).join(', ')}${dd.effort ? ` · ${dd.effort}` : ''}${dd.alt ? ` · second opinion ${spec(dd.alt)}` : ''}`));
   }
   return box;
 }

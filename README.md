@@ -452,17 +452,29 @@ model-id --roles
 - `--role <name>` prints one line, `family=… id=… effort=… alt=…`, ready for
   `eval "$(model-id --role reviewer || true)"`. `use` is an ordered
   preference list and the first entry is the answer; `alt` is a second-opinion
-  family a skill asks for on purpose, never a fallback. Effort is the role's,
-  else that family's flavor effort, else empty — never guessed.
+  family a skill asks for on purpose, never a fallback. `effort` is the first
+  model's (see the precedence below), else empty — never guessed.
 - `--json` (with `--role`, `--flavor` or `--roles`) gives the whole entry: every
   `use` family and id, and where each field came from (default, yours, or
-  cleared).
+  cleared). When a role gives a model an effort of its own, its entry also has
+  `members` (each model in order as `{family, id, effort, source}`) and
+  `altMember` (the second opinion the same way, or null). Without one they are
+  absent, so a script reading them falls back to `use` and `ids` with the
+  role's `effort`, else each family's `--flavor` effort.
 - `--flavor <family>` prints what the family is good at, its quirks and how to
   brief it, as plain text for a delegation brief.
 - `--table` is unchanged: families only. Roles are listed by `--roles`.
 - An unknown role or family, or an invalid `roles.json`, exits 2 and says why;
   `--role` then prints `MODEL-ID-UNRESOLVED-<name>` in place of every value. A
   family call keeps its old behaviour (exit 1).
+
+Effort is set per model in a job first, then per job, then per model. A
+`use` entry (or `alt`) is either a family name or `{"family": "sol", "effort":
+"high"}`; that effort applies to that model in that job only. A model without
+one runs at the job's effort, and a job without one runs each model at its
+own default effort (its flavor `effort`). So "builder = Opus medium, Sol high"
+beside "reviewer = Opus high" needs no change to Opus's default. `source` in
+`members` says which of the three applied: `member`, `role` or `flavor`.
 
 `roles.json` merges over the defaults field by field: a list replaces the
 default list, and `null` clears a default field. Nothing reads a catalog or

@@ -250,6 +250,65 @@ console.log('\nroles: avoid — accepted, merged, and invisible to the plain fla
   ok('the shipped defaults set no avoid list', Object.values(shipped.flavor).every((fl) => fl.avoid === undefined));
 }
 
+console.log('\nroles: per-model effort — a use or alt entry may be {family, effort}');
+{
+  const cases = [
+    ['a member effort that is not one', { roles: { builder: { use: [{ family: 'opus', effort: 'huge' }] } } }, /roles\.builder\.use\[0\]\.effort: "huge" is not one of low\/medium/],
+    ['a member without an effort', { roles: { builder: { use: [{ family: 'opus' }] } } }, /roles\.builder\.use\[0\]\.effort: undefined is not one of/],
+    ['a member with an extra key', { roles: { builder: { use: [{ family: 'opus', effort: 'high', note: 'x' }] } } }, /roles\.builder\.use\[0\]: unknown key "note" \(allowed: family, effort\)/],
+    ['a member with an unknown family', { roles: { builder: { use: ['sol', { family: 'gpt', effort: 'high' }] } } }, /roles\.builder\.use\[1\]\.family: unknown family "gpt"/],
+    ['a member without a family', { roles: { builder: { use: [{ effort: 'high' }] } } }, /roles\.builder\.use\[0\]: "family" is required/],
+    ['a family twice, once as a name and once as an object', { roles: { builder: { use: ['opus', { family: 'opus', effort: 'high' }] } } }, /roles\.builder\.use: names a family twice/],
+    ['a family twice, both as objects', { roles: { builder: { use: [{ family: 'sol', effort: 'low' }, { family: 'sol', effort: 'high' }] } } }, /roles\.builder\.use: names a family twice/],
+    ['a bare object as use', { roles: { builder: { use: { family: 'opus', effort: 'high' } } } }, /roles\.builder\.use: must be a family or a non-empty list/],
+    ['an alt object with a bad effort', { roles: { advisor: { alt: { family: 'astra', effort: 'turbo' } } } }, /roles\.advisor\.alt\.effort: "turbo" is not one of/],
+    ['an alt object with an extra key', { roles: { advisor: { alt: { family: 'astra', effort: 'high', why: 'x' } } } }, /roles\.advisor\.alt: unknown key "why"/],
+    ['an alt object with an unknown family', { roles: { advisor: { alt: { family: 'gpt', effort: 'high' } } } }, /roles\.advisor\.alt\.family: unknown family "gpt"/],
+    ['an alt that is a list', { roles: { advisor: { alt: ['astra'] } } }, /roles\.advisor\.alt: must be a family name/],
+  ];
+  for (const [what, doc, re] of cases) {
+    const r = now(tempHome({ roles: doc }), '--role', 'reviewer');
+    ok(`refuses ${what}`, r.code === 2 && re.test(r.err) && /MODEL-ID-UNRESOLVED/.test(r.out), r.err.trim());
+  }
+
+  // One role per precedence step: the member's own effort, the role's, the family's flavor, none.
+  const home = tempHome({ roles: {
+    roles: {
+      builder: { use: [{ family: 'opus', effort: 'low' }, 'sol', { family: 'grok', effort: 'max' }], effort: 'medium', alt: { family: 'astra', effort: 'xhigh' } },
+      scout: { use: ['haiku', 'sol', { family: 'grok', effort: 'low' }], alt: 'fable' },
+      judge: { use: [{ family: 'fable', effort: 'medium' }], effort: null, alt: 'opus' },
+    },
+    flavor: { sol: { effort: 'high' }, fable: { effort: null } },
+  } });
+  const rows = (r) => r.members.map((m) => `${m.family}:${m.effort}:${m.source}`).join(' ');
+  const b = json(now(home, '--role', 'builder', '--json'));
+  ok('member effort wins over the role effort; a member without one takes the role effort',
+    rows(b) === 'opus:low:member sol:medium:role grok:max:member', JSON.stringify(b?.members));
+  ok('…members carry each id in use order', JSON.stringify(b.members.map((m) => m.id)) === JSON.stringify([MODELS.models.opus, MODELS.models.sol, MODELS.models.grok]) && Object.keys(b.members[0]).join() === 'family,id,effort,source');
+  ok('…and use, ids and effort keep their meaning: names, ids, the first member\'s effort',
+    JSON.stringify(b.use) === '["opus","sol","grok"]' && JSON.stringify(b.ids) === JSON.stringify(b.members.map((m) => m.id)) && b.effort === 'low' && b.family === 'opus', JSON.stringify(b));
+  ok('…the alt object resolves with its own effort, and alt stays a family name',
+    JSON.stringify(b.altMember) === JSON.stringify({ family: 'astra', id: MODELS.models.astra, effort: 'xhigh', source: 'member' }) && b.alt === 'astra' && b.altEffort === 'xhigh', JSON.stringify(b.altMember));
+  ok('the plain line prints the first member\'s effort, in the same format', now(home, '--role', 'builder').out === `family=opus id=${MODELS.models.opus} effort=low alt=astra\n`);
+  const s = json(now(home, '--role', 'scout', '--json'));
+  ok('no member or role effort: the family\'s flavor effort, else empty', rows(s) === 'haiku:: sol:high:flavor grok:low:member', rows(s));
+  ok('…and the alt the same way', JSON.stringify(s.altMember) === JSON.stringify({ family: 'fable', id: MODELS.models.fable, effort: ROLES.flavor.fable.effort ?? '', source: ROLES.flavor.fable.effort ? 'flavor' : '' }), JSON.stringify(s.altMember));
+  const j = json(now(home, '--role', 'judge', '--json'));
+  ok('a member effort applies to that member only: the alt runs at its family\'s effort', rows(j) === 'fable:medium:member' && j.altMember.family === 'opus' && j.altMember.source !== 'member', JSON.stringify(j.altMember));
+  const plain = json(now(home, '--role', 'reviewer', '--json'));
+  ok('a role without member effort has no members or altMember: its output is what it always was',
+    plain && !Object.hasOwn(plain, 'members') && !Object.hasOwn(plain, 'altMember') && Object.keys(plain).at(-1) === 'source', JSON.stringify(plain));
+  const alone = json(now(tempHome({ roles: { roles: { advisor: { alt: { family: 'astra', effort: 'max' } } } } }), '--role', 'advisor', '--json'));
+  ok('an alt with its own effort alone brings both keys', alone.members?.[0]?.source === 'role' && alone.altMember?.source === 'member', JSON.stringify(alone));
+  const nomem = json(now(tempHome({ roles: { roles: { builder: { use: [{ family: 'opus', effort: 'low' }] } } } }), '--role', 'builder', '--json'));
+  ok('…and members without an alt give altMember null', nomem.members.length === 1 && nomem.altMember === null, JSON.stringify(nomem));
+  const rj = json(now(home, '--roles', '--json'));
+  ok('--roles --json adds them only to the roles that have a member effort',
+    Object.entries(rj.roles).every(([n, r]) => Object.hasOwn(r, 'members') === ['builder', 'scout', 'judge'].includes(n)), JSON.stringify(Object.keys(rj.roles)));
+  const all = now(home, '--roles');
+  ok('--roles prints the first member\'s effort', all.code === 0 && /^builder\s+opus\s+\S+\s+low\s+astra$/m.test(all.out), all.out);
+}
+
 console.log('\nroles: the shipped seed');
 {
   ok('every seeded role uses a shipped family', Object.values(ROLES.roles).every((r) => [].concat(r.use).every((f) => Object.hasOwn(MODELS.models, f))));
