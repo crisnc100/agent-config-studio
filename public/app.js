@@ -17,11 +17,28 @@ const esc = (s) => s.replace(/[&<>"']/g, (c) =>
  * in a skill file would otherwise run with same-origin access to the write API.
  */
 const DANGEROUS_TAGS = 'script,style,iframe,object,embed,link,meta,form,base';
+/**
+ * Nothing rendered may load from anywhere but this page: a model that read a
+ * secret could otherwise put it in an image URL, and the browser would send
+ * it the moment the reply rendered — no click needed. So every attribute that
+ * fetches is kept only for a same-origin path or a data: image, srcset is
+ * dropped, and so is any style that could fetch. The page's CSP is the
+ * second layer (server.js PAGE_CSP).
+ */
+const LOADING_ATTRS = /^(src|poster|background|lowsrc|dynsrc|data|xlink:href)$/;
+const SVG_HREF_TAGS = new Set(['image', 'use', 'feimage']);
+function localResource(raw) {
+  const v = raw.replace(/[\s\u0000-\u001f]+/g, '').toLowerCase();
+  if (/^data:image\/(png|gif|jpeg|jpg|webp|avif|bmp);/.test(v)) return true;
+  // A scheme, a protocol-relative //host, or a backslash a browser reads as one, is remote.
+  return !/^[a-z][a-z0-9+.-]*:/.test(v) && !v.startsWith('//') && !v.includes('\\');
+}
 function renderMarkdown(src) {
   const host = document.createElement('div');
   host.innerHTML = marked.parse(src);
   host.querySelectorAll(DANGEROUS_TAGS).forEach((n) => n.remove());
   host.querySelectorAll('*').forEach((n) => {
+    const tag = n.tagName.toLowerCase();
     for (const attr of [...n.attributes]) {
       const name = attr.name.toLowerCase();
       const value = attr.value.replace(/\s+/g, '').toLowerCase();
@@ -29,7 +46,10 @@ function renderMarkdown(src) {
       else if (/^(href|src|xlink:href|action|formaction)$/.test(name) &&
                /^(javascript|vbscript|data:text\/html)/.test(value)) {
         n.removeAttribute(attr.name);
-      }
+      } else if (name === 'srcset' || name === 'imagesrcset') n.removeAttribute(attr.name);
+      else if ((LOADING_ATTRS.test(name) || (name === 'href' && SVG_HREF_TAGS.has(tag))) && !localResource(attr.value)) {
+        n.removeAttribute(attr.name);
+      } else if (name === 'style' && /url\(|image-set|@import|expression\(/.test(value)) n.removeAttribute(attr.name);
     }
   });
   return host.innerHTML;
@@ -5453,6 +5473,8 @@ const C = {
   stream: '',
   startedAt: 0,
   running: null,        // {harness, model} captured at submit — see sendTurn
+  phase: null,          // 'finding' while Assist is loading the files it asked for
+  batch: false,         // an Accept all is in flight: every Accept waits for it
   abort: null,
   draft: '',
   picker: null,
@@ -5519,6 +5541,8 @@ function newSession(mentions = []) {
     id: 's' + Math.random().toString(36).slice(2, 10),
     title: 'New session',
     mentions: [...mentions],
+    loaded: [],           // files Assist pulled in: [{display, readOnly, cls, kind}]
+    blocked: [],          // paths the user removed: never sent or pulled in again
     messages: [],
     slots: {},            // harness id -> its CLI session, seed and stats
     createdAt: Date.now(),
@@ -5578,7 +5602,7 @@ function saveSessions() {
         // stale diff must never remain applyable.
         messages: s.messages.map((m) => ({
           role: m.role, text: m.text, error: m.error, note: m.note,
-          mentions: m.mentions, harness: m.harness,
+          mentions: m.mentions, harness: m.harness, pulled: m.pulled, scope: m.scope,
         })),
       })),
     }));
@@ -5596,6 +5620,8 @@ function restoreSessions() {
       const { cliSessionId, seed, stats, compactions, ...rest } = s;
       return {
         ...rest,
+        loaded: Array.isArray(s.loaded) ? s.loaded : [],
+        blocked: Array.isArray(s.blocked) ? s.blocked : [],
         slots: s.slots ?? {
           claude: {
             cliSessionId: cliSessionId ?? null,
@@ -5854,7 +5880,7 @@ function renderChatBody() {
     const intro = el('div', 'chat-intro');
     intro.appendChild(el('p', 'assist-label', 'Ask for a change'));
     intro.appendChild(el('div', 'scope-sub',
-      'Attach the files you want changed with @, then say what you want. Edits come back as diffs you accept per file — nothing is written until you do.'));
+      'Say what you want in plain words — "change X in all my review skills", "which files mention Astra?". Assist finds the files it needs; attaching one with @ is optional. Edits come back as diffs you accept per file — nothing is written until you do.'));
     const row = el('div', 'assist-actions');
     for (const [label, text] of PRESETS) {
       const chip = el('button', 'assist-chip', label);
@@ -5880,7 +5906,7 @@ function renderChatBody() {
     const prose = stripEditBlocks(C.stream);
     live.appendChild(prose
       ? el('div', 'msg-text', prose)
-      : el('div', 'msg-wait', waitingLine(run.harness, secs)));
+      : el('div', 'msg-wait', C.phase === 'finding' ? 'Finding the files…' : waitingLine(run.harness, secs)));
     body.appendChild(live);
   }
   if (atBottom) body.scrollTop = body.scrollHeight;
@@ -5923,6 +5949,9 @@ function renderMessage(m) {
   }
   // Threads can mix harnesses, so each reply says who wrote it.
   if (m.harness) wrap.appendChild(el('div', 'msg-meta', harnessLabel(m.harness)));
+  if (m.pulled?.length) wrap.appendChild(pulledLine(m.pulled));
+  // Computed by ACS from what it actually searched and loaded — never the model's claim.
+  if (m.scope?.line) wrap.appendChild(el('div', 'msg-scope', m.scope.line));
   if (m.error) { wrap.appendChild(el('div', 'notice error', m.error)); return wrap; }
 
   const prose = stripEditBlocks(m.text);
@@ -5932,29 +5961,153 @@ function renderMessage(m) {
     wrap.appendChild(t);
   }
   for (const p of m.proposals || []) wrap.appendChild(renderProposal(p));
+  const all = renderAcceptAll(m);
+  if (all) wrap.appendChild(all);
   return wrap;
 }
+
+/** "Assist pulled in N files", with a chip per file — what it read on its own. */
+function pulledLine(list) {
+  const box = el('div', 'pulled');
+  box.appendChild(el('span', 'pulled-label', `Assist pulled in ${list.length} file${list.length === 1 ? '' : 's'}`));
+  for (const f of list) {
+    const chip = el('span', 'chip-mini pulled-chip', f.display.split('/').pop() === 'SKILL.md' ? f.display.split('/').slice(-2).join('/') : f.display.split('/').pop());
+    chip.title = `${f.display} — pulled in by Assist${f.readOnly ? ' (read-only)' : ''}`;
+    box.appendChild(chip);
+  }
+  return box;
+}
+
+/** Proposals Accept all may still act on: each has an id and no outcome yet. */
+const pendingOf = (m) => (m.proposals || []).filter((p) => p.id && !p.error && !p.state);
+
+/**
+ * Accept all: shown for two or more pending proposals. It first lists exactly
+ * which files it will write — full paths, the count — and applies only on
+ * that confirmation; one batch at a time, every other Accept waiting for it.
+ */
+function renderAcceptAll(m) {
+  const list = pendingOf(m);
+  if (m.batchResult) {
+    const r = m.batchResult;
+    const box = el('div', 'accept-all-result', r.line);
+    return box;
+  }
+  if (list.length < 2) return null;
+  const box = el('div', 'accept-all');
+  if (!m.confirmAll) {
+    const b = el('button', 'btn primary', `Accept all (${list.length})`);
+    b.disabled = C.batch;
+    b.onclick = () => { m.confirmAll = list.map((p) => p.id); renderChatBody(); };
+    box.appendChild(b);
+    return box;
+  }
+  const chosen = list.filter((p) => m.confirmAll.includes(p.id));
+  box.appendChild(el('div', 'accept-all-title', `Apply these ${chosen.length} files?`));
+  const ul = el('ul', 'accept-all-list');
+  for (const p of chosen) {
+    const li = el('li', null, p.display);
+    if (p.originLabel === 'pulled in by Assist') li.appendChild(el('span', 'item-badge', 'pulled in by Assist'));
+    if (p.synced) li.appendChild(el('span', 'item-badge warn', 'synced'));
+    ul.appendChild(li);
+  }
+  box.appendChild(ul);
+  const synced = chosen.filter((p) => p.synced).length;
+  if (synced) box.appendChild(el('div', 'prop-error', `${synced} of these ${synced === 1 ? 'is a synced skill' : 'are synced skills'}: the next sync overwrites ${synced === 1 ? 'it' : 'them'}. Applying confirms that.`));
+  const row = el('div', 'prop-foot');
+  const go = el('button', 'btn primary', `Apply ${chosen.length} file${chosen.length === 1 ? '' : 's'}`);
+  go.disabled = C.batch;
+  go.onclick = () => acceptAll(m, chosen);
+  const no = el('button', 'btn ghost', 'Cancel');
+  no.disabled = C.batch;
+  no.onclick = () => { m.confirmAll = null; renderChatBody(); };
+  row.append(go, no);
+  box.appendChild(row);
+  return box;
+}
+
+const OUTCOME_STATE = { applied: 'accepted', stale: 'stale', refused: 'refused', gone: 'gone', failed: 'failed' };
+
+async function acceptAll(m, chosen) {
+  if (C.batch) return;
+  C.batch = true;
+  renderChatBody();
+  try {
+    const r = await api('POST', '/api/chat/accept-all', { ids: chosen.map((p) => p.id), ackSync: chosen.some((p) => p.synced) });
+    const byId = new Map(r.results.map((x) => [x.id, x]));
+    const counts = {};
+    for (const p of chosen) {
+      const x = byId.get(p.id);
+      if (!x) continue;
+      p.state = OUTCOME_STATE[x.outcome] || 'failed';
+      p.result = x.message || null;
+      counts[x.outcome] = (counts[x.outcome] || 0) + 1;
+      if (x.outcome === 'applied') afterApplied(p, x);
+    }
+    const parts = Object.entries(counts).filter(([k]) => k !== 'applied').map(([k, n]) => `${n} ${k}`);
+    m.batchResult = { line: `Applied ${counts.applied || 0} of ${chosen.length}${parts.length ? ` · ${parts.join(' · ')}` : ''}.` };
+  } catch (e) {
+    // The batch may have written some files before the reply was lost: say so, and keep each card as it was.
+    notice('error', `Accept all did not report back (${e.message}). Some files may have been written; check History before retrying.`, null, true);
+  } finally {
+    C.batch = false;
+    m.confirmAll = null;
+    renderChatBody();
+  }
+}
+
+/** A written proposal: the open editor follows it, and history counts it. */
+function afterApplied(p, r) {
+  if (S.file?.path === p.path && !S.revoked) {
+    if (r.mtime) S.file.mtime = r.mtime;
+    S.original = p.proposed;
+    S.draft = p.proposed;
+    renderAll();
+  }
+  if (S.registry?.history) S.registry.history.commits++;
+}
+
+const STATE_LINE = {
+  accepted: ['prop-ok', 'Applied and versioned.'],
+  rejected: ['prop-error', 'Rejected — nothing written.'],
+  withdrawn: ['prop-error', 'Withdrawn — you removed this file from the session. Nothing written.'],
+  stale: ['prop-error', 'The file changed since this was proposed — nothing written. Ask again.'],
+  refused: ['prop-error', 'Refused — nothing written.'],
+  gone: ['prop-error', 'This proposal expired or was already used — nothing written by it.'],
+  failed: ['prop-error', 'Not applied.'],
+};
 
 function renderProposal(p) {
   const card = el('div', 'prop');
   const head = el('div', 'prop-head');
   head.appendChild(el('span', 'prop-path', p.display));
+  if (p.originLabel === 'pulled in by Assist') head.appendChild(el('span', 'item-badge', 'pulled in by Assist'));
   if (!p.error) head.appendChild(el('span', 'item-badge', `${p.edits} edit${p.edits === 1 ? '' : 's'}`));
   card.appendChild(head);
 
   if (p.error) { card.appendChild(el('div', 'prop-error', p.error)); return card; }
-  if (p.state === 'accepted') { card.appendChild(el('div', 'prop-ok', 'Applied and versioned.')); return card; }
-  if (p.state === 'rejected') { card.appendChild(el('div', 'prop-error', 'Rejected — nothing written.')); return card; }
+  if (p.state && STATE_LINE[p.state]) {
+    const [cls, text] = STATE_LINE[p.state];
+    card.appendChild(el('div', cls, p.result && p.state !== 'accepted' ? `${text} ${p.result}` : text));
+    return card;
+  }
 
   const d = diffView(p.current, p.proposed, 'now', 'proposed');
   d.style.padding = '0';
   card.appendChild(d);
+  if (p.synced) card.appendChild(el('div', 'prop-error', 'This skill is synced: the next sync overwrites this change.'));
 
   const foot = el('div', 'prop-foot');
-  const accept = el('button', 'btn primary', 'Accept');
+  const accept = el('button', 'btn primary', p.needsAck ? 'Accept anyway' : 'Accept');
+  accept.disabled = C.batch || p.busy === true;
   accept.onclick = () => acceptProposal(p);
   const reject = el('button', 'btn ghost', 'Reject');
-  reject.onclick = () => { p.state = 'rejected'; renderChatBody(); };
+  reject.disabled = C.batch || p.busy === true;
+  reject.onclick = () => {
+    p.state = 'rejected';
+    if (p.id) api('POST', '/api/chat/reject', { ids: [p.id] }).catch(() => {});
+    renderChatBody();
+  };
   const open = el('button', 'btn ghost', 'Open file');
   open.onclick = () => {
     const entry = entryForFile(p.path);
@@ -5966,24 +6119,25 @@ function renderProposal(p) {
 }
 
 async function acceptProposal(p) {
+  if (C.batch || p.busy) return;
+  p.busy = true;
+  renderChatBody();
   try {
-    const r = await api('PUT', '/api/file', { path: p.path, content: p.proposed, mtime: p.mtime });
-    if (!r.saved && r.errors?.length) {
-      notice('error', `Not applied — ${p.display} would be invalid:`, r.errors, true);
-      return;
-    }
+    const r = await api('POST', '/api/chat/accept', { id: p.id, ackSync: p.needsAck === true });
     p.state = 'accepted';
-    renderChatBody();
-    if (S.file?.path === p.path && !S.revoked) {
-      S.file.mtime = r.mtime;
-      S.original = p.proposed;
-      S.draft = p.proposed;
-      renderAll();
-    }
-    S.registry.history.commits++;
+    afterApplied(p, r);
     notice('ok', `Applied to ${p.display} · version ${r.sha?.slice(0, 8) ?? ''}`);
   } catch (e) {
-    notice('error', e.message, null, true);
+    const why = e.body?.reason;
+    if (e.status === 409 && why === 'synced') { p.needsAck = true; notice('warn', e.message, null, true); }
+    else if (e.status === 422) notice('error', e.message, e.body?.errors, true);
+    else if (e.status === 409) { p.state = 'stale'; }
+    else if (e.status === 403) { p.state = 'refused'; p.result = e.message; }
+    else if (e.status === 410) { p.state = 'gone'; }
+    else notice('error', e.message, null, true);
+  } finally {
+    p.busy = false;
+    renderChatBody();
   }
 }
 
@@ -5998,8 +6152,9 @@ function renderCompose() {
     const chip = el('span', 'mention-chip');
     chip.appendChild(el('span', null, p.split('/').pop()));
     const x = el('button', 'mention-x', '×');
-    x.title = p;
-    x.onclick = () => { s.mentions = s.mentions.filter((q) => q !== p); saveSessions(); renderCompose(); };
+    x.title = `${p} — remove: it won't be read or edited again in this session`;
+    x.setAttribute('aria-label', `Remove ${p.split('/').pop()}`);
+    x.onclick = () => removeFromSession(s, { path: p });
     chip.appendChild(x);
     chips.appendChild(chip);
   }
@@ -6008,13 +6163,32 @@ function renderCompose() {
   chips.appendChild(add);
   box.appendChild(chips);
 
+  if (s.loaded?.length) {
+    const row = el('div', 'mention-row pulled-row');
+    row.appendChild(el('span', 'pulled-label', `Assist pulled in ${s.loaded.length} file${s.loaded.length === 1 ? '' : 's'}`));
+    for (const f of s.loaded) {
+      const chip = el('span', 'mention-chip pulled-chip');
+      const name = f.display.split('/').pop() === 'SKILL.md' ? f.display.split('/').slice(-2).join('/') : f.display.split('/').pop();
+      const label = el('span', null, name);
+      label.title = `${f.display} — pulled in by Assist${f.readOnly ? ' (read-only)' : ''}`;
+      chip.appendChild(label);
+      const x = el('button', 'mention-x', '×');
+      x.title = `Remove ${f.display}: it won't be read or edited again in this session`;
+      x.setAttribute('aria-label', `Remove ${name}`);
+      x.onclick = () => removeFromSession(s, { display: f.display });
+      chip.appendChild(x);
+      row.appendChild(chip);
+    }
+    box.appendChild(row);
+  }
+
   if (C.picker) box.appendChild(renderPicker());
 
   const input = el('textarea', 'chat-input');
   input.id = 'chat-input';
   input.placeholder = s.mentions.length
-    ? 'What should change in these files?'
-    : 'Ask a question, or attach a file with @ to make edits…';
+    ? 'What should change? Assist can pull in other files too.'
+    : 'Ask or ask for a change in plain words — Assist finds the files. @ to attach one yourself.';
   input.value = C.draft;
   input.rows = 3;
   input.oninput = () => {
@@ -6131,10 +6305,35 @@ function renderPicker() {
   return box;
 }
 
+/**
+ * A removed file leaves the session: it is not sent on later turns, Assist
+ * may not pull it back in (only attaching it again does), and its open
+ * proposals are withdrawn. The model may still remember what it read — the
+ * wording says it won't be read or edited again, not that it is forgotten.
+ */
+function removeFromSession(s, { path: abs, display }) {
+  if (abs) s.mentions = s.mentions.filter((q) => q !== abs);
+  if (display) s.loaded = (s.loaded || []).filter((f) => f.display !== display);
+  s.blocked = [...new Set([...(s.blocked || []), abs || display])];
+  const ids = [];
+  for (const m of s.messages) {
+    for (const p of m.proposals || []) {
+      if (p.state || p.error || !p.id) continue;
+      if ((abs && p.path === abs) || (display && p.display === display)) { p.state = 'withdrawn'; ids.push(p.id); }
+    }
+  }
+  if (ids.length) api('POST', '/api/chat/reject', { ids }).catch(() => {});
+  saveSessions();
+  notice('ok', `${(abs || display).split('/').pop()} won't be read or edited again in this session.`);
+  renderChat();
+}
+
 function choosePicker(f) {
   if (!f) return;
   const s = ensureSession();
   if (!s.mentions.includes(f.path)) s.mentions.push(f.path);
+  // Attaching is the user's own choice: it lifts a removal.
+  s.blocked = (s.blocked || []).filter((b) => b !== f.path && b !== f.display);
   C.draft = C.draft.replace(/@([^\s@]*)$/, '').replace(/\s+$/, '');
   C.picker = null;
   saveSessions();
@@ -6146,13 +6345,13 @@ function choosePicker(f) {
 let tickTimer;
 
 /** Shared streaming reader for both normal turns and compaction. */
-async function streamChat({ message, mentions, sessionId, seed, harness, model, onDelta }) {
+async function streamChat({ message, mentions, loaded = [], blocked = [], sessionId, seed, harness, model, onDelta, onEvent }) {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     // harness and model are passed in, never read from C: the picker may move
     // while this request is open and the turn must stay what it was at submit.
-    body: JSON.stringify({ message, mentions, sessionId, seed, model, harness }),
+    body: JSON.stringify({ message, mentions, loaded, blocked, sessionId, seed, model, harness }),
     signal: C.abort.signal,
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
@@ -6171,9 +6370,18 @@ async function streamChat({ message, mentions, sessionId, seed, harness, model, 
       if (!line.trim()) continue;
       let ev;
       try { ev = JSON.parse(line); } catch { continue; }
-      if (ev.t === 'delta') { C.stream += ev.text; onDelta?.(); }
+      if (ev.t === 'delta') { C.phase = null; C.stream += ev.text; onDelta?.(); }
       else if (ev.t === 'done') final = ev;
-      else if (ev.t === 'error') throw new Error(ev.message);
+      // A request round's text is not the reply: what streamed of it is dropped.
+      else if (ev.t === 'round') { C.stream = ''; onDelta?.(); }
+      else if (ev.t === 'status' || ev.t === 'loaded' || ev.t === 'searched') {
+        if (ev.t === 'status') C.phase = ev.phase;
+        onEvent?.(ev);
+        onDelta?.();
+      } else if (ev.t === 'error') {
+        if (ev.loaded) onEvent?.({ t: 'loaded', files: ev.loaded });
+        throw new Error(ev.message);
+      }
     }
   }
   return final;
@@ -6191,6 +6399,9 @@ async function sendTurn() {
 
   s.messages.push({ role: 'user', text, mentions: [...s.mentions] });
   if (s.title === 'New session') s.title = titleFor(s);
+  const before = new Set((s.loaded || []).map((f) => f.display));
+  // What was pulled in survives a failed round: the chips stay, honestly.
+  const onEvent = (ev) => { if (ev.t === 'loaded') { s.loaded = ev.files; renderCompose(); } };
   C.draft = '';
   C.picker = null;
   C.busy = true;
@@ -6208,6 +6419,9 @@ async function sendTurn() {
     const final = await streamChat({
       message: text,
       mentions: s.mentions,
+      loaded: (s.loaded || []).map((f) => f.display),
+      blocked: s.blocked || [],
+      onEvent,
       sessionId: sl.cliSessionId,
       seed: sl.cliSessionId ? null : sl.seed,
       harness: run.harness,
@@ -6234,11 +6448,15 @@ async function sendTurn() {
       if (!sl.stats.baselineTokens) sl.stats.baselineTokens = final.stats.contextTokens || 0;
     }
     s.updatedAt = Date.now();
+    if (Array.isArray(final.loaded)) s.loaded = final.loaded;
     s.messages.push({
       role: 'assistant', harness: run.harness,
-      // Deltas when there were any; a harness with streams:false sends none and
-      // its whole reply arrives in the done event instead.
-      text: C.stream || final?.text || '',
+      // The final round's text, from the server: deltas may include a request
+      // round's, and a harness with streams:false sends none at all.
+      text: final?.text ?? C.stream ?? '',
+      note: final?.note || (final?.dropped?.length ? final.dropped.join(' ') : undefined),
+      pulled: (s.loaded || []).filter((f) => !before.has(f.display)),
+      scope: final?.scope ?? null,
       proposals: final?.proposals ?? [],
     });
 
@@ -6259,6 +6477,7 @@ async function sendTurn() {
     clearInterval(tickTimer);
     C.busy = false;
     C.stream = '';
+    C.phase = null;
     C.running = null;
     C.abort = null;
     saveSessions();

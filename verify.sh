@@ -104,6 +104,7 @@ node tests/batch-delete-ui.mjs
 node tests/roles-ui.mjs
 node tests/model-guide-ui.mjs
 node tests/audit-ui.mjs
+node tests/assist-files-ui.mjs
 node tests/models-layout-ui.mjs
 # What the registry tells the Files page (temp HOME).
 node tests/files-registry.mjs
