@@ -297,8 +297,11 @@ never reads it, so new data cannot break it.
   write that makes no progress as an error, re-reads the result, and on any
   failure writes the preimage back and says whether that worked.
 - `lib/audit.js` walks the physical files itself (no `listSkills`, no Context
-  collapse), bounded while it walks (depth 6, 2000 files, 1 MB per file,
-  32 MB in all) and reports what it cut. Skill files are read with
+  collapse), bounded while it walks (depth 6 from each inventory root, a
+  skill's own folders included; 2000 files; 1 MB per file and 32 MB in all,
+  counted on the bytes actually read) and reports what it cut. Shell
+  quoting is carried across lines, and a quoted here-document's body is
+  literal: no substitution fix there. Skill files are read with
   `readInSkill`, everything else with `openUserFile`. A file's class comes
   from its real path — vendor > plugin > read root > synced > user — and is
   computed again at propose and at accept, the strictest winning.

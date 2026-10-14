@@ -399,6 +399,121 @@ try {
     put(path.join(studio, 'roots.json'), JSON.stringify(roots));
   }
 
+  console.log('\naudit: grade fixes — ids, shell state, effort attribution, copies, limits, the create path');
+  {
+    // 1. Two different tokens of one rule on one line get two ids, and both can be fixed at once.
+    const two = 'codex -m gpt-6-sol a && codex -m gpt-6-astra b';
+    const f2 = scan(two, 'run.sh');
+    ok('R7 two different ids on one line are two findings with two ids', f2.length === 2 && f2[0].id !== f2[1].id, JSON.stringify(f2.map((f) => [f.match, f.id])));
+
+    // 2. Quoting carried across lines, and here-documents.
+    const multi = scan("codex exec 'first line\n-m gpt-6-sol still quoted'\ncodex exec -m gpt-6-sol x", 'run.sh');
+    ok('R1 an id inside a single-quoted string that spans lines gets no fix; after it closes, it does', multi.length === 2 && !multi[0].fix && multi[1].fix, JSON.stringify(multi.map((f) => [f.line, Boolean(f.fix)])));
+    for (const [what, open] of [["<<'EOF'", "cat <<'EOF' > out.sh"], ['<<"EOF"', 'cat <<"EOF" > out.sh'], ['<<\\EOF', 'cat <<\\EOF > out.sh']]) {
+      const q = scan(`${open}\ncodex -m gpt-6-sol x\nEOF\ncodex -m gpt-6-sol y`, 'run.sh');
+      ok(`R1 a quoted here-document (${what}) is literal: no fix inside it, a fix after it`, q.length === 2 && !q[0].fix && q[1].fix, JSON.stringify(q.map((f) => [f.line, Boolean(f.fix)])));
+    }
+    const fenced = scan(fence("cat <<'EOF'", 'codex -m gpt-6-sol x', 'EOF'));
+    ok('R1 …in a bash fence too', fenced.length === 1 && !fenced[0].fix);
+    const dash = scan("cat <<-'EOF'\n\tcodex -m gpt-6-sol x\n\tEOF\ncodex -m gpt-6-sol y", 'run.sh');
+    ok('R1 <<- ends at a tab-indented terminator', dash.length === 2 && !dash[0].fix && dash[1].fix);
+    const d3q = scan("cat <<'EOF'\nM=$(model-id sol)\nEOF", 'run.sh');
+    ok('R1 a bare $(model-id …) in a quoted here-document gets no fallback fix', d3q.length === 1 && d3q[0].rule === 'D3' && !d3q[0].fix);
+    const heredoc = 'cat <<EOF\ncodex -m gpt-6-sol x\nEOF\n';
+    const uq = scan(heredoc, 'run.sh');
+    ok('R1 an unquoted here-document expands $(…): fixable, with no added quotes (they would be literal there)', uq.length === 1 && uq[0].fix?.replacement === '$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)', JSON.stringify(uq));
+    const hd = mkdir('heredoc');
+    put(path.join(hd, 'model-id'), '#!/bin/sh\n[ "$1" = sol ] && echo gpt-6.1-sol\n');
+    fs.chmodSync(path.join(hd, 'model-id'), 0o755);
+    const hs = put(path.join(hd, 'h.sh'), A.applyFixes(Buffer.from(heredoc), heredoc, uq));
+    const hr = spawnSync('sh', [hs], { encoding: 'utf8', env: { PATH: `${hd}:/usr/bin:/bin` } });
+    ok('R1 …and the fixed here-document prints the resolved id', hr.stdout === 'codex -m gpt-6.1-sol x\n', JSON.stringify(hr.stdout + hr.stderr));
+
+    // 3. Each effort belongs to the model of its own command.
+    const pair = scan(fence('codex -m gpt-6-sol --effort medium && codex -m gpt-6-astra --effort high'));
+    ok('R8 two commands on one line: each effort is checked against its own model', only(pair, 'D4').length === 0, JSON.stringify(only(pair, 'D4').map((f) => f.message)));
+    const subs = scan(fence('codex -m "$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)" --effort medium; codex -m "$(model-id astra || echo MODEL-ID-UNRESOLVED-astra)" --effort high'));
+    ok('R8 …a fallback\'s || inside $(…) does not split the command', only(subs, 'D4').length === 0, JSON.stringify(only(subs, 'D4').map((f) => f.message)));
+    const wrong = scan(fence('codex -m gpt-6-sol --effort high | codex -m gpt-6-astra --effort high'));
+    ok('R8 …and a real mismatch is still reported, for the right model', only(wrong, 'D4').length === 1 && only(wrong, 'D4')[0].family === 'sol', JSON.stringify(only(wrong, 'D4')));
+
+    // 4, 5, 8: the inventory.
+    const svc = path.join(proj, 'svc');
+    put(path.join(svc, 'CLAUDE.md'), 'Use claude-opus-5-5.\n');
+    put(path.join(svc, 'AGENTS.md'), 'Use claude-opus-5-5.\n');
+    put(path.join(svc, '.claude', 'skills', 'pair', 'SKILL.md'), `${fence('codex -m gpt-6-sol a && codex -m gpt-6-astra b')}\n`);
+    put(path.join(home, '.claude', 'skills', 'synced', 'u2', 'deep', 'SKILL.md'), 'Use claude-sonnet-5 here.\n');
+    const deep = put(path.join(home, '.claude', 'skills', 'synced', 'u2', 'deep', 'refs', 'x.md'), 'Use claude-haiku-4-5-20251001.\n');
+    const audit = A.createAudit({ home, hist: quiet });
+    const res = await audit.run();
+    const by = (d) => res.files.find((f) => f.display === d);
+    const card = by('~/Projects/svc/AGENTS.md') || by('~/Projects/svc/CLAUDE.md');
+    ok('R9 byte-identical CLAUDE.md and AGENTS.md are one card, the other named as a copy', card && card.copies.length === 1 && [card.display, card.copies[0].display].sort().join() === '~/Projects/svc/AGENTS.md,~/Projects/svc/CLAUDE.md', JSON.stringify(res.files.filter((f) => /svc\/[A-Z]/.test(f.display)).map((f) => [f.display, f.copies.length])));
+    if (card?.copies.length) {
+      const other = path.join(svc, card.copies[0].display.endsWith('AGENTS.md') ? 'AGENTS.md' : 'CLAUDE.md');
+      const otherBytes = fs.readFileSync(other);
+      await audit.accept({ id: audit.propose({ fileRef: card.ref, findingIds: [card.findings[0].id] }).id });
+      ok('R9 …and Fix changes only the chosen file', fs.readFileSync(other).equals(otherBytes) && fs.readFileSync(path.join(svc, card.display.split('/').pop()), 'utf8') === 'Use opus.\n');
+    } else ok('R9 …and Fix changes only the chosen file', false, 'no grouped card');
+    const pf = by('~/Projects/svc/.claude/skills/pair/SKILL.md');
+    const pe = await rejects(async () => {
+      const pp = audit.propose({ fileRef: pf.ref, findingIds: pf.findings.map((f) => f.id) });
+      audit.reject({ id: pp.id });
+      if ((pp.proposed.match(/\$\(model-id/g) || []).length !== 2) throw new Error('not both fixed');
+    });
+    ok('R7 …and both findings on that line can be fixed in one proposal', pf.findings.length === 2 && !pe, pe?.message);
+    const d3 = await A.createAudit({ home, hist: quiet, limits: { ...A.AUDIT_LIMITS, depth: 3 } }).run();
+    const shown = (r, re) => r.files.some((f) => re.test(f.display) || f.copies.some((c) => re.test(c.display)));
+    ok('R10 depth counts from the inventory root, through a skill\'s own folders', !shown(d3, /u2\/deep\/refs\/x\.md/) && shown(d3, /u2\/deep\/SKILL\.md/) && shown(res, /u2\/deep\/refs\/x\.md/),
+      JSON.stringify([shown(d3, /u2\/deep\/refs\/x\.md/), shown(d3, /u2\/deep\/SKILL\.md/), shown(res, /u2\/deep\/refs\/x\.md/)]));
+    fs.rmSync(path.dirname(path.dirname(deep)), { recursive: true });
+
+    // A file that grows between its size check and its read is held to the cap on the bytes read.
+    const grow = put(path.join(home, '.claude', 'skills', 'grower', 'SKILL.md'), 'small\n');
+    const ginstr = put(path.join(proj, 'grow', 'CLAUDE.md'), 'small\n');
+    A._setWalkHook((abs) => { if (abs === grow || abs === ginstr) fs.appendFileSync(abs, 'x'.repeat(2 * 1024 * 1024)); });
+    const g = await A.createAudit({ home, hist: quiet }).run();
+    A._setWalkHook(null);
+    ok('R10 a file that grows past 1 MB after its size check is skipped as too large, never read whole', !g.files.some((f) => /grower|Projects\/grow\//.test(f.display)) && g.counts.skipped.tooLarge >= 2, JSON.stringify(g.counts.skipped));
+    fs.rmSync(path.dirname(grow), { recursive: true }); fs.rmSync(path.dirname(ginstr), { recursive: true });
+    const late = put(path.join(home, '.claude', 'skills', 'late', 'SKILL.md'), 'small\n');
+    const capped = A.createAudit({ home, hist: quiet, limits: { ...A.AUDIT_LIMITS, totalBytes: 2048 } });
+    A._setWalkHook((abs) => { if (abs === late) fs.appendFileSync(abs, 'y'.repeat(4096)); });
+    const c = await capped.run();
+    A._setWalkHook(null);
+    ok('R10 the total budget is enforced on bytes read, not on sizes stat\'d before', c.partial && c.partialReasons.some((x) => /MB read/.test(x)) && !c.files.some((f) => /skills\/late\//.test(f.display)));
+    fs.rmSync(path.dirname(late), { recursive: true });
+
+    // 8. A fix that would take a file over the read limit is refused at propose.
+    const near = put(path.join(proj, 'near', 'CLAUDE.md'), `${'#'.repeat(250)}\n${fence('codex -m gpt-6-sol x')}\n`);
+    const small = A.createAudit({ home, hist: quiet, limits: { ...A.AUDIT_LIMITS, fileBytes: 300 } });
+    const sr = await small.run();
+    const nf = sr.files.find((f) => f.display === '~/Projects/near/CLAUDE.md');
+    const nbytes = fs.readFileSync(near);
+    const ne = await rejects(() => small.propose({ fileRef: nf.ref, findingIds: [nf.findings[0].id] }));
+    ok('a fix that would grow a file past the read limit is refused at propose (413), nothing written', nf && ne?.status === 413 && ne.payload.reason === 'too-large' && fs.readFileSync(near).equals(nbytes), ne?.message);
+    fs.rmSync(path.dirname(near), { recursive: true });
+
+    // 6. Creating a file goes through the same write, verify and restore.
+    const dir = mkdir('create');
+    const target = path.join(dir, 'new.md');
+    const rec = { real: target, ident: 'absent', bytes: Buffer.from('fresh contents\n') };
+    const faulty = (writeSync) => ({ ...fs, writeSync });
+    let n = 0;
+    const midway = faulty((fd, buf, off, len, pos) => { if (n++ === 0) { fs.writeSync(fd, buf, off, Math.floor(len / 2), pos); throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }); } return fs.writeSync(fd, buf, off, len, pos); });
+    const c1 = await rejects(() => P.writeInPlace(rec, null, { io: midway }));
+    ok('R13 a create that fails partway removes the partial file, and says so', c1?.status === 500 && c1.payload.restored === true && /partial file was removed/.test(c1.message) && !fs.existsSync(target), c1?.message);
+    n = 0;
+    const wrongBytes = faulty((fd, buf, off, len, pos) => { fs.writeSync(fd, Buffer.alloc(len, 0x41), 0, len, pos); return len; });
+    const c2 = await rejects(() => P.writeInPlace(rec, null, { io: wrongBytes }));
+    ok('R13 a created file that does not read back as written is removed', c2?.status === 500 && /did not read back/.test(c2.message) && !fs.existsSync(target), c2?.message);
+    const c3 = await rejects(() => P.writeInPlace(rec, null, { io: faulty(() => 0) }));
+    ok('R13 a zero-byte write on create is an error, and the empty file is removed', c3?.status === 500 && /short write/.test(c3.message) && !fs.existsSync(target), c3?.message);
+    P.writeInPlace(rec, null);
+    ok('R13 without faults the created file holds the bytes', fs.readFileSync(target, 'utf8') === 'fresh contents\n');
+    ok('R13 an existing file is never created over', (await rejects(() => P.writeInPlace(rec, null)))?.code === 'EEXIST' && fs.readFileSync(target, 'utf8') === 'fresh contents\n');
+  }
+
   console.log('\naudit: R13 — the writer, under faults');
   {
     const dir = mkdir('faults');

@@ -204,27 +204,54 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
   ok('a partial audit with nothing fixable says it was partial', /The last audit was partial/.test(attention(pa)));
 }
 
-// ── Setup's offer ─────────────────────────────────────────────────────────
+// ── Setup's offer, only once done is recorded ─────────────────────────────
+{
+  const at = async (state) => {
+    const st = auditState();
+    const setup = { state };
+    const routes = auditRoutes(st, {
+      'GET /api/setup/status': () => setup,
+      'POST /api/setup/complete': (b) => { setup.state = b.completed; return setup; },
+      'GET /api/setup/clis': () => ({ clis: [], acsOnPath: true, next: [] }),
+      'GET /api/roots': () => ({ state: 'ok', error: null, roots: [], invalid: [] }),
+    });
+    const p = await boot(routes, { hash: '#setup' });
+    p.eval("setupGo('done')");
+    await settle(20);
+    return { p, setup };
+  };
+  const first = await at('none');
+  ok('a first run\'s Done step makes no audit offer: done is not recorded yet', !first.p.$('content').querySelector('.setup-audit'));
+  const again = await at('done');
+  const offer = again.p.$('content').querySelector('.setup-audit');
+  ok('with done recorded (Run setup again), the Done step offers to audit the skills', offer && /Audit your 1 skill and instruction files/.test(txt(offer)), offer && txt(offer));
+  const nav = [...again.p.$('content').querySelector('.setup-nav').querySelectorAll('button')].map(txt);
+  ok('…without changing the step nav', JSON.stringify(nav) === JSON.stringify(['Back', 'Finish']));
+  button(offer, 'Open Audit').click();
+  await settle(30);
+  ok('…Open Audit opens the view and writes nothing to setup', again.p.eval('S.view') === 'audit' && again.p.location.hash === '#audit' && !again.p.requests.some((r) => r.path === '/api/setup/complete'));
+}
+
+// ── Cancel resolving after you left the view ──────────────────────────────
 {
   const st = auditState();
-  const setup = { state: 'none' };
-  const routes = auditRoutes(st, {
-    'GET /api/setup/status': () => setup,
-    'POST /api/setup/complete': (b) => { setup.state = b.completed; return setup; },
-    'GET /api/setup/clis': () => ({ clis: [], acsOnPath: true, next: [] }),
-    'GET /api/roots': () => ({ state: 'ok', error: null, roots: [], invalid: [] }),
-  });
-  const p = await boot(routes, { hash: '#setup' });
-  p.eval("setupGo('done')");
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const p = await boot(auditRoutes(st, { 'POST /api/audit/reject': async () => { await held; return { rejected: true }; } }));
+  button(card(p, 'a'.repeat(16)), 'Fix 1').click();
+  await settle(10);
+  button(card(p, 'a'.repeat(16)), 'Cancel').click();
+  await settle(5);
+  p.eval("viewById('home').open()");
+  await settle(10);
+  release();
   await settle(20);
-  const offer = p.$('content').querySelector('.setup-audit');
-  ok('Setup\'s Done step offers to audit the skills', offer && /Audit your 1 skill and instruction files/.test(txt(offer)), offer && txt(offer));
-  const nav = [...p.$('content').querySelector('.setup-nav').querySelectorAll('button')].map(txt);
-  ok('…without changing the step nav', JSON.stringify(nav) === JSON.stringify(['Back', 'Finish']));
-  button(offer, 'Finish and audit').click();
-  await settle(30);
-  const order = p.requests.filter((r) => r.path === '/api/setup/complete' || r.path === '/api/audit').map((r) => r.path);
-  ok('Finish and audit records done first, then opens the Audit view', setup.state === 'done' && order[0] === '/api/setup/complete' && order.includes('/api/audit') && p.eval('S.view') === 'audit' && p.location.hash === '#audit', JSON.stringify(order));
+  ok('a Cancel that lands after you went to Home does not paint Audit over Home', p.eval('S.view') === 'home' && !!p.$('content').querySelector('.home') && !p.$('content').querySelector('.audit'));
+  const q = await boot(auditRoutes(auditState(), { 'POST /api/audit/dismiss': async (b) => { await new Promise((r) => setTimeout(r, 30)); return { dismissed: true, id: b.id }; } }));
+  button(card(q, 'a'.repeat(16)).querySelectorAll('.audit-finding')[0], 'Dismiss').click();
+  q.eval("viewById('home').open()");
+  await settle(60);
+  ok('…nor does a Dismiss', q.eval('S.view') === 'home' && !q.$('content').querySelector('.audit'));
 }
 
 // ── light and dark ────────────────────────────────────────────────────────

@@ -535,7 +535,8 @@ until you accept a fix.
   under every project folder, the three global instruction files, and every
   `CLAUDE.md` and `AGENTS.md` under your project folders. Codex plugins and
   Grok's bundled skills are not read. One run reads at most 2000 files, 1 MB
-  each and 32 MB in all, six folders deep; a run that hits a limit says it is
+  each and 32 MB in all, six folders below each place it starts from (a
+  skill's own folders count); a run that hits a limit says it is
   partial. Links inside a skill, hard-linked files and credential files are
   refused and listed, never read.
 - **What it finds:** a model id written out (and whether it is stale), a

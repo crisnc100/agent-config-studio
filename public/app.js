@@ -5415,7 +5415,7 @@ function auditProposalView(f, p) {
   cancel.onclick = async () => {
     delete AU.proposals[f.ref];
     try { await api('POST', '/api/audit/reject', { id: p.id }); } catch {}
-    paintAudit();
+    if (S.view === 'audit') paintAudit();
   };
   bar.append(acc, cancel);
   box.appendChild(bar);
@@ -5432,7 +5432,7 @@ async function dismissAudit(x, on) {
   const step = on ? -1 : 1;
   if (f && f.cls !== 'vendor') { counts.findings += step; if (x.fixable) counts.fixable += step; }
   HOME.settledAt = 0;
-  paintAudit();
+  if (S.view === 'audit') paintAudit();
 }
 
 /* ── assist chat ─────────────────────────────────────────────────────── */
