@@ -190,9 +190,12 @@ console.log('\nroles unit: R5 — the tool-less containment rule, and the normal
   ok('a normal Assist argv still ends in --tools Read --strict-mcp-config', normal.slice(-3).join(' ') === '--tools Read --strict-mcp-config' && !normal.includes(''));
   const none = argv({ toolless: true });
   ok('a tool-less argv ends in --tools "" --strict-mcp-config, with no Read', JSON.stringify(none.slice(-3)) === '["--tools","","--strict-mcp-config"]' && !none.includes('Read'));
+  const grokNone = composeArgv(HARNESSES.grok, { model: 'm', toolless: true });
+  ok('grok\'s tool-less argv ends in exactly --tools read_file --disallowed-tools read_file,search_tool,use_tool',
+     JSON.stringify(grokNone.slice(-4)) === '["--tools","read_file","--disallowed-tools","read_file,search_tool,use_tool"]', JSON.stringify(grokNone.slice(-4)));
   let threw = null;
-  try { composeArgv(HARNESSES.grok, { model: 'm', toolless: true }); } catch (e) { threw = e.message; }
-  ok('grok has no tool-less mode: composeArgv refuses', /no tool-less mode/.test(threw || ''), threw);
+  try { composeArgv({ ...HARNESSES.grok, toolless: undefined }, { model: 'm', toolless: true }); } catch (e) { threw = e.message; }
+  ok('a harness with no tool-less mode: composeArgv refuses', /no tool-less mode/.test(threw || ''), threw);
 }
 
 console.log('\nroles unit: R10 — the 120 s timeout, at a test scale');

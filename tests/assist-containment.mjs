@@ -206,7 +206,7 @@ try {
     console.log(`\nassist containment: ${h}, after the spawn`);
     setMode(h, { kind: 'ok' });
     const good = await chat(srv.base, { message: 'hi', harness: h, mentions: [target] });
-    ok(`4 ${h}: init [${h === 'grok' ? 'read_file' : 'Read'}] proceeds, and its edit is proposed`,
+    ok(`4 ${h}: init [] proceeds (chat is tool-less), and its edit is proposed`,
        good.done?.ok === true && good.done.proposals.length === 1 && good.done.proposals[0].proposed.includes('new line'), JSON.stringify(good.lines).slice(0, 400));
     const as = await assist(srv.base, h);
     ok(`4 ${h}: …and the one-shot Assist returns its result`, as.status === 200 && typeof as.body.result === 'string' && as.body.result.length > 0, JSON.stringify(as).slice(0, 300));
@@ -220,6 +220,7 @@ try {
       ['before', 'output before init'],
       ['after-partial', 'a bad init after partial output'],
       ['missing', 'no init at all'],
+      ['read', `the read tool in a chat init (${h === 'grok' ? 'read_file' : 'Read'}: chat is tool-less)`],
     ]) {
       setMode(h, { kind });
       const c = await chat(srv.base, { message: 'hi', harness: h, mentions: [target] });

@@ -24,7 +24,11 @@ import * as history from './lib/history.js';
 import * as worktree from './lib/worktree.js';
 import * as mutate from './lib/mutate.js';
 import { runAssist, listActions } from './lib/assist.js';
-import { streamTurn, parseEdits, resolveMentions } from './lib/chat.js';
+import { streamTurn, resolveMentions } from './lib/chat.js';
+import { classIn, createAssistFiles } from './lib/assist-files.js';
+import { createChatProposals } from './lib/chat-proposals.js';
+import { runChatTurn } from './lib/assist-turn.js';
+import { matchLines } from './lib/search.js';
 import { detectHarnesses, HARNESSES, modelsFor, registryError } from './lib/harness.js';
 import { createWatcher, snapshotOf, diffSnapshots, expectWrite, tagOrigin } from './lib/watch.js';
 import { renderSnapshot, createSeat, removeSeat, moveSeatToPrivateHome, suggestSeats, addSuggestedSeat } from './lib/usage/seats.js';
@@ -76,6 +80,20 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.json': 'application/json; charset=utf-8',
 };
+
+/**
+ * The page's content policy: everything from this origin, images also as
+ * data: URIs, nothing remote. Assist renders model-written Markdown, and a
+ * model that read a secret could otherwise smuggle it out in an image URL the
+ * moment the reply renders (builds/assist-auto-files F3). The sanitizer in
+ * public/app.js strips such loads too; this is the second layer. Inline
+ * styles stay allowed — the page sets them on its own elements.
+ */
+const PAGE_CSP = [
+  "default-src 'self'", "img-src 'self' data:", "media-src 'self'", "font-src 'self' data:",
+  "style-src 'self' 'unsafe-inline'", "script-src 'self'", "connect-src 'self'",
+  "object-src 'none'", "frame-src 'none'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'self'",
+].join('; ');
 
 const json = (res, code, body) => {
   const s = JSON.stringify(body);
@@ -444,7 +462,11 @@ function isRevoked(p) {
  * disk also has large roots walked again, off the main path (lib/registry.js);
  * the rebuild that walk's end triggers passes `fromWalk` and does not.
  */
+/** Caches that a change on disk makes stale (each app's Assist manifest). */
+const fileChangeHooks = new Set();
+
 async function onFilesChanged({ fromWalk = false } = {}) {
+  for (const hook of fileChangeHooks) hook();
   if (!fromWalk) staleLargeWalks();
   let registry;
   try { registry = buildRegistry(); } catch { return; }
@@ -583,6 +605,14 @@ export function createApp(opts = {}) {
   const describer = createDescribe();
   const guide = createModelGuide();
   const audit = createAudit();
+  const assistFiles = createAssistFiles();
+  // Accept checks a file's class against a fresh inventory: an alias made since the proposal counts.
+  const chatProposals = createChatProposals({
+    classify: async (real, cls) => classIn(await assistFiles.manifest({ maxAgeMs: 2000 }), real, cls),
+  });
+  /** Chat turns in flight by the client's turn id: their removal sets, which POST /api/chat/block adds to. */
+  const liveTurns = new Map();
+  fileChangeHooks.add(() => assistFiles.invalidate());
 
   /** A family the registry knows, or a 400 — never a path or free text. */
   const knownFamily = (family) => {
@@ -1210,6 +1240,34 @@ export function createApp(opts = {}) {
     return audit.dismiss({ id: (await objectBody(req)).id, undo: true });
   },
 
+  /**
+   * Assist chat's proposals (lib/chat-proposals.js): accept one, accept a
+   * reviewed list, or withdraw. Strict same-origin, like every other write
+   * of a proposal.
+   */
+  'POST /api/chat/accept': async (req) => {
+    requireStrict(req);
+    const { id, ackSync } = await objectBody(req);
+    return chatProposals.accept({ id, ackSync });
+  },
+  'POST /api/chat/accept-all': async (req) => {
+    requireStrict(req);
+    const { ids, ackSync } = await objectBody(req);
+    return chatProposals.acceptAll({ ids, ackSync });
+  },
+  /** A file removed while a turn runs: that turn stops reading, searching and proposing for it now. */
+  'POST /api/chat/block': async (req) => {
+    requireStrict(req);
+    const { turnId, paths } = await objectBody(req);
+    const live = typeof turnId === 'string' ? liveTurns.get(turnId) : null;
+    if (live) for (const p of Array.isArray(paths) ? paths.slice(0, 50) : []) if (typeof p === 'string' && p.length < 1024) live.add(p);
+    return { live: Boolean(live) };
+  },
+  'POST /api/chat/reject': async (req) => {
+    requireStrict(req);
+    return chatProposals.reject({ ids: (await objectBody(req)).ids });
+  },
+
   /** The Assist picker alone, without the file registry — what a model-registry edit changes. */
   'GET /api/harnesses': async () => detectedHarnessPayload(await detectFn()),
 
@@ -1401,7 +1459,6 @@ export function createApp(opts = {}) {
   'GET /api/search': async (_req, url) => {
     const q = (url.searchParams.get('q') || '').trim();
     if (q.length < 2) return { hits: [] };
-    const needle = q.toLowerCase();
     const { groups } = buildRegistry();
     const safe = currentRoots().safeRoots;
     const hits = [];
@@ -1417,19 +1474,12 @@ export function createApp(opts = {}) {
             if (isDenied(abs)) continue;
             text = readUserText(abs, { maxBytes: 1024 * 1024 });
           } catch { continue; }
-          const lines = text.split('\n');
-          const matches = [];
-          for (let i = 0; i < lines.length && matches.length < 4; i++) {
-            if (lines[i].toLowerCase().includes(needle)) {
-              matches.push({ line: i + 1, text: lines[i].trim().slice(0, 220) });
-            }
-          }
+          const { matches, total } = matchLines(text, q);
           if (matches.length) {
             hits.push({
               group: g.title, entryId: e.id, entryLabel: e.label,
               file: f.name, path: f.path, display: f.display,
-              harness: e.harness, matches,
-              total: lines.filter((l) => l.toLowerCase().includes(needle)).length,
+              harness: e.harness, matches, total,
             });
           }
         }
@@ -1456,7 +1506,10 @@ export function createApp(opts = {}) {
 
 /**
  * Streaming chat turn. Emits newline-delimited JSON so the browser can render
- * tokens as they arrive — a 100s wait behind a spinner reads as a hang.
+ * tokens as they arrive — a 100s wait behind a spinner reads as a hang. One
+ * user message may run up to three rounds while Assist finds its files
+ * (lib/assist-turn.js); this handler owns the request, the child and the
+ * cancellation.
  */
   async function handleChat(req, res) {
   let body;
@@ -1481,54 +1534,38 @@ export function createApp(opts = {}) {
   });
   const send = (obj) => { if (!res.writableEnded) res.write(JSON.stringify(obj) + '\n'); };
 
-  const turn = streamTurnFn({
-    message,
-    mentions,
-    sessionId: resolved.sessionId,
-    seed: body.seed || null,
-    model: resolved.model,
-    cwd: mentions.length ? path.dirname(mentions[0]) : HOME,
-    harness: resolved.harness,
-  }, (text) => send({ t: 'delta', text }));
+  // The removal set is this turn's own: POST /api/chat/block adds to it while the turn runs.
+  const blocked = new Set((Array.isArray(body.blocked) ? body.blocked : []).filter((x) => typeof x === 'string' && x.length < 1024).slice(0, 200));
+  const turnId = typeof body.turnId === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(body.turnId) ? body.turnId : null;
+  if (turnId) liveTurns.set(turnId, blocked);
 
-  // If the browser aborts, kill the child rather than leaving it running.
-  req.on('close', () => { if (!res.writableEnded) turn.kill(); });
+  // If the browser aborts, kill the round that is running and run no other.
+  let active = null;
+  let closed = false;
+  const gone = () => { if (!res.writableEnded) { closed = true; active?.kill(); if (turnId) liveTurns.delete(turnId); } };
+  req.on('close', gone);
+  res.on('close', gone);
 
   try {
-    const result = await turn.done;
-    const text = result.text || '';
-    const sessionId = result.sessionId ?? null;
-    if (turnSucceeded(result) && sessionId) {
-      rememberSession(sessions, sessionId, resolved.harness);
-    }
-    // Edits are only ever read from a turn that worked: a refused or failed
-    // turn's text proposes nothing.
-    const ok = turnSucceeded(result);
-    const proposals = (ok ? parseEdits(text, mentions) : []).map((p) => {
-      let mtime = null;
-      try { mtime = p.path ? fs.statSync(p.path).mtimeMs : null; } catch {}
-      return {
-        path: p.path, display: p.display, kind: p.kind,
-        error: p.error, edits: p.edits || 1, mtime,
-        current: p.current, proposed: p.proposed,
-      };
-    });
-    // The done event has to carry three things the browser cannot infer: the
-    // reply itself (a streams:false harness sends no deltas, so this is the
-    // only copy), whether the turn actually worked, and — only when it did —
-    // the session id. A refused id must not be handed back for the client to
-    // store and resume against.
-    send({
-      t: 'done',
-      ok,
-      text,
-      sessionId: ok ? sessionId : null,
-      error: ok ? null : ((result.err || '').slice(0, 400) ||
-        `${resolved.harness} exited ${result.code ?? '?'} without a usable reply`),
-      proposals, stats: result.stats, rateLimit: result.rateLimit,
+    await runChatTurn({
+      message, mentions,
+      sessionId: resolved.sessionId,
+      seed: body.seed || null,
+      harness: resolved.harness, model: resolved.model,
+      cwd: mentions.length ? path.dirname(mentions[0]) : HOME,
+      carried: body.loaded, blocked,
+      streamTurnFn, assistFiles, proposals: chatProposals, send,
+      isClosed: () => closed,
+      setActive: (t) => { active = t; if (t && closed) t.kill(); },
+      // Edits are only ever read from a turn that worked, and only a turn that
+      // worked binds its session id: a refused id is never handed back.
+      succeeded: turnSucceeded,
+      remember: (id) => rememberSession(sessions, id, resolved.harness),
     });
   } catch (e) {
     send({ t: 'error', message: e.message });
+  } finally {
+    if (turnId) liveTurns.delete(turnId);
   }
   res.end();
   }
@@ -1558,6 +1595,9 @@ export function createApp(opts = {}) {
 
   // These stream their own responses rather than returning a JSON body.
   if (req.method === 'POST' && url.pathname === '/api/chat') {
+    // Strict, like the other routes that read files for a reply: another
+    // localhost port sends Sec-Fetch-Site: same-site with no Origin.
+    if (!strictSameOrigin(req)) return void res.writeHead(403).end('cross-origin requests are not accepted');
     return void handleChat(req, res);
   }
   if (req.method === 'GET' && url.pathname === '/api/events') {
@@ -1594,6 +1634,7 @@ export function createApp(opts = {}) {
     res.writeHead(200, {
       'content-type': MIME[path.extname(file)] || 'application/octet-stream',
       'cache-control': 'no-store, must-revalidate',
+      ...(path.extname(file) === '.html' ? { 'content-security-policy': PAGE_CSP } : {}),
     });
     res.end(buf);
   } catch {

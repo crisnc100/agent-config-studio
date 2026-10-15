@@ -51,8 +51,12 @@ if (a[0] === 'inspect') {
 fs.appendFileSync(path.join(dir, 'started.log'), JSON.stringify(a) + '\\n');
 
 const READ = HARNESS === 'grok' ? 'read_file' : 'Read';
+// What the real CLI reports for the argv it got: no tools for the tool-less set (chat), the read tool otherwise.
+const TOOLLESS = HARNESS === 'grok'
+  ? (a[a.indexOf('--disallowed-tools') + 1] || '').split(',').includes('read_file')
+  : a.includes('--tools') && a[a.indexOf('--tools') + 1] === '';
 const session = mode.session || 'sess-1';
-const init = (over = {}) => ({ type: 'system', subtype: 'init', session_id: session, tools: [READ], mcp_servers: [], permissionMode: 'default', ...over });
+const init = (over = {}) => ({ type: 'system', subtype: 'init', session_id: session, tools: TOOLLESS ? [] : [READ], mcp_servers: [], permissionMode: 'default', ...over });
 const reply = mode.reply || 'ok reply';
 const out = (ev) => process.stdout.write(JSON.stringify(ev) + '\\n');
 const replyEvents = () => {
@@ -76,6 +80,7 @@ const run = () => {
     case 'repeat': out(init()); out(init()); later(); break;
     case 'before': out({ type: 'stream_event', session_id: session, event: { type: 'content_block_delta', delta: { text: 'early ' } } }); out(init()); later(); break;
     case 'after-partial': out(init()); out({ type: 'stream_event', session_id: session, event: { type: 'content_block_delta', delta: { text: 'partial ' } } }); out(init({ tools: [READ, 'Bash'] })); later(); break;
+    case 'read': out(init({ tools: [READ] })); later(); break;
     case 'missing': process.exit(0); break;
     case 'silent': spawn(process.execPath, ['-e', 'setTimeout(() => require("fs").writeFileSync(process.argv[1], "leaked\\\\n"), 3000)', path.join(dir, 'leaked.log')], { stdio: 'ignore' }); setTimeout(() => {}, 60000); break;
     default: out(init()); replyEvents(); process.exit(0);
