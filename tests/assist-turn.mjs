@@ -143,9 +143,11 @@ try {
     const l2 = t2.events.find((e) => e.t === 'loaded');
     ok('F11 512 KB per message, counted on bytes read: two 200 KB files load, the rest refused',
        l2.files.length === 2 && l2.refused.length === 2 && l2.refused.every((r) => /512 KB loading limit/.test(r.reason)), JSON.stringify(l2));
-    const t3 = await turn([{ text: `@@NEED ${A}` }, { text: `@@NEED ${A}` }, { text: 'ok' }]);
-    ok('F11 a round that adds nothing new makes the next round the last (no requests offered)',
-       t3.calls.length === 3 && /cannot request anything more/.test(t3.calls[2].prompt) && /Nothing new could be loaded/.test(t3.calls[2].prompt));
+    const t3 = await turn([{ text: `@@NEED ${A}` }, { text: `Alpha is loaded already.\n@@NEED ${A}` }, { text: 'never asked' }]);
+    ok('F11 a round that adds nothing new ends the loop: no third call, its reply (requests removed) is the answer',
+       t3.calls.length === 2 && t3.done.text === 'Alpha is loaded already.' && /asked for nothing new/.test(t3.done.note || ''), JSON.stringify([t3.calls.length, t3.done.text, t3.done.note]));
+    const t3b = await turn([{ text: `@@NEED ${A}` }, { text: `@@NEED ${A}` }]);
+    ok('F11 …a pure request that adds nothing says so in a short note', t3b.calls.length === 2 && t3b.done.text === '' && /asked for nothing new and gave no answer/.test(t3b.done.note || ''));
     const t4 = await turn([{ text: `@@NEED ${A}` }, { text: `@@NEED ${B}` }, { text: `@@NEED ${PLUG}` }]);
     ok('F11 at most 2 request rounds: the third reply\'s request is ignored and said so',
        t4.calls.length === 3 && t4.done.ok && t4.done.loaded.length === 2 && /after its limit/.test(t4.done.note || ''), JSON.stringify(t4.done));
@@ -163,7 +165,7 @@ try {
     ok('F8 search results are framed as data with the round\'s nonce', /\n@@FOUND-[0-9a-f]{16}\n/.test(t.calls[1].prompt));
     ok('F8 the scope line: "Searched N files · loaded 1"', new RegExp(`^Searched ${s.searched} files · loaded 1$`).test(t.done.scope?.line || ''), JSON.stringify(t.done.scope));
     const p = await turn([{ text: '@@FIND name:' }, { text: 'many' }], { limits: { ...(await import('../lib/assist-files.js')).ASSIST_LIMITS, searchFiles: 3 } });
-    ok('F8 a capped search marks the scope partial', /· partial$/.test(p.done.scope?.line || '') && /PARTIAL/.test(p.calls[1].prompt), p.done.scope?.line);
+    ok('F8 a capped search marks the scope partial, with the reason', /· partial \(\d+ more matching files not listed\)$/.test(p.done.scope?.line || '') && /PARTIAL/.test(p.calls[1].prompt), p.done.scope?.line);
   }
 
   console.log('\nassist turn: B4, F2, F6 — what may be edited');
@@ -187,6 +189,65 @@ try {
     const t2 = await turn([{ text: 'ok' }], { sessionId: 'sess-1' });
     ok('F13 between two turns of one session, the second prompt has the new roles', /reviewer: astra@high/.test(t1.calls[0].prompt) && /reviewer: opus@max/.test(t2.calls[0].prompt));
     fs.rmSync(path.join(studio, 'roles.json'));
+  }
+
+  console.log('\nassist turn: grade fixes — removals, budgets, buffering, disconnects');
+  {
+    // 2. A removed attachment, named by its absolute path, is out of NEED, FIND and context alike.
+    const t = await turn([{ text: '@@FIND use astra here' }, { text: `@@NEED ${A}` }, { text: 'ok' }], { blocked: [fileOf(A)] });
+    const s = t.events.find((e) => e.t === 'searched');
+    ok('G2 a removed attachment (blocked by its path) is not searched: @@FIND that matches only it finds nothing',
+       s && s.matched === 0 && !t.calls[1].prompt.includes('alpha/SKILL.md —'), JSON.stringify(s));
+    ok('G2 …nor pulled back in by @@NEED of its display path', /removed this file/.test(t.events.filter((e) => e.t === 'loaded')[1]?.refused[0]?.reason || ''));
+    const c = await turn([{ text: 'ok' }], { carried: [A], blocked: [fileOf(A)] });
+    ok('G2 …nor carried into context', c.done.loaded.length === 0 && !c.calls[0].prompt.includes('Use astra here.'));
+    const m = await turn([{ text: 'ok' }], { mentions: [fileOf(A)], blocked: [A] });
+    ok('G2 one key either way: an attachment blocked by its display path is left out too', !m.calls[0].prompt.includes('Use astra here.'));
+  }
+  {
+    // 3. Removed while the turn runs: the live set the server adds to.
+    const live = new Set();
+    const t = await turn([{ text: `@@NEED ${A}\n@@NEED ${B}` }, () => { live.add(A); return { text: `${editBlock(A, 'Use astra here.', 'x')}${editBlock(B, 'Reviews go to astra.', 'y')}` }; }], { blocked: live });
+    const byD = Object.fromEntries(t.done.proposals.map((p) => [p.display, p]));
+    ok('G3 a file removed mid-turn gets no proposal from that turn, and says why', !byD[A]?.id && /You removed this file/.test(byD[A]?.error || '') && byD[B]?.id, JSON.stringify(t.done.proposals.map((p) => [p.display, p.error])));
+    ok('G3 …and is not in the loaded list the turn reports back', t.done.loaded.map((f) => f.display).join() === B);
+  }
+  {
+    // 4. Every byte read counts; a pulled-in file is re-read only up to what was counted.
+    const grow = fileOf(A);
+    const before = fs.readFileSync(grow, 'utf8');
+    const sizeA = Buffer.byteLength(before), sizeB = fs.statSync(fileOf(B)).size;
+    const t = await turn([{ text: `@@NEED ${A}` }, () => { fs.appendFileSync(grow, 'grown\n'); return { text: `@@NEED ${B}` }; },
+      { text: editBlock(A, 'Use astra here.', 'Use opus here.') }]);
+    fs.writeFileSync(grow, before);
+    ok('G4 a pulled-in file that grew past what was counted is refused on re-read, not re-counted',
+       /alpha\/SKILL\.md was not sent: it grew since it was loaded/.test(t.calls[2].prompt) && !t.calls[2].prompt.includes('grown'), t.calls[2].prompt.split('ACS NOTES:')[1]?.slice(0, 300));
+    ok('G4 …so an edit to it proposes nothing', /could not read/.test(t.done.proposals[0]?.error || ''), JSON.stringify(t.done.proposals));
+    ok('G4 bytes read are counted once per read across rounds (A and B on load; no blind re-reads)', t.done.readBytes === sizeA + sizeB, `${t.done.readBytes} vs ${sizeA + sizeB}`);
+    const big0 = fileOf('~/.claude/skills/big-0/SKILL.md');
+    fs.chmodSync(big0, 0o000);
+    const d = await turn([{ text: 'ok' }], { carried: [0, 1, 2, 3].map((i) => `~/.claude/skills/big-${i}/SKILL.md`) });
+    fs.chmodSync(big0, 0o644);
+    ok('G4 sizes are checked before reading: the file dropped by the per-turn cap is never read (it is unreadable, and no read error appears)',
+       /big-0\/SKILL\.md was dropped from context/.test(d.done.dropped.join()) && !/not sent/.test(d.done.dropped.join()) && d.done.readBytes === 3 * fs.statSync(fileOf('~/.claude/skills/big-1/SKILL.md')).size, `${d.done.dropped.join(' | ')} ${d.done.readBytes}`);
+  }
+  {
+    // 6. No intermediate prose reaches the client.
+    const t = await turn([{ text: `Let me look at the review skills first.\n@@NEED ${A}` }, { text: 'Final answer.' }]);
+    const deltas = t.events.filter((e) => e.t === 'delta').map((e) => e.text).join('');
+    ok('G6 prose before a request line never reaches the client; only the final round\'s text does', deltas === 'Final answer.' && !t.events.some((e) => JSON.stringify(e).includes('Let me look')), deltas);
+    ok('G6 …while held, the client sees progress, not text', t.events.some((e) => e.t === 'progress' && e.chars > 0) && t.events.filter((e) => e.t === 'progress').every((e) => Object.keys(e).join() === 't,chars'));
+    const last = await turn([{ text: `@@NEED ${A}` }, { text: `@@NEED ${B}` }, { text: 'Streams live.' }]);
+    ok('G6 the last round, which cannot ask, streams as it arrives', last.events.filter((e) => e.t === 'delta').length > 1);
+  }
+  {
+    // 7. A disconnect before the first spawn.
+    let closed = false;
+    const slow = { async manifest() { const m = await files.manifest(); closed = true; return m; } };
+    const t = await turn([{ text: 'never' }], { assistFiles: slow, isClosed: () => closed });
+    ok('G7 a client gone while the manifest builds: no spawn, nothing sent', t.calls.length === 0 && t.events.length === 0);
+    const t2 = await turn([{ text: 'never' }], { isClosed: () => true });
+    ok('G7 …and one gone before it started: no spawn either', t2.calls.length === 0);
   }
 
   console.log('\nassist turn: F14, cancellation and Accept through the server');
@@ -231,6 +292,20 @@ try {
       ok('F10 cancelling mid-loop kills the active round and starts no other', kills === 1 && calls.length === 2, `kills=${kills} calls=${calls.length}`);
 
       calls.length = 0;
+      script = ['hang'];
+      const ac2 = new AbortController();
+      // Not awaited: a round that never answers sends no bytes, so no headers arrive.
+      const r2 = post('/api/chat', { message: 'go', turnId: 'turn-abc12345' }, {}, ac2.signal).catch(() => null);
+      await sleep(100);
+      const blk = await (await post('/api/chat/block', { turnId: 'turn-abc12345', paths: [A] })).json();
+      ok('G3 a removal reaches the running turn by its id', blk.live === true);
+      ac2.abort();
+      await r2;
+      await sleep(100);
+      ok('G3 …and a finished turn is no longer reachable', (await (await post('/api/chat/block', { turnId: 'turn-abc12345', paths: [A] })).json()).live === false);
+      ok('G3 /api/chat/block is strict same-origin', (await post('/api/chat/block', { turnId: 'x', paths: [] }, { 'sec-fetch-site': 'same-site' })).status === 403);
+
+      calls.length = 0;
       script = [{ text: `@@NEED ${B}` }, { text: editBlock(B, 'Reviews go to astra.', 'Reviews go to opus.') }];
       const lines = (await (await post('/api/chat', { message: 'go' })).text()).split('\n').filter(Boolean).map((l) => JSON.parse(l));
       const prop = lines.find((l) => l.t === 'done').proposals[0];
@@ -242,6 +317,18 @@ try {
       ok('F12 accept-all over an applied id reports it gone', (await again.json()).results[0].outcome === 'gone');
       const gen = await fetch(`${base}/api/file?path=${encodeURIComponent(fileOf(B))}`);
       ok('the generic file route still serves the file', gen.status === 200);
+      const page = await fetch(`${base}/`);
+      const PAGE_CSP = "default-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+      ok('G9 the served page carries exactly the CSP', page.headers.get('content-security-policy') === PAGE_CSP, page.headers.get('content-security-policy'));
+      const html = await page.text();
+      const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
+      ok('G9 the page boots under it: no inline script, no inline handler, every script same-origin',
+         scripts.length > 0 && scripts.every((m) => /\bsrc="\/[^/]/.test(m[1]) && !m[2].trim()) && !/\son[a-z]+=/i.test(html));
+      const served = await Promise.all(scripts.map((m) => fetch(`${base}${m[1].match(/src="([^"]+)"/)[1]}`)));
+      ok('G9 …each script is served from this origin', served.every((r) => r.status === 200 && /javascript/.test(r.headers.get('content-type') || '')));
+      const appSrc = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'public', 'app.js'), 'utf8');
+      ok('G9 …and the app never needs unsafe-eval', !/\beval\(|new Function\(/.test(appSrc));
+      ok('G9 the JSON routes carry no page policy (it is the page\'s)', !(await fetch(`${base}/api/health`)).headers.get('content-security-policy'));
     } finally {
       server.close();
       server.closeAllConnections?.();

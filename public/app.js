@@ -5474,6 +5474,8 @@ const C = {
   startedAt: 0,
   running: null,        // {harness, model} captured at submit — see sendTurn
   phase: null,          // 'finding' while Assist is loading the files it asked for
+  progress: 0,          // characters of a reply still being classified (request rounds are not shown)
+  turnId: null,         // the running turn, so a removal can reach it (POST /api/chat/block)
   batch: false,         // an Accept all is in flight: every Accept waits for it
   abort: null,
   draft: '',
@@ -5906,7 +5908,8 @@ function renderChatBody() {
     const prose = stripEditBlocks(C.stream);
     live.appendChild(prose
       ? el('div', 'msg-text', prose)
-      : el('div', 'msg-wait', C.phase === 'finding' ? 'Finding the files…' : waitingLine(run.harness, secs)));
+      : el('div', 'msg-wait', C.phase === 'finding' ? 'Finding the files…'
+        : C.progress ? `Writing… ${C.progress} characters` : waitingLine(run.harness, secs)));
     body.appendChild(live);
   }
   if (atBottom) body.scrollTop = body.scrollHeight;
@@ -5979,7 +5982,9 @@ function pulledLine(list) {
 }
 
 /** Proposals Accept all may still act on: each has an id and no outcome yet. */
-const pendingOf = (m) => (m.proposals || []).filter((p) => p.id && !p.error && !p.state);
+const pendingOf = (m) => (m.proposals || []).filter((p) => p.id && !p.error && !p.state && !p.busy);
+/** An individual Accept in flight anywhere: Accept all waits for it, as it waits for Accept all. */
+const anyBusy = () => C.sessions.some((s) => s.messages.some((m) => (m.proposals || []).some((p) => p.busy)));
 
 /**
  * Accept all: shown for two or more pending proposals. It first lists exactly
@@ -5997,7 +6002,7 @@ function renderAcceptAll(m) {
   const box = el('div', 'accept-all');
   if (!m.confirmAll) {
     const b = el('button', 'btn primary', `Accept all (${list.length})`);
-    b.disabled = C.batch;
+    b.disabled = C.batch || anyBusy();
     b.onclick = () => { m.confirmAll = list.map((p) => p.id); renderChatBody(); };
     box.appendChild(b);
     return box;
@@ -6016,7 +6021,7 @@ function renderAcceptAll(m) {
   if (synced) box.appendChild(el('div', 'prop-error', `${synced} of these ${synced === 1 ? 'is a synced skill' : 'are synced skills'}: the next sync overwrites ${synced === 1 ? 'it' : 'them'}. Applying confirms that.`));
   const row = el('div', 'prop-foot');
   const go = el('button', 'btn primary', `Apply ${chosen.length} file${chosen.length === 1 ? '' : 's'}`);
-  go.disabled = C.batch;
+  go.disabled = C.batch || anyBusy();
   go.onclick = () => acceptAll(m, chosen);
   const no = el('button', 'btn ghost', 'Cancel');
   no.disabled = C.batch;
@@ -6029,7 +6034,10 @@ function renderAcceptAll(m) {
 const OUTCOME_STATE = { applied: 'accepted', stale: 'stale', refused: 'refused', gone: 'gone', failed: 'failed' };
 
 async function acceptAll(m, chosen) {
-  if (C.batch) return;
+  if (C.batch || anyBusy()) return;
+  // Only what is still pending now: a card accepted, rejected or withdrawn since the list was shown is left out.
+  chosen = chosen.filter((p) => p.id && !p.error && !p.state && !p.busy);
+  if (!chosen.length) { m.confirmAll = null; renderChatBody(); return; }
   C.batch = true;
   renderChatBody();
   try {
@@ -6323,6 +6331,8 @@ function removeFromSession(s, { path: abs, display }) {
     }
   }
   if (ids.length) api('POST', '/api/chat/reject', { ids }).catch(() => {});
+  // A turn in flight hears of it too: from now on it neither reads nor proposes for this file.
+  if (C.busy && C.turnId) api('POST', '/api/chat/block', { turnId: C.turnId, paths: [abs || display] }).catch(() => {});
   saveSessions();
   notice('ok', `${(abs || display).split('/').pop()} won't be read or edited again in this session.`);
   renderChat();
@@ -6345,13 +6355,13 @@ function choosePicker(f) {
 let tickTimer;
 
 /** Shared streaming reader for both normal turns and compaction. */
-async function streamChat({ message, mentions, loaded = [], blocked = [], sessionId, seed, harness, model, onDelta, onEvent }) {
+async function streamChat({ message, mentions, loaded = [], blocked = [], turnId = null, sessionId, seed, harness, model, onDelta, onEvent }) {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     // harness and model are passed in, never read from C: the picker may move
     // while this request is open and the turn must stay what it was at submit.
-    body: JSON.stringify({ message, mentions, loaded, blocked, sessionId, seed, model, harness }),
+    body: JSON.stringify({ message, mentions, loaded, blocked, turnId, sessionId, seed, model, harness }),
     signal: C.abort.signal,
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
@@ -6370,10 +6380,11 @@ async function streamChat({ message, mentions, loaded = [], blocked = [], sessio
       if (!line.trim()) continue;
       let ev;
       try { ev = JSON.parse(line); } catch { continue; }
-      if (ev.t === 'delta') { C.phase = null; C.stream += ev.text; onDelta?.(); }
+      if (ev.t === 'delta') { C.phase = null; C.progress = 0; C.stream += ev.text; onDelta?.(); }
+      else if (ev.t === 'progress') { C.phase = null; C.progress = ev.chars; onDelta?.(); }
       else if (ev.t === 'done') final = ev;
       // A request round's text is not the reply: what streamed of it is dropped.
-      else if (ev.t === 'round') { C.stream = ''; onDelta?.(); }
+      else if (ev.t === 'round') { C.stream = ''; C.progress = 0; onDelta?.(); }
       else if (ev.t === 'status' || ev.t === 'loaded' || ev.t === 'searched') {
         if (ev.t === 'status') C.phase = ev.phase;
         onEvent?.(ev);
@@ -6400,12 +6411,16 @@ async function sendTurn() {
   s.messages.push({ role: 'user', text, mentions: [...s.mentions] });
   if (s.title === 'New session') s.title = titleFor(s);
   const before = new Set((s.loaded || []).map((f) => f.display));
+  // A file removed while this turn runs stays removed, whatever the turn reports back.
+  const kept = (list) => (list || []).filter((f) => !(s.blocked || []).includes(f.display));
   // What was pulled in survives a failed round: the chips stay, honestly.
-  const onEvent = (ev) => { if (ev.t === 'loaded') { s.loaded = ev.files; renderCompose(); } };
+  const onEvent = (ev) => { if (ev.t === 'loaded') { s.loaded = kept(ev.files); renderCompose(); } };
   C.draft = '';
   C.picker = null;
   C.busy = true;
   C.stream = '';
+  C.progress = 0;
+  C.turnId = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
   C.startedAt = Date.now();
   C.running = run;
   C.abort = new AbortController();
@@ -6422,6 +6437,7 @@ async function sendTurn() {
       loaded: (s.loaded || []).map((f) => f.display),
       blocked: s.blocked || [],
       onEvent,
+      turnId: C.turnId,
       sessionId: sl.cliSessionId,
       seed: sl.cliSessionId ? null : sl.seed,
       harness: run.harness,
@@ -6448,7 +6464,13 @@ async function sendTurn() {
       if (!sl.stats.baselineTokens) sl.stats.baselineTokens = final.stats.contextTokens || 0;
     }
     s.updatedAt = Date.now();
-    if (Array.isArray(final.loaded)) s.loaded = final.loaded;
+    if (Array.isArray(final.loaded)) s.loaded = kept(final.loaded);
+    const gone = new Set(s.blocked || []);
+    const late = [];
+    for (const p of final?.proposals ?? []) {
+      if (p.id && !p.error && (gone.has(p.display) || gone.has(p.path))) { p.state = 'withdrawn'; late.push(p.id); }
+    }
+    if (late.length) api('POST', '/api/chat/reject', { ids: late }).catch(() => {});
     s.messages.push({
       role: 'assistant', harness: run.harness,
       // The final round's text, from the server: deltas may include a request
@@ -6478,6 +6500,8 @@ async function sendTurn() {
     C.busy = false;
     C.stream = '';
     C.phase = null;
+    C.progress = 0;
+    C.turnId = null;
     C.running = null;
     C.abort = null;
     saveSessions();

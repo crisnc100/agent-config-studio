@@ -136,6 +136,55 @@ const freshSession = (p) => p.eval(`C.sessions = [{ id: 'sa', title: 'New sessio
 }
 
 {
+  console.log('\nassist UI: grade fixes — removal mid-turn, Accept racing Accept all');
+  const blocks = [], rejects = [], batches = [];
+  let releaseChat, releaseA;
+  const routes = routesFor({
+    'POST /api/chat': () => new Promise((r) => { releaseChat = () => r(ndjson([{ t: 'loaded', files: loadedFiles, refused: [] }, { ...DONE, proposals: [prop(A), prop(B)] }])); }),
+    'POST /api/chat/block': (b) => { blocks.push(b); return { live: true }; },
+    'POST /api/chat/reject': (b) => { rejects.push(b); return { rejected: b.ids.length }; },
+    'POST /api/chat/accept': (b) => (b.id === id('a') ? new Promise((r) => { releaseA = () => r({ saved: true, sha: 'aaa' }); }) : { saved: true, sha: 'bbb' }),
+    'POST /api/chat/accept-all': (b) => { batches.push(b); return { results: b.ids.map((x) => ({ id: x, outcome: 'applied', sha: 'ccc' })), applied: b.ids.length }; },
+  });
+  const p = await boot({ routes });
+  await settle(20);
+  freshSession(p);
+  p.eval(`active().loaded = ${JSON.stringify(loadedFiles)};`);
+  p.$('btn-assist').click();
+  p.eval(`C.draft = 'go'; sendTurn();`);
+  await settle(10);
+  const turnId = p.eval('C.turnId');
+  const x = p.$('drawer-compose').querySelectorAll('.pulled-row .mention-chip').find((c) => p.text(c).startsWith('review/SKILL.md')).querySelector('.mention-x');
+  x.click();
+  await settle(5);
+  ok('G3 a removal while the turn runs is sent to that turn', blocks.length === 1 && blocks[0].turnId === turnId && /^t[a-z0-9]+$/.test(turnId) && blocks[0].paths[0] === A, JSON.stringify(blocks));
+  releaseChat();
+  await settle(40);
+  ok('G3 the turn reporting the file back does not restore it', p.eval('active().loaded.map((f) => f.display).join()') === B, p.eval('active().loaded.map((f) => f.display).join()'));
+  const last = p.eval('active().messages.at(-1).proposals.map((q) => q.display + ":" + (q.state || "pending")).join()');
+  ok('G3 …and its proposal for the removed file arrives withdrawn, and is withdrawn on the server', last === `${A}:withdrawn,${B}:pending` && rejects.some((r) => r.ids.includes(id('a'))), last);
+
+  // Accept racing Accept all: three pending cards, one Accept in flight.
+  p.eval(`active().messages.push({ role: 'assistant', harness: 'claude', text: 'three', proposals: [
+    ${JSON.stringify(prop(A))}, ${JSON.stringify(prop(B, { id: id('d') }))}, ${JSON.stringify(prop('~/.claude/skills/c/SKILL.md', { id: id('e') }))}] }); renderChat();`);
+  await settle(5);
+  const cards = () => p.$('drawer-body').querySelectorAll('.msg.assistant').at(-1).querySelectorAll('.prop');
+  cards()[0].querySelector('.btn.primary').click();
+  await settle(5);
+  const allBtn = () => p.$('drawer-body').querySelectorAll('.msg.assistant').at(-1).querySelectorAll('button').find((b) => /^Accept all/.test(p.text(b)));
+  ok('G11 while one Accept is in flight, Accept all leaves that card out and waits', p.text(allBtn()) === 'Accept all (2)' && allBtn().disabled === true);
+  releaseA();
+  await settle(10);
+  ok('G11 …the Accept lands as applied', /Applied and versioned/.test(p.text(cards()[0])));
+  allBtn().click();
+  await settle(5);
+  p.$('drawer-body').querySelectorAll('button').find((b) => /^Apply 2 files/.test(p.text(b))).click();
+  await settle(20);
+  ok('G11 the batch sends only the cards still pending — never the one just applied', batches.length === 1 && JSON.stringify(batches[0].ids) === JSON.stringify([id('d'), id('e')]), JSON.stringify(batches));
+  ok('G11 …and the applied card still says applied (not "gone")', /Applied and versioned/.test(p.text(cards()[0])) && !/expired or was already used/.test(p.text(cards()[0])));
+}
+
+{
   console.log('\nassist UI: F3 — no remote loads from model output');
   const p = await boot();
   await settle(20);

@@ -25,7 +25,7 @@ import * as worktree from './lib/worktree.js';
 import * as mutate from './lib/mutate.js';
 import { runAssist, listActions } from './lib/assist.js';
 import { streamTurn, resolveMentions } from './lib/chat.js';
-import { createAssistFiles } from './lib/assist-files.js';
+import { classIn, createAssistFiles } from './lib/assist-files.js';
 import { createChatProposals } from './lib/chat-proposals.js';
 import { runChatTurn } from './lib/assist-turn.js';
 import { matchLines } from './lib/search.js';
@@ -606,7 +606,12 @@ export function createApp(opts = {}) {
   const guide = createModelGuide();
   const audit = createAudit();
   const assistFiles = createAssistFiles();
-  const chatProposals = createChatProposals();
+  // Accept checks a file's class against a fresh inventory: an alias made since the proposal counts.
+  const chatProposals = createChatProposals({
+    classify: async (real, cls) => classIn(await assistFiles.manifest({ maxAgeMs: 2000 }), real, cls),
+  });
+  /** Chat turns in flight by the client's turn id: their removal sets, which POST /api/chat/block adds to. */
+  const liveTurns = new Map();
   fileChangeHooks.add(() => assistFiles.invalidate());
 
   /** A family the registry knows, or a 400 — never a path or free text. */
@@ -1250,6 +1255,14 @@ export function createApp(opts = {}) {
     const { ids, ackSync } = await objectBody(req);
     return chatProposals.acceptAll({ ids, ackSync });
   },
+  /** A file removed while a turn runs: that turn stops reading, searching and proposing for it now. */
+  'POST /api/chat/block': async (req) => {
+    requireStrict(req);
+    const { turnId, paths } = await objectBody(req);
+    const live = typeof turnId === 'string' ? liveTurns.get(turnId) : null;
+    if (live) for (const p of Array.isArray(paths) ? paths.slice(0, 50) : []) if (typeof p === 'string' && p.length < 1024) live.add(p);
+    return { live: Boolean(live) };
+  },
   'POST /api/chat/reject': async (req) => {
     requireStrict(req);
     return chatProposals.reject({ ids: (await objectBody(req)).ids });
@@ -1521,11 +1534,17 @@ export function createApp(opts = {}) {
   });
   const send = (obj) => { if (!res.writableEnded) res.write(JSON.stringify(obj) + '\n'); };
 
+  // The removal set is this turn's own: POST /api/chat/block adds to it while the turn runs.
+  const blocked = new Set((Array.isArray(body.blocked) ? body.blocked : []).filter((x) => typeof x === 'string' && x.length < 1024).slice(0, 200));
+  const turnId = typeof body.turnId === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(body.turnId) ? body.turnId : null;
+  if (turnId) liveTurns.set(turnId, blocked);
+
   // If the browser aborts, kill the round that is running and run no other.
   let active = null;
   let closed = false;
-  req.on('close', () => { if (!res.writableEnded) { closed = true; active?.kill(); } });
-  res.on('close', () => { if (!res.writableEnded) { closed = true; active?.kill(); } });
+  const gone = () => { if (!res.writableEnded) { closed = true; active?.kill(); if (turnId) liveTurns.delete(turnId); } };
+  req.on('close', gone);
+  res.on('close', gone);
 
   try {
     await runChatTurn({
@@ -1534,7 +1553,7 @@ export function createApp(opts = {}) {
       seed: body.seed || null,
       harness: resolved.harness, model: resolved.model,
       cwd: mentions.length ? path.dirname(mentions[0]) : HOME,
-      carried: body.loaded, blocked: body.blocked,
+      carried: body.loaded, blocked,
       streamTurnFn, assistFiles, proposals: chatProposals, send,
       isClosed: () => closed,
       setActive: (t) => { active = t; if (t && closed) t.kill(); },
@@ -1545,6 +1564,8 @@ export function createApp(opts = {}) {
     });
   } catch (e) {
     send({ t: 'error', message: e.message });
+  } finally {
+    if (turnId) liveTurns.delete(turnId);
   }
   res.end();
   }

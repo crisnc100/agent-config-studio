@@ -45,6 +45,12 @@ skill(path.join(S, 'synced', 'team', 's1'), 'A synced skill.');
 skill(path.join(home, '.agents', 'skills', 'real-skill'), 'The real one.');
 fs.symlinkSync(path.join(home, '.agents', 'skills', 'real-skill'), path.join(S, 'alias'));
 skill(path.join(home, '.claude', 'plugins', 'cache', 'mkt', 'plug', '1.0.0', 'skills', 'p1'), 'A plugin skill.');
+// An enabled plugin that links one of its skills to a user skill folder: that folder is the plugin's.
+skill(path.join(S, 'aliased'), 'A user skill a plugin links to.', 'aliased body\n');
+fs.symlinkSync(path.join(S, 'aliased'), path.join(home, '.claude', 'plugins', 'cache', 'mkt', 'plug', '1.0.0', 'skills', 'aliased'));
+skill(path.join(S, 'later'), 'A user skill a plugin links to after a proposal.', 'later body\n');
+skill(path.join(proj, 'app', '.codex', 'skills', 'cx'), 'A project Codex skill.', 'codex exec -m gpt-5-old x\n');
+skill(path.join(proj, 'app', '.agents', 'skills', 'ag'), 'A project shared skill.', 'shared\n');
 put(path.join(proj, 'CLAUDE.md'), '# project\n');
 put(path.join(ext, 'AGENTS.md'), '# client rules\nastra here\n');
 for (let i = 0; i < 30; i++) skill(path.join(S, `bulk-${String(i).padStart(2, '0')}`), `Bulk skill ${i}.`, i === 27 ? 'the ZEBRA-QUOKKA rule\n' : 'nothing\n');
@@ -53,6 +59,7 @@ const F = await import('../lib/assist-files.js');
 const C = await import('../lib/chat.js');
 const { readContained, safeRoots } = await import('../lib/paths.js');
 const { createChatProposals } = await import('../lib/chat-proposals.js');
+const { createAudit } = await import('../lib/audit.js');
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -187,6 +194,61 @@ try {
     put(path.join(studio, 'models.json'), '{ broken');
     ok('F13 an invalid registry says the ids are the shipped defaults', /model registry is INVALID/.test(F.factsText()));
     fs.rmSync(path.join(studio, 'models.json'));
+  }
+
+  console.log('\nassist files: grade fixes — alias provenance, search partial reasons, project skill homes');
+  {
+    const m1 = await F.buildManifest();
+    const aliased = path.join(S, 'aliased', 'SKILL.md');
+    ok('G1 a user skill an enabled plugin links to is the plugin\'s in the manifest: read-only', m1.byReal.get(aliased)?.cls === 'plugin' && m1.byReal.get(aliased)?.readOnly === true, JSON.stringify(m1.byReal.get(aliased)));
+    const att = F.readAttached(aliased, F.ASSIST_LIMITS.fileBytes, m1);
+    ok('G1 attaching that file keeps the plugin class (not the physical path\'s user class)', att.cls === 'plugin' && att.readOnly === true, att.cls);
+    const quiet = { recordBaseline: async () => null, record: async () => 'abc1234' };
+    const files = F.createAssistFiles();
+    const P = createChatProposals({ hist: quiet, classify: async (real, cls) => F.classIn(await files.manifest({ maxAgeMs: 0 }), real, cls) });
+    const shown = fs.readFileSync(aliased);
+    const pa = P.propose({ kind: 'edit', edits: 1, current: shown.toString(), proposed: 'x\n' }, { real: aliased, display: '~/.claude/skills/aliased/SKILL.md', cls: att.cls, origin: 'attached', shown });
+    ok('G1 at propose: the aliased attachment is refused', pa.refused === true && !pa.id);
+    const later = path.join(S, 'later', 'SKILL.md');
+    const lb = fs.readFileSync(later);
+    const pl = P.propose({ kind: 'edit', edits: 1, current: lb.toString(), proposed: `${lb}changed\n` }, { real: later, display: '~/.claude/skills/later/SKILL.md', cls: F.classIn(await files.manifest(), later), origin: 'attached', shown: lb });
+    ok('G1 …a plain user skill is proposed', /^[0-9a-f]{32}$/.test(pl.id || ''));
+    fs.symlinkSync(path.join(S, 'later'), path.join(home, '.claude', 'plugins', 'cache', 'mkt', 'plug', '1.0.0', 'skills', 'later'));
+    const el = await rejects(() => P.accept({ id: pl.id }));
+    ok('G1 at accept: a plugin alias made since the proposal → 403, nothing written', el?.status === 403 && fs.readFileSync(later, 'utf8') === lb.toString(), `${el?.status} ${el?.message}`);
+    fs.unlinkSync(path.join(home, '.claude', 'plugins', 'cache', 'mkt', 'plug', '1.0.0', 'skills', 'later'));
+    const ok2 = await P.accept({ id: pl.id });
+    ok('G1 …and with the alias gone the same proposal applies (the refusal did not spend it)', ok2.saved === true);
+  }
+  {
+    const dir = path.join(S, 'search-cases');
+    skill(dir, 'Search cases.', `${'many hits\n'.repeat(5)}${'x'.repeat(300)} long-hit\n`);
+    put(path.join(S, 'search-big', 'SKILL.md'), `---\nname: big\n---\n${'big-hit '.repeat(400)}\n`);
+    put(path.join(S, 'search-locked', 'SKILL.md'), '---\nname: locked\n---\nlocked-hit\n');
+    const m2 = await F.buildManifest();
+    // Readable when listed, unreadable when searched.
+    fs.chmodSync(path.join(S, 'search-locked', 'SKILL.md'), 0o000);
+    const lim = { ...F.ASSIST_LIMITS, searchFileBytes: 2000 };
+    const r1 = F.searchManifest(m2, 'many hits', { limits: lim });
+    ok('G8 more matching lines in a file than are shown → partial, with the reason', r1.partial && r1.reasons.some((x) => /more matching lines than shown/.test(x)), JSON.stringify(r1.reasons));
+    const r2 = F.searchManifest(m2, 'long-hit', { limits: lim });
+    ok('G8 a shown line cut short → partial, with the reason', r2.partial && r2.reasons.some((x) => /cut short/.test(x)), JSON.stringify(r2.reasons));
+    ok('G8 a file over the size cap is skipped by stat, not read, and said so', r1.reasons.some((x) => /over .* MB not searched/.test(x)), JSON.stringify(r1.reasons));
+    ok('G8 an unreadable file is said so', r1.reasons.some((x) => /could not be read/.test(x)) && r1.unreadable >= 1, JSON.stringify(r1));
+    const r3 = F.searchManifest(m2, 'many hits', { limits: { ...lim, searchBytes: 300 } });
+    ok('G8 the per-search byte budget stops it and says so', r3.reasons.some((x) => /search budget/.test(x)) && r3.bytes <= 300, JSON.stringify(r3.reasons));
+    fs.chmodSync(path.join(S, 'search-locked', 'SKILL.md'), 0o644);
+    for (const d of ['search-cases', 'search-big', 'search-locked']) fs.rmSync(path.join(S, d), { recursive: true });
+  }
+  {
+    const m3 = await F.buildManifest();
+    ok('G10 a project\'s .codex/skills and .agents/skills are in the manifest', m3.byDisplay.has('~/Projects/app/.codex/skills/cx/SKILL.md') && m3.byDisplay.has('~/Projects/app/.agents/skills/ag/SKILL.md'),
+       [...m3.byDisplay.keys()].filter((k) => k.includes('Projects')).join(', '));
+    const audit = createAudit({ hist: { recordBaseline: async () => null, record: async () => null } });
+    const res = await audit.run({ refresh: true });
+    const cx = res.files.find((f) => f.display === '~/Projects/app/.codex/skills/cx/SKILL.md');
+    ok('G10 audit: a project .codex skill is scanned, and its stale id found', cx && cx.findings.some((f) => f.match === 'gpt-5-old'), JSON.stringify(cx?.findings?.map((f) => f.match)));
+    ok('G10 audit: a project .agents skill is scanned', res.counts.files >= 1 && audit.scannedFiles().includes(path.join(proj, 'app', '.agents', 'skills', 'ag', 'SKILL.md')));
   }
 
   console.log('\nassist files: F4/F12 — proposals');
