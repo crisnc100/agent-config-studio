@@ -77,7 +77,8 @@ try {
     ok('a repo nested under a plain folder is found', reals.includes(nested));
     ok('the edit root itself is not offered (it is not a repo)', !reals.includes(projects));
     ok('grade 1: an edit root with its own .claude (no .git) is not offered', !reals.includes(workspace));
-    ok('grade 1: an edit root that is itself a checkout is not offered', !reals.includes(solo));
+    ok('grade 1: an edit root that is itself a checkout IS offered (a single repo registered as the root)', reals.includes(solo));
+    ok('grade 1: …named by its folder in the Where list', W.wizardTargets().projects.some((p) => p.name === 'Solo' && p.display === '~/Solo'));
     ok('grade 1: …while a repo strictly below such a root is', reals.includes(path.join(workspace, 'repo-a')));
     ok('nothing under a read root is offered', !reals.some((r) => r.startsWith(readOnly)));
     ok('a repo is not searched further (its src/ is not a project)', !reals.includes(path.join(repoB, 'src')));
