@@ -81,6 +81,8 @@ node tests/skill-wizard.mjs
 node tests/skill-wizard-routes.mjs
 # Structured turns: the StructuredOutput-only init gate, the reply from structured_output, the text fallback (temp HOME, fake claude).
 node tests/skill-wizard-structured.mjs
+# One skill for every harness: defaults, a name taken in one place, per-destination Create and Retry (temp HOME, stubbed detection).
+node tests/skill-wizard-multi.mjs
 node tests/models-assist.mjs
 node tests/models-roots.mjs
 node tests/models-scripts.mjs
@@ -115,6 +117,7 @@ node tests/model-guide-ui.mjs
 node tests/audit-ui.mjs
 node tests/assist-files-ui.mjs
 node tests/skill-wizard-ui.mjs
+node tests/skill-wizard-multi-ui.mjs
 node tests/models-layout-ui.mjs
 # What the registry tells the Files page (temp HOME).
 node tests/files-registry.mjs

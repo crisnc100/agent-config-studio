@@ -1471,6 +1471,13 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .sw-target { font-size: 13px; }
 .sw-target.bad { color: var(--red); }
 .sw-path { font-size: 12.5px; }
+.sw-harnesses { border: 1px solid var(--border-soft); border-radius: var(--radius); padding: 8px 12px; margin: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; }
+.sw-harnesses legend { padding: 0 4px; }
+.sw-check.off { color: var(--muted); }
+.sw-why { font-size: 12px; }
+.sw-target .sw-path { word-break: break-all; }
+.sw-result-list { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+.sw-result.bad { color: var(--red); }
 .sw-split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .sw-preview { padding: 10px 14px; border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--panel); overflow: auto; max-height: 520px; }
 .sw-note { width: 100%; box-sizing: border-box; }

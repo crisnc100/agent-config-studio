@@ -5,6 +5,9 @@
  *
  *   node tests/skill-wizard-qa-server.mjs     prints the URL and HOME, runs until Ctrl-C
  *
+ * Both harnesses are installed: the fake claude, and a stub `codex` (it only
+ * answers --version) beside it, so the Where step ticks Claude and Codex.
+ *
  * Seeded: one edit folder (~/Projects) holding two repos — `web-app` with a
  * .claude/skills folder and `api-server` with no harness folder at all — and
  * a read folder (~/Vendor) whose repo must never be offered; three global
@@ -58,6 +61,7 @@ fs.writeFileSync(path.join(path.dirname(bin), 'mode.json'), JSON.stringify({
   ],
   draft: '---\nname: {{name}}\ndescription: Drafts release notes from the merged PRs since the last tag. Use when the user asks for release notes or says "write the notes for this release".\n---\n\n# {{name}}\n\n1. Find the last tag.\n2. List the PRs merged since it.\n3. Group them by area and write one line per PR in the person\'s words.\n\nNever publish or tag anything: only draft the notes for review.\n',
 }));
+fs.writeFileSync(path.join(path.dirname(bin), 'codex'), '#!/bin/sh\necho "codex-cli 0.0.0 (stub)"\n', { mode: 0o755 });
 // The fake answers at once; a pause per turn lets the busy state and Cancel be seen.
 fs.writeFileSync(path.join(path.dirname(bin), 'claude'), fs.readFileSync(bin, 'utf8').replace("if (step.slow) setTimeout(go, step.slow); else go();", 'setTimeout(go, 1200);'), { mode: 0o755 });
 
@@ -68,7 +72,7 @@ const port = process.env.PORT ? Number(process.env.PORT) : await new Promise((re
 });
 const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
   cwd: ROOT,
-  env: { HOME: home, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir(), ACS_SUITE: 'offline' },
+  env: { HOME: home, PORT: String(port), PATH: `${path.dirname(bin)}:${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir(), ACS_SUITE: 'offline' },
   stdio: ['ignore', 'inherit', 'inherit'],
 });
 console.log(`\nskill wizard QA server: http://localhost:${port}/#skills\nHOME: ${home}\n`);

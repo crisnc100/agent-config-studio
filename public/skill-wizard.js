@@ -18,8 +18,8 @@ const SW_MAX_Q = 10;
 const swFresh = () => ({
   id: [...Array(16)].map(() => Math.floor(Math.random() * 16).toString(16)).join(''),
   step: 'describe', description: '', answers: [], current: null, done: null,
-  seq: 0, name: '', nameTouched: false, dest: { scope: 'global', key: 'claude' },
-  draft: null, note: '', error: null, createSent: false,
+  seq: 0, name: '', nameTouched: false, scope: 'global', project: null, picks: {},
+  draft: null, note: '', error: null, createSent: false, results: {},
 });
 let SW = null;
 /** Not persisted: what is in flight, the server's targets, and the refused reply behind the error on screen. */
@@ -47,7 +47,42 @@ const swLocked = () => SWX.busy === 'create';
 const swLive = (w, seq) => SW === w && !!w && w.seq === seq;
 
 /** Anything that changes what the skill is drops the draft. */
-function swInvalidate() { SW.draft = null; SW.createSent = false; }
+function swInvalidate() { SW.draft = null; SW.createSent = false; if (!swPartial()) SW.results = {}; }
+
+/**
+ * Where the skill goes: one destination per ticked box. A box the person has
+ * not touched follows the server's default (`on`: every installed harness,
+ * never the shared folder); one that cannot be used is never ticked.
+ */
+const swKey = (d) => JSON.stringify(d);
+function swBoxes() {
+  const t = SWX.info?.targets;
+  if (!t) return [];
+  if (SW.scope === 'global') {
+    return t.global.map((g) => {
+      const usable = g.available && g.installed !== false;
+      return { id: g.key, label: `${g.label} — ${g.display}`, usable, why: g.why, checked: usable && (SW.picks[g.key] ?? (g.on ?? g.key !== 'shared')), dest: { scope: 'global', key: g.key } };
+    });
+  }
+  const proj = t.projects.find((x) => x.id === SW.project);
+  if (!proj) return [];
+  return t.dirs.map((dir) => {
+    const d = (t.dirInfo || []).find((x) => x.dir === dir) || { installed: true, on: dir !== '.agents' };
+    const has = proj.harnessDirs.includes(dir);
+    const usable = d.installed !== false || has;
+    const on = d.on || (has && dir !== '.agents');
+    return { id: dir, label: `${dir}/skills${has ? '' : ' (will be created)'}`, usable, why: usable ? null : d.why, checked: usable && (SW.picks[dir] ?? on), dest: { scope: 'project', project: proj.id, dir } };
+  });
+}
+const swDests = () => swBoxes().filter((b) => b.checked).map((b) => b.dest);
+/** The overlap note for what is ticked now: a harness that reads two of the ticked folders. */
+function swOverlap() {
+  const ids = new Set(swBoxes().filter((b) => b.checked).map((b) => b.id));
+  const ov = (SWX.info?.targets?.overlaps || []).find((o) => (SW.scope === 'global' ? o.global : o.dirs).every((k) => ids.has(k)));
+  return ov ? ov.why : null;
+}
+/** Some destinations already have the skill: what is left must get the same bytes, so the skill is fixed. */
+const swPartial = () => Object.values(SW.results || {}).some((r) => r.ok);
 
 async function openSkillWizard() {
   if (!confirmDiscard()) return;
@@ -103,7 +138,7 @@ function swStepper() {
   SW_STEPS.forEach(([key, label], i) => {
     const li = el('li', `sw-step${i === at ? ' current' : i < at ? ' done' : ''}`);
     li.dataset.step = key;
-    if (i < at && !SWX.busy) {
+    if (i < at && !SWX.busy && !swPartial()) {
       const b = el('button', 'sw-step-btn', `${i + 1}. ${label}`);
       b.onclick = () => swGo(key);
       li.appendChild(b);
@@ -316,11 +351,15 @@ async function swPreview() {
   const seq = ++swPreviewSeq;
   SWX.preview = null;
   if (!SW_NAME_RE.test(SW.name)) { SWX.preview = { error: 'Lowercase letters, digits and hyphens; start with a letter or digit; at most 64.' }; paintWizard(); return; }
-  if (SW.dest.scope === 'project' && !SW.dest.project) { paintWizard(); return; }
+  if (SW.scope === 'project' && !SW.project) { paintWizard(); return; }
+  const dests = swDests();
+  if (!dests.length) { SWX.preview = { error: 'Check at least one place for the skill.' }; paintWizard(); return; }
   try {
-    const r = await api('POST', '/api/skill-wizard/target', { dest: SW.dest, name: SW.name });
+    const r = await api('POST', '/api/skill-wizard/target', { dests, name: SW.name });
     if (seq !== swPreviewSeq || SW !== w) return;
-    SWX.preview = r.taken ? { display: r.display, error: `${r.display.replace(/\/SKILL\.md$/, '')} already exists. Pick another name.` } : { display: r.display };
+    const targets = r.targets;
+    const taken = targets.filter((x) => x.taken).map((x) => x.display.replace(/\/SKILL\.md$/, ''));
+    SWX.preview = taken.length ? { targets, error: `${taken.join(' and ')} already exist${taken.length === 1 ? 's' : ''}. Pick another name.` } : { targets };
   } catch (e) {
     if (seq !== swPreviewSeq || SW !== w) return;
     SWX.preview = { error: e.message };
@@ -331,48 +370,31 @@ async function swPreview() {
 function swWhere(box) {
   const t = SWX.info?.targets;
   if (!t) { swError(box); return; }
-  const setDest = (d) => { SW.dest = d; swInvalidate(); swSave(); swPreview(); };
+  const changed = () => { swInvalidate(); swSave(); swPreview(); };
 
   const scope = el('div', 'sw-scope');
   for (const [val, label] of [['global', 'Global — every session on this machine'], ['project', 'A project — only inside one repository']]) {
     const l = el('label', 'sw-radio');
-    const r = el('input'); r.type = 'radio'; r.name = 'sw-scope'; r.value = val; r.checked = SW.dest.scope === val;
-    r.onchange = () => setDest(val === 'global' ? { scope: 'global', key: 'claude' } : { scope: 'project', project: t.projects[0]?.id || null, dir: '.claude' });
+    const r = el('input'); r.type = 'radio'; r.name = 'sw-scope'; r.value = val; r.checked = SW.scope === val;
+    // Switching scope starts from the defaults again.
+    r.onchange = () => { SW.scope = val; SW.picks = {}; if (val === 'project' && !SW.project) SW.project = t.projects[0]?.id || null; changed(); };
     l.appendChild(r); l.appendChild(document.createTextNode(` ${label}`));
     scope.appendChild(l);
   }
   box.appendChild(scope);
 
   const fields = el('div', 'sw-fields');
-  if (SW.dest.scope === 'global') {
-    const s = el('select', 'models-input sw-global');
-    for (const g of t.global) {
-      const o = el('option', null, `${g.label} — ${g.display}${g.available ? '' : ' (unavailable)'}`);
-      o.value = g.key; o.disabled = !g.available; o.selected = SW.dest.key === g.key;
-      s.appendChild(o);
-    }
-    s.onchange = () => setDest({ scope: 'global', key: s.value });
-    fields.appendChild(swField('Agent', s));
-  } else if (!t.projects.length) {
+  if (SW.scope === 'project' && !t.projects.length) {
     fields.appendChild(el('div', 'notice warn', 'No repositories were found in your edit folders. Add a folder in Folders, or create the skill globally.'));
-  } else {
+  } else if (SW.scope === 'project') {
     const p = el('select', 'models-input sw-project');
     for (const x of t.projects) {
       const o = el('option', null, `${x.name}${x.root ? ` (${x.root})` : ''} — ${x.display}`);
-      o.value = x.id; o.selected = SW.dest.project === x.id;
+      o.value = x.id; o.selected = SW.project === x.id;
       p.appendChild(o);
     }
-    p.onchange = () => setDest({ ...SW.dest, project: p.value });
+    p.onchange = () => { SW.project = p.value; SW.picks = {}; changed(); };
     fields.appendChild(swField('Project', p));
-    const d = el('select', 'models-input sw-dir');
-    for (const dir of t.dirs) {
-      const proj = t.projects.find((x) => x.id === SW.dest.project);
-      const o = el('option', null, `${dir}/skills${proj && !proj.harnessDirs.includes(dir) ? ' (will be created)' : ''}`);
-      o.value = dir; o.selected = SW.dest.dir === dir;
-      d.appendChild(o);
-    }
-    d.onchange = () => setDest({ ...SW.dest, dir: d.value });
-    fields.appendChild(swField('Folder', d));
   }
   const name = el('input', 'models-input sw-name');
   name.value = SW.name; name.maxLength = 64; name.spellcheck = false;
@@ -380,15 +402,34 @@ function swWhere(box) {
   fields.appendChild(swField('Name', name));
   box.appendChild(fields);
 
+  const boxes = swBoxes();
+  if (boxes.length) {
+    const set = el('fieldset', 'sw-harnesses');
+    set.appendChild(el('legend', 'sw-field-label', SW.scope === 'global' ? 'Create it for' : 'Folders'));
+    for (const b of boxes) {
+      const l = el('label', `sw-check${b.usable ? '' : ' off'}`);
+      const c = el('input'); c.type = 'checkbox'; c.value = b.id; c.checked = b.checked; c.disabled = !b.usable;
+      c.onchange = () => { SW.picks[b.id] = c.checked; changed(); };
+      l.appendChild(c); l.appendChild(document.createTextNode(` ${b.label}`));
+      if (b.why) l.appendChild(el('span', 'scope-note sw-why', ` — ${b.why}`));
+      set.appendChild(l);
+    }
+    box.appendChild(set);
+  }
+  const ov = swOverlap();
+  if (ov) box.appendChild(el('div', 'notice warn sw-overlap', ov));
+
   const pv = SWX.preview;
   const at = el('div', `sw-target${pv?.error ? ' bad' : ''}`);
-  if (pv?.display && !pv.error) { at.appendChild(el('span', 'scope-note', 'Creates ')); at.appendChild(el('code', 'sw-path', pv.display)); }
-  else if (pv?.error) { at.setAttribute('role', 'alert'); at.textContent = pv.error; }
+  if (pv?.targets && !pv.error) {
+    at.appendChild(el('span', 'scope-note', 'Creates '));
+    pv.targets.forEach((x, i) => { if (i) at.appendChild(el('span', 'scope-note', ' and ')); at.appendChild(el('code', 'sw-path', x.display)); });
+  } else if (pv?.error) { at.setAttribute('role', 'alert'); at.textContent = pv.error; }
   else at.appendChild(el('span', 'spinner'));
   box.appendChild(at);
   box.appendChild(swBar(
     swBtn('ghost sw-back', 'Back', () => swGo('interview')),
-    swBtn('primary sw-next', 'Draft the skill', () => swGo('review'), !pv?.display || !!pv.error),
+    swBtn('primary sw-next', 'Draft the skill', () => swGo('review'), !pv?.targets || !!pv.error),
   ));
 }
 function swField(label, input) {
@@ -420,7 +461,7 @@ async function swDraft({ note = null } = {}) {
   }
   if (!swLive(w, seq)) return;
   SWX.busy = null;
-  SW.draft = { content: r.content, name: r.name, dest: SW.dest };
+  SW.draft = { content: r.content, name: r.name, dests: swDests() };
   SW.note = ''; SW.createSent = false;
   swSave(); paintWizard();
 }
@@ -443,39 +484,67 @@ function swReview(box) {
     box.appendChild(swBar(swBtn('ghost sw-back', 'Back', () => swGo('where')), swBtn('primary sw-regen', 'Regenerate', () => swDraft())));
     return;
   }
-  box.appendChild(el('div', 'scope-note', `Review it before creating — it is written exactly as shown, to ${SWX.preview?.display || 'the folder you picked'}.`));
+  const dests = SW.draft.dests || swDests();
+  const shown = SWX.preview?.targets?.map((x) => x.display);
+  box.appendChild(el('div', 'scope-note', `Review it before creating — it is written exactly as shown, to ${shown?.length ? shown.join(' and ') : 'the folders you picked'}.`));
   const split = el('div', 'sw-split');
   const ta = el('textarea', 'models-input sw-source');
   const locked = swLocked();
-  ta.rows = 22; ta.spellcheck = false; ta.value = SW.draft.content; ta.readOnly = locked;
+  // Once one place has it, the rest must get the same bytes: nothing about the skill changes.
+  const fixed = locked || swPartial();
+  ta.rows = 22; ta.spellcheck = false; ta.value = SW.draft.content; ta.readOnly = fixed;
   const pv = el('div', 'sw-preview md');
   const paint = () => { pv.innerHTML = renderMarkdown(splitFrontmatter(ta.value).body ?? ta.value); };
-  ta.oninput = () => { if (!SW || swLocked()) return; SW.draft.content = ta.value; SW.createSent = false; swSave(); paint(); };
+  ta.oninput = () => { if (!SW || swLocked() || swPartial()) return; SW.draft.content = ta.value; SW.createSent = false; SW.results = {}; swSave(); paint(); };
   split.appendChild(ta); split.appendChild(pv);
   paint();
   box.appendChild(split);
 
   const note = el('input', 'models-input sw-note');
   note.placeholder = 'Optional: what to change when regenerating';
-  note.value = SW.note; note.maxLength = 1000; note.disabled = locked;
+  note.value = SW.note; note.maxLength = 1000; note.disabled = fixed;
   note.oninput = () => { SW.note = note.value; swSave(); };
   box.appendChild(note);
+
+  const tried = dests.filter((d) => SW.results[swKey(d)]);
+  const failed = tried.filter((d) => !SW.results[swKey(d)].ok);
+  if (tried.length) {
+    const res = el('div', `notice ${failed.length ? 'error' : 'ok'} sw-results`);
+    if (failed.length) res.setAttribute('role', 'alert');
+    res.appendChild(el('div', null, failed.length ? `Created ${tried.length - failed.length} of ${dests.length}. Retry creates only the ones that failed.` : 'Created.'));
+    const list = el('ul', 'sw-result-list');
+    for (const d of dests) {
+      const x = SW.results[swKey(d)];
+      if (!x) continue;
+      const li = el('li', `sw-result ${x.ok ? 'ok' : 'bad'}`);
+      li.appendChild(el('code', 'sw-path', x.display));
+      li.appendChild(el('span', null, x.ok ? ` — ${x.alreadyCreated ? 'already created' : 'created'}` : ` — failed: ${x.error}`));
+      list.appendChild(li);
+    }
+    res.appendChild(list);
+    box.appendChild(res);
+  }
   box.appendChild(swBar(
-    swBtn('ghost sw-back', 'Back', () => swGo('where'), locked),
-    swBtn('sw-regen', 'Regenerate', () => swDraft({ note: SW.note.trim() || 'Write it again.' }), locked),
-    swBtn('primary sw-create', locked ? 'Creating…' : 'Create', swCreate, locked),
+    swBtn('ghost sw-back', 'Back', () => swGo('where'), fixed),
+    swBtn('sw-regen', 'Regenerate', () => swDraft({ note: SW.note.trim() || 'Write it again.' }), fixed),
+    swPartial() && failed.length ? swBtn('ghost sw-finish', 'Finish without them', () => swFinish(SW, dests), locked) : null,
+    swBtn('primary sw-create', locked ? 'Creating…' : failed.length ? 'Retry the failed ones' : 'Create', swCreate, locked),
   ));
 }
 
 async function swCreate() {
   if (!SW || swLocked() || !SW.draft) return;
   const w = SW;
+  const all = SW.draft.dests || swDests();
+  // Only what is not there yet: a Retry never re-sends a destination that has the skill.
+  const send = all.filter((d) => !SW.results[swKey(d)]?.ok);
+  if (!send.length) return swFinish(w, all);
   SWX.busy = 'create'; SW.error = null; paintWizard();
   const retry = SW.createSent;
   SW.createSent = true; swSave();
   let r;
   try {
-    r = await api('POST', '/api/skill-wizard/create', { dest: SW.dest, name: SW.name, content: SW.draft.content, retry });
+    r = await api('POST', '/api/skill-wizard/create', { dests: send, name: SW.name, content: SW.draft.content, retry });
   } catch (e) {
     SWX.busy = null;
     if (SW !== w) return;
@@ -487,14 +556,32 @@ async function swCreate() {
   }
   SWX.busy = null;
   if (SW !== w) return;
+  // One result per destination sent, in order.
+  send.forEach((d, i) => { if (r.results?.[i]) SW.results[swKey(d)] = { ...r.results[i], dest: d }; });
+  SW.createSent = false;
+  if (all.some((d) => !SW.results[swKey(d)]?.ok)) { swSave(); paintWizard(); return; }
+  return swFinish(w, all);
+}
+
+/** Into the editor at the first one created; the toast names every one, and any that failed. */
+async function swFinish(w, all) {
+  if (!SW || SW !== w || swLocked()) return;
+  const made = all.map((d) => SW.results[swKey(d)]).filter((x) => x?.ok);
+  const missed = all.map((d) => SW.results[swKey(d)]).filter((x) => x && !x.ok);
+  if (!made.length) return;
   const done = { ...SW };
   SW = null; swClear();
   // The new file in the editor (opening it clears notices, so the toast follows);
   // the inventory catches up in the background.
   try { await refreshRegistry(); } catch { /* the editor opens it ad hoc */ }
-  const entry = entryForFile(r.path);
-  if (entry) await openEntry(entry, r.path); else openInEditor(r.path, r.display);
-  notice(r.warnings?.length ? 'warn' : 'ok', `${r.alreadyCreated ? 'Already created' : 'Created'} ${r.display}.`, r.warnings, !!r.warnings?.length);
+  const first = made[0];
+  const entry = entryForFile(first.path);
+  if (entry) await openEntry(entry, first.path); else openInEditor(first.path, first.display);
+  const fresh = made.filter((x) => !x.alreadyCreated).map((x) => x.display);
+  const again = made.filter((x) => x.alreadyCreated).map((x) => x.display);
+  const text = [fresh.length ? `Created ${fresh.join(', ')}` : null, again.length ? `${fresh.length ? 'already created' : 'Already created'} ${again.join(', ')}` : null].filter(Boolean).join('; ');
+  const warnings = [...made.flatMap((x) => x.warnings || []), ...missed.map((x) => `Not created: ${x.display} — ${x.error}`)];
+  notice(warnings.length ? 'warn' : 'ok', `${text}.`, warnings, !!warnings.length);
   api('GET', '/api/skills').then((d) => { SK.rows = d.skills; SK.usage = d.usage; })
     .catch((e) => notice('warn', `${done.name} was created, but the Skills list could not refresh: ${e.message}`));
 }
