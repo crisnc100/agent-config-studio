@@ -304,6 +304,13 @@ a { color: var(--accent); }
   width: min(520px, calc(100vw - 32px)); pointer-events: none;
 }
 #notice-slot .notice { margin: 0 0 8px; pointer-events: auto; background: var(--panel); box-shadow: 0 6px 24px var(--shadow); }
+/* In the open Assist drawer (placeNotices): below the session row, never over
+   its controls. No height of its own, so it still never moves the content. */
+.drawer > #notice-slot {
+  position: relative; top: auto; right: auto; z-index: 5;
+  width: auto; height: 0; overflow: visible;
+}
+.drawer > #notice-slot .notice { margin: 8px 18px 0; }
 .notice.error { color: var(--red); border-color: color-mix(in srgb, var(--red) 35%, transparent); background: color-mix(in srgb, var(--red) 9%, transparent); }
 .notice.warn { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 9%, transparent); }
 .notice.ok { color: var(--green); border-color: color-mix(in srgb, var(--green) 35%, transparent); background: color-mix(in srgb, var(--green) 9%, transparent); }

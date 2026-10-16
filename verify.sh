@@ -98,6 +98,10 @@ node tests/worktree-panel.mjs
 # Worktree init refuses read folders and still works in edit ones (B4).
 node tests/roots-worktree-init.mjs
 node tests/own-writes.mjs
+# A walk cut short never makes files vanish, nor a first index read as outside adds.
+node tests/walk-partial.mjs
+# Notices never cover the open Assist drawer's session row.
+node tests/notice-placement-ui.mjs
 # The front end, in a node VM against stubbed routes: no server, no HOME.
 node tests/shell.mjs
 node tests/home.mjs

@@ -15,13 +15,15 @@
  *   - the open file changed, and clean   → reload it if its content differs,
  *                                           announcing it only for an outside change
  *   - anything else                      → announce added/removed files, outside only
+ *                                           (`index`: a large folder's first full walk
+ *                                           filling in — never announced)
  */
 function fileEventPlan(d, { openPath = null, dirty = false } = {}) {
   const studio = d.origin === 'studio';
   if (openPath && (d.revokedPaths || []).includes(openPath)) return { open: 'revoked', studio, dirty };
   if (openPath && (d.removedPaths || []).includes(openPath)) return { open: 'closed', studio };
   if (openPath && (d.changedPaths || []).includes(openPath)) return { open: dirty ? 'conflict' : 'reload', studio };
-  return { open: 'none', studio, announce: !studio };
+  return { open: 'none', studio, announce: !studio && d.origin !== 'index' };
 }
 
 /**

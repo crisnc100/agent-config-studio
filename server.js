@@ -30,7 +30,7 @@ import { createChatProposals } from './lib/chat-proposals.js';
 import { runChatTurn } from './lib/assist-turn.js';
 import { matchLines } from './lib/search.js';
 import { detectHarnesses, HARNESSES, modelsFor, registryError } from './lib/harness.js';
-import { createWatcher, snapshotOf, diffSnapshots, expectWrite, tagOrigin } from './lib/watch.js';
+import { createWatcher, snapshotOf, diffSnapshots, splitIndexed, expectWrite, tagOrigin } from './lib/watch.js';
 import { renderSnapshot, createSeat, removeSeat, moveSeatToPrivateHome, suggestSeats, addSuggestedSeat } from './lib/usage/seats.js';
 import { refreshSnapshot } from './lib/usage/refresh.js';
 import { refreshCodexCatalogs } from './lib/usage/codex-limits.js';
@@ -466,7 +466,7 @@ function isRevoked(p) {
 /** Caches that a change on disk makes stale (each app's Assist manifest). */
 const fileChangeHooks = new Set();
 
-async function onFilesChanged({ fromWalk = false } = {}) {
+async function onFilesChanged({ fromWalk = false, indexing = null } = {}) {
   for (const hook of fileChangeHooks) hook();
   if (!fromWalk) staleLargeWalks();
   let registry;
@@ -480,11 +480,14 @@ async function onFilesChanged({ fromWalk = false } = {}) {
   const revoked = delta.removed.filter(isRevoked);
   delta.removed = delta.removed.filter((p) => !revoked.includes(p));
 
+  // A large root's index filling in goes out as `index`, so the page stays quiet.
+  const index = splitIndexed(delta, indexing);
+
   // The studio's own writes go out tagged, so the page can stay quiet about
   // them; everything else is an outside change (lib/watch.js tagOrigin).
   const { studio, outside } = tagOrigin(delta);
   outside.revoked = revoked;
-  for (const [part, origin] of [[studio, 'studio'], [outside, 'outside']]) {
+  for (const [part, origin] of [[studio, 'studio'], [outside, 'outside'], [index, 'index']]) {
     const gone = part.revoked || [];
     if (!part.added.length && !part.removed.length && !part.changed.length && !gone.length) continue;
     broadcast({
@@ -1723,10 +1726,10 @@ export async function startStudio({ port = PORT, app = {} } = {}) {
   // as such), then tell every tab to reload what it shows.
   // A large root's off-path walk finished: re-aim the watchers at what it
   // found and tell the tabs.
-  onWalkDone(async () => {
+  onWalkDone(async (rootReal, { indexing } = {}) => {
     watcher.close();
     watcher = createWatcher(onFilesChanged);
-    await onFilesChanged({ fromWalk: true }).catch(() => {});
+    await onFilesChanged({ fromWalk: true, indexing: indexing ? rootReal : null }).catch(() => {});
   });
   const rootsWatch = watchRoots(async () => {
     watcher.close();
