@@ -38,7 +38,7 @@ function stubs(st) {
   const r = routesFor({
     'GET /api/skills': () => ({ skills: [], usage: { caveat: { text: '' } } }),
     'GET /api/skill-wizard': () => INFO,
-    'POST /api/skill-wizard/target': (b) => ({ display: paths(b.name, b.dest), taken: st.taken?.includes(b.name) || false }),
+    'POST /api/skill-wizard/target': (b) => (b.dests ? { targets: b.dests.map((d) => ({ dest: d, display: paths(b.name, d), taken: st.taken?.includes(b.name) || false })) } : { display: paths(b.name, b.dest), taken: st.taken?.includes(b.name) || false }),
     'POST /api/skill-wizard/cancel': () => ({ cancelled: true }),
     'POST /api/skill-wizard/turn': (b) => {
       st.turns.push(b);
@@ -51,12 +51,13 @@ function stubs(st) {
       st.creates.push(b);
       const h = st.create.shift();
       if (h) return h(b);
+      if (b.dests) return { results: b.dests.map((d) => ({ dest: d, ok: true, created: true, path: `/h/.claude/skills/${b.name}/SKILL.md`, display: paths(b.name, d), sha: 'abc', warnings: [] })) };
       return { created: true, path: `/h/.claude/skills/${b.name}/SKILL.md`, display: paths(b.name, b.dest), sha: 'abc', warnings: [] };
     },
   });
   // The editor reads back what Create wrote.
   const create = r.table['POST /api/skill-wizard/create'];
-  r.table['POST /api/skill-wizard/create'] = async (b) => { const out = await create(b); r.files.set(out.path, b.content); return out; };
+  r.table['POST /api/skill-wizard/create'] = async (b) => { const out = await create(b); r.files.set(out.results?.[0]?.path ?? out.path, b.content); return out; };
   return r;
 }
 const pages = [];
@@ -138,7 +139,8 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
   await click(btn(p, 'That’s enough'));
   ok('S8 "That\'s enough" goes straight to Where, without asking the model', step(p) === 'where' && p.st.turns.filter((t) => t.kind === 'draft').length === 0);
   ok('…with a name derived from the description', C(p).querySelector('.sw-name').value === 'cut-a-release-of-my');
-  ok('W3 the exact target path is shown', p.text(C(p).querySelector('.sw-target')) === 'Creates ~/.claude/skills/cut-a-release-of-my/SKILL.md');
+  ok('W3 the exact target path is shown, for every checked place', p.text(C(p).querySelector('.sw-target')) === 'Creates ~/.claude/skills/cut-a-release-of-my/SKILL.md and ~/.claude/skills/cut-a-release-of-my/SKILL.md'
+     && JSON.stringify(p.requests.filter((r) => r.path === '/api/skill-wizard/target').at(-1).body.dests) === '[{"scope":"global","key":"claude"},{"scope":"global","key":"codex"}]');
 
   await click(btn(p, 'Back'));
   ok('W6 Back to the interview keeps every answer', step(p) === 'interview' && C(p).querySelectorAll('.sw-qa').length === 2);
@@ -160,10 +162,10 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
   ok('W3 Project lists the repos (edit roots only, as the server gave them)', C(p).querySelectorAll('.sw-project option').map((o) => p.text(o)).join(' | ') === 'repo-a (Projects) — ~/Projects/repo-a | repo-b (Projects) — ~/Projects/repo-b');
   const sel = C(p).querySelector('.sw-project');
   sel.value = 'bbbbbbbbbbbb'; sel.dispatchEvent({ type: 'change' }); await settle(15);
-  const dirOpts = C(p).querySelectorAll('.sw-dir option').map((o) => p.text(o));
-  ok('…a repo with no harness dir says it will be created', dirOpts[0] === '.claude/skills (will be created)');
-  const dir = C(p).querySelector('.sw-dir');
-  dir.value = '.codex'; dir.dispatchEvent({ type: 'change' }); await settle(15);
+  const dirBoxes = () => C(p).querySelectorAll('.sw-harnesses input').filter((i) => i.type === 'checkbox');
+  const dirOpts = C(p).querySelectorAll('.sw-harnesses .sw-check').map((o) => p.text(o));
+  ok('…a repo with no harness dir says it will be created', dirOpts[0] === '.claude/skills (will be created)' && dirBoxes()[0].checked);
+  dirBoxes().find((c) => c.value === '.claude').click(); await settle(15);
   ok('W3 the path follows the choice exactly', p.text(C(p).querySelector('.sw-target')) === 'Creates ~/Projects/repo-b/.codex/skills/lint-all/SKILL.md');
   p.st.taken.push('taken-one');
   p.input(C(p).querySelector('.sw-name'), 'taken-one');
@@ -203,7 +205,7 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
   p.st.create.push(() => { throw { status: 409, body: { error: 'already exists. Pick another name.' } }; });
   await click(btn(p, 'Create'));
   ok('W6 a refused Create shows the error and stays on Review', /already exists/.test(p.text(C(p).querySelector('.sw-error'))) && step(p) === 'review');
-  ok('…sending the person\'s edited bytes to the chosen place', p.st.creates[0].content === DRAFT('lint-every').replace('Steps.', 'Mine.') && JSON.stringify(p.st.creates[0].dest) === '{"scope":"project","project":"bbbbbbbbbbbb","dir":".codex"}' && p.st.creates[0].retry === false);
+  ok('…sending the person\'s edited bytes to the chosen place', p.st.creates[0].content === DRAFT('lint-every').replace('Steps.', 'Mine.') && JSON.stringify(p.st.creates[0].dests) === '[{"scope":"project","project":"bbbbbbbbbbbb","dir":".codex"}]' && p.st.creates[0].retry === false);
   await click(btn(p, 'Create'));
   ok('S10 after a refusal, Create again is not a retry', p.st.creates[1].retry === false);
   ok('S10 success opens the new SKILL.md in the editor', p.eval('S.view') === 'entry' && p.eval('S.file && S.file.path') === '/h/.claude/skills/lint-every/SKILL.md', `${p.eval('S.view')}`);
@@ -252,7 +254,7 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
   p.st.create.push(() => new Promise((_, rej) => rej(new TypeError('NetworkError when attempting to fetch resource.'))));
   await click(btn(p, 'Create'));
   ok('S10 a lost Create response says it may have been created', /may have been created/.test(p.text(C(p).querySelector('.sw-error'))));
-  p.st.create.push((b) => ({ created: false, alreadyCreated: true, path: `/h/.claude/skills/${b.name}/SKILL.md`, display: paths(b.name, b.dest), warnings: [] }));
+  p.st.create.push((b) => (b.dests ? { results: b.dests.map((d) => ({ dest: d, ok: true, created: false, alreadyCreated: true, path: `/h/.claude/skills/${b.name}/SKILL.md`, display: paths(b.name, d), warnings: [] })) } : { created: false, alreadyCreated: true, path: `/h/.claude/skills/${b.name}/SKILL.md`, display: paths(b.name, b.dest), warnings: [] }));
   await click(btn(p, 'Create'));
   ok('…Retry sends retry: true, and "already created" opens the file', p.st.creates.at(-1).retry === true && /Already created/.test(p.text(p.$('notice-slot'))) && p.eval('S.view') === 'entry');
 }
@@ -276,7 +278,7 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
   p.eval("swDraft({ note: 'again' }); swGo('where'); swAsk(); swCreate();");
   await settle(20);
   ok('…and no wizard action runs: no turn, no step change, no second Create', p.st.turns.length === turnsBefore && step(p) === 'review' && p.st.creates.length === 1);
-  hold.resolve({ created: true, path: '/h/.claude/skills/lock-it/SKILL.md', display: '~/.claude/skills/lock-it/SKILL.md', sha: 'abc', warnings: [] });
+  hold.resolve({ results: p.st.creates[0].dests.map((d) => ({ dest: d, ok: true, created: true, path: '/h/.claude/skills/lock-it/SKILL.md', display: '~/.claude/skills/lock-it/SKILL.md', sha: 'abc', warnings: [] })) });
   await settle(30);
   ok('…Create then finishes into the editor', p.eval('S.view') === 'entry' && p.eval('SW') === null);
 }

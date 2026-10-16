@@ -1068,8 +1068,8 @@ export function createApp(opts = {}) {
   },
   'POST /api/skill-wizard/target': async (req) => {
     requireStrict(req);
-    const { dest, name } = await objectBody(req);
-    return previewTarget({ dest, name });
+    const { dest, dests, name } = await objectBody(req);
+    return previewTarget({ dest, dests, name });
   },
   'POST /api/skill-wizard/turn': async (req) => {
     requireStrict(req);
@@ -1088,8 +1088,8 @@ export function createApp(opts = {}) {
   },
   'POST /api/skill-wizard/create': async (req) => {
     requireStrict(req);
-    const { dest, name, content, retry } = await objectBody(req, 256 * 1024);
-    return wizard.create({ dest, name, content, retry: retry === true });
+    const { dest, dests, name, content, retry } = await objectBody(req, 256 * 1024);
+    return wizard.create({ dest, dests, name, content, retry: retry === true });
   },
 
   /**

@@ -105,8 +105,10 @@ jobs:
           node tests/skill-wizard.mjs
           node tests/skill-wizard-routes.mjs
           node tests/skill-wizard-structured.mjs
+          node tests/skill-wizard-multi.mjs
           node tests/assist-files-ui.mjs
           node tests/skill-wizard-ui.mjs
+          node tests/skill-wizard-multi-ui.mjs
           node tests/walk-partial.mjs
           node tests/notice-placement-ui.mjs
           node tests/home-refresh.mjs
