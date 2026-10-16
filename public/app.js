@@ -5673,10 +5673,22 @@ function titleFor(s) {
 }
 
 /* ── drawer ──────────────────────────────────────────────────────────── */
+/**
+ * Notices float top-right — exactly where the open drawer keeps its session
+ * row, so a sticky one sat over "+" and ×. While the drawer is open the slot
+ * lives in it, below that row, still floating over the conversation.
+ */
+function placeNotices() {
+  const slot = $('notice-slot');
+  if ($('drawer').classList.contains('open')) $('drawer').insertBefore(slot, $('drawer-body'));
+  else $('content').parentNode.insertBefore(slot, $('content'));
+}
+
 function openDrawer() {
   const d = $('drawer');
   if (!d.classList.contains('open') && !d.contains(document.activeElement)) C.opener = document.activeElement;
   d.classList.add('open');
+  placeNotices();
   d.inert = false;
   d.removeAttribute('aria-hidden');
   $('scrim').classList.add('open');
@@ -5692,6 +5704,7 @@ function closeDrawer() {
   const d = $('drawer');
   if (!d.classList.contains('open')) return;
   d.classList.remove('open');
+  placeNotices();
   d.inert = true;
   d.setAttribute('aria-hidden', 'true');
   $('scrim').classList.remove('open');
