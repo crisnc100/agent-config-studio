@@ -131,6 +131,10 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
   const p2 = await boot({ hash: '#skills/new', carrySession: saved });
   ok('W6 reload keeps the wizard: the same step, transcript and card', step(p2) === 'interview' && p2.$('content').querySelectorAll('.sw-qa').length === 2 && /Question number 3\?/.test(p2.text(p2.$('content'))));
 
+  // Reloaded while a turn was out: that question is asked again.
+  const busyState = JSON.parse(p.sessionStore.get('acs.skillWizard'));
+  const p3 = await boot({ hash: '#skills/new', carrySession: [['acs.skillWizard', JSON.stringify({ ...busyState, current: null })]] });
+  ok('W6 reload mid-turn re-asks the pending question with the same transcript', p3.st.turns.length === 1 && p3.st.turns[0].answers.length === 2 && cards(p3).length === 1);
   await click(btn(p, 'That’s enough'));
   ok('S8 "That\'s enough" goes straight to Where, without asking the model', step(p) === 'where' && p.st.turns.filter((t) => t.kind === 'draft').length === 0);
   ok('…with a name derived from the description', C(p).querySelector('.sw-name').value === 'cut-a-release-of-my');

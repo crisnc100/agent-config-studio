@@ -55,6 +55,8 @@ async function openSkillWizard() {
   paintWizard();
   if (SW.step === 'where') swPreview();
   if (SW.step === 'review' && !SW.draft && !SWX.busy) swDraft();
+  // Reloaded mid-turn: the question it was waiting for is asked again.
+  if (SW.step === 'interview' && !SW.current && !SW.done && !SW.error && !SWX.busy && SW.answers.length < SW_MAX_Q && SWX.info?.backend?.ready) swAsk();
 }
 
 function swGo(step) {
