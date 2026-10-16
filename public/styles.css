@@ -1475,4 +1475,7 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .sw-preview { padding: 10px 14px; border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--panel); overflow: auto; max-height: 520px; }
 .sw-note { width: 100%; box-sizing: border-box; }
 .sw-error .sw-retry { margin-top: 6px; }
+.sw-reply { margin-top: 6px; font-size: 12.5px; }
+.sw-reply > summary { cursor: pointer; }
+.sw-reply-text { margin: 6px 0 0; padding: 8px 10px; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 12px; background: var(--panel); border: 1px solid var(--border-soft); border-radius: var(--radius); color: var(--text); }
 @media (max-width: 900px) { .sw-split { grid-template-columns: 1fr; } }

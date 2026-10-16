@@ -79,6 +79,8 @@ node tests/assist-turn.mjs
 # The skill wizard: prompts, parsers, the turn engine and the contained create (in-process), then the routes with a fake claude (temp HOME).
 node tests/skill-wizard.mjs
 node tests/skill-wizard-routes.mjs
+# Structured turns: the StructuredOutput-only init gate, the reply from structured_output, the text fallback (temp HOME, fake claude).
+node tests/skill-wizard-structured.mjs
 node tests/models-assist.mjs
 node tests/models-roots.mjs
 node tests/models-scripts.mjs
