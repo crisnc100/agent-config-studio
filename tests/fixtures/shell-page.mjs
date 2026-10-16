@@ -173,9 +173,10 @@ export function routesFor(over = {}) {
 /** Boot the page: parse index.html, run its scripts, wait for boot to finish. */
 process.setMaxListeners(0);
 
-export async function bootPage({ routes = routesFor(), hash = '', storage, width, carry, raf } = {}) {
+export async function bootPage({ routes = routesFor(), hash = '', storage, width, carry, carrySession, raf } = {}) {
   const page = makePage({ html: HTML, routes, hash, storage, width, raf });
   if (carry) for (const [k, v] of carry) page.store.set(k, v);
+  if (carrySession) for (const [k, v] of carrySession) page.sessionStore.set(k, v);
   const unhandled = (e) => page.errors.push(`unhandled: ${e?.stack || e}`);
   process.on('unhandledRejection', unhandled);
   page.done = () => process.off('unhandledRejection', unhandled);

@@ -76,6 +76,9 @@ node tests/audit-routes.mjs
 # Assist finds its own files: manifest, contained loads, framing, facts, proposals (in-process), then the loop with a stubbed backend.
 node tests/assist-files.mjs
 node tests/assist-turn.mjs
+# The skill wizard: prompts, parsers, the turn engine and the contained create (in-process), then the routes with a fake claude (temp HOME).
+node tests/skill-wizard.mjs
+node tests/skill-wizard-routes.mjs
 node tests/models-assist.mjs
 node tests/models-roots.mjs
 node tests/models-scripts.mjs
@@ -105,6 +108,7 @@ node tests/roles-ui.mjs
 node tests/model-guide-ui.mjs
 node tests/audit-ui.mjs
 node tests/assist-files-ui.mjs
+node tests/skill-wizard-ui.mjs
 node tests/models-layout-ui.mjs
 # What the registry tells the Files page (temp HOME).
 node tests/files-registry.mjs

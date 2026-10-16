@@ -44,6 +44,7 @@ import { loadRegistry } from './lib/models.js';
 import { rolesView, setRole, resetRole, deleteRole, setFlavor, resetFlavor } from './lib/roles-panel.js';
 import { createDescribe, describeBackend, DESCRIBE_LIMITS } from './lib/describe.js';
 import { createModelGuide } from './lib/model-guide.js';
+import { createSkillWizard, previewTarget, wizardTargets } from './lib/skill-wizard.js';
 import { createAudit } from './lib/audit.js';
 import * as memoryOps from './lib/memory-ops.js';
 import { contextMap, contextFile } from './lib/context-map.js';
@@ -552,8 +553,8 @@ const requireStrict = (req) => {
 };
 
 /** The body as a plain object; an array, a string or null is not a request. */
-async function objectBody(req) {
-  const b = await readBody(req, 64 * 1024);
+async function objectBody(req, limit = 64 * 1024) {
+  const b = await readBody(req, limit);
   if (!b || typeof b !== 'object' || Array.isArray(b)) throw bad('the request body must be a JSON object', 400);
   return b;
 }
@@ -605,6 +606,7 @@ export function createApp(opts = {}) {
   const describer = createDescribe();
   const guide = createModelGuide();
   const audit = createAudit();
+  const wizard = opts.skillWizard || createSkillWizard();
   const assistFiles = createAssistFiles();
   // Accept checks a file's class against a fresh inventory: an alias made since the proposal counts.
   const chatProposals = createChatProposals({
@@ -1049,6 +1051,42 @@ export function createApp(opts = {}) {
     // filesystem path, and a test asserts exactly that.
     const { root, ...stats } = usage.stats;
     return { skills: attachUsage(rows, usage), usage: { available: true, caveat: USAGE_CAVEAT, stats } };
+  },
+
+  /**
+   * The skill wizard (lib/skill-wizard.js). Strict same-origin on every
+   * route, GET included, before a body is read, a model spawned or a file
+   * written. A destination is a key or a project id, never a path; the
+   * server resolves it again at every step.
+   */
+  'GET /api/skill-wizard': async (req) => {
+    requireStrict(req);
+    return { ...wizard.info(), targets: wizardTargets() };
+  },
+  'POST /api/skill-wizard/target': async (req) => {
+    requireStrict(req);
+    const { dest, name } = await objectBody(req);
+    return previewTarget({ dest, name });
+  },
+  'POST /api/skill-wizard/turn': async (req) => {
+    requireStrict(req);
+    const body = await objectBody(req, 256 * 1024);
+    // A page that goes away mid-turn (closed, reloaded, navigated) kills the run.
+    const ac = new AbortController();
+    const gone = () => ac.abort();
+    req.socket.once('close', gone);
+    if (req.socket.destroyed) ac.abort();
+    try { return await wizard.turn(body, { signal: ac.signal }); }
+    finally { req.socket.off('close', gone); }
+  },
+  'POST /api/skill-wizard/cancel': async (req) => {
+    requireStrict(req);
+    return wizard.cancel(await objectBody(req));
+  },
+  'POST /api/skill-wizard/create': async (req) => {
+    requireStrict(req);
+    const { dest, name, content, retry } = await objectBody(req, 256 * 1024);
+    return wizard.create({ dest, name, content, retry: retry === true });
   },
 
   /**
