@@ -102,6 +102,8 @@ jobs:
           node tests/audit-ui.mjs
           node tests/assist-files.mjs
           node tests/assist-turn.mjs
+          node tests/skill-wizard.mjs
+          node tests/skill-wizard-routes.mjs
           node tests/assist-files-ui.mjs
           node tests/home-refresh.mjs
           node tests/assist-containment.mjs
