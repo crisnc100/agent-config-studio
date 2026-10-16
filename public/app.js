@@ -91,6 +91,9 @@ const VIEWS = [
     title: 'Files', sub: 'Every config file, by the tool that reads it', open: () => openFiles(), render: renderFiles },
   { id: 'skills', label: 'Skills', group: 'configure', icon: 'skills', hash: '#skills',
     title: 'Skills', sub: 'Every skill on this machine — browse, select, download', open: openSkills },
+  // No sidebar item: the Skills view's New skill button (public/skill-wizard.js).
+  { id: 'skill-new', label: 'New skill', group: null, icon: 'skills', hash: '#skills/new',
+    title: 'New skill', sub: 'Describe it, answer a few questions, review the SKILL.md', open: openSkillWizard },
   { id: 'mcp', label: 'MCP', group: 'configure', icon: 'mcp', hash: '#mcp',
     title: 'MCP servers', sub: 'Model Context Protocol servers across both harnesses', open: openMcp },
   // No sidebar item: reached from the Files page's folder line, and #folders.
@@ -1942,7 +1945,12 @@ function paintSkills() {
   c.innerHTML = '';
   const box = el('div', 'scope');
 
-  box.appendChild(el('h2', null, 'Skills'));
+  const head = el('div', 'sw-head');
+  head.appendChild(el('h2', null, 'Skills'));
+  const add = el('button', 'btn primary sk-new', 'New skill');
+  add.onclick = () => { location.hash = '#skills/new'; };
+  head.appendChild(add);
+  box.appendChild(head);
   box.appendChild(el('div', 'scope-sub',
     `${SK.rows.length} skills across both harnesses and every project. `
     + 'Identical copies are collapsed into one row. Pick any set and download it — '

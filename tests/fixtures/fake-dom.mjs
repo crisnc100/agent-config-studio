@@ -308,6 +308,15 @@ export function makePage({ html, routes, hash = '', storage = 'memory', width = 
       setItem: (k, v) => { store.set(k, String(v)); },
       removeItem: (k) => { store.delete(k); },
     };
+  // Per tab, like a browser's: a test carries it into the next page to model a reload.
+  const sessionStore = new Map();
+  const sessionStorage = storage === 'throws'
+    ? new Proxy({}, { get() { throw new Error('SecurityError: storage is blocked'); } })
+    : {
+      getItem: (k) => (sessionStore.has(k) ? sessionStore.get(k) : null),
+      setItem: (k, v) => { sessionStore.set(k, String(v)); },
+      removeItem: (k) => { sessionStore.delete(k); },
+    };
 
   const location = {
     hash, pathname: '/', search: '',
@@ -357,7 +366,7 @@ export function makePage({ html, routes, hash = '', storage = 'memory', width = 
   }
 
   const ctx = {
-    document: doc, window: win, location, localStorage, fetch, EventSource, URL, URLSearchParams,
+    document: doc, window: win, location, localStorage, sessionStorage, fetch, EventSource, URL, URLSearchParams,
     history: {
       replaceState(_s, _t, url) {
         const u = new URL(url, 'http://localhost/');
@@ -389,7 +398,7 @@ export function makePage({ html, routes, hash = '', storage = 'memory', width = 
   ctx.globalThis = ctx;
 
   const page = {
-    ctx, doc, win, errors, requests, store, location, sources: [], confirm,
+    ctx, doc, win, errors, requests, store, sessionStore, location, sources: [], confirm,
     $: (id) => doc.getElementById(id),
     run(file) { vm.runInContext(fs.readFileSync(file, 'utf8'), ctx, { filename: file }); },
     eval(code) { return vm.runInContext(code, ctx); },
