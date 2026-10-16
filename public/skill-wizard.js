@@ -38,6 +38,14 @@ function swDeriveName(text) {
   return SW_NAME_RE.test(n) ? n : 'new-skill';
 }
 
+/**
+ * Create in flight locks the wizard: no step change, edit, turn or second
+ * Create until it answers. And every await re-checks it is still talking to
+ * the same wizard — Create's success replaces SW with null.
+ */
+const swLocked = () => SWX.busy === 'create';
+const swLive = (w, seq) => SW === w && !!w && w.seq === seq;
+
 /** Anything that changes what the skill is drops the draft. */
 function swInvalidate() { SW.draft = null; SW.createSent = false; }
 
@@ -60,6 +68,7 @@ async function openSkillWizard() {
 }
 
 function swGo(step) {
+  if (!SW || swLocked()) return;
   SW.step = step; SW.error = null; swSave(); paintWizard();
   if (step === 'where') swPreview();
   if (step === 'review' && !SW.draft && !SWX.busy) swDraft();
@@ -74,6 +83,7 @@ function paintWizard() {
   head.appendChild(el('h2', null, 'New skill'));
   const back = el('button', 'btn ghost sw-exit', 'Back to Skills');
   back.onclick = () => { location.hash = '#skills'; };
+  back.disabled = swLocked();
   head.appendChild(back);
   box.appendChild(head);
   box.appendChild(swStepper());
@@ -153,19 +163,21 @@ function swDescribe(box) {
 const swSent = () => SW.answers.map((a) => ({ question: a.question, answer: a.answer }));
 
 async function swAsk() {
-  const seq = ++SW.seq;
+  if (!SW || swLocked()) return;
+  const w = SW;
+  const seq = ++w.seq;
   SWX.busy = 'question'; SW.error = null; SW.current = null; swSave(); paintWizard();
   let r;
   try {
     r = await api('POST', '/api/skill-wizard/turn', { wizardId: SW.id, seq, kind: 'question', description: SW.description, answers: swSent() });
   } catch (e) {
-    if (seq !== SW.seq) return;
+    if (!swLive(w, seq)) return;
     SWX.busy = null;
     SW.error = e.status === 499 ? 'Stopped. Retry to ask again.' : e.message;
     swSave(); paintWizard();
     return;
   }
-  if (seq !== SW.seq) return;   // an answer changed since: this reply is for a transcript that is gone
+  if (!swLive(w, seq)) return;   // an answer changed since: this reply is for a transcript that is gone
   SWX.busy = null;
   if (r.kind === 'done') {
     SW.done = { name: r.name, summary: r.summary };
@@ -178,6 +190,7 @@ async function swAsk() {
 }
 
 function swAnswer(text) {
+  if (!SW || swLocked()) return;
   const q = SW.current;
   if (!q) return;
   SW.answers.push({ ...q, answer: text });
@@ -188,6 +201,7 @@ function swAnswer(text) {
 
 /** "That's enough", and the cap: straight on, without waiting for the model to say done. */
 function swEnough() {
+  if (!SW || swLocked()) return;
   if (SWX.busy) { SW.seq++; api('POST', '/api/skill-wizard/cancel', { wizardId: SW.id }).catch(() => {}); SWX.busy = null; }
   SW.current = null;
   if (!SW.done) SW.done = { name: swDeriveName(SW.description), summary: null };
@@ -196,6 +210,7 @@ function swEnough() {
 }
 
 function swCancel() {
+  if (!SW || swLocked()) return;
   SW.seq++;
   SWX.busy = null;
   SW.error = 'Stopped. Retry to ask again.';
@@ -281,16 +296,18 @@ function swInterview(box) {
 /* ── 3. where ────────────────────────────────────────────────────────── */
 let swPreviewSeq = 0;
 async function swPreview() {
+  if (!SW) return;
+  const w = SW;
   const seq = ++swPreviewSeq;
   SWX.preview = null;
   if (!SW_NAME_RE.test(SW.name)) { SWX.preview = { error: 'Lowercase letters, digits and hyphens; start with a letter or digit; at most 64.' }; paintWizard(); return; }
   if (SW.dest.scope === 'project' && !SW.dest.project) { paintWizard(); return; }
   try {
     const r = await api('POST', '/api/skill-wizard/target', { dest: SW.dest, name: SW.name });
-    if (seq !== swPreviewSeq) return;
+    if (seq !== swPreviewSeq || SW !== w) return;
     SWX.preview = r.taken ? { display: r.display, error: `${r.display.replace(/\/SKILL\.md$/, '')} already exists. Pick another name.` } : { display: r.display };
   } catch (e) {
-    if (seq !== swPreviewSeq) return;
+    if (seq !== swPreviewSeq || SW !== w) return;
     SWX.preview = { error: e.message };
   }
   paintWizard();
@@ -368,7 +385,9 @@ function swField(label, input) {
 
 /* ── 4. review ───────────────────────────────────────────────────────── */
 async function swDraft({ note = null } = {}) {
-  const seq = ++SW.seq;
+  if (!SW || swLocked()) return;
+  const w = SW;
+  const seq = ++w.seq;
   SWX.busy = 'draft'; SW.error = null; paintWizard();
   let r;
   try {
@@ -377,13 +396,13 @@ async function swDraft({ note = null } = {}) {
       name: SW.name, summary: SW.done?.summary || null, note, previous: note ? SW.draft?.content || null : null,
     });
   } catch (e) {
-    if (seq !== SW.seq) return;
+    if (!swLive(w, seq)) return;
     SWX.busy = null;
     SW.error = e.status === 499 ? 'Stopped. Regenerate to try again.' : e.message;
     swSave(); paintWizard();
     return;
   }
-  if (seq !== SW.seq) return;
+  if (!swLive(w, seq)) return;
   SWX.busy = null;
   SW.draft = { content: r.content, name: r.name, dest: SW.dest };
   SW.note = ''; SW.createSent = false;
@@ -411,28 +430,30 @@ function swReview(box) {
   box.appendChild(el('div', 'scope-note', `Review it before creating — it is written exactly as shown, to ${SWX.preview?.display || 'the folder you picked'}.`));
   const split = el('div', 'sw-split');
   const ta = el('textarea', 'models-input sw-source');
-  ta.rows = 22; ta.spellcheck = false; ta.value = SW.draft.content;
+  const locked = swLocked();
+  ta.rows = 22; ta.spellcheck = false; ta.value = SW.draft.content; ta.readOnly = locked;
   const pv = el('div', 'sw-preview md');
   const paint = () => { pv.innerHTML = renderMarkdown(splitFrontmatter(ta.value).body ?? ta.value); };
-  ta.oninput = () => { SW.draft.content = ta.value; SW.createSent = false; swSave(); paint(); };
+  ta.oninput = () => { if (!SW || swLocked()) return; SW.draft.content = ta.value; SW.createSent = false; swSave(); paint(); };
   split.appendChild(ta); split.appendChild(pv);
   paint();
   box.appendChild(split);
 
   const note = el('input', 'models-input sw-note');
   note.placeholder = 'Optional: what to change when regenerating';
-  note.value = SW.note; note.maxLength = 1000;
+  note.value = SW.note; note.maxLength = 1000; note.disabled = locked;
   note.oninput = () => { SW.note = note.value; swSave(); };
   box.appendChild(note);
-  const create = swBtn('primary sw-create', SWX.busy === 'create' ? 'Creating…' : 'Create', swCreate, SWX.busy === 'create');
   box.appendChild(swBar(
-    swBtn('ghost sw-back', 'Back', () => swGo('where')),
-    swBtn('sw-regen', 'Regenerate', () => swDraft({ note: SW.note.trim() || 'Write it again.' })),
-    create,
+    swBtn('ghost sw-back', 'Back', () => swGo('where'), locked),
+    swBtn('sw-regen', 'Regenerate', () => swDraft({ note: SW.note.trim() || 'Write it again.' }), locked),
+    swBtn('primary sw-create', locked ? 'Creating…' : 'Create', swCreate, locked),
   ));
 }
 
 async function swCreate() {
+  if (!SW || swLocked() || !SW.draft) return;
+  const w = SW;
   SWX.busy = 'create'; SW.error = null; paintWizard();
   const retry = SW.createSent;
   SW.createSent = true; swSave();
@@ -441,6 +462,7 @@ async function swCreate() {
     r = await api('POST', '/api/skill-wizard/create', { dest: SW.dest, name: SW.name, content: SW.draft.content, retry });
   } catch (e) {
     SWX.busy = null;
+    if (SW !== w) return;
     // A refusal (an HTTP status) is final for these bytes; a lost response may have written them.
     if (e.status) SW.createSent = false;
     SW.error = e.status ? e.message : `${e.message} — the skill may have been created. Retry checks.`;
@@ -448,6 +470,7 @@ async function swCreate() {
     return;
   }
   SWX.busy = null;
+  if (SW !== w) return;
   const done = { ...SW };
   SW = null; swClear();
   // The new file in the editor (opening it clears notices, so the toast follows);

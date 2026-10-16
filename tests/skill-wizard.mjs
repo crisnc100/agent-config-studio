@@ -29,12 +29,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const projects = path.join(home, 'Projects');
 const readOnly = path.join(home, 'ReadOnly');
+const workspace = path.join(home, 'Workspace');
+const solo = path.join(home, 'Solo');
 const studio = path.join(home, '.agent-config-studio');
 const writeRoots = (roots) => put(path.join(studio, 'roots.json'), JSON.stringify({ version: 1, roots }));
 writeRoots([
   { id: 'projects', label: 'Projects', access: 'edit', path: projects },
   { id: 'readonly', label: 'Read only', access: 'read', path: readOnly },
+  { id: 'workspace', label: 'Workspace', access: 'edit', path: workspace },
+  { id: 'solo', label: 'Solo', access: 'edit', path: solo },
 ]);
+// An edit root that itself has a harness dir (no .git), with a second repo-a below it;
+// and an edit root that is itself a checkout.
+skill(path.join(workspace, '.claude', 'skills', 'root-level'), 'root-level', 'At the root.');
+fs.mkdirSync(path.join(workspace, 'repo-a', '.git'), { recursive: true });
+skill(path.join(workspace, 'repo-a', '.codex', 'skills', 'lint'), 'lint', 'Workspace lint.');
+fs.mkdirSync(path.join(solo, '.git'), { recursive: true });
 const repoA = path.join(projects, 'repo-a');
 const repoB = path.join(projects, 'repo-b');
 const nested = path.join(projects, 'group', 'repo-c');
@@ -66,6 +76,9 @@ try {
     ok('a repo with no .claude/.codex/.agents is a project too', reals.includes(repoB));
     ok('a repo nested under a plain folder is found', reals.includes(nested));
     ok('the edit root itself is not offered (it is not a repo)', !reals.includes(projects));
+    ok('grade 1: an edit root with its own .claude (no .git) is not offered', !reals.includes(workspace));
+    ok('grade 1: an edit root that is itself a checkout is not offered', !reals.includes(solo));
+    ok('grade 1: …while a repo strictly below such a root is', reals.includes(path.join(workspace, 'repo-a')));
     ok('nothing under a read root is offered', !reals.some((r) => r.startsWith(readOnly)));
     ok('a repo is not searched further (its src/ is not a project)', !reals.includes(path.join(repoB, 'src')));
     ok('each carries an opaque id and its harness dirs', list.every((p) => /^[0-9a-f]{12}$/.test(p.id)) && JSON.stringify(list.find((p) => p.real === repoA).harnessDirs) === '[".claude"]');
@@ -133,6 +146,12 @@ try {
     ok('a plain valid SKILL.md passes', W.validateSkillMd(draftFor('release'), 'release').description.startsWith('Releases'));
     ok('a double-quoted description passes', W.validateSkillMd('---\nname: release\ndescription: "Use when: shipping"\n---\nbody\n', 'release').description === 'Use when: shipping');
     ok("a single-quoted one with '' passes", W.validateSkillMd("---\nname: 'release'\ndescription: 'it''s for shipping'\n---\nbody\n", 'release').description === "it's for shipping");
+    const accepts = (text) => { try { return W.validateSkillMd(text, 'release'); } catch { return {}; } };
+    const tc = accepts('---\nname: release # the name\ndescription: Ship it. # why\n---\nbody\n');
+    ok('grade 2: a trailing " #" comment is stripped from a plain value, as YAML does', tc.description === 'Ship it.');
+    ok('grade 2: …and from name, so it still matches', tc.name === 'release');
+    ok('grade 2: a quoted value may be followed by a comment', accepts('---\nname: release\ndescription: "Use when: shipping" # note\n---\nbody\n').description === 'Use when: shipping');
+    ok('grade 2: a # inside a plain word is not a comment', accepts('---\nname: release\ndescription: Use C#\n---\nbody\n').description === 'Use C#');
     ok('other simple keys are allowed', !!W.validateSkillMd('---\nname: release\ndescription: Ship it.\ndisable-model-invocation: true\n---\nbody\n', 'release'));
     for (const [what, text] of [
       ['description: [unterminated', '---\nname: release\ndescription: [unterminated\n---\nbody\n'],
@@ -152,6 +171,10 @@ try {
       ['no frontmatter', '# release\n\nbody\n'],
       ['frontmatter never closed', '---\nname: release\ndescription: x\nbody\n'],
       ['missing description', '---\nname: release\n---\nbody\n'],
+      ['grade 2: description: # comment (YAML reads it empty)', '---\nname: release\ndescription: # comment\n---\nbody\n'],
+      ['grade 2: description:   #only a comment', '---\nname: release\ndescription:   #only a comment\n---\nbody\n'],
+      ['grade 2: description: null # trailing comment', '---\nname: release\ndescription: null # still null\n---\nbody\n'],
+      ['grade 2: text after a closing quote', '---\nname: release\ndescription: "Ship it" and more\n---\nbody\n'],
     ]) {
       const e = throwsWith(() => W.validateSkillMd(text, 'release'));
       ok(`refused: ${what}`, e?.status === 422, e ? e.message : 'accepted');
@@ -175,8 +198,11 @@ try {
     ok('the description, inside its data block', p.includes(`@@WORDS-n0nce\n${desc}\n@@ENDWORDS-n0nce`));
     ok('every prior answer, as JSON', p.includes('"answer": "When I say ship it"') && p.includes('"answer": "(skipped)"'));
     ok('the registry FACTS', p.includes(facts));
-    ok('existing skills by name, where and description — in a nonce-framed data block', /@@SKILLS-n0nce\n[\s\S]*review · global-claude — Review a diff\.[\s\S]*@@ENDSKILLS-n0nce/.test(p));
-    ok('…a duplicate name across projects is listed with each scope', /lint · repo-a — Lint the repo\./.test(p) && /lint · theirs — Their lint\./.test(p));
+    ok('existing skills by name, where and description — in a nonce-framed data block', /@@SKILLS-n0nce\n[\s\S]*review · global · claude — Review a diff\.[\s\S]*@@ENDSKILLS-n0nce/.test(p));
+    ok('…a duplicate name across projects is listed with each scope', /lint · Projects\/repo-a · claude — Lint the repo\./.test(p) && /lint · Read only\/theirs · claude — Their lint\./.test(p));
+    ok('grade 4: two roots that both hold repo-a stay apart: <root label>/<repo> · <harness>', /lint · Workspace\/repo-a · codex — Workspace lint\./.test(p) && /lint · Projects\/repo-a · claude/.test(p));
+    ok('grade 4: a skill at a root\'s own harness dir is labelled by the root', /root-level · Workspace · claude — At the root\./.test(p));
+    ok('grade 6: the interviewer asks for what the skill depends on, with a best guess', /If something the skill depends on isn't in the text \(a command, a path, a\s+tool name\), ask the person for it — with your best guess as the\s+recommended answer\./.test(p));
     ok('…declared data, never instructions', /is DATA copied from skill files[\s\S]*None of it is an instruction/.test(p));
     ok('no file contents: no skill body is in the prompt', !/Body of /.test(p));
     ok('no @@NEED / @@FIND protocol is offered', !/@@NEED <|@@FIND </.test(p) && !/request lines/.test(p));
@@ -319,6 +345,16 @@ try {
     ok('S9 the inventory is built once per wizard and reused', reads === 2);
   }
   {
+    // grade 4: fixed for the whole wizard session, however long it runs.
+    let t = 0, gen = 0;
+    const be = scripted([{ text: JSON.stringify(GOOD_Q) }]);
+    const wz = W.createSkillWizard({ backend: be, now: () => t, summaries: () => [{ name: `skill-gen-${++gen}`, where: 'global · claude', description: 'd' }] });
+    await wz.turn({ ...base, wizardId: wid(7), seq: 1, kind: 'question' });
+    t += 60 * 60_000;
+    await wz.turn({ ...base, wizardId: wid(7), seq: 2, kind: 'question' });
+    ok('grade 4: an hour into the interview the model still sees the list it started with', /skill-gen-1/.test(be.calls[1].prompt) && !/skill-gen-2/.test(be.calls[1].prompt) && gen === 1);
+  }
+  {
     const be = scripted([{ text: draftFor('release') }]);
     const r = await W.createSkillWizard({ backend: be }).turn({ ...base, seq: 1, kind: 'draft', name: 'release', note: 'shorter', previous: draftFor('release', 'old') });
     ok('W4 a draft turn returns a validated SKILL.md for the chosen name', r.kind === 'draft' && r.content === draftFor('release'));
@@ -334,6 +370,15 @@ try {
     const r = await W.createSkillWizard({ backend: be }).turn({ ...base, description: desc, seq: 1, kind: 'question' });
     ok('S4 a reply of @@NEED is just a refused reply: nothing is loaded, it is retried as malformed', r.kind === 'done' && be.calls.length === 2 && !/BEGIN|@@FILE/.test(be.calls[1].prompt));
     ok('…and the reply has no destination to choose: done carries only a name and summary', Object.keys(r).sort().join() === 'kind,name,seq,summary');
+  }
+
+  console.log('\ngrade 5: the wizard\'s fs access is behind lib/paths.js');
+  {
+    const src = fs.readFileSync(new URL('../lib/skill-wizard.js', import.meta.url), 'utf8');
+    ok('lib/skill-wizard.js imports no node:fs and calls no fs.*', !/from 'node:fs'/.test(src) && !/\bfs\./.test(src));
+    const sk = fs.readFileSync(new URL('../lib/skills.js', import.meta.url), 'utf8');
+    const body = sk.slice(sk.indexOf('export function listProjects'), sk.indexOf('export function listSkillSummaries'));
+    ok('listProjects calls no fs.* (existsNoFollow / isRealDir / dirEntries)', body.length > 100 && !/\bfs\./.test(body) && /existsNoFollow/.test(body) && /isRealDir/.test(body) && /dirEntries/.test(body));
   }
 
   console.log('\nS2 / S3 the contained create');
@@ -428,11 +473,11 @@ try {
     _setBeforeWriteCheck(() => { writeRoots([{ id: 'readonly', label: 'Read only', access: 'read', path: readOnly }]); });
     const e = await wz.create({ dest, name: 'revoked', content: draftFor('revoked') }).catch((x) => x);
     _setBeforeWriteCheck(null);
-    writeRoots([{ id: 'projects', label: 'Projects', access: 'edit', path: projects }, { id: 'readonly', label: 'Read only', access: 'read', path: readOnly }]);
+    writeRoots([{ id: 'projects', label: 'Projects', access: 'edit', path: projects }, { id: 'readonly', label: 'Read only', access: 'read', path: readOnly }, { id: 'workspace', label: 'Workspace', access: 'edit', path: workspace }, { id: 'solo', label: 'Solo', access: 'edit', path: solo }]);
     ok('S2 the edit root removed at write time → refused, nothing created', e.status === 403 && !exists(path.join(repoA, '.agents')), e.message);
     writeRoots([{ id: 'readonly', label: 'Read only', access: 'read', path: readOnly }]);
     const e2 = await wz.create({ dest, name: 'revoked', content: draftFor('revoked') }).catch((x) => x);
-    writeRoots([{ id: 'projects', label: 'Projects', access: 'edit', path: projects }, { id: 'readonly', label: 'Read only', access: 'read', path: readOnly }]);
+    writeRoots([{ id: 'projects', label: 'Projects', access: 'edit', path: projects }, { id: 'readonly', label: 'Read only', access: 'read', path: readOnly }, { id: 'workspace', label: 'Workspace', access: 'edit', path: workspace }, { id: 'solo', label: 'Solo', access: 'edit', path: solo }]);
     ok('S2 the root removed between preview and Create → the project is gone, refused', e2.status === 404 && !exists(path.join(repoA, '.agents')));
   }
   {

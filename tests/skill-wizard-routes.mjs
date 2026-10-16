@@ -129,7 +129,7 @@ try {
     const argv = calls()[0] || [];
     ok('the CLI ran tool-less (--tools "") with no session resumed', argv[argv.indexOf('--tools') + 1] === '' && !argv.includes('--resume'));
     const prompt = readFake('prompt.txt');
-    ok('the prompt carries the interviewer rules, the description and the skills', /Ask exactly ONE question/.test(prompt) && prompt.includes(desc) && /ship · global-claude — Ship it/.test(prompt));
+    ok('the prompt carries the interviewer rules, the description and the skills', /Ask exactly ONE question/.test(prompt) && prompt.includes(desc) && /ship · global · claude — Ship it/.test(prompt));
     ok('…and no file contents: no skill body, nothing from ~/.ssh', !/SHIP-BODY-MARKER|LINT-BODY-MARKER/.test(prompt));
     ok('S4 the injected text changed nothing: no file was loaded, nothing written', !exists(path.join(home, '.ssh')) && calls().length === 1);
   }

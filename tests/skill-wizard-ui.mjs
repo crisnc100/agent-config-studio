@@ -241,6 +241,54 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
   ok('…Retry sends retry: true, and "already created" opens the file', p.st.creates.at(-1).retry === true && /Already created/.test(p.text(p.$('notice-slot'))) && p.eval('S.view') === 'entry');
 }
 
+{
+  // grade 3: Create in flight locks the wizard; late replies after teardown are dropped.
+  const p = await boot({ hash: '#skills/new' });
+  p.input(C(p).querySelector('.sw-describe'), 'Lock it');
+  p.st.next.push((b) => ({ seq: b.seq, kind: 'done', name: 'lock-it', summary: null }));
+  await click(btn(p, 'Start the interview'));
+  await settle(30);
+  await click(btn(p, 'Draft the skill'));
+  const hold = deferred();
+  p.st.create.push(() => hold.promise);
+  await click(btn(p, 'Create'));
+  const turnsBefore = p.st.turns.length;
+  ok('grade 3: while Create runs, Back, Regenerate, Create and Back to Skills are disabled',
+     ['Back', 'Regenerate', 'Creating…', 'Back to Skills'].every((t) => btn(p, t)?.disabled === true), ['Back', 'Regenerate', 'Creating…', 'Back to Skills'].map((t) => `${t}:${btn(p, t)?.disabled}`).join(' '));
+  ok('…the source is read-only, the note disabled, and the stepper not clickable',
+     C(p).querySelector('.sw-source').readOnly === true && C(p).querySelector('.sw-note').disabled === true && C(p).querySelectorAll('.sw-step-btn').length === 0);
+  p.eval("swDraft({ note: 'again' }); swGo('where'); swAsk(); swCreate();");
+  await settle(20);
+  ok('…and no wizard action runs: no turn, no step change, no second Create', p.st.turns.length === turnsBefore && step(p) === 'review' && p.st.creates.length === 1);
+  hold.resolve({ created: true, path: '/h/.claude/skills/lock-it/SKILL.md', display: '~/.claude/skills/lock-it/SKILL.md', sha: 'abc', warnings: [] });
+  await settle(30);
+  ok('…Create then finishes into the editor', p.eval('S.view') === 'entry' && p.eval('SW') === null);
+}
+{
+  // grade 3: a reply landing after the wizard was torn down never touches it.
+  const p = await boot({ hash: '#skills/new' });
+  p.input(C(p).querySelector('.sw-describe'), 'Tear down');
+  p.st.next.push((b) => ({ seq: b.seq, kind: 'done', name: 'tear-down', summary: null }));
+  await click(btn(p, 'Start the interview'));
+  await settle(30);
+  const late = deferred();
+  p.st.next.push(() => late.promise);
+  await click(btn(p, 'Draft the skill'));
+  p.eval('SW = null');
+  late.resolve({ seq: 1, kind: 'draft', name: 'tear-down', content: DRAFT('tear-down') });
+  await settle(30);
+  ok('grade 3: a draft reply after SW is gone is dropped without an error', p.errors.length === 0 && p.eval('SW') === null, p.errors.join(' | ').slice(0, 300));
+  const late2 = deferred();
+  p.eval("SW = swFresh(); SW.step = 'interview'; SW.description = 'x';");
+  p.st.next.push(() => late2.promise);
+  p.eval('swAsk()');
+  await settle(5);
+  p.eval('SW = swFresh()');
+  late2.resolve({ seq: 1, ...Q(9) });
+  await settle(20);
+  ok('grade 3: …and a question reply for a replaced wizard never lands in the new one', p.eval('SW.current') === null && p.errors.length === 0);
+}
+
 for (const p of pages) {
   if (p.errors.length) ok('no page errors', false, p.errors.join(' | ').slice(0, 400));
   p.done();
