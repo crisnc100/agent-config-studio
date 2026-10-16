@@ -212,6 +212,22 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
 }
 
 {
+  // A refused reply is behind a disclosure, as plain text.
+  const p = await boot({ hash: '#skills/new' });
+  p.input(C(p).querySelector('.sw-describe'), 'Do a thing');
+  const reply = '{"question": "Say "hi" <img src=x onerror=alert(1)> **bold**';
+  p.st.next.push(() => { throw { status: 502, body: { error: "The AI's reply was refused twice (it is not valid JSON). Retry, or draft the skill now.", refused: true, reply, replyCut: true } }; });
+  await click(btn(p, 'Start the interview'));
+  const box = C(p).querySelector('.sw-error');
+  const d = box?.querySelector('details.sw-reply');
+  ok('a refused turn offers "Show the AI\'s reply"', !!d && /Show the AI's reply/.test(p.text(d.querySelector('summary'))));
+  ok('…the reply as plain text, never markup', d?.querySelector('pre.sw-reply-text')?.textContent === reply && !box.querySelector('img') && !box.querySelector('strong'));
+  ok('…and says it was cut', /Cut at 4 KB/.test(p.text(d)));
+  await click(btn(p, 'Retry'));
+  ok('…gone once the error is', !C(p).querySelector('details.sw-reply') && cards(p).length === 1);
+}
+
+{
   // Errors, cancel and Retry on a turn; lost Create responses.
   const p = await boot({ hash: '#skills/new' });
   p.input(C(p).querySelector('.sw-describe'), 'Do a thing');

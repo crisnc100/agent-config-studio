@@ -5,14 +5,21 @@
  * Per call it reads `mode.json` beside it, appends its argv to `calls.jsonl`,
  * saves the prompt to `prompt-<n>.txt` (n counts from 1) and `prompt.txt`,
  * and appends to `started.log`. Its init reports the tools argv asked for:
- * none for `--tools ""`, as the real CLI does.
+ * none for `--tools ""`, as the real CLI does — and with `--json-schema`,
+ * exactly [StructuredOutput], the reply then coming back as the result
+ * event's `structured_output` (probed 2026-10-16). In that mode a text reply
+ * that is a JSON object becomes `{ reply: <it> }`, a draft `{ skill_md: <it> }`;
+ * other text gives no structured_output.
  *
  *   script  the interview, played from the prompt: a draft turn ("TASK:
  *           DRAFT") answers `draft` with {{name}} filled in; otherwise the
  *           number of questions already asked picks `questions[n]`, and past
  *           the end a done reply naming `name`
  *   seq     `replies[n - 1]` for call n (the last one repeats): each
- *           { text, code, isError, hang, tools, slow }
+ *           { text, structured, initTools, mcp, code, isError, hang, tools, slow }
+ *
+ * `mode.noSchema` plays a claude without --json-schema: given the flag it
+ * exits 1 before init, as commander does.
  *   tools   init claims [Read, Bash] whatever argv said, then lingers
  *   hang    init, then nothing (writes `pid`)
  */
@@ -34,6 +41,9 @@ fs.appendFileSync(path.join(dir, 'started.log'), 'started\\n');
 const out = (ev) => process.stdout.write(JSON.stringify(ev) + '\\n');
 const exit = (code) => process.stdout.write('', () => process.exit(code));
 const ti = a.indexOf('--tools');
+const si = a.indexOf('--json-schema');
+const schema = si !== -1 ? a[si + 1] : null;
+if (schema !== null && mode.noSchema) { process.stderr.write("error: unknown option '--json-schema'\\n"); process.exit(1); }
 let prompt = '';
 process.stdin.on('data', (d) => { prompt += d; });
 process.stdin.on('end', () => {
@@ -56,13 +66,21 @@ process.stdin.on('end', () => {
   } else if (mode.kind === 'tools' || mode.kind === 'hang') {
     step = { [mode.kind]: true };
   }
-  const tools = step.tools ? ['Read', 'Bash'] : (ti !== -1 && a[ti + 1] === '' ? [] : ['Read']);
-  out({ type: 'system', subtype: 'init', session_id: 's1', tools, mcp_servers: [], permissionMode: 'default' });
+  const tools = step.initTools || (step.tools ? ['Read', 'Bash'] : schema !== null ? ['StructuredOutput'] : (ti !== -1 && a[ti + 1] === '' ? [] : ['Read']));
+  out({ type: 'system', subtype: 'init', session_id: 's1', tools, mcp_servers: step.mcp || [], permissionMode: 'default' });
   if (step.tools || step.hang) { setInterval(() => {}, 1000); return; }
-  const text = String(step.text ?? '');
+  let text = String(step.text ?? '');
+  let structured;
+  if (schema !== null) {
+    if (step.structured !== undefined) structured = step.structured;
+    else if (schema.includes('skill_md')) structured = { skill_md: text };
+    else { try { const o = JSON.parse(text); if (o && typeof o === 'object' && !Array.isArray(o)) structured = { reply: o }; } catch {} }
+    if (structured !== undefined) text = JSON.stringify(structured);
+  }
   const go = () => {
-    for (let i = 0; i < text.length; i += 40) out({ type: 'stream_event', session_id: 's1', event: { type: 'content_block_delta', delta: { text: text.slice(i, i + 40) } } });
-    out({ type: 'result', is_error: step.isError === true, result: text, session_id: 's1' });
+    const delta = (piece) => (schema !== null ? { type: 'input_json_delta', partial_json: piece } : { text: piece });
+    for (let i = 0; i < text.length; i += 40) out({ type: 'stream_event', session_id: 's1', event: { type: 'content_block_delta', delta: delta(text.slice(i, i + 40)) } });
+    out({ type: 'result', is_error: step.isError === true, result: text, ...(structured !== undefined ? { structured_output: structured } : {}), session_id: 's1' });
     exit(step.code ?? 0);
   };
   if (step.slow) setTimeout(go, step.slow); else go();

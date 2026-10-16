@@ -22,8 +22,8 @@ const swFresh = () => ({
   draft: null, note: '', error: null, createSent: false,
 });
 let SW = null;
-/** Not persisted: what is in flight, and the server's targets. */
-const SWX = { busy: null, info: null, preview: null, editing: null };
+/** Not persisted: what is in flight, the server's targets, and the refused reply behind the error on screen. */
+const SWX = { busy: null, info: null, preview: null, editing: null, reply: null };
 
 function swLoad() {
   try { const raw = sessionStorage.getItem(SW_KEY); if (raw) { const s = JSON.parse(raw); if (s && s.id && s.step) return { ...swFresh(), ...s, error: null }; } } catch {}
@@ -119,6 +119,14 @@ function swError(box, retry) {
   const n = el('div', 'notice error sw-error');
   n.setAttribute('role', 'alert');
   n.appendChild(el('div', null, SW.error));
+  // The refused reply, as plain text: never parsed, never rendered as markup.
+  if (SWX.reply && SWX.reply.error === SW.error) {
+    const d = el('details', 'sw-reply');
+    d.appendChild(el('summary', null, "Show the AI's reply"));
+    d.appendChild(el('pre', 'sw-reply-text', SWX.reply.text));
+    if (SWX.reply.cut) d.appendChild(el('div', 'scope-note', 'Cut at 4 KB.'));
+    n.appendChild(d);
+  }
   if (retry) {
     const r = el('button', 'btn sw-retry', 'Retry');
     r.onclick = retry;
@@ -159,6 +167,12 @@ function swDescribe(box) {
   box.appendChild(swBar(next));
 }
 
+/** A refused turn's reply rides with its error: shown only while that error is. */
+function swKeepReply(e) {
+  const text = e.body?.reply;
+  SWX.reply = typeof text === 'string' && text ? { error: SW.error, text, cut: e.body.replyCut === true } : null;
+}
+
 /* ── 2. interview ────────────────────────────────────────────────────── */
 const swSent = () => SW.answers.map((a) => ({ question: a.question, answer: a.answer }));
 
@@ -174,6 +188,7 @@ async function swAsk() {
     if (!swLive(w, seq)) return;
     SWX.busy = null;
     SW.error = e.status === 499 ? 'Stopped. Retry to ask again.' : e.message;
+    swKeepReply(e);
     swSave(); paintWizard();
     return;
   }
@@ -399,6 +414,7 @@ async function swDraft({ note = null } = {}) {
     if (!swLive(w, seq)) return;
     SWX.busy = null;
     SW.error = e.status === 499 ? 'Stopped. Regenerate to try again.' : e.message;
+    swKeepReply(e);
     swSave(); paintWizard();
     return;
   }

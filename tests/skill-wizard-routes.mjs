@@ -186,6 +186,22 @@ try {
     ok('W4 a malformed draft is refused (Regenerate)', bad.status === 502 && /refused twice/.test(bad.body.error));
   }
 
+  console.log('\nstructured turns through the server');
+  {
+    const tricky = { question: 'Keep "house style" and {placeholders} as they are?', recommended: 'Yes: "untouched" }' };
+    setMode({ kind: 'seq', replies: [{ text: JSON.stringify(tricky) }] });
+    const r = await post('/api/skill-wizard/turn', turn({ seq: 20 }));
+    const argv = calls()[0] || [];
+    ok('the turn spawns with --json-schema, tool-less builtins, strict MCP', argv.includes('--json-schema') && argv[argv.indexOf('--tools') + 1] === '' && argv.includes('--strict-mcp-config'));
+    ok('…and quotes and braces inside the strings come through', r.status === 200 && r.body.question === tricky.question && r.body.recommended === tricky.recommended, r.text.slice(0, 200));
+    setMode({ kind: 'seq', replies: [{ text: JSON.stringify(tricky), initTools: [] }] });
+    const none = await post('/api/skill-wizard/turn', turn({ seq: 21 }));
+    ok('an init with tools [] on a structured turn → refused, no question', none.status === 502 && none.body.kind === undefined && /did not start contained/.test(none.body.error));
+    setMode({ kind: 'seq', replies: [{ text: 'Sorry, here it is: {"question": "x?"' }] });
+    const twice = await post('/api/skill-wizard/turn', turn({ seq: 22 }));
+    ok('refused twice → the response carries the raw reply as text', twice.status === 502 && twice.body.refused === true && twice.body.reply === 'Sorry, here it is: {"question": "x?"' && twice.body.replyCut === false, twice.text.slice(0, 200));
+  }
+
   console.log('\nW5 / S1 / S10 Create');
   {
     const before = calls().length;
