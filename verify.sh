@@ -72,6 +72,8 @@ node tests/model-guide.mjs
 node tests/model-guide-routes.mjs
 # The audit: rules, fixes, the class policy and the writer under faults (in-process), then through the server (temp HOME).
 node tests/audit.mjs
+# Linked git worktrees: real fixtures in a temp HOME, walked last, cut first, their cards kept apart.
+node tests/audit-worktrees.mjs
 node tests/audit-routes.mjs
 # Assist finds its own files: manifest, contained loads, framing, facts, proposals (in-process), then the loop with a stubbed backend.
 node tests/assist-files.mjs
