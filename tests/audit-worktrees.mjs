@@ -189,6 +189,41 @@ try {
     ok('C7 an identical worktree copy joins the real file\'s card, which stays the one outside the worktree',
       card && !card.worktree && card.copies.some((c) => c.display === '~/Cap/aaa-wt/feature/a/CLAUDE.md') && !full.r.files.some((f) => f.display === '~/Cap/aaa-wt/feature/a/CLAUDE.md'), JSON.stringify(full.r.files.map((f) => [f.display, f.copies.length])));
   }
+
+  console.log('\naudit worktrees: an independent repository inside a linked worktree is its own');
+  {
+    const N = path.join(home, 'Nest');
+    const main = repo(path.join(home, 'nest-main'), { 'CLAUDE.md': 'Use claude-opus-5-5 in nest.\n' });
+    const feat = path.join(N, 'feat');
+    git(main, 'worktree', 'add', '-q', feat);
+    repo(path.join(feat, 'vendor', 'lib'), { 'CLAUDE.md': 'Use claude-opus-5-5 in vendored lib.\n' });
+    // A gitfile to a different common dir: a worktree of a bare repository, inside the linked worktree.
+    const bare = path.join(home, 'nest-bare.git');
+    git(home, 'clone', '-q', '--bare', main, bare);
+    git(bare, 'worktree', 'add', '-q', path.join(feat, 'other'));
+    put(path.join(feat, 'other', 'CLAUDE.md'), 'Use claude-opus-5-5 in other.\n');
+    roots(['Nest', N]);
+    const r = await A.createAudit({ home, hist: quiet }).run();
+    const of = (d) => r.files.find((f) => f.display === d);
+    ok('the linked worktree\'s own file is a worktree card', of('~/Nest/feat/CLAUDE.md')?.worktree?.label === '~/nest-main');
+    ok('an independent repository (its own .git directory) inside it is not tagged as the worktree\'s', of('~/Nest/feat/vendor/lib/CLAUDE.md') && !of('~/Nest/feat/vendor/lib/CLAUDE.md').worktree,
+      JSON.stringify(r.files.map((f) => [f.display, f.worktree?.label ?? null])));
+    ok('…nor is a checkout whose gitfile leads to a different common dir', of('~/Nest/feat/other/CLAUDE.md') && !of('~/Nest/feat/other/CLAUDE.md').worktree);
+    ok('…and the worktree section counts only the worktree\'s own file', JSON.stringify(r.worktrees.map((w) => [w.label, w.files])) === JSON.stringify([['~/nest-main', 1]]), JSON.stringify(r.worktrees));
+
+    // The grader's topology: two worktrees, an independent repository inside the second, a cap of 1.
+    const C1 = path.join(home, 'Cap1');
+    const m2 = repo(path.join(home, 'cap1-main'), { 'CLAUDE.md': 'Use claude-opus-5-5 in cap1.\n' });
+    git(m2, 'worktree', 'add', '-q', path.join(C1, 'a-wt'));
+    git(m2, 'worktree', 'add', '-q', path.join(C1, 'b-wt'));
+    repo(path.join(C1, 'b-wt', 'inner'), { 'CLAUDE.md': 'Use claude-opus-5-5 inside.\n' });
+    roots(['Cap1', C1]);
+    const a = A.createAudit({ home, hist: quiet, limits: { ...A.AUDIT_LIMITS, files: 1 } });
+    const c = await a.run();
+    ok('cap 1: the independent repository inside a worktree is read before any worktree file',
+      JSON.stringify(a.scannedFiles()) === JSON.stringify([fs.realpathSync(path.join(C1, 'b-wt', 'inner', 'CLAUDE.md'))]), JSON.stringify(a.scannedFiles()));
+    ok('…and only the two worktree files are counted as skipped', c.partialReasons.includes('2 files in linked worktrees were skipped: file cap'), JSON.stringify(c.partialReasons));
+  }
 } finally {
   fs.rmSync(home, { recursive: true, force: true });
   assertRealHomesUnchanged(realBefore, ok);
