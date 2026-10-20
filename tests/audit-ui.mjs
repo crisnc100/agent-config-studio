@@ -87,12 +87,12 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
   ok('the Audit view opens from #audit, with its sidebar item', p.eval('S.view') === 'audit' && !!p.$('btn-audit'));
   ok('one card per file; vendor is hidden by default', cards(p).length === 4 && !card(p, 'e'.repeat(16)), cards(p).map((c) => c.dataset.ref[0]).join());
   const a = card(p, 'a'.repeat(16));
-  ok('a card shows the display path, its class and its findings', /~\/\.claude\/skills\/alpha\/SKILL\.md/.test(txt(a)) && txt(a.querySelector('.audit-class')) === 'yours' && a.querySelectorAll('.audit-finding').length === 2);
+  ok('a card shows the display path, its class and its findings', /~\/\.claude\/skills\/alpha\/SKILL\.md/.test(txt(a)) && txt(a.querySelector('.audit-class')) === 'yours' && a.querySelectorAll('.audit-finding').length === 1);
   ok('…each finding with its rule, line, match and message', /Model flag/.test(txt(a)) && /line 3/.test(txt(a)) && /old-id-1/.test(txt(a)) && /message 1111/.test(txt(a)));
   ok('…the fix it would make', /Fix: "\$\(model-id sol \|\| echo MODEL-ID-UNRESOLVED-sol\)"/.test(txt(a)));
   ok('…and its identical copies, saying a fix changes this file only', /Also in 1 identical copy: ~\/Projects\/app\/\.claude\/skills\/alpha\/SKILL\.md\. A fix changes this file only\./.test(txt(a)));
   ok('Fix counts only the fixable findings', !!button(a, 'Fix 1'));
-  ok('the summary says what is hidden', /5 findings · 2 fixable · 1 in vendor files, hidden/.test(txt(p.$('content').querySelector('.audit-summary'))), txt(p.$('content').querySelector('.audit-summary')));
+  ok('the summary says what is hidden', /5 findings · 2 fixable · 1 in vendor files, hidden · 1 info, hidden/.test(txt(p.$('content').querySelector('.audit-summary'))), txt(p.$('content').querySelector('.audit-summary')));
   const plugin = card(p, 'd'.repeat(16));
   ok('plugin findings show no Fix button, and say why', !plugin.querySelector('.audit-fix') && /Findings only: this file belongs to a plugin/.test(txt(plugin)));
   const ro = card(p, 'f'.repeat(16));
@@ -102,6 +102,10 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
   await settle(5);
   ok('Show vendor brings the vendor card, findings only', !!card(p, 'e'.repeat(16)) && !card(p, 'e'.repeat(16)).querySelector('.audit-fix') && /ships with the CLI/.test(txt(card(p, 'e'.repeat(16)))));
   ok('…and the choice is remembered', p.store.get('acs.audit.vendor') === '1');
+  const info = p.$('content').querySelector('.audit-show-info input');
+  info.checked = true; info.onchange();
+  await settle(5);
+  ok('Show info brings card a\'s info note back: 2 findings', card(p, 'a'.repeat(16)).querySelectorAll('.audit-finding').length === 2);
 }
 
 // ── Fix: the diff first, a write only on Accept ─────────────────────────────
@@ -157,10 +161,15 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
   button(row, 'Dismiss').click();
   await settle(10);
   ok('Dismiss posts the finding id', posts(p, '/api/audit/dismiss').length === 1 && posts(p, '/api/audit/dismiss')[0].body.id === '1'.repeat(16));
-  ok('…hides it, and the counts follow', !card(p, 'a'.repeat(16)).querySelectorAll('.audit-finding').some((r) => r.dataset.id === '1'.repeat(16)) && /4 findings · 1 fixable/.test(txt(p.$('content').querySelector('.audit-summary'))));
-  ok('…and Fix goes with it', !card(p, 'a'.repeat(16)).querySelector('.audit-fix'));
+  ok('…hides it, and the counts follow', !card(p, 'a'.repeat(16))?.querySelectorAll('.audit-finding').some((r) => r.dataset.id === '1'.repeat(16)) && /4 findings · 1 fixable/.test(txt(p.$('content').querySelector('.audit-summary'))));
+  ok('…and Fix goes with it', !card(p, 'a'.repeat(16))?.querySelector('.audit-fix'));
+  const showInfo = p.$('content').querySelector('.audit-show-info input');
+  showInfo.checked = true; showInfo.onchange();
+  await settle(5);
+  const back1 = card(p, 'a'.repeat(16));
+  ok('…with Show info, card a is back with exactly its info finding: no dismissed 1111, no Fix', back1 && JSON.stringify(back1.querySelectorAll('.audit-finding').map((r) => r.dataset.id)) === JSON.stringify(['2'.repeat(16)]) && !back1.querySelector('.audit-fix'));
   const again = await boot(routes);
-  ok('after a reload it is still dismissed', !card(again, 'a'.repeat(16)).querySelectorAll('.audit-finding').some((r) => r.dataset.id === '1'.repeat(16)));
+  ok('after a reload it is still dismissed', !card(again, 'a'.repeat(16))?.querySelectorAll('.audit-finding').some((r) => r.dataset.id === '1'.repeat(16)));
   const show = again.$('content').querySelector('.audit-show-dismissed input');
   show.checked = true; show.onchange();
   await settle(5);
@@ -252,6 +261,145 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
   q.eval("viewById('home').open()");
   await settle(60);
   ok('…nor does a Dismiss', q.eval('S.view') === 'home' && !q.$('content').querySelector('.audit'));
+}
+
+// ── tuning: info hidden, name notes folded, worktrees collapsed (C3, C4, C8) ─
+{
+  const R = 'r'.repeat(16);
+  const wt = { repo: R, label: '~/Projects/app' };
+  const name = (id, match, over = {}) => finding(id, { rule: 'D1', severity: 'info', match, fixable: false, replacement: undefined, name: true, message: `"${match}" names a model version.`, ...over });
+  const tuned = () => auditState({ files: [
+    file('n'.repeat(16), '~/.claude/skills/second-opinion/SKILL.md', 'user', [
+      finding('a1'.repeat(8)),
+      finding('a2'.repeat(8), { rule: 'D1', severity: 'info', match: 'claude-opus-5-5', replacement: 'opus' }),
+      name('a3'.repeat(8), 'Opus 5'), name('a4'.repeat(8), 'GPT-6', { line: 7 }), name('a5'.repeat(8), 'Grok 4', { line: 9 }),
+      name('a6'.repeat(8), 'Grok 4.7', { fixable: true, replacement: 'grok' }),
+    ]),
+    file('w'.repeat(16), '~/Projects/app-wt/one/CLAUDE.md', 'user', [finding('b1'.repeat(8))], { kind: 'instruction', skill: undefined, worktree: wt }),
+    file('x'.repeat(16), '~/Projects/app-wt/two/CLAUDE.md', 'user', [finding('b2'.repeat(8), { severity: 'info', fixable: false })], { kind: 'instruction', skill: undefined, worktree: wt }),
+    file('y'.repeat(16), '~/Projects/app/CLAUDE.md', 'user', [finding('b3'.repeat(8))], { kind: 'instruction', skill: undefined }),
+  ] });
+  const routesOf = (st) => auditRoutes(st, { 'GET /api/audit': () => ({ ...st.result(), worktrees: [{ ...wt, files: 3 }] }) });
+  const summary = (p) => txt(p.$('content').querySelector('.audit-summary'));
+  const infoBox = (p) => p.$('content').querySelector('.audit-show-info');
+  const rowIds = (c) => c.querySelectorAll('.audit-finding').map((r) => r.dataset.id[0] + r.dataset.id[1]);
+
+  const st = tuned();
+  const p = await boot(routesOf(st));
+  const n = card(p, 'n'.repeat(16));
+  ok('C4 info is hidden by default, behind "Show info (N)" counting every info finding', txt(infoBox(p)) === 'Show info (6)' && infoBox(p).querySelector('input').checked === false, txt(infoBox(p)));
+  ok('C4 …the card shows only its warn finding', JSON.stringify(rowIds(n)) === '["a1"]' && !n.querySelector('.audit-names'), JSON.stringify(rowIds(n)));
+  ok('C4 the summary keeps today\'s counts and says the info is hidden', /9 findings · 5 fixable · 6 info, hidden/.test(summary(p)), summary(p));
+  ok('C4 hidden info is never part of a Fix selection', !!button(n, 'Fix 1'));
+  button(n, 'Fix 1').click();
+  await settle(10);
+  ok('C4 …Fix proposes the visible fixable finding only', JSON.stringify(posts(p, '/api/audit/propose')[0]?.body.findingIds) === JSON.stringify(['a1'.repeat(8)]));
+  button(card(p, 'n'.repeat(16)), 'Cancel').click();
+  await settle(10);
+
+  const det = p.$('content').querySelector('.audit-worktrees');
+  ok('C8 worktree cards sit in one collapsed per-repository section, not in the main list',
+    det && det.dataset.repo === R && det.open === false && cards(p).filter((c) => !det.contains(c)).every((c) => !['w', 'x'].includes(c.dataset.ref[0])) && det.querySelectorAll('.audit-file').length === 1);
+  ok('C8 …titled with the repository, its worktree files and their findings', txt(det.querySelector('summary')) === 'Worktrees of ~/Projects/app (3 files, 1 finding)', txt(det.querySelector('summary')));
+  ok('C8 the main checkout\'s card stays in the main list', !!card(p, 'y'.repeat(16)) && !det.contains(card(p, 'y'.repeat(16))));
+  det.open = true; det.ontoggle();
+  button(card(p, 'w'.repeat(16)), 'Fix 1').click();
+  await settle(10);
+  const wProp = posts(p, '/api/audit/propose').at(-1);
+  ok('C8 Fix on a worktree card proposes that file and its own findings', wProp.body.fileRef === 'w'.repeat(16) && JSON.stringify(wProp.body.findingIds) === JSON.stringify(['b1'.repeat(8)]));
+  ok('C8 …and the section stays open around the proposal', p.$('content').querySelector('.audit-worktrees').open === true && !!card(p, 'w'.repeat(16)).querySelector('.audit-proposal'));
+  button(card(p, 'w'.repeat(16)), 'Cancel').click();
+  await settle(10);
+  const wRow = card(p, 'w'.repeat(16)).querySelectorAll('.audit-finding')[0];
+  button(wRow, 'Dismiss').click();
+  await settle(10);
+  ok('C8 Dismiss on a worktree card posts its own id', posts(p, '/api/audit/dismiss').at(-1).body.id === 'b1'.repeat(8));
+  ok('C8 …and the section goes once nothing in it is left to show', !p.$('content').querySelector('.audit-worktrees') && /8 findings · 4 fixable · 6 info, hidden/.test(summary(p)), summary(p));
+
+  const box = infoBox(p).querySelector('input');
+  box.checked = true; box.onchange();
+  await settle(5);
+  const n2 = card(p, 'n'.repeat(16));
+  ok('C4 Show info is remembered for this viewer', p.store.get('acs.audit.info') === '1');
+  ok('C4 …and shows the info findings; fixable ones as their own rows', JSON.stringify(rowIds(n2).slice(0, 3)) === '["a1","a2","a6"]', JSON.stringify(rowIds(n2)));
+  const names = n2.querySelector('.audit-names');
+  ok('C3 the never-fixable name notes are one row: "3 model names written out"', names && txt(names.querySelector('summary')) === '3 model names written out' && names.open === false, names && txt(names));
+  ok('C3 …expanding to each line', JSON.stringify(names.querySelectorAll('.audit-finding').map((r) => r.dataset.id.slice(0, 2))) === '["a3","a4","a5"]' && /line 7/.test(txt(names)) && /line 9/.test(txt(names)));
+  ok('C3 a fixable name and a warn are never folded', !names.querySelectorAll('.audit-finding').some((r) => ['a6', 'a1'].includes(r.dataset.id.slice(0, 2))));
+  ok('C4 with info shown, Fix includes the fixable info', !!button(n2, 'Fix 3'));
+  ok('C4 …and the summary no longer says info is hidden', /8 findings · 4 fixable$/.test(summary(p)), summary(p));
+  ok('C8 the info-only worktree card shows in its section now', p.$('content').querySelector('.audit-worktrees')?.querySelectorAll('.audit-file').length === 1 && !!card(p, 'x'.repeat(16)));
+
+  // Counts follow dismiss and undismiss, info shown or hidden.
+  button(card(p, 'n'.repeat(16)).querySelectorAll('.audit-finding').find((r) => r.dataset.id.startsWith('a2')), 'Dismiss').click();
+  await settle(10);
+  ok('C4 dismissing an info finding: counts and "Show info (N)" follow', /7 findings · 3 fixable$/.test(summary(p)) && txt(infoBox(p)) === 'Show info (5)', `${summary(p)} | ${txt(infoBox(p))}`);
+  const hide = infoBox(p).querySelector('input');
+  hide.checked = false; hide.onchange();
+  await settle(5);
+  ok('C4 …hidden again, the summary counts the rest as hidden', /7 findings · 3 fixable · 5 info, hidden/.test(summary(p)), summary(p));
+  const sd = p.$('content').querySelector('.audit-show-dismissed input');
+  sd.checked = true; sd.onchange();
+  await settle(5);
+  ok('C4 a dismissed info finding stays hidden while info is hidden, even with Show dismissed', !card(p, 'n'.repeat(16)).querySelectorAll('.audit-finding').some((r) => r.dataset.id.startsWith('a2')));
+  const on = infoBox(p).querySelector('input');
+  on.checked = true; on.onchange();
+  await settle(5);
+  button(card(p, 'n'.repeat(16)).querySelectorAll('.audit-finding').find((r) => r.dataset.id.startsWith('a2')), 'Undismiss').click();
+  await settle(10);
+  ok('C4 undismiss puts the counts back', /8 findings · 4 fixable$/.test(summary(p)) && txt(infoBox(p)) === 'Show info (6)', `${summary(p)} | ${txt(infoBox(p))}`);
+
+  const again = await bootPage({ routes: routesOf(tuned()), hash: '#audit', carry: p.store });
+  await settle(30);
+  pages.push(again);
+  ok('C4 after a reload, the remembered Show info shows info at once', infoBox(again).querySelector('input').checked === true && rowIds(card(again, 'n'.repeat(16))).includes('a2'));
+  const broken = await boot(routesOf(tuned()), { storage: 'throws' });
+  ok('C4 with storage blocked, info is hidden by default', infoBox(broken).querySelector('input').checked === false && !rowIds(card(broken, 'n'.repeat(16))).includes('a2'));
+  const bi = infoBox(broken).querySelector('input');
+  bi.checked = true; bi.onchange();
+  await settle(5);
+  ok('C4 …and the toggle still works', infoBox(broken).querySelector('input').checked === true && rowIds(card(broken, 'n'.repeat(16))).includes('a2') && !broken.errors.length, broken.errors.join(' | '));
+  // Show info → Fix 3 → hide info: the pending proposal held hidden fixes, so it is dropped, never accepted.
+  const hp = await boot(routesOf(tuned()));
+  const show = infoBox(hp).querySelector('input');
+  show.checked = true; show.onchange();
+  await settle(5);
+  button(card(hp, 'n'.repeat(16)), 'Fix 3').click();
+  await settle(10);
+  ok('(a proposal with info fixes is pending)', !!card(hp, 'n'.repeat(16)).querySelector('.audit-proposal') && posts(hp, '/api/audit/propose')[0].body.findingIds.length === 3);
+  const hideInfo = infoBox(hp).querySelector('input');
+  hideInfo.checked = false; hideInfo.onchange();
+  await settle(10);
+  ok('C4 hiding info drops a pending proposal that includes a now-hidden fix', !card(hp, 'n'.repeat(16)).querySelector('.audit-proposal') && !button(card(hp, 'n'.repeat(16)), 'Accept'));
+  ok('C4 …rejects it on the server and says why', posts(hp, '/api/audit/reject').length === 1 && /hidden/.test(hp.text(hp.$('notice-slot'))), hp.text(hp.$('notice-slot')));
+  ok('C4 …so nothing hidden is ever accepted', posts(hp, '/api/audit/accept').length === 0);
+  button(card(hp, 'n'.repeat(16)), 'Fix 1').click();
+  await settle(10);
+  ok('C4 …and Fix offers only the visible fix again', JSON.stringify(posts(hp, '/api/audit/propose').at(-1).body.findingIds) === JSON.stringify(['a1'.repeat(8)]));
+  const showAgain = infoBox(hp).querySelector('input');
+  showAgain.checked = true; showAgain.onchange();
+  await settle(10);
+  ok('C4 a proposal of visible findings only survives toggling info', !!card(hp, 'n'.repeat(16)).querySelector('.audit-proposal') && posts(hp, '/api/audit/reject').length === 1);
+
+  // The race: Show info → Fix 3 → hide info while propose is still in flight → the response lands.
+  let releasePropose;
+  const held = new Promise((r) => { releasePropose = r; });
+  const rst = tuned();
+  const raceRoutes = auditRoutes(rst, { 'GET /api/audit': () => ({ ...rst.result(), worktrees: [{ ...wt, files: 3 }] }),
+    'POST /api/audit/propose': async (b) => { await held; return { id: '8'.repeat(32), fileRef: b.fileRef, path: '~/.claude/skills/second-opinion/SKILL.md', cls: 'user', fixes: b.findingIds.length, base: 'sha256:x', current: CURRENT, proposed: PROPOSED, expiresAt: 0, copies: 0 }; } });
+  const race = await boot(raceRoutes);
+  const rs = infoBox(race).querySelector('input');
+  rs.checked = true; rs.onchange();
+  await settle(5);
+  button(card(race, 'n'.repeat(16)), 'Fix 3').click();
+  await settle(5);
+  const rh = infoBox(race).querySelector('input');
+  rh.checked = false; rh.onchange();
+  await settle(5);
+  releasePropose();
+  await settle(20);
+  ok('C4 race: info hidden while propose was in flight → the late proposal is discarded: no Accept', !card(race, 'n'.repeat(16)).querySelector('.audit-proposal') && !button(card(race, 'n'.repeat(16)), 'Accept'));
+  ok('C4 race: …it is rejected on the server, and no accept is ever posted', posts(race, '/api/audit/reject').length === 1 && posts(race, '/api/audit/reject')[0].body.id === '8'.repeat(32) && posts(race, '/api/audit/accept').length === 0);
 }
 
 // ── light and dark ────────────────────────────────────────────────────────

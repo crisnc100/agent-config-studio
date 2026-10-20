@@ -1432,6 +1432,12 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .audit-replacement code, .audit-message code { font: 11.5px var(--mono); overflow-wrap: anywhere; }
 .audit-proposal { margin-top: 10px; }
 .audit-proposal .diff { padding: 8px 0; max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); margin: 6px 0 10px; }
+.audit-names { margin-top: 2px; border-top: 1px solid var(--border-soft); padding-top: 6px; font-size: 12.5px; }
+.audit-names-head { cursor: pointer; color: var(--text-dim); }
+.audit-names .audit-finding { margin-left: 14px; }
+.audit-worktrees { border: 1px dashed var(--border); border-radius: var(--radius); padding: 8px 12px; }
+.audit-worktrees-head { cursor: pointer; font-size: 13px; color: var(--text-dim); }
+.audit-worktrees[open] > .audit-list { margin-top: 10px; }
 .home-audit { display: flex; align-items: center; gap: 8px; }
 .home-audit .home-item-btn { margin-left: auto; }
 

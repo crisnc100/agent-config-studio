@@ -134,6 +134,76 @@ try {
     fs.rmSync(path.join(studio, 'roles.json'));
   }
 
+  console.log('\naudit: tuning C1, C2, C5 — false positives and meaning-changing fixes');
+  {
+    const FX = path.join(path.dirname(new URL(import.meta.url).pathname), 'fixtures', 'audit-tuning');
+    const fx = (n) => fs.readFileSync(path.join(FX, n), 'utf8');
+    const block = renderBlock('## Model guide\n\nUse sol.\n', 1);
+    const d5 = (heading) => only(A.analyze(`# Mine\n\n${heading}\nhand-written\n\n${block}\n`, { ref: 'r0', name: 'CLAUDE.md', instruction: true, policy: policy() }), 'D5');
+    for (const h of ['## Model lanes', '# LANES', '###### Model routing:', '### lanes.', '## Model Lanes (canonical — skills reference this table, never copy it)', '## Model routing — who builds', '#### model lanes ##']) {
+      ok(`C1 D5 fires on "${h}" beside the guide`, d5(h).length === 1, JSON.stringify(d5(h)));
+    }
+    for (const h of ['## Routing: build here or dispatch to Atlas', '## Routing', '## API routing', '## Routing table', '## Model routing rules', '## Lanes of work', '#Model lanes']) {
+      ok(`C1 D5 does not fire on "${h}", with the guide present`, d5(h).length === 0, JSON.stringify(d5(h)));
+    }
+    const fenced = only(A.analyze(`# Mine\n\n\`\`\`md\n## Model lanes\n\`\`\`\n\n${block}\n`, { ref: 'r0', name: 'CLAUDE.md', instruction: true, policy: policy() }), 'D5');
+    ok('C1 a lanes heading inside a fence never fires', fenced.length === 0, JSON.stringify(fenced));
+
+    const t = (name, text, file, check) => { const f = scan(text, file); ok(name, check(f), JSON.stringify(f.map((x) => [x.rule, x.match, x.family ?? null, Boolean(x.fix), x.message]))); };
+    const label = (x) => /is a preset label/.test(x.message) && /A label is not a setting, so ACS offers no fix\./.test(x.message);
+    t('C2 a quoted JSON key `<id>-<effort>` → D1, classed by its base, no fix, never "no family has that shape"', '{ "gpt-6-sol-high": { "effort": "high" } }', 'presets.json',
+      (f) => only(f, 'D1').length === 1 && only(f, 'D2').length === 0 && f[0].match === 'gpt-6-sol-high' && f[0].family === 'sol' && f[0].stale && !f[0].fix && label(f[0]) && !/no family/.test(f[0].message));
+    t('C2 a quoted key that is a plain id → D1 (a key, not a model setting), no fix', '{ "gpt-6-sol": {} }', 'presets.json',
+      (f) => f.length === 1 && f[0].rule === 'D1' && !f[0].fix && /a key here, not a model setting/.test(f[0].message));
+    t('C2 a bare YAML key → D1, no D2', 'gpt-6-astra-max: fast\nother: 1', 'presets.yaml',
+      (f) => f.length === 1 && f[0].rule === 'D1' && f[0].family === 'astra' && !f[0].stale && !f[0].fix && label(f[0]));
+    t('C2 a TOML table header → D1, no D2', '[profiles.gpt-6-sol]\nmodel = "gpt-6-sol"', 'config.toml',
+      (f) => f.length === 2 && f[0].rule === 'D1' && f[1].rule === 'D2' && f.every((x) => !x.fix));
+    t('C2 nested JSON: the model value is D2, a sibling preset key is D1', '{"presets": {"fast": {"model": "gpt-6-sol"}, "gpt-6-astra-max": {"effort": "max"}}}', 'cfg.json',
+      (f) => only(f, 'D2').length === 1 && only(f, 'D2')[0].match === 'gpt-6-sol' && only(f, 'D1').length === 1 && only(f, 'D1')[0].match === 'gpt-6-astra-max' && f.every((x) => !x.fix));
+    t('C2 a key holding flag text is still a key: never D2', '{"--model gpt-6-sol": 1, "-m gpt-6-astra-high": 2}', 'cfg.json',
+      (f) => f.length === 2 && f.every((x) => x.rule === 'D1' && !x.fix) && /a key here, not a model setting/.test(f[0].message) && label(f[1]));
+    t('C2 a YAML key holding flag text is still a key', 'codex -m gpt-6-sol: fast', 'cfg.yaml', (f) => f.length === 1 && f[0].rule === 'D1' && !f[0].fix);
+    t('C2 a TOML value is still D2', 'model = "gpt-6-sol"', 'config.toml', (f) => f.length === 1 && f[0].rule === 'D2' && !f[0].fix);
+    t('C2 a YAML value is still D2', 'model: gpt-6-sol', 'config.yml', (f) => f.length === 1 && f[0].rule === 'D2' && !f[0].fix);
+    t('C2 a JSON key inside a json fence → D1', ['```json', '{ "gpt-6-sol-high": 1 }', '```'].join('\n'), 'SKILL.md', (f) => f.length === 1 && f[0].rule === 'D1' && label(f[0]));
+    t('C2 a real --model value is still D2 with a fix', fence('codex exec -m gpt-6-sol x'), 'SKILL.md', (f) => f.length === 1 && f[0].rule === 'D2' && f[0].fix?.replacement === '"$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)"');
+    t('C2 a preset label as a --model value → D2, classed by its base, never a fix', fence('codex exec -m gpt-6-sol-high x'), 'SKILL.md',
+      (f) => f.length === 1 && f[0].rule === 'D2' && f[0].family === 'sol' && !f[0].fix && label(f[0]));
+    t('C2 a preset label in prose with a current base → info, no fix', 'Pick gpt-6-astra-high for reviews.', 'SKILL.md',
+      (f) => f.length === 1 && f[0].severity === 'info' && f[0].family === 'astra' && !f[0].fix && label(f[0]));
+    t('C2 an ambiguous base stays ambiguous', 'Pick grok-4.5-high.', 'SKILL.md', (f) => f.length === 1 && !f[0].family && /grok or grok-prev/.test(f[0].message) && !f[0].fix);
+    t('C2 an unknown base says so about the base, not the label', 'Pick gpt-9-zeta-high.', 'SKILL.md',
+      (f) => f.length === 1 && !f[0].family && /`gpt-9-zeta` looks like a model id/.test(f[0].message) && /preset label/.test(f[0].message) && !f[0].fix);
+    writeModels({ version: 1, models: { sol: 'gpt-6.1-sol', terra: 'gpt-6-terra-max' } });
+    t('C2 an exact registered id wins over suffix stripping', 'Use gpt-6-terra-max here.', 'SKILL.md',
+      (f) => f.length === 1 && f[0].family === 'terra' && f[0].fix?.replacement === 'terra' && !/preset label/.test(f[0].message));
+    writeModels({ version: 1, models: { sol: 'gpt-6.1-sol' } });
+    const rc = scan(fx('review-config-line4.json'), 'review-config.example.json');
+    ok('C2 the real review-config.example.json line: the key is a preset label of sol (stale), the "model" value D2; no fixes, no "no family has that shape"',
+      rc.length >= 2 && rc[0].rule === 'D1' && rc[0].match === 'gpt-5.6-sol-high' && rc[0].family === 'sol' && rc[0].stale && label(rc[0])
+        && rc[1].rule === 'D2' && rc[1].match === 'gpt-5.6-sol' && rc[1].family === 'sol' && rc.every((x) => !x.fix && !/no family/.test(x.message)), JSON.stringify(rc));
+
+    const l64 = fx('investigate-line64.md').replace(/\n$/, '');
+    const r64 = scan(l64, 'SKILL.md');
+    const code64 = r64.find((x) => x.rule === 'D2' && x.match === 'claude-fable-5');
+    const prose64 = r64.find((x) => x.rule === 'D1' && x.match === 'claude-fable-5');
+    ok('C5 the real line 64: the flag copy is D2 (no fix in a table row); the prose copy stays, with no fix, saying why',
+      code64 && !code64.fix && prose64 && !prose64.fix && prose64.family === 'fable' && /also written on this line as a literal/.test(prose64.message) && r64.every((x) => !x.fix), JSON.stringify(r64.map((x) => [x.rule, x.match, Boolean(x.fix)])));
+    t('C5 reversed order (prose first, then the code copy) → no prose fix', 'It lists claude-opus-5-5, from `claude --model claude-opus-5-5 x`.', 'SKILL.md',
+      (f) => f.length === 2 && f[0].rule === 'D1' && !f[0].fix && /literal/.test(f[0].message) && f[1].rule === 'D2');
+    t('C5 two code spans and a prose copy → no prose fix', '`a claude-opus-5-5` then claude-opus-5-5 and `b claude-opus-5-5`.', 'SKILL.md',
+      (f) => f.length === 3 && f.every((x) => !x.fix) && /literal/.test(f[1].message));
+    t('C5 a key copy on the line (in a code span) → no prose fix', 'Set `"model": "claude-opus-5-5"`; it means claude-opus-5-5.', 'SKILL.md',
+      (f) => f.length === 2 && f.every((x) => !x.fix) && /literal/.test(f[1].message));
+    const plain = 'Builds use claude-opus-5-5, reviews use gpt-6-astra.\n';
+    const pf = scan(plain, 'SKILL.md');
+    ok('C5 plain prose with no code copy is still fixed, to the exact bytes', pf.length === 2 && pf.every((x) => x.fix)
+      && A.applyFixes(Buffer.from(plain), plain, pf).toString() === 'Builds use opus, reviews use astra.\n', JSON.stringify(pf));
+    t('C5 another id in code on the line does not block a different prose id', 'Use claude-opus-5-5; `codex -m gpt-6-astra` reviews.', 'SKILL.md',
+      (f) => f.find((x) => x.match === 'claude-opus-5-5')?.fix?.replacement === 'opus');
+  }
+
   console.log('\naudit: A2 — fixes');
   {
     const crlf = '﻿#!/bin/sh\r\ncodex exec -m gpt-6-sol "a"\r\nclaude -p --model "claude-fable-5-1" x\r\nR=$(model-id --role reviewer)\r\ncodex exec -m gpt-6-sol "b"\r\nS=$(model-id sol)';
@@ -512,6 +582,34 @@ try {
     P.writeInPlace(rec, null);
     ok('R13 without faults the created file holds the bytes', fs.readFileSync(target, 'utf8') === 'fresh contents\n');
     ok('R13 an existing file is never created over', (await rejects(() => P.writeInPlace(rec, null)))?.code === 'EEXIST' && fs.readFileSync(target, 'utf8') === 'fresh contents\n');
+  }
+
+  console.log('\naudit: tuning C9 — second-opinion\'s hardcoded names (a fixture copy, never the real file)');
+  {
+    const FX = path.join(path.dirname(new URL(import.meta.url).pathname), 'fixtures', 'audit-tuning');
+    writeModels({ version: 1, models: { sol: 'gpt-6.1-sol', sonnet: 'claude-sonnet-5-5' } });
+    const lines = fs.readFileSync(path.join(FX, 'second-opinion-lines.md'), 'utf8');
+    const dir = path.join(home, '.claude', 'skills', 'second-opinion');
+    const file = put(path.join(dir, 'SKILL.md'), `---\nname: second-opinion\n---\n${lines}Run \`Grok 4.7\` by hand.\n`);
+    const audit = A.createAudit({ home, hist: quiet });
+    const res = await audit.run();
+    const card = res.files.find((f) => f.display === '~/.claude/skills/second-opinion/SKILL.md');
+    const names = card?.findings.filter((x) => x.rule === 'D1') || [];
+    ok('C9 every hardcoded name surfaces as a D1 finding', names.map((x) => x.match).join() === 'Grok 4.7,Grok 4.6,Sonnet 5.5,Grok 4.7,Grok 4.7', JSON.stringify(names.map((x) => x.match)));
+    ok('C9 …each one in plain prose (a table cell or a sentence) is fixable, to its family; one in a code span is not',
+      names.slice(0, 4).every((x) => x.fixable) && names.slice(0, 4).map((x) => x.replacement).join() === 'grok,grok-prev,sonnet,grok' && !names[4].fixable, JSON.stringify(names.map((x) => [x.match, x.fixable, x.replacement])));
+    const p = audit.propose({ fileRef: card.ref, findingIds: names.filter((x) => x.fixable).map((x) => x.id) });
+    ok('C9 …and the proposal is exactly the family names, every other byte kept', p.proposed === [
+      '---', 'name: second-opinion', '---',
+      '| grok | grok, effort xhigh |',
+      'Excluded: grok-prev, sonnet, Sol. Do not offer or run them.',
+      '| Asks for a second opinion, names no model | Ask which one: Fable, Astra, Opus, grok, or all. Wait for the answer. |',
+      'Run `Grok 4.7` by hand.', '',
+    ].join('\n'), p.proposed);
+    audit.reject({ id: p.id });
+    ok('C9 propose wrote nothing', fs.readFileSync(file, 'utf8').includes('Grok 4.6'));
+    fs.rmSync(dir, { recursive: true });
+    writeModels({ version: 1, models: { sol: 'gpt-6.1-sol' } });
   }
 
   console.log('\naudit: R13 — the writer, under faults');

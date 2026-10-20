@@ -5227,12 +5227,18 @@ function guideProposalView(p) {
  * The deterministic audit (lib/audit.js): findings grouped by file, each
  * labelled with its rule, severity and the file's class. Fix shows the full
  * diff of one file and writes only on Accept; Dismiss is remembered by the
- * server. Plugin, vendor and read-only files show findings only.
+ * server. Plugin, vendor and read-only files show findings only. Info
+ * findings wait behind Show info; a file's name+version notes fold into one
+ * row; files in a repository's linked worktrees sit in its own collapsed
+ * section, each still fixed and dismissed on its own.
  */
 const AU = {
   data: null, error: null, loading: false,
   vendor: store.get('acs.audit.vendor') === '1',
   dismissed: store.get('acs.audit.dismissed') === '1',
+  info: store.get('acs.audit.info') === '1',
+  openWt: {},      // repository key -> its worktrees section is open
+  openNames: {},   // file ref -> its model-name notes are expanded
   proposals: {},   // file ref -> proposal
   ack: {},         // file ref -> the synced acknowledgement is ticked
   busy: {},        // file ref -> a propose or accept in flight
@@ -5260,9 +5266,11 @@ async function openAudit({ refresh = false } = {}) {
   if (S.view === 'audit') paintAudit();
 }
 
-/** The findings a card shows under the current filters. */
-const auditVisible = (f) => f.findings.filter((x) => AU.dismissed || !x.dismissed);
+/** The findings a card shows under the current filters; hidden info is never part of a Fix. */
+const auditVisible = (f) => f.findings.filter((x) => (AU.dismissed || !x.dismissed) && (AU.info || x.severity !== 'info'));
 const auditFixable = (f) => auditVisible(f).filter((x) => x.fixable && !x.dismissed);
+/** A name+version note (never fixable): folded into one row per file. */
+const auditNameNote = (x) => x.rule === 'D1' && x.name && x.severity === 'info' && !x.fixable;
 
 function paintAudit() {
   const c = $('content');
@@ -5278,18 +5286,27 @@ function paintAudit() {
   box.appendChild(el('div', 'scope-sub',
     'Where your skills and instruction files write a model id or an effort by hand, use an id that has gone stale, or keep a lanes section beside the generated model guide. Nothing changes until you review a fix and accept it.'));
 
+  const d = AU.data;
+  const listed = (f) => AU.vendor || f.cls !== 'vendor';
+  const infoCount = d ? d.files.filter(listed).reduce((n, f) => n + f.findings.filter((x) => x.severity === 'info' && !x.dismissed).length, 0) : 0;
   const filters = el('div', 'audit-filters');
   const toggle = (label, key, cls) => {
     const l = el('label', `audit-filter ${cls}`);
     const cb = el('input');
     cb.type = 'checkbox';
     cb.checked = AU[key];
-    cb.onchange = () => { AU[key] = cb.checked; store.set(`acs.audit.${key}`, cb.checked ? '1' : '0'); paintAudit(); };
+    cb.onchange = () => {
+      AU[key] = cb.checked;
+      store.set(`acs.audit.${key}`, cb.checked ? '1' : '0');
+      if (key === 'info' && !cb.checked) dropHiddenProposals();
+      paintAudit();
+    };
     l.append(cb, document.createTextNode(` ${label}`));
     filters.appendChild(l);
   };
   toggle('Show vendor', 'vendor', 'audit-show-vendor');
   toggle('Show dismissed', 'dismissed', 'audit-show-dismissed');
+  toggle(`Show info (${infoCount})`, 'info', 'audit-show-info');
   box.appendChild(filters);
 
   if (AU.loading && !AU.data) {
@@ -5304,7 +5321,6 @@ function paintAudit() {
     box.appendChild(n);
     if (!AU.data) { c.appendChild(box); return; }
   }
-  const d = AU.data;
   if (d.policyError) {
     const n = el('div', 'notice error audit-policy');
     n.appendChild(el('div', null, 'The model registry or the roles are invalid, so stale ids, efforts and fixes are not checked until they are fixed in Models.'));
@@ -5319,7 +5335,8 @@ function paintAudit() {
   const vendorFindings = d.counts.byClass.vendor?.findings || 0;
   const summary = el('div', 'audit-summary');
   summary.textContent = `${d.counts.files} file${d.counts.files === 1 ? '' : 's'} read · ${d.counts.findings} finding${d.counts.findings === 1 ? '' : 's'} · ${d.counts.fixable} fixable`
-    + (!AU.vendor && vendorFindings ? ` · ${vendorFindings} in vendor files, hidden` : '');
+    + (!AU.vendor && vendorFindings ? ` · ${vendorFindings} in vendor files, hidden` : '')
+    + (!AU.info && infoCount ? ` · ${infoCount} info, hidden` : '');
   box.appendChild(summary);
   if (d.refusals.length) {
     const det = el('details', 'audit-refusals');
@@ -5328,12 +5345,34 @@ function paintAudit() {
     box.appendChild(det);
   }
 
-  const shown = d.files.filter((f) => (AU.vendor || f.cls !== 'vendor') && auditVisible(f).length);
+  const shown = d.files.filter((f) => listed(f) && auditVisible(f).length);
   if (!shown.length) box.appendChild(el('div', 'audit-clear', d.files.length ? 'Nothing to show with these filters.' : 'No findings: no hardcoded or stale models found.'));
   const list = el('div', 'audit-list');
-  for (const f of shown) list.appendChild(auditCard(f));
+  const repos = new Map();
+  for (const f of shown) {
+    if (!f.worktree) { list.appendChild(auditCard(f)); continue; }
+    if (!repos.has(f.worktree.repo)) repos.set(f.worktree.repo, []);
+    repos.get(f.worktree.repo).push(f);
+  }
+  for (const [repo, files] of repos) list.appendChild(auditWorktrees(repo, files, d));
   box.appendChild(list);
   c.appendChild(box);
+}
+
+/** One repository's linked-worktree cards, collapsed until opened; the counts are of its worktree files. */
+function auditWorktrees(repo, files, d) {
+  const det = el('details', 'audit-worktrees');
+  det.dataset.repo = repo;
+  det.open = !!AU.openWt[repo];
+  det.ontoggle = () => { AU.openWt[repo] = det.open; };
+  const n = d.worktrees?.find((w) => w.repo === repo)?.files ?? files.length;
+  const m = files.reduce((k, f) => k + f.findings.filter((x) => !x.dismissed).length, 0);
+  det.appendChild(el('summary', 'audit-worktrees-head',
+    `Worktrees of ${files[0].worktree.label} (${n} file${n === 1 ? '' : 's'}, ${m} finding${m === 1 ? '' : 's'})`));
+  const inner = el('div', 'audit-list');
+  for (const f of files) inner.appendChild(auditCard(f));
+  det.appendChild(inner);
+  return det;
 }
 
 function auditCard(f) {
@@ -5369,7 +5408,17 @@ function auditCard(f) {
   }
   if (f.aliases) card.appendChild(el('div', 'scope-note audit-aliases', `${f.aliases} link${f.aliases === 1 ? '' : 's'} point${f.aliases === 1 ? 's' : ''} to this file.`));
   const rows = el('div', 'audit-findings');
-  for (const x of auditVisible(f)) rows.appendChild(auditRow(f, x));
+  const visible = auditVisible(f);
+  const names = visible.filter(auditNameNote);
+  for (const x of visible) if (!names.includes(x)) rows.appendChild(auditRow(f, x));
+  if (names.length) {
+    const det = el('details', 'audit-names');
+    det.open = !!AU.openNames[f.ref];
+    det.ontoggle = () => { AU.openNames[f.ref] = det.open; };
+    det.appendChild(el('summary', 'audit-names-head', `${names.length} model name${names.length === 1 ? '' : 's'} written out`));
+    for (const x of names) det.appendChild(auditRow(f, x));
+    rows.appendChild(det);
+  }
   card.appendChild(rows);
   if (AU.proposals[f.ref]) card.appendChild(auditProposalView(f, AU.proposals[f.ref]));
   return card;
@@ -5402,15 +5451,38 @@ async function proposeAudit(f, findings) {
   AU.busy[f.ref] = true;
   paintAudit();
   try {
-    AU.proposals[f.ref] = await api('POST', '/api/audit/propose', {
-      fileRef: f.ref, findingIds: findings.map((x) => x.id), ...(f.cls === 'synced' ? { ackSync: AU.ack[f.ref] === true } : {}),
-    });
+    const findingIds = findings.map((x) => x.id);
+    const infoAt = AU.info;
+    const p = { ...await api('POST', '/api/audit/propose', {
+      fileRef: f.ref, findingIds, ...(f.cls === 'synced' ? { ackSync: AU.ack[f.ref] === true } : {}),
+    }), findingIds };
+    // Info hidden while this was in flight: a proposal holding a finding no longer shown is never kept.
+    const now = AU.data?.files.find((x) => x.ref === f.ref);
+    const shown = new Set(now ? auditVisible(now).map((x) => x.id) : []);
+    if (AU.info !== infoAt || !findingIds.every((id) => shown.has(id))) {
+      api('POST', '/api/audit/reject', { id: p.id }).catch(() => {});
+      notice('ok', 'Cancelled a pending fix that included info findings now hidden. Fix again to review what is shown.');
+    } else AU.proposals[f.ref] = p;
   } catch (e) {
     notice('error', e.message, null, true);
     if (e.status === 409 && !/synced/.test(e.body?.reason || '')) { delete AU.busy[f.ref]; return openAudit({ refresh: true }); }
   }
   delete AU.busy[f.ref];
   if (S.view === 'audit') paintAudit();
+}
+
+/** Hiding info: a pending proposal that fixes a finding no longer shown is rejected, never left to Accept. */
+function dropHiddenProposals() {
+  let dropped = 0;
+  for (const [ref, p] of Object.entries(AU.proposals)) {
+    const f = AU.data?.files.find((x) => x.ref === ref);
+    const shown = new Set(f ? auditVisible(f).map((x) => x.id) : []);
+    if (p.findingIds?.every((id) => shown.has(id))) continue;
+    delete AU.proposals[ref];
+    dropped++;
+    api('POST', '/api/audit/reject', { id: p.id }).catch(() => {});
+  }
+  if (dropped) notice('ok', `Cancelled ${dropped === 1 ? 'a pending fix' : `${dropped} pending fixes`} that included info findings now hidden. Fix again to review what is shown.`);
 }
 
 function auditProposalView(f, p) {
