@@ -5295,7 +5295,12 @@ function paintAudit() {
     const cb = el('input');
     cb.type = 'checkbox';
     cb.checked = AU[key];
-    cb.onchange = () => { AU[key] = cb.checked; store.set(`acs.audit.${key}`, cb.checked ? '1' : '0'); paintAudit(); };
+    cb.onchange = () => {
+      AU[key] = cb.checked;
+      store.set(`acs.audit.${key}`, cb.checked ? '1' : '0');
+      if (key === 'info' && !cb.checked) dropHiddenProposals();
+      paintAudit();
+    };
     l.append(cb, document.createTextNode(` ${label}`));
     filters.appendChild(l);
   };
@@ -5446,15 +5451,30 @@ async function proposeAudit(f, findings) {
   AU.busy[f.ref] = true;
   paintAudit();
   try {
-    AU.proposals[f.ref] = await api('POST', '/api/audit/propose', {
-      fileRef: f.ref, findingIds: findings.map((x) => x.id), ...(f.cls === 'synced' ? { ackSync: AU.ack[f.ref] === true } : {}),
-    });
+    const findingIds = findings.map((x) => x.id);
+    AU.proposals[f.ref] = { ...await api('POST', '/api/audit/propose', {
+      fileRef: f.ref, findingIds, ...(f.cls === 'synced' ? { ackSync: AU.ack[f.ref] === true } : {}),
+    }), findingIds };
   } catch (e) {
     notice('error', e.message, null, true);
     if (e.status === 409 && !/synced/.test(e.body?.reason || '')) { delete AU.busy[f.ref]; return openAudit({ refresh: true }); }
   }
   delete AU.busy[f.ref];
   if (S.view === 'audit') paintAudit();
+}
+
+/** Hiding info: a pending proposal that fixes a finding no longer shown is rejected, never left to Accept. */
+function dropHiddenProposals() {
+  let dropped = 0;
+  for (const [ref, p] of Object.entries(AU.proposals)) {
+    const f = AU.data?.files.find((x) => x.ref === ref);
+    const shown = new Set(f ? auditVisible(f).map((x) => x.id) : []);
+    if (p.findingIds?.every((id) => shown.has(id))) continue;
+    delete AU.proposals[ref];
+    dropped++;
+    api('POST', '/api/audit/reject', { id: p.id }).catch(() => {});
+  }
+  if (dropped) notice('ok', `Cancelled ${dropped === 1 ? 'a pending fix' : `${dropped} pending fixes`} that included info findings now hidden. Fix again to review what is shown.`);
 }
 
 function auditProposalView(f, p) {

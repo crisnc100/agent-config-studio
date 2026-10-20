@@ -359,6 +359,27 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
   bi.checked = true; bi.onchange();
   await settle(5);
   ok('C4 …and the toggle still works', infoBox(broken).querySelector('input').checked === true && rowIds(card(broken, 'n'.repeat(16))).includes('a2') && !broken.errors.length, broken.errors.join(' | '));
+  // Show info → Fix 3 → hide info: the pending proposal held hidden fixes, so it is dropped, never accepted.
+  const hp = await boot(routesOf(tuned()));
+  const show = infoBox(hp).querySelector('input');
+  show.checked = true; show.onchange();
+  await settle(5);
+  button(card(hp, 'n'.repeat(16)), 'Fix 3').click();
+  await settle(10);
+  ok('(a proposal with info fixes is pending)', !!card(hp, 'n'.repeat(16)).querySelector('.audit-proposal') && posts(hp, '/api/audit/propose')[0].body.findingIds.length === 3);
+  const hideInfo = infoBox(hp).querySelector('input');
+  hideInfo.checked = false; hideInfo.onchange();
+  await settle(10);
+  ok('C4 hiding info drops a pending proposal that includes a now-hidden fix', !card(hp, 'n'.repeat(16)).querySelector('.audit-proposal') && !button(card(hp, 'n'.repeat(16)), 'Accept'));
+  ok('C4 …rejects it on the server and says why', posts(hp, '/api/audit/reject').length === 1 && /hidden/.test(hp.text(hp.$('notice-slot'))), hp.text(hp.$('notice-slot')));
+  ok('C4 …so nothing hidden is ever accepted', posts(hp, '/api/audit/accept').length === 0);
+  button(card(hp, 'n'.repeat(16)), 'Fix 1').click();
+  await settle(10);
+  ok('C4 …and Fix offers only the visible fix again', JSON.stringify(posts(hp, '/api/audit/propose').at(-1).body.findingIds) === JSON.stringify(['a1'.repeat(8)]));
+  const showAgain = infoBox(hp).querySelector('input');
+  showAgain.checked = true; showAgain.onchange();
+  await settle(10);
+  ok('C4 a proposal of visible findings only survives toggling info', !!card(hp, 'n'.repeat(16)).querySelector('.audit-proposal') && posts(hp, '/api/audit/reject').length === 1);
 }
 
 // ── light and dark ────────────────────────────────────────────────────────
