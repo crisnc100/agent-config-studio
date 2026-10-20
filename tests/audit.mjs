@@ -161,6 +161,9 @@ try {
       (f) => f.length === 2 && f[0].rule === 'D1' && f[1].rule === 'D2' && f.every((x) => !x.fix));
     t('C2 nested JSON: the model value is D2, a sibling preset key is D1', '{"presets": {"fast": {"model": "gpt-6-sol"}, "gpt-6-astra-max": {"effort": "max"}}}', 'cfg.json',
       (f) => only(f, 'D2').length === 1 && only(f, 'D2')[0].match === 'gpt-6-sol' && only(f, 'D1').length === 1 && only(f, 'D1')[0].match === 'gpt-6-astra-max' && f.every((x) => !x.fix));
+    t('C2 a key holding flag text is still a key: never D2', '{"--model gpt-6-sol": 1, "-m gpt-6-astra-high": 2}', 'cfg.json',
+      (f) => f.length === 2 && f.every((x) => x.rule === 'D1' && !x.fix) && /a key here, not a model setting/.test(f[0].message) && label(f[1]));
+    t('C2 a YAML key holding flag text is still a key', 'codex -m gpt-6-sol: fast', 'cfg.yaml', (f) => f.length === 1 && f[0].rule === 'D1' && !f[0].fix);
     t('C2 a TOML value is still D2', 'model = "gpt-6-sol"', 'config.toml', (f) => f.length === 1 && f[0].rule === 'D2' && !f[0].fix);
     t('C2 a YAML value is still D2', 'model: gpt-6-sol', 'config.yml', (f) => f.length === 1 && f[0].rule === 'D2' && !f[0].fix);
     t('C2 a JSON key inside a json fence → D1', ['```json', '{ "gpt-6-sol-high": 1 }', '```'].join('\n'), 'SKILL.md', (f) => f.length === 1 && f[0].rule === 'D1' && label(f[0]));
