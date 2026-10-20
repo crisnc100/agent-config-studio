@@ -5452,9 +5452,17 @@ async function proposeAudit(f, findings) {
   paintAudit();
   try {
     const findingIds = findings.map((x) => x.id);
-    AU.proposals[f.ref] = { ...await api('POST', '/api/audit/propose', {
+    const infoAt = AU.info;
+    const p = { ...await api('POST', '/api/audit/propose', {
       fileRef: f.ref, findingIds, ...(f.cls === 'synced' ? { ackSync: AU.ack[f.ref] === true } : {}),
     }), findingIds };
+    // Info hidden while this was in flight: a proposal holding a finding no longer shown is never kept.
+    const now = AU.data?.files.find((x) => x.ref === f.ref);
+    const shown = new Set(now ? auditVisible(now).map((x) => x.id) : []);
+    if (AU.info !== infoAt || !findingIds.every((id) => shown.has(id))) {
+      api('POST', '/api/audit/reject', { id: p.id }).catch(() => {});
+      notice('ok', 'Cancelled a pending fix that included info findings now hidden. Fix again to review what is shown.');
+    } else AU.proposals[f.ref] = p;
   } catch (e) {
     notice('error', e.message, null, true);
     if (e.status === 409 && !/synced/.test(e.body?.reason || '')) { delete AU.busy[f.ref]; return openAudit({ refresh: true }); }

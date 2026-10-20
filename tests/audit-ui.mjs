@@ -380,6 +380,26 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
   showAgain.checked = true; showAgain.onchange();
   await settle(10);
   ok('C4 a proposal of visible findings only survives toggling info', !!card(hp, 'n'.repeat(16)).querySelector('.audit-proposal') && posts(hp, '/api/audit/reject').length === 1);
+
+  // The race: Show info → Fix 3 → hide info while propose is still in flight → the response lands.
+  let releasePropose;
+  const held = new Promise((r) => { releasePropose = r; });
+  const rst = tuned();
+  const raceRoutes = auditRoutes(rst, { 'GET /api/audit': () => ({ ...rst.result(), worktrees: [{ ...wt, files: 3 }] }),
+    'POST /api/audit/propose': async (b) => { await held; return { id: '8'.repeat(32), fileRef: b.fileRef, path: '~/.claude/skills/second-opinion/SKILL.md', cls: 'user', fixes: b.findingIds.length, base: 'sha256:x', current: CURRENT, proposed: PROPOSED, expiresAt: 0, copies: 0 }; } });
+  const race = await boot(raceRoutes);
+  const rs = infoBox(race).querySelector('input');
+  rs.checked = true; rs.onchange();
+  await settle(5);
+  button(card(race, 'n'.repeat(16)), 'Fix 3').click();
+  await settle(5);
+  const rh = infoBox(race).querySelector('input');
+  rh.checked = false; rh.onchange();
+  await settle(5);
+  releasePropose();
+  await settle(20);
+  ok('C4 race: info hidden while propose was in flight → the late proposal is discarded: no Accept', !card(race, 'n'.repeat(16)).querySelector('.audit-proposal') && !button(card(race, 'n'.repeat(16)), 'Accept'));
+  ok('C4 race: …it is rejected on the server, and no accept is ever posted', posts(race, '/api/audit/reject').length === 1 && posts(race, '/api/audit/reject')[0].body.id === '8'.repeat(32) && posts(race, '/api/audit/accept').length === 0);
 }
 
 // ── light and dark ────────────────────────────────────────────────────────
