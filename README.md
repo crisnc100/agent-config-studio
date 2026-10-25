@@ -113,10 +113,11 @@ checkout.
 - **No browser** (a remote or headless machine): `ACS_NO_OPEN=1 acs`, or `acs
   --no-open`, then open the URL yourself.
 - **Node is too old or missing.** `acs` stops and says which version it found.
-- **Which node runs the studio.** The `node` on your PATH, unless it is a
-  short-lived odd-numbered release such as Node 23: then `acs` runs the newest
-  LTS that nvm, fnm, Volta or Homebrew installed, and says so when it starts.
-  Set `ACS_NODE` to a node binary to choose it yourself.
+- **Which node runs the studio.** The `node` on your PATH, unless there is
+  none, it is older than 20, or it is a short-lived odd-numbered release such
+  as Node 23: then `acs` runs the newest LTS that nvm, fnm, Volta or Homebrew
+  installed, and says so when it starts. Set `ACS_NODE` to a node binary to
+  choose it yourself.
 - **The studio stops loading pages.** It checks itself every minute and exits
   when its file reads stop completing, and `acs` replaces a running studio
   that has frozen that way — so run `acs` again.

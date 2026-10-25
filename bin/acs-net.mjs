@@ -15,6 +15,10 @@
  *                               "<pid> <nonce> token|legacy" (legacy: written by
  *                               a studio from before the stop token); exits 1
  *                               when it is not valid JSON of that shape
+ *   acs-net.mjs cmdline <port>  prints the command line that run file (stdin)
+ *                               says its studio was launched as — "<argv0>
+ *                               <server.js>", spaces kept — and exits 0; 1 when
+ *                               it does not say (a studio from before it did)
  *   acs-net.mjs stop <port>     asks the studio to stop itself with the run
  *                               file's stop token (run file on stdin). Exits 0
  *                               once the port is closed; 2 when /api/health does
@@ -116,6 +120,11 @@ if (cmd === 'health') {
   const r = await runFile();
   if (r === null) process.exit(1);
   console.log(`${r.pid} ${r.nonce} ${hasToken(r) ? 'token' : 'legacy'}`);
+} else if (cmd === 'cmdline') {
+  const r = await runFile();
+  const field = (v) => typeof v === 'string' && v !== '' && !/[\n\r]/.test(v);
+  if (!field(r?.argv0) || !field(r?.server)) process.exit(1);
+  console.log(`${r.argv0} ${r.server}`);
 } else if (cmd === 'stop') {
   process.exit(await stopByToken());
 } else if (cmd === 'busy') {
@@ -127,6 +136,6 @@ if (cmd === 'health') {
   }
   process.exit(1);
 } else {
-  console.error('usage: acs-net.mjs health|deep|busy|wait|run|stop <port> | gone <pid>');
+  console.error('usage: acs-net.mjs health|deep|busy|wait|run|cmdline|stop <port> | gone <pid>');
   process.exit(2);
 }

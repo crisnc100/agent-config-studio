@@ -78,17 +78,24 @@ const PORT = Number(process.env.PORT || 8787);
  * Whether libuv's thread pool still completes async fs calls. On Node 23.11
  * (libuv 1.50) a studio up for a day stopped completing every one, for good,
  * while /api/health — which touches no disk — still answered (2026-10-24).
- * The probe is one real async stat; deep health, the watchdog and shutdown
- * all ask it. Exported so a test, in-process only, can stub the probe and
- * shorten the watchdog's clock; nothing reads it from the environment.
+ * The probe is one real async stat; deep health and the watchdog ask it.
+ * Exported so a test, in-process only, can stub the probe and shorten the
+ * watchdog's clock; nothing reads it from the environment.
  */
 export const FS_WATCHDOG = { probe: () => fsp.stat(PUBLIC), everyMs: 60_000, timeoutMs: 30_000 };
 
-/** Whether the probe settles, either way, within `ms`. */
-const fsAnswers = (ms) => new Promise((resolve) => {
+/** One probe, started now: `done` once it settles, either way. */
+function startProbe() {
+  const p = { done: false };
+  p.settled = Promise.resolve().then(FS_WATCHDOG.probe).then(() => {}, () => {}).then(() => { p.done = true; });
+  return p;
+}
+
+/** Whether any of `probes` settles within `ms`. */
+const anySettles = (probes, ms) => new Promise((resolve) => {
   const t = setTimeout(() => resolve(false), ms);
   t.unref();
-  Promise.resolve().then(FS_WATCHDOG.probe).then(() => true, () => true).then((v) => { clearTimeout(t); resolve(v); });
+  Promise.race(probes.map((p) => p.settled)).then(() => { clearTimeout(t); resolve(true); });
 });
 
 /**
@@ -103,20 +110,23 @@ function die(reason) {
 }
 
 /**
- * A probe every minute; one still pending at its deadline means every route
- * that touches disk hangs from now on, so the studio kills itself and `acs`
- * starts a fresh one. Unref'd: it never holds the process open.
+ * A probe every minute. One late answer is not a stuck pool, so an overdue
+ * probe gets a fresh one beside it, with the full timeout again; only when
+ * neither has finished does every route that touches disk hang for good, and
+ * the studio kills itself so `acs` starts a fresh one. Unref'd: it never
+ * holds the process open.
  */
 function startFsWatchdog() {
-  let inFlight = false;
-  setInterval(() => {
-    if (inFlight) return;
-    inFlight = true;
+  let checking = false;
+  setInterval(async () => {
+    if (checking) return;
+    checking = true;
     const { timeoutMs } = FS_WATCHDOG;
-    fsAnswers(timeoutMs).then((answered) => {
-      if (!answered) die(`no async file operation completed in ${timeoutMs / 1000} s — the thread pool is stuck`);
-      inFlight = false;
-    });
+    const first = startProbe();
+    if (!(await anySettles([first], timeoutMs)) && !(await anySettles([first, startProbe()], timeoutMs))) {
+      die(`no async file operation completed in ${(2 * timeoutMs) / 1000} s (a probe, then a fresh one beside it) — the thread pool is stuck`);
+    }
+    checking = false;
   }, FS_WATCHDOG.everyMs).unref();
 }
 
@@ -1806,7 +1816,9 @@ export async function startStudio({ port = PORT, app = {} } = {}) {
       const file = runFile(port);
       fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
       const tmp = `${file}.tmp-${process.pid}`;
-      fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, nonce: RUN_NONCE, server: fileURLToPath(import.meta.url), stopToken: STOP_TOKEN }) + '\n', { mode: 0o600 });
+      // argv0 is the node as launched — what `ps` prints before server.js — so
+      // `acs` can match this start's command line exactly, spaces and all.
+      fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, nonce: RUN_NONCE, server: fileURLToPath(import.meta.url), argv0: process.argv0, stopToken: STOP_TOKEN }) + '\n', { mode: 0o600 });
       fs.renameSync(tmp, file);
       runIno = fs.statSync(file).ino;
     } catch { /* without it, `acs stop` refuses rather than guesses */ }
@@ -1825,23 +1837,27 @@ ${rootsBanner()}
   });
 
   // Only this start's own run file is removed (same inode): a newer start may own it now.
-  process.on('exit', () => {
+  const removeRunFile = () => {
     try { if (runIno !== null && fs.statSync(runFile(port)).ino === runIno) fs.unlinkSync(runFile(port)); } catch {}
-  });
+  };
+  process.on('exit', removeRunFile);
   let stopping = false;
-  const stop = async () => {
-    // A second signal changes nothing: the deadline below already stands.
+  const stop = (signal) => {
     if (stopping) return;
     stopping = true;
-    // Still here 3 s on, whatever held the stop up, the studio kills itself.
-    setTimeout(() => die('still running 3 s after a stop signal'), 3000).unref();
-    rootsWatch.close();
-    watcher.close();
-    // process.exit joins the thread pool, which never returns once the pool
-    // is stuck — no timer fires in there. Exit only after a probe answers.
-    if (!(await fsAnswers(1000))) die('the thread pool is stuck, so exiting would hang');
-    console.log('\n  stopped.');
-    process.exit(0);
+    try { rootsWatch.close(); watcher.close(); } catch {}
+    removeRunFile();
+    try { fs.writeSync(1, '\n  stopped.\n'); } catch {}
+    // Ended by the signal itself, its default action restored, never by
+    // process.exit: node's exit joins every thread-pool worker, and one call
+    // blocked for good — a read that never returns — holds it there forever
+    // (2026-10-22), even with the other workers free. The kernel ends the
+    // process without waiting on any of them.
+    process.removeListener('SIGINT', stop);
+    process.removeListener('SIGTERM', stop);
+    process.kill(process.pid, signal);
+    // Still here: something else catches that signal.
+    setTimeout(() => die(`still running after re-raising ${signal}`), 1000);
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);

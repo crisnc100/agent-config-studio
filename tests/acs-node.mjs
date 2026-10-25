@@ -5,10 +5,13 @@
  * it, so the log says which binary ran what.
  *
  *   - node on PATH with an even major (20 or newer) is used as it is;
- *   - an odd major (a short-lived release) gives way to the newest LTS that
- *     nvm, fnm (both homes), Volta or Homebrew installed — each asked its
- *     version, never trusted by folder name — and the start says so in one line;
- *   - none found: PATH's node, with a one-line warning at start;
+ *   - an odd major (a short-lived release), a node below 20, or no node on
+ *     PATH at all gives way to the newest LTS that nvm, fnm (both homes),
+ *     Volta or Homebrew (HOMEBREW_PREFIX, or the brew on PATH) installed —
+ *     each asked its version, never trusted by folder name — and the start
+ *     says so in one line;
+ *   - none found: PATH's odd node with a one-line warning at start; a node
+ *     below 20, or none, refused as before;
  *   - ACS_NODE wins when set, and is refused clearly when it is missing, not
  *     executable, unreadable or older than 20;
  *   - every node invocation — acs-net, subcommands, server.js — is the chosen one,
@@ -31,16 +34,16 @@ const ok = (name, cond, detail = '') => {
   else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const which = (c) => spawnSync('/bin/sh', ['-c', `command -v ${c}`], { encoding: 'utf8' }).stdout.trim();
 
 const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-node-')));
+const scratchHome = path.join(sb, 'home-helpers');
+fs.mkdirSync(scratchHome);
+const which = (c) => spawnSync('/bin/sh', ['-c', `command -v ${c}`], { env: { PATH: process.env.PATH, HOME: scratchHome }, encoding: 'utf8' }).stdout.trim();
 const LOG = path.join(sb, 'node-calls.log');
 // What the launcher needs besides node; node itself is always a fake here.
 const tools = path.join(sb, 'tools');
 fs.mkdirSync(tools);
 for (const t of ['dirname', 'readlink', 'git', 'ps', 'sed']) fs.symlinkSync(which(t), path.join(tools, t));
-const noBrew = path.join(sb, 'no-brew');
-fs.mkdirSync(noBrew);
 
 /** A fake node at `file` that reports `version` and runs everything else on the real node, logging it. */
 function fakeNode(file, version) {
@@ -70,7 +73,7 @@ function machine({ pathVersion = '23.11.1', installs = [] } = {}) {
   const bin = path.join(sb, `path-${n}`);
   if (pathVersion) fakeNode(path.join(bin, 'node'), pathVersion);
   for (const [rel, version] of installs) fakeNode(path.join(home, rel), version);
-  return { home, env: { HOME: home, PATH: `${pathVersion ? `${bin}:` : ''}${tools}`, ACS_NO_UPDATE: '1', ACS_NO_OPEN: '1', ACS_BREW_PREFIXES: noBrew, TMPDIR: os.tmpdir() } };
+  return { home, env: { HOME: home, PATH: `${pathVersion ? `${bin}:` : ''}${tools}`, ACS_NO_UPDATE: '1', ACS_NO_OPEN: '1', TMPDIR: os.tmpdir() } };
 }
 const freePort = () => new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 const port = await freePort();
@@ -129,14 +132,26 @@ console.log('\nacs: an odd major on PATH gives way to the newest LTS installed')
   fakeNode(path.join(brew, 'opt', 'node@22', 'bin', 'node'), '22.12.0');
   fakeNode(path.join(brew, 'opt', 'node@24', 'bin', 'node'), '24.2.0');
   fakeNode(path.join(brew, 'opt', 'node@23', 'bin', 'node'), '23.6.0');
-  const r = stopWith({ ...m.env, ACS_BREW_PREFIXES: `${path.join(sb, 'brew-empty')} ${brew}` });
-  ok('1 Homebrew\'s opt/node@N (each prefix) counts: node@24 over node@22, odd node@23 skipped', r.code === 0 && r.versions.join() === '24.2.0', `${r.versions} ${r.out}`);
+  const r = stopWith({ ...m.env, HOMEBREW_PREFIX: brew });
+  ok('1 Homebrew\'s opt/node@N under HOMEBREW_PREFIX counts: node@24 over node@22, odd node@23 skipped', r.code === 0 && r.versions.join() === '24.2.0', `${r.versions} ${r.out}`);
+  const onPath = path.join(sb, 'brew-on-path');
+  fs.mkdirSync(path.join(onPath, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(onPath, 'bin', 'brew'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fakeNode(path.join(onPath, 'opt', 'node@22', 'bin', 'node'), '22.12.0');
+  const b = stopWith({ ...m.env, PATH: `${m.env.PATH}:${path.join(onPath, 'bin')}` });
+  ok('1 …and with no HOMEBREW_PREFIX, under the prefix of the brew on PATH', b.code === 0 && b.versions.join() === '22.12.0', `${b.versions} ${b.out}`);
 }
 {
   const m = machine();
   const r = stopWith(m.env);
   ok('1 no LTS found: PATH\'s odd node runs every call', r.code === 0 && /not running/.test(r.out) && r.versions.join() === '23.11.1', `${r.versions} ${r.out}`);
   ok('1 …and `acs stop` stays quiet about it (the warning is the start\'s)', !/short-lived/.test(r.out), r.out);
+}
+for (const [what, pathVersion, refused] of [['no node on PATH at all', null, /node is not on PATH/], ['node 18 on PATH', '18.19.0', /Node\.js 18\.19\.0 is too old — Node 20 or newer is required/]]) {
+  const r = stopWith(machine({ pathVersion, installs: [[nvm('22.23.3'), '22.23.3']] }).env);
+  ok(`1 ${what}, an LTS installed: the LTS runs every call`, r.code === 0 && /not running/.test(r.out) && r.versions.join() === '22.23.3', `${r.versions} ${r.out}`);
+  const none = stopWith(machine({ pathVersion }).env);
+  ok(`1 …and with none installed, refused as before`, none.code === 1 && refused.test(none.out) && none.versions.length === 0, none.out);
 }
 {
   const m = machine({ pathVersion: '19.9.0', installs: [[nvm('22.23.3'), '22.23.3']] });
@@ -206,17 +221,20 @@ const stopAsync = (env) => new Promise((resolve) => {
   c.stderr.on('data', (d) => { out += d; });
   c.on('exit', (code) => resolve({ code, out }));
 });
-for (const [what, installs, line, version] of [
-  ['an LTS installed', [[nvm('22.23.3'), '22.23.3']], 'acs: using Node 22.23.3 (LTS); your default node 23.11.1 is a short-lived release', '22.23.3'],
-  ['no LTS installed', [], 'acs: your default node 23.11.1 is a short-lived release and no LTS node (an even major, 20 or newer) was found — running on it anyway. Set ACS_NODE to an LTS node to choose one.', '23.11.1'],
+for (const [what, pathVersion, installs, line, version] of [
+  ['default node 23, an LTS installed', '23.11.1', [[nvm('22.23.3'), '22.23.3']], 'acs: using Node 22.23.3 (LTS); your default node 23.11.1 is a short-lived release', '22.23.3'],
+  ['default node 23, no LTS installed', '23.11.1', [], 'acs: your default node 23.11.1 is a short-lived release and no LTS node (an even major, 20 or newer) was found — running on it anyway. Set ACS_NODE to an LTS node to choose one.', '23.11.1'],
+  ['no node on PATH, an LTS installed', null, [[nvm('22.23.3'), '22.23.3']], 'acs: using Node 22.23.3 (LTS); there is no node on your PATH', '22.23.3'],
+  ['node 18 on PATH, an LTS installed', '18.19.0', [[nvm('22.23.3'), '22.23.3']], 'acs: using Node 22.23.3 (LTS); your default node 18.19.0 is too old', '22.23.3'],
 ]) {
-  const m = machine({ installs });
+  const m = machine({ pathVersion, installs });
   ran();
   const s = await start(m.env);
   const up = await health(port);
   const lines = ran();
-  ok(`1 default node 23, ${what}: the studio starts`, up && s.exited() === null, s.out());
-  ok('1 …and the start says so in exactly one line', s.out().split('\n').filter((l) => l === line).length === 1 && s.out().split('\n').filter((l) => /short-lived/.test(l)).length === 1, s.out());
+  const notes = s.out().split('\n').filter((l) => /^acs: (using Node|your default node)/.test(l));
+  ok(`1 ${what}: the studio starts`, up && s.exited() === null, s.out());
+  ok('1 …and the start says so in exactly one line', notes.length === 1 && notes[0] === line, s.out());
   ok(`1 …server.js runs on ${version}`, lines.some((l) => l === `${version} ${path.join(ROOT, 'server.js')}`), lines.join(' | '));
   ok('1 …and so did every node call of the start', versionsIn(lines).join() === version, lines.join(' | '));
   const st = await stopAsync(m.env);

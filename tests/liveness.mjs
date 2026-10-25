@@ -1,23 +1,27 @@
 /**
  * A frozen studio never stays frozen (builds/server-freeze criteria 2–5), in
- * temp HOMEs on free ports.
+ * temp HOMEs on free ports. Every process this suite starts gets a temp HOME.
  *
- * The freeze is the real one, not a stub: with UV_THREADPOOL_SIZE=1, a
- * preload (NODE_OPTIONS=--import, so the command line stays exactly
- * `node <checkout>/server.js`) answers SIGUSR2 by opening a FIFO nobody
- * writes, which parks the pool's only thread. From then on no async fs call
- * completes while timers and HTTP still run — the 2026-10-24 symptom — and
- * process.exit hangs joining that thread, the 2026-10-22 one.
+ * The freeze is the real one, not a stub: a preload (NODE_OPTIONS=--import,
+ * so the command line stays exactly `node <checkout>/server.js`) answers
+ * SIGUSR2 by opening a FIFO nobody writes, which parks one thread of the
+ * pool. With UV_THREADPOOL_SIZE=1 that is the whole pool: no async fs call
+ * completes while timers and HTTP still run — the 2026-10-24 symptom. With
+ * the default four, three workers stay free, and process.exit still hangs
+ * joining the parked one — the 2026-10-22 shape.
  *
  *   2  /api/health?deep=1 answers only once an async fs call completes; the
  *      plain probe's body is unchanged;
  *   3  `acs` replaces this install's frozen studio (SIGTERM, then SIGKILL when
- *      it ignores that), leaves a healthy one and an unproven frozen listener
- *      alone, and `acs stop` SIGKILLs a proven studio that outlives its stop;
- *   4  the watchdog kills a studio whose probe stops completing, stub or real;
- *   5  SIGTERM/SIGINT stop a healthy studio cleanly, SIGHUP (a closed
- *      terminal) does not stop it at all, and a stop that would hang — in
- *      node's exit, or anywhere — ends in SIGKILL.
+ *      it ignores that) — launched from a node path with a space or a binary
+ *      not named node too — leaves a healthy one and any unproven listener
+ *      alone, `acs stop` SIGKILLs a proven studio that outlives its stop, and
+ *      no signal goes to a pid whose start time changed since it was proven;
+ *   4  the watchdog kills a studio whose probes stop completing, stub or real,
+ *      and never one whose probe is merely late or slow;
+ *   5  SIGTERM/SIGINT stop a healthy studio, SIGHUP (a closed terminal) does
+ *      not stop it at all, and a stop never hangs — with a worker blocked for
+ *      good, or the whole pool parked.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -37,18 +41,39 @@ const ok = (name, cond, detail = '') => {
   else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const which = (c) => spawnSync('/bin/sh', ['-c', `command -v ${c}`], { encoding: 'utf8' }).stdout.trim();
 
 const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-liveness-')));
+const scratchHome = path.join(sb, 'home-helpers');
+fs.mkdirSync(scratchHome);
+const which = (c) => spawnSync('/bin/sh', ['-c', `command -v ${c}`], { env: { PATH: process.env.PATH, HOME: scratchHome }, encoding: 'utf8' }).stdout.trim();
 const tools = path.join(sb, 'tools');
 fs.mkdirSync(tools);
 fs.symlinkSync(process.execPath, path.join(tools, 'node'));
 for (const t of ['dirname', 'readlink', 'git', 'ps', 'sed']) fs.symlinkSync(which(t), path.join(tools, t));
-const noBrew = path.join(sb, 'no-brew');
-fs.mkdirSync(noBrew);
+// The same, but ps says the pid started later on every lstart after the
+// first: the kernel handed the proven pid to a new process with the same argv.
+const reused = path.join(sb, 'tools-reused');
+const REUSE_STATE = path.join(sb, 'lstart-asked');
+fs.mkdirSync(reused);
+for (const t of ['node', 'dirname', 'readlink', 'git', 'sed']) fs.symlinkSync(fs.readlinkSync(path.join(tools, t)), path.join(reused, t));
+fs.writeFileSync(path.join(reused, 'ps'), [
+  '#!/bin/sh',
+  'case " $* " in',
+  "  *' -o lstart= '*)",
+  `    if [ -e '${REUSE_STATE}' ]; then echo 'Mon Jan  1 00:00:00 2035'; exit 0; fi`,
+  `    : > '${REUSE_STATE}' ;;`,
+  'esac',
+  `exec '${which('ps')}' "$@"`,
+  '',
+].join('\n'), { mode: 0o755 });
+// Real node binaries under names the old argv check refused: a path with a
+// space (fnm's macOS home) and a binary not named node.
+const spacedNode = path.join(sb, 'Library', 'Application Support', 'fnm', 'node-versions', 'v0', 'installation', 'bin', 'node');
+const otherName = path.join(sb, 'bin-renamed', 'nodejs-current');
+for (const f of [spacedNode, otherName]) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.symlinkSync(process.execPath, f); }
 
 const FIFO = path.join(sb, 'never-written');
-spawnSync('mkfifo', [FIFO]);
+spawnSync('mkfifo', [FIFO], { env: { PATH: process.env.PATH, HOME: scratchHome } });
 const FREEZE = path.join(sb, 'freeze.mjs');
 fs.writeFileSync(FREEZE, `import fs from 'node:fs';\nprocess.on('SIGUSR2', () => fs.open(${JSON.stringify(FIFO)}, 'r', () => {}));\n`);
 // Signals the studio would stop on are caught and dropped, and its own
@@ -72,7 +97,14 @@ fs.writeFileSync(WRAPPER, [
   "  FS_WATCHDOG.probe = () => (hung ? new Promise(() => {}) : fsp.stat('/'));",
   '}',
   "if (mode === 'stub' || mode === 'clock') Object.assign(FS_WATCHDOG, { everyMs: 200, timeoutMs: 500 });",
-  "if (mode === 'exit-hangs') process.exit = () => {};",
+  '// One probe 80 ms late against a 30 ms deadline, then the real one.',
+  "if (mode === 'late-once') {",
+  '  let n = 0;',
+  "  FS_WATCHDOG.probe = () => (n++ ? fsp.stat('/') : new Promise((r) => setTimeout(() => { process.stderr.write('late probe finished\\n'); r(); }, 80)));",
+  '  Object.assign(FS_WATCHDOG, { everyMs: 100, timeoutMs: 30 });',
+  '}',
+  '// Every probe slower than the deadline (50 ms against 30), each one finite.',
+  "if (mode === 'slow') Object.assign(FS_WATCHDOG, { probe: () => new Promise((r) => setTimeout(r, 50)), everyMs: 100, timeoutMs: 30 });",
   'await startStudio({ port: Number(process.env.PORT) });',
   '',
 ].join('\n'));
@@ -94,14 +126,18 @@ const get = async (port, p, ms = 2000) => {
 const healthOf = async (port, q = '', ms = 2000) => { const r = await get(port, `/api/health${q}`, ms); try { return r && JSON.parse(r.text); } catch { return null; } };
 
 let homes = 0;
+const newHome = () => { const h = path.join(sb, `home-${++homes}`); fs.mkdirSync(h, { recursive: true }); return h; };
 const live = [];
-/** A studio of this checkout, as `node <checkout>/server.js` (or the wrapper), up and answering. */
-async function studio({ port, home = path.join(sb, `home-${++homes}`), freeze = false, deaf = false, wrapper = null } = {}) {
-  fs.mkdirSync(home, { recursive: true });
+/**
+ * A studio of this checkout, as `<node> <checkout>/server.js` (or the
+ * wrapper), up and answering. `freeze` loads the FIFO preload; `pool` is
+ * UV_THREADPOOL_SIZE (one, frozen, by default; null leaves node's four).
+ */
+async function studio({ port, home = newHome(), freeze = false, pool = freeze ? 1 : null, deaf = false, wrapper = null, node = process.execPath } = {}) {
   port ??= await freePort();
   const preload = [freeze && FREEZE, deaf && DEAF].filter(Boolean).map((f) => `--import ${f}`).join(' ');
-  const env = { HOME: home, PORT: String(port), PATH: tools, TMPDIR: os.tmpdir(), ...(preload ? { NODE_OPTIONS: preload } : {}), ...(freeze ? { UV_THREADPOOL_SIZE: '1' } : {}), ...(wrapper ? { LIVENESS_MODE: wrapper } : {}) };
-  const child = spawn(process.execPath, [wrapper ? WRAPPER : SERVER], { cwd: '/', env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const env = { HOME: home, PORT: String(port), PATH: tools, TMPDIR: os.tmpdir(), ...(preload ? { NODE_OPTIONS: preload } : {}), ...(pool ? { UV_THREADPOOL_SIZE: String(pool) } : {}), ...(wrapper ? { LIVENESS_MODE: wrapper } : {}) };
+  const child = spawn(node, [wrapper ? WRAPPER : SERVER], { cwd: '/', env, stdio: ['ignore', 'pipe', 'pipe'] });
   const s = { child, port, home, out: '', err: '', exit: null, run: path.join(home, '.agent-config-studio', 'run', `${port}.json`) };
   child.stdout.on('data', (d) => { s.out += d; });
   child.stderr.on('data', (d) => { s.err += d; });
@@ -113,12 +149,12 @@ async function studio({ port, home = path.join(sb, `home-${++homes}`), freeze = 
 }
 /** The exit within `ms`, or null while it still runs. */
 const exitWithin = (s, ms) => Promise.race([s.exited, sleep(ms).then(() => null)]);
-/** Park the pool (the preload's SIGUSR2), and give the open a moment to take the thread. */
+/** Park a pool thread (the preload's SIGUSR2), and give the open a moment to take it. */
 async function freezeNow(s) {
   s.child.kill('SIGUSR2');
   await sleep(200);
 }
-const acsEnv = (port, home) => ({ HOME: home, PATH: tools, ACS_PORT: String(port), ACS_NO_UPDATE: '1', ACS_NO_OPEN: '1', ACS_BREW_PREFIXES: noBrew, TMPDIR: os.tmpdir() });
+const acsEnv = (port, home, PATH = tools) => ({ HOME: home, PATH, ACS_PORT: String(port), ACS_NO_UPDATE: '1', ACS_NO_OPEN: '1', TMPDIR: os.tmpdir() });
 /** `acs <args>` run asynchronously, so every health answer the test's own studios give arrives. */
 function acs(args, env) {
   const child = spawn('/bin/sh', [ACS, ...args], { cwd: sb, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -130,6 +166,25 @@ function acs(args, env) {
   return r;
 }
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** An `acs` start that should exit: bounded, since one that wrongly starts a studio keeps running. */
+const ended = (r, ms = 20000) => Promise.race([r.done, sleep(ms)]);
+/** Run `acs` against a frozen studio and wait for a different pid to answer deep health. */
+async function restart(s, env) {
+  const a = acs([], env);
+  let fresh = null;
+  for (let i = 0; i < 300 && a.code === null; i++) {
+    const h = await healthOf(s.port, '?deep=1', 1000);
+    if (h && h.pid !== s.pid) { fresh = h; break; }
+    await sleep(100);
+  }
+  return { a, fresh };
+}
+async function stopFresh(s, a) {
+  const st = acs(['stop'], acsEnv(s.port, s.home));
+  await st.done;
+  await Promise.race([a.done, sleep(5000)]);
+  return st.code === 0 && /stopped/.test(st.out) && a.code !== null && !(await busy(s.port));
+}
 
 try {
   console.log('\n2 deep health');
@@ -163,33 +218,40 @@ try {
     const s = await studio({ freeze: true, deaf });
     await freezeNow(s);
     const t0 = Date.now();
-    const a = acs([], acsEnv(s.port, s.home));
-    let fresh = null;
-    for (let i = 0; i < 300 && a.code === null; i++) {
-      const h = await healthOf(s.port, '?deep=1', 1000);
-      if (h && h.pid !== s.pid) { fresh = h; break; }
-      await sleep(100);
-    }
+    const { a, fresh } = await restart(s, acsEnv(s.port, s.home));
     const what = deaf ? 'frozen and deaf to SIGTERM' : 'frozen';
     ok(`3 ${what}: acs says so in one line`, a.out.split('\n').filter((l) => l === 'acs: the running studio is frozen — restarting it').length === 1, a.out);
     ok(`3 …the frozen studio is gone${deaf ? ', by SIGKILL after the SIGTERM grace' : ''}`, s.exit !== null && !alive(s.pid) && (!deaf || (s.exit.signal === 'SIGKILL' && Date.now() - t0 >= 3000)), `${JSON.stringify(s.exit)} ${Date.now() - t0}ms`);
-    if (!deaf) ok('3 …it took the SIGTERM and, its pool stuck, killed itself rather than hang in exit', s.exit?.signal === 'SIGKILL' && /the thread pool is stuck, so exiting would hang/.test(s.err), s.err.slice(-300));
+    if (!deaf) ok('3 …it took the SIGTERM and ended on it, its pool stuck, rather than hang in exit', s.exit?.signal === 'SIGTERM' && /stopped\./.test(s.out), `${JSON.stringify(s.exit)} ${s.err.slice(-300)}`);
     ok('3 …and a fresh studio answers deep health on the same port', fresh !== null && a.code === null, `${JSON.stringify(fresh)} ${a.out}`);
-    const st = acs(['stop'], acsEnv(s.port, s.home));
+    ok('3 …which acs stop then stops, and the launcher exits', await stopFresh(s, a));
+  }
+  for (const [what, node] of [['a node path with a space (fnm\'s macOS home)', spacedNode], ['a node binary not named node', otherName]]) {
+    const s = await studio({ freeze: true, node });
+    await freezeNow(s);
+    const { a, fresh } = await restart(s, acsEnv(s.port, s.home));
+    ok(`3 frozen, launched from ${what}: proven and replaced`, /the running studio is frozen — restarting it/.test(a.out) && s.exit !== null && fresh !== null, `${JSON.stringify(s.exit)} ${a.out}`);
+    await stopFresh(s, a);
+    // A run file from before the stop token, the launch command kept: acs stop proves it by that command.
+    const l = await studio({ node });
+    const rf = JSON.parse(fs.readFileSync(l.run, 'utf8'));
+    delete rf.stopToken;
+    fs.writeFileSync(l.run, JSON.stringify(rf));
+    const st = acs(['stop'], acsEnv(l.port, l.home));
     await st.done;
-    await Promise.race([a.done, sleep(5000)]);
-    ok('3 …which acs stop then stops, and the launcher exits', st.code === 0 && /stopped/.test(st.out) && a.code !== null && !(await busy(s.port)), `${st.code} ${st.out}`);
+    ok(`3 …and acs stop proves and stops a legacy-run-file studio launched from ${what}`, st.code === 0 && /^stopped\.$/m.test(st.out) && (await exitWithin(l, 3000)) !== null, `${st.code} ${st.out}`);
   }
   {
     const s = await studio();
     const a = acs([], acsEnv(s.port, s.home));
-    await a.done;
+    await ended(a);
     ok('3 a healthy studio is left running: "already running", same pid, no restart', a.code === 0 && /already running/.test(a.out) && !/frozen/.test(a.out) && (await healthOf(s.port))?.pid === s.pid, a.out);
     s.child.kill('SIGTERM');
     await exitWithin(s, 5000);
   }
   {
-    // A listener that claims to be a studio, answers plain health, never deep.
+    // A listener that claims to be a studio, answers plain health, never deep,
+    // and names a victim: an unrelated `node <someone-else>/server.js`.
     const otherDir = path.join(sb, 'someone-else');
     fs.mkdirSync(otherDir, { recursive: true });
     fs.writeFileSync(path.join(otherDir, 'server.js'), 'setTimeout(() => {}, 60000);\n');
@@ -202,19 +264,25 @@ try {
       '',
     ].join('\n'));
     const nonce = 'cd'.repeat(16);
-    for (const [what, plant] of [['no run file', false], ['a run file and nonce that match it', true]]) {
+    const otherServer = path.join(otherDir, 'server.js');
+    for (const [what, runFile] of [
+      ['no run file', null],
+      ['a run file and nonce that match it', (pid) => ({ pid, nonce, server: otherServer, stopToken: 'ef'.repeat(32) })],
+      ['a run file recording the victim\'s exact launch, another checkout\'s server.js', (pid) => ({ pid, nonce, server: otherServer, argv0: process.execPath, stopToken: 'ef'.repeat(32) })],
+      ['a run file claiming this checkout\'s launch, which the victim\'s command line is not', (pid) => ({ pid, nonce, server: SERVER, argv0: process.execPath, stopToken: 'ef'.repeat(32) })],
+    ]) {
       const port = await freePort();
-      const home = path.join(sb, `home-liar-${plant}`);
-      const victim = spawn(process.execPath, [path.join(otherDir, 'server.js')], { stdio: 'ignore' });
-      const liar = spawn(process.execPath, [liarJs, String(port), JSON.stringify({ app: 'agent-config-studio', pid: victim.pid, nonce })], { stdio: ['ignore', 'pipe', 'inherit'] });
+      const home = newHome();
+      const victim = spawn(process.execPath, [otherServer], { env: { HOME: home, PATH: tools }, stdio: 'ignore' });
+      const liar = spawn(process.execPath, [liarJs, String(port), JSON.stringify({ app: 'agent-config-studio', pid: victim.pid, nonce })], { env: { HOME: home, PATH: tools }, stdio: ['ignore', 'pipe', 'inherit'] });
       live.push(victim, liar);
       await new Promise((r) => { liar.stdout.once('data', r); liar.once('exit', r); });
-      if (plant) {
+      if (runFile) {
         fs.mkdirSync(path.join(home, '.agent-config-studio', 'run'), { recursive: true });
-        fs.writeFileSync(path.join(home, '.agent-config-studio', 'run', `${port}.json`), JSON.stringify({ pid: victim.pid, nonce, server: path.join(otherDir, 'server.js'), stopToken: 'ef'.repeat(32) }));
+        fs.writeFileSync(path.join(home, '.agent-config-studio', 'run', `${port}.json`), JSON.stringify(runFile(victim.pid)));
       }
       const a = acs([], acsEnv(port, home));
-      await a.done;
+      await ended(a);
       ok(`3 a frozen listener that is not this install's proven start (${what}): left alone, as ever`, a.code === 0 && /already running/.test(a.out) && !/frozen|starting/.test(a.out) && alive(victim.pid) && liar.exitCode === null && await busy(port), `${a.code} ${a.out}`);
       victim.kill('SIGKILL');
       liar.kill('SIGKILL');
@@ -246,7 +314,37 @@ try {
     const t0 = Date.now();
     const st = acs(['stop'], acsEnv(s.port, s.home));
     await st.done;
-    ok('3 acs stop on a frozen studio: its token stop ends it (no exit hang)', st.code === 0 && /^stopped\.$/m.test(st.out) && (await exitWithin(s, 2000))?.signal === 'SIGKILL' && Date.now() - t0 < 6000, `${st.code} ${st.out} ${Date.now() - t0}ms`);
+    ok('3 acs stop on a frozen studio: its token stop ends it (no exit hang)', st.code === 0 && /^stopped\.$/m.test(st.out) && (await exitWithin(s, 2000)) !== null && Date.now() - t0 < 6000, `${st.code} ${st.out} ${Date.now() - t0}ms`);
+  }
+  // The pid was proven, then its start time changed: the kernel reused it for
+  // a process with the same command line. Nothing may be signalled.
+  {
+    const s = await studio();
+    const rf = JSON.parse(fs.readFileSync(s.run, 'utf8'));
+    delete rf.stopToken;
+    fs.writeFileSync(s.run, JSON.stringify(rf));
+    fs.rmSync(REUSE_STATE, { force: true });
+    const st = acs(['stop'], acsEnv(s.port, s.home, reused));
+    await st.done;
+    ok('3 pid reused between proof and the first SIGTERM (legacy stop): no signal, and it says why', st.code === 1 && /no longer the process acs proved/.test(st.out) && fs.existsSync(REUSE_STATE) && (await exitWithin(s, 1500)) === null && (await healthOf(s.port))?.pid === s.pid, `${st.code} ${st.out}`);
+    s.child.kill('SIGKILL');
+  }
+  {
+    const s = await studio({ deaf: true });
+    fs.rmSync(REUSE_STATE, { force: true });
+    const st = acs(['stop'], acsEnv(s.port, s.home, reused));
+    await st.done;
+    ok('3 pid reused before the token stop\'s SIGKILL fallback: no SIGKILL', st.code === 1 && /accepted but is still listening/.test(st.out) && (await exitWithin(s, 1500)) === null && alive(s.child.pid), `${st.code} ${st.out}`);
+    s.child.kill('SIGKILL');
+  }
+  {
+    const s = await studio({ freeze: true });
+    await freezeNow(s);
+    fs.rmSync(REUSE_STATE, { force: true });
+    const a = acs([], acsEnv(s.port, s.home, reused));
+    await ended(a);
+    ok('3 pid reused before a frozen studio\'s SIGTERM: not signalled, nothing started', a.code === 1 && /no longer the process acs proved/.test(a.out) && !/starting Agent Config Studio/.test(a.out) && (await exitWithin(s, 1500)) === null && alive(s.child.pid), `${a.code} ${a.out} ${JSON.stringify(s.exit)}`);
+    s.child.kill('SIGKILL');
   }
 
   console.log('\n4 the watchdog');
@@ -259,8 +357,20 @@ try {
     const t0 = Date.now();
     const gone = await exitWithin(s, 4000);
     ok('4 the probe never resolves: the studio kills itself with SIGKILL', gone?.signal === 'SIGKILL', `${JSON.stringify(gone)} ${Date.now() - t0}ms`);
-    ok('4 …writing one line that names the reason', s.err.split('\n').filter((l) => /agent-config-studio: no async file operation completed in 0\.5 s — the thread pool is stuck — killing this studio \(pid \d+\) with SIGKILL/.test(l)).length === 1, s.err.slice(-300));
+    ok('4 …writing one line that names the reason', s.err.split('\n').filter((l) => /agent-config-studio: no async file operation completed in 1 s \(a probe, then a fresh one beside it\) — the thread pool is stuck — killing this studio \(pid \d+\) with SIGKILL/.test(l)).length === 1, s.err.slice(-300));
     ok('4 …and the port is free', !(await busy(s.port)));
+  }
+  {
+    const s = await studio({ wrapper: 'late-once' });
+    await sleep(1500);
+    ok('4 one probe 80 ms late against a 30 ms deadline does not kill a healthy studio', s.exit === null && /late probe finished/.test(s.err) && (await healthOf(s.port, '?deep=1'))?.pid === s.pid, `${JSON.stringify(s.exit)} ${s.err.slice(-300)}`);
+    s.child.kill('SIGKILL');
+  }
+  {
+    const s = await studio({ wrapper: 'slow' });
+    await sleep(1500);
+    ok('4 every probe slower than the deadline (50 ms against 30), each finishing: never killed', s.exit === null && (await healthOf(s.port, '?deep=1'))?.pid === s.pid, `${JSON.stringify(s.exit)} ${s.err.slice(-300)}`);
+    s.child.kill('SIGKILL');
   }
   {
     const s = await studio({ wrapper: 'clock', freeze: true });
@@ -268,14 +378,14 @@ try {
     ok('4 real probe, short clock: up and probing', s.exit === null && (await healthOf(s.port))?.pid === s.pid, s.err);
     await freezeNow(s);
     const gone = await exitWithin(s, 4000);
-    ok('4 the pool parked for real: the default probe catches it and the studio SIGKILLs itself', gone?.signal === 'SIGKILL' && /no async file operation completed in 0\.5 s/.test(s.err) && !(await busy(s.port)), `${JSON.stringify(gone)} ${s.err.slice(-300)}`);
+    ok('4 the pool parked for real: the default probe catches it and the studio SIGKILLs itself', gone?.signal === 'SIGKILL' && /no async file operation completed in 1 s/.test(s.err) && !(await busy(s.port)), `${JSON.stringify(gone)} ${s.err.slice(-300)}`);
   }
   {
     const s = await studio({ wrapper: 'clock' });
     await sleep(2000);
     ok('4 control: a healthy pool under the short clock is never killed', s.exit === null && (await healthOf(s.port))?.pid === s.pid, s.err);
     s.child.kill('SIGTERM');
-    ok('4 …and stops cleanly on SIGTERM', (await exitWithin(s, 5000))?.code === 0);
+    ok('4 …and SIGTERM stops it', (await exitWithin(s, 5000))?.signal === 'SIGTERM');
   }
 
   console.log('\n5 shutdown cannot hang');
@@ -287,42 +397,33 @@ try {
     ok('5 SIGHUP (the terminal that ran acs closed): the studio keeps running and answers deep health', s.exit === null && deep?.pid === s.pid, `${JSON.stringify(s.exit)} ${JSON.stringify(deep)} ${s.err.slice(-200)}`);
     s.child.kill('SIGTERM');
     const gone = await exitWithin(s, 5000);
-    ok('5 …and SIGTERM still stops it cleanly', gone?.code === 0 && gone.signal === null && /stopped\./.test(s.out) && !fs.existsSync(s.run), JSON.stringify(gone));
+    ok('5 …and SIGTERM still stops it: "stopped.", run file removed', gone?.signal === 'SIGTERM' && /stopped\./.test(s.out) && !fs.existsSync(s.run), JSON.stringify(gone));
   }
   for (const signal of ['SIGTERM', 'SIGINT']) {
     const s = await studio();
     const hadRun = fs.existsSync(s.run);
     s.child.kill(signal);
     const gone = await exitWithin(s, 5000);
-    ok(`5 ${signal}: a healthy studio stops cleanly — exit 0, "stopped.", its run file removed`, gone?.code === 0 && gone.signal === null && /stopped\./.test(s.out) && hadRun && !fs.existsSync(s.run) && !(await busy(s.port)), `${JSON.stringify(gone)} ${s.out.slice(-100)} ${s.err.slice(-200)}`);
+    ok(`5 ${signal}: a healthy studio stops — "stopped.", its run file removed, ended by the ${signal} itself`, gone?.signal === signal && /stopped\./.test(s.out) && hadRun && !fs.existsSync(s.run) && !(await busy(s.port)), `${JSON.stringify(gone)} ${s.out.slice(-100)} ${s.err.slice(-200)}`);
   }
   {
-    // The hazard is real on this node: with the pool parked, process.exit never returns.
+    // The hazard is real on this node: one worker blocked for good, three free, and process.exit never returns.
     const probe = path.join(sb, 'exit-hangs.mjs');
     fs.writeFileSync(probe, "setTimeout(() => { process.kill(process.pid, 'SIGUSR2'); setTimeout(() => process.exit(0), 200); }, 100);\n");
-    const c = spawn(process.execPath, [probe], { env: { PATH: tools, NODE_OPTIONS: `--import ${FREEZE}`, UV_THREADPOOL_SIZE: '1' }, stdio: 'ignore' });
+    const c = spawn(process.execPath, [probe], { env: { HOME: newHome(), PATH: tools, NODE_OPTIONS: `--import ${FREEZE}` }, stdio: 'ignore' });
     live.push(c);
     const exited = await Promise.race([new Promise((r) => c.once('exit', () => r(true))), sleep(3000).then(() => false)]);
-    ok('5 control: on this node, process.exit with the pool parked hangs (still alive 3 s on)', !exited);
+    ok('5 control: on this node, one blocked worker of four makes process.exit hang (still alive 3 s on)', !exited);
     c.kill('SIGKILL');
   }
-  {
-    const s = await studio({ freeze: true });
+  for (const [what, pool] of [['one worker of four blocked for good', null], ['the whole pool (one thread) parked', 1]]) {
+    const s = await studio({ freeze: true, pool });
     await freezeNow(s);
+    ok(`5 ${what}: the studio still answers deep health`, pool === 1 || (await healthOf(s.port, '?deep=1'))?.pid === s.pid);
     const t0 = Date.now();
     s.child.kill('SIGTERM');
     const gone = await exitWithin(s, 4000);
-    ok('5 SIGTERM with the pool parked: no hang in exit — gone by SIGKILL within ~1 s', gone?.signal === 'SIGKILL' && Date.now() - t0 < 2500 && !(await busy(s.port)), `${JSON.stringify(gone)} ${Date.now() - t0}ms`);
-    ok('5 …naming why', /the thread pool is stuck, so exiting would hang — killing this studio/.test(s.err), s.err.slice(-300));
-  }
-  {
-    const s = await studio({ wrapper: 'exit-hangs' });
-    const t0 = Date.now();
-    s.child.kill('SIGTERM');
-    const gone = await exitWithin(s, 6000);
-    const took = Date.now() - t0;
-    ok('5 a stop that never finishes (process.exit stubbed to return): SIGKILL 3 s on', gone?.signal === 'SIGKILL' && took >= 2900 && took < 5000 && !(await busy(s.port)), `${JSON.stringify(gone)} ${took}ms`);
-    ok('5 …naming why', /still running 3 s after a stop signal — killing this studio/.test(s.err), s.err.slice(-300));
+    ok(`5 …SIGTERM: gone within 4 s, "stopped.", its run file removed`, gone !== null && /stopped\./.test(s.out) && !fs.existsSync(s.run) && !(await busy(s.port)), `${JSON.stringify(gone)} ${Date.now() - t0}ms ${s.out.slice(-80)}`);
   }
 } finally {
   for (const c of live) if (c.exitCode === null && c.signalCode === null) c.kill('SIGKILL');
