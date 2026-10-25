@@ -170,8 +170,12 @@ lts_node() {
     "$HOME"/.volta/tools/image/node/*/bin/node; do
     lts_try "$c"
   done
+  # dash answers a relative PATH entry with a relative path, from the cwd.
   brew_on_path=$(command -v brew 2>/dev/null) || brew_on_path=
-  case $brew_on_path in /*) brew_on_path=$(dirname -- "$(dirname -- "$brew_on_path")") ;; *) brew_on_path= ;; esac
+  case $brew_on_path in
+    */*) brew_on_path=$(unset CDPATH; cd -- "$(dirname -- "$brew_on_path")" 2>/dev/null && dirname -- "$(pwd)") || brew_on_path= ;;
+    *) brew_on_path= ;;
+  esac
   for p in "${HOMEBREW_PREFIX:-}" "$brew_on_path"; do
     [ -n "$p" ] || continue
     for c in "$p"/opt/node@*/bin/node; do lts_try "$c"; done
@@ -559,10 +563,11 @@ trap 'kill $SERVER_PID 2>/dev/null' INT TERM
 # Wait (up to 10 s) for the port to accept connections before opening the browser.
 "$NODE" "$DIR/bin/acs-net.mjs" wait "$PORT" || true
 open_url "$URL"
-# The studio ends on its stop signal itself (server.js), so a stop reads 143:
-# a stop, not a failure. The wait's stderr carries the shell's "Terminated"
-# job notice.
+# The studio ends on its stop signal itself (server.js): SIGTERM reads 143,
+# and Ctrl-C 130, whether from the studio or from this wait cut short by it.
+# Each is a stop, not a failure. The wait's stderr carries the shell's
+# "Terminated" job notice.
 rc=0
 wait $SERVER_PID 2>/dev/null || rc=$?
-[ "$rc" -ne 143 ] || rc=0
+case $rc in 130|143) rc=0 ;; esac
 exit "$rc"

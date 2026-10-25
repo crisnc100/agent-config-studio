@@ -77,14 +77,14 @@ function machine({ pathVersion = '23.11.1', installs = [] } = {}) {
 }
 const freePort = () => new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 const port = await freePort();
-const run = (args, env) => {
-  const r = spawnSync('/bin/sh', [ACS, ...args], { cwd: sb, env: { ACS_PORT: String(port), ...env }, encoding: 'utf8' });
+const run = (args, env, { shell = '/bin/sh', cwd = sb } = {}) => {
+  const r = spawnSync(shell, [ACS, ...args], { cwd, env: { ACS_PORT: String(port), ...env }, encoding: 'utf8' });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 };
 /** `acs stop` with nothing running: it exercises acs-net several times and says "not running." */
-const stopWith = (env) => {
+const stopWith = (env, opts) => {
   ran();
-  const r = run(['stop'], env);
+  const r = run(['stop'], env, opts);
   return { ...r, versions: versionsIn(ran()) };
 };
 const nvm = (v) => `.nvm/versions/node/v${v}/bin/node`;
@@ -140,6 +140,11 @@ console.log('\nacs: an odd major on PATH gives way to the newest LTS installed')
   fakeNode(path.join(onPath, 'opt', 'node@22', 'bin', 'node'), '22.12.0');
   const b = stopWith({ ...m.env, PATH: `${m.env.PATH}:${path.join(onPath, 'bin')}` });
   ok('1 …and with no HOMEBREW_PREFIX, under the prefix of the brew on PATH', b.code === 0 && b.versions.join() === '22.12.0', `${b.versions} ${b.out}`);
+  // A relative PATH entry: dash's `command -v brew` answers relative to the cwd.
+  for (const [shell, rel, cwd] of [['dash', 'bin', onPath], ['dash', '.', path.join(onPath, 'bin')], ['sh', 'bin', onPath]]) {
+    const r2 = stopWith({ ...m.env, PATH: `${rel}:${m.env.PATH}` }, { shell: which(shell), cwd });
+    ok(`1 …and through a relative PATH entry ("${rel}", ${shell}), resolved against the cwd`, r2.code === 0 && r2.versions.join() === '22.12.0', `${r2.versions} ${r2.out}`);
+  }
 }
 {
   const m = machine();

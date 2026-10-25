@@ -50,18 +50,22 @@ const tools = path.join(sb, 'tools');
 fs.mkdirSync(tools);
 fs.symlinkSync(process.execPath, path.join(tools, 'node'));
 for (const t of ['dirname', 'readlink', 'git', 'ps', 'sed']) fs.symlinkSync(which(t), path.join(tools, t));
-// The same, but ps says the pid started later on every lstart after the
-// first: the kernel handed the proven pid to a new process with the same argv.
+// The same, but ps says the pid started later once it has answered lstart
+// truthfully REUSE_AFTER times (one by default): the kernel handed the
+// proven pid to a new process with the same argv.
 const reused = path.join(sb, 'tools-reused');
 const REUSE_STATE = path.join(sb, 'lstart-asked');
+const REUSE_AFTER = path.join(sb, 'lstart-true-answers');
 fs.mkdirSync(reused);
 for (const t of ['node', 'dirname', 'readlink', 'git', 'sed']) fs.symlinkSync(fs.readlinkSync(path.join(tools, t)), path.join(reused, t));
 fs.writeFileSync(path.join(reused, 'ps'), [
   '#!/bin/sh',
   'case " $* " in',
   "  *' -o lstart= '*)",
-  `    if [ -e '${REUSE_STATE}' ]; then echo 'Mon Jan  1 00:00:00 2035'; exit 0; fi`,
-  `    : > '${REUSE_STATE}' ;;`,
+  // Shell builtins only: this PATH has no cat.
+  `    n=0; [ -e '${REUSE_STATE}' ] && read -r n < '${REUSE_STATE}'; n=$((n + 1)); echo "$n" > '${REUSE_STATE}'`,
+  `    after=1; [ -e '${REUSE_AFTER}' ] && read -r after < '${REUSE_AFTER}'`,
+  `    if [ "$n" -gt "$after" ]; then echo 'Mon Jan  1 00:00:00 2035'; exit 0; fi ;;`,
   'esac',
   `exec '${which('ps')}' "$@"`,
   '',
@@ -338,6 +342,20 @@ try {
     s.child.kill('SIGKILL');
   }
   {
+    const s = await studio({ deaf: true });
+    const rf = JSON.parse(fs.readFileSync(s.run, 'utf8'));
+    delete rf.stopToken;
+    fs.writeFileSync(s.run, JSON.stringify(rf));
+    fs.rmSync(REUSE_STATE, { force: true });
+    fs.writeFileSync(REUSE_AFTER, '2');
+    const t0 = Date.now();
+    const st = acs(['stop'], acsEnv(s.port, s.home, reused));
+    await st.done;
+    fs.rmSync(REUSE_AFTER, { force: true });
+    ok('3 pid reused between the SIGTERM and its SIGKILL (legacy stop, SIGTERM ignored): no SIGKILL', Date.now() - t0 >= 3000 && (await exitWithin(s, 1500)) === null && alive(s.child.pid) && fs.readFileSync(REUSE_STATE, 'utf8').trim() === '3', `${st.code} ${st.out} ${JSON.stringify(s.exit)}`);
+    s.child.kill('SIGKILL');
+  }
+  {
     const s = await studio({ freeze: true });
     await freezeNow(s);
     fs.rmSync(REUSE_STATE, { force: true });
@@ -398,6 +416,24 @@ try {
     s.child.kill('SIGTERM');
     const gone = await exitWithin(s, 5000);
     ok('5 …and SIGTERM still stops it: "stopped.", run file removed', gone?.signal === 'SIGTERM' && /stopped\./.test(s.out) && !fs.existsSync(s.run), JSON.stringify(gone));
+  }
+  {
+    // Ctrl-C in the terminal that ran acs: SIGINT to the launcher's whole process group.
+    const home = newHome();
+    const port = await freePort();
+    const l = spawn('/bin/sh', [ACS], { cwd: sb, env: acsEnv(port, home), stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    let out = '';
+    l.stdout.on('data', (d) => { out += d; });
+    l.stderr.on('data', (d) => { out += d; });
+    const exited = new Promise((res) => l.on('exit', (code, signal) => res({ code, signal })));
+    live.push(l);
+    for (let i = 0; i < 150 && !(await healthOf(port)); i++) await sleep(100);
+    const up = (await healthOf(port))?.pid;
+    process.kill(-l.pid, 'SIGINT');
+    const gone = await Promise.race([exited, sleep(6000).then(() => null)]);
+    const run = path.join(home, '.agent-config-studio', 'run', `${port}.json`);
+    for (let i = 0; i < 30 && (await busy(port) || fs.existsSync(run) || !/stopped\./.test(out)); i++) await sleep(100);
+    ok('5 Ctrl-C (SIGINT to the launcher\'s process group): the studio stops cleanly and acs exits 0', !!up && gone?.code === 0 && /stopped\./.test(out) && !fs.existsSync(run) && !(await busy(port)), `${JSON.stringify(gone)} ${out.slice(-300)}`);
   }
   for (const signal of ['SIGTERM', 'SIGINT']) {
     const s = await studio();
