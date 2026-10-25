@@ -77,7 +77,8 @@ usage() {
     '       acs help                 this text' \
     '' \
     'environment: ACS_PORT (default 8787), ACS_NO_OPEN=1 (never open a browser),' \
-    '             ACS_NO_UPDATE=1 (start without pulling)' \
+    '             ACS_NO_UPDATE=1 (start without pulling), ACS_NODE (the node to run;' \
+    '             default: node on PATH, or the newest LTS installed when that is an odd release)' \
     "checkout:    $DIR" \
     "installed:   $(mode_label)"
 }
@@ -102,57 +103,159 @@ npm_refuses() {
 
 # Node is the one runtime the studio needs. Check it before anything uses it,
 # so an old or missing node says so instead of failing on a syntax error.
+#
+# Which node, chosen once and run for every command below: ACS_NODE when set;
+# else node on PATH, unless its major is odd — a short-lived release, and on
+# Node 23 a studio up for a day stopped completing async file I/O for good
+# (2026-10-24) — then the newest LTS a version manager or Homebrew installed.
+# None found: PATH's node, with a warning. The start prints which (NODE_NOTE,
+# NODE_WARN); every other command stays as quiet as it was.
+NODE=node
+NODE_NOTE=
+NODE_WARN=
 need_node() {
-  if ! command -v node >/dev/null 2>&1; then
-    echo "acs: Node.js 20 or newer is required, and node is not on PATH. Install it from https://nodejs.org" >&2
-    exit 1
+  if [ -n "${ACS_NODE:-}" ]; then
+    src="ACS_NODE ($ACS_NODE)"
+    case $ACS_NODE in
+      */*) [ -f "$ACS_NODE" ] && [ -x "$ACS_NODE" ] && NODE=$ACS_NODE ;;
+      *) NODE=$(command -v -- "$ACS_NODE" 2>/dev/null) ;;
+    esac || {
+      echo "acs: ACS_NODE is set to \"$ACS_NODE\", which is not an executable file. Point it at Node.js 20 or newer, or unset it." >&2
+      exit 1
+    }
+  else
+    src=node
+    if ! command -v node >/dev/null 2>&1; then
+      echo "acs: Node.js 20 or newer is required, and node is not on PATH. Install it from https://nodejs.org" >&2
+      exit 1
+    fi
   fi
-  v=$(node -p process.versions.node 2>/dev/null || true)
+  v=$("$NODE" -p process.versions.node 2>/dev/null || true)
   major=${v%%.*}
   case $major in
-    ''|*[!0-9]*) echo "acs: could not read the Node.js version (node -p printed \"$v\"). Node 20 or newer is required." >&2; exit 1 ;;
+    ''|*[!0-9]*) echo "acs: could not read the Node.js version ($src -p printed \"$v\"). Node 20 or newer is required." >&2; exit 1 ;;
   esac
+  if [ -z "${ACS_NODE:-}" ] && [ $((major % 2)) -eq 1 ]; then
+    if lts_node; then
+      NODE_NOTE="acs: using Node $lts_v (LTS); your default node $v is a short-lived release"
+      NODE=$lts v=$lts_v major=${lts_v%%.*}
+    elif [ "$major" -ge 20 ]; then
+      NODE_WARN="acs: your default node $v is a short-lived release and no LTS node (an even major, 20 or newer) was found — running on it anyway. Set ACS_NODE to an LTS node to choose one."
+    fi
+  fi
   if [ "$major" -lt 20 ]; then
-    echo "acs: Node.js $v is too old — Node 20 or newer is required. Install it from https://nodejs.org" >&2
+    echo "acs: Node.js $v is too old — Node 20 or newer is required.${ACS_NODE:+ (That is ACS_NODE: $ACS_NODE.)} Install it from https://nodejs.org" >&2
     exit 1
   fi
+}
+
+# The newest LTS node (an even major, 20 or newer) that nvm, fnm, Volta or
+# Homebrew installed, in lts and lts_v. Each candidate is asked its version:
+# a folder's name is not trusted. ACS_BREW_PREFIXES exists for the tests.
+lts_node() {
+  lts= lts_v=
+  for c in "$HOME"/.nvm/versions/node/*/bin/node \
+    "$HOME"/.local/share/fnm/node-versions/*/installation/bin/node \
+    "$HOME/Library/Application Support/fnm"/node-versions/*/installation/bin/node \
+    "$HOME"/.volta/tools/image/node/*/bin/node; do
+    lts_try "$c"
+  done
+  for p in ${ACS_BREW_PREFIXES:-/opt/homebrew /usr/local}; do
+    for c in "$p"/opt/node@*/bin/node; do lts_try "$c"; done
+  done
+  [ -n "$lts" ]
+}
+
+lts_try() {
+  [ -f "$1" ] && [ -x "$1" ] || return 0
+  cv=$("$1" -p process.versions.node 2>/dev/null) || return 0
+  case $cv in
+    *[!0-9.]*|*.*.*.*|.*|*.|*..*) return 0 ;;
+    *.*.*) ;;
+    *) return 0 ;;
+  esac
+  cmajor=${cv%%.*}
+  [ "$cmajor" -ge 20 ] && [ $((cmajor % 2)) -eq 0 ] || return 0
+  if [ -z "$lts" ] || newer "$cv" "$lts_v"; then lts=$1 lts_v=$cv; fi
+}
+
+# Whether version $1 is newer than $2, both major.minor.patch.
+newer() {
+  na=$1 nb=$2
+  for n in 1 2 3; do
+    [ "${na%%.*}" -gt "${nb%%.*}" ] && return 0
+    [ "${na%%.*}" -lt "${nb%%.*}" ] && return 1
+    na=${na#*.} nb=${nb#*.}
+  done
+  return 1
 }
 
 # Identify the app by its health endpoint, never by "something owns the port".
 is_acs() {
-  node "$DIR/bin/acs-net.mjs" health "$PORT" >/dev/null 2>&1
+  "$NODE" "$DIR/bin/acs-net.mjs" health "$PORT" >/dev/null 2>&1
 }
 
-# The pid `acs stop` may signal — only for a legacy run file, written by a
-# studio from before the stop token (any newer studio stops itself, below):
-# THIS install's studio on this port, proven three ways — /api/health names
-# the pid and that start's nonce, the run file (studio dir, mode 0600,
-# decoded as JSON) records the same pid and nonce, and that pid's command
-# line is exactly a node binary followed by this install's server.js, nothing
-# before or after it. A stale, spoofed or foreign answer prints nothing.
+# Whether the studio's async file I/O still completes: /api/health?deep=1
+# answers only after a real fs call returns. One that answers plain health
+# but not this within 5 s is frozen.
+fs_alive() {
+  "$NODE" "$DIR/bin/acs-net.mjs" deep "$PORT" >/dev/null 2>&1
+}
+
+# The pid `acs` may signal: THIS install's studio on this port, proven three
+# ways — /api/health names the pid and that start's nonce, the run file
+# (studio dir, mode 0600, decoded as JSON) records the same pid and nonce, and
+# that pid's command line is exactly a node binary followed by this install's
+# server.js (runs_server). A stale, spoofed or foreign answer prints nothing.
+# `acs stop` asks it only for a legacy run file, written by a studio from
+# before the stop token (any newer studio stops itself, below); `acs_pid any`
+# takes a token-bearing run file too, for a studio too frozen to stop itself.
 acs_pid() {
-  answer=$(node "$DIR/bin/acs-net.mjs" health "$PORT" 2>/dev/null) || return 1
+  answer=$("$NODE" "$DIR/bin/acs-net.mjs" health "$PORT" 2>/dev/null) || return 1
   pid=${answer%% *}
   nonce=${answer#* }
   run="${HOME}/.agent-config-studio/run/$PORT.json"
   [ -f "$run" ] || return 1
-  [ "$(node "$DIR/bin/acs-net.mjs" run "$PORT" < "$run" 2>/dev/null)" = "$pid $nonce legacy" ] || return 1
-  args=$(ps -o args= -p "$pid" 2>/dev/null) || return 1
+  case $("$NODE" "$DIR/bin/acs-net.mjs" run "$PORT" < "$run" 2>/dev/null) in
+    "$pid $nonce legacy") ;;
+    "$pid $nonce token") [ "${1:-}" = any ] || return 1 ;;
+    *) return 1 ;;
+  esac
+  runs_server "$pid" || return 1
+  echo "$pid"
+}
+
+# Whether pid $1's command line is exactly a node binary followed by this
+# install's server.js, nothing before or after it.
+runs_server() {
+  args=$(ps -o args= -p "$1" 2>/dev/null) || return 1
   binary=${args%" $DIR/server.js"}
   [ "$binary" != "$args" ] || return 1
   case $binary in
     *' '*) return 1 ;;
-    node|*/node) echo "$pid" ;;
+    node|*/node) return 0 ;;
     *) return 1 ;;
   esac
 }
 
+# End proven pid $1: SIGTERM, then SIGKILL if 3 s on the same process is still
+# there. Health cannot re-prove it by then — a studio stuck inside node's exit
+# answers nothing (2026-10-22) — so its command line is checked again, which a
+# reused pid fails.
+end_pid() {
+  kill "$1" 2>/dev/null || return 0
+  "$NODE" "$DIR/bin/acs-net.mjs" gone "$1" && return 0
+  runs_server "$1" || return 0
+  kill -9 "$1" 2>/dev/null || true
+  "$NODE" "$DIR/bin/acs-net.mjs" gone "$1" || true
+}
+
 # Whether the run file for this port carries a stop token: a studio that
-# can stop itself, which is then never stopped by signalling a pid.
+# can stop itself, which is signalled only when that stop did not end it.
 run_has_token() {
   run="${HOME}/.agent-config-studio/run/$PORT.json"
   [ -f "$run" ] || return 1
-  case $(node "$DIR/bin/acs-net.mjs" run "$PORT" < "$run" 2>/dev/null) in
+  case $("$NODE" "$DIR/bin/acs-net.mjs" run "$PORT" < "$run" 2>/dev/null) in
     *' token') return 0 ;;
     *) return 1 ;;
   esac
@@ -160,7 +263,7 @@ run_has_token() {
 
 # Anything at all accepting connections on the port, HTTP or not.
 port_busy() {
-  node "$DIR/bin/acs-net.mjs" busy "$PORT"
+  "$NODE" "$DIR/bin/acs-net.mjs" busy "$PORT"
 }
 
 # Bring this checkout up to the remote's default branch before starting, so
@@ -297,47 +400,60 @@ case "${1:-}" in
     # The studio's onboarding tells people to run `acs usage`, so it has to
     # exist. Everything after the subcommand is forwarded verbatim.
     shift
-    exec node "$DIR/bin/usage.mjs" "$@"
+    exec "$NODE" "$DIR/bin/usage.mjs" "$@"
     ;;
   roots)
     # Which project folders the studio reads and edits. A running studio
     # picks up the change by itself.
     shift
-    exec node "$DIR/bin/roots.mjs" "$@"
+    exec "$NODE" "$DIR/bin/roots.mjs" "$@"
     ;;
   install-worktree)
     # Copies tools/worktree into ~/.config/worktree and makes ~/.zshrc source
     # it. Exits here: installing never starts the studio. Re-run after a pull.
     shift
-    exec node "$DIR/bin/install-worktree.mjs" "$@"
+    exec "$NODE" "$DIR/bin/install-worktree.mjs" "$@"
     ;;
   install-model-id)
     # Copies the resolver out of this checkout and links ~/.local/bin/model-id,
     # so skills keep resolving when a worktree is removed. Re-run after a pull.
-    exec node "$DIR/bin/model-id.mjs" --install
+    exec "$NODE" "$DIR/bin/model-id.mjs" --install
     ;;
   install|uninstall)
     # A symlink to this checkout's bin/acs on PATH, and its removal. Never
     # edits a shell profile.
     [ "$MODE" != npm ] || npm_refuses "$1"
-    exec node "$DIR/bin/acs-link.mjs" "$@"
+    exec "$NODE" "$DIR/bin/acs-link.mjs" "$@"
     ;;
   stop)
     # A studio stops itself on its run file's token; a pid is signalled only
-    # for a legacy run file (acs_pid). A token stop that fails is reported,
-    # never retried with a signal.
+    # for a legacy run file (acs_pid), or when a token stop was accepted but
+    # the proven process never ended. A refused token is reported, never
+    # retried with a signal.
     if is_acs && run_has_token; then
+      # Proven first: a studio stuck inside node's exit answers no health
+      # check afterwards, so nothing could prove it then.
+      pid=$(acs_pid any) || pid=
       rc=0
-      node "$DIR/bin/acs-net.mjs" stop "$PORT" < "${HOME}/.agent-config-studio/run/$PORT.json" >/dev/null 2>&1 || rc=$?
+      "$NODE" "$DIR/bin/acs-net.mjs" stop "$PORT" < "${HOME}/.agent-config-studio/run/$PORT.json" >/dev/null 2>&1 || rc=$?
       case $rc in
         0) echo "stopped." ;;
         2) echo "port $PORT answers as an Agent Config Studio that is not the one its run file names — not touching it." >&2; exit 1 ;;
         3) echo "the studio on port $PORT refused the stop token in its run file — not touching it." >&2; exit 1 ;;
-        4) echo "asked the studio on port $PORT to stop; it accepted but is still listening." >&2; exit 1 ;;
+        4)
+          if [ -n "$pid" ] && runs_server "$pid"; then
+            kill -9 "$pid" 2>/dev/null || true
+            "$NODE" "$DIR/bin/acs-net.mjs" gone "$pid" || true
+            echo "stopped (it accepted the stop but kept listening, so it was killed)."
+          else
+            echo "asked the studio on port $PORT to stop; it accepted but is still listening." >&2; exit 1
+          fi
+          ;;
         *) echo "could not ask the studio on port $PORT to stop (exit $rc) — not touching it." >&2; exit 1 ;;
       esac
     elif pid=$(acs_pid); then
-      kill "$pid" && echo "stopped."
+      end_pid "$pid"
+      echo "stopped."
     elif is_acs; then
       echo "port $PORT is served by an Agent Config Studio that is not this checkout's ($DIR) start — not touching it. Stop it with the acs that started it." >&2
       exit 1
@@ -357,10 +473,17 @@ case "${1:-}" in
     ;;
 esac
 
+# Answering health while no async fs call completes is a frozen studio: every
+# page and most routes hang. This install's proven start is replaced; any
+# other is left alone, as ever.
 if is_acs; then
-  echo "already running → $URL"
-  open_url "$URL"
-  exit 0
+  if fs_alive || ! pid=$(acs_pid any); then
+    echo "already running → $URL"
+    open_url "$URL"
+    exit 0
+  fi
+  echo "acs: the running studio is frozen — restarting it"
+  end_pid "$pid"
 fi
 
 if port_busy; then
@@ -384,12 +507,14 @@ if [ "$MODE" = npm ]; then
   stale_copies
 fi
 
+[ -z "$NODE_NOTE" ] || echo "$NODE_NOTE"
+[ -z "$NODE_WARN" ] || echo "$NODE_WARN" >&2
 echo "starting Agent Config Studio…"
-PORT="$PORT" node "$DIR/server.js" &
+PORT="$PORT" "$NODE" "$DIR/server.js" &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null' INT TERM
 
 # Wait (up to 10 s) for the port to accept connections before opening the browser.
-node "$DIR/bin/acs-net.mjs" wait "$PORT" || true
+"$NODE" "$DIR/bin/acs-net.mjs" wait "$PORT" || true
 open_url "$URL"
 wait $SERVER_PID

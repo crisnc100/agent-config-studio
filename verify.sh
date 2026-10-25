@@ -44,6 +44,10 @@ node tests/usage-cli.mjs
 node tests/acs-update.mjs
 # The launcher from a stranger's shell: links, install/uninstall, no curl or lsof.
 node tests/acs-launcher.mjs
+# Which node it runs: fake node binaries, temp HOMEs.
+node tests/acs-node.mjs
+# A frozen studio never stays frozen: deep health, acs's restart, the watchdog, a stop that cannot hang (real pool freezes, temp HOMEs).
+node tests/liveness.mjs
 # The folder registry and `acs roots`: temp HOMEs only.
 node tests/roots.mjs
 # The same, through the real server: custom, legacy and symlinked roots.

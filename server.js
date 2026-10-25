@@ -74,6 +74,52 @@ const runFile = (port) => path.join(STUDIO_HOME, 'run', `${port}.json`);
 const PUBLIC = path.join(__dirname, 'public');
 const PORT = Number(process.env.PORT || 8787);
 
+/**
+ * Whether libuv's thread pool still completes async fs calls. On Node 23.11
+ * (libuv 1.50) a studio up for a day stopped completing every one, for good,
+ * while /api/health — which touches no disk — still answered (2026-10-24).
+ * The probe is one real async stat; deep health, the watchdog and shutdown
+ * all ask it. Exported so a test, in-process only, can stub the probe and
+ * shorten the watchdog's clock; nothing reads it from the environment.
+ */
+export const FS_WATCHDOG = { probe: () => fsp.stat(PUBLIC), everyMs: 60_000, timeoutMs: 30_000 };
+
+/** Whether the probe settles, either way, within `ms`. */
+const fsAnswers = (ms) => new Promise((resolve) => {
+  const t = setTimeout(() => resolve(false), ms);
+  t.unref();
+  Promise.resolve().then(FS_WATCHDOG.probe).then(() => true, () => true).then((v) => { clearTimeout(t); resolve(v); });
+});
+
+/**
+ * End this process now, by SIGKILL: process.exit runs node's exit, which joins
+ * the thread pool and never returns once the pool is what broke (2026-10-22:
+ * a SIGTERM'd studio hung there, holding the port). The run file stays; every
+ * reader proves it against /api/health, which no longer answers.
+ */
+function die(reason) {
+  try { fs.writeSync(2, `\n  agent-config-studio: ${reason} — killing this studio (pid ${process.pid}) with SIGKILL\n`); } catch {}
+  process.kill(process.pid, 'SIGKILL');
+}
+
+/**
+ * A probe every minute; one still pending at its deadline means every route
+ * that touches disk hangs from now on, so the studio kills itself and `acs`
+ * starts a fresh one. Unref'd: it never holds the process open.
+ */
+function startFsWatchdog() {
+  let inFlight = false;
+  setInterval(() => {
+    if (inFlight) return;
+    inFlight = true;
+    const { timeoutMs } = FS_WATCHDOG;
+    fsAnswers(timeoutMs).then((answered) => {
+      if (!answered) die(`no async file operation completed in ${timeoutMs / 1000} s — the thread pool is stuck`);
+      inFlight = false;
+    });
+  }, FS_WATCHDOG.everyMs).unref();
+}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -636,8 +682,15 @@ export function createApp(opts = {}) {
   };
 
   const ROUTES = {
-  /** Identity probe so the launcher never kills an unrelated process on this port. */
-  'GET /api/health': async () => ({ app: 'agent-config-studio', pid: process.pid, nonce: RUN_NONCE }),
+  /**
+   * Identity probe so the launcher never kills an unrelated process on this port.
+   * ?deep=1 answers only once an async fs call has completed (FS_WATCHDOG): a
+   * studio that answers the plain probe but not this one is frozen.
+   */
+  'GET /api/health': async (req, url) => {
+    if (url.searchParams.get('deep') === '1') await Promise.resolve().then(FS_WATCHDOG.probe).catch(() => {});
+    return { app: 'agent-config-studio', pid: process.pid, nonce: RUN_NONCE };
+  },
 
   /** This studio stops itself, for the run file's token only (see STOP_TOKEN). */
   'POST /api/stop': async (req) => {
@@ -1712,6 +1765,7 @@ function rootsBanner() {
  * directly, it is always empty.
  */
 export async function startStudio({ port = PORT, app = {} } = {}) {
+  startFsWatchdog();
   // First start writes roots.json (and the setup marker when it seeds the
   // legacy folders). An unreadable file is left alone and reported.
   try { migrateRoots(); } catch (e) { console.error(`roots.json: ${e.message}`); }
@@ -1774,14 +1828,22 @@ ${rootsBanner()}
   process.on('exit', () => {
     try { if (runIno !== null && fs.statSync(runFile(port)).ino === runIno) fs.unlinkSync(runFile(port)); } catch {}
   });
-  const stop = () => {
+  let stopping = false;
+  const stop = async () => {
+    // A second signal changes nothing: the deadline below already stands.
+    if (stopping) return;
+    stopping = true;
+    // Still here 3 s on, whatever held the stop up, the studio kills itself.
+    setTimeout(() => die('still running 3 s after a stop signal'), 3000).unref();
     rootsWatch.close();
     watcher.close();
+    // process.exit joins the thread pool, which never returns once the pool
+    // is stuck — no timer fires in there. Exit only after a probe answers.
+    if (!(await fsAnswers(1000))) die('the thread pool is stuck, so exiting would hang');
     console.log('\n  stopped.');
     process.exit(0);
   };
-  process.on('SIGINT', stop);
-  process.on('SIGTERM', stop);
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, stop);
   return server;
 }
 
