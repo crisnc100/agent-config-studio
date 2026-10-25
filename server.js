@@ -1843,7 +1843,11 @@ ${rootsBanner()}
     console.log('\n  stopped.');
     process.exit(0);
   };
-  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, stop);
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+  // Ignored, not a stop: closing the terminal that ran `acs` must not take
+  // the studio down with it. Ctrl-C and `acs stop` still stop it.
+  process.on('SIGHUP', () => {});
   return server;
 }
 

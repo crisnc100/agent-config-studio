@@ -15,8 +15,9 @@
  *      it ignores that), leaves a healthy one and an unproven frozen listener
  *      alone, and `acs stop` SIGKILLs a proven studio that outlives its stop;
  *   4  the watchdog kills a studio whose probe stops completing, stub or real;
- *   5  SIGTERM/SIGINT/SIGHUP stop a healthy studio cleanly, and a stop that
- *      would hang — in node's exit, or anywhere — ends in SIGKILL.
+ *   5  SIGTERM/SIGINT stop a healthy studio cleanly, SIGHUP (a closed
+ *      terminal) does not stop it at all, and a stop that would hang — in
+ *      node's exit, or anywhere — ends in SIGKILL.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -278,7 +279,17 @@ try {
   }
 
   console.log('\n5 shutdown cannot hang');
-  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+  {
+    const s = await studio();
+    s.child.kill('SIGHUP');
+    await sleep(1000);
+    const deep = await healthOf(s.port, '?deep=1');
+    ok('5 SIGHUP (the terminal that ran acs closed): the studio keeps running and answers deep health', s.exit === null && deep?.pid === s.pid, `${JSON.stringify(s.exit)} ${JSON.stringify(deep)} ${s.err.slice(-200)}`);
+    s.child.kill('SIGTERM');
+    const gone = await exitWithin(s, 5000);
+    ok('5 …and SIGTERM still stops it cleanly', gone?.code === 0 && gone.signal === null && /stopped\./.test(s.out) && !fs.existsSync(s.run), JSON.stringify(gone));
+  }
+  for (const signal of ['SIGTERM', 'SIGINT']) {
     const s = await studio();
     const hadRun = fs.existsSync(s.run);
     s.child.kill(signal);
