@@ -6,24 +6,47 @@
  *
  *   acs-net.mjs health <port>   prints "<pid> <nonce>" and exits 0 when the
  *                               studio answers there; exits 1 otherwise
+ *   acs-net.mjs deep <port>     exits 0 when /api/health?deep=1 answers within
+ *                               5 s, which it does only once an async file
+ *                               operation completes; 1 otherwise (frozen)
  *   acs-net.mjs busy <port>     exits 0 when anything accepts a connection
  *   acs-net.mjs wait <port>     waits up to 10 s for the port to accept one
  *   acs-net.mjs run <port>      decodes the run file given on stdin and prints
  *                               "<pid> <nonce> token|legacy" (legacy: written by
  *                               a studio from before the stop token); exits 1
  *                               when it is not valid JSON of that shape
+ *   acs-net.mjs cmdline <port>  prints the command line that run file (stdin)
+ *                               says its studio was launched as — "<argv0>
+ *                               <server.js>", spaces kept — and exits 0; 1 when
+ *                               it does not say (a studio from before it did)
  *   acs-net.mjs stop <port>     asks the studio to stop itself with the run
  *                               file's stop token (run file on stdin). Exits 0
  *                               once the port is closed; 2 when /api/health does
  *                               not name that run file's pid and nonce (nothing
  *                               is sent); 3 when the studio refuses the token;
  *                               4 when it accepted but is still listening
+ *   acs-net.mjs gone <pid>      waits up to 3 s for that process to exit;
+ *                               exits 0 once it has, 1 while it still runs
  *
  * The server listens on 127.0.0.1 only, so that is the address checked.
  */
 import net from 'node:net';
 
 const [cmd, portArg] = process.argv.slice(2);
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+if (cmd === 'gone') {
+  const pid = Number(portArg);
+  if (!Number.isInteger(pid) || pid <= 1) {
+    console.error(`acs: not a pid: ${portArg}`);
+    process.exit(2);
+  }
+  // Signal 0 tests for the process and delivers nothing; EPERM means it exists.
+  const alive = () => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+  for (let i = 0; i < 30 && alive(); i++) await sleep(100);
+  process.exit(alive() ? 1 : 0);
+}
+
 const port = Number(portArg);
 if (!Number.isInteger(port) || port <= 0 || port > 65535) {
   console.error(`acs: not a port: ${portArg}`);
@@ -76,9 +99,9 @@ async function stopByToken() {
   return 4;
 }
 
-async function health() {
+async function health(query = '', timeoutMs = 2000) {
   try {
-    const r = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2000) });
+    const r = await fetch(`http://127.0.0.1:${port}/api/health${query}`, { signal: AbortSignal.timeout(timeoutMs) });
     const j = await r.json();
     if (j?.app === 'agent-config-studio' && Number.isInteger(j.pid) && j.pid > 0) {
       return `${j.pid} ${typeof j.nonce === 'string' && /^[0-9a-f]{32}$/.test(j.nonce) ? j.nonce : '-'}`;
@@ -91,10 +114,17 @@ if (cmd === 'health') {
   const pid = await health();
   if (pid === null) process.exit(1);
   console.log(pid);
+} else if (cmd === 'deep') {
+  process.exit((await health('?deep=1', 5000)) === null ? 1 : 0);
 } else if (cmd === 'run') {
   const r = await runFile();
   if (r === null) process.exit(1);
   console.log(`${r.pid} ${r.nonce} ${hasToken(r) ? 'token' : 'legacy'}`);
+} else if (cmd === 'cmdline') {
+  const r = await runFile();
+  const field = (v) => typeof v === 'string' && v !== '' && !/[\n\r]/.test(v);
+  if (!field(r?.argv0) || !field(r?.server)) process.exit(1);
+  console.log(`${r.argv0} ${r.server}`);
 } else if (cmd === 'stop') {
   process.exit(await stopByToken());
 } else if (cmd === 'busy') {
@@ -106,6 +136,6 @@ if (cmd === 'health') {
   }
   process.exit(1);
 } else {
-  console.error('usage: acs-net.mjs health|busy|wait|run|stop <port>');
+  console.error('usage: acs-net.mjs health|deep|busy|wait|run|cmdline|stop <port> | gone <pid>');
   process.exit(2);
 }

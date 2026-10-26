@@ -74,6 +74,62 @@ const runFile = (port) => path.join(STUDIO_HOME, 'run', `${port}.json`);
 const PUBLIC = path.join(__dirname, 'public');
 const PORT = Number(process.env.PORT || 8787);
 
+/**
+ * Whether libuv's thread pool still completes async fs calls. On Node 23.11
+ * (libuv 1.50) a studio up for a day stopped completing every one, for good,
+ * while /api/health — which touches no disk — still answered (2026-10-24).
+ * The probe is one real async stat; deep health and the watchdog ask it.
+ * Exported so a test, in-process only, can stub the probe and shorten the
+ * watchdog's clock; nothing reads it from the environment.
+ */
+export const FS_WATCHDOG = { probe: () => fsp.stat(PUBLIC), everyMs: 60_000, timeoutMs: 30_000 };
+
+/** One probe, started now: `done` once it settles, either way. */
+function startProbe() {
+  const p = { done: false };
+  p.settled = Promise.resolve().then(FS_WATCHDOG.probe).then(() => {}, () => {}).then(() => { p.done = true; });
+  return p;
+}
+
+/** Whether any of `probes` settles within `ms`. */
+const anySettles = (probes, ms) => new Promise((resolve) => {
+  const t = setTimeout(() => resolve(false), ms);
+  t.unref();
+  Promise.race(probes.map((p) => p.settled)).then(() => { clearTimeout(t); resolve(true); });
+});
+
+/**
+ * End this process now, by SIGKILL: process.exit runs node's exit, which joins
+ * the thread pool and never returns once the pool is what broke (2026-10-22:
+ * a SIGTERM'd studio hung there, holding the port). The run file stays; every
+ * reader proves it against /api/health, which no longer answers.
+ */
+function die(reason) {
+  try { fs.writeSync(2, `\n  agent-config-studio: ${reason} — killing this studio (pid ${process.pid}) with SIGKILL\n`); } catch {}
+  process.kill(process.pid, 'SIGKILL');
+}
+
+/**
+ * A probe every minute. One late answer is not a stuck pool, so an overdue
+ * probe gets a fresh one beside it, with the full timeout again; only when
+ * neither has finished does every route that touches disk hang for good, and
+ * the studio kills itself so `acs` starts a fresh one. Unref'd: it never
+ * holds the process open.
+ */
+function startFsWatchdog() {
+  let checking = false;
+  setInterval(async () => {
+    if (checking) return;
+    checking = true;
+    const { timeoutMs } = FS_WATCHDOG;
+    const first = startProbe();
+    if (!(await anySettles([first], timeoutMs)) && !(await anySettles([first, startProbe()], timeoutMs))) {
+      die(`no async file operation completed in ${(2 * timeoutMs) / 1000} s (a probe, then a fresh one beside it) — the thread pool is stuck`);
+    }
+    checking = false;
+  }, FS_WATCHDOG.everyMs).unref();
+}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -636,8 +692,15 @@ export function createApp(opts = {}) {
   };
 
   const ROUTES = {
-  /** Identity probe so the launcher never kills an unrelated process on this port. */
-  'GET /api/health': async () => ({ app: 'agent-config-studio', pid: process.pid, nonce: RUN_NONCE }),
+  /**
+   * Identity probe so the launcher never kills an unrelated process on this port.
+   * ?deep=1 answers only once an async fs call has completed (FS_WATCHDOG): a
+   * studio that answers the plain probe but not this one is frozen.
+   */
+  'GET /api/health': async (req, url) => {
+    if (url.searchParams.get('deep') === '1') await Promise.resolve().then(FS_WATCHDOG.probe).catch(() => {});
+    return { app: 'agent-config-studio', pid: process.pid, nonce: RUN_NONCE };
+  },
 
   /** This studio stops itself, for the run file's token only (see STOP_TOKEN). */
   'POST /api/stop': async (req) => {
@@ -1712,6 +1775,7 @@ function rootsBanner() {
  * directly, it is always empty.
  */
 export async function startStudio({ port = PORT, app = {} } = {}) {
+  startFsWatchdog();
   // First start writes roots.json (and the setup marker when it seeds the
   // legacy folders). An unreadable file is left alone and reported.
   try { migrateRoots(); } catch (e) { console.error(`roots.json: ${e.message}`); }
@@ -1752,7 +1816,9 @@ export async function startStudio({ port = PORT, app = {} } = {}) {
       const file = runFile(port);
       fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
       const tmp = `${file}.tmp-${process.pid}`;
-      fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, nonce: RUN_NONCE, server: fileURLToPath(import.meta.url), stopToken: STOP_TOKEN }) + '\n', { mode: 0o600 });
+      // argv0 is the node as launched — what `ps` prints before server.js — so
+      // `acs` can match this start's command line exactly, spaces and all.
+      fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, nonce: RUN_NONCE, server: fileURLToPath(import.meta.url), argv0: process.argv0, stopToken: STOP_TOKEN }) + '\n', { mode: 0o600 });
       fs.renameSync(tmp, file);
       runIno = fs.statSync(file).ino;
     } catch { /* without it, `acs stop` refuses rather than guesses */ }
@@ -1771,17 +1837,33 @@ ${rootsBanner()}
   });
 
   // Only this start's own run file is removed (same inode): a newer start may own it now.
-  process.on('exit', () => {
+  const removeRunFile = () => {
     try { if (runIno !== null && fs.statSync(runFile(port)).ino === runIno) fs.unlinkSync(runFile(port)); } catch {}
-  });
-  const stop = () => {
-    rootsWatch.close();
-    watcher.close();
-    console.log('\n  stopped.');
-    process.exit(0);
+  };
+  process.on('exit', removeRunFile);
+  let stopping = false;
+  const stop = (signal) => {
+    if (stopping) return;
+    stopping = true;
+    try { rootsWatch.close(); watcher.close(); } catch {}
+    removeRunFile();
+    try { fs.writeSync(1, '\n  stopped.\n'); } catch {}
+    // Ended by the signal itself, its default action restored, never by
+    // process.exit: node's exit joins every thread-pool worker, and one call
+    // blocked for good — a read that never returns — holds it there forever
+    // (2026-10-22), even with the other workers free. The kernel ends the
+    // process without waiting on any of them.
+    process.removeListener('SIGINT', stop);
+    process.removeListener('SIGTERM', stop);
+    process.kill(process.pid, signal);
+    // Still here: something else catches that signal.
+    setTimeout(() => die(`still running after re-raising ${signal}`), 1000);
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
+  // Ignored, not a stop: closing the terminal that ran `acs` must not take
+  // the studio down with it. Ctrl-C and `acs stop` still stop it.
+  process.on('SIGHUP', () => {});
   return server;
 }
 
