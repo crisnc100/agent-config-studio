@@ -1,6 +1,6 @@
 ---
 name: advisor
-description: Consult a stronger model for objective, consultant-style feedback on the session's scope and direction — a second brain for the seat, not a code reviewer. Use when the session faces a scope, architecture, or direction call, or when the user asks for "the advisor's take" / "a second opinion on the plan" / "get an advisor read". The advisor comes from the `advisor` role in ACS (Models → Roles); methods: advisor (the role's family, the default) | second (the role's second opinion) | both (the two blind, in parallel) | a family the user names. Returns a scope verdict, advisory deltas, and ONLY questions that are genuinely undecidable from the repo and conversation.
+description: "Consult a stronger model for objective, consultant-style feedback on the session's scope and direction — a second brain for the seat, not a code reviewer. Use when the session faces a scope, architecture, or direction call, or when the user asks for 'the advisor's take' / 'a second opinion on the plan' / 'get an advisor read'. The advisor comes from the `advisor` role in ACS (Models → Roles); methods: advisor (the role's family, the default) | second (the role's second opinion) | both (the two blind, in parallel) | a family the user names. Returns a scope verdict, advisory deltas, and ONLY questions that are genuinely undecidable from the repo and conversation."
 allowed-tools: Bash, Read, Write, Grep, Glob, AskUserQuestion
 ---
 
@@ -31,7 +31,7 @@ Resolution order: **spoken choice → the `advisor` role in ACS**. The role is t
 | `advisor` | the `advisor` role's family (`family`, `id`, `effort` from `model-id --role advisor`) | **The default.** Scope verdicts, direction, what-to-cut judgment. |
 | `second` | the role's second opinion (`alt`, `altId`, `altEffort` from `model-id --role advisor --json`) | When the user names it, or when the seat is the advisor family itself. |
 | `both` | both, blind, in parallel | When the user says "both". See Dual advisory below. |
-| `<family>` | that family (`model-id <family>`, effort from `model-id --flavor <family>`) | When the user names one. |
+| `<family>` | that family (`model-id <family>`; effort `.flavor.effort` from `model-id --flavor <family> --json`, none when unset) | When the user names one. |
 
 If the role has no second opinion, `second` and `both` are unavailable: say so and offer `advisor`.
 
@@ -54,14 +54,24 @@ The advisor has zero session context. A thin brief produces generic advice; do n
 Every method gets the same prompt contract. **The advisor is read-only** — it never edits, and its output comes back to the seat, not straight to the user.
 
 ```bash
-eval "$(model-id --role advisor)"     # sets family=…, id=…, effort=…; for `second` use altId/altEffort from --json
+METHOD=advisor                                  # advisor | second | the family the user named
+case "$METHOD" in
+  advisor) eval "$(model-id --role advisor)" ;;   # sets family=…, id=…, effort=…
+  second)  role=$(model-id --role advisor --json)
+           family=$(printf '%s' "$role" | jq -r .alt); id=$(printf '%s' "$role" | jq -r .altId)
+           effort=$(printf '%s' "$role" | jq -r .altEffort) ;;
+  *)       family=$METHOD; id=$(model-id "$family")
+           effort=$(model-id --flavor "$family" --json | jq -r '.flavor.effort // empty') ;;
+esac
+# An empty effort means none is set: the commands below leave the effort flag out, never pass it empty.
 PROMPT="Read <absolute path>/advisor-brief.md, then the READ FIRST files it names. $(cat "$HOME/.claude/skills/advisor/advisor-contract.md")"
 ```
 An unresolved role prints an id every CLI rejects: stop and tell the user to set the `advisor` role in ACS → Models → Roles. The CLI follows the id's prefix.
 
 **`claude-…`** — headless CLI, **never an in-session subagent**, which may run on a different model than you asked for:
 ```bash
-claude -p "$PROMPT" --model "$id" --effort "$effort" --output-format json \
+flag=(); [ -z "$effort" ] || flag=(--effort "$effort")
+claude -p "$PROMPT" --model "$id" "${flag[@]}" --output-format json \
   --dangerously-skip-permissions --tools Read,Grep,Glob
 ```
 Parse the JSON envelope: the advisory text is `.result`, and the `modelUsage` keys **must include the resolved id** — check it, never eyeball it: `jq -e --arg m "$id" '.modelUsage | has($m)'` on the envelope. If it fails, the call ran on the wrong model — abort, tell the user, and never present another model's output as the advisor's. Check `.is_error` is false before trusting `.result`, and never branch on `$?` — piping the output masks a failed call as exit 0.
@@ -70,13 +80,15 @@ Parse the JSON envelope: the advisory text is `.result`, and the `modelUsage` ke
 
 **`gpt-…`** (verdict on stdout, logs on stderr):
 ```bash
-codex exec --skip-git-repo-check --sandbox read-only -m "$id" -c model_reasoning_effort="$effort" \
+flag=(); [ -z "$effort" ] || flag=(-c "model_reasoning_effort=$effort")
+codex exec --skip-git-repo-check --sandbox read-only -m "$id" "${flag[@]}" \
   "$PROMPT" </dev/null 2>/dev/null
 ```
 
 **`grok-…`** — read-only by tool allowlist, the same flags the review script uses:
 ```bash
-grok -p "$PROMPT" -m "$id" --reasoning-effort "$effort" --tools read_file,list_dir,grep \
+flag=(); [ -z "$effort" ] || flag=(--reasoning-effort "$effort")
+grok -p "$PROMPT" -m "$id" "${flag[@]}" --tools read_file,list_dir,grep \
   --disallowed-tools search_tool,use_tool --deny MCPTool --disable-web-search --no-subagents
 ```
 

@@ -147,13 +147,14 @@
         "packs/review-gate/runtime/hooks/install-hook.sh"
       ],
       "explain": {
-        "what": "A git pre-push check that refuses to push code no review has closed. To reach every repo, it sets your global git core.hooksPath, so every repo's git hooks go through a pass-through. A repo's own .git/hooks still run, exactly as before. A repo that sets its own core.hooksPath (Husky and similar tools) bypasses the pass-through, so it is not gated. The review check itself applies only to repos you opt in with git config reviewgate.enabled true.",
+        "what": "A git pre-push check that refuses to push code no review has closed. To reach every repo, it sets your global git core.hooksPath, so every repo's git hooks go through a pass-through. A repo's own .git/hooks still run, exactly as before, except a push-to-checkout hook (see the changes). A repo that sets its own core.hooksPath (Husky and similar tools) bypasses the pass-through, so it is not gated. The review check itself applies only to repos you opt in with git config reviewgate.enabled true.",
         "does": "In an opted-in repo, git push is refused until a review of those commits is closed, and the refusal names the first unreviewed commit. A reviewed push goes through and prints the review summary for your PR. Pushes in every other repo behave exactly as they did. If node is missing, an opted-in repo's push is refused rather than let through unchecked.",
         "changes": [
           "your global git config (~/.gitconfig, or $GIT_CONFIG_GLOBAL): core.hooksPath = ~/.agent-config-studio/review-gate/hooks/global",
           "~/.agent-config-studio/review-gate/hooks/ (the pass-through hooks, the gate and node-path, the node they run on)",
           "~/.agent-config-studio/review-gate-global-hook.json (your previous core.hooksPath, for uninstall)",
-          "each repo you opt in: reviewgate.enabled = true in that repo's .git/config (you choose which repos)"
+          "each repo you opt in: reviewgate.enabled = true in that repo's .git/config (you choose which repos)",
+          "any repo with its own .git/hooks/push-to-checkout: that hook will not run while the global hooks are on. The pass-through leaves push-to-checkout out on purpose, so a push into a checked-out branch keeps git's own receive.denyCurrentBranch = updateInstead behavior. Install and status name each repo that has one."
         ],
         "undo": "Uninstalling restores your previous core.hooksPath: the exact earlier bytes of your global git config when nothing else changed, otherwise only the core.hooksPath line. A reviewgate.enabled setting you added to a repo stays until you remove it with git config --unset reviewgate.enabled."
       }

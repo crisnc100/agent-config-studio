@@ -1,6 +1,6 @@
 ---
 name: build
-description: Build something through the Frame -> Bar -> Judge loop. Runs four phases (Understand, Shape, Build, Judge) — the session model orchestrates and advises, a builder-role family types (guided phases, callbacks on demand), the advisor role attacks the plan (Bounce), the judge role grades the result (Grade, cross-vendor preferred), and the human judges. Pick the implementer and effort with "/build <family> [effort]" (or plain English); unspecified means the orchestrator picks from the builder role. Use for any real build where you want it done right and self-correcting. Scales down: a lightweight mode handles small single-outcome work (one implementer call, no plan/Bounce/Grade scaffold) so small-but-real tasks route here too — only true two-minute edits stay out.
+description: "Build something through the Frame -> Bar -> Judge loop. Runs four phases (Understand, Shape, Build, Judge) — the session model orchestrates and advises, a builder-role family types (guided phases, callbacks on demand), the advisor role attacks the plan (Bounce), the judge role grades the result (Grade, cross-vendor preferred), and the human judges. Pick the implementer and effort with '/build <family> [effort]' (or plain English); unspecified means the orchestrator picks from the builder role. Use for any real build where you want it done right and self-correcting. Scales down: a lightweight mode handles small single-outcome work (one implementer call, no plan/Bounce/Grade scaffold) so small-but-real tasks route here too — only true two-minute edits stay out."
 ---
 
 # /build — the Frame, Bar, Judge build loop
@@ -55,7 +55,7 @@ In lightweight mode: state the outcome and the bar **inline in chat** (the drive
 
 Name a builder-role family and it wins for this run: `/build <family>`, `/build <family> <effort>`, or plain English ("build this with <family>"). **A named lane is binding for the entire run — every phase, start to finish.** The orchestrator does not re-route mid-build, does not "upgrade" a phase it finds hard, and does not silently fall back. No lane named → pick from the `builder` role using each family's flavor (`model-id --flavor <family>`: what it is good at and what to watch for — an over-builder needs boundaries; taste matters for frontend, design and copy), and say which and why in one line. Record which lane won or lost — the ranking earns itself.
 
-**Effort** comes from the family's flavor in ACS unless the user names one; a named effort wins for the run.
+**Effort** comes from the builder role in ACS (that family's effort there, else its flavor effort) unless the user names one; a named effort wins for the run. It is resolved once, before the first build call (below).
 
 The one exception is the standing escalation rule below, and with a named lane it is **not** silent: if the implementer misses the same criterion twice after the brief has been sharpened, the orchestrator says so and asks before changing lanes. The user chose the lane; leaving it is the user's call.
 
@@ -96,6 +96,7 @@ No command names a model. Resolve the family, its id and its effort from the rol
 eval "$(model-id --role advisor)"   # Bounce: sets family=…, id=…, effort=… (alt=… is the second opinion)
 eval "$(model-id --role judge)"     # Grade: the same, swapped per the grader rule
 BUILDER=<family>                    # `model-id --role builder`, or the family the user named; its id: "$(model-id "$BUILDER")"
+EFFORT=<effort>                     # the effort the user named; none named: EFFORT= and resolve it below
 ```
 
 Verdict comes back on **stdout**; session logs go to **stderr**. Capture stdout. A role that does not resolve prints an unresolved id every CLI rejects — stop and fix the role in ACS → Models → Roles rather than running something else.
@@ -121,9 +122,21 @@ grok -p "<gate prompt>" -m "$id" --reasoning-effort "$effort" --tools read_file,
 
 **Bounce prompt** (critique a plan, no code yet): "Read plan.md and context.md in this folder. You are an adversarial reviewer with no attachment to this plan. Attack it: what is missing, what will break, what edge cases and failure modes did the author miss, and where is the acceptance bar too weak to catch a bad build? Be concrete. Do not rewrite the plan; list the gaps and why each matters."
 
+**The builder's effort** — set once, before the first build call, and used by every build call below:
+```bash
+# A named effort wins; else that family's effort in the builder role (its members[] entry, else the role's
+# effort); else the family's flavor effort. Still empty: none is set, so the calls leave the flag out.
+[ -n "$EFFORT" ] || EFFORT=$(model-id --role builder --json | jq -r --arg f "$BUILDER" '
+  [(.members // [])[] | select(.family == $f) | .effort][0]
+  // (if .family == $f or ((.provenance.effort == "default" or .provenance.effort == "user") and any(.use[]; . == $f))
+      then .effort else null end) // empty')
+[ -n "$EFFORT" ] || EFFORT=$(model-id --flavor "$BUILDER" --json | jq -r '.flavor.effort // empty')
+EFFORT_FLAG=(); [ -z "$EFFORT" ] || EFFORT_FLAG=(-c "model_reasoning_effort=$EFFORT")   # never an empty effort
+```
+
 **Build — phase 1 on a codex-CLI builder (the only call that starts a session).** `--json` so you can capture the `thread_id`; `-o` so the checkpoint lands in a file instead of buried in event noise. This is the ONLY codex call that gets `--sandbox workspace-write`:
 ```
-codex exec --skip-git-repo-check --sandbox workspace-write -m "$(model-id "$BUILDER")" -c model_reasoning_effort="$EFFORT" \
+codex exec --skip-git-repo-check --sandbox workspace-write -m "$(model-id "$BUILDER")" "${EFFORT_FLAG[@]}" \
   --json -o builds/<slug>/phase1-result.md \
   "Objective: <what exists when this phase is done>
    Read first: plan.md, context.md, <relevant files>
@@ -138,7 +151,7 @@ Grab the session id from the first JSONL line: `{"type":"thread.started","thread
 
 **Build — every later phase, and every callback answer** (same session, context intact):
 ```
-codex exec resume <thread_id> --skip-git-repo-check -m "$(model-id "$BUILDER")" -c model_reasoning_effort="$EFFORT" \
+codex exec resume <thread_id> --skip-git-repo-check -m "$(model-id "$BUILDER")" "${EFFORT_FLAG[@]}" \
   -o builds/<slug>/phase<N>-result.md \
   "<the next phase brief, or the one-line answer to the callback>" </dev/null 2>/dev/null
 ```

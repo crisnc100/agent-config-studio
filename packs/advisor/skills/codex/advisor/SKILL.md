@@ -1,6 +1,6 @@
 ---
 name: advisor
-description: Bring in a stronger or cross-vendor brain for scope and direction before committing — a second brain for the codex seat, not a code reviewer. Use at scope-shaping moments (what to build, how far, which architecture, what to cut) or when the user asks for "the advisor's take" / "an advisor read". The advisor comes from the `advisor` role in ACS (Models → Roles); methods: advisor (the role's family, the default) | second (the role's second opinion) | both | a family the user names. Returns a scope verdict, advisory deltas, and ONLY the questions a human must decide.
+description: "Bring in a stronger or cross-vendor brain for scope and direction before committing — a second brain for the codex seat, not a code reviewer. Use at scope-shaping moments (what to build, how far, which architecture, what to cut) or when the user asks for 'the advisor's take' / 'an advisor read'. The advisor comes from the `advisor` role in ACS (Models → Roles); methods: advisor (the role's family, the default) | second (the role's second opinion) | both | a family the user names. Returns a scope verdict, advisory deltas, and ONLY the questions a human must decide."
 ---
 
 # advisor — a stronger brain on scope, on demand (Codex seat edition)
@@ -35,7 +35,7 @@ family shares this seat's vendor, prefer its second opinion if that is from anot
 | `advisor` | the `advisor` role's family (`model-id --role advisor`) | **The default.** Scope verdicts, direction, what-to-cut judgment. |
 | `second` | the role's second opinion (`altId`, `altEffort` from `model-id --role advisor --json`) | When the user names it, or the role's family shares this seat's vendor. |
 | `both` | both, blind, in parallel, no seat context | When the user says "both". Resolve factual disagreements against the repo yourself; present judgment disagreements to the user steelmanned, both sides — never pick the winner. |
-| `<family>` | that family (`model-id <family>`, effort from `model-id --flavor <family>`) | When the user names one. |
+| `<family>` | that family (`model-id <family>`; effort `.flavor.effort` from `model-id --flavor <family> --json`, none when unset) | When the user names one. |
 
 If the chosen advisor cannot run, report the advice as **NOT RUN** and offer the other method — never substitute a
 model silently.
@@ -56,19 +56,28 @@ The advisor has zero session context. A thin brief produces generic advice; do n
 ## Step 2 — Invoke (read-only, always)
 
 ```bash
-eval "$(model-id --role advisor)"                                  # sets family=…, id=…, effort=…
+METHOD=advisor                                  # advisor | second | the family the user named
+case "$METHOD" in
+  advisor) eval "$(model-id --role advisor)" ;;   # sets family=…, id=…, effort=…
+  second)  role=$(model-id --role advisor --json)
+           family=$(printf '%s' "$role" | jq -r .alt); id=$(printf '%s' "$role" | jq -r .altId)
+           effort=$(printf '%s' "$role" | jq -r .altEffort) ;;
+  *)       family=$METHOD; id=$(model-id "$family")
+           effort=$(model-id --flavor "$family" --json | jq -r '.flavor.effort // empty') ;;
+esac
+# An empty effort means none is set: the commands below leave the effort flag out, never pass it empty.
 BRIEF="$PWD/advisor-brief.md"                                      # absolute path
 CONTRACT="${CODEX_HOME:-$HOME/.codex}/skills/advisor/advisor-contract.md"
 PROMPT="Read $BRIEF, then the READ FIRST files it names. $(cat "$CONTRACT")"
 ```
-For `second`, take `altId` and `altEffort` from `model-id --role advisor --json` instead. An unresolved role prints
-an id every CLI rejects: stop and tell the user to set the `advisor` role in ACS → Models → Roles. The CLI follows
-the id's prefix.
+An unresolved role prints an id every CLI rejects: stop and tell the user to set the `advisor` role in ACS → Models →
+Roles. The CLI follows the id's prefix.
 
 **`claude-…`** — headless claude CLI. Both flags below are load-bearing:
 
 ```bash
-claude -p "$PROMPT" --model "$id" --effort "$effort" \
+flag=(); [ -z "$effort" ] || flag=(--effort "$effort")
+claude -p "$PROMPT" --model "$id" "${flag[@]}" \
   --dangerously-skip-permissions --tools Read,Grep,Glob \
   --output-format json > advisor-out.json
 
@@ -112,14 +121,16 @@ escalation.
 
 **`gpt-…`** — a fresh session, no seat context:
 ```bash
+flag=(); [ -z "$effort" ] || flag=(-c "model_reasoning_effort=$effort")
 codex exec --skip-git-repo-check --sandbox read-only -m "$id" \
-  -c model_reasoning_effort="$effort" "$PROMPT" </dev/null 2>/dev/null
+  "${flag[@]}" "$PROMPT" </dev/null 2>/dev/null
 ```
 When this shares this seat's vendor, say so in one line with the verdict.
 
 **`grok-…`** — read-only by tool allowlist, the same flags the review script uses:
 ```bash
-grok -p "$PROMPT" -m "$id" --reasoning-effort "$effort" --tools read_file,list_dir,grep \
+flag=(); [ -z "$effort" ] || flag=(--reasoning-effort "$effort")
+grok -p "$PROMPT" -m "$id" "${flag[@]}" --tools read_file,list_dir,grep \
   --disallowed-tools search_tool,use_tool --deny MCPTool --disable-web-search --no-subagents
 ```
 

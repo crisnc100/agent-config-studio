@@ -39,28 +39,33 @@ plan.md must name the phases and their pass/fail criteria. End a phase before la
 
 ## The gate commands (read-only, always)
 
-Resolve the gate from its role — never type a model id:
+Resolve the gate from its role — never type a model id — and point `PROMPT_FILE` at that gate's own prompt:
 ```bash
-eval "$(model-id --role advisor)"   # Bounce; for the Grade: eval "$(model-id --role judge)"
-# sets family=…, id=…, effort=… (and alt=…, the second opinion). An unresolved role prints an id
+GATE=bounce                                     # the Bounce; GATE=grade for the Grade
+case "$GATE" in
+  bounce) eval "$(model-id --role advisor)" ;;
+  grade)  eval "$(model-id --role judge)" ;;
+esac
+PROMPT_FILE="builds/<slug>/$GATE-prompt.md"     # bounce-prompt.md or grade-prompt.md: each gate reads its own
+# eval sets family=…, id=…, effort=… (and alt=…, the second opinion). An unresolved role prints an id
 # every CLI rejects: stop and fix the role in ACS → Models → Roles rather than running something else.
 ```
-Write the prompt to a file in the build folder (`builds/<slug>/bounce-prompt.md` or `grade-prompt.md`), then run the command for the id's vendor:
+Write the gate's prompt (below) to `$PROMPT_FILE`, then run the command for the id's vendor:
 
 - `gpt-…` — a fresh codex session with no build context:
   ```bash
   codex exec --skip-git-repo-check --sandbox read-only -m "$id" -c model_reasoning_effort="$effort" \
-    "$(cat builds/<slug>/grade-prompt.md)" </dev/null 2>/dev/null
+    "$(cat "$PROMPT_FILE")" </dev/null 2>/dev/null
   ```
 - `claude-…` — headless claude CLI:
   ```bash
-  claude -p "$(cat builds/<slug>/grade-prompt.md)" --model "$id" --effort "$effort" \
+  claude -p "$(cat "$PROMPT_FILE")" --model "$id" --effort "$effort" \
     --output-format json --dangerously-skip-permissions --tools Read,Grep,Glob
   ```
   Parse `.result` from the JSON envelope; check `.is_error` is false and verify the model with `jq -e --arg m "$id" '.modelUsage | has($m)'`.
 - `grok-…` — read-only by tool allowlist, the same flags the review script uses:
   ```bash
-  grok -p "$(cat builds/<slug>/grade-prompt.md)" -m "$id" --reasoning-effort "$effort" --tools read_file,list_dir,grep \
+  grok -p "$(cat "$PROMPT_FILE")" -m "$id" --reasoning-effort "$effort" --tools read_file,list_dir,grep \
     --disallowed-tools search_tool,use_tool --deny MCPTool --disable-web-search --no-subagents
   ```
 

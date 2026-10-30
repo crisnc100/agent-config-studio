@@ -6,11 +6,12 @@
  * project scan roots.
  *
  * Every run uses a temp HOME, GIT_CONFIG_GLOBAL and a PATH built here (stub CLIs, a `node` link, /usr/bin,
- * /bin) — never node's own folder, which may hold real CLIs. No real model is called.
+ * /bin) — never node's own folder, which may hold real CLIs. The no-node runs get NO_NODE, a folder holding only
+ * the commands they need, since /usr/bin often holds a node. No real model is called.
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
@@ -34,6 +35,15 @@ const put = (path, text, mode) => {
 }
 mkdirSync(NODE_BIN, { recursive: true })
 symlinkSync(process.execPath, join(NODE_BIN, 'node'))
+// The PATH for "node is missing": only what the hooks, the guard fallback and git push run, linked from the
+// system folders, and no node (/usr/bin often has one). The first test checks it.
+const NO_NODE = join(ROOT, 'no-node-bin')
+const NO_NODE_TOOLS = ['sh', 'git', 'cat', 'grep']
+mkdirSync(NO_NODE)
+for (const name of NO_NODE_TOOLS) {
+  const found = SYSTEM.map((dir) => join(dir, name)).find((path) => existsSync(path))
+  if (found) symlinkSync(found, join(NO_NODE, name))
+}
 
 // A located, scored, blocking finding (risk 25, MEDIUM).
 const FINDING = { issue: 'off-by-one in loop', file: 'a.js', line: '2', quote: 'for (let i = 0; i <= n; i++) {}', suggestion: 'use <', likelihood: 5, impact: 5, protected: false, trigger: 'calling f(3)' }
@@ -112,6 +122,12 @@ beforeEach(() => {
 })
 
 // ── 1. The reviewer pool ─────────────────────────────────────────────────────
+test('fixture: the no-node PATH holds only sh, git, cat and grep, and finds no node', () => {
+  assert.deepEqual(readdirSync(NO_NODE).sort(), [...NO_NODE_TOOLS].sort(), `each of ${NO_NODE_TOOLS.join(', ')} is in ${SYSTEM.join(' or ')}`)
+  const probe = spawnSync('/bin/sh', ['-c', 'command -v node'], { env: { PATH: NO_NODE }, encoding: 'utf8' })
+  assert.notEqual(probe.status, 0, `node was found on the no-node PATH: ${probe.stdout}`)
+})
+
 test('B1 a Claude-only machine reviews on a Claude-family reviewer, names the skipped families in one line, and never runs codex or grok', () => {
   const r = run(['fix the loop'], { PATH: machine(['model-id', 'claude']) })
   assert.equal(r.status, 0, r.out)
@@ -184,6 +200,22 @@ test('B1 raw model ids a user passes still pass through', () => {
   assert.deepEqual([JSON.parse(pinned.stdout).selected.model, JSON.parse(pinned.stdout).selected.vendor], ['gpt-custom-1', 'codex'])
 })
 
+test('B1 a pick naming a role family whose CLI is missing stops with the fix; it never reviews on another family', () => {
+  const claudeOnly = machine(['model-id', 'claude'])
+  const config = join(ROOT, 'pick-config.json')
+  writeFileSync(config, J({ pick: 'sol' }))
+  for (const [extra, named] of [[{ REVIEW_PICK: 'sol' }, /REVIEW_PICK=sol needs the codex CLI, which is not on PATH/], [{ REVIEW_CONFIG: config }, /config "pick"=sol needs the codex CLI, which is not on PATH/]]) {
+    for (const args of [[], ['--show-config']]) stopped(run(args, { ...extra, PATH: claudeOnly }), named, /Fix: install it, or name another reviewer/)
+  }
+  const mystery = { ...role(['mystery', 'opus'], ['acme-1', 'claude-opus-stub']), REVIEW_PICK: 'mystery', PATH: claudeOnly }
+  stopped(run([], mystery), /REVIEW_PICK=mystery names a reviewer role family whose id "acme-1" has no known CLI prefix/, /Fix: check `model-id mystery`/)
+  noModelRan()
+  assert.equal(logLines().length, 0)
+  const usable = run(['--show-config'], { REVIEW_PICK: 'opus', PATH: claudeOnly })
+  assert.equal(usable.status, 0, usable.out)
+  assert.equal(JSON.parse(usable.stdout).selected.family, 'opus', 'a pick whose CLI is installed still wins')
+})
+
 // ── 2. One family ────────────────────────────────────────────────────────────
 test('B2 with one family in the role a dispute cannot get a verdict, and the dispute and close name the operator waiver as the path', () => {
   const one = role(['sol'], ['gpt-sol-stub'])
@@ -201,6 +233,55 @@ test('B2 with one family in the role a dispute cannot get a verdict, and the dis
   const close = run(['--close', id, '--status', status, '--test-cmd', 'true'], one)
   assert.notEqual(close.status, 0, close.out)
   assert.match(close.stderr, new RegExp(`Rejected f1 requires a REFUTED verdict or an operator waiver; when no second reviewer family can give a verdict, the operator waiver is the path: --waive ${id} f1`))
+})
+
+test('B2 a team whose lenses are all one family cannot refute its own finding: no self-verdict at review, dispute or close', () => {
+  const claudeOnly = { PATH: machine(['model-id', 'claude']), REVIEW_REVIEWER: 'claude', REVIEW_VERIFY: 'second-opinion',
+    STUB_VERDICTS: J({ verdicts: [{ index: 0, verdict: 'REFUTED', evidence: 'a.js:2 is intended' }] }) }
+  const review = run([], claudeOnly)
+  assert.equal(review.status, 0, review.out)
+  const logged = logLines()[0]
+  assert.deepEqual([logged.family, logged.model, logged.families], ['claude-team', 'opus+opus+opus', ['opus']], 'the record names the lens families')
+  assert.equal(calls('claude').length, 3, 'three lenses; the family that reviewed gives no second opinion')
+  assert.match(review.stderr, /verify=second-opinion: no family in the reviewer pool besides the reviewing opus — skipped/)
+  assert.deepEqual([logged.findings, logged.disputed], [1, 0], 'the finding was not refuted by its own family')
+  const id = logged.id
+  const dispute = run(['--dispute', id, 'f1', '--reason', 'intended', '--evidence', 'a.js:2'], claudeOnly)
+  assert.equal(dispute.status, 0, dispute.out)
+  assert.match(dispute.stdout, new RegExp(`NO-VERDICT: No second reviewer family can give a verdict, so the finding stands\\. The operator waiver is the path: --waive ${id} f1 .*A family that reviewed this \\(opus\\) cannot judge its own finding`))
+  assert.equal(calls('claude').length, 3, 'the reviewing family is never asked to judge its own finding')
+  assert.deepEqual([logLines().at(-1).verdict, logLines().at(-1).verifier], ['NO-VERDICT', null])
+  // That family's REFUTED, as a runtime without this rule logged it, still cannot close the finding.
+  appendFileSync(LOG, J({ type: 'dispute', ts: new Date().toISOString(), review: id, finding: 'f1', head: logged.head, verdict: 'REFUTED',
+    reason: 'intended', evidence: 'a.js:2', verdictEvidence: 'a.js:2 is intended', family: 'claude-team', verifier: 'opus' }) + '\n')
+  const status = join(ROOT, 'status.json')
+  writeFileSync(status, J({ f1: { status: 'rejected', reason: 'intended', evidence: 'a.js:2' } }))
+  const refusal = [new RegExp(`Rejected f1 requires a REFUTED verdict or an operator waiver; when no second reviewer family can give a verdict, the operator waiver is the path: --waive ${id} f1`),
+    /The REFUTED from opus does not count: a family that reviewed this cannot refute its own finding/]
+  stopped(run(['--close', id, '--status', status, '--test-cmd', 'true'], claudeOnly), ...refusal)
+  // A team record logged before `families` existed is read from its model (opus+opus+opus): still refused.
+  writeFileSync(LOG, readFileSync(LOG, 'utf8').trim().split('\n').map((line) => {
+    const e = JSON.parse(line)
+    if (e.type === 'review') delete e.families
+    return J(e)
+  }).join('\n') + '\n')
+  stopped(run(['--close', id, '--status', status, '--test-cmd', 'true'], claudeOnly), ...refusal)
+  assert.equal(logLines().filter((e) => e.type === 'close').length, 0, 'no close was logged')
+})
+
+test('B2 every lens family of a team is barred from verifying it; a family outside the team verifies', () => {
+  const four = { ...role(['lead', 'second', 'third', 'outside'], ['claude-lead-stub', 'claude-second-stub', 'claude-third-stub', 'claude-outside-stub']),
+    PATH: machine(['model-id', 'claude']), REVIEW_REVIEWER: 'claude', STUB_VERDICTS: J({ verdicts: [{ index: 0, verdict: 'CONFIRMED', evidence: 'a.js:2' }] }) }
+  const plain = run([], four)
+  assert.equal(plain.status, 0, plain.out)
+  assert.deepEqual(logLines()[0].families, ['lead', 'second', 'third'])
+  const dispute = run(['--dispute', logLines()[0].id, 'f1', '--reason', 'intended', '--evidence', 'a.js:2'], four)
+  assert.equal(dispute.status, 0, dispute.out)
+  assert.deepEqual([logLines().at(-1).verdict, logLines().at(-1).verifier], ['CONFIRMED', 'outside'])
+  const verified = run([], { ...four, REVIEW_VERIFY: 'second-opinion' })
+  assert.equal(verified.status, 0, verified.out)
+  assert.match(verified.stdout, /▶ second opinion · outside \(claude · claude-outside-stub · high\)/)
+  assert.deepEqual(logLines().at(-1).secondOpinion, { family: 'outside', model: 'claude-outside-stub' })
 })
 
 test('B2 a dispute with a broken reviewer role stops with the fix instead of logging a verdict', () => {
@@ -321,7 +402,7 @@ test('B5 a reviewgate setting that is not a boolean blocks the push instead of g
 
 test('B5 without node, an opted-in repo refuses the push; an ordinary repo passes with a warning', () => {
   installGlobalGate()
-  const noNode = env({ PATH: SYSTEM.join(':') })
+  const noNode = env({ PATH: NO_NODE })
   const ordinary = push('ordinary', { env: noNode }); pushed(ordinary)
   assert.match(ordinary.stderr, /node is missing; treating this push as ordinary/)
   git('config', 'reviewgate.enabled', 'true')
@@ -337,7 +418,7 @@ const pinnedUses = () => (existsSync(join(ROOT, 'pinned-used')) ? readFileSync(j
 
 test('B7 the global push gate runs on the node pinned in hooks/node-path when PATH has no node', () => {
   installGlobalGate(); git('config', 'reviewgate.enabled', 'true'); pinNode()
-  const noNode = env({ PATH: SYSTEM.join(':') })
+  const noNode = env({ PATH: NO_NODE })
   refused(push('unreviewed', { env: noNode }), /Push blocked: No review log/)
   assert.ok(pinnedUses() >= 3, `classification, the gate and review.mjs each ran on the pinned node (${pinnedUses()})`)
   cover(); pushed(push('reviewed', { env: noNode }))
@@ -362,7 +443,7 @@ test('B7 a missing or non-executable pinned path falls back to node on PATH', ()
 
 test('B7 the agent guard launcher and the per-repo shim read the pinned node too', () => {
   cpSync(RUNTIME, GATE, { recursive: true, verbatimSymlinks: true }); pinNode()
-  const noNode = env({ PATH: SYSTEM.join(':') })
+  const noNode = env({ PATH: NO_NODE })
   const guard = sh('/bin/sh', [join(GATE, 'hooks/agent-guard')], { env: noNode, input: J({ tool_name: 'Bash', tool_input: { command: 'git push --no-verify' } }) })
   assert.equal(guard.status, 2, guard.out)
   assert.match(guard.stderr, /agents may not run git push --no-verify/, 'the guard itself ran, not the no-node fallback')
@@ -402,7 +483,7 @@ test('B6 the guard refuses agent writes to reviewgate.* git config, the way it r
     assert.equal(guard(command).status, 0, command)
 })
 test('B6 without node the guard launcher still refuses anything that mentions reviewgate', () => {
-  const r = guard('git config reviewgate.enabled false', SYSTEM.join(':'))
+  const r = guard('git config reviewgate.enabled false', NO_NODE)
   assert.equal(r.status, 2, r.out)
   assert.match(r.stderr, /node could not start/)
 })

@@ -184,16 +184,20 @@ function loadPool() {
   const roleSet = ['default', 'user'].includes(r.data?.provenance?.effort) && r.data?.effort
   const pool = []
   const skipped = []
+  // Role families left out, kept so a pick that names one stops instead of reviewing on another.
+  const unusable = []
   use.forEach((f, i) => {
     const family = String(f).toLowerCase()
     const id = ids[i] || modelId(family)
     const vendor = vendorOf(id)
     if (!vendor) {
       console.warn(`⚠ reviewer role family "${family}" has id "${id}", whose prefix names no known CLI (claude-, gpt-, grok-) — skipped`)
+      unusable.push({ family, vendor, id })
       return
     }
     if (!onPath(vendor)) {
       skipped.push(`${family} (${vendor} CLI not on PATH)`)
+      unusable.push({ family, vendor, id })
       return
     }
     const fl = flavorOf(family)
@@ -204,12 +208,13 @@ function loadPool() {
     skipsNoted = true
     console.warn(`ℹ reviewer role: skipped ${skipped.join(', ')}`)
   }
-  if (pool.length) return { pool }
+  if (pool.length) return { pool, unusable }
   return {
     error: use.length
       ? `none of the reviewer role's families (${use.join(', ')}) has its CLI on PATH`
       : 'the reviewer role lists no families',
     empty: true,
+    unusable,
   }
 }
 function poolOrStop({ pool, error, missing, empty }) {
@@ -690,6 +695,15 @@ function selectReviewer(stats, { dryRun = false } = {}) {
 
   const members = poolOrStop(loaded)
   const pick = String(cfg('REVIEW_PICK', 'pick', 'first')).trim().toLowerCase() || 'first'
+  // A pick naming a role family that cannot run stops; it never becomes another reviewer.
+  const unusablePick = !members.some((m) => m.family === pick) && loaded.unusable?.find((m) => m.family === pick)
+  if (unusablePick) {
+    const named = `${source('REVIEW_PICK', 'pick')}=${pick}`
+    if (!unusablePick.vendor)
+      stop(`${named} names a reviewer role family whose id "${unusablePick.id}" has no known CLI prefix (claude-, gpt-, grok-).\n` +
+        `  Fix: check \`model-id ${pick}\` and the families in ACS → Models, or pick another family.`)
+    requireCli(unusablePick, named)
+  }
   let crossFamily = String(cfg('REVIEW_CROSS_FAMILY', 'crossFamily', 'prefer')).trim().toLowerCase() || 'prefer'
   if (crossFamily !== 'prefer' && crossFamily !== 'off') {
     notes.push(`⚠ crossFamily "${crossFamily}" is not prefer|off — using prefer`)
@@ -1335,9 +1349,19 @@ function quoteProblem(f) {
 }
 
 // ── Optional second opinion: another family CONFIRMs or REFUTEs each HIGH/MEDIUM ──
-// A different vendor from the reviewer when the pool has one; else the next family in pool order.
+// The families whose findings these are: a team's lens families, else the one reviewer family. A team
+// record logged before `families` existed names its lens families in `model` (a+b+c).
+function reviewingFamilies(review) {
+  if (Array.isArray(review.families) && review.families.length) return review.families
+  if (review.lenses) return [...new Set(review.lenses.map((l) => l.family))]
+  if (review.family === 'claude-team') return [...new Set(String(review.model || '').split('+').filter(Boolean))]
+  return [review.family].filter(Boolean)
+}
+// Never a family that reviewed: a different vendor from the reviewer when the pool has one; else the
+// next family in pool order; else none, and the operator waiver is the only way to reject.
 function pickVerifier() {
-  const others = (SELECTION.pool || []).filter((m) => m.family !== SEL.family)
+  const own = reviewingFamilies(SEL)
+  const others = (SELECTION.pool || []).filter((m) => !own.includes(m.family))
   const m = others.find((o) => o.vendor !== SEL.vendor) || others[0]
   return m && { ...m, effort: effortFor(m) }
 }
@@ -1345,7 +1369,7 @@ function pickVerifier() {
 async function secondOpinion(diff, targets) {
   const v = pickVerifier()
   if (!v) {
-    console.warn('⚠ verify=second-opinion: no other family in the reviewer pool — skipped')
+    console.warn(`⚠ verify=second-opinion: no family in the reviewer pool besides the reviewing ${reviewingFamilies(SEL).join(', ')} — skipped`)
     return { verifier: null, error: 'no other pool family' }
   }
   console.log(`▶ second opinion · ${v.family} (${v.vendor} · ${v.id} · ${v.effort}) on ${targets.length} HIGH/MEDIUM finding(s)`)
@@ -1506,14 +1530,25 @@ function findingOf(review, id) {
   if (!finding) throw new Error(`Unknown finding ${id} in review ${review.id}`)
   return finding
 }
+// A REFUTED counts only from a family that did not review: a family cannot refute its own finding.
 function refuted(entries, review, finding, reference) {
-  if (reference === undefined && finding.secondOpinion?.verdict === 'REFUTED') return true
+  const own = reviewingFamilies(review)
+  if (reference === undefined && finding.secondOpinion?.verdict === 'REFUTED' && !own.includes(finding.secondOpinion.family)) return true
   const target = reference === undefined ? { review: review.id, finding: finding.id } : reference
   if (!target || Object.keys(target).some((key) => !['review', 'finding'].includes(key)) || !target.review || !target.finding)
     throw new Error(`Invalid refutedBy reference for ${finding.id}`)
   const prior = entries.find((e) => e.type === 'review' && e.id === target.review && e.branch === review.branch &&
     (target.review === review.id || review.repoId && e.repoId === review.repoId))
-  return !!prior && entries.some((e) => e.type === 'dispute' && e.review === target.review && e.finding === target.finding && e.verdict === 'REFUTED')
+  const barred = prior ? [...own, ...reviewingFamilies(prior)] : own
+  return !!prior && entries.some((e) => e.type === 'dispute' && e.review === target.review && e.finding === target.finding && e.verdict === 'REFUTED' &&
+    !barred.includes(e.verifier))
+}
+// The reviewing families whose own REFUTED was offered for a finding and does not count.
+function selfRefuters(entries, review, finding) {
+  const own = reviewingFamilies(review)
+  const verdicts = [finding.secondOpinion?.verdict === 'REFUTED' && finding.secondOpinion.family,
+    ...entries.filter((e) => e.type === 'dispute' && e.review === review.id && e.finding === finding.id && e.verdict === 'REFUTED').map((e) => e.verifier)]
+  return [...new Set(verdicts.filter((family) => family && own.includes(family)))]
 }
 function validateStatuses(entries, review, statuses) {
   for (const f of review.findingDetails) {
@@ -1535,9 +1570,12 @@ function validateStatuses(entries, review, statuses) {
       if (!String(status.reason || '').trim() || !String(status.evidence || '').trim())
         throw new Error(`Rejection ${f.id} requires a reason and evidence (file:line or test)`)
       const waiver = entries.some((e) => e.type === 'override' && e.action === 'waive' && e.review === review.id && e.finding === f.id && String(e.reason || '').trim())
-      if (rules.refutation && !refuted(entries, review, f, status.refutedBy) && !waiver)
+      if (rules.refutation && !refuted(entries, review, f, status.refutedBy) && !waiver) {
+        const self = selfRefuters(entries, review, f)
         throw new Error(`Rejected ${f.id} requires a REFUTED verdict or an operator waiver; when no second reviewer family can ` +
-          `give a verdict, the operator waiver is the path: --waive ${review.id} ${f.id} --reason "<why>" from a real terminal`)
+          `give a verdict, the operator waiver is the path: --waive ${review.id} ${f.id} --reason "<why>" from a real terminal` +
+          (self.length ? `. The REFUTED from ${self.join(', ')} does not count: a family that reviewed this cannot refute its own finding` : ''))
+      }
     }
   }
 }
@@ -1596,8 +1634,8 @@ async function disputeFinding(id, findingId) {
     throw new Error('One verdict per finding; no back-and-forth')
   const pool = poolOrStop(loadPool())
   SELECTION = { pool }
-  SEL = { family: review.family, vendor: review.vendor }
-  const others = pool.filter((m) => m.family !== review.family)
+  SEL = { family: review.family, vendor: review.vendor, families: reviewingFamilies(review) }
+  const others = pool.filter((m) => !SEL.families.includes(m.family))
   // An optional local classifier (config "classifier", or a pick that names one) may choose the
   // verifier; otherwise another vendor first (pickVerifier).
   const pickSetting = String(cfg('REVIEW_PICK', 'pick', '')).trim().toLowerCase()
@@ -1610,7 +1648,8 @@ async function disputeFinding(id, findingId) {
   const verifier = picked ? { ...picked, effort: effortFor(picked) } : pickVerifier()
   let verdict = 'NO-VERDICT'
   let verdictEvidence = 'No second reviewer family can give a verdict, so the finding stands. The operator waiver is the ' +
-    `path: --waive ${id} ${findingId} --reason "<why>" from a real terminal`
+    `path: --waive ${id} ${findingId} --reason "<why>" from a real terminal. A family that reviewed this ` +
+    `(${SEL.families.join(', ')}) cannot judge its own finding`
   const temp = mkdtempSync(join(tmpdir(), 'review-dispute-'))
   const cwd = process.cwd()
   try {
@@ -1951,6 +1990,7 @@ function pushGate() {
     baseSha,
     repoId: repoIdentity(),
     family: SEL.family,
+    families: reviewingFamilies(SEL),
     model: SEL.id,
     ...(SEL.modelUsed && { modelUsed: SEL.modelUsed }),
     effort: SEL.effort,

@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict'
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -117,6 +117,14 @@ test('the push-gate explain says what the global core.hooksPath does and that on
   assert.ok(worktreeProjects.explain.changes.some((c) => /reviewgate\.worktreeProjects = true/.test(c)))
 })
 
+test('the push-gate explain discloses that a repo\'s own push-to-checkout hook does not run while the global hooks are on', () => {
+  const part = manifest('review-gate').parts.find((p) => p.id === 'push-gate')
+  assert.ok(!part.files.some((f) => f.endsWith('/push-to-checkout')), 'the pass-through has no push-to-checkout entry')
+  assert.ok(part.explain.changes.some((c) => /own \.git\/hooks\/push-to-checkout: that hook will not run while the global hooks are on/.test(c)), part.explain.changes.join('\n'))
+  assert.match(part.explain.what, /A repo's own \.git\/hooks still run, exactly as before, except a push-to-checkout hook/)
+  assert.doesNotMatch(part.explain.what, /\.git\/hooks still run, exactly as before\./, 'no unqualified promise that every repo hook runs')
+})
+
 test('the worktree pack explains the trunk, the worktrees beside it, wnew/wls, env files, zsh only and the .zshrc stanza', () => {
   const pack = manifest('worktree')
   const words = `${pack.explain.what} ${pack.explain.does} ${pack.explain.changes.join(' ')} ${pack.explain.undo}`
@@ -125,6 +133,66 @@ test('the worktree pack explains the trunk, the worktrees beside it, wnew/wls, e
     assert.match(words, re)
   assert.deepEqual(pack.parts[0].files, ['bin/install-worktree.mjs', 'tools/worktree/wt.zsh', 'tools/worktree/defaults.conf'])
   assert.ok(!existsSync(join(PACKS, 'worktree', 'tools')) && !existsSync(join(PACKS, 'worktree', 'bin')), 'points at the toolkit, does not copy it')
+})
+
+// A minimal YAML check of SKILL.md frontmatter, with no dependency: top-level `key: value` lines, each value a
+// double- or single-quoted scalar, a block scalar (| or >) or a plain scalar. A plain scalar may not hold ": "
+// or " #", nor start with an indicator — the rules a strict harness parser (Codex's) enforces.
+function frontmatter(body) {
+  const block = body.match(/^---\n([\s\S]*?)\n---\n/)
+  if (!block) throw new Error('no --- frontmatter block at the top')
+  const lines = block[1].split('\n')
+  const out = {}
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].trim() || /^\s*#/.test(lines[i])) continue
+    const kv = lines[i].match(/^([A-Za-z][\w-]*):(?:[ \t]+(.*))?$/)
+    if (!kv) throw new Error(`line ${i + 2}: not a top-level "key: value" line`)
+    const [, key, raw = ''] = kv
+    if (Object.hasOwn(out, key)) throw new Error(`${key}: duplicate key`)
+    const value = raw.trim()
+    if (/^[|>][+-]?$/.test(value)) {
+      const lines2 = []
+      while (i + 1 < lines.length && (/^[ \t]+\S/.test(lines[i + 1]) || !lines[i + 1].trim())) lines2.push(lines[++i].trim())
+      if (!lines2.some(Boolean)) throw new Error(`${key}: empty block scalar`)
+      out[key] = lines2.join(value[0] === '>' ? ' ' : '\n').trim()
+    } else if (value.startsWith('"')) {
+      if (!/^"(?:[^"\\]|\\.)*"$/.test(value)) throw new Error(`${key}: a double-quoted scalar must close at the end of its line`)
+      out[key] = JSON.parse(value)
+    } else if (value.startsWith("'")) {
+      if (!/^'(?:[^']|'')*'$/.test(value)) throw new Error(`${key}: a single-quoted scalar must close at the end of its line`)
+      out[key] = value.slice(1, -1).replace(/''/g, "'")
+    } else {
+      if (/^[[\]{}&*!%@`,|>]|^[-?:](\s|$)/.test(value)) throw new Error(`${key}: a plain scalar cannot start with "${value[0]}"; quote it`)
+      if (/:(\s|$)/.test(value)) throw new Error(`${key}: mapping values are not allowed here — a plain scalar cannot hold ": "; quote it or use a block scalar`)
+      if (/\s#/.test(value)) throw new Error(`${key}: " #" starts a comment inside a plain scalar; quote it`)
+      out[key] = value
+    }
+  }
+  return out
+}
+test('the frontmatter check refuses an unquoted key: value inside a plain scalar (it cannot pass vacuously)', () => {
+  for (const bad of ['description: use it; methods: advisor | second', 'description: Scales down: a lightweight mode', 'description: ends with a colon:',
+    'description: "never closed', "description: 'never closed", 'description: [a list]', 'description: a # comment', '  description: indented'])
+    assert.throws(() => frontmatter(`---\nname: x\n${bad}\n---\n`), Error, bad)
+  assert.throws(() => frontmatter('---\nname: x\ndescription: use it; methods: advisor\n---\n'), /mapping values are not allowed here/)
+  assert.deepEqual(frontmatter('---\nname: x\ndescription: "methods: advisor, \'the take\'"\n---\n'), { name: 'x', description: "methods: advisor, 'the take'" })
+  assert.deepEqual(frontmatter("---\nname: x\ndescription: 'it''s: fine'\nallowed-tools: Bash, Read\n---\n"), { name: 'x', description: "it's: fine", 'allowed-tools': 'Bash, Read' })
+  assert.deepEqual(frontmatter('---\nname: x\ndescription: >-\n  methods: advisor\n  and more\n---\n'), { name: 'x', description: 'methods: advisor and more' })
+})
+test('every shipped SKILL.md has frontmatter a strict YAML parser accepts, with its folder name and a description', () => {
+  const skills = shipped().filter((path) => basename(path) === 'SKILL.md')
+  assert.equal(skills.length, 10, 'five skills, each for both harnesses')
+  for (const path of skills) {
+    const rel = relative(PACKS, path)
+    let fields
+    try {
+      fields = frontmatter(readFileSync(path, 'utf8'))
+    } catch (e) {
+      assert.fail(`${rel}: ${e.message}`)
+    }
+    assert.equal(fields.name, basename(dirname(path)), `${rel}: name`)
+    assert.ok(text(fields.description), `${rel}: description`)
+  }
 })
 
 // The sweep. No exceptions: a hit anywhere outside packs/*/tests/ fails.
