@@ -1517,14 +1517,29 @@ function loggedReview(entries, id) {
 const headNow = () => sh('git', ['rev-parse', 'HEAD'])
 const repoIdentity = () => realpathSync(resolve(sh('git', ['rev-parse', '--git-common-dir'])))
 const isAncestor = (a, b) => spawnSync('git', ['merge-base', '--is-ancestor', a, b]).status === 0
-// Files changed between two commits, limited to pathspecs that resolve from the top of the work tree.
-// Untrimmed, so a leading-space name stays distinct.
-function filesBetween(a, b, paths = null) {
-  const r = spawnSync('git', ['-C', TOP, 'diff', '--name-only', '--no-renames', '-z', a, b, ...pathspec(paths)],
-    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
-  if (r.error || r.status !== 0) throw new Error(`git diff --name-only ${a} ${b}${sliceSuffix(paths)} failed: ${r.error?.message || r.stderr}`)
-  return r.stdout.split('\0').filter(Boolean)
+// Names from git's -z output, byte for byte: never trimmed, and a name whose bytes don't round-trip through
+// UTF-8 refuses, since decoding would make it equal to another name (a 0xff byte and U+FFFD both read as U+FFFD).
+function nulNames(out, what) {
+  const names = []
+  for (let start = 0, end; start < out.length; start = end + 1) {
+    end = out.indexOf(0, start)
+    if (end === -1) end = out.length
+    if (end === start) continue
+    const bytes = out.subarray(start, end), name = bytes.toString('utf8')
+    if (!Buffer.from(name, 'utf8').equals(bytes))
+      throw new Error(`${what} lists a file name that is not valid UTF-8 (bytes ${bytes.toString('hex')}); the gate compares exact names, so it refuses. Rename the file to valid UTF-8.`)
+    names.push(name)
+  }
+  return names
 }
+// Files changed between two commits (the net diff), limited to pathspecs that resolve from the top of the work tree.
+function filesBetween(a, b, paths = null) {
+  const r = spawnSync('git', ['-C', TOP, 'diff', '--name-only', '--no-renames', '-z', a, b, ...pathspec(paths)], { maxBuffer: 64 * 1024 * 1024 })
+  if (r.error || r.status !== 0) throw new Error(`git diff --name-only ${a} ${b}${sliceSuffix(paths)} failed: ${r.error?.message || r.stderr}`)
+  return nulNames(r.stdout, `git diff --name-only ${a} ${b}`)
+}
+// Every path some commit in a..b touched, merge-parent diffs included, so a change reverted later still counts.
+const touchedBetween = (a, b, paths = null) => [...new Set(commitsIn([`${a}..${b}`]).flatMap((commit) => commitPaths(commit, paths)))].sort()
 const isTestFile = (p) => /(^|\/)(test|tests|__tests__|__snapshots__)\//.test(p) || /\.(test|spec)\.[^/]+$|\.snap$/.test(p) || /(^|\/)(vitest|jest|playwright)\.config\.[^/]+$/.test(p)
 function gradeObject(value, keys, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`)
@@ -1687,8 +1702,8 @@ function closeReview(id) {
   // A sliced review answers for the files it recorded, plus anything its paths match now (stricter only);
   // changes outside both belong to other slices, and a new file in no slice's list blocks at the gate.
   const paths = sliceOf(review)
-  const files = paths ? slicedScope(review, filesBetween(review.head, head, paths), filesBetween(review.head, head))
-    : filesBetween(review.head, head)
+  const files = paths ? slicedScope(review, touchedBetween(review.head, head, paths), touchedBetween(review.head, head))
+    : touchedBetween(review.head, head)
   const command = option('--test-cmd') || VERIFY_CMD
   const noTests = option('--no-tests')
   if (noTests !== null && !noTests.trim()) throw new Error('--no-tests requires a nonempty reason')
@@ -1703,7 +1718,7 @@ function closeReview(id) {
     if (!isAncestor(check.head, head))
       throw new Error(`Fix check head ${check.head} is not an ancestor of closing HEAD (the branch was rewritten after it). Unresolved work goes to the operator, no third model pass`)
     const named = recordedPaths([check], statuses)
-    const since = paths ? slicedScope(review, filesBetween(check.head, head, paths), filesBetween(check.head, head)) : filesBetween(check.head, head)
+    const since = paths ? slicedScope(review, touchedBetween(check.head, head, paths), touchedBetween(check.head, head)) : touchedBetween(check.head, head)
     const unnamed = since.filter((p) => !named.has(p))
     if (unnamed.length) throw new Error(`Fix check head must equal closing HEAD, or the commits after it may only touch files named by its fixed findings: ${unnamed.join(', ')}. Unresolved work goes to the operator, no third model pass`)
   }
@@ -1908,10 +1923,10 @@ function calibrate() {
 const fullObjectId = (sha) => typeof sha === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)
 const zeroObjectId = (sha) => fullObjectId(sha) && /^0+$/.test(sha)
 const commitsIn = (range) => sh('git', ['rev-list', '--reverse', '--topo-order', ...range]).split('\n').filter(Boolean)
-function commitPaths(commit) {
-  const result = spawnSync('git', ['diff-tree', '--root', '-r', '-m', '--no-commit-id', '--name-only', '--no-renames', '-z', commit], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
-  if (result.error || result.status !== 0) throw new Error(result.error?.message || result.stderr)
-  return result.stdout.split('\0').filter(Boolean)
+function commitPaths(commit, paths = null) {
+  const result = spawnSync('git', [...(paths ? ['-C', TOP] : []), 'diff-tree', '--root', '-r', '-m', '--no-commit-id', '--name-only', '--no-renames', '-z', commit, ...pathspec(paths)], { maxBuffer: 64 * 1024 * 1024 })
+  if (result.error || result.status !== 0) throw new Error(result.error?.message || String(result.stderr))
+  return nulNames(result.stdout, `git diff-tree ${commit}`)
 }
 function completeCloses(entries, tip) {
   return entries.filter((e) => {

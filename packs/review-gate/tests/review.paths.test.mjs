@@ -232,3 +232,66 @@ test('P13 the Grade recheck range is untrimmed: a leading-space file there does 
   commit({ 'src/one.js': 'export const one = 3\n' })
   closedAs(original.id, { c1: { status: 'fixed' } }, 'partial', ['src/one.js'])
 })
+
+// A file whose name has a raw 0xff byte, which APFS cannot hold on disk: added through the index and marked
+// skip-worktree, so the work tree stays clean. Committed with the next commit().
+function stageByteName(prefix, suffix, content) {
+  const name = Buffer.concat([Buffer.from(prefix), Buffer.from([0xff]), Buffer.from(suffix)])
+  const plumb = (args, input) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: REPO, env: env(), input })
+    assert.equal(r.status, 0, String(r.stderr))
+    return String(r.stdout).trim()
+  }
+  const blob = plumb(['hash-object', '-w', '--stdin'], content)
+  plumb(['update-index', '-z', '--index-info'], Buffer.concat([Buffer.from(`100644 ${blob}\t`), name, Buffer.from([0])]))
+  plumb(['update-index', '-z', '--skip-worktree', '--stdin'], Buffer.concat([name, Buffer.from([0])]))
+}
+const FFFD = 'src/�.js'
+const notUtf8 = /git diff-tree [0-9a-f]{40} lists a file name that is not valid UTF-8 \(bytes 7372632fff2e6a73\); the gate compares exact names, so it refuses/
+
+test('P14 a file changed and then reverted after the fix check still counts: refused', () => {
+  const { original, check } = fixChecked(ONE)
+  commit({ 'lib/two.js': 'export const two = 2\n' })
+  commit({ 'lib/two.js': 'export const two = 1\n' })
+  commit({ 'src/one.js': 'export const one = 3\n' })
+  assert.equal(git('diff', '--name-only', check.head, 'HEAD'), 'src/one.js')
+  refused(original.id, X_FIXED, named(['lib/two.js']))
+})
+test('P15 in outOfScope, a file changed and then reverted after the review makes the close partial', () => {
+  const { record } = review([ONE])
+  commit({ 'lib/two.js': 'export const two = 2\n' })
+  commit({ 'lib/two.js': 'export const two = 1\n' })
+  commit({ 'src/one.js': 'export const one = 3\n' })
+  assert.equal(git('diff', '--name-only', record.head, 'HEAD'), 'src/one.js')
+  closedAs(record.id, FIXED, 'partial', ['lib/two.js'])
+})
+test('P16 a merge after the fix check that brings in an unnamed file is refused, even when the merge drops its change', () => {
+  const { original, check } = fixChecked(ONE)
+  git('checkout', '-qb', 'side'); commit({ 'm.js': 'export const m = 1\n' }); git('checkout', '-q', 'feat')
+  commit({ 'src/one.js': 'export const one = 3\n' })
+  git('merge', '--no-ff', '-qm', 'merge side', 'side')
+  refused(original.id, X_FIXED, named(['m.js']))
+  git('reset', '-q', '--hard', check.head)
+  git('checkout', '-qb', 'kept'); commit({ 'lib/two.js': 'export const two = 2\n' }); git('checkout', '-q', 'feat')
+  commit({ 'src/one.js': 'export const one = 3\n' })
+  git('merge', '-s', 'ours', '--no-ff', '-qm', 'merge kept, keeping ours', 'kept')
+  assert.equal(git('diff', '--name-only', check.head, 'HEAD'), 'src/one.js')
+  refused(original.id, X_FIXED, named(['lib/two.js']))
+})
+test('P17 a raw 0xff file name next to a recorded U+FFFD file refuses the close, naming the problem', () => {
+  commit({ [FFFD]: 'export const odd = 1\n' })
+  const { record } = review([finding(FFFD, 'export const odd = 1')])
+  assert.equal(record.resolvedPaths.f1.path, FFFD)
+  stageByteName('src/', '.js', 'export const odd = 2\n')
+  commit({ [FFFD]: 'export const odd = 2\n' })
+  assert.equal(git('status', '--porcelain', '--untracked-files=no'), '')
+  refused(record.id, FIXED, notUtf8)
+})
+test('P18 after a fix check too, a raw 0xff file name next to the recorded U+FFFD file refuses the close', () => {
+  commit({ [FFFD]: 'export const odd = 1\n' })
+  const { original, check } = fixChecked(finding(FFFD, 'export const odd = 1'))
+  assert.equal(check.resolvedPaths.x1.path, FFFD)
+  stageByteName('src/', '.js', 'export const odd = 2\n')
+  commit({ [FFFD]: 'export const odd = 2\n' })
+  refused(original.id, X_FIXED, notUtf8)
+})
