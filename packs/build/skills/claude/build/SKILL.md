@@ -93,9 +93,9 @@ The gate model is called at the **gates** (once after the plan is drafted, once 
 No command names a model. Resolve the family, its id and its effort from the role; the CLI follows the id's prefix: `claude-…` runs on `claude`, `gpt-…` on `codex`, `grok-…` on `grok`.
 
 ```
-eval "$(model-id --role advisor)"   # Bounce: sets family=…, id=…, effort=… (alt=… is the second opinion)
-eval "$(model-id --role judge)"     # Grade: the same, swapped per the grader rule
-BUILDER=<family>                    # `model-id --role builder`, or the family the user named; its id: "$(model-id "$BUILDER")"
+eval "$(model-id --role advisor || echo 'echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1')"   # Bounce: sets family=…, id=…, effort=… (alt=… is the second opinion)
+eval "$(model-id --role judge || echo 'echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1')"     # Grade: the same, swapped per the grader rule
+BUILDER=<family>                    # `model-id --role builder`, or the family the user named; its id: "$(model-id "$BUILDER" || echo "MODEL-ID-UNRESOLVED-$BUILDER")"
 EFFORT=<effort>                     # the effort the user named; none named: EFFORT= and resolve it below
 ```
 
@@ -136,7 +136,7 @@ EFFORT_FLAG=(); [ -z "$EFFORT" ] || EFFORT_FLAG=(-c "model_reasoning_effort=$EFF
 
 **Build — phase 1 on a codex-CLI builder (the only call that starts a session).** `--json` so you can capture the `thread_id`; `-o` so the checkpoint lands in a file instead of buried in event noise. This is the ONLY codex call that gets `--sandbox workspace-write`:
 ```
-codex exec --skip-git-repo-check --sandbox workspace-write -m "$(model-id "$BUILDER")" "${EFFORT_FLAG[@]}" \
+codex exec --skip-git-repo-check --sandbox workspace-write -m "$(model-id "$BUILDER" || echo "MODEL-ID-UNRESOLVED-$BUILDER")" "${EFFORT_FLAG[@]}" \
   --json -o builds/<slug>/phase1-result.md \
   "Objective: <what exists when this phase is done>
    Read first: plan.md, context.md, <relevant files>
@@ -151,7 +151,7 @@ Grab the session id from the first JSONL line: `{"type":"thread.started","thread
 
 **Build — every later phase, and every callback answer** (same session, context intact):
 ```
-codex exec resume <thread_id> --skip-git-repo-check -m "$(model-id "$BUILDER")" "${EFFORT_FLAG[@]}" \
+codex exec resume <thread_id> --skip-git-repo-check -m "$(model-id "$BUILDER" || echo "MODEL-ID-UNRESOLVED-$BUILDER")" "${EFFORT_FLAG[@]}" \
   -o builds/<slug>/phase<N>-result.md \
   "<the next phase brief, or the one-line answer to the callback>" </dev/null 2>/dev/null
 ```

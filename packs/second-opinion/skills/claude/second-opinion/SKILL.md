@@ -40,7 +40,7 @@ Read-only. The model gives an opinion only: no edits, no tool use. Say so in the
 The family's id and effort: a role member's effort comes from its role, any other family's from its flavor.
 ```bash
 family=<family>
-id=$(model-id "$family")
+id=$(model-id "$family" || echo "MODEL-ID-UNRESOLVED-$family")
 # role_effort <role> <family>: that family's effort in the role — its members[] entry, the alt's altEffort,
 # or the role's effort — or nothing when the family is not in that role.
 role_effort() {

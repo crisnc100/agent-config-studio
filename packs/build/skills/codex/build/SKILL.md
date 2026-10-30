@@ -43,8 +43,8 @@ Resolve the gate from its role — never type a model id — and point `PROMPT_F
 ```bash
 GATE=bounce                                     # the Bounce; GATE=grade for the Grade
 case "$GATE" in
-  bounce) eval "$(model-id --role advisor)" ;;
-  grade)  eval "$(model-id --role judge)" ;;
+  bounce) eval "$(model-id --role advisor || echo 'echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1')" ;;
+  grade)  eval "$(model-id --role judge || echo 'echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1')" ;;
 esac
 PROMPT_FILE="builds/<slug>/$GATE-prompt.md"     # bounce-prompt.md or grade-prompt.md: each gate reads its own
 # eval sets family=…, id=…, effort=… (and alt=…, the second opinion). An unresolved role prints an id

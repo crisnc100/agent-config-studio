@@ -56,11 +56,11 @@ Every method gets the same prompt contract. **The advisor is read-only** — it 
 ```bash
 METHOD=advisor                                  # advisor | second | the family the user named
 case "$METHOD" in
-  advisor) eval "$(model-id --role advisor)" ;;   # sets family=…, id=…, effort=…
-  second)  role=$(model-id --role advisor --json)
+  advisor) eval "$(model-id --role advisor || echo 'echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1')" ;;   # sets family=…, id=…, effort=…
+  second)  role=$(model-id --role advisor --json || exit 1) || { echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1; }
            family=$(printf '%s' "$role" | jq -r .alt); id=$(printf '%s' "$role" | jq -r .altId)
            effort=$(printf '%s' "$role" | jq -r .altEffort) ;;
-  *)       family=$METHOD; id=$(model-id "$family")
+  *)       family=$METHOD; id=$(model-id "$family" || echo "MODEL-ID-UNRESOLVED-$family")
            effort=$(model-id --flavor "$family" --json | jq -r '.flavor.effort // empty') ;;
 esac
 # An empty effort means none is set: the commands below leave the effort flag out, never pass it empty.

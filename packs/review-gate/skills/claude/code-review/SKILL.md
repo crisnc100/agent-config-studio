@@ -94,7 +94,7 @@ Close uses verifyCmd from .claude/review-config.json or --test-cmd. When there a
 | `/code-review claude` | Claude multi-agent team (`REVIEW_REVIEWER=claude`; its lenses run on the reviewer role's Claude families, in role order) — the ONLY multi-agent tier | Only when the user names it. With no Claude family in the reviewer role, it stops and says so. |
 | `/code-review <family>` | That family, one agent (`REVIEW_REVIEWER=<family>`) | When the user names one. |
 
-Resolve the judge family with `eval "$(model-id --role judge)"` (it sets `family`, `id` and `effort`).
+Resolve the judge family with `eval "$(model-id --role judge || echo 'echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1')"` (it sets `family`, `id` and `effort`).
 
 **Plain English works too** — "code review this with <family>", "review it with both" — the phrase picks the tier for that run via the env overrides. These one-run choices never change the durable default (env var → config file → built-in default precedence).
 

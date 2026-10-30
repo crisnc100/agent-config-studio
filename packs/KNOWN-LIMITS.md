@@ -16,6 +16,12 @@ Scores are **likelihood × impact**, each on a 1–10 scale, as recorded when th
 | A Codex `writable_roots` entry written as a TOML multi-line string (`"""…"""` or `'''…'''`) is read as an ordinary string. | Hand-editing `~/.codex/config.toml` to use multi-line strings inside `writable_roots`. Paths never need them. | unscored | Parse multi-line strings in the `writable_roots` reader, or refuse that file with a clear message. |
 | An update says you edited `wt.zsh` when you didn't. | The `worktree` pack was installed on a machine whose `wt.zsh` was already identical to the shipped one. The pack never records it as written, so later updates always report it as "you edited it" and keep it. | unscored | Record a file that was already identical at install as the pack's own. |
 
+## The pack skills
+
+| Limit | How it could happen | Likelihood × impact | Fix idea |
+|---|---|---|---|
+| When `model-id` is missing or fails, a role lookup stops with "model-id failed: run acs install-model-id". A single model lookup instead passes `MODEL-ID-UNRESOLVED-<family>`, so the step only stops when the agent CLI rejects that name. An effort lookup (`model-id --flavor … \| jq`) comes back empty, and the command then leaves the effort flag out, so the CLI uses its own default effort. | Running a pack skill in a shell where `model-id` isn't on PATH (for example, one that never read your shell profile). | unscored | Stop on a failed single-model or effort lookup too, before any CLI runs. |
+
 ## The Packs card in the studio
 
 | Limit | How it could happen | Likelihood × impact | Fix idea |
