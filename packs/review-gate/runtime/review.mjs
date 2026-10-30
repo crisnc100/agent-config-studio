@@ -388,6 +388,19 @@ const BASE = cfg('REVIEW_BASE', 'base', '') || (['--gate', '--deferred', '--rubr
 const VERIFY_CMD = cfg('REVIEW_VERIFY_CMD', 'verifyCmd', '')
 let VERIFY_RESULT = null
 const DIFF_CAP = 120_000 // chars of diff inlined into the review prompt
+// REVIEW_PATHS / config "paths": git pathspecs (comma- or newline-separated, or a config array) that
+// slice a review to `git diff <base>...HEAD -- <paths>`. Each slice has its own record and close; the
+// push gate accepts slices only when, together, they cover every file of the diff.
+function normalisePaths(value) {
+  const list = Array.isArray(value) ? value : String(value ?? '').split(/[,\n]/)
+  return [...new Set(list.map((p) => String(p).trim().replace(/^(?:\.\/)+(?=.)/, '')).filter(Boolean))].sort()
+}
+const PATHS = normalisePaths(cfg('REVIEW_PATHS', 'paths', ''))
+// The slice in force: REVIEW_PATHS for a review, the original's stored paths for its fix check.
+let SLICE = PATHS.length ? PATHS : null
+const sliceOf = (record) => (Array.isArray(record?.paths) && record.paths.length ? record.paths : null)
+const pathspec = (paths) => (paths ? ['--', ...paths] : [])
+const sliceSuffix = (paths) => (paths ? ` -- ${paths.join(' ')}` : '')
 const FILE_AT_OR_BELOW = 10
 const HIGH_AT_OR_ABOVE = 40
 const RUBRIC_VERSION = '2026-10-29.2'
@@ -473,9 +486,10 @@ const LANGS = {
 // A renamed file is judged by both names, so moving code into auth/ can't dodge an auth rule.
 const pathsOf = (f) => (f.from ? [f.path, f.from] : [f.path])
 // Paths and line counts only — this is everything a classifier and the force rules ever see of the diff.
-function diffStats(range = `${BASE}...HEAD`) {
+function diffStats(range = `${BASE}...HEAD`, paths = null) {
   // -z keeps paths unquoted; a rename is `added\tremoved\t` then NUL-separated source and destination.
-  const r = spawnSync('git', ['diff', '--numstat', '-z', '-M', range], {
+  // Pathspecs resolve from the top of the work tree.
+  const r = spawnSync('git', [...(paths ? ['-C', TOP] : []), 'diff', '--numstat', '-z', '-M', range, ...pathspec(paths)], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   })
@@ -1013,7 +1027,10 @@ function getDiff() {
   }
   const head = sh('git', ['rev-parse', 'HEAD'])
   const baseSha = sh('git', ['merge-base', BASE, head])
-  const diff = sh('git', ['diff', `${baseSha}...${head}`])
+  if (SLICE && !filesBetween(baseSha, head, SLICE).length)
+    die(`REVIEW_PATHS (${SLICE.join(', ')}) matches no file changed between ${BASE} and HEAD; nothing was reviewed.\n` +
+      `  Check the pathspecs against: git diff --name-only ${baseSha}...HEAD`)
+  const diff = sh('git', [...(SLICE ? ['-C', TOP] : []), 'diff', `${baseSha}...${head}`, ...pathspec(SLICE)])
   return { branch, diff, head, baseSha }
 }
 
@@ -1038,6 +1055,19 @@ function ensureReviewsIgnored() {
 
 const clip = (diff) =>
   diff.length > DIFF_CAP ? `${diff.slice(0, DIFF_CAP)}\n…[diff truncated; read files for the rest]` : diff
+// For an unsliced diff over DIFF_CAP: how to slice it, naming the top-level folders with the most changed lines.
+function sliceHint(stats) {
+  const lines = {}
+  for (const f of stats?.files || []) {
+    if (!f.path.includes('/')) continue
+    const top = `${f.path.split('/')[0]}/`
+    lines[top] = (lines[top] || 0) + f.added + f.removed
+  }
+  const largest = Object.entries(lines).sort((a, b) => b[1] - a[1]).slice(0, 5)
+  return `  Slice it instead: review each path group with REVIEW_PATHS=<pathspec>,<pathspec>, close every slice at\n` +
+    `  the same HEAD, and make the slices together cover the whole diff (the push gate checks that).\n` +
+    (largest.length ? `  Largest top-level folders: ${largest.map(([top, n]) => `${top} (${n} changed lines)`).join(', ')}\n` : '')
+}
 
 function toolNotes(vendor) {
   // Codex gets a sandboxed shell that can't open /dev/fd, so `diff <(cmd) <(cmd)` dies before it
@@ -1073,6 +1103,11 @@ function reviewPrompt(diff) {
         `${VERIFY_RESULT.passed ? 'PASSED before this review.' : `FAILED (${VERIFY_RESULT.exit}). Output tail:\n${VERIFY_RESULT.tail}`}` +
         `\nTreat that as context, not as a finding in itself.`,
     )
+  if (SLICE)
+    notes.push(
+      `This review is one slice of the branch: it covers only the paths ${SLICE.join(', ')}. ` +
+        `Other slices review the rest, so report defects in these paths (open other files only for context).`,
+    )
   return (
     `Review the branch diff below for CODE CORRECTNESS only — bugs, regressions, broken edge cases, ` +
     `bad error handling, data-integrity issues — judged against what the branch was supposed to do` +
@@ -1080,11 +1115,11 @@ function reviewPrompt(diff) {
     `Do NOT comment on product direction, scope, or style preference.\n\n` +
     `${CONTEXT ? `${CONTEXT}\n` : ''}` +
     `${notes.length ? `${notes.join('\n\n')}\n\n` : ''}` +
-    `Diff (git diff ${DIFF_BASE}...HEAD):\n${clipped}`
+    `Diff (git diff ${DIFF_BASE}...HEAD${sliceSuffix(SLICE)}):\n${clipped}`
   )
 }
 
-function verifierPrompt(diff, findings, vendor, range = `${DIFF_BASE}...HEAD`) {
+function verifierPrompt(diff, findings, vendor, range = `${DIFF_BASE}...HEAD${sliceSuffix(SLICE)}`) {
   const list = findings
     .map(
       (f, i) =>
@@ -1408,6 +1443,7 @@ function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTr
       .join('\n') || '- none'
   const md =
     `Review ID: ${ts}\nReviewer: ${reviewer}\nBranch: ${branch} → ${BASE}\nHEAD: ${head}\n` +
+    (SLICE ? `Paths: ${SLICE.join(', ')} (one slice; other slices cover the rest of the diff)\n` : '') +
     `Reviewed against: ${INTENT || '(inferred from diff)'}\n` +
     (VERIFY_RESULT ? `Verify (${VERIFY_RESULT.cmd}): ${VERIFY_RESULT.passed ? 'passed' : 'FAILED'}\n` : '') +
     (verifier ? `Second opinion: ${verifier.family} (${verifier.id})\n` : '') +
@@ -1439,6 +1475,14 @@ const headNow = () => sh('git', ['rev-parse', 'HEAD'])
 const repoIdentity = () => realpathSync(resolve(sh('git', ['rev-parse', '--git-common-dir'])))
 const isAncestor = (a, b) => spawnSync('git', ['merge-base', '--is-ancestor', a, b]).status === 0
 const changedFiles = (a, b) => sh('git', ['diff', '--name-only', '--no-renames', '-z', a, b]).split('\0').filter(Boolean)
+// Files changed between two commits, limited to pathspecs that resolve from the top of the work tree.
+// Untrimmed, so a leading-space name stays distinct.
+function filesBetween(a, b, paths = null) {
+  const r = spawnSync('git', ['-C', TOP, 'diff', '--name-only', '--no-renames', '-z', a, b, ...pathspec(paths)],
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  if (r.error || r.status !== 0) throw new Error(`git diff --name-only ${a} ${b}${sliceSuffix(paths)} failed: ${r.error?.message || r.stderr}`)
+  return r.stdout.split('\0').filter(Boolean)
+}
 const isTestFile = (p) => /(^|\/)(test|tests|__tests__|__snapshots__)\//.test(p) || /\.(test|spec)\.[^/]+$|\.snap$/.test(p) || /(^|\/)(vitest|jest|playwright)\.config\.[^/]+$/.test(p)
 const cleanPath = (p) => String(p || '').replace(`${TOP}/`, '').replace(/^(?:\.\/|[ab]\/)/, '')
 function gradeObject(value, keys, label) {
@@ -1590,7 +1634,9 @@ function closeReview(id) {
   if (!statusPath) throw new Error('--close requires --status <file.json>')
   const statuses = JSON.parse(readFileSync(statusPath, 'utf8'))
   if (!statuses || typeof statuses !== 'object' || Array.isArray(statuses)) throw new Error('Statuses must be an object keyed by finding id')
-  const files = changedFiles(review.head, head)
+  // A sliced review answers for its own paths only; changes outside them belong to other slices.
+  const paths = sliceOf(review)
+  const files = paths ? filesBetween(review.head, head, paths) : changedFiles(review.head, head)
   const command = option('--test-cmd') || VERIFY_CMD
   const noTests = option('--no-tests')
   if (noTests !== null && !noTests.trim()) throw new Error('--no-tests requires a nonempty reason')
@@ -1621,7 +1667,7 @@ function closeReview(id) {
   if (headNow() !== head) throw new Error('HEAD changed while tests ran')
   appendLog({ type: 'close', ts: new Date().toISOString(), review: id, closeHead: head, statuses, outOfScope,
     status: outOfScope.length ? 'partial' : 'complete', tests, ...(noTests !== null && { noTests }), ...(check && { fixCheck: check.id }), ...(recheck && { recheck: recheck.id }) })
-  console.log(`✓ Review ${id} closed (${outOfScope.length ? 'partial' : 'complete'}) at ${head}`)
+  console.log(`✓ Review ${id} closed (${outOfScope.length ? 'partial' : 'complete'}) at ${head}${paths ? ` for paths ${paths.join(', ')}` : ''}`)
 }
 async function disputeFinding(id, findingId) {
   const entries = readLog()
@@ -1658,7 +1704,8 @@ async function disputeFinding(id, findingId) {
         ? loggedReview(entries, review.review).head
         : review.baseSha || sh('git', ['merge-base', review.base || BASE, review.head])
       const range = `${baseSha}${review.kind === 'fix-check' ? '..' : '...'}${review.head}`
-      const diff = sh('git', ['diff', range])
+      const paths = sliceOf(review)
+      const diff = sh('git', [...(paths ? ['-C', TOP] : []), 'diff', range, ...pathspec(paths)])
       const snapshot = join(temp, 'snapshot')
       sh('git', ['clone', '--quiet', '--no-hardlinks', '--no-checkout', TOP, snapshot])
       process.chdir(snapshot)
@@ -1666,7 +1713,7 @@ async function disputeFinding(id, findingId) {
       const prompt = `Judge this dispute against the reviewed snapshot ${review.head}, never the current branch.\n` +
         `Reason: ${reason}\nEvidence: ${evidence}\n` +
         (finding.criterion ? `Grade criterion: ${finding.criterion}\nCriterion evidence: ${finding.evidence || ''}\n` : '') +
-        verifierPrompt(diff, [finding], verifier.vendor, range)
+        verifierPrompt(diff, [finding], verifier.vendor, `${range}${sliceSuffix(paths)}`)
       const { result } = await runModel(verifier, prompt, VERDICT_SCHEMA, 'code-review dispute verifier')
       const answer = result?.verdicts?.find((v) => v.index === 0)
       if (answer && ['CONFIRMED', 'REFUTED'].includes(answer.verdict) && String(answer.evidence || '').trim()) {
@@ -1693,12 +1740,14 @@ async function fixCheck(id) {
     throw new Error('One fix check per review; unresolved findings go to the operator, no third model pass')
   const head = headNow()
   if (!isAncestor(original.head, head)) throw new Error('HEAD is neither the reviewed commit nor a descendant')
-  const diff = sh('git', ['diff', `${original.head}..${head}`])
+  // A sliced review's fix check reviews only the fix diff inside its paths.
+  SLICE = sliceOf(original)
+  const diff = sh('git', [...(SLICE ? ['-C', TOP] : []), 'diff', `${original.head}..${head}`, ...pathspec(SLICE)])
   if (!diff) throw new Error('No fix diff to check')
   DIFF_BASE = original.head
   const branch = sh('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
   CONTEXT = reviewContext(branch)
-  SELECTION = selectReviewer(diffStats(`${original.head}..${head}`))
+  SELECTION = selectReviewer(diffStats(`${original.head}..${head}`, SLICE))
   SEL = SELECTION.sel
   if (SEL.team) throw new Error('A fix check requires one reviewer family, not the multi-agent team')
   const { result } = await runModel(SEL, `Fix check: review only this fix diff, not the original branch diff.\n${reviewPrompt(diff)}`, SCHEMA, 'fix-check reviewer')
@@ -1712,7 +1761,7 @@ async function fixCheck(id) {
   const checkId = `fix-${Date.now()}-${randomBytes(3).toString('hex')}`
   appendLog({ type: 'review', kind: 'fix-check', rubricVersion: RUBRIC_VERSION, rescored: scored.rescored, id: checkId, review: id, ts: new Date().toISOString(), head, branch,
     repo: repoName(), repoId: repoIdentity(), base: original.head, baseSha: original.head, family: SEL.family, model: SEL.id, vendor: SEL.vendor, copy: COPY_PATH,
-    findings: findingDetails.length, findingDetails })
+    ...(SLICE && { paths: SLICE }), findings: findingDetails.length, findingDetails })
   console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)`)
 }
 function waiveFinding(id, findingId) {
@@ -1724,6 +1773,22 @@ function waiveFinding(id, findingId) {
   console.log(`✓ Waiver recorded for ${id}/${findingId}: ${reason}`)
 }
 function closeSummary(entries, close, head) {
+  const { review, lines } = closeLines(entries, close, head)
+  lines.push('Deferred findings', ...deferredLines(entries, review))
+  if (close.noTests) lines.push(`No tests: ${close.noTests}`)
+  return lines.join('\n')
+}
+// One summary for the slices that cover HEAD together, then the branch-wide deferred findings.
+function slicedSummary(entries, { slices, baseSha, closeHead }, head) {
+  const lines = [`Sliced review: ${slices.length} slice(s) together cover every file changed from ${baseSha} to ${closeHead}`]
+  slices.forEach(({ close, paths }, i) => {
+    lines.push(`Slice ${i + 1} of ${slices.length}: ${paths.join(', ')}`, ...closeLines(entries, close, head).lines)
+    if (close.noTests) lines.push(`No tests: ${close.noTests}`)
+  })
+  lines.push('Deferred findings', ...deferredLines(entries, slices[0].review))
+  return lines.join('\n')
+}
+function closeLines(entries, close, head) {
   const review = loggedReview(entries, close.review)
   const check = close.fixCheck && loggedReview(entries, close.fixCheck)
   const recheck = close.recheck && loggedReview(entries, close.recheck)
@@ -1737,11 +1802,12 @@ function closeSummary(entries, close, head) {
       lines.push(`${f.id} ${f.severity.toUpperCase()} ${f.issue}: ${status?.reason || ''}${waiver ? `; waived: ${waiver.reason}` : ''}`)
     if (f.status === 'unverified-quote') lines.push(`Carried unlocated ${f.id} ${f.severity.toUpperCase()} ${f.issue}: ${f.quoteCheck}`)
   }
+  return { review, lines }
+}
+function deferredLines(entries, review) {
   const deferred = entries.filter((r) => r.type === 'review' && r.repoId === review.repoId && r.branch === review.branch)
     .flatMap((r) => deferredFindings(entries, r).map(deferredLine))
-  lines.push('Deferred findings', ...(deferred.length ? deferred : ['none']))
-  if (close.noTests) lines.push(`No tests: ${close.noTests}`)
-  return lines.join('\n')
+  return deferred.length ? deferred : ['none']
 }
 function deferredLine(finding) {
   return `${finding.id} risk ${finding.risk} ${finding.severity.toUpperCase()} ${finding.file || '?'}:${finding.line || '?'} — ${finding.issue}; Trigger: ${finding.trigger || 'trigger not recorded'}`
@@ -1800,13 +1866,52 @@ function completeCloses(entries, tip) {
     return ancestry.status === 0
   }).reverse().sort((a, b) => Number(b.closeHead === tip) - Number(a.closeHead === tip))
 }
+const buildsOnlySince = (closeHead, tip) => closeHead === tip || commitsIn([`${closeHead}..${tip}`])
+  .every((commit) => commitPaths(commit).every((path) => path.startsWith('builds/')))
+// One unsliced close that covers the tip. A sliced close covers only its paths, so it never counts here.
 function coveringClose(entries, tip, reviewOnly = false) {
   return completeCloses(entries, tip).find((close) => {
     const review = loggedReview(entries, close.review)
+    if (sliceOf(review)) return false
     if (reviewOnly && review.kind !== 'review') return false
-    return close.closeHead === tip || commitsIn([`${close.closeHead}..${tip}`])
-      .every((commit) => commitPaths(commit).every((path) => path.startsWith('builds/')))
+    return buildsOnlySince(close.closeHead, tip)
   })
+}
+// Sliced reviews cover a tip together: complete closes of sliced reviews with one repoId, branch, baseSha
+// and closeHead (the tip, or an ancestor followed only by builds/ commits) whose paths cover every file
+// in `git diff <baseSha> <closeHead>`. Slices may overlap. A riskPaths file, and every file when the
+// pushed commits touch riskPaths, counts only in a slice of kind review.
+// Returns null when no sliced close applies, else the covering group or the closest one's uncovered files.
+function slicedCover(entries, tip, risk = false) {
+  const groups = new Map(), eligible = new Map()
+  for (const close of completeCloses(entries, tip)) {
+    const review = loggedReview(entries, close.review), paths = sliceOf(review)
+    if (!paths || !fullObjectId(review.baseSha) || !review.repoId || !review.branch) continue
+    if (!eligible.has(close.closeHead)) eligible.set(close.closeHead, buildsOnlySince(close.closeHead, tip))
+    if (!eligible.get(close.closeHead)) continue
+    const key = JSON.stringify([review.repoId, review.branch, review.baseSha, close.closeHead])
+    if (!groups.has(key)) groups.set(key, { baseSha: review.baseSha, closeHead: close.closeHead, slices: [] })
+    const group = groups.get(key)
+    // completeCloses lists the latest close first; one close per review.
+    if (!group.slices.some((s) => s.review.id === review.id)) group.slices.push({ close, review, paths })
+  }
+  let closest = null
+  for (const group of groups.values()) {
+    for (const slice of group.slices) slice.files = new Set(filesBetween(group.baseSha, group.closeHead, slice.paths))
+    const uncovered = filesBetween(group.baseSha, group.closeHead).filter((file) => !group.slices.some((s) =>
+      s.files.has(file) && (s.review.kind === 'review' || (!risk && !matchesAny(file, RISK_PATHS)))))
+    group.slices.sort((a, b) => a.paths.join('\n').localeCompare(b.paths.join('\n')))
+    if (!uncovered.length) return { ...group, covered: true, uncovered }
+    if (!closest || uncovered.length < closest.uncovered.length) closest = { ...group, covered: false, uncovered }
+  }
+  return closest
+}
+function uncoveredNote(sliced) {
+  if (!sliced || sliced.covered) return ''
+  const shown = sliced.uncovered.slice(0, 20).join(', ')
+  const more = sliced.uncovered.length > 20 ? ` and ${sliced.uncovered.length - 20} more` : ''
+  return `; the complete slice closes at ${sliced.closeHead} leave ${sliced.uncovered.length} file(s) uncovered: ${shown}${more}` +
+    ' — review and close them as another slice (REVIEW_PATHS) at the same HEAD'
 }
 function legacyNote(entries) {
   return entries.some((e) => e.type === 'review' && !e.head && e.repo === repoName())
@@ -1816,8 +1921,10 @@ function printSummary() {
   const entries = readLog()
   const head = headNow()
   const close = coveringClose(entries, head)
-  if (!close) throw new Error(`No complete close covers HEAD${legacyNote(entries)}`)
-  console.log(closeSummary(entries, close, head))
+  if (close) return console.log(closeSummary(entries, close, head))
+  const sliced = slicedCover(entries, head)
+  if (!sliced?.covered) throw new Error(`No complete close covers HEAD${legacyNote(entries)}${uncoveredNote(sliced)}`)
+  console.log(slicedSummary(entries, sliced, head))
 }
 function pushRefs(input) {
   const lines = input.split('\n')
@@ -1856,11 +1963,12 @@ function pushGate() {
         if (tip !== ref.localSha) throw new Error(`Pushed tip is not a full commit: ${ref.localSha}`)
         const risk = commitsIn(pushedRange(ref)).some((commit) => commitPaths(commit).some((path) => matchesAny(path, RISK_PATHS)))
         const close = coveringClose(entries, tip, risk)
-        if (!close) {
+        const sliced = close ? null : slicedCover(entries, tip, risk)
+        if (!close && !sliced?.covered) {
           uncovered.push(ref)
-          throw new Error(`No complete ${risk ? 'code-review ' : ''}close covers tip ${tip}${legacyNote(entries)}${risk ? '; pushed commits touch riskPaths' : ''}`)
+          throw new Error(`No complete ${risk ? 'code-review ' : ''}close covers tip ${tip}${legacyNote(entries)}${risk ? '; pushed commits touch riskPaths' : ''}${uncoveredNote(sliced)}`)
         }
-        summaries.push(closeSummary(entries, close, tip))
+        summaries.push(close ? closeSummary(entries, close, tip) : slicedSummary(entries, sliced, tip))
       } catch (e) { failure ||= e.message }
     }
   } catch (e) { failure = e.message }
@@ -1921,7 +2029,8 @@ function pushGate() {
     console.log(`Nothing to review — no diff against ${BASE}.`)
     process.exit(0)
   }
-  SELECTION = selectReviewer(diffStats())
+  const stats = diffStats(undefined, SLICE)
+  SELECTION = selectReviewer(stats)
   SEL = SELECTION.sel
   const reviewer =
     SEL.vendor === 'claude'
@@ -1931,7 +2040,7 @@ function pushGate() {
       : `${SEL.vendor}-${SEL.id}-${SEL.effort}`
   for (const n of SELECTION.notes) console.log(n)
   console.log(`▶ reviewer · ${SEL.family} (${SEL.vendor} · ${SEL.id} · ${SEL.effort}) — ${SELECTION.why}`)
-  console.log(`▶ review · ${reviewer} · ${branch} vs ${BASE} · single pass (no fix, no loop)\n`)
+  console.log(`▶ review · ${reviewer} · ${branch} vs ${BASE}${SLICE ? ` · paths ${SLICE.join(', ')}` : ''} · single pass (no fix, no loop)\n`)
 
   // A silently clipped diff looks identical to a fully-reviewed one — say so in the console,
   // the report, and the JSON, not just inside the prompt where only the model sees it.
@@ -1939,7 +2048,8 @@ function pushGate() {
   if (diffTruncated)
     console.warn(
       `⚠ Diff is ${diff.length} chars — only the first ${DIFF_CAP} were inlined in the prompt.\n` +
-        `  The reviewer was told to open files for the rest; findings may under-cover this branch.\n`,
+        `  The reviewer was told to open files for the rest; findings may under-cover this branch.\n` +
+        (SLICE ? '' : sliceHint(stats)),
     )
 
   VERIFY_RESULT = runVerify()
@@ -1989,6 +2099,7 @@ function pushGate() {
     base: BASE,
     baseSha,
     repoId: repoIdentity(),
+    ...(SLICE && { paths: SLICE }),
     family: SEL.family,
     families: reviewingFamilies(SEL),
     model: SEL.id,
@@ -2027,6 +2138,7 @@ function pushGate() {
       base: BASE,
       branch,
       head,
+      ...(SLICE && { paths: SLICE }),
       reportPath: `${dir}/code-review.md`,
       diffTruncated,
       verify: VERIFY_RESULT && { cmd: VERIFY_RESULT.cmd, passed: VERIFY_RESULT.passed },

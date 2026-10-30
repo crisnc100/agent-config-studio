@@ -31,6 +31,11 @@ The repo's own scripts/review.mjs is the execution source when present. The firs
 - **Optional per-repo gate.** Set `verifyCmd` in `.claude/review-config.json` (e.g. `"npm run type-check"`) and it runs *before* the reviewer, with its pass/fail fed in as context. It never blocks — a failing build is something for the reviewer to explain, not a reason to skip the review. Unset (the default) changes nothing.
 - It's **read-only** — it never fixes or commits. It writes `reviews/<ts>/code-review.md`, prints the findings as JSON after a `===FINDINGS_JSON===` marker, and appends one line to the review log, `~/.agent-config-studio/review-log/review-log.jsonl` (an existing older log under `~/.claude` keeps being used until that folder exists).
 
+**Big diffs: review in slices.** The prompt inlines at most 120k characters of diff; over that, the run warns and names the largest top-level folders.
+Slice the one commit instead: run the review once per path group with `REVIEW_PATHS=<pathspec>,<pathspec>` (git pathspecs, comma- or newline-separated; config `paths` also works). A list that matches no changed file is refused.
+Each slice gets its own record, findings and close, and a sliced close ignores later changes outside its paths. Commit every fix first, then close every slice at the same HEAD.
+The slices together must cover every file of the diff, `builds/` included: the push gate and `--summary` accept them only then, and a missing slice blocks the push and names the uncovered files.
+
 Parse the `===FINDINGS_JSON===` block (and/or read `reviews/latest/code-review.md`). Keep reviewId and each finding's id for the status file.
 
 ## Step 2 — Triage, then show the findings, get the user's call
