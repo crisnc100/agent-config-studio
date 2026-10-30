@@ -83,16 +83,16 @@ const X1 = { issue: 'one is wrong', file: 'src/one.js', line: '1', quote: 'expor
   likelihood: 5, impact: 5, protected: false, trigger: 'importing one' }
 const FIXED = { x1: { status: 'fixed' } }
 const REJECTED = { x1: { status: 'rejected', reason: 'intended', evidence: 'src/one.js:1' } }
-// The review, a test change that needs a fix check, and that fix check with x1 on src/one.js.
-function fixChecked(paths) {
+// The review, a test change that needs a fix check, and that fix check with x1 (on src/one.js by default).
+function fixChecked(paths, finding = X1) {
   allowed(script([], paths ? { REVIEW_PATHS: paths } : {}))
   const review = records().filter((e) => e.type === 'review').at(-1)
   commit({ 'src/one.test.js': 'test one\n' })
   refused(review.id, {}, /run --fix-check first/)
-  allowed(script(['--fix-check', review.id], { STUB_FINDINGS: JSON.stringify({ findings: [X1] }) }))
+  allowed(script(['--fix-check', review.id], { STUB_FINDINGS: JSON.stringify({ findings: [finding] }) }))
   const check = records().at(-1)
   assert.equal(check.kind, 'fix-check'); assert.equal(check.head, git('rev-parse', 'HEAD'))
-  assert.deepEqual(check.findingDetails.map((f) => [f.id, f.file, f.severity, f.status]), [['x1', 'src/one.js', 'medium', 'verified-quote']])
+  assert.deepEqual(check.findingDetails.map((f) => [f.id, f.file, f.severity, f.status]), [['x1', finding.file, 'medium', 'verified-quote']])
   return { review, check }
 }
 
@@ -183,4 +183,21 @@ test('F8 a close at the fix check head is unchanged', () => {
   assert.equal(calls(), before)
   assert.notEqual(script(['--fix-check', review.id]).status, 0, 'still one fix check per review')
   allowed(script(['--summary']))
+})
+test('F9 a changed file whose name starts with a space is its own file: changed alongside the x1 file, it is refused and named', () => {
+  const { review } = fixChecked()
+  commit({ 'src/one.js': 'export const one = 3\n', ' src/one.js': 'a different file\n' })
+  refused(review.id, FIXED, named([' src/one.js']))
+})
+test('F10 a fixed finding on a real b/src/one.js does not authorize a change to the root src/one.js', () => {
+  commit({ 'b/src/one.js': 'export const b = 1\n' })
+  const { review } = fixChecked(undefined, { ...X1, file: 'b/src/one.js', quote: 'export const b = 1' })
+  commit({ 'src/one.js': 'export const one = 3\n' })
+  refused(review.id, FIXED, named(['src/one.js']))
+})
+test('F11 a diff-prefixed b/src/one.js finding, with no b/ folder in the tree, still authorizes the root src/one.js', () => {
+  const { review } = fixChecked(undefined, { ...X1, file: 'b/src/one.js' })
+  assert.equal(existsSync(join(REPO, 'b')), false)
+  commit({ 'src/one.js': 'export const one = 3\n' })
+  closed(review.id, FIXED)
 })

@@ -1631,6 +1631,15 @@ function validateStatuses(entries, review, statuses) {
     }
   }
 }
+// The path a fixed finding authorizes after its fix check: the path as written when it is in the tree at any
+// of revs; a leading a/ or b/ is a diff prefix only when the written path is not and the stripped one is.
+function findingPath(file, revs) {
+  let path = String(file || '')
+  if (path.startsWith(`${TOP}/`)) path = path.slice(TOP.length + 1)
+  path = path.replace(/^\.\//, '')
+  const inTree = (p) => revs.some((rev) => spawnSync('git', ['cat-file', '-e', `${rev}:${p}`]).status === 0)
+  return /^[ab]\//.test(path) && !inTree(path) && inTree(path.slice(2)) ? path.slice(2) : path
+}
 function slicedScope(review, matched, changed) {
   const scope = new Set([...matched, ...sliceFiles(review)])
   return changed.filter((p) => scope.has(p))
@@ -1664,8 +1673,9 @@ function closeReview(id) {
   if (check && check.head !== head) {
     if (!isAncestor(check.head, head))
       throw new Error(`Fix check head ${check.head} is not an ancestor of closing HEAD (the branch was rewritten after it). Unresolved work goes to the operator, no third model pass`)
-    const named = new Set(check.findingDetails.filter((f) => statuses[f.id]?.status === 'fixed').map((f) => cleanPath(f.file)))
-    const since = paths ? slicedScope(review, filesBetween(check.head, head, paths), filesBetween(check.head, head)) : changedFiles(check.head, head)
+    const named = new Set(check.findingDetails.filter((f) => statuses[f.id]?.status === 'fixed').map((f) => findingPath(f.file, [head, check.head])))
+    // filesBetween keeps names untrimmed: a changed name that starts with a space is its own file.
+    const since = paths ? slicedScope(review, filesBetween(check.head, head, paths), filesBetween(check.head, head)) : filesBetween(check.head, head)
     const unnamed = since.filter((p) => !named.has(p))
     if (unnamed.length) throw new Error(`Fix check head must equal closing HEAD, or the commits after it may only touch files named by its fixed findings: ${unnamed.join(', ')}. Unresolved work goes to the operator, no third model pass`)
   }
