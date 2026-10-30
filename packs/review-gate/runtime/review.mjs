@@ -399,6 +399,9 @@ const PATHS = normalisePaths(cfg('REVIEW_PATHS', 'paths', ''))
 // The slice in force: REVIEW_PATHS for a review, the original's stored paths for its fix check.
 let SLICE = PATHS.length ? PATHS : null
 const sliceOf = (record) => (Array.isArray(record?.paths) && record.paths.length ? record.paths : null)
+// The changed files a sliced review actually covered, recorded at review time. Coverage uses only this
+// list, never the pathspecs: their expansion can change later (attributes, config) with no new review.
+const sliceFiles = (record) => (Array.isArray(record?.files) ? record.files.filter((f) => typeof f === 'string') : [])
 const pathspec = (paths) => (paths ? ['--', ...paths] : [])
 const sliceSuffix = (paths) => (paths ? ` -- ${paths.join(' ')}` : '')
 const FILE_AT_OR_BELOW = 10
@@ -1015,6 +1018,10 @@ function reviewContext(branch) {
 }
 function getDiff() {
   if (!existsSync('.git')) die('Not a git repository.')
+  // Magic pathspecs (:(attr:…), :(glob), :!, :/ …) can match differently later with no new commit.
+  const magic = (SLICE || []).filter((p) => p.startsWith(':'))
+  if (magic.length)
+    die(`REVIEW_PATHS refuses pathspec magic: ${magic.join(', ')}. Use plain paths or simple globs (src/, lib/*.js).`)
   const branch = sh('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
   requireClean()
   const slash = BASE.indexOf('/')
@@ -1027,11 +1034,12 @@ function getDiff() {
   }
   const head = sh('git', ['rev-parse', 'HEAD'])
   const baseSha = sh('git', ['merge-base', BASE, head])
-  if (SLICE && !filesBetween(baseSha, head, SLICE).length)
+  const files = SLICE ? filesBetween(baseSha, head, SLICE).sort() : null
+  if (SLICE && !files.length)
     die(`REVIEW_PATHS (${SLICE.join(', ')}) matches no file changed between ${BASE} and HEAD; nothing was reviewed.\n` +
       `  Check the pathspecs against: git diff --name-only ${baseSha}...HEAD`)
   const diff = sh('git', [...(SLICE ? ['-C', TOP] : []), 'diff', `${baseSha}...${head}`, ...pathspec(SLICE)])
-  return { branch, diff, head, baseSha }
+  return { branch, diff, head, baseSha, files }
 }
 
 const die = (m) => {
@@ -1623,6 +1631,10 @@ function validateStatuses(entries, review, statuses) {
     }
   }
 }
+function slicedScope(review, matched, changed) {
+  const scope = new Set([...matched, ...sliceFiles(review)])
+  return changed.filter((p) => scope.has(p))
+}
 function closeReview(id) {
   requireClean()
   const entries = readLog()
@@ -1634,9 +1646,11 @@ function closeReview(id) {
   if (!statusPath) throw new Error('--close requires --status <file.json>')
   const statuses = JSON.parse(readFileSync(statusPath, 'utf8'))
   if (!statuses || typeof statuses !== 'object' || Array.isArray(statuses)) throw new Error('Statuses must be an object keyed by finding id')
-  // A sliced review answers for its own paths only; changes outside them belong to other slices.
+  // A sliced review answers for the files it recorded, plus anything its paths match now (stricter only);
+  // changes outside both belong to other slices, and a new file in no slice's list blocks at the gate.
   const paths = sliceOf(review)
-  const files = paths ? filesBetween(review.head, head, paths) : changedFiles(review.head, head)
+  const files = paths ? slicedScope(review, filesBetween(review.head, head, paths), filesBetween(review.head, head))
+    : changedFiles(review.head, head)
   const command = option('--test-cmd') || VERIFY_CMD
   const noTests = option('--no-tests')
   if (noTests !== null && !noTests.trim()) throw new Error('--no-tests requires a nonempty reason')
@@ -1879,8 +1893,9 @@ function coveringClose(entries, tip, reviewOnly = false) {
 }
 // Sliced reviews cover a tip together: complete closes of sliced reviews with one repoId, branch, baseSha
 // and closeHead (the tip, or an ancestor followed only by builds/ commits) whose paths cover every file
-// in `git diff <baseSha> <closeHead>`. Slices may overlap. A riskPaths file, and every file when the
-// pushed commits touch riskPaths, counts only in a slice of kind review.
+// in `git diff <baseSha> <closeHead>`; a slice covers only the files its review recorded, never what its
+// pathspecs match now. Slices may overlap. A riskPaths file, and every file when the pushed commits touch
+// riskPaths, counts only in a slice of kind review.
 // Returns null when no sliced close applies, else the covering group or the closest one's uncovered files.
 function slicedCover(entries, tip, risk = false) {
   const groups = new Map(), eligible = new Map()
@@ -1897,7 +1912,7 @@ function slicedCover(entries, tip, risk = false) {
   }
   let closest = null
   for (const group of groups.values()) {
-    for (const slice of group.slices) slice.files = new Set(filesBetween(group.baseSha, group.closeHead, slice.paths))
+    for (const slice of group.slices) slice.files = new Set(sliceFiles(slice.review))
     const uncovered = filesBetween(group.baseSha, group.closeHead).filter((file) => !group.slices.some((s) =>
       s.files.has(file) && (s.review.kind === 'review' || (!risk && !matchesAny(file, RISK_PATHS)))))
     group.slices.sort((a, b) => a.paths.join('\n').localeCompare(b.paths.join('\n')))
@@ -2023,7 +2038,7 @@ function pushGate() {
   if (args.includes('--summary')) return printSummary()
   if (args.includes('--deferred')) return printDeferred()
   if (args.includes('--fix-check')) return fixCheck(option('--fix-check'))
-  const { branch, diff, head: reviewedHead, baseSha } = getDiff()
+  const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList } = getDiff()
   CONTEXT = reviewContext(branch)
   if (!diff) {
     console.log(`Nothing to review — no diff against ${BASE}.`)
@@ -2099,7 +2114,7 @@ function pushGate() {
     base: BASE,
     baseSha,
     repoId: repoIdentity(),
-    ...(SLICE && { paths: SLICE }),
+    ...(SLICE && { paths: SLICE, files: sliceFileList }),
     family: SEL.family,
     families: reviewingFamilies(SEL),
     model: SEL.id,

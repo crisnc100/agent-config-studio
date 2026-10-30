@@ -90,6 +90,8 @@ function slice(paths, extra = {}) {
   const record = { type: 'review', kind: 'review', id: `slice-${records().length}`, head: git('rev-parse', 'HEAD'), repo: 'repo',
     repoId: realpathSync(join(REPO, '.git')), branch: 'feat', baseSha: git('merge-base', 'main', 'HEAD'), paths,
     family: 'fixture', model: 'fixture-only', findingDetails: [], ...extra }
+  if (!Object.hasOwn(extra, 'files')) record.files = git('diff', '--name-only', record.baseSha, record.head, '--', ...paths).split('\n').filter(Boolean).sort()
+  else if (extra.files === undefined) delete record.files
   seed(record)
   return record
 }
@@ -299,4 +301,49 @@ test('S8 both code-review skills say when and how to slice, and that the slices 
     for (const part of ['Big diffs: review in slices', 'REVIEW_PATHS=<pathspec>,<pathspec>', 'close every slice at the same HEAD', 'The slices together must cover every file of the diff'])
       assert.ok(text.includes(part), `${harness}: ${part}`)
   }
+})
+
+test('S9 a sliced review records the files it covered, and an attributes edit after the close cannot widen that slice at the gate', () => {
+  writeFileSync(join(REPO, '.gitattributes'), 'docs/** reviewed\n')
+  git('add', '.gitattributes'); git('commit', '-qm', 'attributes')
+  // Magic pathspecs are refused at review time, so log the attack as an old copy would have.
+  const docs = slice([':(attr:reviewed)**'])
+  assert.deepEqual(docs.files, ['docs/three.md'])
+  closed(docs.id)
+  blocked(push(), /uncovered: \.gitattributes, lib\/two\.js, src\/one\.js/)
+  // Every file now carries the attribute, with no new commit or review.
+  writeFileSync(join(REPO, '.git/info/attributes'), '* reviewed\n')
+  assert.equal(git('diff', '--name-only', 'main', 'HEAD', '--', ':(attr:reviewed)**').split('\n').length, 4)
+  blocked(push(), /uncovered: \.gitattributes, lib\/two\.js, src\/one\.js/)
+  assert.equal(git('ls-remote', 'origin'), '')
+})
+test('S9 a real sliced review logs the sorted files it covered; a sliced record without files covers nothing', () => {
+  const r = review('src/,lib/')
+  assert.deepEqual(r.files, ['lib/two.js', 'src/one.js'])
+  closed(r.id)
+  closed(slice(['docs/'], { files: undefined }).id)
+  blocked(push(), /1 file\(s\) uncovered: docs\/three\.md/)
+  closed(slice(['docs/']).id)
+  allowed(push())
+})
+test('S9 pathspec magic in REVIEW_PATHS is refused before any model runs or log line; plain globs still work', () => {
+  for (const paths of [':(attr:reviewed)**', 'src/, :(glob)lib/**', ':(icase)SRC/', ':!docs/', ':/src', ':^docs/', ':(exclude)docs/']) {
+    const r = script([], { REVIEW_PATHS: paths })
+    assert.notEqual(r.status, 0, r.out)
+    assert.match(r.out, /REVIEW_PATHS refuses pathspec magic: :/)
+  }
+  assert.deepEqual(calls(), []); assert.deepEqual(records(), [])
+  assert.deepEqual(review('lib/*.js,src/').files, ['lib/two.js', 'src/one.js'])
+})
+test('S9 a file added after the slices were reviewed blocks the gate, naming it, even though the slice closes are complete', () => {
+  const first = review('src/'), second = review('lib/,docs/')
+  commit({ 'extra/new.js': 'export const added = 1\n' })
+  closed(first.id); closed(second.id)
+  blocked(push(), /1 file\(s\) uncovered: extra\/new\.js —/)
+  const summary = script(['--summary'])
+  assert.notEqual(summary.status, 0); assert.match(summary.out, /uncovered: extra\/new\.js/)
+  // A new file inside a slice's paths makes that slice's close partial instead.
+  commit({ 'src/later.js': 'export const later = 1\n' })
+  const inside = close(first.id)
+  allowed(inside); assert.equal(inside.record.status, 'partial'); assert.deepEqual(inside.record.outOfScope, ['src/later.js'])
 })
