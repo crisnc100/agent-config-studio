@@ -11,10 +11,11 @@
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
-import { ROOT, sandbox, tests, track } from './fixtures/packs-sandbox.mjs';
+import { ROOT, sandbox, sha, tests, track } from './fixtures/packs-sandbox.mjs';
 import { bootPage } from './fixtures/shell-page.mjs';
 
 const realBefore = snapshotRealHomes();
@@ -178,6 +179,49 @@ try {
     ok('…and the card goes back to not installed', await waitFor(() => /not installed/.test(t(card('review-gate').querySelector('.pk-head')))));
   }
 
+  console.log('\nupdate puts back an instructions block I removed');
+  {
+    const claudeMd = path.join(sb.home, '.claude/CLAUDE.md');
+    const begin = '<!-- acs-pack:review-gate/instructions begin -->', end = '<!-- acs-pack:review-gate/instructions end -->\n';
+    const shipped = fs.readFileSync(path.join(ROOT, 'packs/review-gate/instructions/review-gate.md'), 'utf8');
+    await waitFor(statusDone, 30_000);
+    check(card('review-gate'), /^Code-review skill/i).click();
+    check(card('review-gate'), /^Review-gate rules/i).click();
+    check(card('review-gate'), /^Codex \(/).click();
+    await waitFor(() => !!button(card('review-gate'), /^Preview install \(1 part\)/));
+    button(card('review-gate'), /^Preview install/).click();
+    await waitFor(() => previewOf('review-gate'));
+    button(previewOf('review-gate'), /^Install$/).click();
+    ok('the instructions part installs for Claude through the card', await waitFor(() => card('review-gate')?.querySelector('.pk-result'), 30_000)
+      && /Installed: review-gate\/instructions/.test(t(card('review-gate').querySelector('.pk-result'))) && sb.read(claudeMd)?.includes(begin), t(card('review-gate')).slice(0, 600));
+    await waitFor(statusDone, 30_000);
+    // A newer pack: the record says an earlier block went in (what an older version shipped), and then I deleted the block.
+    const statePath = path.join(sb.home, '.agent-config-studio/packs/state.json');
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    const recs = Object.values(state.packs['review-gate'].parts.instructions.files);
+    for (const rec of recs) rec.body = `sha256:${sha('the block an older version shipped\n')}`;
+    fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+    const text = sb.read(claudeMd);
+    fs.writeFileSync(claudeMd, text.slice(0, text.indexOf(begin)) + text.slice(text.indexOf(end) + end.length));
+    ok('…recorded for CLAUDE.md only, and the block is now gone from it', recs.length === 1 && !sb.read(claudeMd).includes(begin), JSON.stringify(Object.keys(state.packs['review-gate'].parts.instructions.files)));
+    button(card('review-gate'), /^Preview update/).click();
+    await waitFor(() => previewOf('review-gate'));
+    const offer = () => check(previewOf('review-gate'), /Take the pack's copy/);
+    ok('the update preview keeps it, saying the block is gone, and offers the pack\'s copy', (previewOf('review-gate')?.querySelectorAll('.pk-kept li') || []).map(t).join(' | ') === 'kept: ~/.claude/CLAUDE.md — the block is gone from the file'
+      && !!offer() && !offer().checked && button(previewOf('review-gate'), /^Update$/).disabled, t(previewOf('review-gate')).slice(0, 600));
+    offer().click();
+    ok('ticking it re-previews: CLAUDE.md gets the block, and Update is enabled', await waitFor(() => offer()?.checked && rows('review-gate').some((r) => /~\/\.claude\/CLAUDE\.md/.test(r)))
+      && !previewOf('review-gate').querySelector('.pk-kept') && !button(previewOf('review-gate'), /^Update$/).disabled, t(previewOf('review-gate')).slice(0, 600));
+    const sent = reqs().filter((r) => r.path === '/api/packs/plan').at(-1).body;
+    ok('…sent as replace: true', JSON.stringify(sent) === JSON.stringify({ action: 'update', pack: 'review-gate', replace: true }), JSON.stringify(sent));
+    button(previewOf('review-gate'), /^Update$/).click();
+    ok('Update puts the pack\'s block back in CLAUDE.md', await waitFor(() => card('review-gate')?.querySelector('.pk-result'), 30_000)
+      && /Updated: review-gate\/instructions/.test(t(card('review-gate').querySelector('.pk-result'))) && sb.read(claudeMd).includes(`${begin}\n${shipped}`), t(card('review-gate')).slice(0, 600));
+    const part = () => card('review-gate')?.querySelector('[data-part="instructions"]');
+    ok('…and the status after it says installed, not broken and no update waiting', await waitFor(() => statusDone() && /installed/.test(t(part()?.querySelector('.pk-badges'))), 30_000)
+      && !/not working|update available|block is gone/.test(t(part())), t(part()));
+  }
+
   console.log('\nlight and dark');
   {
     const css = fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8');
@@ -222,6 +266,66 @@ try {
     ok('…and nothing was written', !fs.existsSync(path.join(c1.home, '.agent-config-studio', 'roles.json')) && !fs.existsSync(path.join(c1.home, '.claude', 'skills', 'code-review')));
     ok('no page errors there either', p1.errors.length === 0, p1.errors.join(' | '));
     p1.done();
+  }
+
+  console.log('\nthe browser QA launcher (tests/skill-packs-qa-server.mjs) advertises only its own sandbox server');
+  {
+    // Run in a sandbox of its own: its temp dirs land in qa.root, so what it leaves is visible.
+    const qa = sandbox('ui-qa', { clis: [], modelId: false, dirs: [] });
+    const launch = (extra = {}) => {
+      const out = { text: '', code: undefined, signal: undefined };
+      const child = track(spawn(process.execPath, [path.join(ROOT, 'tests', 'skill-packs-qa-server.mjs')], { cwd: ROOT, env: { ...qa.env, ...extra }, stdio: ['ignore', 'pipe', 'pipe'] }));
+      child.stdout.on('data', (d) => { out.text += d; });
+      child.stderr.on('data', (d) => { out.text += d; });
+      child.on('exit', (code, signal) => { out.code = code; out.signal = signal; });
+      return { child, out };
+    };
+    const left = () => fs.readdirSync(qa.root).filter((n) => n.startsWith('acs-packs-qa-'));
+    const advertised = (text) => /\burl\s+http:/.test(text) || /\bHOME\s+\//.test(text);
+
+    // Another studio already on PORT: its /api/health answers, but with its own pid and nonce.
+    let asked = 0;
+    const other = http.createServer((req, res) => {
+      asked++;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ app: 'agent-config-studio', pid: process.pid, nonce: 'f'.repeat(32) }));
+    });
+    await new Promise((r) => other.listen(0, '127.0.0.1', r));
+    const a = launch({ PORT: String(other.address().port) });
+    await waitFor(() => a.out.code !== undefined, 60_000);
+    ok('PORT held by another studio: the launcher exits non-zero', a.out.code !== undefined && a.out.code !== 0, a.out.text.slice(-800));
+    ok('…without printing a url or a HOME, though that studio answered its health check', !advertised(a.out.text) && asked > 0, `${asked} health requests; ${a.out.text.slice(-800)}`);
+    ok('…saying its own server exited before it was ready', /exited \(\d+\) before it was ready/.test(a.out.text), a.out.text.slice(-800));
+    ok('…and its sandbox is removed', left().length === 0, left().join(' '));
+    await new Promise((r) => other.close(r));
+
+    // Something on PORT that is not an HTTP server: the launcher's own server dies at listen, and
+    // the launcher sees it at once instead of polling on and printing a URL.
+    const squatter = net.createServer((sock) => sock.destroy());
+    await new Promise((r) => squatter.listen(0, '127.0.0.1', r));
+    const t0 = Date.now();
+    const b = launch({ PORT: String(squatter.address().port) });
+    await waitFor(() => b.out.code !== undefined, 60_000);
+    ok('its server dying before it is ready: non-zero, no url, and it says so', b.out.code !== undefined && b.out.code !== 0 && !advertised(b.out.text) && /before it was ready/.test(b.out.text), b.out.text.slice(-800));
+    ok('…as soon as it dies, not after the 30 s wait for readiness', Date.now() - t0 < 25_000, `${Date.now() - t0} ms`);
+    ok('…and its sandbox is removed', left().length === 0, left().join(' '));
+    await new Promise((r) => squatter.close(r));
+
+    // A free port: it prints the URL and HOME of the server it started, and Ctrl-C removes it all.
+    const c = launch();
+    await waitFor(() => /\burl\s+http:\/\/localhost:\d+\/#packs/.test(c.out.text) || c.out.code !== undefined, 60_000);
+    const url = c.out.text.match(/\burl\s+(http:\/\/localhost:(\d+))\/#packs/);
+    const home = c.out.text.match(/\bHOME\s+(\/\S+)/)?.[1];
+    let health = null, run = null;
+    try { health = await (await fetch(`${url[1]}/api/health`)).json(); } catch {}
+    try { run = JSON.parse(fs.readFileSync(path.join(home, '.agent-config-studio', 'run', `${url[2]}.json`), 'utf8')); } catch {}
+    ok('a free port: it prints the url and the temp HOME', !!url && !!home && home.startsWith(`${qa.root}${path.sep}acs-packs-qa-`), c.out.text.slice(-800));
+    ok('…and the url is the studio it started in that HOME (its run file has the same pid and nonce)', !!health && !!run && health.pid === run.pid && health.nonce === run.nonce, JSON.stringify({ health, run: run && { pid: run.pid, nonce: run.nonce } }));
+    c.child.kill('SIGINT');
+    ok('Ctrl-C stops it and removes the sandbox', await waitFor(() => c.out.code !== undefined || c.out.signal, 20_000) && left().length === 0, left().join(' '));
+    let still = true;
+    try { await fetch(`${url[1]}/api/health`, { signal: AbortSignal.timeout(1000) }); } catch { still = false; }
+    ok('…and its server is gone', !still);
   }
 } finally {
   page.done();

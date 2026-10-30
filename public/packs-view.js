@@ -400,7 +400,8 @@ function pkPreviewView(pack, card) {
     } else offer.appendChild(el('div', 'pk-note', 'No installed CLI can run any family; install one.'));
     box.appendChild(offer);
   }
-  if (action === 'update' && (view.kept.some((k) => /you edited|you removed|you customised/.test(k.why)) || card.replace)) {
+  // Every reason the update planner keeps a file that replace would take instead (lib/packs.js planUpdate).
+  if (action === 'update' && (view.kept.some((k) => /you edited|you removed|you customised|the block is gone/.test(k.why)) || card.replace)) {
     const offer = el('div', 'pk-offer');
     offer.appendChild(pkCheck('Take the pack\'s copy of the files you changed (each edited one is backed up first)', card.replace, (v) => {
       card.replace = v;
