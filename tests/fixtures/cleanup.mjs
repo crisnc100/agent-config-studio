@@ -37,6 +37,7 @@ export function removeOnExit(p) {
 export function track(child, { group = false } = {}) {
   const entry = { child, group };
   children.add(entry);
+  if (child.pid) ownPids.add(child.pid);
   child.once('exit', () => children.delete(entry));
   return child;
 }
@@ -50,21 +51,21 @@ function remove(d) {
   try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
 }
 
-// lib/harness.js keeps prompt files in one fixed folder under the temp dir, and a server
-// a suite starts with TMPDIR set to os.tmpdir() makes it there. When this run made it, it
-// goes too: files whose owner pid has exited, then the folder if that left it empty.
+// lib/harness.js keeps prompt files in one shared folder under the temp dir, each named
+// <pid>-<ts>-<rand>.txt by the process that wrote it; a server a suite starts with TMPDIR set
+// to os.tmpdir() writes there too. Only this run's files go: this process's and those of the
+// children it tracked. Another run's stay, live or dead. The folder goes only when it was not
+// there at import and is empty after that (rmdir never removes a file).
 const PROMPTS = path.join(os.tmpdir(), 'acs-harness-prompts');
 const promptsBefore = fs.existsSync(PROMPTS);
-const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+const ownPids = new Set([process.pid]);
 function removePrompts() {
-  if (promptsBefore) return;
   let names;
   try { names = fs.readdirSync(PROMPTS); } catch { return; }
   for (const n of names) {
-    const pid = Number.parseInt(n, 10);
-    if (pid > 0 && !alive(pid)) { try { fs.unlinkSync(path.join(PROMPTS, n)); } catch {} }
+    if (ownPids.has(Number.parseInt(n, 10))) { try { fs.unlinkSync(path.join(PROMPTS, n)); } catch {} }
   }
-  try { fs.rmdirSync(PROMPTS); } catch {}
+  if (!promptsBefore) { try { fs.rmdirSync(PROMPTS); } catch {} }
 }
 
 let swept = false;
