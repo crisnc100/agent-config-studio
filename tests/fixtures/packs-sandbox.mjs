@@ -7,9 +7,15 @@
  * The stubs never call a model. claude, codex and grok record each call and
  * answer a review with one fixed finding; codex also speaks just enough of
  * the app-server protocol (initialize, hooks/list) for the agent guard's
- * trust check, reading the hooks.json and config.toml of its CODEX_HOME.
+ * trust check, reading the hooks.json and config.toml of its CODEX_HOME
+ * (STUB_HOOKS_DELAY_MS holds the hooks/list answer back, for a slow check).
  * model-id is the real resolver, installed into the temp HOME by
  * `bin/model-id.mjs --install`.
+ *
+ * A run leaves nothing behind, pass or fail: every sandbox root and every
+ * child a suite hands to track() is removed or killed when the process
+ * exits (a thrown error and Ctrl-C included), and done() fails the suite if
+ * a temp dir this run made is still there.
  */
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -23,13 +29,38 @@ export const PACKS = path.join(ROOT, 'bin', 'packs.mjs');
 const J = JSON.stringify;
 export const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 
+/** What this run made: sandbox roots to remove and children to stop, whatever way it ends. */
+const made = new Set();
+const children = new Set();
+
+/** A child process the suite started (a server, a CLI in the background): killed if the run ends first. */
+export function track(child) {
+  children.add(child);
+  child.once('exit', () => children.delete(child));
+  return child;
+}
+
+function sweep() {
+  for (const c of children) { try { c.kill('SIGKILL'); } catch {} }
+  children.clear();
+  for (const root of made) { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} }
+}
+process.on('exit', sweep);
+for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143]]) process.on(sig, () => { sweep(); process.exit(code); });
+
 export function tests() {
   let pass = 0, fail = 0;
   const ok = (name, cond, detail = '') => {
     if (cond) { pass++; console.log(`  ok   ${name}`); }
     else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${String(detail).slice(0, 2000)}` : ''}`); }
   };
-  const done = () => { console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0); };
+  const done = () => {
+    sweep();
+    const left = [...made].filter((root) => fs.existsSync(root));
+    ok(`no acs-packs-* temp dir this run made is left (${made.size} made)`, left.length === 0, left.join(' '));
+    console.log(`\n${pass} passed, ${fail} failed`);
+    process.exit(fail ? 1 : 0);
+  };
   return { ok, done };
 }
 
@@ -54,7 +85,7 @@ if (${J(name)} === 'codex' && a[0] === 'app-server') {
       if (!line.trim()) continue
       const msg = JSON.parse(line)
       if (msg.id === 1) process.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\\n')
-      if (msg.id === 2) {
+      if (msg.id === 2) setTimeout(() => {
         let hooks = {}
         try { hooks = JSON.parse(read('hooks.json') || '{}') } catch {}
         const hash = process.env.STUB_TRUST_HASH || 'sha256:stub-guard'
@@ -64,7 +95,7 @@ if (${J(name)} === 'codex' && a[0] === 'app-server') {
           return { command: h.command, key, currentHash: hash, trustStatus: toml.includes('trusted_hash = ' + JSON.stringify(hash)) && !process.env.STUB_UNTRUSTED ? 'trusted' : 'untrusted' }
         }) }))
         process.stdout.write(JSON.stringify({ id: 2, result: { data } }) + '\\n')
-      }
+      }, Number(process.env.STUB_HOOKS_DELAY_MS) || 0)
     }
   })
   return
@@ -85,6 +116,7 @@ else console.log(JSON.stringify({ type: 'result', is_error: false, result: reply
  */
 export function sandbox(label, { clis = ['claude'], modelId = true, dirs = clis, shell = '/bin/zsh' } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `acs-packs-${label}-`)));
+  made.add(root);
   const home = path.join(root, 'home');
   const bin = path.join(root, 'bin'), nodeBin = path.join(root, 'node-bin'), calls = path.join(root, 'calls');
   fs.mkdirSync(home); fs.mkdirSync(bin); fs.mkdirSync(nodeBin);

@@ -8,7 +8,7 @@
  */
 import readline from 'node:readline';
 import {
-  STATUS, apply, explainOf, getPack, loadCatalog, machine, planInstall, planUninstall, planUpdate, status,
+  PREVIEW_SYMBOL as SYMBOL, PREVIEW_WHAT as WHAT, STATUS, apply, explainOf, getPack, loadCatalog, machine, planInstall, planUninstall, planUpdate, status,
 } from '../lib/packs.js';
 import { readState } from '../lib/packs-files.js';
 
@@ -66,13 +66,6 @@ function printExplain(pack) {
     block(explainOf(pack, part), '  ');
   }
 }
-
-const SYMBOL = { create: '+', replace: '~', 'replace-edited': '~', edit: '~', remove: '-', restore: '<', strip: '~', keep: '=', gone: ' ', record: '·', backup: '·', maybe: '?', 'restore-or-strip': '<' };
-const WHAT = {
-  create: 'new file', replace: 'replaced (the file there now is backed up first)', 'replace-edited': 'your edit is backed up, then replaced', edit: 'edited (backed up first)',
-  remove: 'removed', restore: 'restored', strip: 'only the pack\'s part removed', keep: 'kept', gone: 'already gone', record: 'record', backup: 'backups',
-  maybe: 'may change', 'restore-or-strip': 'restored or stripped',
-};
 
 function printPlan(plan) {
   const verb = { install: 'Install', update: 'Update', uninstall: 'Uninstall' }[plan.action];

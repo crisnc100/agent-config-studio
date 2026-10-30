@@ -231,7 +231,7 @@ const homeRoutes = (over = {}) => routesFor({
   const mem = deferred(), wt = deferred(), reg = deferred();
   const routes = homeRoutes({ 'GET /api/memory': () => mem.promise, 'GET /api/worktree': () => wt.promise, 'GET /api/registry': () => reg.promise });
   const p = await boot({ routes });
-  ok('8 the shell and Home paint before the registry resolves', p.eval('S.registry') === null && !!card(p, 'accounts') && p.$('sidebar').querySelectorAll('.nav-item').length === 13);
+  ok('8 the shell and Home paint before the registry resolves', p.eval('S.registry') === null && !!card(p, 'accounts') && p.$('sidebar').querySelectorAll('.nav-item').length === 14);
   ok('11 the memory index and wclean are asked after first paint, not before it',
      !p.requests.some((r) => r.path === '/api/memory' || r.path === '/api/worktree') || p.requests.findIndex((r) => r.path === '/api/memory') > p.requests.findIndex((r) => r.path === '/api/usage'));
   await settle(20);

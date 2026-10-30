@@ -120,6 +120,8 @@ jobs:
           node tests/packs-install.mjs
           node tests/packs-update.mjs
           node tests/packs-hooks.mjs
+          node tests/packs-server.mjs
+          node tests/packs-ui.mjs
       - name: live containment is a local gate
         if: always()
         run: |

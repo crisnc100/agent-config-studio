@@ -134,6 +134,9 @@ node tests/packs-catalog.mjs
 node tests/packs-install.mjs
 node tests/packs-update.mjs
 node tests/packs-hooks.mjs
+# The Packs card: its routes through a real server, then the view in the page against one (temp HOMEs, stub CLIs).
+node tests/packs-server.mjs
+node tests/packs-ui.mjs
 # A stranger's machine: empty temp HOME, no agent CLI on PATH, every GET route.
 node tests/fresh-home.mjs
 # The setup screen's server half: temp HOMEs, fake CLIs, a fixture tree.

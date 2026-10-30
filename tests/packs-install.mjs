@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
-import { PACKS, ROOT, changed, reviewRepo, sandbox, tests, tree } from './fixtures/packs-sandbox.mjs';
+import { PACKS, ROOT, changed, reviewRepo, sandbox, tests, track, tree } from './fixtures/packs-sandbox.mjs';
 
 const realBefore = snapshotRealHomes();
 const { ok, done } = tests();
@@ -279,7 +279,7 @@ console.log('\nC16 two installs at once leave a valid state.json');
 {
   const sb = box('c16', { clis: ['claude', 'codex'] });
   const start = (pack) => new Promise((resolve) => {
-    const c = spawn(process.execPath, [PACKS, 'install', pack, '--yes'], { env: sb.env, cwd: sb.root });
+    const c = track(spawn(process.execPath, [PACKS, 'install', pack, '--yes'], { env: sb.env, cwd: sb.root }));
     let out = '';
     c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { out += d; });
     c.on('exit', (code) => resolve({ code, out }));
@@ -294,7 +294,7 @@ console.log('\nC16 two installs at once leave a valid state.json');
     check('C16 …and state.json is valid JSON recording all three', st && ['advisor', 'handoff', 'second-opinion'].every((id) => st.packs[id]?.parts), JSON.stringify(Object.keys(st?.packs || {})));
     check('C16 …and no lock is left behind', !fs.existsSync(path.join(sb.home, '.agent-config-studio/packs/state.json.lock')));
     const un = await Promise.all(['advisor', 'handoff', 'second-opinion'].map((p) => new Promise((resolve) => {
-      const c = spawn(process.execPath, [PACKS, 'uninstall', p, '--yes'], { env: sb.env, cwd: sb.root });
+      const c = track(spawn(process.execPath, [PACKS, 'uninstall', p, '--yes'], { env: sb.env, cwd: sb.root }));
       c.on('exit', (code) => resolve(code));
     })));
     const after = stateOrNull();
