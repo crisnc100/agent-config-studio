@@ -83,8 +83,9 @@ const X1 = { issue: 'one is wrong', file: 'src/one.js', line: '1', quote: 'expor
   likelihood: 5, impact: 5, protected: false, trigger: 'importing one' }
 const FIXED = { x1: { status: 'fixed' } }
 const REJECTED = { x1: { status: 'rejected', reason: 'intended', evidence: 'src/one.js:1' } }
-// The review, a test change that needs a fix check, and that fix check with x1 (on src/one.js by default).
-function fixChecked(paths, finding = X1) {
+// The review, a test change that needs a fix check, and that fix check with x1 (on src/one.js by default),
+// whose record holds the path the quote check resolved.
+function fixChecked(paths, finding = X1, resolved = finding.file) {
   allowed(script([], paths ? { REVIEW_PATHS: paths } : {}))
   const review = records().filter((e) => e.type === 'review').at(-1)
   commit({ 'src/one.test.js': 'test one\n' })
@@ -93,6 +94,7 @@ function fixChecked(paths, finding = X1) {
   const check = records().at(-1)
   assert.equal(check.kind, 'fix-check'); assert.equal(check.head, git('rev-parse', 'HEAD'))
   assert.deepEqual(check.findingDetails.map((f) => [f.id, f.file, f.severity, f.status]), [['x1', finding.file, 'medium', 'verified-quote']])
+  assert.deepEqual(check.resolvedPaths, { x1: { path: resolved, commit: check.head } })
   return { review, check }
 }
 
@@ -196,7 +198,7 @@ test('F10 a fixed finding on a real b/src/one.js does not authorize a change to 
   refused(review.id, FIXED, named(['src/one.js']))
 })
 test('F11 a diff-prefixed b/src/one.js finding, with no b/ folder in the tree, still authorizes the root src/one.js', () => {
-  const { review } = fixChecked(undefined, { ...X1, file: 'b/src/one.js' })
+  const { review } = fixChecked(undefined, { ...X1, file: 'b/src/one.js' }, 'src/one.js')
   assert.equal(existsSync(join(REPO, 'b')), false)
   commit({ 'src/one.js': 'export const one = 3\n' })
   closed(review.id, FIXED)

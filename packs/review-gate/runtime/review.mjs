@@ -1363,32 +1363,66 @@ function fileAt(rev, path) {
   const r = spawnSync('git', ['show', `${rev}:${path}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
   return r.status === 0 ? r.stdout : null
 }
-function quoteProblem(f) {
-  if (!String(f.quote ?? '').trim()) return 'no quote'
-  if (!f.file) return 'no file'
+// The quote check also settles, once, which repo path a finding means: the path as written (never trimmed),
+// else, for a leading a/ or b/ diff prefix, the stripped path. The first candidate that exists decides located
+// or not, as before. A located finding yields the candidate that held the quote and the commit it held in; when
+// the written and the stripped path both hold it, the finding is ambiguous and yields no path.
+function locateQuote(f) {
+  if (!String(f.quote ?? '').trim()) return { problem: 'no quote' }
+  if (!f.file) return { problem: 'no file' }
   // One line number, or a range "12-15" read as its start. Anything else is not a citation.
   const cited = String(f.line ?? '').trim()
   const lineMatch = cited.match(/^(\d+)(?:\s*[-–]\s*\d+)?$/)
-  if (!lineMatch) return `line "${cited.slice(0, 40)}" is not a line number`
-  let path = String(f.file).trim()
+  if (!lineMatch) return { problem: `line "${cited.slice(0, 40)}" is not a line number` }
+  let path = String(f.file)
   if (path.startsWith(`${TOP}/`)) path = path.slice(TOP.length + 1)
   path = path.replace(/^\.\//, '')
-  const text = fileAt('HEAD', path) ?? fileAt(DIFF_BASE, path) ?? fileAt('HEAD', path.replace(/^[ab]\//, ''))
-  if (text == null) return `file not found: ${path}`
-  const count = text.endsWith('\n') ? text.split('\n').length - 1 : text.split('\n').length
+  const stripped = /^[ab]\//.test(path) ? path.slice(2) : null
+  const at = (rev, p) => { const text = fileAt(rev, p); return text == null ? null : { path: p, rev, text } }
+  const written = at('HEAD', path) ?? at(DIFF_BASE, path)
+  const prefixed = stripped === null ? null : at('HEAD', stripped)
+  const decider = written ?? prefixed
+  if (!decider) return { problem: `file not found: ${path}` }
   const line = Number(lineMatch[1])
-  // Also bounds the search loop: an unsafe integer (2^53, a 310-digit Infinity) never terminates s++.
-  if (!Number.isSafeInteger(line) || line < 1 || line > count)
-    return `line ${lineMatch[1].length > 20 ? `${lineMatch[1].slice(0, 20)}…` : lineMatch[1]} is outside ${path} (1–${count})`
   const norm = (l) => l.replace(/\s+/g, ' ').trim()
-  const lines = text.split('\n').map(norm)
   const q = String(f.quote).split('\n').map(norm)
   while (q.length && !q[0]) q.shift()
   while (q.length && !q.at(-1)) q.pop()
   const needle = q.join('\n')
-  for (let s = Math.max(1, line - QUOTE_WINDOW); s <= line + QUOTE_WINDOW; s++)
-    if (lines.slice(s - 1, s - 1 + q.length).join('\n').includes(needle)) return null
-  return `quote not found within ±${QUOTE_WINDOW} lines of ${path}:${line}`
+  const problemIn = ({ text }) => {
+    const count = text.endsWith('\n') ? text.split('\n').length - 1 : text.split('\n').length
+    // Also bounds the search loop: an unsafe integer (2^53, a 310-digit Infinity) never terminates s++.
+    if (!Number.isSafeInteger(line) || line < 1 || line > count)
+      return `line ${lineMatch[1].length > 20 ? `${lineMatch[1].slice(0, 20)}…` : lineMatch[1]} is outside ${path} (1–${count})`
+    const lines = text.split('\n').map(norm)
+    for (let s = Math.max(1, line - QUOTE_WINDOW); s <= line + QUOTE_WINDOW; s++)
+      if (lines.slice(s - 1, s - 1 + q.length).join('\n').includes(needle)) return null
+    return `quote not found within ±${QUOTE_WINDOW} lines of ${path}:${line}`
+  }
+  const problem = problemIn(decider)
+  if (problem) return { problem }
+  if (written && prefixed && !problemIn(prefixed)) return { problem: null, ambiguous: [written.path, prefixed.path] }
+  return { problem: null, path: decider.path, commit: sh('git', ['rev-parse', '--verify', `${decider.rev}^{commit}`]) }
+}
+// The location rides on a Symbol key until the record is written: JSON never carries it, so reviewer JSON
+// cannot set it, and the logged finding and FINDINGS_JSON keep their shape. Reviewer keys that look like the
+// record's (resolved…) are dropped.
+const WHERE = Symbol('where')
+function locatedFinding(f) {
+  const finding = Object.fromEntries(Object.entries(f).filter(([key]) => !/^resolved/i.test(key)))
+  const where = locateQuote(finding)
+  if (where.problem) return { ...finding, status: 'unverified-quote', quoteCheck: where.problem }
+  return { ...finding, status: 'verified-quote', [WHERE]: where }
+}
+// The review and fix-check record fields: resolvedPaths { id: { path, commit } } for located findings and
+// ambiguousPaths { id: [paths] }. Close authorizes a changed file only when it equals a fixed finding's path.
+function recordedLocations(findings) {
+  const resolvedPaths = {}, ambiguousPaths = {}
+  for (const f of findings) {
+    if (f[WHERE]?.ambiguous) ambiguousPaths[f.id] = f[WHERE].ambiguous
+    else if (f[WHERE]?.path) resolvedPaths[f.id] = { path: f[WHERE].path, commit: f[WHERE].commit }
+  }
+  return { resolvedPaths, ...(Object.keys(ambiguousPaths).length && { ambiguousPaths }) }
 }
 
 // ── Optional second opinion: another family CONFIRMs or REFUTEs each HIGH/MEDIUM ──
@@ -1443,7 +1477,8 @@ function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTr
   const item = (f, extra = '') =>
     `- [${f.file || '?'}:${f.line || '?'}] ${String(f.issue).replace(/\r?\n|$/, (end) => ` (id ${f.id})${end}`)}` +
     `${f.quote ? `\n  > ${String(f.quote).split('\n').join('\n  > ')}` : ''}` +
-    `${f.suggestion ? `\n  → ${f.suggestion}` : ''}${isFiled(f) ? `\n  Filed: risk ${f.risk}` : ''}${extra}`
+    `${f.suggestion ? `\n  → ${f.suggestion}` : ''}${isFiled(f) ? `\n  Filed: risk ${f.risk}` : ''}` +
+    `${f[WHERE]?.ambiguous ? `\n  Path ambiguous: the quote is in both ${f[WHERE].ambiguous.join(' and ')}, so this finding authorizes no file at close` : ''}${extra}`
   const bySev = (s) =>
     findings
       .filter((f) => f.severity === s)
@@ -1482,7 +1517,6 @@ function loggedReview(entries, id) {
 const headNow = () => sh('git', ['rev-parse', 'HEAD'])
 const repoIdentity = () => realpathSync(resolve(sh('git', ['rev-parse', '--git-common-dir'])))
 const isAncestor = (a, b) => spawnSync('git', ['merge-base', '--is-ancestor', a, b]).status === 0
-const changedFiles = (a, b) => sh('git', ['diff', '--name-only', '--no-renames', '-z', a, b]).split('\0').filter(Boolean)
 // Files changed between two commits, limited to pathspecs that resolve from the top of the work tree.
 // Untrimmed, so a leading-space name stays distinct.
 function filesBetween(a, b, paths = null) {
@@ -1492,7 +1526,6 @@ function filesBetween(a, b, paths = null) {
   return r.stdout.split('\0').filter(Boolean)
 }
 const isTestFile = (p) => /(^|\/)(test|tests|__tests__|__snapshots__)\//.test(p) || /\.(test|spec)\.[^/]+$|\.snap$/.test(p) || /(^|\/)(vitest|jest|playwright)\.config\.[^/]+$/.test(p)
-const cleanPath = (p) => String(p || '').replace(`${TOP}/`, '').replace(/^(?:\.\/|[ab]\/)/, '')
 function gradeObject(value, keys, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`)
   for (const key of Object.keys(value)) if (!keys.includes(key)) throw new Error(`Unknown ${label} key: ${key}`)
@@ -1631,15 +1664,11 @@ function validateStatuses(entries, review, statuses) {
     }
   }
 }
-// The path a fixed finding authorizes after its fix check: the path as written when it is in the tree at any
-// of revs; a leading a/ or b/ is a diff prefix only when the written path is not and the stripped one is.
-function findingPath(file, revs) {
-  let path = String(file || '')
-  if (path.startsWith(`${TOP}/`)) path = path.slice(TOP.length + 1)
-  path = path.replace(/^\.\//, '')
-  const inTree = (p) => revs.some((rev) => spawnSync('git', ['cat-file', '-e', `${rev}:${p}`]).status === 0)
-  return /^[ab]\//.test(path) && !inTree(path) && inTree(path.slice(2)) ? path.slice(2) : path
-}
+// The exact paths fixed findings recorded when their quotes were checked. A finding without one (legacy,
+// unlocated, ambiguous, or a Grade finding, which has no quote) authorizes no file.
+const recordedPaths = (reviews, statuses) => new Set(reviews.flatMap((r) => r.findingDetails
+  .filter((f) => statuses[f.id]?.status === 'fixed' && r.resolvedPaths && Object.hasOwn(r.resolvedPaths, f.id))
+  .map((f) => r.resolvedPaths[f.id]?.path).filter((path) => typeof path === 'string' && path)))
 function slicedScope(review, matched, changed) {
   const scope = new Set([...matched, ...sliceFiles(review)])
   return changed.filter((p) => scope.has(p))
@@ -1659,7 +1688,7 @@ function closeReview(id) {
   // changes outside both belong to other slices, and a new file in no slice's list blocks at the gate.
   const paths = sliceOf(review)
   const files = paths ? slicedScope(review, filesBetween(review.head, head, paths), filesBetween(review.head, head))
-    : changedFiles(review.head, head)
+    : filesBetween(review.head, head)
   const command = option('--test-cmd') || VERIFY_CMD
   const noTests = option('--no-tests')
   if (noTests !== null && !noTests.trim()) throw new Error('--no-tests requires a nonempty reason')
@@ -1668,13 +1697,12 @@ function closeReview(id) {
   const check = entries.find((e) => e.type === 'review' && e.kind === 'fix-check' && e.review === id)
   const recheck = entries.find((e) => e.type === 'review' && e.kind === 'recheck' && e.review === id)
   if (recheck && !isAncestor(recheck.head, head)) throw new Error('Closing HEAD must include the recheck head')
-  // A fixed x… finding's fix lands after its fix check: those commits may touch only the files its fixed
-  // findings name (in the slice, when sliced), and the full tests run below. Nothing re-runs a model.
+  // A fixed x… finding's fix lands after its fix check: those commits may touch only the paths its fixed findings
+  // recorded (in the slice, when sliced), and the full tests run below. Nothing re-runs a model.
   if (check && check.head !== head) {
     if (!isAncestor(check.head, head))
       throw new Error(`Fix check head ${check.head} is not an ancestor of closing HEAD (the branch was rewritten after it). Unresolved work goes to the operator, no third model pass`)
-    const named = new Set(check.findingDetails.filter((f) => statuses[f.id]?.status === 'fixed').map((f) => findingPath(f.file, [head, check.head])))
-    // filesBetween keeps names untrimmed: a changed name that starts with a space is its own file.
+    const named = recordedPaths([check], statuses)
     const since = paths ? slicedScope(review, filesBetween(check.head, head, paths), filesBetween(check.head, head)) : filesBetween(check.head, head)
     const unnamed = since.filter((p) => !named.has(p))
     if (unnamed.length) throw new Error(`Fix check head must equal closing HEAD, or the commits after it may only touch files named by its fixed findings: ${unnamed.join(', ')}. Unresolved work goes to the operator, no third model pass`)
@@ -1684,10 +1712,10 @@ function closeReview(id) {
   const ids = new Set(reviews.flatMap((r) => r.findingDetails.map((f) => f.id)))
   for (const key of Object.keys(statuses)) if (!ids.has(key)) throw new Error(`Unknown finding status key: ${key}`)
   for (const r of reviews) validateStatuses(entries, r, statuses)
-  const fixedFiles = new Set(reviews.flatMap((r) => r.findingDetails.filter((f) => statuses[f.id]?.status === 'fixed').map((f) => cleanPath(f.file))))
+  const fixedFiles = recordedPaths(reviews, statuses)
   if (review.kind === 'grade' && recheck && review.findingDetails.some((f) => f.criterionId && statuses[f.id]?.status === 'fixed' &&
     recheck.criteria.some((c) => c.id === f.criterionId && c.verdict === 'PASS'))) {
-    for (const path of changedFiles(review.head, recheck.head)) fixedFiles.add(path)
+    for (const path of filesBetween(review.head, recheck.head)) fixedFiles.add(path)
   }
   const outOfScope = files.filter((p) => !fixedFiles.has(p) && !isTestFile(p) && !p.startsWith('builds/'))
   let tests = null
@@ -1785,17 +1813,16 @@ async function fixCheck(id) {
   if (SEL.team) throw new Error('A fix check requires one reviewer family, not the multi-agent team')
   const { result } = await runModel(SEL, `Fix check: review only this fix diff, not the original branch diff.\n${reviewPrompt(diff)}`, SCHEMA, 'fix-check reviewer')
   const scored = await scoredFindings(result?.findings || [], SEL)
-  const findingDetails = scored.findings.map((f, i) => {
-    const problem = quoteProblem(f)
-    return { ...f, id: `x${i + 1}`, status: problem ? 'unverified-quote' : 'verified-quote', ...(problem && { quoteCheck: problem }) }
-  })
+  const findingDetails = scored.findings.map((f, i) => ({ ...locatedFinding(f), id: `x${i + 1}` }))
   requireClean()
   if (headNow() !== head) throw new Error('HEAD changed during fix check')
   const checkId = `fix-${Date.now()}-${randomBytes(3).toString('hex')}`
   appendLog({ type: 'review', kind: 'fix-check', rubricVersion: RUBRIC_VERSION, rescored: scored.rescored, id: checkId, review: id, ts: new Date().toISOString(), head, branch,
     repo: repoName(), repoId: repoIdentity(), base: original.head, baseSha: original.head, family: SEL.family, model: SEL.id, vendor: SEL.vendor, copy: COPY_PATH,
-    ...(SLICE && { paths: SLICE }), findings: findingDetails.length, findingDetails })
+    ...(SLICE && { paths: SLICE }), findings: findingDetails.length, findingDetails, ...recordedLocations(findingDetails) })
   console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)`)
+  for (const f of findingDetails.filter((f) => f[WHERE]?.ambiguous))
+    console.warn(`⚠ ${f.id}: path ambiguous, the quote is in both ${f[WHERE].ambiguous.join(' and ')}; it authorizes no file at close`)
 }
 function waiveFinding(id, findingId) {
   const reason = option('--reason')
@@ -2096,12 +2123,14 @@ function pushGate() {
   const located = []
   const unlocated = []
   for (const f of raw) {
-    const problem = quoteProblem(f)
-    if (problem) unlocated.push({ ...f, status: 'unverified-quote', quoteCheck: problem })
-    else located.push({ ...f, status: 'verified-quote' })
+    const finding = locatedFinding(f)
+    if (finding.status === 'unverified-quote') unlocated.push(finding)
+    else located.push(finding)
   }
   if (unlocated.length)
     console.warn(`⚠ ${unlocated.length} finding(s) quote code that isn't at the cited place — listed under "could not be located"`)
+  const ambiguous = located.filter((f) => f[WHERE]?.ambiguous).length
+  if (ambiguous) console.warn(`⚠ ${ambiguous} finding(s) quote code found at two paths (a/ or b/ and without); they authorize no file at close`)
 
   let opinion = { verifier: null }
   if (SECOND_OPINION) {
@@ -2127,6 +2156,7 @@ function pushGate() {
     remote: sh('git', ['remote', 'get-url', 'origin'], { allowFailure: true }) || null,
     copy: COPY_PATH,
     findingDetails,
+    ...recordedLocations(findingDetails),
     id: reviewId,
     ts: new Date().toISOString(),
     repo: repoName(),
