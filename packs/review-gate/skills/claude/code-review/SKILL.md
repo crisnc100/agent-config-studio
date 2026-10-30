@@ -114,7 +114,7 @@ For `both`: run the script twice (once with no reviewer named, once with `REVIEW
 The skills and the loop **never change** — you swap settings in one small JSON file:
 
 - **All your projects:** `~/.agent-config-studio/review-gate/config.json` (an older `~/.claude/review-config.json` is still read when that file is absent)
-- **Just this repo:** `.claude/review-config.json` (per-user; git-ignored)
+- **Just this repo:** `.claude/review-config.json` (per-user; git-ignored). While git tracks it, it can't set `verifyCmd`, `classifier`, `base` or a `pick` that names a command; those are ignored with a warning.
 
 Copy `~/.agent-config-studio/review-gate/review-config.example.json`, rename it to one of the above, and edit the values. Precedence is **env var → that config file → built-in default**, so a quick `REVIEW_MODEL=…` still overrides for one run, and `/code-review claude` switches the reviewer for one run.
 

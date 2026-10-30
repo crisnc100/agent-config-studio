@@ -103,8 +103,10 @@ try {
       try {
         const state = { hooks, configPath, before, after: snapshot(), previousValues: current }
         mkdirSync(dirname(statePath), { recursive: true })
-        writeFileSync(`${statePath}.tmp`, JSON.stringify(state) + '\n')
+        // The snapshot holds the global gitconfig's bytes, which can carry tokens: owner-only, even over a stale .tmp.
+        writeFileSync(`${statePath}.tmp`, JSON.stringify(state) + '\n', { mode: 0o600 })
         renameSync(`${statePath}.tmp`, statePath)
+        chmodSync(statePath, 0o600)
       } catch (e) { restore(configPath, before); throw e }
       console.log(`Installed global hooks: ${hooks}`)
     }

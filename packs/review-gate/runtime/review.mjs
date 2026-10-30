@@ -70,17 +70,48 @@ const option = (flag) => {
 // Resolution: env var > project .claude/review-config.json > ~/.agent-config-studio/review-gate/config.json
 // > the older ~/.claude/review-config.json > built-in.
 // Edit that one small JSON file to switch reviewer/model/effort — see review-config.example.json.
+// The repo file can come from the repository itself (committed, or added by a branch you check out), so
+// the keys that run a command or reach git as an argument count there only while git doesn't track it:
+// a clone or checkout only ever adds tracked files. Env and the home configs always count.
 let gateConfigError
+const COMMAND_KEYS = ['verifyCmd', 'classifier', 'base']
+// Set when the repo file failed that check: its `pick` may name a family, never a command to run.
+let REPO_PICK_UNTRUSTED = false
+const sameFile = (a, b) => {
+  try {
+    return realpathSync(a) === realpathSync(b)
+  } catch {
+    return false
+  }
+}
+function repoFileIsOwn(p, homes) {
+  if (homes.some((home) => sameFile(p, home))) return true // a dotfiles repo at HOME: this is the home config
+  const tracked = spawnSync('git', ['ls-files', '--error-unmatch', '--', p], { stdio: 'ignore' })
+  return !tracked.error && tracked.status === 1 // 1: inside a work tree, and git doesn't track it
+}
+function withoutRepoCommands(config, p, homes) {
+  const keys = COMMAND_KEYS.filter((k) => config[k] != null && String(config[k]).trim() !== '')
+  const pick = String(config.pick ?? '').trim().toLowerCase()
+  const pickMayRun = pick !== '' && pick !== 'first' && pick !== 'rotate'
+  if ((!keys.length && !pickMayRun) || repoFileIsOwn(p, homes)) return config
+  for (const k of keys) delete config[k]
+  REPO_PICK_UNTRUSTED = pickMayRun
+  if (keys.length && !args.includes('--gate'))
+    console.warn(`⚠ Ignoring ${keys.join(', ')} in ${p}: git tracks it, so the repository can set it. ` +
+      `Put them in ~/.agent-config-studio/review-gate/config.json or the environment, or keep the file untracked.`)
+  return config
+}
 function loadConfig() {
+  const homes = [join(homedir(), '.agent-config-studio', 'review-gate', 'config.json'), join(homedir(), '.claude', 'review-config.json')]
   const paths = [
-    process.env.REVIEW_CONFIG,
-    join('.claude', 'review-config.json'),
-    join(homedir(), '.agent-config-studio', 'review-gate', 'config.json'),
-    join(homedir(), '.claude', 'review-config.json'),
-  ].filter(Boolean)
-  for (const p of paths) {
+    { p: process.env.REVIEW_CONFIG },
+    { p: join('.claude', 'review-config.json'), repo: true },
+    ...homes.map((p) => ({ p })),
+  ].filter(({ p }) => p)
+  for (const { p, repo } of paths) {
+    let config = null
     try {
-      if (existsSync(p)) return { ...JSON.parse(readFileSync(p, 'utf8')), _source: p }
+      if (existsSync(p)) config = { ...JSON.parse(readFileSync(p, 'utf8')), _source: p }
     } catch (e) {
       if (args.includes('--gate')) {
         // Defer to pushGate so a real operator override can still be checked and logged.
@@ -89,6 +120,7 @@ function loadConfig() {
       }
       console.warn(`⚠ Ignoring malformed review config at ${p}`)
     }
+    if (config) return repo ? withoutRepoCommands(config, p, homes) : config
   }
   return {}
 }
@@ -382,6 +414,11 @@ function detectDefaultBase() {
 }
 // `||` not `??` so an empty string in review-config.json still means "auto-detect".
 const BASE = cfg('REVIEW_BASE', 'base', '') || (['--gate', '--deferred', '--rubric', '--calibrate'].some((flag) => args.includes(flag)) ? '' : detectDefaultBase())
+// The base reaches git as a revision and as `git fetch <remote> <ref>`, so it is never an option, a
+// refspec or a URL: no leading - or + on any part, no colon, no space. The push gate never uses it.
+const BASE_RE = /^(?!.*\/[-+])[A-Za-z0-9_@][A-Za-z0-9._/~^@{}-]*$/
+if (BASE && !args.includes('--gate') && !BASE_RE.test(BASE))
+  stop(`${process.env.REVIEW_BASE != null ? 'REVIEW_BASE' : 'config "base"'} must be a branch, tag or commit like origin/main; got ${JSON.stringify(BASE)}.`)
 // Optional per-repo gate (config `verifyCmd`, e.g. "npm run type-check"). Its result is CONTEXT
 // for the reviewer, never a gate: a failing build is something to explain, not a reason to skip
 // the review. Unset = unchanged behavior.
@@ -451,6 +488,10 @@ const QUOTE_WINDOW = 5 // a quote must start within ±this many lines of the cit
 // None ships or is assumed. `pick` may name one; `classifier` names the one disputes may ask.
 const CLASSIFIER = String(cfg('REVIEW_CLASSIFIER', 'classifier', '')).trim()
 const CLASSIFIER_ACT = 0.7 // act on its choice at confidence ≥ 0.7; below is the middle band
+// A pick read from a repo file that failed the own-file check (REVIEW_PICK always wins over it).
+const pickFromRepo = () => process.env.REVIEW_PICK == null && REPO_PICK_UNTRUSTED
+const untrustedPickNote = (pick) =>
+  `⚠ Ignoring pick "${pick}" in ${CONFIG._source}: it names a command, and git tracks that file, so the repository can set it.`
 // Path patterns are case-insensitive globs: `**` spans directories, `*` and `?` stay inside one.
 // Like .gitignore, a pattern with no `/` is matched against every path segment ("*auth*").
 const RISK_PATHS = Array.isArray(CONFIG.riskPaths)
@@ -492,7 +533,7 @@ const pathsOf = (f) => (f.from ? [f.path, f.from] : [f.path])
 function diffStats(range = `${BASE}...HEAD`, paths = null) {
   // -z keeps paths unquoted; a rename is `added\tremoved\t` then NUL-separated source and destination.
   // Pathspecs resolve from the top of the work tree.
-  const r = spawnSync('git', [...(paths ? ['-C', TOP] : []), 'diff', '--numstat', '-z', '-M', range, ...pathspec(paths)], {
+  const r = spawnSync('git', [...(paths ? ['-C', TOP] : []), 'diff', '--numstat', '-z', '-M', '--end-of-options', range, ...pathspec(paths)], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   })
@@ -762,8 +803,11 @@ function selectReviewer(stats, { dryRun = false } = {}) {
   let m
   let pickWhy
   let classifier = null
-  const classifierPick =
+  const commandPick =
     !['first', 'rotate'].includes(pick) && !members.some((p) => p.family === pick) && (pick === CLASSIFIER || onPath(pick))
+  // From a repo file the repository can ship, a pick may name a family or your own classifier, never another command.
+  const classifierPick = commandPick && (!pickFromRepo() || (CLASSIFIER && pick === CLASSIFIER))
+  if (commandPick && !classifierPick) notes.push(untrustedPickNote(pick))
   if (hit) {
     m = requireCli(hit.m, `force rule → ${hit.m.family}`)
     const paths = hit.rule.paths ?? hit.rule.when
@@ -804,7 +848,7 @@ function selectReviewer(stats, { dryRun = false } = {}) {
       ? `named pick overrides crossFamily (author is also ${authorVendor})`
       : ''
   } else {
-    if (pick !== 'first')
+    if (pick !== 'first' && !commandPick)
       notes.push(
         `⚠ pick "${pick}" is not first, rotate, a pool family (${members.map((p) => p.family).join(', ')}) ` +
           `or a classifier command on PATH — using first`,
@@ -1026,14 +1070,14 @@ function getDiff() {
   requireClean()
   const slash = BASE.indexOf('/')
   if (slash > 0) {
-    const f = spawnSync('git', ['fetch', BASE.slice(0, slash), BASE.slice(slash + 1)], {
+    const f = spawnSync('git', ['fetch', '--', BASE.slice(0, slash), BASE.slice(slash + 1)], {
       encoding: 'utf8',
     })
     if (f.error || f.status !== 0)
       console.warn(`⚠ Could not fetch ${BASE} — reviewing against a possibly-stale local base.`)
   }
   const head = sh('git', ['rev-parse', 'HEAD'])
-  const baseSha = sh('git', ['merge-base', BASE, head])
+  const baseSha = sh('git', ['merge-base', '--end-of-options', BASE, head])
   const files = SLICE ? filesBetween(baseSha, head, SLICE).sort() : null
   if (SLICE && !files.length)
     die(`REVIEW_PATHS (${SLICE.join(', ')}) matches no file changed between ${BASE} and HEAD; nothing was reviewed.\n` +
@@ -1606,7 +1650,7 @@ function logGrade(path) {
   const kind = original ? 'recheck' : 'grade'
   const id = `${kind}-${Date.now()}-${randomBytes(3).toString('hex')}`
   const entry = { type: 'review', kind, rubricVersion: RUBRIC_VERSION, id, ts: new Date().toISOString(), head, branch, ...(original && { review: original.id }),
-    base: original?.head || BASE, baseSha: original?.head || sh('git', ['merge-base', BASE, head]), repo: repoName(), repoId, copy: COPY_PATH,
+    base: original?.head || BASE, baseSha: original?.head || sh('git', ['merge-base', '--end-of-options', BASE, head]), repo: repoName(), repoId, copy: COPY_PATH,
     family: value.family, model: value.model, vendor, ...(value.effort && { effort: value.effort }),
     criteria: value.criteria, findings: findingDetails.length, findingDetails }
   requireClean()
@@ -1761,8 +1805,10 @@ async function disputeFinding(id, findingId) {
   // An optional local classifier (config "classifier", or a pick that names one) may choose the
   // verifier; otherwise another vendor first (pickVerifier).
   const pickSetting = String(cfg('REVIEW_PICK', 'pick', '')).trim().toLowerCase()
-  const command = CLASSIFIER || (pickSetting && !['first', 'rotate'].includes(pickSetting) &&
-    !pool.some((m) => m.family === pickSetting) && onPath(pickSetting) ? pickSetting : '')
+  const pickCommand = pickSetting && !['first', 'rotate'].includes(pickSetting) &&
+    !pool.some((m) => m.family === pickSetting) && onPath(pickSetting)
+  if (!CLASSIFIER && pickCommand && pickFromRepo()) console.warn(untrustedPickNote(pickSetting))
+  const command = CLASSIFIER || (pickCommand && !pickFromRepo() ? pickSetting : '')
   const answer = command && others.length
     ? askClassifier(command, others, diffStats() || { files: [], filesChanged: 0, linesAdded: 0, linesRemoved: 0, languages: {}, riskFiles: [] })
     : null
@@ -1778,7 +1824,7 @@ async function disputeFinding(id, findingId) {
     if (verifier) {
       const baseSha = review.kind === 'fix-check'
         ? loggedReview(entries, review.review).head
-        : review.baseSha || sh('git', ['merge-base', review.base || BASE, review.head])
+        : review.baseSha || sh('git', ['merge-base', '--end-of-options', review.base || BASE, review.head])
       const range = `${baseSha}${review.kind === 'fix-check' ? '..' : '...'}${review.head}`
       const paths = sliceOf(review)
       const diff = sh('git', [...(paths ? ['-C', TOP] : []), 'diff', range, ...pathspec(paths)])
