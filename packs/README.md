@@ -17,6 +17,8 @@ No pack names a model. Skills read the families from your ACS roles (`model-id -
 `model-id <family>`), and the CLI that runs a model follows its id: `claude-…` → claude, `gpt-…` → codex,
 `grok-…` → grok.
 
+What the packs and the review gate can't do yet, and how likely each limit is to matter: [KNOWN-LIMITS.md](KNOWN-LIMITS.md).
+
 ## Layout
 
 ```

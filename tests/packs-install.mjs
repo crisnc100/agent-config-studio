@@ -197,6 +197,33 @@ console.log('\nC11 the preview lists exactly what is written');
   ok('C11 a file that changed between preview and apply refuses the run', /refused: what this would change is different from the preview/.test(r2.out) && sb2.read(path.join(sb2.home, '.claude/skills/handoff/SKILL.md')) === 'appeared\n', r2.out);
 }
 
+console.log('\nsnapshot() refuses a credential or a hard-linked file the installer would back up or rewrite');
+{
+  // A credential behind the path a pack rewrites: ~/.claude/CLAUDE.md, which gets the instructions block, is a link to Claude's login.
+  const sb = box('cred', { clis: ['claude'] });
+  const secret = 'ACS_PLANTED_CREDENTIAL_5e1d';
+  const cred = path.join(sb.home, '.claude/.credentials.json');
+  fs.writeFileSync(cred, `{"token":"${secret}"}\n`, { mode: 0o600 });
+  fs.symlinkSync(cred, path.join(sb.home, '.claude/CLAUDE.md'));
+  const before = tree(sb.home);
+  const r = sb.packs(['install', 'review-gate', '--part', 'code-review,instructions', '--set-role', 'reviewer=opus', '--yes']);
+  ok('a credential at a path the install rewrites is refused: non-zero exit, naming it protected', r.code !== 0 && /CLAUDE\.md: path is protected/.test(r.out), r.out);
+  ok('…before anything is written: HOME is unchanged', changed(before, tree(sb.home)).length === 0, changed(before, tree(sb.home)).join(' '));
+  ok('…and the credential\'s bytes are never printed', !r.out.includes(secret), r.out);
+
+  // A hard link at a path a pack backs up and replaces: an existing ~/.claude/skills/handoff/SKILL.md that shares its inode with another file.
+  const sb2 = box('hardlink', { clis: ['claude'] });
+  const other = path.join(sb2.home, 'notes.md');
+  fs.writeFileSync(other, 'my notes, also reachable as the skill\n');
+  fs.mkdirSync(path.join(sb2.home, '.claude/skills/handoff'), { recursive: true });
+  fs.linkSync(other, path.join(sb2.home, '.claude/skills/handoff/SKILL.md'));
+  const before2 = tree(sb2.home);
+  const r2 = sb2.packs(['install', 'handoff', '--yes']);
+  ok('a hard-linked file at a path the install backs up is refused: non-zero exit, naming the hard link', r2.code !== 0 && /handoff\/SKILL\.md: this file has hard links/.test(r2.out), r2.out);
+  ok('…before anything is written: HOME is unchanged', changed(before2, tree(sb2.home)).length === 0, changed(before2, tree(sb2.home)).join(' '));
+  ok('…and both names still share one inode', fs.statSync(other).ino === fs.statSync(path.join(sb2.home, '.claude/skills/handoff/SKILL.md')).ino && fs.statSync(other).nlink === 2);
+}
+
 console.log('\na failed state write puts every file back');
 {
   const sb = box('statefail', { clis: ['claude'] });
