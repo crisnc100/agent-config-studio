@@ -1659,7 +1659,16 @@ function closeReview(id) {
   const check = entries.find((e) => e.type === 'review' && e.kind === 'fix-check' && e.review === id)
   const recheck = entries.find((e) => e.type === 'review' && e.kind === 'recheck' && e.review === id)
   if (recheck && !isAncestor(recheck.head, head)) throw new Error('Closing HEAD must include the recheck head')
-  if (check && check.head !== head) throw new Error('Fix check head must equal closing HEAD; unresolved work goes to the operator, no third model pass')
+  // A fixed x… finding's fix lands after its fix check: those commits may touch only the files its fixed
+  // findings name (in the slice, when sliced), and the full tests run below. Nothing re-runs a model.
+  if (check && check.head !== head) {
+    if (!isAncestor(check.head, head))
+      throw new Error(`Fix check head ${check.head} is not an ancestor of closing HEAD (the branch was rewritten after it). Unresolved work goes to the operator, no third model pass`)
+    const named = new Set(check.findingDetails.filter((f) => statuses[f.id]?.status === 'fixed').map((f) => cleanPath(f.file)))
+    const since = paths ? slicedScope(review, filesBetween(check.head, head, paths), filesBetween(check.head, head)) : changedFiles(check.head, head)
+    const unnamed = since.filter((p) => !named.has(p))
+    if (unnamed.length) throw new Error(`Fix check head must equal closing HEAD, or the commits after it may only touch files named by its fixed findings: ${unnamed.join(', ')}. Unresolved work goes to the operator, no third model pass`)
+  }
   if (needsFixCheck(files, [command, VERIFY_CMD].filter(Boolean).join(' ')) && !check) throw new Error('Fix changes tests, verify scripts or risk paths; run --fix-check first')
   const reviews = [review, ...(recheck ? [recheck] : []), ...(check ? [check] : [])]
   const ids = new Set(reviews.flatMap((r) => r.findingDetails.map((f) => f.id)))
