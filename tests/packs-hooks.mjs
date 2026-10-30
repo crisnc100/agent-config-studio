@@ -70,6 +70,8 @@ console.log('\nC6 the agent guard touches only the chosen harnesses');
   fs.writeFileSync(settings, original);
   const p = sb.json(['install', 'review-gate', '--part', 'agent-guard', '--harness', 'codex', '--dry-run']);
   ok('C6 --harness codex: the preview names the Codex home and not Claude settings', p.data.preview.some((r) => r.path === hooksJson) && !p.data.preview.some((r) => r.path === settings), p.out);
+  const both = sb.json(['install', 'review-gate', '--part', 'agent-guard', '--harness', 'claude', '--harness', 'codex', '--dry-run']);
+  ok('C6 a repeated --harness adds up instead of keeping only the last', both.data.preview.some((r) => r.path === hooksJson) && both.data.preview.some((r) => r.path === settings), both.out);
   const r = sb.packs(['install', 'review-gate', '--part', 'agent-guard', '--harness', 'codex', '--yes']);
   ok('C6 --harness codex leaves Claude settings byte-identical', r.code === 0 && sb.read(settings) === original, `${r.out}\n${sb.read(settings)}`);
   ok('C6 …puts the guard in the Codex home, and records codex only', /"\^Bash\$"/.test(sb.read(hooksJson) || '') && sb.state().packs['review-gate'].parts['agent-guard'].harnesses.join() === 'codex', sb.read(hooksJson));

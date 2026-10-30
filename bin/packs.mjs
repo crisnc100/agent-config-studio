@@ -31,7 +31,7 @@ function parse(argv) {
     const a = argv[i];
     const val = () => { const v = argv[++i]; if (v === undefined || v.startsWith('--')) die(`${a} needs a value\n${USAGE}`); return v; };
     if (a === '--part') out.parts.push(...list(val()));
-    else if (a === '--harness') out.harnesses = list(val());
+    else if (a === '--harness') out.harnesses = [...new Set([...(out.harnesses || []), ...list(val())])];
     else if (a === '--set-role') {
       const [role, fams] = val().split('=');
       if (!role || !fams) die(`--set-role needs <role>=<family>[,<family>...]\n${USAGE}`);
