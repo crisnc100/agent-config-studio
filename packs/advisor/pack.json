@@ -1,0 +1,51 @@
+{
+  "id": "advisor",
+  "title": "Advisor",
+  "version": "1.0.0",
+  "summary": "An /advisor skill that asks the model in your ACS advisor role for an outside verdict on scope and direction before you commit to a plan.",
+  "explain": {
+    "what": "The advisor skill brings in an outside consultant: the model in your advisor role (or its second opinion, or both). It reads a short brief and the files that matter and says whether the plan is right-sized, what to change or cut, and only the questions a human really has to decide.",
+    "does": "Day to day you say /advisor at a scope-shaping moment. Your agent writes the brief, runs the advisor read-only, checks its points against the code, and shows you the verdict with its own agreement or disagreement. The advisor never edits anything, and the skill proves which model answered.",
+    "changes": [
+      "~/.claude/skills/advisor/ and ~/.codex/skills/advisor/ (the skill and its contract, for the harnesses you have)"
+    ],
+    "undo": "Uninstalling removes the skill folders. A file you edited after installing is kept and reported."
+  },
+  "requires": {
+    "node": ">=20",
+    "git": false,
+    "modelId": true,
+    "clis": {
+      "anyOf": [
+        "claude",
+        "codex",
+        "grok"
+      ]
+    },
+    "packs": []
+  },
+  "parts": [
+    {
+      "id": "advisor",
+      "title": "Advisor skill",
+      "default": true,
+      "kind": "skill",
+      "harnesses": [
+        "claude",
+        "codex"
+      ],
+      "files": [
+        "packs/advisor/skills/claude/advisor/SKILL.md",
+        "packs/advisor/skills/claude/advisor/advisor-contract.md",
+        "packs/advisor/skills/codex/advisor/SKILL.md",
+        "packs/advisor/skills/codex/advisor/advisor-contract.md"
+      ],
+      "explain": {
+        "changes": [
+          "~/.claude/skills/advisor/SKILL.md and advisor-contract.md (Claude Code; Grok reads this folder too)",
+          "~/.codex/skills/advisor/SKILL.md and advisor-contract.md (Codex)"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "id": "handoff",
+  "title": "Handoff",
+  "version": "1.0.0",
+  "summary": "A /handoff skill that writes a resume-here file for the next agent session: the goal, where things stand, what failed, and the next step.",
+  "explain": {
+    "what": "The handoff skill writes a short file that lets another agent session, or a future you, pick up the work without re-explaining it: the goal, the current state, files in flight, what changed, what was tried and failed, and the single next step.",
+    "does": "Day to day you say /handoff when context is running low or you are switching tools. In a git repo the file goes in docs/handoffs/<branch>.md or .handoffs/<branch>.md, kept out of git so it never rides a PR; the next agent starts by reading it.",
+    "changes": [
+      "~/.claude/skills/handoff/ and ~/.codex/skills/handoff/ (the skill, for the harnesses you have)"
+    ],
+    "undo": "Uninstalling removes the skill folders. A file you edited after installing is kept and reported. Handoff files already written in your projects stay."
+  },
+  "requires": {
+    "node": ">=20",
+    "git": false,
+    "modelId": false,
+    "clis": {
+      "anyOf": [
+        "claude",
+        "codex",
+        "grok"
+      ]
+    },
+    "packs": []
+  },
+  "parts": [
+    {
+      "id": "handoff",
+      "title": "Handoff skill",
+      "default": true,
+      "kind": "skill",
+      "harnesses": [
+        "claude",
+        "codex"
+      ],
+      "files": [
+        "packs/handoff/skills/claude/handoff/SKILL.md",
+        "packs/handoff/skills/codex/handoff/SKILL.md"
+      ],
+      "explain": {
+        "changes": [
+          "~/.claude/skills/handoff/SKILL.md (Claude Code; Grok reads this folder too)",
+          "~/.codex/skills/handoff/SKILL.md (Codex)"
+        ]
+      }
+    }
+  ]
+}

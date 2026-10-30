@@ -1,0 +1,48 @@
+{
+  "id": "worktree",
+  "title": "Worktree setup",
+  "version": "1.0.0",
+  "summary": "Shell commands that keep parallel work tidy: one parked trunk checkout per project, and a worktree beside it for each goal, made with one command.",
+  "explain": {
+    "what": "The worktree setup is a set of zsh commands from ACS's own worktree toolkit (installed with acs install-worktree). Each project gets a trunk: a checkout parked on its base branch (main or staging) that nobody works in, which also holds the project's git-ignored env files. Each piece of work gets its own git worktree beside the trunk, on a branch named for the goal and cut from the latest base. A .worktrees.conf file at the trunk records where worktrees go and what they copy. It works in zsh only.",
+    "does": "wtinit sets a project up once. wnew <name> makes a new worktree in the right place from a fresh base, copies the env files from the trunk so it runs, claims a free port, and prints a banner with the path, branch, base and local address. wls lists a project's worktrees and flags any living outside the expected place. Other commands (wgo, wrm, wclean, wenv) move between, remove and tidy worktrees.",
+    "changes": [
+      "~/.config/worktree/wt.zsh and defaults.conf (or under $WT_HOME): the toolkit; a differing file is backed up first, and a defaults.conf you customised is kept",
+      "~/.zshrc (or $ZDOTDIR/.zshrc): a marked block (# >>> agent-config-studio worktree tools >>> … # <<< agent-config-studio worktree tools <<<) that loads wt.zsh",
+      "~/.agent-config-studio/worktree-source/: a copy of the installed toolkit files, used to notice later updates",
+      "~/.agent-config-studio/backups/<time>-worktree/: copies of any file it replaced"
+    ],
+    "undo": "Uninstalling removes the marked block from your .zshrc and the toolkit files it copied. Your project list in ~/.config/worktree/repos/, your projects, their trunks and their worktrees are never touched. If your shell is not zsh, the setup does nothing, and ACS says so instead of showing it as installed."
+  },
+  "requires": {
+    "node": ">=20",
+    "git": true,
+    "modelId": false,
+    "clis": {
+      "anyOf": []
+    },
+    "packs": []
+  },
+  "parts": [
+    {
+      "id": "worktree",
+      "title": "Worktree commands for zsh",
+      "default": true,
+      "kind": "worktree",
+      "harnesses": [],
+      "files": [
+        "bin/install-worktree.mjs",
+        "tools/worktree/wt.zsh",
+        "tools/worktree/defaults.conf"
+      ],
+      "explain": {
+        "changes": [
+          "~/.config/worktree/wt.zsh and defaults.conf (or under $WT_HOME): the toolkit; a differing file is backed up first, and a defaults.conf you customised is kept",
+          "~/.zshrc (or $ZDOTDIR/.zshrc): a marked block (# >>> agent-config-studio worktree tools >>> … # <<< agent-config-studio worktree tools <<<) that loads wt.zsh",
+          "~/.agent-config-studio/worktree-source/: a copy of the installed toolkit files, used to notice later updates",
+          "~/.agent-config-studio/backups/<time>-worktree/: copies of any file it replaced"
+        ]
+      }
+    }
+  ]
+}

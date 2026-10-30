@@ -1,0 +1,17 @@
+#!/bin/sh
+# The push gate: runs the shared review runtime's --gate, never a copy inside the project.
+home=${HOME:-$(cd ~ 2>/dev/null && pwd)}
+runtime="$home/.agent-config-studio/review-gate"
+# node: the path pinned in hooks/node-path when it is executable, else node on PATH.
+node=
+if [ -r "$runtime/hooks/node-path" ]; then IFS= read -r node < "$runtime/hooks/node-path" || :; fi
+{ [ -n "$node" ] && [ -x "$node" ]; } || node=$(command -v node 2>/dev/null) || node=
+if [ -z "$node" ]; then
+  echo 'Push blocked: node is missing; the review gate cannot run.' >&2
+  exit 1
+fi
+if [ ! -f "$runtime/review.mjs" ]; then
+  echo 'Push blocked: global ~/.agent-config-studio/review-gate/review.mjs is missing.' >&2
+  exit 1
+fi
+exec "$node" "$runtime/review.mjs" --gate

@@ -1,0 +1,49 @@
+{
+  "id": "second-opinion",
+  "title": "Second opinion",
+  "version": "1.0.0",
+  "summary": "A skill that asks one or more other models what they think of an answer or recommendation, and returns each answer labeled, side by side.",
+  "explain": {
+    "what": "The second-opinion skill sends the latest answer or recommendation, with the conversation around it, to another model and brings back its view. The models it offers come from your advisor and reviewer roles in ACS; you can also name any family.",
+    "does": "Day to day you say 'what does <family> think?' or 'ask all of them'. Each model answers read-only and blind to the others, and you get every answer labeled plus a short note on where they agree and disagree. It never picks a winner for you.",
+    "changes": [
+      "~/.claude/skills/second-opinion/ and ~/.codex/skills/second-opinion/ (the skill, for the harnesses you have)"
+    ],
+    "undo": "Uninstalling removes the skill folders. A file you edited after installing is kept and reported."
+  },
+  "requires": {
+    "node": ">=20",
+    "git": false,
+    "modelId": true,
+    "clis": {
+      "anyOf": [
+        "claude",
+        "codex",
+        "grok"
+      ]
+    },
+    "packs": []
+  },
+  "parts": [
+    {
+      "id": "second-opinion",
+      "title": "Second-opinion skill",
+      "default": true,
+      "kind": "skill",
+      "harnesses": [
+        "claude",
+        "codex"
+      ],
+      "files": [
+        "packs/second-opinion/skills/claude/second-opinion/SKILL.md",
+        "packs/second-opinion/skills/codex/second-opinion/SKILL.md"
+      ],
+      "explain": {
+        "changes": [
+          "~/.claude/skills/second-opinion/SKILL.md (Claude Code; Grok reads this folder too)",
+          "~/.codex/skills/second-opinion/SKILL.md (Codex)"
+        ]
+      }
+    }
+  ]
+}
