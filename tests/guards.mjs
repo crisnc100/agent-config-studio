@@ -372,6 +372,12 @@ function guardB() {
       // guard widened to permit a prompt, and it spent the user's subscription
       // on every refresh.
       'lib/usage/codex-limits.js': { fns: new Set(['spawn']), appServerOnly: true },
+      // The pack installer (acs packs). It runs git, /bin/sh on the push
+      // gate's installer, and process.execPath on a script this package ships
+      // (install-worktree, the agent guard's installer) — never a name a
+      // caller supplies, and never a harness binary. Pinned to exactly those
+      // four callees, the way lsof is pinned above.
+      'lib/packs.js': { fns: new Set(['spawnSync']), packsOnly: true },
     }[file];
 
     for (const call of calls) {
@@ -475,6 +481,14 @@ function guardB() {
         const body = fn ? src.slice(fn.start, fn.end).replace(/\s+/g, ' ').trim() : null;
         if (body !== LOGIN_SHELL_FN) {
           hits.push(`${file} loginShell() is not the pinned /etc/shells selector — got ${String(body).slice(0, 80)}…`);
+        }
+        continue;
+      }
+      if (allowed.packsOnly) {
+        const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
+        if (!/^('git'|'\/bin\/sh'|process\.execPath|m\.git)\s*,/.test(text)) {
+          hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 60)}…) — the pack installer may spawn only ` +
+                    `'git', '/bin/sh', process.execPath or m.git (git found on PATH)`);
         }
         continue;
       }

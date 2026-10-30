@@ -17,6 +17,8 @@
     "public/",
     "bin/",
     "tools/",
+    "packs/",
+    "!packs/*/tests/",
     "models.default.json"
   ],
   "scripts": {

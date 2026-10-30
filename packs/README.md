@@ -76,5 +76,6 @@ Each part is `{ id, title, default, kind, harnesses, files, explain }`:
 ACS reads the manifests to list the packs and show each `summary` and `explain` before anything is installed, with a
 preview of every path and setting the chosen parts will change. It checks `requires` and names a fix for each missing
 piece; it installs only the parts you pick, for the harnesses you have; and it records what it wrote, so an update
-replaces only files you have not edited and an uninstall puts back what was there before. The installer, the
-`acs packs` commands and the Packs card come in later steps; this folder is the content they install.
+replaces only files you have not edited and an uninstall puts back what was there before. `acs packs list | explain
+<id> | install <id> | status | update | uninstall <id>` does this from the terminal (`acs packs help`); the Packs card
+in the studio comes in a later step. This folder is the content they install.

@@ -84,9 +84,10 @@ if (!tarball) {
   ok('npm pack makes a tarball of this tree', p.status === 0 && fs.existsSync(tarball), `${p.stdout}${p.stderr}`);
 }
 const listed = execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' }).split('\n').filter(Boolean).map((f) => f.replace(/^package\//, ''));
-const RUNTIME = /^(server\.js|models\.default\.json|README\.md|LICENSE|package\.json|(lib|public|bin|tools)\/.+)$/;
+const RUNTIME = /^(server\.js|models\.default\.json|README\.md|LICENSE|package\.json|(lib|public|bin|tools|packs)\/.+)$/;
 ok(`A2 ${listed.length} files, every one a runtime file, README, LICENSE or package.json`, listed.length > 40 && listed.every((f) => RUNTIME.test(f)), listed.filter((f) => !RUNTIME.test(f)).join(' | '));
 ok('A2 no tests, builds, CI, handoffs, reviews or runbook', !listed.some((f) => /^(tests|builds|\.github|\.handoffs|reviews)\/|^RUNBOOK|^verify\.sh/.test(f)));
+ok('A2 C15 the packs ship, and none of their tests do', listed.some((f) => f === 'packs/review-gate/pack.json') && !listed.some((f) => /^packs\/[^/]+\/tests\//.test(f)), listed.filter((f) => /^packs\/[^/]+\/tests\//.test(f)).join(' | '));
 const NEEDED = ['bin/acs', 'bin/model-id.mjs', 'bin/install-worktree.mjs', 'lib/commands.md', 'tools/worktree/wt.zsh', 'tools/worktree/defaults.conf', 'public/index.html', 'public/vendor/marked.min.js', 'LICENSE', 'README.md'];
 ok('A2 N2 N6 …and every file the runtime reads, the command table and tools/ included', NEEDED.every((f) => listed.includes(f)), NEEDED.filter((f) => !listed.includes(f)).join(' | '));
 

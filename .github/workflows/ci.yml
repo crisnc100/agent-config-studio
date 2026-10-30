@@ -116,6 +116,10 @@ jobs:
           node tests/acs-update.mjs
           node tests/acs-launcher.mjs
           node tests/stranger.mjs
+          node tests/packs-catalog.mjs
+          node tests/packs-install.mjs
+          node tests/packs-update.mjs
+          node tests/packs-hooks.mjs
       - name: live containment is a local gate
         if: always()
         run: |
