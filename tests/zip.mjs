@@ -20,13 +20,14 @@ import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const realHome = os.homedir();
 
 
 const realBefore = snapshotRealHomes();
 
-const fakeHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-zip-')));
+const fakeHome = fs.realpathSync(tempDir('acs-zip-'));
 process.env.HOME = fakeHome;
 // The project folders, named in roots.json: Projects (edit) and a client
 // folder (read).
@@ -53,7 +54,7 @@ const put = (file, body, mode) => { mk(path.dirname(file)); fs.writeFileSync(fil
 const skillMd = (name, desc, extra = '') => `---\nname: ${name}\ndescription: ${desc}\n---\n\n# ${name}\n\nbody ${extra}\n`;
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
-const WORK = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-zip-work-')));
+const WORK = fs.realpathSync(tempDir('acs-zip-work-'));
 let caseNo = 0;
 const caseDir = () => { const d = path.join(WORK, `case-${++caseNo}`); mk(d); return d; };
 

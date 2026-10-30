@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const realHome = os.homedir();
 // Fingerprint the real registry BEFORE anything runs, so "we didn't touch it"
@@ -20,7 +21,7 @@ const realBefore = (() => {
 const realSeatRoot = path.join(realHome, '.codex-seats');
 const realSeatsBefore = (() => { try { return fs.readdirSync(realSeatRoot).sort().join(','); } catch { return null; } })();
 
-const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-routes-'));
+const fakeHome = tempDir('acs-routes-');
 process.env.HOME = fakeHome;
 process.env.ACS_SUITE = 'offline';
 delete process.env.CODEX_HOME;

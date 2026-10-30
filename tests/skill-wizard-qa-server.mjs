@@ -25,9 +25,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { wizardCli } from './fixtures/wizard-cli.mjs';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-wizard-qa-')));
+const home = fs.realpathSync(tempDir('acs-wizard-qa-'));
 const put = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s); };
 const skill = (dir, desc) => put(path.join(dir, 'SKILL.md'), `---\nname: ${path.basename(dir)}\ndescription: ${desc}\n---\n\n# ${path.basename(dir)}\n\nSteps.\n`);
 const studio = path.join(home, '.agent-config-studio');
@@ -74,7 +75,7 @@ const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
   cwd: ROOT,
   env: { HOME: home, PORT: String(port), PATH: `${path.dirname(bin)}:${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir(), ACS_SUITE: 'offline' },
   stdio: ['ignore', 'inherit', 'inherit'],
-});
+}); track(child);
 console.log(`\nskill wizard QA server: http://localhost:${port}/#skills\nHOME: ${home}\n`);
 const stop = () => { child.kill('SIGINT'); process.exit(0); };
 process.on('SIGINT', stop);

@@ -19,6 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { startServer } from './fixtures/roots-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
@@ -28,7 +29,7 @@ const ok = (name, cond, detail = '') => {
   else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 };
 const temps = [];
-const mkTemp = (tag) => { const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `acs-cred-${tag}-`))); temps.push(d); return d; };
+const mkTemp = (tag) => { const d = fs.realpathSync(tempDir(`acs-cred-${tag}-`)); temps.push(d); return d; };
 const put = (f, body) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, body); };
 const SECRET = 'SECRET-REFRESH-TOKEN-7f3a';
 const leaked = (text) => String(text).includes(SECRET);

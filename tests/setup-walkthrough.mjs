@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { bootPage, settle } from './fixtures/shell-page.mjs';
 import { fakeCli, recorder, isolatedPath, calls } from './fixtures/setup-home.mjs';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
@@ -39,7 +40,7 @@ const ok = (name, cond, detail = '') => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-walkthrough-')));
+const sandbox = fs.realpathSync(tempDir('acs-walkthrough-'));
 const home = path.join(sandbox, 'home');
 const bin = path.join(sandbox, 'bin');
 const tmp = path.join(sandbox, 'tmp');
@@ -65,7 +66,7 @@ const base = `http://localhost:${port}`;
 let log = '', exited = null;
 const child = spawn(process.execPath, ['--no-warnings', path.join(ROOT, 'tests', 'fixtures', 'setup-server.mjs'), String(port)], {
   cwd: ROOT, env: { HOME: home, PATH, TMPDIR: tmp, ACS_SUITE: 'offline' }, stdio: ['ignore', 'pipe', 'pipe'],
-});
+}); track(child);
 child.stdout.on('data', (b) => { log += b; });
 child.stderr.on('data', (b) => { log += b; });
 child.on('exit', (code, signal) => { exited = { code, signal }; });

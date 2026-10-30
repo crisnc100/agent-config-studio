@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const realHome = os.homedir();
 
@@ -42,7 +43,7 @@ const realBefore = snapshotRealHomes();
 const REAL_CORPUS = path.join(realHome, '.claude', 'projects');
 const corpusBefore = fs.readdirSync(REAL_CORPUS);
 
-const fakeHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-usage-')));
+const fakeHome = fs.realpathSync(tempDir('acs-usage-'));
 process.env.HOME = fakeHome;
 // ACS ran here before roots.json existed (builds/setup-screen S1), so the
 // legacy folders below are what migration — and absent-file reads — use.
@@ -51,7 +52,7 @@ fs.writeFileSync(path.join(fakeHome, '.agent-config-studio', 'seats.json'), '{"v
 process.env.ACS_SUITE = 'offline';
 delete process.env.CODEX_HOME;
 
-const WORK = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-usage-work-'));
+const WORK = tempDir('acs-usage-work-');
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {

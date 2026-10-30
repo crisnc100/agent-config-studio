@@ -8,6 +8,7 @@ import {
   moveSeatToPrivateHome,
   shellQuote, renderSnapshot, writeSnapshot, snapshotPath, snapshot as takeSnapshot,
 } from '../lib/usage/seats.js';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -15,7 +16,7 @@ const ok = (name, cond, detail = '') => {
   else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 };
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-seats-'));
+const tmp = tempDir('acs-seats-');
 const reg = () => path.join(fs.mkdtempSync(path.join(tmp, 'r-')), 'seats.json');
 const codexSeat = (id, home) => ({ id, vendor: 'codex', label: id, home: home || path.join(tmp, id) });
 

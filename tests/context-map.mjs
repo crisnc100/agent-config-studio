@@ -11,10 +11,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { seedMemoryHome, unlockMemoryHome } from './fixtures/memory-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const realHome = os.homedir();
 const realBefore = snapshotRealHomes();
-const fakeHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-context-')));
+const fakeHome = fs.realpathSync(tempDir('acs-context-'));
 process.env.HOME = fakeHome;
 // The project folders, named in roots.json: Projects (edit) and a client
 // folder (read).

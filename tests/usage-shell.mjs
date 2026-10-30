@@ -15,6 +15,7 @@ import {
   writeShortcuts, install, uninstall, isInstalled, syncShortcuts, shortcutsPath, zshenvPath,
 } from '../lib/usage/shell.js';
 import { saveSeats } from '../lib/usage/seats.js';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -22,7 +23,7 @@ const ok = (name, cond, detail = '') => {
   else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 };
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-shell-'));
+const tmp = tempDir('acs-shell-');
 const realHome = os.homedir();
 const homeDir = (name) => { const p = path.join(tmp, name); fs.mkdirSync(p, { recursive: true }); return p; };
 

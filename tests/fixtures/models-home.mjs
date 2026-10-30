@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { tempDir } from './cleanup.mjs';
 
 export const MARKERS = {
   identity: 'MARKER-IDENTITY-5e1f',
@@ -120,7 +121,7 @@ export function fakeCli(file, version) {
  * calls `model-id opus`.
  */
 export function seedHome({ prefix = 'acs-models-', claudeVersion = '2.1.300 (Claude Code)', catalogs = defaultCatalogs() } = {}) {
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const home = fs.realpathSync(tempDir(prefix));
   writeClaudeCatalog(home, catalogs.claude, catalogs.claudeFetchedAt);
   writeCodexCatalog(path.join(home, '.codex'), catalogs.codex, catalogs.codexFetchedAt);
   writeGrokCatalog(home, catalogs.grok, catalogs.grokFetchedAt);

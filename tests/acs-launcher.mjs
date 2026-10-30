@@ -22,6 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = fs.realpathSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));
 const ACS = path.join(ROOT, 'bin', 'acs');
@@ -34,7 +35,7 @@ const ok = (name, cond, detail = '') => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const which = (c) => spawnSync('/bin/sh', ['-c', `command -v ${c}`], { encoding: 'utf8' }).stdout.trim();
 
-const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-launcher-')));
+const sb = fs.realpathSync(tempDir('acs-launcher-'));
 const nodeDir = path.dirname(process.execPath);
 const SYS = '/usr/bin:/bin';
 const run = (shell, args, { cwd = sb, env = {}, input } = {}) => {
@@ -194,7 +195,7 @@ const home = path.join(sb, 'home-run');
 fs.mkdirSync(home);
 async function start(port, env) {
   let out = '';
-  const child = spawn('/bin/sh', [ACS], { cwd: '/', env: { HOME: home, PATH: tools, ACS_PORT: String(port), ACS_NO_UPDATE: '1', TMPDIR: os.tmpdir(), ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn('/bin/sh', [ACS], { cwd: '/', env: { HOME: home, PATH: tools, ACS_PORT: String(port), ACS_NO_UPDATE: '1', TMPDIR: os.tmpdir(), ...env }, stdio: ['ignore', 'pipe', 'pipe'] }); track(child);
   child.stdout.on('data', (d) => { out += d; });
   child.stderr.on('data', (d) => { out += d; });
   let exited = null;
@@ -246,7 +247,7 @@ async function start(port, env) {
     '',
   ].join('\n'));
   const runAsync = (args, env) => new Promise((resolve) => {
-    const c = spawn('/bin/sh', args, { cwd: sb, env: { PATH: `${nodeDir}:${SYS}`, HOME: path.join(sb, 'home'), ACS_NO_UPDATE: '1', SHELL: '/bin/sh', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const c = spawn('/bin/sh', args, { cwd: sb, env: { PATH: `${nodeDir}:${SYS}`, HOME: path.join(sb, 'home'), ACS_NO_UPDATE: '1', SHELL: '/bin/sh', ...env }, stdio: ['ignore', 'pipe', 'pipe'] }); track(c);
     let out = '';
     c.stdout.on('data', (d) => { out += d; });
     c.stderr.on('data', (d) => { out += d; });
@@ -261,8 +262,8 @@ async function start(port, env) {
     ['is some other app', 'other-app', false, 'not a studio: something else holds the port', /port \d+ is in use by something else — not touching it/],
   ]) {
     const port = await freePort();
-    const victim = spawn(process.execPath, [path.join(otherDir, 'server.js')], { stdio: 'ignore' });
-    const liar = spawn(process.execPath, [liarJs, String(port), JSON.stringify({ app, pid: victim.pid, nonce })], { stdio: ['ignore', 'pipe', 'inherit'] });
+    const victim = spawn(process.execPath, [path.join(otherDir, 'server.js')], { stdio: 'ignore' }); track(victim);
+    const liar = spawn(process.execPath, [liarJs, String(port), JSON.stringify({ app, pid: victim.pid, nonce })], { stdio: ['ignore', 'pipe', 'inherit'] }); track(liar);
     await new Promise((r) => { liar.stdout.once('data', r); liar.once('exit', r); });
     fs.rmSync(runDir, { recursive: true, force: true });
     if (plantRun) { fs.mkdirSync(runDir, { recursive: true }); fs.writeFileSync(path.join(runDir, `${port}.json`), JSON.stringify({ pid: victim.pid, nonce, server: path.join(otherDir, 'server.js') })); }
@@ -285,9 +286,9 @@ async function start(port, env) {
   {
     const port = await freePort();
     fs.mkdirSync(path.join(sb, 'home-control'), { recursive: true });
-    const real = spawn(process.execPath, [path.join(ROOT, 'server.js')], { cwd: '/', env: { HOME: path.join(sb, 'home-control'), PORT: String(await freePort()), PATH: tools, TMPDIR: os.tmpdir() }, stdio: 'ignore' });
+    const real = spawn(process.execPath, [path.join(ROOT, 'server.js')], { cwd: '/', env: { HOME: path.join(sb, 'home-control'), PORT: String(await freePort()), PATH: tools, TMPDIR: os.tmpdir() }, stdio: 'ignore' }); track(real);
     await sleep(1000);
-    const liar = spawn(process.execPath, [liarJs, String(port), JSON.stringify({ app: 'agent-config-studio', pid: real.pid, nonce })], { stdio: ['ignore', 'pipe', 'inherit'] });
+    const liar = spawn(process.execPath, [liarJs, String(port), JSON.stringify({ app: 'agent-config-studio', pid: real.pid, nonce })], { stdio: ['ignore', 'pipe', 'inherit'] }); track(liar);
     await new Promise((r) => { liar.stdout.once('data', r); liar.once('exit', r); });
     fs.mkdirSync(runDir, { recursive: true });
     fs.writeFileSync(path.join(runDir, `${port}.json`), JSON.stringify({ pid: real.pid, nonce, server: path.join(ROOT, 'server.js') }));

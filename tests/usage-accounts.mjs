@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { readAccounts, writeAccounts, reconcile, accountsPath } from '../lib/usage/accounts.js';
 import { readCodexUsage } from '../lib/usage/codex.js';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -19,7 +20,7 @@ const ok = (name, cond, detail = '') => {
   else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 };
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-accounts-'));
+const tmp = tempDir('acs-accounts-');
 const seat = (id) => ({ id, vendor: 'codex', label: id, home: path.join(tmp, id) });
 const fpMap = (o) => new Map(Object.entries(o));
 

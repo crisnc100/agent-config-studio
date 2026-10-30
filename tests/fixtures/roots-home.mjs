@@ -7,6 +7,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { track } from './cleanup.mjs';
 
 const put = (f, body) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, body); };
 const skillMd = (name, desc) => `---\nname: ${name}\ndescription: ${desc}\n---\n\n# ${name}\n`;
@@ -63,7 +64,7 @@ export async function startServer(home, { env = {}, root } = {}) {
     cwd: root,
     env: { PATH: process.env.PATH, ...env, HOME: home, PORT: String(port), ACS_SUITE: 'offline' },
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  }); track(child);
   child.stdout.on('data', (b) => { out += b; });
   child.stderr.on('data', (b) => { out += b; });
   child.on('exit', (code, signal) => { exited = { code, signal }; });

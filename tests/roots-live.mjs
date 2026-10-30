@@ -18,6 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { seedProjectTree, seedGlobals, startServer } from './fixtures/roots-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ACS = path.join(ROOT, 'bin', 'acs');
@@ -31,8 +32,8 @@ const ok = (name, cond, detail = '') => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-live-')));
-const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-live-elsewhere-')));
+const home = fs.realpathSync(tempDir('acs-live-'));
+const elsewhere = fs.realpathSync(tempDir('acs-live-elsewhere-'));
 seedGlobals(home);
 const work = path.join(home, 'code', 'work');
 const w = seedProjectTree(work, 'work');

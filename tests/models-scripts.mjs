@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspect, SCRIPTS } from './fixtures/model-registry/inspect-scripts.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULTS = JSON.parse(fs.readFileSync(path.join(ROOT, 'models.default.json'), 'utf8'));
@@ -24,7 +25,7 @@ console.log('\nmodels/scripts');
 const missing = Object.entries(SCRIPTS).filter(([, p]) => !fs.existsSync(p)).map(([k]) => k);
 ok('the three review scripts are installed', missing.length === 0, missing.join(', '));
 
-const work = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-scripts-'));
+const work = tempDir('acs-scripts-');
 const bin = path.join(work, 'bin');
 fs.mkdirSync(bin);
 fs.symlinkSync(path.join(ROOT, 'bin', 'model-id'), path.join(bin, 'model-id'));

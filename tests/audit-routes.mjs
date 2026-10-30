@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir, track as trackChild } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
@@ -36,7 +37,7 @@ async function startServer(home) {
     cwd: ROOT,
     env: { HOME: home, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir() },
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  }); trackChild(child);
   let log = '';
   child.stdout.on('data', (d) => { log += d; });
   child.stderr.on('data', (d) => { log += d; });
@@ -62,8 +63,8 @@ async function call(base, method, route, body, headers = {}) {
   return { status: r.status, body: json, text };
 }
 
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-audit-srv-')));
-const ext = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-audit-ext-')));
+const home = fs.realpathSync(tempDir('acs-audit-srv-'));
+const ext = fs.realpathSync(tempDir('acs-audit-ext-'));
 const put = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s); return f; };
 const skill = (dir) => put(path.join(dir, 'SKILL.md'), '---\nname: x\n---\n```bash\ncodex exec -m gpt-6-sol "go"\n```\n');
 const S = path.join(home, '.claude', 'skills');

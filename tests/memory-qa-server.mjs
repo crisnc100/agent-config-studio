@@ -26,10 +26,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { seedMemoryHome, unlockMemoryHome } from './fixtures/memory-home.mjs';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-memory-qa-')));
+const home = fs.realpathSync(tempDir('acs-memory-qa-'));
 seedMemoryHome(home);
 
 const free = (port) => new Promise((resolve) => {
@@ -43,7 +44,7 @@ const child = spawn(process.execPath, ['--no-warnings', path.join(ROOT, 'server.
   cwd: ROOT,
   env: { HOME: home, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir() },
   stdio: ['ignore', 'inherit', 'inherit'],
-});
+}); track(child);
 
 const base = `http://localhost:${port}`;
 for (let i = 0; i < 100; i++) {

@@ -24,6 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = fs.realpathSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));
 const ACS = path.join(ROOT, 'bin', 'acs');
@@ -35,7 +36,7 @@ const ok = (name, cond, detail = '') => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-node-')));
+const sb = fs.realpathSync(tempDir('acs-node-'));
 const scratchHome = path.join(sb, 'home-helpers');
 fs.mkdirSync(scratchHome);
 const which = (c) => spawnSync('/bin/sh', ['-c', `command -v ${c}`], { env: { PATH: process.env.PATH, HOME: scratchHome }, encoding: 'utf8' }).stdout.trim();
@@ -211,7 +212,7 @@ console.log('\nacs: the start says which node, and the studio runs on it');
 const health = async (p) => { try { return (await (await fetch(`http://127.0.0.1:${p}/api/health`, { signal: AbortSignal.timeout(2000) })).json()).app === 'agent-config-studio'; } catch { return false; } };
 async function start(env) {
   let out = '';
-  const child = spawn('/bin/sh', [ACS], { cwd: '/', env: { ACS_PORT: String(port), ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn('/bin/sh', [ACS], { cwd: '/', env: { ACS_PORT: String(port), ...env }, stdio: ['ignore', 'pipe', 'pipe'] }); track(child);
   child.stdout.on('data', (d) => { out += d; });
   child.stderr.on('data', (d) => { out += d; });
   let exited = null;
@@ -220,7 +221,7 @@ async function start(env) {
   return { child, out: () => out, exited: () => exited };
 }
 const stopAsync = (env) => new Promise((resolve) => {
-  const c = spawn('/bin/sh', [ACS, 'stop'], { cwd: sb, env: { ACS_PORT: String(port), ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const c = spawn('/bin/sh', [ACS, 'stop'], { cwd: sb, env: { ACS_PORT: String(port), ...env }, stdio: ['ignore', 'pipe', 'pipe'] }); track(c);
   let out = '';
   c.stdout.on('data', (d) => { out += d; });
   c.stderr.on('data', (d) => { out += d; });

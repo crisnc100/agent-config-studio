@@ -19,6 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { seedProjectTree, seedGlobals, legacyHome, startServer } from './fixtures/roots-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realHome = os.homedir();
@@ -31,7 +32,7 @@ const ok = (name, cond, detail = '') => {
 };
 const temps = [];
 const mkTemp = (tag, { raw = false } = {}) => {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), `acs-rr-${tag}-`));
+  const d = tempDir(`acs-rr-${tag}-`);
   temps.push(d);
   return raw ? d : fs.realpathSync(d);
 };

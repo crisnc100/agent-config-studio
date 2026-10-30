@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './cleanup.mjs';
 
 export const GOLDEN = path.join(path.dirname(fileURLToPath(import.meta.url)), 'model-id-golden');
 
@@ -29,7 +30,7 @@ export const CASES = [
 
 /** Run every case against a resolver built from `sources` ({ 'bin/model-id.mjs': bytes, … }). */
 export function runCases(sources) {
-  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-model-id-golden-')));
+  const tmp = fs.realpathSync(tempDir('acs-model-id-golden-'));
   try {
     const dir = path.join(tmp, 'resolver');
     for (const [rel, bytes] of Object.entries(sources)) {

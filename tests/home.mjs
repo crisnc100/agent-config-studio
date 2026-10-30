@@ -12,6 +12,7 @@ import path from 'node:path';
 import os from 'node:os';
 import vm from 'node:vm';
 import { bootPage, routesFor, registry, MEMORY, CONTEXT, PUB, ROOT, settle } from './fixtures/shell-page.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -385,7 +386,7 @@ const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.ent
   // The server tells the two apart: readCatalogs marks a missing catalog, not a broken one.
   const { readCatalogs } = await import('../lib/models-catalog.js');
   const { writeClaudeCatalog, defaultCatalogs } = await import('./fixtures/models-home.mjs');
-  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-home-cat-')));
+  const tmp = fs.realpathSync(tempDir('acs-home-cat-'));
   writeClaudeCatalog(tmp, defaultCatalogs().claude, Date.now());
   fs.mkdirSync(path.join(tmp, '.grok'), { recursive: true });
   fs.writeFileSync(path.join(tmp, '.grok', 'models_cache.json'), '{ not json');
@@ -421,11 +422,11 @@ const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.ent
     ok(`R1 Home: that ${code} keeps "Nothing needs you" away`, m.clear === false && m.partial.some((x) => x.id === 'models'), JSON.stringify(m.partial));
   }
   _setCatalogIo(null);
-  const none = readCatalogs({ home: fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-home-none-'))) });
+  const none = readCatalogs({ home: fs.realpathSync(tempDir('acs-home-none-')) });
   ok('R1 server: with nothing there at all (ENOENT everywhere) all three are missing', ['claude', 'codex', 'grok'].every((v) => none[v].ok === false && none[v].missing === true));
   ok('R1 Home: …and that still allows the empty state', verdict(none).clear === true);
   if (process.getuid?.() !== 0) {
-    const real = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-home-eacces-')));
+    const real = fs.realpathSync(tempDir('acs-home-eacces-'));
     fs.mkdirSync(path.join(real, '.grok'), { recursive: true });
     fs.writeFileSync(path.join(real, '.grok', 'models_cache.json'), '{}');
     fs.chmodSync(path.join(real, '.grok', 'models_cache.json'), 0o000);

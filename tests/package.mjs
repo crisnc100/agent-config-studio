@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { fakeCli } from './fixtures/setup-home.mjs';
 import { containedCli } from './fixtures/contained-cli.mjs';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = fs.realpathSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));
 const realBefore = snapshotRealHomes();
@@ -46,7 +47,7 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, env: { ...process
 
 ok('A5 the suite runs unprivileged (root would ignore the read-only bits)', process.getuid() !== 0, `uid ${process.getuid()}`);
 
-const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-package-')));
+const sb = fs.realpathSync(tempDir('acs-package-'));
 const nodeDir = path.dirname(process.execPath);
 const SYS = '/usr/bin:/bin:/usr/sbin:/sbin';
 const home = path.join(sb, 'home');
@@ -130,7 +131,7 @@ const live = [];
 /** `cmd` under sh, as a terminal would run it; resolves once /api/health answers (or it exits). */
 async function start(cmd, port, { cwd = sb, extra = {} } = {}) {
   let out = '';
-  const child = spawn('/bin/sh', ['-c', cmd], { cwd, env: env({ ACS_PORT: String(port), ...extra }), stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn('/bin/sh', ['-c', cmd], { cwd, env: env({ ACS_PORT: String(port), ...extra }), stdio: ['ignore', 'pipe', 'pipe'] }); track(child);
   child.stdout.on('data', (d) => { out += d; });
   child.stderr.on('data', (d) => { out += d; });
   const s = { child, out: () => out, exited: null, port };
@@ -391,7 +392,7 @@ http.createServer((req, res) => {
 }).listen(Number(port), '127.0.0.1', () => process.stdout.write('up\\n'));
 `);
   const shAsync = (cmd, extra) => new Promise((res) => {
-    const c = spawn('/bin/sh', ['-c', cmd], { cwd: sb, env: env(extra), stdio: ['ignore', 'pipe', 'pipe'] });
+    const c = spawn('/bin/sh', ['-c', cmd], { cwd: sb, env: env(extra), stdio: ['ignore', 'pipe', 'pipe'] }); track(c);
     let out = '';
     c.stdout.on('data', (d) => { out += d; });
     c.stderr.on('data', (d) => { out += d; });
@@ -408,8 +409,8 @@ http.createServer((req, res) => {
     ['legacy run file: an unrelated script given the package path', [worker, pkgShaped], false, nonce, 403, /not this checkout's .* start — not touching it/],
   ]) {
     const port4 = await freePort();
-    const victim = spawn(process.execPath, argv, { stdio: 'ignore' });
-    const liar = spawn(process.execPath, [liarJs, String(port4), String(victim.pid), healthNonce, String(stopStatus)], { stdio: ['ignore', 'pipe', 'inherit'] });
+    const victim = spawn(process.execPath, argv, { stdio: 'ignore' }); track(victim);
+    const liar = spawn(process.execPath, [liarJs, String(port4), String(victim.pid), healthNonce, String(stopStatus)], { stdio: ['ignore', 'pipe', 'inherit'] }); track(liar);
     await new Promise((res) => { liar.stdout.once('data', res); liar.once('exit', res); });
     const runFile = path.join(home, '.agent-config-studio', 'run', `${port4}.json`);
     fs.mkdirSync(path.dirname(runFile), { recursive: true });
@@ -432,9 +433,9 @@ http.createServer((req, res) => {
     const port5 = await freePort();
     const ctrlHome = path.join(sb, 'ctrl-home');
     fs.mkdirSync(ctrlHome, { recursive: true });
-    const real = spawn(process.execPath, [PKG_SERVER], { cwd: sb, env: { ...env(), HOME: ctrlHome, PORT: String(await freePort()) }, stdio: 'ignore' });
+    const real = spawn(process.execPath, [PKG_SERVER], { cwd: sb, env: { ...env(), HOME: ctrlHome, PORT: String(await freePort()) }, stdio: 'ignore' }); track(real);
     await sleep(1500);
-    const liar = spawn(process.execPath, [liarJs, String(port5), String(real.pid), nonce, '403'], { stdio: ['ignore', 'pipe', 'inherit'] });
+    const liar = spawn(process.execPath, [liarJs, String(port5), String(real.pid), nonce, '403'], { stdio: ['ignore', 'pipe', 'inherit'] }); track(liar);
     await new Promise((res) => { liar.stdout.once('data', res); liar.once('exit', res); });
     const runFile = path.join(home, '.agent-config-studio', 'run', `${port5}.json`);
     fs.writeFileSync(runFile, JSON.stringify({ pid: real.pid, nonce, server: PKG_SERVER }), { mode: 0o600 });

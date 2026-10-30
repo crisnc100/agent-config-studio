@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realHome = os.homedir();
@@ -82,7 +83,7 @@ async function startServer(home) {
     cwd: ROOT,
     env: { HOME: home, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir() },
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  }); track(child);
   let log = '';
   child.stdout.on('data', (d) => { log += d; });
   child.stderr.on('data', (d) => { log += d; });
@@ -116,7 +117,7 @@ const modelArg = (argv) => argv[argv.indexOf('--model') + 1];
 
 function setup() {
   // realpath: resolveSafe compares real paths, and macOS tmpdir is behind /private.
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-assist-')));
+  const home = fs.realpathSync(tempDir('acs-assist-'));
   temps.push(home);
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   const log = path.join(home, 'argv.jsonl');

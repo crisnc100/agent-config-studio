@@ -15,10 +15,11 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-walk-partial-')));
+const home = fs.realpathSync(tempDir('acs-walk-partial-'));
 process.env.HOME = home;
 process.env.ACS_SUITE = 'offline';
 delete process.env.CODEX_HOME;

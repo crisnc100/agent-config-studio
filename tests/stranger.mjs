@@ -33,6 +33,7 @@ import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { bootPage, settle } from './fixtures/shell-page.mjs';
 import { fakeCli, recorder, isolatedPath, calls } from './fixtures/setup-home.mjs';
 import { getStartedCommands } from './fixtures/readme.mjs';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = fs.realpathSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));
 const realBefore = snapshotRealHomes();
@@ -55,7 +56,7 @@ ok('B10 …and still has the git clone the rest of it follows', COMMANDS.some((l
 // The registry's package, swapped for this tree's own tarball: npx runs a
 // file: spec the same way, from its cache.
 const NPX = path.join(path.dirname(process.execPath), 'npx');
-const packDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-stranger-pack-')));
+const packDir = fs.realpathSync(tempDir('acs-stranger-pack-'));
 let TARBALL = null;
 if (COMMANDS.includes(NPX_LINE)) {
   const p = spawnSync(path.join(path.dirname(process.execPath), 'npm'), ['pack', '--pack-destination', packDir], {
@@ -85,7 +86,7 @@ const healthy = async (port) => { try { return (await (await fetch(`http://127.0
 
 /** A stranger's machine: temp HOME with something in each surface, fake CLIs, no real one on PATH. */
 async function machine(tag) {
-  const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `acs-stranger-${tag}-`)));
+  const sb = fs.realpathSync(tempDir(`acs-stranger-${tag}-`));
   const home = path.join(sb, 'home');
   const bin = path.join(sb, 'bin');
   const tmp = path.join(sb, 'tmp');
@@ -126,7 +127,7 @@ async function followReadme(m, { materialize, startEnv = {}, afterStart, onLine 
       const npxEnv = { ...m.env, npm_config_cache: path.join(m.sb, '.npm-cache'), npm_config_update_notifier: 'false', npm_config_offline: 'true' };
       const npx = `'${NPX}' --yes 'file:${TARBALL}'`;
       let out = '';
-      const child = spawn('/bin/sh', ['-c', npx], { cwd, env: npxEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn('/bin/sh', ['-c', npx], { cwd, env: npxEnv, stdio: ['ignore', 'pipe', 'pipe'] }); track(child);
       child.stdout.on('data', (d) => { out += d; });
       child.stderr.on('data', (d) => { out += d; });
       let exited = null;
@@ -148,7 +149,7 @@ async function followReadme(m, { materialize, startEnv = {}, afterStart, onLine 
       r = { code: fs.statSync(cwd).isDirectory() ? 0 : 1, out: '' };
     } else if (line === './bin/acs' && !launcher) {
       let out = '';
-      const child = spawn('/bin/sh', ['-c', line], { cwd, env: { ...m.env, ...startEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn('/bin/sh', ['-c', line], { cwd, env: { ...m.env, ...startEnv }, stdio: ['ignore', 'pipe', 'pipe'] }); track(child);
       child.stdout.on('data', (d) => { out += d; });
       child.stderr.on('data', (d) => { out += d; });
       launcher = { child, out: () => out, exited: null };
@@ -167,7 +168,7 @@ async function followReadme(m, { materialize, startEnv = {}, afterStart, onLine 
         const wasUp = await healthy(m.port);
         let out = '';
         let exited = null;
-        const child = spawn('/bin/sh', ['-c', line], { cwd: where, env: m.env, stdio: ['ignore', 'pipe', 'pipe'] });
+        const child = spawn('/bin/sh', ['-c', line], { cwd: where, env: m.env, stdio: ['ignore', 'pipe', 'pipe'] }); track(child);
         child.stdout.on('data', (d) => { out += d; });
         child.stderr.on('data', (d) => { out += d; });
         child.on('exit', (c) => { exited = c; });

@@ -21,10 +21,11 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-audit-qa-')));
-const ext = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-audit-qa-client-')));
+const home = fs.realpathSync(tempDir('acs-audit-qa-'));
+const ext = fs.realpathSync(tempDir('acs-audit-qa-client-'));
 const put = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s); };
 const studio = path.join(home, '.agent-config-studio');
 const fence = (...l) => ['```bash', ...l, '```'].join('\n');
@@ -97,7 +98,7 @@ const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
   cwd: ROOT,
   env: { HOME: home, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir() },
   stdio: ['ignore', 'inherit', 'inherit'],
-});
+}); track(child);
 
 const base = `http://localhost:${port}`;
 for (let i = 0; i < 100; i++) {

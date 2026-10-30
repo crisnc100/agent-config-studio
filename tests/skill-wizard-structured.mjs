@@ -10,9 +10,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { wizardCli } from './fixtures/wizard-cli.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const realBefore = snapshotRealHomes();
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-wizard-structured-')));
+const home = fs.realpathSync(tempDir('acs-wizard-structured-'));
 process.env.HOME = home;
 
 const { containmentHeld, createInitGate } = await import('../lib/containment.js');
@@ -97,7 +98,7 @@ const draftFor = (name) => `---\nname: ${name}\ndescription: "Formats SQL. Use w
 
 console.log('\nrunContained against the fake claude, structured');
 {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-structured-run-'));
+  const cwd = tempDir('acs-structured-run-');
   const run = (step) => {
     setMode({ kind: 'seq', replies: [step] });
     return runContained({ descriptor: HARNESSES.claude, binary: bin, opts: { model: 'm', structured: W.interviewSchema() }, prompt: 'x', cwd, maxTextBytes: 192 * 1024 }).done;

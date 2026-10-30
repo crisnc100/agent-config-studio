@@ -14,6 +14,7 @@ import { GROK_ASSIST_ENV, containmentHeld, grokMcpRefusal } from '../lib/contain
 import { parseEdits, streamTurn } from '../lib/chat.js';
 import { runAssist } from '../lib/assist.js';
 import { tilde } from '../lib/paths.js';
+import { removeOnExit, track } from './fixtures/cleanup.mjs';
 
 const ROOT = path.dirname(fileURLToPath(new URL('.', import.meta.url)));
 // 300s, not 180s: grok was measured at up to 133s on a realistic edit turn, so a
@@ -106,7 +107,7 @@ function makeTemp(prefix) {
   for (const b of bases) {
     try {
       fs.mkdirSync(b, { recursive: true });
-      return fs.mkdtempSync(path.join(b, prefix));
+      return removeOnExit(fs.mkdtempSync(path.join(b, prefix)));
     } catch (e) { last = e; }
   }
   throw last || new Error('cannot create temp dir');
@@ -308,7 +309,7 @@ function runGrokRaw({ binary, cwd, prompt, extraArgs = [], permissionMode }) {
     // The env production Assist gives grok (compat MCP sources off).
     env: { ...process.env, ...GROK_ASSIST_ENV },
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  }); track(child);
   let stdout = Buffer.alloc(0);
   let stderr = '';
   child.stdout.on('data', (d) => { stdout = Buffer.concat([stdout, d]); });
@@ -339,7 +340,7 @@ function runClaudeRaw({ binary, cwd, prompt, extraArgs = [] }) {
     cwd,
     env: process.env,
     stdio: ['pipe', 'pipe', 'pipe'],
-  });
+  }); track(child);
   child.stdin.on('error', () => {});
   child.stdin.end(prompt);
   let stdout = Buffer.alloc(0);

@@ -12,11 +12,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
 const temps = [];
-const mkdir = (tag) => { const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `acs-guide-${tag}-`))); temps.push(d); return d; };
+const mkdir = (tag) => { const d = fs.realpathSync(tempDir(`acs-guide-${tag}-`)); temps.push(d); return d; };
 const home = mkdir('home');
 process.env.HOME = home;
 

@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { startServer } from './fixtures/roots-home.mjs';
 import { scan, scanOnce } from '../lib/setup-scan.js';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realHome = os.homedir();
@@ -34,7 +35,7 @@ const ok = (name, cond, detail = '') => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const temps = [];
-const mkTemp = (tag) => { const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `acs-scan-${tag}-`))); temps.push(d); return d; };
+const mkTemp = (tag) => { const d = fs.realpathSync(tempDir(`acs-scan-${tag}-`)); temps.push(d); return d; };
 const mk = (...p) => { fs.mkdirSync(path.join(...p), { recursive: true }); return path.join(...p); };
 const put = (f, body = '') => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, body); };
 
@@ -216,7 +217,7 @@ const wide = mk(wideHome, 'git', 'wide');
   const wide2 = mk(wideHome, 'git', 'wide2');
   for (let i = 0; i < 200_000; i++) fs.writeFileSync(path.join(wide2, `g${i}`), '');
   const { spawn } = await import('node:child_process');
-  const hogs = [0, 1].map(() => spawn(process.execPath, ['-e', 'for (;;) {}'], { stdio: 'ignore' }));
+  const hogs = [0, 1].map(() => spawn(process.execPath, ['-e', 'for (;;) {}'], { stdio: 'ignore' })); hogs.forEach((h) => track(h));
   let worst2 = 0; stop = false;
   const probe2 = (async () => {
     while (!stop) {

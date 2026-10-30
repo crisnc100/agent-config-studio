@@ -8,10 +8,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const realBefore = snapshotRealHomes();
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-wizard-unit-')));
-const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-wizard-outside-')));
+const home = fs.realpathSync(tempDir('acs-wizard-unit-'));
+const outside = fs.realpathSync(tempDir('acs-wizard-outside-'));
 process.env.HOME = home;
 process.env.ACS_SUITE = 'offline';
 delete process.env.CODEX_HOME;

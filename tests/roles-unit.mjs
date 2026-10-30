@@ -10,9 +10,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { describeCli } from './fixtures/describe-cli.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const realBefore = snapshotRealHomes();
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-roles-unit-')));
+const home = fs.realpathSync(tempDir('acs-roles-unit-'));
 process.env.HOME = home;
 
 const { writeRoles, rolesView, hashOf, setRole, setFlavor, _setWriteHook } = await import('../lib/roles-panel.js');
@@ -43,8 +44,8 @@ console.log('\nroles unit: R3 — history failures are shown, a symlinked folder
   ok('A3 an invalid document is refused before anything is touched', bad?.status === 400 && /"use" is required/.test(bad.message) && fs.readFileSync(file, 'utf8') === '{"version":1,"roles":{}}\n');
   ok('no temp file is left behind', fs.readdirSync(path.dirname(file)).every((f) => !f.includes('.tmp-')));
 
-  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-roles-other-')));
-  const linkedHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-roles-linked-')));
+  const other = fs.realpathSync(tempDir('acs-roles-other-'));
+  const linkedHome = fs.realpathSync(tempDir('acs-roles-linked-'));
   fs.symlinkSync(other, path.join(linkedHome, '.agent-config-studio'));
   const e = await rejects(writeRoles({ text: '{"version":1}\n', base: 'absent', message: 't', home: linkedHome, hist: failing }));
   ok('a symlinked studio folder is refused', e?.status === 409 && /symlink/.test(e.message), e?.message);
@@ -237,7 +238,7 @@ console.log('\nroles unit: A — runContained caps the reply after the stream en
   const bin = path.join(home, '.local', 'bin', 'claude');
   describeCli(bin);
   fs.writeFileSync(path.join(path.dirname(bin), 'mode.json'), JSON.stringify({ kind: 'bigtail' }));
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-cap-'));
+  const cwd = tempDir('acs-cap-');
   const run = runContained({ descriptor: HARNESSES.claude, binary: bin, opts: { model: 'm', toolless: true }, prompt: 'x', cwd, maxTextBytes: 64 * 1024 });
   const r = await run.done.then((v) => ({ resolved: v }), (e) => ({ rejected: e }));
   ok('a 100 KB last event with no newline is refused at the harness, never resolved', r.rejected?.overflow === 'text' && /more than 64 KB/.test(r.rejected.message) && !r.resolved,
@@ -247,7 +248,7 @@ console.log('\nroles unit: A — runContained caps the reply after the stream en
 
 console.log('\nroles unit: B — a hung history git call is stopped (30 s), and the save says so');
 {
-  const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-fake-git-'));
+  const fakeBin = tempDir('acs-fake-git-');
   fs.writeFileSync(path.join(fakeBin, 'git'), '#!/bin/sh\nexec sleep 120\n', { mode: 0o755 });
   const savedPath = process.env.PATH;
   process.env.PATH = `${fakeBin}:${savedPath}`;

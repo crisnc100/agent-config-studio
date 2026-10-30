@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const realHome = os.homedir();
 
@@ -20,7 +21,7 @@ const realBefore = snapshotRealHomes();
 // to /private/var/folders/…. resolveSafe compares REAL paths against roots built
 // from HOME, so an un-resolved fake home makes every path look outside every
 // root — and the 403 assertions below would then pass for the wrong reason.
-const fakeHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-skills-')));
+const fakeHome = fs.realpathSync(tempDir('acs-skills-'));
 process.env.HOME = fakeHome;
 // The project folders, named in roots.json: Projects (edit) and a client
 // folder (read).
@@ -492,7 +493,7 @@ const leaks = (s) => MARKS.filter((m) => String(s).includes(m));
   const { spawnSync } = await import('node:child_process');
   const swapRow = rows.find((r) => r.name === 'swapper');
   let zipLeaks = 0, zipsBuilt = 0;
-  const zdir = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-swap-zip-'));
+  const zdir = tempDir('acs-swap-zip-');
   for (let k = 1; k <= clean.n + 1; k++) {
     for (const mode of ['stay', 'flip']) {
       // Only the sub/doc.md read is attacked, at each of its fs calls in turn.
@@ -633,7 +634,7 @@ const get = (p) => fetch(B + p).then(async (r) => [r.status, await r.json()]);
   // not cry wolf about.
   const { spawnSync } = await import('node:child_process');
   const TRIP = new URL('./real-home.mjs', import.meta.url).pathname;
-  const T = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-trip-')));
+  const T = fs.realpathSync(tempDir('acs-trip-'));
   const tput = (rel, body) => { const f = path.join(T, rel); mk(path.dirname(f)); fs.writeFileSync(f, body); return f; };
   tput('.claude/skills/s1/deep/notes.md', 'AAAA');
   tput('.claude/history.jsonl', '{}\n');

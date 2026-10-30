@@ -12,9 +12,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { seedMemoryHome, unlockMemoryHome } from './fixtures/memory-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const realBefore = snapshotRealHomes();
-const fakeHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-own-')));
+const fakeHome = fs.realpathSync(tempDir('acs-own-'));
 process.env.HOME = fakeHome;
 process.env.ACS_SUITE = 'offline';
 delete process.env.CODEX_HOME;

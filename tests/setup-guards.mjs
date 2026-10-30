@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -242,7 +243,7 @@ console.log('setup guards\n');
 
 /* ── the new guard-b pins reject their variants ───────────────────────── */
 {
-  const copy = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-guard-pins-')));
+  const copy = fs.realpathSync(tempDir('acs-guard-pins-'));
   for (const p of ['lib', 'bin', 'server.js', 'models.default.json', 'package.json']) fs.cpSync(path.join(ROOT, p), path.join(copy, p), { recursive: true });
   fs.mkdirSync(path.join(copy, 'tests'));
   fs.copyFileSync(path.join(ROOT, 'tests', 'guards.mjs'), path.join(copy, 'tests', 'guards.mjs'));

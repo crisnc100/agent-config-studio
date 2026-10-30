@@ -2,12 +2,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { tempDir } from './fixtures/cleanup.mjs';
 import { codexAccountFingerprint, grokAccountFingerprint, fingerprintFor, markDuplicates }
   from '../lib/usage/identity.js';
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) { pass++; console.log(`  ok   ${n}`); } else { fail++; console.log(`  FAIL ${n}${d ? ` — ${d}` : ''}`); } };
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-ident-'));
+const tmp = tempDir('acs-ident-');
 const codexHome = (name, accountId) => {
   const h = path.join(tmp, name); fs.mkdirSync(h, { recursive: true });
   if (accountId !== undefined) fs.writeFileSync(path.join(h, 'auth.json'),

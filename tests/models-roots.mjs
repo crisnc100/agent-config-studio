@@ -16,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { lintScope, projectRoots } from '../lib/models.js';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
@@ -27,7 +28,7 @@ const ok = (name, cond, detail = '') => {
 const write = (f, body) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, body); };
 
 console.log('\nmodels: review configs follow roots.json');
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-models-roots-')));
+const home = fs.realpathSync(tempDir('acs-models-roots-'));
 const elsewhere = path.join(home, 'code', 'work');
 const inRoot = path.join(elsewhere, 'app', '.claude', 'review-config.json');
 const legacy = path.join(home, ['Documents', 'Projects'].join(path.sep), 'old', '.claude', 'review-config.json');
@@ -78,7 +79,7 @@ for (const [what, roots, wantIn, wantLegacy] of cases) {
 }
 {
   // The registry refuses an edit folder outside HOME; so does the resolver (regrade repro).
-  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-models-outside-')));
+  const outside = fs.realpathSync(tempDir('acs-models-outside-'));
   write(path.join(outside, 'app', '.claude', 'review-config.json'), '{\n  "model": "gpt-5.6-sol"\n}\n');
   setRoots({ version: 1, roots: [{ ...root(outside, 'outside'), access: 'edit' }] });
   ok('B11 an edit root outside HOME is not scanned (server path)', !projectRoots(home).includes(outside), JSON.stringify(projectRoots(home)));

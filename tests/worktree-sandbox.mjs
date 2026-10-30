@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 export const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const TOOLKIT = path.join(ROOT, 'tools', 'worktree');
@@ -81,7 +82,7 @@ exec ${git} "$@"
 `;
 
 export function sandbox(name) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `acs-wt-${name}-`)));
+  const root = fs.realpathSync(tempDir(`acs-wt-${name}-`));
   const home = path.join(root, 'home');
   const shim = path.join(root, 'shim');
   const tools = path.join(root, 'tools');
@@ -141,7 +142,7 @@ export function sandbox(name) {
     zshLive(cwd, script, extraEnv = {}) {
       const child = spawn(ZSH, ['-f', '-c', `source "$WT_HOME/wt.zsh" || exit 99\n${script}`], {
         cwd, env: { ...env, ...extraEnv }, stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      }); track(child);
       let out = '';
       const waiters = [];
       const onData = (d) => { out += d; for (const w of waiters.splice(0)) w(); };

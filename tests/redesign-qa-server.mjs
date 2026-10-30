@@ -30,6 +30,7 @@ import path from 'node:path';
 import { sandbox, project, pr, requireZsh, ROOT } from './worktree-sandbox.mjs';
 import { seedMemoryHome, unlockMemoryHome } from './fixtures/memory-home.mjs';
 import { defaultCatalogs, writeClaudeCatalog, writeCodexCatalog, writeGrokCatalog, fakeCli } from './fixtures/models-home.mjs';
+import { track } from './fixtures/cleanup.mjs';
 
 requireZsh('redesign QA server');
 const HOUR = 3_600_000;
@@ -123,7 +124,7 @@ const free = (port) => new Promise((resolve) => {
 const port = (await free(Number(process.env.QA_PORT || 8797))) ?? (await free(0));
 const child = spawn(process.execPath, ['--no-warnings', path.join(ROOT, 'server.js')], {
   cwd: ROOT, env: { ...sb.env, PORT: String(port) }, stdio: ['ignore', 'inherit', 'inherit'],
-});
+}); track(child);
 const base = `http://localhost:${port}`;
 for (let i = 0; i < 100; i++) {
   try { if ((await fetch(`${base}/api/health`)).ok) break; } catch {}

@@ -2,13 +2,14 @@
  * The model registry and its resolver, run as real child processes against a
  * redirected HOME. Nothing here writes the real ~/.agent-config-studio,
  * ~/.claude or ~/.codex; the one real-HOME check (the lint over the live skill
- * scope) only reads.
+ * scope, run only with ACS_LIVE_CHECKS=1) only reads.
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = path.join(ROOT, 'bin', 'model-id');
@@ -23,7 +24,7 @@ const ok = (name, cond, detail = '') => {
 };
 
 function tempHome(userFile) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-models-'));
+  const home = tempDir('acs-models-');
   temps.push(home);
   if (userFile !== undefined) {
     fs.mkdirSync(path.join(home, '.agent-config-studio'), { recursive: true });
@@ -155,7 +156,7 @@ console.log('\nmodels/resolver');
   ok('pinned node missing but node on PATH → still resolves', onPath.status === 0 && onPath.stdout === `${DEFAULTS.models.fable}\n`, JSON.stringify(onPath));
 
   // The copy keeps working when the checkout it came from is gone.
-  const moved = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-models-src-'));
+  const moved = tempDir('acs-models-src-');
   temps.push(moved);
   for (const rel of ['bin/model-id', 'bin/model-id.mjs', 'lib/models.js', 'models.default.json', 'package.json']) {
     write(path.join(moved, rel), fs.readFileSync(path.join(ROOT, rel)));
@@ -258,10 +259,35 @@ console.log('\nmodels/lint');
   ok('lib/, server.js and public/ carry no raw model id or versioned name', hits.length === 0, hits.join(' | '));
 }
 
-// The live scope, read-only: criterion 7's "exit 0 over full scope".
+// The shipped skills, as a pack install lays them out: packs/<pack>/skills/claude/*
+// in ~/.claude/skills and packs/<pack>/skills/codex/* in ~/.codex/skills of a
+// temp HOME. Criterion 7's "exit 0 over full scope", for what this package ships.
 {
+  const home = tempHome();
+  const PACKS = path.join(ROOT, 'packs');
+  let copied = 0;
+  for (const pack of fs.readdirSync(PACKS)) {
+    for (const harness of ['claude', 'codex']) {
+      const from = path.join(PACKS, pack, 'skills', harness);
+      if (!fs.existsSync(from)) continue;
+      for (const skill of fs.readdirSync(from)) {
+        fs.cpSync(path.join(from, skill), path.join(home, `.${harness}`, 'skills', skill), { recursive: true });
+        copied++;
+      }
+    }
+  }
+  const r = spawnSync(process.execPath, [BIN, '--lint'], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin' } });
+  ok(`model-id --lint exits 0 over the shipped pack skills in a temp HOME (${copied} skill folders)`, copied > 0 && r.status === 0,
+     `${r.stdout.split('\n').slice(0, 8).join(' | ')} ${r.stderr}`);
+}
+
+// The live scope, read-only, and only when asked: it checks this machine's
+// own skills, not this package.
+if (process.env.ACS_LIVE_CHECKS === '1') {
   const r = spawnSync(process.execPath, [BIN, '--lint'], { encoding: 'utf8', env: { HOME: realHome, PATH: '/usr/bin:/bin' } });
   ok('model-id --lint exits 0 over the real skill scope', r.status === 0, `${r.stdout.split('\n').slice(0, 8).join(' | ')} ${r.stderr}`);
+} else {
+  console.log('  SKIP model-id --lint over the real skill scope (set ACS_LIVE_CHECKS=1 to check this machine\'s live skills)');
 }
 
 for (const t of temps) fs.rmSync(t, { recursive: true, force: true });
