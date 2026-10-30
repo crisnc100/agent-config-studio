@@ -69,6 +69,35 @@ console.log('\nC7 update: untouched files are updated, edited ones kept, --repla
   ok('C8 …and the pack is no longer recorded', !sb.state().packs.advisor);
 }
 
+console.log('\nC7 with the pack unchanged: a removed or edited file is reported, and --replace puts the pack\'s copy back');
+{
+  const sb = box('c7same', { clis: ['claude'] });
+  const skill = path.join(sb.home, '.claude/skills/advisor/SKILL.md');
+  const contract = path.join(sb.home, '.claude/skills/advisor/advisor-contract.md');
+  sb.packs(['install', 'advisor', '--yes']);
+  const shippedContract = sb.read(contract), shippedSkill = sb.read(skill);
+  fs.rmSync(contract);
+  const st = STATUS(sb.json(['status', '--no-trust-check']), 'advisor', 'advisor');
+  ok('C7 status: a removed file is missing, and the fix named is acs packs update --replace', st.statuses.includes('installed but not working') && st.details.some((d) => /missing: .*advisor-contract\.md — put it back with: acs packs update advisor --replace/.test(d)), JSON.stringify(st));
+  const p = sb.json(['update', 'advisor', '--dry-run']);
+  ok('C7 update reports the removed file as kept ("you removed it"), writing nothing', p.code === 0 && p.data.kept.some((k) => k.path === contract && /you removed it \(--replace puts it back\)/.test(k.why)) && p.data.preview.length === 0, p.out);
+  const r = sb.packs(['update', 'advisor', '--replace', '--yes']);
+  ok('C7 update --replace puts the removed file back, byte for byte', r.code === 0 && sb.read(contract) === shippedContract, r.out);
+  ok('C7 …and status is installed again', STATUS(sb.json(['status', '--no-trust-check']), 'advisor', 'advisor').statuses.join() === 'installed');
+  fs.appendFileSync(skill, 'my edit\n');
+  const mine = sb.read(skill);
+  const k = sb.packs(['update', 'advisor', '--yes']);
+  ok('C7 update keeps an edited file, byte for byte, and reports it', k.code === 0 && sb.read(skill) === mine && /kept: .*SKILL\.md — you edited it/.test(k.out), k.out);
+  const x = sb.packs(['update', 'advisor', '--replace', '--yes']);
+  const backups = path.join(sb.home, '.agent-config-studio/backups');
+  const saved = [];
+  const walk = (d) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch {} for (const e of es) { const q = path.join(d, e.name); if (e.isDirectory()) walk(q); else saved.push(q); } };
+  walk(backups);
+  ok('C7 update --replace takes the pack\'s copy after backing up the edit', x.code === 0 && sb.read(skill) === shippedSkill && saved.some((f) => f.endsWith('SKILL.md') && fs.readFileSync(f, 'utf8') === mine), `${x.out}\n${saved.join(' ')}`);
+  const un = sb.packs(['uninstall', 'advisor', '--yes']);
+  ok('C7 …and uninstall still treats both as files it installed: both go, with their folder', un.code === 0 && !fs.existsSync(path.join(sb.home, '.claude/skills/advisor')), un.out);
+}
+
 console.log('\nC8 skill, unchanged since install: exact pre-install bytes back');
 {
   const sb = box('c8skill', { clis: ['claude', 'codex'] });
@@ -176,6 +205,40 @@ console.log('\nthe worktree part: C8 both branches, C11, and "not zsh"');
   ok('C8 …and the wt.zsh I edited is kept and reported', /# my tweak/.test(sb.read(path.join(sb.home, '.config/worktree/wt.zsh'))) && /kept: .*wt\.zsh/.test(un2.out), un2.out);
   const nz = sb.json(['install', 'worktree', '--dry-run'], { SHELL: '/bin/bash' });
   ok('installing with a non-zsh shell warns that it loads only in zsh', nz.data.warnings.some((w) => /not zsh/.test(w)), nz.out);
+}
+
+console.log('\nworktree update: an untouched defaults.conf takes the new one; only a customised one is kept');
+{
+  const sb = box('wtup', { clis: [], dirs: [] });
+  const pkg = copyPackage(sb);
+  const dflt = path.join(sb.home, '.config/worktree/defaults.conf');
+  const wtz = path.join(sb.home, '.config/worktree/wt.zsh');
+  const src = path.join(pkg.dest, 'tools/worktree/defaults.conf');
+  const release = (version, line) => { fs.appendFileSync(src, `${line}\n`); pkg.bump('worktree', version); return fs.readFileSync(src, 'utf8'); };
+  const status = () => STATUS(pkg.json(['status', '--no-trust-check']), 'worktree', 'worktree');
+  ok('the copy installs worktree', pkg.run(['install', 'worktree', '--yes']).code === 0 && fs.existsSync(dflt));
+  const v11 = release('1.1.0', '# a default added in 1.1.0');
+  const u = pkg.run(['update', 'worktree', '--yes']);
+  ok('update: the untouched defaults.conf is replaced with the new one', u.code === 0 && sb.read(dflt) === v11, `${u.out}\n${sb.read(dflt)}`);
+  ok('…and status is installed, with no update left', status().statuses.join() === 'installed', JSON.stringify(status()));
+  fs.appendFileSync(dflt, 'MY_SETTING=1\n');
+  const mine = sb.read(dflt);
+  const v12 = release('1.2.0', '# a default added in 1.2.0');
+  const k = pkg.run(['update', 'worktree', '--yes']);
+  ok('update: a customised defaults.conf is kept, byte for byte, and reported', k.code === 0 && sb.read(dflt) === mine && /kept: .*defaults\.conf — you customised it/.test(k.out), k.out);
+  ok('…and status still shows the update, since the new defaults.conf was not written', status().statuses.includes('update available'), JSON.stringify(status()));
+  const x = pkg.run(['update', 'worktree', '--replace', '--yes']);
+  ok('update --replace takes the new defaults.conf', x.code === 0 && sb.read(dflt) === v12, x.out);
+  ok('…and then status is installed', status().statuses.join() === 'installed', JSON.stringify(status()));
+  // wt.zsh edited, defaults.conf untouched: wt.zsh is kept and defaults.conf still updates.
+  fs.appendFileSync(wtz, '# my tweak\n');
+  const myWt = sb.read(wtz);
+  const v13 = release('1.3.0', '# a default added in 1.3.0');
+  const w = pkg.run(['update', 'worktree', '--yes']);
+  ok('with wt.zsh edited, update keeps it and still replaces the untouched defaults.conf', w.code === 0 && sb.read(wtz) === myWt && sb.read(dflt) === v13 && /kept: .*wt\.zsh — you edited it/.test(w.out), `${w.out}\n${sb.read(dflt)}`);
+  ok('…and status shows only your wt.zsh edit, no update', status().statuses.join() === 'edited by you', JSON.stringify(status()));
+  const un = pkg.run(['uninstall', 'worktree', '--yes']);
+  ok('…and uninstall removes the defaults.conf it wrote', un.code === 0 && !fs.existsSync(dflt) && /# my tweak/.test(sb.read(wtz) || ''), un.out);
 }
 
 for (const b of boxes) b.cleanup();

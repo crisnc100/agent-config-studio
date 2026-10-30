@@ -153,11 +153,14 @@ async function listHooks(home) {
 
 try {
   const [action, ...args] = process.argv.slice(2)
-  if (!['install', 'uninstall', 'status'].includes(action)) throw new Error('Usage: install-agent-guard.mjs install|uninstall|status [--claude-settings file] [--codex-home dir]... [--grok-config file]')
+  if (!['install', 'uninstall', 'status'].includes(action)) throw new Error('Usage: install-agent-guard.mjs install|uninstall|status [--claude-settings file | --no-claude] [--codex-home dir... | --no-codex] [--grok-config file]')
   const home = homedir(), homes = []
-  let settings = null, grok = join(home, '.grok/config.toml')
-  for (let i = 0; i < args.length; i += 2) {
-    const flag = args[i], value = args[i + 1]
+  let settings = null, grok = join(home, '.grok/config.toml'), noClaude = false, noCodex = false
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i]
+    if (flag === '--no-claude') { noClaude = true; continue }
+    if (flag === '--no-codex') { noCodex = true; continue }
+    const value = args[++i]
     if (!value || value.startsWith('--')) throw new Error(`${flag} needs a path`)
     if (flag === '--claude-settings') settings = resolve(value)
     else if (flag === '--codex-home') homes.push(resolve(value))
@@ -166,9 +169,9 @@ try {
   }
   // Defaults count only when that harness is present (its folder exists); anything named
   // explicitly ($CODEX_HOME, codexHomes in the review-gate config, a flag) is used as given.
-  // Absent harnesses are skipped silently.
-  if (!settings && existsSync(join(home, '.claude'))) settings = join(home, '.claude/settings.json')
-  if (!homes.length) {
+  // Absent harnesses are skipped silently. --no-claude / --no-codex skip that harness's defaults.
+  if (!settings && !noClaude && existsSync(join(home, '.claude'))) settings = join(home, '.claude/settings.json')
+  if (!homes.length && !noCodex) {
     if (existsSync(join(home, '.codex'))) homes.push(join(home, '.codex'))
     if (process.env.CODEX_HOME) homes.push(resolve(process.env.CODEX_HOME))
     for (const extra of configuredCodexHomes(home)) homes.push(extra)
@@ -290,7 +293,8 @@ try {
           keep = remaining.some((h) => h.trust === file.path) || trustSections(trustBlock(text)).length > 0
         } else {
           const matchers = []
-          const keepCodex = remaining.some((h) => h.hooks === file.path), keepClaude = file.kinds.has('claude') && remaining.length > 0
+          // Claude's entries stay while other Codex homes keep the guard, unless --no-codex says this run is Claude's alone.
+          const keepCodex = remaining.some((h) => h.hooks === file.path), keepClaude = file.kinds.has('claude') && !noCodex && remaining.length > 0
           if (file.kinds.has('codex') && !keepCodex) matchers.push('^Bash$')
           if (file.kinds.has('claude') && !keepClaude) matchers.push('Bash', 'Monitor')
           const clean = removeHooks(jsonFile({ ...file, before: current }), matchers)

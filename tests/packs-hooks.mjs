@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { sandbox, tests } from './fixtures/packs-sandbox.mjs';
+import { addRoot, hasRoot, removeRoot } from '../lib/packs-files.js';
 
 const realBefore = snapshotRealHomes();
 const { ok, done } = tests();
@@ -60,6 +61,32 @@ console.log('\nC6 the agent guard');
   ok('C6 …and the codex stub was never started', sb2.callsOf('codex').length === 0);
 }
 
+console.log('\nC6 the agent guard touches only the chosen harnesses');
+{
+  const sb = box('guard-harness', { clis: ['claude', 'codex'] });
+  const settings = path.join(sb.home, '.claude/settings.json');
+  const hooksJson = path.join(sb.env.CODEX_HOME, 'hooks.json');
+  const original = '{\n  "theme": "dark"\n}\n';
+  fs.writeFileSync(settings, original);
+  const p = sb.json(['install', 'review-gate', '--part', 'agent-guard', '--harness', 'codex', '--dry-run']);
+  ok('C6 --harness codex: the preview names the Codex home and not Claude settings', p.data.preview.some((r) => r.path === hooksJson) && !p.data.preview.some((r) => r.path === settings), p.out);
+  const r = sb.packs(['install', 'review-gate', '--part', 'agent-guard', '--harness', 'codex', '--yes']);
+  ok('C6 --harness codex leaves Claude settings byte-identical', r.code === 0 && sb.read(settings) === original, `${r.out}\n${sb.read(settings)}`);
+  ok('C6 …puts the guard in the Codex home, and records codex only', /"\^Bash\$"/.test(sb.read(hooksJson) || '') && sb.state().packs['review-gate'].parts['agent-guard'].harnesses.join() === 'codex', sb.read(hooksJson));
+  const g = partOf(sb.json(['status']), 'review-gate', 'agent-guard');
+  ok('C6 …status checks only Codex, and offers Claude as a new harness rather than calling it broken', !('claude' in g.harness) && g.harness['codex ~/.codex'] === 'active' && g.statuses.includes('new harness detected, not installed for it') && !g.statuses.includes('installed but not working'), JSON.stringify(g));
+  const u = sb.packs(['uninstall', 'review-gate', '--yes']);
+  ok('C6 …and uninstall takes it out of the Codex home, still not touching Claude settings', u.code === 0 && !fs.existsSync(hooksJson) && sb.read(settings) === original, `${u.out}\n${sb.read(settings)}`);
+  const calls = sb.callsOf('codex').length;
+  const c = sb.packs(['install', 'review-gate', '--part', 'agent-guard', '--harness', 'claude', '--yes']);
+  ok('C6 --harness claude: Claude gets the guard, the Codex home is untouched, and the codex stub never starts', c.code === 0 && /agent-guard/.test(sb.read(settings)) && !fs.existsSync(hooksJson) && !fs.existsSync(path.join(sb.env.CODEX_HOME, 'config.toml')) && sb.callsOf('codex').length === calls, c.out);
+  // A Codex guard put there outside acs packs (the runtime's own installer, run by hand) is not the pack's to take out.
+  const own = sb.run(process.execPath, [path.join(sb.home, '.agent-config-studio/review-gate/hooks/install-agent-guard.mjs'), 'install', '--no-claude']);
+  ok('C6 the shipped installer with --no-claude leaves Claude settings alone', own.code === 0 && /"\^Bash\$"/.test(sb.read(hooksJson) || '') && JSON.parse(sb.read(settings)).hooks.PreToolUse.length === 2, own.out);
+  const u2 = sb.packs(['uninstall', 'review-gate', '--yes']);
+  ok('C6 …and uninstalling the Claude-only part restores Claude settings exactly, leaving that Codex guard in place', u2.code === 0 && sb.read(settings) === original && /"\^Bash\$"/.test(sb.read(hooksJson) || ''), `${u2.out}\n${sb.read(settings)}`);
+}
+
 console.log('\nC6 Codex log access');
 {
   const sb = box('logaccess', { clis: ['codex'], dirs: ['codex'] });
@@ -95,6 +122,39 @@ console.log('\nC6 Codex log access');
   const sb2 = box('logaccess-claude', { clis: ['claude'] });
   const r2 = sb2.json(['install', 'review-gate', '--part', 'codex-log-access', '--dry-run']);
   ok('C6 with no Codex home the part is skipped and nothing would be written', r2.code === 0 && r2.data.notes.some((n) => /codex-log-access: .*skipped/.test(n)) && r2.data.preview.length === 0, r2.out);
+}
+
+console.log('\nC6 writable_roots comments: a # outside a string is a comment');
+{
+  const V = '/h/.agent-config-studio/review-log', L = JSON.stringify(V);
+  const T = (arr) => `[sandbox_workspace_write]\nwritable_roots = ${arr}\n`;
+  const trailing = T('[\n  "/existing", # keep this root\n]');
+  const t1 = addRoot(trailing, V);
+  ok('C6 a trailing comment: the entry goes before it, not inside it', t1.text === T(`[\n  "/existing", ${L}, # keep this root\n]`) && hasRoot(t1.text, V), t1.text);
+  ok('C6 …and taking it out gives the exact text back', removeRoot(t1.text, V, t1.how) === trailing, removeRoot(t1.text, V, t1.how));
+  const between = T('[\n  "/a", # first\n  "/b"\n]');
+  const t2 = addRoot(between, V);
+  ok('C6 a comment between items: both items are read, the comment is kept, and the entry goes last', t2.text === T(`[\n  "/a", # first\n  "/b", ${L}\n]`) && hasRoot(between, '/a') && hasRoot(between, '/b') && removeRoot(t2.text, V, t2.how) === between, t2.text);
+  const inString = T('["/a#b"] # see the docs');
+  const t3 = addRoot(inString, V);
+  ok('C6 a # inside a string is part of the path, not a comment', hasRoot(inString, '/a#b') && !hasRoot(inString, '/a') && t3.text === T(`["/a#b", ${L}] # see the docs`) && removeRoot(t3.text, V, t3.how) === inString, t3.text);
+  const commented = T(`[\n  # was ${L} once; don't\n  "/a",\n]`);
+  ok('C6 a path that appears only in a comment is not in writable_roots', !hasRoot(commented, V) && hasRoot(commented, '/a'));
+  const t4 = addRoot(commented, V);
+  ok('C6 …so it is added, and removing it leaves the comment that names it alone', t4.how === 'entry' && hasRoot(t4.text, V) && removeRoot(t4.text, V, t4.how) === commented, t4.text);
+  // Through the installer: a config.toml whose last root has a trailing comment.
+  const sb = box('logaccess-comment', { clis: ['codex'], dirs: ['codex'] });
+  const cfg = path.join(sb.env.CODEX_HOME, 'config.toml');
+  const root = path.join(sb.home, '.agent-config-studio/review-log');
+  const before = 'model = "x"\n\n[sandbox_workspace_write]\nwritable_roots = [\n  "/existing", # keep this root\n]\n';
+  fs.writeFileSync(cfg, before);
+  const r = sb.packs(['install', 'review-gate', '--part', 'codex-log-access', '--yes']);
+  const line = (sb.read(cfg) || '').split('\n').find((l) => l.includes(JSON.stringify(root))) || '';
+  ok('C6 install puts the root on the line before the comment', r.code === 0 && line.indexOf(JSON.stringify(root)) < line.indexOf('#') && /# keep this root/.test(line), `${r.out}\n${sb.read(cfg)}`);
+  ok('C6 …and status reads it as present', partOf(sb.json(['status', '--no-trust-check']), 'review-gate', 'codex-log-access').statuses.join() === 'installed');
+  fs.appendFileSync(cfg, '\n[profile]\nname = "mine"\n');
+  const u = sb.packs(['uninstall', 'review-gate', '--yes']);
+  ok('C8 log access, edited since install: only the entry goes, the comment and the rest stay', u.code === 0 && sb.read(cfg) === `${before}\n[profile]\nname = "mine"\n`, sb.read(cfg));
 }
 
 console.log('\nC5 the push gate');
@@ -183,6 +243,17 @@ console.log('\nC5 the push gate');
   const cfg = sb.read(sb.gitconfig);
   ok('C8 push gate, edited since install: only core.hooksPath and the option go; your alias stays', u3.code === 0 && /st = status/.test(cfg) && !/hooksPath/.test(cfg) && !/worktreeProjects/.test(cfg) && /name = Sandbox/.test(cfg), `${u3.out}\n${cfg}`);
   ok('C8 …and uninstalling the push gate took its worktree-projects option with it', /also removes review-gate\/push-gate-worktree-projects/.test(u3.out));
+  // A git setting changed since install is the user's now: uninstall keeps it and says so.
+  sb.packs(['install', 'review-gate', '--part', 'push-gate,push-gate-worktree-projects', '--yes']);
+  const globalGet = (key) => sb.git(sb.root, 'config', '--global', '--get-all', key).stdout.trim();
+  sb.git(sb.root, 'config', '--global', 'reviewgate.worktreeProjects', 'false');
+  const u4 = sb.packs(['uninstall', 'review-gate', '--part', 'push-gate-worktree-projects', '--yes']);
+  ok('C8 worktree-projects changed since install (true → false): uninstall keeps your false and reports it', u4.code === 0 && globalGet('reviewgate.worktreeProjects') === 'false' && /kept: .*reviewgate\.worktreeProjects is now false, not the true the pack set/.test(u4.out), `${u4.out}\n${sb.read(sb.gitconfig)}`);
+  const other = path.join(sb.root, 'other-hooks');
+  sb.git(sb.root, 'config', '--global', 'core.hooksPath', other);
+  const u5 = sb.packs(['uninstall', 'review-gate', '--yes']);
+  ok('C8 push gate, core.hooksPath set to another path since install: uninstall keeps it and reports it', u5.code === 0 && globalGet('core.hooksPath') === other && /kept: .*core\.hooksPath is now .*other-hooks, not the push gate's/.test(u5.out), `${u5.out}\n${sb.read(sb.gitconfig)}`);
+  ok('C8 …and takes out the rest: the gate\'s record, the runtime and the pack state', !fs.existsSync(path.join(sb.home, '.agent-config-studio/review-gate-global-hook.json')) && !fs.existsSync(path.join(sb.home, '.agent-config-studio/review-gate')) && !sb.state().packs['review-gate'], `${u5.out}\n${JSON.stringify(sb.state().packs)}`);
 }
 
 for (const b of boxes) b.cleanup();

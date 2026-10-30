@@ -66,6 +66,20 @@ console.log('\nrole fix-up: the shipped default reviewer has no CLI on a Claude-
   ok('--fix-roles sets the reviewer role to the suggested installed families', f.code === 0 && set.length > 0 && set.every((x) => ['fable', 'opus', 'sonnet', 'haiku'].includes(x)), f.out);
   const st = sb2.json(['status', '--no-trust-check']);
   ok('…and status no longer reports the role as broken', !JSON.stringify(st.data).includes('role'), JSON.stringify(st.data?.packs?.[0]?.parts?.[0]));
+  // The fix-up declined at install, then taken later the way status says: a re-run on the installed pack.
+  const sb3 = box('roles3', { clis: ['claude'] });
+  const rolesOf = (b) => { try { return JSON.parse(b.read(path.join(b.home, '.agent-config-studio/roles.json'))).roles; } catch { return null; } };
+  const first = sb3.packs(['install', 'review-gate', '--yes']);
+  const told = sb3.json(['status', '--no-trust-check']);
+  ok('fix-up declined: installed with the reviewer role untouched, and status says to re-run with --fix-roles', first.code === 0 && rolesOf(sb3) === null && JSON.stringify(told.data).includes('acs packs install review-gate --fix-roles'), `${first.out}\n${JSON.stringify(told.data?.packs?.[0]?.parts?.[0])}`);
+  const again = sb3.packs(['install', 'review-gate', '--fix-roles', '--yes']);
+  const fixed = rolesOf(sb3)?.reviewer?.use || [];
+  ok('re-running install --fix-roles on the installed pack sets the reviewer role to installed families', again.code === 0 && fixed.length > 0 && fixed.every((x) => ['fable', 'opus', 'sonnet', 'haiku'].includes(x)), again.out);
+  ok('…and status no longer reports the role as broken', !JSON.stringify(sb3.json(['status', '--no-trust-check']).data).includes('role'));
+  const sb4 = box('roles4', { clis: ['claude'] });
+  sb4.packs(['install', 'review-gate', '--yes']);
+  const named = sb4.packs(['install', 'review-gate', '--set-role', 'reviewer=sonnet', '--yes']);
+  ok('re-running install --set-role on the installed pack sets that role', named.code === 0 && rolesOf(sb4)?.reviewer?.use?.join() === 'sonnet', named.out);
 }
 
 console.log('\nC2 a Codex-only machine');
@@ -183,6 +197,34 @@ console.log('\nC11 the preview lists exactly what is written');
   ok('C11 a file that changed between preview and apply refuses the run', /refused: what this would change is different from the preview/.test(r2.out) && sb2.read(path.join(sb2.home, '.claude/skills/handoff/SKILL.md')) === 'appeared\n', r2.out);
 }
 
+console.log('\na failed state write puts every file back');
+{
+  const sb = box('statefail', { clis: ['claude'] });
+  const theirs = path.join(sb.home, '.claude/skills/handoff/SKILL.md');
+  const statePath = path.join(sb.home, '.agent-config-studio/packs/state.json');
+  fs.mkdirSync(path.dirname(theirs), { recursive: true });
+  fs.writeFileSync(theirs, 'my own handoff skill\n');
+  // The install itself runs; only the final rename onto state.json fails, the way a full disk would.
+  const script = path.join(sb.root, 'state-fail.mjs');
+  fs.writeFileSync(script, `
+    import fs from 'node:fs';
+    const rename = fs.renameSync;
+    fs.renameSync = (from, to) => {
+      if (String(to).endsWith('/packs/state.json')) throw Object.assign(new Error('ENOSPC: no space left on device, rename'), { code: 'ENOSPC' });
+      return rename(from, to);
+    };
+    const P = await import(${JSON.stringify(path.join(ROOT, 'lib/packs.js'))});
+    const m = P.machine();
+    try { await P.apply(P.planInstall('handoff', {}, m), { m }); console.log('applied'); } catch (e) { console.log('failed:', e.message); }
+  `);
+  const r = sb.run(process.execPath, [script]);
+  ok('a state write that fails fails the install, saying every touched file was put back', /failed: ENOSPC.* — every file this run touched was put back/.test(r.out), r.out);
+  ok('…the skill it had replaced has my bytes again, and nothing was recorded', sb.read(theirs) === 'my own handoff skill\n' && !fs.existsSync(statePath) && !fs.existsSync(`${statePath}.lock`), `${sb.read(theirs)}\n${sb.read(statePath)}`);
+  const again = sb.packs(['install', 'handoff', '--yes']);
+  const un = sb.packs(['uninstall', 'handoff', '--yes']);
+  ok('…so a retry, then an uninstall, gives me my original back', again.code === 0 && un.code === 0 && sb.read(theirs) === 'my own handoff skill\n', `${again.out}\n${un.out}\n${sb.read(theirs)}`);
+}
+
 console.log('\nrequirements: each missing piece named with its fix');
 {
   const sb = box('req', { clis: ['claude'] });
@@ -224,18 +266,22 @@ console.log('\nC16 two installs at once leave a valid state.json');
     c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { out += d; });
     c.on('exit', (code) => resolve({ code, out }));
   });
+  const stateOrNull = () => { try { return sb.state(); } catch { return null; } };
   for (let round = 0; round < 3; round++) {
+    // Every round is checked; only round one logs its passes (a later round logs only a failure, naming the round).
+    const check = round === 0 ? ok : (name, cond, detail) => { if (!cond) ok(`${name} (round ${round + 1})`, cond, detail); };
     const results = await Promise.all(['advisor', 'handoff', 'second-opinion'].map(start));
-    if (round === 0) ok('C16 three simultaneous installs all succeed', results.every((x) => x.code === 0), results.map((x) => x.out).join('\n---\n'));
-    let st = null;
-    try { st = sb.state(); } catch {}
-    if (round === 0) ok('C16 …and state.json is valid JSON recording all three', st && ['advisor', 'handoff', 'second-opinion'].every((id) => st.packs[id]?.parts), JSON.stringify(Object.keys(st?.packs || {})));
-    if (round === 0) ok('C16 …and no lock is left behind', !fs.existsSync(path.join(sb.home, '.agent-config-studio/packs/state.json.lock')));
+    check('C16 three simultaneous installs all succeed', results.every((x) => x.code === 0), results.map((x) => x.out).join('\n---\n'));
+    const st = stateOrNull();
+    check('C16 …and state.json is valid JSON recording all three', st && ['advisor', 'handoff', 'second-opinion'].every((id) => st.packs[id]?.parts), JSON.stringify(Object.keys(st?.packs || {})));
+    check('C16 …and no lock is left behind', !fs.existsSync(path.join(sb.home, '.agent-config-studio/packs/state.json.lock')));
     const un = await Promise.all(['advisor', 'handoff', 'second-opinion'].map((p) => new Promise((resolve) => {
       const c = spawn(process.execPath, [PACKS, 'uninstall', p, '--yes'], { env: sb.env, cwd: sb.root });
       c.on('exit', (code) => resolve(code));
     })));
-    if (round === 0) ok('C16 three simultaneous uninstalls succeed and leave an empty, valid state', un.every((c) => c === 0) && Object.keys(sb.state().packs).length === 0, JSON.stringify(sb.state()));
+    const after = stateOrNull();
+    check('C16 three simultaneous uninstalls succeed and leave an empty, valid state', un.every((c) => c === 0) && after && Object.keys(after.packs).length === 0, JSON.stringify(after));
+    check('C16 …and no lock is left behind after them', !fs.existsSync(path.join(sb.home, '.agent-config-studio/packs/state.json.lock')));
   }
   // A lock left by a crashed writer (its pid is gone) is taken over.
   fs.writeFileSync(path.join(sb.home, '.agent-config-studio/packs/state.json.lock'), '999999\n');
