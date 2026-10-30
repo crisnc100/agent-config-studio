@@ -257,6 +257,24 @@ console.log('\nan earlier review-gate install is reported, never migrated');
   ok('…and the old log is untouched and still where it was', r.code === 0 && sb.read(path.join(sb.home, '.claude/review-log/review-log.jsonl')) === '{"type":"review"}\n' && !fs.existsSync(path.join(sb.home, '.agent-config-studio/review-log')));
 }
 
+console.log('\nthe shared runtime stays while a guard left in place still uses it');
+{
+  const sb = box('guard-runtime', { clis: ['claude', 'codex'] });
+  const rt = path.join(sb.home, '.agent-config-studio/review-gate');
+  const hooksJson = path.join(sb.env.CODEX_HOME, 'hooks.json');
+  const i = sb.packs(['install', 'review-gate', '--part', 'agent-guard', '--harness', 'claude', '--yes']);
+  // The Codex guard added by hand with the runtime's own installer: the pack's uninstall leaves it in place.
+  const own = sb.run(process.execPath, [path.join(rt, 'hooks/install-agent-guard.mjs'), 'install', '--no-claude']);
+  const p = sb.json(['uninstall', 'review-gate', '--dry-run']);
+  const rows = (p.data?.preview || []).filter((r) => r.path?.startsWith(rt + path.sep) && r.action !== 'keep');
+  const u = sb.packs(['uninstall', 'review-gate', '--yes']);
+  const command = JSON.parse(sb.read(hooksJson) || '{}').hooks?.PreToolUse?.[0]?.hooks?.[0]?.command;
+  ok('uninstalling the last runtime user keeps the runtime while the Codex guard left in place calls it, and the preview and notes say so',
+    i.code === 0 && own.code === 0 && u.code === 0 && rows.length === 0 && p.data.notes.some((n) => /shared review runtime stays: the Codex agent guard/.test(n))
+      && /shared review runtime stays/.test(u.out) && command && fs.existsSync(command) && fs.existsSync(path.join(rt, 'hooks/agent-guard.mjs')) && !sb.state().packs['review-gate'],
+    `${i.out}\n${own.out}\n${JSON.stringify(p.data?.preview)}\n${u.out}\n${command}`);
+}
+
 console.log('\nC16 two installs at once leave a valid state.json');
 {
   const sb = box('c16', { clis: ['claude', 'codex'] });
