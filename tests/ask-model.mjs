@@ -53,6 +53,20 @@ if (${J(name)} === 'grok' && a[0] === 'inspect') {
 }
 if (${J(name)} === 'codex' && a[0] === 'mcp') {
   if (process.env.STUB_MCP_FAIL) { process.stderr.write('mcp: boom\\n'); process.exit(1); }
+  if (process.env.STUB_MCP_PLUGIN) {
+    // STUB_MCP_PLUGIN: servers a plugin provides, as codex 0.160.0 was seen to treat them. An mcp_servers
+    // entry for one has no transport, so codex refuses the config; features.plugins=false drops them
+    // (STUB_PLUGINS_STICKY: it does not). Every -c is read, not only the first.
+    const sets = a.flatMap((x, i) => (x === '-c' ? [a[i + 1]] : []));
+    const off = sets.flatMap((s) => [...s.matchAll(/"([^"]+)"=\\{enabled=false\\}/g)].map((m) => m[1]));
+    const plugin = JSON.parse(process.env.STUB_MCP_PLUGIN);
+    const bad = plugin.find((n) => off.includes(n));
+    if (bad) { process.stderr.write('Error: failed to load bootstrap configuration\\n\\nCaused by:\\n    invalid transport\\n    in \`mcp_servers.' + bad + '\`\\n'); process.exit(1); }
+    const dropped = sets.includes('features.plugins=false') && !process.env.STUB_PLUGINS_STICKY;
+    const all = [...JSON.parse(process.env.STUB_MCP || '[]'), ...(dropped ? [] : plugin)];
+    process.stdout.write(JSON.stringify(all.map((n) => ({ name: n, enabled: !off.includes(n) }))));
+    process.exit(0);
+  }
   const override = val('-c') || '';
   const off = process.env.STUB_MCP_IGNORE ? [] : [...override.matchAll(/"([^"]+)"=\\{enabled=false\\}/g)].map((m) => m[1]);
   process.stdout.write(JSON.stringify(JSON.parse(process.env.STUB_MCP || '[]').map((n) => ({ name: n, enabled: !off.includes(n) }))));
@@ -491,6 +505,34 @@ console.log('\nask-model: acs names a stale copy');
   const acs = fs.readFileSync(path.join(ROOT, 'bin', 'acs'), 'utf8');
   ok('a pull that changes tools/ask-model.mjs says to reinstall', /diff --quiet "\$before" "\$after" -- [^\n]*tools\/ask-model\.mjs[^\n]*\n\s+echo "  the model-id resolver changed/.test(acs));
   ok('an installed ask-model that differs from the package is named', acs.includes('! cmp -s "$r/bin/ask-model.mjs" "$DIR/tools/ask-model.mjs"'));
+}
+
+console.log('\nask-model: codex servers a plugin provides');
+{
+  const full = 'mcp_servers={"writer"={enabled=false},"cua_repl"={enabled=false}}';
+  const rest = 'mcp_servers={"writer"={enabled=false}}';
+  const env = { STUB_MCP: J(['writer']), STUB_MCP_PLUGIN: J(['cua_repl']) };
+  const r = ask(['--family', 'sol', '--cwd', WORK], { env });
+  ok('the override is refused for a plugin\'s server: plugins go off, the override covers the rest',
+     r.code === 0 && same(r.argv, ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', IDS.sol,
+       '-c', 'features.plugins=false', '-c', rest, PROMPT]), show(r));
+  ok('…found by mcp list, the refused check, a list with plugins off, then the check under both',
+     r.mcp.length === 4 && same(r.mcp.map((c) => c.argv), [['mcp', 'list', '--json'], ['mcp', 'list', '--json', '-c', full],
+       ['mcp', 'list', '--json', '-c', 'features.plugins=false'], ['mcp', 'list', '--json', '-c', 'features.plugins=false', '-c', rest]])
+     && r.mcp.every((c) => c.cwd === WORK && c.stdin === 'chardev'), show(r));
+  const e = ask(['--family', 'sol', '--effort', 'high'], { env });
+  ok('with an effort: the effort first, then plugins off, then the override',
+     e.code === 0 && same(e.argv, ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', IDS.sol,
+       '-c', 'model_reasoning_effort=high', '-c', 'features.plugins=false', '-c', rest, PROMPT]), show(e));
+  const only = ask(['--family', 'sol'], { env: { STUB_MCP_PLUGIN: J(['cua_repl']) } });
+  ok('only plugin servers: plugins off and no mcp_servers override',
+     only.code === 0 && same(only.argv, ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', IDS.sol, '-c', 'features.plugins=false', PROMPT])
+     && same(only.mcp.at(-1)?.argv, ['mcp', 'list', '--json', '-c', 'features.plugins=false']), show(only));
+  const sticky = ask(['--family', 'sol'], { env: { ...env, STUB_PLUGINS_STICKY: '1' } });
+  ok('a plugin server that stays with plugins off: exit 4, codex never run, codex\'s refusal shown',
+     sticky.code === 4 && sticky.calls.length === 0 && /codex mcp list failed: [\s\S]*invalid transport[\s\S]*mcp_servers\.cua_repl[\s\S]* — codex was not run/.test(sticky.err), show(sticky));
+  const inv = ask(['--family', 'sol', '--investigate', '--cwd', WORK], { env });
+  ok('--investigate gets the same overrides', inv.code === 0 && same(inv.argv, r.argv), show(inv));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
