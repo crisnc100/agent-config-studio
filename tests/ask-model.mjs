@@ -36,14 +36,21 @@ const PATHS = [STUBS, ...SYSTEM].join(':');
 // Each stub logs its argv, cwd and what its stdin is, then answers as STUB_MODE says.
 // Codex rejects an empty effort the way the real one does. Its `mcp list --json` reports
 // the servers in STUB_MCP and applies an inline-table -c override, as codex was seen to
-// (STUB_MCP_IGNORE: it does not; STUB_MCP_FAIL: it fails).
+// (STUB_MCP_IGNORE: it does not; STUB_MCP_FAIL: it fails). Grok's `inspect --json` prints
+// STUB_GROK_INSPECT, or no servers. Claude's envelope comes as a verbose event list with STUB_VERBOSE.
 const stub = (name) => `#!${process.execPath}
 const fs = require('node:fs');
 const a = process.argv.slice(2);
 const val = (...f) => { const i = a.findIndex((x) => f.includes(x)); return i === -1 ? undefined : a[i + 1]; };
 const st = fs.fstatSync(0);
 fs.appendFileSync(process.env.STUB_LOG, JSON.stringify({ name: ${J(name)}, argv: a, cwd: process.cwd(),
-  stdin: st.isFIFO() ? 'pipe' : st.isCharacterDevice() ? 'chardev' : st.isFile() ? 'file' : 'other' }) + '\\n');
+  stdin: st.isFIFO() ? 'pipe' : st.isCharacterDevice() ? 'chardev' : st.isFile() ? 'file' : 'other',
+  mcpEnv: [process.env.GROK_CLAUDE_MCPS_ENABLED ?? null, process.env.GROK_CURSOR_MCPS_ENABLED ?? null] }) + '\\n');
+if (${J(name)} === 'grok' && a[0] === 'inspect') {
+  if (process.env.STUB_GROK_INSPECT_FAIL) { process.stderr.write('inspect: boom\\n'); process.exit(1); }
+  process.stdout.write(process.env.STUB_GROK_INSPECT || JSON.stringify({ grokVersion: 'stub', mcpServers: [], plugins: [] }));
+  process.exit(0);
+}
 if (${J(name)} === 'codex' && a[0] === 'mcp') {
   if (process.env.STUB_MCP_FAIL) { process.stderr.write('mcp: boom\\n'); process.exit(1); }
   const override = val('-c') || '';
@@ -53,6 +60,7 @@ if (${J(name)} === 'codex' && a[0] === 'mcp') {
 }
 for (const f of (process.env.STUB_WRITE || '').split(',').filter(Boolean)) fs.appendFileSync(f, 'written by the stub\\n');
 for (const f of (process.env.STUB_CHMOD || '').split(',').filter(Boolean)) fs.chmodSync(f, 0o755);
+if (process.env.STUB_GIT) require('node:child_process').execFileSync('git', process.env.STUB_GIT.split(' '), { stdio: 'ignore' });
 if (process.env.STUB_STDERR) process.stderr.write(process.env.STUB_STDERR + '\\n');
 const mode = process.env.STUB_MODE || 'ok';
 const model = val('--model', '-m') || 'none';
@@ -63,12 +71,19 @@ if (${J(name)} === 'codex') {
   process.stdout.write(answer + '\\n');
 } else if (${J(name)} === 'claude') {
   if (mode === 'garbage') { process.stdout.write('not json'); process.exit(0); }
+  const out = (o) => process.stdout.write(JSON.stringify(process.env.STUB_VERBOSE
+    ? [{ type: 'system', subtype: 'init', model }, { type: 'assistant', message: { content: [{ type: 'text', text: 'thinking' }] } }, o] : o));
   if (mode === 'is_error') {
-    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'claude: boom', modelUsage: {} }));
+    out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'claude: boom', modelUsage: {} });
     process.exit(1);
   }
+  if (mode === 'errors') {
+    out({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['first problem', { message: 'second problem' }] });
+    process.exit(1);
+  }
+  if (mode === 'no_result') { process.stdout.write(JSON.stringify([{ type: 'system', subtype: 'init', model }])); process.exit(0); }
   const used = mode === 'downgrade' ? 'claude-sonnet-stub' : model;
-  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: answer, modelUsage: { [used]: { inputTokens: 1 } } }));
+  out({ type: 'result', subtype: 'success', is_error: false, result: answer, modelUsage: { [used]: { inputTokens: 1 } } });
 } else {
   if (mode === 'fail') { process.stdout.write(JSON.stringify({ type: 'error', message: 'grok: boom' })); process.exit(1); }
   const usage = mode === 'downgrade' ? { 'claude-sonnet-stub': {} } : mode === 'sibling' ? { 'grok-sibling-stub': {} } : { [model]: { modelCalls: 1 } };
@@ -96,12 +111,13 @@ function ask(args, { env = {}, home = HOME, cwd = tmp, prompt = PF } = {}) {
     cwd, encoding: 'utf8', env: { HOME: home, PATH: PATHS, STUB_LOG: LOG, ...GIT_ENV, ...env },
   });
   const all = fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  // Model calls apart from codex's `mcp list` checks, which run before its call.
-  const calls = all.filter((c) => c.argv[0] !== 'mcp');
+  // Model calls apart from the MCP checks before them: codex's `mcp list`, grok's `inspect`.
+  const calls = all.filter((c) => c.argv[0] !== 'mcp' && c.argv[0] !== 'inspect');
   const mcp = all.filter((c) => c.argv[0] === 'mcp');
-  return { code: r.status, out: r.stdout, err: r.stderr, calls, mcp, argv: calls[0]?.argv };
+  const inspect = all.filter((c) => c.argv[0] === 'inspect');
+  return { code: r.status, out: r.stdout, err: r.stderr, calls, mcp, inspect, argv: calls[0]?.argv };
 }
-const show = (r) => J({ code: r.code, out: r.out, err: r.err, calls: r.calls, mcp: r.mcp });
+const show = (r) => J({ code: r.code, out: r.out, err: r.err, calls: r.calls, mcp: r.mcp, inspect: r.inspect });
 
 const CLAUDE_RO = (id, effort) => ['-p', PROMPT, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'json',
   '--dangerously-skip-permissions', '--tools', 'Read,Grep,Glob', '--strict-mcp-config'];
@@ -402,6 +418,72 @@ console.log('\nask-model: the installed model-id --install restores ask-model');
     encoding: 'utf8', env: { HOME: home, PATH: [STUBS, ...SYSTEM, path.join(home, '.local', 'bin')].join(':'), STUB_LOG: LOG },
   });
   ok('…and it runs', sh.status === 0 && sh.stdout === `answer from ${IDS.fable}\n`, J(sh));
+}
+
+console.log('\nask-model: grok runs only when no MCP server would start');
+{
+  const g = ask(['--family', 'grok', '--cwd', WORK]);
+  ok('grok inspect runs first, in the call\'s folder, with the Claude and Cursor MCP sources off',
+     g.code === 0 && g.inspect.length === 1 && same(g.inspect[0].argv, ['inspect', '--json']) && g.inspect[0].cwd === WORK
+     && g.inspect[0].stdin === 'chardev' && same(g.inspect[0].mcpEnv, ['0', '0']), show(g));
+  ok('…and the call itself runs with them off', same(g.calls[0]?.mcpEnv, ['0', '0']), show(g));
+  const inspect = (servers, plugins = []) => ({ STUB_GROK_INSPECT: J({ grokVersion: 'stub', mcpServers: servers, plugins }) });
+  const own = ask(['--family', 'grok'], { env: inspect([{ name: 'own', source: { type: 'configToml' } },
+    { name: 'fromclaude', compatibilityStatus: 'disabled' }, { name: 'off', enabled: false }]) });
+  ok('a server of its own still enabled: exit 4, named with the fix, grok never run',
+     own.code === 4 && own.calls.length === 0 && /grok would start MCP servers no flag keeps out of a run \(own\), so grok was not run/.test(own.err)
+     && /grok mcp disable <name>/.test(own.err), show(own));
+  const pl = ask(['--family', 'grok'], { env: inspect([], [{ name: 'kit', provides: { mcpServers: 2 } },
+    { name: 'quiet', enabled: false, provides: { mcpServers: 1 } }, { name: 'tools', provides: { mcpServers: 0 } }]) });
+  ok('a plugin that brings servers: exit 4, named as a plugin', pl.code === 4 && pl.calls.length === 0 && /\(kit \(plugin\)\)/.test(pl.err), show(pl));
+  const clear = ask(['--family', 'grok'], { env: inspect([{ name: 'fromclaude', compatibilityStatus: 'disabled' }, { name: 'off', enabled: false }],
+    [{ name: 'tools', provides: { mcpServers: 0 } }]) });
+  ok('only disabled servers and server-less plugins: grok runs', clear.code === 0 && clear.calls.length === 1, show(clear));
+  const odd = ask(['--family', 'grok'], { env: { STUB_GROK_INSPECT: J({ mcpServers: [{ name: 'x', enabled: 'yes' }], plugins: [] }) } });
+  ok('output of another shape is not read as "no servers": exit 4', odd.code === 4 && odd.calls.length === 0 && /enabled is not a boolean/.test(odd.err), show(odd));
+  const nolist = ask(['--family', 'grok'], { env: { STUB_GROK_INSPECT: J({ plugins: [] }) } });
+  ok('…nor a missing server list', nolist.code === 4 && nolist.calls.length === 0 && /no mcpServers and plugins lists/.test(nolist.err), show(nolist));
+  const fail = ask(['--family', 'grok'], { env: { STUB_GROK_INSPECT_FAIL: '1' } });
+  ok('grok inspect fails: exit 4, grok never run', fail.code === 4 && fail.calls.length === 0 && /grok inspect failed: inspect: boom/.test(fail.err), show(fail));
+  const cl = ask(['--family', 'fable']);
+  const cx = ask(['--family', 'sol']);
+  ok('claude and codex run no grok inspect and get no grok switches',
+     cl.code === 0 && cx.code === 0 && cl.inspect.length === 0 && cx.inspect.length === 0 && same(cl.calls[0]?.mcpEnv, [null, null]) && same(cx.calls[0]?.mcpEnv, [null, null]), show(cl));
+}
+
+console.log('\nask-model: a HEAD move under --investigate');
+{
+  fs.writeFileSync(path.join(WORK, 'b.txt'), 'b\n');
+  git('add', 'b.txt');
+  git('commit', '-q', '-m', 'second');
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const tip = git('rev-parse', 'HEAD').trim().slice(0, 12);
+  const base = git('rev-parse', 'HEAD~1').trim().slice(0, 12);
+  // dirty.txt is the same in both commits, so git status reads the same before and after.
+  const co = ask(['--family', 'sol', '--investigate', '--json', '--cwd', WORK], { env: { STUB_GIT: 'checkout -q HEAD~1' } });
+  const moved = `HEAD ${tip} (${branch}) → ${base} (detached)`;
+  ok('a checkout that leaves git status as it was: exit 5, both commits named',
+     co.code === 5 && same(JSON.parse(co.out || '{}').changed, [moved]) && co.err.includes(`\n  ${moved}\n`), show(co));
+  git('checkout', '-q', branch);
+  git('branch', 'other');
+  const sw = ask(['--family', 'sol', '--investigate', '--cwd', WORK], { env: { STUB_GIT: 'checkout -q other' } });
+  ok('a switch to another branch at the same commit is named too', sw.code === 5 && sw.err.includes(`\n  HEAD ${tip} (${branch}) → ${tip} (other)\n`), show(sw));
+  git('checkout', '-q', branch);
+}
+
+console.log('\nask-model: claude\'s verbose event list, and its errors');
+{
+  const v = ask(['--family', 'fable'], { env: { STUB_VERBOSE: '1' } });
+  ok('a list of events: the last result event is the reply', v.code === 0 && v.out === `answer from ${IDS.fable}\n`, show(v));
+  const vd = ask(['--family', 'fable'], { env: { STUB_VERBOSE: '1', STUB_MODE: 'downgrade' } });
+  ok('…whose modelUsage is checked: another model → exit 2', vd.code === 2 && vd.out === '' && /claude-sonnet-stub/.test(vd.err), show(vd));
+  const ve = ask(['--family', 'fable'], { env: { STUB_VERBOSE: '1', STUB_MODE: 'is_error' } });
+  ok('…and whose is_error is checked: exit 4 with its message', ve.code === 4 && /claude returned an error: claude: boom/.test(ve.err), show(ve));
+  const nr = ask(['--family', 'fable'], { env: { STUB_MODE: 'no_result' } });
+  ok('a list with no result event: exit 4', nr.code === 4 && /claude printed no result event/.test(nr.err), show(nr));
+  const er = ask(['--family', 'fable'], { env: { STUB_MODE: 'errors' } });
+  ok('an error with an errors list and no result: the errors are the message',
+     er.code === 4 && er.err.includes('claude returned an error: first problem; {"message":"second problem"}'), show(er));
 }
 
 console.log('\nask-model: acs names a stale copy');

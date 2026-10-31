@@ -45,6 +45,9 @@ const TOOLS = {
 };
 // The review runtime's grok turn cap (packs/review-gate/runtime/review.mjs).
 const GROK_MAX_TURNS = '40';
+// grok's own switches for the MCP servers it borrows from Claude Code's and Cursor's configs, set for its
+// preflight and its run alike (the studio's GROK_ASSIST_ENV, lib/containment.js). Its own servers have none.
+const GROK_ENV = { GROK_CLAUDE_MCPS_ENABLED: '0', GROK_CURSOR_MCPS_ENABLED: '0' };
 
 /** Which CLI runs an id: its prefix, the rule ACS and the review runtime use. */
 function vendorOf(id) {
@@ -83,6 +86,43 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [] }) {
  * A second `mcp list` under the override must show every server disabled, or
  * codex is not run. Neither call reaches a model.
  */
+/**
+ * The MCP servers a grok run in `cwd` would still start, from `grok inspect
+ * --json` with the run's env. grok starts every configured server on every
+ * run whatever --deny says, and nothing turns one off for a single call, so
+ * any left means grok is not run. The parse is lib/containment.js
+ * grokMcpFromInspect's, copied to keep this file standalone: output of any
+ * other shape is an error, never "no servers".
+ */
+function grokMcpLeft(bin, cwd, env) {
+  const r = spawnSync(bin, ['inspect', '--json'], {
+    cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024,
+  });
+  if (r.error || r.status !== 0) return { error: `grok inspect failed: ${tail(r.error?.message || r.stderr || `exit ${r.status}`)}` };
+  const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  const bad = (what) => ({ error: `grok inspect --json: ${what}` });
+  let doc;
+  try { doc = JSON.parse(r.stdout); } catch { return bad(`not JSON: ${tail(r.stdout)}`); }
+  if (!isObj(doc) || !Array.isArray(doc.mcpServers) || !Array.isArray(doc.plugins)) return bad('no mcpServers and plugins lists');
+  const left = [];
+  for (const s of doc.mcpServers) {
+    if (!isObj(s) || typeof s.name !== 'string' || !s.name) return bad('an mcpServers entry has no name');
+    if (s.enabled !== undefined && typeof s.enabled !== 'boolean') return bad(`mcpServers ${s.name}: enabled is not a boolean`);
+    if (s.compatibilityStatus !== undefined && typeof s.compatibilityStatus !== 'string') return bad(`mcpServers ${s.name}: compatibilityStatus is not a string`);
+    if (s.compatibilityStatus === 'disabled' || s.enabled === false) continue;
+    left.push(s.name);
+  }
+  for (const pl of doc.plugins) {
+    if (!isObj(pl) || typeof pl.name !== 'string' || !pl.name) return bad('a plugins entry has no name');
+    if (pl.enabled !== undefined && typeof pl.enabled !== 'boolean') return bad(`plugin ${pl.name}: enabled is not a boolean`);
+    const n = isObj(pl.provides) ? pl.provides.mcpServers : undefined;
+    // Absent is not zero: only a stated whole-number count clears a plugin.
+    if (!(Number.isInteger(n) && n >= 0)) return bad(`plugin ${pl.name}: provides.mcpServers is not a whole number`);
+    if (pl.enabled !== false && n > 0) left.push(`${pl.name} (plugin)`);
+  }
+  return { left };
+}
+
 function codexMcpOff(bin, cwd) {
   const list = (extra) => {
     const r = spawnSync(bin, ['mcp', 'list', '--json', ...extra], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 });
@@ -161,17 +201,22 @@ function which(name) {
 }
 
 /**
- * Every path `git status` reports, with its status and the file's mode, size,
- * mtime and ctime, so a write or chmod to a file that was already dirty shows
- * too; null outside
- * a git work tree. Ignored files and anything outside the repository are not
- * seen. --no-optional-locks: reading the status must not write the index.
+ * The work tree's state, or null outside a git work tree: HEAD (its commit
+ * and branch), so a checkout that leaves the status clean still shows, and
+ * every path `git status` reports with its porcelain fields (status, modes,
+ * and the HEAD and index object names, so a change to the index shows) and
+ * the file's mode, size, mtime and ctime (so a write or chmod to a file that
+ * was already dirty shows). Ignored files and anything outside the
+ * repository are not seen. --no-optional-locks: reading must not write the index.
  */
 function snapshot(cwd) {
   const git = (...a) => spawnSync('git', ['--no-optional-locks', ...a], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   const top = git('rev-parse', '--show-toplevel');
   if (top.error || top.status !== 0) return null;
   const root = top.stdout.trim();
+  const commit = git('rev-parse', '--verify', '-q', 'HEAD');
+  const branch = git('symbolic-ref', '-q', '--short', 'HEAD');
+  const head = `${commit.status === 0 ? commit.stdout.trim().slice(0, 12) : '(no commit)'} (${branch.status === 0 ? branch.stdout.trim() : 'detached'})`;
   const st = git('status', '--porcelain=v2', '-z', '--untracked-files=all');
   if (st.error || st.status !== 0) return null;
   const seen = new Map();
@@ -180,27 +225,32 @@ function snapshot(cwd) {
     const e = fields[i];
     // v2 entries: `1 XY sub mH mI mW hH hI path`, `2 … score path` then the old path, `u …` (10 fields before
     // the path), `? path`. A path may hold spaces, so it is everything after the fixed fields.
-    let file, xy;
-    if (e[0] === '?') { xy = '??'; file = e.slice(2); }
+    let file, fixed;
+    if (e[0] === '?') { fixed = '??'; file = e.slice(2); }
     else if (e[0] === '1' || e[0] === '2' || e[0] === 'u') {
       const words = e.split(' ');
-      xy = words[1];
-      file = words.slice({ 1: 8, 2: 9, u: 10 }[e[0]]).join(' ');
+      const at = { 1: 8, 2: 9, u: 10 }[e[0]];
+      fixed = words.slice(1, at).join(' ');
+      file = words.slice(at).join(' ');
       if (e[0] === '2') i++;
     } else continue;
     let stamp = 'missing';
     try { const s = fs.lstatSync(path.join(root, file)); stamp = `${s.mode}:${s.size}:${s.mtimeMs}:${s.ctimeMs}`; } catch {}
-    seen.set(file, `${xy} ${stamp}`);
+    seen.set(file, `${fixed} ${stamp}`);
   }
-  return seen;
+  return { head, paths: seen };
 }
 
+/** What differs: a moved HEAD first, naming both commits, then each path. */
 function changedPaths(before, after) {
-  return [...new Set([...before.keys(), ...after.keys()])].filter((p) => before.get(p) !== after.get(p)).sort();
+  const { paths: b } = before;
+  const { paths: a } = after;
+  const moved = before.head === after.head ? [] : [`HEAD ${before.head} → ${after.head}`];
+  return [...moved, ...[...new Set([...b.keys(), ...a.keys()])].filter((p) => b.get(p) !== a.get(p)).sort()];
 }
 
 /** Run the CLI with stdin from /dev/null; a signal to ask-model goes on to the CLI. */
-function run(bin, argv, cwd) {
+function run(bin, argv, cwd, env) {
   return new Promise((done) => {
     const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
     let child;
@@ -213,7 +263,7 @@ function run(bin, argv, cwd) {
       done(r);
     };
     try {
-      child = spawn(bin, argv, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(bin, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
       finish({ error: e });
       return;
@@ -247,7 +297,13 @@ function readAnswer(vendor, id, r) {
       return { exit: 4, error: `${vendor} exited ${r.code} without a JSON reply: ${tail(r.stdout || r.stderr)}` };
     }
     if (vendor === 'claude') {
-      if (env?.is_error !== false) return { exit: 4, error: `claude returned an error: ${tail(env?.result ?? r.stderr)}` };
+      // With the user's verbose setting on, the JSON is every event in a list; the reply is its last result.
+      if (Array.isArray(env)) env = env.findLast((e) => e?.type === 'result') ?? null;
+      if (env === null) return { exit: 4, error: `claude printed no result event: ${tail(r.stdout)}` };
+      if (env?.is_error !== false) {
+        const errors = Array.isArray(env?.errors) && env.errors.length ? env.errors.map((e) => (typeof e === 'string' ? e : JSON.stringify(e))).join('; ') : null;
+        return { exit: 4, error: `claude returned an error: ${tail(env?.result ?? errors ?? r.stderr)}` };
+      }
       if (r.code !== 0) return { exit: 4, error: `claude exited ${r.code}: ${tail(r.stderr)}` };
       const used = Object.keys(env.modelUsage || {});
       if (!used.includes(id)) return { exit: 2, error: `asked for ${id}, but ${used.length ? used.join(', ') : 'no model'} answered — not its answer` };
@@ -303,10 +359,20 @@ async function main(argv) {
     if (off.error) { result.error = `${off.error} — codex was not run`; return finish(4); }
     mcpOff = off.args;
   }
+  const env = vendor === 'grok' ? { ...process.env, ...GROK_ENV } : process.env;
+  if (vendor === 'grok') {
+    const mcp = grokMcpLeft(bin, cwd, env);
+    if (mcp.error) { result.error = `${mcp.error} — no MCP server could be ruled out, so grok was not run`; return finish(4); }
+    if (mcp.left.length) {
+      result.error = `grok would start MCP servers no flag keeps out of a run (${mcp.left.join(', ')}), so grok was not run. ` +
+        'Turn them off with `grok mcp disable <name>` (a plugin\'s: `grok plugin disable <name>`).';
+      return finish(4);
+    }
+  }
 
   const before = o.investigate ? snapshot(cwd) : null;
   if (o.investigate && !before) process.stderr.write(`ask-model: ${cwd} is not in a git work tree — changes are not checked\n`);
-  const r = await run(bin, argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff }), cwd);
+  const r = await run(bin, argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff }), cwd, env);
   // A call grok refused for want of approval leaves only this line, and grok still exits 0.
   if (vendor === 'grok') {
     for (const line of String(r.stderr || '').split('\n')) if (/permission required:/.test(line)) process.stderr.write(`ask-model: grok: ${line.trim()}\n`);
@@ -319,7 +385,7 @@ async function main(argv) {
     const after = snapshot(cwd);
     result.changed = after ? changedPaths(before, after) : null;
     if (!after || result.changed.length) {
-      const what = after ? result.changed.map((p) => `  ${p}`).join('\n') : '  (the work tree could not be read after the call)';
+      const what = after ? result.changed.map((c) => `  ${c}`).join('\n') : '  (the work tree could not be read after the call)';
       // A failed call is still reported; the change is what the caller must act on.
       result.error = [result.error, `files changed under --investigate (nothing was reverted):\n${what}`].filter(Boolean).join('\n');
       return finish(5);
