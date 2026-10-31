@@ -515,16 +515,19 @@ skill.
   the family's flavor effort), `--effort high` overrides it, and when none is
   set no effort flag is passed at all.
 - The CLI follows the id. Claude runs with `--tools Read,Grep,Glob` and
-  `--strict-mcp-config`, Codex with `--sandbox read-only`, and Grok with its
-  read tools only and MCP denied, so the model can read but not edit.
+  `--strict-mcp-config`, Codex with `--sandbox read-only` and each MCP server
+  it has configured switched off, and Grok with its read tools only and MCP
+  denied, so the model can read but not edit. If Codex's servers cannot be
+  confirmed off, Codex is not run.
 - The answer goes to stdout, and one line on stderr names the family, id,
   effort and mode. `--json` prints `family`, `id`, `effort`, `mode`, `answer`,
   `changed` and `error` instead. `--cwd <dir>` is where the model works.
-- It checks that the model it asked for answered. For Claude the id must be in
-  the reply's `modelUsage`; for Grok a Grok model must be. Codex reports no
-  model, so a Codex answer is not checked.
+- It checks that the model it asked for answered: for Claude and Grok the id
+  must be in the reply's `modelUsage`. Codex reports no model, so a Codex
+  answer is not checked.
 - `--investigate` lets the model run commands: Claude gets `Bash`, Grok its
-  shell tool, and Codex's read-only sandbox already runs them. In a git work
+  shell tool with shell commands allowed, and Codex's read-only sandbox
+  already runs them. A command Grok still refuses is passed on to stderr. In a git work
   tree it compares the status before and after; if a file changed, it names
   each one and exits 5. It never reverts anything. Ignored files and files
   outside the repository are not checked.

@@ -12,10 +12,10 @@
  * one that answered. An empty effort passes no effort flag at all: codex
  * rejects `model_reasoning_effort=` with nothing after it.
  *
- * --investigate adds a shell (claude's Bash, grok's run_terminal_cmd; codex's
- * read-only sandbox already runs commands) and compares the git work tree
- * before and after the call. Anything that changed is named on stderr and the
- * exit is 5. Nothing is ever reverted.
+ * --investigate adds a shell (claude's Bash; grok's run_terminal_cmd, with
+ * shell commands allowed; codex's read-only sandbox already runs commands) and
+ * compares the git work tree before and after the call. Anything that changed
+ * is named on stderr and the exit is 5. Nothing is ever reverted.
  *
  * Exit: 0 answered · 2 another model answered · 3 the CLI (or node) is not
  * installed · 4 the call failed or returned an error · 5 files changed under
@@ -54,8 +54,8 @@ function vendorOf(id) {
   return null;
 }
 
-/** The argv for one call. */
-function argvFor(vendor, { id, effort, prompt, cwd, mode }) {
+/** The argv for one call. `mcpOff` is codex's override that switches its MCP servers off (codexMcpOff). */
+function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [] }) {
   if (vendor === 'claude') {
     return ['-p', prompt, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'json',
       // --tools decides which tools exist, so skipping the prompts is safe; --strict-mcp-config with
@@ -64,12 +64,46 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode }) {
   }
   if (vendor === 'codex') {
     return ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', id,
-      ...(effort ? ['-c', `model_reasoning_effort=${effort}`] : []), prompt];
+      ...(effort ? ['-c', `model_reasoning_effort=${effort}`] : []), ...mcpOff, prompt];
   }
   // --disallowed-tools and --deny MCPTool keep configured MCP servers out of reach (grok has no strict-MCP flag).
+  // Headless grok refuses any call that needs approval and still exits 0, so --investigate allows the shell
+  // (an allow rule approves the call; deny rules still win).
   return ['-p', prompt, '-m', id, ...(effort ? ['--reasoning-effort', effort] : []), '--cwd', cwd,
     '--tools', TOOLS.grok[mode], '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool',
+    ...(mode === 'investigate' ? ['--allow', 'Bash'] : []),
     '--disable-web-search', '--no-subagents', '--max-turns', GROK_MAX_TURNS, '--output-format', 'json'];
+}
+
+/**
+ * Codex has no strict-MCP flag, and `-c mcp_servers={}` is merged into the
+ * table rather than replacing it. So each server `codex mcp list` reports for
+ * this folder (project servers included) is switched off with one inline
+ * table: a dotted -c path cannot quote a name holding '.', ':', '@' or '/'.
+ * A second `mcp list` under the override must show every server disabled, or
+ * codex is not run. Neither call reaches a model.
+ */
+function codexMcpOff(bin, cwd) {
+  const list = (extra) => {
+    const r = spawnSync(bin, ['mcp', 'list', '--json', ...extra], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 });
+    if (r.error || r.status !== 0) return { error: `codex mcp list failed: ${tail(r.error?.message || r.stderr || r.stdout)}` };
+    try {
+      const servers = JSON.parse(r.stdout);
+      if (Array.isArray(servers)) return { servers };
+    } catch {}
+    return { error: `codex mcp list printed no server list: ${tail(r.stdout)}` };
+  };
+  const found = list([]);
+  if (found.error) return found;
+  if (!found.servers.length) return { args: [] };
+  // JSON's string escapes are valid TOML basic-string escapes.
+  const names = found.servers.map((s) => s?.name).filter((n) => typeof n === 'string');
+  const override = `mcp_servers={${names.map((n) => `${JSON.stringify(n)}={enabled=false}`).join(',')}}`;
+  const check = list(['-c', override]);
+  if (check.error) return check;
+  const on = check.servers.filter((s) => s?.enabled !== false).map((s) => s?.name ?? '(unnamed)');
+  if (on.length) return { error: `codex MCP servers still enabled under the override: ${on.join(', ')}` };
+  return { args: ['-c', override] };
 }
 
 function parse(argv) {
@@ -127,8 +161,9 @@ function which(name) {
 }
 
 /**
- * Every path `git status` reports, with its status and the file's size and
- * mtime, so a write to a file that was already dirty shows too; null outside
+ * Every path `git status` reports, with its status and the file's mode, size,
+ * mtime and ctime, so a write or chmod to a file that was already dirty shows
+ * too; null outside
  * a git work tree. Ignored files and anything outside the repository are not
  * seen. --no-optional-locks: reading the status must not write the index.
  */
@@ -154,7 +189,7 @@ function snapshot(cwd) {
       if (e[0] === '2') i++;
     } else continue;
     let stamp = 'missing';
-    try { const s = fs.lstatSync(path.join(root, file)); stamp = `${s.size}:${s.mtimeMs}`; } catch {}
+    try { const s = fs.lstatSync(path.join(root, file)); stamp = `${s.mode}:${s.size}:${s.mtimeMs}:${s.ctimeMs}`; } catch {}
     seen.set(file, `${xy} ${stamp}`);
   }
   return seen;
@@ -219,10 +254,9 @@ function readAnswer(vendor, id, r) {
       answer = env.result;
     } else {
       if (env?.type === 'error' || r.code !== 0) return { exit: 4, error: `grok failed (exit ${r.code}): ${tail(env?.message ?? r.stderr)}` };
-      // The review runtime's proof: modelUsage names a grok model. grok may report the id it resolved to,
-      // so the exact id is not required.
+      // The resolved id itself, as for claude: neither the registry nor the review runtime names a grok alias.
       const used = Object.keys(env.modelUsage || {});
-      if (!used.some((k) => /grok/i.test(k))) return { exit: 2, error: `asked for ${id}, but ${used.length ? used.join(', ') : 'no model'} answered — not its answer` };
+      if (!used.includes(id)) return { exit: 2, error: `asked for ${id}, but ${used.length ? used.join(', ') : 'no model'} answered — not its answer` };
       answer = env.text;
     }
   }
@@ -263,9 +297,20 @@ async function main(argv) {
   const bin = which(vendor);
   if (!bin) { result.error = `the ${vendor} CLI is not on PATH`; return finish(3); }
 
+  let mcpOff = [];
+  if (vendor === 'codex') {
+    const off = codexMcpOff(bin, cwd);
+    if (off.error) { result.error = `${off.error} — codex was not run`; return finish(4); }
+    mcpOff = off.args;
+  }
+
   const before = o.investigate ? snapshot(cwd) : null;
   if (o.investigate && !before) process.stderr.write(`ask-model: ${cwd} is not in a git work tree — changes are not checked\n`);
-  const r = await run(bin, argvFor(vendor, { ...m, prompt, cwd, mode }), cwd);
+  const r = await run(bin, argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff }), cwd);
+  // A call grok refused for want of approval leaves only this line, and grok still exits 0.
+  if (vendor === 'grok') {
+    for (const line of String(r.stderr || '').split('\n')) if (/permission required:/.test(line)) process.stderr.write(`ask-model: grok: ${line.trim()}\n`);
+  }
   const got = readAnswer(vendor, m.id, r);
   if (got.answer !== undefined) result.answer = got.answer;
   else result.error = got.error;

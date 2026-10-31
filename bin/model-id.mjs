@@ -119,9 +119,10 @@ async function install() {
   process.stdout.write(`installed ${tilde(resolver)}\nlauncher  ${tilde(launcher)}\nlinked    ${tilde(link)} → ${tilde(launcher)}\n`);
 
   // ask-model imports this resolver's lib/, so it is installed beside it, by its own
-  // install(): it sits in tools/, apart from bin/, because it runs model CLIs.
-  const askModel = path.join(src, 'tools', 'ask-model.mjs');
-  if (!fs.existsSync(askModel)) return;
+  // install(). A checkout keeps it in tools/, apart from bin/, because it runs model
+  // CLIs; the installed copy keeps it in bin/, so a re-run from there restores it too.
+  const askModel = [path.join(src, 'tools', 'ask-model.mjs'), path.join(src, 'bin', 'ask-model.mjs')].find((p) => fs.existsSync(p));
+  if (!askModel) return;
   let r;
   try { r = (await import(pathToFileURL(askModel).href)).install({ home, studio, resolver }); }
   catch (e) { r = { lines: '', error: `ask-model was not installed: ${e.message}` }; }

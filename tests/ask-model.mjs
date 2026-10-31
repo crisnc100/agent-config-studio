@@ -34,7 +34,9 @@ const SYSTEM = ['/usr/bin', '/bin'];
 const PATHS = [STUBS, ...SYSTEM].join(':');
 
 // Each stub logs its argv, cwd and what its stdin is, then answers as STUB_MODE says.
-// Codex rejects an empty effort the way the real one does.
+// Codex rejects an empty effort the way the real one does. Its `mcp list --json` reports
+// the servers in STUB_MCP and applies an inline-table -c override, as codex was seen to
+// (STUB_MCP_IGNORE: it does not; STUB_MCP_FAIL: it fails).
 const stub = (name) => `#!${process.execPath}
 const fs = require('node:fs');
 const a = process.argv.slice(2);
@@ -42,7 +44,16 @@ const val = (...f) => { const i = a.findIndex((x) => f.includes(x)); return i ==
 const st = fs.fstatSync(0);
 fs.appendFileSync(process.env.STUB_LOG, JSON.stringify({ name: ${J(name)}, argv: a, cwd: process.cwd(),
   stdin: st.isFIFO() ? 'pipe' : st.isCharacterDevice() ? 'chardev' : st.isFile() ? 'file' : 'other' }) + '\\n');
+if (${J(name)} === 'codex' && a[0] === 'mcp') {
+  if (process.env.STUB_MCP_FAIL) { process.stderr.write('mcp: boom\\n'); process.exit(1); }
+  const override = val('-c') || '';
+  const off = process.env.STUB_MCP_IGNORE ? [] : [...override.matchAll(/"([^"]+)"=\\{enabled=false\\}/g)].map((m) => m[1]);
+  process.stdout.write(JSON.stringify(JSON.parse(process.env.STUB_MCP || '[]').map((n) => ({ name: n, enabled: !off.includes(n) }))));
+  process.exit(0);
+}
 for (const f of (process.env.STUB_WRITE || '').split(',').filter(Boolean)) fs.appendFileSync(f, 'written by the stub\\n');
+for (const f of (process.env.STUB_CHMOD || '').split(',').filter(Boolean)) fs.chmodSync(f, 0o755);
+if (process.env.STUB_STDERR) process.stderr.write(process.env.STUB_STDERR + '\\n');
 const mode = process.env.STUB_MODE || 'ok';
 const model = val('--model', '-m') || 'none';
 const answer = mode === 'empty' ? '' : 'answer from ' + model;
@@ -60,7 +71,7 @@ if (${J(name)} === 'codex') {
   process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: answer, modelUsage: { [used]: { inputTokens: 1 } } }));
 } else {
   if (mode === 'fail') { process.stdout.write(JSON.stringify({ type: 'error', message: 'grok: boom' })); process.exit(1); }
-  const usage = mode === 'downgrade' ? { 'claude-sonnet-stub': {} } : { [model]: { modelCalls: 1 } };
+  const usage = mode === 'downgrade' ? { 'claude-sonnet-stub': {} } : mode === 'sibling' ? { 'grok-sibling-stub': {} } : { [model]: { modelCalls: 1 } };
   process.stdout.write(JSON.stringify({ text: answer, stopReason: 'end_turn', modelUsage: usage }));
 }
 `;
@@ -84,10 +95,13 @@ function ask(args, { env = {}, home = HOME, cwd = tmp, prompt = PF } = {}) {
   const r = spawnSync(process.execPath, [ASK, ...(prompt ? ['--prompt-file', prompt] : []), ...args], {
     cwd, encoding: 'utf8', env: { HOME: home, PATH: PATHS, STUB_LOG: LOG, ...GIT_ENV, ...env },
   });
-  const calls = fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  return { code: r.status, out: r.stdout, err: r.stderr, calls, argv: calls[0]?.argv };
+  const all = fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  // Model calls apart from codex's `mcp list` checks, which run before its call.
+  const calls = all.filter((c) => c.argv[0] !== 'mcp');
+  const mcp = all.filter((c) => c.argv[0] === 'mcp');
+  return { code: r.status, out: r.stdout, err: r.stderr, calls, mcp, argv: calls[0]?.argv };
 }
-const show = (r) => J({ code: r.code, out: r.out, err: r.err, calls: r.calls });
+const show = (r) => J({ code: r.code, out: r.out, err: r.err, calls: r.calls, mcp: r.mcp });
 
 const CLAUDE_RO = (id, effort) => ['-p', PROMPT, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'json',
   '--dangerously-skip-permissions', '--tools', 'Read,Grep,Glob', '--strict-mcp-config'];
@@ -309,6 +323,85 @@ console.log('\nask-model: model-id --install');
   ok('a real file at ~/.local/bin/ask-model: install exits 1 and leaves it alone',
      clash.status === 1 && /ask-model exists and is not a symlink/.test(clash.stderr) && fs.readFileSync(path.join(home2, '.local', 'bin', 'ask-model'), 'utf8') === '#!/bin/sh\necho mine\n', J(clash));
   ok('…while model-id is still installed and linked', fs.lstatSync(path.join(home2, '.local', 'bin', 'model-id')).isSymbolicLink());
+}
+
+console.log('\nask-model: codex runs with its configured MCP servers off');
+{
+  // Names may hold '.', ':', '@' and '/', which codex accepts and a dotted -c path cannot quote.
+  const names = ['writer', 'a.b', 'x:y@z/w'];
+  const off = 'mcp_servers={"writer"={enabled=false},"a.b"={enabled=false},"x:y@z/w"={enabled=false}}';
+  const r = ask(['--family', 'sol', '--cwd', WORK], { env: { STUB_MCP: J(names) } });
+  ok('every server mcp list reports is disabled by one inline-table override',
+     r.code === 0 && same(r.argv, ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', IDS.sol, '-c', off, PROMPT]), show(r));
+  ok('…found by mcp list in the call\'s folder, then checked under the override, stdin /dev/null',
+     r.mcp.length === 2 && same(r.mcp[0].argv, ['mcp', 'list', '--json']) && same(r.mcp[1].argv, ['mcp', 'list', '--json', '-c', off])
+     && r.mcp.every((c) => c.cwd === WORK && c.stdin === 'chardev'), show(r));
+  const e = ask(['--family', 'sol', '--effort', 'high'], { env: { STUB_MCP: J(['writer']) } });
+  ok('with an effort: both overrides, the effort first',
+     e.code === 0 && same(e.argv, ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', IDS.sol,
+       '-c', 'model_reasoning_effort=high', '-c', 'mcp_servers={"writer"={enabled=false}}', PROMPT]), show(e));
+  const none = ask(['--family', 'sol']);
+  ok('no server configured: no override, one mcp list', none.code === 0 && same(none.argv, CODEX(IDS.sol, '')) && none.mcp.length === 1, show(none));
+  const ign = ask(['--family', 'sol'], { env: { STUB_MCP: J(['writer']), STUB_MCP_IGNORE: '1' } });
+  ok('a server still enabled under the override: exit 4, codex never run',
+     ign.code === 4 && ign.calls.length === 0 && /codex MCP servers still enabled under the override: writer — codex was not run/.test(ign.err), show(ign));
+  const fl = ask(['--family', 'sol'], { env: { STUB_MCP_FAIL: '1' } });
+  ok('mcp list fails: exit 4, codex never run', fl.code === 4 && fl.calls.length === 0 && /codex mcp list failed: mcp: boom/.test(fl.err), show(fl));
+  const cl = ask(['--family', 'fable'], { env: { STUB_MCP: J(['writer']) } });
+  const gr = ask(['--family', 'grok'], { env: { STUB_MCP: J(['writer']) } });
+  ok('claude and grok never run mcp list', cl.code === 0 && gr.code === 0 && cl.mcp.length === 0 && gr.mcp.length === 0, show(cl));
+}
+
+console.log('\nask-model: grok --investigate may run the shell');
+{
+  const g = ask(['--family', 'grok', '--investigate', '--cwd', WORK]);
+  ok('exact argv: the shell tool, the shell allowed, the read tools and MCP denial kept',
+     g.code === 0 && same(g.argv, ['-p', PROMPT, '-m', IDS.grok, '--cwd', WORK, '--tools', 'read_file,list_dir,grep,run_terminal_cmd',
+       '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool', '--allow', 'Bash', '--disable-web-search', '--no-subagents',
+       '--max-turns', '40', '--output-format', 'json']), show(g));
+  const ro = ask(['--family', 'grok', '--cwd', WORK]);
+  ok('read-only allows nothing', ro.code === 0 && !ro.argv.includes('--allow'), show(ro));
+  const refused = 'permission required: Bash ls was not run, as a headless run cannot ask for approval';
+  const p = ask(['--family', 'grok', '--investigate', '--cwd', WORK], { env: { STUB_STDERR: `a note grok printed\n${refused}` } });
+  ok('a permission grok refused (it still exits 0) is passed on to stderr, and only that line',
+     p.code === 0 && p.err.includes(`ask-model: grok: ${refused}\n`) && !p.err.includes('a note grok printed'), show(p));
+}
+
+console.log('\nask-model: grok must report the resolved id');
+{
+  const s2 = ask(['--family', 'grok'], { env: { STUB_MODE: 'sibling' } });
+  ok('another grok model in modelUsage → exit 2, no answer', s2.code === 2 && s2.out === '' && /grok-sibling-stub/.test(s2.err) && s2.err.includes(IDS.grok), show(s2));
+}
+
+console.log('\nask-model: a chmod under --investigate');
+{
+  const dirty = path.join(WORK, 'dirty.txt');
+  const ch = ask(['--family', 'sol', '--investigate', '--cwd', WORK], { env: { STUB_CHMOD: 'dirty.txt' } });
+  ok('a mode change to an already-dirty file: exit 5, the file named', ch.code === 5 && /\n {2}dirty\.txt\n/.test(ch.err) && (fs.statSync(dirty).mode & 0o111) !== 0, show(ch));
+  fs.chmodSync(dirty, 0o644);
+  resetWork();
+}
+
+console.log('\nask-model: the installed model-id --install restores ask-model');
+{
+  const home = mk('home-reinstall');
+  const env = { HOME: home, PATH: SYSTEM.join(':') };
+  const first = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'model-id.mjs'), '--install'], { encoding: 'utf8', env });
+  const studio = path.join(home, '.agent-config-studio');
+  const launcher = path.join(studio, 'bin', 'ask-model');
+  const link = path.join(home, '.local', 'bin', 'ask-model');
+  const installed = path.join(studio, 'resolver', 'bin', 'ask-model.mjs');
+  fs.rmSync(launcher);
+  fs.rmSync(link);
+  const again = spawnSync(process.execPath, [path.join(studio, 'resolver', 'bin', 'model-id.mjs'), '--install'], { encoding: 'utf8', env });
+  ok('a re-run of the installed copy puts the launcher and the link back',
+     first.status === 0 && again.status === 0 && fs.existsSync(launcher) && fs.readlinkSync(link) === launcher && /linked {4}~\/\.local\/bin\/ask-model/.test(again.stdout), J(again));
+  ok('…its ask-model unchanged', fs.readFileSync(installed).equals(fs.readFileSync(ASK)));
+  fs.writeFileSync(LOG, '');
+  const sh = spawnSync('/bin/sh', ['-c', `ask-model --family fable --prompt-file '${PF}'`], {
+    encoding: 'utf8', env: { HOME: home, PATH: [STUBS, ...SYSTEM, path.join(home, '.local', 'bin')].join(':'), STUB_LOG: LOG },
+  });
+  ok('…and it runs', sh.status === 0 && sh.stdout === `answer from ${IDS.fable}\n`, J(sh));
 }
 
 console.log('\nask-model: acs names a stale copy');
