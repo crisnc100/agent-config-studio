@@ -47,28 +47,17 @@ case "$GATE" in
   grade)  eval "$(model-id --role judge || echo 'echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1')" ;;
 esac
 PROMPT_FILE="builds/<slug>/$GATE-prompt.md"     # bounce-prompt.md or grade-prompt.md: each gate reads its own
-# eval sets family=…, id=…, effort=… (and alt=…, the second opinion). An unresolved role prints an id
-# every CLI rejects: stop and fix the role in ACS → Models → Roles rather than running something else.
+# eval sets family=…, id=…, effort=… (and alt=…, the second opinion): the Grade contract's family and model id,
+# and the vendors (the id's prefix) the grader swap compares.
 ```
-Write the gate's prompt (below) to `$PROMPT_FILE`, then run the command for the id's vendor:
-
-- `gpt-…` — a fresh codex session with no build context:
-  ```bash
-  flag=(); [ -z "$effort" ] || flag=(-c "model_reasoning_effort=$effort")
-  codex exec --skip-git-repo-check --sandbox read-only -m "$id" "${flag[@]}" \
-    "$(cat "$PROMPT_FILE")" </dev/null 2>/dev/null
-  ```
-- `claude-…` — headless claude CLI:
-  ```bash
-  claude -p "$(cat "$PROMPT_FILE")" --model "$id" --effort "$effort" \
-    --output-format json --dangerously-skip-permissions --tools Read,Grep,Glob --strict-mcp-config
-  ```
-  Parse `.result` from the JSON envelope; check `.is_error` is false and verify the model with `jq -e --arg m "$id" '.modelUsage | has($m)'`.
-- `grok-…` — read-only by tool allowlist, the same flags the review script uses:
-  ```bash
-  grok -p "$(cat "$PROMPT_FILE")" -m "$id" --reasoning-effort "$effort" --tools read_file,list_dir,grep \
-    --disallowed-tools search_tool,use_tool --deny MCPTool --disable-web-search --no-subagents
-  ```
+Write the gate's prompt (below) to `$PROMPT_FILE`, then ask — a fresh session with no build context, read-only, no MCP:
+```bash
+ask-model --role advisor --prompt-file "$PROMPT_FILE"     # GATE=bounce
+ask-model --role judge --prompt-file "$PROMPT_FILE"       # GATE=grade
+ask-model --family <alt> --effort <altEffort> --prompt-file "$PROMPT_FILE"   # GATE=grade, swapped to the advisor role's second opinion (alt, altEffort: model-id --role advisor --json)
+```
+ask-model picks the CLI from the model id and checks the answering model where the CLI reports one. A role or family
+that does not resolve exits 64: stop and fix the role in ACS → Models → Roles rather than running something else.
 
 **Bounce prompt** (critique a plan, no code yet): "Read plan.md and context.md in this folder. You are an adversarial reviewer with no attachment to this plan. Attack it: what's missing, what will break, what edge cases and failure modes did the author miss, where is the acceptance bar too weak to catch a bad build? Be concrete. List the gaps and why each matters; do not rewrite the plan."
 
@@ -80,9 +69,7 @@ Write the gate's prompt (below) to `$PROMPT_FILE`, then run the command for the 
 
 family, model and non-empty criteria are required. Optional top-level keys: vendor (codex, claude or grok), effort and findings; vendor is derived from the model id when absent. Omit findings or use [] for no extra bugs; file and line are optional. Every criterion and finding requires evidence. Only PASS or FAIL verdicts. Finding scores are likelihood/impact integers 1–10, protected boolean and nonempty trigger; optional severity is ignored comparison text. Missing or invalid scores are unscored and block as MEDIUM (HIGH if protected), without a grader re-ask; no unknown keys and no quotes to locate. Keep criterion ids and text unchanged in a recheck and include only original FAIL criteria. New recheck findings are scored with the same rubric and their severity is derived. Save the returned JSON, including evidence for every criterion.
 
-**The claude flags are load-bearing.** `--tools Read,Grep,Glob` (not `--allowedTools`) plus `--strict-mcp-config` (no MCP tools, which `--tools` does not cover) is what holds the gate read-only — it removes Write/Edit from existence rather than merely gating them, which is what makes skipping the permission prompts safe. A headless `claude -p` can't show a prompt, so without the skip flag a repo deny-rule or hook blocks a read silently and the gate grades files it never opened.
-
-**Check `.is_error` is false before trusting `.result`, and never branch on `$?`** — piping the output masks a failure as exit 0. A call that never reached the API returns `API Error: Unable to connect to API (ENOTFOUND)`, which means Codex's sandbox denied it network (`network_access` under `[sandbox_workspace_write]` in `~/.codex/config.toml`, or run the call escalated). That is a gate that **did not run**: fix it, use the other judgment family, or report NOT RUN — never report it as a pass.
+**Branch on ask-model's exit code, and never pipe the call** — piping the output masks a failure as exit 0. 0 is the verdict; 2 means another model answered (not a gate result); 3 means the gate's CLI is not installed (use the other judgment family at once); 4 means the call failed. A call that never reached the API fails with `API Error: Unable to connect to API (ENOTFOUND)` on stderr, which means Codex's sandbox denied it network (`network_access` under `[sandbox_workspace_write]` in `~/.codex/config.toml`, or run the call escalated). That is a gate that **did not run**: fix it, use the other judgment family, or report NOT RUN — never report it as a pass.
 
 ## Record and close (orchestrator only)
 

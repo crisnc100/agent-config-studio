@@ -90,7 +90,7 @@ The gate model is called at the **gates** (once after the plan is drafted, once 
 
 ### Exact commands
 
-No command names a model. Resolve the family, its id and its effort from the role; the CLI follows the id's prefix: `claude-…` runs on `claude`, `gpt-…` on `codex`, `grok-…` on `grok`.
+No command names a model. Resolve the family, its id and its effort from the role; the CLI follows the id's prefix: `claude-…` runs on `claude`, `gpt-…` on `codex`, `grok-…` on `grok`. The gates go through `ask-model`, which does both; the role lookups below give the grader swap its vendors (the id's prefix) and the Grade contract its family and model id.
 
 ```
 eval "$(model-id --role advisor || echo 'echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1')"   # Bounce: sets family=…, id=…, effort=… (alt=… is the second opinion)
@@ -99,27 +99,15 @@ BUILDER=<family>                    # `model-id --role builder`, or the family t
 EFFORT=<effort>                     # the effort the user named; none named: EFFORT= and resolve it below
 ```
 
-Verdict comes back on **stdout**; session logs go to **stderr**. Capture stdout. A role that does not resolve prints an unresolved id every CLI rejects — stop and fix the role in ACS → Models → Roles rather than running something else.
+Verdict comes back on **stdout**; ask-model's one status line goes to **stderr**. Capture stdout. A role that does not resolve exits 64 — stop and fix the role in ACS → Models → Roles rather than running something else.
 
-**Gate on the codex CLI** (read-only, cannot edit anything):
+**The gate command** — read-only, headless, never an in-session subagent (which may run on a different model). Write the gate's prompt (below) to its file first:
 ```
-flag=(); [ -z "$effort" ] || flag=(-c "model_reasoning_effort=$effort")
-codex exec --skip-git-repo-check --sandbox read-only -m "$id" "${flag[@]}" \
-  "<gate prompt>" </dev/null 2>/dev/null
+ask-model --role advisor --prompt-file builds/<slug>/bounce-prompt.md     # Bounce
+ask-model --role judge --prompt-file builds/<slug>/grade-prompt.md        # Grade
+ask-model --family <alt> --effort <altEffort> --prompt-file builds/<slug>/grade-prompt.md   # Grade on the advisor role's second opinion, when the grader swap picks it (alt, altEffort: model-id --role advisor --json)
 ```
-
-**Gate on the claude CLI** (headless, never an in-session subagent, which may run on a different model):
-```
-claude -p --model "$id" --effort "$effort" \
-  --tools Read,Grep,Glob --strict-mcp-config --output-format json "<gate prompt>"
-```
-Verify the right model ran: `jq -e --arg m "$id" '.modelUsage | has($m)'`.
-
-**Gate on the grok CLI** (read-only by tool allowlist, the same flags the review script uses):
-```
-grok -p "<gate prompt>" -m "$id" --reasoning-effort "$effort" --tools read_file,list_dir,grep \
-  --disallowed-tools search_tool,use_tool --deny MCPTool --disable-web-search --no-subagents
-```
+ask-model picks the CLI from the id, keeps it read-only with no MCP, and checks the answering model where the CLI reports one. Branch on its exit code: 0 the verdict; 2 another model answered — not a gate result; 3 the grader's CLI is not installed — use the other judgment family at once and say which ran; 4 the call failed, so the gate did not run — fix it, use the other judgment family, or report it NOT RUN, never a pass.
 
 **Bounce prompt** (critique a plan, no code yet): "Read plan.md and context.md in this folder. You are an adversarial reviewer with no attachment to this plan. Attack it: what is missing, what will break, what edge cases and failure modes did the author miss, and where is the acceptance bar too weak to catch a bad build? Be concrete. Do not rewrite the plan; list the gaps and why each matters."
 
@@ -166,7 +154,7 @@ codex exec resume <thread_id> --skip-git-repo-check -m "$(model-id "$BUILDER" ||
 
 family, model and a non-empty criteria array are required. vendor (codex, claude or grok) and effort are optional; vendor is derived from the model id when absent. findings is optional; omit it or use [] when there are no extra bugs. Only id, criterion, verdict and evidence belong in each criterion; verdict is exactly PASS or FAIL. A finding has likelihood and impact (integers 1–10), protected (boolean), trigger (nonempty text), issue and evidence; file and line are optional. severity is optional comparison text, stored as reviewerSeverity and ignored when deriving severity. Missing or invalid scores are logged unscored and block as MEDIUM (HIGH when protected is exactly true), without a grader re-ask. Evidence is required for every criterion and finding. No unknown keys and no quotes to locate. Keep criterion ids and text unchanged in the single recheck, which covers only the original FAIL criteria. New recheck findings receive scores under the same rubric and the script derives their severity; existing finding severity never changes in triage.
 
-`codex review` does NOT accept `-m`, and its positional-prompt parsing is unreliable, so use `codex exec` for a codex-CLI grade.
+`codex review` does NOT accept `-m`, and its positional-prompt parsing is unreliable, so a codex-CLI grade goes through ask-model like any other.
 The verdict prints on stdout; logs go to stderr. (A read-only sandbox can't run a `verify.sh` that writes temp files, which is fine: the deterministic checks already ran; the grade is the independent reasoned review on top.)
 
 **Record and close (orchestrator only).** Use the repo's scripts/review.mjs, otherwise the shared runtime. Save the Grade's JSON to builds/<slug>/grade.json and record it against the same committed HEAD. Commit fixes before the one failed-criterion recheck, then record that JSON and close the original Grade:
@@ -204,7 +192,7 @@ Work in a folder for the task (e.g. `builds/<slug>/`). Files hold state so each 
 
 ## Hard rules
 
-- **The verifier never edits.** Every gate call — Bounce and Grade — is read-only: `--sandbox read-only` on codex, read-only tools on claude and grok. The grader observes; it does not fix. `--sandbox workspace-write` appears exactly once in a run: the phase-1 Build call on the codex lane (later phases inherit it via `resume`). If you are writing `workspace-write` on a Bounce or a Grade, you have wired the loop wrong.
+- **The verifier never edits.** Every gate call — Bounce and Grade — is read-only: an `ask-model` call, never with `--investigate`. The grader observes; it does not fix. `--sandbox workspace-write` appears exactly once in a run: the phase-1 Build call on the codex lane (later phases inherit it via `resume`). If you are writing `workspace-write` on a Bounce or a Grade, you have wired the loop wrong.
 - **The builder never grades its own work.** The implementer subagent builds; a judgment-role model grades — cross-vendor preferred, same-vendor allowed per the grader swap rule, and the Judge handoff says which grader ran. The orchestrator that guided the build is not the sole grader either; self-critique is the weak version the whole design avoids.
 - **Never delete, skip, weaken, or narrow tests or checks to make a criterion pass.** A gamed check is a failed build, not a passed one. If a check seems wrong, surface it to the driver instead of dodging it.
 - **Deterministic checks first, the gate model second.** The builder loops against fast local checks; the gate model is the reasoned check on top, called sparingly to control cost.

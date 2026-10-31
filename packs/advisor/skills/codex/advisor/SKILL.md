@@ -58,60 +58,56 @@ The advisor has zero session context. A thin brief produces generic advice; do n
 ```bash
 METHOD=advisor                                  # advisor | second | the family the user named
 case "$METHOD" in
-  advisor) eval "$(model-id --role advisor || echo 'echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1')" ;;   # sets family=…, id=…, effort=…
+  advisor) who=(--role advisor) ;;
   second)  role=$(model-id --role advisor --json || exit 1) || { echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1; }
-           family=$(printf '%s' "$role" | jq -r .alt); id=$(printf '%s' "$role" | jq -r .altId)
-           effort=$(printf '%s' "$role" | jq -r .altEffort) ;;
-  *)       family=$METHOD; id=$(model-id "$family" || echo "MODEL-ID-UNRESOLVED-$family")
-           effort=$(model-id --flavor "$family" --json | jq -r '.flavor.effort // empty') ;;
+           who=(--family "$(printf '%s' "$role" | jq -r .alt)" --effort "$(printf '%s' "$role" | jq -r .altEffort)") ;;
+  *)       who=(--family "$METHOD") ;;
 esac
-# An empty effort means none is set: the commands below leave the effort flag out, never pass it empty.
 BRIEF="$PWD/advisor-brief.md"                                      # absolute path
 CONTRACT="${CODEX_HOME:-$HOME/.codex}/skills/advisor/advisor-contract.md"
-PROMPT="Read $BRIEF, then the READ FIRST files it names. $(cat "$CONTRACT")"
+PROMPT_FILE="$PWD/advisor-prompt.md"
+{ printf 'Read %s, then the READ FIRST files it names. ' "$BRIEF"; cat "$CONTRACT"; } > "$PROMPT_FILE"
+ask-model "${who[@]}" --investigate --prompt-file "$PROMPT_FILE"
 ```
-An unresolved role prints an id every CLI rejects: stop and tell the user to set the `advisor` role in ACS → Models →
-Roles. The CLI follows the id's prefix.
+`ask-model` picks the CLI from the model id (a fresh session, no seat context), keeps MCP out, and checks the
+answering model where the CLI reports one. `--investigate` lets the advisor run commands to check its points; it still
+must not change anything. The advice is on stdout; one stderr line names the family, id, effort and mode. Branch on
+the exit code:
 
-**`claude-…`** — headless claude CLI. The flags below are load-bearing:
+- **0** — the advice. Take it to Step 3.
+- **2** — another model answered. Abort, tell the user, and never present another model's output as the advisor's.
+- **3** — that family's CLI is not installed: report the advice as **NOT RUN** and offer the other method.
+- **4** — the call failed; the reason is on stderr (see the sandbox gate below). The advisor did not run.
+- **5** — files changed during the call. ask-model names them on stderr and reverts nothing: tell the user which
+  files changed, and never revert them yourself. The advice is still printed.
+- **64** — the role or family does not resolve: stop and tell the user to set the `advisor` role in ACS → Models →
+  Roles.
 
+When the stderr line names a `gpt-…` id, the advisor shares this seat's vendor: say so in one line with the verdict.
+
+For `both`, run each advisor as its own background job, with its output kept outside the repo (a file the other job
+writes there would show as changed):
 ```bash
-flag=(); [ -z "$effort" ] || flag=(--effort "$effort")
-claude -p "$PROMPT" --model "$id" "${flag[@]}" \
-  --dangerously-skip-permissions --tools Read,Grep,Glob --strict-mcp-config \
-  --output-format json > advisor-out.json
-
-jq -r '.is_error'                              advisor-out.json   # MUST be false
-jq -e --arg m "$id" '.modelUsage | has($m)'    advisor-out.json   # MUST print true (exit 0)
-jq -r '.result'                                advisor-out.json   # the advisory text
+OUT=$(mktemp -d "${TMPDIR:-/tmp}/advisor.XXXXXX")
+( ask-model --role advisor --investigate --prompt-file "$PROMPT_FILE" > "$OUT/advisor.out" 2> "$OUT/advisor.err"; echo $? > "$OUT/advisor.exit" ) &
+( ask-model "${who[@]}" --investigate --prompt-file "$PROMPT_FILE" > "$OUT/second.out" 2> "$OUT/second.err"; echo $? > "$OUT/second.exit" ) &   # who as for second
+wait
 ```
-
-- `--dangerously-skip-permissions` — a headless `claude -p` cannot show a permission prompt, so anything the
-  permission layer gates gets silently denied instead of asked about. A repo's `.claude/settings.json` deny rule, a
-  hook, or a path outside the trusted workspace can block a read — and the advisor then hands back confident advice
-  about files it never opened. This flag removes that whole class of silent failure; `--tools` below is what makes
-  removing it safe.
-- `--tools Read,Grep,Glob` is what actually keeps it read-only, and it holds *even under skip-permissions*.
-  `--allowedTools` only pre-approves tools; `--tools` restricts which exist. **Never widen this list.** That pairing —
-  bypass the prompts, remove the dangerous tools — is what makes the dangerous-sounding flag safe here.
-- `--strict-mcp-config` (with no `--mcp-config`) — `--tools` limits built-in tools only; this drops every configured
-  MCP tool, so none can write while the prompts are skipped.
-
-**Prove the model.** If the `jq -e` check fails, the call ran on the wrong model — abort, tell the user, and never
-present another model's output as the advisor's.
+Each `.err` file's first line names the family that answered: label each answer with it. A file changed during
+`both` shows in both reports; say so rather than guessing which advisor changed it.
 
 ### The sandbox gate — read this before the first call fails
 
-Codex's own sandbox blocks network for the commands it runs, and `claude` is one of those commands. Under the
-default `workspace-write` sandbox the advisor call **fails**, with this exact signature:
+Codex's own sandbox blocks network for the commands it runs, and `ask-model` (with the CLI it starts) is one of those
+commands. Under the default `workspace-write` sandbox the advisor call **fails** (exit 4), with this signature on
+stderr for a claude advisor:
 
 ```
-IS_ERROR=true
-RESULT=API Error: Unable to connect to API (ENOTFOUND)
+ask-model: claude returned an error: API Error: Unable to connect to API (ENOTFOUND)
 ```
 
-**Exit status is not a reliable tripwire** — piping the output (e.g. `| head`) masks the failure as exit 0. Always
-branch on `.is_error`, never on `$?`.
+**Branch on ask-model's exit code, and never pipe the call** — piping the output (e.g. `| head`) masks the failure
+as exit 0.
 
 When you see ENOTFOUND, the advisor did not run. Do not report its "advice." Either:
 1. Re-run the command with **escalated permissions** (unsandboxed) — the least-privilege path; Codex asks the user
@@ -120,21 +116,6 @@ When you see ENOTFOUND, the advisor did not run. Do not report its "advice." Eit
 
 If `~/.codex/config.toml` sets `[sandbox_workspace_write] network_access = true`, the call just works with no
 escalation.
-
-**`gpt-…`** — a fresh session, no seat context:
-```bash
-flag=(); [ -z "$effort" ] || flag=(-c "model_reasoning_effort=$effort")
-codex exec --skip-git-repo-check --sandbox read-only -m "$id" \
-  "${flag[@]}" "$PROMPT" </dev/null 2>/dev/null
-```
-When this shares this seat's vendor, say so in one line with the verdict.
-
-**`grok-…`** — read-only by tool allowlist, the same flags the review script uses:
-```bash
-flag=(); [ -z "$effort" ] || flag=(--reasoning-effort "$effort")
-grok -p "$PROMPT" -m "$id" "${flag[@]}" --tools read_file,list_dir,grep \
-  --disallowed-tools search_tool,use_tool --deny MCPTool --disable-web-search --no-subagents
-```
 
 ## The advisor contract (embedded verbatim in the prompt)
 
@@ -176,11 +157,10 @@ The seat is not a courier. Before showing the user anything:
 
 - **Orchestrator-only.** Implementers and reviewers never invoke this skill. An implementer unsure of direction uses
   its callback contract; the seat decides whether a consult is worth buying. Nothing routes around the seat.
-- **The advisor never edits.** `--sandbox read-only` for codex; `--tools Read,Grep,Glob` for claude; the read-only
-  allowlist for grok. The skip-permissions flag is paired with that tool restriction, always — one without the other
-  is a bug.
-- **Prove the model, prove the run.** Every claude call verifies `is_error` is false AND `modelUsage` contains the
-  resolved id. A silent downgrade or an ENOTFOUND is a failed call, not an answer — report it, don't relabel it.
+- **The advisor never edits.** It may read and run commands (`--investigate`); ask-model names any file that
+  changed during the call (exit 5). Report those to the user; never revert them.
+- **Prove the model, prove the run.** ask-model checks both: exit 2 is another model, exit 4 a failed call. A silent
+  downgrade or an ENOTFOUND is a failed call, not an answer — report it, don't relabel it.
 - **Same-vendor advice is flagged, never silent.** If the advisor shares this seat's vendor, the user hears that with
   the verdict.
 - **Questions pass the lookup test twice** — once by the advisor, once by the seat. Findable answers never reach the
