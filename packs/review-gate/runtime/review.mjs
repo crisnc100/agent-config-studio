@@ -1000,6 +1000,13 @@ function scoreFinding(finding, legacyAllowed = true) {
   const band = derivedSeverity(finding)
   return { ...plain, ...comparison, risk: finding.likelihood * finding.impact, severity: band, filed: band === 'low' }
 }
+// Every finding shown to the owner carries its numbers, never the bare word: "LOW 6/100 (likelihood 2/10 × impact 3/10)".
+function scoreText(f) {
+  const band = String(f.severity || '?').toUpperCase()
+  if (Number.isInteger(f.likelihood) && Number.isInteger(f.impact) && Number.isInteger(f.risk))
+    return `${band} ${f.risk}/100 (likelihood ${f.likelihood}/10 × impact ${f.impact}/10)`
+  return Number.isInteger(f.risk) ? `${band} ${f.risk}/100` : `${band} unscored`
+}
 function publicFinding(f) {
   if (!isLegacy(f)) return f
   const { unscored, reviewerSeverity, ...legacy } = f
@@ -1520,8 +1527,9 @@ function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTr
   const head = sh('git', ['rev-parse', 'HEAD'])
   const item = (f, extra = '') =>
     `- [${f.file || '?'}:${f.line || '?'}] ${String(f.issue).replace(/\r?\n|$/, (end) => ` (id ${f.id})${end}`)}` +
+    `\n  Score: ${scoreText(f)}${isFiled(f) ? ' — filed, no close status needed' : ''}` +
     `${f.quote ? `\n  > ${String(f.quote).split('\n').join('\n  > ')}` : ''}` +
-    `${f.suggestion ? `\n  → ${f.suggestion}` : ''}${isFiled(f) ? `\n  Filed: risk ${f.risk}` : ''}` +
+    `${f.suggestion ? `\n  → ${f.suggestion}` : ''}` +
     `${f[WHERE]?.ambiguous ? `\n  Path ambiguous: the quote is in both ${f[WHERE].ambiguous.join(' and ')}, so this finding authorizes no file at close` : ''}${extra}`
   const bySev = (s) =>
     findings
@@ -1561,6 +1569,20 @@ function loggedReview(entries, id) {
 const headNow = () => sh('git', ['rev-parse', 'HEAD'])
 const repoIdentity = () => realpathSync(resolve(sh('git', ['rev-parse', '--git-common-dir'])))
 const isAncestor = (a, b) => spawnSync('git', ['merge-base', '--is-ancestor', a, b]).status === 0
+// A commit's tree id, or '' when the commit is not in this repository.
+const treeOf = (rev) => sh('git', ['rev-parse', '--verify', '--quiet', `${rev}^{tree}`], { allowFailure: true })
+// Tree ids for many full commit ids in one git call; a commit missing here maps to nothing.
+function treesOf(shas) {
+  const unique = [...new Set(shas.filter(fullObjectId))]
+  if (!unique.length) return new Map()
+  const r = spawnSync('git', ['cat-file', '--batch-check=%(objectname) %(objecttype)'], { input: unique.map((sha) => `${sha}^{tree}\n`).join(''), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  if (r.error || r.status !== 0) throw new Error(`git cat-file --batch-check failed: ${r.error?.message || r.stderr}`)
+  const lines = r.stdout.split('\n')
+  return new Map(unique.flatMap((sha, i) => {
+    const [id, type] = (lines[i] || '').split(' ')
+    return type === 'tree' ? [[sha, id]] : []
+  }))
+}
 // Names from git's -z output, byte for byte: never trimmed, and a name whose bytes don't round-trip through
 // UTF-8 refuses, since decoding would make it equal to another name (a 0xff byte and U+FFFD both read as U+FFFD).
 function nulNames(out, what) {
@@ -1694,12 +1716,34 @@ function selfRefuters(entries, review, finding) {
     ...entries.filter((e) => e.type === 'dispute' && e.review === review.id && e.finding === finding.id && e.verdict === 'REFUTED').map((e) => e.verifier)]
   return [...new Set(verdicts.filter((family) => family && own.includes(family)))]
 }
+// Deferral files what the one fix check or the one recheck left: only that check's own findings (x…, r…), or a Grade
+// criterion still failing in its recheck. It needs a reason, keeps the reviewer's score, and an original finding
+// can't be deferred.
+function validateDeferral(entries, review, f, status) {
+  const later = review.kind === 'fix-check' || review.kind === 'recheck'
+  if (!later && !(review.kind === 'grade' && f.criterionId))
+    throw new Error(`Finding ${f.id} is from the original ${review.kind === 'grade' ? 'Grade' : 'review'}; only findings a fix check or recheck raised, or a criterion still failing after its recheck, may be deferred`)
+  if (Object.keys(status).some((key) => !['status', 'reason', 'fix'].includes(key)))
+    throw new Error(`Unknown status field for ${f.id}; reviewer severity cannot be changed`)
+  if (typeof status.reason !== 'string' || !status.reason.trim()) throw new Error(`Deferred ${f.id} requires a nonempty reason`)
+  if (Object.hasOwn(status, 'fix') && (typeof status.fix !== 'string' || !status.fix.trim())) throw new Error(`Deferred ${f.id} fix idea must be nonempty text when given`)
+  if (later) return
+  const recheck = entries.find((e) => e.type === 'review' && e.kind === 'recheck' && e.review === review.id)
+  const criterion = recheck?.criteria?.find((c) => c.id === f.criterionId)
+  if (!criterion) throw new Error(`Deferred criterion ${f.id} needs its one recheck first`)
+  if (criterion.verdict !== 'FAIL') throw new Error(`Criterion ${f.id} passed its recheck; mark it fixed rather than deferred`)
+}
 function validateStatuses(entries, review, statuses) {
   for (const f of review.findingDetails) {
     const status = statuses[f.id]
     const rules = resolutionRules(review, f)
     if (!status && !rules.status) continue
-    if (!status || !['fixed', 'rejected'].includes(status.status)) throw new Error(`Finding ${f.id} needs a fixed or rejected status`)
+    if (status?.status === 'deferred') {
+      validateDeferral(entries, review, f, status)
+      continue
+    }
+    if (!status || !['fixed', 'rejected'].includes(status.status))
+      throw new Error(`Finding ${f.id} needs a fixed or rejected status${review.kind === 'fix-check' || review.kind === 'recheck' ? ', or deferred with a reason' : ''}`)
     if (Object.keys(status).some((key) => !['status', 'reason', 'evidence', 'refutedBy'].includes(key)))
       throw new Error(`Unknown status field for ${f.id}; reviewer severity cannot be changed`)
     if (Object.hasOwn(status, 'refutedBy') && !refuted(entries, review, f, status.refutedBy))
@@ -1738,7 +1782,16 @@ function closeReview(id) {
   const review = loggedReview(entries, id)
   if (review.kind === 'fix-check' || review.kind === 'recheck') throw new Error('Close the original review, including its fix-check or recheck statuses')
   const head = headNow()
-  if (!isAncestor(review.head, head)) throw new Error('HEAD is neither the reviewed commit nor a descendant')
+  const check = entries.find((e) => e.type === 'review' && e.kind === 'fix-check' && e.review === id)
+  const recheck = entries.find((e) => e.type === 'review' && e.kind === 'recheck' && e.review === id)
+  // A history rewrite (squash, split, rebase) keeps the review, fix check and recheck when HEAD has the exact tree of
+  // one of their heads that it no longer descends from: the close is checked at that head and logged as carried.
+  const behind = [check, recheck, review].filter(Boolean).filter((r) => !isAncestor(r.head, head))
+  const tree = behind.length ? treeOf(head) : ''
+  const source = behind.find((r) => treeOf(r.head) === tree)
+  const at = source ? source.head : head
+  const carried = source && { from: source.head, kind: source.kind || 'review', record: source.id, tree }
+  if (!isAncestor(review.head, at)) throw new Error('HEAD is neither the reviewed commit nor a descendant, and its tree is not the exact tree of the review, fix-check or recheck head; a rewritten branch with any other tree needs a fresh review')
   const statusPath = option('--status')
   if (!statusPath) throw new Error('--close requires --status <file.json>')
   const statuses = JSON.parse(readFileSync(statusPath, 'utf8'))
@@ -1746,23 +1799,21 @@ function closeReview(id) {
   // A sliced review answers for the files it recorded, plus anything its paths match now (stricter only);
   // changes outside both belong to other slices, and a new file in no slice's list blocks at the gate.
   const paths = sliceOf(review)
-  const files = paths ? slicedScope(review, touchedBetween(review.head, head, paths), touchedBetween(review.head, head))
-    : touchedBetween(review.head, head)
+  const files = paths ? slicedScope(review, touchedBetween(review.head, at, paths), touchedBetween(review.head, at))
+    : touchedBetween(review.head, at)
   const command = option('--test-cmd') || VERIFY_CMD
   const noTests = option('--no-tests')
   if (noTests !== null && !noTests.trim()) throw new Error('--no-tests requires a nonempty reason')
   if (command && noTests !== null) throw new Error('Use a test command or --no-tests, not both')
   if (!command && noTests === null) throw new Error('No test command configured; use --test-cmd or --no-tests "reason"')
-  const check = entries.find((e) => e.type === 'review' && e.kind === 'fix-check' && e.review === id)
-  const recheck = entries.find((e) => e.type === 'review' && e.kind === 'recheck' && e.review === id)
-  if (recheck && !isAncestor(recheck.head, head)) throw new Error('Closing HEAD must include the recheck head')
+  if (recheck && !isAncestor(recheck.head, at)) throw new Error('Closing HEAD must include the recheck head')
   // A fixed x… finding's fix lands after its fix check: those commits may touch only the paths its fixed findings
   // recorded (in the slice, when sliced), and the full tests run below. Nothing re-runs a model.
-  if (check && check.head !== head) {
-    if (!isAncestor(check.head, head))
+  if (check && check.head !== at) {
+    if (!isAncestor(check.head, at))
       throw new Error(`Fix check head ${check.head} is not an ancestor of closing HEAD (the branch was rewritten after it). Unresolved work goes to the operator, no third model pass`)
     const named = recordedPaths([check], statuses)
-    const since = paths ? slicedScope(review, touchedBetween(check.head, head, paths), touchedBetween(check.head, head)) : touchedBetween(check.head, head)
+    const since = paths ? slicedScope(review, touchedBetween(check.head, at, paths), touchedBetween(check.head, at)) : touchedBetween(check.head, at)
     const unnamed = since.filter((p) => !named.has(p))
     if (unnamed.length) throw new Error(`Fix check head must equal closing HEAD, or the commits after it may only touch files named by its fixed findings: ${unnamed.join(', ')}. Unresolved work goes to the operator, no third model pass`)
   }
@@ -1772,8 +1823,10 @@ function closeReview(id) {
   for (const key of Object.keys(statuses)) if (!ids.has(key)) throw new Error(`Unknown finding status key: ${key}`)
   for (const r of reviews) validateStatuses(entries, r, statuses)
   const fixedFiles = recordedPaths(reviews, statuses)
-  if (review.kind === 'grade' && recheck && review.findingDetails.some((f) => f.criterionId && statuses[f.id]?.status === 'fixed' &&
-    recheck.criteria.some((c) => c.id === f.criterionId && c.verdict === 'PASS'))) {
+  // The single recheck graded the fix round's files: a criterion fixed on its PASS, or deferred after its FAIL, covers them.
+  const rechecked = (f, verdict) => recheck.criteria.some((c) => c.id === f.criterionId && c.verdict === verdict)
+  if (review.kind === 'grade' && recheck && review.findingDetails.some((f) => f.criterionId &&
+    (statuses[f.id]?.status === 'fixed' && rechecked(f, 'PASS') || statuses[f.id]?.status === 'deferred' && rechecked(f, 'FAIL')))) {
     for (const path of filesBetween(review.head, recheck.head)) fixedFiles.add(path)
   }
   const outOfScope = files.filter((p) => !fixedFiles.has(p) && !isTestFile(p) && !p.startsWith('builds/'))
@@ -1786,8 +1839,10 @@ function closeReview(id) {
   requireClean()
   if (headNow() !== head) throw new Error('HEAD changed while tests ran')
   appendLog({ type: 'close', ts: new Date().toISOString(), review: id, closeHead: head, statuses, outOfScope,
-    status: outOfScope.length ? 'partial' : 'complete', tests, ...(noTests !== null && { noTests }), ...(check && { fixCheck: check.id }), ...(recheck && { recheck: recheck.id }) })
-  console.log(`✓ Review ${id} closed (${outOfScope.length ? 'partial' : 'complete'}) at ${head}${paths ? ` for paths ${paths.join(', ')}` : ''}`)
+    status: outOfScope.length ? 'partial' : 'complete', tests, ...(noTests !== null && { noTests }), ...(check && { fixCheck: check.id }), ...(recheck && { recheck: recheck.id }),
+    ...(carried && { carried }) })
+  console.log(`✓ Review ${id} closed (${outOfScope.length ? 'partial' : 'complete'}) at ${head}${paths ? ` for paths ${paths.join(', ')}` : ''}` +
+    (carried ? `, carried from the ${carried.kind} head ${carried.from} (identical tree ${carried.tree})` : ''))
 }
 async function disputeFinding(id, findingId) {
   const entries = readLog()
@@ -1893,49 +1948,82 @@ function waiveFinding(id, findingId) {
   appendLog({ type: 'override', action: 'waive', ts: new Date().toISOString(), review: id, finding: findingId, reason })
   console.log(`✓ Waiver recorded for ${id}/${findingId}: ${reason}`)
 }
-function closeSummary(entries, close, head) {
-  const { review, lines } = closeLines(entries, close, head)
-  lines.push('Deferred findings', ...deferredLines(entries, review))
+// The PR body: Grade criteria deferred as not met go on top, then the close lines, then the Deferred findings
+// section, deferred HIGHs first. A tip carried over a rewrite says so.
+function closeSummary(entries, close, head, carry = null) {
+  const { review, lines } = closeLines(entries, close, head, carry)
+  const { criteria, findings } = deferredLines(entries, review)
+  lines.push('Deferred findings', ...findings)
   if (close.noTests) lines.push(`No tests: ${close.noTests}`)
-  return lines.join('\n')
+  return [...criteria, ...lines].join('\n')
 }
 // One summary for the slices that cover HEAD together, then the branch-wide deferred findings.
-function slicedSummary(entries, { slices, baseSha, closeHead }, head) {
+function slicedSummary(entries, { slices, baseSha, closeHead }, head, carry = null) {
   const lines = [`Sliced review: ${slices.length} slice(s) together cover every file changed from ${baseSha} to ${closeHead}`]
+  if (carry) lines.push(carriedLine(carry, head))
   slices.forEach(({ close, paths }, i) => {
     lines.push(`Slice ${i + 1} of ${slices.length}: ${paths.join(', ')}`, ...closeLines(entries, close, head).lines)
     if (close.noTests) lines.push(`No tests: ${close.noTests}`)
   })
-  lines.push('Deferred findings', ...deferredLines(entries, slices[0].review))
-  return lines.join('\n')
+  const { criteria, findings } = deferredLines(entries, slices[0].review)
+  lines.push('Deferred findings', ...findings)
+  return [...criteria, ...lines].join('\n')
 }
-function closeLines(entries, close, head) {
+const carriedLine = (carry, head) => `Carried: ${head} has the exact tree of ${carry.from} (${carry.tree}), which the close below covers; the history was rewritten after it`
+function closeLines(entries, close, head, carry = null) {
   const review = loggedReview(entries, close.review)
   const check = close.fixCheck && loggedReview(entries, close.fixCheck)
   const recheck = close.recheck && loggedReview(entries, close.recheck)
   const findings = [review, ...(recheck ? [recheck] : []), ...(check ? [check] : [])].flatMap((r) => r.findingDetails.map((f) => ({ ...f, review: r.id, owner: r })))
+  const count = (status) => Object.values(close.statuses).filter((s) => s?.status === status).length
   const lines = [`Reviewer: ${review.family} (${review.model})`, `Review: ${review.id}`, `HEAD: ${head}`,
-    `Counts: ${findings.length} findings; ${Object.values(close.statuses).filter((s) => s.status === 'fixed').length} fixed; ${Object.values(close.statuses).filter((s) => s.status === 'rejected').length} rejected`]
+    `Counts: ${findings.length} findings; ${count('fixed')} fixed; ${count('rejected')} rejected${count('deferred') ? `; ${count('deferred')} deferred` : ''}`]
+  if (carry) lines.push(carriedLine(carry, head))
+  if (close.carried) lines.push(`Carried at close: ${close.closeHead} has the exact tree of the ${close.carried.kind} head ${close.carried.from}`)
   for (const f of findings) {
     const status = close.statuses[f.id]
     const waiver = entries.find((e) => e.type === 'override' && e.action === 'waive' && e.review === f.review && e.finding === f.id)
     if (resolutionRules(f.owner, f).refutation && (status?.status === 'rejected' || waiver))
-      lines.push(`${f.id} ${f.severity.toUpperCase()} ${f.issue}: ${status?.reason || ''}${waiver ? `; waived: ${waiver.reason}` : ''}`)
-    if (f.status === 'unverified-quote') lines.push(`Carried unlocated ${f.id} ${f.severity.toUpperCase()} ${f.issue}: ${f.quoteCheck}`)
+      lines.push(`${f.id} ${f.severity.toUpperCase()} ${f.issue}: ${status?.reason || ''}${waiver ? `; waived: ${waiver.reason}` : ''}${f.criterionId ? '' : ` — ${scoreText(f)}`}`)
+    if (f.status === 'unverified-quote') lines.push(`Carried unlocated ${f.id} ${f.severity.toUpperCase()} ${f.issue}: ${f.quoteCheck} — ${scoreText(f)}`)
   }
   return { review, lines }
 }
+// The branch's deferred items, split for the PR body: criteria not met, and every other deferred or filed finding.
 function deferredLines(entries, review) {
-  const deferred = entries.filter((r) => r.type === 'review' && r.repoId === review.repoId && r.branch === review.branch)
-    .flatMap((r) => deferredFindings(entries, r).map(deferredLine))
-  return deferred.length ? deferred : ['none']
+  const items = deferredOrder(entries.filter((r) => r.type === 'review' && r.repoId === review.repoId && r.branch === review.branch)
+    .flatMap((r) => deferredFindings(entries, r)))
+  const criteria = items.filter((f) => f.criterionId).map(deferredLine)
+  const findings = items.filter((f) => !f.criterionId).map(deferredLine)
+  return { criteria: criteria.length ? ['Acceptance criteria not met', ...criteria] : [], findings: findings.length ? findings : ['none'] }
 }
+// PR-body order: criteria not met, then HIGH, then MEDIUM and LOW; ties keep log order.
+const DEFERRED_RANK = { high: 1, medium: 2, low: 3 }
+const deferredOrder = (items) => [...items].sort((a, b) => deferredRank(a) - deferredRank(b))
+const deferredRank = (f) => f.criterionId ? 0 : DEFERRED_RANK[f.severity] ?? 2
 function deferredLine(finding) {
-  return `${finding.id} risk ${finding.risk} ${finding.severity.toUpperCase()} ${finding.file || '?'}:${finding.line || '?'} — ${finding.issue}; Trigger: ${finding.trigger || 'trigger not recorded'}`
+  const { deferral } = finding
+  const fix = deferral && (deferral.fix || finding.suggestion)
+  const decision = deferral ? `; Deferred: ${deferral.reason}${fix ? `; Fix idea: ${fix}` : ''}` : ''
+  if (finding.criterionId)
+    return `${finding.id} criterion ${finding.criterionId} not met: ${finding.criterion}; recheck: ${finding.recheckEvidence || 'evidence not recorded'}${decision}`
+  // Filed lines keep their "risk N BAND" form, which an existing test pins exactly.
+  const score = deferral ? scoreText(finding) : `risk ${finding.risk} ${finding.severity.toUpperCase()}`
+  return `${finding.id} ${score} ${finding.file || '?'}:${finding.line || '?'} — ${finding.issue}; Trigger: ${finding.trigger || 'trigger not recorded'}${decision}`
 }
+// One review record's deferred items under its latest close: findings and criteria the close deferred, and filed
+// findings it did not fix.
 function deferredFindings(entries, review) {
   const close = entries.filter((e) => e.type === 'close' && (e.review === review.id || e.fixCheck === review.id || e.recheck === review.id)).at(-1)
-  return (review.findingDetails || []).filter((f) => isFiled(f) && close?.statuses?.[f.id]?.status !== 'fixed')
+  return (review.findingDetails || []).flatMap((f) => {
+    const status = close?.statuses?.[f.id]
+    if (status?.status === 'deferred') {
+      const recheck = f.criterionId && close.recheck && entries.find((e) => e.type === 'review' && e.id === close.recheck)
+      const evidence = recheck && recheck.criteria?.find((c) => c.id === f.criterionId)?.evidence
+      return [{ ...f, deferral: status, ...(evidence && { recheckEvidence: evidence }) }]
+    }
+    return isFiled(f) && status?.status !== 'fixed' ? [f] : []
+  })
 }
 function printDeferred() {
   const entries = readLog(), repoId = args.includes('--all') ? null : repoIdentity()
@@ -1943,7 +2031,7 @@ function printDeferred() {
     .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))
   console.log('Deferred findings')
   for (const review of reviews) {
-    for (const finding of deferredFindings(entries, review))
+    for (const finding of deferredOrder(deferredFindings(entries, review)))
       console.log(`${review.id} ${review.ts || '(date unknown)'} ${deferredLine(finding)}`)
   }
 }
@@ -2028,6 +2116,21 @@ function slicedCover(entries, tip, risk = false) {
   }
   return closest
 }
+// A rewritten tip (squash, split, rebase) is covered when it does not descend from a logged head (a close, review,
+// Grade, fix-check or recheck head) whose tree is exactly its own, and that head is covered: the review carries over.
+// Only an identical tree carries; any other rewrite needs a fresh review.
+function carriedCover(entries, tip, risk = false) {
+  const heads = entries.flatMap((e) => e.type === 'close' && e.status === 'complete' ? [e.closeHead] : e.type === 'review' ? [e.head] : []).reverse()
+  const trees = treesOf(heads), tree = treeOf(tip)
+  for (const [from, own] of trees) {
+    if (own !== tree || from === tip || isAncestor(from, tip)) continue
+    const close = coveringClose(entries, from, risk)
+    const sliced = close ? null : slicedCover(entries, from, risk)
+    if (close || sliced?.covered) return { from, tree, close, sliced: close ? null : sliced }
+  }
+  return null
+}
+const carriedSummary = (entries, carry, tip) => carry.close ? closeSummary(entries, carry.close, tip, carry) : slicedSummary(entries, carry.sliced, tip, carry)
 function uncoveredNote(sliced) {
   if (!sliced || sliced.covered) return ''
   const shown = sliced.uncovered.slice(0, 20).join(', ')
@@ -2045,8 +2148,10 @@ function printSummary() {
   const close = coveringClose(entries, head)
   if (close) return console.log(closeSummary(entries, close, head))
   const sliced = slicedCover(entries, head)
-  if (!sliced?.covered) throw new Error(`No complete close covers HEAD${legacyNote(entries)}${uncoveredNote(sliced)}`)
-  console.log(slicedSummary(entries, sliced, head))
+  if (sliced?.covered) return console.log(slicedSummary(entries, sliced, head))
+  const carry = carriedCover(entries, head)
+  if (!carry) throw new Error(`No complete close covers HEAD${legacyNote(entries)}${uncoveredNote(sliced)}`)
+  console.log(carriedSummary(entries, carry, head))
 }
 function pushRefs(input) {
   const lines = input.split('\n')
@@ -2066,7 +2171,7 @@ const exemptRef = (ref) => zeroObjectId(ref.localSha) || ref.remoteRef.startsWit
 const pushedRange = (ref) => zeroObjectId(ref.remoteSha) ? [ref.localSha, '--not', '--remotes'] : [`${ref.remoteSha}..${ref.localSha}`]
 function pushGate() {
   let input = '', refs = [], entries = [], failure
-  const summaries = [], uncovered = []
+  const summaries = [], uncovered = [], carries = []
   try {
     input = readFileSync(0, 'utf8')
     refs = pushRefs(input)
@@ -2086,11 +2191,14 @@ function pushGate() {
         const risk = commitsIn(pushedRange(ref)).some((commit) => commitPaths(commit).some((path) => matchesAny(path, RISK_PATHS)))
         const close = coveringClose(entries, tip, risk)
         const sliced = close ? null : slicedCover(entries, tip, risk)
-        if (!close && !sliced?.covered) {
+        const carry = close || sliced?.covered ? null : carriedCover(entries, tip, risk)
+        if (!close && !sliced?.covered && !carry) {
           uncovered.push(ref)
           throw new Error(`No complete ${risk ? 'code-review ' : ''}close covers tip ${tip}${legacyNote(entries)}${risk ? '; pushed commits touch riskPaths' : ''}${uncoveredNote(sliced)}`)
         }
-        summaries.push(close ? closeSummary(entries, close, tip) : slicedSummary(entries, sliced, tip))
+        if (carry) carries.push({ type: 'carried', ts: new Date().toISOString(), repoId: repoIdentity(), ref: ref.remoteRef, tip, from: carry.from, tree: carry.tree,
+          reviews: carry.close ? [carry.close.review] : carry.sliced.slices.map((s) => s.review.id) })
+        summaries.push(carry ? carriedSummary(entries, carry, tip) : close ? closeSummary(entries, close, tip) : slicedSummary(entries, sliced, tip))
       } catch (e) { failure ||= e.message }
     }
   } catch (e) { failure = e.message }
@@ -2127,6 +2235,13 @@ function pushGate() {
     }
     console.error('Run /code-review and close the review before pushing.')
     if (refused) console.error('override refused')
+    process.exitCode = 1
+    return
+  }
+  // A carried tip counts only once the carry-over is logged.
+  try { for (const entry of carries) appendLog(entry) }
+  catch (e) {
+    console.error(`Push blocked: ${e.message}`)
     process.exitCode = 1
     return
   }

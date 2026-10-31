@@ -179,9 +179,9 @@ node "$REVIEW_SCRIPT" --close <grade-id> --status builds/<slug>/status.json
 node "$REVIEW_SCRIPT" --summary
 ```
 
-Skip the recheck command when there were no failed criteria. A recheck needs no close of its own. A criterion needs a recheck PASS to be fixed; a remaining FAIL must be disputed or waived. Use the code-review skill's status-file shape and resolution commands. The close runs the whole test suite, even for a clean Grade; configure verifyCmd or pass --test-cmd, or --no-tests with a reason when there are no tests. Put --summary output in the PR body.
+Skip the recheck command when there were no failed criteria. A recheck needs no close of its own. A criterion needs a recheck PASS to be fixed; a remaining FAIL is disputed, or deferred as criterion not met with a reason (rule 4), never waived on request. Use the code-review skill's status-file shape and resolution commands. The close runs the whole test suite, even for a clean Grade; configure verifyCmd or pass --test-cmd, or --no-tests with a reason when there are no tests. Put --summary output in the PR body.
 
-**Pass limits.** One review per phase; fixes never get a full re-review. Recheck failed criteria once. Run --fix-check only when close requires it because fixes changed tests, test settings, verify scripts or riskPaths. Deal with its findings once, then a hard stop; unresolved work goes to the driver. At most two review passes per phase; risk-area /build work allows three (Grade, /code-review, fix check). Risk-area work that went through /build gets both a Grade and /code-review. Stop before exceeding the limit.
+**Pass limits.** One review per phase; fixes never get a full re-review. Recheck failed criteria once. Run --fix-check only when close requires it because fixes changed tests, test settings, verify scripts or riskPaths. Deal with its findings once (fix, reject or defer each), then a hard stop. At most two review passes per phase; risk-area /build work allows three (Grade, /code-review, fix check). Risk-area work that went through /build gets both a Grade and /code-review. Stop before exceeding the limit.
 
 ## What the driver provides
 
@@ -207,12 +207,12 @@ Work in a folder for the task (e.g. `builds/<slug>/`). Files hold state so each 
 - **The builder never grades its own work.** The implementer subagent builds; a judgment-role model grades — cross-vendor preferred, same-vendor allowed per the grader swap rule, and the Judge handoff says which grader ran. The orchestrator that guided the build is not the sole grader either; self-critique is the weak version the whole design avoids.
 - **Never delete, skip, weaken, or narrow tests or checks to make a criterion pass.** A gamed check is a failed build, not a passed one. If a check seems wrong, surface it to the driver instead of dodging it.
 - **Deterministic checks first, the gate model second.** The builder loops against fast local checks; the gate model is the reasoned check on top, called sparingly to control cost.
-- **A FAIL from Grade is not optional.** Either fix it, or surface to the driver why the criterion is wrong. Do not silently accept a FAIL.
+- **A FAIL from Grade is not optional.** Either fix it, or surface to the driver why the criterion is wrong. Do not silently accept a FAIL; after its one recheck it may only be deferred as criterion not met.
 - **Builders commit at every phase end; never push or open a PR.** The orchestrator pushes and opens the PR with the review summary; the driver alone merges. Builders never run reviews, grades or other models themselves.
 
 ## Stop condition
 
-Stop when every acceptance criterion is resolved, the deterministic checks pass, the Grade is logged and closed, and the result is handed to the driver to judge. One failed-criterion recheck; at most two review passes per phase, or three for risk-area /build work (Grade, /code-review, fix check). After dealing with fix-check findings once, hard stop. Surface unresolved criteria or a needed human decision; never declare done with an unresolved FAIL.
+Stop when every acceptance criterion is resolved, the deterministic checks pass, the Grade is logged and closed, and the result is handed to the driver to judge. One failed-criterion recheck; at most two review passes per phase, or three for risk-area /build work (Grade, /code-review, fix check). After dealing with fix-check findings once, hard stop. Surface a needed human decision; never declare done with an unresolved FAIL, and a criterion deferred after its recheck goes on top of the PR body.
 
 ## Definition of done (how we judge this skill worked)
 
@@ -226,6 +226,20 @@ If any of those is missing, the loop is not done, regardless of how finished the
 
 **In lightweight mode**, the list is shorter but not optional: the driver approved a checkable bar, the deterministic check passes with its output shown, the orchestrator read the diff and gave its take, `/code-review` ran on the committed diff, and the driver made a clean yes/no. `plan.md`, Bounce, `log.md`, and Grade are the parts lightweight mode is allowed to skip — the bar, the check, the second brain, and the driver's judgment are not.
 
-Every PR body must include a section titled exactly **Deferred findings**, using the filed findings in --summary (or `none` when empty). When chasing a bug, first check `node <review.mjs> --deferred` and merged PR descriptions with `gh pr list --state merged --search "Deferred findings in:body"`. Resolve <review.mjs> repo-first, with the shared runtime fallback. `--deferred` lists this repo by repoId, newest first; add `--all` for every repo. The trigger is the input or call path named in the issue.
+## Review policy (rules 1–11)
+
+1. The operator is involved only at PR merge; no agent pauses work to ask the operator to run a command.
+2. First round: every HIGH and MEDIUM from the original review is fixed, or rejected with a REFUTED verdict from a different model (`--dispute`). Nothing is deferred in this round; LOWs are filed automatically.
+3. One fix round, then one fix check. What the fix check finds (`x…`, any severity) may be deferred: `{"x1":{"status":"deferred","reason":"<why>","fix":"<fix idea>"}}`. The reason is required, `fix` is optional (the reviewer's suggestion shows otherwise), and the reviewer's score stands. The close then completes; there is no second round.
+4. Grade: a criterion still failing after one fix round and its one recheck may be deferred as "criterion not met" with the same status shape, and so may the recheck's own `r…` findings. It never silently passes.
+5. The PR body (`--summary`) lists, in order: "Acceptance criteria not met", deferred HIGHs, then all other deferred findings; `--deferred` lists them too. The operator's merge is the approval, and the operator can send the branch back.
+6. Agents never re-rate a finding (severity and score fields stay refused), defer in the first round, edit, re-log or forge review records, or ask the operator to run `--waive` or `REVIEW_GATE_OVERRIDE`.
+7. A history rewrite (squash, split, rebase) after a review or Grade is allowed when the final tree is byte-identical: the gate compares tree hashes with the review, Grade, fix-check, recheck and close heads, and logs the carry-over as `carried`. Any other tree gets a fresh review.
+8. An unexpected gate refusal: one fresh review of the final branch through the normal path, then a clean close. If the gate still refuses, stop and tell the operator in chat, quoting the gate's message.
+9. `--waive` and `REVIEW_GATE_OVERRIDE` remain the operator's own emergency tools from the operator's terminal; no normal flow uses them.
+10. No confirmation before fixing: every HIGH and MEDIUM goes straight to the fix round, or is disputed with proof, without asking. A finding that is really a product choice gets the safe fix by default and is named in the report so the operator can reverse it. The operator hears once, after the fix round and fix check: what was fixed and what was filed. Fixing the filed items is optional.
+11. Show the numbers: every finding shown to the operator carries its scores, e.g. `LOW 6/100 (likelihood 2/10 × impact 3/10)`, or `unscored`, never just the word. The report, `--summary` and `--deferred` print them that way, except that filed lines there still read `risk N LOW`.
+
+Every PR body must include a section titled exactly **Deferred findings**, using the deferred and filed findings in --summary (or `none` when empty). When chasing a bug, first check `node <review.mjs> --deferred` and merged PR descriptions with `gh pr list --state merged --search "Deferred findings in:body"`. Resolve <review.mjs> repo-first, with the shared runtime fallback. `--deferred` lists this repo by repoId, newest first; add `--all` for every repo. The trigger is the input or call path named in the issue.
 
 The script derives severity from scores; scores cannot be changed in triage. Fix HIGH first, then MEDIUM; LOW is filed. Unscored findings block. Use `node <review.mjs> --rubric` and `~/.agent-config-studio/review-gate/calibration.md`, then `node <review.mjs> --calibrate` to check the reference cases. Filed findings (risk ≤ 10, protected false) need no close status and may be fixed when the operator picks them; missing or invalid scores never file a finding. Grade criterion FAILs are never filed.
