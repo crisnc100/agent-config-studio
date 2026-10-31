@@ -265,7 +265,7 @@ test('S5 --summary lists every slice covering HEAD with reviewer, paths and coun
   assert.deepEqual(lines.filter((line) => line.startsWith('HEAD: ')), [`HEAD: ${head}`, `HEAD: ${head}`])
   assert.deepEqual(lines.filter((line) => line.startsWith('Counts: ')), ['Counts: 0 findings; 0 fixed; 0 rejected', 'Counts: 2 findings; 1 fixed; 0 rejected'])
   assert.equal(lines.filter((line) => line === 'Deferred findings').length, 1)
-  assert.deepEqual(lines.slice(lines.indexOf('Deferred findings') + 1), ['f2 risk 5 LOW src/one.js:1 — one is a little odd; Trigger: importing one'])
+  assert.deepEqual(lines.slice(lines.indexOf('Deferred findings') + 1), ['f2 LOW 5/100 (likelihood 1/10 × impact 5/10) src/one.js:1 — one is a little odd; Trigger: importing one'])
   const pushed = push(); allowed(pushed)
   assert.ok(pushed.stderr.includes(r.stdout.trim()), pushed.out)
 })

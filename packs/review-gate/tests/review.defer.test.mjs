@@ -219,10 +219,10 @@ test('D7 --summary puts criteria not met on top, then deferred HIGHs, then every
   assert.deepEqual(lines.slice(0, 2), ['Acceptance criteria not met', 'c1 criterion 2.1 not met: Preserve account; recheck: recheck FAIL evidence; Deferred: criterion later'])
   assert.ok(at('Reviewer: ') > 1 && at('Deferred findings') > at('Reviewer: '), summary.stdout)
   assert.deepEqual(lines.slice(at('Deferred findings') + 1).map((line) => line.split(' — ')[0]),
-    ['x2 HIGH 25/100 (likelihood 5/10 × impact 5/10) src/one.js:1', 'x1 MEDIUM 25/100 (likelihood 5/10 × impact 5/10) src/one.test.js:1', 'f2 risk 2 LOW src/one.js:1'])
+    ['x2 HIGH 25/100 (likelihood 5/10 × impact 5/10) src/one.js:1', 'x1 MEDIUM 25/100 (likelihood 5/10 × impact 5/10) src/one.test.js:1', 'f2 LOW 2/100 (likelihood 1/10 × impact 2/10) src/one.js:1'])
   assert.equal(lines.filter((line) => line === 'Acceptance criteria not met').length, 1)
   const deferred = script(['--deferred']); allowed(deferred)
-  const order = ['c1 criterion 2.1', 'x2 HIGH 25/100', 'x1 MEDIUM 25/100', 'f2 risk 2 LOW'].map((text) => deferred.stdout.indexOf(text))
+  const order = ['c1 criterion 2.1', 'x2 HIGH 25/100', 'x1 MEDIUM 25/100', 'f2 LOW 2/100'].map((text) => deferred.stdout.indexOf(text))
   assert.ok(order.every((i) => i > 0), deferred.stdout)
   assert.ok(order[1] < order[2], 'HIGH before MEDIUM in the fix check record')
   allowed(gate())
