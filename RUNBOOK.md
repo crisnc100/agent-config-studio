@@ -255,6 +255,35 @@ never reads it, so new data cannot break it.
   `runContained` `maxTextBytes`, killed the moment it is passed), 120 s, proposals kept 10
   minutes under a random id; Accept writes exactly the stored bytes.
 
+## ask-model (`tools/ask-model.mjs`)
+
+- It lives in `tools/`, not `bin/`: it spawns claude, codex and grok, and
+  `tests/guards.mjs` allows no harness spawn in `bin/` or `lib/` outside
+  `spawnContained`. The studio never runs it.
+- `model-id --install` imports it and calls its `install()`, which copies it
+  to `resolver/bin/ask-model.mjs` (so `../lib/` is the resolver's), writes
+  `~/.agent-config-studio/bin/ask-model` pinned to the installing node, and
+  links `~/.local/bin/ask-model`. `acs` names the copy as stale when it
+  differs from `tools/ask-model.mjs`.
+- The argv per CLI is the advisor skill's and the review runtime's: claude
+  with `--tools` and `--strict-mcp-config`, codex `exec --sandbox read-only`
+  with stdin from /dev/null, grok with the review runtime's tool and MCP
+  flags plus `--output-format json` (and `--allow Bash` under
+  `--investigate`: headless grok refuses an unapproved call and still exits
+  0). Proof: `modelUsage` must hold the resolved id, for claude and grok;
+  codex has none.
+- Codex has no strict-MCP flag, and `-c mcp_servers={}` is merged, not a
+  replacement. So `codex mcp list --json` in the call's folder names the
+  servers (project ones included), one inline-table `-c` sets each
+  `enabled=false` (a dotted path cannot quote names with `.`, `:`, `@`, `/`),
+  and a second `mcp list` under it must show all disabled, or codex is not
+  run (exit 4). Checked on codex-cli 0.160.0 with a temp `CODEX_HOME`, a stub
+  server that leaves a marker, and a dead local model provider: `exec`
+  launched it without the override and not with it.
+- `--investigate` compares `git status --porcelain=v2` plus each listed
+  file's mode, size, mtime and ctime, before and after, so a write or chmod
+  to an already-dirty file shows. It never reverts.
+- Tests: `tests/ask-model.mjs` (stub CLIs on PATH, temp HOME).
 
 ## Model guide block (`lib/model-guide.js`)
 

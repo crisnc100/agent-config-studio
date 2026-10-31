@@ -8,7 +8,7 @@
  *   model-id --json          the merged registry
  *   model-id --lint [paths]  raw ids / versioned names in the skill scope; exit 1 on any
  *   model-id --sidecars      ids in CLI-owned files that are not current registry values
- *   model-id --install       copy this resolver out of the checkout and link ~/.local/bin/model-id
+ *   model-id --install       copy this resolver (and ask-model) out of the checkout and link them in ~/.local/bin
  *   model-id --role <name>   family=… id=… effort=… alt=…  (add --json for the whole role)
  *   model-id --flavor <fam>  how to brief that family, as plain text
  *   model-id --roles         every role → family, id, effort, alt (--table is families only)
@@ -28,7 +28,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   DEFAULTS_PATH, homeDir, lint, loadRegistry, resolveModel, sidecars, userPath,
 } from '../lib/models.js';
@@ -59,7 +59,7 @@ function registryOrDie() {
  * The launcher pins the node that ran the install, because a skill's
  * non-interactive `sh -c` may not have node on PATH at all.
  */
-function install() {
+async function install() {
   const home = homeDir();
   const studio = path.join(home, '.agent-config-studio');
   const resolver = path.join(studio, 'resolver');
@@ -117,6 +117,20 @@ function install() {
   if (existing) fs.unlinkSync(link);
   fs.symlinkSync(launcher, link);
   process.stdout.write(`installed ${tilde(resolver)}\nlauncher  ${tilde(launcher)}\nlinked    ${tilde(link)} → ${tilde(launcher)}\n`);
+
+  // ask-model imports this resolver's lib/, so it is installed beside it, by its own
+  // install(). A checkout keeps it in tools/, apart from bin/, because it runs model
+  // CLIs; the installed copy keeps it in bin/, so a re-run from there restores it too.
+  const askModel = [path.join(src, 'tools', 'ask-model.mjs'), path.join(src, 'bin', 'ask-model.mjs')].find((p) => fs.existsSync(p));
+  if (!askModel) return;
+  let r;
+  try { r = (await import(pathToFileURL(askModel).href)).install({ home, studio, resolver }); }
+  catch (e) { r = { lines: '', error: `ask-model was not installed: ${e.message}` }; }
+  process.stdout.write(r.lines);
+  if (r.error) {
+    process.stderr.write(`model-id: ${r.error}\n`);
+    process.exit(1);
+  }
 }
 
 /** lib/roles.js, or why this copy has none. */
@@ -207,7 +221,7 @@ const ROLE_FLAGS = new Set(['--role', '--flavor', '--roles']);
 if (ROLE_FLAGS.has(first) || (first === '--json' && rest.some((a) => ROLE_FLAGS.has(a)))) {
   rolesCli(args, await rolesLib());
 } else if (first === '--install') {
-  install();
+  await install();
 } else if (first === '--json') {
   const r = registryOrDie();
   process.stdout.write(JSON.stringify({ ...r.registry, source: r.source }, null, 2) + '\n');

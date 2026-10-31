@@ -173,8 +173,8 @@ What it writes:
 - **When you turn on Terminal shortcuts in Usage:** a generated file in
   `~/.agent-config-studio`, plus one `source` line appended to `~/.zshenv`.
 - **Commands you run:** `acs install` links `~/.local/bin/acs`;
-  `acs install-model-id` writes `~/.local/bin/model-id` and its copy in the
-  studio folder; `acs install-worktree` writes `~/.config/worktree` and adds
+  `acs install-model-id` writes `~/.local/bin/model-id` and
+  `~/.local/bin/ask-model`, and their copy in the studio folder; `acs install-worktree` writes `~/.config/worktree` and adds
   one line to `~/.zshrc`.
 - **Your temp folder:** each Grok Assist turn's prompt, in a file that is
   removed when the turn ends (in `~/.agent-config-studio/tmp` when the temp
@@ -418,12 +418,13 @@ model-id --sidecars
 - `--sidecars` lists ids in `~/.claude/settings.json` and `~/.codex/config.toml`
   that are no longer current.
 
-**`acs install-model-id`** puts `model-id` on your PATH:
+**`acs install-model-id`** puts `model-id` and `ask-model` on your PATH:
 
 - It copies the resolver out of this checkout (or the npm package) into
   `~/.agent-config-studio/resolver/`, writes a small launcher at
   `~/.agent-config-studio/bin/model-id`, and symlinks `~/.local/bin/model-id`
-  to it.
+  to it. `ask-model` gets the same: a copy beside the resolver, a launcher,
+  and `~/.local/bin/ask-model`.
 - It is a copy on purpose: skills keep resolving when a worktree is removed or
   a branch changes.
 - The launcher runs the node that did the install, then `node` on PATH, then
@@ -432,8 +433,8 @@ model-id --sidecars
 Re-run it:
 - after node moves (a Homebrew switch, a new machine);
 - after merging a change to `models.default.json`, `lib/models.js`, `lib/roles.js`,
-  `lib/roles.default.json` or `bin/model-id` — the installed copy does not follow
-  the checkout;
+  `lib/roles.default.json`, `bin/model-id` or `tools/ask-model.mjs` — the
+  installed copy does not follow the checkout;
 - after updating the npm package. The first start after an update says so
   when the installed copy differs from the package's.
 
@@ -502,6 +503,37 @@ the same checks as a hand edit; you see the whole change as a diff and nothing
 is written until you accept it. Flavor text becomes part of the instructions
 other agents are briefed with, so read a proposal before accepting it — it is
 the AI's reading of what you wrote, not a check of it.
+
+### Asking another model (`ask-model`)
+
+`ask-model` is what a skill runs to ask another model something. The flags
+that keep that call read-only and on the right model live in it, not in each
+skill.
+
+- `ask-model --role advisor --prompt-file brief.md` asks the role's first
+  family; `--family sol` asks one family by name. The effort is the role's (or
+  the family's flavor effort), `--effort high` overrides it, and when none is
+  set no effort flag is passed at all.
+- The CLI follows the id. Claude runs with `--tools Read,Grep,Glob` and
+  `--strict-mcp-config`, Codex with `--sandbox read-only` and each MCP server
+  it has configured switched off, and Grok with its read tools only and MCP
+  denied, so the model can read but not edit. If Codex's servers cannot be
+  confirmed off, Codex is not run.
+- The answer goes to stdout, and one line on stderr names the family, id,
+  effort and mode. `--json` prints `family`, `id`, `effort`, `mode`, `answer`,
+  `changed` and `error` instead. `--cwd <dir>` is where the model works.
+- It checks that the model it asked for answered: for Claude and Grok the id
+  must be in the reply's `modelUsage`. Codex reports no model, so a Codex
+  answer is not checked.
+- `--investigate` lets the model run commands: Claude gets `Bash`, Grok its
+  shell tool with shell commands allowed, and Codex's read-only sandbox
+  already runs them. A command Grok still refuses is passed on to stderr. In a git work
+  tree it compares the status before and after; if a file changed, it names
+  each one and exits 5. It never reverts anything. Ignored files and files
+  outside the repository are not checked.
+- Exit codes: 0 answered, 2 another model answered, 3 the CLI (or node) is
+  missing, 4 the call failed or returned an error, 5 files changed under
+  `--investigate`, 64 a usage error or a role or family that does not resolve.
 
 ### Model guide
 
