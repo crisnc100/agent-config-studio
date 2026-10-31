@@ -2007,9 +2007,7 @@ function deferredLine(finding) {
   const decision = deferral ? `; Deferred: ${deferral.reason}${fix ? `; Fix idea: ${fix}` : ''}` : ''
   if (finding.criterionId)
     return `${finding.id} criterion ${finding.criterionId} not met: ${finding.criterion}; recheck: ${finding.recheckEvidence || 'evidence not recorded'}${decision}`
-  // Filed lines keep their "risk N BAND" form, which an existing test pins exactly.
-  const score = deferral ? scoreText(finding) : `risk ${finding.risk} ${finding.severity.toUpperCase()}`
-  return `${finding.id} ${score} ${finding.file || '?'}:${finding.line || '?'} — ${finding.issue}; Trigger: ${finding.trigger || 'trigger not recorded'}${decision}`
+  return `${finding.id} ${scoreText(finding)} ${finding.file || '?'}:${finding.line || '?'} — ${finding.issue}; Trigger: ${finding.trigger || 'trigger not recorded'}${decision}`
 }
 // One review record's deferred items under its latest close: findings and criteria the close deferred, and filed
 // findings it did not fix.
