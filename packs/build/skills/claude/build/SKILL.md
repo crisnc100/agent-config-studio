@@ -103,7 +103,8 @@ Verdict comes back on **stdout**; session logs go to **stderr**. Capture stdout.
 
 **Gate on the codex CLI** (read-only, cannot edit anything):
 ```
-codex exec --skip-git-repo-check --sandbox read-only -m "$id" -c model_reasoning_effort="$effort" \
+flag=(); [ -z "$effort" ] || flag=(-c "model_reasoning_effort=$effort")
+codex exec --skip-git-repo-check --sandbox read-only -m "$id" "${flag[@]}" \
   "<gate prompt>" </dev/null 2>/dev/null
 ```
 

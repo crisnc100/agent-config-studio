@@ -54,7 +54,8 @@ Write the gate's prompt (below) to `$PROMPT_FILE`, then run the command for the 
 
 - `gpt-…` — a fresh codex session with no build context:
   ```bash
-  codex exec --skip-git-repo-check --sandbox read-only -m "$id" -c model_reasoning_effort="$effort" \
+  flag=(); [ -z "$effort" ] || flag=(-c "model_reasoning_effort=$effort")
+  codex exec --skip-git-repo-check --sandbox read-only -m "$id" "${flag[@]}" \
     "$(cat "$PROMPT_FILE")" </dev/null 2>/dev/null
   ```
 - `claude-…` — headless claude CLI:
