@@ -62,6 +62,10 @@ test('every pack.json requires {node, git, modelId, askModel, clis: {anyOf}, pac
   for (const id of ['review-gate', 'build', 'advisor', 'second-opinion']) assert.equal(manifest(id).requires.modelId, true, id)
 })
 
+test('the packs whose skills call ask-model require it: advisor, build and second-opinion', () => {
+  for (const id of IDS) assert.equal(manifest(id).requires.askModel, ['advisor', 'build', 'second-opinion'].includes(id), id)
+})
+
 test('every part has its fields, a known kind, existing files and its own non-empty changes', () => {
   for (const id of IDS) {
     const { parts } = manifest(id)

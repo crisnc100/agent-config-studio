@@ -5,7 +5,7 @@
   "summary": "An /advisor skill that asks the model in your ACS advisor role for an outside verdict on scope and direction before you commit to a plan.",
   "explain": {
     "what": "The advisor skill brings in an outside consultant: the model in your advisor role (or its second opinion, or both). It reads a short brief and the files that matter and says whether the plan is right-sized, what to change or cut, and only the questions a human really has to decide.",
-    "does": "Day to day you say /advisor at a scope-shaping moment. Your agent writes the brief, runs the advisor read-only, checks its points against the code, and shows you the verdict with its own agreement or disagreement. The advisor never edits anything, and the skill proves which model answered.",
+    "does": "Day to day you say /advisor at a scope-shaping moment. Your agent writes the brief and asks the advisor through ask-model, which checks that the model asked for is the one that answered (where its CLI reports one). The advisor may read files and run commands to check its points, but it must not change anything: if a file changes anyway, you are told which ones, and nothing is reverted. Your agent checks the advisor's points against the code and shows you the verdict with its own agreement or disagreement. ask-model comes with model-id (acs install-model-id); the pack will not install until both are on your PATH.",
     "changes": [
       "~/.claude/skills/advisor/ and ~/.codex/skills/advisor/ (the skill and its contract, for the harnesses you have)"
     ],
@@ -15,6 +15,7 @@
     "node": ">=20",
     "git": false,
     "modelId": true,
+    "askModel": true,
     "clis": {
       "anyOf": [
         "claude",

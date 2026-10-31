@@ -119,6 +119,32 @@ console.log('\nC4 through the installer: the loud stops still stop');
   ok('C4 no reviewer role: stops with the fix', rr.code !== 0 && /reviewer role/.test(rr.stderr) && sb3.callsOf('claude').length === 0, rr.out);
 }
 
+console.log('\nask-model: a requirement of the packs whose skills call it');
+{
+  const sb = box('ask-model', { clis: ['claude'] });
+  const link = path.join(sb.home, '.local', 'bin', 'ask-model');
+  ok('precondition: model-id --install linked ask-model too', fs.lstatSync(link).isSymbolicLink());
+  const listed = sb.json(['install', 'advisor', '--dry-run']);
+  ok('advisor lists ask-model among its requirements, met', (listed.data?.requirements || []).some((r) => r.id === 'ask-model' && r.ok), listed.out);
+  fs.rmSync(link);
+  for (const id of ['advisor', 'second-opinion']) {
+    const r = sb.packs(['install', id, '--yes']);
+    ok(`${id} without ask-model: install refuses, names the fix, writes nothing`,
+       r.code === 1 && /ask-model is not on PATH — fix: run: acs install-model-id/.test(r.out) && !fs.existsSync(path.join(sb.home, '.agent-config-studio/packs')), r.out);
+  }
+  const rg = sb.packs(['install', 'review-gate', '--yes']);
+  ok('review-gate does not need ask-model: it installs', rg.code === 0 && !/ask-model/.test(rg.out), rg.out);
+  const b = sb.packs(['install', 'build', '--yes']);
+  ok('build without ask-model: install refuses with the same fix', b.code === 1 && /ask-model is not on PATH — fix: run: acs install-model-id/.test(b.out), b.out);
+
+  const sb2 = box('ask-model-gone', { clis: ['claude'] });
+  const first = sb2.packs(['install', 'advisor', '--yes']);
+  fs.rmSync(path.join(sb2.home, '.local', 'bin', 'ask-model'));
+  const st = sb2.json(['status', '--no-trust-check']);
+  ok('installed, then ask-model gone: status says it is broken and names the fix',
+     first.code === 0 && JSON.stringify(st.data).includes('ask-model is not on PATH — run: acs install-model-id'), `${first.out}\n${JSON.stringify(st.data?.packs)}`);
+}
+
 console.log('\nharnesses: only those present, unless forced');
 {
   const sb = box('harness', { clis: ['claude'] });
