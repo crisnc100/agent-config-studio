@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { bootPage, settle } from './fixtures/shell-page.mjs';
 import { CLIENT } from './fixtures/private-names.mjs';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const PHANTOM = new RegExp(`Documents\\/Projects|${CLIENT}`, 'i');
 const PHANTOM_CTX = new RegExp(`.{0,60}(Documents\\/Projects|${CLIENT}).{0,60}`, 'i');
@@ -43,7 +44,7 @@ const ok = (name, cond, detail = '') => {
   else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 };
 
-const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-fresh-home-')));
+const sandbox = fs.realpathSync(tempDir('acs-fresh-home-'));
 const home = path.join(sandbox, 'home');
 const tmp = path.join(sandbox, 'tmp');
 const bin = path.join(sandbox, 'bin');
@@ -75,7 +76,7 @@ const child = spawn(process.execPath, ['--no-warnings', path.join(ROOT, 'server.
   cwd: ROOT,
   env: { HOME: home, PORT: String(port), PATH, TMPDIR: tmp },
   stdio: ['ignore', 'pipe', 'pipe'],
-});
+}); track(child);
 child.stderr.on('data', (b) => { stderr += b; });
 child.stdout.on('data', (b) => { stdout += b; });
 child.on('exit', (code, signal) => { exited = { code, signal }; });

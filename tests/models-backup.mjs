@@ -11,12 +11,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BACKUP = path.join(ROOT, 'tests', 'fixtures', 'model-registry', 'backup.mjs');
 const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
 const temps = [];
-const tmp = (p) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); temps.push(d); return d; };
+const tmp = (p) => { const d = tempDir(p); temps.push(d); return d; };
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {

@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { seedProjectTree, startServer } from './fixtures/roots-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realHome = os.homedir();
@@ -23,7 +24,7 @@ const ok = (name, cond, detail = '') => {
   else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 };
 const temps = [];
-const mkHome = (tag) => { const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `acs-bi-${tag}-`))); temps.push(d); return d; };
+const mkHome = (tag) => { const d = fs.realpathSync(tempDir(`acs-bi-${tag}-`)); temps.push(d); return d; };
 const put = (f, body) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, body); return f; };
 const KEY = 'SSH-PRIVATE-KEY-MARKER\n';
 const roots = (home, list) => put(path.join(home, '.agent-config-studio', 'roots.json'), JSON.stringify({ version: 1, roots: list }));

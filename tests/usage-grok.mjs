@@ -4,12 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { readGrokUsage, listSessions, sessionUsage, defaultGrokHome } from '../lib/usage/grok.js';
 import { shapeBilling } from '../lib/usage/grok-billing.js';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const ok = (n, c, d = '') => { if (c) { pass++; console.log(`  ok   ${n}`); } else { fail++; console.log(`  FAIL ${n}${d ? ` — ${d}` : ''}`); } };
 const skipped = (n, w) => { skip++; console.log(`  skip ${n} — ${w}`); };
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-grok-'));
+const tmp = tempDir('acs-grok-');
 const mkHome = (name) => { const h = path.join(tmp, name); fs.mkdirSync(path.join(h, 'sessions'), { recursive: true }); return h; };
 const mkSession = (home, proj, id, updates, summaryMtime) => {
   const dir = path.join(home, 'sessions', proj, id);

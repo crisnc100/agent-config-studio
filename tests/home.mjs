@@ -12,6 +12,7 @@ import path from 'node:path';
 import os from 'node:os';
 import vm from 'node:vm';
 import { bootPage, routesFor, registry, MEMORY, CONTEXT, PUB, ROOT, settle } from './fixtures/shell-page.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -231,7 +232,7 @@ const homeRoutes = (over = {}) => routesFor({
   const mem = deferred(), wt = deferred(), reg = deferred();
   const routes = homeRoutes({ 'GET /api/memory': () => mem.promise, 'GET /api/worktree': () => wt.promise, 'GET /api/registry': () => reg.promise });
   const p = await boot({ routes });
-  ok('8 the shell and Home paint before the registry resolves', p.eval('S.registry') === null && !!card(p, 'accounts') && p.$('sidebar').querySelectorAll('.nav-item').length === 13);
+  ok('8 the shell and Home paint before the registry resolves', p.eval('S.registry') === null && !!card(p, 'accounts') && p.$('sidebar').querySelectorAll('.nav-item').length === 14);
   ok('11 the memory index and wclean are asked after first paint, not before it',
      !p.requests.some((r) => r.path === '/api/memory' || r.path === '/api/worktree') || p.requests.findIndex((r) => r.path === '/api/memory') > p.requests.findIndex((r) => r.path === '/api/usage'));
   await settle(20);
@@ -385,7 +386,7 @@ const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.ent
   // The server tells the two apart: readCatalogs marks a missing catalog, not a broken one.
   const { readCatalogs } = await import('../lib/models-catalog.js');
   const { writeClaudeCatalog, defaultCatalogs } = await import('./fixtures/models-home.mjs');
-  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-home-cat-')));
+  const tmp = fs.realpathSync(tempDir('acs-home-cat-'));
   writeClaudeCatalog(tmp, defaultCatalogs().claude, Date.now());
   fs.mkdirSync(path.join(tmp, '.grok'), { recursive: true });
   fs.writeFileSync(path.join(tmp, '.grok', 'models_cache.json'), '{ not json');
@@ -421,11 +422,11 @@ const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.ent
     ok(`R1 Home: that ${code} keeps "Nothing needs you" away`, m.clear === false && m.partial.some((x) => x.id === 'models'), JSON.stringify(m.partial));
   }
   _setCatalogIo(null);
-  const none = readCatalogs({ home: fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-home-none-'))) });
+  const none = readCatalogs({ home: fs.realpathSync(tempDir('acs-home-none-')) });
   ok('R1 server: with nothing there at all (ENOENT everywhere) all three are missing', ['claude', 'codex', 'grok'].every((v) => none[v].ok === false && none[v].missing === true));
   ok('R1 Home: …and that still allows the empty state', verdict(none).clear === true);
   if (process.getuid?.() !== 0) {
-    const real = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-home-eacces-')));
+    const real = fs.realpathSync(tempDir('acs-home-eacces-'));
     fs.mkdirSync(path.join(real, '.grok'), { recursive: true });
     fs.writeFileSync(path.join(real, '.grok', 'models_cache.json'), '{}');
     fs.chmodSync(path.join(real, '.grok', 'models_cache.json'), 0o000);

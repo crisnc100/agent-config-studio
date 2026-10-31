@@ -1,0 +1,72 @@
+{
+  "_help": "Code-review tooling config. Copy this to .claude/review-config.json (this repo only) OR ~/.agent-config-studio/review-gate/config.json (all your projects), then edit the values. The older ~/.claude/review-config.json is still read when the second file is absent. Env vars (REVIEW_REVIEWER, REVIEW_PICK, REVIEW_AUTHOR, ...) still override per run. The _help/_presets keys are ignored — delete them if you like. See your active settings with: node ~/.agent-config-studio/review-gate/review.mjs --show-config",
+  "_pool_help": "Reviewers come from the `reviewer` role in ACS (Models → Roles), each family at its own flavor effort — not from this file. Each family's CLI follows its model id (claude- → claude, gpt- → codex, grok- → grok); families whose CLI is not installed are skipped, and the run says which. Adding a \"reviewer\" or \"model\" key pins one reviewer and bypasses the pool.",
+  "_pick_help": "\"first\" = first family in the role's order; \"rotate\" = the family with the fewest reviews in the review log (tie → role order); a family name picks that family; the name of an optional local classifier command (one that answers the choice protocol) lets it choose from diff paths/stats and each family's flavor (confidence < 0.7 or a failure → first).",
+  "_classifier_help": "Optional. The local classifier command a dispute may ask to choose its verifier. Empty: disputes go to another vendor first.",
+  "_crossFamily_help": "\"prefer\" skips pool families from the author's vendor (codex | claude | grok) when another remains; \"off\" never filters. The author comes from REVIEW_AUTHOR or \"author\" (a family or vendor); unknown means no filtering.",
+  "_force_help": "Hard rules applied before any pick, first match wins: {\"paths\": [\"**/auth/**\", \"**/payments/**\"], \"family\": \"<family>\"} fires when a changed file matches; {\"paths\": \"risk\", \"family\": \"<family>\"} fires on riskPaths. Globs are case-insensitive: ** spans directories, * and ? stay inside one; a pattern with no \"/\" matches any path segment, like .gitignore.",
+  "_verify_help": "\"off\" (default): only the deterministic quote check. \"second-opinion\": every surviving HIGH/MEDIUM finding goes to one other pool family (another vendor when possible), which CONFIRMs or REFUTEs it; REFUTED findings move to a \"disputed\" section.",
+  "_claudeModel_help": "Used when reviewer is \"claude\": \"team\" (default) runs the multi-agent team on the reviewer role's Claude families; a family or id runs one comprehensive agent on that model.",
+  "_codexHomes_help": "Optional extra Codex home folders the agent guard installs into, besides ~/.codex and $CODEX_HOME.",
+  "_base_help": "Leave \"base\" empty to auto-detect the remote's default branch (origin/HEAD) — correct in any repo. Only set it to pin a different base, e.g. \"origin/develop\".",
+  "_verifyCmd_help": "Optional shell command run BEFORE the reviewer (e.g. \"npm run type-check\"). Pass or fail, its result is fed to the reviewer as context — it never blocks the review.",
+  "_presets": {
+    "pool, first family (default)": {
+      "pick": "first",
+      "crossFamily": "prefer"
+    },
+    "pool, rotate to spread outcomes": {
+      "pick": "rotate",
+      "crossFamily": "prefer"
+    },
+    "always one family": {
+      "pick": "<family>"
+    },
+    "pin a codex model": {
+      "reviewer": "codex",
+      "model": "<family>"
+    },
+    "one named reviewer": {
+      "reviewer": "<family>"
+    },
+    "claude-multi-agent": {
+      "reviewer": "claude",
+      "claudeModel": "team"
+    },
+    "risk paths to one family": {
+      "pick": "first",
+      "force": [
+        {
+          "paths": [
+            "**/auth/**",
+            "**/payments/**"
+          ],
+          "family": "<family>"
+        }
+      ]
+    },
+    "with a second opinion": {
+      "pick": "first",
+      "verify": "second-opinion"
+    }
+  },
+  "pick": "first",
+  "crossFamily": "prefer",
+  "author": "",
+  "classifier": "",
+  "force": [],
+  "riskPaths": [
+    "*payment*",
+    "*billing*",
+    "*checkout*",
+    "*auth*",
+    "*migration*",
+    "*security*",
+    "*money*"
+  ],
+  "verify": "off",
+  "claudeModel": "team",
+  "codexHomes": [],
+  "base": "",
+  "verifyCmd": ""
+}

@@ -11,9 +11,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { seedMemoryHome, unlockMemoryHome, enc } from './fixtures/memory-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const realBefore = snapshotRealHomes();
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-files-reg-')));
+const home = fs.realpathSync(tempDir('acs-files-reg-'));
 process.env.HOME = home;
 process.env.ACS_SUITE = 'offline';
 delete process.env.CODEX_HOME;

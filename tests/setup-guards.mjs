@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -151,6 +152,29 @@ console.log('setup guards\n');
       ["fs.readFileSync(path.join(dir, file), 'utf8')", 'trash metadata, the studio\'s own'],
       ['fs.readFileSync(p)', 'sha256Of: a payload inside the studio\'s own trash (contained by containedPayload); the hash only tags the studio\'s write'],
     ],
+    // The pack installer (acs packs and the Packs card). The user's files it backs up and rewrites
+    // are read by snapshot() through openUserFile, and ~/.claude/review-config.json by readUserText.
+    'lib/packs-files.js': [
+      ['fs.readFileSync(out)', 'saveBackup: the backup it just wrote into the studio\'s backups folder, read back to verify it (the user\'s side is openUserFile, in snapshot)'],
+      ['fs.readFileSync(rec.backup)', 'readBackup: a backup saveBackup wrote into the studio\'s own backups folder, named in the studio\'s pack state; its bytes are used only if they still hash to the hash that state recorded'],
+      ["fs.readFileSync(file, 'utf8')", 'readState: packs/state.json, the studio\'s own pack install record'],
+      ["fs.readFileSync(lock, 'utf8')", 'the pack state lock (state.json.lock, in the studio folder): only the holder\'s pid is parsed'],
+    ],
+    'lib/packs.js': [
+      ["fs.readFileSync(path.join(PACKS_DIR, id, 'pack.json'), 'utf8')", 'loadCatalog: each pack\'s pack.json, in this checkout\'s packs/'],
+      ["fs.readFileSync(path.join(PACKS_DIR, 'review-gate', 'pack.json'), 'utf8')", 'runtimeFiles: review-gate\'s pack.json in this checkout, for the runtime files it lists'],
+      ['fs.readFileSync(op.src)', 'sourceSnap: a file a pack ships, from this checkout (every op.src is under ROOT: packs/ or tools/worktree)'],
+      ["fs.readFileSync(path.join(ROOT, part.files[0]), 'utf8')", 'planInstall: the instructions block a pack ships, from this checkout\'s packs/'],
+      ["fs.readFileSync(path.join(ROOT, part.files[0]), 'utf8')", 'planUpdate: the instructions block a pack ships, from this checkout\'s packs/'],
+      ["fs.readFileSync(path.join(tools, 'defaults.conf'))", 'planUpdate: this checkout\'s tools/worktree/defaults.conf, hashed to compare with the installed one'],
+      ['fs.readFileSync(path.join(tools, n))', 'planUpdate: this checkout\'s tools/worktree files, hashed to see whether the worktree part changed'],
+      ["fs.readFileSync(path.join(m.studio, 'review-gate-agent-guard.json'), 'utf8')", 'guardHooksLeft: the studio\'s own agent-guard install record; only the Codex homes it names are taken, and a bad file is skipped'],
+      ["fs.readFileSync(file, 'utf8')", 'guardHooksLeft: Claude\'s settings.json and each Codex home\'s hooks.json; only whether a guard hook entry is still there is derived, nothing is returned or kept, and a file that will not parse is skipped'],
+      ["fs.readFileSync(path.join(ROOT, 'tools', 'worktree', n))", 'apply: this checkout\'s tools/worktree files, hashed to record which source the worktree part was installed from'],
+      ['fs.readFileSync(path.join(ROOT, f))', 'status: a skill file a pack ships, from this checkout, hashed to see whether an update is available'],
+      ["fs.readFileSync(path.join(ROOT, part.files[0]), 'utf8')", 'status: the instructions block a pack ships, from this checkout, hashed to see whether an update is available'],
+      ['fs.readFileSync(path.join(tools, n))', 'status: this checkout\'s tools/worktree files, hashed to see whether an update is available'],
+    ],
     'server.js': [['fsp.readFile(file)', 'the page\'s static assets, from this checkout\'s public/']],
     'bin/install-worktree.mjs': [
       ['fs.readFileSync(path.join(SRC, name))', 'this checkout\'s tools/worktree, the files being installed'],
@@ -219,7 +243,7 @@ console.log('setup guards\n');
 
 /* ── the new guard-b pins reject their variants ───────────────────────── */
 {
-  const copy = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-guard-pins-')));
+  const copy = fs.realpathSync(tempDir('acs-guard-pins-'));
   for (const p of ['lib', 'bin', 'server.js', 'models.default.json', 'package.json']) fs.cpSync(path.join(ROOT, p), path.join(copy, p), { recursive: true });
   fs.mkdirSync(path.join(copy, 'tests'));
   fs.copyFileSync(path.join(ROOT, 'tests', 'guards.mjs'), path.join(copy, 'tests', 'guards.mjs'));

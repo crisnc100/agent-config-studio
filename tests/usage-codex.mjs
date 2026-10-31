@@ -10,6 +10,7 @@ import {
   labelForWindow, listRollouts, lastRateLimits, readCodexUsage, defaultCodexHome,
 } from '../lib/usage/codex.js';
 import { numericPercent } from '../lib/usage/percent.js';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const ok = (name, cond, detail = '') => {
@@ -18,7 +19,7 @@ const ok = (name, cond, detail = '') => {
 };
 const skipped = (name, why) => { skip++; console.log(`  skip ${name} — ${why}`); };
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-usage-'));
+const tmp = tempDir('acs-usage-');
 const seat = (name) => {
   const home = path.join(tmp, name);
   fs.mkdirSync(path.join(home, 'sessions', '2026', '09', '07'), { recursive: true });

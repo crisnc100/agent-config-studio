@@ -15,6 +15,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const realBefore = snapshotRealHomes();
 let pass = 0, fail = 0;
@@ -35,7 +36,7 @@ if (!bun) {
 }
 ok('a tarball was given', !!tarball && fs.existsSync(tarball), String(tarball));
 
-const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-bunx-')));
+const sb = fs.realpathSync(tempDir('acs-bunx-'));
 const home = path.join(sb, 'home');
 const tmp = path.join(sb, 'tmp');
 fs.mkdirSync(home); fs.mkdirSync(tmp);
@@ -51,7 +52,7 @@ console.log(`  bun ${version}, node ${process.versions.node}`);
 
 const health = async () => { try { return (await (await fetch(`http://127.0.0.1:${port}/api/health`)).json()); } catch { return null; } };
 let out = '';
-const child = spawn(bun, ['x', spec], { cwd: sb, env, stdio: ['ignore', 'pipe', 'pipe'] });
+const child = spawn(bun, ['x', spec], { cwd: sb, env, stdio: ['ignore', 'pipe', 'pipe'] }); track(child);
 child.stdout.on('data', (d) => { out += d; });
 child.stderr.on('data', (d) => { out += d; });
 let exited = null;

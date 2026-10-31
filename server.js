@@ -49,6 +49,7 @@ import { createAudit } from './lib/audit.js';
 import * as memoryOps from './lib/memory-ops.js';
 import { contextMap, contextFile } from './lib/context-map.js';
 import { removeBatch } from './lib/batch-delete.js';
+import { applyJob, buildPlan, catalogView, parseRequest, planView, startStatus, statusJob } from './lib/packs-routes.js';
 import {
   syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
   isInstalled as shortcutsInstalled, shortcutsFromSeats, shortcutsPath, zshenvPath,
@@ -1153,6 +1154,37 @@ export function createApp(opts = {}) {
     requireStrict(req);
     const { dest, dests, name, content, retry } = await objectBody(req, 256 * 1024);
     return wizard.create({ dest, dests, name, content, retry: retry === true });
+  },
+
+  /**
+   * The Packs card (lib/packs-routes.js over lib/packs.js, the installer `acs
+   * packs` runs). Strict same-origin on every route, GET included: they read
+   * local config, start the Codex trust check, and apply writes skills,
+   * settings and git hooks. A request names a pack, parts, harnesses and
+   * roles that the catalog and ACS's roles know, or it is a 400. Apply takes
+   * the preview's signature and refuses (409) unless re-planning gives
+   * exactly that preview. Status is a job: the first GET starts it (or joins
+   * the one running) and ?job=<id> polls it, so no request waits on it.
+   */
+  'GET /api/packs': async (req) => {
+    requireStrict(req);
+    return catalogView();
+  },
+  'GET /api/packs/status': async (req, url) => {
+    requireStrict(req);
+    const job = url.searchParams.get('job');
+    if (job !== null) return { job: statusJob(job) };
+    const trust = url.searchParams.get('trust');
+    if (trust !== null && !['', '0', '1'].includes(trust)) throw bad('trust must be 0 or 1', 400);
+    return { job: startStatus({ trust: trust !== '0' }) };
+  },
+  'POST /api/packs/plan': async (req) => {
+    requireStrict(req);
+    return planView(buildPlan(parseRequest(await objectBody(req, 16 * 1024))));
+  },
+  'POST /api/packs/apply': async (req) => {
+    requireStrict(req);
+    return applyJob(parseRequest(await objectBody(req, 16 * 1024), { apply: true }));
   },
 
   /**

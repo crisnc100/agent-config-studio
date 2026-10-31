@@ -24,6 +24,7 @@ import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { startServer } from './fixtures/roots-home.mjs';
 import { fakeCli, isolatedPath } from './fixtures/setup-home.mjs';
 import { readCommands } from '../lib/setup-commands.js';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realHome = os.homedir();
@@ -36,7 +37,7 @@ const ok = (name, cond, detail = '') => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const table = readCommands();
 
-const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-setup-clis-')));
+const sandbox = fs.realpathSync(tempDir('acs-setup-clis-'));
 const home = path.join(sandbox, 'home');
 const bin = path.join(sandbox, 'bin');
 fs.mkdirSync(home);

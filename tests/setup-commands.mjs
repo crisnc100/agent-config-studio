@@ -21,6 +21,7 @@ import { startServer } from './fixtures/roots-home.mjs';
 import { bootPage, settle } from './fixtures/shell-page.mjs';
 import { fakeCli, isolatedPath } from './fixtures/setup-home.mjs';
 import { CLI_IDS } from '../lib/setup-clis.js';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
@@ -51,7 +52,7 @@ const md = Object.fromEntries([...fs.readFileSync(COMMANDS_FILE, 'utf8').matchAl
 ok('3 commands.md parses on its own to every key', keys.every((k) => md[k]), Object.keys(md).join());
 
 async function rendered(tag, makeBin) {
-  const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `acs-setup-cmd-${tag}-`)));
+  const sb = fs.realpathSync(tempDir(`acs-setup-cmd-${tag}-`));
   const home = path.join(sb, 'home');
   fs.mkdirSync(home);
   const PATH = isolatedPath(path.join(sb, 'bin'));
@@ -100,7 +101,7 @@ for (const f of setupSources) {
 ok(`3 nothing in the setup sources (${setupSources.length} files) hardcodes a command`, hard.length === 0, hard.join(' | '));
 
 // S16: the shown next steps run.
-const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-setup-cmd-')));
+const sandbox = fs.realpathSync(tempDir('acs-setup-cmd-'));
 const home = path.join(sandbox, 'home');
 const onPath = path.join(sandbox, 'bin');
 fs.mkdirSync(home); fs.mkdirSync(onPath);

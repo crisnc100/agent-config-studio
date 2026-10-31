@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { seedGlobals, startServer } from './fixtures/roots-home.mjs';
 import { realpathNearest } from '../lib/paths.js';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
@@ -28,7 +29,7 @@ const ok = (name, cond, detail = '') => {
 
 console.log('\nresolver');
 // Unresolved on purpose: /var/folders/… on macOS.
-const T = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-resolve-'));
+const T = tempDir('acs-resolve-');
 const mk = (...p) => { fs.mkdirSync(path.join(...p), { recursive: true }); return path.join(...p); };
 const E = mk(T, 'edit'), R = mk(T, 'read', 'sub');
 fs.symlinkSync(R, path.join(E, 'jump'));                       // edit/jump -> read/sub
@@ -62,8 +63,8 @@ fs.rmSync(T, { recursive: true, force: true });
 
 // The editor routes on a dangling link whose lexical collapse is an existing file.
 {
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-resolve-home-')));
-  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-resolve-read-')));
+  const home = fs.realpathSync(tempDir('acs-resolve-home-'));
+  const other = fs.realpathSync(tempDir('acs-resolve-read-'));
   seedGlobals(home);
   const W = path.join(home, 'code', 'work');
   const RS = mk(other, 'shared', 'sub');

@@ -9,6 +9,7 @@
  * a weekly number under "5h rolling".
  */
 import { shapeLimits } from '../lib/usage/codex-limits.js';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -101,7 +102,7 @@ const PROLITE = {
   const os = await import('node:os');
   const path = await import('node:path');
 
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-fallback-'));
+  const home = tempDir('acs-fallback-');
   const at = Date.now() - 30 * 60_000;
   const d = new Date(at - 5 * 60_000);
   const p2 = (n) => String(n).padStart(2, '0');

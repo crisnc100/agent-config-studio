@@ -129,6 +129,16 @@ node tests/models-layout-ui.mjs
 node tests/files-registry.mjs
 # The MCP route's note on a machine with no ~/.claude.json (temp HOME).
 node tests/mcp-route.mjs
+# The skill-pack installer (acs packs): temp HOMEs, stub CLIs, a copy of the package for updates, the packed tarball.
+node tests/packs-catalog.mjs
+node tests/packs-install.mjs
+node tests/packs-update.mjs
+node tests/packs-hooks.mjs
+node tests/packs-uninstall-backup.mjs
+node tests/cleanup-launcher.mjs
+# The Packs card: its routes through a real server, then the view in the page against one (temp HOMEs, stub CLIs).
+node tests/packs-server.mjs
+node tests/packs-ui.mjs
 # A stranger's machine: empty temp HOME, no agent CLI on PATH, every GET route.
 node tests/fresh-home.mjs
 # The setup screen's server half: temp HOMEs, fake CLIs, a fixture tree.

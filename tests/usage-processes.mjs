@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { processesUsingHome, codexProcessesUsingHome, stopProcesses } from '../lib/usage/processes.js';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -61,7 +62,7 @@ console.log('\nusage/processes');
   // used path.resolve, which keeps symlinks. A user whose ~/.codex is a symlink
   // (dotfiles setups) got zero conflicts and the silent overwrite this feature
   // exists to prevent.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-link-'));
+  const dir = tempDir('acs-link-');
   const real = path.join(dir, 'real');
   const link = path.join(dir, 'link');
   fs.mkdirSync(real, { recursive: true });

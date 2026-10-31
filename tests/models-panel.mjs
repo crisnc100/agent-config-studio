@@ -17,6 +17,7 @@ import {
 } from './fixtures/models-home.mjs';
 import { compareVersions, detect, parseVersion, readCatalogs } from '../lib/models-catalog.js';
 import { withModel, withoutModel } from '../lib/models-panel.js';
+import { track } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = path.join(ROOT, 'bin', 'model-id');
@@ -51,7 +52,7 @@ async function startServer(h) {
     cwd: ROOT,
     env: { HOME: h, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir() },
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  }); track(child);
   children.push(child);
   serverHomes.push(h);
   let log = '';

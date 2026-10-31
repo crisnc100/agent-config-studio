@@ -94,6 +94,8 @@ const VIEWS = [
   // No sidebar item: the Skills view's New skill button (public/skill-wizard.js).
   { id: 'skill-new', label: 'New skill', group: null, icon: 'skills', hash: '#skills/new',
     title: 'New skill', sub: 'Describe it, answer a few questions, review the SKILL.md', open: openSkillWizard },
+  { id: 'packs', label: 'Packs', group: 'configure', icon: 'packs', hash: '#packs',
+    title: 'Skill packs', sub: 'Recommended skill packs — what each changes, a preview, then install, update or uninstall', open: openPacks },
   { id: 'mcp', label: 'MCP', group: 'configure', icon: 'mcp', hash: '#mcp',
     title: 'MCP servers', sub: 'Model Context Protocol servers across both harnesses', open: openMcp },
   // No sidebar item: reached from the Files page's folder line, and #folders.
@@ -131,6 +133,7 @@ const ICONS = {
   files: svg('<path d="M2.5 4a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>'),
   skills: svg('<path d="M8 2.2l1.6 3.3 3.6.5-2.6 2.5.6 3.6L8 10.4l-3.2 1.7.6-3.6-2.6-2.5 3.6-.5z"/>'),
   mcp: svg('<path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11.5v2"/>'),
+  packs: svg('<path d="M2.5 5 8 2.5 13.5 5v6L8 13.5 2.5 11z"/><path d="M2.5 5 8 7.5 13.5 5M8 7.5v6"/>'),
   folders: svg('<path d="M2.5 5a1 1 0 0 1 1-1h2.5l1.2 1.2h5.3a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/><path d="M2.5 7.5h11"/>'),
   models: svg('<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 1.8v2.2M9.5 1.8v2.2M6.5 12v2.2M9.5 12v2.2M1.8 6.5H4M1.8 9.5H4M12 6.5h2.2M12 9.5h2.2"/>'),
   memory: svg('<path d="M3 3.5A1.5 1.5 0 0 1 4.5 2h8v10.5h-8A1.5 1.5 0 0 0 3 14zM3 14V3.5M6 5h4"/>'),

@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { containedCli } from './fixtures/contained-cli.mjs';
 import { containmentHeld, createInitGate, grokMcpFromInspect, grokMcpRefusal } from '../lib/containment.js';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
@@ -105,7 +106,7 @@ async function startServer(home) {
     cwd: ROOT,
     env: { HOME: home, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir() },
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  }); track(child);
   let log = '';
   child.stdout.on('data', (d) => { log += d; });
   child.stderr.on('data', (d) => { log += d; });
@@ -119,7 +120,7 @@ async function startServer(home) {
   throw new Error(`server did not start: ${log.slice(-600)}`);
 }
 
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-contain-')));
+const home = fs.realpathSync(tempDir('acs-contain-'));
 const bins = { claude: path.join(home, '.local', 'bin', 'claude'), grok: path.join(home, '.grok', 'bin', 'grok') };
 containedCli(bins.claude, 'claude');
 containedCli(bins.grok, 'grok');

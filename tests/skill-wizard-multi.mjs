@@ -12,11 +12,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-wizard-multi-')));
-const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-wizard-multi-out-')));
+const home = fs.realpathSync(tempDir('acs-wizard-multi-'));
+const outside = fs.realpathSync(tempDir('acs-wizard-multi-out-'));
 process.env.HOME = home;
 process.env.ACS_SUITE = 'offline';
 delete process.env.CODEX_HOME;

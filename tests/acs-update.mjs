@@ -10,9 +10,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ACS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'acs');
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-update-'));
+const tmp = tempDir('acs-update-');
 const env = {
   ...process.env, HOME: tmp, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',

@@ -2,7 +2,8 @@
  * `./bin/acs install-worktree` (criterion 1), run through bin/acs itself
  * against a temp HOME with WT_HOME and ZDOTDIR inside it. Nothing here reads
  * or writes the real ~/.zshrc; the one real-home READ is the byte comparison
- * of the toolkit's first commit against the live ~/.config/worktree/wt.zsh.
+ * of the toolkit's first commit against the live ~/.config/worktree/wt.zsh,
+ * run only with ACS_LIVE_CHECKS=1.
  */
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -11,10 +12,11 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { ROOT, TOOLKIT, ZSH, tests } from './worktree-sandbox.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const { ok, done } = tests();
 const ACS = path.join(ROOT, 'bin', 'acs');
-const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-wt-install-')));
+const tmp = fs.realpathSync(tempDir('acs-wt-install-'));
 const OURS = { 'wt.zsh': fs.readFileSync(path.join(TOOLKIT, 'wt.zsh')), 'defaults.conf': fs.readFileSync(path.join(TOOLKIT, 'defaults.conf')) };
 const LIVE_LINE = '[ -f "$HOME/.config/worktree/wt.zsh" ] && source "$HOME/.config/worktree/wt.zsh"';
 
@@ -202,7 +204,13 @@ if (ZSH) {
 // the sha256 of the files as first vendored (3559a99), not found through git
 // history: once the branch was squash-merged, "the commit that added
 // wt.zsh" became the squash, which holds the final file, not the original.
-{
+// It reads this machine's ~/.config/worktree, so it runs only when asked.
+// That tools/worktree/ is what the installer ships is checked above for
+// every machine ("1 fresh install: wt.zsh and defaults.conf are this
+// checkout's bytes", against a temp-HOME install).
+if (process.env.ACS_LIVE_CHECKS !== '1') {
+  console.log('  SKIP 1 first-commit identity (set ACS_LIVE_CHECKS=1 to check this machine\'s live ~/.config/worktree)');
+} else {
   const ORIGINAL = {
     'wt.zsh': '90ac56a5210deea5d7a3ffca3695cac06411a8f10373473b3ce7f7082ffa52d0',
     'defaults.conf': 'a23d10331277c783ee926ee428641e86b3523a7cb7a4bf57dbaf84e35cd97eef',

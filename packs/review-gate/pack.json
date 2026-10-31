@@ -1,0 +1,198 @@
+{
+  "id": "review-gate",
+  "title": "Review gate",
+  "version": "1.0.0",
+  "summary": "A code-review skill that has a reviewer from your ACS reviewer role check your branch, makes every finding quote real code, and keeps a record of what was fixed, disputed or accepted.",
+  "explain": {
+    "what": "The review gate is a code-review skill plus a small shared script (review.mjs). When you ask your agent to review a branch, the script asks a model from your reviewer role in ACS (Models → Roles) to read the committed changes and report bugs. Each finding must quote the exact code it is about, and a script checks that quote before you ever see the finding. The optional parts add an agent guard, a push gate and Codex log access.",
+    "does": "Day to day you say /code-review (or 'review this branch'). The script picks a reviewer from your reviewer role, skipping any whose CLI you have not installed and saying which it skipped. It writes a report under reviews/ in the repo and one line to a review log. You decide which findings to fix; fixes are recorded with a close, and disputed findings can get a second model's verdict. If no reviewer can run, it stops and tells you exactly what to fix (install model-id, set the reviewer role, or install a CLI). It never quietly uses a model your role does not list.",
+    "changes": [
+      "~/.claude/skills/code-review/ and ~/.codex/skills/code-review/ (the skill, for the harnesses you have)",
+      "~/.agent-config-studio/review-gate/ (the shared script, the scoring calibration and an example config)",
+      "~/.agent-config-studio/review-log/review-log.jsonl (created by your first review)",
+      "anything an optional part lists, only if you turn that part on"
+    ],
+    "undo": "Uninstalling removes the skill folders and, once no installed part uses it, the shared ~/.agent-config-studio/review-gate/ folder. A file you edited after installing is kept and reported. Your review log and the reports in each repo's reviews/ folder are your history and are never deleted."
+  },
+  "requires": {
+    "node": ">=20",
+    "git": true,
+    "modelId": true,
+    "clis": {
+      "anyOf": [
+        "claude",
+        "codex",
+        "grok"
+      ]
+    },
+    "packs": []
+  },
+  "parts": [
+    {
+      "id": "code-review",
+      "title": "Code-review skill",
+      "default": true,
+      "kind": "skill",
+      "harnesses": [
+        "claude",
+        "codex"
+      ],
+      "files": [
+        "packs/review-gate/skills/claude/code-review/SKILL.md",
+        "packs/review-gate/skills/codex/code-review/SKILL.md",
+        "packs/review-gate/runtime/review.mjs",
+        "packs/review-gate/runtime/calibration.md",
+        "packs/review-gate/runtime/review-config.example.json"
+      ],
+      "explain": {
+        "changes": [
+          "~/.claude/skills/code-review/SKILL.md (Claude Code; Grok reads this folder too)",
+          "~/.codex/skills/code-review/SKILL.md (Codex)",
+          "~/.agent-config-studio/review-gate/review.mjs, calibration.md and review-config.example.json (one shared copy for every harness)",
+          "~/.agent-config-studio/review-log/review-log.jsonl (created by the first review; one line per review, dispute, waiver and close)",
+          "reviews/ inside each repo you review (the reports), added to that repo's .git/info/exclude so git ignores it"
+        ]
+      }
+    },
+    {
+      "id": "instructions",
+      "title": "Review-gate rules in your global instructions",
+      "default": false,
+      "kind": "instructions",
+      "harnesses": [
+        "claude",
+        "codex"
+      ],
+      "files": [
+        "packs/review-gate/instructions/review-gate.md"
+      ],
+      "explain": {
+        "what": "A short, marked block of rules for your agents: where the review script lives, that only the operator waives findings or overrides the gate, and that every PR body lists its Deferred findings.",
+        "does": "Your agents read these rules in every session, so they run reviews the same way in every project without you repeating them.",
+        "changes": [
+          "~/.claude/CLAUDE.md: one marked block added (the rest of the file is untouched)",
+          "~/.codex/AGENTS.md: one marked block added (the rest of the file is untouched)"
+        ],
+        "undo": "Uninstalling removes only the marked block; everything else in those files, including ACS's own model-guide block, stays as it was."
+      }
+    },
+    {
+      "id": "agent-guard",
+      "title": "Agent guard against skipping hooks",
+      "default": false,
+      "kind": "guard",
+      "harnesses": [
+        "claude",
+        "codex"
+      ],
+      "files": [
+        "packs/review-gate/runtime/hooks/agent-guard",
+        "packs/review-gate/runtime/hooks/agent-guard.mjs",
+        "packs/review-gate/runtime/hooks/install-agent-guard.mjs"
+      ],
+      "explain": {
+        "what": "A hook your agents' shell commands pass through before they run. It refuses commands that would skip or switch off the review gate: git push or commit with --no-verify or -n, changing core.hooksPath, changing any reviewgate.* git setting, and git send-pack.",
+        "does": "When an agent tries one of those commands, the command is blocked with a one-line reason and the agent has to get its change reviewed instead. Everything else runs as normal. It is an accident barrier for agents, not a security boundary, and it never touches commands you type in your own terminal.",
+        "changes": [
+          "~/.claude/settings.json: PreToolUse hooks for Bash and Monitor that run the guard (only if ~/.claude exists)",
+          "hooks.json in each Codex home: a PreToolUse hook for Bash (~/.codex if it exists, $CODEX_HOME, and any codexHomes listed in ~/.agent-config-studio/review-gate/config.json)",
+          "config.toml in each Codex home: a marked trust block (# review-gate agent guard begin … # end) so Codex runs the hook",
+          "~/.agent-config-studio/review-gate/hooks/agent-guard, agent-guard.mjs and node-path (the guard and the node it runs on)",
+          "~/.agent-config-studio/review-gate-agent-guard.json (what was installed, for a clean uninstall)",
+          "~/.agent-config-studio/backups/review-gate-guard-<time>/ (a copy of every file before it changed)"
+        ],
+        "undo": "Uninstalling removes only the guard's own hook entries and trust block. A file that has not changed since install gets its exact earlier bytes back; a file you edited keeps your edits and loses only the guard's entries. Harnesses that are not installed are skipped."
+      }
+    },
+    {
+      "id": "push-gate",
+      "title": "Push gate for repos you opt in",
+      "default": false,
+      "kind": "push-gate",
+      "harnesses": [],
+      "files": [
+        "packs/review-gate/runtime/hooks/global/applypatch-msg",
+        "packs/review-gate/runtime/hooks/global/commit-msg",
+        "packs/review-gate/runtime/hooks/global/dispatch.sh",
+        "packs/review-gate/runtime/hooks/global/fsmonitor-watchman",
+        "packs/review-gate/runtime/hooks/global/p4-changelist",
+        "packs/review-gate/runtime/hooks/global/p4-post-changelist",
+        "packs/review-gate/runtime/hooks/global/p4-pre-submit",
+        "packs/review-gate/runtime/hooks/global/p4-prepare-changelist",
+        "packs/review-gate/runtime/hooks/global/post-applypatch",
+        "packs/review-gate/runtime/hooks/global/post-checkout",
+        "packs/review-gate/runtime/hooks/global/post-commit",
+        "packs/review-gate/runtime/hooks/global/post-index-change",
+        "packs/review-gate/runtime/hooks/global/post-merge",
+        "packs/review-gate/runtime/hooks/global/post-receive",
+        "packs/review-gate/runtime/hooks/global/post-rewrite",
+        "packs/review-gate/runtime/hooks/global/post-update",
+        "packs/review-gate/runtime/hooks/global/pre-applypatch",
+        "packs/review-gate/runtime/hooks/global/pre-auto-gc",
+        "packs/review-gate/runtime/hooks/global/pre-commit",
+        "packs/review-gate/runtime/hooks/global/pre-merge-commit",
+        "packs/review-gate/runtime/hooks/global/pre-push",
+        "packs/review-gate/runtime/hooks/global/pre-rebase",
+        "packs/review-gate/runtime/hooks/global/pre-receive",
+        "packs/review-gate/runtime/hooks/global/prepare-commit-msg",
+        "packs/review-gate/runtime/hooks/global/proc-receive",
+        "packs/review-gate/runtime/hooks/global/project.mjs",
+        "packs/review-gate/runtime/hooks/global/push.mjs",
+        "packs/review-gate/runtime/hooks/global/reference-transaction",
+        "packs/review-gate/runtime/hooks/global/run-hook",
+        "packs/review-gate/runtime/hooks/global/sendemail-validate",
+        "packs/review-gate/runtime/hooks/global/update",
+        "packs/review-gate/runtime/hooks/pre-push",
+        "packs/review-gate/runtime/hooks/install-global.sh",
+        "packs/review-gate/runtime/hooks/install-hook.sh"
+      ],
+      "explain": {
+        "what": "A git pre-push check that refuses to push code no review has closed. To reach every repo, it sets your global git core.hooksPath, so every repo's git hooks go through a pass-through. A repo's own .git/hooks still run, exactly as before, except a push-to-checkout hook (see the changes). A repo that sets its own core.hooksPath (Husky and similar tools) bypasses the pass-through, so it is not gated. The review check itself applies only to repos you opt in with git config reviewgate.enabled true.",
+        "does": "In an opted-in repo, git push is refused until a review of those commits is closed, and the refusal names the first unreviewed commit. A reviewed push goes through and prints the review summary for your PR. Pushes in every other repo behave exactly as they did. If node is missing, an opted-in repo's push is refused rather than let through unchecked.",
+        "changes": [
+          "your global git config (~/.gitconfig, or $GIT_CONFIG_GLOBAL): core.hooksPath = ~/.agent-config-studio/review-gate/hooks/global",
+          "~/.agent-config-studio/review-gate/hooks/ (the pass-through hooks, the gate and node-path, the node they run on)",
+          "~/.agent-config-studio/review-gate-global-hook.json (your previous core.hooksPath, for uninstall)",
+          "each repo you opt in: reviewgate.enabled = true in that repo's .git/config (you choose which repos)",
+          "any repo with its own .git/hooks/push-to-checkout: that hook will not run while the global hooks are on. The pass-through leaves push-to-checkout out on purpose, so a push into a checked-out branch keeps git's own receive.denyCurrentBranch = updateInstead behavior. Install and status name each repo that has one."
+        ],
+        "undo": "Uninstalling restores your previous core.hooksPath: the exact earlier bytes of your global git config when nothing else changed, otherwise only the core.hooksPath line. A reviewgate.enabled setting you added to a repo stays until you remove it with git config --unset reviewgate.enabled."
+      }
+    },
+    {
+      "id": "push-gate-worktree-projects",
+      "title": "Also gate worktree projects",
+      "default": false,
+      "kind": "push-gate",
+      "harnesses": [],
+      "files": [],
+      "explain": {
+        "what": "An extra opt-in for the push gate: every repo that is a worktree project (one of its worktrees has a .worktrees.conf, as the worktree setup creates) is gated too, without opting each repo in by hand.",
+        "does": "Pushes from any worktree of such a project need a closed review, like an opted-in repo. Other repos are not affected. It needs the push gate part.",
+        "changes": [
+          "your global git config: reviewgate.worktreeProjects = true"
+        ],
+        "undo": "Uninstalling removes that one setting from your global git config."
+      }
+    },
+    {
+      "id": "codex-log-access",
+      "title": "Codex log access",
+      "default": false,
+      "kind": "codex-log-access",
+      "harnesses": [
+        "codex"
+      ],
+      "files": [],
+      "explain": {
+        "what": "Codex runs commands in a sandbox that can only write inside the project. This part lets a review started from Codex write the shared review log.",
+        "does": "Reviews, disputes and closes run from a Codex session can record themselves in ~/.agent-config-studio/review-log/ instead of failing to write the log.",
+        "changes": [
+          "config.toml in each Codex home: ~/.agent-config-studio/review-log added to writable_roots under [sandbox_workspace_write]",
+          "~/.agent-config-studio/backups/ (a copy of each config.toml before it changed)"
+        ],
+        "undo": "Uninstalling removes only that one writable_roots entry. If config.toml has not changed since install, its exact earlier bytes come back."
+      }
+    }
+  ]
+}

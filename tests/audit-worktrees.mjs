@@ -11,9 +11,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const realBefore = snapshotRealHomes();
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-audit-wt-')));
+const home = fs.realpathSync(tempDir('acs-audit-wt-'));
 process.env.HOME = home;
 
 const A = await import('../lib/audit.js');

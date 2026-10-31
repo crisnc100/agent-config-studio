@@ -14,6 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { codexModel, seedHome, writeCodexCatalog } from './fixtures/models-home.mjs';
 import { refreshCodexCatalogs } from '../lib/usage/codex-limits.js';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realHome = os.homedir();
@@ -27,7 +28,7 @@ const ok = (name, cond, detail = '') => {
   else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 };
 
-const tmpDir = (prefix) => { const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix))); temps.push(d); return d; };
+const tmpDir = (prefix) => { const d = fs.realpathSync(tempDir(prefix)); temps.push(d); return d; };
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 const cache = (h) => readJson(path.join(h, 'models_cache.json'));
 const methods = (h) => { try { return fs.readFileSync(path.join(h, 'fake-methods.log'), 'utf8').split('\n').filter(Boolean); } catch { return []; } };
@@ -99,7 +100,7 @@ async function startServer(h, pathDirs) {
     cwd: ROOT,
     env: { HOME: h, PORT: String(port), PATH: [...pathDirs, path.dirname(process.execPath), '/usr/bin', '/bin'].join(':'), TMPDIR: os.tmpdir() },
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  }); track(child);
   children.push(child);
   let log = '';
   child.stdout.on('data', (d) => { log += d; });

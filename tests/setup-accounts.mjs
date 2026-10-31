@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { startServer } from './fixtures/roots-home.mjs';
 import { fakeCli, isolatedPath, calls } from './fixtures/setup-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realHome = os.homedir();
@@ -31,7 +32,7 @@ const ok = (name, cond, detail = '') => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const temps = [];
-const mkTemp = (tag) => { const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `acs-accounts-${tag}-`))); temps.push(d); return d; };
+const mkTemp = (tag) => { const d = fs.realpathSync(tempDir(`acs-accounts-${tag}-`)); temps.push(d); return d; };
 const S = await import('../lib/usage/seats.js');
 const registry = (H) => path.join(H, '.agent-config-studio', 'seats.json');
 const seatsIn = (H) => { try { return JSON.parse(fs.readFileSync(registry(H), 'utf8')).seats; } catch { return null; } };

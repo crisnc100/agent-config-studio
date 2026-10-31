@@ -11,10 +11,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const realBefore = snapshotRealHomes();
 const temps = [];
-const mkdir = (tag) => { const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `acs-audit-${tag}-`))); temps.push(d); return d; };
+const mkdir = (tag) => { const d = fs.realpathSync(tempDir(`acs-audit-${tag}-`)); temps.push(d); return d; };
 const home = mkdir('home');
 const ext = mkdir('ext');
 process.env.HOME = home;

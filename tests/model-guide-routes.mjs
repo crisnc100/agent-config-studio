@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
@@ -36,7 +37,7 @@ async function startServer(home) {
     cwd: ROOT,
     env: { HOME: home, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir() },
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  }); track(child);
   let log = '';
   child.stdout.on('data', (d) => { log += d; });
   child.stderr.on('data', (d) => { log += d; });
@@ -62,7 +63,7 @@ async function call(base, method, route, body, headers = {}) {
   return { status: r.status, body: json, text };
 }
 
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-guide-srv-')));
+const home = fs.realpathSync(tempDir('acs-guide-srv-'));
 const files = {
   claude: path.join(home, '.claude', 'CLAUDE.md'),
   codex: path.join(home, '.codex', 'AGENTS.md'),

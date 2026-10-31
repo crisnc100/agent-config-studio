@@ -74,6 +74,7 @@ usage() {
     '       acs usage [...]          seat usage in the terminal' \
     '       acs install-model-id     install the model-id resolver' \
     '       acs install-worktree     install the worktree helpers (zsh/macOS only)' \
+    '       acs packs list|explain|install|status|update|uninstall   recommended skill packs (acs packs help)' \
     '       acs help                 this text' \
     '' \
     'environment: ACS_PORT (default 8787), ACS_NO_OPEN=1 (never open a browser),' \
@@ -365,6 +366,9 @@ update_checkout() {
   if git -C "$DIR" diff --quiet "$before" "$after" -- bin/model-id bin/model-id.mjs lib/models.js models.default.json lib/roles.js lib/roles.default.json package.json; then :; else
     echo "  the model-id resolver changed — run: acs install-model-id"
   fi
+  if [ -f "$HOME/.agent-config-studio/packs/state.json" ] && ! git -C "$DIR" diff --quiet "$before" "$after" -- packs; then
+    echo "  the skill packs changed — run: acs packs status (then acs packs update)"
+  fi
   return 10
 }
 
@@ -397,6 +401,11 @@ stale_copies() {
     done
   elif [ -e "$wt" ] && ! cmp -s "$wt" "$DIR/tools/worktree/wt.zsh"; then
     echo "  the installed worktree tools are older than this package — run: $ACS_CMD install-worktree"
+  fi
+  # The review gate's shared runtime, once a pack put it there.
+  rg="$HOME/.agent-config-studio/review-gate/review.mjs"
+  if [ -f "$HOME/.agent-config-studio/packs/state.json" ] && [ -e "$rg" ] && ! cmp -s "$rg" "$DIR/packs/review-gate/runtime/review.mjs"; then
+    echo "  the installed review gate differs from this package — run: $ACS_CMD packs status (then $ACS_CMD packs update)"
   fi
 }
 
@@ -453,6 +462,12 @@ case "${1:-}" in
     # it. Exits here: installing never starts the studio. Re-run after a pull.
     shift
     exec "$NODE" "$DIR/bin/install-worktree.mjs" "$@"
+    ;;
+  packs)
+    # The skill packs in packs/: list, explain, install (preview first),
+    # status, update and uninstall. Never starts the studio.
+    shift
+    exec "$NODE" "$DIR/bin/packs.mjs" "$@"
     ;;
   install-model-id)
     # Copies the resolver out of this checkout and links ~/.local/bin/model-id,

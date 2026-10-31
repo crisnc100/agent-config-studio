@@ -13,6 +13,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ACS = path.join(ROOT, 'bin', 'acs');
@@ -30,7 +31,7 @@ const ok = (name, cond, detail = '') => {
 const temps = [];
 /** A fresh temp HOME, realpath'd unless asked for the symlinked spelling. */
 function mkHome(tag, { raw = false } = {}) {
-  const made = fs.mkdtempSync(path.join(os.tmpdir(), `acs-roots-${tag}-`));
+  const made = tempDir(`acs-roots-${tag}-`);
   temps.push(made);
   return raw ? made : fs.realpathSync(made);
 }

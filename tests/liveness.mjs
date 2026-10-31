@@ -30,6 +30,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = fs.realpathSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));
 const ACS = path.join(ROOT, 'bin', 'acs');
@@ -42,7 +43,7 @@ const ok = (name, cond, detail = '') => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-liveness-')));
+const sb = fs.realpathSync(tempDir('acs-liveness-'));
 const scratchHome = path.join(sb, 'home-helpers');
 fs.mkdirSync(scratchHome);
 const which = (c) => spawnSync('/bin/sh', ['-c', `command -v ${c}`], { env: { PATH: process.env.PATH, HOME: scratchHome }, encoding: 'utf8' }).stdout.trim();
@@ -141,7 +142,7 @@ async function studio({ port, home = newHome(), freeze = false, pool = freeze ? 
   port ??= await freePort();
   const preload = [freeze && FREEZE, deaf && DEAF].filter(Boolean).map((f) => `--import ${f}`).join(' ');
   const env = { HOME: home, PORT: String(port), PATH: tools, TMPDIR: os.tmpdir(), ...(preload ? { NODE_OPTIONS: preload } : {}), ...(pool ? { UV_THREADPOOL_SIZE: String(pool) } : {}), ...(wrapper ? { LIVENESS_MODE: wrapper } : {}) };
-  const child = spawn(node, [wrapper ? WRAPPER : SERVER], { cwd: '/', env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(node, [wrapper ? WRAPPER : SERVER], { cwd: '/', env, stdio: ['ignore', 'pipe', 'pipe'] }); track(child);
   const s = { child, port, home, out: '', err: '', exit: null, run: path.join(home, '.agent-config-studio', 'run', `${port}.json`) };
   child.stdout.on('data', (d) => { s.out += d; });
   child.stderr.on('data', (d) => { s.err += d; });
@@ -161,7 +162,7 @@ async function freezeNow(s) {
 const acsEnv = (port, home, PATH = tools) => ({ HOME: home, PATH, ACS_PORT: String(port), ACS_NO_UPDATE: '1', ACS_NO_OPEN: '1', TMPDIR: os.tmpdir() });
 /** `acs <args>` run asynchronously, so every health answer the test's own studios give arrives. */
 function acs(args, env) {
-  const child = spawn('/bin/sh', [ACS, ...args], { cwd: sb, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn('/bin/sh', [ACS, ...args], { cwd: sb, env, stdio: ['ignore', 'pipe', 'pipe'] }); track(child);
   const r = { child, out: '', code: null };
   child.stdout.on('data', (d) => { r.out += d; });
   child.stderr.on('data', (d) => { r.out += d; });
@@ -277,8 +278,8 @@ try {
     ]) {
       const port = await freePort();
       const home = newHome();
-      const victim = spawn(process.execPath, [otherServer], { env: { HOME: home, PATH: tools }, stdio: 'ignore' });
-      const liar = spawn(process.execPath, [liarJs, String(port), JSON.stringify({ app: 'agent-config-studio', pid: victim.pid, nonce })], { env: { HOME: home, PATH: tools }, stdio: ['ignore', 'pipe', 'inherit'] });
+      const victim = spawn(process.execPath, [otherServer], { env: { HOME: home, PATH: tools }, stdio: 'ignore' }); track(victim);
+      const liar = spawn(process.execPath, [liarJs, String(port), JSON.stringify({ app: 'agent-config-studio', pid: victim.pid, nonce })], { env: { HOME: home, PATH: tools }, stdio: ['ignore', 'pipe', 'inherit'] }); track(liar);
       live.push(victim, liar);
       await new Promise((r) => { liar.stdout.once('data', r); liar.once('exit', r); });
       if (runFile) {
@@ -421,7 +422,7 @@ try {
     // Ctrl-C in the terminal that ran acs: SIGINT to the launcher's whole process group.
     const home = newHome();
     const port = await freePort();
-    const l = spawn('/bin/sh', [ACS], { cwd: sb, env: acsEnv(port, home), stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    const l = spawn('/bin/sh', [ACS], { cwd: sb, env: acsEnv(port, home), stdio: ['ignore', 'pipe', 'pipe'], detached: true }); track(l, { group: true });
     let out = '';
     l.stdout.on('data', (d) => { out += d; });
     l.stderr.on('data', (d) => { out += d; });
@@ -446,7 +447,7 @@ try {
     // The hazard is real on this node: one worker blocked for good, three free, and process.exit never returns.
     const probe = path.join(sb, 'exit-hangs.mjs');
     fs.writeFileSync(probe, "setTimeout(() => { process.kill(process.pid, 'SIGUSR2'); setTimeout(() => process.exit(0), 200); }, 100);\n");
-    const c = spawn(process.execPath, [probe], { env: { HOME: newHome(), PATH: tools, NODE_OPTIONS: `--import ${FREEZE}` }, stdio: 'ignore' });
+    const c = spawn(process.execPath, [probe], { env: { HOME: newHome(), PATH: tools, NODE_OPTIONS: `--import ${FREEZE}` }, stdio: 'ignore' }); track(c);
     live.push(c);
     const exited = await Promise.race([new Promise((r) => c.once('exit', () => r(true))), sleep(3000).then(() => false)]);
     ok('5 control: on this node, one blocked worker of four makes process.exit hang (still alive 3 s on)', !exited);

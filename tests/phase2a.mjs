@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { createApp } from '../server.js';
 import { detectHarnesses, HARNESSES } from '../lib/harness.js';
+import { removeOnExit } from './fixtures/cleanup.mjs';
 
 const ROOT = path.dirname(fileURLToPath(new URL('.', import.meta.url)));
 
@@ -46,7 +47,7 @@ function makeTemp(prefix) {
   for (const b of bases) {
     try {
       fs.mkdirSync(b, { recursive: true });
-      return fs.mkdtempSync(path.join(b, prefix));
+      return removeOnExit(fs.mkdtempSync(path.join(b, prefix)));
     } catch (e) { last = e; }
   }
   throw last || new Error('cannot create temp dir');

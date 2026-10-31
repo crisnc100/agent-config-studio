@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { sandbox, project, pr, tests, requireZsh, ROOT } from './worktree-sandbox.mjs';
+import { track } from './fixtures/cleanup.mjs';
 
 requireZsh('worktree/panel');
 const { ok, done } = tests();
@@ -63,7 +64,7 @@ async function start(extraEnv) {
   const base = `http://localhost:${port}`;
   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: ROOT, env: { ...sb.env, PORT: String(port), ACS_WORKTREE_STATUS_MS: '6000', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  }); track(child);
   let log = '';
   child.stdout.on('data', (d) => { log += d; });
   child.stderr.on('data', (d) => { log += d; });

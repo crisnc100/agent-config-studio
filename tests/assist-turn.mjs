@@ -9,9 +9,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const realBefore = snapshotRealHomes();
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-at-home-')));
+const home = fs.realpathSync(tempDir('acs-at-home-'));
 process.env.HOME = home;
 const put = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s); return f; };
 const studio = path.join(home, '.agent-config-studio');

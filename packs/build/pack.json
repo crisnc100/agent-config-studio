@@ -1,0 +1,51 @@
+{
+  "id": "build",
+  "title": "Build loop",
+  "version": "1.0.0",
+  "summary": "A /build skill that runs real work through Frame, Bar and Judge: a builder from your ACS builder role types, another model attacks the plan and grades the result, and you approve the bar and judge the outcome.",
+  "explain": {
+    "what": "The build skill is a way of running a real change with checks built in. You state the outcome and approve how it will be checked (the bar). A model from your builder role implements it in phases; a model from your advisor role attacks the plan first, and one from your judge role grades the finished work against the bar.",
+    "does": "Day to day you say /build and describe what you want. The skill writes context.md and plan.md in a builds/ folder, asks you to approve the acceptance criteria, has the builder work phase by phase against your tests, records the Grade with the review gate's script, and brings you the result to judge. Small tasks run in a lighter mode with one builder call and a code review.",
+    "changes": [
+      "~/.claude/skills/build/ and ~/.codex/skills/build/ (the skill, for the harnesses you have)"
+    ],
+    "undo": "Uninstalling removes the skill folders. A file you edited after installing is kept and reported. The builds/ folders in your projects are yours and are never touched."
+  },
+  "requires": {
+    "node": ">=20",
+    "git": true,
+    "modelId": true,
+    "clis": {
+      "anyOf": [
+        "claude",
+        "codex",
+        "grok"
+      ]
+    },
+    "packs": [
+      "review-gate"
+    ]
+  },
+  "parts": [
+    {
+      "id": "build",
+      "title": "Build skill",
+      "default": true,
+      "kind": "skill",
+      "harnesses": [
+        "claude",
+        "codex"
+      ],
+      "files": [
+        "packs/build/skills/claude/build/SKILL.md",
+        "packs/build/skills/codex/build/SKILL.md"
+      ],
+      "explain": {
+        "changes": [
+          "~/.claude/skills/build/SKILL.md (Claude Code; Grok reads this folder too)",
+          "~/.codex/skills/build/SKILL.md (Codex)"
+        ]
+      }
+    }
+  ]
+}

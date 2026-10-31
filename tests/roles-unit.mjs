@@ -5,14 +5,17 @@
  * each needs a seam the server does not expose. HOME is a temp dir, set
  * before any studio module loads; the fake `claude` never calls a model.
  */
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { describeCli } from './fixtures/describe-cli.mjs';
+import { onExit, tempDir, track } from './fixtures/cleanup.mjs';
 
 const realBefore = snapshotRealHomes();
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-roles-unit-')));
+const home = fs.realpathSync(tempDir('acs-roles-unit-'));
 process.env.HOME = home;
 
 const { writeRoles, rolesView, hashOf, setRole, setFlavor, _setWriteHook } = await import('../lib/roles-panel.js');
@@ -43,8 +46,8 @@ console.log('\nroles unit: R3 — history failures are shown, a symlinked folder
   ok('A3 an invalid document is refused before anything is touched', bad?.status === 400 && /"use" is required/.test(bad.message) && fs.readFileSync(file, 'utf8') === '{"version":1,"roles":{}}\n');
   ok('no temp file is left behind', fs.readdirSync(path.dirname(file)).every((f) => !f.includes('.tmp-')));
 
-  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-roles-other-')));
-  const linkedHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-roles-linked-')));
+  const other = fs.realpathSync(tempDir('acs-roles-other-'));
+  const linkedHome = fs.realpathSync(tempDir('acs-roles-linked-'));
   fs.symlinkSync(other, path.join(linkedHome, '.agent-config-studio'));
   const e = await rejects(writeRoles({ text: '{"version":1}\n', base: 'absent', message: 't', home: linkedHome, hist: failing }));
   ok('a symlinked studio folder is refused', e?.status === 409 && /symlink/.test(e.message), e?.message);
@@ -203,7 +206,12 @@ console.log('\nroles unit: R10 — the 120 s timeout, at a test scale');
   const bin = describeCli(path.join(home, '.local', 'bin', 'claude'));
   fs.writeFileSync(path.join(path.dirname(bin), 'mode.json'), JSON.stringify({ kind: 'hang' }));
   ok('the shipped limits are the plan\'s', DESCRIBE_LIMITS.description === 4000 && DESCRIBE_LIMITS.outputBytes === 65536 && DESCRIBE_LIMITS.timeoutMs === 120_000);
-  const d = createDescribe({ home, limits: { ...DESCRIBE_LIMITS, timeoutMs: 1500 } });
+  // This block's Describes belong to the suite: their acs-describe-* folders land in a registered
+  // TMPDIR, and the sweep cancels each one first, which kills its CLI's process group.
+  const savedTmp = process.env.TMPDIR;
+  process.env.TMPDIR = tempDir('acs-roles-r10-');
+  const describeHere = (opts) => { const x = createDescribe(opts); onExit(() => x.cancel()); return x; };
+  const d = describeHere({ home, limits: { ...DESCRIBE_LIMITS, timeoutMs: 1500 } });
   const t0 = Date.now();
   const e = await rejects(d.describe({ description: 'x' }));
   const pid = Number(fs.readFileSync(path.join(path.dirname(bin), 'pid'), 'utf8'));
@@ -217,18 +225,19 @@ console.log('\nroles unit: R10 — the 120 s timeout, at a test scale');
   // At the filesystem, as the failure would come: lib/describe.js calls fs.mkdtempSync on this same module.
   const realMkdtemp = fs.mkdtempSync;
   fs.mkdtempSync = (...a) => { fs.mkdtempSync = realMkdtemp; if (String(a[0]).includes('acs-describe-')) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }); return realMkdtemp(...a); };
-  const flaky = createDescribe({ home });
+  const flaky = describeHere({ home });
   const e1 = await rejects(flaky.describe({ description: 'x' }));
   ok('5 a setup failure after the slot is taken (mkdtemp ENOSPC) fails that request', /ENOSPC/.test(e1?.message || ''), e1?.message);
   ok('5 …and frees the slot', flaky.running === false);
   const next = await flaky.describe({ description: 'x' }).catch((e) => e);
   ok('5 …so the next request runs, not 409', next?.id && next.status !== 409, JSON.stringify(next?.message || next?.id));
-  const ttl = createDescribe({ home, now: (() => { let t = 0; return () => (t += 11 * 60_000); })() });
+  const ttl = describeHere({ home, now: (() => { let t = 0; return () => (t += 11 * 60_000); })() });
   fs.writeFileSync(path.join(path.dirname(bin), 'mode.json'), JSON.stringify({ kind: 'ok', reply: '{"roles":{"judge":{"use":"sol"}}}' }));
   const prop = await ttl.describe({ description: 'x' });
   const late = await rejects(ttl.accept({ id: prop.id }));
   ok('R2 a proposal past its TTL cannot be accepted (410)', late?.status === 410, late?.message);
   ok('…and wrote nothing', !fs.existsSync(rolesUserPath(home)));
+  if (savedTmp === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = savedTmp;
 }
 
 console.log('\nroles unit: A — runContained caps the reply after the stream ends too');
@@ -237,7 +246,7 @@ console.log('\nroles unit: A — runContained caps the reply after the stream en
   const bin = path.join(home, '.local', 'bin', 'claude');
   describeCli(bin);
   fs.writeFileSync(path.join(path.dirname(bin), 'mode.json'), JSON.stringify({ kind: 'bigtail' }));
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-cap-'));
+  const cwd = tempDir('acs-cap-');
   const run = runContained({ descriptor: HARNESSES.claude, binary: bin, opts: { model: 'm', toolless: true }, prompt: 'x', cwd, maxTextBytes: 64 * 1024 });
   const r = await run.done.then((v) => ({ resolved: v }), (e) => ({ rejected: e }));
   ok('a 100 KB last event with no newline is refused at the harness, never resolved', r.rejected?.overflow === 'text' && /more than 64 KB/.test(r.rejected.message) && !r.resolved,
@@ -247,7 +256,7 @@ console.log('\nroles unit: A — runContained caps the reply after the stream en
 
 console.log('\nroles unit: B — a hung history git call is stopped (30 s), and the save says so');
 {
-  const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-fake-git-'));
+  const fakeBin = tempDir('acs-fake-git-');
   fs.writeFileSync(path.join(fakeBin, 'git'), '#!/bin/sh\nexec sleep 120\n', { mode: 0o755 });
   const savedPath = process.env.PATH;
   process.env.PATH = `${fakeBin}:${savedPath}`;
@@ -321,6 +330,70 @@ console.log('\nroles unit: avoid — the write boundary checks the installed res
   const same = await writeRoles({ text: AVOID, base: plain.base, message: 't', home, hist: quiet });
   ok('an identical installed resolver: the avoid save goes through', same.saved === true && cur() === AVOID);
   fs.rmSync(path.join(home, '.agent-config-studio'), { recursive: true, force: true });
+}
+
+// The cleanup this suite relies on (tests/fixtures/cleanup.mjs), each probe in a child with its own
+// TMPDIR. The SIGINT probe's child is this file again, and it never probes.
+if (!process.env.ACS_ROLES_UNIT_SIGINT_PROBE) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  console.log('\nroles unit: cleanup — the prompt sweep removes only this run\'s files');
+  {
+    const tmp = tempDir('acs-roles-sweep-');
+    const prompts = path.join(tmp, 'acs-harness-prompts');
+    const foreign = spawnSync('/usr/bin/true').pid; // exited: a dead owner that is not this run
+    const script = [
+      "import fs from 'node:fs'; import path from 'node:path'; import { spawn } from 'node:child_process';",
+      `const { track } = await import(${JSON.stringify(new URL('./fixtures/cleanup.mjs', import.meta.url).href)});`,
+      'const dir = process.env.PROMPTS_DIR; fs.mkdirSync(dir, { recursive: true });',
+      "if (process.env.FOREIGN) fs.writeFileSync(path.join(dir, process.env.FOREIGN + '-1-foreign.txt'), '');",
+      "fs.writeFileSync(path.join(dir, process.pid + '-1-own.txt'), '');",
+      "const child = track(spawn(process.execPath, ['-e', 'require(\"fs\").writeFileSync(process.env.PROMPTS_DIR + \"/\" + process.pid + \"-1-child.txt\", \"\")']));",
+      "await new Promise((r) => child.once('exit', r));",
+    ].join('\n');
+    const sweepRun = (extra) => spawnSync(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, TMPDIR: tmp, PROMPTS_DIR: prompts, ...extra }, encoding: 'utf8', timeout: 30_000 });
+    const first = sweepRun({ FOREIGN: String(foreign) });
+    const left = fs.existsSync(prompts) ? fs.readdirSync(prompts) : null;
+    ok('a foreign dead-owner prompt file in the shared folder survives the sweep, and so does the folder', first.status === 0 && JSON.stringify(left) === JSON.stringify([`${foreign}-1-foreign.txt`]), `${first.stderr} left ${JSON.stringify(left)}`);
+    ok('…while this run\'s own file and its tracked child\'s are removed', first.status === 0 && Array.isArray(left) && !left.some((n) => /-1-(own|child)\.txt$/.test(n)), JSON.stringify(left));
+    fs.rmSync(prompts, { recursive: true, force: true });
+    const second = sweepRun({});
+    ok('a shared folder that was not there at start and is left empty is removed', second.status === 0 && !fs.existsSync(prompts), second.stderr);
+  }
+
+  console.log('\nroles unit: cleanup — a SIGINT during R10 leaves no folder or CLI behind');
+  {
+    const tmp = tempDir('acs-roles-sigint-');
+    const child = track(spawn(process.execPath, [fileURLToPath(import.meta.url)], { env: { ...process.env, TMPDIR: tmp, ACS_ROLES_UNIT_SIGINT_PROBE: '1' }, stdio: ['ignore', 'pipe', 'pipe'] }));
+    let out = '';
+    child.stdout.on('data', (b) => { out += b; });
+    child.stderr.on('data', (b) => { out += b; });
+    const exited = new Promise((r) => child.once('exit', (code, signal) => r({ code, signal })));
+    // R10's hanging fake CLI writes its pid beside it, under the child's temp HOME.
+    const hangPidFile = () => {
+      for (const n of fs.readdirSync(tmp)) {
+        const p = path.join(tmp, n, '.local', 'bin', 'pid');
+        if (n.startsWith('acs-roles-unit-') && fs.existsSync(p)) return p;
+      }
+      return null;
+    };
+    let hangPid = null;
+    for (const t0 = Date.now(); !hangPid && child.exitCode === null && Date.now() - t0 < 60_000;) {
+      await sleep(20);
+      const p = hangPidFile();
+      if (p) hangPid = Number(fs.readFileSync(p, 'utf8')) || null;
+    }
+    child.kill(hangPid ? 'SIGINT' : 'SIGKILL');
+    const end = await exited;
+    const gone = async (pid) => {
+      for (let i = 0; i < 100; i++) { try { process.kill(pid, 0); } catch { return true; } await sleep(20); }
+      return false;
+    };
+    ok('the probe was interrupted inside R10\'s hanging Describe', hangPid !== null && end.code === 130 && !out.includes('a run past the timeout is killed'), `pid ${hangPid}, exit ${end.code}/${end.signal}\n${out.slice(-600)}`);
+    ok('…its Describe CLI is gone', hangPid !== null && await gone(hangPid), `pid ${hangPid}`);
+    const leftover = fs.readdirSync(tmp);
+    ok('…and it left no folder behind (no acs-describe-*, no suite temp folder)', leftover.length === 0, JSON.stringify(leftover));
+    if (hangPid) { try { process.kill(-hangPid, 'SIGKILL'); } catch {} }
+  }
 }
 
 assertRealHomesUnchanged(realBefore, ok);

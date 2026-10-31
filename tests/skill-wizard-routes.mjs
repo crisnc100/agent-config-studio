@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { startServer } from './fixtures/roots-home.mjs';
 import { wizardCli } from './fixtures/wizard-cli.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
@@ -23,7 +24,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const put = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s); };
 const exists = (p) => { try { fs.lstatSync(p); return true; } catch { return false; } };
 
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-wizard-routes-')));
+const home = fs.realpathSync(tempDir('acs-wizard-routes-'));
 const studio = path.join(home, '.agent-config-studio');
 const projects = path.join(home, 'Projects');
 const readOnly = path.join(home, 'Theirs');

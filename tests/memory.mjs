@@ -17,12 +17,13 @@ import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import {
   seedMemoryHome, unlockMemoryHome, alphaIndex, RUN_LINE, RUN_LINKS, MARK, TS, enc,
 } from './fixtures/memory-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realHome = os.homedir();
 const realBefore = snapshotRealHomes();
 
-const fakeHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-memory-')));
+const fakeHome = fs.realpathSync(tempDir('acs-memory-'));
 process.env.HOME = fakeHome;
 process.env.ACS_SUITE = 'offline';
 delete process.env.CODEX_HOME;

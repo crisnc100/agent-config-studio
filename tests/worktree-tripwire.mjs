@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TRIPWIRE = pathToFileURL(path.join(ROOT, 'tests', 'real-home.mjs')).href;
@@ -20,7 +21,7 @@ const ok = (name, cond, detail = '') => {
   else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 };
 
-const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-tripwire-')));
+const tmp = fs.realpathSync(tempDir('acs-tripwire-'));
 const CHILD = `
   import fs from 'node:fs';
   const { snapshotRealHomes, compareRealHomes } = await import(${JSON.stringify(TRIPWIRE)});

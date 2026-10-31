@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLIENT_FOLDER } from './fixtures/private-names.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const TRIP = path.join(path.dirname(fileURLToPath(import.meta.url)), 'real-home.mjs');
 
@@ -28,7 +29,7 @@ const sameShape = (f, body) => {
 };
 
 function scratch(tag) {
-  const T = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `acs-trip-roots-${tag}-`)));
+  const T = fs.realpathSync(tempDir(`acs-trip-roots-${tag}-`));
   const put = (rel, body) => { const f = path.join(T, rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, body); return f; };
   const snap = `${T}.snap`;
   const run = (cmd) => spawnSync(process.execPath, [TRIP, cmd, snap], { env: { ...process.env, HOME: T }, encoding: 'utf8' });

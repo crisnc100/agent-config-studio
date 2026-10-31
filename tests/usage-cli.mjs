@@ -7,10 +7,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'usage.mjs');
 const realHome = os.homedir();
-const home = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-cli-'));
+const home = tempDir('acs-cli-');
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {

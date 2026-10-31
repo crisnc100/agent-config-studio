@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { seedProjectTree, seedGlobals, startServer } from './fixtures/roots-home.mjs';
 import { FOREIGN } from './fixtures/setup-home.mjs';
+import { tempDir } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realHome = os.homedir();
@@ -38,7 +39,7 @@ const ok = (name, cond, detail = '') => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const temps = [];
-const mkTemp = (tag) => { const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `acs-setup-${tag}-`))); temps.push(d); return d; };
+const mkTemp = (tag) => { const d = fs.realpathSync(tempDir(`acs-setup-${tag}-`)); temps.push(d); return d; };
 const mk = (...p) => { fs.mkdirSync(path.join(...p), { recursive: true }); return path.join(...p); };
 const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
 

@@ -1,0 +1,44 @@
+#!/bin/sh
+# The entry-point symlinks keep this guard available even if dispatch.sh is broken.
+name=${0##*/}
+folder=${0%/*}
+project=0
+if [ "$name" = pre-push ]; then
+  # node: the path pinned in ../node-path when it is executable, else node on PATH.
+  node=
+  if [ -r "$folder/../node-path" ]; then IFS= read -r node < "$folder/../node-path" || :; fi
+  { [ -n "$node" ] && [ -x "$node" ]; } || node=$(command -v node 2>/dev/null) || node=
+  if [ -n "$node" ]; then
+    project=$("$node" "$folder/project.mjs") || exit 1
+    case "$project" in
+      0|1) ;;
+      *) echo 'Push blocked: invalid project classification.' >&2; exit 1 ;;
+    esac
+  elif [ "$(git config --type=bool --get reviewgate.enabled 2>/dev/null)" = true ]; then
+    # An explicitly opted-in repo stays gated: without node its review check cannot run.
+    echo 'Push blocked: node is missing; the review gate for this opted-in repo cannot run.' >&2
+    exit 1
+  else
+    # Approved fallback: classifying the other opt-in needs node, so the repo kind is
+    # unknown. Treat it as ordinary and preserve its own pre-push hook.
+    echo 'review gate warning: node is missing; treating this push as ordinary without a review check.' >&2
+  fi
+fi
+
+# fd 3 is a private routing acknowledgement; normal hook stdout stays on fd 1.
+{
+  result=$(
+    sh "$folder/dispatch.sh" "$name" "$project" "$@" 3>&1 1>&4 4>&-
+    printf 'status:%s\n' "$?"
+  )
+} 4>&1
+case "$result" in
+  "handled
+status:"*) exit "${result##*status:}" ;;
+esac
+echo "review gate warning: broken dispatcher for $name." >&2
+if [ "$project" = 1 ] && [ "$name" = pre-push ]; then
+  echo 'Push blocked: the review gate for this opted-in repo could not run.' >&2
+  exit 1
+fi
+exit 0

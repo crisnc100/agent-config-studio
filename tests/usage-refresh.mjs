@@ -12,10 +12,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const realBefore = snapshotRealHomes();
-const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-refresh-')));
+const home = fs.realpathSync(tempDir('acs-refresh-'));
 process.env.HOME = home;
 delete process.env.CODEX_HOME;
 const { refreshSnapshot, refreshSpawns } = await import('../lib/usage/refresh.js');
@@ -53,11 +54,11 @@ function freePort() {
   });
 }
 {
-  const srvHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-refresh-srv-')));
+  const srvHome = fs.realpathSync(tempDir('acs-refresh-srv-'));
   const port = await freePort();
   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: ROOT, env: { HOME: srvHome, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir() }, stdio: 'ignore',
-  });
+  }); track(child);
   const base = `http://localhost:${port}`;
   try {
     for (let i = 0; i < 100; i++) { try { if ((await fetch(`${base}/api/health`)).ok) break; } catch {} await new Promise((r) => setTimeout(r, 100)); }

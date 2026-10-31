@@ -17,6 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { seedHome } from './fixtures/models-home.mjs';
+import { track } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -35,7 +36,7 @@ const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
   cwd: ROOT,
   env: { HOME: home, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir() },
   stdio: ['ignore', 'inherit', 'inherit'],
-});
+}); track(child);
 
 const base = `http://localhost:${port}`;
 for (let i = 0; i < 100; i++) {

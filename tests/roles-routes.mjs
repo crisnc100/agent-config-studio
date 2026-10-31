@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { describeCli } from './fixtures/describe-cli.mjs';
+import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MODELS = JSON.parse(fs.readFileSync(path.join(ROOT, 'models.default.json'), 'utf8'));
@@ -38,7 +39,7 @@ async function startServer(home) {
     cwd: ROOT,
     env: { HOME: home, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir() },
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  }); track(child);
   let log = '';
   child.stdout.on('data', (d) => { log += d; });
   child.stderr.on('data', (d) => { log += d; });
@@ -53,7 +54,7 @@ async function startServer(home) {
 }
 
 const temps = [];
-const mkHome = (tag) => { const h = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `acs-roles-${tag}-`))); temps.push(h); return h; };
+const mkHome = (tag) => { const h = fs.realpathSync(tempDir(`acs-roles-${tag}-`)); temps.push(h); return h; };
 
 const home = mkHome('srv');
 const bin = describeCli(path.join(home, '.local', 'bin', 'claude'));
