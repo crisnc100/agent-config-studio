@@ -280,9 +280,37 @@ never reads it, so new data cannot break it.
   run (exit 4). Checked on codex-cli 0.160.0 with a temp `CODEX_HOME`, a stub
   server that leaves a marker, and a dead local model provider: `exec`
   launched it without the override and not with it.
+- A server a codex plugin provides (the computer-use plugin's `cua_repl`) is
+  listed by `mcp list` but has no `mcp_servers` entry: the override gives it
+  one with no transport, and codex refuses the whole config (`invalid
+  transport in mcp_servers.<name>`). When that check fails, `mcp list` runs
+  again with `-c features.plugins=false` (what `codex --disable plugins`
+  sets; `mcp list` reports no plugin of a server, and `codex plugin list`
+  goes to the network). The servers that left with the plugins are the
+  plugins'; the override covers the rest, and the last `mcp list`, under both
+  overrides, must show every server disabled. When no server leaves, the
+  first error stands. Checked on codex-cli 0.160.0 the same way, with a stub
+  plugin from a local marketplace: without overrides `exec` started both
+  servers within 0.1 s; the old override exits 4 without running `exec`; the
+  new overrides run `exec`, codex accepts the config, and in 30 s neither
+  server leaves a marker.
+- grok has no flag that keeps a configured MCP server from starting
+  (`--deny MCPTool` only refuses its tools). So before each grok call,
+  `grok inspect --json` runs in the call's folder with
+  `GROK_CLAUDE_MCPS_ENABLED=0` and `GROK_CURSOR_MCPS_ENABLED=0`, the same env
+  the call gets. Any server neither disabled nor `compatibilityStatus:
+  "disabled"`, or an enabled plugin whose `provides.mcpServers` is above 0,
+  refuses the call (exit 4, each named, with `grok mcp disable <name>` /
+  `grok plugin disable <name>`). The parse is lib/containment.js
+  `grokMcpFromInspect`'s, copied so the file stands alone: output of any
+  other shape is an error, never "no servers".
 - `--investigate` compares `git status --porcelain=v2` plus each listed
   file's mode, size, mtime and ctime, before and after, so a write or chmod
-  to an already-dirty file shows. It never reverts.
+  to an already-dirty file shows. It also records HEAD (`git rev-parse` for
+  the commit, `git symbolic-ref` for the branch, or "detached"), so a
+  checkout or branch switch that leaves the status as it was still exits 5,
+  reported as `HEAD <commit> (<branch>) → <commit> (<branch>)`. It never
+  reverts.
 - Tests: `tests/ask-model.mjs` (stub CLIs on PATH, temp HOME).
 
 ## Model guide block (`lib/model-guide.js`)

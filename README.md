@@ -518,7 +518,16 @@ skill.
   `--strict-mcp-config`, Codex with `--sandbox read-only` and each MCP server
   it has configured switched off, and Grok with its read tools only and MCP
   denied, so the model can read but not edit. If Codex's servers cannot be
-  confirmed off, Codex is not run.
+  confirmed off, Codex is not run. A server that a Codex plugin brings has no
+  setting of its own to switch off, so when one is there Codex runs that call
+  with its plugins off.
+- Grok starts every MCP server it has configured, whatever the call's flags
+  say, and nothing turns one off for a single call. So before each Grok call
+  `ask-model` runs `grok inspect` in the call's folder, with Grok's borrowed
+  Claude Code and Cursor servers switched off for that check and for the
+  call. If a server, or a plugin that brings one, would still start, Grok is
+  not run (exit 4) and the message names each one. Switch it off with
+  `grok mcp disable <name>` (a plugin's with Grok's plugin disable command).
 - The answer goes to stdout, and one line on stderr names the family, id,
   effort and mode. `--json` prints `family`, `id`, `effort`, `mode`, `answer`,
   `changed` and `error` instead. `--cwd <dir>` is where the model works.
@@ -528,9 +537,11 @@ skill.
 - `--investigate` lets the model run commands: Claude gets `Bash`, Grok its
   shell tool with shell commands allowed, and Codex's read-only sandbox
   already runs them. A command Grok still refuses is passed on to stderr. In a git work
-  tree it compares the status before and after; if a file changed, it names
-  each one and exits 5. It never reverts anything. Ignored files and files
-  outside the repository are not checked.
+  tree it compares HEAD (its commit and branch) and the status before and
+  after, so a checkout shows even when it leaves the status as it was; if
+  anything changed, it names each file (and a moved HEAD with both commits)
+  and exits 5. It never reverts anything. Ignored files and files outside the
+  repository are not checked.
 - Exit codes: 0 answered, 2 another model answered, 3 the CLI (or node) is
   missing, 4 the call failed or returned an error, 5 files changed under
   `--investigate`, 64 a usage error or a role or family that does not resolve.
