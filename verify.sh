@@ -134,6 +134,8 @@ node tests/packs-catalog.mjs
 node tests/packs-install.mjs
 node tests/packs-update.mjs
 node tests/packs-hooks.mjs
+node tests/packs-uninstall-backup.mjs
+node tests/cleanup-launcher.mjs
 # The Packs card: its routes through a real server, then the view in the page against one (temp HOMEs, stub CLIs).
 node tests/packs-server.mjs
 node tests/packs-ui.mjs
