@@ -334,6 +334,46 @@ test('D14 findings shown to the owner carry their numbers: the report, rejection
   assert.match(summary.stdout, /^Carried unlocated f3 LOW not there: .* — LOW 6\/100 \(likelihood 2\/10 × impact 3\/10\)$/m)
   assert.match(script(['--deferred']).stdout, /x1 MEDIUM unscored src\/one\.js:1 — three is odd/)
 })
+const X1_LATER = 'x1 HIGH 25/100 (likelihood 5/10 × impact 5/10) src/one.js:1 — three leaks; Trigger: importing three; Deferred: later; Fix idea: return 1'
+const listed = (r) => { allowed(r); assert.ok(`${r.stdout}\n${r.stderr}`.split('\n').includes(X1_LATER), r.out) }
+test('D15 a summary reads the close that covers its tip: a later close outside the tip does not hide a finding still deferred there', () => {
+  const review = reviewed([scored()])
+  const check = fixChecked(review, [X_HIGH])
+  closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later' } })
+  commit({ 'src/one.js': 'export const one = 4\n' })
+  closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'fixed' } })
+  const fixedThere = script(['--summary']); allowed(fixedThere)
+  assert.doesNotMatch(fixedThere.stdout, /Deferred: later/)
+  // Back to the tree the first close covered: as that very commit, then as a rewrite with its tree.
+  git('reset', '-q', '--hard', check.head)
+  listed(script(['--summary'])); listed(gate())
+  assert.match(script(['--summary']).stdout, /Counts: 2 findings; 1 fixed; 0 rejected; 1 deferred/)
+  squash()
+  listed(script(['--summary'])); listed(gate())
+})
+test('D16 a branch renamed between the review and the fix check: the summary and the push report still list the deferred x1', () => {
+  const review = reviewed([scored()])
+  git('branch', '-m', 'feat', 'renamed')
+  const check = fixChecked(review, [X_HIGH])
+  assert.equal(review.branch, 'feat'); assert.equal(check.branch, 'renamed')
+  closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later' } })
+  listed(script(['--summary'])); listed(gate())
+})
+test('D17 a recheck and a fix check that straddle a tree-preserving amend close, carried from the recheck head', () => {
+  const grade = graded()
+  commit({ 'src/one.js': 'export const one = 3\n' })
+  const recheck = rechecked(grade)
+  git('commit', '-q', '--amend', '-m', 'reworded, same tree')
+  const amended = git('rev-parse', 'HEAD')
+  assert.notEqual(amended, recheck.head); assert.equal(tree(amended), tree(recheck.head))
+  allowed(script(['--fix-check', grade.id], { STUB_FINDINGS: JSON.stringify({ findings: [X_HIGH] }) }))
+  const check = records().at(-1)
+  assert.equal(check.kind, 'fix-check'); assert.equal(check.head, amended)
+  const record = closed(grade.id, { c1: { status: 'deferred', reason: 'later' }, x1: { status: 'deferred', reason: 'later too' } })
+  assert.deepEqual(record.carried, { from: recheck.head, kind: 'recheck', record: recheck.id, tree: tree(amended) })
+  assert.equal(record.fixCheck, check.id); assert.equal(record.recheck, recheck.id); assert.equal(Object.hasOwn(record, 'carriedAlso'), false)
+  allowed(gate())
+})
 
 function isAncestorOf(a, b) {
   return run('git', ['merge-base', '--is-ancestor', a, b]).status === 0
