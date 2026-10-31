@@ -60,7 +60,7 @@ Write the gate's prompt (below) to `$PROMPT_FILE`, then run the command for the 
 - `claude-…` — headless claude CLI:
   ```bash
   claude -p "$(cat "$PROMPT_FILE")" --model "$id" --effort "$effort" \
-    --output-format json --dangerously-skip-permissions --tools Read,Grep,Glob
+    --output-format json --dangerously-skip-permissions --tools Read,Grep,Glob --strict-mcp-config
   ```
   Parse `.result` from the JSON envelope; check `.is_error` is false and verify the model with `jq -e --arg m "$id" '.modelUsage | has($m)'`.
 - `grok-…` — read-only by tool allowlist, the same flags the review script uses:
@@ -79,7 +79,7 @@ Write the gate's prompt (below) to `$PROMPT_FILE`, then run the command for the 
 
 family, model and non-empty criteria are required. Optional top-level keys: vendor (codex, claude or grok), effort and findings; vendor is derived from the model id when absent. Omit findings or use [] for no extra bugs; file and line are optional. Every criterion and finding requires evidence. Only PASS or FAIL verdicts. Finding scores are likelihood/impact integers 1–10, protected boolean and nonempty trigger; optional severity is ignored comparison text. Missing or invalid scores are unscored and block as MEDIUM (HIGH if protected), without a grader re-ask; no unknown keys and no quotes to locate. Keep criterion ids and text unchanged in a recheck and include only original FAIL criteria. New recheck findings are scored with the same rubric and their severity is derived. Save the returned JSON, including evidence for every criterion.
 
-**The claude flags are load-bearing.** `--tools Read,Grep,Glob` (not `--allowedTools`) is what holds the gate read-only — it removes Write/Edit from existence rather than merely gating them, which is what makes skipping the permission prompts safe. A headless `claude -p` can't show a prompt, so without the skip flag a repo deny-rule or hook blocks a read silently and the gate grades files it never opened.
+**The claude flags are load-bearing.** `--tools Read,Grep,Glob` (not `--allowedTools`) plus `--strict-mcp-config` (no MCP tools, which `--tools` does not cover) is what holds the gate read-only — it removes Write/Edit from existence rather than merely gating them, which is what makes skipping the permission prompts safe. A headless `claude -p` can't show a prompt, so without the skip flag a repo deny-rule or hook blocks a read silently and the gate grades files it never opened.
 
 **Check `.is_error` is false before trusting `.result`, and never branch on `$?`** — piping the output masks a failure as exit 0. A call that never reached the API returns `API Error: Unable to connect to API (ENOTFOUND)`, which means Codex's sandbox denied it network (`network_access` under `[sandbox_workspace_write]` in `~/.codex/config.toml`, or run the call escalated). That is a gate that **did not run**: fix it, use the other judgment family, or report NOT RUN — never report it as a pass.
 

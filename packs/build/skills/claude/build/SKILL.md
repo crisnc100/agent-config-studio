@@ -110,7 +110,7 @@ codex exec --skip-git-repo-check --sandbox read-only -m "$id" -c model_reasoning
 **Gate on the claude CLI** (headless, never an in-session subagent, which may run on a different model):
 ```
 claude -p --model "$id" --effort "$effort" \
-  --tools Read,Grep,Glob --output-format json "<gate prompt>"
+  --tools Read,Grep,Glob --strict-mcp-config --output-format json "<gate prompt>"
 ```
 Verify the right model ran: `jq -e --arg m "$id" '.modelUsage | has($m)'`.
 

@@ -72,11 +72,11 @@ An unresolved role prints an id every CLI rejects: stop and tell the user to set
 ```bash
 flag=(); [ -z "$effort" ] || flag=(--effort "$effort")
 claude -p "$PROMPT" --model "$id" "${flag[@]}" --output-format json \
-  --dangerously-skip-permissions --tools Read,Grep,Glob
+  --dangerously-skip-permissions --tools Read,Grep,Glob --strict-mcp-config
 ```
 Parse the JSON envelope: the advisory text is `.result`, and the `modelUsage` keys **must include the resolved id** — check it, never eyeball it: `jq -e --arg m "$id" '.modelUsage | has($m)'` on the envelope. If it fails, the call ran on the wrong model — abort, tell the user, and never present another model's output as the advisor's. Check `.is_error` is false before trusting `.result`, and never branch on `$?` — piping the output masks a failed call as exit 0.
 
-**Why those two flags:** `--tools Read,Grep,Glob` is what keeps the advisor read-only — it removes Write/Edit from existence rather than merely gating them (`--allowedTools` only pre-approves), and it holds even under skip-permissions. That restriction is what makes skipping the prompts safe. A headless `claude -p` can't show a permission prompt, so without the skip flag a repo `.claude/settings.json` deny-rule or hook blocks a read silently and the advisor returns confident advice about files it never opened.
+**Why those flags:** `--tools Read,Grep,Glob` is what keeps the advisor read-only (it limits built-in tools only; `--strict-mcp-config` with no `--mcp-config` drops every configured MCP tool too) — it removes Write/Edit from existence rather than merely gating them (`--allowedTools` only pre-approves), and it holds even under skip-permissions. That restriction is what makes skipping the prompts safe. A headless `claude -p` can't show a permission prompt, so without the skip flag a repo `.claude/settings.json` deny-rule or hook blocks a read silently and the advisor returns confident advice about files it never opened.
 
 **`gpt-…`** (verdict on stdout, logs on stderr):
 ```bash

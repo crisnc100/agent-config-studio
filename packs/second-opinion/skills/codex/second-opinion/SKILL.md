@@ -58,7 +58,7 @@ The CLI follows the id's prefix:
 - `claude-…` (read `.result`; check `.is_error` is false and that `modelUsage` names the id; an `ENOTFOUND` error means the Codex sandbox blocked the network — re-run escalated, never report it as an answer):
   ```bash
   flag=(); [ -z "$effort" ] || flag=(--effort "$effort")
-  claude -p "$PROMPT" --model "$id" "${flag[@]}" --tools Read,Grep,Glob --dangerously-skip-permissions --output-format json
+  claude -p "$PROMPT" --model "$id" "${flag[@]}" --tools Read,Grep,Glob --strict-mcp-config --dangerously-skip-permissions --output-format json
   ```
 - `gpt-…` (always pass `-m`; bare `codex exec` uses the CLI's own default model):
   ```bash

@@ -73,12 +73,12 @@ PROMPT="Read $BRIEF, then the READ FIRST files it names. $(cat "$CONTRACT")"
 An unresolved role prints an id every CLI rejects: stop and tell the user to set the `advisor` role in ACS → Models →
 Roles. The CLI follows the id's prefix.
 
-**`claude-…`** — headless claude CLI. Both flags below are load-bearing:
+**`claude-…`** — headless claude CLI. The flags below are load-bearing:
 
 ```bash
 flag=(); [ -z "$effort" ] || flag=(--effort "$effort")
 claude -p "$PROMPT" --model "$id" "${flag[@]}" \
-  --dangerously-skip-permissions --tools Read,Grep,Glob \
+  --dangerously-skip-permissions --tools Read,Grep,Glob --strict-mcp-config \
   --output-format json > advisor-out.json
 
 jq -r '.is_error'                              advisor-out.json   # MUST be false
@@ -94,6 +94,8 @@ jq -r '.result'                                advisor-out.json   # the advisory
 - `--tools Read,Grep,Glob` is what actually keeps it read-only, and it holds *even under skip-permissions*.
   `--allowedTools` only pre-approves tools; `--tools` restricts which exist. **Never widen this list.** That pairing —
   bypass the prompts, remove the dangerous tools — is what makes the dangerous-sounding flag safe here.
+- `--strict-mcp-config` (with no `--mcp-config`) — `--tools` limits built-in tools only; this drops every configured
+  MCP tool, so none can write while the prompts are skipped.
 
 **Prove the model.** If the `jq -e` check fails, the call ran on the wrong model — abort, tell the user, and never
 present another model's output as the advisor's.

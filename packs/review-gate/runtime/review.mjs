@@ -1098,12 +1098,15 @@ const die = (m) => {
   process.exit(1)
 }
 
-// Portability: if the repo doesn't already ignore reviews/, add it to .git/info/exclude so the report
-// never appears as an untracked file (some repos ignore it via .gitignore; others may not).
+// Portability: if the repo doesn't already ignore reviews/, add it to the repo's info/exclude so the report
+// never appears as an untracked file (some repos ignore it via .gitignore; others may not). Git names the
+// path: in a linked worktree `.git` is a file and info/exclude lives in the common dir.
 function ensureReviewsIgnored() {
   if (spawnSync('git', ['check-ignore', '-q', 'reviews']).status === 0) return
   try {
-    const exclude = '.git/info/exclude'
+    const exclude = sh('git', ['rev-parse', '--git-path', 'info/exclude'])
+    if (!exclude) return
+    mkdirSync(dirname(exclude), { recursive: true })
     const cur = existsSync(exclude) ? readFileSync(exclude, 'utf8') : ''
     if (!cur.split('\n').includes('reviews/'))
       writeFileSync(exclude, `${cur}${!cur || cur.endsWith('\n') ? '' : '\n'}reviews/\n`)

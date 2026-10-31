@@ -58,7 +58,7 @@ The CLI follows the id's prefix:
 - `claude-…` (read `.result`; check `.is_error` is false and that `modelUsage` names the id):
   ```bash
   flag=(); [ -z "$effort" ] || flag=(--effort "$effort")
-  claude -p "$PROMPT" --model "$id" "${flag[@]}" --tools Read,Grep,Glob --output-format json
+  claude -p "$PROMPT" --model "$id" "${flag[@]}" --tools Read,Grep,Glob --strict-mcp-config --output-format json
   ```
 - `gpt-…` (always pass `-m`; bare `codex exec` uses the CLI's own default model):
   ```bash
