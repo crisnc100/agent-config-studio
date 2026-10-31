@@ -251,3 +251,31 @@ for (const harness of ['claude', 'codex']) {
     }
   })
 }
+
+// ── build: the Grade on the advisor role's second opinion, when the grader swap picks it ──
+for (const harness of ['claude', 'codex']) {
+  test(`build (${harness}): the swapped Grade runs the second opinion at its effort, and with none set passes no --effort`, () => {
+    const body = skill(`build/skills/${harness}/build/SKILL.md`)
+    const swap = block(body, /^ask-model --family "\$alt"/m)
+    // The codex copy's command reads $PROMPT_FILE, which its gate setup sets for GATE=grade.
+    const setup = harness === 'codex' ? `${fill(block(body, /^GATE=bounce/m).replace(/^GATE=bounce/m, 'GATE=grade'))}\n` : ''
+    const cases = [
+      ['fresh defaults: the second opinion\'s own effort', null, 'high'],
+      ['no effort set for the second opinion: no --effort at all', { roles: { advisor: { effort: null } } }, null],
+    ]
+    for (const shell of SHELLS) {
+      for (const [label, doc, expected] of cases) {
+        roles(doc)
+        put(join(WORK, 'builds/s/bounce-prompt.md'), 'THE BOUNCE PROMPT')
+        put(join(WORK, 'builds/s/grade-prompt.md'), 'THE GRADE PROMPT')
+        const role = JSON.parse(spawnSync(join(BIN, 'model-id'), ['--role', 'advisor', '--json'], { env: { HOME, PATH }, encoding: 'utf8' }).stdout)
+        assert.equal(role.altEffort, expected ?? '', `${label}: the roles give this altEffort`)
+        const id = models[role.alt]
+        const argv = onlyCall(run(shell, `${setup}${fill(swap)}\n`), cliOf(id), `${shell} ${label}`)
+        assert.equal(effortIn(cliOf(id), argv), expected, `${shell} ${label}: ${argv.join(' ')}`)
+        assert.equal(modelIn(cliOf(id), argv), id, `${shell} ${label}: the second opinion's model`)
+        assert.ok(argv.includes('THE GRADE PROMPT') && !argv.includes('THE BOUNCE PROMPT'), `${shell} ${label}: the Grade's prompt only`)
+      }
+    }
+  })
+}

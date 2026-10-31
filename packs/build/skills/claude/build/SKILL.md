@@ -105,7 +105,13 @@ Verdict comes back on **stdout**; ask-model's one status line goes to **stderr**
 ```
 ask-model --role advisor --prompt-file builds/<slug>/bounce-prompt.md     # Bounce
 ask-model --role judge --prompt-file builds/<slug>/grade-prompt.md        # Grade
-ask-model --family <alt> --effort <altEffort> --prompt-file builds/<slug>/grade-prompt.md   # Grade on the advisor role's second opinion, when the grader swap picks it (alt, altEffort: model-id --role advisor --json)
+```
+The Grade on the advisor role's second opinion, when the grader swap picks it:
+```bash
+role=$(model-id --role advisor --json || exit 1) || { echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1; }
+alt=$(printf '%s' "$role" | jq -r .alt); altEffort=$(printf '%s' "$role" | jq -r .altEffort)
+eff=(); [ -z "$altEffort" ] || eff=(--effort "$altEffort")     # no effort set: no --effort at all
+ask-model --family "$alt" "${eff[@]}" --prompt-file builds/<slug>/grade-prompt.md
 ```
 ask-model picks the CLI from the id, keeps it read-only with no MCP, and checks the answering model where the CLI reports one. Branch on its exit code: 0 the verdict; 2 another model answered — not a gate result; 3 the grader's CLI is not installed — use the other judgment family at once and say which ran; 4 the call failed, so the gate did not run — fix it, use the other judgment family, or report it NOT RUN, never a pass.
 
