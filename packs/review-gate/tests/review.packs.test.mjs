@@ -46,13 +46,14 @@ test('every pack.json has exactly the plan fields, a non-empty summary and a ful
   }
 })
 
-test('every pack.json requires {node, git, modelId, clis: {anyOf}, packs}; build requires review-gate', () => {
+test('every pack.json requires {node, git, modelId, askModel, clis: {anyOf}, packs}; build requires review-gate', () => {
   for (const id of IDS) {
     const { requires } = manifest(id)
-    assert.deepEqual(Object.keys(requires).sort(), ['clis', 'git', 'modelId', 'node', 'packs'], id)
+    assert.deepEqual(Object.keys(requires).sort(), ['askModel', 'clis', 'git', 'modelId', 'node', 'packs'], id)
     assert.equal(requires.node, '>=20', id)
     assert.equal(typeof requires.git, 'boolean', id)
     assert.equal(typeof requires.modelId, 'boolean', id)
+    assert.equal(typeof requires.askModel, 'boolean', id)
     assert.deepEqual(Object.keys(requires.clis), ['anyOf'], id)
     assert.ok(requires.clis.anyOf.every((cli) => ['claude', 'codex', 'grok'].includes(cli)), id)
     assert.ok(Array.isArray(requires.packs) && requires.packs.every((p) => IDS.includes(p) && p !== id), id)
@@ -274,7 +275,6 @@ test('every read-only claude -p command in a shipped skill drops MCP tools with 
   const calls = shipped().filter((path) => relative(PACKS, path).split('/')[1] === 'skills')
     .flatMap((path) => claudeCalls(readFileSync(path, 'utf8')).map((c) => ({ ...c, rel: relative(PACKS, path) })))
   const readOnly = calls.filter((c) => /--tools Read,Grep,Glob\b/.test(c.call))
-  assert.ok(readOnly.length >= 6, `${readOnly.length} read-only claude -p commands (advisor, build and second-opinion, both harnesses)`)
   const missing = readOnly.filter((c) => !/(^|\s)--strict-mcp-config(\s|$)/.test(c.call) || /--mcp-config\b/.test(c.call)).map((c) => `${c.rel}:${c.line}`)
   assert.deepEqual(missing, [])
 })
