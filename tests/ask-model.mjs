@@ -535,5 +535,16 @@ console.log('\nask-model: codex servers a plugin provides');
   ok('--investigate gets the same overrides', inv.code === 0 && same(inv.argv, r.argv), show(inv));
 }
 
+// The one real call, and only when asked: this machine's own HOME, PATH and codex, a one-word prompt.
+console.log('\nask-model: live');
+if (process.env.ACS_LIVE_CHECKS === '1') {
+  const live = path.join(tmp, 'live-prompt.txt');
+  fs.writeFileSync(live, 'Reply with the single word: ok\n');
+  const r = spawnSync(process.execPath, [ASK, '--family', 'sol', '--prompt-file', live, '--cwd', mk('live')], { encoding: 'utf8', env: process.env, timeout: 600_000 });
+  ok('ask-model --family sol answers on this machine', r.status === 0 && r.stdout.trim().length > 0, J({ code: r.status, out: r.stdout, err: r.stderr }));
+} else {
+  console.log('  SKIP ask-model --family sol against the real codex (set ACS_LIVE_CHECKS=1 to run it; it calls the model)');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
