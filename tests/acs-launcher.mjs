@@ -195,7 +195,7 @@ const home = path.join(sb, 'home-run');
 fs.mkdirSync(home);
 async function start(port, env) {
   let out = '';
-  const child = spawn('/bin/sh', [ACS], { cwd: '/', env: { HOME: home, PATH: tools, ACS_PORT: String(port), ACS_NO_UPDATE: '1', TMPDIR: os.tmpdir(), ...env }, stdio: ['ignore', 'pipe', 'pipe'] }); track(child);
+  const child = spawn('/bin/sh', [ACS], { cwd: '/', env: { HOME: home, PATH: tools, ACS_PORT: String(port), ACS_NO_UPDATE: '1', TMPDIR: os.tmpdir(), ...env }, stdio: ['ignore', 'pipe', 'pipe'], detached: true }); track(child, { group: true });
   child.stdout.on('data', (d) => { out += d; });
   child.stderr.on('data', (d) => { out += d; });
   let exited = null;

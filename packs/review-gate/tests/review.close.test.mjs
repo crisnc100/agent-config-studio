@@ -53,7 +53,7 @@ const lines = () => existsSync(LOG) ? readFileSync(LOG, 'utf8').trim().split('\n
 const seed = (...entries) => { mkdirSync(dirname(LOG), { recursive: true }); appendFileSync(LOG, entries.map(JSON.stringify).join('\n') + '\n') }
 const calls = () => readdirSync(CALLS).map((p) => JSON.parse(readFileSync(join(CALLS, p), 'utf8')))
 function environment(extra = {}) {
-  return { PATH: [BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':'), HOME, GIT_CONFIG_GLOBAL: join(HOME, 'isolated.gitconfig'), CODEX_HOME: join(HOME, '.codex'), GROK_HOME: join(HOME, '.grok'), TMPDIR: ROOT, REVIEW_BASE: 'main', REVIEW_REVIEWER: 'sol', REVIEW_CLASSIFIER: 'jev', ...extra }
+  return { PATH: [BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':'), HOME, GIT_CONFIG_GLOBAL: join(HOME, 'isolated.gitconfig'), GIT_CONFIG_NOSYSTEM: '1', CODEX_HOME: join(HOME, '.codex'), GROK_HOME: join(HOME, '.grok'), TMPDIR: ROOT, REVIEW_BASE: 'main', REVIEW_REVIEWER: 'sol', REVIEW_CLASSIFIER: 'jev', ...extra }
 }
 function run(args = [], extra = {}, pty = false, cwd = REPO) {
   const cmd = pty ? '/usr/bin/script' : process.execPath

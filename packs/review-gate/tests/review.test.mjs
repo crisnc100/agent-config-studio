@@ -104,8 +104,10 @@ console.log(JSON.stringify({ answers: { reviewer: { type: 'choice', choice: 'gro
 `,
 )
 
+// Fixture git never reads the developer's own config (signing, hooks): a temp global file and no system file.
+const GIT_ENV = { ...process.env, HOME, GIT_CONFIG_GLOBAL: join(ROOT, 'fixture.gitconfig'), GIT_CONFIG_NOSYSTEM: '1' }
 const git = (...args) => {
-  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: REPO, encoding: 'utf8' })
+  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: REPO, env: GIT_ENV, encoding: 'utf8' })
   assert.equal(r.status, 0, r.stderr)
 }
 mkdirSync(REPO, { recursive: true })
@@ -519,7 +521,7 @@ test('model-id missing (ENOENT): raw ids pass through; the pool and named famili
 test('a rename into auth/ triggers **/auth/** (destination and source both count)', () => {
   const repo2 = join(ROOT, 'repo-rename')
   const g = (...args) => {
-    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: repo2, encoding: 'utf8' })
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: repo2, env: GIT_ENV, encoding: 'utf8' })
     assert.equal(r.status, 0, r.stderr)
   }
   mkdirSync(join(repo2, 'public'), { recursive: true })

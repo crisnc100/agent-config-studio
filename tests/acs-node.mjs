@@ -212,7 +212,7 @@ console.log('\nacs: the start says which node, and the studio runs on it');
 const health = async (p) => { try { return (await (await fetch(`http://127.0.0.1:${p}/api/health`, { signal: AbortSignal.timeout(2000) })).json()).app === 'agent-config-studio'; } catch { return false; } };
 async function start(env) {
   let out = '';
-  const child = spawn('/bin/sh', [ACS], { cwd: '/', env: { ACS_PORT: String(port), ...env }, stdio: ['ignore', 'pipe', 'pipe'] }); track(child);
+  const child = spawn('/bin/sh', [ACS], { cwd: '/', env: { ACS_PORT: String(port), ...env }, stdio: ['ignore', 'pipe', 'pipe'], detached: true }); track(child, { group: true });
   child.stdout.on('data', (d) => { out += d; });
   child.stderr.on('data', (d) => { out += d; });
   let exited = null;

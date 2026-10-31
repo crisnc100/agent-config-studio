@@ -253,3 +253,28 @@ test('the runtime script names no reviewer family and keeps the vendor rule to t
   assert.match(script, /function operatorOnly\(reason\)/)
   assert.doesNotMatch(script, /crisOnly/)
 })
+
+// Every `claude -p` command a shipped skill tells an agent to run, joined across `\` continuations.
+function claudeCalls(source) {
+  const lines = source.split('\n'), calls = []
+  lines.forEach((line, i) => {
+    if (!/^\s*claude -p\b/.test(line)) return
+    let call = line, at = i
+    while (/\\\s*$/.test(lines[at]) && at + 1 < lines.length) call = `${call.replace(/\\\s*$/, ' ')}${lines[++at]}`
+    calls.push({ line: i + 1, call })
+  })
+  return calls
+}
+test('the claude -p command reader joins continuations (it cannot pass vacuously)', () => {
+  const [one, two] = claudeCalls('x\nclaude -p "$P" --model m \\\n  --tools Read,Grep,Glob\n  claude -p --tools Read,Grep,Glob --strict-mcp-config\n')
+  assert.match(one.call, /--model m\s+--tools Read,Grep,Glob$/)
+  assert.ok(!one.call.includes('--strict-mcp-config') && two.call.includes('--strict-mcp-config'))
+})
+test('every read-only claude -p command in a shipped skill drops MCP tools with --strict-mcp-config', () => {
+  const calls = shipped().filter((path) => relative(PACKS, path).split('/')[1] === 'skills')
+    .flatMap((path) => claudeCalls(readFileSync(path, 'utf8')).map((c) => ({ ...c, rel: relative(PACKS, path) })))
+  const readOnly = calls.filter((c) => /--tools Read,Grep,Glob\b/.test(c.call))
+  assert.ok(readOnly.length >= 6, `${readOnly.length} read-only claude -p commands (advisor, build and second-opinion, both harnesses)`)
+  const missing = readOnly.filter((c) => !/(^|\s)--strict-mcp-config(\s|$)/.test(c.call) || /--mcp-config\b/.test(c.call)).map((c) => `${c.rel}:${c.line}`)
+  assert.deepEqual(missing, [])
+})
