@@ -93,6 +93,7 @@ jobs:
           node tests/roles.mjs
           node tests/roles-routes.mjs
           node tests/roles-unit.mjs
+          node tests/ask-model.mjs
           node tests/roles-ui.mjs
           node tests/model-guide.mjs
           node tests/model-guide-routes.mjs

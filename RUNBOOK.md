@@ -255,6 +255,26 @@ never reads it, so new data cannot break it.
   `runContained` `maxTextBytes`, killed the moment it is passed), 120 s, proposals kept 10
   minutes under a random id; Accept writes exactly the stored bytes.
 
+## ask-model (`tools/ask-model.mjs`)
+
+- It lives in `tools/`, not `bin/`: it spawns claude, codex and grok, and
+  `tests/guards.mjs` allows no harness spawn in `bin/` or `lib/` outside
+  `spawnContained`. The studio never runs it.
+- `model-id --install` imports it and calls its `install()`, which copies it
+  to `resolver/bin/ask-model.mjs` (so `../lib/` is the resolver's), writes
+  `~/.agent-config-studio/bin/ask-model` pinned to the installing node, and
+  links `~/.local/bin/ask-model`. `acs` names the copy as stale when it
+  differs from `tools/ask-model.mjs`.
+- The argv per CLI is the advisor skill's and the review runtime's: claude
+  with `--tools` and `--strict-mcp-config`, codex `exec --sandbox read-only`
+  with stdin from /dev/null, grok with the review runtime's tool and MCP
+  flags plus `--output-format json`. Proof: claude's `modelUsage` must hold
+  the resolved id; grok's must name a grok model (the review runtime's
+  check); codex has none.
+- `--investigate` compares `git status --porcelain=v2` plus each listed
+  file's size and mtime, before and after, so a write to an already-dirty
+  file shows. It never reverts.
+- Tests: `tests/ask-model.mjs` (stub CLIs on PATH, temp HOME).
 
 ## Model guide block (`lib/model-guide.js`)
 

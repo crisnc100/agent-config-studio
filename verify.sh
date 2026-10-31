@@ -71,6 +71,8 @@ node tests/roles.mjs
 # …and through the server and in-process: edits, the write boundary, Describe with a fake claude (temp HOME).
 node tests/roles-routes.mjs
 node tests/roles-unit.mjs
+# ask-model: each CLI's argv, the model proof, every exit code and its install, against stub CLIs (temp HOME).
+node tests/ask-model.mjs
 # The model guide block: renderer, markers, byte-exact edits (in-process), then through the server (temp HOME).
 node tests/model-guide.mjs
 node tests/model-guide-routes.mjs
