@@ -57,7 +57,7 @@ function vendorOf(id) {
   return null;
 }
 
-/** The argv for one call. `mcpOff` is codex's override that switches its MCP servers off (codexMcpOff). */
+/** The argv for one call. `mcpOff` is codex's overrides that switch its MCP servers off (codexMcpOff). */
 function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [] }) {
   if (vendor === 'claude') {
     return ['-p', prompt, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'json',
@@ -78,14 +78,6 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [] }) {
     '--disable-web-search', '--no-subagents', '--max-turns', GROK_MAX_TURNS, '--output-format', 'json'];
 }
 
-/**
- * Codex has no strict-MCP flag, and `-c mcp_servers={}` is merged into the
- * table rather than replacing it. So each server `codex mcp list` reports for
- * this folder (project servers included) is switched off with one inline
- * table: a dotted -c path cannot quote a name holding '.', ':', '@' or '/'.
- * A second `mcp list` under the override must show every server disabled, or
- * codex is not run. Neither call reaches a model.
- */
 /**
  * The MCP servers a grok run in `cwd` would still start, from `grok inspect
  * --json` with the run's env. grok starts every configured server on every
@@ -123,6 +115,18 @@ function grokMcpLeft(bin, cwd, env) {
   return { left };
 }
 
+/**
+ * Codex has no strict-MCP flag, and `-c mcp_servers={}` is merged into the
+ * table rather than replacing it. So each server `codex mcp list` reports for
+ * this folder (project servers included) is switched off with one inline
+ * table: a dotted -c path cannot quote a name holding '.', ':', '@' or '/'.
+ * A server a plugin provides has no mcp_servers entry, so the override makes
+ * one with no transport and codex refuses the whole config. When that check
+ * fails, plugins go off as a whole (`features.plugins=false`, what `codex
+ * --disable plugins` sets), and the override covers only the servers still
+ * listed. Either way a last `mcp list` under the final overrides must show
+ * every server disabled, or codex is not run. None of these calls reaches a model.
+ */
 function codexMcpOff(bin, cwd) {
   const list = (extra) => {
     const r = spawnSync(bin, ['mcp', 'list', '--json', ...extra], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 });
@@ -133,17 +137,30 @@ function codexMcpOff(bin, cwd) {
     } catch {}
     return { error: `codex mcp list printed no server list: ${tail(r.stdout)}` };
   };
+  const names = (servers) => servers.map((s) => s?.name).filter((n) => typeof n === 'string');
+  // JSON's string escapes are valid TOML basic-string escapes.
+  const off = (servers) => ['-c', `mcp_servers={${names(servers).map((n) => `${JSON.stringify(n)}={enabled=false}`).join(',')}}`];
+  const allOff = (args, check) => {
+    const on = check.servers.filter((s) => s?.enabled !== false).map((s) => s?.name ?? '(unnamed)');
+    return on.length ? { error: `codex MCP servers still enabled under the override: ${on.join(', ')}` } : { args };
+  };
   const found = list([]);
   if (found.error) return found;
   if (!found.servers.length) return { args: [] };
-  // JSON's string escapes are valid TOML basic-string escapes.
-  const names = found.servers.map((s) => s?.name).filter((n) => typeof n === 'string');
-  const override = `mcp_servers={${names.map((n) => `${JSON.stringify(n)}={enabled=false}`).join(',')}}`;
-  const check = list(['-c', override]);
-  if (check.error) return check;
-  const on = check.servers.filter((s) => s?.enabled !== false).map((s) => s?.name ?? '(unnamed)');
-  if (on.length) return { error: `codex MCP servers still enabled under the override: ${on.join(', ')}` };
-  return { args: ['-c', override] };
+  const check = list(off(found.servers));
+  if (!check.error) return allOff(off(found.servers), check);
+
+  const PLUGINS_OFF = ['-c', 'features.plugins=false'];
+  const rest = list(PLUGINS_OFF);
+  if (rest.error) return check;
+  const left = new Set(names(rest.servers));
+  const fromPlugins = names(found.servers).filter((n) => !left.has(n));
+  // Only a server that leaves with the plugins explains the refusal; otherwise the first error stands.
+  if (!fromPlugins.length) return check;
+  const args = [...PLUGINS_OFF, ...(rest.servers.length ? off(rest.servers) : [])];
+  const final = list(args);
+  if (final.error) return { error: `${final.error} (with plugins off for ${fromPlugins.join(', ')})` };
+  return allOff(args, final);
 }
 
 function parse(argv) {

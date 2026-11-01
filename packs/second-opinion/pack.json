@@ -5,7 +5,7 @@
   "summary": "A skill that asks one or more other models what they think of an answer or recommendation, and returns each answer labeled, side by side.",
   "explain": {
     "what": "The second-opinion skill sends the latest answer or recommendation, with the conversation around it, to another model and brings back its view. The models it offers come from your advisor and reviewer roles in ACS; you can also name any family.",
-    "does": "Day to day you say 'what does <family> think?' or 'ask all of them'. Each model answers read-only and blind to the others, and you get every answer labeled plus a short note on where they agree and disagree. It never picks a winner for you.",
+    "does": "Day to day you say 'what does <family> think?' or 'ask all of them'. Each model answers read-only and blind to the others, through ask-model, which checks that the model asked for is the one that answered (where its CLI reports one). You get every answer labeled plus a short note on where they agree and disagree. It never picks a winner for you. ask-model comes with model-id (acs install-model-id); the pack will not install until both are on your PATH.",
     "changes": [
       "~/.claude/skills/second-opinion/ and ~/.codex/skills/second-opinion/ (the skill, for the harnesses you have)"
     ],
@@ -15,6 +15,7 @@
     "node": ">=20",
     "git": false,
     "modelId": true,
+    "askModel": true,
     "clis": {
       "anyOf": [
         "claude",

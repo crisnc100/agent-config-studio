@@ -58,7 +58,7 @@ The review gate's shared state lives under `~/.agent-config-studio/`:
 | `version` | the pack's version (`1.0.0`); an update compares it with what is installed |
 | `summary` | one plain sentence |
 | `explain` | `{ what, does, changes, undo }`: three plain paragraphs and `changes`, a list naming every file and setting the pack touches |
-| `requires` | `{ node, git, modelId, clis, packs }`: a node version range; whether git and `model-id` are needed; `clis: { anyOf: [...] }`, at least one of these harness CLIs (empty: none needed); other packs this one needs |
+| `requires` | `{ node, git, modelId, askModel, clis, packs }`: a node version range; whether git, `model-id` and `ask-model` are needed (`acs install-model-id` puts both on your PATH); `clis: { anyOf: [...] }`, at least one of these harness CLIs (empty: none needed); other packs this one needs |
 | `parts` | the pieces you can turn on separately |
 
 Each part is `{ id, title, default, kind, harnesses, files, explain }`:

@@ -241,6 +241,36 @@ console.log('\nworktree update: an untouched defaults.conf takes the new one; on
   ok('…and uninstall removes the defaults.conf it wrote', un.code === 0 && !fs.existsSync(dflt) && /# my tweak/.test(sb.read(wtz) || ''), un.out);
 }
 
+console.log('\nupdate checks the requirements of the skills it puts in place (ask-model)');
+{
+  const sb = box('update-reqs', { clis: ['claude'] });
+  const pkg = copyPackage(sb);
+  const link = path.join(sb.home, '.local', 'bin', 'ask-model');
+  const advisor = path.join(sb.home, '.claude/skills/advisor/SKILL.md');
+  const review = path.join(sb.home, '.claude/skills/code-review/SKILL.md');
+  ok('the copy installs advisor and review-gate', pkg.run(['install', 'review-gate', '--yes']).code === 0 && pkg.run(['install', 'advisor', '--yes']).code === 0 && fs.existsSync(advisor) && fs.existsSync(review));
+  for (const [id, rel] of [['advisor', 'packs/advisor/skills/claude/advisor/SKILL.md'], ['review-gate', 'packs/review-gate/skills/claude/code-review/SKILL.md']]) {
+    fs.appendFileSync(path.join(pkg.dest, rel), '\nA new line in 1.1.0.\n');
+    pkg.bump(id, '1.1.0');
+  }
+  const before = sb.read(advisor);
+  fs.rmSync(link);
+  const u = pkg.run(['update', 'advisor', '--yes']);
+  ok('ask-model gone: updating advisor refuses with the fix and writes nothing', u.code === 1 && /ask-model is not on PATH — fix: run: acs install-model-id/.test(u.out)
+     && sb.read(advisor) === before && sb.state().packs.advisor.version === '1.0.0', u.out);
+  const p = pkg.json(['update', 'advisor', '--dry-run']);
+  ok('…the preview lists the unmet requirement', (p.data?.requirements || []).some((r) => r.id === 'ask-model' && !r.ok && r.pack === 'advisor'), p.out);
+  const rg = pkg.run(['update', 'review-gate', '--yes']);
+  ok('review-gate does not need ask-model: its update goes through', rg.code === 0 && /A new line in 1\.1\.0/.test(sb.read(review)) && sb.state().packs['review-gate'].version === '1.1.0', rg.out);
+  fs.symlinkSync(path.join(sb.home, '.agent-config-studio', 'bin', 'ask-model'), link);
+  const again = pkg.run(['update', 'advisor', '--yes']);
+  ok('ask-model back: the advisor update goes through', again.code === 0 && /A new line in 1\.1\.0/.test(sb.read(advisor)) && sb.state().packs.advisor.version === '1.1.0', again.out);
+  const none = pkg.run(['update', 'advisor', '--yes']);
+  fs.rmSync(link);
+  const idle = pkg.run(['update', 'advisor', '--yes']);
+  ok('nothing left to put in place: no requirement check, nothing refused', none.code === 0 && idle.code === 0 && !/ask-model/.test(idle.out), idle.out);
+}
+
 for (const b of boxes) b.cleanup();
 assertRealHomesUnchanged(realBefore, ok);
 done();
