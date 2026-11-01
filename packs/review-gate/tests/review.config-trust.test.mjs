@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { lstatSync, symlinkSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
@@ -206,4 +207,46 @@ test('the global-hook state file, which copies the gitconfig, is written 0600, e
   assert.equal(again.status, 0, `${again.stdout}\n${again.stderr}`)
   assert.equal(mode(), 0o600)
   assert.equal(sh('uninstall').status, 0)
+})
+
+// ── A symlink or a case variant on the way to the repo config ────────────────
+test('a tracked symlinked .claude folder cannot pass off a tracked config as untracked', () => {
+  // The contributor's branch: the config under another tracked name, and a tracked link `.claude -> cfg`.
+  commit('cfg/review-config.json', JSON.stringify({ verifyCmd: `touch ${JSON.stringify(marker('verify'))}`, base: 'main~0', pick: 'pick-helper' }))
+  symlinkSync('cfg', join(REPO, '.claude'))
+  git('add', '.claude'); git('commit', '-qm', 'link .claude')
+  assert.ok(lstatSync(join(REPO, '.claude')).isSymbolicLink())
+  const shown = run(['--show-config'])
+  assert.equal(shown.status, 0, shown.out)
+  const config = JSON.parse(shown.stdout)
+  assert.notEqual(config.base, 'main~0', 'the base came from the linked repo config')
+  assert.equal(config.verifyCmd, '(none)', 'the verifyCmd came from the linked repo config')
+  assert.equal(ignoredLines(shown.out, 'verifyCmd, base').length, 1, shown.out)
+  const r = review()
+  assert.ok(!existsSync(marker('verify')), 'the linked verifyCmd ran')
+  assert.ok(!existsSync(marker('pick')), 'the linked pick command ran')
+  assert.equal(ignoredLines(r.out, 'verifyCmd, base').length, 1, r.out)
+})
+
+test('a symlink anywhere on the way refuses the repo config, even an untracked link to untracked files', () => {
+  ignore('.claude'); ignore('local-cfg/')
+  write('local-cfg/review-config.json', JSON.stringify({ verifyCmd: `touch ${JSON.stringify(marker('verify'))}` }))
+  symlinkSync('local-cfg', join(REPO, '.claude'))
+  const r = review()
+  assert.ok(!existsSync(marker('verify')), 'the verifyCmd behind a linked .claude ran')
+  assert.equal(ignoredLines(r.out, 'verifyCmd').length, 1, r.out)
+  unlinkSync(join(REPO, '.claude'))
+  mkdirSync(join(REPO, '.claude'))
+  symlinkSync('../local-cfg/review-config.json', join(REPO, REPO_CONFIG))
+  const linkedFile = review()
+  assert.ok(!existsSync(marker('verify')), 'the verifyCmd behind a linked review-config.json ran')
+  assert.equal(ignoredLines(linkedFile.out, 'verifyCmd').length, 1, linkedFile.out)
+})
+
+test('a tracked config under another letter case is refused where the disk ignores case', () => {
+  commit('.CLAUDE/review-config.json', JSON.stringify({ verifyCmd: `touch ${JSON.stringify(marker('verify'))}` }))
+  const r = review()
+  assert.ok(!existsSync(marker('verify')), 'the tracked .CLAUDE/review-config.json ran its verifyCmd')
+  // On a case-insensitive disk the file is found as .claude/review-config.json and refused; elsewhere it is never read.
+  if (existsSync(join(REPO, REPO_CONFIG))) assert.equal(ignoredLines(r.out, 'verifyCmd').length, 1, r.out)
 })

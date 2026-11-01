@@ -42,6 +42,7 @@ import {
   appendFileSync,
   constants,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -52,7 +53,7 @@ import {
 } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { homedir, tmpdir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const COPY_PATH = fileURLToPath(import.meta.url)
@@ -71,8 +72,8 @@ const option = (flag) => {
 // > the older ~/.claude/review-config.json > built-in.
 // Edit that one small JSON file to switch reviewer/model/effort — see review-config.example.json.
 // The repo file can come from the repository itself (committed, or added by a branch you check out), so
-// the keys that run a command or reach git as an argument count there only while git doesn't track it:
-// a clone or checkout only ever adds tracked files. Env and the home configs always count.
+// the keys that run a command or reach git as an argument count there only while git doesn't track it and no
+// symlink leads to it: a clone or checkout only ever adds tracked files and links. Env and the home configs always count.
 let gateConfigError
 const COMMAND_KEYS = ['verifyCmd', 'classifier', 'base']
 // Set when the repo file failed that check: its `pick` may name a family, never a command to run.
@@ -84,10 +85,38 @@ const sameFile = (a, b) => {
     return false
   }
 }
+// The path as named must have no symlink on it: a tracked `.claude -> cfg` link serves a tracked file under a
+// name git does not track. The real path, spelled as the disk stores it (a tracked `.CLAUDE/` answers for
+// `.claude/` on a case-insensitive disk), and every folder above it in the work tree must not be tracked either.
 function repoFileIsOwn(p, homes) {
   if (homes.some((home) => sameFile(p, home))) return true // a dotfiles repo at HOME: this is the home config
+  const parts = p.split(sep)
+  try {
+    if (parts.some((_, i) => lstatSync(parts.slice(0, i + 1).join(sep)).isSymbolicLink())) return false
+  } catch {
+    return false
+  }
   const tracked = spawnSync('git', ['ls-files', '--error-unmatch', '--', p], { stdio: 'ignore' })
-  return !tracked.error && tracked.status === 1 // 1: inside a work tree, and git doesn't track it
+  if (tracked.error || tracked.status !== 1) return false // 1: inside a work tree, and git doesn't track it
+  let rel, top
+  try {
+    const t = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' })
+    if (t.error || t.status !== 0) return false
+    top = realpathSync.native(t.stdout.trim())
+    rel = relative(top, realpathSync.native(p))
+  } catch {
+    return false
+  }
+  if (!rel || isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) return false
+  const steps = rel.split(sep)
+  const real = steps.map((_, i) => steps.slice(0, i + 1).join('/'))
+  const listed = spawnSync('git', ['-C', top, 'ls-files', '-z', '--full-name', '--', ...real.map((r) => `:(literal)${r}`)], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  })
+  if (listed.error || listed.status !== 0) return false
+  const entries = new Set(listed.stdout.split('\0'))
+  return !real.some((r) => entries.has(r))
 }
 function withoutRepoCommands(config, p, homes) {
   const keys = COMMAND_KEYS.filter((k) => config[k] != null && String(config[k]).trim() !== '')
@@ -97,7 +126,7 @@ function withoutRepoCommands(config, p, homes) {
   for (const k of keys) delete config[k]
   REPO_PICK_UNTRUSTED = pickMayRun
   if (keys.length && !args.includes('--gate'))
-    console.warn(`⚠ Ignoring ${keys.join(', ')} in ${p}: git tracks it, so the repository can set it. ` +
+    console.warn(`⚠ Ignoring ${keys.join(', ')} in ${p}: git tracks it (or a symlink leads to it), so the repository can set it. ` +
       `Put them in ~/.agent-config-studio/review-gate/config.json or the environment, or keep the file untracked.`)
   return config
 }
@@ -491,7 +520,7 @@ const CLASSIFIER_ACT = 0.7 // act on its choice at confidence ≥ 0.7; below is 
 // A pick read from a repo file that failed the own-file check (REVIEW_PICK always wins over it).
 const pickFromRepo = () => process.env.REVIEW_PICK == null && REPO_PICK_UNTRUSTED
 const untrustedPickNote = (pick) =>
-  `⚠ Ignoring pick "${pick}" in ${CONFIG._source}: it names a command, and git tracks that file, so the repository can set it.`
+  `⚠ Ignoring pick "${pick}" in ${CONFIG._source}: it names a command, and git tracks that file (or a symlink leads to it), so the repository can set it.`
 // Path patterns are case-insensitive globs: `**` spans directories, `*` and `?` stay inside one.
 // Like .gitignore, a pattern with no `/` is matched against every path segment ("*auth*").
 const RISK_PATHS = Array.isArray(CONFIG.riskPaths)
