@@ -322,3 +322,14 @@ test('every shipped advisor contract tells the advisor it may verify but never c
   for (const path of carriers)
     assert.match(readFileSync(path, 'utf8'), /never change any file; if\nsomething should change, say so in ADVISORY\./, relative(PACKS, path))
 })
+
+test('the advisor skills say --investigate gives an unsandboxed shell, and never call the advisor read-only', () => {
+  for (const harness of HARNESSES) {
+    const body = readFileSync(join(PACKS, 'advisor', 'skills', harness, 'advisor', 'SKILL.md'), 'utf8')
+    assert.doesNotMatch(body, /read-only/i, `advisor/${harness}: a read-only claim`)
+    assert.doesNotMatch(body, /advisor never edits|it never edits/i, `advisor/${harness}: a never-edits claim`)
+    const flat = body.replace(/\s+/g, ' ')
+    assert.match(flat, /`--investigate` gives the advisor a shell\*\* to verify things/, `advisor/${harness}`)
+    assert.match(flat, /It is told never to change files, and ask-model reports any change to the work tree, but it isn't sandboxed/, `advisor/${harness}`)
+  }
+})
