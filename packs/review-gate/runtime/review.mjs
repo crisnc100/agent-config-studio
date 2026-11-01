@@ -36,7 +36,7 @@
  * as JSON after a `===FINDINGS_JSON===` marker for the calling agent to parse.
  * Reviews report findings; recording and close failures exit non-zero.
  */
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn as spawnFile, spawnSync as spawnFileSync } from 'node:child_process'
 import {
   accessSync,
   appendFileSync,
@@ -58,6 +58,38 @@ import { fileURLToPath } from 'node:url'
 
 const COPY_PATH = fileURLToPath(import.meta.url)
 console.error(`review.mjs · ${COPY_PATH} · head-aware copy`)
+
+// Every helper named by its bare name (git, model-id, codex, claude, grok, ln, a classifier) runs from an
+// absolute PATH entry only, so a `.` or empty entry never picks a repository's ./git or ./model-id. This is
+// tools/ask-model.mjs which(), copied to keep the runtime standalone; with PATH unset, the spawn's own
+// default. A helper that is not found fails the way a missing command does (ENOENT). Paths and shell
+// strings pass through.
+const isExecutable = (p) => {
+  try {
+    accessSync(p, constants.X_OK)
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
+function which(name) {
+  for (const dir of String(process.env.PATH ?? '/usr/bin:/bin').split(':'))
+    if (isAbsolute(dir) && isExecutable(join(dir, name))) return join(dir, name)
+  return null
+}
+const notFound = (name) =>
+  Object.assign(new Error(`spawnSync ${name} ENOENT`), { errno: -2, code: 'ENOENT', syscall: `spawnSync ${name}`, path: name })
+function spawnSync(command, args, options) {
+  if ((Array.isArray(args) ? options : args)?.shell || String(command).includes('/')) return spawnFileSync(command, args, options)
+  const bin = which(command)
+  if (bin) return spawnFileSync(bin, args, options)
+  return { error: notFound(command), status: null, signal: null, output: null, pid: 0, stdout: undefined, stderr: undefined }
+}
+function spawn(command, args, options) {
+  const bin = String(command).includes('/') ? command : which(command)
+  if (!bin) throw notFound(command)
+  return spawnFile(bin, args, options)
+}
 const args = process.argv.slice(2)
 const option = (flag) => {
   const at = args.indexOf(flag)
@@ -195,19 +227,8 @@ function vendorOf(id) {
   return null
 }
 const VENDORS = ['codex', 'claude', 'grok']
-const isExecutable = (p) => {
-  try {
-    accessSync(p, constants.X_OK)
-    return statSync(p).isFile()
-  } catch {
-    return false
-  }
-}
-// Found on PATH without running it.
-const onPath = (command) =>
-  String(command).includes('/')
-    ? isExecutable(command)
-    : String(process.env.PATH || '').split(':').some((dir) => dir && isExecutable(join(dir, command)))
+// Found on PATH without running it, the way spawnSync will find it.
+const onPath = (command) => (String(command).includes('/') ? isExecutable(command) : which(command) !== null)
 
 // A hard stop names what is wrong and how to fix it; it never tries another vendor instead.
 function stop(message) {

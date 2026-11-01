@@ -250,3 +250,17 @@ test('a tracked config under another letter case is refused where the disk ignor
   // On a case-insensitive disk the file is found as .claude/review-config.json and refused; elsewhere it is never read.
   if (existsSync(join(REPO, REPO_CONFIG))) assert.equal(ignoredLines(r.out, 'verifyCmd').length, 1, r.out)
 })
+
+// ── Helpers by bare name come from absolute PATH entries only ────────────────
+test('a repo-planted ./model-id, ./git or reviewer CLI never runs through a `.` or empty PATH entry', () => {
+  const planted = ['model-id', 'git', 'codex', 'claude', 'grok', 'ln', 'pick-helper']
+  for (const name of planted) executable(join(REPO, name), `#!/bin/sh\n: > ${JSON.stringify(marker(`planted-${name}`))}\nexit 1\n`)
+  git('add', ...planted); git('commit', '-qm', 'plant helpers')
+  const PATH = ['.', '', BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':')
+  const shown = run(['--show-config'], { PATH, REVIEW_BASE: 'main', REVIEW_PICK: 'pick-helper' })
+  assert.equal(shown.status, 0, shown.out)
+  assert.equal(JSON.parse(shown.stdout).selected.family, 'sol', shown.out)
+  const r = review({ PATH, REVIEW_PICK: 'pick-helper' })
+  assert.match(r.out, /reviewer · grok/, 'the pick came from the PATH classifier, not the planted one')
+  for (const name of planted) assert.ok(!existsSync(marker(`planted-${name}`)), `the repo's ./${name} ran`)
+})

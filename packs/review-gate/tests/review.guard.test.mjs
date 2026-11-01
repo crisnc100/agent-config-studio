@@ -578,3 +578,14 @@ test('S2 without node the launcher still refuses a command-line config include',
     assert.equal(r.status, 2, r.out); assert.match(r.stderr, /node could not start/)
   }
 })
+test('S3 the guard launcher and installer never run a ./node or ./codex through a relative PATH entry', () => {
+  const folder = join(ROOT, 'planted'), marks = join(ROOT, 'planted-marks')
+  rmSync(marks, { recursive: true, force: true }); mkdirSync(marks); mkdirSync(folder, { recursive: true })
+  for (const name of ['node', 'codex']) put(join(folder, name), `#!/bin/sh\n: > ${JSON.stringify(join(marks, name))}\nexit 0\n`), chmodSync(join(folder, name), 0o755)
+  const PATH = ['.', '', BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':')
+  const r = run('/bin/sh', [launcher], { cwd: folder, env: env({ PATH }), input: JSON.stringify({ tool_input: { command: 'git push --no-verify' } }) })
+  assert.equal(r.status, 2, r.out); assert.match(r.stderr, /agents may not run git push --no-verify/)
+  const installed = run(process.execPath, [installer, 'install'], { cwd: folder, env: env({ PATH }) }); allowed(installed)
+  assert.ok(readFileSync(RPC, 'utf8').includes('hooks/list'), 'the PATH codex answered hooks/list')
+  assert.deepEqual(readdirSync(marks), [], 'a planted helper ran')
+})

@@ -406,3 +406,20 @@ test('Grade fix install and status bound the Projects scan while retaining named
     if (command === 'status') for (const name of [REPO, '/example-local-hooks', boundary, '/boundary-local-hooks']) assert.ok(r.stdout.includes(name), name)
   }
 })
+
+// ── A `.` or empty PATH entry never runs the repository's own node or git ────
+test('S3 the global hooks never run a repo-planted ./node or ./git through a relative PATH entry', () => {
+  const marks = join(ROOT, 'planted-marks'); rmSync(marks, { recursive: true, force: true }); mkdirSync(marks)
+  for (const name of ['node', 'git', 'sh'])
+    writeFileSync(join(REPO, name), `#!/bin/sh\n: > ${JSON.stringify(join(marks, name))}\nexit 1\n`), chmodSync(join(REPO, name), 0o755)
+  git('config', 'reviewgate.enabled', 'true')
+  const PATH = ['.', '', BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':')
+  // The push itself names git by path: the test's own spawn would otherwise find ./git too.
+  const planted = (ref) => run('/usr/bin/git', ['push', 'origin', `HEAD:refs/heads/${ref}`], { env: environment({ PATH }) })
+  const blocked = planted('planted')
+  assert.notEqual(blocked.status, 0, blocked.out); assert.match(blocked.out, /No review log/)
+  cover(); allowed(planted('planted-reviewed'))
+  const project = run(process.execPath, [join(GLOBAL, 'project.mjs')], { env: environment({ PATH }) })
+  allowed(project); assert.equal(project.stdout.trim(), '1', project.out)
+  assert.deepEqual(readdirSync(marks), [], 'a planted helper ran')
+})

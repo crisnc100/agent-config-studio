@@ -17,7 +17,8 @@ try {
     return result.status ?? 1
   }
   const shim = join(dirname(fileURLToPath(import.meta.url)), '../pre-push')
-  const gate = run('sh', [shim])
+  // The system shell by path: a `.` on PATH must never run the repository's own ./sh.
+  const gate = run('/bin/sh', [shim])
   let legacyShim = false
   if (!gate && own) {
     try { legacyShim = readFileSync(own).equals(readFileSync(shim)) }

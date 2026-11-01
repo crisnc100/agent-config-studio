@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const BEGIN = '# review-gate agent guard begin', END = '# end'
@@ -111,9 +111,22 @@ function configuredCodexHomes(home) {
   }
   return []
 }
+// codex from an absolute PATH entry only, so a `.` or empty entry never runs a ./codex from the current folder.
+function which(name) {
+  for (const dir of String(process.env.PATH ?? '/usr/bin:/bin').split(':')) {
+    if (!isAbsolute(dir)) continue
+    try { accessSync(join(dir, name), constants.X_OK); if (statSync(join(dir, name)).isFile()) return join(dir, name) } catch {}
+  }
+  return null
+}
 async function listHooks(home) {
+  const codex = which('codex')
+  if (!codex) {
+    console.error(`Warning: Codex ${home} is untrusted: codex is not on PATH`)
+    return null
+  }
   return new Promise((done) => {
-    const child = spawn('codex', ['app-server'], { env: { ...process.env, CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawn(codex, ['app-server'], { env: { ...process.env, CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] })
     let buffer = '', settled = false
     const finish = (result, error) => {
       if (settled) return
