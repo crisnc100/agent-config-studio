@@ -1571,7 +1571,21 @@ async function secondOpinion(diff, targets) {
   }
 }
 
+// A branch can track `reviews` as a symlink to anywhere; the report and its `latest` link would land there.
+function refuseLinkedReviews() {
+  let stat
+  try {
+    stat = lstatSync('reviews')
+  } catch (e) {
+    if (e.code === 'ENOENT') return
+    throw e
+  }
+  if (stat.isSymbolicLink())
+    die('reviews is a symlink, so the report would be written wherever it points. Remove it (git rm reviews) and review again.')
+  if (!stat.isDirectory()) die('reviews is not a folder. Remove it and review again.')
+}
 function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTruncated, verifier) {
+  refuseLinkedReviews()
   ensureReviewsIgnored()
   // A random suffix keeps two reviews in the same second (any repo) apart in the folder and the log.
   const ts = `${new Date().toISOString().slice(0, 19).replaceAll(':', '-').replace('T', '-')}-${randomBytes(3).toString('hex')}`
@@ -2335,6 +2349,7 @@ function pushGate() {
   if (args.includes('--deferred')) return printDeferred()
   if (args.includes('--fix-check')) return fixCheck(option('--fix-check'))
   const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList } = getDiff()
+  refuseLinkedReviews()
   CONTEXT = reviewContext(branch)
   if (!diff) {
     console.log(`Nothing to review — no diff against ${BASE}.`)

@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { lstatSync, symlinkSync, unlinkSync } from 'node:fs'
+import { lstatSync, readdirSync, symlinkSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
@@ -263,4 +263,18 @@ test('a repo-planted ./model-id, ./git or reviewer CLI never runs through a `.` 
   const r = review({ PATH, REVIEW_PICK: 'pick-helper' })
   assert.match(r.out, /reviewer · grok/, 'the pick came from the PATH classifier, not the planted one')
   for (const name of planted) assert.ok(!existsSync(marker(`planted-${name}`)), `the repo's ./${name} ran`)
+})
+
+// ── The report folder ────────────────────────────────────────────────────────
+test('a tracked reviews symlink is refused before any model runs, and nothing is written where it points', () => {
+  const outside = join(ROOT, 'outside-reviews')
+  rmSync(outside, { recursive: true, force: true }); mkdirSync(outside)
+  symlinkSync(outside, join(REPO, 'reviews'))
+  git('add', 'reviews'); git('commit', '-qm', 'link reviews')
+  const r = run([], { REVIEW_BASE: 'main', REVIEW_PICK: 'pick-helper' })
+  assert.notEqual(r.status, 0, r.out)
+  assert.match(r.stderr, /reviews is a symlink/)
+  assert.deepEqual(readdirSync(outside), [], 'the report or the latest link landed where reviews points')
+  assert.ok(!existsSync(marker('pick')), 'the review went ahead to pick a reviewer')
+  assert.equal(reviews().length, 0, r.out)
 })
