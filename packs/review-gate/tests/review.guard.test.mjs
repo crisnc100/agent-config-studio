@@ -515,3 +515,66 @@ test('Shared config partial uninstall never absorbs unrelated edits into its res
   assert.match(readFileSync(CONFIG, 'utf8'), /\[human\]\nkeep = true/)
   assert.doesNotMatch(readFileSync(CONFIG, 'utf8'), /review-gate agent guard|hooks\.state/)
 })
+
+// ── A -c alias runs as the git command it expands to; a config include is a hook override ──
+const refused = (command, launch = guard) => {
+  const r = launch(command)
+  assert.equal(r.status, 2, `${command}\n${r.out}`)
+  assert.equal(r.stderr.trim().split('\n').length, 1, command)
+}
+test('S2 the four review reproductions are refused, through the launcher too', () => {
+  for (const command of [
+    "git -c alias.p='push --no-verify' p",
+    'git -c alias.p="-c core.hooksPath=/dev/null push" p',
+    'git config --global include.path /tmp/evil.gitconfig',
+    'git -c include.path=/tmp/evil.gitconfig push',
+  ]) { refused(command); refused(command, launchGuard) }
+})
+test('S2 a -c alias is checked as the git invocation it expands to, recursively', () => {
+  for (const command of [
+    "git -c alias.c='commit -n' c -m x",
+    "git -c alias.P='push --no-verify' p",
+    "git -c alias.a=b -c alias.b='push --no-verify' a",
+    "git -c alias.a='-c alias.b=\"push --no-verify\" b' a",
+    "git -c core.hooksPath=/dev/null -c alias.p=push p",
+    "git -calias.p='push --no-verify' p",
+    "git -c 'alias.p=!git push --no-verify' p",
+    "git -c 'alias.p=!sh -c' p 'git push --no-verify'",
+    "git -c alias.p='send-pack origin HEAD' p",
+    "git -c alias.p='config --global include.path /tmp/evil.gitconfig' p",
+    'git --config-env=alias.p=PUSH_ALIAS p',
+    "sh -c \"git -c alias.p='push --no-verify' p\"",
+  ]) refused(command)
+  for (const command of ["git -c alias.st=status st", "git -c alias.lg='log --oneline' lg -5", "git -c alias.p=push p", "git -c alias.a=a a",
+    "git -c 'alias.s=!git status' s", "git -c alias.p='push --no-verify' status"])
+    allowed(guard(command))
+})
+test('S2 config includes count as hook overrides and as gated config writes', () => {
+  for (const command of [
+    'git -c includeIf.gitdir:/.path=/tmp/evil.gitconfig push',
+    'git -c INCLUDE.PATH=/tmp/evil.gitconfig commit -m x',
+    'git --config-env=include.path=EVIL push',
+    'git -c include.path=/tmp/evil.gitconfig p',
+    'git config include.path /tmp/evil.gitconfig',
+    'git config --file ~/.gitconfig --add include.path /tmp/evil.gitconfig',
+    'git config set --global include.path /tmp/evil.gitconfig',
+    'git config --global includeIf.gitdir:~/work/.path /tmp/evil.gitconfig',
+    'git config --global --unset include.path',
+    'git config --global --rename-section moved include',
+    "git config --global --rename-section moved 'includeIf.gitdir:/'",
+    "git config --global alias.p 'commit -n'",
+    "git config --global -- alias.p '-c include.path=/tmp/evil.gitconfig push'",
+    "git config --global -- alias.p '-c core.hooksPath=/dev/null push'",
+  ]) refused(command)
+  for (const command of ['git config --get include.path', 'git config --global --get-all include.path', 'git config --list --show-origin',
+    'git config include.path', "git config --global alias.lg 'log --oneline'", "git config --global alias.pf 'push --force-with-lease'"])
+    allowed(guard(command))
+})
+test('S2 without node the launcher still refuses a command-line config include', () => {
+  const path = join(ROOT, 'no-node-include'); mkdirSync(path, { recursive: true })
+  for (const name of ['cat', 'grep']) if (!existsSync(join(path, name))) symlinkSync(name === 'cat' ? '/bin/cat' : '/usr/bin/grep', join(path, name))
+  for (const text of ['git -c include.path=/tmp/evil.gitconfig push', 'git config --global includeIf.gitdir:/.path /tmp/evil.gitconfig']) {
+    const r = run('/bin/sh', [launcher], { env: env({ PATH: path }), input: JSON.stringify({ tool_input: { command: text } }) })
+    assert.equal(r.status, 2, r.out); assert.match(r.stderr, /node could not start/)
+  }
+})

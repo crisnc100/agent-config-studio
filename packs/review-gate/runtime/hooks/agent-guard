@@ -8,7 +8,7 @@ if command -v "$node" >/dev/null 2>&1 && "$node" --version >/dev/null 2>&1; then
   exec "$node" "$folder/agent-guard.mjs"
 fi
 input=$(cat)
-if printf '%s' "$input" | LC_ALL=C grep -Ei 'no-veri|hookspath|reviewgate' >/dev/null 2>&1 ||
+if printf '%s' "$input" | LC_ALL=C grep -Ei 'no-veri|hookspath|reviewgate|include\.path|includeif\.' >/dev/null 2>&1 ||
    { printf '%s' "$input" | LC_ALL=C grep -i 'commit' >/dev/null 2>&1 &&
      printf '%s' "$input" | LC_ALL=C grep -E -- '-[[:alpha:]]*n' >/dev/null 2>&1; }; then
   printf '%s\n' 'review gate: agents may not bypass review hooks; node could not start' >&2
