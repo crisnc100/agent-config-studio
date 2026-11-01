@@ -30,6 +30,7 @@ Scores are **likelihood × impact**, each on a 1–10 scale, as recorded when th
 | The review-gate preview is long. It lists about 70 hook-link rows one by one. | Opening the review-gate install preview. | unscored | Group the hook links into one row with a count. |
 | The agent guard's preview says its settings "may change" instead of naming exactly what changes. | Opening the review-gate preview with the agent guard part selected. | unscored | Ask the guard installer for an exact list before the preview is shown. |
 | The card has no button to add a harness that was installed after a pack. | You install Codex after a pack was installed for Claude only. | unscored | Show "Add for Codex" (or the newly found harness) on the installed pack's card. |
+| The packs routes have no per-run token, so any local process can use them. `POST /api/packs/plan` answers a request that sends no Origin header, and apply needs only that plan's signature, which is a staleness hash, not a secret (`server.js:1181-1185`). Web pages are still stopped by the Host allowlist and the same-origin check. This is the studio's general localhost model, not something packs added. | Another process, or another OS user on the machine, sends those two requests to the studio's port while it runs. It can install packs and set your global `core.hooksPath`. | 1 × 6 = 6 | Put a random per-run token in the page and require it in a header on the mutating routes. |
 
 ## The review gate
 
