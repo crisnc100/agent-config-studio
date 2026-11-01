@@ -27,6 +27,7 @@
  * resolver as bin/ask-model.mjs, so `../lib/` resolves in both places.
  */
 import { spawn, spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -421,9 +422,12 @@ export function install({ home, studio, resolver }) {
   const tilde = (p) => (p.startsWith(home + path.sep) ? '~' + p.slice(home.length) : p);
   const put = (dest, body, mode) => {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    const tmp = `${dest}.tmp-${process.pid}`;
-    fs.writeFileSync(tmp, body, { mode });
-    fs.renameSync(tmp, dest);
+    // A fresh random name, created exclusively: a link planted at a guessable name is never written through.
+    const tmp = `${dest}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+    try {
+      fs.writeFileSync(tmp, body, { mode, flag: 'wx' });
+      fs.renameSync(tmp, dest);
+    } finally { fs.rmSync(tmp, { force: true }); }
   };
   const entry = path.join(resolver, 'bin', 'ask-model.mjs');
   put(entry, fs.readFileSync(SELF), 0o644);

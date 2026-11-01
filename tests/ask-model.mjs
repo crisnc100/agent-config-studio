@@ -535,6 +535,25 @@ console.log('\nask-model: codex servers a plugin provides');
   ok('--investigate gets the same overrides', inv.code === 0 && same(inv.argv, r.argv), show(inv));
 }
 
+console.log('\nask-model: model-id --install never writes through a link planted at a temp name');
+{
+  const home = mk('home-planted');
+  const victim = path.join(tmp, 'victim.txt');
+  fs.writeFileSync(victim, 'victim bytes\n');
+  // The attacker's guess: the old names, <dest>.tmp-<pid>, for model-id's own copy and ask-model's, planted as the process starts.
+  const resolverBin = path.join(home, '.agent-config-studio', 'resolver', 'bin');
+  const preload = path.join(tmp, 'plant-temp.cjs');
+  fs.writeFileSync(preload, `const fs=require('node:fs');fs.mkdirSync(${J(resolverBin)},{recursive:true});` +
+    `for(const n of ['model-id.mjs','ask-model.mjs'])fs.symlinkSync(${J(victim)},require('node:path').join(${J(resolverBin)},n)+'.tmp-'+process.pid)`);
+  const inst = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'model-id.mjs'), '--install'], { encoding: 'utf8', env: { HOME: home, PATH: SYSTEM.join(':'), NODE_OPTIONS: `--require=${preload}` } });
+  ok('the install still succeeds', inst.status === 0, J(inst));
+  ok('…and the victim behind the planted links is untouched', fs.readFileSync(victim, 'utf8') === 'victim bytes\n');
+  for (const name of ['model-id.mjs', 'ask-model.mjs']) {
+    const dest = path.join(resolverBin, name);
+    ok(`…and resolver/bin/${name} is a real file, not the planted link`, !fs.lstatSync(dest).isSymbolicLink() && fs.lstatSync(dest).isFile());
+  }
+}
+
 // The one real call, and only when asked: this machine's own HOME, PATH and codex, a one-word prompt.
 console.log('\nask-model: live');
 if (process.env.ACS_LIVE_CHECKS === '1') {

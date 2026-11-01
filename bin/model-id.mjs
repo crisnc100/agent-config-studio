@@ -26,6 +26,7 @@
  * so a family lookup never depends on roles. Never lib/harness.js: that
  * module sweeps temp files at import, and this runs from every skill.
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -67,9 +68,12 @@ async function install() {
   const put = (rel, body, mode = 0o644) => {
     const dest = path.join(resolver, rel);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    const tmp = `${dest}.tmp-${process.pid}`;
-    fs.writeFileSync(tmp, body, { mode });
-    fs.renameSync(tmp, dest);
+    // A fresh random name, created exclusively: a link planted at a guessable name is never written through.
+    const tmp = `${dest}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+    try {
+      fs.writeFileSync(tmp, body, { mode, flag: 'wx' });
+      fs.renameSync(tmp, dest);
+    } finally { fs.rmSync(tmp, { force: true }); }
   };
   // The roles pair before the entry point that loads it. A source without
   // them installs a copy that resolves families and refuses role flags.

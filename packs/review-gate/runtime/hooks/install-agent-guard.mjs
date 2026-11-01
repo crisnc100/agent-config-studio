@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
 import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -21,8 +22,9 @@ function realFile(path) {
 function atomic(path, text, mode = 0o600) {
   const target = realFile(path)
   mkdirSync(dirname(target), { recursive: true })
-  const temporary = `${target}.review-gate-${process.pid}.tmp`
-  try { writeFileSync(temporary, text, { mode }); chmodSync(temporary, mode); renameSync(temporary, target) }
+  // A fresh random name, created exclusively: a link planted at a guessable name is never written through.
+  const temporary = `${target}.review-gate-${process.pid}-${randomBytes(4).toString('hex')}.tmp`
+  try { writeFileSync(temporary, text, { mode, flag: 'wx' }); chmodSync(temporary, mode); renameSync(temporary, target) }
   finally { rmSync(temporary, { force: true }) }
 }
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)

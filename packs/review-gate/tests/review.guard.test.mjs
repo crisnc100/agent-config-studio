@@ -589,3 +589,14 @@ test('S3 the guard launcher and installer never run a ./node or ./codex through 
   assert.ok(readFileSync(RPC, 'utf8').includes('hooks/list'), 'the PATH codex answered hooks/list')
   assert.deepEqual(readdirSync(marks), [], 'a planted helper ran')
 })
+test('S6 the guard installer never writes settings through a link planted at its pid-named temp file', () => {
+  const victim = join(ROOT, 'victim.json'), preload = join(ROOT, 'plant-temp.cjs')
+  writeFileSync(victim, 'victim bytes\n')
+  put(SETTINGS, '{}\n')
+  // The attacker's guess: the old name, <real settings path>.review-gate-<pid>.tmp, planted as the process starts.
+  put(preload, `const fs=require('node:fs');fs.symlinkSync(${JSON.stringify(victim)},fs.realpathSync(${JSON.stringify(SETTINGS)})+'.review-gate-'+process.pid+'.tmp')`)
+  const r = install('install', ['--claude-settings', SETTINGS, '--no-codex'], { NODE_OPTIONS: `--require=${preload}` }); allowed(r)
+  assert.equal(readFileSync(victim, 'utf8'), 'victim bytes\n', 'the settings went through the planted link')
+  assert.ok(!lstatSync(SETTINGS).isSymbolicLink(), 'settings.json became the planted link')
+  assert.equal(json(SETTINGS).hooks.PreToolUse[0].hooks[0].command, launcher)
+})

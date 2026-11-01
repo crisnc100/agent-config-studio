@@ -278,3 +278,23 @@ test('a tracked reviews symlink is refused before any model runs, and nothing is
   assert.ok(!existsSync(marker('pick')), 'the review went ahead to pick a reviewer')
   assert.equal(reviews().length, 0, r.out)
 })
+
+// ── Temp files at guessable names ────────────────────────────────────────────
+test('the global-hook state file is never written through a link planted at its old temp name', () => {
+  const skill = join(ROOT, 'skill-planted')
+  rmSync(skill, { recursive: true, force: true })
+  cpSync(join(RUNTIME, 'hooks'), join(skill, 'hooks'), { recursive: true, verbatimSymlinks: true })
+  writeFileSync(join(HOME, 'isolated.gitconfig'), '[url "https://user:token-stub@example.test/"]\n\tinsteadOf = https://example.test/\n')
+  const state = join(HOME, '.agent-config-studio', 'review-gate-global-hook.json')
+  const victim = join(ROOT, 'victim.txt')
+  writeFileSync(victim, 'victim bytes\n')
+  mkdirSync(dirname(state), { recursive: true })
+  symlinkSync(victim, `${state}.tmp`)
+  const sh = (command) => spawnSync('sh', [join(skill, 'hooks', 'install-global.sh'), command], { cwd: HOME, env: environment(), encoding: 'utf8', timeout: 30000 })
+  const installed = sh('install')
+  assert.equal(installed.status, 0, `${installed.stdout}\n${installed.stderr}`)
+  assert.equal(readFileSync(victim, 'utf8'), 'victim bytes\n', 'the state, with the gitconfig bytes, went through the planted link')
+  assert.ok(lstatSync(state).isFile() && !lstatSync(state).isSymbolicLink(), 'the state file is the planted link')
+  assert.equal(statSync(state).mode & 0o777, 0o600)
+  assert.equal(sh('uninstall').status, 0)
+})
