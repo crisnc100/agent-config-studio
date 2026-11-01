@@ -279,3 +279,32 @@ for (const harness of ['claude', 'codex']) {
     }
   })
 }
+
+// ── the advisor's second opinion with no effort set asks the way build's swapped Grade does ──
+for (const harness of ['claude', 'codex']) {
+  test(`advisor (${harness}): the second opinion with no effort set passes no --effort, the same as build's swapped Grade`, () => {
+    const advisor = fill(block(skill(`advisor/skills/${harness}/advisor/SKILL.md`), /^METHOD=advisor/m).replace(/^METHOD=advisor/m, 'METHOD=second'))
+    const build = skill(`build/skills/${harness}/build/SKILL.md`)
+    const gradeSetup = harness === 'codex' ? `${fill(block(build, /^GATE=bounce/m).replace(/^GATE=bounce/m, 'GATE=grade'))}\n` : ''
+    const grade = `${gradeSetup}${fill(block(build, /^ask-model --family "\$alt"/m))}`
+    // ask-model's own argv, as the skill passed it: an empty --effort and no --effort look the same to the CLI.
+    const asked = join(ROOT, 'ask-model.argv')
+    const record = `ask-model() { printf '%s\\0' "$@" > ${J(asked)}; command ask-model "$@"; }\n`
+    roles({ roles: { advisor: { effort: null } } })   // build's case: no effort set for the second opinion
+    const role = JSON.parse(spawnSync(join(BIN, 'model-id'), ['--role', 'advisor', '--json'], { env: { HOME, PATH }, encoding: 'utf8' }).stdout)
+    assert.equal(role.altEffort, '', 'no own, role or flavor effort: the resolver gives an empty altEffort')
+    for (const shell of SHELLS) {
+      const result = {}
+      for (const [name, script] of [['advisor', advisor], ['build', grade]]) {
+        put(join(WORK, 'builds/s/bounce-prompt.md'), 'THE BOUNCE PROMPT')
+        put(join(WORK, 'builds/s/grade-prompt.md'), 'THE GRADE PROMPT')
+        rmSync(asked, { force: true })
+        const argv = expectEfforts(shell, `${name}: no effort set for the second opinion`, run(shell, `${record}${script}\n`), role.alt, null)
+        const askArgv = readFileSync(asked, 'utf8').split('\0').slice(0, -1)
+        result[name] = { askModelEffort: askArgv.includes('--effort') ? askArgv[askArgv.indexOf('--effort') + 1] : null, cliEffort: effortIn(cliOf(models[role.alt]), argv) }
+      }
+      assert.deepEqual(result.advisor, { askModelEffort: null, cliEffort: null }, `${shell}: the advisor passes no --effort at all, not an empty one`)
+      assert.deepEqual(result.advisor, result.build, `${shell}: the advisor's second opinion asks as build's swapped Grade does`)
+    }
+  })
+}
