@@ -313,3 +313,12 @@ test('no shipped skill makes a raw claude -p, codex exec or grok -p model call: 
     assert.doesNotMatch(skill('build', harness), /ask-model [^\n]*--investigate/, `build/${harness}: the gates never get a shell`)
   }
 })
+
+test('every shipped advisor contract tells the advisor it may verify but never change any file', () => {
+  // The contract files, and any shipped copy of the contract (the SKILL.md blocks that embed it verbatim).
+  const carriers = shipped().filter((path) => readFileSync(path, 'utf8').includes('You are an outside consultant advising the team'))
+  const contracts = carriers.filter((path) => basename(path) === 'advisor-contract.md').map((path) => relative(PACKS, path)).sort()
+  assert.deepEqual(contracts, HARNESSES.map((h) => `advisor/skills/${h}/advisor/advisor-contract.md`).sort(), 'one contract per harness')
+  for (const path of carriers)
+    assert.match(readFileSync(path, 'utf8'), /never change any file; if\nsomething should change, say so in ADVISORY\./, relative(PACKS, path))
+})

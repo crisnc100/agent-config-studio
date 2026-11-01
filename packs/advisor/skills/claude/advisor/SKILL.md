@@ -58,7 +58,9 @@ METHOD=advisor                                  # advisor | second | the family 
 case "$METHOD" in
   advisor) who=(--role advisor) ;;
   second)  role=$(model-id --role advisor --json || exit 1) || { echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1; }
-           who=(--family "$(printf '%s' "$role" | jq -r .alt)" --effort "$(printf '%s' "$role" | jq -r .altEffort)") ;;
+           alt=$(printf '%s' "$role" | jq -r .alt); altEffort=$(printf '%s' "$role" | jq -r .altEffort)
+           eff=(); [ -z "$altEffort" ] || eff=(--effort "$altEffort")     # no effort set: no --effort at all
+           who=(--family "$alt" "${eff[@]}") ;;
   *)       who=(--family "$METHOD") ;;
 esac
 DIR=<absolute path of the folder holding advisor-brief.md>
@@ -91,6 +93,8 @@ The contract lives beside this file as `advisor-contract.md`:
 You are an outside consultant advising the team running this session. You have NO attachment
 to the current direction and no stake in being agreeable. Be objective: if the direction is
 right, say so briefly and stop — do not manufacture concerns to look thorough.
+You may run commands and tests to verify your advice, but never change any file; if
+something should change, say so in ADVISORY.
 
 Deliver exactly three sections:
 
