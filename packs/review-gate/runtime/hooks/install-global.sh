@@ -1,6 +1,7 @@
 #!/bin/sh
 exec node --input-type=module - "$0" "$@" <<'NODE'
 import { spawnSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -103,9 +104,13 @@ try {
       try {
         const state = { hooks, configPath, before, after: snapshot(), previousValues: current }
         mkdirSync(dirname(statePath), { recursive: true })
-        // The snapshot holds the global gitconfig's bytes, which can carry tokens: owner-only, even over a stale .tmp.
-        writeFileSync(`${statePath}.tmp`, JSON.stringify(state) + '\n', { mode: 0o600 })
-        renameSync(`${statePath}.tmp`, statePath)
+        // The snapshot holds the global gitconfig's bytes, which can carry tokens: owner-only, in a fresh random
+        // temp file created exclusively, so a stale file or a planted link at a guessable name is never written through.
+        const temporary = `${statePath}.${process.pid}-${randomBytes(4).toString('hex')}.tmp`
+        try {
+          writeFileSync(temporary, JSON.stringify(state) + '\n', { mode: 0o600, flag: 'wx' })
+          renameSync(temporary, statePath)
+        } finally { rmSync(temporary, { force: true }) }
         chmodSync(statePath, 0o600)
       } catch (e) { restore(configPath, before); throw e }
       console.log(`Installed global hooks: ${hooks}`)

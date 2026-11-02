@@ -1,5 +1,11 @@
 #!/bin/sh
 # The entry-point symlinks keep this guard available even if dispatch.sh is broken.
+# Absolute PATH entries only: a `.` or empty entry must never run the repository's own ./node or ./git.
+if [ -n "${PATH+set}" ]; then
+  kept=; rest=$PATH:
+  while [ -n "$rest" ]; do entry=${rest%%:*}; rest=${rest#*:}; case $entry in /*) kept=${kept:+$kept:}$entry ;; esac; done
+  PATH=${kept:-/usr/bin:/bin}; export PATH
+fi
 name=${0##*/}
 folder=${0%/*}
 project=0

@@ -27,7 +27,9 @@
  * resolver as bin/ask-model.mjs, so `../lib/` resolves in both places.
  */
 import { spawn, spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EFFORTS, loadRegistry, resolveModel } from '../lib/models.js';
@@ -45,9 +47,10 @@ const TOOLS = {
 };
 // The review runtime's grok turn cap (packs/review-gate/runtime/review.mjs).
 const GROK_MAX_TURNS = '40';
-// grok's own switches for the MCP servers it borrows from Claude Code's and Cursor's configs, set for its
-// preflight and its run alike (the studio's GROK_ASSIST_ENV, lib/containment.js). Its own servers have none.
-const GROK_ENV = { GROK_CLAUDE_MCPS_ENABLED: '0', GROK_CURSOR_MCPS_ENABLED: '0' };
+// grok's own switches for the MCP servers and hooks it borrows from Claude Code's and Cursor's configs, set for
+// its preflight and its run alike (the studio's GROK_ASSIST_ENV, lib/containment.js). Its own MCP servers have
+// none, and its own .grok/hooks have none short of turning folder trust off (see grokHookFolders).
+const GROK_ENV = { GROK_CLAUDE_MCPS_ENABLED: '0', GROK_CURSOR_MCPS_ENABLED: '0', GROK_CLAUDE_HOOKS_ENABLED: '0', GROK_CURSOR_HOOKS_ENABLED: '0' };
 
 /** Which CLI runs an id: its prefix, the rule ACS and the review runtime use. */
 function vendorOf(id) {
@@ -63,7 +66,9 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [] }) {
     return ['-p', prompt, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'json',
       // --tools decides which tools exist, so skipping the prompts is safe; --strict-mcp-config with
       // no --mcp-config loads no MCP server. Without the skip, a deny rule or hook blocks a read silently.
-      '--dangerously-skip-permissions', '--tools', TOOLS.claude[mode], '--strict-mcp-config'];
+      // --setting-sources user: a headless run honours the repo's .claude settings, hooks included, so
+      // only your own settings load; your login is not a settings file and is still read.
+      '--dangerously-skip-permissions', '--tools', TOOLS.claude[mode], '--strict-mcp-config', '--setting-sources', 'user'];
   }
   if (vendor === 'codex') {
     return ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', id,
@@ -84,7 +89,9 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [] }) {
  * run whatever --deny says, and nothing turns one off for a single call, so
  * any left means grok is not run. The parse is lib/containment.js
  * grokMcpFromInspect's, copied to keep this file standalone: output of any
- * other shape is an error, never "no servers".
+ * other shape is an error, never "no servers". `projectHooks` names the
+ * enabled hooks inspect says come from the project (none when it lists no
+ * hooks at all).
  */
 function grokMcpLeft(bin, cwd, env) {
   const r = spawnSync(bin, ['inspect', '--json'], {
@@ -112,7 +119,38 @@ function grokMcpLeft(bin, cwd, env) {
     if (!(Number.isInteger(n) && n >= 0)) return bad(`plugin ${pl.name}: provides.mcpServers is not a whole number`);
     if (pl.enabled !== false && n > 0) left.push(`${pl.name} (plugin)`);
   }
-  return { left };
+  const projectHooks = (Array.isArray(doc.hooks) ? doc.hooks : [])
+    .filter((h) => isObj(h) && isObj(h.source) && h.source.type === 'project' && h.disabled !== true && h.compatibilityStatus !== 'disabled')
+    .map((h) => `${h.source.path ?? '(project)'}: ${h.event ?? 'hook'}`);
+  return { left, projectHooks };
+}
+
+/**
+ * Grok runs a trusted folder's own .grok/hooks/*.json on every call, and no
+ * switch turns them off except turning folder trust off, which lets project
+ * hooks run untrusted instead (GROK_FOLDER_TRUST=0, never used). So any
+ * .grok/hooks entry from `cwd` up to the top of its repository keeps grok
+ * from running, ~/.grok/hooks included when HOME is part of that repository.
+ */
+function grokHookFolders(cwd) {
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  const git = which('git');
+  const top = git ? spawnSync(git, ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }) : null;
+  const inRepo = top?.status === 0 && !!top.stdout.trim();
+  const root = inRepo ? real(top.stdout.trim()) : real(cwd);
+  // Outside a repository ~/.grok/hooks are your own hooks. Inside one (a repository at HOME, or one holding it)
+  // they are the checkout's, like any other folder on the way up.
+  const home = real(os.homedir());
+  const found = [];
+  for (let dir = real(cwd); ; dir = path.dirname(dir)) {
+    const hooks = path.join(dir, '.grok', 'hooks');
+    if (inRepo || dir !== home) {
+      try { if (!fs.statSync(hooks).isDirectory() || fs.readdirSync(hooks).length) found.push(hooks); }
+      catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') found.push(hooks); } // unreadable: assume it holds hooks
+    }
+    if (dir === root || path.dirname(dir) === dir) break;
+  }
+  return found;
 }
 
 /**
@@ -218,7 +256,8 @@ function which(name) {
 }
 
 /**
- * The work tree's state, or null outside a git work tree: HEAD (its commit
+ * The work tree's state, null outside a git work tree, or { error } when git
+ * is not on PATH (absolute entries only): HEAD (its commit
  * and branch), so a checkout that leaves the status clean still shows, and
  * every path `git status` reports with its porcelain fields (status, modes,
  * and the HEAD and index object names, so a change to the index shows) and
@@ -227,7 +266,10 @@ function which(name) {
  * repository are not seen. --no-optional-locks: reading must not write the index.
  */
 function snapshot(cwd) {
-  const git = (...a) => spawnSync('git', ['--no-optional-locks', ...a], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  // git from an absolute PATH entry only (which), so a repo's ./git never answers for the work tree.
+  const bin = which('git');
+  if (!bin) return { error: 'git is not on PATH' };
+  const git = (...a) => spawnSync(bin, ['--no-optional-locks', ...a], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   const top = git('rev-parse', '--show-toplevel');
   if (top.error || top.status !== 0) return null;
   const root = top.stdout.trim();
@@ -378,6 +420,12 @@ async function main(argv) {
   }
   const env = vendor === 'grok' ? { ...process.env, ...GROK_ENV } : process.env;
   if (vendor === 'grok') {
+    const hooks = grokHookFolders(cwd);
+    if (hooks.length) {
+      result.error = `${hooks.join(', ')} holds Grok hooks, which grok runs on every call in a trusted folder and no flag turns off, so grok was not run. ` +
+        'Ask another family, or run from a folder without them.';
+      return finish(4);
+    }
     const mcp = grokMcpLeft(bin, cwd, env);
     if (mcp.error) { result.error = `${mcp.error} — no MCP server could be ruled out, so grok was not run`; return finish(4); }
     if (mcp.left.length) {
@@ -385,9 +433,14 @@ async function main(argv) {
         'Turn them off with `grok mcp disable <name>` (a plugin\'s: `grok plugin disable <name>`).';
       return finish(4);
     }
+    if (mcp.projectHooks.length) {
+      result.error = `grok would run this project's hooks (${mcp.projectHooks.join(', ')}), so grok was not run.`;
+      return finish(4);
+    }
   }
 
   const before = o.investigate ? snapshot(cwd) : null;
+  if (before?.error) { result.error = `${before.error}, so changes under --investigate could not be checked — ${vendor} was not run`; return finish(4); }
   if (o.investigate && !before) process.stderr.write(`ask-model: ${cwd} is not in a git work tree — changes are not checked\n`);
   const r = await run(bin, argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff }), cwd, env);
   // A call grok refused for want of approval leaves only this line, and grok still exits 0.
@@ -399,7 +452,8 @@ async function main(argv) {
   else result.error = got.error;
 
   if (before) {
-    const after = snapshot(cwd);
+    const read = snapshot(cwd);
+    const after = read && !read.error ? read : null;
     result.changed = after ? changedPaths(before, after) : null;
     if (!after || result.changed.length) {
       const what = after ? result.changed.map((c) => `  ${c}`).join('\n') : '  (the work tree could not be read after the call)';
@@ -421,9 +475,12 @@ export function install({ home, studio, resolver }) {
   const tilde = (p) => (p.startsWith(home + path.sep) ? '~' + p.slice(home.length) : p);
   const put = (dest, body, mode) => {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    const tmp = `${dest}.tmp-${process.pid}`;
-    fs.writeFileSync(tmp, body, { mode });
-    fs.renameSync(tmp, dest);
+    // A fresh random name, created exclusively: a link planted at a guessable name is never written through.
+    const tmp = `${dest}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+    try {
+      fs.writeFileSync(tmp, body, { mode, flag: 'wx' });
+      fs.renameSync(tmp, dest);
+    } finally { fs.rmSync(tmp, { force: true }); }
   };
   const entry = path.join(resolver, 'bin', 'ask-model.mjs');
   put(entry, fs.readFileSync(SELF), 0o644);

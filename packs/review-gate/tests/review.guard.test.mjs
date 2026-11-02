@@ -515,3 +515,143 @@ test('Shared config partial uninstall never absorbs unrelated edits into its res
   assert.match(readFileSync(CONFIG, 'utf8'), /\[human\]\nkeep = true/)
   assert.doesNotMatch(readFileSync(CONFIG, 'utf8'), /review-gate agent guard|hooks\.state/)
 })
+
+// ── A -c alias runs as the git command it expands to; a config include is a hook override ──
+const refused = (command, launch = guard) => {
+  const r = launch(command)
+  assert.equal(r.status, 2, `${command}\n${r.out}`)
+  assert.equal(r.stderr.trim().split('\n').length, 1, command)
+}
+test('S2 the four review reproductions are refused, through the launcher too', () => {
+  for (const command of [
+    "git -c alias.p='push --no-verify' p",
+    'git -c alias.p="-c core.hooksPath=/dev/null push" p',
+    'git config --global include.path /tmp/evil.gitconfig',
+    'git -c include.path=/tmp/evil.gitconfig push',
+  ]) { refused(command); refused(command, launchGuard) }
+})
+test('S2 a -c alias is checked as the git invocation it expands to, recursively', () => {
+  for (const command of [
+    "git -c alias.c='commit -n' c -m x",
+    "git -c alias.P='push --no-verify' p",
+    "git -c alias.a=b -c alias.b='push --no-verify' a",
+    "git -c alias.a='-c alias.b=\"push --no-verify\" b' a",
+    "git -c core.hooksPath=/dev/null -c alias.p=push p",
+    "git -calias.p='push --no-verify' p",
+    "git -c 'alias.p=!git push --no-verify' p",
+    "git -c 'alias.p=!sh -c' p 'git push --no-verify'",
+    "git -c alias.p='send-pack origin HEAD' p",
+    "git -c alias.p='config --global include.path /tmp/evil.gitconfig' p",
+    'git --config-env=alias.p=PUSH_ALIAS p',
+    "sh -c \"git -c alias.p='push --no-verify' p\"",
+  ]) refused(command)
+  for (const command of ["git -c alias.st=status st", "git -c alias.lg='log --oneline' lg -5", "git -c alias.p=push p", "git -c alias.a=a a",
+    "git -c 'alias.s=!git status' s", "git -c alias.p='push --no-verify' status"])
+    allowed(guard(command))
+})
+test('S2 config includes count as hook overrides and as gated config writes', () => {
+  for (const command of [
+    'git -c includeIf.gitdir:/.path=/tmp/evil.gitconfig push',
+    'git -c INCLUDE.PATH=/tmp/evil.gitconfig commit -m x',
+    'git --config-env=include.path=EVIL push',
+    'git -c include.path=/tmp/evil.gitconfig p',
+    'git config include.path /tmp/evil.gitconfig',
+    'git config --file ~/.gitconfig --add include.path /tmp/evil.gitconfig',
+    'git config set --global include.path /tmp/evil.gitconfig',
+    'git config --global includeIf.gitdir:~/work/.path /tmp/evil.gitconfig',
+    'git config --global --unset include.path',
+    'git config --global --rename-section moved include',
+    "git config --global --rename-section moved 'includeIf.gitdir:/'",
+    "git config --global alias.p 'commit -n'",
+    "git config --global -- alias.p '-c include.path=/tmp/evil.gitconfig push'",
+    "git config --global -- alias.p '-c core.hooksPath=/dev/null push'",
+  ]) refused(command)
+  for (const command of ['git config --get include.path', 'git config --global --get-all include.path', 'git config --list --show-origin',
+    'git config include.path', "git config --global alias.lg 'log --oneline'", "git config --global alias.pf 'push --force-with-lease'"])
+    allowed(guard(command))
+})
+test('S2 without node the launcher still refuses a command-line config include', () => {
+  const path = join(ROOT, 'no-node-include'); mkdirSync(path, { recursive: true })
+  for (const name of ['cat', 'grep']) if (!existsSync(join(path, name))) symlinkSync(name === 'cat' ? '/bin/cat' : '/usr/bin/grep', join(path, name))
+  for (const text of ['git -c include.path=/tmp/evil.gitconfig push', 'git config --global includeIf.gitdir:/.path /tmp/evil.gitconfig']) {
+    const r = run('/bin/sh', [launcher], { env: env({ PATH: path }), input: JSON.stringify({ tool_input: { command: text } }) })
+    assert.equal(r.status, 2, r.out); assert.match(r.stderr, /node could not start/)
+  }
+})
+test('S3 the guard launcher and installer never run a ./node or ./codex through a relative PATH entry', () => {
+  const folder = join(ROOT, 'planted'), marks = join(ROOT, 'planted-marks')
+  rmSync(marks, { recursive: true, force: true }); mkdirSync(marks); mkdirSync(folder, { recursive: true })
+  for (const name of ['node', 'codex']) put(join(folder, name), `#!/bin/sh\n: > ${JSON.stringify(join(marks, name))}\nexit 0\n`), chmodSync(join(folder, name), 0o755)
+  const PATH = ['.', '', BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':')
+  const r = run('/bin/sh', [launcher], { cwd: folder, env: env({ PATH }), input: JSON.stringify({ tool_input: { command: 'git push --no-verify' } }) })
+  assert.equal(r.status, 2, r.out); assert.match(r.stderr, /agents may not run git push --no-verify/)
+  const installed = run(process.execPath, [installer, 'install'], { cwd: folder, env: env({ PATH }) }); allowed(installed)
+  assert.ok(readFileSync(RPC, 'utf8').includes('hooks/list'), 'the PATH codex answered hooks/list')
+  assert.deepEqual(readdirSync(marks), [], 'a planted helper ran')
+})
+test('S6 the guard installer never writes settings through a link planted at its pid-named temp file', () => {
+  const victim = join(ROOT, 'victim.json'), preload = join(ROOT, 'plant-temp.cjs')
+  writeFileSync(victim, 'victim bytes\n')
+  put(SETTINGS, '{}\n')
+  // The attacker's guess: the old name, <real settings path>.review-gate-<pid>.tmp, planted as the process starts.
+  put(preload, `const fs=require('node:fs');fs.symlinkSync(${JSON.stringify(victim)},fs.realpathSync(${JSON.stringify(SETTINGS)})+'.review-gate-'+process.pid+'.tmp')`)
+  const r = install('install', ['--claude-settings', SETTINGS, '--no-codex'], { NODE_OPTIONS: `--require=${preload}` }); allowed(r)
+  assert.equal(readFileSync(victim, 'utf8'), 'victim bytes\n', 'the settings went through the planted link')
+  assert.ok(!lstatSync(SETTINGS).isSymbolicLink(), 'settings.json became the planted link')
+  assert.equal(json(SETTINGS).hooks.PreToolUse[0].hooks[0].command, launcher)
+})
+
+// ── A `!` alias gets the extra arguments as positional parameters, and Git appends them too ──
+test('F1 a ! alias is checked after its positional parameters are filled in, as Git runs it', () => {
+  for (const command of [
+    `git -c 'alias.p=!git "$@"' p push --no-verify`,
+    `git -c 'alias.p=!git "$@"' p commit -n`,
+    `git -c 'alias.p=!git "$@"' p send-pack origin HEAD`,
+    `git -c 'alias.p=!sh -c "$1"' p 'git push --no-verify'`,
+    `git -c 'alias.p=!git $*' p push --no-verify`,
+    `git -c 'alias.p=!git $1 --no-verify' p push`,
+    `git -c 'alias.p=!git "\${1}" "$2"' p commit -n`,
+    `git -c 'alias.p=!f() { git "$@"; }; f' p push --no-verify`,
+    `git -c 'alias.p=!git "$@"' p -c core.hooksPath=/dev/null push`,
+  ]) refused(command)
+})
+test('F1 a ! alias the guard cannot resolve is refused, gated word or not', () => {
+  for (const command of [
+    `git -c 'alias.p=!eval "$1"' p 'git push'`,
+    `git -c 'alias.p=!c=push; git $c' p`,
+    `git -c 'alias.p=!git $(echo push)' p`,
+    'git -c \'alias.p=!git `echo commit`\' p',
+    `git -c 'alias.p=!bash -lc "$X"' p push`,
+    `git -c 'alias.p=!eval "$1"' p 'git status'`,
+  ]) refused(command)
+  for (const command of [`git -c 'alias.p=!git "$@"' p status`, `git -c 'alias.p=!git "$@"' p push`, `git -c 'alias.p=!echo "$1"' p push --no-verify`,
+    `git -c 'alias.p=!git log -n "$1"' p 5`, `git -c 'alias.s=!git status' s`])
+    allowed(guard(command))
+})
+test('X1 a positional parameter with an operator (${1:-x}, ${1:+x}, ${1#x}, ${1:2}) is unresolvable, not read as plain $1', () => {
+  for (const command of [
+    `git -c 'alias.p=!git \${1:-send-pack}' p`,
+    `git -c 'alias.p=!git push \${1:---no-verify}' p`,
+    `git -c 'alias.p=!git push \${1:+--no-verify}' p origin`,
+    `git -c 'alias.p=!git config \${1:-core.hooksPath} /dev/null' p`,
+    `git -c 'alias.p=!git \${1#x} \${2%y}' p xpush --no-verify`,
+    `git -c 'alias.p=!git \${1:0} \${#1}' p push`,
+    `git -c 'alias.p=!git \${!1}' p push`,
+    `git -c 'alias.p=!git \${1/x/push}' p x`,
+  ]) refused(command)
+  for (const command of [`git -c 'alias.p=!git log -n "$1"' p 5`, `git -c 'alias.p=!git log -n "\${1}" "\${@}"' p 5`, `git -c 'alias.p=!git "\${*}"' p status`])
+    allowed(guard(command))
+})
+test('R1 a ! alias never runs while a -c hook override is set: Git hands -c settings to the alias shell', () => {
+  for (const command of [`git -c core.hooksPath=/dev/null -c 'alias.p=!git push' p`, `git -c reviewgate.enabled=false -c 'alias.p=!git commit -m x' p`,
+    `git -c 'alias.p=!git push' -c core.hooksPath=/dev/null p`])
+    refused(command)
+  allowed(guard(`git -c 'alias.p=!git push' p`))
+})
+test('R2 a ! alias the guard cannot read through is refused, gated word or not', () => {
+  for (const command of [`git -c 'alias.p=!x=push; git $x --no-verify' p`, `git -c 'alias.p=!git $(echo push)' p`, `git -c "alias.p=!git $'push'" p`,
+    `git -c 'alias.p=!git $(echo status)' p`, `git -c 'alias.p=!x=status; git $x' p`])
+    refused(command)
+  for (const command of [`git -c 'alias.p=!git log -n "$1"' p 5`, `git -c 'alias.p=!git "$@"' p status`, `git -c 'alias.s=!git status' s`])
+    allowed(guard(command))
+})

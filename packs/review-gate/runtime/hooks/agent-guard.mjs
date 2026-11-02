@@ -2,9 +2,12 @@
 import { readFileSync } from 'node:fs'
 import { basename } from 'node:path'
 
-const sensitive = (text) => /no-veri|hookspath|GIT_CONFIG|reviewgate/i.test(text)
+const sensitive = (text) => /no-veri|hookspath|GIT_CONFIG|reviewgate|include\.path|includeif\./i.test(text)
 // The gate's own settings: an agent turning reviewgate.enabled off would open the gate from inside.
 const gateKey = (key) => /^core\.hookspath$|^reviewgate\./i.test(key)
+// A config include pulls in a file the guard never reads, which can set core.hooksPath or an alias for push.
+const includeKey = (key) => /^include\.path$|^includeif\./i.test(key)
+const shellWord = (word) => `'${String(word).replaceAll("'", `'\\''`)}'`
 const configVariable = (name) => /^(?:GIT_CONFIG(?:_GLOBAL|_SYSTEM|_NOSYSTEM|_COUNT|_KEY_.*|_VALUE_.*|_PARAMETERS)?|HOME|XDG_CONFIG_HOME)$/.test(name)
 const assignment = (word) => /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(word)
 
@@ -252,26 +255,77 @@ function invocation(words) {
   }
   return { program: basename(words[i] || ''), args: words.slice(i + 1), variables, assignmentOnly: i === words.length }
 }
-function configWrite(args) {
+function configWrite(args, chain) {
   const values = []
-  for (let i = 0; i < args.length; i++) {
-    if (['--file', '-f', '--type', '-t', '--default', '--blob'].includes(args[i])) { i++; continue }
-    if (!args[i].startsWith('-')) values.push(args[i])
+  for (let i = 0, rest = false; i < args.length; i++) {
+    if (!rest && args[i] === '--') { rest = true; continue }
+    if (!rest && ['--file', '-f', '--type', '-t', '--default', '--blob'].includes(args[i])) { i++; continue }
+    if (rest || !args[i].startsWith('-')) values.push(args[i])
   }
   const sectionFlag = args.includes('--remove-section') ? 'remove-section' : args.includes('--rename-section') ? 'rename-section' : null
   const sectionCommand = sectionFlag || (['remove-section', 'rename-section'].includes(values[0]) ? values[0] : null)
   if (sectionCommand) {
     const sections = sectionFlag ? values : values.slice(1)
-    return sections.slice(0, sectionCommand === 'remove-section' ? 1 : 2).some((section) => /^(?:core|reviewgate)$/i.test(section))
+    return sections.slice(0, sectionCommand === 'remove-section' ? 1 : 2).some((section) => /^(?:core|reviewgate|include)$|^includeif\./i.test(section))
   }
   if (args.some((a) => ['--get', '--get-all', '--get-regexp', '--get-urlmatch', '--list', '-l', 'get', 'list'].includes(a))) return false
   const writes = args.some((a) => ['--add', '--replace-all', '--unset', '--unset-all', 'set', 'unset'].includes(a))
-  const key = values.findIndex((v) => gateKey(v) || /^alias\./i.test(v))
+  const key = values.findIndex((v) => gateKey(v) || includeKey(v) || /^alias\./i.test(v))
   if (key < 0 || !writes && values.length <= key + 1) return false
-  return gateKey(values[key]) || values.slice(key + 1).some((value) => /--no-veri|hookspath|reviewgate/i.test(value))
+  if (gateKey(values[key]) || includeKey(values[key])) return true
+  // An alias is refused when running it would be: `git <alias>` runs its value.
+  return values.slice(key + 1).some((value) => /--no-veri|hookspath|reviewgate|include\.path|includeif\./i.test(value) ||
+    aliasReason(value, [], new Set(), { aliases: new Map(), hooksOverride: false, chain }) !== null)
 }
-function gitReason(program, words, variables) {
-  let command, args, hooksOverride = false
+// The shell text Git runs for a `!` alias: the extra arguments are its positional parameters ($1, "$@", $*),
+// and Git also appends them ("$@") whenever there are any. Inside double quotes a parameter stays one word;
+// outside them it is split on whitespace.
+function expandShellAlias(body, args) {
+  const inDouble = (text) => text.replace(/[\\"$`]/g, (c) => `\\${c}`)
+  let out = '', quote = null
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i]
+    if (quote === "'") { out += c; if (c === "'") quote = null; continue }
+    if (c === '\\') { out += c + (body[i + 1] ?? ''); i++; continue }
+    if (c === "'" && !quote) { quote = "'"; out += c; continue }
+    if (c === '"') { quote = quote ? null : '"'; out += c; continue }
+    const parameter = c === '$' && /^\$(?:\{([@*]|[1-9][0-9]*)\}|([@*1-9]))/.exec(body.slice(i))
+    if (!parameter) { out += c; continue }
+    const name = parameter[1] ?? parameter[2]
+    const values = name === '@' || name === '*' ? args : [args[Number(name) - 1] ?? '']
+    if (quote === '"') out += name === '@' ? values.map(inDouble).join('" "') : inDouble(values.join(' '))
+    else out += values.flatMap((v) => v.split(/\s+/).filter(Boolean)).map(shellWord).join(' ')
+    i += parameter[0].length - 1
+  }
+  return args.length ? `${out} ${args.map(shellWord).join(' ')}` : out
+}
+// A `!` alias body the guard cannot read through: a variable other than a positional parameter, a command
+// substitution, eval or source, or a shell started with -c.
+// Only the forms expandShellAlias fills in are readable: $@, $*, $1-$9, ${@}, ${*} and ${N} closed right after the
+// name. Any operator (${1:-x}, ${1:+x}, ${1#x}, ${1%x}, ${1/x/y}, ${1:2}, ${!1}, ${#1}) is not.
+const unresolvable = (body) =>
+  /\$(?![@*1-9]|\{(?:[@*]|[1-9][0-9]*)\})|`|\b(?:eval|source)\b|(?:^|[\s;&|(])\.\s|\b(?:sh|bash|zsh|dash|ksh)\b[^;&|]*\s-[a-zA-Z]*c\b/.test(body)
+// What `git <alias> args` runs: a `!` value is shell text that gets the arguments, any other value is git's
+// own options and command. A value from --config-env is never seen, so running it is refused.
+function aliasReason(value, args, variables, context) {
+  if (value === null) return 'agents may not run a Git alias set from the environment'
+  if ((context.chain?.length ?? 0) > 32) return 'agents may not run a Git alias chain this long'
+  const chain = [...(context.chain || []), value]
+  if (value.startsWith('!')) {
+    // Git hands its -c settings to the alias's shell, so any git that shell starts keeps the hook override.
+    if (context.hooksOverride) return 'agents may not run a Git shell alias while overriding Git hook configuration'
+    const body = value.slice(1)
+    const reason = inspectShell(expandShellAlias(body, args), new Set(variables), chain.length)
+    if (reason) return reason
+    // Failing closed: the guard reads only the positional parameters it fills in.
+    if (unresolvable(body)) return 'agents may not run a Git shell alias the guard cannot read through'
+    return null
+  }
+  return gitReason('git', [...tokenize(value).flatMap((c) => c.words), ...args], variables, { ...context, chain })
+}
+function gitReason(program, words, variables, context = { aliases: new Map(), hooksOverride: false, chain: [] }) {
+  let command, args, hooksOverride = context.hooksOverride
+  const aliases = new Map(context.aliases)
   if (['git-push', 'git-commit', 'git-send-pack'].includes(program)) { command = program.slice(4); args = words }
   else if (program === 'git') {
     let i = 0
@@ -281,11 +335,23 @@ function gitReason(program, words, variables) {
       if (globalValues.has(opt)) value = words[i++]
       else if (/^-c.+/.test(opt)) value = opt.slice(2)
       else if (opt.startsWith('--config-env=')) value = opt.slice('--config-env='.length)
-      if ((opt === '-c' || opt.startsWith('-c') || opt.startsWith('--config-env')) && gateKey(String(value || '').split('=')[0])) hooksOverride = true
+      if (!(opt === '-c' || opt.startsWith('-c') || opt.startsWith('--config-env'))) continue
+      const setting = String(value || ''), at = setting.indexOf('=')
+      const key = at < 0 ? setting : setting.slice(0, at)
+      if (gateKey(key)) hooksOverride = true
+      if (includeKey(key)) return 'agents may not include Git config files on the command line; an included file can change the review hooks'
+      const alias = /^alias\.(.+)$/i.exec(key)
+      if (alias) aliases.set(alias[1].toLowerCase(), opt.startsWith('--config-env') ? null : at < 0 ? '' : setting.slice(at + 1))
     }
     command = words[i]; args = words.slice(i + 1)
+    // Git runs an alias only when no command has that name; checking both the alias and the name covers either.
+    const name = String(command ?? '').toLowerCase()
+    if (aliases.has(name) && !(context.chain || []).includes(aliases.get(name))) {
+      const reason = aliasReason(aliases.get(name), args, variables, { aliases, hooksOverride, chain: context.chain })
+      if (reason) return reason
+    }
   } else return null
-  if (command === 'config') return configWrite(args) ? 'agents may not write review-gate bypass configuration' : null
+  if (command === 'config') return configWrite(args, context.chain) ? 'agents may not write review-gate bypass configuration' : null
   if (command === 'send-pack') return 'agents may not run git send-pack; use git push through the review gate instead'
   if (!['push', 'commit'].includes(command)) return null
   if (hooksOverride || [...variables].some(configVariable)) return 'agents may not override Git hook configuration on push or commit'

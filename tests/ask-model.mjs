@@ -134,7 +134,7 @@ function ask(args, { env = {}, home = HOME, cwd = tmp, prompt = PF } = {}) {
 const show = (r) => J({ code: r.code, out: r.out, err: r.err, calls: r.calls, mcp: r.mcp, inspect: r.inspect });
 
 const CLAUDE_RO = (id, effort) => ['-p', PROMPT, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'json',
-  '--dangerously-skip-permissions', '--tools', 'Read,Grep,Glob', '--strict-mcp-config'];
+  '--dangerously-skip-permissions', '--tools', 'Read,Grep,Glob', '--strict-mcp-config', '--setting-sources', 'user'];
 const CODEX = (id, effort) => ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', id,
   ...(effort ? ['-c', `model_reasoning_effort=${effort}`] : []), PROMPT];
 const GROK_RO = (id, effort, cwd) => ['-p', PROMPT, '-m', id, ...(effort ? ['--reasoning-effort', effort] : []), '--cwd', cwd,
@@ -533,6 +533,123 @@ console.log('\nask-model: codex servers a plugin provides');
      sticky.code === 4 && sticky.calls.length === 0 && /codex mcp list failed: [\s\S]*invalid transport[\s\S]*mcp_servers\.cua_repl[\s\S]* — codex was not run/.test(sticky.err), show(sticky));
   const inv = ask(['--family', 'sol', '--investigate', '--cwd', WORK], { env });
   ok('--investigate gets the same overrides', inv.code === 0 && same(inv.argv, r.argv), show(inv));
+}
+
+console.log('\nask-model: model-id --install never writes through a link planted at a temp name');
+{
+  const home = mk('home-planted');
+  const victim = path.join(tmp, 'victim.txt');
+  fs.writeFileSync(victim, 'victim bytes\n');
+  // The attacker's guess: the old names, <dest>.tmp-<pid>, for model-id's own copy and ask-model's, planted as the process starts.
+  const resolverBin = path.join(home, '.agent-config-studio', 'resolver', 'bin');
+  const preload = path.join(tmp, 'plant-temp.cjs');
+  fs.writeFileSync(preload, `const fs=require('node:fs');fs.mkdirSync(${J(resolverBin)},{recursive:true});` +
+    `for(const n of ['model-id.mjs','ask-model.mjs'])fs.symlinkSync(${J(victim)},require('node:path').join(${J(resolverBin)},n)+'.tmp-'+process.pid)`);
+  const inst = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'model-id.mjs'), '--install'], { encoding: 'utf8', env: { HOME: home, PATH: SYSTEM.join(':'), NODE_OPTIONS: `--require=${preload}` } });
+  ok('the install still succeeds', inst.status === 0, J(inst));
+  ok('…and the victim behind the planted links is untouched', fs.readFileSync(victim, 'utf8') === 'victim bytes\n');
+  for (const name of ['model-id.mjs', 'ask-model.mjs']) {
+    const dest = path.join(resolverBin, name);
+    ok(`…and resolver/bin/${name} is a real file, not the planted link`, !fs.lstatSync(dest).isSymbolicLink() && fs.lstatSync(dest).isFile());
+  }
+}
+
+console.log('\nask-model: claude never loads the repo\'s own settings or hooks');
+{
+  // A headless claude run in a repo honours its .claude/settings.json and settings.local.json hooks; only
+  // --setting-sources user keeps them out (and still reads your login).
+  for (const extra of [[], ['--investigate']]) {
+    const r = ask(['--family', 'fable', '--cwd', WORK, ...extra]);
+    const at = r.argv?.indexOf('--setting-sources') ?? -1;
+    ok(`claude${extra.length ? ' --investigate' : ''}: --setting-sources user, given once`,
+       at !== -1 && r.argv[at + 1] === 'user' && r.argv.filter((a) => a === '--setting-sources').length === 1, show(r));
+  }
+}
+
+console.log('\nask-model: grok runs with Claude\'s and Cursor\'s hooks off, and never beside a repo\'s .grok/hooks');
+{
+  // A grok stub that logs the hook switches it got, answers `inspect --json` from STUB_GROK_INSPECT, and answers a run.
+  const bin = mk('stubs-grok-hooks');
+  const glog = path.join(tmp, 'grok-hooks-calls.jsonl');
+  fs.writeFileSync(path.join(bin, 'grok'), `#!${process.execPath}
+const fs = require('node:fs');
+const a = process.argv.slice(2);
+fs.appendFileSync(${J(glog)}, JSON.stringify({ argv: a, hooksEnv: [process.env.GROK_CLAUDE_HOOKS_ENABLED ?? null, process.env.GROK_CURSOR_HOOKS_ENABLED ?? null] }) + '\\n');
+if (a[0] === 'inspect') { process.stdout.write(process.env.STUB_GROK_INSPECT || JSON.stringify({ mcpServers: [], plugins: [], hooks: [] })); process.exit(0); }
+process.stdout.write(JSON.stringify({ text: 'grok answer', stopReason: 'end_turn', modelUsage: { [a[a.indexOf('-m') + 1]]: {} } }));
+`, { mode: 0o755 });
+  const grok = (cwd, env = {}) => {
+    fs.writeFileSync(glog, '');
+    const r = ask(['--family', 'grok', '--cwd', cwd], { env: { PATH: [bin, ...SYSTEM].join(':'), ...env } });
+    return { ...r, grok: fs.readFileSync(glog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) };
+  };
+  const repo = mk('grok-hooks-repo');
+  spawnSync('git', ['init', '-q', repo], { env: { ...process.env, ...GIT_ENV } });
+  const sub = mk('grok-hooks-repo', 'sub');
+  const ran = (r) => r.grok.some((c) => c.argv[0] === '-p');
+
+  const clean = grok(sub);
+  ok('no .grok/hooks: grok runs, and the inspect and the run both get the Claude and Cursor hook switches off',
+     clean.code === 0 && ran(clean) && clean.grok.length === 2 && clean.grok.every((c) => same(c.hooksEnv, ['0', '0'])), J(clean));
+
+  fs.mkdirSync(path.join(repo, '.grok', 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.grok', 'hooks', 'session.json'), '{"hooks":{}}');
+  for (const [where, cwd] of [['the repo root', repo], ['a subfolder, with the hooks at the repo root', sub]]) {
+    const r = grok(cwd);
+    ok(`.grok/hooks in ${where}: exit 4, the folder named, grok never run`,
+       r.code === 4 && r.err.includes(path.join(fs.realpathSync(repo), '.grok', 'hooks')) && /grok was not run/.test(r.err) && r.grok.length === 0, J(r));
+  }
+  fs.rmSync(path.join(repo, '.grok'), { recursive: true, force: true });
+
+  const hook = (extra) => ({ event: 'session_start', hookType: 'command', target: 'touch x', source: { type: 'project', path: path.join(repo, '.claude') }, ...extra });
+  const listed = grok(repo, { STUB_GROK_INSPECT: J({ mcpServers: [], plugins: [], hooks: [hook({})] }) });
+  ok('an enabled project hook in grok inspect: exit 4, named, grok never run', listed.code === 4 && /grok would run this project's hooks/.test(listed.err) && !ran(listed), J(listed));
+  const off = grok(repo, { STUB_GROK_INSPECT: J({ mcpServers: [], plugins: [], hooks: [hook({ disabled: true, compatibilityStatus: 'disabled' }), { ...hook({}), source: { type: 'user', path: '/home/.grok/hooks' } }] }) });
+  ok('a project hook the switches disabled, and the user\'s own hook: grok runs', off.code === 0 && ran(off), J(off));
+}
+
+console.log('\nask-model: a repository at HOME has its .grok/hooks checked like any other');
+{
+  const bin = mk('stubs-grok-home');
+  const glog = path.join(tmp, 'grok-home-calls.jsonl');
+  fs.writeFileSync(path.join(bin, 'grok'), `#!${process.execPath}
+const fs = require('node:fs');
+const a = process.argv.slice(2);
+fs.appendFileSync(${J(glog)}, JSON.stringify(a) + '\\n');
+if (a[0] === 'inspect') { process.stdout.write(JSON.stringify({ mcpServers: [], plugins: [], hooks: [] })); process.exit(0); }
+process.stdout.write(JSON.stringify({ text: 'grok answer', stopReason: 'end_turn', modelUsage: { [a[a.indexOf('-m') + 1]]: {} } }));
+`, { mode: 0o755 });
+  const grokAt = (home) => {
+    fs.writeFileSync(glog, '');
+    const r = ask(['--family', 'grok', '--cwd', home], { home, env: { PATH: [bin, ...SYSTEM].join(':') } });
+    return { ...r, grok: fs.readFileSync(glog, 'utf8').split('\n').filter(Boolean) };
+  };
+  const homeRepo = mk('home-is-a-repo');
+  spawnSync('git', ['init', '-q', homeRepo], { env: { ...process.env, ...GIT_ENV } });
+  fs.mkdirSync(path.join(homeRepo, '.grok', 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(homeRepo, '.grok', 'hooks', 'session.json'), '{"hooks":{}}');
+  const repoHome = grokAt(homeRepo);
+  ok('HOME is the repository: its .grok/hooks are the checkout\'s, exit 4, grok never run',
+     repoHome.code === 4 && repoHome.err.includes(path.join(fs.realpathSync(homeRepo), '.grok', 'hooks')) && repoHome.grok.length === 0, J(repoHome));
+  const plainHome = mk('home-not-a-repo');
+  fs.mkdirSync(path.join(plainHome, '.grok', 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(plainHome, '.grok', 'hooks', 'mine.json'), '{"hooks":{}}');
+  const ownHooks = grokAt(plainHome);
+  ok('HOME outside any repository: ~/.grok/hooks are your own, grok runs', ownHooks.code === 0 && ownHooks.grok.some((l) => l.startsWith('["-p"')), J(ownHooks));
+}
+
+console.log('\nask-model: --investigate reads the work tree with git from an absolute PATH entry only');
+{
+  const repo = mk('planted-git-repo');
+  const g = (...a) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: repo, env: { PATH: SYSTEM.join(':'), HOME, ...GIT_ENV } });
+  g('init', '-q'); fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); g('add', '.'); g('commit', '-q', '-m', 'base');
+  const marker = path.join(tmp, 'planted-git-ran');
+  fs.writeFileSync(path.join(repo, 'git'), `#!/bin/sh\n: > '${marker}'\nexit 0\n`, { mode: 0o755 });
+  const planted = ask(['--family', 'fable', '--investigate', '--cwd', repo], { cwd: repo, env: { PATH: ['.', '', STUBS, ...SYSTEM].join(':') } });
+  ok('PATH=.: with a planted ./git: the planted file never runs, and the call answers', planted.code === 0 && !fs.existsSync(marker), show(planted));
+  const noGit = ask(['--family', 'fable', '--investigate', '--cwd', repo], { cwd: repo, env: { PATH: [STUBS, '.'].join(':') } });
+  ok('no git on an absolute PATH entry: exit 4, the model never runs, the planted ./git never runs',
+     noGit.code === 4 && /git is not on PATH, so changes under --investigate could not be checked — claude was not run/.test(noGit.err) && noGit.calls.length === 0 && !fs.existsSync(marker), show(noGit));
 }
 
 // The one real call, and only when asked: this machine's own HOME, PATH and codex, a one-word prompt.

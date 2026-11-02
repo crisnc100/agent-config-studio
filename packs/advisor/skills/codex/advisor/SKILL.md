@@ -53,7 +53,7 @@ The advisor has zero session context. A thin brief produces generic advice; do n
 5. **READ FIRST** — absolute paths to the few files that ground the decision. Every method can read the repo; point
    it at the right places so it doesn't ask questions the code answers.
 
-## Step 2 — Invoke (read-only, always)
+## Step 2 — Invoke (the advisor gets a shell to verify things)
 
 ```bash
 METHOD=advisor                                  # advisor | second | the family the user named
@@ -72,9 +72,10 @@ PROMPT_FILE="$PWD/advisor-prompt.md"
 ask-model "${who[@]}" --investigate --prompt-file "$PROMPT_FILE"
 ```
 `ask-model` picks the CLI from the model id (a fresh session, no seat context), keeps MCP out, and checks the
-answering model where the CLI reports one. `--investigate` lets the advisor run commands to check its points; it still
-must not change anything. The advice is on stdout; one stderr line names the family, id, effort and mode. Branch on
-the exit code:
+answering model where the CLI reports one. **`--investigate` gives the advisor a shell** to verify things. It is told
+never to change files, and ask-model reports any change to the work tree, but it isn't sandboxed (only a codex advisor
+runs inside codex's own sandbox): it runs commands as the user, and a change outside the work tree goes unseen. The
+advice is on stdout; one stderr line names the family, id, effort and mode. Branch on the exit code:
 
 - **0** — the advice. Take it to Step 3.
 - **2** — another model answered. Abort, tell the user, and never present another model's output as the advisor's.
@@ -161,8 +162,8 @@ The seat is not a courier. Before showing the user anything:
 
 - **Orchestrator-only.** Implementers and reviewers never invoke this skill. An implementer unsure of direction uses
   its callback contract; the seat decides whether a consult is worth buying. Nothing routes around the seat.
-- **The advisor never edits.** It may read and run commands (`--investigate`); ask-model names any file that
-  changed during the call (exit 5). Report those to the user; never revert them.
+- **The advisor is told never to edit.** Its shell (`--investigate`) isn't sandboxed, except a codex advisor's, so
+  nothing else stops it: ask-model names any file that changed in the work tree during the call (exit 5). Report those to the user; never revert them.
 - **Prove the model, prove the run.** ask-model checks both: exit 2 is another model, exit 4 a failed call. A silent
   downgrade or an ENOTFOUND is a failed call, not an answer — report it, don't relabel it.
 - **Same-vendor advice is flagged, never silent.** If the advisor shares this seat's vendor, the user hears that with

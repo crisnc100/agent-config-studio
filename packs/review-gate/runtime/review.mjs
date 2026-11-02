@@ -36,15 +36,17 @@
  * as JSON after a `===FINDINGS_JSON===` marker for the calling agent to parse.
  * Reviews report findings; recording and close failures exit non-zero.
  */
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn as spawnFile, spawnSync as spawnFileSync } from 'node:child_process'
 import {
   accessSync,
   appendFileSync,
   constants,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   statSync,
@@ -52,11 +54,43 @@ import {
 } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { homedir, tmpdir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const COPY_PATH = fileURLToPath(import.meta.url)
 console.error(`review.mjs · ${COPY_PATH} · head-aware copy`)
+
+// Every helper named by its bare name (git, model-id, codex, claude, grok, ln, a classifier) runs from an
+// absolute PATH entry only, so a `.` or empty entry never picks a repository's ./git or ./model-id. This is
+// tools/ask-model.mjs which(), copied to keep the runtime standalone; with PATH unset, the spawn's own
+// default. A helper that is not found fails the way a missing command does (ENOENT). Paths and shell
+// strings pass through.
+const isExecutable = (p) => {
+  try {
+    accessSync(p, constants.X_OK)
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
+function which(name) {
+  for (const dir of String(process.env.PATH ?? '/usr/bin:/bin').split(':'))
+    if (isAbsolute(dir) && isExecutable(join(dir, name))) return join(dir, name)
+  return null
+}
+const notFound = (name) =>
+  Object.assign(new Error(`spawnSync ${name} ENOENT`), { errno: -2, code: 'ENOENT', syscall: `spawnSync ${name}`, path: name })
+function spawnSync(command, args, options) {
+  if ((Array.isArray(args) ? options : args)?.shell || String(command).includes('/')) return spawnFileSync(command, args, options)
+  const bin = which(command)
+  if (bin) return spawnFileSync(bin, args, options)
+  return { error: notFound(command), status: null, signal: null, output: null, pid: 0, stdout: undefined, stderr: undefined }
+}
+function spawn(command, args, options) {
+  const bin = String(command).includes('/') ? command : which(command)
+  if (!bin) throw notFound(command)
+  return spawnFile(bin, args, options)
+}
 const args = process.argv.slice(2)
 const option = (flag) => {
   const at = args.indexOf(flag)
@@ -71,8 +105,8 @@ const option = (flag) => {
 // > the older ~/.claude/review-config.json > built-in.
 // Edit that one small JSON file to switch reviewer/model/effort — see review-config.example.json.
 // The repo file can come from the repository itself (committed, or added by a branch you check out), so
-// the keys that run a command or reach git as an argument count there only while git doesn't track it:
-// a clone or checkout only ever adds tracked files. Env and the home configs always count.
+// the keys that run a command or reach git as an argument count there only while git doesn't track it and no
+// symlink leads to it: a clone or checkout only ever adds tracked files and links. Env and the home configs always count.
 let gateConfigError
 const COMMAND_KEYS = ['verifyCmd', 'classifier', 'base']
 // Set when the repo file failed that check: its `pick` may name a family, never a command to run.
@@ -84,10 +118,38 @@ const sameFile = (a, b) => {
     return false
   }
 }
+// The path as named must have no symlink on it: a tracked `.claude -> cfg` link serves a tracked file under a
+// name git does not track. The real path, spelled as the disk stores it (a tracked `.CLAUDE/` answers for
+// `.claude/` on a case-insensitive disk), and every folder above it in the work tree must not be tracked either.
 function repoFileIsOwn(p, homes) {
   if (homes.some((home) => sameFile(p, home))) return true // a dotfiles repo at HOME: this is the home config
+  const parts = p.split(sep)
+  try {
+    if (parts.some((_, i) => lstatSync(parts.slice(0, i + 1).join(sep)).isSymbolicLink())) return false
+  } catch {
+    return false
+  }
   const tracked = spawnSync('git', ['ls-files', '--error-unmatch', '--', p], { stdio: 'ignore' })
-  return !tracked.error && tracked.status === 1 // 1: inside a work tree, and git doesn't track it
+  if (tracked.error || tracked.status !== 1) return false // 1: inside a work tree, and git doesn't track it
+  let rel, top
+  try {
+    const t = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' })
+    if (t.error || t.status !== 0) return false
+    top = realpathSync.native(t.stdout.trim())
+    rel = relative(top, realpathSync.native(p))
+  } catch {
+    return false
+  }
+  if (!rel || isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) return false
+  const steps = rel.split(sep)
+  const real = steps.map((_, i) => steps.slice(0, i + 1).join('/'))
+  const listed = spawnSync('git', ['-C', top, 'ls-files', '-z', '--full-name', '--', ...real.map((r) => `:(literal)${r}`)], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  })
+  if (listed.error || listed.status !== 0) return false
+  const entries = new Set(listed.stdout.split('\0'))
+  return !real.some((r) => entries.has(r))
 }
 function withoutRepoCommands(config, p, homes) {
   const keys = COMMAND_KEYS.filter((k) => config[k] != null && String(config[k]).trim() !== '')
@@ -97,7 +159,7 @@ function withoutRepoCommands(config, p, homes) {
   for (const k of keys) delete config[k]
   REPO_PICK_UNTRUSTED = pickMayRun
   if (keys.length && !args.includes('--gate'))
-    console.warn(`⚠ Ignoring ${keys.join(', ')} in ${p}: git tracks it, so the repository can set it. ` +
+    console.warn(`⚠ Ignoring ${keys.join(', ')} in ${p}: git tracks it (or a symlink leads to it), so the repository can set it. ` +
       `Put them in ~/.agent-config-studio/review-gate/config.json or the environment, or keep the file untracked.`)
   return config
 }
@@ -166,19 +228,8 @@ function vendorOf(id) {
   return null
 }
 const VENDORS = ['codex', 'claude', 'grok']
-const isExecutable = (p) => {
-  try {
-    accessSync(p, constants.X_OK)
-    return statSync(p).isFile()
-  } catch {
-    return false
-  }
-}
-// Found on PATH without running it.
-const onPath = (command) =>
-  String(command).includes('/')
-    ? isExecutable(command)
-    : String(process.env.PATH || '').split(':').some((dir) => dir && isExecutable(join(dir, command)))
+// Found on PATH without running it, the way spawnSync will find it.
+const onPath = (command) => (String(command).includes('/') ? isExecutable(command) : which(command) !== null)
 
 // A hard stop names what is wrong and how to fix it; it never tries another vendor instead.
 function stop(message) {
@@ -491,7 +542,7 @@ const CLASSIFIER_ACT = 0.7 // act on its choice at confidence ≥ 0.7; below is 
 // A pick read from a repo file that failed the own-file check (REVIEW_PICK always wins over it).
 const pickFromRepo = () => process.env.REVIEW_PICK == null && REPO_PICK_UNTRUSTED
 const untrustedPickNote = (pick) =>
-  `⚠ Ignoring pick "${pick}" in ${CONFIG._source}: it names a command, and git tracks that file, so the repository can set it.`
+  `⚠ Ignoring pick "${pick}" in ${CONFIG._source}: it names a command, and git tracks that file (or a symlink leads to it), so the repository can set it.`
 // Path patterns are case-insensitive globs: `**` spans directories, `*` and `?` stay inside one.
 // Like .gitignore, a pattern with no `/` is matched against every path segment ("*auth*").
 const RISK_PATHS = Array.isArray(CONFIG.riskPaths)
@@ -1215,16 +1266,61 @@ function runVerify() {
 
 // ── Backends: one read-only, structured-output call per vendor ──────────────
 // Each returns { result, modelUsed? } where result is the schema-shaped object.
+// Codex has no strict-MCP flag, and `-c mcp_servers={}` is merged into the table rather than replacing it. So each
+// server `codex mcp list` reports for this folder is switched off with one inline table; when that override is
+// refused (a server a plugin provides has no transport), plugins go off as a whole and the override covers the
+// servers left. A last `mcp list` under the final overrides must show every server disabled, or codex is not run.
+// tools/ask-model.mjs codexMcpOff, copied to keep the runtime standalone. None of these calls reaches a model.
+const tail = (text) => String(text || '').trim().slice(-500) || '(no output)'
+function codexMcpOff(bin, cwd) {
+  const list = (extra) => {
+    const r = spawnSync(bin, ['mcp', 'list', '--json', ...extra], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 })
+    if (r.error || r.status !== 0) return { error: `codex mcp list failed: ${tail(r.error?.message || r.stderr || r.stdout)}` }
+    try {
+      const servers = JSON.parse(r.stdout)
+      if (Array.isArray(servers)) return { servers }
+    } catch {}
+    return { error: `codex mcp list printed no server list: ${tail(r.stdout)}` }
+  }
+  const names = (servers) => servers.map((s) => s?.name).filter((n) => typeof n === 'string')
+  // JSON's string escapes are valid TOML basic-string escapes.
+  const off = (servers) => ['-c', `mcp_servers={${names(servers).map((n) => `${JSON.stringify(n)}={enabled=false}`).join(',')}}`]
+  const allOff = (args, check) => {
+    const on = check.servers.filter((s) => s?.enabled !== false).map((s) => s?.name ?? '(unnamed)')
+    return on.length ? { error: `codex MCP servers still enabled under the override: ${on.join(', ')}` } : { args }
+  }
+  const found = list([])
+  if (found.error) return found
+  if (!found.servers.length) return { args: [] }
+  const check = list(off(found.servers))
+  if (!check.error) return allOff(off(found.servers), check)
+  const PLUGINS_OFF = ['-c', 'features.plugins=false']
+  const rest = list(PLUGINS_OFF)
+  if (rest.error) return check
+  const left = new Set(names(rest.servers))
+  const fromPlugins = names(found.servers).filter((n) => !left.has(n))
+  if (!fromPlugins.length) return check
+  const args = [...PLUGINS_OFF, ...(rest.servers.length ? off(rest.servers) : [])]
+  const final = list(args)
+  if (final.error) return { error: `${final.error} (with plugins off for ${fromPlugins.join(', ')})` }
+  return allOff(args, final)
+}
 function runCodex(m, prompt, schema) {
+  const bin = which('codex')
+  if (!bin) throw new Error('codex review failed: codex is not on PATH')
+  // The reviewer reads a hostile diff: no MCP server it could drive stays on.
+  const mcp = codexMcpOff(bin, process.cwd())
+  if (mcp.error) throw new Error(`${mcp.error} — codex was not run`)
   const tmp = mkdtempSync(join(tmpdir(), 'review-'))
   try {
     const schemaPath = join(tmp, 'schema.json')
     const outPath = join(tmp, 'out.json')
     writeFileSync(schemaPath, JSON.stringify(schema))
     const r = spawnSync(
-      'codex',
+      bin,
       [
         'exec',
+        ...mcp.args,
         '-c',
         `model=${m.id}`,
         '-c',
@@ -1293,8 +1389,48 @@ function parseGrok(stdout) {
   return { result, modelUsed: used.join(',') }
 }
 
+// Grok runs a trusted folder's own hooks on every call. The Claude and Cursor hook files it reads are switched
+// off here. Its own .grok/hooks/*.json have no switch except turning folder trust off, which lets project hooks
+// run untrusted instead (GROK_FOLDER_TRUST=0, never used). So a tree holding any .grok/hooks entry, from the
+// working folder up to the top of its repository, is never reviewed by grok.
+const GROK_HOOKS_OFF = { GROK_CLAUDE_HOOKS_ENABLED: '0', GROK_CURSOR_HOOKS_ENABLED: '0' }
+function grokHookFolders(cwd) {
+  const real = (p) => {
+    try {
+      return realpathSync(p)
+    } catch {
+      return resolve(p)
+    }
+  }
+  const top = spawnSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' })
+  const inRepo = top.status === 0 && !!top.stdout.trim()
+  const root = inRepo ? real(top.stdout.trim()) : real(cwd)
+  // Outside a repository ~/.grok/hooks are your own hooks. Inside one (a repository at HOME, or one holding it)
+  // they are the checkout's, like any other folder on the way up.
+  const home = real(homedir())
+  const found = []
+  for (let dir = real(cwd); ; dir = dirname(dir)) {
+    const hooks = join(dir, '.grok', 'hooks')
+    if (inRepo || dir !== home) {
+      try {
+        if (!statSync(hooks).isDirectory() || readdirSync(hooks).length) found.push(hooks)
+      } catch (e) {
+        if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') found.push(hooks) // unreadable: assume it holds hooks
+      }
+    }
+    if (dir === root || dirname(dir) === dir) break
+  }
+  return found
+}
 function runGrok(m, prompt, schema) {
+  const hooks = grokHookFolders(process.cwd())
+  if (hooks.length)
+    throw new Error(
+      `grok review refused: ${hooks.join(', ')} holds Grok hooks, which grok runs on every call in a trusted ` +
+        `folder and no flag turns off. Review with another family, or remove that folder from the branch.`,
+    )
   const r = spawnSync('grok', grokArgs(m, prompt, schema), {
+    env: { ...process.env, ...GROK_HOOKS_OFF },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
     maxBuffer: 64 * 1024 * 1024,
@@ -1352,10 +1488,14 @@ async function runClaude(m, prompt, schema, role) {
     JSON.stringify(schema),
     // --tools decides which tools EXIST (--allowedTools only pre-approves, so a user's
     // acceptEdits or Bash(*) setting could still let a reviewer write); --strict-mcp-config with
-    // no --mcp-config loads no MCP servers.
+    // no --mcp-config loads no MCP servers. A headless run honours the repo's .claude settings, hooks
+    // included, so a branch under review could run a command: --setting-sources user loads only your own
+    // settings (your login is not a settings file and is still read).
     '--tools',
     'Read,Grep,Glob',
     '--strict-mcp-config',
+    '--setting-sources',
+    'user',
     '--append-system-prompt',
     `You are a precise ${role}. Report only real defects; do not invent issues.`,
   ])
@@ -1521,7 +1661,21 @@ async function secondOpinion(diff, targets) {
   }
 }
 
+// A branch can track `reviews` as a symlink to anywhere; the report and its `latest` link would land there.
+function refuseLinkedReviews() {
+  let stat
+  try {
+    stat = lstatSync('reviews')
+  } catch (e) {
+    if (e.code === 'ENOENT') return
+    throw e
+  }
+  if (stat.isSymbolicLink())
+    die('reviews is a symlink, so the report would be written wherever it points. Remove it (git rm reviews) and review again.')
+  if (!stat.isDirectory()) die('reviews is not a folder. Remove it and review again.')
+}
 function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTruncated, verifier) {
+  refuseLinkedReviews()
   ensureReviewsIgnored()
   // A random suffix keeps two reviews in the same second (any repo) apart in the folder and the log.
   const ts = `${new Date().toISOString().slice(0, 19).replaceAll(':', '-').replace('T', '-')}-${randomBytes(3).toString('hex')}`
@@ -2285,6 +2439,7 @@ function pushGate() {
   if (args.includes('--deferred')) return printDeferred()
   if (args.includes('--fix-check')) return fixCheck(option('--fix-check'))
   const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList } = getDiff()
+  refuseLinkedReviews()
   CONTEXT = reviewContext(branch)
   if (!diff) {
     console.log(`Nothing to review — no diff against ${BASE}.`)

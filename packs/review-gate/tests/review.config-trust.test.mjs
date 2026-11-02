@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { lstatSync, readdirSync, symlinkSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
@@ -33,6 +34,7 @@ node(join(BIN, 'model-id'), `const a=process.argv.slice(2), ids={sol:'gpt-stub-s
 const modelBody = `
 const fs = require('node:fs')
 const a = process.argv.slice(2)
+if (a[0] === 'mcp') { console.log('[]'); process.exit(0) } // codex mcp list: no MCP servers, never recorded
 const schema = a.includes('--output-schema') ? fs.readFileSync(a[a.indexOf('--output-schema')+1],'utf8') : a[a.indexOf('--json-schema')+1]
 const reply = schema.includes('"scores"') ? '{"scores":[]}' : schema.includes('verdicts') ? '{"verdicts":[{"index":0,"verdict":"REFUTED","evidence":"a.js:1 intentional"}]}' : (process.env.STUB_FINDINGS || '{"findings":[]}')
 if (a.includes('-o')) fs.writeFileSync(a[a.indexOf('-o')+1], reply)
@@ -206,4 +208,218 @@ test('the global-hook state file, which copies the gitconfig, is written 0600, e
   assert.equal(again.status, 0, `${again.stdout}\n${again.stderr}`)
   assert.equal(mode(), 0o600)
   assert.equal(sh('uninstall').status, 0)
+})
+
+// ── A symlink or a case variant on the way to the repo config ────────────────
+test('a tracked symlinked .claude folder cannot pass off a tracked config as untracked', () => {
+  // The contributor's branch: the config under another tracked name, and a tracked link `.claude -> cfg`.
+  commit('cfg/review-config.json', JSON.stringify({ verifyCmd: `touch ${JSON.stringify(marker('verify'))}`, base: 'main~0', pick: 'pick-helper' }))
+  symlinkSync('cfg', join(REPO, '.claude'))
+  git('add', '.claude'); git('commit', '-qm', 'link .claude')
+  assert.ok(lstatSync(join(REPO, '.claude')).isSymbolicLink())
+  const shown = run(['--show-config'])
+  assert.equal(shown.status, 0, shown.out)
+  const config = JSON.parse(shown.stdout)
+  assert.notEqual(config.base, 'main~0', 'the base came from the linked repo config')
+  assert.equal(config.verifyCmd, '(none)', 'the verifyCmd came from the linked repo config')
+  assert.equal(ignoredLines(shown.out, 'verifyCmd, base').length, 1, shown.out)
+  const r = review()
+  assert.ok(!existsSync(marker('verify')), 'the linked verifyCmd ran')
+  assert.ok(!existsSync(marker('pick')), 'the linked pick command ran')
+  assert.equal(ignoredLines(r.out, 'verifyCmd, base').length, 1, r.out)
+})
+
+test('a symlink anywhere on the way refuses the repo config, even an untracked link to untracked files', () => {
+  ignore('.claude'); ignore('local-cfg/')
+  write('local-cfg/review-config.json', JSON.stringify({ verifyCmd: `touch ${JSON.stringify(marker('verify'))}` }))
+  symlinkSync('local-cfg', join(REPO, '.claude'))
+  const r = review()
+  assert.ok(!existsSync(marker('verify')), 'the verifyCmd behind a linked .claude ran')
+  assert.equal(ignoredLines(r.out, 'verifyCmd').length, 1, r.out)
+  unlinkSync(join(REPO, '.claude'))
+  mkdirSync(join(REPO, '.claude'))
+  symlinkSync('../local-cfg/review-config.json', join(REPO, REPO_CONFIG))
+  const linkedFile = review()
+  assert.ok(!existsSync(marker('verify')), 'the verifyCmd behind a linked review-config.json ran')
+  assert.equal(ignoredLines(linkedFile.out, 'verifyCmd').length, 1, linkedFile.out)
+})
+
+test('a tracked config under another letter case is refused where the disk ignores case', () => {
+  commit('.CLAUDE/review-config.json', JSON.stringify({ verifyCmd: `touch ${JSON.stringify(marker('verify'))}` }))
+  const r = review()
+  assert.ok(!existsSync(marker('verify')), 'the tracked .CLAUDE/review-config.json ran its verifyCmd')
+  // On a case-insensitive disk the file is found as .claude/review-config.json and refused; elsewhere it is never read.
+  if (existsSync(join(REPO, REPO_CONFIG))) assert.equal(ignoredLines(r.out, 'verifyCmd').length, 1, r.out)
+})
+
+// ── Helpers by bare name come from absolute PATH entries only ────────────────
+test('a repo-planted ./model-id, ./git or reviewer CLI never runs through a `.` or empty PATH entry', () => {
+  const planted = ['model-id', 'git', 'codex', 'claude', 'grok', 'ln', 'pick-helper']
+  for (const name of planted) executable(join(REPO, name), `#!/bin/sh\n: > ${JSON.stringify(marker(`planted-${name}`))}\nexit 1\n`)
+  git('add', ...planted); git('commit', '-qm', 'plant helpers')
+  const PATH = ['.', '', BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':')
+  const shown = run(['--show-config'], { PATH, REVIEW_BASE: 'main', REVIEW_PICK: 'pick-helper' })
+  assert.equal(shown.status, 0, shown.out)
+  assert.equal(JSON.parse(shown.stdout).selected.family, 'sol', shown.out)
+  const r = review({ PATH, REVIEW_PICK: 'pick-helper' })
+  assert.match(r.out, /reviewer · grok/, 'the pick came from the PATH classifier, not the planted one')
+  for (const name of planted) assert.ok(!existsSync(marker(`planted-${name}`)), `the repo's ./${name} ran`)
+})
+
+// ── The report folder ────────────────────────────────────────────────────────
+test('a tracked reviews symlink is refused before any model runs, and nothing is written where it points', () => {
+  const outside = join(ROOT, 'outside-reviews')
+  rmSync(outside, { recursive: true, force: true }); mkdirSync(outside)
+  symlinkSync(outside, join(REPO, 'reviews'))
+  git('add', 'reviews'); git('commit', '-qm', 'link reviews')
+  const r = run([], { REVIEW_BASE: 'main', REVIEW_PICK: 'pick-helper' })
+  assert.notEqual(r.status, 0, r.out)
+  assert.match(r.stderr, /reviews is a symlink/)
+  assert.deepEqual(readdirSync(outside), [], 'the report or the latest link landed where reviews points')
+  assert.ok(!existsSync(marker('pick')), 'the review went ahead to pick a reviewer')
+  assert.equal(reviews().length, 0, r.out)
+})
+
+// ── Temp files at guessable names ────────────────────────────────────────────
+test('the global-hook state file is never written through a link planted at its old temp name', () => {
+  const skill = join(ROOT, 'skill-planted')
+  rmSync(skill, { recursive: true, force: true })
+  cpSync(join(RUNTIME, 'hooks'), join(skill, 'hooks'), { recursive: true, verbatimSymlinks: true })
+  writeFileSync(join(HOME, 'isolated.gitconfig'), '[url "https://user:token-stub@example.test/"]\n\tinsteadOf = https://example.test/\n')
+  const state = join(HOME, '.agent-config-studio', 'review-gate-global-hook.json')
+  const victim = join(ROOT, 'victim.txt')
+  writeFileSync(victim, 'victim bytes\n')
+  mkdirSync(dirname(state), { recursive: true })
+  symlinkSync(victim, `${state}.tmp`)
+  const sh = (command) => spawnSync('sh', [join(skill, 'hooks', 'install-global.sh'), command], { cwd: HOME, env: environment(), encoding: 'utf8', timeout: 30000 })
+  const installed = sh('install')
+  assert.equal(installed.status, 0, `${installed.stdout}\n${installed.stderr}`)
+  assert.equal(readFileSync(victim, 'utf8'), 'victim bytes\n', 'the state, with the gitconfig bytes, went through the planted link')
+  assert.ok(lstatSync(state).isFile() && !lstatSync(state).isSymbolicLink(), 'the state file is the planted link')
+  assert.equal(statSync(state).mode & 0o777, 0o600)
+  assert.equal(sh('uninstall').status, 0)
+})
+
+// ── The codex reviewer runs with every MCP server off ────────────────────────
+// A codex stub whose `mcp list --json` reports STUB_MCP and honours an inline-table enabled=false override, the way
+// codex was seen to (tools/ask-model.mjs's tests). STUB_MCP_STUCK names servers the override does not turn off.
+const MCP_BIN = join(ROOT, 'mcp-bin'), CODEX_LOG = join(ROOT, 'codex-calls.jsonl')
+node(join(MCP_BIN, 'codex'), `
+const fs = require('node:fs')
+const a = process.argv.slice(2)
+fs.appendFileSync(${JSON.stringify(CODEX_LOG)}, JSON.stringify(a) + '\\n')
+if (a[0] === 'mcp') {
+  if (process.env.STUB_MCP_FAIL) { console.error('mcp: boom'); process.exit(1) }
+  const off = a.flatMap((x, i) => (x === '-c' ? [a[i + 1]] : [])).find((s) => s.startsWith('mcp_servers='))
+  const stuck = JSON.parse(process.env.STUB_MCP_STUCK || '[]')
+  const servers = JSON.parse(process.env.STUB_MCP || '[]')
+  console.log(JSON.stringify(servers.map((name) => ({ name, enabled: stuck.includes(name) || !(off && off.includes(JSON.stringify(name) + '={enabled=false}')) }))))
+  process.exit(0)
+}
+const schema = fs.readFileSync(a[a.indexOf('--output-schema') + 1], 'utf8')
+fs.writeFileSync(a[a.indexOf('-o') + 1], schema.includes('"scores"') ? '{"scores":[]}' : '{"findings":[]}')
+`)
+const codexCalls = () => (existsSync(CODEX_LOG) ? readFileSync(CODEX_LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [])
+const mcpReview = (extra) => {
+  rmSync(CODEX_LOG, { force: true })
+  return run([], { PATH: [MCP_BIN, BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':'), REVIEW_BASE: 'main', REVIEW_REVIEWER: 'codex', ...extra })
+}
+test('the codex reviewer switches every MCP server off, and checks that they are off before it runs', () => {
+  const r = mcpReview({ STUB_MCP: JSON.stringify(['github', 'my.server@x']) })
+  assert.equal(r.status, 0, r.out)
+  const off = '-c mcp_servers={"github"={enabled=false},"my.server@x"={enabled=false}}'.split(' ')
+  const calls = codexCalls()
+  assert.deepEqual(calls.filter((c) => c[0] === 'mcp'), [['mcp', 'list', '--json'], ['mcp', 'list', '--json', ...off]])
+  const exec = calls.filter((c) => c[0] === 'exec')
+  assert.equal(exec.length, 1, r.out)
+  assert.deepEqual(exec[0].slice(0, 3), ['exec', ...off])
+  const none = mcpReview({})
+  assert.equal(none.status, 0, none.out)
+  assert.deepEqual(codexCalls().find((c) => c[0] === 'exec').slice(0, 3), ['exec', '-c', 'model=gpt-stub-sol'], 'no servers: no override')
+})
+test('a codex MCP server that stays enabled, or a failed mcp list, keeps codex from running', () => {
+  const stuck = mcpReview({ STUB_MCP: JSON.stringify(['github', 'slack']), STUB_MCP_STUCK: JSON.stringify(['slack']) })
+  assert.notEqual(stuck.status, 0, stuck.out)
+  assert.match(stuck.out, /codex MCP servers still enabled under the override: slack — codex was not run/)
+  assert.equal(codexCalls().filter((c) => c[0] === 'exec').length, 0, 'codex reviewed with an MCP server on')
+  assert.equal(reviews().length, 0)
+  const failed = mcpReview({ STUB_MCP_FAIL: '1' })
+  assert.notEqual(failed.status, 0, failed.out)
+  assert.match(failed.out, /codex mcp list failed: mcp: boom — codex was not run/)
+  assert.equal(codexCalls().filter((c) => c[0] === 'exec').length, 0, 'codex reviewed without an MCP check')
+})
+
+// ── A claude reviewer never loads the repo's own settings or hooks ───────────
+// A headless claude run in a repo honours its .claude/settings.json hooks; --setting-sources user keeps them out.
+const CLAUDE_BIN = join(ROOT, 'claude-bin'), CLAUDE_LOG = join(ROOT, 'claude-calls.jsonl')
+node(join(CLAUDE_BIN, 'claude'), `
+const fs = require('node:fs')
+const a = process.argv.slice(2)
+fs.appendFileSync(${JSON.stringify(CLAUDE_LOG)}, JSON.stringify(a) + '\\n')
+const schema = a[a.indexOf('--json-schema') + 1]
+const reply = schema.includes('"scores"') ? { scores: [] } : schema.includes('verdicts') ? { verdicts: [] } : { findings: [] }
+console.log(JSON.stringify({ type: 'result', is_error: false, result: JSON.stringify(reply), structured_output: reply }))
+`)
+test('every claude review call, single or team, loads only the user\'s settings', () => {
+  for (const reviewer of ['opus', 'claude']) {
+    rmSync(CLAUDE_LOG, { force: true })
+    const r = run([], { PATH: [CLAUDE_BIN, BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':'), REVIEW_BASE: 'main', REVIEW_REVIEWER: reviewer })
+    assert.equal(r.status, 0, r.out)
+    const calls = readFileSync(CLAUDE_LOG, 'utf8').trim().split('\n').map(JSON.parse)
+    assert.ok(calls.length >= (reviewer === 'claude' ? 3 : 1), `${reviewer}: ${calls.length} calls`)
+    for (const argv of calls) {
+      const at = argv.indexOf('--setting-sources')
+      assert.ok(at !== -1 && argv[at + 1] === 'user', `${reviewer}: ${argv.join(' ')}`)
+    }
+  }
+})
+
+// ── A grok reviewer never runs a branch's hooks ──────────────────────────────
+// Grok runs a trusted folder's Claude, Cursor and .grok hooks; the first two have switches, .grok/hooks has none.
+const GROK_BIN = join(ROOT, 'grok-bin'), GROK_LOG = join(ROOT, 'grok-calls.jsonl')
+node(join(GROK_BIN, 'grok'), `
+const fs = require('node:fs')
+const a = process.argv.slice(2)
+fs.appendFileSync(${JSON.stringify(GROK_LOG)}, JSON.stringify({ argv: a, hooksEnv: [process.env.GROK_CLAUDE_HOOKS_ENABLED ?? null, process.env.GROK_CURSOR_HOOKS_ENABLED ?? null] }) + '\\n')
+const schema = a[a.indexOf('--json-schema') + 1]
+const reply = schema.includes('"scores"') ? { scores: [] } : schema.includes('verdicts') ? { verdicts: [] } : { findings: [] }
+console.log(JSON.stringify({ structuredOutput: reply, modelUsage: { 'grok-stub-build': {} } }))
+`)
+const grokReview = () => {
+  rmSync(GROK_LOG, { force: true })
+  const r = run([], { PATH: [GROK_BIN, BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':'), REVIEW_BASE: 'main', REVIEW_REVIEWER: 'grok' })
+  return { ...r, calls: existsSync(GROK_LOG) ? readFileSync(GROK_LOG, 'utf8').trim().split('\n').map(JSON.parse) : [] }
+}
+test('the grok reviewer runs with Claude\'s and Cursor\'s hooks off', () => {
+  const r = grokReview()
+  assert.equal(r.status, 0, r.out)
+  assert.equal(r.calls.length, 1, r.out)
+  assert.deepEqual(r.calls[0].hooksEnv, ['0', '0'])
+})
+test('a branch that holds .grok/hooks is never reviewed by grok', () => {
+  commit('.grok/hooks/session.json', JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'touch pwned' }] }] } }))
+  const r = grokReview()
+  assert.notEqual(r.status, 0, r.out)
+  assert.match(r.out, /grok review refused: .*\.grok\/hooks holds Grok hooks/)
+  assert.equal(r.calls.length, 0, 'grok ran beside the branch\'s .grok/hooks')
+  assert.equal(reviews().length, 0)
+})
+test('a repository at HOME holding .grok/hooks is never reviewed by grok: those hooks are the checkout\'s', () => {
+  const homeRepo = join(ROOT, 'home-repo')
+  rmSync(homeRepo, { recursive: true, force: true }); mkdirSync(homeRepo)
+  const g = (...args) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: homeRepo, env: environment({ HOME: homeRepo }), encoding: 'utf8' })
+    assert.equal(r.status, 0, r.stderr)
+  }
+  g('init', '-q', '-b', 'main'); writeFileSync(join(homeRepo, 'a.js'), 'export const a = 1\n'); g('add', 'a.js'); g('commit', '-qm', 'base')
+  g('checkout', '-qb', 'feat'); mkdirSync(join(homeRepo, '.grok', 'hooks'), { recursive: true })
+  writeFileSync(join(homeRepo, '.grok', 'hooks', 'session.json'), '{"hooks":{}}'); writeFileSync(join(homeRepo, 'a.js'), 'export const a = 2\n')
+  g('add', '.'); g('commit', '-qm', 'change')
+  rmSync(GROK_LOG, { force: true })
+  const r = spawnSync(process.execPath, [SCRIPT], { cwd: homeRepo, encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'],
+    env: environment({ HOME: homeRepo, PATH: [GROK_BIN, BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':'), REVIEW_BASE: 'main', REVIEW_REVIEWER: 'grok' }) })
+  const out = `${r.stdout}\n${r.stderr}`
+  assert.notEqual(r.status, 0, out)
+  assert.match(out, /grok review refused: .*home-repo\/\.grok\/hooks holds Grok hooks/)
+  assert.ok(!existsSync(GROK_LOG), 'grok ran beside the HOME repository\'s .grok/hooks')
 })
