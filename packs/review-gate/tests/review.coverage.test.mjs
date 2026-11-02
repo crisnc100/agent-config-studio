@@ -412,3 +412,35 @@ test('X2 a whitespace-only verifyCmd or --test-cmd is no test command: close ask
   assert.notEqual(untracked.status, 0, untracked.out)
   assert.match(untracked.out, /No test command configured/)
 })
+
+test('K1 a generated lockfile is exempt by default by its exact name, in any folder, and named as not reviewed', () => {
+  commit({ 'package-lock.json': BIG, 'web/yarn.lock': BIG })
+  // The code is reviewed; the lockfiles, each over the cap on its own, are not.
+  closed(review('docs/,src/').id)
+  const pushed = push(); allowed(pushed)
+  assert.match(pushed.stderr, /\nCoverage exempt \(not reviewed\): package-lock\.json, web\/yarn\.lock\n/)
+  // A lookalike name is not a lockfile: it needs a review like any file.
+  commit({ 'package-lock.json.bak': BIG, 'my-yarn.lock': BIG })
+  closed(review('docs/,src/').id)
+  blocked(push(), /leave 2 file\(s\) uncovered: my-yarn\.lock, package-lock\.json\.bak — .*; exempt \(not reviewed\): package-lock\.json, web\/yarn\.lock/)
+})
+
+test('K2 coverageExemptDefaults: false in the home config turns the default list off; a tracked repo config cannot', () => {
+  commit({ 'package-lock.json': BIG })
+  closed(review('docs/,src/').id)
+  writeFileSync(join(SKILL, 'config.json'), JSON.stringify({ coverageExemptDefaults: false }))
+  blocked(push(), uncovered(['package-lock.json']))
+  writeFileSync(join(SKILL, 'config.json'), JSON.stringify({ coverageExemptDefaults: false, coverageExempt: ['package-lock.json'] }))
+  allowed(push())
+  for (const value of ['no', 0, null, []]) {
+    writeFileSync(join(SKILL, 'config.json'), JSON.stringify({ coverageExemptDefaults: value }))
+    blocked(push(), /coverageExemptDefaults must be true or false/)
+  }
+  rmSync(join(SKILL, 'config.json'))
+  commit({ '.claude/review-config.json': JSON.stringify({ coverageExemptDefaults: false }) })
+  const r = script([], { REVIEW_PATHS: '.claude/,docs/,src/' }); allowed(r)
+  assert.match(r.out, /Ignoring coverageExemptDefaults in \.claude\/review-config\.json/)
+  closed(records().filter((e) => e.type === 'review').at(-1).id)
+  const pushed = push(); allowed(pushed)
+  assert.match(pushed.stderr, /Coverage exempt \(not reviewed\): package-lock\.json/)
+})
