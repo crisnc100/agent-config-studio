@@ -53,6 +53,7 @@ beforeEach(() => {
   mkdirSync(HOME, { recursive: true }); mkdirSync(WORK, { recursive: true })
   put(join(HOME, '.claude/skills/advisor/advisor-contract.md'), 'THE CONTRACT')
   put(join(HOME, '.codex/skills/advisor/advisor-contract.md'), 'THE CONTRACT')
+  for (const harness of ['claude', 'codex']) put(join(HOME, `.${harness}/skills/build/grade.schema.json`), readFileSync(join(PACKS, 'build/skills', harness, 'build/grade.schema.json'), 'utf8'))
 })
 
 const skill = (path) => readFileSync(join(PACKS, path), 'utf8')
