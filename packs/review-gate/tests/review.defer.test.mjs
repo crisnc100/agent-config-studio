@@ -22,6 +22,7 @@ stub('model-id', `const a=process.argv.slice(2), ids={sol:'gpt-stub-sol',opus:'c
 const modelBody = `
 const fs = require('node:fs'), path = require('node:path')
 const a = process.argv.slice(2)
+if (a[0] === 'mcp') { console.log('[]'); process.exit(0) } // codex mcp list: no MCP servers, never recorded
 const schema = a.includes('--output-schema') ? fs.readFileSync(a[a.indexOf('--output-schema')+1],'utf8') : a[a.indexOf('--json-schema')+1]
 fs.writeFileSync(path.join(${JSON.stringify(CALLS)}, process.pid+'-'+Date.now()+'.json'), '{}')
 const reply = schema.includes('"scores"') ? '{"scores":[]}'

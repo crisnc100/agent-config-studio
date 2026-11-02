@@ -64,7 +64,8 @@ else console.log(a[0])
 )
 stub(
   'codex',
-  `${record('codex')}
+  `if (process.argv[2] === 'mcp') { console.log('[]'); process.exit(0) } // codex mcp list: no MCP servers, never recorded
+${record('codex')}
 const a = process.argv.slice(2)
 ${answer("require('node:fs').readFileSync(a[a.indexOf('--output-schema') + 1], 'utf8')")}
 writeFileSync(a[a.indexOf('-o') + 1], reply)

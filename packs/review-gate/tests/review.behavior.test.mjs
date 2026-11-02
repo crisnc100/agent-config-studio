@@ -50,6 +50,7 @@ const FINDING = { issue: 'off-by-one in loop', file: 'a.js', line: '2', quote: '
 const model = (name) => `#!${process.execPath}
 const fs = require('node:fs'), path = require('node:path')
 const a = process.argv.slice(2)
+if (a[0] === 'mcp') { console.log('[]'); process.exit(0) } // codex mcp list: no MCP servers, never recorded
 fs.writeFileSync(path.join(${J(ARGV)}, '${name}-' + process.pid + '.json'), JSON.stringify(a))
 const schema = a.includes('--output-schema') ? fs.readFileSync(a[a.indexOf('--output-schema') + 1], 'utf8') : a[a.indexOf('--json-schema') + 1]
 const reply = String(schema).includes('verdicts') ? (process.env.STUB_VERDICTS || '{"verdicts":[]}') : ${J(J({ findings: [FINDING] }))}

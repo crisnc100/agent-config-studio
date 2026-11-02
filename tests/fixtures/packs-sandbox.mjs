@@ -70,6 +70,7 @@ function modelStub(name, calls) {
   return `#!${process.execPath}
 const fs = require('node:fs'), path = require('node:path')
 const a = process.argv.slice(2)
+if (a[0] === 'mcp') { console.log('[]'); process.exit(0) } // codex mcp list: no MCP servers, never recorded
 fs.mkdirSync(${J(calls)}, { recursive: true })
 fs.writeFileSync(path.join(${J(calls)}, '${name}-' + process.pid + '-' + Date.now() + '.json'), JSON.stringify(a))
 if (${J(name)} === 'codex' && a[0] === 'app-server') {
