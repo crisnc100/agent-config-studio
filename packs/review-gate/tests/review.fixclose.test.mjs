@@ -6,8 +6,8 @@ import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-// Close after a fix check: the commits after it may touch only files its fixed x… findings name (in the slice,
-// when sliced), the full tests run at close, and nothing runs a model. Stub CLIs, temporary HOME and Git config.
+// Close after a fix check: the commits after it may touch only builds/ and test files (in the slice, when sliced),
+// the full tests run at close, and nothing runs a model. Stub CLIs, temporary HOME and Git config.
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'runtime', 'review.mjs')
 const ROOT = mkdtempSync(join(tmpdir(), 'review-fixclose-test-'))
 const HOME = join(ROOT, 'home'), REPO = join(ROOT, 'repo'), BIN = join(ROOT, 'bin'), CALLS = join(ROOT, 'calls')
@@ -78,8 +78,8 @@ function refused(id, statuses, pattern) {
   assert.match(r.out, pattern)
   return r
 }
-const AFTER = /Fix check head must equal closing HEAD, or the commits after it may only touch files named by its fixed findings: /
-const named = (files) => new RegExp(`${AFTER.source}${files.map((f) => f.replace(/[./]/g, '\\$&')).join(', ')}\\. Unresolved work goes to the operator, no third model pass`)
+const AFTER = /Fix check head must equal closing HEAD, or the commits after it may touch only builds\/ and test files: /
+const named = (files) => new RegExp(`${AFTER.source}${files.map((f) => f.replace(/[./]/g, '\\$&')).join(', ')}\\. Fixes land before the fix check; close at its head, then review the later files as a slice \\(REVIEW_PATHS\\) and close that at the tip\\. No third model pass`)
 const X1 = { issue: 'one is wrong', file: 'src/one.js', line: '1', quote: 'export const one = 2', suggestion: 'fix it',
   likelihood: 5, impact: 5, protected: false, trigger: 'importing one' }
 const FIXED = { x1: { status: 'fixed' } }
@@ -108,23 +108,20 @@ beforeEach(() => {
   commit({ 'src/one.js': 'export const one = 2\n' })
 })
 
-test('F1 a commit after the fix check touching only the fixed x1 file closes complete, with no model pass', () => {
-  const { review, check } = fixChecked()
-  const head = commit({ 'src/one.js': 'export const one = 3\n' })
+test('F1 a commit after the fix check touching the fixed x1 file is refused, with no model pass', () => {
+  const { review } = fixChecked()
+  commit({ 'src/one.js': 'export const one = 3\n' })
   const before = calls()
-  const record = closed(review.id, FIXED)
-  assert.equal(record.closeHead, head); assert.equal(record.fixCheck, check.id)
-  assert.deepEqual(record.tests, { cmd: 'true', passed: true })
+  refused(review.id, FIXED, named(['src/one.js']))
   assert.equal(calls(), before, 'close runs no model')
-  allowed(script(['--summary']))
 })
-test('F2 the commits after the fix check also touching another file, or a test x1 does not name, are refused and named', () => {
+test('F2 every code file the commits after the fix check touch is refused and named; a test file beside them is not', () => {
   const { review } = fixChecked()
   commit({ 'src/one.js': 'export const one = 3\n', 'lib/two.js': 'export const two = 2\n' })
-  refused(review.id, FIXED, named(['lib/two.js']))
+  refused(review.id, FIXED, named(['lib/two.js', 'src/one.js']))
   git('reset', '-q', '--hard', 'HEAD~1')
   commit({ 'src/one.js': 'export const one = 3\n', 'src/one.test.js': 'test one, edited\n' })
-  refused(review.id, FIXED, named(['src/one.test.js']))
+  refused(review.id, FIXED, named(['src/one.js']))
 })
 test('F3 a change to the x1 file is refused when x1 is rejected or waived rather than fixed', () => {
   const { review, check } = fixChecked()
@@ -146,24 +143,26 @@ test('F4 a fix check head that is no longer an ancestor of HEAD (a rewritten bra
   assert.notEqual(git('rev-parse', 'HEAD'), check.head)
   refused(review.id, FIXED, new RegExp(`Fix check head ${check.head} is not an ancestor of closing HEAD \\(the branch was rewritten after it\\)\\. Unresolved work goes to the operator, no third model pass`))
 })
-test('F5 a builds/-only change after the fix check is still refused; the push gate lets builds/ commits follow the close', () => {
+test('F5 a builds/-only change after the fix check closes; one beside a code change is refused for the code only', () => {
   const { review, check } = fixChecked()
   commit({ 'builds/demo/log.md': 'notes\n' })
-  refused(review.id, FIXED, named(['builds/demo/log.md']))
-  refused(review.id, REJECTED, named(['builds/demo/log.md']))
+  closed(review.id, FIXED)
   git('reset', '-q', '--hard', 'HEAD~1')
   commit({ 'src/one.js': 'export const one = 3\n', 'builds/demo/log.md': 'notes\n' })
-  refused(review.id, FIXED, named(['builds/demo/log.md']))
+  refused(review.id, FIXED, named(['src/one.js']))
   // Close first, then commit the notes: a complete close still covers a builds/-only descendant.
   git('reset', '-q', '--hard', check.head)
   closed(review.id, FIXED)
   commit({ 'builds/demo/log.md': 'notes\n' })
   allowed(script(['--summary']))
 })
-test('F6 sliced: a change outside the slice after the fix check does not block; one inside it that x1 does not name does', () => {
+test('F6 sliced: a change outside the slice after the fix check does not block; a code change inside it does', () => {
   const { review, check } = fixChecked('src/')
   assert.deepEqual(review.paths, ['src/']); assert.deepEqual(check.paths, ['src/'])
   commit({ 'src/one.js': 'export const one = 3\n', 'lib/two.js': 'export const two = 2\n' })
+  refused(review.id, FIXED, named(['src/one.js']))
+  git('reset', '-q', '--hard', 'HEAD~1')
+  commit({ 'lib/two.js': 'export const two = 2\n' })
   const record = closed(review.id, FIXED)
   assert.equal(record.closeHead, git('rev-parse', 'HEAD'))
   commit({ 'src/extra.js': 'export const extra = 1\n' })
@@ -171,7 +170,7 @@ test('F6 sliced: a change outside the slice after the fix check does not block; 
 })
 test('F7 a failing test command at close still refuses after the fix check', () => {
   const { review } = fixChecked()
-  commit({ 'src/one.js': 'export const one = 3\n' })
+  commit({ 'src/one.test.js': 'test one, edited\n' })
   const r = close(review.id, FIXED, 'false')
   assert.notEqual(r.status, 0, r.out); assert.equal(r.record, null)
   assert.match(r.out, /Tests failed at HEAD/)
@@ -187,10 +186,10 @@ test('F8 a close at the fix check head is unchanged', () => {
   assert.notEqual(script(['--fix-check', review.id]).status, 0, 'still one fix check per review')
   allowed(script(['--summary']))
 })
-test('F9 a changed file whose name starts with a space is its own file: changed alongside the x1 file, it is refused and named', () => {
+test('F9 a changed file whose name starts with a space is its own file: changed alongside the x1 file, both are refused and named', () => {
   const { review } = fixChecked()
   commit({ 'src/one.js': 'export const one = 3\n', ' src/one.js': 'a different file\n' })
-  refused(review.id, FIXED, named([' src/one.js']))
+  refused(review.id, FIXED, named([' src/one.js', 'src/one.js']))
 })
 test('F10 a fixed finding on a real b/src/one.js does not authorize a change to the root src/one.js', () => {
   commit({ 'b/src/one.js': 'export const b = 1\n' })
@@ -198,9 +197,9 @@ test('F10 a fixed finding on a real b/src/one.js does not authorize a change to 
   commit({ 'src/one.js': 'export const one = 3\n' })
   refused(review.id, FIXED, named(['src/one.js']))
 })
-test('F11 a diff-prefixed b/src/one.js finding, with no b/ folder in the tree, still authorizes the root src/one.js', () => {
+test('F11 a diff-prefixed b/src/one.js finding, with no b/ folder in the tree, resolves to the root src/one.js; a change to it after the fix check is refused', () => {
   const { review } = fixChecked(undefined, { ...X1, file: 'b/src/one.js' }, 'src/one.js')
   assert.equal(existsSync(join(REPO, 'b')), false)
   commit({ 'src/one.js': 'export const one = 3\n' })
-  closed(review.id, FIXED)
+  refused(review.id, FIXED, named(['src/one.js']))
 })

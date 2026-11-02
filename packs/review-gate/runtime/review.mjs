@@ -105,10 +105,12 @@ const option = (flag) => {
 // > the older ~/.claude/review-config.json > built-in.
 // Edit that one small JSON file to switch reviewer/model/effort — see review-config.example.json.
 // The repo file can come from the repository itself (committed, or added by a branch you check out), so
-// the keys that run a command or reach git as an argument count there only while git doesn't track it and no
-// symlink leads to it: a clone or checkout only ever adds tracked files and links. Env and the home configs always count.
+// the keys that run a command or reach git as an argument, and coverageExempt (it would let a branch exempt its own
+// code from review), count there only while git doesn't track it and no symlink leads to it: a clone or checkout only
+// ever adds tracked files and links. Env and the home configs always count.
 let gateConfigError
 const COMMAND_KEYS = ['verifyCmd', 'classifier', 'base']
+const OWN_FILE_KEYS = [...COMMAND_KEYS, 'coverageExempt']
 // Set when the repo file failed that check: its `pick` may name a family, never a command to run.
 let REPO_PICK_UNTRUSTED = false
 const sameFile = (a, b) => {
@@ -152,7 +154,8 @@ function repoFileIsOwn(p, homes) {
   return !real.some((r) => entries.has(r))
 }
 function withoutRepoCommands(config, p, homes) {
-  const keys = COMMAND_KEYS.filter((k) => config[k] != null && String(config[k]).trim() !== '')
+  // Any value counts but null or a blank string: String([null]) is '' too, and an array or object can still act.
+  const keys = OWN_FILE_KEYS.filter((k) => config[k] != null && (typeof config[k] !== 'string' || config[k].trim() !== ''))
   const pick = String(config.pick ?? '').trim().toLowerCase()
   const pickMayRun = pick !== '' && pick !== 'first' && pick !== 'rotate'
   if ((!keys.length && !pickMayRun) || repoFileIsOwn(p, homes)) return config
@@ -548,6 +551,18 @@ const untrustedPickNote = (pick) =>
 const RISK_PATHS = Array.isArray(CONFIG.riskPaths)
   ? CONFIG.riskPaths
   : ['*payment*', '*billing*', '*checkout*', '*auth*', '*migration*', '*security*', '*money*']
+// coverageExempt (REVIEW_COVERAGE_EXEMPT, comma- or newline-separated): path patterns, same globs, that the push gate
+// does not ask coverage for, such as a lockfile whose diff alone is over the size cap. Empty by default; the refusal
+// and the summary name every exempt file as not reviewed.
+const COVERAGE_EXEMPT = exemptPatterns(cfg('REVIEW_COVERAGE_EXEMPT', 'coverageExempt', ''))
+// A list that isn't text or non-empty strings fails loudly; at the gate it blocks the push, never guesses.
+function exemptPatterns(value) {
+  if (typeof value === 'string' || Array.isArray(value) && value.every((p) => typeof p === 'string' && p.trim())) return normalisePaths(value)
+  const message = `coverageExempt must be a list of non-empty path patterns; got ${JSON.stringify(value)}`
+  if (!args.includes('--gate')) stop(message)
+  gateConfigError ||= new Error(message)
+  return []
+}
 // force: [{ "paths": ["**/auth/**", …] | "risk", "family": "<family>" }] — first match wins, before any pick.
 const FORCE = Array.isArray(CONFIG.force) ? CONFIG.force : []
 
@@ -1933,6 +1948,36 @@ function slicedScope(review, matched, changed) {
   const scope = new Set([...matched, ...sliceFiles(review)])
   return changed.filter((p) => scope.has(p))
 }
+// What the review saw the size cap cut. A record from before `truncated` was logged has its diff measured again:
+// over the cap, nothing it saw counts (null). A Grade inlines no diff.
+function reviewTruncated(review) {
+  if (Array.isArray(review.truncated)) return new Set(review.truncated)
+  if (review.kind === 'grade') return new Set()
+  const paths = sliceOf(review)
+  const r = spawnSync('git', [...(paths ? ['-C', TOP] : []), 'diff', `${review.baseSha}...${review.head}`, ...pathspec(paths)], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
+  return r.error || r.status !== 0 || r.stdout.trim().length > DIFF_CAP ? null : new Set()
+}
+// What a fix check saw in full: its fix diff's files minus the ones the cap cut (`cut`, every fix-diff file when that
+// can't be told). A file it saw is in scope at close; seeing a later change never covers a part the review missed.
+function fixCheckSeen(check) {
+  if (!check) return { seen: new Set(), cut: new Set() }
+  const files = fullObjectId(check.baseSha) && treeOf(check.baseSha) ? filesBetween(check.baseSha, check.head, sliceOf(check)) : null
+  const cut = files && reviewTruncated(check)
+  return cut ? { seen: new Set(files.filter((p) => !cut.has(p))), cut } : { seen: new Set(), cut: files ? new Set(files) : null }
+}
+// A complete close vouches for the state at its head of the review's files (the slice's recorded files, or the net diff
+// from baseSha) and of every file it accepted since, minus any file the cap cut in the review or in the fix check.
+// Coverage the close can't establish is [] (a slice without files, an over-cap legacy diff, a fix check whose cut is
+// unknown and that changed files since). Only a review from before baseSha was logged gives null: no field, the old rule.
+function closeCoverage(review, since, check, head) {
+  const paths = sliceOf(review)
+  if (!paths && !fullObjectId(review.baseSha)) return null
+  if (paths ? !Array.isArray(review.files) : !treeOf(review.baseSha)) return []
+  const truncated = reviewTruncated(review), { cut } = fixCheckSeen(check)
+  if (!truncated || !cut && since.length) return []
+  const reviewed = paths ? sliceFiles(review) : filesBetween(review.baseSha, review.head)
+  return coverageOf(head, [...reviewed, ...since].filter((p) => !truncated.has(p) && !cut?.has(p)))
+}
 function closeReview(id) {
   requireClean()
   const entries = readLog()
@@ -1970,15 +2015,15 @@ function closeReview(id) {
   if (command && noTests !== null) throw new Error('Use a test command or --no-tests, not both')
   if (!command && noTests === null) throw new Error('No test command configured; use --test-cmd or --no-tests "reason"')
   if (recheck && !recheckAt) throw new Error('Closing HEAD must include the recheck head')
-  // A fixed x… finding's fix lands after its fix check: those commits may touch only the paths its fixed findings
-  // recorded (in the slice, when sliced), and the full tests run below. Nothing re-runs a model.
+  // Fixes land before the fix check: after it, commits may touch only builds/ and test files (in the slice, when
+  // sliced), and the full tests run below. Nothing re-runs a model.
   if (check && check.head !== checkAt) {
     if (!checkAt)
       throw new Error(`Fix check head ${check.head} is not an ancestor of closing HEAD (the branch was rewritten after it). Unresolved work goes to the operator, no third model pass`)
-    const named = recordedPaths([check], statuses)
     const since = paths ? slicedScope(review, touchedBetween(check.head, checkAt, paths), touchedBetween(check.head, checkAt)) : touchedBetween(check.head, checkAt)
-    const unnamed = since.filter((p) => !named.has(p))
-    if (unnamed.length) throw new Error(`Fix check head must equal closing HEAD, or the commits after it may only touch files named by its fixed findings: ${unnamed.join(', ')}. Unresolved work goes to the operator, no third model pass`)
+    const code = since.filter((p) => !isTestFile(p) && !p.startsWith('builds/'))
+    if (code.length) throw new Error(`Fix check head must equal closing HEAD, or the commits after it may touch only builds/ and test files: ${code.join(', ')}. ` +
+      'Fixes land before the fix check; close at its head, then review the later files as a slice (REVIEW_PATHS) and close that at the tip. No third model pass')
   }
   if (needsFixCheck(files, [command, VERIFY_CMD].filter(Boolean).join(' ')) && !check) throw new Error('Fix changes tests, verify scripts or risk paths; run --fix-check first')
   const reviews = [review, ...(recheck ? [recheck] : []), ...(check ? [check] : [])]
@@ -1992,7 +2037,10 @@ function closeReview(id) {
     (statuses[f.id]?.status === 'fixed' && rechecked(f, 'PASS') || statuses[f.id]?.status === 'deferred' && rechecked(f, 'FAIL')))) {
     for (const path of filesBetween(review.head, recheck.head)) fixedFiles.add(path)
   }
-  const outOfScope = files.filter((p) => !fixedFiles.has(p) && !isTestFile(p) && !p.startsWith('builds/'))
+  // A file the fix check saw in full was reviewed, so a fix to a sibling file it saw is in scope.
+  const { seen } = fixCheckSeen(check)
+  const outOfScope = files.filter((p) => !fixedFiles.has(p) && !seen.has(p) && !isTestFile(p) && !p.startsWith('builds/'))
+  const coverage = outOfScope.length ? null : closeCoverage(review, files, check, head)
   let tests = null
   if (command) {
     const r = spawnSync(command, { shell: true, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
@@ -2001,8 +2049,8 @@ function closeReview(id) {
   }
   requireClean()
   if (headNow() !== head) throw new Error('HEAD changed while tests ran')
-  appendLog({ type: 'close', ts: new Date().toISOString(), review: id, closeHead: head, statuses, outOfScope,
-    status: outOfScope.length ? 'partial' : 'complete', tests, ...(noTests !== null && { noTests }), ...(check && { fixCheck: check.id }), ...(recheck && { recheck: recheck.id }),
+  appendLog({ type: 'close', ts: new Date().toISOString(), review: id, closeHead: head, repoId: repoIdentity(), statuses, outOfScope,
+    status: outOfScope.length ? 'partial' : 'complete', ...(coverage && { coverage }), tests, ...(noTests !== null && { noTests }), ...(check && { fixCheck: check.id }), ...(recheck && { recheck: recheck.id }),
     ...(carried && { carried }), ...(carriedAlso.length && { carriedAlso }) })
   console.log(`✓ Review ${id} closed (${outOfScope.length ? 'partial' : 'complete'}) at ${head}${paths ? ` for paths ${paths.join(', ')}` : ''}` +
     (carried ? `, carried from the ${carried.kind} head ${carried.from} (identical tree ${carried.tree})` : ''))
@@ -2090,15 +2138,22 @@ async function fixCheck(id) {
   SELECTION = selectReviewer(diffStats(`${original.head}..${head}`, SLICE))
   SEL = SELECTION.sel
   if (SEL.team) throw new Error('A fix check requires one reviewer family, not the multi-agent team')
+  const started = Date.now()
   const { result } = await runModel(SEL, `Fix check: review only this fix diff, not the original branch diff.\n${reviewPrompt(diff)}`, SCHEMA, 'fix-check reviewer')
   const scored = await scoredFindings(result?.findings || [], SEL)
+  const durationMs = Date.now() - started
   const findingDetails = scored.findings.map((f, i) => ({ ...locatedFinding(f), id: `x${i + 1}` }))
   requireClean()
   if (headNow() !== head) throw new Error('HEAD changed during fix check')
+  // What it covers: the fix diff's files at its head, minus any the cap cut here or in the original review (it read
+  // only the later change); nothing when the original's cut is unknown.
+  const files = filesBetween(original.head, head, SLICE), truncated = truncatedFiles(diff, files)
+  const missed = original.kind === 'grade' || fullObjectId(original.baseSha) ? reviewTruncated(original) : null
   const checkId = `fix-${Date.now()}-${randomBytes(3).toString('hex')}`
   appendLog({ type: 'review', kind: 'fix-check', rubricVersion: RUBRIC_VERSION, rescored: scored.rescored, id: checkId, review: id, ts: new Date().toISOString(), head, branch,
     repo: repoName(), repoId: repoIdentity(), base: original.head, baseSha: original.head, family: SEL.family, model: SEL.id, vendor: SEL.vendor, copy: COPY_PATH,
-    ...(SLICE && { paths: SLICE }), findings: findingDetails.length, findingDetails, ...recordedLocations(findingDetails) })
+    ...(SLICE && { paths: SLICE }), findings: findingDetails.length, findingDetails, ...recordedLocations(findingDetails),
+    truncated, coverage: missed ? coverageOf(head, files.filter((p) => !truncated.includes(p) && !missed.has(p))) : [], durationMs })
   console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)`)
   for (const f of findingDetails.filter((f) => f[WHERE]?.ambiguous))
     console.warn(`⚠ ${f.id}: path ambiguous, the quote is in both ${f[WHERE].ambiguous.join(' and ')}; it authorizes no file at close`)
@@ -2159,7 +2214,7 @@ const coverOf = (closes, tip, carry) => ({ closes, bases: [tip, ...(carry ? [car
 // The branch's deferred items, split for the PR body: criteria not met, and every other deferred or filed finding.
 // The covering closes' own fix-check and recheck records count whatever branch name they were logged under.
 function deferredLines(entries, review, cover) {
-  const linked = new Set(cover.closes.flatMap((c) => [c.review, c.fixCheck, c.recheck]).filter(Boolean))
+  const linked = new Set([...cover.closes.flatMap((c) => [c.review, c.fixCheck, c.recheck]), ...(cover.linked || [])].filter(Boolean))
   const items = deferredOrder(entries.filter((r) => r.type === 'review' && (r.repoId === review.repoId && r.branch === review.branch || linked.has(r.id)))
     .flatMap((r) => deferredFindings(entries, r, cover)))
   const criteria = items.filter((f) => f.criterionId).map(deferredLine)
@@ -2253,46 +2308,149 @@ function completeCloses(entries, tip) {
     return ancestry.status === 0
   }).reverse().sort((a, b) => Number(b.closeHead === tip) - Number(a.closeHead === tip))
 }
+// Every file's state in a commit's tree, "mode blob" by path, read once per commit.
+const TREES = new Map()
+function treeStates(commit) {
+  if (TREES.has(commit)) return TREES.get(commit)
+  const r = spawnSync('git', ['ls-tree', '-r', '-z', '--full-tree', commit], { maxBuffer: 1024 * 1024 * 1024 })
+  if (r.error || r.status !== 0) throw new Error(`git ls-tree ${commit} failed: ${r.error?.message || r.stderr}`)
+  const states = new Map()
+  for (let start = 0, end; start < r.stdout.length; start = end + 1) {
+    end = r.stdout.indexOf(0, start)
+    if (end === -1) end = r.stdout.length
+    const tab = r.stdout.indexOf(9, start)
+    if (tab === -1 || tab > end) continue
+    const [mode, , object] = r.stdout.subarray(start, tab).toString('latin1').split(' ')
+    const bytes = r.stdout.subarray(tab + 1, end), name = bytes.toString('utf8')
+    // A name that is not valid UTF-8 never equals a compared path: nulNames refuses those.
+    if (Buffer.from(name, 'utf8').equals(bytes)) states.set(name, `${mode} ${object}`)
+  }
+  TREES.set(commit, states)
+  return states
+}
+// [path, state] pairs at a commit, sorted; an absent file's state is null, so a deletion is a state too.
+const coverageOf = (commit, paths) => [...new Set(paths)].sort().map((path) => [path, treeStates(commit).get(path) ?? null])
+const coverageMap = (record) => Array.isArray(record?.coverage) &&
+  record.coverage.every((e) => Array.isArray(e) && e.length === 2 && typeof e[0] === 'string' && (e[1] === null || typeof e[1] === 'string'))
+  ? new Map(record.coverage) : null
+// Files whose diff section the size cap cut. A section counts as seen only when its exact header line and the next
+// section's header both fall inside the inlined part; diff lines carry a +, - or space prefix, so a header line can't
+// be forged by file content. A quoted or renamed header never matches, so over the cap such a file counts as cut.
+function truncatedFiles(diff, files) {
+  if (diff.length <= DIFF_CAP) return []
+  const shown = diff.slice(0, DIFF_CAP)
+  return files.filter((path) => {
+    const header = `diff --git a/${path} b/${path}\n`
+    const at = shown.startsWith(header) ? 0 : shown.indexOf(`\n${header}`)
+    return at === -1 || shown.indexOf('\ndiff --git ', at + 1) === -1
+  })
+}
+// A merge's paths changed on two or more sides since their merge base; null when the sides share no history.
+const SIDES = new Map()
+function bothSides(merge) {
+  if (SIDES.has(merge)) return SIDES.get(merge)
+  const parents = sh('git', ['rev-list', '--parents', '-n', '1', merge]).split(' ').slice(1)
+  const base = sh('git', ['merge-base', '--octopus', ...parents], { allowFailure: true })
+  let both = null
+  if (base) {
+    const counts = new Map()
+    for (const parent of parents) for (const path of filesBetween(base, parent)) counts.set(path, (counts.get(path) || 0) + 1)
+    both = new Set([...counts].filter(([, n]) => n > 1).map(([path]) => path))
+  }
+  SIDES.set(merge, both)
+  return both
+}
 const buildsOnlySince = (closeHead, tip) => closeHead === tip || commitsIn([`${closeHead}..${tip}`])
   .every((commit) => commitPaths(commit).every((path) => path.startsWith('builds/')))
-// One unsliced close that covers the tip. A sliced close covers only its paths, so it never counts here.
-function coveringClose(entries, tip, reviewOnly = false) {
+// A fix check is clean when no finding of its own needs a status.
+const cleanCheck = (check) => Array.isArray(check.findingDetails) && check.findingDetails.every((f) => !resolutionRules(check, f).status)
+// Content coverage. The tip needs one complete close at it (or followed only by builds/ commits), so the tests ran
+// there; that close's review baseSha is the base. Every file changed from the base to the tip, builds/ aside, is
+// covered when its exact state at the tip (mode and blob, or absent) is the state a complete close or a clean fix check
+// logged, and that record and its review were logged in this repository, at a head that is an ancestor of the tip.
+// A riskPaths file, and every file when the pushed commits touch riskPaths, counts only from a record whose review
+// is of kind review. A file changed on two sides of a merge after the record's head needs a record that saw the merge.
+// Only records with logged coverage count; a coverageExempt file is listed, never checked. Returns null when no
+// complete close with coverage gives a base, else { covered, base, tipClose, used, uncovered, exempt }.
+function contentCover(entries, tip, risk = false) {
+  const repoId = repoIdentity()
+  const reviewOf = (id) => entries.find((e) => e.type === 'review' && e.id === id)
+  const records = []
+  // completeCloses lists closes at the tip first, then the latest first; a review's latest close at a head stands.
+  for (const close of completeCloses(entries, tip)) {
+    const map = coverageMap(close), review = reviewOf(close.review)
+    if (map && review && close.repoId === repoId && review.repoId === repoId &&
+      !records.some((r) => r.review.id === review.id && r.head === close.closeHead)) records.push({ close, review, head: close.closeHead, map })
+  }
+  for (const check of [...entries].reverse()) {
+    if (check.type !== 'review' || check.kind !== 'fix-check' || check.repoId !== repoId || !fullObjectId(check.head)) continue
+    const map = coverageMap(check), review = reviewOf(check.review)
+    if (map && review && review.repoId === repoId && cleanCheck(check) && isAncestor(check.head, tip)) records.push({ check, review, head: check.head, map })
+  }
+  const based = (r) => fullObjectId(r.review.baseSha) && isAncestor(r.review.baseSha, tip)
+  const near = new Map(), atTip = (r) => near.has(r.head) ? near.get(r.head) : near.set(r.head, buildsOnlySince(r.head, tip)).get(r.head)
+  const tipClose = records.find((r) => r.close && based(r) && atTip(r)) || null
+  // Without one, the latest complete close still gives a base, only to name the uncovered files.
+  const anchor = tipClose || records.find((r) => r.close && based(r))
+  if (!anchor) return null
+  const base = anchor.review.baseSha, states = treeStates(tip), merges = new Map()
+  const blind = (r, path) => {
+    if (!merges.has(r.head)) merges.set(r.head, commitsIn(['--merges', tip, `^${r.head}`, `^${base}`]))
+    return merges.get(r.head).some((merge) => bothSides(merge)?.has(path) ?? true)
+  }
+  // Every close at the tip close's head is listed, one per review, whether or not a file still needs it.
+  const used = new Map(), uncovered = [], exempt = []
+  for (const r of records) if (tipClose && r.close && r.head === tipClose.head) used.set(r, [])
+  for (const path of filesBetween(base, tip)) {
+    if (path.startsWith('builds/')) continue
+    if (matchesAny(path, COVERAGE_EXEMPT)) { exempt.push(path); continue }
+    const state = states.get(path) ?? null
+    const record = records.find((r) => r.map.has(path) && r.map.get(path) === state &&
+      (r.review.kind === 'review' || (!risk && !matchesAny(path, RISK_PATHS))) && !blind(r, path))
+    if (!record) uncovered.push(path)
+    else used.set(record, [...(used.get(record) || []), path])
+  }
+  return { covered: !!tipClose && !uncovered.length, base, tipClose, uncovered, exempt, used: [...used].map(([r, files]) => ({ ...r, files })) }
+}
+// The legacy rule, for closes logged without coverage only: one unsliced complete close at the tip, then builds/
+// commits only. A sliced close covers only its paths, so it never counts here.
+function legacyClose(entries, tip, reviewOnly = false) {
   return completeCloses(entries, tip).find((close) => {
+    if (coverageMap(close)) return false
     const review = loggedReview(entries, close.review)
     if (sliceOf(review)) return false
     if (reviewOnly && review.kind !== 'review') return false
     return buildsOnlySince(close.closeHead, tip)
   })
 }
-// Sliced reviews cover a tip together: complete closes of sliced reviews with one repoId, branch, baseSha
-// and closeHead (the tip, or an ancestor followed only by builds/ commits) whose paths cover every file
-// in `git diff <baseSha> <closeHead>`; a slice covers only the files its review recorded, never what its
-// pathspecs match now. Slices may overlap. A riskPaths file, and every file when the pushed commits touch
-// riskPaths, counts only in a slice of kind review.
-// Returns null when no sliced close applies, else the covering group or the closest one's uncovered files.
-function slicedCover(entries, tip, risk = false) {
-  const groups = new Map(), eligible = new Map()
-  for (const close of completeCloses(entries, tip)) {
-    const review = loggedReview(entries, close.review), paths = sliceOf(review)
-    if (!paths || !fullObjectId(review.baseSha) || !review.repoId || !review.branch) continue
-    if (!eligible.has(close.closeHead)) eligible.set(close.closeHead, buildsOnlySince(close.closeHead, tip))
-    if (!eligible.get(close.closeHead)) continue
-    const key = JSON.stringify([review.repoId, review.branch, review.baseSha, close.closeHead])
-    if (!groups.has(key)) groups.set(key, { baseSha: review.baseSha, closeHead: close.closeHead, slices: [] })
-    const group = groups.get(key)
-    // completeCloses lists the latest close first; one close per review.
-    if (!group.slices.some((s) => s.review.id === review.id)) group.slices.push({ close, review, paths })
+// The PR body for a covered tip: one unsliced close keeps the single-close summary, slices closed together at one head
+// keep the sliced one, and anything else lists every close and clean fix check that covers a file.
+function coverSummary(entries, result, tip, carry = null) {
+  return [coveredBy(entries, result, tip, carry), ...(result.exempt.length ? [exemptLine(result.exempt)] : [])].join('\n')
+}
+const exemptLine = (files) => `Coverage exempt (not reviewed): ${files.join(', ')}`
+function coveredBy(entries, result, tip, carry) {
+  const { used, base, tipClose } = result, closes = used.filter((r) => r.close)
+  if (used.length === 1 && !sliceOf(tipClose.review)) return closeSummary(entries, tipClose.close, tip, carry)
+  if (closes.length === used.length && closes.every((r) => sliceOf(r.review) && r.review.baseSha === base && r.head === tipClose.head)) {
+    const slices = closes.map((r) => ({ close: r.close, review: r.review, paths: sliceOf(r.review) }))
+      .sort((a, b) => a.paths.join('\n').localeCompare(b.paths.join('\n')))
+    return slicedSummary(entries, { slices, baseSha: base, closeHead: tipClose.head }, tip, carry)
   }
-  let closest = null
-  for (const group of groups.values()) {
-    for (const slice of group.slices) slice.files = new Set(sliceFiles(slice.review))
-    const uncovered = filesBetween(group.baseSha, group.closeHead).filter((file) => !group.slices.some((s) =>
-      s.files.has(file) && (s.review.kind === 'review' || (!risk && !matchesAny(file, RISK_PATHS)))))
-    group.slices.sort((a, b) => a.paths.join('\n').localeCompare(b.paths.join('\n')))
-    if (!uncovered.length) return { ...group, covered: true, uncovered }
-    if (!closest || uncovered.length < closest.uncovered.length) closest = { ...group, covered: false, uncovered }
-  }
-  return closest
+  const lines = [`Content coverage: ${used.length} record(s) together cover every file changed from ${base} to ${tip}`]
+  if (carry) lines.push(carriedLine(carry, tip))
+  used.forEach((r, i) => {
+    const paths = sliceOf(r.review)
+    if (!r.close) return lines.push(`Fix check ${i + 1} of ${used.length}: ${r.check.id} of review ${r.review.id}, clean at ${r.head}; covers ${r.files.length} file(s)`,
+      `Reviewer: ${r.check.family} (${r.check.model})`)
+    lines.push(`Close ${i + 1} of ${used.length}: review ${r.review.id} at ${r.head}${paths ? ` for paths ${paths.join(', ')}` : ''}; covers ${r.files.length} file(s)` +
+      (r === used[0] ? ', and the tests ran at the tip' : ''), ...closeLines(entries, r.close, tip).lines)
+    if (r.close.noTests) lines.push(`No tests: ${r.close.noTests}`)
+  })
+  const cover = { ...coverOf(closes.map((r) => r.close), tip, carry), linked: used.filter((r) => r.check).map((r) => r.check.id) }
+  const { criteria, findings } = deferredLines(entries, tipClose.review, cover)
+  lines.push('Deferred findings', ...findings)
+  return [...criteria, ...lines].join('\n')
 }
 // A rewritten tip (squash, split, rebase) is covered when it does not descend from a logged head (a close, review,
 // Grade, fix-check or recheck head) whose tree is exactly its own, and that head is covered: the review carries over.
@@ -2302,19 +2460,26 @@ function carriedCover(entries, tip, risk = false) {
   const trees = treesOf(heads), tree = treeOf(tip)
   for (const [from, own] of trees) {
     if (own !== tree || from === tip || isAncestor(from, tip)) continue
-    const close = coveringClose(entries, from, risk)
-    const sliced = close ? null : slicedCover(entries, from, risk)
-    if (close || sliced?.covered) return { from, tree, close, sliced: close ? null : sliced }
+    const result = contentCover(entries, from, risk)
+    if (result?.covered) return { from, tree, result }
+    const close = legacyClose(entries, from, risk)
+    if (close) return { from, tree, close }
   }
   return null
 }
-const carriedSummary = (entries, carry, tip) => carry.close ? closeSummary(entries, carry.close, tip, carry) : slicedSummary(entries, carry.sliced, tip, carry)
-function uncoveredNote(sliced) {
-  if (!sliced || sliced.covered) return ''
-  const shown = sliced.uncovered.slice(0, 20).join(', ')
-  const more = sliced.uncovered.length > 20 ? ` and ${sliced.uncovered.length - 20} more` : ''
-  return `; the complete slice closes at ${sliced.closeHead} leave ${sliced.uncovered.length} file(s) uncovered: ${shown}${more}` +
-    ' — review and close them as another slice (REVIEW_PATHS) at the same HEAD'
+const carriedSummary = (entries, carry, tip) => carry.close ? closeSummary(entries, carry.close, tip, carry) : coverSummary(entries, carry.result, tip, carry)
+// Names the uncovered files, so the agent reviews just those as a slice.
+function uncoveredNote(result) {
+  if (!result || result.covered) return ''
+  const { uncovered, tipClose } = result
+  const exempt = result.exempt.length ? `; exempt (not reviewed): ${result.exempt.join(', ')}` : ''
+  if (!uncovered.length)
+    return `; every changed file is covered, but no complete close is at the tip: close a review at the tip so the tests run there${exempt}`
+  const shown = uncovered.slice(0, 20).join(', ')
+  const more = uncovered.length > 20 ? ` and ${uncovered.length - 20} more` : ''
+  const where = tipClose ? `the complete ${sliceOf(tipClose.review) ? 'slice ' : ''}closes at ${tipClose.head} leave` : 'no complete close or clean fix check saw the tip state of'
+  return `; ${where} ${uncovered.length} file(s) uncovered: ${shown}${more}` +
+    ` — review them as a slice (REVIEW_PATHS=${uncovered.join(',')}) and close it at the tip${exempt}`
 }
 function legacyNote(entries) {
   return entries.some((e) => e.type === 'review' && !e.head && e.repo === repoName())
@@ -2323,12 +2488,12 @@ function legacyNote(entries) {
 function printSummary() {
   const entries = readLog()
   const head = headNow()
-  const close = coveringClose(entries, head)
+  const result = contentCover(entries, head)
+  if (result?.covered) return console.log(coverSummary(entries, result, head))
+  const close = legacyClose(entries, head)
   if (close) return console.log(closeSummary(entries, close, head))
-  const sliced = slicedCover(entries, head)
-  if (sliced?.covered) return console.log(slicedSummary(entries, sliced, head))
   const carry = carriedCover(entries, head)
-  if (!carry) throw new Error(`No complete close covers HEAD${legacyNote(entries)}${uncoveredNote(sliced)}`)
+  if (!carry) throw new Error(`No complete close covers HEAD${legacyNote(entries)}${uncoveredNote(result)}`)
   console.log(carriedSummary(entries, carry, head))
 }
 function pushRefs(input) {
@@ -2367,16 +2532,16 @@ function pushGate() {
         const tip = sh('git', ['rev-parse', '--verify', `${ref.localSha}^{commit}`])
         if (tip !== ref.localSha) throw new Error(`Pushed tip is not a full commit: ${ref.localSha}`)
         const risk = commitsIn(pushedRange(ref)).some((commit) => commitPaths(commit).some((path) => matchesAny(path, RISK_PATHS)))
-        const close = coveringClose(entries, tip, risk)
-        const sliced = close ? null : slicedCover(entries, tip, risk)
-        const carry = close || sliced?.covered ? null : carriedCover(entries, tip, risk)
-        if (!close && !sliced?.covered && !carry) {
+        const result = contentCover(entries, tip, risk)
+        const close = result?.covered ? null : legacyClose(entries, tip, risk)
+        const carry = result?.covered || close ? null : carriedCover(entries, tip, risk)
+        if (!result?.covered && !close && !carry) {
           uncovered.push(ref)
-          throw new Error(`No complete ${risk ? 'code-review ' : ''}close covers tip ${tip}${legacyNote(entries)}${risk ? '; pushed commits touch riskPaths' : ''}${uncoveredNote(sliced)}`)
+          throw new Error(`No complete ${risk ? 'code-review ' : ''}close covers tip ${tip}${legacyNote(entries)}${risk ? '; pushed commits touch riskPaths' : ''}${uncoveredNote(result)}`)
         }
         if (carry) carries.push({ type: 'carried', ts: new Date().toISOString(), repoId: repoIdentity(), ref: ref.remoteRef, tip, from: carry.from, tree: carry.tree,
-          reviews: carry.close ? [carry.close.review] : carry.sliced.slices.map((s) => s.review.id) })
-        summaries.push(carry ? carriedSummary(entries, carry, tip) : close ? closeSummary(entries, close, tip) : slicedSummary(entries, sliced, tip))
+          reviews: carry.close ? [carry.close.review] : carry.result.used.map((r) => r.check ? r.check.id : r.review.id) })
+        summaries.push(carry ? carriedSummary(entries, carry, tip) : close ? closeSummary(entries, close, tip) : coverSummary(entries, result, tip))
       } catch (e) { failure ||= e.message }
     }
   } catch (e) { failure = e.message }
@@ -2499,6 +2664,7 @@ function pushGate() {
   if (headNow() !== reviewedHead) throw new Error('HEAD changed during review')
   const findingDetails = [...findings, ...disputed, ...unlocated]
   findingDetails.forEach((finding, i) => { finding.id = `f${i + 1}` })
+  const truncated = truncatedFiles(diff, sliceFileList || filesBetween(baseSha, reviewedHead))
   const dir = writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTruncated, opinion.verifier)
   const reviewId = basename(dir)
   appendLog({
@@ -2519,6 +2685,7 @@ function pushGate() {
     baseSha,
     repoId: repoIdentity(),
     ...(SLICE && { paths: SLICE, files: sliceFileList }),
+    truncated,
     family: SEL.family,
     families: reviewingFamilies(SEL),
     model: SEL.id,
