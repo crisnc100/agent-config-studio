@@ -627,3 +627,17 @@ test('F1 a ! alias the guard cannot resolve is refused when a gated command word
     `git -c 'alias.p=!git log -n "$1"' p 5`, `git -c 'alias.p=!eval "$1"' p 'git status'`, `git -c 'alias.s=!git status' s`])
     allowed(guard(command))
 })
+test('X1 a positional parameter with an operator (${1:-x}, ${1:+x}, ${1#x}, ${1:2}) is unresolvable, not read as plain $1', () => {
+  for (const command of [
+    `git -c 'alias.p=!git \${1:-send-pack}' p`,
+    `git -c 'alias.p=!git push \${1:---no-verify}' p`,
+    `git -c 'alias.p=!git push \${1:+--no-verify}' p origin`,
+    `git -c 'alias.p=!git config \${1:-core.hooksPath} /dev/null' p`,
+    `git -c 'alias.p=!git \${1#x} \${2%y}' p xpush --no-verify`,
+    `git -c 'alias.p=!git \${1:0} \${#1}' p push`,
+    `git -c 'alias.p=!git \${!1}' p push`,
+    `git -c 'alias.p=!git \${1/x/push}' p x`,
+  ]) refused(command)
+  for (const command of [`git -c 'alias.p=!git log -n "$1"' p 5`, `git -c 'alias.p=!git log -n "\${1}" "\${@}"' p 5`, `git -c 'alias.p=!git "\${*}"' p status`])
+    allowed(guard(command))
+})

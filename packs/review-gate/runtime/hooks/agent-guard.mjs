@@ -301,8 +301,10 @@ function expandShellAlias(body, args) {
 }
 // A `!` alias body the guard cannot read through: a variable other than a positional parameter, a command
 // substitution, eval or source, or a shell started with -c.
+// Only the forms expandShellAlias fills in are readable: $@, $*, $1-$9, ${@}, ${*} and ${N} closed right after the
+// name. Any operator (${1:-x}, ${1:+x}, ${1#x}, ${1%x}, ${1/x/y}, ${1:2}, ${!1}, ${#1}) is not.
 const unresolvable = (body) =>
-  /\$(?!\{?[@*1-9])|`|\b(?:eval|source)\b|(?:^|[\s;&|(])\.\s|\b(?:sh|bash|zsh|dash|ksh)\b[^;&|]*\s-[a-zA-Z]*c\b/.test(body)
+  /\$(?![@*1-9]|\{(?:[@*]|[1-9][0-9]*)\})|`|\b(?:eval|source)\b|(?:^|[\s;&|(])\.\s|\b(?:sh|bash|zsh|dash|ksh)\b[^;&|]*\s-[a-zA-Z]*c\b/.test(body)
 const gatedWord = (text) => /\b(?:push|commit|send-pack|config)\b|no-veri|hookspath|reviewgate|include\.path|includeif\./i.test(text)
 // What `git <alias> args` runs: a `!` value is shell text that gets the arguments, any other value is git's
 // own options and command. A value from --config-env is never seen, so running it is refused.
