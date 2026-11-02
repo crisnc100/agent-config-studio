@@ -1265,16 +1265,61 @@ function runVerify() {
 
 // ── Backends: one read-only, structured-output call per vendor ──────────────
 // Each returns { result, modelUsed? } where result is the schema-shaped object.
+// Codex has no strict-MCP flag, and `-c mcp_servers={}` is merged into the table rather than replacing it. So each
+// server `codex mcp list` reports for this folder is switched off with one inline table; when that override is
+// refused (a server a plugin provides has no transport), plugins go off as a whole and the override covers the
+// servers left. A last `mcp list` under the final overrides must show every server disabled, or codex is not run.
+// tools/ask-model.mjs codexMcpOff, copied to keep the runtime standalone. None of these calls reaches a model.
+const tail = (text) => String(text || '').trim().slice(-500) || '(no output)'
+function codexMcpOff(bin, cwd) {
+  const list = (extra) => {
+    const r = spawnSync(bin, ['mcp', 'list', '--json', ...extra], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 })
+    if (r.error || r.status !== 0) return { error: `codex mcp list failed: ${tail(r.error?.message || r.stderr || r.stdout)}` }
+    try {
+      const servers = JSON.parse(r.stdout)
+      if (Array.isArray(servers)) return { servers }
+    } catch {}
+    return { error: `codex mcp list printed no server list: ${tail(r.stdout)}` }
+  }
+  const names = (servers) => servers.map((s) => s?.name).filter((n) => typeof n === 'string')
+  // JSON's string escapes are valid TOML basic-string escapes.
+  const off = (servers) => ['-c', `mcp_servers={${names(servers).map((n) => `${JSON.stringify(n)}={enabled=false}`).join(',')}}`]
+  const allOff = (args, check) => {
+    const on = check.servers.filter((s) => s?.enabled !== false).map((s) => s?.name ?? '(unnamed)')
+    return on.length ? { error: `codex MCP servers still enabled under the override: ${on.join(', ')}` } : { args }
+  }
+  const found = list([])
+  if (found.error) return found
+  if (!found.servers.length) return { args: [] }
+  const check = list(off(found.servers))
+  if (!check.error) return allOff(off(found.servers), check)
+  const PLUGINS_OFF = ['-c', 'features.plugins=false']
+  const rest = list(PLUGINS_OFF)
+  if (rest.error) return check
+  const left = new Set(names(rest.servers))
+  const fromPlugins = names(found.servers).filter((n) => !left.has(n))
+  if (!fromPlugins.length) return check
+  const args = [...PLUGINS_OFF, ...(rest.servers.length ? off(rest.servers) : [])]
+  const final = list(args)
+  if (final.error) return { error: `${final.error} (with plugins off for ${fromPlugins.join(', ')})` }
+  return allOff(args, final)
+}
 function runCodex(m, prompt, schema) {
+  const bin = which('codex')
+  if (!bin) throw new Error('codex review failed: codex is not on PATH')
+  // The reviewer reads a hostile diff: no MCP server it could drive stays on.
+  const mcp = codexMcpOff(bin, process.cwd())
+  if (mcp.error) throw new Error(`${mcp.error} — codex was not run`)
   const tmp = mkdtempSync(join(tmpdir(), 'review-'))
   try {
     const schemaPath = join(tmp, 'schema.json')
     const outPath = join(tmp, 'out.json')
     writeFileSync(schemaPath, JSON.stringify(schema))
     const r = spawnSync(
-      'codex',
+      bin,
       [
         'exec',
+        ...mcp.args,
         '-c',
         `model=${m.id}`,
         '-c',

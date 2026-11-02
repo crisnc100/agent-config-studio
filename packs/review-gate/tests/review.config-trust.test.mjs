@@ -299,3 +299,52 @@ test('the global-hook state file is never written through a link planted at its 
   assert.equal(statSync(state).mode & 0o777, 0o600)
   assert.equal(sh('uninstall').status, 0)
 })
+
+// ── The codex reviewer runs with every MCP server off ────────────────────────
+// A codex stub whose `mcp list --json` reports STUB_MCP and honours an inline-table enabled=false override, the way
+// codex was seen to (tools/ask-model.mjs's tests). STUB_MCP_STUCK names servers the override does not turn off.
+const MCP_BIN = join(ROOT, 'mcp-bin'), CODEX_LOG = join(ROOT, 'codex-calls.jsonl')
+node(join(MCP_BIN, 'codex'), `
+const fs = require('node:fs')
+const a = process.argv.slice(2)
+fs.appendFileSync(${JSON.stringify(CODEX_LOG)}, JSON.stringify(a) + '\\n')
+if (a[0] === 'mcp') {
+  if (process.env.STUB_MCP_FAIL) { console.error('mcp: boom'); process.exit(1) }
+  const off = a.flatMap((x, i) => (x === '-c' ? [a[i + 1]] : [])).find((s) => s.startsWith('mcp_servers='))
+  const stuck = JSON.parse(process.env.STUB_MCP_STUCK || '[]')
+  const servers = JSON.parse(process.env.STUB_MCP || '[]')
+  console.log(JSON.stringify(servers.map((name) => ({ name, enabled: stuck.includes(name) || !(off && off.includes(JSON.stringify(name) + '={enabled=false}')) }))))
+  process.exit(0)
+}
+const schema = fs.readFileSync(a[a.indexOf('--output-schema') + 1], 'utf8')
+fs.writeFileSync(a[a.indexOf('-o') + 1], schema.includes('"scores"') ? '{"scores":[]}' : '{"findings":[]}')
+`)
+const codexCalls = () => (existsSync(CODEX_LOG) ? readFileSync(CODEX_LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [])
+const mcpReview = (extra) => {
+  rmSync(CODEX_LOG, { force: true })
+  return run([], { PATH: [MCP_BIN, BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':'), REVIEW_BASE: 'main', REVIEW_REVIEWER: 'codex', ...extra })
+}
+test('the codex reviewer switches every MCP server off, and checks that they are off before it runs', () => {
+  const r = mcpReview({ STUB_MCP: JSON.stringify(['github', 'my.server@x']) })
+  assert.equal(r.status, 0, r.out)
+  const off = '-c mcp_servers={"github"={enabled=false},"my.server@x"={enabled=false}}'.split(' ')
+  const calls = codexCalls()
+  assert.deepEqual(calls.filter((c) => c[0] === 'mcp'), [['mcp', 'list', '--json'], ['mcp', 'list', '--json', ...off]])
+  const exec = calls.filter((c) => c[0] === 'exec')
+  assert.equal(exec.length, 1, r.out)
+  assert.deepEqual(exec[0].slice(0, 3), ['exec', ...off])
+  const none = mcpReview({})
+  assert.equal(none.status, 0, none.out)
+  assert.deepEqual(codexCalls().find((c) => c[0] === 'exec').slice(0, 3), ['exec', '-c', 'model=gpt-stub-sol'], 'no servers: no override')
+})
+test('a codex MCP server that stays enabled, or a failed mcp list, keeps codex from running', () => {
+  const stuck = mcpReview({ STUB_MCP: JSON.stringify(['github', 'slack']), STUB_MCP_STUCK: JSON.stringify(['slack']) })
+  assert.notEqual(stuck.status, 0, stuck.out)
+  assert.match(stuck.out, /codex MCP servers still enabled under the override: slack — codex was not run/)
+  assert.equal(codexCalls().filter((c) => c[0] === 'exec').length, 0, 'codex reviewed with an MCP server on')
+  assert.equal(reviews().length, 0)
+  const failed = mcpReview({ STUB_MCP_FAIL: '1' })
+  assert.notEqual(failed.status, 0, failed.out)
+  assert.match(failed.out, /codex mcp list failed: mcp: boom — codex was not run/)
+  assert.equal(codexCalls().filter((c) => c[0] === 'exec').length, 0, 'codex reviewed without an MCP check')
+})
