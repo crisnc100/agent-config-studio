@@ -154,8 +154,8 @@ function repoFileIsOwn(p, homes) {
   return !real.some((r) => entries.has(r))
 }
 function withoutRepoCommands(config, p, homes) {
-  // Any value counts but null or a blank string: String([null]) is '' too, and an array or object can still act.
-  const keys = OWN_FILE_KEYS.filter((k) => config[k] != null && (typeof config[k] !== 'string' || config[k].trim() !== ''))
+  // A key that is present counts, whatever its value: a blank verifyCmd still runs a shell that passes.
+  const keys = OWN_FILE_KEYS.filter((k) => Object.hasOwn(config, k))
   const pick = String(config.pick ?? '').trim().toLowerCase()
   const pickMayRun = pick !== '' && pick !== 'first' && pick !== 'rotate'
   if ((!keys.length && !pickMayRun) || repoFileIsOwn(p, homes)) return config
@@ -476,7 +476,9 @@ if (BASE && !args.includes('--gate') && !BASE_RE.test(BASE))
 // Optional per-repo gate (config `verifyCmd`, e.g. "npm run type-check"). Its result is CONTEXT
 // for the reviewer, never a gate: a failing build is something to explain, not a reason to skip
 // the review. Unset = unchanged behavior.
-const VERIFY_CMD = cfg('REVIEW_VERIFY_CMD', 'verifyCmd', '')
+// A whitespace-only command (here or in --test-cmd) is no command: `sh -c " "` runs nothing and exits 0.
+const blankCommand = (value) => value == null || !String(value).trim()
+const VERIFY_CMD = blankCommand(cfg('REVIEW_VERIFY_CMD', 'verifyCmd', '')) ? '' : cfg('REVIEW_VERIFY_CMD', 'verifyCmd', '')
 let VERIFY_RESULT = null
 const DIFF_CAP = 120_000 // chars of diff inlined into the review prompt
 // REVIEW_PATHS / config "paths": git pathspecs (comma- or newline-separated, or a config array) that
@@ -1957,12 +1959,27 @@ function reviewTruncated(review) {
   const r = spawnSync('git', [...(paths ? ['-C', TOP] : []), 'diff', `${review.baseSha}...${review.head}`, ...pathspec(paths)], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
   return r.error || r.status !== 0 || r.stdout.trim().length > DIFF_CAP ? null : new Set()
 }
+// A fix check logged before `noRenames` saw a moved or copied file as a short rename section, not its content: those
+// destinations count as cut. Needs the check's baseSha (its original's head).
+function renamedInCheck(check) {
+  if (check.noRenames === true) return []
+  const paths = sliceOf(check)
+  const r = spawnSync('git', [...(paths ? ['-C', TOP] : []), 'diff', '-M', '-C', '--name-status', '-z', `${check.baseSha}..${check.head}`, ...pathspec(paths)], { maxBuffer: 64 * 1024 * 1024 })
+  if (r.error || r.status !== 0) throw new Error(`git diff --name-status ${check.baseSha}..${check.head} failed: ${r.error?.message || r.stderr}`)
+  const fields = nulNames(r.stdout, `git diff --name-status ${check.baseSha}..${check.head}`), moved = []
+  for (let i = 0; i < fields.length;) {
+    const status = fields[i]
+    if (/^[RC]/.test(status)) { moved.push(fields[i + 2]); i += 3 } else i += 2
+  }
+  return moved
+}
 // What a fix check saw in full: its fix diff's files minus the ones the cap cut (`cut`, every fix-diff file when that
 // can't be told). A file it saw is in scope at close; seeing a later change never covers a part the review missed.
 function fixCheckSeen(check) {
   if (!check) return { seen: new Set(), cut: new Set() }
   const files = fullObjectId(check.baseSha) && treeOf(check.baseSha) ? filesBetween(check.baseSha, check.head, sliceOf(check)) : null
-  const cut = files && reviewTruncated(check)
+  const measured = files && reviewTruncated(check)
+  const cut = measured && new Set([...measured, ...renamedInCheck(check)])
   return cut ? { seen: new Set(files.filter((p) => !cut.has(p))), cut } : { seen: new Set(), cut: files ? new Set(files) : null }
 }
 // A complete close vouches for the state at its head of the review's files (the slice's recorded files, or the net diff
@@ -2009,7 +2026,7 @@ function closeReview(id) {
   const paths = sliceOf(review)
   const files = paths ? slicedScope(review, touchedBetween(review.head, at, paths), touchedBetween(review.head, at))
     : touchedBetween(review.head, at)
-  const command = option('--test-cmd') || VERIFY_CMD
+  const command = blankCommand(option('--test-cmd')) ? VERIFY_CMD : option('--test-cmd')
   const noTests = option('--no-tests')
   if (noTests !== null && !noTests.trim()) throw new Error('--no-tests requires a nonempty reason')
   if (command && noTests !== null) throw new Error('Use a test command or --no-tests, not both')
@@ -2128,9 +2145,10 @@ async function fixCheck(id) {
     throw new Error('One fix check per review; unresolved findings go to the operator, no third model pass')
   const head = headNow()
   if (!isAncestor(original.head, head)) throw new Error('HEAD is neither the reviewed commit nor a descendant')
-  // A sliced review's fix check reviews only the fix diff inside its paths.
+  // A sliced review's fix check reviews only the fix diff inside its paths. No rename detection: a moved file shows
+  // whole and meets the size cap like any other, so content the review cut can't pass as a short rename.
   SLICE = sliceOf(original)
-  const diff = sh('git', [...(SLICE ? ['-C', TOP] : []), 'diff', `${original.head}..${head}`, ...pathspec(SLICE)])
+  const diff = sh('git', [...(SLICE ? ['-C', TOP] : []), 'diff', '--no-renames', `${original.head}..${head}`, ...pathspec(SLICE)])
   if (!diff) throw new Error('No fix diff to check')
   DIFF_BASE = original.head
   const branch = sh('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
@@ -2153,7 +2171,7 @@ async function fixCheck(id) {
   appendLog({ type: 'review', kind: 'fix-check', rubricVersion: RUBRIC_VERSION, rescored: scored.rescored, id: checkId, review: id, ts: new Date().toISOString(), head, branch,
     repo: repoName(), repoId: repoIdentity(), base: original.head, baseSha: original.head, family: SEL.family, model: SEL.id, vendor: SEL.vendor, copy: COPY_PATH,
     ...(SLICE && { paths: SLICE }), findings: findingDetails.length, findingDetails, ...recordedLocations(findingDetails),
-    truncated, coverage: missed ? coverageOf(head, files.filter((p) => !truncated.includes(p) && !missed.has(p))) : [], durationMs })
+    truncated, coverage: missed ? coverageOf(head, files.filter((p) => !truncated.includes(p) && !missed.has(p))) : [], noRenames: true, durationMs })
   console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)`)
   for (const f of findingDetails.filter((f) => f[WHERE]?.ambiguous))
     console.warn(`⚠ ${f.id}: path ambiguous, the quote is in both ${f[WHERE].ambiguous.join(' and ')}; it authorizes no file at close`)
@@ -2385,7 +2403,10 @@ function contentCover(entries, tip, risk = false) {
   for (const check of [...entries].reverse()) {
     if (check.type !== 'review' || check.kind !== 'fix-check' || check.repoId !== repoId || !fullObjectId(check.head)) continue
     const map = coverageMap(check), review = reviewOf(check.review)
-    if (map && review && review.repoId === repoId && cleanCheck(check) && isAncestor(check.head, tip)) records.push({ check, review, head: check.head, map })
+    if (map && review && review.repoId === repoId && cleanCheck(check) && isAncestor(check.head, tip) && (check.noRenames === true || fullObjectId(check.baseSha))) {
+      for (const path of renamedInCheck(check)) map.delete(path)
+      records.push({ check, review, head: check.head, map })
+    }
   }
   const based = (r) => fullObjectId(r.review.baseSha) && isAncestor(r.review.baseSha, tip)
   const near = new Map(), atTip = (r) => near.has(r.head) ? near.get(r.head) : near.set(r.head, buildsOnlySince(r.head, tip)).get(r.head)
