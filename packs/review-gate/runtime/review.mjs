@@ -42,14 +42,18 @@ import {
   appendFileSync,
   constants,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { randomBytes } from 'node:crypto'
@@ -375,10 +379,88 @@ function readLog({ strict = false } = {}) {
   }
   return entries
 }
+// Parallel slices append at once, and a write() to a regular file is not atomic for lines this long (findings and
+// coverage reach hundreds of KB), so each append holds an exclusive lock: `pid token`, written to a temp file first and
+// hard-linked to the lock path, so a lock is never seen empty (link fails if the path exists). A lock whose process is
+// gone, or older than LOCK_STALE_MS, is stale; an empty or malformed one is stale only by age.
+const LOCK_WAIT_MS = 10_000, LOCK_STALE_MS = 30_000
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+// The stale lock's text, or null while it is live or gone.
+function staleLock(lock) {
+  let text, age
+  try {
+    text = readFileSync(lock, 'utf8')
+    age = Date.now() - statSync(lock).mtimeMs
+  } catch {
+    return null
+  }
+  if (age > LOCK_STALE_MS) return text
+  const pid = Number(text.split(' ')[0])
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null
+  try {
+    process.kill(pid, 0)
+    return null
+  } catch (e) {
+    return e.code === 'ESRCH' ? text : null
+  }
+}
+// Reclaims a lock judged stale: rename it to a tombstone (atomic, so one reclaimer wins), then check the tombstone is
+// the lock judged stale. If another run took the lock in between, it goes back while the path is free; if a third run
+// already took the path, this one keeps waiting.
+function reclaimLock(lock, stale) {
+  const gate = process.env.REVIEW_LOCK_TEST_GATE // tests only: hold here, between the judgment and the reclaim
+  if (gate) {
+    writeFileSync(`${gate}.judged`, '')
+    for (const until = Date.now() + 5000; !existsSync(gate) && Date.now() < until;) pause(10)
+  }
+  const tomb = `${lock}.stale-${randomBytes(6).toString('hex')}`
+  try {
+    renameSync(lock, tomb)
+  } catch (e) {
+    if (e.code === 'ENOENT') return
+    throw e
+  }
+  try {
+    if (readFileSync(tomb, 'utf8') !== stale) linkSync(tomb, lock)
+  } catch (e) {
+    if (e.code !== 'EEXIST') throw e
+  } finally {
+    rmSync(tomb, { force: true })
+  }
+}
+function withLogLock(fn) {
+  const lock = `${LOG_PATH}.lock`, token = `${process.pid} ${randomBytes(6).toString('hex')}`, deadline = Date.now() + LOCK_WAIT_MS
+  const temp = `${lock}.${randomBytes(6).toString('hex')}`
+  writeFileSync(temp, token)
+  try {
+    for (;;) {
+      try {
+        linkSync(temp, lock)
+        break
+      } catch (e) {
+        if (e.code !== 'EEXIST') throw e
+      }
+      const stale = staleLock(lock)
+      if (stale !== null) reclaimLock(lock, stale)
+      if (Date.now() > deadline) throw new Error(`${lock} has been held for over ${LOCK_WAIT_MS / 1000}s by another review run`)
+      if (stale === null) pause(20)
+    }
+  } finally {
+    rmSync(temp, { force: true })
+  }
+  try {
+    return fn()
+  } finally {
+    try {
+      if (readFileSync(lock, 'utf8') === token) unlinkSync(lock)
+    } catch { /* taken over as stale */ }
+  }
+}
 function appendLog(entry) {
   try {
     mkdirSync(dirname(LOG_PATH), { recursive: true })
-    appendFileSync(LOG_PATH, `${JSON.stringify(entry)}\n`)
+    const line = `${JSON.stringify(entry)}\n`
+    withLogLock(() => appendFileSync(LOG_PATH, line))
   } catch (e) {
     throw new Error(`Could not append to ${LOG_PATH}: ${e.message}`)
   }
@@ -530,7 +612,7 @@ risk = likelihood × impact:
 - MEDIUM otherwise.
 Fix HIGH first, then MEDIUM. Both block until fixed, REFUTED or waived by the operator.
 Missing or invalid scores are asked for again once. A finding still unscored blocks as MEDIUM (HIGH if protected is exactly true).`
-const VALUE_FLAGS = ['--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of']
+const VALUE_FLAGS = ['--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of']
 const INTENT = args.includes('--dispute') || args.includes('--waive') || args.includes('--log-grade')
   ? ''
   : args.filter((a, i) => !a.startsWith('--') && !VALUE_FLAGS.includes(args[i - 1])).join(' ').trim()
@@ -1135,6 +1217,13 @@ function reviewContext(branch) {
   if (decided.length) context += `Already decided; don't re-raise without new evidence:\n${JSON.stringify(decided)}\n`
   return context
 }
+function fetchBase() {
+  const slash = BASE.indexOf('/')
+  if (slash <= 0) return
+  const f = spawnSync('git', ['fetch', '--', BASE.slice(0, slash), BASE.slice(slash + 1)], { encoding: 'utf8' })
+  if (f.error || f.status !== 0)
+    console.warn(`⚠ Could not fetch ${BASE} — reviewing against a possibly-stale local base.`)
+}
 function getDiff() {
   if (!existsSync('.git')) die('Not a git repository.')
   // Magic pathspecs (:(attr:…), :(glob), :!, :/ …) can match differently later with no new commit.
@@ -1143,14 +1232,8 @@ function getDiff() {
     die(`REVIEW_PATHS refuses pathspec magic: ${magic.join(', ')}. Use plain paths or simple globs (src/, lib/*.js).`)
   const branch = sh('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
   requireClean()
-  const slash = BASE.indexOf('/')
-  if (slash > 0) {
-    const f = spawnSync('git', ['fetch', '--', BASE.slice(0, slash), BASE.slice(slash + 1)], {
-      encoding: 'utf8',
-    })
-    if (f.error || f.status !== 0)
-      console.warn(`⚠ Could not fetch ${BASE} — reviewing against a possibly-stale local base.`)
-  }
+  // The slice runner fetched the base once for all its slices: concurrent fetches fight over ref locks.
+  if (process.env.REVIEW_BASE_FETCHED !== BASE) fetchBase()
   const head = sh('git', ['rev-parse', 'HEAD'])
   const baseSha = sh('git', ['merge-base', '--end-of-options', BASE, head])
   const files = SLICE ? filesBetween(baseSha, head, SLICE).sort() : null
@@ -1694,10 +1777,20 @@ function refuseLinkedReviews() {
 function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTruncated, verifier) {
   refuseLinkedReviews()
   ensureReviewsIgnored()
-  // A random suffix keeps two reviews in the same second (any repo) apart in the folder and the log.
-  const ts = `${new Date().toISOString().slice(0, 19).replaceAll(':', '-').replace('T', '-')}-${randomBytes(3).toString('hex')}`
-  const dir = `reviews/${ts}`
-  mkdirSync(dir, { recursive: true })
+  // A random suffix keeps two reviews in the same second (any repo) apart in the folder and the log; the folder is
+  // created exclusively, so parallel slices never share one, or a review id.
+  mkdirSync('reviews', { recursive: true })
+  let ts, dir
+  for (;;) {
+    ts = `${new Date().toISOString().slice(0, 19).replaceAll(':', '-').replace('T', '-')}-${randomBytes(3).toString('hex')}`
+    dir = `reviews/${ts}`
+    try {
+      mkdirSync(dir)
+      break
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e
+    }
+  }
   const head = sh('git', ['rev-parse', 'HEAD'])
   const item = (f, extra = '') =>
     `- [${f.file || '?'}:${f.line || '?'}] ${String(f.issue).replace(/\r?\n|$/, (end) => ` (id ${f.id})${end}`)}` +
@@ -1730,7 +1823,15 @@ function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTr
           .join('\n')}\n`
       : '')
   writeFileSync(`${dir}/code-review.md`, md)
-  sh('ln', ['-sfn', ts, 'reviews/latest'])
+  // A temp link renamed over reviews/latest swaps it atomically; parallel runs race only over which one it names.
+  const link = `reviews/.latest-${randomBytes(4).toString('hex')}`
+  try {
+    symlinkSync(ts, link)
+    renameSync(link, 'reviews/latest')
+  } catch (e) {
+    rmSync(link, { force: true })
+    console.warn(`⚠ Could not point reviews/latest at ${ts}: ${e.message}`)
+  }
   return dir
 }
 function loggedReview(entries, id) {
@@ -2071,6 +2172,45 @@ function closeReview(id) {
     ...(carried && { carried }), ...(carriedAlso.length && { carriedAlso }) })
   console.log(`✓ Review ${id} closed (${outOfScope.length ? 'partial' : 'complete'}) at ${head}${paths ? ` for paths ${paths.join(', ')}` : ''}` +
     (carried ? `, carried from the ${carried.kind} head ${carried.from} (identical tree ${carried.tree})` : ''))
+}
+// --slices "<group>;<group>" [--jobs N]: one review per group (each a REVIEW_PATHS value), at most N at a time, all in
+// this checkout. Every slice is an ordinary run, with its own record, report, HEAD checks and close. Each one's output
+// prints under a header as it finishes; then ===SLICES_JSON=== lists { paths, exit, reviewId, result } per slice, result
+// being its FINDINGS_JSON object. The base is fetched once here, not by every slice.
+async function runSlices() {
+  if (PATHS.length) throw new Error('Use --slices or REVIEW_PATHS (or config "paths"), not both')
+  const groups = option('--slices').split(/[;\n]/).map((g) => g.trim()).filter(Boolean)
+  if (!groups.length) throw new Error('--slices needs at least one group of pathspecs')
+  const jobs = Number(option('--jobs') ?? 4)
+  if (!Number.isSafeInteger(jobs) || jobs < 1) throw new Error('--jobs must be a whole number of 1 or more')
+  requireClean()
+  fetchBase()
+  const passed = args.filter((a, i) => !['--slices', '--jobs'].includes(a) && !['--slices', '--jobs'].includes(args[i - 1]))
+  const env = { ...process.env, REVIEW_PATHS: '', REVIEW_BASE: BASE, REVIEW_BASE_FETCHED: BASE }
+  const results = []
+  const one = (i) => new Promise((done) => {
+    let out = '', err = ''
+    const child = spawnFile(process.execPath, [COPY_PATH, ...passed], { env: { ...env, REVIEW_PATHS: groups[i] }, stdio: ['ignore', 'pipe', 'pipe'] })
+    child.stdout.on('data', (d) => { out += d })
+    child.stderr.on('data', (d) => { err += d })
+    child.on('error', (e) => { err += `\n${e.message}` })
+    child.on('close', (code) => {
+      const at = out.indexOf('===FINDINGS_JSON===')
+      let result = null, error = null
+      try { result = at === -1 ? null : JSON.parse(out.slice(at + 19)) } catch (e) { error = `its FINDINGS_JSON is malformed: ${e.message}` }
+      // A slice that exits 0 without whole findings failed: its review may be logged, but nothing here shows it.
+      if (code === 0 && !result?.reviewId) error ||= 'it printed no FINDINGS_JSON'
+      const exit = error ? 1 : code ?? 1
+      results[i] = { paths: groups[i], exit, reviewId: result?.reviewId ?? null, result, ...(error && { error }) }
+      console.log(`=== slice ${i + 1}/${groups.length}: ${groups[i]} (exit ${exit}${error ? `: ${error}` : ''}) ===\n${err.trim()}\n${out.trim()}\n`)
+      done()
+    })
+  })
+  let next = 0
+  const worker = async () => { while (next < groups.length) await one(next++) }
+  await Promise.all(Array.from({ length: Math.min(jobs, groups.length) }, worker))
+  console.log(`===SLICES_JSON===\n${JSON.stringify(results, null, 2)}`)
+  if (results.some((r) => r.exit !== 0)) process.exitCode = 1
 }
 async function disputeFinding(id, findingId) {
   const entries = readLog()
@@ -2624,6 +2764,7 @@ function pushGate() {
   if (args.includes('--summary')) return printSummary()
   if (args.includes('--deferred')) return printDeferred()
   if (args.includes('--fix-check')) return fixCheck(option('--fix-check'))
+  if (args.includes('--slices')) return runSlices()
   const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList } = getDiff()
   refuseLinkedReviews()
   CONTEXT = reviewContext(branch)
@@ -2755,5 +2896,7 @@ function pushGate() {
       unverified: unlocated.map(publicFinding),
     }, null, 2),
   )
+  // Piped (the slice runner reads it), stdout may still be queued: exit only once it has drained.
+  await Promise.all([process.stdout, process.stderr].map((stream) => new Promise((done) => stream.write('', done))))
   process.exit(0)
 })().catch((e) => die(e.message))
