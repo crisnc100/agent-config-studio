@@ -310,6 +310,39 @@ console.log('\nroles: per-model effort — a use or alt entry may be {family, ef
   ok('--roles prints the first member\'s effort', all.code === 0 && /^builder\s+opus\s+\S+\s+low\s+astra$/m.test(all.out), all.out);
 }
 
+console.log('\nroles: model-id --effort');
+{
+  const home = tempHome({ roles: { version: 1, roles: {
+    advisor: { use: ['fable', { family: 'sol', effort: 'high' }], alt: { family: 'grok', effort: 'max' } },
+    reviewer: { use: ['astra', { family: 'sol', effort: 'low' }], effort: 'medium' },
+    investigator: { effort: null, alt: 'opus' },
+  }, flavor: { opus: { effort: 'xhigh' }, terra: { effort: 'low' } } } });
+  const eff = (...a) => now(home, '--effort', ...a);
+  const is = (r, out) => r.code === 0 && r.out === out && r.err === '';
+  ok('no --role: the flavor effort', is(eff('terra'), 'low\n'));
+  ok('no --role and no flavor effort: prints nothing, exit 0', is(eff('haiku'), ''));
+  ok('a member\'s own effort', is(eff('sol', '--role', 'reviewer'), 'low\n'));
+  ok('the first listed role that has the family wins', is(eff('sol', '--role', 'advisor,reviewer'), 'high\n') && is(eff('sol', '--role', 'reviewer,advisor'), 'low\n'));
+  ok('--role may come first', is(now(home, '--role', 'reviewer', '--effort', 'sol'), 'low\n'));
+  ok('the role\'s effort for a member with none', is(eff('astra', '--role', 'advisor,reviewer'), 'medium\n'));
+  ok('the alt\'s own effort', is(eff('grok', '--role', 'advisor'), 'max\n'));
+  ok('an alt with no own or role effort: its flavor\'s', is(eff('opus', '--role', 'investigator'), 'xhigh\n'));
+  ok('in no listed role: the flavor effort', is(eff('terra', '--role', 'advisor'), 'low\n'));
+  const j = eff('grok', '--role', 'reviewer,advisor', '--json');
+  ok('--json: family, effort, where it came from and the role', j.code === 0 && JSON.stringify(json(j)) === JSON.stringify({ family: 'grok', effort: 'max', source: 'member', role: 'advisor' }), j.out);
+  for (const [what, args, why] of [
+    ['an unknown family', ['nope'], /unknown model family "nope"/],
+    ['an unknown role', ['sol', '--role', 'reviewer,nobody'], /unknown role "nobody"/],
+    ['an empty role name', ['sol', '--role', 'reviewer,'], /role names separated by commas/],
+    ['no family', [], /--effort needs a name/],
+    ['with --flavor too', ['sol', '--flavor', 'sol'], /ask one thing at a time/],
+  ]) {
+    const r = eff(...args);
+    ok(`${what}: exit 2, nothing on stdout`, r.code === 2 && r.out === '' && why.test(r.err), JSON.stringify(r));
+  }
+  ok('--role alone still prints the role, as before', /^family=fable id=\S+ effort=\S* alt=grok\n$/.test(now(home, '--role', 'advisor').out));
+}
+
 console.log('\nroles: the shipped seed');
 {
   ok('every seeded role uses a shipped family', Object.values(ROLES.roles).every((r) => [].concat(r.use).every((f) => Object.hasOwn(MODELS.models, f))));

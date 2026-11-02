@@ -40,20 +40,10 @@ Read-only. The model gives an opinion only: no edits, no tool use. Say so in the
 The family's id and effort: a role member's effort comes from its role, any other family's from its flavor.
 ```bash
 family=<family>
-# role_effort <role> <family>: that family's effort in the role — its members[] entry, the alt's altEffort,
-# or the role's effort — or nothing when the family is not in that role.
-role_effort() {
-  model-id --role "$1" --json | jq -r --arg f "$2" '
-    [(.members // [])[] | select(.family == $f) | .effort][0]
-    // (if .alt == $f then .altEffort
-        elif .family == $f or ((.provenance.effort == "default" or .provenance.effort == "user") and any(.use[]; . == $f))
-        then .effort else null end) // empty'
-}
-effort=$(role_effort advisor "$family"); [ -n "$effort" ] || effort=$(role_effort reviewer "$family")
-# Any other family: no --effort, so ask-model uses its flavor effort (none set: no effort flag at all).
-eff=(); [ -z "$effort" ] || eff=(--effort "$effort")
 PROMPT_FILE=$(mktemp "${TMPDIR:-/tmp}/second-opinion.XXXXXX")   # write the prompt (What to send) here
-ask-model --family "$family" "${eff[@]}" --prompt-file "$PROMPT_FILE"
+# The effort: the family's in the advisor role, else in the reviewer role (its members[] entry, the alt's
+# altEffort, or the role's effort); in neither, its flavor effort; none set, no effort flag at all.
+ask-model --family "$family" --effort-from advisor,reviewer --prompt-file "$PROMPT_FILE"
 ```
 `ask-model` picks the CLI from the model id, keeps it read-only with no MCP, and checks the answering model where the CLI reports one. The answer is on stdout; one stderr line names the family, id and effort. Exit 0 is the answer. 2: another model answered — not this family's answer; don't present it. 3: the family's CLI is not installed — skip it and say so. 4: the call failed — say so, with the reason from stderr. An `ENOTFOUND` error (exit 4) means the Codex sandbox blocked the network — re-run escalated, never report it as an answer. 64: the family does not resolve — skip it and say so.
 
@@ -69,9 +59,7 @@ One background job per family, the same prompt file, each answer kept under its 
 ```bash
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/second-opinion.XXXXXX")
 for family in <the offered families>; do
-  effort=$(role_effort advisor "$family"); [ -n "$effort" ] || effort=$(role_effort reviewer "$family")
-  eff=(); [ -z "$effort" ] || eff=(--effort "$effort")
-  ( ask-model --family "$family" "${eff[@]}" --prompt-file "$PROMPT_FILE" > "$OUT/$family.out" 2> "$OUT/$family.err"; echo $? > "$OUT/$family.exit" ) &
+  ( ask-model --family "$family" --effort-from advisor,reviewer --prompt-file "$PROMPT_FILE" > "$OUT/$family.out" 2> "$OUT/$family.err"; echo $? > "$OUT/$family.exit" ) &
 done
 wait
 ```
