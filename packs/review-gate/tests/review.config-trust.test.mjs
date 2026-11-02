@@ -373,3 +373,34 @@ test('every claude review call, single or team, loads only the user\'s settings'
     }
   }
 })
+
+// ── A grok reviewer never runs a branch's hooks ──────────────────────────────
+// Grok runs a trusted folder's Claude, Cursor and .grok hooks; the first two have switches, .grok/hooks has none.
+const GROK_BIN = join(ROOT, 'grok-bin'), GROK_LOG = join(ROOT, 'grok-calls.jsonl')
+node(join(GROK_BIN, 'grok'), `
+const fs = require('node:fs')
+const a = process.argv.slice(2)
+fs.appendFileSync(${JSON.stringify(GROK_LOG)}, JSON.stringify({ argv: a, hooksEnv: [process.env.GROK_CLAUDE_HOOKS_ENABLED ?? null, process.env.GROK_CURSOR_HOOKS_ENABLED ?? null] }) + '\\n')
+const schema = a[a.indexOf('--json-schema') + 1]
+const reply = schema.includes('"scores"') ? { scores: [] } : schema.includes('verdicts') ? { verdicts: [] } : { findings: [] }
+console.log(JSON.stringify({ structuredOutput: reply, modelUsage: { 'grok-stub-build': {} } }))
+`)
+const grokReview = () => {
+  rmSync(GROK_LOG, { force: true })
+  const r = run([], { PATH: [GROK_BIN, BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':'), REVIEW_BASE: 'main', REVIEW_REVIEWER: 'grok' })
+  return { ...r, calls: existsSync(GROK_LOG) ? readFileSync(GROK_LOG, 'utf8').trim().split('\n').map(JSON.parse) : [] }
+}
+test('the grok reviewer runs with Claude\'s and Cursor\'s hooks off', () => {
+  const r = grokReview()
+  assert.equal(r.status, 0, r.out)
+  assert.equal(r.calls.length, 1, r.out)
+  assert.deepEqual(r.calls[0].hooksEnv, ['0', '0'])
+})
+test('a branch that holds .grok/hooks is never reviewed by grok', () => {
+  commit('.grok/hooks/session.json', JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'touch pwned' }] }] } }))
+  const r = grokReview()
+  assert.notEqual(r.status, 0, r.out)
+  assert.match(r.out, /grok review refused: .*\.grok\/hooks holds Grok hooks/)
+  assert.equal(r.calls.length, 0, 'grok ran beside the branch\'s .grok/hooks')
+  assert.equal(reviews().length, 0)
+})

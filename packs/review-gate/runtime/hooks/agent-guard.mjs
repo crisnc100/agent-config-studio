@@ -277,13 +277,48 @@ function configWrite(args, chain) {
   return values.slice(key + 1).some((value) => /--no-veri|hookspath|reviewgate|include\.path|includeif\./i.test(value) ||
     aliasReason(value, [], new Set(), { aliases: new Map(), hooksOverride: false, chain }) !== null)
 }
+// The shell text Git runs for a `!` alias: the extra arguments are its positional parameters ($1, "$@", $*),
+// and Git also appends them ("$@") whenever there are any. Inside double quotes a parameter stays one word;
+// outside them it is split on whitespace.
+function expandShellAlias(body, args) {
+  const inDouble = (text) => text.replace(/[\\"$`]/g, (c) => `\\${c}`)
+  let out = '', quote = null
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i]
+    if (quote === "'") { out += c; if (c === "'") quote = null; continue }
+    if (c === '\\') { out += c + (body[i + 1] ?? ''); i++; continue }
+    if (c === "'" && !quote) { quote = "'"; out += c; continue }
+    if (c === '"') { quote = quote ? null : '"'; out += c; continue }
+    const parameter = c === '$' && /^\$(?:\{([@*]|[1-9][0-9]*)\}|([@*1-9]))/.exec(body.slice(i))
+    if (!parameter) { out += c; continue }
+    const name = parameter[1] ?? parameter[2]
+    const values = name === '@' || name === '*' ? args : [args[Number(name) - 1] ?? '']
+    if (quote === '"') out += name === '@' ? values.map(inDouble).join('" "') : inDouble(values.join(' '))
+    else out += values.flatMap((v) => v.split(/\s+/).filter(Boolean)).map(shellWord).join(' ')
+    i += parameter[0].length - 1
+  }
+  return args.length ? `${out} ${args.map(shellWord).join(' ')}` : out
+}
+// A `!` alias body the guard cannot read through: a variable other than a positional parameter, a command
+// substitution, eval or source, or a shell started with -c.
+const unresolvable = (body) =>
+  /\$(?!\{?[@*1-9])|`|\b(?:eval|source)\b|(?:^|[\s;&|(])\.\s|\b(?:sh|bash|zsh|dash|ksh)\b[^;&|]*\s-[a-zA-Z]*c\b/.test(body)
+const gatedWord = (text) => /\b(?:push|commit|send-pack|config)\b|no-veri|hookspath|reviewgate|include\.path|includeif\./i.test(text)
 // What `git <alias> args` runs: a `!` value is shell text that gets the arguments, any other value is git's
 // own options and command. A value from --config-env is never seen, so running it is refused.
 function aliasReason(value, args, variables, context) {
   if (value === null) return 'agents may not run a Git alias set from the environment'
   if ((context.chain?.length ?? 0) > 32) return 'agents may not run a Git alias chain this long'
   const chain = [...(context.chain || []), value]
-  if (value.startsWith('!')) return inspectShell([value.slice(1), ...args.map(shellWord)].join(' '), new Set(variables), chain.length)
+  if (value.startsWith('!')) {
+    const body = value.slice(1)
+    const reason = inspectShell(expandShellAlias(body, args), new Set(variables), chain.length)
+    if (reason) return reason
+    // Failing closed: a body the guard cannot resolve, near a word that names a gated command.
+    if (unresolvable(body) && gatedWord([body, ...args].join(' ')))
+      return 'agents may not run a Git shell alias the guard cannot read through when it mentions push, commit, send-pack or config'
+    return null
+  }
   return gitReason('git', [...tokenize(value).flatMap((c) => c.words), ...args], variables, { ...context, chain })
 }
 function gitReason(program, words, variables, context = { aliases: new Map(), hooksOverride: false, chain: [] }) {

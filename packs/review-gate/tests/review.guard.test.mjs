@@ -600,3 +600,30 @@ test('S6 the guard installer never writes settings through a link planted at its
   assert.ok(!lstatSync(SETTINGS).isSymbolicLink(), 'settings.json became the planted link')
   assert.equal(json(SETTINGS).hooks.PreToolUse[0].hooks[0].command, launcher)
 })
+
+// ── A `!` alias gets the extra arguments as positional parameters, and Git appends them too ──
+test('F1 a ! alias is checked after its positional parameters are filled in, as Git runs it', () => {
+  for (const command of [
+    `git -c 'alias.p=!git "$@"' p push --no-verify`,
+    `git -c 'alias.p=!git "$@"' p commit -n`,
+    `git -c 'alias.p=!git "$@"' p send-pack origin HEAD`,
+    `git -c 'alias.p=!sh -c "$1"' p 'git push --no-verify'`,
+    `git -c 'alias.p=!git $*' p push --no-verify`,
+    `git -c 'alias.p=!git $1 --no-verify' p push`,
+    `git -c 'alias.p=!git "\${1}" "$2"' p commit -n`,
+    `git -c 'alias.p=!f() { git "$@"; }; f' p push --no-verify`,
+    `git -c 'alias.p=!git "$@"' p -c core.hooksPath=/dev/null push`,
+  ]) refused(command)
+})
+test('F1 a ! alias the guard cannot resolve is refused when a gated command word is near it', () => {
+  for (const command of [
+    `git -c 'alias.p=!eval "$1"' p 'git push'`,
+    `git -c 'alias.p=!c=push; git $c' p`,
+    `git -c 'alias.p=!git $(echo push)' p`,
+    'git -c \'alias.p=!git `echo commit`\' p',
+    `git -c 'alias.p=!bash -lc "$X"' p push`,
+  ]) refused(command)
+  for (const command of [`git -c 'alias.p=!git "$@"' p status`, `git -c 'alias.p=!git "$@"' p push`, `git -c 'alias.p=!echo "$1"' p push --no-verify`,
+    `git -c 'alias.p=!git log -n "$1"' p 5`, `git -c 'alias.p=!eval "$1"' p 'git status'`, `git -c 'alias.s=!git status' s`])
+    allowed(guard(command))
+})

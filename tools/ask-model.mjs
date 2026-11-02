@@ -29,6 +29,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EFFORTS, loadRegistry, resolveModel } from '../lib/models.js';
@@ -46,9 +47,10 @@ const TOOLS = {
 };
 // The review runtime's grok turn cap (packs/review-gate/runtime/review.mjs).
 const GROK_MAX_TURNS = '40';
-// grok's own switches for the MCP servers it borrows from Claude Code's and Cursor's configs, set for its
-// preflight and its run alike (the studio's GROK_ASSIST_ENV, lib/containment.js). Its own servers have none.
-const GROK_ENV = { GROK_CLAUDE_MCPS_ENABLED: '0', GROK_CURSOR_MCPS_ENABLED: '0' };
+// grok's own switches for the MCP servers and hooks it borrows from Claude Code's and Cursor's configs, set for
+// its preflight and its run alike (the studio's GROK_ASSIST_ENV, lib/containment.js). Its own MCP servers have
+// none, and its own .grok/hooks have none short of turning folder trust off (see grokHookFolders).
+const GROK_ENV = { GROK_CLAUDE_MCPS_ENABLED: '0', GROK_CURSOR_MCPS_ENABLED: '0', GROK_CLAUDE_HOOKS_ENABLED: '0', GROK_CURSOR_HOOKS_ENABLED: '0' };
 
 /** Which CLI runs an id: its prefix, the rule ACS and the review runtime use. */
 function vendorOf(id) {
@@ -87,7 +89,9 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [] }) {
  * run whatever --deny says, and nothing turns one off for a single call, so
  * any left means grok is not run. The parse is lib/containment.js
  * grokMcpFromInspect's, copied to keep this file standalone: output of any
- * other shape is an error, never "no servers".
+ * other shape is an error, never "no servers". `projectHooks` names the
+ * enabled hooks inspect says come from the project (none when it lists no
+ * hooks at all).
  */
 function grokMcpLeft(bin, cwd, env) {
   const r = spawnSync(bin, ['inspect', '--json'], {
@@ -115,7 +119,35 @@ function grokMcpLeft(bin, cwd, env) {
     if (!(Number.isInteger(n) && n >= 0)) return bad(`plugin ${pl.name}: provides.mcpServers is not a whole number`);
     if (pl.enabled !== false && n > 0) left.push(`${pl.name} (plugin)`);
   }
-  return { left };
+  const projectHooks = (Array.isArray(doc.hooks) ? doc.hooks : [])
+    .filter((h) => isObj(h) && isObj(h.source) && h.source.type === 'project' && h.disabled !== true && h.compatibilityStatus !== 'disabled')
+    .map((h) => `${h.source.path ?? '(project)'}: ${h.event ?? 'hook'}`);
+  return { left, projectHooks };
+}
+
+/**
+ * Grok runs a trusted folder's own .grok/hooks/*.json on every call, and no
+ * switch turns them off except turning folder trust off, which lets project
+ * hooks run untrusted instead (GROK_FOLDER_TRUST=0, never used). So any
+ * .grok/hooks entry from `cwd` up to the top of its repository keeps grok
+ * from running. ~/.grok/hooks are your own hooks and are left alone.
+ */
+function grokHookFolders(cwd) {
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  const git = which('git');
+  const top = git ? spawnSync(git, ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }) : null;
+  const root = top?.status === 0 && top.stdout.trim() ? real(top.stdout.trim()) : real(cwd);
+  const home = real(os.homedir());
+  const found = [];
+  for (let dir = real(cwd); ; dir = path.dirname(dir)) {
+    const hooks = path.join(dir, '.grok', 'hooks');
+    if (dir !== home) {
+      try { if (!fs.statSync(hooks).isDirectory() || fs.readdirSync(hooks).length) found.push(hooks); }
+      catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') found.push(hooks); } // unreadable: assume it holds hooks
+    }
+    if (dir === root || path.dirname(dir) === dir) break;
+  }
+  return found;
 }
 
 /**
@@ -381,11 +413,21 @@ async function main(argv) {
   }
   const env = vendor === 'grok' ? { ...process.env, ...GROK_ENV } : process.env;
   if (vendor === 'grok') {
+    const hooks = grokHookFolders(cwd);
+    if (hooks.length) {
+      result.error = `${hooks.join(', ')} holds Grok hooks, which grok runs on every call in a trusted folder and no flag turns off, so grok was not run. ` +
+        'Ask another family, or run from a folder without them.';
+      return finish(4);
+    }
     const mcp = grokMcpLeft(bin, cwd, env);
     if (mcp.error) { result.error = `${mcp.error} — no MCP server could be ruled out, so grok was not run`; return finish(4); }
     if (mcp.left.length) {
       result.error = `grok would start MCP servers no flag keeps out of a run (${mcp.left.join(', ')}), so grok was not run. ` +
         'Turn them off with `grok mcp disable <name>` (a plugin\'s: `grok plugin disable <name>`).';
+      return finish(4);
+    }
+    if (mcp.projectHooks.length) {
+      result.error = `grok would run this project's hooks (${mcp.projectHooks.join(', ')}), so grok was not run.`;
       return finish(4);
     }
   }

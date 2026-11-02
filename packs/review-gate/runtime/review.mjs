@@ -46,6 +46,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   statSync,
@@ -1388,8 +1389,45 @@ function parseGrok(stdout) {
   return { result, modelUsed: used.join(',') }
 }
 
+// Grok runs a trusted folder's own hooks on every call. The Claude and Cursor hook files it reads are switched
+// off here. Its own .grok/hooks/*.json have no switch except turning folder trust off, which lets project hooks
+// run untrusted instead (GROK_FOLDER_TRUST=0, never used). So a tree holding any .grok/hooks entry, from the
+// working folder up to the top of its repository, is never reviewed by grok.
+const GROK_HOOKS_OFF = { GROK_CLAUDE_HOOKS_ENABLED: '0', GROK_CURSOR_HOOKS_ENABLED: '0' }
+function grokHookFolders(cwd) {
+  const real = (p) => {
+    try {
+      return realpathSync(p)
+    } catch {
+      return resolve(p)
+    }
+  }
+  const top = spawnSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' })
+  const root = top.status === 0 && top.stdout.trim() ? real(top.stdout.trim()) : real(cwd)
+  const home = real(homedir()) // ~/.grok/hooks are your own hooks, not the repository's
+  const found = []
+  for (let dir = real(cwd); ; dir = dirname(dir)) {
+    const hooks = join(dir, '.grok', 'hooks')
+    if (dir !== home) {
+      try {
+        if (!statSync(hooks).isDirectory() || readdirSync(hooks).length) found.push(hooks)
+      } catch (e) {
+        if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') found.push(hooks) // unreadable: assume it holds hooks
+      }
+    }
+    if (dir === root || dirname(dir) === dir) break
+  }
+  return found
+}
 function runGrok(m, prompt, schema) {
+  const hooks = grokHookFolders(process.cwd())
+  if (hooks.length)
+    throw new Error(
+      `grok review refused: ${hooks.join(', ')} holds Grok hooks, which grok runs on every call in a trusted ` +
+        `folder and no flag turns off. Review with another family, or remove that folder from the branch.`,
+    )
   const r = spawnSync('grok', grokArgs(m, prompt, schema), {
+    env: { ...process.env, ...GROK_HOOKS_OFF },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
     maxBuffer: 64 * 1024 * 1024,
