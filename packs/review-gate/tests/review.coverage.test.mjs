@@ -271,3 +271,32 @@ test('C8 a code commit after the fix check is refused at close and uncovered at 
   assert.deepEqual(later.outOfScope, [])
   allowed(push('HEAD:refs/heads/later'))
 })
+
+const BIG = Array.from({ length: 3000 }, (_, i) => `export const value${i} = '${'x'.repeat(40)}'`).join('\n') + '\n'
+test('E1 coverageExempt from the environment or the home config skips those files, and the summary and refusal name them as not reviewed', () => {
+  commit({ 'z/big.js': BIG })
+  closed(review().id)
+  blocked(push(), uncovered(['z/big.js']))
+  const pushed = run('git', ['push', 'origin', 'HEAD:refs/heads/feat'], { REVIEW_COVERAGE_EXEMPT: 'z/**' }); allowed(pushed)
+  assert.match(pushed.stderr, /\nCoverage exempt \(not reviewed\): z\/big\.js\n/)
+  // A pattern with no slash matches any path segment, as in riskPaths.
+  writeFileSync(join(SKILL, 'config.json'), JSON.stringify({ coverageExempt: ['big.js'] }))
+  commit({ 'lib/two.js': 'export const two = 2\n' })
+  blocked(push(), /1 file\(s\) uncovered: lib\/two\.js — review them as a slice \(REVIEW_PATHS=lib\/two\.js\) and close it at the tip; exempt \(not reviewed\): z\/big\.js/)
+  closed(review('lib/two.js').id)
+  const summary = script(['--summary']); allowed(summary)
+  assert.equal(summary.stdout.trim().split('\n').at(-1), 'Coverage exempt (not reviewed): z/big.js')
+  allowed(push())
+})
+
+test('E2 a tracked repo config cannot set coverageExempt; an untracked one can', () => {
+  commit({ '.claude/review-config.json': JSON.stringify({ coverageExempt: ['z/**'] }), 'z/big.js': BIG })
+  closed(review().id)
+  blocked(push(), uncovered(['z/big.js']))
+  rmSync(LOG)
+  git('rm', '-q', '--cached', '.claude/review-config.json'); git('commit', '-qm', 'untrack the config')
+  assert.equal(existsSync(join(REPO, '.claude/review-config.json')), true)
+  closed(review().id)
+  const pushed = push(); allowed(pushed)
+  assert.match(pushed.stderr, /Coverage exempt \(not reviewed\): z\/big\.js/)
+})

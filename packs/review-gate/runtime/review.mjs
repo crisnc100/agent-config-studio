@@ -105,10 +105,12 @@ const option = (flag) => {
 // > the older ~/.claude/review-config.json > built-in.
 // Edit that one small JSON file to switch reviewer/model/effort — see review-config.example.json.
 // The repo file can come from the repository itself (committed, or added by a branch you check out), so
-// the keys that run a command or reach git as an argument count there only while git doesn't track it and no
-// symlink leads to it: a clone or checkout only ever adds tracked files and links. Env and the home configs always count.
+// the keys that run a command or reach git as an argument, and coverageExempt (it would let a branch exempt its own
+// code from review), count there only while git doesn't track it and no symlink leads to it: a clone or checkout only
+// ever adds tracked files and links. Env and the home configs always count.
 let gateConfigError
 const COMMAND_KEYS = ['verifyCmd', 'classifier', 'base']
+const OWN_FILE_KEYS = [...COMMAND_KEYS, 'coverageExempt']
 // Set when the repo file failed that check: its `pick` may name a family, never a command to run.
 let REPO_PICK_UNTRUSTED = false
 const sameFile = (a, b) => {
@@ -152,7 +154,7 @@ function repoFileIsOwn(p, homes) {
   return !real.some((r) => entries.has(r))
 }
 function withoutRepoCommands(config, p, homes) {
-  const keys = COMMAND_KEYS.filter((k) => config[k] != null && String(config[k]).trim() !== '')
+  const keys = OWN_FILE_KEYS.filter((k) => config[k] != null && String(config[k]).trim() !== '')
   const pick = String(config.pick ?? '').trim().toLowerCase()
   const pickMayRun = pick !== '' && pick !== 'first' && pick !== 'rotate'
   if ((!keys.length && !pickMayRun) || repoFileIsOwn(p, homes)) return config
@@ -548,6 +550,10 @@ const untrustedPickNote = (pick) =>
 const RISK_PATHS = Array.isArray(CONFIG.riskPaths)
   ? CONFIG.riskPaths
   : ['*payment*', '*billing*', '*checkout*', '*auth*', '*migration*', '*security*', '*money*']
+// coverageExempt (REVIEW_COVERAGE_EXEMPT, comma- or newline-separated): path patterns, same globs, that the push gate
+// does not ask coverage for, such as a lockfile whose diff alone is over the size cap. Empty by default; the refusal
+// and the summary name every exempt file as not reviewed.
+const COVERAGE_EXEMPT = normalisePaths(cfg('REVIEW_COVERAGE_EXEMPT', 'coverageExempt', ''))
 // force: [{ "paths": ["**/auth/**", …] | "risk", "family": "<family>" }] — first match wins, before any pick.
 const FORCE = Array.isArray(CONFIG.force) ? CONFIG.force : []
 
@@ -2343,8 +2349,8 @@ const cleanCheck = (check) => Array.isArray(check.findingDetails) && check.findi
 // logged, and that record and its review were logged in this repository, at a head that is an ancestor of the tip.
 // A riskPaths file, and every file when the pushed commits touch riskPaths, counts only from a record whose review
 // is of kind review. A file changed on two sides of a merge after the record's head needs a record that saw the merge.
-// Only records with logged coverage count. Returns null when no complete close with coverage gives a base, else
-// { covered, base, tipClose, used, uncovered }.
+// Only records with logged coverage count; a coverageExempt file is listed, never checked. Returns null when no
+// complete close with coverage gives a base, else { covered, base, tipClose, used, uncovered, exempt }.
 function contentCover(entries, tip, risk = false) {
   const repoId = repoIdentity()
   const reviewOf = (id) => entries.find((e) => e.type === 'review' && e.id === id)
@@ -2372,17 +2378,18 @@ function contentCover(entries, tip, risk = false) {
     return merges.get(r.head).some((merge) => bothSides(merge)?.has(path) ?? true)
   }
   // Every close at the tip close's head is listed, one per review, whether or not a file still needs it.
-  const used = new Map(), uncovered = []
+  const used = new Map(), uncovered = [], exempt = []
   for (const r of records) if (tipClose && r.close && r.head === tipClose.head) used.set(r, [])
   for (const path of filesBetween(base, tip)) {
     if (path.startsWith('builds/')) continue
+    if (matchesAny(path, COVERAGE_EXEMPT)) { exempt.push(path); continue }
     const state = states.get(path) ?? null
     const record = records.find((r) => r.map.has(path) && r.map.get(path) === state &&
       (r.review.kind === 'review' || (!risk && !matchesAny(path, RISK_PATHS))) && !blind(r, path))
     if (!record) uncovered.push(path)
     else used.set(record, [...(used.get(record) || []), path])
   }
-  return { covered: !!tipClose && !uncovered.length, base, tipClose, uncovered, used: [...used].map(([r, files]) => ({ ...r, files })) }
+  return { covered: !!tipClose && !uncovered.length, base, tipClose, uncovered, exempt, used: [...used].map(([r, files]) => ({ ...r, files })) }
 }
 // The legacy rule, for closes logged without coverage only: one unsliced complete close at the tip, then builds/
 // commits only. A sliced close covers only its paths, so it never counts here.
@@ -2398,6 +2405,10 @@ function legacyClose(entries, tip, reviewOnly = false) {
 // The PR body for a covered tip: one unsliced close keeps the single-close summary, slices closed together at one head
 // keep the sliced one, and anything else lists every close and clean fix check that covers a file.
 function coverSummary(entries, result, tip, carry = null) {
+  return [coveredBy(entries, result, tip, carry), ...(result.exempt.length ? [exemptLine(result.exempt)] : [])].join('\n')
+}
+const exemptLine = (files) => `Coverage exempt (not reviewed): ${files.join(', ')}`
+function coveredBy(entries, result, tip, carry) {
   const { used, base, tipClose } = result, closes = used.filter((r) => r.close)
   if (used.length === 1 && !sliceOf(tipClose.review)) return closeSummary(entries, tipClose.close, tip, carry)
   if (closes.length === used.length && closes.every((r) => sliceOf(r.review) && r.review.baseSha === base && r.head === tipClose.head)) {
@@ -2440,13 +2451,14 @@ const carriedSummary = (entries, carry, tip) => carry.close ? closeSummary(entri
 function uncoveredNote(result) {
   if (!result || result.covered) return ''
   const { uncovered, tipClose } = result
+  const exempt = result.exempt.length ? `; exempt (not reviewed): ${result.exempt.join(', ')}` : ''
   if (!uncovered.length)
-    return `; every changed file is covered, but no complete close is at the tip: close a review at the tip so the tests run there`
+    return `; every changed file is covered, but no complete close is at the tip: close a review at the tip so the tests run there${exempt}`
   const shown = uncovered.slice(0, 20).join(', ')
   const more = uncovered.length > 20 ? ` and ${uncovered.length - 20} more` : ''
   const where = tipClose ? `the complete ${sliceOf(tipClose.review) ? 'slice ' : ''}closes at ${tipClose.head} leave` : 'no complete close or clean fix check saw the tip state of'
   return `; ${where} ${uncovered.length} file(s) uncovered: ${shown}${more}` +
-    ` — review them as a slice (REVIEW_PATHS=${uncovered.join(',')}) and close it at the tip`
+    ` — review them as a slice (REVIEW_PATHS=${uncovered.join(',')}) and close it at the tip${exempt}`
 }
 function legacyNote(entries) {
   return entries.some((e) => e.type === 'review' && !e.head && e.repo === repoName())
