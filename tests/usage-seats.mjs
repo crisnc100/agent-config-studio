@@ -534,6 +534,9 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
   fs.rmSync(path.join(out.home, 'auth.json'));
   const gone = (await renderSnapshot({ file: out.f, snapshotFile: out.snapFile })).seats.find((x) => x.seatId === 'codex-1');
   ok('after a logout, the old account\'s session is still excluded', !shows99(gone), JSON.stringify(gone.windows));
+  const again = await snapshot({ file: out.f, snapshotFile: out.snapFile, accountsFile: out.accountsFile });
+  ok('...and in the next CLI snapshot, which keeps the sign-in moment it recorded',
+     !shows99(again.seats[0]) && again.seats[0].windows[0]?.usedPercent === 61, JSON.stringify(again.seats[0].windows));
 
   const back = setup('floor-old-mtime-');
   const snap2 = await snapshot({ file: back.f, snapshotFile: back.snapFile, accountsFile: back.accountsFile });
