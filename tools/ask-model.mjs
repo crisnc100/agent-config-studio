@@ -107,6 +107,8 @@ function schemaProblem(s, at = 'the schema') {
   if (Object.hasOwn(s, 'type')) {
     const types = [].concat(s.type);
     if (!types.length || types.some((t) => !SCHEMA_TYPES.includes(t))) return `${at}.type must be one of ${SCHEMA_TYPES.join(', ')}, or a list of them`;
+    const twice = types.find((t, i) => types.indexOf(t) !== i);
+    if (twice !== undefined) return `${at}.type names "${twice}" twice`;
   }
   if (Object.hasOwn(s, 'properties')) {
     if (!isObject(s.properties)) return `${at}.properties must be an object`;
@@ -116,6 +118,8 @@ function schemaProblem(s, at = 'the schema') {
     }
   }
   if (Object.hasOwn(s, 'required') && (!Array.isArray(s.required) || s.required.some((k) => typeof k !== 'string'))) return `${at}.required must be a list of names`;
+  const twice = (s.required || []).find((k, i) => s.required.indexOf(k) !== i);
+  if (twice !== undefined) return `${at}.required names "${twice}" twice`;
   if (Object.hasOwn(s, 'items')) {
     const p = schemaProblem(s.items, `${at}.items`);
     if (p) return p;
@@ -127,6 +131,25 @@ function schemaProblem(s, at = 'the schema') {
   return null;
 }
 
+/** JSON equality by value: an object's key order does not count, an array's does. */
+function sameValue(a, b) {
+  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => sameValue(x, b[i]));
+  if (isObject(a) || isObject(b)) {
+    if (!isObject(a) || !isObject(b)) return false;
+    const keys = Object.keys(a);
+    return keys.length === Object.keys(b).length && keys.every((k) => Object.hasOwn(b, k) && sameValue(a[k], b[k]));
+  }
+  return a === b;
+}
+
+/** Where an answer holds a number JSON cannot hold (1e400 parses as Infinity and would print as null), or null. */
+function nonFinite(v, at = '$') {
+  if (typeof v === 'number') return Number.isFinite(v) ? null : at;
+  if (Array.isArray(v)) for (let i = 0; i < v.length; i++) { const w = nonFinite(v[i], `${at}[${i}]`); if (w) return w; }
+  else if (isObject(v)) for (const [k, x] of Object.entries(v)) { const w = nonFinite(x, `${at}.${k}`); if (w) return w; }
+  return null;
+}
+
 const typeOf = (v) => (v === null ? 'null' : Array.isArray(v) ? 'array' : Number.isInteger(v) ? 'integer' : typeof v);
 
 /** The first way `v` fails schema `s`, as `$.path: why`, or null. */
@@ -135,7 +158,7 @@ function schemaError(v, s, at = '$') {
     const types = [].concat(s.type), t = typeOf(v);
     if (!types.includes(t) && !(t === 'integer' && types.includes('number'))) return `${at}: ${t} where the schema wants ${types.join(' or ')}`;
   }
-  if (Object.hasOwn(s, 'enum') && !s.enum.some((e) => JSON.stringify(e) === JSON.stringify(v))) {
+  if (Object.hasOwn(s, 'enum') && !s.enum.some((e) => sameValue(e, v))) {
     return `${at}: ${JSON.stringify(v)} is not one of ${s.enum.map((e) => JSON.stringify(e)).join(', ')}`;
   }
   if (typeof v === 'number') {
@@ -490,6 +513,8 @@ function readAnswer(vendor, id, r, schema = null) {
   if (!schema) return { answer: answer.trimEnd() };
   let value;
   try { value = JSON.parse(answer); } catch (e) { return { exit: 6, error: `the answer is not JSON (${e.message}): ${tail(answer)}` }; }
+  const huge = nonFinite(value);
+  if (huge) return { exit: 6, error: `the answer is not usable JSON: ${huge} is not a finite number` };
   const wrong = schemaError(value, schema.doc);
   if (wrong) return { exit: 6, error: `the answer does not match --schema ${schema.file}: ${wrong}` };
   return { answer: JSON.stringify(value, null, 2) };

@@ -783,6 +783,33 @@ console.log('\nask-model: --schema');
   }
 }
 
+console.log('\nask-model: --schema compares enums by value and refuses numbers JSON cannot hold');
+{
+  const file = (name, doc) => { const f = path.join(tmp, name); fs.writeFileSync(f, J(doc)); return f; };
+  const objects = file('object-enum.json', { type: 'object', properties: { pick: { enum: [{ a: 1, b: [1, 2] }, 'none'] } } });
+  const sc = (schema, answer) => ask(['--family', 'sol', '--schema', schema, '--cwd', WORK], { env: { STUB_ANSWER: answer } });
+  const reordered = sc(objects, '{"pick":{"b":[1,2],"a":1}}');
+  ok('an object enum matches with its keys in another order', reordered.code === 0 && JSON.parse(reordered.out).pick.a === 1, show(reordered));
+  const swapped = sc(objects, '{"pick":{"a":1,"b":[2,1]}}');
+  ok('an array inside it keeps its order: [2,1] is not [1,2]', swapped.code === 6 && /\$\.pick: .* is not one of/.test(swapped.err), show(swapped));
+  const extra = sc(objects, '{"pick":{"a":1,"b":[1,2],"c":3}}');
+  ok('an extra key is not the same value', extra.code === 6, show(extra));
+
+  const numbers = file('numbers.json', { type: 'object', properties: { x: { type: 'number' }, list: { type: 'array', items: { type: 'number' } } } });
+  for (const [what, answer, where] of [['1e400', '{"x":1e400}', /\$\.x/], ['-1e400 in a list', '{"list":[1,-1e400]}', /\$\.list\[1\]/], ['an untyped field', '{"y":1e999}', /\$\.y/]]) {
+    const r = sc(numbers, answer);
+    ok(`${what}: exit 6, not printed as null`, r.code === 6 && r.out === '' && /not a finite number/.test(r.err) && where.test(r.err), show(r));
+  }
+
+  for (const [what, doc, why] of [
+    ['a name required twice', { type: 'object', required: ['id', 'id'] }, /required names "id" twice/],
+    ['a type listed twice', { type: ['string', 'string'] }, /type names "string" twice/],
+  ]) {
+    const r = ask(['--family', 'sol', '--schema', file(`dup-${what.length}.json`, doc), '--cwd', WORK]);
+    ok(`--schema with ${what}: exit 64, no model called`, r.code === 64 && r.calls.length === 0 && why.test(r.err), show(r));
+  }
+}
+
 console.log('\nask-model: live');
 if (process.env.ACS_LIVE_CHECKS === '1') {
   const live = path.join(tmp, 'live-prompt.txt');
