@@ -348,3 +348,28 @@ test('a codex MCP server that stays enabled, or a failed mcp list, keeps codex f
   assert.match(failed.out, /codex mcp list failed: mcp: boom — codex was not run/)
   assert.equal(codexCalls().filter((c) => c[0] === 'exec').length, 0, 'codex reviewed without an MCP check')
 })
+
+// ── A claude reviewer never loads the repo's own settings or hooks ───────────
+// A headless claude run in a repo honours its .claude/settings.json hooks; --setting-sources user keeps them out.
+const CLAUDE_BIN = join(ROOT, 'claude-bin'), CLAUDE_LOG = join(ROOT, 'claude-calls.jsonl')
+node(join(CLAUDE_BIN, 'claude'), `
+const fs = require('node:fs')
+const a = process.argv.slice(2)
+fs.appendFileSync(${JSON.stringify(CLAUDE_LOG)}, JSON.stringify(a) + '\\n')
+const schema = a[a.indexOf('--json-schema') + 1]
+const reply = schema.includes('"scores"') ? { scores: [] } : schema.includes('verdicts') ? { verdicts: [] } : { findings: [] }
+console.log(JSON.stringify({ type: 'result', is_error: false, result: JSON.stringify(reply), structured_output: reply }))
+`)
+test('every claude review call, single or team, loads only the user\'s settings', () => {
+  for (const reviewer of ['opus', 'claude']) {
+    rmSync(CLAUDE_LOG, { force: true })
+    const r = run([], { PATH: [CLAUDE_BIN, BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':'), REVIEW_BASE: 'main', REVIEW_REVIEWER: reviewer })
+    assert.equal(r.status, 0, r.out)
+    const calls = readFileSync(CLAUDE_LOG, 'utf8').trim().split('\n').map(JSON.parse)
+    assert.ok(calls.length >= (reviewer === 'claude' ? 3 : 1), `${reviewer}: ${calls.length} calls`)
+    for (const argv of calls) {
+      const at = argv.indexOf('--setting-sources')
+      assert.ok(at !== -1 && argv[at + 1] === 'user', `${reviewer}: ${argv.join(' ')}`)
+    }
+  }
+})

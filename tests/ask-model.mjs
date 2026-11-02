@@ -554,6 +554,18 @@ console.log('\nask-model: model-id --install never writes through a link planted
   }
 }
 
+console.log('\nask-model: claude never loads the repo\'s own settings or hooks');
+{
+  // A headless claude run in a repo honours its .claude/settings.json and settings.local.json hooks; only
+  // --setting-sources user keeps them out (and still reads your login).
+  for (const extra of [[], ['--investigate']]) {
+    const r = ask(['--family', 'fable', '--cwd', WORK, ...extra]);
+    const at = r.argv?.indexOf('--setting-sources') ?? -1;
+    ok(`claude${extra.length ? ' --investigate' : ''}: --setting-sources user, given once`,
+       at !== -1 && r.argv[at + 1] === 'user' && r.argv.filter((a) => a === '--setting-sources').length === 1, show(r));
+  }
+}
+
 // The one real call, and only when asked: this machine's own HOME, PATH and codex, a one-word prompt.
 console.log('\nask-model: live');
 if (process.env.ACS_LIVE_CHECKS === '1') {

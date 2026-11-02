@@ -64,7 +64,9 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [] }) {
     return ['-p', prompt, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'json',
       // --tools decides which tools exist, so skipping the prompts is safe; --strict-mcp-config with
       // no --mcp-config loads no MCP server. Without the skip, a deny rule or hook blocks a read silently.
-      '--dangerously-skip-permissions', '--tools', TOOLS.claude[mode], '--strict-mcp-config'];
+      // --setting-sources user: a headless run honours the repo's .claude settings, hooks included, so
+      // only your own settings load; your login is not a settings file and is still read.
+      '--dangerously-skip-permissions', '--tools', TOOLS.claude[mode], '--strict-mcp-config', '--setting-sources', 'user'];
   }
   if (vendor === 'codex') {
     return ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', id,

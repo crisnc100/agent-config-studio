@@ -1447,10 +1447,14 @@ async function runClaude(m, prompt, schema, role) {
     JSON.stringify(schema),
     // --tools decides which tools EXIST (--allowedTools only pre-approves, so a user's
     // acceptEdits or Bash(*) setting could still let a reviewer write); --strict-mcp-config with
-    // no --mcp-config loads no MCP servers.
+    // no --mcp-config loads no MCP servers. A headless run honours the repo's .claude settings, hooks
+    // included, so a branch under review could run a command: --setting-sources user loads only your own
+    // settings (your login is not a settings file and is still read).
     '--tools',
     'Read,Grep,Glob',
     '--strict-mcp-config',
+    '--setting-sources',
+    'user',
     '--append-system-prompt',
     `You are a precise ${role}. Report only real defects; do not invent issues.`,
   ])
