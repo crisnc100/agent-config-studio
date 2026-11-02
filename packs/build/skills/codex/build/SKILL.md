@@ -59,6 +59,7 @@ GATE=grade swapped to the advisor role's second opinion, when the grader swap pi
 ```bash
 ask-model --second --role advisor --prompt-file "$PROMPT_FILE"   # its alt at its altEffort; none set: no effort flag
 ```
+Exit **64** from this call means the `advisor` role has no second opinion set: say so, skip the swapped Grade, never substitute another model silently, and tell the user to set the `advisor` role's second opinion in ACS → Models → Roles.
 ask-model picks the CLI from the model id and checks the answering model where the CLI reports one. A role or family
 that does not resolve exits 64: stop and fix the role in ACS → Models → Roles rather than running something else.
 

@@ -110,6 +110,7 @@ The Grade on the advisor role's second opinion, when the grader swap picks it:
 ```bash
 ask-model --second --role advisor --prompt-file builds/<slug>/grade-prompt.md   # its alt at its altEffort; none set: no effort flag
 ```
+Exit **64** from this call means the `advisor` role has no second opinion set: say so, skip the swapped Grade, never substitute another model silently, and tell the user to set the `advisor` role's second opinion in ACS → Models → Roles.
 ask-model picks the CLI from the id, keeps it read-only with no MCP, and checks the answering model where the CLI reports one. Branch on its exit code: 0 the verdict; 2 another model answered — not a gate result; 3 the grader's CLI is not installed — use the other judgment family at once and say which ran; 4 the call failed, so the gate did not run — fix it, use the other judgment family, or report it NOT RUN, never a pass.
 
 **Bounce prompt** (critique a plan, no code yet): "Read plan.md and context.md in this folder. You are an adversarial reviewer with no attachment to this plan. Attack it: what is missing, what will break, what edge cases and failure modes did the author miss, and where is the acceptance bar too weak to catch a bad build? Be concrete. Do not rewrite the plan; list the gaps and why each matters."
