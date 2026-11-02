@@ -104,11 +104,11 @@ Verdict comes back on **stdout**; ask-model's one status line goes to **stderr**
 **The gate command** — read-only, headless, never an in-session subagent (which may run on a different model). Write the gate's prompt (below) to its file first:
 ```
 ask-model --role advisor --prompt-file builds/<slug>/bounce-prompt.md     # Bounce
-ask-model --role judge --prompt-file builds/<slug>/grade-prompt.md        # Grade
+ask-model --role judge --prompt-file builds/<slug>/grade-prompt.md --schema "$HOME/.claude/skills/build/grade.schema.json"        # Grade
 ```
 The Grade on the advisor role's second opinion, when the grader swap picks it:
 ```bash
-ask-model --second --role advisor --prompt-file builds/<slug>/grade-prompt.md   # its alt at its altEffort; none set: no effort flag
+ask-model --second --role advisor --prompt-file builds/<slug>/grade-prompt.md --schema "$HOME/.claude/skills/build/grade.schema.json"   # its alt at its altEffort; none set: no effort flag
 ```
 Exit **64** from this call means the `advisor` role has no second opinion set: say so, skip the swapped Grade, never substitute another model silently, and tell the user to set the `advisor` role's second opinion in ACS → Models → Roles.
 ask-model picks the CLI from the id, keeps it read-only with no MCP, and checks the answering model where the CLI reports one. Branch on its exit code: 0 the verdict; 2 another model answered — not a gate result; 3 the grader's CLI is not installed — use the other judgment family at once and say which ran; 4 the call failed, so the gate did not run — fix it, use the other judgment family, or report it NOT RUN, never a pass.
