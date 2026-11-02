@@ -57,10 +57,7 @@ Every method gets the same prompt contract, and its output comes back to the sea
 METHOD=advisor                                  # advisor | second | the family the user named
 case "$METHOD" in
   advisor) who=(--role advisor) ;;
-  second)  role=$(model-id --role advisor --json || exit 1) || { echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1; }
-           alt=$(printf '%s' "$role" | jq -r .alt); altEffort=$(printf '%s' "$role" | jq -r .altEffort)
-           eff=(); [ -z "$altEffort" ] || eff=(--effort "$altEffort")     # no effort set: no --effort at all
-           who=(--family "$alt" "${eff[@]}") ;;
+  second)  who=(--role advisor --second) ;;     # its alt at its altEffort; none set: no effort flag
   *)       who=(--family "$METHOD") ;;
 esac
 DIR=<absolute path of the folder holding advisor-brief.md>

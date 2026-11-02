@@ -314,6 +314,44 @@ test('no shipped skill makes a raw claude -p, codex exec or grok -p model call: 
   }
 })
 
+// A role or effort lookup hand-rolled with jq: jq reading a role's alt, members or effort or a flavor, or model-id's
+// role or flavor JSON piped into jq. ask-model --second and --effort-from, and model-id --effort, are the one place
+// that rule lives (C1 in the reusable-pieces sweep); two jq copies of it had already drifted apart.
+const ROLE_JQ = /\bjq\b[^\n]*(?:\.alt(?:Effort)?\b|\.members\b|\.effort\b|\.flavor\b)|model-id\s+--(?:role|flavor)\b[^\n]*\|\s*jq\b/
+function roleLookups(rel, source) {
+  return source.split('\n').flatMap((line, i) => (ROLE_JQ.test(line) ? [`${rel}:${i + 1}: ${line.trim().slice(0, 100)}`] : []))
+}
+test('the role-lookup lint finds planted jq lookups and lets prose and other jq through (it cannot pass vacuously)', () => {
+  for (const planted of [
+    `alt=$(printf '%s' "$role" | jq -r .alt); altEffort=$(printf '%s' "$role" | jq -r .altEffort)`,
+    `altEffort=$(printf '%s' "$role" | jq -r .altEffort)`,
+    `[ -n "$EFFORT" ] || EFFORT=$(model-id --role builder --json | jq -r --arg f "$BUILDER" '`,
+    `[ -n "$EFFORT" ] || EFFORT=$(model-id --flavor "$BUILDER" --json | jq -r '.flavor.effort // empty')`,
+    `  model-id --role "$1" --json | jq -r --arg f "$2" '`,
+    `fam=$(model-id --role advisor --json | jq -r .family)`,
+    `jq -r '[(.members // [])[] | .effort][0]' role.json`,
+    'model-id --role builder --json | jq -r .role',
+  ]) assert.equal(roleLookups('advisor/skills/claude/advisor/SKILL.md', planted).length, 1, planted)
+  for (const fine of [
+    "Pipe through `head -1` or parse with `jq -r 'select(.type==\"thread.started\").thread_id'`.",
+    '| `second` | the role\'s second opinion (`alt`, `altId`, `altEffort` from `model-id --role advisor --json`) | When the user names it. |',
+    'ask-model --second --role advisor --prompt-file builds/<slug>/grade-prompt.md',
+    '[ -n "$EFFORT" ] || EFFORT=$(model-id --effort "$BUILDER" --role builder)',
+  ]) assert.equal(roleLookups('advisor/skills/claude/advisor/SKILL.md', fine).length, 0, fine)
+})
+test('no shipped skill looks up a role\'s alt or a family\'s effort with jq: ask-model --second, --effort-from and model-id --effort do', () => {
+  const files = shipped().filter((path) => basename(path) === 'SKILL.md')
+  assert.equal(files.length, 10, 'five skills, each for both harnesses')
+  assert.deepEqual(files.flatMap((path) => roleLookups(relative(PACKS, path), readFileSync(path, 'utf8'))), [])
+  const skill = (id, harness) => readFileSync(join(PACKS, id, 'skills', harness, id, 'SKILL.md'), 'utf8')
+  for (const harness of HARNESSES) {
+    assert.match(skill('advisor', harness), /^\s*second\)\s+who=\(--role advisor --second\)/m, `advisor/${harness}: second asks --second`)
+    assert.match(skill('build', harness), /^ask-model --second --role advisor --prompt-file /m, `build/${harness}: the swapped Grade asks --second`)
+    assert.equal(skill('second-opinion', harness).match(/^\s*\(?\s*ask-model --family "\$family" --effort-from advisor,reviewer --prompt-file /gm)?.length, 2, `second-opinion/${harness}: one call and the parallel one`)
+  }
+  assert.match(skill('build', 'claude'), /^\[ -n "\$EFFORT" \] \|\| EFFORT=\$\(model-id --effort "\$BUILDER" --role builder --no-alt\)$/m, 'build/claude: the builder effort, members only')
+})
+
 test('every shipped advisor contract tells the advisor it may verify but never change any file', () => {
   // The contract files, and any shipped copy of the contract (the SKILL.md blocks that embed it verbatim).
   const carriers = shipped().filter((path) => readFileSync(path, 'utf8').includes('You are an outside consultant advising the team'))

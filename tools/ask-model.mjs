@@ -2,8 +2,8 @@
 /**
  * ask-model — ask another model, read-only, and print its answer.
  *
- *   ask-model (--role <role> | --family <family>) [--effort <e>] --prompt-file <path>
- *             [--investigate] [--json] [--cwd <dir>]
+ *   ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]])
+ *             [--effort <e>] --prompt-file <path> [--investigate] [--json] [--cwd <dir>]
  *
  * The mechanical half of "ask model X", in one place instead of in every
  * skill: the family, id and effort from the resolver (lib/models.js and
@@ -11,6 +11,10 @@
  * CLI's read-only and no-MCP flags, and proof that the model asked for is the
  * one that answered. An empty effort passes no effort flag at all: codex
  * rejects `model_reasoning_effort=` with nothing after it.
+ *
+ * --second asks the role's second opinion (its alt, at its altEffort). --effort-from takes a family's effort from
+ * the first listed role that gives it one, else its flavor (lib/roles.js familyEffort, the rule model-id --effort uses).
+ * An --effort given wins over both.
  *
  * --investigate adds a shell (claude's Bash; grok's run_terminal_cmd, with
  * shell commands allowed; codex's read-only sandbox already runs commands) and
@@ -33,11 +37,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EFFORTS, loadRegistry, resolveModel } from '../lib/models.js';
-import { resolveFlavor, resolveRole } from '../lib/roles.js';
+import { familyEffort, resolveFlavor, resolveRole } from '../lib/roles.js';
 
 const SELF = fileURLToPath(import.meta.url);
-const USAGE = 'usage: ask-model (--role <role> | --family <family>) [--effort <e>] --prompt-file <path> [--investigate] [--json] [--cwd <dir>]';
-const VALUE_FLAGS = { '--role': 'role', '--family': 'family', '--effort': 'effort', '--prompt-file': 'promptFile', '--cwd': 'cwd' };
+const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--investigate] [--json] [--cwd <dir>]';
+const VALUE_FLAGS = { '--role': 'role', '--family': 'family', '--effort': 'effort', '--effort-from': 'effortFrom', '--prompt-file': 'promptFile', '--cwd': 'cwd' };
 
 // What each CLI may use. Claude and grok are read-only by these allowlists alone
 // (their plan modes and denylists were observed to still write); codex by its sandbox.
@@ -206,7 +210,7 @@ function parse(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '-h' || a === '--help') return { help: true };
-    if (a === '--investigate' || a === '--json') { o[a.slice(2)] = true; continue; }
+    if (a === '--investigate' || a === '--json' || a === '--second') { o[a.slice(2)] = true; continue; }
     const key = VALUE_FLAGS[a];
     if (!key) return { error: `unexpected argument ${JSON.stringify(a)}` };
     const v = argv[++i];
@@ -216,6 +220,12 @@ function parse(argv) {
     o[key] = v;
   }
   if ((o.role === undefined) === (o.family === undefined)) return { error: 'name exactly one of --role and --family' };
+  if (o.second && o.role === undefined) return { error: '--second asks a role\'s second opinion; it needs --role' };
+  if (o.effortFrom !== undefined) {
+    if (o.family === undefined) return { error: '--effort-from needs --family (a role already has its effort)' };
+    o.effortFrom = o.effortFrom.split(',').map((n) => n.trim());
+    if (o.effortFrom.some((n) => !n)) return { error: '--effort-from takes role names separated by commas' };
+  }
   if (o.promptFile === undefined) return { error: '--prompt-file is required' };
   if (o.effort && !EFFORTS.has(o.effort)) return { error: `--effort ${JSON.stringify(o.effort)} is not one of ${[...EFFORTS].join('/')} (or empty for none)` };
   return o;
@@ -226,6 +236,10 @@ function resolve(o) {
   if (o.role !== undefined) {
     const r = resolveRole(o.role);
     if (r.error) return { error: r.error };
+    if (o.second) {
+      if (!r.alt) return { error: `role "${o.role}" has no second opinion (alt); set one in ACS → Models → Roles` };
+      return { family: r.alt, id: r.altId, effort: o.effort ?? r.altEffort ?? '' };
+    }
     return { family: r.family, id: r.id, effort: o.effort ?? r.effort ?? '' };
   }
   const { registry, error } = loadRegistry();
@@ -237,6 +251,11 @@ function resolve(o) {
   const m = resolveModel(o.family);
   if (m.error) return { error: m.error };
   if (o.effort !== undefined) return { family: o.family, id: m.id, effort: o.effort };
+  if (o.effortFrom !== undefined) {
+    const e = familyEffort(o.family, o.effortFrom);
+    if (e.error) return { error: e.error };
+    return { family: o.family, id: m.id, effort: e.effort };
+  }
   const f = resolveFlavor(o.family);
   if (f.error) return { error: f.error };
   return { family: o.family, id: m.id, effort: f.flavor.effort || '' };

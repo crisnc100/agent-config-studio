@@ -108,11 +108,9 @@ ask-model --role judge --prompt-file builds/<slug>/grade-prompt.md        # Grad
 ```
 The Grade on the advisor role's second opinion, when the grader swap picks it:
 ```bash
-role=$(model-id --role advisor --json || exit 1) || { echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1; }
-alt=$(printf '%s' "$role" | jq -r .alt); altEffort=$(printf '%s' "$role" | jq -r .altEffort)
-eff=(); [ -z "$altEffort" ] || eff=(--effort "$altEffort")     # no effort set: no --effort at all
-ask-model --family "$alt" "${eff[@]}" --prompt-file builds/<slug>/grade-prompt.md
+ask-model --second --role advisor --prompt-file builds/<slug>/grade-prompt.md   # its alt at its altEffort; none set: no effort flag
 ```
+Exit **64** from this call means the `advisor` role has no second opinion set: say so, skip the swapped Grade, never substitute another model silently, and tell the user to set the `advisor` role's second opinion in ACS → Models → Roles.
 ask-model picks the CLI from the id, keeps it read-only with no MCP, and checks the answering model where the CLI reports one. Branch on its exit code: 0 the verdict; 2 another model answered — not a gate result; 3 the grader's CLI is not installed — use the other judgment family at once and say which ran; 4 the call failed, so the gate did not run — fix it, use the other judgment family, or report it NOT RUN, never a pass.
 
 **Bounce prompt** (critique a plan, no code yet): "Read plan.md and context.md in this folder. You are an adversarial reviewer with no attachment to this plan. Attack it: what is missing, what will break, what edge cases and failure modes did the author miss, and where is the acceptance bar too weak to catch a bad build? Be concrete. Do not rewrite the plan; list the gaps and why each matters."
@@ -121,11 +119,7 @@ ask-model picks the CLI from the id, keeps it read-only with no MCP, and checks 
 ```bash
 # A named effort wins; else that family's effort in the builder role (its members[] entry, else the role's
 # effort); else the family's flavor effort. Still empty: none is set, so the calls leave the flag out.
-[ -n "$EFFORT" ] || EFFORT=$(model-id --role builder --json | jq -r --arg f "$BUILDER" '
-  [(.members // [])[] | select(.family == $f) | .effort][0]
-  // (if .family == $f or ((.provenance.effort == "default" or .provenance.effort == "user") and any(.use[]; . == $f))
-      then .effort else null end) // empty')
-[ -n "$EFFORT" ] || EFFORT=$(model-id --flavor "$BUILDER" --json | jq -r '.flavor.effort // empty')
+[ -n "$EFFORT" ] || EFFORT=$(model-id --effort "$BUILDER" --role builder --no-alt)
 EFFORT_FLAG=(); [ -z "$EFFORT" ] || EFFORT_FLAG=(-c "model_reasoning_effort=$EFFORT")   # never an empty effort
 ```
 

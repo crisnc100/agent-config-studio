@@ -57,11 +57,9 @@ ask-model --role judge --prompt-file "$PROMPT_FILE"       # GATE=grade
 ```
 GATE=grade swapped to the advisor role's second opinion, when the grader swap picks it:
 ```bash
-role=$(model-id --role advisor --json || exit 1) || { echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1; }
-alt=$(printf '%s' "$role" | jq -r .alt); altEffort=$(printf '%s' "$role" | jq -r .altEffort)
-eff=(); [ -z "$altEffort" ] || eff=(--effort "$altEffort")     # no effort set: no --effort at all
-ask-model --family "$alt" "${eff[@]}" --prompt-file "$PROMPT_FILE"
+ask-model --second --role advisor --prompt-file "$PROMPT_FILE"   # its alt at its altEffort; none set: no effort flag
 ```
+Exit **64** from this call means the `advisor` role has no second opinion set: say so, skip the swapped Grade, never substitute another model silently, and tell the user to set the `advisor` role's second opinion in ACS → Models → Roles.
 ask-model picks the CLI from the model id and checks the answering model where the CLI reports one. A role or family
 that does not resolve exits 64: stop and fix the role in ACS → Models → Roles rather than running something else.
 

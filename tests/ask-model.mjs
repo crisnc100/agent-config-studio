@@ -653,6 +653,68 @@ console.log('\nask-model: --investigate reads the work tree with git from an abs
 }
 
 // The one real call, and only when asked: this machine's own HOME, PATH and codex, a one-word prompt.
+console.log('\nask-model: --second and --effort-from');
+{
+  // advisor: fable then sol at high, its alt grok at max. builder: its alt terra has no effort of its own, so it
+  // takes the role's. investigator: no role effort and an alt with none either, so opus takes its flavor's.
+  // reviewer: astra and sol at low, the role at medium. judge has no alt.
+  const home = path.dirname(mk('home-c1', '.agent-config-studio'));
+  fs.writeFileSync(path.join(home, '.agent-config-studio', 'roles.json'), J({
+    version: 1,
+    roles: {
+      advisor: { use: ['fable', { family: 'sol', effort: 'high' }], alt: { family: 'grok', effort: 'max' } },
+      builder: { alt: 'terra' },
+      investigator: { effort: null, alt: 'opus' },
+      reviewer: { use: ['astra', { family: 'sol', effort: 'low' }], effort: 'medium' },
+    },
+    flavor: { opus: { effort: 'xhigh' }, terra: { effort: 'low' } },
+  }));
+  const label = (r, family, effort) => r.code === 0 && r.err === `ask-model: ${family} (${IDS[family]}, effort ${effort}, read-only)\n`;
+  const c1 = (args) => ask([...args, '--cwd', WORK], { home });
+
+  const own = c1(['--role', 'advisor', '--second']);
+  ok('--second: the role\'s alt at its own effort', label(own, 'grok', 'max') && own.argv?.includes(IDS.grok), show(own));
+  ok('--second: an alt with no effort of its own takes the role\'s', label(c1(['--role', 'builder', '--second']), 'terra', 'medium'));
+  ok('--second: an alt with no own and no role effort takes its flavor\'s', label(c1(['--role', 'investigator', '--second']), 'opus', 'xhigh'));
+  ok('--second: --effort still wins', label(c1(['--role', 'advisor', '--second', '--effort', 'low']), 'grok', 'low'));
+  const fresh = ask(['--role', 'advisor', '--second', '--cwd', WORK]);
+  ok(`--second on fresh defaults: ${ROLES.roles.advisor.alt} at the role's ${ROLES.roles.advisor.effort}`, label(fresh, ROLES.roles.advisor.alt, ROLES.roles.advisor.effort), show(fresh));
+  const noAlt = c1(['--role', 'judge', '--second']);
+  ok('--second on a role with no alt: exit 64, no model called, the reason named',
+     noAlt.code === 64 && noAlt.calls.length === 0 && /role "judge" has no second opinion \(alt\)/.test(noAlt.err), show(noAlt));
+  const fam = c1(['--family', 'fable', '--second']);
+  ok('--second with --family: exit 64, a usage error', fam.code === 64 && fam.calls.length === 0 && /--second .* needs --role/.test(fam.err), show(fam));
+
+  ok('--effort-from: a member\'s own effort', label(c1(['--family', 'sol', '--effort-from', 'reviewer']), 'sol', 'low'));
+  ok('--effort-from: the first listed role that has the family wins', label(c1(['--family', 'sol', '--effort-from', 'advisor,reviewer']), 'sol', 'high')
+     && label(c1(['--family', 'sol', '--effort-from', 'reviewer,advisor']), 'sol', 'low'));
+  ok('--effort-from: a role it is not in is skipped', label(c1(['--family', 'astra', '--effort-from', 'advisor,reviewer']), 'astra', 'medium'));
+  ok('--effort-from: the alt\'s effort', label(c1(['--family', 'grok', '--effort-from', 'reviewer,advisor']), 'grok', 'max'));
+  ok('--effort-from: an alt with no own or role effort takes its flavor\'s', label(c1(['--family', 'opus', '--effort-from', 'investigator']), 'opus', 'xhigh'));
+  ok('--effort-from: in no listed role, the flavor effort', label(c1(['--family', 'terra', '--effort-from', 'advisor,reviewer']), 'terra', 'low'));
+  const none = c1(['--family', 'haiku', '--effort-from', 'advisor']);
+  ok('--effort-from: no effort anywhere passes no effort flag', label(none, 'haiku', 'none') && !none.argv.includes('--effort'), show(none));
+  ok('--effort-from: --effort wins', label(c1(['--family', 'sol', '--effort-from', 'reviewer', '--effort', 'max']), 'sol', 'max'));
+  for (const [what, args, why] of [
+    ['with an unknown role', ['--family', 'sol', '--effort-from', 'reviewer,nobody'], /unknown role "nobody"/],
+    ['with an empty role name', ['--family', 'sol', '--effort-from', 'reviewer,'], /role names separated by commas/],
+    ['given with --role', ['--role', 'advisor', '--effort-from', 'reviewer'], /--effort-from needs --family/],
+  ]) {
+    const r = c1(args);
+    ok(`--effort-from ${what}: exit 64, no model called`, r.code === 64 && r.calls.length === 0 && why.test(r.err), show(r));
+  }
+}
+
+console.log('\nask-model: --effort-from looks on past a role that gives the family no effort');
+{
+  // advisor's effort cleared: its alt astra has none there, so the reviewer role's effort (astra, high) applies.
+  const home = path.dirname(mk('home-c1-cleared', '.agent-config-studio'));
+  fs.writeFileSync(path.join(home, '.agent-config-studio', 'roles.json'), J({ version: 1, roles: { advisor: { effort: null } } }));
+  const r = ask(['--family', 'astra', '--effort-from', 'advisor,reviewer', '--cwd', WORK], { home });
+  ok(`a cleared advisor effort: astra takes the reviewer role's ${ROLES.roles.reviewer.effort}`,
+     r.code === 0 && r.err === `ask-model: astra (${IDS.astra}, effort ${ROLES.roles.reviewer.effort}, read-only)\n`, show(r));
+}
+
 console.log('\nask-model: live');
 if (process.env.ACS_LIVE_CHECKS === '1') {
   const live = path.join(tmp, 'live-prompt.txt');

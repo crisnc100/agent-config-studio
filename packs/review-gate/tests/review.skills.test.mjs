@@ -256,7 +256,7 @@ for (const harness of ['claude', 'codex']) {
 for (const harness of ['claude', 'codex']) {
   test(`build (${harness}): the swapped Grade runs the second opinion at its effort, and with none set passes no --effort`, () => {
     const body = skill(`build/skills/${harness}/build/SKILL.md`)
-    const swap = block(body, /^ask-model --family "\$alt"/m)
+    const swap = block(body, /^ask-model --second --role advisor/m)
     // The codex copy's command reads $PROMPT_FILE, which its gate setup sets for GATE=grade.
     const setup = harness === 'codex' ? `${fill(block(body, /^GATE=bounce/m).replace(/^GATE=bounce/m, 'GATE=grade'))}\n` : ''
     const cases = [
@@ -286,7 +286,7 @@ for (const harness of ['claude', 'codex']) {
     const advisor = fill(block(skill(`advisor/skills/${harness}/advisor/SKILL.md`), /^METHOD=advisor/m).replace(/^METHOD=advisor/m, 'METHOD=second'))
     const build = skill(`build/skills/${harness}/build/SKILL.md`)
     const gradeSetup = harness === 'codex' ? `${fill(block(build, /^GATE=bounce/m).replace(/^GATE=bounce/m, 'GATE=grade'))}\n` : ''
-    const grade = `${gradeSetup}${fill(block(build, /^ask-model --family "\$alt"/m))}`
+    const grade = `${gradeSetup}${fill(block(build, /^ask-model --second --role advisor/m))}`
     // ask-model's own argv, as the skill passed it: an empty --effort and no --effort look the same to the CLI.
     const asked = join(ROOT, 'ask-model.argv')
     const record = `ask-model() { printf '%s\\0' "$@" > ${J(asked)}; command ask-model "$@"; }\n`
@@ -308,3 +308,59 @@ for (const harness of ['claude', 'codex']) {
     }
   })
 }
+
+// ── the shared effort rule gives the answers the skills' own jq gave before it (39fc63d) ──
+// The second-opinion skill's lookup as it was, the oracle: the family's effort in the advisor role, else the reviewer
+// role, else (ask-model with no --effort) its flavor effort.
+const OLD_SECOND_OPINION_EFFORT = `role_effort() {
+  model-id --role "$1" --json | jq -r --arg f "$2" '
+    [(.members // [])[] | select(.family == $f) | .effort][0]
+    // (if .alt == $f then .altEffort
+        elif .family == $f or ((.provenance.effort == "default" or .provenance.effort == "user") and any(.use[]; . == $f))
+        then .effort else null end) // empty'
+}
+effort=$(role_effort advisor "$family"); [ -n "$effort" ] || effort=$(role_effort reviewer "$family")
+[ -n "$effort" ] || effort=$(model-id --flavor "$family" --json | jq -r '.flavor.effort // empty')
+printf '%s' "$effort"`
+for (const harness of ['claude', 'codex']) {
+  test(`second-opinion (${harness}): --effort-from gives the effort the old jq gave, a cleared advisor effort included`, () => {
+    const ask = block(skill(`second-opinion/skills/${harness}/second-opinion/SKILL.md`), /^family=<family>/m).replace(/^ask-model /m, `printf 'THE PROMPT' > "$PROMPT_FILE"\nask-model `)
+    const cases = [
+      [null, ['fable', 'astra', 'opus', 'sol', 'terra']],
+      [{ roles: { reviewer: { use: ['astra', { family: 'grok', effort: 'xhigh' }] } } }, ['grok', 'astra']],
+      [{ roles: { reviewer: { use: ['astra', 'sol'], effort: 'medium' } }, flavor: { sol: { effort: 'low' } } }, ['sol', 'astra']],
+      [{ roles: { reviewer: { use: ['astra', 'sol'], effort: null } }, flavor: { sol: { effort: 'low' } } }, ['sol', 'astra']],
+      [{ roles: { advisor: { alt: { family: 'astra', effort: 'xhigh' } } } }, ['astra', 'fable']],
+      [{ flavor: { terra: { effort: 'max' } } }, ['terra']],
+      [{ roles: { advisor: { effort: null } } }, ['fable', 'astra']],
+      // The overlap: advisor's effort cleared, so its alt astra has none there, and the reviewer role's applies.
+      [{ roles: { advisor: { effort: null }, reviewer: { use: ['astra', 'sol'], effort: 'low' } } }, ['astra', 'sol', 'fable']],
+    ]
+    for (const shell of SHELLS) {
+      for (const [doc, families] of cases) {
+        roles(doc)
+        for (const family of families) {
+          const old = spawnSync(shell, ['-c', OLD_SECOND_OPINION_EFFORT], { env: { HOME, PATH, family }, encoding: 'utf8' })
+          assert.equal(old.status, 0, old.stderr)
+          const label = `${J(doc)} ${family}`
+          expectEfforts(shell, label, run(shell, `${fill(ask, { '<family>': family })}\n`), family, old.stdout || null)
+        }
+      }
+    }
+    roles({ roles: { advisor: { effort: null } } })
+    expectEfforts(SHELLS[0], 'the cleared-advisor overlap', run(SHELLS[0], `${fill(ask, { '<family>': 'astra' })}\n`), 'astra', 'high')
+  })
+}
+
+test('build (claude): the builder effort counts only the builder role\'s members, never its alt, as before', () => {
+  const claudeSkill = skill('build/skills/claude/build/SKILL.md')
+  const setup = block(claudeSkill, /^BUILDER=<family>/m)
+  const effort = block(claudeSkill, /EFFORT_FLAG=\(\)/)
+  const phase1 = block(claudeSkill, /--sandbox workspace-write/)
+  for (const shell of SHELLS) {
+    roles({ roles: { builder: { alt: 'terra' } }, flavor: { terra: { effort: 'low' } } })
+    const { codex } = run(shell, `${[fill(setup, { '<family>': 'terra', '<effort>': '' }), effort, fill(phase1)].join('\n')}\n`)
+    assert.equal(codex.length, 1, `${shell}: phase 1`)
+    assert.equal(effortIn('codex', codex[0]), 'low', `${shell}: terra as the builder role's alt takes its flavor effort: ${codex[0].join(' ')}`)
+  }
+})
