@@ -465,6 +465,36 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
      JSON.stringify(seatOut.windows));
 }
 
+// --- a re-auth stamped no later than the snapshot still counts as moved ----
+{
+  // CI flake, a real race: renderSnapshot compared auth.json's mtime with the
+  // snapshot's Date.now(), two clocks. Linux stamps mtime from a coarser clock,
+  // so a re-auth just after the snapshot can carry an mtime no later than
+  // takenAt and pass as unchanged. Pinned here by setting the mtime to exactly
+  // takenAt, as that clock would, so it fails the same way on every OS.
+  const dir = fs.mkdtempSync(path.join(tmp, 'coarse-'));
+  const home = path.join(dir, 'home');
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"acct-A"}}');
+  const { loginAt } = recentRollout(home, { usedPercent: 61 });
+  fs.utimesSync(path.join(home, 'auth.json'), loginAt / 1000, loginAt / 1000);
+
+  const f = path.join(dir, 'seats.json');
+  addSeat({ id: 'codex-1', vendor: 'codex', label: 'Seat', home }, f);
+  const snapFile = path.join(dir, 'snap.json');
+  const snap = await snapshot({ file: f, snapshotFile: snapFile, accountsFile: path.join(dir, 'accounts.json') });
+  writeSnapshot(snap, snapFile);
+  ok('the snapshot reads account A', snap.seats[0].windows[0]?.usedPercent === 61, snap.seats[0].reason || '');
+
+  fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"acct-B"}}');
+  fs.utimesSync(path.join(home, 'auth.json'), snap.takenAt / 1000, snap.takenAt / 1000);
+  const rendered = await renderSnapshot({ file: f, snapshotFile: snapFile });
+  const seatOut = rendered.seats.find((x) => x.seatId === 'codex-1');
+  ok('a re-auth whose mtime is no later than takenAt still hides the previous account\'s number',
+     !(seatOut.ok === true && seatOut.windows?.[0]?.usedPercent === 61), JSON.stringify(seatOut.windows));
+  ok('...and says the sign-in changed since the reading', seatOut.staleCredential === true, JSON.stringify(seatOut));
+}
+
 // --- ~/.codex is not re-adopted after a split, even with no seats left ------
 {
   // Review finding: the guard keyed only on "no codex seat exists", but
