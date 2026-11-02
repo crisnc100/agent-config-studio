@@ -1907,6 +1907,8 @@ function readGrade(path) {
   }
   if (Object.hasOwn(value, 'findings') && !Array.isArray(value.findings)) throw new Error('Grade findings must be an array')
   for (const finding of value.findings || []) {
+    // A strict structured-output schema (codex) writes an optional field as null: null file, line or severity is absent.
+    if (finding && typeof finding === 'object') for (const key of ['file', 'line', 'severity']) if (finding[key] === null) delete finding[key]
     gradeObject(finding, ['severity', 'issue', 'file', 'line', 'evidence', ...SCORE_FIELDS], 'Grade finding')
     if (Object.hasOwn(finding, 'severity') && typeof finding.severity !== 'string') throw new Error('Grade finding severity must be text when supplied')
     gradeText(finding.issue, 'Grade finding issue')
