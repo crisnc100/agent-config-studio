@@ -349,7 +349,7 @@ test('no shipped skill looks up a role\'s alt or a family\'s effort with jq: ask
     assert.match(skill('build', harness), /^ask-model --second --role advisor --prompt-file /m, `build/${harness}: the swapped Grade asks --second`)
     assert.equal(skill('second-opinion', harness).match(/^\s*\(?\s*ask-model --family "\$family" --effort-from advisor,reviewer --prompt-file /gm)?.length, 2, `second-opinion/${harness}: one call and the parallel one`)
   }
-  assert.match(skill('build', 'claude'), /^\[ -n "\$EFFORT" \] \|\| EFFORT=\$\(model-id --effort "\$BUILDER" --role builder\)$/m, 'build/claude: the builder effort')
+  assert.match(skill('build', 'claude'), /^\[ -n "\$EFFORT" \] \|\| EFFORT=\$\(model-id --effort "\$BUILDER" --role builder --no-alt\)$/m, 'build/claude: the builder effort, members only')
 })
 
 test('every shipped advisor contract tells the advisor it may verify but never change any file', () => {

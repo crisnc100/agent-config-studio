@@ -705,6 +705,16 @@ console.log('\nask-model: --second and --effort-from');
   }
 }
 
+console.log('\nask-model: --effort-from looks on past a role that gives the family no effort');
+{
+  // advisor's effort cleared: its alt astra has none there, so the reviewer role's effort (astra, high) applies.
+  const home = path.dirname(mk('home-c1-cleared', '.agent-config-studio'));
+  fs.writeFileSync(path.join(home, '.agent-config-studio', 'roles.json'), J({ version: 1, roles: { advisor: { effort: null } } }));
+  const r = ask(['--family', 'astra', '--effort-from', 'advisor,reviewer', '--cwd', WORK], { home });
+  ok(`a cleared advisor effort: astra takes the reviewer role's ${ROLES.roles.reviewer.effort}`,
+     r.code === 0 && r.err === `ask-model: astra (${IDS.astra}, effort ${ROLES.roles.reviewer.effort}, read-only)\n`, show(r));
+}
+
 console.log('\nask-model: live');
 if (process.env.ACS_LIVE_CHECKS === '1') {
   const live = path.join(tmp, 'live-prompt.txt');

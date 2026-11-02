@@ -343,6 +343,20 @@ console.log('\nroles: model-id --effort');
   ok('--role alone still prints the role, as before', /^family=fable id=\S+ effort=\S* alt=grok\n$/.test(now(home, '--role', 'advisor').out));
 }
 
+console.log('\nroles: model-id --effort looks on past an empty role, and --no-alt');
+{
+  const cleared = tempHome({ roles: { version: 1, roles: { advisor: { effort: null } } } });
+  ok('a role holding the family with no effort there: the next listed role\'s effort',
+     now(cleared, '--effort', 'astra', '--role', 'advisor,reviewer').out === `${ROLES.roles.reviewer.effort}\n`);
+  const alt = tempHome({ roles: { version: 1, roles: { builder: { alt: 'terra' } }, flavor: { terra: { effort: 'low' } } } });
+  ok('without --no-alt, the role\'s alt takes the role\'s effort', now(alt, '--effort', 'terra', '--role', 'builder').out === `${ROLES.roles.builder.effort}\n`);
+  const no = now(alt, '--effort', 'terra', '--role', 'builder', '--no-alt');
+  ok('--no-alt: the alt is not a member, so its flavor effort', no.code === 0 && no.out === 'low\n', JSON.stringify(no));
+  ok('--no-alt leaves members as they were', now(alt, '--effort', 'sol', '--role', 'builder', '--no-alt').out === `${ROLES.roles.builder.effort}\n`);
+  const misuse = now(alt, '--role', 'builder', '--no-alt');
+  ok('--no-alt without --effort: exit 2', misuse.code === 2 && /--no-alt goes with --effort/.test(misuse.err), JSON.stringify(misuse));
+}
+
 console.log('\nroles: the shipped seed');
 {
   ok('every seeded role uses a shipped family', Object.values(ROLES.roles).every((r) => [].concat(r.use).every((f) => Object.hasOwn(MODELS.models, f))));

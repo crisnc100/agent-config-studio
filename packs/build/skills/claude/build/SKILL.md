@@ -119,7 +119,7 @@ ask-model picks the CLI from the id, keeps it read-only with no MCP, and checks 
 ```bash
 # A named effort wins; else that family's effort in the builder role (its members[] entry, else the role's
 # effort); else the family's flavor effort. Still empty: none is set, so the calls leave the flag out.
-[ -n "$EFFORT" ] || EFFORT=$(model-id --effort "$BUILDER" --role builder)
+[ -n "$EFFORT" ] || EFFORT=$(model-id --effort "$BUILDER" --role builder --no-alt)
 EFFORT_FLAG=(); [ -z "$EFFORT" ] || EFFORT_FLAG=(-c "model_reasoning_effort=$EFFORT")   # never an empty effort
 ```
 

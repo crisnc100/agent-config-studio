@@ -12,9 +12,10 @@
  *   model-id --role <name>   family=… id=… effort=… alt=…  (add --json for the whole role)
  *   model-id --flavor <fam>  how to brief that family, as plain text
  *   model-id --roles         every role → family, id, effort, alt (--table is families only)
- *   model-id --effort <fam> [--role <role>[,<role>…]]
- *                            that family's effort: from the first listed role that has it, else its flavor;
- *                            nothing when none is set (lib/roles.js familyEffort, the rule ask-model uses)
+ *   model-id --effort <fam> [--role <role>[,<role>…]] [--no-alt]
+ *                            that family's effort: from the first listed role that gives it one, else its flavor;
+ *                            nothing when none is set (lib/roles.js familyEffort, the rule ask-model uses).
+ *                            --no-alt counts a role's members only, never its alt (a builder's effort)
  *
  * A failed resolution NEVER prints an empty string. It exits 1, says why on
  * stderr, and prints MODEL-ID-UNRESOLVED-<name> — an id every CLI rejects
@@ -39,7 +40,7 @@ import {
 
 const args = process.argv.slice(2);
 /** The whole interface, said when a role flag is misused (the bare usage line below stays as it was). */
-const FULL_USAGE = 'usage: model-id <family|raw-id> | --table | --json | --lint [paths] | --sidecars | --install | --role <name> [--json] | --flavor <family> [--json] | --roles [--json] | --effort <family> [--role <role>[,<role>…]] [--json]';
+const FULL_USAGE = 'usage: model-id <family|raw-id> | --table | --json | --lint [paths] | --sidecars | --install | --role <name> [--json] | --flavor <family> [--json] | --roles [--json] | --effort <family> [--role <role>[,<role>…]] [--no-alt] [--json]';
 const tilde = (p) => (p.startsWith(homeDir() + path.sep) ? '~' + p.slice(homeDir().length) : p);
 
 function unresolved(name, why) {
@@ -186,6 +187,7 @@ function rolesCli(argv, R) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') opts.json = true;
+    else if (a === '--no-alt') opts.noAlt = true;
     else if (a === '--roles') opts.roles = true;
     else if (a === '--role' || a === '--flavor' || a === '--effort') {
       const v = argv[++i];
@@ -199,11 +201,12 @@ function rolesCli(argv, R) {
     die(`ask one thing at a time — ${FULL_USAGE}`);
   }
   if (R.missing) die(R.missing, opts.role !== undefined && opts.effort === undefined && !opts.json ? unresolvedRole(opts.role) : '');
+  if (opts.noAlt && opts.effort === undefined) die('--no-alt goes with --effort');
   const { familyEffort, loadRoles, resolveFlavor, resolveRole } = R;
   if (opts.effort !== undefined) {
     const roles = opts.role === undefined ? [] : opts.role.split(',').map((n) => n.trim());
     if (roles.some((n) => !n)) die('--role takes role names separated by commas');
-    const e = familyEffort(opts.effort, roles);
+    const e = familyEffort(opts.effort, roles, { alt: !opts.noAlt });
     if (e.error) die(e.error);
     if (opts.json) process.stdout.write(JSON.stringify(e, null, 2) + '\n');
     else if (e.effort) process.stdout.write(`${e.effort}\n`);

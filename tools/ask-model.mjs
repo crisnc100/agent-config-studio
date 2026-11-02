@@ -13,7 +13,7 @@
  * rejects `model_reasoning_effort=` with nothing after it.
  *
  * --second asks the role's second opinion (its alt, at its altEffort). --effort-from takes a family's effort from
- * the first listed role that has it, else its flavor (lib/roles.js familyEffort, the rule model-id --effort uses).
+ * the first listed role that gives it one, else its flavor (lib/roles.js familyEffort, the rule model-id --effort uses).
  * An --effort given wins over both.
  *
  * --investigate adds a shell (claude's Bash; grok's run_terminal_cmd, with
