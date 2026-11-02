@@ -78,7 +78,9 @@ if (process.env.STUB_GIT) require('node:child_process').execFileSync('git', proc
 if (process.env.STUB_STDERR) process.stderr.write(process.env.STUB_STDERR + '\\n');
 const mode = process.env.STUB_MODE || 'ok';
 const model = val('--model', '-m') || 'none';
-const answer = mode === 'empty' ? '' : 'answer from ' + model;
+// STUB_ANSWER replaces the reply's text; STUB_STRUCTURED is claude's structured_output and grok's structuredOutput.
+const answer = process.env.STUB_ANSWER ?? (mode === 'empty' ? '' : 'answer from ' + model);
+const structured = process.env.STUB_STRUCTURED;
 if (${J(name)} === 'codex') {
   if (a.includes('model_reasoning_effort=')) { process.stderr.write("Error: invalid value for model_reasoning_effort: ''\\n"); process.exit(1); }
   if (mode === 'fail') { process.stderr.write('codex: boom\\n'); process.exit(1); }
@@ -97,11 +99,12 @@ if (${J(name)} === 'codex') {
   }
   if (mode === 'no_result') { process.stdout.write(JSON.stringify([{ type: 'system', subtype: 'init', model }])); process.exit(0); }
   const used = mode === 'downgrade' ? 'claude-sonnet-stub' : model;
-  out({ type: 'result', subtype: 'success', is_error: false, result: answer, modelUsage: { [used]: { inputTokens: 1 } } });
+  out({ type: 'result', subtype: 'success', is_error: false, result: answer, modelUsage: { [used]: { inputTokens: 1 } },
+    ...(structured ? { structured_output: JSON.parse(structured) } : {}) });
 } else {
   if (mode === 'fail') { process.stdout.write(JSON.stringify({ type: 'error', message: 'grok: boom' })); process.exit(1); }
   const usage = mode === 'downgrade' ? { 'claude-sonnet-stub': {} } : mode === 'sibling' ? { 'grok-sibling-stub': {} } : { [model]: { modelCalls: 1 } };
-  process.stdout.write(JSON.stringify({ text: answer, stopReason: 'end_turn', modelUsage: usage }));
+  process.stdout.write(JSON.stringify({ text: answer, stopReason: 'end_turn', modelUsage: usage, ...(structured ? { structuredOutput: structured } : {}) }));
 }
 `;
 for (const name of ['claude', 'codex', 'grok']) fs.writeFileSync(path.join(STUBS, name), stub(name), { mode: 0o755 });
@@ -713,6 +716,71 @@ console.log('\nask-model: --effort-from looks on past a role that gives the fami
   const r = ask(['--family', 'astra', '--effort-from', 'advisor,reviewer', '--cwd', WORK], { home });
   ok(`a cleared advisor effort: astra takes the reviewer role's ${ROLES.roles.reviewer.effort}`,
      r.code === 0 && r.err === `ask-model: astra (${IDS.astra}, effort ${ROLES.roles.reviewer.effort}, read-only)\n`, show(r));
+}
+
+console.log('\nask-model: --schema');
+{
+  const VERDICT = { type: 'object', additionalProperties: false, required: ['verdict', 'score', 'notes'], properties: {
+    verdict: { type: 'string', enum: ['PASS', 'FAIL'] }, score: { type: 'integer', minimum: 1, maximum: 10 },
+    notes: { type: 'array', minItems: 1, items: { type: ['string', 'null'] } } } };
+  const schemaFile = path.join(tmp, 'verdict.schema.json');
+  fs.writeFileSync(schemaFile, J(VERDICT, null, 2));
+  const good = { verdict: 'PASS', score: 7, notes: ['fine', null] };
+  const sc = (args, env = {}) => ask([...args, '--schema', schemaFile, '--cwd', WORK], { env });
+
+  const c = sc(['--family', 'fable', '--effort', 'high'], { STUB_STRUCTURED: J(good), STUB_ANSWER: 'prose the model also wrote' });
+  ok('claude: --json-schema with the schema\'s JSON, after the other flags, MCP still off',
+     c.code === 0 && same(c.argv, [...CLAUDE_RO(IDS.fable, 'high').slice(0, 8), '--json-schema', J(VERDICT), ...CLAUDE_RO(IDS.fable, 'high').slice(8)]), show(c));
+  ok('claude: stdout is only the structured_output, as JSON', c.out === `${J(good, null, 2)}\n` && JSON.parse(c.out).verdict === 'PASS', show(c));
+  const x = sc(['--family', 'sol', '--effort', 'xhigh'], { STUB_ANSWER: J(good) });
+  ok('codex: --output-schema with the file\'s absolute path, before the prompt',
+     x.code === 0 && same(x.argv, [...CODEX(IDS.sol, 'xhigh').slice(0, -1), '--output-schema', schemaFile, PROMPT]), show(x));
+  ok('codex: stdout is only its JSON answer', x.out === `${J(good, null, 2)}\n`, show(x));
+  const g = sc(['--family', 'grok', '--effort', 'high'], { STUB_STRUCTURED: J(good) });
+  ok('grok: --json-schema with the schema\'s JSON, its read-only tools and MCP denial kept',
+     g.code === 0 && same(g.argv, [...GROK_RO(IDS.grok, 'high', WORK), '--json-schema', J(VERDICT)]), show(g));
+  ok('grok: stdout is only the structuredOutput, as JSON', g.out === `${J(good, null, 2)}\n`, show(g));
+  const rel = ask(['--family', 'sol', '--schema', path.relative(tmp, schemaFile), '--cwd', WORK], { env: { STUB_ANSWER: J(good) } });
+  ok('a relative --schema path reaches codex resolved, since codex runs in --cwd', rel.code === 0 && rel.argv.includes(schemaFile), show(rel));
+  const plain = ask(['--family', 'sol', '--cwd', WORK]);
+  ok('without --schema, no structured-output flag and the answer as before', plain.code === 0 && !plain.argv.includes('--output-schema') && plain.out === `answer from ${IDS.sol}\n`, show(plain));
+
+  for (const [what, args, env, error] of [
+    ['codex: an answer that is not JSON', ['--family', 'sol'], { STUB_ANSWER: 'I think it passes.' }, /the answer is not JSON/],
+    ['claude: no structured_output and a prose result', ['--family', 'fable'], { STUB_ANSWER: 'PASS, mostly' }, /the answer is not JSON/],
+    ['a value outside the enum', ['--family', 'sol'], { STUB_ANSWER: J({ ...good, verdict: 'MAYBE' }) }, /\$\.verdict: "MAYBE" is not one of "PASS", "FAIL"/],
+    ['a missing required field', ['--family', 'grok'], { STUB_STRUCTURED: J({ verdict: 'PASS', notes: ['x'] }) }, /\$: "score" is required/],
+    ['an extra field', ['--family', 'fable'], { STUB_STRUCTURED: J({ ...good, extra: 1 }) }, /\$: "extra" is not allowed/],
+    ['a number above the maximum', ['--family', 'sol'], { STUB_ANSWER: J({ ...good, score: 11 }) }, /\$\.score: 11 is above the maximum 10/],
+    ['a float for an integer', ['--family', 'sol'], { STUB_ANSWER: J({ ...good, score: 7.5 }) }, /\$\.score: number where the schema wants integer/],
+    ['too few items', ['--family', 'sol'], { STUB_ANSWER: J({ ...good, notes: [] }) }, /\$\.notes: 0 item\(s\) where the schema wants at least 1/],
+    ['a wrong item type', ['--family', 'sol'], { STUB_ANSWER: J({ ...good, notes: ['ok', 3] }) }, /\$\.notes\[1\]: integer where the schema wants string or null/],
+  ]) {
+    const r = sc(args, env);
+    ok(`${what}: exit 6, the first error on stderr, nothing on stdout`, r.code === 6 && r.out === '' && error.test(r.err) && r.calls.length === 1, show(r));
+  }
+  const both = sc(['--family', 'sol'], { STUB_ANSWER: J({ verdict: 'MAYBE', score: 0 }) });
+  ok('only the first error is named', both.code === 6 && (both.err.match(/does not match --schema/g) || []).length === 1, show(both));
+  const js = sc(['--family', 'sol', '--json'], { STUB_ANSWER: J(good) });
+  ok('--json: the matched JSON text is the answer', js.code === 0 && JSON.parse(JSON.parse(js.out).answer).score === 7, show(js));
+  const jsBad = sc(['--family', 'sol', '--json'], { STUB_ANSWER: 'nope' });
+  ok('--json with a non-JSON answer: exit 6 and the error in the result', jsBad.code === 6 && /not JSON/.test(JSON.parse(jsBad.out).error), show(jsBad));
+  const other = sc(['--family', 'fable'], { STUB_MODE: 'downgrade', STUB_STRUCTURED: J(good) });
+  ok('another model answering is still exit 2, before any schema check', other.code === 2 && other.out === '', show(other));
+
+  const bad = (name, body) => { const f = path.join(tmp, name); fs.writeFileSync(f, body); return f; };
+  for (const [what, file, error] of [
+    ['a missing file', path.join(tmp, 'no-such.schema.json'), /--schema .*no-such\.schema\.json: cannot read it \(ENOENT\)/],
+    ['a file that is not JSON', bad('not.json', '{ type: object'), /not JSON/],
+    ['an unsupported keyword', bad('pattern.json', J({ type: 'object', properties: { id: { type: 'string', pattern: '^x' } } })), /the schema\.properties\.id uses "pattern", which ask-model does not check/],
+    ['a nested unsupported keyword', bad('oneof.json', J({ type: 'array', items: { oneOf: [] } })), /the schema\.items uses "oneOf"/],
+    ['an unknown type', bad('type.json', J({ type: 'map' })), /the schema\.type must be one of/],
+    ['a schema for additionalProperties', bad('ap.json', J({ type: 'object', additionalProperties: { type: 'string' } })), /additionalProperties must be true or false/],
+    ['a schema that is not an object', bad('list.json', '[]'), /the schema must be an object/],
+  ]) {
+    const r = ask(['--family', 'sol', '--schema', file, '--cwd', WORK]);
+    ok(`--schema with ${what}: exit 64, no model called`, r.code === 64 && r.calls.length === 0 && error.test(r.err), show(r));
+  }
 }
 
 console.log('\nask-model: live');

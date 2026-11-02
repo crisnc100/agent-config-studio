@@ -3,7 +3,7 @@
  * ask-model — ask another model, read-only, and print its answer.
  *
  *   ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]])
- *             [--effort <e>] --prompt-file <path> [--investigate] [--json] [--cwd <dir>]
+ *             [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate] [--json] [--cwd <dir>]
  *
  * The mechanical half of "ask model X", in one place instead of in every
  * skill: the family, id and effort from the resolver (lib/models.js and
@@ -16,6 +16,10 @@
  * the first listed role that gives it one, else its flavor (lib/roles.js familyEffort, the rule model-id --effort uses).
  * An --effort given wins over both.
  *
+ * --schema passes the CLI's own structured-output flag (claude and grok --json-schema with the schema's JSON, codex
+ * --output-schema with the file), checks the answer against it, and prints only the JSON. ask-model checks the subset
+ * of JSON Schema in SCHEMA_KEYWORDS and refuses a schema with any other keyword rather than half-check it.
+ *
  * --investigate adds a shell (claude's Bash; grok's run_terminal_cmd, with
  * shell commands allowed; codex's read-only sandbox already runs commands) and
  * compares the git work tree before and after the call. Anything that changed
@@ -23,8 +27,9 @@
  *
  * Exit: 0 answered · 2 another model answered · 3 the CLI (or node) is not
  * installed · 4 the call failed or returned an error · 5 files changed under
- * --investigate · 64 a usage error, or a role or family that does not
- * resolve to a model a known CLI runs.
+ * --investigate · 6 the answer is not JSON or does not match --schema · 64 a
+ * usage error (an unusable --schema included), or a role or family that does
+ * not resolve to a model a known CLI runs.
  *
  * It lives in tools/, not bin/: it runs model CLIs, which nothing under bin/
  * or lib/ may do (tests/guards.mjs). `model-id --install` copies it beside the
@@ -40,8 +45,8 @@ import { EFFORTS, loadRegistry, resolveModel } from '../lib/models.js';
 import { familyEffort, resolveFlavor, resolveRole } from '../lib/roles.js';
 
 const SELF = fileURLToPath(import.meta.url);
-const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--investigate] [--json] [--cwd <dir>]';
-const VALUE_FLAGS = { '--role': 'role', '--family': 'family', '--effort': 'effort', '--effort-from': 'effortFrom', '--prompt-file': 'promptFile', '--cwd': 'cwd' };
+const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate] [--json] [--cwd <dir>]';
+const VALUE_FLAGS = { '--role': 'role', '--family': 'family', '--effort': 'effort', '--effort-from': 'effortFrom', '--prompt-file': 'promptFile', '--schema': 'schemaFile', '--cwd': 'cwd' };
 
 // What each CLI may use. Claude and grok are read-only by these allowlists alone
 // (their plan modes and denylists were observed to still write); codex by its sandbox.
@@ -65,9 +70,11 @@ function vendorOf(id) {
 }
 
 /** The argv for one call. `mcpOff` is codex's overrides that switch its MCP servers off (codexMcpOff). */
-function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [] }) {
+function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = null }) {
+  // The structured-output flags review.mjs passes: the schema's JSON for claude and grok, its file for codex.
+  const json = schema ? ['--json-schema', JSON.stringify(schema.doc)] : [];
   if (vendor === 'claude') {
-    return ['-p', prompt, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'json',
+    return ['-p', prompt, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'json', ...json,
       // --tools decides which tools exist, so skipping the prompts is safe; --strict-mcp-config with
       // no --mcp-config loads no MCP server. Without the skip, a deny rule or hook blocks a read silently.
       // --setting-sources user: a headless run honours the repo's .claude settings, hooks included, so
@@ -76,7 +83,7 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [] }) {
   }
   if (vendor === 'codex') {
     return ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', id,
-      ...(effort ? ['-c', `model_reasoning_effort=${effort}`] : []), ...mcpOff, prompt];
+      ...(effort ? ['-c', `model_reasoning_effort=${effort}`] : []), ...mcpOff, ...(schema ? ['--output-schema', schema.file] : []), prompt];
   }
   // --disallowed-tools and --deny MCPTool keep configured MCP servers out of reach (grok has no strict-MCP flag).
   // Headless grok refuses any call that needs approval and still exits 0, so --investigate allows the shell
@@ -84,7 +91,88 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [] }) {
   return ['-p', prompt, '-m', id, ...(effort ? ['--reasoning-effort', effort] : []), '--cwd', cwd,
     '--tools', TOOLS.grok[mode], '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool',
     ...(mode === 'investigate' ? ['--allow', 'Bash'] : []),
-    '--disable-web-search', '--no-subagents', '--max-turns', GROK_MAX_TURNS, '--output-format', 'json'];
+    '--disable-web-search', '--no-subagents', '--max-turns', GROK_MAX_TURNS, '--output-format', 'json', ...json];
+}
+
+// The JSON Schema ask-model checks: what the gate's schemas use. Annotations check nothing; anything else is refused.
+const SCHEMA_KEYWORDS = ['type', 'properties', 'required', 'items', 'enum', 'additionalProperties', 'minimum', 'maximum', 'minItems', 'description', 'title', '$schema'];
+const SCHEMA_TYPES = ['object', 'array', 'string', 'integer', 'number', 'boolean', 'null'];
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+/** Why a schema can't be checked as written, or null. Walks every nested schema. */
+function schemaProblem(s, at = 'the schema') {
+  if (!isObject(s)) return `${at} must be an object`;
+  const other = Object.keys(s).find((k) => !SCHEMA_KEYWORDS.includes(k));
+  if (other !== undefined) return `${at} uses "${other}", which ask-model does not check (it checks ${SCHEMA_KEYWORDS.join(', ')})`;
+  if (Object.hasOwn(s, 'type')) {
+    const types = [].concat(s.type);
+    if (!types.length || types.some((t) => !SCHEMA_TYPES.includes(t))) return `${at}.type must be one of ${SCHEMA_TYPES.join(', ')}, or a list of them`;
+  }
+  if (Object.hasOwn(s, 'properties')) {
+    if (!isObject(s.properties)) return `${at}.properties must be an object`;
+    for (const [k, v] of Object.entries(s.properties)) {
+      const p = schemaProblem(v, `${at}.properties.${k}`);
+      if (p) return p;
+    }
+  }
+  if (Object.hasOwn(s, 'required') && (!Array.isArray(s.required) || s.required.some((k) => typeof k !== 'string'))) return `${at}.required must be a list of names`;
+  if (Object.hasOwn(s, 'items')) {
+    const p = schemaProblem(s.items, `${at}.items`);
+    if (p) return p;
+  }
+  if (Object.hasOwn(s, 'enum') && (!Array.isArray(s.enum) || !s.enum.length)) return `${at}.enum must be a non-empty list`;
+  if (Object.hasOwn(s, 'additionalProperties') && typeof s.additionalProperties !== 'boolean') return `${at}.additionalProperties must be true or false`;
+  for (const k of ['minimum', 'maximum']) if (Object.hasOwn(s, k) && !Number.isFinite(s[k])) return `${at}.${k} must be a number`;
+  if (Object.hasOwn(s, 'minItems') && !(Number.isSafeInteger(s.minItems) && s.minItems >= 0)) return `${at}.minItems must be a whole number`;
+  return null;
+}
+
+const typeOf = (v) => (v === null ? 'null' : Array.isArray(v) ? 'array' : Number.isInteger(v) ? 'integer' : typeof v);
+
+/** The first way `v` fails schema `s`, as `$.path: why`, or null. */
+function schemaError(v, s, at = '$') {
+  if (Object.hasOwn(s, 'type')) {
+    const types = [].concat(s.type), t = typeOf(v);
+    if (!types.includes(t) && !(t === 'integer' && types.includes('number'))) return `${at}: ${t} where the schema wants ${types.join(' or ')}`;
+  }
+  if (Object.hasOwn(s, 'enum') && !s.enum.some((e) => JSON.stringify(e) === JSON.stringify(v))) {
+    return `${at}: ${JSON.stringify(v)} is not one of ${s.enum.map((e) => JSON.stringify(e)).join(', ')}`;
+  }
+  if (typeof v === 'number') {
+    if (Object.hasOwn(s, 'minimum') && v < s.minimum) return `${at}: ${v} is below the minimum ${s.minimum}`;
+    if (Object.hasOwn(s, 'maximum') && v > s.maximum) return `${at}: ${v} is above the maximum ${s.maximum}`;
+  }
+  if (Array.isArray(v)) {
+    if (Object.hasOwn(s, 'minItems') && v.length < s.minItems) return `${at}: ${v.length} item(s) where the schema wants at least ${s.minItems}`;
+    if (s.items) for (let i = 0; i < v.length; i++) {
+      const e = schemaError(v[i], s.items, `${at}[${i}]`);
+      if (e) return e;
+    }
+  }
+  if (isObject(v)) {
+    const props = s.properties || {};
+    const missing = (s.required || []).find((k) => !Object.hasOwn(v, k));
+    if (missing !== undefined) return `${at}: "${missing}" is required`;
+    if (s.additionalProperties === false) {
+      const extra = Object.keys(v).find((k) => !Object.hasOwn(props, k));
+      if (extra !== undefined) return `${at}: "${extra}" is not allowed`;
+    }
+    for (const [k, sub] of Object.entries(props)) {
+      if (!Object.hasOwn(v, k)) continue;
+      const e = schemaError(v[k], sub, `${at}.${k}`);
+      if (e) return e;
+    }
+  }
+  return null;
+}
+
+/** The --schema file, read and checked: { file, doc }, or why it can't be used. */
+function loadSchema(file) {
+  let doc;
+  try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (e) { return { error: `--schema ${file}: ${e instanceof SyntaxError ? `not JSON (${e.message})` : `cannot read it (${e.code || e.message})`}` }; }
+  const problem = schemaProblem(doc);
+  return problem ? { error: `--schema ${file}: ${problem}` } : { file: path.resolve(file), doc };
 }
 
 /**
@@ -360,8 +448,11 @@ function run(bin, argv, cwd, env) {
 
 const tail = (s) => String(s || '').trim().slice(-500) || '(no output)';
 
-/** The answer from one CLI's output, or an exit code and why. */
-function readAnswer(vendor, id, r) {
+/**
+ * The answer from one CLI's output, or an exit code and why. With a schema, the structured answer: claude's
+ * structured_output (else its result), grok's structuredOutput (else its text), codex's stdout, as JSON text.
+ */
+function readAnswer(vendor, id, r, schema = null) {
   if (r.error) return { exit: r.error.code === 'ENOENT' ? 3 : 4, error: `${vendor} could not start: ${r.error.message}` };
   if (r.signal) return { exit: 4, error: `${vendor} was stopped by ${r.signal}` };
   let answer;
@@ -385,17 +476,23 @@ function readAnswer(vendor, id, r) {
       if (r.code !== 0) return { exit: 4, error: `claude exited ${r.code}: ${tail(r.stderr)}` };
       const used = Object.keys(env.modelUsage || {});
       if (!used.includes(id)) return { exit: 2, error: `asked for ${id}, but ${used.length ? used.join(', ') : 'no model'} answered — not its answer` };
-      answer = env.result;
+      answer = schema && isObject(env.structured_output) ? JSON.stringify(env.structured_output) : env.result;
     } else {
       if (env?.type === 'error' || r.code !== 0) return { exit: 4, error: `grok failed (exit ${r.code}): ${tail(env?.message ?? r.stderr)}` };
       // The resolved id itself, as for claude: neither the registry nor the review runtime names a grok alias.
       const used = Object.keys(env.modelUsage || {});
       if (!used.includes(id)) return { exit: 2, error: `asked for ${id}, but ${used.length ? used.join(', ') : 'no model'} answered — not its answer` };
-      answer = env.text;
+      const structured = env.structuredOutput;
+      answer = schema && structured != null ? (typeof structured === 'string' ? structured : JSON.stringify(structured)) : env.text;
     }
   }
   if (typeof answer !== 'string' || !answer.trim()) return { exit: 4, error: `${vendor} returned an empty answer` };
-  return { answer: answer.trimEnd() };
+  if (!schema) return { answer: answer.trimEnd() };
+  let value;
+  try { value = JSON.parse(answer); } catch (e) { return { exit: 6, error: `the answer is not JSON (${e.message}): ${tail(answer)}` }; }
+  const wrong = schemaError(value, schema.doc);
+  if (wrong) return { exit: 6, error: `the answer does not match --schema ${schema.file}: ${wrong}` };
+  return { answer: JSON.stringify(value, null, 2) };
 }
 
 async function main(argv) {
@@ -412,6 +509,8 @@ async function main(argv) {
   if (prompt.startsWith('-')) prompt = `\n${prompt}`;
   const cwd = path.resolve(o.cwd ?? process.cwd());
   try { if (!fs.statSync(cwd).isDirectory()) return usage(`--cwd ${cwd} is not a directory`); } catch { return usage(`--cwd ${cwd} does not exist`); }
+  const schema = o.schemaFile === undefined ? null : loadSchema(o.schemaFile);
+  if (schema?.error) return usage(schema.error);
 
   const m = resolve(o);
   if (m.error) return usage(m.error);
@@ -461,12 +560,12 @@ async function main(argv) {
   const before = o.investigate ? snapshot(cwd) : null;
   if (before?.error) { result.error = `${before.error}, so changes under --investigate could not be checked — ${vendor} was not run`; return finish(4); }
   if (o.investigate && !before) process.stderr.write(`ask-model: ${cwd} is not in a git work tree — changes are not checked\n`);
-  const r = await run(bin, argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff }), cwd, env);
+  const r = await run(bin, argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff, schema }), cwd, env);
   // A call grok refused for want of approval leaves only this line, and grok still exits 0.
   if (vendor === 'grok') {
     for (const line of String(r.stderr || '').split('\n')) if (/permission required:/.test(line)) process.stderr.write(`ask-model: grok: ${line.trim()}\n`);
   }
-  const got = readAnswer(vendor, m.id, r);
+  const got = readAnswer(vendor, m.id, r, schema);
   if (got.answer !== undefined) result.answer = got.answer;
   else result.error = got.error;
 
