@@ -352,3 +352,63 @@ test('R4 a new close of an old review whose diff measures over the cap logs empt
   assert.deepEqual(record.coverage, [])
   blocked(push())
 })
+
+// A truncated file, moved by the fix round: the review cut it, so no later pass may cover it under its new name.
+function movedAfterCut() {
+  commit({ 'z/big.js': BIG })
+  const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
+  assert.deepEqual(r.truncated, ['z/big.js'])
+  git('mv', 'z/big.js', 'z/moved.js')
+  commit({ 'src/one.js': 'export const one = 3\n', 'src/one.test.js': 'test one\n' }, 'move big, fix one')
+  return { r, check: fixCheck(r.id) }
+}
+test('X1 a file the review truncated, moved before the fix check, is diffed whole and stays uncovered', () => {
+  const { r, check } = movedAfterCut()
+  assert.equal(check.noRenames, true)
+  assert.ok(check.truncated.includes('z/moved.js'), check.truncated.join(', '))
+  assert.equal(check.coverage.some(([path]) => path === 'z/moved.js'), false)
+  // The close can't vouch for the moved file either, and a slice of the rest leaves exactly it uncovered.
+  const partial = close(r.id, { f1: { status: 'fixed' } })
+  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.ok(partial.record.outOfScope.includes('z/moved.js'))
+  closed(review('src/,docs/').id)
+  blocked(push(), uncovered(['z/moved.js']))
+})
+test('X1 a fix-check record from before noRenames never covers a rename destination, in the close or on its own', () => {
+  const { r, check } = movedAfterCut()
+  const head = git('rev-parse', 'HEAD')
+  // As PR A's runtime logged it: the rename diff fit under the cap, so nothing was cut and the moved blob was covered.
+  writeFileSync(LOG, records().map((e) => {
+    if (e.id !== check.id) return JSON.stringify(e)
+    const { noRenames, ...old } = e
+    return JSON.stringify({ ...old, truncated: [], coverage: [['src/one.js', `100644 ${blob(head, 'src/one.js')}`],
+      ['src/one.test.js', `100644 ${blob(head, 'src/one.test.js')}`], ['z/moved.js', `100644 ${blob(head, 'z/moved.js')}`]] })
+  }).join('\n') + '\n')
+  const partial = close(r.id, { f1: { status: 'fixed' } })
+  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.ok(partial.record.outOfScope.includes('z/moved.js'))
+  closed(review('src/,docs/').id)
+  blocked(push(), uncovered(['z/moved.js']))
+})
+
+test('X2 a tracked repo config loses every own-file key it sets, blank values included', () => {
+  commit({ '.claude/review-config.json': JSON.stringify({ verifyCmd: ' ', base: '', classifier: '\n' }) })
+  const r = script([], { REVIEW_PATHS: '' }); allowed(r)
+  assert.match(r.out, /Ignoring verifyCmd, classifier, base in \.claude\/review-config\.json/)
+})
+test('X2 a whitespace-only verifyCmd or --test-cmd is no test command: close asks for one', () => {
+  const r = review()
+  const path = join(ROOT, 'statuses.json')
+  writeFileSync(path, '{}')
+  for (const [args, extra] of [[['--test-cmd', ' '], {}], [['--test-cmd', '\n'], {}], [[], { REVIEW_VERIFY_CMD: ' ' }], [[], { REVIEW_VERIFY_CMD: '\t\n' }]]) {
+    const before = records().length
+    const refused = script(['--close', r.id, '--status', path, ...args], extra)
+    assert.notEqual(refused.status, 0, refused.out)
+    assert.match(refused.out, /No test command configured; use --test-cmd or --no-tests "reason"/)
+    assert.equal(records().length, before, 'a refused close logs nothing')
+  }
+  // An untracked repo config is trusted, and a blank verifyCmd there is unset too.
+  mkdirSync(join(REPO, '.claude'), { recursive: true })
+  writeFileSync(join(REPO, '.claude/review-config.json'), JSON.stringify({ verifyCmd: '  ' }))
+  const untracked = script(['--close', r.id, '--status', path])
+  assert.notEqual(untracked.status, 0, untracked.out)
+  assert.match(untracked.out, /No test command configured/)
+})
