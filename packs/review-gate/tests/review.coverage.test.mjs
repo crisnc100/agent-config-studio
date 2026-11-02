@@ -300,3 +300,55 @@ test('E2 a tracked repo config cannot set coverageExempt; an untracked one can',
   const pushed = push(); allowed(pushed)
   assert.match(pushed.stderr, /Coverage exempt \(not reviewed\): z\/big\.js/)
 })
+
+test('R1 a tracked repo config cannot set coverageExempt or a command key with any value; a malformed trusted list fails loudly', () => {
+  commit({ '.claude/review-config.json': JSON.stringify({ coverageExempt: [null], verifyCmd: [null] }) })
+  const r = script([], { REVIEW_PATHS: '' }); allowed(r)
+  assert.match(r.out, /Ignoring verifyCmd, coverageExempt in \.claude\/review-config\.json/)
+  closed(records().filter((e) => e.type === 'review').at(-1).id)
+  commit({ 'null/x.js': 'export const x = 1\n' })
+  blocked(push(), uncovered(['null/x.js']))
+  git('rm', '-q', '.claude/review-config.json'); git('commit', '-qm', 'drop the config')
+  for (const value of [[null], [''], ['  '], [3], { 'z/**': true }]) {
+    writeFileSync(join(SKILL, 'config.json'), JSON.stringify({ coverageExempt: value }))
+    blocked(push(), /coverageExempt must be a list of non-empty path patterns/)
+  }
+})
+
+test('R2 a fixed file whose fix diff the size cap cut leaves that file uncovered after a complete close', () => {
+  const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
+  commit({ 'src/one.js': `export const one = 3\n${BIG}`, 'src/one.test.js': 'test one\n' })
+  const check = fixCheck(r.id)
+  assert.deepEqual(check.truncated, ['src/one.js', 'src/one.test.js'])
+  const record = closed(r.id, { f1: { status: 'fixed' } })
+  assert.deepEqual(record.coverage.map(([path]) => path), ['docs/three.md'])
+  blocked(push(), /leave 2 file\(s\) uncovered: src\/one\.js, src\/one\.test\.js —/)
+})
+
+test('R3 a file the review saw only in part stays uncovered after the fix check sees its later change, in the close and in the check', () => {
+  commit({ 'z/big.js': BIG })
+  const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
+  assert.deepEqual(r.truncated, ['z/big.js'])
+  commit({ 'z/big.js': `${BIG}export const more = 1\n`, 'src/one.js': 'export const one = 3\n', 'src/one.test.js': 'test one\n' })
+  const check = fixCheck(r.id)
+  assert.deepEqual(check.truncated, [])
+  assert.deepEqual(check.coverage.map(([path]) => path), ['src/one.js', 'src/one.test.js'])
+  // The check saw the change, so the close is complete; the cut part was never read, so the file is not covered.
+  const record = closed(r.id, { f1: { status: 'fixed' } })
+  assert.deepEqual(record.outOfScope, [])
+  assert.deepEqual(record.coverage.map(([path]) => path), ['docs/three.md', 'src/one.js', 'src/one.test.js'])
+  blocked(push(), /leave 1 file\(s\) uncovered: z\/big\.js —/)
+})
+
+test('R4 a new close of an old review whose diff measures over the cap logs empty coverage and is not taken as a legacy close', () => {
+  commit({ 'z/big.js': BIG })
+  const r = review()
+  writeFileSync(LOG, records().map((e) => {
+    if (e.id !== r.id) return JSON.stringify(e)
+    const { truncated, ...old } = e
+    return JSON.stringify(old)
+  }).join('\n') + '\n')
+  const record = closed(r.id)
+  assert.deepEqual(record.coverage, [])
+  blocked(push())
+})

@@ -154,7 +154,8 @@ function repoFileIsOwn(p, homes) {
   return !real.some((r) => entries.has(r))
 }
 function withoutRepoCommands(config, p, homes) {
-  const keys = OWN_FILE_KEYS.filter((k) => config[k] != null && String(config[k]).trim() !== '')
+  // Any value counts but null or a blank string: String([null]) is '' too, and an array or object can still act.
+  const keys = OWN_FILE_KEYS.filter((k) => config[k] != null && (typeof config[k] !== 'string' || config[k].trim() !== ''))
   const pick = String(config.pick ?? '').trim().toLowerCase()
   const pickMayRun = pick !== '' && pick !== 'first' && pick !== 'rotate'
   if ((!keys.length && !pickMayRun) || repoFileIsOwn(p, homes)) return config
@@ -553,7 +554,15 @@ const RISK_PATHS = Array.isArray(CONFIG.riskPaths)
 // coverageExempt (REVIEW_COVERAGE_EXEMPT, comma- or newline-separated): path patterns, same globs, that the push gate
 // does not ask coverage for, such as a lockfile whose diff alone is over the size cap. Empty by default; the refusal
 // and the summary name every exempt file as not reviewed.
-const COVERAGE_EXEMPT = normalisePaths(cfg('REVIEW_COVERAGE_EXEMPT', 'coverageExempt', ''))
+const COVERAGE_EXEMPT = exemptPatterns(cfg('REVIEW_COVERAGE_EXEMPT', 'coverageExempt', ''))
+// A list that isn't text or non-empty strings fails loudly; at the gate it blocks the push, never guesses.
+function exemptPatterns(value) {
+  if (typeof value === 'string' || Array.isArray(value) && value.every((p) => typeof p === 'string' && p.trim())) return normalisePaths(value)
+  const message = `coverageExempt must be a list of non-empty path patterns; got ${JSON.stringify(value)}`
+  if (!args.includes('--gate')) stop(message)
+  gateConfigError ||= new Error(message)
+  return []
+}
 // force: [{ "paths": ["**/auth/**", …] | "risk", "family": "<family>" }] — first match wins, before any pick.
 const FORCE = Array.isArray(CONFIG.force) ? CONFIG.force : []
 
@@ -1948,16 +1957,26 @@ function reviewTruncated(review) {
   const r = spawnSync('git', [...(paths ? ['-C', TOP] : []), 'diff', `${review.baseSha}...${review.head}`, ...pathspec(paths)], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
   return r.error || r.status !== 0 || r.stdout.trim().length > DIFF_CAP ? null : new Set()
 }
+// What a fix check saw in full: its fix diff's files minus the ones the cap cut (`cut`, every fix-diff file when that
+// can't be told). A file it saw is in scope at close; seeing a later change never covers a part the review missed.
+function fixCheckSeen(check) {
+  if (!check) return { seen: new Set(), cut: new Set() }
+  const files = fullObjectId(check.baseSha) && treeOf(check.baseSha) ? filesBetween(check.baseSha, check.head, sliceOf(check)) : null
+  const cut = files && reviewTruncated(check)
+  return cut ? { seen: new Set(files.filter((p) => !cut.has(p))), cut } : { seen: new Set(), cut: files ? new Set(files) : null }
+}
 // A complete close vouches for the state at its head of the review's files (the slice's recorded files, or the net diff
-// from baseSha) and of every file it accepted since, minus files the cap cut that the fix check did not see in full.
-// A review without that data (no baseSha, a slice without files, an over-cap legacy diff) gives none: null.
-function closeCoverage(review, since, checked, head) {
+// from baseSha) and of every file it accepted since, minus any file the cap cut in the review or in the fix check.
+// Coverage the close can't establish is [] (a slice without files, an over-cap legacy diff, a fix check whose cut is
+// unknown and that changed files since). Only a review from before baseSha was logged gives null: no field, the old rule.
+function closeCoverage(review, since, check, head) {
   const paths = sliceOf(review)
-  if (paths ? !Array.isArray(review.files) : !fullObjectId(review.baseSha) || !treeOf(review.baseSha)) return null
-  const truncated = reviewTruncated(review)
-  if (!truncated) return null
+  if (!paths && !fullObjectId(review.baseSha)) return null
+  if (paths ? !Array.isArray(review.files) : !treeOf(review.baseSha)) return []
+  const truncated = reviewTruncated(review), { cut } = fixCheckSeen(check)
+  if (!truncated || !cut && since.length) return []
   const reviewed = paths ? sliceFiles(review) : filesBetween(review.baseSha, review.head)
-  return coverageOf(head, [...reviewed, ...since].filter((p) => !truncated.has(p) || checked.has(p)))
+  return coverageOf(head, [...reviewed, ...since].filter((p) => !truncated.has(p) && !cut?.has(p)))
 }
 function closeReview(id) {
   requireClean()
@@ -2019,9 +2038,9 @@ function closeReview(id) {
     for (const path of filesBetween(review.head, recheck.head)) fixedFiles.add(path)
   }
   // A file the fix check saw in full was reviewed, so a fix to a sibling file it saw is in scope.
-  const checked = new Set(coverageMap(check)?.keys())
-  const outOfScope = files.filter((p) => !fixedFiles.has(p) && !checked.has(p) && !isTestFile(p) && !p.startsWith('builds/'))
-  const coverage = outOfScope.length ? null : closeCoverage(review, files, checked, head)
+  const { seen } = fixCheckSeen(check)
+  const outOfScope = files.filter((p) => !fixedFiles.has(p) && !seen.has(p) && !isTestFile(p) && !p.startsWith('builds/'))
+  const coverage = outOfScope.length ? null : closeCoverage(review, files, check, head)
   let tests = null
   if (command) {
     const r = spawnSync(command, { shell: true, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
@@ -2126,13 +2145,15 @@ async function fixCheck(id) {
   const findingDetails = scored.findings.map((f, i) => ({ ...locatedFinding(f), id: `x${i + 1}` }))
   requireClean()
   if (headNow() !== head) throw new Error('HEAD changed during fix check')
-  // What it saw in full: the fix diff's files at its head, minus any the size cap cut.
+  // What it covers: the fix diff's files at its head, minus any the cap cut here or in the original review (it read
+  // only the later change); nothing when the original's cut is unknown.
   const files = filesBetween(original.head, head, SLICE), truncated = truncatedFiles(diff, files)
+  const missed = original.kind === 'grade' || fullObjectId(original.baseSha) ? reviewTruncated(original) : null
   const checkId = `fix-${Date.now()}-${randomBytes(3).toString('hex')}`
   appendLog({ type: 'review', kind: 'fix-check', rubricVersion: RUBRIC_VERSION, rescored: scored.rescored, id: checkId, review: id, ts: new Date().toISOString(), head, branch,
     repo: repoName(), repoId: repoIdentity(), base: original.head, baseSha: original.head, family: SEL.family, model: SEL.id, vendor: SEL.vendor, copy: COPY_PATH,
     ...(SLICE && { paths: SLICE }), findings: findingDetails.length, findingDetails, ...recordedLocations(findingDetails),
-    truncated, coverage: coverageOf(head, files.filter((p) => !truncated.includes(p))), durationMs })
+    truncated, coverage: missed ? coverageOf(head, files.filter((p) => !truncated.includes(p) && !missed.has(p))) : [], durationMs })
   console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)`)
   for (const f of findingDetails.filter((f) => f[WHERE]?.ambiguous))
     console.warn(`⚠ ${f.id}: path ambiguous, the quote is in both ${f[WHERE].ambiguous.join(' and ')}; it authorizes no file at close`)
