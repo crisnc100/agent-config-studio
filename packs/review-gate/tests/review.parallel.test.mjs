@@ -26,7 +26,7 @@ const schema = a.includes('--output-schema') ? fs.readFileSync(a[a.indexOf('--ou
 const start = Date.now()
 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.STUB_SLEEP_MS || 0))
 fs.writeFileSync(path.join(${JSON.stringify(CALLS)}, process.pid+'-'+start+'.json'), JSON.stringify({ start, end: Date.now() }))
-const reply = schema.includes('"scores"') ? '{"scores":[]}' : '{"findings":[]}'
+const reply = schema.includes('"scores"') ? '{"scores":[]}' : (process.env.STUB_FINDINGS_FILE ? fs.readFileSync(process.env.STUB_FINDINGS_FILE, 'utf8') : '{"findings":[]}')
 if (a.includes('-o')) fs.writeFileSync(a[a.indexOf('-o')+1], reply)
 else console.log(JSON.stringify({structured_output:JSON.parse(reply),structuredOutput:JSON.parse(reply),modelUsage:{'stub-grok':{}}}))
 `
@@ -195,4 +195,76 @@ test('S3 --slices refuses REVIEW_PATHS alongside it, a bad --jobs, no groups, an
   const dirty = run(['--slices', 'a/;b/'])
   assert.notEqual(dirty.status, 0); assert.match(dirty.out, /Tracked working tree changes present/)
   assert.equal(readdirSync(CALLS).length, 0); assert.deepEqual(lines(), [])
+})
+
+const waitFor = async (path, ms = 5000) => {
+  for (const until = Date.now() + ms; !existsSync(path); await new Promise((r) => setTimeout(r, 10)))
+    if (Date.now() > until) throw new Error(`${path} never appeared`)
+}
+test('F1 an empty or unreadable lock is one being set up, not a stale one: the append waits for it', async () => {
+  for (const text of ['', 'not a pid']) {
+    rmSync(LOG, { force: true })
+    writeFileSync(LOCK, text)
+    const waiting = start(['--log-grade', gradeFile(1, 10)])
+    await new Promise((r) => setTimeout(r, 700))
+    assert.equal(lines().length, 0, `nothing is appended past a ${JSON.stringify(text)} lock`)
+    assert.equal(readFileSync(LOCK, 'utf8'), text, 'the lock is left alone')
+    rmSync(LOCK)
+    allowed(await waiting)
+    assert.equal(lines().length, 1)
+  }
+})
+
+test('F2 a lock taken fresh after a waiter judged the old one stale is never removed by that waiter', async () => {
+  const gate = join(ROOT, 'reclaim-gate')
+  rmSync(gate, { force: true }); rmSync(`${gate}.judged`, { force: true })
+  writeFileSync(LOCK, `${deadPid()} left-by-a-crash`)
+  const waiting = start(['--log-grade', gradeFile(1, 10)], { REVIEW_LOCK_TEST_GATE: gate })
+  // The waiter has judged the crashed lock stale; another run now takes the lock before it acts.
+  await waitFor(`${gate}.judged`)
+  writeFileSync(LOCK, `${process.pid} taken-fresh`)
+  writeFileSync(gate, '')
+  await new Promise((r) => setTimeout(r, 500))
+  assert.equal(readFileSync(LOCK, 'utf8'), `${process.pid} taken-fresh`, 'the fresh lock survives the reclaim')
+  assert.equal(lines().length, 0)
+  rmSync(LOCK)
+  allowed(await waiting)
+  assert.equal(lines().length, 1)
+  assert.deepEqual(readdirSync(dirname(LOG)).filter((name) => name !== 'review-log.jsonl'), [], 'no lock, temp or tombstone left')
+})
+
+test('F3 a slice with a 200 KB finding hands its whole FINDINGS_JSON to the runner', () => {
+  const big = { issue: 'x'.repeat(200_000), file: 'a/x.js', line: '1', quote: 'a 2', suggestion: 'fix it', likelihood: 5, impact: 5, protected: false, trigger: 'reading a' }
+  const file = join(ROOT, 'big-findings.json')
+  writeFileSync(file, JSON.stringify({ findings: [big] }))
+  const r = run(['--slices', 'a/;b/'], { STUB_FINDINGS_FILE: file })
+  allowed(r)
+  const slices = JSON.parse(r.stdout.slice(r.stdout.indexOf('===SLICES_JSON===') + 17))
+  assert.deepEqual(slices.map((s) => [s.paths, s.exit]), [['a/', 0], ['b/', 0]])
+  assert.equal(slices[0].result.findings[0].issue.length, 200_000)
+  assert.equal(slices[1].result.findings[0].issue.length, 200_000)
+  for (const s of slices) assert.equal(s.reviewId, s.result.reviewId)
+})
+
+// A copy of review.mjs whose FINDINGS_JSON is cut short or never printed, as when a child's output is lost; --slices
+// run from it spawns the same copy for every slice.
+function brokenCopy(name, replacement) {
+  const source = readFileSync(SCRIPT, 'utf8'), marker = "console.log('\\n===FINDINGS_JSON===')"
+  assert.ok(source.includes(marker))
+  const path = join(ROOT, name)
+  writeFileSync(path, source.replace(marker, replacement))
+  return path
+}
+test('F3 a slice that exits 0 with its FINDINGS_JSON missing or cut short fails the slice and the run', () => {
+  for (const [name, replacement, error] of [
+    ['cut.mjs', "console.log('\\n===FINDINGS_JSON===\\n{\"reviewId\": \"cut')", /its FINDINGS_JSON is malformed/],
+    ['missing.mjs', "console.log('\\n===FINDINGS_GONE===')", /it printed no FINDINGS_JSON/],
+  ]) {
+    const r = spawnSync(process.execPath, [brokenCopy(name, replacement), '--slices', 'a/;b/'], { cwd: REPO, env: env(), encoding: 'utf8', timeout: 60000 })
+    assert.notEqual(r.status, 0, r.stdout)
+    const slices = JSON.parse(r.stdout.slice(r.stdout.indexOf('===SLICES_JSON===') + 17))
+    assert.deepEqual(slices.map((s) => [s.paths, s.exit, s.result]), [['a/', 1, null], ['b/', 1, null]])
+    for (const s of slices) assert.match(s.error, error)
+    assert.match(r.stdout, new RegExp(`=== slice 1/2: a/ \\(exit 1: ${error.source}`))
+  }
 })

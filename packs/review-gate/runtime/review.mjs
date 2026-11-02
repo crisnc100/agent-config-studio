@@ -42,6 +42,7 @@ import {
   appendFileSync,
   constants,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -379,8 +380,9 @@ function readLog({ strict = false } = {}) {
   return entries
 }
 // Parallel slices append at once, and a write() to a regular file is not atomic for lines this long (findings and
-// coverage reach hundreds of KB), so each append holds an exclusive lock file: `pid token`, removed only while it is
-// still this run's. A lock whose process is gone, or older than LOCK_STALE_MS, is stale and is removed.
+// coverage reach hundreds of KB), so each append holds an exclusive lock: `pid token`, written to a temp file first and
+// hard-linked to the lock path, so a lock is never seen empty (link fails if the path exists). A lock whose process is
+// gone, or older than LOCK_STALE_MS, is stale; an empty or malformed one is stale only by age.
 const LOCK_WAIT_MS = 10_000, LOCK_STALE_MS = 30_000
 const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 // The stale lock's text, or null while it is live or gone.
@@ -392,8 +394,9 @@ function staleLock(lock) {
   } catch {
     return null
   }
+  if (age > LOCK_STALE_MS) return text
   const pid = Number(text.split(' ')[0])
-  if (age > LOCK_STALE_MS || !Number.isSafeInteger(pid) || pid <= 0) return text
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null
   try {
     process.kill(pid, 0)
     return null
@@ -401,23 +404,49 @@ function staleLock(lock) {
     return e.code === 'ESRCH' ? text : null
   }
 }
+// Reclaims a lock judged stale: rename it to a tombstone (atomic, so one reclaimer wins), then check the tombstone is
+// the lock judged stale. If another run took the lock in between, it goes back while the path is free; if a third run
+// already took the path, this one keeps waiting.
+function reclaimLock(lock, stale) {
+  const gate = process.env.REVIEW_LOCK_TEST_GATE // tests only: hold here, between the judgment and the reclaim
+  if (gate) {
+    writeFileSync(`${gate}.judged`, '')
+    for (const until = Date.now() + 5000; !existsSync(gate) && Date.now() < until;) pause(10)
+  }
+  const tomb = `${lock}.stale-${randomBytes(6).toString('hex')}`
+  try {
+    renameSync(lock, tomb)
+  } catch (e) {
+    if (e.code === 'ENOENT') return
+    throw e
+  }
+  try {
+    if (readFileSync(tomb, 'utf8') !== stale) linkSync(tomb, lock)
+  } catch (e) {
+    if (e.code !== 'EEXIST') throw e
+  } finally {
+    rmSync(tomb, { force: true })
+  }
+}
 function withLogLock(fn) {
   const lock = `${LOG_PATH}.lock`, token = `${process.pid} ${randomBytes(6).toString('hex')}`, deadline = Date.now() + LOCK_WAIT_MS
-  for (;;) {
-    try {
-      writeFileSync(lock, token, { flag: 'wx' })
-      break
-    } catch (e) {
-      if (e.code !== 'EEXIST') throw e
+  const temp = `${lock}.${randomBytes(6).toString('hex')}`
+  writeFileSync(temp, token)
+  try {
+    for (;;) {
+      try {
+        linkSync(temp, lock)
+        break
+      } catch (e) {
+        if (e.code !== 'EEXIST') throw e
+      }
       const stale = staleLock(lock)
-      // Removed only while it still holds the text judged stale, so a waiter never deletes a lock just taken.
-      if (stale !== null) {
-        try {
-          if (readFileSync(lock, 'utf8') === stale) unlinkSync(lock)
-        } catch { /* gone already */ }
-      } else if (Date.now() > deadline) throw new Error(`${lock} has been held for over ${LOCK_WAIT_MS / 1000}s by another review run`)
-      else pause(20)
+      if (stale !== null) reclaimLock(lock, stale)
+      if (Date.now() > deadline) throw new Error(`${lock} has been held for over ${LOCK_WAIT_MS / 1000}s by another review run`)
+      if (stale === null) pause(20)
     }
+  } finally {
+    rmSync(temp, { force: true })
   }
   try {
     return fn()
@@ -2167,10 +2196,13 @@ async function runSlices() {
     child.on('error', (e) => { err += `\n${e.message}` })
     child.on('close', (code) => {
       const at = out.indexOf('===FINDINGS_JSON===')
-      let result = null
-      try { result = at === -1 ? null : JSON.parse(out.slice(at + 19)) } catch { /* reported as null */ }
-      results[i] = { paths: groups[i], exit: code ?? 1, reviewId: result?.reviewId ?? null, result }
-      console.log(`=== slice ${i + 1}/${groups.length}: ${groups[i]} (exit ${code ?? 1}) ===\n${err.trim()}\n${out.trim()}\n`)
+      let result = null, error = null
+      try { result = at === -1 ? null : JSON.parse(out.slice(at + 19)) } catch (e) { error = `its FINDINGS_JSON is malformed: ${e.message}` }
+      // A slice that exits 0 without whole findings failed: its review may be logged, but nothing here shows it.
+      if (code === 0 && !result?.reviewId) error ||= 'it printed no FINDINGS_JSON'
+      const exit = error ? 1 : code ?? 1
+      results[i] = { paths: groups[i], exit, reviewId: result?.reviewId ?? null, result, ...(error && { error }) }
+      console.log(`=== slice ${i + 1}/${groups.length}: ${groups[i]} (exit ${exit}${error ? `: ${error}` : ''}) ===\n${err.trim()}\n${out.trim()}\n`)
       done()
     })
   })
@@ -2864,5 +2896,7 @@ function pushGate() {
       unverified: unlocated.map(publicFinding),
     }, null, 2),
   )
+  // Piped (the slice runner reads it), stdout may still be queued: exit only once it has drained.
+  await Promise.all([process.stdout, process.stderr].map((stream) => new Promise((done) => stream.write('', done))))
   process.exit(0)
 })().catch((e) => die(e.message))
