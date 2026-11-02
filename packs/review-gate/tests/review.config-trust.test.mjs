@@ -404,3 +404,22 @@ test('a branch that holds .grok/hooks is never reviewed by grok', () => {
   assert.equal(r.calls.length, 0, 'grok ran beside the branch\'s .grok/hooks')
   assert.equal(reviews().length, 0)
 })
+test('a repository at HOME holding .grok/hooks is never reviewed by grok: those hooks are the checkout\'s', () => {
+  const homeRepo = join(ROOT, 'home-repo')
+  rmSync(homeRepo, { recursive: true, force: true }); mkdirSync(homeRepo)
+  const g = (...args) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: homeRepo, env: environment({ HOME: homeRepo }), encoding: 'utf8' })
+    assert.equal(r.status, 0, r.stderr)
+  }
+  g('init', '-q', '-b', 'main'); writeFileSync(join(homeRepo, 'a.js'), 'export const a = 1\n'); g('add', 'a.js'); g('commit', '-qm', 'base')
+  g('checkout', '-qb', 'feat'); mkdirSync(join(homeRepo, '.grok', 'hooks'), { recursive: true })
+  writeFileSync(join(homeRepo, '.grok', 'hooks', 'session.json'), '{"hooks":{}}'); writeFileSync(join(homeRepo, 'a.js'), 'export const a = 2\n')
+  g('add', '.'); g('commit', '-qm', 'change')
+  rmSync(GROK_LOG, { force: true })
+  const r = spawnSync(process.execPath, [SCRIPT], { cwd: homeRepo, encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'],
+    env: environment({ HOME: homeRepo, PATH: [GROK_BIN, BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':'), REVIEW_BASE: 'main', REVIEW_REVIEWER: 'grok' }) })
+  const out = `${r.stdout}\n${r.stderr}`
+  assert.notEqual(r.status, 0, out)
+  assert.match(out, /grok review refused: .*home-repo\/\.grok\/hooks holds Grok hooks/)
+  assert.ok(!existsSync(GROK_LOG), 'grok ran beside the HOME repository\'s .grok/hooks')
+})

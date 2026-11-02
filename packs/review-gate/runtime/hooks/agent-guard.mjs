@@ -305,7 +305,6 @@ function expandShellAlias(body, args) {
 // name. Any operator (${1:-x}, ${1:+x}, ${1#x}, ${1%x}, ${1/x/y}, ${1:2}, ${!1}, ${#1}) is not.
 const unresolvable = (body) =>
   /\$(?![@*1-9]|\{(?:[@*]|[1-9][0-9]*)\})|`|\b(?:eval|source)\b|(?:^|[\s;&|(])\.\s|\b(?:sh|bash|zsh|dash|ksh)\b[^;&|]*\s-[a-zA-Z]*c\b/.test(body)
-const gatedWord = (text) => /\b(?:push|commit|send-pack|config)\b|no-veri|hookspath|reviewgate|include\.path|includeif\./i.test(text)
 // What `git <alias> args` runs: a `!` value is shell text that gets the arguments, any other value is git's
 // own options and command. A value from --config-env is never seen, so running it is refused.
 function aliasReason(value, args, variables, context) {
@@ -313,12 +312,13 @@ function aliasReason(value, args, variables, context) {
   if ((context.chain?.length ?? 0) > 32) return 'agents may not run a Git alias chain this long'
   const chain = [...(context.chain || []), value]
   if (value.startsWith('!')) {
+    // Git hands its -c settings to the alias's shell, so any git that shell starts keeps the hook override.
+    if (context.hooksOverride) return 'agents may not run a Git shell alias while overriding Git hook configuration'
     const body = value.slice(1)
     const reason = inspectShell(expandShellAlias(body, args), new Set(variables), chain.length)
     if (reason) return reason
-    // Failing closed: a body the guard cannot resolve, near a word that names a gated command.
-    if (unresolvable(body) && gatedWord([body, ...args].join(' ')))
-      return 'agents may not run a Git shell alias the guard cannot read through when it mentions push, commit, send-pack or config'
+    // Failing closed: the guard reads only the positional parameters it fills in.
+    if (unresolvable(body)) return 'agents may not run a Git shell alias the guard cannot read through'
     return null
   }
   return gitReason('git', [...tokenize(value).flatMap((c) => c.words), ...args], variables, { ...context, chain })

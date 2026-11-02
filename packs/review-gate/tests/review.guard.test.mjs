@@ -615,16 +615,17 @@ test('F1 a ! alias is checked after its positional parameters are filled in, as 
     `git -c 'alias.p=!git "$@"' p -c core.hooksPath=/dev/null push`,
   ]) refused(command)
 })
-test('F1 a ! alias the guard cannot resolve is refused when a gated command word is near it', () => {
+test('F1 a ! alias the guard cannot resolve is refused, gated word or not', () => {
   for (const command of [
     `git -c 'alias.p=!eval "$1"' p 'git push'`,
     `git -c 'alias.p=!c=push; git $c' p`,
     `git -c 'alias.p=!git $(echo push)' p`,
     'git -c \'alias.p=!git `echo commit`\' p',
     `git -c 'alias.p=!bash -lc "$X"' p push`,
+    `git -c 'alias.p=!eval "$1"' p 'git status'`,
   ]) refused(command)
   for (const command of [`git -c 'alias.p=!git "$@"' p status`, `git -c 'alias.p=!git "$@"' p push`, `git -c 'alias.p=!echo "$1"' p push --no-verify`,
-    `git -c 'alias.p=!git log -n "$1"' p 5`, `git -c 'alias.p=!eval "$1"' p 'git status'`, `git -c 'alias.s=!git status' s`])
+    `git -c 'alias.p=!git log -n "$1"' p 5`, `git -c 'alias.s=!git status' s`])
     allowed(guard(command))
 })
 test('X1 a positional parameter with an operator (${1:-x}, ${1:+x}, ${1#x}, ${1:2}) is unresolvable, not read as plain $1', () => {
@@ -639,5 +640,18 @@ test('X1 a positional parameter with an operator (${1:-x}, ${1:+x}, ${1#x}, ${1:
     `git -c 'alias.p=!git \${1/x/push}' p x`,
   ]) refused(command)
   for (const command of [`git -c 'alias.p=!git log -n "$1"' p 5`, `git -c 'alias.p=!git log -n "\${1}" "\${@}"' p 5`, `git -c 'alias.p=!git "\${*}"' p status`])
+    allowed(guard(command))
+})
+test('R1 a ! alias never runs while a -c hook override is set: Git hands -c settings to the alias shell', () => {
+  for (const command of [`git -c core.hooksPath=/dev/null -c 'alias.p=!git push' p`, `git -c reviewgate.enabled=false -c 'alias.p=!git commit -m x' p`,
+    `git -c 'alias.p=!git push' -c core.hooksPath=/dev/null p`])
+    refused(command)
+  allowed(guard(`git -c 'alias.p=!git push' p`))
+})
+test('R2 a ! alias the guard cannot read through is refused, gated word or not', () => {
+  for (const command of [`git -c 'alias.p=!x=push; git $x --no-verify' p`, `git -c 'alias.p=!git $(echo push)' p`, `git -c "alias.p=!git $'push'" p`,
+    `git -c 'alias.p=!git $(echo status)' p`, `git -c 'alias.p=!x=status; git $x' p`])
+    refused(command)
+  for (const command of [`git -c 'alias.p=!git log -n "$1"' p 5`, `git -c 'alias.p=!git "$@"' p status`, `git -c 'alias.s=!git status' s`])
     allowed(guard(command))
 })

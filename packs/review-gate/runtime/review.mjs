@@ -1403,12 +1403,15 @@ function grokHookFolders(cwd) {
     }
   }
   const top = spawnSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' })
-  const root = top.status === 0 && top.stdout.trim() ? real(top.stdout.trim()) : real(cwd)
-  const home = real(homedir()) // ~/.grok/hooks are your own hooks, not the repository's
+  const inRepo = top.status === 0 && !!top.stdout.trim()
+  const root = inRepo ? real(top.stdout.trim()) : real(cwd)
+  // Outside a repository ~/.grok/hooks are your own hooks. Inside one (a repository at HOME, or one holding it)
+  // they are the checkout's, like any other folder on the way up.
+  const home = real(homedir())
   const found = []
   for (let dir = real(cwd); ; dir = dirname(dir)) {
     const hooks = join(dir, '.grok', 'hooks')
-    if (dir !== home) {
+    if (inRepo || dir !== home) {
       try {
         if (!statSync(hooks).isDirectory() || readdirSync(hooks).length) found.push(hooks)
       } catch (e) {

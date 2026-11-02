@@ -130,18 +130,21 @@ function grokMcpLeft(bin, cwd, env) {
  * switch turns them off except turning folder trust off, which lets project
  * hooks run untrusted instead (GROK_FOLDER_TRUST=0, never used). So any
  * .grok/hooks entry from `cwd` up to the top of its repository keeps grok
- * from running. ~/.grok/hooks are your own hooks and are left alone.
+ * from running, ~/.grok/hooks included when HOME is part of that repository.
  */
 function grokHookFolders(cwd) {
   const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
   const git = which('git');
   const top = git ? spawnSync(git, ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }) : null;
-  const root = top?.status === 0 && top.stdout.trim() ? real(top.stdout.trim()) : real(cwd);
+  const inRepo = top?.status === 0 && !!top.stdout.trim();
+  const root = inRepo ? real(top.stdout.trim()) : real(cwd);
+  // Outside a repository ~/.grok/hooks are your own hooks. Inside one (a repository at HOME, or one holding it)
+  // they are the checkout's, like any other folder on the way up.
   const home = real(os.homedir());
   const found = [];
   for (let dir = real(cwd); ; dir = path.dirname(dir)) {
     const hooks = path.join(dir, '.grok', 'hooks');
-    if (dir !== home) {
+    if (inRepo || dir !== home) {
       try { if (!fs.statSync(hooks).isDirectory() || fs.readdirSync(hooks).length) found.push(hooks); }
       catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') found.push(hooks); } // unreadable: assume it holds hooks
     }
@@ -253,7 +256,8 @@ function which(name) {
 }
 
 /**
- * The work tree's state, or null outside a git work tree: HEAD (its commit
+ * The work tree's state, null outside a git work tree, or { error } when git
+ * is not on PATH (absolute entries only): HEAD (its commit
  * and branch), so a checkout that leaves the status clean still shows, and
  * every path `git status` reports with its porcelain fields (status, modes,
  * and the HEAD and index object names, so a change to the index shows) and
@@ -262,7 +266,10 @@ function which(name) {
  * repository are not seen. --no-optional-locks: reading must not write the index.
  */
 function snapshot(cwd) {
-  const git = (...a) => spawnSync('git', ['--no-optional-locks', ...a], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  // git from an absolute PATH entry only (which), so a repo's ./git never answers for the work tree.
+  const bin = which('git');
+  if (!bin) return { error: 'git is not on PATH' };
+  const git = (...a) => spawnSync(bin, ['--no-optional-locks', ...a], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   const top = git('rev-parse', '--show-toplevel');
   if (top.error || top.status !== 0) return null;
   const root = top.stdout.trim();
@@ -433,6 +440,7 @@ async function main(argv) {
   }
 
   const before = o.investigate ? snapshot(cwd) : null;
+  if (before?.error) { result.error = `${before.error}, so changes under --investigate could not be checked — ${vendor} was not run`; return finish(4); }
   if (o.investigate && !before) process.stderr.write(`ask-model: ${cwd} is not in a git work tree — changes are not checked\n`);
   const r = await run(bin, argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff }), cwd, env);
   // A call grok refused for want of approval leaves only this line, and grok still exits 0.
@@ -444,7 +452,8 @@ async function main(argv) {
   else result.error = got.error;
 
   if (before) {
-    const after = snapshot(cwd);
+    const read = snapshot(cwd);
+    const after = read && !read.error ? read : null;
     result.changed = after ? changedPaths(before, after) : null;
     if (!after || result.changed.length) {
       const what = after ? result.changed.map((c) => `  ${c}`).join('\n') : '  (the work tree could not be read after the call)';

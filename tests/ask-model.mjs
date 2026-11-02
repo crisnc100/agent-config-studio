@@ -608,6 +608,50 @@ process.stdout.write(JSON.stringify({ text: 'grok answer', stopReason: 'end_turn
   ok('a project hook the switches disabled, and the user\'s own hook: grok runs', off.code === 0 && ran(off), J(off));
 }
 
+console.log('\nask-model: a repository at HOME has its .grok/hooks checked like any other');
+{
+  const bin = mk('stubs-grok-home');
+  const glog = path.join(tmp, 'grok-home-calls.jsonl');
+  fs.writeFileSync(path.join(bin, 'grok'), `#!${process.execPath}
+const fs = require('node:fs');
+const a = process.argv.slice(2);
+fs.appendFileSync(${J(glog)}, JSON.stringify(a) + '\\n');
+if (a[0] === 'inspect') { process.stdout.write(JSON.stringify({ mcpServers: [], plugins: [], hooks: [] })); process.exit(0); }
+process.stdout.write(JSON.stringify({ text: 'grok answer', stopReason: 'end_turn', modelUsage: { [a[a.indexOf('-m') + 1]]: {} } }));
+`, { mode: 0o755 });
+  const grokAt = (home) => {
+    fs.writeFileSync(glog, '');
+    const r = ask(['--family', 'grok', '--cwd', home], { home, env: { PATH: [bin, ...SYSTEM].join(':') } });
+    return { ...r, grok: fs.readFileSync(glog, 'utf8').split('\n').filter(Boolean) };
+  };
+  const homeRepo = mk('home-is-a-repo');
+  spawnSync('git', ['init', '-q', homeRepo], { env: { ...process.env, ...GIT_ENV } });
+  fs.mkdirSync(path.join(homeRepo, '.grok', 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(homeRepo, '.grok', 'hooks', 'session.json'), '{"hooks":{}}');
+  const repoHome = grokAt(homeRepo);
+  ok('HOME is the repository: its .grok/hooks are the checkout\'s, exit 4, grok never run',
+     repoHome.code === 4 && repoHome.err.includes(path.join(fs.realpathSync(homeRepo), '.grok', 'hooks')) && repoHome.grok.length === 0, J(repoHome));
+  const plainHome = mk('home-not-a-repo');
+  fs.mkdirSync(path.join(plainHome, '.grok', 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(plainHome, '.grok', 'hooks', 'mine.json'), '{"hooks":{}}');
+  const ownHooks = grokAt(plainHome);
+  ok('HOME outside any repository: ~/.grok/hooks are your own, grok runs', ownHooks.code === 0 && ownHooks.grok.some((l) => l.startsWith('["-p"')), J(ownHooks));
+}
+
+console.log('\nask-model: --investigate reads the work tree with git from an absolute PATH entry only');
+{
+  const repo = mk('planted-git-repo');
+  const g = (...a) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: repo, env: { PATH: SYSTEM.join(':'), HOME, ...GIT_ENV } });
+  g('init', '-q'); fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); g('add', '.'); g('commit', '-q', '-m', 'base');
+  const marker = path.join(tmp, 'planted-git-ran');
+  fs.writeFileSync(path.join(repo, 'git'), `#!/bin/sh\n: > '${marker}'\nexit 0\n`, { mode: 0o755 });
+  const planted = ask(['--family', 'fable', '--investigate', '--cwd', repo], { cwd: repo, env: { PATH: ['.', '', STUBS, ...SYSTEM].join(':') } });
+  ok('PATH=.: with a planted ./git: the planted file never runs, and the call answers', planted.code === 0 && !fs.existsSync(marker), show(planted));
+  const noGit = ask(['--family', 'fable', '--investigate', '--cwd', repo], { cwd: repo, env: { PATH: [STUBS, '.'].join(':') } });
+  ok('no git on an absolute PATH entry: exit 4, the model never runs, the planted ./git never runs',
+     noGit.code === 4 && /git is not on PATH, so changes under --investigate could not be checked — claude was not run/.test(noGit.err) && noGit.calls.length === 0 && !fs.existsSync(marker), show(noGit));
+}
+
 // The one real call, and only when asked: this machine's own HOME, PATH and codex, a one-word prompt.
 console.log('\nask-model: live');
 if (process.env.ACS_LIVE_CHECKS === '1') {
