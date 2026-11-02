@@ -10,7 +10,8 @@
   "_codexHomes_help": "Optional extra Codex home folders the agent guard installs into, besides ~/.codex and $CODEX_HOME.",
   "_base_help": "Leave \"base\" empty to auto-detect the remote's default branch (origin/HEAD) — correct in any repo. Only set it to pin a different base, e.g. \"origin/develop\".",
   "_verifyCmd_help": "Optional shell command run BEFORE the reviewer (e.g. \"npm run type-check\"). Pass or fail, its result is fed to the reviewer as context — it never blocks the review.",
-  "_coverageExempt_help": "Path globs the push gate never asks coverage for, such as a lockfile whose diff alone is over the 120k cap (e.g. [\"package-lock.json\"]). Empty by default. The refusal and the summary name each exempt file as not reviewed. A tracked repo config cannot set it; use this home file, the environment (REVIEW_COVERAGE_EXEMPT) or an untracked repo file.",
+  "_coverageExempt_help": "Path globs the push gate never asks coverage for, on top of the generated dependency lockfiles it exempts by default (package-lock.json, yarn.lock, Cargo.lock, go.sum and the like, by exact name). The refusal and the summary name each exempt file as not reviewed. A tracked repo config cannot set it; use this home file, the environment (REVIEW_COVERAGE_EXEMPT) or an untracked repo file.",
+  "_coverageExemptDefaults_help": "false turns the default lockfile exemptions off. A tracked repo config cannot set it.",
   "_presets": {
     "pool, first family (default)": {
       "pick": "first",
@@ -70,5 +71,6 @@
   "codexHomes": [],
   "base": "",
   "verifyCmd": "",
-  "coverageExempt": []
+  "coverageExempt": [],
+  "coverageExemptDefaults": true
 }

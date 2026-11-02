@@ -109,12 +109,12 @@ const option = (flag) => {
 // > the older ~/.claude/review-config.json > built-in.
 // Edit that one small JSON file to switch reviewer/model/effort — see review-config.example.json.
 // The repo file can come from the repository itself (committed, or added by a branch you check out), so
-// the keys that run a command or reach git as an argument, and coverageExempt (it would let a branch exempt its own
-// code from review), count there only while git doesn't track it and no symlink leads to it: a clone or checkout only
+// the keys that run a command or reach git as an argument, and coverageExempt and coverageExemptDefaults (they would
+// let a branch exempt its own code from review), count there only while git doesn't track it and no symlink leads to it: a clone or checkout only
 // ever adds tracked files and links. Env and the home configs always count.
 let gateConfigError
 const COMMAND_KEYS = ['verifyCmd', 'classifier', 'base']
-const OWN_FILE_KEYS = [...COMMAND_KEYS, 'coverageExempt']
+const OWN_FILE_KEYS = [...COMMAND_KEYS, 'coverageExempt', 'coverageExemptDefaults']
 // Set when the repo file failed that check: its `pick` may name a family, never a command to run.
 let REPO_PICK_UNTRUSTED = false
 const sameFile = (a, b) => {
@@ -636,9 +636,21 @@ const RISK_PATHS = Array.isArray(CONFIG.riskPaths)
   ? CONFIG.riskPaths
   : ['*payment*', '*billing*', '*checkout*', '*auth*', '*migration*', '*security*', '*money*']
 // coverageExempt (REVIEW_COVERAGE_EXEMPT, comma- or newline-separated): path patterns, same globs, that the push gate
-// does not ask coverage for, such as a lockfile whose diff alone is over the size cap. Empty by default; the refusal
-// and the summary name every exempt file as not reviewed.
+// does not ask coverage for, on top of DEFAULT_EXEMPT. The refusal and the summary name every exempt file as not reviewed.
 const COVERAGE_EXEMPT = exemptPatterns(cfg('REVIEW_COVERAGE_EXEMPT', 'coverageExempt', ''))
+// Generated dependency lockfiles: a routine change whose diff alone can pass the size cap. Exempt by default, by exact
+// file name in any folder, never a pattern; "coverageExemptDefaults": false turns them off.
+const DEFAULT_EXEMPT = ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lockb', 'bun.lock', 'Cargo.lock',
+  'poetry.lock', 'uv.lock', 'Pipfile.lock', 'composer.lock', 'Gemfile.lock', 'go.sum', 'mix.lock', 'pubspec.lock', 'Podfile.lock', 'flake.lock']
+const EXEMPT_DEFAULTS = exemptDefaults(CONFIG.coverageExemptDefaults)
+const coverageExempt = (path) => matchesAny(path, COVERAGE_EXEMPT) || EXEMPT_DEFAULTS && DEFAULT_EXEMPT.includes(path.split('/').at(-1))
+function exemptDefaults(value) {
+  if (value === undefined || typeof value === 'boolean') return value !== false
+  const message = `coverageExemptDefaults must be true or false; got ${JSON.stringify(value)}`
+  if (!args.includes('--gate')) stop(message)
+  gateConfigError ||= new Error(message)
+  return true
+}
 // A list that isn't text or non-empty strings fails loudly; at the gate it blocks the push, never guesses.
 function exemptPatterns(value) {
   if (typeof value === 'string' || Array.isArray(value) && value.every((p) => typeof p === 'string' && p.trim())) return normalisePaths(value)
@@ -2564,7 +2576,7 @@ function contentCover(entries, tip, risk = false) {
   for (const r of records) if (tipClose && r.close && r.head === tipClose.head) used.set(r, [])
   for (const path of filesBetween(base, tip)) {
     if (path.startsWith('builds/')) continue
-    if (matchesAny(path, COVERAGE_EXEMPT)) { exempt.push(path); continue }
+    if (coverageExempt(path)) { exempt.push(path); continue }
     const state = states.get(path) ?? null
     const record = records.find((r) => r.map.has(path) && r.map.get(path) === state &&
       (r.review.kind === 'review' || (!risk && !matchesAny(path, RISK_PATHS))) && !blind(r, path))
