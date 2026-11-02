@@ -209,9 +209,13 @@ test('S3 slices count together only with the same repoId, branch and baseSha', (
   const first = slice(['src/']), second = slice(['docs/', 'lib/'])
   closed(first.id); closed(second.id)
   allowed(push(['HEAD:refs/heads/control']))
-  for (const [field, value] of [['repoId', '/elsewhere/.git'], ['branch', 'other'], ['baseSha', git('rev-parse', 'main~1')]]) {
+  rewrite((e) => e.id === second.id ? { ...e, repoId: '/elsewhere/.git' } : null)
+  blocked(push(['HEAD:refs/heads/repoId']), /uncovered: docs\/three\.md, lib\/two\.js —/)
+  rewrite((e) => e.id === second.id ? second : null)
+  // Coverage is by content: the branch name and base a slice was logged under do not matter.
+  for (const [field, value] of [['branch', 'other'], ['baseSha', git('rev-parse', 'main~1')]]) {
     rewrite((e) => e.id === second.id ? { ...e, [field]: value } : null)
-    blocked(push([`HEAD:refs/heads/${field}`]), /uncovered: src\/one\.js/)
+    allowed(push([`HEAD:refs/heads/${field}`]))
     rewrite((e) => e.id === second.id ? second : null)
   }
   allowed(push(['HEAD:refs/heads/restored']))
@@ -221,10 +225,12 @@ test('S3 slices count together only at the same closeHead', () => {
   closed(first.id)
   commit({ 'builds/demo/log.md': 'notes\n' })
   closed(slice(['builds/', 'docs/', 'lib/']).id)
-  // Both closes are usable for this tip on their own, but at different closeHeads they never add up.
-  blocked(push(), /uncovered: src\/one\.js/)
+  // Content coverage: the earlier slice still covers src/one.js, whose state is unchanged at the tip.
+  const mixed = push(['HEAD:refs/heads/mixed']); allowed(mixed)
+  assert.match(mixed.stderr, /Content coverage: 2 record\(s\) together cover every file changed from [0-9a-f]{40} to [0-9a-f]{40}/)
   closed(first.id)
-  allowed(push())
+  const same = push(); allowed(same)
+  assert.match(same.stderr, /Sliced review: 2 slice\(s\)/)
 })
 test('S3 the tip may descend from the shared closeHead through builds/ commits only', () => {
   closed(slice(['src/']).id); closed(slice(['docs/', 'lib/']).id)

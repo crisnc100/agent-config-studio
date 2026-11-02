@@ -73,7 +73,7 @@ function refused(id, statuses, pattern) {
   assert.notEqual(r.status, 0, r.out); assert.equal(r.record, null, 'a refused close logs nothing')
   assert.match(r.out, pattern)
 }
-const named = (files) => new RegExp(`may only touch files named by its fixed findings: ${files.map((f) => f.replace(/[./]/g, '\\$&')).join(', ')}\\. Unresolved work goes to the operator, no third model pass`)
+const named = (files) => new RegExp(`may touch only builds/ and test files: ${files.map((f) => f.replace(/[./]/g, '\\$&')).join(', ')}\\. Fixes land before the fix check`)
 const finding = (file, quote, extra = {}) => ({ issue: 'it is wrong', file, line: '1', quote, suggestion: 'fix it',
   likelihood: 5, impact: 5, protected: false, trigger: 'importing it', ...extra })
 const ONE = finding('src/one.js', 'export const one = 2')
@@ -123,7 +123,7 @@ test('P1 the review and fix-check records carry resolvedPaths with the commit ea
 test('P2 hole 1, after a fix check: a leading-space file changed alongside the x1 file is refused', () => {
   const { original } = fixChecked(ONE)
   commit({ 'src/one.js': 'export const one = 3\n', ' src/one.js': 'a different file\n' })
-  refused(original.id, X_FIXED, named([' src/one.js']))
+  refused(original.id, X_FIXED, named([' src/one.js', 'src/one.js']))
 })
 test('P3 hole 2, after a fix check: a finding on a real b/src/one.js does not authorize the root src/one.js', () => {
   commit({ 'b/src/one.js': 'export const b = 1\n' })
@@ -132,12 +132,9 @@ test('P3 hole 2, after a fix check: a finding on a real b/src/one.js does not au
   commit({ 'src/one.js': 'export const one = 3\n' })
   refused(original.id, X_FIXED, named(['src/one.js']))
 })
-test('P4 hole 3: a literal b/src/one.test.js added after the fix check does not retarget a finding validated against src/one.test.js', () => {
+test('P4 hole 3: a b/src/one.test.js finding is validated against src/one.test.js, and a test change after the fix check closes', () => {
   const { original, check } = fixChecked(finding('b/src/one.test.js', 'test one'))
   assert.deepEqual(check.resolvedPaths.x1, { path: 'src/one.test.js', commit: check.head })
-  commit({ 'b/src/one.test.js': 'test one\n', 'src/one.test.js': 'test one, fixed\n' })
-  refused(original.id, X_FIXED, named(['b/src/one.test.js']))
-  git('reset', '-q', '--hard', 'HEAD~1')
   commit({ 'src/one.test.js': 'test one, fixed\n' })
   closedAs(original.id, X_FIXED, 'complete', [])
 })
@@ -154,7 +151,7 @@ test('P6 hole 2 in outOfScope: a fixed finding on a real b/src/one.js leaves a c
   commit({ 'src/one.js': 'export const one = 3\n', 'b/src/one.js': 'export const b = 2\n' })
   closedAs(record.id, FIXED, 'partial', ['src/one.js'])
 })
-test('P7 a diff-prefixed finding validated against the root file authorizes the root file, in outOfScope and after a fix check', () => {
+test('P7 a diff-prefixed finding validated against the root file authorizes the root file in outOfScope; after a fix check the root file change is refused', () => {
   const { record } = review([finding('b/src/one.js', 'export const one = 2')])
   assert.equal(existsSync(join(REPO, 'b')), false); assert.equal(record.resolvedPaths.f1.path, 'src/one.js')
   commit({ 'src/one.js': 'export const one = 3\n' })
@@ -162,7 +159,7 @@ test('P7 a diff-prefixed finding validated against the root file authorizes the 
   const { original, check } = fixChecked(finding('a/src/one.js', 'export const one = 3'))
   assert.equal(check.resolvedPaths.x1.path, 'src/one.js')
   commit({ 'src/one.js': 'export const one = 4\n' })
-  closedAs(original.id, X_FIXED, 'complete', [])
+  refused(original.id, X_FIXED, named(['src/one.js']))
 })
 test('P8 an ambiguous finding (the quote is in both b/x.js and x.js) records no path, is reported, and authorizes nothing', () => {
   commit({ 'x.js': 'export const x = 1\n', 'b/x.js': 'export const x = 1\n' })
@@ -217,7 +214,7 @@ test('P11 a legacy log entry without resolvedPaths fails closed, in outOfScope a
 test('P12 a rename after the fix check is a delete plus an add: the new path was never recorded, so it is refused', () => {
   const { original } = fixChecked(ONE)
   git('mv', 'src/one.js', 'src/uno.js'); git('commit', '-qm', 'rename one')
-  refused(original.id, X_FIXED, named(['src/uno.js']))
+  refused(original.id, X_FIXED, named(['src/one.js', 'src/uno.js']))
 })
 test('P13 the Grade recheck range is untrimmed: a leading-space file there does not cover the file without the space', () => {
   const grade = (verdict, recheckOf) => {
@@ -256,7 +253,7 @@ test('P14 a file changed and then reverted after the fix check still counts: ref
   commit({ 'lib/two.js': 'export const two = 1\n' })
   commit({ 'src/one.js': 'export const one = 3\n' })
   assert.equal(git('diff', '--name-only', check.head, 'HEAD'), 'src/one.js')
-  refused(original.id, X_FIXED, named(['lib/two.js']))
+  refused(original.id, X_FIXED, named(['lib/two.js', 'src/one.js']))
 })
 test('P15 in outOfScope, a file changed and then reverted after the review makes the close partial', () => {
   const { record } = review([ONE])
@@ -271,13 +268,13 @@ test('P16 a merge after the fix check that brings in an unnamed file is refused,
   git('checkout', '-qb', 'side'); commit({ 'm.js': 'export const m = 1\n' }); git('checkout', '-q', 'feat')
   commit({ 'src/one.js': 'export const one = 3\n' })
   git('merge', '--no-ff', '-qm', 'merge side', 'side')
-  refused(original.id, X_FIXED, named(['m.js']))
+  refused(original.id, X_FIXED, named(['m.js', 'src/one.js']))
   git('reset', '-q', '--hard', check.head)
   git('checkout', '-qb', 'kept'); commit({ 'lib/two.js': 'export const two = 2\n' }); git('checkout', '-q', 'feat')
   commit({ 'src/one.js': 'export const one = 3\n' })
   git('merge', '-s', 'ours', '--no-ff', '-qm', 'merge kept, keeping ours', 'kept')
   assert.equal(git('diff', '--name-only', check.head, 'HEAD'), 'src/one.js')
-  refused(original.id, X_FIXED, named(['lib/two.js']))
+  refused(original.id, X_FIXED, named(['lib/two.js', 'src/one.js']))
 })
 test('P17 a raw 0xff file name next to a recorded U+FFFD file refuses the close, naming the problem', () => {
   commit({ [FFFD]: 'export const odd = 1\n' })

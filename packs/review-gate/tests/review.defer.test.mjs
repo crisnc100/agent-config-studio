@@ -178,7 +178,7 @@ test('D5 x… findings deferred after the fix check close complete, keep their s
   assert.ok(pushed.stderr.includes(summary.stdout.trim()), pushed.out)
   // A deferred finding is not fixed: it authorizes no change after the fix check.
   commit({ 'src/one.js': 'export const one = 4\n' })
-  refused(review.id, statuses, /may only touch files named by its fixed findings: src\/one\.js\./)
+  refused(review.id, statuses, /may touch only builds\/ and test files: src\/one\.js\./)
 })
 test('D6 a Grade criterion still failing after its one recheck, and the recheck findings, may be deferred; a criterion that passed may not', () => {
   const grade = graded()
@@ -341,7 +341,7 @@ test('D15 a summary reads the close that covers its tip: a later close outside t
   const review = reviewed([scored()])
   const check = fixChecked(review, [X_HIGH])
   closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later' } })
-  commit({ 'src/one.js': 'export const one = 4\n' })
+  commit({ 'src/one.test.js': 'test one, x1 fixed\n' })
   closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'fixed' } })
   const fixedThere = script(['--summary']); allowed(fixedThere)
   assert.doesNotMatch(fixedThere.stdout, /Deferred: later/)
