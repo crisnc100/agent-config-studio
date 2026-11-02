@@ -134,7 +134,7 @@ function ask(args, { env = {}, home = HOME, cwd = tmp, prompt = PF } = {}) {
 const show = (r) => J({ code: r.code, out: r.out, err: r.err, calls: r.calls, mcp: r.mcp, inspect: r.inspect });
 
 const CLAUDE_RO = (id, effort) => ['-p', PROMPT, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'json',
-  '--dangerously-skip-permissions', '--tools', 'Read,Grep,Glob', '--strict-mcp-config'];
+  '--dangerously-skip-permissions', '--tools', 'Read,Grep,Glob', '--strict-mcp-config', '--setting-sources', 'user'];
 const CODEX = (id, effort) => ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', id,
   ...(effort ? ['-c', `model_reasoning_effort=${effort}`] : []), PROMPT];
 const GROK_RO = (id, effort, cwd) => ['-p', PROMPT, '-m', id, ...(effort ? ['--reasoning-effort', effort] : []), '--cwd', cwd,
