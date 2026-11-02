@@ -182,6 +182,10 @@ console.log('\nC12 build needs review-gate');
   sb2.packs(['install', 'review-gate', '--yes']);
   const b2 = sb2.packs(['install', 'build', '--yes']);
   ok('C12 with review-gate installed first, build installs on its own', b2.code === 0 && fs.existsSync(path.join(sb2.home, '.claude/skills/build/SKILL.md')), b2.out);
+  const schemaSrc = fs.readFileSync(path.join(ROOT, 'packs/build/skills/claude/build/grade.schema.json'), 'utf8');
+  const schemaAt = path.join(sb2.home, '.claude/skills/build/grade.schema.json');
+  ok('C3 build installs grade.schema.json beside the skill, where its Grade calls read it',
+     fs.existsSync(schemaAt) && fs.readFileSync(schemaAt, 'utf8') === schemaSrc, b2.out);
 }
 
 console.log('\nC11 the preview lists exactly what is written');

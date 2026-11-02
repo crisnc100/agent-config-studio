@@ -703,6 +703,21 @@ test('2.1 Grade validation rejects malformed schemas, unknown keys and values, a
   assert.equal(lines().length, 0)
   assert.equal(calls().length, 0)
 })
+test('2.1 a Grade finding\'s null file, line or severity is absent, as a strict structured-output schema writes them; a non-null bad value is still refused', () => {
+  const original = gradeVerdict()
+  const finding = { likelihood: 5, impact: 5, protected: false, trigger: 'calling it', issue: 'Bug', evidence: 'test' }
+  const result = run(['--log-grade', gradeFile({ ...original, findings: [{ ...finding, file: null, line: null, severity: null }] })])
+  assert.equal(result.status, 0, result.out)
+  const [detail] = lines().at(-1).findingDetails.filter((f) => f.issue === 'Bug')
+  for (const key of ['file', 'line', 'reviewerSeverity']) assert.equal(Object.hasOwn(detail, key), false, key)
+  assert.equal(detail.severity, 'medium', 'the severity is derived from the scores, as for any finding')
+  for (const bad of [{ file: '' }, { file: 3 }, { line: 0 }, { line: '' }, { line: false }, { severity: 42 }, { issue: null }, { evidence: null }, { issue: null, file: null }]) {
+    const before = lines().length
+    const refused = run(['--log-grade', gradeFile({ ...original, findings: [{ ...finding, ...bad }] })])
+    assert.notEqual(refused.status, 0, `${JSON.stringify(bad)}: ${refused.out}`)
+    assert.equal(lines().length, before)
+  }
+})
 test('2.1 Grade records use supplied vendor or require a derivable pool vendor', () => {
   const record = logGrade({ ...gradeVerdict(), family: 'outside-pool', vendor: 'codex' })
   assert.equal(record.vendor, 'codex')

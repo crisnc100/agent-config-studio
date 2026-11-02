@@ -53,6 +53,7 @@ beforeEach(() => {
   mkdirSync(HOME, { recursive: true }); mkdirSync(WORK, { recursive: true })
   put(join(HOME, '.claude/skills/advisor/advisor-contract.md'), 'THE CONTRACT')
   put(join(HOME, '.codex/skills/advisor/advisor-contract.md'), 'THE CONTRACT')
+  for (const harness of ['claude', 'codex']) put(join(HOME, `.${harness}/skills/build/grade.schema.json`), readFileSync(join(PACKS, 'build/skills', harness, 'build/grade.schema.json'), 'utf8'))
 })
 
 const skill = (path) => readFileSync(join(PACKS, path), 'utf8')
@@ -364,3 +365,40 @@ test('build (claude): the builder effort counts only the builder role\'s members
     assert.equal(effortIn('codex', codex[0]), 'low', `${shell}: terra as the builder role's alt takes its flavor effort: ${codex[0].join(' ')}`)
   }
 })
+
+// ── build: both Grade calls ask for the shipped verdict schema, through each CLI's own structured-output flag ──
+for (const harness of ['claude', 'codex']) {
+  test(`build (${harness}): the Grade and the swapped Grade ask with --schema, the grade.schema.json installed beside the skill`, () => {
+    const body = skill(`build/skills/${harness}/build/SKILL.md`)
+    const shipped = readFileSync(join(PACKS, 'build/skills', harness, 'build/grade.schema.json'), 'utf8')
+    assert.equal(shipped, readFileSync(join(PACKS, 'build/skills', harness === 'claude' ? 'codex' : 'claude', 'build/grade.schema.json'), 'utf8'), 'both twins ship the same schema')
+    const schema = JSON.parse(shipped)
+    // The shape --log-grade accepts: these keys and no others; vendor, effort and severity are left to it.
+    assert.deepEqual(Object.keys(schema.properties).sort(), ['criteria', 'family', 'findings', 'model'])
+    assert.deepEqual(Object.keys(schema.properties.criteria.items.properties).sort(), ['criterion', 'evidence', 'id', 'verdict'])
+    assert.deepEqual(schema.properties.criteria.items.properties.verdict.enum, ['PASS', 'FAIL'])
+    assert.deepEqual(Object.keys(schema.properties.findings.items.properties).sort(), ['evidence', 'file', 'impact', 'issue', 'likelihood', 'line', 'protected', 'trigger'])
+    const installed = join(HOME, harness === 'claude' ? '.claude' : '.codex', 'skills/build/grade.schema.json')
+    const judge = block(body, /^ask-model --role advisor/m).split('\n').find((line) => line.includes('--role judge '))
+    const swap = block(body, /^ask-model --second --role advisor/m)
+    const setup = harness === 'codex' ? `${fill(block(body, /^GATE=bounce/m).replace(/^GATE=bounce/m, 'GATE=grade'))}\n` : ''
+    // Fresh defaults put the judge on claude; these roles put it on codex and grok, and the second opinion on each.
+    for (const doc of [null, { roles: { judge: { use: ['sol'] }, advisor: { alt: 'fable' } } }, { roles: { judge: { use: ['grok'] } } }]) {
+      roles(doc)
+      put(installed, shipped)
+      put(join(WORK, 'builds/s/grade-prompt.md'), 'THE GRADE PROMPT')
+      for (const [name, line, role] of [['the Grade', judge, 'judge'], ['the swapped Grade', swap, 'advisor']]) {
+        const resolved = JSON.parse(spawnSync(join(BIN, 'model-id'), ['--role', role, '--json'], { env: { HOME, PATH }, encoding: 'utf8' }).stdout)
+        const id = role === 'advisor' ? resolved.altId : resolved.id
+        for (const shell of SHELLS) {
+          const label = `${shell} ${name} ${J(doc)}`
+          const argv = onlyCall(run(shell, `${setup}${fill(line)}\n`), cliOf(id), label)
+          assert.equal(modelIn(cliOf(id), argv), id, `${label}: the role's model`)
+          assert.ok(argv.includes('THE GRADE PROMPT'), `${label}: the Grade's prompt`)
+          if (cliOf(id) === 'codex') assert.equal(argv[argv.indexOf('--output-schema') + 1], installed, `${label}: codex gets the file`)
+          else assert.deepEqual(JSON.parse(argv[argv.indexOf('--json-schema') + 1]), schema, `${label}: the schema's JSON`)
+        }
+      }
+    }
+  })
+}

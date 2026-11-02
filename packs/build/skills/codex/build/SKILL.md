@@ -53,11 +53,11 @@ PROMPT_FILE="builds/<slug>/$GATE-prompt.md"     # bounce-prompt.md or grade-prom
 Write the gate's prompt (below) to `$PROMPT_FILE`, then ask — a fresh session with no build context, read-only, no MCP:
 ```bash
 ask-model --role advisor --prompt-file "$PROMPT_FILE"     # GATE=bounce
-ask-model --role judge --prompt-file "$PROMPT_FILE"       # GATE=grade
+ask-model --role judge --prompt-file "$PROMPT_FILE" --schema "${CODEX_HOME:-$HOME/.codex}/skills/build/grade.schema.json"       # GATE=grade
 ```
 GATE=grade swapped to the advisor role's second opinion, when the grader swap picks it:
 ```bash
-ask-model --second --role advisor --prompt-file "$PROMPT_FILE"   # its alt at its altEffort; none set: no effort flag
+ask-model --second --role advisor --prompt-file "$PROMPT_FILE" --schema "${CODEX_HOME:-$HOME/.codex}/skills/build/grade.schema.json"   # its alt at its altEffort; none set: no effort flag
 ```
 Exit **64** from this call means the `advisor` role has no second opinion set: say so, skip the swapped Grade, never substitute another model silently, and tell the user to set the `advisor` role's second opinion in ACS → Models → Roles.
 ask-model picks the CLI from the model id and checks the answering model where the CLI reports one. A role or family

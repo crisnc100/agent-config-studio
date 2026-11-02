@@ -39,12 +39,14 @@
       ],
       "files": [
         "packs/build/skills/claude/build/SKILL.md",
-        "packs/build/skills/codex/build/SKILL.md"
+        "packs/build/skills/claude/build/grade.schema.json",
+        "packs/build/skills/codex/build/SKILL.md",
+        "packs/build/skills/codex/build/grade.schema.json"
       ],
       "explain": {
         "changes": [
-          "~/.claude/skills/build/SKILL.md (Claude Code; Grok reads this folder too)",
-          "~/.codex/skills/build/SKILL.md (Codex)"
+          "~/.claude/skills/build/SKILL.md and grade.schema.json (Claude Code; Grok reads this folder too)",
+          "~/.codex/skills/build/SKILL.md and grade.schema.json (Codex)"
         ]
       }
     }
