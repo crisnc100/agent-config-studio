@@ -256,7 +256,7 @@ for (const harness of ['claude', 'codex']) {
 for (const harness of ['claude', 'codex']) {
   test(`build (${harness}): the swapped Grade runs the second opinion at its effort, and with none set passes no --effort`, () => {
     const body = skill(`build/skills/${harness}/build/SKILL.md`)
-    const swap = block(body, /^ask-model --family "\$alt"/m)
+    const swap = block(body, /^ask-model --second --role advisor/m)
     // The codex copy's command reads $PROMPT_FILE, which its gate setup sets for GATE=grade.
     const setup = harness === 'codex' ? `${fill(block(body, /^GATE=bounce/m).replace(/^GATE=bounce/m, 'GATE=grade'))}\n` : ''
     const cases = [
@@ -286,7 +286,7 @@ for (const harness of ['claude', 'codex']) {
     const advisor = fill(block(skill(`advisor/skills/${harness}/advisor/SKILL.md`), /^METHOD=advisor/m).replace(/^METHOD=advisor/m, 'METHOD=second'))
     const build = skill(`build/skills/${harness}/build/SKILL.md`)
     const gradeSetup = harness === 'codex' ? `${fill(block(build, /^GATE=bounce/m).replace(/^GATE=bounce/m, 'GATE=grade'))}\n` : ''
-    const grade = `${gradeSetup}${fill(block(build, /^ask-model --family "\$alt"/m))}`
+    const grade = `${gradeSetup}${fill(block(build, /^ask-model --second --role advisor/m))}`
     // ask-model's own argv, as the skill passed it: an empty --effort and no --effort look the same to the CLI.
     const asked = join(ROOT, 'ask-model.argv')
     const record = `ask-model() { printf '%s\\0' "$@" > ${J(asked)}; command ask-model "$@"; }\n`
