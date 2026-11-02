@@ -465,6 +465,90 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
      JSON.stringify(seatOut.windows));
 }
 
+// --- a re-auth stamped no later than the snapshot still counts as moved ----
+{
+  // CI flake, a real race: renderSnapshot compared auth.json's mtime with the
+  // snapshot's Date.now(), two clocks. Linux stamps mtime from a coarser clock,
+  // so a re-auth just after the snapshot can carry an mtime no later than
+  // takenAt and pass as unchanged. Pinned here by setting the mtime to exactly
+  // takenAt, as that clock would, so it fails the same way on every OS.
+  const dir = fs.mkdtempSync(path.join(tmp, 'coarse-'));
+  const home = path.join(dir, 'home');
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"acct-A"}}');
+  const { loginAt } = recentRollout(home, { usedPercent: 61 });
+  fs.utimesSync(path.join(home, 'auth.json'), loginAt / 1000, loginAt / 1000);
+
+  const f = path.join(dir, 'seats.json');
+  addSeat({ id: 'codex-1', vendor: 'codex', label: 'Seat', home }, f);
+  const snapFile = path.join(dir, 'snap.json');
+  const snap = await snapshot({ file: f, snapshotFile: snapFile, accountsFile: path.join(dir, 'accounts.json') });
+  writeSnapshot(snap, snapFile);
+  ok('the snapshot reads account A', snap.seats[0].windows[0]?.usedPercent === 61, snap.seats[0].reason || '');
+
+  fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"acct-B"}}');
+  fs.utimesSync(path.join(home, 'auth.json'), snap.takenAt / 1000, snap.takenAt / 1000);
+  const rendered = await renderSnapshot({ file: f, snapshotFile: snapFile });
+  const seatOut = rendered.seats.find((x) => x.seatId === 'codex-1');
+  ok('a re-auth whose mtime is no later than takenAt still hides the previous account\'s number',
+     !(seatOut.ok === true && seatOut.windows?.[0]?.usedPercent === 61), JSON.stringify(seatOut.windows));
+  ok('...and says the sign-in changed since the reading', seatOut.staleCredential === true, JSON.stringify(seatOut));
+}
+
+// --- a moved credential never moves the sign-in cutoff backwards ------------
+{
+  // Review finding: when the credential moved (or vanished) the prior sign-in
+  // moment was dropped altogether, so a logout left no cutoff at all and an
+  // older session still writing newer events won on recency. A cutoff can only
+  // correctly move forward: the prior signedInAt stays the floor, whether the
+  // credential is gone or comes back with an older mtime.
+  const setup = (name) => {
+    const dir = fs.mkdtempSync(path.join(tmp, name));
+    const home = path.join(dir, 'home');
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(home, 'auth.json'), '{"tokens":{"account_id":"acct-A"}}');
+    const { loginAt } = recentRollout(home, { usedPercent: 61 });
+    fs.utimesSync(path.join(home, 'auth.json'), loginAt / 1000, loginAt / 1000);
+    // A session that began before this login, still writing newer events: the old account.
+    const begun = new Date(loginAt - 3 * 3600_000);
+    const p2 = (n) => String(n).padStart(2, '0');
+    const sessions = path.join(home, 'sessions', String(begun.getFullYear()), p2(begun.getMonth() + 1), p2(begun.getDate()));
+    fs.mkdirSync(sessions, { recursive: true });
+    const stamp = `${begun.getFullYear()}-${p2(begun.getMonth() + 1)}-${p2(begun.getDate())}T${p2(begun.getHours())}-${p2(begun.getMinutes())}-${p2(begun.getSeconds())}`;
+    const at = Date.now() - 10 * 60_000;
+    fs.writeFileSync(path.join(sessions, `rollout-${stamp}-old.jsonl`), JSON.stringify({
+      timestamp: new Date(at).toISOString(), type: 'turn.completed',
+      info: { rate_limits: { primary: { used_percent: 99, window_minutes: 10080, resets_at: Math.floor((at + 10080 * 60_000) / 1000) } } },
+    }) + '\n');
+    const f = path.join(dir, 'seats.json');
+    addSeat({ id: 'codex-1', vendor: 'codex', label: 'Seat', home }, f);
+    const snapFile = path.join(dir, 'snap.json');
+    return { home, f, snapFile, loginAt, accountsFile: path.join(dir, 'accounts.json') };
+  };
+  const shows99 = (seatOut) => seatOut.ok === true && seatOut.windows?.some((w) => w.usedPercent === 99);
+
+  const out = setup('floor-gone-');
+  const snap = await snapshot({ file: out.f, snapshotFile: out.snapFile, accountsFile: out.accountsFile });
+  writeSnapshot(snap, out.snapFile);
+  ok('signed in, the old account\'s open session is excluded', snap.seats[0].windows[0]?.usedPercent === 61, JSON.stringify(snap.seats[0].windows));
+  fs.rmSync(path.join(out.home, 'auth.json'));
+  const gone = (await renderSnapshot({ file: out.f, snapshotFile: out.snapFile })).seats.find((x) => x.seatId === 'codex-1');
+  ok('after a logout, the old account\'s session is still excluded', !shows99(gone), JSON.stringify(gone.windows));
+  const again = await snapshot({ file: out.f, snapshotFile: out.snapFile, accountsFile: out.accountsFile });
+  ok('...and in the next CLI snapshot, which keeps the sign-in moment it recorded',
+     !shows99(again.seats[0]) && again.seats[0].windows[0]?.usedPercent === 61, JSON.stringify(again.seats[0].windows));
+
+  const back = setup('floor-old-mtime-');
+  const snap2 = await snapshot({ file: back.f, snapshotFile: back.snapFile, accountsFile: back.accountsFile });
+  writeSnapshot(snap2, back.snapFile);
+  // The credential comes back with an mtime older than the old session's start.
+  fs.writeFileSync(path.join(back.home, 'auth.json'), '{"tokens":{"account_id":"acct-A"}}');
+  const old = (back.loginAt - 6 * 3600_000) / 1000;
+  fs.utimesSync(path.join(back.home, 'auth.json'), old, old);
+  const restored = (await renderSnapshot({ file: back.f, snapshotFile: back.snapFile })).seats.find((x) => x.seatId === 'codex-1');
+  ok('a credential restored with an older mtime does not move the cutoff back', !shows99(restored), JSON.stringify(restored.windows));
+}
+
 // --- ~/.codex is not re-adopted after a split, even with no seats left ------
 {
   // Review finding: the guard keyed only on "no codex seat exists", but
