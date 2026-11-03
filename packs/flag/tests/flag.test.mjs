@@ -7,6 +7,7 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -610,4 +611,101 @@ test('a long run of name characters is matched once, not retried from every posi
   for (const s of ['y'.repeat((1 << 20) - 10), 'tokentokentoken'.repeat(60000), `${'a'.repeat(500000)}_PASSWORD=Run-Pw-1`]) redactText(s)
   assert.ok(Date.now() - t < 5000, `${Date.now() - t}ms`)
   assert.equal(redactText(`x ${'a'.repeat(50)}_PASSWORD=Run-Pw-1 y`), `x ${'a'.repeat(50)}_PASSWORD=[REDACTED:named-secret] y`)
+})
+
+/* ── excerpts are references to the transcript, never copies ────────── */
+
+const sha = (s) => createHash('sha256').update(s, 'utf8').digest('hex')
+const transcriptLines = (file) => readFileSync(file, 'utf8').split('\n').slice(0, -1)
+
+test('refs: an excerpt stores the real path, the line numbers, the tool ids and each line\'s sha256, and no transcript text', () => {
+  const b = box()
+  // A secret in a shape redact() does not know: no prefix, no secret-named key, no Bearer, nothing to match.
+  const unknown = 'qz' + 'Vx8-Lm3Pw9-Tr4Kd7-Unknown-Shape-Cred'
+  const file = join(b.root, 'unk.jsonl')
+  const lines = [
+    { type: 'assistant', message: { model: 'model-a', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_unk', name: 'Bash', input: { command: `deploy ${unknown} --distinctive-transcript-marker` } }] } },
+    { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_unk', content: `echoed ${unknown}` }] } },
+    { type: 'user', message: { role: 'user', content: 'plain line about unrelated-transcript-prose' } },
+  ]
+  writeFileSync(file, `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`)
+  const link = join(b.root, 'link.jsonl')
+  symlinkSync(file, link)
+  const r = b.write({ what: 'x', severity: 'low', harness: 'claude', transcript: link, excerpts: { toolIds: ['toolu_unk'], lines: ['3'] } })
+  assert.equal(r.code, 0, r.err)
+  const { text, data } = b.only()
+  assert.ok(!text.includes(unknown), 'the unknown-shape secret is in the written report')
+  for (const s of ['--distinctive-transcript-marker', 'echoed', 'unrelated-transcript-prose', 'tool_result']) assert.ok(!text.includes(s), `transcript text "${s}" is in the report`)
+  const raw = transcriptLines(file)
+  assert.deepEqual(data.excerpts, { transcript: file, toolIds: ['toolu_unk'], lines: [1, 2, 3].map((n) => ({ line: n, sha256: sha(raw[n - 1]) })) })
+  assert.deepEqual(data.toolCalls, [], 'no transcript entry is copied into toolCalls')
+  // list --json returns the stored reference, not resolved text.
+  const listed = b.run(['list', '--json'])
+  assert.deepEqual(JSON.parse(listed.out)[0].excerpts, data.excerpts)
+  assert.ok(!listed.out.includes(unknown) && !listed.out.includes('echoed'))
+})
+
+test('refs: show reads the referenced lines now, redacted; --refs-only prints only the stored report; nothing is written', () => {
+  const b = box()
+  const t = claudeTranscript(b)
+  assert.equal(b.write({ what: 'x', severity: 'low', harness: 'claude', transcript: t.file, excerpts: { toolIds: ['toolu_01AAA'] } }).code, 0)
+  const { data, text: before } = b.only()
+  const s = b.run(['show', data.id])
+  assert.equal(s.code, 0, s.err)
+  assert.match(s.out, /--- excerpts, read now from .* \(redacted, not stored\) ---\n2\t\{.*pnpm install.*\n3\t\{.*ERR lockfile.*\[REDACTED:openai-key\]/s)
+  assert.ok(!s.out.includes(SECRETS.openai) && !s.out.includes(SECRETS.anthropic) && !s.out.includes(SECRETS.ghp))
+  assert.ok(!s.out.includes('CHANGED'))
+  const refs = b.run(['show', data.id, '--refs-only'])
+  assert.equal(refs.code, 0, refs.err)
+  assert.deepEqual(JSON.parse(refs.out), data, 'just the stored report, references only')
+  assert.ok(!refs.out.includes('ERR lockfile'))
+  assert.equal(b.only().text, before, 'show leaves the report as it was')
+  assert.equal(b.files().length, 1)
+})
+
+test('refs: show marks a line whose sha256 no longer matches, and a line past the end', () => {
+  const b = box()
+  const t = claudeTranscript(b)
+  assert.equal(b.write({ what: 'x', severity: 'low', harness: 'claude', transcript: t.file, excerpts: { lines: ['2-4'] } }).code, 0)
+  const { data } = b.only()
+  const raw = transcriptLines(t.file)
+  raw[1] = JSON.stringify({ type: 'user', message: { role: 'user', content: 'rewritten line' } })
+  writeFileSync(t.file, `${raw.slice(0, 3).join('\n')}\n`)
+  const s = b.run(['show', data.id])
+  assert.equal(s.code, 0, s.err)
+  assert.match(s.out, /\n2\t\[CHANGED since the report: this line no longer matches its sha256\] .*rewritten line/)
+  assert.match(s.out, /\n3\t\{/)
+  assert.ok(!/\n3\t\[CHANGED/.test(s.out), 'an unchanged line is not marked')
+  assert.match(s.out, /\n4\t\[MISSING: the transcript now has 3 lines\]/)
+})
+
+test('refs: show says plainly when the transcript is gone, and never reads a credential file swapped in for it', () => {
+  const b = box()
+  const t = claudeTranscript(b)
+  assert.equal(b.write({ what: 'x', severity: 'low', harness: 'claude', transcript: t.file, excerpts: { lines: ['1'] } }).code, 0)
+  const { data } = b.only()
+  rmSync(t.file)
+  const gone = b.run(['show', data.id])
+  assert.equal(gone.code, 0, gone.err)
+  assert.match(gone.out, /the transcript is gone \(the harness may have cleaned it up\)/)
+  assert.equal(JSON.parse(gone.out.split('\n--- excerpts')[0]).id, data.id, 'the report itself still shows')
+  const creds = join(b.home, '.claude', '.credentials.json')
+  writeFileSync(creds, '{"claudeAiOauth":{"accessToken":"planted-cred-value"}}\n')
+  symlinkSync(creds, t.file)
+  const swapped = b.run(['show', data.id])
+  assert.match(swapped.out, /not read: transcript .* is not a session \.jsonl file/)
+  assert.ok(!swapped.out.includes('planted-cred-value'))
+})
+
+test('refs: a report written before references (copied excerpt text in toolCalls) still lists and shows, unchanged', () => {
+  const b = box()
+  const copied = { source: 'transcript', line: 3, entry: { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_old', content: 'ERR old copied text' }] } } }
+  plant(b, 'legacy', new Date().toISOString(), 'alpha', { transcript: '/gone/old.jsonl', transcriptHow: 'given', toolCalls: [{ source: 'agent', quote: 'q' }, copied] })
+  const l = b.run(['list'])
+  assert.equal(l.code, 0, l.err)
+  assert.match(l.out, /^legacy\t/)
+  const s = b.run(['show', 'legacy'])
+  assert.equal(s.code, 0, s.err)
+  assert.deepEqual(JSON.parse(s.out).toolCalls[1], copied, 'shown as stored, with no excerpt section to resolve')
+  assert.deepEqual(JSON.parse(b.run(['list', '--json']).out)[0].toolCalls[1], copied)
 })

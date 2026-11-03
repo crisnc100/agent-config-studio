@@ -1,13 +1,13 @@
 ---
 name: flag
-description: "File a field report when the agent workflow itself goes wrong: a skill or rule that says the wrong thing, two rules that contradict, a gate or skill asking the user to do something by hand, a tool refusing on purpose, an instruction misread, a model choice that went badly. Quotes the real tool calls from the session transcript, redacted, into ~/.agent-config-studio/field-reports/. Use when the user says 'flag this' or '/flag', and on your own when you notice such a problem (file it, say so in one line, keep working). '/flag review' reads the reports back, groups them by cause and proposes rule or skill changes with the report ids as evidence."
+description: "File a field report when the agent workflow itself goes wrong: a skill or rule that says the wrong thing, two rules that contradict, a gate or skill asking the user to do something by hand, a tool refusing on purpose, an instruction misread, a model choice that went badly. Points at the real tool calls in the session transcript (by reference, never copied) and stores the report, redacted, in ~/.agent-config-studio/field-reports/. Use when the user says 'flag this' or '/flag', and on your own when you notice such a problem (file it, say so in one line, keep working). '/flag review' reads the reports back, groups them by cause and proposes rule or skill changes with the report ids as evidence."
 ---
 
 # /flag — field reports on the workflow
 
 A report is evidence for whoever later fixes the skills and the AGENTS.md / CLAUDE.md rules. It records what
-happened, what should have, the rule you were following (quoted), the tool calls that show it (quoted from the
-transcript, not paraphrased), and your own read of what went wrong.
+happened, what should have, the rule you were following (quoted), the tool calls that show it (references to the
+transcript lines, not paraphrases), and your own read of what went wrong.
 
 This is about the **workflow**: the skills, rules, gates, hooks and model choices that shape how agents work. A bug
 in the user's product is not a flag; it goes wherever the project tracks bugs.
@@ -65,7 +65,12 @@ file a duplicate.
 
    - `what` and `severity` (`low` | `medium` | `high`, your guess at the cost if it keeps happening) are required.
    - `rulesInForce`: the exact words of the skill or rule, with where they come from. Quote; never paraphrase.
-   - `toolCalls`: anything you quote yourself. `excerpts` copies transcript entries verbatim on top of that.
+   - `toolCalls`: anything you quote yourself.
+   - `excerpts` stores **references**, never transcript text: the transcript's path, the line numbers (a tool id
+     brings the lines of its call and its result), the tool ids, and each line's sha256. `show` reads those lines
+     from the transcript when it runs, redacted, and marks any line that changed since.
+   - The harness can clean transcripts up, so a reference may stop resolving. Write `what` and `toolCalls` so the
+     report makes sense without the transcript: quote the key command and its output yourself.
    - `model`: leave it out; it is read from the transcript. Give it only when there is no transcript.
    - Without a transcript (none found), leave out `transcript` and `excerpts` and quote the calls in `toolCalls`.
 
@@ -77,7 +82,7 @@ file a duplicate.
 
 3. **Say it in one line**: `Flagged: <id> — <what, short>`. The report is the output; don't restate it.
 
-Every string is redacted before it is written (API keys and tokens, JWTs, private keys, `Bearer` values, URL
+Every string you write is redacted before it is stored (API keys and tokens, JWTs, private keys, `Bearer` values, URL
 passwords, values of names holding KEY, TOKEN, SECRET or PASSWORD), so quote freely. Still: never read or quote a
 credential file (`.credentials.json`, `auth.json`, the keychain), and the helper refuses one as a transcript.
 
@@ -91,10 +96,14 @@ When the user asks to review the reports (`/flag review`, "what's been flagged")
 ```bash
 node "$FLAG" list --since 30d                 # one line each, newest first
 node "$FLAG" list --since 30d --project <name> --json   # the full reports, to read
-node "$FLAG" show <id>
+node "$FLAG" show <id>                        # the report, and its excerpts read from the transcript now
+node "$FLAG" show <id> --refs-only            # the report alone, references unresolved
 ```
 
-`--since` takes a date (`2026-11-01`), or `7d` / `24h`; `--project` a repo name or path. Then:
+`--since` takes a date (`2026-11-01`), or `7d` / `24h`; `--project` a repo name or path. `list --json` gives the
+stored reports, so excerpts there are references; `show` resolves them (redacted, nothing written), marks a line
+whose sha256 no longer matches, and says when the transcript is gone. Older reports may carry copied transcript
+entries in `toolCalls`; read them as they are. Then:
 
 1. Read the reports in full, and group them by **cause**, not by symptom: the same rule misread three ways is one
    group.

@@ -10,22 +10,24 @@
  *   node flag.mjs write < report.json        # one report from JSON on stdin; prints its id and path
  *   node flag.mjs find --transcript <path|auto> --text <s> [--harness claude|codex]
  *   node flag.mjs list [--since 2026-11-01|7d|24h] [--project <name|path>] [--json]
- *   node flag.mjs show <id>
+ *   node flag.mjs show <id> [--refs-only]
  *
  * The input is JSON, never argv, so nothing in it sits in a process list or shell history:
  *   { "what", "severity": "low|medium|high", "expected", "rulesInForce": [], "toolCalls": [],
  *     "agentTake", "harness", "model", "transcript": "<path>|auto",
  *     "excerpts": { "lines": ["120-140"], "toolIds": ["toolu_…", "call_…"] } }
- * Excerpts copy those transcript lines verbatim (a tool id brings its call and its result).
+ * Excerpts are stored as references, never as text: the transcript's real path, the line numbers (a tool id
+ * brings the lines of its call and its result), the tool ids and each line's sha256. `show` reads those lines
+ * from the transcript when it runs, redacted, and says when a line changed or the transcript is gone.
  *
- * Every string is redacted before anything is written (redact() below). Reports land in
+ * Every string the agent writes is redacted before anything is written (redact() below). Reports land in
  * ~/.agent-config-studio/field-reports/<date>-<slug>-<rand>.json, 0600, in a 0700 folder.
  * The only files read are the reports and the one transcript named; never a credential file.
  *
  * Exit: 0 done · 1 bad input or not found · 3 the sandbox refused the write (rerun with permission)
  */
 import { spawnSync } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -373,14 +375,19 @@ function autoTranscript(harness) {
   return { path: null, how: null }
 }
 
+// The real path of a transcript that may be read: a .jsonl file, never a credential file under any name.
+function transcriptPath(p) {
+  let real
+  try { real = realpathSync(p) } catch { refuse(`transcript ${p} does not exist`) }
+  if (!real.endsWith('.jsonl') || CREDENTIAL_FILE.test(basename(real)) || CREDENTIAL_FILE.test(basename(p))) refuse(`transcript ${p} is not a session .jsonl file; only a session transcript is read`)
+  return real
+}
+
 function resolveTranscript(given, harness) {
   if (!given) return { path: null, how: null }
   const t = given === 'auto' ? autoTranscript(harness) : { path: resolve(given), how: 'given' }
   if (!t.path) return t
-  let real
-  try { real = realpathSync(t.path) } catch { refuse(`transcript ${t.path} does not exist`) }
-  if (!real.endsWith('.jsonl') || CREDENTIAL_FILE.test(basename(real)) || CREDENTIAL_FILE.test(basename(t.path))) refuse(`transcript ${t.path} is not a session .jsonl file; only a session transcript is read`)
-  return { path: real, how: t.how }
+  return { path: transcriptPath(t.path), how: t.how }
 }
 
 function readTranscript(file) {
@@ -437,7 +444,10 @@ function parseRanges(list, max) {
   return out
 }
 
-function excerpt(lines, { lines: ranges = [], toolIds = [] } = {}) {
+const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex')
+
+/** A reference to transcript lines: where they are and what they hashed to, never their text. */
+function excerptRef(path, lines, { lines: ranges = [], toolIds = [] } = {}) {
   if (!Array.isArray(ranges) || !Array.isArray(toolIds)) refuse('excerpts.lines and excerpts.toolIds must be lists')
   const want = parseRanges(ranges, lines.length)
   for (const id of toolIds) {
@@ -446,10 +456,7 @@ function excerpt(lines, { lines: ranges = [], toolIds = [] } = {}) {
     for (const h of hits) want.add(h.line)
   }
   if (want.size > MAX_EXCERPT) refuse(`the excerpts come to ${want.size} lines; keep it to ${MAX_EXCERPT} — narrow the ranges`)
-  return [...want].sort((a, b) => a - b).map((n) => {
-    const l = lines[n - 1]
-    return { source: 'transcript', line: n, entry: l.entry ?? l.text }
-  })
+  return { transcript: path, toolIds: [...toolIds], lines: [...want].sort((a, b) => a - b).map((n) => ({ line: n, sha256: sha256(lines[n - 1].text) })) }
 }
 
 /* ── the report ──────────────────────────────────────────────────────── */
@@ -503,13 +510,15 @@ export function buildReport(input, now = new Date()) {
     what: input.what,
     expected: optText(input.expected, 'expected'),
     rulesInForce: asList(input.rulesInForce),
-    toolCalls: [...quoted, ...(lines && input.excerpts ? excerpt(lines, input.excerpts) : [])],
+    toolCalls: quoted,
     agentTake: optText(input.agentTake, 'agentTake'),
     transcript: transcript.path,
     transcriptHow: transcript.how,
   }
   const clean = truncate(redact(report))
   clean.id = `${localDate(now)}-${slugOf(clean.what)}-${randomBytes(3).toString('hex')}`
+  // Added after redaction: a path, ids and hashes, exact so `show` can find and check the lines.
+  if (input.excerpts !== undefined) clean.excerpts = excerptRef(transcript.path, lines, input.excerpts)
   return clean
 }
 
@@ -562,6 +571,26 @@ export function listReports({ since, project: proj } = {}, dir = REPORTS) {
     .sort((a, b) => String(b.ts).localeCompare(String(a.ts)) || String(b.id).localeCompare(String(a.id)))
 }
 
+/**
+ * The referenced transcript lines as they read now, redacted, for display only (never written). A line whose
+ * sha256 no longer matches is marked; a transcript that is gone or will not be read is said plainly.
+ */
+export function resolveExcerpts(ref) {
+  const head = `\n--- excerpts, read now from ${ref.transcript} (redacted, not stored) ---\n`
+  if (typeof ref.transcript !== 'string' || !Array.isArray(ref.lines)) return `${head}the reference is malformed; nothing to show\n`
+  if (!existsSync(ref.transcript)) return `${head}the transcript is gone (the harness may have cleaned it up); the report's own what and toolCalls are all that is left\n`
+  let lines
+  try { lines = readTranscript(transcriptPath(ref.transcript)) } catch (e) { return `${head}not read: ${e.message}\n` }
+  let out = head
+  for (const { line, sha256: want } of ref.lines) {
+    const l = lines[line - 1]
+    if (!l) { out += `${line}\t[MISSING: the transcript now has ${lines.length} lines]\n`; continue }
+    const mark = sha256(l.text) === want ? '' : '[CHANGED since the report: this line no longer matches its sha256] '
+    out += `${line}\t${mark}${l.entry ? JSON.stringify(redact(l.entry)) : redactText(l.text)}\n`
+  }
+  return out
+}
+
 /* ── the command line ────────────────────────────────────────────────── */
 
 function args(argv) {
@@ -569,6 +598,7 @@ function args(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--json') out.json = true
+    else if (a === '--refs-only') out.refsOnly = true
     else if (/^--(since|project|transcript|text|harness)$/.test(a)) {
       if (i + 1 >= argv.length) refuse(`${a} needs a value`)
       out[a.slice(2)] = argv[++i]
@@ -633,6 +663,7 @@ function main(argv) {
     let report
     try { report = readReport(file) } catch (e) { refuse(`${id}: ${e.message}`) }
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+    if (report.excerpts && !opt.refsOnly) process.stdout.write(resolveExcerpts(report.excerpts))
     return 0
   }
   refuse(`unknown command ${cmd} (write | find | list | show)`)
