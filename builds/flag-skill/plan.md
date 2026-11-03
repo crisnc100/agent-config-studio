@@ -87,3 +87,10 @@ in a transcript excerpt, excerpt copying by line and id, find, refusals, list/si
 ## Open choice
 Codex writes: (A, shipped) rerun with escalation, one approval per report; (B, recommended next) widen the review
 gate's `codex-log-access` part into a field-reports writable root too, which needs `lib/packs.js` changes.
+
+## Follow-up (x1–x4, then review 2026-11-03-00-57-10-e98dd6)
+Embedded JSON is found anywhere in a string by a bracket scanner (level 0, or level 1 for JSON encoded inside a
+JSON string, decoded before matching) and parsed by a span-keeping parser: only changed strings are rewritten in
+place, so numbers (2^53+1), spacing and escapes stay byte-exact. Fail-safe limits: a string over 1 MiB becomes
+`[REDACTED:oversize]`; one whose brackets exceed a 32-steps-per-character scan budget becomes
+`[REDACTED:unscannable]`. Secret-name matching takes a whole name run at once, so long runs stay linear.

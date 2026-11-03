@@ -36,7 +36,8 @@ const SEVERITIES = ['low', 'medium', 'high']
 const HARNESSES = ['claude', 'codex', 'grok']
 const INPUT_KEYS = ['what', 'severity', 'expected', 'rulesInForce', 'toolCalls', 'agentTake', 'harness', 'model', 'transcript', 'excerpts']
 const MAX_STRING = 20000
-const MAX_EMBEDDED = 1 << 20
+const MAX_SCAN = 1 << 20
+const SCAN_PER_CHAR = 32
 const MAX_EXCERPT = 200
 const CREDENTIAL_FILE = /^(?:\.credentials\.json|auth\.json|credentials(?:\.json)?)$|keychain/i
 
@@ -61,11 +62,13 @@ const TOKENS = [
   ['gitlab-token', new RegExp(`${NOT_ALNUM}glpat-[A-Za-z0-9_-]{20,}`, 'g')],
   ['npm-token', new RegExp(`${NOT_ALNUM}npm_[A-Za-z0-9]{30,}`, 'g')],
 ]
-const NAME = '[A-Za-z0-9_.-]*(?:key|token|secret|passw(?:or)?d)[A-Za-z0-9_.-]*'
+// A whole run of name characters holding a secret word, taken at once (a lookahead and its backreference act as an
+// atomic group), so a long run is never retried from each position or each word inside it (quadratic).
+const NAME = String.raw`(?=[A-Za-z0-9_.-]*?(?:key|token|secret|passw(?:or)?d))(?=(?<run>[A-Za-z0-9_.-]+))\k<run>`
 // A value: quoted with escaped quotes (\"v\", as inside JSON-encoded text), "v", 'v', or bare.
 const VALUE = String.raw`(?:(?<eq>\\+)"(?<ev>(?:(?!\k<eq>").)*)\k<eq>"|"(?<dq>(?:[^"\\]|\\.)*)"|'(?<sq>[^']*)'|(?<bare>(?:\\.|[^\s"'\x60,;&|(){}[\]<>\\])+))`
 // NAME=value, "name": "value", \"name\": \"value\", name: value — the name holding key, token, secret or password.
-const ASSIGNED = new RegExp(String.raw`(?<q>\\*["']?)(?<name>${NAME})\k<q>(?<sp1>\s*)(?<sep>[=:])(?<sp2>\s*)${VALUE}`, 'gi')
+const ASSIGNED = new RegExp(String.raw`(?<q>\\*["']?)(?<![A-Za-z0-9_.-])(?<name>${NAME})\k<q>(?<sp1>\s*)(?<sep>[=:])(?<sp2>\s*)${VALUE}`, 'gi')
 // --api-key value, -token value (the = form is ASSIGNED's).
 const FLAG = new RegExp(String.raw`(?<lead>\s|^)(?<name>--?${NAME})(?<sp1>\s+)${VALUE}`, 'gi')
 
@@ -86,25 +89,87 @@ function basicCredential(b64) {
   return text.includes(':') && /^[\x20-\x7e]+$/.test(text)
 }
 
-// The index of the bracket that closes the one at `at`, skipping JSON strings; -1 when it never closes.
-function closing(s, at) {
+class Unscannable extends Error {}
+
+// The end (exclusive) of the bracket opened at `at`, skipping JSON strings; -1 when it never closes. At level 1
+// the text is JSON-encoded once more (inside a JSON string): a quote is \" and an escape inside a string is \\.
+// `budget` bounds the work over one string (many brackets that never close would make it quadratic).
+function closing(s, at, level, budget) {
   const stack = []
   let inString = false
   for (let i = at; i < s.length; i++) {
+    if (--budget.left < 0) throw new Unscannable()
     const c = s[i]
-    if (inString) { if (c === '\\') i++; else if (c === '"') inString = false; continue }
-    if (c === '"') inString = true
-    else if (c === '{' || c === '[') stack.push(c === '{' ? '}' : ']')
-    else if (c === '}' || c === ']') { if (stack.pop() !== c) return -1; if (!stack.length) return i }
+    if (level === 0) {
+      if (inString) { if (c === '\\') i++; else if (c === '"') inString = false; continue }
+      if (c === '"') { inString = true; continue }
+    } else {
+      if (c === '\\' && s[i + 1] === '"') { inString = !inString; i++; continue }
+      // An escape at level 1 is \\ and then one level-1 character (itself \x or a plain one); outside a string, \n and the like.
+      if (c === '\\') { i += inString && s[i + 1] === '\\' ? (s[i + 2] === '\\' ? 3 : 2) : 1; continue }
+      if (inString) continue
+    }
+    if (c === '{' || c === '[') stack.push(c === '{' ? '}' : ']')
+    else if (c === '}' || c === ']') { if (stack.pop() !== c) return -1; if (!stack.length) return i + 1 }
   }
   return -1
 }
 
-// [before, after] for every string leaf that redaction changed (the two values have the same shape).
-function changedStrings(a, b, out = []) {
-  if (typeof a === 'string') { if (a !== b) out.push([a, b]) }
-  else if (a && typeof a === 'object') for (const k of Object.keys(a)) changedStrings(a[k], b[k], out)
-  return out
+/**
+ * A strict JSON parse of `src` that keeps where each string sits: { type, start, end, value, members | items }.
+ * Numbers and literals are only stepped over, so nothing but a replaced string ever changes in the source.
+ * Throws when `src` is not exactly one JSON object or array.
+ */
+const STRING_AT = /"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"/y
+const SCALAR_AT = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null/y
+function parseSpans(src) {
+  let i = 0
+  const ws = () => { while (i < src.length && ' \t\n\r'.includes(src[i])) i++ }
+  const fail = () => { throw new SyntaxError(`not JSON at ${i}`) }
+  const at = (re) => { re.lastIndex = i; return re.exec(src) }
+  function str() {
+    const m = at(STRING_AT)
+    if (!m) fail()
+    const node = { type: 'string', start: i, end: i + m[0].length, value: JSON.parse(m[0]) }
+    i = node.end
+    return node
+  }
+  function value() {
+    ws()
+    const c = src[i]
+    if (c === '"') return str()
+    if (c === '{') {
+      i++; ws()
+      const members = []
+      if (src[i] === '}') { i++; return { type: 'object', members } }
+      for (;;) {
+        ws(); if (src[i] !== '"') fail()
+        const key = str(); ws(); if (src[i++] !== ':') fail()
+        members.push([key, value()]); ws()
+        if (src[i] === ',') { i++; continue }
+        if (src[i++] === '}') return { type: 'object', members }
+        fail()
+      }
+    }
+    if (c === '[') {
+      i++; ws()
+      const items = []
+      if (src[i] === ']') { i++; return { type: 'array', items } }
+      for (;;) {
+        items.push(value()); ws()
+        if (src[i] === ',') { i++; continue }
+        if (src[i++] === ']') return { type: 'array', items }
+        fail()
+      }
+    }
+    const m = at(SCALAR_AT)
+    if (!m) fail()
+    i += m[0].length
+    return { type: 'scalar' }
+  }
+  const root = value(); ws()
+  if (i !== src.length || root.type === 'string' || root.type === 'scalar') fail()
+  return root
 }
 
 /**
@@ -122,44 +187,53 @@ function redactor() {
   const sub = (kind) => (all) => { note(all, kind); return mark(kind) }
 
   // JSON anywhere inside a string (a tool result, Codex's function arguments, "config: {…}"), also JSON-encoded
-  // once more: each piece is walked like any value and its redacted form put back in its place.
+  // once more: each piece is redacted like any value, and only its changed strings are rewritten in place.
   function embedded(s) {
-    if (s.length > MAX_EMBEDDED || !/[[{]/.test(s)) return s
+    if (!/[[{]/.test(s)) return s
+    const budget = { left: SCAN_PER_CHAR * s.length + 100000 }
     let out = '', from = 0
     for (let i = 0; i < s.length; i++) {
       if (s[i] !== '{' && s[i] !== '[') continue
-      const end = closing(s, i)
+      const level = /^[{[]\s*\\"/.test(s.slice(i, i + 64)) ? 1 : 0
+      const end = closing(s, i, level, budget)
       if (end < 0) continue
-      const piece = s.slice(i, end + 1)
-      const clean = jsonPiece(piece)
+      const clean = jsonPiece(s.slice(i, end), level)
       if (clean === null) continue
       out += s.slice(from, i) + clean
-      from = i = end + 1
-      i--
+      from = end
+      i = end - 1
     }
     return out + s.slice(from)
   }
 
-  // A piece that parses as JSON (or as JSON inside a JSON string, \"…\"), redacted; null when it is not JSON.
-  function jsonPiece(piece) {
-    for (const encoded of [false, true]) {
-      let value
-      try { value = JSON.parse(encoded ? JSON.parse(`"${piece}"`) : piece) } catch { continue }
-      if (!value || typeof value !== 'object') return null
-      const clean = walk(value, false)
-      if (JSON.stringify(clean) === JSON.stringify(value)) return piece
-      // Keep the piece's own formatting where only strings changed; else write the redacted value out whole.
-      const enc = (v) => (encoded ? JSON.stringify(v).slice(1, -1) : v)
-      let out = piece
-      for (const [from, to] of changedStrings(value, clean)) out = out.split(enc(JSON.stringify(from))).join(enc(JSON.stringify(to)))
-      try { if (JSON.stringify(JSON.parse(encoded ? JSON.parse(`"${out}"`) : out)) === JSON.stringify(clean)) return out } catch {}
-      return enc(JSON.stringify(clean))
+  // A piece that is JSON (level 0) or JSON-encoded JSON (level 1), redacted; null when it is not JSON.
+  function jsonPiece(piece, level) {
+    let src = piece
+    if (level === 1) { try { src = JSON.parse(`"${piece}"`) } catch { return null } }
+    let root
+    try { root = parseSpans(src) } catch { return null }
+    const edits = []
+    const visit = (node, secret) => {
+      if (node.type === 'string') {
+        const v = node.value
+        const red = secret ? (marked(v) ? v : (note(v, 'named-secret'), mark('named-secret'))) : text(v)
+        if (red !== v) edits.push([node.start, node.end, JSON.stringify(red)])
+      } else if (node.type === 'object') for (const [k, v] of node.members) visit(v, secret || SECRET_NAME.test(k.value))
+      else if (node.type === 'array') for (const v of node.items) visit(v, secret)
     }
-    return null
+    visit(root, false)
+    if (!edits.length) return piece
+    let out = src
+    for (const [start, end, repl] of edits.sort((x, y) => y[0] - x[0])) out = out.slice(0, start) + repl + out.slice(end)
+    return level === 1 ? JSON.stringify(out).slice(1, -1) : out
   }
 
   function text(s) {
-    let out = embedded(s)
+    // Too long to scan for structure: kept out whole rather than let a secret through unread.
+    if (s.length > MAX_SCAN) return mark('oversize')
+    let out
+    try { out = embedded(s) } catch (e) { if (e instanceof Unscannable) return mark('unscannable'); throw e }
+    out = out
       .replace(/-----BEGIN ((?:[A-Z0-9]+ )*)PRIVATE KEY-----[\s\S]*?(?:-----END \1PRIVATE KEY-----|$)/g, sub('private-key'))
       .replace(/(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, sub('jwt'))
       .replace(/\b(Bearer)(\s+)([A-Za-z0-9._~+/=-]{8,})/gi, (_, w, sp, v) => { note(v, 'bearer'); return `${w}${sp}${mark('bearer')}` })
