@@ -69,7 +69,7 @@ Open choice below.
 
 ## Existing tests that change (own test-only commit)
 `review.packs.test.mjs`: `IDS` gains `flag`; the SKILL.md count 10 → 12 (three asserts). `packs-catalog.mjs` C10 list
-gains `flag`; `packs-server.mjs` catalog order gains `flag`. Each still pins the full set and order.
+gains `flag`; `packs-server.mjs` catalog order gains `flag`; `packs-ui.mjs` card count 6 → 7. Each still pins the full set and order.
 
 ## Validation
 New: `packs/flag/tests/flag.test.mjs` (node:test, temp HOME): writes, modes, each redaction kind, a planted key
