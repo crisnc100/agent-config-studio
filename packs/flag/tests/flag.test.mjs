@@ -724,3 +724,49 @@ test('refs: a report written before references (copied excerpt text in toolCalls
   assert.deepEqual(JSON.parse(s.out).toolCalls[1], copied, 'shown as stored, with no excerpt section to resolve')
   assert.deepEqual(JSON.parse(b.run(['list', '--json']).out)[0].toolCalls[1], copied)
 })
+
+/* ── fix round: review 2026-11-03-15-35-39-6c0d61 ───────────────────── */
+
+// A call whose result echoes `pass`, and a report referencing only the result line.
+function echoTranscript(b, callInput) {
+  const file = join(b.root, 'echo.jsonl')
+  const lines = [
+    { type: 'assistant', message: { model: 'model-a', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_echo', name: 'Bash', input: callInput }] } },
+    { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_echo', content: 'unrelated' }] } },
+  ]
+  return { file, lines, write: (pass) => { lines[1].message.content[0].content = `connected; session for ${pass} open`; writeFileSync(file, `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`) } }
+}
+
+test('g1: a result-only excerpt whose password sits under a secret-named field only in its call: show never prints it', () => {
+  const b = box()
+  const pass = 'Opaque-Ctx-Pass-1'
+  const t = echoTranscript(b, { command: 'psql', password: pass })
+  t.write(pass)
+  assert.equal(b.write({ what: 'x', severity: 'low', harness: 'claude', transcript: t.file, excerpts: { lines: ['2'] } }).code, 0)
+  const { text, data } = b.only()
+  assert.ok(!text.includes(pass))
+  assert.deepEqual(data.excerpts.lines.map((l) => l.line), [2])
+  const s = b.run(['show', data.id])
+  assert.equal(s.code, 0, s.err)
+  assert.ok(!s.out.includes(pass), s.out)
+  assert.equal(shown(s.out)[2].message.content[0].content, 'connected; session for [REDACTED:named-secret] open')
+  assert.ok(!/\n1\t/.test(s.out), 'the call line is context only, never printed')
+})
+
+test('g2: the same, with the secret name only in the agent\'s quote: show never prints it, and withholds the line if it changed', () => {
+  const b = box()
+  const pass = 'Opaque-Quote-Pass-2'
+  const t = echoTranscript(b, { command: `psql -W ${pass}` })
+  t.write(pass)
+  assert.equal(b.write({ what: 'x', severity: 'low', harness: 'claude', transcript: t.file, excerpts: { lines: ['2'] }, toolCalls: [`DB_PASSWORD=${pass} psql`] }).code, 0)
+  const { text, data } = b.only()
+  assert.ok(!text.includes(pass))
+  const s = b.run(['show', data.id])
+  assert.equal(s.code, 0, s.err)
+  assert.ok(!s.out.includes(pass), s.out)
+  assert.match(shown(s.out)[2].message.content[0].content, /^connected; session for \[REDACTED:[a-z-]+\] open$/)
+  t.write(`${pass} `)
+  const changed = b.run(['show', data.id])
+  assert.ok(!changed.out.includes(pass), changed.out)
+  assert.match(changed.out, /\n2\t\[CHANGED since the report: this line no longer matches its sha256; not shown, it held a secret learned elsewhere\]\n/)
+})
