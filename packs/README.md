@@ -11,6 +11,7 @@ what it is, what it does day to day, every file and setting it will change, and 
 | `advisor` | an outside verdict on scope and direction from your advisor role |
 | `second-opinion` | other models' views on an answer, side by side |
 | `handoff` | a resume-here file for the next agent session |
+| `flag` | redacted field reports when the agent workflow goes wrong, and a review that proposes rule fixes from them |
 | `worktree` | zsh commands for a parked trunk checkout plus one worktree per goal |
 
 No pack names a model. Skills read the families from your ACS roles (`model-id --role <role>`,
@@ -25,6 +26,7 @@ What the packs and the review gate can't do yet, and how likely each limit is to
 packs/<id>/pack.json                         the manifest (below)
 packs/<id>/skills/claude/<skill>/...         the Claude Code skill (Grok reads ~/.claude/skills too)
 packs/<id>/skills/codex/<skill>/...          the Codex skill
+packs/flag/skills/*/flag/flag.mjs            the /flag helper, shipped in its skill folder (no shared runtime)
 packs/review-gate/runtime/                   review.mjs, calibration.md, the example config, hooks/
 packs/review-gate/instructions/              the marked instruction block
 packs/review-gate/tests/                     the review gate's tests (never shipped)

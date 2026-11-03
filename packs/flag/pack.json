@@ -1,0 +1,54 @@
+{
+  "id": "flag",
+  "title": "Flag",
+  "version": "1.0.0",
+  "summary": "A /flag skill that files a redacted report whenever the agent workflow itself goes wrong, quoting the real tool calls, so a later session can fix the rules and skills with evidence.",
+  "explain": {
+    "what": "The flag skill captures problems with how your agents work, not with your code: a skill or rule that says the wrong thing, two rules that contradict, a gate asking you to do something by hand, a tool refusing on purpose, an instruction misread, a model choice that went badly. Each one becomes a small JSON report with what happened, what should have, the rule in force (quoted), the tool calls that show it (copied from the session transcript, not paraphrased) and the agent's own read.",
+    "does": "Day to day you say 'flag this' or /flag, and agents also file a report on their own when they notice such a problem, telling you in one line without stopping the work. Every string is redacted before it is written: API keys and tokens, JWTs, private keys, Bearer values, URL passwords and the values of names holding KEY, TOKEN, SECRET or PASSWORD. Credential files are never read. /flag review lists the reports, groups them by cause and proposes concrete rule or skill changes with the report ids as evidence; it never edits a rule itself. It runs no model, so it needs no model-id or ask-model.",
+    "changes": [
+      "~/.claude/skills/flag/ and ~/.codex/skills/flag/ (the skill and its helper, flag.mjs, for the harnesses you have)",
+      "~/.agent-config-studio/field-reports/ (created by the first report; one file per report, readable only by you)"
+    ],
+    "undo": "Uninstalling removes the skill folders. A file you edited after installing is kept and reported. The reports in ~/.agent-config-studio/field-reports/ are your history and are never deleted."
+  },
+  "requires": {
+    "node": ">=20",
+    "git": false,
+    "modelId": false,
+    "askModel": false,
+    "clis": {
+      "anyOf": [
+        "claude",
+        "codex",
+        "grok"
+      ]
+    },
+    "packs": []
+  },
+  "parts": [
+    {
+      "id": "flag",
+      "title": "Flag skill",
+      "default": true,
+      "kind": "skill",
+      "harnesses": [
+        "claude",
+        "codex"
+      ],
+      "files": [
+        "packs/flag/skills/claude/flag/SKILL.md",
+        "packs/flag/skills/claude/flag/flag.mjs",
+        "packs/flag/skills/codex/flag/SKILL.md",
+        "packs/flag/skills/codex/flag/flag.mjs"
+      ],
+      "explain": {
+        "changes": [
+          "~/.claude/skills/flag/SKILL.md and flag.mjs (Claude Code; Grok reads this folder too)",
+          "~/.codex/skills/flag/SKILL.md and flag.mjs (Codex)",
+          "~/.agent-config-studio/field-reports/ (created by the first report, 0700; each report 0600)"
+        ]
+      }
+    }
+  ]
+}

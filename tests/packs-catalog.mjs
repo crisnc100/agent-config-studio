@@ -20,7 +20,7 @@ const C3 = /cris|cristian|cortega|crisnc100|ortega|\/Users\/|Documents\/Projects
 
 console.log('\nC10 every pack and part explains itself');
 const catalog = loadCatalog();
-ok('C10 the six packs load, worktree setup included', ['review-gate', 'build', 'advisor', 'second-opinion', 'handoff', 'worktree'].every((id) => catalog.some((p) => p.id === id)), catalog.map((p) => p.id).join());
+ok('C10 the seven packs load, worktree setup included', ['review-gate', 'build', 'advisor', 'second-opinion', 'handoff', 'flag', 'worktree'].every((id) => catalog.some((p) => p.id === id)), catalog.map((p) => p.id).join());
 for (const pack of catalog) {
   const full = ['what', 'does', 'undo'].every((k) => pack.explain[k]?.trim()) && pack.explain.changes.length && pack.summary.trim();
   ok(`C10 ${pack.id}: a summary and a full explain`, !!full);
