@@ -106,8 +106,11 @@ if (${J(name)} === 'codex') {
     ...(structured ? { structured_output: JSON.parse(structured) } : {}) });
 } else {
   if (mode === 'fail') { process.stdout.write(JSON.stringify({ type: 'error', message: 'grok: boom' })); process.exit(1); }
-  const usage = mode === 'downgrade' ? { 'claude-sonnet-stub': {} } : mode === 'sibling' ? { 'grok-sibling-stub': {} } : { [model]: { modelCalls: 1 } };
-  process.stdout.write(JSON.stringify({ text: answer, stopReason: 'end_turn', modelUsage: usage, ...(structured ? { structuredOutput: structured } : {}) }));
+  // STUB_GROK_USAGE: the modelUsage keys, '$m' standing for the asked-for model; STUB_SESSION_ID: the reply's sessionId.
+  const usage = process.env.STUB_GROK_USAGE ? Object.fromEntries(JSON.parse(process.env.STUB_GROK_USAGE).map((k) => [k.replace('$m', model), { modelCalls: 1 }]))
+    : mode === 'downgrade' ? { 'claude-sonnet-stub': {} } : mode === 'sibling' ? { 'grok-sibling-stub': {} } : { [model]: { modelCalls: 1 } };
+  process.stdout.write(JSON.stringify({ text: answer, stopReason: 'end_turn', modelUsage: usage,
+    ...(process.env.STUB_SESSION_ID ? { sessionId: process.env.STUB_SESSION_ID } : {}), ...(structured ? { structuredOutput: structured } : {}) }));
 }
 `;
 for (const name of ['claude', 'codex', 'grok']) fs.writeFileSync(path.join(STUBS, name), stub(name), { mode: 0o755 });
