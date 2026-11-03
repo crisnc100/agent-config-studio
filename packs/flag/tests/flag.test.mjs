@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * flag.test.mjs — the /flag helper: reports written with their modes, every redaction kind (inside a transcript
- * excerpt too), excerpts copied by line and by tool id from Claude Code and Codex transcripts, the refusals, and
- * list with its filters. Every run is a temp HOME; no real ~/.claude, ~/.codex or ~/.agent-config-studio is read.
+ * flag.test.mjs — the /flag helper: reports written with their modes, every redaction kind, excerpts stored as
+ * references (by line and by tool id, from Claude Code and Codex transcripts) and resolved by show, redacted, the
+ * refusals, and list with its filters. Every run is a temp HOME; no real ~/.claude, ~/.codex or ~/.agent-config-studio is read.
  * Planted secrets are built at run time so no scanner mistakes this file for a leak.
  */
 import assert from 'node:assert/strict'
@@ -16,6 +16,10 @@ import { fileURLToPath } from 'node:url'
 import { redact, redactText } from '../skills/claude/flag/flag.mjs'
 
 const b64 = (s) => Buffer.from(s).toString('base64')
+const sha = (s) => createHash('sha256').update(s, 'utf8').digest('hex')
+const transcriptLines = (file) => readFileSync(file, 'utf8').split('\n').slice(0, -1)
+// The excerpt lines show prints, by line number, each parsed back from its redacted JSON.
+const shown = (out) => Object.fromEntries(out.split('(redacted, not stored) ---\n')[1].trim().split('\n').map((l) => { const [n, ...rest] = l.split('\t'); return [Number(n), JSON.parse(rest.join('\t'))] }))
 
 const FLAG = resolve(dirname(fileURLToPath(import.meta.url)), '../skills/claude/flag/flag.mjs')
 const roots = []
@@ -194,19 +198,26 @@ function claudeTranscript(b, session = 'sess-1') {
   return { file, lines }
 }
 
-test('a Claude Code excerpt by tool id copies the call and its result verbatim, with the planted keys redacted', () => {
+test('a Claude Code excerpt by tool id references its call and result by line and sha256; show prints them as they were, the planted keys redacted', () => {
   const b = box()
   const t = claudeTranscript(b)
   const r = b.write({ what: 'asked to paste a command', severity: 'medium', harness: 'claude', transcript: t.file, excerpts: { toolIds: ['toolu_01AAA'] } })
   assert.equal(r.code, 0, r.err)
   const { text, data } = b.only()
   assert.ok(!text.includes(SECRETS.openai) && !text.includes(SECRETS.anthropic) && !text.includes(SECRETS.ghp), 'a planted key leaked from the excerpt')
-  assert.deepEqual(data.toolCalls.map((c) => [c.source, c.line]), [['transcript', 2], ['transcript', 3]])
-  assert.deepEqual(data.toolCalls[0].entry, t.lines[1], 'the call is copied as it was')
+  assert.ok(!text.includes('pnpm install') && !text.includes('ERR lockfile'), 'transcript text is in the report')
+  const raw = transcriptLines(t.file)
+  assert.deepEqual(data.excerpts, { transcript: t.file, toolIds: ['toolu_01AAA'], lines: [2, 3].map((n) => ({ line: n, sha256: sha(raw[n - 1]) })) })
+  assert.deepEqual(data.toolCalls, [])
+  const s = b.run(['show', data.id])
+  assert.equal(s.code, 0, s.err)
+  const lines = shown(s.out)
+  assert.deepEqual(Object.keys(lines), ['2', '3'])
+  assert.deepEqual(lines[2], t.lines[1], 'the call is shown as it was')
   const result = structuredClone(t.lines[2])
   result.message.content[0].content = 'ERR lockfile; env had OPENAI_API_KEY=[REDACTED:openai-key] and [REDACTED:anthropic-key]'
   result.toolUseResult.stdout = 'token [REDACTED:github-token]'
-  assert.deepEqual(data.toolCalls[1].entry, result, 'the result is copied as it was, only the secrets replaced')
+  assert.deepEqual(lines[3], result, 'the result is shown as it was, only the secrets replaced')
   assert.deepEqual([data.transcript, data.transcriptHow, data.model], [t.file, 'given', 'model-b'])
 })
 
@@ -216,8 +227,8 @@ test('excerpts by line range, merged with tool ids, in order and without repeats
   const r = b.write({ what: 'x', severity: 'low', harness: 'claude', transcript: t.file, excerpts: { lines: ['3-4', '1'], toolIds: ['toolu_01AAA'] } })
   assert.equal(r.code, 0, r.err)
   const { data } = b.only()
-  assert.deepEqual(data.toolCalls.map((c) => c.line), [1, 2, 3, 4])
-  assert.deepEqual(data.toolCalls[3].entry.message.usage, { input_tokens: 2, output_tokens: 9 })
+  assert.deepEqual(data.excerpts.lines.map((l) => l.line), [1, 2, 3, 4])
+  assert.deepEqual(shown(b.run(['show', data.id]).out)[4].message.usage, { input_tokens: 2, output_tokens: 9 })
 })
 
 test('transcript "auto" in Claude Code finds this session from CLAUDE_CODE_SESSION_ID', () => {
@@ -226,7 +237,7 @@ test('transcript "auto" in Claude Code finds this session from CLAUDE_CODE_SESSI
   const r = b.write({ what: 'x', severity: 'low', harness: 'claude', transcript: 'auto', excerpts: { lines: ['2'] } }, { extra: { CLAUDE_CODE_SESSION_ID: 'sess-auto' } })
   assert.equal(r.code, 0, r.err)
   const { data } = b.only()
-  assert.deepEqual([data.transcript, data.transcriptHow, data.toolCalls[0].entry.uuid], [t.file, 'session-id', 'a1'])
+  assert.deepEqual([data.transcript, data.transcriptHow, data.excerpts.lines], [t.file, 'session-id', [{ line: 2, sha256: sha(JSON.stringify(t.lines[1])) }]])
 })
 
 // A Codex rollout, in the shape ~/.codex/sessions/YYYY/MM/DD/rollout-…-<id>.jsonl lines have.
@@ -245,17 +256,20 @@ function codexTranscript(b, { id = '0000-thread', cwd = b.repo, home = join(b.ho
   return { file, lines }
 }
 
-test('a Codex excerpt by call id copies the call and its output, redacted; the model comes from turn_context', () => {
+test('a Codex excerpt by call id references the call and its output; show prints them redacted; the model comes from turn_context', () => {
   const b = box()
   const t = codexTranscript(b)
   const r = b.write({ what: 'x', severity: 'low', harness: 'codex', transcript: t.file, excerpts: { toolIds: ['call_abc', 'call_old'] } })
   assert.equal(r.code, 0, r.err)
   const { text, data } = b.only()
   assert.ok(!text.includes(SECRETS.gho) && !text.includes(SECRETS.jwt))
-  assert.deepEqual(data.toolCalls.map((c) => c.line), [3, 4, 5])
-  assert.equal(data.toolCalls[0].entry.payload.input, 'export GH_TOKEN=[REDACTED:github-token]; gh pr list')
-  assert.equal(data.toolCalls[1].entry.payload.output[0].text, 'denied: [REDACTED:jwt]')
-  assert.deepEqual(data.toolCalls[2].entry, t.lines[4])
+  assert.ok(!text.includes('gh pr list') && !text.includes('denied:'), 'transcript text is in the report')
+  assert.deepEqual(data.excerpts.lines.map((l) => l.line), [3, 4, 5])
+  assert.deepEqual(data.excerpts.toolIds, ['call_abc', 'call_old'])
+  const lines = shown(b.run(['show', data.id]).out)
+  assert.equal(lines[3].payload.input, 'export GH_TOKEN=[REDACTED:github-token]; gh pr list')
+  assert.equal(lines[4].payload.output[0].text, 'denied: [REDACTED:jwt]')
+  assert.deepEqual(lines[5], t.lines[4])
   assert.equal(data.model, 'model-c')
 })
 
@@ -523,9 +537,13 @@ test('the property: a realistic transcript excerpt with every secret form, neste
     agentTake: `the result held ${planted.cookie}`, toolCalls: [{ name: 'Bash', input: nestedArgs }] })
   assert.equal(r.code, 0, r.err)
   const { text, data } = b.only()
-  assert.equal(data.toolCalls.length, 7, 'the agent quote and six transcript lines')
+  assert.equal(data.toolCalls.length, 1, 'the agent quote')
+  assert.equal(data.excerpts.lines.length, 6, 'six transcript lines, referenced')
   const leaks = Object.entries(planted).filter(([, v]) => text.includes(v) || text.includes(JSON.stringify(v).slice(1, -1)))
   assert.deepEqual(leaks.map(([k]) => k), [], 'planted secrets left in the written file')
+  const s = b.run(['show', data.id])
+  assert.equal(Object.keys(shown(s.out)).length, 6)
+  assert.deepEqual(Object.entries(planted).filter(([, v]) => s.out.includes(v) || s.out.includes(JSON.stringify(v).slice(1, -1))).map(([k]) => k), [], 'planted secrets in show output')
   for (const text of ['toolu_all', 'call_more']) {
     const f = b.run(['find', '--transcript', file, '--text', text])
     assert.ok(f.out.split('\n').length > 2, f.out)
@@ -614,9 +632,6 @@ test('a long run of name characters is matched once, not retried from every posi
 })
 
 /* ── excerpts are references to the transcript, never copies ────────── */
-
-const sha = (s) => createHash('sha256').update(s, 'utf8').digest('hex')
-const transcriptLines = (file) => readFileSync(file, 'utf8').split('\n').slice(0, -1)
 
 test('refs: an excerpt stores the real path, the line numbers, the tool ids and each line\'s sha256, and no transcript text', () => {
   const b = box()
