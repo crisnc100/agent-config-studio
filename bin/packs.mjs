@@ -8,7 +8,7 @@
  */
 import readline from 'node:readline';
 import {
-  PREVIEW_SYMBOL as SYMBOL, PREVIEW_WHAT as WHAT, STATUS, apply, explainOf, getPack, loadCatalog, machine, planInstall, planUninstall, planUpdate, status,
+  PREVIEW_SYMBOL as SYMBOL, PREVIEW_WHAT as WHAT, STATUS, apply, explainOf, getPack, installedFamilies, loadCatalog, machine, planInstall, planUninstall, planUpdate, status,
 } from '../lib/packs.js';
 import { readState } from '../lib/packs-files.js';
 
@@ -91,12 +91,31 @@ function printPlan(plan) {
   if (!plan.ops.length && !plan.refusals.length) say('Nothing to change.');
 }
 
+async function ask(question) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise((r) => rl.question(question, r));
+  rl.close();
+  return answer.trim();
+}
+
 async function confirm(question) {
   if (!process.stdin.isTTY) return false;
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await new Promise((r) => rl.question(`${question} [y/N] `, r));
-  rl.close();
-  return /^y(es)?$/i.test(answer.trim());
+  return /^y(es)?$/i.test(await ask(`${question} [y/N] `));
+}
+
+/** An unset role's families, chosen here from those a CLI on this machine runs; [] leaves it unset. */
+async function pickFamilies(prob, families) {
+  say(`\nChoose the model for the ${prob.role} role${prob.note ? ` (${prob.note})` : ''}.`);
+  families.forEach((f, i) => say(`  ${i + 1}) ${f.family}${f.likes ? ` — ${f.likes}` : ''}${prob.suggestion.includes(f.family) ? '  (suggested)' : ''}`));
+  const several = prob.role === 'reviewer' ? 'several make a pool that each review picks from' : 'the first is the answer, any after it are fallbacks';
+  for (;;) {
+    const answer = await ask(`Numbers or names, comma-separated (${several}); Enter for ${prob.suggestion.join(', ') || 'none'}, - to leave it unset: `);
+    if (answer === '-') return [];
+    if (!answer) return prob.suggestion;
+    const picks = answer.split(',').map((s) => s.trim()).filter(Boolean).map((s) => (/^\d+$/.test(s) ? families[Number(s) - 1]?.family : families.find((f) => f.family === s)?.family));
+    if (picks.length && picks.every(Boolean) && new Set(picks).size === picks.length) return picks;
+    say(`Pick from the list above: ${families.map((f) => f.family).join(', ')}.`);
+  }
 }
 
 async function decide(plan, opts, rebuild) {
@@ -106,9 +125,19 @@ async function decide(plan, opts, rebuild) {
       printPlan(plan);
       if (await confirm('Add the pack it needs now?')) { opts.withDeps = true; plan = rebuild(); }
     }
-    if (!opts.fixRoles && plan.roles?.some((r) => !r.set && r.suggestion.length)) {
-      for (const r of plan.roles.filter((x) => !x.set)) say(`The ${r.role} role uses ${r.use.join(', ') || 'nothing'}, and none of their CLIs is installed here.`);
-      if (await confirm(`Set ${plan.roles.filter((x) => !x.set).map((r) => `${r.role} to ${r.suggestion.join(', ')}`).join('; ')} (through ACS's roles)?`)) { opts.fixRoles = true; plan = rebuild(); }
+    // Unset roles: chosen one by one, from the families a CLI here runs.
+    const families = installedFamilies(m);
+    const unset = (plan.roles || []).filter((r) => r.missing && !r.set);
+    if (!opts.fixRoles && unset.length && families.length) {
+      for (const r of unset) {
+        const picks = await pickFamilies(r, families);
+        if (picks.length) opts.setRoles[r.role] = picks;
+      }
+      plan = rebuild();
+    }
+    if (!opts.fixRoles && plan.roles?.some((r) => !r.set && !r.missing && r.suggestion.length)) {
+      for (const r of plan.roles.filter((x) => !x.set && !x.missing)) say(`The ${r.role} role uses ${r.use.join(', ') || 'nothing'}, and none of their CLIs is installed here.`);
+      if (await confirm(`Set ${plan.roles.filter((x) => !x.set && !x.missing).map((r) => `${r.role} to ${r.suggestion.join(', ')}`).join('; ')} (through ACS's roles)?`)) { opts.fixRoles = true; plan = rebuild(); }
     }
   }
   return plan;

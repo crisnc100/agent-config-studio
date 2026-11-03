@@ -4612,7 +4612,8 @@ function roleRow(role) {
   row.onclick = (e) => { if (!e.target.closest('button, input, select')) toggle(); };
   row.onkeydown = (e) => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggle(); } };
   // A custom role is all yours: one badge says so, rather than a mark on every field.
-  const marked = (k) => !role.custom && differs(role.provenance, k, roleValue(role, k), role.defaults?.[k]);
+  // Marks only where a shipped role still fills this one (a roles.json from before roles were chosen at install).
+  const marked = (k) => !role.custom && role.defaults && differs(role.provenance, k, roleValue(role, k), role.defaults[k]);
 
   const top = el('div', 'roles-top');
   top.appendChild(el('span', 'roles-name-text', role.name));
@@ -4623,6 +4624,11 @@ function roleRow(role) {
   top.appendChild(el('span', 'roles-open-hint', open ? 'Close' : 'Edit'));
   row.appendChild(top);
 
+  if (role.unset) {
+    const sug = role.suggestion ? [].concat(role.suggestion.use).map((m) => (typeof m === 'string' ? m : m.family)).join(', ') : '';
+    row.appendChild(el('div', 'roles-lineup roles-unset', `Not set — choose its model${sug ? ` (suggested: ${sug})` : ''}. Skills that use this job stop until it is set.`));
+    return row;
+  }
   const lineup = el('div', 'roles-lineup');
   membersOf(role).forEach((m, i) => lineup.appendChild(lineupChip(m.family, m.effort, role.ids[i], i ? '' : ' first')));
   if (marked('use') || marked('effort')) lineup.appendChild(changedMark());
@@ -4662,13 +4668,13 @@ function roleEditor(role) {
   const families = () => d.use.split(',').map((x) => x.trim()).filter(Boolean);
   const box = el('div', 'models-detail roles-detail');
   const form = el('div', 'roles-form');
-  const marked = (k) => role && !role.custom && differs(role.provenance, k, roleValue(role, k), role.defaults?.[k]);
+  const marked = (k) => role && !role.custom && role.defaults && differs(role.provenance, k, roleValue(role, k), role.defaults[k]);
   /** A model's effort in this job: "job default" (none of its own) or one value. Marked where it differs from the default role's. */
   const ownSelect = (family, value, k, onchange) => {
     const f = el('label', 'roles-member');
     f.dataset.family = family;
     const l = el('span', 'roles-label', famLabel(family));
-    if (role && !role.custom && value && value !== defaultOwn(role.defaults, k, family)) l.appendChild(changedMark());
+    if (role && !role.custom && role.defaults && value && value !== defaultOwn(role.defaults, k, family)) l.appendChild(changedMark());
     f.appendChild(l);
     const sel = el('select', 'models-input roles-select roles-member-effort');
     sel.appendChild(el('option', null, 'job default')).value = '';
@@ -4746,7 +4752,13 @@ function roleEditor(role) {
     }, key);
   };
   bar.appendChild(save);
-  if (role && !role.custom) {
+  if (role && !role.custom && !role.unset && !role.defaults) {
+    const unset = el('button', 'btn ghost', 'Unset');
+    unset.disabled = !!R.error;
+    unset.title = 'Remove your choice; skills that use this job stop until you choose again';
+    unset.onclick = () => rolesWrite('/api/models/roles/reset', { name: role.name }, `Role ${role.name} is unset.`, () => { delete M.roleDrafts[key]; });
+    bar.appendChild(unset);
+  } else if (role && !role.custom && !role.unset) {
     const reset = el('button', 'btn ghost', 'Reset to default');
     const yours = Object.values(role.provenance || {}).some((p) => p !== 'default');
     reset.disabled = !!R.error || !yours;
