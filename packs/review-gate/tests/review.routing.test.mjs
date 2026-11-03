@@ -25,15 +25,18 @@ const modelBody = (name) => `
 const fs = require('node:fs'), path = require('node:path')
 const a = process.argv.slice(2)
 if (a[0] === 'mcp') { console.log('[]'); process.exit(0) }
+// The HOME and GROK_HOME this call got, and how many entries HOME held then.
+const seenEnv = () => ({ home: process.env.HOME ?? null, grokHome: process.env.GROK_HOME ?? null,
+  homeEntries: (() => { try { return fs.readdirSync(process.env.HOME).length } catch { return null } })() })
 if (${JSON.stringify(name)} === 'grok' && a[0] === 'inspect') {
-  fs.writeFileSync(path.join(${JSON.stringify(CALLS)}, 'grok-inspect-' + process.pid + '.json'), '{}')
+  fs.writeFileSync(path.join(${JSON.stringify(CALLS)}, 'grok-inspect-' + process.pid + '.json'), JSON.stringify(seenEnv()))
   console.log(process.env.STUB_GROK_INSPECT || JSON.stringify({ mcpServers: [], plugins: [] })); process.exit(0)
 }
 const schema = a.includes('--output-schema') ? fs.readFileSync(a[a.indexOf('--output-schema')+1],'utf8') : a[a.indexOf('--json-schema')+1]
 const scores = schema.includes('"scores"')
 const prompt = a.includes('--output-schema') ? a.at(-1) : a[1]
 const seen = fs.existsSync('src/a.js') ? fs.readFileSync('src/a.js', 'utf8') : null
-if (!scores) fs.writeFileSync(path.join(${JSON.stringify(CALLS)}, ${JSON.stringify(name)} + '-' + process.pid + '.json'), JSON.stringify({ start: Date.now(), prompt, cwd: process.cwd(), seen }))
+if (!scores) fs.writeFileSync(path.join(${JSON.stringify(CALLS)}, ${JSON.stringify(name)} + '-' + process.pid + '.json'), JSON.stringify({ start: Date.now(), prompt, cwd: process.cwd(), seen, ...seenEnv() }))
 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.STUB_SLEEP_${name.toUpperCase()} || 0))
 if (process.env.STUB_FAIL_${name.toUpperCase()}) { process.stderr.write('stub failure'); process.exit(1) }
 const reply = scores ? '{"scores":[]}' : (process.env.STUB_FINDINGS_${name.toUpperCase()} || '{"findings":[]}')

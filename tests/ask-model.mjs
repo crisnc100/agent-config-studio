@@ -45,7 +45,9 @@ const val = (...f) => { const i = a.findIndex((x) => f.includes(x)); return i ==
 const st = fs.fstatSync(0);
 fs.appendFileSync(process.env.STUB_LOG, JSON.stringify({ name: ${J(name)}, argv: a, cwd: process.cwd(),
   stdin: st.isFIFO() ? 'pipe' : st.isCharacterDevice() ? 'chardev' : st.isFile() ? 'file' : 'other',
-  mcpEnv: [process.env.GROK_CLAUDE_MCPS_ENABLED ?? null, process.env.GROK_CURSOR_MCPS_ENABLED ?? null] }) + '\\n');
+  mcpEnv: [process.env.GROK_CLAUDE_MCPS_ENABLED ?? null, process.env.GROK_CURSOR_MCPS_ENABLED ?? null],
+  home: process.env.HOME ?? null, grokHome: process.env.GROK_HOME ?? null,
+  homeEntries: (() => { try { return fs.readdirSync(process.env.HOME).length; } catch { return null; } })() }) + '\\n');
 if (${J(name)} === 'grok' && a[0] === 'inspect') {
   if (process.env.STUB_GROK_INSPECT_FAIL) { process.stderr.write('inspect: boom\\n'); process.exit(1); }
   process.stdout.write(process.env.STUB_GROK_INSPECT || JSON.stringify({ grokVersion: 'stub', mcpServers: [], plugins: [] }));
