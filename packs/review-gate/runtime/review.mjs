@@ -114,7 +114,7 @@ const option = (flag) => {
 // ever adds tracked files and links. Env and the home configs always count.
 let gateConfigError
 const COMMAND_KEYS = ['verifyCmd', 'classifier', 'base']
-const OWN_FILE_KEYS = [...COMMAND_KEYS, 'coverageExempt', 'coverageExemptDefaults']
+const OWN_FILE_KEYS = [...COMMAND_KEYS, 'coverageExempt', 'coverageExemptDefaults', 'shadow']
 // Set when the repo file failed that check: its `pick` may name a family, never a command to run.
 let REPO_PICK_UNTRUSTED = false
 const sameFile = (a, b) => {
@@ -428,8 +428,8 @@ function reclaimLock(lock, stale) {
     rmSync(tomb, { force: true })
   }
 }
-function withLogLock(fn) {
-  const lock = `${LOG_PATH}.lock`, token = `${process.pid} ${randomBytes(6).toString('hex')}`, deadline = Date.now() + LOCK_WAIT_MS
+function withLogLock(fn, file = LOG_PATH) {
+  const lock = `${file}.lock`, token = `${process.pid} ${randomBytes(6).toString('hex')}`, deadline = Date.now() + LOCK_WAIT_MS
   const temp = `${lock}.${randomBytes(6).toString('hex')}`
   writeFileSync(temp, token)
   try {
@@ -612,7 +612,7 @@ risk = likelihood × impact:
 - MEDIUM otherwise.
 Fix HIGH first, then MEDIUM. Both block until fixed, REFUTED or waived by the operator.
 Missing or invalid scores are asked for again once. A finding still unscored blocks as MEDIUM (HIGH if protected is exactly true).`
-const VALUE_FLAGS = ['--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of']
+const VALUE_FLAGS = ['--shadow-run', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of']
 const INTENT = args.includes('--dispute') || args.includes('--waive') || args.includes('--log-grade')
   ? ''
   : args.filter((a, i) => !a.startsWith('--') && !VALUE_FLAGS.includes(args[i - 1])).join(' ').trim()
@@ -914,6 +914,9 @@ function selectReviewer(stats, { dryRun = false } = {}) {
   }
 
   const members = poolOrStop(loaded)
+  // A pick, from REVIEW_PICK or config, is an explicit override; with none, configured routing decides.
+  const pickSet = String(process.env.REVIEW_PICK ?? CONFIG.pick ?? '').trim() !== ''
+  const routing = routingRules()
   const pick = String(cfg('REVIEW_PICK', 'pick', 'first')).trim().toLowerCase() || 'first'
   // A pick naming a role family that cannot run stops; it never becomes another reviewer.
   const unusablePick = !members.some((m) => m.family === pick) && loaded.unusable?.find((m) => m.family === pick)
@@ -965,6 +968,7 @@ function selectReviewer(stats, { dryRun = false } = {}) {
   let m
   let pickWhy
   let classifier = null
+  let route = null
   const commandPick =
     !['first', 'rotate'].includes(pick) && !members.some((p) => p.family === pick) && (pick === CLASSIFIER || onPath(pick))
   // From a repo file the repository can ship, a pick may name a family or your own classifier, never another command.
@@ -978,6 +982,16 @@ function selectReviewer(stats, { dryRun = false } = {}) {
     crossWhy = authorVendor && crossFamily === 'prefer' && m.vendor === authorVendor
       ? `force rule overrides crossFamily (author is also ${authorVendor})`
       : ''
+  } else if (!pickSet && routing) {
+    route = routeFor(routing, stats)
+    const member = members.find((p) => p.family === route.family) || loaded.unusable?.find((p) => p.family === route.family)
+    if (!member)
+      stop(`routing names ${route.family}, which is not in the reviewer role (${members.map((p) => p.family).join(', ')}).\n` +
+        '  Fix: add it to the reviewer role in ACS → Models → Roles, or change "routing" in the review config.')
+    m = requireCli(member, `routing → ${route.family}`)
+    pickWhy = route.why
+    // Routing ignores crossFamily: a small diff goes to its family even when the builder shares its vendor.
+    crossWhy = ''
   } else if (classifierPick) {
     m = candidates[0]
     if (dryRun) pickWhy = `pick=${pick}: decided at review time (fallback shown: ${m.family})`
@@ -1018,16 +1032,42 @@ function selectReviewer(stats, { dryRun = false } = {}) {
     m = candidates[0]
     pickWhy = 'pick=first: first in pool order'
   }
+  if (pickSet && routing && !hit) notes.push(`ℹ ${source('REVIEW_PICK', 'pick')}=${pick} overrides routing${process.env.REVIEW_PICK == null ? ' — remove it to route reviews by size' : ' for this run'}`)
   return {
     ...base,
     pool: members,
-    pick,
+    pick: pickSet ? pick : null,
+    route,
     crossFamily,
     author: author || null,
     classifier,
     sel: { ...m, effort: effortFor(m) },
     why: [pickWhy, crossWhy].filter(Boolean).join('; '),
   }
+}
+
+// routing (config only; it names families, so it has no built-in default): [{ "maxLines": <lines>, "family": "<f>" },
+// { "family": "<f>" }]. The first entry whose maxLines the diff's changed lines (added + removed) are under decides; an
+// entry without maxLines takes the rest. A diff touching riskPaths skips every maxLines entry: it is never a small diff.
+// Unset, pick decides as before. Read only when a review picks its reviewer.
+function routingRules() {
+  const value = CONFIG.routing
+  if (value === undefined) return null
+  const entry = (e) => e && typeof e === 'object' && !Array.isArray(e) && Object.keys(e).every((k) => ['maxLines', 'family'].includes(k)) &&
+    typeof e.family === 'string' && FAMILY_NAME.test(e.family) && (e.maxLines === undefined || Number.isSafeInteger(e.maxLines) && e.maxLines > 0)
+  if (!Array.isArray(value) || !value.length || !value.every(entry) || !value.some((e) => e.maxLines === undefined))
+    stop(`config "routing" must be a list of { "maxLines": <lines>, "family": "<family>" } entries with one that has no maxLines; got ${JSON.stringify(value)}`)
+  return value
+}
+function routeFor(rules, stats) {
+  const lines = stats ? stats.linesAdded + stats.linesRemoved : null
+  const risky = !!stats?.riskFiles?.length
+  const rule = rules.find((e) => e.maxLines === undefined || (lines !== null && !risky && lines < e.maxLines))
+  const size = lines === null ? 'no diff stats' : `${lines} changed line(s)${risky ? ', riskPaths touched' : ''}`
+  const why = rule.maxLines === undefined
+    ? `route: ${size} → ${rule.family}${rules.length > 1 ? ' (the catch-all)' : ''}`
+    : `route: ${size}, under ${rule.maxLines} → ${rule.family}`
+  return { family: rule.family, why, lines, risky }
 }
 
 // Selected in main() once the diff is fetched (force rules and a classifier need its stats).
@@ -1049,7 +1089,9 @@ if (process.argv.includes('--show-config')) {
         pool:
           SELECTION.pool?.map((m) => ({ family: m.family, vendor: m.vendor, model: m.id, effort: m.effort })) ??
           `(unresolved: ${SELECTION.poolError})`,
-        pick: SELECTION.pick ?? '(explicit reviewer — not used)',
+        pick: SELECTION.pick ?? (SELECTION.route ? '(none — routing decides)' : '(explicit reviewer — not used)'),
+        route: SELECTION.route ? SELECTION.why : routingRules() ? '(not used: a reviewer, force rule or pick decided)' : '(no routing configured)',
+        routing: routingRules() ?? '(none)',
         crossFamily: SELECTION.crossFamily ?? '(explicit reviewer — not used)',
         author: SELECTION.author ?? '(unknown)',
         reviewCounts: Object.fromEntries(
@@ -1506,6 +1548,38 @@ function parseGrok(stdout) {
 // run untrusted instead (GROK_FOLDER_TRUST=0, never used). So a tree holding any .grok/hooks entry, from the
 // working folder up to the top of its repository, is never reviewed by grok.
 const GROK_HOOKS_OFF = { GROK_CLAUDE_HOOKS_ENABLED: '0', GROK_CURSOR_HOOKS_ENABLED: '0' }
+// What a grok run gets on top of the environment: hooks and the Claude/Cursor MCP sources off (the switches ask-model
+// sets too). The one place a verified per-run MCP lockdown would be added; none is known to work yet.
+const grokRunEnv = () => ({ ...process.env, ...GROK_HOOKS_OFF, GROK_CLAUDE_MCPS_ENABLED: '0', GROK_CURSOR_MCPS_ENABLED: '0' })
+/**
+ * Why grok must not run here, or null: the MCP servers and project hooks `grok inspect --json` says would start under
+ * grokRunEnv (--deny MCPTool keeps calls out, but the servers still start). ask-model's check (tools/ask-model.mjs
+ * grokMcpLeft), carried here because this runtime is installed alone. Anything it can't read counts as a refusal.
+ */
+function grokRefusal(cwd = process.cwd()) {
+  const r = spawnSync('grok', ['inspect', '--json'], { cwd, env: grokRunEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024 })
+  if (r.error || r.status !== 0) return `grok inspect failed: ${String(r.error?.message || r.stderr || `exit ${r.status}`).trim().slice(-300)}`
+  const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
+  let doc
+  try { doc = JSON.parse(r.stdout) } catch { return 'grok inspect --json printed no JSON' }
+  if (!isObj(doc) || !Array.isArray(doc.mcpServers) || !Array.isArray(doc.plugins)) return 'grok inspect --json has no mcpServers and plugins lists'
+  const left = []
+  for (const s of doc.mcpServers) {
+    if (!isObj(s) || typeof s.name !== 'string' || !s.name) return 'grok inspect --json: an mcpServers entry has no name'
+    if (s.compatibilityStatus === 'disabled' || s.enabled === false) continue
+    left.push(s.name)
+  }
+  for (const pl of doc.plugins) {
+    if (!isObj(pl) || typeof pl.name !== 'string' || !pl.name) return 'grok inspect --json: a plugins entry has no name'
+    const n = isObj(pl.provides) ? pl.provides.mcpServers : undefined
+    if (!(Number.isInteger(n) && n >= 0)) return `grok inspect --json: plugin ${pl.name}: provides.mcpServers is not a whole number`
+    if (pl.enabled !== false && n > 0) left.push(`${pl.name} (plugin)`)
+  }
+  if (left.length) return `grok would start MCP servers no flag keeps out of a run (${left.join(', ')}), so grok was not run. ` +
+    'Turn them off for grok (`grok mcp disable <name>`, `grok plugin disable <name>`).'
+  const hooks = (Array.isArray(doc.hooks) ? doc.hooks : []).filter((h) => isObj(h) && isObj(h.source) && h.source.type === 'project' && h.disabled !== true && h.compatibilityStatus !== 'disabled')
+  return hooks.length ? `grok would run this project's hooks (${hooks.map((h) => h.source.path ?? '(project)').join(', ')}), so grok was not run` : null
+}
 function grokHookFolders(cwd) {
   const real = (p) => {
     try {
@@ -1542,7 +1616,7 @@ function runGrok(m, prompt, schema) {
         `folder and no flag turns off. Review with another family, or remove that folder from the branch.`,
     )
   const r = spawnSync('grok', grokArgs(m, prompt, schema), {
-    env: { ...process.env, ...GROK_HOOKS_OFF },
+    env: grokRunEnv(),
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
     maxBuffer: 64 * 1024 * 1024,
@@ -2187,6 +2261,129 @@ function closeReview(id) {
   console.log(`✓ Review ${id} closed (${outOfScope.length ? 'partial' : 'complete'}) at ${head}${paths ? ` for paths ${paths.join(', ')}` : ''}` +
     (carried ? `, carried from the ${carried.kind} head ${carried.from} (identical tree ${carried.tree})` : ''))
 }
+// ── shadow reviewers ────────────────────────────────────────────────────────
+// Config "shadow" (REVIEW_SHADOW, comma-separated): families that review the same diff after the real review, in the
+// background, for comparison only. They write review-log/shadow-log.jsonl and nothing else, so no close, push gate
+// or --summary ever sees them; a failure or a refusal is a record there, never an error. Reviews only, not fix checks.
+const SHADOW_LOG = join(dirname(LOG_PATH), 'shadow-log.jsonl')
+function shadowFamilies() {
+  const value = cfg('REVIEW_SHADOW', 'shadow', [])
+  const list = Array.isArray(value) ? value : String(value).split(',')
+  const names = [...new Set(list.map((f) => String(f).trim().toLowerCase()).filter(Boolean))]
+  const bad = names.find((f) => !FAMILY_NAME.test(f))
+  if (bad !== undefined) stop(`shadow must list family names; got ${JSON.stringify(value)}`)
+  return names
+}
+function appendShadow(record) {
+  mkdirSync(dirname(SHADOW_LOG), { recursive: true })
+  const line = `${JSON.stringify(record)}\n`
+  withLogLock(() => appendFileSync(SHADOW_LOG, line), SHADOW_LOG)
+}
+// After the real review is logged: one detached review.mjs --shadow-run per family, handed the diff, the review's
+// context and slice in a job file. This run does not wait for them.
+function startShadows(reviewId, diff) {
+  const families = shadowFamilies().filter((f) => f !== SEL.family)
+  for (const family of families) {
+    try {
+      const dir = mkdtempSync(join(tmpdir(), 'review-shadow-'))
+      const job = join(dir, 'job.json')
+      writeFileSync(job, JSON.stringify({ reviewId, family, diff, context: CONTEXT, slice: SLICE, diffBase: DIFF_BASE }), { mode: 0o600 })
+      const child = spawnFile(process.execPath, [COPY_PATH, '--shadow-run', job, ...(INTENT ? [INTENT] : [])], { detached: true, stdio: 'ignore' })
+      child.on('error', () => {})
+      child.unref()
+      console.log(`▶ shadow · ${family} started in the background for ${reviewId} (results: ${SHADOW_LOG})`)
+    } catch (e) {
+      try { appendShadow({ type: 'shadow', reviewId, family, ts: new Date().toISOString(), ok: false, error: `could not start: ${e.message}` }) } catch { /* never raised */ }
+    }
+  }
+}
+// One shadow review, run detached: the same prompt the real reviewer got (with this family's tool notes), the same
+// schema and scoring, no quote check, and one record in the shadow log whatever happens.
+async function shadowRun(jobFile) {
+  const started = Date.now()
+  let job = {}, written = false, m = null
+  const write = (fields) => {
+    if (written) return
+    written = true
+    try {
+      appendShadow({ type: 'shadow', reviewId: job.reviewId ?? null, family: job.family ?? null, model: m?.id ?? null, effort: m?.effort ?? null,
+        ts: new Date().toISOString(), durationMs: Date.now() - started, ...fields })
+    } catch { /* the shadow log is best-effort */ }
+  }
+  // A stop() deep in model resolution exits the process: still leave a record.
+  process.on('exit', () => write({ ok: false, error: 'the shadow run exited before it finished' }))
+  try {
+    job = JSON.parse(readFileSync(jobFile, 'utf8'))
+    rmSync(dirname(jobFile), { recursive: true, force: true })
+    const member = poolMember(job.family, loadPool().pool)
+    if (!member.vendor) throw new Error(`${job.family} resolves to no known CLI`)
+    if (!which(member.vendor)) throw new Error(`the ${member.vendor} CLI is not installed`)
+    m = { ...member, effort: effortFor(member) }
+    if (m.vendor === 'grok') {
+      const refusal = grokRefusal()
+      if (refusal) throw new Error(`refused: ${refusal}`)
+    }
+    SEL = m
+    CONTEXT = job.context || ''
+    SLICE = job.slice || null
+    DIFF_BASE = job.diffBase || DIFF_BASE
+    const { result } = await runModel(m, reviewPrompt(job.diff), SCHEMA, 'shadow reviewer')
+    const scored = await scoredFindings(result?.findings || [], m)
+    write({ ok: true, findings: scored.findings.map(({ file, line, quote, issue, severity, likelihood, impact }) => ({ file, line, quote, issue, severity, likelihood, impact })) })
+  } catch (e) {
+    write({ ok: false, error: e.message })
+  }
+  process.exit(0)
+}
+// --shadow-report [--since <date>]: per shadow family, how its findings compare with the real review's. A shadow
+// finding matches a real one with the same file (a/ b/ ./ prefixes dropped) and a line within 5, or when one quote,
+// whitespace collapsed, contains the other. Unique: matched none. Missed: real findings no finding of that shadow run
+// matched. Average durationMs over the runs that answered.
+function shadowReport() {
+  const since = option('--since')
+  const from = since === null ? null : Date.parse(since)
+  if (since !== null && !Number.isFinite(from)) throw new Error(`--since needs a date such as 2026-11-01; got ${since}`)
+  const shadows = existsSync(SHADOW_LOG) ? readFileSync(SHADOW_LOG, 'utf8').split('\n').filter(Boolean).flatMap((l) => {
+    try { const e = JSON.parse(l); return e?.type === 'shadow' ? [e] : [] } catch { return [] }
+  }) : []
+  const reviews = new Map(readLog().filter((e) => e.type === 'review').map((e) => [e.id, e]))
+  const file = (f) => String(f || '').replace(/^(?:\.\/|[ab]\/)/, '')
+  const quote = (q) => String(q || '').replace(/\s+/g, ' ').trim()
+  const same = (a, b) => {
+    if (file(a.file) && file(a.file) === file(b.file) && Math.abs(parseInt(a.line, 10) - parseInt(b.line, 10)) <= 5) return true
+    const qa = quote(a.quote), qb = quote(b.quote)
+    return !!qa && !!qb && (qa.includes(qb) || qb.includes(qa))
+  }
+  const by = new Map()
+  for (const s of shadows) {
+    if (from !== null && !(Date.parse(s.ts) >= from)) continue
+    const t = by.get(s.family) || { runs: 0, failed: 0, unlinked: 0, shadowFindings: 0, matched: 0, unique: 0, real: 0, missed: 0, durations: [] }
+    by.set(s.family, t)
+    t.runs++
+    if (!s.ok) { t.failed++; continue }
+    const real = reviews.get(s.reviewId)?.findingDetails
+    if (!Array.isArray(real)) { t.unlinked++; continue }
+    if (Number.isFinite(s.durationMs)) t.durations.push(s.durationMs)
+    const hit = new Set()
+    for (const f of s.findings || []) {
+      t.shadowFindings++
+      const i = real.findIndex((r) => same(f, r))
+      if (i === -1) t.unique++
+      else { t.matched++; for (let j = 0; j < real.length; j++) if (same(f, real[j])) hit.add(j) }
+    }
+    t.real += real.length
+    t.missed += real.length - hit.size
+  }
+  console.log(`Shadow report${since !== null ? ` since ${since}` : ''} (${SHADOW_LOG})`)
+  if (!by.size) return console.log('no shadow runs')
+  for (const [family, t] of [...by].sort(([a], [b]) => a.localeCompare(b))) {
+    const avg = t.durations.length ? Math.round(t.durations.reduce((a, b) => a + b, 0) / t.durations.length) : null
+    console.log(`${family}: ${t.runs} run(s), ${t.failed} failed${t.unlinked ? `, ${t.unlinked} with no real review in this log` : ''}; ` +
+      `${t.shadowFindings} finding(s): ${t.matched} matched, ${t.unique} unique; missed ${t.missed} of ${t.real} real finding(s); ` +
+      `average ${avg === null ? 'n/a' : `${avg} ms`}`)
+  }
+}
+
 // --slices "<group>;<group>" [--jobs N]: one review per group (each a REVIEW_PATHS value), at most N at a time, all in
 // this checkout. Every slice is an ordinary run, with its own record, report, HEAD checks and close. Each one's output
 // prints under a header as it finishes; then ===SLICES_JSON=== lists { paths, exit, reviewId, result } per slice, result
@@ -2779,6 +2976,8 @@ function pushGate() {
   if (args.includes('--deferred')) return printDeferred()
   if (args.includes('--fix-check')) return fixCheck(option('--fix-check'))
   if (args.includes('--slices')) return runSlices()
+  if (args.includes('--shadow-run')) return shadowRun(option('--shadow-run'))
+  if (args.includes('--shadow-report')) return shadowReport()
   const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList } = getDiff()
   refuseLinkedReviews()
   CONTEXT = reviewContext(branch)
@@ -2881,6 +3080,7 @@ function pushGate() {
     durationMs,
     dir,
   })
+  startShadows(reviewId, diff)
   const counts = ['high', 'medium', 'low']
     .map((s) => `${findings.filter((f) => f.severity === s).length} ${s}`)
     .join(', ')
