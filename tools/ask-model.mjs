@@ -20,6 +20,11 @@
  * --output-schema with the file), checks the answer against it, and prints only the JSON. ask-model checks the subset
  * of JSON Schema in SCHEMA_KEYWORDS and refuses a schema with any other keyword rather than half-check it.
  *
+ * grok runs with an empty temporary HOME (so nothing it borrows from ~/.claude or ~/.cursor, plugin MCP servers
+ * included, starts) and the real GROK_HOME (so its login is the usual one), and only when `grok inspect` under that
+ * same env shows no MCP server, plugin MCP or project hook that would start, and leader mode is off. grokMcpAllow in
+ * the review gate's home config lists servers from grok's own config.toml that may start anyway; MCP tools stay denied.
+ *
  * --investigate adds a shell (claude's Bash; grok's run_terminal_cmd, with
  * shell commands allowed; codex's read-only sandbox already runs commands) and
  * compares the git work tree before and after the call. Anything that changed
@@ -60,6 +65,51 @@ const GROK_MAX_TURNS = '40';
 // its preflight and its run alike (the studio's GROK_ASSIST_ENV, lib/containment.js). Its own MCP servers have
 // none, and its own .grok/hooks have none short of turning folder trust off (see grokHookFolders).
 const GROK_ENV = { GROK_CLAUDE_MCPS_ENABLED: '0', GROK_CURSOR_MCPS_ENABLED: '0', GROK_CLAUDE_HOOKS_ENABLED: '0', GROK_CURSOR_HOOKS_ENABLED: '0' };
+
+/**
+ * Grok's environment for one call: an empty temporary HOME, so what grok borrows from ~/.claude and ~/.cursor
+ * (plugin MCP servers and hooks, ~/.claude.json) finds nothing, and the real GROK_HOME, so the login, its in-place
+ * refresh and folder trust are a normal session's. `done()` removes the temporary HOME.
+ */
+function grokCallEnv() {
+  const grokHome = process.env.GROK_HOME || path.join(os.homedir(), '.grok');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-model-grok-home-'));
+  return { env: { ...process.env, ...GROK_ENV, HOME: home, GROK_HOME: grokHome }, grokHome, done: () => fs.rmSync(home, { recursive: true, force: true }) };
+}
+
+/**
+ * grokMcpAllow: grok-native MCP server names the operator lets start (MCP tools stay denied). Read from the review
+ * gate's home config files only, the first that exists: never a repository's file, and empty when unset.
+ */
+function grokMcpAllow() {
+  for (const file of [path.join(os.homedir(), '.agent-config-studio', 'review-gate', 'config.json'), path.join(os.homedir(), '.claude', 'review-config.json')]) {
+    let text;
+    try { text = fs.readFileSync(file, 'utf8'); } catch (e) { if (e.code === 'ENOENT') continue; return { error: `${file}: ${e.code || e.message}` }; }
+    let doc;
+    try { doc = JSON.parse(text); } catch { return { error: `${file} is not JSON` }; }
+    const value = doc?.grokMcpAllow;
+    if (value === undefined) return { names: [] };
+    if (!Array.isArray(value) || value.some((n) => typeof n !== 'string' || !n.trim())) return { error: `grokMcpAllow in ${file} must be a list of server names` };
+    return { names: value.map((n) => n.trim()) };
+  }
+  return { names: [] };
+}
+
+/**
+ * The file turning grok's leader mode on, or null. A leader session runs with the leader's own HOME, so the borrowed
+ * servers a temporary HOME keeps out could start where inspect does not look. `cli.use_leader` is a pin: the user,
+ * managed and requirements files all count. (macOS device-management settings are not read here.)
+ */
+function grokLeaderFile(grokHome) {
+  const files = ['config.toml', 'managed_config.toml', 'requirements.toml'].map((f) => path.join(grokHome, f))
+    .concat(['/etc/grok/managed_config.toml', '/etc/grok/requirements.toml']);
+  for (const file of files) {
+    let text;
+    try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
+    if (text.split('\n').some((l) => !/^\s*#/.test(l) && /\buse_leader\s*=\s*true\b/.test(l))) return file;
+  }
+  return null;
+}
 
 /** Which CLI runs an id: its prefix, the rule ACS and the review runtime use. */
 function vendorOf(id) {
@@ -208,7 +258,7 @@ function loadSchema(file) {
  * enabled hooks inspect says come from the project (none when it lists no
  * hooks at all).
  */
-function grokMcpLeft(bin, cwd, env) {
+function grokMcpLeft(bin, cwd, env, { allow = [], grokHome = null } = {}) {
   const r = spawnSync(bin, ['inspect', '--json'], {
     cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024,
   });
@@ -224,6 +274,9 @@ function grokMcpLeft(bin, cwd, env) {
     if (s.enabled !== undefined && typeof s.enabled !== 'boolean') return bad(`mcpServers ${s.name}: enabled is not a boolean`);
     if (s.compatibilityStatus !== undefined && typeof s.compatibilityStatus !== 'string') return bad(`mcpServers ${s.name}: compatibilityStatus is not a string`);
     if (s.compatibilityStatus === 'disabled' || s.enabled === false) continue;
+    // A listed server may start only from grok's own config.toml: the same name from a project file still refuses.
+    if (grokHome && allow.includes(s.name) && isObj(s.source) && s.source.type === 'configToml' && typeof s.source.path === 'string'
+      && samePath(s.source.path, path.join(grokHome, 'config.toml'))) continue;
     left.push(s.name);
   }
   for (const pl of doc.plugins) {
@@ -247,6 +300,11 @@ function grokMcpLeft(bin, cwd, env) {
  * .grok/hooks entry from `cwd` up to the top of its repository keeps grok
  * from running, ~/.grok/hooks included when HOME is part of that repository.
  */
+const samePath = (a, b) => {
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return real(a) === real(b);
+};
+
 function grokHookFolders(cwd) {
   const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
   const git = which('git');
@@ -545,7 +603,9 @@ async function main(argv) {
   process.stderr.write(`ask-model: ${m.family} (${m.id}, effort ${m.effort || 'none'}, ${mode})\n`);
 
   const result = { family: m.family, id: m.id, effort: m.effort || null, mode, answer: null, changed: null, error: null };
+  let grokCall = null;
   const finish = (exit) => {
+    grokCall?.done();
     if (result.error) process.stderr.write(`ask-model: ${result.error}\n`);
     if (o.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     else if (result.answer !== null) process.stdout.write(`${result.answer}\n`);
@@ -561,19 +621,29 @@ async function main(argv) {
     if (off.error) { result.error = `${off.error} — codex was not run`; return finish(4); }
     mcpOff = off.args;
   }
-  const env = vendor === 'grok' ? { ...process.env, ...GROK_ENV } : process.env;
+  if (vendor === 'grok') grokCall = grokCallEnv();
+  const env = grokCall ? grokCall.env : process.env;
   if (vendor === 'grok') {
+    const leader = grokLeaderFile(grokCall.grokHome);
+    if (leader) {
+      result.error = `grok's leader mode is on (use_leader in ${leader}): a leader session runs with its own HOME, where MCP servers ` +
+        'this check cannot see may start, so grok was not run.';
+      return finish(4);
+    }
+    const allow = grokMcpAllow();
+    if (allow.error) { result.error = `${allow.error}, so grok was not run`; return finish(4); }
     const hooks = grokHookFolders(cwd);
     if (hooks.length) {
       result.error = `${hooks.join(', ')} holds Grok hooks, which grok runs on every call in a trusted folder and no flag turns off, so grok was not run. ` +
         'Ask another family, or run from a folder without them.';
       return finish(4);
     }
-    const mcp = grokMcpLeft(bin, cwd, env);
+    const mcp = grokMcpLeft(bin, cwd, env, { allow: allow.names, grokHome: grokCall.grokHome });
     if (mcp.error) { result.error = `${mcp.error} — no MCP server could be ruled out, so grok was not run`; return finish(4); }
     if (mcp.left.length) {
       result.error = `grok would start MCP servers no flag keeps out of a run (${mcp.left.join(', ')}), so grok was not run. ` +
-        'Turn them off with `grok mcp disable <name>` (a plugin\'s: `grok plugin disable <name>`).';
+        'Turn them off with `grok mcp disable <name>` (a plugin\'s: `grok plugin disable <name>`), or list a server grok\'s own ' +
+        'config.toml defines in grokMcpAllow (the review gate\'s home config) to let it start; its tools stay denied.';
       return finish(4);
     }
     if (mcp.projectHooks.length) {

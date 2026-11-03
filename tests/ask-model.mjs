@@ -812,6 +812,58 @@ console.log('\nask-model: --schema compares enums by value and refuses numbers J
   }
 }
 
+console.log('\nask-model: grok runs with an empty temporary HOME and the real GROK_HOME');
+{
+  const fresh = (name) => { const h = mk(name); return h; };
+  const home = fresh('grok-home-a');
+  const g = ask(['--family', 'grok', '--cwd', WORK], { home });
+  const [ins] = g.inspect, [call] = g.calls;
+  ok('the check and the call get one temporary HOME, empty, not the real one', g.code === 0 && ins?.home && ins.home === call?.home
+     && ins.home !== home && ins.homeEntries === 0 && call.homeEntries === 0, show(g));
+  ok('…and GROK_HOME is the real home\'s .grok, so the login is the usual one', ins.grokHome === path.join(home, '.grok') && call.grokHome === ins.grokHome, show(g));
+  ok('…and the temporary HOME is gone afterwards', !fs.existsSync(ins.home), ins.home);
+  const set = ask(['--family', 'grok', '--cwd', WORK], { home, env: { GROK_HOME: path.join(tmp, 'elsewhere-grok') } });
+  ok('a GROK_HOME already set is kept', set.code === 0 && set.inspect[0].grokHome === path.join(tmp, 'elsewhere-grok'), show(set));
+  const cl = ask(['--family', 'fable'], { home });
+  ok('claude keeps the real HOME', cl.code === 0 && cl.calls[0].home === home, show(cl));
+
+  const jev = (where) => ({ STUB_GROK_INSPECT: J({ grokVersion: 'stub', mcpServers: [{ name: 'jev', source: { type: 'configToml', path: where } }], plugins: [] }) });
+  const allowIn = (h, file, doc) => { const f = path.join(h, file); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, J(doc)); };
+  const acs = '.agent-config-studio/review-gate/config.json', older = '.claude/review-config.json';
+  const h1 = fresh('grok-home-allow');
+  allowIn(h1, acs, { grokMcpAllow: ['jev'] });
+  const allowed = ask(['--family', 'grok', '--cwd', WORK], { home: h1, env: jev(path.join(h1, '.grok', 'config.toml')) });
+  ok('jev from grok\'s own config.toml, listed in grokMcpAllow: grok runs, MCP tools still denied',
+     allowed.code === 0 && allowed.calls.length === 1 && allowed.argv.includes('MCPTool'), show(allowed));
+  const project = ask(['--family', 'grok', '--cwd', WORK], { home: h1, env: jev(path.join(WORK, '.grok', 'config.toml')) });
+  ok('the same name from a project config.toml: exit 4, grok never run', project.code === 4 && project.calls.length === 0 && /\(jev\)/.test(project.err), show(project));
+  const plugin = ask(['--family', 'grok', '--cwd', WORK], { home: h1, env: { STUB_GROK_INSPECT: J({ mcpServers: [{ name: 'jev', source: { type: 'plugin' } }], plugins: [] }) } });
+  ok('the same name from a plugin: exit 4', plugin.code === 4 && plugin.calls.length === 0, show(plugin));
+  const h2 = fresh('grok-home-noallow');
+  const unlisted = ask(['--family', 'grok', '--cwd', WORK], { home: h2, env: jev(path.join(h2, '.grok', 'config.toml')) });
+  ok('jev not listed: exit 4, and the message names grokMcpAllow', unlisted.code === 4 && unlisted.calls.length === 0 && /grokMcpAllow/.test(unlisted.err), show(unlisted));
+  const h3 = fresh('grok-home-older');
+  allowIn(h3, older, { grokMcpAllow: ['jev'] });
+  ok('the older ~/.claude/review-config.json counts when the ACS one is absent',
+     ask(['--family', 'grok', '--cwd', WORK], { home: h3, env: jev(path.join(h3, '.grok', 'config.toml')) }).code === 0);
+  allowIn(h3, acs, { reviewer: 'sol' });
+  const first = ask(['--family', 'grok', '--cwd', WORK], { home: h3, env: jev(path.join(h3, '.grok', 'config.toml')) });
+  ok('…but the first home config that exists decides: an ACS one without the key allows nothing', first.code === 4, show(first));
+  const h4 = fresh('grok-home-bad');
+  allowIn(h4, acs, { grokMcpAllow: 'jev' });
+  const bad = ask(['--family', 'grok', '--cwd', WORK], { home: h4, env: jev(path.join(h4, '.grok', 'config.toml')) });
+  ok('a grokMcpAllow that is not a list: exit 4, said', bad.code === 4 && /grokMcpAllow in .* must be a list of server names/.test(bad.err), show(bad));
+
+  const h5 = fresh('grok-home-leader');
+  fs.mkdirSync(path.join(h5, '.grok'), { recursive: true });
+  fs.writeFileSync(path.join(h5, '.grok', 'config.toml'), '[cli]\n# use_leader = true is off here\nauto_update = false\n');
+  ok('a commented-out use_leader is not leader mode', ask(['--family', 'grok', '--cwd', WORK], { home: h5 }).code === 0);
+  fs.writeFileSync(path.join(h5, '.grok', 'managed_config.toml'), '[cli]\nuse_leader = true\n');
+  const leader = ask(['--family', 'grok', '--cwd', WORK], { home: h5 });
+  ok('leader mode on in any grok config layer: exit 4, before any grok process runs',
+     leader.code === 4 && leader.inspect.length === 0 && leader.calls.length === 0 && /leader mode is on \(use_leader in .*managed_config\.toml\)/.test(leader.err), show(leader));
+}
+
 console.log('\nask-model: live');
 if (process.env.ACS_LIVE_CHECKS === '1') {
   const live = path.join(tmp, 'live-prompt.txt');

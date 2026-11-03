@@ -114,7 +114,7 @@ const option = (flag) => {
 // ever adds tracked files and links. Env and the home configs always count.
 let gateConfigError
 const COMMAND_KEYS = ['verifyCmd', 'classifier', 'base']
-const OWN_FILE_KEYS = [...COMMAND_KEYS, 'coverageExempt', 'coverageExemptDefaults', 'shadow']
+const OWN_FILE_KEYS = [...COMMAND_KEYS, 'coverageExempt', 'coverageExemptDefaults', 'shadow', 'grokMcpAllow']
 // Set when the repo file failed that check: its `pick` may name a family, never a command to run.
 let REPO_PICK_UNTRUSTED = false
 const sameFile = (a, b) => {
@@ -1548,16 +1548,48 @@ function parseGrok(stdout) {
 // run untrusted instead (GROK_FOLDER_TRUST=0, never used). So a tree holding any .grok/hooks entry, from the
 // working folder up to the top of its repository, is never reviewed by grok.
 const GROK_HOOKS_OFF = { GROK_CLAUDE_HOOKS_ENABLED: '0', GROK_CURSOR_HOOKS_ENABLED: '0' }
-// What a grok run gets on top of the environment: hooks and the Claude/Cursor MCP sources off (the switches ask-model
-// sets too). The one place a verified per-run MCP lockdown would be added; none is known to work yet.
-const grokRunEnv = () => ({ ...process.env, ...GROK_HOOKS_OFF, GROK_CLAUDE_MCPS_ENABLED: '0', GROK_CURSOR_MCPS_ENABLED: '0' })
+// Grok's environment for one call (ask-model's grokCallEnv): an empty temporary HOME, so what grok borrows from
+// ~/.claude and ~/.cursor (plugin MCP servers and hooks, ~/.claude.json) finds nothing; the real GROK_HOME, so the
+// login, its in-place refresh and folder trust are a normal session's; hooks and the Claude/Cursor MCP sources off.
+// done() removes the temporary HOME. The same env serves the check and the call.
+function grokRunEnv() {
+  const grokHome = process.env.GROK_HOME || join(homedir(), '.grok')
+  const home = mkdtempSync(join(tmpdir(), 'review-grok-home-'))
+  return { env: { ...process.env, ...GROK_HOOKS_OFF, GROK_CLAUDE_MCPS_ENABLED: '0', GROK_CURSOR_MCPS_ENABLED: '0', HOME: home, GROK_HOME: grokHome },
+    grokHome, done: () => rmSync(home, { recursive: true, force: true }) }
+}
+// grokMcpAllow (REVIEW_GROK_MCP_ALLOW, comma-separated): grok-native MCP server names allowed to start, empty by default.
+// An own-file key, so a tracked repo config cannot set it. Not a list of names: an error, which refuses grok.
+function grokMcpAllow() {
+  const value = cfg('REVIEW_GROK_MCP_ALLOW', 'grokMcpAllow', [])
+  const list = typeof value === 'string' ? value.split(',').map((n) => n.trim()).filter(Boolean) : value
+  if (!Array.isArray(list) || list.some((n) => typeof n !== 'string' || !n.trim())) return { error: `grokMcpAllow must be a list of server names; got ${JSON.stringify(value)}` }
+  return { names: list.map((n) => n.trim()) }
+}
+// The file turning grok's leader mode on, or null (ask-model's grokLeaderFile). A leader session runs with the leader's
+// own HOME, so the borrowed servers a temporary HOME keeps out could start where inspect does not look.
+function grokLeaderFile(grokHome) {
+  const files = ['config.toml', 'managed_config.toml', 'requirements.toml'].map((f) => join(grokHome, f))
+    .concat(['/etc/grok/managed_config.toml', '/etc/grok/requirements.toml'])
+  for (const file of files) {
+    let text
+    try { text = readFileSync(file, 'utf8') } catch { continue }
+    if (text.split('\n').some((l) => !/^\s*#/.test(l) && /\buse_leader\s*=\s*true\b/.test(l))) return file
+  }
+  return null
+}
 /**
- * Why grok must not run here, or null: the MCP servers and project hooks `grok inspect --json` says would start under
- * grokRunEnv (--deny MCPTool keeps calls out, but the servers still start). ask-model's check (tools/ask-model.mjs
- * grokMcpLeft), carried here because this runtime is installed alone. Anything it can't read counts as a refusal.
+ * Why grok must not run here, or null: leader mode, or the MCP servers and project hooks `grok inspect --json` says
+ * would start under that call's env (--deny MCPTool keeps calls out, but the servers still start). A server named in
+ * grokMcpAllow may start only from grok's own config.toml. ask-model's check (tools/ask-model.mjs grokMcpLeft),
+ * carried here because this runtime is installed alone. Anything it can't read counts as a refusal.
  */
-function grokRefusal(cwd = process.cwd()) {
-  const r = spawnSync('grok', ['inspect', '--json'], { cwd, env: grokRunEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024 })
+function grokRefusal(cwd, call) {
+  const leader = grokLeaderFile(call.grokHome)
+  if (leader) return `grok's leader mode is on (use_leader in ${leader}): a leader session runs with its own HOME, where MCP servers this check cannot see may start, so grok was not run`
+  const allow = grokMcpAllow()
+  if (allow.error) return `${allow.error}, so grok was not run`
+  const r = spawnSync('grok', ['inspect', '--json'], { cwd, env: call.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024 })
   if (r.error || r.status !== 0) return `grok inspect failed: ${String(r.error?.message || r.stderr || `exit ${r.status}`).trim().slice(-300)}`
   const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
   let doc
@@ -1567,6 +1599,9 @@ function grokRefusal(cwd = process.cwd()) {
   for (const s of doc.mcpServers) {
     if (!isObj(s) || typeof s.name !== 'string' || !s.name) return 'grok inspect --json: an mcpServers entry has no name'
     if (s.compatibilityStatus === 'disabled' || s.enabled === false) continue
+    // A listed server may start only from grok's own config.toml: the same name from a project file still refuses.
+    if (allow.names.includes(s.name) && isObj(s.source) && s.source.type === 'configToml' && typeof s.source.path === 'string'
+      && samePath(s.source.path, join(call.grokHome, 'config.toml'))) continue
     left.push(s.name)
   }
   for (const pl of doc.plugins) {
@@ -1576,9 +1611,14 @@ function grokRefusal(cwd = process.cwd()) {
     if (pl.enabled !== false && n > 0) left.push(`${pl.name} (plugin)`)
   }
   if (left.length) return `grok would start MCP servers no flag keeps out of a run (${left.join(', ')}), so grok was not run. ` +
-    'Turn them off for grok (`grok mcp disable <name>`, `grok plugin disable <name>`).'
+    'Turn them off for grok (`grok mcp disable <name>`, `grok plugin disable <name>`), or list a server grok\'s own config.toml ' +
+    'defines in grokMcpAllow to let it start; its tools stay denied.'
   const hooks = (Array.isArray(doc.hooks) ? doc.hooks : []).filter((h) => isObj(h) && isObj(h.source) && h.source.type === 'project' && h.disabled !== true && h.compatibilityStatus !== 'disabled')
   return hooks.length ? `grok would run this project's hooks (${hooks.map((h) => h.source.path ?? '(project)').join(', ')}), so grok was not run` : null
+}
+const samePath = (a, b) => {
+  const real = (p) => { try { return realpathSync(p) } catch { return resolve(p) } }
+  return real(a) === real(b)
 }
 function grokHookFolders(cwd) {
   const real = (p) => {
@@ -1615,15 +1655,22 @@ function runGrok(m, prompt, schema) {
       `grok review refused: ${hooks.join(', ')} holds Grok hooks, which grok runs on every call in a trusted ` +
         `folder and no flag turns off. Review with another family, or remove that folder from the branch.`,
     )
-  // --deny MCPTool keeps MCP calls out, but grok still starts the servers: refuse, as ask-model does.
-  const refusal = grokRefusal()
-  if (refusal) throw new Error(`grok review refused: ${refusal}`)
-  const r = spawnSync('grok', grokArgs(m, prompt, schema), {
-    env: grokRunEnv(),
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'inherit'],
-    maxBuffer: 64 * 1024 * 1024,
-  })
+  // --deny MCPTool keeps MCP calls out, but grok still starts the servers: refuse, as ask-model does, under the very
+  // env the call then gets.
+  const call = grokRunEnv()
+  let r
+  try {
+    const refusal = grokRefusal(process.cwd(), call)
+    if (refusal) throw new Error(`grok review refused: ${refusal}`)
+    r = spawnSync('grok', grokArgs(m, prompt, schema), {
+      env: call.env,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+      maxBuffer: 64 * 1024 * 1024,
+    })
+  } finally {
+    call.done()
+  }
   if (r.error || r.status !== 0)
     throw new Error(`grok review failed (exit ${r.status}): ${r.error?.message || String(r.stdout).slice(0, 300)}`)
   return parseGrok(r.stdout)
@@ -2333,7 +2380,9 @@ async function shadowRun(jobFile) {
     process.chdir(join(snapshot, 'repo'))
     sh('git', ['checkout', '--quiet', '--detach', job.head])
     if (m.vendor === 'grok') {
-      const refusal = grokRefusal()
+      const call = grokRunEnv()
+      let refusal
+      try { refusal = grokRefusal(process.cwd(), call) } finally { call.done() }
       if (refusal) throw new Error(`refused: ${refusal}`)
     }
     SEL = m
