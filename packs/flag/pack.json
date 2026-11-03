@@ -8,7 +8,8 @@
     "does": "Day to day you say 'flag this' or /flag, and agents also file a report on their own when they notice such a problem, telling you in one line without stopping the work. Every string the agent writes is redacted before it is stored: API keys and tokens, JWTs, private keys, Bearer values, URL passwords and the values of names holding KEY, TOKEN, SECRET or PASSWORD. Credential files are never read. Showing a report reads its transcript lines then, redacted, and writes nothing. /flag review lists the reports, groups them by cause and proposes concrete rule or skill changes with the report ids as evidence; it never edits a rule itself. It runs no model, so it needs no model-id or ask-model.",
     "changes": [
       "~/.claude/skills/flag/ and ~/.codex/skills/flag/ (the skill and its helper, flag.mjs, for the harnesses you have)",
-      "~/.agent-config-studio/field-reports/ (created by the first report; one file per report, readable only by you)"
+      "~/.agent-config-studio/field-reports/ (created by the first report; one file per report, readable only by you)",
+      "anything an optional part lists, only if you turn that part on"
     ],
     "undo": "Uninstalling removes the skill folders. A file you edited after installing is kept and reported. The reports in ~/.agent-config-studio/field-reports/ are your history and are never deleted."
   },
@@ -48,6 +49,26 @@
           "~/.codex/skills/flag/SKILL.md and flag.mjs (Codex)",
           "~/.agent-config-studio/field-reports/ (created by the first report, 0700; each report 0600)"
         ]
+      }
+    },
+    {
+      "id": "codex-report-access",
+      "title": "Codex report access",
+      "default": false,
+      "kind": "codex-log-access",
+      "writableRoot": "~/.agent-config-studio/field-reports",
+      "harnesses": [
+        "codex"
+      ],
+      "files": [],
+      "explain": {
+        "what": "Codex runs commands in a sandbox that can only write inside the project. This part lets /flag, run from Codex, save its reports without asking you for permission each time.",
+        "does": "A report filed from a Codex session is written to ~/.agent-config-studio/field-reports/ directly, instead of the write being refused (exit 3) and rerun with escalated permissions.",
+        "changes": [
+          "config.toml in each Codex home: ~/.agent-config-studio/field-reports added to writable_roots under [sandbox_workspace_write]",
+          "~/.agent-config-studio/backups/ (a copy of each config.toml before it changed)"
+        ],
+        "undo": "Uninstalling removes only that one writable_roots entry. If config.toml has not changed since install, its exact earlier bytes come back. Your reports are never deleted."
       }
     }
   ]

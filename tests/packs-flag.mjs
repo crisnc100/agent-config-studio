@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { ROOT, changed, sandbox, tests, tree } from './fixtures/packs-sandbox.mjs';
+import { validatePack } from '../lib/packs.js';
 
 const realBefore = snapshotRealHomes();
 const { ok, done } = tests();
@@ -59,6 +60,61 @@ console.log('\nflag: one harness');
   const sb = box('flag-codex', { clis: ['codex'], modelId: false });
   const r = sb.packs(['install', 'flag', '--yes']);
   ok('a Codex-only machine gets only the Codex skill folder', r.code === 0 && fs.existsSync(path.join(sb.env.CODEX_HOME, 'skills/flag/flag.mjs')) && !fs.existsSync(path.join(sb.home, '.claude/skills/flag')), r.out);
+}
+
+console.log('\nflag: Codex report access (opt-in writable_roots entry)');
+{
+  const partOf = (st, part) => st.data.packs.find((p) => p.id === 'flag').parts.find((p) => p.id === part);
+  const sb = box('flag-reportaccess', { clis: ['codex'], dirs: ['codex'] });
+  const extra = path.join(sb.root, 'seat');
+  fs.mkdirSync(extra);
+  fs.mkdirSync(path.join(sb.home, '.agent-config-studio/review-gate'), { recursive: true });
+  fs.writeFileSync(path.join(sb.home, '.agent-config-studio/review-gate/config.json'), JSON.stringify({ codexHomes: [extra] }));
+  const cfg = path.join(sb.env.CODEX_HOME, 'config.toml');
+  const original = 'model = "x"\n\n[sandbox_workspace_write]\nnetwork_access = true\n';
+  fs.writeFileSync(cfg, original);
+  const reports = path.join(sb.home, '.agent-config-studio/field-reports'), logs = path.join(sb.home, '.agent-config-studio/review-log');
+  const plain = sb.packs(['install', 'flag', '--yes']);
+  ok('it is off by default: a plain install leaves config.toml alone', plain.code === 0 && sb.read(cfg) === original && !fs.existsSync(path.join(extra, 'config.toml')), plain.out);
+  const dry = sb.json(['install', 'flag', '--part', 'codex-report-access', '--dry-run']);
+  ok('the preview names writable_roots += the field-reports folder for each Codex home', dry.code === 0 && [cfg, path.join(extra, 'config.toml')].every((f) => dry.data.preview.some((r) => r.path === f && r.note === `writable_roots += ${reports}`)), JSON.stringify(dry.data?.preview));
+  const r = sb.packs(['install', 'flag', '--part', 'codex-report-access', '--yes']);
+  ok('--part codex-report-access adds the field-reports folder to writable_roots', r.code === 0 && sb.read(cfg) === original.replace('network_access = true\n', `writable_roots = [${JSON.stringify(reports)}]\nnetwork_access = true\n`), `${r.out}\n${sb.read(cfg)}`);
+  ok('…and in each codexHomes entry from the review-gate config', sb.read(path.join(extra, 'config.toml')) === `[sandbox_workspace_write]\nwritable_roots = [${JSON.stringify(reports)}]\n`, sb.read(path.join(extra, 'config.toml')));
+  ok('…with a backup of the existing file', fs.readdirSync(path.join(sb.home, '.agent-config-studio/backups')).length === 1);
+  ok('status: installed', partOf(sb.json(['status', '--no-trust-check']), 'codex-report-access').statuses.join() === 'installed');
+  const withReports = sb.read(cfg), extraWithReports = sb.read(path.join(extra, 'config.toml'));
+  const both = original.replace('network_access = true\n', `writable_roots = [${JSON.stringify(reports)}, ${JSON.stringify(logs)}]\nnetwork_access = true\n`);
+  const rg = sb.packs(['install', 'review-gate', '--part', 'codex-log-access', '--yes']);
+  ok('review-gate\'s log access still adds its own folder, beside the reports folder', rg.code === 0 && sb.read(cfg) === both, `${rg.out}\n${sb.read(cfg)}`);
+  const u = sb.packs(['uninstall', 'review-gate', '--yes']);
+  ok('uninstalling review-gate first gives back the exact bytes flag left', u.code === 0 && sb.read(cfg) === withReports && sb.read(path.join(extra, 'config.toml')) === extraWithReports, `${u.out}\n${sb.read(cfg)}`);
+  const u2 = sb.packs(['uninstall', 'flag', '--yes']);
+  ok('…and then flag\'s: the exact pre-install bytes are back, and the file that did not exist is gone', u2.code === 0 && sb.read(cfg) === original && !fs.existsSync(path.join(extra, 'config.toml')), `${u2.out}\n${sb.read(cfg)}`);
+  sb.packs(['install', 'flag', '--part', 'codex-report-access', '--yes']);
+  sb.packs(['install', 'review-gate', '--part', 'codex-log-access', '--yes']);
+  const u3 = sb.packs(['uninstall', 'flag', '--yes']);
+  ok('uninstalling flag first takes out only the reports entry; the review log entry stays', u3.code === 0 && sb.read(cfg) === original.replace('network_access = true\n', `writable_roots = [${JSON.stringify(logs)}]\nnetwork_access = true\n`), `${u3.out}\n${sb.read(cfg)}`);
+  const u4 = sb.packs(['uninstall', 'review-gate', '--yes']);
+  ok('…and then review-gate\'s takes out its own entry, the rest of the file intact', u4.code === 0 && [cfg, path.join(extra, 'config.toml')].every((f) => !(sb.read(f) || '').includes(reports) && !(sb.read(f) || '').includes(logs)) && sb.read(cfg).startsWith('model = "x"\n\n[sandbox_workspace_write]\n') && sb.read(cfg).endsWith('network_access = true\n'), `${u4.out}\n${sb.read(cfg)}`);
+  fs.writeFileSync(cfg, original);
+  fs.rmSync(path.join(extra, 'config.toml'), { force: true });
+  sb.packs(['install', 'flag', '--part', 'codex-report-access', '--yes']);
+  fs.appendFileSync(cfg, '\n[profile]\nname = "mine"\n');
+  const u5 = sb.packs(['uninstall', 'flag', '--yes']);
+  ok('edited since install: only the writable_roots entry goes, the rest stays', u5.code === 0 && sb.read(cfg) === `${original}\n[profile]\nname = "mine"\n`, sb.read(cfg));
+  const sb2 = box('flag-reportaccess-claude', { clis: ['claude'], modelId: false });
+  const r2 = sb2.json(['install', 'flag', '--part', 'codex-report-access', '--dry-run']);
+  ok('with no Codex home the part is skipped and nothing would be written', r2.code === 0 && r2.data.notes.some((n) => /codex-report-access: .*skipped/.test(n)) && r2.data.preview.length === 0, r2.out);
+  const base = JSON.parse(fs.readFileSync(path.join(ROOT, 'packs/flag/pack.json'), 'utf8'));
+  for (const [what, v] of [['no writableRoot', undefined], ['an absolute path', '/etc'], ['a path that climbs out with ..', '~/../etc'], ['a bare ~', '~']]) {
+    const p = structuredClone(base);
+    const part = p.parts.find((x) => x.id === 'codex-report-access');
+    if (v === undefined) delete part.writableRoot; else part.writableRoot = v;
+    let threw = false;
+    try { validatePack(p); } catch { threw = true; }
+    ok(`the manifest check fails on a codex-log-access part with ${what}`, threw);
+  }
 }
 
 for (const b of boxes) b.cleanup();
