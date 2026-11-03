@@ -232,3 +232,26 @@ test('S4 --shadow-report counts matches, unique and missed findings per family, 
   const bad = script(['--shadow-report', '--since', 'soon'])
   assert.notEqual(bad.status, 0); assert.match(bad.out, /--since needs a date/)
 })
+
+test('G1 a real grok review refuses, with nothing logged, when grok inspect shows MCP servers or project hooks that would start', () => {
+  commit({ 'src/a.js': lines(10) })
+  for (const [inspect, why] of [
+    [{ mcpServers: [{ name: 'jev' }], plugins: [] }, /grok review refused: grok would start MCP servers no flag keeps out of a run \(jev\)/],
+    [{ mcpServers: [{ name: 'Neon', compatibilityStatus: 'disabled' }], plugins: [{ name: 'vercel', provides: { mcpServers: 1 } }] }, /\(vercel \(plugin\)\)/],
+    [{ mcpServers: [], plugins: [], hooks: [{ event: 'PreToolUse', source: { type: 'project', path: '.grok/hooks/x.json' } }] }, /grok would run this project's hooks \(\.grok\/hooks\/x\.json\)/],
+    [{ plugins: [] }, /grok inspect --json has no mcpServers and plugins lists/],
+  ]) {
+    const r = script([], { REVIEW_REVIEWER: 'grok', STUB_GROK_INSPECT: JSON.stringify(inspect) })
+    assert.notEqual(r.status, 0, r.out)
+    assert.match(r.out, why)
+    assert.deepEqual(calls('grok'), [], 'no grok review call was made')
+    assert.deepEqual(records(), [], 'nothing was logged')
+  }
+  // Disabled sources and plugins with no MCP servers are fine: the review runs.
+  const ok = script([], { REVIEW_REVIEWER: 'grok', STUB_GROK_INSPECT: JSON.stringify({
+    mcpServers: [{ name: 'Neon', compatibilityStatus: 'disabled' }, { name: 'off', enabled: false }],
+    plugins: [{ name: 'resend', provides: { mcpServers: 0 } }, { name: 'vercel', enabled: false, provides: { mcpServers: 1 } }] }) })
+  allowed(ok)
+  assert.equal(records().at(-1).family, 'grok')
+  assert.equal(calls('grok').length, 1)
+})

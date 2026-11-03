@@ -1615,6 +1615,9 @@ function runGrok(m, prompt, schema) {
       `grok review refused: ${hooks.join(', ')} holds Grok hooks, which grok runs on every call in a trusted ` +
         `folder and no flag turns off. Review with another family, or remove that folder from the branch.`,
     )
+  // --deny MCPTool keeps MCP calls out, but grok still starts the servers: refuse, as ask-model does.
+  const refusal = grokRefusal()
+  if (refusal) throw new Error(`grok review refused: ${refusal}`)
   const r = spawnSync('grok', grokArgs(m, prompt, schema), {
     env: grokRunEnv(),
     encoding: 'utf8',
