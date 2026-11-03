@@ -82,7 +82,8 @@ console.log(JSON.stringify({ type: 'result', is_error: false, result: process.en
 )
 stub(
   'grok',
-  `${record('grok')}
+  `if (process.argv[2] === 'inspect') { console.log(JSON.stringify({ mcpServers: [], plugins: [] })); process.exit(0) }
+${record('grok')}
 const a = process.argv.slice(2)
 ${answer("a[a.indexOf('--json-schema') + 1]")}
 const out = { structuredOutput: JSON.parse(reply) }
