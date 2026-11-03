@@ -5,6 +5,7 @@
   "_classifier_help": "Optional. The local classifier command a dispute may ask to choose its verifier. Empty: disputes go to another vendor first.",
   "_crossFamily_help": "\"prefer\" skips pool families from the author's vendor (codex | claude | grok) when another remains; \"off\" never filters. The author comes from REVIEW_AUTHOR or \"author\" (a family or vendor); unknown means no filtering.",
   "_routing_help": "Optional. Route reviews by diff size: the first entry whose maxLines the diff's changed lines are under picks the family; an entry with no maxLines takes the rest; a diff touching riskPaths is never small. A pick (REVIEW_PICK or \"pick\") or a force rule overrides it; with no routing the pick decides. Example: [{\"maxLines\": 150, \"family\": \"<family>\"}, {\"family\": \"<family>\"}].",
+  "_grokMcpAllow_help": "Optional MCP server names from grok's own ~/.grok/config.toml that may start when grok reviews (grok runs with an empty temporary HOME, so nothing borrowed from ~/.claude or ~/.cursor starts; anything else that would start refuses grok). Their tools stay denied. ask-model reads the same key from the home config. A tracked repo config cannot set it.",
   "_shadow_help": "Optional families that review the same diff after the real review, detached, for comparison only: results go to review-log/shadow-log.jsonl and never affect findings, closes, the push gate or --summary. Reviews only. See --shadow-report. A tracked repo config cannot set it.",
   "_force_help": "Hard rules applied before any pick, first match wins: {\"paths\": [\"**/auth/**\", \"**/payments/**\"], \"family\": \"<family>\"} fires when a changed file matches; {\"paths\": \"risk\", \"family\": \"<family>\"} fires on riskPaths. Globs are case-insensitive: ** spans directories, * and ? stay inside one; a pattern with no \"/\" matches any path segment, like .gitignore.",
   "_verify_help": "\"off\" (default): only the deterministic quote check. \"second-opinion\": every surviving HIGH/MEDIUM finding goes to one other pool family (another vendor when possible), which CONFIRMs or REFUTEs it; REFUTED findings move to a \"disputed\" section.",
@@ -60,6 +61,7 @@
   "classifier": "",
   "force": [],
   "shadow": [],
+  "grokMcpAllow": [],
   "riskPaths": [
     "*payment*",
     "*billing*",

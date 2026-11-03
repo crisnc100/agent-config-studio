@@ -20,6 +20,11 @@
  * --output-schema with the file), checks the answer against it, and prints only the JSON. ask-model checks the subset
  * of JSON Schema in SCHEMA_KEYWORDS and refuses a schema with any other keyword rather than half-check it.
  *
+ * grok runs with an empty temporary HOME (so nothing it borrows from ~/.claude or ~/.cursor, plugin MCP servers
+ * included, starts) and the real GROK_HOME (so its login is the usual one), and only when `grok inspect` under that
+ * same env shows no MCP server, plugin MCP or project hook that would start, and leader mode is off. grokMcpAllow in
+ * the review gate's home config lists servers from grok's own config.toml that may start anyway; MCP tools stay denied.
+ *
  * --investigate adds a shell (claude's Bash; grok's run_terminal_cmd, with
  * shell commands allowed; codex's read-only sandbox already runs commands) and
  * compares the git work tree before and after the call. Anything that changed
@@ -60,6 +65,245 @@ const GROK_MAX_TURNS = '40';
 // its preflight and its run alike (the studio's GROK_ASSIST_ENV, lib/containment.js). Its own MCP servers have
 // none, and its own .grok/hooks have none short of turning folder trust off (see grokHookFolders).
 const GROK_ENV = { GROK_CLAUDE_MCPS_ENABLED: '0', GROK_CURSOR_MCPS_ENABLED: '0', GROK_CLAUDE_HOOKS_ENABLED: '0', GROK_CURSOR_HOOKS_ENABLED: '0' };
+
+// GROK_HOME made absolute once, at start: grok runs with --cwd, which would read a relative one from somewhere else.
+const GROK_HOME = path.resolve(process.env.GROK_HOME || path.join(os.homedir(), '.grok'));
+
+/**
+ * Grok's environment for one call: an empty temporary HOME, so what grok borrows from ~/.claude and ~/.cursor
+ * (plugin MCP servers and hooks, ~/.claude.json) finds nothing, and the real GROK_HOME, so the login, its in-place
+ * refresh and folder trust are a normal session's. `done()` removes the temporary HOME.
+ */
+function grokCallEnv() {
+  const grokHome = GROK_HOME;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-model-grok-home-'));
+  return { env: { ...process.env, ...GROK_ENV, HOME: home, GROK_HOME: grokHome }, grokHome, done: () => fs.rmSync(home, { recursive: true, force: true }) };
+}
+
+/**
+ * grokMcpAllow: grok-native MCP server names the operator lets start (MCP tools stay denied). Read from the review
+ * gate's home config files only, the first that exists: never a repository's file, and empty when unset.
+ */
+function grokMcpAllow() {
+  for (const file of [path.join(os.homedir(), '.agent-config-studio', 'review-gate', 'config.json'), path.join(os.homedir(), '.claude', 'review-config.json')]) {
+    let text;
+    try { text = fs.readFileSync(file, 'utf8'); } catch (e) { if (e.code === 'ENOENT') continue; return { error: `${file}: ${e.code || e.message}` }; }
+    let doc;
+    try { doc = JSON.parse(text); } catch { return { error: `${file} is not JSON` }; }
+    const value = doc?.grokMcpAllow;
+    if (value === undefined) return { names: [] };
+    if (!Array.isArray(value) || value.some((n) => typeof n !== 'string' || !n.trim())) return { error: `grokMcpAllow in ${file} must be a list of server names` };
+    return { names: value.map((n) => n.trim()) };
+  }
+  return { names: [] };
+}
+
+/**
+ * What one grok TOML file sets cli.use_leader to: { value } (true, false, or undefined when unset), or { unclear }.
+ * A small TOML reader, not a whole one: bare, quoted and dotted keys, [cli] headers and inline tables, comments and
+ * every string form, so `"use_leader" = true # on` and `cli.use_leader = true` both count. What it can't read is
+ * unclear, which refuses grok.
+ */
+function tomlUseLeader(source) {
+  const text = source.replace(/^﻿/, '');
+  let i = 0, found;
+  const fail = (why) => { throw new Error(`${why} (line ${text.slice(0, i).split('\n').length})`); };
+  const ws = () => { while (text[i] === ' ' || text[i] === '\t') i++; };
+  const blank = () => { // spaces, comments and line ends
+    for (;;) {
+      ws();
+      if (text[i] === '#') while (i < text.length && text[i] !== '\n') i++;
+      if (text[i] === '\n' || text[i] === '\r') i++; else return;
+    }
+  };
+  const endLine = () => {
+    ws();
+    if (text[i] === '#') while (i < text.length && text[i] !== '\n') i++;
+    if (text[i] === '\r') i++;
+    if (i < text.length && text[i] !== '\n') fail('more on a line than one key and value');
+    i++;
+  };
+  const ESC = { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', e: '\x1b', '"': '"', '\\': '\\' };
+  const str = () => {
+    const q = text[i], multi = text.startsWith(q.repeat(3), i);
+    i += multi ? 3 : 1;
+    if (multi && text[i] === '\n') i++;
+    else if (multi && text.startsWith('\r\n', i)) i += 2;
+    let out = '';
+    for (;;) {
+      if (i >= text.length) fail('a string that never closes');
+      if (multi ? text.startsWith(q.repeat(3), i) : text[i] === q) {
+        if (multi) for (let k = 0; k < 2 && text[i + 3] === q; k++) { out += q; i++; }
+        i += multi ? 3 : 1;
+        return out;
+      }
+      const c = text[i];
+      if (!multi && (c === '\n' || c === '\r')) fail('a string that runs past its line');
+      if (q === '"' && c === '\\') {
+        const n = text[i + 1];
+        if (multi && /[ \t\r\n]/.test(n)) {
+          let j = i + 1;
+          while (text[j] === ' ' || text[j] === '\t') j++;
+          if (text[j] === '\r') j++;
+          if (text[j] !== '\n') fail('a backslash that is not an escape');
+          i = j;
+          while (/[ \t\r\n]/.test(text[i] || '')) i++;
+          continue;
+        }
+        if (ESC[n] !== undefined) { out += ESC[n]; i += 2; continue; }
+        const hex = { x: 2, u: 4, U: 8 }[n] || 0, digits = text.slice(i + 2, i + 2 + hex);
+        if (!hex || !/^[0-9a-fA-F]+$/.test(digits) || digits.length !== hex) fail('an escape it does not know');
+        out += String.fromCodePoint(parseInt(digits, 16));
+        i += 2 + hex;
+        continue;
+      }
+      out += c;
+      i++;
+    }
+  };
+  const key = () => {
+    const parts = [];
+    for (;;) {
+      ws();
+      if (text[i] === '"' || text[i] === "'") {
+        if (text.startsWith(text[i].repeat(3), i)) fail('a multi-line string as a key');
+        parts.push(str());
+      } else {
+        const m = /[A-Za-z0-9_-]+/y;
+        m.lastIndex = i;
+        const bare = m.exec(text);
+        if (!bare) fail('a key it cannot read');
+        parts.push(bare[0]);
+        i = m.lastIndex;
+      }
+      ws();
+      if (text[i] !== '.') return parts;
+      i++;
+    }
+  };
+  // `at` is the value's full key, or null inside an array, where nothing can be cli.use_leader.
+  const set = (at, v) => {
+    if (!at || at[0] !== 'cli' || at[1] !== 'use_leader') return;
+    if (at.length > 2 || typeof v !== 'boolean') fail('cli.use_leader set to something other than true or false');
+    if (found !== undefined) fail('cli.use_leader set twice');
+    found = v;
+  };
+  const value = (at) => {
+    ws();
+    const c = text[i];
+    if (c === '"' || c === "'") { str(); return set(at, 'a string'); }
+    if (c === '[') {
+      i++;
+      for (;;) {
+        blank();
+        if (text[i] === ']') { i++; return set(at, 'an array'); }
+        value(null);
+        blank();
+        if (text[i] === ',') i++;
+        else if (text[i] !== ']') fail('an array it cannot read');
+      }
+    }
+    if (c === '{') {
+      i++;
+      set(at && at.length >= 2 ? at : null, 'a table');
+      for (;;) {
+        blank();
+        if (text[i] === '}') { i++; return; }
+        const k = key();
+        ws();
+        if (text[i] !== '=') fail('an inline table it cannot read');
+        i++;
+        value(at && [...at, ...k]);
+        blank();
+        if (text[i] === ',') i++;
+        else if (text[i] !== '}') fail('an inline table it cannot read');
+      }
+    }
+    const m = /[A-Za-z0-9_+\-.:]+(?: [0-9]{2}:[A-Za-z0-9_+\-.:]+)?/y;
+    m.lastIndex = i;
+    const scalar = m.exec(text);
+    if (!scalar) fail('a value it cannot read');
+    i = m.lastIndex;
+    return set(at, scalar[0] === 'true' ? true : scalar[0] === 'false' ? false : 'a non-boolean');
+  };
+  try {
+    let table = [];
+    for (;;) {
+      blank();
+      if (i >= text.length) return { value: found };
+      if (text[i] === '[') {
+        const many = text[i + 1] === '[';
+        i += many ? 2 : 1;
+        table = key();
+        if (!text.startsWith(many ? ']]' : ']', i)) fail('a table header it cannot read');
+        i += many ? 2 : 1;
+        if (table[0] === 'cli' && table[1] === 'use_leader') fail('cli.use_leader as a table');
+      } else {
+        const k = key();
+        if (text[i] !== '=') fail('a line that is not a key and value');
+        i++;
+        value([...table, ...k]);
+      }
+      endLine();
+    }
+  } catch (e) {
+    return { unclear: e.message };
+  }
+}
+
+/**
+ * The requirements.toml macOS device management hands grok: the requirements_toml_base64 string in a forced ai.x.grok
+ * preference. { text }, null when there is none, or { unclear }. GROK_TEST_MANAGED_PREFS adds a folder to look in
+ * (the tests'); it never replaces the system one.
+ */
+function grokMdmRequirements() {
+  let user = process.env.USER;
+  try { user = os.userInfo().username; } catch { /* USER stands */ }
+  const dirs = ['/Library/Managed Preferences', ...(process.env.GROK_TEST_MANAGED_PREFS ? [process.env.GROK_TEST_MANAGED_PREFS] : [])];
+  const out = [];
+  for (const file of dirs.flatMap((d) => [...(user ? [path.join(d, user, 'ai.x.grok.plist')] : []), path.join(d, 'ai.x.grok.plist')])) {
+    try { fs.statSync(file); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') continue; out.push({ file, unclear: `unreadable (${e.code || e.message})` }); continue; }
+    const plutil = (args) => spawnSync('/usr/bin/plutil', [...args, '-o', '-', file], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000 });
+    let doc = null, v;
+    const all = plutil(['-convert', 'json']);
+    if (!all.error && all.status === 0) try { doc = JSON.parse(all.stdout); } catch { doc = null; }
+    if (isObject(doc)) v = doc.requirements_toml_base64;
+    else {
+      // A plist JSON can't hold (a date or data value) still gives up the one key.
+      const one = plutil(['-extract', 'requirements_toml_base64', 'json']);
+      try { if (one.error || one.status !== 0) throw new Error(); v = JSON.parse(one.stdout); } catch { out.push({ file, unclear: 'plutil could not read it' }); continue; }
+    }
+    if (v === undefined) continue;
+    const where = `${file} (requirements_toml_base64)`;
+    if (typeof v !== 'string' || !/^[A-Za-z0-9+/\s]*={0,2}\s*$/.test(v)) { out.push({ file: where, unclear: 'not a base64 string' }); continue; }
+    try { out.push({ file: where, text: new TextDecoder('utf-8', { fatal: true }).decode(Buffer.from(v, 'base64')) }); } catch { out.push({ file: where, unclear: 'not UTF-8' }); }
+  }
+  return out;
+}
+
+/**
+ * Whether grok's leader mode is on: { file } for the layer setting cli.use_leader = true, { file, unclear } for one
+ * that can't be read far enough to tell, or null. A leader session runs with the leader's own HOME, so the borrowed
+ * servers a temporary HOME keeps out could start where inspect does not look. `cli.use_leader` is a pin: the user,
+ * managed and requirements files and the macOS device-management payload all count.
+ */
+function grokLeader(grokHome) {
+  const files = ['config.toml', 'managed_config.toml', 'requirements.toml'].map((f) => path.join(grokHome, f))
+    .concat(['/etc/grok/managed_config.toml', '/etc/grok/requirements.toml']);
+  const layers = [];
+  for (const file of files) {
+    try { layers.push({ file, text: fs.readFileSync(file, 'utf8') }); } catch (e) {
+      if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') layers.push({ file, unclear: `unreadable (${e.code || e.message})` });
+    }
+  }
+  for (const layer of [...layers, ...grokMdmRequirements()]) {
+    if (layer.unclear) return layer;
+    const r = tomlUseLeader(layer.text);
+    if (r.unclear) return { file: layer.file, unclear: r.unclear };
+    if (r.value === true) return { file: layer.file };
+  }
+  return null;
+}
 
 /** Which CLI runs an id: its prefix, the rule ACS and the review runtime use. */
 function vendorOf(id) {
@@ -208,7 +452,7 @@ function loadSchema(file) {
  * enabled hooks inspect says come from the project (none when it lists no
  * hooks at all).
  */
-function grokMcpLeft(bin, cwd, env) {
+function grokMcpLeft(bin, cwd, env, { allow = [], grokHome = null } = {}) {
   const r = spawnSync(bin, ['inspect', '--json'], {
     cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024,
   });
@@ -224,6 +468,9 @@ function grokMcpLeft(bin, cwd, env) {
     if (s.enabled !== undefined && typeof s.enabled !== 'boolean') return bad(`mcpServers ${s.name}: enabled is not a boolean`);
     if (s.compatibilityStatus !== undefined && typeof s.compatibilityStatus !== 'string') return bad(`mcpServers ${s.name}: compatibilityStatus is not a string`);
     if (s.compatibilityStatus === 'disabled' || s.enabled === false) continue;
+    // A listed server may start only from grok's own config.toml: the same name from a project file still refuses.
+    if (grokHome && allow.includes(s.name) && isObj(s.source) && s.source.type === 'configToml' && typeof s.source.path === 'string'
+      && samePath(s.source.path, path.join(grokHome, 'config.toml'))) continue;
     left.push(s.name);
   }
   for (const pl of doc.plugins) {
@@ -247,6 +494,11 @@ function grokMcpLeft(bin, cwd, env) {
  * .grok/hooks entry from `cwd` up to the top of its repository keeps grok
  * from running, ~/.grok/hooks included when HOME is part of that repository.
  */
+const samePath = (a, b) => {
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return real(a) === real(b);
+};
+
 function grokHookFolders(cwd) {
   const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
   const git = which('git');
@@ -545,7 +797,9 @@ async function main(argv) {
   process.stderr.write(`ask-model: ${m.family} (${m.id}, effort ${m.effort || 'none'}, ${mode})\n`);
 
   const result = { family: m.family, id: m.id, effort: m.effort || null, mode, answer: null, changed: null, error: null };
+  let grokCall = null;
   const finish = (exit) => {
+    grokCall?.done();
     if (result.error) process.stderr.write(`ask-model: ${result.error}\n`);
     if (o.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     else if (result.answer !== null) process.stdout.write(`${result.answer}\n`);
@@ -561,19 +815,29 @@ async function main(argv) {
     if (off.error) { result.error = `${off.error} — codex was not run`; return finish(4); }
     mcpOff = off.args;
   }
-  const env = vendor === 'grok' ? { ...process.env, ...GROK_ENV } : process.env;
+  if (vendor === 'grok') grokCall = grokCallEnv();
+  const env = grokCall ? grokCall.env : process.env;
   if (vendor === 'grok') {
+    const leader = grokLeader(grokCall.grokHome);
+    if (leader) {
+      result.error = `${leader.unclear ? `grok's leader mode could not be ruled out (${leader.file}: ${leader.unclear})` : `grok's leader mode is on (use_leader in ${leader.file})`}: ` +
+        'a leader session runs with its own HOME, where MCP servers this check cannot see may start, so grok was not run.';
+      return finish(4);
+    }
+    const allow = grokMcpAllow();
+    if (allow.error) { result.error = `${allow.error}, so grok was not run`; return finish(4); }
     const hooks = grokHookFolders(cwd);
     if (hooks.length) {
       result.error = `${hooks.join(', ')} holds Grok hooks, which grok runs on every call in a trusted folder and no flag turns off, so grok was not run. ` +
         'Ask another family, or run from a folder without them.';
       return finish(4);
     }
-    const mcp = grokMcpLeft(bin, cwd, env);
+    const mcp = grokMcpLeft(bin, cwd, env, { allow: allow.names, grokHome: grokCall.grokHome });
     if (mcp.error) { result.error = `${mcp.error} — no MCP server could be ruled out, so grok was not run`; return finish(4); }
     if (mcp.left.length) {
       result.error = `grok would start MCP servers no flag keeps out of a run (${mcp.left.join(', ')}), so grok was not run. ` +
-        'Turn them off with `grok mcp disable <name>` (a plugin\'s: `grok plugin disable <name>`).';
+        'Turn them off with `grok mcp disable <name>` (a plugin\'s: `grok plugin disable <name>`), or list a server grok\'s own ' +
+        'config.toml defines in grokMcpAllow (the review gate\'s home config) to let it start; its tools stay denied.';
       return finish(4);
     }
     if (mcp.projectHooks.length) {

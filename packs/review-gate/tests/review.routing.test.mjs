@@ -25,15 +25,18 @@ const modelBody = (name) => `
 const fs = require('node:fs'), path = require('node:path')
 const a = process.argv.slice(2)
 if (a[0] === 'mcp') { console.log('[]'); process.exit(0) }
+// The HOME and GROK_HOME this call got, and how many entries HOME held then.
+const seenEnv = () => ({ home: process.env.HOME ?? null, grokHome: process.env.GROK_HOME ?? null,
+  homeEntries: (() => { try { return fs.readdirSync(process.env.HOME).length } catch { return null } })() })
 if (${JSON.stringify(name)} === 'grok' && a[0] === 'inspect') {
-  fs.writeFileSync(path.join(${JSON.stringify(CALLS)}, 'grok-inspect-' + process.pid + '.json'), '{}')
+  fs.writeFileSync(path.join(${JSON.stringify(CALLS)}, 'grok-inspect-' + process.pid + '.json'), JSON.stringify(seenEnv()))
   console.log(process.env.STUB_GROK_INSPECT || JSON.stringify({ mcpServers: [], plugins: [] })); process.exit(0)
 }
 const schema = a.includes('--output-schema') ? fs.readFileSync(a[a.indexOf('--output-schema')+1],'utf8') : a[a.indexOf('--json-schema')+1]
 const scores = schema.includes('"scores"')
 const prompt = a.includes('--output-schema') ? a.at(-1) : a[1]
 const seen = fs.existsSync('src/a.js') ? fs.readFileSync('src/a.js', 'utf8') : null
-if (!scores) fs.writeFileSync(path.join(${JSON.stringify(CALLS)}, ${JSON.stringify(name)} + '-' + process.pid + '.json'), JSON.stringify({ start: Date.now(), prompt, cwd: process.cwd(), seen }))
+if (!scores) fs.writeFileSync(path.join(${JSON.stringify(CALLS)}, ${JSON.stringify(name)} + '-' + process.pid + '.json'), JSON.stringify({ start: Date.now(), prompt, cwd: process.cwd(), seen, ...seenEnv() }))
 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.STUB_SLEEP_${name.toUpperCase()} || 0))
 if (process.env.STUB_FAIL_${name.toUpperCase()}) { process.stderr.write('stub failure'); process.exit(1) }
 const reply = scores ? '{"scores":[]}' : (process.env.STUB_FINDINGS_${name.toUpperCase()} || '{"findings":[]}')
@@ -310,4 +313,95 @@ test('F2 --shadow-report leaves findings that failed the quote check out of matc
     { file: 'elsewhere.js', line: '1', quote: 'nope', status: 'unverified-quote' }] }) + '\n')
   const r = script(['--shadow-report']); allowed(r)
   assert.equal(r.stdout.trim().split('\n')[1], 'grok: 1 run(s), 0 failed; 1 finding(s): 1 matched, 0 unique, 2 unlocated; missed 0 of 1 real finding(s); average 100 ms')
+})
+
+const inspects = () => readdirSync(CALLS).filter((f) => f.startsWith('grok-inspect')).map((f) => JSON.parse(readFileSync(join(CALLS, f), 'utf8')))
+const jevAt = (where) => ({ STUB_GROK_INSPECT: JSON.stringify({ mcpServers: [{ name: 'jev', source: { type: 'configToml', path: where } }], plugins: [] }) })
+test('G2 a grok review runs with an empty temporary HOME and the real GROK_HOME, and only a listed grok-native server may start', () => {
+  commit({ 'src/a.js': lines(10) })
+  const grokHome = join(HOME, '.grok')
+  config({ grokMcpAllow: ['jev'] })
+  const ok = script([], { REVIEW_REVIEWER: 'grok', ...jevAt(join(grokHome, 'config.toml')) })
+  allowed(ok)
+  const [ins] = inspects(), call = callOf('grok')
+  assert.ok(ins.home && ins.home === call.home && ins.home !== HOME, `one temporary HOME for the check and the call: ${ins.home}`)
+  assert.deepEqual([ins.homeEntries, call.homeEntries, ins.grokHome, call.grokHome], [0, 0, grokHome, grokHome])
+  assert.ok(!existsSync(ins.home), 'the temporary HOME is removed')
+  const refusedWith = (why, extra = {}) => {
+    rmSync(CALLS, { recursive: true }); mkdirSync(CALLS); rmSync(LOG, { force: true })
+    const r = script([], { REVIEW_REVIEWER: 'grok', ...extra })
+    assert.notEqual(r.status, 0, r.out); assert.match(r.out, why)
+    assert.deepEqual(calls('grok'), []); assert.deepEqual(records(), [])
+  }
+  refusedWith(/grok would start MCP servers no flag keeps out of a run \(jev\)/, jevAt(join(REPO, '.grok', 'config.toml')))
+  config({})
+  refusedWith(/\(jev\).*grokMcpAllow/, jevAt(join(grokHome, 'config.toml')))
+  assert.equal(script([], { REVIEW_REVIEWER: 'grok', REVIEW_GROK_MCP_ALLOW: 'jev', ...jevAt(join(grokHome, 'config.toml')) }).status, 0, 'REVIEW_GROK_MCP_ALLOW lists it for one run')
+  config({ grokMcpAllow: ['jev', 3] })
+  refusedWith(/grokMcpAllow must be a list of server names/, jevAt(join(grokHome, 'config.toml')))
+  config({ grokMcpAllow: ['jev'] })
+  mkdirSync(grokHome, { recursive: true }); writeFileSync(join(grokHome, 'config.toml'), '[cli]\nuse_leader = true\n')
+  refusedWith(/grok's leader mode is on \(use_leader in .*\.grok\/config\.toml\)/, jevAt(join(grokHome, 'config.toml')))
+  assert.deepEqual(inspects(), [], 'leader mode refuses before grok inspect runs')
+})
+
+test('G3 a tracked repo config cannot allow a grok MCP server', () => {
+  rmSync(CONF, { force: true })
+  commit({ '.claude/review-config.json': JSON.stringify({ grokMcpAllow: ['jev'] }), 'src/a.js': lines(10) })
+  const r = script([], { REVIEW_CONFIG: '', REVIEW_REVIEWER: 'grok', ...jevAt(join(HOME, '.grok', 'config.toml')) })
+  assert.notEqual(r.status, 0, r.out)
+  assert.match(r.out, /Ignoring grokMcpAllow in \.claude\/review-config\.json/)
+  assert.match(r.out, /grok would start MCP servers no flag keeps out of a run \(jev\)/)
+})
+
+test('G4 a grok shadow gets the same temporary HOME and allowlist as a real grok review', async () => {
+  config({ routing: ROUTING, shadow: ['grok'], grokMcpAllow: ['jev'] })
+  commit({ 'src/a.js': lines(10) })
+  allowed(script([], jevAt(join(HOME, '.grok', 'config.toml'))))
+  const [shadow] = await shadowRecords(1)
+  assert.equal(shadow.ok, true, shadow.error)
+  const call = callOf('grok')
+  assert.ok(call.home !== HOME && call.homeEntries === 0 && call.grokHome === join(HOME, '.grok') && !existsSync(call.home), JSON.stringify(call))
+})
+
+test('G5 grok leader mode in any TOML spelling or a macOS managed payload refuses, and a relative GROK_HOME is made absolute', async () => {
+  commit({ 'src/a.js': lines(10) })
+  const grokHome = join(HOME, '.grok')
+  const refusedWith = (why, extra = {}) => {
+    rmSync(CALLS, { recursive: true }); mkdirSync(CALLS); rmSync(LOG, { force: true })
+    const r = script([], { REVIEW_REVIEWER: 'grok', ...extra })
+    assert.notEqual(r.status, 0, r.out); assert.match(r.out, why)
+    assert.deepEqual(calls('grok'), []); assert.deepEqual(inspects(), []); assert.deepEqual(records(), [])
+  }
+  mkdirSync(grokHome, { recursive: true })
+  for (const toml of ['[cli]\n"use_leader" = true\n', "[ cli ]\n'use_leader'=true # shared\n", 'cli = { use_leader = true }\n']) {
+    writeFileSync(join(grokHome, 'config.toml'), toml)
+    refusedWith(/grok's leader mode is on \(use_leader in .*\.grok\/config\.toml\)/)
+  }
+  writeFileSync(join(grokHome, 'config.toml'), '[cli]\nuse_leader = "yes"\n')
+  refusedWith(/grok's leader mode could not be ruled out \(.*\.grok\/config\.toml: cli\.use_leader set to something other than true or false/)
+  writeFileSync(join(grokHome, 'config.toml'), '[other]\nuse_leader = true\n')
+  allowed(script([], { REVIEW_REVIEWER: 'grok' }))
+
+  if (process.platform === 'darwin') {
+    const prefs = join(ROOT, 'managed-prefs')
+    mkdirSync(prefs, { recursive: true })
+    const plist = (body) => writeFileSync(join(prefs, 'ai.x.grok.plist'), `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>${body}</dict></plist>\n`)
+    plist(`<key>requirements_toml_base64</key><string>${Buffer.from('[cli]\nuse_leader = true\n').toString('base64')}</string>`)
+    refusedWith(/grok's leader mode is on \(use_leader in .*ai\.x\.grok\.plist \(requirements_toml_base64\)\)/, { GROK_TEST_MANAGED_PREFS: prefs })
+    writeFileSync(join(prefs, 'ai.x.grok.plist'), 'not a plist')
+    refusedWith(/could not be ruled out \(.*ai\.x\.grok\.plist: plutil could not read it\)/, { GROK_TEST_MANAGED_PREFS: prefs })
+    rmSync(prefs, { recursive: true })
+  }
+
+  // A relative GROK_HOME: the real call and a shadow (which runs in a snapshot clone) both get it made absolute.
+  rmSync(CALLS, { recursive: true }); mkdirSync(CALLS)
+  allowed(script([], { REVIEW_REVIEWER: 'grok', GROK_HOME: 'rel-grok' }))
+  assert.equal(callOf('grok').grokHome, join(realpathSync(REPO), 'rel-grok'))
+  rmSync(CALLS, { recursive: true }); mkdirSync(CALLS)
+  config({ routing: ROUTING, shadow: ['grok'] })
+  allowed(script([], { GROK_HOME: 'rel-grok' }))
+  const [shadow] = await shadowRecords(1)
+  assert.equal(shadow.ok, true, shadow.error)
+  assert.equal(callOf('grok').grokHome, join(realpathSync(REPO), 'rel-grok'))
 })
