@@ -37,7 +37,7 @@ file a duplicate.
    command or its output:
 
    ```bash
-   node "$FLAG" find --transcript auto --text "pnpm install"
+   node "$FLAG" find --harness claude --transcript auto --text "pnpm install"
    ```
 
    Each row is `line  tool-ids  tool-name  preview`. Pick the tool ids (a tool id brings the call and its result) or

@@ -50,6 +50,13 @@ PASSWORD (any case). Numbers, booleans and null are left alone (`input_tokens: 2
 value is redacted when the name is upper case, the value is quoted, has a digit, or is 8+ characters; `=` and flags
 always redact. In parsed transcript entries an object key with such a name has its string value redacted whole.
 Over-redaction is the accepted failure mode.
+Fix round (review 2026-11-03-00-17-41-9c26c6): redaction is two passes. Find: the patterns (now also `\"v\"`
+escaped values, `Basic` values that decode to user:pass, with or without a header), every string under a
+secret-named key through arrays and nested objects (whatever it looks like), and any JSON embedded in a string,
+walked for its secrets. Scrub: every literal found (6+ chars, not a plain word) is replaced everywhere in the report,
+raw and JSON-escaped once and twice. Under SECRET or PASSWORD names a number-like value is redacted too. `find`
+redacts the whole line before cutting its preview and needs `--harness` for `auto` (each skill passes it).
+`list`/`show` read only plain report files, never through a link.
 
 ## List
 `flag.mjs list [--since 2026-11-01|7d|24h] [--project <name or path>] [--json]`: newest first by `ts`; one line per

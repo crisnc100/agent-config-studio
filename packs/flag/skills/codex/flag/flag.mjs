@@ -26,7 +26,7 @@
  */
 import { spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -45,6 +45,8 @@ const refuse = (msg) => { throw new Refusal(msg) }
 /* ── redaction ───────────────────────────────────────────────────────── */
 
 const SECRET_NAME = /key|token|secret|passw(?:or)?d/i
+// Names whose value is a secret even when it reads as a number or a boolean ("PASSWORD=123456").
+const ALWAYS_SECRET = /secret|passw(?:or)?d/i
 const mark = (kind) => `[REDACTED:${kind}]`
 const NOT_ALNUM = '(?<![A-Za-z0-9])'
 const TOKENS = [
@@ -58,53 +60,116 @@ const TOKENS = [
   ['gitlab-token', new RegExp(`${NOT_ALNUM}glpat-[A-Za-z0-9_-]{20,}`, 'g')],
   ['npm-token', new RegExp(`${NOT_ALNUM}npm_[A-Za-z0-9]{30,}`, 'g')],
 ]
-// NAME=value, "name": "value", name: value — the name holding key, token, secret or password.
-const ASSIGNED = /(["']?)([A-Za-z0-9_.-]*(?:key|token|secret|passw(?:or)?d)[A-Za-z0-9_.-]*)\1(\s*)([=:])(\s*)(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|([^\s"'`,;&|(){}[\]<>]+))/gi
+const NAME = '[A-Za-z0-9_.-]*(?:key|token|secret|passw(?:or)?d)[A-Za-z0-9_.-]*'
+// A value: quoted with escaped quotes (\"v\", as inside JSON-encoded text), "v", 'v', or bare.
+const VALUE = String.raw`(?:(?<eq>\\+)"(?<ev>(?:(?!\k<eq>").)*)\k<eq>"|"(?<dq>(?:[^"\\]|\\.)*)"|'(?<sq>[^']*)'|(?<bare>[^\s"'\x60,;&|(){}[\]<>\\]+))`
+// NAME=value, "name": "value", \"name\": \"value\", name: value — the name holding key, token, secret or password.
+const ASSIGNED = new RegExp(String.raw`(?<q>\\*["']?)(?<name>${NAME})\k<q>(?<sp1>\s*)(?<sep>[=:])(?<sp2>\s*)${VALUE}`, 'gi')
 // --api-key value, -token value (the = form is ASSIGNED's).
-const FLAG = /(\s|^)(--?[A-Za-z0-9_-]*(?:key|token|secret|passw(?:or)?d)[A-Za-z0-9_-]*)(\s+)(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|([^\s"'`;&|(){}[\]<>]+))/gi
+const FLAG = new RegExp(String.raw`(?<lead>\s|^)(?<name>--?${NAME})(?<sp1>\s+)${VALUE}`, 'gi')
 
-const harmless = (v) => v === '' || v.startsWith('[REDACTED') || /^-?\d+(?:\.\d+)?$/.test(v) || /^(?:true|false|null|undefined|none)$/i.test(v)
+const marked = (v) => v === '' || v.startsWith('[REDACTED')
+const looksPlain = (v) => /^-?\d+(?:\.\d+)?$/.test(v) || /^(?:true|false|null|undefined|none)$/i.test(v)
+// A count or a flag (max_tokens=4096) stays; under a secret or password name nothing does.
+const harmless = (name, v) => marked(v) || (!ALWAYS_SECRET.test(name) && looksPlain(v))
 
 // After a ':' the text may be prose ("token: the agent…"), so a value redacts only when it looks like one.
 function secretAfterColon(name, value, quoted) {
   return (/^[A-Z0-9_.-]+$/.test(name) && /[A-Z]/.test(name)) || quoted || /\d/.test(value) || value.length >= 8
 }
 
-/** One string with every secret it holds replaced by [REDACTED:<kind>]. */
-export function redactText(s) {
-  let out = s
-    .replace(/-----BEGIN ((?:[A-Z0-9]+ )*)PRIVATE KEY-----[\s\S]*?(?:-----END \1PRIVATE KEY-----|$)/g, mark('private-key'))
-    .replace(/(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, mark('jwt'))
-    .replace(/\b(Bearer)(\s+)[A-Za-z0-9._~+/=-]{8,}/gi, (_, w, sp) => `${w}${sp}${mark('bearer')}`)
-    .replace(/\b(Authorization["']?\s*[:=]\s*["']?Basic)(\s+)[A-Za-z0-9+/=]{8,}/gi, (_, w, sp) => `${w}${sp}${mark('basic-auth')}`)
-  for (const [kind, re] of TOKENS) out = out.replace(re, mark(kind))
-  out = out.replace(/\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)([^\s@/]+)@/gi, (_, head) => `${head}${mark('url-password')}@`)
-  out = out.replace(ASSIGNED, (all, q, name, sp1, sep, sp2, dq, sq, bare) => {
-    const value = dq ?? sq ?? bare ?? ''
-    const quoted = dq !== undefined || sq !== undefined
-    if (harmless(value)) return all
-    if (sep === ':' && !secretAfterColon(name, value, quoted)) return all
-    const v = quoted ? `${dq !== undefined ? '"' : "'"}${mark('named-secret')}${dq !== undefined ? '"' : "'"}` : mark('named-secret')
-    return `${q}${name}${q}${sp1}${sep}${sp2}${v}`
-  })
-  out = out.replace(FLAG, (all, lead, name, sp, dq, sq, bare) => {
-    const value = dq ?? sq ?? bare ?? ''
-    if (harmless(value) || value.startsWith('-')) return all
-    return `${lead}${name}${sp}${mark('named-secret')}`
-  })
-  return out
+// Basic credentials are base64 of user:password; the header name may be in another field.
+function basicCredential(b64) {
+  let text
+  try { text = Buffer.from(b64, 'base64').toString('utf8') } catch { return false }
+  return text.includes(':') && /^[\x20-\x7e]+$/.test(text)
 }
 
-/** Any JSON value, redacted: every string, and whole the string value of a key named like a secret. */
-export function redact(value, key = '') {
-  if (typeof value === 'string') {
-    if (key && SECRET_NAME.test(key) && !harmless(value)) return mark('named-secret')
-    return redactText(value)
+/**
+ * One redaction run. Two passes: find — every secret the patterns, the secret-named keys (through every
+ * container below them) and any JSON embedded in a string turn up, each replaced where found and its literal
+ * remembered; then scrub — every remaining occurrence of a remembered literal, raw or JSON-escaped, anywhere
+ * in the value. A secret seen once in a structured place is therefore gone from the free text too.
+ */
+function redactor() {
+  const found = new Map()
+  // Only a literal that cannot be an ordinary word is scrubbed everywhere; a short or plain one is redacted where found.
+  const note = (literal, kind) => {
+    if (literal && !marked(literal) && literal.length >= 6 && (/[^A-Za-z]/.test(literal) || literal.length >= 12)) found.set(literal, kind)
   }
-  if (Array.isArray(value)) return value.map((v) => redact(v))
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redact(v, k)]))
-  return value
+  const sub = (kind) => (all) => { note(all, kind); return mark(kind) }
+
+  function text(s) {
+    // JSON inside a string (a tool result, Codex's function arguments): walk it for its secrets, keep the text.
+    if (/^\s*[[{]/.test(s)) { try { walk(JSON.parse(s), false) } catch {} }
+    let out = s
+      .replace(/-----BEGIN ((?:[A-Z0-9]+ )*)PRIVATE KEY-----[\s\S]*?(?:-----END \1PRIVATE KEY-----|$)/g, sub('private-key'))
+      .replace(/(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, sub('jwt'))
+      .replace(/\b(Bearer)(\s+)([A-Za-z0-9._~+/=-]{8,})/gi, (_, w, sp, v) => { note(v, 'bearer'); return `${w}${sp}${mark('bearer')}` })
+      .replace(/\b(Basic)(\s+)([A-Za-z0-9+/]{8,}={0,2})(?![A-Za-z0-9+/=])/g, (all, w, sp, v, at, whole) => {
+        if (!basicCredential(v) && !/authorization["']?\s*[:=]?\s*["']?$/i.test(whole.slice(Math.max(0, at - 24), at))) return all
+        note(v, 'basic-auth')
+        return `${w}${sp}${mark('basic-auth')}`
+      })
+    for (const [kind, re] of TOKENS) out = out.replace(re, sub(kind))
+    out = out.replace(/\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)([^\s@/]+)@/gi, (_, head, v) => { note(v, 'url-password'); return `${head}${mark('url-password')}@` })
+    const valueOf = (g) => g.ev ?? g.dq ?? g.sq ?? g.bare ?? ''
+    const quoteAround = (g, v) => (g.eq !== undefined ? `${g.eq}"${v}${g.eq}"` : g.dq !== undefined ? `"${v}"` : g.sq !== undefined ? `'${v}'` : v)
+    out = out.replace(ASSIGNED, (...m) => {
+      const g = m.at(-1), all = m[0], value = valueOf(g)
+      if (harmless(g.name, value)) return all
+      if (g.sep === ':' && !secretAfterColon(g.name, value, g.bare === undefined)) return all
+      note(value, 'named-secret')
+      return `${g.q}${g.name}${g.q}${g.sp1}${g.sep}${g.sp2}${quoteAround(g, mark('named-secret'))}`
+    })
+    out = out.replace(FLAG, (...m) => {
+      const g = m.at(-1), all = m[0], value = valueOf(g)
+      if (harmless(g.name, value) || value.startsWith('-')) return all
+      note(value, 'named-secret')
+      return `${g.lead}${g.name}${g.sp1}${quoteAround(g, mark('named-secret'))}`
+    })
+    return out
+  }
+
+  // `secret`: a key above this value is named like a secret, so every string under it is one.
+  function walk(value, secret) {
+    if (typeof value === 'string') {
+      if (secret && !marked(value)) { note(value, 'named-secret'); return mark('named-secret') }
+      return text(value)
+    }
+    if (Array.isArray(value)) return value.map((v) => walk(v, secret))
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, walk(v, secret || SECRET_NAME.test(k))]))
+    return value
+  }
+
+  function scrub(value, literals) {
+    if (typeof value === 'string') {
+      let out = value
+      for (const [lit, kind] of literals) if (out.includes(lit)) out = out.split(lit).join(mark(kind))
+      return out
+    }
+    if (Array.isArray(value)) return value.map((v) => scrub(v, literals))
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, scrub(v, literals)]))
+    return value
+  }
+
+  return (value) => {
+    const out = walk(value, false)
+    // Each literal also in its JSON-escaped forms (once and twice), longest first so no secret is left half-cut.
+    const literals = new Map()
+    for (const [lit, kind] of found) {
+      const once = JSON.stringify(lit).slice(1, -1), twice = JSON.stringify(once).slice(1, -1)
+      for (const form of [lit, once, twice]) literals.set(form, kind)
+    }
+    return scrub(out, [...literals].sort((a, b) => b[0].length - a[0].length))
+  }
 }
+
+/** One string with every secret it holds replaced by [REDACTED:<kind>]. */
+export const redactText = (s) => redactor()(s)
+
+/** Any JSON value, redacted: every string, and every string under a key named like a secret, whole. */
+export const redact = (value) => redactor()(value)
 
 /** Strings over MAX_STRING cut, with the cut said. Runs after redact(), so a cut never splits a secret open. */
 function truncate(value) {
@@ -345,12 +410,20 @@ export function parseSince(s, now = Date.now()) {
   return new Date(t)
 }
 
+/** A report file as write leaves it: a plain file (never a link), one object with id, ts and what. */
+function readReport(file) {
+  if (!lstatSync(file).isFile()) refuse('not a plain file (a link is never followed)')
+  const r = JSON.parse(readFileSync(file, 'utf8'))
+  if (!r || typeof r !== 'object' || ['id', 'ts', 'what'].some((k) => typeof r[k] !== 'string')) refuse('not a field report')
+  return r
+}
+
 export function listReports({ since, project: proj } = {}, dir = REPORTS) {
   let names = []
   try { names = readdirSync(dir).filter((n) => n.endsWith('.json')) } catch (e) { if (e.code !== 'ENOENT') throw e }
   const out = []
   for (const n of names) {
-    try { out.push(JSON.parse(readFileSync(join(dir, n), 'utf8'))) } catch (e) { process.stderr.write(`flag: skipped ${n}: ${e.message}\n`) }
+    try { out.push(readReport(join(dir, n))) } catch (e) { process.stderr.write(`flag: skipped ${n}: ${e.message}\n`) }
   }
   return out
     .filter((r) => !since || Date.parse(r.ts) >= since.getTime())
@@ -399,14 +472,17 @@ function main(argv) {
   if (cmd === 'find') {
     if (!opt.text) refuse('find needs --text <what to look for>')
     const harness = opt.harness ?? detectHarness()
+    if ((opt.transcript || 'auto') === 'auto' && !HARNESSES.includes(harness)) refuse('which harness is this? pass --harness claude or --harness codex')
     const t = resolveTranscript(opt.transcript || 'auto', harness)
     if (!t.path) refuse('no transcript found for this session; pass --transcript <path>')
     process.stdout.write(`${t.path} (${t.how})\n`)
     for (const l of readTranscript(t.path)) {
       if (!l.text.includes(opt.text)) continue
       const ids = toolIdsOf(l.entry), name = toolNameOf(l.entry)
-      const at = l.text.indexOf(opt.text)
-      const preview = oneLine(redactText(l.text.slice(Math.max(0, at - 60), at + 100)), 160)
+      // The whole line is redacted before a window is cut from it, so a secret is never seen half outside it.
+      const shown = l.entry ? JSON.stringify(redact(l.entry)) : redactText(l.text)
+      const at = shown.indexOf(opt.text)
+      const preview = at < 0 ? `(the match is inside redacted text) ${oneLine(shown, 120)}` : oneLine(shown.slice(Math.max(0, at - 60), at + 100), 160)
       process.stdout.write(`${l.line}\t${ids.join(',') || '-'}\t${name || '-'}\t${preview}\n`)
     }
     return 0
@@ -422,8 +498,10 @@ function main(argv) {
     const id = opt._[0]
     if (!id || !/^[\w.-]+$/.test(id)) refuse('show needs a report id')
     const file = join(REPORTS, `${id}.json`)
-    if (!existsSync(file)) refuse(`no report ${id}`)
-    process.stdout.write(readFileSync(file, 'utf8'))
+    if (!existsSync(file) && !lstatSync(file, { throwIfNoEntry: false })) refuse(`no report ${id}`)
+    let report
+    try { report = readReport(file) } catch (e) { refuse(`${id}: ${e.message}`) }
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
     return 0
   }
   refuse(`unknown command ${cmd} (write | find | list | show)`)

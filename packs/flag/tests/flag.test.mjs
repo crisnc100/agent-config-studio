@@ -14,6 +14,8 @@ import { after, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { redact, redactText } from '../skills/claude/flag/flag.mjs'
 
+const b64 = (s) => Buffer.from(s).toString('base64')
+
 const FLAG = resolve(dirname(fileURLToPath(import.meta.url)), '../skills/claude/flag/flag.mjs')
 const roots = []
 after(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }) })
@@ -86,13 +88,14 @@ test('values of names holding KEY, TOKEN, SECRET or PASSWORD: env, JSON text, fl
     ['tool --api-key abc123 --verbose', 'tool --api-key [REDACTED:named-secret] --verbose'],
     ['tool --token=xyz', 'tool --token=[REDACTED:named-secret]'],
     [`OPENAI_API_KEY=${SECRETS.openai}`, 'OPENAI_API_KEY=[REDACTED:openai-key]'],
+    ['SECRET_COUNT=0', 'SECRET_COUNT=[REDACTED:named-secret]'],
   ]
   for (const [input, want] of cases) assert.equal(redactText(input), want, input)
 })
 
 test('numbers, flags with numbers and prose after a colon are left alone (it does not redact everything)', () => {
   for (const fine of ['"input_tokens": 2, "output_tokens": 105', 'max_tokens=4096', 'tool --max-tokens 100', 'token: the agent kept going',
-    'the key: yes', 'SECRET_COUNT=0', 'a plain sentence about tasks and risk-free desks', 'task-abcdefghijklmnopqrstuvwxyz'])
+    'the key: yes', 'KEY_COUNT=0', 'Basic setup', 'Basic understanding of tokens', 'a plain sentence about tasks and risk-free desks', 'task-abcdefghijklmnopqrstuvwxyz'])
     assert.equal(redactText(fine), fine, fine)
 })
 
@@ -391,4 +394,129 @@ test('show prints one report; an unknown id or a path is refused', () => {
   assert.match(b.run(['show', 'two']).err, /no report two/)
   assert.match(b.run(['show', '../x']).err, /show needs a report id/)
   assert.match(b.run(['nope']).err, /unknown command nope/)
+})
+
+/* ── fix round: review 2026-11-03-00-17-41-9c26c6 ───────────────────── */
+
+test('f1: an escaped quote around a value in JSON-encoded text does not leave the value behind', () => {
+  const cmd = { cmd: 'DB_PASSWORD="opaque-pass" npm start' }
+  for (const s of [JSON.stringify(cmd), `ran: ${JSON.stringify(cmd)}`, `twice: ${JSON.stringify(JSON.stringify(cmd))}`, String.raw`MY_TOKEN=\"opaque-pass\"`]) {
+    const out = redactText(s)
+    assert.ok(!out.includes('opaque-pass'), `${s} -> ${out}`)
+    assert.match(out, /\[REDACTED:named-secret\]/, s)
+  }
+  assert.equal(redactText(String.raw`{\"api_key\": \"opaque-value\"}`), String.raw`{\"api_key\": \"[REDACTED:named-secret]\"}`)
+})
+
+test('f2: a Basic credential is redacted from its value alone, with no header name beside it', () => {
+  const cred = b64('agent:opaque-pass')
+  assert.deepEqual(redact({ headers: { Authorization: `Basic ${cred}` } }), { headers: { Authorization: 'Basic [REDACTED:basic-auth]' } })
+  assert.equal(redactText(`["Basic ${cred}"]`), '["Basic [REDACTED:basic-auth]"]')
+  assert.equal(redactText(`auth=Basic ${cred}`), 'auth=Basic [REDACTED:basic-auth]')
+})
+
+test('f3: a string under a secret-named key is redacted even when it reads as a number or a boolean', () => {
+  assert.deepEqual(redact({ password: '123456', client_secret: 'false', api_key: '42', token: 'null' }),
+    { password: '[REDACTED:named-secret]', client_secret: '[REDACTED:named-secret]', api_key: '[REDACTED:named-secret]', token: '[REDACTED:named-secret]' })
+  assert.deepEqual(redact({ max_tokens: 4096, input_tokens: 2 }), { max_tokens: 4096, input_tokens: 2 })
+  assert.equal(redactText('PASSWORD=123456 make'), 'PASSWORD=[REDACTED:named-secret] make')
+  assert.equal(redactText('--password 000000'), '--password [REDACTED:named-secret]')
+  assert.equal(redactText('max_tokens=4096'), 'max_tokens=4096')
+})
+
+test('f4: the secret-name context reaches through arrays and nested objects', () => {
+  assert.deepEqual(redact({ api_tokens: ['opaque-credential-value', 'second-one'], auth: { secrets: [{ v: 'x1y2z3w4' }, ['deep-value']] }, list: ['fine'] }),
+    { api_tokens: ['[REDACTED:named-secret]', '[REDACTED:named-secret]'], auth: { secrets: [{ v: '[REDACTED:named-secret]' }, ['[REDACTED:named-secret]']] }, list: ['fine'] })
+})
+
+test('a secret found once is scrubbed wherever else it appears, raw or escaped; plain words are not', () => {
+  const secret = 'Zq9"opaque-77'
+  const out = redact({ env: { DB_PASSWORD: secret }, log: `connected with ${secret}`, raw: JSON.stringify({ x: secret }), raw2: JSON.stringify(JSON.stringify({ x: secret })), mode: { token: 'standard' }, tier: 'standard' })
+  assert.ok(!JSON.stringify(out).includes('opaque-77'), JSON.stringify(out))
+  assert.deepEqual([out.raw, out.raw2], [JSON.stringify({ x: '[REDACTED:named-secret]' }), JSON.stringify(JSON.stringify({ x: '[REDACTED:named-secret]' }))], 'the JSON-escaped forms, once and twice')
+  assert.equal(out.log, 'connected with [REDACTED:named-secret]')
+  assert.deepEqual([out.mode.token, out.tier], ['[REDACTED:named-secret]', 'standard'], 'a plain word is redacted where found, not everywhere')
+})
+
+test('f5: find redacts the whole line before cutting the preview, so a key or password outside the window never shows', () => {
+  const b = box()
+  const body = Array.from({ length: 40 }, (_, i) => `MIIEpAIBAAKCAQEA${String(i).padStart(4, '0')}PlantedKeyMaterial`).join('\n')
+  const pem = `-----BEGIN ${'RSA PRIVATE KEY'}-----\n${body}\n-----END ${'RSA PRIVATE KEY'}-----`
+  const file = join(b.root, 's.jsonl')
+  writeFileSync(file, [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_k', content: pem }] } }),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_p', name: 'Bash', input: { command: `deploy --password${' '.repeat(120)}Wide-Gap-Secret-9 --target prod` } }] } }),
+  ].join('\n') + '\n')
+  const key = b.run(['find', '--transcript', file, '--text', '0020PlantedKeyMaterial'])
+  assert.equal(key.code, 0, key.err)
+  assert.ok(!key.out.includes('PlantedKeyMaterial') && !key.out.includes('MIIEpAIBAAKCAQEA'), key.out)
+  assert.match(key.out, /\n1\ttoolu_k\t-\t\(the match is inside redacted text\) /)
+  const pw = b.run(['find', '--transcript', file, '--text', '--target prod'])
+  assert.ok(!pw.out.includes('Wide-Gap-Secret-9'), pw.out)
+  assert.match(pw.out, /\n2\ttoolu_p\tBash\t/)
+})
+
+test('f6: find needs the harness for "auto"; the Codex skill passes --harness codex, which reaches the newest-in-cwd fallback', () => {
+  const b = box()
+  const t = codexTranscript(b)
+  const none = b.run(['find', '--transcript', 'auto', '--text', 'gh pr list'])
+  assert.equal(none.code, 1)
+  assert.match(none.err, /pass --harness claude or --harness codex/)
+  const found = b.run(['find', '--harness', 'codex', '--transcript', 'auto', '--text', 'gh pr list'])
+  assert.equal(found.code, 0, found.err)
+  assert.equal(found.out.split('\n')[0], `${t.file} (newest-in-cwd)`)
+  assert.match(found.out, /\n3\tcall_abc\texec\t/)
+  for (const h of ['claude', 'codex']) {
+    const skill = readFileSync(resolve(dirname(FLAG), '../..', h, 'flag', 'SKILL.md'), 'utf8')
+    assert.match(skill, new RegExp(`node "\\$FLAG" find --harness ${h} --transcript auto `), `${h} skill`)
+  }
+})
+
+test('f7: list and show read only plain report files: a link (to a credential file or anything) and a non-report are skipped', () => {
+  const b = box()
+  plant(b, 'real', new Date().toISOString(), 'alpha')
+  const creds = join(b.home, '.codex', 'auth.json')
+  mkdirSync(dirname(creds), { recursive: true })
+  writeFileSync(creds, '{"id":"x","ts":"2026-11-02T00:00:00Z","what":"x","OPENAI_API_KEY":"planted-cred-value"}\n')
+  symlinkSync(creds, join(b.reports, 'linked.json'))
+  writeFileSync(join(b.reports, 'other.json'), '{"some":"json"}')
+  const l = b.run(['list', '--json'])
+  assert.equal(l.code, 0, l.err)
+  assert.deepEqual(JSON.parse(l.out).map((r) => r.id), ['real'])
+  assert.ok(!l.out.includes('planted-cred-value'))
+  assert.match(l.err, /skipped linked\.json: not a plain file/)
+  assert.match(l.err, /skipped other\.json: not a field report/)
+  const s = b.run(['show', 'linked'])
+  assert.equal(s.code, 1)
+  assert.ok(!s.out.includes('planted-cred-value'))
+  assert.match(s.err, /linked: not a plain file/)
+})
+
+test('the property: a realistic transcript excerpt with every secret form, nested, escaped and in arrays, leaves no planted secret in the file', () => {
+  const b = box()
+  const basic = b64('deploy-bot:Basic-Pass-31')
+  const planted = { ...SECRETS, basic, basicPass: 'Basic-Pass-31', dbpass: 'Db-Pass-0042', numpin: '918273', arr: 'Array-Held-Token-55', urlpass: 'Url-Pass-66', wide: 'Wide-Flag-Pass-77', envq: 'Env-Quoted-88', cookie: 'Cookie-Secret-99' }
+  const nestedArgs = JSON.stringify({ cmd: `DB_PASSWORD="${planted.dbpass}" API_KEY=${SECRETS.openai} psql`, env: { GH_TOKEN: SECRETS.ghp } })
+  const lines = [
+    { type: 'assistant', message: { model: 'model-a', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_all', name: 'Bash', input: {
+      command: `curl -H 'Authorization: Bearer ${SECRETS.bearer}' -H "x-api-key: ${SECRETS.anthropic}" https://bot:${planted.urlpass}@example.test && deploy --password      ${planted.wide}`,
+      headers: { Authorization: `Basic ${basic}` }, pin: { password: planted.numpin }, api_tokens: [planted.arr, { nested: [SECRETS.npm] }] } }] } },
+    { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_all', content: [
+      { type: 'text', text: `config: ${JSON.stringify({ client_secret: planted.cookie, keys: [SECRETS.aws, SECRETS.google], pem: SECRETS.pem })}` },
+      { type: 'text', text: `export MY_SECRET="${planted.envq}"; echo ${SECRETS.slack} ${SECRETS.render} ${SECRETS.gitlab} ${SECRETS.jwt} ${SECRETS.ghpat} ${SECRETS.gho}` },
+    ] }] }, toolUseResult: { stdout: `again: ${planted.dbpass} ${planted.cookie} ${planted.arr}`, stderr: JSON.stringify(JSON.stringify({ password: planted.dbpass })) } },
+    { timestamp: 't', type: 'response_item', payload: { type: 'function_call', call_id: 'call_all', name: 'shell', arguments: nestedArgs } },
+    { timestamp: 't', type: 'response_item', payload: { type: 'function_call_output', call_id: 'call_all', output: `ran ${nestedArgs}` } },
+  ]
+  const file = join(b.root, 'all.jsonl')
+  writeFileSync(file, `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`)
+  const r = b.write({ what: `leak test ${planted.dbpass}`, severity: 'high', harness: 'claude', transcript: file, excerpts: { toolIds: ['toolu_all', 'call_all'] },
+    agentTake: `the result held ${planted.cookie}`, toolCalls: [{ name: 'Bash', input: nestedArgs }] })
+  assert.equal(r.code, 0, r.err)
+  const { text, data } = b.only()
+  assert.equal(data.toolCalls.length, 5, 'the agent quote and four transcript lines')
+  const leaks = Object.entries(planted).filter(([, v]) => text.includes(v) || text.includes(JSON.stringify(v).slice(1, -1)))
+  assert.deepEqual(leaks.map(([k]) => k), [], 'planted secrets left in the written file')
+  const f = b.run(['find', '--transcript', file, '--text', 'toolu_all'])
+  assert.deepEqual(Object.entries(planted).filter(([, v]) => f.out.includes(v)).map(([k]) => k), [], 'planted secrets in find output')
 })
