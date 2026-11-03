@@ -393,12 +393,22 @@ function pkPreviewView(pack, card) {
     offer.appendChild(el('div', null, r.missing
       ? `The ${r.role} role is not set: skills that use it stop until you choose its model (here, or any family in Models → Roles).`
       : `The ${r.role} role uses ${r.use.join(', ') || 'nothing'}, and none of their CLIs is installed here.`));
-    if (r.suggestion.length) {
-      offer.appendChild(pkCheck(`Set the ${r.role} role to ${r.suggestion.join(', ')} (through ACS's roles; it stays after an uninstall)`, !!r.set, (v) => {
-        if (v) card.setRoles = { ...card.setRoles, [r.role]: r.suggestion };
+    if ((r.families || []).length) {
+      // A choice, never a default: blank until the user picks, from the families a CLI here runs.
+      const pick = el('select', 'pk-role-pick');
+      pick.appendChild(el('option', null, `Choose the ${r.role} model…`)).value = '';
+      for (const f of r.families) pick.appendChild(el('option', null, f)).value = f;
+      pick.value = r.set?.[0] || '';
+      pick.disabled = !!card.busy;
+      pick.onchange = () => {
+        if (pick.value) card.setRoles = { ...card.setRoles, [r.role]: [pick.value] };
         else { const { [r.role]: _, ...rest } = card.setRoles; card.setRoles = rest; }
         pkPreview(pack, 'install', {}, { keepOffers: true });
-      }, { disabled: !!card.busy }));
+      };
+      const label = el('label', 'pk-check');
+      label.appendChild(el('span', null, `Set the ${r.role} role (through ACS's roles; it stays after an uninstall): `));
+      label.appendChild(pick);
+      offer.appendChild(label);
     } else offer.appendChild(el('div', 'pk-note', 'No installed CLI can run any family; install one.'));
     box.appendChild(offer);
   }

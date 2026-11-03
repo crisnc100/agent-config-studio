@@ -4625,8 +4625,7 @@ function roleRow(role) {
   row.appendChild(top);
 
   if (role.unset) {
-    const sug = role.suggestion ? [].concat(role.suggestion.use).map((m) => (typeof m === 'string' ? m : m.family)).join(', ') : '';
-    row.appendChild(el('div', 'roles-lineup roles-unset', `Not set — choose its model${sug ? ` (suggested: ${sug})` : ''}. Skills that use this job stop until it is set.`));
+    row.appendChild(el('div', 'roles-lineup roles-unset', 'Not set — choose its model. Skills that use this job stop until it is set.'));
     return row;
   }
   const lineup = el('div', 'roles-lineup');

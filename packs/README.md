@@ -16,8 +16,8 @@ what it is, what it does day to day, every file and setting it will change, and 
 
 No pack names a model, and none ships one: you choose which model does each job when you install.
 `acs packs install <pack>` asks for every role the pack uses that is not set yet, offering only the
-families whose CLI is installed here (`--set-role <role>=<family>[,<family>…]` answers ahead of time,
-`--fix-roles` takes the suggestion). With `--yes` and no `--set-role`, the pack installs and the roles stay
+families whose CLI is installed here, none put forward (`--set-role <role>=<family>[,<family>…]` answers
+ahead of time; Enter leaves a role unset). With `--yes` and no `--set-role`, the pack installs and the roles stay
 unset: the output and `acs packs status` name each one and the command that sets it, and a skill that needs
 one stops with that line until it is set. Skills read the families from your ACS roles
 (`model-id --role <role>`, `model-id <family>`), and the CLI that runs a model follows its id: `claude-…` →

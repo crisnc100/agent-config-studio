@@ -451,18 +451,19 @@ use it (`acs packs install <pack>` asks, offering only the families whose CLI
 you have), or later in Models → Roles. Your choices live in
 `~/.agent-config-studio/roles.json`, a separate file from `models.json`, so a
 resolver installed before roles existed keeps working.
-`lib/roles.default.json` ships a short flavor per family and a suggestion for
-each role (advisor, reviewer, builder, judge, investigator). A suggestion is
-shown when you choose; it never runs on its own.
+`lib/roles.default.json` ships a short flavor per family, shown beside each
+family when you choose. Its role entries are kept only for `roles.json` files
+written before this (below); they are never offered and never run for anyone
+else.
 
 A job you have not chosen a model for is unset: `model-id --role`, `ask-model`
 and the review gate stop with one line naming the fix, `acs packs install
 <pack> --set-role <role>=<family>[,<family>…]` or Models → Roles. `acs packs
 install <pack> --yes` without `--set-role` installs anyway and leaves the roles
-unset, saying so; `--fix-roles` takes the suggestion.
+unset, saying so. Nothing picks a family for you.
 
 A `roles.json` written before roles were chosen at install (version 1) keeps
-working as it did: the jobs it leaves out still run the shipped suggestion.
+working as it did: the jobs it leaves out still run the shipped roles.
 `acs packs install` or `acs packs update` writes those jobs into it, with the
 same values, and marks it version 2 (backed up and recorded in history first);
 from then on only what it says runs. An older installed `model-id` refuses a
