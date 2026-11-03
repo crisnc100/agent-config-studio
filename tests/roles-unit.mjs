@@ -117,8 +117,11 @@ console.log('\nroles unit: grade fixes — serialized writes, a pinned folder, u
 }
 
 console.log('\nroles unit: R8 — warnings, never substitution');
+// A roles.json from before roles were chosen at install, so the shipped roles fill it (R8 and R12).
+const LEGACY = '{"version":1}\n';
 {
   fs.mkdirSync(path.join(home, '.agent-config-studio'), { recursive: true });
+  fs.writeFileSync(rolesUserPath(home), LEGACY);
   fs.writeFileSync(path.join(home, '.agent-config-studio', 'models.json'), JSON.stringify({ models: { sol: 'Not An Id' } }));
   const v = rolesView({ home, modelRows: [
     { family: 'astra', alerts: [{ kind: 'retiring', date: '2026-12-01T00:00:00Z' }] },
@@ -144,7 +147,7 @@ console.log('\nroles unit: R12 — where-used maps `model-id --role` to the role
   ok('…not a longer role name that merely starts the same', !astra.hits.some((h) => h.line === 4));
   ok('opus: the builder role (its first use family)', whereUsed('opus', { home }).hits.map((h) => h.role).join() === 'builder');
   ok('sol: nothing (a later preference is not what --role prints)', whereUsed('sol', { home }).hits.length === 0);
-  const r = await setRole({ name: 'reviewer', fields: { use: ['sol'] }, base: 'absent', home });
+  const r = await setRole({ name: 'reviewer', fields: { use: ['sol'] }, base: hashOf(LEGACY), home });
   ok('after the reviewer role moves to sol, its call moves with it', r.saved && whereUsed('sol', { home }).hits.some((h) => h.role === 'reviewer') && !whereUsed('astra', { home }).hits.some((h) => h.role));
   fs.rmSync(rolesUserPath(home));
   fs.rmSync(path.join(home, '.claude'), { recursive: true, force: true });
@@ -152,7 +155,8 @@ console.log('\nroles unit: R12 — where-used maps `model-id --role` to the role
 
 console.log('\nroles unit: R9 — parsing and normalizing a proposal');
 {
-  const loaded = loadRoles({ home });
+  // Proposals against a legacy roles.json: roles stored as differences from the shipped ones.
+  const loaded = { ...loadRoles({ home }), legacy: true };
   const p = (raw) => { try { return { text: parseProposal(raw, loaded) }; } catch (e) { return { error: e }; } };
   const norm = normalizeProposal({ roles: { reviewer: { use: ['astra'], effort: 'high', alt: null } }, flavor: { sol: { brief: loaded.defaults.flavor.sol.brief } } }, loaded.defaults);
   ok('fields equal to the default, and nulls that clear nothing, are dropped', JSON.stringify(norm) === '{"version":1}', JSON.stringify(norm));

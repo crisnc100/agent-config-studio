@@ -208,6 +208,9 @@ try {
     fs.writeFileSync(path.join(sb.home, '.claude/CLAUDE.md'), '# my rules\n\nbe kind\n');
     fs.writeFileSync(path.join(sb.env.CODEX_HOME, 'AGENTS.md'), '# codex rules\n');
     fs.writeFileSync(path.join(sb.home, '.claude/settings.json'), '{\n  "theme": "dark"\n}\n');
+    // The reviewer chosen already (roles are chosen at install), so status right after has nothing to report.
+    fs.mkdirSync(path.join(sb.home, '.agent-config-studio'), { recursive: true });
+    fs.writeFileSync(path.join(sb.home, '.agent-config-studio/roles.json'), '{"version":2,"roles":{"reviewer":{"use":"astra"}}}\n');
     const before = tree(sb.home, own(sb));
     const applyPlan = async (body) => {
       const p = (await post('/api/packs/plan', body)).body;

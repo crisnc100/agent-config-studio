@@ -257,7 +257,7 @@ try {
     await waitFor(() => card1('review-gate')?.querySelector('.pk-preview'));
     const pv = () => card1('review-gate').querySelector('.pk-preview');
     const offer = () => pv()?.querySelectorAll('label').find((l) => /^Set the reviewer role to /.test(p1.text(l)))?.querySelector('input');
-    ok('the preview says the reviewer role has no installed CLI and offers installed families', /The reviewer role uses astra, and none of their CLIs is installed here/.test(p1.text(pv())) && offer() && !offer().checked, p1.text(pv()).slice(0, 600));
+    ok('the preview says the reviewer role is not set and offers installed families', /The reviewer role is not set: skills that use it stop until you choose its model/.test(p1.text(pv())) && offer() && !offer().checked, p1.text(pv()).slice(0, 600));
     offer().click();
     ok('ticking it re-previews with the role change in the list, ticked', await waitFor(() => offer()?.checked && /~\/\.agent-config-studio\/roles\.json/.test(p1.text(pv())))
       && /reviewer role →/.test(p1.text(pv())) && !/warning: the reviewer role/.test(p1.text(pv())), p1.text(pv()).slice(0, 800));

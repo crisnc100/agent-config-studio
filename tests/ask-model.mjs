@@ -119,7 +119,10 @@ for (const name of ['claude', 'codex', 'grok']) fs.writeFileSync(path.join(STUBS
 const PROMPT = 'Read brief.md and say what you think.\n';
 const PF = path.join(tmp, 'prompt.txt');
 fs.writeFileSync(PF, PROMPT);
+// A roles.json from before roles were chosen at install: the shipped roles fill every role it leaves out.
 const HOME = mk('home-defaults');
+fs.mkdirSync(path.join(HOME, '.agent-config-studio'));
+fs.writeFileSync(path.join(HOME, '.agent-config-studio', 'roles.json'), J({ version: 1 }));
 const USER_HOME = mk('home-user', '.agent-config-studio');
 fs.writeFileSync(path.join(USER_HOME, 'roles.json'), J({
   version: 1,
@@ -202,6 +205,9 @@ console.log('\nask-model: roles and families');
   const r = ask(['--role', 'reviewer']);
   ok(`--role reviewer: the role's first family (${fam}) at the role's effort (${rev.effort})`,
      r.code === 0 && same(r.argv, CODEX(IDS[fam], rev.effort)) && r.err.startsWith(`ask-model: ${fam} (${IDS[fam]}, effort ${rev.effort}, read-only)`), show(r));
+  const unset = ask(['--role', 'reviewer'], { home: mk('home-fresh') });
+  ok('no roles.json: --role reviewer is unset — exit 64, no model called, one line naming the fix',
+     unset.code === 64 && unset.calls.length === 0 && unset.err.startsWith('ask-model: role "reviewer" is not set — choose its model: acs packs install review-gate --set-role reviewer=<family>[,<family>…], or in ACS → Models → Roles\n'), show(unset));
   const home = path.dirname(USER_HOME);
   const u = ask(['--role', 'advisor'], { home });
   ok('a user roles.json: the first member, at its own effort', u.code === 0 && same(u.argv, CODEX(IDS.sol, 'xhigh')), show(u));

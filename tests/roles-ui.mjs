@@ -402,6 +402,35 @@ const PROPOSAL = {
     JSON.stringify(s2?.body.fields.use) === '["grok",{"family":"opus","effort":"low"}]' && JSON.stringify(s2?.body.fields.alt) === '{"family":"astra","effort":"max"}', JSON.stringify(s2?.body.fields));
 }
 
+// ── roles chosen at install: an unset role, and a chosen one no shipped role fills ──
+{
+  const v = view({ roles: [
+    { name: 'advisor', unset: true, use: [], ids: [], effort: '', resolvedEffort: '', members: [], altMember: null, alt: '', altId: '', note: 'scope calls',
+      custom: false, provenance: {}, defaults: null, suggestion: { use: 'fable', effort: 'high', alt: 'astra' }, warnings: [] },
+    { name: 'reviewer', use: ['opus'], ids: ['opus-id-1'], effort: '', resolvedEffort: '', alt: '', altId: '', note: 'reads diffs',
+      custom: false, provenance: { use: 'user', note: 'user' }, defaults: null, warnings: [] },
+  ] });
+  const p = await boot({}, v);
+  const unset = roleRow(p, 'advisor');
+  ok('an unset role reads "Not set", with the shipped suggestion and no model chip — not an error', /Not set — choose its model \(suggested: fable\)/.test(p.text(unset)) && chips(unset).length === 0 && !unset.querySelector('.notice.error'), p.text(unset));
+  ok('…and a chosen role in a version 2 file carries no "changed from default" marks', marks(roleRow(p, 'reviewer')).length === 0);
+  unset.click();
+  await settle(5);
+  const ed = content(p).querySelector('.roles-detail');
+  ok('clicking it opens an empty editor to choose its models, with no Reset or Unset', ed && ed.querySelector('.roles-use').value === '' && !button(ed, 'Reset to default') && !button(ed, 'Unset'));
+  p.input(ed.querySelector('.roles-use'), 'fable');
+  button(ed, 'Save').click();
+  await settle(10);
+  ok('…and Save sets it', posts(p, '/api/models/roles/set')[0]?.body.name === 'advisor' && JSON.stringify(posts(p, '/api/models/roles/set')[0]?.body.fields.use) === '["fable"]', JSON.stringify(posts(p, '/api/models/roles/set')));
+  roleRow(p, 'reviewer').click();
+  await settle(5);
+  const rEd = content(p).querySelectorAll('.roles-detail').find((d) => d.querySelector('.roles-use').value === 'opus');
+  ok('a chosen role offers Unset (no default to reset to), which sends the reset route', rEd && button(rEd, 'Unset') && !button(rEd, 'Reset to default'));
+  button(rEd, 'Unset').click();
+  await settle(10);
+  ok('…with the role name', posts(p, '/api/models/roles/reset')[0]?.body.name === 'reviewer');
+}
+
 for (const p of pages) p.done();
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

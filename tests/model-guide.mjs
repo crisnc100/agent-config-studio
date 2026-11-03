@@ -50,6 +50,10 @@ const reset = () => { for (const d of [CLAUDE, CODEX, GROK, path.join(home, '.ag
 try {
   console.log('\nmodel guide: G1 — the renderer');
   {
+    const fresh = guideText(loadRoles({ home }));
+    ok('no roles.json: every shipped role is listed as not set, with no family', ['advisor', 'builder', 'investigator', 'judge', 'reviewer'].every((n) => fresh.includes(`- **${n}**: not set — choose its model in ACS → Models → Roles\n`)) && !/: (fable|astra|opus) at /.test(fresh), fresh);
+    // A roles.json from before roles were chosen at install: the shipped roles fill it.
+    writeRolesFile({ version: 1 });
     const loaded = loadRoles({ home });
     const a = guideText(loaded);
     ok('the same roles give the same bytes', a === guideText(loaded) && a === guideText(structuredClone(loaded)));
@@ -137,19 +141,21 @@ try {
     ok('R3 invalid shipped defaults: loadRoles reports it', bl.error && bl.source === null, bl.error);
     ok('…and guideText refuses', (await rejects(() => broken.guideText(bl)))?.message.includes('roles are invalid'));
 
-    // The CLI is byte-identical to 939c6fd, the commit before the model guide (tests/fixtures/model-id-golden.mjs).
+    // The CLI is byte-identical to 939c6fd, the commit before the model guide (tests/fixtures/model-id-golden.mjs);
+    // a case marked `since` was re-pinned on purpose then (with no roles.json, roles are unset since roles are chosen at install).
     const golden = JSON.parse(fs.readFileSync(path.join(GOLDEN, 'cases.json'), 'utf8'));
     const now = runCases(Object.fromEntries(SOURCE_FILES.map((f) => [f, fs.readFileSync(path.join(ROOT, f))])));
     ok('(the golden captures cover every case)', golden.length === CASES.length && golden.length === now.length);
     for (let i = 0; i < golden.length; i++) {
       const [g, n] = [golden[i], now[i]];
-      ok(`model-id ${g.args.join(' ')} (${g.home}) is byte-identical to 939c6fd: stdout, stderr and exit`,
+      ok(`model-id ${g.args.join(' ')} (${g.home}) is byte-identical to ${g.since ? `its pin (${g.since})` : '939c6fd'}: stdout, stderr and exit`,
         n.stdout === g.stdout && n.stderr === g.stderr && n.status === g.status, JSON.stringify({ now: n, was: g }).slice(0, 400));
     }
   }
 
   console.log('\nmodel guide: G2 — inspect');
   {
+    writeRolesFile({ version: 1 });
     const body = guideText(loadRoles({ home }));
     const block = renderBlock(body, 1);
     const oldBody = body.replace('reads a diff', 'read a diff');

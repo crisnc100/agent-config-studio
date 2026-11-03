@@ -45,13 +45,13 @@ console.log('\nC1 a Claude-only machine');
   ok('C1 …and the review is logged in ~/.agent-config-studio/review-log', logLines(sb)[0]?.family === 'opus');
 }
 
-console.log('\nrole fix-up: the shipped default reviewer has no CLI on a Claude-only machine');
+console.log('\nrole fix-up: a fresh Claude-only machine, where no role is chosen yet');
 {
   const sb = box('roles', { clis: ['claude'] });
   const p = sb.json(['install', 'review-gate', '--dry-run']);
   const prob = p.data?.roles?.find((x) => x.role === 'reviewer');
-  ok('the preview names the reviewer role as unusable here and suggests installed families', prob && prob.use.join() === 'astra' && prob.suggestion.length > 0 && prob.suggestion.every((f) => ['fable', 'opus', 'sonnet', 'haiku'].includes(f)), JSON.stringify(p.data?.roles));
-  ok('…and warns, naming --fix-roles and --set-role', p.data?.warnings?.some((w) => /reviewer role \(astra\)/.test(w) && /--fix-roles/.test(w) && /--set-role/.test(w)), JSON.stringify(p.data?.warnings));
+  ok('the preview names the reviewer role as unset and suggests installed families only (the shipped astra has no CLI here)', prob && prob.missing === true && prob.use.length === 0 && prob.suggestion.length > 0 && prob.suggestion.every((f) => ['fable', 'opus', 'sonnet', 'haiku'].includes(f)), JSON.stringify(p.data?.roles));
+  ok('…and warns that it is not set, naming --set-role with the families installed here, and --fix-roles', p.data?.warnings?.some((w) => /reviewer role is not set/.test(w) && /acs packs install review-gate --set-role reviewer=/.test(w) && /installed here: fable, opus, sonnet, haiku/.test(w) && /--fix-roles/.test(w)), JSON.stringify(p.data?.warnings));
   const r = sb.packs(['install', 'review-gate', '--yes', '--set-role', 'reviewer=opus']);
   ok('--set-role reviewer=opus installs and sets the role through ACS\'s roles write path', r.code === 0 && JSON.parse(sb.read(path.join(sb.home, '.agent-config-studio/roles.json'))).roles.reviewer.use.join() === 'opus', r.out);
   ok('…which records it in ACS\'s history', fs.existsSync(path.join(sb.home, '.agent-config-studio/history/.git')));
@@ -59,7 +59,8 @@ console.log('\nrole fix-up: the shipped default reviewer has no CLI on a Claude-
   const rv = review(sb, repo);
   ok('…and the first review then runs on that claude family (no fallback, no codex)', rv.code === 0 && /▶ reviewer · opus \(claude/.test(rv.stdout) && sb.callsOf('codex').length === 0, rv.out);
   const keep = JSON.parse(sb.read(path.join(sb.home, '.agent-config-studio/roles.json'))).roles.reviewer;
-  ok('…and the role keeps its other fields (only use changed)', Object.keys(keep).join() === 'use', JSON.stringify(keep));
+  ok('…and the new role holds the chosen family and the suggestion\'s description only — no shipped effort or second opinion', Object.keys(keep).join() === 'use,note' && keep.note === 'reads a diff and reports findings', JSON.stringify(keep));
+  ok('…in a roles.json that the shipped roles never fill (version 2)', JSON.parse(sb.read(path.join(sb.home, '.agent-config-studio/roles.json'))).version === 2);
   const sb2 = box('roles2', { clis: ['claude'] });
   const f = sb2.packs(['install', 'review-gate', '--yes', '--fix-roles']);
   const set = JSON.parse(sb2.read(path.join(sb2.home, '.agent-config-studio/roles.json'))).roles.reviewer.use;
@@ -71,7 +72,8 @@ console.log('\nrole fix-up: the shipped default reviewer has no CLI on a Claude-
   const rolesOf = (b) => { try { return JSON.parse(b.read(path.join(b.home, '.agent-config-studio/roles.json'))).roles; } catch { return null; } };
   const first = sb3.packs(['install', 'review-gate', '--yes']);
   const told = sb3.json(['status', '--no-trust-check']);
-  ok('fix-up declined: installed with the reviewer role untouched, and status says to re-run with --fix-roles', first.code === 0 && rolesOf(sb3) === null && JSON.stringify(told.data).includes('acs packs install review-gate --fix-roles'), `${first.out}\n${JSON.stringify(told.data?.packs?.[0]?.parts?.[0])}`);
+  ok('--yes with no --set-role: installed with the reviewer role left unset, said in the output', first.code === 0 && rolesOf(sb3) === null && /reviewer role is not set/.test(first.out), first.out);
+  ok('…and status says it is not set, with the exact command to set it', JSON.stringify(told.data).includes('the reviewer role is not set — choose its model: acs packs install review-gate --set-role reviewer=<family>[,<family>…]'), JSON.stringify(told.data?.packs?.[0]?.parts?.[0]));
   const again = sb3.packs(['install', 'review-gate', '--fix-roles', '--yes']);
   const fixed = rolesOf(sb3)?.reviewer?.use || [];
   ok('re-running install --fix-roles on the installed pack sets the reviewer role to installed families', again.code === 0 && fixed.length > 0 && fixed.every((x) => ['fable', 'opus', 'sonnet', 'haiku'].includes(x)), again.out);
@@ -89,8 +91,11 @@ console.log('\nC2 a Codex-only machine');
   ok('C2 the skill lands in $CODEX_HOME/skills', r.code === 0 && fs.existsSync(path.join(sb.env.CODEX_HOME, 'skills/code-review/SKILL.md')), r.out);
   ok('C2 …and no ~/.claude is created', !fs.existsSync(path.join(sb.home, '.claude')));
   const { repo } = reviewRepo(sb);
+  const unset = review(sb, repo);
+  ok('C2 with the reviewer role unset, the first review stops with the line that sets it, and runs no model', unset.code !== 0 && /role "reviewer" is not set — choose its model: acs packs install review-gate --set-role reviewer=/.test(unset.stderr) && sb.callsOf('codex').length === 0, unset.out);
+  sb.packs(['install', 'review-gate', '--set-role', 'reviewer=astra', '--yes']);
   const rv = review(sb, repo);
-  ok('C2 a review runs from ~/.agent-config-studio (the default reviewer is a codex family)', rv.code === 0 && /▶ reviewer · astra \(codex/.test(rv.stdout) && sb.callsOf('codex').length === 1, rv.out);
+  ok('C2 a review runs from ~/.agent-config-studio (the reviewer set to a codex family)', rv.code === 0 && /▶ reviewer · astra \(codex/.test(rv.stdout) && sb.callsOf('codex').length === 1, rv.out);
   ok('C2 …and logs under ~/.agent-config-studio/review-log', logLines(sb).length === 1 && logLines(sb)[0].vendor === 'codex');
   ok('C2 …and still no ~/.claude', !fs.existsSync(path.join(sb.home, '.claude')));
   const cfg = path.join(sb.home, '.agent-config-studio/review-gate/config.json');
@@ -111,7 +116,7 @@ console.log('\nC4 through the installer: the loud stops still stop');
   sb3.packs(['install', 'review-gate', '--yes']);
   const { repo } = reviewRepo(sb3);
   const rv = review(sb3, repo);
-  ok('C4 every reviewer CLI missing (default astra, claude only, fix-up declined): the review stops with the fix and runs no model', rv.code !== 0 && /Fix/.test(rv.stderr) && sb3.callsOf('claude').length === 0 && sb3.callsOf('codex').length === 0, rv.out);
+  ok('C4 no reviewer to run (role left unset, claude only): the review stops with the fix and runs no model', rv.code !== 0 && /Fix/.test(rv.stderr) && sb3.callsOf('claude').length === 0 && sb3.callsOf('codex').length === 0, rv.out);
   const rn = review(sb3, repo, { REVIEW_REVIEWER: 'grok' });
   ok('C4 a named reviewer with no CLI: stops, names the fix, no other vendor tried', rn.code !== 0 && /Fix|not on PATH/.test(rn.stderr) && sb3.callsOf('claude').length === 0, rn.out);
   sb3.roles({ roles: { reviewer: null } });
