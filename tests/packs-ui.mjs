@@ -57,7 +57,7 @@ const reqs = () => page.requests.filter((r) => r.path.startsWith('/api/packs/'))
 try {
   console.log('\nthe Packs view: cards, explanations, toggles and harnesses');
   {
-    ok('#packs opens the view, with a Packs item in the sidebar under Configure', await waitFor(() => page.$('content').querySelectorAll('.pk-card').length === 6)
+    ok('#packs opens the view, with a Packs item in the sidebar under Configure', await waitFor(() => page.$('content').querySelectorAll('.pk-card').length === 7)
       && page.eval('S.view') === 'packs' && !!page.$('btn-packs')?.closest('.nav-group') && t(page.$('btn-packs')) === 'Packs', t(page.$('content')).slice(0, 300));
     ok('…and the first status check runs by itself and finishes', await waitFor(statusDone), t(page.$('pk-status')));
     const rg = card('review-gate');
@@ -228,7 +228,7 @@ try {
     const block = css.slice(css.indexOf('/* ── packs view'));
     ok('the packs styles use only the theme tokens (no literal colours)', block.length > 200 && !/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i.test(block), (block.match(/#[0-9a-f]{3,8}\b|rgba?\([^)]*\)/i) || [])[0]);
     page.$('btn-theme').click();
-    ok('the theme toggle switches with the Packs view open, and it still renders', page.doc.documentElement.dataset.theme === 'light' && page.$('content').querySelectorAll('.pk-card').length === 6);
+    ok('the theme toggle switches with the Packs view open, and it still renders', page.doc.documentElement.dataset.theme === 'light' && page.$('content').querySelectorAll('.pk-card').length === 7);
   }
   ok('no page errors', page.errors.length === 0, page.errors.join(' | '));
 
@@ -249,7 +249,7 @@ try {
     };
     const p1 = await bootPage({ routes: proxy1, hash: '#packs' });
     const card1 = (id) => p1.$('content').querySelector(`[data-pack="${id}"]`);
-    await waitFor(() => p1.$('content').querySelectorAll('.pk-card').length === 6);
+    await waitFor(() => p1.$('content').querySelectorAll('.pk-card').length === 7);
     const codexBox = card1('review-gate').querySelectorAll('label').find((l) => /^Codex \(/.test(p1.text(l)));
     ok('Codex\'s box is there, disabled and unticked, with why beside it', codexBox && codexBox.querySelector('input').disabled && !codexBox.querySelector('input').checked
       && /Codex: no codex CLI on PATH and no ~\/\.codex/.test(p1.text(card1('review-gate').querySelector('.pk-harnesses'))), p1.text(card1('review-gate').querySelector('.pk-harnesses')));
