@@ -36,6 +36,7 @@ const SEVERITIES = ['low', 'medium', 'high']
 const HARNESSES = ['claude', 'codex', 'grok']
 const INPUT_KEYS = ['what', 'severity', 'expected', 'rulesInForce', 'toolCalls', 'agentTake', 'harness', 'model', 'transcript', 'excerpts']
 const MAX_STRING = 20000
+const MAX_EMBEDDED = 1 << 20
 const MAX_EXCERPT = 200
 const CREDENTIAL_FILE = /^(?:\.credentials\.json|auth\.json|credentials(?:\.json)?)$|keychain/i
 
@@ -62,7 +63,7 @@ const TOKENS = [
 ]
 const NAME = '[A-Za-z0-9_.-]*(?:key|token|secret|passw(?:or)?d)[A-Za-z0-9_.-]*'
 // A value: quoted with escaped quotes (\"v\", as inside JSON-encoded text), "v", 'v', or bare.
-const VALUE = String.raw`(?:(?<eq>\\+)"(?<ev>(?:(?!\k<eq>").)*)\k<eq>"|"(?<dq>(?:[^"\\]|\\.)*)"|'(?<sq>[^']*)'|(?<bare>[^\s"'\x60,;&|(){}[\]<>\\]+))`
+const VALUE = String.raw`(?:(?<eq>\\+)"(?<ev>(?:(?!\k<eq>").)*)\k<eq>"|"(?<dq>(?:[^"\\]|\\.)*)"|'(?<sq>[^']*)'|(?<bare>(?:\\.|[^\s"'\x60,;&|(){}[\]<>\\])+))`
 // NAME=value, "name": "value", \"name\": \"value\", name: value — the name holding key, token, secret or password.
 const ASSIGNED = new RegExp(String.raw`(?<q>\\*["']?)(?<name>${NAME})\k<q>(?<sp1>\s*)(?<sep>[=:])(?<sp2>\s*)${VALUE}`, 'gi')
 // --api-key value, -token value (the = form is ASSIGNED's).
@@ -85,10 +86,31 @@ function basicCredential(b64) {
   return text.includes(':') && /^[\x20-\x7e]+$/.test(text)
 }
 
+// The index of the bracket that closes the one at `at`, skipping JSON strings; -1 when it never closes.
+function closing(s, at) {
+  const stack = []
+  let inString = false
+  for (let i = at; i < s.length; i++) {
+    const c = s[i]
+    if (inString) { if (c === '\\') i++; else if (c === '"') inString = false; continue }
+    if (c === '"') inString = true
+    else if (c === '{' || c === '[') stack.push(c === '{' ? '}' : ']')
+    else if (c === '}' || c === ']') { if (stack.pop() !== c) return -1; if (!stack.length) return i }
+  }
+  return -1
+}
+
+// [before, after] for every string leaf that redaction changed (the two values have the same shape).
+function changedStrings(a, b, out = []) {
+  if (typeof a === 'string') { if (a !== b) out.push([a, b]) }
+  else if (a && typeof a === 'object') for (const k of Object.keys(a)) changedStrings(a[k], b[k], out)
+  return out
+}
+
 /**
  * One redaction run. Two passes: find — every secret the patterns, the secret-named keys (through every
- * container below them) and any JSON embedded in a string turn up, each replaced where found and its literal
- * remembered; then scrub — every remaining occurrence of a remembered literal, raw or JSON-escaped, anywhere
+ * container below them) and any JSON embedded anywhere in a string (walked, its redacted form put back) turn
+ * up, each replaced where found and its literal remembered; then scrub — every remaining occurrence of a remembered literal, raw or JSON-escaped, anywhere
  * in the value. A secret seen once in a structured place is therefore gone from the free text too.
  */
 function redactor() {
@@ -99,14 +121,49 @@ function redactor() {
   }
   const sub = (kind) => (all) => { note(all, kind); return mark(kind) }
 
+  // JSON anywhere inside a string (a tool result, Codex's function arguments, "config: {…}"), also JSON-encoded
+  // once more: each piece is walked like any value and its redacted form put back in its place.
+  function embedded(s) {
+    if (s.length > MAX_EMBEDDED || !/[[{]/.test(s)) return s
+    let out = '', from = 0
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] !== '{' && s[i] !== '[') continue
+      const end = closing(s, i)
+      if (end < 0) continue
+      const piece = s.slice(i, end + 1)
+      const clean = jsonPiece(piece)
+      if (clean === null) continue
+      out += s.slice(from, i) + clean
+      from = i = end + 1
+      i--
+    }
+    return out + s.slice(from)
+  }
+
+  // A piece that parses as JSON (or as JSON inside a JSON string, \"…\"), redacted; null when it is not JSON.
+  function jsonPiece(piece) {
+    for (const encoded of [false, true]) {
+      let value
+      try { value = JSON.parse(encoded ? JSON.parse(`"${piece}"`) : piece) } catch { continue }
+      if (!value || typeof value !== 'object') return null
+      const clean = walk(value, false)
+      if (JSON.stringify(clean) === JSON.stringify(value)) return piece
+      // Keep the piece's own formatting where only strings changed; else write the redacted value out whole.
+      const enc = (v) => (encoded ? JSON.stringify(v).slice(1, -1) : v)
+      let out = piece
+      for (const [from, to] of changedStrings(value, clean)) out = out.split(enc(JSON.stringify(from))).join(enc(JSON.stringify(to)))
+      try { if (JSON.stringify(JSON.parse(encoded ? JSON.parse(`"${out}"`) : out)) === JSON.stringify(clean)) return out } catch {}
+      return enc(JSON.stringify(clean))
+    }
+    return null
+  }
+
   function text(s) {
-    // JSON inside a string (a tool result, Codex's function arguments): walk it for its secrets, keep the text.
-    if (/^\s*[[{]/.test(s)) { try { walk(JSON.parse(s), false) } catch {} }
-    let out = s
+    let out = embedded(s)
       .replace(/-----BEGIN ((?:[A-Z0-9]+ )*)PRIVATE KEY-----[\s\S]*?(?:-----END \1PRIVATE KEY-----|$)/g, sub('private-key'))
       .replace(/(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, sub('jwt'))
       .replace(/\b(Bearer)(\s+)([A-Za-z0-9._~+/=-]{8,})/gi, (_, w, sp, v) => { note(v, 'bearer'); return `${w}${sp}${mark('bearer')}` })
-      .replace(/\b(Basic)(\s+)([A-Za-z0-9+/]{8,}={0,2})(?![A-Za-z0-9+/=])/g, (all, w, sp, v, at, whole) => {
+      .replace(/\b(Basic)(\s+)([A-Za-z0-9+/]{8,}={0,2})(?![A-Za-z0-9+/=])/gi, (all, w, sp, v, at, whole) => {
         if (!basicCredential(v) && !/authorization["']?\s*[:=]?\s*["']?$/i.test(whole.slice(Math.max(0, at - 24), at))) return all
         note(v, 'basic-auth')
         return `${w}${sp}${mark('basic-auth')}`
