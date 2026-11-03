@@ -412,6 +412,75 @@ console.log('\nask-model: grok must report the resolved id');
   ok('another grok model in modelUsage → exit 2, no answer', s2.code === 2 && s2.out === '' && /grok-sibling-stub/.test(s2.err) && s2.err.includes(IDS.grok), show(s2));
 }
 
+console.log('\nask-model: grok\'s <id>-build usage label counts only with its session record');
+{
+  // A GROK_HOME holding one session for WORK, as grok writes it: sessions/<URL-encoded cwd>/<id>/.
+  const SID = '01a1a19e-2e91-75b3-ad8d-4629ea45ab7d';
+  const gh = mk('grok-home-build', '.grok');
+  const dir = path.join(gh, 'sessions', encodeURIComponent(WORK), SID);
+  // false leaves that file out.
+  const session = ({ current = IDS.grok, info = { id: SID, cwd: WORK }, events } = {}) => {
+    fs.rmSync(path.join(gh, 'sessions'), { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    if (current !== false) fs.writeFileSync(path.join(dir, 'summary.json'), J({ info, current_model_id: current, session_kind: 'headless' }));
+    const lines = events ?? [{ type: 'mcp_init_completed', total_servers: 0 }, { type: 'turn_started', session_id: SID, turn_number: 0, model_id: IDS.grok }, { type: 'turn_ended', outcome: 'completed' }];
+    if (lines !== false) fs.writeFileSync(path.join(dir, 'events.jsonl'), lines.map((l) => (typeof l === 'string' ? l : J(l))).join('\n') + '\n');
+  };
+  const build = ({ usage = ['$m-build'], sid = SID } = {}) => ask(['--family', 'grok', '--cwd', WORK],
+    { env: { GROK_HOME: gh, STUB_GROK_USAGE: J(usage), ...(sid ? { STUB_SESSION_ID: sid } : {}) } });
+  const refused = (r, why) => r.code === 2 && r.out === '' && r.err.includes(`${IDS.grok}-build answered`) && why.test(r.err);
+
+  session();
+  const yes = build();
+  ok('<id>-build alone, its session summary and every event naming the id: the answer stands', yes.code === 0 && yes.out === `answer from ${IDS.grok}\n`, show(yes));
+  const exact = build({ usage: ['$m'], sid: null });
+  ok('the exact id still needs no session record', exact.code === 0 && exact.out === `answer from ${IDS.grok}\n`, show(exact));
+
+  for (const [what, usage] of [['-build-fast', ['$m-build-fast']], ['another suffix', ['$m-mini']], ['another id\'s -build', ['grok-sibling-stub-build']]]) {
+    const r = build({ usage });
+    ok(`${what} in modelUsage: exit 2, no answer, even with a session record naming the id`, r.code === 2 && r.out === '' && r.err.includes(`asked for ${IDS.grok}`), show(r));
+  }
+  const extra = build({ usage: ['$m-build', 'grok-sibling-stub'] });
+  ok('<id>-build beside another usage row: exit 2, both named', extra.code === 2 && extra.out === '' && /grok-sibling-stub/.test(extra.err) && extra.err.includes(`${IDS.grok}-build`), show(extra));
+
+  const noSid = build({ sid: null });
+  ok('no sessionId in grok\'s reply: exit 2, said', refused(noSid, /no session id/), show(noSid));
+  const oddSid = build({ sid: '../../x' });
+  ok('a sessionId that is not a plain id: exit 2, never read as a path', refused(oddSid, /no session id/), show(oddSid));
+  const otherSid = build({ sid: '01a1a19e-0000-0000-0000-000000000000' });
+  ok('a session folder that does not exist: exit 2, the summary named', refused(otherSid, /summary\.json could not be read \(ENOENT\)/), show(otherSid));
+
+  session({ current: false });
+  const noSummary = build();
+  ok('no summary.json: exit 2', refused(noSummary, /summary\.json could not be read \(ENOENT\)/), show(noSummary));
+  session();
+  fs.writeFileSync(path.join(dir, 'summary.json'), '{ not json');
+  const badSummary = build();
+  ok('a summary.json that is not JSON: exit 2', refused(badSummary, /summary\.json could not be read \(not JSON\)/), show(badSummary));
+  session({ info: { id: 'someone-else', cwd: WORK } });
+  const wrongSession = build();
+  ok('a summary for another session: exit 2', refused(wrongSession, /summary is for another session/), show(wrongSession));
+  session({ current: 'grok-sibling-stub' });
+  const wrongCurrent = build();
+  ok('current_model_id another model: exit 2, it named', refused(wrongCurrent, /summary names "grok-sibling-stub"/), show(wrongCurrent));
+
+  session({ events: false });
+  const noEvents = build();
+  ok('no events.jsonl: exit 2', refused(noEvents, /events\.jsonl could not be read \(ENOENT\)/), show(noEvents));
+  session({ events: [{ type: 'turn_started', model_id: IDS.grok }, { type: 'turn_started', model_id: 'grok-sibling-stub' }] });
+  const mixed = build();
+  ok('one event naming another model: exit 2, it named', refused(mixed, /events name "grok-sibling-stub"/), show(mixed));
+  session({ events: [{ type: 'turn_started', model_id: IDS.grok }, { type: 'subagent', detail: { model_id: `${IDS.grok}-build-fast` } }] });
+  const nested = build();
+  ok('…a model_id nested inside an event counts too', refused(nested, /-build-fast"/), show(nested));
+  session({ events: [{ type: 'turn_started' }, { type: 'turn_ended' }] });
+  const unnamed = build();
+  ok('events that name no model: exit 2', refused(unnamed, /name no model/), show(unnamed));
+  session({ events: [{ type: 'turn_started', model_id: IDS.grok }, '{ cut off'] });
+  const torn = build();
+  ok('an events line that is not JSON: exit 2', refused(torn, /not JSON/), show(torn));
+}
+
 console.log('\nask-model: a chmod under --investigate');
 {
   const dirty = path.join(WORK, 'dirty.txt');
@@ -889,6 +958,36 @@ console.log('\nask-model: grok runs with an empty temporary HOME and the real GR
     const r = withConfig(toml);
     ok(`use_leader ${what}: grok runs`, r.code === 0 && r.calls.length === 1, show(r));
   }
+
+  // An [[experiments]] entry patches the file on machines in its arm; any arm turning leader mode on refuses.
+  for (const [what, toml] of [
+    ['an entry\'s own [experiments.cli]', '[[experiments]]\nid = "lead"\npercent = 10\n\n[experiments.cli]\nuse_leader = true\n'],
+    ['a named arm', '[[experiments]]\nid = "lead"\n[experiments.arms.on.cli]\nuse_leader = true\n[experiments.arms.off.cli]\nuse_leader = false\n'],
+    ['a dotted key in the entry', '[[experiments]]\nid = "lead"\ncli.use_leader = true\n'],
+    ['an inline arm', '[[experiments]]\nid = "lead"\narms = { on = { cli = { use_leader = true } } }\n'],
+    ['an inline entry list', 'experiments = [{ id = "a" }, { id = "lead", cli = { use_leader = true } }]\n'],
+    ['the second of two entries', '[cli]\nuse_leader = false\n[[experiments]]\nid = "a"\n[experiments.cli]\nchannel = "alpha"\n[[experiments]]\nid = "lead"\n[experiments.cli]\nuse_leader = true\n'],
+  ]) {
+    const r = withConfig(toml);
+    ok(`use_leader = true in ${what}: exit 4, grok never run`, r.code === 4 && r.inspect.length === 0 && r.calls.length === 0
+       && /leader mode could not be ruled out \(use_leader in an \[\[experiments\]\] entry of .*config\.toml\)/.test(r.err), show(r));
+  }
+  for (const [what, toml] of [['set to a string in an arm', '[[experiments]]\nid = "lead"\n[experiments.cli]\nuse_leader = "yes"\n'],
+    ['as a table in an entry', '[[experiments]]\nid = "lead"\n[experiments.cli.use_leader]\non = true\n']]) {
+    const r = withConfig(toml);
+    ok(`use_leader ${what}: exit 4, leader mode not ruled out`, r.code === 4 && r.calls.length === 0 && /leader mode could not be ruled out \(.*config\.toml: /.test(r.err), show(r));
+  }
+  for (const [what, toml] of [['set false in every arm', '[[experiments]]\nid = "lead"\n[experiments.arms.a.cli]\nuse_leader = false\n'],
+    ['absent from an experiment', '[[experiments]]\nid = "alpha"\npercent = 10\n[experiments.cli]\nchannel = "alpha"\n'],
+    ['under a table other than experiments', '[other.cli]\nuse_leader = true\n']]) {
+    const r = withConfig(toml);
+    ok(`use_leader ${what}: grok runs`, r.code === 0 && r.calls.length === 1, show(r));
+  }
+  fs.writeFileSync(path.join(h6, '.grok', 'config.toml'), '');
+  fs.writeFileSync(path.join(h6, '.grok', 'requirements.toml'), '[[experiments]]\nid = "lead"\n[experiments.cli]\nuse_leader = true\n');
+  const req = ask(['--family', 'grok', '--cwd', WORK], { home: h6 });
+  ok('…in requirements.toml too', req.code === 4 && req.calls.length === 0 && /\[\[experiments\]\] entry of .*requirements\.toml/.test(req.err), show(req));
+  fs.rmSync(path.join(h6, '.grok', 'requirements.toml'));
 
   // macOS device management: a forced ai.x.grok preference whose requirements_toml_base64 is a requirements.toml.
   if (process.platform === 'darwin') {
