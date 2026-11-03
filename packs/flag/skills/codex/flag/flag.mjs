@@ -515,10 +515,14 @@ export function buildReport(input, now = new Date()) {
     transcript: transcript.path,
     transcriptHow: transcript.how,
   }
-  const clean = truncate(redact(report))
+  const ref = input.excerpts !== undefined ? excerptRef(transcript.path, lines, input.excerpts) : null
+  // The referenced lines go through the redactor only so a secret found there is scrubbed from the agent's own text
+  // too; they are dropped before anything is written.
+  const seen = ref ? ref.lines.map(({ line }) => lines[line - 1].entry ?? lines[line - 1].text) : []
+  const clean = truncate(redact({ report, seen }).report)
   clean.id = `${localDate(now)}-${slugOf(clean.what)}-${randomBytes(3).toString('hex')}`
   // Added after redaction: a path, ids and hashes, exact so `show` can find and check the lines.
-  if (input.excerpts !== undefined) clean.excerpts = excerptRef(transcript.path, lines, input.excerpts)
+  if (ref) clean.excerpts = ref
   return clean
 }
 
@@ -581,12 +585,16 @@ export function resolveExcerpts(ref) {
   if (!existsSync(ref.transcript)) return `${head}the transcript is gone (the harness may have cleaned it up); the report's own what and toolCalls are all that is left\n`
   let lines
   try { lines = readTranscript(transcriptPath(ref.transcript)) } catch (e) { return `${head}not read: ${e.message}\n` }
+  // Redacted in one run, so a secret found in one line is scrubbed from the others too.
+  const found = ref.lines.map(({ line }) => lines[line - 1]).filter(Boolean)
+  const clean = redact(found.map((l) => l.entry ?? l.text))
   let out = head
   for (const { line, sha256: want } of ref.lines) {
     const l = lines[line - 1]
     if (!l) { out += `${line}\t[MISSING: the transcript now has ${lines.length} lines]\n`; continue }
     const mark = sha256(l.text) === want ? '' : '[CHANGED since the report: this line no longer matches its sha256] '
-    out += `${line}\t${mark}${l.entry ? JSON.stringify(redact(l.entry)) : redactText(l.text)}\n`
+    const shown = clean[found.indexOf(l)]
+    out += `${line}\t${mark}${typeof shown === 'string' ? shown : JSON.stringify(shown)}\n`
   }
   return out
 }
