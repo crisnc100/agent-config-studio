@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
@@ -31,7 +31,9 @@ if (${JSON.stringify(name)} === 'grok' && a[0] === 'inspect') {
 }
 const schema = a.includes('--output-schema') ? fs.readFileSync(a[a.indexOf('--output-schema')+1],'utf8') : a[a.indexOf('--json-schema')+1]
 const scores = schema.includes('"scores"')
-if (!scores) fs.writeFileSync(path.join(${JSON.stringify(CALLS)}, ${JSON.stringify(name)} + '-' + process.pid + '.json'), JSON.stringify({ start: Date.now() }))
+const prompt = a.includes('--output-schema') ? a.at(-1) : a[1]
+const seen = fs.existsSync('src/a.js') ? fs.readFileSync('src/a.js', 'utf8') : null
+if (!scores) fs.writeFileSync(path.join(${JSON.stringify(CALLS)}, ${JSON.stringify(name)} + '-' + process.pid + '.json'), JSON.stringify({ start: Date.now(), prompt, cwd: process.cwd(), seen }))
 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.STUB_SLEEP_${name.toUpperCase()} || 0))
 if (process.env.STUB_FAIL_${name.toUpperCase()}) { process.stderr.write('stub failure'); process.exit(1) }
 const reply = scores ? '{"scores":[]}' : (process.env.STUB_FINDINGS_${name.toUpperCase()} || '{"findings":[]}')
@@ -254,4 +256,58 @@ test('G1 a real grok review refuses, with nothing logged, when grok inspect show
   allowed(ok)
   assert.equal(records().at(-1).family, 'grok')
   assert.equal(calls('grok').length, 1)
+})
+
+const callOf = (name) => JSON.parse(readFileSync(join(CALLS, calls(name)[0]), 'utf8'))
+test('F1 a shadow reviews the reviewed commit, not the live checkout, and checks its quotes there', async () => {
+  config({ routing: ROUTING, shadow: ['grok'] })
+  commit({ 'src/a.js': lines(10) })
+  const reviewed = readFileSync(join(REPO, 'src/a.js'), 'utf8')
+  const located = { issue: 'reviewed line', file: 'src/a.js', line: '3', quote: 'export const x2 = 2', suggestion: 's', likelihood: 5, impact: 5, protected: false, trigger: 't' }
+  const made = { ...located, issue: 'made up', line: '1', quote: 'nothing like this' }
+  allowed(script([], { STUB_SLEEP_GROK: '2000', STUB_FINDINGS_GROK: JSON.stringify({ findings: [located, made] }) }))
+  // While the shadow runs, the branch moves on: the reviewed line is gone from the checkout and HEAD.
+  commit({ 'src/a.js': 'rewritten\n' })
+  const [shadow] = await shadowRecords(1)
+  const call = callOf('grok')
+  assert.ok(!call.cwd.startsWith(realpathSync(REPO)) && /review-shadow-snapshot-/.test(call.cwd), `the shadow ran in a snapshot, not the live checkout: ${call.cwd}`)
+  assert.equal(call.seen, reviewed, 'the shadow read the reviewed version of the file')
+  assert.deepEqual(shadow.findings.map((f) => [f.issue, f.status]), [['reviewed line', 'verified-quote'], ['made up', 'unverified-quote']])
+  assert.match(shadow.findings[1].quoteCheck, /quote not found/)
+  assert.ok(!existsSync(call.cwd), 'the snapshot is removed afterwards')
+})
+
+test('F3 a shadow gets the same verify result in its prompt as the real reviewer', async () => {
+  config({ routing: ROUTING, shadow: ['grok'], verifyCmd: 'true' })
+  commit({ 'src/a.js': lines(10) })
+  allowed(script([]))
+  await shadowRecords(1)
+  const real = callOf('claude').prompt, shadow = callOf('grok').prompt
+  assert.match(real, /This repo's verification command `true` PASSED before this review/)
+  assert.match(shadow, /This repo's verification command `true` PASSED before this review/)
+})
+
+test('F4 an invalid shadow entry is a failure record, and the real review still prints its result', async () => {
+  for (const shadow of [['grok', 'Not A Family!'], 42]) {
+    rmSync(SHADOW, { force: true }); rmSync(LOG, { force: true })
+    config({ routing: ROUTING, shadow })
+    git('reset', '-q', '--hard', 'main'); commit({ 'src/a.js': lines(10) })
+    const r = script([])
+    allowed(r)
+    assert.match(r.stdout, /===FINDINGS_JSON===/)
+    assert.equal(records().length, 1)
+    const logged = await shadowRecords(Array.isArray(shadow) ? 2 : 1)
+    const bad = logged.find((e) => e.family !== 'grok')
+    assert.equal(bad.ok, false); assert.match(bad.error, /not a family name/)
+  }
+})
+
+test('F2 --shadow-report leaves findings that failed the quote check out of matched and unique', () => {
+  appendFileSync(LOG, JSON.stringify({ type: 'review', kind: 'review', id: 'r1', head: 'h', family: 'sol', findingDetails: [{ file: 'src/a.js', line: '10', quote: 'const x = 1' }] }) + '\n')
+  appendFileSync(SHADOW, JSON.stringify({ type: 'shadow', ts: '2026-11-01T00:00:00.000Z', reviewId: 'r1', family: 'grok', ok: true, durationMs: 100, findings: [
+    { file: 'src/a.js', line: '11', quote: 'const x = 1', status: 'verified-quote' },
+    { file: 'src/a.js', line: '10', quote: 'const x = 1', status: 'unverified-quote' },
+    { file: 'elsewhere.js', line: '1', quote: 'nope', status: 'unverified-quote' }] }) + '\n')
+  const r = script(['--shadow-report']); allowed(r)
+  assert.equal(r.stdout.trim().split('\n')[1], 'grok: 1 run(s), 0 failed; 1 finding(s): 1 matched, 0 unique, 2 unlocated; missed 0 of 1 real finding(s); average 100 ms')
 })

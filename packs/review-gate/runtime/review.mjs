@@ -2269,42 +2269,47 @@ function closeReview(id) {
 // background, for comparison only. They write review-log/shadow-log.jsonl and nothing else, so no close, push gate
 // or --summary ever sees them; a failure or a refusal is a record there, never an error. Reviews only, not fix checks.
 const SHADOW_LOG = join(dirname(LOG_PATH), 'shadow-log.jsonl')
-function shadowFamilies() {
-  const value = cfg('REVIEW_SHADOW', 'shadow', [])
-  const list = Array.isArray(value) ? value : String(value).split(',')
-  const names = [...new Set(list.map((f) => String(f).trim().toLowerCase()).filter(Boolean))]
-  const bad = names.find((f) => !FAMILY_NAME.test(f))
-  if (bad !== undefined) stop(`shadow must list family names; got ${JSON.stringify(value)}`)
-  return names
-}
 function appendShadow(record) {
   mkdirSync(dirname(SHADOW_LOG), { recursive: true })
   const line = `${JSON.stringify(record)}\n`
   withLogLock(() => appendFileSync(SHADOW_LOG, line), SHADOW_LOG)
 }
-// After the real review is logged: one detached review.mjs --shadow-run per family, handed the diff, the review's
-// context and slice in a job file. This run does not wait for them.
-function startShadows(reviewId, diff) {
-  const families = shadowFamilies().filter((f) => f !== SEL.family)
-  for (const family of families) {
-    try {
-      const dir = mkdtempSync(join(tmpdir(), 'review-shadow-'))
-      const job = join(dir, 'job.json')
-      writeFileSync(job, JSON.stringify({ reviewId, family, diff, context: CONTEXT, slice: SLICE, diffBase: DIFF_BASE }), { mode: 0o600 })
-      const child = spawnFile(process.execPath, [COPY_PATH, '--shadow-run', job, ...(INTENT ? [INTENT] : [])], { detached: true, stdio: 'ignore' })
-      child.on('error', () => {})
-      child.unref()
-      console.log(`▶ shadow · ${family} started in the background for ${reviewId} (results: ${SHADOW_LOG})`)
-    } catch (e) {
-      try { appendShadow({ type: 'shadow', reviewId, family, ts: new Date().toISOString(), ok: false, error: `could not start: ${e.message}` }) } catch { /* never raised */ }
-    }
+// After the real review is logged: one detached review.mjs --shadow-run per family, handed everything the real
+// reviewer's prompt was built from (the diff, context, verify result, slice, base and the reviewed commit) in a job
+// file. This run does not wait for them, and nothing here can fail it: a bad entry or a failed start is a record.
+function startShadows({ reviewId, diff, head, baseSha }) {
+  const fail = (family, error) => {
+    try { appendShadow({ type: 'shadow', reviewId, family, ts: new Date().toISOString(), ok: false, error }) } catch { /* never raised */ }
   }
+  try {
+    const value = cfg('REVIEW_SHADOW', 'shadow', [])
+    const entries = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [value]
+    const seen = new Set()
+    for (const entry of entries) {
+      const family = String(entry ?? '').trim().toLowerCase()
+      if (!family || seen.has(family) || family === SEL.family) continue
+      seen.add(family)
+      if (!FAMILY_NAME.test(family)) { fail(String(entry), `not a family name: ${JSON.stringify(entry)}`); continue }
+      try {
+        const dir = mkdtempSync(join(tmpdir(), 'review-shadow-'))
+        const job = join(dir, 'job.json')
+        writeFileSync(job, JSON.stringify({ reviewId, family, diff, head, baseSha, context: CONTEXT, verify: VERIFY_RESULT, slice: SLICE, diffBase: DIFF_BASE }), { mode: 0o600 })
+        const child = spawnFile(process.execPath, [COPY_PATH, '--shadow-run', job, ...(INTENT ? [INTENT] : [])], { detached: true, stdio: 'ignore' })
+        child.on('error', () => {})
+        child.unref()
+        console.log(`▶ shadow · ${family} started in the background for ${reviewId} (results: ${SHADOW_LOG})`)
+      } catch (e) { fail(family, `could not start: ${e.message}`) }
+    }
+  } catch (e) { fail(null, `shadows could not start: ${e.message}`) }
 }
 // One shadow review, run detached: the same prompt the real reviewer got (with this family's tool notes), the same
-// schema and scoring, no quote check, and one record in the shadow log whatever happens.
+// schema, scoring and quote check, and one record in the shadow log whatever happens. It runs in a snapshot of the
+// reviewed commit (a temporary clone detached at it, as a dispute's verifier does), so fixes or a branch switch in the
+// checkout while it runs change nothing it reads.
 async function shadowRun(jobFile) {
   const started = Date.now()
-  let job = {}, written = false, m = null
+  let job = {}, written = false, m = null, snapshot = null
+  const cwd = process.cwd()
   const write = (fields) => {
     if (written) return
     written = true
@@ -2322,25 +2327,39 @@ async function shadowRun(jobFile) {
     if (!member.vendor) throw new Error(`${job.family} resolves to no known CLI`)
     if (!which(member.vendor)) throw new Error(`the ${member.vendor} CLI is not installed`)
     m = { ...member, effort: effortFor(member) }
+    if (!fullObjectId(job.head)) throw new Error('the job names no reviewed commit')
+    snapshot = mkdtempSync(join(tmpdir(), 'review-shadow-snapshot-'))
+    sh('git', ['clone', '--quiet', '--no-hardlinks', '--no-checkout', TOP, join(snapshot, 'repo')])
+    process.chdir(join(snapshot, 'repo'))
+    sh('git', ['checkout', '--quiet', '--detach', job.head])
     if (m.vendor === 'grok') {
       const refusal = grokRefusal()
       if (refusal) throw new Error(`refused: ${refusal}`)
     }
     SEL = m
     CONTEXT = job.context || ''
+    VERIFY_RESULT = job.verify ?? null
     SLICE = job.slice || null
     DIFF_BASE = job.diffBase || DIFF_BASE
     const { result } = await runModel(m, reviewPrompt(job.diff), SCHEMA, 'shadow reviewer')
     const scored = await scoredFindings(result?.findings || [], m)
-    write({ ok: true, findings: scored.findings.map(({ file, line, quote, issue, severity, likelihood, impact }) => ({ file, line, quote, issue, severity, likelihood, impact })) })
+    // Quotes are checked against the snapshot: HEAD is the reviewed commit, and the base is its own sha here.
+    if (fullObjectId(job.baseSha)) DIFF_BASE = job.baseSha
+    write({ ok: true, findings: scored.findings.map((f) => {
+      const { file, line, quote, issue, severity, likelihood, impact, status, quoteCheck } = locatedFinding(f)
+      return { file, line, quote, issue, severity, likelihood, impact, status, ...(quoteCheck && { quoteCheck }) }
+    }) })
   } catch (e) {
     write({ ok: false, error: e.message })
+  } finally {
+    process.chdir(cwd)
+    if (snapshot) rmSync(snapshot, { recursive: true, force: true })
   }
   process.exit(0)
 }
 // --shadow-report [--since <date>]: per shadow family, how its findings compare with the real review's. A shadow
 // finding matches a real one with the same file (a/ b/ ./ prefixes dropped) and a line within 5, or when one quote,
-// whitespace collapsed, contains the other. Unique: matched none. Missed: real findings no finding of that shadow run
+// whitespace collapsed, contains the other; a shadow finding that failed the quote check is counted as unlocated, apart. Unique: matched none. Missed: real findings no finding of that shadow run
 // matched. Average durationMs over the runs that answered.
 function shadowReport() {
   const since = option('--since')
@@ -2360,7 +2379,7 @@ function shadowReport() {
   const by = new Map()
   for (const s of shadows) {
     if (from !== null && !(Date.parse(s.ts) >= from)) continue
-    const t = by.get(s.family) || { runs: 0, failed: 0, unlinked: 0, shadowFindings: 0, matched: 0, unique: 0, real: 0, missed: 0, durations: [] }
+    const t = by.get(s.family) || { runs: 0, failed: 0, unlinked: 0, shadowFindings: 0, matched: 0, unique: 0, unlocated: 0, real: 0, missed: 0, durations: [] }
     by.set(s.family, t)
     t.runs++
     if (!s.ok) { t.failed++; continue }
@@ -2369,6 +2388,8 @@ function shadowReport() {
     if (Number.isFinite(s.durationMs)) t.durations.push(s.durationMs)
     const hit = new Set()
     for (const f of s.findings || []) {
+      // A finding whose quote is not in the reviewed code is not a finding: counted apart, never matched.
+      if (f.status === 'unverified-quote') { t.unlocated++; continue }
       t.shadowFindings++
       const i = real.findIndex((r) => same(f, r))
       if (i === -1) t.unique++
@@ -2382,7 +2403,7 @@ function shadowReport() {
   for (const [family, t] of [...by].sort(([a], [b]) => a.localeCompare(b))) {
     const avg = t.durations.length ? Math.round(t.durations.reduce((a, b) => a + b, 0) / t.durations.length) : null
     console.log(`${family}: ${t.runs} run(s), ${t.failed} failed${t.unlinked ? `, ${t.unlinked} with no real review in this log` : ''}; ` +
-      `${t.shadowFindings} finding(s): ${t.matched} matched, ${t.unique} unique; missed ${t.missed} of ${t.real} real finding(s); ` +
+      `${t.shadowFindings} finding(s): ${t.matched} matched, ${t.unique} unique${t.unlocated ? `, ${t.unlocated} unlocated` : ''}; missed ${t.missed} of ${t.real} real finding(s); ` +
       `average ${avg === null ? 'n/a' : `${avg} ms`}`)
   }
 }
@@ -3083,7 +3104,7 @@ function pushGate() {
     durationMs,
     dir,
   })
-  startShadows(reviewId, diff)
+  startShadows({ reviewId, diff, head: reviewedHead, baseSha })
   const counts = ['high', 'medium', 'low']
     .map((s) => `${findings.filter((f) => f.severity === s).length} ${s}`)
     .join(', ')
