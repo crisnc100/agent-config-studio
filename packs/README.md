@@ -68,7 +68,9 @@ Each part is `{ id, title, default, kind, harnesses, files, explain }`:
 - `default` — on when you pick the pack. Skills are on by default; anything that changes machine-wide state (the
   agent guard, the push gate, Codex log access) or your global instruction files is off until you turn it on.
 - `kind` — `skill | instructions | guard | push-gate | codex-log-access | worktree`; it decides how ACS installs,
-  checks and removes the part. Manifests never contain commands.
+  checks and removes the part. Manifests never contain commands. A `codex-log-access` part also names
+  `writableRoot`, the folder under `~/` it adds to `writable_roots` in each Codex home's config.toml (review-gate's
+  review log, flag's field reports).
 - `harnesses` — the harnesses the part installs into (`claude`, `codex`); empty when it does not depend on one.
 - `files` — the source files, as paths from the root of the ACS package. The worktree part points at
   `bin/install-worktree.mjs` and `tools/worktree/`, which ACS already ships, rather than copying them.

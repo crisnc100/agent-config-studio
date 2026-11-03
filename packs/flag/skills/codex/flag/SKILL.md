@@ -78,7 +78,8 @@ file a duplicate.
    write fails with exit 3 ("the sandbox refused writing …"). Rerun the same command once with escalated permissions
    (`sandbox_permissions: "require_escalated"`, justification: "write a /flag field report"). If that is refused
    too, the helper has already printed the redacted report on stdout: say in one line that it could not be filed,
-   and carry on.
+   and carry on. The flag pack's opt-in `codex-report-access` part adds that folder to `writable_roots`, so the
+   write goes through without asking (`acs packs install flag --part codex-report-access`).
 
 3. **Say it in one line**: `Flagged: <id> — <what, short>`. The report is the output; don't restate it.
 
