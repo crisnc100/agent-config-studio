@@ -57,7 +57,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { homedir, tmpdir } from 'node:os'
+import { homedir, tmpdir, userInfo } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -1548,12 +1548,15 @@ function parseGrok(stdout) {
 // run untrusted instead (GROK_FOLDER_TRUST=0, never used). So a tree holding any .grok/hooks entry, from the
 // working folder up to the top of its repository, is never reviewed by grok.
 const GROK_HOOKS_OFF = { GROK_CLAUDE_HOOKS_ENABLED: '0', GROK_CURSOR_HOOKS_ENABLED: '0' }
+// GROK_HOME made absolute once, at load: a shadow run moves into a snapshot clone and grok runs with --cwd, so a relative
+// one would name another folder. Shadows are handed this one.
+const GROK_HOME = resolve(process.env.GROK_HOME || join(homedir(), '.grok'))
 // Grok's environment for one call (ask-model's grokCallEnv): an empty temporary HOME, so what grok borrows from
 // ~/.claude and ~/.cursor (plugin MCP servers and hooks, ~/.claude.json) finds nothing; the real GROK_HOME, so the
 // login, its in-place refresh and folder trust are a normal session's; hooks and the Claude/Cursor MCP sources off.
 // done() removes the temporary HOME. The same env serves the check and the call.
 function grokRunEnv() {
-  const grokHome = process.env.GROK_HOME || join(homedir(), '.grok')
+  const grokHome = GROK_HOME
   const home = mkdtempSync(join(tmpdir(), 'review-grok-home-'))
   return { env: { ...process.env, ...GROK_HOOKS_OFF, GROK_CLAUDE_MCPS_ENABLED: '0', GROK_CURSOR_MCPS_ENABLED: '0', HOME: home, GROK_HOME: grokHome },
     grokHome, done: () => rmSync(home, { recursive: true, force: true }) }
@@ -1566,15 +1569,210 @@ function grokMcpAllow() {
   if (!Array.isArray(list) || list.some((n) => typeof n !== 'string' || !n.trim())) return { error: `grokMcpAllow must be a list of server names; got ${JSON.stringify(value)}` }
   return { names: list.map((n) => n.trim()) }
 }
-// The file turning grok's leader mode on, or null (ask-model's grokLeaderFile). A leader session runs with the leader's
-// own HOME, so the borrowed servers a temporary HOME keeps out could start where inspect does not look.
-function grokLeaderFile(grokHome) {
+/**
+ * What one grok TOML file sets cli.use_leader to: { value } (true, false, or undefined when unset), or { unclear }.
+ * A small TOML reader, not a whole one: bare, quoted and dotted keys, [cli] headers and inline tables, comments and
+ * every string form, so `"use_leader" = true # on` and `cli.use_leader = true` both count. What it can't read is
+ * unclear, which refuses grok.
+ */
+function tomlUseLeader(source) {
+  const text = source.replace(/^﻿/, '')
+  let i = 0, found
+  const fail = (why) => { throw new Error(`${why} (line ${text.slice(0, i).split('\n').length})`); }
+  const ws = () => { while (text[i] === ' ' || text[i] === '\t') i++; }
+  const blank = () => { // spaces, comments and line ends
+    for (;;) {
+      ws()
+      if (text[i] === '#') while (i < text.length && text[i] !== '\n') i++
+      if (text[i] === '\n' || text[i] === '\r') i++; else return
+    }
+  }
+  const endLine = () => {
+    ws()
+    if (text[i] === '#') while (i < text.length && text[i] !== '\n') i++
+    if (text[i] === '\r') i++
+    if (i < text.length && text[i] !== '\n') fail('more on a line than one key and value')
+    i++
+  }
+  const ESC = { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', e: '\x1b', '"': '"', '\\': '\\' }
+  const str = () => {
+    const q = text[i], multi = text.startsWith(q.repeat(3), i)
+    i += multi ? 3 : 1
+    if (multi && text[i] === '\n') i++
+    else if (multi && text.startsWith('\r\n', i)) i += 2
+    let out = ''
+    for (;;) {
+      if (i >= text.length) fail('a string that never closes')
+      if (multi ? text.startsWith(q.repeat(3), i) : text[i] === q) {
+        if (multi) for (let k = 0; k < 2 && text[i + 3] === q; k++) { out += q; i++; }
+        i += multi ? 3 : 1
+        return out
+      }
+      const c = text[i]
+      if (!multi && (c === '\n' || c === '\r')) fail('a string that runs past its line')
+      if (q === '"' && c === '\\') {
+        const n = text[i + 1]
+        if (multi && /[ \t\r\n]/.test(n)) {
+          let j = i + 1
+          while (text[j] === ' ' || text[j] === '\t') j++
+          if (text[j] === '\r') j++
+          if (text[j] !== '\n') fail('a backslash that is not an escape')
+          i = j
+          while (/[ \t\r\n]/.test(text[i] || '')) i++
+          continue
+        }
+        if (ESC[n] !== undefined) { out += ESC[n]; i += 2; continue; }
+        const hex = { x: 2, u: 4, U: 8 }[n] || 0, digits = text.slice(i + 2, i + 2 + hex)
+        if (!hex || !/^[0-9a-fA-F]+$/.test(digits) || digits.length !== hex) fail('an escape it does not know')
+        out += String.fromCodePoint(parseInt(digits, 16))
+        i += 2 + hex
+        continue
+      }
+      out += c
+      i++
+    }
+  }
+  const key = () => {
+    const parts = []
+    for (;;) {
+      ws()
+      if (text[i] === '"' || text[i] === "'") {
+        if (text.startsWith(text[i].repeat(3), i)) fail('a multi-line string as a key')
+        parts.push(str())
+      } else {
+        const m = /[A-Za-z0-9_-]+/y
+        m.lastIndex = i
+        const bare = m.exec(text)
+        if (!bare) fail('a key it cannot read')
+        parts.push(bare[0])
+        i = m.lastIndex
+      }
+      ws()
+      if (text[i] !== '.') return parts
+      i++
+    }
+  }
+  // `at` is the value's full key, or null inside an array, where nothing can be cli.use_leader.
+  const set = (at, v) => {
+    if (!at || at[0] !== 'cli' || at[1] !== 'use_leader') return
+    if (at.length > 2 || typeof v !== 'boolean') fail('cli.use_leader set to something other than true or false')
+    if (found !== undefined) fail('cli.use_leader set twice')
+    found = v
+  }
+  const value = (at) => {
+    ws()
+    const c = text[i]
+    if (c === '"' || c === "'") { str(); return set(at, 'a string'); }
+    if (c === '[') {
+      i++
+      for (;;) {
+        blank()
+        if (text[i] === ']') { i++; return set(at, 'an array'); }
+        value(null)
+        blank()
+        if (text[i] === ',') i++
+        else if (text[i] !== ']') fail('an array it cannot read')
+      }
+    }
+    if (c === '{') {
+      i++
+      set(at && at.length >= 2 ? at : null, 'a table')
+      for (;;) {
+        blank()
+        if (text[i] === '}') { i++; return; }
+        const k = key()
+        ws()
+        if (text[i] !== '=') fail('an inline table it cannot read')
+        i++
+        value(at && [...at, ...k])
+        blank()
+        if (text[i] === ',') i++
+        else if (text[i] !== '}') fail('an inline table it cannot read')
+      }
+    }
+    const m = /[A-Za-z0-9_+\-.:]+(?: [0-9]{2}:[A-Za-z0-9_+\-.:]+)?/y
+    m.lastIndex = i
+    const scalar = m.exec(text)
+    if (!scalar) fail('a value it cannot read')
+    i = m.lastIndex
+    return set(at, scalar[0] === 'true' ? true : scalar[0] === 'false' ? false : 'a non-boolean')
+  }
+  try {
+    let table = []
+    for (;;) {
+      blank()
+      if (i >= text.length) return { value: found }
+      if (text[i] === '[') {
+        const many = text[i + 1] === '['
+        i += many ? 2 : 1
+        table = key()
+        if (!text.startsWith(many ? ']]' : ']', i)) fail('a table header it cannot read')
+        i += many ? 2 : 1
+        if (table[0] === 'cli' && table[1] === 'use_leader') fail('cli.use_leader as a table')
+      } else {
+        const k = key()
+        if (text[i] !== '=') fail('a line that is not a key and value')
+        i++
+        value([...table, ...k])
+      }
+      endLine()
+    }
+  } catch (e) {
+    return { unclear: e.message }
+  }
+}
+
+/**
+ * The requirements.toml macOS device management hands grok: the requirements_toml_base64 string in a forced ai.x.grok
+ * preference. { text }, null when there is none, or { unclear }. GROK_TEST_MANAGED_PREFS adds a folder to look in
+ * (the tests'); it never replaces the system one.
+ */
+function grokMdmRequirements() {
+  let user = process.env.USER
+  try { user = userInfo().username; } catch { /* USER stands */ }
+  const dirs = ['/Library/Managed Preferences', ...(process.env.GROK_TEST_MANAGED_PREFS ? [process.env.GROK_TEST_MANAGED_PREFS] : [])]
+  const out = []
+  for (const file of dirs.flatMap((d) => [...(user ? [join(d, user, 'ai.x.grok.plist')] : []), join(d, 'ai.x.grok.plist')])) {
+    try { statSync(file); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') continue; out.push({ file, unclear: `unreadable (${e.code || e.message})` }); continue; }
+    const plutil = (args) => spawnSync('/usr/bin/plutil', [...args, '-o', '-', file], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000 })
+    let doc = null, v
+    const all = plutil(['-convert', 'json'])
+    if (!all.error && all.status === 0) try { doc = JSON.parse(all.stdout); } catch { doc = null; }
+    if (doc !== null && typeof doc === 'object' && !Array.isArray(doc)) v = doc.requirements_toml_base64
+    else {
+      // A plist JSON can't hold (a date or data value) still gives up the one key.
+      const one = plutil(['-extract', 'requirements_toml_base64', 'json'])
+      try { if (one.error || one.status !== 0) throw new Error(); v = JSON.parse(one.stdout); } catch { out.push({ file, unclear: 'plutil could not read it' }); continue; }
+    }
+    if (v === undefined) continue
+    const where = `${file} (requirements_toml_base64)`
+    if (typeof v !== 'string' || !/^[A-Za-z0-9+/\s]*={0,2}\s*$/.test(v)) { out.push({ file: where, unclear: 'not a base64 string' }); continue; }
+    try { out.push({ file: where, text: new TextDecoder('utf-8', { fatal: true }).decode(Buffer.from(v, 'base64')) }); } catch { out.push({ file: where, unclear: 'not UTF-8' }); }
+  }
+  return out
+}
+
+/**
+ * Whether grok's leader mode is on: { file } for the layer setting cli.use_leader = true, { file, unclear } for one
+ * that can't be read far enough to tell, or null. A leader session runs with the leader's own HOME, so the borrowed
+ * servers a temporary HOME keeps out could start where inspect does not look. `cli.use_leader` is a pin: the user,
+ * managed and requirements files and the macOS device-management payload all count.
+ */
+// ask-model's grokLeader, carried here because this runtime is installed alone.
+function grokLeader(grokHome) {
   const files = ['config.toml', 'managed_config.toml', 'requirements.toml'].map((f) => join(grokHome, f))
     .concat(['/etc/grok/managed_config.toml', '/etc/grok/requirements.toml'])
+  const layers = []
   for (const file of files) {
-    let text
-    try { text = readFileSync(file, 'utf8') } catch { continue }
-    if (text.split('\n').some((l) => !/^\s*#/.test(l) && /\buse_leader\s*=\s*true\b/.test(l))) return file
+    try { layers.push({ file, text: readFileSync(file, 'utf8') }); } catch (e) {
+      if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') layers.push({ file, unclear: `unreadable (${e.code || e.message})` })
+    }
+  }
+  for (const layer of [...layers, ...grokMdmRequirements()]) {
+    if (layer.unclear) return layer
+    const r = tomlUseLeader(layer.text)
+    if (r.unclear) return { file: layer.file, unclear: r.unclear }
+    if (r.value === true) return { file: layer.file }
   }
   return null
 }
@@ -1585,8 +1783,8 @@ function grokLeaderFile(grokHome) {
  * carried here because this runtime is installed alone. Anything it can't read counts as a refusal.
  */
 function grokRefusal(cwd, call) {
-  const leader = grokLeaderFile(call.grokHome)
-  if (leader) return `grok's leader mode is on (use_leader in ${leader}): a leader session runs with its own HOME, where MCP servers this check cannot see may start, so grok was not run`
+  const leader = grokLeader(call.grokHome)
+  if (leader) return `${leader.unclear ? `grok's leader mode could not be ruled out (${leader.file}: ${leader.unclear})` : `grok's leader mode is on (use_leader in ${leader.file})`}: a leader session runs with its own HOME, where MCP servers this check cannot see may start, so grok was not run`
   const allow = grokMcpAllow()
   if (allow.error) return `${allow.error}, so grok was not run`
   const r = spawnSync('grok', ['inspect', '--json'], { cwd, env: call.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024 })
@@ -2341,7 +2539,7 @@ function startShadows({ reviewId, diff, head, baseSha }) {
         const dir = mkdtempSync(join(tmpdir(), 'review-shadow-'))
         const job = join(dir, 'job.json')
         writeFileSync(job, JSON.stringify({ reviewId, family, diff, head, baseSha, context: CONTEXT, verify: VERIFY_RESULT, slice: SLICE, diffBase: DIFF_BASE }), { mode: 0o600 })
-        const child = spawnFile(process.execPath, [COPY_PATH, '--shadow-run', job, ...(INTENT ? [INTENT] : [])], { detached: true, stdio: 'ignore' })
+        const child = spawnFile(process.execPath, [COPY_PATH, '--shadow-run', job, ...(INTENT ? [INTENT] : [])], { detached: true, stdio: 'ignore', env: { ...process.env, GROK_HOME } })
         child.on('error', () => {})
         child.unref()
         console.log(`▶ shadow · ${family} started in the background for ${reviewId} (results: ${SHADOW_LOG})`)

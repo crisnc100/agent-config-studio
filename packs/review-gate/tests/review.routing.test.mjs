@@ -363,3 +363,45 @@ test('G4 a grok shadow gets the same temporary HOME and allowlist as a real grok
   const call = callOf('grok')
   assert.ok(call.home !== HOME && call.homeEntries === 0 && call.grokHome === join(HOME, '.grok') && !existsSync(call.home), JSON.stringify(call))
 })
+
+test('G5 grok leader mode in any TOML spelling or a macOS managed payload refuses, and a relative GROK_HOME is made absolute', async () => {
+  commit({ 'src/a.js': lines(10) })
+  const grokHome = join(HOME, '.grok')
+  const refusedWith = (why, extra = {}) => {
+    rmSync(CALLS, { recursive: true }); mkdirSync(CALLS); rmSync(LOG, { force: true })
+    const r = script([], { REVIEW_REVIEWER: 'grok', ...extra })
+    assert.notEqual(r.status, 0, r.out); assert.match(r.out, why)
+    assert.deepEqual(calls('grok'), []); assert.deepEqual(inspects(), []); assert.deepEqual(records(), [])
+  }
+  mkdirSync(grokHome, { recursive: true })
+  for (const toml of ['[cli]\n"use_leader" = true\n', "[ cli ]\n'use_leader'=true # shared\n", 'cli = { use_leader = true }\n']) {
+    writeFileSync(join(grokHome, 'config.toml'), toml)
+    refusedWith(/grok's leader mode is on \(use_leader in .*\.grok\/config\.toml\)/)
+  }
+  writeFileSync(join(grokHome, 'config.toml'), '[cli]\nuse_leader = "yes"\n')
+  refusedWith(/grok's leader mode could not be ruled out \(.*\.grok\/config\.toml: cli\.use_leader set to something other than true or false/)
+  writeFileSync(join(grokHome, 'config.toml'), '[other]\nuse_leader = true\n')
+  allowed(script([], { REVIEW_REVIEWER: 'grok' }))
+
+  if (process.platform === 'darwin') {
+    const prefs = join(ROOT, 'managed-prefs')
+    mkdirSync(prefs, { recursive: true })
+    const plist = (body) => writeFileSync(join(prefs, 'ai.x.grok.plist'), `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>${body}</dict></plist>\n`)
+    plist(`<key>requirements_toml_base64</key><string>${Buffer.from('[cli]\nuse_leader = true\n').toString('base64')}</string>`)
+    refusedWith(/grok's leader mode is on \(use_leader in .*ai\.x\.grok\.plist \(requirements_toml_base64\)\)/, { GROK_TEST_MANAGED_PREFS: prefs })
+    writeFileSync(join(prefs, 'ai.x.grok.plist'), 'not a plist')
+    refusedWith(/could not be ruled out \(.*ai\.x\.grok\.plist: plutil could not read it\)/, { GROK_TEST_MANAGED_PREFS: prefs })
+    rmSync(prefs, { recursive: true })
+  }
+
+  // A relative GROK_HOME: the real call and a shadow (which runs in a snapshot clone) both get it made absolute.
+  rmSync(CALLS, { recursive: true }); mkdirSync(CALLS)
+  allowed(script([], { REVIEW_REVIEWER: 'grok', GROK_HOME: 'rel-grok' }))
+  assert.equal(callOf('grok').grokHome, join(realpathSync(REPO), 'rel-grok'))
+  rmSync(CALLS, { recursive: true }); mkdirSync(CALLS)
+  config({ routing: ROUTING, shadow: ['grok'] })
+  allowed(script([], { GROK_HOME: 'rel-grok' }))
+  const [shadow] = await shadowRecords(1)
+  assert.equal(shadow.ok, true, shadow.error)
+  assert.equal(callOf('grok').grokHome, join(realpathSync(REPO), 'rel-grok'))
+})

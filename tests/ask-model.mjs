@@ -8,6 +8,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tempDir } from './fixtures/cleanup.mjs';
@@ -862,6 +863,64 @@ console.log('\nask-model: grok runs with an empty temporary HOME and the real GR
   const leader = ask(['--family', 'grok', '--cwd', WORK], { home: h5 });
   ok('leader mode on in any grok config layer: exit 4, before any grok process runs',
      leader.code === 4 && leader.inspect.length === 0 && leader.calls.length === 0 && /leader mode is on \(use_leader in .*managed_config\.toml\)/.test(leader.err), show(leader));
+
+  // Any TOML spelling of cli.use_leader counts; a file it cannot read refuses.
+  const h6 = fresh('grok-home-toml');
+  fs.mkdirSync(path.join(h6, '.grok'), { recursive: true });
+  const withConfig = (toml) => { fs.writeFileSync(path.join(h6, '.grok', 'config.toml'), toml); return ask(['--family', 'grok', '--cwd', WORK], { home: h6 }); };
+  for (const [what, toml] of [
+    ['a quoted key', '[cli]\n"use_leader" = true\n'],
+    ['a literal-quoted key with a comment after it', "[ cli ]\n'use_leader'=true # shared\n"],
+    ['a dotted key at the top', 'cli.use_leader = true\n'],
+    ['an inline table', 'cli = { use_leader = true }\n'],
+    ['an escaped key', '[cli]\n"use\\u005fleader" = true\n'],
+  ]) {
+    const r = withConfig(toml);
+    ok(`use_leader = true as ${what}: exit 4, grok never run`, r.code === 4 && r.inspect.length === 0 && r.calls.length === 0 && /leader mode is on \(use_leader in .*config\.toml\)/.test(r.err), show(r));
+  }
+  for (const [what, toml] of [['set to a string', '[cli]\nuse_leader = "true"\n'], ['in a header that never closes', '[cli\nuse_leader = true\n']]) {
+    const r = withConfig(toml);
+    ok(`use_leader ${what}: exit 4, leader mode not ruled out`, r.code === 4 && r.calls.length === 0 && /leader mode could not be ruled out \(.*config\.toml: /.test(r.err), show(r));
+  }
+  for (const [what, toml] of [['in another table', '[other]\nuse_leader = true\n'], ['inside a multi-line string', 'note = \"\"\"\n[cli]\nuse_leader = true\n\"\"\"\n'], ['set false', '[cli]\nuse_leader = false\n']]) {
+    const r = withConfig(toml);
+    ok(`use_leader ${what}: grok runs`, r.code === 0 && r.calls.length === 1, show(r));
+  }
+
+  // macOS device management: a forced ai.x.grok preference whose requirements_toml_base64 is a requirements.toml.
+  if (process.platform === 'darwin') {
+    const h7 = fresh('grok-home-mdm');
+    const prefs = mk('managed-prefs');
+    const plist = (dir, body) => {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'ai.x.grok.plist'), `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>${body}</dict></plist>\n`);
+    };
+    const b64 = (toml) => `<key>requirements_toml_base64</key><string>${Buffer.from(toml).toString('base64')}</string>`;
+    const mdm = () => ask(['--family', 'grok', '--cwd', WORK], { home: h7, env: { GROK_TEST_MANAGED_PREFS: prefs } });
+    plist(prefs, b64('[cli]\nuse_leader = true\n'));
+    const on = mdm();
+    ok('MDM requirements pinning cli.use_leader: exit 4, the plist named', on.code === 4 && on.calls.length === 0 && /leader mode is on \(use_leader in .*ai\.x\.grok\.plist \(requirements_toml_base64\)\)/.test(on.err), show(on));
+    plist(prefs, b64('[cli]\nauto_update = false\n'));
+    ok('MDM requirements without it: grok runs', mdm().code === 0);
+    plist(path.join(prefs, os.userInfo().username), b64('cli.use_leader = true\n'));
+    const user = mdm();
+    ok('…and the per-user managed plist counts too', user.code === 4 && new RegExp(`${os.userInfo().username}/ai\\.x\\.grok\\.plist`).test(user.err), show(user));
+    fs.rmSync(path.join(prefs, os.userInfo().username), { recursive: true });
+    plist(prefs, '<key>requirements_toml_base64</key><integer>1</integer>');
+    const odd = mdm();
+    ok('a payload that is not a string: exit 4, leader mode not ruled out', odd.code === 4 && /could not be ruled out \(.*requirements_toml_base64\): not a base64 string/.test(odd.err), show(odd));
+    fs.writeFileSync(path.join(prefs, 'ai.x.grok.plist'), 'not a plist');
+    const junk = mdm();
+    ok('a managed plist plutil cannot read: exit 4', junk.code === 4 && /could not be ruled out \(.*ai\.x\.grok\.plist: plutil could not read it\)/.test(junk.err), show(junk));
+  } else {
+    console.log('  SKIP the macOS device-management checks (not macOS)');
+  }
+
+  // A relative GROK_HOME is made absolute where ask-model starts, not read again from grok's --cwd.
+  const rel = mk('grok-rel-start');
+  const relative = ask(['--family', 'grok', '--cwd', WORK], { home: fresh('grok-home-rel'), cwd: rel, env: { GROK_HOME: 'my-grok' } });
+  ok('a relative GROK_HOME reaches the check and the call as one absolute path',
+     relative.code === 0 && relative.inspect[0]?.grokHome === path.join(rel, 'my-grok') && relative.calls[0]?.grokHome === path.join(rel, 'my-grok'), show(relative));
 }
 
 console.log('\nask-model: live');
