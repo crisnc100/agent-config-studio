@@ -98,15 +98,19 @@ function grokMcpAllow() {
   return { names: [] };
 }
 
+// The entry lists whose settings patch a grok config file.
+const PATCHES = ['experiments', 'version_overrides', 'campaigns'];
+
 /**
- * What one grok TOML file sets cli.use_leader to: { value } (true, false, or undefined when unset), or { unclear }.
+ * What one grok TOML file sets cli.use_leader to: { value } (true, false, or undefined when unset, with patch naming
+ * the PATCHES list of an entry that sets it true), or { unclear }.
  * A small TOML reader, not a whole one: bare, quoted and dotted keys, [cli] headers and inline tables, comments and
  * every string form, so `"use_leader" = true # on` and `cli.use_leader = true` both count. What it can't read is
  * unclear, which refuses grok.
  */
 function tomlUseLeader(source) {
   const text = source.replace(/^﻿/, '');
-  let i = 0, found;
+  let i = 0, found, patch;
   const fail = (why) => { throw new Error(`${why} (line ${text.slice(0, i).split('\n').length})`); };
   const ws = () => { while (text[i] === ' ' || text[i] === '\t') i++; };
   const blank = () => { // spaces, comments and line ends
@@ -181,10 +185,20 @@ function tomlUseLeader(source) {
       i++;
     }
   };
-  // `at` is the value's full key, or null inside an array, where nothing can be cli.use_leader.
+  // Where `at` names cli.use_leader: at the top, or anywhere in an [[experiments]], [[version_overrides]] or
+  // [[campaigns]] entry, each a patch to the file on the machines (arm, CLI version, campaign) it picks. Whether this
+  // machine is picked is not worked out: any entry counts.
+  const leaderAt = (at) => {
+    if (!at) return -1;
+    for (let k = 0; k + 1 < at.length; k++) if (at[k] === 'cli' && at[k + 1] === 'use_leader' && (k === 0 || PATCHES.includes(at[0]))) return k + 1;
+    return -1;
+  };
+  // `at` is the value's full key, or null inside an array outside those entry lists, where nothing can be cli.use_leader.
   const set = (at, v) => {
-    if (!at || at[0] !== 'cli' || at[1] !== 'use_leader') return;
-    if (at.length > 2 || typeof v !== 'boolean') fail('cli.use_leader set to something other than true or false');
+    const k = leaderAt(at);
+    if (k < 0) return;
+    if (at.length > k + 1 || typeof v !== 'boolean') fail('cli.use_leader set to something other than true or false');
+    if (k > 1) { if (v) patch ??= at[0]; return; }
     if (found !== undefined) fail('cli.use_leader set twice');
     found = v;
   };
@@ -197,7 +211,8 @@ function tomlUseLeader(source) {
       for (;;) {
         blank();
         if (text[i] === ']') { i++; return set(at, 'an array'); }
-        value(null);
+        // `experiments = [{ cli = { use_leader = true } }]` is the same entry list.
+        value(at && PATCHES.includes(at[0]) ? at : null);
         blank();
         if (text[i] === ',') i++;
         else if (text[i] !== ']') fail('an array it cannot read');
@@ -205,7 +220,7 @@ function tomlUseLeader(source) {
     }
     if (c === '{') {
       i++;
-      set(at && at.length >= 2 ? at : null, 'a table');
+      set(at, 'a table');
       for (;;) {
         blank();
         if (text[i] === '}') { i++; return; }
@@ -230,14 +245,14 @@ function tomlUseLeader(source) {
     let table = [];
     for (;;) {
       blank();
-      if (i >= text.length) return { value: found };
+      if (i >= text.length) return { value: found, patch };
       if (text[i] === '[') {
         const many = text[i + 1] === '[';
         i += many ? 2 : 1;
         table = key();
         if (!text.startsWith(many ? ']]' : ']', i)) fail('a table header it cannot read');
         i += many ? 2 : 1;
-        if (table[0] === 'cli' && table[1] === 'use_leader') fail('cli.use_leader as a table');
+        if (leaderAt(table) >= 0) fail('cli.use_leader as a table');
       } else {
         const k = key();
         if (text[i] !== '=') fail('a line that is not a key and value');
@@ -282,8 +297,8 @@ function grokMdmRequirements() {
 }
 
 /**
- * Whether grok's leader mode is on: { file } for the layer setting cli.use_leader = true, { file, unclear } for one
- * that can't be read far enough to tell, or null. A leader session runs with the leader's own HOME, so the borrowed
+ * Whether grok's leader mode is on: { file } for the layer setting cli.use_leader = true, { file, patch } for one
+ * whose [[experiments]], [[version_overrides]] or [[campaigns]] entry may, { file, unclear } for one that can't be read far enough to tell, or null. A leader session runs with the leader's own HOME, so the borrowed
  * servers a temporary HOME keeps out could start where inspect does not look. `cli.use_leader` is a pin: the user,
  * managed and requirements files and the macOS device-management payload all count.
  */
@@ -301,6 +316,7 @@ function grokLeader(grokHome) {
     const r = tomlUseLeader(layer.text);
     if (r.unclear) return { file: layer.file, unclear: r.unclear };
     if (r.value === true) return { file: layer.file };
+    if (r.patch) return { file: layer.file, patch: r.patch };
   }
   return null;
 }
@@ -724,10 +740,47 @@ function run(bin, argv, cwd, env) {
 const tail = (s) => String(s || '').trim().slice(-500) || '(no output)';
 
 /**
+ * Grok labels the usage of a model it was asked for by id as `<id>-build`, so that row alone proves nothing; grok's
+ * own record of the session does. null when <GROK_HOME>/sessions/<URL-encoded real cwd>/<sessionId>/ has a
+ * summary.json for that session whose current_model_id is `id`, and an events.jsonl whose every model_id is `id`;
+ * else why not.
+ */
+function grokBuildProof(id, sessionId, cwd, grokHome) {
+  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(sessionId)) return 'grok reported no session id to look it up by';
+  let real;
+  try { real = fs.realpathSync(cwd); } catch (e) { return `its folder could not be resolved (${e.code || e.message})`; }
+  const group = encodeURIComponent(real);
+  // A longer name grok replaces with a slug and a hash, which this does not look up.
+  if (Buffer.byteLength(group) > 255) return 'its session folder name is too long to look up';
+  const dir = path.join(grokHome, 'sessions', group, sessionId);
+  let summary;
+  try { summary = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8')); } catch (e) {
+    return `${path.join(dir, 'summary.json')} could not be read (${e.code || 'not JSON'})`;
+  }
+  if (!isObject(summary) || !isObject(summary.info) || summary.info.id !== sessionId) return 'its session summary is for another session';
+  if (summary.current_model_id !== id) return `its session summary names ${JSON.stringify(summary.current_model_id ?? null)}`;
+  let lines;
+  try { lines = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').split('\n').filter((l) => l.trim()); } catch (e) {
+    return `${path.join(dir, 'events.jsonl')} could not be read (${e.code || e.message})`;
+  }
+  const named = [];
+  const walk = (v) => {
+    if (Array.isArray(v)) v.forEach(walk);
+    else if (isObject(v)) for (const [k, x] of Object.entries(v)) { if (k === 'model_id') named.push(x); walk(x); }
+  };
+  for (const line of lines) {
+    try { walk(JSON.parse(line)); } catch { return 'its session events hold a line that is not JSON'; }
+  }
+  if (!named.length) return 'its session events name no model';
+  const other = named.find((x) => x !== id);
+  return other === undefined ? null : `its session events name ${JSON.stringify(other)}`;
+}
+
+/**
  * The answer from one CLI's output, or an exit code and why. With a schema, the structured answer: claude's
  * structured_output (else its result), grok's structuredOutput (else its text), codex's stdout, as JSON text.
  */
-function readAnswer(vendor, id, r, schema = null) {
+function readAnswer(vendor, id, r, schema = null, { cwd, grokHome } = {}) {
   if (r.error) return { exit: r.error.code === 'ENOENT' ? 3 : 4, error: `${vendor} could not start: ${r.error.message}` };
   if (r.signal) return { exit: 4, error: `${vendor} was stopped by ${r.signal}` };
   let answer;
@@ -755,8 +808,17 @@ function readAnswer(vendor, id, r, schema = null) {
     } else {
       if (env?.type === 'error' || r.code !== 0) return { exit: 4, error: `grok failed (exit ${r.code}): ${tail(env?.message ?? r.stderr)}` };
       // The resolved id itself, as for claude: neither the registry nor the review runtime names a grok alias.
+      // Only one usage row: the id, or `<id>-build` when grok's session record names the id. Any other row beside
+      // it is a model whose part in the answer can't be told apart, so a mix refuses.
       const used = Object.keys(env.modelUsage || {});
-      if (!used.includes(id)) return { exit: 2, error: `asked for ${id}, but ${used.length ? used.join(', ') : 'no model'} answered — not its answer` };
+      if (used.length !== 1 || used[0] !== id) {
+        const why = used.length > 1 ? 'more than one model in its usage'
+          : used[0] === `${id}-build` ? grokBuildProof(id, env.sessionId, cwd, grokHome) : '';
+        if (why !== null) {
+          const confirm = used.length > 1 ? ` (${why})` : why ? ` and grok's session record does not confirm ${id} (${why})` : '';
+          return { exit: 2, error: `asked for ${id}, but ${used.length ? used.join(', ') : 'no model'} answered${confirm} — not its answer` };
+        }
+      }
       const structured = env.structuredOutput;
       answer = schema && structured != null ? (typeof structured === 'string' ? structured : JSON.stringify(structured)) : env.text;
     }
@@ -820,7 +882,9 @@ async function main(argv) {
   if (vendor === 'grok') {
     const leader = grokLeader(grokCall.grokHome);
     if (leader) {
-      result.error = `${leader.unclear ? `grok's leader mode could not be ruled out (${leader.file}: ${leader.unclear})` : `grok's leader mode is on (use_leader in ${leader.file})`}: ` +
+      result.error = `${leader.unclear ? `grok's leader mode could not be ruled out (${leader.file}: ${leader.unclear})`
+        : leader.patch ? `grok's leader mode could not be ruled out (use_leader in an [[${leader.patch}]] entry of ${leader.file})`
+          : `grok's leader mode is on (use_leader in ${leader.file})`}: ` +
         'a leader session runs with its own HOME, where MCP servers this check cannot see may start, so grok was not run.';
       return finish(4);
     }
@@ -854,7 +918,7 @@ async function main(argv) {
   if (vendor === 'grok') {
     for (const line of String(r.stderr || '').split('\n')) if (/permission required:/.test(line)) process.stderr.write(`ask-model: grok: ${line.trim()}\n`);
   }
-  const got = readAnswer(vendor, m.id, r, schema);
+  const got = readAnswer(vendor, m.id, r, schema, { cwd, grokHome: grokCall?.grokHome });
   if (got.answer !== undefined) result.answer = got.answer;
   else result.error = got.error;
 
