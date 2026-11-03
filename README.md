@@ -446,10 +446,28 @@ through to its own default model.
 ### Roles and flavor
 
 Beyond ids, the registry says which family does which job and how to brief
-each one. `lib/roles.default.json` ships the defaults (advisor, reviewer,
-builder, judge, investigator, and a short flavor per family);
-`~/.agent-config-studio/roles.json` overrides them. It is a separate file from
-`models.json`, so a resolver installed before roles existed keeps working.
+each one. You choose which model does each job when you install the packs that
+use it (`acs packs install <pack>` asks, offering only the families whose CLI
+you have), or later in Models → Roles. Your choices live in
+`~/.agent-config-studio/roles.json`, a separate file from `models.json`, so a
+resolver installed before roles existed keeps working.
+`lib/roles.default.json` ships a short flavor per family and a suggestion for
+each role (advisor, reviewer, builder, judge, investigator). A suggestion is
+shown when you choose; it never runs on its own.
+
+A job you have not chosen a model for is unset: `model-id --role`, `ask-model`
+and the review gate stop with one line naming the fix, `acs packs install
+<pack> --set-role <role>=<family>[,<family>…]` or Models → Roles. `acs packs
+install <pack> --yes` without `--set-role` installs anyway and leaves the roles
+unset, saying so; `--fix-roles` takes the suggestion.
+
+A `roles.json` written before roles were chosen at install (version 1) keeps
+working as it did: the jobs it leaves out still run the shipped suggestion.
+`acs packs install` or `acs packs update` writes those jobs into it, with the
+same values, and marks it version 2 (backed up and recorded in history first);
+from then on only what it says runs. An older installed `model-id` refuses a
+version 2 file, so run `acs install-model-id` first; until then the packs
+leave the file as it is.
 
 ```
 model-id --role reviewer
@@ -485,8 +503,9 @@ own default effort (its flavor `effort`). So "builder = Opus medium, Sol high"
 beside "reviewer = Opus high" needs no change to Opus's default. `source` in
 `members` says which of the three applied: `member`, `role` or `flavor`.
 
-`roles.json` merges over the defaults field by field: a list replaces the
-default list, and `null` clears a default field. Nothing reads a catalog or
+Each family's flavor in `roles.json` merges over the shipped one field by
+field: a list replaces the shipped list, and `null` clears a shipped field.
+Roles do not merge: a role is what your file says. Nothing reads a catalog or
 swaps a family on its own; the Models panel only warns when a role's family is
 retiring, gone, or has a malformed id.
 

@@ -390,7 +390,9 @@ function pkPreviewView(pack, card) {
   // The role fix-up: the CLI's offer, per role — set it to the installed families, through ACS's roles.
   for (const r of view.roles) {
     const offer = el('div', 'pk-offer');
-    offer.appendChild(el('div', null, `The ${r.role} role uses ${r.use.join(', ') || 'nothing'}, and none of their CLIs is installed here.`));
+    offer.appendChild(el('div', null, r.missing
+      ? `The ${r.role} role is not set: skills that use it stop until you choose its model (here, or any family in Models → Roles).`
+      : `The ${r.role} role uses ${r.use.join(', ') || 'nothing'}, and none of their CLIs is installed here.`));
     if (r.suggestion.length) {
       offer.appendChild(pkCheck(`Set the ${r.role} role to ${r.suggestion.join(', ')} (through ACS's roles; it stays after an uninstall)`, !!r.set, (v) => {
         if (v) card.setRoles = { ...card.setRoles, [r.role]: r.suggestion };
