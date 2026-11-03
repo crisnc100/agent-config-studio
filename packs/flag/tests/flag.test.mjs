@@ -495,7 +495,10 @@ test('f7: list and show read only plain report files: a link (to a credential fi
 test('the property: a realistic transcript excerpt with every secret form, nested, escaped and in arrays, leaves no planted secret in the file', () => {
   const b = box()
   const basic = b64('deploy-bot:Basic-Pass-31')
-  const planted = { ...SECRETS, basic, basicPass: 'Basic-Pass-31', dbpass: 'Db-Pass-0042', numpin: '918273', arr: 'Array-Held-Token-55', urlpass: 'Url-Pass-66', wide: 'Wide-Flag-Pass-77', envq: 'Env-Quoted-88', cookie: 'Cookie-Secret-99' }
+  const planted = { ...SECRETS, basic, basicPass: 'Basic-Pass-31', dbpass: 'Db-Pass-0042', numpin: '918273', arr: 'Array-Held-Token-55', urlpass: 'Url-Pass-66', wide: 'Wide-Flag-Pass-77', envq: 'Env-Quoted-88', cookie: 'Cookie-Secret-99',
+    // The follow-up shapes: short and plain-word secrets in embedded JSON, shell-escaped values, any-case Basic and Bearer.
+    shortpw: 'zq7k', plainpw: 'marmalade', shortkey: 'kq9w', prefixedPlain: 'tangerine', shellEsc: 'Shell-Esc-Pass-5',
+    lowerBasic: b64('u:lower-basic-pw'), upperBasic: b64('v:upper-basic-pw'), lowerBearer: 'lower-bearer-tok-1', upperBearer: 'UPPER-BEARER-TOK-2' }
   const nestedArgs = JSON.stringify({ cmd: `DB_PASSWORD="${planted.dbpass}" API_KEY=${SECRETS.openai} psql`, env: { GH_TOKEN: SECRETS.ghp } })
   const lines = [
     { type: 'assistant', message: { model: 'model-a', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_all', name: 'Bash', input: {
@@ -506,17 +509,105 @@ test('the property: a realistic transcript excerpt with every secret form, neste
       { type: 'text', text: `export MY_SECRET="${planted.envq}"; echo ${SECRETS.slack} ${SECRETS.render} ${SECRETS.gitlab} ${SECRETS.jwt} ${SECRETS.ghpat} ${SECRETS.gho}` },
     ] }] }, toolUseResult: { stdout: `again: ${planted.dbpass} ${planted.cookie} ${planted.arr}`, stderr: JSON.stringify(JSON.stringify({ password: planted.dbpass })) } },
     { timestamp: 't', type: 'response_item', payload: { type: 'function_call', call_id: 'call_all', name: 'shell', arguments: nestedArgs } },
+    { timestamp: 't', type: 'response_item', payload: { type: 'function_call', call_id: 'call_more', name: 'shell',
+      arguments: JSON.stringify({ password: [planted.shortpw, planted.plainpw], api_key: planted.shortkey, cmd: String.raw`DB_PASSWORD=\$${planted.shellEsc} tool` }) } },
+    { timestamp: 't', type: 'response_item', payload: { type: 'function_call_output', call_id: 'call_more', output:
+      `note: ${JSON.stringify({ password: planted.prefixedPlain })} then authorization: basic ${planted.lowerBasic}, BASIC ${planted.upperBasic}, bearer ${planted.lowerBearer} BEARER ${planted.upperBearer}; ` +
+      `again: ${JSON.stringify(JSON.stringify({ api_key: planted.shortkey }))}` } },
     { timestamp: 't', type: 'response_item', payload: { type: 'function_call_output', call_id: 'call_all', output: `ran ${nestedArgs}` } },
   ]
   const file = join(b.root, 'all.jsonl')
   writeFileSync(file, `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`)
-  const r = b.write({ what: `leak test ${planted.dbpass}`, severity: 'high', harness: 'claude', transcript: file, excerpts: { toolIds: ['toolu_all', 'call_all'] },
+  const r = b.write({ what: `leak test ${planted.dbpass}`, severity: 'high', harness: 'claude', transcript: file, excerpts: { toolIds: ['toolu_all', 'call_all', 'call_more'] },
     agentTake: `the result held ${planted.cookie}`, toolCalls: [{ name: 'Bash', input: nestedArgs }] })
   assert.equal(r.code, 0, r.err)
   const { text, data } = b.only()
-  assert.equal(data.toolCalls.length, 5, 'the agent quote and four transcript lines')
+  assert.equal(data.toolCalls.length, 7, 'the agent quote and six transcript lines')
   const leaks = Object.entries(planted).filter(([, v]) => text.includes(v) || text.includes(JSON.stringify(v).slice(1, -1)))
   assert.deepEqual(leaks.map(([k]) => k), [], 'planted secrets left in the written file')
-  const f = b.run(['find', '--transcript', file, '--text', 'toolu_all'])
-  assert.deepEqual(Object.entries(planted).filter(([, v]) => f.out.includes(v)).map(([k]) => k), [], 'planted secrets in find output')
+  for (const text of ['toolu_all', 'call_more']) {
+    const f = b.run(['find', '--transcript', file, '--text', text])
+    assert.ok(f.out.split('\n').length > 2, f.out)
+    assert.deepEqual(Object.entries(planted).filter(([, v]) => f.out.includes(v)).map(([k]) => k), [], `planted secrets in find output for ${text}`)
+  }
+})
+
+/* ── follow-up: the fix check's four gaps (x1–x4) ───────────────────── */
+
+test('x1: short and plain-word secrets inside embedded JSON stay redacted, in the redacted structure itself', () => {
+  const out = redact({ arguments: JSON.stringify({ password: ['1234', 'secret'], api_key: '42', note: 'fine' }) })
+  assert.deepEqual(JSON.parse(out.arguments), { password: ['[REDACTED:named-secret]', '[REDACTED:named-secret]'], api_key: '[REDACTED:named-secret]', note: 'fine' })
+  const pretty = `${JSON.stringify({ a: 1, secret: 'plain' }, null, 2)}\n`
+  assert.equal(redactText(pretty), pretty.replace('"plain"', '"[REDACTED:named-secret]"'), 'the piece keeps its own formatting')
+})
+
+test('x2: a bare value with backslash-escaped characters is consumed whole', () => {
+  assert.equal(redactText(String.raw`DB_PASSWORD=\$OpaquePass123 tool`), 'DB_PASSWORD=[REDACTED:named-secret] tool')
+  assert.equal(redactText(String.raw`--api-key ab\ cd\$ef next`), '--api-key [REDACTED:named-secret] next')
+})
+
+test('x3: Basic and Bearer are matched in any case', () => {
+  for (const w of ['basic', 'BASIC', 'Basic', 'bAsIc']) assert.equal(redactText(`${w} ${b64('u:opaque-pw')}`), `${w} [REDACTED:basic-auth]`, w)
+  for (const w of ['bearer', 'BEARER', 'Bearer']) assert.equal(redactText(`${w} opaque-token-123`), `${w} [REDACTED:bearer]`, w)
+})
+
+test('x4: JSON after other text (or JSON-encoded inside it) gets the structured walk too', () => {
+  assert.equal(redactText(`config: ${JSON.stringify({ api_tokens: ['Array-Held-Token-55'] })} tail`), 'config: {"api_tokens":["[REDACTED:named-secret]"]} tail')
+  assert.equal(redactText(`a {"password":"pw"} b [{"secret":"s1"}] c {not json} [1, 2]`), 'a {"password":"[REDACTED:named-secret]"} b [{"secret":"[REDACTED:named-secret]"}] c {not json} [1, 2]')
+  const twice = `stderr: ${JSON.stringify(JSON.stringify({ password: '1234' }))}`
+  assert.equal(redactText(twice), `stderr: ${JSON.stringify(JSON.stringify({ password: '[REDACTED:named-secret]' }))}`)
+})
+
+/* ── follow-up fix round: review 2026-11-03-00-57-10-e98dd6 ─────────── */
+
+test('f1: JSON encoded inside a JSON string is decoded before its brackets are matched: arrays and nested secret containers', () => {
+  const twice = (v) => JSON.stringify(JSON.stringify(v))
+  const value = { password: ['Dbl-Arr-1', 'Dbl-Arr-2'], nest: { auth: { secrets: [{ v: 'deep9' }, ['deeper'] ] } }, keep: 'fine' }
+  const out = redactText(`log: ${twice(value)} end`)
+  assert.equal(out, `log: ${twice({ password: ['[REDACTED:named-secret]', '[REDACTED:named-secret]'], nest: { auth: { secrets: [{ v: '[REDACTED:named-secret]' }, ['[REDACTED:named-secret]']] } }, keep: 'fine' })} end`)
+  assert.equal(redactText(twice([{ api_key: 'k1' }, { list: [1, 2] }])), twice([{ api_key: '[REDACTED:named-secret]' }, { list: [1, 2] }]))
+  // Without its surrounding quotes, as a fragment of an escaped log line.
+  const bare = JSON.stringify(JSON.stringify({ password: ['frag-pw'] })).slice(1, -1)
+  assert.ok(!redactText(`args=${bare};`).includes('frag-pw'), redactText(`args=${bare};`))
+})
+
+test('f2: a string too long to scan is replaced whole with [REDACTED:oversize], never passed through unread', () => {
+  const b = box()
+  const big = JSON.stringify({ password: ['Megabyte-Pass-13'], pad: 'x'.repeat(1 << 20) })
+  assert.equal(redact({ big }).big, '[REDACTED:oversize]')
+  const r = b.write({ what: 'x', severity: 'low', harness: 'claude', agentTake: big })
+  assert.equal(r.code, 0, r.err)
+  const { text, data } = b.only()
+  assert.ok(!text.includes('Megabyte-Pass-13'))
+  assert.equal(data.agentTake, '[REDACTED:oversize]')
+  const justUnder = `${JSON.stringify({ password: ['Under-Limit-7'] })} ${'y'.repeat((1 << 20) - 100)}`
+  assert.ok(!redactText(justUnder).includes('Under-Limit-7'), 'under the limit the structured walk still runs')
+})
+
+test('a string whose brackets would take too long to match is replaced whole with [REDACTED:unscannable], quickly', () => {
+  const t = Date.now()
+  assert.equal(redactText(`${'{'.repeat(200000)} "password": ["Brace-Pw-3"]`), '[REDACTED:unscannable]')
+  assert.ok(Date.now() - t < 5000, `${Date.now() - t}ms`)
+  const code = `function f() { if (a) { return [1, {b: 2}] } }\n`.repeat(2000)
+  assert.equal(redactText(code), code, 'ordinary bracket-heavy text is scanned, not given up on')
+})
+
+test('f3: only the secret strings change in embedded JSON; big integers, number forms and spacing stay byte-exact', () => {
+  const src = '{"password":"pw","note":"pw","id":9007199254740993,  "f": 1.50e+3, "neg":-0.0,\n "arr":[ 1 ,2 ], "esc":"a\\/b\\u0041"}'
+  const want = src.replace('"password":"pw"', '"password":"[REDACTED:named-secret]"')
+  assert.equal(redactText(src), want)
+  assert.equal(redactText(`prefix ${src} suffix`), `prefix ${want} suffix`)
+  const enc = JSON.stringify(src)
+  assert.equal(redactText(enc), JSON.stringify(want), 'encoded once more, too')
+  const b = box()
+  const r = b.write({ what: 'x', severity: 'low', harness: 'claude', toolCalls: [src] })
+  assert.equal(r.code, 0, r.err)
+  assert.equal(b.only().data.toolCalls[0].quote, want)
+})
+
+test('a long run of name characters is matched once, not retried from every position (no quadratic time)', () => {
+  const t = Date.now()
+  for (const s of ['y'.repeat((1 << 20) - 10), 'tokentokentoken'.repeat(60000), `${'a'.repeat(500000)}_PASSWORD=Run-Pw-1`]) redactText(s)
+  assert.ok(Date.now() - t < 5000, `${Date.now() - t}ms`)
+  assert.equal(redactText(`x ${'a'.repeat(50)}_PASSWORD=Run-Pw-1 y`), `x ${'a'.repeat(50)}_PASSWORD=[REDACTED:named-secret] y`)
 })
