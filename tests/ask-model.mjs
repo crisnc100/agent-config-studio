@@ -442,6 +442,14 @@ console.log('\nask-model: grok\'s <id>-build usage label counts only with its se
   }
   const extra = build({ usage: ['$m-build', 'grok-sibling-stub'] });
   ok('<id>-build beside another usage row: exit 2, both named', extra.code === 2 && extra.out === '' && /grok-sibling-stub/.test(extra.err) && extra.err.includes(`${IDS.grok}-build`), show(extra));
+  // The exact id is no pass for rows beside it: a mix refuses, session record or not.
+  for (const [what, usage] of [['<id>-build', ['$m', '$m-build']], ['another model', ['$m', 'grok-sibling-stub']], ['another suffix', ['$m', '$m-build-fast']]]) {
+    const r = build({ usage });
+    ok(`the exact id beside ${what}: exit 2, no answer, every row named`, r.code === 2 && r.out === '' && r.err.includes(`, ${usage[1].replace('$m', IDS.grok)} answered (more than one model in its usage)`)
+       && r.err.includes(`but ${IDS.grok}, `), show(r));
+  }
+  const alone = build({ usage: ['$m'] });
+  ok('the exact id alone still passes', alone.code === 0 && alone.out === `answer from ${IDS.grok}\n`, show(alone));
 
   const noSid = build({ sid: null });
   ok('no sessionId in grok\'s reply: exit 2, said', refused(noSid, /no session id/), show(noSid));
@@ -982,6 +990,22 @@ console.log('\nask-model: grok runs with an empty temporary HOME and the real GR
     ['under a table other than experiments', '[other.cli]\nuse_leader = true\n']]) {
     const r = withConfig(toml);
     ok(`use_leader ${what}: grok runs`, r.code === 0 && r.calls.length === 1, show(r));
+  }
+  // [[version_overrides]] and [[campaigns]] entries patch the file the same way, so they count the same way.
+  for (const list of ['version_overrides', 'campaigns']) {
+    for (const [what, toml] of [
+      ['a table header', `[[${list}]]\nid = "lead"\n[${list}.cli]\nuse_leader = true\n`],
+      ['a dotted key', `[[${list}]]\nid = "lead"\ncli.use_leader = true\n`],
+      ['an inline entry list', `${list} = [{ id = "a" }, { id = "lead", cli = { use_leader = true } }]\n`],
+    ]) {
+      const r = withConfig(toml);
+      ok(`use_leader = true in a [[${list}]] entry, as ${what}: exit 4, grok never run`, r.code === 4 && r.inspect.length === 0 && r.calls.length === 0
+         && new RegExp(`leader mode could not be ruled out \\(use_leader in an \\[\\[${list}\\]\\] entry of .*config\\.toml\\)`).test(r.err), show(r));
+    }
+    const odd = withConfig(`[[${list}]]\nid = "lead"\n[${list}.cli]\nuse_leader = 1\n`);
+    ok(`use_leader not a boolean in a [[${list}]] entry: exit 4, leader mode not ruled out`, odd.code === 4 && odd.calls.length === 0 && /could not be ruled out \(.*config\.toml: /.test(odd.err), show(odd));
+    const off = withConfig(`[[${list}]]\nid = "a"\n[${list}.cli]\nuse_leader = false\n[[${list}]]\nid = "b"\ncli = { use_leader = false }\n`);
+    ok(`use_leader false in every [[${list}]] entry: grok runs`, off.code === 0 && off.calls.length === 1, show(off));
   }
   fs.writeFileSync(path.join(h6, '.grok', 'config.toml'), '');
   fs.writeFileSync(path.join(h6, '.grok', 'requirements.toml'), '[[experiments]]\nid = "lead"\n[experiments.cli]\nuse_leader = true\n');

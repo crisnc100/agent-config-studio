@@ -98,15 +98,19 @@ function grokMcpAllow() {
   return { names: [] };
 }
 
+// The entry lists whose settings patch a grok config file.
+const PATCHES = ['experiments', 'version_overrides', 'campaigns'];
+
 /**
- * What one grok TOML file sets cli.use_leader to: { value } (true, false, or undefined when unset), or { unclear }.
+ * What one grok TOML file sets cli.use_leader to: { value } (true, false, or undefined when unset, with patch naming
+ * the PATCHES list of an entry that sets it true), or { unclear }.
  * A small TOML reader, not a whole one: bare, quoted and dotted keys, [cli] headers and inline tables, comments and
  * every string form, so `"use_leader" = true # on` and `cli.use_leader = true` both count. What it can't read is
  * unclear, which refuses grok.
  */
 function tomlUseLeader(source) {
   const text = source.replace(/^﻿/, '');
-  let i = 0, found, experiment = false;
+  let i = 0, found, patch;
   const fail = (why) => { throw new Error(`${why} (line ${text.slice(0, i).split('\n').length})`); };
   const ws = () => { while (text[i] === ' ' || text[i] === '\t') i++; };
   const blank = () => { // spaces, comments and line ends
@@ -181,19 +185,20 @@ function tomlUseLeader(source) {
       i++;
     }
   };
-  // Where `at` names cli.use_leader: at the top, or anywhere in an [[experiments]] entry, whose settings (an arm's,
-  // or the entry's own) patch the file on machines in that arm. Which arm this one is in is not worked out: any counts.
+  // Where `at` names cli.use_leader: at the top, or anywhere in an [[experiments]], [[version_overrides]] or
+  // [[campaigns]] entry, each a patch to the file on the machines (arm, CLI version, campaign) it picks. Whether this
+  // machine is picked is not worked out: any entry counts.
   const leaderAt = (at) => {
     if (!at) return -1;
-    for (let k = 0; k + 1 < at.length; k++) if (at[k] === 'cli' && at[k + 1] === 'use_leader' && (k === 0 || at[0] === 'experiments')) return k + 1;
+    for (let k = 0; k + 1 < at.length; k++) if (at[k] === 'cli' && at[k + 1] === 'use_leader' && (k === 0 || PATCHES.includes(at[0]))) return k + 1;
     return -1;
   };
-  // `at` is the value's full key, or null inside an array outside experiments, where nothing can be cli.use_leader.
+  // `at` is the value's full key, or null inside an array outside those entry lists, where nothing can be cli.use_leader.
   const set = (at, v) => {
     const k = leaderAt(at);
     if (k < 0) return;
     if (at.length > k + 1 || typeof v !== 'boolean') fail('cli.use_leader set to something other than true or false');
-    if (at[0] === 'experiments') { if (v) experiment = true; return; }
+    if (k > 1) { if (v) patch ??= at[0]; return; }
     if (found !== undefined) fail('cli.use_leader set twice');
     found = v;
   };
@@ -207,7 +212,7 @@ function tomlUseLeader(source) {
         blank();
         if (text[i] === ']') { i++; return set(at, 'an array'); }
         // `experiments = [{ cli = { use_leader = true } }]` is the same entry list.
-        value(at && at[0] === 'experiments' ? at : null);
+        value(at && PATCHES.includes(at[0]) ? at : null);
         blank();
         if (text[i] === ',') i++;
         else if (text[i] !== ']') fail('an array it cannot read');
@@ -240,7 +245,7 @@ function tomlUseLeader(source) {
     let table = [];
     for (;;) {
       blank();
-      if (i >= text.length) return { value: found, experiment };
+      if (i >= text.length) return { value: found, patch };
       if (text[i] === '[') {
         const many = text[i + 1] === '[';
         i += many ? 2 : 1;
@@ -292,8 +297,8 @@ function grokMdmRequirements() {
 }
 
 /**
- * Whether grok's leader mode is on: { file } for the layer setting cli.use_leader = true, { file, experiment } for one
- * whose [[experiments]] entry may, { file, unclear } for one that can't be read far enough to tell, or null. A leader session runs with the leader's own HOME, so the borrowed
+ * Whether grok's leader mode is on: { file } for the layer setting cli.use_leader = true, { file, patch } for one
+ * whose [[experiments]], [[version_overrides]] or [[campaigns]] entry may, { file, unclear } for one that can't be read far enough to tell, or null. A leader session runs with the leader's own HOME, so the borrowed
  * servers a temporary HOME keeps out could start where inspect does not look. `cli.use_leader` is a pin: the user,
  * managed and requirements files and the macOS device-management payload all count.
  */
@@ -311,7 +316,7 @@ function grokLeader(grokHome) {
     const r = tomlUseLeader(layer.text);
     if (r.unclear) return { file: layer.file, unclear: r.unclear };
     if (r.value === true) return { file: layer.file };
-    if (r.experiment) return { file: layer.file, experiment: true };
+    if (r.patch) return { file: layer.file, patch: r.patch };
   }
   return null;
 }
@@ -803,12 +808,15 @@ function readAnswer(vendor, id, r, schema = null, { cwd, grokHome } = {}) {
     } else {
       if (env?.type === 'error' || r.code !== 0) return { exit: 4, error: `grok failed (exit ${r.code}): ${tail(env?.message ?? r.stderr)}` };
       // The resolved id itself, as for claude: neither the registry nor the review runtime names a grok alias.
-      // `<id>-build` alone counts only when grok's session record names the id.
+      // Only one usage row: the id, or `<id>-build` when grok's session record names the id. Any other row beside
+      // it is a model whose part in the answer can't be told apart, so a mix refuses.
       const used = Object.keys(env.modelUsage || {});
-      if (!used.includes(id)) {
-        const why = used.length === 1 && used[0] === `${id}-build` ? grokBuildProof(id, env.sessionId, cwd, grokHome) : '';
+      if (used.length !== 1 || used[0] !== id) {
+        const why = used.length > 1 ? 'more than one model in its usage'
+          : used[0] === `${id}-build` ? grokBuildProof(id, env.sessionId, cwd, grokHome) : '';
         if (why !== null) {
-          return { exit: 2, error: `asked for ${id}, but ${used.length ? used.join(', ') : 'no model'} answered${why ? ` and grok's session record does not confirm ${id} (${why})` : ''} — not its answer` };
+          const confirm = used.length > 1 ? ` (${why})` : why ? ` and grok's session record does not confirm ${id} (${why})` : '';
+          return { exit: 2, error: `asked for ${id}, but ${used.length ? used.join(', ') : 'no model'} answered${confirm} — not its answer` };
         }
       }
       const structured = env.structuredOutput;
@@ -875,7 +883,7 @@ async function main(argv) {
     const leader = grokLeader(grokCall.grokHome);
     if (leader) {
       result.error = `${leader.unclear ? `grok's leader mode could not be ruled out (${leader.file}: ${leader.unclear})`
-        : leader.experiment ? `grok's leader mode could not be ruled out (use_leader in an [[experiments]] entry of ${leader.file})`
+        : leader.patch ? `grok's leader mode could not be ruled out (use_leader in an [[${leader.patch}]] entry of ${leader.file})`
           : `grok's leader mode is on (use_leader in ${leader.file})`}: ` +
         'a leader session runs with its own HOME, where MCP servers this check cannot see may start, so grok was not run.';
       return finish(4);
