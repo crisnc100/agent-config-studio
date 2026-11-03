@@ -770,3 +770,20 @@ test('g2: the same, with the secret name only in the agent\'s quote: show never 
   assert.ok(!changed.out.includes(pass), changed.out)
   assert.match(changed.out, /\n2\t\[CHANGED since the report: this line no longer matches its sha256; not shown, it held a secret learned elsewhere\]\n/)
 })
+
+/* ── deferred finding x1 (PR #33) ────────────────────────────────────── */
+
+test('x1: call and result both referenced, the agent\'s quote naming the whole assignment: the mask never hides the password from show', () => {
+  const b = box()
+  const pass = 'Opaque-Overlap-Pass-3'
+  const t = echoTranscript(b, { command: `DB_PASSWORD=${pass} psql` })
+  t.write(pass)
+  assert.equal(b.write({ what: 'x', severity: 'low', harness: 'claude', transcript: t.file, excerpts: { lines: ['1-2'] }, toolCalls: [`MY_SECRET='DB_PASSWORD=${pass}' tool`] }).code, 0)
+  const { text, data } = b.only()
+  assert.ok(!text.includes(pass))
+  assert.ok(data.excerpts.lines[0].mask?.length, 'the call line carries a mask, so this is the overlapping case')
+  const s = b.run(['show', data.id])
+  assert.equal(s.code, 0, s.err)
+  assert.ok(!s.out.includes(pass), s.out)
+  assert.match(shown(s.out)[2].message.content[0].content, /^connected; session for \[REDACTED:[a-z-]+\] open$/)
+})

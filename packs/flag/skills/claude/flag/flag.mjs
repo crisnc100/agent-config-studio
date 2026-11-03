@@ -634,21 +634,24 @@ export function resolveExcerpts(ref, report = {}) {
   // What each line shows before redaction: its spans masked first when unchanged; withheld (null) when it changed and
   // held a secret only write could see.
   const shownAs = new Map()
+  const unmasked = []
   for (const { line, sha256: want, mask } of ref.lines) {
     const l = lines[line - 1]
     if (!l) continue
     const masks = Array.isArray(mask) && mask.length > 0
     if (sha256(l.text) !== want) { shownAs.set(line, masks ? null : entryOf(l)); continue }
     if (!masks) { shownAs.set(line, entryOf(l)); continue }
+    unmasked.push(entryOf(l))
     const masked = applyMask(l.text, mask)
     let v
     try { v = JSON.parse(masked) } catch { v = masked }
     shownAs.set(line, v)
   }
   const printed = [...shownAs.keys()].filter((n) => shownAs.get(n) !== null)
-  // Redacted in one run with what write learned from: the tools' calls and results, and the report's own fields.
+  // Redacted in one run with what write learned from: the tools' calls and results, the report's own fields, and each
+  // masked line as it was before its mask, so a mask covering more than the secret cannot hide it from the other lines.
   const context = contextOf(lines, ref.lines.map((l) => l.line), Array.isArray(ref.toolIds) ? ref.toolIds : [])
-    .filter((n) => !printed.includes(n)).map((n) => entryOf(lines[n - 1]))
+    .filter((n) => !printed.includes(n)).map((n) => entryOf(lines[n - 1])).concat(unmasked)
   const clean = redact({ shown: printed.map((n) => shownAs.get(n)), context, report: agentFields(report) }).shown
   let out = head
   for (const { line, sha256: want } of ref.lines) {

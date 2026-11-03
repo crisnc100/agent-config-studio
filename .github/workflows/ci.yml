@@ -122,6 +122,7 @@ jobs:
           node tests/packs-update.mjs
           node tests/packs-hooks.mjs
           node tests/packs-uninstall-backup.mjs
+          node packs/flag/tests/flag.test.mjs
           node tests/cleanup-launcher.mjs
           node tests/packs-server.mjs
           node tests/packs-ui.mjs

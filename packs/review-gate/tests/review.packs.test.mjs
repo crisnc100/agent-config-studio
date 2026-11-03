@@ -73,7 +73,8 @@ test('every part has its fields, a known kind, existing files and its own non-em
     assert.equal(new Set(parts.map((p) => p.id)).size, parts.length, `${id}: part ids are unique`)
     for (const part of parts) {
       const where = `${id}/${part.id}`
-      assert.deepEqual(Object.keys(part).sort(), ['default', 'explain', 'files', 'harnesses', 'id', 'kind', 'title'], where)
+      assert.deepEqual(Object.keys(part).sort(), ['default', 'explain', 'files', 'harnesses', 'id', 'kind', 'title', ...(part.kind === 'codex-log-access' ? ['writableRoot'] : [])].sort(), where)
+      if (part.kind === 'codex-log-access') assert.match(part.writableRoot, /^~\/\.agent-config-studio\/[a-z-]+$/, `${where}: writableRoot`)
       assert.ok(text(part.id) && text(part.title), where)
       assert.equal(typeof part.default, 'boolean', where)
       assert.ok(KINDS.includes(part.kind), `${where}: kind ${part.kind}`)

@@ -181,6 +181,7 @@
       "title": "Codex log access",
       "default": false,
       "kind": "codex-log-access",
+      "writableRoot": "~/.agent-config-studio/review-log",
       "harnesses": [
         "codex"
       ],
