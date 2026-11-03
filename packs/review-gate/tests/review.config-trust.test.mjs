@@ -35,6 +35,7 @@ const modelBody = `
 const fs = require('node:fs')
 const a = process.argv.slice(2)
 if (a[0] === 'mcp') { console.log('[]'); process.exit(0) } // codex mcp list: no MCP servers, never recorded
+if (a[0] === 'inspect') { console.log(JSON.stringify({ mcpServers: [], plugins: [] })); process.exit(0) } // grok inspect: no MCP servers, never recorded
 const schema = a.includes('--output-schema') ? fs.readFileSync(a[a.indexOf('--output-schema')+1],'utf8') : a[a.indexOf('--json-schema')+1]
 const reply = schema.includes('"scores"') ? '{"scores":[]}' : schema.includes('verdicts') ? '{"verdicts":[{"index":0,"verdict":"REFUTED","evidence":"a.js:1 intentional"}]}' : (process.env.STUB_FINDINGS || '{"findings":[]}')
 if (a.includes('-o')) fs.writeFileSync(a[a.indexOf('-o')+1], reply)
@@ -380,6 +381,7 @@ const GROK_BIN = join(ROOT, 'grok-bin'), GROK_LOG = join(ROOT, 'grok-calls.jsonl
 node(join(GROK_BIN, 'grok'), `
 const fs = require('node:fs')
 const a = process.argv.slice(2)
+if (a[0] === 'inspect') { console.log(JSON.stringify({ mcpServers: [], plugins: [] })); process.exit(0) } // grok inspect: no MCP servers, never recorded
 fs.appendFileSync(${JSON.stringify(GROK_LOG)}, JSON.stringify({ argv: a, hooksEnv: [process.env.GROK_CLAUDE_HOOKS_ENABLED ?? null, process.env.GROK_CURSOR_HOOKS_ENABLED ?? null] }) + '\\n')
 const schema = a[a.indexOf('--json-schema') + 1]
 const reply = schema.includes('"scores"') ? { scores: [] } : schema.includes('verdicts') ? { verdicts: [] } : { findings: [] }
