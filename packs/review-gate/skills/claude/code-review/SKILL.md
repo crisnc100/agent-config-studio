@@ -119,10 +119,8 @@ Resolve the judge family with `eval "$(model-id --role judge || echo 'echo "mode
 
 **Plain English works too** — "code review this with <family>", "review it with both" — the phrase picks the tier for that run via the env overrides. These one-run choices never change the durable default (env var → config file → built-in default precedence).
 
-**Auto-routing by complexity (when the user doesn't name a tier).** The orchestrator picks objectively, never by model preference:
-- Risk paths (payments, money math, auth, migrations, order-correctness, security) or >400 changed lines → **premium**; the very highest stakes → **both**.
-- Everything else → **the pool pick** (the default).
-Say which tier was picked and why in one line. The user's spoken choice always overrides the routing.
+**Auto-routing (when the user doesn't name a tier).** Run `/code-review` with no reviewer named: the script's own rules choose, never model preference — a config `force` rule first (risk paths still force the configured family), then `pick`, then the review config's `routing` (see "Who reviews" and "Routing by size" above). Diff size alone never escalates to premium; **premium** and **both** run when the user names them.
+State which reviewer ran and why in one line — the script prints that line. The user's spoken choice always overrides the routing.
 
 For `both`: run the script twice (once with no reviewer named, once with `REVIEW_REVIEWER=<judge family>` — each writes its own `reviews/<ts>/` report), then merge the two findings lists in-context before Step 2. Do not double-fix: one merged list, one fix round.
 
