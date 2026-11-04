@@ -2844,23 +2844,24 @@ function originalFindingsNote(original) {
     `from a new regression the fix introduced; report defects in the fix diff as usual.\n${list}\n\n`
 }
 // Lines the fix diff added or changed, by file at the fix head (-U0 hunks; a pure deletion marks the line it follows).
+// Names come NUL-separated from filesBetween, never from patch headers (a space adds a tab there, odd names are
+// C-quoted); each file's own diff is read for its hunk lines only. null when any name or diff can't be read.
 function fixChangedLines(from, to, paths = null) {
-  const r = spawnSync('git', [...(paths ? ['-C', TOP] : []), '-c', 'core.quotePath=false', 'diff', '-U0', '--no-renames', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', from, to, ...pathspec(paths)],
-    { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
-  if (r.error || r.status !== 0) return null
+  let names
+  try { names = filesBetween(from, to, paths) } catch { return null }
   const changed = new Map()
-  let lines = null
-  for (const line of r.stdout.split('\n')) {
-    const file = line.match(/^\+\+\+ (?:b\/(.*)|\/dev\/null)$/)
-    if (file) {
-      lines = file[1] == null ? null : changed.get(file[1]) || []
-      if (lines) changed.set(file[1], lines)
-      continue
+  for (const name of names) {
+    const r = spawnSync('git', ['-C', TOP, 'diff', '-U0', '--no-renames', '--no-color', '--no-ext-diff', '--no-textconv', from, to, '--', `:(literal)${name}`],
+      { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
+    if (r.error || r.status !== 0) return null
+    const lines = []
+    for (const line of r.stdout.split('\n')) {
+      const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/)
+      if (!hunk) continue
+      const start = Number(hunk[1]), count = hunk[2] == null ? 1 : Number(hunk[2])
+      lines.push(count ? [start, start + count - 1] : [Math.max(start, 1), Math.max(start, 1)])
     }
-    const hunk = lines && line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/)
-    if (!hunk) continue
-    const start = Number(hunk[1]), count = hunk[2] == null ? 1 : Number(hunk[2])
-    lines.push(count ? [start, start + count - 1] : [Math.max(start, 1), Math.max(start, 1)])
+    changed.set(name, lines)
   }
   return changed
 }

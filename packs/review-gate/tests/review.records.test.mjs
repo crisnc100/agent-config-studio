@@ -255,3 +255,17 @@ test('K1 the code-review skills route by the review config, not by a changed-lin
   for (const phrase of ['`force` rule', 'risk paths still force the configured family', '`routing`', 'which reviewer ran and why'])
     assert.ok(auto.includes(phrase), `${phrase}\n${auto}`)
 })
+
+test('I2 inFix reads file names git writes oddly: a space (trailing tab in the header) and a C-quoted name', () => {
+  const ten = (name, over = {}) => Array.from({ length: 10 }, (_, i) => over[i + 1] ?? `export const ${name}${i + 1} = ${i + 1}`).join('\n') + '\n'
+  commit({ 'src/foo bar.js': ten('a'), 'src/say "hi".js': ten('b') })
+  const review = reviewed([F1])
+  const check = fixChecked(review, [
+    scored({ issue: 'spaced, on the fix', file: 'src/foo bar.js', line: '5', quote: 'export const a5 = 50' }),
+    scored({ issue: 'quoted, on the fix', file: 'src/say "hi".js', line: '5', quote: 'export const b5 = 50' }),
+    scored({ issue: 'spaced, far from the fix', file: 'src/foo bar.js', line: '10', quote: 'export const a10 = 10' }),
+  ], { 'src/foo bar.js': ten('a', { 5: 'export const a5 = 50' }), 'src/say "hi".js': ten('b', { 5: 'export const b5 = 50' }) })
+  assert.deepEqual(check.findingDetails.map((f) => [f.issue, f.status, f.inFix]), [
+    ['spaced, on the fix', 'verified-quote', true], ['quoted, on the fix', 'verified-quote', true], ['spaced, far from the fix', 'verified-quote', false],
+  ])
+})
