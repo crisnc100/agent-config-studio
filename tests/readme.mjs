@@ -80,7 +80,7 @@ const CMD = /^(?:[A-Z_]+=\S+ )*(\.\/bin\/acs|acs|model-id|git|node|npm|curl|clau
 const commands = spans.filter((sp) => CMD.test(sp) && sp !== 'node:sqlite');
 const usageOf = {
   roots: src('bin/roots.mjs'), usage: src('bin/usage.mjs'), 'install-worktree': src('bin/install-worktree.mjs'),
-  install: src('bin/acs-link.mjs'), uninstall: src('bin/acs-link.mjs'),
+  install: src('bin/acs-link.mjs'), uninstall: src('bin/acs-link.mjs'), packs: src('bin/packs.mjs'),
 };
 const executed = new Set(getStartedCommands());
 const knownVendor = new Map([

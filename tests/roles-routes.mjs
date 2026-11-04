@@ -120,11 +120,29 @@ try {
     ok('this page (Sec-Fetch-Site: same-origin) is let through', same.status === 200);
   }
 
+  console.log('\nroles routes: chosen at install — no roles.json, every role unset');
+  {
+    const v0 = await view();
+    ok('the view lists every shipped role as unset, with no family put forward, and none resolved', v0.roles.length === Object.keys(ROLES.roles).length
+       && v0.roles.every((r) => r.unset === true && r.use.length === 0 && !('suggestion' in r) && r.defaults === null) && v0.base === 'absent' && v0.error === null, JSON.stringify(v0.roles.map((r) => [r.name, r.unset])));
+    const first = await post('/api/models/roles/set', { name: 'reviewer', fields: { use: ['sol'], note: ROLES.roles.reviewer.note }, base: 'absent' });
+    const doc = JSON.parse(readRoles() || 'null');
+    ok('the first choice creates a version 2 roles.json holding exactly what was chosen', first.status === 200 && doc?.version === 2 && JSON.stringify(doc.roles) === JSON.stringify({ reviewer: { use: ['sol'], note: ROLES.roles.reviewer.note } }), readRoles());
+    const v1 = await view();
+    ok('…the view resolves that one, and the rest stay unset', v1.roles.find((r) => r.name === 'reviewer')?.use.join() === 'sol' && v1.roles.filter((r) => r.unset).length === Object.keys(ROLES.roles).length - 1);
+    const unset = await post('/api/models/roles/reset', { name: 'reviewer', base: first.body.base });
+    ok('reset on a version 2 file unsets the role', unset.status === 200 && !('reviewer' in (JSON.parse(readRoles()).roles || {})) && (await view()).roles.find((r) => r.name === 'reviewer')?.unset === true, readRoles());
+    fs.rmSync(rolesFile);
+  }
+
   console.log('\nroles routes: A4 — view, edit, reset, persist through history');
   {
+    // A roles.json from before roles were chosen at install: the shipped roles fill it, and edits store differences from them.
+    fs.mkdirSync(path.dirname(rolesFile), { recursive: true });
+    fs.writeFileSync(rolesFile, '{"version":1}\n');
     const v = await view();
     ok('the view lists every seeded role with its resolved id', ROLES.roles.reviewer && v.roles.find((r) => r.name === 'reviewer')?.ids[0] === MODELS.models.astra);
-    ok('every field says default, and there is no user file yet', v.roles.every((r) => Object.values(r.provenance).every((p) => p === 'default')) && v.base === 'absent' && v.userText === null);
+    ok('every field says default, and the user file sets nothing', v.roles.length === Object.keys(ROLES.roles).length && v.roles.every((r) => !r.unset && Object.values(r.provenance).every((p) => p === 'default')) && v.userText === '{"version":1}\n');
     ok('flavor is listed per family', v.flavor.find((f) => f.family === 'sol')?.flavor.brief === ROLES.flavor.sol.brief);
     ok('the Describe backend is the Assist registry default for claude', v.describe.harness === 'claude' && v.describe.model === MODELS.models[MODELS.assist.claude.default] && v.describe.ready === true, JSON.stringify(v.describe));
 
@@ -151,7 +169,7 @@ try {
     const custom = await post('/api/models/roles/set', { name: 'scout', fields: { use: ['haiku', 'sonnet'], note: 'quick looks' }, base: v2.base });
     ok('a custom role is added', custom.status === 200 && JSON.stringify(JSON.parse(readRoles()).roles.scout.use) === '["haiku","sonnet"]');
     const noUse = await post('/api/models/roles/set', { name: 'scout2', fields: { effort: 'low' }, base: custom.body.base });
-    ok('R7 a custom role without use → 400', noUse.status === 400 && /needs at least one family/.test(noUse.body.error));
+    ok('R7 a custom role without use → 400', noUse.status === 400 && /choose at least one family/.test(noUse.body.error));
     const resetCustom = await post('/api/models/roles/reset', { name: 'scout', base: custom.body.base });
     ok('R7 reset refuses a custom role (delete is separate)', resetCustom.status === 400 && /delete it instead/.test(resetCustom.body.error));
     const delDefault = await post('/api/models/roles/delete', { name: 'reviewer', base: custom.body.base });

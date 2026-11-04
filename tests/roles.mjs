@@ -115,14 +115,15 @@ if (haveOld) {
   const noDefaults = sh('model-id --role reviewer');
   ok('a copy without lib/roles.default.json: exit 2, run: acs install-model-id', noDefaults.status === 2 && /missing beside this resolver — run: acs install-model-id/.test(noDefaults.stderr), noDefaults.stderr);
   // Data from a newer studio than this resolver.
-  const future = tempHome({ roles: { version: 2, roles: {} } });
+  const future = tempHome({ roles: { version: 3, roles: {} } });
   const fr = now(future, '--role', 'reviewer');
-  ok('a roles.json newer than the resolver: exit 2, run: acs install-model-id', fr.code === 2 && /version 2 is newer than this resolver understands — run: acs install-model-id/.test(fr.err), fr.err);
+  ok('a roles.json newer than the resolver: exit 2, run: acs install-model-id', fr.code === 2 && /version 3 is newer than this resolver understands — run: acs install-model-id/.test(fr.err), fr.err);
 }
 
 console.log('\nroles: A2 — seeded values, overrides, merge and resolution (R6, R7)');
 {
-  const home = tempHome();
+  // A roles.json from before roles were chosen at install: the shipped roles still fill it.
+  const home = tempHome({ roles: { version: 1 } });
   for (const [name, r] of Object.entries(ROLES.roles)) {
     const use = [].concat(r.use);
     const want = `family=${use[0]} id=${MODELS.models[use[0]]} effort=${r.effort || ''} alt=${r.alt || ''}\n`;
@@ -165,7 +166,7 @@ console.log('\nroles: A2 — seeded values, overrides, merge and resolution (R6,
   ok('each id resolves through the models registry (a models.json bump moves the role)', now(home, '--role', 'reviewer').out.startsWith('family=astra id=gpt-7-astra '));
   const c = json(now(home, '--role', 'scout', '--json'));
   ok('a custom role with use resolves and is marked custom', c.custom === true && c.family === 'haiku' && c.effort === '');
-  const bad = tempHome({ models: { models: { sol: 'Not An Id' } } });
+  const bad = tempHome({ models: { models: { sol: 'Not An Id' } }, roles: { version: 1 } });
   const r = now(bad, '--role', 'builder');
   ok('a role whose id is malformed refuses (exit 2), never substitutes another family', r.code === 2 && /not a valid model id/.test(r.err) && !r.out.includes(MODELS.models.opus), JSON.stringify(r));
   const bb = now(bad, '--role', 'builder', '--json');
@@ -219,7 +220,7 @@ console.log('\nroles: A3 — every malformed case refused, with a precise messag
     ['avoid with a non-string', { flavor: { grok: { avoid: [7] } } }, /flavor\.grok\.avoid\[0\]: role name 7 must match/],
     ['avoid naming a role twice', { flavor: { grok: { avoid: ['builder', 'builder'] } } }, /flavor\.grok\.avoid: names a role twice/],
     ['avoid with 13 roles', { flavor: { grok: { avoid: Array.from({ length: 13 }, (_, i) => `r${i}`) } } }, /flavor\.grok\.avoid: has 13 roles; the limit is 12/],
-    ['version 0', { version: 0 }, /version must be 1, got 0/],
+    ['version 0', { version: 0 }, /version must be 1 or 2, got 0/],
     ['roles not an object', { roles: [] }, /"roles" must be an object/],
   ];
   for (const [what, doc, re] of cases) {
@@ -355,6 +356,33 @@ console.log('\nroles: model-id --effort looks on past an empty role, and --no-al
   ok('--no-alt leaves members as they were', now(alt, '--effort', 'sol', '--role', 'builder', '--no-alt').out === `${ROLES.roles.builder.effort}\n`);
   const misuse = now(alt, '--role', 'builder', '--no-alt');
   ok('--no-alt without --effort: exit 2', misuse.code === 2 && /--no-alt goes with --effort/.test(misuse.err), JSON.stringify(misuse));
+}
+
+console.log('\nroles: chosen at install — a shipped role is a suggestion, never an answer');
+{
+  const fresh = tempHome();
+  const r = now(fresh, '--role', 'reviewer');
+  ok('no roles.json: --role reviewer exits 2 with the sentinel, never a shipped family', r.code === 2 && r.out === 'family=MODEL-ID-UNRESOLVED-reviewer id=MODEL-ID-UNRESOLVED-reviewer effort= alt=\n' && !/gpt|claude/.test(r.out), JSON.stringify(r));
+  ok('...and one line naming the fix', r.err === 'model-id: role "reviewer" is not set — choose its model: acs packs install review-gate --set-role reviewer=<family>[,<family>…], or in ACS → Models → Roles\n', r.err);
+  const rj = now(fresh, '--role', 'advisor', '--json');
+  ok('--json: exit 2, nothing on stdout', rj.code === 2 && rj.out === '' && /role "advisor" is not set/.test(rj.err));
+  const all = now(fresh, '--roles');
+  ok('--roles lists each unset role as not set and says how to choose (exit 0)', all.code === 0 && Object.keys(ROLES.roles).every((n) => new RegExp(`^${n}\\s+-\\s+\\(not set\\)`, 'm').test(all.out)) && /^not set: .*--set-role/m.test(all.out), all.out);
+  const allj = json(now(fresh, '--roles', '--json'));
+  ok('--roles --json: no role resolved, every shipped one listed as unset', allj && Object.keys(allj.roles).length === 0 && JSON.stringify(allj.unset) === JSON.stringify(Object.keys(ROLES.roles).sort()), JSON.stringify(allj));
+  const e = now(fresh, '--effort', 'opus', '--role', 'reviewer,builder');
+  ok('--effort passes over an unset role (it holds no family), never refuses it', e.code === 0 && e.out === '', JSON.stringify(e));
+
+  const chosen = tempHome({ roles: { version: 2, roles: { reviewer: { use: ['opus'] }, advisor: { effort: 'high' } } } });
+  const rv = json(now(chosen, '--role', 'reviewer', '--json'));
+  ok('version 2: a chosen role resolves to exactly what it says — no shipped effort, alt or note', rv && rv.family === 'opus' && rv.effort === '' && rv.alt === '' && rv.note === '' && rv.provenance.use === 'user', JSON.stringify(rv));
+  const adv = now(chosen, '--role', 'advisor');
+  ok('version 2: a shipped role with fields but no use is unset', adv.code === 2 && /role "advisor" is not set/.test(adv.err), adv.err);
+  ok('version 2: a role it leaves out is unset', /role "judge" is not set/.test(now(chosen, '--role', 'judge').err));
+  const legacy = tempHome({ roles: { roles: { reviewer: { use: ['opus'] } } } });
+  const lv = json(now(legacy, '--role', 'reviewer', '--json'));
+  ok('a version 1 roles.json keeps its meaning: the shipped fields fill what it leaves out', lv && lv.family === 'opus' && lv.effort === ROLES.roles.reviewer.effort && lv.note === ROLES.roles.reviewer.note, JSON.stringify(lv));
+  ok('...and a role it leaves out still resolves from the shipped one', now(legacy, '--role', 'judge').out === `family=fable id=${MODELS.models.fable} effort=high alt=\n`);
 }
 
 console.log('\nroles: the shipped seed');

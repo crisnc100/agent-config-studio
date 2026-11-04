@@ -153,21 +153,24 @@ function rolesRows(R) {
   const { loadRoles, resolveRole } = R;
   const loaded = loadRoles();
   if (loaded.error) return { error: loaded.error };
-  const rows = Object.keys(loaded.roles).sort().map((name) => {
+  const names = [...new Set([...Object.keys(loaded.roles), ...(loaded.unset || [])])].sort();
+  const rows = names.map((name) => {
+    if (loaded.unset?.includes(name)) return [name, '-', '(not set)', '-', '-'];
     const r = resolveRole(name);
     return r.error ? [name, '?', `(${r.error})`, '', ''] : [name, r.family, r.id, r.effort || '-', r.alt || '-'];
   });
-  return { rows, failed: rows.some((r) => r[1] === '?'), source: loaded.source };
+  return { rows, failed: rows.some((r) => r[1] === '?'), unset: loaded.unset || [], source: loaded.source };
 }
 
 function rolesSection(R) {
-  const { rows, error, failed, source } = rolesRows(R);
+  const { rows, error, failed, unset, source } = rolesRows(R);
   if (error) return { error };
   const all = [['role', 'family', 'id', 'effort', 'alt'], ...rows];
   const w = all[0].map((_, i) => Math.max(...all.map((r) => r[i].length)));
   const lines = all.map((r) => r.map((c, i) => (i === r.length - 1 ? c : c.padEnd(w[i]))).join('  ').trimEnd());
   const note = source === R.ROLES_DEFAULTS_PATH ? ` (no ${tilde(R.rolesUserPath())})` : '';
-  return { text: `${lines.join('\n')}\nroles source: ${tilde(source)}${note}\n`, failed };
+  const choose = unset.length ? `not set: ${unset.join(', ')} — choose their models: acs packs install <pack> --set-role <role>=<family>[,<family>…], or in ACS → Models → Roles\n` : '';
+  return { text: `${lines.join('\n')}\nroles source: ${tilde(source)}${note}\n${choose}`, failed };
 }
 
 /** An unchecked `eval "$(model-id --role x)"` still gets ids every CLI rejects. */
@@ -224,7 +227,8 @@ function rolesCli(argv, R) {
     const loaded = loadRoles();
     if (loaded.error) die(`roles are invalid — ${loaded.error}`);
     const roles = Object.fromEntries(Object.keys(loaded.roles).sort().map((n) => [n, resolveRole(n)]));
-    process.stdout.write(JSON.stringify({ roles, flavor: loaded.flavor, provenance: loaded.provenance, source: loaded.source }, null, 2) + '\n');
+    const unset = loaded.unset?.length ? { unset: loaded.unset } : {};
+    process.stdout.write(JSON.stringify({ roles, ...unset, flavor: loaded.flavor, provenance: loaded.provenance, source: loaded.source }, null, 2) + '\n');
     if (Object.values(roles).some((r) => r.error)) process.exit(2);
   } else {
     const s = rolesSection(R);

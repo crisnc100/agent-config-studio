@@ -256,13 +256,16 @@ try {
     card1('review-gate').querySelectorAll('button').find((b) => /^Preview install/.test(p1.text(b))).click();
     await waitFor(() => card1('review-gate')?.querySelector('.pk-preview'));
     const pv = () => card1('review-gate').querySelector('.pk-preview');
-    const offer = () => pv()?.querySelectorAll('label').find((l) => /^Set the reviewer role to /.test(p1.text(l)))?.querySelector('input');
-    ok('the preview says the reviewer role has no installed CLI and offers installed families', /The reviewer role uses astra, and none of their CLIs is installed here/.test(p1.text(pv())) && offer() && !offer().checked, p1.text(pv()).slice(0, 600));
-    offer().click();
-    ok('ticking it re-previews with the role change in the list, ticked', await waitFor(() => offer()?.checked && /~\/\.agent-config-studio\/roles\.json/.test(p1.text(pv())))
+    const offer = () => pv()?.querySelector('select.pk-role-pick');
+    ok('the preview says the reviewer role is not set and offers the installed families, blank until one is chosen, none put forward',
+      /The reviewer role is not set: skills that use it stop until you choose its model/.test(p1.text(pv())) && offer() && offer().value === ''
+        && JSON.stringify(offer().querySelectorAll('option').map((o) => o.value)) === '["","fable","opus","sonnet","haiku"]' && !/suggest/i.test(p1.text(pv())), p1.text(pv()).slice(0, 600));
+    offer().value = 'opus';
+    offer().dispatchEvent({ type: 'change', bubbles: false });
+    ok('choosing one re-previews with the role change in the list, chosen', await waitFor(() => offer()?.value === 'opus' && /~\/\.agent-config-studio\/roles\.json/.test(p1.text(pv())))
       && /reviewer role →/.test(p1.text(pv())) && !/warning: the reviewer role/.test(p1.text(pv())), p1.text(pv()).slice(0, 800));
     const sent = p1.requests.filter((r) => r.path === '/api/packs/plan').at(-1).body;
-    ok('…sent as setRoles with the families offered', Array.isArray(sent.setRoles?.reviewer) && sent.setRoles.reviewer.length > 0, JSON.stringify(sent));
+    ok('…sent as setRoles with the family chosen', JSON.stringify(sent.setRoles?.reviewer) === '["opus"]', JSON.stringify(sent));
     ok('…and nothing was written', !fs.existsSync(path.join(c1.home, '.agent-config-studio', 'roles.json')) && !fs.existsSync(path.join(c1.home, '.claude', 'skills', 'code-review')));
     ok('no page errors there either', p1.errors.length === 0, p1.errors.join(' | '));
     p1.done();

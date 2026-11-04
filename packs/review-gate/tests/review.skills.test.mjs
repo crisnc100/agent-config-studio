@@ -54,6 +54,8 @@ beforeEach(() => {
   put(join(HOME, '.claude/skills/advisor/advisor-contract.md'), 'THE CONTRACT')
   put(join(HOME, '.codex/skills/advisor/advisor-contract.md'), 'THE CONTRACT')
   for (const harness of ['claude', 'codex']) put(join(HOME, `.${harness}/skills/build/grade.schema.json`), readFileSync(join(PACKS, 'build/skills', harness, 'build/grade.schema.json'), 'utf8'))
+  // A roles.json from before roles were chosen at install: the shipped roles fill every role it leaves out.
+  put(join(HOME, '.agent-config-studio/roles.json'), J({ version: 1 }))
 })
 
 const skill = (path) => readFileSync(join(PACKS, path), 'utf8')
@@ -72,7 +74,7 @@ const fill = (code, values = {}) =>
     .reduce((text, [placeholder, value]) => text.split(placeholder).join(value), code)
 const roles = (doc) => {
   rmSync(join(HOME, '.agent-config-studio'), { recursive: true, force: true })
-  if (doc) put(join(HOME, '.agent-config-studio/roles.json'), J({ version: 1, ...doc }))
+  put(join(HOME, '.agent-config-studio/roles.json'), J({ version: 1, ...doc }))
 }
 
 /** Runs the snippet in a shell; returns each stub CLI's recorded argv, in call order. */

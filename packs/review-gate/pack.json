@@ -10,7 +10,8 @@
       "~/.claude/skills/code-review/ and ~/.codex/skills/code-review/ (the skill, for the harnesses you have)",
       "~/.agent-config-studio/review-gate/ (the shared script, the scoring calibration and an example config)",
       "~/.agent-config-studio/review-log/review-log.jsonl (created by your first review)",
-      "anything an optional part lists, only if you turn that part on"
+      "anything an optional part lists, only if you turn that part on",
+      "~/.agent-config-studio/roles.json, only for the reviewer role you choose at install if not set yet (no model is set for you; kept after uninstall)"
     ],
     "undo": "Uninstalling removes the skill folders and, once no installed part uses it, the shared ~/.agent-config-studio/review-gate/ folder. A file you edited after installing is kept and reported. Your review log and the reports in each repo's reviews/ folder are your history and are never deleted."
   },

@@ -34,6 +34,9 @@ const ok = (name, cond, detail = '') => {
 const rejects = async (fn) => { try { await fn(); return null; } catch (e) { return e; } };
 const quiet = { recordBaseline: async () => null, record: async () => null };
 const put = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s); return f; };
+// A roles.json from before roles were chosen at install: the shipped roles fill it, so the effort rules have roles to check against.
+const LEGACY_ROLES = '{"version":1}\n';
+put(path.join(home, '.agent-config-studio', 'roles.json'), LEGACY_ROLES);
 const studio = path.join(home, '.agent-config-studio');
 const writeModels = (doc) => put(path.join(studio, 'models.json'), JSON.stringify(doc));
 const fence = (...lines) => ['```bash', ...lines, '```'].join('\n');
@@ -132,7 +135,7 @@ try {
     writeModels({ version: 1, models: { sol: 'gpt-6.1-sol' } });
     put(path.join(studio, 'roles.json'), '{"version":1,"roles":{"reviewer":{"use":"nobody"}}}');
     ok('R12 invalid roles switch the policy rules off too', /roles:/.test(policy().error) && scan(fence('codex -m gpt-6-sol')).every((f) => !f.fix && !f.stale));
-    fs.rmSync(path.join(studio, 'roles.json'));
+    put(path.join(studio, 'roles.json'), LEGACY_ROLES);
   }
 
   console.log('\naudit: tuning C1, C2, C5 — false positives and meaning-changing fixes');

@@ -64,6 +64,9 @@ async function call(base, method, route, body, headers = {}) {
 }
 
 const home = fs.realpathSync(tempDir('acs-guide-srv-'));
+// A roles.json from before roles were chosen at install: the shipped roles fill it, so the guide names them.
+fs.mkdirSync(path.join(home, '.agent-config-studio'), { recursive: true });
+fs.writeFileSync(path.join(home, '.agent-config-studio', 'roles.json'), '{"version":1}\n');
 const files = {
   claude: path.join(home, '.claude', 'CLAUDE.md'),
   codex: path.join(home, '.codex', 'AGENTS.md'),

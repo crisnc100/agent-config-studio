@@ -37,7 +37,7 @@ console.log('\nC7 update: untouched files are updated, edited ones kept, --repla
   const pkg = copyPackage(sb);
   const skill = path.join(sb.home, '.claude/skills/advisor/SKILL.md');
   const contract = path.join(sb.home, '.claude/skills/advisor/advisor-contract.md');
-  ok('C7 the copy installs advisor', pkg.run(['install', 'advisor', '--yes']).code === 0 && fs.existsSync(skill));
+  ok('C7 the copy installs advisor', pkg.run(['install', 'advisor', '--set-role', 'advisor=fable', '--yes']).code === 0 && fs.existsSync(skill));
   const fresh = pkg.json(['status', '--no-trust-check']);
   ok('C7 status right after install: installed', STATUS(fresh, 'advisor', 'advisor').statuses.join() === 'installed', JSON.stringify(STATUS(fresh, 'advisor', 'advisor')));
   fs.appendFileSync(path.join(pkg.dest, 'packs/advisor/skills/claude/advisor/SKILL.md'), '\nA new line in 1.1.0.\n');
@@ -74,7 +74,7 @@ console.log('\nC7 with the pack unchanged: a removed or edited file is reported,
   const sb = box('c7same', { clis: ['claude'] });
   const skill = path.join(sb.home, '.claude/skills/advisor/SKILL.md');
   const contract = path.join(sb.home, '.claude/skills/advisor/advisor-contract.md');
-  sb.packs(['install', 'advisor', '--yes']);
+  sb.packs(['install', 'advisor', '--set-role', 'advisor=fable', '--yes']);
   const shippedContract = sb.read(contract), shippedSkill = sb.read(skill);
   fs.rmSync(contract);
   const st = STATUS(sb.json(['status', '--no-trust-check']), 'advisor', 'advisor');
@@ -269,6 +269,51 @@ console.log('\nupdate checks the requirements of the skills it puts in place (as
   fs.rmSync(link);
   const idle = pkg.run(['update', 'advisor', '--yes']);
   ok('nothing left to put in place: no requirement check, nothing refused', none.code === 0 && idle.code === 0 && !/ask-model/.test(idle.out), idle.out);
+}
+
+console.log('\nmigration: a roles.json from before roles were chosen at install keeps exactly what runs');
+{
+  const ROLES_FILE = (b) => path.join(b.home, '.agent-config-studio', 'roles.json');
+  const modelId = (b, ...args) => b.run('model-id', args);
+  // What each role resolves to, without where each field came from (that moves from "default" to "user" on purpose).
+  const resolved = (b) => {
+    const r = JSON.parse(modelId(b, '--roles', '--json').stdout).roles;
+    return JSON.stringify(Object.fromEntries(Object.entries(r).map(([n, x]) => [n, { ...x, provenance: undefined, source: undefined }])));
+  };
+  // Like a real one: builder, reviewer and investigator set, advisor and judge left to the shipped roles.
+  const legacy = { roles: { builder: { use: ['opus', 'sol'] }, reviewer: { use: [{ family: 'opus', effort: 'xhigh' }, 'sol'] }, investigator: { use: 'fable' } } };
+  const sb = box('migrate', { clis: ['claude'] });
+  sb.roles(legacy);
+  const before = resolved(sb);
+  const text = sb.read(ROLES_FILE(sb));
+  const p = sb.json(['install', 'advisor', '--dry-run']);
+  const row = p.data?.preview?.find((r) => r.path === ROLES_FILE(sb));
+  ok('install previews writing out the roles the shipped ones fill, by name', row && /advisor, builder, investigator, judge, reviewer written out with the models they run today/.test(row.note), JSON.stringify(row));
+  ok('…and the dry run writes nothing', sb.read(ROLES_FILE(sb)) === text);
+  const r = sb.packs(['install', 'advisor', '--yes']);
+  const after = JSON.parse(sb.read(ROLES_FILE(sb)));
+  ok('--yes writes them: roles.json is version 2 with advisor and judge explicit, at the shipped values', r.code === 0 && after.version === 2
+     && JSON.stringify(after.roles.advisor) === '{"use":"fable","effort":"high","alt":"astra","note":"scope and direction calls; advises, never builds"}'
+     && JSON.stringify(after.roles.judge) === '{"use":"fable","effort":"high","note":"grades finished work against its criteria"}', `${r.out}\n${JSON.stringify(after)}`);
+  ok('…the user\'s own fields are kept as written, with the shipped ones they leaned on added', JSON.stringify(after.roles.reviewer.use) === JSON.stringify(legacy.roles.reviewer.use) && after.roles.reviewer.effort === 'high' && after.roles.reviewer.note === 'reads a diff and reports findings', JSON.stringify(after.roles.reviewer));
+  ok('…and every role resolves exactly as before (family, id, effort, alt, members)', resolved(sb) === before, `${before}\n${resolved(sb)}`);
+  ok('…with the old bytes backed up and the write in ACS history', /backups in/.test(r.out) && sb.run('git', ['-C', path.join(sb.home, '.agent-config-studio', 'history'), 'log', '--format=%s']).stdout.includes('roles: wrote out advisor, builder, investigator, judge, reviewer shipped roles; roles.json is version 2'), r.out);
+  const again = sb.json(['update', '--dry-run']);
+  ok('a version 2 roles.json is never written out again', !again.data?.preview?.some((x) => x.path === ROLES_FILE(sb)), JSON.stringify(again.data?.preview));
+
+  const up = box('migrate-up', { clis: ['claude'] });
+  up.packs(['install', 'handoff', '--yes']);
+  up.roles({ roles: { reviewer: { effort: 'max' } } });
+  const upBefore = resolved(up);
+  const u = up.packs(['update', '--yes']);
+  ok('update writes them out too, even with no pack to update', u.code === 0 && JSON.parse(up.read(ROLES_FILE(up))).version === 2 && resolved(up) === upBefore, `${u.out}\n${up.read(ROLES_FILE(up))}`);
+
+  const stale = box('migrate-stale', { clis: ['claude'] });
+  stale.roles(legacy);
+  const staleText = stale.read(ROLES_FILE(stale));
+  fs.appendFileSync(path.join(stale.home, '.agent-config-studio', 'resolver', 'lib', 'roles.js'), '\n// an older copy\n');
+  const s1 = stale.packs(['install', 'advisor', '--yes']);
+  ok('an installed resolver older than this package: nothing is written out (it could not read version 2), and the note says what to run', s1.code === 0 && stale.read(ROLES_FILE(stale)) === staleText && /run acs install-model-id, then acs packs update/.test(s1.out), s1.out);
 }
 
 for (const b of boxes) b.cleanup();

@@ -5,8 +5,9 @@
       "--roles"
     ],
     "status": 0,
-    "stdout": "role          family  id                effort  alt\nadvisor       fable   claude-fable-5-1  high    astra\nbuilder       opus    claude-opus-5-5   medium  -\ninvestigator  astra   gpt-6-astra       high    -\njudge         fable   claude-fable-5-1  high    -\nreviewer      astra   gpt-6-astra       high    -\nroles source: <RESOLVER>/lib/roles.default.json (no ~/.agent-config-studio/roles.json)\n",
-    "stderr": ""
+    "stdout": "role          family  id         effort  alt\nadvisor       -       (not set)  -       -\nbuilder       -       (not set)  -       -\ninvestigator  -       (not set)  -       -\njudge         -       (not set)  -       -\nreviewer      -       (not set)  -       -\nroles source: <RESOLVER>/lib/roles.default.json (no ~/.agent-config-studio/roles.json)\nnot set: advisor, builder, investigator, judge, reviewer — choose their models: acs packs install <pack> --set-role <role>=<family>[,<family>…], or in ACS → Models → Roles\n",
+    "stderr": "",
+    "since": "roles chosen at install"
   },
   {
     "home": "defaults",
@@ -24,9 +25,10 @@
       "--role",
       "builder"
     ],
-    "status": 0,
-    "stdout": "family=opus id=claude-opus-5-5 effort=medium alt=\n",
-    "stderr": ""
+    "status": 2,
+    "stdout": "family=MODEL-ID-UNRESOLVED-builder id=MODEL-ID-UNRESOLVED-builder effort= alt=\n",
+    "stderr": "model-id: role \"builder\" is not set — choose its model: acs packs install build --set-role builder=<family>[,<family>…], or in ACS → Models → Roles\n",
+    "since": "roles chosen at install"
   },
   {
     "home": "user",

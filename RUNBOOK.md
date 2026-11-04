@@ -213,6 +213,16 @@ Roles and flavor live in `lib/roles.default.json` and
 pair apart from `models.json` on purpose: a resolver installed before roles
 never reads it, so new data cannot break it.
 
+- Shipped roles are suggestions: a role resolves only from the user file. No
+  file, or a version 2 file without the role, means unset (`loaded.unset`);
+  `resolveRole` refuses with `unsetText`, the one line naming `acs packs
+  install <pack> --set-role`. A version 1 file (`isLegacy`) keeps the old
+  merge until `acs packs install`/`update` runs the `adopt-roles` op
+  (`legacyFill` → `adoptShippedRoles`, through `writeRoles`), skipped while
+  the installed resolver is stale. Every new file the studio writes is
+  version 2, and `writeRoles` refuses a version 2 document while the
+  installed resolver is stale (older resolvers refuse version 2 outright).
+
 - `model-id --role <name>` → `family=… id=… effort=… alt=…` (`--json` for the
   whole entry with per-field provenance). `--flavor <family>` → plain text.
   `--roles` lists every role; `--table` stays byte-identical (families only).

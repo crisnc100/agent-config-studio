@@ -185,6 +185,8 @@ try {
 
   console.log('\nassist turn: B5/F13 — facts follow roles within one session');
   {
+    // A roles.json from before roles were chosen at install: the shipped roles fill it.
+    put(path.join(studio, 'roles.json'), '{"version":1}\n');
     const t1 = await turn([{ text: 'ok' }]);
     put(path.join(studio, 'roles.json'), JSON.stringify({ version: 1, roles: { reviewer: { use: 'opus', effort: 'max' } } }));
     const t2 = await turn([{ text: 'ok' }], { sessionId: 'sess-1' });

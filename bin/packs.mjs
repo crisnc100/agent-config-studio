@@ -8,7 +8,7 @@
  */
 import readline from 'node:readline';
 import {
-  PREVIEW_SYMBOL as SYMBOL, PREVIEW_WHAT as WHAT, STATUS, apply, explainOf, getPack, loadCatalog, machine, planInstall, planUninstall, planUpdate, status,
+  PREVIEW_SYMBOL as SYMBOL, PREVIEW_WHAT as WHAT, STATUS, apply, explainOf, getPack, installedFamilies, loadCatalog, machine, planInstall, planUninstall, planUpdate, status,
 } from '../lib/packs.js';
 import { readState } from '../lib/packs-files.js';
 
@@ -91,12 +91,30 @@ function printPlan(plan) {
   if (!plan.ops.length && !plan.refusals.length) say('Nothing to change.');
 }
 
+async function ask(question) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise((r) => rl.question(question, r));
+  rl.close();
+  return answer.trim();
+}
+
 async function confirm(question) {
   if (!process.stdin.isTTY) return false;
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await new Promise((r) => rl.question(`${question} [y/N] `, r));
-  rl.close();
-  return /^y(es)?$/i.test(answer.trim());
+  return /^y(es)?$/i.test(await ask(`${question} [y/N] `));
+}
+
+/** A role's families, chosen here from those a CLI on this machine runs, none put forward; [] leaves it as it is. */
+async function pickFamilies(prob, families) {
+  say(`\n${prob.missing ? 'Choose the model' : `None of the ${prob.role} role's families (${prob.use.join(', ')}) has its CLI here. Choose another model`} for the ${prob.role} role${prob.note ? ` (${prob.note})` : ''}.`);
+  families.forEach((f, i) => say(`  ${i + 1}) ${f.family}${f.likes ? ` — ${f.likes}` : ''}`));
+  const several = prob.role === 'reviewer' ? 'several make a pool that each review picks from' : 'the first is the answer, any after it are fallbacks';
+  for (;;) {
+    const answer = await ask(`Numbers or names, comma-separated (${several}); Enter to leave it ${prob.missing ? 'unset' : 'as it is'}: `);
+    if (!answer) return [];
+    const picks = answer.split(',').map((s) => s.trim()).filter(Boolean).map((s) => (/^\d+$/.test(s) ? families[Number(s) - 1]?.family : families.find((f) => f.family === s)?.family));
+    if (picks.length && picks.every(Boolean) && new Set(picks).size === picks.length) return picks;
+    say(`Pick from the list above: ${families.map((f) => f.family).join(', ')}.`);
+  }
 }
 
 async function decide(plan, opts, rebuild) {
@@ -106,9 +124,15 @@ async function decide(plan, opts, rebuild) {
       printPlan(plan);
       if (await confirm('Add the pack it needs now?')) { opts.withDeps = true; plan = rebuild(); }
     }
-    if (!opts.fixRoles && plan.roles?.some((r) => !r.set && r.suggestion.length)) {
-      for (const r of plan.roles.filter((x) => !x.set)) say(`The ${r.role} role uses ${r.use.join(', ') || 'nothing'}, and none of their CLIs is installed here.`);
-      if (await confirm(`Set ${plan.roles.filter((x) => !x.set).map((r) => `${r.role} to ${r.suggestion.join(', ')}`).join('; ')} (through ACS's roles)?`)) { opts.fixRoles = true; plan = rebuild(); }
+    // Roles that would stop (unset, or no CLI here): chosen one by one, from the families a CLI here runs.
+    const families = installedFamilies(m);
+    const open = (plan.roles || []).filter((r) => !r.set);
+    if (!opts.fixRoles && open.length && families.length) {
+      for (const r of open) {
+        const picks = await pickFamilies(r, families);
+        if (picks.length) opts.setRoles[r.role] = picks;
+      }
+      plan = rebuild();
     }
   }
   return plan;
@@ -116,7 +140,7 @@ async function decide(plan, opts, rebuild) {
 
 async function change(plan, opts, rebuild) {
   plan = await decide(plan, opts, rebuild);
-  if (opts.json) process.stdout.write(`${JSON.stringify({ action: plan.action, packs: plan.packs, units: plan.units, preview: plan.preview, requirements: plan.requirements, refusals: plan.refusals, warnings: plan.warnings, notes: plan.notes, kept: plan.kept || [], roles: plan.roles }, null, 2)}\n`);
+  if (opts.json) process.stdout.write(`${JSON.stringify({ action: plan.action, packs: plan.packs, units: plan.units, preview: plan.preview, requirements: plan.requirements, refusals: plan.refusals, warnings: plan.warnings, notes: plan.notes, kept: plan.kept || [], roles: (plan.roles || []).map(({ suggestion, ...r }) => r) }, null, 2)}\n`);
   else printPlan(plan);
   if (plan.refusals.length) { process.exitCode = 1; return; }
   if (!plan.ops.length || opts.dryRun) return;
