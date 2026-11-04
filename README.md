@@ -566,6 +566,12 @@ skill.
   (`--tools ""`); Grok and Codex have none, so `ask-model` refuses them with
   exit 4 rather than run them with tools. It cannot be combined with
   `--investigate`.
+- `--min-tools` asks with as few tools as each CLI allows, from `--cwd`:
+  Claude with none (as `--no-tools`), Grok with `list_dir` only, Codex with
+  its shell and other tool features off, web search disabled and the
+  read-only sandbox. `--json` adds `tools` (`none` or `restricted`) and a
+  `toolsNote` naming what is left. It cannot be combined with
+  `--investigate` or `--no-tools`.
 - Exit codes: 0 answered, 2 another model answered, 3 the CLI (or node) is
   missing, 4 the call failed or returned an error, 5 files changed under
   `--investigate`, 64 a usage error or a role or family that does not resolve.

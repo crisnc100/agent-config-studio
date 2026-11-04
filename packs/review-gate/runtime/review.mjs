@@ -2689,14 +2689,15 @@ function shadowReport() {
 // Config "pickShadow" (REVIEW_PICK_SHADOW, comma-separated; home config or env only): pickers that say, in the
 // background, which reviewer family they would have chosen for a review, how complex the diff is, and why. The name of
 // the configured `classifier` asks that command (choice protocol, stats and paths only); any other name is a family asked
-// through `ask-model` with the capped diff, no tools, from a temporary folder.
+// through `ask-model --min-tools` with the capped diff, from a temporary folder: no tools for claude, the fewest each
+// other CLI allows (grok, codex). Each record's `tools` ("none" | "restricted") and `toolsNote` say what it had.
 // They decide nothing: each writes one `pick-shadow` record to the shadow log and nothing else. Reviews only.
 const PICK_DIFF_CAP = 60_000
 const PICK_TIMEOUT_MS = Number(process.env.REVIEW_PICK_SHADOW_TIMEOUT_MS) > 0 ? Number(process.env.REVIEW_PICK_SHADOW_TIMEOUT_MS) : 5 * 60_000
 const COMPLEXITIES = ['simple', 'moderate', 'deep']
 // One record per picker, success or failure; the shape every pick-shadow line shares.
 const pickRecord = (job, picker, fields) => ({ type: 'pick-shadow', reviewId: job.reviewId ?? null, picker, model: null, effort: null,
-  ts: new Date().toISOString(), durationMs: null, ok: false, family: null, complexity: null, reason: null, actual: job.actual ?? null, ...fields })
+  tools: null, toolsNote: null, ts: new Date().toISOString(), durationMs: null, ok: false, family: null, complexity: null, reason: null, actual: job.actual ?? null, ...fields })
 // After the real review is logged: one detached review.mjs --pick-shadow-run for every picker of this review, handed
 // the one input they all share in a job file. Nothing here can fail the review: a bad entry or a failed start is a record.
 function startPickShadows({ reviewId, diff, stats }) {
@@ -2813,12 +2814,12 @@ async function askModelPicker(job, picker, cwd) {
     required: ['family', 'complexity', 'reason'],
     additionalProperties: false,
   }))
-  // --no-tools: the picker sees only what it is handed; a CLI that cannot run without tools refuses (exit 4).
-  const r = await runBounded('ask-model', ['--family', picker, '--prompt-file', promptFile, '--schema', schemaFile, '--no-tools', '--json', '--cwd', cwd], { cwd })
+  // --min-tools: claude with no tools, grok and codex with the fewest their CLIs allow, in the empty temporary cwd.
+  const r = await runBounded('ask-model', ['--family', picker, '--prompt-file', promptFile, '--schema', schemaFile, '--min-tools', '--json', '--cwd', cwd], { cwd })
   if (r.error) return { error: r.error.includes('ENOENT') ? `ask-model is not installed (${r.error})` : r.error }
   let out = null
   try { out = JSON.parse(r.stdout) } catch { /* below */ }
-  const meta = { model: out?.id ?? null, effort: out?.effort ?? null }
+  const meta = { model: out?.id ?? null, effort: out?.effort ?? null, tools: out?.tools ?? null, toolsNote: out?.toolsNote ?? null }
   if (r.code !== 0) return { ...meta, error: `ask-model exited ${r.code ?? r.signal}: ${out?.error || String(r.stderr).trim().split('\n').at(-1) || 'no reason given'}` }
   if (!out || typeof out.answer !== 'string') return { ...meta, error: `unparseable ask-model output: ${String(r.stdout).slice(0, 200)}` }
   let answer
@@ -2846,7 +2847,7 @@ async function classifierPicker(job, cwd) {
   }
   const { name, command } = job.classifier
   const r = await runBounded(command, ['--json-out'], { input: JSON.stringify(payload), cwd })
-  const meta = { model: name, effort: null }
+  const meta = { model: name, effort: null, tools: 'none', toolsNote: 'a classifier command, handed stats and paths; no model tools' }
   if (r.error) return { ...meta, error: r.error }
   if (r.code !== 0) return { ...meta, error: (r.stderr || '').trim().split('\n')[0] || `${name} exited ${r.code ?? r.signal}` }
   let answers
@@ -2896,7 +2897,7 @@ async function pickShadowRun(jobFile) {
   process.exit(0)
 }
 // --pick-report [--since <date>]: per picker, its runs, failures, how often its family matched the family that really
-// reviewed (over the runs that answered), and the families and complexities it chose.
+// reviewed (over the runs that answered), the families and complexities it chose, and the tools it had.
 function pickReport() {
   const since = option('--since')
   const from = since === null ? null : Date.parse(since)
@@ -2908,9 +2909,10 @@ function pickReport() {
   for (const p of picks) {
     if (from !== null && !(Date.parse(p.ts) >= from)) continue
     const key = p.picker ?? '(none)'
-    const t = by.get(key) || { runs: 0, failed: 0, answered: 0, agreed: 0, families: {}, complexity: {} }
+    const t = by.get(key) || { runs: 0, failed: 0, answered: 0, agreed: 0, families: {}, complexity: {}, tools: {} }
     by.set(key, t)
     t.runs++
+    if (typeof p.tools === 'string') t.tools[p.tools] = (t.tools[p.tools] || 0) + 1
     if (!p.ok) { t.failed++; continue }
     t.answered++
     if (p.family && p.family === p.actual) t.agreed++
@@ -2923,7 +2925,9 @@ function pickReport() {
   for (const [picker, t] of [...by].sort(([a], [b]) => a.localeCompare(b))) {
     const rate = t.answered ? ` (${Math.round((100 * t.agreed) / t.answered)}%)` : ''
     console.log(`${picker}: ${t.runs} run(s), ${t.failed} failed; agreed with the actual reviewer ${t.agreed} of ${t.answered}${rate}; ` +
-      `families: ${counts(t.families)}; complexity: ${counts(t.complexity)}`)
+      `families: ${counts(t.families)}; complexity: ${counts(t.complexity)}` +
+      // Records written before pickers logged their tools carry none; those add nothing here.
+      (Object.keys(t.tools).length ? `; tools: ${counts(t.tools)}` : ''))
   }
 }
 
