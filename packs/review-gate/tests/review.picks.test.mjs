@@ -272,12 +272,12 @@ test('C6 --pick-report counts runs, failures, agreement with the actual reviewer
   assert.match(none.stdout, /no pick-shadow runs/)
 })
 
-test('X1 model pickers ask with --no-tools; a CLI that cannot run without tools is ok:false with its reason', async () => {
+test('X1 model pickers ask with --min-tools; a CLI that cannot run without tools is ok:false with its reason', async () => {
   config({ pickShadow: ['grok', 'opus'] })
   commit({ 'src/a.js': lines(10) })
   allowed(script([], { STUB_GROK: 'refuse' }))
   const by = Object.fromEntries((await pickRecords(2)).map((p) => [p.picker, p]))
-  for (const name of ['grok', 'opus']) assert.ok(pickCalls(name)[0].args.includes('--no-tools'), `${name} was asked with --no-tools`)
+  for (const name of ['grok', 'opus']) assert.ok(pickCalls(name)[0].args.includes('--min-tools') && !pickCalls(name)[0].args.includes('--no-tools'), `${name} was asked with --min-tools, not --no-tools`)
   assert.equal(by.grok.ok, false); assert.match(by.grok.error, /ask-model exited 4: grok cannot run with no tools/)
   assert.equal(by.opus.ok, true)
 })
