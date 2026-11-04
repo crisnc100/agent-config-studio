@@ -36,8 +36,8 @@
  *
  * --min-tools asks with as few tools as each CLI allows, from --cwd: claude exactly as --no-tools (mode no-tools,
  * tools "none"); grok with list_dir as its only built-in tool, MCP tools denied, web search and subagents off and a
- * low turn cap; codex with its shell, exec, image, browser, computer-use, sub-agent and app tools switched off, web
- * search disabled and the read-only sandbox (mode min-tools, tools "restricted"). --json then carries `tools` and a
+ * low turn cap; codex with every tool feature in CODEX_TOOL_FEATURES switched off, web search disabled and the
+ * read-only sandbox (mode min-tools, tools "restricted"). --json then carries `tools` and a
  * `toolsNote` naming what the CLI still allows.
  *
  * Exit: 0 answered · 2 another model answered · 3 the CLI (or node) is not
@@ -75,12 +75,15 @@ const GROK_MAX_TURNS = '40';
 const GROK_MIN_TURNS = '5';
 // codex features that give the model a tool (`codex features list`), all off under --min-tools; web search has no
 // feature of its own (`web_search` in config.toml: live, indexed, cached or disabled).
-const CODEX_TOOL_FEATURES = ['shell_tool', 'unified_exec', 'view_image', 'image_generation', 'multi_agent', 'browser_use', 'computer_use', 'apps'];
+const CODEX_TOOL_FEATURES = ['shell_tool', 'unified_exec', 'view_image', 'image_generation', 'multi_agent', 'browser_use', 'browser_use_external', 'computer_use',
+  'in_app_browser', 'apps', 'plugins', 'remote_plugin', 'goals', 'sleep_tool', 'skill_search', 'tool_suggest'];
 // What --min-tools leaves each CLI, for --json's `tools` and `toolsNote`.
 const MIN_TOOLS = {
   claude: { tools: 'none', toolsNote: 'no tools (claude --tools "")' },
   grok: { tools: 'restricted', toolsNote: 'list_dir only (it lists any folder it is given a path to); MCP tools denied, web search and subagents off; grok has no switch that removes every tool' },
-  codex: { tools: 'restricted', toolsNote: 'shell, exec, image, browser, computer-use, sub-agent and app tools off, web search disabled; apply_patch (writes refused by the read-only sandbox), update_plan and any tool codex has no switch for remain' },
+  codex: { tools: 'restricted', toolsNote: 'shell, exec, image, browser, computer-use, sub-agent, app, plugin, goal, sleep, skill-search and tool-suggest tools off, web search disabled; '
+      + 'apply_patch (writes refused by the read-only sandbox), update_plan, and whatever these features still on may add, remain: '
+      + 'code_mode_host, in_app_local_automation, workspace_dependencies, worktrees' },
 };
 // grok's own switches for the MCP servers and hooks it borrows from Claude Code's and Cursor's configs, set for
 // its preflight and its run alike (the studio's GROK_ASSIST_ENV, lib/containment.js). Its own MCP servers have

@@ -1079,7 +1079,8 @@ console.log('\nask-model: --no-tools');
 console.log('\nask-model: --min-tools');
 {
   const MIN = mk('min-cwd');
-  const CODEX_OFF = ['shell_tool', 'unified_exec', 'view_image', 'image_generation', 'multi_agent', 'browser_use', 'computer_use', 'apps'];
+  const CODEX_OFF = ['shell_tool', 'unified_exec', 'view_image', 'image_generation', 'multi_agent', 'browser_use', 'browser_use_external', 'computer_use',
+    'in_app_browser', 'apps', 'plugins', 'remote_plugin', 'goals', 'sleep_tool', 'skill_search', 'tool_suggest'];
   const c = ask(['--family', 'fable', '--min-tools', '--json', '--cwd', MIN]);
   const cj = c.code === 0 ? JSON.parse(c.out) : {};
   ok('claude --min-tools: the --no-tools argv, run from --cwd, mode no-tools, tools "none" with a note',
@@ -1103,6 +1104,8 @@ console.log('\nask-model: --min-tools');
      x.code === 0 && x.argv[0] === 'exec' && x.argv[x.argv.indexOf('--sandbox') + 1] === 'read-only' && same(disabled, CODEX_OFF)
      && x.argv.includes('web_search="disabled"') && x.argv[x.argv.indexOf('web_search="disabled"') - 1] === '-c'
      && x.argv.at(-1) === PROMPT && x.calls[0].cwd === MIN, show(x));
+  ok('codex --min-tools: goals, sleep_tool, skill_search and tool_suggest are disabled too',
+     ['goals', 'sleep_tool', 'skill_search', 'tool_suggest'].every((f) => disabled.includes(f)), show(x));
   ok('codex --min-tools --json: mode min-tools, tools "restricted", a note naming what remains',
      xj.mode === 'min-tools' && xj.tools === 'restricted' && /apply_patch/.test(xj.toolsNote) && /read-only sandbox/.test(xj.toolsNote), show(x));
 
