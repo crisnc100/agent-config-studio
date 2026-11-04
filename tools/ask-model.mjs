@@ -3,7 +3,7 @@
  * ask-model — ask another model, read-only, and print its answer.
  *
  *   ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]])
- *             [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate] [--json] [--cwd <dir>]
+ *             [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools] [--json] [--cwd <dir>]
  *
  * The mechanical half of "ask model X", in one place instead of in every
  * skill: the family, id and effort from the resolver (lib/models.js and
@@ -30,6 +30,10 @@
  * compares the git work tree before and after the call. Anything that changed
  * is named on stderr and the exit is 5. Nothing is ever reverted.
  *
+ * --no-tools asks with no tools at all: claude with `--tools ""` (its documented "no tools"). grok has no such mode
+ * (a --tools entry that names no tool leaves the others available) and codex has no switch that removes every tool,
+ * so for those two it refuses with exit 4 rather than run with tools.
+ *
  * Exit: 0 answered · 2 another model answered · 3 the CLI (or node) is not
  * installed · 4 the call failed or returned an error · 5 files changed under
  * --investigate · 6 the answer is not JSON or does not match --schema · 64 a
@@ -50,13 +54,13 @@ import { EFFORTS, loadRegistry, resolveModel } from '../lib/models.js';
 import { familyEffort, resolveFlavor, resolveRole } from '../lib/roles.js';
 
 const SELF = fileURLToPath(import.meta.url);
-const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate] [--json] [--cwd <dir>]';
+const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools] [--json] [--cwd <dir>]';
 const VALUE_FLAGS = { '--role': 'role', '--family': 'family', '--effort': 'effort', '--effort-from': 'effortFrom', '--prompt-file': 'promptFile', '--schema': 'schemaFile', '--cwd': 'cwd' };
 
 // What each CLI may use. Claude and grok are read-only by these allowlists alone
 // (their plan modes and denylists were observed to still write); codex by its sandbox.
 const TOOLS = {
-  claude: { 'read-only': 'Read,Grep,Glob', investigate: 'Read,Grep,Glob,Bash' },
+  claude: { 'read-only': 'Read,Grep,Glob', investigate: 'Read,Grep,Glob,Bash', 'no-tools': '' },
   grok: { 'read-only': 'read_file,list_dir,grep', investigate: 'read_file,list_dir,grep,run_terminal_cmd' },
 };
 // The review runtime's grok turn cap (packs/review-gate/runtime/review.mjs).
@@ -590,6 +594,7 @@ function parse(argv) {
     const a = argv[i];
     if (a === '-h' || a === '--help') return { help: true };
     if (a === '--investigate' || a === '--json' || a === '--second') { o[a.slice(2)] = true; continue; }
+    if (a === '--no-tools') { o.noTools = true; continue; }
     const key = VALUE_FLAGS[a];
     if (!key) return { error: `unexpected argument ${JSON.stringify(a)}` };
     const v = argv[++i];
@@ -606,6 +611,7 @@ function parse(argv) {
     if (o.effortFrom.some((n) => !n)) return { error: '--effort-from takes role names separated by commas' };
   }
   if (o.promptFile === undefined) return { error: '--prompt-file is required' };
+  if (o.noTools && o.investigate) return { error: '--no-tools and --investigate cannot both be given' };
   if (o.effort && !EFFORTS.has(o.effort)) return { error: `--effort ${JSON.stringify(o.effort)} is not one of ${[...EFFORTS].join('/')} (or empty for none)` };
   return o;
 }
@@ -855,7 +861,7 @@ async function main(argv) {
   if (m.error) return usage(m.error);
   const vendor = vendorOf(m.id);
   if (!vendor) return usage(`${m.family} resolves to "${m.id}", whose prefix names no known CLI (claude-, gpt-, grok-)`);
-  const mode = o.investigate ? 'investigate' : 'read-only';
+  const mode = o.investigate ? 'investigate' : o.noTools ? 'no-tools' : 'read-only';
   process.stderr.write(`ask-model: ${m.family} (${m.id}, effort ${m.effort || 'none'}, ${mode})\n`);
 
   const result = { family: m.family, id: m.id, effort: m.effort || null, mode, answer: null, changed: null, error: null };
@@ -868,6 +874,10 @@ async function main(argv) {
     return exit;
   };
 
+  if (mode === 'no-tools' && !Object.hasOwn(TOOLS[vendor] || {}, 'no-tools')) {
+    result.error = `${vendor} cannot run with no tools (it has no switch that removes every tool) — not asked`;
+    return finish(4);
+  }
   const bin = which(vendor);
   if (!bin) { result.error = `the ${vendor} CLI is not on PATH`; return finish(3); }
 

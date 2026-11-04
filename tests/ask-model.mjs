@@ -1055,6 +1055,27 @@ console.log('\nask-model: grok runs with an empty temporary HOME and the real GR
      relative.code === 0 && relative.inspect[0]?.grokHome === path.join(rel, 'my-grok') && relative.calls[0]?.grokHome === path.join(rel, 'my-grok'), show(relative));
 }
 
+console.log('\nask-model: --no-tools');
+{
+  // claude documents --tools "" as no tools at all; grok's --tools leaves the other tools available for an entry that
+  // names none, and codex has no switch that removes every tool, so those two refuse rather than run with tools.
+  const c = ask(['--family', 'fable', '--no-tools', '--cwd', WORK]);
+  const ci = c.argv?.indexOf('--tools');
+  ok('claude --no-tools: --tools "" (no tools), MCP still off, label says no-tools',
+     c.code === 0 && c.argv?.[ci + 1] === '' && c.argv.filter((a) => a === '--tools').length === 1 && c.argv.includes('--strict-mcp-config') && / no-tools\)\n/.test(c.err), show(c));
+  const cj = ask(['--family', 'fable', '--no-tools', '--json', '--cwd', WORK]);
+  ok('claude --no-tools --json: mode no-tools', cj.code === 0 && JSON.parse(cj.out).mode === 'no-tools', show(cj));
+  const g = ask(['--family', 'grok', '--no-tools', '--json', '--cwd', WORK]);
+  ok('grok --no-tools: refused with exit 4, grok never asked, the reason in --json',
+     g.code === 4 && g.calls.filter((x) => x.argv[0] !== 'inspect').length === 0 && /grok cannot run with no tools/.test(JSON.parse(g.out).error), show(g));
+  const x = ask(['--family', 'astra', '--no-tools', '--cwd', WORK]);
+  ok('codex --no-tools: refused with exit 4, codex never asked', x.code === 4 && x.calls.length === 0 && /codex cannot run with no tools/.test(x.err), show(x));
+  const both = ask(['--family', 'fable', '--no-tools', '--investigate', '--cwd', WORK]);
+  ok('--no-tools with --investigate: a usage error, nothing called', both.code === 64 && both.calls.length === 0 && /--no-tools and --investigate/.test(both.err), show(both));
+  const plain = ask(['--family', 'fable', '--cwd', WORK]);
+  ok('without --no-tools claude keeps its read-only tools', plain.code === 0 && plain.argv?.[plain.argv.indexOf('--tools') + 1] === 'Read,Grep,Glob', show(plain));
+}
+
 console.log('\nask-model: live');
 if (process.env.ACS_LIVE_CHECKS === '1') {
   const live = path.join(tmp, 'live-prompt.txt');
