@@ -2709,7 +2709,8 @@ function startPickShadows({ reviewId, diff, stats }) {
     const entries = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [value]
     const pickers = []
     // The classifier is the home config's own command (a repo file cannot set it); it is logged by its command's name.
-    const classifier = CLASSIFIER ? { name: basename(CLASSIFIER).toLowerCase(), command: CLASSIFIER } : null
+    // A path is made absolute here: the pickers run from a temporary folder.
+    const classifier = CLASSIFIER ? { name: basename(CLASSIFIER).toLowerCase(), command: CLASSIFIER.includes('/') ? resolve(CLASSIFIER) : CLASSIFIER } : null
     for (const entry of entries) {
       const raw = String(entry ?? '').trim()
       const picker = classifier && (raw === CLASSIFIER || raw.toLowerCase() === classifier.name) ? classifier.name : raw.toLowerCase()
@@ -2730,22 +2731,29 @@ function startPickShadows({ reviewId, diff, stats }) {
     }
     const truncated = diff.length > PICK_DIFF_CAP
     const job = { ...base, pickers, ...(pickers.includes(classifier?.name) && { classifier }), input, diff: diff.slice(0, PICK_DIFF_CAP), diffChars: diff.length, diffTruncated: truncated }
+    let dir = null
+    // A start that fails, now or as the child's later 'error' event, is one record per picker and no job left behind.
+    const failed = (e) => {
+      if (dir) rmSync(dir, { recursive: true, force: true })
+      for (const p of pickers) fail(p, `could not start: ${e.message}`)
+    }
     try {
-      const dir = mkdtempSync(join(tmpdir(), 'review-pick-shadow-'))
+      dir = mkdtempSync(join(tmpdir(), 'review-pick-shadow-'))
       const file = join(dir, 'job.json')
       writeFileSync(file, JSON.stringify(job), { mode: 0o600 })
-      const child = spawnFile(process.execPath, [COPY_PATH, '--pick-shadow-run', file], { detached: true, stdio: 'ignore' })
-      child.on('error', () => {})
+      const child = spawnFile(process.execPath, [COPY_PATH, '--pick-shadow-run', file], { detached: true, stdio: 'ignore', env: { ...process.env, GROK_HOME } })
+      child.on('error', failed)
       child.unref()
       console.log(`▶ pick-shadow · ${pickers.join(', ')} started in the background for ${reviewId} (results: ${SHADOW_LOG})`)
-    } catch (e) { for (const p of pickers) fail(p, `could not start: ${e.message}`) }
+    } catch (e) { failed(e) }
   } catch (e) { fail(null, `pick shadows could not start: ${e.message}`) }
 }
 // Run a command detached in its own process group with stdin given, killed (group and all) at the timeout.
 function runBounded(command, argv, { input = '', cwd, timeoutMs = PICK_TIMEOUT_MS } = {}) {
   return new Promise((done) => {
     let child
-    try { child = spawn(command, argv, { cwd, detached: true, stdio: ['pipe', 'pipe', 'pipe'] }) } catch (e) { return done({ error: e.message }) }
+    // GROK_HOME is the one made absolute at load: a relative one would name a folder under the temporary cwd.
+    try { child = spawn(command, argv, { cwd, detached: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, GROK_HOME } }) } catch (e) { return done({ error: e.message }) }
     let stdout = '', stderr = '', timedOut = false
     const timer = setTimeout(() => {
       timedOut = true
@@ -2805,7 +2813,8 @@ async function askModelPicker(job, picker, cwd) {
     required: ['family', 'complexity', 'reason'],
     additionalProperties: false,
   }))
-  const r = await runBounded('ask-model', ['--family', picker, '--prompt-file', promptFile, '--schema', schemaFile, '--json', '--cwd', cwd], { cwd })
+  // --no-tools: the picker sees only what it is handed; a CLI that cannot run without tools refuses (exit 4).
+  const r = await runBounded('ask-model', ['--family', picker, '--prompt-file', promptFile, '--schema', schemaFile, '--no-tools', '--json', '--cwd', cwd], { cwd })
   if (r.error) return { error: r.error.includes('ENOENT') ? `ask-model is not installed (${r.error})` : r.error }
   let out = null
   try { out = JSON.parse(r.stdout) } catch { /* below */ }

@@ -562,6 +562,10 @@ skill.
   anything changed, it names each file (and a moved HEAD with both commits)
   and exits 5. It never reverts anything. Ignored files and files outside the
   repository are not checked.
+- `--no-tools` asks with no tools at all. Only Claude has such a mode
+  (`--tools ""`); Grok and Codex have none, so `ask-model` refuses them with
+  exit 4 rather than run them with tools. It cannot be combined with
+  `--investigate`.
 - Exit codes: 0 answered, 2 another model answered, 3 the CLI (or node) is
   missing, 4 the call failed or returned an error, 5 files changed under
   `--investigate`, 64 a usage error or a role or family that does not resolve.

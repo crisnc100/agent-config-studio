@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
@@ -24,6 +24,7 @@ const reviewer = `
 const fs = require('node:fs')
 const a = process.argv.slice(2)
 if (a[0] === 'mcp') { console.log('[]'); process.exit(0) }
+if (process.env.STUB_DELETE) fs.rmSync(process.env.STUB_DELETE, { force: true })
 const schema = a.includes('--output-schema') ? fs.readFileSync(a[a.indexOf('--output-schema')+1],'utf8') : a[a.indexOf('--json-schema')+1]
 const reply = schema.includes('"scores"') ? '{"scores":[]}' : schema.includes('"verdicts"') ? '{"verdicts":[]}' : (process.env.STUB_FINDINGS || '{"findings":[]}')
 if (a.includes('-o')) fs.writeFileSync(a[a.indexOf('-o')+1], reply)
@@ -39,9 +40,10 @@ const name = ${JSON.stringify(kind)} === 'jev' ? 'jev' : a[a.indexOf('--family')
 const input = ${JSON.stringify(kind)} === 'jev' ? fs.readFileSync(0, 'utf8') : ''
 const at = (f) => a.includes(f) ? fs.readFileSync(a[a.indexOf(f) + 1], 'utf8') : null
 const log = ${JSON.stringify(LOG)}
-fs.writeFileSync(path.join(${JSON.stringify(CALLS)}, 'pick-' + name + '-' + process.pid + '.json'), JSON.stringify({ args: a, cwd: process.cwd(), input,
+fs.writeFileSync(path.join(${JSON.stringify(CALLS)}, 'pick-' + name + '-' + process.pid + '.json'), JSON.stringify({ args: a, cwd: process.cwd(), input, grokHome: process.env.GROK_HOME ?? null,
   prompt: at('--prompt-file'), schema: at('--schema'), reviewLog: fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '' }))
 const mode = process.env['STUB_' + name.toUpperCase()] || 'ok'
+if (mode === 'refuse') { console.log(JSON.stringify({ family: name, id: 'stub-' + name, effort: 'high', mode: 'no-tools', answer: null, error: name + ' cannot run with no tools (it has no switch that removes every tool) — not asked' })); process.exit(4) }
 if (mode === 'sleep') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20000)
 if (mode === 'fail') { process.stderr.write('stub picker failure\\n'); if (name !== 'jev') console.log(JSON.stringify({ family: name, id: 'stub-' + name, effort: 'high', answer: null, error: 'stub picker failure' })); process.exit(4) }
 const custom = process.env['STUB_' + name.toUpperCase() + '_ANSWER']
@@ -268,4 +270,49 @@ test('C6 --pick-report counts runs, failures, agreement with the actual reviewer
   rmSync(SHADOW)
   const none = script(['--pick-report']); allowed(none)
   assert.match(none.stdout, /no pick-shadow runs/)
+})
+
+test('X1 model pickers ask with --no-tools; a CLI that cannot run without tools is ok:false with its reason', async () => {
+  config({ pickShadow: ['grok', 'opus'] })
+  commit({ 'src/a.js': lines(10) })
+  allowed(script([], { STUB_GROK: 'refuse' }))
+  const by = Object.fromEntries((await pickRecords(2)).map((p) => [p.picker, p]))
+  for (const name of ['grok', 'opus']) assert.ok(pickCalls(name)[0].args.includes('--no-tools'), `${name} was asked with --no-tools`)
+  assert.equal(by.grok.ok, false); assert.match(by.grok.error, /ask-model exited 4: grok cannot run with no tools/)
+  assert.equal(by.opus.ok, true)
+})
+
+test('X2 a relative classifier command runs from where the review ran, not the picker folder', async () => {
+  config({ pickShadow: ['jev'] })
+  mkdirSync(join(REPO, 'tools')); writeFileSync(join(REPO, 'tools/jev'), ''); chmodSync(join(REPO, 'tools/jev'), 0o755)
+  commit({ 'src/a.js': lines(10), 'tools/jev': readFileSync(join(BIN, 'jev'), 'utf8') })
+  allowed(script([], { REVIEW_CLASSIFIER: './tools/jev' }))
+  const [p] = await pickRecords(1)
+  assert.deepEqual([p.picker, p.ok, p.family, p.error], ['jev', true, 'opus', undefined])
+})
+
+test('X3 a relative GROK_HOME reaches the pickers made absolute against where the review ran', async () => {
+  config({ pickShadow: ['grok'] })
+  commit({ 'src/a.js': lines(10) })
+  allowed(script([], { GROK_HOME: 'rel-grok' }))
+  await pickRecords(1)
+  assert.equal(pickCalls('grok')[0].grokHome, join(realpathSync(REPO), 'rel-grok'))
+})
+
+test('X4 a picker worker that fails to start writes one ok:false record per picker and leaves no job folder', async () => {
+  config({ pickShadow: ['jev', 'grok'] })
+  commit({ 'src/a.js': lines(10) })
+  // The review runs on its own link to node, which the reviewer removes mid-run: the worker's spawn then fails.
+  const node = join(ROOT, 'node-link')
+  rmSync(node, { force: true })
+  try { linkSync(process.execPath, node) } catch { copyFileSync(process.execPath, node) }
+  const r = spawnSync(node, [SCRIPT], { cwd: REPO, env: env({ STUB_DELETE: node }), encoding: 'utf8', timeout: 60000 })
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`)
+  assert.ok(!existsSync(node), 'the link was removed during the review')
+  const by = Object.fromEntries((await pickRecords(2)).map((p) => [p.picker, p]))
+  for (const name of ['jev', 'grok']) {
+    assert.equal(by[name].ok, false); assert.match(by[name].error, /could not start/)
+    assert.equal(by[name].reviewId, records().at(-1).id)
+  }
+  assert.deepEqual(readdirSync(ROOT).filter((d) => d.startsWith('review-pick-shadow-')), [], 'the unused job folder is removed')
 })
