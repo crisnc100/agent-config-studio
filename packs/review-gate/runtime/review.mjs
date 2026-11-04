@@ -728,6 +728,30 @@ function diffStats(range = `${BASE}...HEAD`, paths = null) {
     riskFiles,
   }
 }
+// The record's `stats`: what a review or fix check saw, for calibrating routing later. Files count per kind;
+// logicLines = lines added + removed in logic files. Lockfiles and coverage-exempt paths are never logic.
+const STATIC_EXTS = new Set(['css', 'scss', 'sass', 'less', 'svg', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'woff', 'woff2', 'ttf', 'otf'])
+const DOC_EXTS = new Set(['md', 'mdx', 'txt', 'rst'])
+const LOGIC_EXTS = new Set(['js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'kts',
+  'swift', 'scala', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'php', 'sql', 'sh', 'bash', 'zsh', 'vue', 'svelte', 'lua', 'ex', 'exs', 'dart'])
+function fileKind(path) {
+  if (isTestFile(path)) return 'tests'
+  if (coverageExempt(path)) return 'other'
+  const name = path.split('/').at(-1)
+  const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : ''
+  return STATIC_EXTS.has(ext) ? 'static' : DOC_EXTS.has(ext) ? 'docs' : LOGIC_EXTS.has(ext) ? 'logic' : 'other'
+}
+function recordStats(stats) {
+  if (!stats) return null
+  const kinds = { static: 0, docs: 0, tests: 0, logic: 0, other: 0 }
+  let logicLines = 0
+  for (const f of stats.files) {
+    const kind = fileKind(f.path)
+    kinds[kind]++
+    if (kind === 'logic') logicLines += f.added + f.removed
+  }
+  return { files: stats.filesChanged, linesAdded: stats.linesAdded, linesRemoved: stats.linesRemoved, kinds, logicLines }
+}
 
 // One choice among the candidates from the classifier `command` (JSON on stdin, JSON answer on
 // stdout). Returns { choice, confidence, probabilities } or { error }.
@@ -2344,6 +2368,9 @@ function validateDeferral(entries, review, f, status) {
   if (!criterion) throw new Error(`Deferred criterion ${f.id} needs its one recheck first`)
   if (criterion.verdict !== 'FAIL') throw new Error(`Criterion ${f.id} passed its recheck; mark it fixed rather than deferred`)
 }
+// A fixed status's optional `test`: a nonempty relative path that stays inside the repository.
+const repoRelativePath = (p) => typeof p === 'string' && !!p.trim() && p === p.trim() && !p.startsWith('/') && !/^[a-z]:/i.test(p) &&
+  !/[\0\n\r]/.test(p) && !p.split(/[\\/]/).includes('..')
 function validateStatuses(entries, review, statuses) {
   for (const f of review.findingDetails) {
     const status = statuses[f.id]
@@ -2355,8 +2382,10 @@ function validateStatuses(entries, review, statuses) {
     }
     if (!status || !['fixed', 'rejected'].includes(status.status))
       throw new Error(`Finding ${f.id} needs a fixed or rejected status${review.kind === 'fix-check' || review.kind === 'recheck' ? ', or deferred with a reason' : ''}`)
-    if (Object.keys(status).some((key) => !['status', 'reason', 'evidence', 'refutedBy'].includes(key)))
+    if (Object.keys(status).some((key) => !['status', 'reason', 'evidence', 'refutedBy', ...(status.status === 'fixed' ? ['test'] : [])].includes(key)))
       throw new Error(`Unknown status field for ${f.id}; reviewer severity cannot be changed`)
+    if (Object.hasOwn(status, 'test') && !repoRelativePath(status.test))
+      throw new Error(`Fixed ${f.id} test must be a repo-relative path to the test that reproduces it`)
     if (Object.hasOwn(status, 'refutedBy') && !refuted(entries, review, f, status.refutedBy))
       throw new Error(`refutedBy for ${f.id} must reference a REFUTED dispute on the same branch in the same repository`)
     if (review.kind === 'grade' && f.criterionId && status.status === 'fixed') {
@@ -2775,14 +2804,19 @@ async function fixCheck(id) {
   DIFF_BASE = original.head
   const branch = sh('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
   CONTEXT = reviewContext(branch)
-  SELECTION = selectReviewer(diffStats(`${original.head}..${head}`, SLICE))
+  const fixStats = diffStats(`${original.head}..${head}`, SLICE)
+  SELECTION = selectReviewer(fixStats)
   SEL = SELECTION.sel
   if (SEL.team) throw new Error('A fix check requires one reviewer family, not the multi-agent team')
   const started = Date.now()
-  const { result } = await runModel(SEL, `Fix check: review only this fix diff, not the original branch diff.\n${reviewPrompt(diff)}`, SCHEMA, 'fix-check reviewer')
+  const { result } = await runModel(SEL, `Fix check: review only this fix diff, not the original branch diff.\n${originalFindingsNote(original)}${reviewPrompt(diff)}`, SCHEMA, 'fix-check reviewer')
   const scored = await scoredFindings(result?.findings || [], SEL)
   const durationMs = Date.now() - started
-  const findingDetails = scored.findings.map((f, i) => ({ ...locatedFinding(f), id: `x${i + 1}` }))
+  const changed = fixChangedLines(original.head, head, SLICE)
+  const findingDetails = scored.findings.map((f, i) => {
+    const finding = { ...locatedFinding(f), id: `x${i + 1}` }
+    return { ...finding, inFix: inFix(finding, changed) }
+  })
   requireClean()
   if (headNow() !== head) throw new Error('HEAD changed during fix check')
   // What it covers: the fix diff's files at its head, minus any the cap cut here or in the original review (it read
@@ -2793,10 +2827,50 @@ async function fixCheck(id) {
   appendLog({ type: 'review', kind: 'fix-check', rubricVersion: RUBRIC_VERSION, rescored: scored.rescored, id: checkId, review: id, ts: new Date().toISOString(), head, branch,
     repo: repoName(), repoId: repoIdentity(), base: original.head, baseSha: original.head, family: SEL.family, model: SEL.id, vendor: SEL.vendor, copy: COPY_PATH,
     ...(SLICE && { paths: SLICE }), findings: findingDetails.length, findingDetails, ...recordedLocations(findingDetails),
-    truncated, coverage: missed ? coverageOf(head, files.filter((p) => !truncated.includes(p) && !missed.has(p))) : [], noRenames: true, durationMs })
+    truncated, coverage: missed ? coverageOf(head, files.filter((p) => !truncated.includes(p) && !missed.has(p))) : [], noRenames: true,
+    stats: recordStats(fixStats), plan: PLAN_PATH ?? null, durationMs })
   console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)`)
   for (const f of findingDetails.filter((f) => f[WHERE]?.ambiguous))
     console.warn(`⚠ ${f.id}: path ambiguous, the quote is in both ${f[WHERE].ambiguous.join(' and ')}; it authorizes no file at close`)
+}
+// The original findings a fix check's fix is meant to repair (every one not filed), so the reviewer can tell an
+// incomplete repair from a new regression. Empty when there are none.
+function originalFindingsNote(original) {
+  const targets = (original.findingDetails || []).filter((f) => !isFiled(f))
+  if (!targets.length) return ''
+  const list = targets.map((f) => `- ${f.id} ${String(f.severity || '?').toUpperCase()} ${f.file || '?'}:${f.line || '?'} — ${f.issue || f.criterion || ''}; ` +
+    `Trigger: ${f.trigger || 'trigger not recorded'}`).join('\n')
+  return `The fix is meant to repair these findings from review ${original.id}. Use them to tell an incomplete repair ` +
+    `from a new regression the fix introduced; report defects in the fix diff as usual.\n${list}\n\n`
+}
+// Lines the fix diff added or changed, by file at the fix head (-U0 hunks; a pure deletion marks the line it follows).
+function fixChangedLines(from, to, paths = null) {
+  const r = spawnSync('git', [...(paths ? ['-C', TOP] : []), '-c', 'core.quotePath=false', 'diff', '-U0', '--no-renames', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', from, to, ...pathspec(paths)],
+    { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
+  if (r.error || r.status !== 0) return null
+  const changed = new Map()
+  let lines = null
+  for (const line of r.stdout.split('\n')) {
+    const file = line.match(/^\+\+\+ (?:b\/(.*)|\/dev\/null)$/)
+    if (file) {
+      lines = file[1] == null ? null : changed.get(file[1]) || []
+      if (lines) changed.set(file[1], lines)
+      continue
+    }
+    const hunk = lines && line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/)
+    if (!hunk) continue
+    const start = Number(hunk[1]), count = hunk[2] == null ? 1 : Number(hunk[2])
+    lines.push(count ? [start, start + count - 1] : [Math.max(start, 1), Math.max(start, 1)])
+  }
+  return changed
+}
+// A fix-check finding is in the fix when its line is within 3 lines of a line the fix added or changed in its file;
+// null when its file or line can't be resolved.
+function inFix(finding, changed) {
+  const path = finding[WHERE]?.path
+  const line = Number(String(finding.line ?? '').trim().match(/^(\d+)(?:\s*[-–]\s*\d+)?$/)?.[1])
+  if (!changed || !path || !Number.isSafeInteger(line) || line < 1) return null
+  return (changed.get(path) || []).some(([a, b]) => line >= a - 3 && line <= b + 3)
 }
 function waiveFinding(id, findingId) {
   const reason = option('--reason')
@@ -2844,6 +2918,7 @@ function closeLines(entries, close, head, carry = null) {
     const waiver = entries.find((e) => e.type === 'override' && e.action === 'waive' && e.review === f.review && e.finding === f.id)
     if (resolutionRules(f.owner, f).refutation && (status?.status === 'rejected' || waiver))
       lines.push(`${f.id} ${f.severity.toUpperCase()} ${f.issue}: ${status?.reason || ''}${waiver ? `; waived: ${waiver.reason}` : ''}${f.criterionId ? '' : ` — ${scoreText(f)}`}`)
+    if (status?.status === 'fixed' && status.test) lines.push(`${f.id} ${String(f.severity || '?').toUpperCase()} ${f.issue || f.criterion || ''}: fixed; test: ${status.test}`)
     if (f.status === 'unverified-quote') lines.push(`Carried unlocated ${f.id} ${f.severity.toUpperCase()} ${f.issue}: ${f.quoteCheck} — ${scoreText(f)}`)
   }
   return { review, lines }
@@ -3332,6 +3407,8 @@ function pushGate() {
     repoId: repoIdentity(),
     ...(SLICE && { paths: SLICE, files: sliceFileList }),
     truncated,
+    stats: recordStats(stats),
+    plan: PLAN_PATH ?? null,
     family: SEL.family,
     families: reviewingFamilies(SEL),
     model: SEL.id,
