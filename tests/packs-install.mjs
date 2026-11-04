@@ -50,8 +50,8 @@ console.log('\nrole fix-up: a fresh Claude-only machine, where no role is chosen
   const sb = box('roles', { clis: ['claude'] });
   const p = sb.json(['install', 'review-gate', '--dry-run']);
   const prob = p.data?.roles?.find((x) => x.role === 'reviewer');
-  ok('the preview names the reviewer role as unset and suggests installed families only (the shipped astra has no CLI here)', prob && prob.missing === true && prob.use.length === 0 && prob.suggestion.length > 0 && prob.suggestion.every((f) => ['fable', 'opus', 'sonnet', 'haiku'].includes(f)), JSON.stringify(p.data?.roles));
-  ok('…and warns that it is not set, naming --set-role with the families installed here, and --fix-roles', p.data?.warnings?.some((w) => /reviewer role is not set/.test(w) && /acs packs install review-gate --set-role reviewer=/.test(w) && /installed here: fable, opus, sonnet, haiku/.test(w) && /--fix-roles/.test(w)), JSON.stringify(p.data?.warnings));
+  ok('the preview names the reviewer role as unset and lists the installed families only, none put forward', prob && prob.missing === true && prob.use.length === 0 && prob.families.join() === 'fable,opus,sonnet,haiku' && !('suggestion' in prob), JSON.stringify(p.data?.roles));
+  ok('…and warns that it is not set, naming --set-role with the families installed here, and neither --fix-roles nor a suggestion', p.data?.warnings?.some((w) => /reviewer role is not set/.test(w) && /acs packs install review-gate --set-role reviewer=/.test(w) && /installed here: fable, opus, sonnet, haiku/.test(w)) && !p.data.warnings.some((w) => /--fix-roles|suggest/.test(w)), JSON.stringify(p.data?.warnings));
   const r = sb.packs(['install', 'review-gate', '--yes', '--set-role', 'reviewer=opus']);
   ok('--set-role reviewer=opus installs and sets the role through ACS\'s roles write path', r.code === 0 && JSON.parse(sb.read(path.join(sb.home, '.agent-config-studio/roles.json'))).roles.reviewer.use.join() === 'opus', r.out);
   ok('…which records it in ACS\'s history', fs.existsSync(path.join(sb.home, '.agent-config-studio/history/.git')));
@@ -59,12 +59,12 @@ console.log('\nrole fix-up: a fresh Claude-only machine, where no role is chosen
   const rv = review(sb, repo);
   ok('…and the first review then runs on that claude family (no fallback, no codex)', rv.code === 0 && /▶ reviewer · opus \(claude/.test(rv.stdout) && sb.callsOf('codex').length === 0, rv.out);
   const keep = JSON.parse(sb.read(path.join(sb.home, '.agent-config-studio/roles.json'))).roles.reviewer;
-  ok('…and the new role holds the chosen family and the suggestion\'s description only — no shipped effort or second opinion', Object.keys(keep).join() === 'use,note' && keep.note === 'reads a diff and reports findings', JSON.stringify(keep));
+  ok('…and the new role holds the chosen family and the job\'s shipped description only — no shipped effort or second opinion', Object.keys(keep).join() === 'use,note' && keep.note === 'reads a diff and reports findings', JSON.stringify(keep));
   ok('…in a roles.json that the shipped roles never fill (version 2)', JSON.parse(sb.read(path.join(sb.home, '.agent-config-studio/roles.json'))).version === 2);
   const sb2 = box('roles2', { clis: ['claude'] });
   const f = sb2.packs(['install', 'review-gate', '--yes', '--fix-roles']);
   const set = JSON.parse(sb2.read(path.join(sb2.home, '.agent-config-studio/roles.json'))).roles.reviewer.use;
-  ok('--fix-roles sets the reviewer role to the suggested installed families', f.code === 0 && set.length > 0 && set.every((x) => ['fable', 'opus', 'sonnet', 'haiku'].includes(x)), f.out);
+  ok('--fix-roles (kept for compatibility, no longer offered) still sets the reviewer role to installed families', f.code === 0 && set.length > 0 && set.every((x) => ['fable', 'opus', 'sonnet', 'haiku'].includes(x)), f.out);
   const st = sb2.json(['status', '--no-trust-check']);
   ok('…and status no longer reports the role as broken', !JSON.stringify(st.data).includes('role'), JSON.stringify(st.data?.packs?.[0]?.parts?.[0]));
   // The fix-up declined at install, then taken later the way status says: a re-run on the installed pack.
@@ -82,6 +82,21 @@ console.log('\nrole fix-up: a fresh Claude-only machine, where no role is chosen
   sb4.packs(['install', 'review-gate', '--yes']);
   const named = sb4.packs(['install', 'review-gate', '--set-role', 'reviewer=sonnet', '--yes']);
   ok('re-running install --set-role on the installed pack sets that role', named.code === 0 && rolesOf(sb4)?.reviewer?.use?.join() === 'sonnet', named.out);
+}
+
+console.log('\nthe build pack: every role its skills run is asked for, builder included');
+{
+  const sb = box('build-roles', { clis: ['claude'] });
+  const NEEDS = ['advisor', 'builder', 'judge', 'reviewer'];
+  const open = sb.json(['install', 'build', '--with-deps', '--dry-run']);
+  ok('a fresh build install names every role it runs as unset, builder included', JSON.stringify((open.data?.roles || []).map((r) => r.role).sort()) === JSON.stringify(NEEDS) && open.data.roles.every((r) => r.missing && !r.set), JSON.stringify(open.data?.roles));
+  const answered = sb.json(['install', 'build', '--with-deps', '--dry-run', ...NEEDS.flatMap((r) => ['--set-role', `${r}=opus`])]);
+  ok('…and with every offered role answered, none is left unset', answered.data?.roles.every((r) => r.set?.join() === 'opus') && !answered.data.warnings.some((w) => /role/.test(w)), JSON.stringify([answered.data?.roles, answered.data?.warnings]));
+  const r = sb.packs(['install', 'build', '--with-deps', '--yes', ...['advisor', 'judge', 'reviewer'].flatMap((x) => ['--set-role', `${x}=opus`])]);
+  const st = JSON.stringify(sb.json(['status', 'build', '--no-trust-check']).data);
+  ok('installed with builder left unset: status flags it with the command that sets it', r.code === 0 && st.includes('the builder role is not set — choose its model: acs packs install build --set-role builder=<family>[,<family>…]'), `${r.out}\n${st}`);
+  const mid = sb.run('model-id', ['--role', 'builder']);
+  ok('…and model-id names the build pack in its fix line', mid.code === 2 && /acs packs install build --set-role builder=/.test(mid.stderr), mid.stderr);
 }
 
 console.log('\nC2 a Codex-only machine');

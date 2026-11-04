@@ -294,17 +294,18 @@ try {
     ok('codex is not detected, with why', !codex.present && /no codex CLI on PATH and no ~\/\.codex/.test(codex.why), JSON.stringify(codex));
     const p = (await call(s1.base, 'POST', '/api/packs/plan', { action: 'install', pack: 'review-gate' })).body;
     const prob = p.roles.find((r) => r.role === 'reviewer');
-    ok('the preview names the unusable reviewer role and offers installed families', prob && !prob.set && prob.suggestion.length > 0 && p.warnings.some((w) => /reviewer role/.test(w)), JSON.stringify(p.roles));
+    ok('the preview names the unset reviewer role and lists the installed families, none put forward', prob && !prob.set && prob.missing && prob.families.join() === 'fable,opus,sonnet,haiku' && !('suggestion' in prob) && p.warnings.some((w) => /reviewer role/.test(w)), JSON.stringify(p.roles));
+    const pick = ['opus'];
     ok('…and installs for claude only', p.units[0].harnesses.join() === 'claude' && !p.preview.some((x) => /\.codex/.test(x.path || '')), JSON.stringify(p.units));
-    const fixed = (await call(s1.base, 'POST', '/api/packs/plan', { action: 'install', pack: 'review-gate', setRoles: { reviewer: prob.suggestion } })).body;
-    ok('setRoles (the offer, accepted) puts the role change in the preview and drops the warning', fixed.roles.find((r) => r.role === 'reviewer')?.set?.join() === prob.suggestion.join()
+    const fixed = (await call(s1.base, 'POST', '/api/packs/plan', { action: 'install', pack: 'review-gate', setRoles: { reviewer: pick } })).body;
+    ok('setRoles (a family chosen) puts the role change in the preview and drops the warning', fixed.roles.find((r) => r.role === 'reviewer')?.set?.join() === pick.join()
       && fixed.preview.some((x) => x.path === '~/.agent-config-studio/roles.json' && /reviewer role →/.test(x.note)) && !fixed.warnings.some((w) => /reviewer role/.test(w)), JSON.stringify(fixed.preview));
     ok('…and an install for codex here is refused in the preview, not a 400', (await call(s1.base, 'POST', '/api/packs/plan', { action: 'install', pack: 'handoff', harnesses: ['codex'] })).body.refusals.some((s) => /codex is not installed here/.test(s)));
     ok('…and still nothing was written', changed(before, tree(c1.home, own(c1))).length === 0, changed(before, tree(c1.home, own(c1))).join(' '));
-    const body = { action: 'install', pack: 'review-gate', setRoles: { reviewer: prob.suggestion } };
+    const body = { action: 'install', pack: 'review-gate', setRoles: { reviewer: pick } };
     const done1 = await call(s1.base, 'POST', '/api/packs/apply', { ...body, signature: fixed.signature });
     const rolesDoc = JSON.parse(c1.read(path.join(c1.home, '.agent-config-studio/roles.json')) || '{}');
-    ok('applying it (in the worker) installs and sets the role through ACS\'s roles write path', done1.status === 200 && rolesDoc.roles?.reviewer?.use?.join() === prob.suggestion.join()
+    ok('applying it (in the worker) installs and sets the role through ACS\'s roles write path', done1.status === 200 && rolesDoc.roles?.reviewer?.use?.join() === pick.join()
       && fs.existsSync(path.join(c1.home, '.claude/skills/code-review/SKILL.md')) && done1.body.log.some((l) => /reviewer role set to/.test(l)), `${done1.status} ${done1.text.slice(0, 400)}`);
     const hist = c1.run('git', ['-C', path.join(c1.home, '.agent-config-studio/history'), 'log', '--oneline']);
     ok('…recorded in ACS\'s history', hist.code === 0 && /roles: reviewer edited/.test(hist.stdout), hist.out);

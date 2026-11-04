@@ -123,8 +123,8 @@ try {
   console.log('\nroles routes: chosen at install — no roles.json, every role unset');
   {
     const v0 = await view();
-    ok('the view lists every shipped role as unset, with its suggestion, and none resolved', v0.roles.length === Object.keys(ROLES.roles).length
-       && v0.roles.every((r) => r.unset === true && r.use.length === 0 && r.suggestion && r.defaults === null) && v0.base === 'absent' && v0.error === null, JSON.stringify(v0.roles.map((r) => [r.name, r.unset])));
+    ok('the view lists every shipped role as unset, with no family put forward, and none resolved', v0.roles.length === Object.keys(ROLES.roles).length
+       && v0.roles.every((r) => r.unset === true && r.use.length === 0 && !('suggestion' in r) && r.defaults === null) && v0.base === 'absent' && v0.error === null, JSON.stringify(v0.roles.map((r) => [r.name, r.unset])));
     const first = await post('/api/models/roles/set', { name: 'reviewer', fields: { use: ['sol'], note: ROLES.roles.reviewer.note }, base: 'absent' });
     const doc = JSON.parse(readRoles() || 'null');
     ok('the first choice creates a version 2 roles.json holding exactly what was chosen', first.status === 200 && doc?.version === 2 && JSON.stringify(doc.roles) === JSON.stringify({ reviewer: { use: ['sol'], note: ROLES.roles.reviewer.note } }), readRoles());

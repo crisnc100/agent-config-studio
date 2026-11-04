@@ -27,7 +27,7 @@
     ],
     "status": 2,
     "stdout": "family=MODEL-ID-UNRESOLVED-builder id=MODEL-ID-UNRESOLVED-builder effort= alt=\n",
-    "stderr": "model-id: role \"builder\" is not set — choose its model: acs packs install <pack> --set-role builder=<family>[,<family>…], or in ACS → Models → Roles\n",
+    "stderr": "model-id: role \"builder\" is not set — choose its model: acs packs install build --set-role builder=<family>[,<family>…], or in ACS → Models → Roles\n",
     "since": "roles chosen at install"
   },
   {

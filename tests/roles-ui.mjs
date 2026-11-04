@@ -406,13 +406,13 @@ const PROPOSAL = {
 {
   const v = view({ roles: [
     { name: 'advisor', unset: true, use: [], ids: [], effort: '', resolvedEffort: '', members: [], altMember: null, alt: '', altId: '', note: 'scope calls',
-      custom: false, provenance: {}, defaults: null, suggestion: { use: 'fable', effort: 'high', alt: 'astra' }, warnings: [] },
+      custom: false, provenance: {}, defaults: null, warnings: [] },
     { name: 'reviewer', use: ['opus'], ids: ['opus-id-1'], effort: '', resolvedEffort: '', alt: '', altId: '', note: 'reads diffs',
       custom: false, provenance: { use: 'user', note: 'user' }, defaults: null, warnings: [] },
   ] });
   const p = await boot({}, v);
   const unset = roleRow(p, 'advisor');
-  ok('an unset role reads "Not set", with the shipped suggestion and no model chip — not an error', /Not set — choose its model \(suggested: fable\)/.test(p.text(unset)) && chips(unset).length === 0 && !unset.querySelector('.notice.error'), p.text(unset));
+  ok('an unset role reads "Not set", names no family and has no model chip — not an error', /Not set — choose its model\. /.test(p.text(unset)) && !/suggest|fable/i.test(p.text(unset)) && chips(unset).length === 0 && !unset.querySelector('.notice.error'), p.text(unset));
   ok('…and a chosen role in a version 2 file carries no "changed from default" marks', marks(roleRow(p, 'reviewer')).length === 0);
   unset.click();
   await settle(5);
