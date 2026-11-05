@@ -3844,10 +3844,11 @@ async function fixCheck(id) {
   const { result } = await runModel(SEL, `Fix check: review only this fix diff, not the original branch diff.\n${originalFindingsNote(original)}${reviewPrompt(diff)}`, SCHEMA, 'fix-check reviewer')
   const scored = await scoredFindings(result?.findings || [], SEL)
   const durationMs = Date.now() - started
-  const changed = fixChangedLines(original.head, head, scope)
+  // inFix: any place of the finding (main or instance) near a line the fix changed, judged as inDiff is (inDiffOf).
+  const changed = changedSides(original.head, head, scope)
   const findingDetails = scored.findings.map((f, i) => {
     const finding = { ...locatedFinding(f), id: `x${i + 1}` }
-    return { ...finding, inFix: inFix(finding, changed) }
+    return { ...finding, inFix: inDiffOf(finding, changed, original.head) }
   })
   requireClean()
   if (headNow() !== head) throw new Error('HEAD changed during fix check')
@@ -3905,13 +3906,9 @@ function originalFindingsNote(original) {
   return `The fix is meant to repair these findings from review ${original.id}. Use them to tell an incomplete repair ` +
     `from a new regression the fix introduced; report defects in the fix diff as usual.\n${list}\n\n`
 }
-// Lines the fix diff added or changed, by file at the fix head (-U0 hunks; a pure deletion marks the line it follows).
-// Names come NUL-separated from filesBetween, never from patch headers (a space adds a tab there, odd names are
-// C-quoted); each file's own diff is read for its hunk lines only. null when any name or diff can't be read.
-function fixChangedLines(from, to, paths = null) {
-  return changedSides(from, to, paths)?.head ?? null
-}
-// Both sides of the -U0 diff: head (lines added or changed, by file at `to`) and base (lines removed or changed, by file at
+// Both sides of the -U0 diff (a pure deletion marks the head line it follows). Names come NUL-separated from filesBetween,
+// never from patch headers (a space adds a tab there, odd names are C-quoted); each file's own diff is read for its hunk
+// lines only: head (lines added or changed, by file at `to`) and base (lines removed or changed, by file at
 // `from`; a pure addition marks the base line it follows). null when any name or diff can't be read.
 function changedSides(from, to, paths = null) {
   let names
@@ -3933,14 +3930,6 @@ function changedSides(from, to, paths = null) {
     removed.set(name, old)
   }
   return { head: changed, base: removed }
-}
-// A fix-check finding is in the fix when its line is within 3 lines of a line the fix added or changed in its file;
-// null when its file or line can't be resolved.
-function inFix(finding, changed) {
-  const path = finding[WHERE]?.path
-  const line = Number(String(finding.line ?? '').trim().match(/^(\d+)(?:\s*[-–]\s*\d+)?$/)?.[1])
-  if (!changed || !path || !Number.isSafeInteger(line) || line < 1) return null
-  return (changed.get(path) || []).some(([a, b]) => line >= a - 3 && line <= b + 3)
 }
 function waiveFinding(id, findingId) {
   const reason = option('--reason')

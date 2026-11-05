@@ -612,3 +612,9 @@ test('X3 eval records in the review log never reach --noise-report or the tip\'s
   assert.ok(!tier.reasons.some((r) => /pre-existing/.test(r)), JSON.stringify(tier.reasons))
   assert.equal(section(summary(), 'Pre-existing (not introduced here)'), null)
 })
+test('X4 a fix-check finding whose main place is unchanged but whose instance the fix changed is inFix', () => {
+  const review = reviewed([scored()])
+  const check = fixChecked(review, [scored({ issue: 'v10 and v2 both wrong', line: '10', quote: 'export const v10 = 10', likelihood: 8, impact: 8,
+    instances: [{ file: 'src/one.js', line: '2', quote: 'export const v2 = 2' }] })])
+  assert.deepEqual(check.findingDetails.map((f) => [f.id, f.severity, f.inFix]), [['x1', 'high', true]])
+})
