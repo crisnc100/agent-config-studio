@@ -111,7 +111,7 @@ const option = (flag) => {
 // or shadow; the review logs to its own folder, and nothing that reads or writes the review gate's own records runs.
 const EVAL_MODE = !!String(process.env.REVIEW_EVAL ?? '').trim()
 const EVAL_REFUSED = ['--gate', '--close', '--summary', '--tier-json', '--deferred', '--fix-check', '--dispute', '--waive', '--log-grade',
-  '--recheck-of', '--log-outcome', '--slices', '--eval', '--shadow-run', '--pick-shadow-run', '--security-worker', '--shadow-report', '--pick-report', '--calibrate']
+  '--recheck-of', '--log-outcome', '--slices', '--eval', '--shadow-run', '--pick-shadow-run', '--security-worker', '--shadow-report', '--pick-report', '--calibrate', '--noise-report']
 // Git variables that move the repo, work tree or index away from the working directory: eval mode refuses them.
 const GIT_LOCATION_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
   'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM']

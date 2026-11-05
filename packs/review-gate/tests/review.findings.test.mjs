@@ -592,3 +592,23 @@ test('X2 a protected pre-existing finding keeps the tip HIGH after a later slice
   assert.ok(tier.reasons.includes('pre-existing protected: f1'), JSON.stringify(tier.reasons))
   assert.equal(tier.reasons.filter((r) => r.startsWith('pre-existing protected')).length, 1)
 })
+test('X3 --noise-report refuses to run in eval mode, like every other command that reads the gate\'s records', () => {
+  const r = script(['--noise-report'], { REVIEW_EVAL: '1' })
+  assert.notEqual(r.status, 0, r.out)
+  assert.ok(r.out.includes('--noise-report refuses to run in eval mode (REVIEW_EVAL is set)'), r.out)
+})
+test('X3 eval records in the review log never reach --noise-report or the tip\'s tier', () => {
+  homeConfig({ merge: { policy: 'always' } })
+  const review = reviewed([])
+  closed(review.id, {})
+  const repoId = realpathSync(join(REPO, '.git'))
+  appendFileSync(LOG, [
+    { type: 'review', kind: 'review', id: 'E', eval: true, family: 'grok', repoId, branch: 'feat', findingDetails: [
+      { id: 'f1', severity: 'high', protected: true, preExisting: true, inDiff: false }] },
+    { type: 'close', review: 'E', eval: true, ts: new Date().toISOString(), repoId, statuses: {} },
+  ].map((e) => JSON.stringify(e)).join('\n') + '\n')
+  assert.deepEqual(noise(), ['Noise report (this repository): 1 review(s) closed'])
+  const tier = JSON.parse(script(['--tier-json']).stdout)
+  assert.ok(!tier.reasons.some((r) => /pre-existing/.test(r)), JSON.stringify(tier.reasons))
+  assert.equal(section(summary(), 'Pre-existing (not introduced here)'), null)
+})
