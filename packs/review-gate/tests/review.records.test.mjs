@@ -192,7 +192,7 @@ test('I1 a pure deletion counts as a change at the line it follows', () => {
 test('T1 a fixed status may name its test, which --summary and the push gate print beside the finding', () => {
   const review = reviewed([F1])
   fixChecked(review)
-  const statuses = { f1: { status: 'fixed', test: 'src/one.test.js' } }
+  const statuses = { f1: { status: 'fixed', test: 'src/one.test.js', response: 'real' } }
   assert.deepEqual(closed(review.id, statuses).statuses, statuses)
   const summary = script(['--summary']); allowed(summary)
   assert.ok(summary.stdout.includes('f1 MEDIUM v2 is wrong: fixed; test: src/one.test.js'), summary.stdout)
