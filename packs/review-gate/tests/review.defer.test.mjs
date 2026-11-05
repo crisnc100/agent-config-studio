@@ -327,7 +327,7 @@ test('D14 findings shown to the owner carry their numbers: the report, rejection
   assert.ok(report.includes('- [src/one.js:1] not there (id f3)\n  Score: LOW 6/100 (likelihood 2/10 × impact 3/10) — filed, no close status needed\n'), report)
   allowed(script(['--dispute', review.id, 'f2', '--reason', 'intended', '--evidence', 'src/one.js:1']))
   fixChecked(review, [scored({ issue: 'three is odd', quote: 'export const one = 3', impact: null })])
-  closed(review.id, { f1: { status: 'fixed' }, f2: { status: 'rejected', reason: 'intended', evidence: 'src/one.js:1' }, x1: { status: 'deferred', reason: 'later' } })
+  closed(review.id, { f1: { status: 'fixed' }, f2: { status: 'rejected', reason: 'intended', response: 'intentional', evidence: 'src/one.js:1' }, x1: { status: 'deferred', reason: 'later' } })
   const summary = script(['--summary']); allowed(summary)
   for (const line of ['f2 MEDIUM two is wrong: intended — MEDIUM unscored',
     'x1 MEDIUM unscored src/one.js:1 — three is odd; Trigger: importing one; Deferred: later; Fix idea: return 1'])

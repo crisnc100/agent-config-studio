@@ -295,7 +295,7 @@ test('H1 a rejected criterion does not exempt files changed before the recheck',
   const original = criterionGrade('FAIL')
   commit('a.js', 'export const a = 3\n'); criterionGrade('PASS', original)
   seed({ type: 'dispute', review: original.id, finding: 'c1', verdict: 'REFUTED' })
-  const result = criterionClose(original, { status: 'rejected', reason: 'intended', evidence: 'account test' })
+  const result = criterionClose(original, { status: 'rejected', reason: 'intended', response: 'intentional', evidence: 'account test' })
   assert.equal(result.status, 'partial'); assert.deepEqual(result.outOfScope, ['a.js'])
   blocked(push())
 })

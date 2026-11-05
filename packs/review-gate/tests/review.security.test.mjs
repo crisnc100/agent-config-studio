@@ -349,7 +349,7 @@ test('6 --dispute <review> s1 works, and the security family cannot refute its o
   // A REFUTED from the security family itself does not count.
   appendFileSync(LOG, `${JSON.stringify({ type: 'dispute', ts: new Date().toISOString(), review: record.id, finding: 's1', head: record.head,
     verdict: 'REFUTED', reason: 'x', evidence: 'y', verdictEvidence: 'z', family: 'sol', verifier: 'opus' })}\n`)
-  const refused = close(record.id, { f1: { status: 'fixed' }, s1: { status: 'rejected', reason: 'not reachable', evidence: 'src/app.ts:6' } })
+  const refused = close(record.id, { f1: { status: 'fixed' }, s1: { status: 'rejected', reason: 'not reachable', response: 'wrong', evidence: 'src/app.ts:6' } })
   assert.notEqual(refused.status, 0)
   assert.match(refused.out, /Rejected s1 requires a REFUTED verdict or an operator waiver.*REFUTED from opus does not count/)
 })
