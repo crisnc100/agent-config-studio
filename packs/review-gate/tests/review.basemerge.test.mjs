@@ -465,3 +465,47 @@ test('BM10 with a fix check, the both-sides refusal at close names the existing 
   assert.notEqual(refused.status, 0)
   assert.match(refused.out, new RegExp(`close that slice; review ${r.id} keeps covering every other file`))
 })
+
+// ── leftovers after the merge of main ──
+test('BM11 a PASS Grade recheck after the merge counts as having seen the both-sides file it graded: the Grade close is complete', () => {
+  commit({ 'shared.js': SHARED.replace('a\n', 'A-feat\n') })
+  const verdict = join(ROOT, 'verdict.json')
+  const criterion = { id: '2.1', criterion: 'Shared reads A', verdict: 'FAIL', evidence: 'shared test fails' }
+  writeFileSync(verdict, JSON.stringify({ family: 'opus', model: 'stub-opus', criteria: [criterion] }))
+  allowed(script(['--log-grade', verdict]))
+  const grade = records().at(-1)
+  assert.equal(grade.kind, 'grade')
+  landOnMain({ 'shared.js': SHARED.replace('g\n', 'G-main\n') })
+  mergeMain()
+  commit({ 'shared.js': SHARED.replace('a\n', 'A-fix\n').replace('g\n', 'G-main\n') })
+  writeFileSync(verdict, JSON.stringify({ family: 'opus', model: 'stub-opus', criteria: [{ ...criterion, verdict: 'PASS', evidence: 'shared recheck passes' }] }))
+  allowed(script(['--log-grade', verdict, '--recheck-of', grade.id]))
+  const record = closed(grade.id, { c1: { status: 'fixed' } })
+  assert.deepEqual(record.outOfScope, [])
+  assert.ok(record.coverage.some(([path]) => path === 'shared.js'), JSON.stringify(record.coverage))
+})
+
+test('BM12 close and --summary never write origin/HEAD: a missing one is warned about and falls back, with no ref created', () => {
+  run('git', ['--git-dir', REMOTE, 'symbolic-ref', 'HEAD', 'refs/heads/main'])
+  const r = review()
+  git('symbolic-ref', '--delete', 'refs/remotes/origin/HEAD')
+  const summary = script(['--summary'], { REVIEW_BASE: null })
+  assert.match(summary.out, /Could not resolve origin\/HEAD/)
+  assert.notEqual(originHeadStatus().status, 0, 'summary created no origin/HEAD')
+  const done = close(r.id, {}, { REVIEW_BASE: null })
+  allowed(done); assert.match(done.out, /Could not resolve origin\/HEAD/)
+  assert.notEqual(originHeadStatus().status, 0, 'close created no origin/HEAD')
+})
+
+test('BM13 a file the review saw at a state that equals main\'s keeps its coverage: another remote does not refuse it', () => {
+  commit({ 'lib/two.js': 'export const two = 2\n' })
+  const r = review()
+  closed(r.id)
+  landOnMain({ 'lib/two.js': 'export const two = 2\n', 'lib/four.js': 'export const four = 4\n' })
+  mergeMain()
+  const record = closed(r.id)
+  assert.ok(record.coverage.some(([path]) => path === 'lib/two.js'), JSON.stringify(record.coverage))
+  allowed(push())
+  mirror()
+  blocked(push(undefined, {}, 'mirror'), uncovered(['lib/four.js']))
+})

@@ -634,26 +634,21 @@ const GROK_MAX_TURNS = cfg('REVIEW_GROK_MAX_TURNS', 'grokMaxTurns', 40)
 // The base defaults to whatever the remote calls its default branch — reviewing against the
 // wrong base produces a wrong diff that still looks like a successful run, so this is worth
 // resolving rather than assuming. `origin/HEAD` is frequently unset (a plain `git remote add`
-// never writes it), so try to populate it once before giving up, and make the fallback loud.
+// never writes it); this never writes it either (origin/HEAD decides what the push gate trusts as the default
+// branch, so only the operator sets it), and the fallback is loud.
 function detectDefaultBase() {
   if (!existsSync('.git')) return 'origin/main' // getDiff() reports the real problem
-  const readHead = () =>
-    spawnSync('git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { encoding: 'utf8' })
-  let r = readHead()
-  if (r.status !== 0) {
-    spawnSync('git', ['remote', 'set-head', 'origin', '--auto'], { encoding: 'utf8' })
-    r = readHead()
-  }
+  const r = spawnSync('git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { encoding: 'utf8' })
   const ref = (r.stdout || '').trim()
   if (r.status === 0 && ref) return ref
   console.warn(
     `⚠ Could not resolve origin/HEAD — falling back to origin/main. If this repo's default branch\n` +
-      `  is not "main", pass REVIEW_BASE=origin/<branch> or set "base" in review-config.json.`,
+      `  is not "main", pass REVIEW_BASE=origin/<branch> or set "base" in review-config.json, or run\n` +
+      `  git remote set-head origin --auto once.`,
   )
   return 'origin/main'
 }
-// origin/HEAD as this run found it, read before detectDefaultBase can create it with `remote set-head`: the default
-// branch counts as reviewed only through a ref the repository already had (defaultTip).
+// origin/HEAD as this run found it, read once: the default branch counts as reviewed only through it (defaultTip).
 const ORIGIN_HEAD = (() => {
   const r = spawnSync('git', ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD'], { encoding: 'utf8' })
   return !r.error && r.status === 0 ? r.stdout.trim() : ''
@@ -2604,17 +2599,21 @@ function fixCheckSeen(check) {
 // from baseSha) and of every file it accepted since, minus any file the cap cut in the review or in the fix check.
 // Coverage the close can't establish is [] (a slice without files, an over-cap legacy diff, a fix check whose cut is
 // unknown and that changed files since). Only a review from before baseSha was logged gives null: no field, the old rule.
-function closeCoverage(review, since, check, head) {
+function closeCoverage(review, since, check, head, recheck = null) {
   const paths = sliceOf(review)
   if (!paths && !fullObjectId(review.baseSha)) return null
   if (paths ? !Array.isArray(review.files) : !treeOf(review.baseSha)) return []
-  const truncated = reviewTruncated(review), { cut, left } = fixCheckSeen(check)
+  const truncated = reviewTruncated(review), { cut, left, seen } = fixCheckSeen(check)
   if (!truncated || !cut && since.length) return []
   const reviewed = paths ? sliceFiles(review) : filesBetween(review.baseSha, review.head)
-  // Never what a merge-tip fix check left out, nor a file whose state at HEAD is the default branch's (no record saw it
-  // there; a push to origin needs no coverage for it, any other push still does).
-  const base = coverBase(review.baseSha, head)
-  const onMain = (p) => base !== review.baseSha && (treeStates(base).get(p) ?? null) === (treeStates(head).get(p) ?? null)
+  // Never what a merge-tip fix check left out, nor a file whose state at HEAD is the default branch's unless a record saw
+  // that very state (the review, the fix check or the Grade's recheck): a fixed status alone vouches for no merge
+  // content, and a push to origin needs no coverage for it while any other push still does.
+  const base = coverBase(review.baseSha, head), stateAt = (commit, p) => treeStates(commit).get(p) ?? null
+  const reviewedSet = new Set(reviewed)
+  const sawAt = (record, files, p) => !!record && files.has(p) && stateAt(record.head, p) === stateAt(head, p)
+  const saw = (p) => sawAt(review, reviewedSet, p) || sawAt(check, seen, p) || sawAt(recheck?.record, recheck?.files || new Set(), p)
+  const onMain = (p) => base !== review.baseSha && stateAt(base, p) === stateAt(head, p) && !saw(p)
   return coverageOf(head, [...reviewed, ...since].filter((p) => !truncated.has(p) && !cut?.has(p) && !left.has(p) && !onMain(p)))
 }
 // ── merge tier (report only: nothing merges, comments or labels) ────────────
@@ -2875,15 +2874,16 @@ async function closeReview(id) {
   const fixedFiles = recordedPaths(reviews, statuses)
   // The single recheck graded the fix round's files: a criterion fixed on its PASS, or deferred after its FAIL, covers them.
   const rechecked = (f, verdict) => recheck.criteria.some((c) => c.id === f.criterionId && c.verdict === verdict)
-  if (review.kind === 'grade' && recheck && review.findingDetails.some((f) => f.criterionId &&
-    (statuses[f.id]?.status === 'fixed' && rechecked(f, 'PASS') || statuses[f.id]?.status === 'deferred' && rechecked(f, 'FAIL')))) {
-    for (const path of filesBetween(review.head, recheck.head)) fixedFiles.add(path)
-  }
+  const recheckSaw = new Set(review.kind === 'grade' && recheck && review.findingDetails.some((f) => f.criterionId &&
+    (statuses[f.id]?.status === 'fixed' && rechecked(f, 'PASS') || statuses[f.id]?.status === 'deferred' && rechecked(f, 'FAIL')))
+    ? filesBetween(review.head, recheck.head) : [])
+  for (const path of recheckSaw) fixedFiles.add(path)
   // A file the fix check saw in full was reviewed, so a fix to a sibling file it saw is in scope.
   const { seen } = fixCheckSeen(check)
   // What a merge of the default branch changed on the branch's side (both sides, or an edit in the merge commit) is in
   // scope only as the default branch's own content (its state at HEAD is the merge base's), or when a fix check after
-  // the merge saw its state at HEAD. A fixed status, a pre-merge fix check or the test-file rule never covers it.
+  // the merge (or the Grade's recheck after it) saw its state at HEAD. A fixed status, a pre-merge fix check or the
+  // test-file rule never covers it.
   const merges = branchCommits(['--merges', `${review.head}..${at}`]).filter((m) => baseMergeParents(m))
   const byMerge = new Map(merges.map((m) => [m, new Set(branchPaths(m))]))
   const mergeBase = coverBase(review.baseSha, head), stateAt = (commit, p) => treeStates(commit).get(p) ?? null
@@ -2891,14 +2891,15 @@ async function closeReview(id) {
     const touching = merges.filter((m) => byMerge.get(m).has(p))
     if (!touching.length) return null
     if (mergeBase !== review.baseSha && stateAt(mergeBase, p) === stateAt(head, p)) return true
-    return !!check && seen.has(p) && touching.every((m) => isAncestor(m, check.head)) && stateAt(check.head, p) === stateAt(head, p)
+    const saw = (record, files) => !!record && files.has(p) && touching.every((m) => isAncestor(m, record.head)) && stateAt(record.head, p) === stateAt(head, p)
+    return saw(check, seen) || saw(recheck, recheckSaw)
   }
   const outOfScope = files.filter((p) => {
     const merged = mergeScope(p)
     if (merged !== null) return !merged && !p.startsWith('builds/')
     return !fixedFiles.has(p) && !seen.has(p) && !isTestFile(p) && !p.startsWith('builds/')
   })
-  const coverage = outOfScope.length ? null : closeCoverage(review, files, check, head)
+  const coverage = outOfScope.length ? null : closeCoverage(review, files, check, head, recheck && { record: recheck, files: recheckSaw })
   let tests = null
   if (command) {
     const r = spawnSync(command, { shell: true, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
