@@ -163,13 +163,58 @@ function withoutRepoCommands(config, p, homes) {
   const keys = OWN_FILE_KEYS.filter((k) => Object.hasOwn(config, k))
   const pick = String(config.pick ?? '').trim().toLowerCase()
   const pickMayRun = pick !== '' && pick !== 'first' && pick !== 'rotate'
-  if ((!keys.length && !pickMayRun) || repoFileIsOwn(p, homes)) return config
+  const hasMerge = Object.hasOwn(config, 'merge')
+  if ((!keys.length && !pickMayRun && !hasMerge) || repoFileIsOwn(p, homes)) return config
+  if (hasMerge) config.merge = stricterMerge(config.merge, homeMerge(homes), p)
   for (const k of keys) delete config[k]
   REPO_PICK_UNTRUSTED = pickMayRun
   if (keys.length && !args.includes('--gate'))
     console.warn(`⚠ Ignoring ${keys.join(', ')} in ${p}: git tracks it (or a symlink leads to it), so the repository can set it. ` +
       `Put them in ~/.agent-config-studio/review-gate/config.json or the environment, or keep the file untracked.`)
   return config
+}
+// merge (the merge tier's policy, report only): off > strict > standard > always, strictest first. A tracked repo
+// config may only make the policy stricter than the home config's, raise the threshold and add alwaysHuman globs;
+// its classifier is ignored like `classifier`. A repo config without `merge` leaves the home config's in force.
+const MERGE_POLICIES = ['off', 'strict', 'standard', 'always']
+const MERGE_THRESHOLD = 0.8
+function mergeSettings(raw) {
+  const m = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const policy = String(m.policy ?? 'off').trim().toLowerCase()
+  if (!MERGE_POLICIES.includes(policy) && !args.includes('--gate'))
+    console.warn(`⚠ Unknown merge.policy ${JSON.stringify(m.policy)}; using "off" (${MERGE_POLICIES.join(' | ')})`)
+  const threshold = Number(m.threshold)
+  return {
+    policy: MERGE_POLICIES.includes(policy) ? policy : 'off',
+    classifier: typeof m.classifier === 'string' && m.classifier.trim() ? m.classifier.trim() : null,
+    threshold: m.threshold != null && threshold > 0 && threshold <= 1 ? threshold : MERGE_THRESHOLD,
+    alwaysHuman: Array.isArray(m.alwaysHuman) ? m.alwaysHuman.filter((g) => typeof g === 'string' && g.trim()) : [],
+  }
+}
+function homeMerge(homes) {
+  for (const p of homes) {
+    try {
+      if (existsSync(p)) return JSON.parse(readFileSync(p, 'utf8')).merge
+    } catch { return undefined }
+  }
+  return undefined
+}
+function stricterMerge(repo, home, p) {
+  const base = mergeSettings(home), own = repo && typeof repo === 'object' && !Array.isArray(repo) ? repo : {}
+  const warn = (key, extra = '') => { if (!args.includes('--gate')) console.warn(`⚠ Ignoring ${key} in ${p}: git tracks it (or a symlink leads to it), so the repository can set it${extra}.`) }
+  const policy = String(own.policy ?? base.policy).trim().toLowerCase()
+  let chosen = base.policy
+  if (MERGE_POLICIES.includes(policy) && MERGE_POLICIES.indexOf(policy) <= MERGE_POLICIES.indexOf(base.policy)) chosen = policy
+  else if (Object.hasOwn(own, 'policy'))
+    warn(`merge.policy ${JSON.stringify(own.policy)}`, `; it may only make the policy stricter than "${base.policy}" (${MERGE_POLICIES.join(' > ')}, strictest first)`)
+  if (own.classifier != null && own.classifier !== '') warn('merge.classifier')
+  const threshold = Number(own.threshold)
+  return {
+    policy: chosen,
+    classifier: base.classifier,
+    threshold: own.threshold != null && threshold > base.threshold && threshold <= 1 ? threshold : base.threshold,
+    alwaysHuman: [...base.alwaysHuman, ...mergeSettings({ alwaysHuman: own.alwaysHuman }).alwaysHuman],
+  }
 }
 function loadConfig() {
   const homes = [join(homedir(), '.agent-config-studio', 'review-gate', 'config.json'), join(homedir(), '.claude', 'review-config.json')]
@@ -190,11 +235,18 @@ function loadConfig() {
       }
       console.warn(`⚠ Ignoring malformed review config at ${p}`)
     }
-    if (config) return repo ? withoutRepoCommands(config, p, homes) : config
+    if (config) {
+      if (!repo) return config
+      const ownMerge = Object.hasOwn(config, 'merge')
+      const checked = withoutRepoCommands(config, p, homes)
+      if (!ownMerge) checked.merge = homeMerge(homes)
+      return checked
+    }
   }
   return {}
 }
 const CONFIG = loadConfig()
+const MERGE = mergeSettings(CONFIG.merge)
 const cfg = (envName, key, dflt) => process.env[envName] ?? CONFIG[key] ?? dflt
 // A family name resolves through the model registry (`model-id --table`);
 // a raw id passes through. On failure model-id prints MODEL-ID-UNRESOLVED-<name>, which the CLI
@@ -2462,7 +2514,174 @@ function closeCoverage(review, since, check, head) {
   const reviewed = paths ? sliceFiles(review) : filesBetween(review.baseSha, review.head)
   return coverageOf(head, [...reviewed, ...since].filter((p) => !truncated.has(p) && !cut?.has(p)))
 }
-function closeReview(id) {
+// ── merge tier (report only: nothing merges, comments or labels) ────────────
+// Rules first: HIGH on a riskPaths or always-human file, a deferred HIGH or protected finding, a partial close or
+// --no-tests; LOW when nothing is deferred (filed findings left unfixed count) and no logic or other-kind file changed;
+// MEDIUM otherwise. merge.classifier may move a MEDIUM, and only a MEDIUM, to LOW at confidence ≥ merge.threshold.
+const ALWAYS_HUMAN = ['.github/workflows/**', 'package.json']
+const TIER_RANK = { low: 0, medium: 1, high: 2 }
+const listed = (paths) => `${paths.slice(0, 5).join(', ')}${paths.length > 5 ? ` and ${paths.length - 5} more` : ''}`
+// The tier's stats: recordStats, except that a rename counts as the worse kind of its two names, so logic moved under
+// tests/ or docs/ is still logic. Review records keep recordStats.
+const KIND_RANK = ['tests', 'docs', 'static', 'other', 'logic']
+const worseKind = (f) => pathsOf(f).map(fileKind).reduce((a, b) => KIND_RANK.indexOf(b) > KIND_RANK.indexOf(a) ? b : a)
+function tierStats(diff) {
+  if (!diff) return null
+  const kinds = { static: 0, docs: 0, tests: 0, logic: 0, other: 0 }
+  let logicLines = 0
+  for (const f of diff.files) {
+    const kind = worseKind(f)
+    kinds[kind]++
+    if (kind === 'logic') logicLines += f.added + f.removed
+  }
+  return { files: diff.filesChanged, linesAdded: diff.linesAdded, linesRemoved: diff.linesRemoved, kinds, logicLines }
+}
+// HIGH by path: riskPaths and always-human, on both names of a rename.
+function pathReasons(diff) {
+  const paths = [...new Set(diff.files.flatMap(pathsOf))]
+  const reasons = []
+  const risky = paths.filter((p) => matchesAny(p, RISK_PATHS))
+  if (risky.length) reasons.push(`riskPaths: ${listed(risky)}`)
+  const human = paths.filter((p) => matchesAny(p, [...ALWAYS_HUMAN, ...MERGE.alwaysHuman]))
+  if (human.length) reasons.push(`always human: ${listed(human)}`)
+  return reasons
+}
+// HIGH and not-LOW by deferred findings: a deferred HIGH (a deferred criterion is HIGH) or protected one is HIGH.
+function deferredReasons(deferred) {
+  const high = [], ids = (list) => list.map((f) => f.id).join(', ')
+  const deferredHigh = deferred.filter((f) => f.severity === 'high')
+  if (deferredHigh.length) high.push(`deferred HIGH: ${ids(deferredHigh)}`)
+  const deferredProtected = deferred.filter((f) => f.protected === true)
+  if (deferredProtected.length) high.push(`deferred protected: ${ids(deferredProtected)}`)
+  return { high, medium: deferred.length ? [`deferred: ${ids(deferred)}`] : [] }
+}
+function closeTier({ review, reviews, statuses, files, outOfScope, noTests, head }) {
+  const base = fullObjectId(review.baseSha) ? review.baseSha : review.base || BASE
+  const diff = diffStats(`${base}...${head}`, sliceOf(review))
+  const stats = tierStats(diff)
+  const findings = reviews.flatMap((r) => r.findingDetails || [])
+  const deferred = findings.filter((f) => statuses[f.id]?.status === 'deferred' || isFiled(f) && statuses[f.id]?.status !== 'fixed')
+  const high = []
+  if (!diff) high.push('the diff could not be read, so its paths are unchecked')
+  if (diff) high.push(...pathReasons(diff))
+  high.push(...deferredReasons(deferred).high)
+  if (outOfScope.length) high.push(`close partial: ${outOfScope.length} file(s) out of scope`)
+  if (noTests !== null) high.push(`tests did not run (--no-tests: ${noTests})`)
+  const facts = { paths: diff ? diff.files.map((f) => f.path) : [], files, stats, deferred }
+  if (high.length) return { tier: 'high', reasons: high, stats, facts }
+  const { kinds, logicLines } = stats
+  if (!kinds.logic && !kinds.other && !deferred.length)
+    return { tier: 'low', stats, facts, reasons: [`no logic or other files changed (docs ${kinds.docs}, tests ${kinds.tests}, static ${kinds.static})`, 'nothing deferred', 'complete close, tests passed'] }
+  const medium = []
+  if (kinds.logic) medium.push(`logic changed: ${logicLines} line(s) in ${kinds.logic} file(s)`)
+  if (kinds.other) medium.push(`${kinds.other} other file(s) changed (config, lockfiles or unknown kinds)`)
+  medium.push(...deferredReasons(deferred).medium)
+  return { tier: 'medium', reasons: medium, stats, facts }
+}
+// The optional tier classifier: the command contract of `classifier` (--json-out, a JSON payload on stdin, one choice
+// answer). Any failure is { error }, and the rules' tier stands.
+async function tierClassifier(command, { stats, facts }, review) {
+  const name = basename(command)
+  const payload = {
+    state: {
+      task: 'Decide the merge tier of a reviewed and closed change. Rules already ruled out HIGH; answer whether it is LOW or stays MEDIUM.',
+      rules: {
+        high: 'Any changed file on riskPaths or always-human paths, any deferred HIGH or protected finding, a partial close, or tests that did not run. Already excluded here.',
+        low: 'Nothing deferred and no logic changed: docs, tests and static files only. A human review adds little.',
+        medium: 'Anything else: logic or config changed, or findings were deferred. A human should look before merging.',
+      },
+      facts: {
+        paths: facts.paths, kinds: stats.kinds, stats,
+        findings: facts.findings, deferred: facts.deferred.map((f) => f.id),
+        intent: Object.hasOwn(review, 'intent') ? review.intent : INTENT || null, plan: review.plan ?? null,
+      },
+    },
+    questions: {
+      tier: {
+        type: 'choice',
+        instructions: 'Is this change LOW risk to merge (as safe as a docs-only change), or does it stay MEDIUM?',
+        criteria: {
+          low: 'The change cannot plausibly break behavior: no deferred findings, and the logic it touches is trivial, mechanical or unreachable in normal use',
+          medium: 'The change could plausibly break behavior, or something about it needs a human to judge',
+        },
+      },
+    },
+  }
+  const r = await runBounded(command, ['--json-out'], { input: JSON.stringify(payload) })
+  if (r.error) return { name, error: r.error }
+  if (r.code !== 0) return { name, error: (r.stderr || '').trim().split('\n')[0] || `${name} exited ${r.code ?? r.signal}` }
+  let answer
+  try { answer = JSON.parse(r.stdout)?.answers?.tier } catch { return { name, error: `unparseable ${name} output: ${String(r.stdout).slice(0, 200)}` } }
+  const confidence = Number(answer?.confidence)
+  if (answer?.type !== 'choice' || !answer.choice) return { name, error: `no tier choice in ${String(r.stdout).slice(0, 200)}` }
+  const probabilities = answer.probabilities && typeof answer.probabilities === 'object' && !Array.isArray(answer.probabilities) ? answer.probabilities : {}
+  const choice = String(answer.choice).toLowerCase()
+  if (!['low', 'medium'].includes(choice)) return { name, error: `choice ${JSON.stringify(answer.choice)} is not low|medium`, probabilities }
+  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return { name, error: `confidence ${JSON.stringify(answer.confidence)} is not a number from 0 to 1`, probabilities }
+  return { name, choice, confidence, probabilities }
+}
+async function mergeTier(input) {
+  const result = closeTier(input)
+  result.facts.findings = input.reviews.flatMap((r) => (r.findingDetails || []).map((f) => ({ id: f.id, severity: f.severity ?? null, risk: f.risk ?? null,
+    likelihood: f.likelihood ?? null, impact: f.impact ?? null, protected: f.protected ?? null, filed: f.filed === true, status: input.statuses[f.id]?.status ?? null })))
+  const out = { stats: result.stats, tier: result.tier, tierReasons: result.reasons, tierBy: 'rules' }
+  // LOW means nothing deferred: with anything deferred the classifier is not asked and MEDIUM stands.
+  if (result.tier !== 'medium' || !MERGE.classifier || result.facts.deferred.length) return out
+  const asked = await tierClassifier(MERGE.classifier, result, input.review)
+  out.tierClassifier = asked
+  if (!asked.error && asked.choice === 'low' && asked.confidence >= MERGE.threshold) {
+    out.tier = 'low'
+    out.tierBy = 'classifier'
+    out.tierReasons = [...result.reasons, `classifier ${asked.name}: low at ${asked.confidence} (threshold ${MERGE.threshold})`]
+  }
+  return out
+}
+// The summary's tier line: the worst tier of the closes that cover the tip, then the summary's own rules, which see the
+// whole branch: riskPaths and always-human on every file the tip changes against base (a file covered only by a clean
+// fix check included), and every deferred finding the summary lists (earlier closes' included). Their reasons replace
+// the closes' reasons of the same kind. A close logged before tiers counts as HIGH beside tiered ones; when none has a
+// tier the summary prints no line, exactly as before.
+const BRANCH_REASON = /^(riskPaths|always human|deferred( HIGH| protected)?): |^nothing deferred$/
+// Files the tip changes that no close's own diff judged (covered by a clean fix check, say): their kinds count here,
+// so logic or another kind keeps the summary from LOW and anything but docs or tests fails strict. A close's own files
+// keep its tier, so a classifier's LOW stands.
+function unjudgedStats(entries, closes, diff) {
+  const judged = new Set()
+  for (const close of closes) {
+    const review = entries.find((e) => e.type === 'review' && e.id === close.review)
+    const own = review && fullObjectId(review.baseSha) && diffStats(`${review.baseSha}...${close.closeHead}`, sliceOf(review))
+    if (!own) return tierStats(diff) // a close whose diff can't be read judged nothing for sure
+    for (const f of own.files) for (const p of pathsOf(f)) judged.add(p)
+  }
+  const files = diff.files.filter((f) => pathsOf(f).some((p) => !judged.has(p)))
+  return { ...tierStats({ ...diff, files }), paths: files.map((f) => f.path) }
+}
+function tierSummary(closes, { entries, base, tip, deferred }) {
+  if (!closes.some((c) => c.tier)) return []
+  const tiers = closes.map((c) => c.tier ? c : { tier: 'high', tierReasons: [`the close of review ${c.review} has no merge tier (logged before tiers)`] })
+  const closesWorst = tiers.reduce((w, c) => TIER_RANK[c.tier] > TIER_RANK[w] ? c.tier : w, 'low')
+  const diff = base ? diffStats(`${base}...${tip}`) : null
+  const { high, medium } = deferredReasons(deferred)
+  high.unshift(...(diff ? pathReasons(diff) : ['the diff from base could not be read, so its paths are unchecked']))
+  const unjudged = diff && unjudgedStats(entries, closes, diff)
+  if (unjudged?.kinds.logic || unjudged?.kinds.other) {
+    const shown = unjudged.paths.filter((p) => ['logic', 'other'].includes(fileKind(p)))
+    medium.unshift(`changed outside the closes' own diffs (logic ${unjudged.kinds.logic}, other ${unjudged.kinds.other}): ${listed(shown.length ? shown : unjudged.paths)}`)
+  }
+  const branchTier = high.length ? 'high' : medium.length ? 'medium' : 'low'
+  const worst = TIER_RANK[branchTier] > TIER_RANK[closesWorst] ? branchTier : closesWorst
+  const own = TIER_RANK[closesWorst] === TIER_RANK[worst] ? [...new Set(tiers.filter((c) => c.tier === worst).flatMap((c) => c.tierReasons || []))] : []
+  const kept = own.filter((r) => !BRANCH_REASON.test(r))
+  const branch = worst === 'high' ? [...high, ...medium] : medium
+  let reasons = [...kept, ...branch]
+  if (worst === 'low') reasons = own
+  else if (!reasons.length) reasons = own
+  const docsTestsOnly = closes.every((c) => c.stats?.kinds && !c.stats.kinds.logic && !c.stats.kinds.other && !c.stats.kinds.static) &&
+    !!unjudged && !unjudged.kinds.logic && !unjudged.kinds.other && !unjudged.kinds.static
+  const merges = { off: false, strict: worst === 'low' && docsTestsOnly, standard: worst === 'low', always: worst !== 'high' }[MERGE.policy]
+  return [`Merge tier: ${worst.toUpperCase()} (${reasons.join('; ')}). Policy ${MERGE.policy}: ${merges ? 'would merge' : 'needs a human'}`]
+}
+async function closeReview(id) {
   requireClean()
   const entries = readLog()
   const review = loggedReview(entries, id)
@@ -2531,11 +2750,12 @@ function closeReview(id) {
     if (r.error || r.status !== 0) throw new Error(`Tests failed at HEAD: ${r.error?.message || r.stderr || r.stdout || `exit ${r.status}`}`)
     tests = { cmd: command, passed: true }
   }
+  const tier = await mergeTier({ review, reviews, statuses, files, outOfScope, noTests, head })
   requireClean()
   if (headNow() !== head) throw new Error('HEAD changed while tests ran')
   appendLog({ type: 'close', ts: new Date().toISOString(), review: id, closeHead: head, repoId: repoIdentity(), statuses, outOfScope,
     status: outOfScope.length ? 'partial' : 'complete', ...(coverage && { coverage }), tests, ...(noTests !== null && { noTests }), ...(check && { fixCheck: check.id }), ...(recheck && { recheck: recheck.id }),
-    ...(carried && { carried }), ...(carriedAlso.length && { carriedAlso }) })
+    ...(carried && { carried }), ...(carriedAlso.length && { carriedAlso }), ...tier })
   console.log(`✓ Review ${id} closed (${outOfScope.length ? 'partial' : 'complete'}) at ${head}${paths ? ` for paths ${paths.join(', ')}` : ''}` +
     (carried ? `, carried from the ${carried.kind} head ${carried.from} (identical tree ${carried.tree})` : ''))
 }
@@ -3132,8 +3352,9 @@ function waiveFinding(id, findingId) {
 // section, deferred HIGHs first. A tip carried over a rewrite says so.
 function closeSummary(entries, close, head, carry = null) {
   const { review, lines } = closeLines(entries, close, head, carry)
-  const { criteria, findings } = deferredLines(entries, review, coverOf([close], head, carry))
-  lines.push('Deferred findings', ...findings)
+  const { items, criteria, findings } = deferredLines(entries, review, coverOf([close], head, carry))
+  const base = fullObjectId(review.baseSha) ? review.baseSha : review.base
+  lines.push(...tierSummary([close], { entries, base, tip: head, deferred: items }), 'Deferred findings', ...findings)
   if (close.noTests) lines.push(`No tests: ${close.noTests}`)
   return [...criteria, ...lines].join('\n')
 }
@@ -3145,8 +3366,8 @@ function slicedSummary(entries, { slices, baseSha, closeHead }, head, carry = nu
     lines.push(`Slice ${i + 1} of ${slices.length}: ${paths.join(', ')}`, ...closeLines(entries, close, head).lines)
     if (close.noTests) lines.push(`No tests: ${close.noTests}`)
   })
-  const { criteria, findings } = deferredLines(entries, slices[0].review, coverOf(slices.map((s) => s.close), head, carry))
-  lines.push('Deferred findings', ...findings)
+  const { items, criteria, findings } = deferredLines(entries, slices[0].review, coverOf(slices.map((s) => s.close), head, carry))
+  lines.push(...tierSummary(slices.map((s) => s.close), { entries, base: baseSha, tip: head, deferred: items }), 'Deferred findings', ...findings)
   return [...criteria, ...lines].join('\n')
 }
 const carriedLine = (carry, head) => `Carried: ${head} has the exact tree of ${carry.from} (${carry.tree}), which the close below covers; the history was rewritten after it`
@@ -3182,7 +3403,7 @@ function deferredLines(entries, review, cover) {
     .flatMap((r) => deferredFindings(entries, r, cover)))
   const criteria = items.filter((f) => f.criterionId).map(deferredLine)
   const findings = items.filter((f) => !f.criterionId).map(deferredLine)
-  return { criteria: criteria.length ? ['Acceptance criteria not met', ...criteria] : [], findings: findings.length ? findings : ['none'] }
+  return { items, criteria: criteria.length ? ['Acceptance criteria not met', ...criteria] : [], findings: findings.length ? findings : ['none'] }
 }
 // PR-body order: criteria not met, then HIGH, then MEDIUM and LOW; ties keep log order.
 const DEFERRED_RANK = { high: 1, medium: 2, low: 3 }
@@ -3414,8 +3635,8 @@ function coveredBy(entries, result, tip, carry) {
     if (r.close.noTests) lines.push(`No tests: ${r.close.noTests}`)
   })
   const cover = { ...coverOf(closes.map((r) => r.close), tip, carry), linked: used.filter((r) => r.check).map((r) => r.check.id) }
-  const { criteria, findings } = deferredLines(entries, tipClose.review, cover)
-  lines.push('Deferred findings', ...findings)
+  const { items, criteria, findings } = deferredLines(entries, tipClose.review, cover)
+  lines.push(...tierSummary(closes.map((r) => r.close), { entries, base, tip, deferred: items }), 'Deferred findings', ...findings)
   return [...criteria, ...lines].join('\n')
 }
 // A rewritten tip (squash, split, rebase) is covered when it does not descend from a logged head (a close, review,
@@ -3659,6 +3880,7 @@ function pushGate() {
     truncated,
     stats: recordStats(stats),
     plan: PLAN_PATH ?? null,
+    intent: INTENT || null,
     family: SEL.family,
     families: reviewingFamilies(SEL),
     model: SEL.id,
