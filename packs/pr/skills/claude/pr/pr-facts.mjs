@@ -57,6 +57,8 @@ const STYLE_KEYS = ['sections', 'tone', 'emoji']
 const SECTION_KEYS = { gif: ['id', 'title', 'on', 'urls'], other: ['id', 'title', 'on'] }
 const TONES = ['plain', 'technical']
 const DEFERRED_TITLE = 'Deferred findings'
+// A review exists, closed or still in progress: Deferred findings is then required.
+const REVIEWED = ['closed', 'in-progress']
 export const KINDS = ['code', 'tests', 'docs', 'config', 'static', 'builds']
 
 class Refusal extends Error {}
@@ -254,15 +256,18 @@ function resolveSections(list, warnings) {
   const missing = DEFAULT_SECTIONS.filter((s) => !seen.has(s.id))
   if (missing.length) warnings.push(`sections not in your list, added at the end and off: ${missing.map((s) => s.id).join(', ')}`)
   for (const s of missing) out.push({ ...clone(s), on: s.id === 'deferred' })
-  const titles = new Map()
+  // No two headings alike: "Deferred findings" is reserved, the first section keeps a title, a later one falls back
+  // to its default title, else to that title with its id, else with a number.
+  const taken = new Set([DEFERRED_TITLE])
   for (const s of out) {
-    if (s.id === 'gif') continue
-    if (titles.has(s.title) || (s.id !== 'deferred' && s.title === DEFERRED_TITLE)) {
+    if (s.id === 'gif' || s.id === 'deferred') continue
+    if (taken.has(s.title)) {
       const def = byId[s.id].title
-      warnings.push(`section "${s.id}": title "${s.title}" is already used: using "${def}"`)
-      s.title = def
+      const fallback = [def, `${def} (${s.id})`, ...Array.from({ length: 50 }, (_, i) => `${def} (${s.id} ${i + 2})`)].find((t) => !taken.has(t))
+      warnings.push(`section "${s.id}": title "${s.title}" is already used: using "${fallback}"`)
+      s.title = fallback
     }
-    titles.set(s.title, s.id)
+    taken.add(s.title)
   }
   return out
 }
@@ -323,7 +328,7 @@ export function facts({ cwd = process.cwd(), base: baseFlag, plan: planFlag } = 
   const changed = KINDS.flatMap((k) => files[k].map((f) => f.path))
   const plan = findPlan(root, planFlag, changed, branch)
   const rev = review(root)
-  const { style, warnings } = loadStyle({ reviewed: rev.state === 'closed' })
+  const { style, warnings } = loadStyle({ reviewed: REVIEWED.includes(rev.state) })
   const agentFile = /(^|\/)(CLAUDE|AGENTS)\.md$/
   return {
     branch, head,
@@ -444,7 +449,7 @@ export function check(body, f) {
 
   for (const s of sections) {
     if (!s.on || s.id === 'record') continue
-    if (s.id === 'deferred' && !closed) continue
+    if (s.id === 'deferred' && !REVIEWED.includes(f.review.state)) continue
     if (!marks.some((m) => m.s === s)) problems.push(`missing section "## ${s.title}"`)
   }
   const rank = new Map(sections.map((s, i) => [s, i]))

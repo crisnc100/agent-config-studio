@@ -247,6 +247,38 @@ test('C2 "Deferred findings" keeps its title, and stays on while a review exists
   assert.ok(f.warnings.some((w) => /"Deferred findings" stays on while a review exists/.test(w)), JSON.stringify(f.warnings))
 })
 
+test('C2 two sections never share a title: a collision gives the later one a unique fallback title, with a warning', () => {
+  const b = fixture()
+  b.setStyle({ sections: [{ id: 'summary', title: 'What changed' }, { id: 'goal', title: 'What changed (changes)' }, { id: 'changes' }, { id: 'try', title: 'What changed' },
+    { id: 'review', title: 'Deferred findings' }, ...DEFAULT_IDS.filter((id) => !['summary', 'changes', 'try', 'review', 'goal'].includes(id)).map((id) => ({ id }))] })
+  const f = b.facts()
+  const titles = f.style.sections.filter((s) => s.id !== 'gif').map((s) => s.title)
+  assert.equal(new Set(titles).size, titles.length, titles.join(' | '))
+  const title = (id) => f.style.sections.find((s) => s.id === id).title
+  assert.equal(title('summary'), 'What changed', 'the first one keeps its title')
+  assert.equal(title('goal'), 'What changed (changes)')
+  assert.equal(title('try'), 'How to try it')
+  assert.equal(title('review'), 'Review highlights')
+  assert.equal(title('deferred'), 'Deferred findings')
+  assert.ok(!['What changed', 'What changed (changes)'].includes(title('changes')), title('changes'))
+  for (const id of ['changes', 'try', 'review'])
+    assert.ok(f.warnings.some((w) => w.startsWith(`section "${id}": title`) && w.includes('already used')), `${id}: ${JSON.stringify(f.warnings)}`)
+})
+
+test('C2 "Deferred findings" stays on while a review is in progress too, and --check then requires it', () => {
+  const b = fixture()
+  b.setStyle({ sections: DEFAULT_IDS.map((id) => ({ id, ...(id === 'deferred' && { on: false }) })) })
+  b.stubGate({ tier: { tip: 'x', covered: false, reason: 'No complete close covers HEAD' }, code: 3, summary: '' })
+  const f = b.facts()
+  assert.equal(f.review.state, 'in-progress')
+  assert.equal(f.style.sections.find((s) => s.id === 'deferred').on, true)
+  assert.ok(f.warnings.some((w) => /"Deferred findings" stays on while a review exists/.test(w)), JSON.stringify(f.warnings))
+  const empty = { criteria: [], deferredHigh: [], deferred: [], reviewer: ['review in progress — not closed at this commit'], fixed: [''] }
+  const body = good({ ...f, review: empty })
+  assert.deepEqual(checked(b, body).problems, [])
+  assert.deepEqual(checked(b, body.replace('## Deferred findings\n\n', '')).problems, ['missing section "## Deferred findings"'])
+})
+
 /* ── C4 the GIF ──────────────────────────────────────────────────────── */
 
 test('C4 GIF: off gives none; on picks the same URL for the same branch every run; on with an empty list gives none, with a note', () => {
