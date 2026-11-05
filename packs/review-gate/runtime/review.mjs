@@ -2642,13 +2642,32 @@ async function mergeTier(input) {
 // the closes' reasons of the same kind. A close logged before tiers counts as HIGH beside tiered ones; when none has a
 // tier the summary prints no line, exactly as before.
 const BRANCH_REASON = /^(riskPaths|always human|deferred( HIGH| protected)?): |^nothing deferred$/
-function tierSummary(closes, { base, tip, deferred }) {
+// Files the tip changes that no close's own diff judged (covered by a clean fix check, say): their kinds count here,
+// so logic or another kind keeps the summary from LOW and anything but docs or tests fails strict. A close's own files
+// keep its tier, so a classifier's LOW stands.
+function unjudgedStats(entries, closes, diff) {
+  const judged = new Set()
+  for (const close of closes) {
+    const review = entries.find((e) => e.type === 'review' && e.id === close.review)
+    const own = review && fullObjectId(review.baseSha) && diffStats(`${review.baseSha}...${close.closeHead}`, sliceOf(review))
+    if (!own) return tierStats(diff) // a close whose diff can't be read judged nothing for sure
+    for (const f of own.files) for (const p of pathsOf(f)) judged.add(p)
+  }
+  const files = diff.files.filter((f) => pathsOf(f).some((p) => !judged.has(p)))
+  return { ...tierStats({ ...diff, files }), paths: files.map((f) => f.path) }
+}
+function tierSummary(closes, { entries, base, tip, deferred }) {
   if (!closes.some((c) => c.tier)) return []
   const tiers = closes.map((c) => c.tier ? c : { tier: 'high', tierReasons: [`the close of review ${c.review} has no merge tier (logged before tiers)`] })
   const closesWorst = tiers.reduce((w, c) => TIER_RANK[c.tier] > TIER_RANK[w] ? c.tier : w, 'low')
   const diff = base ? diffStats(`${base}...${tip}`) : null
   const { high, medium } = deferredReasons(deferred)
   high.unshift(...(diff ? pathReasons(diff) : ['the diff from base could not be read, so its paths are unchecked']))
+  const unjudged = diff && unjudgedStats(entries, closes, diff)
+  if (unjudged?.kinds.logic || unjudged?.kinds.other) {
+    const shown = unjudged.paths.filter((p) => ['logic', 'other'].includes(fileKind(p)))
+    medium.unshift(`changed outside the closes' own diffs (logic ${unjudged.kinds.logic}, other ${unjudged.kinds.other}): ${listed(shown.length ? shown : unjudged.paths)}`)
+  }
   const branchTier = high.length ? 'high' : medium.length ? 'medium' : 'low'
   const worst = TIER_RANK[branchTier] > TIER_RANK[closesWorst] ? branchTier : closesWorst
   const own = TIER_RANK[closesWorst] === TIER_RANK[worst] ? [...new Set(tiers.filter((c) => c.tier === worst).flatMap((c) => c.tierReasons || []))] : []
@@ -2657,7 +2676,8 @@ function tierSummary(closes, { base, tip, deferred }) {
   let reasons = [...kept, ...branch]
   if (worst === 'low') reasons = own
   else if (!reasons.length) reasons = own
-  const docsTestsOnly = closes.every((c) => c.stats?.kinds && !c.stats.kinds.logic && !c.stats.kinds.other && !c.stats.kinds.static)
+  const docsTestsOnly = closes.every((c) => c.stats?.kinds && !c.stats.kinds.logic && !c.stats.kinds.other && !c.stats.kinds.static) &&
+    !!unjudged && !unjudged.kinds.logic && !unjudged.kinds.other && !unjudged.kinds.static
   const merges = { off: false, strict: worst === 'low' && docsTestsOnly, standard: worst === 'low', always: worst !== 'high' }[MERGE.policy]
   return [`Merge tier: ${worst.toUpperCase()} (${reasons.join('; ')}). Policy ${MERGE.policy}: ${merges ? 'would merge' : 'needs a human'}`]
 }
@@ -3334,7 +3354,7 @@ function closeSummary(entries, close, head, carry = null) {
   const { review, lines } = closeLines(entries, close, head, carry)
   const { items, criteria, findings } = deferredLines(entries, review, coverOf([close], head, carry))
   const base = fullObjectId(review.baseSha) ? review.baseSha : review.base
-  lines.push(...tierSummary([close], { base, tip: head, deferred: items }), 'Deferred findings', ...findings)
+  lines.push(...tierSummary([close], { entries, base, tip: head, deferred: items }), 'Deferred findings', ...findings)
   if (close.noTests) lines.push(`No tests: ${close.noTests}`)
   return [...criteria, ...lines].join('\n')
 }
@@ -3347,7 +3367,7 @@ function slicedSummary(entries, { slices, baseSha, closeHead }, head, carry = nu
     if (close.noTests) lines.push(`No tests: ${close.noTests}`)
   })
   const { items, criteria, findings } = deferredLines(entries, slices[0].review, coverOf(slices.map((s) => s.close), head, carry))
-  lines.push(...tierSummary(slices.map((s) => s.close), { base: baseSha, tip: head, deferred: items }), 'Deferred findings', ...findings)
+  lines.push(...tierSummary(slices.map((s) => s.close), { entries, base: baseSha, tip: head, deferred: items }), 'Deferred findings', ...findings)
   return [...criteria, ...lines].join('\n')
 }
 const carriedLine = (carry, head) => `Carried: ${head} has the exact tree of ${carry.from} (${carry.tree}), which the close below covers; the history was rewritten after it`
@@ -3616,7 +3636,7 @@ function coveredBy(entries, result, tip, carry) {
   })
   const cover = { ...coverOf(closes.map((r) => r.close), tip, carry), linked: used.filter((r) => r.check).map((r) => r.check.id) }
   const { items, criteria, findings } = deferredLines(entries, tipClose.review, cover)
-  lines.push(...tierSummary(closes.map((r) => r.close), { base, tip, deferred: items }), 'Deferred findings', ...findings)
+  lines.push(...tierSummary(closes.map((r) => r.close), { entries, base, tip, deferred: items }), 'Deferred findings', ...findings)
   return [...criteria, ...lines].join('\n')
 }
 // A rewritten tip (squash, split, rebase) is covered when it does not descend from a logged head (a close, review,

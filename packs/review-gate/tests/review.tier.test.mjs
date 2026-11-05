@@ -441,3 +441,31 @@ test('o1 the classifier is never asked when anything is deferred, even one that 
   assert.equal(Object.hasOwn(record, 'tierClassifier'), false)
   assert.deepEqual(tierCalls(), [])
 })
+
+// Same class as f1, for file kinds: a file covered only by a clean fix check still counts toward LOW and strict.
+function fixCheckCovers(files) {
+  commit({ 'docs/guide.md': '# Guide\n' })
+  const first = reviewed()
+  closed(first.id)
+  commit({ ...files, 'docs/more.md': 'more\n' })
+  allowed(script(['--fix-check', first.id], { STUB_FINDINGS: JSON.stringify({ findings: [] }) }))
+  closed(reviewed([], { REVIEW_PATHS: 'docs/more.md' }).id)
+}
+test('f1k a logic file covered only by a clean fix check keeps the summary from LOW', () => {
+  fixCheckCovers({ 'src/two.js': 'export const two = 2\n' })
+  homeConfig({ merge: { policy: 'standard' } })
+  assert.match(tierLine(summary().stdout)[0], /^Merge tier: MEDIUM \(.*src\/two\.js.*\)\. Policy standard: needs a human$/)
+})
+test('f1k a static file covered only by a clean fix check leaves LOW but fails strict\'s docs-and-tests-only check', () => {
+  fixCheckCovers({ 'web/app.css': 'a{}\n' })
+  homeConfig({ merge: { policy: 'strict' } })
+  assert.match(tierLine(summary().stdout)[0], /^Merge tier: LOW .*Policy strict: needs a human$/)
+  homeConfig({ merge: { policy: 'standard' } })
+  assert.match(tierLine(summary().stdout)[0], /^Merge tier: LOW .*Policy standard: would merge$/)
+})
+test('f1k a classifier LOW on a close\'s own logic file stands in the summary', () => {
+  homeConfig({ merge: { classifier: 'tierjev' } })
+  commit({ 'web/App.tsx': TSX })
+  assert.equal(reviewAndClose({ extra: { STUB_TIER: answer('low', 0.9, { low: 0.9, medium: 0.1 }) } }).tier, 'low')
+  assert.match(tierLine(summary().stdout)[0], /^Merge tier: LOW /)
+})
