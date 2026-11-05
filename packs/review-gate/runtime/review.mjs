@@ -2242,23 +2242,31 @@ function locateQuote(f) {
   while (q.length && !q[0]) q.shift()
   while (q.length && !q.at(-1)) q.pop()
   const needle = q.join('\n')
-  let start = null
+  const starts = []
   const problemIn = ({ text }, keep = false) => {
     const count = text.endsWith('\n') ? text.split('\n').length - 1 : text.split('\n').length
     // Also bounds the search loop: an unsafe integer (2^53, a 310-digit Infinity) never terminates s++.
     if (!Number.isSafeInteger(line) || line < 1 || line > count)
       return `line ${lineMatch[1].length > 20 ? `${lineMatch[1].slice(0, 20)}…` : lineMatch[1]} is outside ${path} (1–${count})`
     const lines = text.split('\n').map(norm)
+    // Every start in the window that holds the quote, so inDiff can judge each place it could mean.
+    let found = false
     for (let s = Math.max(1, line - QUOTE_WINDOW); s <= line + QUOTE_WINDOW; s++)
-      if (lines.slice(s - 1, s - 1 + q.length).join('\n').includes(needle)) { if (keep) start = s; return null }
-    return `quote not found within ±${QUOTE_WINDOW} lines of ${path}:${line}`
+      if (lines.slice(s - 1, s - 1 + q.length).join('\n').includes(needle)) {
+        found = true
+        if (!keep) break
+        starts.push(s)
+      }
+    return found ? null : `quote not found within ±${QUOTE_WINDOW} lines of ${path}:${line}`
   }
   const problem = problemIn(decider, true)
   if (problem) return { problem }
   if (written && prefixed && !problemIn(prefixed)) return { problem: null, ambiguous: [written.path, prefixed.path] }
-  // Where the quote matched (its lines, and whether in the HEAD or the base file), for inDiff: never the cited line.
+  // Every place in the window the quote matched (its lines, and whether in the HEAD or the base file), for inDiff; the cited
+  // line itself when none is recorded.
+  const spans = (starts.length ? starts : [line]).map((s) => [s, s + q.length - 1])
   return { problem: null, path: decider.path, commit: sh('git', ['rev-parse', '--verify', `${decider.rev}^{commit}`]),
-    lines: [start, start + q.length - 1], side: decider.rev === 'HEAD' ? 'head' : 'base' }
+    spans, side: decider.rev === 'HEAD' ? 'head' : 'base' }
 }
 // The location rides on a Symbol key until the record is written: JSON never carries it, so reviewer JSON
 // cannot set it, and the logged finding and FINDINGS_JSON keep their shape. Reviewer keys that look like the
@@ -3755,14 +3763,15 @@ async function fixCheck(id) {
 // A review or security finding that claims preExisting gets inDiff: true when its main location or any located instance is
 // within 3 lines of a line the review diff (merge base to head) added or changed, false when every place is resolved and
 // outside it, null when that can't be told (unlocated, ambiguous, git failed). Only false files it as pre-existing.
-// Each place is judged by the lines its quote matched, on the side it matched: a HEAD quote against the lines the branch
+// Each place is judged by every span its quote matched near the cited line, on the side it matched: a HEAD quote against the lines the branch
 // added or changed, a base quote (a deleted file) against the lines it removed or changed, and only when that base is the
 // merge base. Any place that can't be judged (unlocated, ambiguous, another base, git failed) is null.
 function placeInDiff(where, changed, baseSha) {
-  if (!changed || !where?.path || !Array.isArray(where.lines) || !Number.isSafeInteger(where.lines[0])) return null
+  if (!changed || !where?.path || !Array.isArray(where.spans) || !where.spans.length) return null
   if (where.side === 'base' && where.commit !== baseSha) return null
-  const [from, to] = where.lines
-  return ((where.side === 'base' ? changed.base : changed.head).get(where.path) || []).some(([a, b]) => from <= b + 3 && to >= a - 3)
+  // Any place the quote matched near the cited line that touches the diff makes it the branch's.
+  const hunks = (where.side === 'base' ? changed.base : changed.head).get(where.path) || []
+  return where.spans.some(([from, to]) => hunks.some(([a, b]) => from <= b + 3 && to >= a - 3))
 }
 function inDiffOf(finding, changed, baseSha) {
   const places = [finding[WHERE], ...(finding.instances || []).map((_, i) => finding[WHERE]?.instances?.[i])]

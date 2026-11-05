@@ -561,3 +561,14 @@ test('Q6 an unknown fixCheck in the home config warns once, naming that file', (
   const warnings = r.out.split('\n').filter((l) => l.includes('Unknown fixCheck'))
   assert.deepEqual(warnings, [`⚠ Unknown fixCheck "sometimes" in ${HOME_CONFIG}; using the others (risk | always)`])
 })
+test('X1 inDiff checks every place the quote matches near the cited line: the same "return true;" unchanged at 10 and introduced at 15 is the branch\'s', () => {
+  // public() returns true at line 10 on main; the branch makes admin() at line 15 return true as well.
+  const auth = (admin) => Array.from({ length: 20 }, (_, i) => ({ 9: 'export function isPublic() {', 10: '  return true;', 11: '}',
+    14: 'export function isAdmin() {', 15: `  return ${admin};`, 16: '}' })[i + 1] ?? `// line ${i + 1}`).join('\n') + '\n'
+  onBase({ 'src/access.js': auth('false') })
+  commit({ 'src/access.js': auth('true') })
+  const review = reviewed([scored({ issue: 'everyone is admin', file: 'src/access.js', line: '15', quote: 'return true;', protected: true, trigger: 'any request', preExisting: true })])
+  assert.equal(review.findingDetails[0].status, 'verified-quote')
+  assert.equal(review.findingDetails[0].inDiff, true)
+  refused(review.id, {}, /Finding f1 needs a fixed or rejected status/)
+})
