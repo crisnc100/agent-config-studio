@@ -317,6 +317,22 @@ const SECURITY = (() => {
   return settings
 })()
 const cfg = (envName, key, dflt) => process.env[envName] ?? CONFIG[key] ?? dflt
+// fixCheck: "risk" (the default: a fix touching tests, verify scripts or riskPaths needs a fix check before close) |
+// "always" (any code fix after the review needs one; docs, static, coverage-exempt and builds/ files never do). Every
+// source may only raise it: the home config is the floor, and REVIEW_FIX_CHECK, REVIEW_CONFIG or a repo file can't lower it.
+const FIX_CHECK_MODES = ['risk', 'always']
+const FIX_CHECK = (() => {
+  const homes = [join(homedir(), '.agent-config-studio', 'review-gate', 'config.json'), join(homedir(), '.claude', 'review-config.json')]
+  let mode = 'risk'
+  for (const [value, where] of [[homeKey(homes, 'fixCheck'), homeSource(homes)], [CONFIG.fixCheck, CONFIG._source], [process.env.REVIEW_FIX_CHECK, 'REVIEW_FIX_CHECK']]) {
+    if (value == null || value === '') continue
+    const asked = String(value).trim().toLowerCase()
+    if (!FIX_CHECK_MODES.includes(asked)) {
+      if (!args.includes('--gate')) console.warn(`⚠ Unknown fixCheck ${JSON.stringify(value)} in ${where}; using the others (${FIX_CHECK_MODES.join(' | ')})`)
+    } else if (asked === 'always') mode = 'always'
+  }
+  return mode
+})()
 // A family name resolves through the model registry (`model-id --table`);
 // a raw id passes through. On failure model-id prints MODEL-ID-UNRESOLVED-<name>, which the CLI
 // rejects loudly — never an empty string that would fall through to the CLI's own default.
@@ -1259,6 +1275,7 @@ if (process.argv.includes('--show-config')) {
         riskFiles: stats ? stats.riskFiles : '(no diff stats)',
         verify: SECOND_OPINION ? 'second-opinion' : 'quote check only',
         verifyCmd: VERIFY_CMD || '(none)',
+        fixCheck: FIX_CHECK,
         source: CONFIG._source || '(built-in defaults / env only)',
         log: LOG_PATH,
       },
@@ -2531,6 +2548,8 @@ function needsFixCheck(files, command) {
   return files.some((p) => isTestFile(p) || matchesAny(p, RISK_PATHS) || /(^|\/)verify(?:[.\/-]|$)/i.test(p) ||
     String(command).split(/[\s'";&|()]+/).some((token) => token.replace(/^\.\//, '') === p))
 }
+// The files that make a fix check due under fixCheck "always": anything but builds/, docs, static and coverage-exempt files.
+const codeFixFiles = (files) => files.filter((p) => !p.startsWith('builds/') && !['docs', 'static'].includes(fileKind(p)) && !coverageExempt(p))
 function operatorOnly(reason) {
   const markers = ['CLAUDECODE', 'CODEX_CI', 'CODEX_SANDBOX', 'CODEX_SESSION_ID', 'CODEX_THREAD_ID', 'GROK_AGENT', 'GROK_SESSION_ID']
   if (!String(reason || '').trim() || !process.stderr.isTTY || markers.some((key) => Object.hasOwn(process.env, key)))
@@ -2932,6 +2951,10 @@ async function closeReview(id) {
       'Fixes land before the fix check; close at its head, then review the later files as a slice (REVIEW_PATHS) and close that at the tip. No third model pass')
   }
   if (needsFixCheck(files, [command, VERIFY_CMD].filter(Boolean).join(' ')) && !check) throw new Error('Fix changes tests, verify scripts or risk paths; run --fix-check first')
+  // Under "always", a Grade's one recheck counts as its check.
+  const code = FIX_CHECK === 'always' && !check && !(review.kind === 'grade' && recheck) ? codeFixFiles(files) : []
+  if (code.length) throw new Error(`Fix changes code after the review and fixCheck is "always": ${listed(code)}; run --fix-check first ` +
+    '(docs, static, coverage-exempt and builds/ files never need one)')
   const reviews = [review, ...(recheck ? [recheck] : []), ...(check ? [check] : [])]
   const ids = new Set(reviews.flatMap((r) => r.findingDetails.map((f) => f.id)))
   for (const key of Object.keys(statuses)) if (!ids.has(key)) throw new Error(`Unknown finding status key: ${key}`)

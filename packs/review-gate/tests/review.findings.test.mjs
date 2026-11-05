@@ -341,3 +341,59 @@ test('R2 --noise-report counts per reviewing family and severity band, from each
 test('R2 --noise-report with nothing closed says so', () => {
   assert.deepEqual(noise(), ['Noise report (this repository): 0 review(s) closed', 'no closes'])
 })
+
+// ── 4. fixCheck: "risk" (default) | "always" ────────────────────────────────
+const ALWAYS_REFUSAL = '✖ Fix changes code after the review and fixCheck is "always": src/one.js; run --fix-check first (docs, static, coverage-exempt and builds/ files never need one)'
+test('F1 fixCheck "always": a code fix after review with no fix check is refused, with the reason in full; a fix check lets it close', () => {
+  homeConfig({ fixCheck: 'always' })
+  const review = reviewed([scored()])
+  commit({ 'src/one.js': lines() })
+  refused(review.id, { f1: { status: 'fixed' } }, ALWAYS_REFUSAL)
+  allowed(script(['--fix-check', review.id]))
+  closed(review.id, { f1: { status: 'fixed' } })
+  assert.match(script(['--show-config']).stdout, /"fixCheck": "always"/)
+})
+test('F1 the default ("risk") still closes a plain code fix without a fix check', () => {
+  const review = reviewed([scored()])
+  commit({ 'src/one.js': lines() })
+  closed(review.id, { f1: { status: 'fixed' } })
+  assert.match(script(['--show-config']).stdout, /"fixCheck": "risk"/)
+})
+test('F2 under "always", builds/, docs, static and coverage-exempt files never need a fix check', () => {
+  homeConfig({ fixCheck: 'always' })
+  const review = reviewed([])
+  commit({ 'builds/x/log.md': 'note\n', 'docs/guide.md': '# Guide\n', 'web/app.css': 'a{}\n', 'package-lock.json': '{}\n' })
+  const r = close(review.id, {})
+  allowed(r); assert.ok(!r.out.includes('run --fix-check first'), r.out)
+})
+test('F3 a tracked repo config or REVIEW_FIX_CHECK can raise fixCheck to "always", never lower the home config\'s', () => {
+  homeConfig({ fixCheck: 'always' })
+  commit({ '.claude/review-config.json': JSON.stringify({ fixCheck: 'risk' }) })
+  const review = reviewed([scored()])
+  commit({ 'src/one.js': lines() })
+  refused(review.id, { f1: { status: 'fixed' } }, ALWAYS_REFUSAL)
+  refused(review.id, { f1: { status: 'fixed' } }, ALWAYS_REFUSAL, { REVIEW_FIX_CHECK: 'risk' })
+  homeConfig({})
+  closed(review.id, { f1: { status: 'fixed' } })
+  refused(review.id, { f1: { status: 'fixed' } }, ALWAYS_REFUSAL, { REVIEW_FIX_CHECK: 'always' })
+  const odd = script(['--show-config'], { REVIEW_FIX_CHECK: 'sometimes' })
+  assert.match(odd.out, /Unknown fixCheck "sometimes" in REVIEW_FIX_CHECK; using the others \(risk \| always\)/)
+})
+test('F4 a Grade close under "always": the recheck counts as its check; without one a code fix needs a fix check', () => {
+  homeConfig({ fixCheck: 'always' })
+  const grade = (value, args = []) => {
+    const path = join(ROOT, 'grade.json'); writeFileSync(path, JSON.stringify(value))
+    allowed(script(['--log-grade', path, ...args]))
+    return records().at(-1)
+  }
+  const criteria = (verdict) => [{ id: 'k1', criterion: 'v2 is 2', verdict, evidence: 'src/one.js:2' }]
+  const failed = grade({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('FAIL') })
+  commit({ 'src/one.js': lines() })
+  refused(failed.id, { c1: { status: 'fixed' } }, ALWAYS_REFUSAL)
+  grade({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('PASS') }, ['--recheck-of', failed.id])
+  closed(failed.id, { c1: { status: 'fixed' } })
+  const passed = grade({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('PASS'),
+    findings: [{ issue: 'v18 off', evidence: 'src/one.js:18', likelihood: 5, impact: 5, protected: false, trigger: 'reading v18' }] })
+  commit({ 'src/one.js': lines({ 18: 'export const v18 = 0' }) })
+  refused(passed.id, { f1: { status: 'fixed' } }, '✖ Fix changes code after the review and fixCheck is "always": src/one.js; run --fix-check first')
+})
