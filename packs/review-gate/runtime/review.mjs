@@ -2853,6 +2853,16 @@ async function closeReview(id) {
   // After a merge of the default branch, a file whose state at HEAD is the merge base's is the default branch's own content.
   const mergeBase = coverBase(review, head), stateAt = (commit, p) => treeStates(commit).get(p) ?? null
   const mainContent = (p) => mergeBase !== review.baseSha && stateAt(mergeBase, p) === stateAt(head, p)
+  // Brought back to main's existing content by a merge of the default branch in from..to, and touched by no other commit
+  // there: a deletion, or a later commit restoring main's version, never qualifies.
+  const mergedToMain = (from, to) => {
+    const merged = new Set(), other = new Set()
+    if (based && mergeBase !== review.baseSha) for (const commit of branchCommits([`${from}..${to}`])) {
+      const viaMerge = !!baseMergeParents(commit)
+      for (const p of viaMerge ? branchPaths(commit) : commitPaths(commit)) (viaMerge ? merged : other).add(p)
+    }
+    return (p) => merged.has(p) && !other.has(p) && stateAt(mergeBase, p) !== null && mainContent(p)
+  }
   const command = blankCommand(option('--test-cmd')) ? VERIFY_CMD : option('--test-cmd')
   const noTests = option('--no-tests')
   if (noTests !== null && !noTests.trim()) throw new Error('--no-tests requires a nonempty reason')
@@ -2866,15 +2876,18 @@ async function closeReview(id) {
       throw new Error(`Fix check head ${check.head} is not an ancestor of closing HEAD (the branch was rewritten after it). Unresolved work goes to the operator, no third model pass`)
     const since = paths ? slicedScope(review, touchedBetween(check.head, checkAt, paths, based), touchedBetween(check.head, checkAt, null, based))
       : touchedBetween(check.head, checkAt, null, based)
-    const code = since.filter((p) => !isTestFile(p) && !p.startsWith('builds/'))
+    const toMain = mergedToMain(check.head, checkAt)
+    const code = since.filter((p) => !isTestFile(p) && !p.startsWith('builds/') && !toMain(p))
     const sides = code.length && based ? baseMergeSides([`${check.head}..${checkAt}`]) : new Set()
     if (code.length && code.every((p) => sides.has(p)))
       throw new Error(`The merge of the default branch after the fix check left ${code.join(', ')} for review: ${sidesNote(code, id)}. No third model pass`)
     if (code.length) throw new Error(`Fix check head must equal closing HEAD, or the commits after it may touch only builds/ and test files: ${code.join(', ')}. ` +
       'Fixes land before the fix check; close at its head, then review the later files as a slice (REVIEW_PATHS) and close that at the tip. No third model pass')
   }
-  // The default branch's own content is not the fix: it never asks for a fix check (which would leave it out anyway).
-  if (needsFixCheck(files.filter((p) => !mainContent(p)), [command, VERIFY_CMD].filter(Boolean).join(' ')) && !check) throw new Error('Fix changes tests, verify scripts or risk paths; run --fix-check first')
+  // What a merge brought back to the default branch's own content is not the fix: it never asks for a fix check (which
+  // would leave it out anyway).
+  const toMain = mergedToMain(review.head, at)
+  if (needsFixCheck(files.filter((p) => !toMain(p)), [command, VERIFY_CMD].filter(Boolean).join(' ')) && !check) throw new Error('Fix changes tests, verify scripts or risk paths; run --fix-check first')
   const reviews = [review, ...(recheck ? [recheck] : []), ...(check ? [check] : [])]
   const ids = new Set(reviews.flatMap((r) => r.findingDetails.map((f) => f.id)))
   for (const key of Object.keys(statuses)) if (!ids.has(key)) throw new Error(`Unknown finding status key: ${key}`)
