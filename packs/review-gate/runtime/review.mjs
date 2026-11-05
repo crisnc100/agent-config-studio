@@ -4591,32 +4591,36 @@ const evalSpan = (line) => {
   return [Math.min(a, b), Math.max(a, b)]
 }
 const EVAL_RANK = { high: 3, medium: 2, low: 1 }
-// The path a finding names, as the quote check reads it: an absolute path inside the case repo made relative, ./ dropped,
-// and the a/ or b/ diff prefix as a second reading.
-function evalFindingPaths(f) {
+// The paths a finding may name: the resolved one when the quote check located it; else the path as cited, with the case
+// repo's own folder (as given, or through symlinks) stripped from an absolute path, ./ dropped, and the a/ or b/ diff
+// prefix as a second reading.
+function evalFindingPaths(f, record, repo) {
+  const resolved = record.resolvedPaths?.[f.id]?.path
+  if (resolved) return [resolved]
   let p = String(f.file ?? '')
-  const inRepo = p.lastIndexOf('/repo/')
-  if (isAbsolute(p) && inRepo !== -1) p = p.slice(inRepo + 6)
+  for (const top of repo ? [repo, realish(repo)] : []) if (p.startsWith(`${top}/`)) { p = p.slice(top.length + 1); break }
   p = p.replace(/^\.\//, '')
   return /^[ab]\//.test(p) ? [p, p.slice(2)] : [p]
 }
-// Whether a finding on a base-side expect's file quotes the base tree within the expected lines ± EVAL_SLACK (whitespace
-// runs collapsed, as the quote check does).
-function quotedInBase(c, e, f) {
-  const bytes = c.base.get(e.file)
-  if (!bytes || !evalFindingPaths(f).includes(e.file)) return false
+// A base-side catch: the finding names the expect's file, its cited line is within the expected lines ± EVAL_SLACK, and
+// its quote is in the base tree near that cited line, at lines that also overlap the expected ones ± EVAL_SLACK
+// (whitespace runs collapsed, as the quote check does). An identical snippet elsewhere in the file does not count.
+function quotedInBase(c, e, f, record, repo) {
+  const bytes = c.base.get(e.file), span = evalSpan(f.line)
+  if (!bytes || !span || !evalFindingPaths(f, record, repo).includes(e.file)) return false
+  const from = e.lines[0] - EVAL_SLACK, to = e.lines[1] + EVAL_SLACK
+  if (span[0] > to || span[1] < from) return false
   const norm = (l) => l.replace(/\s+/g, ' ').trim()
   const q = String(f.quote ?? '').split('\n').map(norm)
   while (q.length && !q[0]) q.shift()
   while (q.length && !q.at(-1)) q.pop()
   if (!q.length) return false
   const lines = bytes.toString('utf8').split('\n').map(norm), needle = q.join('\n')
-  for (let s = Math.max(1, e.lines[0] - EVAL_SLACK); s <= e.lines[1] + EVAL_SLACK; s++)
-    if (lines.slice(s - 1, s - 1 + q.length).join('\n').includes(needle)) return true
+  for (let s = Math.max(1, span[0] - EVAL_SLACK); s <= span[1] + EVAL_SLACK; s++)
+    if (s <= to && s + q.length - 1 >= from && lines.slice(s - 1, s - 1 + q.length).join('\n').includes(needle)) return true
   return false
 }
-// Scores one case from the child's record: its resolvedPaths settle each finding's path, its commit the side.
-function scoreEvalCase(c, record) {
+function scoreEvalCase(c, record, repo = null) {
   const located = [], unlocated = []
   for (const f of record.findingDetails || []) {
     const where = record.resolvedPaths?.[f.id], span = evalSpan(f.line)
@@ -4631,7 +4635,7 @@ function scoreEvalCase(c, record) {
     const expects = c.expect.map((e) => {
       // Removed code has no line at HEAD when its file survives, so the quote check leaves such a finding unlocated (or
       // locates it at HEAD): a base-side expect also takes any finding on that file whose quote is in the base tree there.
-      const hits = [...near(e, e.side), ...(e.side === 'base' ? (record.findingDetails || []).filter((f) => quotedInBase(c, e, f)).map((f) => ({ f })) : [])]
+      const hits = [...near(e, e.side), ...(e.side === 'base' ? (record.findingDetails || []).filter((f) => quotedInBase(c, e, f, record, repo)).map((f) => ({ f })) : [])]
       hits.forEach((l) => used.add(l.f.id))
       const best = strongest(hits)
       return { file: e.file, side: e.side, lines: e.lines, caught: !!best, ...(best && { by: best.f.id, severity: best.f.severity }) }
@@ -4657,29 +4661,28 @@ async function evalOne(m, c, run, root, timeoutMs) {
   const dir = join(root, `${m.family}-${c.id}-${run}`), logDir = join(dir, 'log')
   const started = Date.now()
   const base = { id: c.id, kind: c.kind, run, caseHash: c.hash }
-  let error = null, record = null
+  let error = null, record = null, repo = null
   try {
-    const repo = evalRepo(c, dir)
+    repo = evalRepo(c, dir)
     const r = await evalChild(m, c, repo, logDir, root, timeoutMs)
-    const at = r.out.indexOf('===FINDINGS_JSON===')
-    let json = null
-    try { json = at === -1 ? null : JSON.parse(r.out.slice(at + 19)) } catch { /* below */ }
     if (r.timedOut) error = `timed out after ${evalDuration(timeoutMs)}`
     else if (r.code !== 0) error = `the review exited ${r.code ?? r.signal}: ${tail(r.err || r.out)}`
-    else if (!json?.reviewId) error = 'the review printed no FINDINGS_JSON'
     else {
+      // The result is the review record in this case's own eval log (it logs one review), never stdout: a CLI can
+      // echo its answer there, and a finding may quote the FINDINGS_JSON delimiter.
       const logFile = join(logDir, 'review-log.jsonl')
-      record = (existsSync(logFile) ? readFileSync(logFile, 'utf8').split('\n') : []).flatMap((line) => {
-        try { const e = JSON.parse(line); return e?.type === 'review' && e.id === json.reviewId ? [e] : [] } catch { return [] }
-      })[0] ?? null
-      if (!record) error = `no record of review ${json.reviewId} in its eval log`
+      const reviews = (existsSync(logFile) ? readFileSync(logFile, 'utf8').split('\n') : []).flatMap((line) => {
+        try { const e = JSON.parse(line); return e?.type === 'review' && e.kind === 'review' ? [e] : [] } catch { return [] }
+      })
+      if (reviews.length === 1) record = reviews[0]
+      else error = reviews.length ? `its eval log holds ${reviews.length} review records, not one` : 'the review logged no record (nothing reviewed?)'
     }
   } catch (e) { error = e.message }
   const durationMs = Date.now() - started
   if (error) return { ...base, outcome: 'errored', error, durationMs, kept: dir }
   rmSync(dir, { recursive: true, force: true })
   return {
-    ...base, ...scoreEvalCase(c, record), durationMs, reviewId: record.id, model: record.model ?? null,
+    ...base, ...scoreEvalCase(c, record, repo), durationMs, reviewId: record.id, model: record.model ?? null,
     ...(record.modelUsed && { modelUsed: record.modelUsed }), ...(record.lenses && { lenses: record.lenses }), effort: record.effort ?? null,
     security: record.security?.status ?? null,
   }

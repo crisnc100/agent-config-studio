@@ -48,8 +48,10 @@ if (kind === 'code' && (process.env.STUB_FAIL || '').split(',').includes(model))
 if (kind === 'code' && process.env.STUB_SLEEP_MS) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.STUB_SLEEP_MS))
 const replies = JSON.parse(process.env.STUB_REPLIES || '[]')
 const hit = replies.find((r) => (!r.model || r.model === model) && (!r.intent || prompt.includes(r.intent)))
-const reply = kind === 'scores' ? '{"scores":[]}' : kind === 'verdicts' ? '{"verdicts":[]}' : kind === 'security' ? '{"findings":[]}'
-  : hit ? JSON.stringify(hit.reply) : (process.env.STUB_FINDINGS || '{"findings":[]}')
+const reply = (kind === 'scores' ? '{"scores":[]}' : kind === 'verdicts' ? '{"verdicts":[]}' : kind === 'security' ? '{"findings":[]}'
+  : hit ? JSON.stringify(hit.reply) : (process.env.STUB_FINDINGS || '{"findings":[]}')).replaceAll('@CWD@', process.cwd())
+// STUB_ECHO: the CLI also echoes its answer to stdout, as codex does.
+if (process.env.STUB_ECHO) console.log(reply)
 if (a.includes('-o')) fs.writeFileSync(a[a.indexOf('-o')+1], reply)
 else console.log(JSON.stringify({ structured_output: JSON.parse(reply), structuredOutput: JSON.parse(reply), modelUsage: { [cli === 'claude' ? model : 'stub-grok']: {} } }))
 `
@@ -600,4 +602,45 @@ test('fix 7 a family whose CLI is missing is reported exactly once, named or fro
     assert.equal(r.status, 0, r.out)
     assert.equal(r.out.split('\n').filter((l) => /grok/.test(l) && /not on PATH/.test(l)).length, 1, `${args.join(' ')}:\n${r.out}`)
   }
+})
+
+test('slice f1 a finding that quotes the FINDINGS_JSON delimiter (echoed by the CLI) still scores: the result comes from the eval log record', () => {
+  makeCase('delim', { id: 'delim', kind: 'bug', intent: 'token-delim', expect: [{ file: 'src/out.js', side: 'head', lines: [1, 1], what: 'prints the delimiter' }] },
+    { 'src/out.js': 'export const marker = null\n' }, { 'src/out.js': "export const marker = '===FINDINGS_JSON==='\n" })
+  const r = evalRun(['--family', 'sol'], { STUB_ECHO: '1',
+    STUB_REPLIES: JSON.stringify([{ intent: 'token-delim', reply: findings(finding({ file: 'src/out.js', line: '1', quote: "export const marker = '===FINDINGS_JSON==='" })) }]) })
+  assert.equal(r.status, 0, r.out)
+  const [c] = evalJson(r)[0].cases
+  assert.equal(c.outcome, 'caught', JSON.stringify(c))
+})
+
+test('x1 a base-side catch needs the finding\'s cited line near the expected lines: the same guard quoted far away does not catch', () => {
+  const pad = Array.from({ length: 84 }, (_, i) => `export const pad${i} = ${i}`)
+  const base = ['export function value(x) {', '  if (!x) return null', '  return x.value', '}', ...pad, '  if (!x) return null', ''].join('\n')
+  const head = ['export function value(x) {', '  return x.value', '}', ...pad, '  if (!x) return null', ''].join('\n')
+  assert.equal(base.split('\n')[88], '  if (!x) return null', 'the second copy sits at base line 89')
+  const expect = [{ file: 'src/guard.js', side: 'base', lines: [2, 2], what: 'the null guard is gone' }]
+  makeCase('far-copy', { id: 'far-copy', kind: 'bug', intent: 'token-far-copy', expect }, { 'src/guard.js': base }, { 'src/guard.js': head })
+  makeCase('near', { id: 'near', kind: 'bug', intent: 'token-near', expect }, { 'src/guard.js': base }, { 'src/guard.js': head })
+  const r = evalRun(['--family', 'sol'], { STUB_REPLIES: JSON.stringify([
+    { intent: 'token-far-copy', reply: findings(finding({ file: 'src/guard.js', line: '89', quote: 'if (!x) return null' })) },
+    { intent: 'token-near', reply: findings(finding({ file: 'src/guard.js', line: '2', quote: 'if (!x) return null' })) },
+  ]) })
+  assert.equal(r.status, 0, r.out)
+  const cases = Object.fromEntries(evalJson(r)[0].cases.map((c) => [c.id, c]))
+  assert.equal(cases['far-copy'].outcome, 'missed', JSON.stringify(cases['far-copy']))
+  assert.equal(cases['far-copy'].extra + cases['far-copy'].unlocated, 1, 'the distant finding stays extra or unlocated')
+  assert.equal(cases.near.outcome, 'caught', JSON.stringify(cases.near))
+})
+
+test('x2 a finding cited by absolute path inside the case repo keeps its own folders (src/repo/guard.js)', () => {
+  makeCase('abs', { id: 'abs', kind: 'bug', intent: 'token-abs', expect: [{ file: 'src/repo/guard.js', side: 'base', lines: [2, 2], what: 'the null guard is gone' }] },
+    { 'src/repo/guard.js': 'export function value(x) {\n  if (!x) return null\n  return x.value\n}\n' },
+    { 'src/repo/guard.js': 'export function value(x) {\n  return x.value\n}\n' })
+  const r = evalRun(['--family', 'sol'], { STUB_REPLIES: JSON.stringify([
+    { intent: 'token-abs', reply: findings(finding({ file: '@CWD@/src/repo/guard.js', line: '2', quote: 'if (!x) return null' })) },
+  ]) })
+  assert.equal(r.status, 0, r.out)
+  const [c] = evalJson(r)[0].cases
+  assert.equal(c.outcome, 'caught', JSON.stringify(c))
 })

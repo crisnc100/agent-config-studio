@@ -35,3 +35,10 @@ Each fix's test was written first and failed at 0815ff3 for the reported reason.
 7. **Missing CLI once:** evalFamilies marks the reviewer role's skip note as already printed and reports missing CLIs itself. Without --family it takes the role's usable and unusable families, so each missing one appears exactly once. A role family whose id has no CLI prefix is named only by loadPool's existing warning.
 
 Test-setup change in this PR's own new file: the eval-mode child test now runs its review in a repo inside an eval root, because the old setup (the operator repo) is now refused. Its assertions are unchanged. The stub's claude modelUsage now names the model it ran as.
+
+## Slice f1 + deferred x1/x2 (slice review 2026-11-05-21-09-42-17d47f)
+Each test was written first and failed at bf54338 for the reported reason.
+- **f1:** evalOne no longer reads stdout. The result is the single `kind: review` record in the case's own eval log. Zero records ("nothing reviewed") or more than one means errored. Test: the stub echoes its answer to stdout as codex does, and the finding quotes `===FINDINGS_JSON===`. It now scores as caught; at bf54338 it was errored.
+- **x1:** a base-side catch needs all of these: the finding's path (resolved, else as cited) is the expect's file; its cited line range overlaps the expected lines ±3; and its quote is in the base tree starting within ±3 of the cited line, at lines that overlap the expected ±3. Test: the same guard at base line 89, cited at 89, no longer catches an expect at line 2 (it stays extra), and the same quote cited at line 2 still catches.
+- **x2:** a cited absolute path loses exactly the case repo's prefix (as given, or through symlinks), not anything up to the last `/repo/`. Test: `<repo>/src/repo/guard.js` catches a base-side expect on `src/repo/guard.js`.
+- The test stub gained STUB_ECHO (echo the answer to stdout) and an `@CWD@` placeholder in replies (the CLI's working directory, which is the case repo).
