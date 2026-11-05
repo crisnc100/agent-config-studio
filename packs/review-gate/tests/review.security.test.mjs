@@ -324,3 +324,135 @@ test('a reviewer cannot set source or duplicateOf on its own findings', () => {
   assert.equal(Object.hasOwn(record.findingDetails[1], 'duplicateOf'), false)
 })
 
+// ── close, dispute, fix check, summary, deferred and tier ──
+function close(id, statuses = {}, extra = {}) {
+  const path = join(ROOT, 'statuses.json')
+  writeFileSync(path, JSON.stringify(statuses))
+  const before = records().length
+  const r = script(['--close', id, '--status', path, '--test-cmd', 'true'], extra)
+  return { ...r, record: records().length > before ? records().at(-1) : null }
+}
+const closed = (id, statuses = {}, extra = {}) => {
+  const r = close(id, statuses, extra)
+  allowed(r); assert.equal(r.record?.type, 'close', r.out)
+  return r.record
+}
+
+test('6 close refuses an s HIGH without a status, and closes once it has one', () => {
+  required()
+  commit({ 'src/app.ts': APP })
+  const { record } = reviewed({ STUB_FINDINGS: findings(finding()), STUB_SEC_FINDINGS: findings(SEC) })
+  const refused = close(record.id, { f1: { status: 'fixed' } })
+  assert.notEqual(refused.status, 0)
+  assert.match(refused.out, /Finding s1 needs a fixed or rejected status/)
+  const done = closed(record.id, { f1: { status: 'fixed' }, s1: { status: 'fixed' } })
+  assert.equal(done.status, 'complete')
+})
+
+test('6 a duplicateOf finding needs no status: it follows its code finding', () => {
+  required()
+  commit({ 'src/app.ts': APP })
+  const near = finding({ issue: 'two leaks', line: '2', quote: 'export const two = 2', likelihood: 8, impact: 8 })
+  const { record } = reviewed({ STUB_FINDINGS: findings(finding()), STUB_SEC_FINDINGS: findings(near) })
+  assert.equal(record.findingDetails[1].duplicateOf, 'f1')
+  assert.equal(closed(record.id, { f1: { status: 'fixed' } }).status, 'complete')
+})
+
+test('6 --dispute <review> s1 works, and the security family cannot refute its own finding', () => {
+  required()
+  commit({ 'src/app.ts': APP })
+  const { record } = reviewed({ STUB_FINDINGS: findings(finding()), STUB_SEC_FINDINGS: findings(SEC) })
+  const r = script(['--dispute', record.id, 's1', '--reason', 'not reachable', '--evidence', 'src/app.ts:6'])
+  allowed(r)
+  const dispute = records().filter((e) => e.type === 'dispute').at(-1)
+  assert.equal(dispute.finding, 's1')
+  assert.ok(!['sol', 'opus'].includes(dispute.verifier), `verifier ${dispute.verifier} reviewed this record`)
+  // A REFUTED from the security family itself does not count.
+  appendFileSync(LOG, `${JSON.stringify({ type: 'dispute', ts: new Date().toISOString(), review: record.id, finding: 's1', head: record.head,
+    verdict: 'REFUTED', reason: 'x', evidence: 'y', verdictEvidence: 'z', family: 'sol', verifier: 'opus' })}\n`)
+  const refused = close(record.id, { f1: { status: 'fixed' }, s1: { status: 'rejected', reason: 'not reachable', evidence: 'src/app.ts:6' } })
+  assert.notEqual(refused.status, 0)
+  assert.match(refused.out, /Rejected s1 requires a REFUTED verdict or an operator waiver.*REFUTED from opus does not count/)
+})
+
+test('6 the fix check prompt names the s findings: id, file:line, issue and trigger', () => {
+  required()
+  commit({ 'src/app.ts': APP })
+  const { record } = reviewed({ STUB_FINDINGS: findings(finding()), STUB_SEC_FINDINGS: findings(SEC) })
+  commit({ 'src/app.ts': APP.replace('export const six = 6', 'export const six = 60') })
+  rmSync(CALLS, { force: true })
+  allowed(script(['--fix-check', record.id]))
+  const prompt = codeCalls().at(-1).prompt
+  assert.ok(prompt.includes('- s1 HIGH src/app.ts:6 — six leaks a secret; Trigger: reading six'), prompt.slice(0, 2000))
+  assert.ok(prompt.includes('- f1 MEDIUM src/app.ts:1 — one is wrong'))
+})
+
+test('6 --summary shows the security line and --deferred lists a filed s finding with its score', () => {
+  required()
+  commit({ 'src/app.ts': APP })
+  const low = { ...SEC, issue: 'six is logged', likelihood: 2, impact: 3 }
+  const { record } = reviewed({ STUB_FINDINGS: findings(finding()), STUB_SEC_FINDINGS: findings(low) })
+  assert.equal(record.findingDetails[1].severity, 'low')
+  closed(record.id, { f1: { status: 'fixed' } })
+  const summary = script(['--summary'])
+  allowed(summary)
+  assert.match(summary.stdout, /^Reviewer: sol \(gpt-stub-sol\)\nSecurity: opus \(claude-stub-opus\) — ran, 1 findings$/m)
+  assert.match(summary.stdout, /^s1 LOW 6\/100 \(likelihood 2\/10 × impact 3\/10\) src\/app\.ts:6 — six is logged; Trigger: reading six$/m)
+  const deferred = script(['--deferred'])
+  allowed(deferred)
+  assert.match(deferred.stdout, new RegExp(`^${record.id} .* s1 LOW 6/100 \\(likelihood 2/10 × impact 3/10\\) src/app\\.ts:6 — six is logged`, 'm'))
+})
+
+test('4/5 a required pass that was skipped or failed makes the closed tier HIGH, with the reason', () => {
+  required()
+  commit({ 'src/app.ts': APP })
+  const skipped = reviewed({ STUB_SECURITY_ROLE: 'unset' }).record
+  const tier = closed(skipped.id)
+  assert.equal(tier.tier, 'high')
+  assert.ok(tier.tierReasons.some((r) => /^security pass skipped: .*not set/.test(r)), JSON.stringify(tier.tierReasons))
+  const failed = reviewed({ STUB_SECURITY_ROLE: 'opus', STUB_SEC_FAIL: 'claude' }).record
+  const tier2 = closed(failed.id)
+  assert.equal(tier2.tier, 'high')
+  assert.ok(tier2.tierReasons.some((r) => /^security pass failed: /.test(r)), JSON.stringify(tier2.tierReasons))
+  const ran = reviewed().record
+  const tier3 = closed(ran.id)
+  assert.equal(tier3.tier, 'medium', JSON.stringify(tier3.tierReasons))
+})
+
+test('8 security off or not required at review, then logic in the close diff with the pass on: HIGH at close', () => {
+  // Off at review (no home config), required at close.
+  commit({ 'src/app.ts': APP })
+  const off = reviewed().record
+  assert.equal(off.security.status, 'off')
+  required()
+  let tier = closed(off.id)
+  assert.equal(tier.tier, 'high')
+  assert.ok(tier.tierReasons.some((r) => /^security pass did not cover logic changed after review \(off at review/.test(r)), JSON.stringify(tier.tierReasons))
+  // Not required at review (docs only); fix commits add logic.
+  git('checkout', '-q', 'main'); git('checkout', '-qb', 'docs-then-logic')
+  commit({ 'docs/guide.md': '# Guide\n' })
+  const docs = reviewed().record
+  assert.equal(docs.security.status, 'not-required')
+  commit({ 'src/late.ts': 'export const late = 1\n' })
+  const r = close(docs.id, {})
+  allowed(r)
+  assert.equal(r.record.tier, 'high')
+  assert.ok(r.record.tierReasons.some((x) => /^security pass did not cover logic changed after review \(not-required at review; logic or other files: src\/late\.ts\)/.test(x)), JSON.stringify(r.record.tierReasons))
+  // With the pass off at close as well, a review without it adds no reason.
+  rmSync(HOME_CONFIG)
+  git('checkout', '-q', 'main'); git('checkout', '-qb', 'all-off')
+  commit({ 'src/app.ts': APP })
+  tier = closed(reviewed().record.id)
+  assert.equal(tier.tier, 'medium')
+})
+
+test('12 the code-review skill text (claude and codex twins) describes the security pass, not "not a security audit"', () => {
+  const skills = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills')
+  for (const harness of ['claude', 'codex']) {
+    const text = readFileSync(join(skills, harness, 'code-review', 'SKILL.md'), 'utf8')
+    assert.doesNotMatch(text, /security audit/i, harness)
+    assert.match(text, /\*\*Security pass\.\*\* Config `security\.run`: `"off"` \(default\) \| `"required"` \| `"always"`/, harness)
+    assert.match(text, /`security` role/, harness)
+    assert.match(text, /REVIEW_SECURITY_REVIEWER/, harness)
+  }
+})

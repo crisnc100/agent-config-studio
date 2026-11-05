@@ -2502,6 +2502,7 @@ function validateStatuses(entries, review, statuses) {
     const status = statuses[f.id]
     const rules = resolutionRules(review, f)
     if (!status && !rules.status) continue
+    if (!status && duplicateTarget(review, f)) continue // a duplicate's fate follows its code finding's status
     if (status?.status === 'deferred') {
       validateDeferral(entries, review, f, status)
       continue
@@ -2619,6 +2620,16 @@ function pathReasons(diff) {
   if (human.length) reasons.push(`always human: ${listed(human)}`)
   return reasons
 }
+// HIGH by the security pass: required and it did not run (failed or skipped), or it was off or not required at review
+// while the security pass is on now and the close diff (base to the closing HEAD) would require it.
+function securityReasons(review, diff) {
+  const sec = review.security
+  if (sec?.status === 'failed' || sec?.status === 'skipped') return [`security pass ${sec.status}${sec.reason ? `: ${sec.reason}` : ''}`]
+  if (sec?.status === 'ran' || SECURITY.run === 'off') return []
+  const need = securityNeed(diff)
+  if (!need.required) return []
+  return [`security pass did not cover logic changed after review (${sec?.status ?? 'not recorded'} at review; ${need.why})`]
+}
 // HIGH and not-LOW by deferred findings: a deferred HIGH (a deferred criterion is HIGH) or protected one is HIGH.
 function deferredReasons(deferred) {
   const high = [], ids = (list) => list.map((f) => f.id).join(', ')
@@ -2632,11 +2643,14 @@ function closeTier({ review, reviews, statuses, files, outOfScope, noTests, head
   const base = fullObjectId(review.baseSha) ? review.baseSha : review.base || BASE
   const diff = diffStats(`${base}...${head}`, sliceOf(review))
   const stats = tierStats(diff)
-  const findings = reviews.flatMap((r) => r.findingDetails || [])
-  const deferred = findings.filter((f) => statuses[f.id]?.status === 'deferred' || isFiled(f) && statuses[f.id]?.status !== 'fixed')
+  const deferred = reviews.flatMap((r) => (r.findingDetails || []).filter((f) => {
+    const status = statusOf(r, statuses, f)?.status
+    return status === 'deferred' || isFiled(f) && status !== 'fixed'
+  }))
   const high = []
   if (!diff) high.push('the diff could not be read, so its paths are unchecked')
   if (diff) high.push(...pathReasons(diff))
+  high.push(...securityReasons(review, diff))
   high.push(...deferredReasons(deferred).high)
   if (outOfScope.length) high.push(`close partial: ${outOfScope.length} file(s) out of scope`)
   if (noTests !== null) high.push(`tests did not run (--no-tests: ${noTests})`)
@@ -3037,6 +3051,19 @@ function markDuplicates(security, code) {
     if (same) s.duplicateOf = same.id
   }
 }
+// The code finding a security finding duplicates, only as this script recorded it: an s finding whose duplicateOf
+// names an f finding of the same record.
+function duplicateTarget(review, f) {
+  if (f?.source !== 'security' || typeof f.duplicateOf !== 'string' || !/^s\d+$/.test(String(f.id))) return null
+  return (review.findingDetails || []).find((o) => o.id === f.duplicateOf && o.source !== 'security' && /^f\d+$/.test(String(o.id))) || null
+}
+// The status a finding's fate follows at close: its own, or for a duplicate with none, its code finding's.
+function statusOf(review, statuses, f) {
+  if (statuses?.[f.id]) return statuses[f.id]
+  const target = duplicateTarget(review, f)
+  return target ? statuses?.[target.id] : undefined
+}
+
 // ── shadow reviewers ────────────────────────────────────────────────────────
 // Config "shadow" (REVIEW_SHADOW, comma-separated): families that review the same diff after the real review, in the
 // background, for comparison only. They write review-log/shadow-log.jsonl and nothing else, so no close, push gate
@@ -3655,7 +3682,8 @@ function closeLines(entries, close, head, carry = null) {
   const recheck = close.recheck && loggedReview(entries, close.recheck)
   const findings = [review, ...(recheck ? [recheck] : []), ...(check ? [check] : [])].flatMap((r) => r.findingDetails.map((f) => ({ ...f, review: r.id, owner: r })))
   const count = (status) => Object.values(close.statuses).filter((s) => s?.status === status).length
-  const lines = [`Reviewer: ${review.family} (${review.model})`, `Review: ${review.id}`, `HEAD: ${head}`,
+  const lines = [`Reviewer: ${review.family} (${review.model})`, ...(review.security && review.security.status !== 'off' ? [securityLine(review.security)] : []),
+    `Review: ${review.id}`, `HEAD: ${head}`,
     `Counts: ${findings.length} findings; ${count('fixed')} fixed; ${count('rejected')} rejected${count('deferred') ? `; ${count('deferred')} deferred` : ''}`]
   if (carry) lines.push(carriedLine(carry, head))
   for (const c of [close.carried, ...(close.carriedAlso || [])].filter(Boolean))
@@ -3711,7 +3739,7 @@ function statusClose(entries, review, cover) {
 function deferredFindings(entries, review, cover = null) {
   const close = statusClose(entries, review, cover)
   return (review.findingDetails || []).flatMap((f) => {
-    const status = close?.statuses?.[f.id]
+    const status = statusOf(review, close?.statuses, f)
     if (status?.status === 'deferred') {
       const recheck = f.criterionId && close.recheck && entries.find((e) => e.type === 'review' && e.id === close.recheck)
       const evidence = recheck && recheck.criteria?.find((c) => c.id === f.criterionId)?.evidence
