@@ -36,3 +36,19 @@ Choices the plan left open, and why.
   the install created is removed again.
 - **Finding ids in --check** (lead's fix): an id counts only at the start of a list item (`-`, `*`, `+`, `1.`; bold
   or code allowed) or before HIGH / MEDIUM / LOW (any case). Prose like "speed x2" or "s3 buckets" is not checked.
+
+## Fix round (review 2026-11-05-21-09-22-868148, Grade grade-1793912969094-cd9b75)
+
+- **Finding ids:** checked at the start of a list item, before HIGH/MEDIUM/LOW, and before fixed / deferred /
+  rejected / filed / waived (optionally after is / was / got / stays …). A bare id in prose ("x9 and …") is still not
+  checked: it cannot be told from "speed x2". So the restored original sentence carries x9 as a claim ("x9 is
+  deferred") rather than the bare "x9 and"; "f1 is fixed." is restored exactly.
+- **Files known only from the facts:** changed files, the plan, the build log, a folder holding one, or a name the
+  facts' own text uses (summary, plan Outcome/Out of scope, build log, commit subjects). Tracked-at-HEAD is gone, so
+  How to try it may only name such files; an unchanged test file must appear in the plan or log to be named.
+- **Review findings:** read from the review log path that --tier-json already prints; review.mjs is unchanged. The
+  reviews come from the summary's `Review:`, `Close N of M: review` and `Fix check … of review` lines; each review's
+  latest close gives the statuses; its fix check and recheck findings are included.
+- **Left alone (Grade I1, pre-existing shared lib code):** uninstalling an instructions block from a file that had no
+  trailing newline and was edited after install leaves one extra newline (lib/packs-files.js removeBlock). Not
+  changed here.

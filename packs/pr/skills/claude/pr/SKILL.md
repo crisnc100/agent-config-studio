@@ -16,7 +16,7 @@ PR="$HOME/.claude/skills/pr/pr-facts.mjs"
 ## 1. Get the facts
 
 ```bash
-node "$PR" > "$TMPDIR/pr-facts.json"          # add --base <branch> when the base is not the PR's or the default
+node "$PR" > "${TMPDIR:-/tmp}/pr-facts.json"          # add --base <branch> when the base is not the PR's or the default
 ```
 
 One JSON object: `branch`, `head`, `base` (and where it came from), `pr` (the open PR, or null), `gh` (false when
@@ -29,7 +29,7 @@ created, so the defaults were used). Carry on.
 
 ## 2. Write the description
 
-Write it to a file (`$TMPDIR/pr-body.md`). The style decides which sections appear, in what order, under which
+Write it to a file (`${TMPDIR:-/tmp}/pr-body.md`). The style decides which sections appear, in what order, under which
 titles: `style.sections`, each `## <title>` in that order, only those with `on: true`. `style.tone` is `plain`
 (short sentences, no jargon, explain any code term in a few words) or `technical`. `style.emoji` false means no
 ✅ ⚠️ ❌ markers: write "done", "not asked", "not done" instead.
@@ -62,7 +62,8 @@ The sections, by id (default titles; the user's style may retitle any but Deferr
 
 - `review.state` "absent": the review section says `not reviewed (no review gate)`. Leave Deferred findings out.
 - `review.state` "in-progress": the review section says `review in progress — not closed at this commit`, with
-  `review.reason`. Never write "not reviewed" for a review in progress.
+  `review.reason`. Deferred findings stays, saying the review is not closed yet, so nothing is deferred so far.
+  Never write "not reviewed" for a review in progress.
 - `review.state` "closed": the review section and Deferred findings are written from `review` as above. Deferred
   findings stays on, titled exactly "Deferred findings", outside any `<details>`.
 - `review.state` "error": say the review gate could not be read, with `review.reason`.
@@ -72,7 +73,7 @@ Length is a guide, not a gate: most sections are one to five lines; the whole bo
 ## 3. Check it
 
 ```bash
-node "$PR" --check "$TMPDIR/pr-body.md"        # same --base as step 1
+node "$PR" --check "${TMPDIR:-/tmp}/pr-body.md"        # same --base as step 1
 ```
 
 It prints `{ ok, problems, warnings }`. On exit 1, fix each problem in the body and run the check again; never open
@@ -88,8 +89,8 @@ written.
 When `pr` is set (a PR already exists for this branch, `pr.number`), update it with gh pr edit; otherwise create it:
 
 ```bash
-gh pr edit <pr.number> --body-file "$TMPDIR/pr-body.md"
-gh pr create --base <base branch> --title "<one plain line>" --body-file "$TMPDIR/pr-body.md"
+gh pr edit <pr.number> --body-file "${TMPDIR:-/tmp}/pr-body.md"
+gh pr create --base <base branch> --title "<one plain line>" --body-file "${TMPDIR:-/tmp}/pr-body.md"
 ```
 
 A rerun after more commits (a fix round, a new close) starts again at step 1, so the HEAD, the tier and the deferred
