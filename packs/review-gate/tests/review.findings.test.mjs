@@ -397,3 +397,18 @@ test('F4 a Grade close under "always": the recheck counts as its check; without 
   commit({ 'src/one.js': lines({ 18: 'export const v18 = 0' }) })
   refused(passed.id, { f1: { status: 'fixed' } }, '✖ Fix changes code after the review and fixCheck is "always": src/one.js; run --fix-check first')
 })
+
+// ── 6. skill text (claude and codex twins) ──────────────────────────────────
+test('K1 both code-review skills describe pre-existing, grouped findings, responses and --noise-report, fixCheck, and the one-slice flow for a fix-check HIGH', () => {
+  const skills = join(dirname(SCRIPT), '..', 'skills')
+  for (const harness of ['claude', 'codex']) {
+    const text = readFileSync(join(skills, harness, 'code-review', 'SKILL.md'), 'utf8')
+    const has = (phrase) => assert.ok(text.includes(phrase), `${harness}: ${phrase}`)
+    for (const phrase of ['**Pre-existing findings.**', '`preExisting: true`', '`inDiff`', 'Pre-existing (not introduced here)', '"Pre-existing HIGH"',
+      'makes the merge tier HIGH', '**Grouped findings.**', '`instances`', 'one status covers them all',
+      '`"real"` or `"unimportant"`', '`"wrong"` (not a defect) or `"intentional"`', '--noise-report [--since <date>] [--all]',
+      'Config `fixCheck`: `"risk"` (default', '`"always"` (any code fix after the review needs one', 'a protected pre-existing finding']) has(phrase)
+    assert.match(text, /fix check raises a HIGH in the fix itself \(`inFix: true`\), defer it at close.*one more commit.*`REVIEW_PATHS=<those files>`.*close the slice at the tip; whatever that slice's own fix check finds is deferred\. Hard stop/, harness)
+    assert.match(text, /When the rule 3 slice ran, that report comes after the slice's close/, harness)
+  }
+})
