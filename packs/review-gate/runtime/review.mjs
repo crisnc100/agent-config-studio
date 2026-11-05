@@ -759,11 +759,13 @@ const LANGS = {
 }
 // A renamed file is judged by both names, so moving code into auth/ can't dodge an auth rule.
 const pathsOf = (f) => (f.from ? [f.path, f.from] : [f.path])
+// The work tree's top; diffStats runs from it (first use is at load, so it is defined here).
+const TOP = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).stdout?.trim() || process.cwd()
 // Paths and line counts only — this is everything a classifier and the force rules ever see of the diff.
 function diffStats(range = `${BASE}...HEAD`, paths = null) {
   // -z keeps paths unquoted; a rename is `added\tremoved\t` then NUL-separated source and destination.
-  // Pathspecs resolve from the top of the work tree.
-  const r = spawnSync('git', [...(paths ? ['-C', TOP] : []), 'diff', '--numstat', '-z', '-M', '--end-of-options', range, ...pathspec(paths)], {
+  // Pathspecs resolve from the top of the work tree, and every path is repository-relative whatever the cwd or diff.relative.
+  const r = spawnSync('git', ['-C', TOP, 'diff', '--no-relative', '--numstat', '-z', '-M', '--end-of-options', range, ...pathspec(paths)], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   })
@@ -2078,7 +2080,6 @@ async function review(diff) {
 // A finding is located when its quote appears in the file (at HEAD, else at the base for
 // deleted code) starting within ±QUOTE_WINDOW lines of the cited line. Only whitespace is
 // normalized (runs collapse to one space, ends trimmed); every other character must match.
-const TOP = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).stdout?.trim() || process.cwd()
 function fileAt(rev, path) {
   const r = spawnSync('git', ['show', `${rev}:${path}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
   return r.status === 0 ? r.stdout : null
@@ -2669,8 +2670,10 @@ function unjudgedStats(entries, closes, diff, tip) {
     const review = entries.find((e) => e.type === 'review' && e.id === close.review)
     const own = review && fullObjectId(review.baseSha) && diffStats(`${review.baseSha}...${close.closeHead}`, sliceOf(review))
     if (!own) return unjudged(files) // a close whose diff can't be read judged nothing for sure
-    const then = treeStates(close.closeHead)
-    for (const f of own.files) for (const p of pathsOf(f)) if ((then.get(p) ?? null) === (now.get(p) ?? null)) judged.add(p)
+    const then = treeStates(close.closeHead), before = treeStates(review.baseSha)
+    // A path absent at the close's head and at the tip matches only as a deletion: present at the review's base.
+    const same = (p) => then.has(p) || now.has(p) ? then.get(p) === now.get(p) : before.has(p)
+    for (const f of own.files) for (const p of pathsOf(f)) if (same(p)) judged.add(p)
   }
   return unjudged(files.filter((f) => pathsOf(f).some((p) => !judged.has(p))))
 }

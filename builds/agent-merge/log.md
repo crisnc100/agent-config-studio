@@ -43,3 +43,10 @@
 - Stdout: `<action>[ (dry run)]: <detail>`; exit merged 0, labeled 10, none 0 (policy off) / 11 (onHuman none),
   refused 2. Dry run exits with the would-be action's code.
 - Suite: 628/628 outside the sandbox; tests/packs-catalog.mjs 49/49. review.test.mjs unchanged.
+## PR A fix round (review 2026-11-05-17-57-16-b13bed)
+- f1 MEDIUM 21/100: test A1f1 (subdirectory, diff.relative=true) failed at e25a9b1 (summary said LOW), passes now.
+- Fix: diffStats always runs `git -C TOP diff --no-relative`, so every path is repository-relative (this also corrects
+  review stats/routing run from a subdirectory). TOP moved above diffStats because diffStats runs at load.
+- "A missing state never matches": absent at both the close's head and the tip counts as judged only when the path
+  existed at the review's base (a real deletion). Guarded by a second test (a judged deletion stays LOW).
+- Suite 607/607.
