@@ -43,10 +43,12 @@ import {
   appendFileSync,
   constants,
   existsSync,
+  closeSync,
   linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -164,8 +166,10 @@ function withoutRepoCommands(config, p, homes) {
   const pick = String(config.pick ?? '').trim().toLowerCase()
   const pickMayRun = pick !== '' && pick !== 'first' && pick !== 'rotate'
   const hasMerge = Object.hasOwn(config, 'merge')
-  if ((!keys.length && !pickMayRun && !hasMerge) || repoFileIsOwn(p, homes)) return config
+  const hasSecurity = Object.hasOwn(config, 'security')
+  if ((!keys.length && !pickMayRun && !hasMerge && !hasSecurity) || repoFileIsOwn(p, homes)) return config
   if (hasMerge) config.merge = stricterMerge(config.merge, homeMerge(homes), p)
+  if (hasSecurity) config.security = stricterSecurity(config.security, homeKey(homes, 'security'), p)
   for (const k of keys) delete config[k]
   REPO_PICK_UNTRUSTED = pickMayRun
   if (keys.length && !args.includes('--gate'))
@@ -192,12 +196,41 @@ function mergeSettings(raw) {
   }
 }
 function homeMerge(homes) {
+  return homeKey(homes, 'merge')
+}
+function homeKey(homes, key) {
   for (const p of homes) {
     try {
-      if (existsSync(p)) return JSON.parse(readFileSync(p, 'utf8')).merge
+      if (existsSync(p)) return JSON.parse(readFileSync(p, 'utf8'))[key]
     } catch { return undefined }
   }
   return undefined
+}
+// security (the security review pass): run "off" (the default) | "required" | "always", and timeoutMs. A config the
+// repository can set (a tracked repo file) or an agent can point at (REVIEW_CONFIG) may only raise run above the home
+// config's, and never sets timeoutMs; REVIEW_SECURITY may only raise it for one run.
+const SECURITY_RUNS = ['off', 'required', 'always']
+const SECURITY_TIMEOUT_MS = 15 * 60_000
+function securityLevel(value, where) {
+  const run = String(value ?? 'off').trim().toLowerCase()
+  if (SECURITY_RUNS.includes(run)) return run
+  if (!args.includes('--gate')) console.warn(`⚠ Unknown security.run ${JSON.stringify(value)}${where ? ` in ${where}` : ''}; using "off" (${SECURITY_RUNS.join(' | ')})`)
+  return 'off'
+}
+function securitySettings(raw) {
+  const s = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const timeout = Number(s.timeoutMs)
+  return { run: securityLevel(s.run), timeoutMs: Number.isSafeInteger(timeout) && timeout > 0 ? timeout : SECURITY_TIMEOUT_MS }
+}
+function stricterSecurity(repo, home, p) {
+  const base = securitySettings(home), own = repo && typeof repo === 'object' && !Array.isArray(repo) ? repo : {}
+  const run = String(own.run ?? base.run).trim().toLowerCase()
+  let chosen = base.run
+  if (SECURITY_RUNS.includes(run) && SECURITY_RUNS.indexOf(run) >= SECURITY_RUNS.indexOf(base.run)) chosen = run
+  else if (Object.hasOwn(own, 'run') && !args.includes('--gate'))
+    console.warn(`⚠ Ignoring security.run ${JSON.stringify(own.run)} in ${p}: the repository or an agent can set that file, so it may only ` +
+      `raise the security pass above "${base.run}" (${SECURITY_RUNS.join(' < ')})`)
+  return { run: chosen, timeoutMs: base.timeoutMs }
 }
 function stricterMerge(repo, home, p) {
   const base = mergeSettings(home), own = repo && typeof repo === 'object' && !Array.isArray(repo) ? repo : {}
@@ -219,11 +252,11 @@ function stricterMerge(repo, home, p) {
 function loadConfig() {
   const homes = [join(homedir(), '.agent-config-studio', 'review-gate', 'config.json'), join(homedir(), '.claude', 'review-config.json')]
   const paths = [
-    { p: process.env.REVIEW_CONFIG },
+    { p: process.env.REVIEW_CONFIG, env: true },
     { p: join('.claude', 'review-config.json'), repo: true },
     ...homes.map((p) => ({ p })),
   ].filter(({ p }) => p)
-  for (const { p, repo } of paths) {
+  for (const { p, repo, env } of paths) {
     let config = null
     try {
       if (existsSync(p)) config = { ...JSON.parse(readFileSync(p, 'utf8')), _source: p }
@@ -236,10 +269,13 @@ function loadConfig() {
       console.warn(`⚠ Ignoring malformed review config at ${p}`)
     }
     if (config) {
+      if (env && !homes.some((home) => sameFile(p, home)))
+        config.security = Object.hasOwn(config, 'security') ? stricterSecurity(config.security, homeKey(homes, 'security'), p) : homeKey(homes, 'security')
       if (!repo) return config
-      const ownMerge = Object.hasOwn(config, 'merge')
+      const ownMerge = Object.hasOwn(config, 'merge'), ownSecurity = Object.hasOwn(config, 'security')
       const checked = withoutRepoCommands(config, p, homes)
       if (!ownMerge) checked.merge = homeMerge(homes)
+      if (!ownSecurity) checked.security = homeKey(homes, 'security')
       return checked
     }
   }
@@ -247,6 +283,17 @@ function loadConfig() {
 }
 const CONFIG = loadConfig()
 const MERGE = mergeSettings(CONFIG.merge)
+// The security pass in force: the config's, raised (never lowered) by REVIEW_SECURITY for one run.
+const SECURITY = (() => {
+  const settings = securitySettings(CONFIG.security)
+  const asked = process.env.REVIEW_SECURITY
+  if (asked == null || !String(asked).trim()) return settings
+  const run = securityLevel(asked, 'REVIEW_SECURITY')
+  if (SECURITY_RUNS.indexOf(run) > SECURITY_RUNS.indexOf(settings.run)) return { ...settings, run, raisedBy: 'REVIEW_SECURITY' }
+  if (run !== settings.run && !args.includes('--gate'))
+    console.warn(`⚠ Ignoring REVIEW_SECURITY=${asked}: it may only raise the security pass above "${settings.run}", never lower it`)
+  return settings
+})()
 const cfg = (envName, key, dflt) => process.env[envName] ?? CONFIG[key] ?? dflt
 // A family name resolves through the model registry (`model-id --table`);
 // a raw id passes through. On failure model-id prints MODEL-ID-UNRESOLVED-<name>, which the CLI
@@ -314,9 +361,9 @@ const flavorEffort = (family) => flavorOf(family).effort
 // The unranked reviewer pool: the `reviewer` role (ACS → Models → Roles), each member's CLI taken
 // from its id's prefix, filtered to the CLIs on PATH. One line names the families skipped.
 // Returns { pool } or { error, missing } — callers stop loudly (poolOrStop), never fall back.
-let skipsNoted = false
-function loadPool() {
-  const r = modelIdJson(['--role', 'reviewer', '--json'])
+const skipsNoted = new Set()
+function loadPool(role = 'reviewer') {
+  const r = modelIdJson(['--role', role, '--json'])
   if (r.error) return { error: r.error, missing: r.missing }
   const use = Array.isArray(r.data?.use) ? r.data.use : []
   const ids = Array.isArray(r.data?.ids) ? r.data.ids : []
@@ -334,7 +381,7 @@ function loadPool() {
     const id = ids[i] || modelId(family)
     const vendor = vendorOf(id)
     if (!vendor) {
-      console.warn(`⚠ reviewer role family "${family}" has id "${id}", whose prefix names no known CLI (claude-, gpt-, grok-) — skipped`)
+      console.warn(`⚠ ${role} role family "${family}" has id "${id}", whose prefix names no known CLI (claude-, gpt-, grok-) — skipped`)
       unusable.push({ family, vendor, id })
       return
     }
@@ -347,15 +394,15 @@ function loadPool() {
     const effort = members?.[i]?.effort || (roleSet ? r.data.effort : '') || fl.effort
     pool.push({ family, vendor, id, ...fl, effort })
   })
-  if (skipped.length && !skipsNoted) {
-    skipsNoted = true
-    console.warn(`ℹ reviewer role: skipped ${skipped.join(', ')}`)
+  if (skipped.length && !skipsNoted.has(role)) {
+    skipsNoted.add(role)
+    console.warn(`ℹ ${role} role: skipped ${skipped.join(', ')}`)
   }
   if (pool.length) return { pool, unusable }
   return {
     error: use.length
-      ? `none of the reviewer role's families (${use.join(', ')}) has its CLI on PATH`
-      : 'the reviewer role lists no families',
+      ? `none of the ${role} role's families (${use.join(', ')}) has its CLI on PATH`
+      : `the ${role} role lists no families`,
     empty: true,
     unusable,
   }
@@ -665,7 +712,7 @@ risk = likelihood × impact:
 - MEDIUM otherwise.
 Fix HIGH first, then MEDIUM. Both block until fixed, REFUTED or waived by the operator.
 Missing or invalid scores are asked for again once. A finding still unscored blocks as MEDIUM (HIGH if protected is exactly true).`
-const VALUE_FLAGS = ['--shadow-run', '--pick-shadow-run', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of']
+const VALUE_FLAGS = ['--security-worker', '--shadow-run', '--pick-shadow-run', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of']
 const INTENT = args.includes('--dispute') || args.includes('--waive') || args.includes('--log-grade')
   ? ''
   : args.filter((a, i) => !a.startsWith('--') && !VALUE_FLAGS.includes(args[i - 1])).join(' ').trim()
@@ -1431,9 +1478,10 @@ function toolNotes(vendor) {
   return []
 }
 
-function reviewPrompt(diff) {
-  const clipped = clip(diff)
-  const notes = toolNotes(SEL.vendor)
+// What every reviewer prompt carries after its instruction: the tool notes, the quote rule, the rubric, the verify
+// result and the slice.
+function promptNotes(vendor) {
+  const notes = toolNotes(vendor)
   notes.push(
     `Every finding MUST carry \`quote\`: one to three lines copied character-for-character from \`file\` ` +
       `as it is at HEAD, starting at or within ${QUOTE_WINDOW} lines of \`line\` (a single line number). ` +
@@ -1452,6 +1500,11 @@ function reviewPrompt(diff) {
       `This review is one slice of the branch: it covers only the paths ${SLICE.join(', ')}. ` +
         `Other slices review the rest, so report defects in these paths (open other files only for context).`,
     )
+  return notes
+}
+function reviewPrompt(diff) {
+  const clipped = clip(diff)
+  const notes = promptNotes(SEL.vendor)
   return (
     `Review the branch diff below for CODE CORRECTNESS only — bugs, regressions, broken edge cases, ` +
     `bad error handling, data-integrity issues — judged against what the branch was supposed to do` +
@@ -1460,6 +1513,23 @@ function reviewPrompt(diff) {
     `${CONTEXT ? `${CONTEXT}\n` : ''}` +
     `${notes.length ? `${notes.join('\n\n')}\n\n` : ''}` +
     `Diff (git diff ${DIFF_BASE}...HEAD${sliceSuffix(SLICE)}):\n${clipped}`
+  )
+}
+
+// The security pass's prompt: the same diff, context, notes and schema as the code review, a security-only instruction.
+// SECURITY_MARKER names it (tests find the security call by it).
+const SECURITY_MARKER = 'SECURITY REVIEW ONLY.'
+function securityPrompt(diff, vendor, intent) {
+  return (
+    `${SECURITY_MARKER} Review the branch diff below for security defects, judged against what the branch was supposed to do` +
+    `${intent ? `: ${intent}` : ' (infer from the diff)'}. Look for: trust boundaries crossed without a check; untrusted input ` +
+    `reaching a shell, SQL, file paths, eval or HTML; authentication and authorization gaps; secrets in code, logs or output; ` +
+    `command execution; path traversal; unsafe deserialization; server-side request forgery (SSRF); and changes to ` +
+    `dependencies, install or update scripts and CI workflows. You are not reviewing correctness, style or performance: ` +
+    `report a defect only when it is a security issue. Inspect the diff (open files as needed) BEFORE answering.\n\n` +
+    `${CONTEXT ? `${CONTEXT}\n` : ''}` +
+    `${promptNotes(vendor).join('\n\n')}\n\n` +
+    `Diff (git diff ${DIFF_BASE}...HEAD${sliceSuffix(SLICE)}):\n${clip(diff)}`
   )
 }
 
@@ -2114,7 +2184,8 @@ function locateQuote(f) {
 // record's (resolved…) are dropped.
 const WHERE = Symbol('where')
 function locatedFinding(f) {
-  const finding = Object.fromEntries(Object.entries(f).filter(([key]) => !/^resolved/i.test(key)))
+  // source and duplicateOf are this script's to set (security findings, duplicates), never the reviewer's.
+  const finding = Object.fromEntries(Object.entries(f).filter(([key]) => !/^resolved/i.test(key) && key !== 'source' && key !== 'duplicateOf'))
   const where = locateQuote(finding)
   if (where.problem) return { ...finding, status: 'unverified-quote', quoteCheck: where.problem }
   return { ...finding, status: 'verified-quote', [WHERE]: where }
@@ -2185,7 +2256,7 @@ function refuseLinkedReviews() {
     die('reviews is a symlink, so the report would be written wherever it points. Remove it (git rm reviews) and review again.')
   if (!stat.isDirectory()) die('reviews is not a folder. Remove it and review again.')
 }
-function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTruncated, verifier) {
+function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTruncated, verifier, security = null) {
   refuseLinkedReviews()
   ensureReviewsIgnored()
   // A random suffix keeps two reviews in the same second (any repo) apart in the folder and the log; the folder is
@@ -2208,7 +2279,8 @@ function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTr
     `\n  Score: ${scoreText(f)}${isFiled(f) ? ' — filed, no close status needed' : ''}` +
     `${f.quote ? `\n  > ${String(f.quote).split('\n').join('\n  > ')}` : ''}` +
     `${f.suggestion ? `\n  → ${f.suggestion}` : ''}` +
-    `${f[WHERE]?.ambiguous ? `\n  Path ambiguous: the quote is in both ${f[WHERE].ambiguous.join(' and ')}, so this finding authorizes no file at close` : ''}${extra}`
+    `${f[WHERE]?.ambiguous ? `\n  Path ambiguous: the quote is in both ${f[WHERE].ambiguous.join(' and ')}, so this finding authorizes no file at close` : ''}` +
+    `${f.duplicateOf ? `\n  Duplicate of ${f.duplicateOf}: needs no status of its own; it follows ${f.duplicateOf}'s` : ''}${extra}`
   const bySev = (s) =>
     findings
       .filter((f) => f.severity === s)
@@ -2220,6 +2292,7 @@ function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTr
     `Reviewed against: ${INTENT || '(inferred from diff)'}\n` +
     (VERIFY_RESULT ? `Verify (${VERIFY_RESULT.cmd}): ${VERIFY_RESULT.passed ? 'passed' : 'FAILED'}\n` : '') +
     (verifier ? `Second opinion: ${verifier.family} (${verifier.id})\n` : '') +
+    (security && security.status !== 'off' ? `${securityLine(security)}\n` : '') +
     (diffTruncated ? `⚠ Diff exceeded ${DIFF_CAP} chars — only the first ${DIFF_CAP} were inlined.\n` : '') +
     `Findings: ${findings.length} (plus ${disputed.length} disputed, ${unlocated.length} could not be located)\n\n` +
     `## HIGH\n${bySev('high')}\n\n## MEDIUM\n${bySev('medium')}\n\n## LOW / Info\n${bySev('low')}\n` +
@@ -2758,6 +2831,211 @@ async function closeReview(id) {
     ...(carried && { carried }), ...(carriedAlso.length && { carriedAlso }), ...tier })
   console.log(`✓ Review ${id} closed (${outOfScope.length ? 'partial' : 'complete'}) at ${head}${paths ? ` for paths ${paths.join(', ')}` : ''}` +
     (carried ? `, carried from the ${carried.kind} head ${carried.from} (identical tree ${carried.tree})` : ''))
+}
+// ── security pass ───────────────────────────────────────────────────────────
+// Config security.run (see securitySettings): when it is on and the change needs it, a reviewer from the `security` role
+// reviews the same diff with a security-only prompt, in a detached worker (review.mjs --security-worker <job>) that
+// runs beside the code reviewer. The worker only calls the model and writes the raw findings to a result file: no
+// record, no report, no reviews/latest. This run scores, quote-checks and records them (s1…) in the one review record.
+// Required: run "always", or run "required" and some changed file (either name of a rename) is logic or other kind
+// (a coverage-exempt file never on its own) or matches riskPaths.
+function securityNeed(stats, run = SECURITY.run) {
+  if (run === 'off') return { required: false, status: 'off', reason: 'security.run is off' }
+  if (run === 'always') return { required: true, why: 'security.run is always' }
+  if (!stats) return { required: true, why: 'the diff stats could not be read' }
+  const paths = [...new Set(stats.files.flatMap(pathsOf))]
+  const code = paths.filter((p) => !coverageExempt(p) && ['logic', 'other'].includes(fileKind(p)))
+  const risky = paths.filter((p) => matchesAny(p, RISK_PATHS))
+  if (code.length || risky.length)
+    return { required: true, why: [code.length && `logic or other files: ${listed(code)}`, risky.length && `riskPaths: ${listed(risky)}`].filter(Boolean).join('; ') }
+  return { required: false, status: 'not-required', reason: 'only docs, tests, static or coverage-exempt files changed, none on riskPaths' }
+}
+// The report's and the summary's line: "Security: <family> (<model>) — <status>, N findings", with the reason.
+function securityLine(sec) {
+  if (!sec) return 'Security: off (not recorded)'
+  const who = sec.family ? `${sec.family} (${sec.model})` : 'no reviewer'
+  return `Security: ${who} — ${sec.status}${sec.status === 'ran' ? `, ${sec.findings ?? 0} findings` : ''}${sec.reason ? ` (${sec.reason})` : ''}`
+}
+// Who runs it: REVIEW_SECURITY_REVIEWER pins one family; else the security role's members whose CLI is on PATH, each at
+// its own effort, another vendor than the code reviewer's first. The code review's reviewer, model, pick, routing, force
+// and team settings never apply here, and a Claude family runs as one agent. { members, why } or { error }.
+function securityMembers(codeSel) {
+  const pinned = String(process.env.REVIEW_SECURITY_REVIEWER ?? '').trim().toLowerCase()
+  const loaded = loadPool('security')
+  if (pinned) {
+    if (!FAMILY_NAME.test(pinned)) return { error: `REVIEW_SECURITY_REVIEWER=${pinned} is not a family name` }
+    const known = loaded.pool?.find((m) => m.family === pinned) || loaded.unusable?.find((m) => m.family === pinned)
+    let m = known
+    if (!m) {
+      const id = modelId(pinned)
+      m = { family: pinned, vendor: vendorOf(id), id, effort: vendorOf(id) ? flavorEffort(pinned) : 'high' }
+    } else if (!m.effort) m = { ...m, effort: flavorEffort(pinned) }
+    if (!m.vendor) return { error: `REVIEW_SECURITY_REVIEWER=${pinned} does not resolve to a model with a known CLI (claude-, gpt-, grok-)` }
+    if (!onPath(m.vendor)) return { error: `REVIEW_SECURITY_REVIEWER=${pinned} needs the ${m.vendor} CLI, which is not on PATH` }
+    return { members: [m], why: `REVIEW_SECURITY_REVIEWER=${pinned} (pinned)` }
+  }
+  if (!loaded.pool) return { error: `security role: ${loaded.error}` }
+  const other = loaded.pool.filter((m) => m.vendor !== codeSel.vendor)
+  const same = loaded.pool.filter((m) => m.vendor === codeSel.vendor)
+  return {
+    members: [...other, ...same],
+    why: other.length ? `security role, a vendor other than the code reviewer's (${codeSel.vendor}) first` : `security role (every member is ${codeSel.vendor}, the code reviewer's vendor)`,
+  }
+}
+// Workers still running when this process exits (a thrown error, say) are killed with it: none is left orphaned.
+const SECURITY_WORKERS = new Set()
+process.on('exit', () => {
+  for (const pid of SECURITY_WORKERS) try { process.kill(-pid, 'SIGKILL') } catch { /* gone */ }
+})
+function startSecurityWorker(job, member) {
+  const dir = mkdtempSync(join(tmpdir(), 'review-security-'))
+  const file = join(dir, 'job.json'), result = join(dir, 'result.json'), log = join(dir, 'worker.log')
+  writeFileSync(file, JSON.stringify({ ...job, member, result }), { mode: 0o600 })
+  const out = openSync(log, 'a', 0o600)
+  let child
+  try {
+    child = spawnFile(process.execPath, [COPY_PATH, '--security-worker', file],
+      { detached: true, stdio: ['ignore', out, out], env: { ...process.env, REVIEW_BASE: BASE, REVIEW_BASE_FETCHED: BASE, GROK_HOME } })
+  } finally {
+    closeSync(out)
+  }
+  const started = Date.now()
+  if (child.pid) SECURITY_WORKERS.add(child.pid)
+  const done = new Promise((finish) => {
+    let timedOut = false
+    // A worker that wrote its result is finishing; one that has not by the timeout is killed with its model CLI.
+    const timer = setTimeout(() => {
+      if (existsSync(result)) return
+      timedOut = true
+      try { process.kill(-child.pid, 'SIGKILL') } catch { try { child.kill('SIGKILL') } catch { /* gone */ } }
+    }, SECURITY.timeoutMs)
+    child.on('error', (e) => { clearTimeout(timer); SECURITY_WORKERS.delete(child.pid); finish({ error: `could not start: ${e.message}` }) })
+    child.on('exit', (code, signal) => { clearTimeout(timer); SECURITY_WORKERS.delete(child.pid); finish({ code, signal, timedOut }) })
+  })
+  console.log(`▶ security · ${member.family} (${member.vendor} · ${member.id} · ${member.effort}) started beside the code reviewer`)
+  return { member, dir, result, log, started, done }
+}
+// One worker's outcome: { data } with the raw findings, or { reason } it failed for.
+async function securityOutcome(w) {
+  const end = await w.done
+  const durationMs = Date.now() - w.started
+  let data = null, reason = null
+  try {
+    if (end.error) reason = end.error
+    else if (end.timedOut) reason = `timed out after ${SECURITY.timeoutMs} ms`
+    else {
+      if (existsSync(w.result)) {
+        try { data = JSON.parse(readFileSync(w.result, 'utf8')) } catch (e) { reason = `its result is malformed: ${e.message}` }
+      } else reason = end.code === 0 ? 'it wrote no result' : null
+      if (!reason && data && data.ok !== true) reason = typeof data?.error === 'string' && data.error ? data.error : 'its result is malformed: not ok'
+      if (!reason && data && (!Array.isArray(data.findings) || data.findings.some((f) => !f || typeof f !== 'object' || Array.isArray(f))))
+        reason = 'its result is malformed: no findings list'
+      if (!reason && end.code !== 0) reason = `the security worker exited ${end.code ?? end.signal}`
+      if (!reason && !data) {
+        let tailText = ''
+        try { tailText = tail(readFileSync(w.log, 'utf8')).split('\n').at(-1) } catch { /* no log */ }
+        reason = `the security worker exited ${end.code ?? end.signal} with no result${tailText ? `: ${tailText}` : ''}`
+      }
+    }
+  } finally {
+    rmSync(w.dir, { recursive: true, force: true })
+  }
+  return reason ? { reason, durationMs } : { data, durationMs }
+}
+// Starts the pass, if any, once the diff, context and verify result are known. Returns what finishSecurity waits on.
+function beginSecurity({ stats, diff }) {
+  const need = securityNeed(stats)
+  const base = { run: SECURITY.run, ...(SECURITY.raisedBy && { raisedBy: SECURITY.raisedBy }) }
+  if (!need.required) {
+    console.log(`ℹ security pass: ${need.status} (${need.reason})`)
+    return { record: { ...base, status: need.status, reason: need.reason } }
+  }
+  const chosen = securityMembers(SEL)
+  if (chosen.error) {
+    console.warn(`⚠ security pass required (${need.why}) but skipped: ${chosen.error} — the merge tier will be HIGH`)
+    return { record: { ...base, required: need.why, status: 'skipped', reason: chosen.error } }
+  }
+  const job = { diff, context: CONTEXT, verify: VERIFY_RESULT, slice: SLICE, diffBase: DIFF_BASE, intent: INTENT || null }
+  try {
+    return { base: { ...base, required: need.why, why: chosen.why }, job, members: chosen.members, worker: startSecurityWorker(job, chosen.members[0]) }
+  } catch (e) {
+    const reason = `${chosen.members[0].family}: could not start: ${e.message}`
+    return { record: { ...base, required: need.why, status: 'failed', reason } }
+  }
+}
+// Waits for the pass, trying the next member once each after a failure. { record, raw, member }.
+async function finishSecurity(plan) {
+  if (plan.record) return { record: plan.record, raw: [] }
+  const attempts = []
+  let w = plan.worker
+  for (let i = 0; ; i++) {
+    const r = await securityOutcome(w)
+    const m = w.member
+    attempts.push({ family: m.family, durationMs: r.durationMs, ...(r.reason ? { error: r.reason } : { ok: true }) })
+    if (!r.reason) {
+      const record = { ...plan.base, status: 'ran', family: m.family, model: m.id, ...(r.data.modelUsed && { modelUsed: r.data.modelUsed }), effort: m.effort,
+        vendor: m.vendor, durationMs: attempts.reduce((n, a) => n + a.durationMs, 0), ...(attempts.length > 1 && { attempts }),
+        ...(r.data.rescored && { rescored: r.data.rescored }) }
+      return { record, raw: r.data.findings, member: m }
+    }
+    const next = plan.members[i + 1]
+    console.warn(`⚠ security pass: ${m.family} failed (${r.reason})${next ? ` — trying ${next.family}` : ''}`)
+    if (!next) {
+      const reason = attempts.map((a) => `${a.family}: ${a.error}`).join('; ')
+      console.warn(`⚠ security pass failed: ${reason} — the merge tier will be HIGH`)
+      return { record: { ...plan.base, status: 'failed', reason, durationMs: attempts.reduce((n, a) => n + a.durationMs, 0), attempts }, raw: [] }
+    }
+    try {
+      w = startSecurityWorker(plan.job, next)
+    } catch (e) {
+      attempts.push({ family: next.family, durationMs: 0, error: `could not start: ${e.message}` })
+      const reason = attempts.map((a) => `${a.family}: ${a.error}`).join('; ')
+      return { record: { ...plan.base, status: 'failed', reason, attempts }, raw: [] }
+    }
+  }
+}
+// --security-worker <job>: the detached half. It builds the security prompt, calls the one member, asks it once for
+// missing scores, and writes { ok, findings, rescored } (or { ok: false, error }) to the job's result file.
+async function securityWorker(jobFile) {
+  const job = JSON.parse(readFileSync(jobFile, 'utf8'))
+  const finish = (fields, code) => {
+    try {
+      const temp = `${job.result}.${randomBytes(4).toString('hex')}`
+      writeFileSync(temp, JSON.stringify(fields), { mode: 0o600 })
+      renameSync(temp, job.result)
+    } catch { /* the parent reports a missing result */ }
+    process.exit(code)
+  }
+  // Tests only: a worker that dies, says nothing or writes a broken result. Each can only make the pass fail.
+  const fault = process.env.REVIEW_SECURITY_TEST_FAULT
+  if (fault === 'exit') process.exit(3)
+  if (fault === 'empty') process.exit(0)
+  if (fault === 'malformed') { writeFileSync(job.result, '{"ok":true,"findings":'); process.exit(0) }
+  try {
+    CONTEXT = job.context || ''
+    VERIFY_RESULT = job.verify ?? null
+    SLICE = Array.isArray(job.slice) && job.slice.length ? job.slice : null
+    DIFF_BASE = job.diffBase || DIFF_BASE
+    const m = job.member
+    const { result, modelUsed } = await runModel(m, securityPrompt(String(job.diff ?? ''), m.vendor, job.intent), SCHEMA, 'security reviewer')
+    const raw = result?.findings
+    if (!Array.isArray(raw) || raw.some((f) => !f || typeof f !== 'object' || Array.isArray(f))) throw new Error('its answer has no findings list')
+    const { rescored } = await scoredFindings(raw, m)
+    finish({ ok: true, findings: raw, rescored, ...(modelUsed && { modelUsed }) }, 0)
+  } catch (e) {
+    finish({ ok: false, error: e.message }, 1)
+  }
+}
+// A security finding at the same file as a code finding, within 3 lines of it: the same defect. It is kept, marked
+// duplicateOf that code finding, and its fate at close follows that finding's status.
+const lineOf = (f) => Number(String(f.line ?? '').trim().match(/^(\d+)(?:\s*[-–]\s*\d+)?$/)?.[1])
+function markDuplicates(security, code) {
+  for (const s of security) {
+    const path = s[WHERE]?.path, line = lineOf(s)
+    if (!path || !Number.isSafeInteger(line)) continue
+    const same = code.find((f) => f[WHERE]?.path === path && Number.isSafeInteger(lineOf(f)) && Math.abs(lineOf(f) - line) <= 3)
+    if (same) s.duplicateOf = same.id
+  }
 }
 // ── shadow reviewers ────────────────────────────────────────────────────────
 // Config "shadow" (REVIEW_SHADOW, comma-separated): families that review the same diff after the real review, in the
@@ -3791,6 +4069,7 @@ function pushGate() {
   if (args.includes('--deferred')) return printDeferred()
   if (args.includes('--fix-check')) return fixCheck(option('--fix-check'))
   if (args.includes('--slices')) return runSlices()
+  if (args.includes('--security-worker')) return securityWorker(option('--security-worker'))
   if (args.includes('--shadow-run')) return shadowRun(option('--shadow-run'))
   if (args.includes('--shadow-report')) return shadowReport()
   if (args.includes('--pick-shadow-run')) return pickShadowRun(option('--pick-shadow-run'))
@@ -3827,6 +4106,9 @@ function pushGate() {
 
   VERIFY_RESULT = runVerify()
 
+  // The security pass, when required, starts now (the diff, context and verify result are known) and runs beside the
+  // code reviewer; its findings join this record once both are done.
+  const securityPlan = beginSecurity({ stats, diff })
   const started = Date.now()
   const scored = await scoredFindings(await review(diff), SEL)
   const raw = scored.findings
@@ -3852,12 +4134,29 @@ function pushGate() {
   const disputed = located.filter((f) => f.secondOpinion?.verdict === 'REFUTED').map((f) => ({ ...f, status: 'disputed' }))
   const findings = located.filter((f) => f.secondOpinion?.verdict !== 'REFUTED')
 
+  const security = await finishSecurity(securityPlan)
+  const securityLocated = [], securityUnlocated = []
+  for (const f of security.raw) {
+    const finding = { ...locatedFinding(scoreFinding(f)), source: 'security' }
+    if (finding.status === 'unverified-quote') securityUnlocated.push(finding)
+    else securityLocated.push(finding)
+  }
+  if (security.record.status === 'ran') {
+    security.record.findings = securityLocated.length
+    console.log(`▶ security pass · ${security.record.family}: ${securityLocated.length} finding(s), ${securityUnlocated.length} could not be located`)
+  }
+
   requireClean()
   if (headNow() !== reviewedHead) throw new Error('HEAD changed during review')
   const findingDetails = [...findings, ...disputed, ...unlocated]
   findingDetails.forEach((finding, i) => { finding.id = `f${i + 1}` })
+  const securityDetails = [...securityLocated, ...securityUnlocated]
+  securityDetails.forEach((finding, i) => { finding.id = `s${i + 1}` })
+  markDuplicates(securityLocated, findings)
+  findingDetails.push(...securityDetails)
+  const allFindings = [...findings, ...securityLocated], allUnlocated = [...unlocated, ...securityUnlocated]
   const truncated = truncatedFiles(diff, sliceFileList || filesBetween(baseSha, reviewedHead))
-  const dir = writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTruncated, opinion.verifier)
+  const dir = writeReport(branch, reviewer, { findings: allFindings, unlocated: allUnlocated, disputed }, diffTruncated, opinion.verifier, security.record)
   const reviewId = basename(dir)
   appendLog({
     type: 'review',
@@ -3882,14 +4181,14 @@ function pushGate() {
     plan: PLAN_PATH ?? null,
     intent: INTENT || null,
     family: SEL.family,
-    families: reviewingFamilies(SEL),
+    families: [...new Set([...reviewingFamilies(SEL), ...(security.record.status === 'ran' ? [security.record.family] : [])])],
     model: SEL.id,
     ...(SEL.modelUsed && { modelUsed: SEL.modelUsed }),
     effort: SEL.effort,
     vendor: SEL.vendor,
-    findings: findings.length,
-    raw: raw.length,
-    unverified: unlocated.length,
+    findings: allFindings.length,
+    raw: raw.length + security.raw.length,
+    unverified: allUnlocated.length,
     disputed: disputed.length,
     ...(SELECTION.classifier && classifierRecord(SELECTION.classifier.command, SELECTION.classifier.answer)),
     ...(SECOND_OPINION && {
@@ -3898,16 +4197,17 @@ function pushGate() {
         : { error: opinion.error || 'no HIGH/MEDIUM findings' },
     }),
     durationMs,
+    security: security.record,
     dir,
   })
   startShadows({ reviewId, diff, head: reviewedHead, baseSha })
   startPickShadows({ reviewId, diff, stats })
   const counts = ['high', 'medium', 'low']
-    .map((s) => `${findings.filter((f) => f.severity === s).length} ${s}`)
+    .map((s) => `${allFindings.filter((f) => f.severity === s).length} ${s}`)
     .join(', ')
   console.log(
-    `\n✓ Review complete — ${findings.length} finding(s) (${counts}); ${disputed.length} disputed, ` +
-      `${unlocated.length} could not be located. Report: ${dir}/code-review.md`,
+    `\n✓ Review complete — ${allFindings.length} finding(s) (${counts}); ${disputed.length} disputed, ` +
+      `${allUnlocated.length} could not be located. Report: ${dir}/code-review.md`,
   )
   const head = sh('git', ['rev-parse', 'HEAD'])
   console.log(`Review ID: ${reviewId}`)
@@ -3926,9 +4226,10 @@ function pushGate() {
       diffTruncated,
       verify: VERIFY_RESULT && { cmd: VERIFY_RESULT.cmd, passed: VERIFY_RESULT.passed },
       secondOpinion: opinion.verifier && { family: opinion.verifier.family, model: opinion.verifier.id },
-      findings: findings.map(publicFinding),
+      findings: allFindings.map(publicFinding),
       disputed: disputed.map(publicFinding),
-      unverified: unlocated.map(publicFinding),
+      unverified: allUnlocated.map(publicFinding),
+      security: security.record,
     }, null, 2),
   )
   // Piped (the slice runner reads it), stdout may still be queued: exit only once it has drained.
