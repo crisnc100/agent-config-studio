@@ -350,11 +350,27 @@ test('C3 --check: no sha, review id, finding id or file path that is not in the 
   closedGate(b)
   const f = b.facts()
   const body = good(f)
-  const invented = checked(b, body.replace('I kept it small.', 'I kept it small; see deadbee1, review-1762300000999-ffffff, x9 and src/ghost.js.'))
+  const invented = checked(b, body.replace('I kept it small.', 'I kept it small; see deadbee1, review-1762300000999-ffffff and src/ghost.js.\n- x9 MEDIUM 20/100 a made-up finding'))
   assert.deepEqual(invented.problems.sort(), ['file src/ghost.js is not in the facts (not changed, and not in the repo)', 'finding id x9 is not in the facts',
     'review id review-1762300000999-ffffff is not in the facts', 'sha deadbee1 is not in the facts'].sort())
   const real = checked(b, body.replace('I kept it small.', `I kept it small (${f.head.slice(0, 10)}, ${f.base.sha.slice(0, 7)}, src/one.js, https://example.test/x/abc1234/y.js).`))
   assert.deepEqual(real.problems, [], 'the head, the base, a tracked file and a URL are fine')
+})
+
+test('C3 --check flags a finding id only where a finding id goes: at the start of a list item, or before HIGH, MEDIUM or LOW', () => {
+  const b = fixture()
+  closedGate(b)
+  const body = good(b.facts())
+  const prose = checked(b, body.replace('I kept it small.', 'It runs at speed x2, keeps s3 and r2 buckets, and f9 is a key on the keyboard.'))
+  assert.deepEqual(prose.problems, [], 'ids in prose are not finding ids')
+  const listed = checked(b, body.replace('I kept it small.', 'I kept it small.\n- x9 MEDIUM 20/100 (likelihood 4/10 × impact 5/10) a made-up finding'))
+  assert.deepEqual(listed.problems, ['finding id x9 is not in the facts'])
+  const bullet = checked(b, body.replace('I kept it small.', 'I kept it small.\n* **s7** — a made-up security finding\n1. c4 was not met'))
+  assert.deepEqual(bullet.problems.sort(), ['finding id c4 is not in the facts', 'finding id s7 is not in the facts'])
+  const inline = checked(b, body.replace('I kept it small.', 'I kept it small; r5 HIGH was waived and f8 low was dropped.'))
+  assert.deepEqual(inline.problems.sort(), ['finding id f8 is not in the facts', 'finding id r5 is not in the facts'])
+  const real = checked(b, body.replace('I kept it small.', 'I kept it small.\n- x1 HIGH stays deferred; f2 LOW too.'))
+  assert.deepEqual(real.problems, [], 'ids from the summary are fine in those positions')
 })
 
 test('C3 --check with no review: Deferred findings is not required, and a finding id is invented', () => {
@@ -363,7 +379,7 @@ test('C3 --check with no review: Deferred findings is not required, and a findin
   const body = good({ ...f, review: { criteria: [], deferredHigh: [], deferred: [], reviewer: ['not reviewed (no review gate)'], fixed: [''] } })
     .replace('## Deferred findings\n\n', '')
   assert.deepEqual(checked(b, body).problems, [])
-  assert.deepEqual(checked(b, body.replace('I kept it small.', 'f1 is fixed.')).problems, ['finding id f1 is not in the facts'])
+  assert.deepEqual(checked(b, body.replace('I kept it small.', '- f1 is fixed.')).problems, ['finding id f1 is not in the facts'])
 })
 
 test('the helper refuses unknown options and a missing --check file, with JSON on stdout', () => {
