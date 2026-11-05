@@ -18,6 +18,31 @@
 - --tier-json exits 3 only for "not covered"; any other error throws as --summary does.
 - Suite: 605/605 outside the sandbox (PTY tests fail with openpty inside it). review.test.mjs unchanged.
 
+## PR B (branch agent-merge-run, from agent-merge)
+- Test first: tests/review.merge.test.mjs, 23 tests; all 23 failed before merge.mjs existed.
+- gh fixtures: real read-only calls on 2026-11-05 (gh 2.83.2) against crisnc100/agent-config-studio PR #40:
+  `gh pr view 40 --json number,state,isDraft,headRefOid,baseRefName,mergeStateStatus,reviewDecision,labels,url` and
+  `gh pr checks 40 --json name,state,bucket`. `pr checks --json` exited 0 with a pending check (exit 8 is not
+  relied on: merge.mjs reads buckets from the JSON whatever the exit). Label objects: gh's documented
+  {id,name,description,color} (no labeled PR in the repo to capture). Zero checks: not captured; merge.mjs treats `[]`
+  and a "no checks reported" error alike as zero checks (unverified which one gh 2.83 emits).
+- Deviation (reported): the four new merge keys live in review.mjs's mergeSettings/stricterMerge, so the tracked-file
+  trust rule stays single-source; --tier-json now also emits `merge: {onHuman, humanComment, requireChecks,
+  allowBehind}` and `baseRef` (the review record's base name). PR B therefore touches review.mjs.
+- Tracked repo config: onHuman allowed; humanComment always ignored (warned); requireChecks only true, allowBehind only
+  false (looser values warned and ignored).
+- Example config: the four keys documented in `_merge_help` only (option a), because test 8 in review.tier.test.mjs
+  deepEquals example.merge to the four #40 keys. Pending the lead's answer.
+- Base check: tier.baseRef with refs/heads/, refs/remotes/<r>/ or <remote>/ stripped must equal baseRefName. A base
+  pinned to a sha never matches (refused).
+- Order: tier-json -> intent record -> covered? -> policy off (none, no gh) -> HEAD == tier tip -> clean tree ->
+  gh pr view -> refusals -> (merges) label veto, BEHIND, gh pr checks -> merge | needs-human path.
+  Before --tier-json answers, the log falls back to ~/.agent-config-studio/review-log/merge-log.jsonl.
+- Needs-human path does `gh label list --search needs-human` (read) before `label create`; a comment failure after the
+  label was added is `refused` naming that the label is on.
+- Stdout: `<action>[ (dry run)]: <detail>`; exit merged 0, labeled 10, none 0 (policy off) / 11 (onHuman none),
+  refused 2. Dry run exits with the would-be action's code.
+- Suite: 628/628 outside the sandbox; tests/packs-catalog.mjs 49/49. review.test.mjs unchanged.
 ## PR A fix round (review 2026-11-05-17-57-16-b13bed)
 - f1 MEDIUM 21/100: test A1f1 (subdirectory, diff.relative=true) failed at e25a9b1 (summary said LOW), passes now.
 - Fix: diffStats always runs `git -C TOP diff --no-relative`, so every path is repository-relative (this also corrects
@@ -25,3 +50,57 @@
 - "A missing state never matches": absent at both the close's head and the tip counts as judged only when the path
   existed at the review's base (a real deletion). Guarded by a second test (a judged deletion stays LOW).
 - Suite 607/607.
+
+## PR B after A's fix (lead's product choices)
+- `git merge --no-edit agent-merge` into agent-merge-run; one conflict in this log (both sides appended), resolved
+  by keeping both sections.
+- BLOCKED -> needs-human, reason "blocked by branch protection" (added beside a tier reason when the tier is not
+  mergeable too); onHuman none still writes nothing.
+- UNKNOWN -> `gh pr view` re-read up to 3 times (4 reads total), MERGE_UNKNOWN_DELAY_MS apart (default 5000; tests 0);
+  still UNKNOWN -> refused "... after 3 re-reads". Sync sleep via Atomics.wait.
+- The B6 refused list (added in this PR) dropped BLOCKED; UNKNOWN stays refused after the re-reads. The gh stub
+  takes a list of answers per key (call by call). Skill text updated for both harnesses.
+- Suite 635/635; tests/packs-catalog.mjs 49/49.
+
+## PR B fix round (review 2026-11-05-18-21-30-29699b)
+- Tests first: B13 (f1), B14 x2 (f2), B15 x3 (f3), B16 (f5), and B11 extended (f4); all failed at ba9b152.
+  B2 now also expects the post-merge read; B12's read count excludes it (both tests are this PR's own).
+- f1: review.mjs --tier-json runs with cwd = git toplevel.
+- f2: after `gh pr merge` succeeds, `gh pr view <n> --json state,autoMergeRequest`: MERGED -> merged; otherwise
+  `gh pr merge <n> --disable-auto` (result ignored), then needs-human "base uses a merge queue or auto-merge; not
+  merged" (exit 10; 11 under onHuman none). Unreadable re-read -> disable-auto, then refused. unverified: that
+  --disable-auto also dequeues from a GitHub merge queue (gh docs say it disables auto-merge).
+- f3: merge.mjs never creates a folder. Log folder = dirname(tier.logPath); before that, ACS review-log/, else
+  ~/.claude/review-log/, else ~/.claude/ when ~/.claude/review-log.jsonl exists; else records go to stderr.
+- f5: an intent record that is not appended (append error or missing folder) -> `refused`, exit 2, no gh call, no
+  outcome record. Test fake-log folder is now created in beforeEach.
+- f4: both skills say `node ~/.agent-config-studio/review-gate/merge.mjs`.
+- Suite 642/642 (one run had a single flake in review.records P1, untouched code; 3/3 alone, then 642/642);
+  packs-catalog 49/49.
+
+## PR B: main merged in, then fix check x1
+- `git merge --no-edit origin/main` (#41 squash, #42 security) -> fad55e5. review.mjs: 5 conflict hunks, all the
+  same lines (summaryOf with baseRef, its three callers, --tier-json's merge/baseRef); kept this branch's side,
+  #42's security code untouched elsewhere. builds log: kept this branch's (a superset). Suite 673/673.
+- x1 (MEDIUM 21/100): --disable-auto does not dequeue. Before `gh pr merge`, `gh api graphql`
+  repository(owner,name).mergeQueue(branch: baseRefName) (owner/name from the PR url; real read-only call on
+  crisnc100/agent-config-studio main returned {"data":{"repository":{"mergeQueue":null}}}). A queue -> needs-human
+  "base uses a merge queue", no merge call (dry run reports the same). Check fails -> refused.
+- After the merge call the PR is read by GraphQL (id, state, isInMergeQueue, autoMergeRequest; gh pr view --json has
+  no isInMergeQueue): MERGED -> merged; isInMergeQueue -> dequeuePullRequest(id) then needs-human "base uses a merge
+  queue; not merged", dequeue failure -> refused "may still be queued"; otherwise --disable-auto and needs-human as
+  before; unreadable -> --disable-auto, refused "may still be queued".
+- Tests: B17 x4 (failed at fad55e5); B2/B12/B14 (this PR's own) follow the GraphQL read. Suite 677/677; catalog 49/49.
+
+## PR B fix round (review 2026-11-05-18-55-13-de6bd2)
+- Tests first: B18 x2 (f1), B19 (f2), B20 x2 (f3); all failed at 2ee329c (B18: the planted ./git ran).
+- f1: merge.mjs resolves git and gh with review.mjs's which() (absolute PATH entries only), copied; a missing tool
+  is refused naming it; children get the absolute-only PATH. review.mjs is spawned by process.execPath. The test's
+  fake review.mjs also resolves git from absolute entries, so a planted ./git can't run through the fake.
+- f2: REVIEW_CONFIG (and a repo file that is the older home config while the primary exists) gets the same floor as
+  #42's security.run: merge settings only tighten relative to the home config (stricterMerge, warning "the repository
+  or an agent can set that file"); humanComment and classifier come from home. At the home config itself: honored.
+- f3: after a merge call that set auto-merge, --disable-auto must succeed and a GraphQL re-read must show no
+  autoMergeRequest, else refused "auto-merge may still be enabled on PR <n>; disable it in GitHub". A PR neither
+  merged, queued nor auto-merging -> needs-human "gh pr merge did not merge PR #n". B14 (this PR's) now re-reads.
+- Suite 682/682 (one earlier run: 2 load flakes in routing F1 and records P1, both pass alone); catalog 49/49.

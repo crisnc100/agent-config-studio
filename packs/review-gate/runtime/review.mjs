@@ -182,6 +182,10 @@ function withoutRepoCommands(config, p, homes) {
 // its classifier is ignored like `classifier`. A repo config without `merge` leaves the home config's in force.
 const MERGE_POLICIES = ['off', 'strict', 'standard', 'always']
 const MERGE_THRESHOLD = 0.8
+// merge.mjs's keys: onHuman (comment | none) a tracked repo config may set; humanComment never; requireChecks only to
+// true and allowBehind only to false (tighter).
+const ON_HUMAN = ['comment', 'none']
+const HUMAN_COMMENT = 'Needs human approval before merging.'
 function mergeSettings(raw) {
   const m = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
   const policy = String(m.policy ?? 'off').trim().toLowerCase()
@@ -193,6 +197,10 @@ function mergeSettings(raw) {
     classifier: typeof m.classifier === 'string' && m.classifier.trim() ? m.classifier.trim() : null,
     threshold: m.threshold != null && threshold > 0 && threshold <= 1 ? threshold : MERGE_THRESHOLD,
     alwaysHuman: Array.isArray(m.alwaysHuman) ? m.alwaysHuman.filter((g) => typeof g === 'string' && g.trim()) : [],
+    onHuman: ON_HUMAN.includes(String(m.onHuman ?? '').trim().toLowerCase()) ? String(m.onHuman).trim().toLowerCase() : 'comment',
+    humanComment: typeof m.humanComment === 'string' && m.humanComment.trim() ? m.humanComment.trim() : HUMAN_COMMENT,
+    requireChecks: m.requireChecks !== false,
+    allowBehind: m.allowBehind === true,
   }
 }
 function homeMerge(homes) {
@@ -234,9 +242,9 @@ function stricterSecurity(repo, home, p) {
       `raise the security pass above "${base.run}" (${SECURITY_RUNS.join(' < ')})`)
   return { run: chosen, timeoutMs: base.timeoutMs }
 }
-function stricterMerge(repo, home, p) {
+function stricterMerge(repo, home, p, why = 'git tracks it (or a symlink leads to it), so the repository can set it') {
   const base = mergeSettings(home), own = repo && typeof repo === 'object' && !Array.isArray(repo) ? repo : {}
-  const warn = (key, extra = '') => { if (!args.includes('--gate')) console.warn(`⚠ Ignoring ${key} in ${p}: git tracks it (or a symlink leads to it), so the repository can set it${extra}.`) }
+  const warn = (key, extra = '') => { if (!args.includes('--gate')) console.warn(`⚠ Ignoring ${key} in ${p}: ${why}${extra}.`) }
   const policy = String(own.policy ?? base.policy).trim().toLowerCase()
   let chosen = base.policy
   if (MERGE_POLICIES.includes(policy) && MERGE_POLICIES.indexOf(policy) <= MERGE_POLICIES.indexOf(base.policy)) chosen = policy
@@ -244,11 +252,18 @@ function stricterMerge(repo, home, p) {
     warn(`merge.policy ${JSON.stringify(own.policy)}`, `; it may only make the policy stricter than "${base.policy}" (${MERGE_POLICIES.join(' > ')}, strictest first)`)
   if (own.classifier != null && own.classifier !== '') warn('merge.classifier')
   const threshold = Number(own.threshold)
+  if (Object.hasOwn(own, 'humanComment')) warn('merge.humanComment')
+  if (Object.hasOwn(own, 'requireChecks') && own.requireChecks !== true) warn('merge.requireChecks', '; it may only be true')
+  if (Object.hasOwn(own, 'allowBehind') && own.allowBehind !== false) warn('merge.allowBehind', '; it may only be false')
   return {
     policy: chosen,
     classifier: base.classifier,
     threshold: own.threshold != null && threshold > base.threshold && threshold <= 1 ? threshold : base.threshold,
     alwaysHuman: [...base.alwaysHuman, ...mergeSettings({ alwaysHuman: own.alwaysHuman }).alwaysHuman],
+    onHuman: Object.hasOwn(own, 'onHuman') ? mergeSettings({ onHuman: own.onHuman }).onHuman : base.onHuman,
+    humanComment: base.humanComment,
+    requireChecks: base.requireChecks || own.requireChecks === true,
+    allowBehind: base.allowBehind && own.allowBehind !== false,
   }
 }
 function loadConfig() {
@@ -273,8 +288,11 @@ function loadConfig() {
     if (config) {
       // REVIEW_CONFIG, or a repo file that is the older home config while the primary one exists, never goes below the floor.
       const floorFile = homeSource(homes)
-      if ((env || repo && homes.some((home) => sameFile(p, home))) && !(floorFile && sameFile(p, floorFile)))
+      if ((env || repo && homes.some((home) => sameFile(p, home))) && !(floorFile && sameFile(p, floorFile))) {
         config.security = Object.hasOwn(config, 'security') ? stricterSecurity(config.security, homeKey(homes, 'security'), p) : homeKey(homes, 'security')
+        // The same floor for merge: such a file may only tighten the home config's merge settings.
+        config.merge = Object.hasOwn(config, 'merge') ? stricterMerge(config.merge, homeMerge(homes), p, 'the repository or an agent can set that file') : homeMerge(homes)
+      }
       if (!repo) return config
       const ownMerge = Object.hasOwn(config, 'merge'), ownSecurity = Object.hasOwn(config, 'security')
       const checked = withoutRepoCommands(config, p, homes)
@@ -2801,7 +2819,7 @@ function tipTier(closes, { entries, base, tip, deferred }) {
 }
 const tierLines = (t) => t.tier ? [`Merge tier: ${t.tier.toUpperCase()} (${t.reasons.join('; ')}). Policy ${t.policy}: ${t.merges ? 'would merge' : 'needs a human'}`] : []
 // A summary: the PR-body text and the tip's tier it prints, with the base and the deferred finding ids it counts.
-const summaryOf = (text, tier, base, items) => ({ text, tier, base, deferred: items.map((f) => f.id) })
+const summaryOf = (text, tier, base, items, review) => ({ text, tier, base, baseRef: review.base ?? null, deferred: items.map((f) => f.id) })
 async function closeReview(id) {
   requireClean()
   const entries = readLog()
@@ -3685,7 +3703,7 @@ function closeSummary(entries, close, head, carry = null) {
   const tier = tipTier([close], { entries, base, tip: head, deferred: items })
   lines.push(...tierLines(tier), 'Deferred findings', ...findings)
   if (close.noTests) lines.push(`No tests: ${close.noTests}`)
-  return summaryOf([...criteria, ...lines].join('\n'), tier, base, items)
+  return summaryOf([...criteria, ...lines].join('\n'), tier, base, items, review)
 }
 // One summary for the slices that cover HEAD together, then the branch-wide deferred findings.
 function slicedSummary(entries, { slices, baseSha, closeHead }, head, carry = null) {
@@ -3698,7 +3716,7 @@ function slicedSummary(entries, { slices, baseSha, closeHead }, head, carry = nu
   const { items, criteria, findings } = deferredLines(entries, slices[0].review, coverOf(slices.map((s) => s.close), head, carry))
   const tier = tipTier(slices.map((s) => s.close), { entries, base: baseSha, tip: head, deferred: items })
   lines.push(...tierLines(tier), 'Deferred findings', ...findings)
-  return summaryOf([...criteria, ...lines].join('\n'), tier, baseSha, items)
+  return summaryOf([...criteria, ...lines].join('\n'), tier, baseSha, items, slices[0].review)
 }
 const carriedLine = (carry, head) => `Carried: ${head} has the exact tree of ${carry.from} (${carry.tree}), which the close below covers; the history was rewritten after it`
 function closeLines(entries, close, head, carry = null) {
@@ -3970,7 +3988,7 @@ function coveredBy(entries, result, tip, carry) {
   const { items, criteria, findings } = deferredLines(entries, tipClose.review, cover)
   const tier = tipTier(closes.map((r) => r.close), { entries, base, tip, deferred: items })
   lines.push(...tierLines(tier), 'Deferred findings', ...findings)
-  return summaryOf([...criteria, ...lines].join('\n'), tier, base, items)
+  return summaryOf([...criteria, ...lines].join('\n'), tier, base, items, tipClose.review)
 }
 // A rewritten tip (squash, split, rebase) is covered when it does not descend from a logged head (a close, review,
 // Grade, fix-check or recheck head) whose tree is exactly its own, and that head is covered: the review carries over.
@@ -4029,7 +4047,9 @@ function printTierJson() {
     process.exitCode = 3
     return
   }
-  console.log(JSON.stringify({ tip: head, covered: true, base: summary.base, ...summary.tier, deferred: summary.deferred, logPath: LOG_PATH }))
+  const { onHuman, humanComment, requireChecks, allowBehind } = MERGE
+  console.log(JSON.stringify({ tip: head, covered: true, base: summary.base, baseRef: summary.baseRef, ...summary.tier, deferred: summary.deferred,
+    merge: { onHuman, humanComment, requireChecks, allowBehind }, logPath: LOG_PATH }))
 }
 function pushRefs(input) {
   const lines = input.split('\n')
