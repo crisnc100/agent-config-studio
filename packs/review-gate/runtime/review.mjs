@@ -198,6 +198,8 @@ function mergeSettings(raw) {
 function homeMerge(homes) {
   return homeKey(homes, 'merge')
 }
+// The home config in force: the primary one when it exists, else the older ~/.claude one. Its security is the floor.
+const homeSource = (homes) => homes.find((p) => existsSync(p)) ?? null
 function homeKey(homes, key) {
   for (const p of homes) {
     try {
@@ -220,7 +222,7 @@ function securityLevel(value, where) {
 function securitySettings(raw) {
   const s = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
   const timeout = Number(s.timeoutMs)
-  return { run: securityLevel(s.run), timeoutMs: Number.isSafeInteger(timeout) && timeout > 0 ? timeout : SECURITY_TIMEOUT_MS }
+  return { run: securityLevel(s.run), timeoutMs: Number.isSafeInteger(timeout) && timeout > 0 ? Math.min(timeout, 2 ** 31 - 1) : SECURITY_TIMEOUT_MS }
 }
 function stricterSecurity(repo, home, p) {
   const base = securitySettings(home), own = repo && typeof repo === 'object' && !Array.isArray(repo) ? repo : {}
@@ -269,7 +271,9 @@ function loadConfig() {
       console.warn(`⚠ Ignoring malformed review config at ${p}`)
     }
     if (config) {
-      if (env && !homes.some((home) => sameFile(p, home)))
+      // REVIEW_CONFIG, or a repo file that is the older home config while the primary one exists, never goes below the floor.
+      const floorFile = homeSource(homes)
+      if ((env || repo && homes.some((home) => sameFile(p, home))) && !(floorFile && sameFile(p, floorFile)))
         config.security = Object.hasOwn(config, 'security') ? stricterSecurity(config.security, homeKey(homes, 'security'), p) : homeKey(homes, 'security')
       if (!repo) return config
       const ownMerge = Object.hasOwn(config, 'merge'), ownSecurity = Object.hasOwn(config, 'security')
@@ -837,6 +841,9 @@ const LOGIC_EXTS = new Set(['js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts'
 function fileKind(path) {
   if (isTestFile(path)) return 'tests'
   if (coverageExempt(path)) return 'other'
+  return extKind(path)
+}
+function extKind(path) {
   const name = path.split('/').at(-1)
   const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : ''
   return STATIC_EXTS.has(ext) ? 'static' : DOC_EXTS.has(ext) ? 'docs' : LOGIC_EXTS.has(ext) ? 'logic' : 'other'
@@ -1606,6 +1613,10 @@ function codexMcpOff(bin, cwd) {
   if (final.error) return { error: `${final.error} (with plugins off for ${fromPlugins.join(', ')})` }
   return allOff(args, final)
 }
+// A deadline (epoch ms) every model call must finish by: set only in a security worker, which enforces its own timeout
+// because its parent may be blocked in a synchronous model call of its own. Unset, calls run unbounded as before.
+let MODEL_DEADLINE = null
+const deadlineOptions = () => (MODEL_DEADLINE ? { timeout: Math.max(1, MODEL_DEADLINE - Date.now()), killSignal: 'SIGKILL' } : {})
 function runCodex(m, prompt, schema) {
   const bin = which('codex')
   if (!bin) throw new Error('codex review failed: codex is not on PATH')
@@ -1634,7 +1645,7 @@ function runCodex(m, prompt, schema) {
         outPath,
         prompt,
       ],
-      { stdio: ['ignore', 'inherit', 'inherit'], maxBuffer: 64 * 1024 * 1024 },
+      { stdio: ['ignore', 'inherit', 'inherit'], maxBuffer: 64 * 1024 * 1024, ...deadlineOptions() },
     )
     if (r.error || r.status !== 0) throw new Error(`codex review failed (exit ${r.status})`)
     return { result: JSON.parse(readFileSync(outPath, 'utf8')) }
@@ -2012,6 +2023,7 @@ function runGrok(m, prompt, schema) {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
       maxBuffer: 64 * 1024 * 1024,
+      ...deadlineOptions(),
     })
   } finally {
     call.done()
@@ -2026,6 +2038,10 @@ function spawnAsync(cmd, args) {
     const c = spawn(cmd, args, { maxBuffer: 64 * 1024 * 1024 })
     let out = ''
     let err = ''
+    if (MODEL_DEADLINE) {
+      const timer = setTimeout(() => { try { c.kill('SIGKILL') } catch { /* gone */ } }, Math.max(1, MODEL_DEADLINE - Date.now()))
+      c.on('close', () => clearTimeout(timer))
+    }
     c.stdout.on('data', (d) => {
       out += d
     })
@@ -2184,8 +2200,8 @@ function locateQuote(f) {
 // record's (resolved…) are dropped.
 const WHERE = Symbol('where')
 function locatedFinding(f) {
-  // source and duplicateOf are this script's to set (security findings, duplicates), never the reviewer's.
-  const finding = Object.fromEntries(Object.entries(f).filter(([key]) => !/^resolved/i.test(key) && key !== 'source' && key !== 'duplicateOf'))
+  // source marks a security finding; it is this script's to set, never the reviewer's.
+  const finding = Object.fromEntries(Object.entries(f).filter(([key]) => !/^resolved/i.test(key) && key !== 'source'))
   const where = locateQuote(finding)
   if (where.problem) return { ...finding, status: 'unverified-quote', quoteCheck: where.problem }
   return { ...finding, status: 'verified-quote', [WHERE]: where }
@@ -2279,8 +2295,7 @@ function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTr
     `\n  Score: ${scoreText(f)}${isFiled(f) ? ' — filed, no close status needed' : ''}` +
     `${f.quote ? `\n  > ${String(f.quote).split('\n').join('\n  > ')}` : ''}` +
     `${f.suggestion ? `\n  → ${f.suggestion}` : ''}` +
-    `${f[WHERE]?.ambiguous ? `\n  Path ambiguous: the quote is in both ${f[WHERE].ambiguous.join(' and ')}, so this finding authorizes no file at close` : ''}` +
-    `${f.duplicateOf ? `\n  Duplicate of ${f.duplicateOf}: needs no status of its own; it follows ${f.duplicateOf}'s` : ''}${extra}`
+    `${f[WHERE]?.ambiguous ? `\n  Path ambiguous: the quote is in both ${f[WHERE].ambiguous.join(' and ')}, so this finding authorizes no file at close` : ''}${extra}`
   const bySev = (s) =>
     findings
       .filter((f) => f.severity === s)
@@ -2502,7 +2517,6 @@ function validateStatuses(entries, review, statuses) {
     const status = statuses[f.id]
     const rules = resolutionRules(review, f)
     if (!status && !rules.status) continue
-    if (!status && duplicateTarget(review, f)) continue // a duplicate's fate follows its code finding's status
     if (status?.status === 'deferred') {
       validateDeferral(entries, review, f, status)
       continue
@@ -2622,12 +2636,22 @@ function pathReasons(diff) {
 }
 // HIGH by the security pass: required and it did not run (failed or skipped), or it was off or not required at review
 // while the security pass is on now and the close diff (base to the closing HEAD) would require it.
-function securityReasons(review, diff) {
+// A pass that ran covers only the file states it saw: a logic, other-kind or riskPaths file whose state at the closing HEAD
+// differs (changed by fix commits, say) is HIGH. A fix check is not a security pass and covers nothing here.
+function securityReasons(review, diff, head) {
   const sec = review.security
   if (sec?.status === 'failed' || sec?.status === 'skipped') return [`security pass ${sec.status}${sec.reason ? `: ${sec.reason}` : ''}`]
-  if (sec?.status === 'ran' || SECURITY.run === 'off') return []
+  if (SECURITY.run === 'off' || !diff) return []
+  if (sec?.status === 'ran') {
+    const saw = new Map(Array.isArray(sec.saw) ? sec.saw.filter((e) => Array.isArray(e) && typeof e[0] === 'string') : [])
+    const states = treeStates(head)
+    const unseen = diff.files.filter((f) => pathsOf(f).some(securityRelevant)).map((f) => f.path)
+      .filter((p) => !saw.has(p) || saw.get(p) !== (states.get(p) ?? null))
+    return unseen.length ? [`security pass did not see ${listed(unseen)} (changed after review)`] : []
+  }
   const need = securityNeed(diff)
   if (!need.required) return []
+  if (review.kind === 'grade') return ['no security pass ran (Grade-only close; run /code-review for the security pass)']
   return [`security pass did not cover logic changed after review (${sec?.status ?? 'not recorded'} at review; ${need.why})`]
 }
 // HIGH and not-LOW by deferred findings: a deferred HIGH (a deferred criterion is HIGH) or protected one is HIGH.
@@ -2643,14 +2667,12 @@ function closeTier({ review, reviews, statuses, files, outOfScope, noTests, head
   const base = fullObjectId(review.baseSha) ? review.baseSha : review.base || BASE
   const diff = diffStats(`${base}...${head}`, sliceOf(review))
   const stats = tierStats(diff)
-  const deferred = reviews.flatMap((r) => (r.findingDetails || []).filter((f) => {
-    const status = statusOf(r, statuses, f)?.status
-    return status === 'deferred' || isFiled(f) && status !== 'fixed'
-  }))
+  const findings = reviews.flatMap((r) => r.findingDetails || [])
+  const deferred = findings.filter((f) => statuses[f.id]?.status === 'deferred' || isFiled(f) && statuses[f.id]?.status !== 'fixed')
   const high = []
   if (!diff) high.push('the diff could not be read, so its paths are unchecked')
   if (diff) high.push(...pathReasons(diff))
-  high.push(...securityReasons(review, diff))
+  high.push(...securityReasons(review, diff, head))
   high.push(...deferredReasons(deferred).high)
   if (outOfScope.length) high.push(`close partial: ${outOfScope.length} file(s) out of scope`)
   if (noTests !== null) high.push(`tests did not run (--no-tests: ${noTests})`)
@@ -2858,12 +2880,16 @@ function securityNeed(stats, run = SECURITY.run) {
   if (run === 'always') return { required: true, why: 'security.run is always' }
   if (!stats) return { required: true, why: 'the diff stats could not be read' }
   const paths = [...new Set(stats.files.flatMap(pathsOf))]
-  const code = paths.filter((p) => !coverageExempt(p) && ['logic', 'other'].includes(fileKind(p)))
+  const code = paths.filter(securityCode)
   const risky = paths.filter((p) => matchesAny(p, RISK_PATHS))
   if (code.length || risky.length)
     return { required: true, why: [code.length && `logic or other files: ${listed(code)}`, risky.length && `riskPaths: ${listed(risky)}`].filter(Boolean).join('; ') }
-  return { required: false, status: 'not-required', reason: 'only docs, tests, static or coverage-exempt files changed, none on riskPaths' }
+  return { required: false, status: 'not-required', reason: 'only docs, tests, static or lockfiles changed, none on riskPaths' }
 }
+// A logic or other-kind file for the security pass. Only the built-in lockfile names exempt a file: coverageExempt from the
+// environment or a config never does, so an agent cannot exempt the code it changed.
+const securityCode = (p) => !isTestFile(p) && !DEFAULT_EXEMPT.includes(p.split('/').at(-1)) && ['logic', 'other'].includes(extKind(p))
+const securityRelevant = (p) => securityCode(p) || matchesAny(p, RISK_PATHS)
 // The report's and the summary's line: "Security: <family> (<model>) — <status>, N findings", with the reason.
 function securityLine(sec) {
   if (!sec) return 'Security: off (not recorded)'
@@ -2904,7 +2930,8 @@ process.on('exit', () => {
 function startSecurityWorker(job, member) {
   const dir = mkdtempSync(join(tmpdir(), 'review-security-'))
   const file = join(dir, 'job.json'), result = join(dir, 'result.json'), log = join(dir, 'worker.log')
-  writeFileSync(file, JSON.stringify({ ...job, member, result }), { mode: 0o600 })
+  const deadline = Date.now() + SECURITY.timeoutMs
+  writeFileSync(file, JSON.stringify({ ...job, member, result, deadline, timeoutMs: SECURITY.timeoutMs }), { mode: 0o600 })
   const out = openSync(log, 'a', 0o600)
   let child
   try {
@@ -2922,12 +2949,12 @@ function startSecurityWorker(job, member) {
       if (existsSync(result)) return
       timedOut = true
       try { process.kill(-child.pid, 'SIGKILL') } catch { try { child.kill('SIGKILL') } catch { /* gone */ } }
-    }, SECURITY.timeoutMs)
+    }, Math.max(1, deadline - Date.now()))
     child.on('error', (e) => { clearTimeout(timer); SECURITY_WORKERS.delete(child.pid); finish({ error: `could not start: ${e.message}` }) })
     child.on('exit', (code, signal) => { clearTimeout(timer); SECURITY_WORKERS.delete(child.pid); finish({ code, signal, timedOut }) })
   })
   console.log(`▶ security · ${member.family} (${member.vendor} · ${member.id} · ${member.effort}) started beside the code reviewer`)
-  return { member, dir, result, log, started, done }
+  return { member, dir, result, log, started, deadline, done }
 }
 // One worker's outcome: { data } with the raw findings, or { reason } it failed for.
 async function securityOutcome(w) {
@@ -2941,6 +2968,8 @@ async function securityOutcome(w) {
       if (existsSync(w.result)) {
         try { data = JSON.parse(readFileSync(w.result, 'utf8')) } catch (e) { reason = `its result is malformed: ${e.message}` }
       } else reason = end.code === 0 ? 'it wrote no result' : null
+      // A result written after the deadline is a timeout, whatever it says: the worker ran past its time.
+      if (!reason && data && !(Number(data.finishedAt) <= w.deadline)) reason = `timed out after ${SECURITY.timeoutMs} ms`
       if (!reason && data && data.ok !== true) reason = typeof data?.error === 'string' && data.error ? data.error : 'its result is malformed: not ok'
       if (!reason && data && (!Array.isArray(data.findings) || data.findings.some((f) => !f || typeof f !== 'object' || Array.isArray(f))))
         reason = 'its result is malformed: no findings list'
@@ -3012,10 +3041,12 @@ async function finishSecurity(plan) {
 // missing scores, and writes { ok, findings, rescored } (or { ok: false, error }) to the job's result file.
 async function securityWorker(jobFile) {
   const job = JSON.parse(readFileSync(jobFile, 'utf8'))
+  const late = () => Number.isFinite(job.deadline) && Date.now() >= job.deadline
+  const timedOut = () => ({ ok: false, error: `timed out after ${job.timeoutMs} ms` })
   const finish = (fields, code) => {
     try {
       const temp = `${job.result}.${randomBytes(4).toString('hex')}`
-      writeFileSync(temp, JSON.stringify(fields), { mode: 0o600 })
+      writeFileSync(temp, JSON.stringify({ ...fields, finishedAt: Date.now() }), { mode: 0o600 })
       renameSync(temp, job.result)
     } catch { /* the parent reports a missing result */ }
     process.exit(code)
@@ -3025,6 +3056,9 @@ async function securityWorker(jobFile) {
   if (fault === 'exit') process.exit(3)
   if (fault === 'empty') process.exit(0)
   if (fault === 'malformed') { writeFileSync(job.result, '{"ok":true,"findings":'); process.exit(0) }
+  if (fault === 'late') { pause(Math.max(0, job.deadline + 500 - Date.now())); finish({ ok: true, findings: [] }, 0) }
+  // Its own timeout: every model call is killed at the deadline (MODEL_DEADLINE), and the result then says timed out.
+  if (Number.isFinite(job.deadline)) MODEL_DEADLINE = job.deadline
   try {
     CONTEXT = job.context || ''
     VERIFY_RESULT = job.verify ?? null
@@ -3035,35 +3069,12 @@ async function securityWorker(jobFile) {
     const raw = result?.findings
     if (!Array.isArray(raw) || raw.some((f) => !f || typeof f !== 'object' || Array.isArray(f))) throw new Error('its answer has no findings list')
     const { rescored } = await scoredFindings(raw, m)
+    if (late()) finish(timedOut(), 1)
     finish({ ok: true, findings: raw, rescored, ...(modelUsed && { modelUsed }) }, 0)
   } catch (e) {
-    finish({ ok: false, error: e.message }, 1)
+    finish(late() ? timedOut() : { ok: false, error: e.message }, 1)
   }
 }
-// A security finding at the same file as a code finding, within 3 lines of it: the same defect. It is kept, marked
-// duplicateOf that code finding, and its fate at close follows that finding's status.
-const lineOf = (f) => Number(String(f.line ?? '').trim().match(/^(\d+)(?:\s*[-–]\s*\d+)?$/)?.[1])
-function markDuplicates(security, code) {
-  for (const s of security) {
-    const path = s[WHERE]?.path, line = lineOf(s)
-    if (!path || !Number.isSafeInteger(line)) continue
-    const same = code.find((f) => f[WHERE]?.path === path && Number.isSafeInteger(lineOf(f)) && Math.abs(lineOf(f) - line) <= 3)
-    if (same) s.duplicateOf = same.id
-  }
-}
-// The code finding a security finding duplicates, only as this script recorded it: an s finding whose duplicateOf
-// names an f finding of the same record.
-function duplicateTarget(review, f) {
-  if (f?.source !== 'security' || typeof f.duplicateOf !== 'string' || !/^s\d+$/.test(String(f.id))) return null
-  return (review.findingDetails || []).find((o) => o.id === f.duplicateOf && o.source !== 'security' && /^f\d+$/.test(String(o.id))) || null
-}
-// The status a finding's fate follows at close: its own, or for a duplicate with none, its code finding's.
-function statusOf(review, statuses, f) {
-  if (statuses?.[f.id]) return statuses[f.id]
-  const target = duplicateTarget(review, f)
-  return target ? statuses?.[target.id] : undefined
-}
-
 // ── shadow reviewers ────────────────────────────────────────────────────────
 // Config "shadow" (REVIEW_SHADOW, comma-separated): families that review the same diff after the real review, in the
 // background, for comparison only. They write review-log/shadow-log.jsonl and nothing else, so no close, push gate
@@ -3739,7 +3750,7 @@ function statusClose(entries, review, cover) {
 function deferredFindings(entries, review, cover = null) {
   const close = statusClose(entries, review, cover)
   return (review.findingDetails || []).flatMap((f) => {
-    const status = statusOf(review, close?.statuses, f)
+    const status = close?.statuses?.[f.id]
     if (status?.status === 'deferred') {
       const recheck = f.criterionId && close.recheck && entries.find((e) => e.type === 'review' && e.id === close.recheck)
       const evidence = recheck && recheck.criteria?.find((c) => c.id === f.criterionId)?.evidence
@@ -4180,10 +4191,13 @@ function pushGate() {
   findingDetails.forEach((finding, i) => { finding.id = `f${i + 1}` })
   const securityDetails = [...securityLocated, ...securityUnlocated]
   securityDetails.forEach((finding, i) => { finding.id = `s${i + 1}` })
-  markDuplicates(securityLocated, findings)
   findingDetails.push(...securityDetails)
   const allFindings = [...findings, ...securityLocated], allUnlocated = [...unlocated, ...securityUnlocated]
-  const truncated = truncatedFiles(diff, sliceFileList || filesBetween(baseSha, reviewedHead))
+  const reviewedFiles = sliceFileList || filesBetween(baseSha, reviewedHead)
+  const truncated = truncatedFiles(diff, reviewedFiles)
+  // The file states the security pass saw (the same diff as the code review, minus what the size cap cut): close checks
+  // the closing HEAD against them.
+  if (security.record.status === 'ran') security.record.saw = coverageOf(reviewedHead, reviewedFiles.filter((p) => !truncated.includes(p)))
   const dir = writeReport(branch, reviewer, { findings: allFindings, unlocated: allUnlocated, disputed }, diffTruncated, opinion.verifier, security.record)
   const reviewId = basename(dir)
   appendLog({
