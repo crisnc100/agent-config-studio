@@ -272,12 +272,12 @@ test('C6 --pick-report counts runs, failures, agreement with the actual reviewer
   assert.match(none.stdout, /no pick-shadow runs/)
 })
 
-test('X1 model pickers ask with --no-tools; a CLI that cannot run without tools is ok:false with its reason', async () => {
+test('X1 model pickers ask with --min-tools; a CLI that cannot run without tools is ok:false with its reason', async () => {
   config({ pickShadow: ['grok', 'opus'] })
   commit({ 'src/a.js': lines(10) })
   allowed(script([], { STUB_GROK: 'refuse' }))
   const by = Object.fromEntries((await pickRecords(2)).map((p) => [p.picker, p]))
-  for (const name of ['grok', 'opus']) assert.ok(pickCalls(name)[0].args.includes('--no-tools'), `${name} was asked with --no-tools`)
+  for (const name of ['grok', 'opus']) assert.ok(pickCalls(name)[0].args.includes('--min-tools') && !pickCalls(name)[0].args.includes('--no-tools'), `${name} was asked with --min-tools, not --no-tools`)
   assert.equal(by.grok.ok, false); assert.match(by.grok.error, /ask-model exited 4: grok cannot run with no tools/)
   assert.equal(by.opus.ok, true)
 })
@@ -315,4 +315,88 @@ test('X4 a picker worker that fails to start writes one ok:false record per pick
     assert.equal(by[name].reviewId, records().at(-1).id)
   }
   assert.deepEqual(readdirSync(ROOT).filter((d) => d.startsWith('review-pick-shadow-')), [], 'the unused job folder is removed')
+})
+
+// The real ask-model (tools/ask-model.mjs at the repo root) behind the pickers, over stub claude, codex and grok CLIs
+// that log their argv and answer the picker's schema. Only the pickers see these CLIs: the review keeps BIN's.
+const ASK_MODEL = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'tools', 'ask-model.mjs')
+const ASK_BIN = join(ROOT, 'ask-bin'), CLI_BIN = join(ROOT, 'cli-bin'), CLI_CALLS = join(ROOT, 'cli-calls.jsonl')
+mkdirSync(ASK_BIN); mkdirSync(CLI_BIN)
+writeFileSync(join(ASK_BIN, 'ask-model'), `#!/bin/sh\nPATH=${CLI_BIN}:/usr/bin:/bin exec ${JSON.stringify(process.execPath)} ${JSON.stringify(ASK_MODEL)} "$@"\n`)
+chmodSync(join(ASK_BIN, 'ask-model'), 0o755)
+for (const name of ['claude', 'codex', 'grok']) {
+  writeFileSync(join(CLI_BIN, name), `#!${process.execPath}
+const fs = require('node:fs')
+const a = process.argv.slice(2)
+if (${JSON.stringify(name)} === 'grok' && a[0] === 'inspect') { console.log(JSON.stringify({ mcpServers: [], plugins: [] })); process.exit(0) }
+if (${JSON.stringify(name)} === 'codex' && a[0] === 'mcp') { console.log('[]'); process.exit(0) }
+fs.appendFileSync(${JSON.stringify(CLI_CALLS)}, JSON.stringify({ name: ${JSON.stringify(name)}, argv: a, cwd: process.cwd() }) + '\\n')
+if (process.env['STUB_CLI_' + ${JSON.stringify(name.toUpperCase())}] === 'fail') { process.stderr.write('cli boom\\n'); process.exit(1) }
+const id = a[a.indexOf(a.includes('--model') ? '--model' : '-m') + 1]
+const answer = { family: 'opus', complexity: 'simple', reason: ${JSON.stringify(name)} + ' picked opus' }
+if (${JSON.stringify(name)} === 'codex') console.log(JSON.stringify(answer))
+else if (${JSON.stringify(name)} === 'claude') console.log(JSON.stringify({ type: 'result', is_error: false, result: '', structured_output: answer, modelUsage: { [id]: {} } }))
+else console.log(JSON.stringify({ text: '', structuredOutput: answer, modelUsage: { [id]: {} } }))
+`)
+  chmodSync(join(CLI_BIN, name), 0o755)
+}
+const askPath = { PATH: [ASK_BIN, BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':') }
+const cliCalls = () => existsSync(CLI_CALLS) ? readFileSync(CLI_CALLS, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : []
+
+test('M1 model pickers ask with --min-tools; grok and astra answer ok:true with tools "restricted", a claude picker with tools "none"', async () => {
+  rmSync(CLI_CALLS, { force: true })
+  config({ pickShadow: ['grok', 'astra', 'opus'] })
+  commit({ 'src/a.js': lines(10) })
+  allowed(script([], askPath))
+  const by = Object.fromEntries((await pickRecords(3)).map((p) => [p.picker, p]))
+  for (const name of ['grok', 'astra', 'opus']) {
+    assert.equal(by[name].ok, true, JSON.stringify(by[name])); assert.equal(by[name].family, 'opus')
+  }
+  assert.equal(by.grok.tools, 'restricted'); assert.match(by.grok.toolsNote, /list_dir/)
+  assert.equal(by.astra.tools, 'restricted'); assert.match(by.astra.toolsNote, /read-only sandbox/)
+  assert.equal(by.opus.tools, 'none'); assert.match(by.opus.toolsNote, /no tools/)
+  const calls = Object.fromEntries(cliCalls().map((c) => [c.name, c]))
+  const after = (argv, flag) => argv[argv.indexOf(flag) + 1]
+  assert.equal(after(calls.grok.argv, '--tools'), 'list_dir'); assert.ok(calls.grok.argv.includes('--disable-web-search') && calls.grok.argv.includes('--no-subagents'))
+  assert.ok(calls.codex.argv.includes('shell_tool') && calls.codex.argv.includes('unified_exec') && after(calls.codex.argv, '--sandbox') === 'read-only')
+  assert.equal(after(calls.claude.argv, '--tools'), '')
+  for (const c of Object.values(calls)) assert.match(c.cwd, /review-pick-cwd-/, `${c.name} ran from the picker's temp folder`)
+})
+
+test('M2 a picker whose CLI fails is ok:false and still records the tools it had; the classifier picker records tools "none"', async () => {
+  rmSync(CLI_CALLS, { force: true })
+  config({ pickShadow: ['jev', 'grok', 'astra'] })
+  commit({ 'src/a.js': lines(10) })
+  allowed(script([], { ...askPath, STUB_CLI_GROK: 'fail' }))
+  const by = Object.fromEntries((await pickRecords(3)).map((p) => [p.picker, p]))
+  assert.equal(by.grok.ok, false); assert.match(by.grok.error, /ask-model exited 4: grok exited 1 without a JSON reply: cli boom/)
+  assert.equal(by.grok.tools, 'restricted'); assert.match(by.grok.toolsNote, /list_dir/)
+  assert.equal(by.astra.ok, true); assert.equal(by.astra.tools, 'restricted')
+  assert.equal(by.jev.ok, true); assert.equal(by.jev.tools, 'none'); assert.equal(typeof by.jev.toolsNote, 'string')
+})
+
+test('M3 a picker that never reached ask-model still has the tools fields, empty', async () => {
+  config({ pickShadow: ['Bad Name!'] })
+  commit({ 'src/a.js': lines(10) })
+  allowed(script([]))
+  const [p] = await pickRecords(1)
+  assert.equal(p.ok, false); assert.match(p.error, /not a picker name/)
+  assert.ok(Object.hasOwn(p, 'tools') && Object.hasOwn(p, 'toolsNote'), 'the record has tools and toolsNote')
+  assert.deepEqual([p.tools, p.toolsNote], [null, null])
+})
+
+test('M4 --pick-report prints each picker\'s tools beside its numbers, and nothing for records that predate them', () => {
+  const pick = (fields) => JSON.stringify({ type: 'pick-shadow', ts: '2026-11-04T12:00:00.000Z', ok: true, complexity: 'moderate', actual: 'sol', ...fields })
+  appendFileSync(SHADOW, [
+    pick({ picker: 'grok', family: 'sol', tools: 'restricted', toolsNote: 'list_dir only' }),
+    pick({ picker: 'grok', ok: false, family: null, complexity: null, error: 'boom', tools: 'restricted', toolsNote: 'list_dir only' }),
+    pick({ picker: 'opus', family: 'opus', tools: 'none', toolsNote: 'no tools' }),
+    pick({ picker: 'jev', family: 'sol' }),
+  ].join('\n') + '\n')
+  const r = script(['--pick-report']); allowed(r)
+  assert.deepEqual(r.stdout.trim().split('\n').slice(1), [
+    'grok: 2 run(s), 1 failed; agreed with the actual reviewer 1 of 1 (100%); families: sol 1; complexity: moderate 1; tools: restricted 2',
+    'jev: 1 run(s), 0 failed; agreed with the actual reviewer 1 of 1 (100%); families: sol 1; complexity: moderate 1',
+    'opus: 1 run(s), 0 failed; agreed with the actual reviewer 0 of 1 (0%); families: opus 1; complexity: moderate 1; tools: none 1',
+  ])
 })

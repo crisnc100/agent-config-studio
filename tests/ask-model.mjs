@@ -1076,6 +1076,57 @@ console.log('\nask-model: --no-tools');
   ok('without --no-tools claude keeps its read-only tools', plain.code === 0 && plain.argv?.[plain.argv.indexOf('--tools') + 1] === 'Read,Grep,Glob', show(plain));
 }
 
+console.log('\nask-model: --min-tools');
+{
+  const MIN = mk('min-cwd');
+  const CODEX_OFF = ['shell_tool', 'unified_exec', 'view_image', 'image_generation', 'multi_agent', 'browser_use', 'browser_use_external', 'computer_use',
+    'in_app_browser', 'apps', 'plugins', 'remote_plugin', 'goals', 'sleep_tool', 'skill_search', 'tool_suggest'];
+  const c = ask(['--family', 'fable', '--min-tools', '--json', '--cwd', MIN]);
+  const cj = c.code === 0 ? JSON.parse(c.out) : {};
+  ok('claude --min-tools: the --no-tools argv, run from --cwd, mode no-tools, tools "none" with a note',
+     c.code === 0 && same(c.argv, ask(['--family', 'fable', '--no-tools', '--cwd', MIN]).argv) && c.argv[c.argv.indexOf('--tools') + 1] === ''
+     && c.calls[0].cwd === MIN && cj.mode === 'no-tools' && cj.tools === 'none' && /--tools ""/.test(cj.toolsNote) && / no-tools\)\n/.test(c.err), show(c));
+
+  const g = ask(['--family', 'grok', '--min-tools', '--json', '--cwd', MIN]);
+  const gj = g.code === 0 ? JSON.parse(g.out) : {};
+  ok('grok --min-tools: list_dir only, MCP off, web search off, no subagents, low turn cap, --cwd, nothing else allowed',
+     g.code === 0 && same(g.argv, ['-p', PROMPT, '-m', IDS.grok, ...(gj.effort ? ['--reasoning-effort', gj.effort] : []), '--cwd', MIN,
+       '--tools', 'list_dir', '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool',
+       '--disable-web-search', '--no-subagents', '--max-turns', '5', '--output-format', 'json'])
+     && g.calls[0].cwd === MIN && !g.argv.includes('--allow'), show(g));
+  ok('grok --min-tools --json: mode min-tools, tools "restricted", a note naming list_dir and never "no tools"',
+     gj.mode === 'min-tools' && gj.tools === 'restricted' && /list_dir/.test(gj.toolsNote) && !/^no tools/.test(gj.toolsNote) && gj.answer === `answer from ${IDS.grok}`, show(g));
+
+  const x = ask(['--family', 'astra', '--min-tools', '--json', '--cwd', MIN]);
+  const xj = x.code === 0 ? JSON.parse(x.out) : {};
+  const disabled = (x.argv || []).flatMap((a, i) => (a === '--disable' ? [x.argv[i + 1]] : []));
+  ok('codex --min-tools: shell and exec tools (and the other tool features) disabled, web search disabled, read-only sandbox, from --cwd',
+     x.code === 0 && x.argv[0] === 'exec' && x.argv[x.argv.indexOf('--sandbox') + 1] === 'read-only' && same(disabled, CODEX_OFF)
+     && x.argv.includes('web_search="disabled"') && x.argv[x.argv.indexOf('web_search="disabled"') - 1] === '-c'
+     && x.argv.at(-1) === PROMPT && x.calls[0].cwd === MIN, show(x));
+  ok('codex --min-tools: goals, sleep_tool, skill_search and tool_suggest are disabled too',
+     ['goals', 'sleep_tool', 'skill_search', 'tool_suggest'].every((f) => disabled.includes(f)), show(x));
+  ok('codex --min-tools --json: mode min-tools, tools "restricted", a note naming what remains',
+     xj.mode === 'min-tools' && xj.tools === 'restricted' && /apply_patch/.test(xj.toolsNote) && /read-only sandbox/.test(xj.toolsNote), show(x));
+
+  for (const [other, re] of [['--investigate', /--min-tools and --investigate/], ['--no-tools', /--min-tools and --no-tools/]]) {
+    const both = ask(['--family', 'grok', '--min-tools', other, '--cwd', MIN]);
+    ok(`--min-tools with ${other}: a usage error, nothing called`, both.code === 64 && both.calls.length === 0 && both.inspect.length === 0 && re.test(both.err), show(both));
+  }
+
+  // The other modes are unchanged: same argv as the existing checks pin, and no tools fields in --json.
+  const plainG = ask(['--family', 'grok', '--json', '--cwd', MIN]);
+  const pg = plainG.code === 0 ? JSON.parse(plainG.out) : {};
+  ok('without --min-tools grok keeps its read-only argv and --json has no tools fields',
+     plainG.code === 0 && same(plainG.argv, GROK_RO(IDS.grok, pg.effort, MIN)) && !Object.hasOwn(pg, 'tools') && !Object.hasOwn(pg, 'toolsNote'), show(plainG));
+  const plainX = ask(['--family', 'astra', '--json', '--cwd', MIN]);
+  const px = plainX.code === 0 ? JSON.parse(plainX.out) : {};
+  ok('without --min-tools codex disables no feature and --json has no tools fields',
+     plainX.code === 0 && same(plainX.argv, CODEX(IDS.astra, px.effort)) && !Object.hasOwn(px, 'tools'), show(plainX));
+  const nt = ask(['--family', 'fable', '--no-tools', '--json', '--cwd', MIN]);
+  ok('--no-tools --json carries no tools fields', nt.code === 0 && !Object.hasOwn(JSON.parse(nt.out), 'tools'), show(nt));
+}
+
 console.log('\nask-model: live');
 if (process.env.ACS_LIVE_CHECKS === '1') {
   const live = path.join(tmp, 'live-prompt.txt');
