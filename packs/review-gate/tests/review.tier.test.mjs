@@ -635,3 +635,38 @@ test('A3 --tier-json on an uncovered tip exits 3 with covered false and the reas
   assert.match(json.reason, /No complete close covers HEAD/)
   assert.equal(json.logPath, LOG)
 })
+
+// Fix round (review 2026-11-05-17-57-16-b13bed).
+test('A1f1 from a subdirectory with diff.relative=true, an edited classifier-LOW file is still judged again', () => {
+  homeConfig({ merge: { classifier: 'tierjev' } })
+  commit({ 'web/App.tsx': TSX, 'docs/guide.md': '# Guide\n' })
+  const first = reviewed()
+  assert.equal(closed(first.id, {}, { extra: { STUB_TIER: answer('low', 0.9, { low: 0.9, medium: 0.1 }) } }).tier, 'low')
+  commit({ 'web/App.tsx': `${TSX}export const C = 3\n`, 'docs/more.md': 'more\n' })
+  allowed(script(['--fix-check', first.id], { STUB_FINDINGS: JSON.stringify({ findings: [] }) }))
+  closed(reviewed([], { REVIEW_PATHS: 'docs/more.md' }).id)
+  homeConfig({ merge: { classifier: 'tierjev', policy: 'standard' } })
+  git('config', 'diff.relative', 'true')
+  const fromWeb = (args) => {
+    const r = spawnSync(process.execPath, [SCRIPT, ...args], { cwd: join(REPO, 'web'), env: env(), encoding: 'utf8', timeout: 60000 })
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`)
+    return r.stdout
+  }
+  const text = fromWeb(['--summary'])
+  assert.match(tierLine(text)[0], /^Merge tier: MEDIUM \(.*web\/App\.tsx.*\)\. Policy standard: needs a human$/)
+  const json = JSON.parse(fromWeb(['--tier-json']))
+  assert.equal(json.tier, 'medium')
+  assert.equal(json.merges, false)
+  // Same answer as from the top of the repository.
+  assert.equal(tierLine(summary().stdout)[0], tierLine(text)[0])
+})
+
+test('A1f1 a deletion its close judged stays judged: absent at the close and the tip, present at the base', () => {
+  homeConfig({ merge: { classifier: 'tierjev' } })
+  write({ 'docs/guide.md': '# Guide\n' }); git('rm', '-q', 'src/one.js'); git('add', 'docs/guide.md'); git('commit', '-qm', 'drop one')
+  assert.equal(reviewAndClose({ extra: { STUB_TIER: answer('low', 0.9, { low: 0.9, medium: 0.1 }) } }).tier, 'low')
+  commit({ 'docs/more.md': 'more\n' })
+  closed(reviewed([], { REVIEW_PATHS: 'docs/more.md' }).id)
+  homeConfig({ merge: { classifier: 'tierjev', policy: 'standard' } })
+  assert.match(tierLine(summary().stdout)[0], /^Merge tier: LOW .*Policy standard: would merge$/)
+})

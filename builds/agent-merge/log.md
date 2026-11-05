@@ -17,3 +17,11 @@
 - deferred: the finding ids as the summary lists them (f1, x1, ...), not review-qualified; same ids as the tier reasons.
 - --tier-json exits 3 only for "not covered"; any other error throws as --summary does.
 - Suite: 605/605 outside the sandbox (PTY tests fail with openpty inside it). review.test.mjs unchanged.
+
+## PR A fix round (review 2026-11-05-17-57-16-b13bed)
+- f1 MEDIUM 21/100: test A1f1 (subdirectory, diff.relative=true) failed at e25a9b1 (summary said LOW), passes now.
+- Fix: diffStats always runs `git -C TOP diff --no-relative`, so every path is repository-relative (this also corrects
+  review stats/routing run from a subdirectory). TOP moved above diffStats because diffStats runs at load.
+- "A missing state never matches": absent at both the close's head and the tip counts as judged only when the path
+  existed at the review's base (a real deletion). Guarded by a second test (a judged deletion stays LOW).
+- Suite 607/607.
