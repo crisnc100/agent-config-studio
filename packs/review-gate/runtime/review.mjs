@@ -741,6 +741,7 @@ const INTENT = args.includes('--dispute') || args.includes('--waive') || args.in
 const PLAN_PATH = option('--plan') ?? process.env.REVIEW_PLAN
 let CONTEXT = ''
 let DIFF_BASE = BASE
+let FIX_CHECK_RUN = false
 // verify: "second-opinion" sends surviving HIGH/MEDIUM findings to one other pool family.
 const SECOND_OPINION = String(cfg('REVIEW_VERIFY', 'verify', 'off')).trim().toLowerCase() === 'second-opinion'
 const QUOTE_WINDOW = 5 // a quote must start within ±this many lines of the cited line
@@ -1279,7 +1280,7 @@ const SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['issue', 'file', 'line', 'quote', 'suggestion', 'likelihood', 'impact', 'protected', 'trigger'],
+        required: ['issue', 'file', 'line', 'quote', 'suggestion', 'likelihood', 'impact', 'protected', 'trigger', 'preExisting', 'instances'],
         properties: {
           issue: { type: 'string' },
           file: { type: ['string', 'null'] },
@@ -1290,6 +1291,16 @@ const SCHEMA = {
           impact: { type: 'integer', minimum: 1, maximum: 10 },
           protected: { type: 'boolean' },
           trigger: { type: 'string' },
+          preExisting: { type: ['boolean', 'null'] },
+          instances: {
+            type: ['array', 'null'],
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['file', 'line', 'quote'],
+              properties: { file: { type: 'string' }, line: { type: 'string' }, quote: { type: 'string' } },
+            },
+          },
         },
       },
     },
@@ -1335,7 +1346,11 @@ const validScores = (f) => ['likelihood', 'impact'].every((k) => Number.isIntege
   typeof f.protected === 'boolean' && typeof f.trigger === 'string' && !!f.trigger.trim()
 const derivedSeverity = (f) => f.protected || f.likelihood * f.impact >= HIGH_AT_OR_ABOVE ? 'high' :
   f.likelihood * f.impact <= FILE_AT_OR_BELOW ? 'low' : 'medium'
-const blocking = (f) => !isFiled(f) && (f.severity !== 'low' || f.unscored === true)
+// Pre-existing: the reviewer says the defect is at the base and this branch neither introduced it nor made it newly
+// reachable, and the script found every located place of it outside the review diff (inDiff false, set only by the script).
+// It never blocks and needs no status; a review or security finding only (a fix check's never carries inDiff).
+const isPreExisting = (finding) => !finding.criterionId && finding.preExisting === true && finding.inDiff === false
+const blocking = (f) => !isFiled(f) && !isPreExisting(f) && (f.severity !== 'low' || f.unscored === true)
 function resolutionRules(record, finding) {
   if (Object.hasOwn(record, 'rubricVersion')) {
     const required = blocking(finding)
@@ -1417,8 +1432,8 @@ function reviewContext(branch) {
     }) : []
   })
   for (const review of entries.filter((e) => e.type === 'review' && e.branch === branch && e.repoId === repoId))
-    for (const finding of (review.findingDetails || []).filter(isFiled))
-      decided.push({ ...finding, review: review.id, finding: finding.id, decision: 'filed' })
+    for (const finding of (review.findingDetails || []).filter((f) => isFiled(f) || isPreExisting(f)))
+      decided.push({ ...finding, review: review.id, finding: finding.id, decision: isPreExisting(finding) ? 'pre-existing' : 'filed' })
   if (decided.length) context += `Already decided; don't re-raise without new evidence:\n${JSON.stringify(decided)}\n`
   return context
 }
@@ -1515,6 +1530,15 @@ function promptNotes(vendor) {
       `Open the file and copy it — never paraphrase or reconstruct it from memory. A script checks every ` +
       `quote against the file; a finding whose quote is not there is discarded as unlocatable.`,
   )
+  notes.push(
+    `If the same defect pattern appears in several places, report it once and list every place in \`instances\` ` +
+      `(file, line and quote each, quoted exactly like the main location, which is one of them); otherwise instances is null.`,
+  )
+  if (!FIX_CHECK_RUN)
+    notes.push(
+      `\`preExisting\`: true when the defect exists at the base and this branch neither introduced it nor made it newly ` +
+        `reachable; otherwise false. A script checks the claim against the diff: a finding near a line the branch changed counts as the branch's.`,
+    )
   notes.push(RUBRIC)
   if (VERIFY_RESULT)
     notes.push(
@@ -2220,7 +2244,9 @@ function locateQuote(f) {
 const WHERE = Symbol('where')
 function locatedFinding(f) {
   // source marks a security finding; it is this script's to set, never the reviewer's.
-  const finding = Object.fromEntries(Object.entries(f).filter(([key]) => !/^resolved/i.test(key) && key !== 'source'))
+  // inDiff is the script's too: set only when a review finding claims preExisting.
+  const finding = Object.fromEntries(Object.entries(f).filter(([key]) => !/^resolved/i.test(key) && !['source', 'inDiff'].includes(key)))
+  if (finding.preExisting == null) delete finding.preExisting // a strict schema writes "absent" as null
   const where = locateQuote(finding)
   if (where.problem) return { ...finding, status: 'unverified-quote', quoteCheck: where.problem }
   return { ...finding, status: 'verified-quote', [WHERE]: where }
@@ -2311,7 +2337,7 @@ function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTr
   const head = sh('git', ['rev-parse', 'HEAD'])
   const item = (f, extra = '') =>
     `- [${f.file || '?'}:${f.line || '?'}] ${String(f.issue).replace(/\r?\n|$/, (end) => ` (id ${f.id})${end}`)}` +
-    `\n  Score: ${scoreText(f)}${isFiled(f) ? ' — filed, no close status needed' : ''}` +
+    `\n  Score: ${scoreText(f)}${isPreExisting(f) ? ' — pre-existing (not introduced here), no close status needed' : isFiled(f) ? ' — filed, no close status needed' : ''}` +
     `${f.quote ? `\n  > ${String(f.quote).split('\n').join('\n  > ')}` : ''}` +
     `${f.suggestion ? `\n  → ${f.suggestion}` : ''}` +
     `${f[WHERE]?.ambiguous ? `\n  Path ambiguous: the quote is in both ${f[WHERE].ambiguous.join(' and ')}, so this finding authorizes no file at close` : ''}${extra}`
@@ -2687,12 +2713,15 @@ function closeTier({ review, reviews, statuses, files, outOfScope, noTests, head
   const diff = diffStats(`${base}...${head}`, sliceOf(review))
   const stats = tierStats(diff)
   const findings = reviews.flatMap((r) => r.findingDetails || [])
-  const deferred = findings.filter((f) => statuses[f.id]?.status === 'deferred' || isFiled(f) && statuses[f.id]?.status !== 'fixed')
+  const deferred = findings.filter((f) => statuses[f.id]?.status === 'deferred' || isFiled(f) && !isPreExisting(f) && statuses[f.id]?.status !== 'fixed')
   const high = []
   if (!diff) high.push('the diff could not be read, so its paths are unchecked')
   if (diff) high.push(...pathReasons(diff))
   high.push(...securityReasons(review, diff, head))
   high.push(...deferredReasons(deferred).high)
+  // A known exploit the branch did not introduce never blocks the close, but no agent merges past it.
+  const preProtected = findings.filter((f) => isPreExisting(f) && f.protected === true && statuses[f.id]?.status !== 'fixed')
+  if (preProtected.length) high.push(`pre-existing protected: ${preProtected.map((f) => f.id).join(', ')}`)
   if (outOfScope.length) high.push(`close partial: ${outOfScope.length} file(s) out of scope`)
   if (noTests !== null) high.push(`tests did not run (--no-tests: ${noTests})`)
   const facts = { paths: diff ? diff.files.map((f) => f.path) : [], files, stats, deferred }
@@ -3605,6 +3634,7 @@ async function fixCheck(id) {
   const entries = readLog()
   const original = loggedReview(entries, id)
   if (original.kind === 'fix-check' || original.kind === 'recheck') throw new Error('No third model pass; fix checks target the original review')
+  FIX_CHECK_RUN = true
   if (entries.some((e) => e.type === 'review' && e.kind === 'fix-check' && e.review === id))
     throw new Error('One fix check per review; unresolved findings go to the operator, no third model pass')
   const head = headNow()
@@ -3645,6 +3675,24 @@ async function fixCheck(id) {
   console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)`)
   for (const f of findingDetails.filter((f) => f[WHERE]?.ambiguous))
     console.warn(`⚠ ${f.id}: path ambiguous, the quote is in both ${f[WHERE].ambiguous.join(' and ')}; it authorizes no file at close`)
+}
+// A review or security finding that claims preExisting gets inDiff: true when its main location or any located instance is
+// within 3 lines of a line the review diff (merge base to head) added or changed, false when every place is resolved and
+// outside it, null when that can't be told (unlocated, ambiguous, git failed). Only false files it as pre-existing.
+function inDiffOf(finding, changed) {
+  const places = [finding, ...(finding.instances || []).map((inst, i) => ({ line: inst.line, [WHERE]: finding[WHERE]?.instances?.[i] }))]
+  const each = places.map((place) => inFix(place, changed))
+  return each.includes(true) ? true : each.every((v) => v === false) ? false : null
+}
+function markPreExisting(findings, baseSha, head) {
+  const claimed = findings.filter((f) => f.preExisting === true)
+  if (!claimed.length) return
+  const changed = fixChangedLines(baseSha, head, SLICE)
+  for (const f of claimed) {
+    f.inDiff = inDiffOf(f, changed)
+    if (f.inDiff === true) console.warn(`⚠ ${f.id}: marked pre-existing, but it is within 3 lines of a line this branch changed; it counts as the branch's`)
+    if (f.inDiff === null) console.warn(`⚠ ${f.id}: marked pre-existing, but whether it is in the diff can't be told; it counts as the branch's`)
+  }
 }
 // The original findings a fix check's fix is meant to repair (every one not filed), so the reviewer can tell an
 // incomplete repair from a new regression. Empty when there are none.
@@ -3698,10 +3746,10 @@ function waiveFinding(id, findingId) {
 // section, deferred HIGHs first. A tip carried over a rewrite says so.
 function closeSummary(entries, close, head, carry = null) {
   const { review, lines } = closeLines(entries, close, head, carry)
-  const { items, criteria, findings } = deferredLines(entries, review, coverOf([close], head, carry))
+  const { items, criteria, findings, preExisting } = deferredLines(entries, review, coverOf([close], head, carry))
   const base = fullObjectId(review.baseSha) ? review.baseSha : review.base
   const tier = tipTier([close], { entries, base, tip: head, deferred: items })
-  lines.push(...tierLines(tier), 'Deferred findings', ...findings)
+  lines.push(...tierLines(tier), 'Deferred findings', ...findings, ...preExisting)
   if (close.noTests) lines.push(`No tests: ${close.noTests}`)
   return summaryOf([...criteria, ...lines].join('\n'), tier, base, items, review)
 }
@@ -3713,9 +3761,9 @@ function slicedSummary(entries, { slices, baseSha, closeHead }, head, carry = nu
     lines.push(`Slice ${i + 1} of ${slices.length}: ${paths.join(', ')}`, ...closeLines(entries, close, head).lines)
     if (close.noTests) lines.push(`No tests: ${close.noTests}`)
   })
-  const { items, criteria, findings } = deferredLines(entries, slices[0].review, coverOf(slices.map((s) => s.close), head, carry))
+  const { items, criteria, findings, preExisting } = deferredLines(entries, slices[0].review, coverOf(slices.map((s) => s.close), head, carry))
   const tier = tipTier(slices.map((s) => s.close), { entries, base: baseSha, tip: head, deferred: items })
-  lines.push(...tierLines(tier), 'Deferred findings', ...findings)
+  lines.push(...tierLines(tier), 'Deferred findings', ...findings, ...preExisting)
   return summaryOf([...criteria, ...lines].join('\n'), tier, baseSha, items, slices[0].review)
 }
 const carriedLine = (carry, head) => `Carried: ${head} has the exact tree of ${carry.from} (${carry.tree}), which the close below covers; the history was rewritten after it`
@@ -3748,11 +3796,21 @@ const coverOf = (closes, tip, carry) => ({ closes, bases: [tip, ...(carry ? [car
 // The covering closes' own fix-check and recheck records count whatever branch name they were logged under.
 function deferredLines(entries, review, cover) {
   const linked = new Set([...cover.closes.flatMap((c) => [c.review, c.fixCheck, c.recheck]), ...(cover.linked || [])].filter(Boolean))
-  const items = deferredOrder(entries.filter((r) => r.type === 'review' && (r.repoId === review.repoId && r.branch === review.branch || linked.has(r.id)))
-    .flatMap((r) => deferredFindings(entries, r, cover)))
+  const records = entries.filter((r) => r.type === 'review' && (r.repoId === review.repoId && r.branch === review.branch || linked.has(r.id)))
+  const items = deferredOrder(records.flatMap((r) => deferredFindings(entries, r, cover)))
   const criteria = items.filter((f) => f.criterionId).map(deferredLine)
   const findings = items.filter((f) => !f.criterionId).map(deferredLine)
-  return { items, criteria: criteria.length ? ['Acceptance criteria not met', ...criteria] : [], findings: findings.length ? findings : ['none'] }
+  // Pre-existing findings left unfixed, apart from the deferred ones: protected first, as "Pre-existing HIGH". Only when any.
+  const old = deferredOrder(records.flatMap((r) => preExistingFindings(entries, r, cover)))
+  const preExisting = [...old.filter((f) => f.protected === true).map((f) => `Pre-existing HIGH ${deferredLine(f)}`),
+    ...old.filter((f) => f.protected !== true).map(deferredLine)]
+  return { items, criteria: criteria.length ? ['Acceptance criteria not met', ...criteria] : [], findings: findings.length ? findings : ['none'],
+    preExisting: preExisting.length ? ['Pre-existing (not introduced here)', ...preExisting] : [] }
+}
+// One review record's pre-existing findings its close did not fix.
+function preExistingFindings(entries, review, cover = null) {
+  const close = statusClose(entries, review, cover)
+  return (review.findingDetails || []).filter((f) => isPreExisting(f) && close?.statuses?.[f.id]?.status !== 'fixed')
 }
 // PR-body order: criteria not met, then HIGH, then MEDIUM and LOW; ties keep log order.
 const DEFERRED_RANK = { high: 1, medium: 2, low: 3 }
@@ -3788,7 +3846,7 @@ function deferredFindings(entries, review, cover = null) {
       const evidence = recheck && recheck.criteria?.find((c) => c.id === f.criterionId)?.evidence
       return [{ ...f, deferral: status, ...(evidence && { recheckEvidence: evidence }) }]
     }
-    return isFiled(f) && status?.status !== 'fixed' ? [f] : []
+    return isFiled(f) && !isPreExisting(f) && status?.status !== 'fixed' ? [f] : []
   })
 }
 function printDeferred() {
@@ -3985,9 +4043,9 @@ function coveredBy(entries, result, tip, carry) {
     if (r.close.noTests) lines.push(`No tests: ${r.close.noTests}`)
   })
   const cover = { ...coverOf(closes.map((r) => r.close), tip, carry), linked: used.filter((r) => r.check).map((r) => r.check.id) }
-  const { items, criteria, findings } = deferredLines(entries, tipClose.review, cover)
+  const { items, criteria, findings, preExisting } = deferredLines(entries, tipClose.review, cover)
   const tier = tipTier(closes.map((r) => r.close), { entries, base, tip, deferred: items })
-  lines.push(...tierLines(tier), 'Deferred findings', ...findings)
+  lines.push(...tierLines(tier), 'Deferred findings', ...findings, ...preExisting)
   return summaryOf([...criteria, ...lines].join('\n'), tier, base, items, tipClose.review)
 }
 // A rewritten tip (squash, split, rebase) is covered when it does not descend from a logged head (a close, review,
@@ -4244,6 +4302,7 @@ function pushGate() {
   const securityDetails = [...securityLocated, ...securityUnlocated]
   securityDetails.forEach((finding, i) => { finding.id = `s${i + 1}` })
   findingDetails.push(...securityDetails)
+  markPreExisting(findingDetails, baseSha, reviewedHead)
   const allFindings = [...findings, ...securityLocated], allUnlocated = [...unlocated, ...securityUnlocated]
   const reviewedFiles = sliceFileList || filesBetween(baseSha, reviewedHead)
   const truncated = truncatedFiles(diff, reviewedFiles)
