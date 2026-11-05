@@ -469,3 +469,169 @@ test('f1k a classifier LOW on a close\'s own logic file stands in the summary', 
   assert.equal(reviewAndClose({ extra: { STUB_TIER: answer('low', 0.9, { low: 0.9, medium: 0.1 }) } }).tier, 'low')
   assert.match(tierLine(summary().stdout)[0], /^Merge tier: LOW /)
 })
+
+// Agent merge, PR A: x1 and x2 from #40, and --tier-json, the tip's tier as data.
+const tierJson = (extra = {}) => script(['--tier-json'], extra)
+const tipTier = (extra = {}) => { const r = tierJson(extra); allowed(r); return JSON.parse(r.stdout) }
+// --tier-json carries exactly what the summary's tier line says: tier, reasons, policy and the policy's decision.
+function sameAsLine(json, text) {
+  const [line] = tierLine(text)
+  const m = line.match(/^Merge tier: (LOW|MEDIUM|HIGH) \((.*)\)\. Policy (\w+): (would merge|needs a human)$/)
+  assert.ok(m, line)
+  assert.equal(json.covered, true)
+  assert.equal(json.tier, m[1].toLowerCase())
+  assert.equal(json.reasons.join('; '), m[2])
+  assert.equal(json.policy, m[3])
+  assert.equal(json.merges, m[4] === 'would merge')
+  assert.equal(typeof json.docsTestsOnly, 'boolean')
+  assert.equal(json.tip, git('rev-parse', 'HEAD'))
+  assert.equal(json.logPath, LOG)
+}
+
+test('A1 a classifier-LOW file edited after its close is judged again: covered by a clean fix check, it keeps the summary from LOW', () => {
+  homeConfig({ merge: { classifier: 'tierjev' } })
+  // docs/guide.md stays as the first close judged it, so that close still covers a file and counts in the summary.
+  commit({ 'web/App.tsx': TSX, 'docs/guide.md': '# Guide\n' })
+  const first = reviewed()
+  assert.equal(closed(first.id, {}, { extra: { STUB_TIER: answer('low', 0.9, { low: 0.9, medium: 0.1 }) } }).tier, 'low')
+  commit({ 'web/App.tsx': `${TSX}export const C = 3\n`, 'docs/more.md': 'more\n' })
+  allowed(script(['--fix-check', first.id], { STUB_FINDINGS: JSON.stringify({ findings: [] }) }))
+  closed(reviewed([], { REVIEW_PATHS: 'docs/more.md' }).id)
+  homeConfig({ merge: { classifier: 'tierjev', policy: 'standard' } })
+  const text = summary().stdout
+  assert.match(text, /^Content coverage: 3 record/m)
+  assert.match(tierLine(text)[0], /^Merge tier: MEDIUM \(.*web\/App\.tsx.*\)\. Policy standard: needs a human$/)
+})
+
+test('A1 a builds/-only commit after a classifier-LOW close keeps LOW, a new builds/ file and an edited one alike', () => {
+  homeConfig({ merge: { classifier: 'tierjev', policy: 'standard' } })
+  commit({ 'web/App.tsx': TSX, 'builds/x/plan.md': 'plan\n' })
+  assert.equal(reviewAndClose({ extra: { STUB_TIER: answer('low', 0.9, { low: 0.9, medium: 0.1 }) } }).tier, 'low')
+  commit({ 'builds/x/grade.json': '{}\n', 'builds/x/run.mjs': 'export const r = 1\n', 'builds/x/plan.md': 'plan\nedited\n' })
+  const text = summary().stdout
+  assert.match(tierLine(text)[0], /^Merge tier: LOW \(.*\)\. Policy standard: would merge$/)
+  sameAsLine(tipTier(), text)
+})
+
+test('A1 a file whose tip state is the state its close judged stays judged', () => {
+  homeConfig({ merge: { classifier: 'tierjev', policy: 'standard' } })
+  commit({ 'web/App.tsx': TSX })
+  assert.equal(reviewAndClose({ extra: { STUB_TIER: answer('low', 0.9, { low: 0.9, medium: 0.1 }) } }).tier, 'low')
+  commit({ 'docs/more.md': 'more\n' })
+  closed(reviewed([], { REVIEW_PATHS: 'docs/more.md' }).id)
+  assert.match(tierLine(summary().stdout)[0], /^Merge tier: LOW .*Policy standard: would merge$/)
+})
+
+// A review logged before baseSha: its close's own diff can't be read, so every file the tip changes is unjudged.
+function legacyBase() {
+  writeFileSync(LOG, records().map((e) => {
+    if (e.type === 'review') { const { baseSha, ...rest } = e; return JSON.stringify(rest) }
+    if (e.type === 'close') { const { coverage, ...rest } = e; return JSON.stringify(rest) }
+    return JSON.stringify(e)
+  }).join('\n') + '\n')
+}
+test('A2 a close whose own diff cannot be read: --summary and the push gate print a tier line instead of crashing', () => {
+  commit({ 'web/App.tsx': TSX, 'docs/guide.md': '# Guide\n' })
+  reviewAndClose()
+  legacyBase()
+  homeConfig({ merge: { policy: 'standard' } })
+  const text = summary().stdout
+  assert.match(tierLine(text)[0], /^Merge tier: MEDIUM \(.*web\/App\.tsx.*\)\. Policy standard: needs a human$/)
+  const pushed = gate(); allowed(pushed)
+  assert.ok(pushed.stderr.includes(tierLine(text)[0]), pushed.out)
+  assert.doesNotMatch(pushed.out, /TypeError/)
+  sameAsLine(tipTier(), text)
+})
+
+test('A3 --tier-json for a single close: the summary line\'s tier and decision, the base, deferred ids and the log path', () => {
+  commit({ 'docs/guide.md': '# Guide\n' })
+  const record = reviewAndClose()
+  for (const policy of ['off', 'strict', 'standard', 'always']) {
+    homeConfig({ merge: { policy } })
+    const json = tipTier()
+    sameAsLine(json, summary().stdout)
+    assert.equal(json.policy, policy)
+  }
+  const json = tipTier()
+  assert.equal(json.base, records().find((e) => e.id === record.review).baseSha)
+  assert.deepEqual(json.deferred, [])
+  assert.equal(json.docsTestsOnly, true)
+  assert.equal(tierJson().stdout.trim().split('\n').length, 1, 'one JSON line on stdout')
+})
+
+test('A3 --tier-json lists deferred ids and matches a MEDIUM line', () => {
+  commit({ 'web/App.tsx': TSX })
+  reviewAndClose({}, [scored({ issue: 'a name is vague', likelihood: 1, impact: 2 })]) // a LOW is filed, so deferred
+  homeConfig({ merge: { policy: 'always' } })
+  const json = tipTier()
+  sameAsLine(json, summary().stdout)
+  assert.equal(json.tier, 'medium')
+  assert.deepEqual(json.deferred, ['f1'])
+})
+
+test('A3 --tier-json for sliced closes matches the sliced summary\'s line', () => {
+  commit({ 'docs/guide.md': '# Guide\n', 'web/App.tsx': TSX })
+  closed(reviewed([], { REVIEW_PATHS: 'docs/' }).id)
+  closed(reviewed([], { REVIEW_PATHS: 'web/' }).id)
+  homeConfig({ merge: { policy: 'always' } })
+  const text = summary().stdout
+  assert.match(text, /^Sliced review: 2 slice/m)
+  const json = tipTier()
+  sameAsLine(json, text)
+  assert.equal(json.tier, 'medium')
+})
+
+test('A3 --tier-json for content coverage with a linked fix check matches its line', () => {
+  commit({ 'docs/guide.md': '# Guide\n' })
+  const first = reviewed()
+  closed(first.id)
+  commit({ 'package.json': '{"name":"x"}\n', 'docs/more.md': 'more\n' })
+  allowed(script(['--fix-check', first.id], { STUB_FINDINGS: JSON.stringify({ findings: [] }) }))
+  closed(reviewed([], { REVIEW_PATHS: 'docs/more.md' }).id)
+  homeConfig({ merge: { policy: 'standard' } })
+  const text = summary().stdout
+  assert.match(text, /^Content coverage: /m)
+  const json = tipTier()
+  sameAsLine(json, text)
+  assert.equal(json.tier, 'high')
+})
+
+test('A3 --tier-json for a carried tip (history rewritten to the same tree) matches the carried summary', () => {
+  commit({ 'docs/guide.md': '# Guide\n' })
+  commit({ 'docs/more.md': 'more\n' })
+  reviewAndClose()
+  git('reset', '-q', '--soft', 'main'); git('commit', '-qm', 'squashed')
+  homeConfig({ merge: { policy: 'standard' } })
+  const text = summary().stdout
+  assert.match(text, /^Carried: /m)
+  sameAsLine(tipTier(), text)
+})
+
+test('A3 --tier-json with no tier on any covering close: tier null, merges false, a reason naming the close', () => {
+  commit({ 'docs/guide.md': '# Guide\n' })
+  const record = reviewAndClose()
+  writeFileSync(LOG, records().map((e) => {
+    if (e.type !== 'close') return JSON.stringify(e)
+    const { tier, tierReasons, tierBy, tierClassifier, stats, ...rest } = e
+    return JSON.stringify(rest)
+  }).join('\n') + '\n')
+  homeConfig({ merge: { policy: 'always' } })
+  const json = tipTier()
+  assert.deepEqual([json.covered, json.tier, json.merges, json.policy], [true, null, false, 'always'])
+  assert.ok(json.reasons.length && json.reasons.every((r) => /no merge tier/.test(r)), JSON.stringify(json.reasons))
+  assert.ok(json.reasons.some((r) => r.includes(record.review)), JSON.stringify(json.reasons))
+})
+
+test('A3 --tier-json on an uncovered tip exits 3 with covered false and the reason', () => {
+  commit({ 'docs/guide.md': '# Guide\n' })
+  reviewAndClose()
+  commit({ 'web/App.tsx': TSX })
+  const r = tierJson()
+  assert.equal(r.status, 3, r.out)
+  const json = JSON.parse(r.stdout)
+  assert.deepEqual(Object.keys(json).sort(), ['covered', 'logPath', 'reason', 'tip'])
+  assert.equal(json.covered, false)
+  assert.equal(json.tip, git('rev-parse', 'HEAD'))
+  assert.match(json.reason, /No complete close covers HEAD/)
+  assert.equal(json.logPath, LOG)
+})
