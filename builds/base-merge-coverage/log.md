@@ -25,3 +25,16 @@
 - Old per-repo shim copies run directly by git (no global dispatcher) still call `--gate` without a remote, so they keep the full rule until reinstalled (stricter, not looser).
 - `packs/build/skills/*/build/SKILL.md` carries the same rule 8 sentence; left alone (plan scope is the code-review twins).
 - Full suite: 604/604 outside the sandbox (594 before + 10 new).
+
+## Fix round (Sol review 2026-11-05-18-09-47-0a4347, Astra Grade grade-1793902425898-8d1fc1)
+
+Tests BM7–BM10 written first; 7 of 8 failed at 89e41ec (BM7 "fix check saw it at the merge tip" is a positive guard that passes on both).
+
+1. **Merge-touched files at close.** Files `branchPaths` returns for a merge of the default branch in review.head..HEAD skip the fixedFiles / test-file / pre-merge-seen exemptions. In scope only if (a) the state at HEAD equals the merge base with the default branch (main's own content), or (b) a fix check whose head descends from every merge that touched the file saw it, and its state at the check head equals HEAD. Otherwise outOfScope (partial; refusal when the fix-check-after rule applies).
+   - Deviation from the brief ("must be seen ... or partial"): case (a) is in scope but **never stamped** in coverage. Making it partial would leave no way out: a slice review of a file whose tip state is main's has an empty diff. Not stamping it means a push to origin trusts it as main content, and any other push still needs coverage (BM7 mirror push asserts this).
+   - closeCoverage never stamps a file whose HEAD state is the merge base's, nor a file a merge-tip fix check left out of `onlyFiles` (fixCheckSeen now returns `left`).
+2. **Exact ref.** defaultTip resolves the origin/HEAD target with `git show-ref --verify --hash -- <full ref>`, then peels that sha; a tag named `refs/remotes/origin/<x>` no longer matches (it did via rev-parse's lookup rules; reproduced).
+3. **Snapshot.** origin/HEAD is read once at startup (ORIGIN_HEAD), before BASE initialisation can run `remote set-head`; defaultTip uses only that snapshot. A later run in the same repo does see a set-head created origin/HEAD (it came from the remote).
+4. **Message.** sidesNote now says "...; slice-review just that file at the tip (REVIEW_PATHS=…) and close that slice; review <id> keeps covering every other file, ...". Gate uses the anchor close's review id; close uses the review being closed.
+
+Full suite: 612/612 outside the sandbox.

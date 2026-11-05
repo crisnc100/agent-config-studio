@@ -601,6 +601,12 @@ function detectDefaultBase() {
   )
   return 'origin/main'
 }
+// origin/HEAD as this run found it, read before detectDefaultBase can create it with `remote set-head`: the default
+// branch counts as reviewed only through a ref the repository already had (defaultTip).
+const ORIGIN_HEAD = (() => {
+  const r = spawnSync('git', ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD'], { encoding: 'utf8' })
+  return !r.error && r.status === 0 ? r.stdout.trim() : ''
+})()
 // `||` not `??` so an empty string in review-config.json still means "auto-detect".
 const BASE = cfg('REVIEW_BASE', 'base', '') || (['--gate', '--deferred', '--rubric', '--calibrate'].some((flag) => args.includes(flag)) ? '' : detectDefaultBase())
 // The base reaches git as a revision and as `git fetch <remote> <ref>`, so it is never an option, a
@@ -2496,13 +2502,14 @@ function renamedInCheck(check) {
 // What a fix check saw in full: its fix diff's files minus the ones the cap cut (`cut`, every fix-diff file when that
 // can't be told). A file it saw is in scope at close; seeing a later change never covers a part the review missed.
 function fixCheckSeen(check) {
-  if (!check) return { seen: new Set(), cut: new Set() }
+  if (!check) return { seen: new Set(), cut: new Set(), left: new Set() }
   const all = fullObjectId(check.baseSha) && treeOf(check.baseSha) ? filesBetween(check.baseSha, check.head, sliceOf(check)) : null
   // A fix check at a merge of the default branch saw only its branch-side files.
   const files = all && Array.isArray(check.onlyFiles) ? all.filter((p) => check.onlyFiles.includes(p)) : all
+  const left = new Set(all && Array.isArray(check.onlyFiles) ? all.filter((p) => !check.onlyFiles.includes(p)) : [])
   const measured = files && reviewTruncated(check)
   const cut = measured && new Set([...measured, ...renamedInCheck(check)])
-  return cut ? { seen: new Set(files.filter((p) => !cut.has(p))), cut } : { seen: new Set(), cut: files ? new Set(files) : null }
+  return cut ? { seen: new Set(files.filter((p) => !cut.has(p))), cut, left } : { seen: new Set(), cut: files ? new Set(files) : null, left }
 }
 // A complete close vouches for the state at its head of the review's files (the slice's recorded files, or the net diff
 // from baseSha) and of every file it accepted since, minus any file the cap cut in the review or in the fix check.
@@ -2512,10 +2519,14 @@ function closeCoverage(review, since, check, head) {
   const paths = sliceOf(review)
   if (!paths && !fullObjectId(review.baseSha)) return null
   if (paths ? !Array.isArray(review.files) : !treeOf(review.baseSha)) return []
-  const truncated = reviewTruncated(review), { cut } = fixCheckSeen(check)
+  const truncated = reviewTruncated(review), { cut, left } = fixCheckSeen(check)
   if (!truncated || !cut && since.length) return []
   const reviewed = paths ? sliceFiles(review) : filesBetween(review.baseSha, review.head)
-  return coverageOf(head, [...reviewed, ...since].filter((p) => !truncated.has(p) && !cut?.has(p)))
+  // Never what a merge-tip fix check left out, nor a file whose state at HEAD is the default branch's (no record saw it
+  // there; a push to origin needs no coverage for it, any other push still does).
+  const base = coverBase(review.baseSha, head)
+  const onMain = (p) => base !== review.baseSha && (treeStates(base).get(p) ?? null) === (treeStates(head).get(p) ?? null)
+  return coverageOf(head, [...reviewed, ...since].filter((p) => !truncated.has(p) && !cut?.has(p) && !left.has(p) && !onMain(p)))
 }
 // ── merge tier (report only: nothing merges, comments or labels) ────────────
 // Rules first: HIGH on a riskPaths or always-human file, a deferred HIGH or protected finding, a partial close or
@@ -2730,7 +2741,7 @@ async function closeReview(id) {
     const code = since.filter((p) => !isTestFile(p) && !p.startsWith('builds/'))
     const sides = code.length ? baseMergeSides([`${check.head}..${checkAt}`]) : new Set()
     if (code.length && code.every((p) => sides.has(p)))
-      throw new Error(`The merge of the default branch after the fix check left ${code.join(', ')} for review: ${sidesNote(code)}. No third model pass`)
+      throw new Error(`The merge of the default branch after the fix check left ${code.join(', ')} for review: ${sidesNote(code, id)}. No third model pass`)
     if (code.length) throw new Error(`Fix check head must equal closing HEAD, or the commits after it may touch only builds/ and test files: ${code.join(', ')}. ` +
       'Fixes land before the fix check; close at its head, then review the later files as a slice (REVIEW_PATHS) and close that at the tip. No third model pass')
   }
@@ -2748,7 +2759,23 @@ async function closeReview(id) {
   }
   // A file the fix check saw in full was reviewed, so a fix to a sibling file it saw is in scope.
   const { seen } = fixCheckSeen(check)
-  const outOfScope = files.filter((p) => !fixedFiles.has(p) && !seen.has(p) && !isTestFile(p) && !p.startsWith('builds/'))
+  // What a merge of the default branch changed on the branch's side (both sides, or an edit in the merge commit) is in
+  // scope only as the default branch's own content (its state at HEAD is the merge base's), or when a fix check after
+  // the merge saw its state at HEAD. A fixed status, a pre-merge fix check or the test-file rule never covers it.
+  const merges = branchCommits(['--merges', `${review.head}..${at}`]).filter((m) => baseMergeParents(m))
+  const byMerge = new Map(merges.map((m) => [m, new Set(branchPaths(m))]))
+  const mergeBase = coverBase(review.baseSha, head), stateAt = (commit, p) => treeStates(commit).get(p) ?? null
+  const mergeScope = (p) => {
+    const touching = merges.filter((m) => byMerge.get(m).has(p))
+    if (!touching.length) return null
+    if (mergeBase !== review.baseSha && stateAt(mergeBase, p) === stateAt(head, p)) return true
+    return !!check && seen.has(p) && touching.every((m) => isAncestor(m, check.head)) && stateAt(check.head, p) === stateAt(head, p)
+  }
+  const outOfScope = files.filter((p) => {
+    const merged = mergeScope(p)
+    if (merged !== null) return !merged && !p.startsWith('builds/')
+    return !fixedFiles.has(p) && !seen.has(p) && !isTestFile(p) && !p.startsWith('builds/')
+  })
   const coverage = outOfScope.length ? null : closeCoverage(review, files, check, head)
   let tests = null
   if (command) {
@@ -2765,7 +2792,7 @@ async function closeReview(id) {
   console.log(`✓ Review ${id} closed (${outOfScope.length ? 'partial' : 'complete'}) at ${head}${paths ? ` for paths ${paths.join(', ')}` : ''}` +
     (carried ? `, carried from the ${carried.kind} head ${carried.from} (identical tree ${carried.tree})` : ''))
   if (outOfScope.length && outOfScope.every((p) => baseMergeSides([`${review.head}..${at}`]).has(p)))
-    console.log(`Out of scope: ${outOfScope.join(', ')} — ${sidesNote(outOfScope)}.`)
+    console.log(`Out of scope: ${outOfScope.join(', ')} — ${sidesNote(outOfScope, id)}.`)
 }
 // ── shadow reviewers ────────────────────────────────────────────────────────
 // Config "shadow" (REVIEW_SHADOW, comma-separated): families that review the same diff after the real review, in the
@@ -3564,17 +3591,19 @@ function bothSides(merge) {
 }
 // The default branch's commit, whose content counts as reviewed: only a symbolic refs/remotes/origin/HEAD naming an
 // existing ref under refs/remotes/origin/. It never reads REVIEW_BASE or config "base" and never runs `remote set-head`;
-// the push gate trusts it only for a push to origin (the hook passes the remote as --remote). null keeps the old rule.
+// the push gate trusts it only for a push to origin (the hook passes the remote as --remote). It uses ORIGIN_HEAD, the
+// ref as this run found it. null keeps the old rule.
 let DEFAULT_TIP
 function defaultTip() {
   if (DEFAULT_TIP !== undefined) return DEFAULT_TIP
   DEFAULT_TIP = null
   const remote = args.indexOf('--remote')
   if (args.includes('--gate') && (remote === -1 || args[remote + 1] !== 'origin')) return null
-  const ref = spawnSync('git', ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD'], { encoding: 'utf8' })
-  const target = !ref.error && ref.status === 0 ? ref.stdout.trim() : ''
+  const target = ORIGIN_HEAD
   if (!/^refs\/remotes\/origin\/[^\s]+$/.test(target) || target === 'refs/remotes/origin/HEAD') return null
-  const sha = sh('git', ['rev-parse', '--verify', '--quiet', '--end-of-options', `${target}^{commit}`], { allowFailure: true })
+  // The exact ref only: a short-name lookup would also find refs/tags/<target>.
+  const ref = sh('git', ['show-ref', '--verify', '--hash', '--', target], { allowFailure: true })
+  const sha = fullObjectId(ref) ? sh('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { allowFailure: true }) : ''
   if (fullObjectId(sha)) DEFAULT_TIP = sha
   return DEFAULT_TIP
 }
@@ -3609,9 +3638,9 @@ function branchPaths(commit, paths = null) {
 }
 // The files changed on both sides of the merges of the default branch in a rev-list range.
 const baseMergeSides = (range) => new Set(branchCommits(['--merges', ...range]).flatMap((merge) => baseMergeParents(merge) ? [...(bothSides(merge) || [])] : []))
-const sidesNote = (files) => `${files.length === 1 ? 'it' : 'they'} changed on both sides of a merge of the default branch: ${files.join(', ')}. ` +
-  `Slice-review just ${files.length === 1 ? 'that file' : 'those files'} at the tip (REVIEW_PATHS=${files.join(',')}) and close that slice there; ` +
-  'every other file keeps the existing review\'s coverage, so nothing else needs a new review'
+const sidesNote = (files, id) => `${files.length === 1 ? 'it' : 'they'} changed on both sides of a merge of the default branch: ${files.join(', ')}; ` +
+  `slice-review just ${files.length === 1 ? 'that file' : 'those files'} at the tip (REVIEW_PATHS=${files.join(',')}) and close that slice; ` +
+  `review ${id} keeps covering every other file, so nothing else needs a new review`
 const buildsOnlySince = (closeHead, tip) => closeHead === tip || commitsIn([`${closeHead}..${tip}`])
   .every((commit) => commitPaths(commit).every((path) => path.startsWith('builds/')))
 // A fix check is clean when no finding of its own needs a status.
@@ -3739,7 +3768,7 @@ function uncoveredNote(result) {
   const shown = uncovered.slice(0, 20).join(', ')
   const more = uncovered.length > 20 ? ` and ${uncovered.length - 20} more` : ''
   const where = tipClose ? `the complete ${sliceOf(tipClose.review) ? 'slice ' : ''}closes at ${tipClose.head} leave` : 'no complete close or clean fix check saw the tip state of'
-  if (result.sidesOnly) return `; ${where} ${uncovered.length} file(s) uncovered: ${shown}${more} — ${sidesNote(uncovered)}${exempt}`
+  if (result.sidesOnly) return `; ${where} ${uncovered.length} file(s) uncovered: ${shown}${more} — ${sidesNote(uncovered, result.anchor.review.id)}${exempt}`
   return `; ${where} ${uncovered.length} file(s) uncovered: ${shown}${more}` +
     ` — review them as a slice (REVIEW_PATHS=${uncovered.join(',')}) and close it at the tip${exempt}`
 }
