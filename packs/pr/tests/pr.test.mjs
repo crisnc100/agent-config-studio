@@ -8,7 +8,7 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { after, test } from 'node:test'
@@ -24,9 +24,11 @@ after(() => { for (const r of roots) { try { chmodSync(join(r, 'home/.agent-conf
 function box() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pr-test-')))
   roots.push(root)
-  const home = join(root, 'home'), repo = join(root, 'repo'), bin = join(root, 'bin')
-  for (const d of [home, repo, bin]) mkdirSync(d)
-  const env = { HOME: home, CODEX_HOME: join(home, '.codex'), PATH: [bin, dirname(process.execPath), '/usr/bin', '/bin'].join(':'), LANG: 'C',
+  const home = join(root, 'home'), repo = join(root, 'repo'), bin = join(root, 'bin'), nodeBin = join(root, 'node-bin')
+  for (const d of [home, repo, bin, nodeBin]) mkdirSync(d)
+  // Only a `node` link, never Node's own folder: that folder may hold real CLIs (gh, claude, codex) that would leak in.
+  symlinkSync(process.execPath, join(nodeBin, 'node'))
+  const env = { HOME: home, CODEX_HOME: join(home, '.codex'), PATH: [bin, nodeBin, '/usr/bin', '/bin'].join(':'), LANG: 'C',
     GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: join(root, 'gitconfig'), TMPDIR: root }
   const sh = (cmd, args, extra = {}) => {
     const r = spawnSync(cmd, args, { cwd: repo, env: { ...env, ...extra }, encoding: 'utf8', timeout: 120000, maxBuffer: 64 * 1024 * 1024 })
