@@ -1,0 +1,8 @@
+{
+  "id": "example-off-by-one",
+  "kind": "bug",
+  "intent": "Add last(items, n), which returns the last n items of a list",
+  "expect": [
+    { "file": "src/list.js", "side": "head", "lines": [2, 2], "what": "the slice starts one item late, so last() returns n - 1 items" }
+  ]
+}

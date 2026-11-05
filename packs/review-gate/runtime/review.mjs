@@ -42,6 +42,7 @@ import {
   accessSync,
   appendFileSync,
   constants,
+  cpSync,
   existsSync,
   closeSync,
   linkSync,
@@ -59,7 +60,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { homedir, tmpdir, userInfo } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -105,6 +106,20 @@ const option = (flag) => {
   const value = args[at + 1]
   if (!value || value.startsWith('--')) throw new Error(`${flag} requires a value`)
   return value
+}
+// Eval mode (REVIEW_EVAL, which --eval sets on each case review it runs): no security pass, verify command, second opinion
+// or shadow; the review logs to its own folder, and nothing that reads or writes the review gate's own records runs.
+const EVAL_MODE = !!String(process.env.REVIEW_EVAL ?? '').trim()
+const EVAL_REFUSED = ['--gate', '--close', '--summary', '--tier-json', '--deferred', '--fix-check', '--dispute', '--waive', '--log-grade',
+  '--recheck-of', '--log-outcome', '--slices', '--eval', '--shadow-run', '--pick-shadow-run', '--security-worker', '--shadow-report', '--pick-report', '--calibrate']
+// Git variables that move the repo, work tree or index away from the working directory: eval mode refuses them.
+const GIT_LOCATION_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM']
+// --eval takes only its own flags: with --gate (or any other command) it would run instead of that command.
+const EVAL_FLAGS = ['--eval', '--family', '--cases', '--timeout', '--repeat', '--yes']
+if (args.includes('--eval')) {
+  const others = args.filter((a) => a.startsWith('--') && !EVAL_FLAGS.includes(a))
+  if (others.length) stop(`--eval runs alone: it cannot be combined with ${others.join(', ')} (its flags: ${EVAL_FLAGS.slice(1).join(', ')}).`)
 }
 
 // ── User-configurable defaults (change the model WITHOUT editing this script) ──
@@ -308,6 +323,7 @@ const MERGE = mergeSettings(CONFIG.merge)
 // The security pass in force: the config's, raised (never lowered) by REVIEW_SECURITY for one run.
 const SECURITY = (() => {
   const settings = securitySettings(CONFIG.security)
+  if (EVAL_MODE) return { ...settings, run: 'off' }
   const asked = process.env.REVIEW_SECURITY
   if (asked == null || !String(asked).trim()) return settings
   const run = securityLevel(asked, 'REVIEW_SECURITY')
@@ -495,7 +511,11 @@ function logPath(home = homedir()) {
   if (existsSync(legacy)) return legacy
   return join(acs, 'review-log.jsonl')
 }
-const LOG_PATH = logPath()
+// Eval mode: the review logs only to REVIEW_EVAL_LOG_DIR, an override honoured with the marker alone.
+if (EVAL_MODE) evalModeChecks()
+else if (process.env.REVIEW_EVAL_LOG_DIR && !args.includes('--gate'))
+  console.warn('⚠ Ignoring REVIEW_EVAL_LOG_DIR: it is honoured only in eval mode (REVIEW_EVAL), which review.mjs --eval sets')
+const LOG_PATH = EVAL_MODE ? join(process.env.REVIEW_EVAL_LOG_DIR, 'review-log.jsonl') : logPath()
 function readLog({ strict = false } = {}) {
   if (!existsSync(LOG_PATH)) {
     if (strict) throw new Error(`No review log: ${LOG_PATH}`)
@@ -506,7 +526,7 @@ function readLog({ strict = false } = {}) {
     try {
       const entry = JSON.parse(line)
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('not a record')
-      return [entry]
+      return entry.eval === true ? [] : [entry]
     } catch {
       unreadable++
       return []
@@ -599,7 +619,8 @@ function withLogLock(fn, file = LOG_PATH) {
 function appendLog(entry) {
   try {
     mkdirSync(dirname(LOG_PATH), { recursive: true })
-    const line = `${JSON.stringify(entry)}\n`
+    // A record written in eval mode is tagged, and readLog() skips tagged records: nothing counts it as a review.
+    const line = `${JSON.stringify(EVAL_MODE ? { ...entry, eval: true } : entry)}\n`
     withLogLock(() => appendFileSync(LOG_PATH, line))
   } catch (e) {
     throw new Error(`Could not append to ${LOG_PATH}: ${e.message}`)
@@ -690,7 +711,7 @@ const ORIGIN_HEAD = (() => {
   return !r.error && r.status === 0 ? r.stdout.trim() : ''
 })()
 // `||` not `??` so an empty string in review-config.json still means "auto-detect".
-const BASE = cfg('REVIEW_BASE', 'base', '') || (['--gate', '--deferred', '--rubric', '--calibrate', '--noise-report'].some((flag) => args.includes(flag)) ? '' : detectDefaultBase())
+const BASE = cfg('REVIEW_BASE', 'base', '') || (['--gate', '--deferred', '--rubric', '--calibrate', '--noise-report', '--eval'].some((flag) => args.includes(flag)) ? '' : detectDefaultBase())
 // The base reaches git as a revision and as `git fetch <remote> <ref>`, so it is never an option, a
 // refspec or a URL: no leading - or + on any part, no colon, no space. The push gate never uses it.
 const BASE_RE = /^(?!.*\/[-+])[A-Za-z0-9_@][A-Za-z0-9._/~^@{}-]*$/
@@ -701,7 +722,7 @@ if (BASE && !args.includes('--gate') && !BASE_RE.test(BASE))
 // the review. Unset = unchanged behavior.
 // A whitespace-only command (here or in --test-cmd) is no command: `sh -c " "` runs nothing and exits 0.
 const blankCommand = (value) => value == null || !String(value).trim()
-const VERIFY_CMD = blankCommand(cfg('REVIEW_VERIFY_CMD', 'verifyCmd', '')) ? '' : cfg('REVIEW_VERIFY_CMD', 'verifyCmd', '')
+const VERIFY_CMD = EVAL_MODE || blankCommand(cfg('REVIEW_VERIFY_CMD', 'verifyCmd', '')) ? '' : cfg('REVIEW_VERIFY_CMD', 'verifyCmd', '')
 let VERIFY_RESULT = null
 const DIFF_CAP = 120_000 // chars of diff inlined into the review prompt
 // REVIEW_PATHS / config "paths": git pathspecs (comma- or newline-separated, or a config array) that
@@ -753,7 +774,7 @@ risk = likelihood × impact:
 - MEDIUM otherwise.
 Fix HIGH first, then MEDIUM. Both block until fixed, REFUTED or waived by the operator.
 Missing or invalid scores are asked for again once. A finding still unscored blocks as MEDIUM (HIGH if protected is exactly true).`
-const VALUE_FLAGS = ['--security-worker', '--shadow-run', '--pick-shadow-run', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote']
+const VALUE_FLAGS = ['--security-worker', '--shadow-run', '--pick-shadow-run', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat']
 const INTENT = args.includes('--dispute') || args.includes('--waive') || args.includes('--log-grade')
   ? ''
   : args.filter((a, i) => !a.startsWith('--') && !VALUE_FLAGS.includes(args[i - 1])).join(' ').trim()
@@ -762,7 +783,7 @@ let CONTEXT = ''
 let DIFF_BASE = BASE
 let FIX_CHECK_RUN = false
 // verify: "second-opinion" sends surviving HIGH/MEDIUM findings to one other pool family.
-const SECOND_OPINION = String(cfg('REVIEW_VERIFY', 'verify', 'off')).trim().toLowerCase() === 'second-opinion'
+const SECOND_OPINION = !EVAL_MODE && String(cfg('REVIEW_VERIFY', 'verify', 'off')).trim().toLowerCase() === 'second-opinion'
 const QUOTE_WINDOW = 5 // a quote must start within ±this many lines of the cited line
 // An optional local classifier: any command that answers the choice protocol in askClassifier().
 // None ships or is assumed. `pick` may name one; `classifier` names the one disputes may ask.
@@ -2160,7 +2181,12 @@ async function runClaude(m, prompt, schema, role) {
     '--append-system-prompt',
     `You are a precise ${role}. Report only real defects; do not invent issues.`,
   ])
-  return { result: parseClaude(out) }
+  const result = parseClaude(out)
+  // The model Claude reports it ran as: kept for eval records only.
+  if (!EVAL_MODE) return { result }
+  let used = []
+  try { used = Object.keys(JSON.parse(out)?.modelUsage || {}) } catch { /* parseClaude read it */ }
+  return { result, ...(used.length && { modelUsed: used.join(',') }) }
 }
 
 async function runModel(m, prompt, schema, role) {
@@ -2183,12 +2209,13 @@ async function review(diff) {
   const perLens = await Promise.all(
     SEL.lenses.map(async (lens) => {
       const prompt = `${reviewPrompt(diff)}\n\nFocus especially on: ${lens.focus}.`
-      const { result } = await runClaude(
+      const { result, modelUsed } = await runClaude(
         { id: lens.model, effort: TEAM_EFFORT },
         prompt,
         SCHEMA,
         `${lens.key} code reviewer`,
       )
+      if (modelUsed) lens.modelUsed = modelUsed
       return result?.findings || []
     }),
   )
@@ -2372,6 +2399,7 @@ function refuseLinkedReviews() {
   if (!stat.isDirectory()) die('reviews is not a folder. Remove it and review again.')
 }
 function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTruncated, verifier, security = null) {
+  if (EVAL_MODE) evalOwnRepo() // the report and the info/exclude edit stay in the eval run's temp repo
   refuseLinkedReviews()
   ensureReviewsIgnored()
   // A random suffix keeps two reviews in the same second (any repo) apart in the folder and the log; the folder is
@@ -4506,10 +4534,452 @@ function pushGate() {
   }
   for (const summary of summaries) console.error(summary)
 }
+// ── eval: reviewer families against known cases ──────────────────────────────
+// --eval [--family <f>,…] [--cases <dir>] [--repeat N] [--timeout 15m] [--yes]: every family reviews every case folder
+// (case.json, base/ and head/ trees) in a throwaway repo of its own, base commit on main and head commit on a branch,
+// through a child review in eval mode. Each case is scored from that child's own record; one record per family per run
+// is appended to eval-log.jsonl beside the review log. Nothing reaches the review log, a close or the push gate.
+const EVAL_CASES = join(homedir(), '.agent-config-studio', 'review-gate', 'eval', 'cases')
+const EVAL_GUARD = 10 // more reviews than this need --yes
+const EVAL_SLACK = 3 // a finding's lines may sit this far outside an expected range and still match it
+const EVAL_TIMEOUT_MS = 15 * 60_000
+const EVAL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+const EVAL_KEYS = ['id', 'kind', 'intent', 'expect', 'allow', 'notes']
+const sha256 = (data) => createHash('sha256').update(data).digest('hex')
+function evalModeChecks() {
+  const refused = EVAL_REFUSED.filter((flag) => args.includes(flag))
+  if (refused.length)
+    stop(`${refused.join(', ')} refuses to run in eval mode (REVIEW_EVAL is set): an eval review never reaches the review log, a close, ` +
+      'the summary or the push gate.\n  Fix: unset REVIEW_EVAL; only review.mjs --eval sets it, on the case reviews it runs.')
+  const dir = String(process.env.REVIEW_EVAL_LOG_DIR ?? '')
+  if (!dir || !isAbsolute(dir))
+    stop('Eval mode (REVIEW_EVAL) needs REVIEW_EVAL_LOG_DIR, an absolute folder for this eval run\'s own log, so nothing reaches the review log.\n' +
+      '  Fix: run review.mjs --eval, which sets both.')
+  // Never the review log's own folders: a record there would sit where the gate reads.
+  const home = homedir(), logDir = realish(dir)
+  const realLogs = [join(home, '.agent-config-studio', 'review-log'), join(home, '.claude', 'review-log')].map(realish)
+  if (realLogs.some((l) => within(logDir, l)) || [join(home, '.claude'), dirname(logPath())].map(realish).includes(logDir))
+    stop(`REVIEW_EVAL_LOG_DIR (${dir}) is, or sits inside, a real review-log folder; eval mode logs only inside the eval run's temp folder.`)
+  // The run's temp folder, as --eval made it: a review-eval- folder in the temp folder. The log, the working directory and
+  // the repo (work tree and git dirs) are all inside it, so reviews/ and info/exclude are only ever written there.
+  const rootValue = String(process.env.REVIEW_EVAL_ROOT ?? '')
+  const root = rootValue && isAbsolute(rootValue) ? realish(rootValue) : null
+  if (!root || dirname(root) !== realish(tmpdir()) || !basename(root).startsWith('review-eval-') || !isFolderPath(root))
+    stop(`Eval mode (REVIEW_EVAL) needs REVIEW_EVAL_ROOT, the eval run's review-eval- folder in ${tmpdir()}; got ${JSON.stringify(rootValue)}.\n` +
+      '  Fix: run review.mjs --eval, which sets it.')
+  if (!within(logDir, root)) stop(`REVIEW_EVAL_LOG_DIR (${dir}) is outside the eval run's temp folder ${root}.`)
+  const gitVars = GIT_LOCATION_VARS.filter((k) => process.env[k] != null)
+  if (gitVars.length) stop(`Eval mode (REVIEW_EVAL) refuses ${gitVars.join(', ')}: git must find the case repo from the working directory alone.`)
+  evalOwnRepo(root)
+  if (!String(process.env.REVIEW_BASE ?? '').trim()) stop('Eval mode (REVIEW_EVAL) needs REVIEW_BASE: it never detects a base.')
+}
+// A path with every existing part resolved through symlinks (the rest appended as written).
+function realish(p) {
+  let cur = resolve(p)
+  const rest = []
+  for (;;) {
+    try { return join(realpathSync.native(cur), ...rest.reverse()) } catch { /* not there yet */ }
+    const up = dirname(cur)
+    if (up === cur) return resolve(p)
+    rest.push(basename(cur))
+    cur = up
+  }
+}
+function within(p, dir) {
+  return p === dir || p.startsWith(dir.endsWith(sep) ? dir : `${dir}${sep}`)
+}
+function isFolderPath(p) {
+  try { return statSync(p).isDirectory() } catch { return false }
+}
+// In eval mode: the working directory, its work tree and its git dirs all sit inside the eval run's temp folder.
+function evalOwnRepo(root = realish(String(process.env.REVIEW_EVAL_ROOT ?? ''))) {
+  const outside = (what) => stop(`Eval mode (REVIEW_EVAL): ${what} is outside the eval run's temp folder ${root}; a case review runs only in a repo --eval built there.`)
+  if (!within(realish(process.cwd()), root)) outside(`the working directory ${process.cwd()}`)
+  const r = spawnFileSync(which('git') || 'git', ['rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'], { encoding: 'utf8' })
+  if (r.error || r.status !== 0) stop(`Eval mode (REVIEW_EVAL): ${process.cwd()} is not a git repo.`)
+  for (const p of r.stdout.trim().split('\n')) if (!within(realish(resolve(p)), root)) outside(p)
+}
+const evalDuration = (ms) => (ms % 60_000 === 0 ? `${ms / 60_000}m` : ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`)
+function evalTimeout(value) {
+  if (value == null) return EVAL_TIMEOUT_MS
+  const m = String(value).trim().match(/^(\d+(?:\.\d+)?)(ms|s|m)?$/)
+  const ms = m ? Math.round(Number(m[1]) * { ms: 1, s: 1000, m: 60_000 }[m[2] || 'm']) : NaN
+  if (!(ms >= 1 && ms <= 2 ** 31 - 1)) throw new Error(`--timeout must be a duration like 15m, 90s or 500ms (a bare number is minutes); got ${JSON.stringify(value)}`)
+  return ms
+}
+// A case tree: plain files only (no link, no .git, no review config of its own), as { path: bytes } in path order.
+function evalTree(dir, side) {
+  const files = new Map()
+  const walk = (d, rel) => {
+    for (const e of readdirSync(d, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const r = rel ? `${rel}/${e.name}` : e.name
+      if (e.name === '.git') throw new Error(`${side}/${r}: a case tree holds no .git`)
+      if (e.isSymbolicLink()) throw new Error(`${side}/${r} is a symlink; a case tree holds plain files only`)
+      if (e.isDirectory()) walk(join(d, e.name), r)
+      else if (e.isFile()) files.set(r, readFileSync(join(d, e.name)))
+      else throw new Error(`${side}/${r} is not a plain file`)
+    }
+  }
+  walk(dir, '')
+  if (files.has('.claude/review-config.json')) throw new Error(`${side}/.claude/review-config.json: a case tree may not carry a review config`)
+  return files
+}
+const isFolder = (p) => { try { return statSync(p).isDirectory() } catch { return false } }
+const textLines = (bytes) => { const t = bytes.toString('utf8'); return t.endsWith('\n') ? t.split('\n').length - 1 : t.split('\n').length }
+// One case folder, validated before anything runs; a problem throws the message the run prints as "skipped".
+function readEvalCase(where) {
+  const file = join(where, 'case.json')
+  if (!existsSync(file)) throw new Error('no case.json')
+  let json
+  try { json = JSON.parse(readFileSync(file, 'utf8')) } catch (e) { throw new Error(`case.json is not valid JSON: ${e.message}`) }
+  if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error('case.json must hold an object')
+  const unknown = Object.keys(json).filter((k) => !EVAL_KEYS.includes(k))
+  if (unknown.length) throw new Error(`case.json has unknown keys ${unknown.join(', ')} (known: ${EVAL_KEYS.join(', ')})`)
+  const { id, kind, intent } = json
+  if (typeof id !== 'string' || !EVAL_ID.test(id)) throw new Error(`id must be letters, digits, dot, dash or underscore; got ${JSON.stringify(id)}`)
+  if (!['bug', 'clean'].includes(kind)) throw new Error(`kind must be "bug" or "clean"; got ${JSON.stringify(kind)}`)
+  if (typeof intent !== 'string' || !intent.trim() || intent.trim().startsWith('-'))
+    throw new Error('intent must be a sentence saying what the change was supposed to do')
+  for (const side of ['base', 'head']) if (!isFolder(join(where, side))) throw new Error(`no ${side}/ folder`)
+  const base = evalTree(join(where, 'base'), 'base'), head = evalTree(join(where, 'head'), 'head')
+  if (base.size === head.size && [...base].every(([p, bytes]) => head.get(p)?.equals(bytes))) throw new Error('head/ is the same as base/: there is no change to review')
+  const lines = (value, label) => {
+    if (!Array.isArray(value) || value.length !== 2 || !value.every((n) => Number.isSafeInteger(n) && n >= 1) || value[0] > value[1])
+      throw new Error(`${label}.lines must be [from, to], line numbers with from <= to`)
+    return [value[0], value[1]]
+  }
+  const located = (entry, i, list, sides) => {
+    const label = `${list}[${i}]`
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error(`${label} must be an object`)
+    const side = entry.side ?? 'head'
+    if (!sides.includes(side)) throw new Error(`${label}.side must be ${sides.map((s) => `"${s}"`).join(' or ')}`)
+    if (typeof entry.file !== 'string' || !entry.file) throw new Error(`${label}.file must name a file`)
+    const span = lines(entry.lines, label)
+    const tree = side === 'head' ? head : base
+    if (!tree.has(entry.file)) throw new Error(`${label}: ${entry.file} is not in ${side}/`)
+    const count = textLines(tree.get(entry.file))
+    if (span[1] > count) throw new Error(`${label}: lines ${span[0]}-${span[1]} run past the end of ${side}/${entry.file} (${count} lines)`)
+    return { file: entry.file, side, lines: span }
+  }
+  let expect = [], allow = []
+  if (kind === 'bug') {
+    if (!Array.isArray(json.expect) || !json.expect.length) throw new Error('a bug case needs a non-empty expect list (every entry must be caught)')
+    if (json.allow !== undefined) throw new Error('allow is for clean cases only')
+    expect = json.expect.map((e, i) => {
+      const where = located(e, i, 'expect', ['head', 'base'])
+      if (typeof e.what !== 'string' || !e.what.trim()) throw new Error(`expect[${i}].what must say what the bug is`)
+      return { ...where, what: e.what }
+    })
+  } else {
+    if (json.expect !== undefined) throw new Error('a clean case has no expect (it expects no finding); list tolerated findings under allow')
+    if (json.allow !== undefined && !Array.isArray(json.allow)) throw new Error('allow must be a list')
+    allow = (json.allow ?? []).map((e, i) => located(e, i, 'allow', ['head']))
+  }
+  const hash = createHash('sha256').update(readFileSync(file))
+  for (const [side, tree] of [['base', base], ['head', head]]) for (const [p, bytes] of tree) hash.update(`\0${side}/${p}\0`).update(bytes)
+  return { id, kind, intent: intent.trim(), expect, allow, base, head, hash: hash.digest('hex') }
+}
+function loadEvalCases(dir) {
+  let entries
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch (e) {
+    throw new Error(`No cases folder at ${dir} (${e.code || e.message}). Make one, one folder per case (eval/examples/ beside review.mjs ` +
+      'holds two to copy), or pass --cases <dir>.')
+  }
+  const valid = [], skipped = []
+  for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    if (e.name.startsWith('.')) continue
+    try {
+      if (!e.isDirectory()) throw new Error('not a folder')
+      valid.push({ ...readEvalCase(join(dir, e.name)), folder: e.name })
+    } catch (err) { skipped.push({ name: e.name, error: err.message }) }
+  }
+  const folders = new Map()
+  for (const c of valid) folders.set(c.id, [...(folders.get(c.id) || []), c.folder])
+  for (const c of valid.filter((v) => folders.get(v.id).length > 1))
+    skipped.push({ name: c.folder, error: `duplicate id "${c.id}" (folders ${folders.get(c.id).join(', ')})` })
+  return { cases: valid.filter((c) => folders.get(c.id).length === 1).sort((a, b) => (a.id < b.id ? -1 : 1)), skipped }
+}
+// The families to evaluate, as the child review will resolve them (REVIEW_REVIEWER=<family>, no REVIEW_* settings, a repo
+// with no review config of its own): one whose CLI is missing is reported once, here, and left out before anything is counted.
+function evalFamilies(list) {
+  skipsNoted.add('reviewer') // loadPool's own "skipped" line would name a missing family a second time
+  const loaded = loadPool()
+  if (list == null && !loaded.pool && !loaded.unusable?.length) poolOrStop(loaded)
+  const names = list == null ? [...(loaded.pool || []), ...(loaded.unusable || [])].map((m) => m.family) : list.split(',').map((f) => f.trim().toLowerCase()).filter(Boolean)
+  if (!names.length) throw new Error('--family needs at least one family')
+  // The child sees only the home config: claudeModel there decides team or one agent, whatever this shell or repo sets.
+  const homes = [join(homedir(), '.agent-config-studio', 'review-gate', 'config.json'), join(homedir(), '.claude', 'review-config.json')]
+  const team = (String(homeKey(homes, 'claudeModel') ?? '').trim() || 'team') === 'team'
+  const families = [], skipped = []
+  for (const family of [...new Set(names)]) {
+    let m
+    if (!FAMILY_NAME.test(family)) { skipped.push(`${family}: not a family name`); continue }
+    if (family === 'claude') m = { family, vendor: 'claude', team, calls: team ? LENSES.length : 1 }
+    else if (family === 'codex') m = { family, vendor: 'codex' }
+    else {
+      if (loaded.missing) poolOrStop(loaded)
+      m = loaded.pool?.find((p) => p.family === family) || loaded.unusable?.find((p) => p.family === family) || poolMember(family, loaded.pool)
+    }
+    if (!m.vendor) {
+      // A role family with no CLI prefix was already named by loadPool's warning.
+      if (!loaded.unusable?.some((u) => u.family === family)) skipped.push(`${family}: model-id gives "${m.id}", whose prefix names no known CLI`)
+      continue
+    }
+    if (!onPath(m.vendor)) { skipped.push(`${family}: the ${m.vendor} CLI is not on PATH`); continue }
+    families.push({ calls: 1, ...m, effort: m.effort ? effortFor(m) : null })
+  }
+  return { families, skipped }
+}
+// The review prompt this family's vendor gets, with no diff, intent context or slice: a change here is a prompt change.
+function evalPromptHash(m) {
+  const saved = { SEL, SLICE, DIFF_BASE }
+  try {
+    SEL = { vendor: m.vendor }
+    SLICE = null
+    DIFF_BASE = 'main'
+    return sha256(`${reviewPrompt('')}${m.vendor === 'claude' ? JSON.stringify(LENSES) : ''}`)
+  } finally {
+    ;({ SEL, SLICE, DIFF_BASE } = saved)
+  }
+}
+// This run's environment without any GIT_* variable (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE… would point git at another
+// repo) and without REVIEW_* settings: what the case repos and the case reviews run with.
+function evalEnv() {
+  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_') && !k.startsWith('REVIEW_')))
+}
+function evalGit(cwd, argv) {
+  const r = spawnSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false',
+    '-c', 'user.name=review eval', '-c', 'user.email=review-eval@localhost', ...argv], { cwd, encoding: 'utf8', env: evalEnv() })
+  if (r.error || r.status !== 0) throw new Error(`git ${argv.join(' ')} failed: ${r.error?.message || r.stderr}`)
+}
+function writeEvalTree(repo, tree) {
+  for (const [p, bytes] of tree) {
+    mkdirSync(dirname(join(repo, p)), { recursive: true })
+    writeFileSync(join(repo, p), bytes)
+  }
+}
+// A throwaway repo: the base tree committed on main, the head tree committed on a branch. No remote, no hooks.
+function evalRepo(c, dir) {
+  const repo = join(dir, 'repo')
+  mkdirSync(repo, { recursive: true })
+  evalGit(repo, ['init', '-q', '-b', 'main'])
+  writeEvalTree(repo, c.base)
+  evalGit(repo, ['add', '-A', '-f'])
+  evalGit(repo, ['commit', '-q', '--no-verify', '--allow-empty', '-m', `base: ${c.id}`])
+  evalGit(repo, ['checkout', '-q', '-b', 'eval-case'])
+  evalGit(repo, ['rm', '-r', '-q', '--ignore-unmatch', '.'])
+  writeEvalTree(repo, c.head)
+  evalGit(repo, ['add', '-A', '-f'])
+  evalGit(repo, ['commit', '-q', '--no-verify', '--allow-empty', '-m', `head: ${c.id}`])
+  return repo
+}
+const EVAL_CHILDREN = new Set()
+// One case review: a child review.mjs in the case's repo, in eval mode, with nothing of this run's REVIEW_* settings.
+function evalChild(m, c, repo, logDir, root, timeoutMs) {
+  const env = { ...evalEnv(), REVIEW_EVAL: '1', REVIEW_EVAL_ROOT: root, REVIEW_EVAL_LOG_DIR: logDir, REVIEW_BASE: 'main', REVIEW_REVIEWER: m.family, REVIEW_PATHS: '' }
+  return new Promise((done) => {
+    let out = '', err = '', timedOut = false
+    const child = spawnFile(process.execPath, [COPY_PATH, c.intent], { cwd: repo, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    EVAL_CHILDREN.add(child)
+    const kill = () => { try { process.kill(-child.pid, 'SIGKILL') } catch { /* gone */ } }
+    const timer = setTimeout(() => { timedOut = true; kill() }, timeoutMs)
+    child.stdout.on('data', (d) => { out += d })
+    child.stderr.on('data', (d) => { err += d })
+    child.on('error', (e) => { err += `\n${e.message}` })
+    child.on('close', (code, signal) => {
+      clearTimeout(timer)
+      EVAL_CHILDREN.delete(child)
+      kill() // anything the review left running in its group
+      done({ code, signal, out, err, timedOut })
+    })
+  })
+}
+const evalSpan = (line) => {
+  const m = String(line ?? '').trim().match(/^(\d+)(?:\s*[-–]\s*(\d+))?$/)
+  if (!m) return null
+  const a = Number(m[1]), b = m[2] ? Number(m[2]) : a
+  return [Math.min(a, b), Math.max(a, b)]
+}
+const EVAL_RANK = { high: 3, medium: 2, low: 1 }
+// The paths a finding may name: the resolved one when the quote check located it; else the path as cited, with the case
+// repo's own folder (as given, or through symlinks) stripped from an absolute path, ./ dropped, and the a/ or b/ diff
+// prefix as a second reading.
+function evalFindingPaths(f, record, repo) {
+  const resolved = record.resolvedPaths?.[f.id]?.path
+  if (resolved) return [resolved]
+  let p = String(f.file ?? '')
+  for (const top of repo ? [repo, realish(repo)] : []) if (p.startsWith(`${top}/`)) { p = p.slice(top.length + 1); break }
+  p = p.replace(/^\.\//, '')
+  return /^[ab]\//.test(p) ? [p, p.slice(2)] : [p]
+}
+// A base-side catch: the finding names the expect's file, its cited line is within the expected lines ± EVAL_SLACK, and
+// its quote is in the base tree near that cited line, at lines that also overlap the expected ones ± EVAL_SLACK
+// (whitespace runs collapsed, as the quote check does). An identical snippet elsewhere in the file does not count.
+function quotedInBase(c, e, f, record, repo) {
+  const bytes = c.base.get(e.file), span = evalSpan(f.line)
+  if (!bytes || !span || !evalFindingPaths(f, record, repo).includes(e.file)) return false
+  const from = e.lines[0] - EVAL_SLACK, to = e.lines[1] + EVAL_SLACK
+  if (span[0] > to || span[1] < from) return false
+  const norm = (l) => l.replace(/\s+/g, ' ').trim()
+  const q = String(f.quote ?? '').split('\n').map(norm)
+  while (q.length && !q[0]) q.shift()
+  while (q.length && !q.at(-1)) q.pop()
+  if (!q.length) return false
+  const lines = bytes.toString('utf8').split('\n').map(norm), needle = q.join('\n')
+  for (let s = Math.max(1, span[0] - EVAL_SLACK); s <= span[1] + EVAL_SLACK; s++)
+    if (s <= to && s + q.length - 1 >= from && lines.slice(s - 1, s - 1 + q.length).join('\n').includes(needle)) return true
+  return false
+}
+function scoreEvalCase(c, record, repo = null) {
+  const located = [], unlocated = []
+  for (const f of record.findingDetails || []) {
+    const where = record.resolvedPaths?.[f.id], span = evalSpan(f.line)
+    if (f.status === 'unverified-quote' || !where?.path || !span) unlocated.push(f)
+    else located.push({ f, path: where.path, side: where.commit === record.head ? 'head' : where.commit === record.baseSha ? 'base' : null, span })
+  }
+  const near = (target, side) => located.filter((l) => l.path === target.file && l.side === side &&
+    l.span[0] <= target.lines[1] + EVAL_SLACK && l.span[1] >= target.lines[0] - EVAL_SLACK)
+  const strongest = (list) => [...list].sort((a, b) => (EVAL_RANK[b.f.severity] || 0) - (EVAL_RANK[a.f.severity] || 0))[0]
+  if (c.kind === 'bug') {
+    const used = new Set()
+    const expects = c.expect.map((e) => {
+      // Removed code has no line at HEAD when its file survives, so the quote check leaves such a finding unlocated (or
+      // locates it at HEAD): a base-side expect also takes any finding on that file whose quote is in the base tree there.
+      const hits = [...near(e, e.side), ...(e.side === 'base' ? (record.findingDetails || []).filter((f) => quotedInBase(c, e, f, record, repo)).map((f) => ({ f })) : [])]
+      hits.forEach((l) => used.add(l.f.id))
+      const best = strongest(hits)
+      return { file: e.file, side: e.side, lines: e.lines, caught: !!best, ...(best && { by: best.f.id, severity: best.f.severity }) }
+    })
+    const caught = expects.every((e) => e.caught)
+    const weakest = caught ? expects.map((e) => e.severity).sort((a, b) => (EVAL_RANK[a] || 0) - (EVAL_RANK[b] || 0))[0] : null
+    return { outcome: caught ? 'caught' : 'missed', severity: weakest, expects, extra: located.filter((l) => !used.has(l.f.id)).length,
+      unlocated: unlocated.filter((f) => !used.has(f.id)).length }
+  }
+  const tolerated = new Set(c.allow.flatMap((a) => near(a, 'head')))
+  const outside = located.filter((l) => !tolerated.has(l))
+  const alarms = outside.filter((l) => blocking(l.f))
+  return {
+    outcome: alarms.length ? 'false-alarm' : 'clean',
+    falseAlarms: alarms.length,
+    alarms: alarms.map((l) => ({ id: l.f.id, file: l.path, line: l.f.line, severity: l.f.severity, ...(l.f.unscored && { unscored: true }) })),
+    lows: outside.length - alarms.length,
+    allowed: tolerated.size,
+    unlocated: unlocated.length,
+  }
+}
+async function evalOne(m, c, run, root, timeoutMs) {
+  const dir = join(root, `${m.family}-${c.id}-${run}`), logDir = join(dir, 'log')
+  const started = Date.now()
+  const base = { id: c.id, kind: c.kind, run, caseHash: c.hash }
+  let error = null, record = null, repo = null
+  try {
+    repo = evalRepo(c, dir)
+    const r = await evalChild(m, c, repo, logDir, root, timeoutMs)
+    if (r.timedOut) error = `timed out after ${evalDuration(timeoutMs)}`
+    else if (r.code !== 0) error = `the review exited ${r.code ?? r.signal}: ${tail(r.err || r.out)}`
+    else {
+      // The result is the review record in this case's own eval log (it logs one review), never stdout: a CLI can
+      // echo its answer there, and a finding may quote the FINDINGS_JSON delimiter.
+      const logFile = join(logDir, 'review-log.jsonl')
+      const reviews = (existsSync(logFile) ? readFileSync(logFile, 'utf8').split('\n') : []).flatMap((line) => {
+        try { const e = JSON.parse(line); return e?.type === 'review' && e.kind === 'review' ? [e] : [] } catch { return [] }
+      })
+      if (reviews.length === 1) record = reviews[0]
+      else error = reviews.length ? `its eval log holds ${reviews.length} review records, not one` : 'the review logged no record (nothing reviewed?)'
+    }
+  } catch (e) { error = e.message }
+  const durationMs = Date.now() - started
+  if (error) return { ...base, outcome: 'errored', error, durationMs, kept: dir }
+  rmSync(dir, { recursive: true, force: true })
+  return {
+    ...base, ...scoreEvalCase(c, record, repo), durationMs, reviewId: record.id, model: record.model ?? null,
+    ...(record.modelUsed && { modelUsed: record.modelUsed }), ...(record.lenses && { lenses: record.lenses }), effort: record.effort ?? null,
+    security: record.security?.status ?? null,
+  }
+}
+function evalTotals(cases) {
+  const done = cases.filter((c) => c.outcome !== 'errored'), bugs = done.filter((c) => c.kind === 'bug'), clean = done.filter((c) => c.kind === 'clean')
+  const sum = (list, key) => list.reduce((n, c) => n + (c[key] || 0), 0)
+  return {
+    bugs: bugs.length, caught: bugs.filter((c) => c.outcome === 'caught').length, missed: bugs.filter((c) => c.outcome === 'missed').length,
+    clean: clean.length, cleanWithAlarms: clean.filter((c) => c.outcome === 'false-alarm').length, falseAlarms: sum(clean, 'falseAlarms'),
+    extra: sum(bugs, 'extra'), unlocated: sum(done, 'unlocated'), errored: cases.length - done.length, durationMs: sum(cases, 'durationMs'),
+  }
+}
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+const evalCaseLine = (c, repeat) => {
+  const detail = c.outcome === 'caught' ? ` (${c.severity}, ${c.expects.map((e) => e.by).join(', ')})`
+    : c.outcome === 'false-alarm' ? ` (${c.alarms.map((a) => `${a.severity} ${a.file}:${a.line}`).join(', ')})`
+    : c.outcome === 'errored' ? `: ${c.error.split('\n').at(-1) || c.error}` : ''
+  const counts = [c.extra && `${c.extra} extra`, c.lows && `${c.lows} low`, c.unlocated && `${c.unlocated} unlocated`].filter(Boolean)
+  return `  ${c.id} [${c.kind}] ${c.outcome}${detail}${counts.length ? ` · ${counts.join(', ')}` : ''}${repeat > 1 ? ` · run ${c.run}` : ''} · ${(c.durationMs / 1000).toFixed(1)}s`
+}
+async function runEval() {
+  const casesDir = resolve(option('--cases') ?? EVAL_CASES)
+  const repeat = Number(option('--repeat') ?? 1)
+  if (!Number.isSafeInteger(repeat) || repeat < 1) throw new Error('--repeat must be a whole number of 1 or more')
+  const timeoutMs = evalTimeout(option('--timeout'))
+  const { cases, skipped } = loadEvalCases(casesDir)
+  for (const s of skipped) console.warn(`⚠ skipped ${s.name}: ${s.error}`)
+  if (!cases.length) throw new Error(`No valid case in ${casesDir}${skipped.length ? ' (every entry was skipped above)' : ''}`)
+  const { families, skipped: missing } = evalFamilies(option('--family'))
+  for (const s of missing) console.warn(`⚠ ${s} — skipped`)
+  if (!families.length) throw new Error('No family to evaluate can run here')
+  const reviews = families.length * cases.length * repeat
+  const calls = families.reduce((n, m) => n + m.calls, 0) * cases.length * repeat
+  console.log(`▶ eval · ${plural(families.length, 'family', 'families')} (${families.map((m) => m.family).join(', ')}) × ${plural(cases.length, 'case')} × ` +
+    `${plural(repeat, 'run')} = ${plural(reviews, 'review')}${calls !== reviews ? ` (${calls} model calls)` : ''} · cases ${casesDir}`)
+  for (const m of families.filter((f) => f.team)) console.log(`ℹ ${m.family} runs as the multi-agent team: ${m.calls} model calls per review`)
+  console.log('ℹ a finding with missing scores adds one model call to its review; each review times out after ' + evalDuration(timeoutMs))
+  if (reviews > EVAL_GUARD && !args.includes('--yes')) {
+    console.error(`✖ That is ${plural(reviews, 'review')}, more than ${EVAL_GUARD}: pass --yes to run them.`)
+    process.exitCode = 1
+    return
+  }
+  const stopChildren = () => { for (const child of EVAL_CHILDREN) try { process.kill(-child.pid, 'SIGKILL') } catch { /* gone */ } process.exit(130) }
+  process.once('SIGINT', stopChildren)
+  process.once('SIGTERM', stopChildren)
+  const runtimeHash = sha256(readFileSync(COPY_PATH)), runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomBytes(3).toString('hex')}`
+  const root = mkdtempSync(join(tmpdir(), 'review-eval-'))
+  const records = []
+  for (const m of families) {
+    console.log(`\n▶ ${m.family} (${m.vendor}${m.id ? ` · ${m.id}` : ''})`)
+    const results = []
+    for (const c of cases)
+      for (let run = 1; run <= repeat; run++) {
+        const result = await evalOne(m, c, run, root, timeoutMs)
+        results.push(result)
+        console.log(evalCaseLine(result, repeat))
+      }
+    const ran = results.find((r) => r.outcome !== 'errored')
+    const modelUsed = [...new Set(results.map((r) => r.modelUsed).filter(Boolean))]
+    records.push({
+      type: 'eval', ts: new Date().toISOString(), runId, family: m.family, vendor: m.vendor, model: ran?.model ?? m.id ?? null,
+      effort: ran?.effort ?? m.effort ?? null, ...(modelUsed.length && { modelUsed }), rubricVersion: RUBRIC_VERSION, runtimeHash,
+      promptHash: evalPromptHash(m), casesDir, caseIds: cases.map((c) => c.id), repeat, timeoutMs, totals: evalTotals(results), cases: results,
+    })
+  }
+  const evalLog = join(dirname(LOG_PATH), 'eval-log.jsonl')
+  mkdirSync(dirname(evalLog), { recursive: true })
+  withLogLock(() => appendFileSync(evalLog, records.map((r) => `${JSON.stringify(r)}\n`).join('')), evalLog)
+  console.log('')
+  for (const r of records) {
+    const t = r.totals
+    console.log(`${r.family} (${r.model} · ${r.effort}) · bugs caught ${t.caught}/${t.bugs} · missed ${t.missed} · false alarms ${t.falseAlarms} ` +
+      `(${t.cleanWithAlarms}/${t.clean} clean cases) · extra ${t.extra} · unlocated ${t.unlocated} · errored ${t.errored} · n=${r.repeat} · ${(t.durationMs / 1000).toFixed(1)}s`)
+  }
+  if (readdirSync(root).length) console.log(`ℹ kept for inspection: ${root} (the repos and logs of the reviews that errored)`)
+  else rmSync(root, { recursive: true, force: true })
+  console.log(`ℹ logged ${plural(records.length, 'record')} to ${evalLog}`)
+  console.log(`\n===EVAL_JSON===\n${JSON.stringify(records, null, 2)}`)
+}
 // ── main ─────────────────────────────────────────────────────────────────────
 ;(async function main() {
   if (args.includes('--rubric')) return console.log(`Rubric version: ${RUBRIC_VERSION}\n${RUBRIC}`)
   if (args.includes('--calibrate')) return calibrate()
+  if (args.includes('--eval')) return runEval()
   if (args.includes('--gate')) return pushGate()
   if (args.includes('--log-grade')) return logGrade(option('--log-grade'))
   if (args.includes('--recheck-of')) throw new Error('--recheck-of requires --log-grade <verdict.json>')
@@ -4656,10 +5126,13 @@ function pushGate() {
     }),
     durationMs,
     security: security.record,
+    ...(EVAL_MODE && SEL.team && { lenses: SEL.lenses.map(({ key, family, model, modelUsed }) => ({ key, family, model, ...(modelUsed && { modelUsed }) })) }),
     dir,
   })
-  startShadows({ reviewId, diff, head: reviewedHead, baseSha })
-  startPickShadows({ reviewId, diff, stats })
+  if (!EVAL_MODE) {
+    startShadows({ reviewId, diff, head: reviewedHead, baseSha })
+    startPickShadows({ reviewId, diff, stats })
+  }
   const counts = ['high', 'medium', 'low']
     .map((s) => `${allFindings.filter((f) => f.severity === s).length} ${s}`)
     .join(', ')

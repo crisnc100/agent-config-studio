@@ -1,0 +1,5 @@
+{
+  "id": "example-clean-helper",
+  "kind": "clean",
+  "intent": "Add farewell(name) beside greet(name)"
+}

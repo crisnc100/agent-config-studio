@@ -45,13 +45,21 @@
         "packs/review-gate/runtime/review.mjs",
         "packs/review-gate/runtime/merge.mjs",
         "packs/review-gate/runtime/calibration.md",
-        "packs/review-gate/runtime/review-config.example.json"
+        "packs/review-gate/runtime/review-config.example.json",
+        "packs/review-gate/runtime/eval/examples/clean-helper/base/src/greet.js",
+        "packs/review-gate/runtime/eval/examples/clean-helper/case.json",
+        "packs/review-gate/runtime/eval/examples/clean-helper/head/src/greet.js",
+        "packs/review-gate/runtime/eval/examples/off-by-one/base/README.md",
+        "packs/review-gate/runtime/eval/examples/off-by-one/base/src/list.js",
+        "packs/review-gate/runtime/eval/examples/off-by-one/case.json",
+        "packs/review-gate/runtime/eval/examples/off-by-one/head/README.md",
+        "packs/review-gate/runtime/eval/examples/off-by-one/head/src/list.js"
       ],
       "explain": {
         "changes": [
           "~/.claude/skills/code-review/SKILL.md (Claude Code; Grok reads this folder too)",
           "~/.codex/skills/code-review/SKILL.md (Codex)",
-          "~/.agent-config-studio/review-gate/review.mjs, merge.mjs, calibration.md and review-config.example.json (one shared copy for every harness)",
+          "~/.agent-config-studio/review-gate/review.mjs, merge.mjs, calibration.md and review-config.example.json (one shared copy for every harness), and eval/examples/ (two example eval cases to copy)",
           "~/.agent-config-studio/review-log/review-log.jsonl (created by the first review; one line per review, dispute, waiver and close)",
           "reviews/ inside each repo you review (the reports), added to that repo's .git/info/exclude so git ignores it"
         ]
