@@ -428,3 +428,29 @@ test('B11 the pack ships merge.mjs, and both skills say the orchestrator runs it
   const example = readFileSync(join(RUNTIME, 'review-config.example.json'), 'utf8')
   for (const key of ['onHuman', 'humanComment', 'requireChecks', 'allowBehind']) assert.ok(example.includes(key), key)
 })
+
+test('B9 each loosening key in a tracked repo config is ignored on its own, with its own warning', () => {
+  homeConfig({ merge: { policy: 'standard' } })
+  commit({ '.claude/review-config.json': JSON.stringify({ merge: {} }) })
+  realClose({ REVIEW_CONFIG: '' })
+  const defaults = { onHuman: 'comment', humanComment: 'Needs human approval before merging.', requireChecks: true, allowBehind: false }
+  // The file stays tracked while its working-tree content changes, so each case is read under the tracked rules.
+  const cases = [
+    [{ humanComment: '@bot deploy' }, 'merge.humanComment', {}],
+    [{ requireChecks: false }, 'merge.requireChecks', {}],
+    [{ allowBehind: true }, 'merge.allowBehind', {}],
+    [{ policy: 'always' }, 'merge.policy "always"', {}],
+    [{ onHuman: 'none' }, null, { onHuman: 'none' }],
+  ]
+  for (const [own, warned, changed] of cases) {
+    writeFileSync(join(REPO, '.claude/review-config.json'), JSON.stringify({ merge: own }))
+    const t = run(process.execPath, [REVIEW, '--tier-json'], { REVIEW_CONFIG: '' })
+    assert.equal(t.status, 0, t.out)
+    const json = JSON.parse(t.stdout)
+    assert.equal(json.policy, 'standard', JSON.stringify(own))
+    assert.deepEqual(json.merge, { ...defaults, ...changed }, JSON.stringify(own))
+    const warnings = t.stderr.split('\n').filter((l) => /Ignoring merge\./.test(l))
+    if (warned) { assert.equal(warnings.length, 1, t.stderr); assert.ok(warnings[0].includes(`Ignoring ${warned}`), t.stderr) }
+    else assert.deepEqual(warnings, [], t.stderr)
+  }
+})
