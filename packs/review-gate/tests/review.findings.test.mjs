@@ -412,3 +412,38 @@ test('K1 both code-review skills describe pre-existing, grouped findings, respon
     assert.match(text, /When the rule 3 slice ran, that report comes after the slice's close/, harness)
   }
 })
+
+// ── end to end ──────────────────────────────────────────────────────────────
+test('E1 one close with a pre-existing finding, a grouped finding, a labelled rejection and fixCheck "always", then the summary, tier and noise report', () => {
+  homeConfig({ fixCheck: 'always' })
+  commit({ 'src/two.js': two() })
+  const REJ = scored({ issue: 'v3 is odd', line: '3', quote: 'export const v3 = 3', trigger: 'reading v3' })
+  const review = reviewed([GROUPED, OLD, REJ])
+  assert.deepEqual(review.findingDetails.map((f) => [f.id, f.severity, f.inDiff ?? null]), [['f1', 'medium', null], ['f2', 'medium', false], ['f3', 'medium', null]])
+  refute(review.id, 'f3')
+  commit({ 'src/one.js': lines(), 'src/two.js': two({ 1: 'export const w1 = 1' }) })
+  const statuses = { f1: { status: 'fixed', response: 'real' }, f3: { status: 'rejected', reason: 'v3 is meant', evidence: 'src/one.js:3', response: 'wrong' } }
+  refused(review.id, statuses, '✖ Fix changes code after the review and fixCheck is "always": src/one.js, src/two.js; run --fix-check first (docs, static, coverage-exempt and builds/ files never need one)')
+  allowed(script(['--fix-check', review.id], { STUB_FINDINGS: JSON.stringify({ findings: [scored({ issue: 'w1 = 1 breaks callers', file: 'src/two.js', line: '1', quote: 'export const w1 = 1', likelihood: 8, impact: 8, trigger: 'importing w1' })] }) }))
+  const check = records().at(-1)
+  assert.deepEqual(check.findingDetails.map((f) => [f.id, f.severity, f.inFix]), [['x1', 'high', true]])
+  refused(review.id, statuses, /Finding x1 needs a fixed or rejected status, or deferred with a reason/)
+  const record = closed(review.id, { ...statuses, x1: { status: 'deferred', reason: 'next PR' } })
+  assert.deepEqual(record.outOfScope, [])
+  assert.equal(record.fixCheck, check.id)
+  assert.deepEqual([record.statuses.f1.response, record.statuses.f3.response], ['real', 'wrong'])
+  assert.equal(record.tier, 'high')
+  assert.ok(record.tierReasons.includes('deferred HIGH: x1'), JSON.stringify(record.tierReasons))
+  assert.ok(!record.tierReasons.some((r) => /f2|pre-existing/.test(r)), JSON.stringify(record.tierReasons))
+  const text = summary()
+  assert.match(text, /^Counts: 4 findings; 1 fixed; 1 rejected; 1 deferred$/m)
+  assert.match(text, /^f3 MEDIUM v3 is odd: v3 is meant — MEDIUM 25\/100/m)
+  assert.deepEqual(section(text, 'Deferred findings'),
+    ['x1 HIGH 64/100 (likelihood 8/10 × impact 8/10) src/two.js:1 — w1 = 1 breaks callers; Trigger: importing w1; Deferred: next PR; Fix idea: use 2'])
+  assert.deepEqual(section(text, 'Pre-existing (not introduced here)'),
+    ['f2 MEDIUM 25/100 (likelihood 5/10 × impact 5/10) src/one.js:18 — v18 overflows; Trigger: reading v18'])
+  const tier = JSON.parse(script(['--tier-json']).stdout)
+  assert.deepEqual([tier.tier, tier.deferred], ['high', ['x1']])
+  assert.deepEqual(noise(), ['Noise report (this repository): 1 review(s) closed',
+    row('sol', 'HIGH', { deferred: 1 }), row('sol', 'MEDIUM', { real: 1, wrong: 1, 'pre-existing': 1 })])
+})
