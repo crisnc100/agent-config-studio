@@ -14,4 +14,6 @@ if [ ! -f "$runtime/review.mjs" ]; then
   echo 'Push blocked: global ~/.agent-config-studio/review-gate/review.mjs is missing.' >&2
   exit 1
 fi
+# The remote's name ($1) tells the gate whether origin's default branch may count as reviewed.
+if [ -n "${1-}" ]; then exec "$node" "$runtime/review.mjs" --gate --remote "$1"; fi
 exec "$node" "$runtime/review.mjs" --gate
