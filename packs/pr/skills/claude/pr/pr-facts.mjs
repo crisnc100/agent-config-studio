@@ -371,7 +371,14 @@ function headings(body) {
 const URL_RE = /https?:\/\/[^\s)>\]"']+/g
 const SHA_RE = /\b[0-9a-f]{7,40}\b/g
 const RUN_ID_RE = /\b(?:review|fix|grade|recheck|security)-\d{10,}-[0-9a-f]{4,}\b/g
-const FINDING_RE = /\b[fxscr]\d{1,3}\b/g
+// A finding id where one goes: at the start of a list item (bold or code allowed), or before a severity word.
+// Elsewhere ("speed x2", "s3 buckets") it is prose, not an id.
+const FINDING_ID = '[fxscr]\\d{1,3}'
+const FINDING_RES = [
+  new RegExp(`^[ \\t]*(?:[-*+]|\\d+[.)])[ \\t]+(?:\\*\\*|\`)?(${FINDING_ID})\\b`, 'gm'),
+  new RegExp(`\\b(${FINDING_ID})(?:\\*\\*|\`)?[ \\t]+(?:HIGH|MEDIUM|LOW)\\b`, 'gi'),
+]
+const findingIdsIn = (text) => new Set(FINDING_RES.flatMap((re) => [...text.matchAll(re)].map((m) => m[1])))
 const PATH_RE = /(?<![\w./~$:@-])(?:[\w-][\w.-]*\/)+[\w-][\w.-]*\.[A-Za-z0-9]+(?![\w/])/g
 
 export function check(body, f) {
@@ -429,7 +436,7 @@ export function check(body, f) {
     }
   }
 
-  // No invented facts: shas, review run ids, finding ids and file paths must come from the facts.
+  // No invented facts: shas, review run ids, finding ids (in finding-id positions) and file paths must come from the facts.
   const text = body.replace(URL_RE, ' ')
   const known = [f.head, f.base.sha, f.base.mergeBase, ...f.commits.map((c) => c.sha)]
   const reviewText = closed ? `${f.review.summary}\n${JSON.stringify(f.review.tier)}` : ''
@@ -439,7 +446,7 @@ export function check(body, f) {
   }
   for (const m of new Set(text.match(RUN_ID_RE) || [])) if (!reviewText.includes(m)) problems.push(`review id ${m} is not in the facts`)
   const findingIds = new Set(closed ? f.review.summary.split('\n').map((l) => l.match(/^([fxscr]\d{1,3}) /)?.[1]).filter(Boolean) : [])
-  for (const m of new Set(text.replace(RUN_ID_RE, ' ').match(FINDING_RE) || [])) if (!findingIds.has(m)) problems.push(`finding id ${m} is not in the facts`)
+  for (const m of findingIdsIn(text.replace(RUN_ID_RE, ' '))) if (!findingIds.has(m)) problems.push(`finding id ${m} is not in the facts`)
   const paths = new Set([...KINDS.flatMap((k) => f.files[k].map((x) => x.path)), f.plan?.path, f.buildLog?.path].filter(Boolean))
   let tracked = null
   for (const m of new Set(text.match(PATH_RE) || [])) {
