@@ -196,3 +196,74 @@ test('P1 reviewer JSON cannot set inDiff', () => {
   assert.equal(review.findingDetails[0].inDiff, true)
   refused(review.id, {}, /Finding f1 needs a fixed or rejected status/)
 })
+
+// ── 2. grouped instances ────────────────────────────────────────────────────
+// The branch also adds src/two.js (10 lines `export const wN = 20`), the same defect again at w1.
+const two = (over = {}) => lines({ 1: 'export const w1 = 20', ...over }, 10, 'w')
+const GROUPED = scored({ issue: 'constants set to 20', instances: [
+  { file: 'src/two.js', line: '1', quote: 'export const w1 = 20' },
+  { file: 'src/one.js', line: '2', quote: 'export const v2 = 20' },
+] })
+test('I1 two located instances: one finding, both places recorded, one fixed status authorizes both files', () => {
+  commit({ 'src/two.js': two() })
+  const review = reviewed([GROUPED])
+  assert.equal(review.findingDetails.length, 1)
+  const [f] = review.findingDetails
+  assert.deepEqual(f.instances, GROUPED.instances)
+  assert.equal(f.instancesDropped, undefined)
+  assert.deepEqual(review.instancePaths, { f1: ['src/two.js', 'src/one.js'] })
+  assert.match(readFileSync(join(REPO, review.dir, 'code-review.md'), 'utf8'), /\n  Also at: src\/two\.js:1, src\/one\.js:2\n/)
+  commit({ 'src/one.js': lines(), 'src/two.js': two({ 1: 'export const w1 = 1' }) })
+  const record = closed(review.id, { f1: { status: 'fixed' } })
+  assert.deepEqual(record.outOfScope, [])
+})
+test('I1 without the instance, the second file is out of scope: the instances are what authorize it', () => {
+  commit({ 'src/two.js': two() })
+  const review = reviewed([scored()])
+  commit({ 'src/one.js': lines(), 'src/two.js': two({ 1: 'export const w1 = 1' }) })
+  const r = close(review.id, { f1: { status: 'fixed' } })
+  allowed(r); assert.deepEqual(r.record.outOfScope, ['src/two.js'])
+})
+test('I2 an unlocated instance is dropped with a note; the finding keeps its located places', () => {
+  commit({ 'src/two.js': two() })
+  const review = reviewed([scored({ instances: [{ file: 'src/two.js', line: '1', quote: 'not there' }, { file: 'src/one.js', line: '2', quote: 'export const v2 = 20' }] })])
+  const [f] = review.findingDetails
+  assert.deepEqual(f.instances, [{ file: 'src/one.js', line: '2', quote: 'export const v2 = 20' }])
+  assert.deepEqual(f.instancesDropped, [{ file: 'src/two.js', line: '1', quoteCheck: 'quote not found within ±5 lines of src/two.js:1' }])
+  assert.match(review.out, /f1: 1 instance\(s\) could not be located and were dropped: src\/two\.js:1/)
+  assert.deepEqual(review.instancePaths, { f1: ['src/one.js'] })
+})
+test('I2 an unlocated main location makes the finding unlocated, whatever its instances; null instances are absent', () => {
+  commit({ 'src/two.js': two() })
+  const review = reviewed([scored({ quote: 'nowhere', instances: GROUPED.instances }), scored({ line: '3', quote: 'export const v3 = 3', instances: null, preExisting: null })])
+  const [bad, plain] = review.findingDetails.sort((a, b) => a.line.localeCompare(b.line))
+  assert.equal(bad.status, 'unverified-quote'); assert.equal(bad.instances, undefined)
+  assert.equal(review.instancePaths, undefined)
+  assert.ok(!Object.hasOwn(plain, 'instances') && !Object.hasOwn(plain, 'preExisting'), JSON.stringify(plain))
+})
+test('I3 the fix check is shown every instance of the original findings; a pre-existing finding with an instance in the diff is not pre-existing', () => {
+  commit({ 'src/two.js': two() })
+  const review = reviewed([GROUPED, { ...OLD, instances: [{ file: 'src/two.js', line: '1', quote: 'export const w1 = 20' }] }])
+  assert.equal(review.findingDetails[1].inDiff, true)
+  fixChecked(review)
+  const prompt = prompts().find((c) => c.prompt.startsWith('Fix check:')).prompt
+  assert.match(prompt, /- f1 MEDIUM src\/one\.js:2 — constants set to 20; Trigger: importing v2 at startup; also at src\/two\.js:1, src\/one\.js:2/)
+})
+test('I3 the summary lists a deferred or pre-existing finding\'s other places', () => {
+  const review = reviewed([{ ...OLD, instances: [{ file: 'src/one.js', line: '19', quote: 'export const v19 = 19' }] }])
+  assert.equal(review.findingDetails[0].inDiff, false)
+  closed(review.id, {})
+  assert.deepEqual(section(summary(), 'Pre-existing (not introduced here)'),
+    ['f1 MEDIUM 25/100 (likelihood 5/10 × impact 5/10) src/one.js:18 — v18 overflows; Trigger: reading v18; also at src/one.js:19'])
+})
+test('I4 shadow matching counts a grouped finding\'s instances, on either side', () => {
+  const real = { file: 'a.js', line: '10', quote: 'alpha()', issue: 'x', instances: [{ file: 'b.js', line: '5', quote: 'beta()' }] }
+  appendFileSync(LOG, `${JSON.stringify({ type: 'review', kind: 'review', id: 'r-1', findingDetails: [real] })}\n`)
+  const shadow = (findings) => JSON.stringify({ type: 'shadow', reviewId: 'r-1', family: 'grok', ok: true, ts: new Date().toISOString(), durationMs: 10, findings })
+  writeFileSync(join(dirname(LOG), 'shadow-log.jsonl'), [
+    shadow([{ file: 'b.js', line: '7', quote: 'other', status: 'verified-quote' }]),
+    shadow([{ file: 'c.js', line: '1', quote: 'gamma()', status: 'verified-quote', instances: [{ file: 'a.js', line: '12', quote: 'zzz' }] }]),
+  ].join('\n') + '\n')
+  const r = script(['--shadow-report']); allowed(r)
+  assert.match(r.stdout, /^grok: 2 run\(s\), 0 failed; 2 finding\(s\): 2 matched, 0 unique; missed 0 of 2 real finding\(s\); average 10 ms$/m)
+})

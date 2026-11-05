@@ -2247,19 +2247,42 @@ function locatedFinding(f) {
   // inDiff is the script's too: set only when a review finding claims preExisting.
   const finding = Object.fromEntries(Object.entries(f).filter(([key]) => !/^resolved/i.test(key) && !['source', 'inDiff'].includes(key)))
   if (finding.preExisting == null) delete finding.preExisting // a strict schema writes "absent" as null
+  const given = finding.instances
+  delete finding.instances
+  delete finding.instancesDropped
   const where = locateQuote(finding)
   if (where.problem) return { ...finding, status: 'unverified-quote', quoteCheck: where.problem }
-  return { ...finding, status: 'verified-quote', [WHERE]: where }
+  // The other places of a grouped finding, each quote-checked like the main one: a located one is kept (its path rides on
+  // WHERE like the main one's), an unlocated one is dropped with its problem noted. Only file, line and quote are kept.
+  const instances = [], dropped = [], places = []
+  for (const raw of Array.isArray(given) ? given : []) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const place = { file: String(raw.file ?? ''), line: String(raw.line ?? ''), quote: String(raw.quote ?? '') }
+    const at = locateQuote(place)
+    if (at.problem) dropped.push({ file: place.file, line: place.line, quoteCheck: at.problem })
+    else { instances.push(place); places.push(at) }
+  }
+  return { ...finding, ...(instances.length && { instances }), ...(dropped.length && { instancesDropped: dropped }), status: 'verified-quote',
+    [WHERE]: { ...where, instances: places } }
 }
-// The review and fix-check record fields: resolvedPaths { id: { path, commit } } for located findings and
-// ambiguousPaths { id: [paths] }. Close authorizes a changed file only when it equals a fixed finding's path.
+// Where a grouped finding also is, for the report, the fix-check note and the summary: "; also at a:1, b:2", or ''.
+const alsoAt = (f) => Array.isArray(f.instances) && f.instances.length ? `; also at ${f.instances.map((i) => `${i.file}:${i.line}`).join(', ')}` : ''
+function warnDropped(findings) {
+  for (const f of findings.filter((f) => f.instancesDropped?.length))
+    console.warn(`⚠ ${f.id}: ${f.instancesDropped.length} instance(s) could not be located and were dropped: ${f.instancesDropped.map((d) => `${d.file}:${d.line} (${d.quoteCheck})`).join(', ')}`)
+}
+// The review and fix-check record fields: resolvedPaths { id: { path, commit } } for located findings,
+// ambiguousPaths { id: [paths] }, and instancePaths { id: [paths] } for a grouped finding's located, unambiguous
+// instances. Close authorizes a changed file only when it equals a fixed finding's path or one of its instance paths.
 function recordedLocations(findings) {
-  const resolvedPaths = {}, ambiguousPaths = {}
+  const resolvedPaths = {}, ambiguousPaths = {}, instancePaths = {}
   for (const f of findings) {
     if (f[WHERE]?.ambiguous) ambiguousPaths[f.id] = f[WHERE].ambiguous
     else if (f[WHERE]?.path) resolvedPaths[f.id] = { path: f[WHERE].path, commit: f[WHERE].commit }
+    const paths = (f[WHERE]?.instances || []).map((at) => at.path).filter(Boolean)
+    if (paths.length) instancePaths[f.id] = paths
   }
-  return { resolvedPaths, ...(Object.keys(ambiguousPaths).length && { ambiguousPaths }) }
+  return { resolvedPaths, ...(Object.keys(ambiguousPaths).length && { ambiguousPaths }), ...(Object.keys(instancePaths).length && { instancePaths }) }
 }
 
 // ── Optional second opinion: another family CONFIRMs or REFUTEs each HIGH/MEDIUM ──
@@ -2339,6 +2362,7 @@ function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTr
     `- [${f.file || '?'}:${f.line || '?'}] ${String(f.issue).replace(/\r?\n|$/, (end) => ` (id ${f.id})${end}`)}` +
     `\n  Score: ${scoreText(f)}${isPreExisting(f) ? ' — pre-existing (not introduced here), no close status needed' : isFiled(f) ? ' — filed, no close status needed' : ''}` +
     `${f.quote ? `\n  > ${String(f.quote).split('\n').join('\n  > ')}` : ''}` +
+    `${alsoAt(f) ? `\n  Also at: ${alsoAt(f).slice('; also at '.length)}` : ''}` +
     `${f.suggestion ? `\n  → ${f.suggestion}` : ''}` +
     `${f[WHERE]?.ambiguous ? `\n  Path ambiguous: the quote is in both ${f[WHERE].ambiguous.join(' and ')}, so this finding authorizes no file at close` : ''}${extra}`
   const bySev = (s) =>
@@ -2596,8 +2620,10 @@ function validateStatuses(entries, review, statuses) {
 // The exact paths fixed findings recorded when their quotes were checked. A finding without one (legacy,
 // unlocated, ambiguous, or a Grade finding, which has no quote) authorizes no file.
 const recordedPaths = (reviews, statuses) => new Set(reviews.flatMap((r) => r.findingDetails
-  .filter((f) => statuses[f.id]?.status === 'fixed' && r.resolvedPaths && Object.hasOwn(r.resolvedPaths, f.id))
-  .map((f) => r.resolvedPaths[f.id]?.path).filter((path) => typeof path === 'string' && path)))
+  .filter((f) => statuses[f.id]?.status === 'fixed')
+  .flatMap((f) => [r.resolvedPaths && Object.hasOwn(r.resolvedPaths, f.id) ? r.resolvedPaths[f.id]?.path : null,
+    ...(r.instancePaths && Object.hasOwn(r.instancePaths, f.id) && Array.isArray(r.instancePaths[f.id]) ? r.instancePaths[f.id] : [])])
+  .filter((path) => typeof path === 'string' && path)))
 function slicedScope(review, matched, changed) {
   const scope = new Set([...matched, ...sliceFiles(review)])
   return changed.filter((p) => scope.has(p))
@@ -3218,8 +3244,8 @@ async function shadowRun(jobFile) {
     // Quotes are checked against the snapshot: HEAD is the reviewed commit, and the base is its own sha here.
     if (fullObjectId(job.baseSha)) DIFF_BASE = job.baseSha
     write({ ok: true, findings: scored.findings.map((f) => {
-      const { file, line, quote, issue, severity, likelihood, impact, status, quoteCheck } = locatedFinding(f)
-      return { file, line, quote, issue, severity, likelihood, impact, status, ...(quoteCheck && { quoteCheck }) }
+      const { file, line, quote, issue, severity, likelihood, impact, status, quoteCheck, instances } = locatedFinding(f)
+      return { file, line, quote, issue, severity, likelihood, impact, status, ...(quoteCheck && { quoteCheck }), ...(instances && { instances }) }
     }) })
   } catch (e) {
     write({ ok: false, error: e.message })
@@ -3243,11 +3269,14 @@ function shadowReport() {
   const reviews = new Map(readLog().filter((e) => e.type === 'review').map((e) => [e.id, e]))
   const file = (f) => String(f || '').replace(/^(?:\.\/|[ab]\/)/, '')
   const quote = (q) => String(q || '').replace(/\s+/g, ' ').trim()
-  const same = (a, b) => {
+  const near = (a, b) => {
     if (file(a.file) && file(a.file) === file(b.file) && Math.abs(parseInt(a.line, 10) - parseInt(b.line, 10)) <= 5) return true
     const qa = quote(a.quote), qb = quote(b.quote)
     return !!qa && !!qb && (qa.includes(qb) || qb.includes(qa))
   }
+  // A grouped finding matches at any of its places: the main location or a located instance.
+  const places = (f) => [f, ...(Array.isArray(f.instances) ? f.instances : [])]
+  const same = (a, b) => places(a).some((pa) => places(b).some((pb) => near(pa, pb)))
   const by = new Map()
   for (const s of shadows) {
     if (from !== null && !(Date.parse(s.ts) >= from)) continue
@@ -3673,6 +3702,7 @@ async function fixCheck(id) {
     truncated, coverage: missed ? coverageOf(head, files.filter((p) => !truncated.includes(p) && !missed.has(p))) : [], noRenames: true,
     stats: recordStats(fixStats), plan: PLAN_PATH ?? null, durationMs })
   console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)`)
+  warnDropped(findingDetails)
   for (const f of findingDetails.filter((f) => f[WHERE]?.ambiguous))
     console.warn(`⚠ ${f.id}: path ambiguous, the quote is in both ${f[WHERE].ambiguous.join(' and ')}; it authorizes no file at close`)
 }
@@ -3700,7 +3730,7 @@ function originalFindingsNote(original) {
   const targets = (original.findingDetails || []).filter((f) => !isFiled(f))
   if (!targets.length) return ''
   const list = targets.map((f) => `- ${f.id} ${String(f.severity || '?').toUpperCase()} ${f.file || '?'}:${f.line || '?'} — ${f.issue || f.criterion || ''}; ` +
-    `Trigger: ${f.trigger || 'trigger not recorded'}`).join('\n')
+    `Trigger: ${f.trigger || 'trigger not recorded'}${alsoAt(f)}`).join('\n')
   return `The fix is meant to repair these findings from review ${original.id}. Use them to tell an incomplete repair ` +
     `from a new regression the fix introduced; report defects in the fix diff as usual.\n${list}\n\n`
 }
@@ -3822,7 +3852,7 @@ function deferredLine(finding) {
   const decision = deferral ? `; Deferred: ${deferral.reason}${fix ? `; Fix idea: ${fix}` : ''}` : ''
   if (finding.criterionId)
     return `${finding.id} criterion ${finding.criterionId} not met: ${finding.criterion}; recheck: ${finding.recheckEvidence || 'evidence not recorded'}${decision}`
-  return `${finding.id} ${scoreText(finding)} ${finding.file || '?'}:${finding.line || '?'} — ${finding.issue}; Trigger: ${finding.trigger || 'trigger not recorded'}${decision}`
+  return `${finding.id} ${scoreText(finding)} ${finding.file || '?'}:${finding.line || '?'} — ${finding.issue}; Trigger: ${finding.trigger || 'trigger not recorded'}${alsoAt(finding)}${decision}`
 }
 // The close whose statuses count for one review record. In a summary: the covering close that links it, else the
 // latest close that links it and is not at a commit outside the tip's history. Without a tip (--deferred): the latest.
@@ -4303,6 +4333,7 @@ function pushGate() {
   securityDetails.forEach((finding, i) => { finding.id = `s${i + 1}` })
   findingDetails.push(...securityDetails)
   markPreExisting(findingDetails, baseSha, reviewedHead)
+  warnDropped(findingDetails)
   const allFindings = [...findings, ...securityLocated], allUnlocated = [...unlocated, ...securityUnlocated]
   const reviewedFiles = sliceFileList || filesBetween(baseSha, reviewedHead)
   const truncated = truncatedFiles(diff, reviewedFiles)
