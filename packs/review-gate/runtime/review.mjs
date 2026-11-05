@@ -4093,9 +4093,11 @@ function contentCover(entries, tip, risk = false) {
   const used = new Map(), uncovered = [], exempt = []
   for (const r of records) if (tipClose && r.close && r.head === tipClose.head) used.set(r, [])
   // A file a merge of main changed back on the branch's side (mergeReverts) can equal main's at the tip, so the diff from
-  // the new base omits it; it still needs a record, unless the anchor is a whole-branch review made after that merge.
+  // the new base omits it; it still needs a record, unless a complete whole-branch (unsliced) code review counted for
+  // the tip was made after that merge: measured from main, the file's absence or main's copy is no change there.
+  const wholeReviews = records.filter((r) => r.close && r.review.kind === 'review' && !sliceOf(r.review)).map((r) => r.review.head)
   const reverts = new Set(commitsIn(['--merges', tip, `^${base}`])
-    .filter((merge) => baseMergeParents(merge) && (sliceOf(anchor.review) || !isAncestor(merge, anchor.review.head))).flatMap((merge) => [...mergeReverts(merge)]))
+    .filter((merge) => baseMergeParents(merge) && !wholeReviews.some((h) => isAncestor(merge, h))).flatMap((merge) => [...mergeReverts(merge)]))
   for (const path of [...new Set([...filesBetween(base, tip), ...reverts])]) {
     if (path.startsWith('builds/')) continue
     if (coverageExempt(path)) { exempt.push(path); continue }
@@ -4108,7 +4110,9 @@ function contentCover(entries, tip, risk = false) {
   const baseMerge = base !== anchor.review.baseSha
   const sides = baseMerge && uncovered.length ? baseMergeSides([tip, `^${base}`]) : new Set()
   return { covered: !!tipClose && !uncovered.length, base, tipClose, anchor, uncovered, exempt, used: [...used].map(([r, files]) => ({ ...r, files })),
-    baseMerge, sidesOnly: !!uncovered.length && uncovered.every((p) => sides.has(p)), reverts: uncovered.filter((p) => reverts.has(p)) }
+    // Only a revert whose tip state is main's (or still deleted) is invisible to a slice review; other merge edits are not.
+    baseMerge, sidesOnly: !!uncovered.length && uncovered.every((p) => sides.has(p)),
+    reverts: uncovered.filter((p) => reverts.has(p) && (states.get(p) ?? null) === (treeStates(base).get(p) ?? null)) }
 }
 // The legacy rule, for closes logged without coverage only: one unsliced complete close at the tip, then builds/
 // commits only. A sliced close covers only its paths, so it never counts here.
@@ -4180,9 +4184,12 @@ function uncoveredNote(result) {
   const shown = uncovered.slice(0, 20).join(', ')
   const more = uncovered.length > 20 ? ` and ${uncovered.length - 20} more` : ''
   const where = tipClose ? `the complete ${sliceOf(tipClose.review) ? 'slice ' : ''}closes at ${tipClose.head} leave` : 'no complete close or clean fix check saw the tip state of'
-  if (result.reverts?.length)
+  if (result.reverts?.length) {
+    const rest = uncovered.filter((p) => !result.reverts.includes(p))
     return `; ${where} ${uncovered.length} file(s) uncovered: ${shown}${more} — ${result.reverts.join(', ')} changed back to main's copy inside a merge ` +
-      `of the default branch, which a slice review can't see (no diff from main): run the review's fix check (it sees them), or review the whole branch afresh${exempt}`
+      `of the default branch, which a slice review can't see (no diff from main): run the review's fix check (it sees them), or review the whole branch afresh` +
+      (rest.length ? `; review ${rest.join(', ')} as a slice (REVIEW_PATHS=${rest.join(',')}) and close it at the tip` : '') + exempt
+  }
   if (result.sidesOnly) return `; ${where} ${uncovered.length} file(s) uncovered: ${shown}${more} — ${sidesNote(uncovered, result.anchor.review.id)}${exempt}`
   return `; ${where} ${uncovered.length} file(s) uncovered: ${shown}${more}` +
     ` — review them as a slice (REVIEW_PATHS=${uncovered.join(',')}) and close it at the tip${exempt}`

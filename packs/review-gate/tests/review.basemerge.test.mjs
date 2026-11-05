@@ -696,3 +696,37 @@ test('BM21 a slice review closed at the tip does not cover a reviewed file chang
   const summary = script(['--summary'], { REVIEW_BASE: null })
   assert.notEqual(summary.status, 0); assert.match(summary.out, /src\/one\.js changed back/)
 })
+
+// ── merge-commit-edits fix round ──
+test('BM22 a whole-branch review after the merge excuses a file changed back inside it, whatever close comes later at the tip', () => {
+  const r = review()
+  closed(r.id)
+  landOnMain({ 'lib/two.js': 'export const two = 2\n' })
+  mergeMainWith(() => git('checkout', 'origin/main', '--', 'src/one.js'))
+  closed(review().id)
+  commit({ 'lib/new.js': 'export const fresh = 1\n' })
+  closed(review('lib/new.js').id)
+  allowed(push())
+})
+
+test('BM22 the same with the closes in the other order: the slice first, the whole-branch review last', () => {
+  const r = review()
+  closed(r.id)
+  landOnMain({ 'lib/two.js': 'export const two = 2\n' })
+  mergeMainWith(() => git('checkout', 'origin/main', '--', 'src/one.js'))
+  commit({ 'lib/new.js': 'export const fresh = 1\n' })
+  closed(review('lib/new.js').id)
+  closed(review().id)
+  allowed(push())
+})
+
+test('BM23 an edit inside the merge to a state that differs from main keeps the slice hint; only files back at main\'s copy get the fix-check note', () => {
+  const r = review()
+  closed(r.id)
+  landOnMain({ 'lib/two.js': 'export const two = 2\n' })
+  mergeMainWith(() => { write({ 'src/one.js': 'export const one = 99\n' }); git('checkout', 'origin/main', '--', 'docs/three.md') })
+  const refused = push()
+  blocked(refused, /REVIEW_PATHS=src\/one\.js\)/)
+  // Only docs/three.md is listed before "changed back"; src/one.js keeps its own slice hint.
+  assert.match(refused.out, /uncovered: src\/one\.js, docs\/three\.md — docs\/three\.md changed back to main's copy inside a merge/)
+})
