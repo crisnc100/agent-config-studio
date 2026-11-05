@@ -2853,15 +2853,13 @@ async function closeReview(id) {
   // After a merge of the default branch, a file whose state at HEAD is the merge base's is the default branch's own content.
   const mergeBase = coverBase(review, head), stateAt = (commit, p) => treeStates(commit).get(p) ?? null
   const mainContent = (p) => mergeBase !== review.baseSha && stateAt(mergeBase, p) === stateAt(head, p)
-  // Brought back to main's existing content by a merge of the default branch in from..to, and touched by no other commit
-  // there: a deletion, or a later commit restoring main's version, never qualifies.
-  const mergedToMain = (from, to) => {
-    const merged = new Set(), other = new Set()
-    if (based && mergeBase !== review.baseSha) for (const commit of branchCommits([`${from}..${to}`])) {
-      const viaMerge = !!baseMergeParents(commit)
-      for (const p of viaMerge ? branchPaths(commit) : commitPaths(commit)) (viaMerge ? merged : other).add(p)
-    }
-    return (p) => merged.has(p) && !other.has(p) && stateAt(mergeBase, p) !== null && mainContent(p)
+  // Brought back to main's existing content by a merge of the default branch in from..to, with no branch commit after
+  // that merge touching it: a deletion, or a later commit restoring main's version, never qualifies.
+  // `deletions` true also accepts a file main's merge deleted (scope only; never for skipping a fix check).
+  const mergedToMain = (from, to, deletions = false) => {
+    if (!based || mergeBase === review.baseSha) return () => false
+    const { mergedLast } = rangeTouch(from, to)
+    return (p) => mergedLast(p) && (deletions || stateAt(mergeBase, p) !== null) && mainContent(p)
   }
   const command = blankCommand(option('--test-cmd')) ? VERIFY_CMD : option('--test-cmd')
   const noTests = option('--no-tests')
@@ -2911,7 +2909,9 @@ async function closeReview(id) {
   // Seen after every merge that touched it, at its state at HEAD, by the fix check or the Grade's recheck.
   const sawAfterMerge = (p) => [[check, seen], [recheck, recheckSaw]].some(([record, saw]) => !!record && saw.has(p) &&
     touchingOf(p).every((m) => isAncestor(m, record.head)) && stateAt(record.head, p) === stateAt(head, p))
-  const mergeScope = (p) => !touchingOf(p).length ? null : mainContent(p) || sawAfterMerge(p)
+  // Main content counts only when a merge alone brought it; a later branch commit restoring main's version needs a record.
+  const mergedOnly = mergedToMain(review.head, at, true)
+  const mergeScope = (p) => !touchingOf(p).length ? null : mergedOnly(p) || sawAfterMerge(p)
   // Such a file is stamped only by a record after the merge, even when a pre-merge record saw the same state.
   const held = new Set(files.filter((p) => touchingOf(p).length && !sawAfterMerge(p)))
   const outOfScope = files.filter((p) => {
@@ -3652,12 +3652,15 @@ async function fixCheck(id) {
   // whole and meets the size cap like any other, so content the review cut can't pass as a short rename.
   SLICE = sliceOf(original)
   // After a merge of the default branch, only branch-side content: the fix diff's files whose state at HEAD differs
-  // from the merge base's. What the default branch brought is never sent to the model.
+  // from the merge base's, plus any a commit other than a merge of main touched (a deletion, or a restore to main's
+  // version, is the branch's change). Only what the default branch alone brought is never sent to the model.
   const mergeBase = coverBase(original, head)
   let onlyFiles = null
   if (mergeBase !== original.baseSha) {
     const branchSide = new Set(filesBetween(mergeBase, head)), all = filesBetween(original.head, head, SLICE)
-    if (all.some((p) => !branchSide.has(p))) onlyFiles = all.filter((p) => branchSide.has(p))
+    const { other } = rangeTouch(original.head, head)
+    const kept = all.filter((p) => branchSide.has(p) || other.has(p))
+    if (kept.length < all.length) onlyFiles = kept
   }
   if (onlyFiles && !onlyFiles.length) throw new Error('No fix diff to check')
   const scope = onlyFiles ? onlyFiles.map((p) => `:(top,literal)${p}`) : SLICE
@@ -3996,6 +3999,18 @@ function branchPaths(commit, paths = null) {
   for (const parent of parents) for (const path of filesBetween(base, parent, paths)) counts.set(path, (counts.get(path) || 0) + 1)
   const changed = parents.map((parent) => new Set(filesBetween(parent, commit, paths)))
   return [...new Set([...[...counts].filter(([, n]) => n > 1).map(([path]) => path), ...[...changed[0]].filter((p) => changed.every((c) => c.has(p)))])]
+}
+// The commits of a range's branch side that touch each path: `merged` by merges of the default branch (their
+// branchPaths), `other` by every other commit. `mergedLast(p)`: a merge touched p and every other commit touching it
+// is an ancestor of such a merge, so p's state comes from a merge of main, not from a branch commit after it.
+function rangeTouch(from, to) {
+  const merged = new Map(), other = new Map()
+  for (const commit of branchCommits([`${from}..${to}`])) {
+    const viaMerge = !!baseMergeParents(commit), into = viaMerge ? merged : other
+    for (const p of viaMerge ? branchPaths(commit) : commitPaths(commit)) into.set(p, [...(into.get(p) || []), commit])
+  }
+  const mergedLast = (p) => merged.has(p) && (other.get(p) || []).every((c) => merged.get(p).some((m) => isAncestor(c, m)))
+  return { merged, other, mergedLast }
 }
 // The files changed on both sides of the merges of the default branch in a rev-list range.
 const baseMergeSides = (range) => new Set(branchCommits(['--merges', ...range]).flatMap((merge) => baseMergeParents(merge) ? [...(bothSides(merge) || [])] : []))
