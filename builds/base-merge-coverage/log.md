@@ -47,3 +47,10 @@ Full suite: 612/612 outside the sandbox.
 - c. closeCoverage drops main-equal files only when no record (review, fix check, recheck) saw that exact state. Test BM13.
 - d. packs/build/skills/{claude,codex}/build/SKILL.md rule 8 carries the merge-not-rebase / re-close wording.
 - Tests BM11-BM13 failed at 072fd1d; full suite 659/659 outside the sandbox.
+
+## Fresh-review fix round (Sol review 2026-11-05-19-00-20-861152 at 3e63230)
+
+- f1: `defaultBased(review)` = baseSha on the default tip AND review.base names the origin/HEAD branch (prefixes refs/remotes/origin/, refs/heads/, origin/ stripped). It gates coverBase (so contentCover, fix-check scope, tier bases, stamping), the branch-side touchedBetween at close, mergeScope and the both-sides messages. The gate's riskPaths scan still skips default-branch commits for every push to origin (it has no single review to ask). Test BM14.
+- f2: a file a merge of the default branch changed on the branch side is `held` from close coverage unless a fix check or recheck after that merge saw its state at HEAD. BM13 changed to the safe expectation in its own test-only commit 4580947.
+- f3: needsFixCheck ignores files whose HEAD state is the merge base's (default-based reviews only). Test BM15.
+- Review-gate suite 661/661; root pack/skill tests (packs-catalog, -flag, -hooks, -install, -server, -uninstall-backup, -update, package, readme, skills, guards, roles, roles-security) 894 passed, 0 failed. The full root loop was not run: it includes long-running QA servers (assist-qa-server hung the loop).
