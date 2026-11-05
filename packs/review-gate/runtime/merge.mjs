@@ -136,20 +136,34 @@ if (tier.merges) {
   if (!checks.length && settings.requireChecks) human.push('no CI checks')
 }
 
+// A base with a merge queue never merges here: gh would queue the PR, and --disable-auto can't take it out again.
+const [owner, name] = (String(pr.url || '').match(/\/([^/]+)\/([^/]+)\/pull\/\d+\/?$/) || []).slice(1)
+if (!human.length) {
+  if (!owner || !name) refuse(`could not tell the repository from the PR url ${JSON.stringify(pr.url)} to check for a merge queue`)
+  const queue = graphql('query($owner: String!, $name: String!, $branch: String!) { repository(owner: $owner, name: $name) { mergeQueue(branch: $branch) { id } } }',
+    ['-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `branch=${pr.baseRefName}`])
+  if (!queue.data?.repository) refuse(`could not check the base for a merge queue: ${queue.error}`)
+  if (queue.data.repository.mergeQueue) human.push('base uses a merge queue')
+}
 if (!human.length) {
   if (DRY) finish('merged', `PR #${n} would merge at ${HEAD}`)
   const merged = run('gh', ['pr', 'merge', n, '--merge', '--match-head-commit', HEAD])
   if (merged.code !== 0) refuse(`gh pr merge failed: ${firstLine(merged)}`)
-  // On a merge-queue base (or one gh auto-merges) success only queued it: merged means state MERGED now.
-  const after = run('gh', ['pr', 'view', n, '--json', 'state,autoMergeRequest'])
-  let now = null
-  try { now = JSON.parse(after.stdout) } catch { /* below */ }
-  if (after.code === 0 && now?.state === 'MERGED') finish('merged', `PR #${n} at ${HEAD}`)
-  // We never enable auto-merge, so take back whatever the merge call queued; nothing queued fails harmlessly.
-  run('gh', ['pr', 'merge', n, '--disable-auto'])
-  if (after.code !== 0 || !now || typeof now !== 'object')
-    refuse(`gh pr merge ran, but its result could not be read (auto-merge disabled if it was on): ${firstLine(after)}`)
-  human.push('base uses a merge queue or auto-merge; not merged')
+  // Success may only have queued it or set auto-merge: merged means state MERGED now.
+  const after = graphql('query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { id state isInMergeQueue autoMergeRequest { enabledAt } } } }',
+    ['-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${n}`])
+  const now = after.data?.repository?.pullRequest
+  if (now?.state === 'MERGED') finish('merged', `PR #${n} at ${HEAD}`)
+  if (now?.isInMergeQueue) {
+    const dequeued = graphql('mutation($id: ID!) { dequeuePullRequest(input: { id: $id }) { clientMutationId } }', ['-f', `id=${now.id}`])
+    if (!dequeued.data) refuse(`gh pr merge put PR #${n} in a merge queue and dequeuing it failed, so it may still be queued: ${dequeued.error}`)
+    human.push('base uses a merge queue; not merged')
+  } else {
+    // We never enable auto-merge, so take back whatever the merge call set; nothing set fails harmlessly.
+    run('gh', ['pr', 'merge', n, '--disable-auto'])
+    if (!now) refuse(`gh pr merge ran, but its result could not be read, so PR #${n} may still be queued (auto-merge disabled if it was on): ${after.error}`)
+    human.push('base uses a merge queue or auto-merge; not merged')
+  }
 }
 
 // 5. Needs a human.
@@ -172,6 +186,14 @@ const commented = run('gh', ['pr', 'comment', n, '--body', body])
 if (commented.code !== 0) refuse(`gh pr comment failed (the label was added): ${firstLine(commented)}`)
 finish('labeled', `PR #${n} labeled ${LABEL} (${why})`)
 
+// gh api graphql: { data } or { error }.
+function graphql(query, vars) {
+  const r = run('gh', ['api', 'graphql', '-f', `query=${query}`, ...vars])
+  let body = null
+  try { body = JSON.parse(r.stdout) } catch { /* below */ }
+  if (r.code === 0 && body?.data && !body.errors) return { data: body.data }
+  return { error: body?.errors?.map((e) => e.message).join('; ') || firstLine(r) }
+}
 // The review's base as a branch name: refs/heads/x, refs/remotes/<remote>/x and <remote>/x all name x.
 function branchName(ref) {
   if (typeof ref !== 'string' || !ref) return null

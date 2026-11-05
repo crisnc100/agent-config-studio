@@ -77,3 +77,17 @@
 - f4: both skills say `node ~/.agent-config-studio/review-gate/merge.mjs`.
 - Suite 642/642 (one run had a single flake in review.records P1, untouched code; 3/3 alone, then 642/642);
   packs-catalog 49/49.
+
+## PR B: main merged in, then fix check x1
+- `git merge --no-edit origin/main` (#41 squash, #42 security) -> fad55e5. review.mjs: 5 conflict hunks, all the
+  same lines (summaryOf with baseRef, its three callers, --tier-json's merge/baseRef); kept this branch's side,
+  #42's security code untouched elsewhere. builds log: kept this branch's (a superset). Suite 673/673.
+- x1 (MEDIUM 21/100): --disable-auto does not dequeue. Before `gh pr merge`, `gh api graphql`
+  repository(owner,name).mergeQueue(branch: baseRefName) (owner/name from the PR url; real read-only call on
+  crisnc100/agent-config-studio main returned {"data":{"repository":{"mergeQueue":null}}}). A queue -> needs-human
+  "base uses a merge queue", no merge call (dry run reports the same). Check fails -> refused.
+- After the merge call the PR is read by GraphQL (id, state, isInMergeQueue, autoMergeRequest; gh pr view --json has
+  no isInMergeQueue): MERGED -> merged; isInMergeQueue -> dequeuePullRequest(id) then needs-human "base uses a merge
+  queue; not merged", dequeue failure -> refused "may still be queued"; otherwise --disable-auto and needs-human as
+  before; unreadable -> --disable-auto, refused "may still be queued".
+- Tests: B17 x4 (failed at fad55e5); B2/B12/B14 (this PR's own) follow the GraphQL read. Suite 677/677; catalog 49/49.

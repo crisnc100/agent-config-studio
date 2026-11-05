@@ -27,13 +27,18 @@ after(() => rmSync(ROOT, { recursive: true, force: true }))
 const stub = (name, body) => { writeFileSync(join(BIN, name), `#!${process.execPath}\n${body}`); chmodSync(join(BIN, name), 0o755) }
 // The gh stub: table keys are "<a0> <a1>" ("pr view", "pr checks", "pr merge", "label list", ...), each
 // { stdout, stderr, code }. A key missing from the table is an unexpected call: logged, refused with exit 2.
-// The read after a merge (--json state,autoMergeRequest) has its own key, "pr view after".
+// gh api graphql calls are keyed by their query: "graphql queue" (the base's merge queue), "graphql pr" (the PR read
+// after a merge) and "graphql dequeue" (the dequeuePullRequest mutation).
 stub('gh', `
 const fs = require('node:fs')
 const a = process.argv.slice(2)
 fs.appendFileSync(${JSON.stringify(GH_LOG)}, JSON.stringify(a) + '\\n')
 const table = fs.existsSync(${JSON.stringify(GH_TABLE)}) ? JSON.parse(fs.readFileSync(${JSON.stringify(GH_TABLE)}, 'utf8')) : {}
-const keyOf = (x) => x.includes('state,autoMergeRequest') ? 'pr view after' : x.slice(0, 2).join(' ')
+const keyOf = (x) => {
+  if (x[0] !== 'api' || x[1] !== 'graphql') return x.slice(0, 2).join(' ')
+  const q = x.find((v) => v.startsWith('query=')) || ''
+  return q.includes('dequeuePullRequest') ? 'graphql dequeue' : q.includes('mergeQueue') ? 'graphql queue' : q.includes('pullRequest') ? 'graphql pr' : 'graphql ?'
+}
 const key = keyOf(a)
 let answer = table[key]
 // A list answers call by call (the last one repeats): the nth call with this key gets the nth answer.
@@ -93,7 +98,16 @@ function commit(files) {
 const jsonl = (path) => existsSync(path) ? readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : []
 const calls = () => jsonl(GH_LOG)
 const WRITES = ['pr merge', 'pr edit', 'pr comment', 'label create']
-const writes = () => calls().filter((a) => WRITES.includes(a.slice(0, 2).join(' ')))
+const writes = () => calls().filter((a) => WRITES.includes(a.slice(0, 2).join(' ')) || a.some((v) => /^query=\s*mutation/.test(v)))
+const graphql = (data) => out({ data })
+// The stub's key for one logged call (the same rule as inside the stub).
+const keyOf = (x) => {
+  if (x[0] !== 'api' || x[1] !== 'graphql') return x.slice(0, 2).join(' ')
+  const q = x.find((v) => v.startsWith('query=')) || ''
+  return q.includes('dequeuePullRequest') ? 'graphql dequeue' : q.includes('mergeQueue') ? 'graphql queue' : q.includes('pullRequest') ? 'graphql pr' : 'graphql ?'
+}
+const prAfter = (over = {}) => graphql({ repository: { pullRequest: { id: 'PR_node41', state: 'MERGED', isInMergeQueue: false, autoMergeRequest: null, ...over } } })
+const varOf = (a, name) => { const i = a.findIndex((v, j) => ['-f', '-F'].includes(a[j - 1]) && v.startsWith(`${name}=`)); return i < 0 ? undefined : a[i].slice(name.length + 1) }
 const head = () => git('rev-parse', 'HEAD')
 
 // gh answers in the captured shapes.
@@ -103,7 +117,7 @@ const check = (name, bucket, state = { pass: 'SUCCESS', fail: 'FAILURE', pending
 const label = (name) => ({ id: `LA_${name}`, name, description: '', color: 'd93f0b' })
 const out = (value, code = 0) => ({ stdout: JSON.stringify(value) + '\n', code })
 function gh({ view = prView(), checks = [check('syntax', 'pass'), check('docs', 'skipping')], repoLabels = [], merged = { stdout: '' }, extra = {} } = {}) {
-  const table = { 'pr view': out(view), 'pr view after': out({ autoMergeRequest: null, state: 'MERGED' }), 'pr checks': out(checks), 'pr merge': merged, 'label list': out(repoLabels),
+  const table = { 'pr view': out(view), 'graphql queue': graphql({ repository: { mergeQueue: null } }), 'graphql pr': prAfter(), 'pr checks': out(checks), 'pr merge': merged, 'label list': out(repoLabels),
     'label create': { stdout: '' }, 'pr edit': { stdout: 'https://github.com/o/r/pull/41\n' }, 'pr comment': { stdout: 'https://github.com/o/r/pull/41#issuecomment-1\n' }, ...extra }
   writeFileSync(GH_TABLE, JSON.stringify(table))
 }
@@ -152,10 +166,11 @@ test('B2 standard, LOW, checks pass or skipping, CLEAN: checks are read before e
   assert.equal(r.status, 0, r.out)
   assert.match(r.stdout, /^merged: /)
   const seen = calls().map((a) => a.slice(0, 2).join(' '))
-  assert.deepEqual(seen, ['pr view', 'pr checks', 'pr merge', 'pr view'])
+  assert.deepEqual(seen, ['pr view', 'pr checks', 'api graphql', 'pr merge', 'api graphql'])
   assert.deepEqual(calls()[1], ['pr', 'checks', '41', '--json', 'name,state,bucket'])
-  assert.deepEqual(calls()[2], ['pr', 'merge', '41', '--merge', '--match-head-commit', head()])
-  assert.deepEqual(calls()[3], ['pr', 'view', '41', '--json', 'state,autoMergeRequest'])
+  assert.deepEqual([keyOf(calls()[2]), varOf(calls()[2], 'owner'), varOf(calls()[2], 'name'), varOf(calls()[2], 'branch')], ['graphql queue', 'o', 'r', 'main'])
+  assert.deepEqual(calls()[3], ['pr', 'merge', '41', '--merge', '--match-head-commit', head()])
+  assert.deepEqual([keyOf(calls()[4]), varOf(calls()[4], 'number')], ['graphql pr', '41'])
   assert.equal(calls()[0][0], 'pr'); assert.ok(calls()[0].includes('--json'))
   neverFlags()
   assert.equal(lastOutcome().action, 'merged')
@@ -493,7 +508,7 @@ test('B12 BLOCKED (branch protection) takes the needs-human path: label and one 
 test('B12 UNKNOWN is read again: CLEAN on a re-read merges', () => {
   gh({ extra: { 'pr view': [out(prView({ mergeStateStatus: 'UNKNOWN' })), out(prView({ mergeStateStatus: 'UNKNOWN' })), out(prView())] } })
   allowedMerge(fake())
-  assert.equal(calls().filter((a) => a[1] === 'view' && !a.includes('state,autoMergeRequest')).length, 3, 'three reads before the merge')
+  assert.equal(calls().filter((a) => a[1] === 'view').length, 3, 'three reads before the merge')
 })
 
 test('B12 UNKNOWN on the first read and all 3 re-reads is refused, with no write', () => {
@@ -528,10 +543,10 @@ test('B13 run from a subdirectory, the repo config still counts: a repo policy o
 })
 
 test('B14 a merge that only queued or set auto-merge is undone and goes to a human, not reported merged', () => {
-  const queued = { autoMergeRequest: { enabledAt: '2026-11-05T18:00:00Z', mergeMethod: 'MERGE' }, state: 'OPEN' }
+  const queued = { autoMergeRequest: { enabledAt: '2026-11-05T18:00:00Z' }, state: 'OPEN' }
   for (const disable of [{ stdout: '' }, { stderr: 'no auto-merge to disable\n', code: 1 }]) {
     rmSync(GH_LOG, { force: true })
-    gh({ extra: { 'pr view after': out(queued), 'pr merge': [{ stdout: '' }, disable] } })
+    gh({ extra: { 'graphql pr': prAfter(queued), 'pr merge': [{ stdout: '' }, disable] } })
     const r = fake()
     assert.equal(r.status, 10, r.out)
     assert.match(r.stdout, /^labeled: .*base uses a merge queue or auto-merge; not merged/)
@@ -544,7 +559,7 @@ test('B14 a merge that only queued or set auto-merge is undone and goes to a hum
 })
 
 test('B14 a merge whose result cannot be read again is refused after disabling auto-merge', () => {
-  gh({ extra: { 'pr view after': { stderr: 'HTTP 502\n', code: 1 }, 'pr merge': [{ stdout: '' }, { stdout: '' }] } })
+  gh({ extra: { 'graphql pr': { stderr: 'HTTP 502\n', code: 1 }, 'pr merge': [{ stdout: '' }, { stdout: '' }] } })
   const r = fake()
   assert.equal(r.status, 2, r.out)
   assert.match(r.stdout, /^refused: .*502/)
@@ -595,4 +610,48 @@ test('B16 an intent record that cannot be written refuses before any gh call, ex
     assert.deepEqual(calls(), [])
     assert.equal(readFileSync(MERGE_LOG, 'utf8'), '')
   } finally { chmodSync(MERGE_LOG, 0o644) }
+})
+
+// Fix check x1: --disable-auto does not take a PR out of a merge queue.
+test('B17 a base with a merge queue needs a human before any merge call', () => {
+  gh({ extra: { 'graphql queue': graphql({ repository: { mergeQueue: { id: 'MQ_1' } } }) } })
+  const r = fake()
+  assert.equal(r.status, 10, r.out)
+  assert.match(r.stdout, /^labeled: .*base uses a merge queue/)
+  assert.ok(!calls().some((a) => a[1] === 'merge'), 'never calls merge')
+  assert.match(bodyOf(), /base uses a merge queue/)
+  rmSync(GH_LOG, { force: true })
+  gh({ extra: { 'graphql queue': graphql({ repository: { mergeQueue: { id: 'MQ_1' } } }) } })
+  const dry = fake({}, ['--dry-run'])
+  assert.equal(dry.status, 10, dry.out)
+  assert.match(dry.stdout, /^labeled \(dry run\): .*merge queue/)
+  assert.deepEqual(writes(), [])
+})
+
+test('B17 the merge-queue check failing is refused, with no merge call', () => {
+  gh({ extra: { 'graphql queue': { stderr: 'HTTP 401: Bad credentials\n', code: 1 } } })
+  const r = fake()
+  assert.equal(r.status, 2, r.out)
+  assert.match(r.stdout, /^refused: .*merge queue.*401/)
+  assert.deepEqual(writes(), [])
+})
+
+test('B17 a PR still queued after the merge call is dequeued, then needs a human', () => {
+  gh({ extra: { 'graphql pr': prAfter({ state: 'OPEN', isInMergeQueue: true }), 'graphql dequeue': graphql({ dequeuePullRequest: { clientMutationId: null } }) } })
+  const r = fake()
+  assert.equal(r.status, 10, r.out)
+  assert.match(r.stdout, /^labeled: .*base uses a merge queue; not merged/)
+  const dequeue = calls().find((a) => keyOf(a) === 'graphql dequeue')
+  assert.ok(dequeue, 'dequeuePullRequest called')
+  assert.equal(varOf(dequeue, 'id'), 'PR_node41')
+  assert.equal(calls().filter((a) => a[1] === 'comment').length, 1)
+  neverFlags()
+})
+
+test('B17 a failed dequeue is refused and says the PR may still be queued; no label or comment', () => {
+  gh({ extra: { 'graphql pr': prAfter({ state: 'OPEN', isInMergeQueue: true }), 'graphql dequeue': { stderr: 'GraphQL: Could not dequeue\n', code: 1 } } })
+  const r = fake()
+  assert.equal(r.status, 2, r.out)
+  assert.match(r.stdout, /^refused: .*may still be queued/)
+  assert.ok(!calls().some((a) => ['edit', 'comment'].includes(a[1])))
 })
