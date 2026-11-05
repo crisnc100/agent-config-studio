@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { describeCli } from './fixtures/describe-cli.mjs';
 import { tempDir, track } from './fixtures/cleanup.mjs';
+import { INSTALL_ONLY_ROLES } from '../lib/roles.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MODELS = JSON.parse(fs.readFileSync(path.join(ROOT, 'models.default.json'), 'utf8'));
@@ -142,7 +143,9 @@ try {
     fs.writeFileSync(rolesFile, '{"version":1}\n');
     const v = await view();
     ok('the view lists every seeded role with its resolved id', ROLES.roles.reviewer && v.roles.find((r) => r.name === 'reviewer')?.ids[0] === MODELS.models.astra);
-    ok('every field says default, and the user file sets nothing', v.roles.length === Object.keys(ROLES.roles).length && v.roles.every((r) => !r.unset && Object.values(r.provenance).every((p) => p === 'default')) && v.userText === '{"version":1}\n');
+    const filled = v.roles.filter((r) => !INSTALL_ONLY_ROLES.includes(r.name));
+    ok('every field says default, and the user file sets nothing', filled.length === Object.keys(ROLES.roles).filter((n) => !INSTALL_ONLY_ROLES.includes(n)).length && filled.every((r) => !r.unset && Object.values(r.provenance).every((p) => p === 'default')) && v.userText === '{"version":1}\n');
+    ok('an install-only role (security) stays unset in a legacy file', INSTALL_ONLY_ROLES.every((n) => v.roles.find((r) => r.name === n)?.unset === true));
     ok('flavor is listed per family', v.flavor.find((f) => f.family === 'sol')?.flavor.brief === ROLES.flavor.sol.brief);
     ok('the Describe backend is the Assist registry default for claude', v.describe.harness === 'claude' && v.describe.model === MODELS.models[MODELS.assist.claude.default] && v.describe.ready === true, JSON.stringify(v.describe));
 
