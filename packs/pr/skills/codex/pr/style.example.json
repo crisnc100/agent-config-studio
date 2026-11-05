@@ -1,0 +1,62 @@
+{
+  "sections": [
+    {
+      "id": "gif",
+      "title": "GIF",
+      "on": false,
+      "urls": []
+    },
+    {
+      "id": "summary",
+      "title": "What this does",
+      "on": true
+    },
+    {
+      "id": "goal",
+      "title": "Did it match the goal?",
+      "on": true
+    },
+    {
+      "id": "changes",
+      "title": "What changed",
+      "on": true
+    },
+    {
+      "id": "try",
+      "title": "How to try it",
+      "on": true
+    },
+    {
+      "id": "review",
+      "title": "Review highlights",
+      "on": true
+    },
+    {
+      "id": "deferred",
+      "title": "Deferred findings",
+      "on": true
+    },
+    {
+      "id": "docs",
+      "title": "Docs and context",
+      "on": true
+    },
+    {
+      "id": "agent",
+      "title": "What the agent did",
+      "on": true
+    },
+    {
+      "id": "quote",
+      "title": "Agent's take",
+      "on": true
+    },
+    {
+      "id": "record",
+      "title": "Review record",
+      "on": false
+    }
+  ],
+  "tone": "plain",
+  "emoji": true
+}

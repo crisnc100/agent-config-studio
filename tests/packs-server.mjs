@@ -109,7 +109,7 @@ try {
   {
     const r = await get('/api/packs');
     const ids = (r.body?.packs || []).map((p) => p.id);
-    ok('every pack, in the catalog order', ids.join() === 'review-gate,build,advisor,second-opinion,handoff,flag,worktree', ids.join());
+    ok('every pack, in the catalog order', ids.join() === 'review-gate,build,advisor,second-opinion,handoff,flag,pr,worktree', ids.join());
     ok('each with a summary and a full explain', r.body.packs.every((p) => p.summary && p.explain.what && p.explain.does && p.explain.undo && p.explain.changes.length));
     ok('each part with its own explain and changes', r.body.packs.every((p) => p.parts.every((x) => x.explain.what && x.explain.changes.length)));
     const rg = r.body.packs.find((p) => p.id === 'review-gate');
