@@ -38,3 +38,12 @@ Tests BM7–BM10 written first; 7 of 8 failed at 89e41ec (BM7 "fix check saw it 
 4. **Message.** sidesNote now says "...; slice-review just that file at the tip (REVIEW_PATHS=…) and close that slice; review <id> keeps covering every other file, ...". Gate uses the anchor close's review id; close uses the review being closed.
 
 Full suite: 612/612 outside the sandbox.
+
+## Merge of main (#41, #42) and leftovers
+
+- Merge 072fd1d: conflicts in VALUE_FLAGS (kept --security-worker and --remote), unjudgedStats (main's same-state rule, measured from coverBase, deletion check against that base) and closeSummary (main's tipTier/tierLines with coverBase). Suite 656/656.
+- a. A Grade recheck counts as having seen its graded files for mergeScope (head descends from every touching merge, same state at HEAD) and for closeCoverage. Test BM11.
+- b. detectDefaultBase no longer runs `remote set-head`; the warning now says to run it once by hand. Claude code-review skill "Portable" paragraph says so (the codex twin has no such paragraph). Test BM12.
+- c. closeCoverage drops main-equal files only when no record (review, fix check, recheck) saw that exact state. Test BM13.
+- d. packs/build/skills/{claude,codex}/build/SKILL.md rule 8 carries the merge-not-rebase / re-close wording.
+- Tests BM11-BM13 failed at 072fd1d; full suite 659/659 outside the sandbox.
