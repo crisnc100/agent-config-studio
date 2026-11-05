@@ -7,9 +7,9 @@
 // Never --auto, --admin, --squash or --rebase. Every run logs an intent record, then an outcome record, to
 // merge-log.jsonl beside the review log.
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, statSync } from 'node:fs'
+import { accessSync, appendFileSync, constants, existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomBytes } from 'node:crypto'
 
@@ -27,8 +27,28 @@ const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 const GREEN = ['pass', 'skipping']
 const RUN = `${new Date().toISOString()}-${randomBytes(3).toString('hex')}`
 
+// Every helper named by its bare name (git, gh) runs from an absolute PATH entry only, so a `.` or empty entry never
+// picks a repository's ./git or ./gh. This is review.mjs's which(), copied to keep the runtime standalone; with PATH
+// unset, the spawn's own default. A helper that is not found fails closed: refused, naming it. Children get the same
+// absolute-only PATH.
+const isExecutable = (p) => {
+  try {
+    accessSync(p, constants.X_OK)
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
+const PATH_DIRS = String(process.env.PATH ?? '/usr/bin:/bin').split(':').filter((dir) => isAbsolute(dir))
+function which(name) {
+  for (const dir of PATH_DIRS) if (isExecutable(join(dir, name))) return join(dir, name)
+  return null
+}
+const CHILD_ENV = { ...process.env, PATH: PATH_DIRS.join(':') }
 const run = (cmd, argv, cwd = undefined) => {
-  const r = spawnSync(cmd, argv, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...(cwd && { cwd }) })
+  const bin = String(cmd).includes('/') ? cmd : which(cmd)
+  if (!bin) refuse(`${cmd} is not on PATH (only absolute PATH entries count, so a ./${cmd} in the checkout never runs)`)
+  const r = spawnSync(bin, argv, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: CHILD_ENV, ...(cwd && { cwd }) })
   return { code: r.error ? null : r.status, stdout: r.stdout || '', stderr: r.stderr || '', error: r.error }
 }
 const git = (...argv) => run('git', argv)
@@ -150,20 +170,28 @@ if (!human.length) {
   const merged = run('gh', ['pr', 'merge', n, '--merge', '--match-head-commit', HEAD])
   if (merged.code !== 0) refuse(`gh pr merge failed: ${firstLine(merged)}`)
   // Success may only have queued it or set auto-merge: merged means state MERGED now.
-  const after = graphql('query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { id state isInMergeQueue autoMergeRequest { enabledAt } } } }',
-    ['-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${n}`])
+  const PR_QUERY = 'query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { id state isInMergeQueue autoMergeRequest { enabledAt } } } }'
+  const prVars = ['-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${n}`]
+  const after = graphql(PR_QUERY, prVars)
   const now = after.data?.repository?.pullRequest
   if (now?.state === 'MERGED') finish('merged', `PR #${n} at ${HEAD}`)
   if (now?.isInMergeQueue) {
     const dequeued = graphql('mutation($id: ID!) { dequeuePullRequest(input: { id: $id }) { clientMutationId } }', ['-f', `id=${now.id}`])
     if (!dequeued.data) refuse(`gh pr merge put PR #${n} in a merge queue and dequeuing it failed, so it may still be queued: ${dequeued.error}`)
     human.push('base uses a merge queue; not merged')
-  } else {
-    // We never enable auto-merge, so take back whatever the merge call set; nothing set fails harmlessly.
+  } else if (!now) {
     run('gh', ['pr', 'merge', n, '--disable-auto'])
-    if (!now) refuse(`gh pr merge ran, but its result could not be read, so PR #${n} may still be queued (auto-merge disabled if it was on): ${after.error}`)
+    refuse(`gh pr merge ran, but its result could not be read, so PR #${n} may still be queued or set to auto-merge (tried to disable auto-merge): ${after.error}`)
+  } else if (now.autoMergeRequest) {
+    // We never enable auto-merge, so take back what the merge call set, and confirm it is gone.
+    const autoOn = `auto-merge may still be enabled on PR ${n}; disable it in GitHub`
+    const disabled = run('gh', ['pr', 'merge', n, '--disable-auto'])
+    if (disabled.code !== 0) refuse(`${autoOn} (gh pr merge --disable-auto failed: ${firstLine(disabled)})`)
+    const again = graphql(PR_QUERY, prVars)
+    const still = again.data?.repository?.pullRequest
+    if (!still || still.autoMergeRequest) refuse(`${autoOn} (${still ? 'it still reads as set' : `re-read failed: ${again.error}`})`)
     human.push('base uses a merge queue or auto-merge; not merged')
-  }
+  } else human.push(`gh pr merge did not merge PR #${n} (state ${now.state}); not merged`)
 }
 
 // 5. Needs a human.

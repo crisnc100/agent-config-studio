@@ -242,9 +242,9 @@ function stricterSecurity(repo, home, p) {
       `raise the security pass above "${base.run}" (${SECURITY_RUNS.join(' < ')})`)
   return { run: chosen, timeoutMs: base.timeoutMs }
 }
-function stricterMerge(repo, home, p) {
+function stricterMerge(repo, home, p, why = 'git tracks it (or a symlink leads to it), so the repository can set it') {
   const base = mergeSettings(home), own = repo && typeof repo === 'object' && !Array.isArray(repo) ? repo : {}
-  const warn = (key, extra = '') => { if (!args.includes('--gate')) console.warn(`⚠ Ignoring ${key} in ${p}: git tracks it (or a symlink leads to it), so the repository can set it${extra}.`) }
+  const warn = (key, extra = '') => { if (!args.includes('--gate')) console.warn(`⚠ Ignoring ${key} in ${p}: ${why}${extra}.`) }
   const policy = String(own.policy ?? base.policy).trim().toLowerCase()
   let chosen = base.policy
   if (MERGE_POLICIES.includes(policy) && MERGE_POLICIES.indexOf(policy) <= MERGE_POLICIES.indexOf(base.policy)) chosen = policy
@@ -288,8 +288,11 @@ function loadConfig() {
     if (config) {
       // REVIEW_CONFIG, or a repo file that is the older home config while the primary one exists, never goes below the floor.
       const floorFile = homeSource(homes)
-      if ((env || repo && homes.some((home) => sameFile(p, home))) && !(floorFile && sameFile(p, floorFile)))
+      if ((env || repo && homes.some((home) => sameFile(p, home))) && !(floorFile && sameFile(p, floorFile))) {
         config.security = Object.hasOwn(config, 'security') ? stricterSecurity(config.security, homeKey(homes, 'security'), p) : homeKey(homes, 'security')
+        // The same floor for merge: such a file may only tighten the home config's merge settings.
+        config.merge = Object.hasOwn(config, 'merge') ? stricterMerge(config.merge, homeMerge(homes), p, 'the repository or an agent can set that file') : homeMerge(homes)
+      }
       if (!repo) return config
       const ownMerge = Object.hasOwn(config, 'merge'), ownSecurity = Object.hasOwn(config, 'security')
       const checked = withoutRepoCommands(config, p, homes)

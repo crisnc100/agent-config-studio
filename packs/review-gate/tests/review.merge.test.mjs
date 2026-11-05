@@ -67,7 +67,9 @@ for (const name of ['codex', 'claude', 'grok']) stub(name, modelBody)
 // The fake review script: prints FAKE_TIER over a covered LOW at HEAD; { "covered": false } prints the uncovered shape.
 const FAKE_REVIEW = `import { execFileSync } from 'node:child_process'
 if (!process.argv.includes('--tier-json')) { console.error('fake review: --tier-json only'); process.exit(9) }
-const tip = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+import { accessSync, constants } from 'node:fs'
+const gitBin = process.env.PATH.split(':').filter((d) => d.startsWith('/')).map((d) => d + '/git').find((p) => { try { accessSync(p, constants.X_OK); return true } catch { return false } })
+const tip = execFileSync(gitBin, ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
 const over = JSON.parse(process.env.FAKE_TIER || '{}')
 if (process.env.FAKE_TIER_RAW) { console.log(process.env.FAKE_TIER_RAW); process.exit(Number(process.env.FAKE_TIER_CODE || 0)) }
 if (over.covered === false) { console.log(JSON.stringify({ tip, covered: false, reason: 'No complete close covers HEAD', logPath: process.env.FAKE_LOG })); process.exit(3) }
@@ -544,9 +546,9 @@ test('B13 run from a subdirectory, the repo config still counts: a repo policy o
 
 test('B14 a merge that only queued or set auto-merge is undone and goes to a human, not reported merged', () => {
   const queued = { autoMergeRequest: { enabledAt: '2026-11-05T18:00:00Z' }, state: 'OPEN' }
-  for (const disable of [{ stdout: '' }, { stderr: 'no auto-merge to disable\n', code: 1 }]) {
+  for (const disable of [{ stdout: '' }]) {
     rmSync(GH_LOG, { force: true })
-    gh({ extra: { 'graphql pr': prAfter(queued), 'pr merge': [{ stdout: '' }, disable] } })
+    gh({ extra: { 'graphql pr': [prAfter(queued), prAfter({ state: 'OPEN' })], 'pr merge': [{ stdout: '' }, disable] } })
     const r = fake()
     assert.equal(r.status, 10, r.out)
     assert.match(r.stdout, /^labeled: .*base uses a merge queue or auto-merge; not merged/)
@@ -654,4 +656,75 @@ test('B17 a failed dequeue is refused and says the PR may still be queued; no la
   assert.equal(r.status, 2, r.out)
   assert.match(r.stdout, /^refused: .*may still be queued/)
   assert.ok(!calls().some((a) => ['edit', 'comment'].includes(a[1])))
+})
+
+// Fix round (review 2026-11-05-18-55-13-de6bd2).
+test('B18 a git or gh planted in the checkout never runs, even with . first on PATH', () => {
+  const marker = join(ROOT, 'planted-ran')
+  for (const name of ['git', 'gh']) {
+    writeFileSync(join(REPO, name), `#!/bin/sh\necho ${name} >> ${JSON.stringify(marker)}\nexit 1\n`)
+    chmodSync(join(REPO, name), 0o755)
+  }
+  gh()
+  const path = ['.', '', BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':')
+  try {
+    const r = fake({}, [], { PATH: path })
+    assert.equal(existsSync(marker), false, `planted ran: ${existsSync(marker) && readFileSync(marker, 'utf8')}`)
+    allowedMerge(r)
+  } finally { rmSync(join(REPO, 'git'), { force: true }); rmSync(join(REPO, 'gh'), { force: true }) }
+})
+
+test('B18 a gh that is not on an absolute PATH entry fails closed: refused, nothing planted runs', () => {
+  const marker = join(ROOT, 'planted-ran')
+  writeFileSync(join(REPO, 'gh'), `#!/bin/sh\necho gh >> ${JSON.stringify(marker)}\nexit 0\n`); chmodSync(join(REPO, 'gh'), 0o755)
+  const noGh = join(ROOT, 'bin-no-gh'); mkdirSync(noGh, { recursive: true })
+  const path = ['.', noGh, dirname(process.execPath), '/usr/bin', '/bin'].join(':')
+  try {
+    const r = fake({}, [], { PATH: path })
+    assert.equal(r.status, 2, r.out)
+    assert.match(r.stdout, /^refused: .*gh.*not on PATH/)
+    assert.equal(existsSync(marker), false)
+  } finally { rmSync(join(REPO, 'gh'), { force: true }) }
+})
+
+test('B19 REVIEW_CONFIG at a tracked repo config may only tighten merge settings; at the home config it is the home config', () => {
+  homeConfig({ merge: { policy: 'standard', humanComment: 'Home says wait.' } })
+  commit({ '.claude/review-config.json': JSON.stringify({ merge: { policy: 'always', requireChecks: false, allowBehind: true, humanComment: '@bot deploy', classifier: 'x' } }) })
+  realClose({ REVIEW_CONFIG: '' })
+  const agent = run(process.execPath, [REVIEW, '--tier-json'], { REVIEW_CONFIG: join(REPO, '.claude/review-config.json') })
+  assert.equal(agent.status, 0, agent.out)
+  const json = JSON.parse(agent.stdout)
+  assert.equal(json.policy, 'standard')
+  assert.deepEqual(json.merge, { onHuman: 'comment', humanComment: 'Home says wait.', requireChecks: true, allowBehind: false })
+  for (const key of ['merge.policy "always"', 'merge.requireChecks', 'merge.allowBehind', 'merge.humanComment', 'merge.classifier'])
+    assert.ok(agent.stderr.includes(`Ignoring ${key}`), `${key}: ${agent.stderr}`)
+  // An untracked file outside the repository, named by REVIEW_CONFIG: the same floor.
+  const outside = join(ROOT, 'agent-config.json')
+  writeFileSync(outside, JSON.stringify({ merge: { policy: 'always', requireChecks: false } }))
+  const loose = JSON.parse(run(process.execPath, [REVIEW, '--tier-json'], { REVIEW_CONFIG: outside }).stdout)
+  assert.deepEqual([loose.policy, loose.merge.requireChecks], ['standard', true])
+  // Tighter is honored.
+  writeFileSync(outside, JSON.stringify({ merge: { policy: 'off' } }))
+  assert.equal(JSON.parse(run(process.execPath, [REVIEW, '--tier-json'], { REVIEW_CONFIG: outside }).stdout).policy, 'off')
+  // REVIEW_CONFIG at the home config itself: every key, as from home.
+  homeConfig({ merge: { policy: 'always', requireChecks: false, humanComment: 'Home.' } })
+  const home = JSON.parse(run(process.execPath, [REVIEW, '--tier-json'], { REVIEW_CONFIG: HOME_CONFIG }).stdout)
+  assert.deepEqual([home.policy, home.merge.requireChecks, home.merge.humanComment], ['always', false, 'Home.'])
+})
+
+const autoSet = { autoMergeRequest: { enabledAt: '2026-11-05T18:00:00Z' }, state: 'OPEN' }
+test('B20 a failed --disable-auto is refused: auto-merge may still be enabled', () => {
+  gh({ extra: { 'graphql pr': prAfter(autoSet), 'pr merge': [{ stdout: '' }, { stderr: 'HTTP 502\n', code: 1 }] } })
+  const r = fake()
+  assert.equal(r.status, 2, r.out)
+  assert.match(r.stdout, /^refused: auto-merge may still be enabled on PR 41; disable it in GitHub/)
+  assert.ok(!calls().some((a) => ['edit', 'comment'].includes(a[1])), 'no label or comment')
+})
+
+test('B20 auto-merge still set after --disable-auto succeeded is refused too', () => {
+  gh({ extra: { 'graphql pr': prAfter(autoSet), 'pr merge': [{ stdout: '' }, { stdout: '' }] } })
+  const r = fake()
+  assert.equal(r.status, 2, r.out)
+  assert.match(r.stdout, /^refused: auto-merge may still be enabled on PR 41; disable it in GitHub/)
+  assert.equal(calls().filter((a) => keyOf(a) === 'graphql pr').length, 2, 're-read after disabling')
 })

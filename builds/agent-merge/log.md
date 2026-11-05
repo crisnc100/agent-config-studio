@@ -91,3 +91,16 @@
   queue; not merged", dequeue failure -> refused "may still be queued"; otherwise --disable-auto and needs-human as
   before; unreadable -> --disable-auto, refused "may still be queued".
 - Tests: B17 x4 (failed at fad55e5); B2/B12/B14 (this PR's own) follow the GraphQL read. Suite 677/677; catalog 49/49.
+
+## PR B fix round (review 2026-11-05-18-55-13-de6bd2)
+- Tests first: B18 x2 (f1), B19 (f2), B20 x2 (f3); all failed at 2ee329c (B18: the planted ./git ran).
+- f1: merge.mjs resolves git and gh with review.mjs's which() (absolute PATH entries only), copied; a missing tool
+  is refused naming it; children get the absolute-only PATH. review.mjs is spawned by process.execPath. The test's
+  fake review.mjs also resolves git from absolute entries, so a planted ./git can't run through the fake.
+- f2: REVIEW_CONFIG (and a repo file that is the older home config while the primary exists) gets the same floor as
+  #42's security.run: merge settings only tighten relative to the home config (stricterMerge, warning "the repository
+  or an agent can set that file"); humanComment and classifier come from home. At the home config itself: honored.
+- f3: after a merge call that set auto-merge, --disable-auto must succeed and a GraphQL re-read must show no
+  autoMergeRequest, else refused "auto-merge may still be enabled on PR <n>; disable it in GitHub". A PR neither
+  merged, queued nor auto-merging -> needs-human "gh pr merge did not merge PR #n". B14 (this PR's) now re-reads.
+- Suite 682/682 (one earlier run: 2 load flakes in routing F1 and records P1, both pass alone); catalog 49/49.
