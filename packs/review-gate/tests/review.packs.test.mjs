@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 
 const PACKS = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PACKAGE = resolve(PACKS, '..')
-const IDS = ['review-gate', 'build', 'advisor', 'second-opinion', 'handoff', 'flag', 'worktree']
+const IDS = ['review-gate', 'build', 'advisor', 'second-opinion', 'handoff', 'flag', 'pr', 'worktree']
 const KINDS = ['skill', 'instructions', 'guard', 'push-gate', 'codex-log-access', 'worktree']
 const HARNESSES = ['claude', 'codex']
 const manifest = (id) => JSON.parse(readFileSync(join(PACKS, id, 'pack.json'), 'utf8'))
@@ -27,7 +27,7 @@ function shipped(dir = PACKS) {
   })
 }
 
-test('the seven packs exist, each with a pack.json whose id matches its folder', () => {
+test('the eight packs exist, each with a pack.json whose id matches its folder', () => {
   const folders = readdirSync(PACKS).filter((name) => existsSync(join(PACKS, name, 'pack.json'))).sort()
   assert.deepEqual(folders, [...IDS].sort())
   for (const id of IDS) assert.equal(manifest(id).id, id)
@@ -187,7 +187,7 @@ test('the frontmatter check refuses an unquoted key: value inside a plain scalar
 })
 test('every shipped SKILL.md has frontmatter a strict YAML parser accepts, with its folder name and a description', () => {
   const skills = shipped().filter((path) => basename(path) === 'SKILL.md')
-  assert.equal(skills.length, 12, 'six skills, each for both harnesses')
+  assert.equal(skills.length, 14, 'seven skills, each for both harnesses')
   for (const path of skills) {
     const rel = relative(PACKS, path)
     let fields
@@ -305,7 +305,7 @@ test('the raw-call lint finds planted calls and lets only the build skill\'s wri
 })
 test('no shipped skill makes a raw claude -p, codex exec or grok -p model call: they ask through ask-model', () => {
   const files = shipped().filter((path) => relative(PACKS, path).split('/')[1] === 'skills')
-  assert.equal(files.filter((path) => basename(path) === 'SKILL.md').length, 12, 'six skills, each for both harnesses')
+  assert.equal(files.filter((path) => basename(path) === 'SKILL.md').length, 14, 'seven skills, each for both harnesses')
   assert.deepEqual(files.flatMap((path) => rawModelCalls(relative(PACKS, path), readFileSync(path, 'utf8'))), [])
   const skill = (id, harness) => readFileSync(join(PACKS, id, 'skills', harness, id, 'SKILL.md'), 'utf8')
   for (const harness of HARNESSES) {
@@ -342,7 +342,7 @@ test('the role-lookup lint finds planted jq lookups and lets prose and other jq 
 })
 test('no shipped skill looks up a role\'s alt or a family\'s effort with jq: ask-model --second, --effort-from and model-id --effort do', () => {
   const files = shipped().filter((path) => basename(path) === 'SKILL.md')
-  assert.equal(files.length, 12, 'six skills, each for both harnesses')
+  assert.equal(files.length, 14, 'seven skills, each for both harnesses')
   assert.deepEqual(files.flatMap((path) => roleLookups(relative(PACKS, path), readFileSync(path, 'utf8'))), [])
   const skill = (id, harness) => readFileSync(join(PACKS, id, 'skills', harness, id, 'SKILL.md'), 'utf8')
   for (const harness of HARNESSES) {
