@@ -2333,14 +2333,18 @@ function warnDropped(findings) {
 // ambiguousPaths { id: [paths] }, and instancePaths { id: [paths] } for a grouped finding's located, unambiguous
 // instances. Close authorizes a changed file only when it equals a fixed finding's path or one of its instance paths.
 function recordedLocations(findings) {
-  const resolvedPaths = {}, ambiguousPaths = {}, instancePaths = {}
+  const resolvedPaths = {}, ambiguousPaths = {}, instancePaths = {}, instanceResolved = {}
   for (const f of findings) {
     if (f[WHERE]?.ambiguous) ambiguousPaths[f.id] = f[WHERE].ambiguous
     else if (f[WHERE]?.path) resolvedPaths[f.id] = { path: f[WHERE].path, commit: f[WHERE].commit }
-    const paths = (f[WHERE]?.instances || []).map((at) => at.path).filter(Boolean)
+    const places = f[WHERE]?.instances || []
+    const paths = places.map((at) => at.path).filter(Boolean)
     if (paths.length) instancePaths[f.id] = paths
+    // Aligned with the finding's instances: { path, commit } like resolvedPaths, or null for an ambiguous one.
+    if (places.length) instanceResolved[f.id] = places.map((at) => at.path ? { path: at.path, commit: at.commit } : null)
   }
-  return { resolvedPaths, ...(Object.keys(ambiguousPaths).length && { ambiguousPaths }), ...(Object.keys(instancePaths).length && { instancePaths }) }
+  return { resolvedPaths, ...(Object.keys(ambiguousPaths).length && { ambiguousPaths }), ...(Object.keys(instancePaths).length && { instancePaths }),
+    ...(Object.keys(instanceResolved).length && { instanceResolved }) }
 }
 
 // ── Optional second opinion: another family CONFIRMs or REFUTEs each HIGH/MEDIUM ──
@@ -4806,10 +4810,10 @@ const EVAL_RANK = { high: 3, medium: 2, low: 1 }
 // The paths a finding may name: the resolved one when the quote check located it; else the path as cited, with the case
 // repo's own folder (as given, or through symlinks) stripped from an absolute path, ./ dropped, and the a/ or b/ diff
 // prefix as a second reading.
-function evalFindingPaths(f, record, repo) {
-  const resolved = record.resolvedPaths?.[f.id]?.path
+function evalFindingPaths(place, repo) {
+  const resolved = place.where?.path
   if (resolved) return [resolved]
-  let p = String(f.file ?? '')
+  let p = String(place.file ?? '')
   for (const top of repo ? [repo, realish(repo)] : []) if (p.startsWith(`${top}/`)) { p = p.slice(top.length + 1); break }
   p = p.replace(/^\.\//, '')
   return /^[ab]\//.test(p) ? [p, p.slice(2)] : [p]
@@ -4817,9 +4821,9 @@ function evalFindingPaths(f, record, repo) {
 // A base-side catch: the finding names the expect's file, its cited line is within the expected lines ± EVAL_SLACK, and
 // its quote is in the base tree near that cited line, at lines that also overlap the expected ones ± EVAL_SLACK
 // (whitespace runs collapsed, as the quote check does). An identical snippet elsewhere in the file does not count.
-function quotedInBase(c, e, f, record, repo) {
+function quotedInBase(c, e, f, repo) {
   const bytes = c.base.get(e.file), span = evalSpan(f.line)
-  if (!bytes || !span || !evalFindingPaths(f, record, repo).includes(e.file)) return false
+  if (!bytes || !span || !evalFindingPaths(f, repo).includes(e.file)) return false
   const from = e.lines[0] - EVAL_SLACK, to = e.lines[1] + EVAL_SLACK
   if (span[0] > to || span[1] < from) return false
   const norm = (l) => l.replace(/\s+/g, ' ').trim()
@@ -4832,13 +4836,23 @@ function quotedInBase(c, e, f, record, repo) {
     if (s <= to && s + q.length - 1 >= from && lines.slice(s - 1, s - 1 + q.length).join('\n').includes(needle)) return true
   return false
 }
+// A finding's places: its main location and every instance, each with its file, line, quote and resolved { path, commit }.
+const evalPlaces = (f, record) => [{ file: f.file, line: f.line, quote: f.quote, where: record.resolvedPaths?.[f.id] },
+  ...(Array.isArray(f.instances) ? f.instances : []).map((inst, i) => ({ file: inst?.file, line: inst?.line, quote: inst?.quote, where: record.instanceResolved?.[f.id]?.[i] ?? null }))]
 function scoreEvalCase(c, record, repo = null) {
+  // One entry per located place: a grouped finding catches at any of its places and is tolerated only when all are allowed.
   const located = [], unlocated = []
   for (const f of record.findingDetails || []) {
-    const where = record.resolvedPaths?.[f.id], span = evalSpan(f.line)
-    if (f.status === 'unverified-quote' || !where?.path || !span) unlocated.push(f)
-    else located.push({ f, path: where.path, side: where.commit === record.head ? 'head' : where.commit === record.baseSha ? 'base' : null, span })
+    const [main] = evalPlaces(f, record)
+    if (f.status === 'unverified-quote' || !main.where?.path || !evalSpan(main.line)) { unlocated.push(f); continue }
+    for (const place of evalPlaces(f, record)) {
+      const where = place.where, span = evalSpan(place.line)
+      if (where?.path && span)
+        located.push({ f, path: where.path, side: where.commit === record.head ? 'head' : where.commit === record.baseSha ? 'base' : null, span, line: place.line })
+    }
   }
+  // One entry per finding, its first place in the list.
+  const findingsOf = (list) => list.filter((l, i) => list.findIndex((o) => o.f.id === l.f.id) === i)
   const near = (target, side) => located.filter((l) => l.path === target.file && l.side === side &&
     l.span[0] <= target.lines[1] + EVAL_SLACK && l.span[1] >= target.lines[0] - EVAL_SLACK)
   const strongest = (list) => [...list].sort((a, b) => (EVAL_RANK[b.f.severity] || 0) - (EVAL_RANK[a.f.severity] || 0))[0]
@@ -4847,25 +4861,28 @@ function scoreEvalCase(c, record, repo = null) {
     const expects = c.expect.map((e) => {
       // Removed code has no line at HEAD when its file survives, so the quote check leaves such a finding unlocated (or
       // locates it at HEAD): a base-side expect also takes any finding on that file whose quote is in the base tree there.
-      const hits = [...near(e, e.side), ...(e.side === 'base' ? (record.findingDetails || []).filter((f) => quotedInBase(c, e, f, record, repo)).map((f) => ({ f })) : [])]
+      const hits = [...near(e, e.side), ...(e.side === 'base' ? (record.findingDetails || [])
+        .filter((f) => evalPlaces(f, record).some((place) => quotedInBase(c, e, place, repo))).map((f) => ({ f })) : [])]
       hits.forEach((l) => used.add(l.f.id))
       const best = strongest(hits)
       return { file: e.file, side: e.side, lines: e.lines, caught: !!best, ...(best && { by: best.f.id, severity: best.f.severity }) }
     })
     const caught = expects.every((e) => e.caught)
     const weakest = caught ? expects.map((e) => e.severity).sort((a, b) => (EVAL_RANK[a] || 0) - (EVAL_RANK[b] || 0))[0] : null
-    return { outcome: caught ? 'caught' : 'missed', severity: weakest, expects, extra: located.filter((l) => !used.has(l.f.id)).length,
+    return { outcome: caught ? 'caught' : 'missed', severity: weakest, expects, extra: findingsOf(located.filter((l) => !used.has(l.f.id))).length,
       unlocated: unlocated.filter((f) => !used.has(f.id)).length }
   }
   const tolerated = new Set(c.allow.flatMap((a) => near(a, 'head')))
-  const outside = located.filter((l) => !tolerated.has(l))
+  // A finding is outside the allow list when any of its places is (shown at its first such place).
+  const outside = findingsOf(located.filter((l) => !tolerated.has(l)))
   const alarms = outside.filter((l) => blocking(l.f))
+  const outsideIds = new Set(outside.map((l) => l.f.id))
   return {
     outcome: alarms.length ? 'false-alarm' : 'clean',
     falseAlarms: alarms.length,
-    alarms: alarms.map((l) => ({ id: l.f.id, file: l.path, line: l.f.line, severity: l.f.severity, ...(l.f.unscored && { unscored: true }) })),
+    alarms: alarms.map((l) => ({ id: l.f.id, file: l.path, line: l.line, severity: l.f.severity, ...(l.f.unscored && { unscored: true }) })),
     lows: outside.length - alarms.length,
-    allowed: tolerated.size,
+    allowed: findingsOf(located.filter((l) => !outsideIds.has(l.f.id))).length,
     unlocated: unlocated.length,
   }
 }
