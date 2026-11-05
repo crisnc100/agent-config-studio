@@ -375,6 +375,63 @@ test('C3 --check flags a finding id only where a finding id goes: at the start o
   assert.deepEqual(real.problems, [], 'ids from the summary are fine in those positions')
 })
 
+test('C3 --check: deferred lines and the HIGH preamble must be visible, not in <details> or an HTML comment; a folded record only when the record is on', () => {
+  const b = fixture()
+  closedGate(b)
+  const f = b.facts()
+  const body = good(f)
+  const lines = f.review.deferred.join('\n')
+  const missing = f.review.deferred.map((l) => `"Deferred findings" is missing this line, copied verbatim from the review summary: ${l}`)
+  const inDetails = checked(b, body.replace(`## Deferred findings\n${lines}\n`, `## Deferred findings\n<details><summary>the list</summary>\n\n${lines}\n</details>\n`))
+  assert.deepEqual(inDetails.problems, missing)
+  const inComment = checked(b, body.replace(`## Deferred findings\n${lines}\n`, `## Deferred findings\n<!--\n${lines}\n-->\n`))
+  assert.deepEqual(inComment.problems, missing)
+  const first = [...f.review.criteria, ...f.review.deferredHigh]
+  const preamble = checked(b, body.replace(`${first.join('\n')}\n`, `<!--\n${first.join('\n')}\n-->\n`))
+  assert.deepEqual(preamble.problems, first.map((l) => `this goes first, above every section, verbatim: ${l}`))
+  const foldedOff = checked(b, `${body}\n<details><summary>Review record</summary>\n\n\`\`\`\n${f.review.summary}\n\`\`\`\n</details>\n`)
+  assert.deepEqual(foldedOff.problems, ['the review record is off in your style: leave it out, folded or not'])
+  const foldedOther = checked(b, `${body}\n<details><summary>raw</summary>\n\n${f.review.summary}\n</details>\n`)
+  assert.deepEqual(foldedOther.problems, ['the review record is off in your style: leave it out, folded or not'])
+})
+
+test('C3 --check: file names in code spans and list items must come from the facts, root and extensionless names included', () => {
+  const b = fixture()
+  closedGate(b)
+  const f = b.facts()
+  const body = good(f)
+  const add = (text) => checked(b, body.replace('I kept it small.', text)).problems.sort()
+  assert.deepEqual(add('Touched `Dockerfile` and `ghost-package.json` and `src/ghost`.'),
+    ['file Dockerfile is not in the facts', 'file ghost-package.json is not in the facts', 'file src/ghost is not in the facts'])
+  assert.deepEqual(add('I kept it small.\n- src/ghost — gone\n- Makefile: build\n- **lib/ghost.ts** — new'),
+    ['file Makefile is not in the facts', 'file lib/ghost.ts is not in the facts', 'file src/ghost is not in the facts'])
+  assert.deepEqual(add('Calls `JSON.parse` and `node --test`, version `v1.2`, and/or more; see `src/`, `builds/feat/plan.md`, `.gitignore` and `node src/app.js --x`.'), [],
+    'code that is not a file name, a folder of changed files, and changed files pass')
+  assert.deepEqual(add('I kept it small.\n- and then some'), [])
+})
+
+test('C3 --check: a hex token beside "commit" or "sha", or in backticks, must be a known commit, letters-only or digits-only included', () => {
+  const b = fixture()
+  closedGate(b)
+  const f = b.facts()
+  const body = good(f)
+  const add = (text) => checked(b, body.replace('I kept it small.', text)).problems.sort()
+  assert.deepEqual(add('See commit 1234567, `deadbeef` and sha abcdefa.'),
+    ['sha 1234567 is not in the facts', 'sha abcdefa is not in the facts', 'sha deadbeef is not in the facts'])
+  assert.deepEqual(add('The deadbeef cafe sold 1234567 coffees.'), [], 'plain prose words are not shas')
+  assert.deepEqual(add(`See commit ${f.head.slice(0, 7)} and \`${f.commits[0].sha.slice(0, 9)}\`.`), [])
+})
+
+test('C3 --check: a finding claim in prose ("f1 is fixed", "s4 was rejected") must name a known finding', () => {
+  const b = fixture()
+  closedGate(b)
+  const body = good(b.facts())
+  const add = (text) => checked(b, body.replace('I kept it small.', text)).problems.sort()
+  assert.deepEqual(add('Here s4 was rejected, c2 filed, and f7 deferred.'),
+    ['finding id c2 is not in the facts', 'finding id f7 is not in the facts', 'finding id s4 is not in the facts'])
+  assert.deepEqual(add('Here x1 is deferred and f1 was fixed.'), [])
+})
+
 test('C3 --check with no review: Deferred findings is not required, and a finding id is invented', () => {
   const b = fixture()
   const f = b.facts()

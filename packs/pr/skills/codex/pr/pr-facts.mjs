@@ -346,13 +346,16 @@ export function facts({ cwd = process.cwd(), base: baseFlag, plan: planFlag } = 
 
 /* ── the check ───────────────────────────────────────────────────────── */
 
-// Character ranges inside <details>…</details>, and the text with fenced code blocks blanked out.
-function folds(body) {
+// Character ranges a reader does not see at once: <details>…</details> folds and <!-- … --> comments (an unclosed
+// one runs to the end), and the text with such ranges blanked out, every offset kept.
+function ranges(body, re) {
   const out = []
-  const re = /<details\b[^>]*>[\s\S]*?<\/details>/gi
   for (let m; (m = re.exec(body));) out.push([m.index, m.index + m[0].length])
   return out
 }
+const folds = (body) => ranges(body, /<details\b[^>]*>[\s\S]*?<\/details>/gi)
+const comments = (body) => ranges(body, /<!--[\s\S]*?(?:-->|$)/g)
+const blank = (body, spans) => spans.reduce((t, [a, b]) => t.slice(0, a) + t.slice(a, b).replace(/[^\n]/g, ' ') + t.slice(b), body)
 const inside = (ranges, i) => ranges.some(([a, b]) => i >= a && i < b)
 const lineAt = (body, i) => body.slice(0, i).split('\n').length
 
@@ -378,14 +381,41 @@ const FINDING_RES = [
   new RegExp(`^[ \\t]*(?:[-*+]|\\d+[.)])[ \\t]+(?:\\*\\*|\`)?(${FINDING_ID})\\b`, 'gm'),
   new RegExp(`\\b(${FINDING_ID})(?:\\*\\*|\`)?[ \\t]+(?:HIGH|MEDIUM|LOW)\\b`, 'gi'),
 ]
+FINDING_RES.push(new RegExp(`\\b(${FINDING_ID})(?:\\*\\*|\`)?[ \\t]+(?:(?:is|was|were|got|has been|now|stays|remains|stayed|remained)[ \\t]+)?(?:fixed|deferred|rejected|filed|waived)\\b`, 'gi'))
 const findingIdsIn = (text) => new Set(FINDING_RES.flatMap((re) => [...text.matchAll(re)].map((m) => m[1])))
 const PATH_RE = /(?<![\w./~$:@-])(?:[\w-][\w.-]*\/)+[\w-][\w.-]*\.[A-Za-z0-9]+(?![\w/])/g
+// A hex run is a sha when it reads as one in prose (letters and digits), or sits beside "commit"/"sha", or is a code span.
+const SHA_CONTEXT_RES = [/\b(?:commits?|shas?)\b[ \t]*[:#]?[ \t]*`?([0-9a-f]{7,40})\b/gi, /`([0-9a-f]{7,40})`/gi]
+// File names in code spans and at the start of list items: paths (with or without an extension), names with a known
+// file extension, dotfiles and the usual extensionless root files.
+const FILE_EXT = new Set(('js mjs cjs jsx ts tsx mts cts json jsonc json5 md mdx txt rst yml yaml toml lock css scss sass less html htm ' +
+  'py rb go rs java kt kts swift c h cc cpp hpp cs php sh zsh bash fish sql png jpg jpeg gif svg webp ico avif woff woff2 ttf otf ' +
+  'env ini cfg conf xml csv tsv vue svelte astro lua pl dart ex exs erl hs ml scala gradle tf proto graphql gql ipynb pdf wasm').split(' '))
+const ROOT_FILES = new Set(('Dockerfile Containerfile Makefile GNUmakefile Procfile Gemfile Rakefile Jenkinsfile Vagrantfile Brewfile ' +
+  'Justfile Taskfile Podfile LICENSE LICENCE NOTICE CODEOWNERS CHANGELOG AUTHORS').split(' '))
+export function fileLike(raw) {
+  const t = raw.replace(/^[("'*]+|[)"'*,.;:!?]+$/g, '').replace(/:\d+(?::\d+)?$/, '')
+  if (!t || /^[~$@-]/.test(t) || /[:\\]|\/\//.test(t) || !/[A-Za-z]/.test(t)) return null
+  if (ROOT_FILES.has(t)) return t
+  if (/^[\w.@-]+(?:\/[\w.@-]+)*\/?$/.test(t) && t.includes('/') && t !== '/') return t
+  if (/^\.[A-Za-z][\w.-]*$/.test(t)) return t
+  const ext = t.match(/^[\w-][\w.-]*\.([A-Za-z0-9]+)$/)?.[1]
+  return ext && FILE_EXT.has(ext.toLowerCase()) ? t : null
+}
+function filesNamed(text) {
+  const out = new Set(text.match(PATH_RE) || [])
+  for (const [, span] of text.matchAll(/`([^`\n]+)`/g)) for (const w of span.split(/\s+/)) { const t = fileLike(w); if (t) out.add(t) }
+  for (const [, w] of text.matchAll(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+(?:\*\*|`)?([^\s`]+)/gm)) { const t = fileLike(w); if (t) out.add(t) }
+  return out
+}
 
 export function check(body, f) {
   const problems = [], warnings = [...f.warnings]
   const closed = f.review.state === 'closed'
-  const fold = folds(body)
-  const heads = headings(body)
+  const uncommented = blank(body, comments(body))
+  const fold = folds(uncommented)
+  const heads = headings(uncommented)
+  const visible = blank(uncommented, fold)
   const sections = f.style.sections.filter((s) => s.id !== 'gif')
   const byTitle = new Map(sections.map((s) => [s.title, s]))
 
@@ -400,10 +430,15 @@ export function check(body, f) {
     marks.push({ s, at: h.at })
   }
   const record = sections.find((s) => s.id === 'record')
-  const recordAt = body.indexOf(`<summary>${record.title}</summary>`)
+  const recordAt = uncommented.indexOf(`<summary>${record.title}</summary>`)
   if (record.on && closed) {
     if (recordAt < 0 || !inside(fold, recordAt)) problems.push(`the review record is on: fold it as <details><summary>${record.title}</summary> … </details>`)
     else marks.push({ s: record, at: recordAt })
+  }
+  if (!record.on && closed) {
+    const raw = f.review.summary.split('\n').find((l) => l.startsWith('Review: '))
+    const folded = fold.some(([a, b]) => { const t = uncommented.slice(a, b); return t.includes(`<summary>${record.title}</summary>`) || (raw && t.includes(raw)) })
+    if (folded) problems.push('the review record is off in your style: leave it out, folded or not')
   }
   marks.sort((a, b) => a.at - b.at)
 
@@ -422,12 +457,12 @@ export function check(body, f) {
     const head = heads.find((h) => h.title === DEFERRED_TITLE)
     if (head) {
       const next = heads.find((h) => h.at > head.at)
-      const text = body.slice(head.at, next ? next.at : body.length)
+      const text = visible.slice(head.at, next ? next.at : body.length)
       for (const line of f.review.deferred) if (!text.includes(line)) problems.push(`"Deferred findings" is missing this line, copied verbatim from the review summary: ${line}`)
     }
     const first = heads.length ? heads[0].at : body.length
     for (const line of [...f.review.criteria, ...f.review.deferredHigh]) {
-      const at = body.indexOf(line)
+      const at = visible.indexOf(line)
       if (at < 0 || at > first) problems.push(`this goes first, above every section, verbatim: ${line}`)
     }
     const raw = f.review.summary.split('\n').find((l) => l.startsWith('Review: '))
@@ -440,20 +475,17 @@ export function check(body, f) {
   const text = body.replace(URL_RE, ' ')
   const known = [f.head, f.base.sha, f.base.mergeBase, ...f.commits.map((c) => c.sha)]
   const reviewText = closed ? `${f.review.summary}\n${JSON.stringify(f.review.tier)}` : ''
-  for (const m of new Set(text.match(SHA_RE) || [])) {
-    if (!/[a-f]/.test(m) || !/\d/.test(m)) continue
-    if (!known.some((k) => k.startsWith(m)) && !reviewText.includes(m)) problems.push(`sha ${m} is not in the facts`)
-  }
+  const shas = new Set([...(text.match(SHA_RE) || []).filter((m) => /[a-f]/.test(m) && /\d/.test(m)),
+    ...SHA_CONTEXT_RES.flatMap((re) => [...text.matchAll(re)].map((m) => m[1].toLowerCase()))])
+  for (const m of shas) if (!known.some((k) => k.startsWith(m)) && !reviewText.includes(m)) problems.push(`sha ${m} is not in the facts`)
   for (const m of new Set(text.match(RUN_ID_RE) || [])) if (!reviewText.includes(m)) problems.push(`review id ${m} is not in the facts`)
   const findingIds = new Set(closed ? f.review.summary.split('\n').map((l) => l.match(/^([fxscr]\d{1,3}) /)?.[1]).filter(Boolean) : [])
   for (const m of findingIdsIn(text.replace(RUN_ID_RE, ' '))) if (!findingIds.has(m)) problems.push(`finding id ${m} is not in the facts`)
-  const paths = new Set([...KINDS.flatMap((k) => f.files[k].map((x) => x.path)), f.plan?.path, f.buildLog?.path].filter(Boolean))
-  let tracked = null
-  for (const m of new Set(text.match(PATH_RE) || [])) {
-    if (paths.has(m) || reviewText.includes(m)) continue
-    tracked ??= new Set((git(f.root || process.cwd(), 'ls-files').out || '').split('\n'))
-    if (!tracked.has(m)) problems.push(`file ${m} is not in the facts (not changed, and not in the repo)`)
-  }
+  // Known: a changed file, the plan, the build log, a folder holding one of those, or a name the facts' own text uses.
+  const paths = [...KINDS.flatMap((k) => f.files[k].map((x) => x.path)), f.plan?.path, f.buildLog?.path].filter(Boolean)
+  const factsText = [reviewText, f.plan?.outcome, f.plan?.outOfScope, f.buildLog?.text, ...f.commits.map((c) => c.subject)].filter(Boolean).join('\n')
+  const knownFile = (t) => paths.includes(t) || paths.some((p) => p.startsWith(t.endsWith('/') ? t : `${t}/`)) || factsText.includes(t)
+  for (const m of filesNamed(text)) if (!knownFile(m)) problems.push(`file ${m} is not in the facts`)
 
   if (f.gif.url && !body.includes(f.gif.url)) warnings.push(`the gif section is on: ${f.gif.url} goes at the top`)
   return { ok: problems.length === 0, problems, warnings }
