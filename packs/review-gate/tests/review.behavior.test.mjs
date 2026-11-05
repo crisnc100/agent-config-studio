@@ -231,7 +231,7 @@ test('B2 with one family in the role a dispute cannot get a verdict, and the dis
   assert.equal(calls('codex').length, before, 'no model runs for a verdict nobody can give')
   assert.equal(logLines().at(-1).verdict, 'NO-VERDICT')
   const status = join(ROOT, 'status.json')
-  writeFileSync(status, J({ f1: { status: 'rejected', reason: 'intended', evidence: 'a.js:2' } }))
+  writeFileSync(status, J({ f1: { status: 'rejected', reason: 'intended', response: 'intentional', evidence: 'a.js:2' } }))
   const close = run(['--close', id, '--status', status, '--test-cmd', 'true'], one)
   assert.notEqual(close.status, 0, close.out)
   assert.match(close.stderr, new RegExp(`Rejected f1 requires a REFUTED verdict or an operator waiver; when no second reviewer family can give a verdict, the operator waiver is the path: --waive ${id} f1`))
@@ -257,7 +257,7 @@ test('B2 a team whose lenses are all one family cannot refute its own finding: n
   appendFileSync(LOG, J({ type: 'dispute', ts: new Date().toISOString(), review: id, finding: 'f1', head: logged.head, verdict: 'REFUTED',
     reason: 'intended', evidence: 'a.js:2', verdictEvidence: 'a.js:2 is intended', family: 'claude-team', verifier: 'opus' }) + '\n')
   const status = join(ROOT, 'status.json')
-  writeFileSync(status, J({ f1: { status: 'rejected', reason: 'intended', evidence: 'a.js:2' } }))
+  writeFileSync(status, J({ f1: { status: 'rejected', reason: 'intended', response: 'intentional', evidence: 'a.js:2' } }))
   const refusal = [new RegExp(`Rejected f1 requires a REFUTED verdict or an operator waiver; when no second reviewer family can give a verdict, the operator waiver is the path: --waive ${id} f1`),
     /The REFUTED from opus does not count: a family that reviewed this cannot refute its own finding/]
   stopped(run(['--close', id, '--status', status, '--test-cmd', 'true'], claudeOnly), ...refusal)

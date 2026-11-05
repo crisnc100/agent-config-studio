@@ -145,8 +145,8 @@ test('1.5 close refuses unknown review, missing statuses, unknown keys, severity
     ['missing', {}], [r.id, {}],
     [r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' } }],
     [r.id, { f1: { status: 'fixed', severity: 'low' }, f2: { status: 'fixed' }, f3: { status: 'fixed' } }],
-    [r.id, { f1: { status: 'fixed' }, f2: { status: 'rejected', reason: 'wrong' }, f3: { status: 'fixed' } }],
-    [r.id, { f1: { status: 'rejected', reason: 'wrong', evidence: 'a.js:1' }, f2: { status: 'fixed' }, f3: { status: 'fixed' } }],
+    [r.id, { f1: { status: 'fixed' }, f2: { status: 'rejected', reason: 'wrong', response: 'wrong' }, f3: { status: 'fixed' } }],
+    [r.id, { f1: { status: 'rejected', reason: 'wrong', response: 'wrong', evidence: 'a.js:1' }, f2: { status: 'fixed' }, f3: { status: 'fixed' } }],
     [r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' }, f3: { status: 'fixed' }, typo: { status: 'fixed' } }],
   ]
   for (const [id, statuses] of cases) {
@@ -268,10 +268,10 @@ test('1.8 fix-check findings x ids require their own status and dispute; no unre
   const x = lines().at(-1)
   assert.equal(x.findingDetails[0].id, 'x1')
   assert.notEqual(close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true']).status, 0)
-  assert.notEqual(close(r.id, { f1: { status: 'fixed' }, x1: { status: 'rejected', reason: 'intent', evidence: 'a.js:1' } }, ['--test-cmd', 'true']).status, 0)
+  assert.notEqual(close(r.id, { f1: { status: 'fixed' }, x1: { status: 'rejected', reason: 'intent', response: 'intentional', evidence: 'a.js:1' } }, ['--test-cmd', 'true']).status, 0)
   const dispute = run(['--dispute', x.id, 'x1', '--reason', 'intent', '--evidence', 'a.js:1'])
   assert.equal(dispute.status, 0, dispute.out)
-  const result = close(r.id, { f1: { status: 'fixed' }, x1: { status: 'rejected', reason: 'intent', evidence: 'a.js:1' } }, ['--test-cmd', 'true'])
+  const result = close(r.id, { f1: { status: 'fixed' }, x1: { status: 'rejected', reason: 'intent', response: 'intentional', evidence: 'a.js:1' } }, ['--test-cmd', 'true'])
   assert.equal(result.status, 0, result.out)
   assert.deepEqual(lines().at(-1).outOfScope, [])
 })
@@ -288,7 +288,7 @@ test('1.9 disputes use reviewed snapshot for tool reads, log verdict/families/ev
   assert.deepEqual([logged.type, logged.verdict, logged.family, logged.verifier, logged.evidence], ['dispute', 'REFUTED', 'sol', 'grok', 'a.js:1'])
   const second = run(['--dispute', r.id, 'f1', '--reason', 'again', '--evidence', 'a.js:1'])
   assert.notEqual(second.status, 0)
-  const accepted = close(r.id, { f1: { status: 'rejected', reason: 'intent', evidence: 'a.js:1' } }, ['--test-cmd', 'true'])
+  const accepted = close(r.id, { f1: { status: 'rejected', reason: 'intent', response: 'intentional', evidence: 'a.js:1' } }, ['--test-cmd', 'true'])
   assert.equal(accepted.status, 0, accepted.out)
 })
 test('1.9 Jev failure falls back to other vendor; CONFIRMED, NO-VERDICT and model failure keep finding standing', () => {
@@ -299,7 +299,7 @@ test('1.9 Jev failure falls back to other vendor; CONFIRMED, NO-VERDICT and mode
     assert.equal(dispute.status, 0, dispute.out)
     assert.equal(lines().at(-1).verifier, 'opus')
     assert.equal(lines().at(-1).verdict, mode === 'confirmed' ? 'CONFIRMED' : 'NO-VERDICT')
-    assert.notEqual(close(r.id, { f1: { status: 'rejected', reason: 'wrong', evidence: 'a.js:1' } }, ['--test-cmd', 'true']).status, 0)
+    assert.notEqual(close(r.id, { f1: { status: 'rejected', reason: 'wrong', response: 'wrong', evidence: 'a.js:1' } }, ['--test-cmd', 'true']).status, 0)
   }
 })
 test('1.9 Grade disputes send criterion text/evidence without quote checking', () => {
@@ -314,11 +314,11 @@ test('1.9 Grade disputes send criterion text/evidence without quote checking', (
 test('1.4 closed rejections carry finding text; 1.5 prior REFUTED references require same branch', () => {
   const first = review()
   assert.equal(run(['--dispute', first.id, 'f1', '--reason', 'intent', '--evidence', 'a.js:1']).status, 0)
-  assert.equal(close(first.id, { f1: { status: 'rejected', reason: 'intent', evidence: 'a.js:1' } }, ['--test-cmd', 'true']).status, 0)
+  assert.equal(close(first.id, { f1: { status: 'rejected', reason: 'intent', response: 'intentional', evidence: 'a.js:1' } }, ['--test-cmd', 'true']).status, 0)
   const next = review()
   const prompt = calls().find((c) => c.prompt.includes('Already decided;'))?.prompt
   assert.ok(prompt.includes('wrong return') && prompt.includes('intent') && prompt.includes('a.js:1'))
-  const values = { f1: { status: 'rejected', reason: 'same', evidence: 'a.js:1', refutedBy: { review: first.id, finding: 'f1' } } }
+  const values = { f1: { status: 'rejected', reason: 'same', response: 'wrong', evidence: 'a.js:1', refutedBy: { review: first.id, finding: 'f1' } } }
   assert.equal(close(next.id, values, ['--test-cmd', 'true']).status, 0)
   git('checkout', '-qb', 'other-branch')
   const other = review()
@@ -340,7 +340,7 @@ test('1.10 waiver refuses non-terminal and all runtime agent markers even empty;
   const yes = run(args, { CODEX_HOME: '/metadata', CODEX_VERSION: 'metadata' }, true)
   assert.equal(yes.status, 0, yes.out)
   assert.equal(lines().at(-1).action, 'waive')
-  const accepted = close(r.id, { f1: { status: 'rejected', reason: 'accept bug', evidence: 'a.js:1' } }, ['--no-tests', 'no test runner'])
+  const accepted = close(r.id, { f1: { status: 'rejected', reason: 'accept bug', response: 'intentional', evidence: 'a.js:1' } }, ['--no-tests', 'no test runner'])
   assert.equal(accepted.status, 0, accepted.out)
   const summary = run(['--summary'])
   assert.equal(summary.status, 0, summary.out)
@@ -360,7 +360,7 @@ test('1.10 waiver refuses empty reason and failed durable append, without prompt
 test('1.12 summary prints reviewer, counts, serious rejection reasons and carried unlocated findings; remote never matches', () => {
   const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [{ ...FINDING, severity: 'medium', quote: 'invented' }] }) })
   assert.equal(run(['--dispute', r.id, 'f1', '--reason', 'invented', '--evidence', 'a.js:1']).status, 0)
-  const result = close(r.id, { f1: { status: 'rejected', reason: 'invented quote', evidence: 'a.js:1' } }, ['--no-tests', 'no suite'])
+  const result = close(r.id, { f1: { status: 'rejected', reason: 'invented quote', response: 'wrong', evidence: 'a.js:1' } }, ['--no-tests', 'no suite'])
   assert.equal(result.status, 0, result.out)
   git('remote', 'add', 'origin', 'https://different.invalid')
   const summary = run(['--summary'])
@@ -384,7 +384,7 @@ test('1.5 every supplied reference validates even for fixed, LOW and waived stat
   const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [{ ...FINDING, severity: 'low' }] }) })
   for (const statusValue of [
     { status: 'fixed', refutedBy: { review: 'missing', finding: 'f1' } },
-    { status: 'rejected', reason: 'low', evidence: 'a.js:1', refutedBy: { review: 'missing', finding: 'f1' } },
+    { status: 'rejected', reason: 'low', response: 'wrong', evidence: 'a.js:1', refutedBy: { review: 'missing', finding: 'f1' } },
     { status: 'fixed', refutedBy: { review: r.id, finding: 'f1', severity: 'low' } },
     { status: 'fixed', refutedBy: null },
   ]) {
@@ -395,7 +395,7 @@ test('1.5 every supplied reference validates even for fixed, LOW and waived stat
   }
   const prior = review()
   assert.equal(run(['--waive', prior.id, 'f1', '--reason', 'accept'], {}, true).status, 0)
-  const result = close(prior.id, { f1: { status: 'rejected', reason: 'accept', evidence: 'test', refutedBy: { review: 'missing', finding: 'f1' } } }, ['--test-cmd', 'true'])
+  const result = close(prior.id, { f1: { status: 'rejected', reason: 'accept', response: 'intentional', evidence: 'test', refutedBy: { review: 'missing', finding: 'f1' } } }, ['--test-cmd', 'true'])
   assert.notEqual(result.status, 0)
 })
 test('1.5 tests that dirty tracked files or move HEAD cannot append a close', () => {
@@ -454,7 +454,7 @@ test('M2 reviews and fix checks share resolved repository identity across worktr
   const identity = realpathSync(join(REPO, '.git'))
   assert.equal(r.repoId, identity)
   assert.equal(run(['--dispute', r.id, 'f1', '--reason', 'intent', '--evidence', 'a.js:1']).status, 0)
-  assert.equal(close(r.id, { f1: { status: 'rejected', reason: 'intent', evidence: 'a.js:1' } }, ['--test-cmd', 'true']).status, 0)
+  assert.equal(close(r.id, { f1: { status: 'rejected', reason: 'intent', response: 'intentional', evidence: 'a.js:1' } }, ['--test-cmd', 'true']).status, 0)
   const linked = join(ROOT, 'linked-worktree')
   git('worktree', 'add', '--quiet', '--force', linked, 'feat')
   const result = run([], {}, false, linked)
@@ -462,7 +462,7 @@ test('M2 reviews and fix checks share resolved repository identity across worktr
   const next = lines().at(-1)
   assert.equal(next.repoId, identity)
   assert.ok(calls().find((c) => c.cwd === realpathSync(linked)).prompt.includes('Already decided;'))
-  const statuses = { f1: { status: 'rejected', reason: 'same', evidence: 'a.js:1', refutedBy: { review: r.id, finding: 'f1' } } }
+  const statuses = { f1: { status: 'rejected', reason: 'same', response: 'wrong', evidence: 'a.js:1', refutedBy: { review: r.id, finding: 'f1' } } }
   assert.equal(close(next.id, statuses, ['--test-cmd', 'true']).status, 0)
   commit('a.test.js', 'test\n')
   const checked = run(['--fix-check', next.id], { STUB_FINDINGS: '{"findings":[]}' })
@@ -490,7 +490,7 @@ test('M2 refutedBy refuses identity-less and foreign repositories despite matchi
     seed({ type: 'review', id, head: r.head, branch: r.branch, ...(repoId && { repoId }), findingDetails: [{ ...FINDING, id: 'f1' }] },
       { type: 'dispute', review: id, finding: 'f1', verdict: 'REFUTED' })
     const before = lines()
-    const result = close(r.id, { f1: { status: 'rejected', reason: 'same branch', evidence: 'a.js:1', refutedBy: { review: id, finding: 'f1' } } }, ['--test-cmd', 'true'])
+    const result = close(r.id, { f1: { status: 'rejected', reason: 'same branch', response: 'wrong', evidence: 'a.js:1', refutedBy: { review: id, finding: 'f1' } } }, ['--test-cmd', 'true'])
     assert.notEqual(result.status, 0, result.out)
     assert.deepEqual(lines(), before)
   }
@@ -517,7 +517,7 @@ test('L1 missing and failed dispute verdicts may be retried once a real verdict 
     const missing = run(args, env)
     assert.equal(missing.status, 0, missing.out)
     assert.equal(lines().at(-1).verdict, 'NO-VERDICT')
-    const statuses = { f1: { status: 'rejected', reason: 'intent', evidence: 'a.js:1' } }
+    const statuses = { f1: { status: 'rejected', reason: 'intent', response: 'intentional', evidence: 'a.js:1' } }
     assert.notEqual(close(r.id, statuses, ['--test-cmd', 'true']).status, 0)
     const retry = run(args)
     assert.equal(retry.status, 0, retry.out)
@@ -631,7 +631,7 @@ test('Part A a review without repoId can close using its own REFUTED dispute', (
   seed({ type: 'review', kind: 'review', id, head: git('rev-parse', 'HEAD'), branch: 'feat', family: 'sol', model: 'stub-sol', vendor: 'codex', findingDetails: [{ ...FINDING, id: 'f1' }] },
     { type: 'dispute', review: id, finding: 'f1', verdict: 'REFUTED', verdictEvidence: 'a.js:1 intentional' })
   for (const reference of [{}, { refutedBy: { review: id, finding: 'f1' } }]) {
-    const result = close(id, { f1: { status: 'rejected', reason: 'intentional', evidence: 'a.js:1', ...reference } }, ['--test-cmd', 'true'])
+    const result = close(id, { f1: { status: 'rejected', reason: 'intentional', response: 'intentional', evidence: 'a.js:1', ...reference } }, ['--test-cmd', 'true'])
     assert.equal(result.status, 0, result.out)
     assert.equal(lines().at(-1).type, 'close')
     assert.equal(lines().at(-1).review, id)
@@ -736,8 +736,8 @@ test('2.1 Grade criterion disputes, waivers, close and summary use the existing 
   assert.match(prompt, /Criterion evidence: account test fails/)
   const waived = run(['--waive', record.id, 'f2', '--reason', 'accepted external bug'], {}, true)
   assert.equal(waived.status, 0, waived.out)
-  const statuses = { c1: { status: 'rejected', reason: 'intentional criterion', evidence: 'account test' },
-    f2: { status: 'rejected', reason: 'accept defect', evidence: 'external test' } }
+  const statuses = { c1: { status: 'rejected', reason: 'intentional criterion', response: 'intentional', evidence: 'account test' },
+    f2: { status: 'rejected', reason: 'accept defect', response: 'intentional', evidence: 'external test' } }
   const closed = close(record.id, statuses, ['--test-cmd', 'true'])
   assert.equal(closed.status, 0, closed.out)
   const summary = run(['--summary'])
@@ -806,7 +806,7 @@ test('2.2 a recheck FAIL cannot be fixed and needs dispute or waiver before clos
   const original = logGrade()
   logGrade(recheckVerdict('FAIL'), ['--recheck-of', original.id])
   assert.notEqual(close(original.id, { c1: { status: 'fixed', evidence: 'claimed pass' } }, ['--test-cmd', 'true']).status, 0)
-  const rejected = { c1: { status: 'rejected', reason: 'accept bug', evidence: 'account test' } }
+  const rejected = { c1: { status: 'rejected', reason: 'accept bug', response: 'intentional', evidence: 'account test' } }
   assert.notEqual(close(original.id, rejected, ['--test-cmd', 'true']).status, 0)
   const waived = run(['--waive', original.id, 'c1', '--reason', 'accepted criterion failure'], {}, true)
   assert.equal(waived.status, 0, waived.out)
@@ -820,7 +820,7 @@ test('2.2 recheck findings join original close statuses, disputes, summary and d
   assert.notEqual(close(original.id, { c1: { status: 'fixed' } }, ['--test-cmd', 'true']).status, 0)
   const dispute = run(['--dispute', recheck.id, 'r1', '--reason', 'intended', '--evidence', 'new defect test'])
   assert.equal(dispute.status, 0, dispute.out)
-  const statuses = { c1: { status: 'fixed' }, r1: { status: 'rejected', reason: 'intended recheck behavior', evidence: 'new defect test' } }
+  const statuses = { c1: { status: 'fixed' }, r1: { status: 'rejected', reason: 'intended recheck behavior', response: 'intentional', evidence: 'new defect test' } }
   const closed = close(original.id, statuses, ['--test-cmd', 'true'])
   assert.equal(closed.status, 0, closed.out)
   const summary = run(['--summary'])
@@ -937,7 +937,7 @@ test('5.2 scored disputed and filed unverified findings and preserves identical 
   assert.equal(output.disputed.length, 1); assert.equal(output.unverified.length, 1)
   assert.deepEqual([...output.disputed, ...output.unverified], record.findingDetails)
   assert.deepEqual(record.findingDetails.map((f) => [f.filed, f.risk]), [[false, 49], [true, 1]])
-  const result = close(record.id, { f1: { status: 'rejected', reason: 'refuted', evidence: 'a.js:1' } }, ['--test-cmd', 'true']); assert.equal(result.status, 0, result.out)
+  const result = close(record.id, { f1: { status: 'rejected', reason: 'refuted', response: 'wrong', evidence: 'a.js:1' } }, ['--test-cmd', 'true']); assert.equal(result.status, 0, result.out)
   const summary = run(['--summary']); assert.equal(summary.status, 0, summary.out)
   assert.match(summary.stdout, /Carried unlocated f2/); assert.match(summary.stdout, /Deferred findings/)
 })
@@ -976,7 +976,7 @@ test('6.1 severity derives from scores at both boundaries and protected is alway
   for (const key of ['likelihood', 'impact', 'protected', 'trigger']) {
     assert.ok(schema.required.includes(key)); assert.equal(Array.isArray(schema.properties[key].type), false)
   }
-  const blockingLowLabel = close(r.id, { f2: { status: 'rejected', reason: 'label low', evidence: 'test' }, f3: { status: 'fixed' }, f4: { status: 'fixed' }, f5: { status: 'fixed' } }, ['--test-cmd', 'true'])
+  const blockingLowLabel = close(r.id, { f2: { status: 'rejected', reason: 'label low', response: 'wrong', evidence: 'test' }, f3: { status: 'fixed' }, f4: { status: 'fixed' }, f5: { status: 'fixed' } }, ['--test-cmd', 'true'])
   assert.notEqual(blockingLowLabel.status, 0); assert.match(blockingLowLabel.out, /REFUTED/)
 })
 
@@ -1018,7 +1018,7 @@ test('6.4 failed score follow-up keeps findings blocking and legacy LOW needs RE
   ] }) })
   assert.deepEqual(r.rescored, { asked: 2, scored: 0 })
   assert.deepEqual(r.findingDetails.map((f) => [f.severity, f.unscored, !!f.filed]), [['medium', true, false], ['high', true, false], ['low', true, false]])
-  const values = { f1: { status: 'fixed' }, f2: { status: 'fixed' }, f3: { status: 'rejected', reason: 'legacy low', evidence: 'a.js:1' } }
+  const values = { f1: { status: 'fixed' }, f2: { status: 'fixed' }, f3: { status: 'rejected', reason: 'legacy low', response: 'wrong', evidence: 'a.js:1' } }
   const refused = close(r.id, values, ['--test-cmd', 'true']); assert.notEqual(refused.status, 0); assert.match(refused.out, /REFUTED/)
   seed({ type: 'dispute', review: r.id, finding: 'f3', verdict: 'REFUTED' })
   const accepted = close(r.id, values, ['--test-cmd', 'true']); assert.equal(accepted.status, 0, accepted.out)
@@ -1135,7 +1135,7 @@ test('C2 pre-phase-6 LOW unfiled findings still need statuses but not REFUTED to
   const record = oldCloseRecord('old-low'); seed(record)
   const missing = close(record.id, {}, ['--test-cmd', 'true'])
   assert.notEqual(missing.status, 0, missing.out); assert.match(missing.out, /Finding f1 needs/)
-  const accepted = close(record.id, { f1: { status: 'rejected', reason: 'ordinary LOW rejection', evidence: 'a.js:1' } }, ['--test-cmd', 'true'])
+  const accepted = close(record.id, { f1: { status: 'rejected', reason: 'ordinary LOW rejection', response: 'wrong', evidence: 'a.js:1' } }, ['--test-cmd', 'true'])
   assert.equal(accepted.status, 0, accepted.out)
   assert.doesNotMatch(run(['--summary']).stdout, /f1 LOW wrong return: ordinary LOW rejection/)
 })
@@ -1144,7 +1144,7 @@ for (const kind of ['fix-check', 'recheck']) test(`C2 ${kind} findings use their
   const child = { ...oldCloseRecord('child-' + kind, kind, [{ ...FINDING, id: kind === 'fix-check' ? 'x1' : 'r1', severity: 'low', filed: false }]), review: parent.id, criteria: [] }
   seed(parent, child)
   assert.notEqual(close(parent.id, {}, ['--test-cmd', 'true']).status, 0)
-  const value = { [child.findingDetails[0].id]: { status: 'rejected', reason: 'old child LOW', evidence: 'a.js:1' } }
+  const value = { [child.findingDetails[0].id]: { status: 'rejected', reason: 'old child LOW', response: 'wrong', evidence: 'a.js:1' } }
   const accepted = close(parent.id, value, ['--test-cmd', 'true']); assert.equal(accepted.status, 0, accepted.out)
   const oldParent = oldCloseRecord('old-parent-' + kind, 'grade', [])
   const modernChild = { ...child, id: 'modern-child-' + kind, review: oldParent.id, rubricVersion: '2026-10-29.2',
@@ -1159,7 +1159,7 @@ for (const kind of ['fix-check', 'recheck']) test(`C2 ${kind} findings use their
 test('C2 old stored rejection rules and summary ignore unscored metadata until the record is versioned', () => {
   const old = oldCloseRecord('old-summary', 'review', [{ ...FINDING, id: 'f1', severity: 'low', filed: false, unscored: true },
     { ...FINDING, id: 'f2', severity: 'medium', filed: false }, { ...FINDING, id: 'f3', severity: 'high', filed: true }])
-  const statuses = { f1: { status: 'rejected', reason: 'old LOW', evidence: 'a.js:1' }, f2: { status: 'rejected', reason: 'old MEDIUM', evidence: 'a.js:1' } }
+  const statuses = { f1: { status: 'rejected', reason: 'old LOW', response: 'wrong', evidence: 'a.js:1' }, f2: { status: 'rejected', reason: 'old MEDIUM', response: 'wrong', evidence: 'a.js:1' } }
   seed(old, { type: 'close', review: old.id, closeHead: old.head, status: 'complete', statuses })
   const summary = run(['--summary']); assert.equal(summary.status, 0, summary.out)
   assert.doesNotMatch(summary.stdout, /LOW wrong return: old LOW/)

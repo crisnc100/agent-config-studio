@@ -192,7 +192,7 @@ test('I1 a pure deletion counts as a change at the line it follows', () => {
 test('T1 a fixed status may name its test, which --summary and the push gate print beside the finding', () => {
   const review = reviewed([F1])
   fixChecked(review)
-  const statuses = { f1: { status: 'fixed', test: 'src/one.test.js' } }
+  const statuses = { f1: { status: 'fixed', test: 'src/one.test.js', response: 'real' } }
   assert.deepEqual(closed(review.id, statuses).statuses, statuses)
   const summary = script(['--summary']); allowed(summary)
   assert.ok(summary.stdout.includes('f1 MEDIUM v2 is wrong: fixed; test: src/one.test.js'), summary.stdout)
@@ -204,7 +204,7 @@ test('T1 any other status key is still refused, test is refused off a fixed stat
   fixChecked(review)
   refused(review.id, { f1: { status: 'fixed', tests: 'src/one.test.js' } }, /Unknown status field for f1/)
   refused(review.id, { f1: { status: 'fixed', test: 'src/one.test.js', severity: 'low' } }, /Unknown status field for f1/)
-  refused(review.id, { f1: { status: 'rejected', reason: 'intended', evidence: 'src/one.js:2', test: 'src/one.test.js' } }, /Unknown status field for f1/)
+  refused(review.id, { f1: { status: 'rejected', reason: 'intended', response: 'intentional', evidence: 'src/one.js:2', test: 'src/one.test.js' } }, /Unknown status field for f1/)
   for (const test of ['', ' ', '/abs/one.test.js', '../one.test.js', 'src/../../one.test.js', 'C:\\one.test.js', 7, null, ['src/one.test.js']])
     refused(review.id, { f1: { status: 'fixed', test } }, /Fixed f1 test must be a repo-relative path/)
 })

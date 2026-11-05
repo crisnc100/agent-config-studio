@@ -83,7 +83,7 @@ const named = (files) => new RegExp(`${AFTER.source}${files.map((f) => f.replace
 const X1 = { issue: 'one is wrong', file: 'src/one.js', line: '1', quote: 'export const one = 2', suggestion: 'fix it',
   likelihood: 5, impact: 5, protected: false, trigger: 'importing one' }
 const FIXED = { x1: { status: 'fixed' } }
-const REJECTED = { x1: { status: 'rejected', reason: 'intended', evidence: 'src/one.js:1' } }
+const REJECTED = { x1: { status: 'rejected', reason: 'intended', response: 'intentional', evidence: 'src/one.js:1' } }
 // The review, a test change that needs a fix check, and that fix check with x1 (on src/one.js by default),
 // whose record holds the path the quote check resolved.
 function fixChecked(paths, finding = X1, resolved = finding.file) {

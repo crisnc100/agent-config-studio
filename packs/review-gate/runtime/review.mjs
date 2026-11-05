@@ -111,7 +111,7 @@ const option = (flag) => {
 // or shadow; the review logs to its own folder, and nothing that reads or writes the review gate's own records runs.
 const EVAL_MODE = !!String(process.env.REVIEW_EVAL ?? '').trim()
 const EVAL_REFUSED = ['--gate', '--close', '--summary', '--tier-json', '--deferred', '--fix-check', '--dispute', '--waive', '--log-grade',
-  '--recheck-of', '--log-outcome', '--slices', '--eval', '--shadow-run', '--pick-shadow-run', '--security-worker', '--shadow-report', '--pick-report', '--calibrate']
+  '--recheck-of', '--log-outcome', '--slices', '--eval', '--shadow-run', '--pick-shadow-run', '--security-worker', '--shadow-report', '--pick-report', '--calibrate', '--noise-report']
 // Git variables that move the repo, work tree or index away from the working directory: eval mode refuses them.
 const GIT_LOCATION_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
   'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM']
@@ -333,6 +333,24 @@ const SECURITY = (() => {
   return settings
 })()
 const cfg = (envName, key, dflt) => process.env[envName] ?? CONFIG[key] ?? dflt
+// fixCheck: "risk" (the default: a fix touching tests, verify scripts or riskPaths needs a fix check before close) |
+// "always" (any code fix after the review needs one; docs, static, coverage-exempt and builds/ files never do). Every
+// source may only raise it: the home config is the floor, and REVIEW_FIX_CHECK, REVIEW_CONFIG or a repo file can't lower it.
+const FIX_CHECK_MODES = ['risk', 'always']
+const FIX_CHECK = (() => {
+  const homes = [join(homedir(), '.agent-config-studio', 'review-gate', 'config.json'), join(homedir(), '.claude', 'review-config.json')]
+  let mode = 'risk'
+  // The loaded config is read once: when it is the home config itself, it is not read again under its own name.
+  const home = homeSource(homes), loadedIsHome = !!home && !!CONFIG._source && sameFile(CONFIG._source, home)
+  for (const [value, where] of [[homeKey(homes, 'fixCheck'), home], ...(loadedIsHome ? [] : [[CONFIG.fixCheck, CONFIG._source]]), [process.env.REVIEW_FIX_CHECK, 'REVIEW_FIX_CHECK']]) {
+    if (value == null || value === '') continue
+    const asked = String(value).trim().toLowerCase()
+    if (!FIX_CHECK_MODES.includes(asked)) {
+      if (!args.includes('--gate')) console.warn(`⚠ Unknown fixCheck ${JSON.stringify(value)} in ${where}; using the others (${FIX_CHECK_MODES.join(' | ')})`)
+    } else if (asked === 'always') mode = 'always'
+  }
+  return mode
+})()
 // A family name resolves through the model registry (`model-id --table`);
 // a raw id passes through. On failure model-id prints MODEL-ID-UNRESOLVED-<name>, which the CLI
 // rejects loudly — never an empty string that would fall through to the CLI's own default.
@@ -693,7 +711,7 @@ const ORIGIN_HEAD = (() => {
   return !r.error && r.status === 0 ? r.stdout.trim() : ''
 })()
 // `||` not `??` so an empty string in review-config.json still means "auto-detect".
-const BASE = cfg('REVIEW_BASE', 'base', '') || (['--gate', '--deferred', '--rubric', '--calibrate', '--eval'].some((flag) => args.includes(flag)) ? '' : detectDefaultBase())
+const BASE = cfg('REVIEW_BASE', 'base', '') || (['--gate', '--deferred', '--rubric', '--calibrate', '--noise-report', '--eval'].some((flag) => args.includes(flag)) ? '' : detectDefaultBase())
 // The base reaches git as a revision and as `git fetch <remote> <ref>`, so it is never an option, a
 // refspec or a URL: no leading - or + on any part, no colon, no space. The push gate never uses it.
 const BASE_RE = /^(?!.*\/[-+])[A-Za-z0-9_@][A-Za-z0-9._/~^@{}-]*$/
@@ -763,6 +781,7 @@ const INTENT = args.includes('--dispute') || args.includes('--waive') || args.in
 const PLAN_PATH = option('--plan') ?? process.env.REVIEW_PLAN
 let CONTEXT = ''
 let DIFF_BASE = BASE
+let FIX_CHECK_RUN = false
 // verify: "second-opinion" sends surviving HIGH/MEDIUM findings to one other pool family.
 const SECOND_OPINION = !EVAL_MODE && String(cfg('REVIEW_VERIFY', 'verify', 'off')).trim().toLowerCase() === 'second-opinion'
 const QUOTE_WINDOW = 5 // a quote must start within ±this many lines of the cited line
@@ -1280,6 +1299,7 @@ if (process.argv.includes('--show-config')) {
         riskFiles: stats ? stats.riskFiles : '(no diff stats)',
         verify: SECOND_OPINION ? 'second-opinion' : 'quote check only',
         verifyCmd: VERIFY_CMD || '(none)',
+        fixCheck: FIX_CHECK,
         source: CONFIG._source || '(built-in defaults / env only)',
         log: LOG_PATH,
       },
@@ -1301,7 +1321,7 @@ const SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['issue', 'file', 'line', 'quote', 'suggestion', 'likelihood', 'impact', 'protected', 'trigger'],
+        required: ['issue', 'file', 'line', 'quote', 'suggestion', 'likelihood', 'impact', 'protected', 'trigger', 'preExisting', 'instances'],
         properties: {
           issue: { type: 'string' },
           file: { type: ['string', 'null'] },
@@ -1312,6 +1332,16 @@ const SCHEMA = {
           impact: { type: 'integer', minimum: 1, maximum: 10 },
           protected: { type: 'boolean' },
           trigger: { type: 'string' },
+          preExisting: { type: ['boolean', 'null'] },
+          instances: {
+            type: ['array', 'null'],
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['file', 'line', 'quote'],
+              properties: { file: { type: 'string' }, line: { type: 'string' }, quote: { type: 'string' } },
+            },
+          },
         },
       },
     },
@@ -1357,7 +1387,11 @@ const validScores = (f) => ['likelihood', 'impact'].every((k) => Number.isIntege
   typeof f.protected === 'boolean' && typeof f.trigger === 'string' && !!f.trigger.trim()
 const derivedSeverity = (f) => f.protected || f.likelihood * f.impact >= HIGH_AT_OR_ABOVE ? 'high' :
   f.likelihood * f.impact <= FILE_AT_OR_BELOW ? 'low' : 'medium'
-const blocking = (f) => !isFiled(f) && (f.severity !== 'low' || f.unscored === true)
+// Pre-existing: the reviewer says the defect is at the base and this branch neither introduced it nor made it newly
+// reachable, and the script found every located place of it outside the review diff (inDiff false, set only by the script).
+// It never blocks and needs no status; a review or security finding only (a fix check's never carries inDiff).
+const isPreExisting = (finding) => !finding.criterionId && finding.preExisting === true && finding.inDiff === false
+const blocking = (f) => !isFiled(f) && !isPreExisting(f) && (f.severity !== 'low' || f.unscored === true)
 function resolutionRules(record, finding) {
   if (Object.hasOwn(record, 'rubricVersion')) {
     const required = blocking(finding)
@@ -1439,8 +1473,8 @@ function reviewContext(branch) {
     }) : []
   })
   for (const review of entries.filter((e) => e.type === 'review' && e.branch === branch && e.repoId === repoId))
-    for (const finding of (review.findingDetails || []).filter(isFiled))
-      decided.push({ ...finding, review: review.id, finding: finding.id, decision: 'filed' })
+    for (const finding of (review.findingDetails || []).filter((f) => isFiled(f) || isPreExisting(f)))
+      decided.push({ ...finding, review: review.id, finding: finding.id, decision: isPreExisting(finding) ? 'pre-existing' : 'filed' })
   if (decided.length) context += `Already decided; don't re-raise without new evidence:\n${JSON.stringify(decided)}\n`
   return context
 }
@@ -1537,6 +1571,15 @@ function promptNotes(vendor) {
       `Open the file and copy it — never paraphrase or reconstruct it from memory. A script checks every ` +
       `quote against the file; a finding whose quote is not there is discarded as unlocatable.`,
   )
+  notes.push(
+    `If the same defect pattern appears in several places, report it once and list every place in \`instances\` ` +
+      `(file, line and quote each, quoted exactly like the main location, which is one of them); otherwise instances is null.`,
+  )
+  if (!FIX_CHECK_RUN)
+    notes.push(
+      `\`preExisting\`: true when the defect exists at the base and this branch neither introduced it nor made it newly ` +
+        `reachable; otherwise false. A script checks the claim against the diff: a finding near a line the branch changed counts as the branch's.`,
+    )
   notes.push(RUBRIC)
   if (VERIFY_RESULT)
     notes.push(
@@ -2227,20 +2270,31 @@ function locateQuote(f) {
   while (q.length && !q[0]) q.shift()
   while (q.length && !q.at(-1)) q.pop()
   const needle = q.join('\n')
-  const problemIn = ({ text }) => {
+  const starts = []
+  const problemIn = ({ text }, keep = false) => {
     const count = text.endsWith('\n') ? text.split('\n').length - 1 : text.split('\n').length
     // Also bounds the search loop: an unsafe integer (2^53, a 310-digit Infinity) never terminates s++.
     if (!Number.isSafeInteger(line) || line < 1 || line > count)
       return `line ${lineMatch[1].length > 20 ? `${lineMatch[1].slice(0, 20)}…` : lineMatch[1]} is outside ${path} (1–${count})`
     const lines = text.split('\n').map(norm)
+    // Every start in the window that holds the quote, so inDiff can judge each place it could mean.
+    let found = false
     for (let s = Math.max(1, line - QUOTE_WINDOW); s <= line + QUOTE_WINDOW; s++)
-      if (lines.slice(s - 1, s - 1 + q.length).join('\n').includes(needle)) return null
-    return `quote not found within ±${QUOTE_WINDOW} lines of ${path}:${line}`
+      if (lines.slice(s - 1, s - 1 + q.length).join('\n').includes(needle)) {
+        found = true
+        if (!keep) break
+        starts.push(s)
+      }
+    return found ? null : `quote not found within ±${QUOTE_WINDOW} lines of ${path}:${line}`
   }
-  const problem = problemIn(decider)
+  const problem = problemIn(decider, true)
   if (problem) return { problem }
   if (written && prefixed && !problemIn(prefixed)) return { problem: null, ambiguous: [written.path, prefixed.path] }
-  return { problem: null, path: decider.path, commit: sh('git', ['rev-parse', '--verify', `${decider.rev}^{commit}`]) }
+  // Every place in the window the quote matched (its lines, and whether in the HEAD or the base file), for inDiff; the cited
+  // line itself when none is recorded.
+  const spans = (starts.length ? starts : [line]).map((s) => [s, s + q.length - 1])
+  return { problem: null, path: decider.path, commit: sh('git', ['rev-parse', '--verify', `${decider.rev}^{commit}`]),
+    spans, side: decider.rev === 'HEAD' ? 'head' : 'base' }
 }
 // The location rides on a Symbol key until the record is written: JSON never carries it, so reviewer JSON
 // cannot set it, and the logged finding and FINDINGS_JSON keep their shape. Reviewer keys that look like the
@@ -2248,20 +2302,49 @@ function locateQuote(f) {
 const WHERE = Symbol('where')
 function locatedFinding(f) {
   // source marks a security finding; it is this script's to set, never the reviewer's.
-  const finding = Object.fromEntries(Object.entries(f).filter(([key]) => !/^resolved/i.test(key) && key !== 'source'))
+  // inDiff is the script's too: set only when a review finding claims preExisting.
+  const finding = Object.fromEntries(Object.entries(f).filter(([key]) => !/^resolved/i.test(key) && !['source', 'inDiff'].includes(key)))
+  if (finding.preExisting == null) delete finding.preExisting // a strict schema writes "absent" as null
+  const given = finding.instances
+  delete finding.instances
+  delete finding.instancesDropped
   const where = locateQuote(finding)
   if (where.problem) return { ...finding, status: 'unverified-quote', quoteCheck: where.problem }
-  return { ...finding, status: 'verified-quote', [WHERE]: where }
+  // The other places of a grouped finding, each quote-checked like the main one: a located one is kept (its path rides on
+  // WHERE like the main one's), an unlocated one is dropped with its problem noted. Only file, line and quote are kept.
+  const instances = [], dropped = [], places = []
+  for (const raw of Array.isArray(given) ? given : []) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const place = { file: String(raw.file ?? ''), line: String(raw.line ?? ''), quote: String(raw.quote ?? '') }
+    const at = locateQuote(place)
+    if (at.problem) dropped.push({ file: place.file, line: place.line, quoteCheck: at.problem })
+    else { instances.push(place); places.push(at) }
+  }
+  return { ...finding, ...(instances.length && { instances }), ...(dropped.length && { instancesDropped: dropped }), status: 'verified-quote',
+    [WHERE]: { ...where, instances: places } }
 }
-// The review and fix-check record fields: resolvedPaths { id: { path, commit } } for located findings and
-// ambiguousPaths { id: [paths] }. Close authorizes a changed file only when it equals a fixed finding's path.
+// Where a grouped finding also is, for the report, the fix-check note and the summary: "; also at a:1, b:2", or ''.
+const alsoAt = (f) => Array.isArray(f.instances) && f.instances.length ? `; also at ${f.instances.map((i) => `${i.file}:${i.line}`).join(', ')}` : ''
+function warnDropped(findings) {
+  for (const f of findings.filter((f) => f.instancesDropped?.length))
+    console.warn(`⚠ ${f.id}: ${f.instancesDropped.length} instance(s) could not be located and were dropped: ${f.instancesDropped.map((d) => `${d.file}:${d.line} (${d.quoteCheck})`).join(', ')}`)
+}
+// The review and fix-check record fields: resolvedPaths { id: { path, commit } } for located findings,
+// ambiguousPaths { id: [paths] }, and instancePaths { id: [paths] } for a grouped finding's located, unambiguous
+// instances. Close authorizes a changed file only when it equals a fixed finding's path or one of its instance paths.
 function recordedLocations(findings) {
-  const resolvedPaths = {}, ambiguousPaths = {}
+  const resolvedPaths = {}, ambiguousPaths = {}, instancePaths = {}, instanceResolved = {}
   for (const f of findings) {
     if (f[WHERE]?.ambiguous) ambiguousPaths[f.id] = f[WHERE].ambiguous
     else if (f[WHERE]?.path) resolvedPaths[f.id] = { path: f[WHERE].path, commit: f[WHERE].commit }
+    const places = f[WHERE]?.instances || []
+    const paths = places.map((at) => at.path).filter(Boolean)
+    if (paths.length) instancePaths[f.id] = paths
+    // Aligned with the finding's instances: { path, commit } like resolvedPaths, or null for an ambiguous one.
+    if (places.length) instanceResolved[f.id] = places.map((at) => at.path ? { path: at.path, commit: at.commit } : null)
   }
-  return { resolvedPaths, ...(Object.keys(ambiguousPaths).length && { ambiguousPaths }) }
+  return { resolvedPaths, ...(Object.keys(ambiguousPaths).length && { ambiguousPaths }), ...(Object.keys(instancePaths).length && { instancePaths }),
+    ...(Object.keys(instanceResolved).length && { instanceResolved }) }
 }
 
 // ── Optional second opinion: another family CONFIRMs or REFUTEs each HIGH/MEDIUM ──
@@ -2340,8 +2423,9 @@ function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTr
   const head = sh('git', ['rev-parse', 'HEAD'])
   const item = (f, extra = '') =>
     `- [${f.file || '?'}:${f.line || '?'}] ${String(f.issue).replace(/\r?\n|$/, (end) => ` (id ${f.id})${end}`)}` +
-    `\n  Score: ${scoreText(f)}${isFiled(f) ? ' — filed, no close status needed' : ''}` +
+    `\n  Score: ${scoreText(f)}${isPreExisting(f) ? ' — pre-existing (not introduced here), no close status needed' : isFiled(f) ? ' — filed, no close status needed' : ''}` +
     `${f.quote ? `\n  > ${String(f.quote).split('\n').join('\n  > ')}` : ''}` +
+    `${alsoAt(f) ? `\n  Also at: ${alsoAt(f).slice('; also at '.length)}` : ''}` +
     `${f.suggestion ? `\n  → ${f.suggestion}` : ''}` +
     `${f[WHERE]?.ambiguous ? `\n  Path ambiguous: the quote is in both ${f[WHERE].ambiguous.join(' and ')}, so this finding authorizes no file at close` : ''}${extra}`
   const bySev = (s) =>
@@ -2513,6 +2597,8 @@ function needsFixCheck(files, command) {
   return files.some((p) => isTestFile(p) || matchesAny(p, RISK_PATHS) || /(^|\/)verify(?:[.\/-]|$)/i.test(p) ||
     String(command).split(/[\s'";&|()]+/).some((token) => token.replace(/^\.\//, '') === p))
 }
+// The files that make a fix check due under fixCheck "always": anything but builds/, docs, static and coverage-exempt files.
+const codeFixFiles = (files) => files.filter((p) => !p.startsWith('builds/') && !['docs', 'static'].includes(fileKind(p)) && !coverageExempt(p))
 function operatorOnly(reason) {
   const markers = ['CLAUDECODE', 'CODEX_CI', 'CODEX_SANDBOX', 'CODEX_SESSION_ID', 'CODEX_THREAD_ID', 'GROK_AGENT', 'GROK_SESSION_ID']
   if (!String(reason || '').trim() || !process.stderr.isTTY || markers.some((key) => Object.hasOwn(process.env, key)))
@@ -2563,6 +2649,9 @@ function validateDeferral(entries, review, f, status) {
 // A fixed status's optional `test`: a nonempty relative path that stays inside the repository.
 const repoRelativePath = (p) => typeof p === 'string' && !!p.trim() && p === p.trim() && !p.startsWith('/') && !/^[a-z]:/i.test(p) &&
   !/[\0\n\r]/.test(p) && !p.split(/[\\/]/).includes('..')
+// Response labels on a close status: fixed → real | unimportant (fixed though not worth it); rejected → wrong | intentional.
+const RESPONSES = { fixed: ['real', 'unimportant'], rejected: ['wrong', 'intentional'] }
+const RESPONSE_REQUIRED = true
 function validateStatuses(entries, review, statuses) {
   for (const f of review.findingDetails) {
     const status = statuses[f.id]
@@ -2574,8 +2663,14 @@ function validateStatuses(entries, review, statuses) {
     }
     if (!status || !['fixed', 'rejected'].includes(status.status))
       throw new Error(`Finding ${f.id} needs a fixed or rejected status${review.kind === 'fix-check' || review.kind === 'recheck' ? ', or deferred with a reason' : ''}`)
-    if (Object.keys(status).some((key) => !['status', 'reason', 'evidence', 'refutedBy', ...(status.status === 'fixed' ? ['test'] : [])].includes(key)))
+    if (Object.keys(status).some((key) => !['status', 'reason', 'evidence', 'refutedBy', 'response', ...(status.status === 'fixed' ? ['test'] : [])].includes(key)))
       throw new Error(`Unknown status field for ${f.id}; reviewer severity cannot be changed`)
+    // What the finding turned out to be, for --noise-report. A label only: a rejection still needs its REFUTED or waiver.
+    const labels = RESPONSES[status.status]
+    if (Object.hasOwn(status, 'response') && !labels.includes(status.response))
+      throw new Error(`${status.status === 'fixed' ? 'Fixed' : 'Rejected'} ${f.id} response must be ${labels.join(' or ')}`)
+    if (RESPONSE_REQUIRED && status.status === 'rejected' && !Object.hasOwn(status, 'response'))
+      throw new Error(`Rejected ${f.id} needs a response: wrong (not a defect) or intentional (the behavior is meant)`)
     if (Object.hasOwn(status, 'test') && !repoRelativePath(status.test))
       throw new Error(`Fixed ${f.id} test must be a repo-relative path to the test that reproduces it`)
     if (Object.hasOwn(status, 'refutedBy') && !refuted(entries, review, f, status.refutedBy))
@@ -2602,8 +2697,10 @@ function validateStatuses(entries, review, statuses) {
 // The exact paths fixed findings recorded when their quotes were checked. A finding without one (legacy,
 // unlocated, ambiguous, or a Grade finding, which has no quote) authorizes no file.
 const recordedPaths = (reviews, statuses) => new Set(reviews.flatMap((r) => r.findingDetails
-  .filter((f) => statuses[f.id]?.status === 'fixed' && r.resolvedPaths && Object.hasOwn(r.resolvedPaths, f.id))
-  .map((f) => r.resolvedPaths[f.id]?.path).filter((path) => typeof path === 'string' && path)))
+  .filter((f) => statuses[f.id]?.status === 'fixed')
+  .flatMap((f) => [r.resolvedPaths && Object.hasOwn(r.resolvedPaths, f.id) ? r.resolvedPaths[f.id]?.path : null,
+    ...(r.instancePaths && Object.hasOwn(r.instancePaths, f.id) && Array.isArray(r.instancePaths[f.id]) ? r.instancePaths[f.id] : [])])
+  .filter((path) => typeof path === 'string' && path)))
 function slicedScope(review, matched, changed) {
   const scope = new Set([...matched, ...sliceFiles(review)])
   return changed.filter((p) => scope.has(p))
@@ -2731,12 +2828,15 @@ function closeTier({ review, reviews, statuses, files, outOfScope, noTests, head
   const diff = diffStats(`${base}...${head}`, sliceOf(review))
   const stats = tierStats(diff)
   const findings = reviews.flatMap((r) => r.findingDetails || [])
-  const deferred = findings.filter((f) => statuses[f.id]?.status === 'deferred' || isFiled(f) && statuses[f.id]?.status !== 'fixed')
+  const deferred = findings.filter((f) => statuses[f.id]?.status === 'deferred' || isFiled(f) && !isPreExisting(f) && statuses[f.id]?.status !== 'fixed')
   const high = []
   if (!diff) high.push('the diff could not be read, so its paths are unchecked')
   if (diff) high.push(...pathReasons(diff))
   high.push(...securityReasons(review, diff, head))
   high.push(...deferredReasons(deferred).high)
+  // A known exploit the branch did not introduce never blocks the close, but no agent merges past it.
+  const preProtected = findings.filter((f) => isPreExisting(f) && f.protected === true && statuses[f.id]?.status !== 'fixed')
+  if (preProtected.length) high.push(`pre-existing protected: ${preProtected.map((f) => f.id).join(', ')}`)
   if (outOfScope.length) high.push(`close partial: ${outOfScope.length} file(s) out of scope`)
   if (noTests !== null) high.push(`tests did not run (--no-tests: ${noTests})`)
   const facts = { paths: diff ? diff.files.map((f) => f.path) : [], files, stats, deferred }
@@ -2813,7 +2913,7 @@ async function mergeTier(input) {
 // fix check included), and every deferred finding the summary lists (earlier closes' included). Their reasons replace
 // the closes' reasons of the same kind. A close logged before tiers counts as HIGH beside tiered ones; when none has a
 // tier the summary prints no line, exactly as before.
-const BRANCH_REASON = /^(riskPaths|always human|deferred( HIGH| protected)?): |^nothing deferred$/
+const BRANCH_REASON = /^(riskPaths|always human|deferred( HIGH| protected)?|pre-existing protected): |^nothing deferred$/
 // Files the tip changes that no close's own diff judged (covered by a clean fix check, say): their kinds count here,
 // so logic or another kind keeps the summary from LOW and anything but docs or tests fails strict. A close's own files
 // keep its tier, so a classifier's LOW stands, but only while the file's state at the tip (mode and blob, or absent) is
@@ -2836,13 +2936,17 @@ function unjudgedStats(entries, closes, diff, tip) {
 }
 // The tip's tier as data: { tier, reasons, policy, merges, docsTestsOnly }. tier is null when no close has one (then
 // the summary prints no tier line, and nothing merges).
-function tipTier(closes, { entries, base, tip, deferred }) {
+// preExisting: the branch-wide unfixed pre-existing findings the summary lists; a protected one keeps the tip HIGH whichever
+// closes still cover it.
+function tipTier(closes, { entries, base, tip, deferred, preExisting = [] }) {
   if (!closes.some((c) => c.tier))
     return { tier: null, reasons: closes.map((c) => `the close of review ${c.review} has no merge tier (logged before tiers)`), policy: MERGE.policy, merges: false, docsTestsOnly: false }
   const tiers = closes.map((c) => c.tier ? c : { tier: 'high', tierReasons: [`the close of review ${c.review} has no merge tier (logged before tiers)`] })
   const closesWorst = tiers.reduce((w, c) => TIER_RANK[c.tier] > TIER_RANK[w] ? c.tier : w, 'low')
   const diff = base ? diffStats(`${base}...${tip}`) : null
   const { high, medium } = deferredReasons(deferred)
+  const preProtected = preExisting.filter((f) => f.protected === true)
+  if (preProtected.length) high.push(`pre-existing protected: ${preProtected.map((f) => f.id).join(', ')}`)
   high.unshift(...(diff ? pathReasons(diff) : ['the diff from base could not be read, so its paths are unchecked']))
   const unjudged = diff && unjudgedStats(entries, closes, diff, tip)
   if (unjudged?.kinds.logic || unjudged?.kinds.other) {
@@ -2928,14 +3032,27 @@ async function closeReview(id) {
     if (code.length) throw new Error(`Fix check head must equal closing HEAD, or the commits after it may touch only builds/ and test files: ${code.join(', ')}. ` +
       'Fixes land before the fix check; close at its head, then review the later files as a slice (REVIEW_PATHS) and close that at the tip. No third model pass')
   }
-  // What a merge brought back to the default branch's own content is not the fix: it never asks for a fix check (which
-  // would leave it out anyway).
+  // "risk": tests, verify scripts and riskPaths files need a fix check (no exclusions). "always" adds every other file but
+  // builds/, docs, static and coverage-exempt ones, so it is never looser; under it a Grade's one recheck counts as the
+  // check only when nothing the rules count changed after the recheck's head. What a merge brought back to the default
+  // branch's own content is not the fix: it never asks for a fix check (which would leave it out anyway).
+  const ruleCommand = [command, VERIFY_CMD].filter(Boolean).join(' ')
+  const due = (list) => FIX_CHECK === 'always' ? { risk: needsFixCheck(list, ruleCommand), code: codeFixFiles(list) } : { risk: needsFixCheck(list, ruleCommand), code: [] }
   const toMain = mergedToMain(review.head, at)
-  if (needsFixCheck(files.filter((p) => !toMain(p)), [command, VERIFY_CMD].filter(Boolean).join(' ')) && !check) throw new Error('Fix changes tests, verify scripts or risk paths; run --fix-check first')
+  const need = due(files.filter((p) => !toMain(p)))
+  const recheckToMain = FIX_CHECK === 'always' && review.kind === 'grade' && recheck ? mergedToMain(recheck.head, recheckAt) : null
+  const after = recheckToMain ? due(touchedBetween(recheck.head, recheckAt, null, based).filter((p) => !recheckToMain(p))) : null
+  const recheckCovers = !!after && !after.risk && !after.code.length
+  if (!check && !recheckCovers && need.code.length)
+    throw new Error(`Fix changes code after the review and fixCheck is "always": ${listed(need.code)}; run --fix-check first ` +
+      '(docs, static, coverage-exempt and builds/ files never need one)')
+  if (!check && !recheckCovers && need.risk) throw new Error('Fix changes tests, verify scripts or risk paths; run --fix-check first')
   const reviews = [review, ...(recheck ? [recheck] : []), ...(check ? [check] : [])]
   const ids = new Set(reviews.flatMap((r) => r.findingDetails.map((f) => f.id)))
   for (const key of Object.keys(statuses)) if (!ids.has(key)) throw new Error(`Unknown finding status key: ${key}`)
   for (const r of reviews) validateStatuses(entries, r, statuses)
+  // A fix logged without a label was real; only closes logged before labels existed count as unlabeled.
+  for (const status of Object.values(statuses)) if (status?.status === 'fixed' && !Object.hasOwn(status, 'response')) status.response = 'real'
   const fixedFiles = recordedPaths(reviews, statuses)
   // The single recheck graded the fix round's files: a criterion fixed on its PASS, or deferred after its FAIL, covers them.
   const rechecked = (f, verdict) => recheck.criteria.some((c) => c.id === f.criterionId && c.verdict === verdict)
@@ -3274,8 +3391,8 @@ async function shadowRun(jobFile) {
     // Quotes are checked against the snapshot: HEAD is the reviewed commit, and the base is its own sha here.
     if (fullObjectId(job.baseSha)) DIFF_BASE = job.baseSha
     write({ ok: true, findings: scored.findings.map((f) => {
-      const { file, line, quote, issue, severity, likelihood, impact, status, quoteCheck } = locatedFinding(f)
-      return { file, line, quote, issue, severity, likelihood, impact, status, ...(quoteCheck && { quoteCheck }) }
+      const { file, line, quote, issue, severity, likelihood, impact, status, quoteCheck, instances } = locatedFinding(f)
+      return { file, line, quote, issue, severity, likelihood, impact, status, ...(quoteCheck && { quoteCheck }), ...(instances && { instances }) }
     }) })
   } catch (e) {
     write({ ok: false, error: e.message })
@@ -3299,11 +3416,14 @@ function shadowReport() {
   const reviews = new Map(readLog().filter((e) => e.type === 'review').map((e) => [e.id, e]))
   const file = (f) => String(f || '').replace(/^(?:\.\/|[ab]\/)/, '')
   const quote = (q) => String(q || '').replace(/\s+/g, ' ').trim()
-  const same = (a, b) => {
+  const near = (a, b) => {
     if (file(a.file) && file(a.file) === file(b.file) && Math.abs(parseInt(a.line, 10) - parseInt(b.line, 10)) <= 5) return true
     const qa = quote(a.quote), qb = quote(b.quote)
     return !!qa && !!qb && (qa.includes(qb) || qb.includes(qa))
   }
+  // A grouped finding matches at any of its places: the main location or a located instance.
+  const places = (f) => [f, ...(Array.isArray(f.instances) ? f.instances : [])]
+  const same = (a, b) => places(a).some((pa) => places(b).some((pb) => near(pa, pb)))
   const by = new Map()
   for (const s of shadows) {
     if (from !== null && !(Date.parse(s.ts) >= from)) continue
@@ -3690,6 +3810,7 @@ async function fixCheck(id) {
   const entries = readLog()
   const original = loggedReview(entries, id)
   if (original.kind === 'fix-check' || original.kind === 'recheck') throw new Error('No third model pass; fix checks target the original review')
+  FIX_CHECK_RUN = true
   if (entries.some((e) => e.type === 'review' && e.kind === 'fix-check' && e.review === id))
     throw new Error('One fix check per review; unresolved findings go to the operator, no third model pass')
   const head = headNow()
@@ -3723,10 +3844,11 @@ async function fixCheck(id) {
   const { result } = await runModel(SEL, `Fix check: review only this fix diff, not the original branch diff.\n${originalFindingsNote(original)}${reviewPrompt(diff)}`, SCHEMA, 'fix-check reviewer')
   const scored = await scoredFindings(result?.findings || [], SEL)
   const durationMs = Date.now() - started
-  const changed = fixChangedLines(original.head, head, scope)
+  // inFix: any place of the finding (main or instance) near a line the fix changed, judged as inDiff is (inDiffOf).
+  const changed = changedSides(original.head, head, scope)
   const findingDetails = scored.findings.map((f, i) => {
     const finding = { ...locatedFinding(f), id: `x${i + 1}` }
-    return { ...finding, inFix: inFix(finding, changed) }
+    return { ...finding, inFix: inDiffOf(finding, changed, original.head) }
   })
   requireClean()
   if (headNow() !== head) throw new Error('HEAD changed during fix check')
@@ -3741,48 +3863,73 @@ async function fixCheck(id) {
     truncated, coverage: missed ? coverageOf(head, files.filter((p) => !truncated.includes(p) && !missed.has(p))) : [], noRenames: true,
     stats: recordStats(fixStats), plan: PLAN_PATH ?? null, durationMs })
   console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)`)
+  warnDropped(findingDetails)
   for (const f of findingDetails.filter((f) => f[WHERE]?.ambiguous))
     console.warn(`⚠ ${f.id}: path ambiguous, the quote is in both ${f[WHERE].ambiguous.join(' and ')}; it authorizes no file at close`)
+}
+// A review or security finding that claims preExisting gets inDiff: true when its main location or any located instance is
+// within 3 lines of a line the review diff (merge base to head) added or changed, false when every place is resolved and
+// outside it, null when that can't be told (unlocated, ambiguous, git failed). Only false files it as pre-existing.
+// Each place is judged by every span its quote matched near the cited line, on the side it matched: a HEAD quote against the lines the branch
+// added or changed, a base quote (a deleted file) against the lines it removed or changed, and only when that base is the
+// merge base. Any place that can't be judged (unlocated, ambiguous, another base, git failed) is null.
+function placeInDiff(where, changed, baseSha) {
+  if (!changed || !where?.path || !Array.isArray(where.spans) || !where.spans.length) return null
+  if (where.side === 'base' && where.commit !== baseSha) return null
+  // Any place the quote matched near the cited line that touches the diff makes it the branch's.
+  const hunks = (where.side === 'base' ? changed.base : changed.head).get(where.path) || []
+  return where.spans.some(([from, to]) => hunks.some(([a, b]) => from <= b + 3 && to >= a - 3))
+}
+function inDiffOf(finding, changed, baseSha) {
+  const places = [finding[WHERE], ...(finding.instances || []).map((_, i) => finding[WHERE]?.instances?.[i])]
+  const each = places.map((where) => placeInDiff(where, changed, baseSha))
+  return each.includes(true) ? true : each.every((v) => v === false) ? false : null
+}
+function markPreExisting(findings, baseSha, head) {
+  const claimed = findings.filter((f) => f.preExisting === true)
+  if (!claimed.length) return
+  // The whole branch diff, never a slice's paths: a place outside the slice that the branch changed is still the branch's.
+  const changed = changedSides(baseSha, head)
+  for (const f of claimed) {
+    f.inDiff = inDiffOf(f, changed, baseSha)
+    if (f.inDiff === true) console.warn(`⚠ ${f.id}: marked pre-existing, but it is within 3 lines of a line this branch changed; it counts as the branch's`)
+    if (f.inDiff === null) console.warn(`⚠ ${f.id}: marked pre-existing, but whether it is in the diff can't be told; it counts as the branch's`)
+  }
 }
 // The original findings a fix check's fix is meant to repair (every one not filed), so the reviewer can tell an
 // incomplete repair from a new regression. Empty when there are none.
 function originalFindingsNote(original) {
-  const targets = (original.findingDetails || []).filter((f) => !isFiled(f))
+  const targets = (original.findingDetails || []).filter((f) => !isFiled(f) && !isPreExisting(f))
   if (!targets.length) return ''
   const list = targets.map((f) => `- ${f.id} ${String(f.severity || '?').toUpperCase()} ${f.file || '?'}:${f.line || '?'} — ${f.issue || f.criterion || ''}; ` +
-    `Trigger: ${f.trigger || 'trigger not recorded'}`).join('\n')
+    `Trigger: ${f.trigger || 'trigger not recorded'}${alsoAt(f)}`).join('\n')
   return `The fix is meant to repair these findings from review ${original.id}. Use them to tell an incomplete repair ` +
     `from a new regression the fix introduced; report defects in the fix diff as usual.\n${list}\n\n`
 }
-// Lines the fix diff added or changed, by file at the fix head (-U0 hunks; a pure deletion marks the line it follows).
-// Names come NUL-separated from filesBetween, never from patch headers (a space adds a tab there, odd names are
-// C-quoted); each file's own diff is read for its hunk lines only. null when any name or diff can't be read.
-function fixChangedLines(from, to, paths = null) {
+// Both sides of the -U0 diff (a pure deletion marks the head line it follows). Names come NUL-separated from filesBetween,
+// never from patch headers (a space adds a tab there, odd names are C-quoted); each file's own diff is read for its hunk
+// lines only: head (lines added or changed, by file at `to`) and base (lines removed or changed, by file at
+// `from`; a pure addition marks the base line it follows). null when any name or diff can't be read.
+function changedSides(from, to, paths = null) {
   let names
   try { names = filesBetween(from, to, paths) } catch { return null }
-  const changed = new Map()
+  const changed = new Map(), removed = new Map()
   for (const name of names) {
     const r = spawnSync('git', ['-C', TOP, 'diff', '-U0', '--no-renames', '--no-color', '--no-ext-diff', '--no-textconv', from, to, '--', `:(literal)${name}`],
       { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
     if (r.error || r.status !== 0) return null
-    const lines = []
+    const lines = [], old = []
     for (const line of r.stdout.split('\n')) {
-      const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/)
+      const hunk = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/)
       if (!hunk) continue
-      const start = Number(hunk[1]), count = hunk[2] == null ? 1 : Number(hunk[2])
-      lines.push(count ? [start, start + count - 1] : [Math.max(start, 1), Math.max(start, 1)])
+      const span = (s, c) => c ? [s, s + c - 1] : [Math.max(s, 1), Math.max(s, 1)]
+      lines.push(span(Number(hunk[3]), hunk[4] == null ? 1 : Number(hunk[4])))
+      old.push(span(Number(hunk[1]), hunk[2] == null ? 1 : Number(hunk[2])))
     }
     changed.set(name, lines)
+    removed.set(name, old)
   }
-  return changed
-}
-// A fix-check finding is in the fix when its line is within 3 lines of a line the fix added or changed in its file;
-// null when its file or line can't be resolved.
-function inFix(finding, changed) {
-  const path = finding[WHERE]?.path
-  const line = Number(String(finding.line ?? '').trim().match(/^(\d+)(?:\s*[-–]\s*\d+)?$/)?.[1])
-  if (!changed || !path || !Number.isSafeInteger(line) || line < 1) return null
-  return (changed.get(path) || []).some(([a, b]) => line >= a - 3 && line <= b + 3)
+  return { head: changed, base: removed }
 }
 function waiveFinding(id, findingId) {
   const reason = option('--reason')
@@ -3796,10 +3943,10 @@ function waiveFinding(id, findingId) {
 // section, deferred HIGHs first. A tip carried over a rewrite says so.
 function closeSummary(entries, close, head, carry = null) {
   const { review, lines } = closeLines(entries, close, head, carry)
-  const { items, criteria, findings } = deferredLines(entries, review, coverOf([close], head, carry))
+  const { items, criteria, findings, preExisting, preExistingItems } = deferredLines(entries, review, coverOf([close], head, carry))
   const base = fullObjectId(review.baseSha) ? coverBase(review, head) : review.base
-  const tier = tipTier([close], { entries, base, tip: head, deferred: items })
-  lines.push(...tierLines(tier), 'Deferred findings', ...findings)
+  const tier = tipTier([close], { entries, base, tip: head, deferred: items, preExisting: preExistingItems })
+  lines.push(...tierLines(tier), 'Deferred findings', ...findings, ...preExisting)
   if (close.noTests) lines.push(`No tests: ${close.noTests}`)
   return summaryOf([...criteria, ...lines].join('\n'), tier, base, items, review)
 }
@@ -3811,9 +3958,9 @@ function slicedSummary(entries, { slices, baseSha, closeHead }, head, carry = nu
     lines.push(`Slice ${i + 1} of ${slices.length}: ${paths.join(', ')}`, ...closeLines(entries, close, head).lines)
     if (close.noTests) lines.push(`No tests: ${close.noTests}`)
   })
-  const { items, criteria, findings } = deferredLines(entries, slices[0].review, coverOf(slices.map((s) => s.close), head, carry))
-  const tier = tipTier(slices.map((s) => s.close), { entries, base: baseSha, tip: head, deferred: items })
-  lines.push(...tierLines(tier), 'Deferred findings', ...findings)
+  const { items, criteria, findings, preExisting, preExistingItems } = deferredLines(entries, slices[0].review, coverOf(slices.map((s) => s.close), head, carry))
+  const tier = tipTier(slices.map((s) => s.close), { entries, base: baseSha, tip: head, deferred: items, preExisting: preExistingItems })
+  lines.push(...tierLines(tier), 'Deferred findings', ...findings, ...preExisting)
   return summaryOf([...criteria, ...lines].join('\n'), tier, baseSha, items, slices[0].review)
 }
 const carriedLine = (carry, head) => `Carried: ${head} has the exact tree of ${carry.from} (${carry.tree}), which the close below covers; the history was rewritten after it`
@@ -3846,11 +3993,21 @@ const coverOf = (closes, tip, carry) => ({ closes, bases: [tip, ...(carry ? [car
 // The covering closes' own fix-check and recheck records count whatever branch name they were logged under.
 function deferredLines(entries, review, cover) {
   const linked = new Set([...cover.closes.flatMap((c) => [c.review, c.fixCheck, c.recheck]), ...(cover.linked || [])].filter(Boolean))
-  const items = deferredOrder(entries.filter((r) => r.type === 'review' && (r.repoId === review.repoId && r.branch === review.branch || linked.has(r.id)))
-    .flatMap((r) => deferredFindings(entries, r, cover)))
+  const records = entries.filter((r) => r.type === 'review' && (r.repoId === review.repoId && r.branch === review.branch || linked.has(r.id)))
+  const items = deferredOrder(records.flatMap((r) => deferredFindings(entries, r, cover)))
   const criteria = items.filter((f) => f.criterionId).map(deferredLine)
   const findings = items.filter((f) => !f.criterionId).map(deferredLine)
-  return { items, criteria: criteria.length ? ['Acceptance criteria not met', ...criteria] : [], findings: findings.length ? findings : ['none'] }
+  // Pre-existing findings left unfixed, apart from the deferred ones: protected first, as "Pre-existing HIGH". Only when any.
+  const old = deferredOrder(records.flatMap((r) => preExistingFindings(entries, r, cover)))
+  const preExisting = [...old.filter((f) => f.protected === true).map((f) => `Pre-existing HIGH ${deferredLine(f)}`),
+    ...old.filter((f) => f.protected !== true).map(deferredLine)]
+  return { items, criteria: criteria.length ? ['Acceptance criteria not met', ...criteria] : [], findings: findings.length ? findings : ['none'],
+    preExisting: preExisting.length ? ['Pre-existing (not introduced here)', ...preExisting] : [], preExistingItems: old }
+}
+// One review record's pre-existing findings its close did not fix.
+function preExistingFindings(entries, review, cover = null) {
+  const close = statusClose(entries, review, cover)
+  return (review.findingDetails || []).filter((f) => isPreExisting(f) && close?.statuses?.[f.id]?.status !== 'fixed')
 }
 // PR-body order: criteria not met, then HIGH, then MEDIUM and LOW; ties keep log order.
 const DEFERRED_RANK = { high: 1, medium: 2, low: 3 }
@@ -3862,7 +4019,7 @@ function deferredLine(finding) {
   const decision = deferral ? `; Deferred: ${deferral.reason}${fix ? `; Fix idea: ${fix}` : ''}` : ''
   if (finding.criterionId)
     return `${finding.id} criterion ${finding.criterionId} not met: ${finding.criterion}; recheck: ${finding.recheckEvidence || 'evidence not recorded'}${decision}`
-  return `${finding.id} ${scoreText(finding)} ${finding.file || '?'}:${finding.line || '?'} — ${finding.issue}; Trigger: ${finding.trigger || 'trigger not recorded'}${decision}`
+  return `${finding.id} ${scoreText(finding)} ${finding.file || '?'}:${finding.line || '?'} — ${finding.issue}; Trigger: ${finding.trigger || 'trigger not recorded'}${alsoAt(finding)}${decision}`
 }
 // The close whose statuses count for one review record. In a summary: the covering close that links it, else the
 // latest close that links it and is not at a commit outside the tip's history. Without a tip (--deferred): the latest.
@@ -3886,8 +4043,56 @@ function deferredFindings(entries, review, cover = null) {
       const evidence = recheck && recheck.criteria?.find((c) => c.id === f.criterionId)?.evidence
       return [{ ...f, deferral: status, ...(evidence && { recheckEvidence: evidence }) }]
     }
-    return isFiled(f) && status?.status !== 'fixed' ? [f] : []
+    return isFiled(f) && !isPreExisting(f) && status?.status !== 'fixed' ? [f] : []
   })
+}
+// --noise-report [--since <date>] [--all]: what findings turned out to be, per reviewing family and severity band, from
+// each review's latest close (in this repository unless --all; --since filters the close's timestamp). A finding counts
+// for the family that raised it: a security finding for the security family, a fix check's or recheck's for its own
+// record's family, a team's for each lens family. Unlabeled fixed or rejected statuses (legacy closes) count as
+// unlabeled, never as real; a finding without a status counts as filed or pre-existing when it is one.
+const NOISE_KINDS = ['real', 'unimportant', 'wrong', 'intentional', 'unlabeled', 'deferred', 'filed', 'pre-existing']
+function noiseReport() {
+  const since = option('--since')
+  const from = since === null ? null : Date.parse(since)
+  if (since !== null && !Number.isFinite(from)) throw new Error(`--since needs a date such as 2026-11-01; got ${since}`)
+  const all = args.includes('--all'), repoId = all ? null : repoIdentity()
+  const entries = readLog()
+  const latest = new Map()
+  for (const close of entries.filter((e) => e.type === 'close' && (all || e.repoId === repoId) && (from === null || Date.parse(e.ts) >= from)))
+    latest.set(close.review, close)
+  const counts = new Map()
+  const add = (family, band, kind) => {
+    const key = `${family}\0${band}`
+    if (!counts.has(key)) counts.set(key, { family, band, ...Object.fromEntries(NOISE_KINDS.map((k) => [k, 0])) })
+    counts.get(key)[kind]++
+  }
+  let closed = 0
+  for (const close of latest.values()) {
+    const review = entries.find((e) => e.type === 'review' && e.id === close.review)
+    if (!review) continue
+    closed++
+    const security = review.security?.status === 'ran' ? review.security.family : null
+    // Code findings belong to the code reviewer: each lens family of a team (its model names them), else the one family.
+    const team = review.family === 'claude-team'
+    const code = team && review.model ? reviewingFamilies({ family: review.family, model: review.model })
+      : review.family && !team ? [review.family] : reviewingFamilies(review).filter((family) => family !== security)
+    const records = [review, ...[close.recheck, close.fixCheck].filter(Boolean).map((id) => entries.find((e) => e.type === 'review' && e.id === id)).filter(Boolean)]
+    for (const record of records) for (const f of record.findingDetails || []) {
+      const status = close.statuses?.[f.id]?.status, response = close.statuses?.[f.id]?.response
+      const kind = status === 'fixed' || status === 'rejected' ? (RESPONSES[status].includes(response) ? response : 'unlabeled')
+        : status === 'deferred' ? 'deferred' : isPreExisting(f) ? 'pre-existing' : isFiled(f) ? 'filed' : null
+      if (!kind) continue
+      const families = record !== review ? [record.family] : f.source === 'security' && security ? [security] : code
+      for (const family of families.length ? families : ['(unknown)']) add(family || '(unknown)', String(f.severity || 'unscored').toUpperCase(), kind)
+    }
+  }
+  console.log(`Noise report (${all ? 'all repositories' : 'this repository'}${since !== null ? `, closes since ${since}` : ''}): ${closed} review(s) closed`)
+  if (!closed) return console.log('no closes')
+  const bands = ['HIGH', 'MEDIUM', 'LOW']
+  const rank = (band) => bands.includes(band) ? bands.indexOf(band) : bands.length
+  for (const t of [...counts.values()].sort((a, b) => a.family.localeCompare(b.family) || rank(a.band) - rank(b.band)))
+    console.log(`${t.family} ${t.band}: ${NOISE_KINDS.map((k) => `${k} ${t[k]}`).join(', ')}`)
 }
 function printDeferred() {
   const entries = readLog(), repoId = args.includes('--all') ? null : repoIdentity()
@@ -4179,9 +4384,9 @@ function coveredBy(entries, result, tip, carry) {
     if (r.close.noTests) lines.push(`No tests: ${r.close.noTests}`)
   })
   const cover = { ...coverOf(closes.map((r) => r.close), tip, carry), linked: used.filter((r) => r.check).map((r) => r.check.id) }
-  const { items, criteria, findings } = deferredLines(entries, tipClose.review, cover)
-  const tier = tipTier(closes.map((r) => r.close), { entries, base, tip, deferred: items })
-  lines.push(...tierLines(tier), 'Deferred findings', ...findings)
+  const { items, criteria, findings, preExisting, preExistingItems } = deferredLines(entries, tipClose.review, cover)
+  const tier = tipTier(closes.map((r) => r.close), { entries, base, tip, deferred: items, preExisting: preExistingItems })
+  lines.push(...tierLines(tier), 'Deferred findings', ...findings, ...preExisting)
   return summaryOf([...criteria, ...lines].join('\n'), tier, base, items, tipClose.review)
 }
 // A rewritten tip (squash, split, rebase) is covered when it does not descend from a logged head (a close, review,
@@ -4620,10 +4825,10 @@ const EVAL_RANK = { high: 3, medium: 2, low: 1 }
 // The paths a finding may name: the resolved one when the quote check located it; else the path as cited, with the case
 // repo's own folder (as given, or through symlinks) stripped from an absolute path, ./ dropped, and the a/ or b/ diff
 // prefix as a second reading.
-function evalFindingPaths(f, record, repo) {
-  const resolved = record.resolvedPaths?.[f.id]?.path
+function evalFindingPaths(place, repo) {
+  const resolved = place.where?.path
   if (resolved) return [resolved]
-  let p = String(f.file ?? '')
+  let p = String(place.file ?? '')
   for (const top of repo ? [repo, realish(repo)] : []) if (p.startsWith(`${top}/`)) { p = p.slice(top.length + 1); break }
   p = p.replace(/^\.\//, '')
   return /^[ab]\//.test(p) ? [p, p.slice(2)] : [p]
@@ -4631,9 +4836,9 @@ function evalFindingPaths(f, record, repo) {
 // A base-side catch: the finding names the expect's file, its cited line is within the expected lines ± EVAL_SLACK, and
 // its quote is in the base tree near that cited line, at lines that also overlap the expected ones ± EVAL_SLACK
 // (whitespace runs collapsed, as the quote check does). An identical snippet elsewhere in the file does not count.
-function quotedInBase(c, e, f, record, repo) {
+function quotedInBase(c, e, f, repo) {
   const bytes = c.base.get(e.file), span = evalSpan(f.line)
-  if (!bytes || !span || !evalFindingPaths(f, record, repo).includes(e.file)) return false
+  if (!bytes || !span || !evalFindingPaths(f, repo).includes(e.file)) return false
   const from = e.lines[0] - EVAL_SLACK, to = e.lines[1] + EVAL_SLACK
   if (span[0] > to || span[1] < from) return false
   const norm = (l) => l.replace(/\s+/g, ' ').trim()
@@ -4646,13 +4851,23 @@ function quotedInBase(c, e, f, record, repo) {
     if (s <= to && s + q.length - 1 >= from && lines.slice(s - 1, s - 1 + q.length).join('\n').includes(needle)) return true
   return false
 }
+// A finding's places: its main location and every instance, each with its file, line, quote and resolved { path, commit }.
+const evalPlaces = (f, record) => [{ file: f.file, line: f.line, quote: f.quote, where: record.resolvedPaths?.[f.id] },
+  ...(Array.isArray(f.instances) ? f.instances : []).map((inst, i) => ({ file: inst?.file, line: inst?.line, quote: inst?.quote, where: record.instanceResolved?.[f.id]?.[i] ?? null }))]
 function scoreEvalCase(c, record, repo = null) {
+  // One entry per located place: a grouped finding catches at any of its places and is tolerated only when all are allowed.
   const located = [], unlocated = []
   for (const f of record.findingDetails || []) {
-    const where = record.resolvedPaths?.[f.id], span = evalSpan(f.line)
-    if (f.status === 'unverified-quote' || !where?.path || !span) unlocated.push(f)
-    else located.push({ f, path: where.path, side: where.commit === record.head ? 'head' : where.commit === record.baseSha ? 'base' : null, span })
+    const [main] = evalPlaces(f, record)
+    if (f.status === 'unverified-quote' || !main.where?.path || !evalSpan(main.line)) { unlocated.push(f); continue }
+    for (const place of evalPlaces(f, record)) {
+      const where = place.where, span = evalSpan(place.line)
+      if (where?.path && span)
+        located.push({ f, path: where.path, side: where.commit === record.head ? 'head' : where.commit === record.baseSha ? 'base' : null, span, line: place.line })
+    }
   }
+  // One entry per finding, its first place in the list.
+  const findingsOf = (list) => list.filter((l, i) => list.findIndex((o) => o.f.id === l.f.id) === i)
   const near = (target, side) => located.filter((l) => l.path === target.file && l.side === side &&
     l.span[0] <= target.lines[1] + EVAL_SLACK && l.span[1] >= target.lines[0] - EVAL_SLACK)
   const strongest = (list) => [...list].sort((a, b) => (EVAL_RANK[b.f.severity] || 0) - (EVAL_RANK[a.f.severity] || 0))[0]
@@ -4661,25 +4876,28 @@ function scoreEvalCase(c, record, repo = null) {
     const expects = c.expect.map((e) => {
       // Removed code has no line at HEAD when its file survives, so the quote check leaves such a finding unlocated (or
       // locates it at HEAD): a base-side expect also takes any finding on that file whose quote is in the base tree there.
-      const hits = [...near(e, e.side), ...(e.side === 'base' ? (record.findingDetails || []).filter((f) => quotedInBase(c, e, f, record, repo)).map((f) => ({ f })) : [])]
+      const hits = [...near(e, e.side), ...(e.side === 'base' ? (record.findingDetails || [])
+        .filter((f) => evalPlaces(f, record).some((place) => quotedInBase(c, e, place, repo))).map((f) => ({ f })) : [])]
       hits.forEach((l) => used.add(l.f.id))
       const best = strongest(hits)
       return { file: e.file, side: e.side, lines: e.lines, caught: !!best, ...(best && { by: best.f.id, severity: best.f.severity }) }
     })
     const caught = expects.every((e) => e.caught)
     const weakest = caught ? expects.map((e) => e.severity).sort((a, b) => (EVAL_RANK[a] || 0) - (EVAL_RANK[b] || 0))[0] : null
-    return { outcome: caught ? 'caught' : 'missed', severity: weakest, expects, extra: located.filter((l) => !used.has(l.f.id)).length,
+    return { outcome: caught ? 'caught' : 'missed', severity: weakest, expects, extra: findingsOf(located.filter((l) => !used.has(l.f.id))).length,
       unlocated: unlocated.filter((f) => !used.has(f.id)).length }
   }
   const tolerated = new Set(c.allow.flatMap((a) => near(a, 'head')))
-  const outside = located.filter((l) => !tolerated.has(l))
+  // A finding is outside the allow list when any of its places is (shown at its first such place).
+  const outside = findingsOf(located.filter((l) => !tolerated.has(l)))
   const alarms = outside.filter((l) => blocking(l.f))
+  const outsideIds = new Set(outside.map((l) => l.f.id))
   return {
     outcome: alarms.length ? 'false-alarm' : 'clean',
     falseAlarms: alarms.length,
-    alarms: alarms.map((l) => ({ id: l.f.id, file: l.path, line: l.f.line, severity: l.f.severity, ...(l.f.unscored && { unscored: true }) })),
+    alarms: alarms.map((l) => ({ id: l.f.id, file: l.path, line: l.line, severity: l.f.severity, ...(l.f.unscored && { unscored: true }) })),
     lows: outside.length - alarms.length,
-    allowed: tolerated.size,
+    allowed: findingsOf(located.filter((l) => !outsideIds.has(l.f.id))).length,
     unlocated: unlocated.length,
   }
 }
@@ -4803,6 +5021,7 @@ async function runEval() {
   if (args.includes('--summary')) return printSummary()
   if (args.includes('--tier-json')) return printTierJson()
   if (args.includes('--deferred')) return printDeferred()
+  if (args.includes('--noise-report')) return noiseReport()
   if (args.includes('--fix-check')) return fixCheck(option('--fix-check'))
   if (args.includes('--slices')) return runSlices()
   if (args.includes('--security-worker')) return securityWorker(option('--security-worker'))
@@ -4889,6 +5108,8 @@ async function runEval() {
   const securityDetails = [...securityLocated, ...securityUnlocated]
   securityDetails.forEach((finding, i) => { finding.id = `s${i + 1}` })
   findingDetails.push(...securityDetails)
+  markPreExisting(findingDetails, baseSha, reviewedHead)
+  warnDropped(findingDetails)
   const allFindings = [...findings, ...securityLocated], allUnlocated = [...unlocated, ...securityUnlocated]
   const reviewedFiles = sliceFileList || filesBetween(baseSha, reviewedHead)
   const truncated = truncatedFiles(diff, reviewedFiles)

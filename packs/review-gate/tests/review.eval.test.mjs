@@ -644,3 +644,27 @@ test('x2 a finding cited by absolute path inside the case repo keeps its own fol
   const [c] = evalJson(r)[0].cases
   assert.equal(c.outcome, 'caught', JSON.stringify(c))
 })
+
+test('merge slice f1 a grouped finding scores at every place: an instance catches an expected bug, and an instance outside the allow list is a false alarm', () => {
+  const file = (name, changed, at) => Array.from({ length: 30 }, (_, i) => `export const ${name}${i + 1} = ${i + 1 === at ? changed : i + 1}`).join('\n') + '\n'
+  const trees = (changed) => ({ 'src/a.js': file('a', changed, 10), 'src/b.js': file('b', changed, 20) })
+  const placeA = { file: 'src/a.js', line: '10', quote: 'export const a10 = 0' }, placeB = { file: 'src/b.js', line: '20', quote: 'export const b20 = 0' }
+  const replies = []
+  const bug = (id, ...list) => {
+    makeCase(id, { id, kind: 'bug', intent: `token-${id}`, expect: [{ file: 'src/b.js', side: 'head', lines: [20, 20], what: 'b20 is zero' }] }, trees('x'), trees(0))
+    replies.push({ intent: `token-${id}`, reply: findings(...list) })
+  }
+  bug('grouped', finding({ ...placeA, instances: [placeB] }))
+  bug('separate', finding(placeA), finding(placeB))
+  makeCase('allowed-main', { id: 'allowed-main', kind: 'clean', intent: 'token-allowed-main', allow: [{ file: 'src/a.js', lines: [10, 10] }] }, trees('x'), trees(0))
+  replies.push({ intent: 'token-allowed-main', reply: findings(finding({ ...placeA, instances: [placeB] })) })
+  makeCase('allowed-all', { id: 'allowed-all', kind: 'clean', intent: 'token-allowed-all', allow: [{ file: 'src/a.js', lines: [10, 10] }, { file: 'src/b.js', lines: [20, 20] }] }, trees('x'), trees(0))
+  replies.push({ intent: 'token-allowed-all', reply: findings(finding({ ...placeA, instances: [placeB] })) })
+  const r = evalRun(['--family', 'sol'], { STUB_REPLIES: JSON.stringify(replies) })
+  assert.equal(r.status, 0, r.out)
+  const cases = Object.fromEntries(evalJson(r)[0].cases.map((c) => [c.id, c]))
+  assert.equal(cases.separate.outcome, 'caught')
+  assert.equal(cases.grouped.outcome, 'caught'); assert.equal(cases.grouped.expects[0].by, 'f1'); assert.equal(cases.grouped.extra, 0)
+  assert.equal(cases['allowed-main'].outcome, 'false-alarm'); assert.deepEqual(cases['allowed-main'].alarms.map((a) => a.id), ['f1'])
+  assert.equal(cases['allowed-all'].outcome, 'clean'); assert.equal(cases['allowed-all'].allowed, 1)
+})
