@@ -449,3 +449,99 @@ test('E1 one close with a pre-existing finding, a grouped finding, a labelled re
   assert.deepEqual(noise(), ['Noise report (this repository): 1 review(s) closed',
     row('sol', 'HIGH', { deferred: 1 }), row('sol', 'MEDIUM', { real: 1, wrong: 1, 'pre-existing': 1 })])
 })
+
+// ── fix round (review 2026-11-05-20-54-41-9b339c, grade-1793912091569-781165) ──
+// Files committed on main after the branch started, then merged into the branch: they exist at the merge base, so the
+// branch diff does not touch them.
+function onBase(files) {
+  git('checkout', '-q', 'main'); commit(files); git('checkout', '-q', 'feat'); git('merge', '-q', '--no-edit', 'main')
+}
+test('Q1a inDiff is judged where the quote matched, not at the cited line: a quote of a changed line cited 5 lines off is the branch\'s', () => {
+  const review = reviewed([scored({ line: '7', preExisting: true })])
+  assert.equal(review.findingDetails[0].inDiff, true)
+  refused(review.id, {}, /Finding f1 needs a fixed or rejected status/)
+})
+test('Q1b a quote from a file the branch deleted is judged on the base side: removed lines count as changed', () => {
+  onBase({ 'src/old.js': lines({}, 20, 'o') })
+  commit({ 'README.md': 'base\nmore\n' })
+  git('rm', '-q', 'src/old.js'); git('commit', '-qm', 'delete old')
+  const review = reviewed([scored({ issue: 'o15 overflows', file: 'src/old.js', line: '15', quote: 'export const o15 = 15', preExisting: true })])
+  assert.equal(review.findingDetails[0].status, 'verified-quote')
+  assert.equal(review.findingDetails[0].inDiff, true)
+  refused(review.id, {}, /Finding f1 needs a fixed or rejected status/)
+})
+test('Q1c a slice judges inDiff on the whole branch diff: an instance outside REVIEW_PATHS that the branch changed is in the diff', () => {
+  commit({ 'src/two.js': two() })
+  const review = reviewed([{ ...OLD, instances: [{ file: 'src/two.js', line: '1', quote: 'export const w1 = 20' }] }], { REVIEW_PATHS: 'src/one.js' })
+  assert.deepEqual(review.paths, ['src/one.js'])
+  assert.equal(review.findingDetails[0].inDiff, true)
+})
+test('Q1d a place whose inDiff cannot be computed (an ambiguous a/ instance) keeps the finding from being pre-existing', () => {
+  onBase({ 'a/src/x.js': 'export const x1 = 1\n', 'src/x.js': 'export const x1 = 1\n' })
+  const review = reviewed([{ ...OLD, instances: [{ file: 'a/src/x.js', line: '1', quote: 'export const x1 = 1' }] }])
+  assert.equal(review.findingDetails[0].inDiff, null)
+  refused(review.id, {}, /Finding f1 needs a fixed or rejected status/)
+})
+test('Q2 the fix check is not asked to repair a pre-existing finding, as with a filed one', () => {
+  const review = reviewed([scored(), OLD])
+  assert.equal(review.findingDetails[1].inDiff, false)
+  fixChecked(review)
+  const prompt = prompts().find((c) => c.prompt.startsWith('Fix check:')).prompt
+  // It still reaches the reviewer as already decided context, never as a finding the fix repairs.
+  const note = prompt.slice(prompt.indexOf('The fix is meant to repair')).split('\n\n')[0]
+  assert.deepEqual(note.split('\n').filter((l) => l.startsWith('- ')), ['- f1 MEDIUM src/one.js:2 — v2 is wrong; Trigger: importing v2 at startup'])
+})
+const gradeLog = (value, args = []) => {
+  const path = join(ROOT, 'grade.json'); writeFileSync(path, JSON.stringify(value))
+  allowed(script(['--log-grade', path, ...args]))
+  return records().at(-1)
+}
+const criteria = (verdict) => [{ id: 'k1', criterion: 'v2 is 2', verdict, evidence: 'src/one.js:2' }]
+test('Q3a under "always" the Grade recheck and the exclusions come before the risk rule; "risk" keeps its rule', () => {
+  homeConfig({ fixCheck: 'always' })
+  const failed = gradeLog({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('FAIL') })
+  commit({ 'src/one.js': lines(), 'src/one.test.js': 'test v2\n' })
+  gradeLog({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('PASS') }, ['--recheck-of', failed.id])
+  closed(failed.id, { c1: { status: 'fixed' } })
+  const review = reviewed([])
+  commit({ 'docs/auth.md': '# Auth\n' })
+  allowed(close(review.id, {}))
+  homeConfig({})
+  refused(review.id, {}, 'Fix changes tests, verify scripts or risk paths; run --fix-check first')
+})
+test('Q3b under "always" a code change after the Grade recheck still needs a fix check', () => {
+  homeConfig({ fixCheck: 'always' })
+  const failed = gradeLog({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('FAIL') })
+  commit({ 'src/one.js': lines() })
+  gradeLog({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('PASS') }, ['--recheck-of', failed.id])
+  commit({ 'src/one.js': lines({ 18: 'export const v18 = 0' }) })
+  refused(failed.id, { c1: { status: 'fixed' } }, '✖ Fix changes code after the review and fixCheck is "always": src/one.js; run --fix-check first')
+})
+test('Q4 a new fixed status without a response is logged as real; a legacy close without labels stays unlabeled', () => {
+  const review = reviewed([scored()])
+  commit({ 'src/one.js': lines() })
+  const record = closed(review.id, { f1: { status: 'fixed' } })
+  assert.equal(record.statuses.f1.response, 'real')
+  appendFileSync(LOG, [JSON.stringify({ type: 'review', kind: 'review', id: 'legacy', family: 'grok', repoId: realpathSync(join(REPO, '.git')), findingDetails: [{ id: 'f1', severity: 'medium' }] }),
+    JSON.stringify({ type: 'close', review: 'legacy', ts: new Date().toISOString(), repoId: realpathSync(join(REPO, '.git')), statuses: { f1: { status: 'fixed' } } })].join('\n') + '\n')
+  assert.deepEqual(noise(), ['Noise report (this repository): 2 review(s) closed', row('grok', 'MEDIUM', { unlabeled: 1 }), row('sol', 'MEDIUM', { real: 1 })])
+})
+test('Q5 a team lens family that also ran the security pass keeps its code findings', () => {
+  const repoId = realpathSync(join(REPO, '.git'))
+  writeFileSync(LOG, [
+    { type: 'review', kind: 'review', id: 'T', family: 'claude-team', model: 'opus+fable', families: ['opus', 'fable'], repoId, security: { status: 'ran', family: 'opus' },
+      findingDetails: [{ id: 'f1', severity: 'medium' }, { id: 's1', severity: 'low', source: 'security' }] },
+    { type: 'review', kind: 'review', id: 'S', family: 'sol', model: 'gpt-stub-sol', families: ['sol', 'opus'], repoId, security: { status: 'ran', family: 'opus' },
+      findingDetails: [{ id: 'f1', severity: 'medium' }, { id: 's1', severity: 'medium', source: 'security' }] },
+    { type: 'close', review: 'T', ts: new Date().toISOString(), repoId, statuses: { f1: { status: 'fixed', response: 'real' }, s1: { status: 'fixed', response: 'unimportant' } } },
+    { type: 'close', review: 'S', ts: new Date().toISOString(), repoId, statuses: { f1: { status: 'fixed', response: 'real' }, s1: { status: 'fixed', response: 'real' } } },
+  ].map((e) => JSON.stringify(e)).join('\n') + '\n')
+  assert.deepEqual(noise(), ['Noise report (this repository): 2 review(s) closed',
+    row('fable', 'MEDIUM', { real: 1 }), row('opus', 'MEDIUM', { real: 2 }), row('opus', 'LOW', { unimportant: 1 }), row('sol', 'MEDIUM', { real: 1 })])
+})
+test('Q6 an unknown fixCheck in the home config warns once, naming that file', () => {
+  homeConfig({ fixCheck: 'sometimes' })
+  const r = script(['--show-config'])
+  const warnings = r.out.split('\n').filter((l) => l.includes('Unknown fixCheck'))
+  assert.deepEqual(warnings, [`⚠ Unknown fixCheck "sometimes" in ${HOME_CONFIG}; using the others (risk | always)`])
+})

@@ -324,7 +324,9 @@ const FIX_CHECK_MODES = ['risk', 'always']
 const FIX_CHECK = (() => {
   const homes = [join(homedir(), '.agent-config-studio', 'review-gate', 'config.json'), join(homedir(), '.claude', 'review-config.json')]
   let mode = 'risk'
-  for (const [value, where] of [[homeKey(homes, 'fixCheck'), homeSource(homes)], [CONFIG.fixCheck, CONFIG._source], [process.env.REVIEW_FIX_CHECK, 'REVIEW_FIX_CHECK']]) {
+  // The loaded config is read once: when it is the home config itself, it is not read again under its own name.
+  const home = homeSource(homes), loadedIsHome = !!home && !!CONFIG._source && sameFile(CONFIG._source, home)
+  for (const [value, where] of [[homeKey(homes, 'fixCheck'), home], ...(loadedIsHome ? [] : [[CONFIG.fixCheck, CONFIG._source]]), [process.env.REVIEW_FIX_CHECK, 'REVIEW_FIX_CHECK']]) {
     if (value == null || value === '') continue
     const asked = String(value).trim().toLowerCase()
     if (!FIX_CHECK_MODES.includes(asked)) {
@@ -2240,20 +2242,23 @@ function locateQuote(f) {
   while (q.length && !q[0]) q.shift()
   while (q.length && !q.at(-1)) q.pop()
   const needle = q.join('\n')
-  const problemIn = ({ text }) => {
+  let start = null
+  const problemIn = ({ text }, keep = false) => {
     const count = text.endsWith('\n') ? text.split('\n').length - 1 : text.split('\n').length
     // Also bounds the search loop: an unsafe integer (2^53, a 310-digit Infinity) never terminates s++.
     if (!Number.isSafeInteger(line) || line < 1 || line > count)
       return `line ${lineMatch[1].length > 20 ? `${lineMatch[1].slice(0, 20)}…` : lineMatch[1]} is outside ${path} (1–${count})`
     const lines = text.split('\n').map(norm)
     for (let s = Math.max(1, line - QUOTE_WINDOW); s <= line + QUOTE_WINDOW; s++)
-      if (lines.slice(s - 1, s - 1 + q.length).join('\n').includes(needle)) return null
+      if (lines.slice(s - 1, s - 1 + q.length).join('\n').includes(needle)) { if (keep) start = s; return null }
     return `quote not found within ±${QUOTE_WINDOW} lines of ${path}:${line}`
   }
-  const problem = problemIn(decider)
+  const problem = problemIn(decider, true)
   if (problem) return { problem }
   if (written && prefixed && !problemIn(prefixed)) return { problem: null, ambiguous: [written.path, prefixed.path] }
-  return { problem: null, path: decider.path, commit: sh('git', ['rev-parse', '--verify', `${decider.rev}^{commit}`]) }
+  // Where the quote matched (its lines, and whether in the HEAD or the base file), for inDiff: never the cited line.
+  return { problem: null, path: decider.path, commit: sh('git', ['rev-parse', '--verify', `${decider.rev}^{commit}`]),
+    lines: [start, start + q.length - 1], side: decider.rev === 'HEAD' ? 'head' : 'base' }
 }
 // The location rides on a Symbol key until the record is written: JSON never carries it, so reviewer JSON
 // cannot set it, and the logged finding and FINDINGS_JSON keep their shape. Reviewer keys that look like the
@@ -2950,15 +2955,20 @@ async function closeReview(id) {
     if (code.length) throw new Error(`Fix check head must equal closing HEAD, or the commits after it may touch only builds/ and test files: ${code.join(', ')}. ` +
       'Fixes land before the fix check; close at its head, then review the later files as a slice (REVIEW_PATHS) and close that at the tip. No third model pass')
   }
-  if (needsFixCheck(files, [command, VERIFY_CMD].filter(Boolean).join(' ')) && !check) throw new Error('Fix changes tests, verify scripts or risk paths; run --fix-check first')
-  // Under "always", a Grade's one recheck counts as its check.
-  const code = FIX_CHECK === 'always' && !check && !(review.kind === 'grade' && recheck) ? codeFixFiles(files) : []
-  if (code.length) throw new Error(`Fix changes code after the review and fixCheck is "always": ${listed(code)}; run --fix-check first ` +
-    '(docs, static, coverage-exempt and builds/ files never need one)')
+  if (FIX_CHECK === 'always') {
+    // "always" replaces the risk rule: its exclusions and the Grade's recheck apply first. A Grade's one recheck counts as its
+    // check only when no code file changed after the recheck's head.
+    const rechecked = review.kind === 'grade' && recheck && !codeFixFiles(touchedBetween(recheck.head, recheckAt)).length
+    const code = check || rechecked ? [] : codeFixFiles(files)
+    if (code.length) throw new Error(`Fix changes code after the review and fixCheck is "always": ${listed(code)}; run --fix-check first ` +
+      '(docs, static, coverage-exempt and builds/ files never need one)')
+  } else if (needsFixCheck(files, [command, VERIFY_CMD].filter(Boolean).join(' ')) && !check) throw new Error('Fix changes tests, verify scripts or risk paths; run --fix-check first')
   const reviews = [review, ...(recheck ? [recheck] : []), ...(check ? [check] : [])]
   const ids = new Set(reviews.flatMap((r) => r.findingDetails.map((f) => f.id)))
   for (const key of Object.keys(statuses)) if (!ids.has(key)) throw new Error(`Unknown finding status key: ${key}`)
   for (const r of reviews) validateStatuses(entries, r, statuses)
+  // A fix logged without a label was real; only closes logged before labels existed count as unlabeled.
+  for (const status of Object.values(statuses)) if (status?.status === 'fixed' && !Object.hasOwn(status, 'response')) status.response = 'real'
   const fixedFiles = recordedPaths(reviews, statuses)
   // The single recheck graded the fix round's files: a criterion fixed on its PASS, or deferred after its FAIL, covers them.
   const rechecked = (f, verdict) => recheck.criteria.some((c) => c.id === f.criterionId && c.verdict === verdict)
@@ -3741,17 +3751,27 @@ async function fixCheck(id) {
 // A review or security finding that claims preExisting gets inDiff: true when its main location or any located instance is
 // within 3 lines of a line the review diff (merge base to head) added or changed, false when every place is resolved and
 // outside it, null when that can't be told (unlocated, ambiguous, git failed). Only false files it as pre-existing.
-function inDiffOf(finding, changed) {
-  const places = [finding, ...(finding.instances || []).map((inst, i) => ({ line: inst.line, [WHERE]: finding[WHERE]?.instances?.[i] }))]
-  const each = places.map((place) => inFix(place, changed))
+// Each place is judged by the lines its quote matched, on the side it matched: a HEAD quote against the lines the branch
+// added or changed, a base quote (a deleted file) against the lines it removed or changed, and only when that base is the
+// merge base. Any place that can't be judged (unlocated, ambiguous, another base, git failed) is null.
+function placeInDiff(where, changed, baseSha) {
+  if (!changed || !where?.path || !Array.isArray(where.lines) || !Number.isSafeInteger(where.lines[0])) return null
+  if (where.side === 'base' && where.commit !== baseSha) return null
+  const [from, to] = where.lines
+  return ((where.side === 'base' ? changed.base : changed.head).get(where.path) || []).some(([a, b]) => from <= b + 3 && to >= a - 3)
+}
+function inDiffOf(finding, changed, baseSha) {
+  const places = [finding[WHERE], ...(finding.instances || []).map((_, i) => finding[WHERE]?.instances?.[i])]
+  const each = places.map((where) => placeInDiff(where, changed, baseSha))
   return each.includes(true) ? true : each.every((v) => v === false) ? false : null
 }
 function markPreExisting(findings, baseSha, head) {
   const claimed = findings.filter((f) => f.preExisting === true)
   if (!claimed.length) return
-  const changed = fixChangedLines(baseSha, head, SLICE)
+  // The whole branch diff, never a slice's paths: a place outside the slice that the branch changed is still the branch's.
+  const changed = changedSides(baseSha, head)
   for (const f of claimed) {
-    f.inDiff = inDiffOf(f, changed)
+    f.inDiff = inDiffOf(f, changed, baseSha)
     if (f.inDiff === true) console.warn(`⚠ ${f.id}: marked pre-existing, but it is within 3 lines of a line this branch changed; it counts as the branch's`)
     if (f.inDiff === null) console.warn(`⚠ ${f.id}: marked pre-existing, but whether it is in the diff can't be told; it counts as the branch's`)
   }
@@ -3759,7 +3779,7 @@ function markPreExisting(findings, baseSha, head) {
 // The original findings a fix check's fix is meant to repair (every one not filed), so the reviewer can tell an
 // incomplete repair from a new regression. Empty when there are none.
 function originalFindingsNote(original) {
-  const targets = (original.findingDetails || []).filter((f) => !isFiled(f))
+  const targets = (original.findingDetails || []).filter((f) => !isFiled(f) && !isPreExisting(f))
   if (!targets.length) return ''
   const list = targets.map((f) => `- ${f.id} ${String(f.severity || '?').toUpperCase()} ${f.file || '?'}:${f.line || '?'} — ${f.issue || f.criterion || ''}; ` +
     `Trigger: ${f.trigger || 'trigger not recorded'}${alsoAt(f)}`).join('\n')
@@ -3770,23 +3790,30 @@ function originalFindingsNote(original) {
 // Names come NUL-separated from filesBetween, never from patch headers (a space adds a tab there, odd names are
 // C-quoted); each file's own diff is read for its hunk lines only. null when any name or diff can't be read.
 function fixChangedLines(from, to, paths = null) {
+  return changedSides(from, to, paths)?.head ?? null
+}
+// Both sides of the -U0 diff: head (lines added or changed, by file at `to`) and base (lines removed or changed, by file at
+// `from`; a pure addition marks the base line it follows). null when any name or diff can't be read.
+function changedSides(from, to, paths = null) {
   let names
   try { names = filesBetween(from, to, paths) } catch { return null }
-  const changed = new Map()
+  const changed = new Map(), removed = new Map()
   for (const name of names) {
     const r = spawnSync('git', ['-C', TOP, 'diff', '-U0', '--no-renames', '--no-color', '--no-ext-diff', '--no-textconv', from, to, '--', `:(literal)${name}`],
       { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
     if (r.error || r.status !== 0) return null
-    const lines = []
+    const lines = [], old = []
     for (const line of r.stdout.split('\n')) {
-      const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/)
+      const hunk = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/)
       if (!hunk) continue
-      const start = Number(hunk[1]), count = hunk[2] == null ? 1 : Number(hunk[2])
-      lines.push(count ? [start, start + count - 1] : [Math.max(start, 1), Math.max(start, 1)])
+      const span = (s, c) => c ? [s, s + c - 1] : [Math.max(s, 1), Math.max(s, 1)]
+      lines.push(span(Number(hunk[3]), hunk[4] == null ? 1 : Number(hunk[4])))
+      old.push(span(Number(hunk[1]), hunk[2] == null ? 1 : Number(hunk[2])))
     }
     changed.set(name, lines)
+    removed.set(name, old)
   }
-  return changed
+  return { head: changed, base: removed }
 }
 // A fix-check finding is in the fix when its line is within 3 lines of a line the fix added or changed in its file;
 // null when its file or line can't be resolved.
@@ -3938,7 +3965,10 @@ function noiseReport() {
     if (!review) continue
     closed++
     const security = review.security?.status === 'ran' ? review.security.family : null
-    const code = reviewingFamilies(review).filter((family) => family !== security || family === review.family)
+    // Code findings belong to the code reviewer: each lens family of a team (its model names them), else the one family.
+    const team = review.family === 'claude-team'
+    const code = team && review.model ? reviewingFamilies({ family: review.family, model: review.model })
+      : review.family && !team ? [review.family] : reviewingFamilies(review).filter((family) => family !== security)
     const records = [review, ...[close.recheck, close.fixCheck].filter(Boolean).map((id) => entries.find((e) => e.type === 'review' && e.id === id)).filter(Boolean)]
     for (const record of records) for (const f of record.findingDetails || []) {
       const status = close.statuses?.[f.id]?.status, response = close.statuses?.[f.id]?.response
