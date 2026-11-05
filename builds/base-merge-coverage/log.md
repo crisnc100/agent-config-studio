@@ -18,3 +18,10 @@
 ## Tests
 
 `packs/review-gate/tests/review.basemerge.test.mjs` (BM1–BM6). Written first; 9 of 10 failed on the old code (BM6, rebase, passes on both by design). BM3/BM4 initially expected only the merged-branch / main file in a partial close's outOfScope; the old rule (kept for non-default merges and a missing origin/HEAD) also lists the branch's own files via the `-m` diff, so those asserts were corrected to the old behavior before commit.
+
+## Open points for review
+
+- Pre-existing, not loosened here: a both-sides file that is in close scope for another reason (a finding on it marked fixed, or a fix check that saw it before the merge, without a fix check after) is covered by the re-close at its merged state without anyone reviewing the resolution. The same held for a merge before this change (touchedBetween listed it and fixedFiles/seen put it in scope).
+- Old per-repo shim copies run directly by git (no global dispatcher) still call `--gate` without a remote, so they keep the full rule until reinstalled (stricter, not looser).
+- `packs/build/skills/*/build/SKILL.md` carries the same rule 8 sentence; left alone (plan scope is the code-review twins).
+- Full suite: 604/604 outside the sandbox (594 before + 10 new).
