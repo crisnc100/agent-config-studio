@@ -5,7 +5,8 @@
     "reviewer": { "use": "astra", "effort": "high", "note": "reads a diff and reports findings" },
     "builder": { "use": ["opus", "sol"], "effort": "medium", "note": "implements from a brief" },
     "judge": { "use": "fable", "effort": "high", "note": "grades finished work against its criteria" },
-    "investigator": { "use": "astra", "effort": "high", "note": "evidence-first root-cause and is-it-true questions" }
+    "investigator": { "use": "astra", "effort": "high", "note": "evidence-first root-cause and is-it-true questions" },
+    "security": { "use": "astra", "effort": "high", "note": "reviews a diff for security defects only, beside the code reviewer" }
   },
   "flavor": {
     "fable": {
