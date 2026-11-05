@@ -267,3 +267,77 @@ test('I4 shadow matching counts a grouped finding\'s instances, on either side',
   const r = script(['--shadow-report']); allowed(r)
   assert.match(r.stdout, /^grok: 2 run\(s\), 0 failed; 2 finding\(s\): 2 matched, 0 unique; missed 0 of 2 real finding\(s\); average 10 ms$/m)
 })
+
+// ── 3. response labels and --noise-report ───────────────────────────────────
+test('R1 a fixed status may say real or unimportant; anything else is refused, and the label is logged on the close', () => {
+  const review = reviewed([scored()])
+  commit({ 'src/one.js': lines() })
+  refused(review.id, { f1: { status: 'fixed', response: 'wrong' } }, 'Fixed f1 response must be real or unimportant')
+  refused(review.id, { f1: { status: 'fixed', response: 'nice' } }, 'Fixed f1 response must be real or unimportant')
+  const record = closed(review.id, { f1: { status: 'fixed', response: 'unimportant' } })
+  assert.equal(record.statuses.f1.response, 'unimportant')
+})
+test('R1 a rejection may say wrong or intentional; an unknown one is refused; a label never replaces the REFUTED verdict or waiver', () => {
+  const review = reviewed([scored(), scored({ issue: 'v3 is odd', line: '3', quote: 'export const v3 = 3' })])
+  const both = (response) => ({ f1: { status: 'rejected', reason: 'not a bug', evidence: 'src/one.js:2', response }, f2: { status: 'rejected', reason: 'meant', evidence: 'src/one.js:3', response: 'intentional' } })
+  refused(review.id, both('wrong'), /Rejected f1 requires a REFUTED verdict or an operator waiver/)
+  refute(review.id, 'f1'); refute(review.id, 'f2')
+  refused(review.id, both('unimportant'), 'Rejected f1 response must be wrong or intentional')
+  const record = closed(review.id, both('wrong'))
+  assert.deepEqual([record.statuses.f1.response, record.statuses.f2.response], ['wrong', 'intentional'])
+})
+test('R1 a deferral takes no response', () => {
+  const review = reviewed([scored()])
+  fixChecked(review, [scored({ issue: 'v18 off', line: '18', quote: 'export const v18 = 18' })])
+  refused(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later', response: 'real' } }, /Unknown status field for x1/)
+})
+
+// A fixture log: closes in this repository and another, a team review, a fix check, a security finding, a legacy close
+// (no labels), a superseded partial close, a filed and a pre-existing finding, and one close before --since.
+function noiseFixture() {
+  const repoId = realpathSync(join(REPO, '.git')), other = '/elsewhere/.git'
+  const f = (id, severity, extra = {}) => ({ id, severity, issue: id, ...extra })
+  const review = (id, family, findingDetails, extra = {}) => ({ type: 'review', kind: 'review', id, family, findingDetails, branch: 'feat', ...extra })
+  const closeOf = (reviewId, ts, statuses, extra = {}) => ({ type: 'close', review: reviewId, ts, statuses, status: 'complete', ...extra })
+  const log = [
+    review('A', 'sol', [f('f1', 'high'), f('f2', 'medium'), f('f3', 'low', { filed: true }), f('f4', 'medium', { preExisting: true, inDiff: false }),
+      f('s1', 'medium', { source: 'security' })], { repoId, families: ['sol', 'grok'], security: { status: 'ran', family: 'grok' } }),
+    { type: 'review', kind: 'fix-check', id: 'XA', review: 'A', family: 'grok', repoId, findingDetails: [f('x1', 'medium')] },
+    closeOf('A', '2026-11-02T00:00:00Z', { f1: { status: 'rejected', response: 'wrong' } }, { repoId, status: 'partial' }),
+    closeOf('A', '2026-11-03T00:00:00Z', { f1: { status: 'fixed', response: 'real' }, f2: { status: 'rejected', response: 'wrong' },
+      s1: { status: 'fixed', response: 'unimportant' }, x1: { status: 'deferred', reason: 'later' } }, { repoId, fixCheck: 'XA' }),
+    review('B', 'claude-team', [f('f1', 'medium')], { repoId, families: ['opus', 'fable'] }),
+    closeOf('B', '2026-11-04T00:00:00Z', { f1: { status: 'rejected', response: 'intentional' } }, { repoId }),
+    review('C', 'sol', [f('f1', 'medium'), f('f2', 'high')], { repoId }),
+    closeOf('C', '2026-11-04T00:00:00Z', { f1: { status: 'fixed' }, f2: { status: 'rejected' } }, { repoId }),
+    review('D', 'sol', [f('f1', 'medium')], { repoId: other }),
+    closeOf('D', '2026-11-04T00:00:00Z', { f1: { status: 'fixed', response: 'real' } }, { repoId: other }),
+    review('E', 'sol', [f('f1', 'high')], { repoId }),
+    closeOf('E', '2026-10-01T00:00:00Z', { f1: { status: 'fixed', response: 'real' } }, { repoId }),
+  ]
+  writeFileSync(LOG, log.map((e) => JSON.stringify(e)).join('\n') + '\n')
+}
+const noise = (...args) => { const r = script(['--noise-report', ...args]); allowed(r); return r.stdout.trim().split('\n') }
+const row = (family, band, counts = {}) => `${family} ${band}: ` +
+  ['real', 'unimportant', 'wrong', 'intentional', 'unlabeled', 'deferred', 'filed', 'pre-existing'].map((k) => `${k} ${counts[k] || 0}`).join(', ')
+test('R2 --noise-report counts per reviewing family and severity band, from each review\'s latest close in this repository', () => {
+  noiseFixture()
+  assert.deepEqual(noise('--since', '2026-11-01'), [
+    'Noise report (this repository, closes since 2026-11-01): 3 review(s) closed',
+    row('fable', 'MEDIUM', { intentional: 1 }),
+    row('grok', 'MEDIUM', { unimportant: 1, deferred: 1 }),
+    row('opus', 'MEDIUM', { intentional: 1 }),
+    row('sol', 'HIGH', { real: 1, unlabeled: 1 }),
+    row('sol', 'MEDIUM', { wrong: 1, unlabeled: 1, 'pre-existing': 1 }),
+    row('sol', 'LOW', { filed: 1 }),
+  ])
+  const all = noise('--all')
+  assert.equal(all[0], 'Noise report (all repositories): 5 review(s) closed')
+  assert.ok(all.includes(row('sol', 'HIGH', { real: 2, unlabeled: 1 })), all.join('\n'))
+  assert.ok(all.includes(row('sol', 'MEDIUM', { real: 1, wrong: 1, unlabeled: 1, 'pre-existing': 1 })), all.join('\n'))
+  const bad = script(['--noise-report', '--since', 'soon'])
+  assert.notEqual(bad.status, 0); assert.match(bad.out, /--since needs a date such as 2026-11-01; got soon/)
+})
+test('R2 --noise-report with nothing closed says so', () => {
+  assert.deepEqual(noise(), ['Noise report (this repository): 0 review(s) closed', 'no closes'])
+})

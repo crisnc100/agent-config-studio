@@ -671,7 +671,7 @@ function detectDefaultBase() {
   return 'origin/main'
 }
 // `||` not `??` so an empty string in review-config.json still means "auto-detect".
-const BASE = cfg('REVIEW_BASE', 'base', '') || (['--gate', '--deferred', '--rubric', '--calibrate'].some((flag) => args.includes(flag)) ? '' : detectDefaultBase())
+const BASE = cfg('REVIEW_BASE', 'base', '') || (['--gate', '--deferred', '--rubric', '--calibrate', '--noise-report'].some((flag) => args.includes(flag)) ? '' : detectDefaultBase())
 // The base reaches git as a revision and as `git fetch <remote> <ref>`, so it is never an option, a
 // refspec or a URL: no leading - or + on any part, no colon, no space. The push gate never uses it.
 const BASE_RE = /^(?!.*\/[-+])[A-Za-z0-9_@][A-Za-z0-9._/~^@{}-]*$/
@@ -2581,6 +2581,9 @@ function validateDeferral(entries, review, f, status) {
 // A fixed status's optional `test`: a nonempty relative path that stays inside the repository.
 const repoRelativePath = (p) => typeof p === 'string' && !!p.trim() && p === p.trim() && !p.startsWith('/') && !/^[a-z]:/i.test(p) &&
   !/[\0\n\r]/.test(p) && !p.split(/[\\/]/).includes('..')
+// Response labels on a close status: fixed → real | unimportant (fixed though not worth it); rejected → wrong | intentional.
+const RESPONSES = { fixed: ['real', 'unimportant'], rejected: ['wrong', 'intentional'] }
+const RESPONSE_REQUIRED = false
 function validateStatuses(entries, review, statuses) {
   for (const f of review.findingDetails) {
     const status = statuses[f.id]
@@ -2592,8 +2595,14 @@ function validateStatuses(entries, review, statuses) {
     }
     if (!status || !['fixed', 'rejected'].includes(status.status))
       throw new Error(`Finding ${f.id} needs a fixed or rejected status${review.kind === 'fix-check' || review.kind === 'recheck' ? ', or deferred with a reason' : ''}`)
-    if (Object.keys(status).some((key) => !['status', 'reason', 'evidence', 'refutedBy', ...(status.status === 'fixed' ? ['test'] : [])].includes(key)))
+    if (Object.keys(status).some((key) => !['status', 'reason', 'evidence', 'refutedBy', 'response', ...(status.status === 'fixed' ? ['test'] : [])].includes(key)))
       throw new Error(`Unknown status field for ${f.id}; reviewer severity cannot be changed`)
+    // What the finding turned out to be, for --noise-report. A label only: a rejection still needs its REFUTED or waiver.
+    const labels = RESPONSES[status.status]
+    if (Object.hasOwn(status, 'response') && !labels.includes(status.response))
+      throw new Error(`${status.status === 'fixed' ? 'Fixed' : 'Rejected'} ${f.id} response must be ${labels.join(' or ')}`)
+    if (RESPONSE_REQUIRED && status.status === 'rejected' && !Object.hasOwn(status, 'response'))
+      throw new Error(`Rejected ${f.id} needs a response: wrong (not a defect) or intentional (the behavior is meant)`)
     if (Object.hasOwn(status, 'test') && !repoRelativePath(status.test))
       throw new Error(`Fixed ${f.id} test must be a repo-relative path to the test that reproduces it`)
     if (Object.hasOwn(status, 'refutedBy') && !refuted(entries, review, f, status.refutedBy))
@@ -3879,6 +3888,51 @@ function deferredFindings(entries, review, cover = null) {
     return isFiled(f) && !isPreExisting(f) && status?.status !== 'fixed' ? [f] : []
   })
 }
+// --noise-report [--since <date>] [--all]: what findings turned out to be, per reviewing family and severity band, from
+// each review's latest close (in this repository unless --all; --since filters the close's timestamp). A finding counts
+// for the family that raised it: a security finding for the security family, a fix check's or recheck's for its own
+// record's family, a team's for each lens family. Unlabeled fixed or rejected statuses (legacy closes) count as
+// unlabeled, never as real; a finding without a status counts as filed or pre-existing when it is one.
+const NOISE_KINDS = ['real', 'unimportant', 'wrong', 'intentional', 'unlabeled', 'deferred', 'filed', 'pre-existing']
+function noiseReport() {
+  const since = option('--since')
+  const from = since === null ? null : Date.parse(since)
+  if (since !== null && !Number.isFinite(from)) throw new Error(`--since needs a date such as 2026-11-01; got ${since}`)
+  const all = args.includes('--all'), repoId = all ? null : repoIdentity()
+  const entries = readLog()
+  const latest = new Map()
+  for (const close of entries.filter((e) => e.type === 'close' && (all || e.repoId === repoId) && (from === null || Date.parse(e.ts) >= from)))
+    latest.set(close.review, close)
+  const counts = new Map()
+  const add = (family, band, kind) => {
+    const key = `${family}\0${band}`
+    if (!counts.has(key)) counts.set(key, { family, band, ...Object.fromEntries(NOISE_KINDS.map((k) => [k, 0])) })
+    counts.get(key)[kind]++
+  }
+  let closed = 0
+  for (const close of latest.values()) {
+    const review = entries.find((e) => e.type === 'review' && e.id === close.review)
+    if (!review) continue
+    closed++
+    const security = review.security?.status === 'ran' ? review.security.family : null
+    const code = reviewingFamilies(review).filter((family) => family !== security || family === review.family)
+    const records = [review, ...[close.recheck, close.fixCheck].filter(Boolean).map((id) => entries.find((e) => e.type === 'review' && e.id === id)).filter(Boolean)]
+    for (const record of records) for (const f of record.findingDetails || []) {
+      const status = close.statuses?.[f.id]?.status, response = close.statuses?.[f.id]?.response
+      const kind = status === 'fixed' || status === 'rejected' ? (RESPONSES[status].includes(response) ? response : 'unlabeled')
+        : status === 'deferred' ? 'deferred' : isPreExisting(f) ? 'pre-existing' : isFiled(f) ? 'filed' : null
+      if (!kind) continue
+      const families = record !== review ? [record.family] : f.source === 'security' && security ? [security] : code
+      for (const family of families.length ? families : ['(unknown)']) add(family || '(unknown)', String(f.severity || 'unscored').toUpperCase(), kind)
+    }
+  }
+  console.log(`Noise report (${all ? 'all repositories' : 'this repository'}${since !== null ? `, closes since ${since}` : ''}): ${closed} review(s) closed`)
+  if (!closed) return console.log('no closes')
+  const bands = ['HIGH', 'MEDIUM', 'LOW']
+  const rank = (band) => bands.includes(band) ? bands.indexOf(band) : bands.length
+  for (const t of [...counts.values()].sort((a, b) => a.family.localeCompare(b.family) || rank(a.band) - rank(b.band)))
+    console.log(`${t.family} ${t.band}: ${NOISE_KINDS.map((k) => `${k} ${t[k]}`).join(', ')}`)
+}
 function printDeferred() {
   const entries = readLog(), repoId = args.includes('--all') ? null : repoIdentity()
   const reviews = entries.filter((e) => e.type === 'review' && (!repoId || e.repoId === repoId))
@@ -4246,6 +4300,7 @@ function pushGate() {
   if (args.includes('--summary')) return printSummary()
   if (args.includes('--tier-json')) return printTierJson()
   if (args.includes('--deferred')) return printDeferred()
+  if (args.includes('--noise-report')) return noiseReport()
   if (args.includes('--fix-check')) return fixCheck(option('--fix-check'))
   if (args.includes('--slices')) return runSlices()
   if (args.includes('--security-worker')) return securityWorker(option('--security-worker'))
