@@ -2602,7 +2602,7 @@ const repoRelativePath = (p) => typeof p === 'string' && !!p.trim() && p === p.t
   !/[\0\n\r]/.test(p) && !p.split(/[\\/]/).includes('..')
 // Response labels on a close status: fixed → real | unimportant (fixed though not worth it); rejected → wrong | intentional.
 const RESPONSES = { fixed: ['real', 'unimportant'], rejected: ['wrong', 'intentional'] }
-const RESPONSE_REQUIRED = false
+const RESPONSE_REQUIRED = true
 function validateStatuses(entries, review, statuses) {
   for (const f of review.findingDetails) {
     const status = statuses[f.id]

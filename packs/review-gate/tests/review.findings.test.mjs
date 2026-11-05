@@ -283,6 +283,8 @@ test('R1 a rejection may say wrong or intentional; an unknown one is refused; a 
   refused(review.id, both('wrong'), /Rejected f1 requires a REFUTED verdict or an operator waiver/)
   refute(review.id, 'f1'); refute(review.id, 'f2')
   refused(review.id, both('unimportant'), 'Rejected f1 response must be wrong or intentional')
+  const unlabeled = both('wrong'); delete unlabeled.f1.response
+  refused(review.id, unlabeled, '✖ Rejected f1 needs a response: wrong (not a defect) or intentional (the behavior is meant)')
   const record = closed(review.id, both('wrong'))
   assert.deepEqual([record.statuses.f1.response, record.statuses.f2.response], ['wrong', 'intentional'])
 })
@@ -406,7 +408,7 @@ test('K1 both code-review skills describe pre-existing, grouped findings, respon
     const has = (phrase) => assert.ok(text.includes(phrase), `${harness}: ${phrase}`)
     for (const phrase of ['**Pre-existing findings.**', '`preExisting: true`', '`inDiff`', 'Pre-existing (not introduced here)', '"Pre-existing HIGH"',
       'makes the merge tier HIGH', '**Grouped findings.**', '`instances`', 'one status covers them all',
-      '`"real"` or `"unimportant"`', '`"wrong"` (not a defect) or `"intentional"`', '--noise-report [--since <date>] [--all]',
+      '`"real"` or `"unimportant"`', '`"wrong"` (not a defect) or `"intentional"`', 'required on every rejection', '--noise-report [--since <date>] [--all]',
       'Config `fixCheck`: `"risk"` (default', '`"always"` (any code fix after the review needs one', 'a protected pre-existing finding']) has(phrase)
     assert.match(text, /fix check raises a HIGH in the fix itself \(`inFix: true`\), defer it at close.*one more commit.*`REVIEW_PATHS=<those files>`.*close the slice at the tip; whatever that slice's own fix check finds is deferred\. Hard stop/, harness)
     assert.match(text, /When the rule 3 slice ran, that report comes after the slice's close/, harness)
