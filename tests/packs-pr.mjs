@@ -82,6 +82,49 @@ console.log('\npr: one harness');
   ok('a Codex-only machine gets only the Codex skill folder', r.code === 0 && fs.existsSync(path.join(sb.env.CODEX_HOME, 'skills/pr/pr-facts.mjs')) && !fs.existsSync(path.join(sb.home, '.claude/skills/pr')), r.out);
 }
 
+console.log('\npr: the instructions part (opt-in marked block in CLAUDE.md and AGENTS.md)');
+{
+  const shipped = path.join(ROOT, 'packs/pr/instructions/pr.md');
+  const body = fs.existsSync(shipped) ? fs.readFileSync(shipped, 'utf8') : '';
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'packs/pr/pack.json'), 'utf8'));
+  const part = manifest.parts.find((p) => p.id === 'instructions');
+  ok('the pack lists an instructions part, off by default, for claude and codex, with the block file', part?.kind === 'instructions' && part.default === false && part.harnesses.join() === 'claude,codex' && part.files.join() === 'packs/pr/instructions/pr.md', JSON.stringify(part));
+  ok('…and the pack\'s explain.changes names both instruction files', ['CLAUDE.md', 'AGENTS.md'].every((f) => manifest.explain.changes.some((c) => c.includes(f) && /marked block/.test(c))), manifest.explain.changes.join(' | '));
+  const lines = body.trim().split('\n').filter((l) => l.trim() && !l.startsWith('#'));
+  ok('the block is short (about three rules): run /pr, no raw record unless the style turns it on, Deferred findings required with a review',
+    lines.length <= 4 && /`\/pr`/.test(body) && /raw review record[^\n]*unless[^\n]*style/i.test(body) && /"?Deferred findings"?[^\n]*whenever a review exists/i.test(body), body);
+
+  const sb = box('pr-instructions', { clis: ['claude', 'codex'], modelId: false });
+  const claudeMd = path.join(sb.home, '.claude/CLAUDE.md'), agentsMd = path.join(sb.env.CODEX_HOME, 'AGENTS.md');
+  fs.mkdirSync(path.dirname(claudeMd), { recursive: true }); fs.mkdirSync(path.dirname(agentsMd), { recursive: true });
+  const mine = { [claudeMd]: '# My rules\n\n- keep it short\n', [agentsMd]: '# Codex rules\n- be plain' };
+  for (const [f, t] of Object.entries(mine)) fs.writeFileSync(f, t);
+  const plain = sb.packs(['install', 'pr', '--yes']);
+  ok('a plain install leaves CLAUDE.md and AGENTS.md alone (the part is opt-in)', plain.code === 0 && Object.entries(mine).every(([f, t]) => sb.read(f) === t), plain.out);
+  const begin = '<!-- acs-pack:pr/instructions begin -->', end = '<!-- acs-pack:pr/instructions end -->';
+  const block = `${begin}\n${body.endsWith('\n') ? body : `${body}\n`}${end}\n`;
+  const r = sb.packs(['install', 'pr', '--part', 'instructions', '--yes']);
+  ok('--part instructions appends the marked block after one blank line; the rest of each file is byte-identical',
+    r.code === 0 && sb.read(claudeMd) === `${mine[claudeMd]}\n${block}` && sb.read(agentsMd) === `${mine[agentsMd]}\n\n${block}`, `${r.out}\n${sb.read(claudeMd)}\n${sb.read(agentsMd)}`);
+  const st = sb.json(['status', '--no-trust-check']).data?.packs?.find((p) => p.id === 'pr')?.parts?.find((p) => p.id === 'instructions');
+  ok('status calls the part installed', st?.statuses?.join() === 'installed', JSON.stringify(st));
+  const off = sb.packs(['uninstall', 'pr', '--part', 'instructions', '--yes']);
+  ok('turning the part off gives back the exact earlier bytes, with no marker left', off.code === 0 && Object.entries(mine).every(([f, t]) => sb.read(f) === t), `${off.out}\n${sb.read(claudeMd)}`);
+  ok('…and leaves the skill installed', fs.existsSync(path.join(sb.home, '.claude/skills/pr/SKILL.md')));
+  sb.packs(['install', 'pr', '--part', 'instructions', '--yes']);
+  fs.appendFileSync(claudeMd, '\n- a rule added after the block\n');
+  const u = sb.packs(['uninstall', 'pr', '--yes']);
+  ok('uninstalling the pack removes the whole block and keeps a rule added after it', u.code === 0 && sb.read(claudeMd) === `${mine[claudeMd]}\n- a rule added after the block\n` && sb.read(agentsMd) === mine[agentsMd], `${u.out}\n${JSON.stringify(sb.read(claudeMd))}`);
+  ok('…no pr marker or "disabled" note is left in either file', [claudeMd, agentsMd].every((f) => !/acs-pack:pr|disabled/i.test(sb.read(f))));
+
+  const sb2 = box('pr-instructions-new', { clis: ['claude'], modelId: false });
+  const fresh = path.join(sb2.home, '.claude/CLAUDE.md');
+  const r2 = sb2.packs(['install', 'pr', '--part', 'pr,instructions', '--yes']);
+  ok('with no CLAUDE.md yet, the install creates it holding only the block', r2.code === 0 && sb2.read(fresh) === block, `${r2.out}\n${sb2.read(fresh)}`);
+  const u2 = sb2.packs(['uninstall', 'pr', '--yes']);
+  ok('…and uninstalling removes the file it created', u2.code === 0 && !fs.existsSync(fresh), `${u2.out}\n${sb2.read(fresh)}`);
+}
+
 for (const b of boxes) b.cleanup();
 assertRealHomesUnchanged(realBefore, ok);
 done();

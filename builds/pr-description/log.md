@@ -30,3 +30,7 @@ Choices the plan left open, and why.
   need one escalated rerun; when `gh pr view` is refused, `gh pr create` answering "already exists" means edit.
 - **Suites:** packs-server and packs-ui bind local ports, so they ran outside the sandbox. tests/package.mjs failed
   once (1 of 68, not captured) and passed on two reruns; likely another session's concurrent activity, not this pack.
+- **Instructions part** (added on request): `packs/pr/instructions/pr.md`, kind `instructions`, default off, claude +
+  codex, installed and removed by the existing marked-block machinery (no lib change). Turning it off
+  (`uninstall pr --part instructions`) or uninstalling the pack removes the whole block, markers included; a CLAUDE.md
+  the install created is removed again.
