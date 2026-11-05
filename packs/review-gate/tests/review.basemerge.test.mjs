@@ -497,15 +497,15 @@ test('BM12 close and --summary never write origin/HEAD: a missing one is warned 
   assert.notEqual(originHeadStatus().status, 0, 'close created no origin/HEAD')
 })
 
-test('BM13 a file the review saw at a state that equals main\'s keeps its coverage: another remote does not refuse it', () => {
+test('BM13 a both-sides file whose state a pre-merge review saw is not stamped by the re-close: another remote names it until a post-merge record sees it', () => {
   commit({ 'lib/two.js': 'export const two = 2\n' })
   const r = review()
   closed(r.id)
   landOnMain({ 'lib/two.js': 'export const two = 2\n', 'lib/four.js': 'export const four = 4\n' })
   mergeMain()
   const record = closed(r.id)
-  assert.ok(record.coverage.some(([path]) => path === 'lib/two.js'), JSON.stringify(record.coverage))
+  assert.ok(!record.coverage.some(([path]) => path === 'lib/two.js'), JSON.stringify(record.coverage))
   allowed(push())
   mirror()
-  blocked(push(undefined, {}, 'mirror'), uncovered(['lib/four.js']))
+  blocked(push(undefined, {}, 'mirror'), uncovered(['lib/four.js', 'lib/two.js']))
 })
