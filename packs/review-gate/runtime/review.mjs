@@ -2955,14 +2955,18 @@ async function closeReview(id) {
     if (code.length) throw new Error(`Fix check head must equal closing HEAD, or the commits after it may touch only builds/ and test files: ${code.join(', ')}. ` +
       'Fixes land before the fix check; close at its head, then review the later files as a slice (REVIEW_PATHS) and close that at the tip. No third model pass')
   }
-  if (FIX_CHECK === 'always') {
-    // "always" replaces the risk rule: its exclusions and the Grade's recheck apply first. A Grade's one recheck counts as its
-    // check only when no code file changed after the recheck's head.
-    const rechecked = review.kind === 'grade' && recheck && !codeFixFiles(touchedBetween(recheck.head, recheckAt)).length
-    const code = check || rechecked ? [] : codeFixFiles(files)
-    if (code.length) throw new Error(`Fix changes code after the review and fixCheck is "always": ${listed(code)}; run --fix-check first ` +
+  // "risk": tests, verify scripts and riskPaths files need a fix check (no exclusions). "always" adds every other file but
+  // builds/, docs, static and coverage-exempt ones, so it is never looser; under it a Grade's one recheck counts as the
+  // check only when nothing the rules count changed after the recheck's head.
+  const ruleCommand = [command, VERIFY_CMD].filter(Boolean).join(' ')
+  const due = (list) => FIX_CHECK === 'always' ? { risk: needsFixCheck(list, ruleCommand), code: codeFixFiles(list) } : { risk: needsFixCheck(list, ruleCommand), code: [] }
+  const need = due(files)
+  const after = FIX_CHECK === 'always' && review.kind === 'grade' && recheck ? due(touchedBetween(recheck.head, recheckAt)) : null
+  const recheckCovers = !!after && !after.risk && !after.code.length
+  if (!check && !recheckCovers && need.code.length)
+    throw new Error(`Fix changes code after the review and fixCheck is "always": ${listed(need.code)}; run --fix-check first ` +
       '(docs, static, coverage-exempt and builds/ files never need one)')
-  } else if (needsFixCheck(files, [command, VERIFY_CMD].filter(Boolean).join(' ')) && !check) throw new Error('Fix changes tests, verify scripts or risk paths; run --fix-check first')
+  if (!check && !recheckCovers && need.risk) throw new Error('Fix changes tests, verify scripts or risk paths; run --fix-check first')
   const reviews = [review, ...(recheck ? [recheck] : []), ...(check ? [check] : [])]
   const ids = new Set(reviews.flatMap((r) => r.findingDetails.map((f) => f.id)))
   for (const key of Object.keys(statuses)) if (!ids.has(key)) throw new Error(`Unknown finding status key: ${key}`)

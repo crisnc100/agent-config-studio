@@ -409,7 +409,7 @@ test('K1 both code-review skills describe pre-existing, grouped findings, respon
     for (const phrase of ['**Pre-existing findings.**', '`preExisting: true`', '`inDiff`', 'Pre-existing (not introduced here)', '"Pre-existing HIGH"',
       'makes the merge tier HIGH', '**Grouped findings.**', '`instances`', 'one status covers them all',
       '`"real"` or `"unimportant"`', '`"wrong"` (not a defect) or `"intentional"`', 'required on every rejection', '--noise-report [--since <date>] [--all]',
-      'Config `fixCheck`: `"risk"` (default', '`"always"` (any code fix after the review needs one', 'a protected pre-existing finding']) has(phrase)
+      'Config `fixCheck`: `"risk"` (default', '`"always"` (the risk rule, plus any other code fix after the review', 'never looser than "risk"', 'a protected pre-existing finding']) has(phrase)
     assert.match(text, /fix check raises a HIGH in the fix itself \(`inFix: true`\), defer it at close.*one more commit.*`REVIEW_PATHS=<those files>`.*close the slice at the tip; whatever that slice's own fix check finds is deferred\. Hard stop/, harness)
     assert.match(text, /When the rule 3 slice ran, that report comes after the slice's close/, harness)
   }
@@ -497,17 +497,33 @@ const gradeLog = (value, args = []) => {
   return records().at(-1)
 }
 const criteria = (verdict) => [{ id: 'k1', criterion: 'v2 is 2', verdict, evidence: 'src/one.js:2' }]
-test('Q3a under "always" the Grade recheck and the exclusions come before the risk rule; "risk" keeps its rule', () => {
+test('Q3a under "always" a Grade recheck after the fix covers a code and test-file change', () => {
   homeConfig({ fixCheck: 'always' })
   const failed = gradeLog({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('FAIL') })
   commit({ 'src/one.js': lines(), 'src/one.test.js': 'test v2\n' })
   gradeLog({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('PASS') }, ['--recheck-of', failed.id])
   closed(failed.id, { c1: { status: 'fixed' } })
+})
+test('Q3c "always" is never looser than "risk": a docs file on riskPaths still needs a fix check in both modes', () => {
   const review = reviewed([])
   commit({ 'docs/auth.md': '# Auth\n' })
+  refused(review.id, {}, '✖ Fix changes tests, verify scripts or risk paths; run --fix-check first')
+  homeConfig({ fixCheck: 'always' })
+  refused(review.id, {}, '✖ Fix changes tests, verify scripts or risk paths; run --fix-check first')
+  allowed(script(['--fix-check', review.id]))
   allowed(close(review.id, {}))
-  homeConfig({})
-  refused(review.id, {}, 'Fix changes tests, verify scripts or risk paths; run --fix-check first')
+})
+test('Q3d under "always" a test-file change needs a fix check unless a Grade recheck came after it', () => {
+  homeConfig({ fixCheck: 'always' })
+  const review = reviewed([])
+  commit({ 'src/one.test.js': 'test v2\n' })
+  refused(review.id, {}, '✖ Fix changes code after the review and fixCheck is "always": src/one.test.js; run --fix-check first')
+  const failed = gradeLog({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('FAIL') })
+  commit({ 'src/one.test.js': 'test v2 again\n' })
+  gradeLog({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('PASS') }, ['--recheck-of', failed.id])
+  closed(failed.id, { c1: { status: 'fixed' } })
+  commit({ 'src/one.test.js': 'test v2 after the recheck\n' })
+  refused(failed.id, { c1: { status: 'fixed' } }, '✖ Fix changes code after the review and fixCheck is "always": src/one.test.js; run --fix-check first')
 })
 test('Q3b under "always" a code change after the Grade recheck still needs a fix check', () => {
   homeConfig({ fixCheck: 'always' })
