@@ -10,7 +10,8 @@
  *   node pr-facts.mjs [--base <ref>] [--plan <path>]          # one JSON object: the facts
  *   node pr-facts.mjs --check <file> [--base <ref>] [--plan <path>]   # { ok, problems, warnings }; exit 1 on a problem
  *
- * Base: --base, else the open PR's base (gh pr view), else origin/HEAD, else a local main or master.
+ * Base: --base, else the open PR's base (gh pr view), else the tracking branch when it is not the branch's own
+ * remote copy, else origin/HEAD, else a local main or master.
  * Diffs are three-dot from that base and commits leave merges out, so a stacked branch or a merge of the
  * base into the branch reports only the branch's own changes.
  *
@@ -108,7 +109,17 @@ function openPr(cwd) {
 }
 const refExists = (cwd, ref) => git(cwd, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`).code === 0
 
-function findBase(cwd, flag, pr) {
+// The branch's upstream when it is another branch (a stacked branch tracking its base); never the branch's own
+// remote copy (origin/<same name>), which is where it is pushed, not what it is based on.
+function trackingBase(cwd, branch) {
+  const merge = git(cwd, 'config', `branch.${branch}.merge`).out.replace(/^refs\/heads\//, '')
+  const remote = git(cwd, 'config', `branch.${branch}.remote`).out
+  if (!merge || !remote || merge === branch) return null
+  const ref = remote === '.' ? merge : `${remote}/${merge}`
+  return refExists(cwd, ref) ? ref : null
+}
+
+function findBase(cwd, flag, pr, branch) {
   if (flag) {
     if (!refExists(cwd, flag)) refuse(`--base ${flag}: no such branch or commit`)
     return { ref: flag, from: '--base' }
@@ -116,6 +127,8 @@ function findBase(cwd, flag, pr) {
   if (pr?.base) {
     for (const ref of [`origin/${pr.base}`, pr.base]) if (refExists(cwd, ref)) return { ref, from: 'the open PR' }
   }
+  const tracking = trackingBase(cwd, branch)
+  if (tracking) return { ref: tracking, from: 'the tracking branch' }
   const head = git(cwd, 'symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD')
   if (head.code === 0 && head.out) return { ref: head.out.replace(/^refs\/remotes\//, ''), from: 'origin/HEAD' }
   for (const ref of ['main', 'master']) if (refExists(cwd, ref)) return { ref, from: 'a local default branch' }
@@ -311,14 +324,15 @@ export function facts({ cwd = process.cwd(), base: baseFlag, plan: planFlag } = 
   const branch = gitOk(root, 'rev-parse', '--abbrev-ref', 'HEAD')
   const head = gitOk(root, 'rev-parse', 'HEAD')
   const { gh, pr } = openPr(root)
-  const found = findBase(root, baseFlag, pr)
+  const found = findBase(root, baseFlag, pr, branch)
   const baseSha = gitOk(root, 'rev-parse', `${found.ref}^{commit}`)
   const mergeBase = gitOk(root, 'merge-base', found.ref, 'HEAD')
   const commits = gitOk(root, 'log', '--no-merges', '--format=%H%x09%s', `${found.ref}..HEAD`).split('\n').filter(Boolean)
     .map((l) => { const [sha, ...s] = l.split('\t'); return { sha, subject: s.join('\t') } })
   const files = Object.fromEntries(KINDS.map((k) => [k, []]))
-  for (const l of gitOk(root, 'diff', '--numstat', '--no-renames', `${found.ref}...HEAD`).split('\n').filter(Boolean)) {
-    const [a, r, ...p] = l.split('\t')
+  // -z: each record is "added<TAB>removed<TAB>path<NUL>", the path raw (never quoted or escaped).
+  for (const l of gitOk(root, 'diff', '--numstat', '-z', '--no-renames', `${found.ref}...HEAD`).split('\0').filter((x) => x.trim())) {
+    const [a, r, ...p] = l.replace(/^\n/, '').split('\t')
     const path = p.join('\t')
     files[classify(path)].push({ path, added: a === '-' ? 0 : Number(a), removed: r === '-' ? 0 : Number(r), ...(a === '-' && { binary: true }) })
   }

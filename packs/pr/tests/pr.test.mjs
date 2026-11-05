@@ -137,6 +137,30 @@ process.exit(1)\n`)
   assert.match(JSON.parse(bad.stdout).error, /--base nope: no such branch/)
 })
 
+test('C1 a non-ASCII path is read whole (numstat -z), so docs/é.md counts as docs', () => {
+  const b = fixture()
+  b.commit({ 'docs/é.md': '# Café\n', 'src/naïve.js': 'export const n = 1\n' })
+  const f = b.facts()
+  assert.ok(f.files.docs.some((x) => x.path === 'docs/é.md'), JSON.stringify(f.files))
+  assert.ok(f.files.code.some((x) => x.path === 'src/naïve.js' && x.added === 1), JSON.stringify(f.files.code))
+  assert.ok(!Object.values(f.files).flat().some((x) => x.path.includes('"') || x.path.includes('\\')), 'no quoted or escaped paths')
+})
+
+test('C1 the base falls back to the tracking branch, unless it is the branch\'s own remote copy', () => {
+  const b = fixture()
+  b.git('branch', 'stack', 'main')
+  b.git('branch', '--set-upstream-to=stack', 'feat')
+  const f = b.facts()
+  assert.deepEqual({ ref: f.base.ref, from: f.base.from }, { ref: 'stack', from: 'the tracking branch' })
+  const c = fixture()
+  c.git('init', '-q', '--bare', join(c.root, 'remote.git'))
+  c.git('remote', 'add', 'origin', join(c.root, 'remote.git'))
+  c.git('push', '-q', '-u', 'origin', 'feat')
+  const g = c.facts()
+  assert.notEqual(g.base.from, 'the tracking branch')
+  assert.equal(g.base.ref, 'main', 'origin/feat is the branch itself, not its base')
+})
+
 const SUMMARY = [
   'Acceptance criteria not met',
   'c1 criterion C2 not met: the app logs; recheck: no log line; Deferred: later',
