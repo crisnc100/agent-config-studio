@@ -27,16 +27,18 @@ after(() => rmSync(ROOT, { recursive: true, force: true }))
 const stub = (name, body) => { writeFileSync(join(BIN, name), `#!${process.execPath}\n${body}`); chmodSync(join(BIN, name), 0o755) }
 // The gh stub: table keys are "<a0> <a1>" ("pr view", "pr checks", "pr merge", "label list", ...), each
 // { stdout, stderr, code }. A key missing from the table is an unexpected call: logged, refused with exit 2.
+// The read after a merge (--json state,autoMergeRequest) has its own key, "pr view after".
 stub('gh', `
 const fs = require('node:fs')
 const a = process.argv.slice(2)
 fs.appendFileSync(${JSON.stringify(GH_LOG)}, JSON.stringify(a) + '\\n')
 const table = fs.existsSync(${JSON.stringify(GH_TABLE)}) ? JSON.parse(fs.readFileSync(${JSON.stringify(GH_TABLE)}, 'utf8')) : {}
-const key = a.slice(0, 2).join(' ')
+const keyOf = (x) => x.includes('state,autoMergeRequest') ? 'pr view after' : x.slice(0, 2).join(' ')
+const key = keyOf(a)
 let answer = table[key]
 // A list answers call by call (the last one repeats): the nth call with this key gets the nth answer.
 if (Array.isArray(answer)) {
-  const seen = fs.readFileSync(${JSON.stringify(GH_LOG)}, 'utf8').trim().split('\\n').filter((l) => JSON.parse(l).slice(0, 2).join(' ') === key).length
+  const seen = fs.readFileSync(${JSON.stringify(GH_LOG)}, 'utf8').trim().split('\\n').filter((l) => keyOf(JSON.parse(l)) === key).length
   answer = answer[Math.min(seen, answer.length) - 1]
 }
 if (!answer) { process.stderr.write('gh stub: unexpected call ' + a.join(' ') + '\\n'); process.exit(2) }
@@ -101,7 +103,7 @@ const check = (name, bucket, state = { pass: 'SUCCESS', fail: 'FAILURE', pending
 const label = (name) => ({ id: `LA_${name}`, name, description: '', color: 'd93f0b' })
 const out = (value, code = 0) => ({ stdout: JSON.stringify(value) + '\n', code })
 function gh({ view = prView(), checks = [check('syntax', 'pass'), check('docs', 'skipping')], repoLabels = [], merged = { stdout: '' }, extra = {} } = {}) {
-  const table = { 'pr view': out(view), 'pr checks': out(checks), 'pr merge': merged, 'label list': out(repoLabels),
+  const table = { 'pr view': out(view), 'pr view after': out({ autoMergeRequest: null, state: 'MERGED' }), 'pr checks': out(checks), 'pr merge': merged, 'label list': out(repoLabels),
     'label create': { stdout: '' }, 'pr edit': { stdout: 'https://github.com/o/r/pull/41\n' }, 'pr comment': { stdout: 'https://github.com/o/r/pull/41#issuecomment-1\n' }, ...extra }
   writeFileSync(GH_TABLE, JSON.stringify(table))
 }
@@ -111,7 +113,7 @@ const lastOutcome = (path = MERGE_LOG) => jsonl(path).filter((e) => e.phase === 
 
 beforeEach(() => {
   for (const path of [HOME, REPO, GH_LOG, GH_TABLE, dirname(FAKE_LOG)]) rmSync(path, { recursive: true, force: true })
-  mkdirSync(HOME, { recursive: true }); mkdirSync(REPO)
+  mkdirSync(HOME, { recursive: true }); mkdirSync(REPO); mkdirSync(dirname(FAKE_LOG))
   git('init', '-q', '-b', 'main')
   git('remote', 'add', 'origin', 'https://example.invalid/o/r.git')
   commit({ 'README.md': 'base\n' })
@@ -150,9 +152,10 @@ test('B2 standard, LOW, checks pass or skipping, CLEAN: checks are read before e
   assert.equal(r.status, 0, r.out)
   assert.match(r.stdout, /^merged: /)
   const seen = calls().map((a) => a.slice(0, 2).join(' '))
-  assert.deepEqual(seen, ['pr view', 'pr checks', 'pr merge'])
+  assert.deepEqual(seen, ['pr view', 'pr checks', 'pr merge', 'pr view'])
   assert.deepEqual(calls()[1], ['pr', 'checks', '41', '--json', 'name,state,bucket'])
   assert.deepEqual(calls()[2], ['pr', 'merge', '41', '--merge', '--match-head-commit', head()])
+  assert.deepEqual(calls()[3], ['pr', 'view', '41', '--json', 'state,autoMergeRequest'])
   assert.equal(calls()[0][0], 'pr'); assert.ok(calls()[0].includes('--json'))
   neverFlags()
   assert.equal(lastOutcome().action, 'merged')
@@ -429,6 +432,9 @@ test('B11 the pack ships merge.mjs, and both skills say the orchestrator runs it
     const text = readFileSync(join(pack, 'skills', harness, 'code-review', 'SKILL.md'), 'utf8')
     for (const phrase of ['merge.mjs', 'merge.onHuman', 'merge.requireChecks', 'merge.allowBehind', 'merge.humanComment', 'needs-human', 'never merge'])
       assert.ok(text.includes(phrase), `${harness}: ${phrase}`)
+    // Always the shared runtime's merge.mjs: a repo's scripts/review.mjs has no merge.mjs beside it.
+    assert.ok(text.includes('node ~/.agent-config-studio/review-gate/merge.mjs'), `${harness}: shared merge.mjs`)
+    assert.ok(!text.includes('dir of $REVIEW_SCRIPT'), `${harness}: no REVIEW_SCRIPT-relative merge.mjs`)
   }
   const example = readFileSync(join(RUNTIME, 'review-config.example.json'), 'utf8')
   for (const key of ['onHuman', 'humanComment', 'requireChecks', 'allowBehind']) assert.ok(example.includes(key), key)
@@ -487,7 +493,7 @@ test('B12 BLOCKED (branch protection) takes the needs-human path: label and one 
 test('B12 UNKNOWN is read again: CLEAN on a re-read merges', () => {
   gh({ extra: { 'pr view': [out(prView({ mergeStateStatus: 'UNKNOWN' })), out(prView({ mergeStateStatus: 'UNKNOWN' })), out(prView())] } })
   allowedMerge(fake())
-  assert.equal(calls().filter((a) => a[1] === 'view').length, 3)
+  assert.equal(calls().filter((a) => a[1] === 'view' && !a.includes('state,autoMergeRequest')).length, 3, 'three reads before the merge')
 })
 
 test('B12 UNKNOWN on the first read and all 3 re-reads is refused, with no write', () => {
@@ -505,4 +511,88 @@ test('B12 the re-reads wait MERGE_UNKNOWN_DELAY_MS between them (5 seconds by de
   assert.equal(fake({}, [], { MERGE_UNKNOWN_DELAY_MS: '200' }).status, 2)
   assert.ok(Date.now() - start >= 600, `${Date.now() - start}ms`)
   assert.match(readFileSync(MERGE, 'utf8'), /MERGE_UNKNOWN_DELAY_MS[^\n]*5000/)
+})
+
+// Fix round (review 2026-11-05-18-21-30-29699b).
+test('B13 run from a subdirectory, the repo config still counts: a repo policy off beats a home standard', () => {
+  homeConfig({ merge: { policy: 'standard' } })
+  realClose()
+  // Untracked, so the tip stays covered and the repo config may set the policy.
+  mkdirSync(join(REPO, '.claude'), { recursive: true })
+  writeFileSync(join(REPO, '.claude/review-config.json'), JSON.stringify({ merge: { policy: 'off' } }))
+  writeFileSync(GH_TABLE, '{}')
+  const r = spawnSync(process.execPath, [MERGE], { cwd: join(REPO, 'docs'), env: env(), encoding: 'utf8', timeout: 60000 })
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`)
+  assert.match(r.stdout, /^none: merge policy off/)
+  assert.deepEqual(calls(), [])
+})
+
+test('B14 a merge that only queued or set auto-merge is undone and goes to a human, not reported merged', () => {
+  const queued = { autoMergeRequest: { enabledAt: '2026-11-05T18:00:00Z', mergeMethod: 'MERGE' }, state: 'OPEN' }
+  for (const disable of [{ stdout: '' }, { stderr: 'no auto-merge to disable\n', code: 1 }]) {
+    rmSync(GH_LOG, { force: true })
+    gh({ extra: { 'pr view after': out(queued), 'pr merge': [{ stdout: '' }, disable] } })
+    const r = fake()
+    assert.equal(r.status, 10, r.out)
+    assert.match(r.stdout, /^labeled: .*base uses a merge queue or auto-merge; not merged/)
+    const merges = calls().filter((a) => a[1] === 'merge')
+    assert.deepEqual(merges, [['pr', 'merge', '41', '--merge', '--match-head-commit', head()], ['pr', 'merge', '41', '--disable-auto']])
+    assert.match(bodyOf(), /merge queue or auto-merge; not merged/)
+    assert.equal(lastOutcome().action, 'labeled')
+    neverFlags()
+  }
+})
+
+test('B14 a merge whose result cannot be read again is refused after disabling auto-merge', () => {
+  gh({ extra: { 'pr view after': { stderr: 'HTTP 502\n', code: 1 }, 'pr merge': [{ stdout: '' }, { stdout: '' }] } })
+  const r = fake()
+  assert.equal(r.status, 2, r.out)
+  assert.match(r.stdout, /^refused: .*502/)
+  assert.deepEqual(calls().filter((a) => a[1] === 'merge').at(-1), ['pr', 'merge', '41', '--disable-auto'])
+  assert.ok(!calls().some((a) => ['edit', 'comment'].includes(a[1])))
+})
+
+const ACS_LOG_DIR = join(HOME, '.agent-config-studio', 'review-log')
+test('B15 an early refusal on a legacy-only install writes beside the legacy log and creates no ACS folder', () => {
+  mkdirSync(join(HOME, '.claude'), { recursive: true })
+  writeFileSync(join(HOME, '.claude/review-log.jsonl'), '')
+  gh()
+  const r = merge([], { FAKE_TIER_RAW: 'not json', FAKE_TIER_CODE: '1' })
+  assert.equal(r.status, 2, r.out)
+  assert.equal(existsSync(join(HOME, '.agent-config-studio')), false, 'no ACS folder')
+  assert.deepEqual(jsonl(join(HOME, '.claude/merge-log.jsonl')).map((e) => e.phase), ['intent', 'outcome'])
+})
+
+test('B15 with no review log anywhere an early refusal prints its records to stderr and creates nothing', () => {
+  gh()
+  const r = merge([], { FAKE_TIER_RAW: 'not json', FAKE_TIER_CODE: '1' })
+  assert.equal(r.status, 2, r.out)
+  assert.equal(existsSync(join(HOME, '.agent-config-studio')), false)
+  assert.equal(existsSync(join(HOME, '.claude')), false)
+  assert.match(r.stderr, /"phase":"outcome"/)
+})
+
+test('B15 the --tier-json log folder is never created: a missing one refuses before gh', () => {
+  rmSync(dirname(FAKE_LOG), { recursive: true })
+  gh()
+  const r = fake()
+  assert.equal(r.status, 2, r.out)
+  assert.match(r.stdout, /^refused: /)
+  assert.equal(existsSync(dirname(FAKE_LOG)), false)
+  assert.deepEqual(calls(), [])
+})
+
+test('B16 an intent record that cannot be written refuses before any gh call, exit 2, the error on stderr', () => {
+  mkdirSync(dirname(FAKE_LOG), { recursive: true })
+  writeFileSync(MERGE_LOG, '')
+  chmodSync(MERGE_LOG, 0o444)
+  gh()
+  try {
+    const r = fake()
+    assert.equal(r.status, 2, r.out)
+    assert.match(r.stdout, /^refused: .*intent/)
+    assert.match(r.stderr, /could not append/)
+    assert.deepEqual(calls(), [])
+    assert.equal(readFileSync(MERGE_LOG, 'utf8'), '')
+  } finally { chmodSync(MERGE_LOG, 0o644) }
 })

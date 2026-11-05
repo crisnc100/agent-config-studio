@@ -61,3 +61,19 @@
 - The B6 refused list (added in this PR) dropped BLOCKED; UNKNOWN stays refused after the re-reads. The gh stub
   takes a list of answers per key (call by call). Skill text updated for both harnesses.
 - Suite 635/635; tests/packs-catalog.mjs 49/49.
+
+## PR B fix round (review 2026-11-05-18-21-30-29699b)
+- Tests first: B13 (f1), B14 x2 (f2), B15 x3 (f3), B16 (f5), and B11 extended (f4); all failed at ba9b152.
+  B2 now also expects the post-merge read; B12's read count excludes it (both tests are this PR's own).
+- f1: review.mjs --tier-json runs with cwd = git toplevel.
+- f2: after `gh pr merge` succeeds, `gh pr view <n> --json state,autoMergeRequest`: MERGED -> merged; otherwise
+  `gh pr merge <n> --disable-auto` (result ignored), then needs-human "base uses a merge queue or auto-merge; not
+  merged" (exit 10; 11 under onHuman none). Unreadable re-read -> disable-auto, then refused. unverified: that
+  --disable-auto also dequeues from a GitHub merge queue (gh docs say it disables auto-merge).
+- f3: merge.mjs never creates a folder. Log folder = dirname(tier.logPath); before that, ACS review-log/, else
+  ~/.claude/review-log/, else ~/.claude/ when ~/.claude/review-log.jsonl exists; else records go to stderr.
+- f5: an intent record that is not appended (append error or missing folder) -> `refused`, exit 2, no gh call, no
+  outcome record. Test fake-log folder is now created in beforeEach.
+- f4: both skills say `node ~/.agent-config-studio/review-gate/merge.mjs`.
+- Suite 642/642 (one run had a single flake in review.records P1, untouched code; 3/3 alone, then 642/642);
+  packs-catalog 49/49.

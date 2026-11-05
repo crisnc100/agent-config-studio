@@ -7,7 +7,7 @@
 // Never --auto, --admin, --squash or --rebase. Every run logs an intent record, then an outcome record, to
 // merge-log.jsonl beside the review log.
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -27,21 +27,30 @@ const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 const GREEN = ['pass', 'skipping']
 const RUN = `${new Date().toISOString()}-${randomBytes(3).toString('hex')}`
 
-const run = (cmd, argv, input) => {
-  const r = spawnSync(cmd, argv, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...(input !== undefined && { input }) })
+const run = (cmd, argv, cwd = undefined) => {
+  const r = spawnSync(cmd, argv, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...(cwd && { cwd }) })
   return { code: r.error ? null : r.status, stdout: r.stdout || '', stderr: r.stderr || '', error: r.error }
 }
 const git = (...argv) => run('git', argv)
 const firstLine = (r) => (r.error?.message || r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`).split('\n')[0]
 
-// Before --tier-json names the log, the fallback is the review log's default folder.
-let logFile = join(homedir(), '.agent-config-studio', 'review-log', 'merge-log.jsonl')
+// The merge log sits beside the review log, in a folder that already exists: merge.mjs never creates one, so it
+// can't change where review.mjs looks. --tier-json names the review log; before that, the folder review.mjs would use
+// (the ACS folder, else ~/.claude/review-log/, else beside ~/.claude/review-log.jsonl). With none, records go to stderr.
+const isDir = (p) => { try { return statSync(p).isDirectory() } catch { return false } }
+function existingLogDir(home = homedir()) {
+  for (const dir of [join(home, '.agent-config-studio', 'review-log'), join(home, '.claude', 'review-log')]) if (isDir(dir)) return dir
+  return existsSync(join(home, '.claude', 'review-log.jsonl')) ? join(home, '.claude') : null
+}
+let logDir = existingLogDir()
 let context = { run: RUN, dryRun: DRY, pr: PR_ARG ? Number(PR_ARG) : null, tip: null, policy: null, tier: null }
+// true when the record was appended to the merge log.
 function log(entry) {
-  try {
-    mkdirSync(dirname(logFile), { recursive: true })
-    appendFileSync(logFile, JSON.stringify({ type: 'merge', ts: new Date().toISOString(), ...context, ...entry }) + '\n')
-  } catch (e) { console.error(`merge.mjs: could not append to ${logFile}: ${e.message}`) }
+  const line = JSON.stringify({ type: 'merge', ts: new Date().toISOString(), ...context, ...entry })
+  if (!logDir || !isDir(logDir)) { console.error(`merge.mjs: no review log folder${logDir ? ` (${logDir} is missing)` : ''}; record: ${line}`); return false }
+  const file = join(logDir, 'merge-log.jsonl')
+  try { appendFileSync(file, line + '\n'); return true }
+  catch (e) { console.error(`merge.mjs: could not append to ${file}: ${e.message}; record: ${line}`); return false }
 }
 let intentLogged = false
 function finish(action, detail, code = EXIT[action]) {
@@ -57,15 +66,21 @@ const top = git('rev-parse', '--show-toplevel')
 if (top.code !== 0) refuse(`not in a git work tree: ${firstLine(top)}`)
 const repoScript = join(top.stdout.trim(), 'scripts', 'review.mjs')
 const script = existsSync(repoScript) ? repoScript : join(dirname(fileURLToPath(import.meta.url)), 'review.mjs')
-const tierRun = run(process.execPath, [script, '--tier-json'])
+// From the toplevel, so the repo's .claude/review-config.json counts wherever merge.mjs was started.
+const tierRun = run(process.execPath, [script, '--tier-json'], top.stdout.trim())
 if (tierRun.stderr) process.stderr.write(tierRun.stderr)
 let tier
 try { tier = JSON.parse(tierRun.stdout.trim().split('\n').at(-1)) } catch { tier = null }
 if (!tier || typeof tier !== 'object' || typeof tier.covered !== 'boolean')
   refuse(`${script} --tier-json gave no tier (exit ${tierRun.code}): ${firstLine(tierRun)}`)
-if (typeof tier.logPath === 'string' && tier.logPath) logFile = join(dirname(tier.logPath), 'merge-log.jsonl')
+if (typeof tier.logPath === 'string' && tier.logPath) logDir = dirname(tier.logPath)
 context = { ...context, tip: tier.tip ?? null, policy: tier.policy ?? null, tier: tier.tier ?? null }
-log({ phase: 'intent' }); intentLogged = true
+// No durable intent record, no gh call: refused, and nothing more is written.
+if (!log({ phase: 'intent' })) {
+  console.log(`refused${DRY ? ' (dry run)' : ''}: the intent record could not be written to the merge log (see stderr)`)
+  process.exit(EXIT.refused)
+}
+intentLogged = true
 
 // 2. Covered, then the policy: off does nothing and never calls gh.
 if (!tier.covered) refuse(tier.reason || 'the tip is not covered by a complete close')
@@ -125,7 +140,16 @@ if (!human.length) {
   if (DRY) finish('merged', `PR #${n} would merge at ${HEAD}`)
   const merged = run('gh', ['pr', 'merge', n, '--merge', '--match-head-commit', HEAD])
   if (merged.code !== 0) refuse(`gh pr merge failed: ${firstLine(merged)}`)
-  finish('merged', `PR #${n} at ${HEAD}`)
+  // On a merge-queue base (or one gh auto-merges) success only queued it: merged means state MERGED now.
+  const after = run('gh', ['pr', 'view', n, '--json', 'state,autoMergeRequest'])
+  let now = null
+  try { now = JSON.parse(after.stdout) } catch { /* below */ }
+  if (after.code === 0 && now?.state === 'MERGED') finish('merged', `PR #${n} at ${HEAD}`)
+  // We never enable auto-merge, so take back whatever the merge call queued; nothing queued fails harmlessly.
+  run('gh', ['pr', 'merge', n, '--disable-auto'])
+  if (after.code !== 0 || !now || typeof now !== 'object')
+    refuse(`gh pr merge ran, but its result could not be read (auto-merge disabled if it was on): ${firstLine(after)}`)
+  human.push('base uses a merge queue or auto-merge; not merged')
 }
 
 // 5. Needs a human.
