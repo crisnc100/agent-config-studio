@@ -350,3 +350,94 @@ test('8 the skills describe the tier and the policy keys; the example config car
   const example = JSON.parse(readFileSync(join(pack, 'runtime', 'review-config.example.json'), 'utf8'))
   assert.deepEqual(example.merge, { policy: 'off', classifier: null, threshold: 0.8, alwaysHuman: [] })
 })
+
+// Fix round (review 2026-11-05-16-43-13-bb1c0a and the orchestrator's o1).
+test('f1 the summary judges every file the tip changes against base: a package.json covered only by a clean fix check is HIGH', () => {
+  commit({ 'docs/guide.md': '# Guide\n' })
+  const first = reviewed()
+  closed(first.id)
+  commit({ 'package.json': '{"name":"x"}\n', 'docs/more.md': 'more\n' })
+  allowed(script(['--fix-check', first.id], { STUB_FINDINGS: JSON.stringify({ findings: [] }) }))
+  closed(reviewed([], { REVIEW_PATHS: 'docs/more.md' }).id)
+  homeConfig({ merge: { policy: 'standard' } })
+  const [line] = tierLine(summary().stdout)
+  assert.match(line, /^Merge tier: HIGH \(.*always human: package\.json.*\)\. Policy standard: needs a human$/)
+})
+
+test('f2 the tier line counts every deferred finding the summary lists, including an earlier close\'s deferred HIGH', () => {
+  commit({ 'docs/guide.md': '# Guide\n' })
+  const review = reviewed([scored({ file: 'docs/guide.md', quote: '# Guide' })])
+  commit({ 'docs/guide.md': '# Guide\nfixed\n' })
+  allowed(script(['--fix-check', review.id], { STUB_FINDINGS: JSON.stringify({ findings: [
+    scored({ issue: 'guide misleads', file: 'docs/guide.md', line: '2', quote: 'fixed', likelihood: 9, impact: 9 }),
+  ] }) }))
+  closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later' } })
+  commit({ 'docs/other.md': 'other\n' })
+  const fresh = reviewAndClose()
+  assert.equal(fresh.tier, 'low', 'the fresh close alone sees nothing deferred')
+  homeConfig({ merge: { policy: 'standard' } })
+  const text = summary().stdout
+  assert.ok(text.includes('x1 HIGH'), text)
+  const [line] = tierLine(text)
+  assert.match(line, /^Merge tier: HIGH \(.*deferred HIGH: x1.*\)\. Policy standard: needs a human$/)
+  assert.doesNotMatch(line, /nothing deferred/)
+})
+
+test('f2 a deferred MEDIUM from an earlier close keeps the summary from LOW', () => {
+  commit({ 'docs/guide.md': '# Guide\n' })
+  const review = reviewed([scored({ file: 'docs/guide.md', quote: '# Guide' })])
+  commit({ 'docs/guide.md': '# Guide\nfixed\n' })
+  allowed(script(['--fix-check', review.id], { STUB_FINDINGS: JSON.stringify({ findings: [
+    scored({ issue: 'guide is thin', file: 'docs/guide.md', line: '2', quote: 'fixed' }),
+  ] }) }))
+  closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later' } })
+  commit({ 'docs/other.md': 'other\n' })
+  assert.equal(reviewAndClose().tier, 'low')
+  homeConfig({ merge: { policy: 'standard' } })
+  assert.match(tierLine(summary().stdout)[0], /^Merge tier: MEDIUM \(.*deferred: x1.*\)\. Policy standard: needs a human$/)
+})
+
+test('f3 a rename is judged by its source and its destination: logic moved under tests/ is not LOW', () => {
+  mkdirSync(join(REPO, 'tests')); git('mv', 'src/one.js', 'tests/one.js'); git('commit', '-qm', 'move one')
+  const record = reviewAndClose()
+  assert.notEqual(record.tier, 'low', JSON.stringify(record.tierReasons))
+  assert.equal(record.stats.kinds.logic, 1)
+  assert.match(tierLine(summary().stdout)[0], /^Merge tier: MEDIUM /)
+})
+
+test('f3 riskPaths and always-human apply to a rename\'s source too', () => {
+  git('checkout', '-q', 'main'); commit({ '.github/workflows/ci.yml': 'on: push\n' }); git('checkout', '-q', '-B', 'feat', 'main')
+  mkdirSync(join(REPO, 'docs')); git('mv', '.github/workflows/ci.yml', 'docs/ci.md'); git('commit', '-qm', 'move ci')
+  const record = reviewAndClose()
+  assert.equal(record.tier, 'high')
+  assert.ok(record.tierReasons.some((r) => /always human/.test(r) && r.includes('.github/workflows/ci.yml')), JSON.stringify(record.tierReasons))
+  assert.match(tierLine(summary().stdout)[0], /^Merge tier: HIGH \(.*always human: .*\.github\/workflows\/ci\.yml/)
+})
+
+test('f4 the review records its intent, and the tier classifier reads it at --close', () => {
+  homeConfig({ merge: { classifier: 'tierjev' } })
+  commit({ 'web/App.tsx': TSX })
+  allowed(script(['make the button blue'], { STUB_FINDINGS: JSON.stringify({ findings: [] }) }))
+  const review = records().filter((e) => e.type === 'review').at(-1)
+  assert.equal(review.intent, 'make the button blue')
+  closed(review.id, {}, { extra: { STUB_TIER: answer('medium', 0.9, {}) } })
+  assert.equal(JSON.parse(tierCalls()[0].input).state.facts.intent, 'make the button blue')
+  // A legacy review record without intent falls back to the intent given at --close.
+  commit({ 'web/App.tsx': `${TSX}export const C = 3\n` })
+  const legacy = reviewed()
+  writeFileSync(LOG, records().map((e) => { if (e.id !== legacy.id) return JSON.stringify(e); const { intent, ...rest } = e; return JSON.stringify(rest) }).join('\n') + '\n')
+  const path = join(ROOT, 'statuses.json'); writeFileSync(path, '{}')
+  allowed(script(['--close', legacy.id, '--status', path, '--test-cmd', 'true', 'legacy intent'], { STUB_TIER: answer('medium', 0.9, {}) }))
+  assert.equal(JSON.parse(tierCalls()[1].input).state.facts.intent, 'legacy intent')
+})
+
+test('o1 the classifier is never asked when anything is deferred, even one that would answer low at 0.99', () => {
+  homeConfig({ merge: { classifier: 'tierjev' } })
+  commit({ 'web/App.tsx': TSX })
+  const record = reviewAndClose({ extra: { STUB_TIER: answer('low', 0.99, { low: 0.99, medium: 0.01 }) } },
+    [scored({ issue: 'a name is vague', likelihood: 1, impact: 2 })])
+  assert.deepEqual([record.tier, record.tierBy], ['medium', 'rules'])
+  assert.ok(record.tierReasons.some((r) => /deferred: f1/.test(r)), JSON.stringify(record.tierReasons))
+  assert.equal(Object.hasOwn(record, 'tierClassifier'), false)
+  assert.deepEqual(tierCalls(), [])
+})
