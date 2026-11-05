@@ -21,7 +21,8 @@
  *
  * Review: the review gate's review.mjs (the repo's scripts/review.mjs, else ~/.agent-config-studio/review-gate/
  * review.mjs). Not there: state "absent". There but HEAD not closed: state "in-progress" with the gate's reason.
- * Closed: state "closed", with the --summary text, the --tier-json data and the summary's lines split out.
+ * Closed: state "closed", with the --summary text, the --tier-json data and the summary's lines split out, plus each
+ * finding (id, severity, score, status, one-line issue) and counts by severity, read from the review log --tier-json names.
  *
  * Style: ~/.agent-config-studio/pr/style.json. Unknown keys and bad values are warned about (in the JSON) and
  * ignored. "Deferred findings" keeps its title, and stays on whenever a review exists.
@@ -192,6 +193,44 @@ export function splitSummary(text) {
   }
 }
 
+// Each finding of the closes behind the summary, read from the review log (read-only): the review, its fix check and
+// its recheck, with the close's status for each. The summary names the reviews it covers.
+const STATUSES = ['fixed', 'deferred', 'rejected', 'filed', 'open']
+const scoreOf = (f) => {
+  const band = String(f.severity || '?').toUpperCase()
+  if ([f.likelihood, f.impact, f.risk].every(Number.isInteger)) return `${band} ${f.risk}/100 (likelihood ${f.likelihood}/10 × impact ${f.impact}/10)`
+  return Number.isInteger(f.risk) ? `${band} ${f.risk}/100` : `${band} unscored`
+}
+export function reviewFindings(summary, logPath) {
+  const none = (note) => ({ findings: null, bySeverity: null, findingsNote: note })
+  if (!logPath || !existsSync(logPath)) return none('the review log was not found, so only the summary lines are here')
+  const entries = readFileSync(logPath, 'utf8').split('\n').flatMap((l) => { try { return l.trim() ? [JSON.parse(l)] : [] } catch { return [] } })
+  const ids = [...new Set(summary.split('\n').flatMap((l) => {
+    const m = l.match(/^Review: (\S+)$/) || l.match(/^Close \d+ of \d+: review (\S+) /) || l.match(/^Fix check \d+ of \d+: \S+ of review (\S+),/)
+    return m ? [m[1]] : []
+  }))]
+  const findings = []
+  for (const id of ids) {
+    const close = entries.filter((e) => e.type === 'close' && e.review === id).at(-1)
+    const records = [id, close?.recheck, close?.fixCheck].filter(Boolean).map((rid) => entries.find((e) => e.type === 'review' && e.id === rid)).filter(Boolean)
+    for (const r of records) for (const f of r.findingDetails || []) {
+      const status = close?.statuses?.[f.id]?.status || (f.filed === true ? 'filed' : 'open')
+      findings.push({
+        id: f.id, review: r.id, kind: f.criterionId ? 'criterion' : /^s\d/.test(f.id) ? 'security' : 'code',
+        severity: String(f.severity || '').toLowerCase() || null, likelihood: f.likelihood ?? null, impact: f.impact ?? null, risk: f.risk ?? null,
+        score: scoreOf(f), status: STATUSES.includes(status) ? status : 'open',
+        issue: String(f.issue || f.criterion || '').split('\n')[0], file: f.file ?? null, line: f.line ?? null,
+      })
+    }
+  }
+  if (!ids.length) return none('the summary names no review, so the findings could not be read from the log')
+  const bySeverity = Object.fromEntries(['high', 'medium', 'low'].map((sev) => {
+    const of = findings.filter((f) => f.severity === sev)
+    return [sev, { total: of.length, ...Object.fromEntries(STATUSES.map((st) => [st, of.filter((f) => f.status === st).length])) }]
+  }))
+  return { findings, bySeverity }
+}
+
 function review(cwd) {
   const repoScript = join(cwd, 'scripts', 'review.mjs')
   const script = existsSync(repoScript) ? repoScript : existsSync(GATE_SCRIPT) ? GATE_SCRIPT : null
@@ -204,7 +243,8 @@ function review(cwd) {
   if (tier.code !== 0 || !data) return { state: 'error', note: 'the review gate could not be read', reason: tier.err || tier.out, script }
   const summary = run(process.execPath, [script, '--summary'], cwd)
   if (summary.code !== 0) return { state: 'error', note: 'the review gate could not be read', reason: summary.err || summary.out, script }
-  return { state: 'closed', note: 'reviewed and closed at this commit', script, summary: summary.out, tier: data, ...splitSummary(summary.out) }
+  return { state: 'closed', note: 'reviewed and closed at this commit', script, summary: summary.out, tier: data, ...splitSummary(summary.out),
+    ...reviewFindings(summary.out, data.logPath) }
 }
 
 /* ── the style ───────────────────────────────────────────────────────── */
@@ -498,7 +538,8 @@ export function check(body, f) {
     ...SHA_CONTEXT_RES.flatMap((re) => [...text.matchAll(re)].map((m) => m[1].toLowerCase()))])
   for (const m of shas) if (!known.some((k) => k.startsWith(m)) && !reviewText.includes(m)) problems.push(`sha ${m} is not in the facts`)
   for (const m of new Set(text.match(RUN_ID_RE) || [])) if (!reviewText.includes(m)) problems.push(`review id ${m} is not in the facts`)
-  const findingIds = new Set(closed ? f.review.summary.split('\n').map((l) => l.match(/^([fxscr]\d{1,3}) /)?.[1]).filter(Boolean) : [])
+  const findingIds = new Set(closed ? [...f.review.summary.split('\n').map((l) => l.match(/^([fxscr]\d{1,3}) /)?.[1]).filter(Boolean),
+    ...(f.review.findings || []).map((x) => x.id)] : [])
   for (const m of findingIdsIn(text.replace(RUN_ID_RE, ' '))) if (!findingIds.has(m)) problems.push(`finding id ${m} is not in the facts`)
   // Known: a changed file, the plan, the build log, a folder holding one of those, or a name the facts' own text uses.
   const paths = [...KINDS.flatMap((k) => f.files[k].map((x) => x.path)), f.plan?.path, f.buildLog?.path].filter(Boolean)

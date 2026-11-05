@@ -562,3 +562,64 @@ else console.log(JSON.stringify({structured_output:JSON.parse(reply),structuredO
   const c = b.helper(['--check', join(b.root, 'body.md')], extra)
   assert.equal(c.code, 0, c.out)
 })
+
+test('the real review.mjs: the facts carry each finding (id, severity, score, status, issue) and counts by severity, read from the review log', () => {
+  const b = box()
+  b.stub('model-id', `const a=process.argv.slice(2); console.log(a[0]==='--role' ? JSON.stringify({use:['stubfam'],ids:['gpt-stub']}) : a[0]==='--flavor' ? JSON.stringify({flavor:{effort:'high'}}) : 'gpt-stub')`)
+  const model = `
+const fs = require('node:fs')
+const a = process.argv.slice(2)
+if (a[0] === 'mcp') { console.log('[]'); process.exit(0) }
+const schema = a.includes('--output-schema') ? fs.readFileSync(a[a.indexOf('--output-schema')+1],'utf8') : a[a.indexOf('--json-schema')+1]
+const reply = schema.includes('"scores"') ? '{"scores":[]}' : schema.includes('"verdicts"') ? '{"verdicts":[]}' : (process.env.STUB_FINDINGS || '{"findings":[]}')
+if (a.includes('-o')) fs.writeFileSync(a[a.indexOf('-o')+1], reply)
+else console.log(JSON.stringify({structured_output:JSON.parse(reply),structuredOutput:JSON.parse(reply),modelUsage:{'stub':{}}}))
+`
+  for (const n of ['codex', 'claude', 'grok']) b.stub(n, model)
+  const extra = { REVIEW_BASE: 'main', REVIEW_REVIEWER: 'stubfam' }
+  mkdirSync(join(b.home, '.agent-config-studio/review-log'), { recursive: true })
+  mkdirSync(dirname(b.gate), { recursive: true })
+  copyFileSync(REVIEW, b.gate)
+  b.git('init', '-q', '-b', 'main')
+  b.commit({ 'README.md': 'base\n', 'src/one.js': 'export const one = 1\n' })
+  b.git('checkout', '-qb', 'feat')
+  b.commit({ 'web/App.tsx': 'export const A = 1\nexport const B = 2\n' })
+  const scored = (over = {}) => ({ issue: 'a is wrong', file: 'web/App.tsx', line: '1', quote: 'export const A = 1', suggestion: 'fix a',
+    likelihood: 5, impact: 5, protected: false, trigger: 'rendering App', ...over })
+  const rv = b.sh(process.execPath, [b.gate], { ...extra, STUB_FINDINGS: JSON.stringify({ findings: [scored()] }) })
+  assert.equal(rv.code, 0, rv.out)
+  const log = () => readFileSync(join(b.home, '.agent-config-studio/review-log/review-log.jsonl'), 'utf8').trim().split('\n').map(JSON.parse)
+  const id = log().filter((e) => e.type === 'review').at(-1).id
+  b.commit({ 'web/App.tsx': 'export const A = 10\nexport const B = 2\n' })
+  const fc = b.sh(process.execPath, [b.gate, '--fix-check', id], { ...extra, STUB_FINDINGS: JSON.stringify({ findings: [scored({ issue: 'b leaks', line: '2', quote: 'export const B = 2', likelihood: 9, impact: 9 })] }) })
+  assert.equal(fc.code, 0, fc.out)
+  writeFileSync(join(b.root, 'statuses.json'), JSON.stringify({ f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later' } }))
+  const cl = b.sh(process.execPath, [b.gate, '--close', id, '--status', join(b.root, 'statuses.json'), '--test-cmd', 'true'], extra)
+  assert.equal(cl.code, 0, cl.out)
+  const r = b.facts([], extra).review
+  assert.equal(r.state, 'closed', JSON.stringify(r))
+  const pick = (x) => ({ id: x.id, severity: x.severity, likelihood: x.likelihood, impact: x.impact, status: x.status, issue: x.issue })
+  assert.deepEqual(r.findings.map(pick), [
+    { id: 'f1', severity: 'medium', likelihood: 5, impact: 5, status: 'fixed', issue: 'a is wrong' },
+    { id: 'x1', severity: 'high', likelihood: 9, impact: 9, status: 'deferred', issue: 'b leaks' },
+  ])
+  assert.match(r.findings[1].score, /^HIGH 81\/100 \(likelihood 9\/10 × impact 9\/10\)$/)
+  assert.match(r.findings[0].score, /^MEDIUM \d+\/100 \(likelihood 5\/10 × impact 5\/10\)$/)
+  assert.equal(r.findings[0].review, id)
+  assert.deepEqual(r.bySeverity, {
+    high: { total: 1, fixed: 0, deferred: 1, rejected: 0, filed: 0, open: 0 },
+    medium: { total: 1, fixed: 1, deferred: 0, rejected: 0, filed: 0, open: 0 },
+    low: { total: 0, fixed: 0, deferred: 0, rejected: 0, filed: 0, open: 0 },
+  })
+  assert.equal(r.deferredHigh.length, 1)
+  assert.match(r.deferredHigh[0], /^x1 HIGH 81\/100/)
+})
+
+test('a review gate that gives no log path: the summary facts stay, the findings list is null with a note', () => {
+  const b = fixture()
+  closedGate(b)
+  const r = b.facts().review
+  assert.equal(r.findings, null)
+  assert.match(r.findingsNote, /review log/)
+  assert.equal(r.bySeverity, null)
+})

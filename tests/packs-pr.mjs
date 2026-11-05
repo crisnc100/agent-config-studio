@@ -38,6 +38,7 @@ for (const h of ['claude', 'codex']) {
   ok(`${h}: never invent facts the helper did not give`, /never invent/i.test(body));
   ok(`${h}: the three review states, and "not reviewed" never for a review in progress`, body.includes('not reviewed (no review gate)') && body.includes('review in progress — not closed at this commit') && /never write "not reviewed" for a review in progress/i.test(body));
   ok(`${h}: gh missing → a plain message and nothing written`, /`?gh`? is (missing|not installed)[^\n]*nothing/i.test(body));
+  ok(`${h}: Review highlights come from the findings in the facts: fixed HIGHs with their scores, MEDIUM and LOW as counts`, /`review\.findings`[^\n]*HIGH[^\n]*`?score`?/.test(body) && /`review\.bySeverity`/.test(body) && /`review\.findingsNote`/.test(body));
   ok(`${h}: the style file and its sections are named`, body.includes('~/.agent-config-studio/pr/style.json') && ['What this does', 'Did it match the goal?', 'What changed', 'How to try it', 'Review highlights', 'Deferred findings', 'Docs and context', 'What the agent did', "Agent's take", 'Review record'].every((t) => body.includes(t)));
 }
 
