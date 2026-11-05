@@ -50,3 +50,14 @@
 - "A missing state never matches": absent at both the close's head and the tip counts as judged only when the path
   existed at the review's base (a real deletion). Guarded by a second test (a judged deletion stays LOW).
 - Suite 607/607.
+
+## PR B after A's fix (lead's product choices)
+- `git merge --no-edit agent-merge` into agent-merge-run; one conflict in this log (both sides appended), resolved
+  by keeping both sections.
+- BLOCKED -> needs-human, reason "blocked by branch protection" (added beside a tier reason when the tier is not
+  mergeable too); onHuman none still writes nothing.
+- UNKNOWN -> `gh pr view` re-read up to 3 times (4 reads total), MERGE_UNKNOWN_DELAY_MS apart (default 5000; tests 0);
+  still UNKNOWN -> refused "... after 3 re-reads". Sync sleep via Atomics.wait.
+- The B6 refused list (added in this PR) dropped BLOCKED; UNKNOWN stays refused after the re-reads. The gh stub
+  takes a list of answers per key (call by call). Skill text updated for both harnesses.
+- Suite 635/635; tests/packs-catalog.mjs 49/49.

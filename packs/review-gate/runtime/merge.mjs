@@ -18,7 +18,12 @@ const DRY = args.includes('--dry-run')
 const PR_ARG = args.includes('--pr') ? args[args.indexOf('--pr') + 1] : null
 const LABEL = 'needs-human'
 const EXIT = { merged: 0, labeled: 10, refused: 2 }
-const NOT_GREEN_STATES = ['DIRTY', 'BLOCKED', 'UNKNOWN']
+// DIRTY (conflicts) and a still-UNKNOWN state refuse; BLOCKED (branch protection) needs a human.
+const REFUSED_STATES = ['DIRTY', 'UNKNOWN']
+// GitHub computes mergeability lazily: an UNKNOWN state is read again up to 3 times, this far apart.
+const UNKNOWN_DELAY = ((v) => Number.isFinite(v) && v >= 0 ? v : 5000)(Number(process.env.MERGE_UNKNOWN_DELAY_MS ?? 5000))
+const UNKNOWN_REREADS = 3
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 const GREEN = ['pass', 'skipping']
 const RUN = `${new Date().toISOString()}-${randomBytes(3).toString('hex')}`
 
@@ -73,11 +78,16 @@ if (tier.tip !== HEAD) refuse(`the tier's tip ${tier.tip} is not HEAD ${HEAD}`)
 const status = git('status', '--porcelain', '--untracked-files=no')
 if (status.code !== 0 || status.stdout.trim()) refuse('the working tree has uncommitted tracked changes')
 const FIELDS = 'number,state,isDraft,headRefOid,baseRefName,mergeStateStatus,reviewDecision,labels,url'
-const viewed = run('gh', ['pr', 'view', ...(PR_ARG ? [PR_ARG] : []), '--json', FIELDS])
-if (viewed.code !== 0) refuse(`gh pr view failed: ${firstLine(viewed)}`)
-let pr
-try { pr = JSON.parse(viewed.stdout) } catch { pr = null }
-if (!pr || typeof pr !== 'object' || !Number.isInteger(pr.number)) refuse(`gh pr view gave unreadable output: ${viewed.stdout.slice(0, 200)}`)
+function readPr() {
+  const viewed = run('gh', ['pr', 'view', ...(PR_ARG ? [PR_ARG] : []), '--json', FIELDS])
+  if (viewed.code !== 0) refuse(`gh pr view failed: ${firstLine(viewed)}`)
+  let read
+  try { read = JSON.parse(viewed.stdout) } catch { read = null }
+  if (!read || typeof read !== 'object' || !Number.isInteger(read.number)) refuse(`gh pr view gave unreadable output: ${viewed.stdout.slice(0, 200)}`)
+  return read
+}
+let pr = readPr()
+for (let i = 0; i < UNKNOWN_REREADS && pr.mergeStateStatus === 'UNKNOWN'; i++) { sleep(UNKNOWN_DELAY); pr = readPr() }
 context.pr = pr.number
 const n = String(pr.number)
 if (pr.state !== 'OPEN') refuse(`PR #${n} is ${pr.state}, not OPEN`)
@@ -86,7 +96,8 @@ if (pr.headRefOid !== HEAD) refuse(`PR #${n} head ${pr.headRefOid} is not local 
 const reviewBase = branchName(tier.baseRef)
 if (!reviewBase || pr.baseRefName !== reviewBase)
   refuse(`PR #${n} base ${pr.baseRefName} is not the review's base ${tier.baseRef ?? '(unknown)'}`)
-if (NOT_GREEN_STATES.includes(pr.mergeStateStatus)) refuse(`PR #${n} merge state is ${pr.mergeStateStatus}`)
+if (REFUSED_STATES.includes(pr.mergeStateStatus))
+  refuse(`PR #${n} merge state is ${pr.mergeStateStatus}${pr.mergeStateStatus === 'UNKNOWN' ? ` after ${UNKNOWN_REREADS} re-reads` : ''}`)
 if (pr.reviewDecision === 'CHANGES_REQUESTED') refuse(`PR #${n} review decision is CHANGES_REQUESTED`)
 
 // 4. Would merge only when the tier says so and nothing on the PR says otherwise.
@@ -94,7 +105,8 @@ const labeled = Array.isArray(pr.labels) && pr.labels.some((l) => l?.name === LA
 const tierLine = `Merge tier: ${tier.tier ? tier.tier.toUpperCase() : 'none'} (${(tier.reasons || []).join('; ')}). Policy ${tier.policy}: ${tier.merges ? 'would merge' : 'needs a human'}`
 const human = []
 if (!tier.merges) human.push(tier.tier ? `tier ${tier.tier.toUpperCase()} under policy ${tier.policy}` : (tier.reasons || []).join('; ') || 'no merge tier')
-else {
+if (pr.mergeStateStatus === 'BLOCKED') human.push('blocked by branch protection')
+if (tier.merges) {
   if (labeled) human.push(`the PR has the ${LABEL} label`)
   if (pr.mergeStateStatus === 'BEHIND' && !settings.allowBehind) human.push('base moved: the base branch has commits the review did not see')
   const checked = run('gh', ['pr', 'checks', n, '--json', 'name,state,bucket'])

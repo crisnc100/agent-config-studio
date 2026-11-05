@@ -32,7 +32,13 @@ const fs = require('node:fs')
 const a = process.argv.slice(2)
 fs.appendFileSync(${JSON.stringify(GH_LOG)}, JSON.stringify(a) + '\\n')
 const table = fs.existsSync(${JSON.stringify(GH_TABLE)}) ? JSON.parse(fs.readFileSync(${JSON.stringify(GH_TABLE)}, 'utf8')) : {}
-const answer = table[a.slice(0, 2).join(' ')]
+const key = a.slice(0, 2).join(' ')
+let answer = table[key]
+// A list answers call by call (the last one repeats): the nth call with this key gets the nth answer.
+if (Array.isArray(answer)) {
+  const seen = fs.readFileSync(${JSON.stringify(GH_LOG)}, 'utf8').trim().split('\\n').filter((l) => JSON.parse(l).slice(0, 2).join(' ') === key).length
+  answer = answer[Math.min(seen, answer.length) - 1]
+}
 if (!answer) { process.stderr.write('gh stub: unexpected call ' + a.join(' ') + '\\n'); process.exit(2) }
 if (answer.stdout) process.stdout.write(answer.stdout)
 if (answer.stderr) process.stderr.write(answer.stderr)
@@ -65,7 +71,7 @@ console.log(JSON.stringify({ tip, covered: true, base: 'a'.repeat(40), baseRef: 
 
 const env = (extra = {}) => ({ HOME, CODEX_HOME: join(HOME, '.codex'), GROK_HOME: join(HOME, '.grok'), GIT_CONFIG_GLOBAL: join(HOME, 'isolated.gitconfig'),
   GIT_CONFIG_NOSYSTEM: '1', PATH: [BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':'), TMPDIR: ROOT, REVIEW_BASE: 'main', REVIEW_REVIEWER: 'sol',
-  FAKE_LOG, ...extra })
+  FAKE_LOG, MERGE_UNKNOWN_DELAY_MS: '0', ...extra })
 function run(command, args, extra = {}) {
   const r = spawnSync(command, args, { cwd: REPO, env: env(extra), encoding: 'utf8', timeout: 60000 })
   return { ...r, out: `${r.stdout || ''}\n${r.stderr || ''}` }
@@ -260,7 +266,6 @@ test('B6 refused, with no gh write, exit 2 and a log record, for every unsafe st
     ['tier tip differs', () => gh(), { tip: other }, /tip/i],
     ['base mismatch', () => gh({ view: prView({ baseRefName: 'staging' }) }), {}, /base/i],
     ['DIRTY', () => gh({ view: prView({ mergeStateStatus: 'DIRTY' }) }), {}, /DIRTY/],
-    ['BLOCKED', () => gh({ view: prView({ mergeStateStatus: 'BLOCKED' }) }), {}, /BLOCKED/],
     ['UNKNOWN', () => gh({ view: prView({ mergeStateStatus: 'UNKNOWN' }) }), {}, /UNKNOWN/],
     ['changes requested', () => gh({ view: prView({ reviewDecision: 'CHANGES_REQUESTED' }) }), {}, /CHANGES_REQUESTED/],
     ['gh view fails', () => gh({ extra: { 'pr view': { stderr: 'HTTP 401: Bad credentials\n', code: 1 } } }), {}, /401/],
@@ -453,4 +458,51 @@ test('B9 each loosening key in a tracked repo config is ignored on its own, with
     if (warned) { assert.equal(warnings.length, 1, t.stderr); assert.ok(warnings[0].includes(`Ignoring ${warned}`), t.stderr) }
     else assert.deepEqual(warnings, [], t.stderr)
   }
+})
+
+// Fix round: BLOCKED needs a human; UNKNOWN is read again before it is refused.
+test('B12 BLOCKED (branch protection) takes the needs-human path: label and one comment, no merge, not refused', () => {
+  gh({ view: prView({ mergeStateStatus: 'BLOCKED' }) })
+  const r = fake()
+  assert.equal(r.status, 10, r.out)
+  assert.match(r.stdout, /^labeled: .*blocked by branch protection/)
+  assert.ok(!calls().some((a) => a[1] === 'merge'))
+  assert.equal(calls().filter((a) => a[1] === 'comment').length, 1)
+  assert.match(bodyOf(), /blocked by branch protection/)
+  assert.deepEqual(calls().find((a) => a[1] === 'edit'), ['pr', 'edit', '41', '--add-label', 'needs-human'])
+  assert.deepEqual([lastOutcome().action, /blocked by branch protection/.test(lastOutcome().reason)], ['labeled', true])
+  // A MEDIUM that is also blocked names both reasons; onHuman none still writes nothing.
+  rmSync(GH_LOG, { force: true })
+  gh({ view: prView({ mergeStateStatus: 'BLOCKED' }) })
+  const medium = fake({ tier: 'medium', merges: false })
+  assert.equal(medium.status, 10, medium.out)
+  assert.match(medium.stdout, /tier MEDIUM.*blocked by branch protection/)
+  rmSync(GH_LOG, { force: true })
+  gh({ view: prView({ mergeStateStatus: 'BLOCKED' }) })
+  const none = fake({ merge: { onHuman: 'none', humanComment: 'x', requireChecks: true, allowBehind: false } })
+  assert.equal(none.status, 11, none.out)
+  assert.deepEqual(writes(), [])
+})
+
+test('B12 UNKNOWN is read again: CLEAN on a re-read merges', () => {
+  gh({ extra: { 'pr view': [out(prView({ mergeStateStatus: 'UNKNOWN' })), out(prView({ mergeStateStatus: 'UNKNOWN' })), out(prView())] } })
+  allowedMerge(fake())
+  assert.equal(calls().filter((a) => a[1] === 'view').length, 3)
+})
+
+test('B12 UNKNOWN on the first read and all 3 re-reads is refused, with no write', () => {
+  gh({ view: prView({ mergeStateStatus: 'UNKNOWN' }) })
+  const r = fake()
+  assert.equal(r.status, 2, r.out)
+  assert.match(r.stdout, /^refused: .*UNKNOWN/)
+  assert.equal(calls().filter((a) => a[1] === 'view').length, 4)
+  assert.deepEqual(writes(), [])
+})
+
+test('B12 the re-reads wait MERGE_UNKNOWN_DELAY_MS between them (5 seconds by default)', () => {
+  gh({ view: prView({ mergeStateStatus: 'UNKNOWN' }) })
+  const start = Date.now()
+  assert.equal(fake({}, [], { MERGE_UNKNOWN_DELAY_MS: '200' }).status, 2)
+  assert.ok(Date.now() - start >= 600, `${Date.now() - start}ms`)
+  assert.match(readFileSync(MERGE, 'utf8'), /MERGE_UNKNOWN_DELAY_MS[^\n]*5000/)
 })
