@@ -2881,7 +2881,7 @@ async function mergeTier(input) {
 // fix check included), and every deferred finding the summary lists (earlier closes' included). Their reasons replace
 // the closes' reasons of the same kind. A close logged before tiers counts as HIGH beside tiered ones; when none has a
 // tier the summary prints no line, exactly as before.
-const BRANCH_REASON = /^(riskPaths|always human|deferred( HIGH| protected)?): |^nothing deferred$/
+const BRANCH_REASON = /^(riskPaths|always human|deferred( HIGH| protected)?|pre-existing protected): |^nothing deferred$/
 // Files the tip changes that no close's own diff judged (covered by a clean fix check, say): their kinds count here,
 // so logic or another kind keeps the summary from LOW and anything but docs or tests fails strict. A close's own files
 // keep its tier, so a classifier's LOW stands, but only while the file's state at the tip (mode and blob, or absent) is
@@ -2904,13 +2904,17 @@ function unjudgedStats(entries, closes, diff, tip) {
 }
 // The tip's tier as data: { tier, reasons, policy, merges, docsTestsOnly }. tier is null when no close has one (then
 // the summary prints no tier line, and nothing merges).
-function tipTier(closes, { entries, base, tip, deferred }) {
+// preExisting: the branch-wide unfixed pre-existing findings the summary lists; a protected one keeps the tip HIGH whichever
+// closes still cover it.
+function tipTier(closes, { entries, base, tip, deferred, preExisting = [] }) {
   if (!closes.some((c) => c.tier))
     return { tier: null, reasons: closes.map((c) => `the close of review ${c.review} has no merge tier (logged before tiers)`), policy: MERGE.policy, merges: false, docsTestsOnly: false }
   const tiers = closes.map((c) => c.tier ? c : { tier: 'high', tierReasons: [`the close of review ${c.review} has no merge tier (logged before tiers)`] })
   const closesWorst = tiers.reduce((w, c) => TIER_RANK[c.tier] > TIER_RANK[w] ? c.tier : w, 'low')
   const diff = base ? diffStats(`${base}...${tip}`) : null
   const { high, medium } = deferredReasons(deferred)
+  const preProtected = preExisting.filter((f) => f.protected === true)
+  if (preProtected.length) high.push(`pre-existing protected: ${preProtected.map((f) => f.id).join(', ')}`)
   high.unshift(...(diff ? pathReasons(diff) : ['the diff from base could not be read, so its paths are unchecked']))
   const unjudged = diff && unjudgedStats(entries, closes, diff, tip)
   if (unjudged?.kinds.logic || unjudged?.kinds.other) {
@@ -3918,9 +3922,9 @@ function waiveFinding(id, findingId) {
 // section, deferred HIGHs first. A tip carried over a rewrite says so.
 function closeSummary(entries, close, head, carry = null) {
   const { review, lines } = closeLines(entries, close, head, carry)
-  const { items, criteria, findings, preExisting } = deferredLines(entries, review, coverOf([close], head, carry))
+  const { items, criteria, findings, preExisting, preExistingItems } = deferredLines(entries, review, coverOf([close], head, carry))
   const base = fullObjectId(review.baseSha) ? coverBase(review, head) : review.base
-  const tier = tipTier([close], { entries, base, tip: head, deferred: items })
+  const tier = tipTier([close], { entries, base, tip: head, deferred: items, preExisting: preExistingItems })
   lines.push(...tierLines(tier), 'Deferred findings', ...findings, ...preExisting)
   if (close.noTests) lines.push(`No tests: ${close.noTests}`)
   return summaryOf([...criteria, ...lines].join('\n'), tier, base, items, review)
@@ -3933,8 +3937,8 @@ function slicedSummary(entries, { slices, baseSha, closeHead }, head, carry = nu
     lines.push(`Slice ${i + 1} of ${slices.length}: ${paths.join(', ')}`, ...closeLines(entries, close, head).lines)
     if (close.noTests) lines.push(`No tests: ${close.noTests}`)
   })
-  const { items, criteria, findings, preExisting } = deferredLines(entries, slices[0].review, coverOf(slices.map((s) => s.close), head, carry))
-  const tier = tipTier(slices.map((s) => s.close), { entries, base: baseSha, tip: head, deferred: items })
+  const { items, criteria, findings, preExisting, preExistingItems } = deferredLines(entries, slices[0].review, coverOf(slices.map((s) => s.close), head, carry))
+  const tier = tipTier(slices.map((s) => s.close), { entries, base: baseSha, tip: head, deferred: items, preExisting: preExistingItems })
   lines.push(...tierLines(tier), 'Deferred findings', ...findings, ...preExisting)
   return summaryOf([...criteria, ...lines].join('\n'), tier, baseSha, items, slices[0].review)
 }
@@ -3977,7 +3981,7 @@ function deferredLines(entries, review, cover) {
   const preExisting = [...old.filter((f) => f.protected === true).map((f) => `Pre-existing HIGH ${deferredLine(f)}`),
     ...old.filter((f) => f.protected !== true).map(deferredLine)]
   return { items, criteria: criteria.length ? ['Acceptance criteria not met', ...criteria] : [], findings: findings.length ? findings : ['none'],
-    preExisting: preExisting.length ? ['Pre-existing (not introduced here)', ...preExisting] : [] }
+    preExisting: preExisting.length ? ['Pre-existing (not introduced here)', ...preExisting] : [], preExistingItems: old }
 }
 // One review record's pre-existing findings its close did not fix.
 function preExistingFindings(entries, review, cover = null) {
@@ -4339,8 +4343,8 @@ function coveredBy(entries, result, tip, carry) {
     if (r.close.noTests) lines.push(`No tests: ${r.close.noTests}`)
   })
   const cover = { ...coverOf(closes.map((r) => r.close), tip, carry), linked: used.filter((r) => r.check).map((r) => r.check.id) }
-  const { items, criteria, findings, preExisting } = deferredLines(entries, tipClose.review, cover)
-  const tier = tipTier(closes.map((r) => r.close), { entries, base, tip, deferred: items })
+  const { items, criteria, findings, preExisting, preExistingItems } = deferredLines(entries, tipClose.review, cover)
+  const tier = tipTier(closes.map((r) => r.close), { entries, base, tip, deferred: items, preExisting: preExistingItems })
   lines.push(...tierLines(tier), 'Deferred findings', ...findings, ...preExisting)
   return summaryOf([...criteria, ...lines].join('\n'), tier, base, items, tipClose.review)
 }
