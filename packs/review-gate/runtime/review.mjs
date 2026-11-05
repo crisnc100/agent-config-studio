@@ -3676,8 +3676,8 @@ async function fixCheck(id) {
   let onlyFiles = null
   if (mergeBase !== original.baseSha) {
     const branchSide = new Set(filesBetween(mergeBase, head)), all = filesBetween(original.head, head, SLICE)
-    const { other } = rangeTouch(original.head, head)
-    const kept = all.filter((p) => branchSide.has(p) || other.has(p))
+    const { other, reverted } = rangeTouch(original.head, head)
+    const kept = all.filter((p) => branchSide.has(p) || other.has(p) || reverted.has(p))
     if (kept.length < all.length) onlyFiles = kept
   }
   if (onlyFiles && !onlyFiles.length) throw new Error('No fix diff to check')
@@ -4013,22 +4013,34 @@ function branchPaths(commit, paths = null) {
   const parents = baseMergeParents(commit)
   const base = parents && sh('git', ['merge-base', '--octopus', ...parents], { allowFailure: true })
   if (!base) return commitPaths(commit, paths)
-  const counts = new Map()
-  for (const parent of parents) for (const path of filesBetween(base, parent, paths)) counts.set(path, (counts.get(path) || 0) + 1)
-  const changed = parents.map((parent) => new Set(filesBetween(parent, commit, paths)))
-  return [...new Set([...[...counts].filter(([, n]) => n > 1).map(([path]) => path), ...[...changed[0]].filter((p) => changed.every((c) => c.has(p)))])]
+  return [...new Set([...mergeReverts(commit, paths, parents, base), ...(() => {
+    const counts = new Map()
+    for (const parent of parents) for (const path of filesBetween(base, parent, paths)) counts.set(path, (counts.get(path) || 0) + 1)
+    const changed = parents.map((parent) => new Set(filesBetween(parent, commit, paths)))
+    return [...[...counts].filter(([, n]) => n > 1).map(([path]) => path), ...[...changed[0]].filter((p) => changed.every((c) => c.has(p)))]
+  })()])]
+}
+// Files only the branch changed (since the merge base) whose state a merge of the default branch changed from its
+// first parent: a deletion, or a restore of main's copy, made inside the merge commit. Their result can equal main's,
+// so neither the both-sides rule nor the evil-edit rule sees them; they are still the branch's own change.
+function mergeReverts(merge, paths = null, parents = baseMergeParents(merge), base = parents && sh('git', ['merge-base', '--octopus', ...parents], { allowFailure: true })) {
+  if (!parents || !base) return new Set()
+  const both = bothSides(merge) || new Set(), branchSide = new Set(filesBetween(base, parents[0], paths))
+  return new Set(filesBetween(parents[0], merge, paths).filter((p) => branchSide.has(p) && !both.has(p)))
 }
 // The commits of a range's branch side that touch each path: `merged` by merges of the default branch (their
 // branchPaths), `other` by every other commit. `mergedLast(p)`: a merge touched p and every other commit touching it
 // is an ancestor of such a merge, so p's state comes from a merge of main, not from a branch commit after it.
+// `reverted`: files a merge changed back on the branch's side (mergeReverts); never main's content, so never mergedLast.
 function rangeTouch(from, to) {
-  const merged = new Map(), other = new Map()
+  const merged = new Map(), other = new Map(), reverted = new Set()
   for (const commit of branchCommits([`${from}..${to}`])) {
     const viaMerge = !!baseMergeParents(commit), into = viaMerge ? merged : other
     for (const p of viaMerge ? branchPaths(commit) : commitPaths(commit)) into.set(p, [...(into.get(p) || []), commit])
+    if (viaMerge) for (const p of mergeReverts(commit)) reverted.add(p)
   }
-  const mergedLast = (p) => merged.has(p) && (other.get(p) || []).every((c) => merged.get(p).some((m) => isAncestor(c, m)))
-  return { merged, other, mergedLast }
+  const mergedLast = (p) => merged.has(p) && !reverted.has(p) && (other.get(p) || []).every((c) => merged.get(p).some((m) => isAncestor(c, m)))
+  return { merged, other, reverted, mergedLast }
 }
 // The files changed on both sides of the merges of the default branch in a rev-list range.
 const baseMergeSides = (range) => new Set(branchCommits(['--merges', ...range]).flatMap((merge) => baseMergeParents(merge) ? [...(bothSides(merge) || [])] : []))
@@ -4080,7 +4092,11 @@ function contentCover(entries, tip, risk = false) {
   // Every close at the tip close's head is listed, one per review, whether or not a file still needs it.
   const used = new Map(), uncovered = [], exempt = []
   for (const r of records) if (tipClose && r.close && r.head === tipClose.head) used.set(r, [])
-  for (const path of filesBetween(base, tip)) {
+  // A file a merge of main changed back on the branch's side (mergeReverts) can equal main's at the tip, so the diff from
+  // the new base omits it; it still needs a record, unless the anchor is a whole-branch review made after that merge.
+  const reverts = new Set(commitsIn(['--merges', tip, `^${base}`])
+    .filter((merge) => baseMergeParents(merge) && (sliceOf(anchor.review) || !isAncestor(merge, anchor.review.head))).flatMap((merge) => [...mergeReverts(merge)]))
+  for (const path of [...new Set([...filesBetween(base, tip), ...reverts])]) {
     if (path.startsWith('builds/')) continue
     if (coverageExempt(path)) { exempt.push(path); continue }
     const state = states.get(path) ?? null
@@ -4092,7 +4108,7 @@ function contentCover(entries, tip, risk = false) {
   const baseMerge = base !== anchor.review.baseSha
   const sides = baseMerge && uncovered.length ? baseMergeSides([tip, `^${base}`]) : new Set()
   return { covered: !!tipClose && !uncovered.length, base, tipClose, anchor, uncovered, exempt, used: [...used].map(([r, files]) => ({ ...r, files })),
-    baseMerge, sidesOnly: !!uncovered.length && uncovered.every((p) => sides.has(p)) }
+    baseMerge, sidesOnly: !!uncovered.length && uncovered.every((p) => sides.has(p)), reverts: uncovered.filter((p) => reverts.has(p)) }
 }
 // The legacy rule, for closes logged without coverage only: one unsliced complete close at the tip, then builds/
 // commits only. A sliced close covers only its paths, so it never counts here.
@@ -4164,6 +4180,9 @@ function uncoveredNote(result) {
   const shown = uncovered.slice(0, 20).join(', ')
   const more = uncovered.length > 20 ? ` and ${uncovered.length - 20} more` : ''
   const where = tipClose ? `the complete ${sliceOf(tipClose.review) ? 'slice ' : ''}closes at ${tipClose.head} leave` : 'no complete close or clean fix check saw the tip state of'
+  if (result.reverts?.length)
+    return `; ${where} ${uncovered.length} file(s) uncovered: ${shown}${more} — ${result.reverts.join(', ')} changed back to main's copy inside a merge ` +
+      `of the default branch, which a slice review can't see (no diff from main): run the review's fix check (it sees them), or review the whole branch afresh${exempt}`
   if (result.sidesOnly) return `; ${where} ${uncovered.length} file(s) uncovered: ${shown}${more} — ${sidesNote(uncovered, result.anchor.review.id)}${exempt}`
   return `; ${where} ${uncovered.length} file(s) uncovered: ${shown}${more}` +
     ` — review them as a slice (REVIEW_PATHS=${uncovered.join(',')}) and close it at the tip${exempt}`
