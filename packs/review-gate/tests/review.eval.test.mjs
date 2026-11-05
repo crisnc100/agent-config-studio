@@ -51,7 +51,7 @@ const hit = replies.find((r) => (!r.model || r.model === model) && (!r.intent ||
 const reply = kind === 'scores' ? '{"scores":[]}' : kind === 'verdicts' ? '{"verdicts":[]}' : kind === 'security' ? '{"findings":[]}'
   : hit ? JSON.stringify(hit.reply) : (process.env.STUB_FINDINGS || '{"findings":[]}')
 if (a.includes('-o')) fs.writeFileSync(a[a.indexOf('-o')+1], reply)
-else console.log(JSON.stringify({ structured_output: JSON.parse(reply), structuredOutput: JSON.parse(reply), modelUsage: { 'stub-grok': {} } }))
+else console.log(JSON.stringify({ structured_output: JSON.parse(reply), structuredOutput: JSON.parse(reply), modelUsage: { [cli === 'claude' ? model : 'stub-grok']: {} } }))
 `
 for (const name of ['codex', 'claude']) stub(BIN, name, modelBody)
 stub(GROK_BIN, 'grok', modelBody)
@@ -113,6 +113,18 @@ const find = (dir, name) => {
   return readdirSync(dir, { recursive: true }).filter((p) => String(p).split('/').at(-1) === name)
 }
 
+// A repo the way --eval builds one: inside a review-eval- folder of the temp folder, main plus a branch commit.
+function evalRoot(files = { 'src/app.js': 'export const one = 1\n' }) {
+  const root = mkdtempSync(join(TMP, 'review-eval-')), repo = join(root, 'c', 'repo'), logDir = join(root, 'c', 'log')
+  mkdirSync(repo, { recursive: true })
+  git(repo, 'init', '-q', '-b', 'main')
+  writeFileSync(join(repo, 'README.md'), 'base\n'); git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'base')
+  git(repo, 'checkout', '-qb', 'eval-case')
+  for (const [path, text] of Object.entries(files)) { mkdirSync(dirname(join(repo, path)), { recursive: true }); writeFileSync(join(repo, path), text) }
+  git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'head')
+  return { root, repo, logDir }
+}
+const evalEnv = ({ root, logDir }, extra = {}) => ({ REVIEW_EVAL: '1', REVIEW_EVAL_ROOT: root, REVIEW_EVAL_LOG_DIR: logDir, REVIEW_BASE: 'main', REVIEW_REVIEWER: 'sol', ...extra })
 const finding = (over = {}) => ({ issue: 'a defect', suggestion: 'fix it', likelihood: 7, impact: 5, protected: false, trigger: 'calling it', ...over })
 const BUG_HIT = finding({ issue: 'off by one', file: 'src/list.js', line: '2', quote: 'return items.slice(items.length - n + 1)' })
 const ELSEWHERE = finding({ issue: 'readme', file: 'README.md', line: '1', quote: 'A tiny list helper module.' })
@@ -253,16 +265,11 @@ test('3 control: the same planted config does fire on an ordinary review (the is
 })
 
 test('3 eval mode in the child: no security, verify, second opinion or shadow even when asked, and the record lands only in the eval log dir', () => {
-  const mark = join(MARKS, 'verify'), evalDir = join(ROOT, 'eval-log-dir')
-  rmSync(evalDir, { recursive: true, force: true })
+  const mark = join(MARKS, 'verify'), box = evalRoot(), evalDir = box.logDir
   homeConfig({ shadow: 'opus', pickShadow: ['opus'], security: { run: 'required' }, verify: 'second-opinion', verifyCmd: `echo ran >> ${mark}` })
-  git(OPERATOR, 'checkout', '-qb', 'feat')
-  mkdirSync(join(OPERATOR, 'src'))
-  writeFileSync(join(OPERATOR, 'src/app.js'), 'export const one = 1\n')
-  git(OPERATOR, 'add', 'src/app.js'); git(OPERATOR, 'commit', '-qm', 'app')
-  const r = script([], { REVIEW_EVAL: '1', REVIEW_EVAL_LOG_DIR: evalDir, REVIEW_BASE: 'main', REVIEW_REVIEWER: 'sol', REVIEW_SECURITY: 'always',
+  const r = script([], { cwd: box.repo, ...evalEnv(box, { REVIEW_SECURITY: 'always',
     REVIEW_SHADOW: 'opus', REVIEW_VERIFY: 'second-opinion', REVIEW_VERIFY_CMD: `echo env >> ${mark}`,
-    STUB_FINDINGS: JSON.stringify(findings(finding({ file: 'src/app.js', line: '1', quote: 'export const one = 1' }))) })
+    STUB_FINDINGS: JSON.stringify(findings(finding({ file: 'src/app.js', line: '1', quote: 'export const one = 1' }))) }) })
   assert.equal(r.status, 0, r.out)
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500)
   assert.deepEqual(calls().map((c) => c.kind), ['code'])
@@ -445,5 +452,152 @@ test('the examples ship: listed in pack.json, valid cases, and both skill twins 
     const body = readFileSync(join(PACK, 'skills', harness, 'code-review', 'SKILL.md'), 'utf8')
     assert.match(body, /--eval/, harness)
     assert.match(body, /eval-log\.jsonl/, harness)
+  }
+})
+
+const pushInput = (repo) => { const head = git(repo, 'rev-parse', 'HEAD'); return `refs/heads/eval-case ${head} refs/heads/eval-case ${'0'.repeat(40)}\n` }
+function gateRun(repo) {
+  const r = spawnSync(process.execPath, [SCRIPT, '--gate'], { cwd: repo, env: env(), encoding: 'utf8', input: pushInput(repo), timeout: 60000 })
+  return { ...r, out: `${r.stdout || ''}\n${r.stderr || ''}` }
+}
+
+test('fix 1 eval mode never yields a gate-eligible review: the real log dir is refused, records are tagged, and a tagged record never counts once the marker is unset', () => {
+  // The exact trigger: the marker with REVIEW_EVAL_LOG_DIR at the real log folder, from the operator's repo.
+  git(OPERATOR, 'checkout', '-qb', 'feat')
+  writeFileSync(join(OPERATOR, 'app.js'), 'export const one = 1\n')
+  git(OPERATOR, 'add', 'app.js'); git(OPERATOR, 'commit', '-qm', 'app')
+  for (const dir of [LOG_DIR, join(LOG_DIR, 'sub'), join(HOME, '.claude/review-log'), join(HOME, '.claude')]) {
+    const r = script([], { REVIEW_EVAL: '1', REVIEW_EVAL_LOG_DIR: dir, REVIEW_BASE: 'main', REVIEW_REVIEWER: 'sol' })
+    assert.notEqual(r.status, 0, `${dir}: ${r.out}`)
+    assert.match(r.out, /real review-log folder/, dir)
+  }
+  assert.equal(existsSync(LOG), false, 'nothing was written to the real log')
+  // A log dir inside an eval root, but run from the operator repo (outside the root): refused, and no reviews/ there.
+  const box = evalRoot()
+  let r = script([], evalEnv(box))
+  assert.notEqual(r.status, 0, r.out); assert.match(r.out, /eval run's temp folder/)
+  assert.equal(existsSync(join(OPERATOR, 'reviews')), false)
+  // A root that is not a review-eval- folder in the temp folder: refused.
+  r = script([], { cwd: box.repo, ...evalEnv({ root: ROOT, logDir: box.logDir }) })
+  assert.notEqual(r.status, 0, r.out); assert.match(r.out, /REVIEW_EVAL_ROOT/)
+  // A real eval-mode review inside its root: tagged eval, and its report and exclude stay in the temp repo.
+  r = script([], { cwd: box.repo, ...evalEnv(box) })
+  assert.equal(r.status, 0, r.out)
+  const [record] = lines(join(box.logDir, 'review-log.jsonl'))
+  assert.equal(record.eval, true)
+  assert.ok(existsSync(join(box.repo, 'reviews')))
+  // The record reaches the real log anyway (copied there); with the marker unset nothing counts it.
+  writeFileSync(LOG, `${JSON.stringify(record)}\n`)
+  writeFileSync(join(ROOT, 'statuses.json'), '{}')
+  r = script(['--close', record.id, '--status', join(ROOT, 'statuses.json'), '--test-cmd', 'true'], { cwd: box.repo, REVIEW_BASE: 'main' })
+  assert.notEqual(r.status, 0, r.out); assert.match(r.out, /No logged review matches/)
+  r = script(['--show-config'], { cwd: box.repo, REVIEW_BASE: 'main' })
+  assert.equal(JSON.parse(r.stdout.slice(r.stdout.indexOf('{'))).reviewCounts.sol, 0, 'rotation never counts it')
+  r = script(['--tier-json'], { cwd: box.repo, REVIEW_BASE: 'main' })
+  assert.equal(JSON.parse(r.stdout).covered, false)
+  assert.notEqual(gateRun(box.repo).status, 0)
+  // Control: the same record untagged is closable and passes the gate; tagged again, the gate refuses it despite the close.
+  const { eval: _tag, ...untagged } = record
+  writeFileSync(LOG, `${JSON.stringify(untagged)}\n`)
+  r = script(['--close', record.id, '--status', join(ROOT, 'statuses.json'), '--test-cmd', 'true'], { cwd: box.repo, REVIEW_BASE: 'main' })
+  assert.equal(r.status, 0, r.out)
+  let g = gateRun(box.repo)
+  assert.equal(g.status, 0, g.out)
+  const logged = lines(LOG)
+  writeFileSync(LOG, logged.map((e, i) => JSON.stringify(i === 0 ? { ...e, eval: true } : e)).join('\n') + '\n')
+  g = gateRun(box.repo)
+  assert.notEqual(g.status, 0, g.out)
+  r = script(['--summary'], { cwd: box.repo, REVIEW_BASE: 'main' })
+  assert.doesNotMatch(r.out, new RegExp(record.id))
+})
+
+test('fix 2 --eval with any other command flag is refused before anything runs', () => {
+  examples()
+  for (const extra of [['--gate'], ['--close', 'x'], ['--summary'], ['--fix-check', 'x'], ['--tier-json'], ['--deferred'], ['--show-config'], ['--log-outcome', 'x', '1', '0'], ['--slices', 'a']]) {
+    const r = spawnSync(process.execPath, [SCRIPT, ...extra, '--eval', '--cases', CASES, '--family', 'sol'], { cwd: OPERATOR, env: env(), encoding: 'utf8', input: '', timeout: 60000 })
+    assert.notEqual(r.status, 0, `${extra[0]}: ${r.stdout}${r.stderr}`)
+    assert.match(`${r.stdout}${r.stderr}`, /--eval runs alone/, extra[0])
+  }
+  assert.deepEqual(calls(), [])
+  assert.equal(existsSync(EVAL_LOG), false)
+})
+
+test('fix 3 an inherited GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE never reaches the case repos: the operator checkout stays byte-identical', () => {
+  examples()
+  const before = treeHash(OPERATOR)
+  const r = evalRun(['--family', 'sol'], { GIT_DIR: join(OPERATOR, '.git'), GIT_WORK_TREE: OPERATOR, GIT_INDEX_FILE: join(OPERATOR, '.git/index'),
+    STUB_REPLIES: JSON.stringify([{ intent: 'last(items, n)', reply: findings(BUG_HIT) }]) })
+  assert.equal(r.status, 0, r.out)
+  assert.equal(treeHash(OPERATOR), before)
+  assert.deepEqual(evalJson(r)[0].cases.map((c) => c.outcome), ['clean', 'caught'])
+  // The child refuses those variables itself.
+  const box = evalRoot()
+  const child = script([], { cwd: box.repo, ...evalEnv(box), GIT_DIR: join(box.repo, '.git') })
+  assert.notEqual(child.status, 0, child.out); assert.match(child.out, /GIT_DIR/)
+})
+
+test('fix 4 a base-side expect is caught by a quote of the removed code in a file that survives', () => {
+  const base = { 'src/guard.js': 'export function value(x) {\n  if (!x) return null\n  return x.value\n}\n' }
+  const head = { 'src/guard.js': 'export function value(x) {\n  return x.value\n}\n' }
+  makeCase('removed-guard', { id: 'removed-guard', kind: 'bug', intent: 'token-guard', expect: [{ file: 'src/guard.js', side: 'base', lines: [2, 2], what: 'the null guard is gone' }] }, base, head)
+  makeCase('removed-far', { id: 'removed-far', kind: 'bug', intent: 'token-far', expect: [{ file: 'src/guard.js', side: 'base', lines: [2, 2], what: 'the null guard is gone' }] },
+    { 'src/guard.js': base['src/guard.js'] + Array.from({ length: 20 }, (_, i) => `export const pad${i} = ${i}\n`).join('') }, head)
+  const r = evalRun(['--family', 'sol'], { STUB_REPLIES: JSON.stringify([
+    { intent: 'token-guard', reply: findings(finding({ file: 'src/guard.js', line: '2', quote: 'if (!x) return null' })) },
+    { intent: 'token-far', reply: findings(finding({ file: 'src/guard.js', line: '20', quote: 'export const pad14 = 14' })) },
+  ]) })
+  assert.equal(r.status, 0, r.out)
+  const cases = Object.fromEntries(evalJson(r)[0].cases.map((c) => [c.id, c]))
+  assert.equal(cases['removed-guard'].outcome, 'caught', JSON.stringify(cases['removed-guard']))
+  assert.equal(cases['removed-guard'].unlocated, 0, 'the finding that caught it is not counted as unlocated')
+  assert.equal(cases['removed-far'].outcome, 'missed', 'a quote far from the expected lines does not catch it')
+})
+
+test('fix 5 provenance: a Claude team records each lens\'s resolved model and the model the CLI reports; normal records do not change', () => {
+  makeCase('one', { id: 'one', kind: 'clean', intent: 'tidy' }, { 'a.js': 'x\n' }, { 'a.js': 'y\n' })
+  const r = evalRun(['--family', 'claude'])
+  assert.equal(r.status, 0, r.out)
+  const [c] = evalJson(r)[0].cases
+  assert.deepEqual(c.lenses.map((l) => [l.key, l.model, l.modelUsed]), [['correctness', 'claude-stub-opus', 'claude-stub-opus'],
+    ['regressions', 'claude-stub-opus', 'claude-stub-opus'], ['inputs-and-edges', 'claude-stub-opus', 'claude-stub-opus']])
+  // A normal claude review record: no lenses and no claude modelUsed.
+  git(OPERATOR, 'checkout', '-qb', 'feat')
+  writeFileSync(join(OPERATOR, 'app.js'), 'export const one = 1\n')
+  git(OPERATOR, 'add', 'app.js'); git(OPERATOR, 'commit', '-qm', 'app')
+  for (const extra of [{}, { REVIEW_CLAUDE_MODEL: 'opus' }]) {
+    const n = script([], { REVIEW_BASE: 'main', REVIEW_REVIEWER: 'claude', ...extra })
+    assert.equal(n.status, 0, n.out)
+    const record = lines(LOG).at(-1)
+    assert.equal(Object.hasOwn(record, 'lenses'), false)
+    assert.equal(Object.hasOwn(record, 'modelUsed'), false)
+    assert.equal(Object.hasOwn(record, 'eval'), false)
+  }
+})
+
+test('fix 6 the cost note follows the config the child sees: not the operator env or repo config, but the home config', () => {
+  makeCase('one', { id: 'one', kind: 'clean', intent: 'tidy' }, { 'a.js': 'x\n' }, { 'a.js': 'y\n' })
+  mkdirSync(join(OPERATOR, '.claude'))
+  writeFileSync(join(OPERATOR, '.claude/review-config.json'), JSON.stringify({ claudeModel: 'opus' }))
+  let r = evalRun(['--family', 'claude'], { REVIEW_CLAUDE_MODEL: 'opus' })
+  assert.equal(r.status, 0, r.out)
+  assert.match(r.out, /claude runs as the multi-agent team: 3 model calls per review/)
+  assert.match(r.out, /= 1 review \(3 model calls\)/)
+  assert.equal(calls().filter((c) => c.kind === 'code').length, 3, 'the child ran the team')
+  rmSync(CALLS, { force: true })
+  homeConfig({ claudeModel: 'opus' })
+  r = evalRun(['--family', 'claude'])
+  assert.equal(r.status, 0, r.out)
+  assert.doesNotMatch(r.out, /multi-agent team/)
+  assert.match(r.out, /= 1 review ·/)
+  assert.equal(calls().filter((c) => c.kind === 'code').length, 1, 'the child ran one agent')
+})
+
+test('fix 7 a family whose CLI is missing is reported exactly once, named or from the role', () => {
+  examples()
+  const path = [BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':')
+  for (const args of [['--family', 'grok,sol'], []]) {
+    const r = evalRun(args, { PATH: path })
+    assert.equal(r.status, 0, r.out)
+    assert.equal(r.out.split('\n').filter((l) => /grok/.test(l) && /not on PATH/.test(l)).length, 1, `${args.join(' ')}:\n${r.out}`)
   }
 })

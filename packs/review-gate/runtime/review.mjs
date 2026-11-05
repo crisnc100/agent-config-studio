@@ -112,6 +112,15 @@ const option = (flag) => {
 const EVAL_MODE = !!String(process.env.REVIEW_EVAL ?? '').trim()
 const EVAL_REFUSED = ['--gate', '--close', '--summary', '--tier-json', '--deferred', '--fix-check', '--dispute', '--waive', '--log-grade',
   '--recheck-of', '--log-outcome', '--slices', '--eval', '--shadow-run', '--pick-shadow-run', '--security-worker', '--shadow-report', '--pick-report', '--calibrate']
+// Git variables that move the repo, work tree or index away from the working directory: eval mode refuses them.
+const GIT_LOCATION_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM']
+// --eval takes only its own flags: with --gate (or any other command) it would run instead of that command.
+const EVAL_FLAGS = ['--eval', '--family', '--cases', '--timeout', '--repeat', '--yes']
+if (args.includes('--eval')) {
+  const others = args.filter((a) => a.startsWith('--') && !EVAL_FLAGS.includes(a))
+  if (others.length) stop(`--eval runs alone: it cannot be combined with ${others.join(', ')} (its flags: ${EVAL_FLAGS.slice(1).join(', ')}).`)
+}
 
 // ── User-configurable defaults (change the model WITHOUT editing this script) ──
 // Resolution: env var > project .claude/review-config.json > ~/.agent-config-studio/review-gate/config.json
@@ -499,7 +508,7 @@ function readLog({ strict = false } = {}) {
     try {
       const entry = JSON.parse(line)
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('not a record')
-      return [entry]
+      return entry.eval === true ? [] : [entry]
     } catch {
       unreadable++
       return []
@@ -592,7 +601,8 @@ function withLogLock(fn, file = LOG_PATH) {
 function appendLog(entry) {
   try {
     mkdirSync(dirname(LOG_PATH), { recursive: true })
-    const line = `${JSON.stringify(entry)}\n`
+    // A record written in eval mode is tagged, and readLog() skips tagged records: nothing counts it as a review.
+    const line = `${JSON.stringify(EVAL_MODE ? { ...entry, eval: true } : entry)}\n`
     withLogLock(() => appendFileSync(LOG_PATH, line))
   } catch (e) {
     throw new Error(`Could not append to ${LOG_PATH}: ${e.message}`)
@@ -2127,7 +2137,12 @@ async function runClaude(m, prompt, schema, role) {
     '--append-system-prompt',
     `You are a precise ${role}. Report only real defects; do not invent issues.`,
   ])
-  return { result: parseClaude(out) }
+  const result = parseClaude(out)
+  // The model Claude reports it ran as: kept for eval records only.
+  if (!EVAL_MODE) return { result }
+  let used = []
+  try { used = Object.keys(JSON.parse(out)?.modelUsage || {}) } catch { /* parseClaude read it */ }
+  return { result, ...(used.length && { modelUsed: used.join(',') }) }
 }
 
 async function runModel(m, prompt, schema, role) {
@@ -2150,12 +2165,13 @@ async function review(diff) {
   const perLens = await Promise.all(
     SEL.lenses.map(async (lens) => {
       const prompt = `${reviewPrompt(diff)}\n\nFocus especially on: ${lens.focus}.`
-      const { result } = await runClaude(
+      const { result, modelUsed } = await runClaude(
         { id: lens.model, effort: TEAM_EFFORT },
         prompt,
         SCHEMA,
         `${lens.key} code reviewer`,
       )
+      if (modelUsed) lens.modelUsed = modelUsed
       return result?.findings || []
     }),
   )
@@ -2303,6 +2319,7 @@ function refuseLinkedReviews() {
   if (!stat.isDirectory()) die('reviews is not a folder. Remove it and review again.')
 }
 function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTruncated, verifier, security = null) {
+  if (EVAL_MODE) evalOwnRepo() // the report and the info/exclude edit stay in the eval run's temp repo
   refuseLinkedReviews()
   ensureReviewsIgnored()
   // A random suffix keeps two reviews in the same second (any repo) apart in the folder and the log; the folder is
@@ -4177,7 +4194,49 @@ function evalModeChecks() {
   if (!dir || !isAbsolute(dir))
     stop('Eval mode (REVIEW_EVAL) needs REVIEW_EVAL_LOG_DIR, an absolute folder for this eval run\'s own log, so nothing reaches the review log.\n' +
       '  Fix: run review.mjs --eval, which sets both.')
+  // Never the review log's own folders: a record there would sit where the gate reads.
+  const home = homedir(), logDir = realish(dir)
+  const realLogs = [join(home, '.agent-config-studio', 'review-log'), join(home, '.claude', 'review-log')].map(realish)
+  if (realLogs.some((l) => within(logDir, l)) || [join(home, '.claude'), dirname(logPath())].map(realish).includes(logDir))
+    stop(`REVIEW_EVAL_LOG_DIR (${dir}) is, or sits inside, a real review-log folder; eval mode logs only inside the eval run's temp folder.`)
+  // The run's temp folder, as --eval made it: a review-eval- folder in the temp folder. The log, the working directory and
+  // the repo (work tree and git dirs) are all inside it, so reviews/ and info/exclude are only ever written there.
+  const rootValue = String(process.env.REVIEW_EVAL_ROOT ?? '')
+  const root = rootValue && isAbsolute(rootValue) ? realish(rootValue) : null
+  if (!root || dirname(root) !== realish(tmpdir()) || !basename(root).startsWith('review-eval-') || !isFolderPath(root))
+    stop(`Eval mode (REVIEW_EVAL) needs REVIEW_EVAL_ROOT, the eval run's review-eval- folder in ${tmpdir()}; got ${JSON.stringify(rootValue)}.\n` +
+      '  Fix: run review.mjs --eval, which sets it.')
+  if (!within(logDir, root)) stop(`REVIEW_EVAL_LOG_DIR (${dir}) is outside the eval run's temp folder ${root}.`)
+  const gitVars = GIT_LOCATION_VARS.filter((k) => process.env[k] != null)
+  if (gitVars.length) stop(`Eval mode (REVIEW_EVAL) refuses ${gitVars.join(', ')}: git must find the case repo from the working directory alone.`)
+  evalOwnRepo(root)
   if (!String(process.env.REVIEW_BASE ?? '').trim()) stop('Eval mode (REVIEW_EVAL) needs REVIEW_BASE: it never detects a base.')
+}
+// A path with every existing part resolved through symlinks (the rest appended as written).
+function realish(p) {
+  let cur = resolve(p)
+  const rest = []
+  for (;;) {
+    try { return join(realpathSync.native(cur), ...rest.reverse()) } catch { /* not there yet */ }
+    const up = dirname(cur)
+    if (up === cur) return resolve(p)
+    rest.push(basename(cur))
+    cur = up
+  }
+}
+function within(p, dir) {
+  return p === dir || p.startsWith(dir.endsWith(sep) ? dir : `${dir}${sep}`)
+}
+function isFolderPath(p) {
+  try { return statSync(p).isDirectory() } catch { return false }
+}
+// In eval mode: the working directory, its work tree and its git dirs all sit inside the eval run's temp folder.
+function evalOwnRepo(root = realish(String(process.env.REVIEW_EVAL_ROOT ?? ''))) {
+  const outside = (what) => stop(`Eval mode (REVIEW_EVAL): ${what} is outside the eval run's temp folder ${root}; a case review runs only in a repo --eval built there.`)
+  if (!within(realish(process.cwd()), root)) outside(`the working directory ${process.cwd()}`)
+  const r = spawnFileSync(which('git') || 'git', ['rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'], { encoding: 'utf8' })
+  if (r.error || r.status !== 0) stop(`Eval mode (REVIEW_EVAL): ${process.cwd()} is not a git repo.`)
+  for (const p of r.stdout.trim().split('\n')) if (!within(realish(resolve(p)), root)) outside(p)
 }
 const evalDuration = (ms) => (ms % 60_000 === 0 ? `${ms / 60_000}m` : ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`)
 function evalTimeout(value) {
@@ -4281,23 +4340,32 @@ function loadEvalCases(dir) {
     skipped.push({ name: c.folder, error: `duplicate id "${c.id}" (folders ${folders.get(c.id).join(', ')})` })
   return { cases: valid.filter((c) => folders.get(c.id).length === 1).sort((a, b) => (a.id < b.id ? -1 : 1)), skipped }
 }
-// The families to evaluate, as the child review will resolve them (REVIEW_REVIEWER=<family>); one whose CLI is
-// missing, or whose id names no CLI, is reported once and left out before anything is counted.
+// The families to evaluate, as the child review will resolve them (REVIEW_REVIEWER=<family>, no REVIEW_* settings, a repo
+// with no review config of its own): one whose CLI is missing is reported once, here, and left out before anything is counted.
 function evalFamilies(list) {
+  skipsNoted.add('reviewer') // loadPool's own "skipped" line would name a missing family a second time
   const loaded = loadPool()
-  const names = list == null ? poolOrStop(loaded).map((m) => m.family) : list.split(',').map((f) => f.trim().toLowerCase()).filter(Boolean)
+  if (list == null && !loaded.pool && !loaded.unusable?.length) poolOrStop(loaded)
+  const names = list == null ? [...(loaded.pool || []), ...(loaded.unusable || [])].map((m) => m.family) : list.split(',').map((f) => f.trim().toLowerCase()).filter(Boolean)
   if (!names.length) throw new Error('--family needs at least one family')
+  // The child sees only the home config: claudeModel there decides team or one agent, whatever this shell or repo sets.
+  const homes = [join(homedir(), '.agent-config-studio', 'review-gate', 'config.json'), join(homedir(), '.claude', 'review-config.json')]
+  const team = (String(homeKey(homes, 'claudeModel') ?? '').trim() || 'team') === 'team'
   const families = [], skipped = []
   for (const family of [...new Set(names)]) {
     let m
     if (!FAMILY_NAME.test(family)) { skipped.push(`${family}: not a family name`); continue }
-    if (family === 'claude') m = { family, vendor: 'claude', team: CLAUDE_MODEL === 'team', calls: CLAUDE_MODEL === 'team' ? LENSES.length : 1 }
+    if (family === 'claude') m = { family, vendor: 'claude', team, calls: team ? LENSES.length : 1 }
     else if (family === 'codex') m = { family, vendor: 'codex' }
     else {
       if (loaded.missing) poolOrStop(loaded)
       m = loaded.pool?.find((p) => p.family === family) || loaded.unusable?.find((p) => p.family === family) || poolMember(family, loaded.pool)
     }
-    if (!m.vendor) { skipped.push(`${family}: model-id gives "${m.id}", whose prefix names no known CLI`); continue }
+    if (!m.vendor) {
+      // A role family with no CLI prefix was already named by loadPool's warning.
+      if (!loaded.unusable?.some((u) => u.family === family)) skipped.push(`${family}: model-id gives "${m.id}", whose prefix names no known CLI`)
+      continue
+    }
     if (!onPath(m.vendor)) { skipped.push(`${family}: the ${m.vendor} CLI is not on PATH`); continue }
     families.push({ calls: 1, ...m, effort: m.effort ? effortFor(m) : null })
   }
@@ -4315,9 +4383,14 @@ function evalPromptHash(m) {
     ;({ SEL, SLICE, DIFF_BASE } = saved)
   }
 }
+// This run's environment without any GIT_* variable (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE… would point git at another
+// repo) and without REVIEW_* settings: what the case repos and the case reviews run with.
+function evalEnv() {
+  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_') && !k.startsWith('REVIEW_')))
+}
 function evalGit(cwd, argv) {
   const r = spawnSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false',
-    '-c', 'user.name=review eval', '-c', 'user.email=review-eval@localhost', ...argv], { cwd, encoding: 'utf8' })
+    '-c', 'user.name=review eval', '-c', 'user.email=review-eval@localhost', ...argv], { cwd, encoding: 'utf8', env: evalEnv() })
   if (r.error || r.status !== 0) throw new Error(`git ${argv.join(' ')} failed: ${r.error?.message || r.stderr}`)
 }
 function writeEvalTree(repo, tree) {
@@ -4343,9 +4416,8 @@ function evalRepo(c, dir) {
 }
 const EVAL_CHILDREN = new Set()
 // One case review: a child review.mjs in the case's repo, in eval mode, with nothing of this run's REVIEW_* settings.
-function evalChild(m, c, repo, logDir, timeoutMs) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('REVIEW_')))
-  Object.assign(env, { REVIEW_EVAL: '1', REVIEW_EVAL_LOG_DIR: logDir, REVIEW_BASE: 'main', REVIEW_REVIEWER: m.family, REVIEW_PATHS: '' })
+function evalChild(m, c, repo, logDir, root, timeoutMs) {
+  const env = { ...evalEnv(), REVIEW_EVAL: '1', REVIEW_EVAL_ROOT: root, REVIEW_EVAL_LOG_DIR: logDir, REVIEW_BASE: 'main', REVIEW_REVIEWER: m.family, REVIEW_PATHS: '' }
   return new Promise((done) => {
     let out = '', err = '', timedOut = false
     const child = spawnFile(process.execPath, [COPY_PATH, c.intent], { cwd: repo, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -4370,6 +4442,30 @@ const evalSpan = (line) => {
   return [Math.min(a, b), Math.max(a, b)]
 }
 const EVAL_RANK = { high: 3, medium: 2, low: 1 }
+// The path a finding names, as the quote check reads it: an absolute path inside the case repo made relative, ./ dropped,
+// and the a/ or b/ diff prefix as a second reading.
+function evalFindingPaths(f) {
+  let p = String(f.file ?? '')
+  const inRepo = p.lastIndexOf('/repo/')
+  if (isAbsolute(p) && inRepo !== -1) p = p.slice(inRepo + 6)
+  p = p.replace(/^\.\//, '')
+  return /^[ab]\//.test(p) ? [p, p.slice(2)] : [p]
+}
+// Whether a finding on a base-side expect's file quotes the base tree within the expected lines ± EVAL_SLACK (whitespace
+// runs collapsed, as the quote check does).
+function quotedInBase(c, e, f) {
+  const bytes = c.base.get(e.file)
+  if (!bytes || !evalFindingPaths(f).includes(e.file)) return false
+  const norm = (l) => l.replace(/\s+/g, ' ').trim()
+  const q = String(f.quote ?? '').split('\n').map(norm)
+  while (q.length && !q[0]) q.shift()
+  while (q.length && !q.at(-1)) q.pop()
+  if (!q.length) return false
+  const lines = bytes.toString('utf8').split('\n').map(norm), needle = q.join('\n')
+  for (let s = Math.max(1, e.lines[0] - EVAL_SLACK); s <= e.lines[1] + EVAL_SLACK; s++)
+    if (lines.slice(s - 1, s - 1 + q.length).join('\n').includes(needle)) return true
+  return false
+}
 // Scores one case from the child's record: its resolvedPaths settle each finding's path, its commit the side.
 function scoreEvalCase(c, record) {
   const located = [], unlocated = []
@@ -4384,14 +4480,17 @@ function scoreEvalCase(c, record) {
   if (c.kind === 'bug') {
     const used = new Set()
     const expects = c.expect.map((e) => {
-      const hits = near(e, e.side)
-      hits.forEach((l) => used.add(l))
+      // Removed code has no line at HEAD when its file survives, so the quote check leaves such a finding unlocated (or
+      // locates it at HEAD): a base-side expect also takes any finding on that file whose quote is in the base tree there.
+      const hits = [...near(e, e.side), ...(e.side === 'base' ? (record.findingDetails || []).filter((f) => quotedInBase(c, e, f)).map((f) => ({ f })) : [])]
+      hits.forEach((l) => used.add(l.f.id))
       const best = strongest(hits)
       return { file: e.file, side: e.side, lines: e.lines, caught: !!best, ...(best && { by: best.f.id, severity: best.f.severity }) }
     })
     const caught = expects.every((e) => e.caught)
     const weakest = caught ? expects.map((e) => e.severity).sort((a, b) => (EVAL_RANK[a] || 0) - (EVAL_RANK[b] || 0))[0] : null
-    return { outcome: caught ? 'caught' : 'missed', severity: weakest, expects, extra: located.filter((l) => !used.has(l)).length, unlocated: unlocated.length }
+    return { outcome: caught ? 'caught' : 'missed', severity: weakest, expects, extra: located.filter((l) => !used.has(l.f.id)).length,
+      unlocated: unlocated.filter((f) => !used.has(f.id)).length }
   }
   const tolerated = new Set(c.allow.flatMap((a) => near(a, 'head')))
   const outside = located.filter((l) => !tolerated.has(l))
@@ -4412,7 +4511,7 @@ async function evalOne(m, c, run, root, timeoutMs) {
   let error = null, record = null
   try {
     const repo = evalRepo(c, dir)
-    const r = await evalChild(m, c, repo, logDir, timeoutMs)
+    const r = await evalChild(m, c, repo, logDir, root, timeoutMs)
     const at = r.out.indexOf('===FINDINGS_JSON===')
     let json = null
     try { json = at === -1 ? null : JSON.parse(r.out.slice(at + 19)) } catch { /* below */ }
@@ -4432,7 +4531,8 @@ async function evalOne(m, c, run, root, timeoutMs) {
   rmSync(dir, { recursive: true, force: true })
   return {
     ...base, ...scoreEvalCase(c, record), durationMs, reviewId: record.id, model: record.model ?? null,
-    ...(record.modelUsed && { modelUsed: record.modelUsed }), effort: record.effort ?? null, security: record.security?.status ?? null,
+    ...(record.modelUsed && { modelUsed: record.modelUsed }), ...(record.lenses && { lenses: record.lenses }), effort: record.effort ?? null,
+    security: record.security?.status ?? null,
   }
 }
 function evalTotals(cases) {
@@ -4659,6 +4759,7 @@ async function runEval() {
     }),
     durationMs,
     security: security.record,
+    ...(EVAL_MODE && SEL.team && { lenses: SEL.lenses.map(({ key, family, model, modelUsed }) => ({ key, family, model, ...(modelUsed && { modelUsed }) })) }),
     dir,
   })
   if (!EVAL_MODE) {
