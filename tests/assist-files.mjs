@@ -183,7 +183,7 @@ try {
   console.log('\nassist files: F13 — facts');
   {
     const f0 = F.factsText();
-    ok('F13 no roles.json: no role is claimed, and the unset ones are named', /No roles are defined/.test(f0) && /Not set yet .*: advisor, builder, investigator, judge, reviewer\./.test(f0), f0);
+    ok('F13 no roles.json: no role is claimed, and the unset ones are named', /No roles are defined/.test(f0) && /Not set yet .*: advisor, builder, investigator, judge, reviewer, security\./.test(f0), f0);
     // A roles.json from before roles were chosen at install: the shipped roles fill it.
     put(path.join(studio, 'roles.json'), '{"version":1}\n');
     const f1 = F.factsText();

@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tempDir } from './fixtures/cleanup.mjs';
+import { INSTALL_ONLY_ROLES } from '../lib/roles.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = path.join(ROOT, 'bin', 'model-id');
@@ -124,7 +125,8 @@ console.log('\nroles: A2 — seeded values, overrides, merge and resolution (R6,
 {
   // A roles.json from before roles were chosen at install: the shipped roles still fill it.
   const home = tempHome({ roles: { version: 1 } });
-  for (const [name, r] of Object.entries(ROLES.roles)) {
+  // An install-only role (security) never fills a legacy file; tests/roles-security.mjs checks it stays unset.
+  for (const [name, r] of Object.entries(ROLES.roles).filter(([n]) => !INSTALL_ONLY_ROLES.includes(n))) {
     const use = [].concat(r.use);
     const want = `family=${use[0]} id=${MODELS.models[use[0]]} effort=${r.effort || ''} alt=${r.alt || ''}\n`;
     ok(`--role ${name} → ${want.trim()}`, now(home, '--role', name).out === want, now(home, '--role', name).out);
