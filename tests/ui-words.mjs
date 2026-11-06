@@ -72,6 +72,51 @@ const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]
   ok('every `outline: none` has a replacement focus style', bare.length === 0, bare.join(' | '));
 }
 
+/* ── static: tinted states in the light theme, from the CSS values ───── */
+// Review 2026-11-06-15-12-50 f1: states the seeded QA never showed (a search hit, a new-CLI part badge, an
+// added line in a Describe preview, the Claude tag, installed/update badges) sat at 4.17–4.49:1 in light.
+// Each text colour over its own color-mix tint, laid on the light surfaces they appear on, must reach 4.6:1.
+console.log('\nlight theme: text on its own tint, computed from styles.css');
+{
+  const raw = fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const block = (sel) => {
+    const i = raw.indexOf(`${sel} {`);
+    return Object.fromEntries([...raw.slice(i, raw.indexOf('}', i)).matchAll(/--([\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+  };
+  const light = { ...block(':root'), ...block(':root[data-theme="light"]') };
+  const resolve = (v, seen = 0) => { const m = /^var\(--([\w-]+)\)$/.exec(v.trim()); return m && seen < 5 ? resolve(light[m[1]], seen + 1) : v.trim(); };
+  const rgb = (h) => resolve(h).replace('#', '').match(/../g).map((x) => parseInt(x, 16));
+  const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const lum = (c) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+  const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const rule = (sel) => rules.filter((r) => r.sel.split(',').map((s) => s.trim()).includes(sel)).map((r) => r.body).join(';');
+  // [selector for the text colour, selector for the tint] — the same rule unless the text sits in a child.
+  const PAIRS = [
+    ['.result-line b', '.result-line b'],
+    ['.pk-badge.newHarness', '.pk-badge.newHarness'],
+    ['.pk-badge.installed', '.pk-badge.installed'],
+    ['.pk-badge.update', '.pk-badge.update'],
+    ['.harness-tag.claude', '.harness-tag.claude'],
+    ['.harness-tag.codex', '.harness-tag.codex'],
+    ['.diff-line.add', '.diff-line.add'],
+    ['.diff-line.add .t', '.diff-line.add'],
+  ];
+  const low = [];
+  for (const [fgSel, bgSel] of PAIRS) {
+    // The cascade: a later rule for the same selector wins, so take the last declaration.
+    const fg = [...rule(fgSel).matchAll(/(?:^|;)\s*color:\s*([^;]+)/g)].at(-1)?.[1];
+    const tint = [...rule(bgSel).matchAll(/background:\s*color-mix\(in srgb,\s*([^\s]+)\s+(\d+)%,\s*transparent\)/g)].at(-1);
+    if (!fg || !tint) { low.push(`${fgSel}: no color or tint found`); continue; }
+    const c = rgb(fg), t = rgb(tint[1]), p = Number(tint[2]) / 100;
+    for (const surface of ['bg', 'panel', 'panel-2']) {
+      const s = rgb(`var(--${surface})`);
+      const r = ratio(c, t.map((v, i) => v * p + s[i] * (1 - p)));
+      if (r < 4.6) low.push(`${fgSel} on ${surface}: ${r.toFixed(2)}`);
+    }
+  }
+  ok('every tinted state reaches 4.6:1 on bg, panel and panel-2 (search hits, part badges, Describe diffs, CLI tags)', low.length === 0, low.join(' | '));
+}
+
 /* ── static: words the views never render on their own ───────────────── */
 console.log('\nindex.html and the server\'s errors: no "harness"');
 {
