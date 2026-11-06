@@ -295,9 +295,23 @@ const homeRoutes = (over = {}) => routesFor({
   const rows = p.$('content').querySelectorAll('.home-seat');
   ok('9 the card shows one row per seat', rows.length === SEATS.length, `${rows.length}`);
   const row = (id) => rows.find((r) => r.dataset.seat === id);
-  // C2: one compact line per account — its tightest window's % left and reset — not every bar; Usage has those.
-  ok('9 each account is one compact line: its tightest window, as percent left', /54% left/.test(p.text(row('a'))) && !/80% left|97% left/.test(p.text(row('a'))) && /30% left/.test(p.text(row('b')))
-    && !p.$('content').querySelector('.home-accounts .usage-track'), p.text(row('a')));
+  // PR E (Cris: "I miss the bars"): every quota window shows its % left and a bar; Usage still has the full page.
+  ok('9 each account shows every window as percent left', /80% left/.test(p.text(row('a'))) && /54% left/.test(p.text(row('a'))) && /97% left/.test(p.text(row('a')))
+    && /30% left/.test(p.text(row('b'))), p.text(row('a')));
+  // Guard: one bar per reported window, each filled to its own "left" and carrying the pressure level.
+  const reading = SEATS.filter((s) => s.ok && s.windows.length);
+  const bars = reading.map((s) => {
+    const r = row(s.seatId);
+    const wins = r.querySelectorAll('.home-win');
+    return { id: s.seatId, want: s.windows.length, wins: wins.length,
+      ok: wins.length === s.windows.length && wins.every((w) => {
+        const fill = w.querySelector('.usage-track .usage-fill');
+        const left = (p.text(w.querySelector('.usage-pct')).match(/(\d+)% left/) || [])[1];
+        return !!fill && left !== undefined && fill.style.width === `${left}%` && /^(low|mid|high)$/.test(fill.dataset.level || '');
+      }) };
+  });
+  ok('9 one bar per reported window on each account, its width matching "left", with a level', bars.length > 0 && bars.every((b) => b.ok),
+    bars.map((b) => `${b.id}: ${b.wins}/${b.want}${b.ok ? '' : ' ✗'}`).join(' | '));
   ok('9 …with that window and its reset', /Weekly/.test(p.text(row('a'))) && /resets in/.test(p.text(row('a'))), p.text(row('a')));
   ok('9 …and a link to Usage for the full bars', [...p.$('content').querySelectorAll('.home-accounts button')].some((b) => /Open Usage/.test(p.text(b))));
   ok('9 no number on a seat the route gave none for', ['off', 'wait', 'dup', 'nq', 'rolled', 'err', 'nw'].every((id) => !/\d+%/.test(p.text(row(id)))));
