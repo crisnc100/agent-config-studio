@@ -125,14 +125,11 @@ function paintPacks() {
   if (!PK.data) { c.appendChild(box); return; }
   const legacy = PK.status?.legacy?.length ? PK.status.legacy : PK.data.legacy;
   if (legacy.length) box.appendChild(el('div', 'notice warn pk-legacy', `An earlier review-gate install is here (${legacy.join(', ')}). The packs installer does not migrate it; the review script still reads the older log and config locations.`));
-  // When status was checked, and the slower Codex trust check: fine print, folded.
-  const more = el('details', 'more pk-status-more');
-  more.appendChild(el('summary', null, 'Status check'));
+  box.appendChild(pkHere());
+  // One quiet line: when status was checked, the Codex trust check, and Refresh. No fold.
   const status = el('div', 'pk-status');
   status.id = 'pk-status';
-  more.appendChild(status);
-  box.appendChild(pkHere());
-  box.appendChild(more);
+  box.appendChild(status);
   const todo = pkTodo();
   if (todo) box.appendChild(todo);
   for (const pack of PK.data.packs) box.appendChild(pkCardView(pack));
@@ -157,15 +154,19 @@ function pkPaintStatus() {
     line.appendChild(el('span', 'pk-status-text', when
       ? `Status checked at ${when}${PK.status.trust ? ', with the Codex trust check' : ', without the Codex trust check'}.`
       : 'Status not checked yet.'));
-    const again = el('button', 'btn', 'Refresh status');
+  }
+  // On the same line: the trust check (its cost behind an (i)), then Refresh.
+  const trust = pkCheck('Include the Codex ', PK.trust, (v) => { PK.trust = v; });
+  trust.querySelector('span').appendChild(glossTip('trust', 'trust check'));
+  trust.querySelector('input').disabled = !!PK.job;
+  if (PK.job) trust.title = 'Wait for the status check to finish';
+  line.appendChild(trust);
+  if (!PK.job) {
+    const again = el('button', 'btn ghost', 'Refresh status');
     again.onclick = () => pkCheckStatus();
     line.appendChild(again);
   }
   s.appendChild(line);
-  const trust = pkCheck('Include the Codex trust check (slower: it starts Codex once per settings folder)', PK.trust, (v) => { PK.trust = v; });
-  trust.querySelector('input').disabled = !!PK.job;
-  if (PK.job) trust.title = 'Wait for the status check to finish';
-  s.appendChild(trust);
   if (PK.job?.progress?.length > 1) {
     const ul = el('ul', 'pk-progress');
     for (const p of PK.job.progress) ul.appendChild(el('li', null, p.message));
@@ -292,7 +293,7 @@ function pkCheck(label, checked, onchange, { disabled = false, title = null } = 
 /** What it is, day to day, what it changes, how to undo it — the CLI's explain, in the same words; a pack's adds what it needs. */
 function pkExplain(e, summary, reqs = null) {
   const d = el('details', 'pk-explain');
-  d.appendChild(el('summary', null, summary));
+  d.appendChild(el('summary', 'fold', summary));
   const dl = el('div', 'pk-explain-body');
   const field = (label, text) => { const p = el('p'); p.appendChild(el('strong', null, `${label}: `)); p.appendChild(document.createTextNode(text)); dl.appendChild(p); };
   field('What it is', e.what);
@@ -619,7 +620,7 @@ function pkResultView(card) {
 
 function pkLog(box, lines) {
   const d = el('details', 'pk-log');
-  d.appendChild(el('summary', null, 'Installer output'));
+  d.appendChild(el('summary', 'fold', 'Installer output'));
   d.appendChild(el('pre', null, lines.join('\n')));
   box.appendChild(d);
 }

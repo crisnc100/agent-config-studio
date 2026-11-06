@@ -157,7 +157,7 @@ function swError(box, retry) {
   // The refused reply, as plain text: never parsed, never rendered as markup.
   if (SWX.reply && SWX.reply.error === SW.error) {
     const d = el('details', 'sw-reply');
-    d.appendChild(el('summary', null, "Show the AI's reply"));
+    d.appendChild(el('summary', 'fold', "Show the AI's reply"));
     d.appendChild(el('pre', 'sw-reply-text', SWX.reply.text));
     if (SWX.reply.cut) d.appendChild(el('div', 'scope-note', 'Cut at 4 KB.'));
     n.appendChild(d);

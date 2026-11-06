@@ -7,18 +7,14 @@ const el = (tag, cls, text) => {
   if (text != null) n.textContent = text;
   return n;
 };
-/** Fine print folds behind "Details", so a page opens with one sentence. */
-function moreDetails(...lines) {
-  const d = el('details', 'more');
-  d.appendChild(el('summary', null, 'Details'));
-  for (const l of lines) if (l) d.appendChild(typeof l === 'string' ? el('p', null, l) : l);
-  return d;
-}
 /** The few terms the studio keeps, each explained in one sentence behind an (i). */
 const GLOSSARY = {
   worktree: 'A worktree is a second checkout of the same repo on its own branch, so work can run side by side.',
   trunk: 'The trunk is a project’s main checkout: worktrees branch from it, and nobody works in it.',
   account: 'An account is one signed-in subscription the studio tracks — two Codex plans are two accounts.',
+  env: 'How a worktree gets its env files: linked to the trunk’s, or its own copy.',
+  trust: 'The Codex trust check starts Codex once per settings folder to confirm it runs the review gate’s hooks. It makes the status check slower.',
+  done: 'Done means the exact commit was merged, nothing is uncommitted, and no env file holds anything the trunk lacks (as of the last fetch).',
   effort: 'Effort is how hard a model thinks on each turn: higher is slower and more thorough.',
 };
 const TIP_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 7.2v4M8 4.9v.2"/></svg>';
@@ -29,7 +25,7 @@ function glossTip(term, word = term) {
   const b = el('button', 'tip-btn');
   b.type = 'button';
   b.innerHTML = TIP_ICON;
-  b.setAttribute('aria-label', `What is ${term === 'effort' ? 'effort' : `${/^[aeiou]/.test(term) ? 'an' : 'a'} ${term}`}?`);
+  b.setAttribute('aria-label', `What “${word}” means`);
   b.setAttribute('aria-expanded', 'false');
   b.title = GLOSSARY[term];
   const body = el('span', 'tip-body', GLOSSARY[term]);
@@ -1749,10 +1745,10 @@ async function openWorktrees() {
   c.innerHTML = '';
   const box = el('div', 'scope');
   box.appendChild(pageHeading('Worktrees'));
-  box.appendChild(moreDetails(
-    GLOSSARY.worktree, GLOSSARY.trunk,
-    'Env: how each worktree gets its env files — linked to the trunk, or a copy.',
-    'Done: the exact commit was merged, nothing is uncommitted, and no env file holds anything the trunk lacks. Merge status is as of the last fetch.'));
+  // The words this page uses, each with its (i): no fold of definitions.
+  const terms = el('div', 'wt-terms');
+  [['worktree', 'worktree'], ['trunk', 'trunk'], ['env', 'env'], ['done', 'done']].forEach(([t, w], i) => { if (i) terms.append(' · '); terms.appendChild(glossTip(t, w)); });
+  box.appendChild(terms);
   if (!data.projects?.length) {
     box.appendChild(el('div', 'scope-sub', 'No registered projects. Register one with + on Worktrees in the sidebar.'));
     c.appendChild(box);
@@ -1809,7 +1805,6 @@ async function openTrash() {
   c.innerHTML = '';
   const box = el('div', 'scope');
   box.appendChild(pageHeading('Trash'));
-  box.appendChild(moreDetails('Newest first. Each was saved to history before it moved here, so it can also come back from history.'));
 
   if (!items.length) {
     box.appendChild(el('div', 'scope-sub', 'Trash is empty.'));
@@ -1917,8 +1912,7 @@ function paintFolders() {
     c.appendChild(box);
     return;
   }
-  box.appendChild(moreDetails('Edit folders open in the editor and keep history; the studio never writes in read folders, which are listed in Context, Skills and Worktrees.',
-    `The list lives in ${d.file}; change it from a terminal.`));
+  box.appendChild(el('div', 'scope-note folders-where', `To change this list, edit ${d.file} from a terminal.`));
   const cmd = (text) => { const code = el('code', 'folders-cmd', text); return code; };
   if (d.state === 'error') {
     const n = el('div', 'notice error folders-error');
@@ -2025,11 +2019,8 @@ function paintSkills() {
   add.onclick = () => { location.hash = '#skills/new'; };
   head.appendChild(add);
   box.appendChild(head);
-  // The usage caveat is fine print: inside the fold. Each row still says "unknown, not unused" with its own number.
-  const fold = moreDetails(`${plural(SK.rows.length, 'skill')} across your CLIs and every project. Identical copies are collapsed into one row.`,
-    'Pick any set and download it — one skill saves as a readable .md, several as a .zip.');
-  if (SK.usage?.caveat?.text) fold.appendChild(el('p', 'sk-caveat', SK.usage.caveat.text));
-  box.appendChild(fold);
+  // One muted line is all a user needs about the counts; each row still says "unknown, not unused" beside its own.
+  box.appendChild(el('div', 'scope-note sk-note', 'Counts come from Claude Code only.'));
   // An error reading usage is not fine print: it stays in view.
   if (SK.usage?.available === false) {
     box.appendChild(el('div', 'notice warn sk-usage-error', `Usage could not be read (${SK.usage.reason || 'unknown error'}), so no row below carries a count.`));
@@ -2359,17 +2350,8 @@ function paintMemory() {
     box.appendChild(el('div', 'notice warn', `Showing Memory as it was before the last change — reading it again failed (${MV.outdated}). Reopen Memory to try again.`));
   }
 
-  const facts = el('div', 'mem-facts');
-  facts.appendChild(el('div', null, memCount));
-  facts.appendChild(el('div', 'mem-caveat', d.caveat.text));
-  facts.appendChild(el('div', null, `From ${plural(d.slugCount, 'Claude Code project folder')}; a project's worktrees and subfolders roll up together.`));
-  const states = Object.entries(d.states).map(([k, n]) => (SLUG_STATE_LABELS[k] ? plural(n, ...SLUG_STATE_LABELS[k]) : `${n} ${k}`)).join(' · ');
-  facts.appendChild(el('div', null, `Project folders: ${states}. Temporary session folders are left out of the project list`
-    + (d.hiddenProbeFiles ? `, with the ${plural(d.hiddenProbeFiles, 'memory file')} in them.` : '.')));
-  const o = d.other;
-  const store = (label, s) => (s.count == null ? `${label}: ${s.note}` : `${label}: ${s.count} ${s.unit}${s.scopes != null ? ` in ${s.scopes} scope${s.scopes === 1 ? '' : 's'}` : ''} (${s.store}, read-only)`);
-  facts.appendChild(el('div', null, `${store('Codex', o.codex)} · ${store('Grok', o.grok)}`));
-  box.appendChild(moreDetails(facts));
+  // One muted line: the count, and what "last written: unknown" means on the rows below.
+  box.appendChild(el('div', 'scope-note mem-count', `${memCount} “Last written: unknown” means no transcript record is left.`));
 
   const f = d.findings;
   const queue = d.rows.filter((r) => r.inQueue);
@@ -2451,8 +2433,7 @@ function reviewTab() {
   const wrap = el('div');
   const d = MV.data;
   const head = el('div', 'mem-row-head');
-  head.appendChild(el('div', 'scope-sub', 'Oldest first, by the later of "modified" and "last written". '
-    + `Keep hides a fact for ${d.keepDays} days, or until its content changes. Nothing here edits a memory file.`));
+  head.appendChild(el('div', 'scope-sub', `Oldest first. Keep hides a fact for ${d.keepDays} days, or until it changes.`));
   const sel = el('select', 'scope-select');
   for (const [v, label] of [[0, 'Any age'], [30, 'Older than 30 days'], [90, 'Older than 90 days'], [180, 'Older than 180 days'], [365, 'Older than a year']]) {
     const opt = el('option', null, label);
@@ -2708,7 +2689,7 @@ function projectsTab() {
   const wrap = el('div');
   for (const g of MV.data.groups) {
     const card = el('details', 'mem-card');
-    const sum = el('summary', 'sk-head');
+    const sum = el('summary', 'sk-head fold');
     sum.appendChild(el('span', 'sk-name', g.label));
     sum.appendChild(el('span', `mem-badge state-${g.state}`, SLUG_STATE_LABELS[g.state]?.[0] || g.state));
     sum.appendChild(el('span', 'mem-where', `${g.rowCount} file${g.rowCount === 1 ? '' : 's'} · ${g.display}`));
@@ -2914,12 +2895,8 @@ function paintContext() {
   // One folder's line would only say the totals again.
   const perRoot = roots.length > 1
     ? roots.map((r) => `${r.label}: ${plural(r.files, 'file')} as ${plural(r.entries, 'entry', 'entries')}, ${r.drifted} drifted`).join(' · ') : null;
-  box.appendChild(moreDetails(
-    `${plural(d.totals.files, 'instruction file')}, shown as ${plural(d.totals.entries, 'entry', 'entries')}`
-    + (d.totals.drifted ? ` — ${d.totals.drifted} drifted from trunk.` : '.'),
-    `${plural(d.totals.collapsedCopies, 'identical copy', 'identical copies')} collapsed; every copy's path is still listed.`,
-    perRoot,
-    'Files in edit folders open in the editor, trunk copy first; files in read folders open here, read-only.'));
+  box.appendChild(el('div', 'scope-note cx-count', `${plural(d.totals.files, 'instruction file')}, shown as ${plural(d.totals.entries, 'entry', 'entries')}`
+    + (d.totals.drifted ? ` — ${d.totals.drifted} drifted from trunk.` : '.') + (perRoot ? ` ${perRoot}.` : '')));
   for (const u of d.unreadable) box.appendChild(el('div', 'mem-flag', `not read: ${u.display} (${u.reason})`));
   if (CX.outdated) {
     box.appendChild(el('div', 'notice warn', `Showing Context as it was before the move to Trash — reading it again failed (${CX.outdated}). Reopen Context to try again.`));
@@ -4355,7 +4332,6 @@ async function paintModels(load) {
   const head = el('div', 'usage-head');
   head.appendChild(pageHeading('Models'));
   box.appendChild(head);
-  box.appendChild(moreDetails('Nothing changes until you press a button.'));
 
   if (m.registryError) {
     const n = el('div', 'notice error models-error');
@@ -4393,7 +4369,7 @@ function idsSection(m) {
   const alerts = liveAlerts(m);
   const open = M.idsOpen ?? (alerts > 0 || M.sidecars.length > 0);
   const head = el('div', 'models-section-head');
-  const toggle = el('button', `ids-toggle${open ? ' open' : ''}`);
+  const toggle = el('button', `btn ghost ids-toggle${open ? ' open' : ''}`);
   toggle.setAttribute('aria-expanded', String(open));
   toggle.appendChild(el('span', 'ids-caret', open ? '▾' : '▸'));
   toggle.appendChild(el('span', 'models-subhead-text', 'Model ids'));
@@ -4677,7 +4653,6 @@ function rolesSection() {
   const rolesSub = introLine(['Pick which model fills each role, and its ', { tip: 'effort' }, ' — how hard it thinks.']);
   rolesSub.classList.add('models-roles-sub');
   sec.appendChild(rolesSub);
-  sec.appendChild(moreDetails('Each chip shows the effort that applies: the model’s own in this role, else the role’s, else the model’s default. Click a role to change it.'));
   if (R.error) {
     const n = el('div', 'notice error models-error');
     n.appendChild(el('div', null, 'roles.json is invalid. Defaults are in use, and edits are refused until it is fixed (or a Describe proposal replaces it):'));
@@ -4722,7 +4697,11 @@ function roleRow(role) {
   const note = el('span', 'roles-note-text', role.note || 'No description.');
   top.appendChild(note);
   if (marked('note')) top.appendChild(changedMark());
-  top.appendChild(el('span', 'roles-open-hint', open ? 'Close' : 'Edit'));
+  // A real button, not a label: the row opens too, but Edit is where the eye and the keyboard look.
+  const edit = el('button', 'btn roles-open-hint', open ? 'Close' : 'Edit');
+  edit.setAttribute('aria-expanded', String(open));
+  edit.onclick = toggle;
+  top.appendChild(edit);
   row.appendChild(top);
 
   if (role.unset) {
@@ -5061,7 +5040,7 @@ function usedBy(family) {
     .map((r) => (r.use[0] === family ? r.name : r.use.includes(family) ? `${r.name} (alternative)` : `${r.name} (second opinion)`));
   const open = M.usedOpen.has(family);
   const box = el('div', 'models-where model-used');
-  const toggle = el('button', 'model-used-toggle', `${open ? '▾' : '▸'} Used by ${jobs.length ? plural(jobs.length, 'role') : 'no role'}`);
+  const toggle = el('button', 'btn ghost model-used-toggle', `${open ? '▾' : '▸'} Used by ${jobs.length ? plural(jobs.length, 'role') : 'no role'}`);
   toggle.setAttribute('aria-expanded', String(open));
   toggle.onclick = () => { if (open) M.usedOpen.delete(family); else M.usedOpen.add(family); paintModels(); };
   box.appendChild(toggle);
@@ -5406,12 +5385,11 @@ function paintAudit() {
   const box = el('div', 'scope audit');
   const head = el('div', 'audit-head');
   head.appendChild(pageHeading('Audit'));
-  const again = el('button', 'btn ghost audit-run', AU.loading ? 'Auditing…' : 'Run again');
+  const again = el('button', 'btn audit-run', AU.loading ? 'Auditing…' : 'Run again');
   again.disabled = AU.loading;
   again.onclick = () => openAudit({ refresh: true });
   head.appendChild(again);
   box.appendChild(head);
-  box.appendChild(moreDetails('It also flags a hand-kept list of models beside the generated model guide.', 'Nothing changes until you review a fix and accept it.'));
 
   const d = AU.data;
   const listed = (f) => AU.vendor || f.cls !== 'vendor';
@@ -5467,7 +5445,7 @@ function paintAudit() {
   box.appendChild(summary);
   if (d.refusals.length) {
     const det = el('details', 'audit-refusals');
-    det.appendChild(el('summary', null, `${d.counts.refused} file${d.counts.refused === 1 ? ' was' : 's were'} not read`));
+    det.appendChild(el('summary', 'fold', `${d.counts.refused} file${d.counts.refused === 1 ? ' was' : 's were'} not read`));
     for (const r of d.refusals) det.appendChild(el('div', 'scope-note', `${r.path} — ${r.reason}`));
     box.appendChild(det);
   }
@@ -5494,7 +5472,7 @@ function auditWorktrees(repo, files, d) {
   det.ontoggle = () => { AU.openWt[repo] = det.open; };
   const n = d.worktrees?.find((w) => w.repo === repo)?.files ?? files.length;
   const m = files.reduce((k, f) => k + f.findings.filter((x) => !x.dismissed).length, 0);
-  det.appendChild(el('summary', 'audit-worktrees-head',
+  det.appendChild(el('summary', 'audit-worktrees-head fold',
     `Worktrees of ${files[0].worktree.label} (${n} file${n === 1 ? '' : 's'}, ${m} finding${m === 1 ? '' : 's'})`));
   const inner = el('div', 'audit-list');
   for (const f of files) inner.appendChild(auditCard(f));
@@ -5542,7 +5520,7 @@ function auditCard(f) {
     const det = el('details', 'audit-names');
     det.open = !!AU.openNames[f.ref];
     det.ontoggle = () => { AU.openNames[f.ref] = det.open; };
-    det.appendChild(el('summary', 'audit-names-head', `${names.length} model name${names.length === 1 ? '' : 's'} written out`));
+    det.appendChild(el('summary', 'audit-names-head fold', `${names.length} model name${names.length === 1 ? '' : 's'} written out`));
     for (const x of names) det.appendChild(auditRow(f, x));
     rows.appendChild(det);
   }

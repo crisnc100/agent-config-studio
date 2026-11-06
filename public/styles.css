@@ -210,20 +210,42 @@ a { color: var(--accent); }
 .tab:hover { color: var(--text); }
 .tab.active { background: var(--panel-3); color: var(--text); }
 
+/* Three kinds of button, and only three:
+   primary   .btn.primary  filled accent, one per area at most
+   secondary .btn          a visible border and text: clearly a button
+   quiet     .btn.ghost    text only, in the action colour, for low-weight actions (Select all, Clear, Refresh)
+   .danger tints a secondary or quiet button red. Disabled stays readable: muted text, no fade. */
 .btn {
   padding: 6px 13px; border-radius: 7px; font-size: 13px;
-  border: 1px solid var(--border); background: var(--panel-2); color: var(--text-dim);
+  border: 1px solid color-mix(in srgb, var(--text-dim) 32%, var(--border)); background: var(--panel-2); color: var(--text);
   white-space: nowrap;
 }
-.btn:hover { background: var(--panel-3); color: var(--text); }
+.btn:hover { background: var(--panel-3); border-color: color-mix(in srgb, var(--text-dim) 55%, var(--border)); }
 .btn.primary {
   background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 550;
 }
 .btn.primary:hover { filter: brightness(1.08); }
-.btn:disabled { opacity: 0.4; cursor: default; }
-.btn.ghost { border-color: transparent; background: transparent; }
-.btn.ghost:hover { background: var(--panel-2); }
-.btn.danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 35%, transparent); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--accent-ink); font-weight: 550; }
+.btn.ghost:hover { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+.btn.danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, var(--border)); }
+.btn.ghost.danger { border-color: transparent; }
+.btn:disabled, .btn.primary:disabled, .btn.ghost:disabled {
+  cursor: not-allowed; color: var(--muted); background: var(--panel-2); border-color: var(--border); filter: none; font-weight: 500;
+}
+.btn.ghost:disabled { background: transparent; border-color: transparent; }
+
+/* A data fold the user opens on purpose (what a pack changes, installer output, a project card): a styled
+   control with its own chevron, never the browser's triangle. */
+summary.fold { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; width: fit-content;
+  color: var(--accent-ink); font-weight: 550; padding: 3px 8px; margin-left: -8px; border-radius: 6px; }
+summary.fold::-webkit-details-marker { display: none; }
+summary.fold::before { content: ""; flex: none; width: 6px; height: 6px; border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor;
+  transform: rotate(-45deg); transition: transform 0.15s ease-out; }
+details[open] > summary.fold::before { transform: rotate(45deg); }
+summary.fold:hover { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+summary.fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* A project card's header is a whole row, not a link-sized control. */
+details.mem-card > summary.fold { display: flex; width: auto; color: inherit; font-weight: inherit; margin-left: 0; padding: 0; }
 
 .filebar {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
@@ -400,14 +422,6 @@ a { color: var(--accent); }
 .tip-btn svg { width: 15px; height: 15px; }
 .tip-btn:hover, .tip-btn[aria-expanded="true"] { color: var(--accent); }
 .tip-body { display: block; margin-top: 4px; color: var(--text-dim); font-size: 12.5px; }
-/* Fine print behind "Details" (public/app.js moreDetails). */
-details.more { margin: 8px 0 18px; font-size: 12.5px; color: var(--muted); }
-/* Only under an intro line does the fold tuck up to it; after a toolbar it keeps its own space. */
-.scope-sub + details.more { margin-top: -12px; }
-details.more > summary { cursor: pointer; width: fit-content; color: var(--text-dim); }
-details.more > summary:hover { color: var(--text); }
-details.more > p, details.more > div { margin: 6px 0 0; overflow-wrap: anywhere; }
-details.more .mem-facts { margin: 6px 0 0; }
 .scope-select {
   width: 100%; padding: 9px 11px; margin-bottom: 22px;
   background: var(--panel-2); border: 1px solid var(--border);
@@ -1359,8 +1373,7 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .roles-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
 .roles-name-text { font-weight: 600; font-size: 13.5px; color: var(--text); }
 .roles-note-text { color: var(--text-dim); font-size: 13px; flex: 1 1 200px; min-width: 0; }
-.roles-open-hint { margin-left: auto; font-size: 11px; color: var(--muted); }
-.roles-row:hover .roles-open-hint { color: var(--accent); }
+.roles-open-hint { margin-left: auto; padding: 3px 11px; font-size: 12px; }
 .roles-lineup, .roles-second { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .roles-second { margin-top: 6px; }
 .roles-second-label { font-size: 12px; color: var(--muted); }
@@ -1402,10 +1415,8 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .model-card-buttons { margin: 0; flex-wrap: wrap; }
 .model-card .models-flavor { margin-top: 0; }
 .model-used { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--border-soft); }
-.model-used-toggle, .ids-toggle {
-  background: none; border: none; padding: 0; cursor: pointer; color: var(--muted); font: inherit; font-size: 12px; text-align: left;
-}
-.model-used-toggle:hover, .ids-toggle:hover { color: var(--text); }
+.btn.model-used-toggle { padding: 3px 8px; margin-left: -8px; font-size: 12px; text-align: left; }
+.btn.ids-toggle { padding: 4px 8px; margin-left: -8px; font-size: inherit; color: var(--text); }
 .model-used-jobs { margin-bottom: 4px; }
 
 .models-ids { margin-top: 34px; }
@@ -1714,3 +1725,9 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 
 /* Needs attention: the rest behind one button, under the top 3 (C2). */
 .home-attn-more { margin: 2px 0 4px 10px; font-size: 12.5px; }
+
+/* Worktrees: the words the page uses, each with its (i). */
+.wt-terms { margin: 0 0 16px; font-size: 12.5px; color: var(--text-dim); }
+.sk-note { margin: 8px 0 14px; }
+/* The first section on Models sits at the top: the page has no intro line above it now. */
+.models-roles > .models-subhead { margin-top: 0; }
