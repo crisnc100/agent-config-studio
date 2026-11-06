@@ -192,10 +192,15 @@ console.log('\nPacks: shared needs once, each card its single most important nee
   ok('a card never repeats the shared need, and never says "+N more"', !/git/.test(ready('gate')) && !/git/.test(ready('plain'))
     && !p.$('content').querySelectorAll('.pk-ready').some((n) => /more\)/.test(p.text(n))), `${ready('gate')} | ${ready('plain')}`);
   ok('the gate card shows its single most important need: the one PATH fix (model-id and ask-model together)',
-    ready('gate') === 'Needs model-id and ask-model on the PATH', ready('gate'));
+    ready('gate') === 'Needs a PATH fix: model-id, ask-model', ready('gate'));
   ok('a card whose only gap is the shared need is not called Ready: it points at the block above', ready('plain') === 'Not ready — see “To use packs” above', ready('plain'));
   const det = p.$('content').querySelector('[data-pack="gate"] details.pk-explain .pk-reqs');
-  ok('the full list stays in the card\'s details', !!det && [...det.children].length === 5, det && p.text(det));
+  // node ✓, git ✖, the one PATH fix ✖ (model-id and ask-model together), roles ✖.
+  ok('the full list stays in the card\'s details', !!det && [...det.children].length === 4, det && p.text(det));
+  const detPath = det ? [...det.children].map((li) => p.text(li)).filter((t) => /model-id|ask-model|studio sees/.test(t)) : [];
+  ok('…with the PATH problems as ONE item naming only the missing tools, and its one fix', detPath.length === 1
+    && /^✖ Some tools aren.t on the PATH the studio sees: model-id, ask-model — fix: run acs install-model-id/.test(detPath[0])
+    && !/Claude Code|Grok/.test(detPath[0]) && /restart the studio/.test(detPath[0]), detPath.join(' | '));
   p.done();
 
   // The PATH fix shared by every pack: one item, not three.
@@ -205,7 +210,11 @@ console.log('\nPacks: shared needs once, each card its single most important nee
   ]));
   const qi = [...(q.$('content').querySelector('.pk-todo-list')?.children || [])].map((li) => q.text(li));
   ok('model-id, ask-model and the CLIs off the PATH are one item, with one fix', qi.length === 1
-    && /^Put model-id, ask-model, Claude Code and Grok on the studio's PATH/.test(qi[0]) && /acs install-model-id/.test(qi[0]) && /restart the studio/.test(qi[0]), qi.join(' | '));
+    && /^Some tools aren.t on the PATH the studio sees: model-id, ask-model, Claude Code, Grok/.test(qi[0]) && /acs install-model-id/.test(qi[0])
+    && /each CLI's folder/.test(qi[0]) && /restart the studio/.test(qi[0]), qi.join(' | '));
+  const qd = q.$('content').querySelector('[data-pack="a"] details.pk-explain .pk-reqs');
+  ok('…and the same one item in each card\'s details', !!qd && [...qd.children].length === 1
+    && /^✖ Some tools aren.t on the PATH the studio sees: model-id, ask-model, Claude Code, Grok — fix: /.test(q.text(qd.children[0])), qd && q.text(qd));
   ok('…and every card then has nothing of its own to add', q.$('content').querySelectorAll('.pk-ready').every((n) => q.text(n) === 'Not ready — see “To use packs” above'));
   ok('Packs: the status line and the trust check sit in a Details fold', !!q.$('content').querySelector('details.pk-status-more #pk-status')
     || !!q.$('content').querySelector('#pk-status details'), q.$('content').querySelector('#pk-status')?.parentNode?.localName);
@@ -328,6 +337,17 @@ try {
     const body = ` ${page.text(page.$('content')).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ')} `;
     const again = sub.slice(0, -3).map((_, i) => sub.slice(i, i + 4).join(' ')).filter((g) => body.includes(` ${g} `));
     ok(`${v}: one intro — the page does not repeat the top bar's subtitle`, again.length === 0, again.join(' | '));
+    // …nor says it again in other words: a page line that shares 2+ content words with the subtitle
+    // ("each step optional" / "Four steps, each optional") repeats it.
+    const STOP = new Set('a an and the of to in on for with by at from or not no is are be it its this that these those every each your you what which where when how only any all one'.split(' '));
+    const stems = (t) => new Set(t.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w)).map((w) => w.replace(/(ies|es|s)$/, '')));
+    const subStems = stems(page.text(page.$('title-path')));
+    // The page's intro: the first line of its root box after any headings — not an empty state ("No …").
+    const root = page.$('content').children[0];
+    const first = root ? [...root.children].find((n) => !(n.localName === 'h2' || /(^|-)head\b|\bvh\b/.test(n.className || ''))) : null;
+    const intros = first && /\bscope-sub\b/.test(first.className || '') && !/^(No|Nothing)\b/.test(page.text(first)) ? [page.text(first)] : [];
+    const echoes = intros.map((t) => [t, [...stems(t)].filter((w) => subStems.has(w))]).filter(([, shared]) => shared.length >= 2);
+    ok(`${v}: no intro line restates the subtitle in other words`, echoes.length === 0, echoes.map(([t, w]) => `${t.slice(0, 80)} [${w}]`).join(' | '));
     // Every (i) sits on its word: no bare icon, no two side by side.
     const tips = page.$('content').querySelectorAll('.tip');
     ok(`${v}: every (i) tip names its word`, tips.every((t) => !!t.querySelector('.tip-term') && page.text(t.querySelector('.tip-term')).trim().length > 0),
@@ -369,7 +389,7 @@ try {
     // Not every pack needs model-id (Worktree setup does not), so it is no shared need: no top block, the card says it.
     ok('"To use packs": a tool only some packs need is not in the top block', !todo || !items.some((x) => /model-id/.test(x)), items.join(' | '));
     const rg2 = c2().querySelector('[data-pack="review-gate"]');
-    ok('…and the review gate card names its one missing need, not a list: the one PATH fix', p2.text(rg2.querySelector('.pk-ready.missing')) === 'Needs model-id on the PATH' && !rg2.querySelector('.pk-ready.ok'),
+    ok('…and the review gate card names its one missing need, not a list: the one PATH fix', p2.text(rg2.querySelector('.pk-ready.missing')) === 'Needs a PATH fix: model-id' && !rg2.querySelector('.pk-ready.ok'),
       p2.text(rg2.querySelector('.pk-head')));
     const prev = rg2.querySelectorAll('.pk-actions button').find((b) => /^Preview install/.test(p2.text(b)));
     rg2.querySelectorAll('.pk-part input').forEach((i) => { if (i.checked) i.click(); });
