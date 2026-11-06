@@ -101,10 +101,14 @@ function paintPacks() {
   if (!PK.data) { c.appendChild(box); return; }
   const legacy = PK.status?.legacy?.length ? PK.status.legacy : PK.data.legacy;
   if (legacy.length) box.appendChild(el('div', 'notice warn pk-legacy', `An earlier review-gate install is here (${legacy.join(', ')}). The packs installer does not migrate it; the review script still reads the older log and config locations.`));
+  // When status was checked, and the slower Codex trust check: fine print, folded.
+  const more = el('details', 'more pk-status-more');
+  more.appendChild(el('summary', null, 'Status check'));
   const status = el('div', 'pk-status');
   status.id = 'pk-status';
-  box.appendChild(status);
+  more.appendChild(status);
   box.appendChild(pkHere());
+  box.appendChild(more);
   const todo = pkTodo();
   if (todo) box.appendChild(todo);
   for (const pack of PK.data.packs) box.appendChild(pkCardView(pack));
@@ -151,7 +155,7 @@ function pkPaintStatus() {
   }
 }
 
-/** Each CLI as Home and Setup see it; where the installer's view differs, the one sentence that says how. */
+/** Each CLI as Home and Setup see it: installed or not, nothing else (a PATH gap shows in the need it blocks). */
 function pkHere() {
   const row = el('div', 'pk-here');
   row.appendChild(el('span', 'pk-here-title', 'On this machine:'));
@@ -159,30 +163,79 @@ function pkHere() {
     const on = h.installed ?? h.present;
     const chip = el('span', `pk-harness ${on ? 'on' : 'off'}`, `${on ? '✓' : '—'} ${h.label}`);
     row.appendChild(chip);
-    const note = h.note || (h.present ? null : h.why);
+    // Only "not installed" or "only its folder": an installed CLI's gaps show where they block (Install-for row, needs).
+    const note = h.note || (!h.present && !h.installed ? h.why : null);
     if (note) row.appendChild(el('span', 'pk-harness-why', note));
   }
   return row;
 }
 
-/** What a pack is still missing, in one line for its card; deps name the pack. */
-const pkMissing = (pack) => pack.requirements.filter((r) => !r.ok);
-const PK_NEED_SHORT = { node: 'a newer Node.js', git: 'git', 'model-id': 'model-id', 'ask-model': 'ask-model', roles: 'valid ACS roles', cli: 'an agent CLI on the PATH' };
-const pkNeedText = (r) => (r.dep ? `the ${pkPack(r.dep)?.title || r.dep} pack first` : PK_NEED_SHORT[r.id] || r.what);
+/**
+ * A pack's missing needs as fixes: model-id, ask-model and CLIs off the PATH are one fix (group 'path');
+ * every other need is its own. Most important first: the fix that unblocks the most.
+ */
+const PK_ORDER = ['node', 'cli', 'git', 'path', 'roles'];
+const PK_NEED_SHORT = { node: 'a newer Node.js', git: 'git', roles: 'valid ACS roles', cli: 'an agent CLI' };
+function pkFixes(pack) {
+  const out = new Map();
+  for (const r of pack.requirements.filter((x) => !x.ok)) {
+    const key = r.dep ? `pack:${r.dep}` : r.group || r.id;
+    if (!out.has(key)) out.set(key, { key, reqs: [] });
+    out.get(key).reqs.push(r);
+  }
+  const rank = (k) => (k.startsWith('pack:') ? PK_ORDER.length : PK_ORDER.indexOf(k) === -1 ? PK_ORDER.length - 0.5 : PK_ORDER.indexOf(k));
+  return [...out.values()].sort((a, b) => rank(a.key) - rank(b.key));
+}
+const pkNames = (fix) => fix.reqs.flatMap((r) => String(r.name || r.id).split(' and '));
+const pkAnd = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
+/** A fix as one short phrase for a card: "Needs …". */
+function pkNeedText(fix) {
+  const r = fix.reqs[0];
+  if (r.dep) return `the ${pkPack(r.dep)?.title || r.dep} pack first`;
+  if (fix.key === 'path') return `${pkAnd(pkNames(fix))} on the PATH`;
+  return PK_NEED_SHORT[r.id] || r.what;
+}
+/** A fix as the top block lists it: what to do, then how. */
+function pkFixItem(fix) {
+  if (fix.key !== 'path') return { what: fix.reqs[0].what, fix: fix.reqs[0].fix };
+  const tools = fix.reqs.some((r) => ['model-id', 'ask-model'].includes(r.id));
+  const clis = fix.reqs.some((r) => r.id === 'cli');
+  return {
+    what: `Put ${pkAnd(pkNames(fix))} on the studio's PATH`,
+    fix: [tools ? 'run acs install-model-id (it links model-id and ask-model into ~/.local/bin)' : null,
+      `add ${tools ? '~/.local/bin' : ''}${tools && clis ? ' and ' : ''}${clis ? 'the folder each CLI is in' : ''} to your PATH`,
+      'then restart the studio'].filter(Boolean).join(', '),
+  };
+}
+/** Fixes every pack needs: checked once at the top, never repeated on a card. */
+function pkShared() {
+  const packs = PK.data.packs;
+  if (!packs.length) return new Map();
+  const [first, ...rest] = packs.map(pkFixes);
+  // A merged PATH fix differs per pack (some lack only model-id): share it if every pack has one, listing every name.
+  const shared = new Map();
+  for (const f of first) {
+    if (f.key.startsWith('pack:') || !rest.every((fs) => fs.some((g) => g.key === f.key))) continue;
+    const reqs = new Map();
+    for (const fs of [first, ...rest]) for (const r of fs.find((g) => g.key === f.key).reqs) reqs.set(r.name || r.id, r);
+    shared.set(f.key, { key: f.key, reqs: [...reqs.values()] });
+  }
+  return shared;
+}
 
-/** The needs every pack shares, checked once at the top: "To use packs: do these 2 things". */
+/** "To use packs: do these 2 things": only what every pack needs. */
 function pkTodo() {
-  const seen = new Map();
-  for (const pack of PK.data.packs) for (const r of pkMissing(pack)) if (!r.dep && !seen.has(r.id)) seen.set(r.id, r);
-  if (!seen.size) return null;
+  const shared = pkShared();
+  if (!shared.size) return null;
   const box = el('div', 'pk-todo');
   box.setAttribute('role', 'region');
   box.setAttribute('aria-label', 'What packs need');
-  box.appendChild(el('div', 'pk-todo-title', seen.size === 1 ? 'To use packs: do this one thing' : `To use packs: do these ${seen.size} things`));
+  box.appendChild(el('div', 'pk-todo-title', shared.size === 1 ? 'To use packs: do this one thing' : `To use packs: do these ${shared.size} things`));
   const ol = el('ol', 'pk-todo-list');
-  for (const r of seen.values()) {
-    const li = el('li', null, r.what);
-    li.appendChild(el('div', 'pk-fix', `Fix: ${r.fix}`));
+  for (const f of shared.values()) {
+    const item = pkFixItem(f);
+    const li = el('li', null, item.what);
+    li.appendChild(el('div', 'pk-fix', `Fix: ${item.fix}`));
     ol.appendChild(li);
   }
   box.appendChild(ol);
@@ -254,10 +307,13 @@ function pkCardView(pack) {
     ? `installed ${inst.version}${inst.version !== pack.version ? ` (version ${pack.version} is available)` : ''}`
     : 'not installed'));
   // Ready, or the one thing it still needs (the full list is in the explain).
-  const missing = pkMissing(pack);
-  head.appendChild(missing.length
-    ? el('span', 'pk-ready missing', `Needs ${pkNeedText(missing[0])}${missing.length > 1 ? ` (+${missing.length - 1} more)` : ''}`)
-    : el('span', 'pk-ready ok', '✓ Ready'));
+  // Ready, its single most important missing fix, or — when only shared fixes are left — a pointer to them.
+  const fixes = pkFixes(pack);
+  const shared = pkShared();
+  const own = fixes.filter((f) => !shared.has(f.key));
+  head.appendChild(!fixes.length ? el('span', 'pk-ready ok', '✓ Ready')
+    : own.length ? el('span', 'pk-ready missing', `Needs ${pkNeedText(own[0])}`)
+      : el('span', 'pk-ready later', 'Not ready — see “To use packs” above'));
   sec.appendChild(head);
   sec.appendChild(el('p', 'pk-summary', pack.summary));
   sec.appendChild(pkExplain(pack.explain, 'What it is, what it changes, what it needs, how to undo it', pack.requirements));

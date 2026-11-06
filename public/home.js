@@ -209,11 +209,11 @@ function clisCardModel(data) {
   }));
 }
 
-/** "Project folders: N (edit) · M (read)", from /api/roots — active folders only. */
+/** "Project folders: N you can edit, M read-only", from /api/roots — active folders only. */
 function folderCountText(roots) {
   const active = (roots?.roots || []).filter((r) => r.status === 'ok');
   const edit = active.filter((r) => r.access === 'edit').length;
-  return `Project folders: ${edit} (edit) · ${active.length - edit} (read)`;
+  return `Project folders: ${edit} you can edit, ${active.length - edit} read-only`;
 }
 
 /** The Recent card: trash entries and the last history summary — no edit feed exists. */

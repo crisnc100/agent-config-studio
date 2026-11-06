@@ -18,17 +18,18 @@ function moreDetails(...lines) {
 const GLOSSARY = {
   worktree: 'A worktree is a second checkout of the same repo on its own branch, so work can run side by side.',
   trunk: 'The trunk is a project’s main checkout: worktrees branch from it, and nobody works in it.',
-  seat: 'A seat is one signed-in subscription account the studio tracks.',
+  account: 'An account is one signed-in subscription the studio tracks — two Codex plans are two accounts.',
   effort: 'Effort is how hard a model thinks on each turn: higher is slower and more thorough.',
 };
 const TIP_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 7.2v4M8 4.9v.2"/></svg>';
-/** An (i) after a sentence: it opens that term's one-line meaning in place, by click, tap or keyboard. */
-function glossTip(term) {
+/** A term with its (i): the word, then a button that opens its one-line meaning in place (click, tap or keyboard). */
+function glossTip(term, word = term) {
   const wrap = el('span', 'tip');
+  wrap.appendChild(el('span', 'tip-term', word));
   const b = el('button', 'tip-btn');
   b.type = 'button';
   b.innerHTML = TIP_ICON;
-  b.setAttribute('aria-label', `What is ${term === 'effort' ? 'effort' : `a ${term}`}?`);
+  b.setAttribute('aria-label', `What is ${term === 'effort' ? 'effort' : `${/^[aeiou]/.test(term) ? 'an' : 'a'} ${term}`}?`);
   b.setAttribute('aria-expanded', 'false');
   b.title = GLOSSARY[term];
   const body = el('span', 'tip-body', GLOSSARY[term]);
@@ -37,11 +38,21 @@ function glossTip(term) {
   wrap.append(b, body);
   return wrap;
 }
-/** A one-sentence intro with the (i) tips for the terms it uses. */
-function introLine(text, terms = []) {
-  const d = el('div', 'scope-sub', text);
-  for (const t of terms) { d.appendChild(document.createTextNode(' ')); d.appendChild(glossTip(t)); }
+/** A sentence built from text and { tip: term, word? } parts: each term is in the sentence, with its (i). */
+function introLine(parts) {
+  const d = el('div', 'scope-sub');
+  for (const x of parts) d.appendChild(typeof x === 'string' ? document.createTextNode(x) : glossTip(x.tip, x.word));
   return d;
+}
+/** A worktree's env summary from wls ("copy:1,missing:2", "linked", "trunk", "-") in plain words. */
+const ENV_WORDS = { copy: 'copied', detached: 'kept separate', stale: 'different from the trunk', missing: 'missing',
+  broken: 'broken links', foreign: 'linked elsewhere', other: 'not files', refused: 'refused' };
+function envWords(env) {
+  if (env === 'linked') return 'env files linked to the trunk';
+  if (env === 'trunk') return 'the trunk’s own env files';
+  if (!env || env === '-') return 'no env files';
+  const parts = String(env).split(',').map((p) => p.split(':')).map(([k, n]) => [ENV_WORDS[k] || k, Number(n) || 0]);
+  return parts.map(([w, n], i) => (i ? `${n} ${w}` : `${plural(n, 'env file')} ${w}`)).join(', ');
 }
 /** A heading the top bar already shows: kept for screen readers, not drawn twice. */
 const pageHeading = (text) => el('h2', 'vh', text);
@@ -161,7 +172,7 @@ const VIEWS = [
   { id: 'worktrees', label: 'Worktrees', group: 'review', icon: 'worktrees', hash: '#worktrees',
     title: 'Worktrees', sub: 'Every registered project’s worktrees, and which are done', open: openWorktrees },
   { id: 'usage', label: 'Usage', group: 'review', icon: 'usage', hash: '#usage',
-    title: 'Usage', sub: 'Subscription headroom per seat — where the next task should go', open: openUsage },
+    title: 'Usage', sub: 'Subscription headroom per account — where the next task should go', open: openUsage },
   { id: 'scope', label: 'Scope', group: 'review', icon: 'scope', hash: '#scope',
     title: 'Scope', sub: 'Which instruction files an agent loads in a folder, in order', open: openScope },
   { id: 'audit', label: 'Audit', group: 'review', icon: 'audit', hash: '#audit',
@@ -854,6 +865,7 @@ function renderStatus() {
   // Save only ever acts on the open file — never leave it live on a view that
   // isn't showing one.
   $('btn-save').disabled = S.view !== 'entry' || !isDirty() || !!S.revoked;
+  $('btn-save').title = S.revoked ? 'This folder is no longer editable' : !isDirty() ? 'No changes to save' : 'Save';
   $('btn-save').hidden = S.view !== 'entry' || !S.file;
 }
 
@@ -952,6 +964,8 @@ function renderEditor(c) {
   // readOnly stops typing, not code — so every path that changes the text
   // checks it too, and an input that got through anyway is put back.
   ta.readOnly = !!S.revoked;
+  // Tab types two spaces; Esc leaves the editor (below), so the keyboard is never stuck in it.
+  ta.setAttribute('aria-keyshortcuts', 'Escape');
   ta.oninput = () => {
     if (S.revoked) { ta.value = S.draft; return; }
     S.draft = ta.value; renderStatus();
@@ -1194,7 +1208,6 @@ async function openScope() {
   c.innerHTML = '';
   const box = el('div', 'scope');
   box.appendChild(pageHeading('Scope'));
-  box.appendChild(el('div', 'scope-sub', 'Pick a folder to see the instruction files an agent loads there, widest first.'));
   const sel = el('select', 'scope-select');
   sel.setAttribute('aria-label', 'Folder');
   box.appendChild(sel);
@@ -1727,9 +1740,9 @@ async function openWorktrees() {
   c.innerHTML = '';
   const box = el('div', 'scope');
   box.appendChild(pageHeading('Worktrees'));
-  box.appendChild(introLine('Each worktree, how it gets its env files, and whether it is done.', ['worktree', 'trunk']));
   box.appendChild(moreDetails(
-    'Env: linked to the trunk (the checkout every worktree branches from), or a copy.',
+    GLOSSARY.worktree, GLOSSARY.trunk,
+    'Env: how each worktree gets its env files — linked to the trunk, or a copy.',
     'Done: the exact commit was merged, nothing is uncommitted, and no env file holds anything the trunk lacks. Merge status is as of the last fetch.'));
   if (!data.projects?.length) {
     box.appendChild(el('div', 'scope-sub', 'No registered projects. Register one with + on Worktrees in the sidebar.'));
@@ -1753,7 +1766,7 @@ async function openWorktrees() {
         w.trunk ? 'TRUNK' : done ? 'DONE' : w.verdict.status === 'unknown' ? '?' : '—'));
       const body = el('div', 'scope-body');
       body.appendChild(el('div', 'scope-path', `${w.name}  [${w.branch || 'detached'}]`));
-      const bits = [`env: ${w.env}`];
+      const bits = [envWords(w.env)];
       if (w.envrc === 'blocked') bits.push('envrc: blocked');
       if (w.dirty) bits.push(`${w.dirty} uncommitted`);
       if (w.port) bits.push(`port ${w.port}`);
@@ -1787,8 +1800,7 @@ async function openTrash() {
   c.innerHTML = '';
   const box = el('div', 'scope');
   box.appendChild(pageHeading('Trash'));
-  box.appendChild(el('div', 'scope-sub', 'Trashed items, newest first — restore any of them.'));
-  box.appendChild(moreDetails('Each was saved to history before it moved here, so it can also come back from history.'));
+  box.appendChild(moreDetails('Newest first. Each was saved to history before it moved here, so it can also come back from history.'));
 
   if (!items.length) {
     box.appendChild(el('div', 'scope-sub', 'Trash is empty.'));
@@ -1896,8 +1908,8 @@ function paintFolders() {
     c.appendChild(box);
     return;
   }
-  box.appendChild(el('div', 'scope-sub', 'Edit folders open in the editor and keep history; the studio never writes in read folders.'));
-  box.appendChild(moreDetails('Read folders are listed in Context, Skills and Worktrees.', `The list lives in ${d.file}; change it from a terminal.`));
+  box.appendChild(moreDetails('Edit folders open in the editor and keep history; the studio never writes in read folders, which are listed in Context, Skills and Worktrees.',
+    `The list lives in ${d.file}; change it from a terminal.`));
   const cmd = (text) => { const code = el('code', 'folders-cmd', text); return code; };
   if (d.state === 'error') {
     const n = el('div', 'notice error folders-error');
@@ -2004,8 +2016,7 @@ function paintSkills() {
   add.onclick = () => { location.hash = '#skills/new'; };
   head.appendChild(add);
   box.appendChild(head);
-  box.appendChild(el('div', 'scope-sub', `${plural(SK.rows.length, 'skill')} across your CLIs and every project.`));
-  box.appendChild(moreDetails('Identical copies are collapsed into one row.',
+  box.appendChild(moreDetails(`${plural(SK.rows.length, 'skill')} across your CLIs and every project. Identical copies are collapsed into one row.`,
     'Pick any set and download it — one skill saves as a readable .md, several as a .zip.'));
 
   box.appendChild(usageCaveatBanner());
@@ -2193,9 +2204,9 @@ function syncSkillSelectionUI() {
       : 'Nothing selected';
   }
   const dl = $('sk-download');
-  if (dl) dl.disabled = chosen.length === 0;
+  if (dl) { dl.disabled = chosen.length === 0; dl.title = dl.disabled ? 'Select a skill to download first' : ''; }
   const clear = $('sk-clear');
-  if (clear) clear.disabled = chosen.length === 0;
+  if (clear) { clear.disabled = chosen.length === 0; clear.title = clear.disabled ? 'Nothing selected to clear' : ''; }
 }
 
 /**
@@ -2345,13 +2356,14 @@ function paintMemory() {
   const box = el('div', 'scope mem');
 
   box.appendChild(pageHeading('Memory'));
-  box.appendChild(el('div', 'scope-sub', `${plural(d.rows.length, 'memory file')} in ${plural(d.groups.length, 'project')}, grouped by repository.`));
+  const memCount = `${plural(d.rows.length, 'memory file')} in ${plural(d.groups.length, 'project')}, grouped by repository.`;
 
   if (MV.outdated) {
     box.appendChild(el('div', 'notice warn', `Showing Memory as it was before the last change — reading it again failed (${MV.outdated}). Reopen Memory to try again.`));
   }
 
   const facts = el('div', 'mem-facts');
+  facts.appendChild(el('div', null, memCount));
   facts.appendChild(el('div', 'mem-caveat', d.caveat.text));
   facts.appendChild(el('div', null, `From ${plural(d.slugCount, 'Claude Code project folder')}; a project's worktrees and subfolders roll up together.`));
   const states = Object.entries(d.states).map(([k, n]) => (SLUG_STATE_LABELS[k] ? plural(n, ...SLUG_STATE_LABELS[k]) : `${n} ${k}`)).join(' · ');
@@ -2905,10 +2917,9 @@ function paintContext() {
   // One folder's line would only say the totals again.
   const perRoot = roots.length > 1
     ? roots.map((r) => `${r.label}: ${plural(r.files, 'file')} as ${plural(r.entries, 'entry', 'entries')}, ${r.drifted} drifted`).join(' · ') : null;
-  box.appendChild(el('div', 'scope-sub',
-    `${plural(d.totals.files, 'instruction file')}, shown as ${plural(d.totals.entries, 'entry', 'entries')}`
-    + (d.totals.drifted ? ` — ${d.totals.drifted} drifted from trunk.` : '.')));
   box.appendChild(moreDetails(
+    `${plural(d.totals.files, 'instruction file')}, shown as ${plural(d.totals.entries, 'entry', 'entries')}`
+    + (d.totals.drifted ? ` — ${d.totals.drifted} drifted from trunk.` : '.'),
     `${plural(d.totals.collapsedCopies, 'identical copy', 'identical copies')} collapsed; every copy's path is still listed.`,
     perRoot,
     'Files in edit folders open in the editor, trunk copy first; files in read folders open here, read-only.'));
@@ -3173,10 +3184,10 @@ function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => p
         // that can read account identity, so until it has run, the studio
         // cannot know this seat changed account — and would keep filtering
         // against the previous login.
-        status.textContent = 'signed in — checking this seat…';
+        status.textContent = 'signed in — checking this account…';
         try { await api('POST', '/api/usage/refresh'); } catch { /* the repaint still shows state */ }
         if (!onScreen()) return;
-        notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
+        notice('info', `${seat.label} is signed in. Its usage appears after it runs once.`);
         onSignedIn();
       } else if (!st.running && Date.now() - started > 5000) {
         stop();
@@ -3231,12 +3242,12 @@ function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => p
       status.textContent = 'signed in';
       if (LOGIN_RECONCILED.has(seat.seatId)) return;
       LOGIN_RECONCILED.add(seat.seatId);
-      status.textContent = 'signed in — checking this seat…';
+      status.textContent = 'signed in — checking this account…';
       try { await api('POST', '/api/usage/refresh'); } catch { /* the repaint still shows state */ }
       // The view, not this row: entering the step repaints rows meanwhile, and
       // the reconcile is this seat's, done once — so the repaint must follow it.
       if (S.view !== view) return;
-      notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
+      notice('info', `${seat.label} is signed in. Its usage appears after it runs once.`);
       onSignedIn();
       return;
     }
@@ -3263,7 +3274,7 @@ function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => p
 function conflictRow(seat, conflicts, message, retry) {
   const box = el('div', 'usage-conflict');
   box.appendChild(el('div', 'usage-conflict-why', message
-    || 'Something is using this seat right now. Signing in would be undone when it next refreshes.'));
+    || 'Something is using this account right now. Signing in would be undone when it next refreshes.'));
 
   const list = el('div', 'usage-conflict-list');
   for (const c of conflicts) {
@@ -3305,8 +3316,8 @@ function conflictRow(seat, conflicts, message, retry) {
 function sharedHomeNotice(s) {
   const warn = el('div', 'usage-conflict');
   warn.appendChild(el('div', 'usage-conflict-why',
-    'This seat shares the default Codex folder with the ChatGPT app and every plain ' +
-    '`codex` command. Anything that signs in there changes this seat\'s account. ' +
+    'This account shares the default Codex folder with the ChatGPT app and every plain ' +
+    '`codex` command. Anything that signs in there changes which login it uses. ' +
     'Moving it to its own folder means only you decide what it is signed in to.'));
   const move = el('button', 'btn', 'Move to its own folder');
   move.onclick = async () => {
@@ -3330,7 +3341,7 @@ function sharedHomeNotice(s) {
 /** The seat's account changed since we last looked — deliberate, or not. */
 function accountChangedNotice() {
   return el('div', 'usage-offline-why',
-    'This seat is signed in to a different account than last time. If you did not just ' +
+    'This entry is signed in to a different account than last time. If you did not just ' +
     're-authenticate it, something else is writing to this folder — earlier readings have ' +
     'been discarded because they belong to the previous account.');
 }
@@ -3339,7 +3350,7 @@ function accountChangedNotice() {
 function waitingHint() {
   const row = el('div', 'usage-hint');
   row.appendChild(el('span', 'usage-hint-label',
-    'Connected. Codex reports quota only after a turn runs, so this fills in the first time you use this seat.'));
+    'Connected. This fills in the first time you use this account.'));
   return row;
 }
 
@@ -3357,8 +3368,8 @@ function shortcutsPanel(state) {
 
   if (!state.shortcuts.length) {
     form.appendChild(el('div', 'usage-add-note',
-      'Shortcuts apply to Codex seats — they are the only ones whose account is chosen by ' +
-      'the terminal. Add a second Codex seat and it will appear here.'));
+      'Shortcuts apply to Codex accounts — they are the only ones chosen by ' +
+      'the terminal. Add a second Codex account and it will appear here.'));
     return form;
   }
 
@@ -3396,7 +3407,7 @@ function shortcutsPanel(state) {
     row.appendChild(word); row.appendChild(flags); row.appendChild(def);
     form.appendChild(row);
     form.appendChild(el('div', 'usage-add-note',
-      `Type “${sc.word}”, “codex ${sc.word}”, or “codex-${sc.word}” — each runs Codex on this seat.` +
+      `Type “${sc.word}”, “codex ${sc.word}”, or “codex-${sc.word}” — each runs Codex on this account.` +
       (sc.isDefault ? ' A plain “codex” runs this one.' : '')));
   }
 
@@ -3434,7 +3445,7 @@ function shortcutsPanel(state) {
   form.appendChild(el('div', 'usage-add-note',
     state.installed
       ? `Active in every terminal. Installed as one line in ${state.zshenv}, which zsh reads for ` +
-        'every shell — new tabs, scripts and all. Switching seats never asks you to sign in again.'
+        'every shell — new tabs, scripts and all. Switching accounts never asks you to sign in again.'
       : 'Turning these on adds a single line to your shell profile. Nothing else on your machine changes.'));
   form.appendChild(el('div', 'usage-add-note',
     'Quit a running Codex session before switching — the account is fixed when it starts.'));
@@ -3468,7 +3479,7 @@ function addSeatForm() {
     S.usageAdding = false;
     await paintUsage();
     if (res.loginCommand) {
-      notice('info', `Seat added. Run the login command shown on "${res.seat.label}" to connect it.`);
+      notice('info', `Account added. Run the login command shown on "${res.seat.label}" to connect it.`);
     } else if (res.note) {
       notice('info', res.note);
     }
@@ -3479,9 +3490,9 @@ function addSeatForm() {
   row.appendChild(vendor); row.appendChild(label); row.appendChild(save);
   form.appendChild(row);
   form.appendChild(el('div', 'usage-add-note',
-    'A second Codex seat gets its own home, sharing your config by symlink — only the login and ' +
+    'A second Codex account gets its own folder, sharing your config by symlink — only the login and ' +
     'session history differ. You sign in from here; no terminal needed. ' +
-    'A Grok seat reads its weekly quota through the Grok CLI, so sign in with `grok login` first.'));
+    'A Grok account reads its weekly quota through the Grok CLI, so sign in with `grok login` first.'));
   return form;
 }
 
@@ -3566,7 +3577,9 @@ async function paintUsage() {
 
   const panelHead = el('div', 'usage-head');
   panelHead.appendChild(pageHeading('Subscription usage'));
-  panelHead.appendChild(glossTip('seat'));
+  const lead = el('div', 'usage-lead');
+  lead.append('Your ', glossTip('account', 'accounts'), ', most headroom first.');
+  panelHead.appendChild(lead);
   const actions = el('div', 'usage-actions');
 
   const refresh = el('button', 'btn ghost', 'Refresh');
@@ -3580,7 +3593,7 @@ async function paintUsage() {
   };
   actions.appendChild(refresh);
 
-  const addBtn = el('button', 'btn ghost', '+ Add seat');
+  const addBtn = el('button', 'btn ghost', '+ Add account');
   addBtn.onclick = () => { S.usageAdding = !S.usageAdding; paintUsage(); };
   actions.appendChild(addBtn);
 
@@ -3599,7 +3612,7 @@ async function paintUsage() {
 
   if (!seats.length) {
     box.appendChild(el('div', 'scope-sub',
-      'No subscriptions tracked yet — use + Add seat above.'));
+      'No subscriptions tracked yet — use + Add account above.'));
     c.appendChild(box);
     revealUsageFocus(box);
     return;
@@ -3612,9 +3625,14 @@ async function paintUsage() {
     head.appendChild(el('span', 'usage-route-seat', route.seat.label));
     head.appendChild(el('span', 'usage-route-pct', `${route.left}% left`));
   } else {
-    head.appendChild(el('span', 'usage-route-label', 'No seat is reporting usable headroom'));
+    head.appendChild(el('span', 'usage-route-label', 'No account is reporting usable headroom'));
   }
   box.appendChild(head);
+  // A row may say the codex CLI is missing while other Codex accounts read fine: say once why both are true.
+  const codexRows = seats.filter((s) => s.vendor === 'codex');
+  if (codexRows.some((s) => /codex CLI is not installed/.test(`${s.reason || ''} ${s.staleReason || ''}`)) && codexRows.some((s) => s.ok)) {
+    box.appendChild(el('div', 'usage-note', 'Codex isn’t installed here, but these accounts still report usage from their Codex folders.'));
+  }
 
   for (const s of seats) {
     const card = el('div', 'usage-seat');
@@ -3626,7 +3644,7 @@ async function paintUsage() {
     card.appendChild(title);
 
     const drop = el('button', 'usage-drop', '×');
-    drop.title = 'Stop tracking this seat';
+    drop.title = 'Stop tracking this account';
     drop.onclick = async () => {
       // Unregisters only. The seat's home holds a real login and its history,
       // so removing a row from a list must never destroy credentials.
@@ -3705,7 +3723,7 @@ async function paintUsage() {
       if (s.staleReason) notes.push(`${s.staleReason} — showing the last good reading`);
       if (s.stale && s.observedAt) {
         const stale = el('div', 'usage-stale',
-          `as of ${agoText(Date.now() - s.observedAt)} — not current. Run a turn on this seat to refresh it.`);
+          `as of ${agoText(Date.now() - s.observedAt)} — not current. Run a turn on this account to refresh it.`);
         card.appendChild(stale);
       }
       if (s.expiredWindows) notes.push(`${s.expiredWindows} window(s) hidden — already reset`);
@@ -3996,7 +4014,7 @@ function paintAccounts(body) {
     head.appendChild(el('span', 'home-route-seat', route.seat.label));
     head.appendChild(el('span', 'usage-route-pct', `${route.left}% left`));
   } else {
-    head.appendChild(el('span', 'usage-route-label', 'No seat is reporting usable headroom'));
+    head.appendChild(el('span', 'usage-route-label', 'No account is reporting usable headroom'));
   }
   body.appendChild(head);
 
@@ -4042,7 +4060,7 @@ function paintAccounts(body) {
     const act = el('div', 'home-seat-act');
     if (r.connect) {
       const b = el('button', 'btn', r.connect === 'reauth' ? 'Sign in again' : 'Connect');
-      b.title = 'Opens this seat in Usage, where the sign-in runs';
+      b.title = 'Opens this account in Usage, where the sign-in runs';
       b.onclick = () => goUsage({ seat: r.id });
       act.appendChild(b);
     }
@@ -4122,15 +4140,15 @@ function paintClis(body) {
   const { codex } = cliModel(null, HOME.src.usage);
   const row = el('div', 'home-cli');
   const top = el('div', 'home-cli-top');
-  top.appendChild(el('span', 'home-cli-name', 'Codex seats'));
+  top.appendChild(el('span', 'home-cli-name', 'Codex accounts'));
   row.appendChild(top);
   if (codex.state === 'loading') row.appendChild(homeLoading('from Usage…'));
   else if (codex.state === 'error') row.appendChild(homeFailed('Usage', codex.error));
-  else if (!codex.seats) row.appendChild(el('div', 'home-muted', 'no Codex seat tracked in Usage'));
+  else if (!codex.seats) row.appendChild(el('div', 'home-muted', 'no Codex account tracked in Usage'));
   else {
     top.appendChild(el('span', `home-chip ${codex.signIn ? 'warn' : 'ok'}`, codex.signIn ? 'needs sign-in' : 'signed in'));
     row.appendChild(el('div', 'home-muted',
-      `${codex.seats} seat${codex.seats === 1 ? '' : 's'} in Usage · ${codex.reading} reading` +
+      `${plural(codex.seats, 'account')} in Usage · ${codex.reading} reading` +
       (codex.signIn ? ` · ${codex.signIn} to sign in` : '')));
     if (codex.signIn) {
       const fix = el('button', 'btn ghost home-item-btn', 'Sign in from Usage');
@@ -4139,6 +4157,11 @@ function paintClis(body) {
     }
   }
   body.appendChild(row);
+  // Codex's accounts read their own folders' logs: they report usage with or without the CLI.
+  const codexCli = rows.find((r) => r.id === 'codex');
+  if (codexCli && !codexCli.installed && codex.reading) {
+    body.appendChild(el('div', 'home-muted home-pad', 'Codex isn’t installed here, but these accounts still report usage from their Codex folders.'));
+  }
   const again = el('button', 'btn ghost home-item-btn', 'Check in setup');
   again.onclick = () => homeAction({ view: 'setup' });
   const foot = el('div', 'home-foot', 'Installed CLIs, their versions and sign-in, as setup checks them. ');
@@ -4305,7 +4328,7 @@ async function paintModels(load) {
   const head = el('div', 'usage-head');
   head.appendChild(pageHeading('Models'));
   box.appendChild(head);
-  box.appendChild(el('div', 'scope-sub', 'Which model does each role, and the exact ids they run on — nothing changes until you press a button.'));
+  box.appendChild(moreDetails('Nothing changes until you press a button.'));
 
   if (m.registryError) {
     const n = el('div', 'notice error models-error');
@@ -4624,7 +4647,7 @@ function rolesSection() {
     sec.appendChild(el('div', 'scope-note', M.rolesError || 'reading roles…'));
     return sec;
   }
-  const rolesSub = introLine('Pick which model fills each role, and how hard it thinks.', ['effort']);
+  const rolesSub = introLine(['Pick which model fills each role, and its ', { tip: 'effort' }, ' — how hard it thinks.']);
   rolesSub.classList.add('models-roles-sub');
   sec.appendChild(rolesSub);
   sec.appendChild(moreDetails('Each chip shows the effort that applies: the model’s own in this role, else the role’s, else the model’s default. Click a role to change it.'));
@@ -5348,7 +5371,6 @@ function paintAudit() {
   again.onclick = () => openAudit({ refresh: true });
   head.appendChild(again);
   box.appendChild(head);
-  box.appendChild(el('div', 'scope-sub', 'Model ids and efforts written by hand, or gone stale, in your skills and instruction files.'));
   box.appendChild(moreDetails('It also flags a hand-kept list of models beside the generated model guide.', 'Nothing changes until you review a fix and accept it.'));
 
   const d = AU.data;
