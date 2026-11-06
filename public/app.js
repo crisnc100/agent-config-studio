@@ -142,47 +142,53 @@ const S = {
  * switch the view; `group: null` rows are views with no sidebar item.
  */
 const VIEWS = [
-  { id: 'home', label: 'Home', group: 'home', icon: 'home', hash: '#home',
+  { id: 'home', label: 'Home', group: 'overview', icon: 'home', hash: '#home',
     title: 'Home', sub: 'What is connected, what is left, and what needs you', open: openHome, render: renderHome,
     titleExtra: homeNeedsChip },
-  { id: 'files', label: 'Files', group: 'configure', icon: 'files', hash: '#files',
+  { id: 'files', label: 'Files', group: 'files', icon: 'files', hash: '#files',
     title: 'Files', sub: 'Every config file, by the tool that reads it', open: () => openFiles(), render: renderFiles },
-  { id: 'skills', label: 'Skills', group: 'configure', icon: 'skills', hash: '#skills',
+  { id: 'skills', label: 'Skills', group: 'workflows', icon: 'skills', hash: '#skills',
     title: 'Skills', sub: 'Every skill on this machine — browse, select, download', open: openSkills },
   // No sidebar item: the Skills view's New skill button (public/skill-wizard.js).
   { id: 'skill-new', label: 'New skill', group: null, icon: 'skills', hash: '#skills/new',
     title: 'New skill', sub: 'Describe it, answer a few questions, review the SKILL.md', open: openSkillWizard },
-  { id: 'packs', label: 'Packs', group: 'configure', icon: 'packs', hash: '#packs',
+  { id: 'packs', label: 'Packs', group: 'workflows', icon: 'packs', hash: '#packs',
     title: 'Skill packs', sub: 'Ready-made skills and the settings they need — nothing is written until you preview a change and confirm it', open: openPacks },
-  { id: 'mcp', label: 'MCP', group: 'configure', icon: 'mcp', hash: '#mcp',
+  { id: 'mcp', label: 'MCP', group: 'files', icon: 'mcp', hash: '#mcp',
     title: 'MCP servers', sub: 'The MCP servers your CLIs can call', open: openMcp },
   // No sidebar item: reached from the Files page's folder line, and #folders.
   { id: 'folders', label: 'Folders', group: null, icon: 'folders', hash: '#folders',
     title: 'Folders', sub: 'The project folders the studio reads and edits', open: openFolders },
-  // No sidebar item either: first run lands here, and Home links to it.
-  { id: 'setup', label: 'Setup', group: null, icon: 'home', hash: '#setup',
+  // First run lands here; afterwards it sits in the sidebar footer, with Trash and Theme.
+  { id: 'setup', label: 'Setup', group: 'footer', icon: 'setup', hash: '#setup',
     title: 'Setup', sub: 'CLIs, accounts and project folders — each step optional', open: openSetup },
-  { id: 'models', label: 'Models', group: 'configure', icon: 'models', hash: '#models',
+  { id: 'models', label: 'Models', group: 'workflows', icon: 'models', hash: '#models',
     title: 'Models', sub: 'Every model family, its current id, and what the CLIs offer', open: openModels,
     badge: () => S.badges.models },
-  { id: 'memory', label: 'Memory', group: 'review', icon: 'memory', hash: '#memory',
+  { id: 'memory', label: 'Memory', group: 'upkeep', icon: 'memory', hash: '#memory',
     title: 'Memory', sub: 'Claude auto-memory by project — review, and clean up with a preview first', open: openMemory },
-  { id: 'context', label: 'Context', group: 'review', icon: 'context', hash: '#context',
+  { id: 'context', label: 'Context', group: 'files', icon: 'context', hash: '#context',
     title: 'Context', sub: 'What each project tells its agents — CLAUDE.md, AGENTS.md, Cursor rules', open: openContext },
-  { id: 'worktrees', label: 'Worktrees', group: 'review', icon: 'worktrees', hash: '#worktrees',
+  { id: 'worktrees', label: 'Worktrees', group: 'upkeep', icon: 'worktrees', hash: '#worktrees',
     title: 'Worktrees', sub: 'Every registered project’s worktrees, and which are done', open: openWorktrees },
-  { id: 'usage', label: 'Usage', group: 'review', icon: 'usage', hash: '#usage',
+  { id: 'usage', label: 'Usage', group: 'overview', icon: 'usage', hash: '#usage',
     title: 'Usage', sub: 'Subscription headroom per account — where the next task should go', open: openUsage },
-  { id: 'scope', label: 'Scope', group: 'review', icon: 'scope', hash: '#scope',
+  { id: 'scope', label: 'Scope', group: 'files', icon: 'scope', hash: '#scope',
     title: 'Scope', sub: 'Which instruction files an agent loads in a folder, in order', open: openScope },
-  { id: 'audit', label: 'Audit', group: 'review', icon: 'audit', hash: '#audit',
+  { id: 'audit', label: 'Audit', group: 'upkeep', icon: 'audit', hash: '#audit',
     title: 'Audit', sub: 'Hardcoded and stale models in skills and instruction files — every fix reviewed first', open: () => openAudit() },
   { id: 'trash', label: 'Trash', group: 'footer', icon: 'trash', hash: '#trash',
     title: 'Trash', sub: 'Trashed items — restore any of them', open: openTrash },
   { id: 'theme', label: 'Theme', group: 'footer', icon: 'theme', kind: 'action', open: toggleTheme },
 ];
 const viewById = (id) => VIEWS.find((v) => v.id === id) || null;
-const NAV_GROUPS = [['home', null], ['configure', 'Configure'], ['review', 'Review']];
+/** The sidebar: four groups named for the job, each in this order (C1). Setup sits in the footer with Trash and Theme. */
+const NAV_GROUPS = [
+  ['overview', 'Overview', ['home', 'usage']],
+  ['workflows', 'Workflows', ['packs', 'skills', 'models']],
+  ['files', 'Files', ['files', 'context', 'scope', 'mcp']],
+  ['upkeep', 'Upkeep', ['memory', 'worktrees', 'audit']],
+];
 
 /* Stroke icons, 16px, drawn in currentColor so both themes colour them. */
 const svg = (d) => `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
@@ -200,6 +206,7 @@ const ICONS = {
   usage: svg('<path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5 10.5 7"/>'),
   scope: svg('<circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2"/>'),
   audit: svg('<path d="M3.5 2.5h9v11h-9z"/><path d="M5.5 5.5l1 1 2-2M5.5 9.5l1 1 2-2M10 5.5h1M10 9.5h1"/>'),
+  setup: svg('<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.8M8 12.4v1.8M1.8 8h1.8M12.4 8h1.8M3.6 3.6l1.3 1.3M11.1 11.1l1.3 1.3M3.6 12.4l1.3-1.3M11.1 4.9l1.3-1.3"/>'),
   trash: svg('<path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.6 8.6a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.6"/>'),
   sun: svg('<circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/>'),
   moon: svg('<path d="M13.2 9.6A5.5 5.5 0 0 1 6.4 2.8a5.5 5.5 0 1 0 6.8 6.8z"/>'),
@@ -376,10 +383,10 @@ const narrow = () => !!window.matchMedia?.('(max-width: 900px)').matches;
 function renderNav() {
   const nav = $('nav');
   nav.innerHTML = '';
-  for (const [group, title] of NAV_GROUPS) {
+  for (const [group, title, order] of NAV_GROUPS) {
     const sec = el('div', 'nav-group');
     if (title) sec.appendChild(el('div', 'nav-group-title', title));
-    for (const v of VIEWS.filter((x) => x.group === group)) sec.appendChild(navButton(v));
+    for (const id of order) { const v = viewById(id); if (v?.group === group) sec.appendChild(navButton(v)); }
     nav.appendChild(sec);
   }
   const foot = $('nav-foot');
@@ -4029,15 +4036,13 @@ function paintAccounts(body) {
     const read = el('div', 'home-seat-read');
     if (r.state.kind === 'reading') {
       if (!r.windows.length) read.appendChild(el('span', 'home-muted', 'connected · no quota windows reported'));
-      for (const w of r.windows) {
-        const win = el('div', 'home-win');
-        win.appendChild(el('span', 'usage-pct', `${w.left}% left`));
-        const track = el('div', 'usage-track home-track');
-        const fill = el('div', 'usage-fill');
-        fill.style.width = `${w.left}%`;
-        fill.dataset.level = w.level;
-        track.appendChild(fill);
-        win.appendChild(track);
+      // One compact line: the window that stops you first. Usage has every window's bar (C2).
+      const w = r.windows.reduce((lo, x) => (!lo || x.left < lo.left ? x : lo), null);
+      if (w) {
+        const win = el('div', 'home-win home-win-line');
+        const pct = el('span', 'usage-pct', `${w.left}% left`);
+        pct.dataset.level = w.level;
+        win.appendChild(pct);
         const lbl = el('span', 'usage-label', w.label);
         if (w.resetsAt) lbl.appendChild(el('span', 'usage-reset', ` · resets in ${untilText(w.resetsAt)}`));
         win.appendChild(lbl);
@@ -4072,7 +4077,10 @@ function paintAccounts(body) {
 function paintAttention(body) {
   const m = attentionModel(HOME.src);
   const audit = auditAttention(HOME.src.audit);
-  for (const it of [...m.items, ...(audit?.source ? [audit] : [])]) {
+  // The top few by consequence, then the rest behind "Show all N" (C2).
+  const all = rankAttention([...m.items, ...(audit?.source ? [audit] : [])]);
+  const shown = HOME.attentionAll ? all : all.slice(0, ATTENTION_TOP);
+  for (const it of shown) {
     const row = el('div', `home-item ${it.kind}`);
     row.appendChild(el('span', 'home-item-dot'));
     row.appendChild(el('span', 'home-item-text', it.text));
@@ -4080,6 +4088,12 @@ function paintAttention(body) {
     b.onclick = () => homeAction(it.action);
     row.appendChild(b);
     body.appendChild(row);
+  }
+  if (all.length > ATTENTION_TOP) {
+    const more = el('button', 'btn ghost home-attn-more', HOME.attentionAll ? 'Show fewer' : `Show all ${all.length}`);
+    more.setAttribute('aria-expanded', String(!!HOME.attentionAll));
+    more.onclick = () => { HOME.attentionAll = !HOME.attentionAll; paintHome(['attention']); HOME.body.attention?.querySelector('.home-attn-more')?.focus(); };
+    body.appendChild(more);
   }
   for (const p of m.partial) {
     const row = el('div', 'home-state home-failed');
@@ -4216,7 +4230,19 @@ async function openMcp() {
   c.innerHTML = '';
   const box = el('div', 'scope');
   box.appendChild(pageHeading('MCP servers'));
-  box.appendChild(el('div', 'scope-sub', m.note || ''));
+  const editable = S.registry.groups.find((g) => g.id === 'mcp');
+  // Nothing anywhere: one empty state, said once — what MCP servers are, and where to add one (C3).
+  if (!m.global.length && !m.codex.length && !editable?.entries?.length) {
+    const empty = el('div', 'mcp-empty');
+    empty.appendChild(el('p', null, 'MCP servers give your CLIs extra tools, such as a database or a browser. None are configured yet.'));
+    const how = el('p', 'scope-note');
+    how.append('Add one with ', el('code', null, 'claude mcp add'), ' or ', el('code', null, 'codex mcp add'), ', or in a project’s ', el('code', null, '.mcp.json'), '.');
+    empty.appendChild(how);
+    box.appendChild(empty);
+    c.appendChild(box);
+    return;
+  }
+  if (m.note && !/^No MCP servers/.test(m.note)) box.appendChild(el('div', 'scope-sub', m.note));
 
   const section = (title, rows, empty) => {
     box.appendChild(el('p', 'assist-label', title));
@@ -4233,10 +4259,9 @@ async function openMcp() {
     }
   };
 
-  section('Claude Code — read-only', m.global, 'No MCP servers configured.');
-  section('Codex', m.codex, 'No MCP servers in config.toml.');
+  section('Claude Code — read-only', m.global, 'None configured.');
+  section('Codex', m.codex, 'None configured.');
 
-  const editable = S.registry.groups.find((g) => g.id === 'mcp');
   if (editable) {
     box.appendChild(el('p', 'assist-label', 'Project .mcp.json — editable'));
     for (const e of editable.entries) {
