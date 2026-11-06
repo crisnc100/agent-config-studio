@@ -256,3 +256,53 @@ test('G5 grok leader mode in any TOML spelling or a macOS managed payload refuse
   allowed(script([], { REVIEW_REVIEWER: 'grok', GROK_HOME: 'rel-grok' }))
   assert.equal(callOf('grok').grokHome, join(realpathSync(REPO), 'rel-grok'))
 })
+
+// ── removed: shadow reviewers and shadow pickers ────────────────────────────
+const HOME_CONFIG = join(SKILL, 'config.json')
+const SHADOW_NOTE = 'ignored: shadow pickers were removed'
+
+test('D1 a home config that still has shadow, pickShadow and grokMcpAllow runs a normal review with one note and no shadow job', async () => {
+  writeFileSync(HOME_CONFIG, JSON.stringify({ routing: ROUTING, shadow: ['grok'], pickShadow: ['grok', 'opus'], grokMcpAllow: ['jev'] }))
+  commit({ 'src/a.js': lines(10) })
+  const r = script([], { REVIEW_CONFIG: '' })
+  allowed(r)
+  assert.equal(r.stderr.split('\n').filter((l) => l.includes(SHADOW_NOTE)).length, 1, r.stderr)
+  assert.doesNotMatch(r.out, /▶ (pick-)?shadow/)
+  assert.deepEqual(records().map((e) => [e.type, e.family]), [['review', 'opus']])
+  // A detached job would have called grok and written the shadow log by now.
+  await new Promise((done) => setTimeout(done, 2000))
+  assert.deepEqual(calls('grok'), [])
+  assert.equal(existsSync(join(LOGS, 'shadow-log.jsonl')), false)
+  assert.deepEqual(readdirSync(ROOT).filter((d) => /^review-(pick-)?shadow-/.test(d)), [], 'no shadow job folder')
+})
+
+test('D2 REVIEW_SHADOW and REVIEW_PICK_SHADOW get the same note and start nothing; a config without the keys gets no note', async () => {
+  config({ routing: ROUTING })
+  commit({ 'src/a.js': lines(10) })
+  const quiet = script([])
+  allowed(quiet)
+  assert.ok(!quiet.out.includes(SHADOW_NOTE), quiet.out)
+  const r = script([], { REVIEW_SHADOW: 'grok', REVIEW_PICK_SHADOW: 'opus' })
+  allowed(r)
+  assert.equal(r.stderr.split('\n').filter((l) => l.includes(SHADOW_NOTE)).length, 1, r.stderr)
+  assert.doesNotMatch(r.out, /▶ (pick-)?shadow/)
+  await new Promise((done) => setTimeout(done, 2000))
+  assert.deepEqual(calls('grok'), [])
+  assert.equal(existsSync(join(LOGS, 'shadow-log.jsonl')), false)
+})
+
+test('D3 the removed commands are unknown flags: a plain error, no review, and an old shadow log is left as it was', () => {
+  config({ routing: ROUTING })
+  commit({ 'src/a.js': lines(10) })
+  const old = `${JSON.stringify({ type: 'pick-shadow', reviewId: 'r', picker: 'jev', ok: true })}\n${JSON.stringify({ type: 'shadow', reviewId: 'r', family: 'grok', ok: true, findings: [] })}\n`
+  writeFileSync(join(LOGS, 'shadow-log.jsonl'), old)
+  for (const flag of [['--pick-report'], ['--shadow-report'], ['--pick-report', '--since', '2026-11-01'], ['--shadow-run', 'job.json'], ['--pick-shadow-run', 'job.json']]) {
+    const r = script(flag)
+    assert.equal(r.status, 1, r.out)
+    assert.match(r.stderr, new RegExp(`unknown flag ${flag[0]}`), flag.join(' '))
+    assert.doesNotMatch(r.out, /Review complete|===FINDINGS_JSON===/)
+  }
+  assert.deepEqual(records(), [], 'no review ran')
+  assert.deepEqual(calls('claude'), [])
+  assert.equal(readFileSync(join(LOGS, 'shadow-log.jsonl'), 'utf8'), old)
+})

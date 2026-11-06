@@ -21,7 +21,6 @@
  *   REVIEW_AUTHOR=<family|vendor> REVIEW_PICK=rotate node scripts/review.mjs
  *   REVIEW_EFFORT=xhigh node scripts/review.mjs               # raise codex reasoning for one run
  *   node scripts/review.mjs --show-config                     # resolved pool, pick and counts
- *   node scripts/review.mjs --pick-report [--since <date>]    # what the pickShadow pickers would have chosen
  *   node scripts/review.mjs --log-outcome <reviews-ts> <confirmed> <rejected>
  *
  *   REVIEW_PICK=<classifier command> node scripts/review.mjs  # an optional local classifier picks on diff stats
@@ -107,14 +106,18 @@ const option = (flag) => {
   if (!value || value.startsWith('--')) throw new Error(`${flag} requires a value`)
   return value
 }
-// Eval mode (REVIEW_EVAL, which --eval sets on each case review it runs): no security pass, verify command, second opinion
-// or shadow; the review logs to its own folder, and nothing that reads or writes the review gate's own records runs.
+// Eval mode (REVIEW_EVAL, which --eval sets on each case review it runs): no security pass, verify command or second
+// opinion; the review logs to its own folder, and nothing that reads or writes the review gate's own records runs.
 const EVAL_MODE = !!String(process.env.REVIEW_EVAL ?? '').trim()
 const EVAL_REFUSED = ['--gate', '--close', '--summary', '--tier-json', '--deferred', '--fix-check', '--dispute', '--waive', '--log-grade',
-  '--recheck-of', '--log-outcome', '--slices', '--eval', '--shadow-run', '--pick-shadow-run', '--security-worker', '--shadow-report', '--pick-report', '--calibrate', '--noise-report']
+  '--recheck-of', '--log-outcome', '--slices', '--eval', '--security-worker', '--calibrate', '--noise-report']
 // Git variables that move the repo, work tree or index away from the working directory: eval mode refuses them.
 const GIT_LOCATION_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
   'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM']
+// The shadow reviewers and pickers were removed: their commands are unknown flags, a plain error and never a review.
+const REMOVED_FLAGS = ['--shadow-run', '--shadow-report', '--pick-shadow-run', '--pick-report']
+const removedFlag = args.find((a) => REMOVED_FLAGS.includes(a))
+if (removedFlag) stop(`unknown flag ${removedFlag}`)
 // --eval takes only its own flags: with --gate (or any other command) it would run instead of that command.
 const EVAL_FLAGS = ['--eval', '--family', '--cases', '--timeout', '--repeat', '--yes']
 if (args.includes('--eval')) {
@@ -132,7 +135,7 @@ if (args.includes('--eval')) {
 // ever adds tracked files and links. Env and the home configs always count.
 let gateConfigError
 const COMMAND_KEYS = ['verifyCmd', 'classifier', 'base']
-const OWN_FILE_KEYS = [...COMMAND_KEYS, 'coverageExempt', 'coverageExemptDefaults', 'shadow', 'pickShadow', 'grokMcpAllow']
+const OWN_FILE_KEYS = [...COMMAND_KEYS, 'coverageExempt', 'coverageExemptDefaults', 'grokMcpAllow']
 // Set when the repo file failed that check: its `pick` may name a family, never a command to run.
 let REPO_PICK_UNTRUSTED = false
 const sameFile = (a, b) => {
@@ -319,6 +322,10 @@ function loadConfig() {
   return {}
 }
 const CONFIG = loadConfig()
+// An old config (or env) may still set the removed shadow keys: they are ignored with one note, never an error.
+const OLD_SHADOW_KEYS = [...['shadow', 'pickShadow'].filter((k) => Object.hasOwn(CONFIG, k)),
+  ...['REVIEW_SHADOW', 'REVIEW_PICK_SHADOW'].filter((k) => String(process.env[k] ?? '').trim())]
+if (OLD_SHADOW_KEYS.length && !args.includes('--gate')) console.warn(`ℹ ${OLD_SHADOW_KEYS.join(', ')} ignored: shadow pickers were removed`)
 const MERGE = mergeSettings(CONFIG.merge)
 // The security pass in force: the config's, raised (never lowered) by REVIEW_SECURITY for one run.
 const SECURITY = (() => {
@@ -774,7 +781,7 @@ risk = likelihood × impact:
 - MEDIUM otherwise.
 Fix HIGH first, then MEDIUM. Both block until fixed, REFUTED or waived by the operator.
 Missing or invalid scores are asked for again once. A finding still unscored blocks as MEDIUM (HIGH if protected is exactly true).`
-const VALUE_FLAGS = ['--security-worker', '--shadow-run', '--pick-shadow-run', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat']
+const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat']
 const INTENT = args.includes('--dispute') || args.includes('--waive') || args.includes('--log-grade')
   ? ''
   : args.filter((a, i) => !a.startsWith('--') && !VALUE_FLAGS.includes(args[i - 1])).join(' ').trim()
@@ -1791,8 +1798,7 @@ function parseGrok(stdout) {
 // run untrusted instead (GROK_FOLDER_TRUST=0, never used). So a tree holding any .grok/hooks entry, from the
 // working folder up to the top of its repository, is never reviewed by grok.
 const GROK_HOOKS_OFF = { GROK_CLAUDE_HOOKS_ENABLED: '0', GROK_CURSOR_HOOKS_ENABLED: '0' }
-// GROK_HOME made absolute once, at load: a shadow run moves into a snapshot clone and grok runs with --cwd, so a relative
-// one would name another folder. Shadows are handed this one.
+// GROK_HOME made absolute once, at load: a command run from another folder (runBounded) would read a relative one there.
 const GROK_HOME = resolve(process.env.GROK_HOME || join(homedir(), '.grok'))
 // Grok's environment for one call (ask-model's grokCallEnv): an empty temporary HOME, so what grok borrows from
 // ~/.claude and ~/.cursor (plugin MCP servers and hooks, ~/.claude.json) finds nothing; the real GROK_HOME, so the
@@ -3307,221 +3313,9 @@ async function securityWorker(jobFile) {
     finish(late() ? timedOut() : { ok: false, error: e.message }, 1)
   }
 }
-// ── shadow reviewers ────────────────────────────────────────────────────────
-// Config "shadow" (REVIEW_SHADOW, comma-separated): families that review the same diff after the real review, in the
-// background, for comparison only. They write review-log/shadow-log.jsonl and nothing else, so no close, push gate
-// or --summary ever sees them; a failure or a refusal is a record there, never an error. Reviews only, not fix checks.
-const SHADOW_LOG = join(dirname(LOG_PATH), 'shadow-log.jsonl')
-function appendShadow(record) {
-  mkdirSync(dirname(SHADOW_LOG), { recursive: true })
-  const line = `${JSON.stringify(record)}\n`
-  withLogLock(() => appendFileSync(SHADOW_LOG, line), SHADOW_LOG)
-}
-// After the real review is logged: one detached review.mjs --shadow-run per family, handed everything the real
-// reviewer's prompt was built from (the diff, context, verify result, slice, base and the reviewed commit) in a job
-// file. This run does not wait for them, and nothing here can fail it: a bad entry or a failed start is a record.
-function startShadows({ reviewId, diff, head, baseSha }) {
-  const fail = (family, error) => {
-    try { appendShadow({ type: 'shadow', reviewId, family, ts: new Date().toISOString(), ok: false, error }) } catch { /* never raised */ }
-  }
-  try {
-    const value = cfg('REVIEW_SHADOW', 'shadow', [])
-    const entries = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [value]
-    const seen = new Set()
-    for (const entry of entries) {
-      const family = String(entry ?? '').trim().toLowerCase()
-      if (!family || seen.has(family) || family === SEL.family) continue
-      seen.add(family)
-      if (!FAMILY_NAME.test(family)) { fail(String(entry), `not a family name: ${JSON.stringify(entry)}`); continue }
-      try {
-        const dir = mkdtempSync(join(tmpdir(), 'review-shadow-'))
-        const job = join(dir, 'job.json')
-        writeFileSync(job, JSON.stringify({ reviewId, family, diff, head, baseSha, context: CONTEXT, verify: VERIFY_RESULT, slice: SLICE, diffBase: DIFF_BASE }), { mode: 0o600 })
-        const child = spawnFile(process.execPath, [COPY_PATH, '--shadow-run', job, ...(INTENT ? [INTENT] : [])], { detached: true, stdio: 'ignore', env: { ...process.env, GROK_HOME } })
-        child.on('error', () => {})
-        child.unref()
-        console.log(`▶ shadow · ${family} started in the background for ${reviewId} (results: ${SHADOW_LOG})`)
-      } catch (e) { fail(family, `could not start: ${e.message}`) }
-    }
-  } catch (e) { fail(null, `shadows could not start: ${e.message}`) }
-}
-// One shadow review, run detached: the same prompt the real reviewer got (with this family's tool notes), the same
-// schema, scoring and quote check, and one record in the shadow log whatever happens. It runs in a snapshot of the
-// reviewed commit (a temporary clone detached at it, as a dispute's verifier does), so fixes or a branch switch in the
-// checkout while it runs change nothing it reads.
-async function shadowRun(jobFile) {
-  const started = Date.now()
-  let job = {}, written = false, m = null, snapshot = null
-  const cwd = process.cwd()
-  const write = (fields) => {
-    if (written) return
-    written = true
-    try {
-      appendShadow({ type: 'shadow', reviewId: job.reviewId ?? null, family: job.family ?? null, model: m?.id ?? null, effort: m?.effort ?? null,
-        ts: new Date().toISOString(), durationMs: Date.now() - started, ...fields })
-    } catch { /* the shadow log is best-effort */ }
-  }
-  // A stop() deep in model resolution exits the process: still leave a record.
-  process.on('exit', () => write({ ok: false, error: 'the shadow run exited before it finished' }))
-  try {
-    job = JSON.parse(readFileSync(jobFile, 'utf8'))
-    rmSync(dirname(jobFile), { recursive: true, force: true })
-    const member = poolMember(job.family, loadPool().pool)
-    if (!member.vendor) throw new Error(`${job.family} resolves to no known CLI`)
-    if (!which(member.vendor)) throw new Error(`the ${member.vendor} CLI is not installed`)
-    m = { ...member, effort: effortFor(member) }
-    if (!fullObjectId(job.head)) throw new Error('the job names no reviewed commit')
-    snapshot = mkdtempSync(join(tmpdir(), 'review-shadow-snapshot-'))
-    sh('git', ['clone', '--quiet', '--no-hardlinks', '--no-checkout', TOP, join(snapshot, 'repo')])
-    process.chdir(join(snapshot, 'repo'))
-    sh('git', ['checkout', '--quiet', '--detach', job.head])
-    if (m.vendor === 'grok') {
-      const call = grokRunEnv()
-      let refusal
-      try { refusal = grokRefusal(process.cwd(), call) } finally { call.done() }
-      if (refusal) throw new Error(`refused: ${refusal}`)
-    }
-    SEL = m
-    CONTEXT = job.context || ''
-    VERIFY_RESULT = job.verify ?? null
-    SLICE = job.slice || null
-    DIFF_BASE = job.diffBase || DIFF_BASE
-    const { result } = await runModel(m, reviewPrompt(job.diff), SCHEMA, 'shadow reviewer')
-    const scored = await scoredFindings(result?.findings || [], m)
-    // Quotes are checked against the snapshot: HEAD is the reviewed commit, and the base is its own sha here.
-    if (fullObjectId(job.baseSha)) DIFF_BASE = job.baseSha
-    write({ ok: true, findings: scored.findings.map((f) => {
-      const { file, line, quote, issue, severity, likelihood, impact, status, quoteCheck, instances } = locatedFinding(f)
-      return { file, line, quote, issue, severity, likelihood, impact, status, ...(quoteCheck && { quoteCheck }), ...(instances && { instances }) }
-    }) })
-  } catch (e) {
-    write({ ok: false, error: e.message })
-  } finally {
-    process.chdir(cwd)
-    if (snapshot) rmSync(snapshot, { recursive: true, force: true })
-  }
-  process.exit(0)
-}
-// --shadow-report [--since <date>]: per shadow family, how its findings compare with the real review's. A shadow
-// finding matches a real one with the same file (a/ b/ ./ prefixes dropped) and a line within 5, or when one quote,
-// whitespace collapsed, contains the other; a shadow finding that failed the quote check is counted as unlocated, apart. Unique: matched none. Missed: real findings no finding of that shadow run
-// matched. Average durationMs over the runs that answered.
-function shadowReport() {
-  const since = option('--since')
-  const from = since === null ? null : Date.parse(since)
-  if (since !== null && !Number.isFinite(from)) throw new Error(`--since needs a date such as 2026-11-01; got ${since}`)
-  const shadows = existsSync(SHADOW_LOG) ? readFileSync(SHADOW_LOG, 'utf8').split('\n').filter(Boolean).flatMap((l) => {
-    try { const e = JSON.parse(l); return e?.type === 'shadow' ? [e] : [] } catch { return [] }
-  }) : []
-  const reviews = new Map(readLog().filter((e) => e.type === 'review').map((e) => [e.id, e]))
-  const file = (f) => String(f || '').replace(/^(?:\.\/|[ab]\/)/, '')
-  const quote = (q) => String(q || '').replace(/\s+/g, ' ').trim()
-  const near = (a, b) => {
-    if (file(a.file) && file(a.file) === file(b.file) && Math.abs(parseInt(a.line, 10) - parseInt(b.line, 10)) <= 5) return true
-    const qa = quote(a.quote), qb = quote(b.quote)
-    return !!qa && !!qb && (qa.includes(qb) || qb.includes(qa))
-  }
-  // A grouped finding matches at any of its places: the main location or a located instance.
-  const places = (f) => [f, ...(Array.isArray(f.instances) ? f.instances : [])]
-  const same = (a, b) => places(a).some((pa) => places(b).some((pb) => near(pa, pb)))
-  const by = new Map()
-  for (const s of shadows) {
-    if (from !== null && !(Date.parse(s.ts) >= from)) continue
-    const t = by.get(s.family) || { runs: 0, failed: 0, unlinked: 0, shadowFindings: 0, matched: 0, unique: 0, unlocated: 0, real: 0, missed: 0, durations: [] }
-    by.set(s.family, t)
-    t.runs++
-    if (!s.ok) { t.failed++; continue }
-    const real = reviews.get(s.reviewId)?.findingDetails
-    if (!Array.isArray(real)) { t.unlinked++; continue }
-    if (Number.isFinite(s.durationMs)) t.durations.push(s.durationMs)
-    const hit = new Set()
-    for (const f of s.findings || []) {
-      // A finding whose quote is not in the reviewed code is not a finding: counted apart, never matched.
-      if (f.status === 'unverified-quote') { t.unlocated++; continue }
-      t.shadowFindings++
-      const i = real.findIndex((r) => same(f, r))
-      if (i === -1) t.unique++
-      else { t.matched++; for (let j = 0; j < real.length; j++) if (same(f, real[j])) hit.add(j) }
-    }
-    t.real += real.length
-    t.missed += real.length - hit.size
-  }
-  console.log(`Shadow report${since !== null ? ` since ${since}` : ''} (${SHADOW_LOG})`)
-  if (!by.size) return console.log('no shadow runs')
-  for (const [family, t] of [...by].sort(([a], [b]) => a.localeCompare(b))) {
-    const avg = t.durations.length ? Math.round(t.durations.reduce((a, b) => a + b, 0) / t.durations.length) : null
-    console.log(`${family}: ${t.runs} run(s), ${t.failed} failed${t.unlinked ? `, ${t.unlinked} with no real review in this log` : ''}; ` +
-      `${t.shadowFindings} finding(s): ${t.matched} matched, ${t.unique} unique${t.unlocated ? `, ${t.unlocated} unlocated` : ''}; missed ${t.missed} of ${t.real} real finding(s); ` +
-      `average ${avg === null ? 'n/a' : `${avg} ms`}`)
-  }
-}
-
-// ── shadow pickers ──────────────────────────────────────────────────────────
-// Config "pickShadow" (REVIEW_PICK_SHADOW, comma-separated; home config or env only): pickers that say, in the
-// background, which reviewer family they would have chosen for a review, how complex the diff is, and why. The name of
-// the configured `classifier` asks that command (choice protocol, stats and paths only); any other name is a family asked
-// through `ask-model --min-tools` with the capped diff, from a temporary folder: no tools for claude, the fewest each
-// other CLI allows (grok, codex). Each record's `tools` ("none" | "restricted") and `toolsNote` say what it had.
-// They decide nothing: each writes one `pick-shadow` record to the shadow log and nothing else. Reviews only.
-const PICK_DIFF_CAP = 60_000
-const PICK_TIMEOUT_MS = Number(process.env.REVIEW_PICK_SHADOW_TIMEOUT_MS) > 0 ? Number(process.env.REVIEW_PICK_SHADOW_TIMEOUT_MS) : 5 * 60_000
-const COMPLEXITIES = ['simple', 'moderate', 'deep']
-// One record per picker, success or failure; the shape every pick-shadow line shares.
-const pickRecord = (job, picker, fields) => ({ type: 'pick-shadow', reviewId: job.reviewId ?? null, picker, model: null, effort: null,
-  tools: null, toolsNote: null, ts: new Date().toISOString(), durationMs: null, ok: false, family: null, complexity: null, reason: null, actual: job.actual ?? null, ...fields })
-// After the real review is logged: one detached review.mjs --pick-shadow-run for every picker of this review, handed
-// the one input they all share in a job file. Nothing here can fail the review: a bad entry or a failed start is a record.
-function startPickShadows({ reviewId, diff, stats }) {
-  const base = { reviewId, actual: SEL?.family ?? null }
-  const fail = (picker, error) => {
-    try { appendShadow(pickRecord(base, picker, { error })) } catch { /* never raised */ }
-  }
-  try {
-    const value = cfg('REVIEW_PICK_SHADOW', 'pickShadow', [])
-    const entries = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [value]
-    const pickers = []
-    // The classifier is the home config's own command (a repo file cannot set it); it is logged by its command's name.
-    // A path is made absolute here: the pickers run from a temporary folder.
-    const classifier = CLASSIFIER ? { name: basename(CLASSIFIER).toLowerCase(), command: CLASSIFIER.includes('/') ? resolve(CLASSIFIER) : CLASSIFIER } : null
-    for (const entry of entries) {
-      const raw = String(entry ?? '').trim()
-      const picker = classifier && (raw === CLASSIFIER || raw.toLowerCase() === classifier.name) ? classifier.name : raw.toLowerCase()
-      if (!picker || pickers.includes(picker)) continue
-      if (picker !== classifier?.name && !FAMILY_NAME.test(picker)) { fail(String(entry), `not a picker name: ${JSON.stringify(entry)}`); continue }
-      pickers.push(picker)
-    }
-    if (!pickers.length) return
-    // The candidates are the reviewer role's families and efforts only: no "good at / watch for" text.
-    const candidates = (SELECTION?.pool || []).map((m) => ({ family: m.family, effort: effortFor(m) }))
-    const input = {
-      candidates,
-      stats: recordStats(stats),
-      riskFiles: (stats?.riskFiles || []).slice(0, 20),
-      paths: (stats?.files || []).slice(0, 40).flatMap(pathsOf),
-      intent: INTENT || null,
-      planPassed: !!PLAN_PATH,
-    }
-    const truncated = diff.length > PICK_DIFF_CAP
-    const job = { ...base, pickers, ...(pickers.includes(classifier?.name) && { classifier }), input, diff: diff.slice(0, PICK_DIFF_CAP), diffChars: diff.length, diffTruncated: truncated }
-    let dir = null
-    // A start that fails, now or as the child's later 'error' event, is one record per picker and no job left behind.
-    const failed = (e) => {
-      if (dir) rmSync(dir, { recursive: true, force: true })
-      for (const p of pickers) fail(p, `could not start: ${e.message}`)
-    }
-    try {
-      dir = mkdtempSync(join(tmpdir(), 'review-pick-shadow-'))
-      const file = join(dir, 'job.json')
-      writeFileSync(file, JSON.stringify(job), { mode: 0o600 })
-      const child = spawnFile(process.execPath, [COPY_PATH, '--pick-shadow-run', file], { detached: true, stdio: 'ignore', env: { ...process.env, GROK_HOME } })
-      child.on('error', failed)
-      child.unref()
-      console.log(`▶ pick-shadow · ${pickers.join(', ')} started in the background for ${reviewId} (results: ${SHADOW_LOG})`)
-    } catch (e) { failed(e) }
-  } catch (e) { fail(null, `pick shadows could not start: ${e.message}`) }
-}
+const CLASSIFIER_TIMEOUT_MS = 5 * 60_000
 // Run a command detached in its own process group with stdin given, killed (group and all) at the timeout.
-function runBounded(command, argv, { input = '', cwd, timeoutMs = PICK_TIMEOUT_MS } = {}) {
+function runBounded(command, argv, { input = '', cwd, timeoutMs = CLASSIFIER_TIMEOUT_MS } = {}) {
   return new Promise((done) => {
     let child
     // GROK_HOME is the one made absolute at load: a relative one would name a folder under the temporary cwd.
@@ -3542,166 +3336,6 @@ function runBounded(command, argv, { input = '', cwd, timeoutMs = PICK_TIMEOUT_M
     child.stdin.end(input)
   })
 }
-// The one answer shape every picker gives: a candidate (or unsure), a complexity, a reason of at most 40 words.
-function pickAnswer(value, families) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`the answer is not an object: ${JSON.stringify(value)?.slice(0, 200)}`)
-  const family = String(value.family ?? '').trim().toLowerCase()
-  if (![...families, 'unsure'].includes(family)) throw new Error(`family ${JSON.stringify(value.family)} is not a candidate (${families.join(', ')}) or unsure`)
-  if (!COMPLEXITIES.includes(value.complexity)) throw new Error(`complexity ${JSON.stringify(value.complexity)} is not ${COMPLEXITIES.join('|')}`)
-  if (typeof value.reason !== 'string' || !value.reason.trim()) throw new Error('the answer gives no reason')
-  const words = value.reason.trim().split(/\s+/)
-  return { family, complexity: value.complexity, reason: words.slice(0, 40).join(' ') }
-}
-function pickPrompt(job) {
-  const { input } = job
-  return [
-    'You are choosing which model family should code-review a diff. You decide nothing: your answer is logged for comparison only.',
-    'Answer with the reviewer family from the candidates best placed to find real defects in this diff (or "unsure"),',
-    'how complex the diff is to review (simple | moderate | deep), and your reason in at most 40 words.',
-    '',
-    `Candidates (family and the effort it would review at): ${input.candidates.map((c) => `${c.family} (${c.effort})`).join(', ')}`,
-    `Diff stats: ${JSON.stringify(input.stats)}`,
-    `Risk files: ${input.riskFiles.length ? input.riskFiles.join(', ') : 'none'}`,
-    `Changed paths${input.paths.length >= 40 ? ' (first 40)' : ''}: ${input.paths.join(', ')}`,
-    `Branch intent: ${input.intent || 'not given'}`,
-    `A plan was passed to the review: ${input.planPassed ? 'yes' : 'no'}`,
-    '',
-    job.diffTruncated ? `The diff (${job.diffChars} chars; truncated to the first ${PICK_DIFF_CAP}):` : 'The diff:',
-    job.diff,
-  ].join('\n')
-}
-async function askModelPicker(job, picker, cwd) {
-  const families = job.input.candidates.map((c) => c.family)
-  const promptFile = join(cwd, `${picker}-prompt.txt`)
-  const schemaFile = join(cwd, `${picker}-schema.json`)
-  writeFileSync(promptFile, pickPrompt(job))
-  writeFileSync(schemaFile, JSON.stringify({
-    type: 'object',
-    properties: {
-      family: { type: 'string', enum: [...families, 'unsure'] },
-      complexity: { type: 'string', enum: COMPLEXITIES },
-      reason: { type: 'string', description: 'At most 40 words' },
-    },
-    required: ['family', 'complexity', 'reason'],
-    additionalProperties: false,
-  }))
-  // --min-tools: claude with no tools, grok and codex with the fewest their CLIs allow, in the empty temporary cwd.
-  const r = await runBounded('ask-model', ['--family', picker, '--prompt-file', promptFile, '--schema', schemaFile, '--min-tools', '--json', '--cwd', cwd], { cwd })
-  if (r.error) return { error: r.error.includes('ENOENT') ? `ask-model is not installed (${r.error})` : r.error }
-  let out = null
-  try { out = JSON.parse(r.stdout) } catch { /* below */ }
-  const meta = { model: out?.id ?? null, effort: out?.effort ?? null, tools: out?.tools ?? null, toolsNote: out?.toolsNote ?? null }
-  if (r.code !== 0) return { ...meta, error: `ask-model exited ${r.code ?? r.signal}: ${out?.error || String(r.stderr).trim().split('\n').at(-1) || 'no reason given'}` }
-  if (!out || typeof out.answer !== 'string') return { ...meta, error: `unparseable ask-model output: ${String(r.stdout).slice(0, 200)}` }
-  let answer
-  try { answer = JSON.parse(out.answer) } catch { return { ...meta, error: `the answer is not JSON: ${out.answer.slice(0, 200)}` } }
-  return { ...meta, ...pickAnswer(answer, families) }
-}
-async function classifierPicker(job, cwd) {
-  const families = job.input.candidates.map((c) => c.family)
-  const criteria = Object.fromEntries(job.input.candidates.map((c) => [c.family, `The ${c.family} family, reviewing at ${c.effort} effort`]))
-  criteria.unsure = 'No candidate clearly fits this diff better than the others'
-  const { stats, riskFiles, paths, intent, planPassed } = job.input
-  const payload = {
-    state: {
-      task: 'Choose which model family should code-review this diff, and judge how complex the diff is to review.',
-      diff: { stats, touches_risk_paths: riskFiles.length > 0, risk_files: riskFiles, paths, intent, plan_passed: planPassed },
-    },
-    questions: {
-      reviewer: { type: 'choice', instructions: 'Which reviewer family is the best fit to find real defects in this diff?', criteria },
-      complexity: {
-        type: 'choice',
-        instructions: 'How complex is this diff to review?',
-        criteria: { simple: 'Small or mechanical; little logic to reason about', moderate: 'Some logic to follow across a few places', deep: 'Subtle or wide-reaching logic, state or security' },
-      },
-    },
-  }
-  const { name, command } = job.classifier
-  const r = await runBounded(command, ['--json-out'], { input: JSON.stringify(payload), cwd })
-  const meta = { model: name, effort: null, tools: 'none', toolsNote: 'a classifier command, handed stats and paths; no model tools' }
-  if (r.error) return { ...meta, error: r.error }
-  if (r.code !== 0) return { ...meta, error: (r.stderr || '').trim().split('\n')[0] || `${name} exited ${r.code ?? r.signal}` }
-  let answers
-  try { answers = JSON.parse(r.stdout)?.answers } catch { return { ...meta, error: `unparseable ${name} output: ${String(r.stdout).slice(0, 200)}` } }
-  const fam = answers?.reviewer, cx = answers?.complexity
-  if (fam?.type !== 'choice' || !fam.choice || cx?.type !== 'choice' || !cx.choice) return { ...meta, error: `no choice answers in ${String(r.stdout).slice(0, 200)}` }
-  const family = String(fam.choice).toLowerCase()
-  if (![...families, 'unsure'].includes(family)) return { ...meta, error: `family ${JSON.stringify(fam.choice)} is not a candidate (${families.join(', ')}) or unsure` }
-  if (!COMPLEXITIES.includes(cx.choice)) return { ...meta, error: `complexity ${JSON.stringify(cx.choice)} is not ${COMPLEXITIES.join('|')}` }
-  return { ...meta, family, complexity: cx.choice, reason: null,
-    confidence: Number(fam.confidence), probabilities: fam.probabilities || {},
-    complexityConfidence: Number(cx.confidence), complexityProbabilities: cx.probabilities || {} }
-}
-// The detached run: every picker at once, each from its own temporary folder, one record each whatever happens.
-async function pickShadowRun(jobFile) {
-  let job = {}
-  const written = new Set()
-  const pending = []
-  const write = (picker, fields) => {
-    if (written.has(picker)) return
-    written.add(picker)
-    try { appendShadow(pickRecord(job, picker, fields)) } catch { /* the shadow log is best-effort */ }
-  }
-  process.on('exit', () => { for (const p of pending) write(p, { error: 'the pick-shadow run exited before it finished' }) })
-  try {
-    job = JSON.parse(readFileSync(jobFile, 'utf8'))
-    rmSync(dirname(jobFile), { recursive: true, force: true })
-    pending.push(...(Array.isArray(job.pickers) ? job.pickers : []))
-    await Promise.all(pending.map(async (picker) => {
-      const started = Date.now()
-      const cwd = mkdtempSync(join(tmpdir(), 'review-pick-cwd-'))
-      try {
-        if (!job.input?.candidates?.length) throw new Error('the reviewer role gave no candidate families')
-        const r = picker === job.classifier?.name ? await classifierPicker(job, cwd) : await askModelPicker(job, picker, cwd)
-        const { error, ...fields } = r
-        write(picker, { ...fields, durationMs: Date.now() - started, ok: !error, ...(error && { error }) })
-      } catch (e) {
-        write(picker, { durationMs: Date.now() - started, error: e.message })
-      } finally {
-        rmSync(cwd, { recursive: true, force: true })
-      }
-    }))
-  } catch (e) {
-    for (const p of pending) write(p, { error: e.message })
-    if (!pending.length) write(null, { error: e.message })
-  }
-  process.exit(0)
-}
-// --pick-report [--since <date>]: per picker, its runs, failures, how often its family matched the family that really
-// reviewed (over the runs that answered), the families and complexities it chose, and the tools it had.
-function pickReport() {
-  const since = option('--since')
-  const from = since === null ? null : Date.parse(since)
-  if (since !== null && !Number.isFinite(from)) throw new Error(`--since needs a date such as 2026-11-01; got ${since}`)
-  const picks = existsSync(SHADOW_LOG) ? readFileSync(SHADOW_LOG, 'utf8').split('\n').filter(Boolean).flatMap((l) => {
-    try { const e = JSON.parse(l); return e?.type === 'pick-shadow' ? [e] : [] } catch { return [] }
-  }) : []
-  const by = new Map()
-  for (const p of picks) {
-    if (from !== null && !(Date.parse(p.ts) >= from)) continue
-    const key = p.picker ?? '(none)'
-    const t = by.get(key) || { runs: 0, failed: 0, answered: 0, agreed: 0, families: {}, complexity: {}, tools: {} }
-    by.set(key, t)
-    t.runs++
-    if (typeof p.tools === 'string') t.tools[p.tools] = (t.tools[p.tools] || 0) + 1
-    if (!p.ok) { t.failed++; continue }
-    t.answered++
-    if (p.family && p.family === p.actual) t.agreed++
-    t.families[p.family] = (t.families[p.family] || 0) + 1
-    t.complexity[p.complexity] = (t.complexity[p.complexity] || 0) + 1
-  }
-  const counts = (o) => Object.entries(o).sort(([a], [b]) => a.localeCompare(b)).map(([k, n]) => `${k} ${n}`).join(', ') || 'none'
-  console.log(`Pick report${since !== null ? ` since ${since}` : ''} (${SHADOW_LOG})`)
-  if (!by.size) return console.log('no pick-shadow runs')
-  for (const [picker, t] of [...by].sort(([a], [b]) => a.localeCompare(b))) {
-    const rate = t.answered ? ` (${Math.round((100 * t.agreed) / t.answered)}%)` : ''
-    console.log(`${picker}: ${t.runs} run(s), ${t.failed} failed; agreed with the actual reviewer ${t.agreed} of ${t.answered}${rate}; ` +
-      `families: ${counts(t.families)}; complexity: ${counts(t.complexity)}` +
-      // Records written before pickers logged their tools carry none; those add nothing here.
-      (Object.keys(t.tools).length ? `; tools: ${counts(t.tools)}` : ''))
-  }
-}
-
 // --slices "<group>;<group>" [--jobs N]: one review per group (each a REVIEW_PATHS value), at most N at a time, all in
 // this checkout. Every slice is an ordinary run, with its own record, report, HEAD checks and close. Each one's output
 // prints under a header as it finishes; then ===SLICES_JSON=== lists { paths, exit, reviewId, result } per slice, result
@@ -5025,10 +4659,6 @@ async function runEval() {
   if (args.includes('--fix-check')) return fixCheck(option('--fix-check'))
   if (args.includes('--slices')) return runSlices()
   if (args.includes('--security-worker')) return securityWorker(option('--security-worker'))
-  if (args.includes('--shadow-run')) return shadowRun(option('--shadow-run'))
-  if (args.includes('--shadow-report')) return shadowReport()
-  if (args.includes('--pick-shadow-run')) return pickShadowRun(option('--pick-shadow-run'))
-  if (args.includes('--pick-report')) return pickReport()
   const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList } = getDiff()
   refuseLinkedReviews()
   CONTEXT = reviewContext(branch)
@@ -5161,10 +4791,6 @@ async function runEval() {
     ...(EVAL_MODE && SEL.team && { lenses: SEL.lenses.map(({ key, family, model, modelUsed }) => ({ key, family, model, ...(modelUsed && { modelUsed }) })) }),
     dir,
   })
-  if (!EVAL_MODE) {
-    startShadows({ reviewId, diff, head: reviewedHead, baseSha })
-    startPickShadows({ reviewId, diff, stats })
-  }
   const counts = ['high', 'medium', 'low']
     .map((s) => `${allFindings.filter((f) => f.severity === s).length} ${s}`)
     .join(', ')
