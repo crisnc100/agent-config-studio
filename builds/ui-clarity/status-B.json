@@ -1,0 +1,3 @@
+{"f1":{"status":"fixed","test":"tests/packs-workflow.mjs — second-opinion Its take shows the advisor and its second opinion plus the reviewer pool"},
+ "f2":{"status":"fixed","test":"tests/packs-workflow.mjs — the card's unset line links #models&role=<name>; Models opens that role's editor"},
+ "f3":{"status":"fixed","test":"tests/packs-workflow.mjs — Packs re-reads roles after an install that sets roles"}}
