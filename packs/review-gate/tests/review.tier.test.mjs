@@ -343,7 +343,7 @@ test('6 sliced closes summarize the worst tier; a legacy slice among tiered ones
 test('8 the skills describe the tier and the policy keys; the example config carries the merge block', () => {
   const pack = join(dirname(SCRIPT), '..')
   for (const harness of ['claude', 'codex']) {
-    const text = readFileSync(join(pack, 'skills', harness, 'code-review', 'SKILL.md'), 'utf8')
+    const text = ['SKILL.md', 'reference.md'].map((f) => join(pack, 'skills', harness, 'code-review', f)).filter(existsSync).map((p) => readFileSync(p, 'utf8')).join('\n')
     for (const phrase of ['Merge tier', 'merge.policy', 'merge.classifier', 'merge.threshold', 'merge.alwaysHuman'])
       assert.ok(text.includes(phrase), `${harness}: ${phrase}`)
   }

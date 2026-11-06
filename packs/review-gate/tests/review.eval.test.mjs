@@ -110,10 +110,6 @@ function treeHash(dir) {
   walk(dir)
   return h.digest('hex')
 }
-const find = (dir, name) => {
-  if (!existsSync(dir)) return []
-  return readdirSync(dir, { recursive: true }).filter((p) => String(p).split('/').at(-1) === name)
-}
 
 // A repo the way --eval builds one: inside a review-eval- folder of the temp folder, main plus a branch commit.
 function evalRoot(files = { 'src/app.js': 'export const one = 1\n' }) {
@@ -218,10 +214,10 @@ test('2 two families: two rows, two eval-log records with case results, and each
   assert.deepEqual(readdirSync(TMP).filter((d) => d.startsWith('review-eval-')), [])
 })
 
-test('3 the operator\'s log, shadow log, reviews/ and repo .git are untouched; planted shadow, security, verify and verifyCmd never fire', () => {
+test('3 the operator\'s log, reviews/ and repo .git are untouched; planted security, verify and verifyCmd never fire', () => {
   examples()
   const mark = join(MARKS, 'verify')
-  homeConfig({ shadow: 'opus', pickShadow: ['opus'], security: { run: 'required' }, verify: 'second-opinion', verifyCmd: `echo ran >> ${mark}` })
+  homeConfig({ security: { run: 'required' }, verify: 'second-opinion', verifyCmd: `echo ran >> ${mark}` })
   writeFileSync(LOG, `${JSON.stringify({ type: 'review', id: 'old', family: 'sol' })}\n`)
   // An origin with no origin/HEAD: a base auto-detect would write refs/remotes/origin/HEAD with set-head.
   const remote = join(ROOT, 'remote.git')
@@ -232,14 +228,12 @@ test('3 the operator\'s log, shadow log, reviews/ and repo .git are untouched; p
   rmSync(join(OPERATOR, '.git/refs/remotes/origin/HEAD'), { force: true })
   const logBefore = readFileSync(LOG), gitBefore = treeHash(join(OPERATOR, '.git'))
   const r = evalRun(['--family', 'sol'], {
-    REVIEW_SECURITY: 'always', REVIEW_SHADOW: 'opus', REVIEW_PICK_SHADOW: 'opus', REVIEW_VERIFY: 'second-opinion', REVIEW_VERIFY_CMD: `echo env >> ${mark}`,
+    REVIEW_SECURITY: 'always', REVIEW_VERIFY: 'second-opinion', REVIEW_VERIFY_CMD: `echo env >> ${mark}`,
     STUB_REPLIES: JSON.stringify([{ intent: 'last(items, n)', reply: findings(BUG_HIT) }, { intent: 'farewell(name)', reply: findings(finding({ file: 'src/greet.js', line: '2', quote: FAREWELL })) }]),
   })
   assert.equal(r.status, 0, r.out)
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500) // a detached shadow would have started by now
-  assert.deepEqual(calls().map((c) => c.kind), ['code', 'code'], 'one code call per case: no security, verdict, shadow or picker call')
+  assert.deepEqual(calls().map((c) => c.kind), ['code', 'code'], 'one code call per case: no security or verdict call')
   assert.equal(existsSync(mark), false, 'verifyCmd never ran')
-  assert.deepEqual(find(ROOT, 'shadow-log.jsonl'), [], 'no shadow log anywhere')
   assert.deepEqual(readFileSync(LOG), logBefore, 'the review log is byte-identical')
   assert.equal(existsSync(join(OPERATOR, 'reviews')), false)
   assert.equal(treeHash(join(OPERATOR, '.git')), gitBefore, 'the operator repo .git is byte-identical (no set-head)')
@@ -250,7 +244,7 @@ test('3 the operator\'s log, shadow log, reviews/ and repo .git are untouched; p
 
 test('3 control: the same planted config does fire on an ordinary review (the isolation test cannot pass vacuously)', () => {
   const mark = join(MARKS, 'verify')
-  homeConfig({ shadow: 'opus', security: { run: 'required' }, verify: 'second-opinion', verifyCmd: `echo ran >> ${mark}` })
+  homeConfig({ security: { run: 'required' }, verify: 'second-opinion', verifyCmd: `echo ran >> ${mark}` })
   git(OPERATOR, 'checkout', '-qb', 'feat')
   mkdirSync(join(OPERATOR, 'src'))
   writeFileSync(join(OPERATOR, 'src/app.js'), 'export const one = 1\n')
@@ -266,11 +260,11 @@ test('3 control: the same planted config does fire on an ordinary review (the is
   assert.equal(lines(LOG).filter((e) => e.type === 'review').length, 1)
 })
 
-test('3 eval mode in the child: no security, verify, second opinion or shadow even when asked, and the record lands only in the eval log dir', () => {
+test('3 eval mode in the child: no security, verify or second opinion even when asked, and the record lands only in the eval log dir', () => {
   const mark = join(MARKS, 'verify'), box = evalRoot(), evalDir = box.logDir
-  homeConfig({ shadow: 'opus', pickShadow: ['opus'], security: { run: 'required' }, verify: 'second-opinion', verifyCmd: `echo ran >> ${mark}` })
+  homeConfig({ security: { run: 'required' }, verify: 'second-opinion', verifyCmd: `echo ran >> ${mark}` })
   const r = script([], { cwd: box.repo, ...evalEnv(box, { REVIEW_SECURITY: 'always',
-    REVIEW_SHADOW: 'opus', REVIEW_VERIFY: 'second-opinion', REVIEW_VERIFY_CMD: `echo env >> ${mark}`,
+    REVIEW_VERIFY: 'second-opinion', REVIEW_VERIFY_CMD: `echo env >> ${mark}`,
     STUB_FINDINGS: JSON.stringify(findings(finding({ file: 'src/app.js', line: '1', quote: 'export const one = 1' }))) }) })
   assert.equal(r.status, 0, r.out)
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500)
@@ -280,7 +274,6 @@ test('3 eval mode in the child: no security, verify, second opinion or shadow ev
   const [record] = lines(join(evalDir, 'review-log.jsonl'))
   assert.equal(record.type, 'review'); assert.equal(record.security.status, 'off')
   assert.equal(Object.hasOwn(record, 'secondOpinion'), false)
-  assert.deepEqual(find(ROOT, 'shadow-log.jsonl'), [])
 })
 
 test('3 --gate, --close, --summary and the other log commands refuse in eval mode; the log-dir override needs the marker', () => {
@@ -451,7 +444,7 @@ test('the examples ship: listed in pack.json, valid cases, and both skill twins 
   for (const file of readdirSync(EXAMPLES, { recursive: true }).filter((p) => statSync(join(EXAMPLES, p)).isFile()))
     assert.ok(listed.includes(`packs/review-gate/runtime/eval/examples/${file}`), file)
   for (const harness of ['claude', 'codex']) {
-    const body = readFileSync(join(PACK, 'skills', harness, 'code-review', 'SKILL.md'), 'utf8')
+    const body = ['SKILL.md', 'reference.md'].map((f) => join(PACK, 'skills', harness, 'code-review', f)).filter(existsSync).map((p) => readFileSync(p, 'utf8')).join('\n')
     assert.match(body, /--eval/, harness)
     assert.match(body, /eval-log\.jsonl/, harness)
   }

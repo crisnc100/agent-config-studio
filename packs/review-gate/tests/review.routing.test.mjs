@@ -1,18 +1,18 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-// Reviewer routing by diff size, shadow reviewers, and --shadow-report. Stub CLIs (each records its calls, and can
+// Reviewer routing by diff size and grok runs. Stub CLIs (each records its calls, and can
 // sleep or fail on request), a temporary HOME and Git config, and the push gate through the installed hook.
 const SOURCE = join(dirname(fileURLToPath(import.meta.url)), '..', 'runtime')
 const ROOT = mkdtempSync(join(tmpdir(), 'review-routing-test-'))
 const HOME = join(ROOT, 'home'), REPO = join(ROOT, 'repo'), REMOTE = join(ROOT, 'remote.git')
 const SKILL = join(HOME, '.agent-config-studio/review-gate'), SCRIPT = join(SKILL, 'review.mjs')
-const LOGS = join(HOME, '.agent-config-studio/review-log'), LOG = join(LOGS, 'review-log.jsonl'), SHADOW = join(LOGS, 'shadow-log.jsonl')
+const LOGS = join(HOME, '.agent-config-studio/review-log'), LOG = join(LOGS, 'review-log.jsonl')
 const BIN = join(ROOT, 'bin'), CALLS = join(ROOT, 'calls'), CONF = join(ROOT, 'config.json')
 mkdirSync(BIN)
 const stub = (name, body) => {
@@ -74,11 +74,6 @@ const allowed = (r) => assert.equal(r.status, 0, r.out)
 const show = (extra = {}) => { const r = script(['--show-config'], extra); allowed(r); return JSON.parse(r.stdout) }
 const records = (file = LOG) => existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : []
 const calls = (name) => readdirSync(CALLS).filter((f) => f.startsWith(`${name}-`) && !f.startsWith('grok-inspect'))
-async function shadowRecords(count, ms = 15000) {
-  for (const until = Date.now() + ms; Date.now() < until; await new Promise((r) => setTimeout(r, 50)))
-    if (records(SHADOW).length >= count) return records(SHADOW)
-  throw new Error(`no ${count} shadow record(s) within ${ms} ms: ${JSON.stringify(records(SHADOW))}`)
-}
 
 beforeEach(() => {
   for (const path of [HOME, REPO, REMOTE, CALLS, CONF]) rmSync(path, { recursive: true, force: true })
@@ -162,82 +157,6 @@ test('R4 a fix check routes on the fix diff', () => {
   assert.equal(check.kind, 'fix-check'); assert.equal(check.family, 'opus')
 })
 
-test('S1 a shadow runs detached after the real review and never touches its log, close, summary or push', async () => {
-  config({ routing: ROUTING, shadow: ['grok'] })
-  commit({ 'src/a.js': lines(10) })
-  const finding = { issue: 'grok saw this', file: 'src/a.js', line: '3', quote: 'export const x2 = 2', suggestion: 's', likelihood: 5, impact: 5, protected: false, trigger: 't' }
-  const started = Date.now()
-  const r = script([], { STUB_SLEEP_GROK: '2500', STUB_FINDINGS_GROK: JSON.stringify({ findings: [finding] }) })
-  allowed(r)
-  assert.ok(Date.now() - started < 2500, `the real review did not wait for the shadow (${Date.now() - started} ms)`)
-  assert.match(r.stdout, /▶ shadow · grok started in the background for \S+/)
-  const review = records().at(-1)
-  assert.equal(review.family, 'opus')
-  const status = join(ROOT, 'status.json'); writeFileSync(status, '{}')
-  allowed(script(['--close', review.id, '--status', status, '--test-cmd', 'true']))
-  const summary = script(['--summary']); allowed(summary)
-  allowed(run('git', ['push', 'origin', 'HEAD:refs/heads/feat']))
-  assert.deepEqual(records().map((e) => e.type), ['review', 'close'])
-  const [shadow] = await shadowRecords(1)
-  assert.deepEqual([shadow.type, shadow.reviewId, shadow.family, shadow.model, shadow.ok], ['shadow', review.id, 'grok', IDS.grok, true])
-  assert.ok(shadow.durationMs >= 2500, shadow.durationMs)
-  assert.deepEqual(shadow.findings.map((f) => [f.file, f.line, f.issue, f.severity]), [['src/a.js', '3', 'grok saw this', 'medium']])
-  assert.deepEqual(records().map((e) => e.type), ['review', 'close'], 'the shadow wrote nothing to the review log')
-  assert.doesNotMatch(summary.stdout, /grok|shadow/)
-  assert.ok(!readdirSync(join(REPO, 'reviews')).some((d) => d.includes('shadow')))
-})
-
-test('S2 a shadow that fails, is refused or names an unknown family is logged, never raised', async () => {
-  config({ routing: ROUTING, shadow: ['opus', 'grok', 'nosuch'] })
-  commit({ 'src/b.js': lines(300, 'b') })
-  const r = script([], { STUB_FAIL_CLAUDE: '1', STUB_GROK_INSPECT: JSON.stringify({ mcpServers: [{ name: 'jev' }], plugins: [{ name: 'supabase', provides: { mcpServers: 1 } }] }) })
-  allowed(r)
-  assert.equal(records().at(-1).family, 'sol')
-  const byFamily = Object.fromEntries((await shadowRecords(3)).map((s) => [s.family, s]))
-  assert.equal(byFamily.opus.ok, false); assert.match(byFamily.opus.error, /claude review|exited|stub failure/)
-  assert.equal(byFamily.grok.ok, false)
-  assert.match(byFamily.grok.error, /^refused: grok would start MCP servers no flag keeps out of a run \(jev, supabase \(plugin\)\)/)
-  assert.deepEqual(calls('grok'), [], 'a refused grok is never asked to review')
-  assert.equal(byFamily.nosuch.ok, false)
-})
-
-test('S3 a tracked repo config cannot start shadows', () => {
-  rmSync(CONF, { force: true })
-  commit({ '.claude/review-config.json': JSON.stringify({ shadow: ['grok'] }), 'src/a.js': lines(10) })
-  const r = script([], { REVIEW_CONFIG: '' })
-  allowed(r)
-  assert.match(r.out, /Ignoring shadow in \.claude\/review-config\.json/)
-  assert.doesNotMatch(r.out, /▶ shadow/)
-})
-
-test('S4 --shadow-report counts matches, unique and missed findings per family, and their average duration', () => {
-  const real = (id, findingDetails) => ({ type: 'review', kind: 'review', id, head: 'h', family: 'sol', findingDetails })
-  const shadow = (fields) => ({ type: 'shadow', ts: '2026-11-01T12:00:00.000Z', ok: true, findings: [], ...fields })
-  appendFileSync(LOG, [
-    real('r1', [{ file: 'src/a.js', line: '10', quote: 'const x = 1' }, { file: 'src/b.js', line: '3', quote: 'foo()' }]),
-    real('r2', [{ file: 'lib/c.js', line: '7', quote: 'bar' }]),
-  ].map((e) => JSON.stringify(e)).join('\n') + '\n')
-  appendFileSync(SHADOW, [
-    // Same file (b/ prefix dropped) and 3 lines off; a quote match on another file; one that matches nothing.
-    shadow({ reviewId: 'r1', family: 'grok', durationMs: 1000, findings: [
-      { file: 'b/src/a.js', line: '13', quote: 'zzz' }, { file: 'x.js', line: '1', quote: '  foo()  ' }, { file: 'src/a.js', line: '40', quote: 'other' }] }),
-    shadow({ reviewId: 'r2', family: 'grok', durationMs: 3000 }),
-    shadow({ reviewId: 'r1', family: 'grok', ok: false, error: 'refused', durationMs: 5 }),
-    shadow({ reviewId: 'r1', family: 'opus', durationMs: 500, ts: '2026-10-01T00:00:00.000Z', findings: [{ file: 'src/b.js', line: '9', quote: 'q' }] }),
-    shadow({ reviewId: 'gone', family: 'opus', durationMs: 700, ts: '2026-10-02T00:00:00.000Z' }),
-  ].map((e) => JSON.stringify(e)).join('\n') + '\n')
-  const r = script(['--shadow-report']); allowed(r)
-  const out = r.stdout.trim().split('\n')
-  assert.deepEqual(out.slice(1), [
-    'grok: 3 run(s), 1 failed; 3 finding(s): 2 matched, 1 unique; missed 1 of 3 real finding(s); average 2000 ms',
-    'opus: 2 run(s), 0 failed, 1 with no real review in this log; 1 finding(s): 0 matched, 1 unique; missed 2 of 2 real finding(s); average 500 ms',
-  ])
-  const since = script(['--shadow-report', '--since', '2026-10-15']); allowed(since)
-  assert.deepEqual(since.stdout.trim().split('\n').slice(1), ['grok: 3 run(s), 1 failed; 3 finding(s): 2 matched, 1 unique; missed 1 of 3 real finding(s); average 2000 ms'])
-  const bad = script(['--shadow-report', '--since', 'soon'])
-  assert.notEqual(bad.status, 0); assert.match(bad.out, /--since needs a date/)
-})
-
 test('G1 a real grok review refuses, with nothing logged, when grok inspect shows MCP servers or project hooks that would start', () => {
   commit({ 'src/a.js': lines(10) })
   for (const [inspect, why] of [
@@ -262,58 +181,6 @@ test('G1 a real grok review refuses, with nothing logged, when grok inspect show
 })
 
 const callOf = (name) => JSON.parse(readFileSync(join(CALLS, calls(name)[0]), 'utf8'))
-test('F1 a shadow reviews the reviewed commit, not the live checkout, and checks its quotes there', async () => {
-  config({ routing: ROUTING, shadow: ['grok'] })
-  commit({ 'src/a.js': lines(10) })
-  const reviewed = readFileSync(join(REPO, 'src/a.js'), 'utf8')
-  const located = { issue: 'reviewed line', file: 'src/a.js', line: '3', quote: 'export const x2 = 2', suggestion: 's', likelihood: 5, impact: 5, protected: false, trigger: 't' }
-  const made = { ...located, issue: 'made up', line: '1', quote: 'nothing like this' }
-  allowed(script([], { STUB_SLEEP_GROK: '2000', STUB_FINDINGS_GROK: JSON.stringify({ findings: [located, made] }) }))
-  // While the shadow runs, the branch moves on: the reviewed line is gone from the checkout and HEAD.
-  commit({ 'src/a.js': 'rewritten\n' })
-  const [shadow] = await shadowRecords(1)
-  const call = callOf('grok')
-  assert.ok(!call.cwd.startsWith(realpathSync(REPO)) && /review-shadow-snapshot-/.test(call.cwd), `the shadow ran in a snapshot, not the live checkout: ${call.cwd}`)
-  assert.equal(call.seen, reviewed, 'the shadow read the reviewed version of the file')
-  assert.deepEqual(shadow.findings.map((f) => [f.issue, f.status]), [['reviewed line', 'verified-quote'], ['made up', 'unverified-quote']])
-  assert.match(shadow.findings[1].quoteCheck, /quote not found/)
-  assert.ok(!existsSync(call.cwd), 'the snapshot is removed afterwards')
-})
-
-test('F3 a shadow gets the same verify result in its prompt as the real reviewer', async () => {
-  config({ routing: ROUTING, shadow: ['grok'], verifyCmd: 'true' })
-  commit({ 'src/a.js': lines(10) })
-  allowed(script([]))
-  await shadowRecords(1)
-  const real = callOf('claude').prompt, shadow = callOf('grok').prompt
-  assert.match(real, /This repo's verification command `true` PASSED before this review/)
-  assert.match(shadow, /This repo's verification command `true` PASSED before this review/)
-})
-
-test('F4 an invalid shadow entry is a failure record, and the real review still prints its result', async () => {
-  for (const shadow of [['grok', 'Not A Family!'], 42]) {
-    rmSync(SHADOW, { force: true }); rmSync(LOG, { force: true })
-    config({ routing: ROUTING, shadow })
-    git('reset', '-q', '--hard', 'main'); commit({ 'src/a.js': lines(10) })
-    const r = script([])
-    allowed(r)
-    assert.match(r.stdout, /===FINDINGS_JSON===/)
-    assert.equal(records().length, 1)
-    const logged = await shadowRecords(Array.isArray(shadow) ? 2 : 1)
-    const bad = logged.find((e) => e.family !== 'grok')
-    assert.equal(bad.ok, false); assert.match(bad.error, /not a family name/)
-  }
-})
-
-test('F2 --shadow-report leaves findings that failed the quote check out of matched and unique', () => {
-  appendFileSync(LOG, JSON.stringify({ type: 'review', kind: 'review', id: 'r1', head: 'h', family: 'sol', findingDetails: [{ file: 'src/a.js', line: '10', quote: 'const x = 1' }] }) + '\n')
-  appendFileSync(SHADOW, JSON.stringify({ type: 'shadow', ts: '2026-11-01T00:00:00.000Z', reviewId: 'r1', family: 'grok', ok: true, durationMs: 100, findings: [
-    { file: 'src/a.js', line: '11', quote: 'const x = 1', status: 'verified-quote' },
-    { file: 'src/a.js', line: '10', quote: 'const x = 1', status: 'unverified-quote' },
-    { file: 'elsewhere.js', line: '1', quote: 'nope', status: 'unverified-quote' }] }) + '\n')
-  const r = script(['--shadow-report']); allowed(r)
-  assert.equal(r.stdout.trim().split('\n')[1], 'grok: 1 run(s), 0 failed; 1 finding(s): 1 matched, 0 unique, 2 unlocated; missed 0 of 1 real finding(s); average 100 ms')
-})
 
 const inspects = () => readdirSync(CALLS).filter((f) => f.startsWith('grok-inspect')).map((f) => JSON.parse(readFileSync(join(CALLS, f), 'utf8')))
 const jevAt = (where) => ({ STUB_GROK_INSPECT: JSON.stringify({ mcpServers: [{ name: 'jev', source: { type: 'configToml', path: where } }], plugins: [] }) })
@@ -354,17 +221,7 @@ test('G3 a tracked repo config cannot allow a grok MCP server', () => {
   assert.match(r.out, /grok would start MCP servers no flag keeps out of a run \(jev\)/)
 })
 
-test('G4 a grok shadow gets the same temporary HOME and allowlist as a real grok review', async () => {
-  config({ routing: ROUTING, shadow: ['grok'], grokMcpAllow: ['jev'] })
-  commit({ 'src/a.js': lines(10) })
-  allowed(script([], jevAt(join(HOME, '.grok', 'config.toml'))))
-  const [shadow] = await shadowRecords(1)
-  assert.equal(shadow.ok, true, shadow.error)
-  const call = callOf('grok')
-  assert.ok(call.home !== HOME && call.homeEntries === 0 && call.grokHome === join(HOME, '.grok') && !existsSync(call.home), JSON.stringify(call))
-})
-
-test('G5 grok leader mode in any TOML spelling or a macOS managed payload refuses, and a relative GROK_HOME is made absolute', async () => {
+test('G5 grok leader mode in any TOML spelling or a macOS managed payload refuses, and a relative GROK_HOME is made absolute', () => {
   commit({ 'src/a.js': lines(10) })
   const grokHome = join(HOME, '.grok')
   const refusedWith = (why, extra = {}) => {
@@ -394,14 +251,8 @@ test('G5 grok leader mode in any TOML spelling or a macOS managed payload refuse
     rmSync(prefs, { recursive: true })
   }
 
-  // A relative GROK_HOME: the real call and a shadow (which runs in a snapshot clone) both get it made absolute.
+  // A relative GROK_HOME: the real call gets it made absolute.
   rmSync(CALLS, { recursive: true }); mkdirSync(CALLS)
   allowed(script([], { REVIEW_REVIEWER: 'grok', GROK_HOME: 'rel-grok' }))
-  assert.equal(callOf('grok').grokHome, join(realpathSync(REPO), 'rel-grok'))
-  rmSync(CALLS, { recursive: true }); mkdirSync(CALLS)
-  config({ routing: ROUTING, shadow: ['grok'] })
-  allowed(script([], { GROK_HOME: 'rel-grok' }))
-  const [shadow] = await shadowRecords(1)
-  assert.equal(shadow.ok, true, shadow.error)
   assert.equal(callOf('grok').grokHome, join(realpathSync(REPO), 'rel-grok'))
 })

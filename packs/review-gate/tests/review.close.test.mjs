@@ -956,7 +956,7 @@ test('5.3 both skill copies and global instruction files require the deferred PR
   const source = resolve(dirname(SCRIPT), '../..')
   // The instruction block is the one file the instructions part puts into both global instruction files.
   for (const path of ['build/skills/claude/build/SKILL.md', 'build/skills/codex/build/SKILL.md', 'review-gate/skills/claude/code-review/SKILL.md', 'review-gate/skills/codex/code-review/SKILL.md', 'review-gate/instructions/review-gate.md']) {
-    const text = readFileSync(join(source, path), 'utf8')
+    const text = [path, ...(path.includes('/code-review/') ? [path.replace('SKILL.md', 'reference.md')] : [])].map((p) => join(source, p)).filter(existsSync).map((p) => readFileSync(p, 'utf8')).join('\n')
     assert.ok(text.includes('**Deferred findings**'), path)
     assert.ok(text.includes('node <review.mjs> --deferred'), path)
     assert.ok(text.includes('gh pr list --state merged --search "Deferred findings in:body"'), path)
@@ -1106,7 +1106,7 @@ test('6.4 the multi-agent review re-asks only its lead family once', () => {
 test('6.1 Grade and skill JSON contracts describe derived scores without changing phase or pass rules', () => {
   const root = resolve(dirname(SCRIPT), '../..')
   for (const name of ['build/skills/claude/build/SKILL.md', 'build/skills/codex/build/SKILL.md', 'review-gate/skills/claude/code-review/SKILL.md', 'review-gate/skills/codex/code-review/SKILL.md']) {
-    const text = readFileSync(join(root, name), 'utf8')
+    const text = [name, ...(name.includes('/code-review/') ? [name.replace('SKILL.md', 'reference.md')] : [])].map((p) => join(root, p)).filter(existsSync).map((p) => readFileSync(p, 'utf8')).join('\n')
     for (const part of ['likelihood', 'impact', 'protected', 'trigger', 'unscored', 'HIGH first, then MEDIUM', 'calibration.md', '--calibrate']) assert.ok(text.includes(part), `${name}: ${part}`)
     assert.doesNotMatch(text, /Keep the reviewer's severity|picks.*severity/)
     if (name.includes('/code-review/')) {

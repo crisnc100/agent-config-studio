@@ -256,17 +256,6 @@ test('I3 the summary lists a deferred or pre-existing finding\'s other places', 
   assert.deepEqual(section(summary(), 'Pre-existing (not introduced here)'),
     ['f1 MEDIUM 25/100 (likelihood 5/10 × impact 5/10) src/one.js:18 — v18 overflows; Trigger: reading v18; also at src/one.js:19'])
 })
-test('I4 shadow matching counts a grouped finding\'s instances, on either side', () => {
-  const real = { file: 'a.js', line: '10', quote: 'alpha()', issue: 'x', instances: [{ file: 'b.js', line: '5', quote: 'beta()' }] }
-  appendFileSync(LOG, `${JSON.stringify({ type: 'review', kind: 'review', id: 'r-1', findingDetails: [real] })}\n`)
-  const shadow = (findings) => JSON.stringify({ type: 'shadow', reviewId: 'r-1', family: 'grok', ok: true, ts: new Date().toISOString(), durationMs: 10, findings })
-  writeFileSync(join(dirname(LOG), 'shadow-log.jsonl'), [
-    shadow([{ file: 'b.js', line: '7', quote: 'other', status: 'verified-quote' }]),
-    shadow([{ file: 'c.js', line: '1', quote: 'gamma()', status: 'verified-quote', instances: [{ file: 'a.js', line: '12', quote: 'zzz' }] }]),
-  ].join('\n') + '\n')
-  const r = script(['--shadow-report']); allowed(r)
-  assert.match(r.stdout, /^grok: 2 run\(s\), 0 failed; 2 finding\(s\): 2 matched, 0 unique; missed 0 of 2 real finding\(s\); average 10 ms$/m)
-})
 
 // ── 3. response labels and --noise-report ───────────────────────────────────
 test('R1 a fixed status may say real or unimportant; anything else is refused, and the label is logged on the close', () => {
@@ -404,7 +393,7 @@ test('F4 a Grade close under "always": the recheck counts as its check; without 
 test('K1 both code-review skills describe pre-existing, grouped findings, responses and --noise-report, fixCheck, and the one-slice flow for a fix-check HIGH', () => {
   const skills = join(dirname(SCRIPT), '..', 'skills')
   for (const harness of ['claude', 'codex']) {
-    const text = readFileSync(join(skills, harness, 'code-review', 'SKILL.md'), 'utf8')
+    const text = ['SKILL.md', 'reference.md'].map((f) => join(skills, harness, 'code-review', f)).filter(existsSync).map((p) => readFileSync(p, 'utf8')).join('\n')
     const has = (phrase) => assert.ok(text.includes(phrase), `${harness}: ${phrase}`)
     for (const phrase of ['**Pre-existing findings.**', '`preExisting: true`', '`inDiff`', 'Pre-existing (not introduced here)', '"Pre-existing HIGH"',
       'makes the merge tier HIGH', '**Grouped findings.**', '`instances`', 'one status covers them all',

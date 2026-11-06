@@ -246,11 +246,11 @@ test('L1 legacy records without stats, plan or inFix close, summarize and push e
 test('K1 the code-review skills route by the review config, not by a changed-line count', () => {
   const skills = join(dirname(SCRIPT), '..', 'skills')
   for (const harness of ['claude', 'codex']) {
-    const text = readFileSync(join(skills, harness, 'code-review', 'SKILL.md'), 'utf8')
+    const text = ['SKILL.md', 'reference.md'].map((f) => join(skills, harness, 'code-review', f)).filter(existsSync).map((p) => readFileSync(p, 'utf8')).join('\n')
     assert.doesNotMatch(text, />\s*400 changed lines/, harness)
     assert.doesNotMatch(text, /changed lines\)? → \*\*premium/, harness)
   }
-  const claude = readFileSync(join(skills, 'claude', 'code-review', 'SKILL.md'), 'utf8')
+  const claude = ['SKILL.md', 'reference.md'].map((f) => join(skills, 'claude', 'code-review', f)).filter(existsSync).map((p) => readFileSync(p, 'utf8')).join('\n')
   const auto = claude.slice(claude.indexOf('**Auto-routing')).split('\n\n')[0]
   for (const phrase of ['`force` rule', 'risk paths still force the configured family', '`routing`', 'which reviewer ran and why'])
     assert.ok(auto.includes(phrase), `${phrase}\n${auto}`)
