@@ -790,10 +790,12 @@ function renderTopbar() {
       S.entry.harness === 'both' ? 'shared' : S.entry.harness);
     t.appendChild(tag);
     $('title-path').textContent = S.file?.display || S.entry.display;
+    $('title-path').classList.add('is-path');
   } else {
     const v = viewById(S.view) || viewById('home');
     t.textContent = v.title;
     $('title-path').textContent = v.sub;
+    $('title-path').classList.remove('is-path');
     const extra = v.titleExtra?.();
     if (extra) t.appendChild(extra);
   }
@@ -2023,10 +2025,15 @@ function paintSkills() {
   add.onclick = () => { location.hash = '#skills/new'; };
   head.appendChild(add);
   box.appendChild(head);
-  box.appendChild(moreDetails(`${plural(SK.rows.length, 'skill')} across your CLIs and every project. Identical copies are collapsed into one row.`,
-    'Pick any set and download it — one skill saves as a readable .md, several as a .zip.'));
-
-  box.appendChild(usageCaveatBanner());
+  // The usage caveat is fine print: inside the fold. Each row still says "unknown, not unused" with its own number.
+  const fold = moreDetails(`${plural(SK.rows.length, 'skill')} across your CLIs and every project. Identical copies are collapsed into one row.`,
+    'Pick any set and download it — one skill saves as a readable .md, several as a .zip.');
+  if (SK.usage?.caveat?.text) fold.appendChild(el('p', 'sk-caveat', SK.usage.caveat.text));
+  box.appendChild(fold);
+  // An error reading usage is not fine print: it stays in view.
+  if (SK.usage?.available === false) {
+    box.appendChild(el('div', 'notice warn sk-usage-error', `Usage could not be read (${SK.usage.reason || 'unknown error'}), so no row below carries a count.`));
+  }
   const bar = selectionBar();
   box.appendChild(bar);
 
@@ -2047,23 +2054,6 @@ function paintSkills() {
 
   c.appendChild(box);
   syncSkillSelectionUI();
-}
-
-/**
- * The caveat, in the panel body.
- *
- * It ships as a field on the payload precisely so the UI cannot quietly drop
- * it; putting it in a tooltip would be dropping it. If the usage read failed
- * outright, say that instead — an absent signal is not a zero.
- */
-function usageCaveatBanner() {
-  const n = el('div', 'notice warn sk-caveat');
-  if (SK.usage?.available === false) {
-    n.appendChild(el('div', null,
-      `Usage could not be read (${SK.usage.reason || 'unknown error'}), so no row below carries a count.`));
-  }
-  n.appendChild(el('div', null, SK.usage?.caveat?.text || ''));
-  return n;
 }
 
 function selectionBar() {
