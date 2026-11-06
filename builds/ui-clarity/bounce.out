@@ -1,0 +1,40 @@
+**Verdict:** the plan is directionally right but four of its load-bearing claims are false against the code, and three of its nine acceptance criteria cannot be checked by the test harness it names. A build that follows it literally would ship diagrams the server never serves, break roughly 40 pinned assertions across 8 test files without having budgeted the test-change commits, and pass criteria 2-4 without anyone having measured them.
+
+## PR split
+
+- **A and B do not touch different files.** A3 rewrites the Packs card and B3 puts the diagram on that same card (`public/packs-view.js:205-320`). A1 renames the Models "Jobs" heading and B3 adds "Used by" to the same role rows (`public/app.js:4573-4644`). Both touch `styles.css`. The parallel-worktree option should be struck, and B4's "B uses the new names if it merges first" would leave two naming regimes on one page.
+- **A is not "copy + CSS".** Instruction files are labelled `memory` server-side (`lib/registry.js:402-469`, and fixtures pin `kindLabel: 'memory'`). "both harnesses" and "new harness detected" are server strings (`lib/registry.js:422`, `lib/packs.js:1032`). A5's CLI contradiction is two different detectors: Packs uses a PATH-only lookup plus "home folder exists" (`lib/packs.js:96-106`), Home and Setup use the version-probing scanner in `lib/setup-clis.js`. Copy cannot reconcile them.
+- **B needs a server change the plan omits.** The catalog route whitelists pack fields and would drop `workflow` on the floor (`lib/packs-routes.js:41-45`). Criterion 5 fails on a build that only edits `public/`.
+- **Trash vs Delete is bigger than it looks.** Batch delete moves files to the studio trash (`lib/batch-delete.js:6-27`), so A1 demands it be called "Trash". That label is pinned about 25 times in `tests/batch-delete-ui.mjs` plus the confirm text "Delete 12 files?". Under the working agreement every existing-test change needs its own commit and other-vendor review; the plan budgets none.
+
+## Live role resolution and workflow data
+
+- **Feasible, but Packs has no roles today.** The roles route already returns members with family and effort, ids, and an `unset` flag (`lib/roles-panel.js:349-370`). But that state lives in app.js and loads only when Models opens (`public/app.js:4228`); `packs-view.js` fetches only `/api/packs*`. The plan must say who fetches roles for the diagram.
+- **"Updates without a reload" is tab-local only.** `roles.json` is not watched (`lib/watch.js:58-79`) and the event stream carries only `roots` and `files` (`public/app.js:1224-1226`). A `--set-role` from the CLI or a second tab leaves the diagram stale. Criterion 5 should say which case it means.
+- **One model per step misrepresents the pools.** The reviewer role is an unranked pool with size-based routing (`review.mjs:417, 1245`); showing "reviewer → Opus · xhigh" states a preference as a fact. Build's Grade swaps to the advisor's second opinion when the judge shares the builder's vendor (build SKILL.md, "Grader swap"), so a static "judge, other vendor" label is wrong in that case and needs a vendor comparison on the ids.
+- **The security pass is config, not a part.** It is `security: off|required|always` in the review config (`review.mjs:234`); the server reads that file only for `codexHomes` (`lib/packs.js:131-140`) and no route exposes it. "Optional steps shown only when that setting is on" needs a new read and route for this step. The `security` role also exists in `lib/roles.default.json` but PRODUCT.md lists five roles without it.
+- **Part-to-step mapping is undefined.** Of review-gate's five optional parts only push-gate maps to a named step. Criterion 5's "turning off an optional part dims its step" cannot be tested until the plan states the mapping.
+- **Variants are per-run, not settings.** premium and both are env overrides (SKILL.md:124-136), so tabs are fine but "off/dimmed" does not apply to them.
+- **Drift has no guard.** Each pack ships two SKILL.md copies that already differ heavily (147 diff lines for review-gate, 219 for build), and `validatePack` checks only `explain` (`lib/packs.js:57-72`). Criterion 7's "data shape" test will not catch a workflow that names a role the skill no longer uses. A step-role cross-check against both SKILL.md files is cheap and missing.
+- **Version decision missing.** Adding `workflow` without a version bump is silent; bumping it marks all 8 installed packs "update available" (`lib/packs.js:1064`). Pick one explicitly.
+
+## Renaming risk and automatability
+
+Tests that pin strings the plan changes:
+
+| String | Where pinned |
+|---|---|
+| Jobs | `tests/roles-ui.mjs:85`, `tests/models-layout-ui.mjs:86,115,186`, `tests/model-guide-ui.mjs:89` |
+| Configure group | `tests/shell.mjs:7,46` (Files and Skills must share a group; C1 splits them), `tests/packs-ui.mjs:60` |
+| memory files | `tests/home.mjs:116,336`, `tests/batch-delete-ui.mjs:287` |
+| Needs attention items | `tests/home.mjs:330-345` expects all 10 items rendered and clickable; C2's top-3 breaks it |
+| per-part explain | `tests/packs-ui.mjs:66` pins a `details` per part; A3 hides part detail |
+
+- **Criterion 1 cannot be a plain string sweep.** Home's "3 memory files missing" refers to auto-memory facts (`public/home.js:49`), which A1 allows. The sweep needs a per-view allowlist or it passes nothing or everything.
+- **"Used by" collides with itself.** Models already shows "Used by N jobs" per family card (`public/app.js:4943-4955`); B3 adds a second "Used by" with a different meaning on role rows. That breaks A1's own rule.
+- **Criteria 2-4 are not automatable here.** Every UI test runs in `tests/fixtures/fake-dom.mjs`, whose header says "no layout, no CSS, no real focus rules" and whose `getComputedStyle` returns an empty object (line 388). No test drives Chrome. Contrast over every view, visible focus change, and 390px overflow all need a browser; the only honest wording is "checked by qa-tester in Chrome" plus a static CSS guard.
+- **Criterion 3's static test passes today.** Of 13 `outline: none` rules, most pair with a `:focus { border-color }` replacement (`styles.css:147,496,528,740,923`), so "no outline none without a replacement" is already true while the evidence pass says four selects show no focus. The real bar is the replacement's visibility, which only a browser can judge. `.setup-step h3:focus` (line 1197) is a legitimate programmatic target the sweep would flag.
+- **Font floor evidence is wrong.** The smallest declared size is 9px (`styles.css:133`), not 10px. A static ≥11px check over `styles.css` is doable but misses sizes set from JS.
+- **"no model is called" is inaccurate for pr.** The session agent writing the description is a model. Say "no extra model is called".
+
+Smaller items: flag, handoff and worktree get one- or two-step diagrams that add words against principle 2; a 600px stack breakpoint adds a fifth to the existing 520/700/900/1100 set; the plan should list the test files it will change up front, since each needs its own reviewed commit.

@@ -7,7 +7,7 @@
     "what": "The build skill is a way of running a real change with checks built in. You state the outcome and approve how it will be checked (the bar). A model from your builder role implements it in phases; a model from your advisor role attacks the plan first, and one from your judge role grades the finished work against the bar.",
     "does": "Day to day you say /build and describe what you want. The skill writes context.md and plan.md in a builds/ folder, asks you to approve the acceptance criteria, has the builder work phase by phase against your tests, records the Grade with the review gate's script, and brings you the result to judge. The Bounce and the Grade ask their models through ask-model, read-only, which checks that the model asked for is the one that answered (where its CLI reports one); ask-model comes with model-id (acs install-model-id), and the pack will not install until both are on your PATH. Small tasks run in a lighter mode with one builder call and a code review.",
     "changes": [
-      "~/.claude/skills/build/ and ~/.codex/skills/build/ (the skill, for the harnesses you have)",
+      "~/.claude/skills/build/ and ~/.codex/skills/build/ (the skill, for the CLIs you have)",
       "~/.agent-config-studio/roles.json, only for the reviewer, advisor and judge roles you choose at install if not set yet (no model is set for you; kept after uninstall)"
     ],
     "undo": "Uninstalling removes the skill folders. A file you edited after installing is kept and reported. The builds/ folders in your projects are yours and are never touched."

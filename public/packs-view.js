@@ -85,9 +85,8 @@ function paintPacks() {
   const c = $('content');
   c.innerHTML = '';
   const box = el('div', 'scope pk');
-  box.appendChild(el('h2', null, 'Skill packs'));
-  box.appendChild(el('div', 'scope-sub', 'Ready-made skills, and for some packs the scripts and settings they need. Each pack says what it is, what it '
-    + 'changes and how to undo it. Nothing is written until you preview a change and press the button under that preview.'));
+  box.appendChild(pageHeading('Skill packs'));
+  box.appendChild(el('div', 'scope-sub', 'Ready-made skills and the settings they need — nothing is written until you preview a change and confirm it.'));
   if (PK.error) {
     const n = el('div', 'notice error pk-error');
     n.setAttribute('role', 'alert');
@@ -106,6 +105,8 @@ function paintPacks() {
   status.id = 'pk-status';
   box.appendChild(status);
   box.appendChild(pkHere());
+  const todo = pkTodo();
+  if (todo) box.appendChild(todo);
   for (const pack of PK.data.packs) box.appendChild(pkCardView(pack));
   c.appendChild(box);
   pkPaintStatus();
@@ -133,8 +134,9 @@ function pkPaintStatus() {
     line.appendChild(again);
   }
   s.appendChild(line);
-  const trust = pkCheck('Include the Codex trust check (it starts codex app-server once per Codex home; slower)', PK.trust, (v) => { PK.trust = v; });
+  const trust = pkCheck('Include the Codex trust check (slower: it starts Codex once per settings folder)', PK.trust, (v) => { PK.trust = v; });
   trust.querySelector('input').disabled = !!PK.job;
+  if (PK.job) trust.title = 'Wait for the status check to finish';
   s.appendChild(trust);
   if (PK.job?.progress?.length > 1) {
     const ul = el('ul', 'pk-progress');
@@ -149,17 +151,42 @@ function pkPaintStatus() {
   }
 }
 
-/** Which harnesses this machine has, the way the installer decides it. */
+/** Each CLI as Home and Setup see it; where the installer's view differs, the one sentence that says how. */
 function pkHere() {
   const row = el('div', 'pk-here');
   row.appendChild(el('span', 'pk-here-title', 'On this machine:'));
   for (const h of PK.data.harnesses) {
-    const chip = el('span', `pk-harness ${h.present ? 'on' : 'off'}`, `${h.present ? '✓' : '—'} ${h.label}`);
-    chip.title = h.present ? `${h.cli ? 'CLI on PATH' : 'no CLI on PATH'}; ${h.home}` : h.why;
+    const on = h.installed ?? h.present;
+    const chip = el('span', `pk-harness ${on ? 'on' : 'off'}`, `${on ? '✓' : '—'} ${h.label}`);
     row.appendChild(chip);
-    if (!h.present) row.appendChild(el('span', 'pk-harness-why', h.why));
+    const note = h.present ? h.note : h.why;
+    if (note) row.appendChild(el('span', 'pk-harness-why', note));
   }
   return row;
+}
+
+/** What a pack is still missing, in one line for its card; deps name the pack. */
+const pkMissing = (pack) => pack.requirements.filter((r) => !r.ok);
+const PK_NEED_SHORT = { node: 'a newer Node.js', git: 'git', 'model-id': 'model-id', 'ask-model': 'ask-model', roles: 'valid ACS roles', cli: 'an agent CLI on the PATH' };
+const pkNeedText = (r) => (r.dep ? `the ${pkPack(r.dep)?.title || r.dep} pack first` : PK_NEED_SHORT[r.id] || r.what);
+
+/** The needs every pack shares, checked once at the top: "To use packs: do these 2 things". */
+function pkTodo() {
+  const seen = new Map();
+  for (const pack of PK.data.packs) for (const r of pkMissing(pack)) if (!r.dep && !seen.has(r.id)) seen.set(r.id, r);
+  if (!seen.size) return null;
+  const box = el('div', 'pk-todo');
+  box.setAttribute('role', 'region');
+  box.setAttribute('aria-label', 'What packs need');
+  box.appendChild(el('div', 'pk-todo-title', seen.size === 1 ? 'To use packs: do this one thing' : `To use packs: do these ${seen.size} things`));
+  const ol = el('ol', 'pk-todo-list');
+  for (const r of seen.values()) {
+    const li = el('li', null, r.what);
+    li.appendChild(el('div', 'pk-fix', `Fix: ${r.fix}`));
+    ol.appendChild(li);
+  }
+  box.appendChild(ol);
+  return box;
 }
 
 /** Children with a space between them, so the text reads (and copies) as words, not run together. */
@@ -181,8 +208,8 @@ function pkCheck(label, checked, onchange, { disabled = false, title = null } = 
   return l;
 }
 
-/** What it is, day to day, what it changes, how to undo it — the CLI's explain, in the same words. */
-function pkExplain(e, summary) {
+/** What it is, day to day, what it changes, how to undo it — the CLI's explain, in the same words; a pack's adds what it needs. */
+function pkExplain(e, summary, reqs = null) {
   const d = el('details', 'pk-explain');
   d.appendChild(el('summary', null, summary));
   const dl = el('div', 'pk-explain-body');
@@ -194,9 +221,23 @@ function pkExplain(e, summary) {
   for (const ch of e.changes) ul.appendChild(el('li', null, ch));
   dl.appendChild(ul);
   field('How to undo it', e.undo);
+  if (reqs?.length) {
+    dl.appendChild(el('strong', null, 'What it needs:'));
+    const ul = el('ul', 'pk-reqs');
+    for (const r of reqs) {
+      const li = el('li', r.ok ? 'ok' : 'missing', `${r.ok ? '✓' : '✖'} ${r.what}`);
+      if (!r.ok) li.appendChild(el('span', 'pk-fix', ` — fix: ${r.fix}`));
+      ul.appendChild(li);
+    }
+    dl.appendChild(ul);
+  }
   d.appendChild(dl);
   return d;
 }
+
+/** A part in plain words: the first sentence of what it is. */
+const pkPlain = (text) => (/^[\s\S]*?[.!?](?=\s|$)/.exec(String(text || '').trim())?.[0] || String(text || '').trim());
+const pkCliNames = (ids) => ids.map((h) => pkHarness(h)?.label || h).join(' and ');
 
 const pkStatusOf = (pack, partId) => PK.status?.packs.find((p) => p.id === pack.id)?.parts.find((x) => x.id === partId) || null;
 /** A status word's kind (installed, edited, update, broken, newHarness, absent), for its colour. */
@@ -208,25 +249,18 @@ function pkCardView(pack) {
   sec.dataset.pack = pack.id;
   const head = el('div', 'pk-head');
   head.appendChild(el('h3', null, pack.title));
-  head.appendChild(el('span', 'chip-mini', `${pack.id} ${pack.version}`));
   const inst = pack.installed;
   head.appendChild(el('span', `pk-badge ${inst ? 'installed' : 'absent'}`, inst
-    ? `installed ${inst.version}${inst.version !== pack.version ? ` (package has ${pack.version})` : ''}`
+    ? `installed ${inst.version}${inst.version !== pack.version ? ` (version ${pack.version} is available)` : ''}`
     : 'not installed'));
+  // Ready, or the one thing it still needs (the full list is in the explain).
+  const missing = pkMissing(pack);
+  head.appendChild(missing.length
+    ? el('span', 'pk-ready missing', `Needs ${pkNeedText(missing[0])}${missing.length > 1 ? ` (+${missing.length - 1} more)` : ''}`)
+    : el('span', 'pk-ready ok', '✓ Ready'));
   sec.appendChild(head);
   sec.appendChild(el('p', 'pk-summary', pack.summary));
-  sec.appendChild(pkExplain(pack.explain, 'What it is, what it changes, how to undo it'));
-
-  const reqs = el('ul', 'pk-reqs');
-  for (const r of pack.requirements) {
-    const li = el('li', r.ok ? 'ok' : 'missing', `${r.ok ? '✓' : '✖'} ${r.what}`);
-    if (!r.ok) li.appendChild(el('span', 'pk-fix', ` — fix: ${r.fix}`));
-    reqs.appendChild(li);
-  }
-  if (pack.requirements.length) {
-    sec.appendChild(el('div', 'pk-label', 'Needs'));
-    sec.appendChild(reqs);
-  }
+  sec.appendChild(pkExplain(pack.explain, 'What it is, what it changes, what it needs, how to undo it', pack.requirements));
   const busy = !!card.busy;
   for (const r of pack.requirements.filter((x) => x.dep && !x.ok)) {
     const dep = pkPack(r.dep);
@@ -248,12 +282,13 @@ function pkCardView(pack) {
       const usable = pkUsable(id);
       const on = usable && (card.harnesses ? card.harnesses.has(id) : true);
       const label = `${h?.label || id}${id === 'claude' && !h?.present && usable ? ' skills folder (for Grok, which reads it)' : ''} (${h?.home || ''})`;
+      const why = busy ? 'Wait for the current preview or install to finish' : usable ? null : `${h?.label || id}: ${h?.why}`;
       row.appendChild(pkCheck(label, on, (v) => {
         const now = new Set(card.harnesses || hs.filter(pkUsable));
         if (v) now.add(id); else now.delete(id);
         card.harnesses = hs.filter(pkUsable).every((x) => now.has(x)) ? null : now;
         pkDrop(card); paintPacks();
-      }, { disabled: !usable || busy, title: usable ? null : h?.why }));
+      }, { disabled: !usable || busy, title: why }));
       if (!usable && h?.why) row.appendChild(el('span', 'pk-harness-why', `${h.label}: ${h.why}`));
     }
     sec.appendChild(row);
@@ -262,13 +297,18 @@ function pkCardView(pack) {
   const actions = el('div', 'pk-actions');
   const picked = [...card.parts];
   const harnessesOk = !card.harnesses || card.harnesses.size > 0;
-  const why = !picked.length ? 'Pick at least one part to install.' : !harnessesOk ? 'Pick at least one harness.' : null;
-  const prev = pkBtn('', `Preview install${picked.length ? ` (${picked.length} part${picked.length === 1 ? '' : 's'})` : ''}`, () => pkPreview(pack, 'install'), busy || !!why);
-  if (why) prev.title = why;
+  const why = !picked.length ? 'Pick at least one part to install.' : !harnessesOk ? 'Pick at least one CLI to install for.' : null;
+  const prev = pkBtn('', `Preview install${picked.length ? ` (${plural(picked.length, 'part')})` : ''}`, () => pkPreview(pack, 'install'), busy || !!why);
   actions.appendChild(prev);
   if (inst) {
     actions.appendChild(pkBtn('', 'Preview update', () => pkPreview(pack, 'update'), busy));
     actions.appendChild(pkBtn('danger', 'Preview uninstall', () => pkPreview(pack, 'uninstall'), busy));
+  }
+  // A disabled button says why, beside it — not only in a tooltip.
+  const blocked = why || (busy && card.busy !== 'plan' ? 'Working — wait for it to finish.' : null);
+  if (blocked) {
+    for (const b of actions.querySelectorAll('button')) if (b.disabled) b.title = blocked;
+    actions.appendChild(el('span', 'pk-why', blocked));
   }
   if (card.busy === 'plan') { const s = el('span', 'pk-busy'); s.appendChild(el('span', 'spinner')); s.appendChild(el('span', null, ' Working out what would change…')); actions.appendChild(s); }
   sec.appendChild(actions);
@@ -294,7 +334,7 @@ function pkPartView(pack, part, card) {
     pkDrop(card); paintPacks();
   }, { disabled: !!card.busy }));
   top.appendChild(document.createTextNode(' '));
-  top.appendChild(el('span', 'pk-part-meta', `${part.id} · ${part.kind}${part.harnesses.length ? ` · ${part.harnesses.join(', ')}` : ''} · ${part.default ? 'on by default' : 'off unless you pick it'}`));
+  top.appendChild(el('span', 'pk-part-meta', `${part.harnesses.length ? `For ${pkCliNames(part.harnesses)} · ` : ''}${part.default ? 'on by default' : 'off unless you pick it'}`));
   const st = pkStatusOf(pack, part.id);
   const statuses = st?.statuses || [pkInstalled(pack, part.id) ? PK.data.words.status.installed : PK.data.words.status.absent];
   const badges = el('span', 'pk-badges');
@@ -303,6 +343,7 @@ function pkPartView(pack, part, card) {
   top.appendChild(document.createTextNode(' '));
   top.appendChild(badges);
   row.appendChild(top);
+  row.appendChild(el('div', 'pk-part-what', pkPlain(part.explain?.what)));
   const lines = [...Object.entries(st?.harness || {}).map(([h, s]) => `${h}: ${s}`), ...(st?.details || [])];
   if (lines.length) {
     const ul = el('ul', 'pk-details');

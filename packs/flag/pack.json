@@ -7,7 +7,7 @@
     "what": "The flag skill captures problems with how your agents work, not with your code: a skill or rule that says the wrong thing, two rules that contradict, a gate asking you to do something by hand, a tool refusing on purpose, an instruction misread, a model choice that went badly. Each one becomes a small JSON report with what happened, what should have, the rule in force (quoted), the tool calls that show it (references to the session transcript lines, with each line's hash, never copies of their text) and the agent's own read.",
     "does": "Day to day you say 'flag this' or /flag, and agents also file a report on their own when they notice such a problem, telling you in one line without stopping the work. Every string the agent writes is redacted before it is stored: API keys and tokens, JWTs, private keys, Bearer values, URL passwords and the values of names holding KEY, TOKEN, SECRET or PASSWORD. Credential files are never read. Showing a report reads its transcript lines then, redacted, and writes nothing. /flag review lists the reports, groups them by cause and proposes concrete rule or skill changes with the report ids as evidence; it never edits a rule itself. It runs no model, so it needs no model-id or ask-model.",
     "changes": [
-      "~/.claude/skills/flag/ and ~/.codex/skills/flag/ (the skill and its helper, flag.mjs, for the harnesses you have)",
+      "~/.claude/skills/flag/ and ~/.codex/skills/flag/ (the skill and its helper, flag.mjs, for the CLIs you have)",
       "~/.agent-config-studio/field-reports/ (created by the first report; one file per report, readable only by you)",
       "anything an optional part lists, only if you turn that part on"
     ],

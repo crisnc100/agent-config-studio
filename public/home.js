@@ -47,7 +47,7 @@ function memoryItems(d) {
     [f.emptySlugs, (n) => `${plural(n, 'empty project folder')} to clear`],
     [f.dangling, (n) => `${plural(n, 'index link')} to a missing file`],
     [f.unindexed, (n) => `${plural(n, 'memory file')} missing from ${n === 1 ? 'its' : 'their'} index`],
-    [f.oversized, (n) => `${plural(n, 'memory index', 'memory indexes')} over the length the harness reads`],
+    [f.oversized, (n) => `${plural(n, 'memory index', 'memory indexes')} over the length Claude Code reads`],
   ];
   return kinds.filter(([list]) => list?.length).map(([list, text]) => ({
     source: 'memory', kind: 'warn', text: text(list.length), action: { view: 'memory', label: 'Clean up', tab: 'cleanups' },

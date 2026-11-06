@@ -7,7 +7,7 @@
     "what": "The second-opinion skill sends the latest answer or recommendation, with the conversation around it, to another model and brings back its view. The models it offers come from your advisor and reviewer roles in ACS; you can also name any family.",
     "does": "Day to day you say 'what does <family> think?' or 'ask all of them'. Each model answers read-only and blind to the others, through ask-model, which checks that the model asked for is the one that answered (where its CLI reports one). You get every answer labeled plus a short note on where they agree and disagree. It never picks a winner for you. ask-model comes with model-id (acs install-model-id); the pack will not install until both are on your PATH.",
     "changes": [
-      "~/.claude/skills/second-opinion/ and ~/.codex/skills/second-opinion/ (the skill, for the harnesses you have)",
+      "~/.claude/skills/second-opinion/ and ~/.codex/skills/second-opinion/ (the skill, for the CLIs you have)",
       "~/.agent-config-studio/roles.json, only for the advisor and reviewer roles you choose at install if not set yet (no model is set for you; kept after uninstall)"
     ],
     "undo": "Uninstalling removes the skill folders. A file you edited after installing is kept and reported."

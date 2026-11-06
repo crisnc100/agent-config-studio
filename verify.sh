@@ -127,6 +127,8 @@ node tests/assist-files-ui.mjs
 node tests/skill-wizard-ui.mjs
 node tests/skill-wizard-multi-ui.mjs
 node tests/models-layout-ui.mjs
+# One name per thing in every view, no text under 11px, focus you can see; Packs' CLI status from the shared detector (temp HOMEs, stub CLIs).
+node tests/ui-words.mjs
 # What the registry tells the Files page (temp HOME).
 node tests/files-registry.mjs
 # The MCP route's note on a machine with no ~/.claude.json (temp HOME).
