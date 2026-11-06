@@ -32,8 +32,10 @@ const ATTENTION_SOURCES = [
  * findings change what agents do; then a newer id; then housekeeping.
  */
 const ATTENTION_RANK = { vanished: 0, retiring: 1, drift: 2, audit: 3, update: 4, worktrees: 5, memory: 6 };
-/** Items in rank order, stable within a rank (the order each source gave). */
-const rankAttention = (items) => items.map((it, i) => [it, i]).sort((a, b) => ((a[0].rank ?? 9) - (b[0].rank ?? 9)) || a[1] - b[1]).map(([it]) => it);
+/** Every warning first, then the info items; by rank within each; stable within a rank (the order each source gave). */
+const warnFirst = (it) => (it.kind === 'warn' ? 0 : 1);
+const rankAttention = (items) => items.map((it, i) => [it, i])
+  .sort((a, b) => (warnFirst(a[0]) - warnFirst(b[0])) || ((a[0].rank ?? 9) - (b[0].rank ?? 9)) || a[1] - b[1]).map(([it]) => it);
 /** How many items Home shows before "Show all N". */
 const ATTENTION_TOP = 3;
 

@@ -342,7 +342,7 @@ function pkCardView(pack) {
   const shared = pkShared();
   const own = fixes.filter((f) => !shared.has(f.key));
   head.appendChild(!fixes.length ? el('span', 'pk-ready ok', '✓ Ready')
-    : own.length ? el('span', 'pk-ready missing', `Needs ${pkNeedText(own[0])}`)
+    : own.length ? el('span', 'pk-ready missing', 'Setup needed')
       : el('span', 'pk-ready later', 'Not ready — see “To use packs” above'));
   sec.appendChild(head);
   sec.appendChild(el('p', 'pk-summary', pack.summary));
@@ -353,10 +353,12 @@ function pkCardView(pack) {
       installedParts: new Set(Object.keys(pack.installed?.parts || {})), pickedParts: card.parts,
       variant: card.variant, onVariant: (v) => { card.variant = v; paintPacks(); },
     }));
-    // Under the diagram: one line for the roles it names that are not chosen yet.
+    // Under the diagram: the roles it names that are not chosen yet.
     const unset = pkUnsetLine(pack.workflow);
     if (unset) sec.appendChild(unset);
   }
+  // What this pack still needs, in full (the head says only "Setup needed").
+  if (own.length) sec.appendChild(el('p', 'pk-need', `Needs ${pkNeedText(own[0])}`));
   sec.appendChild(pkExplain(pack.explain, 'What it is, what it changes, what it needs, how to undo it', pkNeedsList(pack)));
   const busy = !!card.busy;
   for (const r of pack.requirements.filter((x) => x.dep && !x.ok)) {
