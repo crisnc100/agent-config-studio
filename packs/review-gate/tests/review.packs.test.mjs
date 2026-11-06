@@ -36,7 +36,8 @@ test('the eight packs exist, each with a pack.json whose id matches its folder',
 test('every pack.json has exactly the plan fields, a non-empty summary and a full explain', () => {
   for (const id of IDS) {
     const pack = manifest(id)
-    assert.deepEqual(Object.keys(pack).sort(), ['explain', 'id', 'parts', 'requires', 'summary', 'title', 'version'], id)
+    assert.deepEqual(Object.keys(pack).sort(), ['explain', 'id', 'parts', 'requires', 'summary', 'title', 'version', 'workflow'], id)
+    assert.ok(pack.workflow && typeof pack.workflow === 'object' && !Array.isArray(pack.workflow), `${id}: workflow`)
     assert.ok(text(pack.title), `${id}: title`)
     assert.equal(pack.version, '1.0.0', `${id}: version`)
     assert.ok(text(pack.summary), `${id}: summary`)

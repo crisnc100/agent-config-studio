@@ -4283,6 +4283,9 @@ async function openModels() {
   if (!confirmDiscard()) return;
   S.view = 'models';
   leaveEditor();
+  // #models&role=<name> (Packs' "not set — choose" line) lands on that role's row with its editor open.
+  let want = null;
+  try { want = decodeURIComponent(/[&]role=([^&]+)/.exec(location.hash)?.[1] || '') || null; } catch { /* a malformed link opens Models plainly */ }
   window.history.replaceState(null, '', '#models');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -4290,6 +4293,13 @@ async function openModels() {
   M.roles = null;
   await paintModels(() => api('GET', '/api/models'));
   await loadRoles();
+  if (want && S.view === 'models' && M.roles?.roles?.some((r) => r.name === want)) {
+    M.roleOpen.add(want);
+    paintModels();
+    const row = [...$('content').querySelectorAll('.roles-row')].find((r) => r.dataset.role === want);
+    row?.scrollIntoView?.({ block: 'center' });
+    row?.focus();
+  }
 }
 
 /**
@@ -4298,9 +4308,11 @@ async function openModels() {
  * here, and a write can leave a guide out of date.
  */
 async function loadRoles() {
-  const [roles, guide] = await Promise.allSettled([api('GET', '/api/models/roles'), api('GET', '/api/model-guide')]);
+  const [roles, guide, packs] = await Promise.allSettled([api('GET', '/api/models/roles'), api('GET', '/api/model-guide'), api('GET', '/api/packs')]);
   if (roles.status === 'fulfilled') { M.roles = roles.value; M.rolesError = null; } else M.rolesError = roles.reason.message;
   setGuide(guide);
+  // The packs' workflows, for each role row's "Steps:" line; without them the line is simply left out.
+  M.packs = packs.status === 'fulfilled' ? packs.value : null;
   if (S.view === 'models' && M.data) paintModels();
 }
 
@@ -4700,6 +4712,7 @@ function roleRow(role) {
 
   if (role.unset) {
     row.appendChild(el('div', 'roles-lineup roles-unset', 'Not set — choose its model. Skills that use this role stop until it is set.'));
+    appendRoleSteps(row, role.name);
     return row;
   }
   const lineup = el('div', 'roles-lineup');
@@ -4714,9 +4727,21 @@ function roleRow(role) {
     if (marked('alt')) alt.appendChild(changedMark());
     row.appendChild(alt);
   }
+  appendRoleSteps(row, role.name);
   for (const w of role.warnings) row.appendChild(el('div', 'models-alert retiring roles-warning', w));
   for (const c of (M.roles.conflicts || []).filter((x) => x.role === role.name)) row.appendChild(el('div', 'roles-conflict', conflictText(c)));
   return row;
+}
+
+/** "Steps: /code-review · Review, Fix check; /build · Grade" — the pack steps this role does (public/workflow.js). */
+function appendRoleSteps(row, name) {
+  if (!M.packs?.packs) return;
+  const groups = wfRoleSteps(M.packs.packs, name, M.packs.settings || {});
+  const line = el('div', 'roles-steps');
+  line.appendChild(el('b', null, 'Steps:'));
+  line.appendChild(document.createTextNode(' '));
+  line.appendChild(el('span', groups.length ? null : 'none', groups.length ? groups.join('; ') : 'no pack uses it yet'));
+  row.appendChild(line);
 }
 
 const familySelect = (families, value, blank) => {

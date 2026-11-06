@@ -73,7 +73,8 @@ const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]
 {
   // The value is read whole (no backtracking into the whitespace): "outline: none" and "outline: 0" draw nothing.
   const value = (body, prop) => [...body.matchAll(new RegExp(`(?:^|[;{\\s])${prop}\\s*:\\s*([^;]+)`, 'g'))].map((m) => m[1].trim());
-  const draws = (body) => value(body, 'outline').some((v) => !/^(none|0)(\s|$)/.test(v))
+  // "0", "0px", "0em" and "none" all draw nothing.
+  const draws = (body) => value(body, 'outline').some((v) => !/^(none|0(?:\.0+)?(?:px|em|rem)?)(\s|$)/.test(v))
     || value(body, 'box-shadow').some((v) => !/^none\b/.test(v))
     || value(body, 'border-color').some((v) => !/^(transparent|inherit|initial|unset)\b/.test(v));
   const focusFor = (cls) => rules.filter((r) => r.sel.split(',').some((s) => s.includes(cls) && s.includes(':focus-visible')) && draws(r.body));
@@ -116,7 +117,10 @@ console.log('\nlight theme: text on its own tint, computed from styles.css');
     const m = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(v || '');
     if (!m) throw new Error(`unparseable colour "${h}" → "${v}"`);
     const d = m[1].length <= 4 ? [...m[1]].map((c) => c + c).join('') : m[1];
-    return d.match(/../g).slice(0, 3).map((x) => parseInt(x, 16));
+    const [r, g, b, a = 255] = d.match(/../g).map((x) => parseInt(x, 16));
+    // A translucent colour depends on what is under it: fail loudly rather than guess.
+    if (a !== 255) throw new Error(`translucent colour "${h}" → "${v}": blend it before measuring`);
+    return [r, g, b];
   };
   const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
   const lum = (c) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
@@ -391,7 +395,9 @@ const RULES = [
     except: [/Auto-memory/gi, /\S*\/memory\b\S*/g,
       /\d+ memory files? missing from (?:its|their) index/g, /\d+ memory index(?:es)? over the length Claude Code reads/g,
       // …and Home's all-clear line, which names the Memory page among the sources it checked.
-      /checked: models, memory, worktrees and context/g] },
+      /checked: models, memory, worktrees and context/g, /Models, memory, worktrees and context all checked/g,
+      // …and its loading line while those sources are read ("Checking models, memory, worktrees, context…").
+      /Checking (?:[a-z]+, )*memory(?:, [a-z]+)*…/g] },
   { name: '"Delete" for something recoverable', re: /\bdelet/i,
     // Permanent actions keep the word: a role (no trash), an Assist session, a file gone outside the studio, and "never deleted" (a promise about history).
     except: [/Delete role/g, /Delete this session/g, /deleted outside the studio/g, /never deleted/g] },

@@ -2,7 +2,7 @@
   "id": "pr",
   "title": "PR descriptions",
   "version": "1.0.0",
-  "summary": "A /pr skill that writes pull request descriptions in your own style from the branch's real facts — what changed and why, whether it matched the goal, how to try it, what was reviewed, fixed and deferred — and checks the description before it opens or updates the PR.",
+  "summary": "Writes a pull request anyone can read in a minute: what changed and why, how to try it, what was reviewed.",
   "explain": {
     "what": "The pr skill writes the description a person reads before merging: what this does in plain words, whether it matched the plan's goal, what changed grouped by purpose, how to try it, the review highlights, the deferred findings, docs and context, what the agent did and the agent's one-line take. A small helper, pr-facts.mjs, gathers the facts (the branch's files and commits against its base, the plan's Outcome and Out of scope, the review gate's summary and merge tier when the review gate is installed) and runs no model.",
     "does": "When an agent opens or updates a PR it runs the helper, writes the description in your style, runs the helper's check (the sections in your order, Deferred findings present and copied verbatim, deferred HIGH findings first, the raw review record folded, no commit, finding id or file path that is not in the facts), and then gh pr create, or gh pr edit when the PR already exists. Your style lives in ~/.agent-config-studio/pr/style.json: which sections appear, their order and titles, plain or technical tone, emoji on or off, and an optional list of GIF URLs. It is created from the shipped example the first time the helper runs; edit it by hand. The skill needs the GitHub CLI (gh) to open the PR; without it, it says so and writes nothing.",
@@ -13,6 +13,39 @@
       "anything an optional part lists, only if you turn that part on"
     ],
     "undo": "Uninstalling removes the skill folders and, when the instructions part is on, its marked block; everything else in CLAUDE.md and AGENTS.md stays as it was. A file you edited after installing is kept and reported. Your style file in ~/.agent-config-studio/pr/ is yours and is never deleted."
+  },
+  "workflow": {
+    "command": "/pr",
+    "note": "No extra model is called: your session agent writes it.",
+    "steps": [
+      {
+        "id": "facts",
+        "label": "Gather facts",
+        "what": "Commits, reviews and checks for the branch.",
+        "who": "script",
+        "tool": "pr-facts.mjs"
+      },
+      {
+        "id": "write",
+        "label": "Write it",
+        "what": "Plain words, in your style.",
+        "who": "agent"
+      },
+      {
+        "id": "check",
+        "label": "Check it",
+        "what": "Makes sure the draft keeps every fact.",
+        "who": "script",
+        "tool": "pr-facts.mjs --check"
+      },
+      {
+        "id": "open",
+        "label": "Open the PR",
+        "what": "Posts it to GitHub.",
+        "who": "script",
+        "tool": "gh, GitHub’s tool"
+      }
+    ]
   },
   "requires": {
     "node": ">=20",

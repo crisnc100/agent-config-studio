@@ -12,7 +12,7 @@
  * Status is a job on the server (the Codex trust check is slow): the page
  * starts it, then polls until it is done, showing each progress line.
  */
-const PK = { data: null, error: null, status: null, statusError: null, job: null, trust: true, statusGen: 0, cards: {} };
+const PK = { data: null, error: null, status: null, statusError: null, job: null, trust: true, statusGen: 0, cards: {}, roles: null, rolesError: null };
 const PK_VERB = { install: 'Install', update: 'Update', uninstall: 'Uninstall' };
 const PK_DONE = { install: 'Installed', update: 'Updated', uninstall: 'Uninstalled' };
 const PK_POLL_MS = 400;
@@ -26,7 +26,7 @@ const pkUsable = (id) => !!pkHarness(id)?.present || (id === 'claude' && !!pkHar
 const pkDefaults = (pack) => pack.parts.filter((p) => p.default && !pkInstalled(pack, p.id)).map((p) => p.id);
 
 function pkCard(pack) {
-  PK.cards[pack.id] ||= { parts: new Set(pkDefaults(pack)), harnesses: null, withDeps: false, setRoles: {}, replace: false, preview: null, busy: null, result: null, error: null, seq: 0 };
+  PK.cards[pack.id] ||= { parts: new Set(pkDefaults(pack)), harnesses: null, withDeps: false, setRoles: {}, replace: false, preview: null, busy: null, result: null, error: null, seq: 0, variant: null };
   return PK.cards[pack.id];
 }
 /** Anything the card shows changed: the preview no longer describes it. */
@@ -40,8 +40,33 @@ async function openPacks() {
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
   $('content').innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span> Reading the packs…</div></div>';
+  // The roles every diagram names, read fresh each time Packs opens: a role changed on Models shows here (R3).
+  const roles = pkLoadRoles();
   await pkLoad();
+  await roles;
   if (S.view === 'packs' && PK.data) pkCheckStatus();
+}
+
+async function pkLoadRoles() {
+  try { PK.roles = (await api('GET', '/api/models/roles')).roles || []; PK.rolesError = null; }
+  catch (e) { PK.roles = null; PK.rolesError = e.message; }
+  if (S.view === 'packs' && PK.data) paintPacks();
+}
+
+/**
+ * One line per card for the roles its workflow names that are not chosen yet: "2 roles not set — choose them
+ * on Models", linked to the first one's row (#models&role=…, which opens its editor there).
+ */
+function pkUnsetLine(wf) {
+  if (!PK.roles) return null;
+  const unset = wfRoles(wf).filter((name) => { const r = PK.roles.find((x) => x.name === name); return !r || r.unset; });
+  if (!unset.length) return null;
+  const line = el('p', 'pk-unset');
+  const a = el('a', null, `${unset.length === 1 ? '1 role' : `${unset.length} roles`} not set — choose ${unset.length === 1 ? 'it' : 'them'} on Models`);
+  a.href = `#models&role=${encodeURIComponent(unset[0])}`;
+  a.title = `Unset: ${unset.join(', ')}`;
+  line.appendChild(a);
+  return line;
 }
 
 async function pkLoad() {
@@ -305,6 +330,7 @@ function pkCardView(pack) {
   sec.dataset.pack = pack.id;
   const head = el('div', 'pk-head');
   head.appendChild(el('h3', null, pack.title));
+  if (pack.workflow?.command) head.appendChild(el('span', 'cmd', pack.workflow.command));
   const inst = pack.installed;
   head.appendChild(el('span', `pk-badge ${inst ? 'installed' : 'absent'}`, inst
     ? `installed ${inst.version}${inst.version !== pack.version ? ` (version ${pack.version} is available)` : ''}`
@@ -319,6 +345,17 @@ function pkCardView(pack) {
       : el('span', 'pk-ready later', 'Not ready — see “To use packs” above'));
   sec.appendChild(head);
   sec.appendChild(el('p', 'pk-summary', pack.summary));
+  // The workflow first: what runs, and who or what does each step (B3).
+  if (pack.workflow) {
+    sec.appendChild(wfDiagram(pack.workflow, {
+      roles: PK.roles, rolesError: PK.rolesError, settings: PK.data.settings || {},
+      installedParts: new Set(Object.keys(pack.installed?.parts || {})), pickedParts: card.parts,
+      variant: card.variant, onVariant: (v) => { card.variant = v; paintPacks(); },
+    }));
+    // Under the diagram: one line for the roles it names that are not chosen yet.
+    const unset = pkUnsetLine(pack.workflow);
+    if (unset) sec.appendChild(unset);
+  }
   sec.appendChild(pkExplain(pack.explain, 'What it is, what it changes, what it needs, how to undo it', pkNeedsList(pack)));
   const busy = !!card.busy;
   for (const r of pack.requirements.filter((x) => x.dep && !x.ok)) {
@@ -558,6 +595,8 @@ async function pkApply(pack) {
   paintPacks();
   if (card.result) {
     if (typeof refreshRegistry === 'function') refreshRegistry().catch(() => {});
+    // An install can set roles (the preview's role offer): the diagrams show them at once, not on the next visit.
+    pkLoadRoles();
     pkCheckStatus();
   }
 }

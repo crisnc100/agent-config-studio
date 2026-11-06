@@ -2,7 +2,7 @@
   "id": "build",
   "title": "Build loop",
   "version": "1.0.0",
-  "summary": "A /build skill that runs real work through Frame, Bar and Judge: a builder from your ACS builder role types, another model attacks the plan and grades the result, and you approve the bar and judge the outcome.",
+  "summary": "Plans a change with you, has a builder write it, and has another model check it against what “done” means.",
   "explain": {
     "what": "The build skill is a way of running a real change with checks built in. You state the outcome and approve how it will be checked (the bar). A model from your builder role implements it in phases; a model from your advisor role attacks the plan first, and one from your judge role grades the finished work against the bar.",
     "does": "Day to day you say /build and describe what you want. The skill writes context.md and plan.md in a builds/ folder, asks you to approve the acceptance criteria, has the builder work phase by phase against your tests, records the Grade with the review gate's script, and brings you the result to judge. The Bounce and the Grade ask their models through ask-model, read-only, which checks that the model asked for is the one that answered (where its CLI reports one); ask-model comes with model-id (acs install-model-id), and the pack will not install until both are on your PATH. Small tasks run in a lighter mode with one builder call and a code review.",
@@ -11,6 +11,58 @@
       "~/.agent-config-studio/roles.json, only for the reviewer, advisor and judge roles you choose at install if not set yet (no model is set for you; kept after uninstall)"
     ],
     "undo": "Uninstalling removes the skill folders. A file you edited after installing is kept and reported. The builds/ folders in your projects are yours and are never touched."
+  },
+  "workflow": {
+    "command": "/build",
+    "note": "Small change? Lightweight mode skips the plan, the Bounce and the Grade: one builder call, then /code-review.",
+    "steps": [
+      {
+        "id": "understand",
+        "label": "Understand",
+        "what": "Reads the code and asks what done looks like.",
+        "who": "agent"
+      },
+      {
+        "id": "shape",
+        "label": "Shape",
+        "what": "Writes the plan and the bar it must meet.",
+        "who": "agent"
+      },
+      {
+        "id": "bounce",
+        "label": "Bounce",
+        "what": "Attacks the plan before any code is written.",
+        "who": "role",
+        "role": "advisor"
+      },
+      {
+        "id": "approve",
+        "label": "You approve",
+        "what": "The plan, and how many PRs it ships as.",
+        "who": "you"
+      },
+      {
+        "id": "build",
+        "label": "Build",
+        "what": "Writes the code, one commit per phase.",
+        "who": "role",
+        "role": "builder"
+      },
+      {
+        "id": "grade",
+        "label": "Grade",
+        "what": "Checks the result against the bar.",
+        "who": "role",
+        "role": "judge",
+        "swap": "grade"
+      },
+      {
+        "id": "judge",
+        "label": "You judge",
+        "what": "Try it and decide if it ships.",
+        "who": "you"
+      }
+    ]
   },
   "requires": {
     "node": ">=20",
