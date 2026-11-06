@@ -676,7 +676,8 @@ function toolCard(tool) {
       b.dataset.entry = e.id;
       b.appendChild(el('span', `item-dot ${e.harness}`));
       b.appendChild(el('span', 'files-item-label', t.labels[e.id]));
-      if (e.extraFiles > 0) b.appendChild(el('span', 'item-badge', `+${e.extraFiles}`));
+      // An entry that holds more than one file says how many, plainly, right after its name.
+      if (e.extraFiles > 0) b.appendChild(el('span', 'files-item-count', plural(e.extraFiles + 1, 'file')));
       const where = e.where ? `${e.where}\n${e.display}` : e.display;
       b.title = e.description ? `${where}\n\n${e.description}` : where;
       b.onclick = () => openEntry(e);
@@ -4394,9 +4395,9 @@ function idsSection(m) {
   const alerts = liveAlerts(m);
   const open = M.idsOpen ?? (alerts > 0 || M.sidecars.length > 0);
   const head = el('div', 'models-section-head');
-  const toggle = el('button', `btn ghost ids-toggle${open ? ' open' : ''}`);
+  // A quiet button with the same CSS chevron as every fold (.chev): no text arrow.
+  const toggle = el('button', `btn ghost chev ids-toggle${open ? ' open' : ''}`);
   toggle.setAttribute('aria-expanded', String(open));
-  toggle.appendChild(el('span', 'ids-caret', open ? '▾' : '▸'));
   toggle.appendChild(el('span', 'models-subhead-text', 'Model ids'));
   if (alerts) toggle.appendChild(el('span', 'ids-count', `${alerts} alert${alerts === 1 ? '' : 's'}`));
   toggle.onclick = () => { M.idsOpen = !open; paintModels(); };
@@ -5067,7 +5068,7 @@ function usedBy(family) {
   const box = el('div', 'models-where model-used');
   // Nothing to open when no role uses it: one plain line.
   if (!jobs.length) { box.appendChild(el('div', 'scope-note model-used-none', 'Not used by any role')); return box; }
-  const toggle = el('button', 'btn ghost model-used-toggle', `${open ? '▾' : '▸'} Used by ${jobs.length ? plural(jobs.length, 'role') : 'no role'}`);
+  const toggle = el('button', 'btn ghost chev model-used-toggle', `Used by ${jobs.length ? plural(jobs.length, 'role') : 'no role'}`);
   toggle.setAttribute('aria-expanded', String(open));
   toggle.onclick = () => { if (open) M.usedOpen.delete(family); else M.usedOpen.add(family); paintModels(); };
   box.appendChild(toggle);

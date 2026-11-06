@@ -165,3 +165,11 @@ Mobile and phone width are not relevant to this build. QA, the impeccable critiq
 
 ## Cris, 2026-11-06: no window sizes in QA
 QA runs in the browser window as it is (full screen). Never resize, zoom or emulate widths. It's a desktop web app, so there are no size or width checks.
+
+## PR D — four visual nits from the last browser look (2026-11-06)
+One small PR off main after #51.
+1. Models "Model ids" toggle: the text "▾/▸" becomes the CSS chevron every fold uses (`.chev`, turning with aria-expanded) on a quiet button. The same for "Used by N roles" on model cards. Guard: no button or fold in any view shows a text arrow.
+2. Diagram encodings, one look each: an off step is a dashed tile; a script is a solid-outline chip. The legend gains "off — not turned on" (dashed swatch) only when a step in that diagram is off; the script swatch is solid. Guards: static CSS (script solid, off dashed) and the legend's exact list.
+3. Models cards: the Edit / Reset row is pinned to the card bottom (Used by stays under it), so the buttons line up across a row. Guard: static CSS.
+4. Files: "+N" counted an entry's files beyond its main one (a skill's extra files, an auto-memory folder's facts). It now reads "N files", right after the name (the name no longer stretches). Guard: no bare "+N" on a Files entry.
+One PR: four independent CSS/markup touches, each small.
