@@ -232,7 +232,7 @@ const homeRoutes = (over = {}) => routesFor({
   const mem = deferred(), wt = deferred(), reg = deferred();
   const routes = homeRoutes({ 'GET /api/memory': () => mem.promise, 'GET /api/worktree': () => wt.promise, 'GET /api/registry': () => reg.promise });
   const p = await boot({ routes });
-  ok('8 the shell and Home paint before the registry resolves', p.eval('S.registry') === null && !!card(p, 'accounts') && p.$('sidebar').querySelectorAll('.nav-item').length === 14);
+  ok('8 the shell and Home paint before the registry resolves', p.eval('S.registry') === null && !!card(p, 'accounts') && p.$('sidebar').querySelectorAll('.nav-item').length === 15);
   ok('11 the memory index and wclean are asked after first paint, not before it',
      !p.requests.some((r) => r.path === '/api/memory' || r.path === '/api/worktree') || p.requests.findIndex((r) => r.path === '/api/memory') > p.requests.findIndex((r) => r.path === '/api/usage'));
   await settle(20);
@@ -288,7 +288,11 @@ const homeRoutes = (over = {}) => routesFor({
   const rows = p.$('content').querySelectorAll('.home-seat');
   ok('9 the card shows one row per seat', rows.length === SEATS.length, `${rows.length}`);
   const row = (id) => rows.find((r) => r.dataset.seat === id);
-  ok('9 the percentages shown are the route\'s, as percent left', /80% left/.test(p.text(row('a'))) && /54% left/.test(p.text(row('a'))) && /97% left/.test(p.text(row('a'))) && /30% left/.test(p.text(row('b'))));
+  // C2: one compact line per account — its tightest window's % left and reset — not every bar; Usage has those.
+  ok('9 each account is one compact line: its tightest window, as percent left', /54% left/.test(p.text(row('a'))) && !/80% left|97% left/.test(p.text(row('a'))) && /30% left/.test(p.text(row('b')))
+    && !p.$('content').querySelector('.home-accounts .usage-track'), p.text(row('a')));
+  ok('9 …with that window and its reset', /Weekly/.test(p.text(row('a'))) && /resets in/.test(p.text(row('a'))), p.text(row('a')));
+  ok('9 …and a link to Usage for the full bars', [...p.$('content').querySelectorAll('.home-accounts button')].some((b) => /Open Usage/.test(p.text(b))));
   ok('9 no number on a seat the route gave none for', ['off', 'wait', 'dup', 'nq', 'rolled', 'err', 'nw'].every((id) => !/\d+%/.test(p.text(row(id)))));
   ok('9 the route line names the seat Usage would', /Route to\s*Codex \(main\)\s*54% left/.test(p.text(card(p, 'accounts'))));
   ok('9 a stale reading says it is not current', /not current/.test(p.text(row('st'))));
@@ -335,7 +339,18 @@ const homeRoutes = (over = {}) => routesFor({
   const expect = { 'opus: a newer id': 'models', 'terra is retiring': 'models', 'haiku is no longer': 'models',
     '2 empty project folders': 'memory', '1 index link': 'memory', '3 memory files': 'memory', '1 memory index': 'memory',
     'app: 2 finished': 'worktrees', 'site: 1 finished': 'worktrees', '2 context files drifted': 'context' };
+  // C2: the top 3 by consequence first — a vanished or retiring model, then drift — then "Show all N".
+  ok('10 only the top 3 show at first, most consequential first', JSON.stringify(items().map((i) => p.text(i).replace(/(Review|Compare|Show|Clean up)$/, ''))) === JSON.stringify([
+    'haiku is no longer offered by its CLI', `terra is retiring on ${new Date('2026-12-01T00:00:00Z').toLocaleDateString()}`, '2 context files drifted from trunk']),
+    items().map((i) => p.text(i)).join(' / '));
+  const more = p.$('content').querySelector('.home-attn-more');
+  ok('10 …then a button names the rest: "Show all 10"', p.text(more) === 'Show all 10', p.text(more));
+  more.click();
+  await settle(5);
   ok('10 every item type is listed', items().length === Object.keys(expect).length, items().map((i) => p.text(i)).join(' / '));
+  ok('10 …still ranked: models and drift before housekeeping (worktrees, memory)', items().findIndex((i) => /drifted/.test(p.text(i))) < items().findIndex((i) => /finished worktree/.test(p.text(i)))
+    && items().findIndex((i) => /newer id/.test(p.text(i))) < items().findIndex((i) => /empty project folders/.test(p.text(i))));
+  ok('10 …and the button now reads "Show fewer"', p.text(p.$('content').querySelector('.home-attn-more')) === 'Show fewer');
   let right = 0;
   for (const [start, view] of Object.entries(expect)) {
     p.$('btn-home').click();

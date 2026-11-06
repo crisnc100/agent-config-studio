@@ -38,6 +38,9 @@ const rolesIn = (wf) => {
   ok('review-gate: Standard, Premium, Both and Claude team tabs', JSON.stringify(rg.variants.map((v) => v.label)) === '["Standard","Premium","Both","Claude team"]');
   ok('review-gate: the steps the skill names, in order', JSON.stringify(rg.steps.map((s) => s.id)) === '["review","security","quote","fix","dispute","check","log","gate"]',
     JSON.stringify(rg.steps.map((s) => s.id)));
+  // PR C: eight steps share one row, so each says what it does in one short line.
+  const whats = rg.steps.flatMap((st) => [st.what, ...Object.values(st.variants || {}).map((o) => o.what)]).filter(Boolean);
+  ok('review-gate: every step\'s description is one short line (36 characters at most)', whats.every((w) => w.length <= 36), whats.filter((w) => w.length > 36).join(' | '));
   ok('…the security pass follows the security setting, the push gate its part', rg.steps.find((s) => s.id === 'security').setting === 'security'
     && rg.steps.find((s) => s.id === 'gate').part === 'push-gate');
   const build = catalog.find((p) => p.id === 'build').workflow;
