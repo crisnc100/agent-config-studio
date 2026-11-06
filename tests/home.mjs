@@ -305,9 +305,12 @@ const homeRoutes = (over = {}) => routesFor({
     const wins = r.querySelectorAll('.home-win');
     return { id: s.seatId, want: s.windows.length, wins: wins.length,
       ok: wins.length === s.windows.length && wins.every((w) => {
-        const fill = w.querySelector('.usage-track .usage-fill');
+        // Exactly one track and one fill per window row, and every fill checked — a stray second bar fails.
+        const tracks = w.querySelectorAll('.usage-track');
+        const fills = w.querySelectorAll('.usage-fill');
         const left = (p.text(w.querySelector('.usage-pct')).match(/(\d+)% left/) || [])[1];
-        return !!fill && left !== undefined && fill.style.width === `${left}%` && /^(low|mid|high)$/.test(fill.dataset.level || '');
+        return tracks.length === 1 && fills.length === 1 && left !== undefined
+          && fills.every((f) => tracks[0].contains(f) && f.style.width === `${left}%` && /^(low|mid|high)$/.test(f.dataset.level || ''));
       }) };
   });
   ok('9 one bar per reported window on each account, its width matching "left", with a level', bars.length > 0 && bars.every((b) => b.ok),
