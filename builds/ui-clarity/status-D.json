@@ -1,0 +1,2 @@
+{"f1":{"status":"fixed","test":"tests/ui-words.mjs — the two Used-by states share one min-height, so Edit/Reset line up"},
+ "f2":{"status":"fixed","test":"tests/ui-words.mjs — each Files card header equals the sum of its rows' file counts"}}
