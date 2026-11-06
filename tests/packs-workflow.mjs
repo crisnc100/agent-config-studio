@@ -167,7 +167,9 @@ try {
 
   ok('every pack draws a diagram or a one-line strip', catalog.every((p) => (p.workflow.strip ? !!card(p.id)?.querySelector('.pk-strip') : card(p.id)?.querySelectorAll('.step').length === p.workflow.steps.length)),
     catalog.map((p) => `${p.id}:${card(p.id)?.querySelectorAll('.step').length}`).join(' '));
-  ok('the diagram comes right after the one-line summary', card('review-gate').querySelector('.pk-summary')?.nextElementSibling?.classList.contains('pk-flow'));
+  const kids = card('review-gate').children;
+  const at = kids.findIndex((k) => k.classList.contains('pk-summary'));
+  ok('the diagram comes right after the one-line summary', at !== -1 && kids[at + 1]?.classList.contains('pk-flow'), kids.map((k) => k.className).join(' '));
   ok('Packs asked for the roles itself when it opened (R3)', state.roleGets === 1, state.roleGets);
   ok('a pool step lists its members: "reviewer — Opus or Sol · picked per review"', /^reviewer/.test(who('review-gate', 'review')) && /Opus or Sol/.test(who('review-gate', 'review')) && /picked per review/.test(who('review-gate', 'review')),
     who('review-gate', 'review'));
@@ -181,7 +183,7 @@ try {
     && /script — no model/.test(who('review-gate', 'quote')) && /git hook — no model/.test(who('review-gate', 'gate')), `${who('build', 'judge')} | ${who('build', 'understand')} | ${who('review-gate', 'quote')}`);
   ok('pr says no extra model is called', /No extra model is called/.test(t(card('pr').querySelector('.pk-flow-note'))));
   ok('build notes its lightweight mode', /lightweight/i.test(t(card('build').querySelector('.pk-flow-note'))));
-  ok('the strips: handoff says your session agent writes it, with no extra model', /your session agent/.test(t(card('handoff').querySelector('.pk-strip'))) && /no extra model/i.test(t(card('handoff').querySelector('.pk-strip'))));
+  ok('the strips: handoff says your session agent writes it, with no extra model', /your session agent/i.test(t(card('handoff').querySelector('.pk-strip'))) && /no extra model/i.test(t(card('handoff').querySelector('.pk-strip'))));
   ok('a legend says what each kind of chip means', card('review-gate').querySelectorAll('.legend li').length === 4);
 
   console.log('\nsteps dim when their part or setting is off (R5)');
