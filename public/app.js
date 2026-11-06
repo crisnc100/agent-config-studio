@@ -4283,6 +4283,9 @@ async function openModels() {
   if (!confirmDiscard()) return;
   S.view = 'models';
   leaveEditor();
+  // #models&role=<name> (Packs' "not set — choose" line) lands on that role's row with its editor open.
+  let want = null;
+  try { want = decodeURIComponent(/[&]role=([^&]+)/.exec(location.hash)?.[1] || '') || null; } catch { /* a malformed link opens Models plainly */ }
   window.history.replaceState(null, '', '#models');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -4290,6 +4293,13 @@ async function openModels() {
   M.roles = null;
   await paintModels(() => api('GET', '/api/models'));
   await loadRoles();
+  if (want && S.view === 'models' && M.roles?.roles?.some((r) => r.name === want)) {
+    M.roleOpen.add(want);
+    paintModels();
+    const row = [...$('content').querySelectorAll('.roles-row')].find((r) => r.dataset.role === want);
+    row?.scrollIntoView?.({ block: 'center' });
+    row?.focus();
+  }
 }
 
 /**

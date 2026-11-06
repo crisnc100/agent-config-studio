@@ -2,7 +2,7 @@
   "id": "handoff",
   "title": "Handoff",
   "version": "1.0.0",
-  "summary": "A /handoff skill that writes a resume-here file for the next agent session: the goal, where things stand, what failed, and the next step.",
+  "summary": "Writes a resume-here file for the next session: the goal, where things stand, what failed, and the next step.",
   "explain": {
     "what": "The handoff skill writes a short file that lets another agent session, or a future you, pick up the work without re-explaining it: the goal, the current state, files in flight, what changed, what was tried and failed, and the single next step.",
     "does": "Day to day you say /handoff when context is running low or you are switching tools. In a git repo the file goes in docs/handoffs/<branch>.md or .handoffs/<branch>.md, kept out of git so it never rides a PR; the next agent starts by reading it.",
@@ -13,7 +13,8 @@
   },
   "workflow": {
     "command": "/handoff",
-    "strip": "Your session agent writes the handoff file — no extra model is called."
+    "strip": "writes the handoff file — no extra model is called.",
+    "stripWho": "agent"
   },
   "requires": {
     "node": ">=20",

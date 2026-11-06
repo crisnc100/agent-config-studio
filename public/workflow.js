@@ -37,7 +37,7 @@ function wfStepOn(step, ctx) {
 
 /**
  * One "who" chip for a role: its model(s) as the studio has them now.
- * { kind, k, v?, n?, unset? }: k the role, v the models, n a note.
+ * { kind, k, models?: [{ family, effort }], join?: 'or'|'and', v?, n?, unset? }: k the role, n a note.
  */
 function wfRoleChip(roleName, step, ctx, { note = null } = {}) {
   if (!ctx.roles) return { kind: 'role', k: roleName, v: ctx.rolesError ? 'roles unavailable' : 'reading…', n: null };
@@ -47,20 +47,21 @@ function wfRoleChip(roleName, step, ctx, { note = null } = {}) {
   if (step.vendor) models = models.filter((m) => wfVendor(m.id) === step.vendor);
   if (step.use === 'alt') models = wfAlt(role) ? [wfAlt(role)] : [];
   if (step.use === 'both') models = [models[0], wfAlt(role)].filter(Boolean);
-  if (!models.length) return { kind: 'role', k: roleName, v: step.use ? 'no second opinion set' : 'no model of that vendor', n: null };
-  let v;
+  if (!models.length) return { kind: 'role', k: roleName, v: step.use === 'alt' ? 'no second opinion set' : 'no model of that vendor', n: null };
+  // A pool reads "Opus · xhigh or Sol · xhigh" (picked per run); advisor-and-second reads "Fable · high and Astra · high".
+  const join = step.use === 'both' ? 'and' : 'or';
   let n = note;
-  if (step.use === 'both') v = models.map(wfModel).join(' and ');
-  else if (models.length > 1) { v = models.map((m) => wfName(m.family)).join(' or '); n = step.pool || n; }
-  else v = wfModel(models[0]);
+  if (models.length > 1 && join === 'or') n = step.pool || (step.noteMany ?? n);
   if (step.swap === 'grade') {
-    // The Grade's grader swap (build SKILL.md): the advisor's second opinion when the builder shares the judge's vendor.
+    // The Grade's grader swap (build SKILL.md), always said: the advisor's second opinion when the builder shares the judge's vendor.
     const advisor = ctx.roles.find((r) => r.name === 'advisor');
     const alt = advisor && !advisor.unset ? wfAlt(advisor) : null;
-    const jv = wfVendor(models[0].id);
-    if (alt && wfVendor(alt.id) && wfVendor(alt.id) !== jv) n = `${wfName(alt.family)} instead when the builder is the same vendor as ${wfName(models[0].family)}`;
+    const judge = wfName(models[0].family);
+    if (!alt) n = `when the builder is the same vendor as ${judge}: the advisor's second opinion instead (not set)`;
+    else if (wfVendor(alt.id) && wfVendor(alt.id) === wfVendor(models[0].id)) n = `no swap: the advisor's second opinion, ${wfName(alt.family)}, is the same vendor as ${judge}`;
+    else n = `${wfName(alt.family)} instead when the builder is the same vendor as ${judge}`;
   }
-  return { kind: 'role', k: roleName, v, n };
+  return { kind: 'role', k: roleName, models, join, n };
 }
 
 /** Every chip a step shows: a role (and an `also` role), you, your session agent, or a script. */
@@ -69,22 +70,31 @@ function wfChips(step, ctx) {
   if (step.who === 'agent') return [{ kind: 'agent', k: 'your session agent' }];
   if (step.who === 'script') return [{ kind: 'script', k: `${step.tool || 'script'} — no model` }];
   const chips = [wfRoleChip(step.role, step, ctx, { note: step.note || null })];
-  if (step.also) chips.push(wfRoleChip(step.also, { ...step, vendor: null, use: null, pool: null, swap: null }, ctx, { note: step.alsoNote || null }));
+  if (step.also) chips.push(wfRoleChip(step.also, { ...step, vendor: null, use: null, pool: null, swap: null, noteMany: null }, ctx, { note: step.alsoNote || null }));
   return chips;
 }
 
 function wfChipEl(c) {
   const w = el('span', `w ${c.kind}`);
   w.appendChild(el('span', 'w-k', c.k));
-  if (c.unset) {
-    const a = el('a', 'w-unset', 'not set — choose');
-    a.href = '#models';
-    a.dataset.role = c.k;
-    a.title = `Choose the ${c.k} role's model on Models`;
-    w.appendChild(a);
+  // Unset: said quietly here; the card's one line links to Models (packs-view.js pkUnsetLine).
+  if (c.unset) w.appendChild(el('span', 'w-unset', 'not set'));
+  else if (c.models) {
+    // Each model in its own span that never wraps, so a chip breaks only between models.
+    const v = el('span', 'w-v');
+    c.models.forEach((m, i) => { if (i) v.appendChild(document.createTextNode(` ${c.join} `)); v.appendChild(el('span', 'w-m', wfModel(m))); });
+    w.appendChild(v);
   } else if (c.v) w.appendChild(el('span', 'w-v', c.v));
   if (c.n) w.appendChild(el('span', 'w-n', c.n));
   return w;
+}
+
+/** The roles a workflow names (every step, every variant), in step order. */
+function wfRoles(wf) {
+  const out = [];
+  const add = (r) => { if (r && !out.includes(r)) out.push(r); };
+  for (const s of wf.steps || []) { add(s.role); add(s.also); for (const o of Object.values(s.variants || {})) { add(o.role); add(o.also); } }
+  return out;
 }
 
 const WF_LEGEND = [['role', 'a role from Models'], ['agent', 'your session agent'], ['you', 'you'], ['script', 'a script, no model']];
@@ -96,9 +106,8 @@ const WF_LEGEND = [['role', 'a role from Models'], ['agent', 'your session agent
 function wfDiagram(wf, ctx) {
   if (wf.strip) {
     const s = el('div', 'pk-strip');
-    s.appendChild(el('span', 'cmd', wf.command));
-    s.appendChild(document.createTextNode(' '));
-    s.appendChild(el('span', null, wf.strip));
+    s.appendChild(wfChipEl(wfChips({ who: wf.stripWho || 'agent' }, ctx)[0]));
+    s.appendChild(el('span', 'pk-strip-text', wf.strip));
     return s;
   }
   const box = el('div', 'pk-flow');
@@ -126,7 +135,8 @@ function wfDiagram(wf, ctx) {
   for (const raw of wf.steps) {
     const step = wfStepFor(raw, variant);
     const on = wfStepOn(step, ctx);
-    const li = el('li', `step${on ? '' : ' off'}`);
+    // A step with no model, or one that is off, is a narrow tile: the role steps get the width.
+    const li = el('li', `step${on ? '' : ' off'}${!on || step.who === 'script' ? ' narrow' : ''}`);
     li.dataset.step = step.id;
     const name = el('div', 'step-name', step.label);
     if (!on) { name.appendChild(document.createTextNode(' ')); name.appendChild(el('span', 'step-off', 'off')); }

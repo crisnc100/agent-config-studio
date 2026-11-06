@@ -53,6 +53,22 @@ async function pkLoadRoles() {
   if (S.view === 'packs' && PK.data) paintPacks();
 }
 
+/**
+ * One line per card for the roles its workflow names that are not chosen yet: "2 roles not set — choose them
+ * on Models", linked to the first one's row (#models&role=…, which opens its editor there).
+ */
+function pkUnsetLine(wf) {
+  if (!PK.roles) return null;
+  const unset = wfRoles(wf).filter((name) => { const r = PK.roles.find((x) => x.name === name); return !r || r.unset; });
+  if (!unset.length) return null;
+  const line = el('p', 'pk-unset');
+  const a = el('a', null, `${unset.length === 1 ? '1 role' : `${unset.length} roles`} not set — choose ${unset.length === 1 ? 'it' : 'them'} on Models`);
+  a.href = `#models&role=${encodeURIComponent(unset[0])}`;
+  a.title = `Unset: ${unset.join(', ')}`;
+  line.appendChild(a);
+  return line;
+}
+
 async function pkLoad() {
   try { PK.data = await api('GET', '/api/packs'); PK.error = null; }
   catch (e) { PK.error = e.message; }
@@ -314,6 +330,7 @@ function pkCardView(pack) {
   sec.dataset.pack = pack.id;
   const head = el('div', 'pk-head');
   head.appendChild(el('h3', null, pack.title));
+  if (pack.workflow?.command) head.appendChild(el('span', 'cmd', pack.workflow.command));
   const inst = pack.installed;
   head.appendChild(el('span', `pk-badge ${inst ? 'installed' : 'absent'}`, inst
     ? `installed ${inst.version}${inst.version !== pack.version ? ` (version ${pack.version} is available)` : ''}`
@@ -335,6 +352,9 @@ function pkCardView(pack) {
       installedParts: new Set(Object.keys(pack.installed?.parts || {})), pickedParts: card.parts,
       variant: card.variant, onVariant: (v) => { card.variant = v; paintPacks(); },
     }));
+    // Under the diagram: one line for the roles it names that are not chosen yet.
+    const unset = pkUnsetLine(pack.workflow);
+    if (unset) sec.appendChild(unset);
   }
   sec.appendChild(pkExplain(pack.explain, 'What it is, what it changes, what it needs, how to undo it', pkNeedsList(pack)));
   const busy = !!card.busy;
@@ -575,6 +595,8 @@ async function pkApply(pack) {
   paintPacks();
   if (card.result) {
     if (typeof refreshRegistry === 'function') refreshRegistry().catch(() => {});
+    // An install can set roles (the preview's role offer): the diagrams show them at once, not on the next visit.
+    pkLoadRoles();
     pkCheckStatus();
   }
 }
