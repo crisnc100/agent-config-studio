@@ -98,6 +98,20 @@ const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]
   ok('every `outline: none` has a replacement focus style', bare.length === 0, bare.join(' | '));
 }
 
+/* ── static: PR D visual nits ── */
+console.log('\nstyles.css: PR D');
+{
+  const body = (sel) => rules.filter((r) => r.sel.split(',').map((x) => x.trim()).includes(sel)).map((r) => r.body).join(';');
+  ok('a toggle button draws its chevron in CSS, turning with aria-expanded', /content\s*:/.test(body('.chev::before'))
+    && rules.some((r) => /\.chev\[aria-expanded="?true"?\]::before/.test(r.sel) && /transform/.test(r.body)));
+  ok('Models cards: the button row sits at the card bottom, so Edit / Reset line up across a row', /margin-top\s*:\s*auto/.test(body('.model-card > .model-card-buttons')));
+  ok('a Files entry\'s file count sits right after its name (the name does not stretch)', !/flex\s*:\s*1\b/.test(body('.files-item-label')) && /margin-left/.test(body('.files-item-count')));
+  // The diagram's encodings, one look each: off = a dashed tile; script = a solid outline chip.
+  ok('script chips are solid outlines, not dashed (dashed means "off")', /border\s*:[^;]*solid/.test(body('.pk-flow .w.script')) && !/dashed/.test(body('.pk-flow .w.script'))
+    && /border\s*:[^;]*solid/.test(body('.wf-sw.script')) && !/dashed/.test(body('.wf-sw.script')));
+  ok('the legend\'s "off" swatch is dashed, like an off step', /dashed/.test(body('.wf-sw.off')) && /dashed/.test(body('.pk-flow .step.off')));
+}
+
 /* ── static: PR C QA at the real window (about 1343×679) ── */
 console.log('\nstyles.css: PR C QA');
 {
@@ -515,6 +529,12 @@ try {
         && rows.every((r) => r.querySelectorAll('button').some((b) => /\bbtn\b/.test(b.className) && /^(Edit|Close)$/.test(page.text(b)))), `${rows.length} rows`);
     }
     const icons = page.$('content').querySelectorAll('button').filter((b) => page.text(b).replace(/[^\p{L}\p{N}]/gu, '').length === 0);
+    // PR D: no text glyph stands in for a fold arrow; a toggle draws its chevron in CSS (.chev).
+    const glyphs = page.$('content').querySelectorAll('button, summary').filter((b) => /[▸▾▶▼◂◀]/.test(page.text(b)));
+    ok(`${v}: no button or fold uses a text arrow (▸ ▾ ▶ ▼)`, glyphs.length === 0, glyphs.map((b) => page.text(b).slice(0, 30)).join(' | '));
+    // PR D: a Files entry's extra files are said plainly ("2 files"), right after its name — no bare "+N".
+    const plus = page.$('content').querySelectorAll('.files-item .item-badge, .files-item-count').filter((n) => /^\+\d+$/.test(page.text(n).trim()));
+    ok(`${v}: no bare "+N" count on a file entry`, plus.length === 0, plus.map((n) => page.text(n)).join(' | '));
     ok(`${v}: every icon-only button has a title and an accessible name`, icons.every((b) => b.getAttribute('title') && (b.getAttribute('aria-label') || b.getAttribute('title'))),
       icons.filter((b) => !b.getAttribute('title')).map((b) => b.className).join(' | '));
     ok(`${v}: no page errors`, page.errors.length === 0, page.errors.join(' | '));
