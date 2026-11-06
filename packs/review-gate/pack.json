@@ -15,6 +15,120 @@
     ],
     "undo": "Uninstalling removes the skill folders and, once no installed part uses it, the shared ~/.agent-config-studio/review-gate/ folder. A file you edited after installing is kept and reported. Your review log and the reports in each repo's reviews/ folder are your history and are never deleted."
   },
+  "workflow": {
+    "command": "/code-review",
+    "variants": [
+      {
+        "id": "standard",
+        "label": "Standard",
+        "hint": "/code-review — a reviewer from your pool"
+      },
+      {
+        "id": "premium",
+        "label": "Premium",
+        "hint": "/code-review premium — in Claude Code",
+        "twins": [
+          "claude"
+        ]
+      },
+      {
+        "id": "both",
+        "label": "Both",
+        "hint": "/code-review both — in Claude Code",
+        "twins": [
+          "claude"
+        ]
+      },
+      {
+        "id": "claude",
+        "label": "Claude team",
+        "hint": "/code-review claude"
+      }
+    ],
+    "steps": [
+      {
+        "id": "review",
+        "label": "Review",
+        "what": "Reads the branch and reports bugs.",
+        "who": "role",
+        "role": "reviewer",
+        "pool": "picked per review",
+        "variants": {
+          "premium": {
+            "what": "One full, careful pass, for changes where a miss is costly.",
+            "role": "judge"
+          },
+          "both": {
+            "what": "Two reviews, one merged list: bugs both found come first.",
+            "also": "judge",
+            "alsoNote": "double-checks"
+          },
+          "claude": {
+            "what": "A team of Claude reviewers, each with its own lens.",
+            "vendor": "claude",
+            "pool": "the Claude team"
+          }
+        }
+      },
+      {
+        "id": "security",
+        "label": "Security pass",
+        "what": "Looks only for security holes, beside the review.",
+        "who": "role",
+        "role": "security",
+        "setting": "security"
+      },
+      {
+        "id": "quote",
+        "label": "Quote check",
+        "what": "Drops any finding whose quote is not in the code.",
+        "who": "script"
+      },
+      {
+        "id": "fix",
+        "label": "Fix round",
+        "what": "Every high and medium is fixed, or disputed with proof.",
+        "who": "role",
+        "role": "builder",
+        "note": "the one that wrote the branch"
+      },
+      {
+        "id": "dispute",
+        "label": "Dispute",
+        "what": "A finding you reject gets a verdict from a different model.",
+        "who": "role",
+        "role": "reviewer",
+        "note": "another model than the finder"
+      },
+      {
+        "id": "check",
+        "label": "Fix check",
+        "what": "One look at the fixes. No second round.",
+        "who": "role",
+        "role": "reviewer",
+        "note": "same pick",
+        "variants": {
+          "premium": {
+            "role": "judge"
+          }
+        }
+      },
+      {
+        "id": "log",
+        "label": "Defer and log",
+        "what": "What is left is deferred and written to the review log.",
+        "who": "script"
+      },
+      {
+        "id": "gate",
+        "label": "Push gate",
+        "what": "Refuses a push until every changed file was reviewed.",
+        "who": "script",
+        "tool": "git hook",
+        "part": "push-gate"
+      }
+    ]
+  },
   "requires": {
     "node": ">=20",
     "git": true,

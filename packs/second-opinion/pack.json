@@ -12,6 +12,38 @@
     ],
     "undo": "Uninstalling removes the skill folders. A file you edited after installing is kept and reported."
   },
+  "workflow": {
+    "command": "/second-opinion",
+    "steps": [
+      {
+        "id": "pick",
+        "label": "Pick a model",
+        "what": "Name one, or say \"all\".",
+        "who": "you"
+      },
+      {
+        "id": "send",
+        "label": "Send it",
+        "what": "Only the situation, not your conclusion.",
+        "who": "agent"
+      },
+      {
+        "id": "ask",
+        "label": "Its take",
+        "what": "One family, or every offered one.",
+        "who": "role",
+        "role": "advisor",
+        "also": "reviewer",
+        "note": "the one you name, or all of them"
+      },
+      {
+        "id": "back",
+        "label": "Report",
+        "what": "Where they agree and where they split.",
+        "who": "agent"
+      }
+    ]
+  },
   "requires": {
     "node": ">=20",
     "git": false,

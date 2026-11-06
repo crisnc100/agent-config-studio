@@ -11,6 +11,10 @@
     ],
     "undo": "Uninstalling removes the skill folders. A file you edited after installing is kept and reported. Handoff files already written in your projects stay."
   },
+  "workflow": {
+    "command": "/handoff",
+    "strip": "Your session agent writes the handoff file — no extra model is called."
+  },
   "requires": {
     "node": ">=20",
     "git": false,

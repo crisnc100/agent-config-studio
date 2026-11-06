@@ -13,6 +13,10 @@
     ],
     "undo": "Uninstalling removes the skill folders. A file you edited after installing is kept and reported. The reports in ~/.agent-config-studio/field-reports/ are your history and are never deleted."
   },
+  "workflow": {
+    "command": "/flag",
+    "strip": "Your session agent files the report, redacted, under ~/.agent-config-studio/field-reports/ — no extra model is called."
+  },
   "requires": {
     "node": ">=20",
     "git": false,

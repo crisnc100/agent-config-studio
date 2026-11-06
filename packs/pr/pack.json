@@ -14,6 +14,39 @@
     ],
     "undo": "Uninstalling removes the skill folders and, when the instructions part is on, its marked block; everything else in CLAUDE.md and AGENTS.md stays as it was. A file you edited after installing is kept and reported. Your style file in ~/.agent-config-studio/pr/ is yours and is never deleted."
   },
+  "workflow": {
+    "command": "/pr",
+    "note": "No extra model is called: your session agent writes it.",
+    "steps": [
+      {
+        "id": "facts",
+        "label": "Gather facts",
+        "what": "Commits, reviews and checks for the branch.",
+        "who": "script",
+        "tool": "pr-facts.mjs"
+      },
+      {
+        "id": "write",
+        "label": "Write it",
+        "what": "Plain words, in your style.",
+        "who": "agent"
+      },
+      {
+        "id": "check",
+        "label": "Check it",
+        "what": "Makes sure the draft keeps every fact.",
+        "who": "script",
+        "tool": "pr-facts.mjs --check"
+      },
+      {
+        "id": "open",
+        "label": "Open the PR",
+        "what": "Posts it to GitHub.",
+        "who": "script",
+        "tool": "gh, GitHub’s tool"
+      }
+    ]
+  },
   "requires": {
     "node": ">=20",
     "git": true,

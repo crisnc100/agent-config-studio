@@ -12,6 +12,56 @@
     ],
     "undo": "Uninstalling removes the skill folders. A file you edited after installing is kept and reported."
   },
+  "workflow": {
+    "command": "/advisor",
+    "variants": [
+      {
+        "id": "advisor",
+        "label": "Advisor",
+        "hint": "/advisor — the role’s model"
+      },
+      {
+        "id": "second",
+        "label": "Second",
+        "hint": "/advisor second — the role’s second opinion"
+      },
+      {
+        "id": "both",
+        "label": "Both",
+        "hint": "/advisor both — the two, blind, in parallel"
+      }
+    ],
+    "steps": [
+      {
+        "id": "brief",
+        "label": "Brief",
+        "what": "The goal, the constraints and the call to make.",
+        "who": "agent"
+      },
+      {
+        "id": "ask",
+        "label": "Advise",
+        "what": "A scope verdict and its reasons, read-only.",
+        "who": "role",
+        "role": "advisor",
+        "variants": {
+          "second": {
+            "use": "alt"
+          },
+          "both": {
+            "use": "both",
+            "what": "Both answer blind; you see where they agree and split."
+          }
+        }
+      },
+      {
+        "id": "back",
+        "label": "Bring it back",
+        "what": "Checks it against the repo; asks you only what it cannot settle.",
+        "who": "agent"
+      }
+    ]
+  },
   "requires": {
     "node": ">=20",
     "git": false,

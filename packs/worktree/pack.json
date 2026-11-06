@@ -14,6 +14,10 @@
     ],
     "undo": "Uninstalling removes the marked block from your .zshrc and the toolkit files it copied. Your project list in ~/.config/worktree/repos/, your projects, their trunks and their worktrees are never touched. If your shell is not zsh, the setup does nothing, and ACS says so instead of showing it as installed."
   },
+  "workflow": {
+    "command": "wnew",
+    "strip": "Shell commands you run yourself (wnew, wls, wenv) — no extra model is called."
+  },
   "requires": {
     "node": ">=20",
     "git": true,
