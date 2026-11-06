@@ -133,6 +133,8 @@ node tests/ui-words.mjs
 node tests/files-registry.mjs
 # The MCP route's note on a machine with no ~/.claude.json (temp HOME).
 node tests/mcp-route.mjs
+# The MCP view: one empty state when nothing is configured, "none configured" said once (stubbed routes).
+node tests/mcp-ui.mjs
 # The skill-pack installer (acs packs): temp HOMEs, stub CLIs, a copy of the package for updates, the packed tarball.
 node tests/packs-catalog.mjs
 node tests/packs-install.mjs
