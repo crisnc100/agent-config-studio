@@ -112,7 +112,7 @@ console.log('\nstyles.css: PR C QA');
     && /width\s*:\s*2\dpx/.test(body('.usage-drop')));
   ok('Files: a type toggle draws a fold chevron, and its "+" has a visible box', /content\s*:/.test(body('.files-type-toggle::before')) && /border\s*:/.test(body('.files-add')));
   ok('a diagram step title never wraps', /white-space\s*:\s*nowrap/.test(body('.pk-flow .step-name')));
-  ok('a long diagram (more than six steps) lays out in rows of four', /grid-template-columns\s*:\s*repeat\(4/.test(body('.pk-flow .flow.rows')));
+  ok('a long diagram (eight or more steps) lays out in rows of four', /grid-template-columns\s*:\s*repeat\(4/.test(body('.pk-flow .flow.rows')));
   ok('a part\'s explain fold is quiet (not the bold action colour)', /color\s*:\s*var\(--text-dim\)/.test(body('.pk-part summary.fold')) && /font-weight\s*:\s*500/.test(body('.pk-part summary.fold')));
 }
 
@@ -531,7 +531,9 @@ try {
     const ready = (k) => page.text(k.querySelector('.pk-ready'));
     ok('a machine with everything: no to-do box, and every card says "✓ Ready"…', !c().querySelector('.pk-todo')
       && cards.length > 0 && cards.filter((k) => k.dataset.pack !== 'build').every((k) => ready(k) === '✓ Ready'), cards.map((k) => page.text(k.querySelector('.pk-head'))).join(' | '));
-    ok('…except a pack that needs another pack first, which names it', ready(c().querySelector('[data-pack="build"]')) === 'Needs the Review gate pack first');
+    const bc = c().querySelector('[data-pack="build"]');
+    ok('…except a pack that needs another pack first: "Setup needed", and the card names the pack', ready(bc) === 'Setup needed'
+      && page.text(bc.querySelector('.pk-need')) === 'Needs the Review gate pack first', `${ready(bc)} | ${page.text(bc.querySelector('.pk-need') || { textContent: '' })}`);
     const rg = c().querySelector('[data-pack="review-gate"]');
     ok('the needs list is folded into the card\'s explain, not shown open', !!rg.querySelector('details.pk-explain .pk-reqs') && !rg.querySelector(':scope > .pk-reqs'));
     const metas = c().querySelectorAll('.pk-part-meta').map((n) => page.text(n));

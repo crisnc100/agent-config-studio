@@ -221,7 +221,7 @@ try {
   const legend = (id) => card(id).querySelectorAll('.legend li').map((li) => t(li));
   ok('a legend says what each kind of chip in that diagram means — only those', JSON.stringify(legend('review-gate')) === '["a role from Models","a script — no model"]'
     && JSON.stringify(legend('build')) === '["a role from Models","your session agent","you"]', `${legend('review-gate')} | ${legend('build')}`);
-  ok('more than six steps lay out in rows of four; six or fewer stay one row', card('review-gate').querySelector('.flow').classList.contains('rows')
+  ok('eight or more steps lay out in rows of four; seven or fewer stay one row', card('review-gate').querySelector('.flow').classList.contains('rows')
     && !card('build').querySelector('.flow').classList.contains('rows'));
   ok('a part\'s "What this part is and changes" is a quiet fold, not an action', card('review-gate').querySelectorAll('.pk-part summary.fold').length > 0);
 
