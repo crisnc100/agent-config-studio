@@ -156,7 +156,9 @@
       ],
       "files": [
         "packs/review-gate/skills/claude/code-review/SKILL.md",
+        "packs/review-gate/skills/claude/code-review/reference.md",
         "packs/review-gate/skills/codex/code-review/SKILL.md",
+        "packs/review-gate/skills/codex/code-review/reference.md",
         "packs/review-gate/runtime/review.mjs",
         "packs/review-gate/runtime/merge.mjs",
         "packs/review-gate/runtime/calibration.md",
