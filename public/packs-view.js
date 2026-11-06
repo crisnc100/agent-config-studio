@@ -159,7 +159,7 @@ function pkHere() {
     const on = h.installed ?? h.present;
     const chip = el('span', `pk-harness ${on ? 'on' : 'off'}`, `${on ? '✓' : '—'} ${h.label}`);
     row.appendChild(chip);
-    const note = h.present ? h.note : h.why;
+    const note = h.note || (h.present ? null : h.why);
     if (note) row.appendChild(el('span', 'pk-harness-why', note));
   }
   return row;

@@ -24,7 +24,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { ROOT, sandbox, tests, track } from './fixtures/packs-sandbox.mjs';
-import { bootPage } from './fixtures/shell-page.mjs';
+import { bootPage, routesFor } from './fixtures/shell-page.mjs';
 
 const realBefore = snapshotRealHomes();
 const { ok, done } = tests();
@@ -111,6 +111,30 @@ console.log('\nPacks: each CLI as Home and Setup see it');
   ok('…and with no CLI anywhere, it says none is installed', !none.ok && /no agent CLI is installed/.test(none.what), JSON.stringify(none));
   const git = rg.requirements.find((r) => r.id === 'git');
   ok('a need that is met shows no full path', git.ok && git.what === 'git', JSON.stringify(git));
+
+  // Review LOW (2026-11-06): Codex found off the studio's PATH, and no ~/.codex yet. Home and Setup say
+  // "installed"; Packs must never answer "not installed" for it — on the machine line or the Install-for row.
+  m.clis = { claude: m.clis.claude, codex: null, grok: null };
+  m.present = { claude: true, codex: false, grok: false };
+  const off = catalogView(m, { installedOf: (id) => id !== 'grok' });
+  const cx = off.harnesses.find((h) => h.id === 'codex');
+  const said = [cx.note, cx.why].filter(Boolean).join(' | ');
+  ok('installed, off the PATH, no settings folder: never "not installed", and both real gaps named', cx.installed && !cx.present
+    && !/not installed/.test(said) && /not on the PATH the studio sees/.test(cx.note) && /no settings folder yet \(~\/\.codex\)/.test(cx.note)
+    && cx.why === cx.note, JSON.stringify(cx));
+  const stub = routesFor({
+    'GET /api/packs': () => off,
+    'GET /api/packs/status': () => ({ job: { running: false, result: { packs: [], legacy: [], checkedAt: Date.now(), trust: false } } }),
+  });
+  const pg = await bootPage({ routes: stub, hash: '#packs' });
+  for (let i = 0; i < 100 && !pg.$('content').querySelector('.pk-here'); i++) await sleep(20);
+  const here = pg.text(pg.$('content').querySelector('.pk-here'));
+  const rows = pg.$('content').querySelectorAll('.pk-harnesses').map((r) => pg.text(r)).join(' | ');
+  ok('…and the page agrees: "✓ Codex" with the off-PATH note, no "not installed" for Codex anywhere on Packs',
+    /✓ Codex/.test(here) && /Codexinstalled, but not on the PATH the studio sees/.test(here)
+      && !/Codex:? ?not installed/.test(here) && !/Codex: not installed/.test(rows) && /no settings folder yet/.test(here), `${here} || ${rows}`);
+  ok('…with no page errors', pg.errors.length === 0, pg.errors.join(' | '));
+  pg.done();
 }
 
 /** A real server over a sandbox's HOME, and the page's fetch forwarded to it. */
