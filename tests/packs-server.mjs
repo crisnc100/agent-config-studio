@@ -117,7 +117,7 @@ try {
     const build = r.body.packs.find((p) => p.id === 'build');
     ok('build lists review-gate as a requirement not met yet', build.requirements.some((x) => x.dep === 'review-gate' && !x.ok), JSON.stringify(build.requirements));
     const h = Object.fromEntries(r.body.harnesses.map((x) => [x.id, x]));
-    ok('claude and codex are detected; grok is not, with why', h.claude.present && h.codex.present && !h.grok.present && /no grok CLI on PATH and no ~\/\.grok/.test(h.grok.why), JSON.stringify(r.body.harnesses));
+    ok('claude and codex are detected; grok is not, with why', h.claude.present && h.codex.present && !h.grok.present && /not installed, and no ~\/\.grok/.test(h.grok.why), JSON.stringify(r.body.harnesses));
     ok('nothing is installed yet, and no earlier install is reported', r.body.packs.every((p) => p.installed === null) && r.body.legacy.length === 0);
     ok('the status and preview words are the CLI\'s', r.body.words.status.edited === 'edited by you' && r.body.words.what.create === 'new file');
     ok('no absolute path in HOME is handed back', !r.text.includes(sb.home), r.text.slice(r.text.indexOf(sb.home) - 60, r.text.indexOf(sb.home) + 60));
@@ -291,7 +291,7 @@ try {
     const before = tree(c1.home, own(c1));
     const cat = (await call(s1.base, 'GET', '/api/packs')).body;
     const codex = cat.harnesses.find((h) => h.id === 'codex');
-    ok('codex is not detected, with why', !codex.present && /no codex CLI on PATH and no ~\/\.codex/.test(codex.why), JSON.stringify(codex));
+    ok('codex is not detected, with why', !codex.present && /not installed, and no ~\/\.codex/.test(codex.why), JSON.stringify(codex));
     const p = (await call(s1.base, 'POST', '/api/packs/plan', { action: 'install', pack: 'review-gate' })).body;
     const prob = p.roles.find((r) => r.role === 'reviewer');
     ok('the preview names the unset reviewer role and lists the installed families, none put forward', prob && !prob.set && prob.missing && prob.families.join() === 'fable,opus,sonnet,haiku' && !('suggestion' in prob) && p.warnings.some((w) => /reviewer role/.test(w)), JSON.stringify(p.roles));

@@ -74,10 +74,10 @@ const requests = (p, path, method = 'GET') => p.requests.filter((r) => r.path ==
      && enabled(p).every((b) => b.localName === 'input' && b.type === 'checkbox' && b.getAttribute('tabindex') !== '-1' && /^Select /.test(b.getAttribute('aria-label'))));
   ok('keyboard: the bar is buttons in a labelled toolbar, reachable by Tab', bar(p).getAttribute('role') === 'toolbar'
      && bar(p).querySelectorAll('button').length === 3 && bar(p).querySelectorAll('button').every((b) => b.getAttribute('tabindex') !== '-1'));
-  ok('the bar starts at 0 selected, Delete and Clear disabled', count(p) === '0 selected' && barBtn(p, 'Delete').disabled && barBtn(p, 'Clear').disabled);
+  ok('the bar starts at 0 selected, Delete and Clear disabled', count(p) === '0 selected' && barBtn(p, 'Move to Trash').disabled && barBtn(p, 'Clear').disabled);
 
   enabled(p)[1].click();
-  ok('a tick counts on the bar without a repaint', count(p) === '1 selected' && !barBtn(p, 'Delete').disabled && enabled(p)[1].checked);
+  ok('a tick counts on the bar without a repaint', count(p) === '1 selected' && !barBtn(p, 'Move to Trash').disabled && enabled(p)[1].checked);
   barBtn(p, 'Select all').click();
   ok('C2 Select all (visible) ticks every selectable row, never a disabled one', count(p) === '3 selected'
      && enabled(p).every((b) => b.checked) && !boxes(p).some((b) => b.disabled && b.checked));
@@ -92,22 +92,22 @@ const requests = (p, path, method = 'GET') => p.requests.filter((r) => r.path ==
   barBtn(p, 'Select all').click();
   let asked = null;
   p.confirm = (m) => { asked = m; return false; };
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').click();
   await settle(5);
-  ok('C2 the confirm names the count and lists ten paths, then "+2 more"', /^Delete 12 files\?/.test(asked)
+  ok('C2 the confirm names the count and lists ten paths, then "+2 more"', /^Move 12 files to Trash\?/.test(asked)
      && asked.includes('~/p/e0/CLAUDE.md') && asked.includes('~/p/e9/CLAUDE.md') && !asked.includes('~/p/e10/') && asked.includes('+2 more'), asked);
-  ok('C2 …and says they go to Trash and can be restored', /trash/.test(asked) && /restore them from Trash/.test(asked));
+  ok('C2 …and says they go to Trash and can be restored', /to Trash\?/.test(asked) && /restore them from Trash/.test(asked));
   ok('C2 Cancel posts nothing, and keeps the selection', p.state.posts.length === 0 && count(p) === '12 selected');
 
   const ctxGets = requests(p, '/api/context').length, regGets = requests(p, '/api/registry').length;
   p.state.ctx = contextOf(0);   // what the server shows once those are gone
   p.confirm = () => true;
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').click();
   await settle(10);
   const sent = p.state.posts[0]?.paths;
   ok('C2 OK posts exactly the selected paths, once', p.state.posts.length === 1 && sent.length === 12
      && sent.every((x, i) => x === `${H}/p/e${i}/CLAUDE.md`), JSON.stringify(sent));
-  ok('C2 the notice says how many, and where to recover them', /Deleted 12 files\. Recover them under Trash\./.test(noticeText(p)), noticeText(p));
+  ok('C2 the notice says how many, and where to recover them', /Moved 12 files to Trash\. Restore them from there\./.test(noticeText(p)), noticeText(p));
   ok('D8 the Context data and the registry are fetched again', requests(p, '/api/context').length === ctxGets + 1 && requests(p, '/api/registry').length === regGets + 1);
   ok('D8 …and the rows on screen really change', boxes(p).length === 2 && /2 instruction files/.test(p.text(p.$('content'))), `${boxes(p).length}`);
   ok('D9 the selection is cleared after the batch', count(p) === '0 selected');
@@ -127,12 +127,12 @@ const requests = (p, path, method = 'GET') => p.requests.filter((r) => r.path ==
     historyWarnings: [{ display: '~/p/e0/CLAUDE.md', error: 'git lock' }],
   });
   barBtn(p, 'Select all').click();
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').click();
   await settle(10);
   const t = noticeText(p);
-  ok('D5 a partial batch: the notice is a warning with the count trashed', p.$('notice-slot').querySelector('.notice.warn') && /Deleted 1 file\. Recover it under Trash\./.test(t), t);
-  ok('D5 …moved-but-unfinished says it is restorable', /e1\/CLAUDE\.md: moved to Trash, but the delete did not finish \(EIO renaming metadata\)\. It can be restored from Trash\./.test(t));
-  ok('D5 …failed carries its error', /e2\/CLAUDE\.md: not deleted — disk full/.test(t));
+  ok('D5 a partial batch: the notice is a warning with the count trashed', p.$('notice-slot').querySelector('.notice.warn') && /Moved 1 file to Trash\. Restore it from there\./.test(t), t);
+  ok('D5 …moved-but-unfinished says it is restorable', /e1\/CLAUDE\.md: moved to Trash, but the move did not finish \(EIO renaming metadata\)\. It can be restored from Trash\./.test(t));
+  ok('D5 …failed carries its error', /e2\/CLAUDE\.md: not moved — disk full/.test(t));
   ok('D5 …not-attempted is named', /e3\/CLAUDE\.md: not attempted/.test(t));
   ok('D7 …and the history warning is shown', /e0\/CLAUDE\.md: history not recorded — git lock/.test(t));
 }
@@ -142,10 +142,10 @@ const requests = (p, path, method = 'GET') => p.requests.filter((r) => r.path ==
   const p = await boot({ ctx: contextOf(2) });
   p.state.batch = () => { throw { status: 400, body: { error: '~/p/e1/CLAUDE.md is hard-linked — nothing was deleted', path: `${H}/p/e1/CLAUDE.md` } }; };
   barBtn(p, 'Select all').click();
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').click();
   await settle(10);
   ok('a refused batch shows the server\'s reason, and keeps the selection', /hard-linked — nothing was deleted/.test(noticeText(p))
-     && count(p) === '2 selected' && !barBtn(p, 'Delete').disabled, noticeText(p));
+     && count(p) === '2 selected' && !barBtn(p, 'Move to Trash').disabled, noticeText(p));
 }
 {
   // The re-read after the delete fails: the old rows stay, marked.
@@ -153,11 +153,11 @@ const requests = (p, path, method = 'GET') => p.requests.filter((r) => r.path ==
   const p = await boot({ ctx: contextOf(2), over: { 'GET /api/context': () => { if (failing) throw { status: 500, body: { error: 'scan timed out' } }; return contextOf(2); } } });
   barBtn(p, 'Select all').click();
   failing = true;
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').click();
   await settle(10);
   ok('D8 a failed re-read keeps the view, marked as from before the delete', p.eval('S.view') === 'context' && boxes(p).length === 4
-     && /Showing Context as it was before the delete — reading it again failed \(scan timed out\)/.test(p.text(p.$('content'))));
-  ok('D8 …and the notice says so beside the result', /Deleted 2 files/.test(noticeText(p)) && /could not be read again \(scan timed out\)/.test(noticeText(p)), noticeText(p));
+     && /Showing Context as it was before the move to Trash — reading it again failed \(scan timed out\)/.test(p.text(p.$('content'))));
+  ok('D8 …and the notice says so beside the result', /Moved 2 files to Trash/.test(noticeText(p)) && /could not be read again \(scan timed out\)/.test(noticeText(p)), noticeText(p));
   ok('D8 the page uses no wording the Memory/Context copy rules forbid', !/\bstale\b|\bunused\b|never used/i.test(p.text(p.$('content')) + noticeText(p)));
 }
 
@@ -168,11 +168,11 @@ const deferred = () => { let resolve, reject; const promise = new Promise((r, j)
   const d = deferred();
   p.state.batch = () => d.promise;
   enabled(p)[0].click(); enabled(p)[1].click();
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').click();
   await settle(5);
-  ok('D9 while it runs, the bar\'s buttons and the checkboxes are disabled', barBtn(p, 'Delete').disabled && barBtn(p, 'Select all').disabled
+  ok('D9 while it runs, the bar\'s buttons and the checkboxes are disabled', barBtn(p, 'Move to Trash').disabled && barBtn(p, 'Select all').disabled
      && barBtn(p, 'Clear').disabled && boxes(p).every((b) => b.disabled));
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').click();
   await settle(5);
   ok('D9 …so a second click posts nothing more', p.state.posts.length === 1);
 
@@ -184,7 +184,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((r, j)
   await settle(10);
   ok('D10 …and the late answer does not repaint Context over it', p.eval('S.view') === 'memory' && p.$('content').querySelector('h2') && p.text(p.$('content').querySelector('h2')) === 'Memory'
      && !p.$('content').querySelector('.cx-variant'));
-  ok('D10 …while its notice still reports the result', /Deleted 2 files/.test(noticeText(p)), noticeText(p));
+  ok('D10 …while its notice still reports the result', /Moved 2 files to Trash/.test(noticeText(p)), noticeText(p));
   p.$('btn-context').click();
   await settle(10);
   ok('D9 back on Context: the selection was cleared by the view change', count(p) === '0 selected');
@@ -202,7 +202,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((r, j)
   const d = deferred();
   p.state.batch = () => d.promise;
   enabled(p).find((b) => /app\/CLAUDE\.md/.test(b.getAttribute('aria-label'))).click();
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').click();
   await settle(5);
   p.eval(`openInEditor(${JSON.stringify(PATHS.claudeMd)}, '~/Documents/Projects/app/CLAUDE.md')`);
   await settle(10);
@@ -215,7 +215,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((r, j)
   const d2 = deferred();
   q.state.batch = () => d2.promise;
   enabled(q).find((b) => /app\/CLAUDE\.md/.test(b.getAttribute('aria-label'))).click();
-  barBtn(q, 'Delete').click();
+  barBtn(q, 'Move to Trash').click();
   await settle(5);
   q.eval(`openInEditor(${JSON.stringify(PATHS.hook)}, '~/.claude/hooks/pre tool.sh')`);
   await settle(10);
@@ -231,9 +231,9 @@ const deferred = () => { let resolve, reject; const promise = new Promise((r, j)
   const p = await boot({ ctx: contextOf(205) });
   barBtn(p, 'Select all').click();
   ok('D9 over 200 visible: Select all takes the first 200, and says so', count(p) === '200 selected'
-     && /first 200 of 205/.test(noticeText(p)) && !barBtn(p, 'Delete').disabled, `${count(p)} / ${noticeText(p)}`);
+     && /first 200 of 205/.test(noticeText(p)) && !barBtn(p, 'Move to Trash').disabled, `${count(p)} / ${noticeText(p)}`);
   enabled(p)[204].click();
-  ok('D9 a 201st tick is counted honestly and Delete refuses it', count(p) === '201 selected — at most 200 at once' && barBtn(p, 'Delete').disabled);
+  ok('D9 a 201st tick is counted honestly and Delete refuses it', count(p) === '201 selected — at most 200 at once' && barBtn(p, 'Move to Trash').disabled);
 }
 
 // ── Memory: Delete selected is the trash-fact operation ──────────────────
@@ -268,7 +268,7 @@ async function bootMemory() {
   const p = await bootMemory();
   ok('D1 Memory: each fact row has a checkbox, and the bar is there', boxes(p).length === 3 && bar(p));
   enabled(p)[0].click(); enabled(p)[1].click();
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').click();
   await settle(10);
   ok('D1 Delete selected previews trash-fact for exactly the ticked ids', p.m.previews.length === 1 && p.m.previews[0].action === 'trash-fact'
      && JSON.stringify(p.m.previews[0].ids) === JSON.stringify(['r1', 'r2']), JSON.stringify(p.m.previews));
@@ -277,14 +277,14 @@ async function bootMemory() {
   panelBtn('Cancel').click();
   await settle(5);
   ok('C2 Cancel accepts nothing and keeps the selection', p.m.accepts.length === 0 && !p.$('content').querySelector('.mem-preview') && count(p) === '2 selected');
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').click();
   await settle(10);
   const gets = requests(p, '/api/memory').length;
   p.$('content').querySelector('.mem-preview').querySelectorAll('button').find((b) => p.text(b) === 'Accept').click();
   await settle(10);
   ok('D1 Accept accepts the previewed operation', p.m.accepts.length === 1 && p.m.accepts[0].opId === 'a'.repeat(24));
   ok('D8 the Memory data is read again and the rows really change', requests(p, '/api/memory').length === gets + 1 && boxes(p).length === 1
-     && /1 memory files/.test(p.text(p.$('content'))), `${boxes(p).length}`);
+     && /1 memory file in /.test(p.text(p.$('content'))), `${boxes(p).length}`);
   ok('D9 the selection is cleared after it', count(p) === '0 selected');
   ok('D10 Accept stays on Memory', p.eval('S.view') === 'memory');
   ok('no page errors', p.errors.length === 0, p.errors.join('; '));
@@ -328,7 +328,7 @@ async function bootMemory() {
 {
   const p = await bootMemory();
   enabled(p)[0].click();
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').click();
   await settle(10);
   p.m.failRead = true;
   p.$('content').querySelector('.mem-preview').querySelectorAll('button').find((b) => p.text(b) === 'Accept').click();
@@ -346,7 +346,7 @@ async function bootMemory() {
   row(0).click();
   const old = deferred();
   held = old;
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').click();
   await settle(10);
   // Away and back: a fresh open reads B alone; then B is deleted and the newest read is empty.
   p.$('btn-memory').click(); await settle(10);
@@ -355,7 +355,7 @@ async function bootMemory() {
   ok('(setup) after returning, only B is selectable', enabled(p).length === 1 && row(1));
   row(1).click();
   current = contextOf(0);
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').click();
   await settle(10);
   ok('(setup) the newest read is empty', enabled(p).length === 0);
   old.resolve({ ...contextOf(0), groups: [{ ...contextOf(2).groups[0], scopes: contextOf(2).groups[0].scopes.filter((x) => x.scope !== 'e0') }] });
@@ -367,7 +367,7 @@ async function bootMemory() {
 // ── grade 2–4: Memory while Accept is out, and when it fails ──────────────
 async function memoryAccepting(p) {
   enabled(p)[0].click(); enabled(p)[1].click();
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').click();
   await settle(10);
 }
 const acceptBtn = (p) => p.$('content').querySelector('.mem-preview')?.querySelectorAll('button').find((b) => p.text(b) === 'Accept');
@@ -378,14 +378,14 @@ const failedOp = (rows) => ({ status: 500, body: { error: 'disk full — the ste
   const held = deferred();
   await memoryAccepting(p);
   ok('grade 3: with the preview open, the selection is frozen: checkboxes, Delete and the filter disabled',
-     boxes(p).every((b) => b.disabled) && barBtn(p, 'Delete').disabled && p.$('content').querySelector('select').disabled && !acceptBtn(p).disabled);
+     boxes(p).every((b) => b.disabled) && barBtn(p, 'Move to Trash').disabled && p.$('content').querySelector('select').disabled && !acceptBtn(p).disabled);
   p.m.holdAccept = held;
   acceptBtn(p).click();
   await settle(5);
-  ok('grade 3: during Accept, Accept itself is disabled too', acceptBtn(p).disabled && boxes(p).every((b) => b.disabled) && barBtn(p, 'Delete').disabled);
+  ok('grade 3: during Accept, Accept itself is disabled too', acceptBtn(p).disabled && boxes(p).every((b) => b.disabled) && barBtn(p, 'Move to Trash').disabled);
   p.eval('paintMemory()');
   ok('grade 3: …and a repaint mid-Accept keeps every one of them disabled', acceptBtn(p).disabled && boxes(p).every((b) => b.disabled)
-     && barBtn(p, 'Delete').disabled && barBtn(p, 'Select all').disabled && p.$('content').querySelector('select').disabled);
+     && barBtn(p, 'Move to Trash').disabled && barBtn(p, 'Select all').disabled && p.$('content').querySelector('select').disabled);
   held.resolve();
   await settle(10);
   ok('grade 3: settled, everything is live again', !barBtn(p, 'Select all').disabled && enabled(p).length > 0 && !p.$('content').querySelector('select').disabled);
@@ -452,8 +452,8 @@ const failedOp = (rows) => ({ status: 500, body: { error: 'disk full — the ste
   ok('QA B: after Clear (which disables itself), focus is on Select all', p.doc.activeElement === barBtn(p, 'Select all'), p.doc.activeElement?.tagName);
   enabled(p)[0].focus();
   enabled(p)[0].click();
-  barBtn(p, 'Delete').focus();
-  barBtn(p, 'Delete').click();
+  barBtn(p, 'Move to Trash').focus();
+  barBtn(p, 'Move to Trash').click();
   await settle(10);
   ok('QA B: after a keyboard-started delete repaints, focus is on the bar, not BODY', p.doc.activeElement !== p.doc.body && bar(p).contains(p.doc.activeElement), p.doc.activeElement?.tagName);
   const slot = p.$('notice-slot');

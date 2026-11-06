@@ -379,7 +379,7 @@ const item = (page, id) => page.querySelectorAll('.files-item').find((b) => b.da
   await settle(10);
   l.eval('deleteOpenEntry()');
   await settle(10);
-  ok('F a local delete lands on Home with its notice', l.eval('S.view') === 'home' && /Deleted/.test(l.text(l.$('notice-slot'))));
+  ok('F a local delete lands on Home with its notice', l.eval('S.view') === 'home' && /Moved .* to Trash/.test(l.text(l.$('notice-slot'))));
 }
 {
   // Live events while the Files panel is closed.

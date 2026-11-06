@@ -68,7 +68,7 @@ try {
     ok('…the default part ticked, the opt-in parts not', check(rg, /^Code-review skill/i)?.checked && !check(rg, /Agent guard/i)?.checked && !check(rg, /push gate/i)?.checked, rg.querySelectorAll('label').map(t).join(' | '));
     ok('…the requirements, met', rg.querySelectorAll('.pk-reqs li.ok').length >= 4 && !rg.querySelector('.pk-reqs li.missing'));
     ok('…and harness boxes for Claude and Codex, both detected and ticked', check(rg, /^Claude Code \(~\/\.claude\)/)?.checked && check(rg, /^Codex \(~\/\.codex\)/)?.checked && !check(rg, /^Codex \(/)?.disabled, rg.querySelectorAll('label').map(t).join(' | '));
-    ok('the machine line says Grok is not here, and why', /Grok/.test(t(page.$('content').querySelector('.pk-here'))) && /no grok CLI on PATH and no ~\/\.grok/.test(t(page.$('content').querySelector('.pk-here'))));
+    ok('the machine line says Grok is not here, and why', /Grok/.test(t(page.$('content').querySelector('.pk-here'))) && /not installed, and no ~\/\.grok/.test(t(page.$('content').querySelector('.pk-here'))));
     ok('no request so far wrote anything (only GETs and no apply)', !reqs().some((r) => r.path === '/api/packs/apply' || r.path === '/api/packs/plan'));
   }
 
@@ -92,7 +92,7 @@ try {
     ok('…the skill is on disk for Claude, not for Codex', fs.existsSync(path.join(sb.home, '.claude/skills/handoff/SKILL.md')) && !fs.existsSync(path.join(sb.env.CODEX_HOME, 'skills/handoff')));
     ok('…and after the status refresh the card says installed, for claude, with Update and Uninstall', await waitFor(() => statusDone() && /installed 1\.0\.0/.test(t(card('handoff').querySelector('.pk-head'))))
       && /for claude$/.test(t(card('handoff').querySelector('.pk-badges'))) && !!button(card('handoff'), /^Preview update/) && !!button(card('handoff'), /^Preview uninstall/), t(card('handoff').querySelector('.pk-part')));
-    ok('…and codex shows as a new harness for it', /new harness detected/.test(t(card('handoff').querySelector('.pk-badges'))) && /codex is here now/.test(t(card('handoff').querySelector('.pk-details'))), t(card('handoff').querySelector('.pk-part')));
+    ok('…and codex shows as a new harness for it', /a new CLI is here, not installed for it/.test(t(card('handoff').querySelector('.pk-badges'))) && /codex is here now/.test(t(card('handoff').querySelector('.pk-details'))), t(card('handoff').querySelector('.pk-part')));
   }
 
   console.log('\nthe build → review-gate dependency offer');
@@ -252,7 +252,7 @@ try {
     await waitFor(() => p1.$('content').querySelectorAll('.pk-card').length === 8);
     const codexBox = card1('review-gate').querySelectorAll('label').find((l) => /^Codex \(/.test(p1.text(l)));
     ok('Codex\'s box is there, disabled and unticked, with why beside it', codexBox && codexBox.querySelector('input').disabled && !codexBox.querySelector('input').checked
-      && /Codex: no codex CLI on PATH and no ~\/\.codex/.test(p1.text(card1('review-gate').querySelector('.pk-harnesses'))), p1.text(card1('review-gate').querySelector('.pk-harnesses')));
+      && /Codex: not installed, and no ~\/\.codex/.test(p1.text(card1('review-gate').querySelector('.pk-harnesses'))), p1.text(card1('review-gate').querySelector('.pk-harnesses')));
     card1('review-gate').querySelectorAll('button').find((b) => /^Preview install/.test(p1.text(b))).click();
     await waitFor(() => card1('review-gate')?.querySelector('.pk-preview'));
     const pv = () => card1('review-gate').querySelector('.pk-preview');

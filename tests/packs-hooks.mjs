@@ -76,7 +76,7 @@ console.log('\nC6 the agent guard touches only the chosen harnesses');
   ok('C6 --harness codex leaves Claude settings byte-identical', r.code === 0 && sb.read(settings) === original, `${r.out}\n${sb.read(settings)}`);
   ok('C6 …puts the guard in the Codex home, and records codex only', /"\^Bash\$"/.test(sb.read(hooksJson) || '') && sb.state().packs['review-gate'].parts['agent-guard'].harnesses.join() === 'codex', sb.read(hooksJson));
   const g = partOf(sb.json(['status']), 'review-gate', 'agent-guard');
-  ok('C6 …status checks only Codex, and offers Claude as a new harness rather than calling it broken', !('claude' in g.harness) && g.harness['codex ~/.codex'] === 'active' && g.statuses.includes('new harness detected, not installed for it') && !g.statuses.includes('installed but not working'), JSON.stringify(g));
+  ok('C6 …status checks only Codex, and offers Claude as a new harness rather than calling it broken', !('claude' in g.harness) && g.harness['codex ~/.codex'] === 'active' && g.statuses.includes('a new CLI is here, not installed for it') && !g.statuses.includes('installed but not working'), JSON.stringify(g));
   const u = sb.packs(['uninstall', 'review-gate', '--yes']);
   ok('C6 …and uninstall takes it out of the Codex home, still not touching Claude settings', u.code === 0 && !fs.existsSync(hooksJson) && sb.read(settings) === original, `${u.out}\n${sb.read(settings)}`);
   const calls = sb.callsOf('codex').length;

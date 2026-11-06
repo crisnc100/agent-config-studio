@@ -181,7 +181,7 @@ console.log('\nharnesses: only those present, unless forced');
   fs.writeFileSync(path.join(sb2.bin, 'codex'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const st = sb2.json(['status', '--no-trust-check']);
   const row = st.data.packs.find((x) => x.id === 'handoff').parts[0];
-  ok('status reports a new harness the part is not installed for', row.statuses.includes('new harness detected, not installed for it') && /codex is here now/.test(row.details.join()), JSON.stringify(row));
+  ok('status reports a new harness the part is not installed for', row.statuses.includes('a new CLI is here, not installed for it') && /codex is here now/.test(row.details.join()), JSON.stringify(row));
   const again = sb2.packs(['install', 'handoff', '--yes']);
   ok('…and installing again adds just that harness', again.code === 0 && fs.existsSync(path.join(sb2.env.CODEX_HOME, 'skills/handoff/SKILL.md')) && sb2.state().packs.handoff.parts.handoff.harnesses.join() === 'claude,codex', again.out);
 }

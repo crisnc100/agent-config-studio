@@ -62,7 +62,7 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
   ]) };
   const p = await boot(state);
   ok('G6 the Model guide section shows after Roles and Describe', !!sec(p) && content(p).querySelector('.models-describe') && [...content(p).querySelector('.models').children].indexOf(sec(p)) > [...content(p).querySelector('.models').children].indexOf(content(p).querySelector('.models-describe')));
-  ok('…with its one-line explanation', /Agents read this file at the start of every session\. The block tells them which model does which job\./.test(p.text(sec(p))));
+  ok('…with its one-line explanation', /Agents read this file at the start of every session\. The block tells them which model does each role\./.test(p.text(sec(p))));
   ok('…one row per target, by display path', sec(p).querySelectorAll('.guide-row').length === 3 && /~\/\.claude\/CLAUDE\.md/.test(p.text(row(p, 'claude'))));
   const cases = [
     ['absent', 'Not added', ['Add']], ['current', 'Up to date', ['Remove']], ['stale', 'Out of date', ['Update', 'Remove']],
@@ -86,7 +86,7 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
       && txt(row(err, 'grok').querySelector('.guide-chip')) === 'Up to date');
   const inv = await boot({ guide: guide([target('claude', 'absent'), target('codex', 'roles-invalid')], 'roles.json: roles.x: unknown family') });
   ok('R3 roles invalid: the section says so, Add is disabled, Remove is not',
-    /Roles invalid — fix in Models → Jobs/.test(inv.text(sec(inv))) && button(row(inv, 'claude'), 'Add').disabled === true && button(row(inv, 'codex'), 'Remove').disabled === false);
+    /Roles invalid — fix in Models → Roles/.test(inv.text(sec(inv))) && button(row(inv, 'claude'), 'Add').disabled === true && button(row(inv, 'codex'), 'Remove').disabled === false);
   const shared = await boot({ guide: guide([target('claude', 'current', { sharedWith: ['codex'] }), target('codex', 'current', { sharedWith: ['claude'], linkedTo: '~/.claude/CLAUDE.md' })]) });
   ok('R2 a shared file says every target sharing it changes', /Shared with ~\/\.codex\/AGENTS\.md/.test(shared.text(row(shared, 'claude'))) && /→ ~\/\.claude\/CLAUDE\.md/.test(shared.text(row(shared, 'codex'))));
 }

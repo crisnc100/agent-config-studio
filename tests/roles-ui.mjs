@@ -82,7 +82,7 @@ const posts = (p, path) => p.requests.filter((r) => r.method === 'POST' && r.pat
 {
   const p = await boot();
   const text = p.text(content(p));
-  ok('A4 the Roles section shows on the Models view', /Jobs/.test(text) && content(p).querySelector('.roles-list'));
+  ok('A4 the Roles section shows on the Models view', p.text(content(p).querySelector('.models-roles .models-subhead')) === 'Roles' && !/\bJobs\b/.test(text) && content(p).querySelector('.roles-list'));
   ok('…each role with its family and id, in order of preference', JSON.stringify(chips(roleRow(p, 'builder'))) === '["Opus · medium","Sol · medium"]'
      && JSON.stringify(roleRow(p, 'builder').querySelectorAll('.roles-lineup .job-chip').map((c) => c.title.split(',')[0])) === '["opus-id-1","sol-id-1"]',
      JSON.stringify(chips(roleRow(p, 'builder'))));
@@ -316,7 +316,7 @@ const PROPOSAL = {
   const sel = (root, f) => member(root, f)?.querySelector('.roles-member-effort');
   ok('the editor has one effort select per model, in order', JSON.stringify(ed.querySelectorAll('.roles-members .roles-member').map((m) => m.dataset.family)) === '["opus","sol"]');
   ok('…starting at each model\'s own effort', sel(ed, 'opus').value === 'medium' && sel(ed, 'sol').value === 'high');
-  ok('…offering "job default" and every effort', JSON.stringify(sel(ed, 'opus').querySelectorAll('option').map((o) => o.textContent)) === '["job default","low","medium","high","xhigh","max"]');
+  ok('…offering "role default" and every effort', JSON.stringify(sel(ed, 'opus').querySelectorAll('option').map((o) => o.textContent)) === '["role default","low","medium","high","xhigh","max"]');
   ok('…a member effort the default role does not have is marked', JSON.stringify(marks(member(ed, 'opus'))) === MARK && JSON.stringify(marks(member(ed, 'sol'))) === MARK);
   ok('…and the job-level effort select stays', !!ed.querySelector('.roles-effort-input'));
   sel(ed, 'opus').value = '';
