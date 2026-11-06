@@ -16,6 +16,11 @@
   --red: #e06b6b;
   --amber: #d9a441;
   --on-accent: #16110e;
+  /* Text that sits on its own colour's tint (badges, hits, diff lines). Dark: the colour itself. */
+  --accent-ink: var(--accent);
+  --claude-ink: var(--claude);
+  --codex-ink: var(--codex);
+  --green-ink: var(--green);
   --shadow: rgba(0, 0, 0, 0.45);
   --radius: 9px;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
@@ -40,6 +45,11 @@
   --green: #2f7449;
   --red: #a83c3c;
   --amber: #83600f;
+  /* Light: a shade darker than the colour, so text on its own tint stays ≥4.6:1 on every surface. */
+  --accent-ink: #904324;
+  --claude-ink: #8f4428;
+  --codex-ink: #2b6296;
+  --green-ink: #296640;
   --shadow: rgba(40, 30, 20, 0.18);
 }
 
@@ -187,8 +197,8 @@ a { color: var(--accent); }
   font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
   padding: 2px 7px; border-radius: 5px;
 }
-.harness-tag.claude { color: var(--claude); background: color-mix(in srgb, var(--claude) 14%, transparent); }
-.harness-tag.codex { color: var(--codex); background: color-mix(in srgb, var(--codex) 14%, transparent); }
+.harness-tag.claude { color: var(--claude-ink); background: color-mix(in srgb, var(--claude) 14%, transparent); }
+.harness-tag.codex { color: var(--codex-ink); background: color-mix(in srgb, var(--codex) 14%, transparent); }
 .harness-tag.both { color: var(--muted); background: var(--panel-3); }
 
 .tabs { display: flex; gap: 2px; background: var(--panel-2); padding: 3px; border-radius: 8px; }
@@ -355,7 +365,7 @@ a { color: var(--accent); }
 .diff-line .n { color: var(--muted); min-width: 38px; text-align: right; user-select: none; }
 .diff-line.add { background: color-mix(in srgb, var(--green) 13%, transparent); }
 .diff-line.del { background: color-mix(in srgb, var(--red) 13%, transparent); }
-.diff-line.add .t { color: var(--green); }
+.diff-line.add .t { color: var(--green-ink); }
 .diff-line.del .t { color: var(--red); }
 .diff-line.ctx .t { color: var(--text-dim); opacity: 0.75; }
 .diff-skip { color: var(--muted); padding: 6px 8px 6px 58px; font-size: 11px; }
@@ -426,7 +436,7 @@ details.more .mem-facts { margin: 6px 0 0; }
 .result-name { font-size: 13.5px; font-weight: 550; }
 .result-path { font: 11px var(--mono); color: var(--muted); margin-left: auto; }
 .result-line { font: 11.5px/1.6 var(--mono); color: var(--text-dim); padding: 1px 0; }
-.result-line b { color: var(--accent); font-weight: 600; background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.result-line b { color: var(--accent-ink); font-weight: 600; background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .result-ln { color: var(--muted); margin-right: 10px; }
 
 /* ── assist drawer ───────────────────────────────────────────────────── */
@@ -1296,7 +1306,7 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
   padding: 8px 10px; margin: 6px 0 10px; overflow-x: auto; max-height: 420px; overflow-y: auto; white-space: pre;
 }
 .diff-line { color: var(--text-dim); }
-.diff-line.add { color: var(--green); background: color-mix(in srgb, var(--green) 10%, transparent); }
+.diff-line.add { color: var(--green-ink); background: color-mix(in srgb, var(--green) 10%, transparent); }
 .diff-line.del { color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
 
 /* ── home: Refresh usage ─────────────────────────────────────────────── */
@@ -1577,11 +1587,11 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .pk-part-remove { font-size: 12px; }
 .pk-details { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; }
 .pk-badge { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
-.pk-badge.installed { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, transparent); background: color-mix(in srgb, var(--green) 9%, transparent); }
+.pk-badge.installed { color: var(--green-ink); border-color: color-mix(in srgb, var(--green) 40%, transparent); background: color-mix(in srgb, var(--green) 9%, transparent); }
 .pk-badge.edited { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 40%, transparent); background: color-mix(in srgb, var(--amber) 9%, transparent); }
-.pk-badge.update { color: var(--codex); border-color: color-mix(in srgb, var(--codex) 40%, transparent); background: color-mix(in srgb, var(--codex) 9%, transparent); }
+.pk-badge.update { color: var(--codex-ink); border-color: color-mix(in srgb, var(--codex) 40%, transparent); background: color-mix(in srgb, var(--codex) 9%, transparent); }
 .pk-badge.broken { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, transparent); background: color-mix(in srgb, var(--red) 9%, transparent); }
-.pk-badge.newHarness { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.pk-badge.newHarness { color: var(--accent-ink); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 9%, transparent); }
 .pk-check { display: inline-flex; align-items: flex-start; gap: 6px; font-size: 13px; cursor: pointer; min-width: 0; overflow-wrap: anywhere; }
 .pk-check input { margin-top: 3px; flex: none; accent-color: var(--accent); }
 .pk-check.disabled { color: var(--muted); cursor: default; }
