@@ -7,7 +7,7 @@
     "what": "The review gate is a code-review skill plus a small shared script (review.mjs). When you ask your agent to review a branch, the script asks a model from your reviewer role in ACS (Models → Roles) to read the committed changes and report bugs. Each finding must quote the exact code it is about, and a script checks that quote before you ever see the finding. The optional parts add an agent guard, a push gate and Codex log access.",
     "does": "Day to day you say /code-review (or 'review this branch'). The script picks a reviewer from your reviewer role, skipping any whose CLI you have not installed and saying which it skipped. It writes a report under reviews/ in the repo and one line to a review log. You decide which findings to fix; fixes are recorded with a close, and disputed findings can get a second model's verdict. If no reviewer can run, it stops and tells you exactly what to fix (install model-id, set the reviewer role, or install a CLI). It never quietly uses a model your role does not list.",
     "changes": [
-      "~/.claude/skills/code-review/ and ~/.codex/skills/code-review/ (the skill, for the harnesses you have)",
+      "~/.claude/skills/code-review/ and ~/.codex/skills/code-review/ (the skill, for the CLIs you have)",
       "~/.agent-config-studio/review-gate/ (the shared script, the scoring calibration and an example config)",
       "~/.agent-config-studio/review-log/review-log.jsonl (created by your first review)",
       "anything an optional part lists, only if you turn that part on",
@@ -59,7 +59,7 @@
         "changes": [
           "~/.claude/skills/code-review/SKILL.md (Claude Code; Grok reads this folder too)",
           "~/.codex/skills/code-review/SKILL.md (Codex)",
-          "~/.agent-config-studio/review-gate/review.mjs, merge.mjs, calibration.md and review-config.example.json (one shared copy for every harness), and eval/examples/ (two example eval cases to copy)",
+          "~/.agent-config-studio/review-gate/review.mjs, merge.mjs, calibration.md and review-config.example.json (one shared copy for every CLI), and eval/examples/ (two example eval cases to copy)",
           "~/.agent-config-studio/review-log/review-log.jsonl (created by the first review; one line per review, dispute, waiver and close)",
           "reviews/ inside each repo you review (the reports), added to that repo's .git/info/exclude so git ignores it"
         ]
@@ -112,7 +112,7 @@
           "~/.agent-config-studio/review-gate-agent-guard.json (what was installed, for a clean uninstall)",
           "~/.agent-config-studio/backups/review-gate-guard-<time>/ (a copy of every file before it changed)"
         ],
-        "undo": "Uninstalling removes only the guard's own hook entries and trust block. A file that has not changed since install gets its exact earlier bytes back; a file you edited keeps your edits and loses only the guard's entries. Harnesses that are not installed are skipped."
+        "undo": "Uninstalling removes only the guard's own hook entries and trust block. A file that has not changed since install gets its exact earlier bytes back; a file you edited keeps your edits and loses only the guard's entries. CLIs that are not installed are skipped."
       }
     },
     {

@@ -362,7 +362,7 @@ next task go to. Seats sort by the headroom of their tightest window, so the
 line at the top is the answer and the cards below are the evidence.
 
 Each seat is one *subscription*, not one vendor — two Codex plans and no Grok is
-a valid setup, and so is none at all. **+ Add seat** registers one; a second
+a valid setup, and so is none at all. **+ Add account** registers one; a second
 Codex seat gets its own `CODEX_HOME` under `~/.codex-seats/`, sharing
 `config.toml`, `AGENTS.md`, `skills`, `rules` and `plugins` by symlink, so only
 the login and session history differ. You sign in from the panel — it opens the

@@ -45,7 +45,7 @@ ok('HOME is redirected', home !== realHome);
   const out = run();
   ok('the human view still explains what to do', /No subscriptions tracked yet/.test(out), out.slice(0, 80));
   ok('it points at the studio, not a command that does not exist',
-     /\+ Add seat/.test(out) && !/acs-usage/.test(out), out);
+     /\+ Add account/.test(out) && !/acs-usage/.test(out), out);
 }
 
 // --- a stale snapshot must not survive every seat being removed -------------

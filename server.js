@@ -289,7 +289,7 @@ function detectedHarnessPayload(detected) {
 function normalizeHarnessId(value) {
   if (value === undefined || value === null || value === '') return 'claude';
   if (typeof value !== 'string') {
-    throw Object.assign(new Error('invalid harness'), { status: 400 });
+    throw Object.assign(new Error('invalid CLI'), { status: 400 });
   }
   return value;
 }
@@ -316,11 +316,11 @@ function rememberSession(sessions, sessionId, harnessId) {
 async function resolveIncoming(body, { detectFn, sessions, checkSession }) {
   const harness = normalizeHarnessId(body?.harness);
   if (!Object.hasOwn(HARNESSES, harness)) {
-    throw Object.assign(new Error(`unknown harness: ${harness}`), { status: 400 });
+    throw Object.assign(new Error(`unknown CLI: ${harness}`), { status: 400 });
   }
   const detected = await detectFn();
   if (!detected.some((h) => h.id === harness)) {
-    throw Object.assign(new Error(`harness not detected: ${harness}`), { status: 400 });
+    throw Object.assign(new Error(`${harness} is not installed on this machine`), { status: 400 });
   }
   const desc = HARNESSES[harness];
   const { models, defaultModel } = modelsFor(desc);
@@ -330,10 +330,10 @@ async function resolveIncoming(body, { detectFn, sessions, checkSession }) {
     // allowlist as a model the browser names.
     model = defaultModel;
     if (typeof model !== 'string' || !Object.hasOwn(models, model)) {
-      throw Object.assign(new Error(`harness ${harness} has no valid default model`), { status: 500 });
+      throw Object.assign(new Error(`${harness} has no valid default model`), { status: 500 });
     }
   } else if (typeof model !== 'string' || !Object.hasOwn(models, model)) {
-    throw Object.assign(new Error(`model ${model} is not valid for harness ${harness}`), { status: 400 });
+    throw Object.assign(new Error(`model ${model} is not valid for ${harness}`), { status: 400 });
   }
 
   let sessionId = body?.sessionId || null;
@@ -343,7 +343,7 @@ async function resolveIncoming(body, { detectFn, sessions, checkSession }) {
       sessionId = null;
     } else if (sessions.get(sessionId) !== harness) {
       throw Object.assign(
-        new Error(`session is bound to harness ${sessions.get(sessionId)}, not ${harness}`),
+        new Error(`this session runs on ${sessions.get(sessionId)}, not ${harness}`),
         { status: 409 },
       );
     }

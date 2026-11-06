@@ -7,6 +7,64 @@ const el = (tag, cls, text) => {
   if (text != null) n.textContent = text;
   return n;
 };
+/** Fine print folds behind "Details", so a page opens with one sentence. */
+function moreDetails(...lines) {
+  const d = el('details', 'more');
+  d.appendChild(el('summary', null, 'Details'));
+  for (const l of lines) if (l) d.appendChild(typeof l === 'string' ? el('p', null, l) : l);
+  return d;
+}
+/** The few terms the studio keeps, each explained in one sentence behind an (i). */
+const GLOSSARY = {
+  worktree: 'A worktree is a second checkout of the same repo on its own branch, so work can run side by side.',
+  trunk: 'The trunk is a project’s main checkout: worktrees branch from it, and nobody works in it.',
+  account: 'An account is one signed-in subscription the studio tracks — two Codex plans are two accounts.',
+  effort: 'Effort is how hard a model thinks on each turn: higher is slower and more thorough.',
+};
+const TIP_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 7.2v4M8 4.9v.2"/></svg>';
+/** A term with its (i): the word, then a button that opens its one-line meaning in place (click, tap or keyboard). */
+function glossTip(term, word = term) {
+  const wrap = el('span', 'tip');
+  wrap.appendChild(el('span', 'tip-term', word));
+  const b = el('button', 'tip-btn');
+  b.type = 'button';
+  b.innerHTML = TIP_ICON;
+  b.setAttribute('aria-label', `What is ${term === 'effort' ? 'effort' : `${/^[aeiou]/.test(term) ? 'an' : 'a'} ${term}`}?`);
+  b.setAttribute('aria-expanded', 'false');
+  b.title = GLOSSARY[term];
+  const body = el('span', 'tip-body', GLOSSARY[term]);
+  body.hidden = true;
+  b.onclick = () => { body.hidden = !body.hidden; b.setAttribute('aria-expanded', String(!body.hidden)); };
+  wrap.append(b, body);
+  return wrap;
+}
+/** A sentence built from text and { tip: term, word? } parts: each term is in the sentence, with its (i). */
+function introLine(parts) {
+  const d = el('div', 'scope-sub');
+  for (const x of parts) d.appendChild(typeof x === 'string' ? document.createTextNode(x) : glossTip(x.tip, x.word));
+  return d;
+}
+/** A worktree's env summary from wls ("copy:1,missing:2", "linked", "trunk", "-") in plain words. */
+const ENV_WORDS = { copy: 'copied', detached: 'kept separate', stale: 'different from the trunk', missing: 'missing',
+  broken: 'broken links', foreign: 'linked elsewhere', other: 'not files', refused: 'refused' };
+function envWords(env) {
+  if (env === 'linked') return 'env files linked to the trunk';
+  if (env === 'trunk') return 'the trunk’s own env files';
+  if (!env || env === '-') return 'no env files';
+  const parts = String(env).split(',').map((p) => p.split(':')).map(([k, n]) => [ENV_WORDS[k] || k, Number(n) || 0]);
+  return parts.map(([w, n], i) => (i ? `${n} ${w}` : `${plural(n, 'env file')} ${w}`)).join(', ');
+}
+/** A heading the top bar already shows: kept for screen readers, not drawn twice. */
+const pageHeading = (text) => el('h2', 'vh', text);
+/** A wide table scrolls inside its own box, never the page; the box takes keyboard focus so it can be scrolled. */
+function scrollBox(child, label) {
+  const box = el('div', 'table-scroll');
+  box.tabIndex = 0;
+  box.setAttribute('role', 'region');
+  box.setAttribute('aria-label', label);
+  box.appendChild(child);
+  return box;
+}
 const esc = (s) => s.replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -95,9 +153,9 @@ const VIEWS = [
   { id: 'skill-new', label: 'New skill', group: null, icon: 'skills', hash: '#skills/new',
     title: 'New skill', sub: 'Describe it, answer a few questions, review the SKILL.md', open: openSkillWizard },
   { id: 'packs', label: 'Packs', group: 'configure', icon: 'packs', hash: '#packs',
-    title: 'Skill packs', sub: 'Recommended skill packs — what each changes, a preview, then install, update or uninstall', open: openPacks },
+    title: 'Skill packs', sub: 'Ready-made skills and the settings they need — nothing is written until you preview a change and confirm it', open: openPacks },
   { id: 'mcp', label: 'MCP', group: 'configure', icon: 'mcp', hash: '#mcp',
-    title: 'MCP servers', sub: 'Model Context Protocol servers across both harnesses', open: openMcp },
+    title: 'MCP servers', sub: 'The MCP servers your CLIs can call', open: openMcp },
   // No sidebar item: reached from the Files page's folder line, and #folders.
   { id: 'folders', label: 'Folders', group: null, icon: 'folders', hash: '#folders',
     title: 'Folders', sub: 'The project folders the studio reads and edits', open: openFolders },
@@ -112,15 +170,15 @@ const VIEWS = [
   { id: 'context', label: 'Context', group: 'review', icon: 'context', hash: '#context',
     title: 'Context', sub: 'What each project tells its agents — CLAUDE.md, AGENTS.md, Cursor rules', open: openContext },
   { id: 'worktrees', label: 'Worktrees', group: 'review', icon: 'worktrees', hash: '#worktrees',
-    title: 'Worktrees', sub: 'Every registered project’s worktrees — env, and which are provably done', open: openWorktrees },
+    title: 'Worktrees', sub: 'Every registered project’s worktrees, and which are done', open: openWorktrees },
   { id: 'usage', label: 'Usage', group: 'review', icon: 'usage', hash: '#usage',
-    title: 'Usage', sub: 'Subscription headroom per seat — where the next task should go', open: openUsage },
+    title: 'Usage', sub: 'Subscription headroom per account — where the next task should go', open: openUsage },
   { id: 'scope', label: 'Scope', group: 'review', icon: 'scope', hash: '#scope',
-    title: 'Scope chain', sub: 'What actually applies when an agent runs in a directory', open: openScope },
+    title: 'Scope', sub: 'Which instruction files an agent loads in a folder, in order', open: openScope },
   { id: 'audit', label: 'Audit', group: 'review', icon: 'audit', hash: '#audit',
     title: 'Audit', sub: 'Hardcoded and stale models in skills and instruction files — every fix reviewed first', open: () => openAudit() },
   { id: 'trash', label: 'Trash', group: 'footer', icon: 'trash', hash: '#trash',
-    title: 'Trash', sub: 'Deleted items — restorable', open: openTrash },
+    title: 'Trash', sub: 'Trashed items — restore any of them', open: openTrash },
   { id: 'theme', label: 'Theme', group: 'footer', icon: 'theme', kind: 'action', open: toggleTheme },
 ];
 const viewById = (id) => VIEWS.find((v) => v.id === id) || null;
@@ -740,8 +798,8 @@ function renderTopbar() {
   del.hidden = !onEntry;
   del.disabled = !onEntry || !S.entry?.deletable;
   del.title = S.entry?.deletable === false
-    ? (S.entry.undeletableReason || 'Cannot be deleted')
-    : 'Delete (moves to trash, recoverable)';
+    ? (S.entry.undeletableReason || 'This cannot be moved to Trash')
+    : 'Move to Trash (you can restore it)';
 
   // Copying a skill across harnesses is only meaningful for skills.
   const copy = $('btn-copy');
@@ -807,6 +865,7 @@ function renderStatus() {
   // Save only ever acts on the open file — never leave it live on a view that
   // isn't showing one.
   $('btn-save').disabled = S.view !== 'entry' || !isDirty() || !!S.revoked;
+  $('btn-save').title = S.revoked ? 'This folder is no longer editable' : !isDirty() ? 'No changes to save' : 'Save';
   $('btn-save').hidden = S.view !== 'entry' || !S.file;
 }
 
@@ -905,6 +964,8 @@ function renderEditor(c) {
   // readOnly stops typing, not code — so every path that changes the text
   // checks it too, and an input that got through anyway is put back.
   ta.readOnly = !!S.revoked;
+  // Tab types two spaces; Esc leaves the editor (below), so the keyboard is never stuck in it.
+  ta.setAttribute('aria-keyshortcuts', 'Escape');
   ta.oninput = () => {
     if (S.revoked) { ta.value = S.draft; return; }
     S.draft = ta.value; renderStatus();
@@ -1146,10 +1207,9 @@ async function openScope() {
   const c = $('content');
   c.innerHTML = '';
   const box = el('div', 'scope');
-  box.appendChild(el('h2', null, 'What applies where'));
-  box.appendChild(el('div', 'scope-sub',
-    'Pick a directory to see every memory file an agent loads there, in the order they layer.'));
+  box.appendChild(pageHeading('Scope'));
   const sel = el('select', 'scope-select');
+  sel.setAttribute('aria-label', 'Folder');
   box.appendChild(sel);
   const list = el('div');
   box.appendChild(list);
@@ -1165,7 +1225,7 @@ async function openScope() {
     list.innerHTML = '<div class="scope-sub"><span class="spinner"></span></div>';
     const { chain } = await api('GET', `/api/scope?dir=${encodeURIComponent(sel.value)}`);
     list.innerHTML = '';
-    if (!chain.length) { list.appendChild(el('div', 'scope-sub', 'No memory files apply here.')); return; }
+    if (!chain.length) { list.appendChild(el('div', 'scope-sub', 'No instruction files apply here.')); return; }
     chain.forEach((f, i) => {
       const row = el('div', 'scope-item');
       row.appendChild(el('div', 'scope-rank', String(i + 1)));
@@ -1502,15 +1562,15 @@ async function addFileToEntry() {
 async function deleteTarget({ path: p, label, isWhole, protectedEntry }) {
   if (protectedEntry) {
     const typed = prompt(
-      `"${label}" is loaded by the harness on every session.\n\n` +
-      `Type its name to confirm deletion:`);
+      `"${label}" is loaded by your CLI on every session.\n\n` +
+      `Type its name to move it to Trash:`);
     if (typed !== label) {
-      if (typed !== null) notice('warn', 'Name did not match — nothing was deleted.');
+      if (typed !== null) notice('warn', 'Name did not match — nothing was moved.');
       return;
     }
   } else if (!confirm(
-    `Delete ${label}?\n\n` +
-    `It moves to the studio's trash and is committed to history first, so you can restore it either way.`)) {
+    `Move ${label} to Trash?\n\n` +
+    `It is saved to history first, so you can restore it from Trash or from history.`)) {
     return;
   }
 
@@ -1524,7 +1584,7 @@ async function deleteTarget({ path: p, label, isWhole, protectedEntry }) {
     } else {
       renderAll();
     }
-    notice('ok', `Deleted ${r.display} (${r.files} file${r.files === 1 ? '' : 's'}). Recover it under Trash.`, null, true);
+    notice('ok', `Moved ${r.display} (${plural(r.files, 'file')}) to Trash. Restore it from there.`, null, true);
   } catch (e) {
     notice('error', e.message, null, true);
   }
@@ -1533,14 +1593,14 @@ async function deleteTarget({ path: p, label, isWhole, protectedEntry }) {
 function deleteOpenEntry() {
   const e = S.entry;
   if (!e) return;
-  if (!e.deletable) { notice('warn', e.undeletableReason || 'This cannot be deleted.', null, true); return; }
+  if (!e.deletable) { notice('warn', e.undeletableReason || 'This cannot be moved to Trash.', null, true); return; }
 
   const multi = e.files.length > 1;
   // For a multi-file skill, make "this file" vs "the whole skill" an explicit choice.
   if (multi && S.file) {
     const whole = confirm(
-      `Delete the whole "${e.label}" skill (${e.files.length} files)?\n\n` +
-      `OK = delete the entire skill\nCancel = delete only ${S.file.display.split('/').pop()}`);
+      `Move the whole "${e.label}" skill (${e.files.length} files) to Trash?\n\n` +
+      `OK = the entire skill\nCancel = only ${S.file.display.split('/').pop()}`);
     if (whole) {
       return deleteTarget({ path: e.dir, label: e.label, isWhole: true, protectedEntry: e.protected });
     }
@@ -1585,7 +1645,7 @@ function selectBox(sel, id, label, why = null) {
   return wrap;
 }
 
-/** The sticky "N selected · Delete · Clear" bar. */
+/** The sticky "N selected · Move to Trash · Clear" bar. */
 function selectBar(sel, onDelete) {
   const bar = el('div', 'sel-bar');
   bar.setAttribute('role', 'toolbar');
@@ -1597,10 +1657,10 @@ function selectBar(sel, onDelete) {
   all.onclick = () => {
     const ids = [...sel.shown.keys()];
     sel.ids = new Set(ids.slice(0, SELECT_CAP));
-    if (ids.length > SELECT_CAP) notice('warn', `Selected the first ${SELECT_CAP} of ${ids.length} — the most one delete takes.`);
+    if (ids.length > SELECT_CAP) notice('warn', `Selected the first ${SELECT_CAP} of ${ids.length} — the most Trash takes at once.`);
     paintSelectBar(sel);
   };
-  const del = el('button', 'btn danger', 'Delete…');
+  const del = el('button', 'btn danger', 'Move to Trash…');
   del.onclick = () => onDelete([...sel.ids]);
   const clear = el('button', 'btn ghost', 'Clear');
   clear.onclick = () => { sel.ids.clear(); paintSelectBar(sel); focusBar(sel); };
@@ -1619,6 +1679,9 @@ function paintSelectBar(sel) {
   b.all.disabled = sel.busy || !sel.shown.size;
   b.del.disabled = sel.busy || !n || n > SELECT_CAP;
   b.clear.disabled = sel.busy || !n;
+  // A disabled button says why (the count beside it says the rest).
+  const why = sel.busy ? 'Working — wait for it to finish' : !n ? 'Tick at least one row first' : n > SELECT_CAP ? `At most ${SELECT_CAP} at once` : '';
+  for (const x of [b.all, b.del, b.clear]) x.title = x.disabled ? (x === b.all && !sel.busy ? 'Nothing here to select' : why) : '';
   // Not `.empty`: that is the global empty-state rule, and it would restyle the bar.
   b.bar.classList.toggle('is-empty', !n);
 }
@@ -1676,10 +1739,11 @@ async function openWorktrees() {
   if (S.view !== 'worktrees') return;
   c.innerHTML = '';
   const box = el('div', 'scope');
-  box.appendChild(el('h2', null, 'Worktrees'));
-  box.appendChild(el('div', 'scope-sub',
-    'Env shows how each worktree gets its env files: linked to the trunk, or a copy. Done means the exact commit was merged, '
-    + 'nothing is uncommitted, and no env file holds anything the trunk lacks. Merge status is against the last fetch.'));
+  box.appendChild(pageHeading('Worktrees'));
+  box.appendChild(moreDetails(
+    GLOSSARY.worktree, GLOSSARY.trunk,
+    'Env: how each worktree gets its env files — linked to the trunk, or a copy.',
+    'Done: the exact commit was merged, nothing is uncommitted, and no env file holds anything the trunk lacks. Merge status is as of the last fetch.'));
   if (!data.projects?.length) {
     box.appendChild(el('div', 'scope-sub', 'No registered projects. Register one with + on Worktrees in the sidebar.'));
     c.appendChild(box);
@@ -1702,7 +1766,7 @@ async function openWorktrees() {
         w.trunk ? 'TRUNK' : done ? 'DONE' : w.verdict.status === 'unknown' ? '?' : '—'));
       const body = el('div', 'scope-body');
       body.appendChild(el('div', 'scope-path', `${w.name}  [${w.branch || 'detached'}]`));
-      const bits = [`env: ${w.env}`];
+      const bits = [envWords(w.env)];
       if (w.envrc === 'blocked') bits.push('envrc: blocked');
       if (w.dirty) bits.push(`${w.dirty} uncommitted`);
       if (w.port) bits.push(`port ${w.port}`);
@@ -1735,12 +1799,11 @@ async function openTrash() {
   const { items } = await api('GET', '/api/trash');
   c.innerHTML = '';
   const box = el('div', 'scope');
-  box.appendChild(el('h2', null, 'Trash'));
-  box.appendChild(el('div', 'scope-sub',
-    'Deleted items, newest first. Contents were committed to history before removal, so anything here is recoverable two ways.'));
+  box.appendChild(pageHeading('Trash'));
+  box.appendChild(moreDetails('Newest first. Each was saved to history before it moved here, so it can also come back from history.'));
 
   if (!items.length) {
-    box.appendChild(el('div', 'scope-sub', 'Nothing deleted yet.'));
+    box.appendChild(el('div', 'scope-sub', 'Trash is empty.'));
     c.appendChild(box);
     return;
   }
@@ -1838,16 +1901,15 @@ function paintFolders() {
   const c = $('content');
   c.innerHTML = '';
   const box = el('div', 'scope folders');
-  box.appendChild(el('h2', null, 'Folders'));
+  box.appendChild(pageHeading('Folders'));
   const d = FOLDERS.data;
   if (!d) {
     box.appendChild(el('div', 'notice error', 'Could not read the folder list. Reload to try again.'));
     c.appendChild(box);
     return;
   }
-  box.appendChild(el('div', 'scope-sub',
-    'Edit folders open in the editor and keep history. Read folders are listed in Context, Skills and Worktrees, '
-    + `and the studio never writes there. The list lives in ${d.file}; change it from a terminal.`));
+  box.appendChild(moreDetails('Edit folders open in the editor and keep history; the studio never writes in read folders, which are listed in Context, Skills and Worktrees.',
+    `The list lives in ${d.file}; change it from a terminal.`));
   const cmd = (text) => { const code = el('code', 'folders-cmd', text); return code; };
   if (d.state === 'error') {
     const n = el('div', 'notice error folders-error');
@@ -1935,7 +1997,7 @@ async function openSkills() {
   } catch (e) {
     c.innerHTML = '';
     const box = el('div', 'scope');
-    box.appendChild(el('h2', null, 'Skills'));
+    box.appendChild(pageHeading('Skills'));
     box.appendChild(el('div', 'notice error', e.message));
     c.appendChild(box);
     return;
@@ -1949,15 +2011,13 @@ function paintSkills() {
   const box = el('div', 'scope');
 
   const head = el('div', 'sw-head');
-  head.appendChild(el('h2', null, 'Skills'));
+  head.appendChild(pageHeading('Skills'));
   const add = el('button', 'btn primary sk-new', 'New skill');
   add.onclick = () => { location.hash = '#skills/new'; };
   head.appendChild(add);
   box.appendChild(head);
-  box.appendChild(el('div', 'scope-sub',
-    `${SK.rows.length} skills across both harnesses and every project. `
-    + 'Identical copies are collapsed into one row. Pick any set and download it — '
-    + 'one skill saves as a readable .md, several as a .zip.'));
+  box.appendChild(moreDetails(`${plural(SK.rows.length, 'skill')} across your CLIs and every project. Identical copies are collapsed into one row.`,
+    'Pick any set and download it — one skill saves as a readable .md, several as a .zip.'));
 
   box.appendChild(usageCaveatBanner());
   const bar = selectionBar();
@@ -2144,9 +2204,9 @@ function syncSkillSelectionUI() {
       : 'Nothing selected';
   }
   const dl = $('sk-download');
-  if (dl) dl.disabled = chosen.length === 0;
+  if (dl) { dl.disabled = chosen.length === 0; dl.title = dl.disabled ? 'Select a skill to download first' : ''; }
   const clear = $('sk-clear');
-  if (clear) clear.disabled = chosen.length === 0;
+  if (clear) { clear.disabled = chosen.length === 0; clear.title = clear.disabled ? 'Nothing selected to clear' : ''; }
 }
 
 /**
@@ -2208,13 +2268,14 @@ const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString() : null);
 const daysAgo = (iso) => (iso ? Math.floor((Date.now() - Date.parse(iso)) / DAY_MS) : null);
 const picked = (kind) => (MV.picked[kind] ||= new Set());
 
+/** Each state's count as words, singular or plural: "1 git repository", "5 project folders not found". */
 const SLUG_STATE_LABELS = {
-  resolved: 'git repository',
-  'non-git': 'folder, not a repository',
-  ambiguous: 'ambiguous — more than one folder fits',
-  inaccessible: 'inaccessible — could not look',
-  missing: 'project folder not found',
-  'temp-probe': 'temporary session folder',
+  resolved: ['git repository', 'git repositories'],
+  'non-git': ['folder, not a repository', 'folders, not repositories'],
+  ambiguous: ['ambiguous — more than one folder fits', 'ambiguous — more than one folder fits'],
+  inaccessible: ['inaccessible — could not look', 'inaccessible — could not look'],
+  missing: ['project folder not found', 'project folders not found'],
+  'temp-probe': ['temporary session folder', 'temporary session folders'],
 };
 
 async function openMemory() {
@@ -2240,7 +2301,7 @@ async function openMemory() {
     if (gen !== MV.gen) return;
     c.innerHTML = '';
     const box = el('div', 'scope');
-    box.appendChild(el('h2', null, 'Memory'));
+    box.appendChild(pageHeading('Memory'));
     box.appendChild(el('div', 'notice error', e.message));
     c.appendChild(box);
     return;
@@ -2294,29 +2355,24 @@ function paintMemory() {
   c.innerHTML = '';
   const box = el('div', 'scope mem');
 
-  box.appendChild(el('h2', null, 'Memory'));
-  box.appendChild(el('div', 'scope-sub',
-    `${d.rows.length} memory files in ${d.groups.length} projects, from ${d.slugCount} Claude Code project folders. `
-    + 'Grouped by repository, so a project\'s worktrees and subfolders roll up together.'));
+  box.appendChild(pageHeading('Memory'));
+  const memCount = `${plural(d.rows.length, 'memory file')} in ${plural(d.groups.length, 'project')}, grouped by repository.`;
 
   if (MV.outdated) {
     box.appendChild(el('div', 'notice warn', `Showing Memory as it was before the last change — reading it again failed (${MV.outdated}). Reopen Memory to try again.`));
   }
 
-  const caveat = el('div', 'notice warn mem-caveat');
-  caveat.appendChild(el('div', null, d.caveat.text));
-  box.appendChild(caveat);
-
   const facts = el('div', 'mem-facts');
-  const states = Object.entries(d.states).map(([k, n]) => `${n} ${SLUG_STATE_LABELS[k] || k}`).join(' · ');
+  facts.appendChild(el('div', null, memCount));
+  facts.appendChild(el('div', 'mem-caveat', d.caveat.text));
+  facts.appendChild(el('div', null, `From ${plural(d.slugCount, 'Claude Code project folder')}; a project's worktrees and subfolders roll up together.`));
+  const states = Object.entries(d.states).map(([k, n]) => (SLUG_STATE_LABELS[k] ? plural(n, ...SLUG_STATE_LABELS[k]) : `${n} ${k}`)).join(' · ');
   facts.appendChild(el('div', null, `Project folders: ${states}. Temporary session folders are left out of the project list`
-    + (d.hiddenProbeFiles ? `, with the ${d.hiddenProbeFiles} memory file${d.hiddenProbeFiles === 1 ? '' : 's'} in them.` : '.')));
+    + (d.hiddenProbeFiles ? `, with the ${plural(d.hiddenProbeFiles, 'memory file')} in them.` : '.')));
   const o = d.other;
   const store = (label, s) => (s.count == null ? `${label}: ${s.note}` : `${label}: ${s.count} ${s.unit}${s.scopes != null ? ` in ${s.scopes} scope${s.scopes === 1 ? '' : 's'}` : ''} (${s.store}, read-only)`);
   facts.appendChild(el('div', null, `${store('Codex', o.codex)} · ${store('Grok', o.grok)}`));
-  facts.appendChild(el('div', null,
-    `Transcripts: ${d.scan.transcripts} (${d.scan.scanned} read, ${d.scan.reused} from cache) in ${d.scan.ms} ms.`));
-  box.appendChild(facts);
+  box.appendChild(moreDetails(facts));
 
   const f = d.findings;
   const queue = d.rows.filter((r) => r.inQueue);
@@ -2387,9 +2443,9 @@ function factDates(r) {
 
 function openInEditor(p, display) {
   const entry = entryForFile(p) || {
-    id: `adhoc:${p}`, label: display.split('/').pop(), kindLabel: 'memory', harness: 'claude',
+    id: `adhoc:${p}`, label: display.split('/').pop(), kindLabel: 'instructions', harness: 'claude',
     dir: p.slice(0, p.lastIndexOf('/')), display, files: [{ name: display.split('/').pop(), path: p, display }],
-    primary: p, deletable: false, undeletableReason: 'Delete memory from the Memory view, where it is restorable with its index link.',
+    primary: p, deletable: false, undeletableReason: 'Trash memory from the Memory view, where it is restorable with its index link.',
   };
   openEntry(entry, p);
 }
@@ -2504,7 +2560,7 @@ function cleanupsTab() {
     f.emptySlugs, (x) => {
       const b = el('div', 'sk-body');
       b.appendChild(el('div', 'scope-path', x.slug));
-      b.appendChild(el('div', 'mem-note', x.probe ? 'temporary session folder' : (SLUG_STATE_LABELS[x.state] || x.state)));
+      b.appendChild(el('div', 'mem-note', x.probe ? 'temporary session folder' : (SLUG_STATE_LABELS[x.state]?.[0] || x.state)));
       return b;
     }, 'trash-empty-slugs', 'Preview trash'));
 
@@ -2537,7 +2593,7 @@ function cleanupsTab() {
 
   if (f.oversized.length) {
     const warn = el('div', 'notice warn');
-    warn.appendChild(el('div', null, `Index files over ${f.oversized[0].threshold} lines — the harness may cut the rest off:`));
+    warn.appendChild(el('div', null, `Index files over ${f.oversized[0].threshold} lines — Claude Code may cut the rest off:`));
     const ul = el('ul');
     for (const o of f.oversized) ul.appendChild(el('li', null, `${groupLabel(o.group)}: ${o.lines} lines`));
     warn.appendChild(ul);
@@ -2557,7 +2613,7 @@ function orphansTab() {
     const card = el('div', 'mem-card');
     const h = el('div', 'sk-head');
     h.appendChild(el('span', 'sk-name', groupLabel(o.group)));
-    h.appendChild(el('span', `mem-badge state-${o.state}`, SLUG_STATE_LABELS[o.state] || o.state));
+    h.appendChild(el('span', `mem-badge state-${o.state}`, SLUG_STATE_LABELS[o.state]?.[0] || o.state));
     card.appendChild(h);
     card.appendChild(el('div', 'scope-path', o.slug));
     if (o.nearest) card.appendChild(el('div', 'mem-note', `Deepest folder that still exists on that path: ${o.nearest}`));
@@ -2628,7 +2684,7 @@ function sideBySide(orphanGroup, otherGroup) {
     t.appendChild(tr);
   }
   const wrap = el('div', 'mem-compare');
-  wrap.appendChild(t);
+  wrap.appendChild(scrollBox(t, 'Files side by side'));
   if (MV.diff?.key?.startsWith('side:')) wrap.appendChild(diffBlock());
   return wrap;
 }
@@ -2657,7 +2713,7 @@ function projectsTab() {
     const card = el('details', 'mem-card');
     const sum = el('summary', 'sk-head');
     sum.appendChild(el('span', 'sk-name', g.label));
-    sum.appendChild(el('span', `mem-badge state-${g.state}`, SLUG_STATE_LABELS[g.state] || g.state));
+    sum.appendChild(el('span', `mem-badge state-${g.state}`, SLUG_STATE_LABELS[g.state]?.[0] || g.state));
     sum.appendChild(el('span', 'mem-where', `${g.rowCount} file${g.rowCount === 1 ? '' : 's'} · ${g.display}`));
     card.appendChild(sum);
     for (const s of g.slugs) {
@@ -2841,7 +2897,7 @@ async function openContext() {
     if (gen !== CX.gen) return;
     c.innerHTML = '';
     const box = el('div', 'scope');
-    box.appendChild(el('h2', null, 'Context'));
+    box.appendChild(pageHeading('Context'));
     box.appendChild(el('div', 'notice error', e.message));
     c.appendChild(box);
     return;
@@ -2856,17 +2912,20 @@ function paintContext() {
   const scroll = c.scrollTop;
   c.innerHTML = '';
   const box = el('div', 'scope mem');
-  box.appendChild(el('h2', null, 'Context'));
-  const perRoot = Object.values(d.roots || {})
-    .map((r) => `${r.label}: ${r.files} files as ${r.entries} entries, ${r.drifted} drifted`).join(' · ');
-  box.appendChild(el('div', 'scope-sub',
-    `${d.totals.files} instruction files, shown as ${d.totals.entries} entries: `
-    + `${d.totals.collapsedCopies} identical copies collapsed, ${d.totals.drifted} drifted from trunk. `
-    + `${perRoot}. Every copy's path is still listed. Files in edit folders open in the editor, trunk copy first; `
-    + 'files in read folders open here, read-only.'));
+  box.appendChild(pageHeading('Context'));
+  const roots = Object.values(d.roots || {});
+  // One folder's line would only say the totals again.
+  const perRoot = roots.length > 1
+    ? roots.map((r) => `${r.label}: ${plural(r.files, 'file')} as ${plural(r.entries, 'entry', 'entries')}, ${r.drifted} drifted`).join(' · ') : null;
+  box.appendChild(moreDetails(
+    `${plural(d.totals.files, 'instruction file')}, shown as ${plural(d.totals.entries, 'entry', 'entries')}`
+    + (d.totals.drifted ? ` — ${d.totals.drifted} drifted from trunk.` : '.'),
+    `${plural(d.totals.collapsedCopies, 'identical copy', 'identical copies')} collapsed; every copy's path is still listed.`,
+    perRoot,
+    'Files in edit folders open in the editor, trunk copy first; files in read folders open here, read-only.'));
   for (const u of d.unreadable) box.appendChild(el('div', 'mem-flag', `not read: ${u.display} (${u.reason})`));
   if (CX.outdated) {
-    box.appendChild(el('div', 'notice warn', `Showing Context as it was before the delete — reading it again failed (${CX.outdated}). Reopen Context to try again.`));
+    box.appendChild(el('div', 'notice warn', `Showing Context as it was before the move to Trash — reading it again failed (${CX.outdated}). Reopen Context to try again.`));
   }
   resetShown(CX.sel);
   box.appendChild(selectBar(CX.sel, deleteContextSelection));
@@ -2897,8 +2956,8 @@ function paintContext() {
  * its editable representative, `open.path`.
  */
 function contextUnselectable(v) {
-  if (v.readOnly || !v.open.path) return 'In a read-only folder: it can be viewed here, not deleted.';
-  if (v.protected) return 'Loaded on every session. Delete it on its own from the editor, where you type its name to confirm.';
+  if (v.readOnly || !v.open.path) return 'In a read-only folder: it can be viewed here, not moved to Trash.';
+  if (v.protected) return 'Loaded on every session. Move it to Trash on its own from the editor, where you type its name to confirm.';
   return null;
 }
 
@@ -2909,8 +2968,8 @@ async function deleteContextSelection(paths) {
   const shown = paths.map((p) => sel.labels.get(p) || p);
   const list = shown.slice(0, 10).join('\n') + (shown.length > 10 ? `\n+${shown.length - 10} more` : '');
   const n = paths.length;
-  if (!confirm(`Delete ${n} file${n === 1 ? '' : 's'}?\n\n${list}\n\n`
-    + `${n === 1 ? 'It moves' : 'They move'} to the studio's trash and ${n === 1 ? 'is' : 'are'} committed to history first, so you can restore ${n === 1 ? 'it' : 'them'} from Trash.`)) return;
+  if (!confirm(`Move ${plural(n, 'file')} to Trash?\n\n${list}\n\n`
+    + `${n === 1 ? 'It is' : 'They are'} saved to history first, so you can restore ${n === 1 ? 'it' : 'them'} from Trash.`)) return;
 
   sel.busy = true;
   paintSelectBar(sel);
@@ -2953,14 +3012,14 @@ function batchNotice(r, extra) {
   const done = r.results.filter((x) => x.status === 'trashed').length;
   const lines = [];
   for (const x of r.results) {
-    if (x.status === 'moved-but-unfinished') lines.push(`${x.display}: moved to Trash, but the delete did not finish (${x.error}). It can be restored from Trash.`);
-    else if (x.status === 'failed') lines.push(`${x.display}: not deleted — ${x.error}`);
-    else if (x.status === 'not-attempted') lines.push(`${x.display}: not attempted — the delete stopped at the failure above.`);
+    if (x.status === 'moved-but-unfinished') lines.push(`${x.display}: moved to Trash, but the move did not finish (${x.error}). It can be restored from Trash.`);
+    else if (x.status === 'failed') lines.push(`${x.display}: not moved — ${x.error}`);
+    else if (x.status === 'not-attempted') lines.push(`${x.display}: not attempted — the move stopped at the failure above.`);
   }
   for (const w of r.historyWarnings) lines.push(`${w.display}: history not recorded — ${w.error}`);
   lines.push(...extra);
   notice(lines.length ? 'warn' : 'ok',
-    `Deleted ${done} file${done === 1 ? '' : 's'}. Recover ${done === 1 ? 'it' : 'them'} under Trash.`, lines, true);
+    `Moved ${plural(done, 'file')} to Trash. Restore ${done === 1 ? 'it' : 'them'} from there.`, lines, true);
 }
 
 function contextScope(s) {
@@ -3125,10 +3184,10 @@ function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => p
         // that can read account identity, so until it has run, the studio
         // cannot know this seat changed account — and would keep filtering
         // against the previous login.
-        status.textContent = 'signed in — checking this seat…';
+        status.textContent = 'signed in — checking this account…';
         try { await api('POST', '/api/usage/refresh'); } catch { /* the repaint still shows state */ }
         if (!onScreen()) return;
-        notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
+        notice('info', `${seat.label} is signed in. Its usage appears after it runs once.`);
         onSignedIn();
       } else if (!st.running && Date.now() - started > 5000) {
         stop();
@@ -3183,12 +3242,12 @@ function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => p
       status.textContent = 'signed in';
       if (LOGIN_RECONCILED.has(seat.seatId)) return;
       LOGIN_RECONCILED.add(seat.seatId);
-      status.textContent = 'signed in — checking this seat…';
+      status.textContent = 'signed in — checking this account…';
       try { await api('POST', '/api/usage/refresh'); } catch { /* the repaint still shows state */ }
       // The view, not this row: entering the step repaints rows meanwhile, and
       // the reconcile is this seat's, done once — so the repaint must follow it.
       if (S.view !== view) return;
-      notice('info', `${seat.label} is signed in. Its usage appears after the seat runs once.`);
+      notice('info', `${seat.label} is signed in. Its usage appears after it runs once.`);
       onSignedIn();
       return;
     }
@@ -3215,7 +3274,7 @@ function connectRow(seat, { reauth = false, view = 'usage', onSignedIn = () => p
 function conflictRow(seat, conflicts, message, retry) {
   const box = el('div', 'usage-conflict');
   box.appendChild(el('div', 'usage-conflict-why', message
-    || 'Something is using this seat right now. Signing in would be undone when it next refreshes.'));
+    || 'Something is using this account right now. Signing in would be undone when it next refreshes.'));
 
   const list = el('div', 'usage-conflict-list');
   for (const c of conflicts) {
@@ -3257,8 +3316,8 @@ function conflictRow(seat, conflicts, message, retry) {
 function sharedHomeNotice(s) {
   const warn = el('div', 'usage-conflict');
   warn.appendChild(el('div', 'usage-conflict-why',
-    'This seat shares the default Codex folder with the ChatGPT app and every plain ' +
-    '`codex` command. Anything that signs in there changes this seat\'s account. ' +
+    'This account shares the default Codex folder with the ChatGPT app and every plain ' +
+    '`codex` command. Anything that signs in there changes which login it uses. ' +
     'Moving it to its own folder means only you decide what it is signed in to.'));
   const move = el('button', 'btn', 'Move to its own folder');
   move.onclick = async () => {
@@ -3282,7 +3341,7 @@ function sharedHomeNotice(s) {
 /** The seat's account changed since we last looked — deliberate, or not. */
 function accountChangedNotice() {
   return el('div', 'usage-offline-why',
-    'This seat is signed in to a different account than last time. If you did not just ' +
+    'This entry is signed in to a different account than last time. If you did not just ' +
     're-authenticate it, something else is writing to this folder — earlier readings have ' +
     'been discarded because they belong to the previous account.');
 }
@@ -3291,7 +3350,7 @@ function accountChangedNotice() {
 function waitingHint() {
   const row = el('div', 'usage-hint');
   row.appendChild(el('span', 'usage-hint-label',
-    'Connected. Codex reports quota only after a turn runs, so this fills in the first time you use this seat.'));
+    'Connected. This fills in the first time you use this account.'));
   return row;
 }
 
@@ -3309,8 +3368,8 @@ function shortcutsPanel(state) {
 
   if (!state.shortcuts.length) {
     form.appendChild(el('div', 'usage-add-note',
-      'Shortcuts apply to Codex seats — they are the only ones whose account is chosen by ' +
-      'the terminal. Add a second Codex seat and it will appear here.'));
+      'Shortcuts apply to Codex accounts — they are the only ones chosen by ' +
+      'the terminal. Add a second Codex account and it will appear here.'));
     return form;
   }
 
@@ -3348,7 +3407,7 @@ function shortcutsPanel(state) {
     row.appendChild(word); row.appendChild(flags); row.appendChild(def);
     form.appendChild(row);
     form.appendChild(el('div', 'usage-add-note',
-      `Type “${sc.word}”, “codex ${sc.word}”, or “codex-${sc.word}” — each runs Codex on this seat.` +
+      `Type “${sc.word}”, “codex ${sc.word}”, or “codex-${sc.word}” — each runs Codex on this account.` +
       (sc.isDefault ? ' A plain “codex” runs this one.' : '')));
   }
 
@@ -3386,7 +3445,7 @@ function shortcutsPanel(state) {
   form.appendChild(el('div', 'usage-add-note',
     state.installed
       ? `Active in every terminal. Installed as one line in ${state.zshenv}, which zsh reads for ` +
-        'every shell — new tabs, scripts and all. Switching seats never asks you to sign in again.'
+        'every shell — new tabs, scripts and all. Switching accounts never asks you to sign in again.'
       : 'Turning these on adds a single line to your shell profile. Nothing else on your machine changes.'));
   form.appendChild(el('div', 'usage-add-note',
     'Quit a running Codex session before switching — the account is fixed when it starts.'));
@@ -3420,7 +3479,7 @@ function addSeatForm() {
     S.usageAdding = false;
     await paintUsage();
     if (res.loginCommand) {
-      notice('info', `Seat added. Run the login command shown on "${res.seat.label}" to connect it.`);
+      notice('info', `Account added. Run the login command shown on "${res.seat.label}" to connect it.`);
     } else if (res.note) {
       notice('info', res.note);
     }
@@ -3431,9 +3490,9 @@ function addSeatForm() {
   row.appendChild(vendor); row.appendChild(label); row.appendChild(save);
   form.appendChild(row);
   form.appendChild(el('div', 'usage-add-note',
-    'A second Codex seat gets its own home, sharing your config by symlink — only the login and ' +
+    'A second Codex account gets its own folder, sharing your config by symlink — only the login and ' +
     'session history differ. You sign in from here; no terminal needed. ' +
-    'A Grok seat reads its weekly quota through the Grok CLI, so sign in with `grok login` first.'));
+    'A Grok account reads its weekly quota through the Grok CLI, so sign in with `grok login` first.'));
   return form;
 }
 
@@ -3517,7 +3576,10 @@ async function paintUsage() {
   const box = el('div', 'scope');
 
   const panelHead = el('div', 'usage-head');
-  panelHead.appendChild(el('h2', null, 'Subscription usage'));
+  panelHead.appendChild(pageHeading('Subscription usage'));
+  const lead = el('div', 'usage-lead');
+  lead.append('Your ', glossTip('account', 'accounts'), ', most headroom first.');
+  panelHead.appendChild(lead);
   const actions = el('div', 'usage-actions');
 
   const refresh = el('button', 'btn ghost', 'Refresh');
@@ -3531,7 +3593,7 @@ async function paintUsage() {
   };
   actions.appendChild(refresh);
 
-  const addBtn = el('button', 'btn ghost', '+ Add seat');
+  const addBtn = el('button', 'btn ghost', '+ Add account');
   addBtn.onclick = () => { S.usageAdding = !S.usageAdding; paintUsage(); };
   actions.appendChild(addBtn);
 
@@ -3550,7 +3612,7 @@ async function paintUsage() {
 
   if (!seats.length) {
     box.appendChild(el('div', 'scope-sub',
-      'No subscriptions tracked yet — use + Add seat above.'));
+      'No subscriptions tracked yet — use + Add account above.'));
     c.appendChild(box);
     revealUsageFocus(box);
     return;
@@ -3563,9 +3625,14 @@ async function paintUsage() {
     head.appendChild(el('span', 'usage-route-seat', route.seat.label));
     head.appendChild(el('span', 'usage-route-pct', `${route.left}% left`));
   } else {
-    head.appendChild(el('span', 'usage-route-label', 'No seat is reporting usable headroom'));
+    head.appendChild(el('span', 'usage-route-label', 'No account is reporting usable headroom'));
   }
   box.appendChild(head);
+  // A row may say the codex CLI is missing while other Codex accounts read fine: say once why both are true.
+  const codexRows = seats.filter((s) => s.vendor === 'codex');
+  if (codexRows.some((s) => /codex CLI is not installed/.test(`${s.reason || ''} ${s.staleReason || ''}`)) && codexRows.some((s) => s.ok)) {
+    box.appendChild(el('div', 'usage-note', 'Codex isn’t installed here, but these accounts still report usage from their Codex folders.'));
+  }
 
   for (const s of seats) {
     const card = el('div', 'usage-seat');
@@ -3577,7 +3644,7 @@ async function paintUsage() {
     card.appendChild(title);
 
     const drop = el('button', 'usage-drop', '×');
-    drop.title = 'Stop tracking this seat';
+    drop.title = 'Stop tracking this account';
     drop.onclick = async () => {
       // Unregisters only. The seat's home holds a real login and its history,
       // so removing a row from a list must never destroy credentials.
@@ -3656,7 +3723,7 @@ async function paintUsage() {
       if (s.staleReason) notes.push(`${s.staleReason} — showing the last good reading`);
       if (s.stale && s.observedAt) {
         const stale = el('div', 'usage-stale',
-          `as of ${agoText(Date.now() - s.observedAt)} — not current. Run a turn on this seat to refresh it.`);
+          `as of ${agoText(Date.now() - s.observedAt)} — not current. Run a turn on this account to refresh it.`);
         card.appendChild(stale);
       }
       if (s.expiredWindows) notes.push(`${s.expiredWindows} window(s) hidden — already reset`);
@@ -3947,7 +4014,7 @@ function paintAccounts(body) {
     head.appendChild(el('span', 'home-route-seat', route.seat.label));
     head.appendChild(el('span', 'usage-route-pct', `${route.left}% left`));
   } else {
-    head.appendChild(el('span', 'usage-route-label', 'No seat is reporting usable headroom'));
+    head.appendChild(el('span', 'usage-route-label', 'No account is reporting usable headroom'));
   }
   body.appendChild(head);
 
@@ -3993,7 +4060,7 @@ function paintAccounts(body) {
     const act = el('div', 'home-seat-act');
     if (r.connect) {
       const b = el('button', 'btn', r.connect === 'reauth' ? 'Sign in again' : 'Connect');
-      b.title = 'Opens this seat in Usage, where the sign-in runs';
+      b.title = 'Opens this account in Usage, where the sign-in runs';
       b.onclick = () => goUsage({ seat: r.id });
       act.appendChild(b);
     }
@@ -4073,15 +4140,15 @@ function paintClis(body) {
   const { codex } = cliModel(null, HOME.src.usage);
   const row = el('div', 'home-cli');
   const top = el('div', 'home-cli-top');
-  top.appendChild(el('span', 'home-cli-name', 'Codex seats'));
+  top.appendChild(el('span', 'home-cli-name', 'Codex accounts'));
   row.appendChild(top);
   if (codex.state === 'loading') row.appendChild(homeLoading('from Usage…'));
   else if (codex.state === 'error') row.appendChild(homeFailed('Usage', codex.error));
-  else if (!codex.seats) row.appendChild(el('div', 'home-muted', 'no Codex seat tracked in Usage'));
+  else if (!codex.seats) row.appendChild(el('div', 'home-muted', 'no Codex account tracked in Usage'));
   else {
     top.appendChild(el('span', `home-chip ${codex.signIn ? 'warn' : 'ok'}`, codex.signIn ? 'needs sign-in' : 'signed in'));
     row.appendChild(el('div', 'home-muted',
-      `${codex.seats} seat${codex.seats === 1 ? '' : 's'} in Usage · ${codex.reading} reading` +
+      `${plural(codex.seats, 'account')} in Usage · ${codex.reading} reading` +
       (codex.signIn ? ` · ${codex.signIn} to sign in` : '')));
     if (codex.signIn) {
       const fix = el('button', 'btn ghost home-item-btn', 'Sign in from Usage');
@@ -4090,6 +4157,11 @@ function paintClis(body) {
     }
   }
   body.appendChild(row);
+  // Codex's accounts read their own folders' logs: they report usage with or without the CLI.
+  const codexCli = rows.find((r) => r.id === 'codex');
+  if (codexCli && !codexCli.installed && codex.reading) {
+    body.appendChild(el('div', 'home-muted home-pad', 'Codex isn’t installed here, but these accounts still report usage from their Codex folders.'));
+  }
   const again = el('button', 'btn ghost home-item-btn', 'Check in setup');
   again.onclick = () => homeAction({ view: 'setup' });
   const foot = el('div', 'home-foot', 'Installed CLIs, their versions and sign-in, as setup checks them. ');
@@ -4113,10 +4185,10 @@ function paintRecent(body) {
   }
   body.appendChild(last);
 
-  body.appendChild(el('div', 'home-sub', 'Recently deleted'));
+  body.appendChild(el('div', 'home-sub', 'Recently trashed'));
   if (!t || t.state === 'loading') return body.appendChild(homeLoading('Reading trash…'));
   if (t.state === 'error') return body.appendChild(homeFailed('Trash', t.error));
-  if (!m.trash.length) return body.appendChild(el('div', 'home-muted home-pad', 'Nothing deleted.'));
+  if (!m.trash.length) return body.appendChild(el('div', 'home-muted home-pad', 'Trash is empty.'));
   for (const it of m.trash) {
     const row = el('div', 'home-trash');
     row.appendChild(el('span', 'home-trash-path', it.display));
@@ -4143,7 +4215,7 @@ async function openMcp() {
 
   c.innerHTML = '';
   const box = el('div', 'scope');
-  box.appendChild(el('h2', null, 'MCP servers'));
+  box.appendChild(pageHeading('MCP servers'));
   box.appendChild(el('div', 'scope-sub', m.note || ''));
 
   const section = (title, rows, empty) => {
@@ -4254,10 +4326,9 @@ async function paintModels(load) {
   c.innerHTML = '';
   const box = el('div', 'scope models');
   const head = el('div', 'usage-head');
-  head.appendChild(el('h2', null, 'Models'));
+  head.appendChild(pageHeading('Models'));
   box.appendChild(head);
-  box.appendChild(el('div', 'scope-sub',
-    'Which model does each job, what each model is like, and the exact ids they run on. Nothing changes until you press a button.'));
+  box.appendChild(moreDetails('Nothing changes until you press a button.'));
 
   if (m.registryError) {
     const n = el('div', 'notice error models-error');
@@ -4345,7 +4416,7 @@ function idsSection(m) {
     const fam = el('td', 'models-family');
     fam.appendChild(el('span', `item-dot ${vendorDot(r.vendor)}`));
     fam.appendChild(document.createTextNode(r.family));
-    if (!r.track) fam.appendChild(el('span', 'item-badge', 'pinned'));
+    if (!r.track) { fam.appendChild(document.createTextNode(' ')); fam.appendChild(el('span', 'item-badge', 'pinned')); }
     tr.appendChild(fam);
     tr.appendChild(el('td', 'models-id', r.id));
     tr.appendChild(el('td', 'models-name', r.displayName || '—'));
@@ -4359,7 +4430,7 @@ function idsSection(m) {
     if (M.open.has(r.family)) tbody.appendChild(modelDetail(r, m));
   }
   table.appendChild(tbody);
-  sec.appendChild(table);
+  sec.appendChild(scrollBox(table, 'Model ids'));
   return sec;
 }
 
@@ -4370,8 +4441,8 @@ function scriptsNote() {
   const n = el('div', 'models-scripts');
   n.appendChild(el('p', 'assist-label', 'For skills and scripts'));
   n.appendChild(el('div', 'scope-note',
-    `model-id --role <job> prints a job's model, id and effort; model-id --flavor <model> prints its briefing notes; model-id <model> prints its id.` +
-    (M.roles?.userFile ? ` Jobs and model notes are saved in ${M.roles.userFile}.` : '')));
+    `model-id --role <role> prints a role's model, id and effort; model-id --flavor <model> prints its briefing notes; model-id <model> prints its id.` +
+    (M.roles?.userFile ? ` Roles and model notes are saved in ${M.roles.userFile}.` : '')));
   return n;
 }
 
@@ -4570,14 +4641,16 @@ const conflictText = (c) => `⚠ ${famLabel(c.family)}${c.slot === 'alt' ? ' (se
 
 function rolesSection() {
   const sec = el('div', 'models-roles');
-  sec.appendChild(el('h3', 'models-subhead', 'Jobs'));
+  sec.appendChild(el('h3', 'models-subhead', 'Roles'));
   const R = M.roles;
   if (!R) {
-    sec.appendChild(el('div', 'scope-note', M.rolesError || 'reading jobs…'));
+    sec.appendChild(el('div', 'scope-note', M.rolesError || 'reading roles…'));
     return sec;
   }
-  sec.appendChild(el('div', 'scope-sub models-roles-sub',
-    'Which model does each job, and how hard it thinks. Each chip shows the effort that actually applies: the model’s own in this job, else the job’s, else the model’s default. Click a job to change it.'));
+  const rolesSub = introLine(['Pick which model fills each role, and its ', { tip: 'effort' }, ' — how hard it thinks.']);
+  rolesSub.classList.add('models-roles-sub');
+  sec.appendChild(rolesSub);
+  sec.appendChild(moreDetails('Each chip shows the effort that applies: the model’s own in this role, else the role’s, else the model’s default. Click a role to change it.'));
   if (R.error) {
     const n = el('div', 'notice error models-error');
     n.appendChild(el('div', null, 'roles.json is invalid. Defaults are in use, and edits are refused until it is fixed (or a Describe proposal replaces it):'));
@@ -4593,6 +4666,7 @@ function rolesSection() {
   sec.appendChild(list);
   const add = el('button', 'btn ghost roles-add', 'Add a role');
   add.disabled = !!R.error || M.adding;
+  if (add.disabled) add.title = R.error ? 'Fix roles.json first (see the error above)' : 'Finish the role you are adding first';
   add.onclick = () => { M.adding = true; paintModels(); };
   sec.appendChild(add);
   return sec;
@@ -4625,7 +4699,7 @@ function roleRow(role) {
   row.appendChild(top);
 
   if (role.unset) {
-    row.appendChild(el('div', 'roles-lineup roles-unset', 'Not set — choose its model. Skills that use this job stop until it is set.'));
+    row.appendChild(el('div', 'roles-lineup roles-unset', 'Not set — choose its model. Skills that use this role stop until it is set.'));
     return row;
   }
   const lineup = el('div', 'roles-lineup');
@@ -4676,7 +4750,7 @@ function roleEditor(role) {
     if (role && !role.custom && role.defaults && value && value !== defaultOwn(role.defaults, k, family)) l.appendChild(changedMark());
     f.appendChild(l);
     const sel = el('select', 'models-input roles-select roles-member-effort');
-    sel.appendChild(el('option', null, 'job default')).value = '';
+    sel.appendChild(el('option', null, 'role default')).value = '';
     for (const e of R.efforts) sel.appendChild(el('option', null, e)).value = e;
     sel.value = value || '';
     sel.onchange = () => onchange(sel.value);
@@ -4702,7 +4776,7 @@ function roleEditor(role) {
   const members = el('div', 'roles-members');
   const paintMembers = () => {
     members.textContent = '';
-    members.appendChild(el('span', 'roles-label', 'Effort per model (job default: the job’s effort, else the model’s default)'));
+    members.appendChild(el('span', 'roles-label', 'Effort per model (role default: the role’s effort, else the model’s default)'));
     const row = el('div', 'roles-members-row');
     for (const f of [...new Set(families())]) row.appendChild(ownSelect(f, d.own[f], 'use', (v) => { if (v) d.own[f] = v; else delete d.own[f]; }));
     members.appendChild(row);
@@ -4728,7 +4802,7 @@ function roleEditor(role) {
   alt.onchange = () => { d.alt = alt.value; paintAltOwn(); };
   form.appendChild(altOwn);
   paintAltOwn();
-  const note = field('What this job is', el('input', 'models-input roles-note'), 'note');
+  const note = field('What this role does', el('input', 'models-input roles-note'), 'note');
   note.value = d.note; note.maxLength = R.limits.note;
   note.oninput = () => { d.note = note.value; };
   paintMembers();
@@ -4754,7 +4828,7 @@ function roleEditor(role) {
   if (role && !role.custom && !role.unset && !role.defaults) {
     const unset = el('button', 'btn ghost', 'Unset');
     unset.disabled = !!R.error;
-    unset.title = 'Remove your choice; skills that use this job stop until you choose again';
+    unset.title = 'Remove your choice; skills that use this role stop until you choose again';
     unset.onclick = () => rolesWrite('/api/models/roles/reset', { name: role.name }, `Role ${role.name} is unset.`, () => { delete M.roleDrafts[key]; });
     bar.appendChild(unset);
   } else if (role && !role.custom && !role.unset) {
@@ -4837,13 +4911,13 @@ function familyCard(f) {
       if (marked(k)) l.appendChild(changedMark());
       w.appendChild(l);
       const v = f.flavor[k];
-      if (k === 'avoid') w.appendChild(el('div', `model-field-text${v?.length ? '' : ' none'}`, v?.length ? v.map(avoidLabel).join(', ') : 'No job'));
+      if (k === 'avoid') w.appendChild(el('div', `model-field-text${v?.length ? '' : ' none'}`, v?.length ? v.map(avoidLabel).join(', ') : 'No role'));
       else if (Array.isArray(v) && v.length) {
         const ul = el('ul', 'model-field-list');
         for (const x of v) ul.appendChild(el('li', null, x));
         w.appendChild(ul);
       } else if (v && !Array.isArray(v)) w.appendChild(el('div', 'model-field-text', v));
-      else w.appendChild(el('div', 'model-field-text none', k === 'effort' ? 'None set — the job decides' : 'Nothing noted'));
+      else w.appendChild(el('div', 'model-field-text none', k === 'effort' ? 'None set — the role decides' : 'Nothing noted'));
       dl.appendChild(w);
     }
     card.appendChild(dl);
@@ -4894,7 +4968,7 @@ function flavorForm(f, marked) {
   quirks.value = d.quirks; quirks.rows = 3; quirks.oninput = () => { d.quirks = quirks.value; };
   const brief = field(`Briefing tips (up to ${R.limits.brief} characters)`, el('textarea', 'models-input flavor-brief'), 'brief');
   brief.value = d.brief; brief.rows = 3; brief.maxLength = R.limits.brief; brief.oninput = () => { d.brief = brief.value; };
-  const effort = field('Default effort (when a job sets none)', el('select', 'models-input roles-select flavor-effort'), 'effort');
+  const effort = field('Default effort (when a role sets none)', el('select', 'models-input roles-select flavor-effort'), 'effort');
   effort.appendChild(el('option', null, '(none)')).value = '';
   for (const e of R.efforts) effort.appendChild(el('option', null, e)).value = e;
   effort.value = d.effort; effort.onchange = () => { d.effort = effort.value; };
@@ -4922,7 +4996,7 @@ function flavorForm(f, marked) {
 function avoidPicker(d, changed) {
   const R = M.roles;
   const box = el('fieldset', 'avoid-picker');
-  const legend = el('legend', 'roles-label', 'Avoid for (jobs this model should not be given)');
+  const legend = el('legend', 'roles-label', 'Avoid for (roles this model should not be given)');
   if (changed) legend.appendChild(changedMark());
   box.appendChild(legend);
   const names = [...R.roles.map((r) => r.name), ...d.avoid.filter((n) => !R.roles.some((r) => r.name === n))];
@@ -4947,12 +5021,12 @@ function usedBy(family) {
     .map((r) => (r.use[0] === family ? r.name : r.use.includes(family) ? `${r.name} (alternative)` : `${r.name} (second opinion)`));
   const open = M.usedOpen.has(family);
   const box = el('div', 'models-where model-used');
-  const toggle = el('button', 'model-used-toggle', `${open ? '▾' : '▸'} Used by ${jobs.length ? `${jobs.length} job${jobs.length === 1 ? '' : 's'}` : 'no job'}`);
+  const toggle = el('button', 'model-used-toggle', `${open ? '▾' : '▸'} Used by ${jobs.length ? plural(jobs.length, 'role') : 'no role'}`);
   toggle.setAttribute('aria-expanded', String(open));
   toggle.onclick = () => { if (open) M.usedOpen.delete(family); else M.usedOpen.add(family); paintModels(); };
   box.appendChild(toggle);
   if (!open) return box;
-  box.appendChild(el('div', 'scope-note model-used-jobs', jobs.length ? `Jobs: ${jobs.join(', ')}` : 'No job uses it.'));
+  box.appendChild(el('div', 'scope-note model-used-jobs', jobs.length ? `Roles: ${jobs.join(', ')}` : 'No role uses it.'));
   const w = M.where[family];
   if (!w) {
     box.appendChild(el('div', 'scope-note', 'reading files…'));
@@ -4985,7 +5059,7 @@ function describeSection() {
   const info = M.roles?.describe;
   if (!info) { sec.appendChild(el('div', 'scope-note', M.rolesError || 'reading…')); return sec; }
   sec.appendChild(el('div', 'scope-sub models-roles-sub',
-    'Say in plain words what each model is good at, what to watch for, and who should advise, review or build. An AI turns that into jobs and model notes, shown as a change to roles.json; nothing is written until you accept it.'));
+    'Say in plain words what each model is good at, what to watch for, and who should advise, review or build. An AI turns that into roles and model notes, shown as a change to roles.json; nothing is written until you accept it.'));
   sec.appendChild(el('div', 'scope-note describe-backend', info.ready
     ? `Runs ${info.label} ${info.modelLabel || info.model} with no tools — the Assist registry's default model, not the picker's last choice.`
     : `Describe is unavailable: ${info.why}`));
@@ -5136,11 +5210,11 @@ function guideSection() {
   const sec = el('div', 'models-guide');
   sec.appendChild(el('h3', 'models-subhead', 'Model guide'));
   sec.appendChild(el('div', 'scope-sub models-roles-sub',
-    'Agents read this file at the start of every session. The block tells them which model does which job.'));
+    'Agents read this file at the start of every session. The block tells them which model does each role.'));
   if (!M.guide) { sec.appendChild(el('div', 'scope-note', M.guideError || 'reading…')); return sec; }
   if (M.guide.rolesError) {
     const n = el('div', 'notice error guide-roles-error');
-    n.appendChild(el('div', null, 'Roles invalid — fix in Models → Jobs. The guide can’t be added or updated until then; removing it still works.'));
+    n.appendChild(el('div', null, 'Roles invalid — fix in Models → Roles. The guide can’t be added or updated until then; removing it still works.'));
     n.appendChild(el('div', 'models-error-text', M.guide.rolesError));
     sec.appendChild(n);
   }
@@ -5291,14 +5365,13 @@ function paintAudit() {
   c.innerHTML = '';
   const box = el('div', 'scope audit');
   const head = el('div', 'audit-head');
-  head.appendChild(el('h2', null, 'Audit'));
+  head.appendChild(pageHeading('Audit'));
   const again = el('button', 'btn ghost audit-run', AU.loading ? 'Auditing…' : 'Run again');
   again.disabled = AU.loading;
   again.onclick = () => openAudit({ refresh: true });
   head.appendChild(again);
   box.appendChild(head);
-  box.appendChild(el('div', 'scope-sub',
-    'Where your skills and instruction files write a model id or an effort by hand, use an id that has gone stale, or keep a lanes section beside the generated model guide. Nothing changes until you review a fix and accept it.'));
+  box.appendChild(moreDetails('It also flags a hand-kept list of models beside the generated model guide.', 'Nothing changes until you review a fix and accept it.'));
 
   const d = AU.data;
   const listed = (f) => AU.vendor || f.cls !== 'vendor';
@@ -5587,7 +5660,7 @@ const C = {
  */
 const harnesses = () => S.registry?.harnesses ?? [];
 const harnessOf = (id) => harnesses().find((h) => h.id === id) || null;
-const harnessLabel = (id) => harnessOf(id)?.label ?? id ?? 'no harness';
+const harnessLabel = (id) => harnessOf(id)?.label ?? id ?? 'no CLI';
 /** The server sends each harness's models as [{id,label}] — its own allowlist. */
 const modelsOf = (h) => h?.models ?? [];
 
@@ -6030,7 +6103,7 @@ function renderChatBody() {
  */
 function waitingLine(harness, secs) {
   if (harnessOf(harness)?.streams === false) {
-    return 'Working — this harness returns the whole reply at once, so nothing appears until it is done.';
+    return 'Working — this CLI returns the whole reply at once, so nothing appears until it is done.';
   }
   return secs < 12 ? 'Working…' : 'Working — still waiting on the first token.';
 }
@@ -6331,7 +6404,7 @@ function renderCompose() {
   const harness = el('select', 'assist-harness');
   harness.title = 'Which CLI answers. Sticky — it never changes with the file you open.';
   if (!list.length) {
-    harness.appendChild(el('option', null, S.registry ? 'No harness detected' : 'Detecting…'));
+    harness.appendChild(el('option', null, S.registry ? 'No CLI found' : 'Detecting…'));
     harness.disabled = true;
   } else {
     for (const h of list) {

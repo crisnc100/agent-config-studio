@@ -270,7 +270,7 @@ console.log('\nstranger A: a copy of this working tree');
       ok('A Finish lands on Home', await until(() => page.eval('S.view') === 'home'));
       ok('5 Home shows each CLI', await until(() => ['claude', 'codex', 'grok'].every((c) => text().includes(`${c} 4.0.0 (fake) · sign-in:`))), text().slice(0, 600));
       ok('5 Home shows the seat', await until(() => page.text(page.$('content').querySelector('.home-accounts') || page.$('content')).includes('Codex (primary)')), text().slice(0, 600));
-      ok('5 Home shows the folder', await until(() => /Project folders: 1 \(edit\) · 0 \(read\)/.test(text())), text().slice(0, 300));
+      ok('5 Home shows the folder', await until(() => /Project folders: 1 you can edit, 0 read-only/.test(text())), text().slice(0, 300));
 
       for (const [view, open, want] of [
         ['Skills', 'openSkills()', 'hello-stranger'],

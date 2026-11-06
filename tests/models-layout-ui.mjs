@@ -178,12 +178,12 @@ const ids = (p) => content(p).querySelector('.models-ids');
     !card(p, 'opus').querySelector('.models-flavor') && posts(p, '/api/models/flavor/set').length === 1 && /Name the files\./.test(p.text(card(p, 'opus'))));
 
   const used = card(p, 'opus').querySelector('.model-used');
-  ok('Used by is folded, counting the jobs', /Used by 2 jobs/.test(p.text(used)) && !used.querySelector('.models-where-hit'));
+  ok('Used by is folded, counting the roles', /Used by 2 roles/.test(p.text(used)) && !used.querySelector('.models-where-hit'));
   button(used, txt(used.querySelector('.model-used-toggle'))).click();
   await settle(10);
   const u2 = card(p, 'opus').querySelector('.model-used');
-  ok('…open, it names the jobs and the files that call it',
-    /Jobs: reviewer, builder/.test(p.text(u2)) && /SKILL\.md:3/.test(p.text(u2))
+  ok('…open, it names the roles and the files that call it',
+    /Roles: reviewer, builder/.test(p.text(u2)) && /SKILL\.md:3/.test(p.text(u2))
       && p.requests.some((r) => r.path === '/api/models/where' && r.search === '?family=opus'));
   ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
 }

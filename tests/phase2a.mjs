@@ -289,14 +289,14 @@ async function main() {
         message: 'hi', harness: 'not-a-harness',
       });
       assert(is4xx(chat.status), `chat status ${chat.status}`);
-      assert(/unknown harness/i.test(chat.json?.error || chat.text), chat.text);
+      assert(/unknown CLI/i.test(chat.json?.error || chat.text), chat.text);
       eq(calls.length, 0, 'unknown harness reached streamTurn');
 
       const assist = await httpJson(srv.port, 'POST', '/api/assist', {
         harness: 'not-a-harness', action: 'critique',
       });
       assert(is4xx(assist.status), `assist status ${assist.status}`);
-      assert(/unknown harness/i.test(assist.json?.error || assist.text), assist.text);
+      assert(/unknown CLI/i.test(assist.json?.error || assist.text), assist.text);
     } finally {
       await srv.close();
     }
@@ -370,7 +370,7 @@ async function main() {
         message: 'hi', harness: '__proto__',
       });
       assert(is4xx(proto.status), `__proto__ status ${proto.status}`);
-      assert(/unknown harness/i.test(proto.json?.error || proto.text), proto.text);
+      assert(/unknown CLI/i.test(proto.json?.error || proto.text), proto.text);
 
       const ctor = await httpJson(srv.port, 'POST', '/api/chat', {
         message: 'hi', harness: 'constructor',

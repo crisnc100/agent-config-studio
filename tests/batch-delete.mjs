@@ -418,12 +418,12 @@ async function refused(name, paths, { status = 400, re = null, headers } = {}) {
   let n = 0;
   mutate._setTrashFault((step) => { if (step === 'after-move' && ++n === 2) throw new Error('injected: metadata write failed'); });
   try {
-    page.$('content').querySelector('.sel-bar').querySelectorAll('button').find((b) => b.textContent.startsWith('Delete')).click();
-    for (let i = 0; i < 100 && !/Deleted/.test(page.text(page.$('notice-slot'))); i++) await settle(20);
+    page.$('content').querySelector('.sel-bar').querySelectorAll('button').find((b) => b.textContent.startsWith('Move to Trash')).click();
+    for (let i = 0; i < 100 && !/Moved .* to Trash/.test(page.text(page.$('notice-slot'))); i++) await settle(20);
   } finally { mutate._setTrashFault(null); }
   const t = page.text(page.$('notice-slot'));
   ok('E2E the notice reports one trashed, one moved-but-unfinished with its error, one not attempted',
-     /Deleted 1 file\./.test(t) && /e2e-2\/CLAUDE\.md: moved to Trash, but the delete did not finish \(injected: metadata write failed\)/.test(t)
+     /Moved 1 file to Trash\./.test(t) && /e2e-2\/CLAUDE\.md: moved to Trash, but the move did not finish \(injected: metadata write failed\)/.test(t)
      && /e2e-3\/CLAUDE\.md: not attempted/.test(t), t);
   ok('E2E …and the disk agrees', !fs.existsSync(pick[0]) && !fs.existsSync(pick[1]) && fs.existsSync(pick[2]));
   ok('E2E …the re-read Context no longer offers the deleted two', !box(pick[0]) && !box(pick[1]) && box(pick[2]));

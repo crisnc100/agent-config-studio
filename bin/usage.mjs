@@ -66,7 +66,7 @@ async function gauge(argv) {
     if (wantsJson) { console.log(JSON.stringify(empty, null, 2)); return 0; }
     console.log(`\nNo subscriptions tracked yet.\n\n  ${C.bold('acs usage detect')}   suggest seats from this machine` +
                 `\n  ${C.bold('acs usage add')} <vendor> <label>` +
-                `\n\n  or add them in the studio: ${C.bold('Usage → + Add seat')}\n`);
+                `\n\n  or add them in the studio: ${C.bold('Usage → + Add account')}\n`);
     return 0;
   }
   const snap = await snapshot();

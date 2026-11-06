@@ -1,0 +1,9 @@
+{"f1":{"status":"fixed","test":"tests/ui-words.mjs — no test block threw (a thrown block fails the run)"},
+ "f2":{"status":"fixed","test":"tests/ui-words.mjs — each select and .editor has a :focus-visible rule that draws; every outline: none has a replacement"},
+ "f3":{"status":"fixed","test":"tests/ui-words.mjs — light-theme tint pairs (short hex expanded, NaN or unparseable fails)"},
+ "f4":{"status":"fixed","test":"tests/ui-words.mjs — home: no \"memory\" for an instruction file"},
+ "f5":{"status":"fixed","test":"tests/ui-words.mjs — font floor resolves em against the parent's smallest size"},
+ "f6":{"status":"fixed","test":"tests/ui-words.mjs — setup: no intro line restates the subtitle"},
+ "x1":{"status":"deferred","reason":"Fix check; MEDIUM 15, test-only. Home's loading line 'Checking models, memory, worktrees, context…' isn't in the memory allowlist, so the sweep can flake if it reads Home before /api/memory answers.","fix":"Add that loading line to Home's except list, or wait for the Needs-attention card to finish loading."},
+ "x2":{"status":"deferred","reason":"Fix check; LOW 6. draws() treats 'outline: 0px' as drawing; no rule uses it today.","fix":"Match zero with any unit: /^(none|0[a-z%]*)(\\s|$)/."},
+ "x3":{"status":"deferred","reason":"Fix check; LOW 6. Hex colours with alpha are measured as opaque; no checked token uses hex alpha today.","fix":"Blend the alpha onto the surface, or fail on hex alpha."}}

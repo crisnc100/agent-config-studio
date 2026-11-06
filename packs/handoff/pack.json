@@ -7,7 +7,7 @@
     "what": "The handoff skill writes a short file that lets another agent session, or a future you, pick up the work without re-explaining it: the goal, the current state, files in flight, what changed, what was tried and failed, and the single next step.",
     "does": "Day to day you say /handoff when context is running low or you are switching tools. In a git repo the file goes in docs/handoffs/<branch>.md or .handoffs/<branch>.md, kept out of git so it never rides a PR; the next agent starts by reading it.",
     "changes": [
-      "~/.claude/skills/handoff/ and ~/.codex/skills/handoff/ (the skill, for the harnesses you have)"
+      "~/.claude/skills/handoff/ and ~/.codex/skills/handoff/ (the skill, for the CLIs you have)"
     ],
     "undo": "Uninstalling removes the skill folders. A file you edited after installing is kept and reported. Handoff files already written in your projects stay."
   },

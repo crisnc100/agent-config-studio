@@ -47,7 +47,7 @@ function memoryItems(d) {
     [f.emptySlugs, (n) => `${plural(n, 'empty project folder')} to clear`],
     [f.dangling, (n) => `${plural(n, 'index link')} to a missing file`],
     [f.unindexed, (n) => `${plural(n, 'memory file')} missing from ${n === 1 ? 'its' : 'their'} index`],
-    [f.oversized, (n) => `${plural(n, 'memory index', 'memory indexes')} over the length the harness reads`],
+    [f.oversized, (n) => `${plural(n, 'memory index', 'memory indexes')} over the length Claude Code reads`],
   ];
   return kinds.filter(([list]) => list?.length).map(([list, text]) => ({
     source: 'memory', kind: 'warn', text: text(list.length), action: { view: 'memory', label: 'Clean up', tab: 'cleanups' },
@@ -209,11 +209,11 @@ function clisCardModel(data) {
   }));
 }
 
-/** "Project folders: N (edit) · M (read)", from /api/roots — active folders only. */
+/** "Project folders: N you can edit, M read-only", from /api/roots — active folders only. */
 function folderCountText(roots) {
   const active = (roots?.roots || []).filter((r) => r.status === 'ok');
   const edit = active.filter((r) => r.access === 'edit').length;
-  return `Project folders: ${edit} (edit) · ${active.length - edit} (read)`;
+  return `Project folders: ${edit} you can edit, ${active.length - edit} read-only`;
 }
 
 /** The Recent card: trash entries and the last history summary — no edit feed exists. */
