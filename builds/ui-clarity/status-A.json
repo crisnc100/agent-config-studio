@@ -1,0 +1,2 @@
+{"f1":{"status":"fixed","test":"tests/ui-words.mjs — A5: installed, off the PATH, no settings folder: never \"not installed\" (server and page)"},
+ "x1":{"status":"deferred","reason":"Fix check; LOW 9. Packs CLI detection looks outside the test sandbox (codex candidates /opt/homebrew/bin, /usr/local/bin, login-shell dirs), so packs-server/packs-ui assertions could fail on a machine with a real Codex or Grok there. Product output is correct; not reached on this Mac.","fix":"Let tests inject the candidate list (or an env override) so locateBinary only searches the sandbox."}}

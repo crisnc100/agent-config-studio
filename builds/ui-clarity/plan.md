@@ -162,3 +162,6 @@ R13. PRODUCT.md lists six roles, including `security`.
 
 ## Cris, 2026-11-05: mobile is out of scope
 Mobile and phone width are not relevant to this build. QA, the impeccable critique and the acceptance bar check desktop only (1440, plus common desktop widths), in both themes. A4's "no sideways scroll at 390" and criterion 4 are dropped. Diagram stacking is not required.
+
+## Cris, 2026-11-06: no window sizes in QA
+QA runs in the browser window as it is (full screen). Never resize, zoom or emulate widths. It's a desktop web app, so there are no size or width checks.
