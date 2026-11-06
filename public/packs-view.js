@@ -86,7 +86,6 @@ function paintPacks() {
   c.innerHTML = '';
   const box = el('div', 'scope pk');
   box.appendChild(pageHeading('Skill packs'));
-  box.appendChild(el('div', 'scope-sub', 'Ready-made skills and the settings they need — nothing is written until you preview a change and confirm it.'));
   if (PK.error) {
     const n = el('div', 'notice error pk-error');
     n.setAttribute('role', 'alert');
@@ -187,12 +186,12 @@ function pkFixes(pack) {
   return [...out.values()].sort((a, b) => rank(a.key) - rank(b.key));
 }
 const pkNames = (fix) => fix.reqs.flatMap((r) => String(r.name || r.id).split(' and '));
-const pkAnd = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 /** A fix as one short phrase for a card: "Needs …". */
 function pkNeedText(fix) {
   const r = fix.reqs[0];
   if (r.dep) return `the ${pkPack(r.dep)?.title || r.dep} pack first`;
-  if (fix.key === 'path') return `${pkAnd(pkNames(fix))} on the PATH`;
+  // A PATH fix, not a missing tool: the CLIs it names are installed (✓ on the machine line).
+  if (fix.key === 'path') return `a PATH fix: ${pkNames(fix).join(', ')}`;
   return PK_NEED_SHORT[r.id] || r.what;
 }
 /** A fix as the top block lists it: what to do, then how. */
@@ -201,11 +200,15 @@ function pkFixItem(fix) {
   const tools = fix.reqs.some((r) => ['model-id', 'ask-model'].includes(r.id));
   const clis = fix.reqs.some((r) => r.id === 'cli');
   return {
-    what: `Put ${pkAnd(pkNames(fix))} on the studio's PATH`,
-    fix: [tools ? 'run acs install-model-id (it links model-id and ask-model into ~/.local/bin)' : null,
-      `add ${tools ? '~/.local/bin' : ''}${tools && clis ? ' and ' : ''}${clis ? 'the folder each CLI is in' : ''} to your PATH`,
+    what: `Some tools aren’t on the PATH the studio sees: ${pkNames(fix).join(', ')}`,
+    fix: [tools ? 'run acs install-model-id' : null,
+      `add ${tools ? '~/.local/bin' : ''}${tools && clis ? ' and ' : ''}${clis ? "each CLI's folder" : ''} to your PATH`,
       'then restart the studio'].filter(Boolean).join(', '),
   };
+}
+/** A card's "What it needs": what is met, then each missing fix once (the PATH problems as one item). */
+function pkNeedsList(pack) {
+  return [...pack.requirements.filter((r) => r.ok), ...pkFixes(pack).map((f) => ({ ok: false, ...pkFixItem(f) }))];
 }
 /** Fixes every pack needs: checked once at the top, never repeated on a card. */
 function pkShared() {
@@ -316,7 +319,7 @@ function pkCardView(pack) {
       : el('span', 'pk-ready later', 'Not ready — see “To use packs” above'));
   sec.appendChild(head);
   sec.appendChild(el('p', 'pk-summary', pack.summary));
-  sec.appendChild(pkExplain(pack.explain, 'What it is, what it changes, what it needs, how to undo it', pack.requirements));
+  sec.appendChild(pkExplain(pack.explain, 'What it is, what it changes, what it needs, how to undo it', pkNeedsList(pack)));
   const busy = !!card.busy;
   for (const r of pack.requirements.filter((x) => x.dep && !x.ok)) {
     const dep = pkPack(r.dep);

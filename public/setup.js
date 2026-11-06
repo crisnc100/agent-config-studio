@@ -104,7 +104,8 @@ function paintSetup() {
   skip.onclick = () => finishSetup('skipped');
   head.appendChild(skip);
   box.appendChild(head);
-  box.appendChild(el('div', 'scope-sub', 'Four steps, each optional. Nothing here removes anything, and you can come back from Home at any time.'));
+  // The top bar already says the steps are optional: this line adds only what it does not.
+  box.appendChild(el('div', 'scope-sub', 'Nothing here removes anything, and you can come back from Home at any time.'));
 
   if (SETUP.status?.state === 'error') box.appendChild(setupStatusNotice());
 

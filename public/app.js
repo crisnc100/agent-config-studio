@@ -153,7 +153,7 @@ const VIEWS = [
   { id: 'skill-new', label: 'New skill', group: null, icon: 'skills', hash: '#skills/new',
     title: 'New skill', sub: 'Describe it, answer a few questions, review the SKILL.md', open: openSkillWizard },
   { id: 'packs', label: 'Packs', group: 'configure', icon: 'packs', hash: '#packs',
-    title: 'Skill packs', sub: 'Recommended skill packs — what each changes, a preview, then install, update or uninstall', open: openPacks },
+    title: 'Skill packs', sub: 'Ready-made skills and the settings they need — nothing is written until you preview a change and confirm it', open: openPacks },
   { id: 'mcp', label: 'MCP', group: 'configure', icon: 'mcp', hash: '#mcp',
     title: 'MCP servers', sub: 'The MCP servers your CLIs can call', open: openMcp },
   // No sidebar item: reached from the Files page's folder line, and #folders.
