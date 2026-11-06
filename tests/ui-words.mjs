@@ -35,22 +35,47 @@ console.log('\nstyles.css: type size and focus');
 const css = fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
 const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1].trim(), body: m[2] }));
 {
+  // Each declared size as [number, unit], skipping a `font:` shorthand's line-height after a slash.
+  const sizes = (body) => [...body.matchAll(/font(?:-size)?\s*:\s*([^;]+)/g)].flatMap((m) => [...m[1].matchAll(/(\d*\.?\d+)(px|rem|em)\b/g)]
+    .filter((v) => !/\/\s*$/.test(m[1].slice(0, v.index))).map((v) => [Number(v[1]), v[2], v[0]]));
+  const compounds = (sel) => sel.trim().split(/\s*[>+~]\s*|\s+/).filter(Boolean);
+  const classes = (compound) => [...compound.matchAll(/\.([\w-]+)/g)].map((m) => m[1]);
+  /**
+   * The smallest px size an em rule's parent can have: the nearest ancestor compound's classes, every class
+   * that shares a compound with one of them anywhere in the sheet (.msg-text.md → msg-text), and the px
+   * sizes rules give elements carrying any of those. The body's 14px when nothing says otherwise.
+   */
+  const parentPx = (sel) => {
+    const parts = compounds(sel);
+    if (parts.length < 2) return 14;
+    const near = new Set(classes(parts.at(-2)));
+    if (!near.size) return 14;
+    const co = new Set(near);
+    for (const r of rules) for (const part of r.sel.split(',')) for (const c of compounds(part)) {
+      const cs = classes(c);
+      if (cs.some((x) => near.has(x))) cs.forEach((x) => co.add(x));
+    }
+    const px = rules.flatMap((r) => r.sel.split(',').some((part) => classes(compounds(part).at(-1) || '').some((x) => co.has(x)))
+      ? sizes(r.body).filter(([, u]) => u === 'px').map(([n]) => n) : []);
+    return px.length ? Math.min(...px) : 14;
+  };
   const small = [];
   for (const r of rules) {
-    for (const m of r.body.matchAll(/font(?:-size)?\s*:\s*([^;]+)/g)) {
-      for (const v of m[1].matchAll(/(\d*\.?\d+)(px|rem|em)\b/g)) {
-        const px = v[2] === 'px' ? Number(v[1]) : Number(v[1]) * 14;
-        // A `font:` shorthand's line-height after a slash is not a size.
-        if (/\/\s*$/.test(m[1].slice(0, v.index))) continue;
-        if (px < 11) small.push(`${r.sel} → ${v[0]}`);
+    for (const part of r.sel.split(',')) {
+      for (const [n, unit, raw] of sizes(r.body)) {
+        const px = unit === 'px' ? n : unit === 'rem' ? n * 16 : n * parentPx(part);
+        if (px < 11) small.push(`${part.trim()} → ${raw} (${px.toFixed(2)}px)`);
       }
     }
   }
-  ok('no CSS font-size under 11px (the 9px badge included)', small.length === 0, small.join(' | '));
+  ok('no CSS font-size under 11px (the 9px badge included; an em resolved against its smallest parent)', small.length === 0, [...new Set(small)].join(' | '));
 }
 {
-  const draws = (body) => /outline\s*:\s*(?!none\b|0\b)[^;]+/.test(body) || /box-shadow\s*:\s*(?!none\b)[^;]+/.test(body)
-    || /border-color\s*:/.test(body);
+  // The value is read whole (no backtracking into the whitespace): "outline: none" and "outline: 0" draw nothing.
+  const value = (body, prop) => [...body.matchAll(new RegExp(`(?:^|[;{\\s])${prop}\\s*:\\s*([^;]+)`, 'g'))].map((m) => m[1].trim());
+  const draws = (body) => value(body, 'outline').some((v) => !/^(none|0)(\s|$)/.test(v))
+    || value(body, 'box-shadow').some((v) => !/^none\b/.test(v))
+    || value(body, 'border-color').some((v) => !/^(transparent|inherit|initial|unset)\b/.test(v));
   const focusFor = (cls) => rules.filter((r) => r.sel.split(',').some((s) => s.includes(cls) && s.includes(':focus-visible')) && draws(r.body));
   for (const cls of ['.scope-select', '.assist-harness', '.assist-model', '.sess-select', '.editor']) {
     ok(`${cls} has a :focus-visible rule that draws an outline or a ring`, focusFor(cls).length > 0);
@@ -85,7 +110,14 @@ console.log('\nlight theme: text on its own tint, computed from styles.css');
   };
   const light = { ...block(':root'), ...block(':root[data-theme="light"]') };
   const resolve = (v, seen = 0) => { const m = /^var\(--([\w-]+)\)$/.exec(v.trim()); return m && seen < 5 ? resolve(light[m[1]], seen + 1) : v.trim(); };
-  const rgb = (h) => resolve(h).replace('#', '').match(/../g).map((x) => parseInt(x, 16));
+  /** #rgb, #rgba, #rrggbb or #rrggbbaa as [r, g, b]; anything else throws, so it can never pass silently. */
+  const rgb = (h) => {
+    const v = resolve(h);
+    const m = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(v || '');
+    if (!m) throw new Error(`unparseable colour "${h}" → "${v}"`);
+    const d = m[1].length <= 4 ? [...m[1]].map((c) => c + c).join('') : m[1];
+    return d.match(/../g).slice(0, 3).map((x) => parseInt(x, 16));
+  };
   const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
   const lum = (c) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
   const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
@@ -107,11 +139,14 @@ console.log('\nlight theme: text on its own tint, computed from styles.css');
     const fg = [...rule(fgSel).matchAll(/(?:^|;)\s*color:\s*([^;]+)/g)].at(-1)?.[1];
     const tint = [...rule(bgSel).matchAll(/background:\s*color-mix\(in srgb,\s*([^\s]+)\s+(\d+)%,\s*transparent\)/g)].at(-1);
     if (!fg || !tint) { low.push(`${fgSel}: no color or tint found`); continue; }
-    const c = rgb(fg), t = rgb(tint[1]), p = Number(tint[2]) / 100;
+    let c, t;
+    try { c = rgb(fg); t = rgb(tint[1]); } catch (e) { low.push(`${fgSel}: ${e.message}`); continue; }
+    const p = Number(tint[2]) / 100;
     for (const surface of ['bg', 'panel', 'panel-2']) {
-      const s = rgb(`var(--${surface})`);
+      let s;
+      try { s = rgb(`var(--${surface})`); } catch (e) { low.push(`--${surface}: ${e.message}`); continue; }
       const r = ratio(c, t.map((v, i) => v * p + s[i] * (1 - p)));
-      if (r < 4.6) low.push(`${fgSel} on ${surface}: ${r.toFixed(2)}`);
+      if (!(r >= 4.6)) low.push(`${fgSel} on ${surface}: ${r.toFixed(2)}`);
     }
   }
   ok('every tinted state reaches 4.6:1 on bg, panel and panel-2 (search hits, part badges, Describe diffs, CLI tags)', low.length === 0, low.join(' | '));
@@ -350,15 +385,22 @@ const RULES = [
   { name: '"both harnesses"', re: /both harnesses/i },
   { name: '"harness"', re: /harness/i },
   { name: '"job" for a role', re: /\bjobs?\b/i },
-  { name: '"memory" for an instruction file', re: /memory/i, allowIn: ['memory', 'home'],
+  // Home may say "memory" only in its auto-memory cleanup lines (public/home.js memoryItems).
+  { name: '"memory" for an instruction file', re: /memory/i, allowIn: ['memory'],
     // "Auto-memory" is the auto-memory group, wherever it shows; the sidebar (PR C regroups it) is not swept.
-    except: [/Auto-memory/gi, /\S*\/memory\b\S*/g] },
+    except: [/Auto-memory/gi, /\S*\/memory\b\S*/g,
+      /\d+ memory files? missing from (?:its|their) index/g, /\d+ memory index(?:es)? over the length Claude Code reads/g,
+      // …and Home's all-clear line, which names the Memory page among the sources it checked.
+      /checked: models, memory, worktrees and context/g] },
   { name: '"Delete" for something recoverable', re: /\bdelet/i,
     // Permanent actions keep the word: a role (no trash), an Assist session, a file gone outside the studio, and "never deleted" (a promise about history).
     except: [/Delete role/g, /Delete this session/g, /deleted outside the studio/g, /never deleted/g] },
   // One word for a subscription account: "account", as Home's "Accounts & usage" says.
   { name: '"seat" for an account', re: /\bseats?\b/i },
 ];
+
+/** A view's empty state ("No MCP servers configured yet.", "No registered projects. …"): not an intro. */
+const EMPTY_STATE = /^No [^.—]*?\b(yet|configured|tracked|registered|apply here|found)\b/;
 
 const VIEWS = ['home', 'files', 'skills', 'packs', 'mcp', 'models', 'memory', 'context', 'worktrees', 'usage', 'scope', 'audit', 'trash', 'setup', 'folders'];
 try {
@@ -390,7 +432,7 @@ try {
     // The page's intro: the first line of its root box after any headings — not an empty state ("No …").
     const root = page.$('content').children[0];
     const first = root ? [...root.children].find((n) => !(n.localName === 'h2' || /(^|-)head\b|\bvh\b/.test(n.className || ''))) : null;
-    const intros = first && /\bscope-sub\b/.test(first.className || '') && !/^(No|Nothing)\b/.test(page.text(first)) ? [page.text(first)] : [];
+    const intros = first && /\bscope-sub\b/.test(first.className || '') && !EMPTY_STATE.test(page.text(first)) ? [page.text(first)] : [];
     const echoes = intros.map((t) => [t, [...stems(t)].filter((w) => subStems.has(w))]).filter(([, shared]) => shared.length >= 2);
     ok(`${v}: no intro line restates the subtitle in other words`, echoes.length === 0, echoes.map(([t, w]) => `${t.slice(0, 80)} [${w}]`).join(' | '));
     // Every (i) sits on its word: no bare icon, no two side by side.
@@ -445,6 +487,9 @@ try {
     ok('packs: no page errors', page.errors.length === 0 && p2.errors.length === 0, [...page.errors, ...p2.errors].join(' | '));
     p2.done();
   }
+} catch (e) {
+  // A block that throws skips every check after it: that is a failure, never a pass.
+  ok(`no test block threw (${e?.message || e})`, false, e?.stack || String(e));
 } finally {
   assertRealHomesUnchanged(realBefore, ok);
   done();
