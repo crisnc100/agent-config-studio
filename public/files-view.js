@@ -63,7 +63,8 @@ function filesModel(registry) {
         tool.types.set(key, { key, label: t.label, group: g, entries: [], create });
       }
       tool.types.get(key).entries.push(e);
-      tool.count++;
+      // Files, not entries: the same unit each row shows (an entry with helpers holds extraFiles + 1).
+      tool.count += (e.extraFiles || 0) + 1;
     }
   }
   return [...tools.values()].filter((t) => t.types.size)

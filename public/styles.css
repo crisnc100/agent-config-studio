@@ -1432,6 +1432,9 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 /* The button row sits at the card bottom (Used by under it), so Edit / Reset line up across a row. */
 .model-card > .model-card-buttons { margin-top: auto; }
 .btn.model-used-toggle { padding: 3px 8px; margin-left: -8px; font-size: 12px; text-align: left; }
+/* Both Used-by states take one height, so a card with no role keeps its buttons level with its neighbours. */
+.btn.model-used-toggle, .model-used-none { min-height: 26px; }
+.model-used-none { margin-top: 0; display: flex; align-items: center; }
 .btn.ids-toggle { padding: 4px 8px; margin-left: -8px; font-size: inherit; color: var(--text); }
 .model-used-jobs { margin-bottom: 4px; }
 
@@ -1732,7 +1735,7 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .pk-strip .w.agent .w-k { color: var(--codex-ink); }
 .pk-strip .w.you { background: color-mix(in srgb, var(--green) 12%, var(--panel)); }
 .pk-strip .w.you .w-k { color: var(--green-ink); }
-.pk-strip .w.script { border: 1px dashed var(--border); background: var(--panel); }
+.pk-strip .w.script { border: 1px solid color-mix(in srgb, var(--text-dim) 32%, var(--border)); background: var(--panel); }
 .pk-head .cmd { font: 12px var(--mono); color: var(--text-dim); padding: 1px 7px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border-soft); }
 .pk-unset { margin: 0; font-size: 12.5px; }
 .pk-unset a { color: var(--amber); text-underline-offset: 2px; }

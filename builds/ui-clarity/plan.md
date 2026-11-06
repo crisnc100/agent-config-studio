@@ -173,3 +173,8 @@ One small PR off main after #51.
 3. Models cards: the Edit / Reset row is pinned to the card bottom (Used by stays under it), so the buttons line up across a row. Guard: static CSS.
 4. Files: "+N" counted an entry's files beyond its main one (a skill's extra files, an auto-memory folder's facts). It now reads "N files", right after the name (the name no longer stretches). Guard: no bare "+N" on a Files entry.
 One PR: four independent CSS/markup touches, each small.
+
+### PR D fix round (review 2026-11-06-18-56-15-fd9694)
+- f1: the Used-by toggle and "Not used by any role" share `min-height: 26px` (no margin-top on the none line), so Edit / Reset line up on a row that mixes used and unused families. Browser: fable/opus(used)/sonnet buttons all at the same top.
+- f2: a Files tool card's header counts files (each entry's extraFiles + 1), the same unit as its rows. The ui-words seed gains a three-file skill; the sweep checks header = sum of rows.
+- f3: `.pk-strip .w.script` is solid like `.pk-flow .w.script`; guarded in ui-words.

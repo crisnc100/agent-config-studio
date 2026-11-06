@@ -109,6 +109,11 @@ console.log('\nstyles.css: PR D');
   // The diagram's encodings, one look each: off = a dashed tile; script = a solid outline chip.
   ok('script chips are solid outlines, not dashed (dashed means "off")', /border\s*:[^;]*solid/.test(body('.pk-flow .w.script')) && !/dashed/.test(body('.pk-flow .w.script'))
     && /border\s*:[^;]*solid/.test(body('.wf-sw.script')) && !/dashed/.test(body('.wf-sw.script')));
+  ok('strip script chips are solid too (dashed means "off" everywhere)', /border\s*:[^;]*solid/.test(body('.pk-strip .w.script')) && !/dashed/.test(body('.pk-strip .w.script')));
+  // f1: both Used-by states (the toggle and "Not used by any role") share one height, so the buttons above line up.
+  const mh = (sel) => (body(sel).match(/min-height\s*:\s*([^;]+)/) || [])[1]?.trim();
+  ok('Models cards: the "Used by" toggle and "Not used by any role" share one min-height', !!mh('.btn.model-used-toggle') && mh('.btn.model-used-toggle') === mh('.model-used-none')
+    && /margin-top\s*:\s*0/.test(body('.model-used-none')));
   ok('the legend\'s "off" swatch is dashed, like an off step', /dashed/.test(body('.wf-sw.off')) && /dashed/.test(body('.pk-flow .step.off')));
 }
 
@@ -246,6 +251,10 @@ put('.agent-config-studio/setup.json', JSON.stringify({ completed: 'done', at: n
 put('.claude/CLAUDE.md', '# Global\n\nBe brief.\n');
 put('.codex/AGENTS.md', '# Global\n\nBe brief.\n');
 put('.claude/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: a test skill\n---\n\nDo alpha.\n');
+// A skill that holds three files, so Files shows a per-entry count and the card header must add it up.
+put('.claude/skills/beta/SKILL.md', '---\nname: beta\ndescription: a skill with helper files\n---\n\nDo beta.\n');
+put('.claude/skills/beta/helper.md', 'Helper notes.\n');
+put('.claude/skills/beta/run.sh', 'echo beta\n');
 put('.claude/skills/scratch/SKILL.md', '---\nname: scratch\ndescription: goes to trash\n---\n\nScratch.\n');
 put('Documents/Projects/app/CLAUDE.md', '# App\n\nRun the tests.\n');
 put('Documents/Projects/app/AGENTS.md', '# App\n\nRun the tests.\n');
@@ -535,6 +544,21 @@ try {
     // PR D: a Files entry's extra files are said plainly ("2 files"), right after its name — no bare "+N".
     const plus = page.$('content').querySelectorAll('.files-item .item-badge, .files-item-count').filter((n) => /^\+\d+$/.test(page.text(n).trim()));
     ok(`${v}: no bare "+N" count on a file entry`, plus.length === 0, plus.map((n) => page.text(n)).join(' | '));
+    if (v === 'files') {
+      // f2: a tool card's header counts files in the same unit as its rows (an entry with no count is one file).
+      const cards = page.$('content').querySelectorAll('.files-tool');
+      const sums = cards.map((c) => {
+        const head = Number((page.text(c.querySelector('.files-count')).match(/\d+/) || [NaN])[0]);
+        const rows = c.querySelectorAll('.files-item').reduce((n, b) => {
+          const k = b.querySelector('.files-item-count');
+          return n + (k ? Number(page.text(k).match(/\d+/)[0]) : 1);
+        }, 0);
+        return [head, rows];
+      });
+      ok('files: some entry holds more than one file (the seed exercises the count)', page.$('content').querySelectorAll('.files-item-count').length > 0);
+      ok('files: each tool card\'s header file count equals the sum of its rows\' file counts', cards.length > 0 && sums.every(([h, r]) => h === r),
+        sums.map(([h, r]) => `${h} vs ${r}`).join(' | '));
+    }
     ok(`${v}: every icon-only button has a title and an accessible name`, icons.every((b) => b.getAttribute('title') && (b.getAttribute('aria-label') || b.getAttribute('title'))),
       icons.filter((b) => !b.getAttribute('title')).map((b) => b.className).join(' | '));
     ok(`${v}: no page errors`, page.errors.length === 0, page.errors.join(' | '));
