@@ -159,3 +159,6 @@ R12. **Copy fixes:**
 - The diagram's stacking reuses the existing 700px breakpoint.
 
 R13. PRODUCT.md lists six roles, including `security`.
+
+## Cris, 2026-11-05: mobile is out of scope
+Mobile and phone width are not relevant to this build. QA, the impeccable critique and the acceptance bar check desktop only (1440, plus common desktop widths), in both themes. A4's "no sideways scroll at 390" and criterion 4 are dropped. Diagram stacking is not required.
