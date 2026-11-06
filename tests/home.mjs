@@ -25,6 +25,12 @@ const pages = [];
 const boot = async (o) => { const p = await bootPage(o); pages.push(p); return p; };
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const card = (p, id) => p.$('content').querySelector(`.home-${id} .home-card-body`);
+/** Needs attention with every item shown: it opens on the top 3, the rest behind "Show all N" (PR C). */
+const attnAll = async (p) => {
+  const more = card(p, 'attention')?.querySelector('.home-attn-more');
+  if (more && /^Show all/.test(p.text(more))) { more.click(); await settle(5); }
+  return p.text(card(p, 'attention'));
+};
 const H = Date.now() + 3_600_000;
 
 // ── fixtures ────────────────────────────────────────────────────────────────
@@ -213,7 +219,7 @@ const homeRoutes = (over = {}) => routesFor({
   const acc = p.text(card(p, 'accounts'));
   ok('8 Usage answering 200 with `error` shows "unavailable" on its card, not "No subscriptions"',
      /Usage unavailable: the usage snapshot is unreadable/.test(acc) && !/No subscriptions/.test(acc) && !/% left/.test(acc));
-  const att = p.text(card(p, 'attention'));
+  const att = await attnAll(p);
   ok('8 Models failing shows on Needs attention, whose other sources still list their items',
      /Models unavailable: catalog read failed/.test(att) && /empty project folders/.test(att) && /finished worktree/.test(att) && !/Nothing needs you/.test(att));
   ok('8 Trash failing shows on Recent, with the history summary still there', /Trash unavailable: trash offline/.test(p.text(card(p, 'recent'))) && /save CLAUDE.md/.test(p.text(card(p, 'recent'))));
@@ -232,11 +238,11 @@ const homeRoutes = (over = {}) => routesFor({
   const mem = deferred(), wt = deferred(), reg = deferred();
   const routes = homeRoutes({ 'GET /api/memory': () => mem.promise, 'GET /api/worktree': () => wt.promise, 'GET /api/registry': () => reg.promise });
   const p = await boot({ routes });
-  ok('8 the shell and Home paint before the registry resolves', p.eval('S.registry') === null && !!card(p, 'accounts') && p.$('sidebar').querySelectorAll('.nav-item').length === 14);
+  ok('8 the shell and Home paint before the registry resolves', p.eval('S.registry') === null && !!card(p, 'accounts') && p.$('sidebar').querySelectorAll('.nav-item').length === 15);
   ok('11 the memory index and wclean are asked after first paint, not before it',
      !p.requests.some((r) => r.path === '/api/memory' || r.path === '/api/worktree') || p.requests.findIndex((r) => r.path === '/api/memory') > p.requests.findIndex((r) => r.path === '/api/usage'));
   await settle(20);
-  ok('8 while they are slow, the fast cards are filled', /Codex \(main\)/.test(p.text(card(p, 'accounts'))) && /opus: a newer id/.test(p.text(card(p, 'attention'))));
+  ok('8 while they are slow, the fast cards are filled', /Codex \(main\)/.test(p.text(card(p, 'accounts'))) && /opus: a newer id/.test(await attnAll(p)));
   ok('8 …and Needs attention says what it is still checking', /Checking memory, worktrees/.test(p.text(card(p, 'attention'))) && !/Nothing needs you/.test(p.text(card(p, 'attention'))));
   ok('8 Recent waits for the registry for its history line only', /Reading history/.test(p.text(card(p, 'recent'))) && /~\/\.claude\/skills\/old/.test(p.text(card(p, 'recent'))));
   ok('11 the first-paint time is recorded before everything has answered', p.eval('HOME.timing.painted') >= 0 && p.eval('HOME.timing.settled') === null);
@@ -246,7 +252,8 @@ const homeRoutes = (over = {}) => routesFor({
   mem.resolve(MEMORY_DIRTY);
   wt.resolve(WORKTREES);
   await settle(10);
-  ok('8 the slow sources land on their card', /empty project folders/.test(p.text(card(p, 'attention'))) && /app: 2 finished worktrees/.test(p.text(card(p, 'attention'))) && !/Checking/.test(p.text(card(p, 'attention'))));
+  const landed = await attnAll(p);
+  ok('8 the slow sources land on their card', /empty project folders/.test(landed) && /app: 2 finished worktrees/.test(landed) && !/Checking/.test(landed));
   ok('11 …and all-cards-loaded is recorded after first paint', p.eval('HOME.timing.settled') >= p.eval('HOME.timing.painted'));
 }
 {
@@ -288,7 +295,11 @@ const homeRoutes = (over = {}) => routesFor({
   const rows = p.$('content').querySelectorAll('.home-seat');
   ok('9 the card shows one row per seat', rows.length === SEATS.length, `${rows.length}`);
   const row = (id) => rows.find((r) => r.dataset.seat === id);
-  ok('9 the percentages shown are the route\'s, as percent left', /80% left/.test(p.text(row('a'))) && /54% left/.test(p.text(row('a'))) && /97% left/.test(p.text(row('a'))) && /30% left/.test(p.text(row('b'))));
+  // C2: one compact line per account — its tightest window's % left and reset — not every bar; Usage has those.
+  ok('9 each account is one compact line: its tightest window, as percent left', /54% left/.test(p.text(row('a'))) && !/80% left|97% left/.test(p.text(row('a'))) && /30% left/.test(p.text(row('b')))
+    && !p.$('content').querySelector('.home-accounts .usage-track'), p.text(row('a')));
+  ok('9 …with that window and its reset', /Weekly/.test(p.text(row('a'))) && /resets in/.test(p.text(row('a'))), p.text(row('a')));
+  ok('9 …and a link to Usage for the full bars', [...p.$('content').querySelectorAll('.home-accounts button')].some((b) => /Open Usage/.test(p.text(b))));
   ok('9 no number on a seat the route gave none for', ['off', 'wait', 'dup', 'nq', 'rolled', 'err', 'nw'].every((id) => !/\d+%/.test(p.text(row(id)))));
   ok('9 the route line names the seat Usage would', /Route to\s*Codex \(main\)\s*54% left/.test(p.text(card(p, 'accounts'))));
   ok('9 a stale reading says it is not current', /not current/.test(p.text(row('st'))));
@@ -335,7 +346,20 @@ const homeRoutes = (over = {}) => routesFor({
   const expect = { 'opus: a newer id': 'models', 'terra is retiring': 'models', 'haiku is no longer': 'models',
     '2 empty project folders': 'memory', '1 index link': 'memory', '3 memory files': 'memory', '1 memory index': 'memory',
     'app: 2 finished': 'worktrees', 'site: 1 finished': 'worktrees', '2 context files drifted': 'context' };
+  // C2: the top 3 by consequence first — a vanished or retiring model, then drift — then "Show all N".
+  ok('10 only the top 3 show at first, most consequential first', JSON.stringify(items().map((i) => p.text(i).replace(/(Review|Compare|Show|Clean up)$/, ''))) === JSON.stringify([
+    'haiku is no longer offered by its CLI', `terra is retiring on ${new Date('2026-12-01T00:00:00Z').toLocaleDateString()}`, '2 context files drifted from trunk']),
+    items().map((i) => p.text(i)).join(' / '));
+  const more = p.$('content').querySelector('.home-attn-more');
+  ok('10 …then a button names the rest: "Show all 10"', p.text(more) === 'Show all 10', p.text(more));
+  more.click();
+  await settle(5);
   ok('10 every item type is listed', items().length === Object.keys(expect).length, items().map((i) => p.text(i)).join(' / '));
+  // PR C QA: every warning first, ranked, then the info items (a newer id, a finished worktree).
+  const kinds = items().map((i) => (i.classList.contains('warn') ? 'warn' : 'info'));
+  ok('10 …warnings first, ranked, then info: no info item between warnings', kinds.lastIndexOf('warn') < kinds.indexOf('info')
+    && items().findIndex((i) => /drifted/.test(p.text(i))) < items().findIndex((i) => /empty project folders/.test(p.text(i))), kinds.join(','));
+  ok('10 …and the button now reads "Show fewer"', p.text(p.$('content').querySelector('.home-attn-more')) === 'Show fewer');
   let right = 0;
   for (const [start, view] of Object.entries(expect)) {
     p.$('btn-home').click();
@@ -474,7 +498,8 @@ const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.ent
   const asked = (x) => p.requests.filter((r) => r.path === x).length;
   ok('QA-bg with requestAnimationFrame never firing, memory and wclean are still asked — once each',
      asked('/api/memory') === 1 && asked('/api/worktree') === 1, `${asked('/api/memory')} / ${asked('/api/worktree')}`);
-  ok('QA-bg …and their items land on the card', /empty project folders/.test(p.text(card(p, 'attention'))) && /finished worktree/.test(p.text(card(p, 'attention'))));
+  const bg = await attnAll(p);
+  ok('QA-bg …and their items land on the card', /empty project folders/.test(bg) && /finished worktree/.test(bg));
   const q = await boot({ routes: homeRoutes() });
   await settle(120);
   ok('QA-bg with frames running as usual they are still asked exactly once', q.requests.filter((r) => r.path === '/api/memory').length === 1
@@ -486,6 +511,7 @@ const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.ent
   const p = await boot({ routes: homeRoutes() });
   await settle(20);
   const chip = () => p.$('title').querySelector('.home-needs');
+  await attnAll(p);
   const n = p.$('content').querySelectorAll('.home-item').length;
   ok('QA6 the Home header shows "Needs you: N", N the actionable attention items', !!chip() && p.text(chip()) === `Needs you: ${n}` && n === 10, p.text(chip()));
   p.$('btn-skills').click();

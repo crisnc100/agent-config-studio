@@ -68,7 +68,8 @@ function wfRoleChip(roleName, step, ctx, { note = null } = {}) {
 function wfChips(step, ctx) {
   if (step.who === 'you') return [{ kind: 'you', k: 'you' }];
   if (step.who === 'agent') return [{ kind: 'agent', k: 'your session agent' }];
-  if (step.who === 'script') return [{ kind: 'script', k: `${step.tool || 'script'} — no model` }];
+  // "no model" is said once, in the legend: the chip names only what runs.
+  if (step.who === 'script') return [{ kind: 'script', k: step.tool || 'script' }];
   const chips = [wfRoleChip(step.role, step, ctx, { note: step.note || null })];
   if (step.also) chips.push(wfRoleChip(step.also, { ...step, vendor: null, use: null, pool: null, swap: null, noteMany: null }, ctx, { note: step.alsoNote || null }));
   return chips;
@@ -97,7 +98,7 @@ function wfRoles(wf) {
   return out;
 }
 
-const WF_LEGEND = [['role', 'a role from Models'], ['agent', 'your session agent'], ['you', 'you'], ['script', 'a script, no model']];
+const WF_LEGEND = [['role', 'a role from Models'], ['agent', 'your session agent'], ['you', 'you'], ['script', 'a script — no model']];
 
 /**
  * A pack's diagram, or its one-line strip.
@@ -131,7 +132,8 @@ function wfDiagram(wf, ctx) {
     if (hint) bar.appendChild(el('span', 'pk-flow-hint', hint));
   }
   box.appendChild(bar);
-  const ol = el('ol', 'flow');
+  // Eight or more steps would squeeze each to a sliver at a desktop width: rows of four instead.
+  const ol = el('ol', `flow${wf.steps.length > 7 ? ' rows' : ''}`);
   for (const raw of wf.steps) {
     const step = wfStepFor(raw, variant);
     const on = wfStepOn(step, ctx);
@@ -150,7 +152,9 @@ function wfDiagram(wf, ctx) {
   box.appendChild(ol);
   const legend = el('ul', 'legend');
   legend.setAttribute('aria-label', 'Who does a step');
-  for (const [kind, text] of WF_LEGEND) {
+  // Only the kinds this diagram uses.
+  const used = new Set(wf.steps.map((st) => st.who));
+  for (const [kind, text] of WF_LEGEND.filter(([k]) => used.has(k))) {
     const li = el('li');
     li.appendChild(el('span', `wf-sw ${kind}`));
     li.appendChild(document.createTextNode(text));

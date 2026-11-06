@@ -21,8 +21,10 @@ console.log('\nnavigation shell');
 
 const APP = fs.readFileSync(path.join(PUB, 'app.js'), 'utf8');
 const CSS = fs.readFileSync(path.join(PUB, 'styles.css'), 'utf8');
-const FORMER = { Skills: 'configure', MCP: 'configure', Models: 'configure', Memory: 'review', Context: 'review',
-  Worktrees: 'review', Usage: 'review', Scope: 'review', Trash: 'footer', Theme: 'footer' };
+// C1: four groups named for the job, and Setup in the footer beside Trash and Theme.
+const FORMER = { Home: 'overview', Usage: 'overview', Packs: 'workflows', Skills: 'workflows', Models: 'workflows',
+  Files: 'files', Context: 'files', Scope: 'files', MCP: 'files', Memory: 'upkeep', Worktrees: 'upkeep', Audit: 'upkeep',
+  Setup: 'footer', Trash: 'footer', Theme: 'footer' };
 const pages = [];
 const boot = async (o) => { const p = await bootPage(o); pages.push(p); return p; };
 const noErrors = (p) => p.errors.length === 0;
@@ -43,7 +45,14 @@ const noErrors = (p) => p.errors.length === 0;
        `${v?.group} / ${title}`);
   }
   ok('1 Home has its own sidebar item, first', p.$('nav').querySelector('.nav-item')?.getAttribute('id') === 'btn-home');
-  ok('1 Files is under Configure', p.$('btn-files').closest('.nav-group') === p.$('btn-skills').closest('.nav-group'));
+  ok('1 Files is under Files, with Context, Scope and MCP', ['context', 'scope', 'mcp'].every((id) => p.$(`btn-${id}`).closest('.nav-group') === p.$('btn-files').closest('.nav-group')));
+  ok('1 the groups read Overview, Workflows, Files, Upkeep, in that order, each in the plan\'s order',
+    JSON.stringify(p.$('nav').querySelectorAll('.nav-group').map((g) => [p.text(g.querySelector('.nav-group-title')), g.querySelectorAll('.nav-item').map((b) => p.text(b.querySelector('.nav-label')))]))
+      === JSON.stringify([['Overview', ['Home', 'Usage']], ['Workflows', ['Packs', 'Skills', 'Models']], ['Files', ['Files', 'Context', 'Scope', 'MCP']], ['Upkeep', ['Memory', 'Worktrees', 'Audit']]]),
+    JSON.stringify(p.$('nav').querySelectorAll('.nav-group').map((g) => p.text(g))));
+  // The theme item names the theme it switches to ("Light theme" / "Dark theme").
+  const foot = p.$('nav-foot').querySelectorAll('.nav-item').map((b) => p.text(b.querySelector('.nav-label')));
+  ok('1 the footer reads Setup, Trash, then the theme switch', foot.length === 3 && foot[0] === 'Setup' && foot[1] === 'Trash' && /^(Light|Dark) theme$/.test(foot[2]), JSON.stringify(foot));
   const sidebar = p.$('sidebar');
   const nameless = sidebar.querySelectorAll('button').filter((b) => !p.text(b) && !b.getAttribute('aria-label'));
   ok('1 every sidebar button has an accessible name', nameless.length === 0, nameless.map((b) => b.outerHTML.slice(0, 80)).join(' '));
@@ -315,7 +324,7 @@ const item = (page, id) => page.querySelectorAll('.files-item').find((b) => b.da
   ok('5 Files on the icon rail opens the Files page, the rail left as it is', again.$('app').classList.contains('rail-collapsed') && again.eval('S.view') === 'files');
   const blocked = await boot({ storage: 'throws', hash: '#skills' });
   ok('5 with localStorage throwing, the page still boots and renders the sidebar',
-     blocked.eval('S.view') === 'skills' && blocked.$('sidebar').querySelectorAll('.nav-item').length === 14 && noErrors(blocked), blocked.errors.join(' | '));
+     blocked.eval('S.view') === 'skills' && blocked.$('sidebar').querySelectorAll('.nav-item').length === 15 && noErrors(blocked), blocked.errors.join(' | '));
   blocked.$('rail-toggle').click();
   blocked.$('btn-theme').click();
   ok('5 …and the rail and theme toggles still work there', blocked.$('app').classList.contains('rail-collapsed')

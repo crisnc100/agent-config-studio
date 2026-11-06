@@ -110,6 +110,23 @@ put(path.join(studio, 'usage-snapshot.json'), {
   ],
 });
 
+// ── skills the Skills page lists (UI clarity: Cris's real page broke where QA had none) ──
+//  - review-helper: invoked 3 times; also in ~/.codex/skills (a shared name: one count, said so)
+//  - scheduler: invoked once; never-seen ones read "unknown, not unused"
+//  - a multi-file skill, so the meta line shows files and size
+const skillMd = (name, description) => `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n\nDo the thing.\n`;
+put(path.join(home, '.claude', 'skills', 'review-helper', 'SKILL.md'), skillMd('review-helper', 'Reviews a branch and reports bugs, with every finding quoting real code.'));
+put(path.join(home, '.claude', 'skills', 'review-helper', 'notes.md'), '# notes\n\nMore detail.\n');
+put(path.join(home, '.codex', 'skills', 'review-helper', 'SKILL.md'), skillMd('review-helper', 'The Codex copy of the review helper.'));
+put(path.join(home, '.claude', 'skills', 'scheduler', 'SKILL.md'), skillMd('scheduler', 'Runs an agent on a schedule, loop or interval.'));
+put(path.join(home, '.claude', 'skills', 'never-used', 'SKILL.md'), skillMd('never-used', 'A skill no transcript has invoked yet.'));
+{
+  const use = (skill, i) => JSON.stringify({ type: 'assistant', timestamp: new Date(Date.now() - (i + 1) * HOUR).toISOString(),
+    message: { content: [{ type: 'tool_use', id: `toolu_qa_${skill}_${i}`, name: 'Skill', input: { skill } }] } });
+  put(path.join(home, '.claude', 'projects', '-qa-skills', 'session-1.jsonl'),
+    `${[use('review-helper', 0), use('review-helper', 1), use('review-helper', 2), use('scheduler', 3)].join('\n')}\n`);
+}
+
 // ── two trashed skills, for Recent ────────────────────────────────────────
 for (const name of ['old-helper', 'scratch-notes']) {
   put(path.join(home, '.claude', 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: QA fixture\n---\n\n${name}\n`);

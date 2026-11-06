@@ -26,6 +26,19 @@ const ATTENTION_SOURCES = [
   ['context', 'Context'],
 ];
 
+/**
+ * Needs attention, most consequential first (C2): a model that is gone or
+ * going breaks skills that call it; drifted instructions and fixable audit
+ * findings change what agents do; then a newer id; then housekeeping.
+ */
+const ATTENTION_RANK = { vanished: 0, retiring: 1, drift: 2, audit: 3, update: 4, worktrees: 5, memory: 6 };
+/** Every warning first, then the info items; by rank within each; stable within a rank (the order each source gave). */
+const warnFirst = (it) => (it.kind === 'warn' ? 0 : 1);
+const rankAttention = (items) => items.map((it, i) => [it, i])
+  .sort((a, b) => (warnFirst(a[0]) - warnFirst(b[0])) || ((a[0].rank ?? 9) - (b[0].rank ?? 9)) || a[1] - b[1]).map(([it]) => it);
+/** How many items Home shows before "Show all N". */
+const ATTENTION_TOP = 3;
+
 /** Model alerts, one line each, from /api/models (not the registry's bare count). */
 function modelItems(m) {
   const out = [];
@@ -34,7 +47,8 @@ function modelItems(m) {
       const text = a.kind === 'update' ? `${r.family}: a newer id is available${a.candidate ? ` — ${a.candidate}` : ''}`
         : a.kind === 'retiring' ? `${r.family} is retiring${a.date ? ` on ${new Date(a.date).toLocaleDateString()}` : ''}`
         : `${r.family} is no longer offered by its CLI`;
-      out.push({ source: 'models', kind: a.kind === 'update' ? 'info' : 'warn', text, action: { view: 'models', label: 'Review' } });
+      out.push({ source: 'models', kind: a.kind === 'update' ? 'info' : 'warn', rank: ATTENTION_RANK[a.kind === 'update' ? 'update' : a.kind === 'retiring' ? 'retiring' : 'vanished'],
+        text, action: { view: 'models', label: 'Review' } });
     }
   }
   return out;
@@ -50,7 +64,7 @@ function memoryItems(d) {
     [f.oversized, (n) => `${plural(n, 'memory index', 'memory indexes')} over the length Claude Code reads`],
   ];
   return kinds.filter(([list]) => list?.length).map(([list, text]) => ({
-    source: 'memory', kind: 'warn', text: text(list.length), action: { view: 'memory', label: 'Clean up', tab: 'cleanups' },
+    source: 'memory', kind: 'warn', rank: ATTENTION_RANK.memory, text: text(list.length), action: { view: 'memory', label: 'Clean up', tab: 'cleanups' },
   }));
 }
 
@@ -65,7 +79,7 @@ function worktreeItems(d) {
     if (p.status !== 'ok') { unknown.push(p.key); continue; }
     const done = (p.worktrees || []).filter((w) => !w.trunk && w.verdict?.status === 'done').length;
     if (done) {
-      items.push({ source: 'worktrees', kind: 'info', text: `${p.key}: ${plural(done, 'finished worktree')} ready to remove`,
+      items.push({ source: 'worktrees', kind: 'info', rank: ATTENTION_RANK.worktrees, text: `${p.key}: ${plural(done, 'finished worktree')} ready to remove`,
         action: { view: 'worktrees', label: 'Show' } });
     }
   }
@@ -74,7 +88,7 @@ function worktreeItems(d) {
 
 function contextItems(d) {
   const n = d.totals?.drifted || 0;
-  return n ? [{ source: 'context', kind: 'warn', text: `${plural(n, 'context file')} drifted from trunk`, action: { view: 'context', label: 'Compare' } }] : [];
+  return n ? [{ source: 'context', kind: 'warn', rank: ATTENTION_RANK.drift, text: `${plural(n, 'context file')} drifted from trunk`, action: { view: 'context', label: 'Compare' } }] : [];
 }
 
 /**
@@ -90,7 +104,7 @@ function auditAttention(src) {
   if (d.state === 'not-audited') return { kind: 'muted', text: 'Skills and instruction files: not audited yet.', action: { view: 'audit', label: 'Audit' } };
   const when = d.stale ? ' (as of the last audit)' : d.state === 'partial' ? ' (partial audit)' : '';
   if (d.fixable > 0) {
-    return { source: 'audit', kind: 'warn', text: `${plural(d.fixable, 'fixable audit finding')} in skills and instruction files${when}`, action: { view: 'audit', label: 'Review' } };
+    return { source: 'audit', kind: 'warn', rank: ATTENTION_RANK.audit, text: `${plural(d.fixable, 'fixable audit finding')} in skills and instruction files${when}`, action: { view: 'audit', label: 'Review' } };
   }
   if (d.state === 'partial') return { kind: 'muted', text: 'The last audit was partial: nothing fixable in what it read.', action: { view: 'audit', label: 'Open' } };
   return null;
@@ -147,7 +161,7 @@ function attentionModel(sources) {
     }
   }
   const clear = !items.length && !loading.length && !failed.length && !partial.length;
-  return { items, loading, failed, partial, quiet, clear };
+  return { items: rankAttention(items), loading, failed, partial, quiet, clear };
 }
 
 /** The Accounts & usage card: the configured seats, ranked and labelled as Usage does. */

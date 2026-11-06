@@ -57,8 +57,8 @@ const reqs = () => page.requests.filter((r) => r.path.startsWith('/api/packs/'))
 try {
   console.log('\nthe Packs view: cards, explanations, toggles and harnesses');
   {
-    ok('#packs opens the view, with a Packs item in the sidebar under Configure', await waitFor(() => page.$('content').querySelectorAll('.pk-card').length === 8)
-      && page.eval('S.view') === 'packs' && !!page.$('btn-packs')?.closest('.nav-group') && t(page.$('btn-packs')) === 'Packs', t(page.$('content')).slice(0, 300));
+    ok('#packs opens the view, with a Packs item in the sidebar under Workflows', await waitFor(() => page.$('content').querySelectorAll('.pk-card').length === 8)
+      && page.eval('S.view') === 'packs' && t(page.$('btn-packs')?.closest('.nav-group')?.querySelector('.nav-group-title')) === 'Workflows' && t(page.$('btn-packs')) === 'Packs', t(page.$('content')).slice(0, 300));
     ok('…and the first status check runs by itself and finishes', await waitFor(statusDone), t(page.$('pk-status')));
     const rg = card('review-gate');
     ok('each card has its title, summary and an expandable explain', /Review gate|review/i.test(t(rg.querySelector('h3'))) && t(rg.querySelector('.pk-summary')).length > 20

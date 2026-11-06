@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg: #0e1014;
   --panel: #15181e;
   --panel-2: #1b1f27;
@@ -28,6 +29,7 @@
 }
 
 :root[data-theme="light"] {
+  color-scheme: light;
   --bg: #faf9f7;
   --panel: #ffffff;
   --panel-2: #f3f2ef;
@@ -66,6 +68,9 @@ body {
   overflow: hidden;
 }
 button, input, textarea, select { font: inherit; color: inherit; }
+/* Native controls follow the theme: checkboxes and radios in the accent colour, placeholders at 4.5:1. */
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
+::placeholder { color: var(--muted); opacity: 1; }
 button { cursor: pointer; background: none; border: none; }
 a { color: var(--accent); }
 
@@ -116,14 +121,14 @@ a { color: var(--accent); }
 
 /* Navigation: grouped by the job, not a row of equal buttons. */
 .nav { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 8px 12px; }
-.nav-group + .nav-group { margin-top: 16px; }
+.nav-group + .nav-group { margin-top: 12px; }
 .nav-group-title {
   font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--muted); padding: 0 10px 6px;
+  color: var(--muted); padding: 0 10px 4px;
 }
 .nav-item {
   display: flex; align-items: center; gap: 10px; width: 100%;
-  height: 32px; padding: 0 10px; border-radius: 7px; text-align: left;
+  height: 29px; padding: 0 10px; border-radius: 7px; text-align: left;
   color: var(--text-dim); font-size: 13.5px; position: relative;
 }
 .nav-item:hover { background: var(--panel-2); color: var(--text); }
@@ -190,9 +195,11 @@ a { color: var(--accent); }
 .title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .harness-tag { flex: none; }
 .title-path {
-  font: 11px var(--mono); color: var(--muted); margin-top: 2px;
+  font-size: 12px; color: var(--muted); margin-top: 2px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* On a file the subtitle is its path: monospace there only (public/app.js renderTopbar). */
+.title-path.is-path { font: 11px var(--mono); }
 .harness-tag {
   font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
   padding: 2px 7px; border-radius: 5px;
@@ -208,20 +215,42 @@ a { color: var(--accent); }
 .tab:hover { color: var(--text); }
 .tab.active { background: var(--panel-3); color: var(--text); }
 
+/* Three kinds of button, and only three:
+   primary   .btn.primary  filled accent, one per area at most
+   secondary .btn          a visible border and text: clearly a button
+   quiet     .btn.ghost    text only, in the action colour, for low-weight actions (Select all, Clear, Refresh)
+   .danger tints a secondary or quiet button red. Disabled stays readable: muted text, no fade. */
 .btn {
   padding: 6px 13px; border-radius: 7px; font-size: 13px;
-  border: 1px solid var(--border); background: var(--panel-2); color: var(--text-dim);
+  border: 1px solid color-mix(in srgb, var(--text-dim) 32%, var(--border)); background: var(--panel-2); color: var(--text);
   white-space: nowrap;
 }
-.btn:hover { background: var(--panel-3); color: var(--text); }
+.btn:hover { background: var(--panel-3); border-color: color-mix(in srgb, var(--text-dim) 55%, var(--border)); }
 .btn.primary {
   background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 550;
 }
 .btn.primary:hover { filter: brightness(1.08); }
-.btn:disabled { opacity: 0.4; cursor: default; }
-.btn.ghost { border-color: transparent; background: transparent; }
-.btn.ghost:hover { background: var(--panel-2); }
-.btn.danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 35%, transparent); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--accent-ink); font-weight: 550; }
+.btn.ghost:hover { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+.btn.danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, var(--border)); }
+.btn.ghost.danger { border-color: transparent; }
+.btn:disabled, .btn.primary:disabled, .btn.ghost:disabled {
+  cursor: not-allowed; color: var(--muted); background: transparent; border-color: var(--border); border-style: dashed; filter: none; font-weight: 500;
+}
+.btn.ghost:disabled { background: transparent; border-color: transparent; }
+
+/* A data fold the user opens on purpose (what a pack changes, installer output, a project card): a styled
+   control with its own chevron, never the browser's triangle. */
+summary.fold { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; width: fit-content;
+  color: var(--accent-ink); font-weight: 550; padding: 3px 8px; margin-left: -8px; border-radius: 6px; }
+summary.fold::-webkit-details-marker { display: none; }
+summary.fold::before { content: ""; flex: none; width: 6px; height: 6px; border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor;
+  transform: rotate(-45deg); transition: transform 0.15s ease-out; }
+details[open] > summary.fold::before { transform: rotate(45deg); }
+summary.fold:hover { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+summary.fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* A project card's header is a whole row, not a link-sized control. */
+details.mem-card > summary.fold { display: flex; width: auto; color: inherit; font-weight: inherit; margin-left: 0; padding: 0; }
 
 .filebar {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
@@ -398,12 +427,6 @@ a { color: var(--accent); }
 .tip-btn svg { width: 15px; height: 15px; }
 .tip-btn:hover, .tip-btn[aria-expanded="true"] { color: var(--accent); }
 .tip-body { display: block; margin-top: 4px; color: var(--text-dim); font-size: 12.5px; }
-/* Fine print behind "Details" (public/app.js moreDetails). */
-details.more { margin: -12px 0 18px; font-size: 12.5px; color: var(--muted); }
-details.more > summary { cursor: pointer; width: fit-content; color: var(--text-dim); }
-details.more > summary:hover { color: var(--text); }
-details.more > p, details.more > div { margin: 6px 0 0; overflow-wrap: anywhere; }
-details.more .mem-facts { margin: 6px 0 0; }
 .scope-select {
   width: 100%; padding: 9px 11px; margin-bottom: 22px;
   background: var(--panel-2); border: 1px solid var(--border);
@@ -742,7 +765,7 @@ details.more .mem-facts { margin: 6px 0 0; }
 /* Tabular figures and a fixed width so the bars line up as a column even when
    the percentages are 7% and 100%. */
 .usage-pct {
-  width: 38px; text-align: right; flex: none;
+  min-width: 64px; white-space: nowrap; text-align: right; flex: none;
   font: 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--text-dim);
 }
 .usage-track {
@@ -785,12 +808,13 @@ details.more .mem-facts { margin: 6px 0 0; }
 /* Kept quiet and only meaningful on hover: removing a seat is rare, and a
    prominent × next to live numbers invites a misclick. */
 .usage-drop {
-  margin-left: auto; flex: none; background: none; border: 0; cursor: pointer;
-  color: var(--muted); font-size: 15px; line-height: 1; padding: 0 4px; opacity: 0;
+  margin-left: auto; flex: none; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+  color: var(--muted); font-size: 15px; line-height: 1; padding: 0; opacity: 0;
   transition: opacity 120ms ease, color 120ms ease;
 }
-.usage-seat:hover .usage-drop { opacity: 0.6; }
-.usage-drop:hover { color: var(--red); opacity: 1; }
+.usage-seat:hover .usage-drop, .usage-drop:focus-visible { opacity: 1; }
+.usage-drop:hover { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, var(--border)); }
 
 .usage-hint { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .usage-hint-label { color: var(--muted); font-size: 11px; }
@@ -848,8 +872,7 @@ details.more .mem-facts { margin: 6px 0 0; }
 .usage-conflict-note { font-size: 11px; color: var(--muted); margin-top: 6px; }
 
 /* ── skills view ─────────────────────────────────────────────────────── */
-.sk-caveat { margin-bottom: 16px; }
-.sk-caveat div + div { margin-top: 5px; }
+.sk-usage-error { margin-bottom: 16px; }
 
 /* Sticky so the running total and Download stay reachable while scrolling a
    list this long — the selection is the point of the panel. */
@@ -900,7 +923,7 @@ details.more .mem-facts { margin: 6px 0 0; }
 }
 .sk-source.global-claude { color: var(--claude); }
 .sk-source.global-codex { color: var(--codex); }
-.sk-meta { font: 11px var(--mono); color: var(--muted); margin-top: 4px; }
+.sk-meta { font-size: 12px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
 .sk-desc {
   font-size: 12.5px; color: var(--text-dim); margin-top: 5px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
@@ -909,9 +932,9 @@ details.more .mem-facts { margin: 6px 0 0; }
 .sk-broken { font-size: 12px; color: var(--red); margin-top: 5px; }
 
 .sk-usage { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; font-size: 12px; }
-.sk-usage-count { color: var(--green); font-family: var(--mono); font-size: 11px; }
+.sk-usage-count { color: var(--green); font-size: 12px; font-variant-numeric: tabular-nums; }
 /* Deliberately not red: an unobserved skill is unknown, not a problem. */
-.sk-usage-none { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+.sk-usage-none { color: var(--muted); font-size: 12px; }
 .sk-usage-when { color: var(--muted); }
 .sk-usage-shared { color: var(--amber); }
 /* ── models view ─────────────────────────────────────────────────────── */
@@ -1099,14 +1122,20 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .files-type-name {
   font-size: 11px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted);
 }
-.files-type-toggle:hover .files-type-name { color: var(--text-dim); }
-.files-type-toggle[aria-expanded="false"] .files-type-name::after { content: " ▸"; }
+.files-type-toggle { align-items: center; border-radius: 6px; margin-left: -6px; padding-left: 6px; padding-right: 6px; }
+.files-type-toggle:hover { background: var(--panel-2); }
+.files-type-toggle:hover .files-type-name { color: var(--text); }
+/* The same chevron as every data fold: down when open, right when folded. */
+.files-type-toggle::before { content: ""; flex: none; width: 6px; height: 6px; border-right: 1.6px solid var(--muted); border-bottom: 1.6px solid var(--muted);
+  transform: rotate(45deg); transition: transform 0.15s ease-out; align-self: center; }
+.files-type-toggle[aria-expanded="false"]::before { transform: rotate(-45deg); }
 .files-type-count { font: 11px var(--mono); color: var(--muted); }
 .files-add {
-  width: 24px; height: 24px; border-radius: 6px; flex: none;
-  color: var(--muted); font-size: 15px; line-height: 1;
+  width: 26px; height: 26px; border-radius: 6px; flex: none;
+  color: var(--text-dim); font-size: 15px; line-height: 1;
+  border: 1px solid color-mix(in srgb, var(--text-dim) 32%, var(--border)); background: var(--panel-2);
 }
-.files-add:hover { background: var(--panel-3); color: var(--accent); }
+.files-add:hover { background: var(--panel-3); color: var(--accent-ink); }
 .files-entries {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 2px 8px;
   padding-bottom: 4px;
@@ -1356,8 +1385,7 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .roles-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
 .roles-name-text { font-weight: 600; font-size: 13.5px; color: var(--text); }
 .roles-note-text { color: var(--text-dim); font-size: 13px; flex: 1 1 200px; min-width: 0; }
-.roles-open-hint { margin-left: auto; font-size: 11px; color: var(--muted); }
-.roles-row:hover .roles-open-hint { color: var(--accent); }
+.roles-open-hint { margin-left: auto; padding: 3px 11px; font-size: 12px; }
 .roles-lineup, .roles-second { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .roles-second { margin-top: 6px; }
 .roles-second-label { font-size: 12px; color: var(--muted); }
@@ -1399,10 +1427,8 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .model-card-buttons { margin: 0; flex-wrap: wrap; }
 .model-card .models-flavor { margin-top: 0; }
 .model-used { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--border-soft); }
-.model-used-toggle, .ids-toggle {
-  background: none; border: none; padding: 0; cursor: pointer; color: var(--muted); font: inherit; font-size: 12px; text-align: left;
-}
-.model-used-toggle:hover, .ids-toggle:hover { color: var(--text); }
+.btn.model-used-toggle { padding: 3px 8px; margin-left: -8px; font-size: 12px; text-align: left; }
+.btn.ids-toggle { padding: 4px 8px; margin-left: -8px; font-size: inherit; color: var(--text); }
 .model-used-jobs { margin-bottom: 4px; }
 
 .models-ids { margin-top: 34px; }
@@ -1490,11 +1516,14 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .sw-head h2 { margin-bottom: 0; }
 .scope.sw { max-width: 1040px; }
 .sw-steps { list-style: none; display: flex; gap: 6px; padding: 0; margin: 14px 0 16px; flex-wrap: wrap; }
-.sw-step { font-size: 12.5px; color: var(--muted); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); }
-.sw-step.current { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+/* A progress line, not pills: only a step you can go back to is a (quiet) button. */
+.sw-steps { align-items: center; gap: 4px; }
+.sw-step { font-size: 12.5px; color: var(--muted); padding: 2px 0; display: inline-flex; align-items: center; }
+.sw-step + .sw-step::before { content: "›"; color: var(--muted); margin: 0 8px 0 4px; }
+.sw-step.current { color: var(--text); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
 .sw-step.done { color: var(--text-dim); }
-.sw-step-btn { background: none; border: none; color: inherit; font: inherit; padding: 0; cursor: pointer; }
-.sw-step-btn:hover { color: var(--text); text-decoration: underline; }
+.sw-step-btn { background: none; border: none; color: var(--accent-ink); font: inherit; font-weight: 550; padding: 2px 6px; margin: -2px -6px; border-radius: 6px; cursor: pointer; }
+.sw-step-btn:hover { background: color-mix(in srgb, var(--accent) 11%, transparent); }
 .sw-backend { margin-bottom: 12px; }
 .sw-body { display: flex; flex-direction: column; gap: 10px; }
 .sw-label { font-size: 13.5px; color: var(--text); }
@@ -1575,7 +1604,7 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .pk-ready.later { color: var(--muted); }
 .pk-status-more { margin: 0 0 12px; }
 .pk-status-more .pk-status { margin: 8px 0 0; }
-.pk-ready.missing { color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 40%, transparent); }
+.pk-ready.missing { color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent); }
 .pk-why { font-size: 12.5px; color: var(--muted); }
 /* The needs every pack shares, once, above the cards. */
 .pk-todo { margin: 0 0 14px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--border)); border-radius: var(--radius); background: var(--panel); }
@@ -1639,22 +1668,25 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .pk-tab { font-size: 12.5px; padding: 3px 10px; border-radius: 6px; color: var(--text-dim); }
 .pk-tab:hover { color: var(--text); }
 .pk-tab[aria-selected="true"] { background: var(--panel); color: var(--text); font-weight: 550; box-shadow: 0 1px 2px var(--shadow); }
-.pk-flow .flow { list-style: none; margin: 0; padding: 0; display: flex; gap: 22px; align-items: stretch; }
+.pk-flow .flow { list-style: none; margin: 0; padding: 0; display: flex; gap: 16px; align-items: stretch; }
 .pk-flow .step {
   position: relative; flex: 1 1 0; min-width: 0;
   display: flex; flex-direction: column; gap: 6px;
-  padding: 11px 12px 12px; border-radius: 10px;
+  padding: 10px 10px 11px; border-radius: 10px;
   background: var(--panel-2); border: 1px solid var(--border);
 }
 .pk-flow .step:not(:last-child)::after {
-  content: ""; position: absolute; top: 50%; right: -17px; width: 12px; height: 12px; margin-top: -6px;
+  content: ""; position: absolute; top: 50%; right: -14px; width: 12px; height: 12px; margin-top: -6px;
   background: var(--muted);
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M1 6h9M6.5 2.5 10 6l-3.5 3.5' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
           mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M1 6h9M6.5 2.5 10 6l-3.5 3.5' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 .pk-flow .step.narrow { flex: 0.8 1 0; }
 .pk-flow .step:not(.narrow) { flex-grow: 1.3; }
-.pk-flow .step-name { font-size: 13px; font-weight: 600; line-height: 1.3; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* Eight or more steps: rows of four, so each step reads at a desktop width. */
+.pk-flow .flow.rows { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 22px; }
+.pk-flow .flow.rows .step:nth-child(4n)::after { display: none; }
+.pk-flow .step-name { font-size: 13px; font-weight: 600; line-height: 1.3; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .pk-flow .step-what { margin: 0; font-size: 12px; line-height: 1.4; color: var(--text-dim); flex: 1; }
 .pk-flow .step.off { background: transparent; border-style: dashed; }
 .pk-flow .step.off .step-name { color: var(--text-dim); font-weight: 550; }
@@ -1702,3 +1734,24 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .roles-steps { margin-top: 4px; font-size: 12.5px; color: var(--text-dim); }
 .roles-steps b { color: var(--muted); font-weight: 600; }
 .roles-steps .none { color: var(--muted); }
+
+/* MCP with nothing configured: one plain empty state (C3). */
+.mcp-empty { max-width: 62ch; padding: 14px 16px; border: 1px dashed var(--border); border-radius: var(--radius); background: var(--panel); }
+.mcp-empty p { margin: 0; color: var(--text-dim); }
+.mcp-empty p + p { margin-top: 6px; }
+.mcp-empty code { font: 12px var(--mono); color: var(--text); }
+
+/* Needs attention: the rest behind one button, under the top 3 (C2). */
+.home-attn-more { margin: 2px 0 4px 10px; font-size: 12.5px; }
+
+/* Worktrees: the words the page uses, each with its (i). */
+.wt-terms { margin: 0 0 16px; font-size: 12.5px; color: var(--text-dim); }
+.sk-note { margin: 8px 0 14px; }
+/* The first section on Models sits at the top: the page has no intro line above it now. */
+.models-roles > .models-subhead { margin-top: 0; }
+
+/* A part's explain is a quiet fold: it repeats on every part, so it must not shout. */
+.pk-part summary.fold { color: var(--text-dim); font-weight: 500; font-size: 12px; }
+.pk-part summary.fold:hover { color: var(--text); }
+/* The card's need, said in full under the summary (the head carries a calm "Setup needed"). */
+.pk-need { margin: 0; font-size: 12.5px; color: var(--amber); }

@@ -49,22 +49,22 @@
       {
         "id": "review",
         "label": "Review",
-        "what": "Reads the branch and reports bugs.",
+        "what": "Reads the branch, reports bugs.",
         "who": "role",
         "role": "reviewer",
         "pool": "picked per review",
         "variants": {
           "premium": {
-            "what": "One full, careful pass, for changes where a miss is costly.",
+            "what": "One careful pass, by the judge.",
             "role": "judge"
           },
           "both": {
-            "what": "Two reviews, one merged list: bugs both found come first.",
+            "what": "Two reviews, one merged list.",
             "also": "judge",
             "alsoNote": "double-checks"
           },
           "claude": {
-            "what": "A team of Claude reviewers, each with its own lens.",
+            "what": "A team of Claude reviewers.",
             "vendor": "claude",
             "pool": "the Claude team"
           }
@@ -73,7 +73,7 @@
       {
         "id": "security",
         "label": "Security pass",
-        "what": "Looks only for security holes, beside the review.",
+        "what": "Looks for security holes only.",
         "who": "role",
         "role": "security",
         "setting": "security"
@@ -81,13 +81,13 @@
       {
         "id": "quote",
         "label": "Quote check",
-        "what": "Drops any finding whose quote is not in the code.",
+        "what": "Drops findings with no real quote.",
         "who": "script"
       },
       {
         "id": "fix",
         "label": "Fix round",
-        "what": "Every high and medium is fixed, or disputed with proof.",
+        "what": "Fixes every high and medium.",
         "who": "role",
         "role": "builder",
         "note": "the one that wrote the branch"
@@ -95,7 +95,7 @@
       {
         "id": "dispute",
         "label": "Dispute",
-        "what": "A finding you reject gets a verdict from a different model.",
+        "what": "A rejected finding gets a verdict.",
         "who": "role",
         "role": "reviewer",
         "note": "a different model than the reviewer",
@@ -104,7 +104,7 @@
       {
         "id": "check",
         "label": "Fix check",
-        "what": "One look at the fixes. No second round.",
+        "what": "One look at the fixes.",
         "who": "role",
         "role": "reviewer",
         "note": "same pick",
@@ -117,13 +117,13 @@
       {
         "id": "log",
         "label": "Defer and log",
-        "what": "What is left is deferred and written to the review log.",
+        "what": "Logs what is left, deferred.",
         "who": "script"
       },
       {
         "id": "gate",
         "label": "Push gate",
-        "what": "Refuses a push until every changed file was reviewed.",
+        "what": "No push until it is reviewed.",
         "who": "script",
         "tool": "git hook",
         "part": "push-gate"

@@ -98,6 +98,52 @@ const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]
   ok('every `outline: none` has a replacement focus style', bare.length === 0, bare.join(' | '));
 }
 
+/* ── static: PR C QA at the real window (about 1343×679) ── */
+console.log('\nstyles.css: PR C QA');
+{
+  const body = (sel) => rules.filter((r) => r.sel.split(',').map((x) => x.trim()).includes(sel)).map((r) => r.body).join(';');
+  ok('each theme tells the browser its colour scheme, so native checkboxes and scrollbars match', /color-scheme\s*:\s*dark/.test(body(':root'))
+    && /color-scheme\s*:\s*light/.test(body(':root[data-theme="light"]')));
+  ok('checkboxes and radios take the accent colour', rules.some((r) => /input\[type="?checkbox"?\]/.test(r.sel) && /accent-color/.test(r.body)));
+  ok('placeholders use the muted colour at full opacity (4.5:1)', /color\s*:\s*var\(--muted\)/.test(body('::placeholder')) && /opacity\s*:\s*1/.test(body('::placeholder')));
+  ok('a disabled button looks disabled: a dashed, softer border', /border-style\s*:\s*dashed/.test(body('.btn:disabled')) || /border\s*:[^;]*dashed/.test(body('.btn:disabled')));
+  ok('Usage\'s "82% left" stays on one line: no fixed narrow width, no wrap', /white-space\s*:\s*nowrap/.test(body('.usage-pct')) && !/(^|;)\s*width\s*:\s*[1-5]?\d px/.test(body('.usage-pct').replace(/px/g, ' px')));
+  ok('Usage\'s stop-tracking × is fully visible when shown (no faded opacity), with a hit area', !/opacity\s*:\s*0?\.\d/.test(body('.usage-seat:hover .usage-drop'))
+    && /width\s*:\s*2\dpx/.test(body('.usage-drop')));
+  ok('Files: a type toggle draws a fold chevron, and its "+" has a visible box', /content\s*:/.test(body('.files-type-toggle::before')) && /border\s*:/.test(body('.files-add')));
+  ok('a diagram step title never wraps', /white-space\s*:\s*nowrap/.test(body('.pk-flow .step-name')));
+  ok('a long diagram (eight or more steps) lays out in rows of four', /grid-template-columns\s*:\s*repeat\(4/.test(body('.pk-flow .flow.rows')));
+  ok('a part\'s explain fold is quiet (not the bold action colour)', /color\s*:\s*var\(--text-dim\)/.test(body('.pk-part summary.fold')) && /font-weight\s*:\s*500/.test(body('.pk-part summary.fold')));
+}
+
+/* ── static: folds and buttons look like controls (Cris, 2026-11-06) ── */
+console.log('\nstyles.css: a data fold is a styled control; buttons are clearly buttons');
+{
+  const has = (sel, re) => rules.some((r) => r.sel.split(',').map((x) => x.trim()).includes(sel) && re.test(r.body));
+  ok('a data fold\'s summary hides the browser triangle', has('summary.fold', /list-style\s*:\s*none/) && has('summary.fold::-webkit-details-marker', /display\s*:\s*none/));
+  ok('…and shows its own chevron, with a hover and a focus style', has('summary.fold::before', /content\s*:/) && rules.some((r) => /summary\.fold:hover/.test(r.sel)) && rules.some((r) => /summary\.fold:focus-visible/.test(r.sel)));
+  ok('a secondary button has a visible border (not the panel\'s own border colour)', has('.btn', /border\s*:[^;]*color-mix|border-color\s*:[^;]*color-mix/));
+  ok('a quiet button has its own text colour and a hover background', has('.btn.ghost', /(^|;)\s*color\s*:/) && rules.some((r) => r.sel.includes('.btn.ghost:hover') && /background/.test(r.body)));
+  const dis = rules.filter((r) => r.sel.split(',').some((x) => x.trim() === '.btn:disabled'));
+  ok('a disabled button stays readable: no opacity under 0.7', dis.length > 0 && dis.every((r) => !/opacity\s*:\s*0?\.[0-6]/.test(r.body)), dis.map((r) => r.body.trim()).join(' | '));
+}
+
+/* ── static: Details folds and quiet meta (the Skills page bug, 2026-11-06) ── */
+console.log('\nstyles.css: a Details fold never slides under the control above it; meta text is not code');
+{
+  // A Details fold after a page's toolbar (Skills' New skill, Audit's Run again) was pulled up 12px by a
+  // negative top margin meant for a fold under an intro line, and sat behind the button. Only a fold that
+  // follows an intro line (a sibling combinator in the selector) may pull itself up.
+  const pulled = rules.filter((r) => r.sel.split(',').some((x) => /details\.more\s*$/.test(x.trim()) && !/[+~]/.test(x))
+    && (/margin-top\s*:\s*-/.test(r.body) || /margin\s*:\s*-/.test(r.body)));
+  ok('no bare details.more rule pulls the fold up with a negative top margin', pulled.length === 0, pulled.map((r) => `${r.sel} {${r.body.trim()}}`).join(' | '));
+  // The top bar's subtitle is a sentence on every view, a path only on a file: monospace only for the path.
+  const mono = (sel) => rules.filter((r) => r.sel.split(',').map((x) => x.trim()).includes(sel)).some((r) => /font(?:-family)?\s*:[^;]*var\(--mono\)/.test(r.body));
+  ok('the top bar subtitle is not monospace, except as a file path (.title-path.is-path)', !mono('.title-path') && mono('.title-path.is-path'));
+  ok('skill meta lines ("3 files · 12 KB", "11 invocations", "no recorded use") are not monospace',
+    ['.sk-meta', '.sk-usage-count', '.sk-usage-none'].every((sel) => !mono(sel)), ['.sk-meta', '.sk-usage-count', '.sk-usage-none'].filter(mono).join(', '));
+}
+
 /* ── static: tinted states in the light theme, from the CSS values ───── */
 // Review 2026-11-06-15-12-50 f1: states the seeded QA never showed (a search hit, a new-CLI part badge, an
 // added line in a Describe preview, the Claude tag, installed/update badges) sat at 4.17–4.49:1 in light.
@@ -275,8 +321,10 @@ console.log('\nPacks: shared needs once, each card its single most important nee
   const ready = (id) => p.text(p.$('content').querySelector(`[data-pack="${id}"] .pk-ready`));
   ok('a card never repeats the shared need, and never says "+N more"', !/git/.test(ready('gate')) && !/git/.test(ready('plain'))
     && !p.$('content').querySelectorAll('.pk-ready').some((n) => /more\)/.test(p.text(n))), `${ready('gate')} | ${ready('plain')}`);
+  // PR C design: the chip is a calm amber "Setup needed"; the need itself is a line in the card.
+  const need = (id) => p.text(p.$('content').querySelector(`[data-pack="${id}"] .pk-need`) || { textContent: '' });
   ok('the gate card shows its single most important need: the one PATH fix (model-id and ask-model together)',
-    ready('gate') === 'Needs a PATH fix: model-id, ask-model', ready('gate'));
+    ready('gate') === 'Setup needed' && need('gate') === 'Needs a PATH fix: model-id, ask-model', `${ready('gate')} | ${need('gate')}`);
   ok('a card whose only gap is the shared need is not called Ready: it points at the block above', ready('plain') === 'Not ready — see “To use packs” above', ready('plain'));
   const det = p.$('content').querySelector('[data-pack="gate"] details.pk-explain .pk-reqs');
   // node ✓, git ✖, the one PATH fix ✖ (model-id and ask-model together), roles ✖.
@@ -300,8 +348,11 @@ console.log('\nPacks: shared needs once, each card its single most important nee
   ok('…and the same one item in each card\'s details', !!qd && [...qd.children].length === 1
     && /^✖ Some tools aren.t on the PATH the studio sees: model-id, ask-model, Claude Code, Grok — fix: /.test(q.text(qd.children[0])), qd && q.text(qd));
   ok('…and every card then has nothing of its own to add', q.$('content').querySelectorAll('.pk-ready').every((n) => q.text(n) === 'Not ready — see “To use packs” above'));
-  ok('Packs: the status line and the trust check sit in a Details fold', !!q.$('content').querySelector('details.pk-status-more #pk-status')
-    || !!q.$('content').querySelector('#pk-status details'), q.$('content').querySelector('#pk-status')?.parentNode?.localName);
+  // No "Details" folds (Cris, 2026-11-06): the status is one quiet line — when it was checked, the trust
+  // check as a small checkbox with an (i), and Refresh — never a raw disclosure.
+  const sl = q.$('content').querySelector('#pk-status');
+  ok('Packs: the status is one quiet line, not inside any fold, with the trust check\'s (i)', !!sl && !sl.closest('details') && !sl.querySelector('details')
+    && !!sl.querySelector('.tip .tip-term') && /Status checked at|Status not checked yet/.test(q.text(sl)), q.text(sl || { textContent: '' }));
   ok('…with no page errors', p.errors.length === 0 && q.errors.length === 0, [...p.errors, ...q.errors].join(' | '));
   q.done();
 }
@@ -445,6 +496,27 @@ try {
     const tips = page.$('content').querySelectorAll('.tip');
     ok(`${v}: every (i) tip names its word`, tips.every((t) => !!t.querySelector('.tip-term') && page.text(t.querySelector('.tip-term')).trim().length > 0),
       tips.map((t) => page.text(t)).join(' | '));
+    // Cris, 2026-11-06: no "▶ Details" toggles. A fold left on the page is a data fold the user opens on
+    // purpose (a pack's "What it changes", installer output, a project card), drawn as a styled control.
+    const folds = page.$('content').querySelectorAll('details');
+    ok(`${v}: no "Details" fold, and every fold left is a styled data fold (summary.fold)`, !page.$('content').querySelector('details.more')
+      && folds.every((d) => d.querySelector('summary')?.classList.contains('fold') && !/^\s*details\s*$/i.test(page.text(d.querySelector('summary')))),
+      folds.map((d) => `${d.className}: ${page.text(d.querySelector('summary')).slice(0, 30)}`).join(' | '));
+    // Every button is one of three kinds — primary, secondary (.btn) or quiet (.btn.ghost) — or a named
+    // non-button control: a tab, a row in the Files tree, an (i) tip, or an icon with a title.
+    const KINDS = /\bbtn\b/;
+    const NAMED = ['pk-tab', 'tab', 'files-item', 'files-type-toggle', 'files-add', 'tip-btn', 'usage-drop'];
+    const loose = page.$('content').querySelectorAll('button').filter((b) => !KINDS.test(b.className || '') && !NAMED.some((c) => b.classList.contains(c)));
+    ok(`${v}: every button is primary, secondary or quiet (or a tab, tree row or titled icon)`, loose.length === 0,
+      loose.map((b) => `${b.className || '(no class)'}: ${page.text(b).slice(0, 24)}`).join(' | '));
+    if (v === 'models') {
+      const rows = page.$('content').querySelectorAll('.roles-row');
+      ok('models: each role row\'s Edit is a real button (secondary), not a text label', rows.length > 0
+        && rows.every((r) => r.querySelectorAll('button').some((b) => /\bbtn\b/.test(b.className) && /^(Edit|Close)$/.test(page.text(b)))), `${rows.length} rows`);
+    }
+    const icons = page.$('content').querySelectorAll('button').filter((b) => page.text(b).replace(/[^\p{L}\p{N}]/gu, '').length === 0);
+    ok(`${v}: every icon-only button has a title and an accessible name`, icons.every((b) => b.getAttribute('title') && (b.getAttribute('aria-label') || b.getAttribute('title'))),
+      icons.filter((b) => !b.getAttribute('title')).map((b) => b.className).join(' | '));
     ok(`${v}: no page errors`, page.errors.length === 0, page.errors.join(' | '));
     page.done();
   }
@@ -459,7 +531,9 @@ try {
     const ready = (k) => page.text(k.querySelector('.pk-ready'));
     ok('a machine with everything: no to-do box, and every card says "✓ Ready"…', !c().querySelector('.pk-todo')
       && cards.length > 0 && cards.filter((k) => k.dataset.pack !== 'build').every((k) => ready(k) === '✓ Ready'), cards.map((k) => page.text(k.querySelector('.pk-head'))).join(' | '));
-    ok('…except a pack that needs another pack first, which names it', ready(c().querySelector('[data-pack="build"]')) === 'Needs the Review gate pack first');
+    const bc = c().querySelector('[data-pack="build"]');
+    ok('…except a pack that needs another pack first: "Setup needed", and the card names the pack', ready(bc) === 'Setup needed'
+      && page.text(bc.querySelector('.pk-need')) === 'Needs the Review gate pack first', `${ready(bc)} | ${page.text(bc.querySelector('.pk-need') || { textContent: '' })}`);
     const rg = c().querySelector('[data-pack="review-gate"]');
     ok('the needs list is folded into the card\'s explain, not shown open', !!rg.querySelector('details.pk-explain .pk-reqs') && !rg.querySelector(':scope > .pk-reqs'));
     const metas = c().querySelectorAll('.pk-part-meta').map((n) => page.text(n));
@@ -482,7 +556,8 @@ try {
     // Not every pack needs model-id (Worktree setup does not), so it is no shared need: no top block, the card says it.
     ok('"To use packs": a tool only some packs need is not in the top block', !todo || !items.some((x) => /model-id/.test(x)), items.join(' | '));
     const rg2 = c2().querySelector('[data-pack="review-gate"]');
-    ok('…and the review gate card names its one missing need, not a list: the one PATH fix', p2.text(rg2.querySelector('.pk-ready.missing')) === 'Needs a PATH fix: model-id' && !rg2.querySelector('.pk-ready.ok'),
+    ok('…and the review gate card names its one missing need, not a list: the one PATH fix', p2.text(rg2.querySelector('.pk-ready.missing')) === 'Setup needed'
+      && p2.text(rg2.querySelector('.pk-need')) === 'Needs a PATH fix: model-id' && !rg2.querySelector('.pk-ready.ok'),
       p2.text(rg2.querySelector('.pk-head')));
     const prev = rg2.querySelectorAll('.pk-actions button').find((b) => /^Preview install/.test(p2.text(b)));
     rg2.querySelectorAll('.pk-part input').forEach((i) => { if (i.checked) i.click(); });
