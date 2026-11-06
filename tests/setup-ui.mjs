@@ -326,10 +326,10 @@ console.log('\nsetup in the page');
   await settle(20);
   btn(p, 'Finish').click();
   await settle(40);
-  ok('S15 after Finish, Home shows the new folder', /Project folders: 1 \(edit\)/.test(p.text(p.$('content'))), p.text(p.$('content')).slice(0, 120));
+  ok('S15 after Finish, Home shows the new folder', /Project folders: 1 you can edit/.test(p.text(p.$('content'))), p.text(p.$('content')).slice(0, 120));
   first.resolve(ROOTS([]));
   await settle(40);
-  ok('S15 …and the old, held /api/roots answer cannot paint over it', /Project folders: 1 \(edit\)/.test(p.text(p.$('content'))), p.text(p.$('content')).slice(0, 120));
+  ok('S15 …and the old, held /api/roots answer cannot paint over it', /Project folders: 1 you can edit/.test(p.text(p.$('content'))), p.text(p.$('content')).slice(0, 120));
 }
 {
   // The boot status is held at "none"; the person runs setup from Home and finishes; then it lands.
@@ -386,7 +386,7 @@ console.log('\nsetup in the page');
   routes.st.setup = { state: 'done' };
   const p = await boot({ routes });
   await settle(40);
-  ok('S15 Home shows the folder line', /Project folders: 0 \(edit\) · 0 \(read\)/.test(p.text(p.$('content'))), p.text(p.$('content')).slice(0, 200));
+  ok('S15 Home shows the folder line', /Project folders: 0 you can edit, 0 read-only/.test(p.text(p.$('content'))), p.text(p.$('content')).slice(0, 200));
   btn(p, 'Run setup again').click();
   await settle(20);
   ok('S15 "Run setup again" opens setup', p.eval('S.view') === 'setup');
@@ -400,7 +400,7 @@ console.log('\nsetup in the page');
   await settle(40);
   const home = p.text(p.$('content'));
   ok('S15 Finish writes done and lands on #home', routes.st.setup.state === 'done' && p.eval('S.view') === 'home' && p.location.hash === '#home');
-  ok('S15 …with Home re-read, not cached: the new folder count', /Project folders: 1 \(edit\) · 1 \(read\)/.test(home), home.slice(0, 300));
+  ok('S15 …with Home re-read, not cached: the new folder count', /Project folders: 1 you can edit, 1 read-only/.test(home), home.slice(0, 300));
   ok('S15 …each CLI\'s state from /api/setup/clis', /Claude Code.*2\.1\.0 \(Claude Code\) · sign-in: unknown — refresh/.test(home) && /Codex.*sign-in: credentials present/.test(home) && /Grok.*not installed/.test(home));
   ok('S15 …and the added seat', /Codex \(primary\)/.test(home));
 }

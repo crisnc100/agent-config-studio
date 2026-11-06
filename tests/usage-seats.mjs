@@ -655,7 +655,7 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
 
   let again = null;
   try { moveSeatToPrivateHome({ id: 'codex-1', file: f, home: dir }); } catch (e) { again = e; }
-  ok('moving twice is refused', again !== null && /already has a private home/.test(again.message));
+  ok('moving twice is refused', again !== null && /already has its own folder/.test(again.message));
 
   let wrong = null;
   addSeat({ id: 'claude-1', vendor: 'claude', label: 'Claude' }, f);

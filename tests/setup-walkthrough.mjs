@@ -143,7 +143,7 @@ ok('S16 Done names this checkout\'s bin/acs (acs is not on this PATH)', text().i
 btn('Finish').click();
 ok('1 Finish lands on Home', await until(() => page.eval('S.view') === 'home'));
 ok('1 …having written setup.json completed: done', JSON.parse(fs.readFileSync(path.join(home, '.agent-config-studio', 'setup.json'), 'utf8')).completed === 'done');
-ok('S15 Home shows the folder count', await until(() => /Project folders: 1 \(edit\) · 0 \(read\)/.test(text())), text().slice(0, 300));
+ok('S15 Home shows the folder count', await until(() => /Project folders: 1 you can edit, 0 read-only/.test(text())), text().slice(0, 300));
 ok('S15 Home shows each CLI\'s state', await until(() => ['claude', 'codex', 'grok'].every((c) => text().includes(`${c} 3.0.0 (fake) · sign-in:`))), text());
 ok('QA3 nothing on Home calls an installed CLI missing (Needs attention agrees with the CLIs card)',
    await until(() => /installed, no model catalog yet/.test(text())) && !/(Claude|Codex|Grok)[^:]*: not installed/.test(text()), text().slice(0, 600));

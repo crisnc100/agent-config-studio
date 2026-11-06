@@ -222,9 +222,9 @@ const homeRoutes = (over = {}) => routesFor({
      /Detection unavailable: clis probe failed/.test(p.text(card(p, 'clis'))) && /Usage unavailable/.test(p.text(card(p, 'clis'))));
   const ok200 = await boot({ routes: homeRoutes({ 'GET /api/setup/clis': () => { throw { status: 500, body: { error: 'clis probe failed' } }; } }) });
   await settle(20);
-  const codexLine = ok200.$('content').querySelectorAll('.home-clis .home-cli').find((r) => /Codex seats/.test(ok200.text(r)));
+  const codexLine = ok200.$('content').querySelectorAll('.home-clis .home-cli').find((r) => /Codex accounts/.test(ok200.text(r)));
   ok('8 …and with Usage answering, the Codex Usage line still reports on its own',
-     /Detection unavailable: clis probe failed/.test(ok200.text(card(ok200, 'clis'))) && /6 seats in Usage · 2 reading · 2 to sign in/.test(ok200.text(codexLine)), ok200.text(card(ok200, 'clis')));
+     /Detection unavailable: clis probe failed/.test(ok200.text(card(ok200, 'clis'))) && /6 accounts in Usage · 2 reading · 2 to sign in/.test(ok200.text(codexLine)), ok200.text(card(ok200, 'clis')));
   ok('8 a failing card never raises a page error or a notice', p.errors.length === 0 && p.text(p.$('notice-slot')) === '', p.errors.join(' | '));
 }
 {

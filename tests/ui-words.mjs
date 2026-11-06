@@ -72,6 +72,28 @@ const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]
   ok('every `outline: none` has a replacement focus style', bare.length === 0, bare.join(' | '));
 }
 
+/* ── static: words the views never render on their own ───────────────── */
+console.log('\nindex.html and the server\'s errors: no "harness"');
+{
+  // index.html's own buttons: their text, and every title / aria-label / placeholder.
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const said = [...html.matchAll(/\b(?:title|aria-label|placeholder)="([^"]*)"/g)].map((m) => m[1])
+    .concat([...html.matchAll(/>([^<>]*[A-Za-z][^<>]*)</g)].map((m) => m[1]));
+  ok('index.html: no "harness" in any button text, title, aria-label or placeholder', !said.some((s) => /harness/i.test(s)),
+    said.filter((s) => /harness/i.test(s)).join(' | '));
+  // Every message the server throws at a request: the string literal inside `new Error(…)`.
+  const thrown = [];
+  // server.js, and the one lib/harness.js message a request reaches (an unknown CLI id); the rest are internal guards.
+  for (const f of ['server.js', 'lib/harness.js']) {
+    const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    for (const m of src.matchAll(/new Error\(\s*(['`])((?:\\.|(?!\1).)*)\1/g)) {
+      if (f === 'lib/harness.js' && !/^unknown /.test(m[2])) continue;
+      if (/harness/i.test(m[2].replace(/\$\{[^}]*\}/g, ''))) thrown.push(`${f}: ${m[2]}`);
+    }
+  }
+  ok('server.js and lib/harness.js: no error a request can see says "harness"', thrown.length === 0, thrown.join(' | '));
+}
+
 /* ── the sweep: every view, rendered against a real server ───────────── */
 const sb = sandbox('words', { clis: ['claude', 'codex'] });
 const H = sb.home;
@@ -98,19 +120,25 @@ console.log('\nPacks: each CLI as Home and Setup see it');
   m.present = { claude: true, codex: true, grok: false };
   const view = catalogView(m, { installedOf: (id) => id !== 'grok' });
   const cli = (id) => view.harnesses.find((h) => h.id === id);
-  ok('installed but off the PATH: said once, in one plain sentence', cli('claude').installed && !cli('claude').cli
-    && cli('claude').note === 'installed, but not on the PATH the studio sees', JSON.stringify(cli('claude')));
+  // Home and Setup say "installed" for a CLI the detector finds; so does Packs' machine line. The PATH
+  // gap is said only where it blocks something: in the one Packs need, as what to do.
+  ok('installed but off the PATH: the machine line says only "installed" — no off-PATH note there', cli('claude').installed && !cli('claude').cli
+    && cli('claude').note === null && cli('claude').why === null, JSON.stringify(cli('claude')));
   ok('installed and on the PATH: nothing to add', cli('codex').installed && cli('codex').note === null, JSON.stringify(cli('codex')));
   ok('absent: "not installed", and its folder missing', !cli('grok').present && cli('grok').why === 'not installed, and no ~/.grok', JSON.stringify(cli('grok')));
   m.clis = { claude: null, codex: null, grok: null };
   const rg = catalogView(m, { installedOf: (id) => id === 'claude' }).packs.find((p) => p.id === 'review-gate');
   const need = rg.requirements.find((r) => r.id === 'cli');
-  ok('the agent-CLI need agrees with Home: installed, not on the PATH — not "no agent CLI"',
-    !need.ok && need.what === 'Claude Code is installed, but not on the PATH the studio sees' && !/no agent CLI/.test(need.what), JSON.stringify(need));
+  ok('the agent-CLI need agrees with Home and is worded as what to do: put Claude Code on the studio\'s PATH',
+    !need.ok && need.group === 'path' && need.name === 'Claude Code' && need.what === 'Put Claude Code on the studio\'s PATH'
+      && !/no agent CLI|not installed/.test(need.what), JSON.stringify(need));
   const none = catalogView(m, { installedOf: () => false }).packs.find((p) => p.id === 'review-gate').requirements.find((r) => r.id === 'cli');
-  ok('…and with no CLI anywhere, it says none is installed', !none.ok && /no agent CLI is installed/.test(none.what), JSON.stringify(none));
+  ok('…and with no CLI anywhere, it says none is installed, outside the PATH fix', !none.ok && /no agent CLI is installed/.test(none.what) && !none.group, JSON.stringify(none));
   const git = rg.requirements.find((r) => r.id === 'git');
   ok('a need that is met shows no full path', git.ok && git.what === 'git', JSON.stringify(git));
+  const tools = rg.requirements.filter((r) => ['model-id', 'ask-model'].includes(r.id) && !r.ok);
+  ok('model-id and ask-model missing from the PATH belong to the same PATH fix as the CLIs', tools.length === 0 || tools.every((r) => r.group === 'path' && r.name === r.id),
+    JSON.stringify(rg.requirements));
 
   // Review LOW (2026-11-06): Codex found off the studio's PATH, and no ~/.codex yet. Home and Setup say
   // "installed"; Packs must never answer "not installed" for it — on the machine line or the Install-for row.
@@ -118,10 +146,8 @@ console.log('\nPacks: each CLI as Home and Setup see it');
   m.present = { claude: true, codex: false, grok: false };
   const off = catalogView(m, { installedOf: (id) => id !== 'grok' });
   const cx = off.harnesses.find((h) => h.id === 'codex');
-  const said = [cx.note, cx.why].filter(Boolean).join(' | ');
-  ok('installed, off the PATH, no settings folder: never "not installed", and both real gaps named', cx.installed && !cx.present
-    && !/not installed/.test(said) && /not on the PATH the studio sees/.test(cx.note) && /no settings folder yet \(~\/\.codex\)/.test(cx.note)
-    && cx.why === cx.note, JSON.stringify(cx));
+  ok('installed, no settings folder: never "not installed"; the Install-for reason says what to do', cx.installed && !cx.present && cx.note === null
+    && cx.why === 'installed, but ~/.codex doesn\'t exist yet — run Codex once, then refresh' && !/not installed/.test(cx.why), JSON.stringify(cx));
   const stub = routesFor({
     'GET /api/packs': () => off,
     'GET /api/packs/status': () => ({ job: { running: false, result: { packs: [], legacy: [], checkedAt: Date.now(), trust: false } } }),
@@ -130,11 +156,106 @@ console.log('\nPacks: each CLI as Home and Setup see it');
   for (let i = 0; i < 100 && !pg.$('content').querySelector('.pk-here'); i++) await sleep(20);
   const here = pg.text(pg.$('content').querySelector('.pk-here'));
   const rows = pg.$('content').querySelectorAll('.pk-harnesses').map((r) => pg.text(r)).join(' | ');
-  ok('…and the page agrees: "✓ Codex" with the off-PATH note, no "not installed" for Codex anywhere on Packs',
-    /✓ Codex/.test(here) && /Codexinstalled, but not on the PATH the studio sees/.test(here)
-      && !/Codex:? ?not installed/.test(here) && !/Codex: not installed/.test(rows) && /no settings folder yet/.test(here), `${here} || ${rows}`);
+  ok('…and the page agrees: "✓ Codex" on the machine line with nothing after it, the reason on the Install-for row, no "not installed" for Codex',
+    /✓ Codex(— Grok|$)/.test(here) && !/not on the PATH|doesn.t exist/.test(here) && /Codex: installed, but ~\/\.codex doesn.t exist yet/.test(rows)
+      && !/Codex:? ?not installed/.test(`${here} ${rows}`), `${here} || ${rows}`);
   ok('…with no page errors', pg.errors.length === 0, pg.errors.join(' | '));
   pg.done();
+}
+
+/* ── Packs: the top block holds only what every pack needs; cards never repeat it ── */
+console.log('\nPacks: shared needs once, each card its single most important need');
+{
+  const req = (id, ok, extra = {}) => ({ id, ok, what: extra.what || `${id} need`, fix: extra.fix || `fix ${id}`, dep: extra.dep || null, ...extra });
+  const pack = (id, title, requirements) => ({ id, title, version: '1.0.0', summary: `${title} does a thing.`,
+    explain: { what: `${title} is a pack.`, does: 'd', changes: ['c'], undo: 'u' }, requires: { packs: [] },
+    parts: [{ id: `${id}-skill`, title: `${title} skill`, default: true, kind: 'skill', harnesses: ['claude'], explain: { what: `${title} skill does it.`, does: 'd', changes: ['c'], undo: 'u' } }],
+    requirements, installed: null });
+  const path = (id, name) => req(id, false, { group: 'path', name, what: `${name} is not on PATH`, fix: `link ${name}` });
+  const catalog = (packs) => ({ packs, harnesses: [{ id: 'claude', label: 'Claude Code', present: true, installed: true, cli: true, home: '~/.claude', note: null, why: null }],
+    legacy: [], words: { status: { installed: 'installed', absent: 'not installed' }, symbol: {}, what: {} } });
+  const boot = async (cat) => {
+    const p = await bootPage({ routes: routesFor({ 'GET /api/packs': () => cat,
+      'GET /api/packs/status': () => ({ job: { running: false, result: { packs: [], legacy: [], checkedAt: Date.now(), trust: false } } }) }), hash: '#packs' });
+    for (let i = 0; i < 100 && !p.$('content').querySelector('.pk-card'); i++) await sleep(20);
+    return p;
+  };
+  // git is missing for both packs (shared); only "gate" also lacks model-id and ask-model (one PATH fix) and valid roles.
+  const p = await boot(catalog([
+    pack('gate', 'Gate', [req('node', true), req('git', false, { what: 'git is not on PATH', fix: 'install git' }), path('model-id', 'model-id'), path('ask-model', 'ask-model'), req('roles', false)]),
+    pack('plain', 'Plain', [req('node', true), req('git', false, { what: 'git is not on PATH', fix: 'install git' })]),
+  ]));
+  const todo = p.$('content').querySelector('.pk-todo');
+  const items = todo ? [...todo.querySelector('.pk-todo-list').children].map((li) => p.text(li)) : [];
+  ok('the top block lists only what every pack needs (git), once', items.length === 1 && /^git is not on PATH/.test(items[0]), items.join(' | '));
+  const ready = (id) => p.text(p.$('content').querySelector(`[data-pack="${id}"] .pk-ready`));
+  ok('a card never repeats the shared need, and never says "+N more"', !/git/.test(ready('gate')) && !/git/.test(ready('plain'))
+    && !p.$('content').querySelectorAll('.pk-ready').some((n) => /more\)/.test(p.text(n))), `${ready('gate')} | ${ready('plain')}`);
+  ok('the gate card shows its single most important need: the one PATH fix (model-id and ask-model together)',
+    ready('gate') === 'Needs model-id and ask-model on the PATH', ready('gate'));
+  ok('a card whose only gap is the shared need is not called Ready: it points at the block above', ready('plain') === 'Not ready — see “To use packs” above', ready('plain'));
+  const det = p.$('content').querySelector('[data-pack="gate"] details.pk-explain .pk-reqs');
+  ok('the full list stays in the card\'s details', !!det && [...det.children].length === 5, det && p.text(det));
+  p.done();
+
+  // The PATH fix shared by every pack: one item, not three.
+  const q = await boot(catalog([
+    pack('a', 'A', [path('model-id', 'model-id'), path('ask-model', 'ask-model'), req('cli', false, { group: 'path', name: 'Claude Code and Grok', what: 'Put Claude Code and Grok on the studio\'s PATH' })]),
+    pack('b', 'B', [path('model-id', 'model-id'), path('ask-model', 'ask-model'), req('cli', false, { group: 'path', name: 'Claude Code and Grok', what: 'Put Claude Code and Grok on the studio\'s PATH' })]),
+  ]));
+  const qi = [...(q.$('content').querySelector('.pk-todo-list')?.children || [])].map((li) => q.text(li));
+  ok('model-id, ask-model and the CLIs off the PATH are one item, with one fix', qi.length === 1
+    && /^Put model-id, ask-model, Claude Code and Grok on the studio's PATH/.test(qi[0]) && /acs install-model-id/.test(qi[0]) && /restart the studio/.test(qi[0]), qi.join(' | '));
+  ok('…and every card then has nothing of its own to add', q.$('content').querySelectorAll('.pk-ready').every((n) => q.text(n) === 'Not ready — see “To use packs” above'));
+  ok('Packs: the status line and the trust check sit in a Details fold', !!q.$('content').querySelector('details.pk-status-more #pk-status')
+    || !!q.$('content').querySelector('#pk-status details'), q.$('content').querySelector('#pk-status')?.parentNode?.localName);
+  ok('…with no page errors', p.errors.length === 0 && q.errors.length === 0, [...p.errors, ...q.errors].join(' | '));
+  q.done();
+}
+
+/* ── one word for a subscription account, and Codex's usage explained where its CLI is missing ── */
+console.log('\nHome: "account" everywhere, and Codex not installed beside live Codex accounts');
+{
+  const clis = { clis: [
+    { id: 'claude', label: 'Claude Code', installed: true, binary: '~/.local/bin/claude', version: '2.1.0', signIn: { state: 'verified', label: 'verified' }, fix: {} },
+    { id: 'codex', label: 'Codex', installed: false, binary: null, version: null, signIn: { state: 'none', label: 'not signed in' }, fix: {} },
+    { id: 'grok', label: 'Grok', installed: false, binary: null, version: null, signIn: { state: 'none', label: 'not signed in' }, fix: {} },
+  ] };
+  const usage = { seats: [{ seatId: 'codex', label: 'Codex (main)', vendor: 'codex', home: '/h/.codex', ok: true, observedAt: Date.now(),
+    windows: [{ label: 'Weekly', usedPercent: 20, resetsAt: Date.now() + 86_400_000 }] }] };
+  const h = await bootPage({ routes: routesFor({ 'GET /api/setup/clis': () => clis, 'GET /api/usage': () => usage, 'GET /api/roots': () => ({ roots: [{ id: 'p', label: 'Projects', status: 'ok', access: 'edit' }] }) }), hash: '#home' });
+  for (let i = 0; i < 100 && !/Codex/.test(h.text(h.$('content'))); i++) await sleep(20);
+  await sleep(200);
+  const t = h.text(h.$('content'));
+  ok('Home says once why Codex reports usage without its CLI', (t.match(/Codex isn.t installed here, but these accounts still report usage from their Codex folders\./g) || []).length === 1, t.slice(0, 900));
+  ok('Home names them accounts: "Codex accounts", never "seat"', /Codex accounts/.test(t) && !/\bseats?\b/i.test(t), t.slice(0, 900));
+  ok('Home\'s folder count is in plain words, not "(edit) · (read)"', !/\((edit|read)\)/.test(t) && h.eval('folderCountText({ roots: [{ status: "ok", access: "edit" }, { status: "ok", access: "read" }, { status: "ok", access: "read" }] })') === 'Project folders: 1 you can edit, 2 read-only', h.eval('folderCountText({ roots: [] })'));
+  ok('Worktrees: env states in plain words', h.eval('envWords("missing:1")') === '1 env file missing'
+    && h.eval('envWords("copy:1,missing:2")') === '1 env file copied, 2 missing' && h.eval('envWords("linked")') === 'env files linked to the trunk',
+    `${h.eval('envWords("missing:1")')} / ${h.eval('envWords("copy:1,missing:2")')} / ${h.eval('envWords("linked")')}`);
+  ok('Usage: the "Codex reports quota only after a turn" caveat is not on the hint (the row\'s reason already says it)', !/quota/.test(h.eval('waitingHint().textContent')), h.eval('waitingHint().textContent'));
+  ok('…with no page errors', h.errors.length === 0, h.errors.join(' | '));
+  h.done();
+}
+
+/* ── the editor's Save and Skills' bar: a disabled button says why ───── */
+console.log('\nDisabled buttons say why: the editor\'s Save, Skills\' Clear and Download');
+{
+  const { PATHS } = await import('./fixtures/shell-page.mjs');
+  const e = await bootPage({ hash: `#file=${encodeURIComponent(PATHS.claudeMd)}` });
+  for (let i = 0; i < 100 && e.eval('S.view') !== 'entry'; i++) await sleep(20);
+  await sleep(100);
+  const save = e.$('btn-save');
+  ok('an unchanged file: Save is disabled and says "No changes to save"', save.disabled && save.title === 'No changes to save', `${save.disabled} ${save.title}`);
+  e.eval("S.tab = 'edit'; renderContent(); renderStatus()");
+  const ta = e.$('content').querySelector('textarea');
+  ok('the editor names its way out: Esc leaves it (Tab still types spaces)', ta?.getAttribute('aria-keyshortcuts') === 'Escape', ta?.getAttribute('aria-keyshortcuts'));
+  e.done();
+  const s = await bootPage({ hash: '#skills' });
+  for (let i = 0; i < 100 && !s.$('sk-download'); i++) await sleep(20);
+  ok('Skills, nothing selected: Clear and Download are disabled and say why', s.$('sk-download').disabled && s.$('sk-clear').disabled
+    && /select/i.test(s.$('sk-download').title) && /select/i.test(s.$('sk-clear').title), `${s.$('sk-download').title} | ${s.$('sk-clear').title}`);
+  s.done();
 }
 
 /** A real server over a sandbox's HOME, and the page's fetch forwarded to it. */
@@ -181,6 +302,8 @@ const RULES = [
   { name: '"Delete" for something recoverable', re: /\bdelet/i,
     // Permanent actions keep the word: a role (no trash), an Assist session, a file gone outside the studio, and "never deleted" (a promise about history).
     except: [/Delete role/g, /Delete this session/g, /deleted outside the studio/g, /never deleted/g] },
+  // One word for a subscription account: "account", as Home's "Accounts & usage" says.
+  { name: '"seat" for an account', re: /\bseats?\b/i },
 ];
 
 const VIEWS = ['home', 'files', 'skills', 'packs', 'mcp', 'models', 'memory', 'context', 'worktrees', 'usage', 'scope', 'audit', 'trash', 'setup', 'folders'];
@@ -200,6 +323,15 @@ try {
       const hits = t.split("\n").filter((l) => r.re.test(l)).map((l) => { const i = l.search(r.re); return l.slice(Math.max(0, i - 70), i + 70); });
       ok(`${v}: no ${r.name}`, hits.length === 0, hits.join(' | '));
     }
+    // One intro per page: the page never says again what the top bar's subtitle says (any 4 words in a row).
+    const sub = page.text(page.$('title-path')).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
+    const body = ` ${page.text(page.$('content')).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ')} `;
+    const again = sub.slice(0, -3).map((_, i) => sub.slice(i, i + 4).join(' ')).filter((g) => body.includes(` ${g} `));
+    ok(`${v}: one intro — the page does not repeat the top bar's subtitle`, again.length === 0, again.join(' | '));
+    // Every (i) sits on its word: no bare icon, no two side by side.
+    const tips = page.$('content').querySelectorAll('.tip');
+    ok(`${v}: every (i) tip names its word`, tips.every((t) => !!t.querySelector('.tip-term') && page.text(t.querySelector('.tip-term')).trim().length > 0),
+      tips.map((t) => page.text(t)).join(' | '));
     ok(`${v}: no page errors`, page.errors.length === 0, page.errors.join(' | '));
     page.done();
   }
@@ -234,10 +366,10 @@ try {
     await waitFor(p2, () => c2().querySelectorAll('.pk-card').length > 0);
     const todo = c2().querySelector('.pk-todo');
     const items = todo ? [...todo.querySelector('.pk-todo-list').children].map((li) => p2.text(li)) : [];
-    ok('"To use packs": the missing tool is listed once, with its fix', !!todo && /^To use packs: do (this one thing|these \d+ things)$/.test(p2.text(todo.querySelector('.pk-todo-title')))
-      && items.filter((x) => /^model-id/.test(x)).length === 1 && items.every((x) => /Fix: /.test(x)), items.join(' | ') || p2.text(c2()).slice(0, 600));
+    // Not every pack needs model-id (Worktree setup does not), so it is no shared need: no top block, the card says it.
+    ok('"To use packs": a tool only some packs need is not in the top block', !todo || !items.some((x) => /model-id/.test(x)), items.join(' | '));
     const rg2 = c2().querySelector('[data-pack="review-gate"]');
-    ok('…and the review gate card names its one missing need, not a list', /^Needs model-id/.test(p2.text(rg2.querySelector('.pk-ready.missing'))) && !rg2.querySelector('.pk-ready.ok'),
+    ok('…and the review gate card names its one missing need, not a list: the one PATH fix', p2.text(rg2.querySelector('.pk-ready.missing')) === 'Needs model-id on the PATH' && !rg2.querySelector('.pk-ready.ok'),
       p2.text(rg2.querySelector('.pk-head')));
     const prev = rg2.querySelectorAll('.pk-actions button').find((b) => /^Preview install/.test(p2.text(b)));
     rg2.querySelectorAll('.pk-part input').forEach((i) => { if (i.checked) i.click(); });
