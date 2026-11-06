@@ -98,6 +98,22 @@ const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]
   ok('every `outline: none` has a replacement focus style', bare.length === 0, bare.join(' | '));
 }
 
+/* ── static: Details folds and quiet meta (the Skills page bug, 2026-11-06) ── */
+console.log('\nstyles.css: a Details fold never slides under the control above it; meta text is not code');
+{
+  // A Details fold after a page's toolbar (Skills' New skill, Audit's Run again) was pulled up 12px by a
+  // negative top margin meant for a fold under an intro line, and sat behind the button. Only a fold that
+  // follows an intro line (a sibling combinator in the selector) may pull itself up.
+  const pulled = rules.filter((r) => r.sel.split(',').some((x) => /details\.more\s*$/.test(x.trim()) && !/[+~]/.test(x))
+    && (/margin-top\s*:\s*-/.test(r.body) || /margin\s*:\s*-/.test(r.body)));
+  ok('no bare details.more rule pulls the fold up with a negative top margin', pulled.length === 0, pulled.map((r) => `${r.sel} {${r.body.trim()}}`).join(' | '));
+  // The top bar's subtitle is a sentence on every view, a path only on a file: monospace only for the path.
+  const mono = (sel) => rules.filter((r) => r.sel.split(',').map((x) => x.trim()).includes(sel)).some((r) => /font(?:-family)?\s*:[^;]*var\(--mono\)/.test(r.body));
+  ok('the top bar subtitle is not monospace, except as a file path (.title-path.is-path)', !mono('.title-path') && mono('.title-path.is-path'));
+  ok('skill meta lines ("3 files · 12 KB", "11 invocations", "no recorded use") are not monospace',
+    ['.sk-meta', '.sk-usage-count', '.sk-usage-none'].every((sel) => !mono(sel)), ['.sk-meta', '.sk-usage-count', '.sk-usage-none'].filter(mono).join(', '));
+}
+
 /* ── static: tinted states in the light theme, from the CSS values ───── */
 // Review 2026-11-06-15-12-50 f1: states the seeded QA never showed (a search hit, a new-CLI part badge, an
 // added line in a Describe preview, the Claude tag, installed/update badges) sat at 4.17–4.49:1 in light.
