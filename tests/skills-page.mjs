@@ -33,6 +33,9 @@ try {
     && p.text(c.querySelector('.sk-note')) === 'Counts come from Claude Code only.', p.text(c.querySelector('.sk-note') || { textContent: '' }));
   ok('no Details fold on Skills, and New skill sits in its toolbar', !c.querySelector('details') && !!c.querySelector('.sw-head .sk-new'));
   ok('the rows still say an unseen skill is unknown, not unused (the caveat travels with the data)', /unknown, not unused/i.test(p.text(c)) || /no recorded use/.test(p.text(c)), p.text(c).slice(0, 400));
+  // PR C design: a card does not repeat its group's heading as a chip, and an unseen skill says only "no recorded use".
+  ok('no source chip on a card under its own source heading', !c.querySelector('.sk-group .sk-row .sk-source'), c.querySelectorAll('.sk-row .sk-source').map((n) => p.text(n)).join(' | '));
+  ok('an unseen skill says "no recorded use", nothing more', /no recorded use/.test(p.text(c)) && !/unknown, not unused/.test(p.text(c)));
   ok('the top bar subtitle is a sentence here, not marked as a path', !p.$('title-path').classList.contains('is-path'));
   ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
   p.done();

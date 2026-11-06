@@ -355,8 +355,10 @@ const homeRoutes = (over = {}) => routesFor({
   more.click();
   await settle(5);
   ok('10 every item type is listed', items().length === Object.keys(expect).length, items().map((i) => p.text(i)).join(' / '));
-  ok('10 …still ranked: models and drift before housekeeping (worktrees, memory)', items().findIndex((i) => /drifted/.test(p.text(i))) < items().findIndex((i) => /finished worktree/.test(p.text(i)))
-    && items().findIndex((i) => /newer id/.test(p.text(i))) < items().findIndex((i) => /empty project folders/.test(p.text(i))));
+  // PR C QA: every warning first, ranked, then the info items (a newer id, a finished worktree).
+  const kinds = items().map((i) => (i.classList.contains('warn') ? 'warn' : 'info'));
+  ok('10 …warnings first, ranked, then info: no info item between warnings', kinds.lastIndexOf('warn') < kinds.indexOf('info')
+    && items().findIndex((i) => /drifted/.test(p.text(i))) < items().findIndex((i) => /empty project folders/.test(p.text(i))), kinds.join(','));
   ok('10 …and the button now reads "Show fewer"', p.text(p.$('content').querySelector('.home-attn-more')) === 'Show fewer');
   let right = 0;
   for (const [start, view] of Object.entries(expect)) {

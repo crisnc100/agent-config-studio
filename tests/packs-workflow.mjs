@@ -213,11 +213,17 @@ try {
   ok('no-model steps and off steps are narrow tiles, so role steps get the width (design 1)', step('review-gate', 'quote').classList.contains('narrow')
     && step('review-gate', 'log').classList.contains('narrow') && step('review-gate', 'security').classList.contains('narrow') && !step('review-gate', 'review').classList.contains('narrow'));
   ok('who is you, your session agent, or a script with no model', /^you\b/.test(who('build', 'judge')) && /your session agent/.test(who('build', 'understand'))
-    && /script — no model/.test(who('review-gate', 'quote')) && /git hook — no model/.test(who('review-gate', 'gate')), `${who('build', 'judge')} | ${who('build', 'understand')} | ${who('review-gate', 'quote')}`);
+    && who('review-gate', 'quote') === 'script' && who('review-gate', 'gate') === 'git hook', `${who('build', 'judge')} | ${who('build', 'understand')} | ${who('review-gate', 'quote')} | ${who('review-gate', 'gate')}`);
   ok('pr says no extra model is called', /No extra model is called/.test(t(card('pr').querySelector('.pk-flow-note'))));
   ok('build notes its lightweight mode', /lightweight/i.test(t(card('build').querySelector('.pk-flow-note'))));
   ok('the strips: handoff says your session agent writes it, with no extra model', /your session agent/.test(t(card('handoff').querySelector('.pk-strip'))) && /no extra model/i.test(t(card('handoff').querySelector('.pk-strip'))));
-  ok('a legend says what each kind of chip means', card('review-gate').querySelectorAll('.legend li').length === 4);
+  // The legend lists only the kinds a diagram uses, and carries "no model" for the scripts (PR C QA).
+  const legend = (id) => card(id).querySelectorAll('.legend li').map((li) => t(li));
+  ok('a legend says what each kind of chip in that diagram means — only those', JSON.stringify(legend('review-gate')) === '["a role from Models","a script — no model"]'
+    && JSON.stringify(legend('build')) === '["a role from Models","your session agent","you"]', `${legend('review-gate')} | ${legend('build')}`);
+  ok('more than six steps lay out in rows of four; six or fewer stay one row', card('review-gate').querySelector('.flow').classList.contains('rows')
+    && !card('build').querySelector('.flow').classList.contains('rows'));
+  ok('a part\'s "What this part is and changes" is a quiet fold, not an action', card('review-gate').querySelectorAll('.pk-part summary.fold').length > 0);
 
   console.log('\nsteps dim when their part or setting is off (R5)');
   ok('security off in the home config: the security pass is dimmed and marked "off"', step('review-gate', 'security').classList.contains('off') && t(step('review-gate', 'security').querySelector('.step-off')) === 'off');

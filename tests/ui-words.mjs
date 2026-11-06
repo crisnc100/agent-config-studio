@@ -98,6 +98,24 @@ const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]
   ok('every `outline: none` has a replacement focus style', bare.length === 0, bare.join(' | '));
 }
 
+/* ── static: PR C QA at the real window (about 1343×679) ── */
+console.log('\nstyles.css: PR C QA');
+{
+  const body = (sel) => rules.filter((r) => r.sel.split(',').map((x) => x.trim()).includes(sel)).map((r) => r.body).join(';');
+  ok('each theme tells the browser its colour scheme, so native checkboxes and scrollbars match', /color-scheme\s*:\s*dark/.test(body(':root'))
+    && /color-scheme\s*:\s*light/.test(body(':root[data-theme="light"]')));
+  ok('checkboxes and radios take the accent colour', rules.some((r) => /input\[type="?checkbox"?\]/.test(r.sel) && /accent-color/.test(r.body)));
+  ok('placeholders use the muted colour at full opacity (4.5:1)', /color\s*:\s*var\(--muted\)/.test(body('::placeholder')) && /opacity\s*:\s*1/.test(body('::placeholder')));
+  ok('a disabled button looks disabled: a dashed, softer border', /border-style\s*:\s*dashed/.test(body('.btn:disabled')) || /border\s*:[^;]*dashed/.test(body('.btn:disabled')));
+  ok('Usage\'s "82% left" stays on one line: no fixed narrow width, no wrap', /white-space\s*:\s*nowrap/.test(body('.usage-pct')) && !/(^|;)\s*width\s*:\s*[1-5]?\d px/.test(body('.usage-pct').replace(/px/g, ' px')));
+  ok('Usage\'s stop-tracking × is fully visible when shown (no faded opacity), with a hit area', !/opacity\s*:\s*0?\.\d/.test(body('.usage-seat:hover .usage-drop'))
+    && /width\s*:\s*2\dpx/.test(body('.usage-drop')));
+  ok('Files: a type toggle draws a fold chevron, and its "+" has a visible box', /content\s*:/.test(body('.files-type-toggle::before')) && /border\s*:/.test(body('.files-add')));
+  ok('a diagram step title never wraps', /white-space\s*:\s*nowrap/.test(body('.pk-flow .step-name')));
+  ok('a long diagram (more than six steps) lays out in rows of four', /grid-template-columns\s*:\s*repeat\(4/.test(body('.pk-flow .flow.rows')));
+  ok('a part\'s explain fold is quiet (not the bold action colour)', /color\s*:\s*var\(--text-dim\)/.test(body('.pk-part summary.fold')) && /font-weight\s*:\s*500/.test(body('.pk-part summary.fold')));
+}
+
 /* ── static: folds and buttons look like controls (Cris, 2026-11-06) ── */
 console.log('\nstyles.css: a data fold is a styled control; buttons are clearly buttons');
 {
@@ -303,8 +321,10 @@ console.log('\nPacks: shared needs once, each card its single most important nee
   const ready = (id) => p.text(p.$('content').querySelector(`[data-pack="${id}"] .pk-ready`));
   ok('a card never repeats the shared need, and never says "+N more"', !/git/.test(ready('gate')) && !/git/.test(ready('plain'))
     && !p.$('content').querySelectorAll('.pk-ready').some((n) => /more\)/.test(p.text(n))), `${ready('gate')} | ${ready('plain')}`);
+  // PR C design: the chip is a calm amber "Setup needed"; the need itself is a line in the card.
+  const need = (id) => p.text(p.$('content').querySelector(`[data-pack="${id}"] .pk-need`) || { textContent: '' });
   ok('the gate card shows its single most important need: the one PATH fix (model-id and ask-model together)',
-    ready('gate') === 'Needs a PATH fix: model-id, ask-model', ready('gate'));
+    ready('gate') === 'Setup needed' && need('gate') === 'Needs a PATH fix: model-id, ask-model', `${ready('gate')} | ${need('gate')}`);
   ok('a card whose only gap is the shared need is not called Ready: it points at the block above', ready('plain') === 'Not ready — see “To use packs” above', ready('plain'));
   const det = p.$('content').querySelector('[data-pack="gate"] details.pk-explain .pk-reqs');
   // node ✓, git ✖, the one PATH fix ✖ (model-id and ask-model together), roles ✖.
@@ -534,7 +554,8 @@ try {
     // Not every pack needs model-id (Worktree setup does not), so it is no shared need: no top block, the card says it.
     ok('"To use packs": a tool only some packs need is not in the top block', !todo || !items.some((x) => /model-id/.test(x)), items.join(' | '));
     const rg2 = c2().querySelector('[data-pack="review-gate"]');
-    ok('…and the review gate card names its one missing need, not a list: the one PATH fix', p2.text(rg2.querySelector('.pk-ready.missing')) === 'Needs a PATH fix: model-id' && !rg2.querySelector('.pk-ready.ok'),
+    ok('…and the review gate card names its one missing need, not a list: the one PATH fix', p2.text(rg2.querySelector('.pk-ready.missing')) === 'Setup needed'
+      && p2.text(rg2.querySelector('.pk-need')) === 'Needs a PATH fix: model-id' && !rg2.querySelector('.pk-ready.ok'),
       p2.text(rg2.querySelector('.pk-head')));
     const prev = rg2.querySelectorAll('.pk-actions button').find((b) => /^Preview install/.test(p2.text(b)));
     rg2.querySelectorAll('.pk-part input').forEach((i) => { if (i.checked) i.click(); });

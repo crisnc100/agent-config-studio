@@ -31,6 +31,13 @@ try {
   ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
   p.done();
 
+  // f1: the route could not read ~/.claude.json — say that, not "none configured".
+  const er = await bootPage({ routes: routesFor({ 'GET /api/registry': () => bare, 'GET /api/mcp': () => ({ note: 'Could not read ~/.claude.json: Unexpected token } in JSON', global: [], codex: [] }) }), hash: '#mcp' });
+  await settle(20);
+  const et = er.text(er.$('content'));
+  ok('a route error note is shown, and no empty state claims none are configured', /Could not read ~\/\.claude\.json: Unexpected token/.test(et) && !er.$('content').querySelector('.mcp-empty') && !/None are configured/.test(et), et.slice(0, 300));
+  er.done();
+
   // Something configured somewhere: the sections show, and an empty one says so in two words.
   const q = await bootPage({ routes: routesFor({ 'GET /api/mcp': () => ({ note: 'Global MCP is read-only here.', global: [{ name: 'files', scope: 'user', transport: 'stdio', target: 'npx files' }], codex: [] }) }), hash: '#mcp' });
   await settle(20);
