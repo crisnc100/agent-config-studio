@@ -12,7 +12,8 @@ const ok = (name, cond, detail = '') => {
   else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 };
 console.log('\nmcp view');
-const none = (t) => (t.match(/no(ne)? (mcp servers )?configured|no mcp servers/gi) || []).length;
+/** Every way of saying nothing is configured: "None configured.", "None are configured yet", "No MCP servers …". */
+const none = (t) => (t.match(/none (?:are )?configured|no mcp servers/gi) || []).length;
 
 try {
   // Nothing anywhere: no global servers, none in Codex, no project .mcp.json.

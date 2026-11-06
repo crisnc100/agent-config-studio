@@ -50,7 +50,9 @@ const noErrors = (p) => p.errors.length === 0;
     JSON.stringify(p.$('nav').querySelectorAll('.nav-group').map((g) => [p.text(g.querySelector('.nav-group-title')), g.querySelectorAll('.nav-item').map((b) => p.text(b.querySelector('.nav-label')))]))
       === JSON.stringify([['Overview', ['Home', 'Usage']], ['Workflows', ['Packs', 'Skills', 'Models']], ['Files', ['Files', 'Context', 'Scope', 'MCP']], ['Upkeep', ['Memory', 'Worktrees', 'Audit']]]),
     JSON.stringify(p.$('nav').querySelectorAll('.nav-group').map((g) => p.text(g))));
-  ok('1 the footer reads Setup, Trash, Theme', JSON.stringify(p.$('nav-foot').querySelectorAll('.nav-item').map((b) => p.text(b.querySelector('.nav-label')))) === '["Setup","Trash","Theme"]');
+  // The theme item names the theme it switches to ("Light theme" / "Dark theme").
+  const foot = p.$('nav-foot').querySelectorAll('.nav-item').map((b) => p.text(b.querySelector('.nav-label')));
+  ok('1 the footer reads Setup, Trash, then the theme switch', foot.length === 3 && foot[0] === 'Setup' && foot[1] === 'Trash' && /^(Light|Dark) theme$/.test(foot[2]), JSON.stringify(foot));
   const sidebar = p.$('sidebar');
   const nameless = sidebar.querySelectorAll('button').filter((b) => !p.text(b) && !b.getAttribute('aria-label'));
   ok('1 every sidebar button has an accessible name', nameless.length === 0, nameless.map((b) => b.outerHTML.slice(0, 80)).join(' '));
