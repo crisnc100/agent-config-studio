@@ -1204,9 +1204,12 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .home-seat-read .usage-stale { margin-top: 0; }
 .home-seat-state { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .home-seat-state .home-muted { min-width: 0; overflow-wrap: anywhere; }
-.home-win { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* One row per quota window: % left, a thin bar, the label. Fixed first two columns, so bars line up
+   across windows and accounts. */
+.home-seat-read:has(.home-win) { gap: 3px; }
+.home-win { display: grid; grid-template-columns: 64px 120px minmax(0, 1fr); align-items: center; gap: 10px; min-width: 0; }
 .home-win .usage-pct { width: 64px; }
-.home-track { width: 140px; height: 6px; }
+.home-track { width: 120px; height: 5px; }
 .home-win .usage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-seat-act .btn { padding: 4px 12px; font-size: 12px; }
 

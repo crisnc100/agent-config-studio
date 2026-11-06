@@ -4025,13 +4025,18 @@ function paintAccounts(body) {
     const read = el('div', 'home-seat-read');
     if (r.state.kind === 'reading') {
       if (!r.windows.length) read.appendChild(el('span', 'home-muted', 'connected · no quota windows reported'));
-      // One compact line: the window that stops you first. Usage has every window's bar (C2).
-      const w = r.windows.reduce((lo, x) => (!lo || x.left < lo.left ? x : lo), null);
-      if (w) {
-        const win = el('div', 'home-win home-win-line');
+      // Every window, one compact row each: % left, a thin bar, its label and reset (Usage has the full page).
+      for (const w of r.windows) {
+        const win = el('div', 'home-win');
         const pct = el('span', 'usage-pct', `${w.left}% left`);
         pct.dataset.level = w.level;
         win.appendChild(pct);
+        const track = el('div', 'usage-track home-track');
+        const fill = el('div', 'usage-fill');
+        fill.style.width = `${w.left}%`;
+        fill.dataset.level = w.level;
+        track.appendChild(fill);
+        win.appendChild(track);
         const lbl = el('span', 'usage-label', w.label);
         if (w.resetsAt) lbl.appendChild(el('span', 'usage-reset', ` · resets in ${untilText(w.resetsAt)}`));
         win.appendChild(lbl);

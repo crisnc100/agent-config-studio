@@ -165,3 +165,11 @@ Mobile and phone width are not relevant to this build. QA, the impeccable critiq
 
 ## Cris, 2026-11-06: no window sizes in QA
 QA runs in the browser window as it is (full screen). Never resize, zoom or emulate widths. It's a desktop web app, so there are no size or width checks.
+
+## PR E — Home usage bars back
+
+Cris: "I miss the bars on the homepage for accounts and usage." C2 had cut Home's accounts card to one line (the tightest window, text only).
+- paintAccounts shows every quota window again: "N% left", a thin bar (.usage-track.home-track > .usage-fill, width = left, data-level by pressure), then the label and "resets in". C2's route line, per-account rows and Open Usage stay.
+- Compact: each window is a grid row (64px % | 120px bar | label), the track is 5px, and rows are 3px apart. So bars line up across windows and accounts.
+- Test change, in its own test-only commit: home.mjs '9 each account is one compact line…' becomes '9 each account shows every window as percent left'. New guard: one bar per reported window, its width equal to its "% left", with a level.
+- Browser (seeded QA server, window as it is): 5 windows across 3 accounts, every track starts at the same x (607px) and is 5px tall, and each fill's width matches its percentage.
