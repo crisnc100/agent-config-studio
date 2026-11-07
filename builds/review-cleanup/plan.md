@@ -8,7 +8,7 @@ One PR: three small, independent parts, each small enough to review in one slice
 1. **Remove the shadow pickers and the Grok shadow** (`packs/review-gate/runtime/review.mjs`)
    - Remove: the `shadow` / `pickShadow` config and `REVIEW_SHADOW` / `REVIEW_PICK_SHADOW`, `--pick-shadow-run`, `--pick-report`, and the shadow-only parts of `appendShadow` and the `--shadow-report` paths. Also remove their mentions in the skills, the instructions, `review-config.example.json`, and any ACS lib/public reference.
    - Keep: the reviewer pool, the `pick` modes, and the Jev picker itself. Only the "what would X have picked" logging goes.
-   - Old configs: a home config that still has `shadow` / `pickShadow` / `grokMcpAllow` must not break. Ignore those keys with one short note on stderr ("ignored: shadow pickers were removed"), never an error.
+   - Old configs: a home config that still has `shadow` / `pickShadow` must not break. Ignore only those two keys (`grokMcpAllow` stays: real grok reviews and ask-model use it) with one short note on stderr ("ignored: shadow pickers were removed"), never an error.
    - Old records: shadow lines already in logs stay readable; nothing rewrites them.
    - Tests: tests that only cover the removed feature are deleted in their **own test-only commit**. Its message names each removed assertion and says the feature is gone. Tests that mix shadow and kept behavior get only the shadow parts removed, in that same commit. The frozen `review.test.mjs` is untouched (it has no shadow references).
    - New tests: an old config with the shadow keys runs a normal review with the note and no shadow job; `--pick-report` is an unknown flag (a plain error).
