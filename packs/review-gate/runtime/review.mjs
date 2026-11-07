@@ -1618,7 +1618,39 @@ function reviewPrompt(diff) {
 // The security pass's prompt: the same diff, context, notes and schema as the code review, a security-only instruction.
 // SECURITY_MARKER names it (tests find the security call by it).
 const SECURITY_MARKER = 'SECURITY REVIEW ONLY.'
-function securityPrompt(diff, vendor, intent) {
+// Attack-class checklists, each added to the security prompt only when a changed file is of its class (by path; docs never
+// count, apart from the agent instruction files). Borrowed from Cloudflare's security-audit-skill.
+const AGENT_FILES = /(^|\/)(SKILL|AGENTS|CLAUDE|GEMINI)\.md$/i
+const SECURITY_CLASSES = [
+  {
+    test: (p) => AGENT_FILES.test(p) || /(^|[/._-])(agents?|prompts?|skills?|mcp|llm|ai|tool-?use|tool-?calls?|ask-model|claude|codex|grok|openai|anthropic)([/._-]|$)/i.test(p),
+    list: 'Checklist: AI and agent tools. Prompt injection through tool output (files, web pages, command output or model replies that ' +
+      'reach a model and steer what it does next); tool permissions (what each tool may read, write or run, and who grants that); ' +
+      'commands a model chooses (commands, paths or URLs picked by a model that run without a fixed allowlist or a human check).',
+  },
+  {
+    test: (p) => /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|pnpm-workspace\.yaml|bun\.lockb?|\.npmrc|\.yarnrc(\.yml)?|requirements[^/]*\.txt|Pipfile(\.lock)?|poetry\.lock|pyproject\.toml|setup\.py|setup\.cfg|Gemfile(\.lock)?|[^/]+\.gemspec|go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|composer\.json|composer\.lock|Dockerfile)$/i.test(p) ||
+      /(^|\/)\.github\/workflows\//.test(p) || /(^|\/)(pre|post)?(install|setup|bootstrap|update|upgrade)[^/]*\.(sh|bash|zsh|ps1|mjs|cjs|js|py)$/i.test(p),
+    list: 'Checklist: supply chain. Install scripts (install, postinstall, setup and update scripts, CI workflows, and what they run); ' +
+      'lockfile or registry changes (a new or moved dependency, a changed resolved URL or integrity hash, a new registry or package ' +
+      'source); fetched code (anything downloaded and run at build, install or run time, such as curl | sh or an import from a URL, ' +
+      'without a pinned version or checksum).',
+  },
+  {
+    test: (p) => /(^|[/._-])(servers?|ipc|sockets?|daemon|websockets?|ws|rpc|https?|listeners?|localhost|bridge|proxy|pipes?)([/._-]|$)/i.test(p),
+    list: 'Checklist: local IPC. localhost servers (who else on this machine can connect, and what a web page can make the browser ' +
+      'send them); Host and Origin checks (against DNS rebinding and cross-site requests); sockets and named pipes (who may connect, ' +
+      'their file permissions and where they live); file-permission races (check-then-use on temp files, sockets, locks and config ' +
+      'files another local user or process could swap).',
+  },
+]
+// The lists for these changed paths, in class order; a docs file (other than an agent instruction file) never matches.
+function securityClassLists(paths = []) {
+  const counted = paths.filter((p) => typeof p === 'string' && (AGENT_FILES.test(p) || extKind(p) !== 'docs'))
+  return SECURITY_CLASSES.filter((c) => counted.some(c.test)).map((c) => c.list)
+}
+function securityPrompt(diff, vendor, intent, paths = []) {
+  const lists = securityClassLists(paths)
   return (
     `${SECURITY_MARKER} Review the branch diff below for security defects, judged against what the branch was supposed to do` +
     `${intent ? `: ${intent}` : ' (infer from the diff)'}. Look for: trust boundaries crossed without a check; untrusted input ` +
@@ -1626,6 +1658,9 @@ function securityPrompt(diff, vendor, intent) {
     `command execution; path traversal; unsafe deserialization; server-side request forgery (SSRF); and changes to ` +
     `dependencies, install or update scripts and CI workflows. You are not reviewing correctness, style or performance: ` +
     `report a defect only when it is a security issue. Inspect the diff (open files as needed) BEFORE answering.\n\n` +
+    `${lists.length ? `This diff touches these attack classes; check each item:\n${lists.map((l) => `- ${l}`).join('\n')}\n\n` : ''}` +
+    `A missing extra layer of defense is a hardening note (LOW), not a vulnerability. ` +
+    `Do not report a vulnerability without a concrete harmed principal: who is harmed, and how an attacker reaches them.\n\n` +
     `${CONTEXT ? `${CONTEXT}\n` : ''}` +
     `${promptNotes(vendor).join('\n\n')}\n\n` +
     `Diff (git diff ${DIFF_BASE}...HEAD${sliceSuffix(SLICE)}):\n${clip(diff)}`
@@ -3236,7 +3271,8 @@ function beginSecurity({ stats, diff }) {
     console.warn(`⚠ security pass required (${need.why}) but skipped: ${chosen.error} — the merge tier will be HIGH`)
     return { record: { ...base, required: need.why, status: 'skipped', reason: chosen.error } }
   }
-  const job = { diff, context: CONTEXT, verify: VERIFY_RESULT, slice: SLICE, diffBase: DIFF_BASE, intent: INTENT || null }
+  const job = { diff, context: CONTEXT, verify: VERIFY_RESULT, slice: SLICE, diffBase: DIFF_BASE, intent: INTENT || null,
+    paths: [...new Set((stats?.files || []).flatMap(pathsOf))] }
   try {
     return { base: { ...base, required: need.why, why: chosen.why }, job, members: chosen.members, worker: startSecurityWorker(job, chosen.members[0]) }
   } catch (e) {
@@ -3303,7 +3339,7 @@ async function securityWorker(jobFile) {
     SLICE = Array.isArray(job.slice) && job.slice.length ? job.slice : null
     DIFF_BASE = job.diffBase || DIFF_BASE
     const m = job.member
-    const { result, modelUsed } = await runModel(m, securityPrompt(String(job.diff ?? ''), m.vendor, job.intent), SCHEMA, 'security reviewer')
+    const { result, modelUsed } = await runModel(m, securityPrompt(String(job.diff ?? ''), m.vendor, job.intent, Array.isArray(job.paths) ? job.paths : []), SCHEMA, 'security reviewer')
     const raw = result?.findings
     if (!Array.isArray(raw) || raw.some((f) => !f || typeof f !== 'object' || Array.isArray(f))) throw new Error('its answer has no findings list')
     const { rescored } = await scoredFindings(raw, m)

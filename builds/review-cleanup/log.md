@@ -29,3 +29,16 @@
 - "Who reviews" stays in SKILL.md (it is how a reviewer is chosen, and the packs test pins `model-id --role reviewer`
   to SKILL.md).
 - pack.json lists both reference.md files, so the installer copies them beside SKILL.md.
+
+## Part 3: security prompt borrowings
+
+- Matching is by changed path only (the review's own file list, both names of a rename, passed to the security worker
+  as `job.paths`). Docs (`.md/.mdx/.txt/.rst`) never match, except agent instruction files (SKILL.md, AGENTS.md,
+  CLAUDE.md, GEMINI.md), which count as AI/agent tools. Content is not scanned: a docs-only diff then never gets a list.
+- AI/agent tools: path parts such as agent(s), prompt(s), skill(s), mcp, llm, ai, tool-use/tool-call, ask-model, and the
+  vendor CLI names. Supply chain: manifests and lockfiles of npm/yarn/pnpm/bun, pip/poetry, gem, go, cargo, composer,
+  .npmrc/.yarnrc, Dockerfile, .github/workflows/, and install/setup/bootstrap/update scripts. Local IPC: path parts such
+  as server(s), ipc, socket(s), daemon, websocket, ws, rpc, http(s), listener, localhost, bridge, proxy, pipe(s).
+- The hardening rule (b) and the harmed-principal rule (c) are in every security prompt, word for word from the plan.
+- Under heavy machine load (load average 15+, other agents' suites running), some security tests ran past their spawn
+  timeouts in the full-file run; the same tests pass alone in seconds.
