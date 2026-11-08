@@ -219,8 +219,10 @@ try {
   ok('the strips: handoff says your session agent writes it, with no extra model', /your session agent/.test(t(card('handoff').querySelector('.pk-strip'))) && /no extra model/i.test(t(card('handoff').querySelector('.pk-strip'))));
   // The legend lists only the kinds a diagram uses, and carries "no model" for the scripts (PR C QA).
   const legend = (id) => card(id).querySelectorAll('.legend li').map((li) => t(li));
-  ok('a legend says what each kind of chip in that diagram means — only those', JSON.stringify(legend('review-gate')) === '["a role from Models","a script — no model"]'
+  // PR D: an off step is in the legend too, in its own look (dashed), apart from a script (solid outline).
+  ok('a legend says what each kind of chip in that diagram means — only those, and "off" when a step is off', JSON.stringify(legend('review-gate')) === '["a role from Models","a script — no model","off — not turned on"]'
     && JSON.stringify(legend('build')) === '["a role from Models","your session agent","you"]', `${legend('review-gate')} | ${legend('build')}`);
+  ok('…the "off" swatch carries the off look, the script swatch its own', !!card('review-gate').querySelector('.legend .wf-sw.off') && !!card('review-gate').querySelector('.legend .wf-sw.script'));
   ok('eight or more steps lay out in rows of four; seven or fewer stay one row', card('review-gate').querySelector('.flow').classList.contains('rows')
     && !card('build').querySelector('.flow').classList.contains('rows'));
   ok('a part\'s "What this part is and changes" is a quiet fold, not an action', card('review-gate').querySelectorAll('.pk-part summary.fold').length > 0);

@@ -134,9 +134,11 @@ function wfDiagram(wf, ctx) {
   box.appendChild(bar);
   // Eight or more steps would squeeze each to a sliver at a desktop width: rows of four instead.
   const ol = el('ol', `flow${wf.steps.length > 7 ? ' rows' : ''}`);
+  let anyOff = false;
   for (const raw of wf.steps) {
     const step = wfStepFor(raw, variant);
     const on = wfStepOn(step, ctx);
+    if (!on) anyOff = true;
     // A step with no model, or one that is off, is a narrow tile: the role steps get the width.
     const li = el('li', `step${on ? '' : ' off'}${!on || step.who === 'script' ? ' narrow' : ''}`);
     li.dataset.step = step.id;
@@ -158,6 +160,13 @@ function wfDiagram(wf, ctx) {
     const li = el('li');
     li.appendChild(el('span', `wf-sw ${kind}`));
     li.appendChild(document.createTextNode(text));
+    legend.appendChild(li);
+  }
+  // One look per meaning: an off step is a dashed tile, so the legend says so — only when one is off.
+  if (anyOff) {
+    const li = el('li');
+    li.appendChild(el('span', 'wf-sw off'));
+    li.appendChild(document.createTextNode('off — not turned on'));
     legend.appendChild(li);
   }
   box.appendChild(legend);
