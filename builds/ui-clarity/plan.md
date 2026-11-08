@@ -178,3 +178,10 @@ One PR: four independent CSS/markup touches, each small.
 - f1: the Used-by toggle and "Not used by any role" share `min-height: 26px` (no margin-top on the none line), so Edit / Reset line up on a row that mixes used and unused families. Browser: fable/opus(used)/sonnet buttons all at the same top.
 - f2: a Files tool card's header counts files (each entry's extraFiles + 1), the same unit as its rows. The ui-words seed gains a three-file skill; the sweep checks header = sum of rows.
 - f3: `.pk-strip .w.script` is solid like `.pk-flow .w.script`; guarded in ui-words.
+## PR E — Home usage bars back
+
+Cris: "I miss the bars on the homepage for accounts and usage." C2 had cut Home's accounts card to one line (the tightest window, text only).
+- paintAccounts shows every quota window again: "N% left", a thin bar (.usage-track.home-track > .usage-fill, width = left, data-level by pressure), then the label and "resets in". C2's route line, per-account rows and Open Usage stay.
+- Compact: each window is a grid row (64px % | 120px bar | label), the track is 5px, and rows are 3px apart. So bars line up across windows and accounts.
+- Test change, in its own test-only commit: home.mjs '9 each account is one compact line…' becomes '9 each account shows every window as percent left'. New guard: one bar per reported window, its width equal to its "% left", with a level.
+- Browser (seeded QA server, window as it is): 5 windows across 3 accounts, every track starts at the same x (607px) and is 5px tall, and each fill's width matches its percentage.
