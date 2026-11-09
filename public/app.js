@@ -2741,7 +2741,13 @@ function projectsTab() {
     for (const r of all ? rows : rows.slice(0, MEM_CARD_CAP)) card.appendChild(factRow(r));
     if (!all) {
       const more = el('button', 'btn mem-more', `Show all ${rows.length} files`);
-      more.onclick = () => { MV.shownAll.add(g.id); paintMemory(); };
+      more.onclick = () => {
+        MV.shownAll.add(g.id);
+        paintMemory();
+        // Keep your place: focus the first file the button revealed (its checkbox), not the detached button.
+        const card = [...document.querySelectorAll('.mem-card')].find((k) => k.dataset.group === g.id);
+        card?.querySelectorAll('.mem-fact')[MEM_CARD_CAP]?.querySelector('input, button')?.focus();
+      };
       card.appendChild(more);
     }
     wrap.appendChild(card);
@@ -5107,6 +5113,7 @@ function avoidPicker(d, changed) {
 }
 
 /** Which roles lean on a model, and which files call model-id for it: a quiet button to a dialog (no folds). */
+let usedByAsk = 0;
 function usedBy(family) {
   const R = M.roles;
   const jobs = R.roles.filter((r) => r.use.includes(family) || r.alt === family)
@@ -5117,9 +5124,14 @@ function usedBy(family) {
   const b = el('button', 'btn ghost model-used-toggle', `Used by ${plural(jobs.length, 'role')}`);
   b.setAttribute('aria-haspopup', 'dialog');
   b.onclick = async () => {
+    const ask = ++usedByAsk;
     if (!M.where[family]) {
-      try { M.where[family] = await api('GET', `/api/models/where?family=${encodeURIComponent(family)}`); }
-      catch (e) { M.where[family] = { hits: [], error: e.message }; }
+      let w;
+      try { w = await api('GET', `/api/models/where?family=${encodeURIComponent(family)}`); }
+      catch (e) { w = { hits: [], error: e.message }; }
+      M.where[family] = w;
+      // A late answer: the user left Models, or pressed another "Used by" since. Keep the result, open nothing.
+      if (S.view !== 'models' || ask !== usedByAsk) return;
     }
     const w = M.where[family];
     const body = el('div', 'pk-dialog-body models-where');
@@ -5539,10 +5551,19 @@ function paintAudit() {
 const AUDIT_CAP = 3;
 function auditCapped(box, key, items, render, cap = AUDIT_CAP) {
   const all = AU.showAll[key] || items.length <= cap;
-  for (const x of all ? items : items.slice(0, cap)) box.appendChild(render(x));
+  (all ? items : items.slice(0, cap)).forEach((x, i) => {
+    const n = render(x);
+    // The first item "Show all" revealed takes focus after the repaint: it can hold focus without being a tab stop.
+    if (i === cap) { n.dataset.capFirst = key; n.tabIndex = -1; }
+    box.appendChild(n);
+  });
   if (!all) {
     const more = el('button', 'btn audit-more', `Show all ${items.length}`);
-    more.onclick = () => { AU.showAll[key] = true; paintAudit(); };
+    more.onclick = () => {
+      AU.showAll[key] = true;
+      paintAudit();
+      [...document.querySelectorAll('[data-cap-first]')].find((n) => n.dataset.capFirst === key)?.focus();
+    };
     box.appendChild(more);
   }
 }

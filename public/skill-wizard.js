@@ -150,6 +150,8 @@ function swStepper() {
 }
 
 function swError(box, retry) {
+  // The reply dialog belongs to the error it came with: once that error is gone, so is the dialog.
+  if (!(SW.error && SWX.reply && SWX.reply.error === SW.error)) document.querySelector('.sw-reply-dialog')?.pkClose?.();
   if (!SW.error) return;
   const n = el('div', 'notice error sw-error');
   n.setAttribute('role', 'alert');
@@ -164,7 +166,7 @@ function swError(box, retry) {
       const body = el('div', 'pk-dialog-body');
       body.appendChild(el('pre', 'sw-reply-text', reply.text));
       if (reply.cut) body.appendChild(el('div', 'scope-note', 'Cut at 4 KB.'));
-      pkDialog("The AI's reply", body, b, () => document.querySelector('.sw-reply-btn'));
+      pkDialog("The AI's reply", body, b, () => document.querySelector('.sw-reply-btn')).classList.add('sw-reply-dialog');
     };
     n.appendChild(b);
   }

@@ -235,3 +235,8 @@ Cris: "I miss the bars on the homepage for accounts and usage." C2 had cut Home'
 - **CSS:** summary.fold, details.mem-card, .chev and the files-type-toggle chevron rules are deleted.
 - **Guards:** no details, summary, .chev or .fold in any view (ui-words sweep and ui-clarity-g), plus static checks on the JS and CSS.
 - **Trash:** the kind badge is its own .trash-kind, sized to its word (min-width, nowrap, flex none). In the browser, "folder" measured clientWidth 54 = scrollWidth 54, 14px clear of the path, in light and dark.
+- **PR G fix round** (review 2026-11-09-20-19-44-e7cb26):
+  - f1: "Show all" on Memory → Projects focuses the first newly shown file's checkbox. On Audit, the first newly shown item takes focus (tabindex -1, so it is not a tab stop).
+  - f2: a "Used by" lookup that answers after you left Models, or after a newer press, keeps its result and opens nothing.
+  - The skill wizard's reply dialog closes when its error is gone.
+  - Three tests Sol rated weakened are tightened in the test-only commit.
