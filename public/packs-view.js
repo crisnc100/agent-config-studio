@@ -357,6 +357,7 @@ function pkCardView(pack) {
     const unset = pkUnsetLine(pack.workflow);
     if (unset) sec.appendChild(unset);
   }
+  if (pack.id === 'review-gate') sec.appendChild(pkSecurityView());
   // What this pack still needs, in full (the head says only "Setup needed").
   if (own.length) sec.appendChild(el('p', 'pk-need', `Needs ${pkNeedText(own[0])}`));
   sec.appendChild(pkExplain(pack.explain, 'What it is, what it changes, what it needs, how to undo it', pkNeedsList(pack)));
@@ -456,6 +457,88 @@ function pkPartView(pack, part, card) {
   }
   row.appendChild(foot);
   return row;
+}
+
+/* ── the review gate's security switch: security.run in the home review config ── */
+
+const PK_SEC_LEVELS = [
+  ['off', 'Off', 'PR reviews run no security pass.'],
+  ['required', 'When code changes', 'A security reviewer reads the PR review whenever the change touches code or a risky path.'],
+  ['always', 'Always', 'A security reviewer reads every PR review.'],
+];
+const PK_SEC = { preview: null, busy: false, error: null, result: null, seq: 0 };
+
+/** Off / When code changes / Always: the level in force, and a change shown as the file's diff before it is saved. */
+function pkSecurityView() {
+  const now = PK.data.settings?.security || 'off';
+  const box = el('div', 'pk-sec');
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', 'Security pass in PR reviews');
+  box.appendChild(el('div', 'pk-label', 'Security pass in PR reviews'));
+  const row = el('div', 'pk-sec-levels');
+  for (const [level, label] of PK_SEC_LEVELS) {
+    const b = pkBtn(level === now ? 'pk-sec-on' : '', label, () => pkSecurityPreview(level), PK_SEC.busy);
+    b.setAttribute('aria-pressed', String(level === now));
+    b.dataset.level = level;
+    row.appendChild(b);
+  }
+  box.appendChild(row);
+  box.appendChild(el('p', 'pk-sec-now', `Now: ${PK_SEC_LEVELS.find(([l]) => l === now)[2]} /security-check runs on its own either way.`));
+  if (PK_SEC.busy) { const s = el('span', 'pk-busy'); s.appendChild(el('span', 'spinner')); s.appendChild(el('span', null, ' Working…')); box.appendChild(s); }
+  if (PK_SEC.error) {
+    const n = el('div', 'notice error');
+    n.setAttribute('role', 'alert');
+    n.textContent = PK_SEC.error;
+    box.appendChild(n);
+  }
+  const p = PK_SEC.preview;
+  if (p) {
+    const pre = el('div', 'pk-sec-preview');
+    pre.setAttribute('role', 'region');
+    pre.setAttribute('aria-label', 'Security setting preview');
+    const label = PK_SEC_LEVELS.find(([l]) => l === p.level)[1];
+    pre.appendChild(el('p', null, p.view.changes
+      ? `Set to “${label}”: this changes ${p.view.file}${p.view.exists ? ', and a copy of it goes to the backups folder first' : ' (a new file)'}.`
+      : `${p.view.file} already says “${label}”. Nothing to change.`));
+    if (p.view.changes) pre.appendChild(diffView(p.view.current, p.view.next, 'now', 'after'));
+    const acts = el('div', 'pk-actions');
+    if (p.view.changes) acts.appendChild(pkBtn('primary', 'Save', () => pkSecurityApply(), PK_SEC.busy));
+    acts.appendChild(pkBtn('ghost', 'Cancel', () => { PK_SEC.preview = null; PK_SEC.seq++; paintPacks(); }, PK_SEC.busy));
+    pre.appendChild(acts);
+    box.appendChild(pre);
+  }
+  if (PK_SEC.result) {
+    const r = PK_SEC.result;
+    box.appendChild(el('div', 'notice pk-result', `Saved: ${r.file} now says “${PK_SEC_LEVELS.find(([l]) => l === r.level)[1]}”.${r.backup ? ` The old file is at ${r.backup}.` : ''}`));
+  }
+  return box;
+}
+
+async function pkSecurityPreview(level) {
+  PK_SEC.preview = null; PK_SEC.error = null; PK_SEC.result = null; PK_SEC.busy = true;
+  const seq = ++PK_SEC.seq;
+  paintPacks();
+  try {
+    const view = await api('POST', '/api/packs/security/plan', { level });
+    if (seq === PK_SEC.seq) PK_SEC.preview = { level, view };
+  } catch (e) { if (seq === PK_SEC.seq) PK_SEC.error = e.message; }
+  if (seq === PK_SEC.seq) PK_SEC.busy = false;
+  paintPacks();
+}
+
+async function pkSecurityApply() {
+  const { level, view } = PK_SEC.preview;
+  PK_SEC.busy = true; PK_SEC.error = null;
+  const seq = ++PK_SEC.seq;
+  paintPacks();
+  try {
+    const r = await api('POST', '/api/packs/security/apply', { level, signature: view.signature });
+    if (seq !== PK_SEC.seq) return;
+    PK_SEC.result = r; PK_SEC.preview = null;
+    PK.data.settings = { ...(PK.data.settings || {}), security: level };
+  } catch (e) { if (seq === PK_SEC.seq) PK_SEC.error = e.message; }
+  if (seq === PK_SEC.seq) PK_SEC.busy = false;
+  paintPacks();
 }
 
 /** The request the card describes for `action`: exactly what the preview and the apply send. */

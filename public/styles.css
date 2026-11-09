@@ -1772,3 +1772,11 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .chev::before { content: ""; flex: none; width: 6px; height: 6px; border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor;
   transform: rotate(-45deg); transition: transform 0.15s ease-out; }
 .chev[aria-expanded="true"]::before { transform: rotate(45deg); }
+
+/* ── Packs: the review gate's security switch ─────────────────────────── */
+.pk-sec { margin: 12px 0; }
+.pk-sec-levels { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn.pk-sec-on { border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.pk-sec-now { color: var(--text-dim); margin: 6px 0 0; }
+.pk-sec-preview { margin-top: 10px; }
+.pk-sec-preview .diff { padding: 8px 0; max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); margin: 6px 0 10px; }
