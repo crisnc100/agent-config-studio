@@ -3376,11 +3376,23 @@ function readSecurityLog() {
     } catch { return [] }
   })
 }
-function writeSecurityReport(id, branch, member, findings, unlocated, diffTruncated) {
+// Each folder on the report's path is a real folder, never a link a branch committed: a link would carry the intent and
+// the findings wherever it points.
+function refuseLinkedSecurityReports() {
   refuseLinkedReviews()
+  let stat
+  try { stat = lstatSync('reviews/security') } catch (e) { if (e.code === 'ENOENT') return; throw e }
+  if (stat.isSymbolicLink()) die('reviews/security is a symlink, so the report would be written wherever it points. Remove it and check again.')
+  if (!stat.isDirectory()) die('reviews/security is not a folder. Remove it and check again.')
+}
+function writeSecurityReport(id, branch, member, findings, unlocated, diffTruncated) {
+  refuseLinkedSecurityReports()
   ensureReviewsIgnored()
   const dir = `reviews/security/${id}`
-  mkdirSync(dir, { recursive: true })
+  // One level at a time, and the check's own folder exclusively: a path that appeared since the check above fails here.
+  for (const d of ['reviews', 'reviews/security']) try { mkdirSync(d) } catch (e) { if (e.code !== 'EEXIST') throw e }
+  refuseLinkedSecurityReports()
+  mkdirSync(dir)
   const item = (f) => `- [${f.file || '?'}:${f.line || '?'}] ${f.issue} (id ${f.id})\n  Score: ${scoreText(f)}${isFiled(f) ? ' — filed' : ''}` +
     `${f.quote ? `\n  > ${String(f.quote).split('\n').join('\n  > ')}` : ''}${f.suggestion ? `\n  → ${f.suggestion}` : ''}`
   const bySev = (s) => findings.filter((f) => f.severity === s).map(item).join('\n') || '- none'
@@ -3397,7 +3409,7 @@ function writeSecurityReport(id, branch, member, findings, unlocated, diffTrunca
 }
 async function runSecurityOnly() {
   const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList } = getDiff()
-  refuseLinkedReviews()
+  refuseLinkedSecurityReports()
   CONTEXT = reviewContext(branch)
   if (!diff) {
     console.log(`Nothing to check — no diff against ${BASE}.`)
@@ -3449,23 +3461,58 @@ async function runSecurityOnly() {
   process.exit(0)
 }
 // --security-findings: the open findings of this branch's standalone checks (this repository), as text a PR review is
-// handed as context. Open: not filed, and its quote still sits at its place at HEAD. They are never "already decided".
+// handed as context. They are never "already decided". A finding is fixed only when its quote is gone from its file
+// (followed through renames since the check's head); a file that is gone or can't be read is listed as can't tell.
 function printSecurityFindings() {
   const branch = sh('git', ['rev-parse', '--abbrev-ref', 'HEAD']), repoId = repoIdentity()
-  const seen = new Set(), open = []
+  const flat = (t) => String(t ?? '').replace(/\s+/g, ' ').trim()
+  const seen = new Set(), open = [], unknown = []
   for (const check of readSecurityLog().filter((e) => e.branch === branch && e.repoId === repoId).reverse()) {
     for (const f of check.findingDetails || []) {
       if (f.status === 'unverified-quote' || isFiled(f) || isPreExisting(f)) continue
-      const key = `${f.file}\0${String(f.quote ?? '').replace(/\s+/g, ' ').trim()}\0${f.issue}`
+      const key = `${f.file}\0${flat(f.quote)}\0${f.issue}`
       if (seen.has(key)) continue
       seen.add(key)
-      if (locateQuote(f).problem) continue
-      open.push({ check: check.id, ...f })
+      const where = currentPath(check.head, check.resolvedPaths?.[f.id]?.path || f.file)
+      if (!where.path) { unknown.push({ check: check.id, ...f, why: where.why }); continue }
+      const text = spawnSync('git', ['show', `HEAD:${where.path}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+      if (text.status !== 0) { unknown.push({ check: check.id, ...f, why: `${where.path} can't be read at HEAD` }); continue }
+      if (flat(text.stdout).includes(flat(f.quote))) open.push({ check: check.id, ...f, now: where.path })
     }
   }
-  if (!open.length) return console.log(`No open standalone security findings on ${branch}.`)
+  if (!open.length && !unknown.length) return console.log(`No open standalone security findings on ${branch}.`)
   console.log(`Standalone security findings on ${branch} (from /security-check). They are not decided: check whether each still holds.`)
-  for (const f of open) console.log(`- ${scoreText(f)} ${f.file}:${f.line} — ${f.issue} (check ${f.check}, ${f.id})\n  > ${String(f.quote ?? '').split('\n').join('\n  > ')}`)
+  const quoted = (f) => `\n  > ${String(f.quote ?? '').split('\n').join('\n  > ')}`
+  for (const f of open) console.log(`- ${scoreText(f)} ${f.now === f.file ? `${f.file}:${f.line}` : `${f.now} (was ${f.file}:${f.line})`} — ${f.issue} (check ${f.check}, ${f.id})${quoted(f)}`)
+  if (unknown.length) {
+    console.log(`Can't tell whether these are fixed (${unknown.length}): check each by hand.`)
+    for (const f of unknown) console.log(`- ${scoreText(f)} ${f.file}:${f.line} — ${f.issue} (check ${f.check}, ${f.id}; ${f.why})${quoted(f)}`)
+  }
+}
+// Where a file a check saw at `from` is at HEAD: { path }, or { why } it can't be told. Renames are followed commit by
+// commit along the first-parent line, so a file both moved and edited is still found.
+function currentPath(from, file) {
+  if (!file) return { why: 'no file was recorded' }
+  let path = file
+  if (from && spawnSync('git', ['cat-file', '-e', `${from}^{commit}`]).status === 0 && isAncestor(from, 'HEAD')) {
+    const commits = spawnSync('git', ['rev-list', '--reverse', '--first-parent', `${from}..HEAD`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+    for (const commit of commits.status === 0 ? commits.stdout.split('\n').filter(Boolean) : []) {
+      const r = spawnSync('git', ['diff-tree', '-r', '-z', '-M', '--name-status', `${commit}^`, commit], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+      if (r.status !== 0) continue
+      const parts = r.stdout.split('\0')
+      for (let i = 0; i < parts.length - 1;) {
+        const status = parts[i]
+        if (/^[RC]/.test(status)) {
+          if (status[0] === 'R' && parts[i + 1] === path) path = parts[i + 2]
+          i += 3
+        } else {
+          if (status === 'D' && parts[i + 1] === path) return { why: `${path} was deleted` }
+          i += 2
+        }
+      }
+    }
+  }
+  return spawnSync('git', ['cat-file', '-e', `HEAD:${path}`]).status === 0 ? { path } : { why: `${path} is not at HEAD` }
 }
 const CLASSIFIER_TIMEOUT_MS = 5 * 60_000
 // Run a command detached in its own process group with stdin given, killed (group and all) at the timeout.

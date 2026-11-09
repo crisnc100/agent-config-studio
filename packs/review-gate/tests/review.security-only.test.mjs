@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
@@ -313,3 +313,73 @@ test('10 --code-only with security.run off records the pass as off, and the tier
   const tier = closed(findingsJson(r).reviewId)
   assert.ok(!tier.tierReasons.some((x) => /security/.test(x)), JSON.stringify(tier.tierReasons))
 })
+
+// ── fix round: review 2026-11-09-19-05-06-55cb9f ──
+test('fix s1 a link at any level of the report path refuses the check, and nothing is written outside the checkout', () => {
+  const outside = join(ROOT, 'outside')
+  for (const [label, plant] of [
+    ['reviews/security is a link', () => { mkdirSync(join(REPO, 'reviews'), { recursive: true }); run('ln', ['-s', outside, join(REPO, 'reviews/security')]) }],
+    ['reviews is a link', () => run('ln', ['-s', outside, join(REPO, 'reviews')])],
+  ]) {
+    rmSync(outside, { recursive: true, force: true }); mkdirSync(outside)
+    rmSync(join(REPO, 'reviews'), { recursive: true, force: true })
+    plant()
+    git('add', '-f', 'reviews'); git('commit', '-qm', `plant ${label}`)
+    rmSync(CALLS, { force: true })
+    const r = script(['--security-only'], { STUB_SEC_FINDINGS: findings(finding()) })
+    refused(r, /is a symlink/)
+    assert.deepEqual(readdirSync(outside), [], `${label}: nothing written outside`)
+    assert.equal(calls().length, 0, `${label}: refused before any model call`)
+    assert.equal(lines(SEC_LOG).length, 0, label)
+    git('rm', '-rq', '--cached', 'reviews'); rmSync(join(REPO, 'reviews'), { recursive: true, force: true }); git('commit', '-qm', `unplant ${label}`)
+  }
+  mkdirSync(join(REPO, 'reviews'), { recursive: true }); writeFileSync(join(REPO, 'reviews/security'), 'a file\n')
+  git('add', '-f', 'reviews'); git('commit', '-qm', 'plant a file')
+  refused(script(['--security-only']), /reviews\/security is not a folder/)
+})
+
+test('fix m1 --security-findings finds a quote that moved far, follows a rename, and lists a deleted file as can\'t tell', () => {
+  securityOnly({ STUB_SEC_FINDINGS: findings(finding({ issue: 'MOVED-ONE' })) })
+  commit({ 'src/app.js': `${'// pad\n'.repeat(20)}${APP}` })
+  assert.match(script(['--security-findings']).stdout, /src\/app\.js:\d+ — MOVED-ONE/, 'moved 20 lines down: still open')
+  git('mv', 'src/app.js', 'src/main.js'); git('commit', '-qm', 'rename')
+  const renamed = script(['--security-findings']).stdout
+  assert.match(renamed, /src\/main\.js \(was src\/app\.js:2\) — MOVED-ONE/, renamed)
+  git('rm', '-q', 'src/main.js'); git('commit', '-qm', 'delete')
+  const gone = script(['--security-findings']).stdout
+  assert.match(gone, /Can't tell[^\n]*\n[\s\S]*MOVED-ONE/, gone)
+  assert.doesNotMatch(gone, /No open standalone security findings/)
+})
+
+test('fix m2 an unknown flag is a plain error with no review; --supports answers for each flag', () => {
+  for (const flag of ['--bogus', '--security-onyl', '--']) {
+    const r = script([flag], { REVIEW_REVIEWER: 'sol' })
+    assert.equal(r.status, 1, r.out)
+    assert.match(r.stderr, new RegExp(`unknown flag ${flag}`))
+  }
+  assert.equal(calls().length, 0); assert.equal(existsSync(LOG), false)
+  for (const flag of ['--security-only', '--security-findings', '--code-only', '--close']) assert.equal(script(['--supports', flag]).status, 0, flag)
+  assert.equal(script(['--supports', '--nope']).status, 1)
+})
+
+for (const [skill, flag] of [['security-check', '--security-only'], ['code-review', '--code-only']]) {
+  test(`fix m2 /${skill}: an older repo copy without ${flag} is skipped for the shared runtime, and says so`, () => {
+    for (const harness of ['claude', 'codex']) {
+      rmSync(CALLS, { force: true })
+      const { repo, sh } = scratch()
+      const block = fenced(readFileSync(join(SKILLS, harness, skill, 'SKILL.md'), 'utf8'), '=scripts/review.mjs').replace(/"<intent:[^"]*>"/g, '"add a"')
+      mkdirSync(join(repo, 'scripts'))
+      writeFileSync(join(repo, 'scripts/review.mjs'), "console.log('OLD COPY RAN ' + process.argv.slice(2).join(' '))\n")
+      const old = sh(block)
+      allowed(old)
+      assert.doesNotMatch(old.out, /OLD COPY RAN/, `${harness}: ${old.out}`)
+      assert.match(old.out, new RegExp(`scripts/review\\.mjs does not support ${flag}; using the shared runtime`), harness)
+      assert.match(old.stdout, /===FINDINGS_JSON===/)
+      // A current copy in the repo is the one that runs.
+      cpSync(SCRIPT, join(repo, 'scripts/review.mjs'))
+      const now = sh(block)
+      allowed(now)
+      assert.match(now.out, /review\.mjs · scripts\/review\.mjs/, `${harness}: ${now.out.slice(0, 400)}`)
+    }
+  })
+}
