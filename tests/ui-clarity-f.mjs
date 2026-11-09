@@ -219,6 +219,69 @@ console.log('\nSidebar: opening a file keeps the view you came from marked');
   ok('…and leaving for Home moves the mark', q.$('btn-home').classList.contains('active') && !q.$('btn-files').classList.contains('active'));
 }
 
+/* ── Packs: no folds; "Files and undo" opens a dialog (Cris, after the critique) ── */
+console.log('\nPacks: no folds — a summary line, and "Files and undo" opens a dialog');
+{
+  const req = (id, ok_, extra = {}) => ({ id, ok: ok_, what: `${id} need`, fix: `fix ${id}`, dep: null, ...extra });
+  const part = (id, title, explain) => ({ id, title, default: true, kind: 'skill', harnesses: ['claude'], explain });
+  const pack = (id, title, parts, requirements) => ({ id, title, version: '1.0.0', summary: `${title} does a thing.`,
+    explain: { what: `${title} is a pack.`, does: 'Day to day it helps.', changes: ['~/.claude/skills/x/', 'a marked block in ~/.zshrc', '~/.agent-config-studio/x/'], undo: 'Uninstalling removes the skill folders.' },
+    requires: { packs: [] }, parts, requirements, installed: null });
+  const cat = { packs: [
+    pack('alpha', 'Alpha', [part('a-skill', 'Alpha skill', { what: 'Alpha skill does it.', does: 'd', changes: ['~/.claude/skills/alpha/'], undo: 'Remove alpha.' }),
+      part('a-guard', 'Alpha guard', { what: 'Guards it.', does: 'd', changes: ['~/.claude/settings.json hook'], undo: 'Remove the hook.' })], [req('node', true), req('roles', false)]),
+    pack('beta', 'Beta', [part('b-skill', 'Beta skill', { what: 'Beta does it.', changes: ['~/.claude/skills/beta/'] })], [req('node', true)]),
+  ], harnesses: [{ id: 'claude', label: 'Claude Code', present: true, installed: true, cli: true, home: '~/.claude', note: null, why: null }],
+  legacy: [], words: { status: { installed: 'installed', absent: 'not installed' }, symbol: {}, what: {} } };
+  const p = await boot({ hash: '#packs', routes: routesFor({ 'GET /api/packs': () => cat,
+    'GET /api/packs/status': () => ({ job: { running: false, result: { packs: [], legacy: [], checkedAt: Date.now(), trust: false } } }) }) });
+  for (let i = 0; i < 100 && !p.$('content').querySelector('.pk-card'); i++) await settle(5);
+  const c = p.$('content');
+  ok('Packs: no <details>, no summary.fold, no chevron control, no triangle glyph', c.querySelectorAll('details').length === 0 && c.querySelectorAll('summary').length === 0
+    && c.querySelectorAll('.chev, .fold').length === 0 && !/[▸▾▶▼◂◀›⌄]/.test(p.text(c)), `${c.querySelectorAll('details').length} details`);
+  const card = (id) => c.querySelector(`[data-pack="${id}"]`);
+  const line = (id) => p.text(card(id).querySelector('.pk-changes'));
+  ok('each card says what it changes and how to undo it in one short muted line', line('alpha') === 'Changes 3 places · undo: acs packs uninstall alpha'
+    && line('beta') === 'Changes 3 places · undo: acs packs uninstall beta', `${line('alpha')} | ${line('beta')}`);
+  const btn = card('alpha').querySelectorAll('button').find((b) => p.text(b) === 'Files and undo');
+  ok('…and a secondary "Files and undo" button (bordered, not quiet or primary)', !!btn && btn.classList.contains('btn') && !btn.classList.contains('ghost') && !btn.classList.contains('primary')
+    && btn.getAttribute('aria-haspopup') === 'dialog');
+  btn.focus();
+  btn.click();
+  await settle(2);
+  const dlg = () => p.doc.body.querySelector('.pk-dialog');
+  const d = dlg();
+  ok('the button opens a modal dialog, named by its title', !!d && d.getAttribute('role') === 'dialog' && d.getAttribute('aria-modal') === 'true'
+    && /Alpha/.test(p.text(p.doc.getElementById(d.getAttribute('aria-labelledby')))));
+  const dt = d ? p.text(d) : '';
+  ok('…with the full list: what it is, every change, how to undo it with the command, what it needs', /Alpha is a pack/.test(dt) && /a marked block in ~\/\.zshrc/.test(dt)
+    && /Uninstalling removes the skill folders/.test(dt) && /acs packs uninstall alpha/.test(dt) && !!d.querySelector('.pk-reqs') && /roles need/.test(dt), dt.slice(0, 400));
+  ok('…and each part with what it changes and its undo', /Alpha guard/.test(dt) && /~\/\.claude\/settings\.json hook/.test(dt) && /Remove the hook/.test(dt));
+  ok('focus moves into the dialog', !!d && d.contains(p.doc.activeElement));
+  const focusables = d.querySelectorAll('button, a[href], input, select, textarea, [tabindex="0"]');
+  focusables.at(-1).focus();
+  p.key('Tab');
+  ok('Tab from the last control wraps to the first (focus stays in the dialog)', p.doc.activeElement === focusables[0]);
+  p.key('Tab', { shift: true });
+  ok('…and Shift+Tab from the first wraps to the last', p.doc.activeElement === focusables.at(-1));
+  p.key('Escape');
+  await settle(2);
+  ok('Esc closes it and focus goes back to the button', !dlg() && p.doc.activeElement === btn);
+  ok('(the page still has no folds after the dialog)', c.querySelectorAll('details, summary').length === 0);
+
+  // The installer's output: a button to a dialog, not a fold.
+  p.eval(`(() => { const b = document.createElement('div'); b.id = 'logbox'; document.getElementById('content').appendChild(b); pkLog(b, ['line one', 'line two']); })()`);
+  const lb = p.$('logbox');
+  const logBtn = lb.querySelectorAll('button').find((b) => p.text(b) === 'Installer output');
+  ok('the installer output is a button, not a fold', !lb.querySelector('details, summary') && !!logBtn && logBtn.classList.contains('btn'));
+  logBtn.click();
+  await settle(2);
+  ok('…that opens the output in a dialog', /line one\s*line two/.test(p.text(dlg()?.querySelector('pre') || { textContent: '' })));
+  p.key('Escape');
+  await settle(2);
+  ok('…which Esc closes', !dlg());
+}
+
 for (const p of pages) p.done?.();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

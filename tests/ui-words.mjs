@@ -132,7 +132,8 @@ console.log('\nstyles.css: PR C QA');
   ok('Files: a type toggle draws a fold chevron, and its "+" has a visible box', /content\s*:/.test(body('.files-type-toggle::before')) && /border\s*:/.test(body('.files-add')));
   ok('a diagram step title never wraps', /white-space\s*:\s*nowrap/.test(body('.pk-flow .step-name')));
   ok('a long diagram (eight or more steps) lays out in rows of four', /grid-template-columns\s*:\s*repeat\(4/.test(body('.pk-flow .flow.rows')));
-  ok('a part\'s explain fold is quiet (not the bold action colour)', /color\s*:\s*var\(--text-dim\)/.test(body('.pk-part summary.fold')) && /font-weight\s*:\s*500/.test(body('.pk-part summary.fold')));
+  // PR F: Packs has no folds at all (Cris) — a part's explain lives in the card's "Files and undo" dialog, so no part fold style is left.
+  ok('no .pk-part fold style is left: a part has no fold', !rules.some((r) => /\.pk-part[^,{]*summary\.fold|\.pk-part[^,{]*details/.test(r.sel)));
 }
 
 /* ── static: folds and buttons look like controls (Cris, 2026-11-06) ── */
@@ -351,9 +352,15 @@ console.log('\nPacks: shared needs once, each card its single most important nee
   ok('the gate card shows its own most important need (valid roles), not the search-path fix said at the top',
     ready('gate') === 'Setup needed' && need('gate') === 'Needs valid ACS roles', `${ready('gate')} | ${need('gate')}`);
   ok('a card whose only gap is the shared need is not called Ready: it points at the block above', ready('plain') === 'Not ready — see “To use packs” above', ready('plain'));
-  const det = p.$('content').querySelector('[data-pack="gate"] details.pk-explain .pk-reqs');
+  // PR F: no folds — the full list is in the card's "Files and undo" dialog.
+  const filesDialog = (pg, id) => {
+    pg.doc.body.querySelector('.pk-dialog') && pg.key('Escape');
+    pg.$('content').querySelector(`[data-pack="${id}"]`).querySelectorAll('button').find((b) => pg.text(b) === 'Files and undo').click();
+    return pg.doc.body.querySelector('.pk-dialog');
+  };
+  const det = filesDialog(p, 'gate')?.querySelector('.pk-reqs');
   // node ✓, git ✖, the one PATH fix ✖ (model-id and ask-model together), roles ✖.
-  ok('the full list stays in the card\'s details', !!det && [...det.children].length === 4, det && p.text(det));
+  ok('the full list stays in the card\'s "Files and undo" dialog', !!det && [...det.children].length === 4, det && p.text(det));
   const detPath = det ? [...det.children].map((li) => p.text(li)).filter((t) => /model-id|ask-model|search path/.test(t)) : [];
   ok('…with the PATH problems as ONE item naming only the missing tools, and its one fix', detPath.length === 1
     && /^✖ Some commands aren.t on your shell.s search path, so agents can.t run them: model-id, ask-model — fix: run acs install-model-id/.test(detPath[0])
@@ -369,8 +376,8 @@ console.log('\nPacks: shared needs once, each card its single most important nee
   ok('model-id, ask-model and the CLIs off the PATH are one item, with one fix', qi.length === 1
     && /^Some commands aren.t on your shell.s search path, so agents can.t run them: model-id, ask-model, Claude Code, Grok/.test(qi[0]) && /acs install-model-id/.test(qi[0])
     && /each CLI's folder/.test(qi[0]) && /restart the studio/.test(qi[0]), qi.join(' | '));
-  const qd = q.$('content').querySelector('[data-pack="a"] details.pk-explain .pk-reqs');
-  ok('…and the same one item in each card\'s details', !!qd && [...qd.children].length === 1
+  const qd = filesDialog(q, 'a')?.querySelector('.pk-reqs');
+  ok('…and the same one item in each card\'s "Files and undo" dialog', !!qd && [...qd.children].length === 1
     && /^✖ Some commands aren.t on your shell.s search path, so agents can.t run them: model-id, ask-model, Claude Code, Grok — fix: /.test(q.text(qd.children[0])), qd && q.text(qd));
   ok('…and every card then has nothing of its own to add', q.$('content').querySelectorAll('.pk-ready').every((n) => q.text(n) === 'Not ready — see “To use packs” above'));
   // No "Details" folds (Cris, 2026-11-06): the status is one quiet line — when it was checked, the trust
@@ -546,6 +553,12 @@ try {
     const loose = page.$('content').querySelectorAll('button').filter((b) => !KINDS.test(b.className || '') && !NAMED.some((c) => b.classList.contains(c)));
     ok(`${v}: every button is primary, secondary or quiet (or a tab, tree row or titled icon)`, loose.length === 0,
       loose.map((b) => `${b.className || '(no class)'}: ${page.text(b).slice(0, 24)}`).join(' | '));
+    if (v === 'packs') {
+      // PR F (Cris): no folds on Packs at all — no <details>, no summary, no chevron control.
+      const c = page.$('content');
+      ok('packs: no <details>, summary or chevron anywhere', c.querySelectorAll('details, summary, .chev, .fold').length === 0 && !/[▸▾▶▼›⌄]/.test(page.text(c)),
+        `${c.querySelectorAll('details, summary').length} folds`);
+    }
     if (v === 'models') {
       const rows = page.$('content').querySelectorAll('.roles-row');
       ok('models: each role row\'s Edit is a real button (secondary), not a text label', rows.length > 0
@@ -593,7 +606,10 @@ try {
     ok('…except a pack that needs another pack first: "Setup needed", and the card names the pack', ready(bc) === 'Setup needed'
       && page.text(bc.querySelector('.pk-need')) === 'Needs the Review gate pack first', `${ready(bc)} | ${page.text(bc.querySelector('.pk-need') || { textContent: '' })}`);
     const rg = c().querySelector('[data-pack="review-gate"]');
-    ok('the needs list is folded into the card\'s explain, not shown open', !!rg.querySelector('details.pk-explain .pk-reqs') && !rg.querySelector(':scope > .pk-reqs'));
+    // PR F: no folds — the needs list is in the card's "Files and undo" dialog, not shown open on the card.
+    rg.querySelectorAll('button').find((b) => page.text(b) === 'Files and undo').click();
+    ok('the needs list is in the card\'s "Files and undo" dialog, not shown open on the card', !!page.doc.body.querySelector('.pk-dialog .pk-reqs') && !rg.querySelector('.pk-reqs'));
+    page.key('Escape');
     const metas = c().querySelectorAll('.pk-part-meta').map((n) => page.text(n));
     ok('no part id or part type on the cards, only who it is for and whether it is on', metas.length > 0
       && metas.every((m) => /^(For [A-Z][\w ]+ · )?(on by default|off unless you pick it)$/.test(m))

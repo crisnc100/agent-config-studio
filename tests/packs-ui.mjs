@@ -61,10 +61,14 @@ try {
       && page.eval('S.view') === 'packs' && t(page.$('btn-packs')?.closest('.nav-group')?.querySelector('.nav-group-title')) === 'Workflows' && t(page.$('btn-packs')) === 'Packs', t(page.$('content')).slice(0, 300));
     ok('…and the first status check runs by itself and finishes', await waitFor(statusDone), t(page.$('pk-status')));
     const rg = card('review-gate');
-    ok('each card has its title, summary and an expandable explain', /Review gate|review/i.test(t(rg.querySelector('h3'))) && t(rg.querySelector('.pk-summary')).length > 20
-      && /What it is:/.test(t(rg.querySelector('.pk-explain'))) && /How to undo it:/.test(t(rg.querySelector('.pk-explain'))) && rg.querySelector('.pk-explain').localName === 'details');
-    ok('…one row per part, each with its own explain and a not-installed badge', rg.querySelectorAll('.pk-part').length === 6
-      && rg.querySelectorAll('.pk-part').every((r) => r.querySelector('details.pk-explain') && /not installed/.test(t(r.querySelector('.pk-badges')))));
+    // PR F: no folds (Cris) — the explain opens from "Files and undo" as a dialog.
+    button(rg, /^Files and undo$/)?.click();
+    const dlg = page.doc.body.querySelector('.pk-dialog');
+    ok('each card has its title, summary and a "Files and undo" dialog with what it is and how to undo it', /Review gate|review/i.test(t(rg.querySelector('h3'))) && t(rg.querySelector('.pk-summary')).length > 20
+      && !!dlg && /What it is:/.test(t(dlg)) && /How to undo it:/.test(t(dlg)) && !rg.querySelector('details'));
+    page.key('Escape');
+    ok('…one row per part, each with what it does in a line and a not-installed badge', rg.querySelectorAll('.pk-part').length === 6
+      && rg.querySelectorAll('.pk-part').every((r) => t(r.querySelector('.pk-part-what')).length > 0 && !r.querySelector('details') && /not installed/.test(t(r.querySelector('.pk-badges')))));
     ok('…the default part ticked, the opt-in parts not', check(rg, /^Code-review skill/i)?.checked && !check(rg, /Agent guard/i)?.checked && !check(rg, /push gate/i)?.checked, rg.querySelectorAll('label').map(t).join(' | '));
     ok('…the requirements, met', rg.querySelectorAll('.pk-reqs li.ok').length >= 4 && !rg.querySelector('.pk-reqs li.missing'));
     ok('…and harness boxes for Claude and Codex, both detected and ticked', check(rg, /^Claude Code \(~\/\.claude\)/)?.checked && check(rg, /^Codex \(~\/\.codex\)/)?.checked && !check(rg, /^Codex \(/)?.disabled, rg.querySelectorAll('label').map(t).join(' | '));
@@ -121,7 +125,7 @@ try {
     button(previewOf('review-gate'), /^Install$/).click();
     ok('…the button reads Installing… while it runs', await waitFor(() => /Installing…/.test(t(card('review-gate'))), 5000));
     ok('…and it installs', await waitFor(() => card('review-gate')?.querySelector('.pk-result'), 30_000) && /Installed: review-gate\/code-review, review-gate\/agent-guard/.test(t(card('review-gate').querySelector('.pk-result'))), t(card('review-gate')).slice(0, 600));
-    ok('…with the installers\' output behind a disclosure', /Installer output/.test(t(card('review-gate').querySelector('.pk-result .pk-log summary'))));
+    ok('…with the installers\' output behind a button (no fold)', !!button(card('review-gate').querySelector('.pk-result'), /^Installer output$/) && !card('review-gate').querySelector('.pk-result details'));
     ok('the status refresh after it shows a spinner and the trust check\'s progress line', await waitFor(() => page.$('pk-status')?.querySelector('.spinner') && /checking the agent guard/.test(t(page.$('pk-status'))), 10_000), t(page.$('pk-status')));
     ok('…with the elapsed seconds, and the trust box locked while it runs', /\(\d+ s\)/.test(t(page.$('pk-status'))) && page.$('pk-status').querySelector('input').disabled);
     ok('…and then it finishes: the guard is active for claude and the Codex home', await waitFor(statusDone, 30_000)
