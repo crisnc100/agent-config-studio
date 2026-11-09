@@ -259,3 +259,30 @@ for (const [skill, opener, roles, kind] of [['code-review', 'REVIEW_SCRIPT=scrip
     }
   })
 }
+
+test('9 --code-only (the /code-review skill) never starts the security pass; with security.run on, the merge tier says so', () => {
+  mkdirSync(dirname(HOME_CONFIG), { recursive: true })
+  writeFileSync(HOME_CONFIG, JSON.stringify({ security: { run: 'required' } }))
+  const id = (() => { const r = script(['--code-only'], { REVIEW_REVIEWER: 'sol' }); allowed(r); return findingsJson(r).reviewId })()
+  assert.deepEqual(calls().map((c) => c.kind), ['code'])
+  const review = lines(LOG).find((e) => e.id === id)
+  assert.equal(review.security.status, 'not-asked')
+  assert.equal(review.security.run, 'required')
+  const tier = closed(id)
+  assert.equal(tier.tier, 'high')
+  assert.ok(tier.tierReasons.some((r) => /security pass did not cover logic changed after review \(not-asked at review/.test(r)), JSON.stringify(tier.tierReasons))
+  // The same run without --code-only (the /pr-review flow) runs the pass in the same record.
+  rmSync(CALLS, { force: true })
+  const both = script([], { REVIEW_REVIEWER: 'sol' })
+  allowed(both)
+  assert.deepEqual(calls().map((c) => c.kind).sort(), ['code', 'security'])
+  assert.equal(findingsJson(both).security.status, 'ran')
+})
+
+test('10 --code-only with security.run off records the pass as off, and the tier names no security reason', () => {
+  const r = script(['--code-only'], { REVIEW_REVIEWER: 'sol' })
+  allowed(r)
+  assert.equal(findingsJson(r).security.status, 'off')
+  const tier = closed(findingsJson(r).reviewId)
+  assert.ok(!tier.tierReasons.some((x) => /security/.test(x)), JSON.stringify(tier.tierReasons))
+})

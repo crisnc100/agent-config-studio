@@ -2861,7 +2861,7 @@ function securityReasons(review, diff, head) {
   }
   const need = securityNeed(diff)
   if (!need.required) return []
-  if (review.kind === 'grade') return ['no security pass ran (Grade-only close; run /code-review for the security pass)']
+  if (review.kind === 'grade') return ['no security pass ran (Grade-only close; run /pr-review for the security pass)']
   return [`security pass did not cover logic changed after review (${sec?.status ?? 'not recorded'} at review; ${need.why})`]
 }
 // HIGH and not-LOW by deferred findings: a deferred HIGH (a deferred criterion is HIGH) or protected one is HIGH.
@@ -4849,7 +4849,11 @@ async function runEval() {
 
   // The security pass, when required, starts now (the diff, context and verify result are known) and runs beside the
   // code reviewer; its findings join this record once both are done.
-  const securityPlan = beginSecurity({ stats, diff })
+  // --code-only (the /code-review skill): no security pass, recorded as not asked, so the merge tier still says when a
+  // security.run that is on needed one.
+  const securityPlan = args.includes('--code-only') && SECURITY.run !== 'off'
+    ? { record: { run: SECURITY.run, status: 'not-asked', reason: 'code-only run' } }
+    : beginSecurity({ stats, diff })
   const started = Date.now()
   const scored = await scoredFindings(await review(diff), SEL)
   const raw = scored.findings
