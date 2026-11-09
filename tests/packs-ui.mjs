@@ -70,7 +70,11 @@ try {
     ok('…one row per part, each with what it does in a line and a not-installed badge', rg.querySelectorAll('.pk-part').length === 6
       && rg.querySelectorAll('.pk-part').every((r) => t(r.querySelector('.pk-part-what')).length > 0 && !r.querySelector('details') && /not installed/.test(t(r.querySelector('.pk-badges')))));
     ok('…the default part ticked, the opt-in parts not', check(rg, /^Code-review skill/i)?.checked && !check(rg, /Agent guard/i)?.checked && !check(rg, /push gate/i)?.checked, rg.querySelectorAll('label').map(t).join(' | '));
-    ok('…the requirements, met', rg.querySelectorAll('.pk-reqs li.ok').length >= 4 && !rg.querySelector('.pk-reqs li.missing'));
+    // PR F: the requirements list is in the card's "Files and undo" dialog (no folds on Packs).
+    button(rg, /^Files and undo$/)?.click();
+    const reqList = page.doc.body.querySelector('.pk-dialog .pk-reqs');
+    ok('…the requirements, met (listed in the "Files and undo" dialog)', !!reqList && reqList.querySelectorAll('li.ok').length >= 4 && !reqList.querySelector('li.missing'));
+    page.key('Escape');
     ok('…and harness boxes for Claude and Codex, both detected and ticked', check(rg, /^Claude Code \(~\/\.claude\)/)?.checked && check(rg, /^Codex \(~\/\.codex\)/)?.checked && !check(rg, /^Codex \(/)?.disabled, rg.querySelectorAll('label').map(t).join(' | '));
     ok('the machine line says Grok is not here, and why', /Grok/.test(t(page.$('content').querySelector('.pk-here'))) && /not installed, and no ~\/\.grok/.test(t(page.$('content').querySelector('.pk-here'))));
     ok('no request so far wrote anything (only GETs and no apply)', !reqs().some((r) => r.path === '/api/packs/apply' || r.path === '/api/packs/plan'));
