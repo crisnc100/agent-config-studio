@@ -12,9 +12,10 @@ It works in any repository, alone: no review-gate config, no reviewer role and n
 
 ## Step 1 — Run the check
 
-Commit the work first: the check reads the committed diff against the remote's default branch (auto-detected from `origin/HEAD`; `REVIEW_BASE=origin/<branch>` pins it). Use the repo's copy of the script first, the shared runtime as the fallback:
+Commit the work first: the check reads the committed diff against the remote's default branch (auto-detected from `origin/HEAD`; `REVIEW_BASE=origin/<branch>` pins it). Use the repo's copy of the script first, the shared runtime as the fallback, and also when the repo's copy is too old to support `--security-only` (one line says so):
 ```bash
 SCRIPT=scripts/review.mjs
+[ -f "$SCRIPT" ] && ! { grep -q -- --supports "$SCRIPT" && node "$SCRIPT" --supports --security-only; } && echo "scripts/review.mjs does not support --security-only; using the shared runtime" >&2 && SCRIPT=
 [ -f "$SCRIPT" ] || SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
 node "$SCRIPT" --security-only "<intent: what the branch delivers, and what it must keep safe>"
 ```

@@ -379,7 +379,7 @@ for (const [skill, flag] of [['security-check', '--security-only'], ['code-revie
       cpSync(SCRIPT, join(repo, 'scripts/review.mjs'))
       const now = sh(block)
       allowed(now)
-      assert.match(now.out, /review\.mjs · scripts\/review\.mjs/, `${harness}: ${now.out.slice(0, 400)}`)
+      assert.match(now.out, /review\.mjs · \S*scripts\/review\.mjs · /, `${harness}: ${now.out.slice(0, 400)}`)
     }
   })
 }

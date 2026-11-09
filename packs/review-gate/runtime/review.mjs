@@ -118,6 +118,16 @@ const GIT_LOCATION_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_CO
 const REMOVED_FLAGS = ['--shadow-run', '--shadow-report', '--pick-shadow-run', '--pick-report']
 const removedFlag = args.find((a) => REMOVED_FLAGS.includes(a))
 if (removedFlag) stop(`unknown flag ${removedFlag}`)
+const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat', '--supports']
+// Every flag this copy reads. Anything else is refused: an older copy that ignored an unknown flag ran a full review in
+// its place, so a skill asking for a mode this copy lacks gets an error, never a different command.
+const KNOWN_FLAGS = [...VALUE_FLAGS, '--all', '--calibrate', '--code-only', '--deferred', '--eval', '--gate', '--log-outcome', '--noise-report',
+  '--rubric', '--security-findings', '--security-only', '--show-config', '--summary', '--tier-json', '--yes']
+// --log-outcome takes positional values; none of them is a flag.
+const unknownFlag = args.find((a, i) => a.startsWith('--') && !KNOWN_FLAGS.includes(a) && !VALUE_FLAGS.includes(args[i - 1]) && !args.slice(0, i).includes('--log-outcome'))
+if (unknownFlag !== undefined) stop(`unknown flag ${unknownFlag}`)
+// --supports <flag>: exit 0 when this copy reads the flag, 1 when it does not. Skills ask before using a newer mode.
+if (args.includes('--supports')) process.exit(KNOWN_FLAGS.includes(args[args.indexOf('--supports') + 1]) ? 0 : 1)
 // --eval takes only its own flags: with --gate (or any other command) it would run instead of that command.
 const EVAL_FLAGS = ['--eval', '--family', '--cases', '--timeout', '--repeat', '--yes']
 if (args.includes('--eval')) {
@@ -788,7 +798,6 @@ risk = likelihood × impact:
 - MEDIUM otherwise.
 Fix HIGH first, then MEDIUM. Both block until fixed, REFUTED or waived by the operator.
 Missing or invalid scores are asked for again once. A finding still unscored blocks as MEDIUM (HIGH if protected is exactly true).`
-const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat']
 const INTENT = args.includes('--dispute') || args.includes('--waive') || args.includes('--log-grade')
   ? ''
   : args.filter((a, i) => !a.startsWith('--') && !VALUE_FLAGS.includes(args[i - 1])).join(' ').trim()
@@ -3238,7 +3247,7 @@ function startSecurityWorker(job, member) {
     child.on('error', (e) => { clearTimeout(timer); SECURITY_WORKERS.delete(child.pid); finish({ error: `could not start: ${e.message}` }) })
     child.on('exit', (code, signal) => { clearTimeout(timer); SECURITY_WORKERS.delete(child.pid); finish({ code, signal, timedOut }) })
   })
-  console.log(`▶ security · ${member.family} (${member.vendor} · ${member.id} · ${member.effort}) started beside the code reviewer`)
+  console.log(`▶ security · ${member.family} (${member.vendor} · ${member.id} · ${member.effort}) started${args.includes('--security-only') ? '' : ' beside the code reviewer'}`)
   return { member, dir, result, log, started, deadline, done }
 }
 // One worker's outcome: { data } with the raw findings, or { reason } it failed for.

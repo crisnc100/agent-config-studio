@@ -22,11 +22,12 @@ Triage, fixes, statuses, disputes, deferrals and the close follow the **code-rev
 
 ```bash
 SCRIPT=scripts/review.mjs
+[ -f "$SCRIPT" ] && ! { grep -q -- --supports "$SCRIPT" && node "$SCRIPT" --supports --security-findings; } && echo "scripts/review.mjs does not support --security-findings; using the shared runtime" >&2 && SCRIPT=
 [ -f "$SCRIPT" ] || SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
 node "$SCRIPT" --show-config
 ```
 
-Its `security` field is `security.run` as this review will use it.
+Its `security` field is `security.run` as this review will use it. A repo copy of the script too old to support `--security-findings` is skipped for the shared runtime, and one line says so.
 
 - **Security pass.** Config `security.run`: `"off"` (default) | `"required"` | `"always"`, plus `security.timeoutMs` (default 15 minutes). The operator sets it in ACS → Packs → Review gate, which writes the home config. When on, and the change is not docs, tests, static or lockfiles only (or it touches riskPaths; `always` runs every time), a reviewer from the `security` role (ACS → Models → Roles; `REVIEW_SECURITY_REVIEWER=<family>` pins one for a run) reviews the same diff with a security-only prompt, in parallel with the code reviewer, preferring a vendor other than the code reviewer's and trying the next role member when one fails. The code review's reviewer, pick, routing, force and team settings never apply to it. Its findings come back in the same review record and FINDINGS_JSON as `s1`, `s2`, … (`source: "security"`), scored by the same rubric, and go through the same fix round, fix check, close, dispute and `--summary`. A tracked repo config or `REVIEW_CONFIG` may only raise `security.run` above the home config's, and `REVIEW_SECURITY=<level>` only raises it for one run. A required pass that failed or was skipped, or logic changed after a review the pass did not cover, makes the merge tier HIGH.
 - **When it is off, say so.** Write `Security: not reviewed (security.run is off)` in the report and in the PR description. A PR never reads as security-reviewed when no security pass ran. Never raise the setting on your own; it is the operator's.
