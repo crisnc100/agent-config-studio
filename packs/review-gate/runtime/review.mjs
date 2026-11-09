@@ -110,7 +110,7 @@ const option = (flag) => {
 // opinion; the review logs to its own folder, and nothing that reads or writes the review gate's own records runs.
 const EVAL_MODE = !!String(process.env.REVIEW_EVAL ?? '').trim()
 const EVAL_REFUSED = ['--gate', '--close', '--summary', '--tier-json', '--deferred', '--fix-check', '--dispute', '--waive', '--log-grade',
-  '--recheck-of', '--log-outcome', '--slices', '--eval', '--security-worker', '--calibrate', '--noise-report']
+  '--recheck-of', '--log-outcome', '--slices', '--eval', '--security-worker', '--calibrate', '--noise-report', '--security-only', '--security-findings']
 // Git variables that move the repo, work tree or index away from the working directory: eval mode refuses them.
 const GIT_LOCATION_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
   'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM']
@@ -118,11 +118,27 @@ const GIT_LOCATION_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_CO
 const REMOVED_FLAGS = ['--shadow-run', '--shadow-report', '--pick-shadow-run', '--pick-report']
 const removedFlag = args.find((a) => REMOVED_FLAGS.includes(a))
 if (removedFlag) stop(`unknown flag ${removedFlag}`)
+const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat', '--supports']
+// Every flag this copy reads. Anything else is refused: an older copy that ignored an unknown flag ran a full review in
+// its place, so a skill asking for a mode this copy lacks gets an error, never a different command.
+const KNOWN_FLAGS = [...VALUE_FLAGS, '--all', '--calibrate', '--code-only', '--deferred', '--eval', '--gate', '--log-outcome', '--noise-report',
+  '--rubric', '--security-findings', '--security-only', '--show-config', '--summary', '--tier-json', '--yes']
+// --log-outcome takes positional values; none of them is a flag.
+const unknownFlag = args.find((a, i) => a.startsWith('--') && !KNOWN_FLAGS.includes(a) && !VALUE_FLAGS.includes(args[i - 1]) && !args.slice(0, i).includes('--log-outcome'))
+if (unknownFlag !== undefined) stop(`unknown flag ${unknownFlag}`)
+// --supports <flag>: exit 0 when this copy reads the flag, 1 when it does not. Skills ask before using a newer mode.
+if (args.includes('--supports')) process.exit(KNOWN_FLAGS.includes(args[args.indexOf('--supports') + 1]) ? 0 : 1)
 // --eval takes only its own flags: with --gate (or any other command) it would run instead of that command.
 const EVAL_FLAGS = ['--eval', '--family', '--cases', '--timeout', '--repeat', '--yes']
 if (args.includes('--eval')) {
   const others = args.filter((a) => a.startsWith('--') && !EVAL_FLAGS.includes(a))
   if (others.length) stop(`--eval runs alone: it cannot be combined with ${others.join(', ')} (its flags: ${EVAL_FLAGS.slice(1).join(', ')}).`)
+}
+
+// --security-only takes only --plan and an intent: with --close, --gate or any other command, that command would run.
+if (args.includes('--security-only')) {
+  const others = args.filter((a, i) => a.startsWith('--') && !['--security-only', '--plan'].includes(a) && args[i - 1] !== '--plan')
+  if (others.length) stop(`--security-only runs alone: it cannot be combined with ${others.join(', ')} (it takes --plan and an intent).`)
 }
 
 // ── User-configurable defaults (change the model WITHOUT editing this script) ──
@@ -533,7 +549,8 @@ function readLog({ strict = false } = {}) {
     try {
       const entry = JSON.parse(line)
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('not a record')
-      return entry.eval === true ? [] : [entry]
+      // A standalone security check's record is never a review, whichever log it turns up in.
+      return entry.eval === true || entry.securityOnly === true ? [] : [entry]
     } catch {
       unreadable++
       return []
@@ -781,7 +798,6 @@ risk = likelihood × impact:
 - MEDIUM otherwise.
 Fix HIGH first, then MEDIUM. Both block until fixed, REFUTED or waived by the operator.
 Missing or invalid scores are asked for again once. A finding still unscored blocks as MEDIUM (HIGH if protected is exactly true).`
-const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat']
 const INTENT = args.includes('--dispute') || args.includes('--waive') || args.includes('--log-grade')
   ? ''
   : args.filter((a, i) => !a.startsWith('--') && !VALUE_FLAGS.includes(args[i - 1])).join(' ').trim()
@@ -1307,6 +1323,7 @@ if (process.argv.includes('--show-config')) {
         verify: SECOND_OPINION ? 'second-opinion' : 'quote check only',
         verifyCmd: VERIFY_CMD || '(none)',
         fixCheck: FIX_CHECK,
+        security: SECURITY.run,
         source: CONFIG._source || '(built-in defaults / env only)',
         log: LOG_PATH,
       },
@@ -2854,7 +2871,7 @@ function securityReasons(review, diff, head) {
   }
   const need = securityNeed(diff)
   if (!need.required) return []
-  if (review.kind === 'grade') return ['no security pass ran (Grade-only close; run /code-review for the security pass)']
+  if (review.kind === 'grade') return ['no security pass ran (Grade-only close; run /pr-review for the security pass)']
   return [`security pass did not cover logic changed after review (${sec?.status ?? 'not recorded'} at review; ${need.why})`]
 }
 // HIGH and not-LOW by deferred findings: a deferred HIGH (a deferred criterion is HIGH) or protected one is HIGH.
@@ -3230,7 +3247,7 @@ function startSecurityWorker(job, member) {
     child.on('error', (e) => { clearTimeout(timer); SECURITY_WORKERS.delete(child.pid); finish({ error: `could not start: ${e.message}` }) })
     child.on('exit', (code, signal) => { clearTimeout(timer); SECURITY_WORKERS.delete(child.pid); finish({ code, signal, timedOut }) })
   })
-  console.log(`▶ security · ${member.family} (${member.vendor} · ${member.id} · ${member.effort}) started beside the code reviewer`)
+  console.log(`▶ security · ${member.family} (${member.vendor} · ${member.id} · ${member.effort}) started${args.includes('--security-only') ? '' : ' beside the code reviewer'}`)
   return { member, dir, result, log, started, deadline, done }
 }
 // One worker's outcome: { data } with the raw findings, or { reason } it failed for.
@@ -3352,6 +3369,159 @@ async function securityWorker(jobFile) {
   } catch (e) {
     finish(late() ? timedOut() : { ok: false, error: e.message }, 1)
   }
+}
+// ── standalone security check (--security-only) ──────────────────────────────
+// The security reviewer alone, on demand, whatever security.run says. Its record goes to security-log.jsonl beside the
+// review log, with type "security-check", and readLog() drops any record marked securityOnly: so it is never a review to
+// close, fix-check, cover a push, count toward rotation or feed "already decided" forward. Its report lives under
+// reviews/security/, so reviews/latest keeps naming the last real review.
+const SECURITY_LOG = join(dirname(LOG_PATH), 'security-log.jsonl')
+function readSecurityLog() {
+  if (!existsSync(SECURITY_LOG)) return []
+  return readFileSync(SECURITY_LOG, 'utf8').split('\n').filter(Boolean).flatMap((line) => {
+    try {
+      const e = JSON.parse(line)
+      return e?.type === 'security-check' ? [e] : []
+    } catch { return [] }
+  })
+}
+// Each folder on the report's path is a real folder, never a link a branch committed: a link would carry the intent and
+// the findings wherever it points.
+function refuseLinkedSecurityReports() {
+  refuseLinkedReviews()
+  let stat
+  try { stat = lstatSync('reviews/security') } catch (e) { if (e.code === 'ENOENT') return; throw e }
+  if (stat.isSymbolicLink()) die('reviews/security is a symlink, so the report would be written wherever it points. Remove it and check again.')
+  if (!stat.isDirectory()) die('reviews/security is not a folder. Remove it and check again.')
+}
+function writeSecurityReport(id, branch, member, findings, unlocated, diffTruncated) {
+  refuseLinkedSecurityReports()
+  ensureReviewsIgnored()
+  const dir = `reviews/security/${id}`
+  // One level at a time, and the check's own folder exclusively: a path that appeared since the check above fails here.
+  for (const d of ['reviews', 'reviews/security']) try { mkdirSync(d) } catch (e) { if (e.code !== 'EEXIST') throw e }
+  refuseLinkedSecurityReports()
+  mkdirSync(dir)
+  const item = (f) => `- [${f.file || '?'}:${f.line || '?'}] ${f.issue} (id ${f.id})\n  Score: ${scoreText(f)}${isFiled(f) ? ' — filed' : ''}` +
+    `${f.quote ? `\n  > ${String(f.quote).split('\n').join('\n  > ')}` : ''}${f.suggestion ? `\n  → ${f.suggestion}` : ''}`
+  const bySev = (s) => findings.filter((f) => f.severity === s).map(item).join('\n') || '- none'
+  const md = `Security check: ${id}\nReviewer: ${member ? `${member.family} (${member.id})` : 'none'}\nBranch: ${branch} → ${BASE}\nHEAD: ${headNow()}\n` +
+    (SLICE ? `Paths: ${SLICE.join(', ')}\n` : '') +
+    `Reviewed against: ${INTENT || '(inferred from diff)'}\n` +
+    (diffTruncated ? `⚠ Diff exceeded ${DIFF_CAP} chars — only the first ${DIFF_CAP} were inlined.\n` : '') +
+    `This is a standalone security check: it closes nothing and covers no push.\n` +
+    `Findings: ${findings.length} (plus ${unlocated.length} could not be located)\n\n` +
+    `## HIGH\n${bySev('high')}\n\n## MEDIUM\n${bySev('medium')}\n\n## LOW / Info\n${bySev('low')}\n` +
+    (unlocated.length ? `\n## Could not be located in the code (unverified-quote)\n${unlocated.map((f) => `${item(f)}\n  ? ${f.quoteCheck}`).join('\n')}\n` : '')
+  writeFileSync(`${dir}/security-check.md`, md)
+  return dir
+}
+async function runSecurityOnly() {
+  const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList } = getDiff()
+  refuseLinkedSecurityReports()
+  CONTEXT = reviewContext(branch)
+  if (!diff) {
+    console.log(`Nothing to check — no diff against ${BASE}.`)
+    process.exit(0)
+  }
+  const stats = diffStats(undefined, SLICE)
+  const diffTruncated = diff.length > DIFF_CAP
+  if (diffTruncated) console.warn(`⚠ Diff is ${diff.length} chars — only the first ${DIFF_CAP} were inlined in the prompt.`)
+  // No code reviewer runs here, so "another vendor" means another than the branch's author, when it is known.
+  const author = String(cfg('REVIEW_AUTHOR', 'author', '')).trim().toLowerCase()
+  const authorVendor = author ? vendorOfName(author, null) : null
+  const chosen = securityMembers({ vendor: authorVendor })
+  if (chosen.error) stop(`security check: ${chosen.error}\n  Fix: choose the security role in ACS → Models → Roles, or pin one with REVIEW_SECURITY_REVIEWER=<family>.`)
+  const job = { diff, context: CONTEXT, verify: null, slice: SLICE, diffBase: DIFF_BASE, intent: INTENT || null,
+    paths: [...new Set((stats?.files || []).flatMap(pathsOf))] }
+  const base = { run: 'standalone', why: authorVendor || chosen.why.startsWith('REVIEW_SECURITY_REVIEWER') ? chosen.why.replaceAll('the code reviewer', 'the author') : 'security role' }
+  const security = await finishSecurity({ base, job, members: chosen.members, worker: startSecurityWorker(job, chosen.members[0]) })
+  if (security.record.status !== 'ran') stop(`security check failed: ${security.record.reason}`)
+  const located = [], unlocated = []
+  for (const f of security.raw) {
+    const finding = { ...locatedFinding(scoreFinding(f)), source: 'security' }
+    if (finding.status === 'unverified-quote') unlocated.push(finding)
+    else located.push(finding)
+  }
+  requireClean()
+  if (headNow() !== reviewedHead) throw new Error('HEAD changed during the security check')
+  const findingDetails = [...located, ...unlocated]
+  findingDetails.forEach((finding, i) => { finding.id = `s${i + 1}` })
+  markPreExisting(findingDetails, baseSha, reviewedHead)
+  const id = `sec-${new Date().toISOString().slice(0, 19).replaceAll(':', '-').replace('T', '-')}-${randomBytes(3).toString('hex')}`
+  const dir = writeSecurityReport(id, branch, security.member, located, unlocated, diffTruncated)
+  const record = { type: 'security-check', kind: 'security-only', securityOnly: true, id, ts: new Date().toISOString(), head: reviewedHead, branch,
+    base: BASE, baseSha, repoId: repoIdentity(), repo: repoName(), ...(SLICE && { paths: SLICE, files: sliceFileList }), plan: PLAN_PATH ?? null,
+    intent: INTENT || null, rubricVersion: RUBRIC_VERSION, findingDetails, ...recordedLocations(findingDetails), findings: located.length,
+    unverified: unlocated.length, security: { ...security.record, findings: located.length }, dir }
+  try {
+    mkdirSync(dirname(SECURITY_LOG), { recursive: true })
+    appendFileSync(SECURITY_LOG, `${JSON.stringify(record)}\n`)
+  } catch (e) { throw new Error(`Could not append to ${SECURITY_LOG}: ${e.message}`) }
+  const counts = ['high', 'medium', 'low'].map((s) => `${located.filter((f) => f.severity === s).length} ${s}`).join(', ')
+  console.log(`\n✓ Security check complete — ${located.length} finding(s) (${counts}); ${unlocated.length} could not be located. Report: ${dir}/security-check.md`)
+  for (const f of located.filter((f) => f.severity === 'high')) console.log(`HIGH ${f.id} ${f.file}:${f.line} — ${f.issue} (${scoreText(f)})`)
+  console.log('This check closes nothing and covers no push: a PR still needs /code-review (or /pr-review) and its close.')
+  console.log(`Security check ID: ${id}`)
+  console.log(`\n===FINDINGS_JSON===\n${JSON.stringify({ schemaVersion: 1, securityCheckId: id, standalone: true, family: security.record.family, base: BASE, branch, head: reviewedHead,
+    ...(SLICE && { paths: SLICE }), reportPath: `${dir}/security-check.md`, diffTruncated, findings: located.map(publicFinding),
+    unverified: unlocated.map(publicFinding), security: record.security, logPath: SECURITY_LOG }, null, 2)}`)
+  await Promise.all([process.stdout, process.stderr].map((stream) => new Promise((done) => stream.write('', done))))
+  process.exit(0)
+}
+// --security-findings: the open findings of this branch's standalone checks (this repository), as text a PR review is
+// handed as context. They are never "already decided". A finding is fixed only when its quote is gone from its file
+// (followed through renames since the check's head); a file that is gone or can't be read is listed as can't tell.
+function printSecurityFindings() {
+  const branch = sh('git', ['rev-parse', '--abbrev-ref', 'HEAD']), repoId = repoIdentity()
+  const flat = (t) => String(t ?? '').replace(/\s+/g, ' ').trim()
+  const seen = new Set(), open = [], unknown = []
+  for (const check of readSecurityLog().filter((e) => e.branch === branch && e.repoId === repoId).reverse()) {
+    for (const f of check.findingDetails || []) {
+      if (f.status === 'unverified-quote' || isFiled(f) || isPreExisting(f)) continue
+      const key = `${f.file}\0${flat(f.quote)}\0${f.issue}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const where = currentPath(check.head, check.resolvedPaths?.[f.id]?.path || f.file)
+      if (!where.path) { unknown.push({ check: check.id, ...f, why: where.why }); continue }
+      const text = spawnSync('git', ['show', `HEAD:${where.path}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+      if (text.status !== 0) { unknown.push({ check: check.id, ...f, why: `${where.path} can't be read at HEAD` }); continue }
+      if (flat(text.stdout).includes(flat(f.quote))) open.push({ check: check.id, ...f, now: where.path })
+    }
+  }
+  if (!open.length && !unknown.length) return console.log(`No open standalone security findings on ${branch}.`)
+  console.log(`Standalone security findings on ${branch} (from /security-check). They are not decided: check whether each still holds.`)
+  const quoted = (f) => `\n  > ${String(f.quote ?? '').split('\n').join('\n  > ')}`
+  for (const f of open) console.log(`- ${scoreText(f)} ${f.now === f.file ? `${f.file}:${f.line}` : `${f.now} (was ${f.file}:${f.line})`} — ${f.issue} (check ${f.check}, ${f.id})${quoted(f)}`)
+  if (unknown.length) {
+    console.log(`Can't tell whether these are fixed (${unknown.length}): check each by hand.`)
+    for (const f of unknown) console.log(`- ${scoreText(f)} ${f.file}:${f.line} — ${f.issue} (check ${f.check}, ${f.id}; ${f.why})${quoted(f)}`)
+  }
+}
+// Where a file a check saw at `from` is at HEAD: { path }, or { why } it can't be told. Renames are followed commit by
+// commit along the first-parent line, so a file both moved and edited is still found.
+function currentPath(from, file) {
+  if (!file) return { why: 'no file was recorded' }
+  let path = file
+  if (from && spawnSync('git', ['cat-file', '-e', `${from}^{commit}`]).status === 0 && isAncestor(from, 'HEAD')) {
+    const commits = spawnSync('git', ['rev-list', '--reverse', '--first-parent', `${from}..HEAD`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+    for (const commit of commits.status === 0 ? commits.stdout.split('\n').filter(Boolean) : []) {
+      const r = spawnSync('git', ['diff-tree', '-r', '-z', '-M', '--name-status', `${commit}^`, commit], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+      if (r.status !== 0) continue
+      const parts = r.stdout.split('\0')
+      for (let i = 0; i < parts.length - 1;) {
+        const status = parts[i]
+        if (/^[RC]/.test(status)) {
+          if (status[0] === 'R' && parts[i + 1] === path) path = parts[i + 2]
+          i += 3
+        } else {
+          if (status === 'D' && parts[i + 1] === path) return { why: `${path} was deleted` }
+          i += 2
+        }
+      }
+    }
+  }
+  return spawnSync('git', ['cat-file', '-e', `HEAD:${path}`]).status === 0 ? { path } : { why: `${path} is not at HEAD` }
 }
 const CLASSIFIER_TIMEOUT_MS = 5 * 60_000
 // Run a command detached in its own process group with stdin given, killed (group and all) at the timeout.
@@ -4699,6 +4869,8 @@ async function runEval() {
   if (args.includes('--fix-check')) return fixCheck(option('--fix-check'))
   if (args.includes('--slices')) return runSlices()
   if (args.includes('--security-worker')) return securityWorker(option('--security-worker'))
+  if (args.includes('--security-only')) return runSecurityOnly()
+  if (args.includes('--security-findings')) return printSecurityFindings()
   const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList } = getDiff()
   refuseLinkedReviews()
   CONTEXT = reviewContext(branch)
@@ -4733,7 +4905,11 @@ async function runEval() {
 
   // The security pass, when required, starts now (the diff, context and verify result are known) and runs beside the
   // code reviewer; its findings join this record once both are done.
-  const securityPlan = beginSecurity({ stats, diff })
+  // --code-only (the /code-review skill): no security pass, recorded as not asked, so the merge tier still says when a
+  // security.run that is on needed one.
+  const securityPlan = args.includes('--code-only') && SECURITY.run !== 'off'
+    ? { record: { run: SECURITY.run, status: 'not-asked', reason: 'code-only run' } }
+    : beginSecurity({ stats, diff })
   const started = Date.now()
   const scored = await scoredFindings(await review(diff), SEL)
   const raw = scored.findings

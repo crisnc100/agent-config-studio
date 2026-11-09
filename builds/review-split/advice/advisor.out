@@ -1,0 +1,48 @@
+Evidence is in; here is the advisory.
+
+## 1. SCOPE VERDICT
+
+**Over-built in two places, with one false assumption** — the three-stage flow is right, but the token-level "no code changed" check and the module split are not needed for the stated outcome, and the context commit cannot skip re-review under today's gate.
+
+## 2. ADVISORY
+
+**1. Move the context commit to after the fix round and before the fix check. Cut the token-level check as a gate rule.**
+- **Why the current plan fails:** the push gate needs a complete close at the tip, followed only by `builds/` commits (`review.mjs:4283`, `:4315`). Every other changed file must match the exact content a record saw (`:4334-4341`). So a README edit or a one-comment trim after the close blocks the push.
+- **What "never reopens the loop" would cost:** a new accept path inside the push gate, which the skill itself lists as protected logic (`SKILL.md:57`). It would rest on a comment lexer for about 35 languages (`review.mjs:900`) in a dependency-free file.
+- **Why a lexer is unsound** (unverified — reasoned, not run): some comments carry behavior, such as `@ts-expect-error`, `//go:build`, `# type: ignore` and Python docstrings. One lexer mistake is a gate bypass.
+- **Why the earlier slot works:** `fixCheck` needs only a fix diff, not findings (`:3832-3835`). A file the fix check saw is in scope at close (`:3083`), and the close still runs the full tests. No gate change.
+- **Rule to add:** a non-empty context commit means the fix check runs. Otherwise its files are out of scope and the close goes partial (`:3080-3084`).
+- **Guard:** keep a cheap line-level check before the commit (code files change only whole-line comments, never directive comments). It is an accident barrier; nothing trusts it.
+- **Accepted gap:** if the fix check raises a HIGH in the fix (rule 3), one more commit lands after context. Do not re-run context.
+
+**2. Context is a writer for comments and human docs, and a reporter for everything else.**
+- Findings would add ids that each need a status, which is the per-fix logging Cris called overkill.
+- Files that instruct agents (SKILL.md, CLAUDE.md, AGENTS.md, pack `instructions/`) are behavior here, yet the gate counts `.md` as docs (`review.mjs:899`). Tests also execute SKILL.md code blocks (`review.skills.test.mjs:3`). The writer should report on those, not edit them.
+- Its whole output is three lines at most in the build log, which `/pr` already reads (`pr-facts.mjs:546`). No new record type.
+- Nothing to build for "one line per deferred finding": `pr-facts --check` already enforces it.
+
+**3. Cut "checked by another vendor" for the context writer.** The fix check already reads its commit. A second checker is the loop Cris ruled out.
+
+**4. The writer needs an ACS role.** CLAUDE.md forbids family names in commands, and no `writer` role exists. This is a hidden change outside the pack (roles, pack.json workflow steps). Default it to Sonnet per the standing rule; it is one roles edit to reverse.
+
+**5. Cut `--security-only`.** Decisions.md:30 says ours "stays the fast per-PR security pass", and its findings share one record and one fix round by design (decisions.md:3). If it is ever built, it must be report-only: a closable security-only record could satisfy the push gate without a code review.
+
+**6. Defer the module split (5d).**
+- **It is not a move.** Eight module-level variables are reassigned across the proposed boundaries: `SLICE`, `CONTEXT`, `DIFF_BASE`, `VERIFY_RESULT`, `SEL`, `SELECTION`, `MODEL_DEADLINE`, `FIX_CHECK_RUN` (`:726-784`, `:1266`, `:1703`; reassigned at `:3295-3298`, `:3820-3841`). ES imports are read-only, so "behavior unchanged" needs a state refactor of the gate first.
+- **Single-file contracts break.** The hook checks only `review.mjs` (`hooks/pre-push:13`). Eval hashes only that file as the runtime (`:4976`). A live repo copy exists at `team-skills-bundle/scripts/review.mjs`.
+- **The file is still moving.** 20 commits since Oct 25 (+5,590 lines), and PR C removes 448 more.
+- **If done later:** first one PR that puts the shared state in one object, still in one file; then pure moves. The black-box tests make that checkable (`review.test.mjs:17`).
+
+**7. PR order.**
+1. Merge PR C. Its log says the SKILL.md shortening was reverted to wait for this split (`review-cleanup/log.md:21`).
+2. Context stage: the skill for both harnesses, the role, the line-level guard, and the flow text in the code-review and build skills. Package lean-comments' rules without its "ask which to apply" step (`lean-comments/SKILL.md:57`) and its hardcoded base (`:14`). State "once per PR, not per phase" beside the phase rule (`build/SKILL.md:71`).
+3. Skill text split: security into its own file, gate rules into a reference file. One skill must still own the sequence, or it will drift across three. Update the "14 SKILL.md files" assertion (`review.packs.test.mjs:309`) in its own test-only commit.
+
+**Missing from the brief:** put the comment rules in the builder's brief so the end stage usually finds nothing.
+
+## 3. QUESTIONS
+
+1. **Does "separate them" include review.mjs's file layout now, or only the flow and skills?** Recommended: flow and skills now; modules later, starting with the state-object PR.
+2. **Context commit placement: before the fix check, or strictly last with a new push-gate exemption?** The first costs one fix-check pass on PRs where context changed something. The second costs a new accept path in protected gate logic. Recommended: before the fix check.
+3. **May the context writer edit agent-instruction files, or only report on them?** Recommended: report only; those edits belong to the builder under a plan criterion, so the code review sees them.
+4. **Do you want a security run outside a PR review at all?** Recommended: no; Claude Code's `/security-review` and the Cloudflare audit skill cover ad-hoc runs.

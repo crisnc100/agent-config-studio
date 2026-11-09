@@ -50,6 +50,8 @@ import * as memoryOps from './lib/memory-ops.js';
 import { contextMap, contextFile } from './lib/context-map.js';
 import { removeBatch } from './lib/batch-delete.js';
 import { applyJob, buildPlan, catalogView, parseRequest, planView, startStatus, statusJob } from './lib/packs-routes.js';
+import { machine as packsMachine } from './lib/packs.js';
+import { securityApply, securityPlan } from './lib/review-security.js';
 import {
   syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
   isInstalled as shortcutsInstalled, shortcutsFromSeats, shortcutsPath, zshenvPath,
@@ -1185,6 +1187,22 @@ export function createApp(opts = {}) {
   'POST /api/packs/apply': async (req) => {
     requireStrict(req);
     return applyJob(parseRequest(await objectBody(req, 16 * 1024), { apply: true }));
+  },
+  /**
+   * The review gate's security switch: security.run in the home review config the review script reads first.
+   * Plan returns the file's diff and a signature; apply writes only that diff (409 if the file moved), after a backup.
+   */
+  'POST /api/packs/security/plan': async (req) => {
+    requireStrict(req);
+    const { level, ...rest } = await objectBody(req, 1024);
+    if (Object.keys(rest).length) throw bad(`unknown field "${Object.keys(rest)[0].slice(0, 64)}"`, 400);
+    return securityPlan(level, packsMachine());
+  },
+  'POST /api/packs/security/apply': async (req) => {
+    requireStrict(req);
+    const { level, signature, ...rest } = await objectBody(req, 1024);
+    if (Object.keys(rest).length) throw bad(`unknown field "${Object.keys(rest)[0].slice(0, 64)}"`, 400);
+    return securityApply(level, signature, packsMachine());
   },
 
   /**

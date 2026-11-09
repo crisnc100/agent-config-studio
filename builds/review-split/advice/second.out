@@ -1,0 +1,21 @@
+## 1. SCOPE VERDICT
+
+**over-built** — the three responsibilities are right, but a universal “comment/doc edits need no review” exemption adds unnecessary complexity and weakens the proposed boundary.
+
+## 2. ADVISORY
+
+- **CUT the token-equivalence exemption.** The current close explicitly rejects ordinary documentation or source edits after the fix check ([review.mjs:3020](/Users/cortega/Documents/Projects/personal/agent-config-studio-trunk/packs/review-gate/runtime/review.mjs:3020)). This requires a deliberate gate change; a skill instruction cannot make it work. Token equality also does not establish unchanged tooling or agent behavior: lean-comments already protects directive comments, and `SKILL.md` files contain operational instructions ([lean-comments:46](/Users/cortega/.claude/skills/lean-comments/SKILL.md:46)). Initially, use the existing slice-review mechanism for files changed by context work, then close at the final tip. That avoids a new exemption engine and preserves coverage.
+
+- **Separate context writing from context judgment.** Sonnet can make the bounded documentation/comment edits; another vendor checks them read-only. Run this once after code/security fixes, using the final diff, plan, and affected documentation. Reuse lean-comments’ criteria and `/pr`’s writing/checking contract. **Cut duplicate PR generation and per-fix narratives.** Finalize the PR body after the final close: `/pr` obtains authoritative deferred findings and review status from that close ([PR skill:54](/Users/cortega/Documents/Projects/personal/agent-config-studio-trunk/packs/pr/skills/claude/pr/SKILL.md:54), [PR skill:96](/Users/cortega/Documents/Projects/personal/agent-config-studio-trunk/packs/pr/skills/claude/pr/SKILL.md:96)). This prevents stale review claims and competing sources of truth.
+
+- **Make the missing docs check substantive.** Require identification of the documentation describing each changed behavior, followed by an update or a concrete “no update needed” reason. The existing helper clears `codeWithoutDocs` whenever *any* documentation file changes; it does not establish relevance or accuracy ([pr-facts.mjs:395](/Users/cortega/Documents/Projects/personal/agent-config-studio-trunk/packs/pr/skills/claude/pr/pr-facts.mjs:395)). This is the actual missing capability, rather than another file-extension check.
+
+- **Keep one coordinator and distinguish review coverage by responsibility.** The existing security worker already runs beside code review and returns findings into one record ([review.mjs:3103](/Users/cortega/Documents/Projects/personal/agent-config-studio-trunk/packs/review-gate/runtime/review.mjs:3103)). Preserve that shared fix round. A standalone security run must not accidentally satisfy code-review coverage; add an explicit acceptance test for that boundary. Keep orchestration in the session/runtime coordinator and enforcement in the push hook. Splitting skills should not produce three independent close workflows.
+
+- **Do the module split, but keep it mechanical and ship working increments.** This directly addresses the stated monolith problem; stopping at skill text would leave it intact. Preserve CLI behavior and record formats, and account for eval as an existing responsibility. Include installation and copied-runtime checks: the pack explicitly lists runtime files, while coverage tests currently copy `review.mjs` alone ([pack.json:157](/Users/cortega/Documents/Projects/personal/agent-config-studio-trunk/packs/review-gate/pack.json:157), [review.coverage.test.mjs:101](/Users/cortega/Documents/Projects/personal/agent-config-studio-trunk/packs/review-gate/tests/review.coverage.test.mjs:101)). “Tests unchanged” should mean unchanged behavioral assertions, not frozen fixture setup. **Cut a generic plugin framework or speculative extension points.**
+
+Recommended order: reconcile PR C first; extract the existing security implementation and ship its standalone command with `/security-check`; add the bounded context workflow using existing coverage; then extract the remaining responsibilities in behavior-preserving PRs. Do not publish skills advertising unavailable commands.
+
+## 3. QUESTIONS
+
+No real questions — the scope is determined.

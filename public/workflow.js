@@ -135,13 +135,15 @@ function wfDiagram(wf, ctx) {
   // Eight or more steps would squeeze each to a sliver at a desktop width: rows of four instead.
   const ol = el('ol', `flow${wf.steps.length > 7 ? ' rows' : ''}`);
   let anyOff = false;
-  for (const raw of wf.steps) {
+  for (const [i, raw] of wf.steps.entries()) {
     const step = wfStepFor(raw, variant);
     const on = wfStepOn(step, ctx);
     if (!on) anyOff = true;
     // A step with no model, or one that is off, is a narrow tile: the role steps get the width.
-    const li = el('li', `step${on ? '' : ' off'}${!on || step.who === 'script' ? ' narrow' : ''}`);
+    // A step `beside` the one before runs at the same time: the two are joined by a mark, not an arrow.
+    const li = el('li', `step${on ? '' : ' off'}${!on || step.who === 'script' ? ' narrow' : ''}${wf.steps[i + 1]?.beside ? ' with-next' : ''}${raw.beside ? ' beside' : ''}`);
     li.dataset.step = step.id;
+    if (raw.beside) li.appendChild(el('span', 'pair-note', 'at the same time'));
     const name = el('div', 'step-name', step.label);
     if (!on) { name.appendChild(document.createTextNode(' ')); name.appendChild(el('span', 'step-off', 'off')); }
     li.appendChild(name);

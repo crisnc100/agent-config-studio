@@ -5,9 +5,9 @@
   "summary": "A reviewer reads your branch and reports bugs. Every finding must quote real code, gets fixed once, and is logged.",
   "explain": {
     "what": "The review gate is a code-review skill plus a small shared script (review.mjs). When you ask your agent to review a branch, the script asks a model from your reviewer role in ACS (Models → Roles) to read the committed changes and report bugs. Each finding must quote the exact code it is about, and a script checks that quote before you ever see the finding. The optional parts add an agent guard, a push gate and Codex log access.",
-    "does": "Day to day you say /code-review (or 'review this branch'). The script picks a reviewer from your reviewer role, skipping any whose CLI you have not installed and saying which it skipped. It writes a report under reviews/ in the repo and one line to a review log. You decide which findings to fix; fixes are recorded with a close, and disputed findings can get a second model's verdict. If no reviewer can run, it stops and tells you exactly what to fix (install model-id, set the reviewer role, or install a CLI). It never quietly uses a model your role does not list.",
+    "does": "Day to day you say /code-review (or 'review this branch') for bugs, /security-check for security holes alone, and /pr-review when a branch is ready for its pull request: it runs the code review and, when the security setting is on, the security pass in one review, then the fixes, the push and the description. The script picks a reviewer from your reviewer role, skipping any whose CLI you have not installed and saying which it skipped. It writes a report under reviews/ in the repo and one line to a review log. You decide which findings to fix; fixes are recorded with a close, and disputed findings can get a second model's verdict. If no reviewer can run, it stops and tells you exactly what to fix (install model-id, set the reviewer role, or install a CLI). It never quietly uses a model your role does not list.",
     "changes": [
-      "~/.claude/skills/code-review/ and ~/.codex/skills/code-review/ (the skill, for the CLIs you have)",
+      "~/.claude/skills/ and ~/.codex/skills/: code-review, security-check and pr-review (the skills, for the CLIs you have)",
       "~/.agent-config-studio/review-gate/ (the shared script, the scoring calibration and an example config)",
       "~/.agent-config-studio/review-log/review-log.jsonl (created by your first review)",
       "anything an optional part lists, only if you turn that part on",
@@ -16,73 +16,25 @@
     "undo": "Uninstalling removes the skill folders and, once no installed part uses it, the shared ~/.agent-config-studio/review-gate/ folder. A file you edited after installing is kept and reported. Your review log and the reports in each repo's reviews/ folder are your history and are never deleted."
   },
   "workflow": {
-    "command": "/code-review",
-    "variants": [
-      {
-        "id": "standard",
-        "label": "Standard",
-        "hint": "/code-review — a reviewer from your pool"
-      },
-      {
-        "id": "premium",
-        "label": "Premium",
-        "hint": "/code-review premium — only in Claude Code",
-        "twins": [
-          "claude"
-        ]
-      },
-      {
-        "id": "both",
-        "label": "Both",
-        "hint": "/code-review both — only in Claude Code",
-        "twins": [
-          "claude"
-        ]
-      },
-      {
-        "id": "claude",
-        "label": "Claude team",
-        "hint": "/code-review claude — a team of reviewers on Claude models"
-      }
-    ],
+    "command": "/pr-review",
+    "note": "/code-review and /security-check also run on their own; neither counts as a PR review alone.",
     "steps": [
       {
         "id": "review",
-        "label": "Review",
-        "what": "Reads the branch, reports bugs.",
+        "label": "Code review",
+        "what": "/code-review: reports bugs.",
         "who": "role",
         "role": "reviewer",
-        "pool": "picked per review",
-        "variants": {
-          "premium": {
-            "what": "One careful pass, by the judge.",
-            "role": "judge"
-          },
-          "both": {
-            "what": "Two reviews, one merged list.",
-            "also": "judge",
-            "alsoNote": "double-checks"
-          },
-          "claude": {
-            "what": "A team of Claude reviewers.",
-            "vendor": "claude",
-            "pool": "the Claude team"
-          }
-        }
+        "pool": "picked per review"
       },
       {
         "id": "security",
-        "label": "Security pass",
-        "what": "Looks for security holes only.",
+        "label": "Security check",
+        "what": "/security-check: holes only.",
         "who": "role",
         "role": "security",
-        "setting": "security"
-      },
-      {
-        "id": "quote",
-        "label": "Quote check",
-        "what": "Drops findings with no real quote.",
-        "who": "script"
+        "setting": "security",
+        "beside": "review"
       },
       {
         "id": "fix",
@@ -107,17 +59,12 @@
         "what": "One look at the fixes.",
         "who": "role",
         "role": "reviewer",
-        "note": "same pick",
-        "variants": {
-          "premium": {
-            "role": "judge"
-          }
-        }
+        "note": "same pick"
       },
       {
-        "id": "log",
-        "label": "Defer and log",
-        "what": "Logs what is left, deferred.",
+        "id": "close",
+        "label": "Close",
+        "what": "Tests, defers the rest, logs it.",
         "who": "script"
       },
       {
@@ -127,6 +74,12 @@
         "who": "script",
         "tool": "git hook",
         "part": "push-gate"
+      },
+      {
+        "id": "pr",
+        "label": "PR description",
+        "what": "/pr writes it from the close.",
+        "who": "agent"
       }
     ]
   },
@@ -157,6 +110,10 @@
       "files": [
         "packs/review-gate/skills/claude/code-review/SKILL.md",
         "packs/review-gate/skills/codex/code-review/SKILL.md",
+        "packs/review-gate/skills/claude/security-check/SKILL.md",
+        "packs/review-gate/skills/codex/security-check/SKILL.md",
+        "packs/review-gate/skills/claude/pr-review/SKILL.md",
+        "packs/review-gate/skills/codex/pr-review/SKILL.md",
         "packs/review-gate/runtime/review.mjs",
         "packs/review-gate/runtime/merge.mjs",
         "packs/review-gate/runtime/calibration.md",
@@ -172,10 +129,11 @@
       ],
       "explain": {
         "changes": [
-          "~/.claude/skills/code-review/SKILL.md (Claude Code; Grok reads this folder too)",
-          "~/.codex/skills/code-review/SKILL.md (Codex)",
+          "~/.claude/skills/code-review/, security-check/ and pr-review/ (Claude Code; Grok reads this folder too)",
+          "~/.codex/skills/code-review/, security-check/ and pr-review/ (Codex)",
           "~/.agent-config-studio/review-gate/review.mjs, merge.mjs, calibration.md and review-config.example.json (one shared copy for every CLI), and eval/examples/ (two example eval cases to copy)",
           "~/.agent-config-studio/review-log/review-log.jsonl (created by the first review; one line per review, dispute, waiver and close)",
+          "~/.agent-config-studio/review-log/security-log.jsonl (created by the first /security-check; the review gate never reads it)",
           "reviews/ inside each repo you review (the reports), added to that repo's .git/info/exclude so git ignores it"
         ]
       }

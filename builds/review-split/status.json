@@ -1,0 +1,3 @@
+{"s1":{"status":"fixed","test":"packs/review-gate/tests/review.security-only.test.mjs — a link at reviews or reviews/security makes the standalone check refuse; nothing is written outside the checkout"},
+ "f1":{"status":"fixed","test":"packs/review-gate/tests/review.security-only.test.mjs — --security-findings keeps moved, renamed and deleted-file findings (\"can't tell\")"},
+ "f2":{"status":"fixed","test":"packs/review-gate/tests/review.security-only.test.mjs — an old repo copy without the flag falls back to the shared runtime; review.mjs refuses unknown flags"}}

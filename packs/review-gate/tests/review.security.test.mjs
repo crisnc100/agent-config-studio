@@ -425,15 +425,22 @@ test('8 security off or not required at review, then logic in the close diff wit
   assert.equal(tier.tier, 'medium')
 })
 
-test('12 the code-review skill text (claude and codex twins) describes the security pass, not "not a security audit"', () => {
+test('12 the pr-review skill text (claude and codex twins) describes the security pass, the security-check skill its role, and code-review has none', () => {
   const skills = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills')
   for (const harness of ['claude', 'codex']) {
-    const text = readFileSync(join(skills, harness, 'code-review', 'SKILL.md'), 'utf8')
-    assert.doesNotMatch(text, /security audit/i, harness)
-    assert.match(text, /\*\*Security pass\.\*\* Config `security\.run`: `"off"` \(default\) \| `"required"` \| `"always"`/, harness)
-    assert.match(text, /`security` role/, harness)
-    assert.match(text, /REVIEW_SECURITY_REVIEWER/, harness)
-    assert.doesNotMatch(text, /duplicateOf/, harness)
+    const read = (name) => readFileSync(join(skills, harness, name, 'SKILL.md'), 'utf8')
+    const pr = read('pr-review'), check = read('security-check'), code = read('code-review')
+    for (const text of [pr, check, code]) {
+      assert.doesNotMatch(text, /security audit/i, harness)
+      assert.doesNotMatch(text, /duplicateOf/, harness)
+    }
+    assert.match(pr, /\*\*Security pass\.\*\* Config `security\.run`: `"off"` \(default\) \| `"required"` \| `"always"`/, harness)
+    for (const text of [pr, check]) {
+      assert.match(text, /`security` role/, harness)
+      assert.match(text, /REVIEW_SECURITY_REVIEWER/, harness)
+    }
+    assert.match(code, /`--code-only`/, harness)
+    assert.doesNotMatch(code, /\*\*Security pass\.\*\*|security\.run|`security` role|REVIEW_SECURITY/, harness)
   }
 })
 
@@ -513,7 +520,7 @@ test('fix 5 a Grade-only close with the pass on is HIGH with a reason that names
   const grade = records().filter((e) => e.type === 'review' && e.kind === 'grade').at(-1)
   const tier = closed(grade.id)
   assert.equal(tier.tier, 'high')
-  assert.ok(tier.tierReasons.includes('no security pass ran (Grade-only close; run /code-review for the security pass)'), JSON.stringify(tier.tierReasons))
+  assert.ok(tier.tierReasons.includes('no security pass ran (Grade-only close; run /pr-review for the security pass)'), JSON.stringify(tier.tierReasons))
 })
 
 test('fix 6 short timeout, the security result arriving later, the parent busy longer: failed, timed out', () => {
