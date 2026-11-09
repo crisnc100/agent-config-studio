@@ -18,17 +18,7 @@
 - Pre-existing sandbox note: the close suite's waiver tests need a real PTY (`script: openpty: Operation not permitted`
   inside the agent sandbox); they fail the same way on main there and pass outside it.
 
-## Part 2: code-review skill split
-
-- claude SKILL.md 159 -> 60 lines (161 before part 1's shadow removal); codex 108 -> 58 (112 before part 1).
-- Moved whole lines, byte for byte, by script; a check confirmed every line of the old skill is in SKILL.md or
-  reference.md. New text: one pointer line in each SKILL.md, a two-line title and intro in each reference.md, and a
-  `## Never (from the review policy)` header in the claude SKILL.md.
-- The claude skill had no never-do list, so its SKILL.md repeats rules 6 and 9 verbatim under that header; the full
-  policy (rules 1-11) stays whole in reference.md. The codex skill's own "Hard rules" stay in its SKILL.md.
-- "Who reviews" stays in SKILL.md (it is how a reviewer is chosen, and the packs test pins `model-id --role reviewer`
-  to SKILL.md).
-- pack.json lists both reference.md files, so the installer copies them beside SKILL.md.
+Part 2 reverted: the skill split will reshape SKILL.md.
 
 ## Part 3: security prompt borrowings
 

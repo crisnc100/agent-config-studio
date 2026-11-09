@@ -373,18 +373,3 @@ test('the advisor skills say --investigate gives an unsandboxed shell, and never
     assert.match(flat, /It is told never to change files, and ask-model reports any change to the work tree, but it isn't sandboxed/, `advisor/${harness}`)
   }
 })
-
-test('the code-review skill is at most 60 lines and points to the reference.md beside it, which ships for both harnesses', () => {
-  const files = manifest('review-gate').parts.find((p) => p.id === 'code-review').files
-  for (const harness of HARNESSES) {
-    const dir = join(PACKS, 'review-gate', 'skills', harness, 'code-review')
-    const skill = readFileSync(join(dir, 'SKILL.md'), 'utf8')
-    assert.ok(skill.trimEnd().split('\n').length <= 60, `${harness}: SKILL.md has ${skill.trimEnd().split('\n').length} lines`)
-    assert.ok(skill.includes('reference.md'), `${harness}: SKILL.md names reference.md`)
-    assert.ok(existsSync(join(dir, 'reference.md')), `${harness}: reference.md exists`)
-    assert.ok(files.includes(`packs/review-gate/skills/${harness}/code-review/reference.md`), `${harness}: pack.json lists reference.md`)
-    // The one command and the loop stay in SKILL.md itself.
-    for (const phrase of ['/review-gate/review.mjs', '--close <review-id>', 'fix check', '**Deferred findings**'])
-      assert.ok(skill.includes(phrase), `${harness}: SKILL.md keeps ${phrase}`)
-  }
-})
