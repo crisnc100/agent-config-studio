@@ -44,7 +44,7 @@ codex exec --skip-git-repo-check --sandbox workspace-write -m "$id" -c model_rea
 
 - **Deliberate comments.** Every comment tells the next reader something the code can't: why, a constraint, a trade-off, a trap. Otherwise delete it, including slop left by earlier agents. No narration, section banners, name-restating doc comments or process notes ("fixed", "now", "per review"). Keep license headers and ticketed TODOs.
 - **Directive and executable comments are never touched:** `@ts-…`, `//go:build`, `# type: ignore`, lint directives, docstrings that tests read, Rust doc tests, Go `// Output:` examples.
-- **Never edit a line that holds code,** even to change a comment at its end.
+- **Never edit a line that holds code,** even to change a comment at its end. Never add or remove a block-comment delimiter (`/*`, `*/`): edit the text inside a block comment, and report a whole block that should go.
 - **Every doc claim is true of the code.** Confirm each one by reading the code, and record it with its `file:line` in the docs table. A claim you cannot confirm is not written. Check each point of the brief's `mechanism` against the code before using it.
 - **The right place, not the main file.** A project's root CLAUDE.md or AGENTS.md stays short: only what every agent needs in every session there. Anything else goes, in this order: into a sub-folder CLAUDE.md or AGENTS.md next to the code it is about; or into a fuller doc (`docs/<topic>.md`) with a one-line pointer from the root file; or nowhere, when the code already says it. Instruction files are untouchable for the writer, so propose each such change in the report, naming its target file and level (root, sub-folder, or pointer plus doc). The docs you write follow the same rule: one home per fact, linked rather than repeated.
 - **Docs describe the result, not the journey.**
@@ -55,7 +55,7 @@ codex exec --skip-git-repo-check --sandbox workspace-write -m "$id" -c model_rea
 ```bash
 node "$CP" --check-commit HEAD --brief builds/<slug>/context-brief.json
 ```
-It fails, naming each path and why, when the commit touched a test file, an agent-instruction file (SKILL.md, CLAUDE.md, AGENTS.md, GEMINI.md, `.cursor/rules`, a pack's `instructions/`, `.claude/`, `.codex/`, `.agents/`), a path the brief lists, a generated block (`<!-- ns:name … -->` … `<!-- /ns:name -->`), a doc line a test quotes, or a line in a code file that is not comment or blank. On a failure, take those changes out of the commit (restore the files from `HEAD~1` and amend) and put them in the report. Never change the check.
+It fails, naming each path and why, when the commit touched a test file, an agent-instruction file (SKILL.md, CLAUDE.md, AGENTS.md, GEMINI.md, `.cursor/rules`, a pack's `instructions/`, `.claude/`, `.codex/`, `.agents/`), a path the brief lists, a generated block (`<!-- ns:name … -->` … `<!-- /ns:name -->`), a doc line a test quotes, or a line in a code file that is not comment or blank. The code-line part fails closed (anything it cannot read for sure counts as code) and is only an accident barrier: the docs-focus slice reviews the commit as code. On a failure, take those changes out of the commit (restore the files from `HEAD~1` and amend) and put them in the report. Never change the check.
 
 ## Step 4 — the docs table
 
