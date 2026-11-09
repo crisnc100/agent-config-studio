@@ -35,9 +35,11 @@ const rolesIn = (wf) => {
   ok('handoff, flag and worktree are one-line strips; every other pack is a diagram of steps', JSON.stringify(strips) === '["flag","handoff","worktree"]'
     && catalog.filter((p) => !p.workflow?.strip).every((p) => p.workflow.steps.length >= 3), JSON.stringify(strips));
   const rg = catalog.find((p) => p.id === 'review-gate').workflow;
-  ok('review-gate: Standard, Premium, Both and Claude team tabs', JSON.stringify(rg.variants.map((v) => v.label)) === '["Standard","Premium","Both","Claude team"]');
-  ok('review-gate: the steps the skill names, in order', JSON.stringify(rg.steps.map((s) => s.id)) === '["review","security","quote","fix","dispute","check","log","gate"]',
+  ok('review-gate: the /pr-review flow, with no variant tabs (the reviewer tiers are /code-review\'s)', rg.command === '/pr-review' && !rg.variants?.length, JSON.stringify(rg.variants));
+  ok('review-gate: the steps /pr-review names, in order', JSON.stringify(rg.steps.map((s) => s.id)) === '["review","security","fix","dispute","check","close","gate","pr"]',
     JSON.stringify(rg.steps.map((s) => s.id)));
+  ok('…the code review and the security check run side by side, and the note says each runs alone too', rg.steps.find((s) => s.id === 'security').beside === 'review'
+    && rg.steps.filter((s) => s.beside).length === 1 && /\/code-review/.test(rg.note || '') && /\/security-check/.test(rg.note || ''), JSON.stringify(rg.note));
   // PR C: eight steps share one row, so each says what it does in one short line.
   const whats = rg.steps.flatMap((st) => [st.what, ...Object.values(st.variants || {}).map((o) => o.what)]).filter(Boolean);
   ok('review-gate: every step\'s description is one short line (36 characters at most)', whats.every((w) => w.length <= 36), whats.filter((w) => w.length > 36).join(' | '));
@@ -53,8 +55,8 @@ const rolesIn = (wf) => {
     && /no extra model is called/i.test(pr.note || ''));
   const adv = catalog.find((p) => p.id === 'advisor').workflow;
   ok('advisor: Advisor, Second and Both tabs', JSON.stringify(adv.variants.map((v) => v.id)) === '["advisor","second","both"]');
-  ok('review-gate: Premium and Both say "only in Claude Code"; the Claude team says it runs Claude models', rg.variants.filter((v) => ['premium', 'both'].includes(v.id)).every((v) => /only in Claude Code/.test(v.hint))
-    && /Claude models/.test(rg.variants.find((v) => v.id === 'claude').hint), JSON.stringify(rg.variants.map((v) => v.hint)));
+  ok('review-gate: the two reviewers are named by their skills', /\/code-review/.test(rg.steps.find((s) => s.id === 'review').what) && /\/security-check/.test(rg.steps.find((s) => s.id === 'security').what),
+    JSON.stringify(rg.steps.slice(0, 2).map((s) => s.what)));
   const so = catalog.find((p) => p.id === 'second-opinion').workflow.steps.find((s) => s.id === 'ask');
   ok('second-opinion "Its take": the advisor and its second opinion, plus the reviewer pool (f1)', so.role === 'advisor' && so.use === 'both' && so.also === 'reviewer', JSON.stringify(so));
   ok('every summary in plain words: no "ACS", no "Frame, Bar and Judge", no "role" jargon', catalog.every((p) => !/\bACS\b|Frame, Bar|\brole\b/.test(p.summary)),
@@ -82,7 +84,10 @@ console.log('\nvalidatePack checks the workflow shape (R6)');
   bad('a role step without a role', (w) => { delete w.steps[0].role; }, /role/);
   bad('a step linked to a part the pack does not have', (w) => { w.steps.at(-1).part = 'no-such-part'; }, /part/);
   bad('a setting the studio does not read', (w) => { w.steps[1].setting = 'colour'; }, /setting/);
-  bad('a step override for a variant that does not exist', (w) => { w.steps[0].variants.nope = { what: 'x' }; }, /variant/);
+  bad('a step override for a variant that does not exist', (w) => { (w.steps[0].variants ??= {}).nope = { what: 'x' }; }, /variant/);
+  bad('a step beside a step that is not the one before it', (w) => { w.steps[3].beside = 'review'; }, /beside/);
+  bad('a step beside one that is itself beside another', (w) => { w.steps[2].beside = 'security'; }, /beside/);
+  bad('the first step beside anything', (w) => { w.steps[0].beside = 'security'; }, /beside/);
   bad('two steps with one id', (w) => { w.steps[2].id = w.steps[1].id; }, /id/);
   bad('a step without a label', (w) => { w.steps[0].label = ''; }, /label/);
   bad('neither steps nor a strip', (w) => { delete w.steps; }, /steps|strip/);
@@ -94,7 +99,9 @@ console.log('\ndrift guard: every role a workflow names is in its SKILL.md twins
     const roles = rolesIn(pack.workflow);
     if (!roles.size) continue;
     const skill = pack.parts.find((p) => p.kind === 'skill');
-    const twins = ['claude', 'codex'].map((h) => ({ h, file: skill.files.map((f) => path.join(ROOT, f.from || f)).find((f) => f.includes(`/skills/${h}/`) && f.endsWith('SKILL.md')) }));
+    // The skill the card's command runs (/pr-review in the review gate's part of three skills), else the part's first.
+    const own = (h) => skill.files.map((f) => path.join(ROOT, f.from || f)).filter((f) => f.includes(`/skills/${h}/`) && f.endsWith('SKILL.md'))
+    const twins = ['claude', 'codex'].map((h) => ({ h, file: own(h).find((f) => f.endsWith(`/${pack.workflow.command.replace(/^\//, '')}/SKILL.md`)) || own(h)[0] }));
     for (const { h, file } of twins) {
       ok(`${pack.id}: its ${h} SKILL.md exists`, !!file && fs.existsSync(file), JSON.stringify(skill.files).slice(0, 200));
       if (!file) continue;
@@ -210,17 +217,22 @@ try {
   ok('Dispute, with two reviewers in the pool: "another model from the pool than the one that found it"', /another model from the pool than the one that found it/.test(who('review-gate', 'dispute')), who('review-gate', 'dispute'));
   ok('second-opinion "Its take": Fable · high and Astra · high, plus the reviewer pool (f1)', /Fable · high and Astra · high/.test(who('second-opinion', 'ask'))
     && /reviewer/.test(who('second-opinion', 'ask')) && /Opus · xhigh or Sol · xhigh/.test(who('second-opinion', 'ask')), who('second-opinion', 'ask'));
-  ok('no-model steps and off steps are narrow tiles, so role steps get the width (design 1)', step('review-gate', 'quote').classList.contains('narrow')
-    && step('review-gate', 'log').classList.contains('narrow') && step('review-gate', 'security').classList.contains('narrow') && !step('review-gate', 'review').classList.contains('narrow'));
+  ok('no-model steps and off steps are narrow tiles, so role steps get the width (design 1)', step('review-gate', 'close').classList.contains('narrow')
+    && step('review-gate', 'security').classList.contains('narrow') && !step('review-gate', 'review').classList.contains('narrow'));
   ok('who is you, your session agent, or a script with no model', /^you\b/.test(who('build', 'judge')) && /your session agent/.test(who('build', 'understand'))
-    && who('review-gate', 'quote') === 'script' && who('review-gate', 'gate') === 'git hook', `${who('build', 'judge')} | ${who('build', 'understand')} | ${who('review-gate', 'quote')} | ${who('review-gate', 'gate')}`);
+    && who('review-gate', 'close') === 'script' && who('review-gate', 'gate') === 'git hook' && who('review-gate', 'pr') === 'your session agent',
+    `${who('build', 'judge')} | ${who('build', 'understand')} | ${who('review-gate', 'close')} | ${who('review-gate', 'gate')} | ${who('review-gate', 'pr')}`);
+  const pair = card('review-gate').querySelector('.flow .step-pair');
+  ok('the code review and the security check share one column, marked "at the same time", and the arrow leaves the pair', !!pair
+    && pair.querySelectorAll('.step').map((x) => x.dataset.step).join() === 'review,security' && /at the same time/.test(t(pair.querySelector('.pair-note')))
+    && pair.parentNode === card('review-gate').querySelector('.flow') && card('review-gate').querySelector('.flow').children.length === 7, t(pair));
   ok('pr says no extra model is called', /No extra model is called/.test(t(card('pr').querySelector('.pk-flow-note'))));
   ok('build notes its lightweight mode', /lightweight/i.test(t(card('build').querySelector('.pk-flow-note'))));
   ok('the strips: handoff says your session agent writes it, with no extra model', /your session agent/.test(t(card('handoff').querySelector('.pk-strip'))) && /no extra model/i.test(t(card('handoff').querySelector('.pk-strip'))));
   // The legend lists only the kinds a diagram uses, and carries "no model" for the scripts (PR C QA).
   const legend = (id) => card(id).querySelectorAll('.legend li').map((li) => t(li));
   // PR D: an off step is in the legend too, in its own look (dashed), apart from a script (solid outline).
-  ok('a legend says what each kind of chip in that diagram means — only those, and "off" when a step is off', JSON.stringify(legend('review-gate')) === '["a role from Models","a script — no model","off — not turned on"]'
+  ok('a legend says what each kind of chip in that diagram means — only those, and "off" when a step is off', JSON.stringify(legend('review-gate')) === '["a role from Models","your session agent","a script — no model","off — not turned on"]'
     && JSON.stringify(legend('build')) === '["a role from Models","your session agent","you"]', `${legend('review-gate')} | ${legend('build')}`);
   ok('…the "off" swatch carries the off look, the script swatch its own', !!card('review-gate').querySelector('.legend .wf-sw.off') && !!card('review-gate').querySelector('.legend .wf-sw.script'));
   ok('eight or more steps lay out in rows of four; seven or fewer stay one row', card('review-gate').querySelector('.flow').classList.contains('rows')
@@ -229,7 +241,7 @@ try {
 
   console.log('\nsteps dim when their part or setting is off (R5)');
   ok('security off in the home config: the security pass is dimmed and marked "off"', step('review-gate', 'security').classList.contains('off') && t(step('review-gate', 'security').querySelector('.step-off')) === 'off');
-  ok('a step with neither is always on', !step('review-gate', 'quote').classList.contains('off') && !step('review-gate', 'review').classList.contains('off'));
+  ok('a step with neither is always on', !step('review-gate', 'close').classList.contains('off') && !step('review-gate', 'review').classList.contains('off'));
   ok('the push gate part is not picked: its step is dimmed', step('review-gate', 'gate').classList.contains('off'));
   const box = (label) => card('review-gate').querySelectorAll('.pk-part label').find((l) => new RegExp(label, 'i').test(t(l)))?.querySelector('input');
   box('Push gate').click();
@@ -240,19 +252,9 @@ try {
   ok('untick it: the step dims again', step('review-gate', 'gate').classList.contains('off'));
 
   console.log('\nvariant tabs (R4)');
-  const tabs = card('review-gate').querySelectorAll('.pk-tab');
-  ok('four tabs, Standard selected', tabs.length === 4 && tabs[0].getAttribute('aria-selected') === 'true' && tabs.every((b) => b.getAttribute('role') === 'tab'));
-  tabs.find((b) => t(b) === 'Premium').click();
-  await settle(5);
-  ok('Premium: the review is the judge — "Fable · high", one pass', /judge/.test(who('review-gate', 'review')) && /Fable · high/.test(who('review-gate', 'review')) && !/Opus · xhigh or Sol/.test(who('review-gate', 'review')),
-    who('review-gate', 'review'));
-  ok('…the tab says it is only in Claude Code', /only in Claude Code/.test(t(card('review-gate').querySelector('.pk-flow-hint'))), t(card('review-gate').querySelector('.pk-flow-hint')));
-  card('review-gate').querySelectorAll('.pk-tab').find((b) => t(b) === 'Both').click();
-  await settle(5);
-  ok('Both: the pool, then the judge double-checks', /Opus · xhigh or Sol · xhigh/.test(who('review-gate', 'review')) && /judge/.test(who('review-gate', 'review')), who('review-gate', 'review'));
-  card('review-gate').querySelectorAll('.pk-tab').find((b) => t(b) === 'Claude team').click();
-  await settle(5);
-  ok('Claude team: only the pool\'s Claude families', /Opus/.test(who('review-gate', 'review')) && !/Sol/.test(who('review-gate', 'review')), who('review-gate', 'review'));
+  ok('review-gate has no tabs', card('review-gate').querySelectorAll('.pk-tab').length === 0);
+  const tabs = card('advisor').querySelectorAll('.pk-tab');
+  ok('advisor: three tabs, the first selected', tabs.length === 3 && tabs[0].getAttribute('aria-selected') === 'true' && tabs.every((b) => b.getAttribute('role') === 'tab'));
   card('advisor').querySelectorAll('.pk-tab').find((b) => t(b) === 'Second').click();
   await settle(5);
   ok('advisor Second: the role\'s second opinion, Astra · high', /Astra · high/.test(who('advisor', 'ask')) && !/Fable/.test(who('advisor', 'ask')), who('advisor', 'ask'));
@@ -285,9 +287,9 @@ try {
   for (let i = 0; i < 100 && !mp.$('content').querySelector('.roles-steps'); i++) await sleep(30);
   await settle(10);
   const steps = (name) => mp.text(mp.$('content').querySelectorAll('.roles-row').find((r) => r.dataset.role === name)?.querySelector('.roles-steps') || { textContent: '' });
-  ok('reviewer: "Steps: /code-review · Review, Fix check …"', /^Steps:/.test(steps('reviewer')) && /\/code-review · Review/.test(steps('reviewer')) && /Fix check/.test(steps('reviewer')), steps('reviewer'));
-  ok('judge: the Grade in /build and Premium review', /\/build · Grade/.test(steps('judge')) && /\/code-review · Review \(Premium\)/.test(steps('judge')), steps('judge'));
-  ok('security: its step says it is off', /\/code-review · Security pass \(off\)/.test(steps('security')), steps('security'));
+  ok('reviewer: "Steps: /pr-review · Code review, Dispute, Fix check …"', /^Steps:/.test(steps('reviewer')) && /\/pr-review · Code review/.test(steps('reviewer')) && /Fix check/.test(steps('reviewer')), steps('reviewer'));
+  ok('judge: the Grade in /build, and no /pr-review step', /\/build · Grade/.test(steps('judge')) && !/\/pr-review/.test(steps('judge')), steps('judge'));
+  ok('security: its step says it is off', /\/pr-review · Security check \(off\)/.test(steps('security')), steps('security'));
   ok('investigator: no pack uses it', /no pack uses it/.test(steps('investigator')), steps('investigator'));
   ok('family cards keep "Used by N roles"', !mp.$('content').querySelector('.model-card') || mp.$('content').querySelectorAll('.model-used-toggle').every((b) => /Used by/.test(mp.text(b))));
   ok('no page errors on Models', mp.errors.length === 0, mp.errors.join(' | '));
