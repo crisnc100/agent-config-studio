@@ -1618,18 +1618,20 @@ function reviewPrompt(diff) {
 // The security pass's prompt: the same diff, context, notes and schema as the code review, a security-only instruction.
 // SECURITY_MARKER names it (tests find the security call by it).
 const SECURITY_MARKER = 'SECURITY REVIEW ONLY.'
-// Attack-class checklists, each added to the security prompt only when a changed file is of its class (by path; docs never
-// count, apart from the agent instruction files). Borrowed from Cloudflare's security-audit-skill.
+// Attack-class checklists, each added to the security prompt only when a changed file is of its class (by path). Agent
+// instruction files count only as AI/agent tools; other docs never count, apart from supply-chain names such as
+// requirements.txt. Borrowed from Cloudflare's security-audit-skill.
 const AGENT_FILES = /(^|\/)(SKILL|AGENTS|CLAUDE|GEMINI)\.md$/i
+const plainFile = (p) => !AGENT_FILES.test(p) && extKind(p) !== 'docs'
 const SECURITY_CLASSES = [
   {
-    test: (p) => AGENT_FILES.test(p) || /(^|[/._-])(agents?|prompts?|skills?|mcp|llm|ai|tool-?use|tool-?calls?|ask-model|claude|codex|grok|openai|anthropic)([/._-]|$)/i.test(p),
+    test: (p) => AGENT_FILES.test(p) || plainFile(p) && /(^|[/._-])(agents?|prompts?|skills?|mcp|llm|ai|tool-?use|tool-?calls?|ask-model|claude|codex|grok|openai|anthropic)([/._-]|$)/i.test(p),
     list: 'Checklist: AI and agent tools. Prompt injection through tool output (files, web pages, command output or model replies that ' +
       'reach a model and steer what it does next); tool permissions (what each tool may read, write or run, and who grants that); ' +
       'commands a model chooses (commands, paths or URLs picked by a model that run without a fixed allowlist or a human check).',
   },
   {
-    test: (p) => /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|pnpm-workspace\.yaml|bun\.lockb?|\.npmrc|\.yarnrc(\.yml)?|requirements[^/]*\.txt|Pipfile(\.lock)?|poetry\.lock|pyproject\.toml|setup\.py|setup\.cfg|Gemfile(\.lock)?|[^/]+\.gemspec|go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|composer\.json|composer\.lock|Dockerfile)$/i.test(p) ||
+    test: (p) => !AGENT_FILES.test(p) && /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|pnpm-workspace\.yaml|bun\.lockb?|\.npmrc|\.yarnrc(\.yml)?|requirements[^/]*\.txt|Pipfile(\.lock)?|poetry\.lock|pyproject\.toml|setup\.py|setup\.cfg|Gemfile(\.lock)?|[^/]+\.gemspec|go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|composer\.json|composer\.lock|Dockerfile)$/i.test(p) ||
       /(^|\/)\.github\/workflows\//.test(p) || /(^|\/)(pre|post)?(install|setup|bootstrap|update|upgrade)[^/]*\.(sh|bash|zsh|ps1|mjs|cjs|js|py)$/i.test(p),
     list: 'Checklist: supply chain. Install scripts (install, postinstall, setup and update scripts, CI workflows, and what they run); ' +
       'lockfile or registry changes (a new or moved dependency, a changed resolved URL or integrity hash, a new registry or package ' +
@@ -1637,17 +1639,17 @@ const SECURITY_CLASSES = [
       'without a pinned version or checksum).',
   },
   {
-    test: (p) => /(^|[/._-])(servers?|ipc|sockets?|daemon|websockets?|ws|rpc|https?|listeners?|localhost|bridge|proxy|pipes?)([/._-]|$)/i.test(p),
+    test: (p) => plainFile(p) && /(^|[/._-])(servers?|ipc|sockets?|daemon|websockets?|ws|rpc|https?|listeners?|localhost|bridge|proxy|pipes?)([/._-]|$)/i.test(p),
     list: 'Checklist: local IPC. localhost servers (who else on this machine can connect, and what a web page can make the browser ' +
       'send them); Host and Origin checks (against DNS rebinding and cross-site requests); sockets and named pipes (who may connect, ' +
       'their file permissions and where they live); file-permission races (check-then-use on temp files, sockets, locks and config ' +
       'files another local user or process could swap).',
   },
 ]
-// The lists for these changed paths, in class order; a docs file (other than an agent instruction file) never matches.
+// The lists for these changed paths, in class order; each class decides which files count for it.
 function securityClassLists(paths = []) {
-  const counted = paths.filter((p) => typeof p === 'string' && (AGENT_FILES.test(p) || extKind(p) !== 'docs'))
-  return SECURITY_CLASSES.filter((c) => counted.some(c.test)).map((c) => c.list)
+  const named = paths.filter((p) => typeof p === 'string')
+  return SECURITY_CLASSES.filter((c) => named.some(c.test)).map((c) => c.list)
 }
 function securityPrompt(diff, vendor, intent, paths = []) {
   const lists = securityClassLists(paths)
@@ -2920,7 +2922,9 @@ async function tierClassifier(command, { stats, facts }, review) {
       },
     },
   }
-  const r = await runBounded(command, ['--json-out'], { input: JSON.stringify(payload) })
+  // REVIEW_TEST_CLASSIFIER_TIMEOUT_MS: a test seam for this call only, so the timeout path can run in seconds.
+  const testTimeout = Number(process.env.REVIEW_TEST_CLASSIFIER_TIMEOUT_MS)
+  const r = await runBounded(command, ['--json-out'], { input: JSON.stringify(payload), ...(testTimeout > 0 && { timeoutMs: testTimeout }) })
   if (r.error) return { name, error: r.error }
   if (r.code !== 0) return { name, error: (r.stderr || '').trim().split('\n')[0] || `${name} exited ${r.code ?? r.signal}` }
   let answer

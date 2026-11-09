@@ -39,7 +39,12 @@ const input = fs.readFileSync(0, 'utf8')
 fs.appendFileSync(${JSON.stringify(TIER_CALLS)}, JSON.stringify({ args: process.argv.slice(2), input }) + '\\n')
 const mode = process.env.STUB_TIER || ''
 if (mode === 'fail') { console.error('tierjev broke'); process.exit(3) }
-console.log(mode)
+// "hang": start a child in the same process group, note its pid, and never answer.
+if (mode === 'hang') {
+  const child = require('node:child_process').spawn('sleep', ['30'], { stdio: 'ignore' })
+  fs.writeFileSync(process.env.STUB_TIER_CHILD, String(child.pid))
+  setInterval(() => {}, 1000)
+} else console.log(mode)
 `)
 after(() => rmSync(ROOT, { recursive: true, force: true }))
 
@@ -669,4 +674,19 @@ test('A1f1 a deletion its close judged stays judged: absent at the close and the
   closed(reviewed([], { REVIEW_PATHS: 'docs/more.md' }).id)
   homeConfig({ merge: { classifier: 'tierjev', policy: 'standard' } })
   assert.match(tierLine(summary().stdout)[0], /^Merge tier: LOW .*Policy standard: would merge$/)
+})
+
+test('t1 a merge-tier classifier that never answers is killed with its process group at the timeout; the rules\' MEDIUM stands', () => {
+  homeConfig({ merge: { classifier: 'tierjev' } })
+  commit({ 'web/App.tsx': TSX })
+  const childFile = join(ROOT, 'tier-child.pid')
+  rmSync(childFile, { force: true })
+  const started = Date.now()
+  const record = reviewAndClose({ extra: { STUB_TIER: 'hang', STUB_TIER_CHILD: childFile, REVIEW_TEST_CLASSIFIER_TIMEOUT_MS: '700' } })
+  assert.ok(Date.now() - started < 25000, `the close waited ${Date.now() - started} ms`)
+  assert.deepEqual([record.tier, record.tierBy], ['medium', 'rules'])
+  assert.equal(record.tierClassifier.error, 'timed out after 700 ms')
+  const pid = Number(readFileSync(childFile, 'utf8'))
+  const alive = (() => { try { process.kill(pid, 0); return true } catch { return false } })()
+  assert.equal(alive, false, `the classifier's own child ${pid} was killed with its group`)
 })

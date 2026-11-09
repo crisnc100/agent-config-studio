@@ -605,3 +605,13 @@ test('13 a diff touching several classes gets each of their lists; a docs-only d
   assert.ok(docs.includes(HARDENING) && docs.includes(PRINCIPAL))
   assert.doesNotMatch(docs, /Checklist:/)
 })
+
+test('13 requirements*.txt gets the supply-chain list despite its .txt; an agent instruction file gets only the AI list', () => {
+  homeConfig({ security: { run: 'always' } })
+  assert.deepEqual(listsIn(securityPromptFor({ 'requirements.txt': 'requests==2.0\n' })), ['supply'])
+  assert.deepEqual(listsIn(securityPromptFor({ 'api/requirements-dev.txt': 'pytest==8.0\n' })), ['supply'])
+  assert.deepEqual(listsIn(securityPromptFor({ 'packages/mcp-server/CLAUDE.md': '# Rules\n' })), ['ai'])
+  assert.deepEqual(listsIn(securityPromptFor({ 'server/install/AGENTS.md': '# Rules\n' })), ['ai'])
+  // Other .txt files are still docs.
+  assert.deepEqual(listsIn(securityPromptFor({ 'notes/server-install.txt': 'notes\n' })), [])
+})
