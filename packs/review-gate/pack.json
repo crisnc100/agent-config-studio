@@ -16,73 +16,25 @@
     "undo": "Uninstalling removes the skill folders and, once no installed part uses it, the shared ~/.agent-config-studio/review-gate/ folder. A file you edited after installing is kept and reported. Your review log and the reports in each repo's reviews/ folder are your history and are never deleted."
   },
   "workflow": {
-    "command": "/code-review",
-    "variants": [
-      {
-        "id": "standard",
-        "label": "Standard",
-        "hint": "/code-review — a reviewer from your pool"
-      },
-      {
-        "id": "premium",
-        "label": "Premium",
-        "hint": "/code-review premium — only in Claude Code",
-        "twins": [
-          "claude"
-        ]
-      },
-      {
-        "id": "both",
-        "label": "Both",
-        "hint": "/code-review both — only in Claude Code",
-        "twins": [
-          "claude"
-        ]
-      },
-      {
-        "id": "claude",
-        "label": "Claude team",
-        "hint": "/code-review claude — a team of reviewers on Claude models"
-      }
-    ],
+    "command": "/pr-review",
+    "note": "/code-review and /security-check also run on their own; neither counts as a PR review alone.",
     "steps": [
       {
         "id": "review",
-        "label": "Review",
-        "what": "Reads the branch, reports bugs.",
+        "label": "Code review",
+        "what": "/code-review: reports bugs.",
         "who": "role",
         "role": "reviewer",
-        "pool": "picked per review",
-        "variants": {
-          "premium": {
-            "what": "One careful pass, by the judge.",
-            "role": "judge"
-          },
-          "both": {
-            "what": "Two reviews, one merged list.",
-            "also": "judge",
-            "alsoNote": "double-checks"
-          },
-          "claude": {
-            "what": "A team of Claude reviewers.",
-            "vendor": "claude",
-            "pool": "the Claude team"
-          }
-        }
+        "pool": "picked per review"
       },
       {
         "id": "security",
-        "label": "Security pass",
-        "what": "Looks for security holes only.",
+        "label": "Security check",
+        "what": "/security-check: holes only.",
         "who": "role",
         "role": "security",
-        "setting": "security"
-      },
-      {
-        "id": "quote",
-        "label": "Quote check",
-        "what": "Drops findings with no real quote.",
-        "who": "script"
+        "setting": "security",
+        "beside": "review"
       },
       {
         "id": "fix",
@@ -107,17 +59,12 @@
         "what": "One look at the fixes.",
         "who": "role",
         "role": "reviewer",
-        "note": "same pick",
-        "variants": {
-          "premium": {
-            "role": "judge"
-          }
-        }
+        "note": "same pick"
       },
       {
-        "id": "log",
-        "label": "Defer and log",
-        "what": "Logs what is left, deferred.",
+        "id": "close",
+        "label": "Close",
+        "what": "Tests, defers the rest, logs it.",
         "who": "script"
       },
       {
@@ -127,6 +74,12 @@
         "who": "script",
         "tool": "git hook",
         "part": "push-gate"
+      },
+      {
+        "id": "pr",
+        "label": "PR description",
+        "what": "/pr writes it from the close.",
+        "who": "agent"
       }
     ]
   },

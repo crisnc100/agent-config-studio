@@ -47,7 +47,7 @@ Drop `--plan` when there is no plan; pass `REVIEW_AUTHOR=<family or vendor that 
 
 ## Step 3 — one fix round, one fix check, close
 
-Every HIGH and MEDIUM, `f…` and `s…`, is fixed in-context without asking (rule 10); LOWs are filed. Commit the fixes. When the fix round changed any code, run `node "$SCRIPT" --fix-check <review-id>` once, then fix, reject or defer each `x…` finding once, and stop: no second check. Close with `node "$SCRIPT" --close <review-id> --status builds/<slug>/status.json` (with `--test-cmd`, or `--no-tests "<reason>"`). A clean review closes too.
+Every HIGH and MEDIUM, `f…` and `s…`, is fixed without asking (rule 10): by the builder that wrote the branch, or in-context when no builder did. LOWs are filed. Commit the fixes. When the fix round changed any code, run `node "$SCRIPT" --fix-check <review-id>` once, then fix, reject or defer each `x…` finding once, and stop: no second check. Close with `node "$SCRIPT" --close <review-id> --status builds/<slug>/status.json` (with `--test-cmd`, or `--no-tests "<reason>"`). A clean review closes too.
 
 ## Step 4 — context pass (not built yet)
 
