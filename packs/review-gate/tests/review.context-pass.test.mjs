@@ -194,7 +194,7 @@ test('9 a large file is judged by its change, never refused for its length', () 
   assert.deepEqual(verdicts([['src/big.js', big, changed]]), { 'src/big.js': false })
 })
 test('10 the agent-instruction list is wide and case-insensitive', () => {
-  for (const path of ['claude.md', 'docs/Agents.md', 'CLAUDE.local.md', 'AGENTS.override.md', '.github/copilot-instructions.md', '.github/instructions/web.instructions.md',
+  for (const path of ['sub/claude.md', 'docs/Agents.md', 'CLAUDE.local.md', 'AGENTS.override.md', '.github/copilot-instructions.md', '.github/instructions/web.instructions.md',
     '.gemini/styleguide.md', '.windsurf/rules/x.md', '.cursor/rules/x.mdc', 'GEMINI.md', 'pkg/skill.md']) {
     const sha = commit({ [path]: '# Rules\n' }, `add ${path}`)
     const edit = commit({ [path]: '# Rules\nMore.\n' }, `edit ${path}`)
