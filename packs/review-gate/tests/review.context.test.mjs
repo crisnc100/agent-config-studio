@@ -232,3 +232,64 @@ test('5d merge tier (protected): the exemption is the docs-focus slice\'s alone;
   const plain = closed(reviewed({ REVIEW_PATHS: 'src/app.js' }, ['--code-only']))
   assert.equal(plain.tier, 'high', JSON.stringify(plain.tierReasons))
 })
+
+// ── the Bar: the coordinated PR flow, end to end, on a test repo ──
+const CONTEXT_PASS = join(dirname(SCRIPT), 'context-pass.mjs')
+const PR_FACTS = join(dirname(SCRIPT), '..', '..', 'pr', 'skills', 'claude', 'pr', 'pr-facts.mjs')
+const node = (file, args) => run(process.execPath, [file, ...args])
+
+test('6 the coordinated flow: code and security in one record, one fix round, one fix check, close, then a checked context commit covered by a closed docs-focus slice; the push passes and the tier holds', () => {
+  homeConfig({ security: { run: 'required' } })
+  commit({ 'builds/feat/plan.md': '# Plan\n\n## Outcome\nThe app exports three numbers.\n' })
+  // Review: one record with a code finding and a security finding.
+  const codeF = { issue: 'two should be 22', file: 'src/app.js', line: '2', quote: 'export const two = 2', suggestion: 'use 22', likelihood: 5, impact: 5, protected: false, trigger: 'reading two' }
+  const secF = { issue: 'three leaks', file: 'src/app.js', line: '3', quote: 'export const three = 3', suggestion: 'drop it', likelihood: 4, impact: 5, protected: false, trigger: 'reading three' }
+  const main = reviewed({ STUB_FINDINGS: findings(codeF), STUB_SEC_FINDINGS: findings(secF) })
+  const record = lines(LOG).find((e) => e.id === main)
+  assert.deepEqual(record.findingDetails.map((f) => f.id), ['f1', 's1'])
+  assert.equal(record.security.status, 'ran')
+  // One fix round, one fix check (clean), close.
+  commit({ 'src/app.js': 'export const one = 1\nexport const two = 22\nexport const three = 0\n' })
+  allowed(script(['--fix-check', main], { REVIEW_REVIEWER: 'sol', STUB_FINDINGS: findings() }))
+  const mainClose = closed(main, { f1: { status: 'fixed' }, s1: { status: 'fixed' } })
+  assert.equal(mainClose.status, 'complete')
+  // The context pass: a brief that passes, one writer commit of a comment and a doc edit, and its check.
+  const briefPath = join(ROOT, 'context-brief.json')
+  writeFileSync(briefPath, JSON.stringify({ mode: 'pr', purpose: 'The app exports three numbers', mechanism: ['src/app.js exports one, two and three'],
+    decisions: ['two is 22 and three is 0 after review'], readers: { 'README.md': 'users', comments: 'the next maintainer' }, base: 'main',
+    docMap: [{ behavior: 'the exported numbers', docs: ['README.md'] }], untouchable: ['builds/**'] }))
+  allowed(node(CONTEXT_PASS, ['--check-brief', briefPath]))
+  commit({ 'src/app.js': '// Callers read these three numbers at start; two and three changed after review.\nexport const one = 1\nexport const two = 22\nexport const three = 0\n',
+    'README.md': 'base\nThe app exports one (1), two (22) and three (0).\n' })
+  const touched = git('diff', '--name-only', 'HEAD~1', 'HEAD').split('\n')
+  assert.deepEqual(touched, ['README.md', 'src/app.js'])
+  const checkCommit = node(CONTEXT_PASS, ['--check-commit', 'HEAD', '--brief', briefPath])
+  assert.equal(checkCommit.status, 0, checkCommit.out)
+  // The docs table, committed in the build folder beside the plan.
+  commit({ 'builds/feat/docs-table.json': JSON.stringify({ rows: [{ behavior: 'the exported numbers', files: ['src/app.js'],
+    docs: [{ path: 'README.md', claims: [{ claim: 'two is 22', at: 'src/app.js:3' }, { claim: 'three is 0', at: 'src/app.js:4' }] }] }] }) })
+  // A docs-focus slice of exactly the files the context commit touched, closed at the tip.
+  rmSync(CALLS, { force: true })
+  const slice = docsSlice(touched.join(','))
+  assert.deepEqual(calls().map((c) => c.kind), ['code'], 'one docs reviewer, no security pass')
+  const sliceClose = closed(slice)
+  assert.equal(sliceClose.status, 'complete')
+  // The fix round changed src/app.js after the security pass saw it, so the main close is HIGH for it already; the
+  // comment-only commit on top neither raises nor clears that.
+  assert.equal(sliceClose.tier, mainClose.tier, `${JSON.stringify(sliceClose.tierReasons)} vs ${JSON.stringify(mainClose.tierReasons)}`)
+  const named = (close) => close.tierReasons.filter((r) => /security pass did not see/.test(r)).map((r) => r.match(/did not see (\S+)/)[1])
+  assert.deepEqual(named(sliceClose), named(mainClose))
+  // The push passes through the normal gate: no override, no new exception.
+  const pushed = gate()
+  allowed(pushed)
+  assert.doesNotMatch(pushed.out, /override/i)
+  const tip = JSON.parse(script(['--tier-json']).stdout)
+  assert.equal(tip.covered, true)
+  assert.equal(tip.tier, mainClose.tier, `tip ${tip.tier} (${tip.reasons}) vs main close ${mainClose.tier} (${mainClose.tierReasons})`)
+  // pr-facts reads the table: complete passes; a code file no row covers fails.
+  writeFileSync(join(ROOT, 'body.md'), '# x\n')
+  const docsProblems = () => JSON.parse(node(PR_FACTS, ['--base', 'main', '--check', join(ROOT, 'body.md')]).stdout).problems.filter((p) => /docs table/.test(p))
+  assert.deepEqual(docsProblems(), [])
+  commit({ 'src/extra.js': 'export const extra = 1\n' })
+  assert.deepEqual(docsProblems(), ['docs table: src/extra.js changed, but no row covers it'])
+})
