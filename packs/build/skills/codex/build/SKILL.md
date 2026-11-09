@@ -92,6 +92,8 @@ Skip recheck when there were no failed criteria. It needs no close of its own. A
 
 One review per phase; fixes never get a full re-review. Run --fix-check only when close requires it because fixes changed tests, test settings, verify scripts or riskPaths. Deal with its findings once (fix, reject or defer each), then a hard stop. At most two review passes per phase; risk-area /build work allows three (Grade, /code-review, fix check). Risk-area work that went through /build gets both a Grade and /code-review. Stop before exceeding the limit.
 
+**Hand-off to the PR.** When the last phase's Grade (and any /code-review) is closed, hand the finished tip to the pr-review skill. It owns the rest, in order: the security pass when `security.run` is on, its fix round and close, the push, and the PR description. The Grade and /code-review closes count as they do today.
+
 ## Hard rules
 
 - The verifier never edits — all gate calls are read-only.

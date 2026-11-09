@@ -244,7 +244,7 @@ function scratch() {
     'mkdir src && printf "export const one = 1\\n" > src/a.js && git add src && git -c user.name=t -c user.email=t@t commit -qm a']) allowed(sh(c))
   return { home, repo, sh }
 }
-for (const [skill, opener, roles, kind] of [['code-review', 'REVIEW_SCRIPT=scripts/review.mjs', 'reviewer', 'code'], ['security-check', 'SCRIPT=scripts/review.mjs', 'security', 'security']]) {
+for (const [skill, opener, roles, kind] of [['code-review', '=scripts/review.mjs', 'reviewer', 'code'], ['security-check', '=scripts/review.mjs', 'security', 'security']]) {
   test(`8 portability: /${skill}'s command runs in a scratch repo with no review-gate config, only its own role, and no other skill`, () => {
     for (const harness of ['claude', 'codex']) {
       rmSync(CALLS, { force: true })
@@ -256,13 +256,40 @@ for (const [skill, opener, roles, kind] of [['code-review', 'REVIEW_SCRIPT=scrip
       assert.deepEqual(calls().map((c) => c.kind), [kind], harness)
       assert.equal(existsSync(join(home, '.agent-config-studio/review-gate/config.json')), false)
       assert.equal(existsSync(join(home, '.claude/skills')) || existsSync(join(home, '.codex/skills')), false, 'no skill is installed')
+      if (skill !== 'code-review') continue
+      // /code-review never starts the security pass on its own, even with the setting at its highest.
+      rmSync(CALLS, { force: true })
+      writeFileSync(join(home, '.agent-config-studio/review-gate/config.json'), JSON.stringify({ security: { run: 'always' } }))
+      const always = sh(block)
+      allowed(always)
+      assert.deepEqual(calls().map((c) => c.kind), ['code'], `${harness}: ${always.out}`)
     }
   })
 }
 
+test('11 /pr-review\'s review command hands open standalone findings to both reviewers as context, in one record', () => {
+  mkdirSync(dirname(HOME_CONFIG), { recursive: true })
+  writeFileSync(HOME_CONFIG, JSON.stringify({ security: { run: 'required' } }))
+  securityOnly({ STUB_SEC_FINDINGS: findings(finding({ issue: 'OPEN-CTX-9' })) })
+  rmSync(CALLS, { force: true })
+  for (const harness of ['claude', 'codex']) {
+    const body = readFileSync(join(SKILLS, harness, 'pr-review', 'SKILL.md'), 'utf8')
+    const block = fenced(body, 'OPEN=$(node').replace('--plan <plan.md> ', '').replace(/"<intent:[^"]*>"/, '"add app"')
+    const r = run('bash', ['-c', `SCRIPT=${JSON.stringify(SCRIPT)}\n${block}`], { REVIEW_REVIEWER: 'sol' })
+    allowed(r)
+    const json = findingsJson(r)
+    assert.equal(json.security.status, 'ran', harness)
+    const latest = calls().slice(-2)
+    assert.deepEqual(latest.map((c) => c.kind).sort(), ['code', 'security'], harness)
+    for (const c of latest) assert.match(c.prompt, /OPEN-CTX-9/, `${harness}: ${c.kind} prompt carries the open finding`)
+    for (const c of latest) assert.doesNotMatch(c.prompt, /Already decided/, harness)
+  }
+})
+
 test('9 --code-only (the /code-review skill) never starts the security pass; with security.run on, the merge tier says so', () => {
   mkdirSync(dirname(HOME_CONFIG), { recursive: true })
   writeFileSync(HOME_CONFIG, JSON.stringify({ security: { run: 'required' } }))
+  assert.equal(JSON.parse(script(['--show-config'], { REVIEW_REVIEWER: 'sol' }).stdout).security, 'required', '/pr-review reads the setting here')
   const id = (() => { const r = script(['--code-only'], { REVIEW_REVIEWER: 'sol' }); allowed(r); return findingsJson(r).reviewId })()
   assert.deepEqual(calls().map((c) => c.kind), ['code'])
   const review = lines(LOG).find((e) => e.id === id)

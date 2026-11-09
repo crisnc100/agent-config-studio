@@ -1314,6 +1314,7 @@ if (process.argv.includes('--show-config')) {
         verify: SECOND_OPINION ? 'second-opinion' : 'quote check only',
         verifyCmd: VERIFY_CMD || '(none)',
         fixCheck: FIX_CHECK,
+        security: SECURITY.run,
         source: CONFIG._source || '(built-in defaults / env only)',
         log: LOG_PATH,
       },
