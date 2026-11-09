@@ -1,0 +1,71 @@
+**Verdict: not ready to build.** Three things the plan relies on are false in the code. The fix check does not verify docs, a new record kind is closable and covering by default, and the brief has a field that cannot be filled when it is written.
+
+I ran nothing: every claim below comes from reading the code in this session. Paths are under `packs/review-gate/` unless they start elsewhere.
+
+## 1. "Doc edits land before the one fix check"
+
+- **The fix check is told to ignore docs.** Its prompt is the code review prompt: "CODE CORRECTNESS only … Do NOT comment on … style preference" (`runtime/review.mjs:3844`, `:1601-1604`). The plan dropped the other-vendor check because "the fix check reads them", and a wrong README sentence would score LOW and be filed.
+- **A doc defect the fix check finds cannot be fixed.** After the fix check, commits may touch only `builds/` and test files, and docs count as code there (`:3028-3033`). The finding is deferred or goes through a slice review; the plan says neither.
+- **Docs can go stale with no pass left.** A rule-3 code fix after the fix check changes behavior after the docs were written. Fable named this as an accepted gap (`advisor.out:16`); the plan dropped it without accepting it.
+- **The gate never asks for this fix check.** Docs are excluded from both fix-check rules (`:2596-2601`, `:3046-3049`). Skip it and the close goes partial, which covers nothing (`:3080-3084`, `:3096`).
+- **/build tells the orchestrator the opposite.** It says to run `--fix-check` "only when close requires it" (`packs/build/skills/claude/build/SKILL.md:173`). A clean review with a docs commit needs one anyway.
+- **One fix check per review, no retry** (`:3814-3815`). If it runs before the docs commit, or the fix diff plus a README rewrite passes the 120k cap (`:2733-2741`), the doc files are unseen and only a slice review recovers.
+- **Slices and Grades are not covered by the flow.**
+  - A fix check is per record and limited to its slice (`:3820`); a doc outside every slice's paths belongs to no record (`:2998-3002`).
+  - In /build the record is a Grade, sometimes alongside a code review. The plan does not say which record's fix check takes the docs commit.
+- **Comment edits push the merge tier to HIGH.** With the security pass on, any logic file whose blob differs from what the pass saw is HIGH (`:2805-2810`, `:5118`). Every comment trim does that, even on a clean review, and the bar never mentions the tier.
+
+## 2. Can a report-only security record leak into coverage?
+
+Yes, unless the build changes every site below. The gate excludes kinds by name; it does not allow-list them.
+
+- **Close and fix check accept any new kind.** Each refuses only `fix-check` and `recheck` (`:2976`, `:3812`).
+- **Coverage accepts any kind for non-risk files** (`:4339`); the legacy path checks kind only on risk pushes (`:4357`).
+- **A clean fix check covers files on its own** (`:4305-4311`), so `--fix-check <security-only id>` is a second way in.
+- **The plan does not say where the record lives.** Shadow records use a separate file that the gate never reads (`:3310-3314`). The main log with a new `kind` is the leaky option.
+- **The boundary test is underspecified.** It should plant a complete close for a security-only record in the log and assert that the push, `--summary` and `--tier-json` all refuse. Closes run the repo's own `scripts/review.mjs` first (`skills/claude/code-review/SKILL.md:19-24`), so an older copy can write one.
+- **Side channels through the normal report path:**
+  - it repoints `reviews/latest` (`:2459-2462`), which the skill tells agents to read (`SKILL.md:48`);
+  - it counts toward `pick: rotate` (`:631`);
+  - its filed findings reach the next real review as "already decided" (`:1475-1477`).
+- **A HIGH from a standalone run can vanish.** Nothing carries it forward; a later code review that misses it closes clean. The bar tests only "push gate stays locked".
+- **The coordinated flow may run no security at all.** `security.run` defaults to off (`:3111`), and this machine has no `~/.agent-config-studio/review-gate/config.json`. The bar item "one record holds code and security findings" would pass on a stubbed config.
+
+## 3. Is the brief contract enough?
+
+No. It checks that fields are present, not that they are right.
+
+- **Field 6 cannot be filled.** Deferrals exist only for fix-check findings (`:2635-2638`), and the fix check runs after `/doc-update`.
+- **The PR description has two owners.** The outcome table gives it to `/doc-update`; the flow gives it to `/pr`, which writes a temp file and never a commit (`packs/pr/skills/claude/pr/SKILL.md:32`).
+- **Standalone contradicts the contract.** "Runs on any folder" has no plan, no final diff and no deferred findings, yet the skill "refuses without every field".
+- **"Refuses a missing field" has no mechanism.** A skill is prose. No brief format or validator script is named, so the bar reduces to a text match on SKILL.md.
+- **The truth rule is self-attested.** The table maps behavior to doc, not claim to `file:line`. Its rows come from the orchestrator's doc map, so an omitted behavior has no row and passes.
+- **The docs check does not exist yet and runs too late.**
+  - `codeWithoutDocs` is only a fact (`packs/pr/skills/claude/pr/pr-facts.mjs:398`); `check()` never reads it.
+  - The helper calls no model, so it can check only the table's shape.
+  - It runs after the push, when a docs fix needs fresh coverage.
+- **Missing fields:**
+  - docs that tests pin (`tests/readme.mjs:135`, `:174`, run by `verify.sh:23`);
+  - `.md` files that are program input (`lib/commands.md` via `lib/setup-commands.js:13`; `calibration.md` via `review.mjs:4109`; `advisor-contract.md`);
+  - generated blocks, the claude/codex twin copies, and the old names of renamed things for the grep.
+- **Field 2 is second-hand.** The orchestrator delegates the build, yet must describe the mechanism "not copied from the diff".
+- **Sonnet's own flavor argues against the task.** It says "one concrete, single-file task" and "weak on open-ended design" (`lib/roles.default.json`). This task is multi-file and needs why-judgment, and the plan has no eval for writer quality.
+- **No sanctioned way to give the writer write access.** `ask-model` is read-only (`tools/ask-model.mjs:3`), and the raw-call lint allows writes only in the build skill (`tests/review.packs.test.mjs:286-311`). The Codex harness has no path for a Claude writer.
+- **The `writer` role needs more than "default Sonnet".**
+  - `model-id --role writer` reports an unknown role today.
+  - It must be added to `lib/roles.js:319` and `lib/packs.js:45`.
+  - New shipped roles stay unset on existing installs (`lib/roles.js:195`), and the pack promises "no model is set for you" (`pack.json:14`).
+
+## 4. Other gaps and weak bar items
+
+- **The line-level guard is a lexer in disguise.**
+  - The directive list is four examples, and nothing checks directives the writer adds.
+  - Block comments need parser state.
+  - Comments that execute are invisible to it (Rust doc tests, Go `// Output:`, doctests).
+  - It drops lean-comments' license headers and ticketed TODOs (`~/.claude/skills/lean-comments/SKILL.md:46-47`).
+- **"Code file" is undefined.** The gate's doc extensions include `txt` (`:899`), so `requirements.txt` would count as a doc.
+- **"Never edits agent-instruction files" has no test** in the bar.
+- **The sequence owner is an optional part.** The instructions part is `default: false` (`pack.json:184-186`). Skills that "keep no copy" leave users without it with no sequence; Fable advised that a skill own it (`advisor.out:39`).
+- **The plan names one pinned-text test; there are at least ten.** The others include `review.security.test.mjs:433`, `review.close.test.mjs:958` and `:1108`, and `review.slices.test.mjs:305`. Each needs its own test-only commit and cross-vendor read.
+- **"The coordinator" is never defined or built** by any PR, and the gate cannot tell who ran a close.
+- **`security-check` in a path matches the default riskPaths glob `*security*`** (`:798-801`), so every PR touching that skill is risk-tier.
