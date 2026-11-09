@@ -224,3 +224,19 @@ Cris: "I miss the bars on the homepage for accounts and usage." C2 had cut Home'
   - f2: while a Packs dialog is open, ⌘/Ctrl shortcuts stop at the dialog (⌘K/S/E are also prevented), so nothing opens behind the scrim.
   - f3: a failed Recheck says "Recheck failed at … — showing the last result" and leaves the old "Checked at" time alone.
   - Three test assertions Sol rated weakened are tightened in the test-only commit.
+
+## PR G — no folds anywhere, the Trash badge (final-critique-2.md: 30/40, no P1)
+
+- **Files:** no type toggles. Each type is a plain heading with its count. A long type shows its first 8 (a low-traffic one, e.g. Auto-memory, shows 3), then a secondary "Show all N" that expands in place for the visit and focuses the first newly shown file. The last-opened file always shows. The acs.collapsed store and FILES.unfold are gone.
+- **Models:** Model ids is always drawn under an h3 that keeps the alert count. "Used by N roles" is a quiet button that opens a dialog with the roles and the files that call it.
+- **Memory → Projects:** plain cards, the first 3 files, then "Show all N files". Only shown rows are selectable, as before.
+- **Audit:** refused files, worktree cards and model-name notes each show the first 3, then "Show all N" (auditCapped). The worktree section is a heading, not a fold. The ui-words sweep seeds a skill the Audit flags, so its cards render.
+- **Skill wizard:** "Show the AI's reply" is a quiet button that opens the reply in a dialog, still as plain text.
+- **CSS:** summary.fold, details.mem-card, .chev and the files-type-toggle chevron rules are deleted.
+- **Guards:** no details, summary, .chev or .fold in any view (ui-words sweep and ui-clarity-g), plus static checks on the JS and CSS.
+- **Trash:** the kind badge is its own .trash-kind, sized to its word (min-width, nowrap, flex none). In the browser, "folder" measured clientWidth 54 = scrollWidth 54, 14px clear of the path, in light and dark.
+- **PR G fix round** (review 2026-11-09-20-19-44-e7cb26):
+  - f1: "Show all" on Memory → Projects focuses the first newly shown file's checkbox. On Audit, the first newly shown item takes focus (tabindex -1, so it is not a tab stop).
+  - f2: a "Used by" lookup that answers after you left Models, or after a newer press, keeps its result and opens nothing.
+  - The skill wizard's reply dialog closes when its error is gone.
+  - Three tests Sol rated weakened are tightened in the test-only commit.
