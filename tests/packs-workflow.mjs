@@ -260,6 +260,7 @@ try {
   card('advisor').querySelectorAll('.pk-tab').find((b) => t(b) === 'Second').click();
   await settle(5);
   ok('advisor Second: the role\'s second opinion, Astra · high', /Astra · high/.test(who('advisor', 'ask')) && !/Fable/.test(who('advisor', 'ask')), who('advisor', 'ask'));
+  ok('…the selected tab\'s hint renders beside the tabs: "/advisor second — the role’s second opinion"', /^\/advisor second — the role’s second opinion$/.test(t(card('advisor').querySelector('.pk-flow-hint'))), t(card('advisor').querySelector('.pk-flow-hint')));
   card('advisor').querySelectorAll('.pk-tab').find((b) => t(b) === 'Both').click();
   await settle(5);
   ok('advisor Both: "Fable · high and Astra · high", blind, in parallel (design 4)', /Fable · high and Astra · high/.test(who('advisor', 'ask')) && /blind, in parallel/.test(who('advisor', 'ask')), who('advisor', 'ask'));
