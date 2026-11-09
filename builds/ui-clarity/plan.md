@@ -219,3 +219,8 @@ Cris: "I miss the bars on the homepage for accounts and usage." C2 had cut Home'
   - The installer output is a button that opens the same kind of dialog.
   - Guards: no details, summary, .chev, .fold or triangle glyph on Packs (stub test and the ui-words live sweep).
   - The browser check caught `querySelectorAll(...).filter` in the Tab trap: the fake DOM returns arrays, a browser a NodeList. It is fixed, with a static guard against the pattern in public/.
+- **PR F fix round** (review 2026-11-09-19-36-08-10444d):
+  - f1: a role-picker press keeps focus on the same model's new button. The installer-output dialog re-finds its button by the card's data-pack when the card repainted under it.
+  - f2: while a Packs dialog is open, ⌘/Ctrl shortcuts stop at the dialog (⌘K/S/E are also prevented), so nothing opens behind the scrim.
+  - f3: a failed Recheck says "Recheck failed at … — showing the last result" and leaves the old "Checked at" time alone.
+  - Three test assertions Sol rated weakened are tightened in the test-only commit.

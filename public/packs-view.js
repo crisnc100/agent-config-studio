@@ -362,6 +362,12 @@ function pkDialog(title, body, opener, reopen) {
   scrim.onclick = shut;
   d.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); shut(); return; }
+    // The app's ⌘/Ctrl shortcuts (search, save, edit) act on the page behind: none reach it while the dialog is open.
+    if (e.metaKey || e.ctrlKey) {
+      e.stopPropagation();
+      if (['k', 's', 'e'].includes(String(e.key).toLowerCase())) e.preventDefault();
+      return;
+    }
     if (e.key !== 'Tab') return;
     // A real NodeList has no .filter: spread it first.
     const f = [...d.querySelectorAll('button, a[href], input, select, textarea, [tabindex="0"]')].filter((x) => !x.disabled);
@@ -396,7 +402,7 @@ function pkFilesAndUndo(pack) {
         body.appendChild(sec);
       }
     }
-    pkDialog(`${pack.title}: files and undo`, body, b, () => document.querySelector(`[data-pack="${pack.id}"] .pk-files-btn`));
+    pkDialog(`${pack.title}: files and undo`, body, b, () => document.querySelector(`[data-pack="${pack.id}"]`)?.querySelector('.pk-files-btn'));
   };
   row.appendChild(b);
   return row;
@@ -709,6 +715,14 @@ function pkResultView(card) {
 function pkLog(box, lines) {
   const b = el('button', 'btn pk-log-btn', 'Installer output');
   b.setAttribute('aria-haspopup', 'dialog');
-  b.onclick = () => { const body = el('div', 'pk-dialog-body'); body.appendChild(el('pre', 'pk-log', lines.join('\n'))); pkDialog('Installer output', body, b); };
+  b.onclick = () => {
+    const body = el('div', 'pk-dialog-body');
+    body.appendChild(el('pre', 'pk-log', lines.join('\n')));
+    // The post-install status check repaints the card under the dialog: find its new button by the pack it sits in.
+    let k = b;
+    while (k && !k.dataset?.pack) k = k.parentNode;
+    const id = k?.dataset?.pack;
+    pkDialog('Installer output', body, b, () => (id ? document.querySelector(`[data-pack="${id}"]`)?.querySelector('.pk-log-btn') : null));
+  };
   box.appendChild(b);
 }

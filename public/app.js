@@ -4871,6 +4871,8 @@ function roleEditor(role) {
         box.querySelector('.models-write-error')?.remove();
         paintPicks();
         paintMembers();
+        // The repaint replaced the pressed button: keep keyboard focus on the same model's new one.
+        [...use.querySelectorAll('.roles-pick')].find((x) => x.dataset.family === f)?.focus();
       };
       use.appendChild(b);
     }
