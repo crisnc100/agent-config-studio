@@ -188,7 +188,7 @@ test('the frontmatter check refuses an unquoted key: value inside a plain scalar
 })
 test('every shipped SKILL.md has frontmatter a strict YAML parser accepts, with its folder name and a description', () => {
   const skills = shipped().filter((path) => basename(path) === 'SKILL.md')
-  assert.equal(skills.length, 18, 'nine skills, each for both harnesses')
+  assert.equal(skills.length, 20, 'ten skills, each for both harnesses')
   for (const path of skills) {
     const rel = relative(PACKS, path)
     let fields
@@ -286,14 +286,16 @@ test('every read-only claude -p command in a shipped skill drops MCP tools with 
 })
 
 // A raw model call: claude -p, codex exec or grok -p run as a command (at the start of a line, or after $( | & ; ( ),
-// not named in prose. The build skill's builder calls are the one exception: they write (codex exec with
-// --sandbox workspace-write, and codex exec resume, which inherits it), and ask-model only asks read-only.
+// not named in prose. Two callers write, and ask-model only asks read-only, so they are the exceptions: the build
+// skill's builder calls (codex exec with --sandbox workspace-write, and codex exec resume, which inherits it) and the
+// Codex context-pass skill's writer call (codex exec with --sandbox workspace-write, nothing else).
 const RAW_CALL = /(?:^|\$\(|[|&;(])\s*(?:claude\s+-p|codex\s+exec|grok\s+-p)(?:\s|$)/
-const builderCall = (rel, line) => rel.startsWith('build/') && (/^\s*codex\s+exec\s+resume\b/.test(line) || /^\s*codex\s+exec\b.*\s--sandbox\s+workspace-write\b/.test(line))
+const builderCall = (rel, line) => rel.startsWith('build/') && (/^\s*codex\s+exec\s+resume\b/.test(line) || /^\s*codex\s+exec\b.*\s--sandbox\s+workspace-write\b/.test(line)) ||
+  /^review-gate\/skills\/codex\/context-pass\//.test(rel) && /^\s*codex\s+exec\b.*\s--sandbox\s+workspace-write\b/.test(line)
 function rawModelCalls(rel, source) {
   return source.split('\n').flatMap((line, i) => (RAW_CALL.test(line) && !builderCall(rel, line) ? [`${rel}:${i + 1}: ${line.trim().slice(0, 100)}`] : []))
 }
-test('the raw-call lint finds planted calls and lets only the build skill\'s write calls through (it cannot pass vacuously)', () => {
+test('the raw-call lint finds planted calls and lets only the build skill\'s and the Codex context-pass writer\'s write calls through (it cannot pass vacuously)', () => {
   for (const planted of ['claude -p "$P" --model x', '  codex exec --skip-git-repo-check --sandbox read-only -m x "go"', 'grok -p "$P" -m x',
     '  claude -p --model "$id" \\', 'out=$(codex exec -m x "go")', 'cat p | grok -p "$P"', 'true && claude -p "$P"'])
     assert.equal(rawModelCalls('advisor/claude/advisor/SKILL.md', planted).length, 1, planted)
@@ -303,10 +305,16 @@ test('the raw-call lint finds planted calls and lets only the build skill\'s wri
   assert.equal(rawModelCalls('build/skills/claude/build/SKILL.md', `${write}\n${resume}`).length, 0, 'the builder\'s calls in build')
   assert.equal(rawModelCalls('advisor/skills/claude/advisor/SKILL.md', `${write}\n${resume}`).length, 2, 'the same lines anywhere else')
   assert.equal(rawModelCalls('build/skills/claude/build/SKILL.md', 'codex exec --skip-git-repo-check --sandbox read-only -m x "go"').length, 1, 'a read-only gate in build')
+  const writer = 'codex exec --skip-git-repo-check --sandbox workspace-write -m "$id" -c model_reasoning_effort="$effort" "$(cat p)"'
+  assert.equal(rawModelCalls('review-gate/skills/codex/context-pass/SKILL.md', writer).length, 0, 'the Codex context-pass writer call')
+  assert.equal(rawModelCalls('review-gate/skills/claude/context-pass/SKILL.md', writer).length, 1, 'the same call in the Claude context-pass skill')
+  assert.equal(rawModelCalls('review-gate/skills/codex/context-pass/SKILL.md', 'codex exec resume <thread_id> -m x').length, 1, 'a resume in context-pass')
+  assert.equal(rawModelCalls('review-gate/skills/codex/context-pass/SKILL.md', 'claude -p "$P" --permission-mode acceptEdits').length, 1, 'a claude -p writer in context-pass')
+  assert.equal(rawModelCalls('review-gate/skills/codex/code-review/SKILL.md', writer).length, 1, 'the writer call in any other review-gate skill')
 })
 test('no shipped skill makes a raw claude -p, codex exec or grok -p model call: they ask through ask-model', () => {
   const files = shipped().filter((path) => relative(PACKS, path).split('/')[1] === 'skills')
-  assert.equal(files.filter((path) => basename(path) === 'SKILL.md').length, 18, 'nine skills, each for both harnesses')
+  assert.equal(files.filter((path) => basename(path) === 'SKILL.md').length, 20, 'ten skills, each for both harnesses')
   assert.deepEqual(files.flatMap((path) => rawModelCalls(relative(PACKS, path), readFileSync(path, 'utf8'))), [])
   const skill = (id, harness) => readFileSync(join(PACKS, id, 'skills', harness, id, 'SKILL.md'), 'utf8')
   for (const harness of HARNESSES) {
@@ -343,7 +351,7 @@ test('the role-lookup lint finds planted jq lookups and lets prose and other jq 
 })
 test('no shipped skill looks up a role\'s alt or a family\'s effort with jq: ask-model --second, --effort-from and model-id --effort do', () => {
   const files = shipped().filter((path) => basename(path) === 'SKILL.md')
-  assert.equal(files.length, 18, 'nine skills, each for both harnesses')
+  assert.equal(files.length, 20, 'ten skills, each for both harnesses')
   assert.deepEqual(files.flatMap((path) => roleLookups(relative(PACKS, path), readFileSync(path, 'utf8'))), [])
   const skill = (id, harness) => readFileSync(join(PACKS, id, 'skills', harness, id, 'SKILL.md'), 'utf8')
   for (const harness of HARNESSES) {
