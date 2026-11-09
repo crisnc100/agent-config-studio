@@ -118,7 +118,7 @@ const GIT_LOCATION_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_CO
 const REMOVED_FLAGS = ['--shadow-run', '--shadow-report', '--pick-shadow-run', '--pick-report']
 const removedFlag = args.find((a) => REMOVED_FLAGS.includes(a))
 if (removedFlag) stop(`unknown flag ${removedFlag}`)
-const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat', '--supports']
+const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat', '--supports', '--focus', '--since-close']
 // Every flag this copy reads. Anything else is refused: an older copy that ignored an unknown flag ran a full review in
 // its place, so a skill asking for a mode this copy lacks gets an error, never a different command.
 const KNOWN_FLAGS = [...VALUE_FLAGS, '--all', '--calibrate', '--code-only', '--deferred', '--eval', '--gate', '--log-outcome', '--noise-report',
@@ -759,6 +759,18 @@ function normalisePaths(value) {
 const PATHS = normalisePaths(cfg('REVIEW_PATHS', 'paths', ''))
 // The slice in force: REVIEW_PATHS for a review, the original's stored paths for its fix check.
 let SLICE = PATHS.length ? PATHS : null
+// --focus docs: the context pass's slice review. It is a full review (the correctness prompt, the security pass when
+// security.run is on) with docs instructions added, and only ever of a slice.
+const FOCUS = args.includes('--focus') ? option('--focus') : null
+if (FOCUS !== null && FOCUS !== 'docs') stop(`--focus must be docs, not ${JSON.stringify(FOCUS)}`)
+if (FOCUS && !SLICE && !args.includes('--slices'))
+  stop('--focus docs reviews a slice: set REVIEW_PATHS to the files the context commit touched (or use --slices).')
+// --since-close <sha>: a slice whose code reviewer reads only what changed after a complete close of this branch ended at
+// <sha>. It is sound only because each of its files was already covered at <sha> (getDiff checks), and its security pass
+// still reads the whole slice, so the pass never vouches for code it did not see.
+const SINCE_CLOSE = args.includes('--since-close') ? option('--since-close') : null
+if (SINCE_CLOSE && !SLICE && !args.includes('--slices'))
+  stop('--since-close reviews a slice: set REVIEW_PATHS to the files changed after that close (or use --slices).')
 const sliceOf = (record) => (Array.isArray(record?.paths) && record.paths.length ? record.paths : null)
 // The changed files a sliced review actually covered, recorded at review time. Coverage uses only this
 // list, never the pathspecs: their expansion can change later (attributes, config) with no new review.
@@ -1526,7 +1538,33 @@ function getDiff() {
     die(`REVIEW_PATHS (${SLICE.join(', ')}) matches no file changed between ${BASE} and HEAD; nothing was reviewed.\n` +
       `  Check the pathspecs against: git diff --name-only ${baseSha}...HEAD`)
   const diff = sh('git', [...(SLICE ? ['-C', TOP] : []), 'diff', `${baseSha}...${head}`, ...pathspec(SLICE)])
-  return { branch, diff, head, baseSha, files }
+  if (!SINCE_CLOSE) return { branch, diff, head, baseSha, files }
+  const since = sinceCloseHead(branch, head, baseSha)
+  const sinceFiles = filesBetween(since, head, SLICE).sort()
+  if (!sinceFiles.length) die(`REVIEW_PATHS (${SLICE.join(', ')}) matches no file changed after ${since}; nothing was reviewed.`)
+  DIFF_BASE = since
+  const delta = sh('git', ['-C', TOP, 'diff', `${since}..${head}`, ...pathspec(SLICE)])
+  return { branch, diff: delta, sliceDiff: diff, head, baseSha, files: sinceFiles, since }
+}
+// The commit --since-close names, checked: an ancestor of HEAD where a complete close of a review on this branch and
+// repository ended, whose coverage holds every slice file's state there (or the file is as it was at the base).
+function sinceCloseHead(branch, head, baseSha) {
+  const r = spawnSync('git', ['rev-parse', '--verify', '--quiet', '--end-of-options', `${SINCE_CLOSE}^{commit}`], { encoding: 'utf8' })
+  const sha = r.status === 0 ? r.stdout.trim() : null
+  if (!sha) die(`--since-close ${SINCE_CLOSE} does not name a commit`)
+  if (!isAncestor(sha, head)) die(`--since-close ${sha} is not an ancestor of HEAD`)
+  const entries = readLog(), repoId = repoIdentity()
+  const closes = entries.filter((e) => e.type === 'close' && e.status === 'complete' && e.closeHead === sha && Array.isArray(e.coverage) &&
+    entries.some((r2) => r2.type === 'review' && r2.id === e.review && r2.branch === branch && r2.repoId === repoId))
+  if (!closes.length) die(`--since-close ${sha}: no complete close of this branch ended at that commit`)
+  const covered = new Map(closes.flatMap((c) => c.coverage.filter((x) => Array.isArray(x) && typeof x[0] === 'string')))
+  const then = treeStates(sha), base = treeStates(baseSha)
+  for (const p of filesBetween(sha, head, SLICE)) {
+    const state = then.get(p) ?? null
+    if (state === (base.get(p) ?? null)) continue
+    if (!covered.has(p) || covered.get(p) !== state) die(`${p}: its state at ${sha} was not covered by that close; review it without --since-close`)
+  }
+  return sha
 }
 
 const die = (m) => {
@@ -1626,11 +1664,19 @@ function reviewPrompt(diff) {
     `bad error handling, data-integrity issues — judged against what the branch was supposed to do` +
     `${INTENT ? `: ${INTENT}` : ' (infer from the diff)'}. Inspect the diff (open files as needed) BEFORE answering. ` +
     `Do NOT comment on product direction, scope, or style preference.\n\n` +
+    `${FOCUS === 'docs' ? DOCS_FOCUS : ''}` +
     `${CONTEXT ? `${CONTEXT}\n` : ''}` +
     `${notes.length ? `${notes.join('\n\n')}\n\n` : ''}` +
-    `Diff (git diff ${DIFF_BASE}...HEAD${sliceSuffix(SLICE)}):\n${clipped}`
+    `Diff (git diff ${DIFF_BASE}${SINCE_CLOSE ? '..' : '...'}HEAD${sliceSuffix(SLICE)}):\n${clipped}`
   )
 }
+// Added to the correctness prompt for a --focus docs slice: the context pass's edits are judged as code and as docs.
+const DOCS_FOCUS = `DOCS AND COMMENTS, as well: this slice is a context pass, edits to comments and technical docs made so they ` +
+  `describe the code as it is now. For every changed doc line and comment, open the code it describes and also report: a ` +
+  `claim that is untrue of the code; a claim not backed by the code (name the file:line that would back it, or say none ` +
+  `does); any code-line change, meaning a changed line that is not comment or doc text; a removed comment that carried a ` +
+  `reason, constraint, trade-off or trap the code cannot show; a changed directive or executable comment (lint or type ` +
+  `directives, build tags, doc tests). Quote the changed line. Do NOT report wording, tone or style preferences.\n\n`
 
 // The security pass's prompt: the same diff, context, notes and schema as the code review, a security-only instruction.
 // SECURITY_MARKER names it (tests find the security call by it).
@@ -3280,7 +3326,7 @@ async function securityOutcome(w) {
   return reason ? { reason, durationMs } : { data, durationMs }
 }
 // Starts the pass, if any, once the diff, context and verify result are known. Returns what finishSecurity waits on.
-function beginSecurity({ stats, diff }) {
+function beginSecurity({ stats, diff, diffBase = null }) {
   const need = securityNeed(stats)
   const base = { run: SECURITY.run, ...(SECURITY.raisedBy && { raisedBy: SECURITY.raisedBy }) }
   if (!need.required) {
@@ -3292,7 +3338,7 @@ function beginSecurity({ stats, diff }) {
     console.warn(`⚠ security pass required (${need.why}) but skipped: ${chosen.error} — the merge tier will be HIGH`)
     return { record: { ...base, required: need.why, status: 'skipped', reason: chosen.error } }
   }
-  const job = { diff, context: CONTEXT, verify: VERIFY_RESULT, slice: SLICE, diffBase: DIFF_BASE, intent: INTENT || null,
+  const job = { diff, context: CONTEXT, verify: VERIFY_RESULT, slice: SLICE, diffBase: diffBase || DIFF_BASE, intent: INTENT || null,
     paths: [...new Set((stats?.files || []).flatMap(pathsOf))] }
   try {
     return { base: { ...base, required: need.why, why: chosen.why }, job, members: chosen.members, worker: startSecurityWorker(job, chosen.members[0]) }
@@ -4871,7 +4917,7 @@ async function runEval() {
   if (args.includes('--security-worker')) return securityWorker(option('--security-worker'))
   if (args.includes('--security-only')) return runSecurityOnly()
   if (args.includes('--security-findings')) return printSecurityFindings()
-  const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList } = getDiff()
+  const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList, sliceDiff, since } = getDiff()
   refuseLinkedReviews()
   CONTEXT = reviewContext(branch)
   if (!diff) {
@@ -4909,7 +4955,7 @@ async function runEval() {
   // security.run that is on needed one.
   const securityPlan = args.includes('--code-only') && SECURITY.run !== 'off'
     ? { record: { run: SECURITY.run, status: 'not-asked', reason: 'code-only run' } }
-    : beginSecurity({ stats, diff })
+    : beginSecurity({ stats, diff: sliceDiff ?? diff, diffBase: since ? baseSha : null })
   const started = Date.now()
   const scored = await scoredFindings(await review(diff), SEL)
   const raw = scored.findings
@@ -4982,6 +5028,8 @@ async function runEval() {
     baseSha,
     repoId: repoIdentity(),
     ...(SLICE && { paths: SLICE, files: sliceFileList }),
+    ...(FOCUS && { focus: FOCUS }),
+    ...(since && { sinceClose: since }),
     truncated,
     stats: recordStats(stats),
     plan: PLAN_PATH ?? null,

@@ -383,3 +383,19 @@ for (const [skill, flag] of [['security-check', '--security-only'], ['code-revie
     }
   })
 }
+
+test('fix f8 /pr-review: a repo copy that lacks any flag the flow uses (--focus here) is skipped for the shared runtime, and says so', () => {
+  for (const harness of ['claude', 'codex']) {
+    const { repo, sh } = scratch()
+    const block = fenced(readFileSync(join(SKILLS, harness, 'pr-review', 'SKILL.md'), 'utf8'), '=scripts/review.mjs')
+    mkdirSync(join(repo, 'scripts'))
+    // An older copy: it knows --supports and --security-findings, but not --focus or --since-close.
+    writeFileSync(join(repo, 'scripts/review.mjs'), "const a = process.argv.slice(2)\n// --supports\nif (a[0] === '--supports') process.exit(['--security-findings', '--code-only'].includes(a[1]) ? 0 : 1)\nconsole.log('OLD COPY RAN')\n")
+    const r = sh(`${block}\necho "SCRIPT=$SCRIPT"`)
+    assert.doesNotMatch(r.out, /OLD COPY RAN/, harness)
+    assert.match(r.out, /scripts\/review\.mjs does not support every flag this flow uses; using the shared runtime/, `${harness}: ${r.out}`)
+    assert.match(r.stdout, /SCRIPT=.*\.agent-config-studio\/review-gate\/review\.mjs/, harness)
+    cpSync(SCRIPT, join(repo, 'scripts/review.mjs'))
+    assert.match(sh(`${block}\necho "SCRIPT=$SCRIPT"`).stdout, /SCRIPT=scripts\/review\.mjs/, `${harness}: a current copy is kept`)
+  }
+})
