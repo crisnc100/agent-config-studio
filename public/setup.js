@@ -81,6 +81,8 @@ async function loadSetupClis(recheck) {
   try { SETUP.clis = await api('GET', `/api/setup/clis${recheck ? '?recheck=1' : ''}`); SETUP.clisError = null; }
   catch (e) { SETUP.clisError = e.message; }
   SETUP.checking = false;
+  // A Recheck that finds the same thing still says it looked (and when).
+  if (recheck) SETUP.checkedAt = Date.now();
   if (recheck) focusAfter('[data-focus="recheck"]');
   paintSetup();
 }
@@ -191,6 +193,12 @@ function setupClisStep(body) {
   recheck.disabled = SETUP.checking;
   recheck.onclick = () => loadSetupClis(true);
   tools.appendChild(recheck);
+  if (SETUP.checkedAt && !SETUP.checking && SETUP.clis) {
+    const n = SETUP.clis.clis.filter((c) => c.installed).length;
+    const line = el('span', 'setup-checked', `Checked at ${new Date(SETUP.checkedAt).toLocaleTimeString()} — ${n} of ${SETUP.clis.clis.length} installed`);
+    line.setAttribute('role', 'status');
+    tools.appendChild(line);
+  }
   body.appendChild(tools);
   if (SETUP.clisError) body.appendChild(el('div', 'notice error', `Could not check the CLIs: ${SETUP.clisError}`));
   if (!SETUP.clis) { if (!SETUP.clisError) body.appendChild(homeLoading('Looking for the CLIs…')); return; }

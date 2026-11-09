@@ -216,8 +216,8 @@ const pkNames = (fix) => fix.reqs.flatMap((r) => String(r.name || r.id).split(' 
 function pkNeedText(fix) {
   const r = fix.reqs[0];
   if (r.dep) return `the ${pkPack(r.dep)?.title || r.dep} pack first`;
-  // A PATH fix, not a missing tool: the CLIs it names are installed (✓ on the machine line).
-  if (fix.key === 'path') return `a PATH fix: ${pkNames(fix).join(', ')}`;
+  // Off the search path, not missing: the CLIs it names are installed. Said once at the top (pkShared), so rarely here.
+  if (fix.key === 'path') return `commands on your search path: ${pkNames(fix).join(', ')}`;
   return PK_NEED_SHORT[r.id] || r.what;
 }
 /** A fix as the top block lists it: what to do, then how. */
@@ -226,9 +226,9 @@ function pkFixItem(fix) {
   const tools = fix.reqs.some((r) => ['model-id', 'ask-model'].includes(r.id));
   const clis = fix.reqs.some((r) => r.id === 'cli');
   return {
-    what: `Some tools aren’t on the PATH the studio sees: ${pkNames(fix).join(', ')}`,
+    what: `Some commands aren’t on your shell’s search path, so agents can’t run them: ${pkNames(fix).join(', ')}`,
     fix: [tools ? 'run acs install-model-id' : null,
-      `add ${tools ? '~/.local/bin' : ''}${tools && clis ? ' and ' : ''}${clis ? "each CLI's folder" : ''} to your PATH`,
+      `add ${tools ? '~/.local/bin' : ''}${tools && clis ? ' and ' : ''}${clis ? "each CLI's folder" : ''} to your shell’s PATH`,
       'then restart the studio'].filter(Boolean).join(', '),
   };
 }
@@ -244,11 +244,21 @@ function pkShared() {
   // A merged PATH fix differs per pack (some lack only model-id): share it if every pack has one, listing every name.
   const shared = new Map();
   for (const f of first) {
-    if (f.key.startsWith('pack:') || !rest.every((fs) => fs.some((g) => g.key === f.key))) continue;
+    if (f.key.startsWith('pack:') || f.key === 'path' || !rest.every((fs) => fs.some((g) => g.key === f.key))) continue;
     const reqs = new Map();
     for (const fs of [first, ...rest]) for (const r of fs.find((g) => g.key === f.key).reqs) reqs.set(r.name || r.id, r);
     shared.set(f.key, { key: f.key, reqs: [...reqs.values()] });
   }
+  // The search-path fix is one machine fix, whichever packs it blocks: said once at the top, with every name,
+  // never repeated on each card (final critique P2-2).
+  const pathReqs = new Map();
+  let blocked = 0;
+  for (const fs of [first, ...rest]) {
+    const f = fs.find((g) => g.key === 'path');
+    if (f) blocked++;
+    for (const r of f?.reqs || []) pathReqs.set(r.name || r.id, r);
+  }
+  if (pathReqs.size) shared.set('path', { key: 'path', reqs: [...pathReqs.values()], blocked, of: packs.length });
   return shared;
 }
 
@@ -265,6 +275,8 @@ function pkTodo() {
     const item = pkFixItem(f);
     const li = el('li', null, item.what);
     li.appendChild(el('div', 'pk-fix', `Fix: ${item.fix}`));
+    // Said once for every pack it blocks — and how many that is, when it is not all of them.
+    if (f.blocked && f.blocked < f.of) li.appendChild(el('div', 'pk-fix', `Needed by ${f.blocked} of ${f.of} packs.`));
     ol.appendChild(li);
   }
   box.appendChild(ol);

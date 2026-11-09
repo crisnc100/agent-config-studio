@@ -88,7 +88,7 @@ function worktreeItems(d) {
 
 function contextItems(d) {
   const n = d.totals?.drifted || 0;
-  return n ? [{ source: 'context', kind: 'warn', rank: ATTENTION_RANK.drift, text: `${plural(n, 'context file')} drifted from trunk`, action: { view: 'context', label: 'Compare' } }] : [];
+  return n ? [{ source: 'context', kind: 'warn', rank: ATTENTION_RANK.drift, text: n === 1 ? '1 instruction file in a worktree differs from the main checkout' : `${n} instruction files in worktrees differ from the main checkout`, action: { view: 'context', label: 'Compare' } }] : [];
 }
 
 /**
