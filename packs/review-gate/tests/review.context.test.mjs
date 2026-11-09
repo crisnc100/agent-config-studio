@@ -242,3 +242,26 @@ test('8 --since-close refuses without a slice, at a commit no complete close of 
   refused(script(['--since-close', readmeOnly.closeHead], { REVIEW_REVIEWER: 'sol', REVIEW_PATHS: 'src/app.js' }),
     /src\/app\.js: its state at .* was not covered by that close/)
 })
+
+test('9 --since-close: a file the security prompt cut at the cap stays out of what the pass saw, and the close names it', () => {
+  homeConfig({ security: { run: 'required' } })
+  const body = (name, n) => Array.from({ length: n }, (_, i) => `export const ${name}${i} = ${i}`).join('\n') + '\n'
+  const A = body('a', 4300), Z = body('z', 800)
+  commit({ 'src/a.js': A, 'src/z.js': Z })
+  const head = git('rev-parse', 'HEAD')
+  // The main review in two slices, each under the cap on its own, closed at one head: both files covered there.
+  const aClose = closed(reviewed({ REVIEW_PATHS: 'src/a.js' }))
+  const zClose = closed(reviewed({ REVIEW_PATHS: 'src/z.js' }))
+  assert.equal(aClose.closeHead, head); assert.equal(zClose.closeHead, head)
+  commit({ 'src/a.js': `// The a numbers.\n${A}`, 'src/z.js': `// The z numbers.\n${Z}` })
+  rmSync(CALLS, { force: true })
+  const id = reviewed({ REVIEW_PATHS: 'src/a.js,src/z.js' }, ['--focus', 'docs', '--since-close', head])
+  const record = lines(LOG).find((e) => e.id === id)
+  assert.equal(record.security.status, 'ran')
+  const saw = new Map(record.security.saw)
+  assert.ok(saw.has('src/a.js'), 'a.js is inside the cap')
+  assert.equal(saw.has('src/z.js'), false, 'z.js is past the cap in the diff the security pass got')
+  const close = closed(id)
+  assert.ok(close.tierReasons.some((r) => /security pass did not see src\/z\.js/.test(r)), JSON.stringify(close.tierReasons))
+  assert.equal(close.tier, 'high')
+})
