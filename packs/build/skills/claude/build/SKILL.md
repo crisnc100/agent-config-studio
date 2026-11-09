@@ -172,7 +172,7 @@ Skip the recheck command when there were no failed criteria. A recheck needs no 
 
 **Pass limits.** One review per phase; fixes never get a full re-review. Recheck failed criteria once. Run --fix-check only when close requires it because fixes changed tests, test settings, verify scripts or riskPaths. Deal with its findings once (fix, reject or defer each), then a hard stop. At most two review passes per phase; risk-area /build work allows three (Grade, /code-review, fix check). Risk-area work that went through /build gets both a Grade and /code-review. Stop before exceeding the limit.
 
-**Hand-off to the PR.** When the last phase's Grade (and any /code-review) is closed, hand the finished tip to `/pr-review`. It owns the rest, in order: the security pass when `security.run` is on, its fix round and close, the push, and the PR description. The Grade and /code-review closes count as they do today.
+**Hand-off to the PR.** When the last phase's Grade (and any /code-review) is closed, hand the finished tip to `/pr-review`. It owns the rest, in order: the security pass when `security.run` is on, its fix round and close, the context pass and its docs-focus slice, the push, and the PR description. The Grade and /code-review closes count as they do today. The context pass runs once, at the PR, never per phase or per fix.
 
 ## What the driver provides
 

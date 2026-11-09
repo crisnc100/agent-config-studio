@@ -33,6 +33,8 @@ To name one reviewer for a run: `REVIEW_REVIEWER=<family>` (or `codex`, `claude`
 
 Per-run knobs (env → config file → built-in): `REVIEW_EFFORT=xhigh` (raise codex reasoning), `REVIEW_BASE=origin/master` (non-standard default branch). The config files are `.claude/review-config.json` (this repo) and `~/.agent-config-studio/review-gate/config.json` (all projects). A repo file sets `verifyCmd`, `classifier`, `base` or a `pick` that names a command only while git doesn't track it; otherwise those are ignored with a warning. Check active config: `node "$SCRIPT" --show-config`. The review log is `~/.agent-config-studio/review-log/review-log.jsonl` (an existing older log under `~/.claude` keeps being used until that folder exists).
 
+**Docs focus.** `--focus docs` with `REVIEW_PATHS` reviews a slice of comment and doc edits: the reviewer reads every changed doc line and comment against the code, and reports untrue or unbacked claims, any code-line change, a removed comment that carried a reason, and a changed directive. It runs no security pass, and it reviews a slice only.
+
 **Big diffs: review in slices.** The prompt inlines at most 120k characters of diff; over that, the run warns and names the largest top-level folders.
 Slice the one commit instead: run the review once per path group with `REVIEW_PATHS=<pathspec>,<pathspec>` (git pathspecs, comma- or newline-separated; config `paths` also works). A list that matches no changed file is refused.
 Each slice gets its own record, findings and close, and a sliced close ignores later changes outside its paths. Commit every fix first, then close every slice at the same HEAD.

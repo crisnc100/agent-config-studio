@@ -1,6 +1,6 @@
 ---
 name: pr-review
-description: Make a finished branch ready for its pull request, in one fixed order. The code review and the security pass run together in one review record, then one fix round, one fix check and the close, then the push, and the PR description. Use when a branch, or a build tip, is finished and being made ready for a PR. It owns the order of the steps; the reviews themselves follow the code-review skill's rules.
+description: Make a finished branch ready for its pull request, in one fixed order. The code review and the security pass run together in one review record, then one fix round, one fix check and the close, then the context pass and its docs-focus slice, then the push, and the PR description. Use when a branch, or a build tip, is finished and being made ready for a PR. It owns the order of the steps; the reviews themselves follow the code-review skill's rules.
 ---
 
 # pr-review — from a finished branch to an open PR
@@ -11,7 +11,7 @@ This skill owns the order. Each step runs once, in this order, and never per bui
 SETTING  read security.run, and say plainly when it is off
 REVIEW   code + security in parallel → one record (open standalone security findings go in as context)
 FIX      one fix round → one fix check → close
-CONTEXT  the context pass: not built yet, skipped (say so)
+CONTEXT  /context-pass on the final code → a docs-focus slice of exactly the files it touched → close the slice
 SHIP     push → the PR description → the operator merges
 ```
 
@@ -49,9 +49,19 @@ Drop `--plan` when there is no plan; pass `REVIEW_AUTHOR=<family or vendor that 
 
 Every HIGH and MEDIUM, `f…` and `s…`, is fixed without asking (rule 10): by the builder that wrote the branch, or in-context when no builder did. LOWs are filed. Commit the fixes. When the fix round changed any code, run `node "$SCRIPT" --fix-check <review-id>` once, then fix, reject or defer each `x…` finding once, and stop: no second check. Close with `node "$SCRIPT" --close <review-id> --status builds/<slug>/status.json` (with `--test-cmd`, or `--no-tests "<reason>"`). A clean review closes too.
 
-## Step 4 — context pass (not built yet)
+## Step 4 — context pass, then its slice
 
-The context pass, a review of comments and technical docs against the final code, is planned but not built yet. Skip this step, and say in the report that it was skipped.
+It runs after the close, on the final code, so the docs describe the code after every fix. It adds no gate exception: its commit is covered by its own closed slice.
+
+1. **The context pass.** Run the context-pass skill in PR mode: write `builds/<slug>/context-brief.json` and check it with `--check-brief`, run the writer, then check its commit with `--check-commit`. Its docs table goes to `builds/<slug>/docs-table.json`, which `pr-facts --check` reads.
+2. **Nothing changed?** When the writer made no commit, go to step 5.
+3. **The docs-focus slice.** Review exactly the files the context commit touched, as one slice with the docs focus, then fix, dispute or defer its findings by the same rules and close the slice at the tip:
+   ```bash
+   FILES=$(git diff --name-only HEAD~1 HEAD | grep -v '^builds/' | paste -sd, -)
+   REVIEW_PATHS="$FILES" node "$SCRIPT" --focus docs "<intent: the context pass for this branch — comments and docs only>"
+   node "$SCRIPT" --close <slice-id> --status builds/<slug>/docs-status.json
+   ```
+   The docs reviewer reads every changed doc line and comment against the code, and reports untrue or unbacked claims and any code-line change. A docs-focus slice runs no security pass, and comment-only edits to code a security pass saw leave the merge tier where it was.
 
 ## Step 5 — push, then the PR description
 
@@ -59,4 +69,4 @@ The context pass, a review of comments and technical docs against the final code
 
 ## One report
 
-Report once, after the close: what was fixed, deferred and filed, each with its numbers (rule 11); the security line from step 1; that the context pass was skipped; and the PR link.
+Report once, after the close: what was fixed, deferred and filed, each with its numbers (rule 11); the security line from step 1; what the context pass changed (or that it changed nothing) and the changes it proposes for instruction files; and the PR link.
