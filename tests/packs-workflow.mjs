@@ -222,10 +222,12 @@ try {
   ok('who is you, your session agent, or a script with no model', /^you\b/.test(who('build', 'judge')) && /your session agent/.test(who('build', 'understand'))
     && who('review-gate', 'close') === 'script' && who('review-gate', 'gate') === 'git hook' && who('review-gate', 'pr') === 'your session agent',
     `${who('build', 'judge')} | ${who('build', 'understand')} | ${who('review-gate', 'close')} | ${who('review-gate', 'gate')} | ${who('review-gate', 'pr')}`);
-  const pair = card('review-gate').querySelector('.flow .step-pair');
-  ok('the code review and the security check share one column, marked "at the same time", and the arrow leaves the pair', !!pair
-    && pair.querySelectorAll('.step').map((x) => x.dataset.step).join() === 'review,security' && /at the same time/.test(t(pair.querySelector('.pair-note')))
-    && pair.parentNode === card('review-gate').querySelector('.flow') && card('review-gate').querySelector('.flow').children.length === 7, t(pair));
+  const flowKids = card('review-gate').querySelector('.flow').children;
+  const at2 = flowKids.indexOf(step('review-gate', 'review'));
+  ok('the code review and the security check sit side by side, joined (not an arrow), the second marked "at the same time"', at2 !== -1
+    && flowKids[at2 + 1] === step('review-gate', 'security') && step('review-gate', 'review').classList.contains('with-next')
+    && step('review-gate', 'security').classList.contains('beside') && /^at the same time$/.test(t(step('review-gate', 'security').querySelector('.pair-note')))
+    && flowKids.length === 8, `${at2} ${flowKids.map((k) => k.className).join(' | ')}`);
   ok('pr says no extra model is called', /No extra model is called/.test(t(card('pr').querySelector('.pk-flow-note'))));
   ok('build notes its lightweight mode', /lightweight/i.test(t(card('build').querySelector('.pk-flow-note'))));
   ok('the strips: handoff says your session agent writes it, with no extra model', /your session agent/.test(t(card('handoff').querySelector('.pk-strip'))) && /no extra model/i.test(t(card('handoff').querySelector('.pk-strip'))));
