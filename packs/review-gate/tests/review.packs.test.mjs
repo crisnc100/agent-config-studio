@@ -290,8 +290,10 @@ test('every read-only claude -p command in a shipped skill drops MCP tools with 
 // skill's builder calls (codex exec with --sandbox workspace-write, and codex exec resume, which inherits it) and the
 // Codex context-pass skill's writer call (codex exec with --sandbox workspace-write, nothing else).
 const RAW_CALL = /(?:^|\$\(|[|&;(])\s*(?:claude\s+-p|codex\s+exec|grok\s+-p)(?:\s|$)/
+// The context-pass writer call, exactly: one line, in one file.
+const WRITER_CALL = 'codex exec --skip-git-repo-check --sandbox workspace-write -m "$id" -c model_reasoning_effort="$effort" "$(cat builds/<slug>/context-prompt.md)"'
 const builderCall = (rel, line) => rel.startsWith('build/') && (/^\s*codex\s+exec\s+resume\b/.test(line) || /^\s*codex\s+exec\b.*\s--sandbox\s+workspace-write\b/.test(line)) ||
-  /^review-gate\/skills\/codex\/context-pass\//.test(rel) && /^\s*codex\s+exec\b.*\s--sandbox\s+workspace-write\b/.test(line)
+  rel.endsWith('review-gate/skills/codex/context-pass/SKILL.md') && line === WRITER_CALL
 function rawModelCalls(rel, source) {
   return source.split('\n').flatMap((line, i) => (RAW_CALL.test(line) && !builderCall(rel, line) ? [`${rel}:${i + 1}: ${line.trim().slice(0, 100)}`] : []))
 }
@@ -305,12 +307,17 @@ test('the raw-call lint finds planted calls and lets only the build skill\'s and
   assert.equal(rawModelCalls('build/skills/claude/build/SKILL.md', `${write}\n${resume}`).length, 0, 'the builder\'s calls in build')
   assert.equal(rawModelCalls('advisor/skills/claude/advisor/SKILL.md', `${write}\n${resume}`).length, 2, 'the same lines anywhere else')
   assert.equal(rawModelCalls('build/skills/claude/build/SKILL.md', 'codex exec --skip-git-repo-check --sandbox read-only -m x "go"').length, 1, 'a read-only gate in build')
-  const writer = 'codex exec --skip-git-repo-check --sandbox workspace-write -m "$id" -c model_reasoning_effort="$effort" "$(cat p)"'
-  assert.equal(rawModelCalls('review-gate/skills/codex/context-pass/SKILL.md', writer).length, 0, 'the Codex context-pass writer call')
-  assert.equal(rawModelCalls('review-gate/skills/claude/context-pass/SKILL.md', writer).length, 1, 'the same call in the Claude context-pass skill')
-  assert.equal(rawModelCalls('review-gate/skills/codex/context-pass/SKILL.md', 'codex exec resume <thread_id> -m x').length, 1, 'a resume in context-pass')
-  assert.equal(rawModelCalls('review-gate/skills/codex/context-pass/SKILL.md', 'claude -p "$P" --permission-mode acceptEdits').length, 1, 'a claude -p writer in context-pass')
-  assert.equal(rawModelCalls('review-gate/skills/codex/code-review/SKILL.md', writer).length, 1, 'the writer call in any other review-gate skill')
+  const cp = 'review-gate/skills/codex/context-pass/SKILL.md'
+  assert.equal(rawModelCalls(cp, WRITER_CALL).length, 0, 'the Codex context-pass writer call, exactly')
+  for (const planted of [
+    `  ${WRITER_CALL}`, `${WRITER_CALL} && rm -rf build`, WRITER_CALL.replace('"$(cat builds/<slug>/context-prompt.md)"', '"go"'),
+    'codex exec --skip-git-repo-check --sandbox workspace-write -m x "go"', 'codex exec --sandbox workspace-write --dangerously-bypass-approvals-and-sandbox -m x "go"',
+    'codex exec --skip-git-repo-check --sandbox read-only -m x "go"', 'codex exec resume <thread_id> -m x', 'claude -p "$P" --permission-mode acceptEdits',
+    'grok -p "$P" -m x', 'out=$(codex exec -m x "go")',
+  ]) assert.equal(rawModelCalls(cp, planted).length, 1, `still flagged in context-pass: ${planted}`)
+  assert.equal(rawModelCalls('review-gate/skills/claude/context-pass/SKILL.md', WRITER_CALL).length, 1, 'the same call in the Claude context-pass skill')
+  assert.equal(rawModelCalls('review-gate/skills/codex/code-review/SKILL.md', WRITER_CALL).length, 1, 'the writer call in any other review-gate skill')
+  assert.ok(readFileSync(join(PACKS, cp), 'utf8').split('\n').includes(WRITER_CALL), 'the exception names the line the skill really ships')
 })
 test('no shipped skill makes a raw claude -p, codex exec or grok -p model call: they ask through ask-model', () => {
   const files = shipped().filter((path) => relative(PACKS, path).split('/')[1] === 'skills')
