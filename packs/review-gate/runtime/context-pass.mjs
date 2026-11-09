@@ -13,23 +13,27 @@
  * test file, an agent-instruction file (SKILL.md, CLAUDE.md, AGENTS.md, GEMINI.md, .cursor/rules, a pack's
  * instructions/, .claude/, .codex/, .agents/), a path the brief lists as untouchable (program-input .md files, say), a
  * change inside a generated block (<!-- ns:name … --> … <!-- /ns:name -->), a removed doc line that a test file quotes,
- * and in any other file a changed line that is not comment or blank (review.mjs --comment-only, beside this script).
+ * and in any other file a changed line that is not comment or blank.
+ *
+ * The code-line check is an accident barrier for the writer, never a proof: the review gate never trusts it, and the
+ * docs-focus slice that follows reviews the commit as code. So it fails closed. An unknown language, a regex literal
+ * that could hide a comment or quote, a string that runs past a line end, a heredoc, a YAML block scalar, a line
+ * continuation, a mode change, a new or deleted file, and any changed line with a block-comment delimiter all count as
+ * code. Changed lines come from git diff, so a file's length never decides the answer.
  *
  * Output: one JSON object. Exit 0 ok · 1 a problem or bad input.
  */
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const REVIEW = join(dirname(fileURLToPath(import.meta.url)), 'review.mjs')
 const FIELDS = {
   pr: ['mode', 'purpose', 'mechanism', 'decisions', 'readers', 'base', 'docMap', 'untouchable'],
   standalone: ['mode', 'purpose', 'readers', 'paths'],
 }
 const DOCS = /\.(md|mdx|rst|adoc)$|(^|\/)docs\/[^/]+\.txt$/i
 const TESTS = /(^|\/)(tests?|__tests__|spec|fixtures)\/|\.(test|spec)\.[^/]+$|(^|\/)test_[^/]+$|_test\.[^/]+$/
-const AGENT = /(^|\/)(SKILL|CLAUDE|AGENTS|GEMINI)\.md$|(^|\/)\.cursor\/rules\/|(^|\/)packs\/[^/]+\/instructions\/|(^|\/)\.(claude|codex|agents)\//
+const AGENT = /(^|\/)(SKILL|CLAUDE|AGENTS|GEMINI)(\.[\w-]+)?\.md$|(^|\/)\.github\/copilot-instructions\.md$|(^|\/)\.github\/instructions\/|(^|\/)\.(cursor|windsurf)\/rules\/|(^|\/)packs\/[^/]+\/instructions\/|(^|\/)\.(claude|codex|agents|gemini)\//i
 // A doc line short enough to recur by chance ("## Usage") is not treated as pinned.
 const PINNED_MIN = 12
 
@@ -140,13 +144,83 @@ export function checkCommit(commit, brief = null) {
       if (t.length >= PINNED_MIN && !kept.has(line) && pinned(t)) problems.push(`${p}: a line a test pins: "${t}" (untouchable)`)
     }
   }
-  if (code.length) {
-    const r = spawnSync(process.execPath, [REVIEW, '--comment-only', parent, sha, ...code], { encoding: 'utf8' })
-    let out = null
-    try { out = JSON.parse(r.stdout) } catch { refuse(`review.mjs --comment-only failed: ${(r.stderr || r.stdout).trim().split('\n').at(-1)}`) }
-    for (const p of code) if (out.files[p] !== true) problems.push(`${p}: a code line changed (only comments may change in code)`)
-  }
+  for (const p of code) if (!commentOnly(parent, sha, p)) problems.push(`${p}: a code line changed (only comments may change in code)`)
   return { ok: problems.length === 0, commit: sha, problems, files }
+}
+
+/* ── the code-line check ─────────────────────────────────────────────── */
+
+const STYLES = [
+  { exts: ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'cts', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'java', 'kt', 'kts', 'swift', 'go', 'rs', 'scala', 'dart', 'php', 'css', 'scss', 'less'],
+    line: '//', block: ['/*', '*/'], quotes: ['"', "'", '`'], regex: true },
+  { exts: ['sh', 'bash', 'zsh', 'fish'], line: '#', block: null, quotes: ['"', "'"], heredoc: true },
+  { exts: ['yaml', 'yml'], line: '#', block: null, quotes: ['"', "'"], blockScalar: true },
+  { exts: ['py', 'rb', 'pl', 'toml', 'r', 'ex', 'exs', 'tf'], line: '#', block: null, quotes: ['"', "'"] },
+  { exts: ['sql', 'lua', 'hs'], line: '--', block: null, quotes: ['"', "'"] },
+]
+const DIRECTIVE = /^\s*(?:#!|\/\/\/|\/\/!|\/\/\s*go:|\/\/\s*\+build|\/\/\s*Output:)|@ts-|eslint|prettier-ignore|istanbul |\bc8 |biome-ignore|deno-lint|jshint|@flow\b|@jsx|@vite-ignore|webpack[A-Z]|#__PURE__|\bnoqa\b|#\s*type:|pylint:|mypy:|pyright:|rubocop:|nolint|fmt:\s*(?:off|on)|isort:|-\*-.*-\*-|swiftlint:|NOSONAR|pragma/
+const styleOf = (path) => {
+  const ext = path.includes('.') ? path.split('.').pop().toLowerCase() : ''
+  return STYLES.find((st) => st.exts.includes(ext)) || null
+}
+// Per line, whether every non-blank character on it is comment; null when the text has anything this scanner cannot
+// read for sure.
+function commentMap(text, style) {
+  const out = []
+  let state = 'code', quote = null, code = false
+  const lines = text.split('\n')
+  for (const line of lines) {
+    if (style.blockScalar && /(^|[:\s-])[|>][+-]?\d*\s*(#.*)?$/.test(line) && state === 'code') return null
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i]
+      if (state === 'block') {
+        if (line.startsWith(style.block[1], i)) { state = 'code'; i += style.block[1].length - 1 }
+        continue
+      }
+      if (state === 'string') {
+        code = true
+        if (c === '\\') i++
+        else if (c === quote) state = 'code'
+        continue
+      }
+      if (/\s/.test(c)) continue
+      if (style.block && line.startsWith(style.block[0], i)) { state = 'block'; i += style.block[0].length - 1; continue }
+      if (line.startsWith(style.line, i) && (style.line !== '#' || i === 0 || /\s/.test(line[i - 1]))) break
+      if (style.heredoc && line.startsWith('<<', i)) return null
+      if (style.regex && c === '/' && /\/\*|\*\/|\/\/|["'`]/.test(line.slice(i + 1))) return null
+      if (style.quotes.includes(c)) { state = 'string'; quote = c; code = true; continue }
+      code = true
+    }
+    if (state === 'string') return null
+    if (state === 'code' && /\\\s*$/.test(line)) return null
+    out.push(!code)
+    code = false
+  }
+  return out
+}
+// The line numbers git diff -U0 says changed: { old: [n…], now: [n…] }.
+function changedLines(parent, sha, path) {
+  const diff = git('diff', '-U0', '--no-color', '--no-ext-diff', '--no-renames', parent, sha, '--', path)
+  if (diff === null) return null
+  const old = [], now = []
+  for (const m of diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)) {
+    const [a, b, c, d] = [Number(m[1]), m[2] === undefined ? 1 : Number(m[2]), Number(m[3]), m[4] === undefined ? 1 : Number(m[4])]
+    for (let k = 0; k < b; k++) old.push(a + k)
+    for (let k = 0; k < d; k++) now.push(c + k)
+  }
+  return { old, now }
+}
+const modeOf = (commit, path) => (git('ls-tree', commit, '--', path) || '').split(' ')[0] || null
+function commentOnly(parent, sha, path) {
+  const style = styleOf(path)
+  if (!style) return false
+  const before = git('show', `${parent}:${path}`), after = git('show', `${sha}:${path}`)
+  if (before === null || after === null || modeOf(parent, path) !== modeOf(sha, path)) return false
+  const was = commentMap(before, style), now = commentMap(after, style), changed = changedLines(parent, sha, path)
+  if (!was || !now || !changed) return false
+  const ok = (map, lines, n) => map[n - 1] === true && !DIRECTIVE.test(lines[n - 1]) && !(style.block && /\/\*|\*\//.test(lines[n - 1]))
+  const a = before.split('\n'), b = after.split('\n')
+  return changed.old.every((n) => ok(was, a, n)) && changed.now.every((n) => ok(now, b, n))
 }
 
 export function main(args = process.argv.slice(2)) {
