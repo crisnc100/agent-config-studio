@@ -183,8 +183,8 @@ test('6 the coordinated flow: code and security in one record, one fix round, on
   // A docs-focus slice of exactly the files the context commit touched, since the main close's head, closed at the tip.
   rmSync(CALLS, { force: true })
   const slice = reviewed({ REVIEW_PATHS: touched.join(',') }, ['--focus', 'docs', '--since-close', mainClose.closeHead])
+  assert.deepEqual(calls().map((c) => c.kind).sort(), ['code', 'security'], 'exactly one docs reviewer and one security pass, nothing else')
   const code = calls().filter((c) => c.kind === 'code'), security = calls().filter((c) => c.kind === 'security')
-  assert.equal(code.length, 1); assert.equal(security.length, 1)
   assert.match(code[0].prompt, /\+\/\/ Callers read these three numbers/, 'the docs reviewer sees the context commit')
   assert.doesNotMatch(code[0].prompt, /\+export const two = 22/, 'and only it: not the fix the main review already covered')
   assert.match(security[0].prompt, /\+export const two = 22/, 'the security pass reads the whole slice, the fix it never saw included')

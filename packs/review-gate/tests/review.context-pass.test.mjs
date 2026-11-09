@@ -155,6 +155,9 @@ test('7 a code file passes only when its changed lines are wholly comment or bla
   const cases = [
     ['src/a.js', JS, JS.replace('// Loads the config.', '// Reads the config once, at start.'), true],
     ['src/b.js', JS, `${JS}\n\n`, true],
+    ['src/n.js', JS, JS.replace(' * The parser.', ' * The config parser, comma-separated.'), true],
+    ['src/o.js', JS, JS.replace(' * The parser.\n', ''), true],
+    ['src/p.py', 'def f():\n    """Doc."""\n    return 1\n', 'def f():\n    """Better doc."""\n    return 1\n', false],
     ['src/c.js', JS, JS.replace("split(',')", "split(';')"), false],
     ['src/d.js', JS, JS.replace("'http://x'", "'http://y'"), false],
     ['src/e.js', JS, JS.replace('// where it lives', '// where it is served'), false],

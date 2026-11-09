@@ -293,7 +293,7 @@ const RAW_CALL = /(?:^|\$\(|[|&;(])\s*(?:claude\s+-p|codex\s+exec|grok\s+-p)(?:\
 // The context-pass writer call, exactly: one line, in one file.
 const WRITER_CALL = 'codex exec --skip-git-repo-check --sandbox workspace-write -m "$id" -c model_reasoning_effort="$effort" "$(cat builds/<slug>/context-prompt.md)"'
 const builderCall = (rel, line) => rel.startsWith('build/') && (/^\s*codex\s+exec\s+resume\b/.test(line) || /^\s*codex\s+exec\b.*\s--sandbox\s+workspace-write\b/.test(line)) ||
-  rel.endsWith('review-gate/skills/codex/context-pass/SKILL.md') && line === WRITER_CALL
+  rel === 'review-gate/skills/codex/context-pass/SKILL.md' && line === WRITER_CALL
 function rawModelCalls(rel, source) {
   return source.split('\n').flatMap((line, i) => (RAW_CALL.test(line) && !builderCall(rel, line) ? [`${rel}:${i + 1}: ${line.trim().slice(0, 100)}`] : []))
 }
@@ -309,6 +309,8 @@ test('the raw-call lint finds planted calls and lets only the build skill\'s and
   assert.equal(rawModelCalls('build/skills/claude/build/SKILL.md', 'codex exec --skip-git-repo-check --sandbox read-only -m x "go"').length, 1, 'a read-only gate in build')
   const cp = 'review-gate/skills/codex/context-pass/SKILL.md'
   assert.equal(rawModelCalls(cp, WRITER_CALL).length, 0, 'the Codex context-pass writer call, exactly')
+  for (const lookAlike of [`other-${cp}`, `x/${cp}`, `${cp}.bak`])
+    assert.equal(rawModelCalls(lookAlike, WRITER_CALL).length, 1, `the writer line in a look-alike path is still flagged: ${lookAlike}`)
   for (const planted of [
     `  ${WRITER_CALL}`, `${WRITER_CALL} && rm -rf build`, WRITER_CALL.replace('"$(cat builds/<slug>/context-prompt.md)"', '"go"'),
     'codex exec --skip-git-repo-check --sandbox workspace-write -m x "go"', 'codex exec --sandbox workspace-write --dangerously-bypass-approvals-and-sandbox -m x "go"',
