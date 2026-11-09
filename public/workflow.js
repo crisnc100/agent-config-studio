@@ -135,16 +135,15 @@ function wfDiagram(wf, ctx) {
   // Eight or more steps would squeeze each to a sliver at a desktop width: rows of four instead.
   const ol = el('ol', `flow${wf.steps.length > 7 ? ' rows' : ''}`);
   let anyOff = false;
-  // A step `beside` the one before shares its column: the two run at the same time, and the arrow leaves the pair.
-  let pair = null;
   for (const [i, raw] of wf.steps.entries()) {
     const step = wfStepFor(raw, variant);
     const on = wfStepOn(step, ctx);
     if (!on) anyOff = true;
-    const together = !!wf.steps[i + 1]?.beside || !!raw.beside;
     // A step with no model, or one that is off, is a narrow tile: the role steps get the width.
-    const li = el(together ? 'div' : 'li', `step${on ? '' : ' off'}${!on || step.who === 'script' ? ' narrow' : ''}`);
+    // A step `beside` the one before runs at the same time: the two are joined by a mark, not an arrow.
+    const li = el('li', `step${on ? '' : ' off'}${!on || step.who === 'script' ? ' narrow' : ''}${wf.steps[i + 1]?.beside ? ' with-next' : ''}${raw.beside ? ' beside' : ''}`);
     li.dataset.step = step.id;
+    if (raw.beside) li.appendChild(el('span', 'pair-note', 'at the same time'));
     const name = el('div', 'step-name', step.label);
     if (!on) { name.appendChild(document.createTextNode(' ')); name.appendChild(el('span', 'step-off', 'off')); }
     li.appendChild(name);
@@ -152,13 +151,7 @@ function wfDiagram(wf, ctx) {
     const who = el('div', 'who');
     for (const c of wfChips(step, ctx)) who.appendChild(wfChipEl(c));
     li.appendChild(who);
-    if (!together) { ol.appendChild(li); continue; }
-    if (!raw.beside) {
-      pair = el('li', 'step-pair');
-      pair.appendChild(el('span', 'pair-note', 'at the same time'));
-      ol.appendChild(pair);
-    }
-    pair.appendChild(li);
+    ol.appendChild(li);
   }
   box.appendChild(ol);
   const legend = el('ul', 'legend');
