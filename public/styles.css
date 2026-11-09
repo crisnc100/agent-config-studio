@@ -239,19 +239,6 @@ a { color: var(--accent); }
 }
 .btn.ghost:disabled { background: transparent; border-color: transparent; }
 
-/* A data fold the user opens on purpose (what a pack changes, installer output, a project card): a styled
-   control with its own chevron, never the browser's triangle. */
-summary.fold { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; width: fit-content;
-  color: var(--accent-ink); font-weight: 550; padding: 3px 8px; margin-left: -8px; border-radius: 6px; }
-summary.fold::-webkit-details-marker { display: none; }
-summary.fold::before { content: ""; flex: none; width: 6px; height: 6px; border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor;
-  transform: rotate(-45deg); transition: transform 0.15s ease-out; }
-details[open] > summary.fold::before { transform: rotate(45deg); }
-summary.fold:hover { background: color-mix(in srgb, var(--accent) 11%, transparent); }
-summary.fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* A project card's header is a whole row, not a link-sized control. */
-details.mem-card > summary.fold { display: flex; width: auto; color: inherit; font-weight: inherit; margin-left: 0; padding: 0; }
-
 .filebar {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   padding: 8px 20px; border-bottom: 1px solid var(--border-soft); background: var(--panel);
@@ -735,6 +722,12 @@ details.mem-card > summary.fold { display: flex; width: auto; color: inherit; fo
 .wt-proj { display: flex; align-items: baseline; gap: 10px; margin: 22px 0 8px; }
 .wt-proj h3 { margin: 0; font-size: 14px; }
 .scope-rank.wt-done, .scope-rank.wt-trunk { width: auto; padding: 0 6px; }
+/* Trash's kind ("folder", "file"): sized to its word, never the 24px rank square (it ran into the path). */
+.trash-kind {
+  font: 11px var(--mono); color: var(--muted); background: var(--panel-2); border-radius: 6px;
+  min-width: 24px; height: 24px; padding: 0 7px; flex: none; white-space: nowrap;
+  display: inline-grid; place-items: center;
+}
 .scope-rank.wt-done { color: var(--green); }
 .wt-unknown { margin-bottom: 8px; }
 .wt-cmd {
@@ -1021,7 +1014,6 @@ details.mem-card > summary.fold { display: flex; width: auto; color: inherit; fo
   padding: 10px 12px; margin-bottom: 8px; background: var(--panel);
 }
 .mem-card { flex-direction: column; align-items: stretch; }
-details.mem-card > summary { cursor: pointer; list-style: none; }
 .mem-where { font: 11px var(--mono); color: var(--muted); }
 .mem-badge {
   font: 11px var(--mono); padding: 1px 7px; border-radius: 10px;
@@ -1116,21 +1108,12 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .files-type { padding: 4px 12px 8px 16px; }
 .files-type + .files-type { border-top: 1px solid var(--border-soft); }
 .files-type-head { display: flex; align-items: center; gap: 6px; }
-.files-type-toggle {
-  display: flex; align-items: baseline; gap: 8px; flex: 1; min-width: 0;
-  padding: 8px 0 6px; text-align: left;
-}
+.files-type-title { display: flex; align-items: baseline; gap: 8px; flex: 1; min-width: 0; padding: 8px 0 6px; }
 .files-type-name {
   font-size: 11px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted);
 }
-.files-type-toggle { align-items: center; border-radius: 6px; margin-left: -6px; padding-left: 6px; padding-right: 6px; }
-.files-type-toggle:hover { background: var(--panel-2); }
-.files-type-toggle:hover .files-type-name { color: var(--text); }
-/* The same chevron as every data fold: down when open, right when folded. */
-.files-type-toggle::before { content: ""; flex: none; width: 6px; height: 6px; border-right: 1.6px solid var(--muted); border-bottom: 1.6px solid var(--muted);
-  transform: rotate(45deg); transition: transform 0.15s ease-out; align-self: center; }
-.files-type-toggle[aria-expanded="false"]::before { transform: rotate(-45deg); }
 .files-type-count { font: 11px var(--mono); color: var(--muted); }
+.btn.files-more { margin-top: 6px; padding: 3px 10px; font-size: 12px; }
 .files-add {
   width: 26px; height: 26px; border-radius: 6px; flex: none;
   color: var(--text-dim); font-size: 15px; line-height: 1;
@@ -1447,12 +1430,11 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 /* Both Used-by states take one height, so a card with no role keeps its buttons level with its neighbours. */
 .btn.model-used-toggle, .model-used-none { min-height: 26px; }
 .model-used-none { margin-top: 0; display: flex; align-items: center; }
-.btn.ids-toggle { padding: 4px 8px; margin-left: -8px; font-size: inherit; color: var(--text); }
 .model-used-jobs { margin-bottom: 4px; }
 
 .models-ids { margin-top: 34px; }
 .models-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
-.ids-toggle { display: inline-flex; align-items: center; gap: 8px; color: var(--text); }
+.models-subhead.ids-title { display: inline-flex; align-items: center; gap: 8px; margin: 0; }
 .ids-count {
   font-size: 11px; padding: 1px 8px; border-radius: 999px; color: var(--amber);
   border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 8%, transparent);
@@ -1488,7 +1470,8 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .audit-filter { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .audit-summary { font-size: 13px; color: var(--text-dim); margin: 0 0 10px; }
 .audit-refusals { font-size: 12.5px; color: var(--muted); margin: 0 0 12px; }
-.audit-refusals summary { cursor: pointer; }
+.audit-refusals-head { color: var(--text-dim); margin-bottom: 2px; }
+.btn.audit-more { margin-top: 6px; padding: 3px 10px; font-size: 12px; }
 .audit-partial, .audit-policy, .audit-error { margin-bottom: 12px; }
 .audit-clear { color: var(--muted); font-size: 13px; padding: 12px 0; }
 .audit-list { display: flex; flex-direction: column; gap: 10px; }
@@ -1521,11 +1504,11 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .audit-proposal { margin-top: 10px; }
 .audit-proposal .diff { padding: 8px 0; max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); margin: 6px 0 10px; }
 .audit-names { margin-top: 2px; border-top: 1px solid var(--border-soft); padding-top: 6px; font-size: 12.5px; }
-.audit-names-head { cursor: pointer; color: var(--text-dim); }
+.audit-names-head { color: var(--text-dim); }
 .audit-names .audit-finding { margin-left: 14px; }
 .audit-worktrees { border: 1px dashed var(--border); border-radius: var(--radius); padding: 8px 12px; }
-.audit-worktrees-head { cursor: pointer; font-size: 13px; color: var(--text-dim); }
-.audit-worktrees[open] > .audit-list { margin-top: 10px; }
+.audit-worktrees-head { margin: 0; font-size: 13px; font-weight: 500; color: var(--text-dim); }
+.audit-worktrees > .audit-list { margin-top: 10px; }
 .home-audit { display: flex; align-items: center; gap: 8px; }
 .home-audit .home-item-btn { margin-left: auto; }
 
@@ -1579,9 +1562,8 @@ details.mem-card > summary { cursor: pointer; list-style: none; }
 .sw-preview { padding: 10px 14px; border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--panel); overflow: auto; max-height: 520px; }
 .sw-note { width: 100%; box-sizing: border-box; }
 .sw-error .sw-retry { margin-top: 6px; }
-.sw-reply { margin-top: 6px; font-size: 12.5px; }
-.sw-reply > summary { cursor: pointer; }
-.sw-reply-text { margin: 6px 0 0; padding: 8px 10px; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 12px; background: var(--panel); border: 1px solid var(--border-soft); border-radius: var(--radius); color: var(--text); }
+.btn.sw-reply-btn { margin-top: 6px; }
+.sw-reply-text { margin: 6px 0 0; padding: 8px 10px; max-height: 60vh; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 12px; background: var(--panel); border: 1px solid var(--border-soft); border-radius: var(--radius); color: var(--text); }
 @media (max-width: 900px) { .sw-split { grid-template-columns: 1fr; } }
 
 /* ── packs view (public/packs-view.js) ──────────────────────────────── */
@@ -1794,11 +1776,6 @@ pre.pk-log { white-space: pre-wrap; overflow-wrap: anywhere; font: 11.5px var(--
 /* The card's need, said in full under the summary (the head carries a calm "Setup needed"). */
 .pk-need { margin: 0; font-size: 12.5px; color: var(--amber); }
 
-/* A toggle button's chevron, drawn in CSS like every data fold's: right when closed, down when open. */
-.chev { display: inline-flex; align-items: center; gap: 8px; }
-.chev::before { content: ""; flex: none; width: 6px; height: 6px; border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor;
-  transform: rotate(-45deg); transition: transform 0.15s ease-out; }
-.chev[aria-expanded="true"]::before { transform: rotate(45deg); }
 
 /* ── Packs: the review gate's security switch ─────────────────────────── */
 .pk-sec { margin: 12px 0; }

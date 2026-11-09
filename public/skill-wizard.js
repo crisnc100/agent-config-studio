@@ -156,11 +156,17 @@ function swError(box, retry) {
   n.appendChild(el('div', null, SW.error));
   // The refused reply, as plain text: never parsed, never rendered as markup.
   if (SWX.reply && SWX.reply.error === SW.error) {
-    const d = el('details', 'sw-reply');
-    d.appendChild(el('summary', 'fold', "Show the AI's reply"));
-    d.appendChild(el('pre', 'sw-reply-text', SWX.reply.text));
-    if (SWX.reply.cut) d.appendChild(el('div', 'scope-note', 'Cut at 4 KB.'));
-    n.appendChild(d);
+    // A quiet button to a dialog, not a fold.
+    const reply = SWX.reply;
+    const b = el('button', 'btn ghost sw-reply-btn', "Show the AI's reply");
+    b.setAttribute('aria-haspopup', 'dialog');
+    b.onclick = () => {
+      const body = el('div', 'pk-dialog-body');
+      body.appendChild(el('pre', 'sw-reply-text', reply.text));
+      if (reply.cut) body.appendChild(el('div', 'scope-note', 'Cut at 4 KB.'));
+      pkDialog("The AI's reply", body, b, () => document.querySelector('.sw-reply-btn'));
+    };
+    n.appendChild(b);
   }
   if (retry) {
     const r = el('button', 'btn sw-retry', 'Retry');
