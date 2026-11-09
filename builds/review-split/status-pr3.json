@@ -1,0 +1,42 @@
+{
+ "f1": {
+  "status": "fixed",
+  "test": "packs/review-gate/tests/review.context-pass.test.mjs 7 \u2014 any block-comment delimiter change counts as code; the comment-only classifier and the tier exemption are removed from review.mjs; --check-commit fails closed (packs/review-gate/tests/review.context-pass.test.mjs 7-11)"
+ },
+ "f2": {
+  "status": "fixed",
+  "test": "packs/review-gate/tests/review.context-pass.test.mjs 8 \u2014 string continuations count as code; the comment-only classifier and the tier exemption are removed from review.mjs; --check-commit fails closed (packs/review-gate/tests/review.context-pass.test.mjs 7-11)"
+ },
+ "f3": {
+  "status": "fixed",
+  "test": "packs/review-gate/tests/review.context-pass.test.mjs 8 \u2014 heredocs and YAML block scalars count as code"
+ },
+ "f4": {
+  "status": "fixed",
+  "test": "packs/review-gate/tests/review.context.test.mjs 6-8 \u2014 --since-close: the docs slice reviews only the context commit's delta"
+ },
+ "s1": {
+  "status": "fixed",
+  "test": "packs/review-gate/tests/review.context-pass.test.mjs 8 \u2014 regex literals count as code; the gate never trusts the check (test 11)"
+ },
+ "s2": {
+  "status": "fixed",
+  "test": "packs/review-gate/tests/review.context.test.mjs 1 \u2014 --focus docs is a full code review plus docs, with the security pass when on"
+ },
+ "f5": {
+  "status": "fixed",
+  "test": "packs/pr/tests/pr.docs-table.test.mjs 6-7 \u2014 table found with no plan; an empty table with changed code fails"
+ },
+ "f6": {
+  "status": "fixed",
+  "test": "packs/review-gate/tests/review.context-pass.test.mjs 9 \u2014 a 30,000-line file is judged by its change, not its length"
+ },
+ "f7": {
+  "status": "fixed",
+  "test": "packs/review-gate/tests/review.packs.test.mjs \u2014 the /pr-review build shortcut still runs Step 4 (skill text pinned)"
+ },
+ "f8": {
+  "status": "fixed",
+  "test": "packs/review-gate/tests/review.security-only.test.mjs fix f8 \u2014 the probe checks every flag the flow uses"
+ }
+}
