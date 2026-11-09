@@ -52,6 +52,10 @@ console.log('\nstatic: no jargon in what the views say');
   const diffBtns = files.flatMap(([f, src]) => [...src.matchAll(/el\(\s*'button'[^;]*?,\s*(['`])(Diff[^'`]*)\1/g)].map((m) => `${f}: ${m[2]}`));
   ok('public/: no button says "Diff" — the verb is Compare', diffBtns.length === 0, diffBtns.join(' | '));
 
+  // The fake DOM's querySelectorAll returns an array; a browser's returns a NodeList with no .filter/.find/.map —
+  // code that calls those directly passes here and throws in the page (the Packs dialog's focus trap did).
+  const nodeListArray = files.flatMap(([f, src]) => [...src.matchAll(/querySelectorAll\([^()]*\)\.(filter|find|map|some|every|reduce)\(/g)].map((m) => `${f}: ${m[0]}`));
+  ok('public/: no array method called straight on a NodeList (spread it first)', nodeListArray.length === 0, nodeListArray.join(' | '));
   const css = fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const rule = (sel) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1].split(',').map((x) => x.trim()).includes(sel)).map((m) => m[2]).join(';');
   ok('a role row has a visible focus ring: a 2px outline on :focus-visible, like every other control', /outline\s*:\s*2px solid/.test(rule('.roles-row:focus-visible')), rule('.roles-row:focus-visible'));
