@@ -69,6 +69,14 @@ try {
     page.key('Escape');
     ok('…one row per part, each with what it does in a line and a not-installed badge', rg.querySelectorAll('.pk-part').length === 6
       && rg.querySelectorAll('.pk-part').every((r) => t(r.querySelector('.pk-part-what')).length > 0 && !r.querySelector('details') && /not installed/.test(t(r.querySelector('.pk-badges')))));
+    // …and every part's full explain is in the dialog: a section per part, titled, with what it is and what it changes.
+    button(rg, /^Files and undo$/)?.click();
+    const partSecs = [...(page.doc.body.querySelector('.pk-dialog')?.querySelectorAll('.pk-dialog-part') || [])];
+    const partTitles = rg.querySelectorAll('.pk-part').map((r) => t(r.querySelector('.pk-check span')));
+    ok('…and the dialog has every part\'s full explain: titled, what it is, what it changes', partSecs.length === 6
+      && partSecs.every((sec, i) => t(sec.querySelector('h4')) === partTitles[i] && /What it is:/.test(t(sec)) && /What it changes:/.test(t(sec)) && sec.querySelectorAll('li').length > 0),
+      partSecs.map((sec) => `${t(sec.querySelector('h4'))}: ${/What it is:/.test(t(sec))}/${/What it changes:/.test(t(sec))}`).join(' | '));
+    page.key('Escape');
     ok('…the default part ticked, the opt-in parts not', check(rg, /^Code-review skill/i)?.checked && !check(rg, /Agent guard/i)?.checked && !check(rg, /push gate/i)?.checked, rg.querySelectorAll('label').map(t).join(' | '));
     // PR F: the requirements list is in the card's "Files and undo" dialog (no folds on Packs).
     button(rg, /^Files and undo$/)?.click();

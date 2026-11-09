@@ -426,7 +426,10 @@ const PROPOSAL = {
   unset.click();
   await settle(5);
   const ed = content(p).querySelector('.roles-detail');
-  ok('clicking it opens an empty editor to choose its models, with no Reset or Unset', ed && useOf(ed) === '' && !button(ed, 'Reset to default') && !button(ed, 'Unset'));
+  ok('clicking it opens an empty editor to choose its models, with no Reset or Unset', ed && useOf(ed) === '' && !button(ed, 'Reset to default') && !button(ed, 'Unset')
+    && ed.querySelectorAll('.roles-use .roles-pick').map((b) => b.dataset.family).join() === v.families.join()
+    && ed.querySelectorAll('.roles-pick').every((b) => b.getAttribute('aria-pressed') === 'false'),
+    ed && ed.querySelectorAll('.roles-pick').map((b) => b.dataset.family).join());
   pickUse(ed, 'fable');
   button(ed, 'Save').click();
   await settle(10);

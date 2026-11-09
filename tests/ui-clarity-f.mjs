@@ -130,6 +130,15 @@ console.log('\nModels: the role editor picks models from a list');
     && /1/.test(p.text(picks().find((b) => b.dataset.family === 'astra'))));
   picks().find((b) => b.dataset.family === 'sol')?.click();
   picks().find((b) => b.dataset.family === 'opus')?.click();
+  // f1: a press repaints the picker; focus stays on the same model's (new) button.
+  {
+    const b = picks().find((x) => x.dataset.family === 'fable');
+    b.focus();
+    b.click();
+    const act = p.doc.activeElement;
+    ok('f1 focus stays on the pressed model after the picker repaints', !!act && act !== b && act.dataset?.family === 'fable' && ed().contains(act), act?.className);
+    picks().find((x) => x.dataset.family === 'fable').click(); // take it back out
+  }
   ok('picking adds to the end of the order', picks().filter((b) => b.getAttribute('aria-pressed') === 'true').sort((a, b) => a.dataset.order - b.dataset.order).map((b) => b.dataset.family).join() === 'astra,sol,opus');
   picks().find((b) => b.dataset.family === 'astra')?.click();
   ed()?.querySelectorAll('button').find((b) => p.text(b) === 'Save')?.click();
@@ -196,7 +205,9 @@ console.log('\nSetup: Recheck gives feedback');
 {
   const clis = { clis: [{ id: 'claude', label: 'Claude Code', installed: true, binary: '~/.local/bin/claude', version: '2.1.0',
     signIn: { state: 'present', label: 'credentials present' }, fix: {} }], acsOnPath: true, next: [] };
-  const p = await boot({ hash: '#setup', routes: routesFor({ 'GET /api/setup/status': () => ({ state: 'none' }), 'GET /api/setup/clis': () => clis }) });
+  let failNext = false;
+  const p = await boot({ hash: '#setup', routes: routesFor({ 'GET /api/setup/status': () => ({ state: 'none' }),
+    'GET /api/setup/clis': () => { if (failNext) throw { status: 500, body: { error: 'probe crashed' } }; return clis; } }) });
   const recheck = () => p.$('content').querySelectorAll('button').find((b) => /^(Recheck|Checking…)$/.test(p.text(b)));
   ok('before any Recheck, no "checked" line', !p.$('content').querySelector('.setup-checked'));
   recheck()?.click();
@@ -204,6 +215,13 @@ console.log('\nSetup: Recheck gives feedback');
   const line = p.$('content').querySelector('.setup-checked');
   ok('after Recheck, a status line says when it checked and what it found', !!line && /^Checked at .+ — 1 of 1 installed$/.test(p.text(line)) && line.getAttribute('role') === 'status',
     line ? p.text(line) : '(none)');
+
+  // f3: a Recheck that fails never stamps the cached counts with a fresh "Checked at".
+  failNext = true;
+  recheck()?.click();
+  await settle(20);
+  const l2 = p.$('content').querySelector('.setup-checked');
+  ok('f3 a failed Recheck says it failed, not a fresh "Checked at"', !!l2 && /^Recheck failed at .+ — showing the last result$/.test(p.text(l2)) && l2.getAttribute('role') === 'status', l2 ? p.text(l2) : '(none)');
 }
 
 /* ── P2-8: the sidebar keeps your place inside a file ─────────────────── */
@@ -284,6 +302,29 @@ console.log('\nPacks: no folds — a summary line, and "Files and undo" opens a 
   p.key('Escape');
   await settle(2);
   ok('…which Esc closes', !dlg());
+
+  // f1: a repaint under the open dialog replaces the installer-output button; Esc still returns focus to it.
+  p.eval(`(() => { const k = document.createElement('div'); k.setAttribute('data-pack', 'zz'); k.id = 'zzcard'; document.getElementById('content').appendChild(k);
+    const b = document.createElement('div'); k.appendChild(b); pkLog(b, ['out'], 'zz'); })()`);
+  const old = p.$('zzcard').querySelectorAll('button').find((b) => p.text(b) === 'Installer output');
+  old.focus();
+  old.click();
+  await settle(2);
+  p.eval(`(() => { const k = document.getElementById('zzcard'); k.textContent = ''; const b = document.createElement('div'); k.appendChild(b); pkLog(b, ['out'], 'zz'); })()`);
+  p.key('Escape');
+  await settle(2);
+  const fresh = p.$('zzcard').querySelectorAll('button').find((b) => p.text(b) === 'Installer output');
+  ok('f1 the installer output dialog returns focus to its button even after the card repainted', !dlg() && !!fresh && fresh !== old && p.doc.activeElement === fresh);
+
+  // f2: while the dialog is open, the app's shortcuts (⌘K) stay inside it.
+  card('alpha').querySelectorAll('button').find((b) => p.text(b) === 'Files and undo').click();
+  await settle(2);
+  p.key('k', { meta: true });
+  await settle(5);
+  ok('f2 ⌘K inside the dialog does nothing behind it: still Packs, dialog open, focus inside', p.eval('S.view') === 'packs' && !!dlg() && dlg().contains(p.doc.activeElement), p.eval('S.view'));
+  p.key('Escape');
+  await settle(2);
+  ok('f2 …and Esc still closes it', !dlg());
 }
 
 for (const p of pages) p.done?.();
