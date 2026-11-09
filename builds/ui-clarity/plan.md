@@ -213,3 +213,9 @@ Cris: "I miss the bars on the homepage for accounts and usage." C2 had cut Home'
 - **P2-8 sidebar:** inside a file, the view it came from stays marked (aria-current="location"). A deep link marks Files.
 - **P3-4:** `.roles-row:focus-visible` gets the 2px accent outline.
 - Not touched: the Packs chevron folds (Cris's call).
+- **Packs folds removed** (Cris's decision after the critique): all 23 chevron folds are gone.
+  - Each card has a muted line, "Changes N places · undo: acs packs uninstall <id>", and a secondary **Files and undo** button. It opens a modal dialog (role=dialog, aria-modal) with the pack's what / day to day / changes / undo + command / needs, and each part's own explain.
+  - In the dialog, focus moves in, Tab and Shift+Tab wrap, and Esc, Close or a scrim click shuts it. Focus then returns to the button, found again if the card repainted.
+  - The installer output is a button that opens the same kind of dialog.
+  - Guards: no details, summary, .chev, .fold or triangle glyph on Packs (stub test and the ui-words live sweep).
+  - The browser check caught `querySelectorAll(...).filter` in the Tab trap: the fake DOM returns arrays, a browser a NodeList. It is fixed, with a static guard against the pattern in public/.
