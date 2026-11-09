@@ -116,6 +116,7 @@
         "packs/review-gate/skills/codex/pr-review/SKILL.md",
         "packs/review-gate/runtime/review.mjs",
         "packs/review-gate/runtime/merge.mjs",
+        "packs/review-gate/runtime/context-pass.mjs",
         "packs/review-gate/runtime/calibration.md",
         "packs/review-gate/runtime/review-config.example.json",
         "packs/review-gate/runtime/eval/examples/clean-helper/base/src/greet.js",
