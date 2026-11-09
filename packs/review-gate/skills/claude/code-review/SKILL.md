@@ -17,8 +17,8 @@ Why no loop: the loop's cost is re-reviewing the whole diff after every fix and 
 Commit the work first, including the build folder (it reviews the committed diff vs the remote's default branch, auto-detected), then run the reviewer — **repo copy first, shared runtime as the fallback**, and also when the repo copy is too old to support `--code-only` (one line says so):
 ```bash
 REVIEW_SCRIPT=scripts/review.mjs
-[ -f "$REVIEW_SCRIPT" ] && ! { grep -q -- --supports "$REVIEW_SCRIPT" && node "$REVIEW_SCRIPT" --supports --code-only; } && echo "scripts/review.mjs does not support --code-only; using the shared runtime" >&2 && REVIEW_SCRIPT=
 [ -f "$REVIEW_SCRIPT" ] || REVIEW_SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
+[ "$REVIEW_SCRIPT" = scripts/review.mjs ] && ! { grep -q -- --supports "$REVIEW_SCRIPT" && node "$REVIEW_SCRIPT" --supports --code-only; } && echo "scripts/review.mjs does not support --code-only; using the shared runtime" >&2 && REVIEW_SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
 node "$REVIEW_SCRIPT" --code-only "<intent: what the branch delivers, its acceptance criteria, and anything deliberately out of scope>"
 ```
 Context comes from files: the orchestrator's plan via --plan <plan.md> or REVIEW_PLAN, the builder's adjacent log.md if present, and already-decided findings from the review log. Inside /build, pass the plan; a missing plan file refuses. The optional intent string can supplement those files. Decided stays decided: closed rejections on the same branch and repository are passed in as "already decided; don't re-raise without new evidence".

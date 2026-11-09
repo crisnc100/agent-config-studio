@@ -13,8 +13,8 @@ One pass, read-only reviewer, findings come back to the seat, every HIGH and MED
 Commit the work first, including the build folder (it reviews the committed diff). Then run the same `review.mjs` every tool shares — repo copy first, shared runtime as the fallback, and also when the repo copy is too old to support `--code-only` (one line says so):
 ```bash
 SCRIPT=scripts/review.mjs
-[ -f "$SCRIPT" ] && ! { grep -q -- --supports "$SCRIPT" && node "$SCRIPT" --supports --code-only; } && echo "scripts/review.mjs does not support --code-only; using the shared runtime" >&2 && SCRIPT=
 [ -f "$SCRIPT" ] || SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
+[ "$SCRIPT" = scripts/review.mjs ] && ! { grep -q -- --supports "$SCRIPT" && node "$SCRIPT" --supports --code-only; } && echo "scripts/review.mjs does not support --code-only; using the shared runtime" >&2 && SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
 node "$SCRIPT" --code-only "<intent: what the branch delivers, its acceptance criteria, and anything deliberately out of scope>"
 ```
 Context comes from files: the orchestrator's plan via --plan <plan.md> or REVIEW_PLAN, the builder's adjacent log.md if present, and already-decided findings from the review log. Inside a build loop, pass the plan; a missing plan file refuses. The optional intent string supplements those files. Decided stays decided: same-branch, same-repository rejections arrive as "already decided; don't re-raise without new evidence".

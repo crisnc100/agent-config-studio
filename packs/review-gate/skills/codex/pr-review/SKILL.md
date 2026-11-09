@@ -21,8 +21,8 @@ Triage, fixes, statuses, disputes, deferrals and the close follow the **code-rev
 
 ```bash
 SCRIPT=scripts/review.mjs
-[ -f "$SCRIPT" ] && ! { grep -q -- --supports "$SCRIPT" && node "$SCRIPT" --supports --security-findings; } && echo "scripts/review.mjs does not support --security-findings; using the shared runtime" >&2 && SCRIPT=
 [ -f "$SCRIPT" ] || SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
+[ "$SCRIPT" = scripts/review.mjs ] && ! { grep -q -- --supports "$SCRIPT" && node "$SCRIPT" --supports --security-findings; } && echo "scripts/review.mjs does not support --security-findings; using the shared runtime" >&2 && SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
 node "$SCRIPT" --show-config
 ```
 
