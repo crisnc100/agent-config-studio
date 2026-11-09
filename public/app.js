@@ -297,7 +297,6 @@ async function loadRegistry() {
     if (S.view === 'home') paintHome(['recent']);
     return false;
   }
-  seedCollapsed();
   renderSidebar();
   const total = S.registry.groups.reduce(
     (n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
@@ -506,17 +505,12 @@ function toggleTheme() {
  * then each tool's files by type. Hooks, subagents, commands and settings
  * have no other panel, so this is their home, and each type keeps its "+".
  */
-const stored = store.get('acs.collapsed');
-const collapsed = new Set((() => {
-  try { const v = stored ? JSON.parse(stored) : []; return Array.isArray(v) ? v : []; } catch { return []; }
-})());
-/** First run: low-traffic groups (the server marks them) start folded. */
-function seedCollapsed() {
-  if (stored) return;
-  for (const tool of filesModel(S.registry)) {
-    for (const t of tool.types) if (t.group.collapsed) collapsed.add(t.key);
-  }
-}
+/**
+ * No folds: every type is open. A long one shows its first few files, then "Show all N",
+ * which expands it in place for this visit. Low-traffic types (the server marks them) show fewer.
+ */
+const FILES_CAP = 8;
+const FILES_CAP_QUIET = 3;
 
 const RECENT_KEY = 'acs.recentFiles';
 /** Recently opened, kept in this browser only. It records opens, never edits. */
@@ -530,7 +524,7 @@ function rememberOpened(f, entry) {
   })));
 }
 
-const FILES = { query: '', timer: null, scrolled: false, unfold: null };
+const FILES = { query: '', timer: null, scrolled: false, expanded: new Set() };
 
 function openFiles({ focus = false } = {}) {
   if (S.view !== 'files') {
@@ -539,7 +533,7 @@ function openFiles({ focus = false } = {}) {
     leaveEditor();
     FILES.query = '';
     FILES.scrolled = false;
-    FILES.unfold = 'pending';       // the open file's type shows this visit, even if folded
+    FILES.expanded = new Set();
     window.history.replaceState(null, '', '#files');
     renderSidebar();
     renderAll();
@@ -586,9 +580,6 @@ function paintFilesBody() {
     return;
   }
   const model = filesModel(S.registry);
-  if (FILES.unfold === 'pending') {
-    FILES.unfold = model.flatMap((t) => t.types).find((t) => t.entries.some((e) => e.id === S.lastEntryId))?.key ?? null;
-  }
   const tools = el('div', 'files-tools');
   for (const tool of model) tools.appendChild(toolCard(tool));
   body.appendChild(tools);
@@ -651,18 +642,10 @@ function toolCard(tool) {
     // A row, not a button — it holds its own "+" button, and nesting
     // interactive elements inside a button is invalid.
     const row = el('div', 'files-type-head');
-    const toggle = el('button', 'files-type-toggle');
-    const folded = collapsed.has(t.key) && FILES.unfold !== t.key;
-    toggle.setAttribute('aria-expanded', String(!folded));
-    toggle.appendChild(el('span', 'files-type-name', t.label));
-    toggle.appendChild(el('span', 'files-type-count', String(t.entries.length)));
-    toggle.onclick = () => {
-      if (FILES.unfold === t.key) { FILES.unfold = null; if (!collapsed.has(t.key)) collapsed.add(t.key); }
-      else if (collapsed.has(t.key)) collapsed.delete(t.key); else collapsed.add(t.key);
-      store.set('acs.collapsed', JSON.stringify([...collapsed]));
-      paintFilesBody();
-    };
-    row.appendChild(toggle);
+    const title = el('div', 'files-type-title');
+    title.appendChild(el('span', 'files-type-name', t.label));
+    title.appendChild(el('span', 'files-type-count', String(t.entries.length)));
+    row.appendChild(title);
     if (t.create) {
       const add = el('button', 'files-add', '+');
       add.title = `New ${t.group.title.replace(/s$/, '').toLowerCase()}`;
@@ -672,9 +655,11 @@ function toolCard(tool) {
     }
     sec.appendChild(row);
     const list = el('div', 'files-entries');
-    list.hidden = folded;
     if (!t.entries.length) list.appendChild(el('div', 'files-empty', 'Empty — + creates the first one.'));
-    for (const e of t.entries) {
+    // The first few, unless expanded — or unless the file you last opened sits past them.
+    const cap = t.group.collapsed ? FILES_CAP_QUIET : FILES_CAP;
+    const all = FILES.expanded.has(t.key) || t.entries.length <= cap || t.entries.findIndex((e) => e.id === S.lastEntryId) >= cap;
+    for (const e of all ? t.entries : t.entries.slice(0, cap)) {
       const b = el('button', 'files-item' + (S.lastEntryId === e.id ? ' active' : ''));
       b.dataset.entry = e.id;
       b.appendChild(el('span', `item-dot ${e.harness}`));
@@ -687,6 +672,16 @@ function toolCard(tool) {
       list.appendChild(b);
     }
     sec.appendChild(list);
+    if (!all) {
+      const more = el('button', 'btn files-more', `Show all ${t.entries.length}`);
+      more.onclick = () => {
+        FILES.expanded.add(t.key);
+        paintFilesBody();
+        // Keep your place: focus the first file the button revealed.
+        [...($('files-body')?.querySelectorAll('.files-item') || [])].find((x) => x.dataset.entry === t.entries[cap].id)?.focus();
+      };
+      sec.appendChild(more);
+    }
     card.appendChild(sec);
   }
   return card;
@@ -1828,7 +1823,7 @@ async function openTrash() {
   }
   for (const it of items) {
     const row = el('div', 'scope-item');
-    row.appendChild(el('div', 'scope-rank', it.isDir ? 'folder' : 'file'));
+    row.appendChild(el('div', 'trash-kind', it.isDir ? 'folder' : 'file'));
     const body = el('div', 'scope-body');
     body.appendChild(el('div', 'scope-path', it.display));
     body.appendChild(el('div', 'scope-note',
@@ -2260,6 +2255,7 @@ const MV = {
   diff: null,              // { key, before, after, labels }
   restoreRefusal: null,    // { opId, reason, diffs }
   sel: newSelection(),     // fact row ids, for Delete selected (trash-fact)
+  shownAll: new Set(),     // Projects cards showing every file (the rest show the first few)
   outdated: null,          // why the last re-read failed, while the old rows stay shown
   gen: 0,                  // bumped by every load: an answer from an older one is dropped
   accepting: false,        // an Accept is in flight
@@ -2713,19 +2709,22 @@ function diffBlock() {
   return w;
 }
 
+/** A project card shows its first few files; "Show all N files" lists the rest in place (no folds). */
+const MEM_CARD_CAP = 3;
 function projectsTab() {
   const wrap = el('div');
   for (const g of MV.data.groups) {
-    const card = el('details', 'mem-card');
-    const sum = el('summary', 'sk-head fold');
+    const card = el('div', 'mem-card');
+    card.dataset.group = g.id;
+    const head = el('div', 'sk-head mem-card-head');
     const name = el('span', 'sk-name', readableSlug(g.label));
     if (name.textContent !== g.label) name.title = g.label;
-    sum.appendChild(name);
-    sum.appendChild(el('span', `mem-badge state-${g.state}`, SLUG_STATE_LABELS[g.state]?.[0] || g.state));
+    head.appendChild(name);
+    head.appendChild(el('span', `mem-badge state-${g.state}`, SLUG_STATE_LABELS[g.state]?.[0] || g.state));
     const where = el('span', 'mem-where', `${plural(g.rowCount, 'file')} · ${readableSlug(g.display)}`);
     where.title = g.display;
-    sum.appendChild(where);
-    card.appendChild(sum);
+    head.appendChild(where);
+    card.appendChild(head);
     for (const s of g.slugs) {
       const line = el('div', 'mem-note', `${s.worktree ? 'worktree' : 'folder'} ${readableSlug(s.display || s.slug)}`
         + (s.memoryFiles ? ` · memory/ holds ${s.memoryFiles}` : ''));
@@ -2736,22 +2735,21 @@ function projectsTab() {
     for (const ix of g.indexes) {
       card.appendChild(el('div', ix.oversized ? 'mem-flag' : 'mem-note', `MEMORY.md: ${ix.lines} lines${ix.oversized ? ' — over the limit' : ''}`));
     }
-    // Filled on first open. A closed card's rows are hidden, so they leave
-    // the selection; opened again, they come back unticked.
-    let boxes = null;
-    card.ontoggle = () => {
-      if (card.open && !boxes) {
-        card.dataset.filled = '1';
-        const before = new Set(MV.sel.shown.keys());
-        for (const r of MV.data.rows.filter((x) => x.group === g.id)) card.appendChild(factRow(r));
-        boxes = [...MV.sel.shown].filter(([id]) => !before.has(id));
-      } else if (card.open) {
-        for (const [id, cb] of boxes) MV.sel.shown.set(id, cb);
-      } else if (boxes) {
-        for (const [id] of boxes) { MV.sel.shown.delete(id); MV.sel.ids.delete(id); }
-      }
-      paintSelectBar(MV.sel);
-    };
+    // Only shown rows are selectable: a file past the cap joins the selection once "Show all" lists it.
+    const rows = MV.data.rows.filter((x) => x.group === g.id);
+    const all = MV.shownAll.has(g.id) || rows.length <= MEM_CARD_CAP;
+    for (const r of all ? rows : rows.slice(0, MEM_CARD_CAP)) card.appendChild(factRow(r));
+    if (!all) {
+      const more = el('button', 'btn mem-more', `Show all ${rows.length} files`);
+      more.onclick = () => {
+        MV.shownAll.add(g.id);
+        paintMemory();
+        // Keep your place: focus the first file the button revealed (its checkbox), not the detached button.
+        const card = [...document.querySelectorAll('.mem-card')].find((k) => k.dataset.group === g.id);
+        card?.querySelectorAll('.mem-fact')[MEM_CARD_CAP]?.querySelector('input, button')?.focus();
+      };
+      card.appendChild(more);
+    }
     wrap.appendChild(card);
   }
   return wrap;
@@ -4297,7 +4295,7 @@ const M = {
   // Roles, flavor and Describe (GET /api/models/roles). Drafts survive repaints.
   roles: null, rolesError: null, roleOpen: new Set(), roleDrafts: {}, flavorDrafts: {}, adding: false,
   // Model ids: null follows the alerts (open while any wait); a click pins it. Cards being edited, and cards showing Used by.
-  idsOpen: null, flavorOpen: new Set(), usedOpen: new Set(),
+  flavorOpen: new Set(),
   // A failed save's message, by the form that sent it (a family, or a role's draft key).
   writeErrors: {},
   describe: { text: '', busy: false, error: null, proposal: null },
@@ -4399,22 +4397,17 @@ async function paintModels(load) {
 const liveAlerts = (m) => m.rows.reduce((n, r) => n + r.alerts.filter((a) => !a.dismissed).length, 0);
 
 /**
- * The family → id table, folded away by default: it is plumbing. It opens on
- * its own while an alert or a sidecar strip waits, and its header counts the
- * alerts either way, so one is never hidden.
+ * The family → id table, always shown (no folds): it is short, and its header counts the alerts so one is
+ * never missed.
  */
 function idsSection(m) {
   const sec = el('div', 'models-ids');
   const alerts = liveAlerts(m);
-  const open = M.idsOpen ?? (alerts > 0 || M.sidecars.length > 0);
   const head = el('div', 'models-section-head');
-  // A quiet button with the same CSS chevron as every fold (.chev): no text arrow.
-  const toggle = el('button', `btn ghost chev ids-toggle${open ? ' open' : ''}`);
-  toggle.setAttribute('aria-expanded', String(open));
-  toggle.appendChild(el('span', 'models-subhead-text', 'Model ids'));
-  if (alerts) toggle.appendChild(el('span', 'ids-count', `${alerts} alert${alerts === 1 ? '' : 's'}`));
-  toggle.onclick = () => { M.idsOpen = !open; paintModels(); };
-  head.appendChild(toggle);
+  const title = el('h3', 'models-subhead ids-title');
+  title.appendChild(el('span', 'models-subhead-text', 'Model ids'));
+  if (alerts) title.appendChild(el('span', 'ids-count', `${alerts} alert${alerts === 1 ? '' : 's'}`));
+  head.appendChild(title);
   const check = el('button', 'btn ghost ids-check', 'Check now');
   check.onclick = async () => {
     check.disabled = true; check.textContent = 'Checking…';
@@ -4425,7 +4418,6 @@ function idsSection(m) {
   sec.appendChild(el('div', 'scope-sub models-roles-sub',
     `The exact model id each name points to, from each CLI's own model list. Check now asks Codex to refresh its list first; it uses no tokens. Checked ${agoText(Date.now() - m.checkedAt)}` +
     (m.claudeVersion ? ` · Claude Code ${m.claudeVersion.split(' ')[0]}` : '') + '.'));
-  if (!open) return sec;
 
   const cats = el('div', 'models-catalogs');
   for (const cat of m.catalogs) {
@@ -5120,41 +5112,46 @@ function avoidPicker(d, changed) {
   return box;
 }
 
-/** Which jobs lean on a model, and which files call model-id for it — folded until asked for. */
+/** Which roles lean on a model, and which files call model-id for it: a quiet button to a dialog (no folds). */
+let usedByAsk = 0;
 function usedBy(family) {
   const R = M.roles;
   const jobs = R.roles.filter((r) => r.use.includes(family) || r.alt === family)
     .map((r) => (r.use[0] === family ? r.name : r.use.includes(family) ? `${r.name} (alternative)` : `${r.name} (second opinion)`));
-  const open = M.usedOpen.has(family);
   const box = el('div', 'models-where model-used');
   // Nothing to open when no role uses it: one plain line.
   if (!jobs.length) { box.appendChild(el('div', 'scope-note model-used-none', 'Not used by any role')); return box; }
-  const toggle = el('button', 'btn ghost chev model-used-toggle', `Used by ${jobs.length ? plural(jobs.length, 'role') : 'no role'}`);
-  toggle.setAttribute('aria-expanded', String(open));
-  toggle.onclick = () => { if (open) M.usedOpen.delete(family); else M.usedOpen.add(family); paintModels(); };
-  box.appendChild(toggle);
-  if (!open) return box;
-  box.appendChild(el('div', 'scope-note model-used-jobs', jobs.length ? `Roles: ${jobs.join(', ')}` : 'No role uses it.'));
-  const w = M.where[family];
-  if (!w) {
-    box.appendChild(el('div', 'scope-note', 'reading files…'));
-    api('GET', `/api/models/where?family=${encodeURIComponent(family)}`)
-      .then((res) => { M.where[family] = res; if (S.view === 'models') paintModels(); })
-      .catch((e) => { M.where[family] = { hits: [], error: e.message }; if (S.view === 'models') paintModels(); });
-  } else if (w.error) {
-    box.appendChild(el('div', 'scope-note', w.error));
-  } else if (!w.hits.length) {
-    box.appendChild(el('div', 'scope-note', 'No skill, config or CLAUDE.md calls it.'));
-  } else {
-    box.appendChild(el('div', 'scope-note', 'Files that call it:'));
-    for (const h of w.hits) {
-      const line = el('div', 'models-where-hit');
-      line.appendChild(el('span', 'models-where-file', `${h.file}:${h.line}`));
-      line.appendChild(el('span', 'models-where-text', h.text));
-      box.appendChild(line);
+  const b = el('button', 'btn ghost model-used-toggle', `Used by ${plural(jobs.length, 'role')}`);
+  b.setAttribute('aria-haspopup', 'dialog');
+  b.onclick = async () => {
+    const ask = ++usedByAsk;
+    if (!M.where[family]) {
+      let w;
+      try { w = await api('GET', `/api/models/where?family=${encodeURIComponent(family)}`); }
+      catch (e) { w = { hits: [], error: e.message }; }
+      M.where[family] = w;
+      // A late answer: the user left Models, or pressed another "Used by" since. Keep the result, open nothing.
+      if (S.view !== 'models' || ask !== usedByAsk) return;
     }
-    if (w.truncated) box.appendChild(el('div', 'scope-note', 'Showing the first matches only.'));
-  }
+    const w = M.where[family];
+    const body = el('div', 'pk-dialog-body models-where');
+    body.appendChild(el('div', 'scope-note model-used-jobs', `Roles: ${jobs.join(', ')}`));
+    if (w.error) body.appendChild(el('div', 'scope-note', w.error));
+    else if (!w.hits.length) body.appendChild(el('div', 'scope-note', 'No skill, config or CLAUDE.md calls it.'));
+    else {
+      body.appendChild(el('div', 'scope-note', 'Files that call it:'));
+      for (const h of w.hits) {
+        const line = el('div', 'models-where-hit');
+        line.appendChild(el('span', 'models-where-file', `${h.file}:${h.line}`));
+        line.appendChild(el('span', 'models-where-text', h.text));
+        body.appendChild(line);
+      }
+      if (w.truncated) body.appendChild(el('div', 'scope-note', 'Showing the first matches only.'));
+    }
+    pkDialog(`${famLabel(family)}: used by`, body, b,
+      () => [...document.querySelectorAll('.model-card')].find((k) => k.dataset.family === family)?.querySelector('.model-used-toggle'));
+  };
+  box.appendChild(b);
   return box;
 }
 
@@ -5431,8 +5428,7 @@ const AU = {
   vendor: store.get('acs.audit.vendor') === '1',
   dismissed: store.get('acs.audit.dismissed') === '1',
   info: store.get('acs.audit.info') === '1',
-  openWt: {},      // repository key -> its worktrees section is open
-  openNames: {},   // file ref -> its model-name notes are expanded
+  showAll: {},     // a capped list's key -> every item shown (refusals, worktree cards, model names; no folds)
   proposals: {},   // file ref -> proposal
   ack: {},         // file ref -> the synced acknowledgement is ticked
   busy: {},        // file ref -> a propose or accept in flight
@@ -5531,10 +5527,10 @@ function paintAudit() {
     + (!AU.info && infoCount ? ` · ${infoCount} info, hidden` : '');
   box.appendChild(summary);
   if (d.refusals.length) {
-    const det = el('details', 'audit-refusals');
-    det.appendChild(el('summary', 'fold', `${d.counts.refused} file${d.counts.refused === 1 ? ' was' : 's were'} not read`));
-    for (const r of d.refusals) det.appendChild(el('div', 'scope-note', `${r.path} — ${r.reason}`));
-    box.appendChild(det);
+    const sec = el('div', 'audit-refusals');
+    sec.appendChild(el('div', 'audit-refusals-head', `${d.counts.refused} file${d.counts.refused === 1 ? ' was' : 's were'} not read`));
+    auditCapped(sec, 'refusals', d.refusals, (r) => el('div', 'scope-note', `${r.path} — ${r.reason}`));
+    box.appendChild(sec);
   }
 
   const shown = d.files.filter((f) => listed(f) && auditVisible(f).length);
@@ -5551,20 +5547,39 @@ function paintAudit() {
   c.appendChild(box);
 }
 
-/** One repository's linked-worktree cards, collapsed until opened; the counts are of its worktree files. */
+/** The first few of a list, then "Show all N", which lists the rest in place (no folds). */
+const AUDIT_CAP = 3;
+function auditCapped(box, key, items, render, cap = AUDIT_CAP) {
+  const all = AU.showAll[key] || items.length <= cap;
+  (all ? items : items.slice(0, cap)).forEach((x, i) => {
+    const n = render(x);
+    // The first item "Show all" revealed takes focus after the repaint: it can hold focus without being a tab stop.
+    if (i === cap) { n.dataset.capFirst = key; n.tabIndex = -1; }
+    box.appendChild(n);
+  });
+  if (!all) {
+    const more = el('button', 'btn audit-more', `Show all ${items.length}`);
+    more.onclick = () => {
+      AU.showAll[key] = true;
+      paintAudit();
+      [...document.querySelectorAll('[data-cap-first]')].find((n) => n.dataset.capFirst === key)?.focus();
+    };
+    box.appendChild(more);
+  }
+}
+
+/** One repository's linked-worktree cards, apart from the main list, under one heading; the counts are of its worktree files. */
 function auditWorktrees(repo, files, d) {
-  const det = el('details', 'audit-worktrees');
-  det.dataset.repo = repo;
-  det.open = !!AU.openWt[repo];
-  det.ontoggle = () => { AU.openWt[repo] = det.open; };
+  const sec = el('section', 'audit-worktrees');
+  sec.dataset.repo = repo;
   const n = d.worktrees?.find((w) => w.repo === repo)?.files ?? files.length;
   const m = files.reduce((k, f) => k + f.findings.filter((x) => !x.dismissed).length, 0);
-  det.appendChild(el('summary', 'audit-worktrees-head fold',
+  sec.appendChild(el('h3', 'audit-worktrees-head',
     `Worktrees of ${files[0].worktree.label} (${n} file${n === 1 ? '' : 's'}, ${m} finding${m === 1 ? '' : 's'})`));
   const inner = el('div', 'audit-list');
-  for (const f of files) inner.appendChild(auditCard(f));
-  det.appendChild(inner);
-  return det;
+  auditCapped(inner, `wt:${repo}`, files, auditCard);
+  sec.appendChild(inner);
+  return sec;
 }
 
 function auditCard(f) {
@@ -5604,12 +5619,10 @@ function auditCard(f) {
   const names = visible.filter(auditNameNote);
   for (const x of visible) if (!names.includes(x)) rows.appendChild(auditRow(f, x));
   if (names.length) {
-    const det = el('details', 'audit-names');
-    det.open = !!AU.openNames[f.ref];
-    det.ontoggle = () => { AU.openNames[f.ref] = det.open; };
-    det.appendChild(el('summary', 'audit-names-head fold', `${names.length} model name${names.length === 1 ? '' : 's'} written out`));
-    for (const x of names) det.appendChild(auditRow(f, x));
-    rows.appendChild(det);
+    const sec = el('div', 'audit-names');
+    sec.appendChild(el('div', 'audit-names-head', `${names.length} model name${names.length === 1 ? '' : 's'} written out`));
+    auditCapped(sec, `names:${f.ref}`, names, (x) => auditRow(f, x));
+    rows.appendChild(sec);
   }
   card.appendChild(rows);
   if (AU.proposals[f.ref]) card.appendChild(auditProposalView(f, AU.proposals[f.ref]));

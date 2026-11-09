@@ -178,36 +178,32 @@ const ids = (p) => content(p).querySelector('.models-ids');
     !card(p, 'opus').querySelector('.models-flavor') && posts(p, '/api/models/flavor/set').length === 1 && /Name the files\./.test(p.text(card(p, 'opus'))));
 
   const used = card(p, 'opus').querySelector('.model-used');
-  ok('Used by is folded, counting the roles', /Used by 2 roles/.test(p.text(used)) && !used.querySelector('.models-where-hit'));
+  // PR G (no folds): "Used by" is a quiet button that opens a dialog, not an in-card fold.
+  ok('Used by is a button counting the roles, its detail not in the card', /Used by 2 roles/.test(p.text(used)) && !used.querySelector('.models-where-hit'));
   button(used, txt(used.querySelector('.model-used-toggle'))).click();
   await settle(10);
-  const u2 = card(p, 'opus').querySelector('.model-used');
-  ok('…open, it names the roles and the files that call it',
-    /Roles: reviewer, builder/.test(p.text(u2)) && /SKILL\.md:3/.test(p.text(u2))
+  const u2 = p.doc.body.querySelector('.pk-dialog');
+  ok('…pressed, its dialog names the roles and the files that call it',
+    !!u2 && /Roles: reviewer, builder/.test(p.text(u2)) && /SKILL\.md:3/.test(p.text(u2))
       && p.requests.some((r) => r.path === '/api/models/where' && r.search === '?family=opus'));
+  p.key('Escape');
   ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
 }
 
-// ── Model ids: folded by default, open while an alert waits ─────────────
+// ── Model ids: always shown (PR G, no folds); an alert is counted on its header ─────────────
 {
   const p = await boot();
-  ok('no alerts: Model ids is collapsed, its table not drawn', ids(p) && !ids(p).querySelector('.models-table')
-    && ids(p).querySelector('.ids-toggle').getAttribute('aria-expanded') === 'false');
+  ok('no alerts: Model ids is still shown, its table drawn (no fold)', ids(p) && !!ids(p).querySelector('.models-table') && !ids(p).querySelector('[aria-expanded]'));
   ok('…Check now stays reachable on its header', !!button(ids(p), 'Check now'));
-  ids(p).querySelector('.ids-toggle').click();
-  await settle(5);
-  ok('…a click opens it, every family listed', ids(p).querySelectorAll('.models-row').length === 5);
+  ok('…every family listed', ids(p).querySelectorAll('.models-row').length === 5);
   content(p).querySelectorAll('.models-row').find((r) => r.dataset.family === 'sol').click();
   await settle(5);
   ok('…and a row still opens its id editor', !!ids(p).querySelector('.models-detail .models-input'));
 
   const q = await boot(models([ALERT]));
-  ok('an alert pending: Model ids opens on its own', ids(q).querySelector('.models-table') && ids(q).querySelector('.ids-toggle').getAttribute('aria-expanded') === 'true');
+  ok('an alert pending: Model ids shows its table', !!ids(q).querySelector('.models-table'));
   ok('…with the count on its header', p.text(ids(q).querySelector('.ids-count')) === '1 alert');
   ok('…and the alert with its buttons', /Newer: opus-id-2/.test(q.text(ids(q))) && button(ids(q), 'Accept') && button(ids(q), 'Dismiss'));
-  ids(q).querySelector('.ids-toggle').click();
-  await settle(5);
-  ok('folded by hand, the count still shows', !ids(q).querySelector('.models-table') && q.text(ids(q).querySelector('.ids-count')) === '1 alert');
 }
 
 // ── Avoid for: the picker, the warning line, a save that creates a conflict ──
