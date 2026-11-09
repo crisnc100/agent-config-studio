@@ -500,7 +500,7 @@ function pkSecurityView() {
     pre.appendChild(el('p', null, p.view.changes
       ? `Set to “${label}”: this changes ${p.view.file}${p.view.exists ? ', and a copy of it goes to the backups folder first' : ' (a new file)'}.`
       : `${p.view.file} already says “${label}”. Nothing to change.`));
-    if (p.view.changes) pre.appendChild(diffView(p.view.current, p.view.next, 'now', 'after'));
+    if (p.view.changes) pre.appendChild(pkSecurityDiff(p.view.diff));
     const acts = el('div', 'pk-actions');
     if (p.view.changes) acts.appendChild(pkBtn('primary', 'Save', () => pkSecurityApply(), PK_SEC.busy));
     acts.appendChild(pkBtn('ghost', 'Cancel', () => { PK_SEC.preview = null; PK_SEC.seq++; paintPacks(); }, PK_SEC.busy));
@@ -512,6 +512,22 @@ function pkSecurityView() {
     box.appendChild(el('div', 'notice pk-result', `Saved: ${r.file} now says “${PK_SEC_LEVELS.find(([l]) => l === r.level)[1]}”.${r.backup ? ` The old file is at ${r.backup}.` : ''}`));
   }
   return box;
+}
+
+/** The server's line diff of the config, every line shown: the file is a few lines long. */
+function pkSecurityDiff(rows) {
+  const wrap = el('div', 'diff');
+  const type = { '+': 'add', '-': 'del', ' ': 'ctx' };
+  let a = 0, b = 0;
+  for (const r of rows) {
+    if (r.op !== '+') a++;
+    if (r.op !== '-') b++;
+    const line = el('div', `diff-line ${type[r.op]}`);
+    line.appendChild(el('span', 'n', String(r.op === '-' ? a : b)));
+    line.appendChild(el('span', 't', `${r.op === ' ' ? ' ' : r.op} ${r.line}`));
+    wrap.appendChild(line);
+  }
+  return wrap;
 }
 
 async function pkSecurityPreview(level) {
