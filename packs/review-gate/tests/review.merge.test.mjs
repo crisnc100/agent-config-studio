@@ -446,7 +446,7 @@ test('B11 the pack ships merge.mjs, and both skills say the orchestrator runs it
   const part = manifest.parts.find((p) => p.id === 'code-review')
   assert.ok(part.files.includes('packs/review-gate/runtime/merge.mjs'))
   for (const harness of ['claude', 'codex']) {
-    const text = ['SKILL.md', 'reference.md'].map((f) => join(pack, 'skills', harness, 'code-review', f)).filter(existsSync).map((p) => readFileSync(p, 'utf8')).join('\n')
+    const text = readFileSync(join(pack, 'skills', harness, 'code-review', 'SKILL.md'), 'utf8')
     for (const phrase of ['merge.mjs', 'merge.onHuman', 'merge.requireChecks', 'merge.allowBehind', 'merge.humanComment', 'needs-human', 'never merge'])
       assert.ok(text.includes(phrase), `${harness}: ${phrase}`)
     // Always the shared runtime's merge.mjs: a repo's scripts/review.mjs has no merge.mjs beside it.

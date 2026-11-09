@@ -428,7 +428,7 @@ test('8 security off or not required at review, then logic in the close diff wit
 test('12 the code-review skill text (claude and codex twins) describes the security pass, not "not a security audit"', () => {
   const skills = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills')
   for (const harness of ['claude', 'codex']) {
-    const text = ['SKILL.md', 'reference.md'].map((f) => join(skills, harness, 'code-review', f)).filter(existsSync).map((p) => readFileSync(p, 'utf8')).join('\n')
+    const text = readFileSync(join(skills, harness, 'code-review', 'SKILL.md'), 'utf8')
     assert.doesNotMatch(text, /security audit/i, harness)
     assert.match(text, /\*\*Security pass\.\*\* Config `security\.run`: `"off"` \(default\) \| `"required"` \| `"always"`/, harness)
     assert.match(text, /`security` role/, harness)

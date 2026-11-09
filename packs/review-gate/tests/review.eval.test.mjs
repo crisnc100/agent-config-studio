@@ -444,7 +444,7 @@ test('the examples ship: listed in pack.json, valid cases, and both skill twins 
   for (const file of readdirSync(EXAMPLES, { recursive: true }).filter((p) => statSync(join(EXAMPLES, p)).isFile()))
     assert.ok(listed.includes(`packs/review-gate/runtime/eval/examples/${file}`), file)
   for (const harness of ['claude', 'codex']) {
-    const body = ['SKILL.md', 'reference.md'].map((f) => join(PACK, 'skills', harness, 'code-review', f)).filter(existsSync).map((p) => readFileSync(p, 'utf8')).join('\n')
+    const body = readFileSync(join(PACK, 'skills', harness, 'code-review', 'SKILL.md'), 'utf8')
     assert.match(body, /--eval/, harness)
     assert.match(body, /eval-log\.jsonl/, harness)
   }

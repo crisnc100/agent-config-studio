@@ -304,7 +304,7 @@ test('S7 an unsliced diff over DIFF_CAP suggests REVIEW_PATHS and names the larg
 
 test('S8 both code-review skills say when and how to slice, and that the slices together must cover the diff', () => {
   for (const harness of ['claude', 'codex']) {
-    const text = ['SKILL.md', 'reference.md'].map((f) => join(SOURCE, '..', 'skills', harness, 'code-review', f)).filter(existsSync).map((p) => readFileSync(p, 'utf8')).join('\n')
+    const path = join(SOURCE, '..', 'skills', harness, 'code-review', 'SKILL.md'), text = readFileSync(path, 'utf8')
     for (const part of ['Big diffs: review in slices', 'REVIEW_PATHS=<pathspec>,<pathspec>', 'close every slice at the same HEAD', 'The slices together must cover every file of the diff'])
       assert.ok(text.includes(part), `${harness}: ${part}`)
   }

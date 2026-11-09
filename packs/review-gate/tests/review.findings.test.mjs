@@ -393,7 +393,7 @@ test('F4 a Grade close under "always": the recheck counts as its check; without 
 test('K1 both code-review skills describe pre-existing, grouped findings, responses and --noise-report, fixCheck, and the one-slice flow for a fix-check HIGH', () => {
   const skills = join(dirname(SCRIPT), '..', 'skills')
   for (const harness of ['claude', 'codex']) {
-    const text = ['SKILL.md', 'reference.md'].map((f) => join(skills, harness, 'code-review', f)).filter(existsSync).map((p) => readFileSync(p, 'utf8')).join('\n')
+    const text = readFileSync(join(skills, harness, 'code-review', 'SKILL.md'), 'utf8')
     const has = (phrase) => assert.ok(text.includes(phrase), `${harness}: ${phrase}`)
     for (const phrase of ['**Pre-existing findings.**', '`preExisting: true`', '`inDiff`', 'Pre-existing (not introduced here)', '"Pre-existing HIGH"',
       'makes the merge tier HIGH', '**Grouped findings.**', '`instances`', 'one status covers them all',
