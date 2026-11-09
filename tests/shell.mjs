@@ -107,7 +107,10 @@ const item = (page, id) => page.querySelectorAll('.files-item').find((b) => b.da
     && /^\d+$/.test(p.text(page.querySelectorAll('.files-type').find((t) => /Auto-memory/.test(p.text(t))).querySelector('.files-type-count'))));
   const again = await boot({ carry: p.store });
   const page2 = await filesPage(again);
-  ok('2 no type has a fold toggle, on any visit', !page.querySelector('.files-type-toggle') && !page2.querySelector('.files-type-toggle') && !!item(page2, 'am:fact'));
+  // Visible means no ancestor hides it (the fake DOM has no layout): a row inside a hidden list must not pass.
+  const visible = (n) => { for (let x = n; x; x = x.parentNode) if (x.hidden || x.style?.display === 'none') return false; return !!n; };
+  ok('2 no type has a fold toggle, on any visit — and the row is really visible', !page.querySelector('.files-type-toggle') && !page2.querySelector('.files-type-toggle')
+    && visible(item(page2, 'am:fact')));
   hook.click();
   await settle(10);
   ok('2 clicking a file opens the editor as before, full path in the topbar', p.eval('S.view') === 'entry' && p.eval('S.file.path') === PATHS.hook

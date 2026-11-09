@@ -547,6 +547,10 @@ try {
     const folds = page.$('content').querySelectorAll('details, summary, .chev, .fold, [aria-expanded].files-type-toggle');
     ok(`${v}: no fold — no <details>, summary or chevron toggle`, folds.length === 0,
       folds.map((d) => `${d.localName}.${d.className}: ${page.text(d).slice(0, 30)}`).join(' | '));
+    // …and no arrow glyph standing in for one, anywhere on the page (Packs' full ban, now app-wide).
+    const glyph = /[▸▾▶▼◂◀›⌄]/;
+    ok(`${v}: no fold or arrow glyph anywhere (▸ ▾ ▶ ▼ ◂ ◀ › ⌄)`, !glyph.test(page.text(page.$('content'))),
+      (page.text(page.$('content')).match(new RegExp(`.{0,30}${glyph.source}.{0,30}`)) || [''])[0]);
     // Every button is one of three kinds — primary, secondary (.btn) or quiet (.btn.ghost) — or a named
     // non-button control: a tab, a row in the Files tree, an (i) tip, or an icon with a title.
     const KINDS = /\bbtn\b/;
@@ -565,8 +569,8 @@ try {
     }
     const icons = page.$('content').querySelectorAll('button').filter((b) => page.text(b).replace(/[^\p{L}\p{N}]/gu, '').length === 0);
     // PR D: no text glyph stands in for a fold arrow; a toggle draws its chevron in CSS (.chev).
-    const glyphs = page.$('content').querySelectorAll('button, summary').filter((b) => /[▸▾▶▼◂◀]/.test(page.text(b)));
-    ok(`${v}: no button or fold uses a text arrow (▸ ▾ ▶ ▼)`, glyphs.length === 0, glyphs.map((b) => page.text(b).slice(0, 30)).join(' | '));
+    const glyphs = page.$('content').querySelectorAll('button, summary').filter((b) => /[▸▾▶▼◂◀›⌄]/.test(page.text(b)));
+    ok(`${v}: no button or fold uses a text arrow (▸ ▾ ▶ ▼ › ⌄)`, glyphs.length === 0, glyphs.map((b) => page.text(b).slice(0, 30)).join(' | '));
     // PR D: a Files entry's extra files are said plainly ("2 files"), right after its name — no bare "+N".
     const plus = page.$('content').querySelectorAll('.files-item .item-badge, .files-item-count').filter((n) => /^\+\d+$/.test(page.text(n).trim()));
     ok(`${v}: no bare "+N" count on a file entry`, plus.length === 0, plus.map((n) => page.text(n)).join(' | '));

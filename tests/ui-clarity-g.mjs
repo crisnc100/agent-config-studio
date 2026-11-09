@@ -102,6 +102,19 @@ console.log('\nModels: no folds');
   p.key('Escape');
   await settle(2);
   ok('…Esc closes it, focus back on the button', !p.doc.body.querySelector('.pk-dialog') && p.doc.activeElement?.classList?.contains('model-used-toggle'));
+
+  // f2: a slow lookup that answers after you left Models opens nothing.
+  let release;
+  const slow = new Promise((r) => { release = r; });
+  const q = await boot({ hash: '#models', routes: routesFor({ 'GET /api/models': () => models, 'GET /api/models/roles': () => view,
+    'GET /api/models/where': () => slow }) });
+  q.$('content').querySelector('.model-card[data-family="opus"] .model-used-toggle').click();
+  await settle(2);
+  q.$('btn-home').click();
+  await settle(5);
+  release({ hits: [] });
+  await settle(10);
+  ok('f2 a "Used by" answer that lands after leaving Models opens no dialog', !q.doc.body.querySelector('.pk-dialog') && q.eval('S.view') === 'home');
 }
 
 /* ── Memory → Projects: plain cards, first few files, "Show all N" ────── */
@@ -120,6 +133,8 @@ console.log('\nMemory → Projects: plain cards');
   btn(p, card, 'Show all 5 files')?.click();
   await settle(5);
   const card2 = p.$('content').querySelector('.mem-card');
+  ok('f1 focus lands on the first newly shown file (row 4), not a detached button', !!p.doc.activeElement && card2.querySelectorAll('.mem-fact')[3]?.contains(p.doc.activeElement),
+    p.doc.activeElement?.className);
   ok('"Show all" expands in place, every file selectable', card2.querySelectorAll('.mem-fact').length === 5 && !btn(p, card2, 'Show all 5 files')
     && p.$('content').querySelectorAll('.mem-card .sel-check').length === 5);
 }
@@ -140,6 +155,7 @@ console.log('\nAudit: refused files are listed, not folded');
   await settle(5);
   const r2 = p.$('content').querySelector('.audit-refusals');
   ok('…which expands in place', r2.querySelectorAll('.scope-note').length === 5 && !btn(p, r2, 'Show all 5'));
+  ok('f1 …and focus lands on the first newly shown item (the 4th)', p.doc.activeElement === r2.querySelectorAll('.scope-note')[3], p.doc.activeElement?.className);
 }
 
 /* ── Trash: the badge is its own class, sized to its word ──────────────── */

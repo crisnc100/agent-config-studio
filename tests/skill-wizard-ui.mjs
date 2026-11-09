@@ -231,8 +231,12 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
   ok('…and says it was cut', /Cut at 4 KB/.test(p.text(d || { textContent: '' })));
   p.key('Escape');
   await settle(2);
+  ok('…Escape closes the reply dialog', !p.doc.body.querySelector('.pk-dialog'));
+  rb?.click();
+  await settle(2);
   await click(btn(p, 'Retry'));
-  ok('…gone once the error is', !C(p).querySelectorAll('button').some((b) => p.text(b) === "Show the AI's reply") && cards(p).length === 1);
+  ok('…gone once the error is: no button, and no reply dialog left in the page', !C(p).querySelectorAll('button').some((b) => p.text(b) === "Show the AI's reply") && cards(p).length === 1
+    && !p.doc.body.querySelector('.pk-dialog'));
 }
 
 {
