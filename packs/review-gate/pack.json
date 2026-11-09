@@ -17,7 +17,7 @@
   },
   "workflow": {
     "command": "/pr-review",
-    "note": "/code-review and /security-check also run on their own; neither counts as a PR review alone.",
+    "note": "/code-review and /security-check also run on their own; neither counts as a PR review alone. After the push, /pr writes the description.",
     "steps": [
       {
         "id": "review",
@@ -68,18 +68,20 @@
         "who": "script"
       },
       {
+        "id": "context",
+        "label": "Context pass",
+        "what": "/context-pass: comments and docs.",
+        "who": "role",
+        "role": "writer",
+        "note": "then a docs-focus slice review"
+      },
+      {
         "id": "gate",
         "label": "Push gate",
         "what": "No push until it is reviewed.",
         "who": "script",
         "tool": "git hook",
         "part": "push-gate"
-      },
-      {
-        "id": "pr",
-        "label": "PR description",
-        "what": "/pr writes it from the close.",
-        "who": "agent"
       }
     ]
   },
