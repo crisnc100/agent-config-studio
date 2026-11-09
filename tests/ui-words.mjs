@@ -340,21 +340,23 @@ console.log('\nPacks: shared needs once, each card its single most important nee
   ]));
   const todo = p.$('content').querySelector('.pk-todo');
   const items = todo ? [...todo.querySelector('.pk-todo-list').children].map((li) => p.text(li)) : [];
-  ok('the top block lists only what every pack needs (git), once', items.length === 1 && /^git is not on PATH/.test(items[0]), items.join(' | '));
+  // PR F (critique P2-2): the search-path fix is one machine fix — said once at the top, with how many packs it blocks, never per card.
+  ok('the top block lists what every pack needs (git), then the one search-path fix, saying it blocks 1 of 2 packs', items.length === 2 && /^git is not on PATH/.test(items[0])
+    && /search path, so agents can.t run them: model-id, ask-model/.test(items[1]) && /Needed by 1 of 2 packs/.test(items[1]), items.join(' | '));
   const ready = (id) => p.text(p.$('content').querySelector(`[data-pack="${id}"] .pk-ready`));
   ok('a card never repeats the shared need, and never says "+N more"', !/git/.test(ready('gate')) && !/git/.test(ready('plain'))
     && !p.$('content').querySelectorAll('.pk-ready').some((n) => /more\)/.test(p.text(n))), `${ready('gate')} | ${ready('plain')}`);
   // PR C design: the chip is a calm amber "Setup needed"; the need itself is a line in the card.
   const need = (id) => p.text(p.$('content').querySelector(`[data-pack="${id}"] .pk-need`) || { textContent: '' });
-  ok('the gate card shows its single most important need: the one PATH fix (model-id and ask-model together)',
-    ready('gate') === 'Setup needed' && need('gate') === 'Needs a PATH fix: model-id, ask-model', `${ready('gate')} | ${need('gate')}`);
+  ok('the gate card shows its own most important need (valid roles), not the search-path fix said at the top',
+    ready('gate') === 'Setup needed' && need('gate') === 'Needs valid ACS roles', `${ready('gate')} | ${need('gate')}`);
   ok('a card whose only gap is the shared need is not called Ready: it points at the block above', ready('plain') === 'Not ready — see “To use packs” above', ready('plain'));
   const det = p.$('content').querySelector('[data-pack="gate"] details.pk-explain .pk-reqs');
   // node ✓, git ✖, the one PATH fix ✖ (model-id and ask-model together), roles ✖.
   ok('the full list stays in the card\'s details', !!det && [...det.children].length === 4, det && p.text(det));
-  const detPath = det ? [...det.children].map((li) => p.text(li)).filter((t) => /model-id|ask-model|studio sees/.test(t)) : [];
+  const detPath = det ? [...det.children].map((li) => p.text(li)).filter((t) => /model-id|ask-model|search path/.test(t)) : [];
   ok('…with the PATH problems as ONE item naming only the missing tools, and its one fix', detPath.length === 1
-    && /^✖ Some tools aren.t on the PATH the studio sees: model-id, ask-model — fix: run acs install-model-id/.test(detPath[0])
+    && /^✖ Some commands aren.t on your shell.s search path, so agents can.t run them: model-id, ask-model — fix: run acs install-model-id/.test(detPath[0])
     && !/Claude Code|Grok/.test(detPath[0]) && /restart the studio/.test(detPath[0]), detPath.join(' | '));
   p.done();
 
@@ -365,11 +367,11 @@ console.log('\nPacks: shared needs once, each card its single most important nee
   ]));
   const qi = [...(q.$('content').querySelector('.pk-todo-list')?.children || [])].map((li) => q.text(li));
   ok('model-id, ask-model and the CLIs off the PATH are one item, with one fix', qi.length === 1
-    && /^Some tools aren.t on the PATH the studio sees: model-id, ask-model, Claude Code, Grok/.test(qi[0]) && /acs install-model-id/.test(qi[0])
+    && /^Some commands aren.t on your shell.s search path, so agents can.t run them: model-id, ask-model, Claude Code, Grok/.test(qi[0]) && /acs install-model-id/.test(qi[0])
     && /each CLI's folder/.test(qi[0]) && /restart the studio/.test(qi[0]), qi.join(' | '));
   const qd = q.$('content').querySelector('[data-pack="a"] details.pk-explain .pk-reqs');
   ok('…and the same one item in each card\'s details', !!qd && [...qd.children].length === 1
-    && /^✖ Some tools aren.t on the PATH the studio sees: model-id, ask-model, Claude Code, Grok — fix: /.test(q.text(qd.children[0])), qd && q.text(qd));
+    && /^✖ Some commands aren.t on your shell.s search path, so agents can.t run them: model-id, ask-model, Claude Code, Grok — fix: /.test(q.text(qd.children[0])), qd && q.text(qd));
   ok('…and every card then has nothing of its own to add', q.$('content').querySelectorAll('.pk-ready').every((n) => q.text(n) === 'Not ready — see “To use packs” above'));
   // No "Details" folds (Cris, 2026-11-06): the status is one quiet line — when it was checked, the trust
   // check as a small checkbox with an (i), and Refresh — never a raw disclosure.
@@ -477,6 +479,18 @@ const RULES = [
     except: [/Delete role/g, /Delete this session/g, /deleted outside the studio/g, /never deleted/g] },
   // One word for a subscription account: "account", as Home's "Accounts & usage" says.
   { name: '"seat" for an account', re: /\bseats?\b/i },
+  // PR F (final critique P1-1, P2-1, P2-2): words a newcomer can't act on. "Trunk" is explained (ⓘ) on Worktrees only.
+  // …and in the Worktree setup pack's own explain, which defines it ("Each project gets a trunk: a checkout parked on …").
+  { name: '"trunk" outside Worktrees', re: /\btrunks?\b/i, allowIn: ['worktrees'],
+    except: [/Each project gets a trunk:/g, /beside the trunk/g, /conf file at the trunk/g, /from the trunk so it runs/g, /their trunks/g] },
+  { name: '"drifted"', re: /\bdrifted\b/i },
+  { name: '"headroom"', re: /headroom/i },
+  { name: '"Route to"', re: /\bRoute to\b/i },
+  { name: '"Orphans"', re: /\borphans?\b/i },
+  { name: '"Operations" for recent cleanups', re: /\bOperations\b/ },
+  { name: '"frontmatter"', re: /frontmatter/i },
+  { name: '"invocations"', re: /invocations?/i },
+  { name: '"PATH fix"', re: /PATH fix/i },
 ];
 
 /** A view's empty state ("No MCP servers configured yet.", "No registered projects. …"): not an intro. */
@@ -597,11 +611,13 @@ try {
     await waitFor(p2, () => c2().querySelectorAll('.pk-card').length > 0);
     const todo = c2().querySelector('.pk-todo');
     const items = todo ? [...todo.querySelector('.pk-todo-list').children].map((li) => p2.text(li)) : [];
-    // Not every pack needs model-id (Worktree setup does not), so it is no shared need: no top block, the card says it.
-    ok('"To use packs": a tool only some packs need is not in the top block', !todo || !items.some((x) => /model-id/.test(x)), items.join(' | '));
+    // PR F (critique P2-2): not every pack needs model-id (Worktree setup does not), yet it is one machine fix —
+    // said once at the top with how many packs it blocks; no card repeats it.
+    ok('"To use packs": a tool only some packs need is in the top block once, saying how many packs need it',
+      !!todo && items.filter((x) => /model-id/.test(x)).length === 1 && items.some((x) => /model-id/.test(x) && /Needed by \d+ of \d+ packs/.test(x)), items.join(' | '));
     const rg2 = c2().querySelector('[data-pack="review-gate"]');
-    ok('…and the review gate card names its one missing need, not a list: the one PATH fix', p2.text(rg2.querySelector('.pk-ready.missing')) === 'Setup needed'
-      && p2.text(rg2.querySelector('.pk-need')) === 'Needs a PATH fix: model-id' && !rg2.querySelector('.pk-ready.ok'),
+    ok('…and the review gate card points at the top block instead of repeating it', p2.text(rg2.querySelector('.pk-ready')) === 'Not ready — see “To use packs” above'
+      && !rg2.querySelector('.pk-need') && !rg2.querySelector('.pk-ready.ok'),
       p2.text(rg2.querySelector('.pk-head')));
     const prev = rg2.querySelectorAll('.pk-actions button').find((b) => /^Preview install/.test(p2.text(b)));
     rg2.querySelectorAll('.pk-part input').forEach((i) => { if (i.checked) i.click(); });

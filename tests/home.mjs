@@ -122,7 +122,7 @@ const CLEAN = {
   ok('10 memory: a count per cleanup kind', ['2 empty project folders', '1 index link to', '3 memory files missing', '1 memory index over'].every((x) => texts.some((t) => t.startsWith(x))));
   ok('10 worktrees: the done count per project, trunk excluded, projects with none left out',
      texts.includes('app: 2 finished worktrees ready to remove') && texts.includes('site: 1 finished worktree ready to remove') && !texts.some((t) => t.startsWith('quiet')));
-  ok('10 context: drifted files', texts.includes('2 context files drifted from trunk'));
+  ok('10 context: worktree copies that differ, in plain words', texts.includes('2 instruction files in worktrees differ from the main checkout'));
   ok('10 each item names the view it opens', att.items.every((i) => ['models', 'memory', 'worktrees', 'context'].includes(i.action.view))
      && att.items.filter((i) => i.source === 'memory').every((i) => i.action.tab === 'cleanups'));
   ok('10 with items there is no empty state', att.clear === false);
@@ -318,7 +318,7 @@ const homeRoutes = (over = {}) => routesFor({
   ok('9 …with that window and its reset', /Weekly/.test(p.text(row('a'))) && /resets in/.test(p.text(row('a'))), p.text(row('a')));
   ok('9 …and a link to Usage for the full bars', [...p.$('content').querySelectorAll('.home-accounts button')].some((b) => /Open Usage/.test(p.text(b))));
   ok('9 no number on a seat the route gave none for', ['off', 'wait', 'dup', 'nq', 'rolled', 'err', 'nw'].every((id) => !/\d+%/.test(p.text(row(id)))));
-  ok('9 the route line names the seat Usage would', /Route to\s*Codex \(main\)\s*54% left/.test(p.text(card(p, 'accounts'))));
+  ok('9 the route line names the seat Usage would', /Next task goes to\s*Codex \(main\)\s*54% left/.test(p.text(card(p, 'accounts'))));
   ok('9 a stale reading says it is not current', /not current/.test(p.text(row('st'))));
   ok('9 each state reads as Usage says it', /not connected/.test(p.text(row('off'))) && /signed in · no usage yet/.test(p.text(row('wait')))
      && /duplicate account/.test(p.text(row('dup'))) && /no quota published/.test(p.text(row('nq'))) && /reading out of date/.test(p.text(row('rolled'))));
@@ -362,10 +362,10 @@ const homeRoutes = (over = {}) => routesFor({
   const items = () => p.$('content').querySelectorAll('.home-item');
   const expect = { 'opus: a newer id': 'models', 'terra is retiring': 'models', 'haiku is no longer': 'models',
     '2 empty project folders': 'memory', '1 index link': 'memory', '3 memory files': 'memory', '1 memory index': 'memory',
-    'app: 2 finished': 'worktrees', 'site: 1 finished': 'worktrees', '2 context files drifted': 'context' };
+    'app: 2 finished': 'worktrees', 'site: 1 finished': 'worktrees', '2 instruction files in worktrees differ': 'context' };
   // C2: the top 3 by consequence first — a vanished or retiring model, then drift — then "Show all N".
   ok('10 only the top 3 show at first, most consequential first', JSON.stringify(items().map((i) => p.text(i).replace(/(Review|Compare|Show|Clean up)$/, ''))) === JSON.stringify([
-    'haiku is no longer offered by its CLI', `terra is retiring on ${new Date('2026-12-01T00:00:00Z').toLocaleDateString()}`, '2 context files drifted from trunk']),
+    'haiku is no longer offered by its CLI', `terra is retiring on ${new Date('2026-12-01T00:00:00Z').toLocaleDateString()}`, '2 instruction files in worktrees differ from the main checkout']),
     items().map((i) => p.text(i)).join(' / '));
   const more = p.$('content').querySelector('.home-attn-more');
   ok('10 …then a button names the rest: "Show all 10"', p.text(more) === 'Show all 10', p.text(more));
@@ -375,7 +375,7 @@ const homeRoutes = (over = {}) => routesFor({
   // PR C QA: every warning first, ranked, then the info items (a newer id, a finished worktree).
   const kinds = items().map((i) => (i.classList.contains('warn') ? 'warn' : 'info'));
   ok('10 …warnings first, ranked, then info: no info item between warnings', kinds.lastIndexOf('warn') < kinds.indexOf('info')
-    && items().findIndex((i) => /drifted/.test(p.text(i))) < items().findIndex((i) => /empty project folders/.test(p.text(i))), kinds.join(','));
+    && items().findIndex((i) => /differ from the main checkout/.test(p.text(i))) < items().findIndex((i) => /empty project folders/.test(p.text(i))), kinds.join(','));
   ok('10 …and the button now reads "Show fewer"', p.text(p.$('content').querySelector('.home-attn-more')) === 'Show fewer');
   let right = 0;
   for (const [start, view] of Object.entries(expect)) {
