@@ -221,12 +221,18 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
   p.st.next.push(() => { throw { status: 502, body: { error: "The AI's reply was refused twice (it is not valid JSON). Retry, or draft the skill now.", refused: true, reply, replyCut: true } }; });
   await click(btn(p, 'Start the interview'));
   const box = C(p).querySelector('.sw-error');
-  const d = box?.querySelector('details.sw-reply');
-  ok('a refused turn offers "Show the AI\'s reply"', !!d && /Show the AI's reply/.test(p.text(d.querySelector('summary'))));
-  ok('…the reply as plain text, never markup', d?.querySelector('pre.sw-reply-text')?.textContent === reply && !box.querySelector('img') && !box.querySelector('strong'));
-  ok('…and says it was cut', /Cut at 4 KB/.test(p.text(d)));
+  // PR G (no folds): a quiet button that opens the reply in a dialog.
+  const rb = box?.querySelectorAll('button').find((b) => p.text(b) === "Show the AI's reply");
+  ok('a refused turn offers "Show the AI\'s reply" as a quiet button, not a fold', !!rb && rb.classList.contains('ghost') && !box.querySelector('details'));
+  rb?.click();
+  await settle(2);
+  const d = p.doc.body.querySelector('.pk-dialog');
+  ok('…the reply as plain text, never markup', d?.querySelector('pre.sw-reply-text')?.textContent === reply && !d.querySelector('img') && !d.querySelector('strong') && !box.querySelector('img'));
+  ok('…and says it was cut', /Cut at 4 KB/.test(p.text(d || { textContent: '' })));
+  p.key('Escape');
+  await settle(2);
   await click(btn(p, 'Retry'));
-  ok('…gone once the error is', !C(p).querySelector('details.sw-reply') && cards(p).length === 1);
+  ok('…gone once the error is', !C(p).querySelectorAll('button').some((b) => p.text(b) === "Show the AI's reply") && cards(p).length === 1);
 }
 
 {

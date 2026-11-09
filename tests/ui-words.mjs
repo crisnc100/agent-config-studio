@@ -102,8 +102,8 @@ const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]
 console.log('\nstyles.css: PR D');
 {
   const body = (sel) => rules.filter((r) => r.sel.split(',').map((x) => x.trim()).includes(sel)).map((r) => r.body).join(';');
-  ok('a toggle button draws its chevron in CSS, turning with aria-expanded', /content\s*:/.test(body('.chev::before'))
-    && rules.some((r) => /\.chev\[aria-expanded="?true"?\]::before/.test(r.sel) && /transform/.test(r.body)));
+  // PR G (no folds anywhere): the chevron style PR D added is gone with the last toggle that drew it.
+  ok('no chevron toggle style is left (.chev)', !rules.some((r) => /\.chev\b/.test(r.sel)));
   ok('Models cards: the button row sits at the card bottom, so Edit / Reset line up across a row', /margin-top\s*:\s*auto/.test(body('.model-card > .model-card-buttons')));
   ok('a Files entry\'s file count sits right after its name (the name does not stretch)', !/flex\s*:\s*1\b/.test(body('.files-item-label')) && /margin-left/.test(body('.files-item-count')));
   // The diagram's encodings, one look each: off = a dashed tile; script = a solid outline chip.
@@ -129,7 +129,8 @@ console.log('\nstyles.css: PR C QA');
   ok('Usage\'s "82% left" stays on one line: no fixed narrow width, no wrap', /white-space\s*:\s*nowrap/.test(body('.usage-pct')) && !/(^|;)\s*width\s*:\s*[1-5]?\d px/.test(body('.usage-pct').replace(/px/g, ' px')));
   ok('Usage\'s stop-tracking × is fully visible when shown (no faded opacity), with a hit area', !/opacity\s*:\s*0?\.\d/.test(body('.usage-seat:hover .usage-drop'))
     && /width\s*:\s*2\dpx/.test(body('.usage-drop')));
-  ok('Files: a type toggle draws a fold chevron, and its "+" has a visible box', /content\s*:/.test(body('.files-type-toggle::before')) && /border\s*:/.test(body('.files-add')));
+  // PR G: a Files type is a plain heading, never a fold; its "+" keeps a visible box.
+  ok('Files: no type-toggle chevron, and its "+" has a visible box', !rules.some((r) => /files-type-toggle/.test(r.sel)) && /border\s*:/.test(body('.files-add')));
   ok('a diagram step title never wraps', /white-space\s*:\s*nowrap/.test(body('.pk-flow .step-name')));
   ok('a long diagram (eight or more steps) lays out in rows of four', /grid-template-columns\s*:\s*repeat\(4/.test(body('.pk-flow .flow.rows')));
   // PR F: Packs has no folds at all (Cris) — a part's explain lives in the card's "Files and undo" dialog, so no part fold style is left.
@@ -140,8 +141,8 @@ console.log('\nstyles.css: PR C QA');
 console.log('\nstyles.css: a data fold is a styled control; buttons are clearly buttons');
 {
   const has = (sel, re) => rules.some((r) => r.sel.split(',').map((x) => x.trim()).includes(sel) && re.test(r.body));
-  ok('a data fold\'s summary hides the browser triangle', has('summary.fold', /list-style\s*:\s*none/) && has('summary.fold::-webkit-details-marker', /display\s*:\s*none/));
-  ok('…and shows its own chevron, with a hover and a focus style', has('summary.fold::before', /content\s*:/) && rules.some((r) => /summary\.fold:hover/.test(r.sel)) && rules.some((r) => /summary\.fold:focus-visible/.test(r.sel)));
+  // PR G (no folds anywhere): no fold is left to style.
+  ok('no data-fold style is left (summary / details)', !rules.some((r) => /(^|[\s,>+~])(summary|details)\b/.test(r.sel)), rules.filter((r) => /(^|[\s,>+~])(summary|details)\b/.test(r.sel)).map((r) => r.sel).join(' | '));
   ok('a secondary button has a visible border (not the panel\'s own border colour)', has('.btn', /border\s*:[^;]*color-mix|border-color\s*:[^;]*color-mix/));
   ok('a quiet button has its own text colour and a hover background', has('.btn.ghost', /(^|;)\s*color\s*:/) && rules.some((r) => r.sel.includes('.btn.ghost:hover') && /background/.test(r.body)));
   const dis = rules.filter((r) => r.sel.split(',').some((x) => x.trim() === '.btn:disabled'));
@@ -256,6 +257,8 @@ put('.claude/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: a test skil
 put('.claude/skills/beta/SKILL.md', '---\nname: beta\ndescription: a skill with helper files\n---\n\nDo beta.\n');
 put('.claude/skills/beta/helper.md', 'Helper notes.\n');
 put('.claude/skills/beta/run.sh', 'echo beta\n');
+// PR G: a skill the Audit flags (a model-id call with no fallback), so Audit's cards render in the sweep.
+put('.claude/skills/gamma/SKILL.md', '---\nname: gamma\ndescription: calls a model\n---\n\n```bash\ncodex exec -m $(model-id sol) "review"\n```\n');
 put('.claude/skills/scratch/SKILL.md', '---\nname: scratch\ndescription: goes to trash\n---\n\nScratch.\n');
 put('Documents/Projects/app/CLAUDE.md', '# App\n\nRun the tests.\n');
 put('Documents/Projects/app/AGENTS.md', '# App\n\nRun the tests.\n');
@@ -540,12 +543,10 @@ try {
     const tips = page.$('content').querySelectorAll('.tip');
     ok(`${v}: every (i) tip names its word`, tips.every((t) => !!t.querySelector('.tip-term') && page.text(t.querySelector('.tip-term')).trim().length > 0),
       tips.map((t) => page.text(t)).join(' | '));
-    // Cris, 2026-11-06: no "▶ Details" toggles. A fold left on the page is a data fold the user opens on
-    // purpose (a pack's "What it changes", installer output, a project card), drawn as a styled control.
-    const folds = page.$('content').querySelectorAll('details');
-    ok(`${v}: no "Details" fold, and every fold left is a styled data fold (summary.fold)`, !page.$('content').querySelector('details.more')
-      && folds.every((d) => d.querySelector('summary')?.classList.contains('fold') && !/^\s*details\s*$/i.test(page.text(d.querySelector('summary')))),
-      folds.map((d) => `${d.className}: ${page.text(d.querySelector('summary')).slice(0, 30)}`).join(' | '));
+    // Cris: no triangles anywhere (PR G) — no <details>, no summary, no chevron toggle, in any view.
+    const folds = page.$('content').querySelectorAll('details, summary, .chev, .fold, [aria-expanded].files-type-toggle');
+    ok(`${v}: no fold — no <details>, summary or chevron toggle`, folds.length === 0,
+      folds.map((d) => `${d.localName}.${d.className}: ${page.text(d).slice(0, 30)}`).join(' | '));
     // Every button is one of three kinds — primary, secondary (.btn) or quiet (.btn.ghost) — or a named
     // non-button control: a tab, a row in the Files tree, an (i) tip, or an icon with a title.
     const KINDS = /\bbtn\b/;
@@ -553,11 +554,9 @@ try {
     const loose = page.$('content').querySelectorAll('button').filter((b) => !KINDS.test(b.className || '') && !NAMED.some((c) => b.classList.contains(c)));
     ok(`${v}: every button is primary, secondary or quiet (or a tab, tree row or titled icon)`, loose.length === 0,
       loose.map((b) => `${b.className || '(no class)'}: ${page.text(b).slice(0, 24)}`).join(' | '));
-    if (v === 'packs') {
-      // PR F (Cris): no folds on Packs at all — no <details>, no summary, no chevron control.
-      const c = page.$('content');
-      ok('packs: no <details>, summary or chevron anywhere', c.querySelectorAll('details, summary, .chev, .fold').length === 0 && !/[▸▾▶▼›⌄]/.test(page.text(c)),
-        `${c.querySelectorAll('details, summary').length} folds`);
+    if (v === 'audit') {
+      // The seeded gamma skill has a finding, so the sweep sees real Audit cards, not only the empty state.
+      ok('audit: the seeded findings render as cards', page.$('content').querySelectorAll('.audit-file').length > 0, page.text(page.$('content')).slice(0, 200));
     }
     if (v === 'models') {
       const rows = page.$('content').querySelectorAll('.roles-row');

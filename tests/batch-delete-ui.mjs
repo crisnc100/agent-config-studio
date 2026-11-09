@@ -305,16 +305,10 @@ async function bootMemory() {
   tab('Projects').click();
   await settle(5);
   ok('D9 a tab change clears the selection', count(p) === '0 selected');
-  ok('D9 a closed project card shows no rows to select', boxes(p).length === 0 && barBtn(p, 'Select all').disabled);
-  const card = p.$('content').querySelector('details.mem-card');
-  card.open = true; card.ontoggle();
-  ok('D9 opened, its rows can be selected', boxes(p).length === 3 && !barBtn(p, 'Select all').disabled);
+  // PR G (no folds): a project card is a plain card; its shown rows (three here, under the cap) are selectable.
+  ok('D9 a project card lists its rows, selectable', !p.$('content').querySelector('details') && boxes(p).length === 3 && !barBtn(p, 'Select all').disabled);
   barBtn(p, 'Select all').click();
   ok('(setup) all three ticked', count(p) === '3 selected');
-  card.open = false; card.ontoggle();
-  ok('D9 closing the card drops its rows from the selection', count(p) === '0 selected' && barBtn(p, 'Select all').disabled);
-  card.open = true; card.ontoggle();
-  ok('D9 reopened, they are selectable again, unticked', !barBtn(p, 'Select all').disabled && boxes(p).every((b) => !b.checked));
 
   tab('Review').click();
   await settle(5);

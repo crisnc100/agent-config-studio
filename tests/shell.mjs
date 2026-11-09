@@ -102,12 +102,12 @@ const item = (page, id) => page.querySelectorAll('.files-item').find((b) => b.da
   const hook = item(page, 'hook:pre');
   ok('2 files show short names, with the full path in the tooltip', p.text(hook.querySelector('.files-item-label')) === 'pre tool'
      && hook.title.includes('~/.claude/hooks/pre tool.sh') && !p.text(page.querySelector('.files-tools')).includes('~/'));
-  ok('2 a low-traffic type (Auto-memory) starts folded, its count still shown', !item(page, 'am:fact') || item(page, 'am:fact').closest('.files-entries').hidden);
-  const am = page.querySelectorAll('.files-type').find((t) => /Auto-memory/.test(p.text(t)));
-  am.querySelector('.files-type-toggle').click();
+  // PR G (no folds anywhere): every type is open, its count shown; there is no toggle to fold or remember.
+  ok('2 a low-traffic type (Auto-memory) is open like the rest, its count shown', !!item(page, 'am:fact') && !item(page, 'am:fact').closest('.files-entries').hidden
+    && /^\d+$/.test(p.text(page.querySelectorAll('.files-type').find((t) => /Auto-memory/.test(p.text(t))).querySelector('.files-type-count'))));
   const again = await boot({ carry: p.store });
   const page2 = await filesPage(again);
-  ok('2 unfolding a type is remembered', !item(page2, 'am:fact').closest('.files-entries').hidden);
+  ok('2 no type has a fold toggle, on any visit', !page.querySelector('.files-type-toggle') && !page2.querySelector('.files-type-toggle') && !!item(page2, 'am:fact'));
   hook.click();
   await settle(10);
   ok('2 clicking a file opens the editor as before, full path in the topbar', p.eval('S.view') === 'entry' && p.eval('S.file.path') === PATHS.hook

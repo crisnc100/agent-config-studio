@@ -298,16 +298,16 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
   await settle(10);
 
   const det = p.$('content').querySelector('.audit-worktrees');
-  ok('C8 worktree cards sit in one collapsed per-repository section, not in the main list',
-    det && det.dataset.repo === R && det.open === false && cards(p).filter((c) => !det.contains(c)).every((c) => !['w', 'x'].includes(c.dataset.ref[0])) && det.querySelectorAll('.audit-file').length === 1);
-  ok('C8 …titled with the repository, its worktree files and their findings', txt(det.querySelector('summary')) === 'Worktrees of ~/Projects/app (3 files, 1 finding)', txt(det.querySelector('summary')));
+  // PR G (no folds): the per-repository section is shown, under a heading; its cards are listed (capped with "Show all").
+  ok('C8 worktree cards sit in one per-repository section, not in the main list',
+    det && det.dataset.repo === R && det.localName !== 'details' && cards(p).filter((c) => !det.contains(c)).every((c) => !['w', 'x'].includes(c.dataset.ref[0])) && det.querySelectorAll('.audit-file').length === 1);
+  ok('C8 …titled with the repository, its worktree files and their findings', txt(det.querySelector('.audit-worktrees-head')) === 'Worktrees of ~/Projects/app (3 files, 1 finding)', txt(det.querySelector('.audit-worktrees-head')));
   ok('C8 the main checkout\'s card stays in the main list', !!card(p, 'y'.repeat(16)) && !det.contains(card(p, 'y'.repeat(16))));
-  det.open = true; det.ontoggle();
   button(card(p, 'w'.repeat(16)), 'Fix 1').click();
   await settle(10);
   const wProp = posts(p, '/api/audit/propose').at(-1);
   ok('C8 Fix on a worktree card proposes that file and its own findings', wProp.body.fileRef === 'w'.repeat(16) && JSON.stringify(wProp.body.findingIds) === JSON.stringify(['b1'.repeat(8)]));
-  ok('C8 …and the section stays open around the proposal', p.$('content').querySelector('.audit-worktrees').open === true && !!card(p, 'w'.repeat(16)).querySelector('.audit-proposal'));
+  ok('C8 …and the section stays around the proposal', !!p.$('content').querySelector('.audit-worktrees') && !!card(p, 'w'.repeat(16)).querySelector('.audit-proposal'));
   button(card(p, 'w'.repeat(16)), 'Cancel').click();
   await settle(10);
   const wRow = card(p, 'w'.repeat(16)).querySelectorAll('.audit-finding')[0];
@@ -323,8 +323,9 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
   ok('C4 Show info is remembered for this viewer', p.store.get('acs.audit.info') === '1');
   ok('C4 …and shows the info findings; fixable ones as their own rows', JSON.stringify(rowIds(n2).slice(0, 3)) === '["a1","a2","a6"]', JSON.stringify(rowIds(n2)));
   const names = n2.querySelector('.audit-names');
-  ok('C3 the never-fixable name notes are one row: "3 model names written out"', names && txt(names.querySelector('summary')) === '3 model names written out' && names.open === false, names && txt(names));
-  ok('C3 …expanding to each line', JSON.stringify(names.querySelectorAll('.audit-finding').map((r) => r.dataset.id.slice(0, 2))) === '["a3","a4","a5"]' && /line 7/.test(txt(names)) && /line 9/.test(txt(names)));
+  // PR G (no folds): the notes sit under one heading line; three is under the cap, so each is listed.
+  ok('C3 the never-fixable name notes are grouped under one line: "3 model names written out"', names && txt(names.querySelector('.audit-names-head')) === '3 model names written out' && names.localName !== 'details', names && txt(names));
+  ok('C3 …listing each line', JSON.stringify(names.querySelectorAll('.audit-finding').map((r) => r.dataset.id.slice(0, 2))) === '["a3","a4","a5"]' && /line 7/.test(txt(names)) && /line 9/.test(txt(names)));
   ok('C3 a fixable name and a warn are never folded', !names.querySelectorAll('.audit-finding').some((r) => ['a6', 'a1'].includes(r.dataset.id.slice(0, 2))));
   ok('C4 with info shown, Fix includes the fixable info', !!button(n2, 'Fix 3'));
   ok('C4 …and the summary no longer says info is hidden', /8 findings · 4 fixable$/.test(summary(p)), summary(p));
