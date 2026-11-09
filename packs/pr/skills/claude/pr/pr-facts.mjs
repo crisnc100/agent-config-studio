@@ -9,7 +9,8 @@
  * USAGE
  *   node pr-facts.mjs [--base <ref>] [--plan <path>]          # one JSON object: the facts
  *   node pr-facts.mjs --check <file> [--base <ref>] [--plan <path>]   # { ok, problems, warnings }; exit 1 on a problem
- *   --docs-table <path> names the context pass's docs table; by default it is docs-table.json beside the plan.
+ *   --docs-table <path> names the context pass's docs table; by default it is docs-table.json beside the plan, else a
+ *   changed builds/<slug>/docs-table.json, else builds/<branch>/docs-table.json.
  *
  * Base: --base, else the open PR's base (gh pr view), else the tracking branch when it is not the branch's own
  * remote copy, else origin/HEAD, else a local main or master.
@@ -179,9 +180,12 @@ function findBuildLog(cwd, plan) {
 /* ── the docs table ──────────────────────────────────────────────────── */
 
 const textOk = (v) => typeof v === 'string' && v.trim().length > 0
-// The table and what is wrong with it: { path, rows, uncovered, problems }, or null when there is none.
-function docsTable(root, flag, plan, codeFiles) {
-  const path = flag || (plan ? join(dirname(plan.path), 'docs-table.json') : null)
+// The table and what is wrong with it: { path, rows, uncovered, problems }, or null when there is none. Found by
+// --docs-table, else beside the plan, else as a changed builds/<slug>/docs-table.json, else in builds/<branch>/.
+function docsTable(root, flag, plan, codeFiles, changed, branch) {
+  const found = [plan && join(dirname(plan.path), 'docs-table.json'), ...changed.filter((p) => /^builds\/[^/]+\/docs-table\.json$/.test(p)),
+    `builds/${branch}/docs-table.json`].filter(Boolean).find((p) => existsSync(join(root, p)))
+  const path = flag || found
   if (!path) return null
   if (!existsSync(join(root, path))) {
     if (flag) refuse(`--docs-table ${flag}: no such file`)
@@ -457,7 +461,7 @@ export function facts({ cwd = process.cwd(), base: baseFlag, plan: planFlag, doc
       agentFiles: changed.filter((p) => agentFile.test(p)),
       codeWithoutDocs: files.docs.length ? [] : files.code.map((f) => f.path),
     },
-    docsTable: docsTable(root, tableFlag, plan, files.code.map((x) => x.path)),
+    docsTable: docsTable(root, tableFlag, plan, files.code.map((x) => x.path), changed, branch),
     style,
     gif: pickGif(style.sections.find((s) => s.id === 'gif'), branch),
     warnings,
