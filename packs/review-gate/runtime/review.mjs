@@ -3442,10 +3442,9 @@ async function runSecurityOnly() {
   for (const f of located.filter((f) => f.severity === 'high')) console.log(`HIGH ${f.id} ${f.file}:${f.line} — ${f.issue} (${scoreText(f)})`)
   console.log('This check closes nothing and covers no push: a PR still needs /code-review (or /pr-review) and its close.')
   console.log(`Security check ID: ${id}`)
-  console.log('\n===FINDINGS_JSON===')
-  console.log(JSON.stringify({ schemaVersion: 1, securityCheckId: id, standalone: true, family: security.record.family, base: BASE, branch, head: reviewedHead,
+  console.log(`\n===FINDINGS_JSON===\n${JSON.stringify({ schemaVersion: 1, securityCheckId: id, standalone: true, family: security.record.family, base: BASE, branch, head: reviewedHead,
     ...(SLICE && { paths: SLICE }), reportPath: `${dir}/security-check.md`, diffTruncated, findings: located.map(publicFinding),
-    unverified: unlocated.map(publicFinding), security: record.security, logPath: SECURITY_LOG }, null, 2))
+    unverified: unlocated.map(publicFinding), security: record.security, logPath: SECURITY_LOG }, null, 2)}`)
   await Promise.all([process.stdout, process.stderr].map((stream) => new Promise((done) => stream.write('', done))))
   process.exit(0)
 }
