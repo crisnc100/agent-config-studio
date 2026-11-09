@@ -90,3 +90,18 @@ test('5 --docs-table names the file; a missing one, or one that is not JSON, is 
   commit({ 'builds/feat/docs-table.json': '{ not json' })
   assert.ok(problems().some((p) => /^docs table: builds\/feat\/docs-table\.json is not valid JSON/.test(p)), JSON.stringify(problems()))
 })
+
+test('6 with no plan, the table is still found in the build folder: a changed builds/<slug>/docs-table.json, else builds/<branch>/', () => {
+  git('rm', '-q', 'builds/feat/plan.md'); git('commit', '-qm', 'no plan')
+  commit({ 'builds/feat/docs-table.json': { rows: [ROW_ADD] } })
+  assert.equal(facts().plan, null)
+  assert.equal(facts().docsTable?.path, 'builds/feat/docs-table.json')
+  assert.deepEqual(problems(), ['docs table: src/sub.js changed, but no row covers it'])
+  git('mv', 'builds/feat', 'builds/other-slug'); git('commit', '-qm', 'move')
+  assert.equal(facts().docsTable?.path, 'builds/other-slug/docs-table.json')
+})
+
+test('7 an empty table with changed code fails, naming every uncovered file', () => {
+  commit({ 'builds/feat/docs-table.json': { rows: [] } })
+  assert.deepEqual(problems().sort(), ['docs table: src/add.js changed, but no row covers it', 'docs table: src/sub.js changed, but no row covers it'])
+})

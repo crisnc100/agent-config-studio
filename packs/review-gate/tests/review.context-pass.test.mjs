@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
@@ -140,4 +140,70 @@ test('6 --check-commit without a brief still holds the built-in untouchables, an
   assert.equal(r.status, 1); assert.ok(r.json.problems.some((p) => /CLAUDE\.md: an agent-instruction file/.test(p)))
   assert.equal(run(['--check-commit', 'nope']).status, 1)
   assert.equal(run(['--bogus']).status, 1)
+})
+
+// ── the code-line check: an accident barrier for the writer, failing closed ──
+const JS = ["// Loads the config.", "/**", " * The parser.", " */", "export function parse(s) {", "  const url = 'http://x' // where it lives", "  return s.split(',')", "}", ""].join('\n')
+function verdicts(cases) {
+  commit(Object.fromEntries(cases.map(([p, a]) => [p, a])), 'before')
+  const sha = commit(Object.fromEntries(cases.map(([p, , b]) => [p, b])), 'after')
+  const r = run(['--check-commit', sha])
+  const bad = new Set(r.json.problems.map((x) => x.split(':')[0]))
+  return Object.fromEntries(cases.map(([p]) => [p, !bad.has(p)]))
+}
+test('7 a code file passes only when its changed lines are wholly comment or blank, by its language', () => {
+  const cases = [
+    ['src/a.js', JS, JS.replace('// Loads the config.', '// Reads the config once, at start.'), true],
+    ['src/b.js', JS, `${JS}\n\n`, true],
+    ['src/c.js', JS, JS.replace("split(',')", "split(';')"), false],
+    ['src/d.js', JS, JS.replace("'http://x'", "'http://y'"), false],
+    ['src/e.js', JS, JS.replace('// where it lives', '// where it is served'), false],
+    ['src/f.js', JS, JS.replace('// Loads the config.', '// @ts-ignore'), false],
+    ['src/g.py', 'x = 1  # one\n# about y\ny = "#2"\n', 'x = 1  # one\n# about y, kept short\ny = "#2"\n', true],
+    ['src/h.py', '# about\nx = 1\n', '# type: ignore\nx = 1\n', false],
+    ['src/i.sh', 'echo $# # count\n', 'echo $# # the count\n', false],
+    ['src/j.sh', '# run it\necho hi\n', '# run it twice\necho hi\n', true],
+    ['src/k.rs', '/// Adds.\nfn add(x: i32) -> i32 { x + 1 }\n', '/// Adds one.\nfn add(x: i32) -> i32 { x + 1 }\n', false],
+    ['src/l.go', '//go:build linux\npackage m\n', '//go:build darwin\npackage m\n', false],
+    ['src/m.unknownext', 'a\n', '# a\na\n', false],
+  ]
+  const got = verdicts(cases)
+  for (const [p, , , want] of cases) assert.equal(got[p], want, p)
+})
+test('8 it fails closed: block-comment delimiters, regex literals, string continuations, heredocs and YAML block scalars count as code', () => {
+  const cases = [
+    ['src/a.js', JS, JS.replace('/**\n * The parser.\n */\n', ''), 'a removed block comment (delimiters change)'],
+    ['src/b.js', 'const a = 1\n', 'const a = 1\n/* new */\n', 'an added block comment'],
+    ['src/c.js', 'const re = /\\/*x/\nconst b = 2 // b\n', 'const re = /\\/*x/\nconst b = 2 // the b\n', 'a regex literal that looks like a comment start'],
+    ['src/d.js', 'const r = /"/\n// note\nconst s = 1\n', 'const r = /"/\n// a note\nconst s = 1\n', 'a regex literal with a quote'],
+    ['src/e.js', 'const t = `a\n// not a comment\nb`\n', 'const t = `a\n// still not a comment\nb`\n', 'a template literal across lines'],
+    ['src/f.py', 'def f():\n    """Doc.\n    # not a comment\n    """\n', 'def f():\n    """Doc.\n    # changed text\n    """\n', 'a triple-quoted string'],
+    ['src/g.sh', "cat <<EOF\n# not a comment\nEOF\n", "cat <<EOF\n# changed\nEOF\n", 'a heredoc'],
+    ['src/h.yaml', 'script: |\n  # not a comment\n  run\n', 'script: |\n  # changed\n  run\n', 'a YAML block scalar'],
+    ['src/i.c', 'int a = 1; \\\n// x\n', 'int a = 1; \\\n// y\n', 'a line continuation'],
+  ]
+  const got = verdicts(cases.map(([p, a, b]) => [p, a, b]))
+  for (const [p, , , why] of cases) assert.equal(got[p], false, `${p}: ${why}`)
+})
+test('9 a large file is judged by its change, never refused for its length', () => {
+  const big = Array.from({ length: 30000 }, (_, i) => `export const v${i} = ${i} // value ${i}`).join('\n') + '\n'
+  const comment = big.replace('export const v15000 = 15000 // value 15000\n', 'export const v15000 = 15000 // value 15000\n// The middle one.\n')
+  const changed = big.replace('export const v15000 = 15000', 'export const v15000 = 1')
+  assert.deepEqual(verdicts([['src/big.js', big, comment]]), { 'src/big.js': true })
+  git('reset', '-q', '--hard', 'HEAD~2')
+  assert.deepEqual(verdicts([['src/big.js', big, changed]]), { 'src/big.js': false })
+})
+test('10 the agent-instruction list is wide and case-insensitive', () => {
+  for (const path of ['claude.md', 'docs/Agents.md', 'CLAUDE.local.md', 'AGENTS.override.md', '.github/copilot-instructions.md', '.github/instructions/web.instructions.md',
+    '.gemini/styleguide.md', '.windsurf/rules/x.md', '.cursor/rules/x.mdc', 'GEMINI.md', 'pkg/skill.md']) {
+    const sha = commit({ [path]: '# Rules\n' }, `add ${path}`)
+    const edit = commit({ [path]: '# Rules\nMore.\n' }, `edit ${path}`)
+    const r = run(['--check-commit', edit])
+    assert.ok(r.json.problems?.some((p) => p.startsWith(`${path}: an agent-instruction file`)), `${path}: ${JSON.stringify(r.json)}`)
+    assert.ok(sha)
+  }
+})
+test('11 the script says the gate never trusts its code-line check', () => {
+  const text = readFileSync(SCRIPT, 'utf8')
+  assert.match(text, /never trusts? (it|this check)/i)
 })
