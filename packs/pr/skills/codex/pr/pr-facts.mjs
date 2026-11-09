@@ -9,6 +9,7 @@
  * USAGE
  *   node pr-facts.mjs [--base <ref>] [--plan <path>]          # one JSON object: the facts
  *   node pr-facts.mjs --check <file> [--base <ref>] [--plan <path>]   # { ok, problems, warnings }; exit 1 on a problem
+ *   --docs-table <path> names the context pass's docs table; by default it is docs-table.json beside the plan.
  *
  * Base: --base, else the open PR's base (gh pr view), else the tracking branch when it is not the branch's own
  * remote copy, else origin/HEAD, else a local main or master.
@@ -23,6 +24,11 @@
  * review.mjs). Not there: state "absent". There but HEAD not closed: state "in-progress" with the gate's reason.
  * Closed: state "closed", with the --summary text, the --tier-json data and the summary's lines split out, plus each
  * finding (id, severity, score, status, one-line issue) and counts by severity, read from the review log --tier-json names.
+ *
+ * Docs table: the rows the context pass wrote, one per changed behavior, each naming its changed files and either the
+ * docs that describe it, every claim with the file:line that backs it, or the reason no doc is needed. --check fails a
+ * changed code file no row covers, a row that is incomplete, and a claim whose file:line is not in the repo at HEAD.
+ * It checks the table's rows and their completeness, never whether a claim is true: the docs-focus review does that.
  *
  * Style: ~/.agent-config-studio/pr/style.json. Unknown keys and bad values are warned about (in the JSON) and
  * ignored. "Deferred findings" keeps its title, and stays on whenever a review exists.
@@ -168,6 +174,60 @@ function findBuildLog(cwd, plan) {
   if (!path || !existsSync(join(cwd, path))) return null
   const text = readFileSync(join(cwd, path), 'utf8')
   return { path, text: text.length > LOG_LIMIT ? `${text.slice(0, LOG_LIMIT)}\n…(cut at ${LOG_LIMIT} characters)` : text }
+}
+
+/* ── the docs table ──────────────────────────────────────────────────── */
+
+const textOk = (v) => typeof v === 'string' && v.trim().length > 0
+// The table and what is wrong with it: { path, rows, uncovered, problems }, or null when there is none.
+function docsTable(root, flag, plan, codeFiles) {
+  const path = flag || (plan ? join(dirname(plan.path), 'docs-table.json') : null)
+  if (!path) return null
+  if (!existsSync(join(root, path))) {
+    if (flag) refuse(`--docs-table ${flag}: no such file`)
+    return null
+  }
+  let doc
+  try { doc = JSON.parse(readFileSync(join(root, path), 'utf8')) } catch (e) {
+    return { path, rows: [], uncovered: codeFiles, problems: [`docs table: ${path} is not valid JSON (${e.message})`] }
+  }
+  const rows = Array.isArray(doc?.rows) ? doc.rows : null
+  if (!rows) return { path, rows: [], uncovered: codeFiles, problems: [`docs table: ${path} must be { "rows": [ … ] }`] }
+  const problems = []
+  const lineCount = new Map()
+  const linesAt = (file) => {
+    if (!lineCount.has(file)) {
+      const r = git(root, 'show', `HEAD:${file}`)
+      lineCount.set(file, r.code === 0 ? r.out.replace(/\n$/, '').split('\n').length : null)
+    }
+    return lineCount.get(file)
+  }
+  rows.forEach((row, i) => {
+    const at = `docs table row ${i + 1}${row && textOk(row.behavior) ? ` (${row.behavior})` : ''}`
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return problems.push(`${at}: must be { behavior, files, docs | none }`)
+    if (!textOk(row.behavior)) problems.push(`${at}: behavior is empty`)
+    if (!Array.isArray(row.files) || !row.files.length || !row.files.every(textOk)) problems.push(`${at}: files must list the changed files it covers`)
+    const docs = Array.isArray(row.docs) ? row.docs : []
+    if (!docs.length && !textOk(row.none)) problems.push(`${at}: needs docs with claims, or a reason no doc is needed ("none")`)
+    for (const d of docs) {
+      if (!d || !textOk(d.path)) { problems.push(`${at}: a doc without a path`); continue }
+      if (linesAt(d.path) === null) problems.push(`${at}: ${d.path} is not in the repo at HEAD`)
+      const claims = Array.isArray(d.claims) ? d.claims : []
+      if (!claims.length) problems.push(`${at}: ${d.path} lists no claims`)
+      for (const c of claims) {
+        const name = c && textOk(c.claim) ? c.claim : '(unnamed)'
+        const m = typeof c?.at === 'string' && c.at.match(/^(.+):(\d+)$/)
+        if (!m) { problems.push(`${at}: claim "${name}" has no file:line ("at")`); continue }
+        const n = linesAt(m[1])
+        if (n === null) problems.push(`${at}: claim "${name}" points at ${c.at}, which is not in the repo at HEAD`)
+        else if (Number(m[2]) < 1 || Number(m[2]) > n) problems.push(`${at}: claim "${name}" points at ${c.at}, but ${m[1]} has ${n} line(s)`)
+      }
+    }
+  })
+  const covered = new Set(rows.flatMap((r) => (Array.isArray(r?.files) ? r.files : [])))
+  const uncovered = codeFiles.filter((p) => !covered.has(p))
+  for (const p of uncovered) problems.push(`docs table: ${p} changed, but no row covers it`)
+  return { path, rows, uncovered, problems }
 }
 
 /* ── the review gate ─────────────────────────────────────────────────── */
@@ -357,7 +417,7 @@ export function pickGif(section, branch) {
 
 /* ── the facts ───────────────────────────────────────────────────────── */
 
-export function facts({ cwd = process.cwd(), base: baseFlag, plan: planFlag } = {}) {
+export function facts({ cwd = process.cwd(), base: baseFlag, plan: planFlag, docsTable: tableFlag } = {}) {
   const top = git(cwd, 'rev-parse', '--show-toplevel')
   if (top.code !== 0) refuse('not inside a git repository')
   const root = top.out
@@ -397,6 +457,7 @@ export function facts({ cwd = process.cwd(), base: baseFlag, plan: planFlag } = 
       agentFiles: changed.filter((p) => agentFile.test(p)),
       codeWithoutDocs: files.docs.length ? [] : files.code.map((f) => f.path),
     },
+    docsTable: docsTable(root, tableFlag, plan, files.code.map((x) => x.path)),
     style,
     gif: pickGif(style.sections.find((s) => s.id === 'gif'), branch),
     warnings,
@@ -469,7 +530,7 @@ function filesNamed(text) {
 }
 
 export function check(body, f) {
-  const problems = [], warnings = [...f.warnings]
+  const problems = [...(f.docsTable?.problems || [])], warnings = [...f.warnings]
   const closed = f.review.state === 'closed'
   const uncommented = blank(body, comments(body))
   const fold = folds(uncommented)
@@ -567,8 +628,8 @@ export function main(args = process.argv.slice(2)) {
       process.stdout.write(readFileSync(new URL(import.meta.url), 'utf8').split('*/')[0].replace(/^#!.*\n\/\*\*\n/, '').replace(/^ \* ?/gm, ''))
       return 0
     }
-    for (const a of args) if (a.startsWith('--') && !['--base', '--plan', '--check'].includes(a)) refuse(`unknown option ${a}`)
-    const opts = { base: option(args, '--base'), plan: option(args, '--plan') }
+    for (const a of args) if (a.startsWith('--') && !['--base', '--plan', '--check', '--docs-table'].includes(a)) refuse(`unknown option ${a}`)
+    const opts = { base: option(args, '--base'), plan: option(args, '--plan'), docsTable: option(args, '--docs-table') }
     const file = option(args, '--check')
     const root = git(process.cwd(), 'rev-parse', '--show-toplevel').out
     const f = { ...facts(opts), root }
