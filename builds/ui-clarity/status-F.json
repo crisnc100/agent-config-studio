@@ -1,0 +1,1 @@
+{"f1":{"status":"fixed","test":"tests/ui-clarity-f.mjs — f1 focus stays on the pressed model after the picker repaints; the installer output dialog returns focus to its button after the card repainted"}}
