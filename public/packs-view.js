@@ -216,8 +216,8 @@ const pkNames = (fix) => fix.reqs.flatMap((r) => String(r.name || r.id).split(' 
 function pkNeedText(fix) {
   const r = fix.reqs[0];
   if (r.dep) return `the ${pkPack(r.dep)?.title || r.dep} pack first`;
-  // A PATH fix, not a missing tool: the CLIs it names are installed (✓ on the machine line).
-  if (fix.key === 'path') return `a PATH fix: ${pkNames(fix).join(', ')}`;
+  // Off the search path, not missing: the CLIs it names are installed. Said once at the top (pkShared), so rarely here.
+  if (fix.key === 'path') return `commands on your search path: ${pkNames(fix).join(', ')}`;
   return PK_NEED_SHORT[r.id] || r.what;
 }
 /** A fix as the top block lists it: what to do, then how. */
@@ -226,9 +226,9 @@ function pkFixItem(fix) {
   const tools = fix.reqs.some((r) => ['model-id', 'ask-model'].includes(r.id));
   const clis = fix.reqs.some((r) => r.id === 'cli');
   return {
-    what: `Some tools aren’t on the PATH the studio sees: ${pkNames(fix).join(', ')}`,
+    what: `Some commands aren’t on your shell’s search path, so agents can’t run them: ${pkNames(fix).join(', ')}`,
     fix: [tools ? 'run acs install-model-id' : null,
-      `add ${tools ? '~/.local/bin' : ''}${tools && clis ? ' and ' : ''}${clis ? "each CLI's folder" : ''} to your PATH`,
+      `add ${tools ? '~/.local/bin' : ''}${tools && clis ? ' and ' : ''}${clis ? "each CLI's folder" : ''} to your shell’s PATH`,
       'then restart the studio'].filter(Boolean).join(', '),
   };
 }
@@ -244,11 +244,21 @@ function pkShared() {
   // A merged PATH fix differs per pack (some lack only model-id): share it if every pack has one, listing every name.
   const shared = new Map();
   for (const f of first) {
-    if (f.key.startsWith('pack:') || !rest.every((fs) => fs.some((g) => g.key === f.key))) continue;
+    if (f.key.startsWith('pack:') || f.key === 'path' || !rest.every((fs) => fs.some((g) => g.key === f.key))) continue;
     const reqs = new Map();
     for (const fs of [first, ...rest]) for (const r of fs.find((g) => g.key === f.key).reqs) reqs.set(r.name || r.id, r);
     shared.set(f.key, { key: f.key, reqs: [...reqs.values()] });
   }
+  // The search-path fix is one machine fix, whichever packs it blocks: said once at the top, with every name,
+  // never repeated on each card (final critique P2-2).
+  const pathReqs = new Map();
+  let blocked = 0;
+  for (const fs of [first, ...rest]) {
+    const f = fs.find((g) => g.key === 'path');
+    if (f) blocked++;
+    for (const r of f?.reqs || []) pathReqs.set(r.name || r.id, r);
+  }
+  if (pathReqs.size) shared.set('path', { key: 'path', reqs: [...pathReqs.values()], blocked, of: packs.length });
   return shared;
 }
 
@@ -265,6 +275,8 @@ function pkTodo() {
     const item = pkFixItem(f);
     const li = el('li', null, item.what);
     li.appendChild(el('div', 'pk-fix', `Fix: ${item.fix}`));
+    // Said once for every pack it blocks — and how many that is, when it is not all of them.
+    if (f.blocked && f.blocked < f.of) li.appendChild(el('div', 'pk-fix', `Needed by ${f.blocked} of ${f.of} packs.`));
     ol.appendChild(li);
   }
   box.appendChild(ol);
@@ -291,18 +303,19 @@ function pkCheck(label, checked, onchange, { disabled = false, title = null } = 
 }
 
 /** What it is, day to day, what it changes, how to undo it — the CLI's explain, in the same words; a pack's adds what it needs. */
-function pkExplain(e, summary, reqs = null) {
-  const d = el('details', 'pk-explain');
-  d.appendChild(el('summary', 'fold', summary));
+function pkExplainBody(e, reqs = null, undoCmd = null) {
   const dl = el('div', 'pk-explain-body');
-  const field = (label, text) => { const p = el('p'); p.appendChild(el('strong', null, `${label}: `)); p.appendChild(document.createTextNode(text)); dl.appendChild(p); };
-  field('What it is', e.what);
-  field('Day to day', e.does);
-  dl.appendChild(el('strong', null, 'What it changes:'));
-  const ul = el('ul');
-  for (const ch of e.changes) ul.appendChild(el('li', null, ch));
-  dl.appendChild(ul);
-  field('How to undo it', e.undo);
+  const field = (label, text) => { if (!text) return; const p = el('p'); p.appendChild(el('strong', null, `${label}: `)); p.appendChild(document.createTextNode(text)); dl.appendChild(p); };
+  field('What it is', e?.what);
+  field('Day to day', e?.does);
+  if (e?.changes?.length) {
+    dl.appendChild(el('strong', null, 'What it changes:'));
+    const ul = el('ul');
+    for (const ch of e.changes) ul.appendChild(el('li', null, ch));
+    dl.appendChild(ul);
+  }
+  field('How to undo it', e?.undo);
+  if (undoCmd) { const p = el('p'); p.appendChild(el('strong', null, 'Command: ')); p.appendChild(el('code', null, undoCmd)); dl.appendChild(p); }
   if (reqs?.length) {
     dl.appendChild(el('strong', null, 'What it needs:'));
     const ul = el('ul', 'pk-reqs');
@@ -313,8 +326,86 @@ function pkExplain(e, summary, reqs = null) {
     }
     dl.appendChild(ul);
   }
-  d.appendChild(dl);
+  return dl;
+}
+
+/**
+ * A modal dialog over the page (Packs has no folds): focus moves in and stays in
+ * (Tab and Shift+Tab wrap), Esc or Close shuts it, and focus goes back to what opened it.
+ */
+let pkDialogN = 0;
+function pkDialog(title, body, opener, reopen) {
+  document.body.querySelector('.pk-dialog')?.pkClose?.();
+  const scrim = el('div', 'pk-scrim');
+  const d = el('div', 'pk-dialog');
+  const id = `pk-dialog-title-${++pkDialogN}`;
+  d.setAttribute('role', 'dialog');
+  d.setAttribute('aria-modal', 'true');
+  d.setAttribute('aria-labelledby', id);
+  const head = el('div', 'pk-dialog-head');
+  const h = el('h2', 'pk-dialog-title', title);
+  h.id = id;
+  head.appendChild(h);
+  const close = el('button', 'btn ghost', 'Close');
+  head.appendChild(close);
+  d.appendChild(head);
+  d.appendChild(body);
+  const shut = () => {
+    scrim.remove();
+    d.remove();
+    // The card may have repainted under the dialog: find its button again.
+    const back = opener && document.body.contains(opener) ? opener : reopen?.();
+    back?.focus();
+  };
+  d.pkClose = shut;
+  close.onclick = shut;
+  scrim.onclick = shut;
+  d.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); shut(); return; }
+    // The app's ⌘/Ctrl shortcuts (search, save, edit) act on the page behind: none reach it while the dialog is open.
+    if (e.metaKey || e.ctrlKey) {
+      e.stopPropagation();
+      if (['k', 's', 'e'].includes(String(e.key).toLowerCase())) e.preventDefault();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    // A real NodeList has no .filter: spread it first.
+    const f = [...d.querySelectorAll('button, a[href], input, select, textarea, [tabindex="0"]')].filter((x) => !x.disabled);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+  document.body.appendChild(scrim);
+  document.body.appendChild(d);
+  close.focus();
   return d;
+}
+
+/** A card's files and undo: one muted line, and the full list (pack and every part) in a dialog. */
+function pkFilesAndUndo(pack) {
+  const cmd = `acs packs uninstall ${pack.id}`;
+  const n = pack.explain?.changes?.length || 0;
+  const row = el('div', 'pk-changes-row');
+  row.appendChild(el('span', 'pk-changes', `Changes ${n} place${n === 1 ? '' : 's'} · undo: ${cmd}`));
+  const b = el('button', 'btn pk-files-btn', 'Files and undo');
+  b.setAttribute('aria-haspopup', 'dialog');
+  b.onclick = () => {
+    const body = el('div', 'pk-dialog-body');
+    body.appendChild(pkExplainBody(pack.explain, pkNeedsList(pack), cmd));
+    if (pack.parts.length) {
+      body.appendChild(el('h3', 'pk-dialog-sub', 'Parts'));
+      for (const part of pack.parts) {
+        const sec = el('div', 'pk-dialog-part');
+        sec.appendChild(el('h4', null, part.title));
+        sec.appendChild(pkExplainBody(part.explain));
+        body.appendChild(sec);
+      }
+    }
+    pkDialog(`${pack.title}: files and undo`, body, b, () => document.querySelector(`[data-pack="${pack.id}"]`)?.querySelector('.pk-files-btn'));
+  };
+  row.appendChild(b);
+  return row;
 }
 
 /** A part in plain words: the first sentence of what it is. */
@@ -360,7 +451,7 @@ function pkCardView(pack) {
   if (pack.id === 'review-gate') sec.appendChild(pkSecurityView());
   // What this pack still needs, in full (the head says only "Setup needed").
   if (own.length) sec.appendChild(el('p', 'pk-need', `Needs ${pkNeedText(own[0])}`));
-  sec.appendChild(pkExplain(pack.explain, 'What it is, what it changes, what it needs, how to undo it', pkNeedsList(pack)));
+  sec.appendChild(pkFilesAndUndo(pack));
   const busy = !!card.busy;
   for (const r of pack.requirements.filter((x) => x.dep && !x.ok)) {
     const dep = pkPack(r.dep);
@@ -450,12 +541,12 @@ function pkPartView(pack, part, card) {
     for (const l of lines) ul.appendChild(el('li', null, l));
     row.appendChild(ul);
   }
-  const foot = el('div', 'pk-part-foot');
-  foot.appendChild(pkExplain(part.explain, 'What this part is and changes'));
+  // A part's full explain is in the card's "Files and undo" dialog: no fold here.
   if (pkInstalled(pack, part.id) && Object.keys(pack.installed.parts).length > 1) {
+    const foot = el('div', 'pk-part-foot');
     foot.appendChild(pkBtn('ghost pk-part-remove', 'Preview uninstalling this part', () => pkPreview(pack, 'uninstall', { parts: [part.id] }), !!card.busy));
+    row.appendChild(foot);
   }
-  row.appendChild(foot);
   return row;
 }
 
@@ -719,9 +810,18 @@ function pkResultView(card) {
   return n;
 }
 
+/** The installers' output: a button to a dialog, not a fold. */
 function pkLog(box, lines) {
-  const d = el('details', 'pk-log');
-  d.appendChild(el('summary', 'fold', 'Installer output'));
-  d.appendChild(el('pre', null, lines.join('\n')));
-  box.appendChild(d);
+  const b = el('button', 'btn pk-log-btn', 'Installer output');
+  b.setAttribute('aria-haspopup', 'dialog');
+  b.onclick = () => {
+    const body = el('div', 'pk-dialog-body');
+    body.appendChild(el('pre', 'pk-log', lines.join('\n')));
+    // The post-install status check repaints the card under the dialog: find its new button by the pack it sits in.
+    let k = b;
+    while (k && !k.dataset?.pack) k = k.parentNode;
+    const id = k?.dataset?.pack;
+    pkDialog('Installer output', body, b, () => (id ? document.querySelector(`[data-pack="${id}"]`)?.querySelector('.pk-log-btn') : null));
+  };
+  box.appendChild(b);
 }

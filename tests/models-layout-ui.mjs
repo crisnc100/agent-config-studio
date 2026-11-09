@@ -127,7 +127,7 @@ const ids = (p) => content(p).querySelector('.models-ids');
   rv.click();
   await settle(5);
   const ed = content(p).querySelector('.roles-detail');
-  const marked = ed.querySelectorAll('.roles-field').filter((f) => marks(f).join() === 'changed from default').map((f) => f.querySelector('input, select').className);
+  const marked = ed.querySelectorAll('.roles-field').filter((f) => marks(f).join() === 'changed from default').map((f) => f.querySelector('input, select, .roles-use').className);
   ok('…in the editor, only the changed fields (models, effort) are marked',
     marked.length === 2 && /roles-use/.test(marked[0]) && /roles-effort-input/.test(marked[1]), JSON.stringify(marked));
   ok('models: only the differing field (Briefing tips) is marked on the card',

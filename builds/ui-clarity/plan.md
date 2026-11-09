@@ -185,3 +185,42 @@ Cris: "I miss the bars on the homepage for accounts and usage." C2 had cut Home'
 - Compact: each window is a grid row (64px % | 120px bar | label), the track is 5px, and rows are 3px apart. So bars line up across windows and accounts.
 - Test change, in its own test-only commit: home.mjs '9 each account is one compact line…' becomes '9 each account shows every window as percent left'. New guard: one bar per reported window, its width equal to its "% left", with a level.
 - Browser (seeded QA server, window as it is): 5 windows across 3 accounts, every track starts at the same x (607px) and is 5px tall, and each fill's width matches its percentage.
+
+## PR F — final critique fixes (final-critique.md: 27/40, one P1)
+
+- **P1-1 trunk:** Home's to-do now reads "1 instruction file in a worktree differs from the main checkout". In Context, the tags are "main checkout" / "differs from the main checkout" / "worktree copy", and the button is "Compare with main checkout". "Trunk" stays only on Worktrees (it has an ⓘ) and in the Worktree setup pack's own definition. One verb everywhere: History "Diff" → "Compare", and Memory's "Diff…" → "Compare…".
+- **P2-1 words:**
+  - Usage subtitle: "Room left on each account".
+  - "Route to" → "Next task goes to".
+  - "headroom" → "room left".
+  - Memory tabs: "Unlinked & duplicates" and "Recent cleanups", including the server's "restored from …" text.
+  - "frontmatter date" → "the date in the file".
+  - Trash "DIR/FILE" → "folder/file".
+  - Skills "invocations" → "uses".
+  - "Asking the toolkit…" → "Checking worktrees…".
+  - Models columns → "Vendor's name" / "Set by".
+  - Cut Describe's "Assist registry" sentence; only an unavailable Describe says why.
+- **P2-2 PATH:** the search-path fix is one machine fix. pkShared puts it at the top whenever any pack has it (every name, plus "Needed by N of M packs"), and no card repeats it. Plain wording: "Some commands aren't on your shell's search path, so agents can't run them".
+- **P2-4 role editor:** pick buttons for the known families (plus any unknown one the role still names, so it can be taken out). Each press adds a family to the end of the order; a second press takes it out. Errors:
+  - Field refusals show inline in plain words ("No model called "x" — pick one from the list."). No toast, except for a stale file (409).
+  - "Pick at least one model." is checked before anything is sent.
+- **P2-5 Memory → Cleanups:**
+  - Empty folders show their real path (the server now passes `where`), or the slug's readable tail; the raw slug moves to the tooltip.
+  - A broken link shows only "label" → target (missing) and its line number.
+  - Cut the byte-for-byte and _archive fine print.
+- **P2-6 Assist:** "Delete session" is a labelled quiet danger button (aria-label "Delete this session") in the session row, not a second ×.
+- **P2-7 Setup:** Recheck leaves "Checked at <time> — N of M installed" (role=status).
+- **P2-8 sidebar:** inside a file, the view it came from stays marked (aria-current="location"). A deep link marks Files.
+- **P3-4:** `.roles-row:focus-visible` gets the 2px accent outline.
+- Not touched: the Packs chevron folds (Cris's call).
+- **Packs folds removed** (Cris's decision after the critique): all 23 chevron folds are gone.
+  - Each card has a muted line, "Changes N places · undo: acs packs uninstall <id>", and a secondary **Files and undo** button. It opens a modal dialog (role=dialog, aria-modal) with the pack's what / day to day / changes / undo + command / needs, and each part's own explain.
+  - In the dialog, focus moves in, Tab and Shift+Tab wrap, and Esc, Close or a scrim click shuts it. Focus then returns to the button, found again if the card repainted.
+  - The installer output is a button that opens the same kind of dialog.
+  - Guards: no details, summary, .chev, .fold or triangle glyph on Packs (stub test and the ui-words live sweep).
+  - The browser check caught `querySelectorAll(...).filter` in the Tab trap: the fake DOM returns arrays, a browser a NodeList. It is fixed, with a static guard against the pattern in public/.
+- **PR F fix round** (review 2026-11-09-19-36-08-10444d):
+  - f1: a role-picker press keeps focus on the same model's new button. The installer-output dialog re-finds its button by the card's data-pack when the card repainted under it.
+  - f2: while a Packs dialog is open, ⌘/Ctrl shortcuts stop at the dialog (⌘K/S/E are also prevented), so nothing opens behind the scrim.
+  - f3: a failed Recheck says "Recheck failed at … — showing the last result" and leaves the old "Checked at" time alone.
+  - Three test assertions Sol rated weakened are tightened in the test-only commit.

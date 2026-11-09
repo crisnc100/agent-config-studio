@@ -335,7 +335,7 @@ async function bootMemory() {
   await settle(10);
   ok('D8 Memory: a failed re-read keeps the rows shown, marked', p.eval('S.view') === 'memory' && boxes(p).length === 3
      && /Showing Memory as it was before the last change — reading it again failed \(transcripts unreadable\)/.test(p.text(p.$('content'))));
-  ok('D8 …the result notice is still shown', /done\. Restorable from Operations/.test(noticeText(p)), noticeText(p));
+  ok('D8 …the result notice is still shown', /done\. Restorable from Recent cleanups/.test(noticeText(p)), noticeText(p));
 }
 
 // ── grade 1: an older Context read never overwrites a newer one ───────────
@@ -371,7 +371,7 @@ async function memoryAccepting(p) {
   await settle(10);
 }
 const acceptBtn = (p) => p.$('content').querySelector('.mem-preview')?.querySelectorAll('button').find((b) => p.text(b) === 'Accept');
-const failedOp = (rows) => ({ status: 500, body: { error: 'disk full — the steps that ran can be restored from Operations',
+const failedOp = (rows) => ({ status: 500, body: { error: 'disk full — the steps that ran can be restored from Recent cleanups',
   op: { id: 'a'.repeat(24), status: 'failed', steps: rows.map((r, i) => ({ type: 'trash', label: r.display, path: r.display, done: i === 0, restored: false })) } } });
 {
   const p = await bootMemory();
@@ -418,7 +418,7 @@ const failedOp = (rows) => ({ status: 500, body: { error: 'disk full — the ste
   await settle(10);
   const t = noticeText(p);
   ok('grade 4: a partial failure names the fact that moved, and where Restore is', new RegExp(`${rows[0].display.replace(/[.]/g, '\\.')}: moved to the ACS trash`).test(t)
-     && /Restore puts them back, under Operations/.test(t) && !t.includes(`${rows[1].display}: moved`), t);
+     && /Restore puts them back, under Recent cleanups/.test(t) && !t.includes(`${rows[1].display}: moved`), t);
   ok('grade 4: …the registry is refreshed', requests(p, '/api/registry').length === regs + 1);
   ok('grade 4: …and a failed re-read keeps the rows, marked — never an error screen', p.eval('S.view') === 'memory' && boxes(p).length === 3
      && /Showing Memory as it was before the last change/.test(p.text(p.$('content'))));

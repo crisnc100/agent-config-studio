@@ -174,7 +174,7 @@ const VIEWS = [
   { id: 'worktrees', label: 'Worktrees', group: 'upkeep', icon: 'worktrees', hash: '#worktrees',
     title: 'Worktrees', sub: 'Every registered project’s worktrees, and which are done', open: openWorktrees },
   { id: 'usage', label: 'Usage', group: 'overview', icon: 'usage', hash: '#usage',
-    title: 'Usage', sub: 'Subscription headroom per account — where the next task should go', open: openUsage },
+    title: 'Usage', sub: 'Room left on each account — where the next task should go', open: openUsage },
   { id: 'scope', label: 'Scope', group: 'files', icon: 'scope', hash: '#scope',
     title: 'Scope', sub: 'Which instruction files an agent loads in a folder, in order', open: openScope },
   { id: 'audit', label: 'Audit', group: 'upkeep', icon: 'audit', hash: '#audit',
@@ -354,7 +354,7 @@ function routeHash(hash, { cold = false } = {}) {
     const entry = p && entryForFile(p);
     if (entry) {
       if (!cold && S.view === 'entry' && S.file?.path === p) return;
-      return openEntry(entry, p);
+      return openEntry(entry, p, 'files');
     }
     return cold ? goHome() : openHome();
   }
@@ -442,9 +442,12 @@ function syncNav() {
   for (const v of VIEWS) {
     const b = $(`btn-${v.id}`);
     if (!b) continue;
-    const here = v.kind !== 'action' && S.view === v.id;
+    const page = v.kind !== 'action' && S.view === v.id;
+    // Inside a file, the view it came from stays marked: "you are here, under it", not the page itself.
+    const under = v.kind !== 'action' && S.view === 'entry' && (S.fromView || 'files') === v.id;
+    const here = page || under;
     b.classList.toggle('active', here);
-    if (here) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    if (page) b.setAttribute('aria-current', 'page'); else if (under) b.setAttribute('aria-current', 'location'); else b.removeAttribute('aria-current');
     // A short window: the active item is never left below the sidebar's fold.
     if (here) b.scrollIntoView?.({ block: 'nearest' });
     if (v.badge) {
@@ -749,9 +752,12 @@ function confirmDiscard() {
 }
 const isDirty = () => S.file && S.draft !== S.original;
 
-async function openEntry(entry, filePath) {
+async function openEntry(entry, filePath, from) {
   if (!confirmDiscard()) return;
   S.navs++;
+  // The view this file was opened from stays marked in the sidebar, so you keep your place (a link: Files).
+  if (from) S.fromView = from;
+  else if (S.view !== 'entry') S.fromView = VIEWS.some((v) => v.id === S.view && v.kind !== 'action') ? S.view : 'files';
   S.entry = entry;
   S.lastEntryId = entry.id;         // what the Files page highlights when you go there
   S.view = 'entry';
@@ -1026,7 +1032,7 @@ async function renderHistory(c) {
     row.appendChild(el('span', 'hist-msg', cm.subject));
     if (i === 0) row.appendChild(el('span', 'item-badge', 'current'));
 
-    const view = el('button', 'btn ghost', 'Diff');
+    const view = el('button', 'btn ghost', 'Compare');
     view.style.padding = '3px 10px';
     view.onclick = () => showVersionDiff(cm.sha);
     row.appendChild(view);
@@ -1742,7 +1748,7 @@ async function openWorktrees() {
   $('filebar').hidden = true;
 
   const c = $('content');
-  c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span> Asking the toolkit…</div></div>';
+  c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span> Checking worktrees…</div></div>';
   let data;
   try {
     data = await api('GET', '/api/worktree');
@@ -1822,7 +1828,7 @@ async function openTrash() {
   }
   for (const it of items) {
     const row = el('div', 'scope-item');
-    row.appendChild(el('div', 'scope-rank', it.isDir ? 'DIR' : 'FILE'));
+    row.appendChild(el('div', 'scope-rank', it.isDir ? 'folder' : 'file'));
     const body = el('div', 'scope-body');
     body.appendChild(el('div', 'scope-path', it.display));
     body.appendChild(el('div', 'scope-note',
@@ -2165,7 +2171,7 @@ function usageLine(r) {
   if (u.observed) {
     const when = u.lastUsedAt ? new Date(u.lastUsedAt).toLocaleDateString() : 'unknown date';
     line.appendChild(el('span', 'sk-usage-count',
-      `${u.count} invocation${u.count === 1 ? '' : 's'}`));
+      `${u.count} use${u.count === 1 ? '' : 's'}`));
     line.appendChild(el('span', 'sk-usage-when', `last seen ${when}`));
   } else {
     line.appendChild(el('span', 'sk-usage-none', 'no recorded use'));
@@ -2367,9 +2373,9 @@ function paintMemory() {
   const tabs = [
     ['review', `Review (${queue.length})`],
     ['cleanups', `Cleanups (${cleanups})`],
-    ['orphans', `Orphans & duplicates (${f.orphans.length + f.duplicates.length})`],
+    ['orphans', `Unlinked & duplicates (${f.orphans.length + f.duplicates.length})`],
     ['projects', `Projects (${d.groups.length})`],
-    ['ops', `Operations (${MV.ops.length})`],
+    ['ops', `Recent cleanups (${MV.ops.length})`],
   ];
   const bar = el('div', 'mem-tabs');
   for (const [id, label] of tabs) {
@@ -2429,7 +2435,7 @@ function factDates(r) {
   line.appendChild(mod);
   if (r.modifiedFlag) {
     line.appendChild(el('span', 'mem-flag',
-      r.modifiedFlag === 'future' ? 'frontmatter date is in the future' : 'frontmatter date unreadable'));
+      r.modifiedFlag === 'future' ? 'the date in the file is in the future' : 'the date in the file can’t be read'));
   }
   if (r.lastWrite) {
     line.appendChild(el('span', 'mem-written',
@@ -2557,27 +2563,29 @@ function cleanupsTab() {
     'Only folders holding nothing but an empty memory/ are listed — never one with a transcript in it. Each moves to the ACS trash.',
     f.emptySlugs, (x) => {
       const b = el('div', 'sk-body');
-      b.appendChild(el('div', 'scope-path', x.slug));
+      // The real folder when it was found; else the slug's readable tail. The encoded name stays in the tooltip.
+      const name = el('div', 'scope-path', x.where || readableSlug(x.slug));
+      name.title = x.slug;
+      b.appendChild(name);
       b.appendChild(el('div', 'mem-note', x.probe ? 'temporary session folder' : (SLUG_STATE_LABELS[x.state]?.[0] || x.state)));
       return b;
     }, 'trash-empty-slugs', 'Preview trash'));
 
   wrap.appendChild(findingList('dangling', 'Index links to missing files',
-    'Only the link itself is removed; every other link and all text on the line stay byte-for-byte. '
-    + 'Where the file now sits in _archive/, the link is pointed there instead.',
+    'Only the broken link is removed; the rest of the line stays. If the file was archived, the link points there instead.',
     f.dangling, (x) => {
       const b = el('div', 'sk-body');
       const h = el('div', 'sk-head');
-      h.appendChild(el('span', 'sk-name', x.label || x.target));
-      h.appendChild(el('span', 'mem-where', `${groupLabel(x.group)} · MEMORY.md:${x.line} → ${x.target}`));
-      h.appendChild(el('span', 'mem-badge', x.offer === 'archive' ? `point at ${x.archiveRel}` : 'remove link'));
+      // Just the broken link: its text and the file it points at, not the whole index line.
+      h.appendChild(el('span', 'sk-name', `“${x.label || x.target}” → ${x.target} (missing)`));
+      h.appendChild(el('span', 'mem-where', `${groupLabel(x.group)} · MEMORY.md line ${x.line}`));
+      h.appendChild(el('span', 'mem-badge', x.offer === 'archive' ? 'point at the archived file' : 'remove link'));
       b.appendChild(h);
-      b.appendChild(el('div', 'mem-line', x.lineText.length > 220 ? x.lineText.slice(0, 220) + '…' : x.lineText));
       return b;
     }, 'fix-links', 'Preview repair'));
 
   wrap.appendChild(findingList('unindexed', 'Files missing from their index',
-    'Each gets one index entry built from its own frontmatter. A folder with no MEMORY.md gets one created. Archived files are never offered.',
+    'Each gets one index entry built from its own name and description. A folder with no MEMORY.md gets one created. Archived files are never offered.',
     f.unindexed, (x) => {
       const b = el('div', 'sk-body');
       const r = rowById(x.row);
@@ -2606,7 +2614,7 @@ function orphansTab() {
   wrap.appendChild(el('div', 'scope-sub',
     'Memory whose project folder could not be found, each with how sure that is. Review only: moving memory '
     + 'between folders is not offered yet. The one action is trashing a single file, with its index link.'));
-  if (!f.orphans.length) wrap.appendChild(el('div', 'mem-note', 'No orphaned memory.'));
+  if (!f.orphans.length) wrap.appendChild(el('div', 'mem-note', 'No unlinked memory.'));
   for (const o of f.orphans) {
     const card = el('div', 'mem-card');
     const h = el('div', 'sk-head');
@@ -2640,7 +2648,7 @@ function orphansTab() {
     for (const r of rows) card.appendChild(factRow(r));
     if (rows.length >= 2) {
       const key = `dup:${dup.name}`;
-      const b = el('button', 'btn ghost', 'Diff the first two');
+      const b = el('button', 'btn ghost', 'Compare the first two');
       b.onclick = () => showMemoryDiff(key, rows[0], rows[1]);
       card.appendChild(b);
       if (MV.diff?.key === key) card.appendChild(diffBlock());
@@ -2658,7 +2666,7 @@ function sideBySide(orphanGroup, otherGroup) {
   const rels = [...new Set([...mine, ...theirs].map((r) => r.rel))].sort();
   const t = el('table', 'mem-table');
   const hr = el('tr');
-  for (const h of ['File', groupLabel(orphanGroup) + ' (orphan)', otherGroup ? groupLabel(otherGroup) : '', '']) hr.appendChild(el('th', null, h));
+  for (const h of ['File', groupLabel(orphanGroup) + ' (unlinked)', otherGroup ? groupLabel(otherGroup) : '', '']) hr.appendChild(el('th', null, h));
   t.appendChild(hr);
   for (const rel of rels) {
     const a = mine.find((r) => r.rel === rel);
@@ -2669,7 +2677,7 @@ function sideBySide(orphanGroup, otherGroup) {
     tr.appendChild(el('td', null, otherGroup ? (b ? `${fmtDate(b.modified)} · ${b.size} B` : '—') : ''));
     const acts = el('td', 'mem-acts');
     if (a && b) {
-      const d = el('button', 'btn ghost', 'Diff');
+      const d = el('button', 'btn ghost', 'Compare');
       d.onclick = () => showMemoryDiff(`side:${rel}`, a, b);
       acts.appendChild(d);
     }
@@ -2754,7 +2762,7 @@ function opsTab() {
   wrap.appendChild(el('div', 'scope-sub',
     'Every cleanup Accepted here, newest first. Restore puts back everything the operation changed — '
     + 'unless a file was edited since, in which case it shows what changed and restores nothing.'));
-  if (!MV.ops.length) wrap.appendChild(el('div', 'mem-note', 'No operations yet.'));
+  if (!MV.ops.length) wrap.appendChild(el('div', 'mem-note', 'No cleanups yet.'));
   for (const op of MV.ops) {
     const row = el('div', 'scope-item');
     row.appendChild(el('div', 'mem-badge mem-status', op.status));
@@ -2813,7 +2821,7 @@ function previewPanel() {
   panel.appendChild(el('h3', 'mem-h3', `Preview — ${p.summary}`));
   panel.appendChild(el('div', 'mem-note',
     'Nothing has changed yet. Accept re-checks every file first and refuses if any changed since this preview. '
-    + 'Anything trashed goes to the ACS trash, and the whole operation can be restored from Operations.'));
+    + 'Anything trashed goes to the ACS trash, and the whole cleanup can be restored from Recent cleanups.'));
   if (p.items.length) {
     const ul = el('ul', 'mem-items');
     for (const it of p.items) ul.appendChild(el('li', null, it));
@@ -2839,7 +2847,7 @@ function previewPanel() {
       MV.sel.ids.clear();
       closeEditorOn(trashed(r).map((s) => ({ display: s.path })));
       const extra = [...r.skipped.map((s) => `Skipped ${s}`), ...(r.historyError ? [`History: ${r.historyError}`] : [])];
-      notice(extra.length ? 'warn' : 'ok', `${r.summary} — done. Restorable from Operations.`, extra, extra.length > 0);
+      notice(extra.length ? 'warn' : 'ok', `${r.summary} — done. Restorable from Recent cleanups.`, extra, extra.length > 0);
     } catch (e) {
       // A late answer never takes the screen back: it is reported, and the
       // view — if it is still the one showing — is read again in place.
@@ -2847,7 +2855,7 @@ function previewPanel() {
       const moved = e.body?.op ? trashed(e.body.op) : [];
       closeEditorOn(moved.map((s) => ({ display: s.path })));
       notice('error', e.message, moved.length
-        ? [...moved.map((s) => `${s.path}: moved to the ACS trash`), 'Restore puts them back, under Operations.']
+        ? [...moved.map((s) => `${s.path}: moved to the ACS trash`), 'Restore puts them back, under Recent cleanups.']
         : null, true);
     } finally {
       MV.accepting = false;
@@ -2919,9 +2927,9 @@ function paintContext() {
   const roots = Object.values(d.roots || {});
   // One folder's line would only say the totals again.
   const perRoot = roots.length > 1
-    ? roots.map((r) => `${r.label}: ${plural(r.files, 'file')} as ${plural(r.entries, 'entry', 'entries')}, ${r.drifted} drifted`).join(' · ') : null;
+    ? roots.map((r) => `${r.label}: ${plural(r.files, 'file')} as ${plural(r.entries, 'entry', 'entries')}, ${r.drifted} different`).join(' · ') : null;
   box.appendChild(el('div', 'scope-note cx-count', `${plural(d.totals.files, 'instruction file')}, shown as ${plural(d.totals.entries, 'entry', 'entries')}`
-    + (d.totals.drifted ? ` — ${d.totals.drifted} drifted from trunk.` : '.') + (perRoot ? ` ${perRoot}.` : '')));
+    + (d.totals.drifted ? ` — ${d.totals.drifted} ${d.totals.drifted === 1 ? 'differs' : 'differ'} from the main checkout.` : '.') + (perRoot ? ` ${perRoot}.` : '')));
   for (const u of d.unreadable) box.appendChild(el('div', 'mem-flag', `not read: ${u.display} (${u.reason})`));
   if (CX.outdated) {
     box.appendChild(el('div', 'notice warn', `Showing Context as it was before the move to Trash — reading it again failed (${CX.outdated}). Reopen Context to try again.`));
@@ -3026,7 +3034,7 @@ function contextScope(s) {
   const h = el('div', 'sk-head');
   h.appendChild(el('span', 'scope-path', s.scope));
   h.appendChild(el('span', 'sk-source', s.kind === 'cursor-rule' ? 'cursor rule' : s.kind === 'agents' ? 'AGENTS.md' : 'CLAUDE.md'));
-  if (s.drift) h.appendChild(el('span', 'mem-badge warn', 'drifted'));
+  if (s.drift) h.appendChild(el('span', 'mem-badge warn', 'copies differ'));
   wrap.appendChild(h);
 
   for (const v of s.variants) {
@@ -3034,21 +3042,21 @@ function contextScope(s) {
     const top = el('div', 'sk-head');
     top.appendChild(selectBox(CX.sel, v.open.path, v.open.display, contextUnselectable(v)));
     top.appendChild(el('span', 'mem-where',
-      `${v.trunk ? 'trunk' : v.drift ? 'differs from trunk' : 'copy'} · ${v.lines} lines`
+      `${v.trunk ? 'main checkout' : v.drift ? 'differs from the main checkout' : 'worktree copy'} · ${v.lines} lines`
       + (v.copies > 1 ? ` · ${v.copies - 1} identical cop${v.copies === 2 ? 'y' : 'ies'} collapsed` : '')));
     const open = el('button', 'btn ghost', v.readOnly ? (CX.view?.id === v.id ? 'Close' : 'View') : 'Open');
     open.onclick = () => (v.readOnly ? toggleContextView(v.id) : openInEditor(v.open.path, v.open.display));
     top.appendChild(open);
     if (v.readOnly) top.appendChild(el('span', 'mem-badge', 'read-only'));
     if (v.drift && s.trunkId) {
-      const diffBtn = el('button', 'btn', 'Diff vs trunk');
+      const diffBtn = el('button', 'btn', 'Compare with main checkout');
       diffBtn.onclick = () => showContextDiff(s.trunkId, v.id);
       top.appendChild(diffBtn);
     }
     box.appendChild(top);
     const paths = el('div', 'cx-paths');
     for (const p of v.paths) {
-      paths.appendChild(el('div', 'mem-note', `${p.display}${p.trunk ? ' (trunk)' : ''}${p.readOnly && !v.readOnly ? ' (read-only)' : ''}${p.alias ? ` — link ${p.alias}` : ''}`));
+      paths.appendChild(el('div', 'mem-note', `${p.display}${p.trunk ? ' (main checkout)' : ''}${p.readOnly && !v.readOnly ? ' (read-only)' : ''}${p.alias ? ` — link ${p.alias}` : ''}`));
     }
     box.appendChild(paths);
     if (v.outline.length) {
@@ -3576,7 +3584,7 @@ async function paintUsage() {
   const panelHead = el('div', 'usage-head');
   panelHead.appendChild(pageHeading('Subscription usage'));
   const lead = el('div', 'usage-lead');
-  lead.append('Your ', glossTip('account', 'accounts'), ' — most headroom first.');
+  lead.append('Your ', glossTip('account', 'accounts'), ' — most room left first.');
   panelHead.appendChild(lead);
   const actions = el('div', 'usage-actions');
 
@@ -3619,11 +3627,11 @@ async function paintUsage() {
   const route = routeSeat(seats);
   const head = el('div', 'usage-route');
   if (route) {
-    head.appendChild(el('span', 'usage-route-label', 'Route to'));
+    head.appendChild(el('span', 'usage-route-label', 'Next task goes to'));
     head.appendChild(el('span', 'usage-route-seat', route.seat.label));
     head.appendChild(el('span', 'usage-route-pct', `${route.left}% left`));
   } else {
-    head.appendChild(el('span', 'usage-route-label', 'No account is reporting usable headroom'));
+    head.appendChild(el('span', 'usage-route-label', 'No account reports room left'));
   }
   box.appendChild(head);
   // A row may say the codex CLI is missing while other Codex accounts read fine: say once why both are true.
@@ -4007,11 +4015,11 @@ function paintAccounts(body) {
 
   const head = el('div', 'home-route');
   if (route) {
-    head.appendChild(el('span', 'usage-route-label', 'Route to'));
+    head.appendChild(el('span', 'usage-route-label', 'Next task goes to'));
     head.appendChild(el('span', 'home-route-seat', route.seat.label));
     head.appendChild(el('span', 'usage-route-pct', `${route.left}% left`));
   } else {
-    head.appendChild(el('span', 'usage-route-label', 'No account is reporting usable headroom'));
+    head.appendChild(el('span', 'usage-route-label', 'No account reports room left'));
   }
   body.appendChild(head);
 
@@ -4435,7 +4443,7 @@ function idsSection(m) {
   const table = el('table', 'models-table');
   const thead = el('thead');
   const hr = el('tr');
-  for (const h of ['Name', 'Current id', 'Catalog name', 'Source', 'Alerts']) hr.appendChild(el('th', null, h));
+  for (const h of ['Name', 'Current id', 'Vendor’s name', 'Set by', 'Alerts']) hr.appendChild(el('th', null, h));
   thead.appendChild(hr);
   table.appendChild(thead);
   const tbody = el('tbody');
@@ -4652,10 +4660,12 @@ async function rolesWrite(path, body, okText, done, errKey) {
   if (errKey) delete M.writeErrors[errKey];
   try { r = await api('POST', path, { ...body, base: M.roles?.base }); }
   catch (e) {
-    notice('error', e.message, null, true);
-    // Also kept beside the form that sent it, which stays open with its draft.
-    if (errKey) M.writeErrors[errKey] = e.message;
+    // A refused value is said beside the form that sent it (which stays open with its draft), in plain words;
+    // a stale file, or a write with no form, is also a notice.
+    if (!errKey || e.status === 409) notice('error', e.message, null, true);
+    if (errKey) M.writeErrors[errKey] = plainRoleError(e.message);
     if (e.status === 409) await loadRoles();
+    else if (errKey) paintModels();
     return false;
   }
   if (r.unchanged) notice('ok', 'Nothing to change.');
@@ -4668,6 +4678,14 @@ async function rolesWrite(path, body, okText, done, errKey) {
   const added = (M.roles?.conflicts || []).filter((c) => !before.has(conflictKey(c)));
   if (added.length) notice('warn', `${okText} It saved, but now:`, added.map(conflictText), true);
   return true;
+}
+
+/** A roles.json refusal in plain words: no file path or field address, and an unknown model named as such. */
+function plainRoleError(msg) {
+  const m = String(msg || '');
+  const unknown = m.match(/unknown family "([^"]+)"/);
+  if (unknown) return `No model called “${unknown[1]}” — pick one from the list.`;
+  return m.replace(/^roles\.json: (?:roles|flavor)\.[\w.\[\]-]+: /, '');
 }
 
 const conflictKey = (c) => `${c.role}\0${c.family}\0${c.slot}`;
@@ -4821,8 +4839,44 @@ function roleEditor(role) {
     name.value = d.name; name.placeholder = 'e.g. scout'; name.spellcheck = false;
     name.oninput = () => { d.name = name.value; };
   }
-  const use = field('Models, in order (first is the default; comma-separated)', el('input', 'models-input roles-use'), 'use');
-  use.value = d.use; use.spellcheck = false; use.placeholder = R.families.slice(0, 2).join(', ');
+  // Picked from the known models, never typed: each press adds it to the end of the order, a second press takes it out.
+  // A div, not field()'s label: a label would pass every click inside it to its first button.
+  const useField = el('div', 'roles-field roles-use-field');
+  const useLabel = el('span', 'roles-label', 'Models, in order (first is the default)');
+  if (marked('use')) useLabel.appendChild(changedMark());
+  useField.appendChild(useLabel);
+  const use = el('div', 'roles-use roles-picks');
+  use.setAttribute('role', 'group');
+  use.setAttribute('aria-label', 'Models, in order');
+  useField.appendChild(use);
+  form.appendChild(useField);
+  const paintPicks = () => {
+    use.textContent = '';
+    const chosen = families();
+    // A family the role names that is no longer known still shows, so it can be taken out.
+    for (const f of [...new Set([...R.families, ...chosen])]) {
+      const at = chosen.indexOf(f);
+      const b = el('button', `btn roles-pick${at >= 0 ? ' on' : ''}`);
+      b.type = 'button';
+      b.dataset.family = f;
+      if (at >= 0) { b.dataset.order = String(at + 1); b.appendChild(el('span', 'roles-pick-n', String(at + 1))); }
+      b.appendChild(document.createTextNode(famLabel(f)));
+      b.setAttribute('aria-pressed', String(at >= 0));
+      b.title = at === 0 ? 'The default — press to take it out' : at > 0 ? `Choice ${at + 1} — press to take it out` : 'Press to add it to the end of the order';
+      b.onclick = (e) => {
+        e.preventDefault();
+        const now = families();
+        d.use = (now.includes(f) ? now.filter((x) => x !== f) : [...now, f]).join(', ');
+        delete M.writeErrors[key];
+        box.querySelector('.models-write-error')?.remove();
+        paintPicks();
+        paintMembers();
+        // The repaint replaced the pressed button: keep keyboard focus on the same model's new one.
+        [...use.querySelectorAll('.roles-pick')].find((x) => x.dataset.family === f)?.focus();
+      };
+      use.appendChild(b);
+    }
+  };
   const members = el('div', 'roles-members');
   const paintMembers = () => {
     members.textContent = '';
@@ -4836,7 +4890,6 @@ function roleEditor(role) {
       if (!listed.has(f)) members.appendChild(el('div', 'scope-note roles-member-dropped', `${famLabel(f)}’s own effort (${e}) will be dropped`));
     }
   };
-  use.oninput = () => { d.use = use.value; paintMembers(); };
   const effort = field('Effort', el('select', 'models-input roles-select roles-effort-input'), 'effort');
   effort.appendChild(el('option', null, role?.defaults?.effort && !d.effort ? '(each model’s default — cleared)' : '(each model’s default)')).value = '';
   for (const e of R.efforts) effort.appendChild(el('option', null, e)).value = e;
@@ -4855,6 +4908,7 @@ function roleEditor(role) {
   const note = field('What this role does', el('input', 'models-input roles-note'), 'note');
   note.value = d.note; note.maxLength = R.limits.note;
   note.oninput = () => { d.note = note.value; };
+  paintPicks();
   paintMembers();
   form.appendChild(members);
   box.appendChild(form);
@@ -4864,6 +4918,8 @@ function roleEditor(role) {
   save.disabled = !!R.error;
   save.onclick = async () => {
     const name = role ? role.name : d.name.trim();
+    // Said by the field, before anything is sent.
+    if (!families().length) { M.writeErrors[key] = 'Pick at least one model.'; paintModels(); return; }
     // The object form only where a model has an effort of its own: the rest stay family names.
     const withOwn = (f, own) => (own ? { family: f, effort: own } : f);
     const fields = {
@@ -5112,9 +5168,7 @@ function describeSection() {
   if (!info) { sec.appendChild(el('div', 'scope-note', M.rolesError || 'reading…')); return sec; }
   sec.appendChild(el('div', 'scope-sub models-roles-sub',
     'Say in plain words what each model is good at, what to watch for, and who should advise, review or build. An AI turns that into roles and model notes, shown as a change to roles.json; nothing is written until you accept it.'));
-  sec.appendChild(el('div', 'scope-note describe-backend', info.ready
-    ? `Runs ${info.label} ${info.modelLabel || info.model} with no tools — the Assist registry's default model, not the picker's last choice.`
-    : `Describe is unavailable: ${info.why}`));
+  if (!info.ready) sec.appendChild(el('div', 'scope-note describe-backend', `Describe is unavailable: ${info.why}`));
   const ta = el('textarea', 'models-input describe-text');
   ta.rows = 5;
   ta.maxLength = info.limits.description;
@@ -5966,7 +6020,9 @@ function renderSessionBar() {
   add.onclick = createSession;
   row.appendChild(add);
 
-  const del = el('button', 'btn ghost sess-btn', '×');
+  // Words, not a second ×: the drawer's close × sits just above.
+  const del = el('button', 'btn ghost danger sess-del', 'Delete session');
+  del.setAttribute('aria-label', 'Delete this session');
   del.title = 'Delete this session';
   del.onclick = deleteSession;
   row.appendChild(del);

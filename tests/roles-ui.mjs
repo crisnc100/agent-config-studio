@@ -33,7 +33,7 @@ const view = (over = {}) => ({
     { family: 'astra', flavor: { likes: ['review'], quirks: ['slow'], brief: 'Give it the diff.' }, provenance: prov(['likes', 'quirks', 'brief']), defaults: {} },
     { family: 'sol', flavor: { likes: ['builds'], quirks: [], brief: 'Set limits.' }, provenance: prov(['likes', 'quirks', 'brief'], { brief: 'user' }), defaults: {} },
   ],
-  families: ['fable', 'opus', 'haiku', 'astra', 'sol'],
+  families: ['fable', 'opus', 'sonnet', 'haiku', 'astra', 'sol', 'grok'],
   efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
   limits: { brief: 600, item: 160, items: 12, note: 160, use: 8 },
   base: 'sha256:base-1',
@@ -74,7 +74,16 @@ const marks = (root) => (root ? root.querySelectorAll('.changed-mark').map(p0tex
 const MARK = '["changed from default"]';
 /** The editor fields carrying a marker, by their input's class. */
 const markedFields = (root) => root.querySelectorAll('.roles-field').filter((f) => marks(f).length)
-  .map((f) => [f.querySelector('input, select, textarea').className.split(' ').find((c) => /^(roles|flavor)-/.test(c) && c !== 'roles-select'), marks(f)]);
+  .map((f) => [f.querySelector('input, select, textarea, .roles-use').className.split(' ').find((c) => /^(roles|flavor)-/.test(c) && c !== 'roles-select'), marks(f)]);
+/** The models picked in a role editor, in order: the picker replaced the typed, comma-separated box (PR F). */
+const useOf = (ed) => ed.querySelectorAll('.roles-pick').filter((b) => b.getAttribute('aria-pressed') === 'true')
+  .sort((a, b) => Number(a.dataset.order) - Number(b.dataset.order)).map((b) => b.dataset.family).join(', ');
+/** Pick exactly `list` ("a, b") in order — what typing it into the old box did: clear the picks, then press each. */
+const pickUse = (ed, list) => {
+  const pressed = () => ed.querySelectorAll('.roles-pick').filter((b) => b.getAttribute('aria-pressed') === 'true');
+  while (pressed().length) pressed()[0].click();
+  for (const f of list.split(',').map((x) => x.trim()).filter(Boolean)) ed.querySelectorAll('.roles-pick').find((b) => b.dataset.family === f).click();
+};
 const chips = (root) => root.querySelectorAll('.roles-lineup .job-chip').map(p0text);
 const posts = (p, path) => p.requests.filter((r) => r.method === 'POST' && r.path === path);
 
@@ -97,7 +106,7 @@ const posts = (p, path) => p.requests.filter((r) => r.method === 'POST' && r.pat
   roleRow(p, 'reviewer').click();
   await settle(5);
   const editor = content(p).querySelector('.roles-detail');
-  ok('A4 clicking a role opens its editor', !!editor && editor.querySelector('.roles-use').value === 'astra');
+  ok('A4 clicking a role opens its editor', !!editor && useOf(editor) === 'astra');
   ok('R7 …where only the overridden field, effort, is marked "changed from default"',
      JSON.stringify(markedFields(editor)) === '[["roles-effort-input",["changed from default"]]]', JSON.stringify(markedFields(editor)));
   const effort = editor.querySelector('.roles-effort-input');
@@ -122,13 +131,13 @@ const posts = (p, path) => p.requests.filter((r) => r.method === 'POST' && r.pat
 
   roleRow(p, 'builder').click();
   await settle(5);
-  const bEd = content(p).querySelectorAll('.roles-detail').find((d) => d.querySelector('.roles-use').value === 'opus, sol');
+  const bEd = content(p).querySelectorAll('.roles-detail').find((d) => useOf(d) === 'opus, sol');
   ok('a role with nothing of yours: Reset is disabled', button(bEd, 'Reset to default').disabled === true);
   ok('…and its defaults are shown', /Default: opus, sol · medium/.test(p.text(bEd)));
 
   roleRow(p, 'scout').click();
   await settle(5);
-  const sEd = content(p).querySelectorAll('.roles-detail').find((d) => d.querySelector('.roles-use').value === 'haiku');
+  const sEd = content(p).querySelectorAll('.roles-detail').find((d) => useOf(d) === 'haiku');
   ok('R7 a custom role offers Delete, not Reset', button(sEd, 'Delete role') && !button(sEd, 'Reset to default'));
   button(sEd, 'Delete role').click();
   await settle(10);
@@ -138,7 +147,7 @@ const posts = (p, path) => p.requests.filter((r) => r.method === 'POST' && r.pat
   await settle(5);
   const add = content(p).querySelectorAll('.roles-detail').find((d) => d.querySelector('.roles-name'));
   p.input(add.querySelector('.roles-name'), 'scout2');
-  p.input(add.querySelector('.roles-use'), 'haiku, sonnet');
+  pickUse(add, 'haiku, sonnet');
   button(add, 'Save').click();
   await settle(10);
   const addPost = posts(p, '/api/models/roles/set').pop();
@@ -227,7 +236,7 @@ const PROPOSAL = {
     'POST /api/models/roles/proposal/accept': () => ({ saved: true, base: 'sha256:base-3', warnings: [], written: PROPOSAL.proposed }),
   });
   const sec = () => content(p).querySelector('.models-describe');
-  ok('R10 the box names the backend and model it will use, and that it has no tools', /Runs Claude Sonnet 5 with no tools — the Assist registry's default model/.test(p.text(sec())));
+  ok('R10 a ready Describe box carries no backend fine print (no "Assist registry" line); only an unavailable one says why', !/Assist registry|with no tools/.test(p.text(sec())) && !sec().querySelector('.describe-backend'));
   p.input(sec().querySelector('.describe-text'), 'Sol builds. Astra reviews.');
   ok('…and counts characters against the limit', /26 \/ 4000/.test(p.text(sec())));
   button(sec(), 'Describe').click();
@@ -329,10 +338,10 @@ const PROPOSAL = {
 
   roleRow(p, 'reviewer').click();
   await settle(5);
-  const rv = content(p).querySelectorAll('.roles-detail').find((d) => d.querySelector('.roles-use').value === 'astra, sol');
+  const rv = content(p).querySelectorAll('.roles-detail').find((d) => useOf(d) === 'astra, sol');
   ok('no member effort: every select reads "job default", unmarked', sel(rv, 'astra').value === '' && sel(rv, 'sol').value === '' && marks(member(rv, 'astra')).length === 0);
   ok('the second opinion has its own select, at its effort', rv.querySelector('.roles-alt-own .roles-member-effort')?.value === 'low');
-  p.input(rv.querySelector('.roles-use'), 'astra, sol, grok');
+  pickUse(rv, 'astra, sol, grok');
   await settle(2);
   ok('adding a model to the list adds its select', !!sel(rv, 'grok') && sel(rv, 'grok').value === '');
   sel(rv, 'grok').value = 'max';
@@ -364,7 +373,7 @@ const PROPOSAL = {
   const sel = (f) => ed.querySelector(`.roles-members .roles-member[data-family="${f}"] .roles-member-effort`);
   const dropped = () => ed.querySelectorAll('.roles-members .roles-member-dropped').map(p0text);
   ok('(no drop note while every model with an effort is listed)', dropped().length === 0);
-  p.input(ed.querySelector('.roles-use'), 'grok');
+  pickUse(ed, 'grok');
   await settle(2);
   ok('a model with its own effort taken out of the list: the editor says it will be dropped',
     JSON.stringify(dropped()) === '["Opus’s own effort (low) will be dropped"]' && sel('grok')?.value === '', JSON.stringify(dropped()));
@@ -378,9 +387,9 @@ const PROPOSAL = {
   await settle(5);
   const ed2 = content(p2).querySelector('.roles-detail');
   const sel2 = (f) => ed2.querySelector(`.roles-members .roles-member[data-family="${f}"] .roles-member-effort`);
-  p2.input(ed2.querySelector('.roles-use'), 'grok');
+  pickUse(ed2, 'grok');
   await settle(2);
-  p2.input(ed2.querySelector('.roles-use'), 'grok, opus');
+  pickUse(ed2, 'grok, opus');
   await settle(2);
   ok('re-adding the model restores its effort and clears the note',
     sel2('opus')?.value === 'low' && ed2.querySelectorAll('.roles-member-dropped').length === 0);
@@ -417,14 +426,17 @@ const PROPOSAL = {
   unset.click();
   await settle(5);
   const ed = content(p).querySelector('.roles-detail');
-  ok('clicking it opens an empty editor to choose its models, with no Reset or Unset', ed && ed.querySelector('.roles-use').value === '' && !button(ed, 'Reset to default') && !button(ed, 'Unset'));
-  p.input(ed.querySelector('.roles-use'), 'fable');
+  ok('clicking it opens an empty editor to choose its models, with no Reset or Unset', ed && useOf(ed) === '' && !button(ed, 'Reset to default') && !button(ed, 'Unset')
+    && ed.querySelectorAll('.roles-use .roles-pick').map((b) => b.dataset.family).join() === v.families.join()
+    && ed.querySelectorAll('.roles-pick').every((b) => b.getAttribute('aria-pressed') === 'false'),
+    ed && ed.querySelectorAll('.roles-pick').map((b) => b.dataset.family).join());
+  pickUse(ed, 'fable');
   button(ed, 'Save').click();
   await settle(10);
   ok('…and Save sets it', posts(p, '/api/models/roles/set')[0]?.body.name === 'advisor' && JSON.stringify(posts(p, '/api/models/roles/set')[0]?.body.fields.use) === '["fable"]', JSON.stringify(posts(p, '/api/models/roles/set')));
   roleRow(p, 'reviewer').click();
   await settle(5);
-  const rEd = content(p).querySelectorAll('.roles-detail').find((d) => d.querySelector('.roles-use').value === 'opus');
+  const rEd = content(p).querySelectorAll('.roles-detail').find((d) => useOf(d) === 'opus');
   ok('a chosen role offers Unset (no default to reset to), which sends the reset route', rEd && button(rEd, 'Unset') && !button(rEd, 'Reset to default'));
   button(rEd, 'Unset').click();
   await settle(10);

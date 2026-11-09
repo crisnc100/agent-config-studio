@@ -81,6 +81,10 @@ async function loadSetupClis(recheck) {
   try { SETUP.clis = await api('GET', `/api/setup/clis${recheck ? '?recheck=1' : ''}`); SETUP.clisError = null; }
   catch (e) { SETUP.clisError = e.message; }
   SETUP.checking = false;
+  // A Recheck that finds the same thing still says it looked (and when); one that failed says so, and the
+  // cached counts keep their old time.
+  if (recheck && SETUP.clisError) SETUP.recheckFailedAt = Date.now();
+  else if (recheck) { SETUP.checkedAt = Date.now(); SETUP.recheckFailedAt = null; }
   if (recheck) focusAfter('[data-focus="recheck"]');
   paintSetup();
 }
@@ -191,6 +195,14 @@ function setupClisStep(body) {
   recheck.disabled = SETUP.checking;
   recheck.onclick = () => loadSetupClis(true);
   tools.appendChild(recheck);
+  if ((SETUP.checkedAt || SETUP.recheckFailedAt) && !SETUP.checking && SETUP.clis) {
+    const n = SETUP.clis.clis.filter((c) => c.installed).length;
+    const line = el('span', 'setup-checked', SETUP.recheckFailedAt
+      ? `Recheck failed at ${new Date(SETUP.recheckFailedAt).toLocaleTimeString()} — showing the last result`
+      : `Checked at ${new Date(SETUP.checkedAt).toLocaleTimeString()} — ${n} of ${SETUP.clis.clis.length} installed`);
+    line.setAttribute('role', 'status');
+    tools.appendChild(line);
+  }
   body.appendChild(tools);
   if (SETUP.clisError) body.appendChild(el('div', 'notice error', `Could not check the CLIs: ${SETUP.clisError}`));
   if (!SETUP.clis) { if (!SETUP.clisError) body.appendChild(homeLoading('Looking for the CLIs…')); return; }

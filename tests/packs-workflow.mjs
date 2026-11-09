@@ -239,7 +239,15 @@ try {
   ok('…the "off" swatch carries the off look, the script swatch its own', !!card('review-gate').querySelector('.legend .wf-sw.off') && !!card('review-gate').querySelector('.legend .wf-sw.script'));
   ok('eight or more steps lay out in rows of four; seven or fewer stay one row', card('review-gate').querySelector('.flow').classList.contains('rows')
     && !card('build').querySelector('.flow').classList.contains('rows'));
-  ok('a part\'s "What this part is and changes" is a quiet fold, not an action', card('review-gate').querySelectorAll('.pk-part summary.fold').length > 0);
+  // PR F: no folds on Packs (Cris) — a part's explain is in the card's "Files and undo" dialog.
+  card('review-gate').querySelectorAll('button').find((b) => t(b) === 'Files and undo')?.click();
+  const wfDlg = page.doc.body.querySelector('.pk-dialog');
+  const wfParts = wfDlg ? [...wfDlg.querySelectorAll('.pk-dialog-part')] : [];
+  ok('a part has no fold: what it is and changes lives in the card\'s "Files and undo" dialog, one section per part', card('review-gate').querySelectorAll('.pk-part summary, .pk-part details').length === 0
+    && wfParts.length === card('review-gate').querySelectorAll('.pk-part').length && wfParts.length > 0
+    && wfParts.every((sec) => t(sec.querySelector('h4')).length > 0 && /What it is:/.test(t(sec)) && /What it changes:/.test(t(sec))),
+    wfParts.map((sec) => t(sec.querySelector('h4'))).join(' | '));
+  page.key('Escape');
 
   console.log('\nsteps dim when their part or setting is off (R5)');
   ok('security off in the home config: the security pass is dimmed and marked "off"', step('review-gate', 'security').classList.contains('off') && t(step('review-gate', 'security').querySelector('.step-off')) === 'off');
