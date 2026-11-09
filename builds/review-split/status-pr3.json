@@ -38,5 +38,13 @@
  "f8": {
   "status": "fixed",
   "test": "packs/review-gate/tests/review.security-only.test.mjs fix f8 \u2014 the probe checks every flag the flow uses"
+ },
+ "x1": {
+  "status": "deferred",
+  "reason": "MEDIUM 35 from the fix check (one fix round policy): the writer's check over-rejects comment edits in files with regex idioms; it fails closed, so it blocks edits, never lets code through."
+ },
+ "x2": {
+  "status": "deferred",
+  "reason": "MEDIUM 14 from the fix check: under --since-close a slice base diff over the 120k cap can let security saw list files the prompt cut; follow-up PR computes truncated from the diff actually sent."
  }
 }
