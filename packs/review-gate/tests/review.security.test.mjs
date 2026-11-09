@@ -539,3 +539,79 @@ test('fix 7 a timeoutMs above what a timer holds is clamped, not fired at once',
   commit({ 'src/app.ts': APP })
   assert.equal(reviewed({ STUB_SEC_SLEEP_MS: '500' }).record.security.status, 'ran')
 })
+
+// ── attack-class checklists, the hardening rule and the harmed-principal rule ──
+const CLASS_LISTS = {
+  ai: 'Checklist: AI and agent tools.',
+  supply: 'Checklist: supply chain.',
+  ipc: 'Checklist: local IPC.',
+}
+const HARDENING = 'A missing extra layer of defense is a hardening note (LOW), not a vulnerability.'
+const PRINCIPAL = 'Do not report a vulnerability without a concrete harmed principal: who is harmed, and how an attacker reaches them.'
+// The security prompt for a branch of these files, with the pass on for every diff.
+function securityPromptFor(files) {
+  git('checkout', '-q', 'main'); git('checkout', '-qb', `b${Date.now()}${Math.random().toString(36).slice(2, 6)}`)
+  rmSync(CALLS, { force: true })
+  commit(files)
+  const r = reviewed()
+  assert.equal(r.record.security.status, 'ran', JSON.stringify(r.record.security))
+  const [call] = securityCalls()
+  assert.ok(call, 'a security call ran')
+  return call.prompt
+}
+const listsIn = (prompt) => Object.entries(CLASS_LISTS).filter(([, heading]) => prompt.includes(heading)).map(([k]) => k)
+
+test('13 each attack class: a diff touching it gets that class\'s checklist and no other; the two rules are always there', () => {
+  homeConfig({ security: { run: 'always' } })
+  const cases = [
+    ['ai', { 'src/agents/run.js': 'export const run = 1\n' }],
+    ['ai', { 'tools/ask-model.mjs': 'export const ask = 1\n' }],
+    ['ai', { 'skills/review/SKILL.md': '# Skill\n' }],
+    ['supply', { 'package.json': '{"name":"x"}\n' }],
+    ['supply', { 'package-lock.json': '{"lockfileVersion":3}\n' }],
+    ['supply', { 'scripts/install.sh': 'echo hi\n' }],
+    ['supply', { '.github/workflows/ci.yml': 'on: push\n' }],
+    ['ipc', { 'src/server.js': 'export const listen = 1\n' }],
+    ['ipc', { 'lib/ipc/socket.js': 'export const s = 1\n' }],
+  ]
+  for (const [cls, files] of cases) {
+    const prompt = securityPromptFor(files)
+    assert.deepEqual(listsIn(prompt), [cls], `${Object.keys(files)}: ${listsIn(prompt)}`)
+    assert.ok(prompt.includes(HARDENING), `${Object.keys(files)}: hardening rule`)
+    assert.ok(prompt.includes(PRINCIPAL), `${Object.keys(files)}: harmed-principal rule`)
+  }
+  // The AI list names its three checks; supply chain and IPC theirs.
+  const ai = securityPromptFor({ 'src/agents/run.js': 'export const run = 2\n' })
+  for (const phrase of ['Prompt injection through tool output', 'tool permissions', 'commands a model chooses']) assert.ok(ai.includes(phrase), phrase)
+  const supply = securityPromptFor({ 'package.json': '{"name":"y"}\n' })
+  for (const phrase of ['Install scripts', 'lockfile or registry changes', 'fetched code']) assert.ok(supply.includes(phrase), phrase)
+  const ipc = securityPromptFor({ 'src/server.js': 'export const listen = 2\n' })
+  for (const phrase of ['localhost servers', 'Host and Origin checks', 'sockets', 'file-permission races']) assert.ok(ipc.includes(phrase), phrase)
+})
+
+test('13 a diff touching several classes gets each of their lists; a docs-only diff gets none, and still both rules', () => {
+  homeConfig({ security: { run: 'always' } })
+  const both = securityPromptFor({ 'src/agents/run.js': 'export const run = 1\n', 'src/server.js': 'export const listen = 1\n' })
+  assert.deepEqual(listsIn(both), ['ai', 'ipc'])
+  // A rename counts by either name.
+  git('checkout', '-q', 'main'); git('checkout', '-qb', 'moved-server')
+  rmSync(CALLS, { force: true })
+  git('mv', 'src/one.js', 'src/server.js'); git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'move')
+  allowed(script([]))
+  assert.deepEqual(listsIn(securityCalls()[0].prompt), ['ipc'])
+  // Docs, even ones named like a class (prompts, servers, install), add no list.
+  const docs = securityPromptFor({ 'README.md': 'more\n', 'docs/guide.md': '# Guide\n', 'docs/prompts.md': '# Prompts\n', 'docs/server-install.md': '# Server\n' })
+  assert.deepEqual(listsIn(docs), [])
+  assert.ok(docs.includes(HARDENING) && docs.includes(PRINCIPAL))
+  assert.doesNotMatch(docs, /Checklist:/)
+})
+
+test('13 requirements*.txt gets the supply-chain list despite its .txt; an agent instruction file gets only the AI list', () => {
+  homeConfig({ security: { run: 'always' } })
+  assert.deepEqual(listsIn(securityPromptFor({ 'requirements.txt': 'requests==2.0\n' })), ['supply'])
+  assert.deepEqual(listsIn(securityPromptFor({ 'api/requirements-dev.txt': 'pytest==8.0\n' })), ['supply'])
+  assert.deepEqual(listsIn(securityPromptFor({ 'packages/mcp-server/CLAUDE.md': '# Rules\n' })), ['ai'])
+  assert.deepEqual(listsIn(securityPromptFor({ 'server/install/AGENTS.md': '# Rules\n' })), ['ai'])
+  // Other .txt files are still docs.
+  assert.deepEqual(listsIn(securityPromptFor({ 'notes/server-install.txt': 'notes\n' })), [])
+})
