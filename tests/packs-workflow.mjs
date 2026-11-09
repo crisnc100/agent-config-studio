@@ -36,10 +36,13 @@ const rolesIn = (wf) => {
     && catalog.filter((p) => !p.workflow?.strip).every((p) => p.workflow.steps.length >= 3), JSON.stringify(strips));
   const rg = catalog.find((p) => p.id === 'review-gate').workflow;
   ok('review-gate: the /pr-review flow, with no variant tabs (the reviewer tiers are /code-review\'s)', rg.command === '/pr-review' && !rg.variants?.length, JSON.stringify(rg.variants));
-  ok('review-gate: the steps /pr-review names, in order', JSON.stringify(rg.steps.map((s) => s.id)) === '["review","security","fix","dispute","check","close","gate","pr"]',
+  ok('review-gate: the steps /pr-review names, in order', JSON.stringify(rg.steps.map((s) => s.id)) === '["review","security","fix","dispute","check","close","context","gate"]',
     JSON.stringify(rg.steps.map((s) => s.id)));
   ok('…the code review and the security check run side by side, and the note says each runs alone too', rg.steps.find((s) => s.id === 'security').beside === 'review'
     && rg.steps.filter((s) => s.beside).length === 1 && /\/code-review/.test(rg.note || '') && /\/security-check/.test(rg.note || ''), JSON.stringify(rg.note));
+  ok('…the context pass comes right after Close, run by the writer role, and the note says /pr writes the description after the push',
+    rg.steps.findIndex((s) => s.id === 'context') === rg.steps.findIndex((s) => s.id === 'close') + 1 && rg.steps.find((s) => s.id === 'context').role === 'writer'
+    && /\/context-pass/.test(rg.steps.find((s) => s.id === 'context').what) && /After the push, \/pr writes the description/.test(rg.note || ''), JSON.stringify(rg.note));
   // PR C: eight steps share one row, so each says what it does in one short line.
   const whats = rg.steps.flatMap((st) => [st.what, ...Object.values(st.variants || {}).map((o) => o.what)]).filter(Boolean);
   ok('review-gate: every step\'s description is one short line (36 characters at most)', whats.every((w) => w.length <= 36), whats.filter((w) => w.length > 36).join(' | '));
@@ -144,7 +147,7 @@ const m = machine(sb.env);
 const member = (family, effort) => ({ family, own: '', effort });
 const role = (name, fams, effort, extra = {}) => ({ name, use: fams, ids: fams.map((f) => ID[f]), effort, resolvedEffort: effort, members: fams.map((f) => member(f, effort)),
   altMember: null, alt: '', altId: '', note: '', custom: false, provenance: {}, defaults: null, warnings: [], ...extra });
-const ID = { fable: 'claude-fable-5-1', opus: 'claude-opus-5-5', sol: 'gpt-6-sol', astra: 'gpt-6-astra', grok: 'grok-4.7' };
+const ID = { fable: 'claude-fable-5-1', opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', sol: 'gpt-6-sol', astra: 'gpt-6-astra', grok: 'grok-4.7' };
 const rolesView = (over = {}) => ({
   roles: [
     role('advisor', ['fable'], 'high', { alt: 'astra', altId: ID.astra, altMember: member('astra', 'high') }),
@@ -152,6 +155,7 @@ const rolesView = (over = {}) => ({
     role('investigator', ['fable'], 'high'),
     role('judge', ['fable'], 'high'),
     role('reviewer', ['opus', 'sol'], 'xhigh'),
+    role('writer', ['opus', 'sonnet'], 'medium'),
     { name: 'security', unset: true, use: [], ids: [], effort: '', resolvedEffort: '', members: [], altMember: null, alt: '', altId: '', note: '', custom: false, provenance: {}, defaults: null, warnings: [] },
     ...(over.extra || []),
   ].map((r) => (over[r.name] ? { ...r, ...over[r.name] } : r)),
@@ -220,8 +224,10 @@ try {
   ok('no-model steps and off steps are narrow tiles, so role steps get the width (design 1)', step('review-gate', 'close').classList.contains('narrow')
     && step('review-gate', 'security').classList.contains('narrow') && !step('review-gate', 'review').classList.contains('narrow'));
   ok('who is you, your session agent, or a script with no model', /^you\b/.test(who('build', 'judge')) && /your session agent/.test(who('build', 'understand'))
-    && who('review-gate', 'close') === 'script' && who('review-gate', 'gate') === 'git hook' && who('review-gate', 'pr') === 'your session agent',
-    `${who('build', 'judge')} | ${who('build', 'understand')} | ${who('review-gate', 'close')} | ${who('review-gate', 'gate')} | ${who('review-gate', 'pr')}`);
+    && who('review-gate', 'close') === 'script' && who('review-gate', 'gate') === 'git hook',
+    `${who('build', 'judge')} | ${who('build', 'understand')} | ${who('review-gate', 'close')} | ${who('review-gate', 'gate')}`);
+  ok('the context pass names the writer role, Opus then Sonnet, and its docs slice', /^writer/.test(who('review-gate', 'context')) && /Opus · medium or Sonnet · medium/.test(who('review-gate', 'context'))
+    && /then a docs-focus slice review/.test(who('review-gate', 'context')), who('review-gate', 'context'));
   const flowKids = card('review-gate').querySelector('.flow').children;
   const at2 = flowKids.indexOf(step('review-gate', 'review'));
   ok('the code review and the security check sit side by side, joined (not an arrow), the second marked "at the same time"', at2 !== -1
@@ -234,7 +240,7 @@ try {
   // The legend lists only the kinds a diagram uses, and carries "no model" for the scripts (PR C QA).
   const legend = (id) => card(id).querySelectorAll('.legend li').map((li) => t(li));
   // PR D: an off step is in the legend too, in its own look (dashed), apart from a script (solid outline).
-  ok('a legend says what each kind of chip in that diagram means — only those, and "off" when a step is off', JSON.stringify(legend('review-gate')) === '["a role from Models","your session agent","a script — no model","off — not turned on"]'
+  ok('a legend says what each kind of chip in that diagram means — only those, and "off" when a step is off', JSON.stringify(legend('review-gate')) === '["a role from Models","a script — no model","off — not turned on"]'
     && JSON.stringify(legend('build')) === '["a role from Models","your session agent","you"]', `${legend('review-gate')} | ${legend('build')}`);
   ok('…the "off" swatch carries the off look, the script swatch its own', !!card('review-gate').querySelector('.legend .wf-sw.off') && !!card('review-gate').querySelector('.legend .wf-sw.script'));
   ok('eight or more steps lay out in rows of four; seven or fewer stay one row', card('review-gate').querySelector('.flow').classList.contains('rows')
