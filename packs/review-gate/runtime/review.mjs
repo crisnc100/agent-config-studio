@@ -118,13 +118,13 @@ const GIT_LOCATION_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_CO
 const REMOVED_FLAGS = ['--shadow-run', '--shadow-report', '--pick-shadow-run', '--pick-report']
 const removedFlag = args.find((a) => REMOVED_FLAGS.includes(a))
 if (removedFlag) stop(`unknown flag ${removedFlag}`)
-const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat', '--supports', '--focus']
+const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat', '--supports', '--focus', '--since-close']
 // Every flag this copy reads. Anything else is refused: an older copy that ignored an unknown flag ran a full review in
 // its place, so a skill asking for a mode this copy lacks gets an error, never a different command.
-const KNOWN_FLAGS = [...VALUE_FLAGS, '--all', '--calibrate', '--code-only', '--comment-only', '--deferred', '--eval', '--gate', '--log-outcome', '--noise-report',
+const KNOWN_FLAGS = [...VALUE_FLAGS, '--all', '--calibrate', '--code-only', '--deferred', '--eval', '--gate', '--log-outcome', '--noise-report',
   '--rubric', '--security-findings', '--security-only', '--show-config', '--summary', '--tier-json', '--yes']
-// --log-outcome and --comment-only take positional values; none of them is a flag.
-const unknownFlag = args.find((a, i) => a.startsWith('--') && !KNOWN_FLAGS.includes(a) && !VALUE_FLAGS.includes(args[i - 1]) && !args.slice(0, i).some((x) => ['--log-outcome', '--comment-only'].includes(x)))
+// --log-outcome takes positional values; none of them is a flag.
+const unknownFlag = args.find((a, i) => a.startsWith('--') && !KNOWN_FLAGS.includes(a) && !VALUE_FLAGS.includes(args[i - 1]) && !args.slice(0, i).includes('--log-outcome'))
 if (unknownFlag !== undefined) stop(`unknown flag ${unknownFlag}`)
 // --supports <flag>: exit 0 when this copy reads the flag, 1 when it does not. Skills ask before using a newer mode.
 if (args.includes('--supports')) process.exit(KNOWN_FLAGS.includes(args[args.indexOf('--supports') + 1]) ? 0 : 1)
@@ -759,13 +759,18 @@ function normalisePaths(value) {
 const PATHS = normalisePaths(cfg('REVIEW_PATHS', 'paths', ''))
 // The slice in force: REVIEW_PATHS for a review, the original's stored paths for its fix check.
 let SLICE = PATHS.length ? PATHS : null
-// --focus docs: the slice review a context pass gets. Only a slice: a docs review of a whole branch would cover its code
-// with no correctness review. It runs no security pass; securityReasons judges its comment-only edits against the pass
-// that saw the code before them.
+// --focus docs: the context pass's slice review. It is a full review (the correctness prompt, the security pass when
+// security.run is on) with docs instructions added, and only ever of a slice.
 const FOCUS = args.includes('--focus') ? option('--focus') : null
 if (FOCUS !== null && FOCUS !== 'docs') stop(`--focus must be docs, not ${JSON.stringify(FOCUS)}`)
 if (FOCUS && !SLICE && !args.includes('--slices'))
   stop('--focus docs reviews a slice: set REVIEW_PATHS to the files the context commit touched (or use --slices).')
+// --since-close <sha>: a slice whose code reviewer reads only what changed after a complete close of this branch ended at
+// <sha>. It is sound only because each of its files was already covered at <sha> (getDiff checks), and its security pass
+// still reads the whole slice, so the pass never vouches for code it did not see.
+const SINCE_CLOSE = args.includes('--since-close') ? option('--since-close') : null
+if (SINCE_CLOSE && !SLICE && !args.includes('--slices'))
+  stop('--since-close reviews a slice: set REVIEW_PATHS to the files changed after that close (or use --slices).')
 const sliceOf = (record) => (Array.isArray(record?.paths) && record.paths.length ? record.paths : null)
 // The changed files a sliced review actually covered, recorded at review time. Coverage uses only this
 // list, never the pathspecs: their expansion can change later (attributes, config) with no new review.
@@ -1533,7 +1538,33 @@ function getDiff() {
     die(`REVIEW_PATHS (${SLICE.join(', ')}) matches no file changed between ${BASE} and HEAD; nothing was reviewed.\n` +
       `  Check the pathspecs against: git diff --name-only ${baseSha}...HEAD`)
   const diff = sh('git', [...(SLICE ? ['-C', TOP] : []), 'diff', `${baseSha}...${head}`, ...pathspec(SLICE)])
-  return { branch, diff, head, baseSha, files }
+  if (!SINCE_CLOSE) return { branch, diff, head, baseSha, files }
+  const since = sinceCloseHead(branch, head, baseSha)
+  const sinceFiles = filesBetween(since, head, SLICE).sort()
+  if (!sinceFiles.length) die(`REVIEW_PATHS (${SLICE.join(', ')}) matches no file changed after ${since}; nothing was reviewed.`)
+  DIFF_BASE = since
+  const delta = sh('git', ['-C', TOP, 'diff', `${since}..${head}`, ...pathspec(SLICE)])
+  return { branch, diff: delta, sliceDiff: diff, head, baseSha, files: sinceFiles, since }
+}
+// The commit --since-close names, checked: an ancestor of HEAD where a complete close of a review on this branch and
+// repository ended, whose coverage holds every slice file's state there (or the file is as it was at the base).
+function sinceCloseHead(branch, head, baseSha) {
+  const r = spawnSync('git', ['rev-parse', '--verify', '--quiet', '--end-of-options', `${SINCE_CLOSE}^{commit}`], { encoding: 'utf8' })
+  const sha = r.status === 0 ? r.stdout.trim() : null
+  if (!sha) die(`--since-close ${SINCE_CLOSE} does not name a commit`)
+  if (!isAncestor(sha, head)) die(`--since-close ${sha} is not an ancestor of HEAD`)
+  const entries = readLog(), repoId = repoIdentity()
+  const closes = entries.filter((e) => e.type === 'close' && e.status === 'complete' && e.closeHead === sha && Array.isArray(e.coverage) &&
+    entries.some((r2) => r2.type === 'review' && r2.id === e.review && r2.branch === branch && r2.repoId === repoId))
+  if (!closes.length) die(`--since-close ${sha}: no complete close of this branch ended at that commit`)
+  const covered = new Map(closes.flatMap((c) => c.coverage.filter((x) => Array.isArray(x) && typeof x[0] === 'string')))
+  const then = treeStates(sha), base = treeStates(baseSha)
+  for (const p of filesBetween(sha, head, SLICE)) {
+    const state = then.get(p) ?? null
+    if (state === (base.get(p) ?? null)) continue
+    if (!covered.has(p) || covered.get(p) !== state) die(`${p}: its state at ${sha} was not covered by that close; review it without --since-close`)
+  }
+  return sha
 }
 
 const die = (m) => {
@@ -1628,34 +1659,24 @@ function promptNotes(vendor) {
 function reviewPrompt(diff) {
   const clipped = clip(diff)
   const notes = promptNotes(SEL.vendor)
-  if (FOCUS === 'docs') return docsPrompt(clipped, notes)
   return (
     `Review the branch diff below for CODE CORRECTNESS only — bugs, regressions, broken edge cases, ` +
     `bad error handling, data-integrity issues — judged against what the branch was supposed to do` +
     `${INTENT ? `: ${INTENT}` : ' (infer from the diff)'}. Inspect the diff (open files as needed) BEFORE answering. ` +
     `Do NOT comment on product direction, scope, or style preference.\n\n` +
+    `${FOCUS === 'docs' ? DOCS_FOCUS : ''}` +
     `${CONTEXT ? `${CONTEXT}\n` : ''}` +
     `${notes.length ? `${notes.join('\n\n')}\n\n` : ''}` +
-    `Diff (git diff ${DIFF_BASE}...HEAD${sliceSuffix(SLICE)}):\n${clipped}`
+    `Diff (git diff ${DIFF_BASE}${SINCE_CLOSE ? '..' : '...'}HEAD${sliceSuffix(SLICE)}):\n${clipped}`
   )
 }
-
-// The docs-focus prompt: the same diff, context, notes and schema, judging comments and docs against the code.
-function docsPrompt(clipped, notes) {
-  return (
-    `DOCS AND COMMENTS REVIEW. The diff below is a context pass: edits to code comments and technical docs, made after the ` +
-    `code was reviewed and fixed, so they describe the code as it is now. What the branch delivers` +
-    `${INTENT ? `: ${INTENT}` : ' (infer from the diff)'}. For every changed doc line and comment, open the code it describes ` +
-    `and report: a claim that is untrue of the code; a claim not backed by the code (name the file:line that would back ` +
-    `it, or say none does); any code-line change, meaning a changed line that is not comment or doc text; a removed ` +
-    `comment that carried a reason, constraint, trade-off or trap the code cannot show; a changed directive or executable ` +
-    `comment (lint or type directives, build tags, doc tests). Quote the changed line. Do NOT report wording, tone or ` +
-    `style preferences.\n\n` +
-    `${CONTEXT ? `${CONTEXT}\n` : ''}` +
-    `${notes.length ? `${notes.join('\n\n')}\n\n` : ''}` +
-    `Diff (git diff ${DIFF_BASE}...HEAD${sliceSuffix(SLICE)}):\n${clipped}`
-  )
-}
+// Added to the correctness prompt for a --focus docs slice: the context pass's edits are judged as code and as docs.
+const DOCS_FOCUS = `DOCS AND COMMENTS, as well: this slice is a context pass, edits to comments and technical docs made so they ` +
+  `describe the code as it is now. For every changed doc line and comment, open the code it describes and also report: a ` +
+  `claim that is untrue of the code; a claim not backed by the code (name the file:line that would back it, or say none ` +
+  `does); any code-line change, meaning a changed line that is not comment or doc text; a removed comment that carried a ` +
+  `reason, constraint, trade-off or trap the code cannot show; a changed directive or executable comment (lint or type ` +
+  `directives, build tags, doc tests). Quote the changed line. Do NOT report wording, tone or style preferences.\n\n`
 
 // The security pass's prompt: the same diff, context, notes and schema as the code review, a security-only instruction.
 // SECURITY_MARKER names it (tests find the security call by it).
@@ -2883,17 +2904,10 @@ function pathReasons(diff) {
 // while the security pass is on now and the close diff (base to the closing HEAD) would require it.
 // A pass that ran covers only the file states it saw: a logic, other-kind or riskPaths file whose state at the closing HEAD
 // differs (changed by fix commits, say) is HIGH. A fix check is not a security pass and covers nothing here.
-function securityReasons(review, diff, head, entries = []) {
+function securityReasons(review, diff, head) {
   const sec = review.security
   if (sec?.status === 'failed' || sec?.status === 'skipped') return [`security pass ${sec.status}${sec.reason ? `: ${sec.reason}` : ''}`]
   if (SECURITY.run === 'off' || !diff) return []
-  // A docs-focus slice runs no pass of its own. Each relevant file it closes counts as seen only when a pass on this
-  // branch saw a state of it from which the file at the closing HEAD differs in comments and blank lines alone.
-  if (review.focus === 'docs' && Array.isArray(review.paths)) {
-    const relevant = diff.files.filter((f) => pathsOf(f).some(securityRelevant)).map((f) => f.path)
-    const unseen = relevant.filter((p) => !commentOnlySinceSeen(p, head, review, entries))
-    return unseen.length ? [`security pass did not see ${listed(unseen)} (a docs-focus slice covers comment-only edits to code a pass saw)`] : []
-  }
   if (sec?.status === 'ran') {
     const saw = new Map(Array.isArray(sec.saw) ? sec.saw.filter((e) => Array.isArray(e) && typeof e[0] === 'string') : [])
     const states = treeStates(head)
@@ -2906,104 +2920,6 @@ function securityReasons(review, diff, head, entries = []) {
   if (review.kind === 'grade') return ['no security pass ran (Grade-only close; run /pr-review for the security pass)']
   return [`security pass did not cover logic changed after review (${sec?.status ?? 'not recorded'} at review; ${need.why})`]
 }
-// The latest state of `path` a security pass saw on this branch and repository, at a commit HEAD descends from, and
-// whether `head`'s state differs from it only in comments and blank lines. A mode change or a deletion is never that.
-function commentOnlySinceSeen(path, head, review, entries) {
-  const passes = entries.filter((e) => e.type === 'review' && e.repoId === review.repoId && e.branch === review.branch && e.id !== review.id &&
-    e.security?.status === 'ran' && Array.isArray(e.security.saw) && fullObjectId(e.head) && isAncestor(e.head, head))
-  for (const e of passes.reverse()) {
-    const seen = e.security.saw.find((x) => Array.isArray(x) && x[0] === path)
-    if (!seen) continue
-    const now = treeStates(head).get(path) ?? null
-    if (!seen[1] || !now || seen[1].split(' ')[0] !== now.split(' ')[0]) return false
-    return commentOnlyChange(path, blobOf(e.head, path), blobOf(head, path))
-  }
-  return false
-}
-const blobOf = (commit, path) => {
-  const r = spawnSync('git', ['show', `${commit}:${path}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
-  return r.status === 0 ? r.stdout : null
-}
-
-// ── comment-only changes ────────────────────────────────────────────────────
-// Whether two versions of a file differ only in comment and blank lines. A line counts as comment only when every
-// non-blank character on it is inside a comment by this file's language; strings, code and a line that mixes code and a
-// comment are code. Directive and executable comments (lint and type directives, build tags, doc tests, shebangs) are
-// code too. An unknown language is never comment-only. --comment-only and context-pass.mjs both use this.
-const COMMENT_STYLES = {
-  slash: { exts: ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'cts', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'java', 'kt', 'kts', 'swift', 'go', 'rs', 'scala', 'dart', 'php', 'css', 'scss', 'less'],
-    line: ['//'], block: ['/*', '*/'], quotes: ['"', "'", '`'] },
-  hash: { exts: ['py', 'rb', 'sh', 'bash', 'zsh', 'fish', 'pl', 'yaml', 'yml', 'toml', 'r', 'ex', 'exs', 'tf'], line: ['#'], block: null, quotes: ['"', "'"] },
-  dash: { exts: ['sql', 'lua', 'hs'], line: ['--'], block: null, quotes: ['"', "'"] },
-}
-const DIRECTIVE = /^\s*(?:#!|\/\/\/|\/\/!|\/\/\s*go:|\/\/\s*\+build|\/\/\s*Output:)|@ts-|eslint|prettier-ignore|istanbul |\bc8 |biome-ignore|deno-lint|jshint|@flow\b|@jsx|@vite-ignore|webpack[A-Z]|#__PURE__|\bnoqa\b|#\s*type:|pylint:|mypy:|pyright:|rubocop:|nolint|fmt:\s*(?:off|on)|isort:|-\*-.*-\*-|swiftlint:|NOSONAR|pragma/
-const styleOf = (path) => {
-  const ext = path.includes('.') ? path.split('.').pop().toLowerCase() : ''
-  return Object.values(COMMENT_STYLES).find((st) => st.exts.includes(ext)) || null
-}
-// Per line: true when its non-blank characters are all comment (or it is blank), false when any is code.
-function commentLines(text, style) {
-  const out = []
-  let state = 'code', quote = null, code = false, anyComment = false
-  const endLine = () => { out.push(!code); code = false; anyComment = false }
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]
-    if (c === '\n') {
-      if (state === 'line') state = 'code'
-      endLine()
-      continue
-    }
-    if (state === 'line') { anyComment = true; continue }
-    if (state === 'block') {
-      anyComment = true
-      if (text.startsWith(style.block[1], i)) { state = 'code'; i += style.block[1].length - 1 }
-      continue
-    }
-    if (state === 'string') {
-      code = true
-      if (c === '\\') i++
-      else if (c === quote) state = 'code'
-      continue
-    }
-    if (/\s/.test(c)) continue
-    if (style.block && text.startsWith(style.block[0], i)) { state = 'block'; anyComment = true; i += style.block[0].length - 1; continue }
-    const lineMark = style.line.find((m) => text.startsWith(m, i))
-    // A # starts a comment only at the start of a word (a shell's $# and ${#x} are code).
-    if (lineMark && (lineMark !== '#' || i === 0 || /\s/.test(text[i - 1]))) { state = 'line'; anyComment = true; continue }
-    if (style.quotes.includes(c)) { state = 'string'; quote = c; code = true; continue }
-    code = true
-  }
-  if (text.length && !text.endsWith('\n')) endLine()
-  return out
-}
-function commentOnlyChange(path, before, after) {
-  const style = styleOf(path)
-  if (!style || before === null || after === null) return false
-  if (before === after) return true
-  const a = before.split('\n'), b = after.split('\n')
-  const ca = commentLines(before, style), cb = commentLines(after, style)
-  const n = a.length, m = b.length
-  if (n * m > 4_000_000) return false
-  const lcs = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1))
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1])
-  const changedOk = (lines, kinds, k) => (kinds[k] ?? true) && !DIRECTIVE.test(lines[k])
-  let i = 0, j = 0
-  while (i < n || j < m) {
-    if (i < n && j < m && a[i] === b[j]) { i++; j++; continue }
-    if (j >= m || (i < n && lcs[i + 1][j] >= lcs[i][j + 1])) { if (!changedOk(a, ca, i)) return false; i++ }
-    else { if (!changedOk(b, cb, j)) return false; j++ }
-  }
-  return true
-}
-// --comment-only <from> <to> [paths…]: per path, whether <to> differs from <from> only in comments; every changed file when
-// no path is named. One JSON object; read-only.
-function printCommentOnly() {
-  const at = args.indexOf('--comment-only'), [from, to, ...named] = args.slice(at + 1)
-  if (!from || !to) stop('usage: review.mjs --comment-only <from> <to> [paths…]')
-  const paths = named.length ? named : sh('git', ['diff', '--name-only', '--no-renames', from, to]).split('\n').filter(Boolean)
-  const files = Object.fromEntries(paths.map((p) => [p, commentOnlyChange(p, blobOf(from, p), blobOf(to, p))]))
-  console.log(JSON.stringify({ commentOnly: Object.values(files).every(Boolean), files }))
-}
 // HIGH and not-LOW by deferred findings: a deferred HIGH (a deferred criterion is HIGH) or protected one is HIGH.
 function deferredReasons(deferred) {
   const high = [], ids = (list) => list.map((f) => f.id).join(', ')
@@ -3013,7 +2929,7 @@ function deferredReasons(deferred) {
   if (deferredProtected.length) high.push(`deferred protected: ${ids(deferredProtected)}`)
   return { high, medium: deferred.length ? [`deferred: ${ids(deferred)}`] : [] }
 }
-function closeTier({ review, reviews, statuses, files, outOfScope, noTests, head, entries = [] }) {
+function closeTier({ review, reviews, statuses, files, outOfScope, noTests, head }) {
   const base = fullObjectId(review.baseSha) ? coverBase(review, head) : review.base || BASE
   const diff = diffStats(`${base}...${head}`, sliceOf(review))
   const stats = tierStats(diff)
@@ -3022,7 +2938,7 @@ function closeTier({ review, reviews, statuses, files, outOfScope, noTests, head
   const high = []
   if (!diff) high.push('the diff could not be read, so its paths are unchecked')
   if (diff) high.push(...pathReasons(diff))
-  high.push(...securityReasons(review, diff, head, entries))
+  high.push(...securityReasons(review, diff, head))
   high.push(...deferredReasons(deferred).high)
   // A known exploit the branch did not introduce never blocks the close, but no agent merges past it.
   const preProtected = findings.filter((f) => isPreExisting(f) && f.protected === true && statuses[f.id]?.status !== 'fixed')
@@ -3281,7 +3197,7 @@ async function closeReview(id) {
     if (r.error || r.status !== 0) throw new Error(`Tests failed at HEAD: ${r.error?.message || r.stderr || r.stdout || `exit ${r.status}`}`)
     tests = { cmd: command, passed: true }
   }
-  const tier = await mergeTier({ review, reviews, statuses, files, outOfScope, noTests, head, entries })
+  const tier = await mergeTier({ review, reviews, statuses, files, outOfScope, noTests, head })
   requireClean()
   if (headNow() !== head) throw new Error('HEAD changed while tests ran')
   appendLog({ type: 'close', ts: new Date().toISOString(), review: id, closeHead: head, repoId: repoIdentity(), statuses, outOfScope,
@@ -3410,7 +3326,7 @@ async function securityOutcome(w) {
   return reason ? { reason, durationMs } : { data, durationMs }
 }
 // Starts the pass, if any, once the diff, context and verify result are known. Returns what finishSecurity waits on.
-function beginSecurity({ stats, diff }) {
+function beginSecurity({ stats, diff, diffBase = null }) {
   const need = securityNeed(stats)
   const base = { run: SECURITY.run, ...(SECURITY.raisedBy && { raisedBy: SECURITY.raisedBy }) }
   if (!need.required) {
@@ -3422,7 +3338,7 @@ function beginSecurity({ stats, diff }) {
     console.warn(`⚠ security pass required (${need.why}) but skipped: ${chosen.error} — the merge tier will be HIGH`)
     return { record: { ...base, required: need.why, status: 'skipped', reason: chosen.error } }
   }
-  const job = { diff, context: CONTEXT, verify: VERIFY_RESULT, slice: SLICE, diffBase: DIFF_BASE, intent: INTENT || null,
+  const job = { diff, context: CONTEXT, verify: VERIFY_RESULT, slice: SLICE, diffBase: diffBase || DIFF_BASE, intent: INTENT || null,
     paths: [...new Set((stats?.files || []).flatMap(pathsOf))] }
   try {
     return { base: { ...base, required: need.why, why: chosen.why }, job, members: chosen.members, worker: startSecurityWorker(job, chosen.members[0]) }
@@ -5000,9 +4916,8 @@ async function runEval() {
   if (args.includes('--slices')) return runSlices()
   if (args.includes('--security-worker')) return securityWorker(option('--security-worker'))
   if (args.includes('--security-only')) return runSecurityOnly()
-  if (args.includes('--comment-only')) return printCommentOnly()
   if (args.includes('--security-findings')) return printSecurityFindings()
-  const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList } = getDiff()
+  const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList, sliceDiff, since } = getDiff()
   refuseLinkedReviews()
   CONTEXT = reviewContext(branch)
   if (!diff) {
@@ -5038,9 +4953,9 @@ async function runEval() {
   // code reviewer; its findings join this record once both are done.
   // --code-only (the /code-review skill): no security pass, recorded as not asked, so the merge tier still says when a
   // security.run that is on needed one.
-  const securityPlan = (args.includes('--code-only') || FOCUS) && SECURITY.run !== 'off'
-    ? { record: { run: SECURITY.run, status: 'not-asked', reason: FOCUS ? 'docs-focus slice' : 'code-only run' } }
-    : beginSecurity({ stats, diff })
+  const securityPlan = args.includes('--code-only') && SECURITY.run !== 'off'
+    ? { record: { run: SECURITY.run, status: 'not-asked', reason: 'code-only run' } }
+    : beginSecurity({ stats, diff: sliceDiff ?? diff, diffBase: since ? baseSha : null })
   const started = Date.now()
   const scored = await scoredFindings(await review(diff), SEL)
   const raw = scored.findings
@@ -5114,6 +5029,7 @@ async function runEval() {
     repoId: repoIdentity(),
     ...(SLICE && { paths: SLICE, files: sliceFileList }),
     ...(FOCUS && { focus: FOCUS }),
+    ...(since && { sinceClose: since }),
     truncated,
     stats: recordStats(stats),
     plan: PLAN_PATH ?? null,
