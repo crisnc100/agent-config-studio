@@ -217,8 +217,10 @@ test('C2 no style file: the first run creates it from the example, and the defau
   assert.equal(f.style.created, true)
   assert.equal(readFileSync(b.style, 'utf8'), readFileSync(EXAMPLE, 'utf8'))
   assert.deepEqual(f.style.sections.map((s) => s.id), DEFAULT_IDS)
-  assert.deepEqual(f.style.sections.filter((s) => !s.on).map((s) => s.id), ['gif', 'record'], 'gif and the raw record are off')
+  assert.deepEqual(f.style.sections.filter((s) => !s.on).map((s) => s.id), ['gif', 'agent', 'record'], 'gif, the agent notes and the raw record are off')
   assert.equal(f.style.sections.find((s) => s.id === 'deferred').title, 'Deferred findings')
+  assert.equal(f.style.sections.find((s) => s.id === 'summary').title, 'What this does and why')
+  assert.equal(f.style.sections.find((s) => s.id === 'changes').title, 'Files changed')
   assert.equal(f.style.sections.find((s) => s.id === 'quote').title, "Agent's take")
   assert.deepEqual(f.style.sections.find((s) => s.id === 'gif').urls, [], 'gif urls ship empty')
   assert.deepEqual({ tone: f.style.tone, emoji: f.style.emoji }, { tone: 'plain', emoji: true })
@@ -249,7 +251,7 @@ test('C2 sections reordered, retitled and turned off are respected; unknown keys
   })
   const f = b.facts()
   assert.deepEqual(f.style.sections.slice(0, 5).map((s) => [s.id, s.title, s.on]),
-    [['changes', 'Files', true], ['summary', 'What this does', true], ['quote', "Agent's take", false], ['goal', 'Did it match the goal?', true], ['gif', 'GIF', true]])
+    [['changes', 'Files', true], ['summary', 'What this does and why', true], ['quote', "Agent's take", false], ['goal', 'Did it match the goal?', true], ['gif', 'GIF', true]])
   assert.deepEqual(f.style.sections.slice(5).map((s) => [s.id, s.on]), [['try', false], ['review', false], ['deferred', true], ['docs', false], ['agent', false], ['record', false]],
     'missing sections come after, off, except Deferred findings')
   assert.deepEqual(f.style.sections.find((s) => s.id === 'gif').urls, ['https://example.test/a.gif'])
@@ -324,19 +326,22 @@ test('C4 GIF: off gives none; on picks the same URL for the same branch every ru
 
 /* ── C3 --check ──────────────────────────────────────────────────────── */
 
+// One plain-words entry per deferred finding: the id and the score as the summary gives them, then what could go wrong
+// and why it waited, never the reviewer's raw line.
+const entry = (d) => d.kind === 'criterion' ? `- ${d.id}: criterion ${d.criterionId} is not met yet. Deferred: ${d.reason}.`
+  : `- ${d.id} ${d.score}: something could go wrong in ${d.location.split(':')[0]}. Deferred: ${d.reason}.`
 // A description that follows the default style for the closed fixture, from its facts.
 function good(f, { record = false } = {}) {
   const r = f.review
+  const unmet = r.criteria.map((l) => `❌ ${l.split(' ')[2]} not done: the app does not log yet.`)
   return [
-    ...r.criteria, ...r.deferredHigh, '',
-    '## What this does', 'Adds three constants to the app.', '',
-    '## Did it match the goal?', '✅ App gains a, b and c.', '',
-    '## What changed', '- `src/app.js` — the constants', '- `tests/app.test.js` — a test', '',
+    '## What this does and why', `Adds three constants to the app (${f.commits[0].sha.slice(0, 7)}), so callers stop repeating the numbers.`, '',
+    '## Did it match the goal?', '✅ App gains a, b and c.', ...unmet, '',
+    '## Files changed', '- `src/app.js` — the constants', '- `tests/app.test.js` — a test', '',
     '## How to try it', '`node src/app.js`', '',
     '## Review highlights', ...r.reviewer, `${r.fixed[0]}`, '',
-    '## Deferred findings', ...r.deferred, '',
+    '## Deferred findings', ...(r.deferredItems || []).map(entry), '',
     '## Docs and context', '❌ no docs changed for src/app.js', '',
-    '## What the agent did', `Chose three constants (${f.commits[0].sha.slice(0, 7)}).`, '',
     "## Agent's take", 'I kept it small.', '',
     ...(record ? ['<details><summary>Review record</summary>', '', '```', r.summary, '```', '</details>', ''] : []),
   ].join('\n')
@@ -367,33 +372,33 @@ test('C3 --check fails naming each problem: missing, out of order, turned off, f
   const missing = checked(b, body.replace('## How to try it\n`node src/app.js`\n', ''))
   assert.equal(missing.code, 1)
   assert.deepEqual(missing.problems, ['missing section "## How to try it"'])
-  const swapped = checked(b, body.replace('## What this does', '## TEMP').replace('## Did it match the goal?', '## What this does').replace('## TEMP', '## Did it match the goal?'))
-  assert.deepEqual(swapped.problems, ['"What this does" comes after "Did it match the goal?", but your style puts it first'])
+  const swapped = checked(b, body.replace('## What this does and why', '## TEMP').replace('## Did it match the goal?', '## What this does and why').replace('## TEMP', '## Did it match the goal?'))
+  assert.deepEqual(swapped.problems, ['"What this does and why" comes after "Did it match the goal?", but your style puts it first'])
   const off = checked(b, `${body}\n## Review record\nx\n`)
   assert.ok(off.problems.some((p) => /the review record goes in <details>, not under a "## Review record" heading/.test(p)), JSON.stringify(off.problems))
   b.setStyle({ sections: DEFAULT_IDS.map((id) => ({ id, ...(id === 'quote' && { on: false }) })) })
   const turnedOff = checked(b, body)
   assert.deepEqual(turnedOff.problems, ['"## Agent\'s take" is turned off in your style'])
   b.setStyle({ sections: DEFAULT_IDS.map((id) => ({ id })) })
-  const folded = checked(b, body.replace('## Docs and context', '<details>\n\n## Docs and context').replace("## What the agent did", '</details>\n\n## What the agent did'))
+  const folded = checked(b, body.replace('## Docs and context', '<details>\n\n## Docs and context').replace("## Agent's take", "</details>\n\n## Agent's take"))
   assert.ok(folded.problems.some((p) => /"## Docs and context" \(line \d+\) is inside <details>/.test(p)), JSON.stringify(folded.problems))
   const extra = checked(b, `${body}\n## Notes\nmore\n`)
   assert.deepEqual(extra.problems, [])
   assert.ok(extra.warnings.includes('"## Notes" is not a section in your style'))
 })
 
-test('C3 --check: Deferred findings present, exact and verbatim; deferred HIGHs and unmet criteria first; the record folded', () => {
+test('C3 --check: Deferred findings present, each id with its exact score; unmet criteria in the goal section; the record folded', () => {
   const b = fixture()
   closedGate(b)
   const f = b.facts()
   const body = good(f)
-  const [high, low] = f.review.deferred
+  const [, low] = f.review.deferredItems
   const gone = checked(b, body.replace('## Deferred findings', '## Deferred'))
   assert.ok(gone.problems.includes('missing section "## Deferred findings"'), JSON.stringify(gone.problems))
-  const reworded = checked(b, body.replace(`${low}\n`, 'f2 a small style nit\n'))
-  assert.deepEqual(reworded.problems, [`"Deferred findings" is missing this line, copied verbatim from the review summary: ${low}`])
-  const notFirst = checked(b, body.replace(`${f.review.criteria[0]}\n${high}\n`, ''))
-  assert.deepEqual(notFirst.problems, [`this goes first, above every section, verbatim: ${f.review.criteria[0]}`, `this goes first, above every section, verbatim: ${high}`])
+  const reworded = checked(b, body.replace(entry(low), '- f2 a small style nit'))
+  assert.deepEqual(reworded.problems, [`"Deferred findings" is missing f2 with its score as the summary gives it: f2 ${low.score}`])
+  const unmet = checked(b, body.replace('❌ C2 not done: the app does not log yet.\n', ''))
+  assert.deepEqual(unmet.problems, [`"Did it match the goal?" is missing unmet criterion C2, as a not-done line: ${f.review.criteria[0]}`])
   b.setStyle({ sections: DEFAULT_IDS.map((id) => ({ id, ...(id === 'record' && { on: true }) })) })
   const unfoldedRecord = checked(b, `${body}\n<summary>Review record</summary>\n${f.review.summary}\n`)
   assert.ok(unfoldedRecord.problems.some((p) => /the review record is on: fold it as <details><summary>Review record<\/summary>/.test(p)), JSON.stringify(unfoldedRecord.problems))
@@ -433,20 +438,20 @@ test('C3 --check flags a finding id only where a finding id goes: at the start o
   assert.deepEqual(real.problems, [], 'ids from the summary are fine in those positions')
 })
 
-test('C3 --check: deferred lines and the HIGH preamble must be visible, not in <details> or an HTML comment; a folded record only when the record is on', () => {
+test('C3 --check: deferred entries and unmet criteria must be visible, not in <details> or an HTML comment; a folded record only when the record is on', () => {
   const b = fixture()
   closedGate(b)
   const f = b.facts()
   const body = good(f)
-  const lines = f.review.deferred.join('\n')
-  const missing = f.review.deferred.map((l) => `"Deferred findings" is missing this line, copied verbatim from the review summary: ${l}`)
+  const lines = f.review.deferredItems.map(entry).join('\n')
+  const missing = f.review.deferredItems.map((d) => `"Deferred findings" is missing ${d.id} with its score as the summary gives it: ${d.id} ${d.score}`)
   const inDetails = checked(b, body.replace(`## Deferred findings\n${lines}\n`, `## Deferred findings\n<details><summary>the list</summary>\n\n${lines}\n</details>\n`))
   assert.deepEqual(inDetails.problems, missing)
   const inComment = checked(b, body.replace(`## Deferred findings\n${lines}\n`, `## Deferred findings\n<!--\n${lines}\n-->\n`))
   assert.deepEqual(inComment.problems, missing)
-  const first = [...f.review.criteria, ...f.review.deferredHigh]
-  const preamble = checked(b, body.replace(`${first.join('\n')}\n`, `<!--\n${first.join('\n')}\n-->\n`))
-  assert.deepEqual(preamble.problems, first.map((l) => `this goes first, above every section, verbatim: ${l}`))
+  const notDone = '❌ C2 not done: the app does not log yet.'
+  const hidden = checked(b, body.replace(notDone, `<!-- ${notDone} -->`))
+  assert.deepEqual(hidden.problems, [`"Did it match the goal?" is missing unmet criterion C2, as a not-done line: ${f.review.criteria[0]}`])
   const foldedOff = checked(b, `${body}\n<details><summary>Review record</summary>\n\n\`\`\`\n${f.review.summary}\n\`\`\`\n</details>\n`)
   assert.deepEqual(foldedOff.problems, ['the review record is off in your style: leave it out, folded or not'])
   const foldedOther = checked(b, `${body}\n<details><summary>raw</summary>\n\n${f.review.summary}\n</details>\n`)
@@ -556,9 +561,9 @@ else console.log(JSON.stringify({structured_output:JSON.parse(reply),structuredO
   assert.ok(f.review.tierLine?.startsWith('Merge tier: '), f.review.summary)
   assert.equal(f.review.reviewer.length, 1)
   const body = [
-    '## What this does', 'A guide.', '', '## Did it match the goal?', 'No plan.', '', '## What changed', '- `docs/guide.md`', '',
+    '## What this does and why', 'A guide, so readers can start.', '', '## Did it match the goal?', 'No plan.', '', '## Files changed', '- `docs/guide.md`', '',
     '## How to try it', 'Read it.', '', '## Review highlights', ...f.review.reviewer, '', '## Deferred findings', 'none', '',
-    '## Docs and context', '✅', '', '## What the agent did', 'Wrote it.', '', "## Agent's take", 'Small.', '',
+    '## Docs and context', '✅', '', "## Agent's take", 'Small.', '',
   ].join('\n')
   writeFileSync(join(b.root, 'body.md'), body)
   const c = b.helper(['--check', join(b.root, 'body.md')], extra)
