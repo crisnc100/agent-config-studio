@@ -40,10 +40,13 @@
  * read-only sandbox (mode min-tools, tools "restricted"). --json then carries `tools` and a
  * `toolsNote` naming what the CLI still allows.
  *
- * --x-search asks grok what people on X are saying, with grok's built-in X tools (x_keyword_search, x_semantic_search,
- * x_user_search, x_thread_fetch) and nothing else: every other built-in in GROK_X_DENY disallowed, MCP tools denied,
- * web search left on (the X tools come with it), no subagents and a low turn cap. Only for a family grok runs (any
- * other exits 64), and not with --investigate, --no-tools, --min-tools or --schema.
+ * --x-search asks grok what people on X are saying. What it is left is grok's built-in X tools, x_keyword_search,
+ * x_semantic_search, x_user_search and x_thread_fetch: every other built-in in GROK_X_DENY is disallowed, permission
+ * rules deny Bash, Read, Edit, Write, Grep, Glob, WebFetch and MCP tools whatever grant GROK_HOME holds, subagents are
+ * off and the turn cap is low. Web search is not switched off, since the X tools go with it. open_page and
+ * open_page_with_find, which come with web_search, can't be disallowed by name; with web_search disallowed grok 1.0.77
+ * offered neither. Only for a family grok runs (any other exits 64), not with --investigate, --no-tools, --min-tools or
+ * --schema, and only when `grok inspect` reports GROK_X_VERSION (exit 4 otherwise, nothing run).
  *
  * Exit: 0 answered · 2 another model answered · 3 the CLI (or node) is not
  * installed · 4 the call failed or returned an error · 5 files changed under
@@ -65,7 +68,9 @@ import { EFFORTS, loadRegistry, resolveModel } from '../lib/models.js';
 import { familyEffort, resolveFlavor, resolveRole } from '../lib/roles.js';
 
 const SELF = fileURLToPath(import.meta.url);
-const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools | --x-search] [--json] [--cwd <dir>]';
+const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools | --x-search] [--json] [--cwd <dir>]'
+  + '\n  --x-search: grok only; leaves x_keyword_search, x_semantic_search, x_user_search and x_thread_fetch; open_page and open_page_with_find '
+  + 'cannot be disallowed by name, and the grok it was checked against offers neither';
 const VALUE_FLAGS = { '--role': 'role', '--family': 'family', '--effort': 'effort', '--effort-from': 'effortFrom', '--prompt-file': 'promptFile', '--schema': 'schemaFile', '--cwd': 'cwd' };
 
 // What each CLI may use. Claude and grok are read-only by these allowlists alone
@@ -79,12 +84,17 @@ const TOOLS = {
 const GROK_MAX_TURNS = '40';
 const GROK_MIN_TURNS = '5';
 // --x-search: a denylist, because a --tools allowlist ignores the X tool names (grok warns they name no tool and leaves
-// every tool available). So a tool a later grok adds is not on it; this is every other built-in grok listed, with
-// run_terminal_cmd (the name --investigate allows) beside run_terminal_command. open_page and open_page_with_find come
-// with web search and grok says they name no tool when disallowed, so they stay. 8 turns returned real posts.
-const GROK_X_DENY = ['run_terminal_command', 'run_terminal_cmd', 'search_replace', 'read_file', 'list_dir', 'grep', 'kill_command_or_subagent', 'todo_write',
-  'get_command_or_subagent_output', 'scheduler_create', 'scheduler_delete', 'scheduler_list', 'monitor', 'search_tool', 'use_tool', 'workflow',
-  'enter_plan_mode', 'exit_plan_mode', 'ask_user_question', 'send_feedback', 'web_fetch', 'image_gen', 'image_edit', 'image_to_video', 'web_search'];
+// every tool available). A tool a later grok adds would not be on it, so the mode runs only on GROK_X_VERSION, the grok
+// this list was taken from (every client tool its sessions' tool_definitions.json named, with run_terminal_cmd, the name
+// --investigate allows, beside run_terminal_command). The deny rules are the second wall: a write or command a name
+// misses is still refused, and deny wins over any allow grant or always-approve setting in GROK_HOME. Under them a
+// session's tool_definitions.json was empty and a `write` left off the list was refused ("deny rule on edit").
+// 8 turns returned real posts.
+const GROK_X_DENY = ['run_terminal_command', 'run_terminal_cmd', 'search_replace', 'write', 'read_file', 'list_dir', 'grep', 'kill_command_or_subagent', 'todo_write',
+  'get_command_or_subagent_output', 'spawn_subagent', 'scheduler_create', 'scheduler_delete', 'scheduler_list', 'monitor', 'search_tool', 'use_tool', 'workflow',
+  'enter_plan_mode', 'exit_plan_mode', 'ask_user_question', 'send_feedback', 'web_fetch', 'image_gen', 'image_edit', 'image_to_video', 'reference_to_video', 'web_search'];
+const GROK_X_RULES = ['MCPTool', 'Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch'];
+const GROK_X_VERSION = '1.0.77';
 const GROK_X_TURNS = '8';
 // codex features that give the model a tool (`codex features list`), all off under --min-tools; web search has no
 // feature of its own (`web_search` in config.toml: live, indexed, cached or disabled).
@@ -98,6 +108,9 @@ const MIN_TOOLS = {
       + 'apply_patch (writes refused by the read-only sandbox), update_plan, and whatever these features still on may add, remain: '
       + 'code_mode_host, in_app_local_automation, workspace_dependencies, worktrees' },
 };
+const X_SEARCH_TOOLS = { tools: 'restricted', toolsNote: 'x_keyword_search, x_semantic_search, x_user_search and x_thread_fetch only; every other built-in disallowed, '
+    + 'Bash, Read, Edit, Write, Grep, Glob, WebFetch and MCP tools denied by rule, subagents off. open_page and open_page_with_find come with '
+    + 'web search and cannot be disallowed by name; grok ' + GROK_X_VERSION + ' offered neither with web_search disallowed' };
 // grok's own switches for the MCP servers and hooks it borrows from Claude Code's and Cursor's configs, set for
 // its preflight and its run alike (the studio's GROK_ASSIST_ENV, lib/containment.js). Its own MCP servers have
 // none, and its own .grok/hooks have none short of turning folder trust off (see grokHookFolders).
@@ -388,7 +401,7 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = 
   // (an allow rule approves the call; deny rules still win).
   if (mode === 'x-search') {
     return ['-p', prompt, '-m', id, ...(effort ? ['--reasoning-effort', effort] : []), '--cwd', cwd,
-      '--disallowed-tools', GROK_X_DENY.join(','), '--deny', 'MCPTool', '--no-subagents', '--max-turns', GROK_X_TURNS, '--output-format', 'json'];
+      '--disallowed-tools', GROK_X_DENY.join(','), ...GROK_X_RULES.flatMap((r) => ['--deny', r]), '--no-subagents', '--max-turns', GROK_X_TURNS, '--output-format', 'json'];
   }
   return ['-p', prompt, '-m', id, ...(effort ? ['--reasoning-effort', effort] : []), '--cwd', cwd,
     '--tools', TOOLS.grok[mode], '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool',
@@ -542,7 +555,7 @@ function grokMcpLeft(bin, cwd, env, { allow = [], grokHome = null } = {}) {
   const projectHooks = (Array.isArray(doc.hooks) ? doc.hooks : [])
     .filter((h) => isObj(h) && isObj(h.source) && h.source.type === 'project' && h.disabled !== true && h.compatibilityStatus !== 'disabled')
     .map((h) => `${h.source.path ?? '(project)'}: ${h.event ?? 'hook'}`);
-  return { left, projectHooks };
+  return { left, projectHooks, version: typeof doc.grokVersion === 'string' ? doc.grokVersion : null };
 }
 
 /**
@@ -911,7 +924,7 @@ async function main(argv) {
   const mode = o.xSearch ? 'x-search' : o.investigate ? 'investigate' : o.noTools || (o.minTools && vendor === 'claude') ? 'no-tools' : o.minTools ? 'min-tools' : 'read-only';
   process.stderr.write(`ask-model: ${m.family} (${m.id}, effort ${m.effort || 'none'}, ${mode})\n`);
 
-  const result = { family: m.family, id: m.id, effort: m.effort || null, mode, ...(o.minTools && MIN_TOOLS[vendor]), answer: null, changed: null, error: null };
+  const result = { family: m.family, id: m.id, effort: m.effort || null, mode, ...(o.minTools && MIN_TOOLS[vendor]), ...(mode === 'x-search' && X_SEARCH_TOOLS), answer: null, changed: null, error: null };
   let grokCall = null;
   const finish = (exit) => {
     grokCall?.done();
@@ -963,6 +976,11 @@ async function main(argv) {
     }
     if (mcp.projectHooks.length) {
       result.error = `grok would run this project's hooks (${mcp.projectHooks.join(', ')}), so grok was not run.`;
+      return finish(4);
+    }
+    if (mode === 'x-search' && mcp.version !== GROK_X_VERSION) {
+      result.error = `grok inspect reports grok ${mcp.version ?? '(no version)'}, but --x-search's tool list was checked against grok ${GROK_X_VERSION}: `
+        + 're-check the X-search tool list (GROK_X_DENY in ask-model) for this grok before using it, so grok was not run.';
       return finish(4);
     }
   }
