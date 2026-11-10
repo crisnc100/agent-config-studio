@@ -29,22 +29,28 @@ If it isn't, fix that before writing: add the directory to `.gitignore`, and if 
 
 Outside a git repo there's nothing to leak into: use `docs/handoff.md`, or `<root>/handoff.md`.
 
+**An orchestrator thread** — a session that runs work across several repos or worktrees, or from a folder that is not one — gets one fixed file outside any repo, in the folder the session works from, and it is overwritten in place each time. Don't stop to offer a branch: the file belongs to the thread, not to a branch.
+
+If `HANDOFF_POINTER_DIR` is set, also write the handoff's absolute path, as the file's only line, to `$HANDOFF_POINTER_DIR/$CLAUDE_CODE_SESSION_ID` (create the folder first), so a tool that waits on a fresh handoff can find it.
+
 ## Step 2 — What to capture
 
 Pull it from the session you've been in — don't make the user re-explain. Write for someone who remembers nothing: absolute paths, no "as discussed." If a section is genuinely empty, say so instead of padding it.
 
 1. **Goal** — what we're building and why. One paragraph.
 2. **Current State** — where it stands, concretely. What works, what doesn't.
-3. **Files in Flight** — what's open right now: absolute path plus a line on what's changing in each. This is what tells the next agent where to start reading.
+3. **Files in Flight** — what's open right now: absolute path plus a line on what's changing in each. This is what tells the next agent where to start reading. Delegated work goes here by location: worktree, branch, PR, and what to do with its report when it lands; an agent's name dies with the session.
 4. **Changed This Session** — what's already done, saved, or staged, as distinct from still in flight.
 5. **Failed Attempts** — what was tried, what happened, and why it failed. The most valuable section in the file, because it's what stops the next agent walking back down a dead end. "Tried X, didn't work, not sure why" is worth more than leaving it out.
-6. **Next Steps** — the single most important next action. List five and the next agent picks the easiest one; pick for them.
+6. **Next objective** — the one action to take next, already approved by the user, and how to tell it is done. Pick it for them: list five and the next agent picks the easiest. Never put an offered or proposed item here; a session that resumes on its own will start whatever this says.
+7. **Waiting on the user** — what needs their decision or go-ahead, each with the question to ask.
+8. **Later (do not start)** — parked work, so it is not lost and not begun.
 
-Add **Key Context** for non-obvious constraints or decisions, and **Open Questions** for anything the user still has to settle — only if they exist.
+Add **What worked** for approaches worth repeating, and **Key Context** for non-obvious constraints or decisions — only if they exist.
 
 ## Step 3 — Write it
 
-If a handoff for this branch already exists, replace it. It's a stale snapshot of the same work — but read its Failed Attempts first and carry forward anything you didn't already know. A bare `docs/handoff.md` left over from the old shared-file scheme isn't yours: don't read it or extend it, just mention it so it can be deleted.
+If a handoff for this branch (or thread) already exists, replace it. It's a stale snapshot of the same work — but read its Failed Attempts first and carry forward anything you didn't already know. A bare `docs/handoff.md` left over from the old shared-file scheme isn't yours: don't read it or extend it, just mention it so it can be deleted.
 
 ````markdown
 # Handoff — <short description of the work>
@@ -79,17 +85,25 @@ If a handoff for this branch already exists, replace it. It's a stale snapshot o
   **Result:** <what happened>
   **Why it failed:** <root cause, or "unknown — needs investigation">
 
-## Next Steps
+## Next objective
 
-1. <the one thing to do next>
+<the one approved action, and how to tell it is done>
+
+## Waiting on the user
+
+- <decision or go-ahead needed, with the question>
+
+## Later (do not start)
+
+- <parked work>
+
+## What worked
+
+<only if there are approaches worth repeating>
 
 ## Key Context
 
 <only if non-obvious context exists>
-
-## Open Questions
-
-<only if there are unresolved decisions>
 ````
 
 Drop the **Branch** line outside a git repo.
