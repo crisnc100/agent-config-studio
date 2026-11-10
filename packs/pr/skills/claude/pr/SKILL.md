@@ -38,23 +38,23 @@ titles: `style.sections`, each `## <title>` in that order, only those with `on: 
 JSON; no test you did not see run; no reviewer the summary does not name. When a fact is missing, say it is
 missing.
 
-**First, above the summary:** when the review is closed and it has unmet criteria (`review.criteria`) or deferred
-HIGH findings (`review.deferredHigh`), the deferred HIGH lines and unmet criteria go first, at the top, above every
-section, each line copied verbatim.
+**Nothing goes above the first section.** Deferred HIGH findings are listed first inside Deferred findings;
+unmet criteria (`review.criteria`) go in "Did it match the goal?" as not-done lines. Never paste the
+reviewer's raw lines into the body: the full text belongs only in the Review record, when the style turns it on.
 
 The sections, by id (default titles; the user's style may retitle any but Deferred findings):
 
 | id | Default title | What goes in it |
 |---|---|---|
 | `gif` | (no heading) | When `gif.url` is set: `![](<gif.url>)` as the first line. Off by default. |
-| `summary` | What this does | 2–3 plain sentences on the purpose, not the mechanics. |
-| `goal` | Did it match the goal? | Against `plan.outcome` and `plan.outOfScope`: ✅ asked and done, ⚠️ done but not asked, ❌ asked but not done, one line each. No plan: say there was no plan to check against. |
-| `changes` | What changed | The files grouped by purpose (`files`), one line each on why it changed; counts from `counts`. Group many small files into one line. |
+| `summary` | What this does and why | 2–3 plain sentences: what it does and why (the problem it solves), not the mechanics. |
+| `goal` | Did it match the goal? | Against `plan.outcome` and `plan.outOfScope`: ✅ asked and done, ⚠️ done but not asked, ❌ asked but not done, one line each. Each unmet criterion in `review.criteria` is a not-done line naming its criterion id (e.g. C2). No plan: say there was no plan to check against. |
+| `changes` | Files changed | The files grouped by purpose (`files`), one line each on why it changed; counts from `counts`. Group many small files into one line. |
 | `try` | How to try it | The commands or steps a reviewer runs to see it work. |
 | `review` | Review highlights | Who reviewed: the `review.reviewer` and `review.security` lines. From `review.findings`, each HIGH finding with status fixed: its id and `score` copied as given, and a one-line why from its `issue`. MEDIUMs and LOWs as counts only, from `review.bySeverity` (e.g. "3 MEDIUM: 2 fixed, 1 deferred"). When `review.findings` is null, `review.findingsNote` says why: use `review.fixed` and `review.counts` instead. |
-| `deferred` | Deferred findings | Every line of `review.deferred` copied verbatim, ids and scores included; "none" when it is empty. Plain words may go around the lines, never instead of them. |
+| `deferred` | Deferred findings | One entry per item in `review.deferredItems`, HIGHs first: the id and its `score` exactly as given (e.g. `x1 HIGH 18/100 (likelihood 2/10 × impact 9/10)`), then in plain words what could go wrong and when, why it was deferred (`reason`), and where it is tracked (`trackedIn`) when the reason names it. No file:line, function names, trigger commands or fix ideas unless the reader needs them to understand it. "none" when it is empty. |
 | `docs` | Docs and context | Docs updated? CLAUDE.md or AGENTS.md updated or created? New comments clear? ✅ or a one-line reason each, from `docs` (`codeWithoutDocs` lists code changed with no docs change). When the context pass ran, `docsTable` holds its rows: one line per row, the doc or the reason none is needed; `--check` fails a changed code file no row covers. |
-| `agent` | What the agent did | Short notes from `buildLog`: the decisions and why. No build log: what you decided in this session, briefly. |
+| `agent` | What the agent did | Off by default. Short notes from `buildLog`: the decisions and why. No build log: what you decided in this session, briefly. |
 | `quote` | Agent's take | One first-person sentence summing up the PR. |
 | `record` | Review record | Off by default. When on and the review is closed: `<details><summary>Review record</summary>`, then `review.summary` in a code block, then `</details>`. |
 
@@ -77,9 +77,10 @@ node "$PR" --check "${TMPDIR:-/tmp}/pr-body.md"        # same --base as step 1
 ```
 
 It prints `{ ok, problems, warnings }`. On exit 1, fix each problem in the body and run the check again; never open
-or update the PR while it fails. It checks only what must hold: the sections in the style's order, Deferred findings
-present and verbatim, deferred HIGHs and unmet criteria first, the record folded, and no sha, id or path that is not
-in the facts. Warnings are yours to judge.
+or update the PR while it fails. It checks only what must hold: the sections in the style's order, every deferred id
+in Deferred findings with its exact score on the same line, each unmet criterion in the goal section, nothing deferred
+above the first section, the record folded, and no sha, id or path that is not in the facts. Warnings are yours to
+judge.
 
 ## 4. Open or update the PR
 

@@ -25,6 +25,8 @@
  * review.mjs). Not there: state "absent". There but HEAD not closed: state "in-progress" with the gate's reason.
  * Closed: state "closed", with the --summary text, the --tier-json data and the summary's lines split out, plus each
  * finding (id, severity, score, status, one-line issue) and counts by severity, read from the review log --tier-json names.
+ * Each deferred line is also split into its parts (deferredItems), so the description can say it in plain words and
+ * the check can still hold it to its id and exact score.
  *
  * Docs table: the rows the context pass wrote, one per changed behavior, each naming its changed files and either the
  * docs that describe it, every claim with the file:line that backs it, or the reason no doc is needed. --check fails a
@@ -50,14 +52,14 @@ const GATE_SCRIPT = join(HOME, '.agent-config-studio', 'review-gate', 'review.mj
 
 export const DEFAULT_SECTIONS = [
   { id: 'gif', title: 'GIF', on: false, urls: [] },
-  { id: 'summary', title: 'What this does', on: true },
+  { id: 'summary', title: 'What this does and why', on: true },
   { id: 'goal', title: 'Did it match the goal?', on: true },
-  { id: 'changes', title: 'What changed', on: true },
+  { id: 'changes', title: 'Files changed', on: true },
   { id: 'try', title: 'How to try it', on: true },
   { id: 'review', title: 'Review highlights', on: true },
   { id: 'deferred', title: 'Deferred findings', on: true },
   { id: 'docs', title: 'Docs and context', on: true },
-  { id: 'agent', title: 'What the agent did', on: true },
+  { id: 'agent', title: 'What the agent did', on: false },
   { id: 'quote', title: "Agent's take", on: true },
   { id: 'record', title: 'Review record', on: false },
 ]
@@ -236,6 +238,41 @@ function docsTable(root, flag, plan, codeFiles, changed, branch) {
 
 /* ── the review gate ─────────────────────────────────────────────────── */
 
+// The parts of one deferred line, as the review gate writes it:
+//   <id> <SEV> <score> <file:line> — <issue>; Trigger: <trigger>[; also at a:1, b:2][; Deferred: <reason>[; Fix idea: <fix>]]
+//   <id> criterion <Cn> not met: <criterion>; recheck: <evidence>[; Deferred: <reason>[; Fix idea: <fix>]]
+// The issue text may hold its own semicolons, so each part is found by its label, never by splitting on ';'.
+// A line in neither shape keeps its id and raw text (kind "unknown"), so the check can still require the id.
+const SCORE = '(?:\\d+/100 \\(likelihood \\d+/10 × impact \\d+/10\\)|\\d+/100|unscored)'
+const CODE_LINE = new RegExp(`^(\\S+) (\\S+ ${SCORE}) (\\S+) — (.*)$`)
+const CRITERION_LINE = /^(\S+) criterion (\S+) not met: (.*)$/
+const TRACKED_RE = /https?:\/\/[^\s)>\]"']*[^\s)>\]"'.,;:]|(?<![\w&])#\d+\b/g
+function decision(rest) {
+  const at = rest.indexOf('; Deferred: ')
+  if (at < 0) return { head: rest, reason: null, fixIdea: null }
+  const tail = rest.slice(at + '; Deferred: '.length), fix = tail.indexOf('; Fix idea: ')
+  return { head: rest.slice(0, at), reason: fix < 0 ? tail : tail.slice(0, fix), fixIdea: fix < 0 ? null : tail.slice(fix + '; Fix idea: '.length) }
+}
+const tracked = (reason) => [...new Set(reason ? reason.match(TRACKED_RE) || [] : [])]
+export function parseDeferred(line) {
+  const crit = line.match(CRITERION_LINE)
+  if (crit) {
+    const { head, reason, fixIdea } = decision(crit[3])
+    const r = head.indexOf('; recheck: ')
+    return { id: crit[1], kind: 'criterion', severity: null, score: null, location: null, alsoAt: [], criterionId: crit[2],
+      criterion: r < 0 ? head : head.slice(0, r), recheck: r < 0 ? null : head.slice(r + '; recheck: '.length), reason, fixIdea, trackedIn: tracked(reason), line }
+  }
+  const code = line.match(CODE_LINE)
+  if (!code) return { id: line.split(' ')[0], kind: 'unknown', severity: null, score: null, location: null, alsoAt: [], reason: null, fixIdea: null, trackedIn: [], line }
+  const { head, reason, fixIdea } = decision(code[4])
+  const t = head.indexOf('; Trigger: ')
+  let trigger = t < 0 ? null : head.slice(t + '; Trigger: '.length)
+  const also = trigger?.match(/; also at ((?:[^,;\s]+:[^,;\s]+)(?:, [^,;\s]+:[^,;\s]+)*)$/)
+  if (also) trigger = trigger.slice(0, also.index)
+  return { id: code[1], kind: 'code', severity: code[2].split(' ')[0].toLowerCase(), score: code[2], location: code[3], alsoAt: also ? also[1].split(', ') : [],
+    issue: t < 0 ? head : head.slice(0, t), trigger, reason, fixIdea, trackedIn: tracked(reason), line }
+}
+
 export function splitSummary(text) {
   const lines = text.split('\n')
   const at = lines.indexOf(DEFERRED_TITLE)
@@ -247,6 +284,7 @@ export function splitSummary(text) {
   return {
     criteria: lines.filter((l) => /^\S+ criterion \S+ not met: /.test(l)),
     deferred,
+    deferredItems: deferred.map(parseDeferred),
     deferredHigh: deferred.filter((l) => /^\S+ HIGH\b/.test(l)),
     fixed: lines.filter((l) => /^\S+ \S+ .*: fixed; test: /.test(l)),
     reviewer: lines.filter((l) => l.startsWith('Reviewer: ')),
@@ -482,6 +520,9 @@ const comments = (body) => ranges(body, /<!--[\s\S]*?(?:-->|$)/g)
 const blank = (body, spans) => spans.reduce((t, [a, b]) => t.slice(0, a) + t.slice(a, b).replace(/[^\n]/g, ' ') + t.slice(b), body)
 const inside = (ranges, i) => ranges.some(([a, b]) => i >= a && i < b)
 const lineAt = (body, i) => body.slice(0, i).split('\n').length
+const escape = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+// Some one line of the text names the id as a word and, when given, also holds the exact score text.
+const mentions = (text, id, score) => text.split('\n').some((l) => new RegExp(`(?<![\\w-])${escape(id)}(?![\\w-])`).test(l) && (!score || l.includes(score)))
 
 function headings(body) {
   const out = []
@@ -578,17 +619,31 @@ export function check(body, f) {
   }
 
   if (closed) {
-    const head = heads.find((h) => h.title === DEFERRED_TITLE)
-    if (head) {
+    const sectionText = (title) => {
+      const head = heads.find((h) => h.title === title)
+      if (!head) return null
       const next = heads.find((h) => h.at > head.at)
-      const text = visible.slice(head.at, next ? next.at : body.length)
-      for (const line of f.review.deferred) if (!text.includes(line)) problems.push(`"Deferred findings" is missing this line, copied verbatim from the review summary: ${line}`)
+      return visible.slice(head.at, next ? next.at : body.length)
     }
-    const first = heads.length ? heads[0].at : body.length
-    for (const line of [...f.review.criteria, ...f.review.deferredHigh]) {
-      const at = visible.indexOf(line)
-      if (at < 0 || at > first) problems.push(`this goes first, above every section, verbatim: ${line}`)
+    const items = f.review.deferredItems || (f.review.deferred || []).map(parseDeferred)
+    const deferredText = sectionText(DEFERRED_TITLE)
+    if (deferredText !== null) for (const d of items) {
+      if (d.score && !mentions(deferredText, d.id, d.score)) problems.push(`"Deferred findings" is missing ${d.id} with its score as the summary gives it: ${d.id} ${d.score}`)
+      else if (d.kind === 'criterion' && !mentions(deferredText, d.id)) problems.push(`"Deferred findings" is missing ${d.id} (criterion ${d.criterionId} not met)`)
+      else if (!d.score && !mentions(deferredText, d.id)) problems.push(`"Deferred findings" is missing ${d.id}`)
     }
+    const criteria = f.review.criteria.map((line) => ({ line, id: line.match(CRITERION_LINE)?.[2] })).filter((c) => c.id)
+    const goal = sections.find((s) => s.id === 'goal')
+    const goalText = goal.on ? sectionText(goal.title) : null
+    if (goalText !== null) for (const c of criteria)
+      if (!mentions(goalText, c.id)) problems.push(`"${goal.title}" is missing unmet criterion ${c.id}, as a not-done line: ${c.line}`)
+    // Nothing goes above the first section: a deferred finding or unmet criterion there is the dump this check exists
+    // to stop, whether pasted raw or reworded around its id and score.
+    const top = visible.slice(0, heads.length ? heads[0].at : body.length)
+    for (const d of items) if (top.includes(d.line) || (d.score ? mentions(top, d.id, d.score) : d.kind === 'criterion' && mentions(top, d.criterionId)))
+      problems.push(`deferred findings go under "## ${DEFERRED_TITLE}", never above the first section: ${d.id}`)
+    for (const c of criteria) if (top.includes(c.line) || mentions(top, c.id))
+      problems.push(`unmet criteria go in "${goal.title}", never above the first section: ${c.id}`)
     const raw = f.review.summary.split('\n').find((l) => l.startsWith('Review: '))
     if (raw) for (let i = body.indexOf(raw); i >= 0; i = body.indexOf(raw, i + 1)) {
       if (!inside(fold, i)) { problems.push(`the raw review record ("${raw}") is outside <details>`); break }
