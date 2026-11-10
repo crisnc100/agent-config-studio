@@ -226,6 +226,7 @@ test('12 a whole-line comment edit passes in a file with regex literals, the ski
     ['src/u.mjs', REGEXES, REGEXES.replace('export const n = 1 // n', 'export const n = 1 // the n'), 'a trailing comment on a code line'],
     ['src/v.mjs', REGEXES, REGEXES.replace('// kept as plain text.', '/* kept as plain text. */'), 'a block-comment delimiter'],
     ['src/w.mjs', REGEXES, REGEXES.replace("|^test_'/", "|^test_x'/"), 'a changed regex'],
+    ['src/z.js', 'const q = a /"/ 2\n// note\n', 'const q = a /"/ 2\n// a note\n', 'a slash with a quote after an identifier (a /"/), which may divide'],
     ['src/x.js', 'function q(s) { return /"/.test(s) }\n// note\n', 'function q(s) { return /"/.test(s) }\n// a note\n', 'a regex after a keyword, which could be a division'],
     ['src/y.js', "const a = b\n  / 2; const s = '/'\n// note\n", "const a = b\n  / 2; const s = '/'\n// a note\n", 'a slash starting a line after an operand'],
     ['.env.example', '# The port\nPORT=3000\n', '# The port\nPORT=4000\n', 'a changed .env value'],
