@@ -232,7 +232,7 @@ async function api(method, path, body) {
 
 /* ── notices ─────────────────────────────────────────────────────────── */
 let noticeTimer;
-function notice(kind, text, list, sticky) {
+function notice(kind, text, list, sticky, action) {
   clearTimeout(noticeTimer);
   const slot = $('notice-slot');
   slot.innerHTML = '';
@@ -244,6 +244,12 @@ function notice(kind, text, list, sticky) {
     const ul = el('ul');
     list.forEach((x) => ul.appendChild(el('li', null, x)));
     n.appendChild(ul);
+  }
+  // One follow-up the notice offers (e.g. "Review and update" after a save left the model guide behind).
+  if (action) {
+    const b = el('button', 'btn primary notice-action', action.label);
+    b.onclick = () => { clearNotice(); action.run(); };
+    n.appendChild(b);
   }
   slot.appendChild(n);
   if (!sticky) noticeTimer = setTimeout(() => { slot.innerHTML = ''; }, 6000);
@@ -4301,6 +4307,8 @@ const M = {
   describe: { text: '', busy: false, error: null, proposal: null },
   // The model guide block per target (GET /api/model-guide), and any open proposal by target key.
   guide: null, guideError: null, guideProposals: {},
+  // Targets whose update is under review at the top of Models (the banner's "Review and update").
+  guideTop: new Set(),
 };
 
 function paintModelsBadge(n) {
@@ -4376,8 +4384,11 @@ async function paintModels(load) {
     n.appendChild(el('div', 'models-error-text', m.registryError));
     box.appendChild(n);
   }
+  // The out-of-date guide leads the page: one banner, and the review right under it (no scrolling down).
   const stale = guideStrip();
   if (stale) box.appendChild(stale);
+  const review = guideReviewTop();
+  if (review) box.appendChild(review);
   if (M.roles?.resolverStale) {
     const b = el('div', 'models-resolver-stale', 'Your installed model-id is older than this version of ACS. Run: acs install-model-id');
     b.setAttribute('role', 'status');
@@ -4669,6 +4680,11 @@ async function rolesWrite(path, body, okText, done, errKey) {
   // Saved either way: a conflict is a warning, never a refusal.
   const added = (M.roles?.conflicts || []).filter((c) => !before.has(conflictKey(c)));
   if (added.length) notice('warn', `${okText} It saved, but now:`, added.map(conflictText), true);
+  // A roles write can leave the model guide behind: say so at the save, with the button that fixes it.
+  else if (path.startsWith('/api/models/roles') && staleGuides().length) {
+    const n = staleGuides().length;
+    notice('ok', `${okText.replace(/\.$/, '')}. The model guide in ${plural(n, 'file')} needs updating.`, null, true, { label: 'Review and update', run: reviewGuide });
+  }
   return true;
 }
 
@@ -5287,15 +5303,36 @@ function guideStrip() {
   if (!stale.length) return null;
   const strip = el('div', 'guide-stale');
   strip.setAttribute('role', 'status');
-  strip.appendChild(el('span', null, `Model guide is out of date in ${stale.length} file${stale.length === 1 ? '' : 's'} — `));
-  const go = el('button', 'btn ghost models-alert-btn guide-review', 'Review update');
-  go.onclick = async () => {
-    go.disabled = true;
-    for (const t of stale) if (!M.guideProposals[t.key]) await proposeGuide(t.key, 'update', false);
-    paintModels();
-  };
+  strip.appendChild(el('span', 'guide-stale-text', `Your model guide in ${plural(stale.length, 'file')} is out of date`));
+  const go = el('button', 'btn primary guide-review', 'Review and update');
+  go.disabled = stale.every((t) => M.guideTop.has(t.key) && M.guideProposals[t.key]);
+  go.onclick = () => { go.disabled = true; reviewGuide(); };
   strip.appendChild(go);
   return strip;
+}
+
+/** Propose an update for every out-of-date file and show the diffs at the top of Models, Accept and Cancel beside each. */
+async function reviewGuide() {
+  // The save's "needs updating" notice has done its job once the review is open.
+  if ($('notice-slot').querySelector('.notice-action')) clearNotice();
+  if (S.view !== 'models') { openModels?.(); }
+  for (const t of staleGuides()) {
+    M.guideTop.add(t.key);
+    if (!M.guideProposals[t.key]) await proposeGuide(t.key, 'update', false);
+  }
+  if (S.view !== 'models' || !M.data) return;
+  paintModels();
+  $('content').scrollTop = 0;
+  $('content').querySelector('.guide-review-top .guide-accept')?.focus();
+}
+
+/** The proposals opened from the banner, right under it. */
+function guideReviewTop() {
+  const keys = [...M.guideTop].filter((k) => M.guideProposals[k]);
+  if (!keys.length) return null;
+  const box = el('div', 'guide-review-top');
+  for (const k of keys) box.appendChild(guideProposalView(M.guideProposals[k]));
+  return box;
 }
 
 /** One proposal, shown as a diff; nothing is written until Accept. */
@@ -5360,12 +5397,15 @@ function guideRow(t) {
     const others = t.sharedWith.map((k) => guideByKey(k)?.path || k).join(', ');
     note(`Shared with ${others}: it is the same file, so a change here changes every target sharing it.`, 'guide-shared');
   }
-  if (M.guideProposals[t.key]) row.appendChild(guideProposalView(M.guideProposals[t.key]));
+  // An update opened from the banner is shown at the top, not twice.
+  if (M.guideProposals[t.key] && M.guideTop.has(t.key)) note('Its update is open at the top of the page.', 'guide-at-top');
+  else if (M.guideProposals[t.key]) row.appendChild(guideProposalView(M.guideProposals[t.key]));
   return row;
 }
 
 function guideProposalView(p) {
   const box = el('div', 'describe-proposal guide-proposal');
+  box.dataset.target = p.target;
   const verb = { install: 'Add the model guide to', update: 'Update the model guide in', remove: 'Remove the model guide from' }[p.action];
   if (p.overwritesEdits) {
     const w = el('div', 'notice error guide-overwrites');
@@ -5389,12 +5429,14 @@ function guideProposalView(p) {
     try { r = await api('POST', '/api/model-guide/accept', { id: p.id }); }
     catch (e) {
       delete M.guideProposals[p.target];
+      M.guideTop.delete(p.target);
       notice('error', e.message, null, true);
       await loadGuide();
       return;
     }
     delete M.guideProposals[p.target];
-    for (const k of p.sharedWith || []) delete M.guideProposals[k];
+    M.guideTop.delete(p.target);
+    for (const k of p.sharedWith || []) { delete M.guideProposals[k]; M.guideTop.delete(k); }
     const done = { install: 'Model guide added to', update: 'Model guide updated in', remove: 'Model guide removed from' }[p.action];
     if (r.warnings?.length) notice('error', `${done} ${p.path}, with a warning:`, r.warnings, true);
     else notice('ok', `${done} ${p.path}.`);
@@ -5403,6 +5445,7 @@ function guideProposalView(p) {
   const cancel = el('button', 'btn ghost guide-cancel', 'Cancel');
   cancel.onclick = async () => {
     delete M.guideProposals[p.target];
+    M.guideTop.delete(p.target);
     try { await api('POST', '/api/model-guide/reject', { id: p.id }); } catch {}
     paintModels();
   };

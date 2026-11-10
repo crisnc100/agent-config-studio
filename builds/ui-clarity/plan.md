@@ -240,3 +240,20 @@ Cris: "I miss the bars on the homepage for accounts and usage." C2 had cut Home'
   - f2: a "Used by" lookup that answers after you left Models, or after a newer press, keeps its result and opens nothing.
   - The skill wizard's reply dialog closes when its error is gone.
   - Three tests Sol rated weakened are tightened in the test-only commit.
+
+## PR H — model guide review at the top; orange/amber contrast
+
+- **Model guide:**
+  - An out-of-date guide is one banner at the top of Models, above Roles: "Your model guide in N files is out of date", with a primary "Review and update". It proposes an update per real file and shows each diff right under the banner, with Accept and Cancel beside it (M.guideTop). The rows below say "Its update is open at the top of the page" rather than showing the diff twice.
+  - A roles write that leaves the guide behind says so in its notice ("Role X saved. The model guide in N files needs updating.") with the same button. notice() gained an optional action; opening the review clears that notice.
+  - The accept path is unchanged: diff first, the server's backup, and a 409 re-reads the status.
+- **Contrast:**
+  - New ui-words sweep: 25 orange/amber buttons and badges, light and dark, on bg/panel/panel-2. Text ≥4.5:1 against its own fill, and the edge (border, else fill) ≥3:1 against the page; quiet text-only buttons are checked for text only.
+  - Fixes:
+    - Amber and accent badges get solid var(--amber) / var(--accent) borders; the translucent ones were 1.1–2.6:1.
+    - The borderless amber badges (item-badge.warn, mem-badge warn/folders-missing, home-needs) get one too.
+    - A new --amber-ink (light #6b4e0b) for amber text on its tint, and changed-mark uses --accent-ink; four badges were 4.28–4.40:1 on light panel-2.
+- **Browser** (seeded server; guide installed, then reviewer changed from opus to opus+sol in the UI):
+  - The save notice and the banner both said 3 files.
+  - "Review and update" showed 3 diffs under the banner.
+  - Accepting CLAUDE.md dropped the banner to 2 files.
