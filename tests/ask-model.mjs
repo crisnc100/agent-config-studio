@@ -664,13 +664,14 @@ console.log('\nask-model: model-id --install never writes through a link planted
 console.log('\nask-model: claude never loads the repo\'s own settings or hooks');
 {
   // A headless claude run in a repo honours its .claude/settings.json and settings.local.json hooks; only
-  // --setting-sources user keeps them out (and still reads your login).
-  for (const extra of [[], ['--investigate']]) {
-    const r = ask(['--family', 'fable', '--cwd', WORK, ...extra]);
-    const at = r.argv?.indexOf('--setting-sources') ?? -1;
-    ok(`claude${extra.length ? ' --investigate' : ''}: --setting-sources user, given once`,
-       at !== -1 && r.argv[at + 1] === 'user' && r.argv.filter((a) => a === '--setting-sources').length === 1, show(r));
-  }
+  // --setting-sources keeps them out (and still reads your login). --investigate loads no settings file at all.
+  const r = ask(['--family', 'fable', '--cwd', WORK]);
+  const at = r.argv?.indexOf('--setting-sources') ?? -1;
+  ok('claude: --setting-sources user, given once',
+     at !== -1 && r.argv[at + 1] === 'user' && r.argv.filter((a) => a.startsWith('--setting-sources')).length === 1, show(r));
+  const i = ask(['--family', 'fable', '--cwd', WORK, '--investigate']);
+  ok('claude --investigate: --setting-sources= (no source), given once, so neither the repo\'s settings nor your own load',
+     i.argv?.includes('--setting-sources=') && i.argv.filter((a) => a.startsWith('--setting-sources')).length === 1 && !i.argv.includes('user'), show(i));
 }
 
 console.log('\nask-model: grok runs with Claude\'s and Cursor\'s hooks off, and never beside a repo\'s .grok/hooks');
