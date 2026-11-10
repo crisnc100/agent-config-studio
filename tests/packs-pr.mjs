@@ -1,7 +1,8 @@
 /**
  * The pr pack through acs packs (builds/pr-description/plan.md C5): the twin helpers are one script, each SKILL.md
- * uses its own harness's path and pins the workflow (helper first, --check before gh, edit when a PR exists, deferred
- * HIGHs first, no invented facts, the three review states); install puts the skill, the helper and the example style
+ * uses its own harness's path and pins the workflow (helper first, --check before gh, edit when a PR exists, nothing
+ * above the first section, deferred findings in plain words with their ids and scores, no invented facts, the three
+ * review states); install puts the skill, the helper and the example style
  * into both harness folders and no style file; the installed helper creates it on first run; uninstall removes the
  * skill folders and keeps the style file. Temp HOME, stub CLIs; no model CLI and no gh write is ever run.
  */
@@ -33,15 +34,17 @@ for (const h of ['claude', 'codex']) {
   ok(`${h}: create and edit both take --body-file`, /gh pr create [^\n]*--body-file/.test(body) && /gh pr edit [^\n]*--body-file/.test(body));
   ok(`${h}: an existing PR is edited, not created again`, /pr\.number[^\n]*gh pr edit|PR already exists[^\n]*edit/i.test(body));
   ok(`${h}: --check failing means fix and check again, never open the PR`, /exit 1[^\n]*fix[^\n]*(again|rerun)/i.test(body));
-  ok(`${h}: deferred HIGHs and unmet criteria go first, above the summary`, /deferred HIGH[^\n]*criteria[^\n]*(first|top)[^\n]*above/i.test(body));
-  ok(`${h}: deferred lines are copied verbatim, with their ids and scores`, /verbatim[^\n]*(ids?|scores)/i.test(body));
+  ok(`${h}: nothing goes above the first section: deferred HIGHs lead Deferred findings, unmet criteria are not-done lines in the goal section`,
+    /nothing goes above the first section/i.test(body) && /deferred HIGH[^\n]*first[^\n]*Deferred findings/i.test(body) && /unmet criteri[^\n]*Did it match the goal\?[^\n]*not.done/i.test(body) && !/above every section/i.test(body));
+  ok(`${h}: each deferred finding keeps its id and exact score, then plain words: what could go wrong, why deferred, where tracked`,
+    /`review\.deferredItems`/.test(body) && /id and[^\n]*score[^\n]*exactly/i.test(body) && /what could go wrong[^\n]*why it was deferred[^\n]*tracked/i.test(body) && !/copied verbatim/i.test(body));
   ok(`${h}: never invent facts the helper did not give`, /never invent/i.test(body));
   ok(`${h}: the three review states, and "not reviewed" never for a review in progress`, body.includes('not reviewed (no review gate)') && body.includes('review in progress — not closed at this commit') && /never write "not reviewed" for a review in progress/i.test(body));
   ok(`${h}: gh missing → a plain message and nothing written`, /`?gh`? is (missing|not installed)[^\n]*nothing/i.test(body));
   ok(`${h}: Review highlights come from the findings in the facts: fixed HIGHs with their scores, MEDIUM and LOW as counts`, /`review\.findings`[^\n]*HIGH[^\n]*`?score`?/.test(body) && /`review\.bySeverity`/.test(body) && /`review\.findingsNote`/.test(body));
   ok(`${h}: temp files use \${TMPDIR:-/tmp}, never a bare $TMPDIR`, body.includes('${TMPDIR:-/tmp}/pr-body.md') && !/\$TMPDIR\b/.test(body));
   ok(`${h}: an in-progress review still gets Deferred findings`, /"in-progress"[^\n]*\n?[^\n]*Deferred findings[^\n]*(stays|keep)/i.test(body));
-  ok(`${h}: the style file and its sections are named`, body.includes('~/.agent-config-studio/pr/style.json') && ['What this does', 'Did it match the goal?', 'What changed', 'How to try it', 'Review highlights', 'Deferred findings', 'Docs and context', 'What the agent did', "Agent's take", 'Review record'].every((t) => body.includes(t)));
+  ok(`${h}: the style file and its sections are named`, body.includes('~/.agent-config-studio/pr/style.json') && ['What this does and why', 'Did it match the goal?', 'Files changed', 'How to try it', 'Review highlights', 'Deferred findings', 'Docs and context', 'What the agent did', "Agent's take", 'Review record'].every((t) => body.includes(t)));
 }
 
 console.log('\npr: install, use, uninstall');

@@ -8,7 +8,7 @@
     },
     {
       "id": "summary",
-      "title": "What this does",
+      "title": "What this does and why",
       "on": true
     },
     {
@@ -18,7 +18,7 @@
     },
     {
       "id": "changes",
-      "title": "What changed",
+      "title": "Files changed",
       "on": true
     },
     {
@@ -44,7 +44,7 @@
     {
       "id": "agent",
       "title": "What the agent did",
-      "on": true
+      "on": false
     },
     {
       "id": "quote",
