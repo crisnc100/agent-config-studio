@@ -210,3 +210,41 @@ test('11 the script says the gate never trusts its code-line check', () => {
   const text = readFileSync(SCRIPT, 'utf8')
   assert.match(text, /never trusts? (it|this check)/i)
 })
+// A file like pr-facts.mjs: regex literals holding quotes and slashes, one starting a line after an operator.
+const REGEXES = ['const TESTS = /(^|\\/)(tests?)\\/|\\.(test|spec)\\.[^/]+$|"x"/', 'export const kind = (name) => TESTS.test(name) ||',
+  "  /\\.(test|spec)\\.[^/]+$|_test\\.[^/]+$|^test_'/.test(name)", "const esc = (t) => t.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')",
+  '// A two-line comment: "quoted", (in parens) and ✅,', '// kept as plain text.', 'export const n = 1 // n', ''].join('\n')
+test('12 a whole-line comment edit passes in a file with regex literals, the skill\'s docs table and .env comments pass; code still fails', () => {
+  const pass = [
+    ['src/r.mjs', REGEXES, REGEXES.replace('// kept as plain text.', '// reworded: "still quoted" (still in parens) ✅.')],
+    ['src/s.mjs', REGEXES, REGEXES.replace('// A two-line comment: "quoted", (in parens) and ✅,\n', '')],
+    ['.env.example', '# The port it listens on\nPORT=3000\n', '# The port the server listens on (default "3000")\nPORT=3000\n'],
+    ['config/.env.sample', '# A key\nKEY=x\n', '# The API key\nKEY=x\n'],
+  ]
+  const fail = [
+    ['src/t.mjs', REGEXES, REGEXES.replace('export const n = 1', 'export const n = 2'), 'a changed code line'],
+    ['src/u.mjs', REGEXES, REGEXES.replace('export const n = 1 // n', 'export const n = 1 // the n'), 'a trailing comment on a code line'],
+    ['src/v.mjs', REGEXES, REGEXES.replace('// kept as plain text.', '/* kept as plain text. */'), 'a block-comment delimiter'],
+    ['src/w.mjs', REGEXES, REGEXES.replace("|^test_'/", "|^test_x'/"), 'a changed regex'],
+    ['src/x.js', 'function q(s) { return /"/.test(s) }\n// note\n', 'function q(s) { return /"/.test(s) }\n// a note\n', 'a regex after a keyword, which could be a division'],
+    ['src/y.js', "const a = b\n  / 2; const s = '/'\n// note\n", "const a = b\n  / 2; const s = '/'\n// a note\n", 'a slash starting a line after an operand'],
+    ['.env.example', '# The port\nPORT=3000\n', '# The port\nPORT=4000\n', 'a changed .env value'],
+    ['.env.example', 'PORT=3000 # port\n', 'PORT=3000 # the port\n', 'a trailing .env comment'],
+  ]
+  for (const [p, a, b] of pass) {
+    assert.deepEqual(verdicts([[p, a, b]]), { [p]: true }, p)
+    git('reset', '-q', '--hard', 'HEAD~2')
+  }
+  for (const [p, a, b, why] of fail) {
+    assert.deepEqual(verdicts([[p, a, b]]), { [p]: false }, `${p}: ${why}`)
+    git('reset', '-q', '--hard', 'HEAD~2')
+  }
+  const table = commit({ 'builds/v01/docs-table.json': '{ "rows": [] }\n' })
+  assert.equal(run(['--check-commit', table]).status, 0, 'the docs table the skill writes')
+  const edited = commit({ 'builds/v01/docs-table.json': '{ "rows": [{ "behavior": "b", "files": ["src/app.js"], "none": "internal" }] }\n' })
+  assert.equal(run(['--check-commit', edited]).status, 0, 'an edit to it')
+  for (const p of ['builds/v01/other.json', 'builds/v01/sub/docs-table.json', 'src/builds/v01/docs-table.json']) {
+    const sha = commit({ [p]: '{}\n' })
+    assert.ok(run(['--check-commit', sha]).json.problems.some((x) => x.startsWith(`${p}: a code line changed`)), p)
+  }
+})

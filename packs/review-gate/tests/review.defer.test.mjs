@@ -379,3 +379,15 @@ test('D17 a recheck and a fix check that straddle a tree-preserving amend close,
 function isAncestorOf(a, b) {
   return run('git', ['merge-base', '--is-ancestor', a, b]).status === 0
 }
+test('D18 a deferred finding whose issue, trigger or reason spans lines stays one summary line, in --summary and --deferred', () => {
+  const review = reviewed([scored()])
+  fixChecked(review, [scored({ issue: 'three leaks.\n\nThe second paragraph.\n  The third, indented.', quote: 'export const one = 3', trigger: 'importing\nthree' })])
+  closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later,\nin its own PR', fix: 'guard\nthree' } })
+  const summary = script(['--summary']); allowed(summary)
+  const lines = summary.stdout.trim().split('\n')
+  const at = lines.indexOf('Deferred findings')
+  assert.deepEqual(lines.slice(at + 1), ['x1 MEDIUM 25/100 (likelihood 5/10 × impact 5/10) src/one.js:1 — three leaks. The second paragraph. The third, indented.; ' +
+    'Trigger: importing three; Deferred: later, in its own PR; Fix idea: guard three'], summary.stdout)
+  const deferred = script(['--deferred']); allowed(deferred)
+  assert.match(deferred.stdout, / x1 MEDIUM 25\/100 \(likelihood 5\/10 × impact 5\/10\) src\/one\.js:1 — three leaks\. The second paragraph\. The third, indented\.; Trigger: importing three; Deferred: later, in its own PR; Fix idea: guard three$/m)
+})
