@@ -594,8 +594,11 @@ never model ids, and points at `model-id` for the current id.
   the whole file before and after, and nothing is written until you accept.
   Accept is refused if the file changed since the diff was made. Every write is
   versioned in history.
-- After you change roles or flavor, the panel shows which files' guides are out
-  of date and offers the update as a diff. It never rewrites a file on its own.
+- When roles or flavor change, a banner at the top of Models says how many
+  files' guides are out of date. **Review and update** opens each file's diff
+  right under it, with **Accept** and **Cancel**. Saving a role that leaves the
+  guide behind also shows a notice with the same button. ACS never rewrites a
+  file on its own.
 - A harness whose folder does not exist reads "Not installed"; ACS never
   creates it. A missing file in an existing folder is created holding only the
   block. A symlinked file is written in place, so the link stays a link. Broken
