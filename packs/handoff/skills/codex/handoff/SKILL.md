@@ -13,16 +13,16 @@ Find the project root (walk up for `.git`, `package.json`, `pyproject.toml`, `CL
 - `docs/` exists → `docs/handoff.md`
 - else → `<project-root>/handoff.md`
 
-An orchestrator thread — a session that runs work across several repos or worktrees, or from a folder that is not one — gets one fixed file outside any repo, in the folder the session works from, overwritten in place each time.
+An orchestrator thread — a session that runs work across several repos or worktrees, or from a folder that is not one — instead writes `HANDOFF-<thread>.md` (a short name for the work) in the nearest folder at or above the working folder that is not inside a git repo, reusing an existing `HANDOFF-*.md` there. It is replaced in place each time, without asking.
 
-Tell the user the path before writing. If a handoff already exists there, ask whether to replace, append a dated section, save as `handoff-YYYY-MM-DD.md`, or cancel. Never silently overwrite.
+Tell the user the path before writing. If a handoff already exists there (other than a thread file), ask whether to replace it, save as `handoff-YYYY-MM-DD.md`, or cancel. Never silently overwrite. Before replacing any handoff, read its Failed Attempts, Waiting on the user and Later (do not start), and carry forward every item not known to be resolved. One file holds one Next objective.
 
 ## Content (pull from THIS session; don't make the user re-explain)
 
 Required, in order:
 1. **Goal** — what we're building and why. One paragraph.
 2. **Current State** — where it stands, concretely.
-3. **Files in Flight** — active files with absolute paths, one line each on what's changing. Delegated work goes here by location: worktree, branch, PR, and what to do with its report; an agent's name dies with the session.
+3. **Files in Flight** — active files with absolute paths, one line each on what's changing. Delegated work goes here by location: worktree, branch, PR, and what to do with its report: only steps the user already approved; anything else is "bring the report to the user", under Waiting on the user. An agent's name dies with the session.
 4. **Changed This Session** — what's done or staged (distinct from in-flight).
 5. **Failed Attempts** — what was tried, what happened, why it failed. The most valuable section; it stops the next agent from repeating dead ends. None → say "None so far."
 6. **Next objective** — the one action to take next, already approved by the user, and how to tell it is done. Never put an offered or proposed item here.
