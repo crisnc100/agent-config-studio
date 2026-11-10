@@ -71,7 +71,7 @@ The orchestrator plans in phases and advises when asked; the implementer works a
 **Phase rule.** plan.md must name the phases and their pass/fail criteria. End a phase before later work builds on it (database changes, data passed between parts or shared code), whenever it touches riskPaths (sign-in, money, deleting data, migrations or security), or after over 400 changed lines since the last review. Everything else waits for the one review at the PR.
 
 1. The orchestrator groups plan steps into **phases** (a coherent chunk with one checkpoint). Each phase goes to the implementer subagent as a self-contained brief: goal, the steps with their pass/fail checks, files in scope, constraints (no scope creep, no new deps unless the plan names them), and the callback contract below.
-2. The implementer proceeds through the phase on its own, running the deterministic checks (`verify.sh` / tests) after each step and writing deliberate choices to log.md. Builders commit at every phase end, including the build folder before each review; they never push, open a PR, or run reviews, grades or other models themselves. The orchestrator handles those checks.
+2. The implementer proceeds through the phase on its own, running the deterministic checks (`verify.sh` / tests) after each step and writing deliberate choices to log.md. Tests and suites run in the foreground, with a timeout long enough to finish; a builder never ends a turn waiting on a background job. Builders commit at every phase end, including the build folder before each review; they never push, open a PR, or run reviews, grades or other models themselves. The orchestrator handles those checks.
 3. **Callback contract — the implementer comes back ONLY when:**
    - the spec does not determine a choice it must make;
    - it needs to deviate from the plan;
@@ -79,7 +79,7 @@ The orchestrator plans in phases and advises when asked; the implementer works a
    - it hits a scope or architecture decision;
    - the phase is complete (the normal checkpoint).
    Every callback carries a **recommended answer** so the orchestrator can reply in one line. Anything derivable from the brief, the plan, or the repo: resolve it and keep moving.
-4. The orchestrator answers callbacks (the agent continues with its context intact), reviews the phase checkpoint against `plan.md` — right direction? bar still reachable? — then dispatches the next phase, or corrects course and re-issues this one. Callback frequency is itself a signal: three or more callbacks in one phase means the plan under-specified it — fix `plan.md` and re-issue rather than answering one-offs; zero callbacks through a genuinely complex phase means review that checkpoint harder, not lighter.
+4. The orchestrator answers callbacks (the agent continues with its context intact), reviews the phase checkpoint against `plan.md` — right direction? bar still reachable? — then dispatches the next phase, or corrects course and re-issues this one. Callback frequency is itself a signal: three or more callbacks in one phase means the plan under-specified it — fix `plan.md` and re-issue rather than answering one-offs; zero callbacks through a genuinely complex phase means review that checkpoint harder, not lighter. A builder that goes idle without a callback or a phase-complete report is stalled: message it then, rather than waiting on it.
 5. **Codex-lane steering uses session resume, not re-invocation.** Capture the `thread_id` from the first phase's `--json` output and keep it for the whole build. Every callback answer and every subsequent phase goes through `codex exec resume <thread_id>` — codex continues with its full context intact, so a one-line answer stays a one-line answer instead of a rebuilt brief. Only start a fresh session if you are deliberately resetting a poisoned context.
 
 **Advisor consult points (orchestrator only).** When the advisor skill is installed, use it at exactly two moments: (a) Understand/Shape while scope is still being set, before `plan.md` exists — once the plan is written, the Bounce is the adversarial gate, don't double-spend; (b) a builder callback raises a scope/architecture call the orchestrator itself is unsure of — consult `/advisor`, validate the advice, answer the builder in one line. Builders never invoke /advisor; a builder's route to advice IS the callback contract. One chain of command.
@@ -119,7 +119,7 @@ ask-model picks the CLI from the id, keeps it read-only with no MCP, and checks 
 ```bash
 # A named effort wins; else that family's effort in the builder role (its members[] entry, else the role's
 # effort); else the family's flavor effort. Still empty: none is set, so the calls leave the flag out.
-[ -n "$EFFORT" ] || EFFORT=$(model-id --effort "$BUILDER" --role builder --no-alt)
+[ -n "$EFFORT" ] || EFFORT=$(model-id --effort "$BUILDER" --role builder --no-alt || true)
 EFFORT_FLAG=(); [ -z "$EFFORT" ] || EFFORT_FLAG=(-c "model_reasoning_effort=$EFFORT")   # never an empty effort
 ```
 
@@ -130,7 +130,7 @@ codex exec --skip-git-repo-check --sandbox workspace-write -m "$(model-id "$BUIL
   "Objective: <what exists when this phase is done>
    Read first: plan.md, context.md, <relevant files>
    Steps: <each step with its pass/fail check>
-   Constraints: <files in scope; no new deps unless plan.md names them; no scope creep; commit at phase end; never push, open a PR or run reviews, grades or other models>
+   Constraints: <files in scope; no new deps unless plan.md names them; no scope creep; commit at phase end; run tests in the foreground and never end a turn waiting on a background job; never push, open a PR or run reviews, grades or other models>
    Validate: ./verify.sh — run after every step, read the failure, fix, re-run
    Stop when: every check in this phase passes, OR a choice is not determined by this brief —
               then stop and state the choice with your recommended answer.
