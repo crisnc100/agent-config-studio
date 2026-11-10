@@ -772,9 +772,9 @@ function which(name) {
 /**
  * Every file whose state the after-call check compares: the work tree's .git (a folder, or a linked worktree's
  * gitfile), the git dir's commondir, the config and config.worktree of the git dir and common dir, and each file those
- * configs include (include.path and includeIf.*.path, followed as git follows them). The after-call git never reads
- * any of them, so a change here cannot make the check run a command; it is reported because the caller's next git
- * would read it. `git` is the confined git (confinedGit), which reads only the file it is given.
+ * configs include (include.path, and every includeIf.*.path whatever its condition, up to git's 10 levels). The
+ * after-call git never reads any of them, so a change here cannot make the check run a command; it is reported
+ * because the caller's next git would read it. `git` is the confined git (confinedGit), which reads only the file it is given.
  */
 function guardFiles(repo, git) {
   const files = [path.join(repo.root, '.git'), path.join(repo.gitDir, 'commondir'),
@@ -835,8 +835,10 @@ function locateRepo(bin, cwd, env = process.env) {
 }
 
 /**
- * The caller's env without the variables git itself clears before it runs in a submodule (`rev-parse
- * --local-env-vars`), so a GIT_DIR or GIT_WORK_TREE meant for the superproject cannot answer for a submodule.
+ * The caller's env without the variables `rev-parse --local-env-vars` lists, so a GIT_DIR or GIT_WORK_TREE meant for
+ * the superproject cannot answer for a submodule. This is stricter than git: that list includes GIT_CONFIG_PARAMETERS
+ * and GIT_CONFIG_COUNT, which git keeps when it runs in a submodule, so a caller's `git -c` settings are not applied
+ * when a submodule is located here.
  */
 function localEnv(bin) {
   const r = spawnSync(bin, ['rev-parse', '--local-env-vars'], { encoding: 'utf8' });
@@ -973,7 +975,7 @@ function readRepo(bin, repo, pinning) {
  * the repository are not seen. --no-optional-locks: reading must not write the index.
  * Before the call git runs once as the caller would, to find the repository (locateRepo); every read runs confined
  * git (confinedGit). `pin`, the before-snapshot, is checked first: when a guarded file changed, git is not run at all
- * and the result is { tampered }, naming them.
+ * and the result is { tampered }, naming them. A repository that can't be read after the call gives null.
  */
 function snapshot(cwd, pin = null) {
   // git from an absolute PATH entry only (which), so a repo's ./git never answers for the work tree.
