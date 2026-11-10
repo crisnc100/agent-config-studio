@@ -4679,12 +4679,13 @@ async function rolesWrite(path, body, okText, done, errKey) {
   await loadRoles();
   // Saved either way: a conflict is a warning, never a refusal.
   const added = (M.roles?.conflicts || []).filter((c) => !before.has(conflictKey(c)));
-  if (added.length) notice('warn', `${okText} It saved, but now:`, added.map(conflictText), true);
-  // A roles write can leave the model guide behind: say so at the save, with the button that fixes it.
-  else if (path.startsWith('/api/models/roles') && staleGuides().length) {
-    const n = staleGuides().length;
-    notice('ok', `${okText.replace(/\.$/, '')}. The model guide in ${plural(n, 'file')} needs updating.`, null, true, { label: 'Review and update', run: reviewGuide });
-  }
+  // A roles write can leave the model guide behind: the final notice says so with the button that fixes it,
+  // and keeps whatever the save already had to say (its warnings, a new conflict) in its list.
+  const stale = path.startsWith('/api/models/roles') ? staleGuides().length : 0;
+  const reminder = stale ? ` The model guide in ${plural(stale, 'file')} needs updating.` : '';
+  const action = stale ? { label: 'Review and update', run: reviewGuide } : undefined;
+  if (added.length) notice('warn', `${okText} It saved, but now:`, [...added.map(conflictText), ...(reminder ? [reminder.trim()] : [])], true, action);
+  else if (stale) notice('ok', `${okText.replace(/\.$/, '')}.${reminder}`, r.warnings?.length ? r.warnings : null, true, action);
   return true;
 }
 

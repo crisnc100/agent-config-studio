@@ -257,3 +257,7 @@ Cris: "I miss the bars on the homepage for accounts and usage." C2 had cut Home'
   - The save notice and the banner both said 3 files.
   - "Review and update" showed 3 diffs under the banner.
   - Accepting CLAUDE.md dropped the banner to 2 files.
+- **PR H fix round** (review 2026-11-10-01-06-08-c27870):
+  - f1: when a roles save leaves the guide stale, the final notice keeps the save's warnings as its list, beside the reminder and the "Review and update" button.
+  - f2: a save that adds an avoid-for conflict lists the conflict and the guide reminder together, with the same button.
+  - Two of the new model-guide-ui assertions are tightened in a test-only commit: Roles must exist for the order check, and the page is scrolled first so "back to the top" means something.
