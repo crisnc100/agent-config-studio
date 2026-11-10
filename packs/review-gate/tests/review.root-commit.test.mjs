@@ -145,3 +145,91 @@ test('a successful merge-base keeps its existing base even before the first push
   commit('notes.md', 'Local branch change\n')
   assert.equal(review({ REVIEW_BASE: base }).baseSha, base)
 })
+
+function publishMain(ref = 'main') {
+  git('push', '-q', 'origin', `${ref}:refs/heads/main`)
+  git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main')
+}
+function refusedReview(extra = {}) {
+  const before = records().length
+  const r = script([], extra)
+  assert.notEqual(r.status, 0, r.out)
+  assert.match(r.out, /git merge-base.*failed/)
+  assert.equal(records().length, before, 'a refused review logs nothing')
+  assert.deepEqual(readdirSync(CALLS), [], 'a refused review never invokes the reviewer')
+}
+test('an orphan snapshot in an established repo cannot use the default review base', () => {
+  publishMain()
+  git('checkout', '--orphan', 'snapshot')
+  git('commit', '-qm', 'orphan snapshot')
+  refusedReview({ REVIEW_BASE: '' })
+})
+
+test('an established history refuses an explicit empty-tree review base', () => {
+  publishMain()
+  commit('notes.md', 'Established branch\n')
+  refusedReview({ REVIEW_BASE: emptyTree() })
+})
+
+test('an orphan snapshot also refuses an explicit empty-tree base when the default branch is published', () => {
+  publishMain()
+  git('checkout', '--orphan', 'snapshot')
+  git('commit', '-qm', 'orphan snapshot')
+  refusedReview({ REVIEW_BASE: emptyTree() })
+})
+
+test('a merged unpublished orphan root cannot hide published history behind a bad review base', () => {
+  publishMain()
+  git('checkout', '--orphan', 'unrelated')
+  git('rm', '-q', '-rf', '.')
+  commit('extra.md', 'Unrelated root\n')
+  git('checkout', '-q', 'main')
+  git('merge', '--allow-unrelated-histories', '--no-ff', '-qm', 'merge orphan', 'unrelated')
+  refusedReview({ REVIEW_BASE: 'misspelled-base' })
+})
+
+test('an orphan snapshot close cannot carry onto a same-tree tip descending from published history', () => {
+  const base = commit('check.md', 'This check must be reviewed when deleted\n')
+  git('rm', '-q', 'check.md'); git('commit', '-qm', 'delete check')
+  git('checkout', '--orphan', 'snapshot')
+  git('commit', '-qm', 'orphan snapshot')
+  const r = review()
+  close(r)
+  git('checkout', '-q', 'main')
+  assert.equal(git('rev-parse', 'HEAD^{tree}'), git('rev-parse', 'snapshot^{tree}'))
+  publishMain(base)
+  const summary = script(['--summary'])
+  assert.notEqual(summary.status, 0, summary.out)
+  assert.match(summary.out, /No complete close covers HEAD/)
+  const pushed = push()
+  assert.notEqual(pushed.status, 0, pushed.out)
+  assert.match(pushed.out, /Run \/code-review/)
+  assert.equal(git('ls-remote', 'origin', 'refs/heads/main').split('\t')[0], base)
+  assert.equal(records().some((e) => e.type === 'carried'), false)
+})
+
+test('a push updating a remote branch refuses an empty-tree close even after all remote-tracking refs are deleted', () => {
+  const base = git('rev-parse', 'HEAD')
+  commit('notes.md', 'New tip\n')
+  close(review())
+  publishMain(base)
+  git('symbolic-ref', '--delete', 'refs/remotes/origin/HEAD')
+  git('update-ref', '-d', 'refs/remotes/origin/main')
+  const pushed = push()
+  assert.notEqual(pushed.status, 0, pushed.out)
+  assert.match(pushed.out, /empty.tree.*existing|existing.*empty.tree/i)
+  assert.equal(git('ls-remote', 'origin', 'refs/heads/main').split('\t')[0], base)
+})
+
+test('a locally known default branch blocks an empty-tree close for a new remote branch', () => {
+  const base = git('rev-parse', 'HEAD')
+  commit('notes.md', 'New tip\n')
+  close(review())
+  git('update-ref', 'refs/remotes/origin/main', base)
+  git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main')
+  allowed(run('sh', [join(SKILL, 'hooks/install-hook.sh'), REPO]))
+  const pushed = run('git', ['push', 'origin', 'main:refs/heads/feature'])
+  assert.notEqual(pushed.status, 0, pushed.out)
+  assert.match(pushed.out, /Run \/code-review/)
+  assert.equal(git('ls-remote', 'origin'), '')
+})
