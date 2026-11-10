@@ -891,6 +891,11 @@ const LANGS = {
 const pathsOf = (f) => (f.from ? [f.path, f.from] : [f.path])
 // The work tree's top; diffStats runs from it (first use is at load, so it is defined here).
 const TOP = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).stdout?.trim() || process.cwd()
+let EMPTY_TREE
+const emptyTree = () => EMPTY_TREE ??= sh('git', ['hash-object', '-t', 'tree', '/dev/null'])
+const isEmptyTree = (base) => base === emptyTree()
+// Three-dot diffs require commits; a root review's base is a tree.
+const diffRange = (base, head = 'HEAD') => `${base}${isEmptyTree(base) ? '..' : '...'}${head}`
 // Paths and line counts only — this is everything a classifier and the force rules ever see of the diff.
 function diffStats(range = `${BASE}...HEAD`, paths = null) {
   // -z keeps paths unquoted; a rename is `added\tremoved\t` then NUL-separated source and destination.
@@ -1521,6 +1526,27 @@ function fetchBase() {
   if (f.error || f.status !== 0)
     console.warn(`⚠ Could not fetch ${BASE} — reviewing against a possibly-stale local base.`)
 }
+const unpublishedRoots = (head) => sh('git', ['rev-list', '--max-parents=0', head, '--not', '--remotes']).split('\n').filter(Boolean)
+const remoteHeads = () => sh('git', ['for-each-ref', '--format=%(objectname)', 'refs/remotes/']).split('\n').filter(Boolean)
+function sharesHistory(a, b) {
+  const r = spawnSync('git', ['merge-base', '--end-of-options', a, b], { encoding: 'utf8' })
+  if (r.error || ![0, 1].includes(r.status)) throw new Error(`git merge-base failed: ${r.error?.message || r.stderr}`)
+  return r.status === 0
+}
+function unpublishedHistory(head) {
+  const roots = sh('git', ['rev-list', '--max-parents=0', head]).split('\n').filter(Boolean)
+  const unpublished = new Set(unpublishedRoots(head))
+  return roots.length > 0 && roots.length === unpublished.size && roots.every((root) => unpublished.has(root)) &&
+    remoteHeads().every((remote) => !sharesHistory(head, remote))
+}
+function reviewBase(base, head) {
+  try { return sh('git', ['merge-base', '--end-of-options', base, head]) }
+  catch (error) {
+    // An unrelated orphan is unpublished too; existing remote refs still make this an established repository.
+    if (!remoteHeads().length && unpublishedHistory(head)) return emptyTree()
+    throw error
+  }
+}
 function getDiff() {
   if (!existsSync('.git')) die('Not a git repository.')
   // Magic pathspecs (:(attr:…), :(glob), :!, :/ …) can match differently later with no new commit.
@@ -1532,12 +1558,13 @@ function getDiff() {
   // The slice runner fetched the base once for all its slices: concurrent fetches fight over ref locks.
   if (process.env.REVIEW_BASE_FETCHED !== BASE) fetchBase()
   const head = sh('git', ['rev-parse', 'HEAD'])
-  const baseSha = sh('git', ['merge-base', '--end-of-options', BASE, head])
+  const baseSha = reviewBase(BASE, head)
+  if (isEmptyTree(baseSha)) DIFF_BASE = baseSha
   const files = SLICE ? filesBetween(baseSha, head, SLICE).sort() : null
   if (SLICE && !files.length)
     die(`REVIEW_PATHS (${SLICE.join(', ')}) matches no file changed between ${BASE} and HEAD; nothing was reviewed.\n` +
-      `  Check the pathspecs against: git diff --name-only ${baseSha}...HEAD`)
-  const diff = sh('git', [...(SLICE ? ['-C', TOP] : []), 'diff', `${baseSha}...${head}`, ...pathspec(SLICE)])
+      `  Check the pathspecs against: git diff --name-only ${diffRange(baseSha)}`)
+  const diff = sh('git', [...(SLICE ? ['-C', TOP] : []), 'diff', diffRange(baseSha, head), ...pathspec(SLICE)])
   if (!SINCE_CLOSE) return { branch, diff, head, baseSha, files }
   const since = sinceCloseHead(branch, head, baseSha)
   const sinceFiles = filesBetween(since, head, SLICE).sort()
@@ -1667,7 +1694,7 @@ function reviewPrompt(diff) {
     `${FOCUS === 'docs' ? DOCS_FOCUS : ''}` +
     `${CONTEXT ? `${CONTEXT}\n` : ''}` +
     `${notes.length ? `${notes.join('\n\n')}\n\n` : ''}` +
-    `Diff (git diff ${DIFF_BASE}${SINCE_CLOSE ? '..' : '...'}HEAD${sliceSuffix(SLICE)}):\n${clipped}`
+    `Diff (git diff ${SINCE_CLOSE ? `${DIFF_BASE}..HEAD` : diffRange(DIFF_BASE)}${sliceSuffix(SLICE)}):\n${clipped}`
   )
 }
 // Added to the correctness prompt for a --focus docs slice: the context pass's edits are judged as code and as docs.
@@ -1728,11 +1755,11 @@ function securityPrompt(diff, vendor, intent, paths = []) {
     `Do not report a vulnerability without a concrete harmed principal: who is harmed, and how an attacker reaches them.\n\n` +
     `${CONTEXT ? `${CONTEXT}\n` : ''}` +
     `${promptNotes(vendor).join('\n\n')}\n\n` +
-    `Diff (git diff ${DIFF_BASE}...HEAD${sliceSuffix(SLICE)}):\n${clip(diff)}`
+    `Diff (git diff ${diffRange(DIFF_BASE)}${sliceSuffix(SLICE)}):\n${clip(diff)}`
   )
 }
 
-function verifierPrompt(diff, findings, vendor, range = `${DIFF_BASE}...HEAD${sliceSuffix(SLICE)}`) {
+function verifierPrompt(diff, findings, vendor, range = `${diffRange(DIFF_BASE)}${sliceSuffix(SLICE)}`) {
   const list = findings
     .map(
       (f, i) =>
@@ -2689,7 +2716,7 @@ function logGrade(path) {
   const kind = original ? 'recheck' : 'grade'
   const id = `${kind}-${Date.now()}-${randomBytes(3).toString('hex')}`
   const entry = { type: 'review', kind, rubricVersion: RUBRIC_VERSION, id, ts: new Date().toISOString(), head, branch, ...(original && { review: original.id }),
-    base: original?.head || BASE, baseSha: original?.head || sh('git', ['merge-base', '--end-of-options', BASE, head]), repo: repoName(), repoId, copy: COPY_PATH,
+    base: original?.head || BASE, baseSha: original?.head || reviewBase(BASE, head), repo: repoName(), repoId, copy: COPY_PATH,
     family: value.family, model: value.model, vendor, ...(value.effort && { effort: value.effort }),
     criteria: value.criteria, findings: findingDetails.length, findingDetails }
   requireClean()
@@ -2817,7 +2844,7 @@ function reviewTruncated(review) {
   if (Array.isArray(review.truncated)) return new Set(review.truncated)
   if (review.kind === 'grade') return new Set()
   const paths = sliceOf(review)
-  const r = spawnSync('git', [...(paths ? ['-C', TOP] : []), 'diff', `${review.baseSha}...${review.head}`, ...pathspec(paths)], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
+  const r = spawnSync('git', [...(paths ? ['-C', TOP] : []), 'diff', diffRange(review.baseSha, review.head), ...pathspec(paths)], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
   return r.error || r.status !== 0 || r.stdout.trim().length > DIFF_CAP ? null : new Set()
 }
 // A fix check logged before `noRenames` saw a moved or copied file as a short rename section, not its content: those
@@ -2931,7 +2958,7 @@ function deferredReasons(deferred) {
 }
 function closeTier({ review, reviews, statuses, files, outOfScope, noTests, head }) {
   const base = fullObjectId(review.baseSha) ? coverBase(review, head) : review.base || BASE
-  const diff = diffStats(`${base}...${head}`, sliceOf(review))
+  const diff = diffStats(diffRange(base, head), sliceOf(review))
   const stats = tierStats(diff)
   const findings = reviews.flatMap((r) => r.findingDetails || [])
   const deferred = findings.filter((f) => statuses[f.id]?.status === 'deferred' || isFiled(f) && !isPreExisting(f) && statuses[f.id]?.status !== 'fixed')
@@ -3033,7 +3060,7 @@ function unjudgedStats(entries, closes, diff, tip) {
   for (const close of closes) {
     const review = entries.find((e) => e.type === 'review' && e.id === close.review)
     const base = review && fullObjectId(review.baseSha) && coverBase(review, close.closeHead)
-    const own = base && diffStats(`${base}...${close.closeHead}`, sliceOf(review))
+    const own = base && diffStats(diffRange(base, close.closeHead), sliceOf(review))
     if (!own) return unjudged(files) // a close whose diff can't be read judged nothing for sure
     const then = treeStates(close.closeHead), before = treeStates(base)
     // A path absent at the close's head and at the tip matches only as a deletion: present at the review's base.
@@ -3051,7 +3078,7 @@ function tipTier(closes, { entries, base, tip, deferred, preExisting = [] }) {
     return { tier: null, reasons: closes.map((c) => `the close of review ${c.review} has no merge tier (logged before tiers)`), policy: MERGE.policy, merges: false, docsTestsOnly: false }
   const tiers = closes.map((c) => c.tier ? c : { tier: 'high', tierReasons: [`the close of review ${c.review} has no merge tier (logged before tiers)`] })
   const closesWorst = tiers.reduce((w, c) => TIER_RANK[c.tier] > TIER_RANK[w] ? c.tier : w, 'low')
-  const diff = base ? diffStats(`${base}...${tip}`) : null
+  const diff = base ? diffStats(diffRange(base, tip)) : null
   const { high, medium } = deferredReasons(deferred)
   const preProtected = preExisting.filter((f) => f.protected === true)
   if (preProtected.length) high.push(`pre-existing protected: ${preProtected.map((f) => f.id).join(', ')}`)
@@ -3470,7 +3497,7 @@ async function runSecurityOnly() {
     console.log(`Nothing to check — no diff against ${BASE}.`)
     process.exit(0)
   }
-  const stats = diffStats(undefined, SLICE)
+  const stats = diffStats(isEmptyTree(baseSha) ? diffRange(baseSha, reviewedHead) : undefined, SLICE)
   const diffTruncated = diff.length > DIFF_CAP
   if (diffTruncated) console.warn(`⚠ Diff is ${diff.length} chars — only the first ${DIFF_CAP} were inlined in the prompt.`)
   // No code reviewer runs here, so "another vendor" means another than the branch's author, when it is known.
@@ -3666,8 +3693,8 @@ async function disputeFinding(id, findingId) {
     if (verifier) {
       const baseSha = review.kind === 'fix-check'
         ? loggedReview(entries, review.review).head
-        : review.baseSha || sh('git', ['merge-base', '--end-of-options', review.base || BASE, review.head])
-      const range = `${baseSha}${review.kind === 'fix-check' ? '..' : '...'}${review.head}`
+        : review.baseSha || reviewBase(review.base || BASE, review.head)
+      const range = review.kind === 'fix-check' ? `${baseSha}..${review.head}` : diffRange(baseSha, review.head)
       const paths = sliceOf(review)
       const diff = sh('git', [...(paths ? ['-C', TOP] : []), 'diff', range, ...pathspec(paths)])
       const snapshot = join(temp, 'snapshot')
@@ -4182,7 +4209,7 @@ const cleanCheck = (check) => Array.isArray(check.findingDetails) && check.findi
 // is of kind review. A file changed on two sides of a merge after the record's head needs a record that saw the merge.
 // Only records with logged coverage count; a coverageExempt file is listed, never checked. Returns null when no
 // complete close with coverage gives a base, else { covered, base, tipClose, used, uncovered, exempt }.
-function contentCover(entries, tip, risk = false) {
+function contentCover(entries, tip, risk = false, checkedTip = tip) {
   const repoId = repoIdentity()
   const reviewOf = (id) => entries.find((e) => e.type === 'review' && e.id === id)
   const records = []
@@ -4200,7 +4227,10 @@ function contentCover(entries, tip, risk = false) {
       records.push({ check, review, head: check.head, map })
     }
   }
-  const based = (r) => fullObjectId(r.review.baseSha) && isAncestor(r.review.baseSha, tip)
+  let rootHistory
+  const based = (r) => fullObjectId(r.review.baseSha) && (isEmptyTree(r.review.baseSha)
+    ? (rootHistory ??= unpublishedHistory(tip) && (checkedTip === tip || unpublishedHistory(checkedTip)))
+    : isAncestor(r.review.baseSha, tip))
   const near = new Map(), atTip = (r) => near.has(r.head) ? near.get(r.head) : near.set(r.head, buildsOnlySince(r.head, tip)).get(r.head)
   const tipClose = records.find((r) => r.close && based(r) && atTip(r)) || null
   // Without one, the latest complete close still gives a base, only to name the uncovered files.
@@ -4243,6 +4273,7 @@ function legacyClose(entries, tip, reviewOnly = false) {
   return completeCloses(entries, tip).find((close) => {
     if (coverageMap(close)) return false
     const review = loggedReview(entries, close.review)
+    if (isEmptyTree(review.baseSha) && !unpublishedHistory(tip)) return false
     if (sliceOf(review)) return false
     if (reviewOnly && review.kind !== 'review') return false
     return buildsOnlySince(close.closeHead, tip)
@@ -4287,10 +4318,10 @@ function carriedCover(entries, tip, risk = false) {
   const trees = treesOf(heads), tree = treeOf(tip)
   for (const [from, own] of trees) {
     if (own !== tree || from === tip || isAncestor(from, tip)) continue
-    const result = contentCover(entries, from, risk)
+    const result = contentCover(entries, from, risk, tip)
     if (result?.covered) return { from, tree, result }
     const close = legacyClose(entries, from, risk)
-    if (close) return { from, tree, close }
+    if (close && (!isEmptyTree(loggedReview(entries, close.review).baseSha) || unpublishedHistory(tip))) return { from, tree, close }
   }
   return null
 }
@@ -4392,6 +4423,13 @@ function pushGate() {
           uncovered.push(ref)
           throw new Error(`No complete ${risk ? 'code-review ' : ''}close covers tip ${tip}${legacyNote(entries)}${risk ? '; pushed commits touch riskPaths' : ''}${uncoveredNote(result)}`)
         }
+        const base = carry ? carry.result?.base ?? loggedReview(entries, carry.close.review).baseSha
+          : close ? loggedReview(entries, close.review).baseSha : result.base
+        const def = defaultTip()
+        if (isEmptyTree(base) && (!zeroObjectId(ref.remoteSha) || def && sharesHistory(tip, def))) {
+          uncovered.push(ref)
+          throw new Error('An empty-tree close cannot cover an existing remote branch or a tip sharing the default branch history. Run /code-review against the published history and close it before pushing.')
+        }
         if (carry) carries.push({ type: 'carried', ts: new Date().toISOString(), repoId: repoIdentity(), ref: ref.remoteRef, tip, from: carry.from, tree: carry.tree,
           reviews: carry.close ? [carry.close.review] : carry.result.used.map((r) => r.check ? r.check.id : r.review.id) })
         summaries.push((carry ? carriedSummary(entries, carry, tip) : close ? closeSummary(entries, close, tip) : coverSummary(entries, result, tip)).text)
@@ -4427,6 +4465,8 @@ function pushGate() {
         console.error(`First commits ${last ? `after complete close ${last.closeHead}` : 'without a complete close'}:`)
         for (const commit of commits.slice(0, 5)) console.error(sh('git', ['show', '-s', '--format=%H %s', commit]))
         if (!commits.length) console.error(ref.localSha)
+        if (unpublishedRoots(ref.localSha).some((root) => commits.includes(root)))
+          console.error("this is the repo's first commit: run the review on it; it is reviewed against the empty tree")
       } catch (e) { console.error(`Could not list commits: ${e.message}`) }
     }
     console.error('Run /code-review and close the review before pushing.')
@@ -4924,7 +4964,7 @@ async function runEval() {
     console.log(`Nothing to review — no diff against ${BASE}.`)
     process.exit(0)
   }
-  const stats = diffStats(undefined, SLICE)
+  const stats = diffStats(isEmptyTree(baseSha) ? diffRange(baseSha, reviewedHead) : undefined, SLICE)
   SELECTION = selectReviewer(stats)
   SEL = SELECTION.sel
   const reviewer =
