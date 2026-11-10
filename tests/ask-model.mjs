@@ -144,6 +144,21 @@ function ask(args, { env = {}, home = HOME, cwd = tmp, prompt = PF } = {}) {
   return { code: r.status, out: r.stdout, err: r.stderr, calls, mcp, inspect, argv: calls[0]?.argv };
 }
 const show = (r) => J({ code: r.code, out: r.out, err: r.err, calls: r.calls, mcp: r.mcp, inspect: r.inspect });
+// The platform and the kernel's security modules as ask-model sees them, set by a preload (FAKE_PLATFORM, FAKE_LSM),
+// so a test of grok's sandboxed shell runs the same on any machine: grok --investigate runs only on Linux with Landlock.
+const PRELOAD = path.join(tmp, 'platform.cjs');
+fs.writeFileSync(PRELOAD, `const fs = require('node:fs');
+if (process.env.FAKE_PLATFORM) Object.defineProperty(process, 'platform', { value: process.env.FAKE_PLATFORM });
+const read = fs.readFileSync;
+fs.readFileSync = function (p, ...rest) {
+  if (p === '/sys/kernel/security/lsm') {
+    if (process.env.FAKE_LSM === undefined) { const e = new Error('ENOENT: no such file'); e.code = 'ENOENT'; throw e; }
+    return rest.length && rest[0] ? process.env.FAKE_LSM : Buffer.from(process.env.FAKE_LSM);
+  }
+  return read.call(this, p, ...rest);
+};`);
+const on = (env) => ({ NODE_OPTIONS: `--require=${PRELOAD}`, TEMP: tmp, TMP: tmp, ...env });
+const LANDLOCK = on({ FAKE_PLATFORM: 'linux', FAKE_LSM: 'lockdown,capability,landlock,yama\n' });
 
 const CLAUDE_RO = (id, effort) => ['-p', PROMPT, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'json',
   '--dangerously-skip-permissions', '--tools', 'Read,Grep,Glob', '--strict-mcp-config', '--setting-sources', 'user'];
@@ -248,7 +263,7 @@ const resetWork = () => {
   const ro = ask(['--family', 'fable', '--cwd', WORK]);
   ok('claude read-only: no Bash, MCP off, prompts skipped only with the allowlist set',
      ro.argv?.[ro.argv.indexOf('--tools') + 1] === 'Read,Grep,Glob' && ro.argv.includes('--strict-mcp-config') && ro.argv.includes('--dangerously-skip-permissions'), show(ro));
-  const g = ask(['--family', 'grok', '--investigate', '--cwd', WORK]);
+  const g = ask(['--family', 'grok', '--investigate', '--cwd', WORK], { env: LANDLOCK });
   ok('grok --investigate: its shell tool added, MCP still denied', g.code === 0 && g.argv?.[g.argv.indexOf('--tools') + 1] === 'read_file,list_dir,grep,run_terminal_cmd' && g.argv.includes('MCPTool'), show(g));
   const xi = ask(['--family', 'astra', '--investigate', '--cwd', WORK]);
   ok('codex --investigate: the same read-only sandbox argv', xi.code === 0 && same(xi.argv, CODEX(IDS.astra, '')), show(xi));
@@ -259,7 +274,7 @@ const resetWork = () => {
   ok('…the answer is still printed, and nothing is reverted',
      w.out === `answer from ${IDS.sol}\n` && fs.existsSync(path.join(WORK, 'new file.txt')) && /written by the stub/.test(fs.readFileSync(path.join(WORK, 'dirty.txt'), 'utf8')), show(w));
   resetWork();
-  const wj = ask(['--family', 'grok', '--investigate', '--json', '--cwd', WORK], { env: { STUB_WRITE: 'new file.txt' } });
+  const wj = ask(['--family', 'grok', '--investigate', '--json', '--cwd', WORK], { env: { ...LANDLOCK, STUB_WRITE: 'new file.txt' } });
   const wjo = JSON.parse(wj.out || '{}');
   ok('--json: changed lists the files', wj.code === 5 && same(wjo.changed, ['new file.txt']) && /files changed/.test(wjo.error), show(wj));
   resetWork();
@@ -399,7 +414,7 @@ console.log('\nask-model: codex runs with its configured MCP servers off');
 
 console.log('\nask-model: grok --investigate may run the shell');
 {
-  const g = ask(['--family', 'grok', '--investigate', '--cwd', WORK]);
+  const g = ask(['--family', 'grok', '--investigate', '--cwd', WORK], { env: LANDLOCK });
   ok('exact argv: the shell tool, the shell allowed inside the strict sandbox, the read tools and MCP denial kept',
      g.code === 0 && same(g.argv, ['-p', PROMPT, '-m', IDS.grok, '--cwd', WORK, '--tools', 'read_file,list_dir,grep,run_terminal_cmd',
        '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool', '--allow', 'Bash', '--sandbox', 'strict', '--disable-web-search', '--no-subagents',
@@ -407,7 +422,7 @@ console.log('\nask-model: grok --investigate may run the shell');
   const ro = ask(['--family', 'grok', '--cwd', WORK]);
   ok('read-only allows nothing', ro.code === 0 && !ro.argv.includes('--allow'), show(ro));
   const refused = 'permission required: Bash ls was not run, as a headless run cannot ask for approval';
-  const p = ask(['--family', 'grok', '--investigate', '--cwd', WORK], { env: { STUB_STDERR: `a note grok printed\n${refused}` } });
+  const p = ask(['--family', 'grok', '--investigate', '--cwd', WORK], { env: { ...LANDLOCK, STUB_STDERR: `a note grok printed\n${refused}` } });
   ok('a permission grok refused (it still exits 0) is passed on to stderr, and only that line',
      p.code === 0 && p.err.includes(`ask-model: grok: ${refused}\n`) && !p.err.includes('a note grok printed'), show(p));
 }
@@ -1195,7 +1210,7 @@ console.log('\nask-model: --x-search');
   const ro = ask(['--family', 'grok', '--json', '--cwd', XC]);
   const roj = ro.code === 0 ? JSON.parse(ro.out) : {};
   ok('without --x-search grok keeps its read-only argv', ro.code === 0 && same(ro.argv, GROK_RO(IDS.grok, roj.effort, XC)), show(ro));
-  const inv = ask(['--family', 'grok', '--investigate', '--cwd', XC]);
+  const inv = ask(['--family', 'grok', '--investigate', '--cwd', XC], { env: LANDLOCK });
   ok('without --x-search grok --investigate keeps its argv',
      inv.code === 0 && same(inv.argv, ['-p', PROMPT, '-m', IDS.grok, ...(roj.effort ? ['--reasoning-effort', roj.effort] : []), '--cwd', XC,
        '--tools', 'read_file,list_dir,grep,run_terminal_cmd', '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool', '--allow', 'Bash',
@@ -1224,7 +1239,7 @@ console.log('\nask-model: the --investigate shell runs inside each CLI\'s own sa
   ok('claude read-only: no --settings and no shellSandbox (it has no shell)',
      cro.code === 0 && !cro.argv.includes('--settings') && !Object.hasOwn(JSON.parse(cro.out || '{}'), 'shellSandbox'), show(cro));
 
-  const g = ask(['--family', 'grok', '--investigate', '--json', '--cwd', SB]);
+  const g = ask(['--family', 'grok', '--investigate', '--json', '--cwd', SB], { env: LANDLOCK });
   const gs = g.argv?.indexOf('--sandbox') ?? -1;
   ok('grok --investigate: --sandbox strict, given once', g.code === 0 && gs !== -1 && g.argv[gs + 1] === 'strict' && g.argv.filter((a) => a === '--sandbox').length === 1, show(g));
   ok('…and --json says the shell was sandboxed', /--sandbox strict/.test(JSON.parse(g.out || '{}').shellSandbox ?? ''), show(g));
@@ -1237,19 +1252,7 @@ console.log('\nask-model: the --investigate shell runs inside each CLI\'s own sa
      x.code === 0 && same(x.argv, CODEX(IDS.astra, '')) && /--sandbox read-only/.test(JSON.parse(x.out || '{}').shellSandbox ?? ''), show(x));
 
   // A platform none of these sandboxes runs on, and a Linux kernel without Landlock (grok's built-in profiles then run
-  // unenforced): a preload changes what ask-model sees, so the test needs no such machine.
-  const preload = path.join(tmp, 'platform.cjs');
-  fs.writeFileSync(preload, `const fs = require('node:fs');
-if (process.env.FAKE_PLATFORM) Object.defineProperty(process, 'platform', { value: process.env.FAKE_PLATFORM });
-const read = fs.readFileSync;
-fs.readFileSync = function (p, ...rest) {
-  if (p === '/sys/kernel/security/lsm') {
-    if (process.env.FAKE_LSM === undefined) { const e = new Error('ENOENT: no such file'); e.code = 'ENOENT'; throw e; }
-    return rest.length && rest[0] ? process.env.FAKE_LSM : Buffer.from(process.env.FAKE_LSM);
-  }
-  return read.call(this, p, ...rest);
-};`);
-  const on = (env) => ({ NODE_OPTIONS: `--require=${preload}`, TEMP: tmp, TMP: tmp, ...env });
+  // unenforced): the platform preload (PRELOAD) changes what ask-model sees, so the test needs no such machine.
   for (const family of ['fable', 'grok']) {
     const w = ask(['--family', family, '--investigate', '--json', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'win32' }) });
     ok(`${family} --investigate on win32: exit 4, the model never run, the reason in error`,
@@ -1265,7 +1268,7 @@ fs.readFileSync = function (p, ...rest) {
     const gl = ask(['--family', 'grok', '--investigate', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'linux', ...(lsm === undefined ? {} : { FAKE_LSM: lsm }) }) });
     ok(`grok --investigate on Linux with ${why}: exit 4, grok never run`, gl.code === 4 && gl.calls.length === 0 && /landlock/i.test(gl.err), show(gl));
   }
-  const gl = ask(['--family', 'grok', '--investigate', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'linux', FAKE_LSM: 'lockdown,capability,landlock,yama\n' }) });
+  const gl = ask(['--family', 'grok', '--investigate', '--cwd', SB], { env: LANDLOCK });
   ok('grok --investigate on Linux with landlock: runs under --sandbox strict', gl.code === 0 && gl.argv?.[gl.argv.indexOf('--sandbox') + 1] === 'strict', show(gl));
 }
 
