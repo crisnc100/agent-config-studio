@@ -1268,6 +1268,14 @@ console.log('\nask-model: the --investigate shell runs inside each CLI\'s own sa
     const gl = ask(['--family', 'grok', '--investigate', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'linux', ...(lsm === undefined ? {} : { FAKE_LSM: lsm }) }) });
     ok(`grok --investigate on Linux with ${why}: exit 4, grok never run`, gl.code === 4 && gl.calls.length === 0 && /landlock/i.test(gl.err), show(gl));
   }
+  // On macOS grok's sandbox cannot block a command's network, so its shell is refused there.
+  const gm = ask(['--family', 'grok', '--investigate', '--json', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'darwin' }) });
+  ok('grok --investigate on macOS: exit 4, grok never run, the reason in plain words',
+     gm.code === 4 && gm.calls.length === 0 && /grok's sandbox can't block a command's network on macOS/.test(JSON.parse(gm.out || '{}').error ?? ''), show(gm));
+  const gmr = ask(['--family', 'grok', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'darwin' }) });
+  ok('grok read-only on macOS still runs (no shell)', gmr.code === 0 && gmr.calls.length === 1, show(gmr));
+  const cm = ask(['--family', 'fable', '--investigate', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'darwin' }) });
+  ok('claude --investigate on macOS runs, with the sandbox settings', cm.code === 0 && settingsOf(cm.argv)?.sandbox?.enabled === true, show(cm));
   const gl = ask(['--family', 'grok', '--investigate', '--cwd', SB], { env: LANDLOCK });
   ok('grok --investigate on Linux with landlock: runs under --sandbox strict', gl.code === 0 && gl.argv?.[gl.argv.indexOf('--sandbox') + 1] === 'strict', show(gl));
 }
