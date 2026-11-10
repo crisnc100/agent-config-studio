@@ -20,9 +20,9 @@
  * that could hide a comment or quote, a string that runs past a line end, a heredoc, a YAML block scalar, a line
  * continuation, a mode change, a new or deleted file, and any changed line with a block-comment delimiter all count as
  * code. In JS and TS a '/' counts as a regex literal only after ( , = : [ & | ; { or =>, where it cannot divide, and
- * only when it closes on its line; elsewhere a '/' never does. Files are known by extension, and .env-style files (.env, .env.example) by name.
- * builds/<slug>/docs-table.json, the skill's own output, passes. Changed lines come from git diff, so a file's length
- * never decides the answer.
+ * only when it closes on its line; any other '/' followed on its line by a comment marker or quote still counts as
+ * code. Files are known by extension, and .env-style files (.env, .env.example) by name. builds/<slug>/docs-table.json,
+ * the skill's own output, passes. Changed lines come from git diff, so a file's length never decides the answer.
  *
  * Output: one JSON object. Exit 0 ok · 1 a problem or bad input.
  */
@@ -36,7 +36,7 @@ const FIELDS = {
 }
 const DOCS = /\.(md|mdx|rst|adoc)$|(^|\/)docs\/[^/]+\.txt$/i
 const TESTS = /(^|\/)(tests?|__tests__|spec|fixtures)\/|\.(test|spec)\.[^/]+$|(^|\/)test_[^/]+$|_test\.[^/]+$/
-// The docs table the context-pass skill writes beside its plan: the skill's own output, never program input.
+// The docs table the context-pass skill writes beside its brief: the skill's own output, never program input.
 const DOCS_TABLE = /^builds\/[^/]+\/docs-table\.json$/
 const AGENT = /(^|\/)(SKILL|CLAUDE|AGENTS|GEMINI)(\.[\w-]+)?\.md$|(^|\/)\.github\/copilot-instructions\.md$|(^|\/)\.github\/instructions\/|(^|\/)\.(cursor|windsurf)\/rules\/|(^|\/)packs\/[^/]+\/instructions\/|(^|\/)\.(claude|codex|agents|gemini)\//i
 // A doc line short enough to recur by chance ("## Usage") is not treated as pinned.
