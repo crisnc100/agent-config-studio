@@ -814,22 +814,37 @@ function gitGuard(files) {
 
 /**
  * Where the repository holding `cwd` is, or null outside a git work tree. This runs the caller's git as they would,
- * before the call, when the config is still theirs; rev-parse reads no index and runs no configured command.
+ * before the call, when the config is still theirs; rev-parse reads no index and runs no configured command. `env` is
+ * the caller's, or for a submodule the caller's without the variables that route git to a repository (localEnv).
  */
-function locateRepo(bin, cwd) {
+function locateRepo(bin, cwd, env = process.env) {
   const where = spawnSync(bin, ['--no-optional-locks', 'rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir', '--show-object-format'],
-    { cwd, encoding: 'utf8' });
+    { cwd, env, encoding: 'utf8' });
   if (where.error || where.status !== 0) return null;
   const [root, gitDir, common, format] = where.stdout.split('\n');
   if (!root || !gitDir || !common) return null;
   const repo = { root, gitDir, commonDir: path.resolve(cwd, common), format: format || 'sha1' };
   // The ignore rules the caller's git uses outside the work tree, read now so the after-call git sees the same ones.
-  const xf = spawnSync(bin, ['config', '--type=path', '--get', 'core.excludesFile'], { cwd: root, encoding: 'utf8' });
+  const xf = spawnSync(bin, ['config', '--type=path', '--get', 'core.excludesFile'], { cwd: root, env, encoding: 'utf8' });
   const global = xf.status === 0 && xf.stdout.trim()
-    ? xf.stdout.trim() : path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'git', 'ignore');
-  repo.excludes = [path.join(repo.commonDir, 'info', 'exclude'), global]
+    ? xf.stdout.trim() : path.join(env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'git', 'ignore');
+  // One file, so a later pattern wins: the global rules first, then info/exclude, which git ranks above them.
+  repo.excludes = [global, path.join(repo.commonDir, 'info', 'exclude')]
     .map((f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return ''; } }).join('\n');
   return repo;
+}
+
+/**
+ * The caller's env without the variables git itself clears before it runs in a submodule (`rev-parse
+ * --local-env-vars`), so a GIT_DIR or GIT_WORK_TREE meant for the superproject cannot answer for a submodule.
+ */
+function localEnv(bin) {
+  const r = spawnSync(bin, ['rev-parse', '--local-env-vars'], { encoding: 'utf8' });
+  const names = r.status === 0 && r.stdout.trim() ? r.stdout.split('\n').filter(Boolean)
+    : ['GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_OBJECT_DIRECTORY', 'GIT_DIR',
+      'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_GRAFT_FILE', 'GIT_INDEX_FILE', 'GIT_NO_REPLACE_OBJECTS', 'GIT_REPLACE_REF_BASE', 'GIT_PREFIX',
+      'GIT_SHALLOW_FILE', 'GIT_COMMON_DIR'];
+  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !names.includes(k)));
 }
 
 /**
@@ -920,13 +935,15 @@ function readRepo(bin, repo, pinning) {
       if (!e.startsWith('160000 ')) continue;
       const tab = e.indexOf('\t');
       const p = e.slice(tab + 1);
-      seen.set(p, `submodule ${e.slice(7, tab)}`);
+      // Every stage of a conflicted entry, after the status line status may have given it.
+      seen.set(p, `${seen.has(p) ? `${seen.get(p)} ` : ''}submodule ${e.slice(7, tab)}`);
       if (!links.includes(p)) links.push(p);
     }
     if (pinning) {
+      const env = links.length ? localEnv(bin) : null;
       repo.subs = links.map((p) => {
         const root = path.join(repo.root, p);
-        const sub = fs.existsSync(path.join(root, '.git')) ? locateRepo(bin, root) : null;
+        const sub = fs.existsSync(path.join(root, '.git')) ? locateRepo(bin, root, env) : null;
         return { path: p, repo: sub && fs.realpathSync(sub.root) === fs.realpathSync(root) ? sub : null };
       });
     }
