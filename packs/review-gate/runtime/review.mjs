@@ -1527,10 +1527,23 @@ function fetchBase() {
     console.warn(`⚠ Could not fetch ${BASE} — reviewing against a possibly-stale local base.`)
 }
 const unpublishedRoots = (head) => sh('git', ['rev-list', '--max-parents=0', head, '--not', '--remotes']).split('\n').filter(Boolean)
+const remoteHeads = () => sh('git', ['for-each-ref', '--format=%(objectname)', 'refs/remotes/']).split('\n').filter(Boolean)
+function sharesHistory(a, b) {
+  const r = spawnSync('git', ['merge-base', '--end-of-options', a, b], { encoding: 'utf8' })
+  if (r.error || ![0, 1].includes(r.status)) throw new Error(`git merge-base failed: ${r.error?.message || r.stderr}`)
+  return r.status === 0
+}
+function unpublishedHistory(head) {
+  const roots = sh('git', ['rev-list', '--max-parents=0', head]).split('\n').filter(Boolean)
+  const unpublished = new Set(unpublishedRoots(head))
+  return roots.length > 0 && roots.length === unpublished.size && roots.every((root) => unpublished.has(root)) &&
+    remoteHeads().every((remote) => !sharesHistory(head, remote))
+}
 function reviewBase(base, head) {
   try { return sh('git', ['merge-base', '--end-of-options', base, head]) }
   catch (error) {
-    if (unpublishedRoots(head).length) return emptyTree()
+    // An unrelated orphan is unpublished too; existing remote refs still make this an established repository.
+    if (!remoteHeads().length && unpublishedHistory(head)) return emptyTree()
     throw error
   }
 }
@@ -4196,7 +4209,7 @@ const cleanCheck = (check) => Array.isArray(check.findingDetails) && check.findi
 // is of kind review. A file changed on two sides of a merge after the record's head needs a record that saw the merge.
 // Only records with logged coverage count; a coverageExempt file is listed, never checked. Returns null when no
 // complete close with coverage gives a base, else { covered, base, tipClose, used, uncovered, exempt }.
-function contentCover(entries, tip, risk = false) {
+function contentCover(entries, tip, risk = false, checkedTip = tip) {
   const repoId = repoIdentity()
   const reviewOf = (id) => entries.find((e) => e.type === 'review' && e.id === id)
   const records = []
@@ -4214,7 +4227,10 @@ function contentCover(entries, tip, risk = false) {
       records.push({ check, review, head: check.head, map })
     }
   }
-  const based = (r) => fullObjectId(r.review.baseSha) && (isEmptyTree(r.review.baseSha) || isAncestor(r.review.baseSha, tip))
+  let rootHistory
+  const based = (r) => fullObjectId(r.review.baseSha) && (isEmptyTree(r.review.baseSha)
+    ? (rootHistory ??= unpublishedHistory(tip) && (checkedTip === tip || unpublishedHistory(checkedTip)))
+    : isAncestor(r.review.baseSha, tip))
   const near = new Map(), atTip = (r) => near.has(r.head) ? near.get(r.head) : near.set(r.head, buildsOnlySince(r.head, tip)).get(r.head)
   const tipClose = records.find((r) => r.close && based(r) && atTip(r)) || null
   // Without one, the latest complete close still gives a base, only to name the uncovered files.
@@ -4257,6 +4273,7 @@ function legacyClose(entries, tip, reviewOnly = false) {
   return completeCloses(entries, tip).find((close) => {
     if (coverageMap(close)) return false
     const review = loggedReview(entries, close.review)
+    if (isEmptyTree(review.baseSha) && !unpublishedHistory(tip)) return false
     if (sliceOf(review)) return false
     if (reviewOnly && review.kind !== 'review') return false
     return buildsOnlySince(close.closeHead, tip)
@@ -4301,10 +4318,10 @@ function carriedCover(entries, tip, risk = false) {
   const trees = treesOf(heads), tree = treeOf(tip)
   for (const [from, own] of trees) {
     if (own !== tree || from === tip || isAncestor(from, tip)) continue
-    const result = contentCover(entries, from, risk)
+    const result = contentCover(entries, from, risk, tip)
     if (result?.covered) return { from, tree, result }
     const close = legacyClose(entries, from, risk)
-    if (close) return { from, tree, close }
+    if (close && (!isEmptyTree(loggedReview(entries, close.review).baseSha) || unpublishedHistory(tip))) return { from, tree, close }
   }
   return null
 }
@@ -4405,6 +4422,13 @@ function pushGate() {
         if (!result?.covered && !close && !carry) {
           uncovered.push(ref)
           throw new Error(`No complete ${risk ? 'code-review ' : ''}close covers tip ${tip}${legacyNote(entries)}${risk ? '; pushed commits touch riskPaths' : ''}${uncoveredNote(result)}`)
+        }
+        const base = carry ? carry.result?.base ?? loggedReview(entries, carry.close.review).baseSha
+          : close ? loggedReview(entries, close.review).baseSha : result.base
+        const def = defaultTip()
+        if (isEmptyTree(base) && (!zeroObjectId(ref.remoteSha) || def && sharesHistory(tip, def))) {
+          uncovered.push(ref)
+          throw new Error('An empty-tree close cannot cover an existing remote branch or a tip sharing the default branch history. Run /code-review against the published history and close it before pushing.')
         }
         if (carry) carries.push({ type: 'carried', ts: new Date().toISOString(), repoId: repoIdentity(), ref: ref.remoteRef, tip, from: carry.from, tree: carry.tree,
           reviews: carry.close ? [carry.close.review] : carry.result.used.map((r) => r.check ? r.check.id : r.review.id) })
