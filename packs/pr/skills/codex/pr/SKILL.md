@@ -54,11 +54,11 @@ The sections, by id (default titles; the user's style may retitle any but Deferr
 |---|---|---|
 | `gif` | (no heading) | When `gif.url` is set: `![](<gif.url>)` as the first line. Off by default. |
 | `summary` | What this does and why | 2–3 plain sentences: what it does and why (the problem it solves), not the mechanics. |
-| `goal` | Did it match the goal? | Against `plan.outcome` and `plan.outOfScope`: ✅ asked and done, ⚠️ done but not asked, ❌ asked but not done, one line each. Each unmet criterion in `review.criteria` is a not-done line naming its criterion id (e.g. C2). No plan: say there was no plan to check against. |
+| `goal` | Did it match the goal? | Against `plan.outcome` and `plan.outOfScope`: ✅ asked and done, ⚠️ done but not asked, ❌ asked but not done, one line each. Each unmet criterion in `review.criteria` is a not-done line (❌, or "not met") naming its criterion id (e.g. C2), never ✅; when this section is off, those lines go in Deferred findings. No plan: say there was no plan to check against. |
 | `changes` | Files changed | The files grouped by purpose (`files`), one line each on why it changed; counts from `counts`. Group many small files into one line. |
 | `try` | How to try it | The commands or steps a reviewer runs to see it work. |
 | `review` | Review highlights | Who reviewed: the `review.reviewer` and `review.security` lines. From `review.findings`, each HIGH finding with status fixed: its id and `score` copied as given, and a one-line why from its `issue`. MEDIUMs and LOWs as counts only, from `review.bySeverity` (e.g. "3 MEDIUM: 2 fixed, 1 deferred"). When `review.findings` is null, `review.findingsNote` says why: use `review.fixed` and `review.counts` instead. |
-| `deferred` | Deferred findings | One entry per item in `review.deferredItems`, HIGHs first: the id and its `score` exactly as given (e.g. `x1 HIGH 18/100 (likelihood 2/10 × impact 9/10)`), then in plain words what could go wrong and when, why it was deferred (`reason`), and where it is tracked (`trackedIn`) when the reason names it. No file:line, function names, trigger commands or fix ideas unless the reader needs them to understand it. "none" when it is empty. |
+| `deferred` | Deferred findings | One entry per item in `review.deferredItems`, HIGHs first: the id and its `score` exactly as given (e.g. `x1 HIGH 18/100 (likelihood 2/10 × impact 9/10)`), then in plain words what could go wrong and when, why it was deferred (`reason`), and where it is tracked (`trackedIn`) when the reason names it. No file:line, function names, trigger commands or fix ideas unless the reader needs them to understand it. One entry per item: two items never share an entry, even with the same id. A `preExisting` item was there before this branch: say so. An item of kind `unknown` goes in as its raw `line`, verbatim. "none" when it is empty. |
 | `docs` | Docs and context | Docs updated? CLAUDE.md or AGENTS.md updated or created? New comments clear? ✅ or a one-line reason each, from `docs` (`codeWithoutDocs` lists code changed with no docs change). When the context pass ran, `docsTable` holds its rows: one line per row, the doc or the reason none is needed; `--check` fails a changed code file no row covers. |
 | `agent` | What the agent did | Off by default. Short notes from `buildLog`: the decisions and why. No build log: what you decided in this session, briefly. |
 | `quote` | Agent's take | One first-person sentence summing up the PR. |
@@ -83,9 +83,10 @@ node "$PR" --check "${TMPDIR:-/tmp}/pr-body.md"        # same --base as step 1
 ```
 
 It prints `{ ok, problems, warnings }`. On exit 1, fix each problem in the body and run the check again; never open
-or update the PR while it fails. It checks only what must hold: the sections in the style's order, every deferred id
-in Deferred findings with its exact score on the same line, each unmet criterion in the goal section, nothing deferred
-above the first section, the record folded, and no sha, id or path that is not in the facts. Warnings are yours to
+or update the PR while it fails. It checks only what must hold: the sections in the style's order, every deferred item
+in its own entry in Deferred findings with its id followed by its exact score (an unknown line verbatim), each unmet
+criterion as a not-done line in the goal section (or in Deferred findings when that is off), no deferred id above the
+first section, the record folded, and no sha, id or path that is not in the facts. Warnings are yours to
 judge.
 
 ## 4. Open or update the PR
