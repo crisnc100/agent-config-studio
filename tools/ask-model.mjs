@@ -3,7 +3,7 @@
  * ask-model — ask another model, read-only, and print its answer.
  *
  *   ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]])
- *             [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools] [--json] [--cwd <dir>]
+ *             [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools | --x-search] [--json] [--cwd <dir>]
  *
  * The mechanical half of "ask model X", in one place instead of in every
  * skill: the family, id and effort from the resolver (lib/models.js and
@@ -40,6 +40,11 @@
  * read-only sandbox (mode min-tools, tools "restricted"). --json then carries `tools` and a
  * `toolsNote` naming what the CLI still allows.
  *
+ * --x-search asks grok what people on X are saying, with grok's built-in X tools (x_keyword_search, x_semantic_search,
+ * x_user_search, x_thread_fetch) and nothing else: every other built-in in GROK_X_DENY disallowed, MCP tools denied,
+ * web search left on (the X tools come with it), no subagents and a low turn cap. Only for a family grok runs (any
+ * other exits 64), and not with --investigate, --no-tools, --min-tools or --schema.
+ *
  * Exit: 0 answered · 2 another model answered · 3 the CLI (or node) is not
  * installed · 4 the call failed or returned an error · 5 files changed under
  * --investigate · 6 the answer is not JSON or does not match --schema · 64 a
@@ -60,7 +65,7 @@ import { EFFORTS, loadRegistry, resolveModel } from '../lib/models.js';
 import { familyEffort, resolveFlavor, resolveRole } from '../lib/roles.js';
 
 const SELF = fileURLToPath(import.meta.url);
-const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools] [--json] [--cwd <dir>]';
+const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools | --x-search] [--json] [--cwd <dir>]';
 const VALUE_FLAGS = { '--role': 'role', '--family': 'family', '--effort': 'effort', '--effort-from': 'effortFrom', '--prompt-file': 'promptFile', '--schema': 'schemaFile', '--cwd': 'cwd' };
 
 // What each CLI may use. Claude and grok are read-only by these allowlists alone
@@ -73,6 +78,14 @@ const TOOLS = {
 // The review runtime's grok turn cap (packs/review-gate/runtime/review.mjs); min-tools needs few turns.
 const GROK_MAX_TURNS = '40';
 const GROK_MIN_TURNS = '5';
+// --x-search: a denylist, because a --tools allowlist ignores the X tool names (grok warns they name no tool and leaves
+// every tool available). So a tool a later grok adds is not on it; this is every other built-in grok listed, with
+// run_terminal_cmd (the name --investigate allows) beside run_terminal_command. open_page and open_page_with_find come
+// with web search and grok says they name no tool when disallowed, so they stay. 8 turns returned real posts.
+const GROK_X_DENY = ['run_terminal_command', 'run_terminal_cmd', 'search_replace', 'read_file', 'list_dir', 'grep', 'kill_command_or_subagent', 'todo_write',
+  'get_command_or_subagent_output', 'scheduler_create', 'scheduler_delete', 'scheduler_list', 'monitor', 'search_tool', 'use_tool', 'workflow',
+  'enter_plan_mode', 'exit_plan_mode', 'ask_user_question', 'send_feedback', 'web_fetch', 'image_gen', 'image_edit', 'image_to_video', 'web_search'];
+const GROK_X_TURNS = '8';
 // codex features that give the model a tool (`codex features list`), all off under --min-tools; web search has no
 // feature of its own (`web_search` in config.toml: live, indexed, cached or disabled).
 const CODEX_TOOL_FEATURES = ['shell_tool', 'unified_exec', 'view_image', 'image_generation', 'multi_agent', 'browser_use', 'browser_use_external', 'computer_use',
@@ -373,6 +386,10 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = 
   // --disallowed-tools and --deny MCPTool keep configured MCP servers out of reach (grok has no strict-MCP flag).
   // Headless grok refuses any call that needs approval and still exits 0, so --investigate allows the shell
   // (an allow rule approves the call; deny rules still win).
+  if (mode === 'x-search') {
+    return ['-p', prompt, '-m', id, ...(effort ? ['--reasoning-effort', effort] : []), '--cwd', cwd,
+      '--disallowed-tools', GROK_X_DENY.join(','), '--deny', 'MCPTool', '--no-subagents', '--max-turns', GROK_X_TURNS, '--output-format', 'json'];
+  }
   return ['-p', prompt, '-m', id, ...(effort ? ['--reasoning-effort', effort] : []), '--cwd', cwd,
     '--tools', TOOLS.grok[mode], '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool',
     ...(mode === 'investigate' ? ['--allow', 'Bash'] : []),
@@ -617,6 +634,7 @@ function parse(argv) {
     if (a === '--investigate' || a === '--json' || a === '--second') { o[a.slice(2)] = true; continue; }
     if (a === '--no-tools') { o.noTools = true; continue; }
     if (a === '--min-tools') { o.minTools = true; continue; }
+    if (a === '--x-search') { o.xSearch = true; continue; }
     const key = VALUE_FLAGS[a];
     if (!key) return { error: `unexpected argument ${JSON.stringify(a)}` };
     const v = argv[++i];
@@ -635,6 +653,10 @@ function parse(argv) {
   if (o.promptFile === undefined) return { error: '--prompt-file is required' };
   if (o.noTools && o.investigate) return { error: '--no-tools and --investigate cannot both be given' };
   if (o.minTools && (o.investigate || o.noTools)) return { error: `--min-tools and ${o.investigate ? '--investigate' : '--no-tools'} cannot both be given` };
+  if (o.xSearch) {
+    const other = o.investigate ? '--investigate' : o.noTools ? '--no-tools' : o.minTools ? '--min-tools' : o.schemaFile !== undefined ? '--schema' : null;
+    if (other) return { error: `--x-search and ${other} cannot both be given` };
+  }
   if (o.effort && !EFFORTS.has(o.effort)) return { error: `--effort ${JSON.stringify(o.effort)} is not one of ${[...EFFORTS].join('/')} (or empty for none)` };
   return o;
 }
@@ -884,8 +906,9 @@ async function main(argv) {
   if (m.error) return usage(m.error);
   const vendor = vendorOf(m.id);
   if (!vendor) return usage(`${m.family} resolves to "${m.id}", whose prefix names no known CLI (claude-, gpt-, grok-)`);
+  if (o.xSearch && vendor !== 'grok') return usage(`--x-search uses grok's own X tools, so it needs a family grok runs; ${m.family} resolves to "${m.id}" (${vendor})`);
   // --min-tools is --no-tools for a CLI that can run with none.
-  const mode = o.investigate ? 'investigate' : o.noTools || (o.minTools && vendor === 'claude') ? 'no-tools' : o.minTools ? 'min-tools' : 'read-only';
+  const mode = o.xSearch ? 'x-search' : o.investigate ? 'investigate' : o.noTools || (o.minTools && vendor === 'claude') ? 'no-tools' : o.minTools ? 'min-tools' : 'read-only';
   process.stderr.write(`ask-model: ${m.family} (${m.id}, effort ${m.effort || 'none'}, ${mode})\n`);
 
   const result = { family: m.family, id: m.id, effort: m.effort || null, mode, ...(o.minTools && MIN_TOOLS[vendor]), answer: null, changed: null, error: null };
