@@ -1342,6 +1342,122 @@ console.log('\nask-model: a shell that rewrites git\'s own config or gitfile nev
   ok('a core.fsmonitor already in the repo config: the snapshots run git with it off', p.code === 0 && !fs.existsSync(marker), show(p));
 }
 
+console.log('\nask-model: the after-call snapshot runs no command any git config names, wherever the shell puts it');
+{
+  const marker = path.join(tmp, 'filter-ran');
+  const FILTER = `[filter "x"]\n\tclean = touch ${J(marker)}; cat\n`;
+  const g = (cwd, ...a) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'protocol.file.allow=always', ...a],
+      { cwd, encoding: 'utf8', env: { PATH: SYSTEM.join(':'), HOME, ...GIT_ENV } });
+    if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`);
+    return r.stdout;
+  };
+  const repoAt = (name) => {
+    const d = mk(name);
+    g(d, 'init', '-q');
+    fs.writeFileSync(path.join(d, 'a.txt'), 'a\n');
+    g(d, 'add', '.'); g(d, 'commit', '-q', '-m', 'base');
+    return d;
+  };
+  // What the shell does besides planting the filter: name it for every file and rewrite a tracked one at the same
+  // size, so only its mtime differs and git status would hash it through the filter.
+  const dirty = (root) => [{ file: path.join(root, '.gitattributes'), text: '* filter=x\n' }, { file: path.join(root, 'a.txt'), text: 'b\n' }];
+  const investigate = (cwd, put, env = {}) => {
+    fs.rmSync(marker, { force: true });
+    const r = ask(['--family', 'sol', '--investigate', '--json', '--cwd', cwd], { env: { STUB_PUT: J(put), ...env } });
+    return { ...r, j: JSON.parse(r.out || '{}') };
+  };
+  const names = (r, re) => (r.j.changed ?? []).some((c) => re.test(c));
+
+  // A linked worktree's git dir names its common dir in commondir; pointed at a copy whose config defines the filter.
+  const cd = repoAt('commondir-repo');
+  const cdWt = path.join(tmp, 'commondir-wt');
+  g(cd, 'worktree', 'add', '-q', cdWt);
+  const copy = path.join(tmp, 'commondir-copy');
+  fs.cpSync(path.join(cd, '.git'), copy, { recursive: true });
+  fs.appendFileSync(path.join(copy, 'config'), FILTER);
+  const cdFile = path.join(fs.realpathSync(cd), '.git', 'worktrees', 'commondir-wt', 'commondir');
+  const c = investigate(cdWt, [{ file: cdFile, text: `${copy}\n` }, ...dirty(cdWt)]);
+  ok('.git/commondir redirected to a copied git dir with a clean filter: exit 5, commondir named, the filter never run',
+     c.code === 5 && !fs.existsSync(marker) && names(c, /commondir/) && /commondir/.test(c.err), show(c));
+
+  // A config include: the included file is where the filter lands.
+  const inc = repoAt('include-repo');
+  fs.writeFileSync(path.join(inc, '.git', 'extra.cfg'), '[core]\n\tautocrlf = false\n');
+  fs.appendFileSync(path.join(inc, '.git', 'config'), '[include]\n\tpath = extra.cfg\n');
+  const i = investigate(inc, [{ file: path.join(inc, '.git', 'extra.cfg'), text: FILTER, append: true }, ...dirty(inc)]);
+  ok('a clean filter planted in a file .git/config includes: exit 5, the include named, the filter never run',
+     i.code === 5 && !fs.existsSync(marker) && names(i, /\.git\/extra\.cfg/) && /extra\.cfg/.test(i.err), show(i));
+
+  // A symlinked config: the file behind the link is what git reads.
+  const ln = repoAt('linked-config-repo');
+  const target = path.join(tmp, 'linked-config-target');
+  fs.renameSync(path.join(ln, '.git', 'config'), target);
+  fs.symlinkSync(target, path.join(ln, '.git', 'config'));
+  const l = investigate(ln, [{ file: target, text: FILTER, append: true }]);
+  ok('a symlinked .git/config whose target gains a filter: exit 5, .git/config named, the filter never run',
+     l.code === 5 && !fs.existsSync(marker) && names(l, /\.git\/config/), show(l));
+
+  // Sources no guard fingerprints: the global config the caller's git reads, and a filter the repository already defines.
+  const globalCfg = GIT_ENV.GIT_CONFIG_GLOBAL;
+  const had = fs.existsSync(globalCfg) ? fs.readFileSync(globalCfg) : null;
+  const gl = repoAt('global-filter-repo');
+  const gr = investigate(gl, [{ file: globalCfg, text: FILTER, append: true }, ...dirty(gl)]);
+  if (had === null) fs.rmSync(globalCfg, { force: true }); else fs.writeFileSync(globalCfg, had);
+  ok('a clean filter planted in the global git config: exit 5 naming the files, the filter never run',
+     gr.code === 5 && !fs.existsSync(marker) && names(gr, /^a\.txt$/) && names(gr, /^\.gitattributes$/), show(gr));
+  const own = repoAt('own-filter-repo');
+  fs.appendFileSync(path.join(own, '.git', 'config'), FILTER);
+  const o = investigate(own, dirty(own));
+  ok('a clean filter the repository already defines, named by a .gitattributes the shell writes: exit 5, the filter never run',
+     o.code === 5 && !fs.existsSync(marker) && names(o, /^a\.txt$/) && names(o, /^\.gitattributes$/), show(o));
+}
+
+console.log('\nask-model: --investigate sees changes inside submodules, by the same confined git');
+{
+  const g = (cwd, ...a) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'protocol.file.allow=always', ...a],
+      { cwd, encoding: 'utf8', env: { PATH: SYSTEM.join(':'), HOME, ...GIT_ENV } });
+    if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`);
+    return r.stdout;
+  };
+  const src = mk('sub-src');
+  g(src, 'init', '-q');
+  fs.writeFileSync(path.join(src, 's.txt'), 's\n');
+  g(src, 'add', '.'); g(src, 'commit', '-q', '-m', 'one');
+  fs.writeFileSync(path.join(src, 's.txt'), 's2\n');
+  g(src, 'commit', '-q', '-am', 'two');
+  const sup = mk('super-repo');
+  g(sup, 'init', '-q');
+  fs.writeFileSync(path.join(sup, 'a.txt'), 'a\n');
+  g(sup, 'add', '.');
+  g(sup, 'submodule', 'add', '-q', src, 'sub');
+  g(sup, 'commit', '-q', '-m', 'base');
+  const run = (put = [], env = {}) => {
+    const r = ask(['--family', 'sol', '--investigate', '--json', '--cwd', sup], { env: { STUB_PUT: J(put), ...env } });
+    return { ...r, j: JSON.parse(r.out || '{}') };
+  };
+  const clean = run();
+  ok('a repository with a submodule, untouched: exit 0, changed is []', clean.code === 0 && same(clean.j.changed, []), show(clean));
+  const edit = run([{ file: path.join(sup, 'sub', 's.txt'), text: 'edited\n', append: true }]);
+  ok('a tracked file inside the submodule edited: exit 5 naming sub/s.txt',
+     edit.code === 5 && (edit.j.changed ?? []).includes('sub/s.txt') && /sub\/s\.txt/.test(edit.err), show(edit));
+  fs.writeFileSync(path.join(sup, 'sub', 's.txt'), 's2\n');
+  const moved = run([], { STUB_GIT: '-C sub checkout -q --detach HEAD~1' });
+  ok('the submodule checked out at another commit: exit 5 naming the submodule\'s HEAD',
+     moved.code === 5 && (moved.j.changed ?? []).some((c) => /^sub: HEAD .* → /.test(c)), show(moved));
+  g(path.join(sup, 'sub'), 'checkout', '-q', 'master');
+  const marker = path.join(tmp, 'sub-fsmonitor-ran');
+  const hook = path.join(tmp, 'sub-fsmonitor-hook.sh');
+  fs.writeFileSync(hook, `#!/bin/sh\ntouch ${J(marker)}\n`, { mode: 0o755 });
+  const subCfg = path.join(sup, '.git', 'modules', 'sub', 'config');
+  const before = fs.readFileSync(subCfg);
+  const planted = run([{ file: subCfg, text: `[core]\n\tfsmonitor = ${hook}\n`, append: true }]);
+  fs.writeFileSync(subCfg, before);
+  ok('core.fsmonitor planted in the submodule\'s config: exit 5 naming it, the hook never run',
+     planted.code === 5 && !fs.existsSync(marker) && (planted.j.changed ?? []).some((c) => /modules\/sub\/config/.test(c)), show(planted));
+}
+
 console.log('\nask-model: live');
 if (process.env.ACS_LIVE_CHECKS === '1') {
   const live = path.join(tmp, 'live-prompt.txt');
