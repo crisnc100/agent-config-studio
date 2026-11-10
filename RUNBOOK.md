@@ -282,6 +282,19 @@ never reads it, so new data cannot break it.
   `--investigate`: headless grok refuses an unapproved call and still exits
   0). Proof: `modelUsage` must hold the resolved id, for claude and grok;
   codex has none.
+- The `--investigate` shell is sandboxed per CLI. claude gets
+  `--settings` with `CLAUDE_SANDBOX` (sandbox on, `failIfUnavailable`, no
+  unsandboxed commands, `allowedDomains: []` with `strictAllowlist`) and
+  `--setting-sources=`, the empty list, where other calls pass
+  `--setting-sources user`: array settings merge across sources, so a user
+  `allowedDomains`, `WebFetch(domain:…)` grant or `excludedCommands` entry
+  would reopen the sandbox. grok gets `--sandbox strict`. `sandboxProblem`
+  refuses first (exit 4, no CLI run): any platform but macOS and Linux;
+  grok on macOS, where its sandbox leaves a command's network open; grok on
+  Linux unless `/sys/kernel/security/lsm` lists `landlock`, since a built-in
+  profile that fails to apply runs unenforced with only a warning. codex
+  keeps its read-only sandbox. `--json` carries `shellSandbox`
+  (`SHELL_SANDBOX[vendor]`).
 - `--x-search` (grok only) drops `--tools` and `--disable-web-search`:
   grok's `--tools` ignores the X tool names, and the X tools come with web
   search. Instead `--disallowed-tools` lists every other built-in
@@ -331,6 +344,14 @@ never reads it, so new data cannot break it.
   checkout or branch switch that leaves the status as it was still exits 5,
   reported as `HEAD <commit> (<branch>) → <commit> (<branch>)`. It never
   reverts.
+- The sandboxed shell can still write the work tree, so the before-snapshot
+  pins the repository: `rev-parse` gives the work tree root, git dir and
+  common dir, and `gitGuard` records the work tree's `.git` (dir, gitfile
+  hash or symlink target) and the sha256 of `config` and `config.worktree`
+  in the git dir and common dir. The after-snapshot checks those first; a
+  change is exit 5 naming each file, and git is not run. Otherwise both
+  snapshots run git with `GIT_DIR` and `GIT_WORK_TREE` pinned,
+  `-c core.fsmonitor=false`, and `status --ignore-submodules=all`.
 - Tests: `tests/ask-model.mjs` (stub CLIs on PATH, temp HOME).
 
 ## Model guide block (`lib/model-guide.js`)
@@ -415,5 +436,10 @@ never reads it, so new data cannot break it.
 - The uncontained-probe guard in the live suite checks cwd. It cannot stop a
   write to an absolute path outside the fixture. Only an OS-level sandbox
   would, and that is not available here.
+- ask-model's `--investigate` guard does not cover `.git/commondir` or
+  files a git config includes, and a clean filter the repository configures
+  can still run during the snapshot's `git status`.
+- The snapshot's `git status` runs with `--ignore-submodules=all`, so a
+  change inside a submodule never causes exit 5.
 - No Codex adapter yet. The contract is ready (`streams: false`, buffered
   `decode.parse`, resume as `{kind:'subcommand', argv}`).
