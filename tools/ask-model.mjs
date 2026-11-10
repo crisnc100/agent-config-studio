@@ -427,10 +427,12 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = 
     return ['-p', prompt, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'json', ...json,
       // --tools decides which tools exist, so skipping the prompts is safe; --strict-mcp-config with
       // no --mcp-config loads no MCP server. Without the skip, a deny rule or hook blocks a read silently.
-      // --setting-sources user: a headless run honours the repo's .claude settings, hooks included, so
-      // only your own settings load; your login is not a settings file and is still read.
-      '--dangerously-skip-permissions', '--tools', TOOLS.claude[mode], '--strict-mcp-config', '--setting-sources', 'user',
-      ...(mode === 'investigate' ? ['--settings', JSON.stringify(CLAUDE_SANDBOX)] : [])];
+      // --setting-sources: a headless run honours the repo's .claude settings, hooks included, so only your own
+      // settings load; your login is not a settings file and is still read. --investigate loads none of them
+      // (`--setting-sources=`, the empty list): array settings merge across sources, so a user allowedDomains,
+      // WebFetch(domain:…) grant or excludedCommands entry would reopen what CLAUDE_SANDBOX closes.
+      '--dangerously-skip-permissions', '--tools', TOOLS.claude[mode], '--strict-mcp-config',
+      ...(mode === 'investigate' ? ['--setting-sources=', '--settings', JSON.stringify(CLAUDE_SANDBOX)] : ['--setting-sources', 'user'])];
   }
   if (vendor === 'codex') {
     const min = mode === 'min-tools' ? [...CODEX_TOOL_FEATURES.flatMap((f) => ['--disable', f]), '-c', 'web_search="disabled"'] : [];
@@ -768,18 +770,55 @@ function which(name) {
  * was already dirty shows). Ignored files and anything outside the
  * repository are not seen. --no-optional-locks: reading must not write the index.
  */
-function snapshot(cwd) {
+/**
+ * The files that tell git where the repository is and which commands to run: the work tree's .git (a folder, or a
+ * linked worktree's gitfile) and the config files of its git dir and common dir. A sandboxed shell may write the work
+ * tree, so it may rewrite these to make the next git call run its command (core.fsmonitor) as the caller.
+ */
+function gitGuard({ root, gitDir, commonDir }) {
+  const files = [...new Set([path.join(root, '.git'), ...[gitDir, commonDir].flatMap((d) => [path.join(d, 'config'), path.join(d, 'config.worktree')])])];
+  return new Map(files.map((f) => {
+    let state = 'missing';
+    try {
+      const s = fs.lstatSync(f);
+      state = s.isSymbolicLink() ? `link ${fs.readlinkSync(f)}` : s.isDirectory() ? 'dir'
+        : `file ${crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex')}`;
+    } catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') state = `unreadable ${e.code || e.message}`; }
+    return [f, state];
+  }));
+}
+
+/**
+ * The work tree's state. `pin`, the before-snapshot's repository, is checked first: when its .git or config files
+ * changed, git is not run at all and those files are what changed. git runs with GIT_DIR and GIT_WORK_TREE pinned,
+ * core.fsmonitor off and submodules ignored, so nothing the repository configures runs as the caller.
+ */
+function snapshot(cwd, pin = null) {
   // git from an absolute PATH entry only (which), so a repo's ./git never answers for the work tree.
   const bin = which('git');
   if (!bin) return { error: 'git is not on PATH' };
-  const git = (...a) => spawnSync(bin, ['--no-optional-locks', ...a], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  const top = git('rev-parse', '--show-toplevel');
-  if (top.error || top.status !== 0) return null;
-  const root = top.stdout.trim();
+  let repo = pin?.repo;
+  if (repo) {
+    const now = gitGuard(repo);
+    const tampered = [...repo.guard.keys()].filter((f) => repo.guard.get(f) !== now.get(f));
+    if (tampered.length) return { tampered: tampered.map((f) => path.relative(repo.root, f) || f).sort() };
+  } else {
+    const where = spawnSync(bin, ['--no-optional-locks', 'rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
+      { cwd, encoding: 'utf8' });
+    if (where.error || where.status !== 0) return null;
+    const [root, gitDir, common] = where.stdout.split('\n');
+    if (!root || !gitDir || !common) return null;
+    repo = { root, gitDir, commonDir: path.resolve(cwd, common) };
+    repo.guard = gitGuard(repo);
+  }
+  const env = { ...process.env, GIT_DIR: repo.gitDir, GIT_WORK_TREE: repo.root };
+  const git = (...a) => spawnSync(bin, ['--no-optional-locks', '-c', 'core.fsmonitor=false', ...a],
+    { cwd: repo.root, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const root = repo.root;
   const commit = git('rev-parse', '--verify', '-q', 'HEAD');
   const branch = git('symbolic-ref', '-q', '--short', 'HEAD');
   const head = `${commit.status === 0 ? commit.stdout.trim().slice(0, 12) : '(no commit)'} (${branch.status === 0 ? branch.stdout.trim() : 'detached'})`;
-  const st = git('status', '--porcelain=v2', '-z', '--untracked-files=all');
+  const st = git('status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignore-submodules=all');
   if (st.error || st.status !== 0) return null;
   const seen = new Map();
   const fields = st.stdout.split('\0');
@@ -800,7 +839,7 @@ function snapshot(cwd) {
     try { const s = fs.lstatSync(path.join(root, file)); stamp = `${s.mode}:${s.size}:${s.mtimeMs}:${s.ctimeMs}`; } catch {}
     seen.set(file, `${fixed} ${stamp}`);
   }
-  return { head, paths: seen };
+  return { head, paths: seen, repo };
 }
 
 /** What differs: a moved HEAD first, naming both commits, then each path. */
@@ -1042,11 +1081,12 @@ async function main(argv) {
   else result.error = got.error;
 
   if (before) {
-    const read = snapshot(cwd);
-    const after = read && !read.error ? read : null;
-    result.changed = after ? changedPaths(before, after) : null;
+    const read = snapshot(cwd, before);
+    const after = read && !read.error && !read.tampered ? read : null;
+    result.changed = read?.tampered ? read.tampered.map((f) => `${f} (git's own files: git was not run after the call)`)
+      : after ? changedPaths(before, after) : null;
     if (!after || result.changed.length) {
-      const what = after ? result.changed.map((c) => `  ${c}`).join('\n') : '  (the work tree could not be read after the call)';
+      const what = result.changed ? result.changed.map((c) => `  ${c}`).join('\n') : '  (the work tree could not be read after the call)';
       // A failed call is still reported; the change is what the caller must act on.
       result.error = [result.error, `files changed under --investigate (nothing was reverted):\n${what}`].filter(Boolean).join('\n');
       return finish(5);
