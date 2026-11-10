@@ -277,18 +277,18 @@ test('C2 "Deferred findings" keeps its title, and stays on while a review exists
 
 test('C2 two sections never share a title: a collision gives the later one a unique fallback title, with a warning', () => {
   const b = fixture()
-  b.setStyle({ sections: [{ id: 'summary', title: 'What changed' }, { id: 'goal', title: 'What changed (changes)' }, { id: 'changes' }, { id: 'try', title: 'What changed' },
+  b.setStyle({ sections: [{ id: 'summary', title: 'Files changed' }, { id: 'goal', title: 'Files changed (changes)' }, { id: 'changes' }, { id: 'try', title: 'Files changed' },
     { id: 'review', title: 'Deferred findings' }, ...DEFAULT_IDS.filter((id) => !['summary', 'changes', 'try', 'review', 'goal'].includes(id)).map((id) => ({ id }))] })
   const f = b.facts()
   const titles = f.style.sections.filter((s) => s.id !== 'gif').map((s) => s.title)
   assert.equal(new Set(titles).size, titles.length, titles.join(' | '))
   const title = (id) => f.style.sections.find((s) => s.id === id).title
-  assert.equal(title('summary'), 'What changed', 'the first one keeps its title')
-  assert.equal(title('goal'), 'What changed (changes)')
+  assert.equal(title('summary'), 'Files changed', 'the first one keeps its title')
+  assert.equal(title('goal'), 'Files changed (changes)')
   assert.equal(title('try'), 'How to try it')
   assert.equal(title('review'), 'Review highlights')
   assert.equal(title('deferred'), 'Deferred findings')
-  assert.ok(!['What changed', 'What changed (changes)'].includes(title('changes')), title('changes'))
+  assert.ok(!['Files changed', 'Files changed (changes)'].includes(title('changes')), title('changes'))
   for (const id of ['changes', 'try', 'review'])
     assert.ok(f.warnings.some((w) => w.startsWith(`section "${id}": title`) && w.includes('already used')), `${id}: ${JSON.stringify(f.warnings)}`)
 })
@@ -373,7 +373,8 @@ test('C3 --check fails naming each problem: missing, out of order, turned off, f
   assert.equal(missing.code, 1)
   assert.deepEqual(missing.problems, ['missing section "## How to try it"'])
   const swapped = checked(b, body.replace('## What this does and why', '## TEMP').replace('## Did it match the goal?', '## What this does and why').replace('## TEMP', '## Did it match the goal?'))
-  assert.deepEqual(swapped.problems, ['"What this does and why" comes after "Did it match the goal?", but your style puts it first'])
+  assert.deepEqual(swapped.problems, ['"What this does and why" comes after "Did it match the goal?", but your style puts it first',
+    `"Did it match the goal?" is missing unmet criterion C2, as a not-done line: ${f.review.criteria[0]}`], 'headings swapped, the goal heading now holds the summary text')
   const off = checked(b, `${body}\n## Review record\nx\n`)
   assert.ok(off.problems.some((p) => /the review record goes in <details>, not under a "## Review record" heading/.test(p)), JSON.stringify(off.problems))
   b.setStyle({ sections: DEFAULT_IDS.map((id) => ({ id, ...(id === 'quote' && { on: false }) })) })
