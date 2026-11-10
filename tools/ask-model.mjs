@@ -28,10 +28,14 @@
  * --investigate adds a shell (claude's Bash; grok's run_terminal_cmd, with
  * shell commands allowed; codex's read-only sandbox already runs commands) and
  * compares the git work tree before and after the call. Anything that changed
- * is named on stderr and the exit is 5. Nothing is ever reverted. The shell runs
+ * is named on stderr and the exit is 5. Nothing is ever reverted. A change to the
+ * work tree's .git (folder or gitfile) or to its git dir's config is exit 5 too,
+ * and git is not run after the call; otherwise both snapshots run git pinned to
+ * the repository found before the call, with core.fsmonitor off. The shell runs
  * inside the CLI's own OS sandbox: claude's Bash sandbox through --settings
  * (CLAUDE_SANDBOX: writes to the cwd and the temp folder only, no network host,
- * no unsandboxed fallback, and claude exits if the sandbox cannot start), grok's
+ * no unsandboxed fallback, and claude exits if the sandbox cannot start), with no
+ * settings file loaded, your own included, so none of them widens it; grok's
  * `--sandbox strict` on Linux (reads the cwd, system paths and ~/.grok, writes the
  * cwd and temp folders, no network), codex's read-only one. Off macOS and Linux,
  * for grok on macOS (where its sandbox can't block a command's network), or on

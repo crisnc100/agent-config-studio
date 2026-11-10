@@ -71,8 +71,8 @@ ask-model "${who[@]}" --investigate --prompt-file "$PROMPT_FILE"
 `ask-model` picks the CLI from the model id (a fresh session, no seat context), keeps MCP out, and checks the
 answering model where the CLI reports one. **`--investigate` gives the advisor a shell** to verify things. It is told
 never to change files, and ask-model reports any change to the work tree. The shell runs inside its CLI's own sandbox:
-claude's Bash sandbox (commands write only to the work tree and the temp folder, reach no network host, and never run
-outside it), grok's `strict` profile on Linux (commands read the work tree and system paths, write the work tree and
+claude's Bash sandbox, with none of your Claude Code settings loaded (commands write only to the work tree and the
+temp folder, reach no network host, and never run outside it), grok's `strict` profile on Linux (commands read the work tree and system paths, write the work tree and
 temp folders, and reach no network), or codex's own. Where that sandbox can't run (a platform other than macOS or
 Linux; grok on macOS, where its sandbox can't block a command's network; grok on Linux without Landlock), ask-model
 refuses with exit 4 and runs nothing. The advice is on stdout; one stderr line names the family, id, effort and mode.
