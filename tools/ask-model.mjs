@@ -765,16 +765,6 @@ function which(name) {
 }
 
 /**
- * The work tree's state, null outside a git work tree, or { error } when git
- * is not on PATH (absolute entries only): HEAD (its commit
- * and branch), so a checkout that leaves the status clean still shows, and
- * every path `git status` reports with its porcelain fields (status, modes,
- * and the HEAD and index object names, so a change to the index shows) and
- * the file's mode, size, mtime and ctime (so a write or chmod to a file that
- * was already dirty shows). Ignored files and anything outside the
- * repository are not seen. --no-optional-locks: reading must not write the index.
- */
-/**
  * The files that tell git where the repository is and which commands to run: the work tree's .git (a folder, or a
  * linked worktree's gitfile) and the config files of its git dir and common dir. A sandboxed shell may write the work
  * tree, so it may rewrite these to make the next git call run its command (core.fsmonitor) as the caller.
@@ -793,9 +783,15 @@ function gitGuard({ root, gitDir, commonDir }) {
 }
 
 /**
- * The work tree's state. `pin`, the before-snapshot's repository, is checked first: when its .git or config files
- * changed, git is not run at all and those files are what changed. git runs with GIT_DIR and GIT_WORK_TREE pinned,
- * core.fsmonitor off and submodules ignored, so nothing the repository configures runs as the caller.
+ * The work tree's state, null outside a git work tree, or { error } when git is not on PATH (absolute entries only):
+ * HEAD (its commit and branch), so a checkout that leaves the status clean still shows, and every path `git status`
+ * reports with its porcelain fields (status, modes, and the HEAD and index object names, so a change to the index
+ * shows) and the file's mode, size, mtime and ctime (so a write or chmod to a file that was already dirty shows).
+ * Ignored files and anything outside the repository are not seen. --no-optional-locks: reading must not write the index.
+ * `pin`, the before-snapshot's repository, is checked first: when its .git or config files changed, git is not run at
+ * all and the result is { tampered }, naming them. git runs with GIT_DIR and GIT_WORK_TREE pinned, core.fsmonitor off
+ * and submodules ignored. Config include files and .git/commondir are not guarded, and a clean filter the repository
+ * configures can still run.
  */
 function snapshot(cwd, pin = null) {
   // git from an absolute PATH entry only (which), so a repo's ./git never answers for the work tree.
