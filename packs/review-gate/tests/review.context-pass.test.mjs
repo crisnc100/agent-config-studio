@@ -178,7 +178,7 @@ test('8 it fails closed: block-comment delimiters, regex literals, string contin
     ['src/a.js', JS, JS.replace('/**\n * The parser.\n */\n', ''), 'a removed block comment (delimiters change)'],
     ['src/b.js', 'const a = 1\n', 'const a = 1\n/* new */\n', 'an added block comment'],
     ['src/c.js', 'const re = /\\/*x/\nconst b = 2 // b\n', 'const re = /\\/*x/\nconst b = 2 // the b\n', 'a regex literal that looks like a comment start'],
-    ['src/d.js', 'const r = /"/\n// note\nconst s = 1\n', 'const r = /"/\n// a note\nconst s = 1\n', 'a regex literal with a quote'],
+    ['src/d.js', 'if (ok) /"/.test(s)\n// note\nconst s = 1\n', 'if (ok) /"/.test(s)\n// a note\nconst s = 1\n', 'a slash with a quote after ), which may divide or open a regex'],
     ['src/e.js', 'const t = `a\n// not a comment\nb`\n', 'const t = `a\n// still not a comment\nb`\n', 'a template literal across lines'],
     ['src/f.py', 'def f():\n    """Doc.\n    # not a comment\n    """\n', 'def f():\n    """Doc.\n    # changed text\n    """\n', 'a triple-quoted string'],
     ['src/g.sh', "cat <<EOF\n# not a comment\nEOF\n", "cat <<EOF\n# changed\nEOF\n", 'a heredoc'],
