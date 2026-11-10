@@ -13,7 +13,7 @@ Find the project root (walk up for `.git`, `package.json`, `pyproject.toml`, `CL
 - `docs/` exists → `docs/handoff.md`
 - else → `<project-root>/handoff.md`
 
-An orchestrator thread — a session that runs work across several repos or worktrees, or from a folder that is not one — instead writes `HANDOFF-<thread>.md` (a short name for the work) in the nearest folder at or above the working folder that is not inside a git repo, reusing an existing `HANDOFF-*.md` there. It is replaced in place each time, without asking.
+An orchestrator thread — a session that runs work across several repos or worktrees, or from a folder that is not one — instead writes `HANDOFF-<thread>.md` (a short name for the work) in the nearest folder at or above the working folder that is not inside a git repo. Other threads can share that folder: reuse an existing `HANDOFF-*.md` there only when its Goal is this thread's work (its **Thread:** line names only the shared folder), and replace it in place each time, without asking. When none matches, write a new `HANDOFF-<thread>.md` under a name no file there has, and never replace another thread's file or carry its items forward.
 
 Tell the user the path before writing. If a handoff already exists there (other than a thread file), ask whether to replace it, save as `handoff-YYYY-MM-DD.md`, or cancel. Never silently overwrite. Before replacing any handoff, read its Failed Attempts, Waiting on the user and Later (do not start), and carry forward every item not known to be resolved. One file holds one Next objective.
 

@@ -19,7 +19,10 @@
  * docs-focus slice that follows reviews the commit as code. So it fails closed. An unknown language, a regex literal
  * that could hide a comment or quote, a string that runs past a line end, a heredoc, a YAML block scalar, a line
  * continuation, a mode change, a new or deleted file, and any changed line with a block-comment delimiter all count as
- * code. Changed lines come from git diff, so a file's length never decides the answer.
+ * code. A '/' counts as a regex literal only after ( , = : [ ! & | ? ; { or =>, where it cannot divide, and only when it
+ * closes on its line. Files are known by extension, and .env-style files (.env, .env.example) by name.
+ * builds/<slug>/docs-table.json, the skill's own output, passes. Changed lines come from git diff, so a file's length
+ * never decides the answer.
  *
  * Output: one JSON object. Exit 0 ok · 1 a problem or bad input.
  */

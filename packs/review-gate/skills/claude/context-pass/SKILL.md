@@ -58,7 +58,7 @@ Give the subagent the brief, the rules below word for word, and these instructio
 ```bash
 node "$CP" --check-commit HEAD --brief builds/<slug>/context-brief.json
 ```
-It fails, naming each path and why, when the commit touched a test file, an agent-instruction file (SKILL.md, CLAUDE.md, AGENTS.md, GEMINI.md, `.cursor/rules`, a pack's `instructions/`, `.claude/`, `.codex/`, `.agents/`), a path the brief lists, a generated block (`<!-- ns:name … -->` … `<!-- /ns:name -->`), a doc line a test quotes, or a line in a code file that is not comment or blank. The code-line part fails closed (anything it cannot read for sure counts as code) and is only an accident barrier: the docs-focus slice reviews the commit as code. On a failure, take those changes out of the commit (restore the files from `HEAD~1` and amend) and put them in the report as needed changes. Never change the check.
+It fails, naming each path and why, when the commit touched a test file, an agent-instruction file (SKILL.md, CLAUDE.md, AGENTS.md, GEMINI.md, `.cursor/rules`, a pack's `instructions/`, `.claude/`, `.codex/`, `.agents/`), a path the brief lists, a generated block (`<!-- ns:name … -->` … `<!-- /ns:name -->`), a doc line a test quotes, or a line in a code file that is not comment or blank (`.env`-style files count as code files with `#` comments; `builds/<slug>/docs-table.json` is this skill's own output and passes). The code-line part fails closed (anything it cannot read for sure counts as code) and is only an accident barrier: the docs-focus slice reviews the commit as code. On a failure, take those changes out of the commit (restore the files from `HEAD~1` and amend) and put them in the report as needed changes. Never change the check.
 
 ## Step 4 — The docs table
 
