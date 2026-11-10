@@ -28,10 +28,13 @@
  * --investigate adds a shell (claude's Bash; grok's run_terminal_cmd, with
  * shell commands allowed; codex's read-only sandbox already runs commands) and
  * compares the git work tree before and after the call. Anything that changed
- * is named on stderr and the exit is 5. Nothing is ever reverted. A change to the
- * work tree's .git (folder or gitfile) or to its git dir's config is exit 5 too,
- * and git is not run after the call; otherwise both snapshots run git pinned to
- * the repository found before the call, with core.fsmonitor off. The shell runs
+ * is named on stderr and the exit is 5. Nothing is ever reverted. Submodules
+ * that are checked out are compared the same way. A change to the work tree's
+ * .git (folder or gitfile), the git dir's commondir, or a config file or any
+ * file it includes is exit 5 too, and git is not run after the call. Every
+ * snapshot reads the repository found before the call through git confined to
+ * a config ask-model writes, so no config the repository or the shell controls
+ * (no fsmonitor, filter or include) is read. The shell runs
  * inside the CLI's own OS sandbox: claude's Bash sandbox through --settings
  * (CLAUDE_SANDBOX: writes to the cwd and the temp folder only, no network host,
  * no unsandboxed fallback, and claude exits if the sandbox cannot start), with no
@@ -765,88 +768,214 @@ function which(name) {
 }
 
 /**
- * The files that tell git where the repository is and which commands to run: the work tree's .git (a folder, or a
- * linked worktree's gitfile) and the config files of its git dir and common dir. A sandboxed shell may write the work
- * tree, so it may rewrite these to make the next git call run its command (core.fsmonitor) as the caller.
+ * Every file whose state the after-call check compares: the work tree's .git (a folder, or a linked worktree's
+ * gitfile), the git dir's commondir, the config and config.worktree of the git dir and common dir, and each file those
+ * configs include (include.path and includeIf.*.path, followed as git follows them). The after-call git never reads
+ * any of them, so a change here cannot make the check run a command; it is reported because the caller's next git
+ * would read it. `git` is the confined git (confinedGit), which reads only the file it is given.
  */
-function gitGuard({ root, gitDir, commonDir }) {
-  const files = [...new Set([path.join(root, '.git'), ...[gitDir, commonDir].flatMap((d) => [path.join(d, 'config'), path.join(d, 'config.worktree')])])];
+function guardFiles(repo, git) {
+  const files = [path.join(repo.root, '.git'), path.join(repo.gitDir, 'commondir'),
+    ...[repo.gitDir, repo.commonDir].flatMap((d) => [path.join(d, 'config'), path.join(d, 'config.worktree')])];
+  const seen = new Set();
+  const walk = (file, depth) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    // git stops at 10 levels of includes.
+    if (depth > 10 || !fs.existsSync(file)) return;
+    const r = git('config', '--file', file, '--no-includes', '--null', '--type=path', '--get-regexp', '^include(if\\..*)?\\.path$');
+    for (const entry of String(r.stdout || '').split('\0')) {
+      const value = entry.slice(entry.indexOf('\n') + 1);
+      if (entry.includes('\n') && value) walk(path.resolve(path.dirname(file), value), depth + 1);
+    }
+  };
+  for (const f of files) walk(f, 0);
+  return [...seen];
+}
+
+/** Each file's state: missing, a folder, its sha256, or a symlink's target with the sha256 of what it points at. */
+function gitGuard(files) {
+  const hash = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
   return new Map(files.map((f) => {
     let state = 'missing';
     try {
       const s = fs.lstatSync(f);
-      state = s.isSymbolicLink() ? `link ${fs.readlinkSync(f)}` : s.isDirectory() ? 'dir'
-        : `file ${crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex')}`;
+      if (s.isSymbolicLink()) {
+        let to = 'missing';
+        try { to = fs.statSync(f).isDirectory() ? 'dir' : hash(f); } catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') to = `unreadable ${e.code || e.message}`; }
+        state = `link ${fs.readlinkSync(f)} ${to}`;
+      } else state = s.isDirectory() ? 'dir' : `file ${hash(f)}`;
     } catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') state = `unreadable ${e.code || e.message}`; }
     return [f, state];
   }));
 }
 
 /**
- * The work tree's state, null outside a git work tree, or { error } when git is not on PATH (absolute entries only):
- * HEAD (its commit and branch), so a checkout that leaves the status clean still shows, and every path `git status`
- * reports with its porcelain fields (status, modes, and the HEAD and index object names, so a change to the index
- * shows) and the file's mode, size, mtime and ctime (so a write or chmod to a file that was already dirty shows).
- * Ignored files and anything outside the repository are not seen. --no-optional-locks: reading must not write the index.
- * `pin`, the before-snapshot's repository, is checked first: when its .git or config files changed, git is not run at
- * all and the result is { tampered }, naming them. git runs with GIT_DIR and GIT_WORK_TREE pinned, core.fsmonitor off
- * and submodules ignored. Config include files and .git/commondir are not guarded, and a clean filter the repository
- * configures can still run.
+ * Where the repository holding `cwd` is, or null outside a git work tree. This runs the caller's git as they would,
+ * before the call, when the config is still theirs; rev-parse reads no index and runs no configured command.
+ */
+function locateRepo(bin, cwd) {
+  const where = spawnSync(bin, ['--no-optional-locks', 'rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir', '--show-object-format'],
+    { cwd, encoding: 'utf8' });
+  if (where.error || where.status !== 0) return null;
+  const [root, gitDir, common, format] = where.stdout.split('\n');
+  if (!root || !gitDir || !common) return null;
+  const repo = { root, gitDir, commonDir: path.resolve(cwd, common), format: format || 'sha1' };
+  // The ignore rules the caller's git uses outside the work tree, read now so the after-call git sees the same ones.
+  const xf = spawnSync(bin, ['config', '--type=path', '--get', 'core.excludesFile'], { cwd: root, encoding: 'utf8' });
+  const global = xf.status === 0 && xf.stdout.trim()
+    ? xf.stdout.trim() : path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'git', 'ignore');
+  repo.excludes = [path.join(repo.commonDir, 'info', 'exclude'), global]
+    .map((f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return ''; } }).join('\n');
+  return repo;
+}
+
+/**
+ * git confined to the data of `repo`: GIT_DIR and GIT_COMMON_DIR are a fresh temp folder holding a config ask-model
+ * writes (no include, no filter or fsmonitor, no excludes or attributes file), a copy of HEAD, the pinned ignore rules,
+ * and links to the repository's refs; the index and objects are the repository's, named by GIT_INDEX_FILE and
+ * GIT_OBJECT_DIRECTORY. No GIT_* variable is inherited, the system and global configs are off, so no config git reads
+ * is one the repository or the shell controls. What the shell can still write (.gitattributes, the index, refs,
+ * objects) is data: an attribute names a filter, and no filter is defined. Status, ls-files and rev-parse run no
+ * command but what config names.
+ */
+function confinedGit(bin, repo) {
+  if (fs.existsSync(path.join(repo.commonDir, 'reftable'))) return { error: `${repo.root} keeps its refs in reftable, which the change check cannot read` };
+  let dir;
+  try {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-model-git-'));
+    const sha256 = repo.format === 'sha256';
+    fs.writeFileSync(path.join(dir, 'config'), `[core]\n\trepositoryformatversion = ${sha256 ? 1 : 0}\n\tbare = false\n\tfsmonitor = false\n`
+      + `\tuntrackedCache = false\n\texcludesFile = ${os.devNull}\n\tattributesFile = ${os.devNull}\n${sha256 ? '[extensions]\n\tobjectFormat = sha256\n' : ''}`);
+    fs.writeFileSync(path.join(dir, 'HEAD'), fs.readFileSync(path.join(repo.gitDir, 'HEAD')));
+    fs.symlinkSync(path.join(repo.commonDir, 'refs'), path.join(dir, 'refs'));
+    if (fs.existsSync(path.join(repo.commonDir, 'packed-refs'))) fs.symlinkSync(path.join(repo.commonDir, 'packed-refs'), path.join(dir, 'packed-refs'));
+    // A split index keeps its shared part beside the index, and git looks for it in GIT_DIR.
+    for (const f of fs.readdirSync(repo.gitDir)) if (f.startsWith('sharedindex.')) fs.symlinkSync(path.join(repo.gitDir, f), path.join(dir, f));
+    fs.mkdirSync(path.join(dir, 'info'));
+    fs.writeFileSync(path.join(dir, 'info', 'exclude'), repo.excludes ?? '');
+  } catch (e) {
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+    return { error: `git could not be confined for ${repo.root} (${e.code || e.message})` };
+  }
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
+  Object.assign(env, { GIT_DIR: dir, GIT_COMMON_DIR: dir, GIT_WORK_TREE: repo.root, GIT_INDEX_FILE: path.join(repo.gitDir, 'index'),
+    GIT_OBJECT_DIRECTORY: path.join(repo.commonDir, 'objects'), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull, GIT_ATTR_NOSYSTEM: '1' });
+  const git = (...a) => spawnSync(bin, ['--no-optional-locks', ...a], { cwd: repo.root, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  return { git, done: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+/** The guarded files of `repo` and its pinned submodules that changed, relative to `top`. */
+function guardChanges(repo, top) {
+  const now = gitGuard([...repo.guard.keys()]);
+  return [...[...repo.guard.keys()].filter((f) => repo.guard.get(f) !== now.get(f)).map((f) => path.relative(top, f) || f),
+    ...repo.subs.flatMap((s) => (s.repo ? guardChanges(s.repo, top) : []))];
+}
+
+/**
+ * One repository's state through confined git, its submodules' folded in under their paths. `pinning` is the
+ * before-call read: it fingerprints the guarded files and finds each submodule's repository (locateRepo); after the
+ * call only the repositories pinned then are read, and a submodule that had none is compared by its folder listing.
+ */
+function readRepo(bin, repo, pinning) {
+  const c = confinedGit(bin, repo);
+  if (c.error) return c;
+  try {
+    const { git } = c;
+    if (pinning) repo.guard = gitGuard(guardFiles(repo, git));
+    const fail = (what, r) => ({ error: `git ${what} failed in ${repo.root}: ${(r.stderr || r.error?.message || '').trim() || `exit ${r.status}`}` });
+    const commit = git('rev-parse', '--verify', '-q', 'HEAD');
+    const branch = git('symbolic-ref', '-q', '--short', 'HEAD');
+    const heads = new Map([['', `${commit.status === 0 ? commit.stdout.trim().slice(0, 12) : '(no commit)'} (${branch.status === 0 ? branch.stdout.trim() : 'detached'})`]]);
+    // Submodules are read below, each through its own confined git: git's own recursion would run a git that reads
+    // the submodule's config.
+    const st = git('status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignore-submodules=all');
+    if (st.error || st.status !== 0) return fail('status', st);
+    const seen = new Map();
+    const fields = st.stdout.split('\0');
+    for (let i = 0; i < fields.length; i++) {
+      const e = fields[i];
+      // v2 entries: `1 XY sub mH mI mW hH hI path`, `2 … score path` then the old path, `u …` (10 fields before
+      // the path), `? path`. A path may hold spaces, so it is everything after the fixed fields.
+      let file, fixed;
+      if (e[0] === '?') { fixed = '??'; file = e.slice(2); }
+      else if (e[0] === '1' || e[0] === '2' || e[0] === 'u') {
+        const words = e.split(' ');
+        const at = { 1: 8, 2: 9, u: 10 }[e[0]];
+        fixed = words.slice(1, at).join(' ');
+        file = words.slice(at).join(' ');
+        if (e[0] === '2') i++;
+      } else continue;
+      let stamp = 'missing';
+      try { const s = fs.lstatSync(path.join(repo.root, file)); stamp = `${s.mode}:${s.size}:${s.mtimeMs}:${s.ctimeMs}`; } catch {}
+      seen.set(file, `${fixed} ${stamp}`);
+    }
+    // The index's submodule entries, so a staged submodule commit shows though status leaves submodules out.
+    const ls = git('ls-files', '--stage', '-z');
+    if (ls.error || ls.status !== 0) return fail('ls-files', ls);
+    const links = [];
+    for (const e of ls.stdout.split('\0')) {
+      if (!e.startsWith('160000 ')) continue;
+      const tab = e.indexOf('\t');
+      const p = e.slice(tab + 1);
+      seen.set(p, `submodule ${e.slice(7, tab)}`);
+      if (!links.includes(p)) links.push(p);
+    }
+    if (pinning) {
+      repo.subs = links.map((p) => {
+        const root = path.join(repo.root, p);
+        const sub = fs.existsSync(path.join(root, '.git')) ? locateRepo(bin, root) : null;
+        return { path: p, repo: sub && fs.realpathSync(sub.root) === fs.realpathSync(root) ? sub : null };
+      });
+    }
+    for (const p of new Set([...repo.subs.map((s) => s.path), ...links])) {
+      const pinned = repo.subs.find((s) => s.path === p)?.repo;
+      if (!pinned) {
+        let names = 'missing';
+        try { names = fs.readdirSync(path.join(repo.root, p)).sort().join('\0'); } catch {}
+        seen.set(`${p}/`, `not checked out: ${names}`);
+        continue;
+      }
+      const sub = readRepo(bin, pinned, pinning);
+      if (sub.error) return sub;
+      for (const [k, v] of sub.heads) heads.set(k ? `${p}/${k}` : p, v);
+      for (const [k, v] of sub.paths) seen.set(`${p}/${k}`, v);
+    }
+    return { heads, paths: seen, repo };
+  } finally { c.done(); }
+}
+
+/**
+ * The work tree's state, null outside a git work tree, or { error } when git is not on PATH (absolute entries only) or
+ * the repository can't be read: HEAD (its commit and branch), so a checkout that leaves the status clean still shows,
+ * and every path `git status` reports with its porcelain fields (status, modes, and the HEAD and index object names,
+ * so a change to the index shows) and the file's mode, size, mtime and ctime (so a write or chmod to a file that was
+ * already dirty shows); each checked-out submodule the same way, under its path. Ignored files and anything outside
+ * the repository are not seen. --no-optional-locks: reading must not write the index.
+ * Before the call git runs once as the caller would, to find the repository (locateRepo); every read runs confined
+ * git (confinedGit). `pin`, the before-snapshot, is checked first: when a guarded file changed, git is not run at all
+ * and the result is { tampered }, naming them.
  */
 function snapshot(cwd, pin = null) {
   // git from an absolute PATH entry only (which), so a repo's ./git never answers for the work tree.
   const bin = which('git');
   if (!bin) return { error: 'git is not on PATH' };
-  let repo = pin?.repo;
-  if (repo) {
-    const now = gitGuard(repo);
-    const tampered = [...repo.guard.keys()].filter((f) => repo.guard.get(f) !== now.get(f));
-    if (tampered.length) return { tampered: tampered.map((f) => path.relative(repo.root, f) || f).sort() };
-  } else {
-    const where = spawnSync(bin, ['--no-optional-locks', 'rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
-      { cwd, encoding: 'utf8' });
-    if (where.error || where.status !== 0) return null;
-    const [root, gitDir, common] = where.stdout.split('\n');
-    if (!root || !gitDir || !common) return null;
-    repo = { root, gitDir, commonDir: path.resolve(cwd, common) };
-    repo.guard = gitGuard(repo);
+  if (pin) {
+    const tampered = guardChanges(pin.repo, pin.repo.root);
+    if (tampered.length) return { tampered: tampered.sort() };
+    const after = readRepo(bin, pin.repo, false);
+    return after?.error ? null : after;
   }
-  const env = { ...process.env, GIT_DIR: repo.gitDir, GIT_WORK_TREE: repo.root };
-  const git = (...a) => spawnSync(bin, ['--no-optional-locks', '-c', 'core.fsmonitor=false', ...a],
-    { cwd: repo.root, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  const root = repo.root;
-  const commit = git('rev-parse', '--verify', '-q', 'HEAD');
-  const branch = git('symbolic-ref', '-q', '--short', 'HEAD');
-  const head = `${commit.status === 0 ? commit.stdout.trim().slice(0, 12) : '(no commit)'} (${branch.status === 0 ? branch.stdout.trim() : 'detached'})`;
-  const st = git('status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignore-submodules=all');
-  if (st.error || st.status !== 0) return null;
-  const seen = new Map();
-  const fields = st.stdout.split('\0');
-  for (let i = 0; i < fields.length; i++) {
-    const e = fields[i];
-    // v2 entries: `1 XY sub mH mI mW hH hI path`, `2 … score path` then the old path, `u …` (10 fields before
-    // the path), `? path`. A path may hold spaces, so it is everything after the fixed fields.
-    let file, fixed;
-    if (e[0] === '?') { fixed = '??'; file = e.slice(2); }
-    else if (e[0] === '1' || e[0] === '2' || e[0] === 'u') {
-      const words = e.split(' ');
-      const at = { 1: 8, 2: 9, u: 10 }[e[0]];
-      fixed = words.slice(1, at).join(' ');
-      file = words.slice(at).join(' ');
-      if (e[0] === '2') i++;
-    } else continue;
-    let stamp = 'missing';
-    try { const s = fs.lstatSync(path.join(root, file)); stamp = `${s.mode}:${s.size}:${s.mtimeMs}:${s.ctimeMs}`; } catch {}
-    seen.set(file, `${fixed} ${stamp}`);
-  }
-  return { head, paths: seen, repo };
+  const repo = locateRepo(bin, cwd);
+  return repo && readRepo(bin, repo, true);
 }
 
-/** What differs: a moved HEAD first, naming both commits, then each path. */
+/** What differs: each moved HEAD first (the work tree's, then a submodule's under its path), naming both commits, then each path. */
 function changedPaths(before, after) {
+  const moved = [...new Set([...before.heads.keys(), ...after.heads.keys()])].filter((k) => before.heads.get(k) !== after.heads.get(k))
+    .map((k) => `${k ? `${k}: ` : ''}HEAD ${before.heads.get(k) ?? '(none)'} → ${after.heads.get(k) ?? '(none)'}`);
   const { paths: b } = before;
   const { paths: a } = after;
-  const moved = before.head === after.head ? [] : [`HEAD ${before.head} → ${after.head}`];
   return [...moved, ...[...new Set([...b.keys(), ...a.keys()])].filter((p) => b.get(p) !== a.get(p)).sort()];
 }
 
