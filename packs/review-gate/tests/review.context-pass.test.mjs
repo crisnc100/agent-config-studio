@@ -229,6 +229,11 @@ test('12 a whole-line comment edit passes in a file with regex literals, the ski
     ['src/z.js', 'const q = a /"/ 2\n// note\n', 'const q = a /"/ 2\n// a note\n', 'a slash with a quote after an identifier (a /"/), which may divide'],
     ['src/x.js', 'function q(s) { return /"/.test(s) }\n// note\n', 'function q(s) { return /"/.test(s) }\n// a note\n', 'a regex after a keyword, which could be a division'],
     ['src/y.js', "const a = b\n  / 2; const s = '/'\n// note\n", "const a = b\n  / 2; const s = '/'\n// a note\n", 'a slash starting a line after an operand'],
+    ['src/aa.mjs', 'const q = {} / 2; const t = tag`a/\n// in the template\n`; // end `\n', 'const q = {} / 2; const t = tag`a/\n// changed template text\n`; // end `\n', 'a division after }, then a template across lines'],
+    ['src/ab.ts', 'const n = a! / 2; const t = `x/\n// in the template\n`; // end `\n', 'const n = a! / 2; const t = `x/\n// changed template text\n`; // end `\n', 'a division after a TS non-null !'],
+    ['src/ac.rs', 'let n = f()? / 2; let s = "x/\n// in the string\n"; // end "\n', 'let n = f()? / 2; let s = "x/\n// changed string text\n"; // end "\n', 'a division after a Rust ?'],
+    ['src/ad.c', 'int n = (/ 2); char *s = "x/\n// in the string\n"; // end "\n', 'int n = (/ 2); char *s = "x/\n// changed string\n"; // end "\n', 'a non-JS file never reads a slash as a regex literal'],
+    ['src/ae.kt', 'val n = a!! / 2; val s = "x/\n// in the string\n" // end "\n', 'val n = a!! / 2; val s = "x/\n// changed string\n" // end "\n', 'a division after a Kotlin !!'],
     ['.env.example', '# The port\nPORT=3000\n', '# The port\nPORT=4000\n', 'a changed .env value'],
     ['.env.example', 'PORT=3000 # port\n', 'PORT=3000 # the port\n', 'a trailing .env comment'],
   ]

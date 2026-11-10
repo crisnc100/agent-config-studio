@@ -878,6 +878,9 @@ test('C3 --check: a not-met marker counts only on a line naming that one criteri
   assert.deepEqual(checked(b, body.replace(notDone, 'C2 is met; C3 is not met.')).problems, missing, 'the "not met" belongs to C3, not C2')
   assert.deepEqual(checked(b, body.replace(notDone, 'C3 is met; C2 is not met.')).problems, missing, 'a line naming two criteria is ambiguous')
   assert.deepEqual(checked(b, body.replace(notDone, 'C2 and C3 are not met.')).problems, missing, 'one marker never stands for two criteria')
+  assert.deepEqual(checked(b, body.replace(notDone, 'C2 is met; C3.1 is not met.')).problems, missing, 'another numbering depth is another criterion')
+  assert.deepEqual(checked(b, body.replace(notDone, 'C2 is met; R3 is not met.')).problems, missing, 'another prefix is another criterion')
+  assert.deepEqual(checked(b, body.replace(notDone, 'C2 is met; 4.2 is not met.')).problems, missing, 'a dotted number is a criterion too')
   assert.deepEqual(checked(b, body.replace(notDone, `${notDone}\nC3 met.`)).problems, [], 'a met criterion on its own line asks nothing')
   assert.deepEqual(checked(b, body.replace(notDone, `${notDone}\n✅ C3 and C2 done.`)).problems,
     [`"Did it match the goal?" shows unmet criterion C2 as done (✅), but the review recorded it not met: ${crit}`], 'a ✅ on a line naming it still counts against it')
