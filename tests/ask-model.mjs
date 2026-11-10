@@ -1130,15 +1130,33 @@ console.log('\nask-model: --min-tools');
 console.log('\nask-model: --x-search');
 {
   const XC = mk('x-search-cwd');
-  const X_DENY = ['run_terminal_command', 'run_terminal_cmd', 'search_replace', 'read_file', 'list_dir', 'grep', 'kill_command_or_subagent', 'todo_write',
-    'get_command_or_subagent_output', 'scheduler_create', 'scheduler_delete', 'scheduler_list', 'monitor', 'search_tool', 'use_tool', 'workflow',
-    'enter_plan_mode', 'exit_plan_mode', 'ask_user_question', 'send_feedback', 'web_fetch', 'image_gen', 'image_edit', 'image_to_video', 'web_search'];
-  const g = ask(['--family', 'grok', '--x-search', '--json', '--cwd', XC]);
+  const X_DENY = ['run_terminal_command', 'run_terminal_cmd', 'search_replace', 'write', 'read_file', 'list_dir', 'grep', 'kill_command_or_subagent', 'todo_write',
+    'get_command_or_subagent_output', 'spawn_subagent', 'scheduler_create', 'scheduler_delete', 'scheduler_list', 'monitor', 'search_tool', 'use_tool', 'workflow',
+    'enter_plan_mode', 'exit_plan_mode', 'ask_user_question', 'send_feedback', 'web_fetch', 'image_gen', 'image_edit', 'image_to_video', 'reference_to_video', 'web_search'];
+  const X_RULES = ['--deny', 'MCPTool', ...['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch'].flatMap((r) => ['--deny', r])];
+  // The grok version GROK_X_DENY was listed against; any other one refuses --x-search.
+  const X_INSPECT = { STUB_GROK_INSPECT: J({ grokVersion: '1.0.77', mcpServers: [], plugins: [] }) };
+  const xask = (args, opts = {}) => ask(args, { ...opts, env: { ...X_INSPECT, ...opts.env } });
+  const g = xask(['--family', 'grok', '--x-search', '--json', '--cwd', XC]);
   const gj = g.code === 0 ? JSON.parse(g.out) : {};
-  ok('grok --x-search: exact argv, every other built-in disallowed, MCP denied, no subagents, low turn cap, from --cwd',
+  ok('grok --x-search: exact argv, every other built-in disallowed, MCP and file, shell and fetch rules denied, no subagents, low turn cap, from --cwd',
      g.code === 0 && same(g.argv, ['-p', PROMPT, '-m', IDS.grok, ...(gj.effort ? ['--reasoning-effort', gj.effort] : []), '--cwd', XC,
-       '--disallowed-tools', X_DENY.join(','), '--deny', 'MCPTool', '--no-subagents', '--max-turns', '8', '--output-format', 'json'])
+       '--disallowed-tools', X_DENY.join(','), ...X_RULES, '--no-subagents', '--max-turns', '8', '--output-format', 'json'])
      && g.calls[0].cwd === XC, show(g));
+  ok('grok --x-search: write, spawn_subagent and reference_to_video are disallowed',
+     g.code === 0 && ['write', 'spawn_subagent', 'reference_to_video'].every((t) => g.argv[g.argv.indexOf('--disallowed-tools') + 1].split(',').includes(t)), show(g));
+  ok('grok --x-search --json: tools "restricted", a note naming the four X tools and what is denied',
+     gj.tools === 'restricted' && ['x_keyword_search', 'x_semantic_search', 'x_user_search', 'x_thread_fetch'].every((t) => gj.toolsNote?.includes(t))
+     && /open_page/.test(gj.toolsNote) && /denied/.test(gj.toolsNote), show(g));
+
+  for (const [what, inspect] of [['another grok version', { grokVersion: '1.0.78', mcpServers: [], plugins: [] }], ['no grokVersion', { mcpServers: [], plugins: [] }]]) {
+    const d = ask(['--family', 'grok', '--x-search', '--json', '--cwd', XC], { env: { STUB_GROK_INSPECT: J(inspect) } });
+    const dj = d.out ? JSON.parse(d.out) : {};
+    ok(`--x-search with ${what} in grok inspect: exit 4, the X-search tool list must be re-checked, grok never run`,
+       d.code === 4 && d.inspect.length === 1 && d.calls.length === 0 && /1\.0\.77/.test(dj.error) && /re-check/.test(dj.error) && dj.answer === null, show(d));
+  }
+  const otherVer = ask(['--family', 'grok', '--json', '--cwd', XC], { env: { STUB_GROK_INSPECT: J({ grokVersion: '1.0.78', mcpServers: [], plugins: [] }) } });
+  ok('without --x-search another grok version still runs', otherVer.code === 0 && otherVer.calls.length === 1, show(otherVer));
   ok('grok --x-search: no --disable-web-search, no --tools allowlist, nothing allowed',
      g.code === 0 && !g.argv.includes('--disable-web-search') && !g.argv.includes('--tools') && !g.argv.includes('--allow'), show(g));
   ok('grok --x-search: the X tools themselves are never disallowed',
@@ -1148,10 +1166,10 @@ console.log('\nask-model: --x-search');
 
   const grokRole = mk('home-x-role', '.agent-config-studio');
   fs.writeFileSync(path.join(grokRole, 'roles.json'), J({ version: 1, roles: { advisor: { use: [{ family: 'grok', effort: 'high' }] } } }));
-  const r = ask(['--role', 'advisor', '--x-search', '--cwd', XC], { home: path.dirname(grokRole) });
+  const r = xask(['--role', 'advisor', '--x-search', '--cwd', XC], { home: path.dirname(grokRole) });
   ok('--role resolving to grok: --x-search runs with the same argv shape and the role\'s effort',
      r.code === 0 && same(r.argv, ['-p', PROMPT, '-m', IDS.grok, '--reasoning-effort', 'high', '--cwd', XC,
-       '--disallowed-tools', X_DENY.join(','), '--deny', 'MCPTool', '--no-subagents', '--max-turns', '8', '--output-format', 'json']), show(r));
+       '--disallowed-tools', X_DENY.join(','), ...X_RULES, '--no-subagents', '--max-turns', '8', '--output-format', 'json']), show(r));
 
   for (const fam of ['fable', 'sol', 'astra']) {
     const n = ask(['--family', fam, '--x-search', '--cwd', XC]);
