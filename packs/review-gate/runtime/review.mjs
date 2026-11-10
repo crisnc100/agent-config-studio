@@ -5005,9 +5005,10 @@ async function runEval() {
   const allFindings = [...findings, ...securityLocated], allUnlocated = [...unlocated, ...securityUnlocated]
   const reviewedFiles = sliceFileList || filesBetween(baseSha, reviewedHead)
   const truncated = truncatedFiles(diff, reviewedFiles)
-  // The file states the security pass saw (the same diff as the code review, minus what the size cap cut): close checks
-  // the closing HEAD against them.
-  if (security.record.status === 'ran') security.record.saw = coverageOf(reviewedHead, reviewedFiles.filter((p) => !truncated.includes(p)))
+  // The file states the security pass saw, minus what the size cap cut from the diff it was sent (a --since-close slice
+  // sends it the whole slice, bigger than the code reviewer's delta): close checks the closing HEAD against them.
+  const securityCut = sliceDiff ? truncatedFiles(sliceDiff, reviewedFiles) : truncated
+  if (security.record.status === 'ran') security.record.saw = coverageOf(reviewedHead, reviewedFiles.filter((p) => !securityCut.includes(p)))
   const dir = writeReport(branch, reviewer, { findings: allFindings, unlocated: allUnlocated, disputed }, diffTruncated, opinion.verifier, security.record)
   const reviewId = basename(dir)
   appendLog({
