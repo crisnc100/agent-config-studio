@@ -340,7 +340,7 @@ function good(f, { record = false } = {}) {
     '## Files changed', '- `src/app.js` — the constants', '- `tests/app.test.js` — a test', '',
     '## How to try it', '`node src/app.js`', '',
     '## Review highlights', ...r.reviewer, `${r.fixed[0]}`, '',
-    '## Deferred findings', ...(r.deferredItems || []).map(entry), '',
+    '## Deferred findings', ...(r.deferredItems || []).filter((d) => d.kind !== 'unknown').map(entry), '',
     '## Docs and context', '❌ no docs changed for src/app.js', '',
     "## Agent's take", 'I kept it small.', '',
     ...(record ? ['<details><summary>Review record</summary>', '', '```', r.summary, '```', '</details>', ''] : []),
@@ -650,17 +650,17 @@ test('splitSummary: each deferred line becomes a structured item, the raw lines 
     issue: 'The base is decided from local refs; an agent can delete them. Traced by reading.',
     trigger: 'delete refs/remotes/*, then `git push origin feature`',
     reason: 'Needs a remote-truth check at push time. Tracked with issue #61 (see https://example.test/issues/61).',
-    fixIdea: 'run `git ls-remote --heads`', trackedIn: ['#61', 'https://example.test/issues/61'], line: x1,
+    fixIdea: 'run `git ls-remote --heads`', trackedIn: ['#61', 'https://example.test/issues/61'], preExisting: false, line: x1,
   })
   assert.deepEqual(s.deferredItems[1], { id: 'f2', kind: 'code', severity: 'low', score: 'LOW 6/100', location: 'src/app.js:1', alsoAt: [],
-    issue: 'a is terse', trigger: 'reading', reason: 'style', fixIdea: null, trackedIn: [], line: f2 })
+    issue: 'a is terse', trigger: 'reading', reason: 'style', fixIdea: null, trackedIn: [], preExisting: false, line: f2 })
   assert.deepEqual(s.deferredItems[2], { id: 'r3', kind: 'code', severity: 'medium', score: 'MEDIUM unscored', location: '?:?', alsoAt: [],
-    issue: 'no file', trigger: 'trigger not recorded', reason: null, fixIdea: null, trackedIn: [], line: odd })
+    issue: 'no file', trigger: 'trigger not recorded', reason: null, fixIdea: null, trackedIn: [], preExisting: false, line: odd })
   assert.deepEqual(s.deferredItems[3], { id: 'c1', kind: 'criterion', severity: null, score: null, location: null, alsoAt: [],
-    criterionId: 'C2', criterion: 'the app logs', recheck: 'no log line', reason: 'later', fixIdea: 'add a log', trackedIn: [], line: crit })
+    criterionId: 'C2', criterion: 'the app logs', recheck: 'no log line', reason: 'later', fixIdea: 'add a log', trackedIn: [], preExisting: false, line: crit })
   const raw = splitSummary('Deferred findings\nz9 something the parser does not know').deferredItems
   assert.deepEqual(raw, [{ id: 'z9', kind: 'unknown', severity: null, score: null, location: null, alsoAt: [], reason: null, fixIdea: null, trackedIn: [],
-    line: 'z9 something the parser does not know' }], 'an unknown line keeps its id and raw text')
+    preExisting: false, line: 'z9 something the parser does not know' }], 'an unknown line keeps its id and raw text')
   assert.deepEqual(splitSummary('Deferred findings\nnone').deferredItems, [])
 })
 
@@ -710,4 +710,106 @@ test('C3 --check: a deferred criterion in Deferred findings needs its id; the go
   b.setStyle({ sections: DEFAULT_IDS.map((id) => ({ id, ...(id === 'goal' && { on: false }) })) })
   const noGoal = checked(b, body.replace(/## Did it match the goal\?\n[^#]*/, ''))
   assert.deepEqual(noGoal.problems, [])
+})
+
+/* ── deferred findings: the check fails closed ───────────────────────── */
+
+const X1_SCORE = 'HIGH 81/100 (likelihood 9/10 × impact 9/10)', F2_SCORE = 'LOW 6/100 (likelihood 2/10 × impact 3/10)'
+const PRE = 'Pre-existing HIGH x3 HIGH 72/100 (likelihood 8/10 × impact 9/10) src/old file.js:4 — old leak; Trigger: loading old'
+const withDeferred = (...extra) => SUMMARY.replace(/^(f2 LOW .*)$/m, `$1\n${extra.join('\n')}`)
+
+test('splitSummary: pre-existing lines keep their id and score, the pre-existing title is not an item, spaced paths parse, a blank id is null', async () => {
+  const { splitSummary } = await import(HELPER)
+  const spaced = 'f4 MEDIUM 20/100 src/foo bar.js:5 — spaced path; Trigger: opening it'
+  const s = splitSummary(['Deferred findings', 'f2 LOW 6/100 src/a.js:1 — a; Trigger: t', 'Pre-existing (not introduced here)', PRE, spaced, ' leading space text'].join('\n'))
+  assert.ok(s.deferred.includes('Pre-existing (not introduced here)'), 'the raw lines stay as the summary gives them')
+  assert.deepEqual(s.deferredItems.map((d) => d.id), ['f2', 'x3', 'f4', null], 'the pre-existing title is not an item')
+  const pre = s.deferredItems[1]
+  assert.deepEqual([pre.kind, pre.severity, pre.score, pre.location, pre.issue, pre.preExisting, pre.line],
+    ['code', 'high', 'HIGH 72/100 (likelihood 8/10 × impact 9/10)', 'src/old file.js:4', 'old leak', true, PRE])
+  assert.deepEqual([s.deferredItems[2].score, s.deferredItems[2].location, s.deferredItems[2].issue], ['MEDIUM 20/100', 'src/foo bar.js:5', 'spaced path'])
+  assert.deepEqual([s.deferredItems[3].kind, s.deferredItems[3].id, s.deferredItems[3].score], ['unknown', null, null])
+})
+
+test('C3 --check: a pre-existing HIGH is held to its own id and score; the title word alone satisfies nothing', () => {
+  const b = fixture()
+  closedGate(b, withDeferred('Pre-existing (not introduced here)', PRE))
+  const f = b.facts()
+  const body = good(f)
+  assert.deepEqual(checked(b, body).problems, [])
+  const dropped = checked(b, body.replace(/^- x3 .*$/m, '- Pre-existing (not introduced here)'))
+  assert.deepEqual(dropped.problems, ['"Deferred findings" is missing x3 with its score as the summary gives it: x3 HIGH 72/100 (likelihood 8/10 × impact 9/10)'])
+})
+
+test('C3 --check: an unknown deferred line must appear verbatim; a line with no id is never matched by its first word', () => {
+  const b = fixture()
+  const odd = 'z9 something the parser does not know'
+  closedGate(b, withDeferred(odd, ' leading space text'))
+  const f = b.facts()
+  const body = good(f)
+  assert.deepEqual(checked(b, body).problems.sort(), [
+    `"Deferred findings" is missing this line, copied verbatim from the review summary: ${odd}`,
+    '"Deferred findings" is missing this line, copied verbatim from the review summary:  leading space text',
+  ].sort())
+  const kept = body.replace('## Docs and context', `- ${odd}\n-  leading space text\n\n## Docs and context`)
+  assert.deepEqual(checked(b, kept).problems, [])
+  const reworded = body.replace('## Docs and context', `- z9 something else\n- leading text\n\n## Docs and context`)
+  assert.equal(checked(b, reworded).problems.length, 2)
+})
+
+test('C3 --check: each id is tied to its own score; swapped scores on one line fail both', () => {
+  const b = fixture()
+  closedGate(b)
+  const body = good(b.facts())
+  const swapped = body.replace(/^- x1 .*\n- f2 .*$/m, `- x1 ${F2_SCORE} and f2 ${X1_SCORE}: both fine.`)
+  assert.deepEqual(checked(b, swapped).problems, [
+    `"Deferred findings" is missing x1 with its score as the summary gives it: x1 ${X1_SCORE}`,
+    `"Deferred findings" is missing f2 with its score as the summary gives it: f2 ${F2_SCORE}`,
+  ])
+  const crossed = body.replace(/^- x1 .*\n- f2 .*$/m, `- x1 and f2 are deferred (${F2_SCORE}; ${X1_SCORE}).`)
+  assert.equal(checked(b, crossed).problems.length, 2, 'an id with some score somewhere on the line is not enough')
+})
+
+test('C3 --check: distinct deferred items need distinct entries', () => {
+  const b = fixture()
+  const twin = `x1 ${X1_SCORE} src/other.js:9 — a second x1 from another slice; Trigger: slicing; Deferred: later`
+  closedGate(b, withDeferred(twin))
+  const f = b.facts()
+  const body = good(f)
+  assert.deepEqual(checked(b, body).problems, [])
+  const one = body.replace(/^- x1 .*src\/other\.js.*\n/m, '')
+  assert.deepEqual(checked(b, one).problems, [`"Deferred findings" is missing x1 with its score as the summary gives it: x1 ${X1_SCORE}`])
+  closedGate(b)
+  const both = good(b.facts()).replace(/^- x1 .*\n- f2 .*$/m, `- x1 ${X1_SCORE} leaks, and f2 ${F2_SCORE} is a style nit.`)
+  assert.deepEqual(checked(b, both).problems, [`"Deferred findings" is missing f2 with its score as the summary gives it: f2 ${F2_SCORE}`], 'one entry stands for one finding')
+})
+
+test('C3 --check: any deferred id above the first section fails, with or without its score', () => {
+  const b = fixture()
+  closedGate(b)
+  const body = good(b.facts())
+  assert.deepEqual(checked(b, `Deferred HIGH: x1 can leak when called.\n\n${body}`).problems,
+    ['deferred findings go under "## Deferred findings", never above the first section: x1'])
+})
+
+test('C3 --check: unmet criteria must be marked not met; with the goal section off they go in Deferred findings', () => {
+  const b = fixture()
+  closedGate(b)
+  const f = b.facts()
+  const crit = f.review.criteria[0]
+  const body = good(f)
+  const notDone = '❌ C2 not done: the app does not log yet.'
+  const shownDone = checked(b, body.replace(notDone, '✅ C2 done: the app logs.'))
+  assert.deepEqual(shownDone.problems, [
+    `"Did it match the goal?" is missing unmet criterion C2, as a not-done line: ${crit}`,
+    `"Did it match the goal?" shows unmet criterion C2 as done (✅), but the review recorded it not met: ${crit}`,
+  ])
+  const bare = checked(b, body.replace(notDone, 'C2 the app logs.'))
+  assert.deepEqual(bare.problems, [`"Did it match the goal?" is missing unmet criterion C2, as a not-done line: ${crit}`])
+  const words = checked(b, body.replace(notDone, 'C2 is not met: the app does not log yet.'))
+  assert.deepEqual(words.problems, [], '"not met" in words is enough without emoji')
+  b.setStyle({ sections: DEFAULT_IDS.map((id) => ({ id, ...(id === 'goal' && { on: false }) })) })
+  const noGoal = body.replace(/## Did it match the goal\?\n[^#]*/, '')
+  assert.deepEqual(checked(b, noGoal).problems, [`"Deferred findings" is missing unmet criterion C2, as a not-done line: ${crit}`])
+  assert.deepEqual(checked(b, noGoal.replace('## Docs and context', `- ${notDone}\n\n## Docs and context`)).problems, [])
 })
