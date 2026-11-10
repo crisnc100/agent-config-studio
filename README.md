@@ -585,7 +585,8 @@ skill.
   system one, so nothing a config names (an fsmonitor, a clean filter, an
   include) runs, wherever the shell put it. A repository it finds but can't
   read that way (one keeping its refs in reftable, say) exits 4 before the
-  call. It never reverts anything. Ignored files, the contents of a
+  call; one that can't be read after the call exits 5. It never reverts
+  anything. Ignored files, the contents of a
   submodule that is not checked out, and files outside the repository are
   not checked.
 - `--no-tools` asks with no tools at all. Only Claude has such a mode

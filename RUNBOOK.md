@@ -350,10 +350,12 @@ never reads it, so new data cannot break it.
   pins the repository. `locateRepo` runs the caller's git once, before the
   call (`rev-parse` for the work tree root, git dir, common dir and object
   format; `config --get core.excludesFile`), and copies the ignore rules
-  from `info/exclude` and the global excludes file. `guardFiles` lists the
+  into one file, the global excludes first and `info/exclude` after, so
+  `info/exclude` wins as it does in git. `guardFiles` lists the
   work tree's `.git`, the git dir's `commondir`, `config` and
   `config.worktree` in the git dir and common dir, and every file those
-  include (`include.path`, `includeIf.*.path`, followed up to 10 deep);
+  include (`include.path`, and `includeIf.*.path` whatever its condition,
+  followed up to 10 deep);
   `gitGuard` records each as missing, a dir, its sha256, or a symlink's
   target with the target's sha256. The after-snapshot checks those first; a
   change is exit 5 naming each file, and git is not run.
@@ -371,10 +373,14 @@ never reads it, so new data cannot break it.
   read with the wrong HEAD.
 - `status --ignore-submodules=all` spawns no submodule git. Instead
   `ls-files --stage` gives each submodule entry (its commit in the index is
-  compared too), and each one checked out before the call is pinned like
-  the top repository and read by its own confined git, its paths and HEAD
+  compared too, every stage of a conflicted one), and each one checked out
+  before the call is pinned like the top repository and read by its own
+  confined git, its paths and HEAD
   reported under its path (`sub/file`, `sub: HEAD a → b`). One not checked
-  out is compared by its folder listing.
+  out is compared by its folder listing. `locateRepo` finds a submodule
+  with the caller's env minus `localEnv`'s list (`rev-parse
+  --local-env-vars`, or a fixed copy of it if that call fails), so a
+  `GIT_DIR` meant for the superproject does not answer for it.
 - Tests: `tests/ask-model.mjs` (stub CLIs on PATH, temp HOME).
 
 ## Model guide block (`lib/model-guide.js`)
@@ -462,5 +468,15 @@ never reads it, so new data cannot break it.
 - ask-model's `--investigate` guard does not fingerprint `.git/hooks`, and
   a skip-worktree or assume-unchanged bit the shell sets in the index hides
   later edits to that file from `git status`.
+- ask-model's `--investigate` change check misses a new untracked
+  `.gitignore` that ignores itself: neither it nor the new files it
+  ignores show.
+- ask-model's confined git dir is a fresh folder under the system temp
+  folder, which the sandboxed shell can also write, so a process the call
+  leaves running could write into it before the after-call git reads it.
+- ask-model locates a submodule without the caller's
+  `GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_COUNT`, which git itself keeps
+  for submodules, so a `git -c` setting the caller relies on (a
+  `core.excludesFile`, say) is not applied to that submodule.
 - No Codex adapter yet. The contract is ready (`streams: false`, buffered
   `decode.parse`, resume as `{kind:'subcommand', argv}`).
