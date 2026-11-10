@@ -94,13 +94,14 @@ const TOOLS = {
 // Writes stay in the cwd and the temp folder Claude Code allows by default.
 const CLAUDE_SANDBOX = { sandbox: { enabled: true, failIfUnavailable: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false,
   network: { allowedDomains: [], strictAllowlist: true } } };
-// grok: `strict`, its most restrictive built-in profile, which still reads the cwd. A built-in profile that fails to
-// apply runs unenforced, with only a warning, so sandboxProblem checks the platform first.
+// grok: `strict`, its most restrictive built-in profile, which still reads the cwd; Linux only. A built-in profile that
+// fails to apply runs unenforced, with only a warning, so sandboxProblem checks for Landlock first. On macOS grok's
+// sandbox leaves a command's network open (its docs: a no-op there), so grok gets no shell on macOS.
 const GROK_SANDBOX = 'strict';
 const SHELL_SANDBOX = {
   claude: 'claude sandbox: commands write only to the work tree and the temp folder, reach no network host, and never run outside it',
-  grok: `grok --sandbox ${GROK_SANDBOX}: commands read the work tree, system paths and ~/.grok, and write the work tree and temp folders; `
-    + 'their network is blocked on Linux only',
+  grok: `grok --sandbox ${GROK_SANDBOX}: commands read the work tree, system paths and ~/.grok, write the work tree and temp folders, `
+    + 'and reach no network (Linux only)',
   codex: 'codex --sandbox read-only',
 };
 // The review runtime's grok turn cap (packs/review-gate/runtime/review.mjs); min-tools needs few turns.
@@ -395,13 +396,14 @@ function grokLeader(grokHome) {
 }
 
 /**
- * Why the --investigate shell could not be sandboxed for this vendor here, or null. claude's sandbox and grok's run on
- * macOS and Linux only; on Linux grok's needs Landlock, which the kernel lists among its active security modules.
+ * Why the --investigate shell could not be sandboxed for this vendor here, or null. claude's sandbox runs on macOS and
+ * Linux; grok's on Linux only, and there it needs Landlock, which the kernel lists among its active security modules.
  */
 function sandboxProblem(vendor) {
   if (vendor === 'codex') return null;
   if (process.platform !== 'darwin' && process.platform !== 'linux') return `${vendor}'s shell sandbox does not run on ${process.platform}`;
-  if (vendor !== 'grok' || process.platform !== 'linux') return null;
+  if (vendor !== 'grok') return null;
+  if (process.platform === 'darwin') return "grok's sandbox can't block a command's network on macOS";
   let lsm;
   try { lsm = fs.readFileSync('/sys/kernel/security/lsm', 'utf8'); } catch (e) {
     return `the kernel's security modules could not be read (/sys/kernel/security/lsm: ${e.code || e.message}), so grok's Landlock sandbox could not be confirmed`;
@@ -979,7 +981,7 @@ async function main(argv) {
     return finish(4);
   }
   const unsandboxed = mode === 'investigate' ? sandboxProblem(vendor) : null;
-  if (unsandboxed) { result.error = `${unsandboxed}, so --investigate would give the model an unsandboxed shell — ${vendor} was not run`; return finish(4); }
+  if (unsandboxed) { result.error = `${unsandboxed}, so --investigate would give the model a shell its sandbox does not confine — ${vendor} was not run`; return finish(4); }
   const bin = which(vendor);
   if (!bin) { result.error = `the ${vendor} CLI is not on PATH`; return finish(3); }
 
