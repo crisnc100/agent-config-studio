@@ -201,10 +201,14 @@ function withoutRepoCommands(config, p, homes) {
   const pickMayRun = pick !== '' && pick !== 'first' && pick !== 'rotate'
   const hasMerge = Object.hasOwn(config, 'merge')
   const hasSecurity = Object.hasOwn(config, 'security')
-  if ((!keys.length && !pickMayRun && !hasMerge && !hasSecurity) || repoFileIsOwn(p, homes)) return config
+  // The repo file stands in for the home config, so a tracked one, even {}, would drop the home's own-file keys
+  // (coverageExemptDefaults: false among them) unless they are carried over.
+  const fromHome = OWN_FILE_KEYS.flatMap((k) => { const v = homeKey(homes, k); return v === undefined ? [] : [[k, v]] })
+  if ((!keys.length && !fromHome.length && !pickMayRun && !hasMerge && !hasSecurity) || repoFileIsOwn(p, homes)) return config
   if (hasMerge) config.merge = stricterMerge(config.merge, homeMerge(homes), p)
   if (hasSecurity) config.security = stricterSecurity(config.security, homeKey(homes, 'security'), p)
   for (const k of keys) delete config[k]
+  for (const [k, v] of fromHome) config[k] = v
   REPO_PICK_UNTRUSTED = pickMayRun
   if (keys.length && !args.includes('--gate'))
     console.warn(`⚠ Ignoring ${keys.join(', ')} in ${p}: git tracks it (or a symlink leads to it), so the repository can set it. ` +

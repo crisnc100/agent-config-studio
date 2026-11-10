@@ -80,6 +80,21 @@ const TOOLS = {
   // min-tools: one tool, since a --tools entry that names no tool leaves every tool available; list_dir shows names only.
   grok: { 'read-only': 'read_file,list_dir,grep', investigate: 'read_file,list_dir,grep,run_terminal_cmd', 'min-tools': 'list_dir' },
 };
+// The --investigate shell runs inside each CLI's own OS sandbox. claude: Claude Code's Bash sandbox, per call through
+// --settings (only user, managed and --settings sources may set strictAllowlist). Without strictAllowlist, a skipped
+// permission prompt lets a command reach any host; failIfUnavailable makes claude exit rather than run Bash unconfined.
+// Writes stay in the cwd and the temp folder Claude Code allows by default.
+const CLAUDE_SANDBOX = { sandbox: { enabled: true, failIfUnavailable: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false,
+  network: { allowedDomains: [], strictAllowlist: true } } };
+// grok: `strict`, its most restrictive built-in profile, which still reads the cwd. A built-in profile that fails to
+// apply runs unenforced, with only a warning, so sandboxProblem checks the platform first.
+const GROK_SANDBOX = 'strict';
+const SHELL_SANDBOX = {
+  claude: 'claude sandbox: commands write only to the work tree and the temp folder, reach no network host, and never run outside it',
+  grok: `grok --sandbox ${GROK_SANDBOX}: commands read the work tree, system paths and ~/.grok, and write the work tree and temp folders; `
+    + 'their network is blocked on Linux only',
+  codex: 'codex --sandbox read-only',
+};
 // The review runtime's grok turn cap (packs/review-gate/runtime/review.mjs); min-tools needs few turns.
 const GROK_MAX_TURNS = '40';
 const GROK_MIN_TURNS = '5';
@@ -371,6 +386,21 @@ function grokLeader(grokHome) {
   return null;
 }
 
+/**
+ * Why the --investigate shell could not be sandboxed for this vendor here, or null. claude's sandbox and grok's run on
+ * macOS and Linux only; on Linux grok's needs Landlock, which the kernel lists among its active security modules.
+ */
+function sandboxProblem(vendor) {
+  if (vendor === 'codex') return null;
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return `${vendor}'s shell sandbox does not run on ${process.platform}`;
+  if (vendor !== 'grok' || process.platform !== 'linux') return null;
+  let lsm;
+  try { lsm = fs.readFileSync('/sys/kernel/security/lsm', 'utf8'); } catch (e) {
+    return `the kernel's security modules could not be read (/sys/kernel/security/lsm: ${e.code || e.message}), so grok's Landlock sandbox could not be confirmed`;
+  }
+  return lsm.trim().split(',').includes('landlock') ? null : 'Landlock is not active in this kernel, and grok would run its sandbox unenforced';
+}
+
 /** Which CLI runs an id: its prefix, the rule ACS and the review runtime use. */
 function vendorOf(id) {
   if (id.startsWith('claude-')) return 'claude';
@@ -389,7 +419,8 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = 
       // no --mcp-config loads no MCP server. Without the skip, a deny rule or hook blocks a read silently.
       // --setting-sources user: a headless run honours the repo's .claude settings, hooks included, so
       // only your own settings load; your login is not a settings file and is still read.
-      '--dangerously-skip-permissions', '--tools', TOOLS.claude[mode], '--strict-mcp-config', '--setting-sources', 'user'];
+      '--dangerously-skip-permissions', '--tools', TOOLS.claude[mode], '--strict-mcp-config', '--setting-sources', 'user',
+      ...(mode === 'investigate' ? ['--settings', JSON.stringify(CLAUDE_SANDBOX)] : [])];
   }
   if (vendor === 'codex') {
     const min = mode === 'min-tools' ? [...CODEX_TOOL_FEATURES.flatMap((f) => ['--disable', f]), '-c', 'web_search="disabled"'] : [];
@@ -405,7 +436,7 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = 
   }
   return ['-p', prompt, '-m', id, ...(effort ? ['--reasoning-effort', effort] : []), '--cwd', cwd,
     '--tools', TOOLS.grok[mode], '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool',
-    ...(mode === 'investigate' ? ['--allow', 'Bash'] : []),
+    ...(mode === 'investigate' ? ['--allow', 'Bash', '--sandbox', GROK_SANDBOX] : []),
     '--disable-web-search', '--no-subagents', '--max-turns', mode === 'min-tools' ? GROK_MIN_TURNS : GROK_MAX_TURNS, '--output-format', 'json', ...json];
 }
 
@@ -924,7 +955,8 @@ async function main(argv) {
   const mode = o.xSearch ? 'x-search' : o.investigate ? 'investigate' : o.noTools || (o.minTools && vendor === 'claude') ? 'no-tools' : o.minTools ? 'min-tools' : 'read-only';
   process.stderr.write(`ask-model: ${m.family} (${m.id}, effort ${m.effort || 'none'}, ${mode})\n`);
 
-  const result = { family: m.family, id: m.id, effort: m.effort || null, mode, ...(o.minTools && MIN_TOOLS[vendor]), ...(mode === 'x-search' && X_SEARCH_TOOLS), answer: null, changed: null, error: null };
+  const result = { family: m.family, id: m.id, effort: m.effort || null, mode, ...(o.minTools && MIN_TOOLS[vendor]), ...(mode === 'x-search' && X_SEARCH_TOOLS),
+    ...(mode === 'investigate' && { shellSandbox: SHELL_SANDBOX[vendor] }), answer: null, changed: null, error: null };
   let grokCall = null;
   const finish = (exit) => {
     grokCall?.done();
@@ -938,6 +970,8 @@ async function main(argv) {
     result.error = `${vendor} cannot run with no tools (it has no switch that removes every tool) — not asked`;
     return finish(4);
   }
+  const unsandboxed = mode === 'investigate' ? sandboxProblem(vendor) : null;
+  if (unsandboxed) { result.error = `${unsandboxed}, so --investigate would give the model an unsandboxed shell — ${vendor} was not run`; return finish(4); }
   const bin = which(vendor);
   if (!bin) { result.error = `the ${vendor} CLI is not on PATH`; return finish(3); }
 
