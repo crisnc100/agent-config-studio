@@ -13,19 +13,23 @@ Find the project root (walk up for `.git`, `package.json`, `pyproject.toml`, `CL
 - `docs/` exists → `docs/handoff.md`
 - else → `<project-root>/handoff.md`
 
-Tell the user the path before writing. If a handoff already exists there, ask whether to replace, append a dated section, save as `handoff-YYYY-MM-DD.md`, or cancel. Never silently overwrite.
+An orchestrator thread — a session that runs work across several repos or worktrees, or from a folder that is not one — instead writes `HANDOFF-<thread>.md` (a short name for the work) in the nearest folder at or above the working folder that is not inside a git repo, reusing an existing `HANDOFF-*.md` there. It is replaced in place each time, without asking.
+
+Tell the user the path before writing. If a handoff already exists there (other than a thread file), ask whether to replace it, save as `handoff-YYYY-MM-DD.md`, or cancel. Never silently overwrite. Before replacing any handoff, read its Failed Attempts, Waiting on the user and Later (do not start), and carry forward every item not known to be resolved. One file holds one Next objective.
 
 ## Content (pull from THIS session; don't make the user re-explain)
 
 Required, in order:
 1. **Goal** — what we're building and why. One paragraph.
 2. **Current State** — where it stands, concretely.
-3. **Files in Flight** — active files with absolute paths, one line each on what's changing.
+3. **Files in Flight** — active files with absolute paths, one line each on what's changing. Delegated work goes here by location: worktree, branch, PR, and what to do with its report: only steps the user already approved; anything else is "bring the report to the user", under Waiting on the user. An agent's name dies with the session.
 4. **Changed This Session** — what's done or staged (distinct from in-flight).
 5. **Failed Attempts** — what was tried, what happened, why it failed. The most valuable section; it stops the next agent from repeating dead ends. None → say "None so far."
-6. **Next Steps** — the single most important next action (or a prioritized list). Specific enough to act without asking.
+6. **Next objective** — the one action to take next, already approved by the user, and how to tell it is done. Never put an offered or proposed item here.
+7. **Waiting on the user** — what needs their decision or go-ahead, each with the question.
+8. **Later (do not start)** — parked work.
 
-Optional: **Key Context** (non-obvious constraints/decisions), **Open Questions** (unresolved decisions).
+Optional: **What worked** (approaches worth repeating), **Key Context** (non-obvious constraints/decisions).
 
 ## After writing
 
@@ -35,5 +39,5 @@ Report the exact path, a one-line summary of what was captured, and remind the u
 
 - Write for the next agent, not yourself. Absolute paths. Assume zero memory.
 - Be brutally honest in Failed Attempts. "Tried X, didn't work, unsure why" beats glossing over it.
-- One next step beats five. Pick the most important yourself.
+- One next objective beats five. Pick the most important approved one yourself.
 - Don't pad. Empty section → say so or omit it.

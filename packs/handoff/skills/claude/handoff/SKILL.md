@@ -10,7 +10,9 @@ Write the file a future session reads first. Not a session summary and not a jou
 
 ## Step 1 — Where it goes
 
-Ask git rather than guessing from the folder name; a directory named `<project>-main` is often sitting on a feature branch.
+**First: is this an orchestrator thread?** A session that runs work across several repos or worktrees, or from a folder that is not one, is one. Its handoff belongs to the thread, not to a branch: skip the branch rules below and never stop to offer a branch. The file is `HANDOFF-<thread>.md`, where `<thread>` is a short name for the work, in the nearest folder at or above the session's working folder that is not inside a git repo (`git -C <folder> rev-parse` fails there). Look for an existing `HANDOFF-*.md` in that folder first and reuse its name, so every session of the thread writes the same file. It is replaced in place each time.
+
+Otherwise, ask git rather than guessing from the folder name; a directory named `<project>-main` is often sitting on a feature branch.
 
 ```bash
 git rev-parse --show-toplevel      # worktree root
@@ -35,25 +37,27 @@ Pull it from the session you've been in — don't make the user re-explain. Writ
 
 1. **Goal** — what we're building and why. One paragraph.
 2. **Current State** — where it stands, concretely. What works, what doesn't.
-3. **Files in Flight** — what's open right now: absolute path plus a line on what's changing in each. This is what tells the next agent where to start reading.
+3. **Files in Flight** — what's open right now: absolute path plus a line on what's changing in each. This is what tells the next agent where to start reading. Delegated work goes here by location: worktree, branch, PR, and what to do with its report when it lands: only steps the user already approved; anything else is "bring the report to the user", listed under Waiting on the user. An agent's name dies with the session.
 4. **Changed This Session** — what's already done, saved, or staged, as distinct from still in flight.
 5. **Failed Attempts** — what was tried, what happened, and why it failed. The most valuable section in the file, because it's what stops the next agent walking back down a dead end. "Tried X, didn't work, not sure why" is worth more than leaving it out.
-6. **Next Steps** — the single most important next action. List five and the next agent picks the easiest one; pick for them.
+6. **Next objective** — the one action to take next, already approved by the user, and how to tell it is done. Pick it for them: list five and the next agent picks the easiest. Never put an offered or proposed item here; a session that resumes on its own will start whatever this says.
+7. **Waiting on the user** — what needs their decision or go-ahead, each with the question to ask.
+8. **Later (do not start)** — parked work, so it is not lost and not begun.
 
-Add **Key Context** for non-obvious constraints or decisions, and **Open Questions** for anything the user still has to settle — only if they exist.
+Add **What worked** for approaches worth repeating, and **Key Context** for non-obvious constraints or decisions — only if they exist.
 
 ## Step 3 — Write it
 
-If a handoff for this branch already exists, replace it. It's a stale snapshot of the same work — but read its Failed Attempts first and carry forward anything you didn't already know. A bare `docs/handoff.md` left over from the old shared-file scheme isn't yours: don't read it or extend it, just mention it so it can be deleted.
+If a handoff for this branch (or thread) already exists, replace it. It's a stale snapshot of the same work — but read its Failed Attempts, Waiting on the user and Later (do not start) first, and carry forward every item not known to be resolved. One file holds one Next objective: never append a second. A bare `docs/handoff.md` left over from the old shared-file scheme isn't yours: don't read it or extend it, just mention it so it can be deleted.
 
 ````markdown
 # Handoff — <short description of the work>
 
-**Branch:** `<branch>`
+**Branch:** `<branch>` (a thread file: **Thread:** `<its folder>` instead)
 **Created:** <YYYY-MM-DD HH:MM>
 **From session:** Claude Code
 
-> If this isn't the branch you're on, this handoff isn't yours — ignore it.
+> If this isn't the branch you're on, this handoff isn't yours — ignore it. (A thread file leaves this line out.)
 
 ---
 
@@ -79,20 +83,30 @@ If a handoff for this branch already exists, replace it. It's a stale snapshot o
   **Result:** <what happened>
   **Why it failed:** <root cause, or "unknown — needs investigation">
 
-## Next Steps
+## Next objective
 
-1. <the one thing to do next>
+<the one approved action, and how to tell it is done>
+
+## Waiting on the user
+
+- <decision or go-ahead needed, with the question>
+
+## Later (do not start)
+
+- <parked work>
+
+## What worked
+
+<only if there are approaches worth repeating>
 
 ## Key Context
 
 <only if non-obvious context exists>
-
-## Open Questions
-
-<only if there are unresolved decisions>
 ````
 
 Drop the **Branch** line outside a git repo.
+
+After the file is written, for any location: if both `HANDOFF_POINTER_DIR` and `CLAUDE_CODE_SESSION_ID` are set, write the handoff's absolute path, as the only line, to `$HANDOFF_POINTER_DIR/$CLAUDE_CODE_SESSION_ID` (create the folder first). Write it last, so a tool waiting on a fresh handoff never reads the old one.
 
 ## Step 4 — Confirm
 
