@@ -33,6 +33,8 @@ const FIELDS = {
 }
 const DOCS = /\.(md|mdx|rst|adoc)$|(^|\/)docs\/[^/]+\.txt$/i
 const TESTS = /(^|\/)(tests?|__tests__|spec|fixtures)\/|\.(test|spec)\.[^/]+$|(^|\/)test_[^/]+$|_test\.[^/]+$/
+// The docs table the context-pass skill writes beside its plan: the skill's own output, never program input.
+const DOCS_TABLE = /^builds\/[^/]+\/docs-table\.json$/
 const AGENT = /(^|\/)(SKILL|CLAUDE|AGENTS|GEMINI)(\.[\w-]+)?\.md$|(^|\/)\.github\/copilot-instructions\.md$|(^|\/)\.github\/instructions\/|(^|\/)\.(cursor|windsurf)\/rules\/|(^|\/)packs\/[^/]+\/instructions\/|(^|\/)\.(claude|codex|agents|gemini)\//i
 // A doc line short enough to recur by chance ("## Usage") is not treated as pinned.
 const PINNED_MIN = 12
@@ -133,6 +135,7 @@ export function checkCommit(commit, brief = null) {
     if (AGENT.test(p)) { problems.push(`${p}: an agent-instruction file (untouchable; propose the change in the report)`); continue }
     const hit = listed.find(([, re]) => re.test(p))
     if (hit) { problems.push(`${p}: listed untouchable in the brief (${hit[0]})`); continue }
+    if (DOCS_TABLE.test(p)) continue
     if (!DOCS.test(p)) { code.push(p); continue }
     const before = git('show', `${parent}:${p}`), after = git('show', `${sha}:${p}`)
     const was = blocks(before), now = blocks(after)
@@ -158,8 +161,14 @@ const STYLES = [
   { exts: ['py', 'rb', 'pl', 'toml', 'r', 'ex', 'exs', 'tf'], line: '#', block: null, quotes: ['"', "'"] },
   { exts: ['sql', 'lua', 'hs'], line: '--', block: null, quotes: ['"', "'"] },
 ]
+// Known by name, not extension: .env, .env.example, .env.sample and the like (KEY=value lines, # comments).
+const ENV_STYLE = { line: '#', block: null, quotes: ['"', "'"] }
+const ENV_NAME = /(^|\/)\.env(\.[\w-]+)*$/
+// A '/' after one of these (or after =>) can only open a regex literal, never divide.
+const REGEX_AFTER = /[(,=:[!&|?{};]/
 const DIRECTIVE = /^\s*(?:#!|\/\/\/|\/\/!|\/\/\s*go:|\/\/\s*\+build|\/\/\s*Output:)|@ts-|eslint|prettier-ignore|istanbul |\bc8 |biome-ignore|deno-lint|jshint|@flow\b|@jsx|@vite-ignore|webpack[A-Z]|#__PURE__|\bnoqa\b|#\s*type:|pylint:|mypy:|pyright:|rubocop:|nolint|fmt:\s*(?:off|on)|isort:|-\*-.*-\*-|swiftlint:|NOSONAR|pragma/
 const styleOf = (path) => {
+  if (ENV_NAME.test(path)) return ENV_STYLE
   const ext = path.includes('.') ? path.split('.').pop().toLowerCase() : ''
   return STYLES.find((st) => st.exts.includes(ext)) || null
 }
@@ -167,7 +176,8 @@ const styleOf = (path) => {
 // read for sure.
 function commentMap(text, style) {
   const out = []
-  let state = 'code', quote = null, code = false
+  // prev: the last code character, carried across lines, so a regex literal that starts a line after || is still known.
+  let state = 'code', quote = null, code = false, prev = ''
   const lines = text.split('\n')
   for (const line of lines) {
     if (style.blockScalar && /(^|[:\s-])[|>][+-]?\d*\s*(#.*)?$/.test(line) && state === 'code') return null
@@ -187,9 +197,16 @@ function commentMap(text, style) {
       if (style.block && line.startsWith(style.block[0], i)) { state = 'block'; i += style.block[0].length - 1; continue }
       if (line.startsWith(style.line, i) && (style.line !== '#' || i === 0 || /\s/.test(line[i - 1]))) break
       if (style.heredoc && line.startsWith('<<', i)) return null
+      if (style.regex && c === '/' && REGEX_AFTER.test(prev)) {
+        const end = regexEnd(line, i)
+        if (end < 0) return null
+        i = end; code = true; prev = 'a'
+        continue
+      }
       if (style.regex && c === '/' && /\/\*|\*\/|\/\/|["'`]/.test(line.slice(i + 1))) return null
-      if (style.quotes.includes(c)) { state = 'string'; quote = c; code = true; continue }
+      if (style.quotes.includes(c)) { state = 'string'; quote = c; code = true; prev = c; continue }
       code = true
+      prev = c === '>' && prev === '=' ? '(' : c
     }
     if (state === 'string') return null
     if (state === 'code' && /\\\s*$/.test(line)) return null
@@ -197,6 +214,20 @@ function commentMap(text, style) {
     code = false
   }
   return out
+}
+// Where the regex literal opened at i closes (after its flags), or -1 when it does not close on this line.
+function regexEnd(line, i) {
+  for (let j = i + 1, inClass = false; j < line.length; j++) {
+    const c = line[j]
+    if (c === '\\') { j++; continue }
+    if (inClass) { if (c === ']') inClass = false; continue }
+    if (c === '[') inClass = true
+    else if (c === '/') {
+      while (/[a-z]/i.test(line[j + 1] || '')) j++
+      return j
+    }
+  }
+  return -1
 }
 // The line numbers git diff -U0 says changed: { old: [n…], now: [n…] }.
 function changedLines(parent, sha, path) {
