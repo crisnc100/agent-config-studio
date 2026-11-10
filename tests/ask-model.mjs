@@ -1192,11 +1192,11 @@ console.log('\nask-model: --x-search');
   for (const fam of ['fable', 'sol', 'astra']) {
     const n = ask(['--family', fam, '--x-search', '--cwd', XC]);
     ok(`--x-search with ${fam} (not grok): exit 64 naming --x-search and grok, nothing called`,
-       n.code === 64 && /--x-search/.test(n.err) && /grok/.test(n.err) && n.calls.length === 0 && n.mcp.length === 0 && n.inspect.length === 0 && n.out === '', show(n));
+       n.code === 64 && /--x-search uses grok's own X tools, so it needs a family grok runs/.test(n.err) && n.calls.length === 0 && n.mcp.length === 0 && n.inspect.length === 0 && n.out === '', show(n));
   }
   const nr = ask(['--role', 'advisor', '--x-search', '--cwd', XC]);
   ok('--x-search with a role that resolves to another family: exit 64, nothing called',
-     nr.code === 64 && /--x-search/.test(nr.err) && nr.calls.length === 0 && nr.inspect.length === 0, show(nr));
+     nr.code === 64 && /--x-search uses grok's own X tools, so it needs a family grok runs/.test(nr.err) && nr.calls.length === 0 && nr.inspect.length === 0, show(nr));
 
   const schemaFile = path.join(tmp, 'x-search-schema.json');
   fs.writeFileSync(schemaFile, J({ type: 'object' }));
