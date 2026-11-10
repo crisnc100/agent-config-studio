@@ -78,6 +78,8 @@ if (${J(name)} === 'codex' && a[0] === 'mcp') {
 for (const f of (process.env.STUB_WRITE || '').split(',').filter(Boolean)) fs.appendFileSync(f, 'written by the stub\\n');
 // STUB_PUT: [{ file, text, append }], written as given: what a sandboxed shell may do to a repo's .git.
 for (const w of JSON.parse(process.env.STUB_PUT || '[]')) (w.append ? fs.appendFileSync : fs.writeFileSync)(w.file, w.text);
+// STUB_COPY: [{ from, to }], byte for byte (an index file, say).
+for (const c of JSON.parse(process.env.STUB_COPY || '[]')) fs.copyFileSync(c.from, c.to);
 for (const f of (process.env.STUB_CHMOD || '').split(',').filter(Boolean)) fs.chmodSync(f, 0o755);
 if (process.env.STUB_GIT) require('node:child_process').execFileSync('git', process.env.STUB_GIT.split(' '), { stdio: 'ignore' });
 if (process.env.STUB_STDERR) process.stderr.write(process.env.STUB_STDERR + '\\n');
@@ -1456,6 +1458,53 @@ console.log('\nask-model: --investigate sees changes inside submodules, by the s
   fs.writeFileSync(subCfg, before);
   ok('core.fsmonitor planted in the submodule\'s config: exit 5 naming it, the hook never run',
      planted.code === 5 && !fs.existsSync(marker) && (planted.j.changed ?? []).some((c) => /modules\/sub\/config/.test(c)), show(planted));
+
+  // GIT_DIR and GIT_WORK_TREE exported for the superproject must not route the submodule's discovery back to it.
+  const routed = run([{ file: path.join(sup, 'sub', 's.txt'), text: 's3\n' }], { GIT_DIR: path.join(sup, '.git'), GIT_WORK_TREE: sup });
+  fs.writeFileSync(path.join(sup, 'sub', 's.txt'), 's2\n');
+  ok('GIT_DIR and GIT_WORK_TREE set to the superproject: an edit inside the submodule still names sub/s.txt',
+     routed.code === 5 && (routed.j.changed ?? []).includes('sub/s.txt'), show(routed));
+
+  // A conflicted submodule entry: two indexes that differ only in its stage 1 commit.
+  const idx = (base) => {
+    const f = path.join(tmp, `conflict-index-${base}`);
+    fs.copyFileSync(path.join(sup, '.git', 'index'), f);
+    const lines = [`160000 ${base.repeat(40)} 1\tconf`, `160000 ${'b'.repeat(40)} 2\tconf`, `160000 ${'c'.repeat(40)} 3\tconf`].join('\n') + '\n';
+    const r = spawnSync('git', ['update-index', '--index-info'], { cwd: sup, input: lines, encoding: 'utf8',
+      env: { PATH: SYSTEM.join(':'), HOME, ...GIT_ENV, GIT_INDEX_FILE: f } });
+    if (r.status !== 0) throw new Error(`update-index: ${r.stderr}`);
+    return f;
+  };
+  const one = idx('a');
+  const other = idx('d');
+  const saved = path.join(tmp, 'super-index-saved');
+  fs.copyFileSync(path.join(sup, '.git', 'index'), saved);
+  fs.copyFileSync(one, path.join(sup, '.git', 'index'));
+  const stage = run([], { STUB_COPY: J([{ from: other, to: path.join(sup, '.git', 'index') }]) });
+  fs.copyFileSync(saved, path.join(sup, '.git', 'index'));
+  ok('a conflicted submodule entry whose stage 1 commit alone changes: exit 5 naming it',
+     stage.code === 5 && (stage.j.changed ?? []).includes('conf'), show(stage));
+}
+
+console.log('\nask-model: the snapshot keeps git\'s ignore precedence (info/exclude over the global excludes file)');
+{
+  const g = (cwd, ...a) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd, encoding: 'utf8', env: { PATH: SYSTEM.join(':'), HOME, ...GIT_ENV } });
+    if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`);
+  };
+  const repo = mk('exclude-order-repo');
+  g(repo, 'init', '-q');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  g(repo, 'add', '.'); g(repo, 'commit', '-q', '-m', 'base');
+  fs.writeFileSync(path.join(repo, '.git', 'info', 'exclude'), '!keep.tmp\n');
+  const xdg = mk('exclude-order-xdg', 'git');
+  fs.writeFileSync(path.join(xdg, 'ignore'), '*.tmp\n');
+  fs.writeFileSync(path.join(repo, 'keep.tmp'), 'k\n');
+  const r = ask(['--family', 'sol', '--investigate', '--json', '--cwd', repo],
+    { env: { XDG_CONFIG_HOME: path.dirname(xdg), STUB_PUT: J([{ file: path.join(repo, 'keep.tmp'), text: 'more\n', append: true }]) } });
+  const j = JSON.parse(r.out || '{}');
+  ok('!keep.tmp in info/exclude beside a global *.tmp: a write to keep.tmp is exit 5 naming it',
+     r.code === 5 && (j.changed ?? []).includes('keep.tmp'), show(r));
 }
 
 console.log('\nask-model: live');
