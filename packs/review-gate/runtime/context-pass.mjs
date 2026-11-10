@@ -19,8 +19,8 @@
  * docs-focus slice that follows reviews the commit as code. So it fails closed. An unknown language, a regex literal
  * that could hide a comment or quote, a string that runs past a line end, a heredoc, a YAML block scalar, a line
  * continuation, a mode change, a new or deleted file, and any changed line with a block-comment delimiter all count as
- * code. A '/' counts as a regex literal only after ( , = : [ ! & | ? ; { or =>, where it cannot divide, and only when it
- * closes on its line. Files are known by extension, and .env-style files (.env, .env.example) by name.
+ * code. In JS and TS a '/' counts as a regex literal only after ( , = : [ & | ; { or =>, where it cannot divide, and
+ * only when it closes on its line; elsewhere a '/' never does. Files are known by extension, and .env-style files (.env, .env.example) by name.
  * builds/<slug>/docs-table.json, the skill's own output, passes. Changed lines come from git diff, so a file's length
  * never decides the answer.
  *
@@ -157,7 +157,8 @@ export function checkCommit(commit, brief = null) {
 /* ── the code-line check ─────────────────────────────────────────────── */
 
 const STYLES = [
-  { exts: ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'cts', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'java', 'kt', 'kts', 'swift', 'go', 'rs', 'scala', 'dart', 'php', 'css', 'scss', 'less'],
+  { exts: ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'cts'], line: '//', block: ['/*', '*/'], quotes: ['"', "'", '`'], regex: true, regexLiterals: true },
+  { exts: ['c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'java', 'kt', 'kts', 'swift', 'go', 'rs', 'scala', 'dart', 'php', 'css', 'scss', 'less'],
     line: '//', block: ['/*', '*/'], quotes: ['"', "'", '`'], regex: true },
   { exts: ['sh', 'bash', 'zsh', 'fish'], line: '#', block: null, quotes: ['"', "'"], heredoc: true },
   { exts: ['yaml', 'yml'], line: '#', block: null, quotes: ['"', "'"], blockScalar: true },
@@ -167,8 +168,9 @@ const STYLES = [
 // Known by name, not extension: .env, .env.example, .env.sample and the like (KEY=value lines, # comments).
 const ENV_STYLE = { line: '#', block: null, quotes: ['"', "'"] }
 const ENV_NAME = /(^|\/)\.env(\.[\w-]+)*$/
-// A '/' after one of these (or after =>) can only open a regex literal, never divide.
-const REGEX_AFTER = /[(,=:[!&|?{};]/
+// In JS and TS, a '/' after one of these (or after =>) can only open a regex literal, never divide. Not after } ! or ?:
+// an object literal, a non-null assertion or an optional chain can end an operand.
+const REGEX_AFTER = /[(,=:[&|{;]/
 const DIRECTIVE = /^\s*(?:#!|\/\/\/|\/\/!|\/\/\s*go:|\/\/\s*\+build|\/\/\s*Output:)|@ts-|eslint|prettier-ignore|istanbul |\bc8 |biome-ignore|deno-lint|jshint|@flow\b|@jsx|@vite-ignore|webpack[A-Z]|#__PURE__|\bnoqa\b|#\s*type:|pylint:|mypy:|pyright:|rubocop:|nolint|fmt:\s*(?:off|on)|isort:|-\*-.*-\*-|swiftlint:|NOSONAR|pragma/
 const styleOf = (path) => {
   if (ENV_NAME.test(path)) return ENV_STYLE
@@ -200,7 +202,7 @@ function commentMap(text, style) {
       if (style.block && line.startsWith(style.block[0], i)) { state = 'block'; i += style.block[0].length - 1; continue }
       if (line.startsWith(style.line, i) && (style.line !== '#' || i === 0 || /\s/.test(line[i - 1]))) break
       if (style.heredoc && line.startsWith('<<', i)) return null
-      if (style.regex && c === '/' && REGEX_AFTER.test(prev)) {
+      if (style.regexLiterals && c === '/' && REGEX_AFTER.test(prev)) {
         const end = regexEnd(line, i)
         if (end < 0) return null
         i = end; code = true; prev = 'a'
