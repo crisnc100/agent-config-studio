@@ -32,11 +32,11 @@
  * inside the CLI's own OS sandbox: claude's Bash sandbox through --settings
  * (CLAUDE_SANDBOX: writes to the cwd and the temp folder only, no network host,
  * no unsandboxed fallback, and claude exits if the sandbox cannot start), grok's
- * `--sandbox strict` (reads the cwd, system paths and ~/.grok, writes the cwd and
- * temp folders; its network is blocked on Linux only), codex's read-only one.
- * Off macOS and Linux, or on Linux without Landlock for grok, --investigate exits
- * 4 and the model is not run. --json then carries `shellSandbox`, naming the
- * sandbox the shell ran in.
+ * `--sandbox strict` on Linux (reads the cwd, system paths and ~/.grok, writes the
+ * cwd and temp folders, no network), codex's read-only one. Off macOS and Linux,
+ * for grok on macOS (where its sandbox can't block a command's network), or on
+ * Linux without Landlock for grok, --investigate exits 4 and the model is not run.
+ * --json then carries `shellSandbox`, naming the sandbox the shell ran in.
  *
  * --no-tools asks with no tools at all: claude with `--tools ""` (its documented "no tools"). grok has no such mode
  * (a --tools entry that names no tool leaves the others available) and codex has no switch that removes every tool,
