@@ -572,6 +572,14 @@ skill.
   read-only sandbox. `--json` adds `tools` (`none` or `restricted`) and a
   `toolsNote` naming what is left. It cannot be combined with
   `--investigate` or `--no-tools`.
+- `--x-search` asks Grok what people on X are saying, with Grok's four X
+  search tools and no others: every other built-in tool is disallowed, rules
+  deny shell, file and fetch tools and MCP tools, and subagents are off.
+  Only a family Grok runs can use it, and only on Grok 1.0.77, the version
+  its tool list was checked against; any other version exits 4 without
+  running. `--json` marks `tools` as `restricted` with a `toolsNote`. It
+  cannot be combined with `--investigate`, `--no-tools`, `--min-tools` or
+  `--schema`, and any of those, or a non-Grok family, exits 64.
 - Exit codes: 0 answered, 2 another model answered, 3 the CLI (or node) is
   missing, 4 the call failed or returned an error, 5 files changed under
   `--investigate`, 64 a usage error or a role or family that does not resolve.

@@ -282,6 +282,16 @@ never reads it, so new data cannot break it.
   `--investigate`: headless grok refuses an unapproved call and still exits
   0). Proof: `modelUsage` must hold the resolved id, for claude and grok;
   codex has none.
+- `--x-search` (grok only) drops `--tools` and `--disable-web-search`:
+  grok's `--tools` ignores the X tool names, and the X tools come with web
+  search. Instead `--disallowed-tools` lists every other built-in
+  (`GROK_X_DENY`), `--deny` rules refuse MCPTool, Bash, Read, Edit, Write,
+  Grep, Glob and WebFetch over any allow grant, and the turn cap is 8. The
+  list was taken from grok 1.0.77, so any other version `grok inspect`
+  reports exits 4: re-check `GROK_X_DENY` against the new grok before
+  bumping `GROK_X_VERSION`. `open_page` and `open_page_with_find` cannot be
+  disallowed by name; 1.0.77 offers neither in this mode. The leader-mode,
+  hook-folder and MCP checks run as for every grok call.
 - Codex has no strict-MCP flag, and `-c mcp_servers={}` is merged, not a
   replacement. So `codex mcp list --json` in the call's folder names the
   servers (project ones included), one inline-table `-c` sets each
