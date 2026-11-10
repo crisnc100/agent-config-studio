@@ -534,9 +534,13 @@ const word = (id) => new RegExp(`(?<![\\w-])${escape(id)}(?![\\w-])`)
 const mentions = (text, id) => text.split('\n').some((l) => word(id).test(l))
 // The id followed by its own score, with only markdown or a separator between, so a line cannot hand one finding's
 // score to another.
-const ownScore = (text, id, score) => new RegExp(`(?<![\\w-])${escape(id)}(?![\\w-])[*\`_]*[ \\t]*[:—–-]?[ \\t]*[*\`_]*${escape(score)}(?!\\d)`).test(text)
+const ownScore = (text, id, score) => new RegExp(`(?<![\\w-])${escape(id)}(?![\\w-])[*\`_ \\t]*[:—–-]?[*\`_ \\t]*${escape(score)}(?!\\d)`).test(text)
 const NOT_MET = /❌|\bnot (?:met|done)\b/i
-const notMetLine = (text, id) => text.split('\n').some((l) => word(id).test(l) && NOT_MET.test(l) && !l.includes('✅'))
+// Any id of the same shape (C2 → C7, 2.1 → 3.4): a line naming another one is ambiguous, as its marker may be that
+// one's, so it never counts as this id's not-met line.
+const sameShape = (id) => new RegExp(`(?<![\\w.-])${escape(id).replace(/\d+/g, '\\d+')}(?![\\w-]|\\.\\d)`, 'g')
+const onlyId = (l, id) => [...l.matchAll(sameShape(id))].every((m) => m[0] === id)
+const notMetLine = (text, id) => text.split('\n').some((l) => word(id).test(l) && onlyId(l, id) && NOT_MET.test(l) && !l.includes('✅'))
 const doneLine = (text, id) => text.split('\n').some((l) => word(id).test(l) && l.includes('✅'))
 // A section's entries: each list item with its continuation lines, else each paragraph.
 function entriesOf(text) {
