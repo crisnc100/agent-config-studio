@@ -76,6 +76,8 @@ if (${J(name)} === 'codex' && a[0] === 'mcp') {
   process.exit(0);
 }
 for (const f of (process.env.STUB_WRITE || '').split(',').filter(Boolean)) fs.appendFileSync(f, 'written by the stub\\n');
+// STUB_PUT: [{ file, text, append }], written as given: what a sandboxed shell may do to a repo's .git.
+for (const w of JSON.parse(process.env.STUB_PUT || '[]')) (w.append ? fs.appendFileSync : fs.writeFileSync)(w.file, w.text);
 for (const f of (process.env.STUB_CHMOD || '').split(',').filter(Boolean)) fs.chmodSync(f, 0o755);
 if (process.env.STUB_GIT) require('node:child_process').execFileSync('git', process.env.STUB_GIT.split(' '), { stdio: 'ignore' });
 if (process.env.STUB_STDERR) process.stderr.write(process.env.STUB_STDERR + '\\n');
@@ -144,6 +146,21 @@ function ask(args, { env = {}, home = HOME, cwd = tmp, prompt = PF } = {}) {
   return { code: r.status, out: r.stdout, err: r.stderr, calls, mcp, inspect, argv: calls[0]?.argv };
 }
 const show = (r) => J({ code: r.code, out: r.out, err: r.err, calls: r.calls, mcp: r.mcp, inspect: r.inspect });
+// The platform and the kernel's security modules as ask-model sees them, set by a preload (FAKE_PLATFORM, FAKE_LSM),
+// so a test of grok's sandboxed shell runs the same on any machine: grok --investigate runs only on Linux with Landlock.
+const PRELOAD = path.join(tmp, 'platform.cjs');
+fs.writeFileSync(PRELOAD, `const fs = require('node:fs');
+if (process.env.FAKE_PLATFORM) Object.defineProperty(process, 'platform', { value: process.env.FAKE_PLATFORM });
+const read = fs.readFileSync;
+fs.readFileSync = function (p, ...rest) {
+  if (p === '/sys/kernel/security/lsm') {
+    if (process.env.FAKE_LSM === undefined) { const e = new Error('ENOENT: no such file'); e.code = 'ENOENT'; throw e; }
+    return rest.length && rest[0] ? process.env.FAKE_LSM : Buffer.from(process.env.FAKE_LSM);
+  }
+  return read.call(this, p, ...rest);
+};`);
+const on = (env) => ({ NODE_OPTIONS: `--require=${PRELOAD}`, TEMP: tmp, TMP: tmp, ...env });
+const LANDLOCK = on({ FAKE_PLATFORM: 'linux', FAKE_LSM: 'lockdown,capability,landlock,yama\n' });
 
 const CLAUDE_RO = (id, effort) => ['-p', PROMPT, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'json',
   '--dangerously-skip-permissions', '--tools', 'Read,Grep,Glob', '--strict-mcp-config', '--setting-sources', 'user'];
@@ -248,7 +265,7 @@ const resetWork = () => {
   const ro = ask(['--family', 'fable', '--cwd', WORK]);
   ok('claude read-only: no Bash, MCP off, prompts skipped only with the allowlist set',
      ro.argv?.[ro.argv.indexOf('--tools') + 1] === 'Read,Grep,Glob' && ro.argv.includes('--strict-mcp-config') && ro.argv.includes('--dangerously-skip-permissions'), show(ro));
-  const g = ask(['--family', 'grok', '--investigate', '--cwd', WORK]);
+  const g = ask(['--family', 'grok', '--investigate', '--cwd', WORK], { env: LANDLOCK });
   ok('grok --investigate: its shell tool added, MCP still denied', g.code === 0 && g.argv?.[g.argv.indexOf('--tools') + 1] === 'read_file,list_dir,grep,run_terminal_cmd' && g.argv.includes('MCPTool'), show(g));
   const xi = ask(['--family', 'astra', '--investigate', '--cwd', WORK]);
   ok('codex --investigate: the same read-only sandbox argv', xi.code === 0 && same(xi.argv, CODEX(IDS.astra, '')), show(xi));
@@ -259,7 +276,7 @@ const resetWork = () => {
   ok('…the answer is still printed, and nothing is reverted',
      w.out === `answer from ${IDS.sol}\n` && fs.existsSync(path.join(WORK, 'new file.txt')) && /written by the stub/.test(fs.readFileSync(path.join(WORK, 'dirty.txt'), 'utf8')), show(w));
   resetWork();
-  const wj = ask(['--family', 'grok', '--investigate', '--json', '--cwd', WORK], { env: { STUB_WRITE: 'new file.txt' } });
+  const wj = ask(['--family', 'grok', '--investigate', '--json', '--cwd', WORK], { env: { ...LANDLOCK, STUB_WRITE: 'new file.txt' } });
   const wjo = JSON.parse(wj.out || '{}');
   ok('--json: changed lists the files', wj.code === 5 && same(wjo.changed, ['new file.txt']) && /files changed/.test(wjo.error), show(wj));
   resetWork();
@@ -399,15 +416,15 @@ console.log('\nask-model: codex runs with its configured MCP servers off');
 
 console.log('\nask-model: grok --investigate may run the shell');
 {
-  const g = ask(['--family', 'grok', '--investigate', '--cwd', WORK]);
-  ok('exact argv: the shell tool, the shell allowed, the read tools and MCP denial kept',
+  const g = ask(['--family', 'grok', '--investigate', '--cwd', WORK], { env: LANDLOCK });
+  ok('exact argv: the shell tool, the shell allowed inside the strict sandbox, the read tools and MCP denial kept',
      g.code === 0 && same(g.argv, ['-p', PROMPT, '-m', IDS.grok, '--cwd', WORK, '--tools', 'read_file,list_dir,grep,run_terminal_cmd',
-       '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool', '--allow', 'Bash', '--disable-web-search', '--no-subagents',
+       '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool', '--allow', 'Bash', '--sandbox', 'strict', '--disable-web-search', '--no-subagents',
        '--max-turns', '40', '--output-format', 'json']), show(g));
   const ro = ask(['--family', 'grok', '--cwd', WORK]);
   ok('read-only allows nothing', ro.code === 0 && !ro.argv.includes('--allow'), show(ro));
   const refused = 'permission required: Bash ls was not run, as a headless run cannot ask for approval';
-  const p = ask(['--family', 'grok', '--investigate', '--cwd', WORK], { env: { STUB_STDERR: `a note grok printed\n${refused}` } });
+  const p = ask(['--family', 'grok', '--investigate', '--cwd', WORK], { env: { ...LANDLOCK, STUB_STDERR: `a note grok printed\n${refused}` } });
   ok('a permission grok refused (it still exits 0) is passed on to stderr, and only that line',
      p.code === 0 && p.err.includes(`ask-model: grok: ${refused}\n`) && !p.err.includes('a note grok printed'), show(p));
 }
@@ -649,13 +666,14 @@ console.log('\nask-model: model-id --install never writes through a link planted
 console.log('\nask-model: claude never loads the repo\'s own settings or hooks');
 {
   // A headless claude run in a repo honours its .claude/settings.json and settings.local.json hooks; only
-  // --setting-sources user keeps them out (and still reads your login).
-  for (const extra of [[], ['--investigate']]) {
-    const r = ask(['--family', 'fable', '--cwd', WORK, ...extra]);
-    const at = r.argv?.indexOf('--setting-sources') ?? -1;
-    ok(`claude${extra.length ? ' --investigate' : ''}: --setting-sources user, given once`,
-       at !== -1 && r.argv[at + 1] === 'user' && r.argv.filter((a) => a === '--setting-sources').length === 1, show(r));
-  }
+  // --setting-sources keeps them out (and still reads your login). --investigate loads no settings file at all.
+  const r = ask(['--family', 'fable', '--cwd', WORK]);
+  const at = r.argv?.indexOf('--setting-sources') ?? -1;
+  ok('claude: --setting-sources user, given once',
+     at !== -1 && r.argv[at + 1] === 'user' && r.argv.filter((a) => a.startsWith('--setting-sources')).length === 1, show(r));
+  const i = ask(['--family', 'fable', '--cwd', WORK, '--investigate']);
+  ok('claude --investigate: --setting-sources= (no source), given once, so neither the repo\'s settings nor your own load',
+     i.argv?.includes('--setting-sources=') && i.argv.filter((a) => a.startsWith('--setting-sources')).length === 1 && !i.argv.includes('user'), show(i));
 }
 
 console.log('\nask-model: grok runs with Claude\'s and Cursor\'s hooks off, and never beside a repo\'s .grok/hooks');
@@ -1195,16 +1213,133 @@ console.log('\nask-model: --x-search');
   const ro = ask(['--family', 'grok', '--json', '--cwd', XC]);
   const roj = ro.code === 0 ? JSON.parse(ro.out) : {};
   ok('without --x-search grok keeps its read-only argv', ro.code === 0 && same(ro.argv, GROK_RO(IDS.grok, roj.effort, XC)), show(ro));
-  const inv = ask(['--family', 'grok', '--investigate', '--cwd', XC]);
+  const inv = ask(['--family', 'grok', '--investigate', '--cwd', XC], { env: LANDLOCK });
   ok('without --x-search grok --investigate keeps its argv',
      inv.code === 0 && same(inv.argv, ['-p', PROMPT, '-m', IDS.grok, ...(roj.effort ? ['--reasoning-effort', roj.effort] : []), '--cwd', XC,
        '--tools', 'read_file,list_dir,grep,run_terminal_cmd', '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool', '--allow', 'Bash',
-       '--disable-web-search', '--no-subagents', '--max-turns', '40', '--output-format', 'json']), show(inv));
+       '--sandbox', 'strict', '--disable-web-search', '--no-subagents', '--max-turns', '40', '--output-format', 'json']), show(inv));
   const min = ask(['--family', 'grok', '--min-tools', '--cwd', XC]);
   ok('without --x-search grok --min-tools keeps its argv',
      min.code === 0 && same(min.argv, ['-p', PROMPT, '-m', IDS.grok, ...(roj.effort ? ['--reasoning-effort', roj.effort] : []), '--cwd', XC,
        '--tools', 'list_dir', '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool',
        '--disable-web-search', '--no-subagents', '--max-turns', '5', '--output-format', 'json']), show(min));
+}
+
+console.log('\nask-model: the --investigate shell runs inside each CLI\'s own sandbox');
+{
+  const SB = mk('sandbox-work');
+  const settingsOf = (argv) => {
+    const at = argv?.indexOf('--settings') ?? -1;
+    try { return at === -1 ? null : JSON.parse(argv[at + 1]); } catch { return null; }
+  };
+  const c = ask(['--family', 'fable', '--investigate', '--json', '--cwd', SB]);
+  ok('claude --investigate: one --settings that turns the Bash sandbox on, fails closed, and allows no unsandboxed command or network host',
+     c.code === 0 && c.argv.filter((a) => a === '--settings').length === 1 && same(settingsOf(c.argv), { sandbox: {
+       enabled: true, failIfUnavailable: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false,
+       network: { allowedDomains: [], strictAllowlist: true } } }), show(c));
+  ok('…and --json says the shell was sandboxed', /claude sandbox/.test(JSON.parse(c.out || '{}').shellSandbox ?? ''), show(c));
+  const cro = ask(['--family', 'fable', '--json', '--cwd', SB]);
+  ok('claude read-only: no --settings and no shellSandbox (it has no shell)',
+     cro.code === 0 && !cro.argv.includes('--settings') && !Object.hasOwn(JSON.parse(cro.out || '{}'), 'shellSandbox'), show(cro));
+
+  const g = ask(['--family', 'grok', '--investigate', '--json', '--cwd', SB], { env: LANDLOCK });
+  const gs = g.argv?.indexOf('--sandbox') ?? -1;
+  ok('grok --investigate: --sandbox strict, given once', g.code === 0 && gs !== -1 && g.argv[gs + 1] === 'strict' && g.argv.filter((a) => a === '--sandbox').length === 1, show(g));
+  ok('…and --json says the shell was sandboxed', /--sandbox strict/.test(JSON.parse(g.out || '{}').shellSandbox ?? ''), show(g));
+  for (const extra of [[], ['--min-tools']]) {
+    const gro = ask(['--family', 'grok', '--cwd', SB, ...extra]);
+    ok(`grok ${extra[0] || 'read-only'}: no --sandbox (no shell to sandbox)`, gro.code === 0 && !gro.argv.includes('--sandbox'), show(gro));
+  }
+  const x = ask(['--family', 'astra', '--investigate', '--json', '--cwd', SB]);
+  ok('codex --investigate: its argv unchanged, and --json names its own sandbox',
+     x.code === 0 && same(x.argv, CODEX(IDS.astra, '')) && /--sandbox read-only/.test(JSON.parse(x.out || '{}').shellSandbox ?? ''), show(x));
+
+  // A platform none of these sandboxes runs on, and a Linux kernel without Landlock (grok's built-in profiles then run
+  // unenforced): the platform preload (PRELOAD) changes what ask-model sees, so the test needs no such machine.
+  for (const family of ['fable', 'grok']) {
+    const w = ask(['--family', family, '--investigate', '--json', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'win32' }) });
+    ok(`${family} --investigate on win32: exit 4, the model never run, the reason in error`,
+       w.code === 4 && w.calls.length === 0 && /sandbox/.test(JSON.parse(w.out || '{}').error ?? ''), show(w));
+    const r = ask(['--family', family, '--cwd', SB], { env: on({ FAKE_PLATFORM: 'win32' }) });
+    ok(`${family} read-only on win32 still runs (no shell)`, r.code === 0 && r.calls.length === 1, show(r));
+  }
+  const xw = ask(['--family', 'astra', '--investigate', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'win32' }) });
+  ok('codex --investigate on win32 still runs (its sandbox is its own)', xw.code === 0 && xw.calls.length === 1, show(xw));
+  const cl = ask(['--family', 'fable', '--investigate', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'linux' }) });
+  ok('claude --investigate on Linux runs, with the sandbox settings', cl.code === 0 && settingsOf(cl.argv)?.sandbox?.enabled === true, show(cl));
+  for (const [lsm, why] of [[undefined, 'no LSM list'], ['lockdown,capability,yama,apparmor', 'an LSM list without landlock']]) {
+    const gl = ask(['--family', 'grok', '--investigate', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'linux', ...(lsm === undefined ? {} : { FAKE_LSM: lsm }) }) });
+    ok(`grok --investigate on Linux with ${why}: exit 4, grok never run`, gl.code === 4 && gl.calls.length === 0 && /landlock/i.test(gl.err), show(gl));
+  }
+  // On macOS grok's sandbox cannot block a command's network, so its shell is refused there.
+  const gm = ask(['--family', 'grok', '--investigate', '--json', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'darwin' }) });
+  ok('grok --investigate on macOS: exit 4, grok never run, the reason in plain words',
+     gm.code === 4 && gm.calls.length === 0 && /grok's sandbox can't block a command's network on macOS/.test(JSON.parse(gm.out || '{}').error ?? ''), show(gm));
+  const gmr = ask(['--family', 'grok', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'darwin' }) });
+  ok('grok read-only on macOS still runs (no shell)', gmr.code === 0 && gmr.calls.length === 1, show(gmr));
+  const cm = ask(['--family', 'fable', '--investigate', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'darwin' }) });
+  ok('claude --investigate on macOS runs, with the sandbox settings', cm.code === 0 && settingsOf(cm.argv)?.sandbox?.enabled === true, show(cm));
+  const gl = ask(['--family', 'grok', '--investigate', '--cwd', SB], { env: LANDLOCK });
+  ok('grok --investigate on Linux with landlock: runs under --sandbox strict', gl.code === 0 && gl.argv?.[gl.argv.indexOf('--sandbox') + 1] === 'strict', show(gl));
+}
+
+console.log('\nask-model: claude --investigate ignores your own settings, sandbox grants included');
+{
+  // User settings that would widen the sandbox: an allowed host, a WebFetch domain grant, a command run outside it.
+  const home = mk('home-wide-sandbox');
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'settings.json'), J({ sandbox: { network: { allowedDomains: ['example.com'] }, excludedCommands: ['curl'] },
+    permissions: { allow: ['WebFetch(domain:example.com)'] } }));
+  fs.cpSync(path.join(HOME, '.agent-config-studio'), path.join(home, '.agent-config-studio'), { recursive: true });
+  const r = ask(['--family', 'fable', '--investigate', '--cwd', mk('wide-work')], { home });
+  ok('the call runs with --setting-sources= and the sandbox --settings, and nothing names a user source',
+     r.code === 0 && r.argv.includes('--setting-sources=') && !r.argv.includes('user') && r.argv.includes('--settings'), show(r));
+}
+
+console.log('\nask-model: a shell that rewrites git\'s own config or gitfile never gets git to run its command');
+{
+  const marker = path.join(tmp, 'fsmonitor-ran');
+  const hook = path.join(tmp, 'fsmonitor-hook.sh');
+  fs.writeFileSync(hook, `#!/bin/sh\ntouch ${J(marker)}\n`, { mode: 0o755 });
+  const FSMON = `[core]\n\tfsmonitor = ${hook}\n`;
+  const repo = mk('tamper-repo');
+  const g = (cwd, ...a) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd, encoding: 'utf8', env: { PATH: SYSTEM.join(':'), HOME, ...GIT_ENV } });
+    if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`);
+  };
+  g(repo, 'init', '-q');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  g(repo, 'add', '.'); g(repo, 'commit', '-q', '-m', 'base');
+  fs.rmSync(marker, { force: true });
+  const c = ask(['--family', 'sol', '--investigate', '--json', '--cwd', repo], { env: { STUB_PUT: J([{ file: '.git/config', text: FSMON, append: true }]) } });
+  const cj = JSON.parse(c.out || '{}');
+  ok('core.fsmonitor planted in .git/config: exit 5, .git/config named, the planted command never run',
+     c.code === 5 && !fs.existsSync(marker) && (cj.changed ?? []).some((p) => /\.git\/config/.test(p)) && /\.git\/config/.test(c.err), show(c));
+
+  // A linked worktree's .git is a gitfile; pointed at another repository whose config holds the hook.
+  const wt = path.join(tmp, 'tamper-wt');
+  g(repo, 'worktree', 'add', '-q', wt);
+  const evil = mk('tamper-evil');
+  g(evil, 'init', '-q');
+  fs.appendFileSync(path.join(evil, '.git', 'config'), FSMON);
+  fs.rmSync(marker, { force: true });
+  const w = ask(['--family', 'sol', '--investigate', '--json', '--cwd', wt], { env: { STUB_PUT: J([{ file: '.git', text: `gitdir: ${path.join(evil, '.git')}\n` }]) } });
+  const wj = JSON.parse(w.out || '{}');
+  ok('the worktree\'s gitfile rewritten: exit 5, .git named, the other repository\'s hook never run',
+     w.code === 5 && !fs.existsSync(marker) && (wj.changed ?? []).some((p) => /^\.git\b/.test(p)) , show(w));
+
+  // Untouched, a worktree still snapshots cleanly, and a planted hook in a clean repo's own config never runs either.
+  fs.writeFileSync(path.join(wt, '.git'), fs.readFileSync(path.join(wt, '.git'), 'utf8').replace(/^gitdir: .*$/m, `gitdir: ${path.join(fs.realpathSync(repo), '.git', 'worktrees', 'tamper-wt')}`));
+  const ok1 = ask(['--family', 'sol', '--investigate', '--json', '--cwd', wt]);
+  ok('an untouched worktree: exit 0, changed is []', ok1.code === 0 && same(JSON.parse(ok1.out || '{}').changed, []), show(ok1));
+  const pre = mk('preset-repo');
+  g(pre, 'init', '-q');
+  fs.writeFileSync(path.join(pre, 'a.txt'), 'a\n');
+  g(pre, 'add', '.'); g(pre, 'commit', '-q', '-m', 'base');
+  fs.appendFileSync(path.join(pre, '.git', 'config'), FSMON);
+  fs.rmSync(marker, { force: true });
+  const p = ask(['--family', 'sol', '--investigate', '--json', '--cwd', pre]);
+  ok('a core.fsmonitor already in the repo config: the snapshots run git with it off', p.code === 0 && !fs.existsSync(marker), show(p));
 }
 
 console.log('\nask-model: live');

@@ -70,9 +70,13 @@ ask-model "${who[@]}" --investigate --prompt-file "$PROMPT_FILE"
 ```
 `ask-model` picks the CLI from the model id (a fresh session, no seat context), keeps MCP out, and checks the
 answering model where the CLI reports one. **`--investigate` gives the advisor a shell** to verify things. It is told
-never to change files, and ask-model reports any change to the work tree, but it isn't sandboxed (only a codex advisor
-runs inside codex's own sandbox): it runs commands as the user, and a change outside the work tree goes unseen. The
-advice is on stdout; one stderr line names the family, id, effort and mode. Branch on the exit code:
+never to change files, and ask-model reports any change to the work tree. The shell runs inside its CLI's own sandbox:
+claude's Bash sandbox, with none of your Claude Code settings loaded (commands write only to the work tree and the
+temp folder, reach no network host, and never run outside it), grok's `strict` profile on Linux (commands read the work tree and system paths, write the work tree and
+temp folders, and reach no network), or codex's own. Where that sandbox can't run (a platform other than macOS or
+Linux; grok on macOS, where its sandbox can't block a command's network; grok on Linux without Landlock), ask-model
+refuses with exit 4 and runs nothing. The advice is on stdout; one stderr line names the family, id, effort and mode.
+Branch on the exit code:
 
 - **0** — the advice. Take it to Step 3.
 - **2** — another model answered. Abort, tell the user, and never present another model's output as the advisor's.
@@ -159,8 +163,8 @@ The seat is not a courier. Before showing the user anything:
 
 - **Orchestrator-only.** Implementers and reviewers never invoke this skill. An implementer unsure of direction uses
   its callback contract; the seat decides whether a consult is worth buying. Nothing routes around the seat.
-- **The advisor is told never to edit.** Its shell (`--investigate`) isn't sandboxed, except a codex advisor's, so
-  nothing else stops it: ask-model names any file that changed in the work tree during the call (exit 5). Report those to the user; never revert them.
+- **The advisor is told never to edit.** Its shell (`--investigate`) is sandboxed, but the sandbox still lets it write
+  in the work tree: ask-model names any file that changed there during the call (exit 5). Report those to the user; never revert them.
 - **Prove the model, prove the run.** ask-model checks both: exit 2 is another model, exit 4 a failed call. A silent
   downgrade or an ENOTFOUND is a failed call, not an answer — report it, don't relabel it.
 - **Same-vendor advice is flagged, never silent.** If the advisor shares this seat's vendor, the user hears that with

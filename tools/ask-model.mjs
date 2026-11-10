@@ -28,7 +28,19 @@
  * --investigate adds a shell (claude's Bash; grok's run_terminal_cmd, with
  * shell commands allowed; codex's read-only sandbox already runs commands) and
  * compares the git work tree before and after the call. Anything that changed
- * is named on stderr and the exit is 5. Nothing is ever reverted.
+ * is named on stderr and the exit is 5. Nothing is ever reverted. A change to the
+ * work tree's .git (folder or gitfile) or to its git dir's config is exit 5 too,
+ * and git is not run after the call; otherwise both snapshots run git pinned to
+ * the repository found before the call, with core.fsmonitor off. The shell runs
+ * inside the CLI's own OS sandbox: claude's Bash sandbox through --settings
+ * (CLAUDE_SANDBOX: writes to the cwd and the temp folder only, no network host,
+ * no unsandboxed fallback, and claude exits if the sandbox cannot start), with no
+ * settings file loaded, your own included, so none of them widens it; grok's
+ * `--sandbox strict` on Linux (reads the cwd, system paths and ~/.grok, writes the
+ * cwd and temp folders, no network), codex's read-only one. Off macOS and Linux,
+ * for grok on macOS (where its sandbox can't block a command's network), or on
+ * Linux without Landlock for grok, --investigate exits 4 and the model is not run.
+ * --json then carries `shellSandbox`, naming the sandbox the shell ran in.
  *
  * --no-tools asks with no tools at all: claude with `--tools ""` (its documented "no tools"). grok has no such mode
  * (a --tools entry that names no tool leaves the others available) and codex has no switch that removes every tool,
@@ -79,6 +91,22 @@ const TOOLS = {
   claude: { 'read-only': 'Read,Grep,Glob', investigate: 'Read,Grep,Glob,Bash', 'no-tools': '' },
   // min-tools: one tool, since a --tools entry that names no tool leaves every tool available; list_dir shows names only.
   grok: { 'read-only': 'read_file,list_dir,grep', investigate: 'read_file,list_dir,grep,run_terminal_cmd', 'min-tools': 'list_dir' },
+};
+// The --investigate shell runs inside each CLI's own OS sandbox. claude: Claude Code's Bash sandbox, per call through
+// --settings (only user, managed and --settings sources may set strictAllowlist). Without strictAllowlist, a skipped
+// permission prompt lets a command reach any host; failIfUnavailable makes claude exit rather than run Bash unconfined.
+// Writes stay in the cwd and the temp folder Claude Code allows by default.
+const CLAUDE_SANDBOX = { sandbox: { enabled: true, failIfUnavailable: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false,
+  network: { allowedDomains: [], strictAllowlist: true } } };
+// grok: `strict`, its most restrictive built-in profile, which still reads the cwd; Linux only. A built-in profile that
+// fails to apply runs unenforced, with only a warning, so sandboxProblem checks for Landlock first. On macOS grok's
+// sandbox leaves a command's network open (its docs: a no-op there), so grok gets no shell on macOS.
+const GROK_SANDBOX = 'strict';
+const SHELL_SANDBOX = {
+  claude: 'claude sandbox: commands write only to the work tree and the temp folder, reach no network host, and never run outside it',
+  grok: `grok --sandbox ${GROK_SANDBOX}: commands read the work tree, system paths and ~/.grok, write the work tree and temp folders, `
+    + 'and reach no network (Linux only)',
+  codex: 'codex --sandbox read-only',
 };
 // The review runtime's grok turn cap (packs/review-gate/runtime/review.mjs); min-tools needs few turns.
 const GROK_MAX_TURNS = '40';
@@ -371,6 +399,22 @@ function grokLeader(grokHome) {
   return null;
 }
 
+/**
+ * Why the --investigate shell could not be sandboxed for this vendor here, or null. claude's sandbox runs on macOS and
+ * Linux; grok's on Linux only, and there it needs Landlock, which the kernel lists among its active security modules.
+ */
+function sandboxProblem(vendor) {
+  if (vendor === 'codex') return null;
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return `${vendor}'s shell sandbox does not run on ${process.platform}`;
+  if (vendor !== 'grok') return null;
+  if (process.platform === 'darwin') return "grok's sandbox can't block a command's network on macOS";
+  let lsm;
+  try { lsm = fs.readFileSync('/sys/kernel/security/lsm', 'utf8'); } catch (e) {
+    return `the kernel's security modules could not be read (/sys/kernel/security/lsm: ${e.code || e.message}), so grok's Landlock sandbox could not be confirmed`;
+  }
+  return lsm.trim().split(',').includes('landlock') ? null : 'Landlock is not active in this kernel, and grok would run its sandbox unenforced';
+}
+
 /** Which CLI runs an id: its prefix, the rule ACS and the review runtime use. */
 function vendorOf(id) {
   if (id.startsWith('claude-')) return 'claude';
@@ -387,9 +431,12 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = 
     return ['-p', prompt, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'json', ...json,
       // --tools decides which tools exist, so skipping the prompts is safe; --strict-mcp-config with
       // no --mcp-config loads no MCP server. Without the skip, a deny rule or hook blocks a read silently.
-      // --setting-sources user: a headless run honours the repo's .claude settings, hooks included, so
-      // only your own settings load; your login is not a settings file and is still read.
-      '--dangerously-skip-permissions', '--tools', TOOLS.claude[mode], '--strict-mcp-config', '--setting-sources', 'user'];
+      // --setting-sources: a headless run honours the repo's .claude settings, hooks included, so only your own
+      // settings load; your login is not a settings file and is still read. --investigate loads none of them
+      // (`--setting-sources=`, the empty list): array settings merge across sources, so a user allowedDomains,
+      // WebFetch(domain:…) grant or excludedCommands entry would reopen what CLAUDE_SANDBOX closes.
+      '--dangerously-skip-permissions', '--tools', TOOLS.claude[mode], '--strict-mcp-config',
+      ...(mode === 'investigate' ? ['--setting-sources=', '--settings', JSON.stringify(CLAUDE_SANDBOX)] : ['--setting-sources', 'user'])];
   }
   if (vendor === 'codex') {
     const min = mode === 'min-tools' ? [...CODEX_TOOL_FEATURES.flatMap((f) => ['--disable', f]), '-c', 'web_search="disabled"'] : [];
@@ -405,7 +452,7 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = 
   }
   return ['-p', prompt, '-m', id, ...(effort ? ['--reasoning-effort', effort] : []), '--cwd', cwd,
     '--tools', TOOLS.grok[mode], '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool',
-    ...(mode === 'investigate' ? ['--allow', 'Bash'] : []),
+    ...(mode === 'investigate' ? ['--allow', 'Bash', '--sandbox', GROK_SANDBOX] : []),
     '--disable-web-search', '--no-subagents', '--max-turns', mode === 'min-tools' ? GROK_MIN_TURNS : GROK_MAX_TURNS, '--output-format', 'json', ...json];
 }
 
@@ -718,27 +765,60 @@ function which(name) {
 }
 
 /**
- * The work tree's state, null outside a git work tree, or { error } when git
- * is not on PATH (absolute entries only): HEAD (its commit
- * and branch), so a checkout that leaves the status clean still shows, and
- * every path `git status` reports with its porcelain fields (status, modes,
- * and the HEAD and index object names, so a change to the index shows) and
- * the file's mode, size, mtime and ctime (so a write or chmod to a file that
- * was already dirty shows). Ignored files and anything outside the
- * repository are not seen. --no-optional-locks: reading must not write the index.
+ * The files that tell git where the repository is and which commands to run: the work tree's .git (a folder, or a
+ * linked worktree's gitfile) and the config files of its git dir and common dir. A sandboxed shell may write the work
+ * tree, so it may rewrite these to make the next git call run its command (core.fsmonitor) as the caller.
  */
-function snapshot(cwd) {
+function gitGuard({ root, gitDir, commonDir }) {
+  const files = [...new Set([path.join(root, '.git'), ...[gitDir, commonDir].flatMap((d) => [path.join(d, 'config'), path.join(d, 'config.worktree')])])];
+  return new Map(files.map((f) => {
+    let state = 'missing';
+    try {
+      const s = fs.lstatSync(f);
+      state = s.isSymbolicLink() ? `link ${fs.readlinkSync(f)}` : s.isDirectory() ? 'dir'
+        : `file ${crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex')}`;
+    } catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') state = `unreadable ${e.code || e.message}`; }
+    return [f, state];
+  }));
+}
+
+/**
+ * The work tree's state, null outside a git work tree, or { error } when git is not on PATH (absolute entries only):
+ * HEAD (its commit and branch), so a checkout that leaves the status clean still shows, and every path `git status`
+ * reports with its porcelain fields (status, modes, and the HEAD and index object names, so a change to the index
+ * shows) and the file's mode, size, mtime and ctime (so a write or chmod to a file that was already dirty shows).
+ * Ignored files and anything outside the repository are not seen. --no-optional-locks: reading must not write the index.
+ * `pin`, the before-snapshot's repository, is checked first: when its .git or config files changed, git is not run at
+ * all and the result is { tampered }, naming them. git runs with GIT_DIR and GIT_WORK_TREE pinned, core.fsmonitor off
+ * and submodules ignored. Config include files and .git/commondir are not guarded, and a clean filter the repository
+ * configures can still run.
+ */
+function snapshot(cwd, pin = null) {
   // git from an absolute PATH entry only (which), so a repo's ./git never answers for the work tree.
   const bin = which('git');
   if (!bin) return { error: 'git is not on PATH' };
-  const git = (...a) => spawnSync(bin, ['--no-optional-locks', ...a], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  const top = git('rev-parse', '--show-toplevel');
-  if (top.error || top.status !== 0) return null;
-  const root = top.stdout.trim();
+  let repo = pin?.repo;
+  if (repo) {
+    const now = gitGuard(repo);
+    const tampered = [...repo.guard.keys()].filter((f) => repo.guard.get(f) !== now.get(f));
+    if (tampered.length) return { tampered: tampered.map((f) => path.relative(repo.root, f) || f).sort() };
+  } else {
+    const where = spawnSync(bin, ['--no-optional-locks', 'rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
+      { cwd, encoding: 'utf8' });
+    if (where.error || where.status !== 0) return null;
+    const [root, gitDir, common] = where.stdout.split('\n');
+    if (!root || !gitDir || !common) return null;
+    repo = { root, gitDir, commonDir: path.resolve(cwd, common) };
+    repo.guard = gitGuard(repo);
+  }
+  const env = { ...process.env, GIT_DIR: repo.gitDir, GIT_WORK_TREE: repo.root };
+  const git = (...a) => spawnSync(bin, ['--no-optional-locks', '-c', 'core.fsmonitor=false', ...a],
+    { cwd: repo.root, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const root = repo.root;
   const commit = git('rev-parse', '--verify', '-q', 'HEAD');
   const branch = git('symbolic-ref', '-q', '--short', 'HEAD');
   const head = `${commit.status === 0 ? commit.stdout.trim().slice(0, 12) : '(no commit)'} (${branch.status === 0 ? branch.stdout.trim() : 'detached'})`;
-  const st = git('status', '--porcelain=v2', '-z', '--untracked-files=all');
+  const st = git('status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignore-submodules=all');
   if (st.error || st.status !== 0) return null;
   const seen = new Map();
   const fields = st.stdout.split('\0');
@@ -759,7 +839,7 @@ function snapshot(cwd) {
     try { const s = fs.lstatSync(path.join(root, file)); stamp = `${s.mode}:${s.size}:${s.mtimeMs}:${s.ctimeMs}`; } catch {}
     seen.set(file, `${fixed} ${stamp}`);
   }
-  return { head, paths: seen };
+  return { head, paths: seen, repo };
 }
 
 /** What differs: a moved HEAD first, naming both commits, then each path. */
@@ -924,7 +1004,8 @@ async function main(argv) {
   const mode = o.xSearch ? 'x-search' : o.investigate ? 'investigate' : o.noTools || (o.minTools && vendor === 'claude') ? 'no-tools' : o.minTools ? 'min-tools' : 'read-only';
   process.stderr.write(`ask-model: ${m.family} (${m.id}, effort ${m.effort || 'none'}, ${mode})\n`);
 
-  const result = { family: m.family, id: m.id, effort: m.effort || null, mode, ...(o.minTools && MIN_TOOLS[vendor]), ...(mode === 'x-search' && X_SEARCH_TOOLS), answer: null, changed: null, error: null };
+  const result = { family: m.family, id: m.id, effort: m.effort || null, mode, ...(o.minTools && MIN_TOOLS[vendor]), ...(mode === 'x-search' && X_SEARCH_TOOLS),
+    ...(mode === 'investigate' && { shellSandbox: SHELL_SANDBOX[vendor] }), answer: null, changed: null, error: null };
   let grokCall = null;
   const finish = (exit) => {
     grokCall?.done();
@@ -938,6 +1019,8 @@ async function main(argv) {
     result.error = `${vendor} cannot run with no tools (it has no switch that removes every tool) — not asked`;
     return finish(4);
   }
+  const unsandboxed = mode === 'investigate' ? sandboxProblem(vendor) : null;
+  if (unsandboxed) { result.error = `${unsandboxed}, so --investigate would give the model a shell its sandbox does not confine — ${vendor} was not run`; return finish(4); }
   const bin = which(vendor);
   if (!bin) { result.error = `the ${vendor} CLI is not on PATH`; return finish(3); }
 
@@ -998,11 +1081,12 @@ async function main(argv) {
   else result.error = got.error;
 
   if (before) {
-    const read = snapshot(cwd);
-    const after = read && !read.error ? read : null;
-    result.changed = after ? changedPaths(before, after) : null;
+    const read = snapshot(cwd, before);
+    const after = read && !read.error && !read.tampered ? read : null;
+    result.changed = read?.tampered ? read.tampered.map((f) => `${f} (git's own files: git was not run after the call)`)
+      : after ? changedPaths(before, after) : null;
     if (!after || result.changed.length) {
-      const what = after ? result.changed.map((c) => `  ${c}`).join('\n') : '  (the work tree could not be read after the call)';
+      const what = result.changed ? result.changed.map((c) => `  ${c}`).join('\n') : '  (the work tree could not be read after the call)';
       // A failed call is still reported; the change is what the caller must act on.
       result.error = [result.error, `files changed under --investigate (nothing was reverted):\n${what}`].filter(Boolean).join('\n');
       return finish(5);

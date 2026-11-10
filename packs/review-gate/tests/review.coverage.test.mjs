@@ -444,3 +444,29 @@ test('K2 coverageExemptDefaults: false in the home config turns the default list
   const pushed = push(); allowed(pushed)
   assert.match(pushed.stderr, /Coverage exempt \(not reviewed\): package-lock\.json/)
 })
+
+test('K3 a tracked repo config, even {}, leaves the home config\'s coverageExemptDefaults: false in force', () => {
+  writeFileSync(join(SKILL, 'config.json'), JSON.stringify({ coverageExemptDefaults: false }))
+  commit({ 'package-lock.json': BIG, '.claude/review-config.json': '{}' })
+  closed(review('.claude/,docs/,src/').id)
+  blocked(push(), uncovered(['package-lock.json']))
+  // The repo file's own value is still ignored, with the warning, and the home value stays.
+  commit({ '.claude/review-config.json': JSON.stringify({ coverageExemptDefaults: true }) })
+  const r = script([], { REVIEW_PATHS: '.claude/,docs/,src/' }); allowed(r)
+  assert.match(r.out, /Ignoring coverageExemptDefaults in \.claude\/review-config\.json/)
+  closed(records().filter((e) => e.type === 'review').at(-1).id)
+  blocked(push(), uncovered(['package-lock.json']))
+})
+
+test('K3 a tracked repo config, even {}, keeps the home config\'s coverageExempt list, and cannot replace it', () => {
+  writeFileSync(join(SKILL, 'config.json'), JSON.stringify({ coverageExempt: ['z/**'] }))
+  commit({ 'z/big.js': BIG, '.claude/review-config.json': '{}' })
+  closed(review('.claude/,docs/,src/').id)
+  const pushed = push(); allowed(pushed)
+  assert.match(pushed.stderr, /Coverage exempt \(not reviewed\): z\/big\.js/)
+  commit({ '.claude/review-config.json': JSON.stringify({ coverageExempt: ['y/**'] }), 'y/big.js': BIG })
+  const r = script([], { REVIEW_PATHS: '.claude/,docs/,src/' }); allowed(r)
+  assert.match(r.out, /Ignoring coverageExempt in \.claude\/review-config\.json/)
+  closed(records().filter((e) => e.type === 'review').at(-1).id)
+  blocked(push(), /1 file\(s\) uncovered: y\/big\.js .*exempt \(not reviewed\): z\/big\.js/)
+})

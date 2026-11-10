@@ -51,7 +51,7 @@ The advisor has zero session context. A thin brief produces generic advice; do n
 
 ## Step 2 — Invoke
 
-Every method gets the same prompt contract, and its output comes back to the seat, not straight to the user. **`--investigate` gives the advisor a shell** to verify things. It is told never to change files, and ask-model reports any change to the work tree, but it isn't sandboxed (only a codex advisor runs inside codex's own sandbox): it runs commands as you, and a change outside the work tree goes unseen.
+Every method gets the same prompt contract, and its output comes back to the seat, not straight to the user. **`--investigate` gives the advisor a shell** to verify things. It is told never to change files, and ask-model reports any change to the work tree. The shell runs inside its CLI's own sandbox: claude's Bash sandbox, with none of your Claude Code settings loaded (commands write only to the work tree and the temp folder, reach no network host, and never run outside it), grok's `strict` profile on Linux (commands read the work tree and system paths, write the work tree and temp folders, and reach no network), or codex's own. Where that sandbox can't run (a platform other than macOS or Linux; grok on macOS, where its sandbox can't block a command's network; grok on Linux without Landlock), ask-model refuses with exit 4 and runs nothing.
 
 ```bash
 METHOD=advisor                                  # advisor | second | the family the user named
@@ -122,7 +122,7 @@ The seat is not a courier. Before showing the user anything:
 ## Hard rules
 
 - **Orchestrator-only.** Builders and reviewers never invoke this skill. A builder unsure of direction uses its callback contract; the orchestrator decides whether a consult is worth buying. Nothing routes around the seat.
-- **The advisor is told never to edit.** Its shell (`--investigate`) isn't sandboxed, except a codex advisor's, so nothing else stops it: ask-model names any file that changed in the work tree during the call (exit 5). Report those to the user; never revert them.
+- **The advisor is told never to edit.** Its shell (`--investigate`) is sandboxed, but the sandbox still lets it write in the work tree: ask-model names any file that changed there during the call (exit 5). Report those to the user; never revert them.
 - **Prove the model.** ask-model checks the answering model where the CLI reports one (exit 2 when another model answered). A silent downgrade is a failed call, not an answer — report it, don't relabel it.
 - **No silent substitute.** If the chosen advisor cannot run, say so; run another only when the user agrees, and name it with the verdict.
 - **Questions must pass the lookup test twice** — once by the advisor, once by the seat. Findable answers never reach the human as questions.
