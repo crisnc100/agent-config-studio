@@ -1207,6 +1207,68 @@ console.log('\nask-model: --x-search');
        '--disable-web-search', '--no-subagents', '--max-turns', '5', '--output-format', 'json']), show(min));
 }
 
+console.log('\nask-model: the --investigate shell runs inside each CLI\'s own sandbox');
+{
+  const SB = mk('sandbox-work');
+  const settingsOf = (argv) => {
+    const at = argv?.indexOf('--settings') ?? -1;
+    try { return at === -1 ? null : JSON.parse(argv[at + 1]); } catch { return null; }
+  };
+  const c = ask(['--family', 'fable', '--investigate', '--json', '--cwd', SB]);
+  ok('claude --investigate: one --settings that turns the Bash sandbox on, fails closed, and allows no unsandboxed command or network host',
+     c.code === 0 && c.argv.filter((a) => a === '--settings').length === 1 && same(settingsOf(c.argv), { sandbox: {
+       enabled: true, failIfUnavailable: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false,
+       network: { allowedDomains: [], strictAllowlist: true } } }), show(c));
+  ok('…and --json says the shell was sandboxed', /claude sandbox/.test(JSON.parse(c.out || '{}').shellSandbox ?? ''), show(c));
+  const cro = ask(['--family', 'fable', '--json', '--cwd', SB]);
+  ok('claude read-only: no --settings and no shellSandbox (it has no shell)',
+     cro.code === 0 && !cro.argv.includes('--settings') && !Object.hasOwn(JSON.parse(cro.out || '{}'), 'shellSandbox'), show(cro));
+
+  const g = ask(['--family', 'grok', '--investigate', '--json', '--cwd', SB]);
+  const gs = g.argv?.indexOf('--sandbox') ?? -1;
+  ok('grok --investigate: --sandbox strict, given once', g.code === 0 && gs !== -1 && g.argv[gs + 1] === 'strict' && g.argv.filter((a) => a === '--sandbox').length === 1, show(g));
+  ok('…and --json says the shell was sandboxed', /--sandbox strict/.test(JSON.parse(g.out || '{}').shellSandbox ?? ''), show(g));
+  for (const extra of [[], ['--min-tools']]) {
+    const gro = ask(['--family', 'grok', '--cwd', SB, ...extra]);
+    ok(`grok ${extra[0] || 'read-only'}: no --sandbox (no shell to sandbox)`, gro.code === 0 && !gro.argv.includes('--sandbox'), show(gro));
+  }
+  const x = ask(['--family', 'astra', '--investigate', '--json', '--cwd', SB]);
+  ok('codex --investigate: its argv unchanged, and --json names its own sandbox',
+     x.code === 0 && same(x.argv, CODEX(IDS.astra, '')) && /--sandbox read-only/.test(JSON.parse(x.out || '{}').shellSandbox ?? ''), show(x));
+
+  // A platform none of these sandboxes runs on, and a Linux kernel without Landlock (grok's built-in profiles then run
+  // unenforced): a preload changes what ask-model sees, so the test needs no such machine.
+  const preload = path.join(tmp, 'platform.cjs');
+  fs.writeFileSync(preload, `const fs = require('node:fs');
+if (process.env.FAKE_PLATFORM) Object.defineProperty(process, 'platform', { value: process.env.FAKE_PLATFORM });
+const read = fs.readFileSync;
+fs.readFileSync = function (p, ...rest) {
+  if (p === '/sys/kernel/security/lsm') {
+    if (process.env.FAKE_LSM === undefined) { const e = new Error('ENOENT: no such file'); e.code = 'ENOENT'; throw e; }
+    return rest.length && rest[0] ? process.env.FAKE_LSM : Buffer.from(process.env.FAKE_LSM);
+  }
+  return read.call(this, p, ...rest);
+};`);
+  const on = (env) => ({ NODE_OPTIONS: `--require=${preload}`, TEMP: tmp, TMP: tmp, ...env });
+  for (const family of ['fable', 'grok']) {
+    const w = ask(['--family', family, '--investigate', '--json', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'win32' }) });
+    ok(`${family} --investigate on win32: exit 4, the model never run, the reason in error`,
+       w.code === 4 && w.calls.length === 0 && /sandbox/.test(JSON.parse(w.out || '{}').error ?? ''), show(w));
+    const r = ask(['--family', family, '--cwd', SB], { env: on({ FAKE_PLATFORM: 'win32' }) });
+    ok(`${family} read-only on win32 still runs (no shell)`, r.code === 0 && r.calls.length === 1, show(r));
+  }
+  const xw = ask(['--family', 'astra', '--investigate', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'win32' }) });
+  ok('codex --investigate on win32 still runs (its sandbox is its own)', xw.code === 0 && xw.calls.length === 1, show(xw));
+  const cl = ask(['--family', 'fable', '--investigate', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'linux' }) });
+  ok('claude --investigate on Linux runs, with the sandbox settings', cl.code === 0 && settingsOf(cl.argv)?.sandbox?.enabled === true, show(cl));
+  for (const [lsm, why] of [[undefined, 'no LSM list'], ['lockdown,capability,yama,apparmor', 'an LSM list without landlock']]) {
+    const gl = ask(['--family', 'grok', '--investigate', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'linux', ...(lsm === undefined ? {} : { FAKE_LSM: lsm }) }) });
+    ok(`grok --investigate on Linux with ${why}: exit 4, grok never run`, gl.code === 4 && gl.calls.length === 0 && /landlock/i.test(gl.err), show(gl));
+  }
+  const gl = ask(['--family', 'grok', '--investigate', '--cwd', SB], { env: on({ FAKE_PLATFORM: 'linux', FAKE_LSM: 'lockdown,capability,landlock,yama\n' }) });
+  ok('grok --investigate on Linux with landlock: runs under --sandbox strict', gl.code === 0 && gl.argv?.[gl.argv.indexOf('--sandbox') + 1] === 'strict', show(gl));
+}
+
 console.log('\nask-model: live');
 if (process.env.ACS_LIVE_CHECKS === '1') {
   const live = path.join(tmp, 'live-prompt.txt');

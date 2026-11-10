@@ -221,6 +221,16 @@ test('G3 a tracked repo config cannot allow a grok MCP server', () => {
   assert.match(r.out, /grok would start MCP servers no flag keeps out of a run \(jev\)/)
 })
 
+test('G3 a tracked repo config, even {}, leaves the home config\'s grokMcpAllow in force', () => {
+  rmSync(CONF, { force: true })
+  writeFileSync(join(SKILL, 'config.json'), JSON.stringify({ grokMcpAllow: ['jev'] }))
+  commit({ '.claude/review-config.json': '{}', 'src/a.js': lines(10) })
+  const r = script([], { REVIEW_CONFIG: '', REVIEW_REVIEWER: 'grok', ...jevAt(join(HOME, '.grok', 'config.toml')) })
+  allowed(r)
+  assert.equal(records().at(-1).family, 'grok')
+  assert.equal(calls('grok').length, 1)
+})
+
 test('G5 grok leader mode in any TOML spelling or a macOS managed payload refuses, and a relative GROK_HOME is made absolute', () => {
   commit({ 'src/a.js': lines(10) })
   const grokHome = join(HOME, '.grok')
