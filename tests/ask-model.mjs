@@ -400,9 +400,9 @@ console.log('\nask-model: codex runs with its configured MCP servers off');
 console.log('\nask-model: grok --investigate may run the shell');
 {
   const g = ask(['--family', 'grok', '--investigate', '--cwd', WORK]);
-  ok('exact argv: the shell tool, the shell allowed, the read tools and MCP denial kept',
+  ok('exact argv: the shell tool, the shell allowed inside the strict sandbox, the read tools and MCP denial kept',
      g.code === 0 && same(g.argv, ['-p', PROMPT, '-m', IDS.grok, '--cwd', WORK, '--tools', 'read_file,list_dir,grep,run_terminal_cmd',
-       '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool', '--allow', 'Bash', '--disable-web-search', '--no-subagents',
+       '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool', '--allow', 'Bash', '--sandbox', 'strict', '--disable-web-search', '--no-subagents',
        '--max-turns', '40', '--output-format', 'json']), show(g));
   const ro = ask(['--family', 'grok', '--cwd', WORK]);
   ok('read-only allows nothing', ro.code === 0 && !ro.argv.includes('--allow'), show(ro));
@@ -1199,7 +1199,7 @@ console.log('\nask-model: --x-search');
   ok('without --x-search grok --investigate keeps its argv',
      inv.code === 0 && same(inv.argv, ['-p', PROMPT, '-m', IDS.grok, ...(roj.effort ? ['--reasoning-effort', roj.effort] : []), '--cwd', XC,
        '--tools', 'read_file,list_dir,grep,run_terminal_cmd', '--disallowed-tools', 'search_tool,use_tool', '--deny', 'MCPTool', '--allow', 'Bash',
-       '--disable-web-search', '--no-subagents', '--max-turns', '40', '--output-format', 'json']), show(inv));
+       '--sandbox', 'strict', '--disable-web-search', '--no-subagents', '--max-turns', '40', '--output-format', 'json']), show(inv));
   const min = ask(['--family', 'grok', '--min-tools', '--cwd', XC]);
   ok('without --x-search grok --min-tools keeps its argv',
      min.code === 0 && same(min.argv, ['-p', PROMPT, '-m', IDS.grok, ...(roj.effort ? ['--reasoning-effort', roj.effort] : []), '--cwd', XC,
