@@ -223,6 +223,107 @@ console.log('\nlight theme: text on its own tint, computed from styles.css');
   ok('every tinted state reaches 4.6:1 on bg, panel and panel-2 (search hits, part badges, Describe diffs, CLI tags)', low.length === 0, low.join(' | '));
 }
 
+/* ── static: orange and amber controls, both themes, text AND edge (PR H) ── */
+// Cris, 2026-11-09: orange/amber buttons were hard to see in light. Every orange or amber button and badge,
+// in light and dark, on bg, panel and panel-2: its text reaches 4.5:1 against what is behind it, and its edge —
+// its border, or its fill when it has no border — reaches 3:1 against the page. Text-only (quiet) controls have
+// no edge to measure; their text still must pass.
+console.log('\norange and amber controls: text 4.5:1 and edge 3:1, light and dark, from styles.css');
+{
+  const raw = fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const tokens = (sel) => {
+    const i = raw.indexOf(`${sel} {`);
+    return Object.fromEntries([...raw.slice(i, raw.indexOf('}', i)).matchAll(/--([\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+  };
+  const THEMES = { dark: tokens(':root'), light: { ...tokens(':root'), ...tokens(':root[data-theme="light"]') } };
+  const hex = (h) => { const d = h.length <= 4 ? [...h.slice(1)].map((c) => c + c).join('') : h.slice(1); return d.match(/../g).slice(0, 3).map((x) => parseInt(x, 16)); };
+  /** A colour as [r,g,b,a] over nothing yet: hex, var(), color-mix(in srgb, A p%, B|transparent), transparent. */
+  const parse = (v, t, depth = 0) => {
+    v = String(v || '').trim();
+    if (depth > 8) throw new Error(`too deep: ${v}`);
+    if (v === 'transparent' || v === 'none') return [0, 0, 0, 0];
+    let m;
+    if ((m = /^var\(--([\w-]+)\)$/.exec(v))) return parse(t[m[1]], t, depth + 1);
+    if (/^#[0-9a-f]{3,8}$/i.test(v)) return [...hex(v), 1];
+    if ((m = /^color-mix\(in srgb,\s*(.+?)\s+(\d+(?:\.\d+)?)%,\s*(.+)\)$/.exec(v))) {
+      const a = parse(m[1], t, depth + 1), b = parse(m[3], t, depth + 1), p = Number(m[2]) / 100;
+      // Mixing with transparent keeps the colour and scales its alpha; otherwise a plain mix.
+      if (b[3] === 0) return [a[0], a[1], a[2], a[3] * p];
+      return [0, 1, 2].map((i) => a[i] * p + b[i] * (1 - p)).concat(a[3] * p + b[3] * (1 - p));
+    }
+    throw new Error(`unparseable colour "${v}"`);
+  };
+  const over = (c, under) => [0, 1, 2].map((i) => c[i] * c[3] + under[i] * (1 - c[3]));
+  const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const lum = (c) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+  const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  /** The declarations a chain of selectors gives, later ones winning (base rule first, then the variant). */
+  const decl = (chain) => {
+    const out = {};
+    for (const sel of chain) {
+      for (const r of rules.filter((x) => x.sel.split(',').map((y) => y.trim()).includes(sel))) {
+        for (const m of r.body.matchAll(/(?:^|;)\s*(color|background|background-color|border|border-color)\s*:\s*([^;]+)/g)) {
+          const [, k, v] = m;
+          if (k === 'background' || k === 'background-color') out.bg = v.trim();
+          else if (k === 'color') out.color = v.trim();
+          else if (k === 'border-color') out.edge = v.trim();
+          else if (k === 'border') { const c = v.trim().replace(/^\S+\s+\S+\s+/, ''); out.edge = /^(none|0)$/.test(v.trim()) ? 'transparent' : c; }
+        }
+      }
+    }
+    return out;
+  };
+  // Every orange or amber button and badge: [name, selector chain, text-only?].
+  const CONTROLS = [
+    ['primary button', ['.btn', '.btn.primary']],
+    ['quiet button', ['.btn', '.btn.ghost'], true],
+    ['security pass "on" button', ['.btn', '.btn.pk-sec-on']],
+    ['picked model', ['.btn', '.btn.roles-pick', '.btn.roles-pick.on']],
+    ['picked model number', ['.roles-pick-n']],
+    ['Assist chip, active', ['.assist-chip', '.assist-chip.active']],
+    ['Setup step, current', ['.setup-step-btn', '.setup-step-btn.active']],
+    ['wizard step link', ['.sw-step-btn'], true],
+    ['sidebar count', ['.nav-badge']],
+    ['warn badge', ['.item-badge', '.item-badge.warn']],
+    ['retiring alert', ['.models-alert', '.models-alert.retiring']],
+    ['memory warn badge', ['.mem-badge', '.mem-badge.warn']],
+    ['memory folders-missing badge', ['.mem-badge', '.mem-badge.folders-missing']],
+    ['Home "needs you"', ['.home-needs']],
+    ['Home warn chip', ['.home-chip', '.home-chip.warn']],
+    ['guide out-of-date chip', ['.guide-chip', '.guide-chip.stale']],
+    ['Model ids alert count', ['.ids-count']],
+    ['pack "Setup needed"', ['.pk-ready', '.pk-ready.missing']],
+    ['pack edited badge', ['.pk-badge', '.pk-badge.edited']],
+    ['pack new-CLI badge', ['.pk-badge', '.pk-badge.newHarness']],
+    ['audit synced class', ['.audit-class', '.audit-class.synced']],
+    ['audit warn', ['.audit-sev', '.audit-sev.warn']],
+    ['account offline tag', ['.usage-offline-tag']],
+    ['changed-from-default mark', ['.changed-mark']],
+    ['default model chip', ['.job-chip', '.job-chip.first']],
+  ];
+  const bad = [];
+  for (const [theme, t] of Object.entries(THEMES)) {
+    for (const surface of ['bg', 'panel', 'panel-2']) {
+      const page = parse(`var(--${surface})`, t);
+      for (const [name, chain, textOnly] of CONTROLS) {
+        const d = decl(chain);
+        if (!d.color) { bad.push(`${name}: no colour found`); continue; }
+        let fg, fill, edge;
+        try { fg = parse(d.color, t); fill = parse(d.bg || 'transparent', t); edge = parse(d.edge || 'transparent', t); } catch (e) { bad.push(`${name}: ${e.message}`); continue; }
+        const behind = over(fill, page);
+        const tr = ratio(over(fg, behind), behind);
+        if (!(tr >= 4.5)) bad.push(`${theme}/${surface} ${name} text ${tr.toFixed(2)}`);
+        if (textOnly) continue;
+        // The edge: the border if it shows, else the fill.
+        const e = edge[3] > 0 ? over(edge, page) : fill[3] > 0 ? behind : null;
+        const er = e ? ratio(e, page) : 0;
+        if (!(er >= 3)) bad.push(`${theme}/${surface} ${name} edge ${er.toFixed(2)}`);
+      }
+    }
+  }
+  ok('every orange or amber button and badge: text ≥4.5:1 and edge ≥3:1 on bg, panel and panel-2, light and dark', bad.length === 0, bad.join(' | '));
+}
+
 /* ── static: words the views never render on their own ───────────────── */
 console.log('\nindex.html and the server\'s errors: no "harness"');
 {

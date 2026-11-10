@@ -178,19 +178,90 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
   button(content(p).querySelector('.roles-detail'), 'Save').click();
   await settle(15);
   const strip = content(p).querySelector('.guide-stale');
-  ok('after a roles edit the strip appears, counting each real file once', strip && /Model guide is out of date in 2 files/.test(p.text(strip)), strip && p.text(strip));
+  // PR H: one plain banner at the TOP of Models, counting each real file once, with a primary button.
+  ok('after a roles edit the banner appears, counting each real file once', strip && /Your model guide in 2 files is out of date/.test(p.text(strip)), strip && p.text(strip));
+  // The Roles section must exist, or "first of the two" is true with only the banner on the page.
+  const order = [...content(p).querySelectorAll('.guide-stale, .models-roles')];
+  ok('…at the top of Models, above Roles', !!strip && !!content(p).querySelector('.models-roles') && order.length === 2 && order[0] === strip && order[1].classList.contains('models-roles'));
+  ok('…with a primary "Review and update" button', !!button(strip, 'Review and update') && button(strip, 'Review and update').classList.contains('primary'));
   ok('…and the status was read again after the save', p.requests.filter((r) => r.path === '/api/model-guide').length >= 2);
-  button(strip, 'Review update').click();
+  // PR H: the save itself says the guide needs updating, with the same button, so it is not forgotten.
+  const said = p.$('notice-slot');
+  ok('the save says the guide now needs updating, with the same button', /saved\. The model guide in 2 files needs updating/.test(p.text(said)) && !!button(said, 'Review and update'), p.text(said));
+  button(strip, 'Review and update').click();
   await settle(15);
-  ok('Review update proposes an update per file, writing nothing', JSON.stringify(posts(p, '/api/model-guide/propose').map((r) => r.body)) === '[{"target":"claude","action":"update"},{"target":"codex","action":"update"}]' && posts(p, '/api/model-guide/accept').length === 0);
-  ok('…each shown as a diff in its row', row(p, 'claude').querySelector('.guide-proposal .diff') && row(p, 'codex').querySelector('.guide-proposal .diff'));
-  button(row(p, 'claude').querySelector('.guide-proposal'), 'Accept').click();
+  ok('Review and update proposes an update per file, writing nothing', JSON.stringify(posts(p, '/api/model-guide/propose').map((r) => r.body)) === '[{"target":"claude","action":"update"},{"target":"codex","action":"update"}]' && posts(p, '/api/model-guide/accept').length === 0);
+  const top = () => content(p).querySelector('.guide-review-top');
+  const topProp = (path) => top()?.querySelectorAll('.guide-proposal').find((x) => x.dataset.target === path);
+  ok('…each shown as a diff right under the banner, with Accept and Cancel beside it (no scrolling down)', !!topProp('claude')?.querySelector('.diff') && !!topProp('codex')?.querySelector('.diff')
+    && !!button(topProp('claude'), 'Accept') && !!button(topProp('claude'), 'Cancel') && (() => { const b = content(p).querySelector('.guide-stale'); const kids = b.parentNode.children; return kids[kids.indexOf(b) + 1] === top(); })());
+  ok('…and not a second time down in the rows', !sec(p).querySelector('.guide-proposal'));
+  button(topProp('claude'), 'Accept').click();
   await settle(10);
-  ok('one accepted: the strip counts what is left', /out of date in 1 file —/.test(p.text(content(p).querySelector('.guide-stale'))));
+  ok('one accepted: the banner counts what is left', /Your model guide in 1 file is out of date/.test(p.text(content(p).querySelector('.guide-stale'))));
   state.accept = () => { state.guide = guide([target('claude', 'current'), target('codex', 'current', { sharedWith: ['grok'] }), target('grok', 'current', { sharedWith: ['codex'] })]); return { saved: true, warnings: [] }; };
-  button(row(p, 'codex').querySelector('.guide-proposal'), 'Accept').click();
+  button(topProp('codex'), 'Accept').click();
   await settle(10);
-  ok('all accepted: the strip clears', !content(p).querySelector('.guide-stale'));
+  ok('all accepted: the banner clears', !content(p).querySelector('.guide-stale') && !top());
+}
+
+// ── PR H: the save notice's button opens the same review at the top ─────
+{
+  const stale = guide([target('claude', 'current'), target('codex', 'stale')]);
+  const state = {
+    guide: guide([target('claude', 'current'), target('codex', 'current')]), afterRoles: stale,
+    propose: (b) => ({ id: 'a'.repeat(32), target: b.target, action: b.action, path: b.target, status: 'stale', current: 'a\n', proposed: 'b\n', newFile: false, overwritesEdits: false }),
+    accept: () => ({ saved: true, warnings: [] }),
+  };
+  const p = await boot(state, {
+    'GET /api/models/roles': () => ({ ...ROLES, roles: [{ name: 'reviewer', use: ['sol'], ids: ['sol-1'], effort: 'high', resolvedEffort: 'high', alt: '', altId: '', note: '', custom: false, provenance: { use: 'default' }, defaults: { use: 'sol' }, warnings: [] }] }),
+  });
+  content(p).querySelectorAll('.roles-row').find((r) => r.dataset.role === 'reviewer').click();
+  await settle(5);
+  button(content(p).querySelector('.roles-detail'), 'Save').click();
+  await settle(15);
+  ok('one file: the save says "the model guide in 1 file needs updating"', /saved\. The model guide in 1 file needs updating/.test(p.text(p.$('notice-slot'))), p.text(p.$('notice-slot')));
+  // Scrolled down first, so landing at the top is something the button did.
+  content(p).scrollTop = 640;
+  const scrolledBefore = content(p).scrollTop;
+  button(p.$('notice-slot'), 'Review and update').click();
+  await settle(15);
+  ok('…its button opens the review under the banner, at the top (from 640px down to 0)', scrolledBefore === 640 && !!content(p).querySelector('.guide-review-top .guide-proposal .diff') && content(p).scrollTop === 0
+    && JSON.stringify(posts(p, '/api/model-guide/propose').map((r) => r.body)) === '[{"target":"codex","action":"update"}]');
+  const cancel = button(content(p).querySelector('.guide-review-top'), 'Cancel');
+  cancel.click();
+  await settle(10);
+  ok('Cancel drops the review and writes nothing; the banner stays', !content(p).querySelector('.guide-review-top') && !!content(p).querySelector('.guide-stale')
+    && posts(p, '/api/model-guide/accept').length === 0 && posts(p, '/api/model-guide/reject').length === 1);
+}
+
+// ── f1/f2: the save notice keeps the save's warnings and any new conflict beside the guide reminder ──
+{
+  const reviewer = (over = {}) => ({ name: 'reviewer', use: ['sol'], ids: ['sol-1'], effort: 'high', resolvedEffort: 'high', alt: '', altId: '', note: '', custom: false, provenance: { use: 'default' }, defaults: { use: 'sol' }, warnings: [], ...over });
+  const boot2 = async (warnings, conflictsAfter) => {
+    const state = {
+      guide: guide([target('claude', 'current'), target('codex', 'current')]),
+      propose: (b) => ({ id: 'c'.repeat(32), target: b.target, action: b.action, path: b.target, status: 'stale', current: 'a\n', proposed: 'b\n', newFile: false, overwritesEdits: false }),
+      accept: () => ({ saved: true, warnings: [] }), saved: false,
+    };
+    const p = await boot(state, {
+      'GET /api/models/roles': () => ({ ...ROLES, roles: [reviewer()], conflicts: state.saved ? conflictsAfter : [] }),
+      'POST /api/models/roles/set': () => { state.saved = true; state.guide = guide([target('claude', 'stale'), target('codex', 'current')]); return { saved: true, base: 'sha256:r2', warnings }; },
+    });
+    content(p).querySelectorAll('.roles-row').find((r) => r.dataset.role === 'reviewer').click();
+    await settle(5);
+    button(content(p).querySelector('.roles-detail'), 'Save').click();
+    await settle(15);
+    return p;
+  };
+  const p = await boot2(['history: could not record the backup'], []);
+  const n = p.$('notice-slot');
+  ok('f1 a save that warned AND left the guide stale shows both: the warning in its list, the reminder and its button',
+    /The model guide in 1 file needs updating/.test(p.text(n)) && /could not record the backup/.test(p.text(n.querySelector('ul') || { textContent: '' })) && !!button(n, 'Review and update'), p.text(n));
+  const q = await boot2([], [{ role: 'reviewer', family: 'sol', slot: 'use' }]);
+  const m = q.$('notice-slot');
+  ok('f2 a save that adds an avoid-for conflict keeps the conflict AND the guide reminder with its button',
+    /avoid for reviewer/.test(q.text(m)) && /The model guide in 1 file needs updating/.test(q.text(m)) && !!button(m, 'Review and update'), q.text(m));
 }
 
 // ── light and dark: the section draws only from the theme tokens ────────
