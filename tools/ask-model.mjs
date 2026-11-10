@@ -28,7 +28,15 @@
  * --investigate adds a shell (claude's Bash; grok's run_terminal_cmd, with
  * shell commands allowed; codex's read-only sandbox already runs commands) and
  * compares the git work tree before and after the call. Anything that changed
- * is named on stderr and the exit is 5. Nothing is ever reverted.
+ * is named on stderr and the exit is 5. Nothing is ever reverted. The shell runs
+ * inside the CLI's own OS sandbox: claude's Bash sandbox through --settings
+ * (CLAUDE_SANDBOX: writes to the cwd and the temp folder only, no network host,
+ * no unsandboxed fallback, and claude exits if the sandbox cannot start), grok's
+ * `--sandbox strict` (reads the cwd, system paths and ~/.grok, writes the cwd and
+ * temp folders; its network is blocked on Linux only), codex's read-only one.
+ * Off macOS and Linux, or on Linux without Landlock for grok, --investigate exits
+ * 4 and the model is not run. --json then carries `shellSandbox`, naming the
+ * sandbox the shell ran in.
  *
  * --no-tools asks with no tools at all: claude with `--tools ""` (its documented "no tools"). grok has no such mode
  * (a --tools entry that names no tool leaves the others available) and codex has no switch that removes every tool,
