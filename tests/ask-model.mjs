@@ -76,6 +76,8 @@ if (${J(name)} === 'codex' && a[0] === 'mcp') {
   process.exit(0);
 }
 for (const f of (process.env.STUB_WRITE || '').split(',').filter(Boolean)) fs.appendFileSync(f, 'written by the stub\\n');
+// STUB_PUT: [{ file, text, append }], written as given: what a sandboxed shell may do to a repo's .git.
+for (const w of JSON.parse(process.env.STUB_PUT || '[]')) (w.append ? fs.appendFileSync : fs.writeFileSync)(w.file, w.text);
 for (const f of (process.env.STUB_CHMOD || '').split(',').filter(Boolean)) fs.chmodSync(f, 0o755);
 if (process.env.STUB_GIT) require('node:child_process').execFileSync('git', process.env.STUB_GIT.split(' '), { stdio: 'ignore' });
 if (process.env.STUB_STDERR) process.stderr.write(process.env.STUB_STDERR + '\\n');
@@ -1279,6 +1281,65 @@ console.log('\nask-model: the --investigate shell runs inside each CLI\'s own sa
   ok('claude --investigate on macOS runs, with the sandbox settings', cm.code === 0 && settingsOf(cm.argv)?.sandbox?.enabled === true, show(cm));
   const gl = ask(['--family', 'grok', '--investigate', '--cwd', SB], { env: LANDLOCK });
   ok('grok --investigate on Linux with landlock: runs under --sandbox strict', gl.code === 0 && gl.argv?.[gl.argv.indexOf('--sandbox') + 1] === 'strict', show(gl));
+}
+
+console.log('\nask-model: claude --investigate ignores your own settings, sandbox grants included');
+{
+  // User settings that would widen the sandbox: an allowed host, a WebFetch domain grant, a command run outside it.
+  const home = mk('home-wide-sandbox');
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'settings.json'), J({ sandbox: { network: { allowedDomains: ['example.com'] }, excludedCommands: ['curl'] },
+    permissions: { allow: ['WebFetch(domain:example.com)'] } }));
+  fs.cpSync(path.join(HOME, '.agent-config-studio'), path.join(home, '.agent-config-studio'), { recursive: true });
+  const r = ask(['--family', 'fable', '--investigate', '--cwd', mk('wide-work')], { home });
+  ok('the call runs with --setting-sources= and the sandbox --settings, and nothing names a user source',
+     r.code === 0 && r.argv.includes('--setting-sources=') && !r.argv.includes('user') && r.argv.includes('--settings'), show(r));
+}
+
+console.log('\nask-model: a shell that rewrites git\'s own config or gitfile never gets git to run its command');
+{
+  const marker = path.join(tmp, 'fsmonitor-ran');
+  const hook = path.join(tmp, 'fsmonitor-hook.sh');
+  fs.writeFileSync(hook, `#!/bin/sh\ntouch ${J(marker)}\n`, { mode: 0o755 });
+  const FSMON = `[core]\n\tfsmonitor = ${hook}\n`;
+  const repo = mk('tamper-repo');
+  const g = (cwd, ...a) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd, encoding: 'utf8', env: { PATH: SYSTEM.join(':'), HOME, ...GIT_ENV } });
+    if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`);
+  };
+  g(repo, 'init', '-q');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  g(repo, 'add', '.'); g(repo, 'commit', '-q', '-m', 'base');
+  fs.rmSync(marker, { force: true });
+  const c = ask(['--family', 'sol', '--investigate', '--json', '--cwd', repo], { env: { STUB_PUT: J([{ file: '.git/config', text: FSMON, append: true }]) } });
+  const cj = JSON.parse(c.out || '{}');
+  ok('core.fsmonitor planted in .git/config: exit 5, .git/config named, the planted command never run',
+     c.code === 5 && !fs.existsSync(marker) && (cj.changed ?? []).some((p) => /\.git\/config/.test(p)) && /\.git\/config/.test(c.err), show(c));
+
+  // A linked worktree's .git is a gitfile; pointed at another repository whose config holds the hook.
+  const wt = path.join(tmp, 'tamper-wt');
+  g(repo, 'worktree', 'add', '-q', wt);
+  const evil = mk('tamper-evil');
+  g(evil, 'init', '-q');
+  fs.appendFileSync(path.join(evil, '.git', 'config'), FSMON);
+  fs.rmSync(marker, { force: true });
+  const w = ask(['--family', 'sol', '--investigate', '--json', '--cwd', wt], { env: { STUB_PUT: J([{ file: '.git', text: `gitdir: ${path.join(evil, '.git')}\n` }]) } });
+  const wj = JSON.parse(w.out || '{}');
+  ok('the worktree\'s gitfile rewritten: exit 5, .git named, the other repository\'s hook never run',
+     w.code === 5 && !fs.existsSync(marker) && (wj.changed ?? []).some((p) => /^\.git\b/.test(p)) , show(w));
+
+  // Untouched, a worktree still snapshots cleanly, and a planted hook in a clean repo's own config never runs either.
+  fs.writeFileSync(path.join(wt, '.git'), fs.readFileSync(path.join(wt, '.git'), 'utf8').replace(/^gitdir: .*$/m, `gitdir: ${path.join(fs.realpathSync(repo), '.git', 'worktrees', 'tamper-wt')}`));
+  const ok1 = ask(['--family', 'sol', '--investigate', '--json', '--cwd', wt]);
+  ok('an untouched worktree: exit 0, changed is []', ok1.code === 0 && same(JSON.parse(ok1.out || '{}').changed, []), show(ok1));
+  const pre = mk('preset-repo');
+  g(pre, 'init', '-q');
+  fs.writeFileSync(path.join(pre, 'a.txt'), 'a\n');
+  g(pre, 'add', '.'); g(pre, 'commit', '-q', '-m', 'base');
+  fs.appendFileSync(path.join(pre, '.git', 'config'), FSMON);
+  fs.rmSync(marker, { force: true });
+  const p = ask(['--family', 'sol', '--investigate', '--json', '--cwd', pre]);
+  ok('a core.fsmonitor already in the repo config: the snapshots run git with it off', p.code === 0 && !fs.existsSync(marker), show(p));
 }
 
 console.log('\nask-model: live');
