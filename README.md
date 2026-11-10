@@ -559,24 +559,36 @@ skill.
   already runs them. The shell runs inside the CLI's own sandbox. Claude's
   Bash sandbox is set for that call only: commands write to the work tree and
   the temp folder, reach no network host and never run outside the sandbox,
-  and Claude exits if the sandbox cannot start. No Claude Code settings file
-  loads for that call, yours included, so none can widen the sandbox (your
-  login is not a settings file and still works). Grok runs with
-  `--sandbox strict`, and only on Linux with Landlock active. On a platform
-  other than macOS or Linux, for Grok on macOS (where its sandbox can't block
-  a command's network), or for Grok on Linux without Landlock,
-  `--investigate` exits 4 and the model is not run. `--json` adds
+  and Claude exits if the sandbox cannot start. No user, project or local
+  Claude Code settings file loads for that call, yours included, so none can
+  widen the sandbox (your login is not a settings file and still works).
+  Managed settings, the ones an administrator installs, still apply, since no
+  flag turns them off. Grok runs with `--sandbox strict`, and only on Linux
+  with Landlock active. For Claude or Grok on a platform other than macOS or
+  Linux, for Grok on macOS (where its sandbox can't block a command's
+  network), or for Grok on Linux without Landlock, `--investigate` exits 4
+  and the model is not run. Codex runs anywhere, in its own read-only
+  sandbox. `--json` adds
   `shellSandbox`, naming the sandbox the shell ran in. A command Grok still
   refuses is passed on to stderr. In a git work
   tree it compares HEAD (its commit and branch) and the status before and
   after, so a checkout shows even when it leaves the status as it was; if
   anything changed, it names each file (and a moved HEAD with both commits)
-  and exits 5. It also fingerprints the work tree's `.git` and the
-  repository's `config` and `config.worktree` before the call; if any of
-  them changed, it names them and exits 5 without running git again.
-  Otherwise git runs pinned to the repository found before the call, with
-  `core.fsmonitor` off and submodules ignored. It never reverts anything.
-  Ignored files, submodules and files outside the repository are not checked.
+  and exits 5. Each checked-out submodule is compared the same way, its
+  files and HEAD named under its path. It also fingerprints, before the
+  call, the work tree's `.git`, the git dir's `commondir`, the repository's
+  `config` and `config.worktree`, and every file those configs include (a
+  symlink by its target path and the target's contents), the same for each
+  submodule; if any of them changed, it names them and exits 5 without
+  running git again. Every look at the repository runs git with a config
+  `ask-model` writes for it, never the repository's, your global or the
+  system one, so nothing a config names (an fsmonitor, a clean filter, an
+  include) runs, wherever the shell put it. A repository it finds but can't
+  read that way (one keeping its refs in reftable, say) exits 4 before the
+  call; one that can't be read after the call exits 5. It never reverts
+  anything. Ignored files, the contents of a
+  submodule that is not checked out, and files outside the repository are
+  not checked.
 - `--no-tools` asks with no tools at all. Only Claude has such a mode
   (`--tools ""`); Grok and Codex have none, so `ask-model` refuses them with
   exit 4 rather than run them with tools. It cannot be combined with
