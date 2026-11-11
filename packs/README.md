@@ -51,7 +51,10 @@ Where each file lands:
 The review gate's shared state lives under `~/.agent-config-studio/`:
 
 - `review-gate/config.json` — your review settings for every project (copy `review-config.example.json`). The
-  older `~/.claude/review-config.json` is read when it is absent; a repo's `.claude/review-config.json` wins over both.
+  older `~/.claude/review-config.json` is read when it is absent; a repo's `.claude/review-config.json` wins over both,
+  except for `fixCheck`, `security`, `merge` and `crossFamily`: for those the home file is a floor that a repo file git
+  tracks, or `REVIEW_CONFIG`, may only tighten (each key's note in the example config gives its exact rule).
+  `review.mjs --show-config` prints the settings in force, merge and crossFamily among them.
   `codexHomes` there lists extra Codex homes for the agent guard.
 - `review-log/review-log.jsonl` — the review log. Until that folder exists, an existing `~/.claude/review-log/`
   folder or older `~/.claude/review-log.jsonl` file keeps being used (`logPath()` in review.mjs).
