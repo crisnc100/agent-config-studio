@@ -246,6 +246,30 @@ try {
   await settle(5);
   ok('choosing what is already in force asks for nothing', !pre() && writes.length === 2);
 
+  // f1: the box's text is part of every preview and every Save, whatever was clicked.
+  box().value = 'infra/**\ndb/**\nvendor/**';
+  choices(cf()).find((b) => tx(b) === 'Prefer another vendor').click();
+  await waitFor(() => pre());
+  ok('typed paths, then a choice: the one preview covers both', pre().querySelectorAll('.diff-line.add').some((l) => /"vendor\/\*\*"/.test(tx(l)))
+    && pre().querySelectorAll('.diff-line.add').some((l) => /"crossFamily": "prefer"/.test(tx(l))), tx(pre()));
+  acts().find((b) => tx(b) === 'Save').click();
+  await waitFor(() => sec().querySelector('.pk-result'));
+  ok('…and Save writes both, the box showing what was saved', JSON.parse(read(t.primary)).merge.alwaysHuman.join() === 'infra/**,db/**,vendor/**'
+    && JSON.parse(read(t.primary)).crossFamily === 'prefer' && box().value === 'infra/**\ndb/**\nvendor/**', read(t.primary));
+
+  box().value = 'infra/**\nlib/**';
+  paths().querySelector('button').click();
+  await waitFor(() => pre());
+  box().value = 'infra/**\nlib/**\ncfg/**';
+  const before = writes.length;
+  acts().find((b) => tx(b) === 'Save').click();
+  await waitFor(() => pre() && pre().querySelectorAll('.diff-line.add').some((l) => /"cfg\/\*\*"/.test(tx(l))));
+  ok('paths edited after their preview: Save shows the new diff instead of writing the old list', writes.length === before
+    && JSON.parse(read(t.primary)).merge.alwaysHuman.join() === 'infra/**,db/**,vendor/**' && pre().querySelectorAll('.diff-line.add').some((l) => /"cfg\/\*\*"/.test(tx(l))), tx(pre()));
+  acts().find((b) => tx(b) === 'Save').click();
+  await waitFor(() => sec().querySelector('.pk-result'));
+  ok('…then Save writes what is on screen', JSON.parse(read(t.primary)).merge.alwaysHuman.join() === 'infra/**,lib/**,cfg/**' && box().value === 'infra/**\nlib/**\ncfg/**', read(t.primary));
+
   choices(mg()).find((b) => tx(b) === 'Low and medium-risk PRs').click();
   await waitFor(() => pre());
   put(t.primary, '{"merge":{"policy":"strict"}}\n');
