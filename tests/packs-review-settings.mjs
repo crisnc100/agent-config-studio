@@ -184,7 +184,7 @@ try {
     choices(mg()).map(tx).join('|'));
   ok('…each with its one line', ['You merge every PR.', 'An agent may merge a low-risk PR that changes only docs or tests.', 'An agent may merge any low-risk PR.',
     'An agent may merge low- and medium-risk PRs: medium-risk code merges without you. High-risk always waits for you.'].every((s) => tx(mg()).includes(s)), tx(mg()));
-  ok('…its Now line, with what it needs: the gh CLI, and CI checks', /Now: You merge every PR\. Agent merge needs the gh CLI, and a repo with no CI checks always waits for you\./.test(tx(mg())), tx(mg()));
+  ok('…its Now line, with what it needs: the gh CLI, and CI checks', /Now: You merge every PR\. Agent merge needs the gh CLI, and a repo with no CI checks waits for you \(unless your review config turns required checks off\)\./.test(tx(mg())), tx(mg()));
   ok('…and the line that holds whatever you pick', /An agent merges only through merge\.mjs, and only when the review is closed at the tip, CI is green and nobody asked for changes\./.test(tx(mg())), tx(mg()));
   const paths = () => mg().querySelector('.pk-paths');
   ok('R4: Always needs you lists the built-ins and the risky paths read-only', /Always needs you/.test(tx(paths())) && /Built in: \.github\/workflows\/\*\*, package\.json/.test(tx(paths()))
