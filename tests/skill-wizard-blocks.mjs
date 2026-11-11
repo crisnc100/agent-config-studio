@@ -105,12 +105,12 @@ try {
     const merges = byId('operator-merges');
     const edited = pasted
       .replace('Do the thing.', 'Do the thing, my way.')
-      .replace(merges.body, merges.body.replace('Only the operator merges.', 'Only the person merges.'));
+      .replace(merges.body, merges.body.replace('default off: the operator merges', 'default off: the person merges'));
     const be = scripted([{ text: draftFor('release', 'Do the thing, my way, shorter.') }]);
     const r = await W.createSkillWizard({ backend: be }).turn({ ...base, seq: 2, blocks: chosenIds, note: 'shorter', previous: edited });
     const p = be.calls[0].prompt;
     ok('the Regenerate prompt holds no body line of any chosen block', leaked(p, chosen).length === 0, leaked(p, chosen).join('\n'));
-    ok('…not the hand-edited block line either, nor any marker or the Shared rules heading', !/Only the person merges/.test(p) && !/<!-- \/?block:/.test(p) && !/^#+\s*Shared rules/im.test(p), p.slice(-2500));
+    ok('…not the hand-edited block line either, nor any marker or the Shared rules heading', !/the person merges/.test(p) && !/<!-- \/?block:/.test(p) && !/^#+\s*Shared rules/im.test(p), p.slice(-2500));
     ok('…but it keeps the person\'s own edit to the draft', /Do the thing, my way\./.test(p));
     ok('the new draft gets the blocks pasted fresh: a hand edit inside a block is reset', r.content === draftFor('release', 'Do the thing, my way, shorter.') + section(chosen), r.content);
   }

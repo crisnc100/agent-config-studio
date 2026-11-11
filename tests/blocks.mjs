@@ -206,7 +206,7 @@ const home = fs.realpathSync(tempDir('acs-blocks-srv-'));
 const shipped = B.loadBlocks().find((b) => b.id === 'operator-merges');
 put(path.join(home, '.claude', 'skills', 'demo', 'SKILL.md'),
   `---\nname: demo\ndescription: carries a block\n---\n\nIntro line.\n\n${B.startMarker(shipped.id, shipped.body)}\n${shipped.body}<!-- /block:${shipped.id} -->\n`);
-put(path.join(home, '.codex', 'skills', 'demo', 'SKILL.md'), `---\nname: demo\ndescription: carries a block\n---\n\n${shipped.body.replace('Only the operator merges.', 'Only the user merges.')}`);
+put(path.join(home, '.codex', 'skills', 'demo', 'SKILL.md'), `---\nname: demo\ndescription: carries a block\n---\n\n${shipped.body.replace('default off: the operator merges', 'default off: the user merges')}`);
 put(path.join(home, '.claude', 'CLAUDE.md'), `# Rules\n\n${shipped.body}\n<!-- acs:model-guide v1 sep=1 sha256:${'a'.repeat(64)} -->\n${shipped.body}<!-- /acs:model-guide -->\n`);
 // The other places the wizard writes skills: the shared ~/.agents/skills and a project's skill folders under an edit root.
 put(path.join(home, '.agent-config-studio', 'roots.json'), JSON.stringify({ version: 1, roots: [{ id: 'projects', label: 'Projects', access: 'edit', path: path.join(home, 'Projects') }] }));
@@ -241,7 +241,7 @@ try {
     instr.length === 1 && instr[0].kind === 'instructions' && instr[0].line === 3 && instr[0].rating === 'same', JSON.stringify(instr));
   ok('skill copies are labelled skills', claudeCopy?.kind === 'skill' && codexCopy?.kind === 'skill');
   ok('A2 each copy carries its own text: the marked copy\'s lines between its markers, the unmarked copy\'s lines', claudeCopy?.text === shipped.body.replace(/\n$/, '')
-    && codexCopy?.text === shipped.body.replace('Only the operator merges.', 'Only the user merges.').replace(/\n$/, '') && instr[0]?.text === shipped.body.replace(/\n$/, ''),
+    && codexCopy?.text === shipped.body.replace('default off: the operator merges', 'default off: the user merges').replace(/\n$/, '') && instr[0]?.text === shipped.body.replace(/\n$/, ''),
     JSON.stringify([claudeCopy, codexCopy, instr[0]]));
   ok('A4 copies in the checkout\'s packs say so; the others do not', body.blocks.every((b) => b.copies.every((c) => c.pack === c.file.startsWith('packs/')))
     && body.blocks.some((b) => b.copies.some((c) => c.pack)), JSON.stringify(body.blocks.flatMap((b) => b.copies.map((c) => [c.file, c.pack]))).slice(0, 400));

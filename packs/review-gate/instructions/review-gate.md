@@ -1,9 +1,11 @@
 ## Review gate
 
 - Code review runs through the code-review skill and the shared review script: `scripts/review.mjs` in the repo when present, otherwise `~/.agent-config-studio/review-gate/review.mjs` (<review.mjs> below).
-- A finished branch is made ready for its PR with the pr-review skill, which owns the order: code and security review in one record, one fix round, one fix check, close, the context pass and its docs-focus slice, push, then the PR description. A standalone security-check never counts toward a close or a push.
+- A finished branch is made ready for its PR with the pr-review skill, which owns the order: the code review, plus the security pass when `security.run` is on (ACS → Packs → Review gate), in one record, one fix round, one fix check, close, the context pass and its docs-focus slice, push, then the PR description. A standalone security-check never counts toward a close or a push.
 - Reviewers come from the `reviewer` role in ACS (Models → Roles). If the script stops and names a fix (install `model-id`, set the role, install a CLI), relay that fix; never review with a model the role does not list.
 - Builders commit their work and never run reviews, grades or other models themselves; the orchestrator runs those checks and opens the PR.
+- Agents merge only through merge.mjs, which follows the review gate's merge policy (default off: the operator merges). Never gh pr merge, auto-merge or the merge button.
+- Cross-vendor checks follow the review gate's crossFamily setting (default prefer: another vendor when available, never a blocker; the run names who checked and why).
 - Only the operator accepts a confirmed finding (`--waive`, from a real terminal) or overrides the push gate. Agents never set `REVIEW_GATE_OVERRIDE`, never pass `--no-verify`, and never change `core.hooksPath` or any `reviewgate.*` setting.
 - Never ask the operator to run `--waive` or `REVIEW_GATE_OVERRIDE`; defer what the one fix check or recheck leaves, per the code-review skill's review policy.
 - Every PR body must include a section titled exactly **Deferred findings**, using the deferred and filed findings in --summary (or `none` when empty). When chasing a bug, first check `node <review.mjs> --deferred` and merged PR descriptions with `gh pr list --state merged --search "Deferred findings in:body"`.

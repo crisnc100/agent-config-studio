@@ -26,7 +26,7 @@ Families come from the ACS roles (`model-id --role <role>`); the CLI follows the
 | **Grade** (verify vs bar) | the `judge` role's family, read-only, cross-vendor preferred | gate commands below |
 | Judge | the driver | yes/no against the bar |
 
-**Cross-vendor preferred, never a blocker:** the grader should not share the builder's vendor. If the `judge` family does, prefer the `advisor` role's second opinion (`alt` in `model-id --role advisor`) when it is from the other vendor. Never wait on a grader: if the preferred one is unavailable, use the other at once and say in the handoff which one ran and, when it was same-vendor, why. If no gate can run at all, the gate is **NOT RUN** — report it that way, never as a pass. Judgment-role families never build.
+**Grader swap.** Cross-vendor checks follow the review gate's crossFamily setting (default prefer: another vendor when available, never a blocker; the run names who checked and why). Read it once with the gate commands below (`CROSS_FAMILY`). With `prefer`, the grader should not share the builder's vendor: if the `judge` family does, prefer the `advisor` role's second opinion (`alt` in `model-id --role advisor`) when it is from the other vendor. Never wait on a grader: if the preferred one is unavailable, use the other at once. With `off`, grade with the `judge` role's family. Say in the handoff which one ran and, when it was same-vendor, why. If no gate can run at all, the gate is **NOT RUN** — report it that way, never as a pass. Judgment-role families never build.
 
 ## The four phases (state in `builds/<slug>/`, re-read each pass)
 
@@ -50,6 +50,19 @@ PROMPT_FILE="builds/<slug>/$GATE-prompt.md"     # bounce-prompt.md or grade-prom
 # eval sets family=…, id=…, effort=… (and alt=…, the second opinion): the Grade contract's family and model id,
 # and the vendors (the id's prefix) the grader swap compares.
 ```
+The grader swap's setting, read once before the Grade:
+```bash
+REVIEW_SCRIPT=scripts/review.mjs
+[ -f "$REVIEW_SCRIPT" ] || REVIEW_SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
+# prefer unless this copy supports --cross-family and answers prefer or off: a copy too old for --supports runs a
+# review on an unknown flag, so it is never asked.
+CROSS_FAMILY=prefer
+if grep -q -- --supports "$REVIEW_SCRIPT" 2>/dev/null && node "$REVIEW_SCRIPT" --supports --cross-family 2>/dev/null; then
+  ANSWER=$(node "$REVIEW_SCRIPT" --cross-family 2>/dev/null)
+  case "$ANSWER" in prefer|off) CROSS_FAMILY=$ANSWER ;; esac
+fi
+```
+
 Write the gate's prompt (below) to `$PROMPT_FILE`, then ask — a fresh session with no build context, read-only, no MCP:
 ```bash
 ask-model --role advisor --prompt-file "$PROMPT_FILE"     # GATE=bounce
@@ -97,10 +110,10 @@ One review per phase; fixes never get a full re-review. Run --fix-check only whe
 ## Hard rules
 
 - The verifier never edits — all gate calls are read-only.
-- The grader is never the author's context. Cross-vendor preferred; a same-vendor grader is allowed and named in the handoff; if no gate can run, it is NOT RUN.
+- The grader is never the author's context. Cross-vendor per crossFamily (the grader swap above); a same-vendor grader is allowed and named in the handoff; if no gate can run, it is NOT RUN.
 - Never delete, skip, weaken, or narrow a test to make a criterion pass. A gamed check is a failed build.
 - A FAIL from Grade is not optional: fix it, or surface to the driver why the criterion is wrong.
-- Builders commit at every phase end; never push or open a PR. The orchestrator pushes and opens the PR with the review summary; the driver alone merges. Builders never run reviews, grades or other models themselves.
+- Builders commit at every phase end; never push or open a PR. The orchestrator pushes and opens the PR with the review summary. Agents merge only through merge.mjs, which follows the review gate's merge policy (default off: the operator merges). Never gh pr merge, auto-merge or the merge button. Builders never run reviews, grades or other models themselves.
 
 ## Stop condition
 
@@ -112,7 +125,7 @@ Every criterion is resolved, the deterministic checks pass, the Grade is logged 
 2. First round: every HIGH and MEDIUM from the original review is fixed, or rejected with a REFUTED verdict from a different model (`--dispute`). Nothing is deferred in this round; LOWs are filed automatically.
 3. One fix round, then one fix check. What the fix check finds (`x…`, any severity) may be deferred: `{"x1":{"status":"deferred","reason":"<why>","fix":"<fix idea>"}}`. The reason is required, `fix` is optional (the reviewer's suggestion shows otherwise), and the reviewer's score stands. The close then completes; there is no second round.
 4. Grade: a criterion still failing after one fix round and its one recheck may be deferred as "criterion not met" with the same status shape, and so may the recheck's own `r…` findings. It never silently passes.
-5. The PR body (`--summary`) lists, in order: "Acceptance criteria not met", deferred HIGHs, then all other deferred findings; `--deferred` lists them too. The operator's merge is the approval, and the operator can send the branch back.
+5. The PR body (`--summary`) lists, in order: "Acceptance criteria not met", deferred HIGHs, then all other deferred findings; `--deferred` lists them too. Agents merge only through merge.mjs, which follows the review gate's merge policy (default off: the operator merges). Never gh pr merge, auto-merge or the merge button. The merge is the approval, and the operator can send the branch back.
 6. Agents never re-rate a finding (severity and score fields stay refused), defer in the first round, edit, re-log or forge review records, or ask the operator to run `--waive` or `REVIEW_GATE_OVERRIDE`.
 7. A history rewrite (squash, split, rebase) after a review or Grade is allowed when the final tree is byte-identical: the gate compares tree hashes with the review, Grade, fix-check, recheck and close heads, and logs the carry-over as `carried`. Any other tree gets a fresh review.
 8. An unexpected gate refusal: one fresh review of the final branch through the normal path, then a clean close. Update a reviewed branch by merging the default branch into it, never by rebasing. A refusal after that merge is not unexpected: re-close the existing review at the merge tip, and slice-review only the both-sides files it names (`REVIEW_PATHS`) and close that slice there; never a fresh review of the whole branch. If the gate still refuses, stop and tell the operator in chat, quoting the gate's message.

@@ -13,7 +13,7 @@ SETTING  read security.run, and say plainly when it is off
 REVIEW   code + security in parallel → one record (open standalone security findings go in as context)
 FIX      one fix round → one fix check → close
 CONTEXT  /context-pass on the final code → a docs-focus slice of exactly the files it touched → close the slice
-SHIP     push → /pr writes the description → the operator merges
+SHIP     push → /pr writes the description → merged per the merge policy (merge.mjs, or the operator)
 ```
 
 Triage, fixes, statuses, disputes, deferrals and the close follow the **code-review skill's** Steps 2–3 and its review policy (rules 1–11). `s…` findings follow exactly the same rules as `f…` findings.
@@ -72,7 +72,11 @@ It runs after the close, on the final code, so the docs describe the code after 
 1. `node "$SCRIPT" --summary` must succeed at the tip; its output goes in the PR body.
 2. Push the branch. With the push gate installed, a refusal names the uncovered files: follow the code-review skill's slice rule, never an override.
 3. Run `/pr` to write the description from the close; it reads the docs table at `builds/<slug>/docs-table.json` (pass `--docs-table` to pr-facts when the table lives elsewhere). Without the pr skill, open the PR with `gh pr create`, putting the `--summary` output, the **Deferred findings** section and the security line from Step 1 in the body.
-4. Agent merge, if the operator turned it on, follows rule 5 of the review policy (`node ~/.agent-config-studio/review-gate/merge.mjs`). Otherwise the operator merges.
+4. Agent merge: read the merge policy from `--tier-json`; unless it is `off`, run `node ~/.agent-config-studio/review-gate/merge.mjs` once, as rule 5 of the review policy says, and report the one line it prints. A runtime whose `--tier-json` has no `policy` field counts as not off, and merge.mjs decides. Agents merge only through merge.mjs, which follows the review gate's merge policy (default off: the operator merges). Never gh pr merge, auto-merge or the merge button.
+   ```bash
+   POLICY=$(node "$SCRIPT" --tier-json 2>/dev/null | jq -r '.policy // "unknown"')
+   [ "$POLICY" = off ] || node ~/.agent-config-studio/review-gate/merge.mjs
+   ```
 
 ## One report
 
