@@ -115,6 +115,34 @@ try {
     ok('the new draft gets the blocks pasted fresh: a hand edit inside a block is reset', r.content === draftFor('release', 'Do the thing, my way, shorter.') + section(chosen), r.content);
   }
   {
+    // A closing marker deleted on Review: the unclosed block still never reaches the model.
+    const regen = async (previous, blocks = chosenIds) => {
+      const be = scripted([{ text: draftFor('release') }]);
+      await W.createSkillWizard({ backend: be }).turn({ ...base, seq: 4, blocks, note: 'again', previous });
+      return be.calls[0].prompt;
+    };
+    const mine = pasted.replace('Do the thing.', 'Do the thing, my way.');
+    const pMid = await regen(mine.replace('<!-- /block:operator-merges -->\n', ''));
+    ok('f1 a block whose end marker was deleted (mid-section): none of its body lines reach the Regenerate prompt', leaked(pMid, chosen).length === 0 && /Do the thing, my way\./.test(pMid), leaked(pMid, chosen).join('\n'));
+    const pLast = await regen(`${mine.replace('<!-- /block:review-policy -->\n', '')}\n## My notes\n\nKeep this note.\n`);
+    ok('f1 …the last block unclosed: its body stops at the next ## heading, so the person\'s text after it is kept', leaked(pLast, chosen).length === 0 && /Keep this note\./.test(pLast) && /## My notes/.test(pLast), leaked(pLast, chosen).join('\n'));
+    const pEof = await regen(mine.replace('<!-- /block:review-policy -->\n', ''), []);
+    ok('f1 …and unclosed at the end of the file, with no blocks ticked now', leaked(pEof, chosen).length === 0, leaked(pEof, chosen).join('\n'));
+  }
+  {
+    // A draft with no block markers is sent back exactly as the person left it, its own "Shared rules" heading included.
+    const own = draftFor('release', 'Do the thing.\n\n## Shared rules\n\nMy own rule.\n\n\n\nSpaced out.');
+    ok('f2 withoutSharedRules leaves a block-free draft byte-identical', W.withoutSharedRules(own) === own);
+    for (const blocks of [[], ['operator-merges']]) {
+      const be = scripted([{ text: draftFor('release') }]);
+      await W.createSkillWizard({ backend: be }).turn({ ...base, seq: 5, blocks, note: 'again', previous: own });
+      ok(`f2 …and the Regenerate prompt carries it unchanged (${blocks.length ? 'a block ticked' : 'no blocks'})`, be.calls[0].prompt.includes(`\n${own}\n@@ENDDRAFT-`), be.calls[0].prompt.slice(-800));
+    }
+    const both = `${draftFor('release', 'Do the thing.\n\n## Shared rules\n\nMy own rule.')}${section([byId('operator-merges')])}`;
+    const cut = W.withoutSharedRules(both);
+    ok('f2 a person\'s own Shared rules heading stays; the studio\'s section and its heading go', cut === draftFor('release', 'Do the thing.\n\n## Shared rules\n\nMy own rule.') && leaked(cut, SHIPPED).length === 0, cut);
+  }
+  {
     // Unticking every block on Regenerate: the section goes, and the model never sees it.
     const be = scripted([{ text: draftFor('release') }]);
     const r = await W.createSkillWizard({ backend: be }).turn({ ...base, seq: 3, blocks: [], note: 'again', previous: pasted });
