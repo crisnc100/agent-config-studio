@@ -103,8 +103,10 @@ try {
     ok('…the older file is untouched', read(t.older) === '{"merge":{"policy":"always"}}\n');
     put(t.primary, '{"merge":{"policy":"strict"}}');
     const same = mergePlan({ policy: 'strict', alwaysHuman: [] }, t.m);
+    const kept = backups(t).length;
     ok('the policy already set and no paths: no change, byte for byte, and apply writes nothing', !same.changes && same.next === same.current
-      && mergeApply({ policy: 'strict', alwaysHuman: [] }, same.signature, t.m).changed === false && backups(t).length === 0);
+      && mergeApply({ policy: 'strict', alwaysHuman: [] }, same.signature, t.m).changed === false && backups(t).length === kept
+      && read(t.primary) === '{"merge":{"policy":"strict"}}');
     ok('paths are trimmed and repeats dropped', JSON.parse(mergePlan({ policy: 'strict', alwaysHuman: [' a/** ', 'a/**', 'b'] }, t.m).next).merge.alwaysHuman.join() === 'a/**,b');
     ok('an unknown policy: refused (400)', status(() => mergePlan({ policy: 'sometimes', alwaysHuman: [] }, t.m)) === 400 && status(() => mergePlan({ alwaysHuman: [] }, t.m)) === 400);
     ok('paths that are not a list of short one-line strings: refused (400)', [undefined, 'a/**', [1], [''], ['a\nb'], ['x'.repeat(201)], Array(65).fill('a')]
