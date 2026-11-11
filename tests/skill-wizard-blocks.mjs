@@ -128,6 +128,15 @@ try {
     ok('f1 …the last block unclosed: its body stops at the next ## heading, so the person\'s text after it is kept', leaked(pLast, chosen).length === 0 && /Keep this note\./.test(pLast) && /## My notes/.test(pLast), leaked(pLast, chosen).join('\n'));
     const pEof = await regen(mine.replace('<!-- /block:review-policy -->\n', ''), []);
     ok('f1 …and unclosed at the end of the file, with no blocks ticked now', leaked(pEof, chosen).length === 0, leaked(pEof, chosen).join('\n'));
+    // A start marker deleted on Review: the end marker alone still bounds the block.
+    const noStart = (id) => mine.replace(`${B.startMarker(id, byId(id).body)}\n`, '');
+    for (const [where, id] of [['first, right under the heading', 'callback-contract'], ['in the middle', 'operator-merges'], ['last', 'review-policy']]) {
+      const pS = await regen(noStart(id));
+      ok(`x1 a block whose start marker was deleted (${where}): none of its body lines, its ### name or the studio's heading reach the Regenerate prompt`,
+        leaked(pS, chosen).length === 0 && !pS.split('\n').includes(`### ${byId(id).name}`) && !/^## Shared rules$/m.test(pS) && /Do the thing, my way\./.test(pS), leaked(pS, chosen).join('\n') || pS.slice(-1500));
+    }
+    const pAfter = await regen(`${noStart('review-policy')}\n## My notes\n\nKeep this note.\n`, []);
+    ok('x1 …the person\'s own text after a ## heading is kept', leaked(pAfter, chosen).length === 0 && /## My notes\n\nKeep this note\./.test(pAfter), leaked(pAfter, chosen).join('\n'));
   }
   {
     // A draft with no block markers is sent back exactly as the person left it, its own "Shared rules" heading included.
