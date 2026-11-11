@@ -31,7 +31,7 @@ async function bbLoad() {
 const bbPlural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 function bbCounts(b) {
-  if (!b.copies.length) return 'No skill carries a copy yet.';
+  if (!b.copies.length) return 'No skill or instruction file carries a copy yet.';
   const parts = ['same', 'reworded', 'differs'].filter((k) => b.counts[k]).map((k) => `${b.counts[k]} ${BB_WORD[k]}`);
   return `${bbPlural(b.copies.length, 'copy', 'copies')}: ${parts.join(', ')}`;
 }
@@ -41,6 +41,7 @@ function bbCopyRow(c) {
   row.appendChild(el('span', `bb-rating bb-rating-${c.rating}`, BB_WORD[c.rating]));
   const where = c.endLine > c.line ? `${c.file}:${c.line}–${c.endLine}` : `${c.file}:${c.line}`;
   row.appendChild(el('code', 'bb-where', where));
+  if (c.kind === 'instructions') row.appendChild(el('span', 'bb-kind', 'instruction file'));
   if (c.marked) row.appendChild(el('span', 'bb-marked', 'marked'));
   if (c.note) row.appendChild(el('span', 'bb-note', c.note));
   return row;
