@@ -111,6 +111,7 @@ function paintPacks() {
   c.innerHTML = '';
   const box = el('div', 'scope pk');
   box.appendChild(pageHeading('Skill packs'));
+  box.appendChild(el('p', 'pk-promise', 'The studio sets how its own packs behave here. Everything else it shows and edits as files.'));
   if (PK.error) {
     const n = el('div', 'notice error pk-error');
     n.setAttribute('role', 'alert');
@@ -448,7 +449,11 @@ function pkCardView(pack) {
     const unset = pkUnsetLine(pack.workflow);
     if (unset) sec.appendChild(unset);
   }
-  if (pack.id === 'review-gate') { sec.appendChild(pkSecurityView()); sec.appendChild(pkMergeView()); sec.appendChild(pkCrossView()); }
+  if (pack.id === 'review-gate') sec.appendChild(pkSettingsView(pack));
+  if (pack.id === 'build') {
+    const cross = PK_CROSS_MODES.find(([m]) => m === (PK.data.settings?.crossFamily || 'prefer'))[1];
+    sec.appendChild(el('p', 'pk-cross-note', `The Grade's vendor swap follows Cross-vendor checks in the review gate's settings (now: ${cross}).`));
+  }
   // What this pack still needs, in full (the head says only "Setup needed").
   if (own.length) sec.appendChild(el('p', 'pk-need', `Needs ${pkNeedText(own[0])}`));
   sec.appendChild(pkFilesAndUndo(pack));
@@ -550,31 +555,157 @@ function pkPartView(pack, part, card) {
   return row;
 }
 
-/* ── the review gate's security switch: security.run in the home review config ── */
+/* ── the review gate's Settings section: one writer, one pending preview ── */
 
 const PK_SEC_LEVELS = [
   ['off', 'Off', 'PR reviews run no security pass.'],
   ['required', 'When code changes', 'A security reviewer reads the PR review whenever the change touches code or a risky path.'],
   ['always', 'Always', 'A security reviewer reads every PR review.'],
 ];
-const PK_SEC = { preview: null, busy: false, error: null, result: null, seq: 0 };
+const PK_MERGE_POLICIES = [
+  ['off', 'Off', 'You merge every PR.'],
+  ['strict', 'Docs and tests only', 'An agent may merge a low-risk PR that changes only docs or tests.'],
+  ['standard', 'Low-risk PRs', 'An agent may merge any low-risk PR.'],
+  ['always', 'Low and medium-risk PRs', 'An agent may merge low- and medium-risk PRs: medium-risk code merges without you. High-risk always waits for you.'],
+];
+const PK_CROSS_MODES = [
+  ['prefer', 'Prefer another vendor', 'Reviews and grades use a model from another vendor when one is available; never a blocker.'],
+  ['off', 'Off', 'Any reviewer in your roles may check any work.'],
+];
+/**
+ * The section's state. `draft` holds every change picked but not saved ({ key: value } over the writer's
+ * allow-list): one preview covers them all, and Save writes them in one request with one backup.
+ * `paths` is the box's text while it differs from what is saved.
+ */
+const PK_SEC = { draft: {}, paths: null, preview: null, busy: false, error: null, result: null, seq: 0 };
+const pkSaved = () => {
+  const s = PK.data.settings || {};
+  return { 'security.run': s.security || 'off', 'merge.policy': s.merge?.policy || 'off', 'merge.alwaysHuman': s.merge?.alwaysHuman || [], crossFamily: s.crossFamily || 'prefer' };
+};
+const pkPicked = (key) => (Object.hasOwn(PK_SEC.draft, key) ? PK_SEC.draft[key] : pkSaved()[key]);
+const pkPathsOf = (text) => [...new Set(String(text || '').split('\n').map((l) => l.trim()).filter(Boolean))];
+const pkLabelOf = {
+  'security.run': (v) => PK_SEC_LEVELS.find(([l]) => l === v)?.[1] || v,
+  'merge.policy': (v) => PK_MERGE_POLICIES.find(([l]) => l === v)?.[1] || v,
+  'merge.alwaysHuman': (v) => (v.length ? `${v.length} path${v.length === 1 ? '' : 's'} of your own` : 'no paths of your own'),
+  crossFamily: (v) => PK_CROSS_MODES.find(([l]) => l === v)?.[1] || v,
+};
+const PK_SETTING_NAME = { 'security.run': 'security pass', 'merge.policy': 'agent merge', 'merge.alwaysHuman': 'always needs you', crossFamily: 'cross-vendor checks' };
+/** “When code changes”, or “Low-risk PRs” (agent merge) and “Off” (cross-vendor checks) when more than one changed. */
+function pkSaysText(changes) {
+  const keys = Object.keys(changes);
+  if (keys.length === 1) return `“${pkLabelOf[keys[0]](changes[keys[0]])}”`;
+  const parts = keys.map((k) => `“${pkLabelOf[k](changes[k])}” (${PK_SETTING_NAME[k]})`);
+  return `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
+}
 
-/** Off / When code changes / Always: the level in force, and a change shown as the file's diff before it is saved. */
-function pkSecurityView() {
-  const now = PK.data.settings?.security || 'off';
-  const box = el('div', 'pk-sec');
-  box.setAttribute('role', 'group');
-  box.setAttribute('aria-label', 'Security pass in PR reviews');
-  box.appendChild(el('div', 'pk-label', 'Security pass in PR reviews'));
-  const row = el('div', 'pk-sec-levels');
-  for (const [level, label] of PK_SEC_LEVELS) {
-    const b = pkBtn(level === now ? 'pk-sec-on' : '', label, () => pkSecurityPreview(level), PK_SEC.busy);
-    b.setAttribute('aria-pressed', String(level === now));
-    b.dataset.level = level;
+/** A row of choices with the line saying what each does; the picked one (saved, or waiting in the preview) is pressed. */
+function pkChoices(options, key, { rowClass = '' } = {}) {
+  const now = pkPicked(key);
+  const wrap = el('div');
+  const row = el('div', `pk-choice-row${rowClass ? ` ${rowClass}` : ''}`);
+  for (const [value, label] of options) {
+    const b = pkBtn(value === now ? 'pk-sec-on' : '', label, () => pkPick(key, value), PK_SEC.busy);
+    b.setAttribute('aria-pressed', String(value === now));
+    b.dataset.level = value;
     row.appendChild(b);
   }
-  box.appendChild(row);
-  box.appendChild(el('p', 'pk-sec-now', `Now: ${PK_SEC_LEVELS.find(([l]) => l === now)[2]} /security-check runs on its own either way.`));
+  wrap.appendChild(row);
+  return wrap;
+}
+function pkChoiceLines(options, key) {
+  const now = pkPicked(key);
+  const ul = el('ul', 'pk-choice-lines');
+  for (const [value, label, line] of options) {
+    const li = el('li', value === now ? 'on' : null);
+    li.appendChild(el('strong', null, `${label}: `));
+    li.appendChild(el('span', null, line));
+    ul.appendChild(li);
+  }
+  return ul;
+}
+
+/**
+ * The review gate card's Settings: the security pass, agent merge, the paths that always need you and
+ * cross-vendor checks. Only with the code-review part installed: it ships the scripts that read them.
+ */
+function pkSettingsView(pack) {
+  if (!pack.installed?.parts?.['code-review']) {
+    return el('p', 'pk-settings-none', 'Install the Code review part to set the security pass, agent merge and cross-vendor checks here.');
+  }
+  const s = PK.data.settings || {};
+  const box = el('div', 'pk-sec pk-settings');
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', 'Review gate settings');
+
+  const secBox = el('div', 'pk-setting pk-security');
+  secBox.appendChild(el('div', 'pk-label', 'Security pass in PR reviews'));
+  secBox.appendChild(pkChoices(PK_SEC_LEVELS, 'security.run', { rowClass: 'pk-sec-levels' }));
+  secBox.appendChild(el('p', 'pk-sec-now', `Now: ${PK_SEC_LEVELS.find(([l]) => l === (s.security || 'off'))[2]} /security-check runs on its own either way.`));
+  box.appendChild(secBox);
+
+  const mg = el('div', 'pk-setting pk-merge');
+  mg.appendChild(el('div', 'pk-label', 'Agent merge'));
+  mg.appendChild(pkChoices(PK_MERGE_POLICIES, 'merge.policy'));
+  mg.appendChild(pkChoiceLines(PK_MERGE_POLICIES, 'merge.policy'));
+  const policyNow = PK_MERGE_POLICIES.find(([p]) => p === (s.merge?.policy || 'off'))[2];
+  mg.appendChild(el('p', 'pk-sec-now', `Now: ${policyNow} Agent merge needs the gh CLI, and a repo with no CI checks always waits for you.`));
+  mg.appendChild(el('p', 'pk-sec-now', 'An agent merges only through merge.mjs, and only when the review is closed at the tip, CI is green and nobody asked for changes.'));
+  mg.appendChild(pkPathsView(s.merge || {}));
+  mg.appendChild(el('p', 'pk-help', 'Saved as merge.policy and merge.alwaysHuman in your home review config.'));
+  box.appendChild(mg);
+
+  const cf = el('div', 'pk-setting pk-cross');
+  cf.appendChild(el('div', 'pk-label', 'Cross-vendor checks'));
+  cf.appendChild(pkChoices(PK_CROSS_MODES, 'crossFamily'));
+  cf.appendChild(pkChoiceLines(PK_CROSS_MODES, 'crossFamily'));
+  cf.appendChild(el('p', 'pk-help', 'Saved as crossFamily in your home review config.'));
+  box.appendChild(cf);
+
+  box.appendChild(pkOtherSettings(s.reviewConfig));
+  pkSettingsFoot(box);
+  return box;
+}
+
+/** Always needs you: the review script's built-ins and risky paths, read-only, then your own, one per line. */
+function pkPathsView(merge) {
+  const wrap = el('div', 'pk-paths');
+  wrap.appendChild(el('div', 'pk-label pk-sub', 'Always needs you'));
+  wrap.appendChild(el('p', 'pk-help', 'A change to any of these paths is high-risk, so no agent merges it.'));
+  wrap.appendChild(el('p', 'pk-fixed', `Built in: ${(merge.builtIn || []).join(', ')}`));
+  const from = merge.riskPathsFrom === 'config' ? 'from your review config' : 'the review gate\'s defaults';
+  wrap.appendChild(el('p', 'pk-fixed', `Risky paths (${from}): ${(merge.riskPaths || []).join(', ')}`));
+  const ta = el('textarea', 'pk-paths-box');
+  ta.rows = 3;
+  ta.value = PK_SEC.paths ?? (pkPicked('merge.alwaysHuman') || []).join('\n');
+  ta.placeholder = 'infra/**';
+  ta.setAttribute('aria-label', 'Your own paths that always need you, one per line');
+  ta.disabled = PK_SEC.busy;
+  ta.oninput = () => { PK_SEC.paths = ta.value; };
+  wrap.appendChild(el('div', 'pk-label-inline', 'Your own paths, one per line:'));
+  wrap.appendChild(ta);
+  const acts = el('div', 'pk-actions');
+  acts.appendChild(pkBtn('', 'Preview', () => { PK_SEC.paths = ta.value; pkPick('merge.alwaysHuman', pkPathsOf(ta.value)); }, PK_SEC.busy));
+  wrap.appendChild(acts);
+  return wrap;
+}
+
+/** "Other review settings live in <file>", opening it in Files when Files lists it. */
+function pkOtherSettings(rc) {
+  const line = el('p', 'pk-other');
+  if (!rc?.file) return line;
+  line.appendChild(el('span', null, `Other review settings live in ${rc.file}.`));
+  // Files lists only what its registry found; ~/.agent-config-studio is outside its folders, so that copy is named only.
+  const entry = rc.exists ? (S.registry?.groups || []).flatMap((g) => g.entries).find((e) => e.files.some((f) => f.display === rc.file)) : null;
+  if (entry) {
+    line.appendChild(document.createTextNode(' '));
+    line.appendChild(pkBtn('ghost', 'Open in Files', () => openEntry(entry, entry.files.find((f) => f.display === rc.file).path, 'packs')));
+  }
+  return line;
+}
+
+/** Busy, the error, the one preview with Save and Cancel, and the saved line. */
+function pkSettingsFoot(box) {
   if (PK_SEC.busy) { const s = el('span', 'pk-busy'); s.appendChild(el('span', 'spinner')); s.appendChild(el('span', null, ' Working…')); box.appendChild(s); }
   if (PK_SEC.error) {
     const n = el('div', 'notice error');
@@ -586,23 +717,21 @@ function pkSecurityView() {
   if (p) {
     const pre = el('div', 'pk-sec-preview');
     pre.setAttribute('role', 'region');
-    pre.setAttribute('aria-label', 'Security setting preview');
-    const label = PK_SEC_LEVELS.find(([l]) => l === p.level)[1];
+    pre.setAttribute('aria-label', 'Review gate settings preview');
     pre.appendChild(el('p', null, p.view.changes
-      ? `Set to “${label}”: this changes ${p.view.file}${p.view.exists ? ', and a copy of it goes to the backups folder first' : ' (a new file)'}.`
-      : `${p.view.file} already says “${label}”. Nothing to change.`));
+      ? `Set to ${pkSaysText(p.changes)}: this changes ${p.view.file}${p.view.exists ? ', and a copy of it goes to the backups folder first' : ' (a new file)'}.`
+      : `${p.view.file} already says ${pkSaysText(p.changes)}. Nothing to change.`));
     if (p.view.changes) pre.appendChild(pkSecurityDiff(p.view.diff));
     const acts = el('div', 'pk-actions');
-    if (p.view.changes) acts.appendChild(pkBtn('primary', 'Save', () => pkSecurityApply(), PK_SEC.busy));
-    acts.appendChild(pkBtn('ghost', 'Cancel', () => { PK_SEC.preview = null; PK_SEC.seq++; paintPacks(); }, PK_SEC.busy));
+    if (p.view.changes) acts.appendChild(pkBtn('primary', 'Save', () => pkSettingsApply(), PK_SEC.busy));
+    acts.appendChild(pkBtn('ghost', 'Cancel', () => { PK_SEC.draft = {}; PK_SEC.paths = null; PK_SEC.preview = null; PK_SEC.seq++; paintPacks(); }, PK_SEC.busy));
     pre.appendChild(acts);
     box.appendChild(pre);
   }
   if (PK_SEC.result) {
     const r = PK_SEC.result;
-    box.appendChild(el('div', 'notice pk-result', `Saved: ${r.file} now says “${PK_SEC_LEVELS.find(([l]) => l === r.level)[1]}”.${r.backup ? ` The old file is at ${r.backup}.` : ''}`));
+    box.appendChild(el('div', 'notice pk-result', `Saved: ${r.file} now says ${pkSaysText(r.saved)}.${r.backup ? ` The old file is at ${r.backup}.` : ''}`));
   }
-  return box;
 }
 
 /** The server's line diff of the config, every line shown: the file is a few lines long. */
@@ -621,198 +750,46 @@ function pkSecurityDiff(rows) {
   return wrap;
 }
 
-async function pkSecurityPreview(level) {
-  PK_SEC.preview = null; PK_SEC.error = null; PK_SEC.result = null; PK_SEC.busy = true;
+/** Add a pick to the draft (or drop it when it is what is saved), then preview every pending change at once. */
+async function pkPick(key, value) {
+  const same = JSON.stringify(value) === JSON.stringify(pkSaved()[key]);
+  if (same) delete PK_SEC.draft[key];
+  else PK_SEC.draft[key] = value;
+  PK_SEC.error = null; PK_SEC.result = null; PK_SEC.preview = null;
   const seq = ++PK_SEC.seq;
+  const changes = { ...PK_SEC.draft };
+  if (!Object.keys(changes).length) { PK_SEC.busy = false; paintPacks(); return; }
+  PK_SEC.busy = true;
   paintPacks();
   try {
-    const view = await api('POST', '/api/packs/security/plan', { level });
-    if (seq === PK_SEC.seq) PK_SEC.preview = { level, view };
+    const view = await api('POST', '/api/packs/review-settings/plan', { changes });
+    if (seq === PK_SEC.seq) PK_SEC.preview = { changes, view };
   } catch (e) { if (seq === PK_SEC.seq) PK_SEC.error = e.message; }
   if (seq === PK_SEC.seq) PK_SEC.busy = false;
   paintPacks();
 }
 
-async function pkSecurityApply() {
-  const { level, view } = PK_SEC.preview;
+async function pkSettingsApply() {
+  const { changes, view } = PK_SEC.preview;
   PK_SEC.busy = true; PK_SEC.error = null;
   const seq = ++PK_SEC.seq;
   paintPacks();
   try {
-    const r = await api('POST', '/api/packs/security/apply', { level, signature: view.signature });
+    const r = await api('POST', '/api/packs/review-settings/apply', { changes, signature: view.signature });
     if (seq !== PK_SEC.seq) return;
-    PK_SEC.result = r; PK_SEC.preview = null;
-    PK.data.settings = { ...(PK.data.settings || {}), security: level };
+    PK_SEC.result = r; PK_SEC.preview = null; PK_SEC.draft = {}; PK_SEC.paths = null;
+    const s = PK.data.settings || {};
+    const v = (k, d) => (Object.hasOwn(r.saved, k) ? r.saved[k] : d);
+    PK.data.settings = {
+      ...s,
+      security: v('security.run', s.security || 'off'),
+      merge: { ...(s.merge || {}), policy: v('merge.policy', s.merge?.policy || 'off'), alwaysHuman: v('merge.alwaysHuman', s.merge?.alwaysHuman || []) },
+      crossFamily: v('crossFamily', s.crossFamily || 'prefer'),
+      reviewConfig: { ...(s.reviewConfig || {}), file: r.file, exists: true },
+    };
   } catch (e) { if (seq === PK_SEC.seq) PK_SEC.error = e.message; }
   if (seq === PK_SEC.seq) PK_SEC.busy = false;
   paintPacks();
-}
-
-/* ── the review gate's agent merge and cross-vendor checks, in the same home review config ── */
-
-const PK_MERGE_POLICIES = [
-  ['off', 'Off', 'You merge every PR.'],
-  ['strict', 'Docs and tests only', 'An agent may merge a low-risk PR that changes only docs or tests.'],
-  ['standard', 'Low-risk PRs', 'An agent may merge any low-risk PR.'],
-  ['always', 'Low and medium-risk PRs', 'An agent may merge low- and medium-risk PRs; high-risk always waits for you.'],
-];
-const PK_CROSS_MODES = [
-  ['prefer', 'Prefer another vendor', 'Reviews and grades use a model from another vendor when one is available; never a blocker.'],
-  ['off', 'Off', 'Any reviewer in your roles may check any work.'],
-];
-/** One state per setting: the preview on screen, a busy flag, the last error and result, and a sequence that drops stale answers. */
-const PK_SET = {
-  merge: { preview: null, busy: false, error: null, result: null, seq: 0, draft: '' },
-  cross: { preview: null, busy: false, error: null, result: null, seq: 0 },
-};
-const PK_SET_ROUTES = { merge: '/api/packs/merge', cross: '/api/packs/cross-family' };
-const pkMergeNow = () => ({ policy: PK.data.settings?.merge?.policy || 'off', alwaysHuman: PK.data.settings?.merge?.alwaysHuman || [] });
-
-/** A row of choices, each one line under the row saying what it does; the one in force is pressed. */
-function pkChoices(options, now, busy, onPick) {
-  const wrap = el('div');
-  const row = el('div', 'pk-sec-levels');
-  for (const [value, label] of options) {
-    const b = pkBtn(value === now ? 'pk-sec-on' : '', label, () => onPick(value), busy);
-    b.setAttribute('aria-pressed', String(value === now));
-    b.dataset.level = value;
-    row.appendChild(b);
-  }
-  wrap.appendChild(row);
-  const ul = el('ul', 'pk-choice-lines');
-  for (const [value, label, line] of options) {
-    const li = el('li', value === now ? 'on' : null);
-    li.appendChild(el('strong', null, `${label}: `));
-    li.appendChild(el('span', null, line));
-    ul.appendChild(li);
-  }
-  wrap.appendChild(ul);
-  return wrap;
-}
-
-/** Busy, error, the diff preview with Save and Cancel, and the saved line: the parts every review setting shares. */
-function pkSettingFoot(box, key, ariaLabel, saidAs, savedText) {
-  const st = PK_SET[key];
-  if (st.busy) { const s = el('span', 'pk-busy'); s.appendChild(el('span', 'spinner')); s.appendChild(el('span', null, ' Working…')); box.appendChild(s); }
-  if (st.error) {
-    const n = el('div', 'notice error');
-    n.setAttribute('role', 'alert');
-    n.textContent = st.error;
-    box.appendChild(n);
-  }
-  const p = st.preview;
-  if (p) {
-    const pre = el('div', 'pk-sec-preview');
-    pre.setAttribute('role', 'region');
-    pre.setAttribute('aria-label', ariaLabel);
-    pre.appendChild(el('p', null, p.view.changes
-      ? `${saidAs(p.body)}: this changes ${p.view.file}${p.view.exists ? ', and a copy of it goes to the backups folder first' : ' (a new file)'}.`
-      : `${p.view.file} already says this. Nothing to change.`));
-    if (p.view.changes) pre.appendChild(pkSecurityDiff(p.view.diff));
-    const acts = el('div', 'pk-actions');
-    if (p.view.changes) acts.appendChild(pkBtn('primary', 'Save', () => pkSettingApply(key), st.busy));
-    acts.appendChild(pkBtn('ghost', 'Cancel', () => { st.preview = null; st.seq++; paintPacks(); }, st.busy));
-    pre.appendChild(acts);
-    box.appendChild(pre);
-  }
-  if (st.result) {
-    const r = st.result;
-    box.appendChild(el('div', 'notice pk-result', `Saved: ${r.file} now says ${savedText(r)}.${r.backup ? ` The old file is at ${r.backup}.` : ''}`));
-  }
-}
-
-async function pkSettingPreview(key, body) {
-  const st = PK_SET[key];
-  st.preview = null; st.error = null; st.result = null; st.busy = true;
-  const seq = ++st.seq;
-  paintPacks();
-  try {
-    const view = await api('POST', `${PK_SET_ROUTES[key]}/plan`, body);
-    if (seq === st.seq) st.preview = { body, view };
-  } catch (e) { if (seq === st.seq) st.error = e.message; }
-  if (seq === st.seq) st.busy = false;
-  paintPacks();
-}
-
-async function pkSettingApply(key) {
-  const st = PK_SET[key];
-  const { body, view } = st.preview;
-  st.busy = true; st.error = null;
-  const seq = ++st.seq;
-  paintPacks();
-  try {
-    const r = await api('POST', `${PK_SET_ROUTES[key]}/apply`, { ...body, signature: view.signature });
-    if (seq !== st.seq) return;
-    st.result = r; st.preview = null;
-    if (key === 'merge') { PK.data.settings = { ...(PK.data.settings || {}), merge: { policy: r.policy, alwaysHuman: r.alwaysHuman } }; st.draft = ''; }
-    else PK.data.settings = { ...(PK.data.settings || {}), crossFamily: r.mode };
-  } catch (e) { if (seq === st.seq) st.error = e.message; }
-  if (seq === st.seq) st.busy = false;
-  paintPacks();
-}
-
-/** Agent merge: the policy, what stays yours whatever it says, and the paths that always need you. */
-function pkMergeView() {
-  const st = PK_SET.merge;
-  const now = pkMergeNow();
-  const box = el('div', 'pk-setting pk-merge');
-  box.setAttribute('role', 'group');
-  box.setAttribute('aria-label', 'Agent merge');
-  box.appendChild(el('div', 'pk-label', 'Agent merge'));
-  box.appendChild(pkChoices(PK_MERGE_POLICIES, now.policy, st.busy, (policy) => pkSettingPreview('merge', { policy, alwaysHuman: now.alwaysHuman })));
-  box.appendChild(el('p', 'pk-sec-now', 'Whatever you pick, an agent merges only when the review is closed at the tip, CI is green and nobody asked for changes. Changes to package.json, CI workflows and the paths below always need you.'));
-
-  box.appendChild(el('div', 'pk-label pk-sub', 'Always needs you'));
-  const list = el('ul', 'pk-paths');
-  for (const g of now.alwaysHuman) {
-    const li = el('li');
-    li.appendChild(el('code', null, g));
-    li.appendChild(pkBtn('ghost', 'Remove', () => pkSettingPreview('merge', { policy: now.policy, alwaysHuman: now.alwaysHuman.filter((x) => x !== g) }), st.busy));
-    list.appendChild(li);
-  }
-  box.appendChild(list);
-  if (!now.alwaysHuman.length) box.appendChild(el('p', 'pk-sec-now', 'No paths of your own yet.'));
-  const add = el('div', 'pk-paths-add');
-  const input = el('input');
-  input.type = 'text';
-  input.value = st.draft;
-  input.placeholder = 'a path or pattern, like infra/**';
-  input.setAttribute('aria-label', 'A path that always needs you');
-  input.oninput = () => { st.draft = input.value; };
-  const addPath = () => {
-    const g = String(input.value || '').trim();
-    st.draft = input.value;
-    if (!g) return;
-    pkSettingPreview('merge', { policy: now.policy, alwaysHuman: now.alwaysHuman.includes(g) ? now.alwaysHuman : [...now.alwaysHuman, g] });
-  };
-  input.onkeydown = (e) => { if (e.key === 'Enter') addPath(); };
-  input.disabled = st.busy;
-  add.appendChild(input);
-  add.appendChild(pkBtn('', 'Add', addPath, st.busy));
-  box.appendChild(add);
-  box.appendChild(el('p', 'pk-help', 'Saved as merge.policy and merge.alwaysHuman in your home review config. Agents merge only through merge.mjs.'));
-
-  const label = (policy) => PK_MERGE_POLICIES.find(([p]) => p === policy)[1];
-  const paths = (n) => `${n} path${n === 1 ? '' : 's'} that always need${n === 1 ? 's' : ''} you`;
-  pkSettingFoot(box, 'merge', 'Agent merge preview',
-    (b) => `Set to “${label(b.policy)}”${b.alwaysHuman.length ? `, with ${paths(b.alwaysHuman.length)}` : ''}`,
-    (r) => `“${label(r.policy)}”${r.alwaysHuman.length ? `, with ${paths(r.alwaysHuman.length)}` : ''}`);
-  return box;
-}
-
-/** Cross-vendor checks: prefer another vendor's model, or let any reviewer check any work. */
-function pkCrossView() {
-  const st = PK_SET.cross;
-  const now = PK.data.settings?.crossFamily || 'prefer';
-  const box = el('div', 'pk-setting pk-cross');
-  box.setAttribute('role', 'group');
-  box.setAttribute('aria-label', 'Cross-vendor checks');
-  box.appendChild(el('div', 'pk-label', 'Cross-vendor checks'));
-  box.appendChild(pkChoices(PK_CROSS_MODES, now, st.busy, (mode) => pkSettingPreview('cross', { mode })));
-  box.appendChild(el('p', 'pk-help', 'Saved as crossFamily in your home review config.'));
-  const label = (mode) => PK_CROSS_MODES.find(([m]) => m === mode)[1];
-  pkSettingFoot(box, 'cross', 'Cross-vendor checks preview', (b) => `Set to “${label(b.mode)}”`, (r) => `“${label(r.mode)}”`);
-  return box;
 }
 
 /** The request the card describes for `action`: exactly what the preview and the apply send. */

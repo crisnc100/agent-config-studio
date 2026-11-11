@@ -28,11 +28,17 @@ function wfStepFor(step, variant) {
   return { ...step, ...o };
 }
 
+/** Is a step's setting on, as the review gate's settings (GET /api/packs `settings`) say? A step with none is. */
+const WF_SETTING_ON = {
+  security: (s) => (s?.security || 'off') !== 'off',
+  merge: (s) => (s?.merge?.policy || 'off') !== 'off',
+};
+const wfSettingOn = (setting, settings) => !setting || !WF_SETTING_ON[setting] || WF_SETTING_ON[setting](settings);
+
 /** Is the step on? Off when its part is neither installed nor picked, or its setting is off. */
 function wfStepOn(step, ctx) {
   if (step.part && !(ctx.installedParts?.has(step.part) || ctx.pickedParts?.has(step.part))) return false;
-  if (step.setting === 'security' && (ctx.settings?.security || 'off') === 'off') return false;
-  return true;
+  return wfSettingOn(step.setting, ctx.settings);
 }
 
 /**
@@ -53,11 +59,13 @@ function wfRoleChip(roleName, step, ctx, { note = null } = {}) {
   let n = note;
   if (models.length > 1 && join === 'or') n = step.pool || (step.noteMany ?? n);
   if (step.swap === 'grade') {
-    // The Grade's grader swap (build SKILL.md), always said: the advisor's second opinion when the builder shares the judge's vendor.
+    // The Grade's grader swap (build SKILL.md): the advisor's second opinion when the builder shares the judge's vendor,
+    // unless the review gate's cross-vendor checks are off.
     const advisor = ctx.roles.find((r) => r.name === 'advisor');
     const alt = advisor && !advisor.unset ? wfAlt(advisor) : null;
     const judge = wfName(models[0].family);
-    if (!alt) n = `when the builder is the same vendor as ${judge}: the advisor's second opinion instead (not set)`;
+    if (ctx.settings?.crossFamily === 'off') n = 'no swap: Cross-vendor checks is off in the review gate\'s settings';
+    else if (!alt) n = `when the builder is the same vendor as ${judge}: the advisor's second opinion instead (not set)`;
     else if (wfVendor(alt.id) && wfVendor(alt.id) === wfVendor(models[0].id)) n = `no swap: the advisor's second opinion, ${wfName(alt.family)}, is the same vendor as ${judge}`;
     else n = `${wfName(alt.family)} instead when the builder is the same vendor as ${judge}`;
   }
@@ -187,7 +195,7 @@ function wfRoleSteps(packs, roleName, settings = {}) {
     if (!wf?.steps) continue;
     const labels = [];
     for (const s of wf.steps) {
-      const off = s.setting === 'security' && (settings.security || 'off') === 'off' ? ' (off)' : '';
+      const off = wfSettingOn(s.setting, settings) ? '' : ' (off)';
       if (s.role === roleName || s.also === roleName) labels.push(`${s.label}${off}`);
       for (const [vid, o] of Object.entries(s.variants || {})) {
         if ((o.role === roleName || o.also === roleName) && s.role !== roleName && s.also !== roleName) {
