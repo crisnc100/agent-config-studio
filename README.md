@@ -658,8 +658,9 @@ file**; a pack's `instructions/` count as instruction files.
 A copy between `<!-- block:<id> sha256:… -->` and `<!-- /block:<id> -->` lines
 is a marked copy. It rates **same** only when it matches the block byte for
 byte; otherwise it says whether it was edited after it was added or the block
-has changed since. Any other copy is found by how closely its words match, and
-a copy that holds the whole block with more added says so. Ratings compare
+has changed since. Any other copy is found by how closely its words match; a
+copy rated **differs** that still holds the whole block, with more added, says
+so. Ratings compare
 wording, not meaning. **Check again** reads everything again. The page only
 reads: nothing on it changes a file.
 
