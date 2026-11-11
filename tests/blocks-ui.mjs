@@ -60,7 +60,8 @@ try {
     && t(rows[1].querySelector('.bb-note')) === 'Changed by hand after it was pasted in.' && t(rows[0].querySelector('.bb-note')) === 'The whole rule is here, inside longer text.',
     rows.map((r) => t(r)).join(' | '));
   ok('a copy\'s type is in its place words ("(Claude, global)" for an instruction file, "the … skill" for a skill), with no tag beside it',
-    /\(Claude, global\)/.test(t(rows[2].querySelector('.bb-place'))) && / skill \(Claude\)/.test(t(rows[0].querySelector('.bb-place'))) && !rp.querySelector('.bb-kind'),
+    / skill \(Claude\) · /.test(t(rows[0].querySelector('.bb-place'))) && / skill \(Claude\) · /.test(t(rows[1].querySelector('.bb-place')))
+    && /^CLAUDE\.md \(Claude, global\) · /.test(t(rows[2].querySelector('.bb-place'))) && !rp.querySelector('.bb-kind'),
     rows.map((r) => t(r)).join(' | '));
   // Plural agreement: "3 of 12 copies match", "1 of 7 copies matches", "1 of 1 copy matches".
   const line = (m, n) => p.eval(`bbCounts(${JSON.stringify({ copies: [...Array(m).fill({ rating: 'same', pack: false }), ...Array(n - m).fill({ rating: 'differs', pack: false }), { rating: 'same', pack: true }] })})`);
@@ -181,6 +182,12 @@ try {
   ok('A6 places in words: a project\'s skill names the project folder, the shared folder says so, Codex\'s global file says Codex',
     places.includes('SKILL.md in the build skill (team-bundle project) · lines 48–52') && places.includes('SKILL.md in the helper skill (shared skills folder) · line 3')
     && places.includes('AGENTS.md (Codex, global) · line 197'), places.join(' | '));
+  const LABEL_CLASS = { Matches: 'same', 'Small changes': 'reworded', 'Big changes': 'differs' };
+  const badges = c.querySelectorAll('.bb-copy .bb-rating');
+  ok('each rating has its own class for its colour, Matches included: every badge on the list, and a matching copy of yours carries bb-rating-same',
+    badges.length > 0 && badges.every((r) => r.classList.contains(`bb-rating-${LABEL_CLASS[t(r)]}`))
+    && c.querySelector('#bb-review-policy').querySelectorAll('.bb-copy').some((r) => /review skill/.test(t(r.querySelector('.bb-place'))) && r.querySelector('.bb-rating').classList.contains('bb-rating-same') && t(r.querySelector('.bb-rating')) === 'Matches'),
+    badges.map((r) => `${t(r)}:${r.className}`).join(' | '));
   ok('A3 labels are Matches, Small changes and Big changes, and only Big changes takes the warning colour', JSON.stringify([...new Set(c.querySelectorAll('.bb-rating').map(t))].sort()) === JSON.stringify(['Big changes', 'Matches', 'Small changes'])
     && c.querySelectorAll('.bb-rating').every((r) => r.classList.contains('bb-rating-differs') === (t(r) === 'Big changes')));
   ok('A3 nothing on the page claims the same meaning, and no "marked", "block" or "differs" outside quoted rule text', (() => {
