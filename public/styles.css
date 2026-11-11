@@ -1560,6 +1560,13 @@ a { color: var(--accent); }
 .sw-harnesses { border: 1px solid var(--border-soft); border-radius: var(--radius); padding: 8px 12px; margin: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; }
 .sw-harnesses legend { padding: 0 4px; }
 .sw-check.off { color: var(--muted); }
+.sw-blocks { border: 1px solid var(--border-soft); border-radius: var(--radius); padding: 8px 12px; margin: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; }
+.sw-blocks legend { padding: 0 4px; }
+.sw-block { display: flex; gap: 8px; align-items: flex-start; }
+.sw-block input { margin-top: 3px; }
+.sw-block-text { display: flex; flex-direction: column; gap: 2px; }
+.sw-block-name { color: var(--text); font-weight: 600; }
+.sw-block-summary { color: var(--muted); }
 .sw-why { font-size: 12px; }
 .sw-target .sw-path { word-break: break-all; }
 .sw-result-list { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }

@@ -1,4 +1,4 @@
-/* Agent Config Studio — the skill wizard: Describe → Interview → Where → Review (lib/skill-wizard.js) */
+/* Agent Config Studio — the skill wizard: Describe → Interview → Where → Blocks → Review (lib/skill-wizard.js) */
 
 /**
  * Loaded before app.js, which owns the helpers this calls (el, api, notice,
@@ -7,23 +7,23 @@
  *
  * Every model turn carries a sequence number; a reply for an older one is
  * dropped, so an answer edited while a turn runs can never be overwritten by
- * the stale reply. Changing an answer, the name or the destination drops the
- * draft: Review always shows a draft of what is on screen now.
+ * the stale reply. Changing an answer, the name, the destination or the
+ * blocks drops the draft: Review always shows a draft of what is on screen now.
  */
 const SW_KEY = 'acs.skillWizard';
-const SW_STEPS = [['describe', 'Describe'], ['interview', 'Interview'], ['where', 'Where'], ['review', 'Review']];
+const SW_STEPS = [['describe', 'Describe'], ['interview', 'Interview'], ['where', 'Where'], ['blocks', 'Blocks'], ['review', 'Review']];
 const SW_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SW_MAX_Q = 10;
 
 const swFresh = () => ({
   id: [...Array(16)].map(() => Math.floor(Math.random() * 16).toString(16)).join(''),
   step: 'describe', description: '', answers: [], current: null, done: null,
-  seq: 0, name: '', nameTouched: false, scope: 'global', project: null, picks: {},
+  seq: 0, name: '', nameTouched: false, scope: 'global', project: null, picks: {}, blocks: [],
   draft: null, note: '', error: null, createSent: false, results: {},
 });
 let SW = null;
 /** Not persisted: what is in flight, the server's targets, and the refused reply behind the error on screen. */
-const SWX = { busy: null, info: null, preview: null, editing: null, reply: null };
+const SWX = { busy: null, info: null, preview: null, editing: null, reply: null, goneBlocks: [] };
 
 function swLoad() {
   try { const raw = sessionStorage.getItem(SW_KEY); if (raw) { const s = JSON.parse(raw); if (s && s.id && s.step) return { ...swFresh(), ...s, error: null }; } } catch {}
@@ -127,7 +127,7 @@ function paintWizard() {
     ? `Assist runs ${b.label} ${b.modelLabel || b.model} with no tools. It sees your words and the names and descriptions of your existing skills — never their files.`
     : `The interview is unavailable: ${b.why}`));
   const body = el('div', 'sw-body');
-  ({ describe: swDescribe, interview: swInterview, where: swWhere, review: swReview })[SW.step](body);
+  ({ describe: swDescribe, interview: swInterview, where: swWhere, blocks: swBlocks, review: swReview })[SW.step](body);
   box.appendChild(body);
   c.appendChild(box);
 }
@@ -437,7 +437,7 @@ function swWhere(box) {
   box.appendChild(at);
   box.appendChild(swBar(
     swBtn('ghost sw-back', 'Back', () => swGo('interview')),
-    swBtn('primary sw-next', 'Draft the skill', () => swGo('review'), !pv?.targets || !!pv.error),
+    swBtn('primary sw-next', 'Next', () => swGo('blocks'), !pv?.targets || !!pv.error),
   ));
 }
 function swField(label, input) {
@@ -447,7 +447,49 @@ function swField(label, input) {
   return f;
 }
 
-/* ── 4. review ───────────────────────────────────────────────────────── */
+/* ── 4. blocks ───────────────────────────────────────────────────────── */
+/**
+ * Shared rules from Building blocks, each ticked by the person: none is
+ * ticked or suggested for them. The server pastes the ticked ones word for
+ * word after the draft; the model only ever sees their names.
+ */
+function swBlocks(box) {
+  const list = SWX.info?.blocks || [];
+  const known = new Set(list.map((b) => b.id));
+  const gone = SW.blocks.filter((id) => !known.has(id));
+  if (gone.length) {
+    SWX.goneBlocks = gone;
+    SW.blocks = SW.blocks.filter((id) => known.has(id));
+    swInvalidate(); swSave();
+  }
+  box.appendChild(el('div', 'sw-label', 'Add shared rules from Building blocks?'));
+  box.appendChild(el('div', 'scope-note', 'Each one you tick is added word for word at the end of the skill, under Shared rules. The AI sees only the names of the ones you tick, never their text.'));
+  if (SWX.goneBlocks.length) box.appendChild(el('div', 'notice warn sw-blocks-gone', `No longer in Building blocks, so not added: ${SWX.goneBlocks.join(', ')}.`));
+  const set = el('fieldset', 'sw-blocks');
+  set.appendChild(el('legend', 'sw-field-label', 'Shared rules'));
+  if (!list.length) set.appendChild(el('div', 'scope-note', 'There are no building blocks yet.'));
+  for (const b of list) {
+    const l = el('label', 'sw-block');
+    const c = el('input'); c.type = 'checkbox'; c.value = b.id; c.checked = SW.blocks.includes(b.id);
+    c.onchange = () => {
+      SW.blocks = c.checked ? [...SW.blocks.filter((id) => id !== b.id), b.id] : SW.blocks.filter((id) => id !== b.id);
+      SWX.goneBlocks = [];
+      swInvalidate(); swSave();
+    };
+    const text = el('span', 'sw-block-text');
+    text.appendChild(el('span', 'sw-block-name', b.name));
+    if (b.summary) text.appendChild(el('span', 'sw-block-summary', b.summary));
+    l.appendChild(c); l.appendChild(text);
+    set.appendChild(l);
+  }
+  box.appendChild(set);
+  box.appendChild(swBar(
+    swBtn('ghost sw-back', 'Back', () => swGo('where')),
+    swBtn('primary sw-next', 'Draft the skill', () => swGo('review')),
+  ));
+}
+
+/* ── 5. review ───────────────────────────────────────────────────────── */
 async function swDraft({ note = null } = {}) {
   if (!SW || swLocked()) return;
   const w = SW;
@@ -457,7 +499,7 @@ async function swDraft({ note = null } = {}) {
   try {
     r = await api('POST', '/api/skill-wizard/turn', {
       wizardId: SW.id, seq, kind: 'draft', description: SW.description, answers: swSent(),
-      name: SW.name, summary: SW.done?.summary || null, note, previous: note ? SW.draft?.content || null : null,
+      name: SW.name, summary: SW.done?.summary || null, note, previous: note ? SW.draft?.content || null : null, blocks: SW.blocks,
     });
   } catch (e) {
     if (!swLive(w, seq)) return;
@@ -489,7 +531,7 @@ function swReview(box) {
   }
   swError(box, () => swDraft());
   if (!SW.draft) {
-    box.appendChild(swBar(swBtn('ghost sw-back', 'Back', () => swGo('where')), swBtn('primary sw-regen', 'Regenerate', () => swDraft())));
+    box.appendChild(swBar(swBtn('ghost sw-back', 'Back', () => swGo('blocks')), swBtn('primary sw-regen', 'Regenerate', () => swDraft())));
     return;
   }
   const dests = SW.draft.dests || swDests();
@@ -533,7 +575,7 @@ function swReview(box) {
     box.appendChild(res);
   }
   box.appendChild(swBar(
-    swBtn('ghost sw-back', 'Back', () => swGo('where'), fixed),
+    swBtn('ghost sw-back', 'Back', () => swGo('blocks'), fixed),
     swBtn('sw-regen', 'Regenerate', () => swDraft({ note: SW.note.trim() || 'Write it again.' }), fixed),
     swPartial() && failed.length ? swBtn('ghost sw-finish', 'Finish without them', () => swFinish(SW, dests), locked) : null,
     swBtn('primary sw-create', locked ? 'Creating…' : failed.length ? 'Retry the failed ones' : 'Create', swCreate, locked),
