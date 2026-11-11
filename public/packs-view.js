@@ -606,7 +606,7 @@ function pkAfterSave(options, key) {
   return line ? el('p', 'pk-sec-after', `After Save: ${line[2]}`) : null;
 }
 
-/** A row of choices with the line saying what each does; the picked one (saved, or waiting in the preview) is pressed. */
+/** A row of choice buttons. The one picked, saved or waiting in the preview, is pressed. */
 function pkChoices(options, key, { rowClass = '' } = {}) {
   const now = pkPicked(key);
   const wrap = el('div');
