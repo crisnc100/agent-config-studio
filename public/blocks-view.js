@@ -7,6 +7,8 @@
  */
 const BB = { data: null, error: null, loading: false };
 const BB_WORD = { same: 'same', reworded: 'reworded', differs: 'differs' };
+/** The count's own form: "1 differs", "2 differ". */
+const bbWord = (k, n) => (k === 'differs' && n !== 1 ? 'differ' : BB_WORD[k]);
 
 async function openBlocks() {
   if (!confirmDiscard()) return;
@@ -32,7 +34,7 @@ const bbPlural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 function bbCounts(b) {
   if (!b.copies.length) return 'No skill or instruction file carries a copy yet.';
-  const parts = ['same', 'reworded', 'differs'].filter((k) => b.counts[k]).map((k) => `${b.counts[k]} ${BB_WORD[k]}`);
+  const parts = ['same', 'reworded', 'differs'].filter((k) => b.counts[k]).map((k) => `${b.counts[k]} ${bbWord(k, b.counts[k])}`);
   return `${bbPlural(b.copies.length, 'copy', 'copies')}: ${parts.join(', ')}`;
 }
 
@@ -41,7 +43,7 @@ function bbCopyRow(c) {
   row.appendChild(el('span', `bb-rating bb-rating-${c.rating}`, BB_WORD[c.rating]));
   const where = c.endLine > c.line ? `${c.file}:${c.line}–${c.endLine}` : `${c.file}:${c.line}`;
   row.appendChild(el('code', 'bb-where', where));
-  if (c.kind === 'instructions') row.appendChild(el('span', 'bb-kind', 'instruction file'));
+  row.appendChild(el('span', 'bb-kind', c.kind === 'instructions' ? 'instruction file' : 'skill'));
   if (c.marked) row.appendChild(el('span', 'bb-marked', 'marked'));
   if (c.note) row.appendChild(el('span', 'bb-note', c.note));
   return row;

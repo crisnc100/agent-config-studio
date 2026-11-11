@@ -1,6 +1,6 @@
 ---
 name: Callback contract
-summary: When a builder comes back to the orchestrator, and that it always brings a recommended answer.
+summary: The few times a builder stops to ask the orchestrator, and the recommended answer it always brings.
 ---
 **Callback contract — the builder comes back ONLY when:**
 - the spec does not determine a choice it must make;
