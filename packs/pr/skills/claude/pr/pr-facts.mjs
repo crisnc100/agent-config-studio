@@ -542,7 +542,7 @@ const NOT_MET = /❌|\bnot (?:met|done)\b/i
 const CRITERION_ID = /(?<![\w.-])(?:[A-Z]{1,3}\d+(?:\.\d+)*|\d+(?:\.\d+)+)(?![\w-]|\.\d)/g
 const sameShape = (id) => new RegExp(`(?<![\\w.-])${escape(id).replace(/\d+/g, '\\d+')}(?![\\w-]|\\.\\d)`, 'g')
 const onlyIds = (l, ids, known) => [CRITERION_ID, ...known.criteria.map(sameShape)].every((re) => [...l.matchAll(re)].every((m) => ids.includes(m[0])))
-  && known.all.every((k) => ids.includes(k) || !word(k).test(l))
+  && known.all.every((k) => ids.includes(k) || !new RegExp(`(?<![\\w.-])${escape(k)}(?![\\w-]|\\.\\d)`).test(l))
 const notMetLine = (text, id, also, known) => text.split('\n').some((l) => word(id).test(l) && onlyIds(l, [id, ...also], known) && NOT_MET.test(l) && !l.includes('✅'))
 const doneLine = (text, id) => text.split('\n').some((l) => word(id).test(l) && l.includes('✅'))
 // A section's entries: each list item with its continuation lines, else each paragraph.
