@@ -52,6 +52,7 @@ import { removeBatch } from './lib/batch-delete.js';
 import { applyJob, buildPlan, catalogView, parseRequest, planView, startStatus, statusJob } from './lib/packs-routes.js';
 import { machine as packsMachine } from './lib/packs.js';
 import { securityApply, securityPlan } from './lib/review-security.js';
+import { blocksView } from './lib/blocks.js';
 import {
   syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
   isInstalled as shortcutsInstalled, shortcutsFromSeats, shortcutsPath, zshenvPath,
@@ -1187,6 +1188,16 @@ export function createApp(opts = {}) {
   'POST /api/packs/apply': async (req) => {
     requireStrict(req);
     return applyJob(parseRequest(await objectBody(req, 16 * 1024), { apply: true }));
+  },
+  /**
+   * The Building blocks page (lib/blocks.js): each block in blocks/ and every
+   * copy of it in a skill or an instruction file, rated. GET only —
+   * nothing on that page writes. Strict same-origin: the scan reads every
+   * skill and instruction file.
+   */
+  'GET /api/blocks': async (req) => {
+    requireStrict(req);
+    return blocksView();
   },
   /**
    * The review gate's security switch: security.run in the home review config the review script reads first.

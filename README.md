@@ -641,6 +641,29 @@ never model ids, and points at `model-id` for the current id.
   roles are each shown and refused (removing a block still works while the
   roles are invalid). Hand-written text outside the block is never touched.
 
+## Building blocks
+
+**Building blocks** (under Workflows) lists the shared rule text that many
+skills repeat: the review policy, the callback contract, who merges, and the
+rest. Each block lives once in `blocks/` in this repo. The page shows what
+each block says and every file that carries a copy, with its file and line,
+rated **same**, **reworded** or **differs**.
+
+It reads the global `CLAUDE.md` and `AGENTS.md` files (Claude, Codex, Grok),
+the Claude and Codex skill folders, and each pack's `skills/` and
+`instructions/` in `packs/`; text inside a block the studio generates, such as
+the model guide, is skipped. Each copy is labelled **skill** or **instruction
+file**; a pack's `instructions/` count as instruction files.
+
+A copy between `<!-- block:<id> sha256:… -->` and `<!-- /block:<id> -->` lines
+is a marked copy. It rates **same** only when it matches the block byte for
+byte; otherwise it says whether it was edited after it was added or the block
+has changed since. Any other copy is found by how closely its words match; a
+copy rated **differs** that still holds the whole block, with more added, says
+so. Ratings compare
+wording, not meaning. **Check again** reads everything again. The page only
+reads: nothing on it changes a file.
+
 ## Audit
 
 The **Audit** view (Review) reads your skills and instruction files and shows

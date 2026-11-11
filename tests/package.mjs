@@ -85,7 +85,7 @@ if (!tarball) {
   ok('npm pack makes a tarball of this tree', p.status === 0 && fs.existsSync(tarball), `${p.stdout}${p.stderr}`);
 }
 const listed = execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' }).split('\n').filter(Boolean).map((f) => f.replace(/^package\//, ''));
-const RUNTIME = /^(server\.js|models\.default\.json|README\.md|LICENSE|package\.json|(lib|public|bin|tools|packs)\/.+)$/;
+const RUNTIME = /^(server\.js|models\.default\.json|README\.md|LICENSE|package\.json|(lib|public|bin|tools|packs)\/.+|blocks\/[a-z0-9-]+\.md)$/;
 ok(`A2 ${listed.length} files, every one a runtime file, README, LICENSE or package.json`, listed.length > 40 && listed.every((f) => RUNTIME.test(f)), listed.filter((f) => !RUNTIME.test(f)).join(' | '));
 ok('A2 no tests, builds, CI, handoffs, reviews or runbook', !listed.some((f) => /^(tests|builds|\.github|\.handoffs|reviews)\/|^RUNBOOK|^verify\.sh/.test(f)));
 ok('A2 C15 the packs ship, and none of their tests do', listed.some((f) => f === 'packs/review-gate/pack.json') && !listed.some((f) => /^packs\/[^/]+\/tests\//.test(f)), listed.filter((f) => /^packs\/[^/]+\/tests\//.test(f)).join(' | '));
