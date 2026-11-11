@@ -339,3 +339,15 @@ test('6.8 Grok runtime markers refuse a real-terminal push override, including e
   }
   assert.equal(existsSync(LOG), false)
 })
+
+test('a remote whose name is a mode flag is data: the gate still runs and blocks, and --gate refuses any other mode', () => {
+  const tip = git('rev-parse', 'HEAD')
+  const refs = `refs/heads/feat ${tip} refs/heads/feat ${ZERO}\n`
+  for (const name of ['--cross-family', '--rubric', '--show-config']) {
+    const r = run(process.execPath, [SCRIPT, '--gate', '--remote', name], { REVIEW_BASE: 'main' }, { input: refs })
+    blocked(r)
+  }
+  const mixed = run(process.execPath, [SCRIPT, '--gate', '--show-config'], { REVIEW_BASE: 'main' }, { input: refs })
+  assert.notEqual(mixed.status, 0, mixed.out)
+  assert.match(mixed.out, /--gate runs alone/)
+})

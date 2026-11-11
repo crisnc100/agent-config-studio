@@ -452,3 +452,51 @@ test('build: the Grade reads the review gate\'s crossFamily, prefer when no revi
     }
   }
 })
+
+// A stand-in runtime: an older copy that ignores unknown flags and runs a review, or one that answers.
+const fakeRuntime = (path, body) => put(path, `const a = process.argv.slice(2)\n${body}\n`)
+const runSnippet = (shell, code) => {
+  writeFileSync(join(ROOT, 'snippet.sh'), code)
+  return spawnSync(shell, [join(ROOT, 'snippet.sh')], { cwd: WORK, env: { HOME, PATH, TMPDIR: ROOT }, encoding: 'utf8', timeout: 30_000 })
+}
+
+test('build: CROSS_FAMILY is prefer unless the runtime supports --cross-family and answers prefer or off', () => {
+  if (!existsSync(join(BIN, 'node'))) symlinkSync(process.execPath, join(BIN, 'node'))
+  const runtime = join(HOME, '.agent-config-studio/review-gate/review.mjs')
+  const cases = [
+    ['an older copy that ignores the flag and reviews', "console.log('▶ reviewer · sol — pick=first'); console.log('off')", 'prefer'],
+    ['a copy that supports it but answers something else', "if (a[0] === '--supports') process.exit(0); console.log('maybe')", 'prefer'],
+    ['a copy that supports it and answers off', "if (a[0] === '--supports') process.exit(a[1] === '--cross-family' ? 0 : 1); console.log('off')", 'off'],
+    ['a copy that does not support it', "if (a[0] === '--supports') process.exit(1); console.log('off')", 'prefer'],
+  ]
+  for (const harness of ['claude', 'codex']) {
+    const code = block(skill(`build/skills/${harness}/build/SKILL.md`), /--cross-family/)
+    for (const shell of SHELLS)
+      for (const [what, body, want] of cases) {
+        fakeRuntime(runtime, body)
+        const r = runSnippet(shell, `${fill(code)}\necho "CROSS=$CROSS_FAMILY" >&2\n`)
+        assert.equal(/CROSS=(.*)/.exec(r.stderr)?.[1], want, `${harness} ${shell}: ${what}\n${r.stderr}`)
+      }
+  }
+})
+
+test('pr-review: the agent merge step runs merge.mjs unless --tier-json says the policy is off, older runtimes included', () => {
+  if (!existsSync(join(BIN, 'node'))) symlinkSync(process.execPath, join(BIN, 'node'))
+  const runtime = join(ROOT, 'runtime.mjs'), marker = join(ROOT, 'merge-ran')
+  put(join(HOME, '.agent-config-studio/review-gate/merge.mjs'), `import { writeFileSync } from 'node:fs'\nwriteFileSync(${J(marker)}, 'ran'); console.log('none')\n`)
+  const cases = [
+    ['policy off', { covered: true, tier: 'low', policy: 'off' }, false],
+    ['policy standard', { covered: true, tier: 'low', policy: 'standard' }, true],
+    ['an older runtime with no policy field', { covered: true, tier: 'low' }, true],
+  ]
+  for (const harness of ['claude', 'codex']) {
+    const code = block(skill(`review-gate/skills/${harness}/pr-review/SKILL.md`), /merge\.mjs/)
+    for (const shell of SHELLS)
+      for (const [what, tier, ran] of cases) {
+        rmSync(marker, { force: true })
+        fakeRuntime(runtime, `if (a[0] === '--tier-json') console.log(${J(J(tier))})`)
+        const r = runSnippet(shell, `SCRIPT=${J(runtime)}\n${fill(code)}\n`)
+        assert.equal(existsSync(marker), ran, `${harness} ${shell}: ${what}\n${r.stderr}`)
+      }
+  }
+})
