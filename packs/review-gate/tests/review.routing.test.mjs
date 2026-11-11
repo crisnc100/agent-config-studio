@@ -402,3 +402,18 @@ test('X5 --show-config prints the merge policy and crossFamily, even with a revi
   config({ merge: { policy: 'always' } })
   assert.equal(show().merge.policy, 'standard', 'REVIEW_CONFIG may not loosen the merge policy, and --show-config shows the one in force')
 })
+
+test('X6 REVIEW_CROSS_FAMILY=off works when no config sets crossFamily, and is ignored, with a warning, when the home config sets prefer', () => {
+  commit({ 'src/a.js': lines(10) })
+  const free = script(['--show-config'], { REVIEW_CONFIG: '', REVIEW_AUTHOR: 'sol', REVIEW_CROSS_FAMILY: 'off' })
+  allowed(free)
+  assert.equal(JSON.parse(free.stdout).crossFamily, 'off')
+  assert.equal(JSON.parse(free.stdout).selected.family, 'sol')
+  assert.doesNotMatch(free.stderr, /Ignoring REVIEW_CROSS_FAMILY/)
+  homeConfig({ crossFamily: 'prefer' })
+  const floored = script(['--show-config'], { REVIEW_CONFIG: '', REVIEW_AUTHOR: 'sol', REVIEW_CROSS_FAMILY: 'off' })
+  allowed(floored)
+  assert.equal(JSON.parse(floored.stdout).crossFamily, 'prefer')
+  assert.equal(JSON.parse(floored.stdout).selected.vendor, 'claude')
+  assert.match(floored.stderr, /Ignoring REVIEW_CROSS_FAMILY=off: .*never off/)
+})
