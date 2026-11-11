@@ -650,11 +650,18 @@ each block says and every file that carries a copy, with its file and line,
 rated **same**, **reworded** or **differs**.
 
 It reads the global `CLAUDE.md` and `AGENTS.md` files (Claude, Codex, Grok),
-the Claude and Codex skill folders, and the packs in `packs/`; text inside a
-block the studio generates, such as the model guide, is skipped. A copy
-between `<!-- block:<id> sha256:… -->` and `<!-- /block:<id> -->` lines is a
-marked copy; any other copy is found by how closely its words match. The page
-only reads: nothing on it changes a file.
+the Claude and Codex skill folders, and each pack's `skills/` and
+`instructions/` in `packs/`; text inside a block the studio generates, such as
+the model guide, is skipped. Each copy is labelled **skill** or **instruction
+file**; a pack's `instructions/` count as instruction files.
+
+A copy between `<!-- block:<id> sha256:… -->` and `<!-- /block:<id> -->` lines
+is a marked copy. It rates **same** only when it matches the block byte for
+byte; otherwise it says whether it was edited after it was added or the block
+has changed since. Any other copy is found by how closely its words match, and
+a copy that holds the whole block with more added says so. Ratings compare
+wording, not meaning. **Check again** reads everything again. The page only
+reads: nothing on it changes a file.
 
 ## Audit
 
