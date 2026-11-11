@@ -208,6 +208,7 @@ try {
   await until(() => c.querySelector('.bb-cmp'));
   ok('A2 Compare opens its own view at #blocks/compare&rule=<id>, not a fold', p.eval('S.view') === 'blocks-compare' && p.location.hash === '#blocks/compare&rule=review-policy'
     && !c.querySelector('.bb-card'), `${p.eval('S.view')} ${p.location.hash}`);
+  ok('QA the Compare title is a visible heading, not the hidden page heading', !c.querySelector('h2').classList.contains('vh') && c.querySelectorAll('h2.vh').length === 0, c.querySelector('h2')?.className);
   ok('…titled with the rule, and the sidebar keeps Shared rules marked', t(c.querySelector('h2')) === 'Compare copies: Review policy' && p.$('btn-blocks').classList.contains('active')
     && t(p.$('title')) === 'Shared rules', `${t(c.querySelector('h2'))} | ${p.$('btn-blocks').className}`);
   ok('…says it compares words, not meaning, with a legend for both marks', /compares words, not meaning/i.test(t(c.querySelector('.bb-cmp-intro')))
@@ -266,6 +267,35 @@ try {
     && u.$('content').querySelectorAll('button').some((b) => u.text(b) === 'Back' && /\bbtn\b/.test(b.className)), u.text(u.$('content')));
   u.done();
 
+  console.log('\nevery group shows; counts agree; summaries');
+  {
+    const e1 = await bootPage({ routes: routesFor({ 'GET /api/blocks': () => ({ blocks: RICH.blocks.filter((b) => b.id === 'callback-contract'), scanned: RICH.scanned }) }), hash: '#blocks' });
+    const lead = (m, n) => e1.eval(`bbCounts(${JSON.stringify({ copies: [...Array(m).fill({ rating: 'same', pack: false }), ...Array(n - m).fill({ rating: 'differs', pack: false })] })})`);
+    await until(() => e1.$('content').querySelector('.bb-card'));
+    const gs = e1.$('content').querySelectorAll('.bb-group').map((g) => [e1.text(g.querySelector('.bb-group-title')), e1.text(g.querySelector('.bb-group-empty')), g.querySelectorAll('.bb-card').length]);
+    ok('QA the three groups always show, in order; an empty one says so plainly; Not in your files only when it has rules', JSON.stringify(gs) === JSON.stringify([
+      ['Needs a look', 'Nothing needs a look. Every copy matches or has only small wording changes.', 0],
+      ['Small wording changes', '', 1],
+      ['Match everywhere', 'No rule matches word for word everywhere yet.', 0]]), JSON.stringify(gs));
+    ok('QA count forms: 1 of 1 copy matches, 0 of 1 copy matches, 2 of 5 copies match, 0 of 5 copies match, 1 of 7 copies matches',
+      lead(1, 1) === '1 of 1 copy matches' && lead(0, 1) === '0 of 1 copy matches' && lead(2, 5) === '2 of 5 copies match' && lead(0, 5) === '0 of 5 copies match' && lead(1, 7) === '1 of 7 copies matches',
+      [lead(1, 1), lead(0, 1), lead(2, 5), lead(0, 5), lead(1, 7)].join(' | '));
+    // The shipped rules: only a summary that says the text again is cut (builders-commit); a shorter restatement stays (operator-overrides).
+    const shipped = fs.readdirSync(path.join(path.dirname(PUB), 'blocks')).filter((f) => f.endsWith('.md')).map((f) => {
+      const raw = fs.readFileSync(path.join(path.dirname(PUB), 'blocks', f), 'utf8');
+      return { id: f.slice(0, -3), summary: raw.match(/^summary: (.*)$/m)[1], text: raw.split(/^---$/m)[2] };
+    });
+    const cut = shipped.filter((b) => e1.eval(`bbRepeatsText(${JSON.stringify(b.summary)}, ${JSON.stringify(b.text)})`)).map((b) => b.id);
+    ok('QA of the shipped rules only builders-commit\'s summary is cut as a repeat; operator-overrides keeps its summary', JSON.stringify(cut) === JSON.stringify(['builders-commit']), cut.join(', '));
+    e1.done();
+    const e2 = await bootPage({ routes: routesFor({ 'GET /api/blocks': () => ({ blocks: RICH.blocks.filter((b) => b.id === 'review-policy'), scanned: RICH.scanned }) }), hash: '#blocks' });
+    await until(() => e2.$('content').querySelector('.bb-card'));
+    const small = e2.$('content').querySelectorAll('.bb-group').find((g) => e2.text(g.querySelector('.bb-group-title')) === 'Small wording changes');
+    ok('QA an empty Small wording changes group says so plainly', e2.text(small?.querySelector('.bb-group-empty')) === 'No rule has small wording changes right now.' && !small.querySelector('.bb-card'));
+    ok('…and no page errors', e1.errors.length === 0 && e2.errors.length === 0, [...e1.errors, ...e2.errors].join(' | '));
+    e2.done();
+  }
+
   console.log('\nthe word diff');
   const d = await bootPage({ routes: rich(), hash: '#home' });
   const diff = (a, b) => JSON.parse(d.eval(`JSON.stringify(bbWordDiff(${JSON.stringify(a)}, ${JSON.stringify(b)}))`));
@@ -309,6 +339,12 @@ console.log('\nstatic: blocks-view.js and its styles');
   const ruleColour = (cls) => (bb.find((m) => m[1].trim() === `.bb-rating-${cls}`) || [, , ''])[2];
   ok('A3 only Big changes takes the warning colour; Small changes and Matches are calm', /var\(--amber-ink\)/.test(ruleColour('differs'))
     && !/--(amber|red)/.test(ruleColour('reworded')) && !/--(amber|red)/.test(ruleColour('same')), ['differs', 'reworded', 'same'].map(ruleColour).join(' | '));
+  const rule = (sel) => bb.filter((m) => m[1].split(',').some((x) => x.trim() === sel)).map((m) => m[2]).join(';');
+  ok('QA "Only in this copy" is not underlined like a link: a tint and a border, in the body text colour', !/text-decoration\s*:[^;]*underline/.test(rule('.bb-only'))
+    && /background\s*:/.test(rule('.bb-only')) && /(?:^|;)\s*border\s*:/.test(rule('.bb-only')) && /color\s*:\s*var\(--text\)/.test(rule('.bb-missing, .bb-only') + rule('.bb-only')),
+    rule('.bb-only'));
+  ok('QA …and "Missing from this copy" stays distinct: struck through, its own tint', /line-through/.test(rule('.bb-missing')) && /--red/.test(rule('.bb-missing')) && !/--red/.test(rule('.bb-only')), rule('.bb-missing'));
+  ok('QA the reference text lines up with the card: no centred margin or width cap from .md', /margin\s*:\s*0\b/.test(rule('.bb-text')) && /max-width\s*:\s*none/.test(rule('.bb-text')), rule('.bb-text'));
   const fontPx = bb.flatMap((m) => [...m[2].matchAll(/font(?:-size)?\s*:\s*[^;]*?(\d+(?:\.\d+)?)px/g)].map((x) => [m[1].trim(), Number(x[1])]));
   ok('A6 nothing on the page is under 11px', fontPx.length > 5 && fontPx.every(([, n]) => n >= 11), fontPx.filter(([, n]) => n < 11).map((x) => x.join(' ')).join(' | '));
   const cc = fs.readFileSync(path.join(path.dirname(PUB), 'blocks', 'callback-contract.md'), 'utf8').match(/^summary: (.*)$/m)?.[1] || '';
