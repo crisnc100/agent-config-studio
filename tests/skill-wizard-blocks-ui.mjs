@@ -131,7 +131,7 @@ async function toWhere(p) {
   const p = await boot({ blocks: [] });
   await toWhere(p);
   await click(btn(p, 'Next'));
-  ok('no blocks at all: a plain line says so, and Draft still works', step(p) === 'blocks' && /no building blocks/i.test(p.text(C(p))) && !btn(p, 'Draft the skill').disabled);
+  ok('no blocks at all: a plain line says so, and Draft still works', step(p) === 'blocks' && /There are no shared rules yet\./.test(p.text(C(p))) && !btn(p, 'Draft the skill').disabled);
 }
 
 {
