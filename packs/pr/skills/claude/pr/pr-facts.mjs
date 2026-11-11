@@ -534,9 +534,13 @@ const word = (id) => new RegExp(`(?<![\\w-])${escape(id)}(?![\\w-])`)
 const mentions = (text, id) => text.split('\n').some((l) => word(id).test(l))
 // The id followed by its own score, with only markdown or a separator between, so a line cannot hand one finding's
 // score to another.
-const ownScore = (text, id, score) => new RegExp(`(?<![\\w-])${escape(id)}(?![\\w-])[*\`_]*[ \\t]*[:—–-]?[ \\t]*[*\`_]*${escape(score)}(?!\\d)`).test(text)
+const ownScore = (text, id, score) => new RegExp(`(?<![\\w-])${escape(id)}(?![\\w-])[*\`_ \\t]*[:—–-]?[*\`_ \\t]*${escape(score)}(?!\\d)`).test(text)
 const NOT_MET = /❌|\bnot (?:met|done)\b/i
-const notMetLine = (text, id) => text.split('\n').some((l) => word(id).test(l) && NOT_MET.test(l) && !l.includes('✅'))
+// Anything shaped like a criterion id, whatever its prefix or depth (C2, R3, C3.1, 2.1): a line naming one besides
+// the ids it may name is ambiguous, as its marker may be that one's, so it never counts as a not-met line.
+const CRITERION_ID = /(?<![\w.-])(?:[A-Z]{1,3}\d+(?:\.\d+)*|\d+(?:\.\d+)+)(?![\w-]|\.\d)/g
+const onlyIds = (l, ids) => [...l.matchAll(CRITERION_ID)].every((m) => ids.includes(m[0]))
+const notMetLine = (text, id, also = []) => text.split('\n').some((l) => word(id).test(l) && onlyIds(l, [id, ...also]) && NOT_MET.test(l) && !l.includes('✅'))
 const doneLine = (text, id) => text.split('\n').some((l) => word(id).test(l) && l.includes('✅'))
 // A section's entries: each list item with its continuation lines, else each paragraph.
 function entriesOf(text) {
@@ -667,7 +671,7 @@ export function check(body, f) {
     const items = f.review.deferredItems || (f.review.deferred || []).filter((l) => l !== PRE_TITLE).map(parseDeferred)
     const deferredText = sectionText(DEFERRED_TITLE)
     if (deferredText !== null) {
-      const fits = (d, e) => d.kind === 'unknown' ? e.includes(d.line) : d.kind === 'criterion' ? notMetLine(e, d.id) : ownScore(e, d.id, d.score)
+      const fits = (d, e) => d.kind === 'unknown' ? e.includes(d.line) : d.kind === 'criterion' ? notMetLine(e, d.id, [d.criterionId]) : ownScore(e, d.id, d.score)
       const placed = matchEntries(items, entriesOf(deferredText), fits)
       items.forEach((d, i) => {
         if (placed[i]) return

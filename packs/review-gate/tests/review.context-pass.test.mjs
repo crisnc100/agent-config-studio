@@ -178,7 +178,7 @@ test('8 it fails closed: block-comment delimiters, regex literals, string contin
     ['src/a.js', JS, JS.replace('/**\n * The parser.\n */\n', ''), 'a removed block comment (delimiters change)'],
     ['src/b.js', 'const a = 1\n', 'const a = 1\n/* new */\n', 'an added block comment'],
     ['src/c.js', 'const re = /\\/*x/\nconst b = 2 // b\n', 'const re = /\\/*x/\nconst b = 2 // the b\n', 'a regex literal that looks like a comment start'],
-    ['src/d.js', 'const r = /"/\n// note\nconst s = 1\n', 'const r = /"/\n// a note\nconst s = 1\n', 'a regex literal with a quote'],
+    ['src/d.js', 'if (ok) /"/.test(s)\n// note\nconst s = 1\n', 'if (ok) /"/.test(s)\n// a note\nconst s = 1\n', 'a slash with a quote after ), which may divide or open a regex'],
     ['src/e.js', 'const t = `a\n// not a comment\nb`\n', 'const t = `a\n// still not a comment\nb`\n', 'a template literal across lines'],
     ['src/f.py', 'def f():\n    """Doc.\n    # not a comment\n    """\n', 'def f():\n    """Doc.\n    # changed text\n    """\n', 'a triple-quoted string'],
     ['src/g.sh', "cat <<EOF\n# not a comment\nEOF\n", "cat <<EOF\n# changed\nEOF\n", 'a heredoc'],
@@ -209,4 +209,48 @@ test('10 the agent-instruction list is wide and case-insensitive', () => {
 test('11 the script says the gate never trusts its code-line check', () => {
   const text = readFileSync(SCRIPT, 'utf8')
   assert.match(text, /never trusts? (it|this check)/i)
+})
+// A file like pr-facts.mjs: regex literals holding quotes and slashes, one starting a line after an operator.
+const REGEXES = ['const TESTS = /(^|\\/)(tests?)\\/|\\.(test|spec)\\.[^/]+$|"x"/', 'export const kind = (name) => TESTS.test(name) ||',
+  "  /\\.(test|spec)\\.[^/]+$|_test\\.[^/]+$|^test_'/.test(name)", "const esc = (t) => t.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')",
+  '// A two-line comment: "quoted", (in parens) and ✅,', '// kept as plain text.', 'export const n = 1 // n', ''].join('\n')
+test('12 a whole-line comment edit passes in a file with regex literals, the skill\'s docs table and .env comments pass; code still fails', () => {
+  const pass = [
+    ['src/r.mjs', REGEXES, REGEXES.replace('// kept as plain text.', '// reworded: "still quoted" (still in parens) ✅.')],
+    ['src/s.mjs', REGEXES, REGEXES.replace('// A two-line comment: "quoted", (in parens) and ✅,\n', '')],
+    ['.env.example', '# The port it listens on\nPORT=3000\n', '# The port the server listens on (default "3000")\nPORT=3000\n'],
+    ['config/.env.sample', '# A key\nKEY=x\n', '# The API key\nKEY=x\n'],
+  ]
+  const fail = [
+    ['src/t.mjs', REGEXES, REGEXES.replace('export const n = 1', 'export const n = 2'), 'a changed code line'],
+    ['src/u.mjs', REGEXES, REGEXES.replace('export const n = 1 // n', 'export const n = 1 // the n'), 'a trailing comment on a code line'],
+    ['src/v.mjs', REGEXES, REGEXES.replace('// kept as plain text.', '/* kept as plain text. */'), 'a block-comment delimiter'],
+    ['src/w.mjs', REGEXES, REGEXES.replace("|^test_'/", "|^test_x'/"), 'a changed regex'],
+    ['src/z.js', 'const q = a /"/ 2\n// note\n', 'const q = a /"/ 2\n// a note\n', 'a slash with a quote after an identifier (a /"/), which may divide'],
+    ['src/x.js', 'function q(s) { return /"/.test(s) }\n// note\n', 'function q(s) { return /"/.test(s) }\n// a note\n', 'a regex after a keyword, which could be a division'],
+    ['src/y.js', "const a = b\n  / 2; const s = '/'\n// note\n", "const a = b\n  / 2; const s = '/'\n// a note\n", 'a slash starting a line after an operand'],
+    ['src/aa.mjs', 'const q = {} / 2; const t = tag`a/\n// in the template\n`; // end `\n', 'const q = {} / 2; const t = tag`a/\n// changed template text\n`; // end `\n', 'a division after }, then a template across lines'],
+    ['src/ab.ts', 'const n = a! / 2; const t = `x/\n// in the template\n`; // end `\n', 'const n = a! / 2; const t = `x/\n// changed template text\n`; // end `\n', 'a division after a TS non-null !'],
+    ['src/ac.rs', 'let n = f()? / 2; let s = "x/\n// in the string\n"; // end "\n', 'let n = f()? / 2; let s = "x/\n// changed string text\n"; // end "\n', 'a division after a Rust ?'],
+    ['src/ad.c', 'int n = (/ 2); char *s = "x/\n// in the string\n"; // end "\n', 'int n = (/ 2); char *s = "x/\n// changed string\n"; // end "\n', 'a non-JS file never reads a slash as a regex literal'],
+    ['src/ae.kt', 'val n = a!! / 2; val s = "x/\n// in the string\n" // end "\n', 'val n = a!! / 2; val s = "x/\n// changed string\n" // end "\n', 'a division after a Kotlin !!'],
+    ['.env.example', '# The port\nPORT=3000\n', '# The port\nPORT=4000\n', 'a changed .env value'],
+    ['.env.example', 'PORT=3000 # port\n', 'PORT=3000 # the port\n', 'a trailing .env comment'],
+  ]
+  for (const [p, a, b] of pass) {
+    assert.deepEqual(verdicts([[p, a, b]]), { [p]: true }, p)
+    git('reset', '-q', '--hard', 'HEAD~2')
+  }
+  for (const [p, a, b, why] of fail) {
+    assert.deepEqual(verdicts([[p, a, b]]), { [p]: false }, `${p}: ${why}`)
+    git('reset', '-q', '--hard', 'HEAD~2')
+  }
+  const table = commit({ 'builds/v01/docs-table.json': '{ "rows": [] }\n' })
+  assert.equal(run(['--check-commit', table]).status, 0, 'the docs table the skill writes')
+  const edited = commit({ 'builds/v01/docs-table.json': '{ "rows": [{ "behavior": "b", "files": ["src/app.js"], "none": "internal" }] }\n' })
+  assert.equal(run(['--check-commit', edited]).status, 0, 'an edit to it')
+  for (const p of ['builds/v01/other.json', 'builds/v01/sub/docs-table.json', 'src/builds/v01/docs-table.json']) {
+    const sha = commit({ [p]: '{}\n' })
+    assert.ok(run(['--check-commit', sha]).json.problems.some((x) => x.startsWith(`${p}: a code line changed`)), p)
+  }
 })

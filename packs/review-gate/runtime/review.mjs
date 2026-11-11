@@ -3934,13 +3934,16 @@ function preExistingFindings(entries, review, cover = null) {
 const DEFERRED_RANK = { high: 1, medium: 2, low: 3 }
 const deferredOrder = (items) => [...items].sort((a, b) => deferredRank(a) - deferredRank(b))
 const deferredRank = (f) => f.criterionId ? 0 : DEFERRED_RANK[f.severity] ?? 2
+// One line per finding: readers of the summary (the PR helper among them) split it by line, so a reviewer's
+// multi-paragraph text would otherwise read as several findings.
+const oneLine = (text) => text.replace(/[ \t]*\r?\n\s*/g, ' ')
 function deferredLine(finding) {
   const { deferral } = finding
   const fix = deferral && (deferral.fix || finding.suggestion)
   const decision = deferral ? `; Deferred: ${deferral.reason}${fix ? `; Fix idea: ${fix}` : ''}` : ''
   if (finding.criterionId)
-    return `${finding.id} criterion ${finding.criterionId} not met: ${finding.criterion}; recheck: ${finding.recheckEvidence || 'evidence not recorded'}${decision}`
-  return `${finding.id} ${scoreText(finding)} ${finding.file || '?'}:${finding.line || '?'} — ${finding.issue}; Trigger: ${finding.trigger || 'trigger not recorded'}${alsoAt(finding)}${decision}`
+    return oneLine(`${finding.id} criterion ${finding.criterionId} not met: ${finding.criterion}; recheck: ${finding.recheckEvidence || 'evidence not recorded'}${decision}`)
+  return oneLine(`${finding.id} ${scoreText(finding)} ${finding.file || '?'}:${finding.line || '?'} — ${finding.issue}; Trigger: ${finding.trigger || 'trigger not recorded'}${alsoAt(finding)}${decision}`)
 }
 // The close whose statuses count for one review record. In a summary: the covering close that links it, else the
 // latest close that links it and is not at a commit outside the tip's history. Without a tip (--deferred): the latest.

@@ -10,7 +10,7 @@ Write the file a future session reads first. Not a session summary and not a jou
 
 ## Step 1 — Where it goes
 
-**First: is this an orchestrator thread?** A session that runs work across several repos or worktrees, or from a folder that is not one, is one. Its handoff belongs to the thread, not to a branch: skip the branch rules below and never stop to offer a branch. The file is `HANDOFF-<thread>.md`, where `<thread>` is a short name for the work, in the nearest folder at or above the session's working folder that is not inside a git repo (`git -C <folder> rev-parse` fails there). Look for an existing `HANDOFF-*.md` in that folder first and reuse its name, so every session of the thread writes the same file. It is replaced in place each time.
+**First: is this an orchestrator thread?** A session that runs work across several repos or worktrees, or from a folder that is not one, is one. Its handoff belongs to the thread, not to a branch: skip the branch rules below and never stop to offer a branch. The file is `HANDOFF-<thread>.md`, where `<thread>` is a short name for the work, in the nearest folder at or above the session's working folder that is not inside a git repo (`git -C <folder> rev-parse` fails there). Other threads can share that folder, so look at each existing `HANDOFF-*.md` there and reuse one only when its Goal is this thread's work (the **Thread:** line names only the folder, which they share); every session of the thread then writes the same file, replaced in place each time. When none matches, write a new `HANDOFF-<thread>.md` under a name no file there has, and never replace another thread's file or carry its items forward.
 
 Otherwise, ask git rather than guessing from the folder name; a directory named `<project>-main` is often sitting on a feature branch.
 
@@ -48,7 +48,7 @@ Add **What worked** for approaches worth repeating, and **Key Context** for non-
 
 ## Step 3 — Write it
 
-If a handoff for this branch (or thread) already exists, replace it. It's a stale snapshot of the same work — but read its Failed Attempts, Waiting on the user and Later (do not start) first, and carry forward every item not known to be resolved. One file holds one Next objective: never append a second. A bare `docs/handoff.md` left over from the old shared-file scheme isn't yours: don't read it or extend it, just mention it so it can be deleted.
+If a handoff for this branch (or this thread, matched by its Goal as in Step 1) already exists, replace it. It's a stale snapshot of the same work — but read its Failed Attempts, Waiting on the user and Later (do not start) first, and carry forward every item not known to be resolved. One file holds one Next objective: never append a second. A bare `docs/handoff.md` left over from the old shared-file scheme isn't yours: don't read it or extend it, just mention it so it can be deleted.
 
 ````markdown
 # Handoff — <short description of the work>

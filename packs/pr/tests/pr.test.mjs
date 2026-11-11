@@ -813,3 +813,86 @@ test('C3 --check: unmet criteria must be marked not met; with the goal section o
   assert.deepEqual(checked(b, noGoal).problems, [`"Deferred findings" is missing unmet criterion C2, as a not-done line: ${crit}`])
   assert.deepEqual(checked(b, noGoal.replace('## Docs and context', `- ${notDone}\n\n## Docs and context`)).problems, [])
 })
+
+/* ── follow-ups: multi-paragraph findings, mixed criterion lines, a bold id with a colon ── */
+
+test('the real review.mjs: a deferred finding whose text runs to four paragraphs is one item, and a plain-words entry passes', () => {
+  const b = box()
+  b.stub('model-id', `const a=process.argv.slice(2); console.log(a[0]==='--role' ? JSON.stringify({use:['stubfam'],ids:['gpt-stub']}) : a[0]==='--flavor' ? JSON.stringify({flavor:{effort:'high'}}) : 'gpt-stub')`)
+  const model = `
+const fs = require('node:fs')
+const a = process.argv.slice(2)
+if (a[0] === 'mcp') { console.log('[]'); process.exit(0) }
+const schema = a.includes('--output-schema') ? fs.readFileSync(a[a.indexOf('--output-schema')+1],'utf8') : a[a.indexOf('--json-schema')+1]
+const reply = schema.includes('"scores"') ? '{"scores":[]}' : schema.includes('"verdicts"') ? '{"verdicts":[]}' : (process.env.STUB_FINDINGS || '{"findings":[]}')
+if (a.includes('-o')) fs.writeFileSync(a[a.indexOf('-o')+1], reply)
+else console.log(JSON.stringify({structured_output:JSON.parse(reply),structuredOutput:JSON.parse(reply),modelUsage:{'stub':{}}}))
+`
+  for (const n of ['codex', 'claude', 'grok']) b.stub(n, model)
+  const extra = { REVIEW_BASE: 'main', REVIEW_REVIEWER: 'stubfam' }
+  mkdirSync(join(b.home, '.agent-config-studio/review-log'), { recursive: true })
+  mkdirSync(dirname(b.gate), { recursive: true })
+  copyFileSync(REVIEW, b.gate)
+  b.git('init', '-q', '-b', 'main')
+  b.commit({ 'README.md': 'base\n', 'src/one.js': 'export const one = 1\n' })
+  b.git('checkout', '-qb', 'feat')
+  b.commit({ 'web/App.tsx': 'export const A = 1\nexport const B = 2\n' })
+  const scored = (over = {}) => ({ issue: 'a is wrong', file: 'web/App.tsx', line: '1', quote: 'export const A = 1', suggestion: 'fix a',
+    likelihood: 5, impact: 5, protected: false, trigger: 'rendering App', ...over })
+  assert.equal(b.sh(process.execPath, [b.gate], { ...extra, STUB_FINDINGS: JSON.stringify({ findings: [scored()] }) }).code, 0)
+  const id = readFileSync(join(b.home, '.agent-config-studio/review-log/review-log.jsonl'), 'utf8').trim().split('\n').map(JSON.parse).filter((e) => e.type === 'review').at(-1).id
+  b.commit({ 'web/App.tsx': 'export const A = 10\nexport const B = 2\n' })
+  const issue = 'Two threads can share one file.\n\nThe nearest folder is shared by every session.\nIt takes over the first file.\n\nThe first pointer still points there.\n\nOld items keep dragging along.'
+  const x1 = scored({ issue, line: '2', quote: 'export const B = 2', likelihood: 9, impact: 9, trigger: 'two sessions\nin one folder' })
+  assert.equal(b.sh(process.execPath, [b.gate, '--fix-check', id], { ...extra, STUB_FINDINGS: JSON.stringify({ findings: [x1] }) }).code, 0)
+  writeFileSync(join(b.root, 'statuses.json'), JSON.stringify({ f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later' } }))
+  const cl = b.sh(process.execPath, [b.gate, '--close', id, '--status', join(b.root, 'statuses.json'), '--test-cmd', 'true'], extra)
+  assert.equal(cl.code, 0, cl.out)
+  const r = b.facts([], extra).review
+  assert.equal(r.state, 'closed', JSON.stringify(r))
+  assert.equal(r.deferred.length, 1, `one finding, one summary line: ${JSON.stringify(r.deferred)}`)
+  assert.equal(r.deferredItems.length, 1, JSON.stringify(r.deferredItems))
+  const [item] = r.deferredItems
+  assert.deepEqual([item.id, item.kind, item.score, item.location, item.trigger, item.reason],
+    ['x1', 'code', 'HIGH 81/100 (likelihood 9/10 × impact 9/10)', 'web/App.tsx:2', 'two sessions in one folder', 'later'])
+  assert.equal(item.issue, 'Two threads can share one file. The nearest folder is shared by every session. It takes over the first file. The first pointer still points there. Old items keep dragging along.')
+  const body = [
+    '## What this does and why', 'Changes A, so the app reads ten.', '', '## Did it match the goal?', 'No plan.', '', '## Files changed', '- `web/App.tsx`', '',
+    '## How to try it', 'Render it.', '', '## Review highlights', ...r.reviewer, '',
+    '## Deferred findings', `- **x1 ${item.score}:** two sessions in one folder could share one handoff file. Deferred: later.`, '',
+    '## Docs and context', '✅', '', "## Agent's take", 'Small.', '',
+  ].join('\n')
+  writeFileSync(join(b.root, 'body.md'), body)
+  const c = b.helper(['--check', join(b.root, 'body.md')], extra)
+  assert.equal(c.code, 0, c.out)
+})
+
+test('C3 --check: a not-met marker counts only on a line naming that one criterion; a line naming two is ambiguous', () => {
+  const b = fixture()
+  closedGate(b)
+  const f = b.facts()
+  const crit = f.review.criteria[0]
+  const body = good(f)
+  const notDone = '❌ C2 not done: the app does not log yet.'
+  const missing = [`"Did it match the goal?" is missing unmet criterion C2, as a not-done line: ${crit}`]
+  assert.deepEqual(checked(b, body.replace(notDone, 'C2 is met; C3 is not met.')).problems, missing, 'the "not met" belongs to C3, not C2')
+  assert.deepEqual(checked(b, body.replace(notDone, 'C3 is met; C2 is not met.')).problems, missing, 'a line naming two criteria is ambiguous')
+  assert.deepEqual(checked(b, body.replace(notDone, 'C2 and C3 are not met.')).problems, missing, 'one marker never stands for two criteria')
+  assert.deepEqual(checked(b, body.replace(notDone, 'C2 is met; C3.1 is not met.')).problems, missing, 'another numbering depth is another criterion')
+  assert.deepEqual(checked(b, body.replace(notDone, 'C2 is met; R3 is not met.')).problems, missing, 'another prefix is another criterion')
+  assert.deepEqual(checked(b, body.replace(notDone, 'C2 is met; 4.2 is not met.')).problems, missing, 'a dotted number is a criterion too')
+  assert.deepEqual(checked(b, body.replace(notDone, `${notDone}\nC3 met.`)).problems, [], 'a met criterion on its own line asks nothing')
+  assert.deepEqual(checked(b, body.replace(notDone, `${notDone}\n✅ C3 and C2 done.`)).problems,
+    [`"Did it match the goal?" shows unmet criterion C2 as done (✅), but the review recorded it not met: ${crit}`], 'a ✅ on a line naming it still counts against it')
+})
+
+test('C3 --check: a bold id followed by a colon (**x1:**) is held to its score like any other', () => {
+  const b = fixture()
+  closedGate(b)
+  const f = b.facts()
+  const body = good(f)
+  const [high] = f.review.deferredItems
+  assert.deepEqual(checked(b, body.replace(`- x1 ${high.score}:`, `- **x1:** ${high.score}:`)).problems, [])
+  assert.deepEqual(checked(b, body.replace(`- x1 ${high.score}:`, `- **x1:** ${F2_SCORE}:`)).problems,
+    [`"Deferred findings" is missing x1 with its score as the summary gives it: x1 ${high.score}`], 'the colon form still ties the id to its own score')
+})
