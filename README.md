@@ -241,7 +241,7 @@ expected to diverge afterwards.
 
 **New skill, by interview.** **New skill** on the Skills view opens a wizard:
 describe the skill, answer the interview one question at a time, pick where it
-goes, tick any shared rules from **Building blocks**, then review the drafted
+goes, tick any rules from **Shared rules**, then review the drafted
 `SKILL.md` and create it. No block is ticked for you. The model sees only the
 names of the ticked blocks; the studio adds their text word for word at the
 end, under **Shared rules**. Nothing is written until you press **Create**,
@@ -649,28 +649,42 @@ never model ids, and points at `model-id` for the current id.
   roles are each shown and refused (removing a block still works while the
   roles are invalid). Hand-written text outside the block is never touched.
 
-## Building blocks
+## Shared rules
 
-**Building blocks** (under Workflows) lists the shared rule text that many
-skills repeat: the review policy, the callback contract, who merges, and the
-rest. Each block lives once in `blocks/` in this repo. The page shows what
-each block says and every file that carries a copy, with its file and line,
-rated **same**, **reworded** or **differs**.
+**Shared rules** (under Workflows) lists the rules that many instruction files
+and skills repeat: the review policy, the callback contract, who merges, and
+the rest. Each rule's reference version lives once in `blocks/` in this repo,
+and the page checks every file for copies of it.
 
 It reads the global `CLAUDE.md` and `AGENTS.md` files (Claude, Codex, Grok),
 the Claude and Codex skill folders, the shared `~/.agents/skills`, each
 project's `.claude`, `.codex` and `.agents` skill folders under your edit
 folders, and each pack's `skills/` and `instructions/` in `packs/`; text
 inside a block the studio generates, such as the model guide, is skipped.
-Each copy is labelled **skill** or **instruction file**; a pack's
-`instructions/` count as instruction files.
+
+Each copy is rated by its wording against the reference: **Matches** (the same
+words in the same order), **Small changes** (close, with a few words changed)
+or **Big changes** (part left out, other rules added, or the rule inside a
+longer paragraph). Ratings compare wording, not meaning. Each rule sits in one
+group by its worst copy: **Needs a look**, **Small wording changes**, **Match
+everywhere**, or **Not in your files** when only the studio's packs carry it
+or nothing does. Copies in the studio's own packs are counted on one line per
+rule and never move a rule's group. A copy says where it lives in words
+(`CLAUDE.md (Claude, global) · line 168`, `SKILL.md in the build skill
+(Claude) · lines 75–79`; a project's skill names the project folder) with the
+full path beneath, and a rule found more than once in one file is flagged.
 
 A copy between `<!-- block:<id> sha256:… -->` and `<!-- /block:<id> -->` lines
-is a marked copy. It rates **same** only when it matches the block byte for
-byte; otherwise it says whether it was edited after it was added or the block
-has changed since. Any other copy is found by how closely its words match; a
-copy rated **differs** that still holds the whole block, with more added, says
-so. Ratings compare wording, not meaning. **Check again** reads everything
+was pasted in by the studio. It matches only byte for byte; otherwise it says
+whether it was changed by hand after it was pasted in or came from an older
+version of the rule.
+
+**Compare copies** (on Needs a look and Small wording changes rules) opens
+`#blocks/compare&rule=<id>`: each of your copies beside the reference, with
+words **missing from this copy** marked in the reference and words **only in
+this copy** marked in the copy. A copy's text is sent up to 60 lines or 6,000
+characters; a longer copy says only its start is shown. **Back** returns to
+the list without reading the files again; **Check again** reads everything
 again. The page only reads: nothing on it changes a file.
 
 The skill wizard's Blocks step pastes ticked blocks as marked copies: after
