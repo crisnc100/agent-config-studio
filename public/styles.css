@@ -1794,7 +1794,9 @@ pre.pk-log { white-space: pre-wrap; overflow-wrap: anywhere; font: 11.5px var(--
 .pk-sec, .pk-setting { margin: 12px 0; }
 .pk-sec-levels, .pk-choice-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .btn.pk-sec-on { border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.pk-sec-now { color: var(--text-dim); margin: 6px 0 0; }
+.pk-sec-now, .pk-sec-after { color: var(--text-dim); margin: 6px 0 0; }
+.pk-sec-after { color: var(--text); font-weight: 600; }
+.pk-refreshed { color: var(--amber-ink); font-weight: 600; }
 .pk-sec-preview { margin-top: 10px; }
 .pk-choice-lines { list-style: none; margin: 6px 0 0; padding: 0; color: var(--text-dim); }
 .pk-choice-lines li { margin: 2px 0; }

@@ -599,6 +599,13 @@ function pkSaysText(changes) {
   return `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
 }
 
+/** "After Save: …" while a pick for `key` waits in the preview, so Now (the saved value) and the pressed button never seem to disagree. */
+function pkAfterSave(options, key) {
+  if (!PK_SEC.preview || !Object.hasOwn(PK_SEC.preview.changes, key)) return null;
+  const line = options.find(([v]) => v === PK_SEC.preview.changes[key]);
+  return line ? el('p', 'pk-sec-after', `After Save: ${line[2]}`) : null;
+}
+
 /** A row of choices with the line saying what each does; the picked one (saved, or waiting in the preview) is pressed. */
 function pkChoices(options, key, { rowClass = '' } = {}) {
   const now = pkPicked(key);
@@ -642,6 +649,8 @@ function pkSettingsView(pack) {
   secBox.appendChild(el('div', 'pk-label', 'Security pass in PR reviews'));
   secBox.appendChild(pkChoices(PK_SEC_LEVELS, 'security.run', { rowClass: 'pk-sec-levels' }));
   secBox.appendChild(el('p', 'pk-sec-now', `Now: ${PK_SEC_LEVELS.find(([l]) => l === (s.security || 'off'))[2]} /security-check runs on its own either way.`));
+  const secAfter = pkAfterSave(PK_SEC_LEVELS, 'security.run');
+  if (secAfter) secBox.appendChild(secAfter);
   box.appendChild(secBox);
 
   const mg = el('div', 'pk-setting pk-merge');
@@ -650,6 +659,8 @@ function pkSettingsView(pack) {
   mg.appendChild(pkChoiceLines(PK_MERGE_POLICIES, 'merge.policy'));
   const policyNow = PK_MERGE_POLICIES.find(([p]) => p === (s.merge?.policy || 'off'))[2];
   mg.appendChild(el('p', 'pk-sec-now', `Now: ${policyNow} Agent merge needs the gh CLI, and a repo with no CI checks always waits for you.`));
+  const mergeAfter = pkAfterSave(PK_MERGE_POLICIES, 'merge.policy');
+  if (mergeAfter) mg.appendChild(mergeAfter);
   mg.appendChild(el('p', 'pk-sec-now', 'An agent merges only through merge.mjs, and only when the review is closed at the tip, CI is green and nobody asked for changes.'));
   mg.appendChild(pkPathsView(s.merge || {}));
   mg.appendChild(el('p', 'pk-help', 'Saved as merge.policy and merge.alwaysHuman in your home review config.'));
@@ -718,6 +729,7 @@ function pkSettingsFoot(box) {
     const pre = el('div', 'pk-sec-preview');
     pre.setAttribute('role', 'region');
     pre.setAttribute('aria-label', 'Review gate settings preview');
+    if (p.refreshed) pre.appendChild(el('p', 'pk-refreshed', 'The list changed since the preview; check the new preview and Save again.'));
     pre.appendChild(el('p', null, p.view.changes
       ? `Set to ${pkSaysText(p.changes)}: this changes ${p.view.file}${p.view.exists ? ', and a copy of it goes to the backups folder first' : ' (a new file)'}.`
       : `${p.view.file} already says ${pkSaysText(p.changes)}. Nothing to change.`));
@@ -730,7 +742,8 @@ function pkSettingsFoot(box) {
   }
   if (PK_SEC.result) {
     const r = PK_SEC.result;
-    box.appendChild(el('div', 'notice pk-result', `Saved: ${r.file} now says ${pkSaysText(r.saved)}.${r.backup ? ` The old file is at ${r.backup}.` : ''}`));
+    const after = !r.changed ? '' : r.backupDir ? ` The old file is at ${r.backupDir}.` : ' No existing file needed a backup.';
+    box.appendChild(el('div', 'notice pk-result', `Saved: ${r.file} now says ${pkSaysText(r.saved)}.${after}`));
   }
 }
 
@@ -770,7 +783,7 @@ async function pkPick(key, value) {
 }
 
 /** Preview the whole draft as it stands. */
-async function pkReplan() {
+async function pkReplan({ refreshed = false } = {}) {
   PK_SEC.error = null; PK_SEC.result = null; PK_SEC.preview = null;
   const seq = ++PK_SEC.seq;
   const changes = { ...PK_SEC.draft };
@@ -779,7 +792,7 @@ async function pkReplan() {
   paintPacks();
   try {
     const view = await api('POST', '/api/packs/review-settings/plan', { changes });
-    if (seq === PK_SEC.seq) PK_SEC.preview = { changes, view };
+    if (seq === PK_SEC.seq) PK_SEC.preview = { changes, view, refreshed };
   } catch (e) { if (seq === PK_SEC.seq) PK_SEC.error = e.message; }
   if (seq === PK_SEC.seq) PK_SEC.busy = false;
   paintPacks();
@@ -788,7 +801,7 @@ async function pkReplan() {
 async function pkSettingsApply() {
   pkDraftPaths();
   // The box changed after the preview: show the new diff rather than write what is no longer on screen.
-  if (JSON.stringify(PK_SEC.draft) !== JSON.stringify(PK_SEC.preview.changes)) return pkReplan();
+  if (JSON.stringify(PK_SEC.draft) !== JSON.stringify(PK_SEC.preview.changes)) return pkReplan({ refreshed: true });
   const { changes, view } = PK_SEC.preview;
   PK_SEC.busy = true; PK_SEC.error = null;
   const seq = ++PK_SEC.seq;

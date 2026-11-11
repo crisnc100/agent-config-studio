@@ -46,9 +46,11 @@ function wfStepOn(step, ctx) {
  * { kind, k, models?: [{ family, effort }], join?: 'or'|'and', v?, n?, unset? }: k the role, n a note.
  */
 function wfRoleChip(roleName, step, ctx, { note = null } = {}) {
-  if (!ctx.roles) return { kind: 'role', k: roleName, v: ctx.rolesError ? 'roles unavailable' : 'reading…', n: null };
+  // Cross-vendor checks off means no Grade swap, whatever the roles say (or before they load).
+  const noSwap = step.swap === 'grade' && ctx.settings?.crossFamily === 'off' ? 'no swap: Cross-vendor checks is off in the review gate\'s settings' : null;
+  if (!ctx.roles) return { kind: 'role', k: roleName, v: ctx.rolesError ? 'roles unavailable' : 'reading…', n: noSwap };
   const role = ctx.roles.find((r) => r.name === roleName);
-  if (!role || role.unset) return { kind: 'role', k: roleName, unset: true };
+  if (!role || role.unset) return { kind: 'role', k: roleName, unset: true, n: noSwap };
   let models = wfMembers(role);
   if (step.vendor) models = models.filter((m) => wfVendor(m.id) === step.vendor);
   if (step.use === 'alt') models = wfAlt(role) ? [wfAlt(role)] : [];
@@ -64,7 +66,7 @@ function wfRoleChip(roleName, step, ctx, { note = null } = {}) {
     const advisor = ctx.roles.find((r) => r.name === 'advisor');
     const alt = advisor && !advisor.unset ? wfAlt(advisor) : null;
     const judge = wfName(models[0].family);
-    if (ctx.settings?.crossFamily === 'off') n = 'no swap: Cross-vendor checks is off in the review gate\'s settings';
+    if (noSwap) n = noSwap;
     else if (!alt) n = `when the builder is the same vendor as ${judge}: the advisor's second opinion instead (not set)`;
     else if (wfVendor(alt.id) && wfVendor(alt.id) === wfVendor(models[0].id)) n = `no swap: the advisor's second opinion, ${wfName(alt.family)}, is the same vendor as ${judge}`;
     else n = `${wfName(alt.family)} instead when the builder is the same vendor as ${judge}`;
