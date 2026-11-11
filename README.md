@@ -660,23 +660,23 @@ rated **same**, **reworded** or **differs**.
 It reads the global `CLAUDE.md` and `AGENTS.md` files (Claude, Codex, Grok),
 the Claude and Codex skill folders, the shared `~/.agents/skills`, each
 project's `.claude`, `.codex` and `.agents` skill folders under your edit
-folders, and each pack's `skills/` and `instructions/` in `packs/`; text inside a block the studio generates, such as
-the model guide, is skipped. Each copy is labelled **skill** or **instruction
-file**; a pack's `instructions/` count as instruction files.
+folders, and each pack's `skills/` and `instructions/` in `packs/`; text
+inside a block the studio generates, such as the model guide, is skipped.
+Each copy is labelled **skill** or **instruction file**; a pack's
+`instructions/` count as instruction files.
 
 A copy between `<!-- block:<id> sha256:… -->` and `<!-- /block:<id> -->` lines
 is a marked copy. It rates **same** only when it matches the block byte for
 byte; otherwise it says whether it was edited after it was added or the block
 has changed since. Any other copy is found by how closely its words match; a
 copy rated **differs** that still holds the whole block, with more added, says
-so. Ratings compare
-wording, not meaning.
+so. Ratings compare wording, not meaning. **Check again** reads everything
+again. The page only reads: nothing on it changes a file.
 
 The skill wizard's Blocks step pastes ticked blocks as marked copies: after
 the draft, a `## Shared rules` heading, then each block under its `### name`
 line between its markers, in the page's order. **Regenerate** pastes them
-again, so an edit made inside a block on Review does not survive it. **Check again** reads everything again. The page only
-reads: nothing on it changes a file.
+again, so an edit made inside a block on Review does not survive it.
 
 ## Audit
 
