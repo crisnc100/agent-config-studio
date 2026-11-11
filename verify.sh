@@ -152,6 +152,9 @@ node tests/packs-ui.mjs
 # Workflow diagrams: pack.json's workflow, its drift guard, the route, the Packs card and Models' Steps line (temp HOME, stubbed routes).
 node tests/packs-workflow.mjs
 node tests/packs-security.mjs
+# Building blocks: finding and rating copies, the GET-only route (temp HOME), then the page (stubbed routes).
+node tests/blocks.mjs
+node tests/blocks-ui.mjs
 # A stranger's machine: empty temp HOME, no agent CLI on PATH, every GET route.
 node tests/fresh-home.mjs
 # The setup screen's server half: temp HOMEs, fake CLIs, a fixture tree.
