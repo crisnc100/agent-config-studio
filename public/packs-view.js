@@ -750,11 +750,27 @@ function pkSecurityDiff(rows) {
   return wrap;
 }
 
+/** Set or drop one draft key: dropped when it is what is saved. */
+function pkDraftSet(key, value) {
+  if (JSON.stringify(value) === JSON.stringify(pkSaved()[key])) delete PK_SEC.draft[key];
+  else PK_SEC.draft[key] = value;
+}
+/** The paths box as it is on screen, into the draft: typed text counts whatever was clicked, so nothing on screen is left out of a preview. */
+function pkDraftPaths() {
+  const ta = $('content')?.querySelector('.pk-paths-box');
+  if (ta) PK_SEC.paths = ta.value;
+  if (PK_SEC.paths !== null) pkDraftSet('merge.alwaysHuman', pkPathsOf(PK_SEC.paths));
+}
+
 /** Add a pick to the draft (or drop it when it is what is saved), then preview every pending change at once. */
 async function pkPick(key, value) {
-  const same = JSON.stringify(value) === JSON.stringify(pkSaved()[key]);
-  if (same) delete PK_SEC.draft[key];
-  else PK_SEC.draft[key] = value;
+  pkDraftPaths();
+  if (key !== 'merge.alwaysHuman' || PK_SEC.paths === null) pkDraftSet(key, value);
+  return pkReplan();
+}
+
+/** Preview the whole draft as it stands. */
+async function pkReplan() {
   PK_SEC.error = null; PK_SEC.result = null; PK_SEC.preview = null;
   const seq = ++PK_SEC.seq;
   const changes = { ...PK_SEC.draft };
@@ -770,6 +786,9 @@ async function pkPick(key, value) {
 }
 
 async function pkSettingsApply() {
+  pkDraftPaths();
+  // The box changed after the preview: show the new diff rather than write what is no longer on screen.
+  if (JSON.stringify(PK_SEC.draft) !== JSON.stringify(PK_SEC.preview.changes)) return pkReplan();
   const { changes, view } = PK_SEC.preview;
   PK_SEC.busy = true; PK_SEC.error = null;
   const seq = ++PK_SEC.seq;
