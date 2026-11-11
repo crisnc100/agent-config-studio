@@ -1190,8 +1190,9 @@ export function createApp(opts = {}) {
     return applyJob(parseRequest(await objectBody(req, 16 * 1024), { apply: true }));
   },
   /**
-   * The Building blocks page (lib/blocks.js): each block in blocks/ and every
-   * copy of it in a skill or an instruction file, rated. GET only —
+   * The Shared rules page (lib/blocks.js): each block in blocks/ and every
+   * copy of it in a skill or an instruction file, each copy rated and with
+   * its own text and whether it sits in the studio's packs. GET only:
    * nothing on that page writes. Strict same-origin: the scan reads every
    * skill and instruction file.
    */
