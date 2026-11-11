@@ -101,6 +101,170 @@ try {
   ok(`no test block threw (${err?.message || err})`, false, err?.stack || String(err));
 }
 
+/* ── Shared rules: groups, status, pack copies, repeats, Compare (builds/shared-rules-page A1–A5) ── */
+console.log('\nshared rules: groups, status line, pack copies, repeats');
+const cp = (o) => ({ source: 'claude', kind: 'skill', skill: null, project: null, pack: false, marked: false, note: null, textCut: false, ...o, endLine: o.endLine ?? o.line });
+const RP_TEXT = '1. The operator is involved only at PR merge.\n2. **One** fix round.\n';
+const RICH = {
+  blocks: [
+    { id: 'builders-commit', name: 'Builders commit, never push', summary: 'Builders commit at every phase end and never push.', text: 'Builders commit at every phase end; they never push.\n',
+      marker: '', counts: { same: 0, reworded: 1, differs: 1 }, copies: [
+        cp({ file: '~/.claude/CLAUDE.md', kind: 'instructions', line: 26, rating: 'reworded', text: 'Builders commit at every phase end; they never push it.' }),
+        cp({ file: '~/.claude/CLAUDE.md', kind: 'instructions', line: 168, rating: 'differs', text: 'Builders never push.' }),
+      ] },
+    { id: 'callback-contract', name: 'Callback contract', summary: 'When a builder stops to ask.', text: 'Come back only when the spec is silent.\n',
+      marker: '', counts: { same: 1, reworded: 1, differs: 0 }, copies: [
+        cp({ file: '~/Projects/team-bundle/.claude/skills/build/SKILL.md', source: 'project', skill: 'build', project: 'team-bundle', line: 48, endLine: 52, rating: 'reworded', text: 'Come back only when the brief is silent.' }),
+        cp({ file: '~/.agents/skills/helper/SKILL.md', source: 'shared', skill: 'helper', line: 3, rating: 'same', text: 'Come back only when the spec is silent.' }),
+      ] },
+    { id: 'deferred-findings', name: 'Deferred findings in the PR body', summary: 'List deferred findings.', text: 'Every PR body lists its deferred findings.\n',
+      marker: '', counts: { same: 3, reworded: 0, differs: 0 }, copies: [
+        cp({ file: '~/.codex/AGENTS.md', source: 'codex', kind: 'instructions', line: 197, rating: 'same', text: 'Every PR body lists its deferred findings.' }),
+        cp({ file: 'packs/build/skills/claude/build/SKILL.md', source: 'pack', skill: 'build', pack: true, line: 234, rating: 'same', text: 'Every PR body lists its deferred findings.' }),
+        cp({ file: 'packs/build/skills/codex/build/SKILL.md', source: 'pack', skill: 'build', pack: true, line: 123, rating: 'same', text: 'Every PR body lists its deferred findings.' }),
+      ] },
+    { id: 'lookup-test', name: 'The lookup test', summary: 'Only ask what cannot be looked up.', text: 'If you can look it up, it is not a question.\n',
+      marker: '', counts: { same: 0, reworded: 1, differs: 0 }, copies: [
+        cp({ file: 'packs/advisor/skills/claude/advisor/SKILL.md', source: 'pack', skill: 'advisor', pack: true, line: 105, endLine: 112, rating: 'reworded', text: 'If it can be looked up, it is not a question.' }),
+      ] },
+    { id: 'operator-merges', name: 'Only the operator merges', summary: 'Agents never merge.', text: 'Never merge a PR or enable auto-merge.\n',
+      marker: '', counts: { same: 0, reworded: 0, differs: 0 }, copies: [] },
+    { id: 'review-policy', name: 'Review policy', summary: 'The eleven rules for a review.', text: RP_TEXT,
+      marker: '', counts: { same: 1, reworded: 1, differs: 2 }, copies: [
+        cp({ file: '~/.claude/skills/build/SKILL.md', skill: 'build', line: 220, endLine: 230, rating: 'reworded', marked: true, note: 'edited after it was added', text: '1. The operator is involved only at merge.\n2. **One** fix round.' }),
+        cp({ file: '~/.claude/skills/code-review/SKILL.md', skill: 'code-review', line: 65, rating: 'differs', text: 'One fix round.' }),
+        cp({ file: '~/.claude/skills/code-review/SKILL.md', skill: 'code-review', line: 103, endLine: 117, rating: 'differs', note: 'the whole block is there, with more added',
+          text: 'First read the plan. 1. The operator is involved only at PR merge. 2. One fix round. Then report.' }),
+        cp({ file: '~/.claude/skills/review/SKILL.md', skill: 'review', line: 40, endLine: 41, rating: 'same', text: '1. The operator is involved only at PR merge.\n2. One fix round.' }),
+        cp({ file: 'packs/build/skills/claude/build/SKILL.md', source: 'pack', skill: 'build', pack: true, line: 222, endLine: 232, rating: 'same', text: RP_TEXT.trim() }),
+      ] },
+  ],
+  scanned: { files: 40, unreadable: [] },
+};
+const rcalls = [];
+const rich = () => { const fn = routesFor({ 'GET /api/blocks': () => RICH }); return Object.assign(async (m, pth, b, u) => { rcalls.push(`${m} ${pth}`); return fn(m, pth, b, u); }, fn); };
+const until = async (cond) => { for (let i = 0; i < 80 && !cond(); i++) await settle(5); return cond(); };
+try {
+  const p = await bootPage({ routes: rich(), hash: '#blocks' });
+  const c = p.$('content');
+  const t = (n) => (n ? p.text(n) : '');
+  await until(() => c.querySelector('.bb-card'));
+  ok('A1 the page heading and the top bar say "Shared rules"', t(c.querySelector('h2.vh')) === 'Shared rules' && t(p.$('title')) === 'Shared rules', `${t(c.querySelector('h2'))} / ${t(p.$('title'))}`);
+  ok('A1 the intro is always shown, word for word', t(c.querySelector('.bb-intro')) === 'Some rules appear in more than one of your instruction files and skills. The studio keeps one reference version of each and checks every file for it. When copies drift apart, your agents follow different versions of the same rule, depending on which file they read.',
+    t(c.querySelector('.bb-intro')));
+  ok('A1 the status line, computed: rules per group, then the files checked', t(c.querySelector('.bb-total')) === '2 rules need a look · 1 has small wording changes · 1 matches everywhere · 2 not in your files · checked 40 files',
+    t(c.querySelector('.bb-total')));
+  const again = c.querySelector('.bb-bar button');
+  ok('…with a quiet Check again beside it', t(again) === 'Check again' && /\bbtn\b/.test(again.className) && /\bghost\b/.test(again.className), again?.className);
+  const groups = c.querySelectorAll('.bb-group');
+  const shape = groups.map((g) => [t(g.querySelector('.bb-group-title')), t(g.querySelector('.bb-group-sub')), g.querySelectorAll('.bb-card').map((k) => k.id)]);
+  ok('A1 the groups, in order, each with its one line, each rule under its worst copy of yours', JSON.stringify(shape) === JSON.stringify([
+    ['Needs a look', 'At least one copy is quite different from the reference: it may leave part of the rule out, add other rules, or sit inside a longer paragraph.', ['bb-builders-commit', 'bb-review-policy']],
+    ['Small wording changes', 'Every copy is close to the reference, with a few words changed. Check that the meaning held.', ['bb-callback-contract']],
+    ['Match everywhere', 'Every copy is word for word the same.', ['bb-deferred-findings']],
+    ['Not in your files', 'The studio has these rules, but none of your files carries a copy.', ['bb-lookup-test', 'bb-operator-merges']],
+  ]), JSON.stringify(shape));
+  const card = (id) => c.querySelector(`#bb-${id}`);
+  ok('a rule found only in the studio\'s packs is not in your files, and says so', t(card('lookup-test').querySelector('.bb-counts')) === 'Not found in any of your files.'
+    && !card('lookup-test').querySelector('.bb-copies'), t(card('lookup-test')));
+  ok('the lead line counts your copies only', t(card('review-policy').querySelector('.bb-counts')) === '1 of 4 copies match' && t(card('deferred-findings').querySelector('.bb-counts')) === '1 of 1 copy matches'
+    && t(card('callback-contract').querySelector('.bb-counts')) === '1 of 2 copies matches', ['review-policy', 'deferred-findings', 'callback-contract'].map((x) => t(card(x).querySelector('.bb-counts'))).join(' | '));
+  ok('A4 pack copies are one quiet line per rule, never rows', t(card('review-policy').querySelector('.bb-packs')) === 'Also in the studio\'s own packs: 1 copy (you don\'t need to change these).'
+    && t(card('deferred-findings').querySelector('.bb-packs')) === 'Also in the studio\'s own packs: 2 copies (you don\'t need to change these).'
+    && t(card('lookup-test').querySelector('.bb-packs')) === 'Also in the studio\'s own packs: 1 copy (you don\'t need to change these).'
+    && !card('callback-contract').querySelector('.bb-packs') && !c.querySelectorAll('.bb-path').some((n) => /^packs\//.test(t(n))), c.querySelectorAll('.bb-packs').map(t).join(' | '));
+  const flags = c.querySelectorAll('.bb-copy').filter((r) => r.querySelector('.bb-flag')).map((r) => [t(r.querySelector('.bb-place')), t(r.querySelector('.bb-flag'))]);
+  ok('A4 a rule found twice in one file is flagged on both copies, and nowhere else', JSON.stringify(flags) === JSON.stringify([
+    ['CLAUDE.md (Claude, global) · line 168', 'Appears twice in this file'], ['CLAUDE.md (Claude, global) · line 26', 'Appears twice in this file'],
+    ['SKILL.md in the code-review skill (Claude) · line 65', 'Appears twice in this file'], ['SKILL.md in the code-review skill (Claude) · lines 103–117', 'Appears twice in this file']]), JSON.stringify(flags));
+  const places = c.querySelectorAll('.bb-copy').map((r) => t(r.querySelector('.bb-place')));
+  ok('A6 places in words: a project\'s skill names the project folder, the shared folder says so, Codex\'s global file says Codex',
+    places.includes('SKILL.md in the build skill (team-bundle project) · lines 48–52') && places.includes('SKILL.md in the helper skill (shared skills folder) · line 3')
+    && places.includes('AGENTS.md (Codex, global) · line 197'), places.join(' | '));
+  ok('A3 labels are Matches, Small changes and Big changes, and only Big changes takes the warning colour', JSON.stringify([...new Set(c.querySelectorAll('.bb-rating').map(t))].sort()) === JSON.stringify(['Big changes', 'Matches', 'Small changes'])
+    && c.querySelectorAll('.bb-rating').every((r) => r.classList.contains('bb-rating-differs') === (t(r) === 'Big changes')));
+  ok('A3 nothing on the page claims the same meaning, and no "marked", "block" or "differs" outside quoted rule text', (() => {
+    let words = t(c);
+    for (const n of c.querySelectorAll('.bb-text')) words = words.split(t(n)).join('');
+    return !/same meaning|\bmarked\b|\bblocks?\b|\bdiffers?\b|\breworded\b/i.test(words);
+  })(), t(c).slice(0, 600));
+  ok('the summary is cut when it repeats the rule\'s text; kept when it does not', !card('builders-commit').querySelector('.bb-summary') && t(card('review-policy').querySelector('.bb-summary')) === 'The eleven rules for a review.');
+  const cmp = (id) => card(id).querySelectorAll('button').filter((b) => t(b) === 'Compare copies');
+  ok('A2 Compare copies: primary on each Needs a look rule, secondary on Small wording changes, none elsewhere', cmp('builders-commit').length === 1 && /\bprimary\b/.test(cmp('review-policy')[0]?.className)
+    && cmp('callback-contract').length === 1 && cmp('callback-contract')[0].className === 'btn' && !cmp('deferred-findings').length && !cmp('lookup-test').length && !cmp('operator-merges').length);
+  ok('no link-looking tags: no copy-type tag and no bare file:line', !c.querySelector('.bb-kind, .bb-where, .bb-marked'));
+  ok('no page errors on the list', p.errors.length === 0, p.errors.join(' | '));
+
+  console.log('\nCompare copies: its own view');
+  rcalls.length = 0;
+  cmp('review-policy')[0].click();
+  await until(() => c.querySelector('.bb-cmp'));
+  ok('A2 Compare opens its own view at #blocks/compare&rule=<id>, not a fold', p.eval('S.view') === 'blocks-compare' && p.location.hash === '#blocks/compare&rule=review-policy'
+    && !c.querySelector('.bb-card'), `${p.eval('S.view')} ${p.location.hash}`);
+  ok('…titled with the rule, and the sidebar keeps Shared rules marked', t(c.querySelector('h2')) === 'Compare copies: Review policy' && p.$('btn-blocks').classList.contains('active')
+    && t(p.$('title')) === 'Shared rules', `${t(c.querySelector('h2'))} | ${p.$('btn-blocks').className}`);
+  ok('…says it compares words, not meaning, with a legend for both marks', /compares words, not meaning/i.test(t(c.querySelector('.bb-cmp-intro')))
+    && t(c.querySelector('.bb-legend .bb-missing')) === 'Missing from this copy' && t(c.querySelector('.bb-legend .bb-only')) === 'Only in this copy', t(c).slice(0, 400));
+  const cs = c.querySelectorAll('.bb-cmp');
+  ok('one section per copy of yours, worst first; pack copies are a quiet line', cs.length === 4 && JSON.stringify(cs.map((x) => t(x.querySelector('.bb-place'))))
+    === JSON.stringify(['SKILL.md in the code-review skill (Claude) · line 65', 'SKILL.md in the code-review skill (Claude) · lines 103–117', 'SKILL.md in the build skill (Claude) · lines 220–230', 'SKILL.md in the review skill (Claude) · lines 40–41'])
+    && /Also in the studio's own packs: 1 copy/.test(t(c.querySelector('.bb-packs'))), cs.map((x) => t(x.querySelector('.bb-place'))).join(' | '));
+  const sq = (x) => x.replace(/\s+/g, ' ').trim();
+  const buried = cs[1];
+  ok('A2 each copy shows the reference beside its own actual text', !!buried.querySelector('.bb-ref') && !!buried.querySelector('.bb-mine')
+    && sq(t(buried.querySelector('.bb-mine .bb-diff'))) === 'First read the plan. 1. The operator is involved only at PR merge. 2. One fix round. Then report.'
+    && sq(t(buried.querySelector('.bb-ref .bb-diff'))) === sq(RP_TEXT), buried.innerHTML.slice(0, 600));
+  ok('A2 …words only in the copy are marked in the copy', JSON.stringify(buried.querySelectorAll('.bb-mine .bb-only').map(t)) === JSON.stringify(['First read the plan.', 'Then report.'])
+    && !buried.querySelector('.bb-ref .bb-missing'), JSON.stringify(buried.querySelectorAll('.bb-only').map(t)));
+  ok('A2 …and words missing from the copy are marked in the reference', JSON.stringify(cs[2].querySelectorAll('.bb-ref .bb-missing').map(t)) === JSON.stringify(['PR'])
+    && !cs[2].querySelector('.bb-mine .bb-only'), cs[2].innerHTML.slice(0, 500));
+  ok('…Markdown marks, case and punctuation are not differences', !cs[3].querySelector('.bb-only, .bb-missing'));
+  ok('a copy that matches says so instead of two columns', t(cs[3].querySelector('.bb-same')) === 'Word for word the same as the reference.' && !cs[3].querySelector('.bb-mine'));
+  ok('each copy keeps its label and note', t(cs[1].querySelector('.bb-rating')) === 'Big changes' && t(cs[1].querySelector('.bb-note')) === 'The whole rule is here, inside longer text.'
+    && t(cs[0].querySelector('.bb-flag')) === 'Appears twice in this file');
+  const kinds = c.querySelectorAll('button');
+  ok('no fold here either, and every button is primary, secondary or quiet', !c.querySelector('details, summary, [aria-expanded]') && kinds.length > 0 && kinds.every((b) => /\bbtn\b/.test(b.className)),
+    kinds.map((b) => b.className).join(' | '));
+  ok('A5 opening Compare asks the server nothing', rcalls.length === 0, rcalls.join(', '));
+  const back = kinds.find((b) => t(b) === 'Back');
+  ok('a Back button', !!back);
+  back.click();
+  await until(() => c.querySelector('.bb-card'));
+  ok('Back returns to the list at #blocks, without reading every file again, focused on that rule\'s Compare copies', p.eval('S.view') === 'blocks' && p.location.hash === '#blocks'
+    && rcalls.length === 0 && p.doc.activeElement === card('review-policy').querySelectorAll('button').find((b) => t(b) === 'Compare copies'), `${p.eval('S.view')} ${p.location.hash} ${rcalls.join(',')}`);
+  ok('no page errors on Compare and Back', p.errors.length === 0, p.errors.join(' | '));
+  p.done();
+
+  // A link straight to a comparison reads the rules once and opens it.
+  rcalls.length = 0;
+  const q = await bootPage({ routes: rich(), hash: '#blocks/compare&rule=callback-contract' });
+  await until(() => q.$('content').querySelector('.bb-cmp'));
+  ok('a link to #blocks/compare&rule=<id> opens that comparison, reading the rules once', q.eval('S.view') === 'blocks-compare' && q.text(q.$('content').querySelector('h2')) === 'Compare copies: Callback contract'
+    && rcalls.filter((x) => x === 'GET /api/blocks').length === 1 && rcalls.every((x) => x.startsWith('GET ')), rcalls.join(', '));
+  q.done();
+  const u = await bootPage({ routes: rich(), hash: '#blocks/compare&rule=gone-rule' });
+  await until(() => /not on the list/.test(u.text(u.$('content'))));
+  ok('a rule that is no longer there says so plainly, with Back', /That rule is not on the list any more\./.test(u.text(u.$('content')))
+    && u.$('content').querySelectorAll('button').some((b) => u.text(b) === 'Back' && /\bbtn\b/.test(b.className)), u.text(u.$('content')));
+  u.done();
+
+  console.log('\nthe word diff');
+  const d = await bootPage({ routes: rich(), hash: '#home' });
+  const diff = (a, b) => JSON.parse(d.eval(`JSON.stringify(bbWordDiff(${JSON.stringify(a)}, ${JSON.stringify(b)}))`));
+  const marked = (side) => side.filter((x) => x.mark).map((x) => x.text.trim());
+  const w = diff('Never merge a PR or enable auto-merge.', 'Never merge a pull request. Only the user merges.');
+  ok('missing words are marked on the reference side, extra words on the copy side, runs joined', JSON.stringify(marked(w.ref)) === JSON.stringify(['PR or enable auto-merge.'])
+    && JSON.stringify(marked(w.copy)) === JSON.stringify(['pull request. Only the user merges.']), JSON.stringify(w));
+  ok('both sides keep every character of their text', w.ref.map((x) => x.text).join('') === 'Never merge a PR or enable auto-merge.' && w.copy.map((x) => x.text).join('') === 'Never merge a pull request. Only the user merges.');
+  const same = diff('**Never** merge, a PR.\n- or enable it', 'never merge a pr or\nenable it!');
+  ok('case, punctuation, Markdown marks and line breaks are not differences', !same.ref.some((x) => x.mark) && !same.copy.some((x) => x.mark), JSON.stringify(same));
+  const moved = diff('alpha beta gamma', 'gamma alpha beta');
+  ok('a moved word shows as missing in one place and extra in the other', JSON.stringify(marked(moved.ref)) === JSON.stringify(['gamma']) && JSON.stringify(marked(moved.copy)) === JSON.stringify(['gamma']), JSON.stringify(moved));
+  d.done();
+} catch (err) {
+  ok(`no shared-rules test block threw (${err?.message || err})`, false, err?.stack || String(err));
+}
+
 /* ── static: the view only reads; its colours are the theme's ────────── */
 console.log('\nstatic: blocks-view.js and its styles');
 {
@@ -124,6 +288,11 @@ console.log('\nstatic: blocks-view.js and its styles');
   const px = code.flatMap((m) => [...m[2].matchAll(/font-size\s*:\s*(\d+(?:\.\d+)?)px/g)].map((x) => Number(x[1])));
   ok('inline code in block text is 12px or larger, in the darker accent ink', px.length > 0 && Math.min(...px) >= 12
     && code.some((m) => /color\s*:\s*var\(--accent-ink\)/.test(m[2])), code.map((m) => m[0].trim()).join(' | '));
+  const ruleColour = (cls) => (bb.find((m) => m[1].trim() === `.bb-rating-${cls}`) || [, , ''])[2];
+  ok('A3 only Big changes takes the warning colour; Small changes and Matches are calm', /var\(--amber-ink\)/.test(ruleColour('differs'))
+    && !/--(amber|red)/.test(ruleColour('reworded')) && !/--(amber|red)/.test(ruleColour('same')), ['differs', 'reworded', 'same'].map(ruleColour).join(' | '));
+  const fontPx = bb.flatMap((m) => [...m[2].matchAll(/font(?:-size)?\s*:\s*[^;]*?(\d+(?:\.\d+)?)px/g)].map((x) => [m[1].trim(), Number(x[1])]));
+  ok('A6 nothing on the page is under 11px', fontPx.length > 5 && fontPx.every(([, n]) => n >= 11), fontPx.filter(([, n]) => n < 11).map((x) => x.join(' ')).join(' | '));
   const cc = fs.readFileSync(path.join(path.dirname(PUB), 'blocks', 'callback-contract.md'), 'utf8').match(/^summary: (.*)$/m)?.[1] || '';
   ok('the callback contract\'s summary reads as a sentence (no ", and that")', cc.length > 20 && !/, and that\b/.test(cc), cc);
   const html = fs.readFileSync(path.join(PUB, 'index.html'), 'utf8');

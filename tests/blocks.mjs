@@ -155,6 +155,11 @@ console.log('\nwhere copies are looked for');
   const wider = B.sourceFiles({ dirs: more, packsDir: path.join(t, 'none'), instructions: [] });
   ok('…and sourceFiles reads skills from them, labelled skills', JSON.stringify(wider.map((f) => path.relative(t, f.abs)).sort()) === JSON.stringify(['repo-x/.agents/skills/p/SKILL.md', 'shared-home/.agents/skills/s/SKILL.md'])
     && wider.every((f) => f.kind === 'skill'), JSON.stringify(wider));
+  ok('A6 a project\'s skill folders name their project folder; the shared folder names none', more.slice(1).every((d) => d.project === 'repo-x') && !more[0].project, JSON.stringify(more));
+  const pf = wider.find((f) => f.abs.includes('repo-x')), sf = wider.find((f) => f.abs.includes('shared-home'));
+  ok('…and each skill file carries its skill folder\'s name and its project, if any', pf?.skill === 'p' && pf.project === 'repo-x' && sf?.skill === 's' && !sf.project, JSON.stringify(wider));
+  ok('…a global instruction file carries neither', files.filter((f) => f.kind === 'instructions' && f.source !== 'pack').every((f) => !f.skill && !f.project)
+    && files.find((f) => f.abs.endsWith('one/references/more.md'))?.skill === 'one', JSON.stringify(files.map((f) => [f.display.slice(-24), f.skill, f.project])));
 
   // The whole view over that tree, with the test blocks.
   const bdir = path.join(t, 'blocks');
@@ -170,6 +175,22 @@ console.log('\nwhere copies are looked for');
   ok('…a pack instruction file\'s copy is labelled an instruction file', b.copies.find((c) => c.file === 'packs/p/instructions/p.md')?.kind === 'instructions'
     && b.copies.find((c) => c.file.endsWith('claude-skills/one/SKILL.md'))?.kind === 'skill', JSON.stringify(b.copies));
   ok('…and how many files it read', v.scanned.files === 5 && v.scanned.unreadable.length === 0, JSON.stringify(v.scanned));
+  const mineCopy = b.copies.find((c) => c.file.endsWith('claude-skills/one/SKILL.md')), packCopy = b.copies.find((c) => c.file === 'packs/p/instructions/p.md');
+  ok('A2 each copy carries its text: an unmarked copy\'s lines, a marked copy\'s lines between its markers', mineCopy?.text === `${P1}\n\n${P2}`
+    && packCopy?.text === BODY.replace(/\n$/, '') && b.copies.every((c) => c.textCut === false), JSON.stringify(b.copies));
+  ok('A4 …whether it sits in the studio\'s packs, and its skill folder', packCopy?.pack === true && mineCopy?.pack === false && mineCopy.skill === 'one' && !mineCopy.project,
+    JSON.stringify(b.copies));
+  // A long copy is cut, so the page's payload stays small however big a buried copy is.
+  const longDir = path.join(t, 'long-skills');
+  const extra = Array.from({ length: 80 }, (_, i) => `extra line ${i}`).join('\n');
+  put(path.join(longDir, 'big', 'SKILL.md'), `<!-- block:test-rule sha256:${sha(BODY)} -->\n${BODY}${extra}\n<!-- /block:test-rule -->\n`);
+  put(path.join(longDir, 'wide', 'SKILL.md'), `<!-- block:test-rule sha256:${sha(BODY)} -->\n${BODY}${'word '.repeat(2000)}\n<!-- /block:test-rule -->\n`);
+  const lv = B.blocksView({ blocksDir: bdir, dirs: [{ harness: 'claude', dir: longDir }], packsDir: path.join(t, 'none'), instructions: [] });
+  const big = lv.blocks[0].copies.find((c) => c.skill === 'big'), wide = lv.blocks[0].copies.find((c) => c.skill === 'wide');
+  ok('a long copy\'s text stops at BLOCK_LIMITS.copyLines lines and says it was cut', B.BLOCK_LIMITS.copyLines === 60 && big?.text.split('\n').length === 60
+    && big.textCut === true && big.text.startsWith(P1), JSON.stringify(big).slice(0, 300));
+  ok('…and at BLOCK_LIMITS.copyChars characters', B.BLOCK_LIMITS.copyChars === 6000 && wide?.text.length <= 6000 && wide.textCut === true && wide.text.startsWith(P1),
+    `${wide?.text.length} ${wide?.textCut}`);
 }
 
 /* ── the route, through a real server ───────────────────────────────── */
@@ -219,11 +240,20 @@ try {
   ok('the global CLAUDE.md is read: one copy, labelled an instruction file; the one inside the model guide is skipped',
     instr.length === 1 && instr[0].kind === 'instructions' && instr[0].line === 3 && instr[0].rating === 'same', JSON.stringify(instr));
   ok('skill copies are labelled skills', claudeCopy?.kind === 'skill' && codexCopy?.kind === 'skill');
+  ok('A2 each copy carries its own text: the marked copy\'s lines between its markers, the unmarked copy\'s lines', claudeCopy?.text === shipped.body.replace(/\n$/, '')
+    && codexCopy?.text === shipped.body.replace('Only the operator merges.', 'Only the user merges.').replace(/\n$/, '') && instr[0]?.text === shipped.body.replace(/\n$/, ''),
+    JSON.stringify([claudeCopy, codexCopy, instr[0]]));
+  ok('A4 copies in the checkout\'s packs say so; the others do not', body.blocks.every((b) => b.copies.every((c) => c.pack === c.file.startsWith('packs/')))
+    && body.blocks.some((b) => b.copies.some((c) => c.pack)), JSON.stringify(body.blocks.flatMap((b) => b.copies.map((c) => [c.file, c.pack]))).slice(0, 400));
   ok('the checkout\'s packs are read too', body.scanned.files > 2 && body.blocks.some((b) => b.copies.some((c) => c.file.startsWith('packs/'))), JSON.stringify(body.scanned));
   ok('no absolute home path in the answer', !JSON.stringify(body).includes(home));
   const wide = ['~/.agents/skills/shared-one/SKILL.md', ...['.claude', '.codex', '.agents'].map((d) => `~/Projects/repo-a/${d}/skills/proj-one/SKILL.md`)];
   ok('C5 copies in ~/.agents/skills and in each project skill folder are listed, labelled skills, rated same',
     wide.every((f) => mine?.copies.some((c) => c.file === f && c.kind === 'skill' && c.marked && c.rating === 'same')), JSON.stringify(mine?.copies.map((c) => c.file)));
+  const projCopies = mine?.copies.filter((c) => c.file.startsWith('~/Projects/repo-a/')) || [];
+  ok('A6 a project skill\'s copy names its project folder and skill; a home skill\'s names no project', projCopies.length === 3
+    && projCopies.every((c) => c.project === 'repo-a' && c.skill === 'proj-one' && c.source === 'project') && claudeCopy?.skill === 'demo' && !claudeCopy.project,
+    JSON.stringify(projCopies));
   const cross = await fetch(`${base}/api/blocks`, { headers: { 'sec-fetch-site': 'same-site' } });
   ok('strict same-origin: another localhost page is refused (403)', cross.status === 403, String(cross.status));
   for (const m of ['POST', 'PUT', 'DELETE', 'PATCH']) {
