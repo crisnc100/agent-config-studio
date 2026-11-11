@@ -97,7 +97,7 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
   ok('…gone once Codex is unchecked', !C(p).querySelector('.sw-overlap') && p.text(C(p).querySelector('.sw-target')) === 'Creates ~/.claude/skills/cut-release/SKILL.md and ~/.agents/skills/cut-release/SKILL.md');
   await click(box(p, 'claude'));
   await click(box(p, 'shared'));
-  ok('nothing checked → an error, and Draft is disabled', /Check at least one/.test(p.text(C(p).querySelector('.sw-target'))) && btn(p, 'Draft the skill').disabled);
+  ok('nothing checked → an error, and Next is disabled', /Check at least one/.test(p.text(C(p).querySelector('.sw-target'))) && btn(p, 'Next').disabled);
   await click(box(p, 'claude'));
   await click(box(p, 'codex'));
 
@@ -106,12 +106,13 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
   p.input(C(p).querySelector('.sw-name'), 'taken-one');
   await settle(300);
   const t = p.text(C(p).querySelector('.sw-target'));
-  ok('a name taken in ~/.codex only: that one is named, Draft disabled', /~\/\.codex\/skills\/taken-one already exists/.test(t) && !/\.claude/.test(t) && btn(p, 'Draft the skill').disabled, t);
+  ok('a name taken in ~/.codex only: that one is named, Next disabled', /~\/\.codex\/skills\/taken-one already exists/.test(t) && !/\.claude/.test(t) && btn(p, 'Next').disabled, t);
   p.input(C(p).querySelector('.sw-name'), 'cut-release');
   await settle(300);
-  ok('…a free name clears it', !btn(p, 'Draft the skill').disabled);
+  ok('…a free name clears it', !btn(p, 'Next').disabled);
 
   // Create: both, one fails, Retry sends only that one.
+  await click(btn(p, 'Next'));
   await click(btn(p, 'Draft the skill'));
   await settle(20);
   ok('Review says where it goes: both paths', /written exactly as shown, to ~\/\.claude\/skills\/cut-release\/SKILL\.md and ~\/\.codex\/skills\/cut-release\/SKILL\.md/.test(p.text(C(p))));
@@ -147,6 +148,7 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
   await click(box(p, '.agents'));
   ok('….codex and .agents both checked → the overlap warning', /Codex loads this skill twice/.test(p.text(C(p).querySelector('.sw-overlap')) || ''));
   await click(box(p, '.agents'));
+  await click(btn(p, 'Next'));
   await click(btn(p, 'Draft the skill'));
   await settle(20);
   await click(btn(p, 'Create'));
@@ -164,6 +166,7 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
 {
   // Giving up on the failed one: Finish opens what was created and says what was not.
   const p = await boot();
+  await click(btn(p, 'Next'));
   await click(btn(p, 'Draft the skill'));
   await settle(20);
   p.st.fail.push(['claude']);

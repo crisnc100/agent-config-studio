@@ -187,6 +187,24 @@ try {
     ok('W4 a malformed draft is refused (Regenerate)', bad.status === 502 && /refused twice/.test(bad.body.error));
   }
 
+  console.log('\nbuilding blocks through the server');
+  {
+    const { loadBlocks, scanText } = await import('../lib/blocks.js');
+    const shipped = loadBlocks();
+    const info = await get('/api/skill-wizard');
+    ok('GET /api/skill-wizard carries every block by id, name and summary only', info.status === 200 && Array.isArray(info.body.blocks)
+      && JSON.stringify(info.body.blocks) === JSON.stringify(shipped.map((b) => ({ id: b.id, name: b.name, summary: b.summary }))), JSON.stringify(info.body.blocks).slice(0, 300));
+    setMode({ kind: 'script', questions: [], name: 'cut-release', draft: draftFor('{{name}}') });
+    const unknown = await post('/api/skill-wizard/turn', turn({ seq: 20, kind: 'draft', name: 'cut-release', blocks: ['no-such-block'] }));
+    ok('an unknown block id → 400, and no model run', unknown.status === 400 && calls().length === 0, `${unknown.status} ${unknown.text.slice(0, 160)}`);
+    const r = await post('/api/skill-wizard/turn', turn({ seq: 21, kind: 'draft', name: 'cut-release', blocks: ['operator-merges'] }));
+    const merges = shipped.find((b) => b.id === 'operator-merges');
+    const copies = r.status === 200 ? scanText(r.body.content, shipped) : [];
+    ok('a draft with a block comes back with it pasted, marked and rated same', r.status === 200 && copies.length === 1 && copies[0].id === 'operator-merges' && copies[0].marked && copies[0].rating === 'same', `${r.status} ${r.text.slice(0, 300)}`);
+    const prompt = readFake('prompt.txt');
+    ok('…and the prompt the CLI got names it but holds none of its text', prompt.includes(`- ${merges.name}`) && !merges.body.split('\n').filter(Boolean).some((l) => prompt.includes(l)), prompt.slice(-800));
+  }
+
   console.log('\nstructured turns through the server');
   {
     const tricky = { question: 'Keep "house style" and {placeholders} as they are?', recommended: 'Yes: "untouched" }' };
