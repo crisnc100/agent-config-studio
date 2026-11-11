@@ -122,7 +122,7 @@ const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--pl
 // Every flag this copy reads. Anything else is refused: an older copy that ignored an unknown flag ran a full review in
 // its place, so a skill asking for a mode this copy lacks gets an error, never a different command.
 const KNOWN_FLAGS = [...VALUE_FLAGS, '--all', '--calibrate', '--code-only', '--deferred', '--eval', '--gate', '--log-outcome', '--noise-report',
-  '--rubric', '--security-findings', '--security-only', '--show-config', '--summary', '--tier-json', '--yes']
+  '--rubric', '--security-findings', '--security-only', '--show-config', '--summary', '--tier-json', '--yes', '--cross-family']
 // --log-outcome takes positional values; none of them is a flag.
 const unknownFlag = args.find((a, i) => a.startsWith('--') && !KNOWN_FLAGS.includes(a) && !VALUE_FLAGS.includes(args[i - 1]) && !args.slice(0, i).includes('--log-outcome'))
 if (unknownFlag !== undefined) stop(`unknown flag ${unknownFlag}`)
@@ -154,6 +154,8 @@ const COMMAND_KEYS = ['verifyCmd', 'classifier', 'base']
 const OWN_FILE_KEYS = [...COMMAND_KEYS, 'coverageExempt', 'coverageExemptDefaults', 'grokMcpAllow']
 // Set when the repo file failed that check: its `pick` may name a family, never a command to run.
 let REPO_PICK_UNTRUSTED = false
+// Whether the loaded config may turn crossFamily off: the home config, or a repo file git doesn't track.
+let CONFIG_CROSS_TRUSTED = false
 const sameFile = (a, b) => {
   try {
     return realpathSync(a) === realpathSync(b)
@@ -326,6 +328,10 @@ function loadConfig() {
     if (config) {
       // REVIEW_CONFIG, or a repo file that is the older home config while the primary one exists, never goes below the floor.
       const floorFile = homeSource(homes)
+      const isFloor = !!floorFile && sameFile(p, floorFile)
+      CONFIG_CROSS_TRUSTED = !env && !repo ? true
+        : env || homes.some((home) => sameFile(p, home)) ? isFloor
+        : Object.hasOwn(config, 'crossFamily') && repoFileIsOwn(p, homes)
       if ((env || repo && homes.some((home) => sameFile(p, home))) && !(floorFile && sameFile(p, floorFile))) {
         config.security = Object.hasOwn(config, 'security') ? stricterSecurity(config.security, homeKey(homes, 'security'), p) : homeKey(homes, 'security')
         // The same floor for merge: such a file may only tighten the home config's merge settings.
@@ -360,6 +366,44 @@ const SECURITY = (() => {
   return settings
 })()
 const cfg = (envName, key, dflt) => process.env[envName] ?? CONFIG[key] ?? dflt
+// crossFamily: "prefer" (the default: reviews, /build's Grade and the check on test changes prefer a vendor other than
+// the author's) | "off". The home config is the floor: REVIEW_CONFIG and a tracked repo file, which an agent or the
+// repository can set, and REVIEW_CROSS_FAMILY may turn it on, never off. An untracked repo file is the operator's own.
+// REVIEW_CROSS_FAMILY=off still counts when no config sets crossFamily at all.
+const CROSS_FAMILY_MODES = ['prefer', 'off']
+const CROSS_FAMILY_NOTES = []
+const CROSS_FAMILY = (() => {
+  const homes = [join(homedir(), '.agent-config-studio', 'review-gate', 'config.json'), join(homedir(), '.claude', 'review-config.json')]
+  const mode = (value, where) => {
+    if (value == null || String(value).trim() === '') return null
+    const asked = String(value).trim().toLowerCase()
+    if (CROSS_FAMILY_MODES.includes(asked)) return asked
+    CROSS_FAMILY_NOTES.push(`⚠ crossFamily ${JSON.stringify(value)}${where ? ` in ${where}` : ''} is not prefer|off — using prefer`)
+    return 'prefer'
+  }
+  const ignore = (what) => {
+    if (!args.includes('--gate'))
+      console.warn(`⚠ Ignoring ${what}: the repository or an agent can set it, so it may only turn cross-vendor checks on, never off`)
+  }
+  const home = homeSource(homes), loadedIsHome = !!home && !!CONFIG._source && sameFile(CONFIG._source, home)
+  const fromHome = mode(homeKey(homes, 'crossFamily'), home)
+  let chosen = fromHome ?? 'prefer'
+  const own = loadedIsHome ? null : mode(CONFIG.crossFamily, CONFIG._source)
+  if (own === 'prefer' || (own === 'off' && CONFIG_CROSS_TRUSTED)) chosen = own
+  else if (own === 'off' && chosen === 'prefer') ignore(`crossFamily "off" in ${CONFIG._source}`)
+  const asked = mode(process.env.REVIEW_CROSS_FAMILY, 'REVIEW_CROSS_FAMILY')
+  if (asked === 'prefer') chosen = 'prefer'
+  else if (asked === 'off' && chosen === 'prefer') {
+    if (fromHome == null && own == null) chosen = 'off'
+    else ignore(`REVIEW_CROSS_FAMILY=${process.env.REVIEW_CROSS_FAMILY}`)
+  }
+  return chosen
+})()
+// --cross-family: the resolved setting alone, for the skills that grade or check test changes. It needs no reviewer pool.
+if (args.includes('--cross-family')) {
+  console.log(CROSS_FAMILY)
+  process.exit(0)
+}
 // fixCheck: "risk" (the default: a fix touching tests, verify scripts or riskPaths needs a fix check before close) |
 // "always" (any code fix after the review needs one; docs, static, coverage-exempt and builds/ files never do). Every
 // source may only raise it: the home config is the floor, and REVIEW_FIX_CHECK, REVIEW_CONFIG or a repo file can't lower it.
@@ -1163,11 +1207,8 @@ function selectReviewer(stats, { dryRun = false } = {}) {
         `  Fix: check \`model-id ${pick}\` and the families in ACS → Models, or pick another family.`)
     requireCli(unusablePick, named)
   }
-  let crossFamily = String(cfg('REVIEW_CROSS_FAMILY', 'crossFamily', 'prefer')).trim().toLowerCase() || 'prefer'
-  if (crossFamily !== 'prefer' && crossFamily !== 'off') {
-    notes.push(`⚠ crossFamily "${crossFamily}" is not prefer|off — using prefer`)
-    crossFamily = 'prefer'
-  }
+  const crossFamily = CROSS_FAMILY
+  notes.push(...CROSS_FAMILY_NOTES)
   const author = String(cfg('REVIEW_AUTHOR', 'author', '')).trim().toLowerCase()
   const authorVendor = author ? vendorOfName(author, members) : null
   if (author && !authorVendor) notes.push(`⚠ author "${author}" is not a known family or vendor — treated as unknown`)
@@ -1227,7 +1268,9 @@ function selectReviewer(stats, { dryRun = false } = {}) {
     m = requireCli(member, `routing → ${route.family}`)
     pickWhy = route.why
     // Routing ignores crossFamily: a small diff goes to its family even when the builder shares its vendor.
-    crossWhy = ''
+    crossWhy = authorVendor && crossFamily === 'prefer' && m.vendor === authorVendor
+      ? `same vendor: ${route.small ? 'small-diff' : 'catch-all'} route (author ${author} is also ${authorVendor})`
+      : ''
   } else if (classifierPick) {
     m = candidates[0]
     if (dryRun) pickWhy = `pick=${pick}: decided at review time (fallback shown: ${m.family})`
@@ -1303,7 +1346,7 @@ function routeFor(rules, stats) {
   const why = rule.maxLines === undefined
     ? `route: ${size} → ${rule.family}${rules.length > 1 ? ' (the catch-all)' : ''}`
     : `route: ${size}, under ${rule.maxLines} → ${rule.family}`
-  return { family: rule.family, why, lines, risky }
+  return { family: rule.family, why, lines, risky, small: rule.maxLines !== undefined }
 }
 
 // Selected in main() once the diff is fetched (force rules and a classifier need its stats).
@@ -1328,7 +1371,7 @@ if (process.argv.includes('--show-config')) {
         pick: SELECTION.pick ?? (SELECTION.route ? '(none — routing decides)' : '(explicit reviewer — not used)'),
         route: SELECTION.route ? SELECTION.why : routingRules() ? '(not used: a reviewer, force rule or pick decided)' : '(no routing configured)',
         routing: routingRules() ?? '(none)',
-        crossFamily: SELECTION.crossFamily ?? '(explicit reviewer — not used)',
+        crossFamily: CROSS_FAMILY,
         author: SELECTION.author ?? '(unknown)',
         reviewCounts: Object.fromEntries(
           [...new Set([...(SELECTION.pool || []).map((m) => m.family), ...Object.keys(counts)])].map((f) => [
@@ -1345,6 +1388,7 @@ if (process.argv.includes('--show-config')) {
         verifyCmd: VERIFY_CMD || '(none)',
         fixCheck: FIX_CHECK,
         security: SECURITY.run,
+        merge: { policy: MERGE.policy, alwaysHuman: MERGE.alwaysHuman, onHuman: MERGE.onHuman },
         source: CONFIG._source || '(built-in defaults / env only)',
         log: LOG_PATH,
       },
