@@ -156,6 +156,8 @@ const VIEWS = [
     title: 'New skill', sub: 'Describe it, answer a few questions, review the SKILL.md', open: openSkillWizard },
   { id: 'packs', label: 'Packs', group: 'workflows', icon: 'packs', hash: '#packs',
     title: 'Skill packs', sub: 'Ready-made skills and the settings they need — nothing is written until you preview a change and confirm it', open: openPacks },
+  { id: 'blocks', label: 'Building blocks', group: 'workflows', icon: 'blocks', hash: '#blocks',
+    title: 'Building blocks', sub: 'Shared rule text, and every skill that carries a copy of it', open: openBlocks },
   { id: 'mcp', label: 'MCP', group: 'files', icon: 'mcp', hash: '#mcp',
     title: 'MCP servers', sub: 'The MCP servers your CLIs can call', open: openMcp },
   // No sidebar item: reached from the Files page's folder line, and #folders.
@@ -187,7 +189,7 @@ const viewById = (id) => VIEWS.find((v) => v.id === id) || null;
 /** The sidebar: four groups named for the job, each in this order (C1). Setup sits in the footer with Trash and Theme. */
 const NAV_GROUPS = [
   ['overview', 'Overview', ['home', 'usage']],
-  ['workflows', 'Workflows', ['packs', 'skills', 'models']],
+  ['workflows', 'Workflows', ['packs', 'skills', 'blocks', 'models']],
   ['files', 'Files', ['files', 'context', 'scope', 'mcp']],
   ['upkeep', 'Upkeep', ['memory', 'worktrees', 'audit']],
 ];
@@ -200,6 +202,7 @@ const ICONS = {
   skills: svg('<path d="M8 2.2l1.6 3.3 3.6.5-2.6 2.5.6 3.6L8 10.4l-3.2 1.7.6-3.6-2.6-2.5 3.6-.5z"/>'),
   mcp: svg('<path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11.5v2"/>'),
   packs: svg('<path d="M2.5 5 8 2.5 13.5 5v6L8 13.5 2.5 11z"/><path d="M2.5 5 8 7.5 13.5 5M8 7.5v6"/>'),
+  blocks: svg('<rect x="2.5" y="8.5" width="5" height="5" rx="1"/><rect x="8.5" y="8.5" width="5" height="5" rx="1"/><rect x="5.5" y="2.5" width="5" height="5" rx="1"/>'),
   folders: svg('<path d="M2.5 5a1 1 0 0 1 1-1h2.5l1.2 1.2h5.3a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/><path d="M2.5 7.5h11"/>'),
   models: svg('<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 1.8v2.2M9.5 1.8v2.2M6.5 12v2.2M9.5 12v2.2M1.8 6.5H4M1.8 9.5H4M12 6.5h2.2M12 9.5h2.2"/>'),
   memory: svg('<path d="M3 3.5A1.5 1.5 0 0 1 4.5 2h8v10.5h-8A1.5 1.5 0 0 0 3 14zM3 14V3.5M6 5h4"/>'),
