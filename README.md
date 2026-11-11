@@ -646,10 +646,12 @@ never model ids, and points at `model-id` for the current id.
 **Building blocks** (under Workflows) lists the shared rule text that many
 skills repeat: the review policy, the callback contract, who merges, and the
 rest. Each block lives once in `blocks/` in this repo. The page shows what
-each block says and every skill file that carries a copy, with its file and
-line, rated **same**, **reworded** or **differs**.
+each block says and every file that carries a copy, with its file and line,
+rated **same**, **reworded** or **differs**.
 
-It reads the Claude and Codex skill folders and the packs in `packs/`. A copy
+It reads the global `CLAUDE.md` and `AGENTS.md` files (Claude, Codex, Grok),
+the Claude and Codex skill folders, and the packs in `packs/`; text inside a
+block the studio generates, such as the model guide, is skipped. A copy
 between `<!-- block:<id> sha256:… -->` and `<!-- /block:<id> -->` lines is a
 marked copy; any other copy is found by how closely its words match. The page
 only reads: nothing on it changes a file.
