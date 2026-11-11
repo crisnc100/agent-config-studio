@@ -165,6 +165,7 @@ if (hasFlag('--gate')) {
 // ── User-configurable defaults (change the model WITHOUT editing this script) ──
 // Resolution: env var > project .claude/review-config.json > ~/.agent-config-studio/review-gate/config.json
 // > the older ~/.claude/review-config.json > built-in.
+// fixCheck, security, merge and crossFamily keep the home config as a floor instead, set out where each is read.
 // Edit that one small JSON file to switch reviewer/model/effort — see review-config.example.json.
 // The repo file can come from the repository itself (committed, or added by a branch you check out), so
 // the keys that run a command or reach git as an argument, and coverageExempt and coverageExemptDefaults (they would
@@ -1288,7 +1289,7 @@ function selectReviewer(stats, { dryRun = false } = {}) {
         '  Fix: add it to the reviewer role in ACS → Models → Roles, or change "routing" in the review config.')
     m = requireCli(member, `routing → ${route.family}`)
     pickWhy = route.why
-    // Routing ignores crossFamily: a small diff goes to its family even when the builder shares its vendor.
+    // Routing ignores crossFamily: a routed diff goes to its family even when the author shares its vendor, and the reviewer line names the route.
     crossWhy = authorVendor && crossFamily === 'prefer' && m.vendor === authorVendor
       ? `same vendor: ${route.small ? 'small-diff' : 'catch-all'} route (author ${author} is also ${authorVendor})`
       : ''
