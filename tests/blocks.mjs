@@ -97,6 +97,23 @@ console.log('\nfinding copies: unmarked by close match, marked by their markers'
   ok('text inside a generated block (<!-- acs:… --> … <!-- /acs:… -->) is never a copy', gen.length === 0, JSON.stringify(gen));
   const after = B.scanText(`<!-- acs:model-guide v1 sep=1 sha256:${'a'.repeat(64)} -->\nmodel lines\n<!-- /acs:model-guide -->\n\n${P1}\n\n${P2}\n`, blocks);
   ok('…while a copy after one is still found, at its own line', after.length === 1 && after[0].rating === 'same' && after[0].line === 5, JSON.stringify(after));
+  // f1: a marked copy is "same" only byte for byte; Markdown or spacing changes are drift the hash can name.
+  const boldBody = BODY.replace('Always run', '**Always** run');
+  const mb = B.scanText(mark(boldBody, BODY), blocks);
+  ok('marked, only Markdown changed after it was added: reworded, edited after it was added — not same', mb.length === 1 && mb[0].marked
+    && mb[0].rating === 'reworded' && mb[0].note === 'edited after it was added', JSON.stringify(mb));
+  const mw = B.scanText(mark(BODY.replace('\n\n', '\n\n\n')), blocks);
+  ok('marked, only spacing differs from the block, untouched since added: reworded, an older version of the block', mw.length === 1 && mw[0].marked
+    && mw[0].rating === 'reworded' && mw[0].note === 'an older version of the block', JSON.stringify(mw));
+  // f2: a run never crosses a generated block or a marked copy.
+  const G = `<!-- acs:model-guide v1 sep=1 sha256:${'a'.repeat(64)} -->\n${P1}\n<!-- /acs:model-guide -->`;
+  const split = B.scanText(`${P1}\n\n${P2}\n${G}\n${P1}\n\n${P2}\n`, blocks);
+  ok('two copies on either side of a generated block are two copies, neither covering it', split.length === 2 && split.every((c) => c.rating === 'same' && !c.marked)
+    && split[0].line === 1 && split[0].endLine === 3 && split[1].line === 7 && split[1].endLine === 9, JSON.stringify(split));
+  const around = B.scanText(`${P1}\n\n${P2}\n<!-- block:test-rule sha256:${sha(BODY)} -->\n${BODY}<!-- /block:test-rule -->\n${P1}\n\n${P2}\n`, blocks);
+  const overlap = around.some((a, i) => around.some((b, j) => i !== j && a.line <= b.endLine && b.line <= a.endLine));
+  ok('copies around a marked copy: three copies, none overlapping, each same', around.length === 3 && !overlap && around.every((c) => c.rating === 'same')
+    && around.filter((c) => c.marked).length === 1, JSON.stringify(around));
   ok('CRLF files are read the same', B.scanText(mark(BODY).replace(/\n/g, '\r\n'), blocks)[0]?.rating === 'same');
 }
 
