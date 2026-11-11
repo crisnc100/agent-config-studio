@@ -490,7 +490,7 @@ test('pr-review: the agent merge step runs merge.mjs unless --tier-json says the
     ['an older runtime with no policy field', { covered: true, tier: 'low' }, true],
   ]
   for (const harness of ['claude', 'codex']) {
-    const code = block(skill(`review-gate/skills/${harness}/pr-review/SKILL.md`), /merge\.mjs/)
+    const code = block(skill(`review-gate/skills/${harness}/pr-review/SKILL.md`), /review-gate\/merge\.mjs/)
     for (const shell of SHELLS)
       for (const [what, tier, ran] of cases) {
         rmSync(marker, { force: true })
