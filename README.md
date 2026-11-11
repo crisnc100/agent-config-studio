@@ -692,7 +692,7 @@ again. The page only reads: nothing on it changes a file.
 
 The skill wizard's Blocks step pastes ticked blocks as marked copies: after
 the draft, a `## Shared rules` heading, then each block under its `### name`
-line between its markers, in the page's order. **Regenerate** pastes them
+line between its markers, in the order the Blocks step lists them. **Regenerate** pastes them
 again, so an edit made inside a block on Review does not survive it.
 
 ## Audit
