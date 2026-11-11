@@ -886,6 +886,30 @@ test('C3 --check: a not-met marker counts only on a line naming that one criteri
     [`"Did it match the goal?" shows unmet criterion C2 as done (✅), but the review recorded it not met: ${crit}`], 'a ✅ on a line naming it still counts against it')
 })
 
+test('C3 --check: a line naming two criteria is ambiguous whatever the ids look like (2, AC-1, c1)', () => {
+  const unmet = (...ids) => ids.map((id) => `c${id.replace(/\D/g, '')} criterion ${id} not met: the app logs; recheck: no log line; Deferred: later`)
+  const missing = (crits) => crits.map((l) => `"Did it match the goal?" is missing unmet criterion ${l.split(' ')[2]}, as a not-done line: ${l}`)
+  const goalLines = (crits) => crits.map((l) => `❌ ${l.split(' ')[2]} not done: the app does not log yet.`).join('\n')
+  for (const ids of [['2', '3'], ['AC-1', 'AC-2']]) {
+    const b = fixture()
+    const crits = unmet(...ids)
+    closedGate(b, SUMMARY.replace(/^c1 criterion C2 .*$/m, crits.join('\n')))
+    const body = good(b.facts())
+    assert.deepEqual(checked(b, body).problems, [], `one criterion per line passes: ${ids}`)
+    const mixed = `${ids[0]} is met; ${ids[1]} is not met.`
+    assert.deepEqual(checked(b, body.replace(goalLines(crits), mixed)).problems, missing(crits), `"${mixed}" holds neither criterion`)
+    assert.deepEqual(checked(b, body.replace(goalLines(crits), `${ids[1]} is not met.\n${ids[0]} is not met.`)).problems, [], `a single-criterion line still passes: ${ids}`)
+  }
+  const b = fixture()
+  const deferred = ['c1 criterion C2 not met: the app logs; Deferred: later', 'c2 criterion C3 not met: the app warns; Deferred: later']
+  closedGate(b, SUMMARY.replace('Deferred findings\n', `Deferred findings\n${deferred.join('\n')}\n`))
+  const f = b.facts()
+  const body = good(f)
+  assert.deepEqual(checked(b, body).problems, [])
+  assert.deepEqual(checked(b, body.replace(entry(f.review.deferredItems[0]), '- c1 is met; c2 is not met.')).problems,
+    ['"Deferred findings" is missing c1 (criterion C2 not met)'], 'a lowercase deferred id beside the line\'s own is another item')
+})
+
 test('C3 --check: a bold id followed by a colon (**x1:**) is held to its score like any other', () => {
   const b = fixture()
   closedGate(b)
