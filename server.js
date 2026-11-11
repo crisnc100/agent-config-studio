@@ -1191,9 +1191,9 @@ export function createApp(opts = {}) {
   },
   /**
    * The Building blocks page (lib/blocks.js): each block in blocks/ and every
-   * copy of it in a skill or a global instruction file, rated. GET only —
+   * copy of it in a skill or an instruction file, rated. GET only —
    * nothing on that page writes. Strict same-origin: the scan reads every
-   * skill file.
+   * skill and instruction file.
    */
   'GET /api/blocks': async (req) => {
     requireStrict(req);

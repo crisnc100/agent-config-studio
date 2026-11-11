@@ -1,4 +1,4 @@
-/* Agent Config Studio — the Building blocks view: each shared rule block, and every skill copy of it (lib/blocks.js) */
+/* Agent Config Studio — the Building blocks view: each shared rule block, and every copy of it in a skill or instruction file (lib/blocks.js) */
 
 /**
  * Loaded before app.js, which owns the helpers this calls (el, api,

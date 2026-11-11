@@ -157,7 +157,7 @@ const VIEWS = [
   { id: 'packs', label: 'Packs', group: 'workflows', icon: 'packs', hash: '#packs',
     title: 'Skill packs', sub: 'Ready-made skills and the settings they need — nothing is written until you preview a change and confirm it', open: openPacks },
   { id: 'blocks', label: 'Building blocks', group: 'workflows', icon: 'blocks', hash: '#blocks',
-    title: 'Building blocks', sub: 'Shared rule text, and every skill that carries a copy of it', open: openBlocks },
+    title: 'Building blocks', sub: 'Shared rule text, and every copy of it in your skills and instruction files', open: openBlocks },
   { id: 'mcp', label: 'MCP', group: 'files', icon: 'mcp', hash: '#mcp',
     title: 'MCP servers', sub: 'The MCP servers your CLIs can call', open: openMcp },
   // No sidebar item: reached from the Files page's folder line, and #folders.
