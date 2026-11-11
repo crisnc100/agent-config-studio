@@ -1465,6 +1465,16 @@ console.log('\nask-model: --investigate sees changes inside submodules, by the s
   ok('GIT_DIR and GIT_WORK_TREE set to the superproject: an edit inside the submodule still names sub/s.txt',
      routed.code === 5 && (routed.j.changed ?? []).includes('sub/s.txt'), show(routed));
 
+  // Settings that come only from the environment (GIT_CONFIG_COUNT), as git passes them on into a submodule.
+  const envIgnore = path.join(tmp, 'env-config-ignore');
+  fs.writeFileSync(envIgnore, '*.tmp\n');
+  const fromEnv = run([{ file: path.join(sup, 'sub', 's.txt'), text: 's4\n' }, { file: path.join(sup, 'sub', 'n.tmp'), text: 'n\n' }],
+    { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.excludesFile', GIT_CONFIG_VALUE_0: envIgnore });
+  fs.writeFileSync(path.join(sup, 'sub', 's.txt'), 's2\n');
+  fs.rmSync(path.join(sup, 'sub', 'n.tmp'), { force: true });
+  ok('core.excludesFile from GIT_CONFIG_COUNT: an edit inside the submodule names sub/s.txt, and the file\'s ignore rules hold there',
+     fromEnv.code === 5 && (fromEnv.j.changed ?? []).includes('sub/s.txt') && !(fromEnv.j.changed ?? []).includes('sub/n.tmp'), show(fromEnv));
+
   // A conflicted submodule entry: two indexes that differ only in its stage 1 commit.
   const idx = (base) => {
     const f = path.join(tmp, `conflict-index-${base}`);

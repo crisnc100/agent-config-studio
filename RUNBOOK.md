@@ -381,6 +381,8 @@ never reads it, so new data cannot break it.
   with the caller's env minus `localEnv`'s list (`rev-parse
   --local-env-vars`, or a fixed copy of it if that call fails), so a
   `GIT_DIR` meant for the superproject does not answer for it.
+  `GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_COUNT` stay, as git keeps them
+  for a submodule, so a caller's `git -c` or env-only settings apply there.
 - Tests: `tests/ask-model.mjs` (stub CLIs on PATH, temp HOME).
 
 ## Model guide block (`lib/model-guide.js`)
@@ -474,9 +476,5 @@ never reads it, so new data cannot break it.
 - ask-model's confined git dir is a fresh folder under the system temp
   folder, which the sandboxed shell can also write, so a process the call
   leaves running could write into it before the after-call git reads it.
-- ask-model locates a submodule without the caller's
-  `GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_COUNT`, which git itself keeps
-  for submodules, so a `git -c` setting the caller relies on (a
-  `core.excludesFile`, say) is not applied to that submodule.
 - No Codex adapter yet. The contract is ready (`streams: false`, buffered
   `decode.parse`, resume as `{kind:'subcommand', argv}`).

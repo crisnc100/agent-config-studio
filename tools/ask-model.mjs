@@ -836,16 +836,16 @@ function locateRepo(bin, cwd, env = process.env) {
 
 /**
  * The caller's env without the variables `rev-parse --local-env-vars` lists, so a GIT_DIR or GIT_WORK_TREE meant for
- * the superproject cannot answer for a submodule. This is stricter than git: that list includes GIT_CONFIG_PARAMETERS
- * and GIT_CONFIG_COUNT, which git keeps when it runs in a submodule, so a caller's `git -c` settings are not applied
- * when a submodule is located here.
+ * the superproject cannot answer for a submodule. GIT_CONFIG_PARAMETERS and GIT_CONFIG_COUNT are on that list but
+ * kept, as git keeps them when it runs in a submodule: a caller's `git -c` or env-only settings apply there too.
  */
+const KEPT_IN_SUBMODULES = ['GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT'];
 function localEnv(bin) {
   const r = spawnSync(bin, ['rev-parse', '--local-env-vars'], { encoding: 'utf8' });
-  const names = r.status === 0 && r.stdout.trim() ? r.stdout.split('\n').filter(Boolean)
-    : ['GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_OBJECT_DIRECTORY', 'GIT_DIR',
+  const names = (r.status === 0 && r.stdout.trim() ? r.stdout.split('\n').filter(Boolean)
+    : ['GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_OBJECT_DIRECTORY', 'GIT_DIR',
       'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_GRAFT_FILE', 'GIT_INDEX_FILE', 'GIT_NO_REPLACE_OBJECTS', 'GIT_REPLACE_REF_BASE', 'GIT_PREFIX',
-      'GIT_SHALLOW_FILE', 'GIT_COMMON_DIR'];
+      'GIT_SHALLOW_FILE', 'GIT_COMMON_DIR']).filter((n) => !KEPT_IN_SUBMODULES.includes(n));
   return Object.fromEntries(Object.entries(process.env).filter(([k]) => !names.includes(k)));
 }
 
