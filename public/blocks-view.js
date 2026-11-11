@@ -261,6 +261,12 @@ function bbDiffBox(runs, cls, title) {
   return box;
 }
 
+const bbRuleOf = (hash) => {
+  try { return decodeURIComponent(/[&]rule=([^&]+)/.exec(hash)?.[1] || '') || null; } catch { return null; /* a malformed link names no rule */ }
+};
+/** Whether a Compare link names a rule other than the one shown. */
+const bbRuleMoved = (hash) => bbRuleOf(hash) !== BB.rule;
+
 function bbCompare(id) {
   BB.rule = id;
   location.hash = `${BB_COMPARE_HASH}&rule=${encodeURIComponent(id)}`;
@@ -269,8 +275,7 @@ function bbCompare(id) {
 
 async function openBlocksCompare() {
   if (!confirmDiscard()) return;
-  let id = BB.rule;
-  try { id = decodeURIComponent(/[&]rule=([^&]+)/.exec(location.hash)?.[1] || '') || id; } catch { /* a malformed link names no rule */ }
+  const id = bbRuleOf(location.hash) || BB.rule;
   BB.rule = id;
   S.view = 'blocks-compare';
   leaveEditor();

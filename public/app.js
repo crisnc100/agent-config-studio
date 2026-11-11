@@ -160,7 +160,7 @@ const VIEWS = [
     title: 'Shared rules', sub: 'Checked word by word, never by meaning', open: openBlocks },
   // No sidebar item: a rule's Compare copies button (public/blocks-view.js); Shared rules stays marked.
   { id: 'blocks-compare', label: 'Compare copies', group: null, parent: 'blocks', icon: 'blocks', hash: '#blocks/compare',
-    title: 'Shared rules', sub: 'Checked word by word, never by meaning', open: openBlocksCompare },
+    title: 'Shared rules', sub: 'Checked word by word, never by meaning', open: openBlocksCompare, moved: bbRuleMoved },
   { id: 'mcp', label: 'MCP', group: 'files', icon: 'mcp', hash: '#mcp',
     title: 'MCP servers', sub: 'The MCP servers your CLIs can call', open: openMcp },
   // No sidebar item: reached from the Files page's folder line, and #folders.
@@ -371,7 +371,8 @@ function routeHash(hash, { cold = false } = {}) {
   }
   const v = VIEWS.find((x) => x.hash && hashIs(hash, x.hash));
   if (v) {
-    if (!cold && S.view === v.id) return;
+    // `moved` lets a view whose hash carries a parameter (Compare's rule) reopen when only that parameter changed.
+    if (!cold && S.view === v.id && !v.moved?.(hash)) return;
     return v.open();
   }
   if (cold) return goHome();
