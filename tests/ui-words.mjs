@@ -652,7 +652,8 @@ console.log('\nBuilding blocks: a quoted rule may say "delete" only inside its b
   };
   ok('the phrase inside the rendered block text passes', (await hitsFor(view())).length === 0);
   ok('…the same phrase in the block\'s heading still fails', (await hitsFor(view({ name: QUOTE }))).length > 0);
-  ok('…and in its summary line', (await hitsFor(view({ summary: QUOTE }))).length > 0);
+  // The page cuts a summary that only repeats the rule's text, so this summary carries the quote beside other text.
+  ok('…and in its summary line', (await hitsFor(view({ summary: QUOTE, text: 'Keep every test whole, and say when one could not run.\n' }))).length > 0);
   ok('…and a second "delete" beside the quote fails', (await hitsFor(view({ text: `${QUOTE}\n\nDelete this block.\n` }))).length > 0);
   // One body quote inside nested block-text elements counts once: the heading's quote still fails.
   const nest = (pg) => {
