@@ -589,7 +589,9 @@ const RULES = [
       /Checking (?:[a-z]+, )*memory(?:, [a-z]+)*…/g] },
   { name: '"Delete" for something recoverable', re: /\bdelet/i,
     // Permanent actions keep the word: a role (no trash), an Assist session, a file gone outside the studio, and "never deleted" (a promise about history).
-    except: [/Delete role/g, /Delete this session/g, /deleted outside the studio/g, /never deleted/g] },
+    except: [/Delete role/g, /Delete this session/g, /deleted outside the studio/g, /never deleted/g],
+    // Building blocks quotes rule text word for word: the never-weaken-tests block's own phrase, there only.
+    exceptIn: { blocks: [/Never delete, skip, weaken or narrow a test or check/g, /Do not delete, skip, weaken, or narrow tests or checks/g] } },
   // One word for a subscription account: "account", as Home's "Accounts & usage" says.
   { name: '"seat" for an account', re: /\bseats?\b/i },
   // PR F (final critique P1-1, P2-1, P2-2): words a newcomer can't act on. "Trunk" is explained (ⓘ) on Worktrees only.
@@ -622,7 +624,7 @@ try {
     for (const r of RULES) {
       if (r.allowIn?.includes(v)) continue;
       let t = text;
-      for (const x of r.except || []) t = t.replace(x, '');
+      for (const x of [...(r.except || []), ...(r.exceptIn?.[v] || [])]) t = t.replace(x, '');
       const hits = t.split("\n").filter((l) => r.re.test(l)).map((l) => { const i = l.search(r.re); return l.slice(Math.max(0, i - 70), i + 70); });
       ok(`${v}: no ${r.name}`, hits.length === 0, hits.join(' | '));
     }
