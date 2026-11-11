@@ -1791,11 +1791,24 @@ pre.pk-log { white-space: pre-wrap; overflow-wrap: anywhere; font: 11.5px var(--
 
 
 /* ── Packs: the review gate's security switch ─────────────────────────── */
-.pk-sec { margin: 12px 0; }
+.pk-sec, .pk-setting { margin: 12px 0; }
 .pk-sec-levels { display: flex; flex-wrap: wrap; gap: 8px; }
 .btn.pk-sec-on { border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .pk-sec-now { color: var(--text-dim); margin: 6px 0 0; }
 .pk-sec-preview { margin-top: 10px; }
+.pk-choice-lines { list-style: none; margin: 6px 0 0; padding: 0; color: var(--text-dim); }
+.pk-choice-lines li { margin: 2px 0; }
+.pk-choice-lines li.on { color: var(--text); }
+.pk-label.pk-sub { margin-top: 10px; }
+.pk-paths { list-style: none; margin: 6px 0 0; padding: 0; }
+.pk-paths li { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.pk-paths code { font: 12px var(--mono); }
+.pk-paths-add { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.pk-paths-add input {
+  flex: 1; min-width: 180px; max-width: 360px; padding: 6px 10px; font: 12px var(--mono);
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 7px;
+}
+.pk-help { color: var(--text-dim); font-size: 12px; margin: 6px 0 0; }
 .pk-sec-preview .diff { padding: 8px 0; max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); margin: 6px 0 10px; }
 
 /* ── Shared rules (public/blocks-view.js) ── */

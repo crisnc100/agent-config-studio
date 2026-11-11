@@ -52,6 +52,7 @@ import { removeBatch } from './lib/batch-delete.js';
 import { applyJob, buildPlan, catalogView, parseRequest, planView, startStatus, statusJob } from './lib/packs-routes.js';
 import { machine as packsMachine } from './lib/packs.js';
 import { securityApply, securityPlan } from './lib/review-security.js';
+import { crossFamilyApply, crossFamilyPlan, mergeApply, mergePlan } from './lib/review-settings.js';
 import { blocksView } from './lib/blocks.js';
 import {
   syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
@@ -1215,6 +1216,34 @@ export function createApp(opts = {}) {
     const { level, signature, ...rest } = await objectBody(req, 1024);
     if (Object.keys(rest).length) throw bad(`unknown field "${Object.keys(rest)[0].slice(0, 64)}"`, 400);
     return securityApply(level, signature, packsMachine());
+  },
+  /**
+   * The review gate's agent merge (merge.policy, merge.alwaysHuman) and cross-vendor checks (crossFamily), in the same
+   * home review config and with the same plan, signature and backup as the security switch.
+   */
+  'POST /api/packs/merge/plan': async (req) => {
+    requireStrict(req);
+    const { policy, alwaysHuman, ...rest } = await objectBody(req, 32 * 1024);
+    if (Object.keys(rest).length) throw bad(`unknown field "${Object.keys(rest)[0].slice(0, 64)}"`, 400);
+    return mergePlan({ policy, alwaysHuman }, packsMachine());
+  },
+  'POST /api/packs/merge/apply': async (req) => {
+    requireStrict(req);
+    const { policy, alwaysHuman, signature, ...rest } = await objectBody(req, 32 * 1024);
+    if (Object.keys(rest).length) throw bad(`unknown field "${Object.keys(rest)[0].slice(0, 64)}"`, 400);
+    return mergeApply({ policy, alwaysHuman }, signature, packsMachine());
+  },
+  'POST /api/packs/cross-family/plan': async (req) => {
+    requireStrict(req);
+    const { mode, ...rest } = await objectBody(req, 1024);
+    if (Object.keys(rest).length) throw bad(`unknown field "${Object.keys(rest)[0].slice(0, 64)}"`, 400);
+    return crossFamilyPlan(mode, packsMachine());
+  },
+  'POST /api/packs/cross-family/apply': async (req) => {
+    requireStrict(req);
+    const { mode, signature, ...rest } = await objectBody(req, 1024);
+    if (Object.keys(rest).length) throw bad(`unknown field "${Object.keys(rest)[0].slice(0, 64)}"`, 400);
+    return crossFamilyApply(mode, signature, packsMachine());
   },
 
   /**

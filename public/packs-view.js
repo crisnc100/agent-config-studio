@@ -448,7 +448,7 @@ function pkCardView(pack) {
     const unset = pkUnsetLine(pack.workflow);
     if (unset) sec.appendChild(unset);
   }
-  if (pack.id === 'review-gate') sec.appendChild(pkSecurityView());
+  if (pack.id === 'review-gate') { sec.appendChild(pkSecurityView()); sec.appendChild(pkMergeView()); sec.appendChild(pkCrossView()); }
   // What this pack still needs, in full (the head says only "Setup needed").
   if (own.length) sec.appendChild(el('p', 'pk-need', `Needs ${pkNeedText(own[0])}`));
   sec.appendChild(pkFilesAndUndo(pack));
@@ -646,6 +646,173 @@ async function pkSecurityApply() {
   } catch (e) { if (seq === PK_SEC.seq) PK_SEC.error = e.message; }
   if (seq === PK_SEC.seq) PK_SEC.busy = false;
   paintPacks();
+}
+
+/* ── the review gate's agent merge and cross-vendor checks, in the same home review config ── */
+
+const PK_MERGE_POLICIES = [
+  ['off', 'Off', 'You merge every PR.'],
+  ['strict', 'Docs and tests only', 'An agent may merge a low-risk PR that changes only docs or tests.'],
+  ['standard', 'Low-risk PRs', 'An agent may merge any low-risk PR.'],
+  ['always', 'Low and medium-risk PRs', 'An agent may merge low- and medium-risk PRs; high-risk always waits for you.'],
+];
+const PK_CROSS_MODES = [
+  ['prefer', 'Prefer another vendor', 'Reviews and grades use a model from another vendor when one is available; never a blocker.'],
+  ['off', 'Off', 'Any reviewer in your roles may check any work.'],
+];
+/** One state per setting: the preview on screen, a busy flag, the last error and result, and a sequence that drops stale answers. */
+const PK_SET = {
+  merge: { preview: null, busy: false, error: null, result: null, seq: 0, draft: '' },
+  cross: { preview: null, busy: false, error: null, result: null, seq: 0 },
+};
+const PK_SET_ROUTES = { merge: '/api/packs/merge', cross: '/api/packs/cross-family' };
+const pkMergeNow = () => ({ policy: PK.data.settings?.merge?.policy || 'off', alwaysHuman: PK.data.settings?.merge?.alwaysHuman || [] });
+
+/** A row of choices, each one line under the row saying what it does; the one in force is pressed. */
+function pkChoices(options, now, busy, onPick) {
+  const wrap = el('div');
+  const row = el('div', 'pk-sec-levels');
+  for (const [value, label] of options) {
+    const b = pkBtn(value === now ? 'pk-sec-on' : '', label, () => onPick(value), busy);
+    b.setAttribute('aria-pressed', String(value === now));
+    b.dataset.level = value;
+    row.appendChild(b);
+  }
+  wrap.appendChild(row);
+  const ul = el('ul', 'pk-choice-lines');
+  for (const [value, label, line] of options) {
+    const li = el('li', value === now ? 'on' : null);
+    li.appendChild(el('strong', null, `${label}: `));
+    li.appendChild(el('span', null, line));
+    ul.appendChild(li);
+  }
+  wrap.appendChild(ul);
+  return wrap;
+}
+
+/** Busy, error, the diff preview with Save and Cancel, and the saved line: the parts every review setting shares. */
+function pkSettingFoot(box, key, ariaLabel, saidAs, savedText) {
+  const st = PK_SET[key];
+  if (st.busy) { const s = el('span', 'pk-busy'); s.appendChild(el('span', 'spinner')); s.appendChild(el('span', null, ' Working…')); box.appendChild(s); }
+  if (st.error) {
+    const n = el('div', 'notice error');
+    n.setAttribute('role', 'alert');
+    n.textContent = st.error;
+    box.appendChild(n);
+  }
+  const p = st.preview;
+  if (p) {
+    const pre = el('div', 'pk-sec-preview');
+    pre.setAttribute('role', 'region');
+    pre.setAttribute('aria-label', ariaLabel);
+    pre.appendChild(el('p', null, p.view.changes
+      ? `${saidAs(p.body)}: this changes ${p.view.file}${p.view.exists ? ', and a copy of it goes to the backups folder first' : ' (a new file)'}.`
+      : `${p.view.file} already says this. Nothing to change.`));
+    if (p.view.changes) pre.appendChild(pkSecurityDiff(p.view.diff));
+    const acts = el('div', 'pk-actions');
+    if (p.view.changes) acts.appendChild(pkBtn('primary', 'Save', () => pkSettingApply(key), st.busy));
+    acts.appendChild(pkBtn('ghost', 'Cancel', () => { st.preview = null; st.seq++; paintPacks(); }, st.busy));
+    pre.appendChild(acts);
+    box.appendChild(pre);
+  }
+  if (st.result) {
+    const r = st.result;
+    box.appendChild(el('div', 'notice pk-result', `Saved: ${r.file} now says ${savedText(r)}.${r.backup ? ` The old file is at ${r.backup}.` : ''}`));
+  }
+}
+
+async function pkSettingPreview(key, body) {
+  const st = PK_SET[key];
+  st.preview = null; st.error = null; st.result = null; st.busy = true;
+  const seq = ++st.seq;
+  paintPacks();
+  try {
+    const view = await api('POST', `${PK_SET_ROUTES[key]}/plan`, body);
+    if (seq === st.seq) st.preview = { body, view };
+  } catch (e) { if (seq === st.seq) st.error = e.message; }
+  if (seq === st.seq) st.busy = false;
+  paintPacks();
+}
+
+async function pkSettingApply(key) {
+  const st = PK_SET[key];
+  const { body, view } = st.preview;
+  st.busy = true; st.error = null;
+  const seq = ++st.seq;
+  paintPacks();
+  try {
+    const r = await api('POST', `${PK_SET_ROUTES[key]}/apply`, { ...body, signature: view.signature });
+    if (seq !== st.seq) return;
+    st.result = r; st.preview = null;
+    if (key === 'merge') { PK.data.settings = { ...(PK.data.settings || {}), merge: { policy: r.policy, alwaysHuman: r.alwaysHuman } }; st.draft = ''; }
+    else PK.data.settings = { ...(PK.data.settings || {}), crossFamily: r.mode };
+  } catch (e) { if (seq === st.seq) st.error = e.message; }
+  if (seq === st.seq) st.busy = false;
+  paintPacks();
+}
+
+/** Agent merge: the policy, what stays yours whatever it says, and the paths that always need you. */
+function pkMergeView() {
+  const st = PK_SET.merge;
+  const now = pkMergeNow();
+  const box = el('div', 'pk-setting pk-merge');
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', 'Agent merge');
+  box.appendChild(el('div', 'pk-label', 'Agent merge'));
+  box.appendChild(pkChoices(PK_MERGE_POLICIES, now.policy, st.busy, (policy) => pkSettingPreview('merge', { policy, alwaysHuman: now.alwaysHuman })));
+  box.appendChild(el('p', 'pk-sec-now', 'Whatever you pick, an agent merges only when the review is closed at the tip, CI is green and nobody asked for changes. Changes to package.json, CI workflows and the paths below always need you.'));
+
+  box.appendChild(el('div', 'pk-label pk-sub', 'Always needs you'));
+  const list = el('ul', 'pk-paths');
+  for (const g of now.alwaysHuman) {
+    const li = el('li');
+    li.appendChild(el('code', null, g));
+    li.appendChild(pkBtn('ghost', 'Remove', () => pkSettingPreview('merge', { policy: now.policy, alwaysHuman: now.alwaysHuman.filter((x) => x !== g) }), st.busy));
+    list.appendChild(li);
+  }
+  box.appendChild(list);
+  if (!now.alwaysHuman.length) box.appendChild(el('p', 'pk-sec-now', 'No paths of your own yet.'));
+  const add = el('div', 'pk-paths-add');
+  const input = el('input');
+  input.type = 'text';
+  input.value = st.draft;
+  input.placeholder = 'a path or pattern, like infra/**';
+  input.setAttribute('aria-label', 'A path that always needs you');
+  input.oninput = () => { st.draft = input.value; };
+  const addPath = () => {
+    const g = String(input.value || '').trim();
+    st.draft = input.value;
+    if (!g) return;
+    pkSettingPreview('merge', { policy: now.policy, alwaysHuman: now.alwaysHuman.includes(g) ? now.alwaysHuman : [...now.alwaysHuman, g] });
+  };
+  input.onkeydown = (e) => { if (e.key === 'Enter') addPath(); };
+  input.disabled = st.busy;
+  add.appendChild(input);
+  add.appendChild(pkBtn('', 'Add', addPath, st.busy));
+  box.appendChild(add);
+  box.appendChild(el('p', 'pk-help', 'Saved as merge.policy and merge.alwaysHuman in your home review config. Agents merge only through merge.mjs.'));
+
+  const label = (policy) => PK_MERGE_POLICIES.find(([p]) => p === policy)[1];
+  const paths = (n) => `${n} path${n === 1 ? '' : 's'} that always need${n === 1 ? 's' : ''} you`;
+  pkSettingFoot(box, 'merge', 'Agent merge preview',
+    (b) => `Set to “${label(b.policy)}”${b.alwaysHuman.length ? `, with ${paths(b.alwaysHuman.length)}` : ''}`,
+    (r) => `“${label(r.policy)}”${r.alwaysHuman.length ? `, with ${paths(r.alwaysHuman.length)}` : ''}`);
+  return box;
+}
+
+/** Cross-vendor checks: prefer another vendor's model, or let any reviewer check any work. */
+function pkCrossView() {
+  const st = PK_SET.cross;
+  const now = PK.data.settings?.crossFamily || 'prefer';
+  const box = el('div', 'pk-setting pk-cross');
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', 'Cross-vendor checks');
+  box.appendChild(el('div', 'pk-label', 'Cross-vendor checks'));
+  box.appendChild(pkChoices(PK_CROSS_MODES, now, st.busy, (mode) => pkSettingPreview('cross', { mode })));
+  box.appendChild(el('p', 'pk-help', 'Saved as crossFamily in your home review config.'));
+  const label = (mode) => PK_CROSS_MODES.find(([m]) => m === mode)[1];
+  pkSettingFoot(box, 'cross', 'Cross-vendor checks preview', (b) => `Set to “${label(b.mode)}”`, (r) => `“${label(r.mode)}”`);
+  return box;
 }
 
 /** The request the card describes for `action`: exactly what the preview and the apply send. */
