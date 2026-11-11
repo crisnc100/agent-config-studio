@@ -239,6 +239,14 @@ reference doc. **Copy to Codex / Copy to Claude** seeds a skill in the other
 harness from the open one, retargeting the frontmatter `name`; the two are
 expected to diverge afterwards.
 
+**New skill, by interview.** **New skill** on the Skills view opens a wizard:
+describe the skill, answer the interview one question at a time, pick where it
+goes, tick any shared rules from **Building blocks**, then review the drafted
+`SKILL.md` and create it. No block is ticked for you. The model sees only the
+names of the ticked blocks; the studio adds their text word for word at the
+end, under **Shared rules**. Nothing is written until you press **Create**,
+and it writes exactly what Review shows.
+
 **Deleting is never destructive.** A delete records the current contents in
 history, moves the item to `~/.agent-config-studio/trash/`, then commits the
 removal. Two independent ways back: **Trash** restores in one click, or
@@ -650,8 +658,9 @@ each block says and every file that carries a copy, with its file and line,
 rated **same**, **reworded** or **differs**.
 
 It reads the global `CLAUDE.md` and `AGENTS.md` files (Claude, Codex, Grok),
-the Claude and Codex skill folders, and each pack's `skills/` and
-`instructions/` in `packs/`; text inside a block the studio generates, such as
+the Claude and Codex skill folders, the shared `~/.agents/skills`, each
+project's `.claude`, `.codex` and `.agents` skill folders under your edit
+folders, and each pack's `skills/` and `instructions/` in `packs/`; text inside a block the studio generates, such as
 the model guide, is skipped. Each copy is labelled **skill** or **instruction
 file**; a pack's `instructions/` count as instruction files.
 
@@ -661,7 +670,12 @@ byte; otherwise it says whether it was edited after it was added or the block
 has changed since. Any other copy is found by how closely its words match; a
 copy rated **differs** that still holds the whole block, with more added, says
 so. Ratings compare
-wording, not meaning. **Check again** reads everything again. The page only
+wording, not meaning.
+
+The skill wizard's Blocks step pastes ticked blocks as marked copies: after
+the draft, a `## Shared rules` heading, then each block under its `### name`
+line between its markers, in the page's order. **Regenerate** pastes them
+again, so an edit made inside a block on Review does not survive it. **Check again** reads everything again. The page only
 reads: nothing on it changes a file.
 
 ## Audit
