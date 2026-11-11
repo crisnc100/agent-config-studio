@@ -467,7 +467,7 @@ function swBlocks(box) {
   if (SWX.goneBlocks.length) box.appendChild(el('div', 'notice warn sw-blocks-gone', `No longer among the shared rules, so not added: ${SWX.goneBlocks.join(', ')}.`));
   const set = el('fieldset', 'sw-blocks');
   set.appendChild(el('legend', 'sw-field-label', 'Shared rules'));
-  if (!list.length) set.appendChild(el('div', 'scope-note', 'There are no building blocks yet.'));
+  if (!list.length) set.appendChild(el('div', 'scope-note', 'There are no shared rules yet.'));
   for (const b of list) {
     const l = el('label', 'sw-block');
     const c = el('input'); c.type = 'checkbox'; c.value = b.id; c.checked = SW.blocks.includes(b.id);
