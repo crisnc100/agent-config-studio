@@ -54,7 +54,13 @@ The grader swap's setting, read once before the Grade:
 ```bash
 REVIEW_SCRIPT=scripts/review.mjs
 [ -f "$REVIEW_SCRIPT" ] || REVIEW_SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
-CROSS_FAMILY=$(node "$REVIEW_SCRIPT" --cross-family 2>/dev/null || echo prefer)   # prefer | off; no review gate, or a copy too old to answer: prefer
+# prefer unless this copy supports --cross-family and answers prefer or off: a copy too old for --supports runs a
+# review on an unknown flag, so it is never asked.
+CROSS_FAMILY=prefer
+if grep -q -- --supports "$REVIEW_SCRIPT" 2>/dev/null && node "$REVIEW_SCRIPT" --supports --cross-family 2>/dev/null; then
+  ANSWER=$(node "$REVIEW_SCRIPT" --cross-family 2>/dev/null)
+  case "$ANSWER" in prefer|off) CROSS_FAMILY=$ANSWER ;; esac
+fi
 ```
 
 Write the gate's prompt (below) to `$PROMPT_FILE`, then ask — a fresh session with no build context, read-only, no MCP:

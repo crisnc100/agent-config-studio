@@ -72,7 +72,11 @@ It runs after the close, on the final code, so the docs describe the code after 
 1. `node "$SCRIPT" --summary` must succeed at the tip; its output goes in the PR body.
 2. Push the branch. With the push gate installed, a refusal names the uncovered files: follow the code-review skill's slice rule, never an override.
 3. Run `/pr` to write the description from the close; it reads the docs table at `builds/<slug>/docs-table.json` (pass `--docs-table` to pr-facts when the table lives elsewhere). Without the pr skill, open the PR with `gh pr create`, putting the `--summary` output, the **Deferred findings** section and the security line from Step 1 in the body.
-4. Agent merge: when `--show-config` shows a `merge.policy` other than `off`, run `node ~/.agent-config-studio/review-gate/merge.mjs` once, as rule 5 of the review policy says, and report the one line it prints. Agents merge only through merge.mjs, which follows the review gate's merge policy (default off: the operator merges). Never gh pr merge, auto-merge or the merge button.
+4. Agent merge: read the merge policy from `--tier-json`; unless it is `off`, run `node ~/.agent-config-studio/review-gate/merge.mjs` once, as rule 5 of the review policy says, and report the one line it prints. A runtime whose `--tier-json` has no `policy` field counts as not off, and merge.mjs decides. Agents merge only through merge.mjs, which follows the review gate's merge policy (default off: the operator merges). Never gh pr merge, auto-merge or the merge button.
+   ```bash
+   POLICY=$(node "$SCRIPT" --tier-json 2>/dev/null | jq -r '.policy // "unknown"')
+   [ "$POLICY" = off ] || node ~/.agent-config-studio/review-gate/merge.mjs
+   ```
 
 ## One report
 
