@@ -141,11 +141,6 @@ function flagAt(flag) {
 // --log-outcome takes positional values; none of them is a flag.
 const unknownFlag = args.find((a, i) => a.startsWith('--') && !KNOWN_FLAGS.includes(a) && !VALUE_FLAGS.includes(args[i - 1]) && !args.slice(0, i).includes('--log-outcome'))
 if (unknownFlag !== undefined) stop(`unknown flag ${unknownFlag}`)
-// The push gate takes only --remote: with any other mode flag, that mode could answer in its place and pass the push.
-if (hasFlag('--gate')) {
-  const others = MODE_ARGS.filter((a) => a.startsWith('--') && !['--gate', '--remote'].includes(a))
-  if (others.length) stop(`--gate runs alone: it cannot be combined with ${others.join(', ')} (it takes --remote <name>).`)
-}
 // --supports <flag>: exit 0 when this copy reads the flag, 1 when it does not. Skills ask before using a newer mode.
 if (hasFlag('--supports')) process.exit(KNOWN_FLAGS.includes(args[flagAt('--supports') + 1]) ? 0 : 1)
 // --eval takes only its own flags: with --gate (or any other command) it would run instead of that command.
@@ -159,6 +154,12 @@ if (hasFlag('--eval')) {
 if (hasFlag('--security-only')) {
   const others = args.filter((a, i) => a.startsWith('--') && !['--security-only', '--plan'].includes(a) && args[i - 1] !== '--plan')
   if (others.length) stop(`--security-only runs alone: it cannot be combined with ${others.join(', ')} (it takes --plan and an intent).`)
+}
+
+// The push gate takes only --remote: with any other mode flag, that mode could answer in its place and pass the push.
+if (hasFlag('--gate')) {
+  const others = MODE_ARGS.filter((a) => a.startsWith('--') && !['--gate', '--remote'].includes(a))
+  if (others.length) stop(`--gate runs alone: it cannot be combined with ${others.join(', ')} (it takes --remote <name>).`)
 }
 
 // ── User-configurable defaults (change the model WITHOUT editing this script) ──
