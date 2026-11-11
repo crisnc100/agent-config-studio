@@ -167,7 +167,7 @@ try {
   const card = (id) => c.querySelector(`#bb-${id}`);
   ok('a rule found only in the studio\'s packs is not in your files, and says so', t(card('lookup-test').querySelector('.bb-counts')) === 'Not found in any of your files.'
     && !card('lookup-test').querySelector('.bb-copies'), t(card('lookup-test')));
-  ok('the lead line counts your copies only', t(card('review-policy').querySelector('.bb-counts')) === '1 of 4 copies match' && t(card('deferred-findings').querySelector('.bb-counts')) === '1 of 1 copy matches'
+  ok('the lead line counts your copies only', t(card('review-policy').querySelector('.bb-counts')) === '1 of 4 copies matches' && t(card('deferred-findings').querySelector('.bb-counts')) === '1 of 1 copy matches'
     && t(card('callback-contract').querySelector('.bb-counts')) === '1 of 2 copies matches', ['review-policy', 'deferred-findings', 'callback-contract'].map((x) => t(card(x).querySelector('.bb-counts'))).join(' | '));
   ok('A4 pack copies are one quiet line per rule, never rows', t(card('review-policy').querySelector('.bb-packs')) === 'Also in the studio\'s own packs: 1 copy (you don\'t need to change these).'
     && t(card('deferred-findings').querySelector('.bb-packs')) === 'Also in the studio\'s own packs: 2 copies (you don\'t need to change these).'
