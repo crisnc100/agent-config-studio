@@ -82,6 +82,15 @@
         "who": "script",
         "tool": "git hook",
         "part": "push-gate"
+      },
+      {
+        "id": "merge",
+        "label": "Merge",
+        "what": "merge.mjs: only what you allow.",
+        "who": "script",
+        "tool": "merge.mjs",
+        "part": "code-review",
+        "setting": "merge"
       }
     ]
   },

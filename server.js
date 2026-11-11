@@ -52,6 +52,7 @@ import { removeBatch } from './lib/batch-delete.js';
 import { applyJob, buildPlan, catalogView, parseRequest, planView, startStatus, statusJob } from './lib/packs-routes.js';
 import { machine as packsMachine } from './lib/packs.js';
 import { securityApply, securityPlan } from './lib/review-security.js';
+import { settingsApply, settingsPlan } from './lib/review-settings.js';
 import { blocksView } from './lib/blocks.js';
 import {
   syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
@@ -1215,6 +1216,23 @@ export function createApp(opts = {}) {
     const { level, signature, ...rest } = await objectBody(req, 1024);
     if (Object.keys(rest).length) throw bad(`unknown field "${Object.keys(rest)[0].slice(0, 64)}"`, 400);
     return securityApply(level, signature, packsMachine());
+  },
+  /**
+   * The review gate's Settings section: one writer over an allow-list of keys (lib/review-settings.js) in the same
+   * home review config as the security switch. A plan returns the diff and a signature; apply writes only that diff
+   * (409 if the file moved), after one backup.
+   */
+  'POST /api/packs/review-settings/plan': async (req) => {
+    requireStrict(req);
+    const { changes, ...rest } = await objectBody(req, 32 * 1024);
+    if (Object.keys(rest).length) throw bad(`unknown field "${Object.keys(rest)[0].slice(0, 64)}"`, 400);
+    return settingsPlan(changes, packsMachine());
+  },
+  'POST /api/packs/review-settings/apply': async (req) => {
+    requireStrict(req);
+    const { changes, signature, ...rest } = await objectBody(req, 32 * 1024);
+    if (Object.keys(rest).length) throw bad(`unknown field "${Object.keys(rest)[0].slice(0, 64)}"`, 400);
+    return settingsApply(changes, signature, packsMachine());
   },
 
   /**

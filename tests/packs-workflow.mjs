@@ -36,7 +36,7 @@ const rolesIn = (wf) => {
     && catalog.filter((p) => !p.workflow?.strip).every((p) => p.workflow.steps.length >= 3), JSON.stringify(strips));
   const rg = catalog.find((p) => p.id === 'review-gate').workflow;
   ok('review-gate: the /pr-review flow, with no variant tabs (the reviewer tiers are /code-review\'s)', rg.command === '/pr-review' && !rg.variants?.length, JSON.stringify(rg.variants));
-  ok('review-gate: the steps /pr-review names, in order', JSON.stringify(rg.steps.map((s) => s.id)) === '["review","security","fix","dispute","check","close","context","gate"]',
+  ok('review-gate: the steps /pr-review names, in order', JSON.stringify(rg.steps.map((s) => s.id)) === '["review","security","fix","dispute","check","close","context","gate","merge"]',
     JSON.stringify(rg.steps.map((s) => s.id)));
   ok('…the code review and the security check run side by side, and the note says each runs alone too', rg.steps.find((s) => s.id === 'security').beside === 'review'
     && rg.steps.filter((s) => s.beside).length === 1 && /\/code-review/.test(rg.note || '') && /\/security-check/.test(rg.note || ''), JSON.stringify(rg.note));
@@ -48,6 +48,8 @@ const rolesIn = (wf) => {
   ok('review-gate: every step\'s description is one short line (36 characters at most)', whats.every((w) => w.length <= 36), whats.filter((w) => w.length > 36).join(' | '));
   ok('…the security pass follows the security setting, the push gate its part', rg.steps.find((s) => s.id === 'security').setting === 'security'
     && rg.steps.find((s) => s.id === 'gate').part === 'push-gate');
+  ok('…and Merge, last, is merge.mjs in the code-review part, following the merge setting', JSON.stringify((({ id, who, tool, part, setting }) => ({ id, who, tool, part, setting }))(rg.steps.at(-1)))
+    === '{"id":"merge","who":"script","tool":"merge.mjs","part":"code-review","setting":"merge"}', JSON.stringify(rg.steps.at(-1)));
   const build = catalog.find((p) => p.id === 'build').workflow;
   ok('build: Understand, Shape, Bounce, you approve, Build, Grade, you judge — and a lightweight note',
     JSON.stringify(build.steps.map((s) => [s.id, s.who, s.role || null])) === JSON.stringify([['understand', 'agent', null], ['shape', 'agent', null], ['bounce', 'role', 'advisor'], ['approve', 'you', null], ['build', 'role', 'builder'], ['grade', 'role', 'judge'], ['judge', 'you', null]])
@@ -233,7 +235,7 @@ try {
   ok('the code review and the security check sit side by side, joined (not an arrow), the second marked "at the same time"', at2 !== -1
     && flowKids[at2 + 1] === step('review-gate', 'security') && step('review-gate', 'review').classList.contains('with-next')
     && step('review-gate', 'security').classList.contains('beside') && /^at the same time$/.test(t(step('review-gate', 'security').querySelector('.pair-note')))
-    && flowKids.length === 8, `${at2} ${flowKids.map((k) => k.className).join(' | ')}`);
+    && flowKids.length === 9, `${at2} ${flowKids.map((k) => k.className).join(' | ')}`);
   ok('pr says no extra model is called', /No extra model is called/.test(t(card('pr').querySelector('.pk-flow-note'))));
   ok('build notes its lightweight mode', /lightweight/i.test(t(card('build').querySelector('.pk-flow-note'))));
   ok('the strips: handoff says your session agent writes it, with no extra model', /your session agent/.test(t(card('handoff').querySelector('.pk-strip'))) && /no extra model/i.test(t(card('handoff').querySelector('.pk-strip'))));

@@ -17,6 +17,7 @@ import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { machine } from '../lib/packs.js';
 import { catalogView, securitySetting } from '../lib/packs-routes.js';
 import { securityApply, securityPlan } from '../lib/review-security.js';
+import { settingsApply, settingsPlan } from '../lib/review-settings.js';
 
 const realBefore = snapshotRealHomes();
 const { ok, done } = tests();
@@ -107,12 +108,14 @@ try {
   const t = home();
   put(t.primary, '{\n  "pick": "rotate"\n}\n');
   const writes = [];
+  // The settings show only once the review gate's code-review part is installed.
+  const withGate = (v) => { v.packs.find((p) => p.id === 'review-gate').installed = { version: '1', parts: { 'code-review': { harnesses: ['claude'], installedAt: null } } }; return v; };
   const routes = routesFor({
-    'GET /api/packs': () => catalogView(t.m, { installedOf: () => true }),
+    'GET /api/packs': () => withGate(catalogView(t.m, { installedOf: () => true })),
     'GET /api/packs/status': () => ({ job: { running: false, result: { packs: [], legacy: [], checkedAt: Date.now(), trust: false } } }),
     'GET /api/models/roles': () => ({ roles: [] }),
-    'POST /api/packs/security/plan': (b) => securityPlan(b.level, t.m),
-    'POST /api/packs/security/apply': (b) => { writes.push(b); return securityApply(b.level, b.signature, t.m); },
+    'POST /api/packs/review-settings/plan': (b) => settingsPlan(b.changes, t.m),
+    'POST /api/packs/review-settings/apply': (b) => { writes.push(b); return settingsApply(b.changes, b.signature, t.m); },
   });
   const page = await bootPage({ routes, hash: '#packs' });
   const c = () => page.$('content');
@@ -146,7 +149,7 @@ try {
   acts().find((b) => tx(b) === 'Save').click();
   for (let i = 0; i < 100 && !sec().querySelector('.pk-result'); i++) await sleep(20);
   await settle(5);
-  ok('Save sends the preview\'s signature and writes security.run "required"', writes.length === 1 && writes[0].level === 'required' && /^[0-9a-f]{64}$/.test(writes[0].signature)
+  ok('Save sends the preview\'s signature and writes security.run "required"', writes.length === 1 && JSON.stringify(writes[0].changes) === '{"security.run":"required"}' && /^[0-9a-f]{64}$/.test(writes[0].signature)
     && JSON.parse(read(t.primary)).security.run === 'required' && JSON.parse(read(t.primary)).pick === 'rotate', read(t.primary));
   ok('…says where it saved and where the old file went', /Saved: ~\/\.agent-config-studio\/review-gate\/config\.json now says “When code changes”\. The old file is at ~\/\.agent-config-studio\/backups\//.test(tx(sec().querySelector('.pk-result'))), tx(sec()));
   ok('…the pressed button and the diagram follow it', tx(pressed()) === 'When code changes' && !c().querySelector('[data-pack="review-gate"] .step[data-step="security"]')?.classList.contains('off'), tx(sec()));
