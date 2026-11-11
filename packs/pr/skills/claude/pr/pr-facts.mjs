@@ -536,11 +536,14 @@ const mentions = (text, id) => text.split('\n').some((l) => word(id).test(l))
 // score to another.
 const ownScore = (text, id, score) => new RegExp(`(?<![\\w-])${escape(id)}(?![\\w-])[*\`_ \\t]*[:—–-]?[*\`_ \\t]*${escape(score)}(?!\\d)`).test(text)
 const NOT_MET = /❌|\bnot (?:met|done)\b/i
-// Anything shaped like a criterion id, whatever its prefix or depth (C2, R3, C3.1, 2.1): a line naming one besides
-// the ids it may name is ambiguous, as its marker may be that one's, so it never counts as a not-met line.
+// Anything shaped like a criterion id, whatever its prefix or depth (C2, R3, C3.1, 2.1), shaped like one of the known
+// criterion ids (2, AC-1), or a known id itself (c1): a line naming one besides the ids it may name is ambiguous, as
+// its marker may be that one's, so it never counts as a not-met line.
 const CRITERION_ID = /(?<![\w.-])(?:[A-Z]{1,3}\d+(?:\.\d+)*|\d+(?:\.\d+)+)(?![\w-]|\.\d)/g
-const onlyIds = (l, ids) => [...l.matchAll(CRITERION_ID)].every((m) => ids.includes(m[0]))
-const notMetLine = (text, id, also = []) => text.split('\n').some((l) => word(id).test(l) && onlyIds(l, [id, ...also]) && NOT_MET.test(l) && !l.includes('✅'))
+const sameShape = (id) => new RegExp(`(?<![\\w.-])${escape(id).replace(/\d+/g, '\\d+')}(?![\\w-]|\\.\\d)`, 'g')
+const onlyIds = (l, ids, known) => [CRITERION_ID, ...known.criteria.map(sameShape)].every((re) => [...l.matchAll(re)].every((m) => ids.includes(m[0])))
+  && known.all.every((k) => ids.includes(k) || !word(k).test(l))
+const notMetLine = (text, id, also, known) => text.split('\n').some((l) => word(id).test(l) && onlyIds(l, [id, ...also], known) && NOT_MET.test(l) && !l.includes('✅'))
 const doneLine = (text, id) => text.split('\n').some((l) => word(id).test(l) && l.includes('✅'))
 // A section's entries: each list item with its continuation lines, else each paragraph.
 function entriesOf(text) {
@@ -670,8 +673,10 @@ export function check(body, f) {
     }
     const items = f.review.deferredItems || (f.review.deferred || []).filter((l) => l !== PRE_TITLE).map(parseDeferred)
     const deferredText = sectionText(DEFERRED_TITLE)
+    const criterionIds = [...f.review.criteria.map((l) => l.match(CRITERION_LINE)?.[2]), ...items.map((d) => d.criterionId)].filter(Boolean)
+    const known = { criteria: [...new Set(criterionIds)], all: [...new Set([...criterionIds, ...items.map((d) => d.id)].filter(Boolean))] }
     if (deferredText !== null) {
-      const fits = (d, e) => d.kind === 'unknown' ? e.includes(d.line) : d.kind === 'criterion' ? notMetLine(e, d.id, [d.criterionId]) : ownScore(e, d.id, d.score)
+      const fits = (d, e) => d.kind === 'unknown' ? e.includes(d.line) : d.kind === 'criterion' ? notMetLine(e, d.id, [d.criterionId], known) : ownScore(e, d.id, d.score)
       const placed = matchEntries(items, entriesOf(deferredText), fits)
       items.forEach((d, i) => {
         if (placed[i]) return
@@ -687,7 +692,7 @@ export function check(body, f) {
     const goalText = goal.on ? sectionText(goal.title) : null
     const [where, whereText] = goalText !== null ? [goal.title, goalText] : [DEFERRED_TITLE, deferredText]
     if (whereText !== null) for (const c of criteria) {
-      if (!notMetLine(whereText, c.id)) problems.push(`"${where}" is missing unmet criterion ${c.id}, as a not-done line: ${c.line}`)
+      if (!notMetLine(whereText, c.id, items.filter((d) => d.criterionId === c.id).map((d) => d.id), known)) problems.push(`"${where}" is missing unmet criterion ${c.id}, as a not-done line: ${c.line}`)
       if (doneLine(whereText, c.id)) problems.push(`"${where}" shows unmet criterion ${c.id} as done (✅), but the review recorded it not met: ${c.line}`)
     }
     // Nothing goes above the first section: a deferred finding or unmet criterion there is the dump this check exists
