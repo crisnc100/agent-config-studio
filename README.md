@@ -709,7 +709,8 @@ them):
   code merges without you; high-risk always waits for you). An agent merges
   only through `merge.mjs`, and only when the review is closed at the tip, CI
   is green and nobody asked for changes. It needs the `gh` CLI, and a repo
-  with no CI checks always waits for you.
+  with no CI checks waits for you unless the config sets
+  `merge.requireChecks` to `false`.
 - **Always needs you**: the built-in paths (`.github/workflows/**`,
   `package.json`) and the risky paths (`riskPaths`, or the review gate's
   defaults) are shown read-only; your own paths (`merge.alwaysHuman`) go one
@@ -723,12 +724,13 @@ merge is off.
 
 Every change is written to your home review config only: the first of
 `~/.agent-config-studio/review-gate/config.json` and
-`~/.claude/review-config.json` that exists, or the first when neither does,
-which is the file the review script reads first. Picks wait in one preview
-showing that file's diff; **Save** writes them together, copies the old file
-into `~/.agent-config-studio/backups/` once, and keeps every other key. If
-the file changed after the preview, Save refuses and asks you to preview
-again. The section names that file for the review settings it has no switch
+`~/.claude/review-config.json` that exists, or the first when neither does:
+the same order the review script reads its home config in. Picks wait in one
+preview showing that file's diff; **Save** writes them together, copies the
+old file into `~/.agent-config-studio/backups/` once, and keeps every other
+key. If the file changed after the preview, Save refuses and asks you to
+preview again; if you edited your own paths after it, Save shows the new
+preview instead of writing. The section names that file for the review settings it has no switch
 for, with **Open in Files** when Files lists it (`~/.claude/review-config.json`
 is listed; the studio's own folder is not).
 

@@ -575,7 +575,7 @@ const PK_CROSS_MODES = [
 /**
  * The section's state. `draft` holds every change picked but not saved ({ key: value } over the writer's
  * allow-list): one preview covers them all, and Save writes them in one request with one backup.
- * `paths` is the box's text while it differs from what is saved.
+ * paths holds the text typed in the box, from the first keystroke until Save or Cancel.
  */
 const PK_SEC = { draft: {}, paths: null, preview: null, busy: false, error: null, result: null, seq: 0 };
 const pkSaved = () => {
