@@ -1804,12 +1804,15 @@ pre.pk-log { white-space: pre-wrap; overflow-wrap: anywhere; font: 11.5px var(--
 .bb-total { flex: 1 1 auto; }
 .bb-group { margin: 0 0 22px; }
 .bb-group-title { margin: 0 0 2px; font-size: 16px; color: var(--text); }
+.bb-group-empty { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+.bb-cmp-title { margin: 12px 0 0; font-size: 17px; color: var(--text); }
 .bb-group-sub { margin: 0 0 12px; color: var(--text-dim); font-size: 13px; max-width: 72ch; }
 .bb-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); padding: 14px 16px; margin: 0 0 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .bb-name { margin: 0; font-size: 15px; color: var(--text); }
 .bb-summary { margin: 0; color: var(--text-dim); font-size: 13px; }
 .bb-label { color: var(--muted); font-size: 12px; font-weight: 600; }
-.bb-text { border-left: 3px solid var(--border); padding: 2px 0 2px 12px; color: var(--text); font-size: 13px; max-height: 280px; overflow: auto; overflow-wrap: anywhere; }
+/* .md centres itself in a 76ch column with page padding; inside a card it starts at the card's edge. */
+.bb-text { margin: 0; max-width: none; border-left: 3px solid var(--border); padding: 2px 0 2px 12px; color: var(--text); font-size: 13px; max-height: 280px; overflow: auto; overflow-wrap: anywhere; }
 .bb-text code { font-size: 12px; color: var(--accent-ink); }
 .bb-text > :first-child { margin-top: 0; }
 .bb-text > :last-child { margin-bottom: 0; }
@@ -1836,6 +1839,7 @@ pre.pk-log { white-space: pre-wrap; overflow-wrap: anywhere; font: 11.5px var(--
 .bb-diff { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; color: var(--text); background: var(--panel-2); border: 1px solid var(--border-soft); border-radius: 7px; padding: 8px 10px; max-height: 420px; overflow: auto; }
 .bb-missing, .bb-only { color: var(--text); border-radius: 3px; padding: 0 2px; }
 .bb-missing { background: color-mix(in srgb, var(--red) 18%, transparent); text-decoration: line-through; text-decoration-color: var(--red); }
-.bb-only { background: color-mix(in srgb, var(--green) 18%, transparent); text-decoration: underline; text-decoration-color: var(--green); }
+/* A boxed tint, never an underline: underlined text reads as a link. */
+.bb-only { background: color-mix(in srgb, var(--green) 18%, transparent); border: 1px solid var(--green); text-decoration: none; }
 .bb-same { margin: 0; color: var(--text-dim); font-size: 13px; }
 @media (max-width: 720px) { .bb-card, .bb-cmp { padding: 12px; } .bb-cols { grid-template-columns: minmax(0, 1fr); } }

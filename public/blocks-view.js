@@ -18,9 +18,12 @@ const BB_NOTE = {
   'an older version of the block': 'Pasted from an older version of the rule.',
 };
 const BB_GROUPS = [
-  { id: 'look', title: 'Needs a look', sub: 'At least one copy is quite different from the reference: it may leave part of the rule out, add other rules, or sit inside a longer paragraph.' },
-  { id: 'small', title: 'Small wording changes', sub: 'Every copy is close to the reference, with a few words changed. Check that the meaning held.' },
-  { id: 'match', title: 'Match everywhere', sub: 'Every copy is word for word the same.' },
+  { id: 'look', title: 'Needs a look', sub: 'At least one copy is quite different from the reference: it may leave part of the rule out, add other rules, or sit inside a longer paragraph.',
+    empty: 'Nothing needs a look. Every copy matches or has only small wording changes.' },
+  { id: 'small', title: 'Small wording changes', sub: 'Every copy is close to the reference, with a few words changed. Check that the meaning held.',
+    empty: 'No rule has small wording changes right now.' },
+  { id: 'match', title: 'Match everywhere', sub: 'Every copy is word for word the same.', empty: 'No rule matches word for word everywhere yet.' },
+  // No empty line: this group shows only when some rule is in it.
   { id: 'none', title: 'Not in your files', sub: 'The studio has these rules, but none of your files carries a copy.' },
 ];
 const BB_CLI = { claude: 'Claude', codex: 'Codex', grok: 'Grok' };
@@ -44,7 +47,8 @@ function bbCounts(b) {
   const mine = bbMine(b);
   if (!mine.length) return 'Not found in any of your files.';
   const m = mine.filter((c) => c.rating === 'same').length;
-  return `${m} of ${bbPlural(mine.length, 'copy', 'copies')} ${m === 1 ? 'matches' : 'match'}`;
+  // "1 of 7 copies matches", "0 of 1 copy matches", "2 of 5 copies match": singular when either number is one.
+  return `${m} of ${bbPlural(mine.length, 'copy', 'copies')} ${m === 1 || mine.length === 1 ? 'matches' : 'match'}`;
 }
 
 function bbStatus(d) {
@@ -102,7 +106,8 @@ function bbRepeatsText(summary, text) {
   if (!a.size) return false;
   let shared = 0;
   for (const x of a) if (b.has(x)) shared++;
-  return shared / a.size >= 0.6;
+  // Measured on the shipped rules: a summary that says its text again scored 0.80; shorter restatements 0.13–0.63.
+  return shared / a.size >= 0.75;
 }
 
 function bbCard(b) {
@@ -203,10 +208,11 @@ function paintBlocks() {
   if (!d.blocks.length) box.appendChild(el('p', 'bb-empty', 'No shared rules yet.'));
   for (const g of BB_GROUPS) {
     const rules = d.blocks.filter((b) => bbGroup(b) === g.id);
-    if (!rules.length) continue;
+    if (!rules.length && !g.empty) continue;
     const sec = el('section', `bb-group bb-group-${g.id}`);
     sec.appendChild(el('h3', 'bb-group-title', g.title));
     sec.appendChild(el('p', 'bb-group-sub', g.sub));
+    if (!rules.length) sec.appendChild(el('p', 'bb-group-empty', g.empty));
     for (const b of rules) sec.appendChild(bbCard(b));
     box.appendChild(sec);
   }
@@ -304,7 +310,7 @@ function paintCompare() {
   back.onclick = bbBack;
   top.appendChild(back);
   const b = BB.data?.blocks.find((x) => x.id === BB.rule);
-  box.appendChild(pageHeading(b ? `Compare copies: ${b.name}` : 'Compare copies'));
+  box.appendChild(el('h2', 'bb-cmp-title', b ? `Compare copies: ${b.name}` : 'Compare copies'));
   box.appendChild(top);
   if (BB.error && !BB.data) { bbFailed(box); c.appendChild(box); return; }
   if (!b) { box.appendChild(el('p', 'bb-empty', 'That rule is not on the list any more.')); c.appendChild(box); return; }
