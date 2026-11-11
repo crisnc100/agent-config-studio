@@ -360,6 +360,8 @@ put('.claude/skills/beta/helper.md', 'Helper notes.\n');
 put('.claude/skills/beta/run.sh', 'echo beta\n');
 // PR G: a skill the Audit flags (a model-id call with no fallback), so Audit's cards render in the sweep.
 put('.claude/skills/gamma/SKILL.md', '---\nname: gamma\ndescription: calls a model\n---\n\n```bash\ncodex exec -m $(model-id sol) "review"\n```\n');
+// A skill carrying a block copy, so Building blocks shows a real copy row in the sweep.
+put('.claude/skills/delta/SKILL.md', '---\nname: delta\ndescription: carries a block\n---\n\nNever merge a PR or enable auto-merge. Only the operator merges.\n');
 put('.claude/skills/scratch/SKILL.md', '---\nname: scratch\ndescription: goes to trash\n---\n\nScratch.\n');
 put('Documents/Projects/app/CLAUDE.md', '# App\n\nRun the tests.\n');
 put('Documents/Projects/app/AGENTS.md', '# App\n\nRun the tests.\n');
@@ -607,7 +609,7 @@ const RULES = [
 /** A view's empty state ("No MCP servers configured yet.", "No registered projects. …"): not an intro. */
 const EMPTY_STATE = /^No [^.—]*?\b(yet|configured|tracked|registered|apply here|found)\b/;
 
-const VIEWS = ['home', 'files', 'skills', 'packs', 'mcp', 'models', 'memory', 'context', 'worktrees', 'usage', 'scope', 'audit', 'trash', 'setup', 'folders'];
+const VIEWS = ['home', 'files', 'skills', 'blocks', 'packs', 'mcp', 'models', 'memory', 'context', 'worktrees', 'usage', 'scope', 'audit', 'trash', 'setup', 'folders'];
 try {
   console.log('\nthe sweep: one name per thing, per view');
   for (const v of VIEWS) {

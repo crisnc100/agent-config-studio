@@ -96,7 +96,7 @@ console.log('\nsetup in the page');
   await settle(20);
   ok('1 with no setup.json, the default landing opens #setup', p.eval('S.view') === 'setup' && /^#setup&step=clis$/.test(p.location.hash), `${p.eval('S.view')} ${p.location.hash}`);
   // PR C (C1): Setup now has a sidebar item, in the footer with Trash and Theme — reachable without Home.
-  ok('1 …with one sidebar item for it, in the footer (the nav count is 15)', p.$('sidebar').querySelectorAll('.nav-item').length === 15 && !!p.$('btn-setup')?.closest('.nav-foot'));
+  ok('1 …with one sidebar item for it, in the footer (the nav count is 16)', p.$('sidebar').querySelectorAll('.nav-item').length === 16 && !!p.$('btn-setup')?.closest('.nav-foot'));
   ok('6 no scan request on page load', !p.requests.some((r) => r.path === '/api/setup/scan'));
   ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
 }
