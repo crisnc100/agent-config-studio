@@ -1,5 +1,5 @@
 ---
-name: Only the operator merges
-summary: Agents never merge a pull request or turn on auto-merge.
+name: Agents merge only through merge.mjs
+summary: Agents merge only through merge.mjs and the review gate's merge policy; never gh pr merge or auto-merge.
 ---
-Never merge a PR or enable auto-merge. Only the operator merges.
+Agents merge only through merge.mjs, which follows the review gate's merge policy (default off: the operator merges). Never gh pr merge, auto-merge or the merge button.

@@ -12,7 +12,7 @@ SETTING  read security.run, and say plainly when it is off
 REVIEW   code + security in parallel → one record (open standalone security findings go in as context)
 FIX      one fix round → one fix check → close
 CONTEXT  /context-pass on the final code → a docs-focus slice of exactly the files it touched → close the slice
-SHIP     push → the PR description → the operator merges
+SHIP     push → the PR description → merged per the merge policy (merge.mjs, or the operator)
 ```
 
 Triage, fixes, statuses, disputes, deferrals and the close follow the **code-review skill's** steps 2–3 and its review policy (rules 1–11). `s…` findings follow exactly the same rules as `f…` findings.
@@ -66,7 +66,9 @@ It runs after the close, on the final code, so the docs describe the code after 
 
 ## Step 5 — push, then the PR description
 
-`node "$SCRIPT" --summary` must succeed at the tip; its output goes in the PR body. Push the branch; a push-gate refusal names the uncovered files, so follow the code-review skill's slice rule, never an override. Write the description with the pr skill when it is installed (it reads the docs table at `builds/<slug>/docs-table.json`; pass `--docs-table` to pr-facts when it lives elsewhere); otherwise open the PR with `gh pr create`, putting the `--summary` output, the **Deferred findings** section and the security line from step 1 in the body. Agent merge, if the operator turned it on, follows rule 5 of the review policy (`node ~/.agent-config-studio/review-gate/merge.mjs`); otherwise the operator merges.
+`node "$SCRIPT" --summary` must succeed at the tip; its output goes in the PR body. Push the branch; a push-gate refusal names the uncovered files, so follow the code-review skill's slice rule, never an override. Write the description with the pr skill when it is installed (it reads the docs table at `builds/<slug>/docs-table.json`; pass `--docs-table` to pr-facts when it lives elsewhere); otherwise open the PR with `gh pr create`, putting the `--summary` output, the **Deferred findings** section and the security line from step 1 in the body.
+
+Agent merge: when `--show-config` shows a `merge.policy` other than `off`, run `node ~/.agent-config-studio/review-gate/merge.mjs` once, as rule 5 of the review policy says, and report the one line it prints. Agents merge only through merge.mjs, which follows the review gate's merge policy (default off: the operator merges). Never gh pr merge, auto-merge or the merge button.
 
 ## One report
 
