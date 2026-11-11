@@ -156,8 +156,11 @@ const VIEWS = [
     title: 'New skill', sub: 'Describe it, answer a few questions, review the SKILL.md', open: openSkillWizard },
   { id: 'packs', label: 'Packs', group: 'workflows', icon: 'packs', hash: '#packs',
     title: 'Skill packs', sub: 'Ready-made skills and the settings they need — nothing is written until you preview a change and confirm it', open: openPacks },
-  { id: 'blocks', label: 'Building blocks', group: 'workflows', icon: 'blocks', hash: '#blocks',
-    title: 'Building blocks', sub: 'Shared rule text, and every copy of it in your skills and instruction files', open: openBlocks },
+  { id: 'blocks', label: 'Shared rules', group: 'workflows', icon: 'blocks', hash: '#blocks',
+    title: 'Shared rules', sub: 'Checked word by word, never by meaning', open: openBlocks },
+  // No sidebar item: a rule's Compare copies button (public/blocks-view.js); Shared rules stays marked.
+  { id: 'blocks-compare', label: 'Compare copies', group: null, parent: 'blocks', icon: 'blocks', hash: '#blocks/compare',
+    title: 'Shared rules', sub: 'Checked word by word, never by meaning', open: openBlocksCompare },
   { id: 'mcp', label: 'MCP', group: 'files', icon: 'mcp', hash: '#mcp',
     title: 'MCP servers', sub: 'The MCP servers your CLIs can call', open: openMcp },
   // No sidebar item: reached from the Files page's folder line, and #folders.
@@ -452,7 +455,7 @@ function syncNav() {
     if (!b) continue;
     const page = v.kind !== 'action' && S.view === v.id;
     // Inside a file, the view it came from stays marked: "you are here, under it", not the page itself.
-    const under = v.kind !== 'action' && S.view === 'entry' && (S.fromView || 'files') === v.id;
+    const under = v.kind !== 'action' && ((S.view === 'entry' && (S.fromView || 'files') === v.id) || viewById(S.view)?.parent === v.id);
     const here = page || under;
     b.classList.toggle('active', here);
     if (page) b.setAttribute('aria-current', 'page'); else if (under) b.setAttribute('aria-current', 'location'); else b.removeAttribute('aria-current');

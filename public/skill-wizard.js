@@ -449,7 +449,7 @@ function swField(label, input) {
 
 /* ── 4. blocks ───────────────────────────────────────────────────────── */
 /**
- * Shared rules from Building blocks, each ticked by the person: none is
+ * Shared rules from the Shared rules page, each ticked by the person: none is
  * ticked or suggested for them. The server pastes the ticked ones word for
  * word after the draft; the model only ever sees their names.
  */
@@ -462,9 +462,9 @@ function swBlocks(box) {
     SW.blocks = SW.blocks.filter((id) => known.has(id));
     swInvalidate(); swSave();
   }
-  box.appendChild(el('div', 'sw-label', 'Add shared rules from Building blocks?'));
+  box.appendChild(el('div', 'sw-label', 'Add shared rules?'));
   box.appendChild(el('div', 'scope-note', 'Each one you tick is added word for word at the end of the skill, under Shared rules. The AI sees only the names of the ones you tick, never their text.'));
-  if (SWX.goneBlocks.length) box.appendChild(el('div', 'notice warn sw-blocks-gone', `No longer in Building blocks, so not added: ${SWX.goneBlocks.join(', ')}.`));
+  if (SWX.goneBlocks.length) box.appendChild(el('div', 'notice warn sw-blocks-gone', `No longer among the shared rules, so not added: ${SWX.goneBlocks.join(', ')}.`));
   const set = el('fieldset', 'sw-blocks');
   set.appendChild(el('legend', 'sw-field-label', 'Shared rules'));
   if (!list.length) set.appendChild(el('div', 'scope-note', 'There are no building blocks yet.'));
