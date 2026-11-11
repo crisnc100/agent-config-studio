@@ -19,10 +19,11 @@ console.log('\nbuilding blocks page');
 const VIEW = {
   blocks: [
     { id: 'review-policy', name: 'Review policy', summary: 'The eleven rules for a review.', text: '1. The operator is involved only at PR merge.\n2. **One** fix round.\n',
-      marker: '<!-- block:review-policy sha256:aa -->', counts: { same: 1, reworded: 1, differs: 1 }, copies: [
-        { file: 'packs/build/skills/claude/build/SKILL.md', source: 'pack', line: 222, endLine: 232, rating: 'same', marked: false, note: null },
-        { file: '~/.claude/skills/build/SKILL.md', source: 'claude', line: 220, endLine: 230, rating: 'reworded', marked: true, note: 'edited after it was added' },
-        { file: '~/.claude/skills/code-review/SKILL.md', source: 'claude', line: 103, endLine: 117, rating: 'differs', marked: false, note: 'the whole block is there, with more added' },
+      marker: '<!-- block:review-policy sha256:aa -->', counts: { same: 1, reworded: 2, differs: 1 }, copies: [
+        { file: 'packs/build/skills/claude/build/SKILL.md', source: 'pack', kind: 'skill', line: 222, endLine: 232, rating: 'same', marked: false, note: null },
+        { file: '~/.claude/skills/build/SKILL.md', source: 'claude', kind: 'skill', line: 220, endLine: 230, rating: 'reworded', marked: true, note: 'edited after it was added' },
+        { file: '~/.claude/skills/code-review/SKILL.md', source: 'claude', kind: 'skill', line: 103, endLine: 117, rating: 'differs', marked: false, note: 'the whole block is there, with more added' },
+        { file: '~/.claude/CLAUDE.md', source: 'claude', kind: 'instructions', line: 30, endLine: 31, rating: 'reworded', marked: false, note: null },
       ] },
     { id: 'operator-merges', name: 'Only the operator merges', summary: 'Agents never merge.', text: 'Never merge a PR or enable auto-merge.\n',
       marker: '<!-- block:operator-merges sha256:bb -->', counts: { same: 0, reworded: 0, differs: 0 }, copies: [] },
@@ -47,17 +48,19 @@ try {
   const [rp, om] = c.querySelectorAll('.bb-card');
   ok('each block shows its name, summary and its text', t(rp.querySelector('.bb-name')) === 'Review policy' && t(rp.querySelector('.bb-summary')) === 'The eleven rules for a review.'
     && /The operator is involved only at PR merge\./.test(t(rp.querySelector('.bb-text'))), rp.innerHTML.slice(0, 400));
-  ok('the counts line: "3 copies: 1 same, 1 reworded, 1 differs"', t(rp.querySelector('.bb-counts')) === '3 copies: 1 same, 1 reworded, 1 differs', t(rp.querySelector('.bb-counts')));
+  ok('the counts line: "4 copies: 1 same, 2 reworded, 1 differs"', t(rp.querySelector('.bb-counts')) === '4 copies: 1 same, 2 reworded, 1 differs', t(rp.querySelector('.bb-counts')));
   const rows = rp.querySelectorAll('.bb-copy');
-  ok('every copy with its file:line range and its rating, differs first', rows.length === 3
+  ok('every copy with its file:line range and its rating, differs first', rows.length === 4
     && JSON.stringify(rows.map((r) => [t(r.querySelector('.bb-rating')), t(r.querySelector('.bb-where'))])) === JSON.stringify([
-      ['differs', '~/.claude/skills/code-review/SKILL.md:103–117'], ['reworded', '~/.claude/skills/build/SKILL.md:220–230'], ['same', 'packs/build/skills/claude/build/SKILL.md:222–232']]),
+      ['differs', '~/.claude/skills/code-review/SKILL.md:103–117'], ['reworded', '~/.claude/skills/build/SKILL.md:220–230'], ['reworded', '~/.claude/CLAUDE.md:30–31'], ['same', 'packs/build/skills/claude/build/SKILL.md:222–232']]),
     JSON.stringify(rows.map((r) => t(r))));
   ok('a marked copy says so, and a note shows beside its copy', t(rows[1].querySelector('.bb-marked')) === 'marked' && !rows[0].querySelector('.bb-marked')
     && t(rows[1].querySelector('.bb-note')) === 'edited after it was added' && t(rows[0].querySelector('.bb-note')) === 'the whole block is there, with more added');
-  ok('each rating has its own class for its colour', ['differs', 'reworded', 'same'].every((k, i) => rows[i].querySelector('.bb-rating').classList.contains(`bb-rating-${k}`)));
-  ok('a block with no copies says so in one line', t(om.querySelector('.bb-counts')) === 'No skill carries a copy yet.' && !om.querySelector('.bb-copies'));
-  ok('the totals line counts blocks, copies and files', /^2 blocks · 3 copies in 102 files read$/.test(t(c.querySelector('.bb-total'))), t(c.querySelector('.bb-total')));
+  ok('a copy in an instruction file is labelled "instruction file"; skill copies carry no label', t(rows[2].querySelector('.bb-kind')) === 'instruction file'
+    && [0, 1, 3].every((i) => !rows[i].querySelector('.bb-kind')), rows.map((r) => t(r)).join(' | '));
+  ok('each rating has its own class for its colour', ['differs', 'reworded', 'reworded', 'same'].every((k, i) => rows[i].querySelector('.bb-rating').classList.contains(`bb-rating-${k}`)));
+  ok('a block with no copies says so in one line', t(om.querySelector('.bb-counts')) === 'No skill or instruction file carries a copy yet.' && !om.querySelector('.bb-copies'));
+  ok('the totals line counts blocks, copies and files', /^2 blocks · 4 copies in 102 files read$/.test(t(c.querySelector('.bb-total'))), t(c.querySelector('.bb-total')));
   ok('no fold: no <details>, summary or toggle', c.querySelectorAll('details, summary, [aria-expanded]').length === 0);
   const buttons = c.querySelectorAll('button');
   ok('every button is primary, secondary or quiet', buttons.length > 0 && buttons.every((b) => /\bbtn\b/.test(b.className)), buttons.map((b) => b.className).join(' | '));

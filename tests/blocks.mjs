@@ -93,6 +93,10 @@ console.log('\nfinding copies: unmarked by close match, marked by their markers'
   ok('a start marker without its end is ignored; the text is still found unmarked', loose.length === 1 && !loose[0].marked && loose[0].rating === 'same', JSON.stringify(loose));
   const unknown = B.scanText(`<!-- block:nope sha256:${sha(BODY)} -->\n${BODY}<!-- /block:nope -->\n`, blocks);
   ok('a marker naming no known block is ignored', unknown.length === 1 && !unknown[0].marked && unknown[0].id === 'test-rule', JSON.stringify(unknown));
+  const gen = B.scanText(`# Rules\n\n<!-- acs:model-guide v1 sep=1 sha256:${'a'.repeat(64)} -->\n${P1}\n\n${P2}\n<!-- /acs:model-guide -->\n\nAfter.\n`, blocks);
+  ok('text inside a generated block (<!-- acs:… --> … <!-- /acs:… -->) is never a copy', gen.length === 0, JSON.stringify(gen));
+  const after = B.scanText(`<!-- acs:model-guide v1 sep=1 sha256:${'a'.repeat(64)} -->\nmodel lines\n<!-- /acs:model-guide -->\n\n${P1}\n\n${P2}\n`, blocks);
+  ok('…while a copy after one is still found, at its own line', after.length === 1 && after[0].rating === 'same' && after[0].line === 5, JSON.stringify(after));
   ok('CRLF files are read the same', B.scanText(mark(BODY).replace(/\n/g, '\r\n'), blocks)[0]?.rating === 'same');
 }
 
@@ -110,11 +114,18 @@ console.log('\nwhere copies are looked for');
   put(path.join(packs, 'p', 'instructions', 'p.md'), 'e');
   put(path.join(packs, 'p', 'tests', 'fixture.md'), 'f');
   put(path.join(packs, 'p', 'README.md'), 'g');
-  const files = B.sourceFiles({ dirs: [{ harness: 'claude', dir: claude }, { harness: 'codex', dir: codex }], packsDir: packs });
+  put(path.join(t, 'claude-home', 'CLAUDE.md'), 'h');
+  put(path.join(t, 'codex-home', 'AGENTS.md'), 'i');
+  const instructions = [{ harness: 'claude', file: path.join(t, 'claude-home', 'CLAUDE.md') }, { harness: 'codex', file: path.join(t, 'codex-home', 'AGENTS.md') },
+    { harness: 'grok', file: path.join(t, 'grok-home', 'AGENTS.md') }];
+  const files = B.sourceFiles({ dirs: [{ harness: 'claude', dir: claude }, { harness: 'codex', dir: codex }], packsDir: packs, instructions });
   const shown = files.map((f) => f.display.startsWith(t) ? path.relative(t, f.display) : f.display).sort();
-  ok('skill .md files (top and one folder down), pack skills and instructions; not pack tests or other files',
-    JSON.stringify(shown) === JSON.stringify(['claude-skills/one/SKILL.md', 'claude-skills/one/references/more.md', 'codex-skills/two/SKILL.md', 'packs/p/instructions/p.md', 'packs/p/skills/claude/x/SKILL.md']),
+  ok('global instruction files that exist, skill .md files (top and one folder down), pack skills and instructions; not pack tests or other files',
+    JSON.stringify(shown) === JSON.stringify(['claude-home/CLAUDE.md', 'claude-skills/one/SKILL.md', 'claude-skills/one/references/more.md', 'codex-home/AGENTS.md', 'codex-skills/two/SKILL.md', 'packs/p/instructions/p.md', 'packs/p/skills/claude/x/SKILL.md']),
     JSON.stringify(shown));
+  ok('global instruction files are labelled instruction files, skill files skills', files.find((f) => f.display.endsWith('CLAUDE.md'))?.kind === 'instructions'
+    && files.find((f) => f.display.endsWith('codex-home/AGENTS.md'))?.kind === 'instructions' && files.find((f) => f.display.endsWith('two/SKILL.md'))?.kind === 'skill'
+    && files.find((f) => f.display.endsWith('x/SKILL.md'))?.kind === 'skill', JSON.stringify(files.map((f) => [f.display.slice(-24), f.kind])));
   ok('a skill linked into a second folder is read once', files.filter((f) => f.abs.endsWith('one/SKILL.md') || f.abs.endsWith('one-link/SKILL.md')).length === 1);
   ok('each file says where it came from', files.find((f) => f.display.endsWith('two/SKILL.md'))?.source === 'codex' && files.find((f) => f.display.endsWith('p.md'))?.source === 'pack');
 
@@ -123,7 +134,7 @@ console.log('\nwhere copies are looked for');
   put(path.join(bdir, 'test-rule.md'), `---\nname: Test rule\nsummary: s\n---\n${BODY}`);
   put(path.join(claude, 'one', 'SKILL.md'), `---\nname: one\n---\n\n${P1}\n\n${P2}\n`);
   put(path.join(packs, 'p', 'instructions', 'p.md'), `<!-- block:test-rule sha256:${sha(BODY)} -->\n${BODY}<!-- /block:test-rule -->\n`);
-  const v = B.blocksView({ blocksDir: bdir, dirs: [{ harness: 'claude', dir: claude }, { harness: 'codex', dir: codex }], packsDir: packs });
+  const v = B.blocksView({ blocksDir: bdir, dirs: [{ harness: 'claude', dir: claude }, { harness: 'codex', dir: codex }], packsDir: packs, instructions: [] });
   const b = v.blocks[0];
   ok('blocksView: the block, its text, its marker line and its counts', v.blocks.length === 1 && b.id === 'test-rule' && b.text === BODY
     && b.marker === `<!-- block:test-rule sha256:${sha(BODY)} -->` && b.counts.same === 2 && b.counts.reworded === 0 && b.counts.differs === 0, JSON.stringify(b));
@@ -146,6 +157,7 @@ const shipped = B.loadBlocks().find((b) => b.id === 'operator-merges');
 put(path.join(home, '.claude', 'skills', 'demo', 'SKILL.md'),
   `---\nname: demo\ndescription: carries a block\n---\n\nIntro line.\n\n${B.startMarker(shipped.id, shipped.body)}\n${shipped.body}<!-- /block:${shipped.id} -->\n`);
 put(path.join(home, '.codex', 'skills', 'demo', 'SKILL.md'), `---\nname: demo\ndescription: carries a block\n---\n\n${shipped.body.replace('Only the operator merges.', 'Only the user merges.')}`);
+put(path.join(home, '.claude', 'CLAUDE.md'), `# Rules\n\n${shipped.body}\n<!-- acs:model-guide v1 sep=1 sha256:${'a'.repeat(64)} -->\n${shipped.body}<!-- /acs:model-guide -->\n`);
 const port = await freePort();
 const child = track(spawn(process.execPath, [path.join(ROOT, 'server.js')], {
   cwd: ROOT, env: { HOME: home, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir() }, stdio: ['ignore', 'pipe', 'pipe'],
@@ -168,6 +180,10 @@ try {
   const codexCopy = mine?.copies.find((c) => c.file === '~/.codex/skills/demo/SKILL.md');
   ok('the Claude skill\'s marked copy: same, at its marker line', claudeCopy?.marked && claudeCopy.rating === 'same' && claudeCopy.line === 8, JSON.stringify(mine?.copies));
   ok('the Codex skill\'s unmarked copy with one word changed: reworded', codexCopy && !codexCopy.marked && codexCopy.rating === 'reworded' && codexCopy.line === 6, JSON.stringify(mine?.copies));
+  const instr = mine?.copies.filter((c) => c.file === '~/.claude/CLAUDE.md') || [];
+  ok('the global CLAUDE.md is read: one copy, labelled an instruction file; the one inside the model guide is skipped',
+    instr.length === 1 && instr[0].kind === 'instructions' && instr[0].line === 3 && instr[0].rating === 'same', JSON.stringify(instr));
+  ok('skill copies are labelled skills', claudeCopy?.kind === 'skill' && codexCopy?.kind === 'skill');
   ok('the checkout\'s packs are read too', body.scanned.files > 2 && body.blocks.some((b) => b.copies.some((c) => c.file.startsWith('packs/'))), JSON.stringify(body.scanned));
   ok('no absolute home path in the answer', !JSON.stringify(body).includes(home));
   const cross = await fetch(`${base}/api/blocks`, { headers: { 'sec-fetch-site': 'same-site' } });
