@@ -100,7 +100,7 @@ function spawn(command, args, options) {
 }
 const args = process.argv.slice(2)
 const option = (flag) => {
-  const at = args.indexOf(flag)
+  const at = flagAt(flag)
   if (at === -1) return null
   const value = args[at + 1]
   if (!value || value.startsWith('--')) throw new Error(`${flag} requires a value`)
@@ -122,28 +122,50 @@ const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--pl
 // Every flag this copy reads. Anything else is refused: an older copy that ignored an unknown flag ran a full review in
 // its place, so a skill asking for a mode this copy lacks gets an error, never a different command.
 const KNOWN_FLAGS = [...VALUE_FLAGS, '--all', '--calibrate', '--code-only', '--deferred', '--eval', '--gate', '--log-outcome', '--noise-report',
-  '--rubric', '--security-findings', '--security-only', '--show-config', '--summary', '--tier-json', '--yes']
+  '--rubric', '--security-findings', '--security-only', '--show-config', '--summary', '--tier-json', '--yes', '--cross-family']
+// The flags that pick a mode, with every value flag's value left out: a value is data, never a mode. --remote's value
+// (a git remote name, from the pre-push hook) and --supports' (a flag name) may start with --; option() refuses any
+// other value that does, so a --flag after any other value flag is a flag.
+const ANY_VALUE = ['--remote', '--supports']
+const MODE_ARGS = [], FLAG_AT = []
+for (let i = 0; i < args.length; i++) {
+  MODE_ARGS.push(args[i])
+  FLAG_AT.push(i)
+  if (VALUE_FLAGS.includes(args[i]) && i + 1 < args.length && (ANY_VALUE.includes(args[i]) || !args[i + 1].startsWith('--'))) i++
+}
+const hasFlag = (flag) => MODE_ARGS.includes(flag)
+// The flag's own position in args, never a value that happens to spell it.
+function flagAt(flag) {
+  return FLAG_AT.find((i) => args[i] === flag) ?? -1
+}
 // --log-outcome takes positional values; none of them is a flag.
 const unknownFlag = args.find((a, i) => a.startsWith('--') && !KNOWN_FLAGS.includes(a) && !VALUE_FLAGS.includes(args[i - 1]) && !args.slice(0, i).includes('--log-outcome'))
 if (unknownFlag !== undefined) stop(`unknown flag ${unknownFlag}`)
 // --supports <flag>: exit 0 when this copy reads the flag, 1 when it does not. Skills ask before using a newer mode.
-if (args.includes('--supports')) process.exit(KNOWN_FLAGS.includes(args[args.indexOf('--supports') + 1]) ? 0 : 1)
+if (hasFlag('--supports')) process.exit(KNOWN_FLAGS.includes(args[flagAt('--supports') + 1]) ? 0 : 1)
 // --eval takes only its own flags: with --gate (or any other command) it would run instead of that command.
 const EVAL_FLAGS = ['--eval', '--family', '--cases', '--timeout', '--repeat', '--yes']
-if (args.includes('--eval')) {
+if (hasFlag('--eval')) {
   const others = args.filter((a) => a.startsWith('--') && !EVAL_FLAGS.includes(a))
   if (others.length) stop(`--eval runs alone: it cannot be combined with ${others.join(', ')} (its flags: ${EVAL_FLAGS.slice(1).join(', ')}).`)
 }
 
 // --security-only takes only --plan and an intent: with --close, --gate or any other command, that command would run.
-if (args.includes('--security-only')) {
+if (hasFlag('--security-only')) {
   const others = args.filter((a, i) => a.startsWith('--') && !['--security-only', '--plan'].includes(a) && args[i - 1] !== '--plan')
   if (others.length) stop(`--security-only runs alone: it cannot be combined with ${others.join(', ')} (it takes --plan and an intent).`)
+}
+
+// The push gate takes only --remote: with any other mode flag, that mode could answer in its place and pass the push.
+if (hasFlag('--gate')) {
+  const others = MODE_ARGS.filter((a) => a.startsWith('--') && !['--gate', '--remote'].includes(a))
+  if (others.length) stop(`--gate runs alone: it cannot be combined with ${others.join(', ')} (it takes --remote <name>).`)
 }
 
 // ── User-configurable defaults (change the model WITHOUT editing this script) ──
 // Resolution: env var > project .claude/review-config.json > ~/.agent-config-studio/review-gate/config.json
 // > the older ~/.claude/review-config.json > built-in.
+// fixCheck, security, merge and crossFamily keep the home config as a floor instead, set out where each is read.
 // Edit that one small JSON file to switch reviewer/model/effort — see review-config.example.json.
 // The repo file can come from the repository itself (committed, or added by a branch you check out), so
 // the keys that run a command or reach git as an argument, and coverageExempt and coverageExemptDefaults (they would
@@ -154,6 +176,8 @@ const COMMAND_KEYS = ['verifyCmd', 'classifier', 'base']
 const OWN_FILE_KEYS = [...COMMAND_KEYS, 'coverageExempt', 'coverageExemptDefaults', 'grokMcpAllow']
 // Set when the repo file failed that check: its `pick` may name a family, never a command to run.
 let REPO_PICK_UNTRUSTED = false
+// Whether the loaded config may turn crossFamily off: the home config, or a repo file git doesn't track.
+let CONFIG_CROSS_TRUSTED = false
 const sameFile = (a, b) => {
   try {
     return realpathSync(a) === realpathSync(b)
@@ -210,7 +234,7 @@ function withoutRepoCommands(config, p, homes) {
   for (const k of keys) delete config[k]
   for (const [k, v] of fromHome) config[k] = v
   REPO_PICK_UNTRUSTED = pickMayRun
-  if (keys.length && !args.includes('--gate'))
+  if (keys.length && !hasFlag('--gate'))
     console.warn(`⚠ Ignoring ${keys.join(', ')} in ${p}: git tracks it (or a symlink leads to it), so the repository can set it. ` +
       `Put them in ~/.agent-config-studio/review-gate/config.json or the environment, or keep the file untracked.`)
   return config
@@ -227,7 +251,7 @@ const HUMAN_COMMENT = 'Needs human approval before merging.'
 function mergeSettings(raw) {
   const m = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
   const policy = String(m.policy ?? 'off').trim().toLowerCase()
-  if (!MERGE_POLICIES.includes(policy) && !args.includes('--gate'))
+  if (!MERGE_POLICIES.includes(policy) && !hasFlag('--gate'))
     console.warn(`⚠ Unknown merge.policy ${JSON.stringify(m.policy)}; using "off" (${MERGE_POLICIES.join(' | ')})`)
   const threshold = Number(m.threshold)
   return {
@@ -262,7 +286,7 @@ const SECURITY_TIMEOUT_MS = 15 * 60_000
 function securityLevel(value, where) {
   const run = String(value ?? 'off').trim().toLowerCase()
   if (SECURITY_RUNS.includes(run)) return run
-  if (!args.includes('--gate')) console.warn(`⚠ Unknown security.run ${JSON.stringify(value)}${where ? ` in ${where}` : ''}; using "off" (${SECURITY_RUNS.join(' | ')})`)
+  if (!hasFlag('--gate')) console.warn(`⚠ Unknown security.run ${JSON.stringify(value)}${where ? ` in ${where}` : ''}; using "off" (${SECURITY_RUNS.join(' | ')})`)
   return 'off'
 }
 function securitySettings(raw) {
@@ -275,14 +299,14 @@ function stricterSecurity(repo, home, p) {
   const run = String(own.run ?? base.run).trim().toLowerCase()
   let chosen = base.run
   if (SECURITY_RUNS.includes(run) && SECURITY_RUNS.indexOf(run) >= SECURITY_RUNS.indexOf(base.run)) chosen = run
-  else if (Object.hasOwn(own, 'run') && !args.includes('--gate'))
+  else if (Object.hasOwn(own, 'run') && !hasFlag('--gate'))
     console.warn(`⚠ Ignoring security.run ${JSON.stringify(own.run)} in ${p}: the repository or an agent can set that file, so it may only ` +
       `raise the security pass above "${base.run}" (${SECURITY_RUNS.join(' < ')})`)
   return { run: chosen, timeoutMs: base.timeoutMs }
 }
 function stricterMerge(repo, home, p, why = 'git tracks it (or a symlink leads to it), so the repository can set it') {
   const base = mergeSettings(home), own = repo && typeof repo === 'object' && !Array.isArray(repo) ? repo : {}
-  const warn = (key, extra = '') => { if (!args.includes('--gate')) console.warn(`⚠ Ignoring ${key} in ${p}: ${why}${extra}.`) }
+  const warn = (key, extra = '') => { if (!hasFlag('--gate')) console.warn(`⚠ Ignoring ${key} in ${p}: ${why}${extra}.`) }
   const policy = String(own.policy ?? base.policy).trim().toLowerCase()
   let chosen = base.policy
   if (MERGE_POLICIES.includes(policy) && MERGE_POLICIES.indexOf(policy) <= MERGE_POLICIES.indexOf(base.policy)) chosen = policy
@@ -316,7 +340,7 @@ function loadConfig() {
     try {
       if (existsSync(p)) config = { ...JSON.parse(readFileSync(p, 'utf8')), _source: p }
     } catch (e) {
-      if (args.includes('--gate')) {
+      if (hasFlag('--gate')) {
         // Defer to pushGate so a real operator override can still be checked and logged.
         gateConfigError = new Error(`Malformed review config at ${p}: ${e.message}`)
         return {}
@@ -326,6 +350,10 @@ function loadConfig() {
     if (config) {
       // REVIEW_CONFIG, or a repo file that is the older home config while the primary one exists, never goes below the floor.
       const floorFile = homeSource(homes)
+      const isFloor = !!floorFile && sameFile(p, floorFile)
+      CONFIG_CROSS_TRUSTED = !env && !repo ? true
+        : env || homes.some((home) => sameFile(p, home)) ? isFloor
+        : Object.hasOwn(config, 'crossFamily') && repoFileIsOwn(p, homes)
       if ((env || repo && homes.some((home) => sameFile(p, home))) && !(floorFile && sameFile(p, floorFile))) {
         config.security = Object.hasOwn(config, 'security') ? stricterSecurity(config.security, homeKey(homes, 'security'), p) : homeKey(homes, 'security')
         // The same floor for merge: such a file may only tighten the home config's merge settings.
@@ -345,7 +373,7 @@ const CONFIG = loadConfig()
 // An old config (or env) may still set the removed shadow keys: they are ignored with one note, never an error.
 const OLD_SHADOW_KEYS = [...['shadow', 'pickShadow'].filter((k) => Object.hasOwn(CONFIG, k)),
   ...['REVIEW_SHADOW', 'REVIEW_PICK_SHADOW'].filter((k) => String(process.env[k] ?? '').trim())]
-if (OLD_SHADOW_KEYS.length && !args.includes('--gate')) console.warn(`ℹ ${OLD_SHADOW_KEYS.join(', ')} ignored: shadow pickers were removed`)
+if (OLD_SHADOW_KEYS.length && !hasFlag('--gate')) console.warn(`ℹ ${OLD_SHADOW_KEYS.join(', ')} ignored: shadow pickers were removed`)
 const MERGE = mergeSettings(CONFIG.merge)
 // The security pass in force: the config's, raised (never lowered) by REVIEW_SECURITY for one run.
 const SECURITY = (() => {
@@ -355,11 +383,49 @@ const SECURITY = (() => {
   if (asked == null || !String(asked).trim()) return settings
   const run = securityLevel(asked, 'REVIEW_SECURITY')
   if (SECURITY_RUNS.indexOf(run) > SECURITY_RUNS.indexOf(settings.run)) return { ...settings, run, raisedBy: 'REVIEW_SECURITY' }
-  if (run !== settings.run && !args.includes('--gate'))
+  if (run !== settings.run && !hasFlag('--gate'))
     console.warn(`⚠ Ignoring REVIEW_SECURITY=${asked}: it may only raise the security pass above "${settings.run}", never lower it`)
   return settings
 })()
 const cfg = (envName, key, dflt) => process.env[envName] ?? CONFIG[key] ?? dflt
+// crossFamily: "prefer" (the default: reviews, /build's Grade and the check on test changes prefer a vendor other than
+// the author's) | "off". The home config is the floor: REVIEW_CONFIG and a tracked repo file, which an agent or the
+// repository can set, and REVIEW_CROSS_FAMILY may turn it on, never off. An untracked repo file is the operator's own.
+// REVIEW_CROSS_FAMILY=off still counts when no config sets crossFamily at all.
+const CROSS_FAMILY_MODES = ['prefer', 'off']
+const CROSS_FAMILY_NOTES = []
+const CROSS_FAMILY = (() => {
+  const homes = [join(homedir(), '.agent-config-studio', 'review-gate', 'config.json'), join(homedir(), '.claude', 'review-config.json')]
+  const mode = (value, where) => {
+    if (value == null || String(value).trim() === '') return null
+    const asked = String(value).trim().toLowerCase()
+    if (CROSS_FAMILY_MODES.includes(asked)) return asked
+    CROSS_FAMILY_NOTES.push(`⚠ crossFamily ${JSON.stringify(value)}${where ? ` in ${where}` : ''} is not prefer|off — using prefer`)
+    return 'prefer'
+  }
+  const ignore = (what) => {
+    if (!hasFlag('--gate'))
+      console.warn(`⚠ Ignoring ${what}: the repository or an agent can set it, so it may only turn cross-vendor checks on, never off`)
+  }
+  const home = homeSource(homes), loadedIsHome = !!home && !!CONFIG._source && sameFile(CONFIG._source, home)
+  const fromHome = mode(homeKey(homes, 'crossFamily'), home)
+  let chosen = fromHome ?? 'prefer'
+  const own = loadedIsHome ? null : mode(CONFIG.crossFamily, CONFIG._source)
+  if (own === 'prefer' || (own === 'off' && CONFIG_CROSS_TRUSTED)) chosen = own
+  else if (own === 'off' && chosen === 'prefer') ignore(`crossFamily "off" in ${CONFIG._source}`)
+  const asked = mode(process.env.REVIEW_CROSS_FAMILY, 'REVIEW_CROSS_FAMILY')
+  if (asked === 'prefer') chosen = 'prefer'
+  else if (asked === 'off' && chosen === 'prefer') {
+    if (fromHome == null && own == null) chosen = 'off'
+    else ignore(`REVIEW_CROSS_FAMILY=${process.env.REVIEW_CROSS_FAMILY}`)
+  }
+  return chosen
+})()
+// --cross-family: the resolved setting alone, for the skills that grade or check test changes. It needs no reviewer pool.
+if (hasFlag('--cross-family')) {
+  console.log(CROSS_FAMILY)
+  process.exit(0)
+}
 // fixCheck: "risk" (the default: a fix touching tests, verify scripts or riskPaths needs a fix check before close) |
 // "always" (any code fix after the review needs one; docs, static, coverage-exempt and builds/ files never do). Every
 // source may only raise it: the home config is the floor, and REVIEW_FIX_CHECK, REVIEW_CONFIG or a repo file can't lower it.
@@ -373,7 +439,7 @@ const FIX_CHECK = (() => {
     if (value == null || value === '') continue
     const asked = String(value).trim().toLowerCase()
     if (!FIX_CHECK_MODES.includes(asked)) {
-      if (!args.includes('--gate')) console.warn(`⚠ Unknown fixCheck ${JSON.stringify(value)} in ${where}; using the others (${FIX_CHECK_MODES.join(' | ')})`)
+      if (!hasFlag('--gate')) console.warn(`⚠ Unknown fixCheck ${JSON.stringify(value)} in ${where}; using the others (${FIX_CHECK_MODES.join(' | ')})`)
     } else if (asked === 'always') mode = 'always'
   }
   return mode
@@ -540,7 +606,7 @@ function logPath(home = homedir()) {
 }
 // Eval mode: the review logs only to REVIEW_EVAL_LOG_DIR, an override honoured with the marker alone.
 if (EVAL_MODE) evalModeChecks()
-else if (process.env.REVIEW_EVAL_LOG_DIR && !args.includes('--gate'))
+else if (process.env.REVIEW_EVAL_LOG_DIR && !hasFlag('--gate'))
   console.warn('⚠ Ignoring REVIEW_EVAL_LOG_DIR: it is honoured only in eval mode (REVIEW_EVAL), which review.mjs --eval sets')
 const LOG_PATH = EVAL_MODE ? join(process.env.REVIEW_EVAL_LOG_DIR, 'review-log.jsonl') : logPath()
 function readLog({ strict = false } = {}) {
@@ -739,11 +805,11 @@ const ORIGIN_HEAD = (() => {
   return !r.error && r.status === 0 ? r.stdout.trim() : ''
 })()
 // `||` not `??` so an empty string in review-config.json still means "auto-detect".
-const BASE = cfg('REVIEW_BASE', 'base', '') || (['--gate', '--deferred', '--rubric', '--calibrate', '--noise-report', '--eval'].some((flag) => args.includes(flag)) ? '' : detectDefaultBase())
+const BASE = cfg('REVIEW_BASE', 'base', '') || (['--gate', '--deferred', '--rubric', '--calibrate', '--noise-report', '--eval'].some(hasFlag) ? '' : detectDefaultBase())
 // The base reaches git as a revision and as `git fetch <remote> <ref>`, so it is never an option, a
 // refspec or a URL: no leading - or + on any part, no colon, no space. The push gate never uses it.
 const BASE_RE = /^(?!.*\/[-+])[A-Za-z0-9_@][A-Za-z0-9._/~^@{}-]*$/
-if (BASE && !args.includes('--gate') && !BASE_RE.test(BASE))
+if (BASE && !hasFlag('--gate') && !BASE_RE.test(BASE))
   stop(`${process.env.REVIEW_BASE != null ? 'REVIEW_BASE' : 'config "base"'} must be a branch, tag or commit like origin/main; got ${JSON.stringify(BASE)}.`)
 // Optional per-repo gate (config `verifyCmd`, e.g. "npm run type-check"). Its result is CONTEXT
 // for the reviewer, never a gate: a failing build is something to explain, not a reason to skip
@@ -765,15 +831,15 @@ const PATHS = normalisePaths(cfg('REVIEW_PATHS', 'paths', ''))
 let SLICE = PATHS.length ? PATHS : null
 // --focus docs: the context pass's slice review. It is a full review (the correctness prompt, the security pass when
 // security.run is on) with docs instructions added, and only ever of a slice.
-const FOCUS = args.includes('--focus') ? option('--focus') : null
+const FOCUS = hasFlag('--focus') ? option('--focus') : null
 if (FOCUS !== null && FOCUS !== 'docs') stop(`--focus must be docs, not ${JSON.stringify(FOCUS)}`)
-if (FOCUS && !SLICE && !args.includes('--slices'))
+if (FOCUS && !SLICE && !hasFlag('--slices'))
   stop('--focus docs reviews a slice: set REVIEW_PATHS to the files the context commit touched (or use --slices).')
 // --since-close <sha>: a slice whose code reviewer reads only what changed after a complete close of this branch ended at
 // <sha>. It is sound only because each of its files was already covered at <sha> (getDiff checks), and its security pass
 // still reads the whole slice, so the pass never vouches for code it did not see.
-const SINCE_CLOSE = args.includes('--since-close') ? option('--since-close') : null
-if (SINCE_CLOSE && !SLICE && !args.includes('--slices'))
+const SINCE_CLOSE = hasFlag('--since-close') ? option('--since-close') : null
+if (SINCE_CLOSE && !SLICE && !hasFlag('--slices'))
   stop('--since-close reviews a slice: set REVIEW_PATHS to the files changed after that close (or use --slices).')
 const sliceOf = (record) => (Array.isArray(record?.paths) && record.paths.length ? record.paths : null)
 // The changed files a sliced review actually covered, recorded at review time. Coverage uses only this
@@ -814,7 +880,7 @@ risk = likelihood × impact:
 - MEDIUM otherwise.
 Fix HIGH first, then MEDIUM. Both block until fixed, REFUTED or waived by the operator.
 Missing or invalid scores are asked for again once. A finding still unscored blocks as MEDIUM (HIGH if protected is exactly true).`
-const INTENT = args.includes('--dispute') || args.includes('--waive') || args.includes('--log-grade')
+const INTENT = hasFlag('--dispute') || hasFlag('--waive') || hasFlag('--log-grade')
   ? ''
   : args.filter((a, i) => !a.startsWith('--') && !VALUE_FLAGS.includes(args[i - 1])).join(' ').trim()
 const PLAN_PATH = option('--plan') ?? process.env.REVIEW_PLAN
@@ -849,7 +915,7 @@ const coverageExempt = (path) => matchesAny(path, COVERAGE_EXEMPT) || EXEMPT_DEF
 function exemptDefaults(value) {
   if (value === undefined || typeof value === 'boolean') return value !== false
   const message = `coverageExemptDefaults must be true or false; got ${JSON.stringify(value)}`
-  if (!args.includes('--gate')) stop(message)
+  if (!hasFlag('--gate')) stop(message)
   gateConfigError ||= new Error(message)
   return true
 }
@@ -857,7 +923,7 @@ function exemptDefaults(value) {
 function exemptPatterns(value) {
   if (typeof value === 'string' || Array.isArray(value) && value.every((p) => typeof p === 'string' && p.trim())) return normalisePaths(value)
   const message = `coverageExempt must be a list of non-empty path patterns; got ${JSON.stringify(value)}`
-  if (!args.includes('--gate')) stop(message)
+  if (!hasFlag('--gate')) stop(message)
   gateConfigError ||= new Error(message)
   return []
 }
@@ -1163,11 +1229,8 @@ function selectReviewer(stats, { dryRun = false } = {}) {
         `  Fix: check \`model-id ${pick}\` and the families in ACS → Models, or pick another family.`)
     requireCli(unusablePick, named)
   }
-  let crossFamily = String(cfg('REVIEW_CROSS_FAMILY', 'crossFamily', 'prefer')).trim().toLowerCase() || 'prefer'
-  if (crossFamily !== 'prefer' && crossFamily !== 'off') {
-    notes.push(`⚠ crossFamily "${crossFamily}" is not prefer|off — using prefer`)
-    crossFamily = 'prefer'
-  }
+  const crossFamily = CROSS_FAMILY
+  notes.push(...CROSS_FAMILY_NOTES)
   const author = String(cfg('REVIEW_AUTHOR', 'author', '')).trim().toLowerCase()
   const authorVendor = author ? vendorOfName(author, members) : null
   if (author && !authorVendor) notes.push(`⚠ author "${author}" is not a known family or vendor — treated as unknown`)
@@ -1226,8 +1289,10 @@ function selectReviewer(stats, { dryRun = false } = {}) {
         '  Fix: add it to the reviewer role in ACS → Models → Roles, or change "routing" in the review config.')
     m = requireCli(member, `routing → ${route.family}`)
     pickWhy = route.why
-    // Routing ignores crossFamily: a small diff goes to its family even when the builder shares its vendor.
-    crossWhy = ''
+    // Routing ignores crossFamily: a routed diff goes to its family even when the author shares its vendor, and the reviewer line names the route.
+    crossWhy = authorVendor && crossFamily === 'prefer' && m.vendor === authorVendor
+      ? `same vendor: ${route.small ? 'small-diff' : 'catch-all'} route (author ${author} is also ${authorVendor})`
+      : ''
   } else if (classifierPick) {
     m = candidates[0]
     if (dryRun) pickWhy = `pick=${pick}: decided at review time (fallback shown: ${m.family})`
@@ -1303,14 +1368,14 @@ function routeFor(rules, stats) {
   const why = rule.maxLines === undefined
     ? `route: ${size} → ${rule.family}${rules.length > 1 ? ' (the catch-all)' : ''}`
     : `route: ${size}, under ${rule.maxLines} → ${rule.family}`
-  return { family: rule.family, why, lines, risky }
+  return { family: rule.family, why, lines, risky, small: rule.maxLines !== undefined }
 }
 
 // Selected in main() once the diff is fetched (force rules and a classifier need its stats).
 let SELECTION
 let SEL
 
-if (process.argv.includes('--show-config')) {
+if (hasFlag('--show-config')) {
   const stats = existsSync('.git') ? diffStats() : null
   SELECTION = selectReviewer(stats, { dryRun: true })
   SEL = SELECTION.sel
@@ -1328,7 +1393,7 @@ if (process.argv.includes('--show-config')) {
         pick: SELECTION.pick ?? (SELECTION.route ? '(none — routing decides)' : '(explicit reviewer — not used)'),
         route: SELECTION.route ? SELECTION.why : routingRules() ? '(not used: a reviewer, force rule or pick decided)' : '(no routing configured)',
         routing: routingRules() ?? '(none)',
-        crossFamily: SELECTION.crossFamily ?? '(explicit reviewer — not used)',
+        crossFamily: CROSS_FAMILY,
         author: SELECTION.author ?? '(unknown)',
         reviewCounts: Object.fromEntries(
           [...new Set([...(SELECTION.pool || []).map((m) => m.family), ...Object.keys(counts)])].map((f) => [
@@ -1345,6 +1410,7 @@ if (process.argv.includes('--show-config')) {
         verifyCmd: VERIFY_CMD || '(none)',
         fixCheck: FIX_CHECK,
         security: SECURITY.run,
+        merge: { policy: MERGE.policy, alwaysHuman: MERGE.alwaysHuman, onHuman: MERGE.onHuman },
         source: CONFIG._source || '(built-in defaults / env only)',
         log: LOG_PATH,
       },
@@ -3324,7 +3390,7 @@ function startSecurityWorker(job, member) {
     child.on('error', (e) => { clearTimeout(timer); SECURITY_WORKERS.delete(child.pid); finish({ error: `could not start: ${e.message}` }) })
     child.on('exit', (code, signal) => { clearTimeout(timer); SECURITY_WORKERS.delete(child.pid); finish({ code, signal, timedOut }) })
   })
-  console.log(`▶ security · ${member.family} (${member.vendor} · ${member.id} · ${member.effort}) started${args.includes('--security-only') ? '' : ' beside the code reviewer'}`)
+  console.log(`▶ security · ${member.family} (${member.vendor} · ${member.id} · ${member.effort}) started${hasFlag('--security-only') ? '' : ' beside the code reviewer'}`)
   return { member, dir, result, log, started, deadline, done }
 }
 // One worker's outcome: { data } with the raw findings, or { reason } it failed for.
@@ -3980,7 +4046,7 @@ function noiseReport() {
   const since = option('--since')
   const from = since === null ? null : Date.parse(since)
   if (since !== null && !Number.isFinite(from)) throw new Error(`--since needs a date such as 2026-11-01; got ${since}`)
-  const all = args.includes('--all'), repoId = all ? null : repoIdentity()
+  const all = hasFlag('--all'), repoId = all ? null : repoIdentity()
   const entries = readLog()
   const latest = new Map()
   for (const close of entries.filter((e) => e.type === 'close' && (all || e.repoId === repoId) && (from === null || Date.parse(e.ts) >= from)))
@@ -4019,7 +4085,7 @@ function noiseReport() {
     console.log(`${t.family} ${t.band}: ${NOISE_KINDS.map((k) => `${k} ${t[k]}`).join(', ')}`)
 }
 function printDeferred() {
-  const entries = readLog(), repoId = args.includes('--all') ? null : repoIdentity()
+  const entries = readLog(), repoId = hasFlag('--all') ? null : repoIdentity()
   const reviews = entries.filter((e) => e.type === 'review' && (!repoId || e.repoId === repoId))
     .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))
   console.log('Deferred findings')
@@ -4029,7 +4095,7 @@ function printDeferred() {
   }
 }
 function calibrate() {
-  const at = args.indexOf('--calibrate'), candidate = args[at + 1]
+  const at = flagAt('--calibrate'), candidate = args[at + 1]
   const path = candidate && !candidate.startsWith('--') ? candidate : join(dirname(COPY_PATH), 'calibration.md')
   const text = readFileSync(path, 'utf8')
   const versions = [...text.matchAll(/^Rubric version:[ \t]*([^\s]+)[ \t]*$/gm)]
@@ -4128,8 +4194,8 @@ let DEFAULT_TIP
 function defaultTip() {
   if (DEFAULT_TIP !== undefined) return DEFAULT_TIP
   DEFAULT_TIP = null
-  const remote = args.indexOf('--remote')
-  if (args.includes('--gate') && (remote === -1 || args[remote + 1] !== 'origin')) return null
+  const remote = flagAt('--remote')
+  if (hasFlag('--gate') && (remote === -1 || args[remote + 1] !== 'origin')) return null
   const target = ORIGIN_HEAD
   if (!/^refs\/remotes\/origin\/[^\s]+$/.test(target) || target === 'refs/remotes/origin/HEAD') return null
   // The exact ref only: a short-name lookup would also find refs/tags/<target>.
@@ -4503,7 +4569,7 @@ const EVAL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const EVAL_KEYS = ['id', 'kind', 'intent', 'expect', 'allow', 'notes']
 const sha256 = (data) => createHash('sha256').update(data).digest('hex')
 function evalModeChecks() {
-  const refused = EVAL_REFUSED.filter((flag) => args.includes(flag))
+  const refused = EVAL_REFUSED.filter(hasFlag)
   if (refused.length)
     stop(`${refused.join(', ')} refuses to run in eval mode (REVIEW_EVAL is set): an eval review never reaches the review log, a close, ` +
       'the summary or the push gate.\n  Fix: unset REVIEW_EVAL; only review.mjs --eval sets it, on the case reviews it runs.')
@@ -4902,7 +4968,7 @@ async function runEval() {
     `${plural(repeat, 'run')} = ${plural(reviews, 'review')}${calls !== reviews ? ` (${calls} model calls)` : ''} · cases ${casesDir}`)
   for (const m of families.filter((f) => f.team)) console.log(`ℹ ${m.family} runs as the multi-agent team: ${m.calls} model calls per review`)
   console.log('ℹ a finding with missing scores adds one model call to its review; each review times out after ' + evalDuration(timeoutMs))
-  if (reviews > EVAL_GUARD && !args.includes('--yes')) {
+  if (reviews > EVAL_GUARD && !hasFlag('--yes')) {
     console.error(`✖ That is ${plural(reviews, 'review')}, more than ${EVAL_GUARD}: pass --yes to run them.`)
     process.exitCode = 1
     return
@@ -4946,24 +5012,24 @@ async function runEval() {
 }
 // ── main ─────────────────────────────────────────────────────────────────────
 ;(async function main() {
-  if (args.includes('--rubric')) return console.log(`Rubric version: ${RUBRIC_VERSION}\n${RUBRIC}`)
-  if (args.includes('--calibrate')) return calibrate()
-  if (args.includes('--eval')) return runEval()
-  if (args.includes('--gate')) return pushGate()
-  if (args.includes('--log-grade')) return logGrade(option('--log-grade'))
-  if (args.includes('--recheck-of')) throw new Error('--recheck-of requires --log-grade <verdict.json>')
-  if (args.includes('--close')) return closeReview(option('--close'))
-  if (args.includes('--dispute')) return disputeFinding(option('--dispute'), args[args.indexOf('--dispute') + 2])
-  if (args.includes('--waive')) return waiveFinding(option('--waive'), args[args.indexOf('--waive') + 2])
-  if (args.includes('--summary')) return printSummary()
-  if (args.includes('--tier-json')) return printTierJson()
-  if (args.includes('--deferred')) return printDeferred()
-  if (args.includes('--noise-report')) return noiseReport()
-  if (args.includes('--fix-check')) return fixCheck(option('--fix-check'))
-  if (args.includes('--slices')) return runSlices()
-  if (args.includes('--security-worker')) return securityWorker(option('--security-worker'))
-  if (args.includes('--security-only')) return runSecurityOnly()
-  if (args.includes('--security-findings')) return printSecurityFindings()
+  if (hasFlag('--rubric')) return console.log(`Rubric version: ${RUBRIC_VERSION}\n${RUBRIC}`)
+  if (hasFlag('--calibrate')) return calibrate()
+  if (hasFlag('--eval')) return runEval()
+  if (hasFlag('--gate')) return pushGate()
+  if (hasFlag('--log-grade')) return logGrade(option('--log-grade'))
+  if (hasFlag('--recheck-of')) throw new Error('--recheck-of requires --log-grade <verdict.json>')
+  if (hasFlag('--close')) return closeReview(option('--close'))
+  if (hasFlag('--dispute')) return disputeFinding(option('--dispute'), args[flagAt('--dispute') + 2])
+  if (hasFlag('--waive')) return waiveFinding(option('--waive'), args[flagAt('--waive') + 2])
+  if (hasFlag('--summary')) return printSummary()
+  if (hasFlag('--tier-json')) return printTierJson()
+  if (hasFlag('--deferred')) return printDeferred()
+  if (hasFlag('--noise-report')) return noiseReport()
+  if (hasFlag('--fix-check')) return fixCheck(option('--fix-check'))
+  if (hasFlag('--slices')) return runSlices()
+  if (hasFlag('--security-worker')) return securityWorker(option('--security-worker'))
+  if (hasFlag('--security-only')) return runSecurityOnly()
+  if (hasFlag('--security-findings')) return printSecurityFindings()
   const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList, sliceDiff, since } = getDiff()
   refuseLinkedReviews()
   CONTEXT = reviewContext(branch)
@@ -5000,7 +5066,7 @@ async function runEval() {
   // code reviewer; its findings join this record once both are done.
   // --code-only (the /code-review skill): no security pass, recorded as not asked, so the merge tier still says when a
   // security.run that is on needed one.
-  const securityPlan = args.includes('--code-only') && SECURITY.run !== 'off'
+  const securityPlan = hasFlag('--code-only') && SECURITY.run !== 'off'
     ? { record: { run: SECURITY.run, status: 'not-asked', reason: 'code-only run' } }
     : beginSecurity({ stats, diff: sliceDiff ?? diff, diffBase: since ? baseSha : null })
   const started = Date.now()
