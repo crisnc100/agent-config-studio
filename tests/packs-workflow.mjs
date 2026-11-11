@@ -36,7 +36,7 @@ const rolesIn = (wf) => {
     && catalog.filter((p) => !p.workflow?.strip).every((p) => p.workflow.steps.length >= 3), JSON.stringify(strips));
   const rg = catalog.find((p) => p.id === 'review-gate').workflow;
   ok('review-gate: the /pr-review flow, with no variant tabs (the reviewer tiers are /code-review\'s)', rg.command === '/pr-review' && !rg.variants?.length, JSON.stringify(rg.variants));
-  ok('review-gate: the steps /pr-review names, in order', JSON.stringify(rg.steps.map((s) => s.id)) === '["review","security","fix","dispute","check","close","context","gate"]',
+  ok('review-gate: the steps /pr-review names, in order', JSON.stringify(rg.steps.map((s) => s.id)) === '["review","security","fix","dispute","check","close","context","gate","merge"]',
     JSON.stringify(rg.steps.map((s) => s.id)));
   ok('…the code review and the security check run side by side, and the note says each runs alone too', rg.steps.find((s) => s.id === 'security').beside === 'review'
     && rg.steps.filter((s) => s.beside).length === 1 && /\/code-review/.test(rg.note || '') && /\/security-check/.test(rg.note || ''), JSON.stringify(rg.note));
@@ -48,6 +48,8 @@ const rolesIn = (wf) => {
   ok('review-gate: every step\'s description is one short line (36 characters at most)', whats.every((w) => w.length <= 36), whats.filter((w) => w.length > 36).join(' | '));
   ok('…the security pass follows the security setting, the push gate its part', rg.steps.find((s) => s.id === 'security').setting === 'security'
     && rg.steps.find((s) => s.id === 'gate').part === 'push-gate');
+  ok('…and Merge, last, is merge.mjs in the code-review part, following the merge setting', JSON.stringify((({ id, who, tool, part, setting }) => ({ id, who, tool, part, setting }))(rg.steps.at(-1)))
+    === '{"id":"merge","who":"script","tool":"merge.mjs","part":"code-review","setting":"merge"}', JSON.stringify(rg.steps.at(-1)));
   const build = catalog.find((p) => p.id === 'build').workflow;
   ok('build: Understand, Shape, Bounce, you approve, Build, Grade, you judge — and a lightweight note',
     JSON.stringify(build.steps.map((s) => [s.id, s.who, s.role || null])) === JSON.stringify([['understand', 'agent', null], ['shape', 'agent', null], ['bounce', 'role', 'advisor'], ['approve', 'you', null], ['build', 'role', 'builder'], ['grade', 'role', 'judge'], ['judge', 'you', null]])
@@ -128,11 +130,7 @@ const sb = sandbox('wf', { clis: ['claude', 'codex'] });
 const m = machine(sb.env);
 {
   const view = catalogView(m, { installedOf: () => true });
-  // The route serves pack.json's workflow as written, except that the review gate's gains its Merge step at the end.
-  const asServed = (c) => (c.id === 'review-gate' ? { ...c.workflow, steps: [...c.workflow.steps, view.packs.find((p) => p.id === 'review-gate').workflow.steps.at(-1)] } : c.workflow);
-  ok('every pack carries its workflow through the route', view.packs.every((p) => p.workflow && JSON.stringify(p.workflow) === JSON.stringify(asServed(catalog.find((c) => c.id === p.id)))));
-  ok('…the review gate\'s one added step is Merge, last', view.packs.find((p) => p.id === 'review-gate').workflow.steps.at(-1).id === 'merge'
-    && view.packs.find((p) => p.id === 'review-gate').workflow.steps.length === catalog.find((c) => c.id === 'review-gate').workflow.steps.length + 1);
+  ok('every pack carries its workflow through the route', view.packs.every((p) => p.workflow && JSON.stringify(p.workflow) === JSON.stringify(catalog.find((c) => c.id === p.id).workflow)));
   ok('no home review config: security is "off"', view.settings?.security === 'off' && securitySetting(m) === 'off', JSON.stringify(view.settings));
   const cfg = path.join(sb.home, '.agent-config-studio', 'review-gate', 'config.json');
   fs.mkdirSync(path.dirname(cfg), { recursive: true });
@@ -195,9 +193,7 @@ try {
   const step = (pack, id) => card(pack)?.querySelector(`.step[data-step="${id}"]`);
   const who = (pack, id) => t(step(pack, id)?.querySelector('.who'));
 
-  // The served workflow, not pack.json's: the catalog route appends the review gate's Merge step.
-  const served = (id) => state.catalog.packs.find((p) => p.id === id).workflow;
-  ok('every pack draws a diagram or a one-line strip', catalog.every((p) => (p.workflow.strip ? !!card(p.id)?.querySelector('.pk-strip') : card(p.id)?.querySelectorAll('.step').length === served(p.id).steps.length)),
+  ok('every pack draws a diagram or a one-line strip', catalog.every((p) => (p.workflow.strip ? !!card(p.id)?.querySelector('.pk-strip') : card(p.id)?.querySelectorAll('.step').length === p.workflow.steps.length)),
     catalog.map((p) => `${p.id}:${card(p.id)?.querySelectorAll('.step').length}`).join(' '));
   const kids = card('review-gate').children;
   const at = kids.findIndex((k) => k.classList.contains('pk-summary'));
