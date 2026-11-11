@@ -575,7 +575,8 @@ const PK_CROSS_MODES = [
 /**
  * The section's state. `draft` holds every change picked but not saved ({ key: value } over the writer's
  * allow-list): one preview covers them all, and Save writes them in one request with one backup.
- * paths holds the text typed in the box, from the first keystroke until Save or Cancel.
+ * `paths` is the paths box's text: copied from the box on every keystroke and again on every pick, Preview and
+ * Save press, and cleared (null) by a successful Save or by Cancel, when the box shows what is saved again.
  */
 const PK_SEC = { draft: {}, paths: null, preview: null, busy: false, error: null, result: null, seq: 0 };
 const pkSaved = () => {
@@ -658,7 +659,7 @@ function pkSettingsView(pack) {
   mg.appendChild(pkChoices(PK_MERGE_POLICIES, 'merge.policy'));
   mg.appendChild(pkChoiceLines(PK_MERGE_POLICIES, 'merge.policy'));
   const policyNow = PK_MERGE_POLICIES.find(([p]) => p === (s.merge?.policy || 'off'))[2];
-  mg.appendChild(el('p', 'pk-sec-now', `Now: ${policyNow} Agent merge needs the gh CLI, and a repo with no CI checks always waits for you.`));
+  mg.appendChild(el('p', 'pk-sec-now', `Now: ${policyNow} Agent merge needs the gh CLI, and a repo with no CI checks waits for you (unless your review config turns required checks off).`));
   const mergeAfter = pkAfterSave(PK_MERGE_POLICIES, 'merge.policy');
   if (mergeAfter) mg.appendChild(mergeAfter);
   mg.appendChild(el('p', 'pk-sec-now', 'An agent merges only through merge.mjs, and only when the review is closed at the tip, CI is green and nobody asked for changes.'));
