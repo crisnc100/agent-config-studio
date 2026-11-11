@@ -248,6 +248,17 @@ try {
   await until(() => q.$('content').querySelector('.bb-cmp'));
   ok('a link to #blocks/compare&rule=<id> opens that comparison, reading the rules once', q.eval('S.view') === 'blocks-compare' && q.text(q.$('content').querySelector('h2')) === 'Compare copies: Callback contract'
     && rcalls.filter((x) => x === 'GET /api/blocks').length === 1 && rcalls.every((x) => x.startsWith('GET ')), rcalls.join(', '));
+  // f1: with Compare open, a link to another rule opens that rule; the same link again repaints nothing.
+  rcalls.length = 0;
+  q.navigate('#blocks/compare&rule=review-policy');
+  await until(() => q.text(q.$('content').querySelector('h2')) === 'Compare copies: Review policy');
+  ok('with Compare open, a link to another rule shows that rule, without reading the files again', q.eval('S.view') === 'blocks-compare'
+    && q.text(q.$('content').querySelector('h2')) === 'Compare copies: Review policy' && q.location.hash === '#blocks/compare&rule=review-policy' && rcalls.length === 0,
+    `${q.text(q.$('content').querySelector('h2'))} ${q.location.hash} ${rcalls.join(',')}`);
+  const shown = q.$('content').querySelector('.bb-cmp');
+  q.navigate('#blocks/compare&rule=review-policy');
+  await settle(10);
+  ok('…and a link to the rule already shown leaves the view as it is', q.$('content').querySelector('.bb-cmp') === shown);
   q.done();
   const u = await bootPage({ routes: rich(), hash: '#blocks/compare&rule=gone-rule' });
   await until(() => /not on the list/.test(u.text(u.$('content'))));
