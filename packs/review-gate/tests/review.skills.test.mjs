@@ -404,3 +404,51 @@ for (const harness of ['claude', 'codex']) {
     }
   })
 }
+
+// ── the merge and cross-vendor settings, said one way in every shipped text ──
+const MERGE_RULE = "Agents merge only through merge.mjs, which follows the review gate's merge policy (default off: the operator merges). Never gh pr merge, auto-merge or the merge button."
+const CROSS_RULE = "Cross-vendor checks follow the review gate's crossFamily setting (default prefer: another vendor when available, never a blocker; the run names who checked and why)."
+const shipped = (path) => readFileSync(join(PACKAGE, path), 'utf8')
+const SKILLS = (name, pack = 'review-gate') => ['claude', 'codex'].map((h) => `packs/${pack}/skills/${h}/${name}/SKILL.md`)
+
+test('text: every shipped text that speaks of merging or cross-vendor checks says it the one way, and none forbids what the settings allow', () => {
+  const mergeFiles = [...SKILLS('code-review'), ...SKILLS('pr-review'), ...SKILLS('build', 'build'), 'packs/review-gate/instructions/review-gate.md',
+    'blocks/operator-merges.md', 'blocks/review-policy.md']
+  const crossFiles = [...SKILLS('code-review'), ...SKILLS('build', 'build'), 'packs/review-gate/instructions/review-gate.md', 'blocks/grader-swap.md', 'blocks/changing-tests.md']
+  for (const f of mergeFiles) assert.ok(shipped(f).includes(MERGE_RULE), `${f}: the merge wording`)
+  for (const f of crossFiles) assert.ok(shipped(f).includes(CROSS_RULE), `${f}: the cross-vendor wording`)
+  for (const f of new Set([...mergeFiles, ...crossFiles])) {
+    const text = shipped(f).split(MERGE_RULE).join('')
+    for (const banned of [/driver alone merges/i, /only the operator merges/i, /never merge, never push/i, /the operator merges/i, /operator's merge is the approval/i,
+      /must .{0,40}another vendor/i, /different family always/i])
+      assert.doesNotMatch(text, banned, `${f}: ${banned}`)
+  }
+  // The codex pr-review runs the agent merge step, as the claude one does.
+  for (const f of SKILLS('pr-review')) assert.match(shipped(f), /node ~\/\.agent-config-studio\/review-gate\/merge\.mjs/, f)
+  // Rule 5 is the same line in the block and in both code-review skills.
+  const rule5 = (text) => text.split('\n').find((l) => l.startsWith('5. The PR body'))
+  const block5 = rule5(shipped('blocks/review-policy.md'))
+  for (const f of SKILLS('code-review')) assert.equal(rule5(shipped(f)), block5, f)
+})
+
+test('build: the Grade reads the review gate\'s crossFamily, prefer when no review gate answers', () => {
+  if (!existsSync(join(BIN, 'node'))) symlinkSync(process.execPath, join(BIN, 'node'))
+  for (const harness of ['claude', 'codex']) {
+    const code = block(skill(`build/skills/${harness}/build/SKILL.md`), /--cross-family/)
+    const probe = `${fill(code)}\necho "CROSS=$CROSS_FAMILY" >&2\n`
+    const cross = (shell) => {
+      writeFileSync(join(ROOT, 'snippet.sh'), probe)
+      const r = spawnSync(shell, [join(ROOT, 'snippet.sh')], { cwd: WORK, env: { HOME, PATH, TMPDIR: ROOT }, encoding: 'utf8', timeout: 30_000 })
+      return /CROSS=(\S*)/.exec(r.stderr)?.[1]
+    }
+    for (const shell of SHELLS) {
+      rmSync(join(HOME, '.agent-config-studio/review-gate'), { recursive: true, force: true })
+      assert.equal(cross(shell), 'prefer', `${harness} ${shell}: no review gate installed`)
+      put(join(HOME, '.agent-config-studio/review-gate/review.mjs'), readFileSync(join(PACKS, 'review-gate/runtime/review.mjs'), 'utf8'))
+      put(join(HOME, '.agent-config-studio/review-gate/config.json'), J({ crossFamily: 'off' }))
+      assert.equal(cross(shell), 'off', `${harness} ${shell}: the home config's off`)
+      put(join(HOME, '.agent-config-studio/review-gate/config.json'), J({}))
+      assert.equal(cross(shell), 'prefer', `${harness} ${shell}: the default`)
+    }
+  }
+})
