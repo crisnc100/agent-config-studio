@@ -146,6 +146,15 @@ console.log('\nwhere copies are looked for');
     JSON.stringify(files.map((f) => [f.display.slice(-24), f.kind])));
   ok('a skill linked into a second folder is read once', files.filter((f) => f.abs.endsWith('one/SKILL.md') || f.abs.endsWith('one-link/SKILL.md')).length === 1);
   ok('each file says where it came from', files.find((f) => f.display.endsWith('two/SKILL.md'))?.source === 'codex' && files.find((f) => f.display.endsWith('p.md'))?.source === 'pack');
+  const proj = path.join(t, 'repo-x');
+  put(path.join(t, 'shared-home', '.agents', 'skills', 's', 'SKILL.md'), 'j');
+  put(path.join(proj, '.agents', 'skills', 'p', 'SKILL.md'), 'k');
+  const more = B.wizardSkillDirs({ home: path.join(t, 'shared-home'), projects: () => [{ real: proj }] });
+  ok('C5 the wizard\'s other folders: the shared ~/.agents/skills, then each project\'s .claude, .codex and .agents skills',
+    JSON.stringify(more.map((d) => path.relative(t, d.dir))) === JSON.stringify(['shared-home/.agents/skills', 'repo-x/.claude/skills', 'repo-x/.codex/skills', 'repo-x/.agents/skills']), JSON.stringify(more));
+  const wider = B.sourceFiles({ dirs: more, packsDir: path.join(t, 'none'), instructions: [] });
+  ok('…and sourceFiles reads skills from them, labelled skills', JSON.stringify(wider.map((f) => path.relative(t, f.abs)).sort()) === JSON.stringify(['repo-x/.agents/skills/p/SKILL.md', 'shared-home/.agents/skills/s/SKILL.md'])
+    && wider.every((f) => f.kind === 'skill'), JSON.stringify(wider));
 
   // The whole view over that tree, with the test blocks.
   const bdir = path.join(t, 'blocks');
@@ -178,6 +187,12 @@ put(path.join(home, '.claude', 'skills', 'demo', 'SKILL.md'),
   `---\nname: demo\ndescription: carries a block\n---\n\nIntro line.\n\n${B.startMarker(shipped.id, shipped.body)}\n${shipped.body}<!-- /block:${shipped.id} -->\n`);
 put(path.join(home, '.codex', 'skills', 'demo', 'SKILL.md'), `---\nname: demo\ndescription: carries a block\n---\n\n${shipped.body.replace('Only the operator merges.', 'Only the user merges.')}`);
 put(path.join(home, '.claude', 'CLAUDE.md'), `# Rules\n\n${shipped.body}\n<!-- acs:model-guide v1 sep=1 sha256:${'a'.repeat(64)} -->\n${shipped.body}<!-- /acs:model-guide -->\n`);
+// The other places the wizard writes skills: the shared ~/.agents/skills and a project's skill folders under an edit root.
+put(path.join(home, '.agent-config-studio', 'roots.json'), JSON.stringify({ version: 1, roots: [{ id: 'projects', label: 'Projects', access: 'edit', path: path.join(home, 'Projects') }] }));
+fs.mkdirSync(path.join(home, 'Projects', 'repo-a', '.git'), { recursive: true });
+const markedCopy = `${B.startMarker(shipped.id, shipped.body)}\n${shipped.body}<!-- /block:${shipped.id} -->\n`;
+put(path.join(home, '.agents', 'skills', 'shared-one', 'SKILL.md'), `---\nname: shared-one\ndescription: d\n---\n\n${markedCopy}`);
+for (const dir of ['.claude', '.codex', '.agents']) put(path.join(home, 'Projects', 'repo-a', dir, 'skills', 'proj-one', 'SKILL.md'), `---\nname: proj-one\ndescription: d\n---\n\n${markedCopy}`);
 const port = await freePort();
 const child = track(spawn(process.execPath, [path.join(ROOT, 'server.js')], {
   cwd: ROOT, env: { HOME: home, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir() }, stdio: ['ignore', 'pipe', 'pipe'],
@@ -206,6 +221,9 @@ try {
   ok('skill copies are labelled skills', claudeCopy?.kind === 'skill' && codexCopy?.kind === 'skill');
   ok('the checkout\'s packs are read too', body.scanned.files > 2 && body.blocks.some((b) => b.copies.some((c) => c.file.startsWith('packs/'))), JSON.stringify(body.scanned));
   ok('no absolute home path in the answer', !JSON.stringify(body).includes(home));
+  const wide = ['~/.agents/skills/shared-one/SKILL.md', ...['.claude', '.codex', '.agents'].map((d) => `~/Projects/repo-a/${d}/skills/proj-one/SKILL.md`)];
+  ok('C5 copies in ~/.agents/skills and in each project skill folder are listed, labelled skills, rated same',
+    wide.every((f) => mine?.copies.some((c) => c.file === f && c.kind === 'skill' && c.marked && c.rating === 'same')), JSON.stringify(mine?.copies.map((c) => c.file)));
   const cross = await fetch(`${base}/api/blocks`, { headers: { 'sec-fetch-site': 'same-site' } });
   ok('strict same-origin: another localhost page is refused (403)', cross.status === 403, String(cross.status));
   for (const m of ['POST', 'PUT', 'DELETE', 'PATCH']) {
