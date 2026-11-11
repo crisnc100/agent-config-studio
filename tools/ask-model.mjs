@@ -836,9 +836,8 @@ function locateRepo(bin, cwd, env = process.env) {
 
 /**
  * The caller's env without the variables `rev-parse --local-env-vars` lists, so a GIT_DIR or GIT_WORK_TREE meant for
- * the superproject cannot answer for a submodule. This is stricter than git: that list includes GIT_CONFIG_PARAMETERS
- * and GIT_CONFIG_COUNT, which git keeps when it runs in a submodule, so a caller's `git -c` settings are not applied
- * when a submodule is located here.
+ * the superproject cannot answer for a submodule. GIT_CONFIG_PARAMETERS and GIT_CONFIG_COUNT are on that list but
+ * kept, as git keeps them when it runs in a submodule: a caller's `git -c` or env-only settings apply there too.
  */
 const KEPT_IN_SUBMODULES = ['GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT'];
 function localEnv(bin) {
