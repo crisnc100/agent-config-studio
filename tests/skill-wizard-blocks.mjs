@@ -135,6 +135,19 @@ try {
       ok(`x1 a block whose start marker was deleted (${where}): none of its body lines, its ### name or the studio's heading reach the Regenerate prompt`,
         leaked(pS, chosen).length === 0 && !pS.split('\n').includes(`### ${byId(id).name}`) && !/^## Shared rules$/m.test(pS) && /Do the thing, my way\./.test(pS), leaked(pS, chosen).join('\n') || pS.slice(-1500));
     }
+    // The content backstop: whatever the markers look like, a ticked block's lines never go back.
+    const cc = byId('callback-contract');
+    const ccFirst = cc.body.split('\n')[0];
+    const pDetails = await regen(noStart('callback-contract').replace(`${ccFirst}\n`, `${ccFirst}\n### Details\n`));
+    ok('backstop: start marker deleted and a ### Details line inside the block — no body line of any ticked block reaches the prompt', leaked(pDetails, chosen).length === 0 && /Do the thing, my way\./.test(pDetails), leaked(pDetails, chosen).join('\n'));
+    const bare = mine.split('\n').filter((l) => !/^<!-- \/?block:/.test(l)).join('\n');
+    const pBare = await regen(bare);
+    ok('backstop: both markers deleted on every block — no body line of any ticked block reaches the prompt', leaked(pBare, chosen).length === 0 && /Do the thing, my way\./.test(pBare), leaked(pBare, chosen).join('\n'));
+    const om = byId('operator-merges').body.split('\n').find((l) => l.trim().length >= 40);
+    const pMore = await regen(bare.replace(om, `${om} And tell the team first.`));
+    ok('backstop: a body line with text appended is dropped too', !pMore.includes(om) && !/tell the team first/.test(pMore), pMore.slice(-1200));
+    const pOwn = await regen(`${bare}\nA line of my own about releases.\n`);
+    ok('backstop: the person\'s own unrelated lines are kept', /A line of my own about releases\./.test(pOwn) && /Do the thing, my way\./.test(pOwn));
     const pAfter = await regen(`${noStart('review-policy')}\n## My notes\n\nKeep this note.\n`, []);
     ok('x1 …the person\'s own text after a ## heading is kept', leaked(pAfter, chosen).length === 0 && /## My notes\n\nKeep this note\./.test(pAfter), leaked(pAfter, chosen).join('\n'));
   }
