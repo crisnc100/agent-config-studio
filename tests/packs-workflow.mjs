@@ -191,7 +191,9 @@ try {
   const step = (pack, id) => card(pack)?.querySelector(`.step[data-step="${id}"]`);
   const who = (pack, id) => t(step(pack, id)?.querySelector('.who'));
 
-  ok('every pack draws a diagram or a one-line strip', catalog.every((p) => (p.workflow.strip ? !!card(p.id)?.querySelector('.pk-strip') : card(p.id)?.querySelectorAll('.step').length === p.workflow.steps.length)),
+  // The served workflow, not pack.json's: the catalog route appends the review gate's Merge step.
+  const served = (id) => state.catalog.packs.find((p) => p.id === id).workflow;
+  ok('every pack draws a diagram or a one-line strip', catalog.every((p) => (p.workflow.strip ? !!card(p.id)?.querySelector('.pk-strip') : card(p.id)?.querySelectorAll('.step').length === served(p.id).steps.length)),
     catalog.map((p) => `${p.id}:${card(p.id)?.querySelectorAll('.step').length}`).join(' '));
   const kids = card('review-gate').children;
   const at = kids.findIndex((k) => k.classList.contains('pk-summary'));
