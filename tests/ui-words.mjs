@@ -616,13 +616,20 @@ const RULES = [
  */
 function ruleHits(page, v, r, text) {
   let t = text;
-  for (const x of r.except || []) t = t.replace(x, '');
   if (r.quoteIn?.view === v) {
-    const quoted = page.$('content').querySelectorAll(r.quoteIn.within).map((n) => page.text(n)).join('\n');
-    for (const phrase of r.quoteIn.phrases) {
-      for (let k = quoted.split(phrase).length - 1; k > 0 && t.includes(phrase); k--) t = t.replace(phrase, '');
+    // Outermost allowed elements only, so a nested one never counts its quote twice; each loses the phrase
+    // from its own text, in place, so the same words anywhere else on the view stay in.
+    const cls = r.quoteIn.within.replace(/^\./, '');
+    const inAllowed = (n) => { for (let p = n.parentElement; p; p = p.parentElement) if (p.classList?.contains(cls)) return true; return false; };
+    for (const n of page.$('content').querySelectorAll(r.quoteIn.within).filter((x) => !inAllowed(x))) {
+      const own = page.text(n);
+      const at = t.indexOf(own);
+      if (!own || at === -1) continue;
+      const kept = r.quoteIn.phrases.reduce((x, phrase) => x.split(phrase).join(''), own);
+      t = t.slice(0, at) + kept + t.slice(at + own.length);
     }
   }
+  for (const x of r.except || []) t = t.replace(x, '');
   return t.split('\n').filter((l) => r.re.test(l)).map((l) => { const i = l.search(r.re); return l.slice(Math.max(0, i - 70), i + 70); });
 }
 
@@ -635,9 +642,10 @@ console.log('\nBuilding blocks: a quoted rule may say "delete" only inside its b
   const QUOTE = 'Do not delete, skip, weaken, or narrow tests or checks to make something pass.';
   const view = (over) => ({ blocks: [{ id: 'never-weaken-tests', name: 'Never weaken tests', summary: 'Keep every test.', text: `${QUOTE}\n`,
     marker: '', counts: { same: 0, reworded: 0, differs: 0 }, copies: [], ...over }], scanned: { files: 1, unreadable: [] } });
-  const hitsFor = async (data, v = 'blocks') => {
+  const hitsFor = async (data, v = 'blocks', alter = null) => {
     const pg = await bootPage({ routes: routesFor({ 'GET /api/blocks': () => data }), hash: `#${v}` });
     for (let i = 0; i < 60 && !pg.$('content').querySelector('.bb-card'); i++) await sleep(10);
+    if (alter) alter(pg);
     const h = ruleHits(pg, v, DELETE, words(pg));
     pg.done();
     return h;
@@ -646,6 +654,17 @@ console.log('\nBuilding blocks: a quoted rule may say "delete" only inside its b
   ok('…the same phrase in the block\'s heading still fails', (await hitsFor(view({ name: QUOTE }))).length > 0);
   ok('…and in its summary line', (await hitsFor(view({ summary: QUOTE }))).length > 0);
   ok('…and a second "delete" beside the quote fails', (await hitsFor(view({ text: `${QUOTE}\n\nDelete this block.\n` }))).length > 0);
+  // One body quote inside nested block-text elements counts once: the heading's quote still fails.
+  const nest = (pg) => {
+    const outer = pg.$('content').querySelector('.bb-text');
+    const inner = outer.ownerDocument.createElement('div');
+    inner.className = 'bb-text';
+    while (outer.childNodes.length) inner.appendChild(outer.childNodes[0]);
+    outer.appendChild(inner);
+  };
+  ok('…a quote in nested block-text elements counts once, so the same quote in the heading still fails',
+    (await hitsFor(view({ name: QUOTE }), 'blocks', nest)).length > 0);
+  ok('…while nested block text alone still passes', (await hitsFor(view(), 'blocks', nest)).length === 0);
   ok('…and nothing is allowed on another view', DELETE.quoteIn.view === 'blocks');
 }
 
