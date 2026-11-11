@@ -590,8 +590,8 @@ const RULES = [
   { name: '"Delete" for something recoverable', re: /\bdelet/i,
     // Permanent actions keep the word: a role (no trash), an Assist session, a file gone outside the studio, and "never deleted" (a promise about history).
     except: [/Delete role/g, /Delete this session/g, /deleted outside the studio/g, /never deleted/g],
-    // Building blocks quotes rule text word for word: the never-weaken-tests block's own phrase, there only.
-    exceptIn: { blocks: [/Never delete, skip, weaken or narrow a test or check/g, /Do not delete, skip, weaken, or narrow tests or checks/g] } },
+    // Building blocks quotes rule text word for word: the never-weaken-tests block's own phrase, inside a rendered block text only.
+    quoteIn: { view: 'blocks', within: '.bb-text', phrases: ['Do not delete, skip, weaken, or narrow tests or checks'] } },
   // One word for a subscription account: "account", as Home's "Accounts & usage" says.
   { name: '"seat" for an account', re: /\bseats?\b/i },
   // PR F (final critique P1-1, P2-1, P2-2): words a newcomer can't act on. "Trunk" is explained (ⓘ) on Worktrees only.
@@ -608,8 +608,46 @@ const RULES = [
   { name: '"PATH fix"', re: /PATH fix/i },
 ];
 
+/**
+ * Where a rule fires on a view: its global exceptions stripped, and a quoted
+ * phrase (quoteIn) stripped only as many times as it appears inside the
+ * elements it is allowed in — the same words in a button, label or heading
+ * still fire.
+ */
+function ruleHits(page, v, r, text) {
+  let t = text;
+  for (const x of r.except || []) t = t.replace(x, '');
+  if (r.quoteIn?.view === v) {
+    const quoted = page.$('content').querySelectorAll(r.quoteIn.within).map((n) => page.text(n)).join('\n');
+    for (const phrase of r.quoteIn.phrases) {
+      for (let k = quoted.split(phrase).length - 1; k > 0 && t.includes(phrase); k--) t = t.replace(phrase, '');
+    }
+  }
+  return t.split('\n').filter((l) => r.re.test(l)).map((l) => { const i = l.search(r.re); return l.slice(Math.max(0, i - 70), i + 70); });
+}
+
 /** A view's empty state ("No MCP servers configured yet.", "No registered projects. …"): not an intro. */
 const EMPTY_STATE = /^No [^.—]*?\b(yet|configured|tracked|registered|apply here|found)\b/;
+
+console.log('\nBuilding blocks: a quoted rule may say "delete" only inside its block text');
+{
+  const DELETE = RULES.find((r) => r.name === '"Delete" for something recoverable');
+  const QUOTE = 'Do not delete, skip, weaken, or narrow tests or checks to make something pass.';
+  const view = (over) => ({ blocks: [{ id: 'never-weaken-tests', name: 'Never weaken tests', summary: 'Keep every test.', text: `${QUOTE}\n`,
+    marker: '', counts: { same: 0, reworded: 0, differs: 0 }, copies: [], ...over }], scanned: { files: 1, unreadable: [] } });
+  const hitsFor = async (data, v = 'blocks') => {
+    const pg = await bootPage({ routes: routesFor({ 'GET /api/blocks': () => data }), hash: `#${v}` });
+    for (let i = 0; i < 60 && !pg.$('content').querySelector('.bb-card'); i++) await sleep(10);
+    const h = ruleHits(pg, v, DELETE, words(pg));
+    pg.done();
+    return h;
+  };
+  ok('the phrase inside the rendered block text passes', (await hitsFor(view())).length === 0);
+  ok('…the same phrase in the block\'s heading still fails', (await hitsFor(view({ name: QUOTE }))).length > 0);
+  ok('…and in its summary line', (await hitsFor(view({ summary: QUOTE }))).length > 0);
+  ok('…and a second "delete" beside the quote fails', (await hitsFor(view({ text: `${QUOTE}\n\nDelete this block.\n` }))).length > 0);
+  ok('…and nothing is allowed on another view', DELETE.quoteIn.view === 'blocks');
+}
 
 const VIEWS = ['home', 'files', 'skills', 'blocks', 'packs', 'mcp', 'models', 'memory', 'context', 'worktrees', 'usage', 'scope', 'audit', 'trash', 'setup', 'folders'];
 try {
@@ -623,9 +661,7 @@ try {
     ok(`${v}: the view renders`, shown === v && text.length > 40, `${shown}: ${text.slice(0, 200)}`);
     for (const r of RULES) {
       if (r.allowIn?.includes(v)) continue;
-      let t = text;
-      for (const x of [...(r.except || []), ...(r.exceptIn?.[v] || [])]) t = t.replace(x, '');
-      const hits = t.split("\n").filter((l) => r.re.test(l)).map((l) => { const i = l.search(r.re); return l.slice(Math.max(0, i - 70), i + 70); });
+      const hits = ruleHits(page, v, r, text);
       ok(`${v}: no ${r.name}`, hits.length === 0, hits.join(' | '));
     }
     // One intro per page: the page never says again what the top bar's subtitle says (any 4 words in a row).
