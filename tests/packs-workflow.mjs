@@ -128,7 +128,11 @@ const sb = sandbox('wf', { clis: ['claude', 'codex'] });
 const m = machine(sb.env);
 {
   const view = catalogView(m, { installedOf: () => true });
-  ok('every pack carries its workflow through the route', view.packs.every((p) => p.workflow && JSON.stringify(p.workflow) === JSON.stringify(catalog.find((c) => c.id === p.id).workflow)));
+  // The route serves pack.json's workflow as written, except that the review gate's gains its Merge step at the end.
+  const asServed = (c) => (c.id === 'review-gate' ? { ...c.workflow, steps: [...c.workflow.steps, view.packs.find((p) => p.id === 'review-gate').workflow.steps.at(-1)] } : c.workflow);
+  ok('every pack carries its workflow through the route', view.packs.every((p) => p.workflow && JSON.stringify(p.workflow) === JSON.stringify(asServed(catalog.find((c) => c.id === p.id)))));
+  ok('…the review gate\'s one added step is Merge, last', view.packs.find((p) => p.id === 'review-gate').workflow.steps.at(-1).id === 'merge'
+    && view.packs.find((p) => p.id === 'review-gate').workflow.steps.length === catalog.find((c) => c.id === 'review-gate').workflow.steps.length + 1);
   ok('no home review config: security is "off"', view.settings?.security === 'off' && securitySetting(m) === 'off', JSON.stringify(view.settings));
   const cfg = path.join(sb.home, '.agent-config-studio', 'review-gate', 'config.json');
   fs.mkdirSync(path.dirname(cfg), { recursive: true });
@@ -235,7 +239,7 @@ try {
   ok('the code review and the security check sit side by side, joined (not an arrow), the second marked "at the same time"', at2 !== -1
     && flowKids[at2 + 1] === step('review-gate', 'security') && step('review-gate', 'review').classList.contains('with-next')
     && step('review-gate', 'security').classList.contains('beside') && /^at the same time$/.test(t(step('review-gate', 'security').querySelector('.pair-note')))
-    && flowKids.length === 8, `${at2} ${flowKids.map((k) => k.className).join(' | ')}`);
+    && flowKids.length === 9, `${at2} ${flowKids.map((k) => k.className).join(' | ')}`);
   ok('pr says no extra model is called', /No extra model is called/.test(t(card('pr').querySelector('.pk-flow-note'))));
   ok('build notes its lightweight mode', /lightweight/i.test(t(card('build').querySelector('.pk-flow-note'))));
   ok('the strips: handoff says your session agent writes it, with no extra model', /your session agent/.test(t(card('handoff').querySelector('.pk-strip'))) && /no extra model/i.test(t(card('handoff').querySelector('.pk-strip'))));
