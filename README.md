@@ -697,30 +697,40 @@ again, so an edit made inside a block on Review does not survive it.
 
 ## Review gate settings
 
-**Packs → Review gate** has three settings for the review gate, under its
-workflow diagram:
+The studio sets how its own packs behave on **Packs**; everything else it
+shows and edits as files. The review gate card has a **Settings** section
+once its Code review part is installed (that part ships the scripts that read
+them):
 
-- **Security pass in PR reviews** — Off, When code changes, or Always
+- **Security pass in PR reviews**: Off, When code changes, or Always
   (`security.run`).
-- **Agent merge** (`merge.policy`) — Off (the default: you merge every PR),
-  Docs and tests only (an agent may merge a low-risk PR that changes only docs
-  or tests), Low-risk PRs, or Low and medium-risk PRs (high-risk always waits
-  for you). Whatever it says, an agent merges only through `merge.mjs`, and
-  only when the review is closed at the tip, CI is green and nobody asked for
-  changes. Changes to `package.json`, CI workflows and the paths in **Always
-  needs you** (`merge.alwaysHuman`) always need you.
-- **Cross-vendor checks** (`crossFamily`) — Prefer another vendor (the
+- **Agent merge** (`merge.policy`): Off (the default: you merge every PR),
+  Docs and tests only, Low-risk PRs, or Low and medium-risk PRs (medium-risk
+  code merges without you; high-risk always waits for you). An agent merges
+  only through `merge.mjs`, and only when the review is closed at the tip, CI
+  is green and nobody asked for changes. It needs the `gh` CLI, and a repo
+  with no CI checks always waits for you.
+- **Always needs you**: the built-in paths (`.github/workflows/**`,
+  `package.json`) and the risky paths (`riskPaths`, or the review gate's
+  defaults) are shown read-only; your own paths (`merge.alwaysHuman`) go one
+  per line below them.
+- **Cross-vendor checks** (`crossFamily`): Prefer another vendor (the
   default; never a blocker) or Off (any reviewer in your roles may check any
-  work).
+  work). The Build card's Grade follows it.
 
-Each one writes only your home review config: the first of
+The review gate's diagram ends with a **Merge** step, shown off while agent
+merge is off.
+
+Every change is written to your home review config only: the first of
 `~/.agent-config-studio/review-gate/config.json` and
 `~/.claude/review-config.json` that exists, or the first when neither does,
-which is the file the review script reads first. A change shows that file's
-diff before anything is saved; **Save** copies the old file into
-`~/.agent-config-studio/backups/` first and keeps every other key in it. If
+which is the file the review script reads first. Picks wait in one preview
+showing that file's diff; **Save** writes them together, copies the old file
+into `~/.agent-config-studio/backups/` once, and keeps every other key. If
 the file changed after the preview, Save refuses and asks you to preview
-again.
+again. The section names that file for the review settings it has no switch
+for, with **Open in Files** when Files lists it (`~/.claude/review-config.json`
+is listed; the studio's own folder is not).
 
 ## Audit
 
