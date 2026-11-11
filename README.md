@@ -663,13 +663,16 @@ folders, and each pack's `skills/` and `instructions/` in `packs/`; text
 inside a block the studio generates, such as the model guide, is skipped.
 
 Each copy is rated by its wording against the reference: **Matches** (the same
-words in the same order), **Small changes** (close, with a few words changed)
-or **Big changes** (part left out, other rules added, or the rule inside a
-longer paragraph). Ratings compare wording, not meaning. Each rule sits in one
-group by its worst copy: **Needs a look**, **Small wording changes**, **Match
-everywhere**, or **Not in your files** when only the studio's packs carry it
-or nothing does. Copies in the studio's own packs are counted on one line per
-rule and never move a rule's group. A copy says where it lives in words
+words in the same order), **Small changes** (close in wording: a few words
+changed, or a sentence swapped or added) or **Big changes** (part left out,
+other rules added, or the rule inside a longer paragraph). Ratings compare
+wording, not meaning. Each rule sits in one group by its worst copy: **Needs a
+look**, **Small wording changes**, **Match everywhere**, or **Not in your
+files** when only the studio's packs carry it or nothing does. The first three
+groups always show, with a line saying so when one is empty. Each rule's card
+leads with how many of your copies match (`2 of 5 copies match`). Copies in
+the studio's own packs are counted on one line per rule and never move a
+rule's group or its count. A copy says where it lives in words
 (`CLAUDE.md (Claude, global) · line 168`, `SKILL.md in the build skill
 (Claude) · lines 75–79`; a project's skill names the project folder) with the
 full path beneath, and a rule found more than once in one file is flagged.
