@@ -207,11 +207,24 @@ try {
   ok('the Build card points to the setting', /The Grade's vendor swap follows Cross-vendor checks in the review gate's settings \(now: Prefer another vendor\)\./.test(tx(card('build').querySelector('.pk-cross-note'))), tx(card('build')));
 
   console.log('\none pending preview for the section, one save');
+  {
+    const opened = [];
+    for (const [boxOf, label, want] of [[mg, 'Docs and tests only', '"policy": "strict"'], [mg, 'Low-risk PRs', '"policy": "standard"'],
+      [mg, 'Low and medium-risk PRs', '"policy": "always"'], [cf, 'Off', '"crossFamily": "off"'], [() => sec().querySelector('.pk-security'), 'Always', '"run": "always"']]) {
+      choices(boxOf()).find((b) => tx(b) === label).click();
+      await waitFor(() => pre());
+      opened.push(!!pre() && pre().querySelectorAll('.diff-line.add').some((l) => tx(l).includes(want)));
+      acts().find((b) => tx(b) === 'Cancel').click();
+      await settle(5);
+    }
+    ok('QA 2: every choice, merge, cross-vendor and security alike, opens the one preview at once', opened.every(Boolean) && writes.length === 0, JSON.stringify(opened));
+  }
   choices(mg()).find((b) => tx(b) === 'Low-risk PRs').click();
   await waitFor(() => pre());
   ok('choosing Low-risk PRs shows the file and its diff first, nothing written', /this changes ~\/\.agent-config-studio\/review-gate\/config\.json, and a copy of it goes to the backups folder first/.test(tx(pre()))
     && pre().querySelectorAll('.diff-line.add').some((l) => /"policy": "standard"/.test(tx(l))) && writes.length === 0 && read(t.primary) === '{\n  "pick": "rotate"\n}\n', tx(pre()));
   ok('…the choice shows as picked while it waits', tx(pressed(mg())) === 'Low-risk PRs');
+  ok('QA 3: while it waits, Now says what is saved and After Save what the pick does', /Now: You merge every PR\./.test(tx(mg())) && /After Save: An agent may merge any low-risk PR\./.test(tx(mg())), tx(mg()));
   choices(cf()).find((b) => tx(b) === 'Off').click();
   await waitFor(() => pre() && pre().querySelectorAll('.diff-line.add').some((l) => /crossFamily/.test(tx(l))));
   ok('a second change joins the same preview: one diff with both', sec().querySelectorAll('.pk-sec-preview').length === 1
@@ -223,6 +236,9 @@ try {
     && JSON.stringify(writes[0].changes) === '{"merge.policy":"standard","crossFamily":"off"}'
     && JSON.parse(read(t.primary)).merge.policy === 'standard' && JSON.parse(read(t.primary)).crossFamily === 'off' && JSON.parse(read(t.primary)).pick === 'rotate', read(t.primary));
   ok('…and says what it saved and where the old file went', /Saved: ~\/\.agent-config-studio\/review-gate\/config\.json now says “Low-risk PRs” \(agent merge\) and “Off” \(cross-vendor checks\)\. The old file is at ~\/\.agent-config-studio\/backups\//.test(tx(sec().querySelector('.pk-result'))), tx(sec().querySelector('.pk-result')));
+  ok('QA 6: the backup is shown as its ~ folder, never the nested absolute path', /The old file is at ~\/\.agent-config-studio\/backups\/[^\s/]+-review-settings\/\./.test(tx(sec().querySelector('.pk-result')))
+    && !tx(sec().querySelector('.pk-result')).includes(t.h) && !/\/0\//.test(tx(sec().querySelector('.pk-result'))), tx(sec().querySelector('.pk-result')));
+  ok('QA 3: after Save no After Save line is left', !/After Save:/.test(tx(sec())), tx(mg()));
   ok('…the pressed choices, the Merge step, the Grade note and the Build card follow', tx(pressed(mg())) === 'Low-risk PRs' && tx(pressed(cf())) === 'Off'
     && !step('review-gate', 'merge').classList.contains('off') && /no swap: Cross-vendor checks is off/.test(tx(step('build', 'grade')))
     && /\(now: Off\)/.test(tx(card('build').querySelector('.pk-cross-note'))), `${tx(step('build', 'grade'))} | ${tx(card('build').querySelector('.pk-cross-note'))}`);
@@ -264,6 +280,7 @@ try {
   const before = writes.length;
   acts().find((b) => tx(b) === 'Save').click();
   await waitFor(() => pre() && pre().querySelectorAll('.diff-line.add').some((l) => /"cfg\/\*\*"/.test(tx(l))));
+  ok('QA 4: the refreshed preview says why it did not save', /The list changed since the preview; check the new preview and Save again\./.test(tx(pre())), tx(pre()));
   ok('paths edited after their preview: Save shows the new diff instead of writing the old list', writes.length === before
     && JSON.parse(read(t.primary)).merge.alwaysHuman.join() === 'infra/**,db/**,vendor/**' && pre().querySelectorAll('.diff-line.add').some((l) => /"cfg\/\*\*"/.test(tx(l))), tx(pre()));
   acts().find((b) => tx(b) === 'Save').click();
@@ -289,6 +306,43 @@ try {
     && /Install the Code review part to set the security pass, agent merge and cross-vendor checks here\./.test(bare.text(bc().querySelector('.pk-settings-none'))), bare.text(bc()));
   ok('no page errors', bare.errors.length === 0, bare.errors.join(' | '));
   bare.done();
+
+  console.log('\nQA 1 and 5: a first save, and the Grade note with the judge unset');
+  {
+    installed = true;
+    const t3 = home();
+    const r3 = routesFor({ 'GET /api/packs/status': routes.table['GET /api/packs/status'], 'GET /api/models/roles': () => ({ roles: [] }),
+      'GET /api/packs': () => withGate(view(t3)),
+      'POST /api/packs/review-settings/plan': (b) => settingsPlan(b.changes, t3.m),
+      'POST /api/packs/review-settings/apply': (b) => settingsApply(b.changes, b.signature, t3.m) });
+    const p3 = await bootPage({ routes: r3, hash: '#packs' });
+    const s3 = () => p3.$('content').querySelector('[data-pack="review-gate"] .pk-settings');
+    for (let i = 0; i < 100 && !s3(); i++) await sleep(30);
+    await settle(10);
+    s3().querySelector('.pk-cross .pk-choice-row').querySelectorAll('button').find((b) => p3.text(b) === 'Off').click();
+    for (let i = 0; i < 100 && !s3().querySelector('.pk-sec-preview'); i++) await sleep(20);
+    s3().querySelector('.pk-sec-preview').querySelectorAll('button').find((b) => p3.text(b) === 'Save').click();
+    for (let i = 0; i < 100 && !s3().querySelector('.pk-result'); i++) await sleep(20);
+    await settle(5);
+    ok('QA 5: a first save that creates the file says no backup was needed', /now says “Off”\. No existing file needed a backup\./.test(p3.text(s3().querySelector('.pk-result')))
+      && JSON.parse(read(t3.primary)).crossFamily === 'off', p3.text(s3().querySelector('.pk-result')));
+    const grade = p3.text(p3.$('content').querySelector('[data-pack="build"] .step[data-step="grade"]'));
+    ok('QA 1: with the judge unset, the Grade still says there is no swap', /not set/.test(grade) && /no swap: Cross-vendor checks is off/.test(grade), grade);
+    ok('no page errors', p3.errors.length === 0, p3.errors.join(' | '));
+    p3.done();
+  }
+  {
+    // QA 7: light-theme chips from the stylesheet's own tokens, the role chip's tint worked out as color-mix does.
+    const css = fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8');
+    const light = css.slice(css.indexOf(':root[data-theme="light"]'), css.indexOf('}', css.indexOf(':root[data-theme="light"]')));
+    const tok = (n) => light.match(new RegExp(`--${n}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1];
+    const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+    const lum = (c) => c.map((v) => v / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0);
+    const ratio = (f, b) => { const [x, y] = [lum(f), lum(b)].sort((a, c) => c - a); return (x + 0.05) / (y + 0.05); };
+    const tint = rgb(tok('accent')).map((v, i) => v * 0.11 + rgb(tok('panel'))[i] * 0.89);
+    const pairs = { 'role name on its chip': ratio(rgb(tok('accent-ink')), tint), '"not set" on a role chip': ratio(rgb(tok('muted')), tint) };
+    ok('QA 7: light theme, the role chip\'s name and "not set" are at least 4.5:1', Object.values(pairs).every((r) => r >= 4.5), JSON.stringify(pairs));
+  }
 
   console.log('\nR7: the older home config is in Files, so the line opens it');
   {
