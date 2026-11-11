@@ -695,6 +695,33 @@ the draft, a `## Shared rules` heading, then each block under its `### name`
 line between its markers, in the order the Blocks step lists them. **Regenerate** pastes them
 again, so an edit made inside a block on Review does not survive it.
 
+## Review gate settings
+
+**Packs → Review gate** has three settings for the review gate, under its
+workflow diagram:
+
+- **Security pass in PR reviews** — Off, When code changes, or Always
+  (`security.run`).
+- **Agent merge** (`merge.policy`) — Off (the default: you merge every PR),
+  Docs and tests only (an agent may merge a low-risk PR that changes only docs
+  or tests), Low-risk PRs, or Low and medium-risk PRs (high-risk always waits
+  for you). Whatever it says, an agent merges only through `merge.mjs`, and
+  only when the review is closed at the tip, CI is green and nobody asked for
+  changes. Changes to `package.json`, CI workflows and the paths in **Always
+  needs you** (`merge.alwaysHuman`) always need you.
+- **Cross-vendor checks** (`crossFamily`) — Prefer another vendor (the
+  default; never a blocker) or Off (any reviewer in your roles may check any
+  work).
+
+Each one writes only your home review config: the first of
+`~/.agent-config-studio/review-gate/config.json` and
+`~/.claude/review-config.json` that exists, or the first when neither does,
+which is the file the review script reads first. A change shows that file's
+diff before anything is saved; **Save** copies the old file into
+`~/.agent-config-studio/backups/` first and keeps every other key in it. If
+the file changed after the preview, Save refuses and asks you to preview
+again.
+
 ## Audit
 
 The **Audit** view (Review) reads your skills and instruction files and shows
