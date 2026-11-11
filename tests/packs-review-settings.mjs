@@ -287,7 +287,7 @@ try {
     ok('the line names ~/.claude/review-config.json, with an Open in Files button (quiet)', /Other review settings live in ~\/\.claude\/review-config\.json\./.test(op.text(other()))
       && op.text(btn) === 'Open in Files' && /\bbtn ghost\b/.test(btn.className), op.text(other()));
     btn.click();
-    for (let i = 0; i < 100 && op.eval('S.view') !== 'entry'; i++) await sleep(20);
+    for (let i = 0; i < 100 && !op.eval('S.file && S.file.path'); i++) await sleep(20);
     ok('…which opens it in the editor', op.eval('S.view') === 'entry' && op.eval('S.file && S.file.path') === '/h/.claude/review-config.json', `${op.eval('S.view')} ${op.eval('S.file && S.file.path')}`);
     ok('no page errors', op.errors.length === 0, op.errors.join(' | '));
     op.done();
