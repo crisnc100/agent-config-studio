@@ -910,6 +910,16 @@ test('C3 --check: a line naming two criteria is ambiguous whatever the ids look 
     ['"Deferred findings" is missing c1 (criterion C2 not met)'], 'a lowercase deferred id beside the line\'s own is another item')
 })
 
+test('C3 --check: a criterion and its sub-criterion both unmet (C3, C3.1), each on its own line, pass', () => {
+  const b = fixture()
+  const crits = ['c1 criterion C3 not met: the app logs; Deferred: later', 'c2 criterion C3.1 not met: the app warns; Deferred: later']
+  closedGate(b, SUMMARY.replace(/^c1 criterion C2 .*$/m, crits.join('\n')))
+  assert.deepEqual(checked(b, good(b.facts())).problems, [], 'C3 inside C3.1 is not C3')
+  const b2 = fixture()
+  closedGate(b2, SUMMARY.replace('Deferred findings\n', `Deferred findings\n${crits.join('\n')}\n`).replace(/^c1 criterion C2 .*\n/m, ''))
+  assert.deepEqual(checked(b2, good(b2.facts())).problems, [], 'nor in Deferred findings')
+})
+
 test('C3 --check: a bold id followed by a colon (**x1:**) is held to its score like any other', () => {
   const b = fixture()
   closedGate(b)
