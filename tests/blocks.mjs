@@ -140,9 +140,10 @@ console.log('\nwhere copies are looked for');
   ok('global instruction files that exist, skill .md files (top and one folder down), pack skills and instructions; not pack tests or other files',
     JSON.stringify(shown) === JSON.stringify(['claude-home/CLAUDE.md', 'claude-skills/one/SKILL.md', 'claude-skills/one/references/more.md', 'codex-home/AGENTS.md', 'codex-skills/two/SKILL.md', 'packs/p/instructions/p.md', 'packs/p/skills/claude/x/SKILL.md']),
     JSON.stringify(shown));
-  ok('global instruction files are labelled instruction files, skill files skills', files.find((f) => f.display.endsWith('CLAUDE.md'))?.kind === 'instructions'
+  ok('global and pack instruction files are labelled instruction files, skill files skills', files.find((f) => f.display.endsWith('CLAUDE.md'))?.kind === 'instructions'
     && files.find((f) => f.display.endsWith('codex-home/AGENTS.md'))?.kind === 'instructions' && files.find((f) => f.display.endsWith('two/SKILL.md'))?.kind === 'skill'
-    && files.find((f) => f.display.endsWith('x/SKILL.md'))?.kind === 'skill', JSON.stringify(files.map((f) => [f.display.slice(-24), f.kind])));
+    && files.find((f) => f.display.endsWith('x/SKILL.md'))?.kind === 'skill' && files.find((f) => f.display === 'packs/p/instructions/p.md')?.kind === 'instructions',
+    JSON.stringify(files.map((f) => [f.display.slice(-24), f.kind])));
   ok('a skill linked into a second folder is read once', files.filter((f) => f.abs.endsWith('one/SKILL.md') || f.abs.endsWith('one-link/SKILL.md')).length === 1);
   ok('each file says where it came from', files.find((f) => f.display.endsWith('two/SKILL.md'))?.source === 'codex' && files.find((f) => f.display.endsWith('p.md'))?.source === 'pack');
 
@@ -157,6 +158,8 @@ console.log('\nwhere copies are looked for');
     && b.marker === `<!-- block:test-rule sha256:${sha(BODY)} -->` && b.counts.same === 2 && b.counts.reworded === 0 && b.counts.differs === 0, JSON.stringify(b));
   ok('…each copy with its file, line and rating, marked or not', b.copies.some((c) => c.file === 'packs/p/instructions/p.md' && c.line === 1 && c.marked)
     && b.copies.some((c) => c.file.endsWith('claude-skills/one/SKILL.md') && c.line === 5 && !c.marked), JSON.stringify(b.copies));
+  ok('…a pack instruction file\'s copy is labelled an instruction file', b.copies.find((c) => c.file === 'packs/p/instructions/p.md')?.kind === 'instructions'
+    && b.copies.find((c) => c.file.endsWith('claude-skills/one/SKILL.md'))?.kind === 'skill', JSON.stringify(b.copies));
   ok('…and how many files it read', v.scanned.files === 5 && v.scanned.unreadable.length === 0, JSON.stringify(v.scanned));
 }
 

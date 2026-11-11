@@ -56,8 +56,12 @@ try {
     JSON.stringify(rows.map((r) => t(r))));
   ok('a marked copy says so, and a note shows beside its copy', t(rows[1].querySelector('.bb-marked')) === 'marked' && !rows[0].querySelector('.bb-marked')
     && t(rows[1].querySelector('.bb-note')) === 'edited after it was added' && t(rows[0].querySelector('.bb-note')) === 'the whole block is there, with more added');
-  ok('a copy in an instruction file is labelled "instruction file"; skill copies carry no label', t(rows[2].querySelector('.bb-kind')) === 'instruction file'
-    && [0, 1, 3].every((i) => !rows[i].querySelector('.bb-kind')), rows.map((r) => t(r)).join(' | '));
+  ok('every copy row shows its type: "instruction file" or "skill"', JSON.stringify(rows.map((r) => t(r.querySelector('.bb-kind'))))
+    === JSON.stringify(['skill', 'skill', 'instruction file', 'skill']), rows.map((r) => t(r)).join(' | '));
+  // Plural agreement: "2 differ", "1 differs"; "same" and "reworded" do not change.
+  const line = (counts) => p.eval(`bbCounts(${JSON.stringify({ copies: Array(counts.same + counts.reworded + counts.differs).fill({}), counts })})`);
+  ok('counts agree in number: "11 differ", and "1 differs" stays', line({ same: 2, reworded: 3, differs: 11 }) === '16 copies: 2 same, 3 reworded, 11 differ'
+    && line({ same: 0, reworded: 0, differs: 1 }) === '1 copy: 1 differs', `${line({ same: 2, reworded: 3, differs: 11 })} / ${line({ same: 0, reworded: 0, differs: 1 })}`);
   ok('each rating has its own class for its colour', ['differs', 'reworded', 'reworded', 'same'].every((k, i) => rows[i].querySelector('.bb-rating').classList.contains(`bb-rating-${k}`)));
   ok('a block with no copies says so in one line', t(om.querySelector('.bb-counts')) === 'No skill or instruction file carries a copy yet.' && !om.querySelector('.bb-copies'));
   ok('the totals line counts blocks, copies and files', /^2 blocks · 4 copies in 102 files read$/.test(t(c.querySelector('.bb-total'))), t(c.querySelector('.bb-total')));
@@ -111,6 +115,13 @@ console.log('\nstatic: blocks-view.js and its styles');
   const tokens = [...new Set(colours.flatMap((v) => [...v.matchAll(/var\((--[\w-]+)\)/g)].map((x) => x[1])))];
   const unset = tokens.filter((tok) => !new RegExp(`${tok}\\s*:`).test(dark) || !new RegExp(`${tok}\\s*:`).test(light));
   ok('…and each colour token is set for both the dark and the light theme', tokens.length > 4 && light.length > 100 && unset.length === 0, `${tokens.join(' ')} | unset: ${unset.join(' ')}`);
+  // QA, light theme: the base .md code (0.855em of the block's 13px, --accent) read 4.89:1 at 11.1px.
+  const code = bb.filter((m) => m[1].split(',').some((sel) => /\.bb-text\s+code\s*$/.test(sel.trim())));
+  const px = code.flatMap((m) => [...m[2].matchAll(/font-size\s*:\s*(\d+(?:\.\d+)?)px/g)].map((x) => Number(x[1])));
+  ok('inline code in block text is 12px or larger, in the darker accent ink', px.length > 0 && Math.min(...px) >= 12
+    && code.some((m) => /color\s*:\s*var\(--accent-ink\)/.test(m[2])), code.map((m) => m[0].trim()).join(' | '));
+  const cc = fs.readFileSync(path.join(path.dirname(PUB), 'blocks', 'callback-contract.md'), 'utf8').match(/^summary: (.*)$/m)?.[1] || '';
+  ok('the callback contract\'s summary reads as a sentence (no ", and that")', cc.length > 20 && !/, and that\b/.test(cc), cc);
   const html = fs.readFileSync(path.join(PUB, 'index.html'), 'utf8');
   ok('index.html loads blocks-view.js before app.js', html.indexOf('/blocks-view.js') > 0 && html.indexOf('/blocks-view.js') < html.indexOf('/app.js'));
 }
