@@ -54,6 +54,7 @@ import { machine as packsMachine } from './lib/packs.js';
 import { securityApply, securityPlan } from './lib/review-security.js';
 import { settingsApply, settingsPlan } from './lib/review-settings.js';
 import { blocksView } from './lib/blocks.js';
+import { createBlocksAdd } from './lib/blocks-add.js';
 import { createBlocksMatch } from './lib/blocks-match.js';
 import {
   syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
@@ -672,6 +673,7 @@ export function createApp(opts = {}) {
   const guide = createModelGuide();
   const audit = createAudit();
   const blocksMatch = createBlocksMatch();
+  const blocksAdd = createBlocksAdd();
   const wizard = opts.skillWizard || createSkillWizard();
   const assistFiles = createAssistFiles();
   // Accept checks a file's class against a fresh inventory: an alias made since the proposal counts.
@@ -1217,6 +1219,20 @@ export function createApp(opts = {}) {
   'POST /api/blocks/match/apply': async (req) => {
     requireStrict(req);
     return blocksMatch.apply(await objectBody(req, 4 * 1024));
+  },
+  /**
+   * Add a rule to files that have none (lib/blocks-add.js). Each file is
+   * named as the page lists it and mapped through the server's own list of
+   * targets, outside the packs. Apply writes nothing unless every file still
+   * has its preview's signature, and saves every old file to history first.
+   */
+  'POST /api/blocks/add/preview': async (req) => {
+    requireStrict(req);
+    return blocksAdd.preview(await objectBody(req, 64 * 1024));
+  },
+  'POST /api/blocks/add/apply': async (req) => {
+    requireStrict(req);
+    return blocksAdd.apply(await objectBody(req, 64 * 1024));
   },
   /**
    * The review gate's security switch: security.run in the home review config the review script reads first.
