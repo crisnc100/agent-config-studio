@@ -257,6 +257,12 @@ try {
     && card('review-gate').querySelectorAll('.pk-part').length === catalog.find((p) => p.id === 'review-gate').parts.length
     && card('review-gate').querySelectorAll('.pk-part').every((r) => t(r.querySelector('.pk-part-what')).length > 0)
     && card('review-gate').querySelectorAll('#pk-sec-files .pk-paths li').length === catalog.find((p) => p.id === 'review-gate').explain.changes.length);
+  // The parts as the catalog route serves them: a skill part's what comes from its SKILL.md there.
+  const rgParts = (state.catalog.packs || state.catalog).find((p) => p.id === 'review-gate').parts;
+  const partRow = (id) => card('review-gate').querySelector(`.pk-part[data-part="${id}"]`);
+  ok('…each part\'s row is titled with its own part\'s name, and says what that part is', rgParts.length > 0
+    && rgParts.every((p) => t(partRow(p.id)?.querySelector('.pk-part-name')) === p.title && t(partRow(p.id)?.querySelector('.pk-part-what')).length > 0 && String(p.explain?.what || '').replace(/\s+/g, ' ').trim().startsWith(t(partRow(p.id)?.querySelector('.pk-part-what')))),
+    rgParts.map((p) => `${p.id}: ${t(partRow(p.id)?.querySelector('.pk-part-name'))}`).join(' | '));
 
   console.log('\nsteps dim when their part or setting is off (R5)');
   ok('security off in the home config: the security pass is dimmed and marked "off"', step('review-gate', 'security').classList.contains('off') && t(step('review-gate', 'security').querySelector('.step-off')) === 'off');
