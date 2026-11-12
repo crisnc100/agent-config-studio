@@ -189,6 +189,7 @@ const step = (p) => C(p).querySelector('.sw-step.current')?.dataset.step;
   p.input(C(p).querySelector('.sw-source'), DRAFT('lint-all').replace('Steps.', 'Final words.'));
   await click(btn(p, 'Back'));
   ok('Back from Review keeps the draft', step(p) === 'where');
+  ok('…Back from Review reaches Where, the name unchanged', C(p).querySelector('.sw-name').value === 'lint-all');
   await click(btn(p, 'Draft the skill'));
   ok('…returning shows the same draft, no new turn', p.st.turns.filter((t) => t.kind === 'draft').length === 2 && /Final words/.test(C(p).querySelector('.sw-source').value));
   await click(btn(p, 'Back'));

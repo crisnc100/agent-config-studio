@@ -424,11 +424,10 @@ test('text: every shipped text that speaks of merging or cross-vendor checks say
   }
   // The codex pr-review runs the agent merge step, as the claude one does.
   for (const f of SKILLS('pr-review')) assert.match(shipped(f), /node ~\/\.agent-config-studio\/review-gate\/merge\.mjs/, f)
-  // Rule 5 is the same line in both code-review skills.
+  // Rule 5 is this exact line in both code-review skills.
+  const RULE5 = '5. The PR body (`--summary`) lists, in order: "Acceptance criteria not met", deferred HIGHs, then all other deferred findings; `--deferred` lists them too. Agents merge only through merge.mjs, which follows the review gate\'s merge policy (default off: the operator merges). Never gh pr merge, auto-merge or the merge button. The merge is the approval, and the operator can send the branch back.'
   const rule5 = (text) => text.split('\n').find((l) => l.startsWith('5. The PR body'))
-  const [claude5, codex5] = SKILLS('code-review').map((f) => rule5(shipped(f)))
-  assert.ok(claude5, 'claude code-review: rule 5')
-  assert.equal(codex5, claude5, 'codex code-review: rule 5 matches claude')
+  for (const f of SKILLS('code-review')) assert.equal(rule5(shipped(f)), RULE5, f)
 })
 
 test('build: the Grade reads the review gate\'s crossFamily, prefer when no review gate answers', () => {
