@@ -60,7 +60,7 @@ tests/acs-launcher.mjs                                ci:offline ci:stranger-mac
 # Which node it runs: fake node binaries, temp HOMEs.
 tests/acs-node.mjs                                    ci:offline
 # A frozen studio never stays frozen: deep health, acs's restart, the watchdog, a stop that cannot hang (real pool freezes, temp HOMEs).
-tests/liveness.mjs                                    ci:offline
+tests/liveness.mjs                                    local                         # about 120 s on a 4-core runner or a Mac, added to every pull request
 # The folder registry and `acs roots`: temp HOMEs only.
 tests/roots.mjs                                       ci:offline
 # The same, through the real server: custom, legacy and symlinked roots.
@@ -121,7 +121,7 @@ tests/batch-delete.mjs                                ci:offline
 tests/batch-delete-memory.mjs                         ci:offline
 # The worktree toolkit, its installer and the read-only panel: temp HOME, temp repos.
 tests/worktree-install.mjs                            ci:offline
-tests/worktree-tools.mjs                              ci:offline
+tests/worktree-tools.mjs                              local                         # 80 to 110 s; its "gh missing" checks drop only the sandbox gh stub (worktree-sandbox.mjs:170) with /usr/bin still on PATH (:96), so a runner's system gh answers
 tests/worktree-panel.mjs                              ci:offline
 # Worktree init refuses read folders and still works in edit ones (B4).
 tests/roots-worktree-init.mjs                         ci:offline
@@ -132,7 +132,7 @@ tests/walk-partial.mjs                                ci:offline
 tests/notice-placement-ui.mjs                         ci:offline
 # The front end, in a node VM against stubbed routes: no server, no HOME.
 tests/shell.mjs                                       ci:offline
-tests/home.mjs                                        ci:offline
+tests/home.mjs                                        ci:offline serial             # CPU: two checks race the clock (line 106 reads Date.now() twice at a rounding edge, line 281 waits fixed 20 ms); 3 of 12 copies four side by side failed, 0 of 3 alone
 tests/home-refresh.mjs                                ci:offline
 tests/roots-ui.mjs                                    ci:offline
 tests/batch-delete-ui.mjs                             ci:offline

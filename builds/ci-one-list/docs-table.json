@@ -1,7 +1,7 @@
 {
  "rows": [
   {
-   "behavior": "The offline group holds the tests/ files that can run on a CI runner (45 joined from the local and pending-ci lanes); five stay local with reasons",
+   "behavior": "The offline group holds the tests/ files that can run on a CI runner (37 joined from the local and pending-ci lanes); seven stay local with reasons",
    "files": [
     "tests/SUITE"
    ],
