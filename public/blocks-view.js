@@ -1,15 +1,21 @@
-/* Agent Config Studio — the Shared rules view: each shared rule, every copy of it in your instruction files and skills, and a word-by-word comparison (lib/blocks.js) */
+/* Agent Config Studio — the Shared rules view: each shared rule, every copy of it in your instruction files and skills, a word-by-word comparison (lib/blocks.js), and adding a rule to files that lack it (lib/blocks-add.js) */
 
 /**
  * Loaded before app.js, which owns the helpers this calls (el, api,
- * renderMarkdown, renderSidebar…). Read-only: the one request it makes is
- * GET /api/blocks (tests/blocks-ui.mjs holds it to that); Compare works from
- * the data already read.
+ * renderMarkdown, renderSidebar…). Reading is GET /api/blocks alone; Compare
+ * and Add to… work from the data already read. The two writes, making one
+ * copy match and adding a rule to files, are each a preview the person
+ * reads, then apply with the preview's signatures (tests/blocks-ui.mjs pins
+ * those five calls).
  *
  * Ratings come from the server and measure wording (shared word pairs), never
  * meaning, so no label here may claim two copies mean the same thing.
  */
-const BB = { data: null, error: null, loading: false, rule: null };
+/**
+ * match: the one copy being made to match ({ key, rule, copy, busy, preview, error, stale }); matched: the last apply's result.
+ * add: Add to… for one rule ({ rule, from, picked, busy, preview, error, stale, result }).
+ */
+const BB = { data: null, error: null, loading: false, rule: null, match: null, matched: null, add: null };
 const BB_LABEL = { same: 'Matches', reworded: 'Small changes', differs: 'Big changes' };
 const BB_ORDER = { differs: 0, reworded: 1, same: 2 };
 const BB_NOTE = {
@@ -28,6 +34,7 @@ const BB_GROUPS = [
 ];
 const BB_CLI = { claude: 'Claude', codex: 'Codex', grok: 'Grok' };
 const BB_COMPARE_HASH = '#blocks/compare';
+const BB_ADD_HASH = '#blocks/add';
 
 const bbPlural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const bbMine = (b) => b.copies.filter((c) => !c.pack);
@@ -66,14 +73,18 @@ function bbStatus(d) {
 
 const bbCli = (id) => BB_CLI[id] || (id ? id[0].toUpperCase() + id.slice(1) : '');
 
-/** Where a copy lives, in words: "CLAUDE.md (Claude, global) · line 168", "SKILL.md in the build skill (Claude) · lines 75–79". */
-function bbPlace(c) {
+/** A file in words: "CLAUDE.md (Claude, global)", "SKILL.md in the build skill (Claude)". */
+function bbFileWords(c) {
   const name = c.file.split('/').pop();
   // A project's skill folder could be any CLI's: name the project, never guess the CLI.
   const who = c.source === 'project' ? `${c.project || 'a'} project` : c.source === 'shared' ? 'shared skills folder' : bbCli(c.source);
-  const what = c.kind === 'instructions' ? `${name} (${who}, global)` : c.skill ? `${name} in the ${c.skill} skill (${who})` : `${name} (${who})`;
+  return c.kind === 'instructions' ? `${name} (${who}, global)` : c.skill ? `${name} in the ${c.skill} skill (${who})` : `${name} (${who})`;
+}
+
+/** Where a copy lives, in words: "CLAUDE.md (Claude, global) · line 168", "SKILL.md in the build skill (Claude) · lines 75–79". */
+function bbPlace(c) {
   const at = c.endLine > c.line ? `lines ${c.line}–${c.endLine}` : `line ${c.line}`;
-  return `${what} · ${at}`;
+  return `${bbFileWords(c)} · ${at}`;
 }
 
 /** How many of this rule's copies share a file with `c`. */
@@ -133,13 +144,15 @@ function bbCard(b) {
   }
   const packs = bbPacksLine(b);
   if (packs) card.appendChild(packs);
+  const row = el('div', 'bb-actions');
   if (group === 'look' || group === 'small') {
     const cmp = el('button', group === 'look' ? 'btn primary' : 'btn', 'Compare copies');
     cmp.onclick = () => bbCompare(b.id);
-    const row = el('div', 'bb-actions');
     row.appendChild(cmp);
-    card.appendChild(row);
   }
+  const add = bbAddButton(b, 'blocks');
+  if (add) row.appendChild(add);
+  if (row.childNodes.length) card.appendChild(row);
   return card;
 }
 
@@ -174,7 +187,7 @@ async function bbLoad() {
   bbPaint();
 }
 
-const bbPaint = () => { if (S.view === 'blocks') paintBlocks(); else if (S.view === 'blocks-compare') paintCompare(); };
+const bbPaint = () => { if (S.view === 'blocks') paintBlocks(); else if (S.view === 'blocks-compare') paintCompare(); else if (S.view === 'blocks-add') paintAdd(); };
 
 function bbFailed(box) {
   const n = el('div', 'notice error');
@@ -275,6 +288,7 @@ const bbRuleMoved = (hash) => bbRuleOf(hash) !== BB.rule;
 
 function bbCompare(id) {
   BB.rule = id;
+  BB.match = null; BB.matched = null;
   location.hash = `${BB_COMPARE_HASH}&rule=${encodeURIComponent(id)}`;
   openBlocksCompare();
 }
@@ -295,6 +309,7 @@ async function openBlocksCompare() {
 }
 
 function bbBack() {
+  BB.match = null; BB.matched = null;
   location.hash = '#blocks';
   openBlocks();
 }
@@ -310,11 +325,19 @@ function paintCompare() {
   back.onclick = bbBack;
   top.appendChild(back);
   const b = BB.data?.blocks.find((x) => x.id === BB.rule);
+  const add = b && bbAddButton(b, 'blocks-compare');
+  if (add) top.appendChild(add);
   box.appendChild(el('h2', 'bb-cmp-title', b ? `Compare copies: ${b.name}` : 'Compare copies'));
   box.appendChild(top);
   if (BB.error && !BB.data) { bbFailed(box); c.appendChild(box); return; }
   if (!b) { box.appendChild(el('p', 'bb-empty', 'That rule is not on the list any more.')); c.appendChild(box); return; }
   box.appendChild(el('p', 'bb-cmp-intro', 'Each of your copies beside the reference version. The studio compares words, not meaning: read both and decide whether the copy still says what you want.'));
+  if (BB.matched?.rule === b.id) {
+    const r = BB.matched;
+    const n = el('div', 'notice bb-result', `Updated ${r.file}: that copy now matches the reference. ${r.undo}`);
+    n.setAttribute('role', 'status');
+    box.appendChild(n);
+  }
   const legend = el('p', 'bb-legend');
   legend.appendChild(el('del', 'bb-missing', 'Missing from this copy'));
   legend.appendChild(el('ins', 'bb-only', 'Only in this copy'));
@@ -341,10 +364,374 @@ function paintCompare() {
       cols.appendChild(own);
       sec.appendChild(cols);
       if (copy.textCut) sec.appendChild(el('p', 'bb-note', 'This copy is long: only its start is shown, so words further on may be marked as missing.'));
+      bbMatchPart(sec, b, copy);
     }
     box.appendChild(sec);
   }
   const packs = bbPacksLine(b);
   if (packs) box.appendChild(packs);
   c.appendChild(box);
+}
+
+const bbKey = (c) => `${c.file}\n${c.line}\n${c.endLine}`;
+
+/** Under a drifted copy: its button, the preview with Make it match and Cancel, or why it cannot be replaced. */
+function bbMatchPart(sec, b, copy) {
+  if (!copy.canMatch) {
+    if (copy.whyNot) sec.appendChild(el('p', 'bb-why', copy.whyNot));
+    return;
+  }
+  const m = BB.match?.key === bbKey(copy) ? BB.match : null;
+  if (!m) {
+    const row = el('div', 'bb-actions');
+    const go = el('button', 'btn', 'Make this copy match');
+    go.disabled = !!BB.match?.busy;
+    go.onclick = () => bbPreview(b.id, copy);
+    row.appendChild(go);
+    sec.appendChild(row);
+    return;
+  }
+  const box = el('div', 'bb-match');
+  box.setAttribute('role', 'region');
+  box.setAttribute('aria-label', 'Preview of the change');
+  const acts = el('div', 'bb-actions');
+  if (m.error) {
+    const n = el('div', 'notice error', m.error);
+    n.setAttribute('role', 'alert');
+    box.appendChild(n);
+    if (m.stale) {
+      const again = el('button', 'btn', 'Preview again');
+      again.disabled = m.busy;
+      again.onclick = () => bbPreviewAgain(m);
+      acts.appendChild(again);
+    }
+  }
+  const p = m.preview;
+  if (p) {
+    const at = p.endLine > p.line ? `lines ${p.line}–${p.endLine}` : `line ${p.line}`;
+    box.appendChild(el('p', null, `In ${p.file}, ${at} ${p.endLine > p.line ? 'become' : 'becomes'} the reference version:`));
+    box.appendChild(bbLineDiff(p.diff, p.line));
+    box.appendChild(el('p', 'bb-match-note', 'The old file is saved to History first, so you can put it back. Nothing else in the file changes.'));
+    const yes = el('button', 'btn primary', m.busy ? 'Saving…' : 'Make it match');
+    yes.disabled = m.busy;
+    yes.onclick = () => bbApply();
+    acts.appendChild(yes);
+  } else if (m.busy) {
+    box.appendChild(el('p', 'bb-match-note', 'Reading the file…'));
+  }
+  const cancel = el('button', 'btn ghost', 'Cancel');
+  cancel.disabled = m.busy;
+  // After a refusal the copy's lines on the page may be out of date: read them again.
+  cancel.onclick = () => { const refused = !!m.error; BB.match = null; if (refused) bbLoad(); else paintCompare(); };
+  acts.appendChild(cancel);
+  box.appendChild(acts);
+  sec.appendChild(box);
+}
+
+/** The server's line diff, numbered from the copy's first line in the file. */
+function bbLineDiff(rows, from) {
+  const wrap = el('div', 'diff bb-lines');
+  const type = { '+': 'add', '-': 'del', ' ': 'ctx' };
+  let a = from - 1, n = from - 1;
+  for (const r of rows) {
+    if (r.op !== '+') a++;
+    if (r.op !== '-') n++;
+    const line = el('div', `diff-line ${type[r.op]}`);
+    line.appendChild(el('span', 'n', String(r.op === '-' ? a : n)));
+    line.appendChild(el('span', 't', `${r.op} ${r.line}`));
+    wrap.appendChild(line);
+  }
+  return wrap;
+}
+
+function bbFocusMatch() {
+  const box = $('content').querySelector('.bb-match');
+  box?.scrollIntoView?.({ block: 'nearest' });
+  box?.querySelector('.btn.primary, .btn:not(.ghost)')?.focus?.({ preventScroll: true });
+}
+
+async function bbPreview(rule, copy) {
+  const m = { key: bbKey(copy), rule, copy, busy: true, preview: null, error: null, stale: false };
+  BB.match = m; BB.matched = null;
+  paintCompare();
+  try { m.preview = await api('POST', '/api/blocks/match/preview', { rule, file: copy.file, line: copy.line, endLine: copy.endLine }); }
+  catch (e) { m.error = e.message; m.stale = e.status === 409; }
+  if (BB.match !== m) return;
+  m.busy = false;
+  paintCompare();
+  bbFocusMatch();
+}
+
+/**
+ * After a refusal the copy may have moved: check again first, then preview
+ * the same copy where it is now — by its place if it is still there, else
+ * the one drifted copy of this rule left in that file. With none, or more
+ * than one, the refreshed page is left for the person to choose from.
+ */
+async function bbPreviewAgain(m) {
+  m.busy = true;
+  paintCompare();
+  await bbLoad();
+  if (BB.match !== m) return;
+  const rule = BB.data?.blocks.find((x) => x.id === m.rule);
+  const offered = (rule?.copies || []).filter((c) => c.canMatch);
+  const here = offered.find((c) => bbKey(c) === m.key) || (() => {
+    const inFile = offered.filter((c) => c.file === m.copy.file);
+    return inFile.length === 1 ? inFile[0] : null;
+  })();
+  if (!here) { BB.match = null; paintCompare(); return; }
+  await bbPreview(m.rule, here);
+}
+
+async function bbApply() {
+  const m = BB.match;
+  if (!m?.preview || m.busy) return;
+  m.busy = true; m.error = null;
+  paintCompare();
+  const { rule, copy, preview } = m;
+  let r;
+  try { r = await api('POST', '/api/blocks/match/apply', { rule, file: copy.file, line: copy.line, endLine: copy.endLine, signature: preview.signature }); }
+  catch (e) {
+    if (BB.match !== m) return;
+    m.busy = false; m.error = e.message; m.stale = e.status === 409;
+    if (m.stale) m.preview = null;
+    paintCompare();
+    bbFocusMatch();
+    return;
+  }
+  if (BB.match === m) BB.match = null;
+  BB.matched = { ...r, rule };
+  await bbLoad();
+}
+
+/** The files `b` can be added to: the scan's targets less those holding any copy of it. */
+function bbAddable(b) {
+  const has = new Set(b.copies.map((c) => c.file));
+  return (BB.data?.targets || []).filter((t) => !has.has(t.file));
+}
+
+function bbAddButton(b, from) {
+  if (!bbAddable(b).length) return null;
+  const btn = el('button', 'btn', 'Add to…');
+  btn.onclick = () => bbAddOpen(b.id, from);
+  return btn;
+}
+
+function bbAddOpen(id, from) {
+  BB.rule = id;
+  BB.match = null; BB.matched = null;
+  BB.add = { rule: id, from, picked: new Set(), busy: false, preview: null, error: null, stale: false, result: null };
+  location.hash = `${BB_ADD_HASH}&rule=${encodeURIComponent(id)}`;
+  openBlocksAdd();
+}
+
+async function openBlocksAdd() {
+  if (!confirmDiscard()) return;
+  const id = bbRuleOf(location.hash) || BB.rule;
+  BB.rule = id;
+  if (BB.add?.rule !== id) BB.add = { rule: id, from: 'blocks', picked: new Set(), busy: false, preview: null, error: null, stale: false, result: null };
+  S.view = 'blocks-add';
+  leaveEditor();
+  window.history.replaceState(null, '', `${BB_ADD_HASH}&rule=${encodeURIComponent(id || '')}`);
+  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
+  $('filebar').hidden = true;
+  $('content').scrollTop = 0;
+  if (BB.data) { paintAdd(); return; }
+  $('content').innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span> Reading your instruction files and skills…</div></div>';
+  await bbLoad();
+}
+
+function bbAddBack() {
+  const a = BB.add;
+  BB.add = null;
+  if (a?.from === 'blocks-compare' && a.rule) { bbCompare(a.rule); return; }
+  location.hash = '#blocks';
+  openBlocks();
+}
+
+/** Ticks follow the page's own order, so the request and the preview list files as the picker does. */
+const bbPickedInOrder = (b) => bbAddable(b).filter((t) => BB.add.picked.has(t.file)).map((t) => t.file);
+
+function paintAdd() {
+  if (S.view !== 'blocks-add') return;
+  const c = $('content');
+  if (!BB.data && !BB.error) return;
+  c.innerHTML = '';
+  const box = el('div', 'scope bb bb-add');
+  const b = BB.data?.blocks.find((x) => x.id === BB.rule);
+  box.appendChild(el('h2', 'bb-cmp-title', b ? `Add to files: ${b.name}` : 'Add to files'));
+  const top = el('div', 'bb-actions');
+  const back = el('button', 'btn', 'Back');
+  back.onclick = bbAddBack;
+  top.appendChild(back);
+  box.appendChild(top);
+  if (BB.error && !BB.data) { bbFailed(box); c.appendChild(box); return; }
+  if (!b) { box.appendChild(el('p', 'bb-empty', 'That rule is not on the list any more.')); c.appendChild(box); return; }
+  const a = BB.add;
+  box.appendChild(el('p', 'bb-cmp-intro', 'Choose the files that should carry this rule. The list shows your instruction files and skills that don\'t have it yet; the studio\'s own packs are never changed. Nothing is written until you preview and confirm.'));
+  if (a.result) bbAddResult(box, b, a.result);
+  const list = bbAddable(b);
+  // A file that left the list (added, or changed on disk) is no longer ticked.
+  for (const f of [...a.picked]) if (!list.some((t) => t.file === f)) a.picked.delete(f);
+  if (!list.length) box.appendChild(el('p', 'bb-empty', 'Every file the studio checks already has this rule.'));
+  for (const [kind, title] of [['instructions', 'Instruction files'], ['skill', 'Skills']]) {
+    const rows = list.filter((t) => t.kind === kind);
+    if (!rows.length) continue;
+    const sec = el('section', 'bb-add-group');
+    sec.appendChild(el('h3', 'bb-group-title', title));
+    const ul = el('ul', 'bb-picks');
+    for (const t of rows) {
+      const li = el('li');
+      const label = el('label', 'bb-pick');
+      const box2 = el('input');
+      box2.type = 'checkbox';
+      box2.checked = a.picked.has(t.file);
+      box2.disabled = a.busy;
+      box2.onchange = () => {
+        if (box2.checked) a.picked.add(t.file); else a.picked.delete(t.file);
+        a.preview = null; a.error = null; a.stale = false;
+        paintAdd();
+      };
+      label.appendChild(box2);
+      const words = el('span', 'bb-loc');
+      words.appendChild(el('span', 'bb-place', bbFileWords(t)));
+      words.appendChild(el('code', 'bb-path', t.file));
+      label.appendChild(words);
+      li.appendChild(label);
+      ul.appendChild(li);
+    }
+    sec.appendChild(ul);
+    box.appendChild(sec);
+  }
+  const n = bbPickedInOrder(b).length;
+  if (list.length && !a.preview) {
+    const acts = el('div', 'bb-actions bb-add-bar');
+    const go = el('button', 'btn primary', a.busy ? 'Reading the files…' : 'Preview');
+    go.disabled = a.busy || !n;
+    go.onclick = () => bbAddPreview();
+    acts.appendChild(go);
+    acts.appendChild(el('span', 'bb-add-count', n ? `${bbPlural(n, 'file')} chosen` : 'No file chosen yet'));
+    box.appendChild(acts);
+  }
+  if (a.error) {
+    const err = el('div', 'notice error');
+    err.setAttribute('role', 'alert');
+    err.appendChild(el('div', null, a.error));
+    if (a.stale) {
+      const again = el('button', 'btn', 'Preview again');
+      again.disabled = a.busy;
+      again.onclick = () => bbAddPreviewAgain();
+      err.appendChild(again);
+    }
+    box.appendChild(err);
+  }
+  if (a.preview) bbAddPreviewPart(box, a);
+  c.appendChild(box);
+}
+
+function bbAddPreviewPart(box, a) {
+  const pv = el('section', 'bb-add-preview');
+  pv.setAttribute('role', 'region');
+  pv.setAttribute('aria-label', 'Preview of the change');
+  const byFile = new Map((BB.data?.targets || []).map((t) => [t.file, t]));
+  for (const f of a.preview.files) {
+    const sec = el('div', 'bb-add-file');
+    sec.appendChild(el('h4', 'bb-name', bbFileWords(byFile.get(f.file) || { file: f.file })));
+    sec.appendChild(el('code', 'bb-path', f.file));
+    sec.appendChild(el('p', null, f.heading === 'existing'
+      ? 'Under the file\'s "## Shared rules" heading, after what is already there:'
+      : 'At the end of the file, under a new "## Shared rules" heading:'));
+    if (f.newline) sec.appendChild(el('p', 'bb-match-note', 'The file\'s last line has no line break, so one is added first.'));
+    sec.appendChild(bbLineDiff(f.diff, f.from));
+    pv.appendChild(sec);
+  }
+  pv.appendChild(el('p', 'bb-match-note', 'Each old file is saved to History first, so you can put it back. Nothing else in the files changes.'));
+  const acts = el('div', 'bb-actions');
+  const k = a.preview.files.length;
+  const yes = el('button', 'btn primary', a.busy ? 'Saving…' : `Add to ${bbPlural(k, 'file')}`);
+  yes.disabled = a.busy;
+  yes.onclick = () => bbAddApply();
+  acts.appendChild(yes);
+  const cancel = el('button', 'btn ghost', 'Cancel');
+  cancel.disabled = a.busy;
+  cancel.onclick = () => { a.preview = null; paintAdd(); };
+  acts.appendChild(cancel);
+  pv.appendChild(acts);
+  box.appendChild(pv);
+}
+
+/** After a write: each file, how the fresh check rates the rule there, and how to put the old one back. */
+function bbAddResult(box, b, r) {
+  const n = el('div', 'notice bb-result bb-add-result');
+  n.setAttribute('role', 'status');
+  n.appendChild(el('div', null, `Added "${b.name}" to ${bbPlural(r.files.length, 'file')}. Each old version is in History.`));
+  const ul = el('ul', 'bb-copies');
+  for (const f of r.files) {
+    const copy = b.copies.find((c) => c.file === f.file);
+    const li = el('li', 'bb-copy');
+    if (copy) li.appendChild(el('span', `bb-rating bb-rating-${copy.rating}`, BB_LABEL[copy.rating]));
+    const loc = el('div', 'bb-loc');
+    loc.appendChild(el('div', 'bb-place', copy ? bbPlace(copy) : f.file));
+    loc.appendChild(el('div', 'bb-why', f.undo));
+    li.appendChild(loc);
+    ul.appendChild(li);
+  }
+  n.appendChild(ul);
+  box.appendChild(n);
+}
+
+function bbAddFocus(sel) {
+  const n = $('content').querySelector(sel);
+  n?.scrollIntoView?.({ block: 'nearest' });
+  n?.querySelector('.btn.primary, .btn')?.focus?.({ preventScroll: true });
+}
+
+async function bbAddPreview() {
+  const a = BB.add;
+  const b = BB.data?.blocks.find((x) => x.id === a?.rule);
+  if (!a || !b || a.busy) return;
+  const files = bbPickedInOrder(b);
+  if (!files.length) return;
+  a.busy = true; a.error = null; a.stale = false; a.preview = null; a.result = null;
+  paintAdd();
+  try { a.preview = await api('POST', '/api/blocks/add/preview', { rule: a.rule, files }); }
+  catch (e) { a.error = e.message; a.stale = e.status === 409; }
+  if (BB.add !== a) return;
+  a.busy = false;
+  paintAdd();
+  bbAddFocus(a.preview ? '.bb-add-preview' : '.notice.error');
+}
+
+/** A refusal means the files moved on: check again first, so the list and the ticks are current, then preview what is still ticked. */
+async function bbAddPreviewAgain() {
+  const a = BB.add;
+  if (!a) return;
+  a.busy = true;
+  paintAdd();
+  await bbLoad();
+  if (BB.add !== a) return;
+  a.busy = false;
+  await bbAddPreview();
+}
+
+async function bbAddApply() {
+  const a = BB.add;
+  if (!a?.preview || a.busy) return;
+  a.busy = true; a.error = null;
+  paintAdd();
+  let r;
+  try { r = await api('POST', '/api/blocks/add/apply', { rule: a.rule, files: a.preview.files.map((f) => ({ file: f.file, signature: f.signature })) }); }
+  catch (e) {
+    if (BB.add !== a) return;
+    a.busy = false; a.error = e.message; a.stale = e.status === 409; a.preview = null;
+    // Some files may have been written before the failure: the list must show them as they are now.
+    if (e.body?.written?.length) { a.stale = false; await bbLoad(); }
+    else paintAdd();
+    bbAddFocus('.notice.error');
+    return;
+  }
+  if (BB.add !== a) return;
+  a.busy = false; a.preview = null; a.result = r;
+  a.picked.clear();
+  await bbLoad();
 }

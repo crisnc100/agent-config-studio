@@ -688,12 +688,54 @@ words **missing from this copy** marked in the reference and words **only in
 this copy** marked in the copy. A copy's text is sent up to 60 lines or 6,000
 characters; a longer copy says only its start is shown. **Back** returns to
 the list without reading the files again; **Check again** reads everything
-again. The page only reads: nothing on it changes a file.
+again.
+
+Under a copy that differs, **Make this copy match** previews the change: the
+file, and the lines that become the reference version between block markers.
+**Make it match** saves the old file to History first (if that fails, nothing
+is written), then changes only those lines, keeping the file's line endings;
+the file's History tab puts the old version back. The page then checks again.
+If the file changed after the preview, nothing is written and **Preview
+again** offers a fresh preview. Copies in the studio's packs are never
+changed, and a copy the studio cannot replace exactly (inside a longer
+paragraph, or sharing lines with another rule's copy) says why instead. Each
+change is one copy at a time.
 
 The skill wizard's Blocks step pastes ticked blocks as marked copies: after
 the draft, a `## Shared rules` heading, then each block under its `### name`
 line between its markers, in the order the Blocks step lists them. **Regenerate** pastes them
 again, so an edit made inside a block on Review does not survive it.
+
+**Add to…** (on a rule's card, and beside **Back** in Compare copies) opens
+`#blocks/add&rule=<id>`: a list, under Instruction files and Skills, of the
+files the page reads that have no copy of that rule. The button shows only
+when at least one such file exists. A file is offered only when it is an
+instruction file or a skill's `SKILL.md`, outside the studio's packs, and its
+real path is one too: a link that leads outside the folders the studio may
+change, into the packs, or to anything other than a `CLAUDE.md` or `AGENTS.md`
+(for an instruction file) or a `SKILL.md` inside a `skills` folder (for a
+skill) is left off, as is a file the page could not read.
+
+Tick files and choose **Preview**: for each file it shows where the rule goes
+and the added lines with the lines around them. The rule goes in the skill
+wizard's layout above, as `### <name>` between block markers, in the file's
+own line endings. When the file has a `# Shared rules` or `## Shared rules`
+heading outside code examples (the last one, if several), the rule goes after
+the last block under it, or after its last line; otherwise a new `## Shared
+rules` heading goes at the end of the file. A file whose last line has no
+line break gets one first. Changing a tick drops the preview.
+
+**Add to N files** writes all the files or none. It checks every file against
+its preview, saves each old file to History, checks every file once more, and
+only then writes; as with Make this copy match, a file's History tab puts its
+old version back. If any file changed since the preview, nothing is written
+and **Preview again** checks again, then previews the files still ticked. If
+an old file cannot be saved to History, nothing is written. If a write still
+fails partway, the message names the files written and the files not written.
+Afterwards the page checks again and lists each file with its rating. A file
+that ends inside a code example that is never closed (a line opening a fence
+of three backticks or three tildes, with no closing one) is refused, because the rule would land inside
+it; add the rule there by hand.
 
 ## Review gate settings
 

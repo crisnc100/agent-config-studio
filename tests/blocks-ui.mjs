@@ -2,7 +2,8 @@
  * The Shared rules page (builds/building-blocks-page C1–C4, builds/shared-rules-page
  * A1–A6), in the fake DOM against stubbed routes: under Workflows in the sidebar,
  * each rule with its reference text and every copy's place and rating, no fold,
- * every button one of the three kinds, and the only request the page makes is GET /api/blocks.
+ * every button one of the three kinds; reading, the only request is GET /api/blocks, and
+ * only making one copy match (builds/shared-rules-ux B1, B2, B6) posts.
  * The static half reads the view's source and its styles. No server, no HOME.
  */
 import fs from 'node:fs';
@@ -313,12 +314,308 @@ try {
   ok(`no shared-rules test block threw (${err?.message || err})`, false, err?.stack || String(err));
 }
 
+/* ── make one copy match (builds/shared-rules-ux B1, B2, B6) ─────────── */
+console.log('\nCompare copies: make one copy match');
+{
+  const RP = RICH.blocks.find((b) => b.id === 'review-policy');
+  const WHY = 'This copy sits inside a longer paragraph, so the studio cannot tell exactly where the rule starts and ends. Change it by hand.';
+  const fixable = (c) => (c.pack || c.rating === 'same' ? { ...c, canMatch: false, whyNot: null }
+    : c.line === 103 ? { ...c, canMatch: false, whyNot: WHY } : { ...c, canMatch: true, whyNot: null });
+  const state = { matched: false };
+  const view = () => ({ blocks: [{ ...RP, copies: RP.copies.map(fixable).map((c) => (state.matched && c.line === 220 ? { ...c, rating: 'same', canMatch: false, note: null, text: RP_TEXT.trim() } : c)) }], scanned: RICH.scanned });
+  const PREVIEW = { file: '~/.claude/skills/build/SKILL.md', line: 220, endLine: 230, removed: ['old line'], added: ['new line'], signature: 'f'.repeat(64),
+    diff: [{ op: ' ', line: '<!-- block:review-policy sha256:aa -->' }, { op: '-', line: '1. The operator is involved only at merge.' }, { op: '+', line: '1. The operator is involved only at PR merge.' }] };
+  const mcalls = [];
+  let applyAnswer = () => { state.matched = true; return { saved: true, file: '~/.claude/skills/build/SKILL.md', line: 220, sha: 'abc', warnings: [], undo: 'The old version is in History (~/.agent-config-studio/history): open ~/.claude/skills/build/SKILL.md and choose History to put it back.' }; };
+  const base = routesFor({
+    'GET /api/blocks': () => view(),
+    'POST /api/blocks/match/preview': (b) => { mcalls.push(['preview', b]); return PREVIEW; },
+    'POST /api/blocks/match/apply': (b) => { mcalls.push(['apply', b]); return applyAnswer(b); },
+  });
+  const all = [];
+  const routes = Object.assign(async (m, pth, b, u) => { all.push(`${m} ${pth}`); return base(m, pth, b, u); }, base);
+  try {
+    const p = await bootPage({ routes, hash: '#blocks/compare&rule=review-policy' });
+    const c = p.$('content');
+    const t = (n) => (n ? p.text(n) : '');
+    await until(() => c.querySelector('.bb-cmp'));
+    const sec = (line) => c.querySelectorAll('.bb-cmp').find((x) => new RegExp(`· lines? ${line}\\b`).test(t(x.querySelector('.bb-place'))));
+    const btnIn = (n, label) => n?.querySelectorAll('button').find((b) => t(b) === label);
+    ok('B1 a drifted copy of yours has a secondary "Make this copy match"', btnIn(sec(220), 'Make this copy match')?.className === 'btn' && btnIn(sec(65), 'Make this copy match')?.className === 'btn',
+      [sec(220), sec(65)].map((x) => x?.innerHTML.slice(0, 200)).join(' | '));
+    ok('B1 …a matching copy has none, and pack copies are not on the page to offer', !btnIn(sec(40), 'Make this copy match')
+      && c.querySelectorAll('button').filter((b) => t(b) === 'Make this copy match').length === 2);
+    ok('a copy that cannot be replaced exactly has no button, and one line saying why', !btnIn(sec(103), 'Make this copy match') && t(sec(103).querySelector('.bb-why')) === WHY, t(sec(103)));
+    ok('no update-all button', !c.querySelectorAll('button').some((b) => /\ball\b/i.test(t(b))));
+    all.length = 0;
+    btnIn(sec(220), 'Make this copy match').click();
+    await until(() => sec(220)?.querySelector('.bb-match .diff'));
+    const box = sec(220).querySelector('.bb-match');
+    ok('B2 clicking asks for a preview of that copy, as the scan named it, and writes nothing', JSON.stringify(mcalls) === JSON.stringify([['preview', { rule: 'review-policy', file: '~/.claude/skills/build/SKILL.md', line: 220, endLine: 230 }]])
+      && !all.some((x) => /apply/.test(x)), JSON.stringify(mcalls));
+    ok('B2 the preview sits under that copy: the file, and the lines removed and added', /~\/\.claude\/skills\/build\/SKILL\.md/.test(t(box)) && /lines 220–230/.test(t(box))
+      && box.querySelectorAll('.diff-line.del').length === 1 && box.querySelectorAll('.diff-line.add').length === 1 && /involved only at merge/.test(t(box.querySelector('.diff-line.del')))
+      && /only at PR merge/.test(t(box.querySelector('.diff-line.add'))), t(box));
+    ok('B2 …with the real line numbers of the file', t(box.querySelector('.diff-line .n')) === '220', t(box.querySelector('.diff-line .n')));
+    ok('B2 …saying the old file goes to History first', /History/.test(t(box)), t(box));
+    ok('B2 …a primary "Make it match" and a quiet Cancel', /\bprimary\b/.test(btnIn(box, 'Make it match')?.className) && /\bghost\b/.test(btnIn(box, 'Cancel')?.className),
+      box.querySelectorAll('button').map((b) => `${t(b)}:${b.className}`).join(' | '));
+    ok('no fold, and every button styled', !c.querySelector('details, summary, [aria-expanded]') && c.querySelectorAll('button').every((b) => /\bbtn\b/.test(b.className)));
+    btnIn(box, 'Cancel').click();
+    await settle(10);
+    ok('B2 Cancel drops the preview, writes nothing, and the button is back', !sec(220).querySelector('.bb-match') && !!btnIn(sec(220), 'Make this copy match')
+      && mcalls.length === 1, JSON.stringify(mcalls));
+
+    // A stale apply: refused, said so, Preview again.
+    applyAnswer = () => { throw { status: 409, body: { error: 'The file changed since the preview. Nothing was written; preview it again.' } }; };
+    btnIn(sec(220), 'Make this copy match').click();
+    await until(() => btnIn(sec(220)?.querySelector('.bb-match'), 'Make it match'));
+    btnIn(sec(220).querySelector('.bb-match'), 'Make it match').click();
+    await until(() => /changed since the preview/.test(t(sec(220)?.querySelector('.bb-match'))));
+    const st = sec(220).querySelector('.bb-match');
+    ok('a stale apply says the file changed and nothing was written', /The file changed since the preview\. Nothing was written/.test(t(st)), t(st));
+    ok('…offers a secondary Preview again, and no Make it match', btnIn(st, 'Preview again')?.className === 'btn' && !btnIn(st, 'Make it match'), st.querySelectorAll('button').map((b) => `${t(b)}:${b.className}`).join(' | '));
+    ok('…and the apply carried the preview\'s signature', mcalls.at(-1)[0] === 'apply' && mcalls.at(-1)[1].signature === 'f'.repeat(64), JSON.stringify(mcalls.at(-1)));
+    mcalls.length = 0;
+    btnIn(st, 'Preview again').click();
+    await until(() => btnIn(sec(220)?.querySelector('.bb-match'), 'Make it match'));
+    ok('Preview again asks for a fresh preview', mcalls.length === 1 && mcalls[0][0] === 'preview', JSON.stringify(mcalls));
+
+    // Apply: the page checks again and the copy shows as the same.
+    applyAnswer = (b) => { state.matched = true; return { saved: true, file: b.file, line: 220, sha: 'abc', warnings: [], undo: 'The old version is in History (~/.agent-config-studio/history): open ~/.claude/skills/build/SKILL.md and choose History to put it back.' }; };
+    all.length = 0;
+    btnIn(sec(220).querySelector('.bb-match'), 'Make it match').click();
+    await until(() => c.querySelector('.bb-result'));
+    await until(() => sec(220)?.querySelector('.bb-same'));
+    ok('B6 after the write the page checks again (GET /api/blocks)', all.includes('POST /api/blocks/match/apply') && all.indexOf('GET /api/blocks') > all.indexOf('POST /api/blocks/match/apply'), all.join(', '));
+    ok('B6 …and that copy now shows as the same, with no button', t(sec(220).querySelector('.bb-rating')) === 'Matches' && !!sec(220).querySelector('.bb-same') && !btnIn(sec(220), 'Make this copy match'), t(sec(220)));
+    ok('B3 the result line names the file and how to undo', /~\/\.claude\/skills\/build\/SKILL\.md/.test(t(c.querySelector('.bb-result'))) && /History/.test(t(c.querySelector('.bb-result'))),
+      t(c.querySelector('.bb-result')));
+    ok('the page stays on Compare for that rule', p.eval('S.view') === 'blocks-compare' && p.location.hash === '#blocks/compare&rule=review-policy');
+    ok('no "marked" in the page\'s own words', !/\bmarked\b/i.test(c.querySelectorAll('.bb-cmp-intro, .bb-why, .bb-match p, .bb-result').map(t).join(' ')));
+    ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
+    p.done();
+  } catch (err) {
+    ok(`no make-it-match test block threw (${err?.message || err})`, false, err?.stack || String(err));
+  }
+}
+
+/* ── Preview again after the copy moved (review f3) ─────────────────── */
+console.log('\nCompare copies: Preview again checks again first');
+{
+  const RP = RICH.blocks.find((b) => b.id === 'review-policy');
+  const state = { moved: false };
+  const copies = () => RP.copies.filter((c) => !c.pack && c.line === 220).map((c) => ({ ...c, canMatch: true, whyNot: null, ...(state.moved ? { line: 223, endLine: 233 } : {}) }));
+  const view = () => ({ blocks: [{ ...RP, copies: copies() }], scanned: RICH.scanned });
+  const seen = [];
+  const base = routesFor({
+    'GET /api/blocks': () => view(),
+    'POST /api/blocks/match/preview': (b) => {
+      seen.push(['preview', b.line]);
+      if (b.line !== (state.moved ? 223 : 220)) throw { status: 409, body: { error: 'This copy is not where it was: the file changed. Check again.' } };
+      return { file: b.file, line: b.line, endLine: b.endLine, removed: ['a'], added: ['b'], signature: 'e'.repeat(64), diff: [{ op: '-', line: 'a' }, { op: '+', line: 'b' }] };
+    },
+    'POST /api/blocks/match/apply': () => { seen.push(['apply']); throw { status: 409, body: { error: 'The file changed since the preview. Nothing was written; preview it again.' } }; },
+  });
+  const routes = Object.assign(async (m, pth, b, u) => { seen.push([`${m} ${pth}`]); return base(m, pth, b, u); }, base);
+  try {
+    const p = await bootPage({ routes, hash: '#blocks/compare&rule=review-policy' });
+    const c = p.$('content');
+    const t = (n) => (n ? p.text(n) : '');
+    const btn = (label) => c.querySelectorAll('button').find((b) => t(b) === label);
+    await until(() => btn('Make this copy match'));
+    btn('Make this copy match').click();
+    await until(() => btn('Make it match'));
+    state.moved = true;
+    btn('Make it match').click();
+    await until(() => btn('Preview again'));
+    seen.length = 0;
+    btn('Preview again').click();
+    await until(() => btn('Make it match'));
+    const order = seen.map((x) => x[0]);
+    ok('f3 Preview again checks again (GET /api/blocks) before it previews', order.indexOf('GET /api/blocks') > -1 && order.indexOf('GET /api/blocks') < order.lastIndexOf('preview'), JSON.stringify(seen));
+    ok('f3 …and previews the copy where it is now, not at its old lines', seen.filter((x) => x[0] === 'preview').at(-1)?.[1] === 223 && /lines 223–233/.test(t(c.querySelector('.bb-match'))), JSON.stringify(seen));
+    ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
+    p.done();
+  } catch (err) {
+    ok(`no Preview again test block threw (${err?.message || err})`, false, err?.stack || String(err));
+  }
+}
+
+/* ── browser QA fixes: one line's grammar, Cancel after a refusal ────── */
+console.log('\nCompare copies: QA fixes');
+{
+  const RP = RICH.blocks.find((b) => b.id === 'review-policy');
+  const view = () => ({ blocks: [{ ...RP, copies: RP.copies.filter((c) => c.line === 220).map((c) => ({ ...c, canMatch: true, whyNot: null })) }], scanned: RICH.scanned });
+  let answer = (b) => ({ file: b.file, line: 7, endLine: 7, removed: ['a'], added: ['b'], signature: 'd'.repeat(64), diff: [{ op: '-', line: 'a' }, { op: '+', line: 'b' }] });
+  const seen = [];
+  const base = routesFor({ 'GET /api/blocks': () => view(), 'POST /api/blocks/match/preview': (b) => answer(b) });
+  const routes = Object.assign(async (m, pth, b, u) => { seen.push(`${m} ${pth}`); return base(m, pth, b, u); }, base);
+  try {
+    const p = await bootPage({ routes, hash: '#blocks/compare&rule=review-policy' });
+    const c = p.$('content');
+    const t = (n) => (n ? p.text(n) : '');
+    const btn = (label) => c.querySelectorAll('button').find((b) => t(b) === label);
+    await until(() => btn('Make this copy match'));
+    btn('Make this copy match').click();
+    await until(() => btn('Make it match'));
+    ok('QA a one-line preview says "line 7 becomes"', /, line 7 becomes the reference version:/.test(t(c.querySelector('.bb-match'))), t(c.querySelector('.bb-match')));
+    btn('Cancel').click();
+    await settle(10);
+    answer = () => { throw { status: 409, body: { error: 'This copy is not where it was: the file changed. Preview it again.' } }; };
+    btn('Make this copy match').click();
+    await until(() => btn('Preview again'));
+    seen.length = 0;
+    btn('Cancel').click();
+    await until(() => seen.includes('GET /api/blocks') && btn('Make this copy match'));
+    ok('QA Cancel after a refused preview checks again, so the copy\'s lines are current', seen.includes('GET /api/blocks') && !c.querySelector('.bb-match'), seen.join(', '));
+    ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
+    p.done();
+  } catch (err) {
+    ok(`no QA-fix test block threw (${err?.message || err})`, false, err?.stack || String(err));
+  }
+  const css = fs.readFileSync(path.join(PUB, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const bb = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /\.bb-/.test(m[1]));
+  const px = bb.flatMap((m) => [...m[2].matchAll(/font(?:-size)?\s*:\s*[^;]*?(\d+(?:\.\d+)?)px/g)].map((x) => [m[1].trim(), Number(x[1])]));
+  ok('QA nothing on the Shared rules pages is under 12px, the file path under each copy included', px.length > 5 && px.every(([, n]) => n >= 12)
+    && px.some(([sel]) => sel === '.bb-path'), px.filter(([, n]) => n < 12).map((x) => x.join(' ')).join(' | '));
+  const sameSec = bb.filter((m) => m[1].split(',').some((x) => x.trim() === '.bb-cmp.bb-same')).map((m) => m[2]).join(';');
+  ok('QA a matching copy\'s section keeps the gap below it that the other sections have', /margin\s*:\s*0 0 14px/.test(sameSec), sameSec);
+}
+
+/* ── Add to… (builds/shared-rules-ux PR B2: D1, D2, D5) ─────────────── */
+console.log('\nAdd to…: add a rule where it is missing');
+{
+  const RP = RICH.blocks.find((b) => b.id === 'review-policy');
+  const OM = RICH.blocks.find((b) => b.id === 'operator-merges');
+  const tg = (file, o = {}) => ({ file, source: 'claude', kind: 'skill', skill: null, project: null, ...o });
+  const TARGETS = [
+    tg('~/.claude/CLAUDE.md', { kind: 'instructions' }),
+    tg('~/.codex/AGENTS.md', { source: 'codex', kind: 'instructions' }),
+    tg('~/.claude/skills/build/SKILL.md', { skill: 'build' }),
+    tg('~/.claude/skills/fresh/SKILL.md', { skill: 'fresh' }),
+    tg('~/.agents/skills/helper/SKILL.md', { source: 'shared', skill: 'helper' }),
+  ];
+  const state = { added: [] };
+  const withAdded = (b) => ({ ...b, copies: [...b.copies.map((c) => ({ ...c, canMatch: false, whyNot: null })),
+    ...state.added.map((file) => ({ ...cp({ ...TARGETS.find((x) => x.file === file), line: 9, endLine: 12, rating: 'same', marked: true, text: RP_TEXT.trim() }), canMatch: false, whyNot: null }))] });
+  const view = () => ({ blocks: [withAdded(RP), OM], targets: TARGETS, scanned: RICH.scanned });
+  const one = (file, o = {}) => ({ file, line: 8, from: 7, heading: 'new', newline: false, added: ['', '## Shared rules', '', '### Review policy'],
+    diff: [{ op: ' ', line: 'Last line.' }, { op: '+', line: '' }, { op: '+', line: '## Shared rules' }, { op: '+', line: '' }, { op: '+', line: '### Review policy' }], signature: `${file.length % 10}`.repeat(64), ...o });
+  const acalls = [];
+  let applyAnswer = (b) => { state.added.push(...b.files.map((f) => f.file)); return { saved: true, rule: b.rule, warnings: [], undo: 'The old versions are in History.',
+    files: b.files.map((f) => ({ file: f.file, line: 9, sha: 'abc', undo: `To put it back, open ${f.file} and choose History.` })) }; };
+  const base = routesFor({
+    'GET /api/blocks': () => view(),
+    'POST /api/blocks/add/preview': (b) => { acalls.push(['preview', b]); return { rule: b.rule, files: b.files.map((f, i) => one(f, i === 1 ? { heading: 'existing', newline: true } : {})) }; },
+    'POST /api/blocks/add/apply': (b) => { acalls.push(['apply', b]); return applyAnswer(b); },
+  });
+  const all = [];
+  const routes = Object.assign(async (m, pth, b, u) => { all.push(`${m} ${pth}`); return base(m, pth, b, u); }, base);
+  try {
+    const p = await bootPage({ routes, hash: '#blocks' });
+    const c = p.$('content');
+    const t = (n) => (n ? p.text(n) : '');
+    const btnIn = (n, label) => n?.querySelectorAll('button').find((b) => t(b) === label);
+    await until(() => c.querySelector('#bb-review-policy'));
+    ok('D1 each rule\'s card has a secondary "Add to…", the rule found nowhere included', btnIn(c.querySelector('#bb-review-policy'), 'Add to…')?.className === 'btn'
+      && btnIn(c.querySelector('#bb-operator-merges'), 'Add to…')?.className === 'btn', c.querySelectorAll('button').map((b) => `${t(b)}:${b.className}`).join(' | '));
+    all.length = 0;
+    btnIn(c.querySelector('#bb-review-policy'), 'Add to…').click();
+    await until(() => c.querySelector('.bb-pick'));
+    ok('D1 it opens the picker for that rule, on its own page', p.eval('S.view') === 'blocks-add' && p.location.hash === '#blocks/add&rule=review-policy'
+      && /Review policy/.test(t(c.querySelector('h2'))), `${p.eval('S.view')} ${p.location.hash} ${t(c.querySelector('h2'))}`);
+    const groups = c.querySelectorAll('.bb-add-group').map((g) => [t(g.querySelector('h3')), g.querySelectorAll('.bb-pick').map((x) => [t(x.querySelector('.bb-place')), t(x.querySelector('.bb-path'))])]);
+    ok('D1 the files without a copy, grouped Instruction files then Skills, each with its plain label and path', JSON.stringify(groups) === JSON.stringify([
+      ['Instruction files', [['CLAUDE.md (Claude, global)', '~/.claude/CLAUDE.md'], ['AGENTS.md (Codex, global)', '~/.codex/AGENTS.md']]],
+      ['Skills', [['SKILL.md in the fresh skill (Claude)', '~/.claude/skills/fresh/SKILL.md'], ['SKILL.md in the helper skill (shared skills folder)', '~/.agents/skills/helper/SKILL.md']]],
+    ]), JSON.stringify(groups));
+    const boxes = () => c.querySelectorAll('.bb-pick input');
+    ok('D1 nothing is ticked, and Preview waits for a file', boxes().length === 4 && boxes().every((x) => x.type === 'checkbox' && !x.checked) && btnIn(c, 'Preview')?.disabled === true,
+      boxes().map((x) => x.checked).join(','));
+    ok('D1 opening the picker asked the server for nothing new', all.every((x) => x.startsWith('GET ')), all.join(', '));
+    ok('no fold, and every button styled', !c.querySelector('details, summary, [aria-expanded]') && c.querySelectorAll('button').every((b) => /\bbtn\b/.test(b.className)));
+    boxes()[3].click();
+    boxes()[1].click();
+    ok('ticking files enables a primary Preview', btnIn(c, 'Preview')?.disabled === false && /\bprimary\b/.test(btnIn(c, 'Preview').className), btnIn(c, 'Preview')?.className);
+    btnIn(c, 'Preview').click();
+    await until(() => c.querySelector('.bb-add-preview .diff'));
+    ok('D2 Preview asks for the ticked files, in the page\'s order, and writes nothing', JSON.stringify(acalls) === JSON.stringify([['preview', { rule: 'review-policy', files: ['~/.codex/AGENTS.md', '~/.agents/skills/helper/SKILL.md'] }]])
+      && !all.some((x) => /apply/.test(x)), JSON.stringify(acalls));
+    const pv = c.querySelector('.bb-add-preview');
+    const files = pv.querySelectorAll('.bb-add-file');
+    ok('D2 the preview shows each file, with the lines added numbered where they land', files.length === 2 && /AGENTS\.md \(Codex, global\)/.test(t(files[0])) && /helper skill/.test(t(files[1]))
+      && files.every((f) => f.querySelectorAll('.diff-line.add').length === 4 && t(f.querySelector('.diff-line .n')) === '7'), t(pv));
+    ok('D2 …and says where: a new heading at the end, or under the file\'s own heading', /at the end of the file, under a new "## Shared rules" heading/i.test(t(files[0]))
+      && /under the file's "## Shared rules" heading/i.test(t(files[1])), `${t(files[0])} || ${t(files[1])}`);
+    ok('D2 …and that a file with no final line break gets one first', /line break/.test(t(files[1])) && !/line break/.test(t(files[0])), t(files[1]));
+    ok('D2 …the old files go to History first; a primary "Add to 2 files" and a quiet Cancel', /History/.test(t(pv)) && /\bprimary\b/.test(btnIn(pv, 'Add to 2 files')?.className)
+      && /\bghost\b/.test(btnIn(pv, 'Cancel')?.className), pv.querySelectorAll('button').map((b) => `${t(b)}:${b.className}`).join(' | '));
+    btnIn(pv, 'Cancel').click();
+    await settle(10);
+    ok('Cancel drops the preview and writes nothing; the ticks stay', !c.querySelector('.bb-add-preview') && acalls.length === 1 && boxes()[1].checked && boxes()[3].checked && !boxes()[0].checked);
+    btnIn(c, 'Preview').click();
+    await until(() => c.querySelector('.bb-add-preview'));
+    boxes()[2].click();
+    await settle(5);
+    ok('changing the ticks drops the preview, so only what was previewed is written', !c.querySelector('.bb-add-preview'));
+    boxes()[2].click();
+
+    // A stale apply: refused, said so, Preview again checks again first.
+    applyAnswer = () => { throw { status: 409, body: { error: '~/.codex/AGENTS.md changed since the preview. Nothing was written; preview it again.' } }; };
+    btnIn(c, 'Preview').click();
+    await until(() => btnIn(c, 'Add to 2 files'));
+    btnIn(c, 'Add to 2 files').click();
+    await until(() => btnIn(c, 'Preview again'));
+    ok('a stale apply says what changed and that nothing was written, with a secondary Preview again', /changed since the preview\. Nothing was written/.test(t(c.querySelector('.bb-add .notice.error')))
+      && btnIn(c, 'Preview again')?.className === 'btn' && !btnIn(c, 'Add to 2 files'), t(c).slice(0, 400));
+    ok('…the apply carried each file with its preview\'s signature', JSON.stringify(acalls.at(-1)) === JSON.stringify(['apply', { rule: 'review-policy',
+      files: [{ file: '~/.codex/AGENTS.md', signature: one('~/.codex/AGENTS.md').signature }, { file: '~/.agents/skills/helper/SKILL.md', signature: one('~/.agents/skills/helper/SKILL.md').signature }] }]), JSON.stringify(acalls.at(-1)));
+    all.length = 0;
+    btnIn(c, 'Preview again').click();
+    await until(() => btnIn(c, 'Add to 2 files'));
+    ok('Preview again checks again (GET /api/blocks), then previews', all.indexOf('GET /api/blocks') > -1 && all.indexOf('GET /api/blocks') < all.lastIndexOf('POST /api/blocks/add/preview'), all.join(', '));
+
+    // Apply: the page checks again; the result lists each file, now matching, and how to restore it.
+    applyAnswer = (b) => { state.added.push(...b.files.map((f) => f.file)); return { saved: true, rule: b.rule, warnings: [], undo: 'The old versions are in History.',
+      files: b.files.map((f) => ({ file: f.file, line: 9, sha: 'abc', undo: `To put it back, open ${f.file} and choose History.` })) }; };
+    all.length = 0;
+    btnIn(c, 'Add to 2 files').click();
+    await until(() => c.querySelector('.bb-add-result'));
+    await settle(10);
+    const res = c.querySelector('.bb-add-result');
+    ok('D5 after the write the page checks again (GET /api/blocks)', all.includes('POST /api/blocks/add/apply') && all.lastIndexOf('GET /api/blocks') > all.indexOf('POST /api/blocks/add/apply'), all.join(', '));
+    const rows = res.querySelectorAll('li');
+    ok('D5 the result lists each file, showing the rule there as matching', rows.length === 2 && rows.every((r) => t(r.querySelector('.bb-rating')) === 'Matches')
+      && /AGENTS\.md \(Codex, global\)/.test(t(rows[0])) && /helper skill/.test(t(rows[1])), t(res));
+    ok('D5 …and how to put each one back from History', rows.every((r) => /choose History/.test(t(r))), t(res));
+    ok('the added files leave the picker; the ones not ticked stay, unticked', JSON.stringify(c.querySelectorAll('.bb-pick .bb-path').map(t)) === JSON.stringify(['~/.claude/CLAUDE.md', '~/.claude/skills/fresh/SKILL.md'])
+      && boxes().every((x) => !x.checked), c.querySelectorAll('.bb-pick').map(t).join(' | '));
+    ok('no "marked" in the page\'s own words', !/\bmarked\b/i.test(t(c)));
+
+    // From Compare copies too.
+    p.navigate('#blocks/compare&rule=review-policy');
+    await until(() => p.eval('S.view') === 'blocks-compare' && c.querySelector('.bb-cmp'));
+    ok('D1 Compare copies has "Add to…" too, secondary', btnIn(c, 'Add to…')?.className === 'btn', c.querySelectorAll('button').map((b) => `${t(b)}:${b.className}`).join(' | '));
+    btnIn(c, 'Add to…').click();
+    await until(() => p.eval('S.view') === 'blocks-add');
+    btnIn(c, 'Back').click();
+    await until(() => p.eval('S.view') === 'blocks-compare');
+    ok('Back from the picker returns to Compare copies when it came from there', p.eval('S.view') === 'blocks-compare' && p.location.hash === '#blocks/compare&rule=review-policy', p.location.hash);
+    ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
+    p.done();
+  } catch (err) {
+    ok(`no Add to test block threw (${err?.message || err})`, false, err?.stack || String(err));
+  }
+}
+
 /* ── static: the view only reads; its colours are the theme's ────────── */
 console.log('\nstatic: blocks-view.js and its styles');
 {
   const src = fs.readFileSync(path.join(PUB, 'blocks-view.js'), 'utf8');
   const apiCalls = [...src.matchAll(/api\(\s*'([A-Z]+)'\s*,\s*'([^']+)'/g)].map((m) => `${m[1]} ${m[2]}`);
-  ok('blocks-view.js calls the API once, GET /api/blocks', JSON.stringify(apiCalls) === JSON.stringify(['GET /api/blocks']), apiCalls.join(', '));
+  ok('blocks-view.js calls the API five ways: GET /api/blocks, the preview and apply of making one copy match, and the preview and apply of adding a rule to files',
+    JSON.stringify(apiCalls) === JSON.stringify(['GET /api/blocks', 'POST /api/blocks/match/preview', 'POST /api/blocks/match/apply', 'POST /api/blocks/add/preview', 'POST /api/blocks/add/apply']), apiCalls.join(', '));
   ok('…and has no other way out: no fetch, form, XHR or beacon', !/\bfetch\(|XMLHttpRequest|sendBeacon|<form|\.submit\(/.test(src));
   const css = fs.readFileSync(path.join(PUB, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const bb = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /\.bb-/.test(m[1]));

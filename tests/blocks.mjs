@@ -260,9 +260,76 @@ try {
     const w = await fetch(`${base}/api/blocks`, { method: m, headers: { 'content-type': 'application/json' }, body: '{}' });
     ok(`${m} /api/blocks: no such endpoint (404)`, w.status === 404, String(w.status));
   }
+  // Make one copy match, through the routes (builds/shared-rules-ux B3–B5).
+  const post = (route, body, headers = {}) => fetch(`${base}/api/blocks/match/${route}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  const codexFile = path.join(home, '.codex', 'skills', 'demo', 'SKILL.md');
+  const codexBefore = fs.readFileSync(codexFile, 'utf8');
+  ok('B1 the drifted Codex copy is offered; the matching Claude copy and pack copies are not', codexCopy?.canMatch === true && claudeCopy?.canMatch === false
+    && body.blocks.every((b) => b.copies.every((c) => !c.pack || c.canMatch === false)), JSON.stringify([codexCopy?.canMatch, claudeCopy?.canMatch]));
+  const want = { rule: 'operator-merges', file: codexCopy.file, line: codexCopy.line, endLine: codexCopy.endLine };
+  for (const route of ['preview', 'apply']) {
+    const x = await post(route, { ...want, signature: 'a'.repeat(64) }, { 'sec-fetch-site': 'same-site' });
+    ok(`strict same-origin: ${route} from another localhost page is refused (403)`, x.status === 403, String(x.status));
+    const y = await post(route, { ...want, extra: 1 });
+    ok(`${route} refuses an unknown field (400)`, y.status === 400, String(y.status));
+  }
+  const pv = await post('preview', want);
+  const pj = await pv.json();
+  ok('B2 preview answers with the file, the removed and added lines and a signature, and writes nothing', pv.status === 200 && pj.file === '~/.codex/skills/demo/SKILL.md'
+    && pj.removed.join('\n') === codexCopy.text && pj.added[0] === B.startMarker(shipped.id, shipped.body) && /^[0-9a-f]{64}$/.test(pj.signature)
+    && fs.readFileSync(codexFile, 'utf8') === codexBefore, JSON.stringify(pj).slice(0, 400));
+  const packOne = body.blocks.flatMap((b) => b.copies.map((c) => ({ ...c, rule: b.id }))).find((c) => c.pack);
+  const pr = await post('preview', { rule: packOne.rule, file: packOne.file, line: packOne.line, endLine: packOne.endLine });
+  ok('B5 a pack copy is refused (403)', pr.status === 403, `${pr.status} ${await pr.text()}`);
+  const stale = await post('apply', { ...want, signature: 'b'.repeat(64) });
+  ok('B4 apply with a signature that does not match is refused (409), the file unchanged', stale.status === 409 && fs.readFileSync(codexFile, 'utf8') === codexBefore, String(stale.status));
+  const ap = await post('apply', { ...want, signature: pj.signature });
+  const aj = await ap.json();
+  const after = fs.readFileSync(codexFile, 'utf8');
+  ok('B3 apply writes the studio\'s text between markers in place of the copy; the rest of the file is byte for byte the same', ap.status === 200 && aj.saved
+    && after === codexBefore.replace(`${codexCopy.text}`, `${B.startMarker(shipped.id, shipped.body)}\n${shipped.body}<!-- /block:${shipped.id} -->`), `${ap.status} ${JSON.stringify(aj)} ${JSON.stringify(after)}`);
+  ok('B3 the result names the file and how to undo', aj.file === '~/.codex/skills/demo/SKILL.md' && /History/.test(aj.undo), JSON.stringify(aj));
+  const hist = await (await fetch(`${base}/api/history?path=${encodeURIComponent(codexFile)}`)).json();
+  const olds = await Promise.all((hist.commits || []).map(async (c) => (await (await fetch(`${base}/api/history/version?path=${encodeURIComponent(codexFile)}&sha=${c.sha}`)).json()).content));
+  ok('B3 the old file is in the studio\'s history, beside the new one', olds.includes(codexBefore) && olds[0] === after, `${hist.commits?.length} versions`);
+  const again = (await (await fetch(`${base}/api/blocks`)).json()).blocks.find((b) => b.id === 'operator-merges').copies.find((c) => c.file === '~/.codex/skills/demo/SKILL.md');
+  ok('B6 checked again, that copy is the same, marked', again?.rating === 'same' && again.marked && again.canMatch === false, JSON.stringify(again));
+  // Add a rule where it is missing, through the routes (builds/shared-rules-ux PR B2: D2–D5).
+  const add = (route, b, headers = {}) => fetch(`${base}/api/blocks/add/${route}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(b) });
+  const bare = path.join(home, '.claude', 'skills', 'bare', 'SKILL.md');
+  put(bare, '---\nname: bare\ndescription: no rules\n---\n\nJust a skill.\n');
+  const bareBefore = fs.readFileSync(bare, 'utf8');
+  const listed = (await (await fetch(`${base}/api/blocks`)).json()).targets || [];
+  ok('D1 the GET lists the files a rule can be added to, the new skill among them and no pack file', listed.some((t) => t.file === '~/.claude/skills/bare/SKILL.md' && t.kind === 'skill')
+    && !listed.some((t) => t.file.startsWith('packs/')), JSON.stringify(listed).slice(0, 400));
+  const addWant = { rule: 'operator-merges', files: ['~/.claude/skills/bare/SKILL.md'] };
+  for (const route of ['preview', 'apply']) {
+    const x = await add(route, route === 'apply' ? { rule: 'operator-merges', files: [{ file: addWant.files[0], signature: 'a'.repeat(64) }] } : addWant, { 'sec-fetch-site': 'same-site' });
+    ok(`strict same-origin: add ${route} from another localhost page is refused (403)`, x.status === 403, String(x.status));
+    const y = await add(route, { ...addWant, extra: 1 });
+    ok(`add ${route} refuses an unknown field (400)`, y.status === 400, String(y.status));
+  }
+  const typed = await add('preview', { rule: 'operator-merges', files: [bare] });
+  ok('D4 add preview of a typed absolute path is refused (403)', typed.status === 403, String(typed.status));
+  const packAdd = await add('preview', { rule: 'review-policy', files: [body.blocks.flatMap((b) => b.copies).find((c) => c.pack).file] });
+  ok('D4 add preview of a pack file is refused (403)', packAdd.status === 403, String(packAdd.status));
+  const ap1 = await add('preview', addWant);
+  const aj1 = await ap1.json();
+  ok('D2 add preview answers per file with the lines added and a signature, and writes nothing', ap1.status === 200 && aj1.files?.[0]?.file === '~/.claude/skills/bare/SKILL.md'
+    && aj1.files[0].added.includes(B.startMarker(shipped.id, shipped.body)) && /^[0-9a-f]{64}$/.test(aj1.files[0].signature) && fs.readFileSync(bare, 'utf8') === bareBefore, JSON.stringify(aj1).slice(0, 400));
+  const ap2 = await add('apply', { rule: 'operator-merges', files: [{ file: aj1.files[0].file, signature: aj1.files[0].signature }] });
+  const aj2 = await ap2.json();
+  ok('D3 add apply appends the section and keeps every old byte', ap2.status === 200 && aj2.saved && fs.readFileSync(bare, 'utf8').startsWith(bareBefore)
+    && fs.readFileSync(bare, 'utf8').includes(`### ${shipped.name}`), `${ap2.status} ${JSON.stringify(aj2)}`);
+  const addedCopy = (await (await fetch(`${base}/api/blocks`)).json()).blocks.find((b) => b.id === 'operator-merges').copies.find((c) => c.file === '~/.claude/skills/bare/SKILL.md');
+  ok('D5 checked again, the file has the rule, marked and matching', addedCopy?.marked && addedCopy.rating === 'same', JSON.stringify(addedCopy));
+  const bareHist = await (await fetch(`${base}/api/history?path=${encodeURIComponent(bare)}`)).json();
+  const bareOld = await Promise.all((bareHist.commits || []).map(async (c) => (await (await fetch(`${base}/api/history/version?path=${encodeURIComponent(bare)}&sha=${c.sha}`)).json()).content));
+  ok('D3 the old file is in the studio\'s history', bareOld.includes(bareBefore), `${bareHist.commits?.length} versions`);
   const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   const routes = [...src.matchAll(/'(GET|POST|PUT|DELETE|PATCH) (\/api\/blocks[^']*)'/g)].map((m) => `${m[1]} ${m[2]}`);
-  ok('server.js declares one blocks route, and it is a GET', JSON.stringify(routes) === JSON.stringify(['GET /api/blocks']), routes.join(', '));
+  ok('server.js declares the blocks routes: one GET, the preview and apply of making one copy match, and the preview and apply of adding a rule to files',
+    JSON.stringify(routes) === JSON.stringify(['GET /api/blocks', 'POST /api/blocks/match/preview', 'POST /api/blocks/match/apply', 'POST /api/blocks/add/preview', 'POST /api/blocks/add/apply']), routes.join(', '));
   const lib = fs.readFileSync(path.join(ROOT, 'lib', 'blocks.js'), 'utf8');
   ok('lib/blocks.js has no write call', !/\b(writeFile|appendFile|rename|unlink|rmSync|mkdir|copyFile|symlink|truncate|createWriteStream)\w*\(/.test(lib));
 } finally {

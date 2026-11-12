@@ -164,6 +164,9 @@ const VIEWS = [
   // No sidebar item: a rule's Compare copies button (public/blocks-view.js); Shared rules stays marked.
   { id: 'blocks-compare', label: 'Compare copies', group: null, parent: 'blocks', icon: 'blocks', hash: '#blocks/compare',
     title: 'Shared rules', sub: 'Checked word by word, never by meaning', open: openBlocksCompare, moved: bbRuleMoved },
+  // No sidebar item: a rule's Add to… button, on its card or in Compare copies; Shared rules stays marked.
+  { id: 'blocks-add', label: 'Add to files', group: null, parent: 'blocks', icon: 'blocks', hash: '#blocks/add',
+    title: 'Shared rules', sub: 'Checked word by word, never by meaning', open: openBlocksAdd, moved: bbRuleMoved },
   { id: 'mcp', label: 'MCP', group: 'files', icon: 'mcp', hash: '#mcp',
     title: 'MCP servers', sub: 'The MCP servers your CLIs can call', open: openMcp },
   // No sidebar item: reached from the Files page's folder line, and #folders.
