@@ -360,7 +360,6 @@ function paintCompare() {
   c.appendChild(box);
 }
 
-/* ── make one copy match ──────────────────────────────────────────────── */
 const bbKey = (c) => `${c.file}\n${c.line}\n${c.endLine}`;
 
 /** Under a drifted copy: its button, the preview with Make it match and Cancel, or why it cannot be replaced. */
