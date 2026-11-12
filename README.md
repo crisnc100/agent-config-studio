@@ -688,7 +688,18 @@ words **missing from this copy** marked in the reference and words **only in
 this copy** marked in the copy. A copy's text is sent up to 60 lines or 6,000
 characters; a longer copy says only its start is shown. **Back** returns to
 the list without reading the files again; **Check again** reads everything
-again. The page only reads: nothing on it changes a file.
+again.
+
+Under a copy that differs, **Make this copy match** previews the change: the
+file, and the lines that become the reference version between block markers.
+**Make it match** saves the old file to History first (if that fails, nothing
+is written), then changes only those lines, keeping the file's line endings;
+the file's History tab puts the old version back. The page then checks again.
+If the file changed after the preview, nothing is written and **Preview
+again** offers a fresh preview. Copies in the studio's packs are never
+changed, and a copy the studio cannot replace exactly (inside a longer
+paragraph, or sharing lines with another rule's copy) says why instead. Each
+change is one copy at a time.
 
 The skill wizard's Blocks step pastes ticked blocks as marked copies: after
 the draft, a `## Shared rules` heading, then each block under its `### name`
