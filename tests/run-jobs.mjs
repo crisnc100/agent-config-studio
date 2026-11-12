@@ -8,7 +8,9 @@
  * file's output still reaches the terminal while it runs.
  *
  * Fixture files log start and end times to SUITE_LOG, so overlap is proven
- * from timestamps, not assumed from wall time.
+ * from timestamps, not assumed from wall time. Where a check needs one file
+ * to outlast another's start, the long one sleeps 1.5 s or more: a loaded
+ * 2-core CI runner can take hundreds of ms to start a node child.
  *
  * Node 20.0.0 runs this in CI: no API newer than that.
  */
@@ -67,9 +69,10 @@ const block = (out, f) => {
 console.log('\nrun.mjs --jobs: output in list order');
 {
   const suite = ['tests/a.mjs ci:g', 'tests/b.mjs ci:g', 'tests/c.mjs ci:g', ''].join('\n');
-  const r = run(suite, { 'tests/a.mjs': FILE('a', { ms: 600 }), 'tests/b.mjs': FILE('b'), 'tests/c.mjs': FILE('c', { ms: 200 }) }, ['g', '--jobs', '3']);
-  ok('the files ran at once (b and c started and ended while a ran)', r.status === 0 && r.t.a && r.t.b && r.t.c
-    && overlap(r.t.a, r.t.b) && overlap(r.t.a, r.t.c) && r.t.b.end < r.t.a.end, `${r.status} ${JSON.stringify(r.t)}\n${r.out}`);
+  const r = run(suite, { 'tests/a.mjs': FILE('a', { ms: 2000 }), 'tests/b.mjs': FILE('b'), 'tests/c.mjs': FILE('c', { ms: 300 }) }, ['g', '--jobs', '3']);
+  // A serial run would start b and c only after a ended. b is instant, so it may end before a's slower start.
+  ok('the files ran at once (b and c started and ended before a ended)', r.status === 0 && r.t.a && r.t.b && r.t.c
+    && r.t.b.start < r.t.a.end && r.t.c.start < r.t.a.end && r.t.b.end < r.t.a.end && r.t.c.end < r.t.a.end, `${r.status} ${JSON.stringify(r.t)}\n${r.out}`);
   const heads = [...r.stdout.matchAll(/=== (tests\/\w\.mjs) \((\d+)\/3\)/g)].map((m) => `${m[1]}:${m[2]}`);
   ok('each file\'s header is printed in list order with its list position', heads.join() === 'tests/a.mjs:1,tests/b.mjs:2,tests/c.mjs:3', heads.join());
   const blocks = ['a', 'b', 'c'].map((f) => block(r.stdout, f));
@@ -94,7 +97,7 @@ console.log('\nrun.mjs --jobs: the stop rule');
 {
   const suite = ['tests/a.mjs ci:g', 'tests/b.mjs ci:g', 'tests/c.mjs ci:g', 'tests/d.mjs ci:g', 'tests/e.mjs ci:g', ''].join('\n');
   const r = run(suite, {
-    'tests/a.mjs': FILE('a', { ms: 500 }), 'tests/b.mjs': FILE('b', { code: 5 }), 'tests/c.mjs': FILE('c', { ms: 300 }),
+    'tests/a.mjs': FILE('a', { ms: 2500 }), 'tests/b.mjs': FILE('b', { code: 5 }), 'tests/c.mjs': FILE('c', { ms: 2000 }),
     'tests/d.mjs': FILE('d'), 'tests/e.mjs': FILE('e'),
   }, ['g', '--jobs', '3']);
   ok('a failure starts no new file (d and e never ran)', r.started.sort().join() === 'a,b,c', JSON.stringify(r.t));
@@ -105,7 +108,7 @@ console.log('\nrun.mjs --jobs: the stop rule');
 }
 {
   const suite = ['tests/a.mjs ci:g', 'tests/b.mjs ci:g', ''].join('\n');
-  const r = run(suite, { 'tests/a.mjs': FILE('a', { ms: 500, code: 3 }), 'tests/b.mjs': FILE('b', { code: 4 }) }, ['g', '--jobs', '2']);
+  const r = run(suite, { 'tests/a.mjs': FILE('a', { ms: 2000, code: 3 }), 'tests/b.mjs': FILE('b', { code: 4 }) }, ['g', '--jobs', '2']);
   ok('two failures: the exit code is the first failing file in list order, not the first to fail in time', r.status === 3
     && r.t.b?.end < r.t.a?.end && /FAIL tests\/a\.mjs: exit 3/.test(r.out) && /FAIL tests\/b\.mjs: exit 4/.test(r.out), `${r.status} ${JSON.stringify(r.t)}\n${r.out}`);
 }
@@ -113,7 +116,7 @@ console.log('\nrun.mjs --jobs: the stop rule');
 console.log('\nrun.mjs --jobs: serial files');
 {
   const suite = ['tests/s.mjs ci:g serial # fixed port', 'tests/a.mjs ci:g', 'tests/t.mjs local serial # wall clock', 'tests/b.mjs ci:g', 'tests/u.mjs ci:g serial # shared name', ''].join('\n');
-  const files = { 'tests/s.mjs': FILE('s', { ms: 150 }), 'tests/a.mjs': FILE('a', { ms: 300 }), 'tests/t.mjs': FILE('t'), 'tests/b.mjs': FILE('b', { ms: 300 }), 'tests/u.mjs': FILE('u', { ms: 150 }) };
+  const files = { 'tests/s.mjs': FILE('s', { ms: 150 }), 'tests/a.mjs': FILE('a', { ms: 1500 }), 'tests/t.mjs': FILE('t'), 'tests/b.mjs': FILE('b', { ms: 1500 }), 'tests/u.mjs': FILE('u', { ms: 150 }) };
   const r = run(suite, files, ['g', '--jobs', '4']);
   const { s, a, b, u } = r.t;
   ok('the files that share ran at once', r.status === 0 && a && b && overlap(a, b), `${r.status} ${JSON.stringify(r.t)}\n${r.out}`);
@@ -145,13 +148,14 @@ console.log('\nrun.mjs --jobs: serial files');
   }
 }
 
-console.log('\nrun.mjs --jobs: a failed run drains its output before it exits');
+console.log('\nrun.mjs --jobs: a failed run delivers all its output to a slow reader');
 /**
- * The runner's stdout is a pipe nobody reads until the runner exits (or 3 s
- * pass). With --jobs 2 a few of the 3000 empty files run beside the
- * failing one; the not-run line names the rest, far more than a pipe buffer
- * holds, so a runner that exits with output still queued loses its tail; one
- * that sets the exit code and returns stays alive until the reader drains it.
+ * The runner's stdout is a pipe nobody reads until the runner exits or 3 s
+ * pass. The not-run line names thousands of files (about 159 KB). Where
+ * that is more than the pipe holds (macOS), a runner that calls
+ * process.exit() with output still queued loses its tail. Where the pipe
+ * holds it all (Linux's larger socket buffer), exiting early loses nothing.
+ * So the check is what arrives, never whether the runner is still alive.
  */
 {
   const names = Array.from({ length: 3000 }, (_, i) => `tests/n${String(i).padStart(4, '0')}-a-long-enough-name-to-fill-the-pipe.mjs`);
@@ -164,17 +168,17 @@ console.log('\nrun.mjs --jobs: a failed run drains its output before it exits');
   child.stdout.on('data', (d) => { out += d; });
   child.stderr.on('data', (d) => { out += d; });
   const exited = new Promise((res) => child.once('exit', (code) => res(code)));
-  const first = await Promise.race([exited.then(() => 'exited'), new Promise((res) => setTimeout(() => res('waited'), 3000))]);
+  await Promise.race([exited, new Promise((res) => setTimeout(res, 3000))]);
   child.stdout.resume();
   const guard = setTimeout(() => child.kill('SIGKILL'), 15000);
   const code = await exited;
   await new Promise((res) => (child.stdout.readableEnded ? res() : child.stdout.once('end', res)));
   clearTimeout(guard);
-  ok('it waits for a slow reader instead of exiting with output queued', first === 'waited', first);
+  // With --jobs 2 a few of the empty files run beside the failing one; the not-run line names the rest.
   const notRun = out.match(/=== (\d+) file\(s\) not run: (.*)\n/);
   const count = Number(notRun?.[1]);
-  ok('…the whole not-run list and the closing line arrive, and it ends on its own with the failing file\'s code', code === 9
-    && count > 2900 && notRun[2] === names.slice(names.length - count).join(', ') && /first failing file in list order: tests\/a\.mjs \(exit 9\)/.test(out), `${code} ${out.length} chars, tail ${JSON.stringify(out.slice(-200))}`);
+  ok('the whole not-run list and the closing line arrive, and it ends on its own with the failing file\'s code', code === 9
+    && count > 2900 && notRun[2] === names.slice(names.length - count).join(', ') && /first failing file in list order: tests\/a\.mjs \(exit 9\)\n$/.test(out), `${code} ${out.length} chars, tail ${JSON.stringify(out.slice(-200))}`);
 }
 
 console.log('\nrun.mjs --jobs: a bad N');
