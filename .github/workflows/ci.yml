@@ -97,8 +97,11 @@ jobs:
           set -uo pipefail
           run=true
           if [ "$EVENT" = pull_request ] && git rev-parse --verify --quiet HEAD^1 >/dev/null; then
-            git diff --quiet HEAD^1 HEAD -- packs/
-            case $? in
+            # GitHub runs this under bash -e: a bare diff exiting 1 or 128
+            # would end the step before its status is read.
+            rc=0
+            git diff --quiet HEAD^1 HEAD -- packs/ || rc=$?
+            case $rc in
               0) run=false; echo 'packs/ is unchanged: pack tests skipped' ;;
               1) echo 'packs/ changed: pack tests run' ;;
               *) echo 'could not diff against the base: pack tests run' ;;
