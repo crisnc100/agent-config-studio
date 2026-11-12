@@ -241,8 +241,8 @@ console.log('\nSidebar: opening a file keeps the view you came from marked');
   ok('…and leaving for Home moves the mark', q.$('btn-home').classList.contains('active') && !q.$('btn-files').classList.contains('active'));
 }
 
-/* ── Packs: no folds; "Files and undo" opens a dialog (Cris, after the critique) ── */
-console.log('\nPacks: no folds — a summary line, and "Files and undo" opens a dialog');
+/* ── Packs: no folds and no dialogs; Files and undo is a section of the pack's page (Cris; builds/packs-redesign) ── */
+console.log('\nPacks: no folds, no dialogs — Files and undo is a section of the pack\'s page');
 {
   const req = (id, ok_, extra = {}) => ({ id, ok: ok_, what: `${id} need`, fix: `fix ${id}`, dep: null, ...extra });
   const part = (id, title, explain) => ({ id, title, default: true, kind: 'skill', harnesses: ['claude'], explain });
@@ -255,30 +255,44 @@ console.log('\nPacks: no folds — a summary line, and "Files and undo" opens a 
     pack('beta', 'Beta', [part('b-skill', 'Beta skill', { what: 'Beta does it.', changes: ['~/.claude/skills/beta/'] })], [req('node', true)]),
   ], harnesses: [{ id: 'claude', label: 'Claude Code', present: true, installed: true, cli: true, home: '~/.claude', note: null, why: null }],
   legacy: [], words: { status: { installed: 'installed', absent: 'not installed' }, symbol: {}, what: {} } };
-  const p = await boot({ hash: '#packs', routes: routesFor({ 'GET /api/packs': () => cat,
+  const p = await boot({ hash: '#packs/alpha', routes: routesFor({ 'GET /api/packs': () => cat,
     'GET /api/packs/status': () => ({ job: { running: false, result: { packs: [], legacy: [], checkedAt: Date.now(), trust: false } } }) }) });
-  for (let i = 0; i < 100 && !p.$('content').querySelector('.pk-card'); i++) await settle(5);
+  for (let i = 0; i < 100 && !p.$('content').querySelector('.pk-page'); i++) await settle(5);
   const c = p.$('content');
   ok('Packs: no <details>, no summary.fold, no chevron control, no triangle glyph', c.querySelectorAll('details').length === 0 && c.querySelectorAll('summary').length === 0
     && c.querySelectorAll('.chev, .fold').length === 0 && !/[▸▾▶▼◂◀›⌄]/.test(p.text(c)), `${c.querySelectorAll('details').length} details`);
-  const card = (id) => c.querySelector(`[data-pack="${id}"]`);
-  const line = (id) => p.text(card(id).querySelector('.pk-changes'));
-  ok('each card says what it changes and how to undo it in one short muted line', line('alpha') === 'Changes 3 places · undo: acs packs uninstall alpha'
-    && line('beta') === 'Changes 3 places · undo: acs packs uninstall beta', `${line('alpha')} | ${line('beta')}`);
-  const btn = card('alpha').querySelectorAll('button').find((b) => p.text(b) === 'Files and undo');
-  ok('…and a secondary "Files and undo" button (bordered, not quiet or primary)', !!btn && btn.classList.contains('btn') && !btn.classList.contains('ghost') && !btn.classList.contains('primary')
-    && btn.getAttribute('aria-haspopup') === 'dialog');
-  btn.focus();
-  btn.click();
+  const files = c.querySelector('#pk-sec-files');
+  const ft = p.text(files);
+  ok('the pack\'s page has a Files and undo section: every change, how to undo it, the command', !!files && /^Files and undo/.test(ft)
+    && files.querySelectorAll('.pk-paths li').length === 3 && /a marked block in ~\/\.zshrc/.test(ft) && /Uninstalling removes the skill folders/.test(ft) && /acs packs uninstall alpha/.test(ft), ft.slice(0, 400));
+  const copy = files.querySelector('.pk-undo button');
+  ok('…the command with a quiet Copy beside it', !!copy && copy.classList.contains('btn') && copy.classList.contains('ghost') && /Copy/.test(p.text(copy)));
+  ok('…and no button on the page opens a dialog', !c.querySelector('[aria-haspopup="dialog"]'));
+  ok('what the pack still needs is said in its header: valid roles, with the fix', /Needs valid ACS roles/.test(p.text(c.querySelector('.pk-page-meta'))) && /Fix: fix roles/.test(p.text(c.querySelector('.pk-page-head'))),
+    p.text(c.querySelector('.pk-page-head')));
+  ok('each part: its one line on its row', c.querySelectorAll('.pk-part').map((r) => p.text(r.querySelector('.pk-part-what'))).join('|') === 'Alpha skill does it.|Guards it.');
+  p.navigate('#packs/beta');
+  await settle(5);
+  ok('another pack\'s page has its own Files and undo', /acs packs uninstall beta/.test(p.text(c.querySelector('#pk-sec-files'))));
+
+  // The installer's output: in place, in a box of its own — no button, no fold, no dialog.
+  p.eval(`(() => { const b = document.createElement('div'); b.id = 'logbox'; document.getElementById('content').appendChild(b); pkLog(b, ['line one', 'line two']); })()`);
+  const lb = p.$('logbox');
+  ok('the installer output shows in place: a heading and the lines, not a fold or a button', !lb.querySelector('details, summary, button') && /^Installer output/.test(p.text(lb))
+    && /line one\s*line two/.test(p.text(lb.querySelector('pre.pk-log'))) && !p.doc.body.querySelector('.pk-dialog'));
+
+  // The dialog Models and the skill wizard still open (pkDialog): focus stays in it, Esc returns it.
+  p.eval(`(() => { const k = document.createElement('div'); k.id = 'dlgcard'; const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Open'; b.id = 'opener';
+    b.onclick = () => { const body = document.createElement('div'); const x = document.createElement('button'); x.className = 'btn'; x.textContent = 'Inside'; body.appendChild(x); pkDialog('Test dialog', body, b, () => document.getElementById('opener')); };
+    k.appendChild(b); document.getElementById('content').appendChild(k); })()`);
+  const opener = p.$('opener');
+  opener.focus();
+  opener.click();
   await settle(2);
   const dlg = () => p.doc.body.querySelector('.pk-dialog');
   const d = dlg();
-  ok('the button opens a modal dialog, named by its title', !!d && d.getAttribute('role') === 'dialog' && d.getAttribute('aria-modal') === 'true'
-    && /Alpha/.test(p.text(p.doc.getElementById(d.getAttribute('aria-labelledby')))));
-  const dt = d ? p.text(d) : '';
-  ok('…with the full list: what it is, every change, how to undo it with the command, what it needs', /Alpha is a pack/.test(dt) && /a marked block in ~\/\.zshrc/.test(dt)
-    && /Uninstalling removes the skill folders/.test(dt) && /acs packs uninstall alpha/.test(dt) && !!d.querySelector('.pk-reqs') && /roles need/.test(dt), dt.slice(0, 400));
-  ok('…and each part with what it changes and its undo', /Alpha guard/.test(dt) && /~\/\.claude\/settings\.json hook/.test(dt) && /Remove the hook/.test(dt));
+  ok('pkDialog opens a modal dialog, named by its title', !!d && d.getAttribute('role') === 'dialog' && d.getAttribute('aria-modal') === 'true'
+    && p.text(p.doc.getElementById(d.getAttribute('aria-labelledby'))) === 'Test dialog');
   ok('focus moves into the dialog', !!d && d.contains(p.doc.activeElement));
   const focusables = d.querySelectorAll('button, a[href], input, select, textarea, [tabindex="0"]');
   focusables.at(-1).focus();
@@ -286,45 +300,15 @@ console.log('\nPacks: no folds — a summary line, and "Files and undo" opens a 
   ok('Tab from the last control wraps to the first (focus stays in the dialog)', p.doc.activeElement === focusables[0]);
   p.key('Tab', { shift: true });
   ok('…and Shift+Tab from the first wraps to the last', p.doc.activeElement === focusables.at(-1));
-  p.key('Escape');
-  await settle(2);
-  ok('Esc closes it and focus goes back to the button', !dlg() && p.doc.activeElement === btn);
-  ok('(the page still has no folds after the dialog)', c.querySelectorAll('details, summary').length === 0);
-
-  // The installer's output: a button to a dialog, not a fold.
-  p.eval(`(() => { const b = document.createElement('div'); b.id = 'logbox'; document.getElementById('content').appendChild(b); pkLog(b, ['line one', 'line two']); })()`);
-  const lb = p.$('logbox');
-  const logBtn = lb.querySelectorAll('button').find((b) => p.text(b) === 'Installer output');
-  ok('the installer output is a button, not a fold', !lb.querySelector('details, summary') && !!logBtn && logBtn.classList.contains('btn'));
-  logBtn.click();
-  await settle(2);
-  ok('…that opens the output in a dialog', /line one\s*line two/.test(p.text(dlg()?.querySelector('pre') || { textContent: '' })));
-  p.key('Escape');
-  await settle(2);
-  ok('…which Esc closes', !dlg());
-
-  // f1: a repaint under the open dialog replaces the installer-output button; Esc still returns focus to it.
-  p.eval(`(() => { const k = document.createElement('div'); k.setAttribute('data-pack', 'zz'); k.id = 'zzcard'; document.getElementById('content').appendChild(k);
-    const b = document.createElement('div'); k.appendChild(b); pkLog(b, ['out'], 'zz'); })()`);
-  const old = p.$('zzcard').querySelectorAll('button').find((b) => p.text(b) === 'Installer output');
-  old.focus();
-  old.click();
-  await settle(2);
-  p.eval(`(() => { const k = document.getElementById('zzcard'); k.textContent = ''; const b = document.createElement('div'); k.appendChild(b); pkLog(b, ['out'], 'zz'); })()`);
-  p.key('Escape');
-  await settle(2);
-  const fresh = p.$('zzcard').querySelectorAll('button').find((b) => p.text(b) === 'Installer output');
-  ok('f1 the installer output dialog returns focus to its button even after the card repainted', !dlg() && !!fresh && fresh !== old && p.doc.activeElement === fresh);
-
-  // f2: while the dialog is open, the app's shortcuts (⌘K) stay inside it.
-  card('alpha').querySelectorAll('button').find((b) => p.text(b) === 'Files and undo').click();
-  await settle(2);
   p.key('k', { meta: true });
   await settle(5);
-  ok('f2 ⌘K inside the dialog does nothing behind it: still Packs, dialog open, focus inside', p.eval('S.view') === 'packs' && !!dlg() && dlg().contains(p.doc.activeElement), p.eval('S.view'));
+  ok('f2 ⌘K inside the dialog does nothing behind it: dialog open, focus inside', !!dlg() && dlg().contains(p.doc.activeElement));
+  // f1: the page repaints under the open dialog and replaces its opener; Esc still returns focus to the new one.
+  p.eval(`(() => { const k = document.getElementById('dlgcard'); const old = document.getElementById('opener'); old.id = ''; k.textContent = '';
+    const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Open'; b.id = 'opener'; k.appendChild(b); })()`);
   p.key('Escape');
   await settle(2);
-  ok('f2 …and Esc still closes it', !dlg());
+  ok('f1 Esc closes it and focus goes back to the opener, even after a repaint replaced it', !dlg() && p.doc.activeElement === p.$('opener') && p.$('opener') !== opener);
 }
 
 for (const p of pages) p.done?.();
