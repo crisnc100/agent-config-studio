@@ -1250,7 +1250,8 @@ function pkPreviewView(pack, card) {
   } else if (card.error && !card.busy && !why) {
     bar.appendChild(pkBtn('', 'Preview again', () => pkPreview(pack, action, card.flow.extra, { at: card.flow.at })));
   }
-  bar.appendChild(pkBtn('ghost', 'Cancel', () => { card.flow = null; pkDrop(card); paintPacks(); }, card.busy === 'apply'));
+  // Cancel is off while an apply runs, so busy here is only a plan in flight: pkDrop orphans that request, which never clears busy itself.
+  bar.appendChild(pkBtn('ghost', 'Cancel', () => { card.flow = null; pkDrop(card); card.busy = null; paintPacks(); }, card.busy === 'apply'));
   if (card.busy === 'apply') bar.appendChild(el('span', 'spinner'));
   box.appendChild(bar);
   if (card.preview?.view.changes && !card.preview.view.refusals.length) box.appendChild(el('div', 'pk-note', `${PK_VERB[action]} applies exactly this preview. If anything on disk changes first, it stops and asks you to preview again.`));
