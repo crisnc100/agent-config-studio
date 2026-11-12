@@ -2,10 +2,11 @@
  * Workflow diagrams (builds/ui-clarity PR B): each pack's `workflow` in
  * pack.json — its shape, checked by validatePack; a drift guard against the
  * pack's SKILL.md twins; the catalog route passing it through with the home
- * review config's security setting; and the Packs card drawing it in the
- * page (fake DOM, stubbed routes): who does each step, resolved live from
- * the studio's roles; pools, the Grade swap, unset roles; dimmed steps for
- * a part or setting that is off; variant tabs; the one-line strips; and the
+ * review config's security setting; and each pack's page drawing it as a
+ * list of steps (fake DOM, stubbed routes): who does each step, resolved live
+ * from the studio's roles; pools, the Grade swap, unset roles; dimmed steps
+ * for a part or setting that is off; the variant switch; the one-line strips;
+ * the grid's legend; and the
  * Models role rows' "Steps:" line. No browser: tests/ui-words.mjs and the QA
  * run cover how it looks.
  */
@@ -183,107 +184,108 @@ const routes = routesFor({
 state.applied = [];
 
 try {
-  console.log('\nthe Packs card draws each workflow (B1)');
+  console.log('\neach pack\'s page draws its workflow (B1)');
   const page = await bootPage({ routes, hash: '#packs' });
   const c = () => page.$('content');
-  for (let i = 0; i < 100 && !c().querySelector('.pk-card .flow'); i++) await sleep(30);
+  for (let i = 0; i < 100 && !c().querySelector('.pk-card'); i++) await sleep(30);
   await settle(10);
   const t = (n) => (n ? page.text(n) : '');
-  const card = (id) => c().querySelector(`[data-pack="${id}"]`);
+  // A pack's page, opened through its route when another one is shown (the diagrams live on the pack pages now).
+  const card = (id) => {
+    if (page.eval('S.view') !== 'pack' || page.eval('PK.page') !== id) page.navigate(`#packs/${id}`);
+    return c().querySelector(`.pk-page[data-pack="${id}"]`);
+  };
   const step = (pack, id) => card(pack)?.querySelector(`.step[data-step="${id}"]`);
   const who = (pack, id) => t(step(pack, id)?.querySelector('.who'));
 
+  ok('the grid names each pack\'s command: /pr-review, /build, /pr, /advisor, /second-opinion, /handoff, /flag, wnew',
+    catalog.every((p) => t(c().querySelector(`.pk-card[data-pack="${p.id}"] .pk-card-cmd`)) === p.workflow.command), catalog.map((p) => t(c().querySelector(`.pk-card[data-pack="${p.id}"] .pk-card-cmd`))).join(' '));
   ok('every pack draws a diagram or a one-line strip', catalog.every((p) => (p.workflow.strip ? !!card(p.id)?.querySelector('.pk-strip') : card(p.id)?.querySelectorAll('.step').length === p.workflow.steps.length)),
     catalog.map((p) => `${p.id}:${card(p.id)?.querySelectorAll('.step').length}`).join(' '));
-  const kids = card('review-gate').children;
-  const at = kids.findIndex((k) => k.classList.contains('pk-summary'));
-  ok('the diagram comes right after the one-line summary', at !== -1 && kids[at + 1]?.classList.contains('pk-flow'), kids.map((k) => k.className).join(' '));
+  const runs = card('review-gate').querySelector('#pk-sec-runs').children;
+  ok('the steps sit in How it runs, right after its lead line', t(runs[0]) === 'How it runs' && runs[1]?.classList.contains('pk-sec-lead') && runs[2]?.classList.contains('pk-flow'), runs.map((k) => k.className || k.localName).join(' '));
   ok('Packs asked for the roles itself when it opened (R3)', state.roleGets === 1, state.roleGets);
-  ok('a pool step lists its members with their efforts: "reviewer — Opus · xhigh or Sol · xhigh · picked per review"', /^reviewer/.test(who('review-gate', 'review'))
-    && /Opus · xhigh or Sol · xhigh/.test(who('review-gate', 'review')) && /picked per review/.test(who('review-gate', 'review')), who('review-gate', 'review'));
-  ok('…each model name in its own unbreakable span, so a chip never wraps mid-name', step('review-gate', 'review').querySelectorAll('.w-m').map(t).join('|') === 'Opus · xhigh|Sol · xhigh',
+  ok('a pool step lists its members by family, efforts left to Models: "reviewer Opus or Sol · picked per review"', /^reviewer/.test(who('review-gate', 'review'))
+    && /Opus or Sol/.test(who('review-gate', 'review')) && /picked per review/.test(who('review-gate', 'review')) && !/xhigh/.test(who('review-gate', 'review')), who('review-gate', 'review'));
+  ok('…each model name in its own unbreakable span, so a line never breaks mid-name', step('review-gate', 'review').querySelectorAll('.w-m').map(t).join('|') === 'Opus|Sol',
     step('review-gate', 'review').querySelectorAll('.w-m').map(t).join('|'));
-  ok('a single-model role shows the model and its effort: "advisor — Fable · high"', /advisor/.test(who('build', 'bounce')) && /Fable · high/.test(who('build', 'bounce')), who('build', 'bounce'));
+  ok('a single-model role shows the model: "advisor Fable"', /advisor/.test(who('build', 'bounce')) && /Fable/.test(who('build', 'bounce')) && !/high/.test(who('build', 'bounce')), who('build', 'bounce'));
   ok('the Grade step computes the swap from the ids: "Astra instead when the builder is the same vendor as Fable"',
-    /judge/.test(who('build', 'grade')) && /Fable · high/.test(who('build', 'grade')) && /Astra instead when the builder is the same vendor as Fable/.test(who('build', 'grade')), who('build', 'grade'));
-  // An unset role: the chip says "not set" quietly; one line per card links to the first unset role's row (design 3, f2).
+    /judge/.test(who('build', 'grade')) && /Fable/.test(who('build', 'grade')) && /Astra instead when the builder is the same vendor as Fable/.test(who('build', 'grade')), who('build', 'grade'));
+  // An unset role: the chip says "not set" quietly; one line per page links to the first unset role's row (design 3, f2).
   const quiet = step('review-gate', 'security')?.querySelector('.w-unset');
   ok('an unset role\'s chip says "not set", quietly, with no link of its own', t(quiet) === 'not set' && quiet.localName !== 'a', who('review-gate', 'security'));
   const line = card('review-gate').querySelector('.pk-unset');
   const go = line?.querySelector('a');
-  ok('…and one line per card: "1 role not set — choose it on Models", linked to that role\'s row', /^1 role not set — choose it on Models$/.test(t(line))
+  ok('…and one line per page: "1 role not set — choose it on Models", linked to that role\'s row', /^1 role not set — choose it on Models$/.test(t(line))
     && go?.getAttribute('href') === '#models&role=security', `${t(line)} ${go?.getAttribute('href')}`);
-  ok('…a card whose roles are all set has no such line', !card('build').querySelector('.pk-unset'));
-  ok('every card header names its command: /code-review, /build, /pr, /advisor, /second-opinion, /handoff, /flag, wnew',
-    catalog.every((p) => t(card(p.id).querySelector('.pk-head .cmd')) === p.workflow.command), catalog.map((p) => t(card(p.id).querySelector('.pk-head .cmd'))).join(' '));
+  ok('…a page whose roles are all set has no such line', !card('build').querySelector('.pk-unset'));
+  ok('…and every page names its command in a pill', catalog.every((p) => t(card(p.id).querySelector('.pk-pill')) === p.workflow.command));
   ok('the handoff strip carries its who-chip, "your session agent", coloured like the diagrams', t(card('handoff').querySelector('.pk-strip .w.agent')) === 'your session agent'
     && t(card('worktree').querySelector('.pk-strip .w.you')) === 'you');
-  ok('…and its card head shows the Ready state', !!card('handoff').querySelector('.pk-head .pk-ready'));
+  ok('…and its page head shows the Ready state', !!card('handoff').querySelector('.pk-page-meta .pk-ready'));
   ok('the Grade swap: always shown', /Astra instead when the builder is the same vendor as Fable/.test(who('build', 'grade')), who('build', 'grade'));
   ok('Dispute, with two reviewers in the pool: "another model from the pool than the one that found it"', /another model from the pool than the one that found it/.test(who('review-gate', 'dispute')), who('review-gate', 'dispute'));
-  ok('second-opinion "Its take": Fable · high and Astra · high, plus the reviewer pool (f1)', /Fable · high and Astra · high/.test(who('second-opinion', 'ask'))
-    && /reviewer/.test(who('second-opinion', 'ask')) && /Opus · xhigh or Sol · xhigh/.test(who('second-opinion', 'ask')), who('second-opinion', 'ask'));
-  ok('no-model steps and off steps are narrow tiles, so role steps get the width (design 1)', step('review-gate', 'close').classList.contains('narrow')
-    && step('review-gate', 'security').classList.contains('narrow') && !step('review-gate', 'review').classList.contains('narrow'));
+  ok('second-opinion "Its take": Fable and Astra, plus the reviewer pool (f1)', /Fable and Astra/.test(who('second-opinion', 'ask'))
+    && /reviewer/.test(who('second-opinion', 'ask')) && /Opus or Sol/.test(who('second-opinion', 'ask')), who('second-opinion', 'ask'));
+  ok('each step\'s mark is coloured by who does it: a role, a script', step('review-gate', 'review').querySelector('.step-mark')?.classList.contains('role')
+    && step('review-gate', 'close').querySelector('.step-mark')?.classList.contains('script') && step('build', 'judge').querySelector('.step-mark')?.classList.contains('you'));
   ok('who is you, your session agent, or a script with no model', /^you\b/.test(who('build', 'judge')) && /your session agent/.test(who('build', 'understand'))
     && who('review-gate', 'close') === 'script' && who('review-gate', 'gate') === 'git hook',
     `${who('build', 'judge')} | ${who('build', 'understand')} | ${who('review-gate', 'close')} | ${who('review-gate', 'gate')}`);
-  ok('the context pass names the writer role, Opus then Sonnet, and its docs slice', /^writer/.test(who('review-gate', 'context')) && /Opus · medium or Sonnet · medium/.test(who('review-gate', 'context'))
+  ok('the context pass names the writer role, Opus or Sonnet, and its docs slice', /^writer/.test(who('review-gate', 'context')) && /Opus or Sonnet/.test(who('review-gate', 'context'))
     && /then a docs-focus slice review/.test(who('review-gate', 'context')), who('review-gate', 'context'));
   const flowKids = card('review-gate').querySelector('.flow').children;
   const at2 = flowKids.indexOf(step('review-gate', 'review'));
-  ok('the code review and the security check sit side by side, joined (not an arrow), the second marked "at the same time"', at2 !== -1
-    && flowKids[at2 + 1] === step('review-gate', 'security') && step('review-gate', 'review').classList.contains('with-next')
-    && step('review-gate', 'security').classList.contains('beside') && /^at the same time$/.test(t(step('review-gate', 'security').querySelector('.pair-note')))
+  ok('the security check is the row after the code review, shaded, saying it runs at the same time', at2 !== -1
+    && flowKids[at2 + 1] === step('review-gate', 'security') && step('review-gate', 'security').classList.contains('beside')
+    && /^At the same time as the code review\.$/.test(t(step('review-gate', 'security').querySelector('.pair-note')))
     && flowKids.length === 9, `${at2} ${flowKids.map((k) => k.className).join(' | ')}`);
+  ok('…and the steps are one list, in the pack\'s order', JSON.stringify(flowKids.map((k) => k.dataset.step)) === JSON.stringify(catalog.find((p) => p.id === 'review-gate').workflow.steps.map((s) => s.id)));
   ok('pr says no extra model is called', /No extra model is called/.test(t(card('pr').querySelector('.pk-flow-note'))));
   ok('build notes its lightweight mode', /lightweight/i.test(t(card('build').querySelector('.pk-flow-note'))));
   ok('the strips: handoff says your session agent writes it, with no extra model', /your session agent/.test(t(card('handoff').querySelector('.pk-strip'))) && /no extra model/i.test(t(card('handoff').querySelector('.pk-strip'))));
-  // The legend lists only the kinds a diagram uses, and carries "no model" for the scripts (PR C QA).
-  const legend = (id) => card(id).querySelectorAll('.legend li').map((li) => t(li));
-  // PR D: an off step is in the legend too, in its own look (dashed), apart from a script (solid outline).
-  ok('a legend says what each kind of chip in that diagram means — only those, and "off" when a step is off', JSON.stringify(legend('review-gate')) === '["a role from Models","a script — no model","off — not turned on"]'
-    && JSON.stringify(legend('build')) === '["a role from Models","your session agent","you"]', `${legend('review-gate')} | ${legend('build')}`);
-  ok('…the "off" swatch carries the off look, the script swatch its own', !!card('review-gate').querySelector('.legend .wf-sw.off') && !!card('review-gate').querySelector('.legend .wf-sw.script'));
-  ok('eight or more steps lay out in rows of four; seven or fewer stay one row', card('review-gate').querySelector('.flow').classList.contains('rows')
-    && !card('build').querySelector('.flow').classList.contains('rows'));
-  // PR F: no folds on Packs (Cris) — a part's explain is in the card's "Files and undo" dialog.
-  card('review-gate').querySelectorAll('button').find((b) => t(b) === 'Files and undo')?.click();
-  const wfDlg = page.doc.body.querySelector('.pk-dialog');
-  const wfParts = wfDlg ? [...wfDlg.querySelectorAll('.pk-dialog-part')] : [];
-  ok('a part has no fold: what it is and changes lives in the card\'s "Files and undo" dialog, one section per part', card('review-gate').querySelectorAll('.pk-part summary, .pk-part details').length === 0
-    && wfParts.length === card('review-gate').querySelectorAll('.pk-part').length && wfParts.length > 0
-    && wfParts.every((sec) => t(sec.querySelector('h4')).length > 0 && /What it is:/.test(t(sec)) && /What it changes:/.test(t(sec))),
-    wfParts.map((sec) => t(sec.querySelector('h4'))).join(' | '));
-  page.key('Escape');
+  ok('models come from the roles, said once under the steps', /^Models come from your roles on the Models page\.$/.test(t(card('review-gate').querySelector('.pk-rail-note'))));
+  // One legend, on the grid: what each colour means, for every pack (direction.md).
+  page.navigate('#packs');
+  await settle(5);
+  ok('the grid\'s legend says what each colour means: a model from your roles, your session agent, you, a script', JSON.stringify(c().querySelectorAll('.pk-legend li').map(t)) === '["a model from your roles","your session agent","you","a script"]'
+    && c().querySelectorAll('.pk-legend li .pk-strip-seg').map((s) => s.className).join('|') === 'pk-strip-seg role|pk-strip-seg agent|pk-strip-seg you|pk-strip-seg script', c().querySelectorAll('.pk-legend li').map(t).join(' | '));
+  ok('…and no page repeats a legend', !card('review-gate').querySelector('.legend, .pk-legend'));
+  // No folds on Packs (Cris): a part's one line is on its row; what the pack changes is under Files and undo.
+  ok('a part has no fold: one row each with its one line, and the changes under Files and undo', card('review-gate').querySelectorAll('.pk-part summary, .pk-part details').length === 0
+    && card('review-gate').querySelectorAll('.pk-part').length === catalog.find((p) => p.id === 'review-gate').parts.length
+    && card('review-gate').querySelectorAll('.pk-part').every((r) => t(r.querySelector('.pk-part-what')).length > 0)
+    && card('review-gate').querySelectorAll('#pk-sec-files .pk-paths li').length === catalog.find((p) => p.id === 'review-gate').explain.changes.length);
 
   console.log('\nsteps dim when their part or setting is off (R5)');
   ok('security off in the home config: the security pass is dimmed and marked "off"', step('review-gate', 'security').classList.contains('off') && t(step('review-gate', 'security').querySelector('.step-off')) === 'off');
   ok('a step with neither is always on', !step('review-gate', 'close').classList.contains('off') && !step('review-gate', 'review').classList.contains('off'));
-  ok('the push gate part is not picked: its step is dimmed', step('review-gate', 'gate').classList.contains('off'));
-  const box = (label) => card('review-gate').querySelectorAll('.pk-part label').find((l) => new RegExp(label, 'i').test(t(l)))?.querySelector('input');
-  box('Push gate').click();
+  ok('the push gate part is not installed: its step is dimmed', step('review-gate', 'gate').classList.contains('off'));
+  const partBtn = (part, label) => card('review-gate').querySelector(`.pk-part[data-part="${part}"]`)?.querySelectorAll('button').find((b) => t(b) === label);
+  partBtn('push-gate', 'Add…').click();
   await settle(5);
-  ok('tick the push gate part: its step comes on', !step('review-gate', 'gate').classList.contains('off'));
-  box('Push gate').click();
+  ok('Add… on the push gate (its install preview open): its step comes on', !step('review-gate', 'gate').classList.contains('off'));
+  card('review-gate').querySelector('.pk-part[data-part="push-gate"] .pk-preview').querySelectorAll('button').find((b) => t(b) === 'Cancel').click();
   await settle(5);
-  ok('untick it: the step dims again', step('review-gate', 'gate').classList.contains('off'));
+  ok('Cancel: the step dims again', step('review-gate', 'gate').classList.contains('off'));
 
-  console.log('\nvariant tabs (R4)');
-  ok('review-gate has no tabs', card('review-gate').querySelectorAll('.pk-tab').length === 0);
+  console.log('\nvariant switch (R4)');
+  ok('review-gate has no variant switch', card('review-gate').querySelectorAll('.pk-tab').length === 0);
   const tabs = card('advisor').querySelectorAll('.pk-tab');
-  ok('advisor: three tabs, the first selected', tabs.length === 3 && tabs[0].getAttribute('aria-selected') === 'true' && tabs.every((b) => b.getAttribute('role') === 'tab'));
+  ok('advisor: a segmented control of three, the first pressed', tabs.length === 3 && tabs[0].getAttribute('aria-pressed') === 'true' && tabs.slice(1).every((b) => b.getAttribute('aria-pressed') === 'false')
+    && card('advisor').querySelector('.pk-tabs')?.getAttribute('role') === 'group');
   card('advisor').querySelectorAll('.pk-tab').find((b) => t(b) === 'Second').click();
   await settle(5);
-  ok('advisor Second: the role\'s second opinion, Astra · high', /Astra · high/.test(who('advisor', 'ask')) && !/Fable/.test(who('advisor', 'ask')), who('advisor', 'ask'));
-  ok('…the selected tab\'s hint renders beside the tabs: "/advisor second — the role’s second opinion"', /^\/advisor second — the role’s second opinion$/.test(t(card('advisor').querySelector('.pk-flow-hint'))), t(card('advisor').querySelector('.pk-flow-hint')));
+  ok('advisor Second: the role\'s second opinion, Astra', /Astra/.test(who('advisor', 'ask')) && !/Fable/.test(who('advisor', 'ask')), who('advisor', 'ask'));
+  ok('…the selected choice\'s hint renders beside the switch: "/advisor second — the role’s second opinion"', /^\/advisor second — the role’s second opinion$/.test(t(card('advisor').querySelector('.pk-flow-hint'))), t(card('advisor').querySelector('.pk-flow-hint')));
   card('advisor').querySelectorAll('.pk-tab').find((b) => t(b) === 'Both').click();
   await settle(5);
-  ok('advisor Both: "Fable · high and Astra · high", blind, in parallel (design 4)', /Fable · high and Astra · high/.test(who('advisor', 'ask')) && /blind, in parallel/.test(who('advisor', 'ask')), who('advisor', 'ask'));
+  ok('advisor Both: "Fable and Astra", blind, in parallel (design 4)', /Fable and Astra/.test(who('advisor', 'ask')) && /blind, in parallel/.test(who('advisor', 'ask')), who('advisor', 'ask'));
 
   console.log('\nf3: an install refreshes the roles the diagrams show');
   const before = state.roleGets;
-  card('handoff').querySelectorAll('.pk-actions button').find((b) => /^Preview install/.test(t(b))).click();
+  card('handoff').querySelector('.pk-page-actions').querySelectorAll('button').find((b) => t(b) === 'Install').click();
   for (let i = 0; i < 100 && !card('handoff').querySelector('.pk-apply'); i++) await sleep(20);
   card('handoff').querySelector('.pk-apply').click();
   for (let i = 0; i < 100 && !state.applied.length; i++) await sleep(20);
@@ -296,7 +298,7 @@ try {
   for (let i = 0; i < 100 && page.eval('S.view') !== 'models'; i++) await sleep(20);
   page.$('btn-packs').click();
   for (let i = 0; i < 100 && !/Grok/.test(who('review-gate', 'fix') + who('review-gate', 'check') + who('review-gate', 'review')); i++) await sleep(30);
-  ok('Packs asks for the roles again on open, and the review now names Grok', state.roleGets >= 2 && /Grok · high/.test(who('review-gate', 'check')), `${state.roleGets} ${who('review-gate', 'check')}`);
+  ok('Packs asks for the roles again on open, and the review now names Grok', state.roleGets >= 2 && /Grok/.test(who('review-gate', 'check')), `${state.roleGets} ${who('review-gate', 'check')}`);
   ok('no page errors', page.errors.length === 0, page.errors.join(' | '));
   page.done();
 
@@ -326,10 +328,13 @@ try {
 
   console.log('\nA: the Grade swap when the advisor has no second opinion; Dispute with one reviewer');
   state.roles = rolesView({ advisor: { alt: '', altId: '', altMember: null }, reviewer: { use: ['opus'], ids: [ID.opus], members: [member('opus', 'xhigh')] } });
-  const np = await bootPage({ routes, hash: '#packs' });
-  for (let i = 0; i < 100 && !np.$('content').querySelector('.pk-card .flow'); i++) await sleep(30);
+  const np = await bootPage({ routes, hash: '#packs/build' });
+  for (let i = 0; i < 100 && !np.$('content').querySelector('.pk-page .flow'); i++) await sleep(30);
   await settle(10);
-  const nwho = (pack, id) => np.text(np.$('content').querySelector(`[data-pack="${pack}"] .step[data-step="${id}"] .who`) || { textContent: '' });
+  const nwho = (pack, id) => {
+    if (np.eval('PK.page') !== pack) np.navigate(`#packs/${pack}`);
+    return np.text(np.$('content').querySelector(`[data-pack="${pack}"] .step[data-step="${id}"] .who`) || { textContent: '' });
+  };
   ok('no second opinion: "the advisor\'s second opinion instead (not set)"', /the advisor.s second opinion instead \(not set\)/.test(nwho('build', 'grade')), nwho('build', 'grade'));
   ok('one reviewer: Dispute says "a different model than the reviewer"', /a different model than the reviewer/.test(nwho('review-gate', 'dispute')) && !/from the pool/.test(nwho('review-gate', 'dispute')), nwho('review-gate', 'dispute'));
   ok('…with no page errors', np.errors.length === 0, np.errors.join(' | '));
