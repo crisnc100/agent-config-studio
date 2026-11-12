@@ -2,7 +2,7 @@
 
 /**
  * Loaded before packs-view.js and app.js; it uses app.js's `el` at call time
- * only. Pure apart from building DOM: Packs draws a card's diagram with
+ * only. Pure apart from building DOM: a pack's page draws its steps with
  * wfDiagram, Models lists a role's steps with wfRoleSteps. Who does a step is
  * resolved here from /api/models/roles as the page has it now — never stored
  * in the pack — so a role changed on Models shows the next time Packs opens.
@@ -19,8 +19,6 @@ function wfMembers(role) {
   return list.map((m, i) => ({ family: m.family, effort: m.effort || '', id: role.ids?.[i] ?? null }));
 }
 const wfAlt = (role) => (role.alt ? { family: role.alt, effort: role.altMember?.effort || '', id: role.altId || null } : null);
-/** "Fable · high", or just "Fable" with no effort. */
-const wfModel = (m) => `${wfName(m.family)}${m.effort ? ` · ${m.effort}` : ''}`;
 
 /** A step as one variant runs it: the step with that variant's overrides laid over it. */
 function wfStepFor(step, variant) {
@@ -85,17 +83,25 @@ function wfChips(step, ctx) {
   return chips;
 }
 
+/** "Fable", "Opus or Sol", "Fable, Sol, Opus or Astra": family names only (efforts live on Models). */
+function wfModelsEl(models, join) {
+  const names = [...new Set(models.map((m) => wfName(m.family)))];
+  const v = el('span', 'w-v');
+  // Each name in its own span that never wraps, so a line breaks only between models.
+  names.forEach((n, i) => {
+    if (i) v.appendChild(document.createTextNode(i === names.length - 1 ? ` ${join} ` : ', '));
+    v.appendChild(el('span', 'w-m', n));
+  });
+  return v;
+}
+
 function wfChipEl(c) {
   const w = el('span', `w ${c.kind}`);
   w.appendChild(el('span', 'w-k', c.k));
-  // Unset: said quietly here; the card's one line links to Models (packs-view.js pkUnsetLine).
+  // Unset: said quietly here; the page's one line links to Models (packs-view.js pkUnsetLine).
   if (c.unset) w.appendChild(el('span', 'w-unset', 'not set'));
-  else if (c.models) {
-    // Each model in its own span that never wraps, so a chip breaks only between models.
-    const v = el('span', 'w-v');
-    c.models.forEach((m, i) => { if (i) v.appendChild(document.createTextNode(` ${c.join} `)); v.appendChild(el('span', 'w-m', wfModel(m))); });
-    w.appendChild(v);
-  } else if (c.v) w.appendChild(el('span', 'w-v', c.v));
+  else if (c.models) w.appendChild(wfModelsEl(c.models, c.join));
+  else if (c.v) w.appendChild(el('span', 'w-v', c.v));
   if (c.n) w.appendChild(el('span', 'w-n', c.n));
   return w;
 }
@@ -108,81 +114,66 @@ function wfRoles(wf) {
   return out;
 }
 
-const WF_LEGEND = [['role', 'a role from Models'], ['agent', 'your session agent'], ['you', 'you'], ['script', 'a script — no model']];
-
 /**
- * A pack's diagram, or its one-line strip.
+ * A pack's steps as a vertical list, one row per step: a mark coloured by who does it, the step, one line,
+ * and who does it with the models your roles name. A pack with one step (`strip`) is one row.
  * ctx: { roles, rolesError, settings, installedParts: Set, pickedParts: Set, variant, onVariant(id) }.
  */
 function wfDiagram(wf, ctx) {
-  if (wf.strip) {
-    const s = el('div', 'pk-strip');
-    s.appendChild(wfChipEl(wfChips({ who: wf.stripWho || 'agent' }, ctx)[0]));
-    s.appendChild(el('span', 'pk-strip-text', wf.strip));
-    return s;
-  }
   const box = el('div', 'pk-flow');
-  const bar = el('div', 'flow-bar');
-  bar.appendChild(el('span', 'flow-title', 'How it runs'));
   const variant = wf.variants?.length ? (wf.variants.some((v) => v.id === ctx.variant) ? ctx.variant : wf.variants[0].id) : null;
   if (wf.variants?.length) {
-    const tabs = el('div', 'pk-tabs');
-    tabs.setAttribute('role', 'tablist');
-    tabs.setAttribute('aria-label', 'Ways to run it');
+    const bar = el('div', 'flow-bar');
+    const seg = el('div', 'pk-tabs');
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', 'Ways to run it');
     for (const v of wf.variants) {
       const b = el('button', 'pk-tab', v.label);
       b.type = 'button';
-      b.setAttribute('role', 'tab');
-      b.setAttribute('aria-selected', String(v.id === variant));
+      b.setAttribute('aria-pressed', String(v.id === variant));
       b.onclick = () => ctx.onVariant?.(v.id);
-      tabs.appendChild(b);
+      seg.appendChild(b);
     }
-    bar.appendChild(tabs);
+    bar.appendChild(seg);
     const hint = wf.variants.find((v) => v.id === variant)?.hint;
     if (hint) bar.appendChild(el('span', 'pk-flow-hint', hint));
+    box.appendChild(bar);
   }
-  box.appendChild(bar);
-  // Eight or more steps would squeeze each to a sliver at a desktop width: rows of four instead.
-  const ol = el('ol', `flow${wf.steps.length > 7 ? ' rows' : ''}`);
-  let anyOff = false;
+  const ol = el('ol', 'flow');
+  if (wf.strip) {
+    box.classList.add('pk-strip');
+    const li = el('li', 'step');
+    li.appendChild(el('span', `step-mark ${wf.stripWho || 'agent'}`));
+    const who = el('div', 'step-name');
+    who.appendChild(wfChipEl(wfChips({ who: wf.stripWho || 'agent' }, ctx)[0]));
+    li.appendChild(who);
+    li.appendChild(el('p', 'step-what', wf.strip));
+    ol.appendChild(li);
+    box.appendChild(ol);
+    return box;
+  }
   for (const [i, raw] of wf.steps.entries()) {
     const step = wfStepFor(raw, variant);
     const on = wfStepOn(step, ctx);
-    if (!on) anyOff = true;
-    // A step with no model, or one that is off, is a narrow tile: the role steps get the width.
-    // A step `beside` the one before runs at the same time: the two are joined by a mark, not an arrow.
-    const li = el('li', `step${on ? '' : ' off'}${!on || step.who === 'script' ? ' narrow' : ''}${wf.steps[i + 1]?.beside ? ' with-next' : ''}${raw.beside ? ' beside' : ''}`);
+    // A step `beside` the one before runs at the same time: a shaded row that says so.
+    const li = el('li', `step${on ? '' : ' off'}${raw.beside ? ' beside' : ''}`);
     li.dataset.step = step.id;
-    if (raw.beside) li.appendChild(el('span', 'pair-note', 'at the same time'));
+    li.appendChild(el('span', `step-mark ${step.who}`));
     const name = el('div', 'step-name', step.label);
     if (!on) { name.appendChild(document.createTextNode(' ')); name.appendChild(el('span', 'step-off', 'off')); }
     li.appendChild(name);
-    if (step.what) li.appendChild(el('p', 'step-what', step.what));
+    const what = el('p', 'step-what', step.what || '');
+    if (raw.beside) {
+      const pair = wf.steps.find((s) => s.id === raw.beside) || wf.steps[i - 1];
+      what.appendChild(el('span', 'pair-note', ` At the same time as the ${String(pair?.label || 'step before').toLowerCase()}.`));
+    }
+    li.appendChild(what);
     const who = el('div', 'who');
     for (const c of wfChips(step, ctx)) who.appendChild(wfChipEl(c));
     li.appendChild(who);
     ol.appendChild(li);
   }
   box.appendChild(ol);
-  const legend = el('ul', 'legend');
-  legend.setAttribute('aria-label', 'Who does a step');
-  // Only the kinds this diagram uses.
-  const used = new Set(wf.steps.map((st) => st.who));
-  for (const [kind, text] of WF_LEGEND.filter(([k]) => used.has(k))) {
-    const li = el('li');
-    li.appendChild(el('span', `wf-sw ${kind}`));
-    li.appendChild(document.createTextNode(text));
-    legend.appendChild(li);
-  }
-  // One look per meaning: an off step is a dashed tile, so the legend says so — only when one is off.
-  if (anyOff) {
-    const li = el('li');
-    li.appendChild(el('span', 'wf-sw off'));
-    li.appendChild(document.createTextNode('off — not turned on'));
-    legend.appendChild(li);
-  }
-  box.appendChild(legend);
-  if (wf.note) box.appendChild(el('p', 'pk-flow-note', wf.note));
   return box;
 }
 

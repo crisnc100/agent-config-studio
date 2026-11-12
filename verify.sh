@@ -149,6 +149,8 @@ node tests/cleanup-launcher.mjs
 # The Packs card: its routes through a real server, then the view in the page against one (temp HOMEs, stub CLIs).
 node tests/packs-server.mjs
 node tests/packs-ui.mjs
+# The Packs grid, each pack's page and its routes, and the trust check on Setup (stubbed routes).
+node tests/packs-pages.mjs
 # Workflow diagrams: pack.json's workflow, its drift guard, the route, the Packs card and Models' Steps line (temp HOME, stubbed routes).
 node tests/packs-workflow.mjs
 node tests/packs-security.mjs

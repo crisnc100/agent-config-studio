@@ -2,71 +2,111 @@
 
 /**
  * Loaded before app.js, which owns the helpers this calls (el, api, notice,
- * renderSidebar…). Every write goes through a preview: the page asks the
- * server for the plan of what the card shows, lists every path and setting
- * it changes, and the Install / Update / Uninstall button under it sends
- * that same request back with the preview's signature. Any change on the
- * card drops the preview, so the button only ever applies what was shown;
- * the server refuses (409) if the disk moved in between.
+ * renderSidebar…). Three kinds of page: `#packs` is a grid of cards that only
+ * open pages, `#packs/<id>` is one pack's page, and `#packs/setup` lists the
+ * fixes every pack shares. All of them share one state (PK), read once when
+ * Packs is entered from another view, so moving between them keeps previews
+ * and results where they were.
+ *
+ * Every write goes through a preview: the page asks the server for the plan
+ * of what was asked, lists every path and setting it changes, and the
+ * Install / Update / Uninstall button under it sends that same request back
+ * with the preview's signature. Any change to the request drops the preview,
+ * so the button only ever applies what was shown; the server refuses (409)
+ * if the disk moved in between.
  *
  * Status is a job on the server (the Codex trust check is slow): the page
- * starts it, then polls until it is done, showing each progress line.
+ * starts it, then polls until it is done, showing its latest progress line.
+ * Whether it runs the trust check is a preference set on Setup.
  */
-const PK = { data: null, error: null, status: null, statusError: null, job: null, trust: true, statusGen: 0, cards: {}, roles: null, rolesError: null };
+const PK = { data: null, error: null, status: null, statusError: null, job: null, statusGen: 0, cards: {}, roles: null, rolesError: null, page: null };
 const PK_VERB = { install: 'Install', update: 'Update', uninstall: 'Uninstall' };
 const PK_DONE = { install: 'Installed', update: 'Updated', uninstall: 'Uninstalled' };
 const PK_POLL_MS = 400;
+const PK_TRUST_KEY = 'acs.packs.trust';
+/** The shared-fixes page: a reserved word in the pack-id slot of the route. */
+const PK_SETUP = 'setup';
+
+/** The Codex trust check, as Setup saved it: on unless turned off. */
+const pkTrust = () => store.get(PK_TRUST_KEY) !== '0';
+const pkSetTrust = (on) => store.set(PK_TRUST_KEY, on ? '1' : '0');
 
 const pkPack = (id) => PK.data?.packs.find((p) => p.id === id) || null;
 const pkInstalled = (pack, partId) => !!pack.installed?.parts?.[partId];
-const pkHarnesses = (pack) => [...new Set(pack.parts.flatMap((p) => p.harnesses))];
 const pkHarness = (id) => PK.data?.harnesses.find((h) => h.id === id) || null;
 /** A harness a part can install for here: present, or the Claude skills folder on a machine that has only Grok (it reads it). */
 const pkUsable = (id) => !!pkHarness(id)?.present || (id === 'claude' && !!pkHarness('grok')?.present);
 const pkDefaults = (pack) => pack.parts.filter((p) => p.default && !pkInstalled(pack, p.id)).map((p) => p.id);
+const pkShown = () => S.view === 'packs' || S.view === 'pack';
 
+/**
+ * A pack's page state. `flow` is the action in progress ({ action, at, extra }, `at` being 'pack' or a part id):
+ * its preview, error and busy line render under the button that started it. `parts`, `harnesses` and
+ * `withDeps` are what an install asks for; the preview-only offers (`setRoles`, `replace`) start unticked.
+ */
 function pkCard(pack) {
-  PK.cards[pack.id] ||= { parts: new Set(pkDefaults(pack)), harnesses: null, withDeps: false, setRoles: {}, replace: false, preview: null, busy: null, result: null, error: null, seq: 0, variant: null };
+  PK.cards[pack.id] ||= { parts: new Set(pkDefaults(pack)), harnesses: null, withDeps: false, setRoles: {}, replace: false, flow: null, preview: null, busy: null, result: null, error: null, seq: 0, variant: null };
   return PK.cards[pack.id];
 }
-/** Anything the card shows changed: the preview no longer describes it. */
+/** Anything the request depends on changed: the preview no longer describes it. */
 function pkDrop(card) { card.preview = null; card.error = null; card.seq++; }
 
-async function openPacks() {
+/* ── routing ── */
+
+/** The pack id (or the setup page) a hash names: #packs/<id>. */
+function pkRouteOf(hash) {
+  const m = /^#packs\/([^&/]+)/.exec(hash || '');
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]); } catch { return m[1]; }
+}
+/** For routeHash: a #packs/<id> link to a page other than the one shown. */
+const pkMoved = (hash) => pkRouteOf(hash) !== PK.page;
+const pkHash = (page) => (page ? `#packs/${encodeURIComponent(page)}` : '#packs');
+
+async function pkEnter(view, page) {
   if (!confirmDiscard()) return;
-  S.view = 'packs';
+  // Within Packs the catalog, roles and status already read stay: only a visit from elsewhere reads them again.
+  const fresh = !pkShown();
+  S.view = view;
+  PK.page = page;
   leaveEditor();
-  window.history.replaceState(null, '', '#packs');
+  window.history.replaceState(null, '', pkHash(page));
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
-  $('content').innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span> Reading the packs…</div></div>';
+  $('content').scrollTop = 0;
+  if (!fresh && PK.data) { paintPacks(); pkFocusPage(); return; }
+  $('content').innerHTML = '<div class="scope pk"><div class="scope-sub"><span class="spinner"></span> Reading the packs…</div></div>';
   // The roles every diagram names, read fresh each time Packs opens: a role changed on Models shows here (R3).
   const roles = pkLoadRoles();
   await pkLoad();
   await roles;
-  if (S.view === 'packs' && PK.data) pkCheckStatus();
+  pkFocusPage();
+  if (pkShown() && PK.data) pkCheckStatus();
 }
+
+function openPacks() { return pkEnter('packs', null); }
+/** #packs/<id>: the id from the hash, or the page last shown (coming back from a file opened here). */
+function openPackPage() { return pkEnter('pack', pkRouteOf(location.hash) ?? PK.page); }
+
+/** Navigate inside Packs. The hash change this makes finds the page already shown and does nothing. */
+function pkGo(page) {
+  location.hash = pkHash(page);
+  return page ? pkEnter('pack', page) : pkEnter('packs', null);
+}
+
+/** After a navigation the old focus is gone with the old page: put it on the new page's heading. */
+function pkFocusPage() {
+  if (!pkShown()) return;
+  const h = $('content').querySelector('.pk-page h1, .pk-title');
+  if (h) { h.tabIndex = -1; h.focus?.(); }
+}
+
+/* ── loading ── */
 
 async function pkLoadRoles() {
   try { PK.roles = (await api('GET', '/api/models/roles')).roles || []; PK.rolesError = null; }
   catch (e) { PK.roles = null; PK.rolesError = e.message; }
-  if (S.view === 'packs' && PK.data) paintPacks();
-}
-
-/**
- * One line per card for the roles its workflow names that are not chosen yet: "2 roles not set — choose them
- * on Models", linked to the first one's row (#models&role=…, which opens its editor there).
- */
-function pkUnsetLine(wf) {
-  if (!PK.roles) return null;
-  const unset = wfRoles(wf).filter((name) => { const r = PK.roles.find((x) => x.name === name); return !r || r.unset; });
-  if (!unset.length) return null;
-  const line = el('p', 'pk-unset');
-  const a = el('a', null, `${unset.length === 1 ? '1 role' : `${unset.length} roles`} not set — choose ${unset.length === 1 ? 'it' : 'them'} on Models`);
-  a.href = `#models&role=${encodeURIComponent(unset[0])}`;
-  a.title = `Unset: ${unset.join(', ')}`;
-  line.appendChild(a);
-  return line;
+  if (pkShown() && PK.data) paintPacks();
 }
 
 async function pkLoad() {
@@ -84,9 +124,9 @@ async function pkCheckStatus() {
   pkPaintStatus();
   let job;
   try {
-    job = (await api('GET', `/api/packs/status?trust=${PK.trust ? 1 : 0}`)).job;
+    job = (await api('GET', `/api/packs/status?trust=${pkTrust() ? 1 : 0}`)).job;
     while (job.running) {
-      if (gen !== PK.statusGen || S.view !== 'packs') return;
+      if (gen !== PK.statusGen || !pkShown()) return;
       PK.job = job;
       pkPaintStatus();
       await new Promise((r) => setTimeout(r, PK_POLL_MS));
@@ -102,99 +142,98 @@ async function pkCheckStatus() {
   PK.job = null;
   if (job.error) PK.statusError = job.error;
   else PK.status = job.result;
-  if (S.view === 'packs') paintPacks();
+  if (pkShown()) paintPacks();
 }
 
+/** Which page to draw: the grid, the shared fixes, a pack, or "No pack called …". */
 function paintPacks() {
-  if (S.view !== 'packs') return;
+  if (!pkShown()) return;
   const c = $('content');
+  const top = c.scrollTop;
   c.innerHTML = '';
   const box = el('div', 'scope pk');
-  box.appendChild(pageHeading('Skill packs'));
-  box.appendChild(el('p', 'pk-promise', 'The studio sets how its own packs behave here. Everything else it shows and edits as files.'));
   if (PK.error) {
+    box.appendChild(pageHeading('Skill packs'));
     const n = el('div', 'notice error pk-error');
     n.setAttribute('role', 'alert');
     n.appendChild(el('div', null, `The packs could not be read: ${PK.error}`));
-    const retry = el('button', 'btn', 'Try again');
-    retry.onclick = () => pkLoad();
-    n.appendChild(retry);
+    n.appendChild(pkBtn('', 'Try again', () => pkLoad()));
     box.appendChild(n);
-    c.appendChild(box);
-    return;
+  } else if (PK.data) {
+    if (S.view === 'packs') pkGrid(box);
+    else if (PK.page === PK_SETUP) pkSetupPage(box);
+    else if (pkPack(PK.page)) pkPage(box, pkPack(PK.page));
+    else pkMissing(box);
   }
-  if (!PK.data) { c.appendChild(box); return; }
-  const legacy = PK.status?.legacy?.length ? PK.status.legacy : PK.data.legacy;
-  if (legacy.length) box.appendChild(el('div', 'notice warn pk-legacy', `An earlier review-gate install is here (${legacy.join(', ')}). The packs installer does not migrate it; the review script still reads the older log and config locations.`));
-  box.appendChild(pkHere());
-  // One quiet line: when status was checked, the Codex trust check, and Refresh. No fold.
-  const status = el('div', 'pk-status');
-  status.id = 'pk-status';
-  box.appendChild(status);
-  const todo = pkTodo();
-  if (todo) box.appendChild(todo);
-  for (const pack of PK.data.packs) box.appendChild(pkCardView(pack));
   c.appendChild(box);
+  c.scrollTop = top;
   pkPaintStatus();
 }
 
-/** The status bar: running with its progress, or when it was checked and a refresh. */
-function pkPaintStatus() {
-  const s = $('pk-status');
-  if (!s || S.view !== 'packs') return;
-  s.innerHTML = '';
-  const line = el('div', 'pk-status-line');
-  if (PK.job) {
-    line.appendChild(el('span', 'spinner'));
-    const last = PK.job.progress?.at(-1)?.message || 'starting the status check…';
-    const live = el('span', 'pk-status-text', `${last} (${Math.round((PK.job.elapsedMs || 0) / 1000)} s)`);
-    live.setAttribute('aria-live', 'polite');
-    line.appendChild(live);
-  } else {
-    const when = PK.status?.checkedAt ? new Date(PK.status.checkedAt).toLocaleTimeString() : null;
-    line.appendChild(el('span', 'pk-status-text', when
-      ? `Status checked at ${when}${PK.status.trust ? ', with the Codex trust check' : ', without the Codex trust check'}.`
-      : 'Status not checked yet.'));
-  }
-  // On the same line: the trust check (its cost behind an (i)), then Refresh.
-  const trust = pkCheck('Include the Codex ', PK.trust, (v) => { PK.trust = v; });
-  trust.querySelector('span').appendChild(glossTip('trust', 'trust check'));
-  trust.querySelector('input').disabled = !!PK.job;
-  if (PK.job) trust.title = 'Wait for the status check to finish';
-  line.appendChild(trust);
-  if (!PK.job) {
-    const again = el('button', 'btn ghost', 'Refresh status');
-    again.onclick = () => pkCheckStatus();
-    line.appendChild(again);
-  }
-  s.appendChild(line);
-  if (PK.job?.progress?.length > 1) {
-    const ul = el('ul', 'pk-progress');
-    for (const p of PK.job.progress) ul.appendChild(el('li', null, p.message));
-    s.appendChild(ul);
-  }
-  if (PK.statusError) {
-    const n = el('div', 'notice error');
-    n.setAttribute('role', 'alert');
-    n.textContent = `The status check failed: ${PK.statusError}`;
-    s.appendChild(n);
-  }
-}
+/* ── small parts ── */
 
-/** Each CLI as Home and Setup see it: installed or not, nothing else (a PATH gap shows in the need it blocks). */
-function pkHere() {
-  const row = el('div', 'pk-here');
-  row.appendChild(el('span', 'pk-here-title', 'On this machine:'));
-  for (const h of PK.data.harnesses) {
-    const on = h.installed ?? h.present;
-    const chip = el('span', `pk-harness ${on ? 'on' : 'off'}`, `${on ? '✓' : '—'} ${h.label}`);
-    row.appendChild(chip);
-    // Only "not installed" or "only its folder": an installed CLI's gaps show where they block (Install-for row, needs).
-    const note = h.note || (!h.present && !h.installed ? h.why : null);
-    if (note) row.appendChild(el('span', 'pk-harness-why', note));
-  }
+const pkBtn = (cls, text, fn, disabled = false) => { const b = el('button', `btn${cls ? ` ${cls}` : ''}`, text); b.type = 'button'; b.onclick = fn; b.disabled = disabled; return b; };
+function pkCheck(label, checked, onchange, { disabled = false, title = null } = {}) {
+  const l = el('label', `pk-check${disabled ? ' disabled' : ''}`);
+  const i = el('input');
+  i.type = 'checkbox';
+  i.checked = !!checked;
+  i.disabled = disabled;
+  i.onchange = () => onchange(i.checked);
+  l.appendChild(i);
+  l.appendChild(el('span', null, label));
+  if (title) l.title = title;
+  return l;
+}
+/** Children with a space between them, so the text reads (and copies) as words, not run together. */
+function pkJoin(parent, ...kids) {
+  kids.forEach((k, i) => { if (i) parent.appendChild(document.createTextNode(' ')); parent.appendChild(k); });
+  return parent;
+}
+const PK_ICONS = {
+  check: '<path d="M3.5 8.5l3 3 6-7"/>',
+  go: '<path d="M6 3.5L10.5 8 6 12.5"/>',
+  back: '<path d="M10 3.5L5.5 8 10 12.5"/>',
+  copy: '<rect x="5.5" y="5.5" width="7.5" height="7.5" rx="1.5"/><path d="M3 10.5V4.5A1.5 1.5 0 0 1 4.5 3h6"/>',
+};
+function pkIcon(name, cls = 'pk-icon') {
+  const s = el('span', cls);
+  s.setAttribute('aria-hidden', 'true');
+  s.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${PK_ICONS[name]}</svg>`;
+  return s;
+}
+/** A status word with its dot: tone ok (green), warn (amber), err (red) or off (hollow). */
+function pkStatusWord(word, tone, title = null) {
+  const s = el('span', `pk-st ${tone}`);
+  s.appendChild(el('span', 'pk-dot'));
+  s.appendChild(el('span', null, word));
+  if (title) s.title = title;
+  return s;
+}
+function pkBackButton() {
+  const b = pkBtn('ghost pk-back', '', () => pkGo(null));
+  b.appendChild(pkIcon('back'));
+  b.appendChild(el('span', null, 'Skill packs'));
+  return b;
+}
+/** A command with a quiet Copy beside it. */
+function pkCommand(text, cls) {
+  const row = el('div', cls);
+  row.appendChild(el('code', null, text));
+  const copy = pkBtn('ghost', '', async () => {
+    try { await navigator.clipboard.writeText(text); label.textContent = 'Copied'; }
+    catch { label.textContent = 'Select and copy it'; }
+    setTimeout(() => { label.textContent = 'Copy'; }, 2000);
+  });
+  copy.appendChild(pkIcon('copy'));
+  const label = el('span', null, 'Copy');
+  copy.appendChild(label);
+  copy.setAttribute('aria-label', `Copy: ${text}`);
+  row.appendChild(copy);
   return row;
 }
+
+/* ── needs: fixes for this machine ── */
 
 /**
  * A pack's missing needs as fixes: model-id, ask-model and CLIs off the PATH are one fix (group 'path');
@@ -213,15 +252,15 @@ function pkFixes(pack) {
   return [...out.values()].sort((a, b) => rank(a.key) - rank(b.key));
 }
 const pkNames = (fix) => fix.reqs.flatMap((r) => String(r.name || r.id).split(' and '));
-/** A fix as one short phrase for a card: "Needs …". */
+/** A fix as one short phrase: "Needs …". */
 function pkNeedText(fix) {
   const r = fix.reqs[0];
   if (r.dep) return `the ${pkPack(r.dep)?.title || r.dep} pack first`;
-  // Off the search path, not missing: the CLIs it names are installed. Said once at the top (pkShared), so rarely here.
+  // Off the search path, not missing: the CLIs it names are installed. Said once on the setup page (pkShared), so rarely here.
   if (fix.key === 'path') return `commands on your search path: ${pkNames(fix).join(', ')}`;
   return PK_NEED_SHORT[r.id] || r.what;
 }
-/** A fix as the top block lists it: what to do, then how. */
+/** A fix as the setup page lists it: what to do, then how. */
 function pkFixItem(fix) {
   if (fix.key !== 'path') return { what: fix.reqs[0].what, fix: fix.reqs[0].fix };
   const tools = fix.reqs.some((r) => ['model-id', 'ask-model'].includes(r.id));
@@ -233,11 +272,7 @@ function pkFixItem(fix) {
       'then restart the studio'].filter(Boolean).join(', '),
   };
 }
-/** A card's "What it needs": what is met, then each missing fix once (the PATH problems as one item). */
-function pkNeedsList(pack) {
-  return [...pack.requirements.filter((r) => r.ok), ...pkFixes(pack).map((f) => ({ ok: false, ...pkFixItem(f) }))];
-}
-/** Fixes every pack needs: checked once at the top, never repeated on a card. */
+/** Fixes every pack needs: listed once on the setup page, never repeated on a pack. */
 function pkShared() {
   const packs = PK.data.packs;
   if (!packs.length) return new Map();
@@ -250,8 +285,7 @@ function pkShared() {
     for (const fs of [first, ...rest]) for (const r of fs.find((g) => g.key === f.key).reqs) reqs.set(r.name || r.id, r);
     shared.set(f.key, { key: f.key, reqs: [...reqs.values()] });
   }
-  // The search-path fix is one machine fix, whichever packs it blocks: said once at the top, with every name,
-  // never repeated on each card (final critique P2-2).
+  // The search-path fix is one machine fix, whichever packs it blocks: said once, with every name (final critique P2-2).
   const pathReqs = new Map();
   let blocked = 0;
   for (const fs of [first, ...rest]) {
@@ -262,21 +296,21 @@ function pkShared() {
   if (pathReqs.size) shared.set('path', { key: 'path', reqs: [...pathReqs.values()], blocked, of: packs.length });
   return shared;
 }
+/** A pack's own fixes: what it needs beyond the shared ones. */
+const pkOwnFixes = (pack, shared = pkShared()) => pkFixes(pack).filter((f) => !shared.has(f.key));
 
-/** "To use packs: do these 2 things": only what every pack needs. */
+/** The shared fixes as a list: what to do, how, and how many packs it blocks when not all. */
 function pkTodo() {
   const shared = pkShared();
   if (!shared.size) return null;
   const box = el('div', 'pk-todo');
   box.setAttribute('role', 'region');
   box.setAttribute('aria-label', 'What packs need');
-  box.appendChild(el('div', 'pk-todo-title', shared.size === 1 ? 'To use packs: do this one thing' : `To use packs: do these ${shared.size} things`));
   const ol = el('ol', 'pk-todo-list');
   for (const f of shared.values()) {
     const item = pkFixItem(f);
     const li = el('li', null, item.what);
     li.appendChild(el('div', 'pk-fix', `Fix: ${item.fix}`));
-    // Said once for every pack it blocks — and how many that is, when it is not all of them.
     if (f.blocked && f.blocked < f.of) li.appendChild(el('div', 'pk-fix', `Needed by ${f.blocked} of ${f.of} packs.`));
     ol.appendChild(li);
   }
@@ -284,275 +318,476 @@ function pkTodo() {
   return box;
 }
 
-/** Children with a space between them, so the text reads (and copies) as words, not run together. */
-function pkJoin(parent, ...kids) {
-  kids.forEach((k, i) => { if (i) parent.appendChild(document.createTextNode(' ')); parent.appendChild(k); });
-  return parent;
+/* ── status of a pack and its parts ── */
+
+const pkStatusOf = (pack, partId) => PK.status?.packs.find((p) => p.id === pack.id)?.parts.find((x) => x.id === partId) || null;
+/** A status word's kind (installed, edited, update, broken, newHarness, absent). */
+const pkKind = (s) => Object.keys(PK.data?.words?.status || {}).find((k) => PK.data.words.status[k] === s) || 'other';
+/** The status check's words for a part, or installed / not installed before it has run. */
+function pkPartStatuses(pack, partId) {
+  const st = pkStatusOf(pack, partId);
+  const w = PK.data.words.status;
+  return st?.statuses || [pkInstalled(pack, partId) ? w.installed : w.absent];
 }
-const pkBtn = (cls, text, fn, disabled = false) => { const b = el('button', `btn ${cls}`, text); b.onclick = fn; b.disabled = disabled; return b; };
-function pkCheck(label, checked, onchange, { disabled = false, title = null } = {}) {
-  const l = el('label', `pk-check${disabled ? ' disabled' : ''}`);
-  const i = el('input');
-  i.type = 'checkbox';
-  i.checked = !!checked;
-  i.disabled = disabled;
-  i.onchange = () => onchange(i.checked);
-  l.appendChild(i);
-  l.appendChild(el('span', null, label));
-  if (title) l.title = title;
-  return l;
+/** A part's one word, the most pressing of its statuses first. */
+const PK_PART_WORD = [['broken', 'Not working', 'err'], ['update', 'Update ready', 'warn'], ['edited', 'Edited', 'warn'], ['newHarness', 'New CLI here', 'warn'], ['installed', 'On', 'ok'], ['absent', 'Off', 'off']];
+function pkPartWord(pack, partId) {
+  const kinds = pkPartStatuses(pack, partId).map(pkKind);
+  const hit = PK_PART_WORD.find(([k]) => kinds.includes(k)) || (pkInstalled(pack, partId) ? PK_PART_WORD[4] : PK_PART_WORD[5]);
+  return { kind: hit[0], word: hit[1], tone: hit[2] };
+}
+/** Installed, with a newer version or a part the status check says has an update. */
+function pkUpdateReady(pack) {
+  if (!pack.installed) return false;
+  return pack.installed.version !== pack.version || Object.keys(pack.installed.parts || {}).some((id) => pkPartStatuses(pack, id).map(pkKind).includes('update'));
+}
+/** Update is worth offering: an update is ready, or an installed part is edited, broken or missing a CLI. */
+const pkUpdateUseful = (pack) => pkUpdateReady(pack)
+  || Object.keys(pack.installed?.parts || {}).some((id) => pkPartStatuses(pack, id).map(pkKind).some((k) => ['edited', 'broken'].includes(k)));
+/** A card's status: Update ready, Needs setup, Installed or Not installed. */
+function pkState(pack, shared = pkShared()) {
+  if (pkUpdateReady(pack)) return { key: 'update', word: 'Update ready', tone: 'warn' };
+  if (pkOwnFixes(pack, shared).length) return { key: 'setup', word: 'Needs setup', tone: 'warn' };
+  if (pack.installed) return { key: 'installed', word: 'Installed', tone: 'ok' };
+  return { key: 'absent', word: 'Not installed', tone: 'off' };
 }
 
-/** What it is, day to day, what it changes, how to undo it — the CLI's explain, in the same words; a pack's adds what it needs. */
-function pkExplainBody(e, reqs = null, undoCmd = null) {
-  const dl = el('div', 'pk-explain-body');
-  const field = (label, text) => { if (!text) return; const p = el('p'); p.appendChild(el('strong', null, `${label}: `)); p.appendChild(document.createTextNode(text)); dl.appendChild(p); };
-  field('What it is', e?.what);
-  field('Day to day', e?.does);
-  if (e?.changes?.length) {
-    dl.appendChild(el('strong', null, 'What it changes:'));
-    const ul = el('ul');
-    for (const ch of e.changes) ul.appendChild(el('li', null, ch));
-    dl.appendChild(ul);
+/* ── the grid (#packs) ── */
+
+/** Each card's one line: shorter than pack.json's summary, which leads the pack's own page. */
+const PK_LINES = {
+  'review-gate': 'Reviews your branch for bugs, fixes them once, and logs the result.',
+  build: 'Plans a change with you, has a builder write it, then grades it.',
+  advisor: 'Gets an outside verdict on scope and direction before you commit.',
+  'second-opinion': 'Asks other models for their take and shows the replies side by side.',
+  pr: 'Writes a pull request anyone can read in a minute.',
+  handoff: 'Leaves a resume-here note so the next session picks up cleanly.',
+  flag: 'Files a short report when the agent workflow itself goes wrong.',
+  worktree: 'Shell commands that give each goal its own tidy worktree.',
+};
+const PK_WHO = [['role', 'a model from your roles'], ['agent', 'your session agent'], ['you', 'you'], ['script', 'a script']];
+/** Who does a single-step pack, said on its card. */
+const PK_SOLO = { agent: 'Your session agent', you: 'You run them', script: 'A script', role: 'A model from your roles' };
+const pkWhos = (wf) => (wf?.strip ? [wf.stripWho || 'agent'] : (wf?.steps || []).map((s) => s.who));
+
+function pkGrid(box) {
+  const head = el('header', 'pk-head-row');
+  const left = el('div', 'pk-head-text');
+  left.appendChild(el('h1', 'pk-title', 'Skill packs'));
+  left.appendChild(el('p', 'pk-lead', 'Ready-made workflows for your agents. Open one to see how it runs and change how it behaves.'));
+  head.appendChild(left);
+  const machine = el('div', 'pk-machine');
+  machine.appendChild(pkClis());
+  const status = el('div', 'pk-status');
+  status.id = 'pk-status';
+  machine.appendChild(status);
+  head.appendChild(machine);
+  box.appendChild(head);
+  const shared = pkShared();
+  if (shared.size) {
+    const n = el('div', 'pk-shared');
+    n.setAttribute('role', 'status');
+    n.appendChild(el('strong', null, `${plural(shared.size, 'thing')} to set up before packs run`));
+    n.appendChild(pkBtn('', 'Show me', () => pkGo(PK_SETUP)));
+    box.appendChild(n);
   }
-  field('How to undo it', e?.undo);
-  if (undoCmd) { const p = el('p'); p.appendChild(el('strong', null, 'Command: ')); p.appendChild(el('code', null, undoCmd)); dl.appendChild(p); }
-  if (reqs?.length) {
-    dl.appendChild(el('strong', null, 'What it needs:'));
-    const ul = el('ul', 'pk-reqs');
-    for (const r of reqs) {
-      const li = el('li', r.ok ? 'ok' : 'missing', `${r.ok ? '✓' : '✖'} ${r.what}`);
-      if (!r.ok) li.appendChild(el('span', 'pk-fix', ` — fix: ${r.fix}`));
-      ul.appendChild(li);
-    }
-    dl.appendChild(ul);
+  const legend = el('ul', 'pk-legend');
+  legend.setAttribute('aria-label', 'Step colours');
+  for (const [who, text] of PK_WHO) {
+    const li = el('li');
+    li.appendChild(el('i', `pk-strip-seg ${who}`));
+    li.appendChild(document.createTextNode(text));
+    legend.appendChild(li);
   }
-  return dl;
+  box.appendChild(legend);
+  const grid = el('div', 'pk-grid');
+  for (const pack of PK.data.packs) grid.appendChild(pkCardView(pack, shared));
+  box.appendChild(grid);
 }
 
-/**
- * A modal dialog over the page (Packs has no folds): focus moves in and stays in
- * (Tab and Shift+Tab wrap), Esc or Close shuts it, and focus goes back to what opened it.
- */
-let pkDialogN = 0;
-function pkDialog(title, body, opener, reopen) {
-  document.body.querySelector('.pk-dialog')?.pkClose?.();
-  const scrim = el('div', 'pk-scrim');
-  const d = el('div', 'pk-dialog');
-  const id = `pk-dialog-title-${++pkDialogN}`;
-  d.setAttribute('role', 'dialog');
-  d.setAttribute('aria-modal', 'true');
-  d.setAttribute('aria-labelledby', id);
-  const head = el('div', 'pk-dialog-head');
-  const h = el('h2', 'pk-dialog-title', title);
-  h.id = id;
-  head.appendChild(h);
-  const close = el('button', 'btn ghost', 'Close');
-  head.appendChild(close);
-  d.appendChild(head);
-  d.appendChild(body);
-  const shut = () => {
-    scrim.remove();
-    d.remove();
-    // The card may have repainted under the dialog: find its button again.
-    const back = opener && document.body.contains(opener) ? opener : reopen?.();
-    back?.focus();
-  };
-  d.pkClose = shut;
-  close.onclick = shut;
-  scrim.onclick = shut;
-  d.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); shut(); return; }
-    // The app's ⌘/Ctrl shortcuts (search, save, edit) act on the page behind: none reach it while the dialog is open.
-    if (e.metaKey || e.ctrlKey) {
-      e.stopPropagation();
-      if (['k', 's', 'e'].includes(String(e.key).toLowerCase())) e.preventDefault();
-      return;
-    }
-    if (e.key !== 'Tab') return;
-    // A real NodeList has no .filter: spread it first.
-    const f = [...d.querySelectorAll('button, a[href], input, select, textarea, [tabindex="0"]')].filter((x) => !x.disabled);
-    if (!f.length) return;
-    const first = f[0], last = f[f.length - 1];
-    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-  });
-  document.body.appendChild(scrim);
-  document.body.appendChild(d);
-  close.focus();
-  return d;
-}
-
-/** A card's files and undo: one muted line, and the full list (pack and every part) in a dialog. */
-function pkFilesAndUndo(pack) {
-  const cmd = `acs packs uninstall ${pack.id}`;
-  const n = pack.explain?.changes?.length || 0;
-  const row = el('div', 'pk-changes-row');
-  row.appendChild(el('span', 'pk-changes', `Changes ${n} place${n === 1 ? '' : 's'} · undo: ${cmd}`));
-  const b = el('button', 'btn pk-files-btn', 'Files and undo');
-  b.setAttribute('aria-haspopup', 'dialog');
-  b.onclick = () => {
-    const body = el('div', 'pk-dialog-body');
-    body.appendChild(pkExplainBody(pack.explain, pkNeedsList(pack), cmd));
-    if (pack.parts.length) {
-      body.appendChild(el('h3', 'pk-dialog-sub', 'Parts'));
-      for (const part of pack.parts) {
-        const sec = el('div', 'pk-dialog-part');
-        sec.appendChild(el('h4', null, part.title));
-        sec.appendChild(pkExplainBody(part.explain));
-        body.appendChild(sec);
-      }
-    }
-    pkDialog(`${pack.title}: files and undo`, body, b, () => document.querySelector(`[data-pack="${pack.id}"]`)?.querySelector('.pk-files-btn'));
-  };
-  row.appendChild(b);
+/** Each CLI as Home and Setup see it: installed or not; why not, on hover (a PATH gap shows where it blocks). */
+function pkClis() {
+  const row = el('div', 'pk-clis');
+  row.setAttribute('aria-label', 'CLIs on this machine');
+  for (const h of PK.data.harnesses) {
+    const on = h.installed ?? h.present;
+    const chip = el('span', `pk-cli ${on ? 'on' : 'off'}`);
+    chip.appendChild(on ? pkIcon('check') : el('span', 'pk-dot'));
+    chip.appendChild(el('span', null, h.label));
+    const note = h.note || (!h.present && !h.installed ? h.why : null);
+    chip.title = note ? `${h.label}: ${note}` : `${h.label}: installed`;
+    if (!on) chip.appendChild(el('span', 'vh', ` (${note || 'not installed'})`));
+    row.appendChild(chip);
+  }
   return row;
 }
 
-/** A part in plain words: the first sentence of what it is. */
+function pkCardView(pack, shared) {
+  const k = el('article', 'pk-card');
+  k.dataset.pack = pack.id;
+  const top = el('div', 'pk-card-top');
+  const name = el('div');
+  const h = el('h2', 'pk-card-name');
+  const a = el('a', 'pk-card-link', pack.title);
+  a.href = pkHash(pack.id);
+  h.appendChild(a);
+  name.appendChild(h);
+  if (pack.workflow?.command) name.appendChild(el('span', 'pk-card-cmd', pack.workflow.command));
+  top.appendChild(name);
+  const st = pkState(pack, shared);
+  top.appendChild(pkStatusWord(st.word, st.tone));
+  k.appendChild(top);
+  k.appendChild(el('p', 'pk-card-line', PK_LINES[pack.id] || pack.summary));
+  const foot = el('div', 'pk-card-foot');
+  const steps = el('div', 'pk-card-steps');
+  const whos = pkWhos(pack.workflow);
+  const strip = el('span', 'pk-strip-segs');
+  strip.setAttribute('aria-hidden', 'true');
+  for (const w of whos) strip.appendChild(el('i', `pk-strip-seg ${w}`));
+  steps.appendChild(strip);
+  steps.appendChild(el('span', null, pack.workflow?.strip ? PK_SOLO[whos[0]] : plural(whos.length, 'step')));
+  foot.appendChild(steps);
+  // One primary button, only where something needs doing; it opens the page with the preview loaded.
+  const action = st.key === 'update' ? 'update' : !pack.installed ? 'install' : null;
+  if (action) {
+    foot.appendChild(pkBtn('primary', PK_VERB[action], (e) => {
+      e.stopPropagation();
+      pkGo(pack.id);
+      pkPreview(pack, action, {}, { at: 'pack' });
+    }));
+  } else foot.appendChild(pkIcon('go', 'pk-card-go'));
+  k.appendChild(foot);
+  // The whole card opens the page; a modified click is left to the link (a new tab).
+  k.onclick = (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    pkGo(pack.id);
+  };
+  return k;
+}
+
+/* ── #packs/setup and an unknown id ── */
+
+function pkSetupPage(box) {
+  const page = el('div', 'pk-page');
+  page.appendChild(pkBackButton());
+  page.appendChild(el('h1', null, 'Before packs run'));
+  const todo = pkTodo();
+  if (!todo) { page.appendChild(el('p', 'pk-page-lead', 'Nothing to set up: every pack has what this machine needs.')); box.appendChild(page); return; }
+  page.appendChild(el('p', 'pk-page-lead', 'These are fixes for this machine, so every pack waits on them. Do them once.'));
+  page.appendChild(todo);
+  box.appendChild(page);
+}
+
+function pkMissing(box) {
+  const page = el('div', 'pk-page');
+  page.appendChild(pkBackButton());
+  page.appendChild(el('h1', null, 'Skill packs'));
+  page.appendChild(el('p', 'pk-page-lead', `No pack called ${PK.page}.`));
+  box.appendChild(page);
+}
+
+/* ── a pack's page (#packs/<id>) ── */
+
+/** "What it does": two to four words and one sentence each, from explain.does. A pack with less to say has fewer. */
+const PK_DOES = {
+  'review-gate': [
+    ['Finds bugs', 'A model from your reviewer role reads the branch. Every finding must quote real code.'],
+    ['Fixes them once', 'High and medium findings get one fix round and one check. The rest are logged.'],
+    ['Guards the push', 'With the push gate on, code nobody has reviewed is not pushed.'],
+  ],
+  build: [
+    ['Plans with you', 'It writes a plan in a builds/ folder and asks you to approve what done means.'],
+    ['A builder writes it', 'A model from your builder role works phase by phase against your tests.'],
+    ['Another model grades it', 'The Grade checks the result against your criteria, then you judge it.'],
+  ],
+  advisor: [
+    ['An outside verdict', 'A model from your advisor role reads the brief and says what it thinks of the plan.'],
+    ['Reads, never writes', 'It may read files and run commands to check a point, but it changes nothing.'],
+    ['Checked against the code', 'Your agent checks each point and says where it agrees or not.'],
+  ],
+  'second-opinion': [
+    ['Asks other models', 'Each model answers read-only and blind to the others.'],
+    ['Side by side', 'Every reply is labeled, with a short note on where they agree and differ.'],
+    ['Never picks a winner', 'The choice stays yours.'],
+  ],
+  pr: [
+    ['In your style', 'Sections, order and tone come from your style file.'],
+    ['Checked first', 'A helper checks the description against the facts before the PR opens.'],
+    ['Opens the PR', 'It runs gh pr create, or gh pr edit when the PR already exists.'],
+  ],
+  handoff: [
+    ['A resume-here note', 'The goal, where things stand, what failed and the next step, in one file.'],
+    ['Kept out of git', 'The note stays out of your commits, so it never rides a PR.'],
+  ],
+  flag: [
+    ['Short reports', 'It files a report when a rule, skill or tool goes wrong, without stopping the work.'],
+    ['Redacted first', 'Keys, tokens and passwords are stripped before anything is stored.'],
+    ['Proposes fixes', '/flag review groups reports by cause and suggests rule changes. It never edits one.'],
+  ],
+  worktree: [
+    ['A worktree per goal', 'wnew makes one in the right place from a fresh base, with its env files and a free port.'],
+    ['Finds strays', 'wls lists a project’s worktrees and flags any outside the expected place.'],
+  ],
+};
+/** The first sentence of a text. */
 const pkPlain = (text) => (/^[\s\S]*?[.!?](?=\s|$)/.exec(String(text || '').trim())?.[0] || String(text || '').trim());
 const pkCliNames = (ids) => ids.map((h) => pkHarness(h)?.label || h).join(' and ');
 
-const pkStatusOf = (pack, partId) => PK.status?.packs.find((p) => p.id === pack.id)?.parts.find((x) => x.id === partId) || null;
-/** A status word's kind (installed, edited, update, broken, newHarness, absent), for its colour. */
-const pkKind = (s) => Object.keys(PK.data?.words?.status || {}).find((k) => PK.data.words.status[k] === s) || 'other';
-
-function pkCardView(pack) {
+function pkPage(box, pack) {
   const card = pkCard(pack);
-  const sec = el('section', 'pk-card');
-  sec.dataset.pack = pack.id;
-  const head = el('div', 'pk-head');
-  head.appendChild(el('h3', null, pack.title));
-  if (pack.workflow?.command) head.appendChild(el('span', 'cmd', pack.workflow.command));
-  const inst = pack.installed;
-  head.appendChild(el('span', `pk-badge ${inst ? 'installed' : 'absent'}`, inst
-    ? `installed ${inst.version}${inst.version !== pack.version ? ` (version ${pack.version} is available)` : ''}`
-    : 'not installed'));
-  // Ready, or the one thing it still needs (the full list is in the explain).
-  // Ready, its single most important missing fix, or — when only shared fixes are left — a pointer to them.
-  const fixes = pkFixes(pack);
-  const shared = pkShared();
-  const own = fixes.filter((f) => !shared.has(f.key));
-  head.appendChild(!fixes.length ? el('span', 'pk-ready ok', '✓ Ready')
-    : own.length ? el('span', 'pk-ready missing', 'Setup needed')
-      : el('span', 'pk-ready later', 'Not ready — see “To use packs” above'));
-  sec.appendChild(head);
-  sec.appendChild(el('p', 'pk-summary', pack.summary));
-  // The workflow first: what runs, and who or what does each step (B3).
-  if (pack.workflow) {
-    sec.appendChild(wfDiagram(pack.workflow, {
-      roles: PK.roles, rolesError: PK.rolesError, settings: PK.data.settings || {},
-      installedParts: new Set(Object.keys(pack.installed?.parts || {})), pickedParts: card.parts,
-      variant: card.variant, onVariant: (v) => { card.variant = v; paintPacks(); },
-    }));
-    // Under the diagram: the roles it names that are not chosen yet.
-    const unset = pkUnsetLine(pack.workflow);
-    if (unset) sec.appendChild(unset);
+  const page = el('div', 'pk-page');
+  page.dataset.pack = pack.id;
+  page.appendChild(pkBackButton());
+  const sections = [['does', 'What it does', pkDoesView], ['runs', 'How it runs', pkRunsView],
+    ...(pack.id === 'review-gate' ? [['settings', 'Settings', pkSettingsSection]] : []),
+    ['parts', 'Parts', pkPartsView], ['files', 'Files and undo', pkFilesView]];
+  page.appendChild(pkPageHead(pack, card, sections));
+  for (const n of pkFlowAt(pack, card, 'pack')) page.appendChild(n);
+  for (const [key, title, draw] of sections) {
+    const sec = el('section', 'pk-sec-block');
+    sec.id = `pk-sec-${key}`;
+    sec.appendChild(el('h2', null, title));
+    draw(sec, pack, card);
+    page.appendChild(sec);
   }
-  if (pack.id === 'review-gate') sec.appendChild(pkSettingsView(pack));
+  box.appendChild(page);
+}
+
+function pkPageHead(pack, card, sections) {
+  const head = el('header', 'pk-page-head');
+  const left = el('div', 'pk-page-text');
+  const title = el('div', 'pk-page-title');
+  title.appendChild(el('h1', null, pack.title));
+  if (pack.workflow?.command) title.appendChild(el('span', 'pk-pill', pack.workflow.command));
+  left.appendChild(title);
+  left.appendChild(el('p', 'pk-page-lead', pack.summary));
+  const meta = el('div', 'pk-page-meta');
+  const inst = pack.installed;
+  const st = pkState(pack);
+  meta.appendChild(inst
+    ? pkStatusWord(st.key === 'update' && inst.version !== pack.version ? `Update ready · ${inst.version} → ${pack.version}` : `${st.key === 'update' ? 'Update ready' : 'Installed'} · ${inst.version}`, st.key === 'update' ? 'warn' : 'ok')
+    : pkStatusWord('Not installed', 'off'));
+  // Ready, its own most important missing fix, or — when only shared fixes are left — the way to them.
+  const shared = pkShared();
+  const fixes = pkFixes(pack);
+  const own = pkOwnFixes(pack, shared);
+  if (!fixes.length) {
+    const ready = el('span', 'pk-st ok pk-ready');
+    ready.appendChild(pkIcon('check'));
+    ready.appendChild(el('span', null, 'Ready to run'));
+    meta.appendChild(ready);
+  } else if (own.length) meta.appendChild(pkStatusWord(`Needs ${pkNeedText(own[0])}`, 'warn pk-need'));
+  else {
+    meta.appendChild(pkStatusWord('Not ready', 'warn pk-need'));
+    meta.appendChild(pkBtn('ghost', 'See what to set up', () => pkGo(PK_SETUP)));
+  }
+  left.appendChild(meta);
+  if (own.length > 1 || (own.length === 1 && own[0].reqs.length > 1)) {
+    const ul = el('ul', 'pk-reqs');
+    for (const f of own) { const it = pkFixItem(f); const li = el('li', 'missing', it.what); li.appendChild(el('span', 'pk-fix', ` — fix: ${it.fix}`)); ul.appendChild(li); }
+    left.appendChild(ul);
+  } else if (own.length === 1) left.appendChild(el('p', 'pk-fix-line', `Fix: ${pkFixItem(own[0]).fix}`));
+  const jump = el('nav', 'pk-jump');
+  jump.setAttribute('aria-label', 'On this page');
+  for (const [key, label] of sections) {
+    const a = el('a', null, label);
+    a.href = pkHash(pack.id);
+    a.onclick = (e) => {
+      e.preventDefault();
+      const target = $('content').querySelector(`#pk-sec-${key}`);
+      target?.scrollIntoView({ block: 'start' });
+    };
+    jump.appendChild(a);
+  }
+  left.appendChild(jump);
+  head.appendChild(left);
+  const acts = el('div', 'pk-page-actions');
+  const busy = !!card.busy;
+  if (!inst) acts.appendChild(pkBtn('primary', 'Install', () => pkPreview(pack, 'install', {}, { at: 'pack' }), busy || !pkDefaults(pack).length));
+  else if (pkUpdateUseful(pack)) acts.appendChild(pkBtn('primary', 'Update', () => pkPreview(pack, 'update', {}, { at: 'pack' }), busy));
+  if (inst) acts.appendChild(pkBtn('danger', 'Uninstall…', () => pkPreview(pack, 'uninstall', {}, { at: 'pack' }), busy));
+  head.appendChild(acts);
+  return head;
+}
+
+function pkDoesView(sec, pack) {
+  const tiles = PK_DOES[pack.id] || [['Day to day', pkPlain(pack.explain?.does)]];
+  const ul = el('ul', 'pk-does');
+  for (const [title, line] of tiles) {
+    const li = el('li');
+    li.appendChild(el('strong', null, title));
+    li.appendChild(el('span', null, line));
+    ul.appendChild(li);
+  }
+  sec.appendChild(ul);
+}
+
+/** "Say /x. These steps run in order.", with the command in code. */
+function pkRunsLead(wf) {
+  const p = el('p', 'pk-sec-lead');
+  const cmd = el('code', null, wf.command);
+  if (wf.strip && wf.stripWho === 'you') { p.append('Run ', cmd, ' in your terminal.'); return p; }
+  p.append(wf.command === '/pr-review' ? 'When a branch is ready, say ' : 'Say ', cmd, wf.strip ? '.' : '. These steps run in order.');
+  return p;
+}
+
+function pkRunsView(sec, pack, card) {
+  const wf = pack.workflow;
+  if (!wf) { sec.appendChild(el('p', 'pk-sec-lead', pkPlain(pack.explain?.does))); return; }
+  sec.appendChild(pkRunsLead(wf));
+  // A step whose part is on its way in (the install preview open for it) shows as on.
+  const picked = card.flow?.action === 'install' ? card.parts : new Set();
+  sec.appendChild(wfDiagram(wf, {
+    roles: PK.roles, rolesError: PK.rolesError, settings: PK.data.settings || {},
+    installedParts: new Set(Object.keys(pack.installed?.parts || {})), pickedParts: picked,
+    variant: card.variant, onVariant: (v) => { card.variant = v; paintPacks(); },
+  }));
+  const unset = pkUnsetLine(wf);
+  if (unset) sec.appendChild(unset);
+  if (wf.note) sec.appendChild(el('p', 'pk-flow-note', wf.note));
   if (pack.id === 'build') {
     const cross = PK_CROSS_MODES.find(([m]) => m === (PK.data.settings?.crossFamily || 'prefer'))[1];
     sec.appendChild(el('p', 'pk-cross-note', `The Grade's vendor swap follows Cross-vendor checks in the review gate's settings (now: ${cross}).`));
   }
-  // What this pack still needs, in full (the head says only "Setup needed").
-  if (own.length) sec.appendChild(el('p', 'pk-need', `Needs ${pkNeedText(own[0])}`));
-  sec.appendChild(pkFilesAndUndo(pack));
-  const busy = !!card.busy;
-  for (const r of pack.requirements.filter((x) => x.dep && !x.ok)) {
-    const dep = pkPack(r.dep);
-    sec.appendChild(pkCheck(`Also install the ${dep?.title || r.dep} pack's skill now — ${pack.title} needs it: its gate commands run the review gate's review.mjs`, card.withDeps,
-      (v) => { card.withDeps = v; pkDrop(card); paintPacks(); }, { disabled: busy }));
-  }
-
-  sec.appendChild(el('div', 'pk-label', 'Parts'));
-  const parts = el('div', 'pk-parts');
-  for (const part of pack.parts) parts.appendChild(pkPartView(pack, part, card));
-  sec.appendChild(parts);
-
-  const hs = pkHarnesses(pack);
-  if (hs.length) {
-    const row = el('div', 'pk-harnesses');
-    row.appendChild(el('span', 'pk-label-inline', 'Install for:'));
-    for (const id of hs) {
-      const h = pkHarness(id);
-      const usable = pkUsable(id);
-      const on = usable && (card.harnesses ? card.harnesses.has(id) : true);
-      const label = `${h?.label || id}${id === 'claude' && !h?.present && usable ? ' skills folder (for Grok, which reads it)' : ''} (${h?.home || ''})`;
-      const why = busy ? 'Wait for the current preview or install to finish' : usable ? null : `${h?.label || id}: ${h?.why}`;
-      row.appendChild(pkCheck(label, on, (v) => {
-        const now = new Set(card.harnesses || hs.filter(pkUsable));
-        if (v) now.add(id); else now.delete(id);
-        card.harnesses = hs.filter(pkUsable).every((x) => now.has(x)) ? null : now;
-        pkDrop(card); paintPacks();
-      }, { disabled: !usable || busy, title: why }));
-      if (!usable && h?.why) row.appendChild(el('span', 'pk-harness-why', `${h.label}: ${h.why}`));
-    }
-    sec.appendChild(row);
-  }
-
-  const actions = el('div', 'pk-actions');
-  const picked = [...card.parts];
-  const harnessesOk = !card.harnesses || card.harnesses.size > 0;
-  const why = !picked.length ? 'Pick at least one part to install.' : !harnessesOk ? 'Pick at least one CLI to install for.' : null;
-  const prev = pkBtn('', `Preview install${picked.length ? ` (${plural(picked.length, 'part')})` : ''}`, () => pkPreview(pack, 'install'), busy || !!why);
-  actions.appendChild(prev);
-  if (inst) {
-    actions.appendChild(pkBtn('', 'Preview update', () => pkPreview(pack, 'update'), busy));
-    actions.appendChild(pkBtn('danger', 'Preview uninstall', () => pkPreview(pack, 'uninstall'), busy));
-  }
-  // A disabled button says why, beside it — not only in a tooltip.
-  const blocked = why || (busy && card.busy !== 'plan' ? 'Working — wait for it to finish.' : null);
-  if (blocked) {
-    for (const b of actions.querySelectorAll('button')) if (b.disabled) b.title = blocked;
-    actions.appendChild(el('span', 'pk-why', blocked));
-  }
-  if (card.busy === 'plan') { const s = el('span', 'pk-busy'); s.appendChild(el('span', 'spinner')); s.appendChild(el('span', null, ' Working out what would change…')); actions.appendChild(s); }
-  sec.appendChild(actions);
-
-  if (card.error) {
-    const n = el('div', 'notice error pk-error');
-    n.setAttribute('role', 'alert');
-    n.appendChild(el('div', null, card.error.message));
-    if (card.error.log?.length) pkLog(n, card.error.log);
-    sec.appendChild(n);
-  }
-  if (card.preview) sec.appendChild(pkPreviewView(pack, card));
-  if (card.result) sec.appendChild(pkResultView(card));
-  return sec;
+  if (wfRoles(wf).length) sec.appendChild(el('p', 'pk-rail-note', 'Models come from your roles on the Models page.'));
 }
 
-function pkPartView(pack, part, card) {
-  const row = el('div', 'pk-part');
-  row.dataset.part = part.id;
-  const top = el('div', 'pk-part-top');
-  top.appendChild(pkCheck(part.title, card.parts.has(part.id), (v) => {
-    if (v) card.parts.add(part.id); else card.parts.delete(part.id);
-    pkDrop(card); paintPacks();
-  }, { disabled: !!card.busy }));
-  top.appendChild(document.createTextNode(' '));
-  top.appendChild(el('span', 'pk-part-meta', `${part.harnesses.length ? `For ${pkCliNames(part.harnesses)} · ` : ''}${part.default ? 'on by default' : 'off unless you pick it'}`));
-  const st = pkStatusOf(pack, part.id);
-  const statuses = st?.statuses || [pkInstalled(pack, part.id) ? PK.data.words.status.installed : PK.data.words.status.absent];
-  const badges = el('span', 'pk-badges');
-  const hsNow = st?.harnesses?.length ? st.harnesses : pack.installed?.parts?.[part.id]?.harnesses || [];
-  pkJoin(badges, ...statuses.map((x) => el('span', `pk-badge ${pkKind(x)}`, x)), ...(hsNow.length ? [el('span', 'chip-mini', `for ${hsNow.join(', ')}`)] : []));
-  top.appendChild(document.createTextNode(' '));
-  top.appendChild(badges);
-  row.appendChild(top);
-  row.appendChild(el('div', 'pk-part-what', pkPlain(part.explain?.what)));
-  const lines = [...Object.entries(st?.harness || {}).map(([h, s]) => `${h}: ${s}`), ...(st?.details || [])];
+/**
+ * One line for the roles a workflow names that are not chosen yet: "2 roles not set — choose them
+ * on Models", linked to the first one's row (#models&role=…, which opens its editor there).
+ */
+function pkUnsetLine(wf) {
+  if (!PK.roles) return null;
+  const unset = wfRoles(wf).filter((name) => { const r = PK.roles.find((x) => x.name === name); return !r || r.unset; });
+  if (!unset.length) return null;
+  const line = el('p', 'pk-unset');
+  const a = el('a', null, `${unset.length === 1 ? '1 role' : `${unset.length} roles`} not set — choose ${unset.length === 1 ? 'it' : 'them'} on Models`);
+  a.href = `#models&role=${encodeURIComponent(unset[0])}`;
+  a.title = `Unset: ${unset.join(', ')}`;
+  line.appendChild(a);
+  return line;
+}
+
+function pkSettingsSection(sec, pack) {
+  sec.appendChild(el('p', 'pk-sec-lead', 'Nothing is saved until you preview the change.'));
+  sec.appendChild(pkSettingsView(pack));
+}
+
+function pkPartsView(sec, pack, card) {
+  const lead = el('div', 'pk-parts-lead');
+  lead.appendChild(el('p', 'pk-sec-lead', 'Turn parts on or off. Each change is previewed first.'));
+  const status = el('div', 'pk-status');
+  status.id = 'pk-status';
+  lead.appendChild(status);
+  sec.appendChild(lead);
+  const ul = el('ul', 'pk-parts');
+  const installed = Object.keys(pack.installed?.parts || {});
+  for (const part of pack.parts) {
+    const li = el('li', 'pk-part');
+    li.dataset.part = part.id;
+    const text = el('div', 'pk-part-text');
+    text.appendChild(el('div', 'pk-part-name', part.title));
+    text.appendChild(el('div', 'pk-part-what', pkPlain(part.explain?.what)));
+    li.appendChild(text);
+    const w = pkPartWord(pack, part.id);
+    li.appendChild(pkStatusWord(w.word, w.tone, pkPartStatuses(pack, part.id).join(', ')));
+    const act = el('span', 'pk-part-act');
+    const busy = !!card.busy;
+    if (!pkInstalled(pack, part.id) || w.kind === 'newHarness') {
+      act.appendChild(pkBtn('', 'Add…', () => pkPreview(pack, 'install', { parts: [part.id] }, { at: part.id }), busy));
+    } else {
+      // The last part out is the pack's uninstall.
+      const only = installed.length === 1;
+      act.appendChild(pkBtn('ghost', 'Remove…', () => pkPreview(pack, 'uninstall', only ? {} : { parts: [part.id] }, { at: part.id }), busy));
+    }
+    li.appendChild(act);
+    const flow = pkFlowAt(pack, card, part.id);
+    if (flow.length) {
+      const slot = el('div', 'pk-part-flow');
+      for (const n of flow) slot.appendChild(n);
+      li.appendChild(slot);
+    }
+    ul.appendChild(li);
+  }
+  sec.appendChild(ul);
+}
+
+/** "~/.claude/skills/x/ (the skill, …)" as the path and its plain line; text with no leading path stays a line. */
+function pkChange(text) {
+  const m = /^((?:~|\$)\S*(?:(?:,| and) (?:~|\$)?\S+)*?)(?::\s+|\s+\()(.+?)\)?$/.exec(text);
+  if (!m) return { path: null, line: text };
+  const line = m[2].trim();
+  return { path: m[1], line: line[0].toUpperCase() + line.slice(1) };
+}
+
+function pkFilesView(sec, pack) {
+  const wrap = el('div', 'pk-files');
+  const what = el('div', 'pk-box');
+  what.appendChild(el('h3', null, 'What it changes'));
+  const ul = el('ul', 'pk-paths');
+  for (const ch of pack.explain?.changes || []) {
+    const { path, line } = pkChange(ch);
+    const li = el('li');
+    if (path) { li.appendChild(el('code', null, path)); li.appendChild(el('div', null, line)); }
+    else li.appendChild(el('div', null, line));
+    ul.appendChild(li);
+  }
+  what.appendChild(ul);
+  // What the status check found per part: each CLI's state and anything it noticed.
+  const lines = pack.parts.flatMap((part) => {
+    const st = pkStatusOf(pack, part.id);
+    return [...Object.entries(st?.harness || {}).map(([h, s]) => `${part.title}: ${h}: ${s}`), ...(st?.details || []).map((d) => `${part.title}: ${d}`)];
+  });
   if (lines.length) {
-    const ul = el('ul', 'pk-details');
-    for (const l of lines) ul.appendChild(el('li', null, l));
-    row.appendChild(ul);
+    what.appendChild(el('h3', 'pk-box-sub', 'On this machine'));
+    const d = el('ul', 'pk-details');
+    for (const l of lines) d.appendChild(el('li', null, l));
+    what.appendChild(d);
   }
-  // A part's full explain is in the card's "Files and undo" dialog: no fold here.
-  if (pkInstalled(pack, part.id) && Object.keys(pack.installed.parts).length > 1) {
-    const foot = el('div', 'pk-part-foot');
-    foot.appendChild(pkBtn('ghost pk-part-remove', 'Preview uninstalling this part', () => pkPreview(pack, 'uninstall', { parts: [part.id] }), !!card.busy));
-    row.appendChild(foot);
+  wrap.appendChild(what);
+  const undo = el('div', 'pk-box');
+  undo.appendChild(el('h3', null, 'Undo'));
+  undo.appendChild(pkCommand(`acs packs uninstall ${pack.id}`, 'pk-undo'));
+  if (pack.explain?.undo) undo.appendChild(el('p', null, pack.explain.undo));
+  const legacy = PK.status?.legacy?.length ? PK.status.legacy : PK.data.legacy;
+  if (pack.id === 'review-gate' && legacy?.length) {
+    const n = el('div', 'pk-notice pk-legacy');
+    n.appendChild(el('strong', null, 'Older install found.'));
+    n.appendChild(document.createTextNode(' The review script still reads its log and config. The installer does not move them.'));
+    n.appendChild(el('div', 'pk-notice-paths', legacy.join(', ')));
+    undo.appendChild(n);
   }
-  return row;
+  wrap.appendChild(undo);
+  sec.appendChild(wrap);
+}
+
+/** The status line: running with its latest progress, or when it was checked and a quiet Refresh. */
+function pkPaintStatus() {
+  const s = $('pk-status');
+  if (!s || !pkShown()) return;
+  s.innerHTML = '';
+  const line = el('div', 'pk-status-line');
+  if (PK.job) {
+    line.appendChild(el('span', 'spinner'));
+    const last = PK.job.progress?.at(-1)?.message || 'starting the status check…';
+    const live = el('span', 'pk-status-text', `${last} (${Math.round((PK.job.elapsedMs || 0) / 1000)} s)`);
+    live.setAttribute('aria-live', 'polite');
+    line.appendChild(live);
+  } else {
+    const when = PK.status?.checkedAt ? new Date(PK.status.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null;
+    const text = el('span', 'pk-status-text', when ? `Checked at ${when}` : 'Not checked yet');
+    if (when) text.title = PK.status.trust ? 'With the Codex trust check' : 'Without the Codex trust check (set on Setup)';
+    line.appendChild(text);
+    line.appendChild(pkBtn('ghost', 'Refresh', () => pkCheckStatus()));
+  }
+  s.appendChild(line);
+  if (PK.statusError) {
+    const n = el('div', 'notice error');
+    n.setAttribute('role', 'alert');
+    n.textContent = `The status check failed: ${PK.statusError}`;
+    s.appendChild(n);
+  }
 }
 
 /* ── the review gate's Settings section: one writer, one pending preview ── */
@@ -634,7 +869,7 @@ function pkChoiceLines(options, key) {
 }
 
 /**
- * The review gate card's Settings: the security pass, agent merge, the paths that always need you and
+ * The review gate's Settings: the security pass, agent merge, the paths that always need you and
  * cross-vendor checks. Only with the code-review part installed: it ships the scripts that read them.
  */
 function pkSettingsView(pack) {
@@ -711,7 +946,7 @@ function pkOtherSettings(rc) {
   const entry = rc.exists ? (S.registry?.groups || []).flatMap((g) => g.entries).find((e) => e.files.some((f) => f.display === rc.file)) : null;
   if (entry) {
     line.appendChild(document.createTextNode(' '));
-    line.appendChild(pkBtn('ghost', 'Open in Files', () => openEntry(entry, entry.files.find((f) => f.display === rc.file).path, 'packs')));
+    line.appendChild(pkBtn('ghost', 'Open in Files', () => openEntry(entry, entry.files.find((f) => f.display === rc.file).path, S.view)));
   }
   return line;
 }
@@ -825,7 +1060,62 @@ async function pkSettingsApply() {
   paintPacks();
 }
 
-/** The request the card describes for `action`: exactly what the preview and the apply send. */
+/**
+ * A modal dialog over the page (Models' "Used by" and the skill wizard's reply): focus moves in and stays in
+ * (Tab and Shift+Tab wrap), Esc or Close shuts it, and focus goes back to what opened it.
+ */
+let pkDialogN = 0;
+function pkDialog(title, body, opener, reopen) {
+  document.body.querySelector('.pk-dialog')?.pkClose?.();
+  const scrim = el('div', 'pk-scrim');
+  const d = el('div', 'pk-dialog');
+  const id = `pk-dialog-title-${++pkDialogN}`;
+  d.setAttribute('role', 'dialog');
+  d.setAttribute('aria-modal', 'true');
+  d.setAttribute('aria-labelledby', id);
+  const head = el('div', 'pk-dialog-head');
+  const h = el('h2', 'pk-dialog-title', title);
+  h.id = id;
+  head.appendChild(h);
+  const close = el('button', 'btn ghost', 'Close');
+  head.appendChild(close);
+  d.appendChild(head);
+  d.appendChild(body);
+  const shut = () => {
+    scrim.remove();
+    d.remove();
+    // The page may have repainted under the dialog: find its button again.
+    const back = opener && document.body.contains(opener) ? opener : reopen?.();
+    back?.focus();
+  };
+  d.pkClose = shut;
+  close.onclick = shut;
+  scrim.onclick = shut;
+  d.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); shut(); return; }
+    // The app's ⌘/Ctrl shortcuts (search, save, edit) act on the page behind: none reach it while the dialog is open.
+    if (e.metaKey || e.ctrlKey) {
+      e.stopPropagation();
+      if (['k', 's', 'e'].includes(String(e.key).toLowerCase())) e.preventDefault();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    // A real NodeList has no .filter: spread it first.
+    const f = [...d.querySelectorAll('button, a[href], input, select, textarea, [tabindex="0"]')].filter((x) => !x.disabled);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+  document.body.appendChild(scrim);
+  document.body.appendChild(d);
+  close.focus();
+  return d;
+}
+
+/* ── install, update, uninstall: previewed under the button that asked ── */
+
+/** The request the page describes for `action`: exactly what the preview and the apply send. */
 function pkBody(pack, action, card, extra = {}) {
   if (action === 'install') {
     const b = { action, pack: pack.id, parts: pack.parts.map((p) => p.id).filter((id) => card.parts.has(id)) };
@@ -838,16 +1128,37 @@ function pkBody(pack, action, card, extra = {}) {
   return { action, pack: pack.id, ...(extra.parts ? { parts: extra.parts } : {}) };
 }
 
-/** Ask for the plan; a fresh preview starts with the preview-only offers (roles, replace) unticked. */
-async function pkPreview(pack, action, extra = {}, { keepOffers = false } = {}) {
+/** The CLIs an install of the picked parts can be for. */
+const pkFlowHarnesses = (pack, card) => [...new Set(pack.parts.filter((p) => card.parts.has(p.id)).flatMap((p) => p.harnesses))];
+/** Why an install cannot be previewed as asked, or null. */
+function pkInstallWhy(pack, card) {
+  if (!card.parts.size) return 'Pick at least one part to install.';
+  if (card.harnesses && card.harnesses.size === 0) return 'Pick at least one CLI to install for.';
+  return null;
+}
+
+/**
+ * Ask for the plan. A new action (`at` given) starts a fresh request under the button at `at`: an install
+ * of `extra.parts` or the default parts, for every usable CLI, with the preview-only offers unticked.
+ * `keepOffers` re-asks for the same action after a choice in the preview changed it.
+ */
+async function pkPreview(pack, action, extra = {}, { keepOffers = false, at } = {}) {
   const card = pkCard(pack);
-  if (!keepOffers) { card.setRoles = {}; card.replace = false; }
+  if (at !== undefined || !card.flow) {
+    card.flow = { action, at: at ?? 'pack', extra };
+    card.setRoles = {}; card.replace = false;
+    if (action === 'install') { card.parts = new Set(extra.parts || pkDefaults(pack)); card.harnesses = null; card.withDeps = false; }
+  } else {
+    card.flow = { ...card.flow, action };
+    if (!keepOffers) { card.setRoles = {}; card.replace = false; }
+  }
   pkDrop(card);
   card.result = null;
+  if (action === 'install' && pkInstallWhy(pack, card)) { card.busy = null; paintPacks(); return; }
   card.busy = 'plan';
   const seq = card.seq;
   paintPacks();
-  const body = pkBody(pack, action, card, extra);
+  const body = pkBody(pack, action, card, card.flow.extra);
   try {
     const view = await api('POST', '/api/packs/plan', body);
     if (seq !== card.seq) return;
@@ -860,11 +1171,79 @@ async function pkPreview(pack, action, extra = {}, { keepOffers = false } = {}) 
   paintPacks();
 }
 
+/** What renders under the button at `at`: the action in progress there, and the result of the last one. */
+function pkFlowAt(pack, card, at) {
+  const out = [];
+  if (card.flow?.at === at) out.push(pkPreviewView(pack, card));
+  if (card.result?.at === at) out.push(pkResultView(card));
+  return out;
+}
+
+/** The choices an install needs before its preview: which CLIs, and another pack it depends on. */
+function pkInstallChoices(pack, card, box) {
+  const busy = !!card.busy;
+  const hs = pkFlowHarnesses(pack, card);
+  if (hs.length) {
+    const row = el('div', 'pk-harnesses');
+    row.appendChild(el('span', 'pk-label-inline', 'Install for:'));
+    for (const id of hs) {
+      const h = pkHarness(id);
+      const usable = pkUsable(id);
+      const on = usable && (card.harnesses ? card.harnesses.has(id) : true);
+      const label = `${h?.label || id}${id === 'claude' && !h?.present && usable ? ' skills folder (for Grok, which reads it)' : ''} (${h?.home || ''})`;
+      const why = busy ? 'Wait for the preview to finish' : usable ? null : `${h?.label || id}: ${h?.why}`;
+      row.appendChild(pkCheck(label, on, (v) => {
+        const now = new Set(card.harnesses || hs.filter(pkUsable));
+        if (v) now.add(id); else now.delete(id);
+        card.harnesses = hs.filter(pkUsable).every((x) => now.has(x)) ? null : now;
+        pkPreview(pack, 'install', {}, { keepOffers: true });
+      }, { disabled: !usable || busy, title: why }));
+      if (!usable && h?.why) row.appendChild(el('span', 'pk-harness-why', `${h.label}: ${h.why}`));
+    }
+    box.appendChild(row);
+  }
+  for (const r of pack.requirements.filter((x) => x.dep && !x.ok)) {
+    const dep = pkPack(r.dep);
+    box.appendChild(pkCheck(`Also install the ${dep?.title || r.dep} pack's skill now — ${pack.title} needs it: its gate commands run the review gate's review.mjs`, card.withDeps,
+      (v) => { card.withDeps = v; pkPreview(pack, 'install', {}, { keepOffers: true }); }, { disabled: busy }));
+  }
+}
+
 function pkPreviewView(pack, card) {
-  const { action, view } = card.preview;
+  const action = card.flow.action;
   const box = el('div', `pk-preview pk-preview-${action}`);
   box.setAttribute('role', 'region');
   box.setAttribute('aria-label', `${PK_VERB[action]} preview`);
+  if (action === 'install') pkInstallChoices(pack, card, box);
+  const why = action === 'install' ? pkInstallWhy(pack, card) : null;
+  if (why) box.appendChild(el('p', 'pk-why', why));
+  if (card.busy === 'plan') { const s = el('p', 'pk-busy'); s.appendChild(el('span', 'spinner')); s.appendChild(el('span', null, ' Working out what would change…')); box.appendChild(s); }
+  if (card.error) {
+    const n = el('div', 'notice error pk-error');
+    n.setAttribute('role', 'alert');
+    n.appendChild(el('div', null, card.error.message));
+    if (card.error.log?.length) pkLog(n, card.error.log);
+    box.appendChild(n);
+  }
+  if (card.preview) pkPreviewBody(pack, card, box);
+  const bar = el('div', 'pk-actions');
+  if (card.preview) {
+    const { view } = card.preview;
+    const can = view.changes && !view.refusals.length;
+    bar.appendChild(pkBtn(action === 'uninstall' ? 'danger pk-apply' : 'primary pk-apply', card.busy === 'apply' ? `${PK_VERB[action].replace(/e$/, '')}ing…` : PK_VERB[action], () => pkApply(pack), !can || !!card.busy));
+  } else if (card.error && !card.busy && !why) {
+    bar.appendChild(pkBtn('', 'Preview again', () => pkPreview(pack, action, card.flow.extra, { at: card.flow.at })));
+  }
+  bar.appendChild(pkBtn('ghost', 'Cancel', () => { card.flow = null; pkDrop(card); paintPacks(); }, card.busy === 'apply'));
+  if (card.busy === 'apply') bar.appendChild(el('span', 'spinner'));
+  box.appendChild(bar);
+  if (card.preview?.view.changes && !card.preview.view.refusals.length) box.appendChild(el('div', 'pk-note', `${PK_VERB[action]} applies exactly this preview. If anything on disk changes first, it stops and asks you to preview again.`));
+  return box;
+}
+
+/** The plan as the CLI words it: the head, what fails, every path and setting, what is kept or refused, the offers. */
+function pkPreviewBody(pack, card, box) {
+  const { action, view } = card.preview;
   box.appendChild(el('div', 'pk-preview-head', `${PK_VERB[action]}: ${view.packs.join(', ')}${view.units.length ? ` — ${view.units.map((u) => `${u.key}${u.harnesses.length ? ` (${u.harnesses.join(', ')})` : ''}`).join(', ')}` : ''}`));
   const list = (cls, items, fmt) => {
     if (!items.length) return;
@@ -929,29 +1308,21 @@ function pkPreviewView(pack, card) {
     box.appendChild(offer);
   }
   if (!view.changes && !view.refusals.length) box.appendChild(el('div', 'pk-note pk-nothing', 'Nothing to change.'));
-
-  const bar = el('div', 'pk-actions');
-  const can = view.changes && !view.refusals.length;
-  const go = pkBtn(action === 'uninstall' ? 'danger pk-apply' : 'primary pk-apply', card.busy === 'apply' ? `${PK_VERB[action].replace(/e$/, '')}ing…` : PK_VERB[action], () => pkApply(pack), !can || !!card.busy);
-  bar.appendChild(go);
-  bar.appendChild(pkBtn('ghost', 'Cancel', () => { pkDrop(card); paintPacks(); }, card.busy === 'apply'));
-  if (card.busy === 'apply') bar.appendChild(el('span', 'spinner'));
-  box.appendChild(bar);
-  if (can) box.appendChild(el('div', 'pk-note', `${PK_VERB[action]} applies exactly this preview. If anything on disk changes first, it stops and asks you to preview again.`));
-  return box;
 }
 
 async function pkApply(pack) {
   const card = pkCard(pack);
   if (!card.preview || card.busy) return;
   const { action, body, view } = card.preview;
+  const at = card.flow?.at ?? 'pack';
   card.busy = 'apply';
   card.error = null;
   paintPacks();
   try {
     const r = await api('POST', '/api/packs/apply', { ...body, signature: view.signature });
-    card.result = { action, r };
+    card.result = { action, r, at };
     card.preview = null;
+    card.flow = null;
   } catch (e) {
     card.error = { message: e.message, log: e.body?.log };
     // A stale preview (409) is gone; anything else keeps it on screen beside the error.
@@ -982,23 +1353,15 @@ function pkResultView(card) {
   list(r.notes, (x) => `note: ${x}`);
   list(r.warnings, (x) => `warning: ${x}`);
   if (r.log?.length) pkLog(n, r.log);
-  const close = pkBtn('ghost', 'Dismiss', () => { card.result = null; paintPacks(); });
-  n.appendChild(close);
+  n.appendChild(pkBtn('ghost', 'Dismiss', () => { card.result = null; paintPacks(); }));
   return n;
 }
 
-/** The installers' output: a button to a dialog, not a fold. */
+/** The installers' output, in place under its result: a short scrolling box, never a fold. */
 function pkLog(box, lines) {
-  const b = el('button', 'btn pk-log-btn', 'Installer output');
-  b.setAttribute('aria-haspopup', 'dialog');
-  b.onclick = () => {
-    const body = el('div', 'pk-dialog-body');
-    body.appendChild(el('pre', 'pk-log', lines.join('\n')));
-    // The post-install status check repaints the card under the dialog: find its new button by the pack it sits in.
-    let k = b;
-    while (k && !k.dataset?.pack) k = k.parentNode;
-    const id = k?.dataset?.pack;
-    pkDialog('Installer output', body, b, () => (id ? document.querySelector(`[data-pack="${id}"]`)?.querySelector('.pk-log-btn') : null));
-  };
-  box.appendChild(b);
+  box.appendChild(el('div', 'pk-log-head', 'Installer output'));
+  const pre = el('pre', 'pk-log', lines.join('\n'));
+  pre.tabIndex = 0;
+  pre.setAttribute('aria-label', 'Installer output');
+  box.appendChild(pre);
 }
