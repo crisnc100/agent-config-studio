@@ -118,6 +118,12 @@ spells out the format.
 - CI (`.github/workflows/ci.yml`) runs the groups `guards`, `offline` (Node
   20.0.0 and LTS, with `ACS_SUITE=offline`) and `stranger-macos`. `package`
   and `bunx` run their files by name, since they pass the packed tarball.
+  The `syntax` job runs `node --check` on `server.js` and on each `.js` and
+  `.mjs` file under `lib`, `tests`, `public`, `bin`, `packs`, `tools` and
+  `blocks`, one file per run, and fails when it finds none;
+  `tests/ci-syntax-step.mjs`, in `guards`, runs that step against fixture
+  trees. The `syntax` job also writes to the run's summary that live
+  containment is a local gate and was not checked.
 - `node tests/suite-coverage.mjs`, in `guards` and `verify.sh`, fails when a
   test file (`tests/*.mjs`, `packs/*/tests/*.mjs`) is not listed once, a
   `ci:` group has no job, or `ci.yml` or `verify.sh` runs a test file the list
