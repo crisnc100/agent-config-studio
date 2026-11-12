@@ -1,0 +1,34 @@
+{"rows":[
+ {"behavior":"One test list (tests/SUITE) read by verify.sh and CI through tests/run.mjs","files":["tests/SUITE","tests/run.mjs","verify.sh",".github/workflows/ci.yml"],"docs":[{"path":"RUNBOOK.md","claims":[
+  {"claim":"verify.sh snapshots the real home, runs node tests/run.mjs --local, and checks the snapshot on every exit","at":"verify.sh:17"},
+  {"claim":"the snapshot is checked on every exit","at":"verify.sh:15"},
+  {"claim":"tests/phase1.mjs is in the verify.sh run (ci:offline without ci-only)","at":"tests/SUITE:70"},
+  {"claim":"lanes ci:<group>, ci-only, local, pending-ci, manual, helper; non-ci lanes need a reason","at":"tests/run.mjs:63"},
+  {"claim":"the SUITE header spells out the format","at":"tests/SUITE:6"},
+  {"claim":"--local runs ci lines without ci-only plus local lines","at":"tests/run.mjs:70"},
+  {"claim":"--list prints the files without running them","at":"tests/run.mjs:109"},
+  {"claim":"stops at the first failing file with that file's exit code","at":"tests/run.mjs:126"},
+  {"claim":"refuses a group with no files","at":"tests/run.mjs:102"},
+  {"claim":"CI runs group guards","at":".github/workflows/ci.yml:171"},
+  {"claim":"CI runs group offline on Node 20.0.0 and LTS with ACS_SUITE=offline","at":".github/workflows/ci.yml:78"},
+  {"claim":"offline matrix is 20.0.0 and lts/*","at":".github/workflows/ci.yml:60"},
+  {"claim":"CI runs group stranger-macos","at":".github/workflows/ci.yml:107"},
+  {"claim":"package runs its file by name with the packed tarball","at":".github/workflows/ci.yml:137"},
+  {"claim":"bunx runs its file by name with the packed tarball","at":".github/workflows/ci.yml:160"}]}]},
+ {"behavior":"tests/suite-coverage.mjs guards the list against unlisted files and ungated lanes","files":["tests/suite-coverage.mjs","tests/SUITE"],"docs":[{"path":"RUNBOOK.md","claims":[
+  {"claim":"suite-coverage is in guards and verify.sh (ci:guards without ci-only)","at":"tests/SUITE:26"},
+  {"claim":"fails when a test file (tests/*.mjs, packs/*/tests/*.mjs) is not listed once","at":"tests/suite-coverage.mjs:4"},
+  {"claim":"fails when a ci group has no job, or ci.yml runs a test file the list does not give it","at":"tests/suite-coverage.mjs:8"},
+  {"claim":"fails when verify.sh runs a test file directly","at":"tests/suite-coverage.mjs:11"}]}]},
+ {"behavior":"The CI syntax step checks every file under lib, tests, public, bin, packs, tools and blocks, one node --check each, and fails on none","files":[".github/workflows/ci.yml","tests/ci-syntax-step.mjs","tests/SUITE"],"docs":[{"path":"RUNBOOK.md","claims":[
+  {"claim":"node --check on server.js","at":".github/workflows/ci.yml:32"},
+  {"claim":"source folders lib tests public bin packs tools blocks","at":".github/workflows/ci.yml:36"},
+  {"claim":"fails when it finds no file","at":".github/workflows/ci.yml:38"},
+  {"claim":"one node --check per file","at":".github/workflows/ci.yml:39"},
+  {"claim":"tests/ci-syntax-step.mjs is in guards","at":"tests/SUITE:28"},
+  {"claim":"ci-syntax-step runs that step against fixture trees","at":"tests/ci-syntax-step.mjs:2"}]}]},
+ {"behavior":"CI jobs have timeouts and superseded pull-request runs are cancelled","files":[".github/workflows/ci.yml"],"none":"Runner configuration; the ci.yml comment at the concurrency block explains it and no maintainer task depends on it"},
+ {"behavior":"The live-containment notice is written once to the CI job summary from the syntax job","files":[".github/workflows/ci.yml"],"docs":[{"path":"RUNBOOK.md","claims":[
+  {"claim":"the syntax job writes to the run's summary that live containment is a local gate and was not checked","at":".github/workflows/ci.yml:50"},
+  {"claim":"it writes even when the job fails","at":".github/workflows/ci.yml:44"}]}]}
+]}

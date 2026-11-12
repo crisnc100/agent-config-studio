@@ -8,9 +8,19 @@ on:
     branches: [main]
   pull_request:
 
+# A new push to a PR cancels that PR's run still in progress. A push to main
+# gets a group of its own (its sha), so a run on main is never cancelled or
+# left pending behind another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# The test files each job runs, and their order, are in tests/SUITE;
+# `node tests/run.mjs <group>` runs one group and fails on a group with no files.
 jobs:
   syntax:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -20,15 +30,24 @@ jobs:
         run: |
           set -euo pipefail
           node --check server.js
-          find lib tests public bin \( -name '*.js' -o -name '*.mjs' \) -exec node --check {} +
+          # node --check reads only its first file (the rest become script
+          # arguments), so each file gets its own run; xargs exits non-zero if
+          # any run does. An empty match would pass vacuously, so it fails.
+          src=(lib tests public bin packs tools blocks)
+          n=$(find "${src[@]}" \( -name '*.js' -o -name '*.mjs' \) | wc -l)
+          if [ "$n" -eq 0 ]; then echo "no .js or .mjs file under ${src[*]}" >&2; exit 1; fi
+          find "${src[@]}" \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n 1 node --check
+          echo "node --check: server.js and $n files"
+      # Once per run: a job summary shows on the run's page whichever job
+      # failed, and always() writes it when this job fails too.
       - name: live containment is a local gate
         if: always()
         run: |
-          echo "============================================================"
-          echo "Live containment checks are a LOCAL gate (./verify.sh)"
-          echo "and were not run here."
-          echo "A green CI tick is not a containment pass."
-          echo "============================================================"
+          {
+            echo '> [!WARNING]'
+            echo '> Live containment checks are a **local** gate (./verify.sh) and were not run here.'
+            echo '> A green CI tick is not a containment pass.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   offline-node:
     # The declared minimum (package.json engines: >=20), pinned exactly, and
@@ -40,6 +59,7 @@ jobs:
       matrix:
         node: ['20.0.0', 'lts/*']
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -55,86 +75,7 @@ jobs:
         run: |
           set -euo pipefail
           node --version
-          node tests/phase1.mjs
-          node tests/phase2a.mjs
-          node tests/usage-codex.mjs
-          node tests/usage-claude.mjs
-          node tests/usage-grok.mjs
-          node tests/usage-identity.mjs
-          node tests/usage-seats.mjs
-          node tests/usage-routes.mjs
-          node tests/usage-refresh.mjs
-          node tests/usage-cli.mjs
-          node tests/roots.mjs
-          node tests/roots-routes.mjs
-          node tests/roots-revoke.mjs
-          node tests/roots-history.mjs
-          node tests/roots-builtins.mjs
-          node tests/roots-resolver.mjs
-          node tests/roots-live.mjs
-          node tests/roots-ui.mjs
-          node tests/batch-delete.mjs
-          node tests/batch-delete-memory.mjs
-          node tests/batch-delete-ui.mjs
-          node tests/real-home-roots.mjs
-          node tests/fresh-home.mjs
-          node tests/setup-guards.mjs
-          node tests/setup-credentials.mjs
-          node tests/setup-routes.mjs
-          node tests/setup-clis.mjs
-          node tests/setup-scan.mjs
-          node tests/setup-accounts.mjs
-          node tests/setup-commands.mjs
-          node tests/setup-ui.mjs
-          node tests/setup-walkthrough.mjs
-          node tests/no-personal-paths.mjs
-          node tests/readme.mjs
-          node tests/models-roots.mjs
-          node tests/roles.mjs
-          node tests/roles-routes.mjs
-          node tests/roles-unit.mjs
-          node tests/ask-model.mjs
-          node tests/roles-ui.mjs
-          node tests/model-guide.mjs
-          node tests/model-guide-routes.mjs
-          node tests/model-guide-ui.mjs
-          node tests/audit.mjs
-          node tests/audit-routes.mjs
-          node tests/audit-ui.mjs
-          node tests/assist-files.mjs
-          node tests/assist-turn.mjs
-          node tests/skill-wizard.mjs
-          node tests/skill-wizard-routes.mjs
-          node tests/skill-wizard-structured.mjs
-          node tests/skill-wizard-multi.mjs
-          node tests/assist-files-ui.mjs
-          node tests/skill-wizard-ui.mjs
-          node tests/skill-wizard-multi-ui.mjs
-          node tests/walk-partial.mjs
-          node tests/notice-placement-ui.mjs
-          node tests/home-refresh.mjs
-          node tests/assist-containment.mjs
-          node tests/acs-update.mjs
-          node tests/acs-launcher.mjs
-          node tests/stranger.mjs
-          node tests/packs-catalog.mjs
-          node tests/packs-install.mjs
-          node tests/packs-update.mjs
-          node tests/packs-hooks.mjs
-          node tests/packs-uninstall-backup.mjs
-          node packs/flag/tests/flag.test.mjs
-          node tests/cleanup-launcher.mjs
-          node tests/packs-server.mjs
-          node tests/packs-ui.mjs
-          node tests/packs-review-settings.mjs
-      - name: live containment is a local gate
-        if: always()
-        run: |
-          echo "============================================================"
-          echo "Live containment checks are a LOCAL gate (./verify.sh)"
-          echo "and were not run here."
-          echo "A green CI tick is not a containment pass."
-          echo "============================================================"
+          node tests/run.mjs offline
 
   # main's branch protection requires a check named exactly `offline`; the
   # matrix reports `offline (<node>)`. This passes only when every Node did.
@@ -142,15 +83,16 @@ jobs:
     needs: offline-node
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: every Node version passed
         run: test "${{ needs.offline-node.result }}" = success
 
   stranger-macos:
     # The README is written for a Mac: follow it there too. Current LTS only —
-    # the minimum Node is covered by offline (20.0.0), and macOS minutes bill
-    # at 10x on a private repo.
+    # the minimum Node is covered by offline (20.0.0).
     runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -162,9 +104,7 @@ jobs:
         run: |
           set -euo pipefail
           node --version
-          node tests/acs-launcher.mjs
-          node tests/stranger.mjs
-          node tests/readme.mjs
+          node tests/run.mjs stranger-macos
 
   package:
     # The npm package as a stranger gets it (tests/package.mjs): `npm pack`,
@@ -180,6 +120,7 @@ jobs:
           - { os: ubuntu-latest, node: 'lts/*' }
           - { os: macos-latest, node: 'lts/*' }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -200,6 +141,7 @@ jobs:
     # tarball and runs bin/acs, which starts the studio with node — not that
     # the studio runs on Bun's runtime.
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -219,20 +161,11 @@ jobs:
 
   guards:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: static security guards
-        run: |
-          node tests/guards.mjs
-          node tests/setup-guards.mjs
-      - name: live containment is a local gate
-        if: always()
-        run: |
-          echo "============================================================"
-          echo "Live containment checks are a LOCAL gate (./verify.sh)"
-          echo "and were not run here."
-          echo "A green CI tick is not a containment pass."
-          echo "============================================================"
+      - name: static security guards and the test list
+        run: node tests/run.mjs guards
