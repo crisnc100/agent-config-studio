@@ -27,6 +27,8 @@ tests/setup-guards.mjs                                ci:guards
 tests/suite-coverage.mjs                              ci:guards
 # ci.yml's syntax step fails on a bad file wherever it sits, and when it finds no file.
 tests/ci-syntax-step.mjs                              ci:guards
+# ci.yml's packs condition exits 0 under bash -e and skips the pack tests only on a proven "packs/ unchanged".
+tests/ci-packs-step.mjs                               ci:guards
 # run.mjs --jobs: output in run order, the stop rule, serial files, live output without it.
 tests/run-jobs.mjs                                    ci:guards
 # Nothing shipped names one person's machine; the README claims only what the code does.

@@ -158,7 +158,7 @@ const GOOD = {
     '    runs-on: ubuntu-latest',
     '    steps:',
     '      - run: node tests/run.mjs offline',
-    "      - if: steps.packs.outputs.run == 'true'",
+    "      - if: steps.packs.outputs.run != 'false'",
     '        run: node tests/run.mjs packs',
     '  mac:',
     '    steps:',
