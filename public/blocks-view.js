@@ -396,7 +396,7 @@ function bbMatchPart(sec, b, copy) {
   const p = m.preview;
   if (p) {
     const at = p.endLine > p.line ? `lines ${p.line}–${p.endLine}` : `line ${p.line}`;
-    box.appendChild(el('p', null, `In ${p.file}, ${at} become the reference version:`));
+    box.appendChild(el('p', null, `In ${p.file}, ${at} ${p.endLine > p.line ? 'become' : 'becomes'} the reference version:`));
     box.appendChild(bbLineDiff(p.diff, p.line));
     box.appendChild(el('p', 'bb-match-note', 'The old file is saved to History first, so you can put it back. Nothing else in the file changes.'));
     const yes = el('button', 'btn primary', m.busy ? 'Saving…' : 'Make it match');
@@ -408,7 +408,8 @@ function bbMatchPart(sec, b, copy) {
   }
   const cancel = el('button', 'btn ghost', 'Cancel');
   cancel.disabled = m.busy;
-  cancel.onclick = () => { BB.match = null; paintCompare(); };
+  // After a refusal the copy's lines on the page may be out of date: read them again.
+  cancel.onclick = () => { const refused = !!m.error; BB.match = null; if (refused) bbLoad(); else paintCompare(); };
   acts.appendChild(cancel);
   box.appendChild(acts);
   sec.appendChild(box);

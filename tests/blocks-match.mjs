@@ -135,6 +135,8 @@ try {
     // The copy moved down a line: the old line no longer names it.
     fs.writeFileSync(f, `Extra.\n${before}`);
     const gone = await refusal(() => matcher.apply(ask(c, { signature: p.signature })));
+    const shifted = await refusal(() => matcher.preview(ask(c)));
+    ok('QA preview of a copy that moved says to preview again, the button the page offers', shifted?.status === 409 && /Preview it again\.$/.test(shifted.message), shifted?.message);
     ok('a copy no longer at the line the preview named is refused as changed (409)', gone?.status === 409 && read(f) === `Extra.\n${before}`, `${gone?.status} ${gone?.message}`);
   }
 

@@ -442,6 +442,47 @@ console.log('\nCompare copies: Preview again checks again first');
   }
 }
 
+/* ── browser QA fixes: one line's grammar, Cancel after a refusal ────── */
+console.log('\nCompare copies: QA fixes');
+{
+  const RP = RICH.blocks.find((b) => b.id === 'review-policy');
+  const view = () => ({ blocks: [{ ...RP, copies: RP.copies.filter((c) => c.line === 220).map((c) => ({ ...c, canMatch: true, whyNot: null })) }], scanned: RICH.scanned });
+  let answer = (b) => ({ file: b.file, line: 7, endLine: 7, removed: ['a'], added: ['b'], signature: 'd'.repeat(64), diff: [{ op: '-', line: 'a' }, { op: '+', line: 'b' }] });
+  const seen = [];
+  const base = routesFor({ 'GET /api/blocks': () => view(), 'POST /api/blocks/match/preview': (b) => answer(b) });
+  const routes = Object.assign(async (m, pth, b, u) => { seen.push(`${m} ${pth}`); return base(m, pth, b, u); }, base);
+  try {
+    const p = await bootPage({ routes, hash: '#blocks/compare&rule=review-policy' });
+    const c = p.$('content');
+    const t = (n) => (n ? p.text(n) : '');
+    const btn = (label) => c.querySelectorAll('button').find((b) => t(b) === label);
+    await until(() => btn('Make this copy match'));
+    btn('Make this copy match').click();
+    await until(() => btn('Make it match'));
+    ok('QA a one-line preview says "line 7 becomes"', /, line 7 becomes the reference version:/.test(t(c.querySelector('.bb-match'))), t(c.querySelector('.bb-match')));
+    btn('Cancel').click();
+    await settle(10);
+    answer = () => { throw { status: 409, body: { error: 'This copy is not where it was: the file changed. Preview it again.' } }; };
+    btn('Make this copy match').click();
+    await until(() => btn('Preview again'));
+    seen.length = 0;
+    btn('Cancel').click();
+    await until(() => seen.includes('GET /api/blocks') && btn('Make this copy match'));
+    ok('QA Cancel after a refused preview checks again, so the copy\'s lines are current', seen.includes('GET /api/blocks') && !c.querySelector('.bb-match'), seen.join(', '));
+    ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
+    p.done();
+  } catch (err) {
+    ok(`no QA-fix test block threw (${err?.message || err})`, false, err?.stack || String(err));
+  }
+  const css = fs.readFileSync(path.join(PUB, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const bb = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /\.bb-/.test(m[1]));
+  const px = bb.flatMap((m) => [...m[2].matchAll(/font(?:-size)?\s*:\s*[^;]*?(\d+(?:\.\d+)?)px/g)].map((x) => [m[1].trim(), Number(x[1])]));
+  ok('QA nothing on the Shared rules pages is under 12px, the file path under each copy included', px.length > 5 && px.every(([, n]) => n >= 12)
+    && px.some(([sel]) => sel === '.bb-path'), px.filter(([, n]) => n < 12).map((x) => x.join(' ')).join(' | '));
+  const sameSec = bb.filter((m) => m[1].split(',').some((x) => x.trim() === '.bb-cmp.bb-same')).map((m) => m[2]).join(';');
+  ok('QA a matching copy\'s section keeps the gap below it that the other sections have', /margin\s*:\s*0 0 14px/.test(sameSec), sameSec);
+}
+
 /* ── static: the view only reads; its colours are the theme's ────────── */
 console.log('\nstatic: blocks-view.js and its styles');
 {
