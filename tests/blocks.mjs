@@ -262,7 +262,7 @@ try {
   }
   const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   const routes = [...src.matchAll(/'(GET|POST|PUT|DELETE|PATCH) (\/api\/blocks[^']*)'/g)].map((m) => `${m[1]} ${m[2]}`);
-  ok('server.js declares one blocks route, and it is a GET', JSON.stringify(routes) === JSON.stringify(['GET /api/blocks']), routes.join(', '));
+  ok('server.js declares the blocks routes: one GET, and the preview and apply of making one copy match', JSON.stringify(routes) === JSON.stringify(['GET /api/blocks', 'POST /api/blocks/match/preview', 'POST /api/blocks/match/apply']), routes.join(', '));
   const lib = fs.readFileSync(path.join(ROOT, 'lib', 'blocks.js'), 'utf8');
   ok('lib/blocks.js has no write call', !/\b(writeFile|appendFile|rename|unlink|rmSync|mkdir|copyFile|symlink|truncate|createWriteStream)\w*\(/.test(lib));
 } finally {
