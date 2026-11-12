@@ -1,42 +1,232 @@
-{"rows":[
- {"behavior":"tests/run.mjs --jobs N runs up to N files side by side, output captured per file and printed whole in run order, serial files alone first, a failure stops new starts and exits with the first failing file's code in list order","files":["tests/run.mjs","tests/run-jobs.mjs"],"docs":[{"path":"RUNBOOK.md","claims":[
-  {"claim":"without --jobs it runs one file at a time with output live and stops at the first failing file with its exit code","at":"tests/run.mjs:144"},
-  {"claim":"the sequential run exits with the failing file's code","at":"tests/run.mjs:150"},
-  {"claim":"--jobs N runs up to N files at once","at":"tests/run.mjs:242"},
-  {"claim":"anything but a positive whole number is refused with exit 2","at":"tests/run.mjs:106"},
-  {"claim":"refuse exits 2","at":"tests/run.mjs:90"},
-  {"claim":"each file's output is held in a temp file","at":"tests/run.mjs:183"},
-  {"claim":"printed whole, in run order","at":"tests/run.mjs:218"},
-  {"claim":"serial files run first, one at a time","at":"tests/run.mjs:241"},
-  {"claim":"they run first because after the shared files the machine's backlog made wall-clock tests miss","at":"tests/run.mjs:172"},
-  {"claim":"a failure starts no new file","at":"tests/run.mjs:205"},
-  {"claim":"names the files not run","at":"tests/run.mjs:249"},
-  {"claim":"exits with the code of the first failing file in list order","at":"tests/run.mjs:248"},
-  {"claim":"verify.sh does not use --jobs","at":"verify.sh:17"},
-  {"claim":"tests/run-jobs.mjs proves this in guards","at":"tests/SUITE:33"}]}]},
- {"behavior":"tests/SUITE gains the serial mark, valid only with ci:<group> or local, on roots-live and assist-containment","files":["tests/SUITE","tests/run.mjs"],"docs":[{"path":"RUNBOOK.md","claims":[
-  {"claim":"serial is valid with ci: or local","at":"tests/run.mjs:77"},
-  {"claim":"the reason names what it contends on","at":"tests/SUITE:11"},
-  {"claim":"roots-live carries serial with its wall-clock reason","at":"tests/SUITE:72"},
-  {"claim":"assist-containment carries serial with its wall-clock reason","at":"tests/SUITE:77"}]}]},
- {"behavior":"CI shows five checks: syntax, guards, offline, package, stranger-macos","files":[".github/workflows/ci.yml"],"docs":[{"path":"RUNBOOK.md","claims":[
-  {"claim":"syntax job","at":".github/workflows/ci.yml:21"},
-  {"claim":"offline job","at":".github/workflows/ci.yml:52"},
-  {"claim":"stranger-macos job","at":".github/workflows/ci.yml:82"},
-  {"claim":"package job","at":".github/workflows/ci.yml:101"},
-  {"claim":"guards runs the guards group","at":".github/workflows/ci.yml:149"},
-  {"claim":"branch protection requires syntax, guards and offline","at":"builds/ci-one-list/plan.md:35"}]}]},
- {"behavior":"offline is one job on Node 20.0.0 running the offline group with --jobs 4; current Node is covered by the Mac job","files":[".github/workflows/ci.yml"],"docs":[{"path":"RUNBOOK.md","claims":[
-  {"claim":"offline runs on Node 20.0.0","at":".github/workflows/ci.yml:63"},
-  {"claim":"20.0.0 is the declared minimum","at":"package.json:29"},
-  {"claim":"with ACS_SUITE=offline","at":".github/workflows/ci.yml:70"},
-  {"claim":"offline group with --jobs 4","at":".github/workflows/ci.yml:80"},
-  {"claim":"stranger-macos runs on the current LTS Node","at":".github/workflows/ci.yml:92"},
-  {"claim":"stranger-macos runs the stranger-macos group","at":".github/workflows/ci.yml:99"}]}]},
- {"behavior":"The package job runs tests/package.mjs then tests/bunx.mjs on the same tarball on Node 20.0.0; the Mac job runs tests/package.mjs, which packs the tree itself","files":[".github/workflows/ci.yml","tests/SUITE"],"docs":[{"path":"RUNBOOK.md","claims":[
-  {"claim":"package runs on Node 20.0.0","at":".github/workflows/ci.yml:115"},
-  {"claim":"tests/package.mjs named with the packed tarball","at":".github/workflows/ci.yml:128"},
-  {"claim":"tests/bunx.mjs named with the same tarball","at":".github/workflows/ci.yml:138"},
-  {"claim":"the stranger-macos group includes tests/package.mjs","at":"tests/SUITE:192"},
-  {"claim":"given no tarball, tests/package.mjs packs the tree itself","at":"tests/package.mjs:81"}]}]}
-]}
+{
+ "rows": [
+  {
+   "behavior": "tests/run.mjs --jobs N runs up to N files side by side, output captured per file and printed whole in run order, serial files alone first, a failure stops new starts and exits with the first failing file's code in list order",
+   "files": [
+    "tests/run.mjs",
+    "tests/run-jobs.mjs"
+   ],
+   "docs": [
+    {
+     "path": "RUNBOOK.md",
+     "claims": [
+      {
+       "claim": "without --jobs it runs one file at a time with output live and stops at the first failing file with its exit code",
+       "at": "tests/run.mjs:144"
+      },
+      {
+       "claim": "the sequential run exits with the failing file's code",
+       "at": "tests/run.mjs:150"
+      },
+      {
+       "claim": "--jobs N runs up to N files at once",
+       "at": "tests/run.mjs:242"
+      },
+      {
+       "claim": "anything but a positive whole number is refused with exit 2",
+       "at": "tests/run.mjs:106"
+      },
+      {
+       "claim": "refuse exits 2",
+       "at": "tests/run.mjs:90"
+      },
+      {
+       "claim": "each file's output is held in a temp file",
+       "at": "tests/run.mjs:183"
+      },
+      {
+       "claim": "printed whole, in run order",
+       "at": "tests/run.mjs:218"
+      },
+      {
+       "claim": "serial files run first, one at a time",
+       "at": "tests/run.mjs:241"
+      },
+      {
+       "claim": "each serial file asserts a wall-clock window or changes what files beside it check (the real home)",
+       "at": "tests/SUITE:52"
+      },
+      {
+       "claim": "they run first because a wall-clock file (roots-live) run after the shared files on macOS missed its settle time",
+       "at": "tests/run.mjs:172"
+      },
+      {
+       "claim": "a failure starts no new file",
+       "at": "tests/run.mjs:205"
+      },
+      {
+       "claim": "names the files not run",
+       "at": "tests/run.mjs:249"
+      },
+      {
+       "claim": "exits with the code of the first failing file in list order",
+       "at": "tests/run.mjs:248"
+      },
+      {
+       "claim": "verify.sh does not use --jobs",
+       "at": "verify.sh:17"
+      },
+      {
+       "claim": "tests/run-jobs.mjs proves this in guards",
+       "at": "tests/SUITE:33"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "behavior": "tests/SUITE gains the serial mark, valid only with ci:<group> or local, on four files: two that assert wall-clock windows and two that write into the real home, which real-home checks in files beside them compare",
+   "files": [
+    "tests/SUITE",
+    "tests/run.mjs"
+   ],
+   "docs": [
+    {
+     "path": "RUNBOOK.md",
+     "claims": [
+      {
+       "claim": "serial is valid with ci: or local",
+       "at": "tests/run.mjs:77"
+      },
+      {
+       "claim": "the reason names what it contends on",
+       "at": "tests/SUITE:11"
+      },
+      {
+       "claim": "usage-seats is serial: it starts the real codex CLI, which creates ~/.codex/tmp under the real home when absent",
+       "at": "tests/SUITE:52"
+      },
+      {
+       "claim": "roots-live is serial: wall clock, a fixed 600 ms settle for file watchers",
+       "at": "tests/SUITE:72"
+      },
+      {
+       "claim": "assist-containment is serial: wall clock, a grandchild write 1.5 s after a bad init",
+       "at": "tests/SUITE:77"
+      },
+      {
+       "claim": "phase2a is serial: GET /api/registry creates ~/.agent-config-studio/history in the real home when absent",
+       "at": "tests/SUITE:78"
+      },
+      {
+       "claim": "the history repo is created (git init, baseline commit) when absent",
+       "at": "lib/history.js:46"
+      },
+      {
+       "claim": "GET /api/registry reads history stats",
+       "at": "server.js:1098"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "behavior": "CI shows five checks: syntax, guards, offline, package, stranger-macos",
+   "files": [
+    ".github/workflows/ci.yml"
+   ],
+   "docs": [
+    {
+     "path": "RUNBOOK.md",
+     "claims": [
+      {
+       "claim": "syntax job",
+       "at": ".github/workflows/ci.yml:21"
+      },
+      {
+       "claim": "offline job",
+       "at": ".github/workflows/ci.yml:52"
+      },
+      {
+       "claim": "stranger-macos job",
+       "at": ".github/workflows/ci.yml:82"
+      },
+      {
+       "claim": "package job",
+       "at": ".github/workflows/ci.yml:101"
+      },
+      {
+       "claim": "guards runs the guards group",
+       "at": ".github/workflows/ci.yml:149"
+      },
+      {
+       "claim": "branch protection requires syntax, guards and offline",
+       "at": "builds/ci-one-list/plan.md:35"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "behavior": "offline is one job on Node 20.0.0 running the offline group with --jobs 4; current Node is covered by the Mac job",
+   "files": [
+    ".github/workflows/ci.yml"
+   ],
+   "docs": [
+    {
+     "path": "RUNBOOK.md",
+     "claims": [
+      {
+       "claim": "offline runs on Node 20.0.0",
+       "at": ".github/workflows/ci.yml:63"
+      },
+      {
+       "claim": "20.0.0 is the declared minimum",
+       "at": "package.json:29"
+      },
+      {
+       "claim": "with ACS_SUITE=offline",
+       "at": ".github/workflows/ci.yml:70"
+      },
+      {
+       "claim": "offline group with --jobs 4",
+       "at": ".github/workflows/ci.yml:80"
+      },
+      {
+       "claim": "stranger-macos runs on the current LTS Node",
+       "at": ".github/workflows/ci.yml:92"
+      },
+      {
+       "claim": "stranger-macos runs the stranger-macos group",
+       "at": ".github/workflows/ci.yml:99"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "behavior": "The package job runs tests/package.mjs then tests/bunx.mjs on the same tarball on Node 20.0.0; the Mac job runs tests/package.mjs, which packs the tree itself",
+   "files": [
+    ".github/workflows/ci.yml",
+    "tests/SUITE"
+   ],
+   "docs": [
+    {
+     "path": "RUNBOOK.md",
+     "claims": [
+      {
+       "claim": "package runs on Node 20.0.0",
+       "at": ".github/workflows/ci.yml:115"
+      },
+      {
+       "claim": "tests/package.mjs named with the packed tarball",
+       "at": ".github/workflows/ci.yml:128"
+      },
+      {
+       "claim": "tests/bunx.mjs named with the same tarball",
+       "at": ".github/workflows/ci.yml:138"
+      },
+      {
+       "claim": "the stranger-macos group includes tests/package.mjs",
+       "at": "tests/SUITE:194"
+      },
+      {
+       "claim": "given no tarball, tests/package.mjs packs the tree itself",
+       "at": "tests/package.mjs:81"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
