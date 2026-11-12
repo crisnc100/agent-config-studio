@@ -259,12 +259,16 @@ try {
     ok('no page errors', sp.errors.length === 0, sp.errors.join(' | '));
     sp.done();
 
-    const kept = await bootPage({ routes: stub(installedAll(base)).routes, hash: '#setup', carry: [['acs.packs.trust', '0']] });
-    await waitFor(() => kept.$('content').querySelector('[data-cli="codex"] .setup-trust input') || /Codex/.test(kept.text(kept.$('content'))));
-    await settle(20);
-    const kb = kept.$('content').querySelector('[data-cli="codex"] .setup-trust input');
-    ok('a saved "off" shows unticked after a reload', !kb || !kb.checked);
-    kept.done();
+    for (const [saved, want] of [['0', false], ['1', true]]) {
+      const kept = await bootPage({ routes: stub(installedAll(base), { 'GET /api/setup/clis': () => clis, 'GET /api/setup/status': () => ({ state: 'done' }) }).routes,
+        hash: '#setup', carry: [['acs.packs.trust', saved]] });
+      const kb = () => kept.$('content').querySelector('[data-cli="codex"] .setup-trust input');
+      await waitFor(() => !!kb());
+      ok(`a saved "${want ? 'on' : 'off'}" shows ${want ? 'ticked' : 'unticked'} after a reload, on the Codex card`, !!kb() && kb().checked === want,
+        kb() ? `checked=${kb().checked}` : kept.text(kept.$('content')).slice(0, 200));
+      ok('…no page errors', kept.errors.length === 0, kept.errors.join(' | '));
+      kept.done();
+    }
   }
 
   console.log('\nC7: width, type size and labels');
