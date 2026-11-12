@@ -120,10 +120,12 @@ contends on as the reason. The file's header spells out the format.
 - `--jobs N` runs up to N files at once; anything but a positive whole number
   is refused with exit 2. Each file's output is held in a temp file and
   printed whole, in run order, so the log reads like a serial run. `serial`
-  files run (and print) first, one at a time: they assert wall-clock windows,
-  and after the shared files a busy machine made them miss. A failure starts
-  no new file, lets the running ones finish and print, names the files not
-  run, and exits with the code of the first failing file in list order.
+  files run (and print) first, one at a time: each asserts a wall-clock
+  window or changes what files beside it check (the real home). They go
+  first because a wall-clock file run after the shared files missed its
+  window on macOS. A failure starts no new file, lets the running ones finish
+  and print, names the files not run, and exits with the code of the first
+  failing file in list order.
   `verify.sh` does not use it.
 - CI (`.github/workflows/ci.yml`) shows five checks. `syntax`; `guards` (the
   `guards` group); `offline` (the `offline` group with `--jobs 4`, on Node
