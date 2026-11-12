@@ -1593,7 +1593,6 @@ a { color: var(--accent); }
 .pk-icon svg, .pk-card-go svg { width: 100%; height: 100%; }
 .pk-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
 
-/* Status words: a dot and a word. */
 .pk-st { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-meta); font-weight: 550; color: var(--text-dim); white-space: nowrap; }
 .pk-st.ok { color: var(--green-ink); }
 .pk-st.ok .pk-dot { background: var(--green); }
@@ -1667,7 +1666,6 @@ a { color: var(--accent); }
 .pk-card-go { display: inline-flex; width: 16px; height: 16px; color: var(--muted); transition: transform .18s ease-out, color .18s; }
 .pk-card:hover .pk-card-go { color: var(--text-dim); transform: translateX(2px); }
 
-/* A pack's page. */
 .pk-back { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 var(--s5) -10px; }
 .pk-page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s5); flex-wrap: wrap; padding-bottom: var(--s5); border-bottom: 1px solid var(--border-soft); }
 .pk-page-text { min-width: 0; flex: 1 1 420px; }
@@ -1717,7 +1715,6 @@ a { color: var(--accent); }
 .pk-flow .w.role .w-k { color: var(--accent-ink); }
 .pk-flow .w.agent .w-k { color: var(--codex-ink); }
 .pk-flow .w.you .w-k { color: var(--green-ink); }
-/* A script is named in mono, in a solid outline; dashed belongs to "off" alone. */
 .pk-flow .w.script { padding: 1px 7px; border: 1px solid color-mix(in srgb, var(--text-dim) 32%, var(--border)); border-radius: 6px; }
 .pk-flow .w.script .w-k { color: var(--text-dim); font: 500 var(--t-meta) var(--mono); }
 .pk-flow .w-v { color: var(--text-dim); }
@@ -1752,7 +1749,6 @@ a { color: var(--accent); }
 .pk-part-act { display: flex; justify-content: flex-end; }
 .pk-part-flow { grid-column: 1 / -1; display: flex; flex-direction: column; gap: var(--s3); }
 
-/* Files and undo: two boxes. */
 .pk-files { display: grid; grid-template-columns: 1.4fr 1fr; gap: var(--s4); }
 @media (max-width: 900px) { .pk-files { grid-template-columns: 1fr; } }
 .pk-box { background: var(--panel); border: 1px solid var(--border-soft); border-radius: var(--radius); padding: var(--s5); min-width: 0; }
@@ -1802,7 +1798,6 @@ a { color: var(--accent); }
 .pk-log-head { margin-top: var(--s2); font-size: var(--t-small); font-weight: 600; color: var(--text); }
 pre.pk-log { align-self: stretch; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: var(--t-meta) var(--mono); color: var(--text-dim); margin: 0; padding: var(--s2) var(--s3); border-radius: var(--radius-sm); background: var(--panel); border: 1px solid var(--border-soft); }
 
-/* The review gate's Settings, as #75 built them (PR 3 turns them into rows). */
 .pk-sec { background: var(--panel); border: 1px solid var(--border-soft); border-radius: var(--radius); padding: var(--s5); }
 .pk-setting + .pk-setting { margin-top: var(--s5); padding-top: var(--s5); border-top: 1px solid var(--border-soft); }
 .pk-sec-levels, .pk-choice-row { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s2); }

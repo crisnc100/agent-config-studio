@@ -51,8 +51,6 @@ function pkCard(pack) {
 /** Anything the request depends on changed: the preview no longer describes it. */
 function pkDrop(card) { card.preview = null; card.error = null; card.seq++; }
 
-/* ── routing ── */
-
 /** The pack id (or the setup page) a hash names: #packs/<id>. */
 function pkRouteOf(hash) {
   const m = /^#packs\/([^&/]+)/.exec(hash || '');
@@ -105,8 +103,6 @@ function pkFocusPage(from) {
   const target = S.view === 'pack' ? c.querySelector('.pk-back') : c.querySelector(`.pk-card[data-pack="${from}"] .pk-card-link`);
   target?.focus?.();
 }
-
-/* ── loading ── */
 
 async function pkLoadRoles() {
   try { PK.roles = (await api('GET', '/api/models/roles')).roles || []; PK.rolesError = null; }
@@ -175,8 +171,6 @@ function paintPacks() {
   pkPaintStatus();
 }
 
-/* ── small parts ── */
-
 const pkBtn = (cls, text, fn, disabled = false) => { const b = el('button', `btn${cls ? ` ${cls}` : ''}`, text); b.type = 'button'; b.onclick = fn; b.disabled = disabled; return b; };
 function pkCheck(label, checked, onchange, { disabled = false, title = null } = {}) {
   const l = el('label', `pk-check${disabled ? ' disabled' : ''}`);
@@ -237,8 +231,6 @@ function pkCommand(text, cls) {
   row.appendChild(copy);
   return row;
 }
-
-/* ── needs: fixes for this machine ── */
 
 /**
  * A pack's missing needs as fixes: model-id, ask-model and CLIs off the PATH are one fix (group 'path');
@@ -323,8 +315,6 @@ function pkTodo() {
   return box;
 }
 
-/* ── status of a pack and its parts ── */
-
 const pkStatusOf = (pack, partId) => PK.status?.packs.find((p) => p.id === pack.id)?.parts.find((x) => x.id === partId) || null;
 /** A status word's kind (installed, edited, update, broken, newHarness, absent). */
 const pkKind = (s) => Object.keys(PK.data?.words?.status || {}).find((k) => PK.data.words.status[k] === s) || 'other';
@@ -361,8 +351,6 @@ function pkState(pack, shared = pkShared()) {
   if (pack.installed) return { key: 'installed', word: 'Installed', tone: 'ok' };
   return { key: 'absent', word: 'Not installed', tone: 'off' };
 }
-
-/* ── the grid (#packs) ── */
 
 /** Each card's one line: shorter than pack.json's summary, which leads the pack's own page. */
 const PK_LINES = {
@@ -476,8 +464,6 @@ function pkCardView(pack, shared) {
   return k;
 }
 
-/* ── #packs/setup and an unknown id ── */
-
 function pkSetupPage(box) {
   const page = el('div', 'pk-page');
   page.appendChild(pkBackButton());
@@ -496,8 +482,6 @@ function pkMissing(box) {
   page.appendChild(el('p', 'pk-page-lead', `No pack called ${PK.page}.`));
   box.appendChild(page);
 }
-
-/* ── a pack's page (#packs/<id>) ── */
 
 /** "What it does": two to four words and one sentence each, from explain.does. A pack with less to say has fewer. */
 const PK_DOES = {
@@ -1128,8 +1112,6 @@ function pkDialog(title, body, opener, reopen) {
   close.focus();
   return d;
 }
-
-/* ── install, update, uninstall: previewed under the button that asked ── */
 
 /** The request the page describes for `action`: exactly what the preview and the apply send. */
 function pkBody(pack, action, card, extra = {}) {
