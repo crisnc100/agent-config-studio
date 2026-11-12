@@ -300,9 +300,11 @@ console.log('\nPacks: no folds, no dialogs — Files and undo is a section of th
   ok('Tab from the last control wraps to the first (focus stays in the dialog)', p.doc.activeElement === focusables[0]);
   p.key('Tab', { shift: true });
   ok('…and Shift+Tab from the first wraps to the last', p.doc.activeElement === focusables.at(-1));
+  const viewBefore = p.eval('S.view');
   p.key('k', { meta: true });
   await settle(5);
-  ok('f2 ⌘K inside the dialog does nothing behind it: dialog open, focus inside', !!dlg() && dlg().contains(p.doc.activeElement));
+  ok('f2 ⌘K inside the dialog does nothing behind it: dialog open, focus inside, the view unchanged', !!dlg() && dlg().contains(p.doc.activeElement) && p.eval('S.view') === viewBefore,
+    `${viewBefore} -> ${p.eval('S.view')}`);
   // f1: the page repaints under the open dialog and replaces its opener; Esc still returns focus to the new one.
   p.eval(`(() => { const k = document.getElementById('dlgcard'); const old = document.getElementById('opener'); old.id = ''; k.textContent = '';
     const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Open'; b.id = 'opener'; k.appendChild(b); })()`);
