@@ -121,7 +121,7 @@ tests/batch-delete.mjs                                ci:offline
 tests/batch-delete-memory.mjs                         ci:offline
 # The worktree toolkit, its installer and the read-only panel: temp HOME, temp repos.
 tests/worktree-install.mjs                            ci:offline
-tests/worktree-tools.mjs                              local                         # 80 to 110 s; its "gh missing" checks drop only the sandbox gh stub (worktree-sandbox.mjs:170) with /usr/bin still on PATH (:96), so a runner's system gh answers
+tests/worktree-tools.mjs                              local                         # its gh-missing checks hide gh by deleting a shim, but the sandbox PATH keeps /usr/bin, where a CI runner has gh
 tests/worktree-panel.mjs                              ci:offline
 # Worktree init refuses read folders and still works in edit ones (B4).
 tests/roots-worktree-init.mjs                         ci:offline
@@ -132,7 +132,7 @@ tests/walk-partial.mjs                                ci:offline
 tests/notice-placement-ui.mjs                         ci:offline
 # The front end, in a node VM against stubbed routes: no server, no HOME.
 tests/shell.mjs                                       ci:offline
-tests/home.mjs                                        ci:offline serial             # CPU: two checks race the clock (line 106 reads Date.now() twice at a rounding edge, line 281 waits fixed 20 ms); 3 of 12 copies four side by side failed, 0 of 3 alone
+tests/home.mjs                                        local                         # wall clock: clicks Refresh 20 ms after boot and counts two memory requests; under load the first is still in flight and Refresh reuses it
 tests/home-refresh.mjs                                ci:offline
 tests/roots-ui.mjs                                    ci:offline
 tests/batch-delete-ui.mjs                             ci:offline
@@ -200,7 +200,7 @@ tests/ui-clarity-g.mjs                                ci:offline
 # process at a time), in the offline job when a PR changes packs/ and always on main,
 # on LTS Node (ci.yml's packs step says why).
 packs/pr/tests/pr.docs-table.test.mjs                 ci:packs ci-only
-packs/pr/tests/pr.test.mjs                            ci:packs ci-only
+packs/pr/tests/pr.test.mjs                            manual                        # asserts gh is absent with a PATH that keeps /usr/bin, where a CI runner has gh
 packs/review-gate/tests/review.basemerge.test.mjs     ci:packs ci-only
 packs/review-gate/tests/review.behavior.test.mjs      ci:packs ci-only
 packs/review-gate/tests/review.close.test.mjs         ci:packs ci-only
@@ -215,7 +215,7 @@ packs/review-gate/tests/review.fixclose.test.mjs      ci:packs ci-only
 packs/review-gate/tests/review.gate.test.mjs          ci:packs ci-only
 packs/review-gate/tests/review.global.test.mjs        ci:packs ci-only
 packs/review-gate/tests/review.guard.test.mjs         ci:packs ci-only
-packs/review-gate/tests/review.merge.test.mjs         ci:packs ci-only
+packs/review-gate/tests/review.merge.test.mjs         manual                        # asserts gh is absent with a PATH that keeps /usr/bin, where a CI runner has gh
 packs/review-gate/tests/review.packs.test.mjs         ci:packs ci-only
 packs/review-gate/tests/review.parallel.test.mjs      ci:packs ci-only
 packs/review-gate/tests/review.paths.test.mjs         ci:packs ci-only
