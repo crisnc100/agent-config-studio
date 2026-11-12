@@ -35,8 +35,14 @@ Cris: "It's confusing — what does it mean? Focus on UI/UX so it's clear what t
 - B7 UI rules: no folds, styled buttons, plain words, readable light and dark; existing suites and ui-words pass; one browser QA at the end.
 - Not in B: "Update all close copies" (later, if wanted).
 
-## PR B2 — add a rule where it's missing (after B)
-- "Add to…" on a rule: pick skills or instruction files that don't have it; each gets the rule pasted under a "Shared rules" heading with markers, previewed per file, backed up, same write path as B.
+## PR B2 — add a rule where it's missing (approved 2026-11-12)
+- D1 On a rule (its row and its Compare copies view), an "Add to…" button (secondary) opens a picker of the files that don't have a copy of that rule: your skills (SKILL.md) and instruction files (CLAUDE.md, AGENTS.md) the Shared rules scan already reads, never pack files. Grouped (Instruction files / Skills), each with its plain label and path; nothing ticked by default.
+- D2 With files ticked, "Preview" shows per file exactly the lines that will be added and where: at the end of the file, under an existing "## Shared rules" heading if the file has one, otherwise a new one; each rule under "### <rule name>" with block markers, the same layout the skill wizard writes.
+- D3 "Add to N files" (primary) writes every previewed file. Before writing any, it checks every file's signature (file bytes + text to write); if any changed, nothing is written and it asks to preview again. Each old file goes to History first; every other byte of each file is unchanged (appended bytes only; the file's line-ending style is kept; a file without a final newline gets one before the added section, and that is shown in the preview).
+- D4 The server accepts only files the scan lists as readable targets without a copy of that rule, outside packs by real path; typed paths, traversal and links out of the allowed folders are refused, as in PR B.
+- D5 After writing, the page checks again; each file shows the rule as matching, marked. The result lists each file and how to restore it from History.
+- D6 UI rules as B7; one browser QA at the end.
+- Not in B2: adding to project folders' files the scan doesn't read; bulk "add every rule".
 
 ## PR C — choose the reference, and "Leave as is"
 - "Use this copy as the reference": the reference lives in a file the person owns (not inside the installed package); the studio's text stays the fallback.
