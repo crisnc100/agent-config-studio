@@ -58,6 +58,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On a PR the checkout is GitHub's merge commit, whose first parent
+          # is the base branch's tip: HEAD^1..HEAD is exactly what the PR
+          # changes, which the packs step below is decided on.
+          fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
           node-version: '20.0.0'
@@ -78,6 +83,47 @@ jobs:
           node --version
           nproc
           node tests/run.mjs offline --jobs 4
+      # The pack tests take about 15 minutes of file time, so they run only
+      # when a PR changes packs/, and on every push to main. Anything short of
+      # a clean "packs/ unchanged" answer runs them: a skip must be proven.
+      # These three steps run even when the offline suite failed, so one red
+      # step does not hide whether the pack tests pass.
+      - name: does this change touch packs/
+        id: packs
+        if: ${{ !cancelled() }}
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -uo pipefail
+          run=true
+          if [ "$EVENT" = pull_request ] && git rev-parse --verify --quiet HEAD^1 >/dev/null; then
+            git diff --quiet HEAD^1 HEAD -- packs/
+            case $? in
+              0) run=false; echo 'packs/ is unchanged: pack tests skipped' ;;
+              1) echo 'packs/ changed: pack tests run' ;;
+              *) echo 'could not diff against the base: pack tests run' ;;
+            esac
+          else
+            echo "$EVENT, or no base commit to diff against: pack tests run"
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+      # LTS, not the minimum: the pack tests exercise the review gate's own
+      # scripts, and two of them cannot test what they mean to on 20.0.0
+      # (fs.readdirSync's recursive option arrived in 20.1, and
+      # review.global's fs.statSync patch trips 20.0.0's module loader). The
+      # offline suite above covers the minimum-Node promise.
+      - uses: actions/setup-node@v4
+        if: ${{ !cancelled() && steps.packs.outputs.run != 'false' }}
+        with:
+          node-version: 'lts/*'
+      - name: pack tests
+        if: ${{ !cancelled() && steps.packs.outputs.run != 'false' }}
+        env:
+          ACS_SUITE: offline
+        run: |
+          set -euo pipefail
+          node --version
+          node tests/run.mjs packs --jobs 4
 
   stranger-macos:
     # The README is written for a Mac: follow it there, on current Node, and

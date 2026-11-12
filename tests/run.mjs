@@ -35,7 +35,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-export const LANES = ['local', 'pending-ci', 'manual', 'helper'];
+export const LANES = ['local', 'manual', 'helper'];
 const GROUP = /^[a-z0-9][a-z0-9-]*$/;
 
 /**

@@ -108,8 +108,8 @@ cannot run it.
 
 `tests/SUITE` is the one list of test files, in run order, each with a lane:
 `ci:<group>` (that CI job, and `verify.sh` unless also `ci-only`), `local`
-(`verify.sh` only), `pending-ci` (no gate yet), `manual` or `helper` (never a
-gate). Every lane but `ci:` carries its reason on the line. A `serial` mark
+(`verify.sh` only), `manual` or `helper` (never a gate). Every lane but `ci:`
+carries its reason on the line. A `serial` mark
 (with `ci:` or `local`) keeps a file from running beside others, with what it
 contends on as the reason. The file's header spells out the format.
 
@@ -133,8 +133,10 @@ contends on as the reason. The file's header spells out the format.
   20.0.0: `npm pack`, then `tests/package.mjs` and `tests/bunx.mjs` named with
   that tarball, since they take it); and `stranger-macos` (the
   `stranger-macos` group on the current LTS Node, which includes
-  `tests/package.mjs` packing the tree itself). Current Node is covered only
-  there. Branch protection requires `syntax`, `guards` and `offline`.
+  `tests/package.mjs` packing the tree itself). Current Node is covered
+  there, and by the `packs` group, which `offline` runs on LTS Node when a PR
+  changes `packs/` and on every push to main. Branch protection requires
+  `syntax`, `guards` and `offline`.
   The `syntax` job runs `node --check` on `server.js` and on each `.js` and
   `.mjs` file under `lib`, `tests`, `public`, `bin`, `packs`, `tools` and
   `blocks`, one file per run, and fails when it finds none;
