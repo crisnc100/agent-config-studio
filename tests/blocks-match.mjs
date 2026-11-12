@@ -206,6 +206,47 @@ try {
     ok('copySpan: a marked copy\'s span is its markers, 0-based', mk.start === 2 && mk.end === 5, JSON.stringify(mk));
   }
 
+  console.log('\nreview fixes: bytes, the rule text, packs through a link');
+  {
+    // f1: bytes that are not UTF-8, outside the copy, stay exactly as they were.
+    const head = Buffer.concat([Buffer.from('Caf'), Buffer.from([0xe9]), Buffer.from(' line \x96 here.\n\n')]);
+    const tailB = Buffer.concat([Buffer.from('\nAfter '), Buffer.from([0xff, 0xfe]), Buffer.from(' end.\n')]);
+    const copyB = Buffer.from(marked(EDITED));
+    const f = path.join(skills, 'latin', 'SKILL.md');
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, Buffer.concat([head, copyB, tailB]));
+    const c = copyIn(view(), '~/.claude/skills/latin/SKILL.md');
+    const p = await matcher.preview(ask(c));
+    await matcher.apply(ask(c, { signature: p.signature }));
+    const want = Buffer.concat([head, Buffer.from(`${region}\n`), tailB]);
+    ok('f1 a file with bytes that are not UTF-8: only the copy\'s bytes change, every other byte is identical', fs.readFileSync(f).equals(want), fs.readFileSync(f).toString('hex'));
+
+    // f2: the rule's text changing between preview and apply refuses the apply.
+    const before = `Top.\n\n${marked(EDITED)}`;
+    const g = put(path.join(skills, 'ruletext', 'SKILL.md'), before);
+    const rc = copyIn(view(), '~/.claude/skills/ruletext/SKILL.md');
+    const rp = await matcher.preview(ask(rc));
+    const ruleFile = path.join(blocksDir, 'test-rule.md');
+    const ruleBefore = read(ruleFile);
+    fs.writeFileSync(ruleFile, `${ruleBefore.replace(/\n$/, '')} One more sentence the person never saw in the preview.\n`);
+    const e = await refusal(() => matcher.apply(ask(rc, { signature: rp.signature })));
+    fs.writeFileSync(ruleFile, ruleBefore);
+    ok('f2 the studio\'s text changed after the preview: apply refuses (409) and writes nothing', e?.status === 409 && /preview/i.test(e.message) && read(g) === before, `${e?.status} ${e?.message}`);
+
+    // s1: a pack file reached through a link in a skill folder is still a pack file. The packs sit inside a
+    // safe root (~/.agents) here, as a checkout under an edit folder does, so only the pack check can refuse it.
+    const inRoots = path.join(home, '.agents', 'acs-checkout', 'packs');
+    const packTarget = put(path.join(inRoots, 'q', 'skills', 'claude', 'q', 'SKILL.md'), marked(EDITED));
+    fs.mkdirSync(path.join(skills, 'packlink'), { recursive: true });
+    fs.symlinkSync(packTarget, path.join(skills, 'packlink', 'SKILL.md'));
+    const where2 = { ...where, packsDir: inRoots };
+    const lc = B.blocksView({ blocksDir, ...where2 }).blocks.find((b) => b.id === 'test-rule').copies.find((x) => x.file === '~/.claude/skills/packlink/SKILL.md');
+    ok('s1 a pack file behind a link in a skill folder is listed without the button, saying it is a pack file', lc && lc.canMatch === false && /studio's own pack files/.test(lc.whyNot || ''), JSON.stringify(lc));
+    const packed = M.createBlocksMatch({ blocksDir, where: where2, hist: spy });
+    const e2 = await refusal(() => packed.preview(ask(lc)));
+    ok('s1 …and preview refuses it (403) by its real path; the pack file untouched', e2?.status === 403 && /studio's own pack files/.test(e2.message) && read(packTarget) === marked(EDITED), `${e2?.status} ${e2?.message}`);
+  }
+
   console.log('\nB3 the old file is saved first, or nothing is written');
   {
     const before = `Top.\n\n${marked(EDITED)}`;

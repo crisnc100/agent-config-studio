@@ -400,6 +400,48 @@ console.log('\nCompare copies: make one copy match');
   }
 }
 
+/* ── Preview again after the copy moved (review f3) ─────────────────── */
+console.log('\nCompare copies: Preview again checks again first');
+{
+  const RP = RICH.blocks.find((b) => b.id === 'review-policy');
+  const state = { moved: false };
+  const copies = () => RP.copies.filter((c) => !c.pack && c.line === 220).map((c) => ({ ...c, canMatch: true, whyNot: null, ...(state.moved ? { line: 223, endLine: 233 } : {}) }));
+  const view = () => ({ blocks: [{ ...RP, copies: copies() }], scanned: RICH.scanned });
+  const seen = [];
+  const base = routesFor({
+    'GET /api/blocks': () => view(),
+    'POST /api/blocks/match/preview': (b) => {
+      seen.push(['preview', b.line]);
+      if (b.line !== (state.moved ? 223 : 220)) throw { status: 409, body: { error: 'This copy is not where it was: the file changed. Check again.' } };
+      return { file: b.file, line: b.line, endLine: b.endLine, removed: ['a'], added: ['b'], signature: 'e'.repeat(64), diff: [{ op: '-', line: 'a' }, { op: '+', line: 'b' }] };
+    },
+    'POST /api/blocks/match/apply': () => { seen.push(['apply']); throw { status: 409, body: { error: 'The file changed since the preview. Nothing was written; preview it again.' } }; },
+  });
+  const routes = Object.assign(async (m, pth, b, u) => { seen.push([`${m} ${pth}`]); return base(m, pth, b, u); }, base);
+  try {
+    const p = await bootPage({ routes, hash: '#blocks/compare&rule=review-policy' });
+    const c = p.$('content');
+    const t = (n) => (n ? p.text(n) : '');
+    const btn = (label) => c.querySelectorAll('button').find((b) => t(b) === label);
+    await until(() => btn('Make this copy match'));
+    btn('Make this copy match').click();
+    await until(() => btn('Make it match'));
+    state.moved = true;
+    btn('Make it match').click();
+    await until(() => btn('Preview again'));
+    seen.length = 0;
+    btn('Preview again').click();
+    await until(() => btn('Make it match'));
+    const order = seen.map((x) => x[0]);
+    ok('f3 Preview again checks again (GET /api/blocks) before it previews', order.indexOf('GET /api/blocks') > -1 && order.indexOf('GET /api/blocks') < order.lastIndexOf('preview'), JSON.stringify(seen));
+    ok('f3 …and previews the copy where it is now, not at its old lines', seen.filter((x) => x[0] === 'preview').at(-1)?.[1] === 223 && /lines 223–233/.test(t(c.querySelector('.bb-match'))), JSON.stringify(seen));
+    ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
+    p.done();
+  } catch (err) {
+    ok(`no Preview again test block threw (${err?.message || err})`, false, err?.stack || String(err));
+  }
+}
+
 /* ── static: the view only reads; its colours are the theme's ────────── */
 console.log('\nstatic: blocks-view.js and its styles');
 {

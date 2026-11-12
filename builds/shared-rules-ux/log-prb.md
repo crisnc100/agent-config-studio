@@ -18,3 +18,10 @@ Page phase:
 - A 409 on apply drops the preview, shows the server's message (stale: "The file changed since the preview. Nothing was written; preview it again.") and a secondary "Preview again"; a 409 on preview (for example, the copy moved) also offers Preview again.
 - After apply the page runs GET /api/blocks again (B6) and shows a status line at the top of Compare: "Updated <file>: that copy now matches the reference. The old version is in History (~/.agent-config-studio/history): open <file> and choose History to put it back."
 - No browser pass was run in this phase; B7's one browser QA is left for the end of the build.
+
+Fix round (review 2026-11-12-15-30-56-0b359e):
+
+- f1: the writer splices bytes. Lines are cut at the 0x0A byte (UTF-8 decoding never moves it), so line i of the buffer is line i of the decoded text the scan reads; only the copy's byte range is replaced and every other byte is copied over as it was. Invalid UTF-8 inside the copy itself is removed with it, as the preview shows.
+- f2: the signature also covers a hash of the text to be written, so a rule changed between preview and apply is a 409.
+- s1: pack files are judged by real path too (`inPacks`, against the packs folder's own real path), in the writer and in the GET's canMatch/whyNot, so a link in a skill folder to a pack file gets no button and a 403.
+- f3: Preview again checks again first, then previews that copy at its current lines: by its place if unchanged, else the one drifted copy of the rule in that file; otherwise the refreshed page is left for the person to choose.

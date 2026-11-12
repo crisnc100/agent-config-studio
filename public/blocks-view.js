@@ -390,7 +390,7 @@ function bbMatchPart(sec, b, copy) {
     if (m.stale) {
       const again = el('button', 'btn', 'Preview again');
       again.disabled = m.busy;
-      again.onclick = () => bbPreview(b.id, copy);
+      again.onclick = () => bbPreviewAgain(m);
       acts.appendChild(again);
     }
   }
@@ -447,6 +447,27 @@ async function bbPreview(rule, copy) {
   m.busy = false;
   paintCompare();
   bbFocusMatch();
+}
+
+/**
+ * After a refusal the copy may have moved: check again first, then preview
+ * the same copy where it is now — by its place if it is still there, else
+ * the one drifted copy of this rule left in that file. With none, or more
+ * than one, the refreshed page is left for the person to choose from.
+ */
+async function bbPreviewAgain(m) {
+  m.busy = true;
+  paintCompare();
+  await bbLoad();
+  if (BB.match !== m) return;
+  const rule = BB.data?.blocks.find((x) => x.id === m.rule);
+  const offered = (rule?.copies || []).filter((c) => c.canMatch);
+  const here = offered.find((c) => bbKey(c) === m.key) || (() => {
+    const inFile = offered.filter((c) => c.file === m.copy.file);
+    return inFile.length === 1 ? inFile[0] : null;
+  })();
+  if (!here) { BB.match = null; paintCompare(); return; }
+  await bbPreview(m.rule, here);
 }
 
 async function bbApply() {
