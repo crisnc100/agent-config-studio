@@ -114,21 +114,25 @@ gate). Every lane but `ci:` carries its reason on the line. A `serial` mark
 contends on as the reason. The file's header spells out the format.
 
 - `node tests/run.mjs <group>` runs one group; `--local` runs what `verify.sh`
-  runs; `--list` prints the files without running them. It stops at the first
-  failing file with that file's exit code, and refuses a group with no files.
-- `--jobs N` runs up to N files at once. Each file's output is held in a temp
-  file and printed whole, with its seconds; `serial` files run (and print)
-  first, one at a time, while the machine is quiet, then the rest in list
-  order. A failure starts no new file, lets the running
-  ones finish and print, names the files not run, and exits with the code of
-  the first failing file in list order. `verify.sh` does not use it.
+  runs; `--list` prints the files without running them. It runs one file at a
+  time with its output live, stops at the first failing file with that file's
+  exit code, and refuses a group with no files.
+- `--jobs N` runs up to N files at once; anything but a positive whole number
+  is refused with exit 2. Each file's output is held in a temp file and
+  printed whole, in run order, so the log reads like a serial run. `serial`
+  files run (and print) first, one at a time: they assert wall-clock windows,
+  and after the shared files a busy machine made them miss. A failure starts
+  no new file, lets the running ones finish and print, names the files not
+  run, and exits with the code of the first failing file in list order.
+  `verify.sh` does not use it.
 - CI (`.github/workflows/ci.yml`) shows five checks. `syntax`; `guards` (the
-  `guards` group); `offline` (the `offline` group, `--jobs`, on Node 20.0.0,
-  the declared minimum, with `ACS_SUITE=offline`); `package` (Node 20.0.0:
-  `npm pack`, then `tests/package.mjs` and `tests/bunx.mjs` named with that
-  tarball, since they take it); and `stranger-macos` (the `stranger-macos`
-  group on current Node, which includes `tests/package.mjs` packing the tree
-  itself). Branch protection requires `syntax`, `guards` and `offline`.
+  `guards` group); `offline` (the `offline` group with `--jobs 4`, on Node
+  20.0.0, the declared minimum, with `ACS_SUITE=offline`); `package` (Node
+  20.0.0: `npm pack`, then `tests/package.mjs` and `tests/bunx.mjs` named with
+  that tarball, since they take it); and `stranger-macos` (the
+  `stranger-macos` group on the current LTS Node, which includes
+  `tests/package.mjs` packing the tree itself). Current Node is covered only
+  there. Branch protection requires `syntax`, `guards` and `offline`.
   The `syntax` job runs `node --check` on `server.js` and on each `.js` and
   `.mjs` file under `lib`, `tests`, `public`, `bin`, `packs`, `tools` and
   `blocks`, one file per run, and fails when it finds none;
