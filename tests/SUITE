@@ -167,6 +167,7 @@ tests/packs-workflow.mjs                              local                     
 tests/packs-security.mjs                              local                         # not yet run on a CI runner (PR 2)
 # Building blocks: finding and rating copies, the GET-only route (temp HOME), then the page (stubbed routes).
 tests/blocks.mjs                                      local                         # not yet run on a CI runner (PR 2)
+tests/blocks-match.mjs                                local                         # not yet run on a CI runner (PR 2)
 tests/blocks-ui.mjs                                   local                         # not yet run on a CI runner (PR 2)
 # A stranger's machine: empty temp HOME, no agent CLI on PATH, every GET route.
 tests/fresh-home.mjs                                  ci:offline
