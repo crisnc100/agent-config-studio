@@ -300,6 +300,7 @@ try {
     && /this changes ~\/\.agent-config-studio\/review-gate\/config\.json, and a copy of it goes to the backups folder first/.test(tx(pre()))
     && added(/"policy": "standard"/) && added(/"crossFamily": "off"/) && writes.length === 0 && read(t.primary) === '{\n  "pick": "rotate"\n}\n', tx(pre()));
   ok('…the preview sits in the bar\'s place, after the rows, not inside them', !sec().querySelector('.pk-set-rows .pk-sec-preview') && pre().parentNode === sec());
+  ok('C10: the preview does not stick (only the short bar does), and it is scrolled into view when it opens', unstuck(pre()) && page.doc.scrolledIntoView.at(-1) === pre(), page.doc.scrolledIntoView.at(-1)?.className || 'nothing scrolled');
   ok('the preview\'s buttons: Save (primary) and Cancel (quiet)', acts().map((b) => `${tx(b)}:${b.className}`).join('|') === 'Save:btn primary|Cancel:btn ghost');
   await saveIt();
   ok('Save writes both in one request and keeps the other keys', writes.length === 1 && /^[0-9a-f]{64}$/.test(writes[0].signature)
@@ -310,6 +311,12 @@ try {
   ok('QA 6: the backup is shown as its ~ folder, never the nested absolute path', /The old file is at ~\/\.agent-config-studio\/backups\/[^\s/]+-review-settings\/\./.test(tx(result()))
     && !tx(result()).includes(t.h) && !/\/0\//.test(tx(result())), tx(result()));
   ok('C10: the saved line stays in the page flow; it does not stick over the rows', !!result() && unstuck(result()), result()?.parentNode?.className || 'no result');
+  {
+    // The saved line's edge: a soft border of its own, not .notice's bare border in the text colour.
+    const edge = CSS_RULES.filter((r) => r.sels.some((x) => result().classList.contains('pk-save-part') && /^\.notice\.pk-result\.pk-save-part$|^\.pk-save-part\.pk-result$/.test(x)))
+      .map((r) => /(?:^|;)\s*border(?:-color)?\s*:\s*([^;]+)/.exec(r.body)?.[1].trim()).filter(Boolean).at(-1);
+    ok('C10: the saved line is a quiet notice: a soft border token, not the text colour', !!edge && /var\(--border(-soft)?\)/.test(edge), edge || 'no border rule');
+  }
   ok('QA 3: after Save no After Save line, no bar and no preview are left', !/After Save:/.test(tx(sec())) && !bar() && !pre(), tx(sec()));
   ok('…the pressed choices, the Merge step, the Grade note and the Build page follow', tx(pressed(mg())) === 'Low-risk PRs' && tx(pressed(cf())) === 'Off'
     && !step('review-gate', 'merge').classList.contains('off') && /no swap: Cross-vendor checks is off/.test(tx(step('build', 'grade')))
@@ -345,7 +352,8 @@ try {
   ok('C9: typing opens the save bar here, the box keeping what was typed', tx(bar()?.querySelector('.pk-savebar-text')) === '1 change: always needs you to “2 paths of your own”' && box().value === 'infra/**\n\n  db/** \ninfra/**', tx(bar()));
   ok('C9: …and sticks inside the paths page, which holds the lists and the box', !!stuck() && stuck().parentNode === pathsPage() && !!pathsPage().querySelector('textarea'), stuck() ? `${stuck().className} in ${stuck().parentNode?.className}` : 'no sticky element');
   await previewIt();
-  ok('C9/C10: the preview sticks in the same place as the bar', !!stuck() && stuck().parentNode === pathsPage(), stuck() ? stuck().className : 'no sticky element');
+  ok('C9/C10: the preview sits in the page flow after the box, not over it, and is scrolled into view', unstuck(pre()) && pre().parentNode === pathsPage()
+    && pathsPage().children.indexOf(pre()) > pathsPage().children.indexOf(box().parentNode) && page.doc.scrolledIntoView.at(-1) === pre(), pre()?.className || 'no preview');
   ok('C9: Save there previews first: blank lines dropped, trimmed, repeats once, nothing written', !bar() && added(/"infra\/\*\*"/) && added(/"db\/\*\*"/) && writes.length === 1, tx(pre()));
   await saveIt();
   ok('…Save writes them, and the result counts them', JSON.parse(read(t.primary)).merge.alwaysHuman.join() === 'infra/**,db/**' && writes.length === 2
@@ -408,9 +416,12 @@ try {
   await previewIt();
   put(t.primary, '{"merge":{"policy":"strict"}}\n');
   const stale = writes.length;
+  c().scrollTop = 640;
+  const scrolled = page.doc.scrolledIntoView.length;
   acts().find((b) => tx(b) === 'Save').click();
   await waitFor(() => sec().querySelector('.notice.error'));
-  ok('C10: the refusal stays in the page flow; it does not stick over the rows', unstuck(sec().querySelector('.notice.error')) && !!bar() && !!stuck(), sec().querySelector('.notice.error')?.parentNode?.className || '');
+  ok('C10: the refusal stays in the page flow; it does not stick over the rows', unstuck(sec().querySelector('.notice.error')) && !!bar() && stuck() === bar(), sec().querySelector('.notice.error')?.parentNode?.className || '');
+  ok('C10: a refused Save leaves the scroll where it was', c().scrollTop === 640 && page.doc.scrolledIntoView.length === scrolled, `${c().scrollTop} ${page.doc.scrolledIntoView.length - scrolled}`);
   ok('a stale preview: the refusal is shown, and the file is not overwritten', /changed since the preview/.test(tx(sec().querySelector('.notice.error'))) && read(t.primary) === '{"merge":{"policy":"strict"}}\n', tx(sec()));
   ok('C10: …it asks to preview again: the preview is gone and the bar is back with the pick', !pre() && tx(bar()?.querySelector('.pk-savebar-text')) === '1 change: agent merge to “Low and medium-risk PRs”'
     && !!barBtn('Preview and save') && writes.length === stale + 1, tx(sec()));
