@@ -1809,8 +1809,9 @@ pre.pk-log { align-self: stretch; max-height: 240px; overflow: auto; white-space
 .pk-set-inline > span { color: var(--text-dim); }
 .pk-set-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding: var(--s3) var(--s5); border-top: 1px solid var(--border-soft); color: var(--muted); font-size: var(--t-small); overflow-wrap: anywhere; }
 .pk-set-foot code { color: var(--text-dim); font-size: var(--t-meta); }
-/* Sticky inside the section (or the paths page): it stays in view while you scroll the rows, and goes with them. */
-.pk-savebar, .pk-savebar-preview { position: sticky; bottom: var(--s4); z-index: 2; border-radius: var(--radius); background: var(--panel-3); border: 1px solid var(--border); box-shadow: 0 10px 28px -10px var(--shadow); }
+/* The slot sticks, not the bar: sticky holds to its parent, and the slot's parent is the whole section (or the paths page). */
+.pk-savebar-slot { position: sticky; bottom: var(--s4); z-index: 2; }
+.pk-savebar, .pk-savebar-preview { border-radius: var(--radius); background: var(--panel-3); border: 1px solid var(--border); box-shadow: 0 10px 28px -10px var(--shadow); }
 .pk-savebar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s4); padding: 10px 10px 10px var(--s5); }
 .pk-savebar-text { color: var(--text); font-size: var(--t-small); overflow-wrap: anywhere; }
 .pk-savebar-acts { display: flex; align-items: center; gap: var(--s2); }

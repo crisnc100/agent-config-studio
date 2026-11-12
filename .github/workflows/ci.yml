@@ -126,6 +126,7 @@ jobs:
           node tests/cleanup-launcher.mjs
           node tests/packs-server.mjs
           node tests/packs-ui.mjs
+          node tests/packs-review-settings.mjs
       - name: live containment is a local gate
         if: always()
         run: |

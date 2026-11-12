@@ -154,6 +154,7 @@ node tests/packs-pages.mjs
 # Workflow diagrams: pack.json's workflow, its drift guard, the route, the Packs card and Models' Steps line (temp HOME, stubbed routes).
 node tests/packs-workflow.mjs
 node tests/packs-security.mjs
+node tests/packs-review-settings.mjs
 # Building blocks: finding and rating copies, the GET-only route (temp HOME), then the page (stubbed routes).
 node tests/blocks.mjs
 node tests/blocks-ui.mjs
