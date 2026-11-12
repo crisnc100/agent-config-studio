@@ -1,0 +1,41 @@
+ask-model: sol (gpt-6.1-sol, effort xhigh, read-only)
+**WEAKENED.** Two replacements lose explanation coverage. The write-safety assertions are retained or strengthened.
+
+References below use the supplied diff’s post-change line numbers. PASS means no weakening of the former assertion.
+
+| Verdict | File:line | Assessment |
+|---|---|---|
+| **WEAKENED** | `packs-review-settings.mjs:206` | Previously checked all four explanations. “Docs and tests only” and “Low and medium-risk PRs” can now have **no explanation** while the choice-preview checks pass. |
+| **WEAKENED** | `packs-review-settings.mjs:210` | Removes the positive check for cross-vendor Off’s explanation. Nothing checks that explanation when Off is selected. |
+| PASS | `packs-review-settings.mjs:204` | Same choice labels and saved selection through the new selector. |
+| PASS | `packs-review-settings.mjs:208` | Intentional copy removal; conditional gh-warning checks are added at `:395`, `:398`, `:404`. |
+| PASS | `packs-review-settings.mjs:209` | Exact selected security explanation. |
+| PASS | `packs-review-settings.mjs:212`, `:292` | Count replaces inline lists; both complete lists are checked on the paths page. |
+| PASS | `packs-review-settings.mjs:214` | Exact saved-file footer, absent button and absent retired wording. |
+| PASS | `packs-review-settings.mjs:217`, `:218` | Recognized segment styling replaces button styling; raw-key checks follow the new labels. |
+| PASS | `packs-review-settings.mjs:240` | Each exercised choice still produces its expected diff with zero apply requests. |
+| PASS | `packs-review-settings.mjs:245`, `:253` | Pick sends no plan or apply; preview contains both changes, with the file unchanged. |
+| PASS | `packs-review-settings.mjs:248`, `:249` | Selected state and explanation checked; retired Now/After Save wording explicitly absent. |
+| PASS | `packs-review-settings.mjs:251`, `:253` | Both pending changes remain in one preview. |
+| PASS | `packs-review-settings.mjs:263`, `:264` | Saved-result and backup-location assertions retain their checks. |
+| PASS | `packs-review-settings.mjs:266` | Stronger cleanup check: no bar or preview remains. |
+| PASS | `packs-review-settings.mjs:276`, `:282` | Both Cancels restore saved choices; subsequent request-count checks catch unwanted applies. |
+| PASS | `packs-review-settings.mjs:285` | Returning to the saved choice requires no apply. |
+| PASS | `packs-review-settings.mjs:294`, `:300`, `:302` | Labelled single editor, preview first, normalized saved paths and exact request count retained. |
+| PASS | `packs-review-settings.mjs:318`, `:320`, `:323` | Typed paths join the other change, reach disk together and reappear in the editor. |
+| PASS | `packs-review-settings.mjs:333` | Editing paths after preview still requires a refreshed preview without writing. |
+| PASS | `packs-review-settings.mjs:364`, `:365`, `:368` | Stale-file refusal retained; preview removal and re-preview added. |
+| PASS | `packs-review-settings.mjs:481` | Footer replacement retains Open in Files behavior and destination checks. |
+| PASS | `packs-security.mjs:128` | Exact replacement label. |
+| PASS | `packs-security.mjs:130` | Stronger: exact explanation, exactly one line, other explanations absent. |
+| PASS | `packs-security.mjs:132` | Segment styling and group role replace button styling. The claimed group label itself is untested. |
+| PASS | `packs-security.mjs:141`, `:145` | New bar step preserves diff-before-write checks; Save, Cancel, request-count and stale-file assertions remain. |
+| PASS | `ui-words.mjs:277` removed, `:296` added | Removing the retired button’s contrast entry is appropriate; amber warning coverage uses the existing threshold. This does not independently verify replacement-segment contrast. |
+
+I confirmed both weakened explanation cases with **in-memory probes**: missing explanations still passed the replacement choice-preview checks.
+
+There is also a separate test defect at **`packs-review-settings.mjs:289`**: `!sec()` invokes a helper that navigates away from the paths page. I reproduced the false assertion and navigation; the following assertion then encounters a missing paths page, preventing later path/stale tests from completing.
+
+One inherited coverage limit remains: backup count is checked only after the first UI Save (`:262`), and the refreshed-path Save (`:336`) lacks an apply-count assertion. Extra writes/backups specifically there could escape detection.
+
+No files changed; full suites were not run.
