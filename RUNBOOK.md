@@ -134,8 +134,8 @@ contends on as the reason. The file's header spells out the format.
   `tests/package.mjs` packing the tree itself). Current Node is covered only
   there. Branch protection requires `syntax`, `guards` and `offline`.
   The `syntax` job runs `node --check` on `server.js` and on each `.js` and
-  `.mjs` file under `lib`, `tests`, `public`, `bin`, `packs`, `tools` and
-  `blocks`, one file per run, and fails when it finds none;
+  `.mjs` file under `lib`, `tests`, `public`, `bin`, `packs` and `tools`,
+  one file per run, and fails when it finds none;
   `tests/ci-syntax-step.mjs`, in `guards`, runs that step against fixture
   trees. The `syntax` job also writes to the run's summary that live
   containment is a local gate and was not checked.

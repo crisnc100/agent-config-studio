@@ -18,7 +18,6 @@
     "bin/",
     "tools/",
     "packs/",
-    "blocks/",
     "!packs/*/tests/",
     "models.default.json"
   ],

@@ -49,7 +49,7 @@ console.log('\nci.yml syntax step');
 ok('ci.yml has a `node --check` step with a run block that checks server.js and the source folders', !!script
   && /node --check server\.js/.test(script) && /\bfind\b/.test(script), script || 'no step');
 
-const DIRS = ['lib', 'tests', 'public', 'bin', 'packs', 'tools', 'blocks'];
+const DIRS = ['lib', 'tests', 'public', 'bin', 'packs', 'tools'];
 function tree({ bad = null, files = true } = {}) {
   const root = tempDir('acs-syntax-');
   fs.writeFileSync(path.join(root, 'package.json'), '{"type":"module"}\n');
@@ -77,7 +77,7 @@ if (script) {
   const good = run(tree());
   ok('it passes a tree where every file parses', good.status === 0, `exit ${good.status}: ${good.out}`);
   // The last folder find walks, deepest, among many good files: never the first file of a batch.
-  for (const bad of ['blocks/sub/zz.js', 'packs/zz.mjs', 'tools/sub/g1.js']) {
+  for (const bad of ['tools/sub/zz.js', 'packs/zz.mjs', 'tools/sub/g1.js']) {
     const r = run(tree({ bad }));
     ok(`it fails on a syntax error in ${bad}, not the first file checked`, r.status !== 0 && r.status !== null && r.out.includes(path.basename(bad)), `exit ${r.status}: ${r.out}`);
   }

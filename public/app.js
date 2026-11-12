@@ -159,14 +159,6 @@ const VIEWS = [
   // No sidebar item: a pack's own page (#packs/<id>, through `match`) and the shared fixes (#packs/setup); Packs stays marked.
   { id: 'pack', label: 'Pack', group: null, parent: 'packs', icon: 'packs', hash: '#packs/setup', match: (h) => /^#packs\/[^&/]/.test(h),
     title: 'Skill packs', sub: 'Nothing is written until you preview a change and confirm it', open: openPackPage, moved: pkMoved },
-  { id: 'blocks', label: 'Shared rules', group: 'workflows', icon: 'blocks', hash: '#blocks',
-    title: 'Shared rules', sub: 'Checked word by word, never by meaning', open: openBlocks },
-  // No sidebar item: a rule's Compare copies button (public/blocks-view.js); Shared rules stays marked.
-  { id: 'blocks-compare', label: 'Compare copies', group: null, parent: 'blocks', icon: 'blocks', hash: '#blocks/compare',
-    title: 'Shared rules', sub: 'Checked word by word, never by meaning', open: openBlocksCompare, moved: bbRuleMoved },
-  // No sidebar item: a rule's Add to… button, on its card or in Compare copies; Shared rules stays marked.
-  { id: 'blocks-add', label: 'Add to files', group: null, parent: 'blocks', icon: 'blocks', hash: '#blocks/add',
-    title: 'Shared rules', sub: 'Checked word by word, never by meaning', open: openBlocksAdd, moved: bbRuleMoved },
   { id: 'mcp', label: 'MCP', group: 'files', icon: 'mcp', hash: '#mcp',
     title: 'MCP servers', sub: 'The MCP servers your CLIs can call', open: openMcp },
   // No sidebar item: reached from the Files page's folder line, and #folders.
@@ -198,7 +190,7 @@ const viewById = (id) => VIEWS.find((v) => v.id === id) || null;
 /** The sidebar: four groups named for the job, each in this order (C1). Setup sits in the footer with Trash and Theme. */
 const NAV_GROUPS = [
   ['overview', 'Overview', ['home', 'usage']],
-  ['workflows', 'Workflows', ['packs', 'skills', 'blocks', 'models']],
+  ['workflows', 'Workflows', ['packs', 'skills', 'models']],
   ['files', 'Files', ['files', 'context', 'scope', 'mcp']],
   ['upkeep', 'Upkeep', ['memory', 'worktrees', 'audit']],
 ];
@@ -211,7 +203,6 @@ const ICONS = {
   skills: svg('<path d="M8 2.2l1.6 3.3 3.6.5-2.6 2.5.6 3.6L8 10.4l-3.2 1.7.6-3.6-2.6-2.5 3.6-.5z"/>'),
   mcp: svg('<path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11.5v2"/>'),
   packs: svg('<path d="M2.5 5 8 2.5 13.5 5v6L8 13.5 2.5 11z"/><path d="M2.5 5 8 7.5 13.5 5M8 7.5v6"/>'),
-  blocks: svg('<rect x="2.5" y="8.5" width="5" height="5" rx="1"/><rect x="8.5" y="8.5" width="5" height="5" rx="1"/><rect x="5.5" y="2.5" width="5" height="5" rx="1"/>'),
   folders: svg('<path d="M2.5 5a1 1 0 0 1 1-1h2.5l1.2 1.2h5.3a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/><path d="M2.5 7.5h11"/>'),
   models: svg('<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 1.8v2.2M9.5 1.8v2.2M6.5 12v2.2M9.5 12v2.2M1.8 6.5H4M1.8 9.5H4M12 6.5h2.2M12 9.5h2.2"/>'),
   memory: svg('<path d="M3 3.5A1.5 1.5 0 0 1 4.5 2h8v10.5h-8A1.5 1.5 0 0 0 3 14zM3 14V3.5M6 5h4"/>'),
@@ -379,7 +370,7 @@ function routeHash(hash, { cold = false } = {}) {
   }
   const v = viewForHash(hash);
   if (v) {
-    // `moved` lets a view whose hash carries a parameter (Compare's rule) reopen when only that parameter changed.
+    // `moved` lets a view whose hash carries a parameter (a pack's page) reopen when only that parameter changed.
     if (!cold && S.view === v.id && !v.moved?.(hash)) return;
     return v.open();
   }

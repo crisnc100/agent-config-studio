@@ -412,9 +412,8 @@ const shipped = (path) => readFileSync(join(PACKAGE, path), 'utf8')
 const SKILLS = (name, pack = 'review-gate') => ['claude', 'codex'].map((h) => `packs/${pack}/skills/${h}/${name}/SKILL.md`)
 
 test('text: every shipped text that speaks of merging or cross-vendor checks says it the one way, and none forbids what the settings allow', () => {
-  const mergeFiles = [...SKILLS('code-review'), ...SKILLS('pr-review'), ...SKILLS('build', 'build'), 'packs/review-gate/instructions/review-gate.md',
-    'blocks/operator-merges.md', 'blocks/review-policy.md']
-  const crossFiles = [...SKILLS('code-review'), ...SKILLS('build', 'build'), 'packs/review-gate/instructions/review-gate.md', 'blocks/grader-swap.md', 'blocks/changing-tests.md']
+  const mergeFiles = [...SKILLS('code-review'), ...SKILLS('pr-review'), ...SKILLS('build', 'build'), 'packs/review-gate/instructions/review-gate.md']
+  const crossFiles = [...SKILLS('code-review'), ...SKILLS('build', 'build'), 'packs/review-gate/instructions/review-gate.md']
   for (const f of mergeFiles) assert.ok(shipped(f).includes(MERGE_RULE), `${f}: the merge wording`)
   for (const f of crossFiles) assert.ok(shipped(f).includes(CROSS_RULE), `${f}: the cross-vendor wording`)
   for (const f of new Set([...mergeFiles, ...crossFiles])) {
@@ -425,10 +424,10 @@ test('text: every shipped text that speaks of merging or cross-vendor checks say
   }
   // The codex pr-review runs the agent merge step, as the claude one does.
   for (const f of SKILLS('pr-review')) assert.match(shipped(f), /node ~\/\.agent-config-studio\/review-gate\/merge\.mjs/, f)
-  // Rule 5 is the same line in the block and in both code-review skills.
+  // Rule 5 is this exact line in both code-review skills.
+  const RULE5 = '5. The PR body (`--summary`) lists, in order: "Acceptance criteria not met", deferred HIGHs, then all other deferred findings; `--deferred` lists them too. Agents merge only through merge.mjs, which follows the review gate\'s merge policy (default off: the operator merges). Never gh pr merge, auto-merge or the merge button. The merge is the approval, and the operator can send the branch back.'
   const rule5 = (text) => text.split('\n').find((l) => l.startsWith('5. The PR body'))
-  const block5 = rule5(shipped('blocks/review-policy.md'))
-  for (const f of SKILLS('code-review')) assert.equal(rule5(shipped(f)), block5, f)
+  for (const f of SKILLS('code-review')) assert.equal(rule5(shipped(f)), RULE5, f)
 })
 
 test('build: the Grade reads the review gate\'s crossFamily, prefer when no review gate answers', () => {
