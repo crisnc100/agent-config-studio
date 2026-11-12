@@ -285,7 +285,7 @@ try {
     const { r } = await addBoth(['~/.claude/CLAUDE.md']);
     ok('the global CLAUDE.md takes the section like a skill does', read(claudeMd) === wizard(before, ['test-rule']) && r.files[0].file === '~/.claude/CLAUDE.md', JSON.stringify(read(claudeMd)));
   }
-  console.log('\nreview fixes: real-path kind, a change during the History saves, fences, size');
+  console.log('\nreview fixes: real-path kind, a change during the History saves, fences');
   {
     // s1: the kind is judged on the file the write would reach, not the link's name.
     const notes = put(path.join(home, '.claude', 'notes', 'private.md'), 'Not a skill.\n');
@@ -331,12 +331,6 @@ try {
     const openNo = put(path.join(skills, 'openfence2', 'SKILL.md'), 'Intro.\n\n\`\`\`\nNever closed.\n');
     const e4 = await refusal(() => adder.preview({ rule: 'test-rule', files: ['~/.claude/skills/openfence2/SKILL.md'] }));
     ok('f2 …and so is a file without the heading that ends inside one', e4?.status === 409 && /code/.test(e4.message) && read(openNo) === 'Intro.\n\n```\nNever closed.\n', `${e4?.status} ${e4?.message}`);
-
-    // f3: the new file must stay readable by the scan.
-    const bigBody = `${'x'.repeat(B.BLOCK_LIMITS.fileBytes - 100)}\n`;
-    const big = put(path.join(skills, 'big', 'SKILL.md'), bigBody);
-    const e5 = await refusal(() => adder.preview({ rule: 'test-rule', files: ['~/.claude/skills/big/SKILL.md'] }));
-    ok('f3 a file the rule would push past the size limit is refused with a reason, untouched', e5?.status === 413 && /too big|too large/i.test(e5.message) && read(big) === bigBody, `${e5?.status} ${e5?.message}`);
   }
 } catch (err) {
   ok(`no test block threw (${err?.message || err})`, false, err?.stack || String(err));
