@@ -209,7 +209,7 @@ try {
   ok('C8: security pass, one line for Off', choices(secRow()).map(tx).join('|') === 'Off|When code changes|Always' && JSON.stringify(says(secRow())) === '["PR reviews run no security pass."]', tx(secRow()));
   ok('R5: Cross-vendor checks, Prefer another vendor pressed, its line only', choices(cf()).map(tx).join('|') === 'Prefer another vendor|Off' && tx(pressed(cf())) === 'Prefer another vendor'
     && JSON.stringify(says(cf())) === '["Reviews and grades use a model from another vendor when one is available; never a blocker."]' && !tx(cf()).includes('Any reviewer in your roles'), tx(cf()));
-  ok('R4: Always needs you is a count and Edit paths (secondary); no box, no lists on the pack page', /^9 paths: 2 built in, 7 risky, none of your own/.test(tx(always()))
+  ok('R4: Always needs you is a count and Edit paths (secondary); no box, no lists on the pack page', tx(always().querySelector('.pk-set-inline span')) === '9 paths: 2 built in, 7 risky, none of your own'
     && always().querySelectorAll('button').map((b) => `${tx(b)}:${b.className}`).join('|') === 'Edit paths:btn pk-edit-paths' && !sec().querySelector('textarea') && !/package\.json|\*auth\*/.test(tx(sec())), tx(always()));
   ok('R7: the footer says where it is saved (the primary file has no Files entry, so no button), and no "Saved as" key line', /^Saved in ~\/\.agent-config-studio\/review-gate\/config\.json$/.test(tx(sec().querySelector('.pk-set-foot')))
     && !sec().querySelector('.pk-set-foot button') && !/Saved as|Other review settings/.test(tx(sec())), tx(sec().querySelector('.pk-set-foot')));
@@ -286,7 +286,7 @@ try {
 
   console.log('\nC9: Edit paths opens its own page');
   await toPaths();
-  ok('C9: Edit paths opens #packs/review-gate/paths, its own page', page.location.hash === '#packs/review-gate/paths' && page.eval('S.view') === 'pack' && !sec() && !!pathsPage(), page.location.hash);
+  ok('C9: Edit paths opens #packs/review-gate/paths, its own page', page.location.hash === '#packs/review-gate/paths' && page.eval('S.view') === 'pack' && !c().querySelector('.pk-settings') && !!pathsPage(), page.location.hash);
   ok('…titled Always needs you, with a quiet way back to the review gate', tx(pathsPage().querySelector('h1')) === 'Always needs you' && tx(pathsPage().querySelector('.pk-back')) === 'Review gate'
     && /\bbtn ghost\b/.test(pathsPage().querySelector('.pk-back').className), tx(pathsPage()).slice(0, 200));
   ok('C9: the built-in list and the risky list, read-only', pathsPage().querySelectorAll('.pk-path-list.built-in li').map(tx).join(',') === '.github/workflows/**,package.json'
@@ -303,7 +303,7 @@ try {
     && /now says “2 paths of your own”\./.test(tx(result())) && box().value === 'infra/**\ndb/**', tx(result()));
   await toPack();
   ok('C9: back returns to the review gate\'s page, focus on Edit paths, and the count follows', page.location.hash === '#packs/review-gate' && !pathsPage()
-    && page.doc.activeElement === always().querySelector('.pk-edit-paths') && /^11 paths: 2 built in, 7 risky, 2 of your own/.test(tx(always())), `${page.location.hash} ${tx(always())}`);
+    && page.doc.activeElement === always().querySelector('.pk-edit-paths') && tx(always().querySelector('.pk-set-inline span')) === '11 paths: 2 built in, 7 risky, 2 of your own', `${page.location.hash} ${tx(always())}`);
 
   // Trap: paths typed on their page were lost when another setting was saved first.
   await toPaths();
@@ -311,7 +311,7 @@ try {
   await settle(5);
   await toPack();
   ok('typed paths, then back: the bar still holds them, and the count counts them', tx(bar()?.querySelector('.pk-savebar-text')) === '1 change: always needs you to “3 paths of your own”'
-    && /^12 paths: .*3 of your own/.test(tx(always())), tx(bar()));
+    && tx(always().querySelector('.pk-set-inline span')) === '12 paths: 2 built in, 7 risky, 3 of your own', tx(bar()));
   await pick(cf, 'Prefer another vendor');
   ok('…a choice joins them in the bar', tx(bar().querySelector('.pk-savebar-text')) === '2 changes: always needs you to “3 paths of your own” and cross-vendor checks to “Prefer another vendor”', tx(bar()));
   await previewIt();
