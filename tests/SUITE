@@ -170,11 +170,6 @@ tests/packs-pages.mjs                                 local                     
 # Workflow diagrams: pack.json's workflow, its drift guard, the route, the Packs card and Models' Steps line (temp HOME, stubbed routes).
 tests/packs-workflow.mjs                              local                         # not yet run on a CI runner (PR 3)
 tests/packs-security.mjs                              local                         # not yet run on a CI runner (PR 3)
-# Building blocks: finding and rating copies, the GET-only route (temp HOME), then the page (stubbed routes).
-tests/blocks.mjs                                      local                         # not yet run on a CI runner (PR 3)
-tests/blocks-match.mjs                                local                         # not yet run on a CI runner (PR 3)
-tests/blocks-add.mjs                                  local                         # not yet run on a CI runner (PR 3)
-tests/blocks-ui.mjs                                   local                         # not yet run on a CI runner (PR 3)
 # A stranger's machine: empty temp HOME, no agent CLI on PATH, every GET route.
 tests/fresh-home.mjs                                  ci:offline
 # The setup screen's server half: temp HOMEs, fake CLIs, a fixture tree.
@@ -200,8 +195,6 @@ tests/packs-flag.mjs                                  pending-ci                
 tests/packs-pr.mjs                                    pending-ci                    # not yet run by any gate (PR 3)
 tests/packs-review-settings.mjs                       local                         # not yet run on a CI runner (PR 3)
 tests/roles-security.mjs                              pending-ci                    # not yet run by any gate (PR 3)
-tests/skill-wizard-blocks.mjs                         pending-ci                    # not yet run by any gate (PR 3)
-tests/skill-wizard-blocks-ui.mjs                      pending-ci                    # not yet run by any gate (PR 3)
 tests/ui-clarity-f.mjs                                pending-ci                    # not yet run by any gate (PR 3)
 tests/ui-clarity-g.mjs                                pending-ci                    # not yet run by any gate (PR 3)
 packs/pr/tests/pr.docs-table.test.mjs                 pending-ci                    # not yet run by any gate (PR 3)
