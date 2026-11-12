@@ -698,9 +698,9 @@ again, so an edit made inside a block on Review does not survive it.
 ## Review gate settings
 
 The studio sets how its own packs behave on **Packs**; everything else it
-shows and edits as files. The review gate card has a **Settings** section
-once its Code review part is installed (that part ships the scripts that read
-them):
+shows and edits as files. Open **Review gate** on Packs: its page has a
+**Settings** section, whose switches appear once its Code review part is
+installed (that part ships the scripts that read them):
 
 - **Security pass in PR reviews**: Off, When code changes, or Always
   (`security.run`).
@@ -717,10 +717,10 @@ them):
   per line below them.
 - **Cross-vendor checks** (`crossFamily`): Prefer another vendor (the
   default; never a blocker) or Off (any reviewer in your roles may check any
-  work). The Build card's Grade follows it.
+  work). The Build pack's Grade follows it.
 
-The review gate's diagram ends with a **Merge** step, shown off while agent
-merge is off.
+The review gate's steps under **How it runs** end with a **Merge** step,
+marked off while agent merge is off.
 
 Every change is written to your home review config only: the first of
 `~/.agent-config-studio/review-gate/config.json` and

@@ -108,13 +108,13 @@ console.log('\nstyles.css: PR D');
   ok('a Files entry\'s file count sits right after its name (the name does not stretch)', !/flex\s*:\s*1\b/.test(body('.files-item-label')) && /margin-left/.test(body('.files-item-count')));
   // The diagram's encodings, one look each: off = a dashed tile; script = a solid outline chip.
   ok('script chips are solid outlines, not dashed (dashed means "off")', /border\s*:[^;]*solid/.test(body('.pk-flow .w.script')) && !/dashed/.test(body('.pk-flow .w.script'))
-    && /border\s*:[^;]*solid/.test(body('.wf-sw.script')) && !/dashed/.test(body('.wf-sw.script')));
-  ok('strip script chips are solid too (dashed means "off" everywhere)', /border\s*:[^;]*solid/.test(body('.pk-strip .w.script')) && !/dashed/.test(body('.pk-strip .w.script')));
+    && /border\s*:[^;]*solid/.test(body('.step-mark.script')) && !/dashed/.test(body('.step-mark.script')));
+  ok('a script\'s strip segment and legend swatch are solid too (dashed means "off" everywhere)', /border\s*:[^;]*solid/.test(body('.pk-strip-seg.script')) && !/dashed/.test(body('.pk-strip-seg.script')));
   // f1: both Used-by states (the toggle and "Not used by any role") share one height, so the buttons above line up.
   const mh = (sel) => (body(sel).match(/min-height\s*:\s*([^;]+)/) || [])[1]?.trim();
   ok('Models cards: the "Used by" toggle and "Not used by any role" share one min-height', !!mh('.btn.model-used-toggle') && mh('.btn.model-used-toggle') === mh('.model-used-none')
     && /margin-top\s*:\s*0/.test(body('.model-used-none')));
-  ok('the legend\'s "off" swatch is dashed, like an off step', /dashed/.test(body('.wf-sw.off')) && /dashed/.test(body('.pk-flow .step.off')));
+  ok('an off step\'s mark is dashed, and so is its "off" word', /dashed/.test(body('.pk-flow .step.off .step-mark')) && /dashed/.test(body('.step-off')));
 }
 
 /* ── static: PR C QA at the real window (about 1343×679) ── */
@@ -132,7 +132,7 @@ console.log('\nstyles.css: PR C QA');
   // PR G: a Files type is a plain heading, never a fold; its "+" keeps a visible box.
   ok('Files: no type-toggle chevron, and its "+" has a visible box', !rules.some((r) => /files-type-toggle/.test(r.sel)) && /border\s*:/.test(body('.files-add')));
   ok('a diagram step title never wraps', /white-space\s*:\s*nowrap/.test(body('.pk-flow .step-name')));
-  ok('a long diagram (eight or more steps) lays out in rows of four', /grid-template-columns\s*:\s*repeat\(4/.test(body('.pk-flow .flow.rows')));
+  ok('the steps are one list: each row a mark, the step, its line and who does it', /grid-template-columns\s*:\s*28px\s+\d+px\s+minmax\(0,\s*1fr\)\s+minmax\(0,\s*auto\)/.test(body('.pk-flow .step')));
   // PR F: Packs has no folds at all (Cris) — a part's explain lives in the card's "Files and undo" dialog, so no part fold style is left.
   ok('no .pk-part fold style is left: a part has no fold', !rules.some((r) => /\.pk-part[^,{]*summary\.fold|\.pk-part[^,{]*details/.test(r.sel)));
 }
@@ -196,9 +196,6 @@ console.log('\nlight theme: text on its own tint, computed from styles.css');
   // [selector for the text colour, selector for the tint] — the same rule unless the text sits in a child.
   const PAIRS = [
     ['.result-line b', '.result-line b'],
-    ['.pk-badge.newHarness', '.pk-badge.newHarness'],
-    ['.pk-badge.installed', '.pk-badge.installed'],
-    ['.pk-badge.update', '.pk-badge.update'],
     ['.harness-tag.claude', '.harness-tag.claude'],
     ['.harness-tag.codex', '.harness-tag.codex'],
     ['.diff-line.add', '.diff-line.add'],
@@ -292,9 +289,11 @@ console.log('\norange and amber controls: text 4.5:1 and edge 3:1, light and dar
     ['Home warn chip', ['.home-chip', '.home-chip.warn']],
     ['guide out-of-date chip', ['.guide-chip', '.guide-chip.stale']],
     ['Model ids alert count', ['.ids-count']],
-    ['pack "Setup needed"', ['.pk-ready', '.pk-ready.missing']],
-    ['pack edited badge', ['.pk-badge', '.pk-badge.edited']],
-    ['pack new-CLI badge', ['.pk-badge', '.pk-badge.newHarness']],
+    // A pack's status is a dot and a word, no box: its text is what must read.
+    ['pack "Needs setup", "Edited", "Update ready"', ['.pk-st', '.pk-st.warn'], true],
+    ['pack "Installed", "On"', ['.pk-st', '.pk-st.ok'], true],
+    ['pack "Not working"', ['.pk-st', '.pk-st.err'], true],
+    ['pack "Not installed", "Off"', ['.pk-st', '.pk-st.off'], true],
     ['audit synced class', ['.audit-class', '.audit-class.synced']],
     ['audit warn', ['.audit-sev', '.audit-sev.warn']],
     ['account offline tag', ['.usage-offline-tag']],
@@ -413,18 +412,23 @@ console.log('\nPacks: each CLI as Home and Setup see it');
     'GET /api/packs/status': () => ({ job: { running: false, result: { packs: [], legacy: [], checkedAt: Date.now(), trust: false } } }),
   });
   const pg = await bootPage({ routes: stub, hash: '#packs' });
-  for (let i = 0; i < 100 && !pg.$('content').querySelector('.pk-here'); i++) await sleep(20);
-  const here = pg.text(pg.$('content').querySelector('.pk-here'));
+  for (let i = 0; i < 100 && !pg.$('content').querySelector('.pk-clis'); i++) await sleep(20);
+  const codex = pg.$('content').querySelectorAll('.pk-cli').find((n) => /Codex/.test(pg.text(n)));
+  const here = pg.text(pg.$('content').querySelector('.pk-clis'));
+  pg.navigate('#packs/review-gate');
+  await sleep(20);
+  pg.$('content').querySelector('.pk-page-actions').querySelectorAll('button').find((b) => pg.text(b) === 'Install').click();
+  for (let i = 0; i < 100 && !pg.$('content').querySelector('.pk-harnesses'); i++) await sleep(20);
   const rows = pg.$('content').querySelectorAll('.pk-harnesses').map((r) => pg.text(r)).join(' | ');
-  ok('…and the page agrees: "✓ Codex" on the machine line with nothing after it, the reason on the Install-for row, no "not installed" for Codex',
-    /✓ Codex(— Grok|$)/.test(here) && !/not on the PATH|doesn.t exist/.test(here) && /Codex: installed, but ~\/\.codex doesn.t exist yet/.test(rows)
-      && !/Codex:? ?not installed/.test(`${here} ${rows}`), `${here} || ${rows}`);
+  ok('…and the page agrees: Codex shown installed on the machine line with nothing after it, the reason on the install preview\'s Install-for row, no "not installed" for Codex',
+    !!codex && codex.classList.contains('on') && pg.text(codex) === 'Codex' && codex.getAttribute('title') === 'Codex: installed' && !/not on the PATH|doesn.t exist/.test(here)
+      && /Codex: installed, but ~\/\.codex doesn.t exist yet/.test(rows) && !/Codex:? ?not installed/.test(`${here} ${rows}`), `${here} || ${rows}`);
   ok('…with no page errors', pg.errors.length === 0, pg.errors.join(' | '));
   pg.done();
 }
 
 /* ── Packs: the top block holds only what every pack needs; cards never repeat it ── */
-console.log('\nPacks: shared needs once, each card its single most important need');
+console.log('\nPacks: shared needs once, each pack its single most important need');
 {
   const req = (id, ok, extra = {}) => ({ id, ok, what: extra.what || `${id} need`, fix: extra.fix || `fix ${id}`, dep: extra.dep || null, ...extra });
   const pack = (id, title, requirements) => ({ id, title, version: '1.0.0', summary: `${title} does a thing.`,
@@ -445,32 +449,34 @@ console.log('\nPacks: shared needs once, each card its single most important nee
     pack('gate', 'Gate', [req('node', true), req('git', false, { what: 'git is not on PATH', fix: 'install git' }), path('model-id', 'model-id'), path('ask-model', 'ask-model'), req('roles', false)]),
     pack('plain', 'Plain', [req('node', true), req('git', false, { what: 'git is not on PATH', fix: 'install git' })]),
   ]));
-  const todo = p.$('content').querySelector('.pk-todo');
+  const pc = () => p.$('content');
+  ok('the grid says once how many things to set up, with Show me', /^2 things to set up before packs run/.test(p.text(pc().querySelector('.pk-shared'))), p.text(pc().querySelector('.pk-shared')));
+  const status = (id) => p.text(pc().querySelector(`.pk-card[data-pack="${id}"] .pk-st`));
+  const cardText = (id) => p.text(pc().querySelector(`.pk-card[data-pack="${id}"]`));
+  // A card says Needs setup only for a need of its own; the shared ones are said once, above the grid.
+  ok('a card never repeats the shared need: gate "Needs setup" (its own roles need), plain "Not installed"', status('gate') === 'Needs setup' && status('plain') === 'Not installed'
+    && !/git|search path/.test(cardText('gate') + cardText('plain')), `${status('gate')} | ${status('plain')}`);
+  p.navigate('#packs/setup');
+  await sleep(20);
+  const todo = pc().querySelector('.pk-todo');
   const items = todo ? [...todo.querySelector('.pk-todo-list').children].map((li) => p.text(li)) : [];
-  // PR F (critique P2-2): the search-path fix is one machine fix — said once at the top, with how many packs it blocks, never per card.
-  ok('the top block lists what every pack needs (git), then the one search-path fix, saying it blocks 1 of 2 packs', items.length === 2 && /^git is not on PATH/.test(items[0])
+  // PR F (critique P2-2): the search-path fix is one machine fix — said once, with how many packs it blocks, never per pack.
+  ok('#packs/setup lists what every pack needs (git), then the one search-path fix, saying it blocks 1 of 2 packs', items.length === 2 && /^git is not on PATH/.test(items[0])
     && /search path, so agents can.t run them: model-id, ask-model/.test(items[1]) && /Needed by 1 of 2 packs/.test(items[1]), items.join(' | '));
-  const ready = (id) => p.text(p.$('content').querySelector(`[data-pack="${id}"] .pk-ready`));
-  ok('a card never repeats the shared need, and never says "+N more"', !/git/.test(ready('gate')) && !/git/.test(ready('plain'))
-    && !p.$('content').querySelectorAll('.pk-ready').some((n) => /more\)/.test(p.text(n))), `${ready('gate')} | ${ready('plain')}`);
-  // PR C design: the chip is a calm amber "Setup needed"; the need itself is a line in the card.
-  const need = (id) => p.text(p.$('content').querySelector(`[data-pack="${id}"] .pk-need`) || { textContent: '' });
-  ok('the gate card shows its own most important need (valid roles), not the search-path fix said at the top',
-    ready('gate') === 'Setup needed' && need('gate') === 'Needs valid ACS roles', `${ready('gate')} | ${need('gate')}`);
-  ok('a card whose only gap is the shared need is not called Ready: it points at the block above', ready('plain') === 'Not ready — see “To use packs” above', ready('plain'));
-  // PR F: no folds — the full list is in the card's "Files and undo" dialog.
-  const filesDialog = (pg, id) => {
-    pg.doc.body.querySelector('.pk-dialog') && pg.key('Escape');
-    pg.$('content').querySelector(`[data-pack="${id}"]`).querySelectorAll('button').find((b) => pg.text(b) === 'Files and undo').click();
-    return pg.doc.body.querySelector('.pk-dialog');
-  };
-  const det = filesDialog(p, 'gate')?.querySelector('.pk-reqs');
-  // node ✓, git ✖, the one PATH fix ✖ (model-id and ask-model together), roles ✖.
-  ok('the full list stays in the card\'s "Files and undo" dialog', !!det && [...det.children].length === 4, det && p.text(det));
-  const detPath = det ? [...det.children].map((li) => p.text(li)).filter((t) => /model-id|ask-model|search path/.test(t)) : [];
-  ok('…with the PATH problems as ONE item naming only the missing tools, and its one fix', detPath.length === 1
-    && /^✖ Some commands aren.t on your shell.s search path, so agents can.t run them: model-id, ask-model — fix: run acs install-model-id/.test(detPath[0])
-    && !/Claude Code|Grok/.test(detPath[0]) && /restart the studio/.test(detPath[0]), detPath.join(' | '));
+  ok('…the PATH problems as ONE item naming only the missing tools, and its one fix', /Fix: run acs install-model-id/.test(items[1]) && !/Claude Code|Grok/.test(items[1]) && /restart the studio/.test(items[1]), items[1]);
+  p.navigate('#packs/gate');
+  await sleep(20);
+  const head = p.text(pc().querySelector('.pk-page-head'));
+  ok('the gate page says its own most important need (valid roles) and its fix, not the shared ones', /Needs valid ACS roles/.test(p.text(pc().querySelector('.pk-page-meta .pk-need')))
+    && /Fix: fix roles/.test(head) && !/git|search path|model-id/.test(head), head);
+  p.navigate('#packs/plain');
+  await sleep(20);
+  const meta = pc().querySelector('.pk-page-meta');
+  ok('a page whose only gap is the shared need is not called Ready: "Not ready", and a way to what to set up', /Not ready/.test(p.text(meta)) && !meta.querySelector('.pk-ready')
+    && !!meta.querySelectorAll('button').find((b) => p.text(b) === 'See what to set up'), p.text(meta));
+  meta.querySelectorAll('button').find((b) => p.text(b) === 'See what to set up').click();
+  await sleep(20);
+  ok('…which opens #packs/setup', p.location.hash === '#packs/setup' && !!pc().querySelector('.pk-todo'));
   p.done();
 
   // The PATH fix shared by every pack: one item, not three.
@@ -478,19 +484,20 @@ console.log('\nPacks: shared needs once, each card its single most important nee
     pack('a', 'A', [path('model-id', 'model-id'), path('ask-model', 'ask-model'), req('cli', false, { group: 'path', name: 'Claude Code and Grok', what: 'Put Claude Code and Grok on the studio\'s PATH' })]),
     pack('b', 'B', [path('model-id', 'model-id'), path('ask-model', 'ask-model'), req('cli', false, { group: 'path', name: 'Claude Code and Grok', what: 'Put Claude Code and Grok on the studio\'s PATH' })]),
   ]));
+  ok('…and every card then has nothing of its own to add', q.$('content').querySelectorAll('.pk-card .pk-st').every((n) => q.text(n) === 'Not installed'));
+  // No "Details" folds (Cris, 2026-11-06): the status is one quiet line — when it was checked and Refresh — never a raw disclosure.
+  const sl = q.$('content').querySelector('#pk-status');
+  ok('Packs: the status is one quiet line, not inside any fold, with a quiet Refresh', !!sl && !sl.closest('details') && !sl.querySelector('details, input')
+    && /^(Checked at .+|Not checked yet)Refresh$/.test(q.text(sl)) && sl.querySelector('button')?.classList.contains('ghost'), q.text(sl || { textContent: '' }));
+  q.navigate('#packs/setup');
+  await sleep(20);
   const qi = [...(q.$('content').querySelector('.pk-todo-list')?.children || [])].map((li) => q.text(li));
   ok('model-id, ask-model and the CLIs off the PATH are one item, with one fix', qi.length === 1
     && /^Some commands aren.t on your shell.s search path, so agents can.t run them: model-id, ask-model, Claude Code, Grok/.test(qi[0]) && /acs install-model-id/.test(qi[0])
     && /each CLI's folder/.test(qi[0]) && /restart the studio/.test(qi[0]), qi.join(' | '));
-  const qd = filesDialog(q, 'a')?.querySelector('.pk-reqs');
-  ok('…and the same one item in each card\'s "Files and undo" dialog', !!qd && [...qd.children].length === 1
-    && /^✖ Some commands aren.t on your shell.s search path, so agents can.t run them: model-id, ask-model, Claude Code, Grok — fix: /.test(q.text(qd.children[0])), qd && q.text(qd));
-  ok('…and every card then has nothing of its own to add', q.$('content').querySelectorAll('.pk-ready').every((n) => q.text(n) === 'Not ready — see “To use packs” above'));
-  // No "Details" folds (Cris, 2026-11-06): the status is one quiet line — when it was checked, the trust
-  // check as a small checkbox with an (i), and Refresh — never a raw disclosure.
-  const sl = q.$('content').querySelector('#pk-status');
-  ok('Packs: the status is one quiet line, not inside any fold, with the trust check\'s (i)', !!sl && !sl.closest('details') && !sl.querySelector('details')
-    && !!sl.querySelector('.tip .tip-term') && /Status checked at|Status not checked yet/.test(q.text(sl)), q.text(sl || { textContent: '' }));
+  q.navigate('#packs/a');
+  await sleep(20);
+  ok('…and a pack\'s page does not repeat it: Not ready, with the way to it', /Not ready/.test(q.text(q.$('content').querySelector('.pk-page-meta'))) && !/search path/.test(q.text(q.$('content').querySelector('.pk-page-head'))));
   ok('…with no page errors', p.errors.length === 0 && q.errors.length === 0, [...p.errors, ...q.errors].join(' | '));
   q.done();
 }
@@ -669,16 +676,17 @@ console.log('\nBuilding blocks: a quoted rule may say "delete" only inside its b
   ok('…and nothing is allowed on another view', DELETE.quoteIn.view === 'blocks');
 }
 
-const VIEWS = ['home', 'files', 'skills', 'blocks', 'packs', 'mcp', 'models', 'memory', 'context', 'worktrees', 'usage', 'scope', 'audit', 'trash', 'setup', 'folders'];
+const VIEWS = ['home', 'files', 'skills', 'blocks', 'packs', 'packs/review-gate', 'packs/build', 'packs/handoff', 'packs/setup', 'mcp', 'models', 'memory', 'context', 'worktrees', 'usage', 'scope', 'audit', 'trash', 'setup', 'folders'];
 try {
   console.log('\nthe sweep: one name per thing, per view');
   for (const v of VIEWS) {
     const page = await bootPage({ routes: proxy, hash: `#${v}` });
     for (let i = 0; i < 60 && page.text(page.$('content')).length < 40; i++) await sleep(50);
-    await sleep(v === 'packs' ? 1500 : 400);
+    await sleep(v.startsWith('packs') ? 1500 : 400);
     const text = words(page);
     const shown = page.eval('S.view');
-    ok(`${v}: the view renders`, shown === v && text.length > 40, `${shown}: ${text.slice(0, 200)}`);
+    // A pack's own page (#packs/<id>) is the "pack" view.
+    ok(`${v}: the view renders`, shown === (v.startsWith('packs/') ? 'pack' : v) && text.length > 40, `${shown}: ${text.slice(0, 200)}`);
     for (const r of RULES) {
       if (r.allowIn?.includes(v)) continue;
       const hits = ruleHits(page, v, r, text);
@@ -756,55 +764,61 @@ try {
     page.done();
   }
 
-  console.log('\nPacks: needs checked once at the top, each card ready or its one missing need');
+  console.log('\nPacks: shared needs once on #packs/setup, each pack ready or its one missing need');
   {
     const waitFor = async (page, cond) => { for (let i = 0; i < 200 && !cond(); i++) await sleep(50); return cond(); };
     const page = await bootPage({ routes: proxy, hash: '#packs' });
     const c = () => page.$('content');
     await waitFor(page, () => c().querySelectorAll('.pk-card').length > 0);
     const cards = c().querySelectorAll('.pk-card');
-    const ready = (k) => page.text(k.querySelector('.pk-ready'));
-    ok('a machine with everything: no to-do box, and every card says "✓ Ready"…', !c().querySelector('.pk-todo')
-      && cards.length > 0 && cards.filter((k) => k.dataset.pack !== 'build').every((k) => ready(k) === '✓ Ready'), cards.map((k) => page.text(k.querySelector('.pk-head'))).join(' | '));
-    const bc = c().querySelector('[data-pack="build"]');
-    ok('…except a pack that needs another pack first: "Setup needed", and the card names the pack', ready(bc) === 'Setup needed'
-      && page.text(bc.querySelector('.pk-need')) === 'Needs the Review gate pack first', `${ready(bc)} | ${page.text(bc.querySelector('.pk-need') || { textContent: '' })}`);
-    const rg = c().querySelector('[data-pack="review-gate"]');
-    // PR F: no folds — the needs list is in the card's "Files and undo" dialog, not shown open on the card.
-    rg.querySelectorAll('button').find((b) => page.text(b) === 'Files and undo').click();
-    ok('the needs list is in the card\'s "Files and undo" dialog, not shown open on the card', !!page.doc.body.querySelector('.pk-dialog .pk-reqs') && !rg.querySelector('.pk-reqs'));
-    page.key('Escape');
-    const metas = c().querySelectorAll('.pk-part-meta').map((n) => page.text(n));
-    ok('no part id or part type on the cards, only who it is for and whether it is on', metas.length > 0
-      && metas.every((m) => /^(For [A-Z][\w ]+ · )?(on by default|off unless you pick it)$/.test(m))
-      && !metas.some((m) => /code-review ·|· skill|· guard|· instructions/.test(m)), metas.join(' | '));
+    const status = (k) => page.text(k.querySelector('.pk-st'));
+    // Nothing is installed in this home, so a ready pack's card says exactly "Not installed".
+    const expected = Object.fromEntries(cards.map((k) => [k.dataset.pack, k.dataset.pack === 'build' ? 'Needs setup' : 'Not installed']));
+    ok('a machine with everything: no shared-fixes notice, and each card\'s exact status: "Not installed", nothing needs setup…', !c().querySelector('.pk-shared')
+      && cards.length === 8 && cards.every((k) => status(k) === expected[k.dataset.pack]), cards.map((k) => `${k.dataset.pack}: ${status(k)}`).join(' | '));
+    ok('…except a pack that needs another pack first: its card "Needs setup"', status(c().querySelector('.pk-card[data-pack="build"]')) === 'Needs setup');
+    page.navigate('#packs/build');
+    await waitFor(page, () => c().querySelector('.pk-page'));
+    ok('…and its page names the pack', page.text(c().querySelector('.pk-page-meta .pk-need')) === 'Needs the Review gate pack first', page.text(c().querySelector('.pk-page-meta')));
+    page.navigate('#packs/review-gate');
+    await waitFor(page, () => c().querySelector('.pk-page[data-pack="review-gate"]'));
+    const rg = c().querySelector('.pk-page');
+    ok('a ready pack that is not installed says "Ready to install", with no tick and no list of needs', page.text(rg.querySelector('.pk-page-meta .pk-ready')) === 'Ready to install' && !rg.querySelector('.pk-page-meta .pk-ready svg') && !rg.querySelector('.pk-reqs'));
+    const parts = rg.querySelectorAll('.pk-part');
+    ok('no part id or part type on the page: each part row is its title, a line, a status word and one action', parts.length > 0
+      && parts.every((r) => /^(On|Off|Edited|Update ready|Not working|New CLI here)$/.test(page.text(r.querySelector('.pk-st'))) && r.querySelectorAll('.pk-part-act button').length === 1)
+      && !parts.some((r) => /code-review ·|· skill|· guard|· instructions/.test(page.text(r))), parts.map((r) => page.text(r)).join(' | '));
     ok('each part says what it does in a sentence', rg.querySelectorAll('.pk-part-what').every((n) => /\.$/.test(page.text(n)) && page.text(n).length > 12));
-    ok('no pack id chip in the head', !rg.querySelector('.pk-head .chip-mini'));
+    ok('no pack id chip in the head', !rg.querySelector('.pk-page-head .chip-mini'));
     page.done();
 
-    // No model-id here: the one shared need, once at the top; each pack that needs it says so in one line.
+    // No model-id here: the one shared need, once on #packs/setup; each pack that needs it points there.
     const sb2 = sandbox('words-needs', { clis: ['claude'], modelId: false });
     fs.mkdirSync(path.join(sb2.home, '.agent-config-studio'), { recursive: true });
     fs.writeFileSync(path.join(sb2.home, '.agent-config-studio', 'setup.json'), JSON.stringify({ completed: 'done', at: new Date().toISOString() }));
-    const p2 = await bootPage({ routes: await serve(sb2.env), hash: '#packs' });
+    const p2 = await bootPage({ routes: await serve(sb2.env), hash: '#packs/setup' });
     const c2 = () => p2.$('content');
-    await waitFor(p2, () => c2().querySelectorAll('.pk-card').length > 0);
+    await waitFor(p2, () => c2().querySelector('.pk-todo'));
     const todo = c2().querySelector('.pk-todo');
     const items = todo ? [...todo.querySelector('.pk-todo-list').children].map((li) => p2.text(li)) : [];
     // PR F (critique P2-2): not every pack needs model-id (Worktree setup does not), yet it is one machine fix —
-    // said once at the top with how many packs it blocks; no card repeats it.
-    ok('"To use packs": a tool only some packs need is in the top block once, saying how many packs need it',
+    // said once with how many packs it blocks; no pack repeats it.
+    ok('"Before packs run": a tool only some packs need is listed once, saying how many packs need it',
       !!todo && items.filter((x) => /model-id/.test(x)).length === 1 && items.some((x) => /model-id/.test(x) && /Needed by \d+ of \d+ packs/.test(x)), items.join(' | '));
-    const rg2 = c2().querySelector('[data-pack="review-gate"]');
-    ok('…and the review gate card points at the top block instead of repeating it', p2.text(rg2.querySelector('.pk-ready')) === 'Not ready — see “To use packs” above'
-      && !rg2.querySelector('.pk-need') && !rg2.querySelector('.pk-ready.ok'),
-      p2.text(rg2.querySelector('.pk-head')));
-    const prev = rg2.querySelectorAll('.pk-actions button').find((b) => /^Preview install/.test(p2.text(b)));
-    rg2.querySelectorAll('.pk-part input').forEach((i) => { if (i.checked) i.click(); });
+    p2.navigate('#packs/review-gate');
+    await waitFor(p2, () => c2().querySelector('.pk-page'));
+    const meta2 = c2().querySelector('.pk-page-meta');
+    ok('…and the review gate\'s page points there instead of repeating it', /Not ready/.test(p2.text(meta2)) && !meta2.querySelector('.pk-need') && !meta2.querySelector('.pk-ready'),
+      p2.text(meta2));
+    c2().querySelector('.pk-page-actions').querySelectorAll('button').find((b) => p2.text(b) === 'Install').click();
+    // The CLI boxes are locked while a preview is being worked out: wait for it.
+    await waitFor(p2, () => c2().querySelector('.pk-preview .pk-preview-head'));
+    const plansBefore = p2.requests.filter((r) => r.path === '/api/packs/plan').length;
+    c2().querySelector('.pk-preview .pk-harnesses').querySelectorAll('input').filter((i) => i.checked).forEach((i) => i.click());
     await sleep(50);
-    const rg3 = c2().querySelector('[data-pack="review-gate"]');
-    const prev3 = rg3.querySelectorAll('.pk-actions button').find((b) => /^Preview install/.test(p2.text(b)));
-    ok('a disabled Preview install says why, beside it', !!prev && prev3?.disabled && /Pick at least one part/.test(p2.text(rg3.querySelector('.pk-why'))) && /Pick at least one part/.test(prev3.title));
+    const pv = c2().querySelector('.pk-preview');
+    ok('unticking every CLI in the install preview says why, in place, and asks for no plan', /Pick at least one CLI to install for\./.test(p2.text(pv.querySelector('.pk-why')))
+      && !pv.querySelector('.pk-apply') && p2.requests.filter((r) => r.path === '/api/packs/plan').length === plansBefore, p2.text(pv));
     ok('packs: no page errors', page.errors.length === 0 && p2.errors.length === 0, [...page.errors, ...p2.errors].join(' | '));
     p2.done();
   }

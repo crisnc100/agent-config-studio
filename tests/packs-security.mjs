@@ -117,7 +117,7 @@ try {
     'POST /api/packs/review-settings/plan': (b) => settingsPlan(b.changes, t.m),
     'POST /api/packs/review-settings/apply': (b) => { writes.push(b); return settingsApply(b.changes, b.signature, t.m); },
   });
-  const page = await bootPage({ routes, hash: '#packs' });
+  const page = await bootPage({ routes, hash: '#packs/review-gate' });
   const c = () => page.$('content');
   const sec = () => c().querySelector('[data-pack="review-gate"] .pk-sec');
   for (let i = 0; i < 100 && !sec(); i++) await sleep(30);
@@ -125,11 +125,14 @@ try {
   const tx = (n) => (n ? page.text(n) : '');
   const levels = () => sec().querySelectorAll('.pk-sec-levels button');
   const pressed = () => levels().find((b) => b.getAttribute('aria-pressed') === 'true');
-  ok('the review gate card has the switch, labelled in plain words', !!sec() && /Security pass in PR reviews/.test(tx(sec())), tx(sec()));
+  ok('the review gate\'s page has the switch, labelled in plain words', !!sec() && /Security pass in PR reviews/.test(tx(sec())), tx(sec()));
   ok('three buttons: Off, When code changes, Always', levels().map(tx).join('|') === 'Off|When code changes|Always', levels().map(tx).join('|'));
   ok('the level in force is the pressed one: Off', tx(pressed()) === 'Off' && /Now: PR reviews run no security pass\./.test(tx(sec())), tx(sec()));
   ok('every button is a styled kind (secondary), and no fold', levels().every((b) => /\bbtn\b/.test(b.className)) && !sec().querySelector('details'));
-  ok('only the review gate card has it', c().querySelectorAll('.pk-sec').length === 1);
+  const others = page.eval('PK.data.packs.map((p) => p.id)').filter((id) => id !== 'review-gate');
+  const elsewhere = others.filter((id) => { page.navigate(`#packs/${id}`); return c().querySelectorAll('.pk-sec').length > 0; });
+  page.navigate('#packs/review-gate');
+  ok('only the review gate\'s page has it, once', c().querySelectorAll('.pk-sec').length === 1 && others.length > 0 && elsewhere.length === 0, elsewhere.join(' '));
 
   levels().find((b) => tx(b) === 'Always').click();
   for (let i = 0; i < 100 && !sec().querySelector('.pk-sec-preview'); i++) await sleep(20);

@@ -1,0 +1,14 @@
+{
+  "mode": "pr",
+  "purpose": "The Packs page was one long, cluttered page. It becomes a grid of eight pack cards with less text, and each pack opens its own page with five sections, so details and settings are a click away instead of all on one screen (the owner's redesign, approved from a mock).",
+  "mechanism": "public/app.js: a second VIEWS row 'pack' (no sidebar item, parent 'packs') owns every #packs/<id> hash through a match function; viewForHash replaces the exact-hash lookups; its own hash #packs/setup is the shared-fixes page. public/packs-view.js: openPacks paints the grid (cards with name, command, one-liner, status word, step strip from pack.workflow.steps[].who, a primary Install or Update only when needed); openPackPage paints one pack: header (back, title, command, lead, status, Install/Update, Uninstall…), jump links, then What it does (tiles), How it runs (the wfDiagram data as a vertical step list), Settings (review gate only, the #75 section moved as it was), Parts (one row each, one action), Files and undo. Install, update and part add/remove preview on the pack page under the action, and only Save/Install writes; installer output shows in place; Packs opens no dialog (pkDialog stays for Models and the skill wizard). Moving between grid and pack pages repaints from state already read; entering Packs from elsewhere reads catalog, roles and status again. public/setup.js: the Codex card on Setup holds the 'Run the Codex trust check when Packs checks status' checkbox, saving the same preference packs-view.js pkTrust reads. public/workflow.js: the step list drawing. public/styles.css: spacing and type scale tokens in their own :root rule, Packs styles at 1080px width, nothing under 12px, no uppercase labels. verify.sh runs the new tests/packs-pages.mjs.",
+  "decisions": "Separate pages rather than folds or tabs (the owner rules out folds). The review gate settings moved unchanged; their row redesign is the next PR. pkDialog kept because other pages use it. Update offered only when it helps (newer version, edited part, or a missing file the status check says an update fixes). Part statuses include 'Not working' and 'New CLI here' because the server reports them. The trust-check preference lives on Setup because it is a machine setting, not a pack's.",
+  "readers": "README and user docs: users of the studio. Comments: the next maintainer of packs-view.js, app.js routing and setup.js.",
+  "base": "origin/main",
+  "docMap": [
+    {"behavior": "Packs is a card grid and each pack has its own page; the review gate's settings sit on its pack page", "docs": ["README.md"]},
+    {"behavior": "The Codex trust-check preference is set on Setup", "docs": []},
+    {"behavior": "Hash routing: #packs/<id> and #packs/setup", "docs": []}
+  ],
+  "untouchable": ["packs/**", "PRODUCT.md", "builds/**"]
+}

@@ -307,9 +307,10 @@ const item = (page, id) => page.querySelectorAll('.files-item').find((b) => b.da
   const hex = outside.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
   ok('4 styles.css has no hex colour outside the :root token blocks', hex.length === 0, hex.join(' '));
   const lightBlock = CSS.match(/:root\[data-theme="light"\]\s*\{[^}]*\}/)[0];
-  const darkBlock = CSS.match(/:root\s*\{[^}]*\}/)[0];
   const used = [...new Set([...CSS.matchAll(/var\((--[\w-]+)/g)].map((m) => m[1]))];
-  const undefinedTokens = used.filter((t) => !darkBlock.includes(`${t}:`) && !/--rail-w/.test(t));
+  // Colours live in the first :root block; scales (Packs' spacing and type) in a :root rule of their own.
+  const rootRules = [...CSS.matchAll(/(?:^|\n):root\s*\{[^}]*\}/g)].map((m) => m[0]).join('\n');
+  const undefinedTokens = used.filter((t) => !rootRules.includes(`${t}:`) && !/--rail-w/.test(t));
   ok('4 every var() names a defined token', undefinedTokens.length === 0, undefinedTokens.join(' '));
   ok('4 the light theme overrides the shadow token for its own surface', /--shadow:/.test(lightBlock));
 }
