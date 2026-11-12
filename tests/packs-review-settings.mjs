@@ -163,43 +163,59 @@ try {
   });
   const page = await bootPage({ routes, hash: '#packs/review-gate' });
   const c = () => page.$('content');
-  // A pack's own page, opened through its route when another page is shown.
+  // A pack's own page, opened through its route when another page (or the paths page) is shown.
   const card = (id = 'review-gate') => {
-    if (page.eval('PK.page') !== id) page.navigate(`#packs/${id}`);
+    if (page.eval('PK.page') !== id || page.eval('PK.sub')) page.navigate(`#packs/${id}`);
     return c().querySelector(`.pk-page[data-pack="${id}"]`);
   };
   const sec = () => card()?.querySelector('.pk-settings');
+  const secRow = () => sec()?.querySelector('.pk-security');
   const mg = () => sec()?.querySelector('.pk-merge');
   const cf = () => sec()?.querySelector('.pk-cross');
+  const always = () => sec()?.querySelector('.pk-always');
   for (let i = 0; i < 100 && !mg(); i++) await sleep(30);
   await settle(10);
   const tx = (n) => (n ? page.text(n) : '');
-  const choices = (box) => box.querySelectorAll('.pk-choice-row button');
+  const choices = (box) => box.querySelectorAll('.pk-tabs button');
   const pressed = (box) => choices(box).find((b) => b.getAttribute('aria-pressed') === 'true');
-  const pre = () => sec().querySelector('.pk-sec-preview');
+  const says = (box) => box.querySelectorAll('.pk-set-says').map(tx);
+  // The paths page, or the pack page's Settings: wherever the save bar is drawn now.
+  const pathsPage = () => c().querySelector('.pk-paths-page');
+  const here = () => pathsPage() || sec();
+  const bar = () => here()?.querySelector('.pk-savebar');
+  const barBtn = (label) => bar()?.querySelectorAll('button').find((b) => tx(b) === label);
+  const pre = () => here()?.querySelector('.pk-sec-preview');
   const acts = () => pre().querySelectorAll('button');
+  const result = () => here()?.querySelector('.pk-result');
   const waitFor = async (fn) => { for (let i = 0; i < 100 && !fn(); i++) await sleep(20); await settle(5); };
+  const pick = async (boxOf, label) => { choices(boxOf()).find((b) => tx(b) === label).click(); await settle(5); };
+  const previewIt = async () => { barBtn('Preview and save').click(); await waitFor(() => pre() || here()?.querySelector('.notice.error')); };
+  const saveIt = async () => { acts().find((b) => tx(b) === 'Save').click(); await waitFor(() => result() || pre() || here()?.querySelector('.notice.error')); };
+  const toPaths = async () => { always().querySelectorAll('button').find((b) => tx(b) === 'Edit paths').click(); await waitFor(() => pathsPage()); };
+  const toPack = async () => { pathsPage().querySelector('.pk-back').click(); await waitFor(() => sec()); };
+  const box = () => pathsPage()?.querySelector('textarea');
+  const added = (want) => pre().querySelectorAll('.diff-line.add').some((l) => want.test(tx(l)));
 
   ok('one Settings section on the review gate page, holding the security switch, agent merge and cross-vendor checks', c().querySelectorAll('.pk-settings').length === 1
     && !!sec().querySelector('.pk-sec-levels') && !!mg() && !!cf(), tx(sec()));
+  ok('C8: four rows, in order: Security pass, Agent merge, Always needs you, Cross-vendor checks', sec().querySelectorAll('.pk-set').map((r) => tx(r.querySelector('.pk-set-name'))).join('|')
+    === 'Security pass|Agent merge|Always needs you|Cross-vendor checks', sec().querySelectorAll('.pk-set-name').map(tx).join('|'));
+  ok('…under the lead "Nothing is saved until you preview the change."', tx(card().querySelector('#pk-sec-settings .pk-sec-lead')) === 'Nothing is saved until you preview the change.');
   ok('R3: four merge choices in plain words, Off pressed', choices(mg()).map(tx).join('|') === 'Off|Docs and tests only|Low-risk PRs|Low and medium-risk PRs' && tx(pressed(mg())) === 'Off',
     choices(mg()).map(tx).join('|'));
-  ok('…each with its one line', ['You merge every PR.', 'An agent may merge a low-risk PR that changes only docs or tests.', 'An agent may merge any low-risk PR.',
-    'An agent may merge low- and medium-risk PRs: medium-risk code merges without you. High-risk always waits for you.'].every((s) => tx(mg()).includes(s)), tx(mg()));
-  ok('…its Now line, with what it needs: the gh CLI, and CI checks', /Now: You merge every PR\. Agent merge needs the gh CLI, and a repo with no CI checks waits for you \(unless your review config turns required checks off\)\./.test(tx(mg())), tx(mg()));
-  ok('…and the line that holds whatever you pick', /An agent merges only through merge\.mjs, and only when the review is closed at the tip, CI is green and nobody asked for changes\./.test(tx(mg())), tx(mg()));
-  const paths = () => mg().querySelector('.pk-paths');
-  ok('R4: Always needs you lists the built-ins and the risky paths read-only', /Always needs you/.test(tx(paths())) && /Built in: \.github\/workflows\/\*\*, package\.json/.test(tx(paths()))
-    && new RegExp(`Risky paths \\(the review gate's defaults\\): ${DEFAULT_RISK_PATHS.map((p) => p.replace(/[*.]/g, '\\$&')).join(', ')}`).test(tx(paths())), tx(paths()));
-  const box = () => paths().querySelector('textarea');
-  ok('…and your own paths in one box, one per line, labelled, with a Preview button; no risky-paths editor', !!box() && !!box().getAttribute('aria-label') && box().value === ''
-    && paths().querySelectorAll('textarea').length === 1 && tx(paths().querySelector('button')) === 'Preview' && /\bbtn\b/.test(paths().querySelector('button').className));
-  ok('R5: Cross-vendor checks, Prefer another vendor pressed, each with its line', choices(cf()).map(tx).join('|') === 'Prefer another vendor|Off' && tx(pressed(cf())) === 'Prefer another vendor'
-    && tx(cf()).includes('Reviews and grades use a model from another vendor when one is available; never a blocker.') && tx(cf()).includes('Any reviewer in your roles may check any work.'), tx(cf()));
-  ok('R7: one line names where the other review settings live (the primary file has no Files entry, so no button)', /Other review settings live in ~\/\.agent-config-studio\/review-gate\/config\.json\./.test(tx(sec().querySelector('.pk-other')))
-    && !sec().querySelector('.pk-other button'), tx(sec().querySelector('.pk-other')));
-  ok('every button is a styled kind, and no fold on the page', sec().querySelectorAll('button').every((b) => /\bbtn\b/.test(b.className)) && !card().querySelector('details'));
-  ok('no raw key name in a label or a choice', [...sec().querySelectorAll('.pk-choice-row button'), ...sec().querySelectorAll('.pk-label')].every((n) => !/merge\.policy|alwaysHuman|crossFamily|riskPaths|strict|standard/.test(tx(n))));
+  ok('C8: …one line, for the selected choice only', JSON.stringify(says(mg())) === '["You merge every PR."]'
+    && !['An agent may merge a low-risk PR', 'An agent may merge any low-risk PR', 'An agent may merge low- and medium-risk PRs'].some((s) => tx(mg()).includes(s)), tx(mg()));
+  ok('C8: with gh not reported missing, no gh or CI line, and no merge.mjs essay', !mg().querySelector('.pk-set-warn') && !/gh CLI|CI checks|merge\.mjs/.test(tx(mg())), tx(mg()));
+  ok('C8: security pass, one line for Off', choices(secRow()).map(tx).join('|') === 'Off|When code changes|Always' && JSON.stringify(says(secRow())) === '["PR reviews run no security pass."]', tx(secRow()));
+  ok('R5: Cross-vendor checks, Prefer another vendor pressed, its line only', choices(cf()).map(tx).join('|') === 'Prefer another vendor|Off' && tx(pressed(cf())) === 'Prefer another vendor'
+    && JSON.stringify(says(cf())) === '["Reviews and grades use a model from another vendor when one is available; never a blocker."]' && !tx(cf()).includes('Any reviewer in your roles'), tx(cf()));
+  ok('R4: Always needs you is a count and Edit paths (secondary); no box, no lists on the pack page', /^9 paths: 2 built in, 7 risky, none of your own/.test(tx(always()))
+    && always().querySelectorAll('button').map((b) => `${tx(b)}:${b.className}`).join('|') === 'Edit paths:btn pk-edit-paths' && !sec().querySelector('textarea') && !/package\.json|\*auth\*/.test(tx(sec())), tx(always()));
+  ok('R7: the footer says where it is saved (the primary file has no Files entry, so no button), and no "Saved as" key line', /^Saved in ~\/\.agent-config-studio\/review-gate\/config\.json$/.test(tx(sec().querySelector('.pk-set-foot')))
+    && !sec().querySelector('.pk-set-foot button') && !/Saved as|Other review settings/.test(tx(sec())), tx(sec().querySelector('.pk-set-foot')));
+  ok('nothing picked: no save bar and no preview', !bar() && !pre());
+  ok('every button is a styled kind or a segment, and no fold on the page', sec().querySelectorAll('button').every((b) => /\bbtn\b/.test(b.className) || b.classList.contains('pk-tab')) && !card().querySelector('details'));
+  ok('no raw key name in a label or a choice', [...sec().querySelectorAll('.pk-tabs button'), ...sec().querySelectorAll('.pk-set-name')].every((n) => !/merge\.policy|alwaysHuman|crossFamily|riskPaths|strict|standard/.test(tx(n))));
 
   console.log('\nR6 and R5: the diagram, the Grade and the Build page follow the settings');
   const step = (pack, id) => card(pack)?.querySelector(`.step[data-step="${id}"]`);
@@ -208,95 +224,187 @@ try {
   ok('the Grade swaps vendors while cross-vendor checks prefer another vendor', /Astra instead when the builder is the same vendor as Fable/.test(tx(step('build', 'grade'))), tx(step('build', 'grade')));
   ok('the Build page points to the setting', /The Grade's vendor swap follows Cross-vendor checks in the review gate's settings \(now: Prefer another vendor\)\./.test(tx(card('build').querySelector('.pk-cross-note'))), tx(card('build')));
 
-  console.log('\none pending preview for the section, one save');
+  console.log('\nC10: a pick opens the save bar; Preview and save shows the diff in its place; one save');
   {
     const opened = [];
-    for (const [boxOf, label, want] of [[mg, 'Docs and tests only', '"policy": "strict"'], [mg, 'Low-risk PRs', '"policy": "standard"'],
-      [mg, 'Low and medium-risk PRs', '"policy": "always"'], [cf, 'Off', '"crossFamily": "off"'], [() => sec().querySelector('.pk-security'), 'Always', '"run": "always"']]) {
-      choices(boxOf()).find((b) => tx(b) === label).click();
-      await waitFor(() => pre());
-      opened.push(!!pre() && pre().querySelectorAll('.diff-line.add').some((l) => tx(l).includes(want)));
+    for (const [boxOf, label, line, want] of [[mg, 'Docs and tests only', 'agent merge to “Docs and tests only”', /"policy": "strict"/], [mg, 'Low-risk PRs', 'agent merge to “Low-risk PRs”', /"policy": "standard"/],
+      [mg, 'Low and medium-risk PRs', 'agent merge to “Low and medium-risk PRs”', /"policy": "always"/], [cf, 'Off', 'cross-vendor checks to “Off”', /"crossFamily": "off"/],
+      [secRow, 'Always', 'security pass to “Always”', /"run": "always"/]]) {
+      await pick(boxOf, label);
+      const named = tx(bar()?.querySelector('.pk-savebar-text')) === `1 change: ${line}` && !pre();
+      await previewIt();
+      opened.push(named && !!pre() && added(want) && !bar());
       acts().find((b) => tx(b) === 'Cancel').click();
       await settle(5);
     }
-    ok('QA 2: every choice, merge, cross-vendor and security alike, opens the one preview at once', opened.every(Boolean) && writes.length === 0, JSON.stringify(opened));
+    ok('QA 2: every choice, merge, cross-vendor and security alike, names itself in the bar, and Preview and save shows its diff', opened.every(Boolean) && writes.length === 0, JSON.stringify(opened));
   }
-  choices(mg()).find((b) => tx(b) === 'Low-risk PRs').click();
-  await waitFor(() => pre());
-  ok('choosing Low-risk PRs shows the file and its diff first, nothing written', /this changes ~\/\.agent-config-studio\/review-gate\/config\.json, and a copy of it goes to the backups folder first/.test(tx(pre()))
-    && pre().querySelectorAll('.diff-line.add').some((l) => /"policy": "standard"/.test(tx(l))) && writes.length === 0 && read(t.primary) === '{\n  "pick": "rotate"\n}\n', tx(pre()));
-  ok('…the choice shows as picked while it waits', tx(pressed(mg())) === 'Low-risk PRs');
-  ok('QA 3: while it waits, Now says what is saved and After Save what the pick does', /Now: You merge every PR\./.test(tx(mg())) && /After Save: An agent may merge any low-risk PR\./.test(tx(mg())), tx(mg()));
-  choices(cf()).find((b) => tx(b) === 'Off').click();
-  await waitFor(() => pre() && pre().querySelectorAll('.diff-line.add').some((l) => /crossFamily/.test(tx(l))));
-  ok('a second change joins the same preview: one diff with both', sec().querySelectorAll('.pk-sec-preview').length === 1
-    && pre().querySelectorAll('.diff-line.add').some((l) => /"policy": "standard"/.test(tx(l))) && pre().querySelectorAll('.diff-line.add').some((l) => /"crossFamily": "off"/.test(tx(l))), tx(pre()));
+  const plans = () => page.requests.filter((r) => /review-settings\/plan/.test(r.path)).length;
+  const plansBefore = plans();
+  await pick(mg, 'Low-risk PRs');
+  ok('C10: a pick opens the bar: the change named, quiet Cancel and primary Preview and save; nothing previewed or written', tx(bar().querySelector('.pk-savebar-text')) === '1 change: agent merge to “Low-risk PRs”'
+    && bar().querySelectorAll('button').map((b) => `${tx(b)}:${b.className}`).join('|') === 'Cancel:btn ghost|Preview and save:btn primary'
+    && !pre() && writes.length === 0 && plans() === plansBefore, tx(bar()));
+  ok('…the choice shows as picked, and the row\'s one line is the pick\'s', tx(pressed(mg())) === 'Low-risk PRs' && JSON.stringify(says(mg())) === '["An agent may merge any low-risk PR. You merge the rest."]', tx(mg()));
+  ok('…with no Now or After Save lines', !/Now:|After Save:/.test(tx(sec())), tx(sec()));
+  await pick(cf, 'Off');
+  ok('C10: a second pick: the bar counts both', tx(bar().querySelector('.pk-savebar-text')) === '2 changes: agent merge to “Low-risk PRs” and cross-vendor checks to “Off”', tx(bar()));
+  await previewIt();
+  ok('C10: Preview and save shows the file and one diff with both in place of the bar, nothing written', !bar() && sec().querySelectorAll('.pk-sec-preview').length === 1
+    && /this changes ~\/\.agent-config-studio\/review-gate\/config\.json, and a copy of it goes to the backups folder first/.test(tx(pre()))
+    && added(/"policy": "standard"/) && added(/"crossFamily": "off"/) && writes.length === 0 && read(t.primary) === '{\n  "pick": "rotate"\n}\n', tx(pre()));
+  ok('…the preview sits in the bar\'s place, after the rows, not inside them', !sec().querySelector('.pk-set-rows .pk-sec-preview') && !!sec().querySelector('.pk-savebar-slot .pk-sec-preview'));
   ok('the preview\'s buttons: Save (primary) and Cancel (quiet)', acts().map((b) => `${tx(b)}:${b.className}`).join('|') === 'Save:btn primary|Cancel:btn ghost');
-  acts().find((b) => tx(b) === 'Save').click();
-  await waitFor(() => sec().querySelector('.pk-result'));
+  await saveIt();
   ok('Save writes both in one request and keeps the other keys', writes.length === 1 && /^[0-9a-f]{64}$/.test(writes[0].signature)
     && JSON.stringify(writes[0].changes) === '{"merge.policy":"standard","crossFamily":"off"}'
     && JSON.parse(read(t.primary)).merge.policy === 'standard' && JSON.parse(read(t.primary)).crossFamily === 'off' && JSON.parse(read(t.primary)).pick === 'rotate', read(t.primary));
-  ok('…and says what it saved and where the old file went', /Saved: ~\/\.agent-config-studio\/review-gate\/config\.json now says “Low-risk PRs” \(agent merge\) and “Off” \(cross-vendor checks\)\. The old file is at ~\/\.agent-config-studio\/backups\//.test(tx(sec().querySelector('.pk-result'))), tx(sec().querySelector('.pk-result')));
-  ok('QA 6: the backup is shown as its ~ folder, never the nested absolute path', /The old file is at ~\/\.agent-config-studio\/backups\/[^\s/]+-review-settings\/\./.test(tx(sec().querySelector('.pk-result')))
-    && !tx(sec().querySelector('.pk-result')).includes(t.h) && !/\/0\//.test(tx(sec().querySelector('.pk-result'))), tx(sec().querySelector('.pk-result')));
-  ok('QA 3: after Save no After Save line is left', !/After Save:/.test(tx(sec())), tx(mg()));
+  ok('C10: …with one backup', backupDirs(t).length === 1, backupDirs(t).join(' '));
+  ok('…and says what it saved and where the old file went', /Saved: ~\/\.agent-config-studio\/review-gate\/config\.json now says “Low-risk PRs” \(agent merge\) and “Off” \(cross-vendor checks\)\. The old file is at ~\/\.agent-config-studio\/backups\//.test(tx(result())), tx(result()));
+  ok('QA 6: the backup is shown as its ~ folder, never the nested absolute path', /The old file is at ~\/\.agent-config-studio\/backups\/[^\s/]+-review-settings\/\./.test(tx(result()))
+    && !tx(result()).includes(t.h) && !/\/0\//.test(tx(result())), tx(result()));
+  ok('QA 3: after Save no After Save line, no bar and no preview are left', !/After Save:/.test(tx(sec())) && !bar() && !pre(), tx(sec()));
   ok('…the pressed choices, the Merge step, the Grade note and the Build page follow', tx(pressed(mg())) === 'Low-risk PRs' && tx(pressed(cf())) === 'Off'
     && !step('review-gate', 'merge').classList.contains('off') && /no swap: Cross-vendor checks is off/.test(tx(step('build', 'grade')))
     && /\(now: Off\)/.test(tx(card('build').querySelector('.pk-cross-note'))), `${tx(step('build', 'grade'))} | ${tx(card('build').querySelector('.pk-cross-note'))}`);
 
-  box().value = 'infra/**\n\n  db/** \ninfra/**';
-  paths().querySelector('button').click();
-  await waitFor(() => pre());
-  ok('Preview of your paths: blank lines dropped, trimmed, repeats once', pre().querySelectorAll('.diff-line.add').some((l) => /"infra\/\*\*"/.test(tx(l)))
-    && pre().querySelectorAll('.diff-line.add').some((l) => /"db\/\*\*"/.test(tx(l))), tx(pre()));
-  acts().find((b) => tx(b) === 'Save').click();
-  await waitFor(() => sec().querySelector('.pk-result'));
-  ok('…Save writes them, and the result counts them', JSON.parse(read(t.primary)).merge.alwaysHuman.join() === 'infra/**,db/**'
-    && /now says “2 paths of your own”\./.test(tx(sec().querySelector('.pk-result'))) && box().value === 'infra/**\ndb/**', tx(sec().querySelector('.pk-result')));
-
-  choices(mg()).find((b) => tx(b) === 'Off').click();
-  await waitFor(() => pre());
+  await pick(mg, 'Off');
+  await pick(secRow, 'Always');
+  ok('C10: picks waiting in the bar', tx(bar().querySelector('.pk-savebar-text')) === '2 changes: agent merge to “Off” and security pass to “Always”' && tx(pressed(mg())) === 'Off', tx(bar()));
+  barBtn('Cancel').click();
+  await settle(5);
+  ok('C10: the bar\'s Cancel restores the saved values: the pressed choices and their lines, no bar, nothing written', !bar() && !pre() && tx(pressed(mg())) === 'Low-risk PRs' && tx(pressed(secRow())) === 'Off'
+    && JSON.stringify(says(mg())) === '["An agent may merge any low-risk PR. You merge the rest."]' && writes.length === 1 && JSON.parse(read(t.primary)).merge.policy === 'standard', tx(sec()));
+  await pick(mg, 'Off');
+  await previewIt();
   acts().find((b) => tx(b) === 'Cancel').click();
   await settle(5);
-  ok('Cancel drops the whole pending preview and writes nothing', !pre() && tx(pressed(mg())) === 'Low-risk PRs' && JSON.parse(read(t.primary)).merge.policy === 'standard');
-  choices(mg()).find((b) => tx(b) === 'Low-risk PRs').click();
+  ok('the preview\'s Cancel drops the pending changes too and writes nothing', !pre() && !bar() && tx(pressed(mg())) === 'Low-risk PRs' && JSON.parse(read(t.primary)).merge.policy === 'standard');
+  await pick(mg, 'Off');
+  await pick(mg, 'Low-risk PRs');
+  ok('picking back what is saved asks for nothing: no bar', !pre() && !bar() && writes.length === 1);
+
+  console.log('\nC9: Edit paths opens its own page');
+  await toPaths();
+  ok('C9: Edit paths opens #packs/review-gate/paths, its own page', page.location.hash === '#packs/review-gate/paths' && page.eval('S.view') === 'pack' && !sec() && !!pathsPage(), page.location.hash);
+  ok('…titled Always needs you, with a quiet way back to the review gate', tx(pathsPage().querySelector('h1')) === 'Always needs you' && tx(pathsPage().querySelector('.pk-back')) === 'Review gate'
+    && /\bbtn ghost\b/.test(pathsPage().querySelector('.pk-back').className), tx(pathsPage()).slice(0, 200));
+  ok('C9: the built-in list and the risky list, read-only', pathsPage().querySelectorAll('.pk-path-list.built-in li').map(tx).join(',') === '.github/workflows/**,package.json'
+    && pathsPage().querySelectorAll('.pk-path-list.risky li').map(tx).join(',') === DEFAULT_RISK_PATHS.join(',') && /the review gate's defaults/.test(tx(pathsPage())), tx(pathsPage()));
+  ok('C9: …and one labelled box for your own, empty; no Preview button and no risky-paths editor', !!box() && !!box().getAttribute('aria-label') && box().value === ''
+    && pathsPage().querySelectorAll('textarea').length === 1 && !pathsPage().querySelectorAll('button').some((b) => tx(b) === 'Preview') && !bar());
+  page.input(box(), 'infra/**\n\n  db/** \ninfra/**');
   await settle(5);
-  ok('choosing what is already in force asks for nothing', !pre() && writes.length === 2);
+  ok('C9: typing opens the save bar here, the box keeping what was typed', tx(bar()?.querySelector('.pk-savebar-text')) === '1 change: always needs you to “2 paths of your own”' && box().value === 'infra/**\n\n  db/** \ninfra/**', tx(bar()));
+  await previewIt();
+  ok('C9: Save there previews first: blank lines dropped, trimmed, repeats once, nothing written', !bar() && added(/"infra\/\*\*"/) && added(/"db\/\*\*"/) && writes.length === 1, tx(pre()));
+  await saveIt();
+  ok('…Save writes them, and the result counts them', JSON.parse(read(t.primary)).merge.alwaysHuman.join() === 'infra/**,db/**' && writes.length === 2
+    && /now says “2 paths of your own”\./.test(tx(result())) && box().value === 'infra/**\ndb/**', tx(result()));
+  await toPack();
+  ok('C9: back returns to the review gate\'s page, focus on Edit paths, and the count follows', page.location.hash === '#packs/review-gate' && !pathsPage()
+    && page.doc.activeElement === always().querySelector('.pk-edit-paths') && /^11 paths: 2 built in, 7 risky, 2 of your own/.test(tx(always())), `${page.location.hash} ${tx(always())}`);
 
-  // f1: the box's text is part of every preview and every Save, whatever was clicked.
-  box().value = 'infra/**\ndb/**\nvendor/**';
-  choices(cf()).find((b) => tx(b) === 'Prefer another vendor').click();
-  await waitFor(() => pre());
-  ok('typed paths, then a choice: the one preview covers both', pre().querySelectorAll('.diff-line.add').some((l) => /"vendor\/\*\*"/.test(tx(l)))
-    && pre().querySelectorAll('.diff-line.add').some((l) => /"crossFamily": "prefer"/.test(tx(l))), tx(pre()));
-  acts().find((b) => tx(b) === 'Save').click();
-  await waitFor(() => sec().querySelector('.pk-result'));
-  ok('…and Save writes both, the box showing what was saved', JSON.parse(read(t.primary)).merge.alwaysHuman.join() === 'infra/**,db/**,vendor/**'
-    && JSON.parse(read(t.primary)).crossFamily === 'prefer' && box().value === 'infra/**\ndb/**\nvendor/**', read(t.primary));
+  // Trap: paths typed on their page were lost when another setting was saved first.
+  await toPaths();
+  page.input(box(), 'infra/**\ndb/**\nvendor/**');
+  await settle(5);
+  await toPack();
+  ok('typed paths, then back: the bar still holds them, and the count counts them', tx(bar()?.querySelector('.pk-savebar-text')) === '1 change: always needs you to “3 paths of your own”'
+    && /^12 paths: .*3 of your own/.test(tx(always())), tx(bar()));
+  await pick(cf, 'Prefer another vendor');
+  ok('…a choice joins them in the bar', tx(bar().querySelector('.pk-savebar-text')) === '2 changes: always needs you to “3 paths of your own” and cross-vendor checks to “Prefer another vendor”', tx(bar()));
+  await previewIt();
+  ok('typed paths, then a choice: the one preview covers both', added(/"vendor\/\*\*"/) && added(/"crossFamily": "prefer"/), tx(pre()));
+  await saveIt();
+  ok('…and Save writes both in one request', writes.length === 3 && JSON.parse(read(t.primary)).merge.alwaysHuman.join() === 'infra/**,db/**,vendor/**'
+    && JSON.parse(read(t.primary)).crossFamily === 'prefer', read(t.primary));
+  await toPaths();
+  ok('…the box showing what was saved', box().value === 'infra/**\ndb/**\nvendor/**' && !bar(), box().value);
 
-  box().value = 'infra/**\nlib/**';
-  paths().querySelector('button').click();
-  await waitFor(() => pre());
+  page.input(box(), 'infra/**\nlib/**');
+  await settle(5);
+  await previewIt();
   box().value = 'infra/**\nlib/**\ncfg/**';
   const before = writes.length;
   acts().find((b) => tx(b) === 'Save').click();
-  await waitFor(() => pre() && pre().querySelectorAll('.diff-line.add').some((l) => /"cfg\/\*\*"/.test(tx(l))));
+  await waitFor(() => pre() && added(/"cfg\/\*\*"/));
   ok('QA 4: the refreshed preview says why it did not save', /The list changed since the preview; check the new preview and Save again\./.test(tx(pre())), tx(pre()));
   ok('paths edited after their preview: Save shows the new diff instead of writing the old list', writes.length === before
-    && JSON.parse(read(t.primary)).merge.alwaysHuman.join() === 'infra/**,db/**,vendor/**' && pre().querySelectorAll('.diff-line.add').some((l) => /"cfg\/\*\*"/.test(tx(l))), tx(pre()));
-  acts().find((b) => tx(b) === 'Save').click();
-  await waitFor(() => sec().querySelector('.pk-result'));
+    && JSON.parse(read(t.primary)).merge.alwaysHuman.join() === 'infra/**,db/**,vendor/**' && added(/"cfg\/\*\*"/), tx(pre()));
+  await saveIt();
   ok('…then Save writes what is on screen', JSON.parse(read(t.primary)).merge.alwaysHuman.join() === 'infra/**,lib/**,cfg/**' && box().value === 'infra/**\nlib/**\ncfg/**', read(t.primary));
 
-  choices(mg()).find((b) => tx(b) === 'Low and medium-risk PRs').click();
-  await waitFor(() => pre());
+  // Trap: an old paths list came back after the page's data was read again.
+  put(t.primary, `${JSON.stringify({ ...JSON.parse(read(t.primary)), merge: { ...JSON.parse(read(t.primary)).merge, alwaysHuman: ['disk/**'] } }, null, 2)}\n`);
+  await page.eval('pkLoad()');
+  await settle(5);
+  ok('the data read again: the box shows the list on disk, not the one saved before', box().value === 'disk/**' && !bar(), box().value);
+  page.input(box(), 'typed/**');
+  await settle(5);
+  barBtn('Cancel').click();
+  await settle(5);
+  await page.eval('pkLoad()');
+  await settle(5);
+  ok('typed, then Cancel, then the data read again: the box shows the list on disk', box().value === 'disk/**' && !bar(), box().value);
+
+  page.navigate('#packs/review-gate/paths');
+  await settle(5);
+  ok('C9: a hash change to the paths page lands on it', !!pathsPage() && page.location.hash === '#packs/review-gate/paths');
+  page.navigate('#packs/build/paths');
+  await settle(5);
+  ok('…another pack has no paths page: a plain "No page called" with a way back', !pathsPage() && /No page called build\/paths\./.test(tx(c())) && !!c().querySelector('.pk-back'), tx(c()).slice(0, 200));
+
+  await pick(mg, 'Low and medium-risk PRs');
+  await previewIt();
   put(t.primary, '{"merge":{"policy":"strict"}}\n');
+  const stale = writes.length;
   acts().find((b) => tx(b) === 'Save').click();
   await waitFor(() => sec().querySelector('.notice.error'));
   ok('a stale preview: the refusal is shown, and the file is not overwritten', /changed since the preview/.test(tx(sec().querySelector('.notice.error'))) && read(t.primary) === '{"merge":{"policy":"strict"}}\n', tx(sec()));
+  ok('C10: …it asks to preview again: the preview is gone and the bar is back with the pick', !pre() && tx(bar()?.querySelector('.pk-savebar-text')) === '1 change: agent merge to “Low and medium-risk PRs”'
+    && !!barBtn('Preview and save') && writes.length === stale + 1, tx(sec()));
+  await previewIt();
+  ok('…and previewing again shows the diff against the file as it is now', !!pre() && added(/"policy": "always"/) && !sec().querySelector('.notice.error'), tx(pre()));
   ok('no page errors', page.errors.length === 0, page.errors.join(' | '));
   page.done();
+
+  console.log('\nC9: a reload on the paths page lands on it');
+  {
+    const cold = await bootPage({ routes, hash: '#packs/review-gate/paths' });
+    for (let i = 0; i < 100 && !cold.$('content').querySelector('.pk-paths-page textarea'); i++) await sleep(30);
+    await settle(10);
+    ok('a reload on #packs/review-gate/paths lands on the paths page', cold.eval('S.view') === 'pack' && cold.location.hash === '#packs/review-gate/paths'
+      && cold.text(cold.$('content').querySelector('.pk-paths-page h1')) === 'Always needs you', cold.text(cold.$('content')).slice(0, 200));
+    ok('no page errors', cold.errors.length === 0, cold.errors.join(' | '));
+    cold.done();
+  }
+
+  console.log('\nC8: the gh line shows only when it applies');
+  {
+    const tg = home();
+    put(tg.primary, '{"merge":{"policy":"standard"}}\n');
+    let gh = false;
+    const rg = routesFor({ ...Object.fromEntries(['GET /api/packs/status', 'GET /api/models/roles'].map((k) => [k, routes.table[k]])),
+      'GET /api/packs': () => { const v = withGate(view(tg)); v.settings.merge.gh = gh; return v; } });
+    const pg = await bootPage({ routes: rg, hash: '#packs/review-gate' });
+    const m2 = () => pg.$('content').querySelector('[data-pack="review-gate"] .pk-merge');
+    for (let i = 0; i < 100 && !m2(); i++) await sleep(30);
+    await settle(10);
+    const warn = () => m2().querySelectorAll('.pk-set-warn');
+    ok('gh missing and an agent may merge: one amber line in the agent merge row', warn().length === 1 && /needs the gh CLI/.test(pg.text(warn()[0])), pg.text(m2()));
+    m2().querySelectorAll('.pk-tabs button').find((b) => pg.text(b) === 'Off').click();
+    await settle(5);
+    ok('…picking Off: no gh line', warn().length === 0, pg.text(m2()));
+    gh = true;
+    await pg.eval('pkLoad()');
+    await settle(5);
+    m2().querySelectorAll('.pk-tabs button').find((b) => pg.text(b) === 'Low-risk PRs').click();
+    await settle(5);
+    ok('gh on the PATH: no gh line', warn().length === 0, pg.text(m2()));
+    ok('no page errors', pg.errors.length === 0, pg.errors.join(' | '));
+    pg.done();
+  }
 
   console.log('\nR1: no code-review part installed, no settings');
   installed = false;
@@ -306,6 +414,9 @@ try {
   await settle(10);
   ok('the page shows no settings, and one sentence on what installing lets you set', !bc().querySelector('.pk-settings') && !bc().querySelector('.pk-sec-levels')
     && /Install the Code review part to set the security pass, agent merge and cross-vendor checks here\./.test(bare.text(bc().querySelector('.pk-settings-none'))), bare.text(bc()));
+  bare.navigate('#packs/review-gate/paths');
+  await settle(5);
+  ok('…and the paths page says the same, with no box', !bare.$('content').querySelector('textarea') && /Install the Code review part/.test(bare.text(bare.$('content').querySelector('.pk-paths-page'))), bare.text(bare.$('content')).slice(0, 200));
   ok('no page errors', bare.errors.length === 0, bare.errors.join(' | '));
   bare.done();
 
@@ -321,7 +432,9 @@ try {
     const s3 = () => p3.$('content').querySelector('[data-pack="review-gate"] .pk-settings');
     for (let i = 0; i < 100 && !s3(); i++) await sleep(30);
     await settle(10);
-    s3().querySelector('.pk-cross .pk-choice-row').querySelectorAll('button').find((b) => p3.text(b) === 'Off').click();
+    s3().querySelector('.pk-cross .pk-tabs').querySelectorAll('button').find((b) => p3.text(b) === 'Off').click();
+    await settle(5);
+    s3().querySelector('.pk-savebar').querySelectorAll('button').find((b) => p3.text(b) === 'Preview and save').click();
     for (let i = 0; i < 100 && !s3().querySelector('.pk-sec-preview'); i++) await sleep(20);
     s3().querySelector('.pk-sec-preview').querySelectorAll('button').find((b) => p3.text(b) === 'Save').click();
     for (let i = 0; i < 100 && !s3().querySelector('.pk-result'); i++) await sleep(20);
@@ -347,7 +460,7 @@ try {
     ok('QA 7: light theme, the role chip\'s name and "not set" are at least 4.5:1', Object.values(pairs).every((r) => r >= 4.5), JSON.stringify(pairs));
   }
 
-  console.log('\nR7: the older home config is in Files, so the line opens it');
+  console.log('\nR7: the older home config is in Files, so the footer opens it');
   {
     installed = true;
     const t2 = home();
@@ -361,12 +474,12 @@ try {
       'GET /api/packs': () => withGate(view(t2)), 'GET /api/registry': () => reg });
     r2.files.set('/h/.claude/review-config.json', '{"merge":{"policy":"off"}}\n');
     const op = await bootPage({ routes: r2, hash: '#packs/review-gate' });
-    const other = () => op.$('content').querySelector('[data-pack="review-gate"] .pk-other');
-    for (let i = 0; i < 100 && !other(); i++) await sleep(30);
+    const foot = () => op.$('content').querySelector('[data-pack="review-gate"] .pk-set-foot');
+    for (let i = 0; i < 100 && !foot(); i++) await sleep(30);
     await settle(10);
-    const btn = other()?.querySelector('button');
-    ok('the line names ~/.claude/review-config.json, with an Open in Files button (quiet)', /Other review settings live in ~\/\.claude\/review-config\.json\./.test(op.text(other()))
-      && op.text(btn) === 'Open in Files' && /\bbtn ghost\b/.test(btn.className), op.text(other()));
+    const btn = foot()?.querySelector('button');
+    ok('the footer names ~/.claude/review-config.json, with an Open in Files button (quiet)', /^Saved in ~\/\.claude\/review-config\.json/.test(op.text(foot()))
+      && op.text(btn) === 'Open in Files' && /\bbtn ghost\b/.test(btn.className), op.text(foot()));
     btn.click();
     for (let i = 0; i < 100 && !op.eval('S.file && S.file.path'); i++) await sleep(20);
     ok('…which opens it in the editor', op.eval('S.view') === 'entry' && op.eval('S.file && S.file.path') === '/h/.claude/review-config.json', `${op.eval('S.view')} ${op.eval('S.file && S.file.path')}`);

@@ -274,7 +274,6 @@ console.log('\norange and amber controls: text 4.5:1 and edge 3:1, light and dar
   const CONTROLS = [
     ['primary button', ['.btn', '.btn.primary']],
     ['quiet button', ['.btn', '.btn.ghost'], true],
-    ['security pass "on" button', ['.btn', '.btn.pk-sec-on']],
     ['picked model', ['.btn', '.btn.roles-pick', '.btn.roles-pick.on']],
     ['picked model number', ['.roles-pick-n']],
     ['Assist chip, active', ['.assist-chip', '.assist-chip.active']],
@@ -294,6 +293,7 @@ console.log('\norange and amber controls: text 4.5:1 and edge 3:1, light and dar
     ['pack "Installed", "On"', ['.pk-st', '.pk-st.ok'], true],
     ['pack "Not working"', ['.pk-st', '.pk-st.err'], true],
     ['pack "Not installed", "Off"', ['.pk-st', '.pk-st.off'], true],
+    ['agent merge "needs the gh CLI" line', ['.pk-set-warn'], true],
     ['audit synced class', ['.audit-class', '.audit-class.synced']],
     ['audit warn', ['.audit-sev', '.audit-sev.warn']],
     ['account offline tag', ['.usage-offline-tag']],
