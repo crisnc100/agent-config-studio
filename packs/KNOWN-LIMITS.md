@@ -54,3 +54,4 @@ Scores are **likelihood × impact**, each on a 1–10 scale, as recorded when th
 |---|---|---|---|
 | Windows is not supported. | Running `acs packs` or the review gate on Windows. The shell scripts, hooks and paths assume a Unix system. | unscored | Out of scope for now. |
 | Linux is best effort. macOS is the platform that is tested in full. | Running on Linux. It shouldn't break, but not every path has been run there. | unscored | Run the full test suite on Linux in CI. |
+<!-- proof run: the pack tests on the Linux runner; this branch is never merged -->
