@@ -117,8 +117,9 @@ contends on as the reason. The file's header spells out the format.
   runs; `--list` prints the files without running them. It stops at the first
   failing file with that file's exit code, and refuses a group with no files.
 - `--jobs N` runs up to N files at once. Each file's output is held in a temp
-  file and printed whole in list order, with its seconds; `serial` files run
-  one at a time after the rest. A failure starts no new file, lets the running
+  file and printed whole, with its seconds; `serial` files run (and print)
+  first, one at a time, while the machine is quiet, then the rest in list
+  order. A failure starts no new file, lets the running
   ones finish and print, names the files not run, and exits with the code of
   the first failing file in list order. `verify.sh` does not use it.
 - CI (`.github/workflows/ci.yml`) shows five checks. `syntax`; `guards` (the

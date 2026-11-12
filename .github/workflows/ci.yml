@@ -71,7 +71,8 @@ jobs:
         # --jobs 4: one file per core of the Linux runner. The files mostly
         # wait on servers and children, but some assert wall-clock deadlines,
         # so more files than cores risks a false red on the required check.
-        # Files marked serial in tests/SUITE run alone after the rest.
+        # Files marked serial in tests/SUITE run alone first, while the
+        # runner is quiet.
         run: |
           set -euo pipefail
           node --version

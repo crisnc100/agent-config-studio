@@ -3,7 +3,7 @@
  * the log reads as a serial run (each file's output whole, in list order);
  * a failure starts nothing new, lets running files finish and print, names
  * the files not run, and exits with the first failing file's code in list
- * order; a `serial` file runs alone, after the files that share; a bad N is
+ * order; a `serial` file runs alone, before the files that share; a bad N is
  * refused before anything runs; and without --jobs (or with --jobs 1) a
  * file's output still reaches the terminal while it runs.
  *
@@ -117,10 +117,10 @@ console.log('\nrun.mjs --jobs: serial files');
   const r = run(suite, files, ['g', '--jobs', '4']);
   const { s, a, b, u } = r.t;
   ok('the files that share ran at once', r.status === 0 && a && b && overlap(a, b), `${r.status} ${JSON.stringify(r.t)}\n${r.out}`);
-  ok('each serial file ran alone, after the files that share, one after the other', s && u && s.start >= Math.max(a.end, b.end)
-    && u.start >= Math.max(a.end, b.end) && !overlap(s, u), JSON.stringify(r.t));
+  ok('each serial file ran alone, before the files that share, one after the other', s && u && Math.min(a.start, b.start) >= Math.max(s.end, u.end)
+    && !overlap(s, u), JSON.stringify(r.t));
   const heads = [...r.stdout.matchAll(/=== (tests\/\w\.mjs) \(/g)].map((m) => m[1]);
-  ok('the log prints the shared files first, then the serial ones, each in list order', heads.join() === 'tests/a.mjs,tests/b.mjs,tests/s.mjs,tests/u.mjs', heads.join());
+  ok('the log follows run order: the serial files, then the shared ones, each in list order', heads.join() === 'tests/s.mjs,tests/u.mjs,tests/a.mjs,tests/b.mjs', heads.join());
 
   const listed = run(suite, files, ['g', '--list', '--jobs', '4']);
   ok('--list keeps list order and runs nothing', listed.status === 0 && listed.started.length === 0
@@ -131,10 +131,10 @@ console.log('\nrun.mjs --jobs: serial files');
     && ['s', 'a', 'b', 'u'].every((n, i, all) => i === 0 || plain.t[n].start >= plain.t[all[i - 1]].end), JSON.stringify(plain.t));
 }
 {
-  const suite = ['tests/a.mjs ci:g', 'tests/s.mjs ci:g serial # port', ''].join('\n');
-  const r = run(suite, { 'tests/a.mjs': FILE('a', { code: 6 }), 'tests/s.mjs': FILE('s') }, ['g', '--jobs', '2']);
-  ok('a failure among the shared files leaves the serial files not run, and names them', r.status === 6 && !r.t.s
-    && /not run: tests\/s\.mjs/.test(r.out), `${r.status}\n${r.out}`);
+  const suite = ['tests/a.mjs ci:g', 'tests/s.mjs ci:g serial # port', 'tests/b.mjs ci:g', ''].join('\n');
+  const r = run(suite, { 'tests/a.mjs': FILE('a'), 'tests/s.mjs': FILE('s', { code: 6 }), 'tests/b.mjs': FILE('b') }, ['g', '--jobs', '2']);
+  ok('a failing serial file leaves the shared files not run, and names them', r.status === 6 && !r.t.a && !r.t.b
+    && /not run: tests\/a\.mjs, tests\/b\.mjs/.test(r.out), `${r.status}\n${r.out}`);
 }
 {
   const files = { 'tests/a.mjs': FILE('a') };
@@ -143,6 +143,38 @@ console.log('\nrun.mjs --jobs: serial files');
     ok(`serial on ${name} is a malformed list, refused before anything runs`, r.status === 2 && r.started.length === 0
       && /malformed[\s\S]*serial/.test(r.out), `${r.status}\n${r.out}`);
   }
+}
+
+console.log('\nrun.mjs --jobs: a failed run drains its output before it exits');
+/**
+ * The runner's stdout is a pipe nobody reads until the runner exits (or 3 s
+ * pass). With --jobs 2 a few of the 3000 empty files run beside the
+ * failing one; the not-run line names the rest, far more than a pipe buffer
+ * holds, so a runner that exits with output still queued loses its tail; one
+ * that sets the exit code and returns stays alive until the reader drains it.
+ */
+{
+  const names = Array.from({ length: 3000 }, (_, i) => `tests/n${String(i).padStart(4, '0')}-a-long-enough-name-to-fill-the-pipe.mjs`);
+  const files = { 'tests/a.mjs': FILE('a', { code: 9 }) };
+  for (const n of names) files[n] = '';
+  const root = tree({ 'tests/SUITE': ['tests/a.mjs ci:g', ...names.map((n) => `${n} ci:g`), ''].join('\n'), ...files });
+  const child = spawn(process.execPath, [RUNNER, '--root', root, 'g', '--jobs', '2'], { env: { ...process.env, SUITE_LOG: path.join(root, 'log.txt') }, stdio: ['ignore', 'pipe', 'pipe'] });
+  child.stdout.pause();
+  let out = '';
+  child.stdout.on('data', (d) => { out += d; });
+  child.stderr.on('data', (d) => { out += d; });
+  const exited = new Promise((res) => child.once('exit', (code) => res(code)));
+  const first = await Promise.race([exited.then(() => 'exited'), new Promise((res) => setTimeout(() => res('waited'), 3000))]);
+  child.stdout.resume();
+  const guard = setTimeout(() => child.kill('SIGKILL'), 15000);
+  const code = await exited;
+  await new Promise((res) => (child.stdout.readableEnded ? res() : child.stdout.once('end', res)));
+  clearTimeout(guard);
+  ok('it waits for a slow reader instead of exiting with output queued', first === 'waited', first);
+  const notRun = out.match(/=== (\d+) file\(s\) not run: (.*)\n/);
+  const count = Number(notRun?.[1]);
+  ok('…the whole not-run list and the closing line arrive, and it ends on its own with the failing file\'s code', code === 9
+    && count > 2900 && notRun[2] === names.slice(names.length - count).join(', ') && /first failing file in list order: tests\/a\.mjs \(exit 9\)/.test(out), `${code} ${out.length} chars, tail ${JSON.stringify(out.slice(-200))}`);
 }
 
 console.log('\nrun.mjs --jobs: a bad N');

@@ -14,10 +14,12 @@
  * --jobs N (N > 1) runs up to N files at once. Each file's stdout and stderr
  * go to one temp file (so their interleaving survives and a chatty test
  * costs disk, not memory) and are printed whole when that file's turn comes
- * in list order, so the log reads like a serial run. Files marked `serial`
- * run one at a time after the rest. A failure starts no new file; the files
- * already running finish and print, the files not run are named, and the
- * exit code is the first failing file's in list order.
+ * in run order, so the log reads like a serial run. Files marked `serial`
+ * run one at a time before the rest, and print first. A failure starts no
+ * new file; the files already running finish and print, the files not run
+ * are named, and the exit code is the first failing file's in list order.
+ * A failed run sets the exit code and returns rather than calling
+ * process.exit(), which would drop output still queued for a slow stdout.
  *
  * A selection that names no file is refused, never a pass: a
  * typo in a group name in ci.yml must turn the job red, not green with zero
@@ -167,7 +169,11 @@ async function runSideBySide(chosen, jobs, root, label) {
   const position = new Map(chosen.map((e, i) => [e, i + 1]));
   const shared = chosen.filter((e) => !e.serial);
   const alone = chosen.filter((e) => e.serial);
-  const order = [...shared, ...alone];
+  // Serial files assert wall-clock windows, so they run first, while the
+  // machine is quiet: after the shared files, macOS's FSEvents backlog from
+  // their temp-folder churn delayed tests/roots-live.mjs's watcher events
+  // past its fixed settle time.
+  const order = [...alone, ...shared];
   const slots = order.map(() => deferred());
   let stopped = false;
   let fileSecs = 0;
@@ -232,8 +238,8 @@ async function runSideBySide(chosen, jobs, root, label) {
   })();
 
   const start = performance.now();
-  await pool(0, shared.length, jobs);
-  await pool(shared.length, order.length, 1);
+  await pool(0, alone.length, 1);
+  await pool(alone.length, order.length, jobs);
   for (const slot of slots) slot.resolve(null);
   await printer;
   const wall = ((performance.now() - start) / 1000).toFixed(1);
@@ -242,7 +248,8 @@ async function runSideBySide(chosen, jobs, root, label) {
     const first = failures.sort((a, b) => position.get(a.e) - position.get(b.e))[0];
     if (notRun.length) console.log(`\n=== ${notRun.length} file(s) not run: ${notRun.join(', ')}`);
     console.log(`=== ${label}: failed after ${wall}s; first failing file in list order: ${first.e.file} (exit ${first.code})`);
-    process.exit(first.code);
+    process.exitCode = first.code;
+    return;
   }
   console.log(`\n=== ${label}: ${chosen.length} file(s) passed in ${wall}s (--jobs ${jobs}, ${alone.length} serial; ${fileSecs.toFixed(1)}s of file time)`);
 }

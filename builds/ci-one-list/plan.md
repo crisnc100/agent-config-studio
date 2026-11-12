@@ -66,7 +66,7 @@ A PR shows five checks instead of ten, and the wait is measured, not assumed.
    (first in list order), and the files not run are named. Without `--jobs`, behaviour is unchanged, so `verify.sh`
    runs as before.
 4. A file that cannot run beside others carries `serial` on its `tests/SUITE` line with the reason, and runs alone
-   after the rest. A test is never edited to make it run beside others.
+   before the rest, while the machine is quiet. A test is never edited to make it run beside others.
 5. `package` is one job (Linux, the minimum Node) and runs the `bunx` test as a step; the separate `bunx` job and
    the other two `package` variants are gone. `stranger-macos` (current Node) also runs the package test, so the
    package is still installed on a Mac and on current Node.

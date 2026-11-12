@@ -7,7 +7,7 @@
 #                more than one group
 #   ci-only      with ci:<group>: CI only, never verify.sh
 #   serial       with ci:<group> or local: under `node tests/run.mjs --jobs N`, this file
-#                runs alone, after the files that run side by side; the reason after #
+#                runs alone, before the files that run side by side; the reason after #
 #                names what it contends on. Without --jobs every file runs alone anyway.
 #   local        verify.sh only
 #   pending-ci   in no gate yet: PR 3 of
