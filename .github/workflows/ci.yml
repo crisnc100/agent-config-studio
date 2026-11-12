@@ -110,11 +110,11 @@ jobs:
             echo "$EVENT, or no base commit to diff against: pack tests run"
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
-      # LTS, not the minimum: the pack tests exercise the review gate's own
-      # scripts, and two of them cannot test what they mean to on 20.0.0
-      # (fs.readdirSync's recursive option arrived in 20.1, and
-      # review.global's fs.statSync patch trips 20.0.0's module loader). The
-      # offline suite above covers the minimum-Node promise.
+      # LTS, not the minimum: two pack tests cannot test what they mean to on
+      # 20.0.0. review.eval reads its examples with fs.readdirSync's recursive
+      # option, which arrived in 20.1, and review.global's fs.statSync patch
+      # trips 20.0.0's module loader. The offline suite above covers the
+      # minimum-Node promise.
       - uses: actions/setup-node@v4
         if: ${{ !cancelled() && steps.packs.outputs.run != 'false' }}
         with:
