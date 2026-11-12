@@ -1,4 +1,4 @@
-/* Agent Config Studio — the Shared rules view: each shared rule, every copy of it in your instruction files and skills, and a word-by-word comparison (lib/blocks.js) */
+/* Agent Config Studio — the Shared rules view: each shared rule, every copy of it in your instruction files and skills, a word-by-word comparison (lib/blocks.js), and adding a rule to files that lack it (lib/blocks-add.js) */
 
 /**
  * Loaded before app.js, which owns the helpers this calls (el, api,
@@ -504,7 +504,6 @@ async function bbApply() {
   await bbLoad();
 }
 
-/* ── Add to… ──────────────────────────────────────────────────────────── */
 /** The files `b` can be added to: the scan's targets less those holding any copy of it. */
 function bbAddable(b) {
   const has = new Set(b.copies.map((c) => c.file));
