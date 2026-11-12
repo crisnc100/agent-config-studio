@@ -312,6 +312,30 @@ try {
     page.done();
   }
 
+  console.log('\nRestore… only where replace can restore: skill files');
+  {
+    const v = installedAll(base);
+    for (const id of ['pr', 'worktree']) { const p = v.packs.find((x) => x.id === id); p.installed.parts = Object.fromEntries(p.parts.map((x) => [x.id, { harnesses: ['claude'], installedAt: null }])); }
+    const edited = base.words.status.edited;
+    const parts = { pr: ['pr', 'instructions'], worktree: ['worktree'] };
+    const st = stub(v, { 'GET /api/packs/status': () => ({ job: { running: false, result: { checkedAt: Date.now(), trust: true, legacy: [],
+      packs: Object.entries(parts).map(([id, ps]) => ({ id, parts: ps.map((pid) => ({ id: pid, statuses: [edited], details: [], harnesses: ['claude'] })) })) } } }) });
+    const page = await bootPage({ routes: st.routes, hash: '#packs/pr' });
+    const c = () => page.$('content');
+    const t = (n) => (n ? page.text(n) : '');
+    const btns = (pid) => (c().querySelector(`.pk-part[data-part="${pid}"]`)?.querySelectorAll('button') || []).map(t).join('|');
+    await waitFor(() => /Edited/.test(t(c().querySelector('.pk-part[data-part="instructions"]'))));
+    ok('an edited skill file offers Restore…', btns('pr') === 'Restore…|Remove…', btns('pr'));
+    ok('…an edited instruction block does not (the update planner keeps it even with replace)', /Edited/.test(t(c().querySelector('.pk-part[data-part="instructions"] .pk-st'))) && !/Restore/.test(btns('instructions')), btns('instructions'));
+    c().querySelector('.pk-part[data-part="pr"]').querySelectorAll('button').find((b) => t(b) === 'Restore…').click();
+    ok('…the skill\'s Restore… previews an update with replace, its Restore enabled', await waitFor(() => !!c().querySelector('.pk-part[data-part="pr"] .pk-preview .pk-apply'))
+      && !c().querySelector('.pk-part[data-part="pr"] .pk-preview .pk-apply').disabled && st.plans.at(-1).action === 'update' && st.plans.at(-1).replace === true, JSON.stringify(st.plans.at(-1)));
+    page.navigate('#packs/worktree');
+    await waitFor(() => /Edited/.test(t(c().querySelector('.pk-part[data-part="worktree"]'))));
+    ok('an edited worktree file does not offer Restore… either', !/Restore/.test(btns('worktree')) && /Remove…/.test(btns('worktree')), btns('worktree'));
+    page.done();
+  }
+
   console.log('\nCancel while a preview is still loading');
   {
     let release = null;

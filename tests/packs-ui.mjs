@@ -219,6 +219,22 @@ try {
       && !/my note/.test(sb.read(skill)) && /Backups of every existing file it changed: ~\/\.agent-config-studio\/backups\//.test(t(card('handoff').querySelector('.pk-result'))), t(card('handoff').querySelector('.pk-result')));
   }
 
+  console.log('\na missing skill file: Update puts it back');
+  {
+    const skill = path.join(sb.home, '.claude/skills/handoff/SKILL.md');
+    await waitFor(statusDone, 30_000);
+    fs.rmSync(skill);
+    card('handoff');
+    button(page.$('pk-status'), /^Refresh$/).click();
+    ok('a removed SKILL.md shows the part as not working, and the page offers Update', await waitFor(() => statusDone() && t(part('handoff', 'handoff')?.querySelector('.pk-st')) === 'Not working', 30_000)
+      && !!act('handoff', /^Update$/), t(part('handoff', 'handoff')));
+    act('handoff', /^Update$/).click();
+    ok('…its preview starts with the pack\'s copy taken: it puts the file back, with Update enabled', await waitFor(() => rows('handoff').some((r) => /~\/\.claude\/skills\/handoff\/SKILL\.md/.test(r)) && !!apply('handoff', /^Update$/))
+      && !apply('handoff', /^Update$/).disabled && !!check(previewOf('handoff'), /Take the pack's copy/)?.checked && reqs().filter((r) => r.path === '/api/packs/plan').at(-1).body.replace === true, rows('handoff').join(' | '));
+    apply('handoff', /^Update$/).click();
+    ok('…and Update puts it back on disk', await waitFor(() => card('handoff')?.querySelector('.pk-result'), 30_000) && fs.existsSync(skill), t(card('handoff').querySelector('.pk-result')));
+  }
+
   console.log('\na stale preview, and uninstall');
   {
     await waitFor(statusDone, 30_000);
