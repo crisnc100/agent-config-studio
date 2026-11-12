@@ -283,6 +283,33 @@ try {
     ok('the spacing and type scales are tokens, outside the colour block', /--s7\s*:\s*48px/.test(css) && /--t-page\s*:\s*26px/.test(css)
       && !/--s7/.test(css.slice(css.indexOf(':root {'), css.indexOf('}', css.indexOf(':root {')))));
   }
+
+  console.log('\nCancel while a preview is still loading');
+  {
+    let release = null;
+    const st = stub(installedAll(base));
+    const instant = st.routes.table['POST /api/packs/plan'];
+    // The first plan waits until the test lets it go; later ones answer at once.
+    st.routes.table['POST /api/packs/plan'] = (b) => (release ? instant(b) : new Promise((r) => { release = () => r(instant(b)); }));
+    const page = await bootPage({ routes: st.routes, hash: '#packs/handoff' });
+    const c = () => page.$('content');
+    const t = (n) => (n ? page.text(n) : '');
+    await waitFor(() => c().querySelector('.pk-page-actions button'));
+    const install = () => c().querySelector('.pk-page-actions').querySelectorAll('button').find((b) => t(b) === 'Install');
+    install().click();
+    await waitFor(() => !!release && !!c().querySelector('.pk-preview .pk-busy'));
+    c().querySelector('.pk-preview').querySelectorAll('button').find((b) => t(b) === 'Cancel').click();
+    ok('Cancel during a pending preview closes it and leaves the pack\'s Install enabled', !c().querySelector('.pk-preview') && !!install() && !install().disabled,
+      install() ? `disabled=${install().disabled}` : 'no Install');
+    release();
+    await settle(10);
+    ok('…the late answer does not bring the preview back, and Install stays enabled', !c().querySelector('.pk-preview') && !install().disabled);
+    install().click();
+    ok('…and a later Install previews and can be applied', await waitFor(() => !!c().querySelector('.pk-preview .pk-apply'))
+      && !c().querySelector('.pk-preview .pk-apply').disabled && st.plans.length === 2, `${st.plans.length} plans | ${t(c().querySelector('.pk-preview')).slice(0, 200)}`);
+    ok('no page errors', page.errors.length === 0, page.errors.join(' | '));
+    page.done();
+  }
 } catch (e) {
   ok(`no test block threw (${e?.message || e})`, false, e?.stack || String(e));
 } finally {
