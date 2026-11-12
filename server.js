@@ -53,9 +53,6 @@ import { applyJob, buildPlan, catalogView, parseRequest, planView, startStatus, 
 import { machine as packsMachine } from './lib/packs.js';
 import { securityApply, securityPlan } from './lib/review-security.js';
 import { settingsApply, settingsPlan } from './lib/review-settings.js';
-import { blocksView } from './lib/blocks.js';
-import { createBlocksAdd } from './lib/blocks-add.js';
-import { createBlocksMatch } from './lib/blocks-match.js';
 import {
   syncShortcuts, install as installShortcuts, uninstall as uninstallShortcuts,
   isInstalled as shortcutsInstalled, shortcutsFromSeats, shortcutsPath, zshenvPath,
@@ -672,8 +669,6 @@ export function createApp(opts = {}) {
   const describer = createDescribe();
   const guide = createModelGuide();
   const audit = createAudit();
-  const blocksMatch = createBlocksMatch();
-  const blocksAdd = createBlocksAdd();
   const wizard = opts.skillWizard || createSkillWizard();
   const assistFiles = createAssistFiles();
   // Accept checks a file's class against a fresh inventory: an alias made since the proposal counts.
@@ -1193,46 +1188,6 @@ export function createApp(opts = {}) {
   'POST /api/packs/apply': async (req) => {
     requireStrict(req);
     return applyJob(parseRequest(await objectBody(req, 16 * 1024), { apply: true }));
-  },
-  /**
-   * The Shared rules page (lib/blocks.js): each block in blocks/ and every
-   * copy of it in a skill or an instruction file, each copy rated and with
-   * its own text, whether it sits in the studio's packs, and whether it can
-   * be made to match. Strict same-origin: the scan reads every skill and
-   * instruction file.
-   */
-  'GET /api/blocks': async (req) => {
-    requireStrict(req);
-    return blocksView();
-  },
-  /**
-   * Make one copy match the studio's text (lib/blocks-match.js). The copy is
-   * named as the scan reports it and found again by a fresh scan, so only a
-   * listed copy outside the packs is written. Preview returns the lines and
-   * a signature; apply refuses (409) when the file moved, and saves the old
-   * file to history first.
-   */
-  'POST /api/blocks/match/preview': async (req) => {
-    requireStrict(req);
-    return blocksMatch.preview(await objectBody(req, 4 * 1024));
-  },
-  'POST /api/blocks/match/apply': async (req) => {
-    requireStrict(req);
-    return blocksMatch.apply(await objectBody(req, 4 * 1024));
-  },
-  /**
-   * Add a rule to files that have none (lib/blocks-add.js). Each file is
-   * named as the page lists it and mapped through the server's own list of
-   * targets, outside the packs. Apply writes nothing unless every file still
-   * has its preview's signature, and saves every old file to history first.
-   */
-  'POST /api/blocks/add/preview': async (req) => {
-    requireStrict(req);
-    return blocksAdd.preview(await objectBody(req, 64 * 1024));
-  },
-  'POST /api/blocks/add/apply': async (req) => {
-    requireStrict(req);
-    return blocksAdd.apply(await objectBody(req, 64 * 1024));
   },
   /**
    * The review gate's security switch: security.run in the home review config the review script reads first.
