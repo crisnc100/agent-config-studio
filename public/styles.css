@@ -385,7 +385,8 @@ a { color: var(--accent); }
 .diff-line.del { background: color-mix(in srgb, var(--red) 13%, transparent); }
 .diff-line.add .t { color: var(--green-ink); }
 .diff-line.del .t { color: var(--red); }
-.diff-line.ctx .t { color: var(--text-dim); opacity: 0.75; }
+.diff-line.ctx .t { color: var(--text-dim); }
+.diff-line.del .n, .diff-line.add .n { color: var(--text-dim); }
 .diff-skip { color: var(--muted); padding: 6px 8px 6px 58px; font-size: 11px; }
 
 /* ── compare (paired skills) ─────────────────────────────────────────── */
@@ -1809,15 +1810,16 @@ pre.pk-log { align-self: stretch; max-height: 240px; overflow: auto; white-space
 .pk-set-inline > span { color: var(--text-dim); }
 .pk-set-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding: var(--s3) var(--s5); border-top: 1px solid var(--border-soft); color: var(--muted); font-size: var(--t-small); overflow-wrap: anywhere; }
 .pk-set-foot code { color: var(--text-dim); font-size: var(--t-meta); }
-/* Only the bar and the preview stick, each with its own fill; the error and saved notes stay in the page flow. */
-.pk-savebar, .pk-savebar-preview { position: sticky; bottom: var(--s4); z-index: 2; border-radius: var(--radius); background: var(--panel-3); border: 1px solid var(--border); box-shadow: 0 10px 28px -10px var(--shadow); }
-.pk-savebar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s4); padding: 10px 10px 10px var(--s5); }
+/* Only the short bar sticks, with its own fill. The preview, the error and the saved line stay in the page flow, so none covers the controls. */
+.pk-savebar { position: sticky; bottom: var(--s4); z-index: 2; border-radius: var(--radius); background: var(--panel-3); border: 1px solid var(--border); box-shadow: 0 10px 28px -10px var(--shadow);
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s4); padding: 10px 10px 10px var(--s5); }
 .pk-savebar-text { color: var(--text); font-size: var(--t-small); overflow-wrap: anywhere; }
 .pk-savebar-acts { display: flex; align-items: center; gap: var(--s2); }
-.pk-savebar-preview { padding: var(--s4) var(--s5); max-height: 70vh; overflow: auto; font-size: var(--t-small); }
+.pk-savebar-preview { padding: var(--s4) var(--s5); border-radius: var(--radius); background: var(--panel); border: 1px solid var(--border); font-size: var(--t-small); }
 .pk-savebar-preview > p { margin: 0 0 var(--s2); }
 .pk-save-part { margin-top: var(--s5); }
 .pk-save-part.notice + .pk-save-part { margin-top: var(--s3); }
+.notice.pk-result.pk-save-part { border-color: var(--border-soft); background: var(--panel-2); color: var(--text); }
 .pk-refreshed { color: var(--amber-ink); font-weight: 600; }
 .pk-settings-none { color: var(--text-dim); margin: 0; font-size: var(--t-small); }
 .pk-sec-preview .diff { padding: var(--s2) 0; max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel-2); margin: 6px 0 10px; }

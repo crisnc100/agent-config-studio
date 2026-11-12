@@ -1117,7 +1117,9 @@ async function pkReplan({ refreshed = false } = {}) {
   if (seq !== PK_SEC.seq) return;
   PK_SEC.busy = false;
   paintPacks();
-  $('content').querySelector('.pk-savebar-preview .btn.primary')?.focus?.();
+  const pre = $('content').querySelector('.pk-savebar-preview');
+  pre?.scrollIntoView?.({ block: 'nearest' });
+  pre?.querySelector('.btn.primary')?.focus?.({ preventScroll: true });
 }
 
 async function pkSettingsApply() {
@@ -1147,6 +1149,8 @@ async function pkSettingsApply() {
   }
   if (seq === PK_SEC.seq) PK_SEC.busy = false;
   paintPacks();
+  // The Save button that had focus is gone; focus the bar's button without moving the page.
+  if (PK_SEC.error) $('content').querySelector('.pk-savebar .btn.primary')?.focus?.({ preventScroll: true });
 }
 
 /**
