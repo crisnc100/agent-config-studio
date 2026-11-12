@@ -229,6 +229,25 @@ try {
   ok('every button is a styled kind or a segment, and no fold on the page', sec().querySelectorAll('button').every((b) => /\bbtn\b/.test(b.className) || b.classList.contains('pk-tab')) && !card().querySelector('details'));
   ok('no raw key name in a label or a choice', [...sec().querySelectorAll('.pk-tabs button'), ...sec().querySelectorAll('.pk-set-name')].every((n) => !/merge\.policy|alwaysHuman|crossFamily|riskPaths|strict|standard/.test(tx(n))));
 
+  {
+    // Each choice in turn: the row's one line is that choice's own explanation, exactly, and no other's.
+    const rows = [[secRow, 'security pass', [['Off', 'PR reviews run no security pass.'], ['When code changes', 'A security reviewer reads the PR review whenever the change touches code or a risky path.'],
+      ['Always', 'A security reviewer reads every PR review.']]],
+    [mg, 'agent merge', [['Off', 'You merge every PR.'], ['Docs and tests only', 'An agent may merge a low-risk PR that changes only docs or tests.'],
+      ['Low-risk PRs', 'An agent may merge any low-risk PR. You merge the rest.'], ['Low and medium-risk PRs', 'An agent may merge low- and medium-risk PRs; high-risk always waits for you.']]],
+    [cf, 'cross-vendor checks', [['Off', 'Any reviewer in your roles may check any work.'], ['Prefer another vendor', 'Reviews and grades use a model from another vendor when one is available; never a blocker.']]]];
+    const wrong = [];
+    for (const [boxOf, name, options] of rows) {
+      for (const [label, line] of options) {
+        await pick(boxOf, label);
+        const others = options.filter(([l]) => l !== label).map(([, x]) => x);
+        if (tx(pressed(boxOf())) !== label || JSON.stringify(says(boxOf())) !== JSON.stringify([line]) || others.some((x) => tx(boxOf()).includes(x))) wrong.push(`${name} ${label}: ${tx(boxOf())}`);
+      }
+      if (bar()) { barBtn('Cancel').click(); await settle(5); }
+    }
+    ok('C8: every choice of all three rows, picked in turn, shows its own exact line and no other choice\'s', wrong.length === 0 && writes.length === 0 && !bar(), wrong.join(' | '));
+  }
+
   console.log('\nR6 and R5: the diagram, the Grade and the Build page follow the settings');
   const step = (pack, id) => card(pack)?.querySelector(`.step[data-step="${id}"]`);
   ok('the Merge step is drawn last, greyed and marked off while merge is off', !!step('review-gate', 'merge') && step('review-gate', 'merge').classList.contains('off')
