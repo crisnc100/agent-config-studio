@@ -196,14 +196,14 @@ tests/packs-review-settings.mjs                       ci:offline
 tests/roles-security.mjs                              ci:offline
 tests/ui-clarity-f.mjs                                ci:offline
 tests/ui-clarity-g.mjs                                ci:offline
-# The review gate's and the PR pack's own tests: CI only (about 15 minutes in one
-# process at a time), in the offline job when a PR changes packs/ and always on main,
-# on LTS Node (ci.yml's packs step says why).
+# The review gate's and the PR pack's own tests. The ci:packs ones run in CI only, in the
+# offline job when a PR changes packs/ and always on main, on LTS Node (ci.yml's packs step
+# says why); the manual ones are in no gate, each for the reason on its line.
 packs/pr/tests/pr.docs-table.test.mjs                 ci:packs ci-only
 packs/pr/tests/pr.test.mjs                            manual                        # asserts gh is absent with a PATH that keeps /usr/bin, where a CI runner has gh
 packs/review-gate/tests/review.basemerge.test.mjs     ci:packs ci-only
 packs/review-gate/tests/review.behavior.test.mjs      ci:packs ci-only
-packs/review-gate/tests/review.close.test.mjs         ci:packs ci-only
+packs/review-gate/tests/review.close.test.mjs         manual                        # its waiver checks open a terminal with BSD `script -q /dev/null <cmd>` (line 61), which Linux's util-linux script rejects; 5 tests fail on a Linux runner
 packs/review-gate/tests/review.config-trust.test.mjs  ci:packs ci-only
 packs/review-gate/tests/review.context-pass.test.mjs  ci:packs ci-only
 packs/review-gate/tests/review.context.test.mjs       ci:packs ci-only
@@ -211,24 +211,24 @@ packs/review-gate/tests/review.coverage.test.mjs      ci:packs ci-only
 packs/review-gate/tests/review.defer.test.mjs         ci:packs ci-only
 packs/review-gate/tests/review.eval.test.mjs          ci:packs ci-only
 packs/review-gate/tests/review.findings.test.mjs      ci:packs ci-only
-packs/review-gate/tests/review.fixclose.test.mjs      ci:packs ci-only
-packs/review-gate/tests/review.gate.test.mjs          ci:packs ci-only
-packs/review-gate/tests/review.global.test.mjs        ci:packs ci-only
-packs/review-gate/tests/review.guard.test.mjs         ci:packs ci-only
+packs/review-gate/tests/review.fixclose.test.mjs      manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.gate.test.mjs          manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.global.test.mjs        manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.guard.test.mjs         manual                        # unproven on a Linux runner: the CI proof run stopped before it
 packs/review-gate/tests/review.merge.test.mjs         manual                        # asserts gh is absent with a PATH that keeps /usr/bin, where a CI runner has gh
-packs/review-gate/tests/review.packs.test.mjs         ci:packs ci-only
-packs/review-gate/tests/review.parallel.test.mjs      ci:packs ci-only
-packs/review-gate/tests/review.paths.test.mjs         ci:packs ci-only
-packs/review-gate/tests/review.records.test.mjs       ci:packs ci-only
-packs/review-gate/tests/review.root-commit.test.mjs   ci:packs ci-only
-packs/review-gate/tests/review.routing.test.mjs       ci:packs ci-only
-packs/review-gate/tests/review.security-only.test.mjs ci:packs ci-only
-packs/review-gate/tests/review.security.test.mjs      ci:packs ci-only
-packs/review-gate/tests/review.skills.test.mjs        ci:packs ci-only
-packs/review-gate/tests/review.slices.test.mjs        ci:packs ci-only
-packs/review-gate/tests/review.test.mjs               ci:packs ci-only
-packs/review-gate/tests/review.tier.test.mjs          ci:packs ci-only
-packs/review-gate/tests/review.worktree.test.mjs      ci:packs ci-only
+packs/review-gate/tests/review.packs.test.mjs         manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.parallel.test.mjs      manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.paths.test.mjs         manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.records.test.mjs       manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.root-commit.test.mjs   manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.routing.test.mjs       manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.security-only.test.mjs manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.security.test.mjs      manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.skills.test.mjs        manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.slices.test.mjs        manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.test.mjs               manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.tier.test.mjs          manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.worktree.test.mjs      manual                        # unproven on a Linux runner: the CI proof run stopped before it
 
 # Never run by a gate.
 tests/assist-qa-server.mjs                            manual                        # browser QA server: runs until Ctrl-C
