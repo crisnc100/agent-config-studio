@@ -101,8 +101,33 @@ Chat and the one-shot Assist both reach it through `runContained`
 
 ## Testing
 
-`./verify.sh` is the full gate: `tests/phase1.mjs` then `tests/phase2a.mjs`.
-It makes live authenticated model calls. GitHub Actions cannot run it.
+`./verify.sh` is the full gate. It snapshots the real home, runs
+`node tests/run.mjs --local`, and checks the snapshot on every exit. Its
+`tests/phase1.mjs` makes live authenticated model calls, so GitHub Actions
+cannot run it.
+
+`tests/SUITE` is the one list of test files, in run order, each with a lane:
+`ci:<group>` (that CI job, and `verify.sh` unless also `ci-only`), `local`
+(`verify.sh` only), `pending-ci` (no gate yet), `manual` or `helper` (never a
+gate). Every lane but `ci:` carries its reason on the line. The file's header
+spells out the format.
+
+- `node tests/run.mjs <group>` runs one group; `--local` runs what `verify.sh`
+  runs; `--list` prints the files without running them. It stops at the first
+  failing file with that file's exit code, and refuses a group with no files.
+- CI (`.github/workflows/ci.yml`) runs the groups `guards`, `offline` (Node
+  20.0.0 and LTS, with `ACS_SUITE=offline`) and `stranger-macos`. `package`
+  and `bunx` run their files by name, since they pass the packed tarball.
+  The `syntax` job runs `node --check` on `server.js` and on each `.js` and
+  `.mjs` file under `lib`, `tests`, `public`, `bin`, `packs`, `tools` and
+  `blocks`, one file per run, and fails when it finds none;
+  `tests/ci-syntax-step.mjs`, in `guards`, runs that step against fixture
+  trees. The `syntax` job also writes to the run's summary that live
+  containment is a local gate and was not checked.
+- `node tests/suite-coverage.mjs`, in `guards` and `verify.sh`, fails when a
+  test file (`tests/*.mjs`, `packs/*/tests/*.mjs`) is not listed once, a
+  `ci:` group has no job, or `ci.yml` or `verify.sh` runs a test file the list
+  does not give it. Add a test by adding its line to `tests/SUITE`.
 
 `ACS_SUITE=offline` runs only checks that need no harness binary and no
 network (descriptor contract, argv chokepoint, stream-parser fixtures, the
