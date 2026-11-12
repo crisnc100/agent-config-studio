@@ -940,7 +940,7 @@ function pkSettingsView(pack) {
   rows.appendChild(pkChoiceRow('Cross-vendor checks', 'pk-cross', 'crossFamily', PK_CROSS_MODES));
   rows.appendChild(pkSettingsFoot(s.reviewConfig));
   wrap.appendChild(rows);
-  wrap.appendChild(pkSaveSlot());
+  pkSaveSlot(wrap);
   return wrap;
 }
 
@@ -982,7 +982,7 @@ function pkPathsPage(box, pack) {
   ta.oninput = () => { PK_SEC.paths = ta.value; pkPaintSlot(); };
   own.appendChild(ta);
   page.appendChild(own);
-  page.appendChild(pkSaveSlot());
+  pkSaveSlot(page);
   box.appendChild(page);
 }
 function pkPathList(title, note, items, cls) {
@@ -995,23 +995,27 @@ function pkPathList(title, note, items, cls) {
   return wrap;
 }
 
-/** Where the save bar sits: the error, then the bar while changes wait, the preview in its place, or the saved line. */
-function pkSaveSlot() {
-  const slot = el('div', 'pk-savebar-slot');
-  pkFillSlot(slot);
-  return slot;
+/**
+ * The save bar's place, at the end of `host` (the Settings section or the paths page): the error, then the bar
+ * while changes wait, the preview in its place, or the saved line. They are the host's own children because sticky
+ * holds to the parent, and the host is tall enough for the bar to stay in view while the rows are on screen.
+ */
+function pkSaveSlot(host) {
+  host.classList.add('pk-save-host');
+  pkFillSlot(host);
 }
 function pkPaintSlot() {
-  const slot = $('content')?.querySelector('.pk-savebar-slot');
-  if (slot) pkFillSlot(slot);
+  const host = $('content')?.querySelector('.pk-save-host');
+  if (host) pkFillSlot(host);
 }
-function pkFillSlot(slot) {
-  slot.textContent = '';
+function pkFillSlot(host) {
+  for (const n of [...host.children].filter((c) => c.classList.contains('pk-save-part'))) n.remove();
+  const add = (n) => { n.classList.add('pk-save-part'); host.appendChild(n); };
   if (PK_SEC.error) {
     const n = el('div', 'notice error');
     n.setAttribute('role', 'alert');
     n.textContent = PK_SEC.error;
-    slot.appendChild(n);
+    add(n);
   }
   const busy = () => { const s = el('span', 'pk-busy'); s.appendChild(el('span', 'spinner')); s.appendChild(el('span', null, ' Working…')); return s; };
   const p = PK_SEC.preview;
@@ -1029,7 +1033,7 @@ function pkFillSlot(slot) {
     acts.appendChild(pkBtn('ghost', 'Cancel', () => pkSettingsCancel(), PK_SEC.busy));
     if (PK_SEC.busy) acts.appendChild(busy());
     pre.appendChild(acts);
-    slot.appendChild(pre);
+    add(pre);
     return;
   }
   pkDraftPaths();
@@ -1042,11 +1046,11 @@ function pkFillSlot(slot) {
     acts.appendChild(pkBtn('ghost', 'Cancel', () => pkSettingsCancel(), PK_SEC.busy));
     acts.appendChild(pkBtn('primary', 'Preview and save', () => pkReplan(), PK_SEC.busy));
     bar.appendChild(acts);
-    slot.appendChild(bar);
+    add(bar);
   } else if (PK_SEC.result) {
     const r = PK_SEC.result;
     const after = !r.changed ? '' : r.backupDir ? ` The old file is at ${r.backupDir}.` : ' No existing file needed a backup.';
-    slot.appendChild(el('div', 'notice pk-result', `Saved: ${r.file} now says ${pkSaysText(r.saved)}.${after}`));
+    add(el('div', 'notice pk-result', `Saved: ${r.file} now says ${pkSaysText(r.saved)}.${after}`));
   }
 }
 

@@ -205,6 +205,12 @@ try {
   const STICKY = [...fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{[^}]*position:\s*sticky[^}]*\}/g)]
     .flatMap((m) => m[1].split(',').map((x) => x.trim())).filter((x) => /^(\.[\w-]+)+$/.test(x));
   const sticks = (n) => STICKY.some((sel) => sel.slice(1).split('.').every((cls) => n.classList?.contains(cls)));
+  // What sticks floats over the rows, so it needs a fill of its own: a background on its own rule, not transparent.
+  const CSS_RULES = [...fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^}]*)\}/g)]
+    .map((m) => ({ sels: m[1].split(',').map((x) => x.trim()), body: m[2] }));
+  const fillOf = (sel) => CSS_RULES.filter((r) => r.sels.includes(sel)).map((r) => /(?:^|;)\s*background(?:-color)?\s*:\s*([^;]+)/.exec(r.body)?.[1].trim()).filter(Boolean).at(-1) || null;
+  const opaque = (v) => !!v && !/transparent|none|rgba|hsla|\/\s*0?\.\d/.test(v);
+  const unstuck = (n) => { for (let x = n; x; x = x.parentNode) if (sticks(x)) return false; return true; };
   const stuck = () => { let n = bar() || pre(); while (n && !sticks(n)) n = n.parentNode; return n; };
   const pick = async (boxOf, label) => { choices(boxOf()).find((b) => tx(b) === label).click(); await settle(5); };
   const previewIt = async () => { barBtn('Preview and save').click(); await waitFor(() => pre() || here()?.querySelector('.notice.error')); };
@@ -282,6 +288,7 @@ try {
   ok('C10: a pick opens the bar: the change named, quiet Cancel and primary Preview and save; nothing previewed or written', tx(bar().querySelector('.pk-savebar-text')) === '1 change: agent merge to “Low-risk PRs”'
     && bar().querySelectorAll('button').map((b) => `${tx(b)}:${b.className}`).join('|') === 'Cancel:btn ghost|Preview and save:btn primary'
     && !pre() && writes.length === 0 && plans() === plansBefore, tx(bar()));
+  ok('C10: every element a sticky rule names has an opaque background of its own', STICKY.length > 0 && STICKY.every((sel) => opaque(fillOf(sel))), STICKY.map((sel) => `${sel}: ${fillOf(sel)}`).join(' | '));
   ok('C10: the bar sticks inside the whole Settings section (rows and bar), not a wrapper only as tall as the bar', !!stuck() && !!stuck().parentNode?.querySelector('.pk-set-rows')
     && stuck().parentNode.classList.contains('pk-settings'), stuck() ? `${stuck().className} in ${stuck().parentNode?.className}` : 'no sticky element');
   ok('…the choice shows as picked, and the row\'s one line is the pick\'s', tx(pressed(mg())) === 'Low-risk PRs' && JSON.stringify(says(mg())) === '["An agent may merge any low-risk PR. You merge the rest."]', tx(mg()));
@@ -292,7 +299,7 @@ try {
   ok('C10: Preview and save shows the file and one diff with both in place of the bar, nothing written', !bar() && sec().querySelectorAll('.pk-sec-preview').length === 1
     && /this changes ~\/\.agent-config-studio\/review-gate\/config\.json, and a copy of it goes to the backups folder first/.test(tx(pre()))
     && added(/"policy": "standard"/) && added(/"crossFamily": "off"/) && writes.length === 0 && read(t.primary) === '{\n  "pick": "rotate"\n}\n', tx(pre()));
-  ok('…the preview sits in the bar\'s place, after the rows, not inside them', !sec().querySelector('.pk-set-rows .pk-sec-preview') && !!sec().querySelector('.pk-savebar-slot .pk-sec-preview'));
+  ok('…the preview sits in the bar\'s place, after the rows, not inside them', !sec().querySelector('.pk-set-rows .pk-sec-preview') && pre().parentNode === sec());
   ok('the preview\'s buttons: Save (primary) and Cancel (quiet)', acts().map((b) => `${tx(b)}:${b.className}`).join('|') === 'Save:btn primary|Cancel:btn ghost');
   await saveIt();
   ok('Save writes both in one request and keeps the other keys', writes.length === 1 && /^[0-9a-f]{64}$/.test(writes[0].signature)
@@ -302,6 +309,7 @@ try {
   ok('…and says what it saved and where the old file went', /Saved: ~\/\.agent-config-studio\/review-gate\/config\.json now says “Low-risk PRs” \(agent merge\) and “Off” \(cross-vendor checks\)\. The old file is at ~\/\.agent-config-studio\/backups\//.test(tx(result())), tx(result()));
   ok('QA 6: the backup is shown as its ~ folder, never the nested absolute path', /The old file is at ~\/\.agent-config-studio\/backups\/[^\s/]+-review-settings\/\./.test(tx(result()))
     && !tx(result()).includes(t.h) && !/\/0\//.test(tx(result())), tx(result()));
+  ok('C10: the saved line stays in the page flow; it does not stick over the rows', !!result() && unstuck(result()), result()?.parentNode?.className || 'no result');
   ok('QA 3: after Save no After Save line, no bar and no preview are left', !/After Save:/.test(tx(sec())) && !bar() && !pre(), tx(sec()));
   ok('…the pressed choices, the Merge step, the Grade note and the Build page follow', tx(pressed(mg())) === 'Low-risk PRs' && tx(pressed(cf())) === 'Off'
     && !step('review-gate', 'merge').classList.contains('off') && /no swap: Cross-vendor checks is off/.test(tx(step('build', 'grade')))
@@ -402,6 +410,7 @@ try {
   const stale = writes.length;
   acts().find((b) => tx(b) === 'Save').click();
   await waitFor(() => sec().querySelector('.notice.error'));
+  ok('C10: the refusal stays in the page flow; it does not stick over the rows', unstuck(sec().querySelector('.notice.error')) && !!bar() && !!stuck(), sec().querySelector('.notice.error')?.parentNode?.className || '');
   ok('a stale preview: the refusal is shown, and the file is not overwritten', /changed since the preview/.test(tx(sec().querySelector('.notice.error'))) && read(t.primary) === '{"merge":{"policy":"strict"}}\n', tx(sec()));
   ok('C10: …it asks to preview again: the preview is gone and the bar is back with the pick', !pre() && tx(bar()?.querySelector('.pk-savebar-text')) === '1 change: agent merge to “Low and medium-risk PRs”'
     && !!barBtn('Preview and save') && writes.length === stale + 1, tx(sec()));
