@@ -285,6 +285,59 @@ try {
     const { r } = await addBoth(['~/.claude/CLAUDE.md']);
     ok('the global CLAUDE.md takes the section like a skill does', read(claudeMd) === wizard(before, ['test-rule']) && r.files[0].file === '~/.claude/CLAUDE.md', JSON.stringify(read(claudeMd)));
   }
+  console.log('\nreview fixes: real-path kind, a change during the History saves, fences, size');
+  {
+    // s1: the kind is judged on the file the write would reach, not the link's name.
+    const notes = put(path.join(home, '.claude', 'notes', 'private.md'), 'Not a skill.\n');
+    const settings = put(path.join(home, '.claude', 'settings.json'), '{"a":1}\n');
+    for (const [name, target] of [['to-notes', notes], ['to-settings', settings]]) {
+      fs.mkdirSync(path.join(skills, name), { recursive: true });
+      fs.symlinkSync(target, path.join(skills, name, 'SKILL.md'));
+      const before = read(target);
+      const disp = `~/.claude/skills/${name}/SKILL.md`;
+      ok(`s1 a SKILL.md linking to ${path.basename(target)} is not offered`, !view().targets.some((t) => t.file === disp), JSON.stringify(view().targets.map((t) => t.file)));
+      const e = await refusal(() => adder.preview({ rule: 'test-rule', files: [disp] }));
+      const e2 = await refusal(() => adder.apply({ rule: 'test-rule', files: [{ file: disp, signature: 'a'.repeat(64) }] }));
+      ok(`s1 …preview and apply refuse it (403), the target untouched`, e?.status === 403 && e2?.status === 403 && read(target) === before, `${e?.status} ${e?.message} / ${e2?.status} ${e2?.message}`);
+    }
+    const realSkill = put(path.join(home, '.codex', 'skills', 'real', 'SKILL.md'), 'A real skill.\n');
+    fs.mkdirSync(path.join(skills, 'to-skill'), { recursive: true });
+    fs.symlinkSync(realSkill, path.join(skills, 'to-skill', 'SKILL.md'));
+    ok('s1 a SKILL.md linking to another skill\'s SKILL.md is still offered', view().targets.some((t) => t.file === '~/.claude/skills/to-skill/SKILL.md'));
+
+    // f1: a file changing while the old files are saved to History stops every write.
+    const a = put(path.join(skills, 'race-a', 'SKILL.md'), 'A.\n');
+    const b = put(path.join(skills, 'race-b', 'SKILL.md'), 'B.\n');
+    let poked = false;
+    const racy = A.createBlocksAdd({ blocksDir, where, hist: {
+      recordBaseline: async (abs, m) => { if (!poked && abs === a) { poked = true; fs.appendFileSync(b, 'Changed during the backup.\n'); } return history.recordBaseline(abs, m); },
+      record: (abs, m, o) => history.record(abs, m, o),
+    } });
+    const p = await racy.preview({ rule: 'test-rule', files: ['~/.claude/skills/race-a/SKILL.md', '~/.claude/skills/race-b/SKILL.md'] });
+    const e = await refusal(() => racy.apply({ rule: 'test-rule', files: p.files.map((x) => ({ file: x.file, signature: x.signature })) }));
+    ok('f1 a file changed during the History saves: 409 naming it, and neither file is written', e?.status === 409 && /race-b/.test(e.message) && /Nothing was written/.test(e.message)
+      && read(a) === 'A.\n' && read(b) === 'B.\nChanged during the backup.\n', `${e?.status} ${e?.message} ${JSON.stringify([read(a), read(b)])}`);
+
+    // f2: an end marker inside a fenced example is not where the rule goes.
+    const example = '\nAn example of the layout:\n\n```\n<!-- /block:example -->\n```\n';
+    const g = put(path.join(skills, 'fenced', 'SKILL.md'), `${wizard('Intro.\n', ['other-rule'])}${example}`);
+    await addBoth(['~/.claude/skills/fenced/SKILL.md']);
+    ok('f2 a marker inside a fence is ignored: the rule follows the last real block, and the example after it is untouched',
+      read(g) === `${wizard('Intro.\n', ['other-rule', 'test-rule'])}${example}`, JSON.stringify(read(g)));
+    const open = put(path.join(skills, 'openfence', 'SKILL.md'), `${wizard('Intro.\n', ['other-rule'])}\n\`\`\`\nAn example never closed.\n`);
+    const openBefore = read(open);
+    const e3 = await refusal(() => adder.preview({ rule: 'test-rule', files: ['~/.claude/skills/openfence/SKILL.md'] }));
+    ok('f2 a section ending in a code example that is never closed is refused with a reason', e3?.status === 409 && /code/.test(e3.message) && read(open) === openBefore, `${e3?.status} ${e3?.message}`);
+    const openNo = put(path.join(skills, 'openfence2', 'SKILL.md'), 'Intro.\n\n\`\`\`\nNever closed.\n');
+    const e4 = await refusal(() => adder.preview({ rule: 'test-rule', files: ['~/.claude/skills/openfence2/SKILL.md'] }));
+    ok('f2 …and so is a file without the heading that ends inside one', e4?.status === 409 && /code/.test(e4.message) && read(openNo) === 'Intro.\n\n```\nNever closed.\n', `${e4?.status} ${e4?.message}`);
+
+    // f3: the new file must stay readable by the scan.
+    const bigBody = `${'x'.repeat(B.BLOCK_LIMITS.fileBytes - 100)}\n`;
+    const big = put(path.join(skills, 'big', 'SKILL.md'), bigBody);
+    const e5 = await refusal(() => adder.preview({ rule: 'test-rule', files: ['~/.claude/skills/big/SKILL.md'] }));
+    ok('f3 a file the rule would push past the size limit is refused with a reason, untouched', e5?.status === 413 && /too big|too large/i.test(e5.message) && read(big) === bigBody, `${e5?.status} ${e5?.message}`);
+  }
 } catch (err) {
   ok(`no test block threw (${err?.message || err})`, false, err?.stack || String(err));
 }

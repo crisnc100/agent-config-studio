@@ -21,3 +21,10 @@ Page phase:
 - A 409 shows the server's message and a secondary Preview again, which checks again first (ticks for files that left the list are dropped), then previews what is still ticked. A failure after some files were written (`written` in the body) checks again so the page shows them as they are now, with the server's message naming written and not written files.
 - After apply the page checks again and shows a result: per file the fresh rating (Matches), its place and line, and "To put it back, open <file> and choose History." The written files leave the picker.
 - No browser pass in this phase; D6's QA is the orchestrator's.
+
+Fix round (review 2026-11-12-16-29-29-f14ec1):
+
+- s1: `addTargetReal` (lib/blocks.js) judges a target's kind on its real path as well as its listed name: a skill must resolve to a SKILL.md with a `skills` folder above its own folder, an instruction file to a CLAUDE.md or AGENTS.md; packs and the roots are checked there too. The GET's `targets` and the writer both use it, so a SKILL.md linking to settings.json or a notes file is neither offered nor written (403). A SKILL.md linking to another skill's SKILL.md stays a target.
+- f1: the first write's commit runs a synchronous check of every file (same real path, identity and bytes as at the signature check) through the proposals writer's `recheck`, with no await before that write. A file changed during the History saves stops every write (409 naming it, "Nothing was written").
+- f2: lines inside fenced code are ignored when finding the heading, the next heading and the last end marker. A file whose code fence is never closed is refused (409, "ends inside a code example… Add it by hand.").
+- f3: a file the rule would push past the scan's 1 MB limit is refused at preview (413, one line).
