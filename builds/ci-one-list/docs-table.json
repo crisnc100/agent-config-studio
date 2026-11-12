@@ -92,7 +92,7 @@
        "at": "tests/SUITE:202"
       },
       {
-       "claim": "the review-gate pack tests are ci:packs ci-only",
+       "claim": "the review-gate pack tests that passed on a Linux runner are ci:packs ci-only; the rest are manual with a reason each",
        "at": "tests/SUITE:204"
       },
       {

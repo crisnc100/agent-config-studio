@@ -90,14 +90,17 @@ A PR shows five checks instead of ten, and the wait is measured, not assumed.
    Before files join `offline`, each runs alone with `HOME=<fresh empty temp dir> ACS_SUITE=offline` and no agent
    CLI on PATH, and the temp home is listed afterwards: a file that writes there is a writer the runner's empty home
    exposes and the Mac's full one hides. The scan is repeated whenever files join the group.
-2. 28 of the 30 pack tests are `ci:packs ci-only` (`verify.sh` does not gain about 15 minutes). `pr.test` and
-   `review.merge.test` are `manual`: they assert gh is absent with a PATH that keeps `/usr/bin`, where a runner has gh.
-   The `offline` job runs the 28 in a step after the offline suite when the PR changes anything under `packs/` (`git diff HEAD^1 HEAD -- packs/` on
-   the merge commit, checked out with depth 2), and always on main; an answer short of "unchanged" runs them. That
-   step runs on LTS Node, not 20.0.0: two of them cannot test what they mean to there (`fs.readdirSync`'s
-   `recursive` arrived in 20.1, and `review.global`'s `fs.statSync` patch trips 20.0.0's module loader), and the
-   offline suite covers the minimum Node. `packs/flag/tests/flag.test.mjs` stays `ci:offline ci-only`.
-3. `review.test.mjs` (frozen at 4a5807e) is run, never edited.
+2. 10 of the 30 pack tests, the ones that passed on the Linux runner, are `ci:packs ci-only` (`verify.sh` does not
+   gain their minutes). The other 20 are `manual`, in no gate, each with its reason: `pr.test` and `review.merge.test`
+   assert gh is absent with a PATH that keeps `/usr/bin`, where a runner has gh; `review.close` drives a terminal with
+   BSD `script`, which util-linux rejects; the 17 the proof run never reached are unproven on Linux.
+   The `offline` job runs the 10 in a step after the offline suite when the PR changes anything under `packs/`
+   (`git diff HEAD^1 HEAD -- packs/` on the merge commit, checked out with depth 2), and always on main; an answer short of "unchanged" runs them. That
+   step runs on LTS Node, not 20.0.0: `review.eval` reads with `fs.readdirSync`'s `recursive`, which arrived in 20.1
+   (`review.global`'s `fs.statSync` patch, in no gate, also trips 20.0.0's module loader), and the offline suite
+   covers the minimum Node. `packs/flag/tests/flag.test.mjs` stays `ci:offline ci-only`.
+3. `review.test.mjs` (frozen at 4a5807e) is never edited. It is among the 17 unproven files and runs in no gate, a
+   departure from running it that is the operator's call to revisit.
 4. A file that fails on Linux for a product reason, or intermittently, is a finding: stop and report it with the
    failing check and its failure rate. It is never skipped, loosened or retried to green.
 5. The `pending-ci` lane is gone from `tests/SUITE` and from `suite-coverage.mjs`.
