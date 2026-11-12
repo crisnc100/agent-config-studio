@@ -2,9 +2,9 @@
 
 ## Problem
 The test list is written by hand twice, in `verify.sh` and in `.github/workflows/ci.yml`, and nothing compares them.
-At 9643f7a there are 161 test files (`tests/*.mjs`, `packs/*/tests/*.mjs`):
-- CI runs 74. Its list last changed in #34.
-- 39 that `verify.sh` runs are not in CI.
+At 20a655b there are 162 test files (`tests/*.mjs`, `packs/*/tests/*.mjs`):
+- `verify.sh` runs 112. CI runs 74. CI's list last changed in #34.
+- 40 that `verify.sh` runs are not in CI.
 - 38 real tests are in neither: 8 in `tests/` (packs-flag, packs-pr, packs-review-settings, roles-security,
   skill-wizard-blocks, skill-wizard-blocks-ui, ui-clarity-f, ui-clarity-g) and all 30 pack tests
   (28 review-gate, 2 pr).
@@ -40,10 +40,10 @@ Each leaves main working alone. PR 1 changes how the gates are wired and must ch
 add coverage and may surface real failures, so they are reviewed apart from the rewiring.
 
 ### PR 1: one list, same tests
-1. `tests/SUITE` lists all 161 files once. The 77 not yet in CI are `local` (the 39) or a `pending-ci` lane (the
+1. `tests/SUITE` lists all 162 files once. The 78 not yet in CI are `local` (the 40) or a `pending-ci` lane (the
    38), which `suite-coverage.mjs` accepts only while PRs 2 and 3 are open work, named in the file.
-2. `verify.sh` runs the same 112 files in the same order as before. The PR body shows the before and after lists
-   and their diff (empty).
+2. `verify.sh` runs the same 112 files in the same order as before, plus `suite-coverage.mjs`. The PR body shows
+   the before and after lists and their diff (that one added line).
 3. CI runs the same 74 files under the same job names. The PR body shows the same comparison per job.
 4. `suite-coverage.mjs` passes, and its negative control fails as designed.
 5. `ci.yml`: `timeout-minutes` on every job (20; the `offline` aggregate 5). Superseded runs of the same PR are
@@ -53,7 +53,7 @@ add coverage and may surface real failures, so they are reviewed apart from the 
 6. `RUNBOOK.md` Testing says what `verify.sh` and CI run now and where the list lives.
 
 ### PR 2: the tests/ files CI skips
-1. The 39 `verify.sh`-only files and the 8 ungated files run on Linux at Node 20.0.0 and LTS, in groups sized from
+1. The 40 `verify.sh`-only files and the 8 ungated files run on Linux at Node 20.0.0 and LTS, in groups sized from
    measured time so no job runs longer than about 8 minutes. On a Mac, serially: 366 s and 15 s
    (`liveness` 122 s, `worktree-tools` 81 s).
 2. The 8 ungated files also join `verify.sh`.

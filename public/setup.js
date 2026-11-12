@@ -233,7 +233,25 @@ function setupCliCard(cli) {
     a.href = cli.fix.docs; a.target = '_blank'; a.rel = 'noopener';
     card.appendChild(a);
   }
+  if (cli.id === 'codex') card.appendChild(setupTrustCheck());
   return card;
+}
+
+/** Whether Packs' status check runs the Codex trust check: a saved preference (packs-view.js pkTrust reads it). */
+function setupTrustCheck() {
+  const row = el('div', 'setup-trust');
+  const label = el('label', 'pk-check');
+  const box = el('input');
+  box.type = 'checkbox';
+  box.checked = pkTrust();
+  box.onchange = () => pkSetTrust(box.checked);
+  label.appendChild(box);
+  const text = el('span', null, 'Run the Codex ');
+  text.appendChild(glossTip('trust', 'trust check'));
+  text.appendChild(document.createTextNode(' when Packs checks status'));
+  label.appendChild(text);
+  row.appendChild(label);
+  return row;
 }
 
 /* ── step 2: accounts ─────────────────────────────────────────────────── */

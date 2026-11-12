@@ -158,6 +158,8 @@ tests/cleanup-launcher.mjs                            ci:offline
 # The Packs card: its routes through a real server, then the view in the page against one (temp HOMEs, stub CLIs).
 tests/packs-server.mjs                                ci:offline
 tests/packs-ui.mjs                                    ci:offline
+# The Packs grid, each pack's page and its routes, and the trust check on Setup (stubbed routes).
+tests/packs-pages.mjs                                 local                         # not yet run on a CI runner (PR 2)
 # Workflow diagrams: pack.json's workflow, its drift guard, the route, the Packs card and Models' Steps line (temp HOME, stubbed routes).
 tests/packs-workflow.mjs                              local                         # not yet run on a CI runner (PR 2)
 tests/packs-security.mjs                              local                         # not yet run on a CI runner (PR 2)

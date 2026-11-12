@@ -1,1 +1,14 @@
-{"rows":[{"behavior":"The dark theme uses the Soft slate palette and default font smoothing","files":["public/styles.css"],"none":"No README or doc describes the theme's colour values or font smoothing; a search of every tracked .md file finds none."}]}
+{"rows":[
+{"behavior":"Packs is a card grid and each pack has its own page; the review gate's settings sit on its pack page","files":["public/packs-view.js","public/app.js","public/workflow.js","public/styles.css"],"docs":[{"path":"README.md","claims":[
+{"claim":"Opening Review gate on Packs shows its page with a Settings section","at":"public/packs-view.js:553"},
+{"claim":"The Settings switches appear once the Code review part is installed","at":"public/packs-view.js:892"},
+{"claim":"The Build pack's Grade follows Cross-vendor checks","at":"public/packs-view.js:659"},
+{"claim":"The Build pack's Grade swap is dropped when crossFamily is off","at":"public/workflow.js:48"},
+{"claim":"The review gate's steps are listed under How it runs","at":"public/packs-view.js:551"},
+{"claim":"The review gate's last step is Merge","at":"packs/review-gate/pack.json:87"},
+{"claim":"Merge is marked off while agent merge is off","at":"public/workflow.js:32"},
+{"claim":"An off step carries an 'off' mark in the step list","at":"public/workflow.js:163"}]}]},
+{"behavior":"The Codex trust-check preference is set on Setup","files":["public/setup.js"],"none":"README never described where the trust check is set; the Setup checkbox labels itself (public/setup.js:248-252)"},
+{"behavior":"Hash routing: #packs/<id> and #packs/setup","files":["public/app.js"],"none":"Internal routing; the VIEWS row comment and pkRouteOf say it in the code"},
+{"behavior":"verify.sh runs the new packs-pages test; test updates for the new pages","files":["verify.sh","tests/packs-pages.mjs","tests/packs-review-settings.mjs","tests/packs-security.mjs","tests/packs-ui.mjs","tests/packs-workflow.mjs","tests/shell.mjs","tests/ui-clarity-f.mjs","tests/ui-words.mjs"],"none":"Tests and the verify script; no user-facing behavior"}
+]}

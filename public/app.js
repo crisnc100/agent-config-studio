@@ -155,7 +155,10 @@ const VIEWS = [
   { id: 'skill-new', label: 'New skill', group: null, icon: 'skills', hash: '#skills/new',
     title: 'New skill', sub: 'Describe it, answer a few questions, review the SKILL.md', open: openSkillWizard },
   { id: 'packs', label: 'Packs', group: 'workflows', icon: 'packs', hash: '#packs',
-    title: 'Skill packs', sub: 'Ready-made skills and the settings they need — nothing is written until you preview a change and confirm it', open: openPacks },
+    title: 'Skill packs', sub: 'Nothing is written until you preview a change and confirm it', open: openPacks },
+  // No sidebar item: a pack's own page (#packs/<id>, through `match`) and the shared fixes (#packs/setup); Packs stays marked.
+  { id: 'pack', label: 'Pack', group: null, parent: 'packs', icon: 'packs', hash: '#packs/setup', match: (h) => /^#packs\/[^&/]/.test(h),
+    title: 'Skill packs', sub: 'Nothing is written until you preview a change and confirm it', open: openPackPage, moved: pkMoved },
   { id: 'blocks', label: 'Shared rules', group: 'workflows', icon: 'blocks', hash: '#blocks',
     title: 'Shared rules', sub: 'Checked word by word, never by meaning', open: openBlocks },
   // No sidebar item: a rule's Compare copies button (public/blocks-view.js); Shared rules stays marked.
@@ -340,7 +343,7 @@ function firstRunCheck(hash) {
 /** Whether routeHash would land this hash on Home: no file, no drawer, no view. */
 function landsOnHome(hash) {
   if (hashIs(hash, '#assist') || /^#file=/.test(hash)) return false;
-  const v = VIEWS.find((x) => x.hash && hashIs(hash, x.hash));
+  const v = viewForHash(hash);
   return !v || v.id === 'home';
 }
 
@@ -352,6 +355,8 @@ function landsOnHome(hash) {
  */
 /** A hash names a view exactly, optionally followed by &-parameters: #models-x is not #models. */
 const hashIs = (hash, h) => hash === h || hash.startsWith(`${h}&`);
+/** The view a hash opens: its exact hash, or a row's own `match` for a hash that carries a path (#packs/<id>). */
+const viewForHash = (hash) => VIEWS.find((x) => x.hash && (x.match ? x.match(hash) : hashIs(hash, x.hash)));
 
 function routeHash(hash, { cold = false } = {}) {
   if (hashIs(hash, '#assist')) {
@@ -369,7 +374,7 @@ function routeHash(hash, { cold = false } = {}) {
     }
     return cold ? goHome() : openHome();
   }
-  const v = VIEWS.find((x) => x.hash && hashIs(hash, x.hash));
+  const v = viewForHash(hash);
   if (v) {
     // `moved` lets a view whose hash carries a parameter (Compare's rule) reopen when only that parameter changed.
     if (!cold && S.view === v.id && !v.moved?.(hash)) return;

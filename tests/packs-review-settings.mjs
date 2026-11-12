@@ -5,8 +5,8 @@
  * merge.alwaysHuman, crossFamily) into the home review config the review
  * script reads first, with one preview, one signature and one backup per
  * save. Also where those settings show elsewhere: the Merge step in the
- * review gate's diagram, the Grade's swap note and its pointer on the Build
- * card, and the Packs page's one-line promise.
+ * review gate's steps and the Grade's swap note and its pointer on the Build
+ * page.
  *
  * The lib half runs against temp HOMEs and the review script reads the
  * result back; the page half drives the fake DOM with the routes answered by
@@ -142,7 +142,7 @@ try {
     ok('…and no other pack gains a step', view(t).packs.filter((p) => p.id !== 'review-gate').every((p) => !p.workflow?.steps?.some((s) => s.id === 'merge')));
   }
 
-  console.log('\nthe page: the Settings section on the review gate card');
+  console.log('\nthe page: the Settings section on the review gate\'s page');
   const t = home();
   put(t.primary, '{\n  "pick": "rotate"\n}\n');
   const writes = [];
@@ -161,9 +161,13 @@ try {
     'POST /api/packs/review-settings/plan': (b) => settingsPlan(b.changes, t.m),
     'POST /api/packs/review-settings/apply': (b) => { writes.push(b); return settingsApply(b.changes, b.signature, t.m); },
   });
-  const page = await bootPage({ routes, hash: '#packs' });
+  const page = await bootPage({ routes, hash: '#packs/review-gate' });
   const c = () => page.$('content');
-  const card = (id = 'review-gate') => c().querySelector(`[data-pack="${id}"]`);
+  // A pack's own page, opened through its route when another page is shown.
+  const card = (id = 'review-gate') => {
+    if (page.eval('PK.page') !== id) page.navigate(`#packs/${id}`);
+    return c().querySelector(`.pk-page[data-pack="${id}"]`);
+  };
   const sec = () => card()?.querySelector('.pk-settings');
   const mg = () => sec()?.querySelector('.pk-merge');
   const cf = () => sec()?.querySelector('.pk-cross');
@@ -176,9 +180,7 @@ try {
   const acts = () => pre().querySelectorAll('button');
   const waitFor = async (fn) => { for (let i = 0; i < 100 && !fn(); i++) await sleep(20); await settle(5); };
 
-  ok('R8: the Packs page says its promise once', c().querySelectorAll('.pk-promise').length === 1
-    && /The studio sets how its own packs behave here\. Everything else it shows and edits as files\./.test(tx(c().querySelector('.pk-promise'))), tx(c().querySelector('.pk-promise')));
-  ok('one Settings section on the review gate card, holding the security switch, agent merge and cross-vendor checks', c().querySelectorAll('.pk-settings').length === 1
+  ok('one Settings section on the review gate page, holding the security switch, agent merge and cross-vendor checks', c().querySelectorAll('.pk-settings').length === 1
     && !!sec().querySelector('.pk-sec-levels') && !!mg() && !!cf(), tx(sec()));
   ok('R3: four merge choices in plain words, Off pressed', choices(mg()).map(tx).join('|') === 'Off|Docs and tests only|Low-risk PRs|Low and medium-risk PRs' && tx(pressed(mg())) === 'Off',
     choices(mg()).map(tx).join('|'));
@@ -196,15 +198,15 @@ try {
     && tx(cf()).includes('Reviews and grades use a model from another vendor when one is available; never a blocker.') && tx(cf()).includes('Any reviewer in your roles may check any work.'), tx(cf()));
   ok('R7: one line names where the other review settings live (the primary file has no Files entry, so no button)', /Other review settings live in ~\/\.agent-config-studio\/review-gate\/config\.json\./.test(tx(sec().querySelector('.pk-other')))
     && !sec().querySelector('.pk-other button'), tx(sec().querySelector('.pk-other')));
-  ok('every button is a styled kind, and no fold on the card', sec().querySelectorAll('button').every((b) => /\bbtn\b/.test(b.className)) && !card().querySelector('details'));
+  ok('every button is a styled kind, and no fold on the page', sec().querySelectorAll('button').every((b) => /\bbtn\b/.test(b.className)) && !card().querySelector('details'));
   ok('no raw key name in a label or a choice', [...sec().querySelectorAll('.pk-choice-row button'), ...sec().querySelectorAll('.pk-label')].every((n) => !/merge\.policy|alwaysHuman|crossFamily|riskPaths|strict|standard/.test(tx(n))));
 
-  console.log('\nR6 and R5: the diagram, the Grade and the Build card follow the settings');
+  console.log('\nR6 and R5: the diagram, the Grade and the Build page follow the settings');
   const step = (pack, id) => card(pack)?.querySelector(`.step[data-step="${id}"]`);
   ok('the Merge step is drawn last, greyed and marked off while merge is off', !!step('review-gate', 'merge') && step('review-gate', 'merge').classList.contains('off')
     && tx(step('review-gate', 'merge').querySelector('.step-off')) === 'off', tx(step('review-gate', 'merge')));
   ok('the Grade swaps vendors while cross-vendor checks prefer another vendor', /Astra instead when the builder is the same vendor as Fable/.test(tx(step('build', 'grade'))), tx(step('build', 'grade')));
-  ok('the Build card points to the setting', /The Grade's vendor swap follows Cross-vendor checks in the review gate's settings \(now: Prefer another vendor\)\./.test(tx(card('build').querySelector('.pk-cross-note'))), tx(card('build')));
+  ok('the Build page points to the setting', /The Grade's vendor swap follows Cross-vendor checks in the review gate's settings \(now: Prefer another vendor\)\./.test(tx(card('build').querySelector('.pk-cross-note'))), tx(card('build')));
 
   console.log('\none pending preview for the section, one save');
   {
@@ -239,7 +241,7 @@ try {
   ok('QA 6: the backup is shown as its ~ folder, never the nested absolute path', /The old file is at ~\/\.agent-config-studio\/backups\/[^\s/]+-review-settings\/\./.test(tx(sec().querySelector('.pk-result')))
     && !tx(sec().querySelector('.pk-result')).includes(t.h) && !/\/0\//.test(tx(sec().querySelector('.pk-result'))), tx(sec().querySelector('.pk-result')));
   ok('QA 3: after Save no After Save line is left', !/After Save:/.test(tx(sec())), tx(mg()));
-  ok('…the pressed choices, the Merge step, the Grade note and the Build card follow', tx(pressed(mg())) === 'Low-risk PRs' && tx(pressed(cf())) === 'Off'
+  ok('…the pressed choices, the Merge step, the Grade note and the Build page follow', tx(pressed(mg())) === 'Low-risk PRs' && tx(pressed(cf())) === 'Off'
     && !step('review-gate', 'merge').classList.contains('off') && /no swap: Cross-vendor checks is off/.test(tx(step('build', 'grade')))
     && /\(now: Off\)/.test(tx(card('build').querySelector('.pk-cross-note'))), `${tx(step('build', 'grade'))} | ${tx(card('build').querySelector('.pk-cross-note'))}`);
 
@@ -298,11 +300,11 @@ try {
 
   console.log('\nR1: no code-review part installed, no settings');
   installed = false;
-  const bare = await bootPage({ routes, hash: '#packs' });
+  const bare = await bootPage({ routes, hash: '#packs/review-gate' });
   const bc = () => bare.$('content').querySelector('[data-pack="review-gate"]');
   for (let i = 0; i < 100 && !bc()?.querySelector('.pk-flow'); i++) await sleep(30);
   await settle(10);
-  ok('the card shows no settings, and one sentence on what installing lets you set', !bc().querySelector('.pk-settings') && !bc().querySelector('.pk-sec-levels')
+  ok('the page shows no settings, and one sentence on what installing lets you set', !bc().querySelector('.pk-settings') && !bc().querySelector('.pk-sec-levels')
     && /Install the Code review part to set the security pass, agent merge and cross-vendor checks here\./.test(bare.text(bc().querySelector('.pk-settings-none'))), bare.text(bc()));
   ok('no page errors', bare.errors.length === 0, bare.errors.join(' | '));
   bare.done();
@@ -315,7 +317,7 @@ try {
       'GET /api/packs': () => withGate(view(t3)),
       'POST /api/packs/review-settings/plan': (b) => settingsPlan(b.changes, t3.m),
       'POST /api/packs/review-settings/apply': (b) => settingsApply(b.changes, b.signature, t3.m) });
-    const p3 = await bootPage({ routes: r3, hash: '#packs' });
+    const p3 = await bootPage({ routes: r3, hash: '#packs/review-gate' });
     const s3 = () => p3.$('content').querySelector('[data-pack="review-gate"] .pk-settings');
     for (let i = 0; i < 100 && !s3(); i++) await sleep(30);
     await settle(10);
@@ -326,6 +328,7 @@ try {
     await settle(5);
     ok('QA 5: a first save that creates the file says no backup was needed', /now says “Off”\. No existing file needed a backup\./.test(p3.text(s3().querySelector('.pk-result')))
       && JSON.parse(read(t3.primary)).crossFamily === 'off', p3.text(s3().querySelector('.pk-result')));
+    p3.navigate('#packs/build');
     const grade = p3.text(p3.$('content').querySelector('[data-pack="build"] .step[data-step="grade"]'));
     ok('QA 1: with the judge unset, the Grade still says there is no swap', /not set/.test(grade) && /no swap: Cross-vendor checks is off/.test(grade), grade);
     ok('no page errors', p3.errors.length === 0, p3.errors.join(' | '));
@@ -357,7 +360,7 @@ try {
     const r2 = routesFor({ ...Object.fromEntries(['GET /api/packs/status', 'GET /api/models/roles'].map((k) => [k, routes.table[k]])),
       'GET /api/packs': () => withGate(view(t2)), 'GET /api/registry': () => reg });
     r2.files.set('/h/.claude/review-config.json', '{"merge":{"policy":"off"}}\n');
-    const op = await bootPage({ routes: r2, hash: '#packs' });
+    const op = await bootPage({ routes: r2, hash: '#packs/review-gate' });
     const other = () => op.$('content').querySelector('[data-pack="review-gate"] .pk-other');
     for (let i = 0; i < 100 && !other(); i++) await sleep(30);
     await settle(10);
