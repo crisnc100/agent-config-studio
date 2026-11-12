@@ -274,7 +274,6 @@ console.log('\norange and amber controls: text 4.5:1 and edge 3:1, light and dar
   const CONTROLS = [
     ['primary button', ['.btn', '.btn.primary']],
     ['quiet button', ['.btn', '.btn.ghost'], true],
-    ['security pass "on" button', ['.btn', '.btn.pk-sec-on']],
     ['picked model', ['.btn', '.btn.roles-pick', '.btn.roles-pick.on']],
     ['picked model number', ['.roles-pick-n']],
     ['Assist chip, active', ['.assist-chip', '.assist-chip.active']],
@@ -294,6 +293,7 @@ console.log('\norange and amber controls: text 4.5:1 and edge 3:1, light and dar
     ['pack "Installed", "On"', ['.pk-st', '.pk-st.ok'], true],
     ['pack "Not working"', ['.pk-st', '.pk-st.err'], true],
     ['pack "Not installed", "Off"', ['.pk-st', '.pk-st.off'], true],
+    ['agent merge "needs the gh CLI" line', ['.pk-set-warn'], true],
     ['audit synced class', ['.audit-class', '.audit-class.synced']],
     ['audit warn', ['.audit-sev', '.audit-sev.warn']],
     ['account offline tag', ['.usage-offline-tag']],
@@ -321,6 +321,30 @@ console.log('\norange and amber controls: text 4.5:1 and edge 3:1, light and dar
     }
   }
   ok('every orange or amber button and badge: text ≥4.5:1 and edge ≥3:1 on bg, panel and panel-2, light and dark', bad.length === 0, bad.join(' | '));
+  {
+    // A settings preview's diff sits on --panel-2: its unchanged lines, and the line numbers on removed and added rows.
+    const val = (sel, prop) => {
+      let v = null;
+      for (const r of rules.filter((x) => x.sel.split(',').map((y) => y.trim()).includes(sel))) for (const m of r.body.matchAll(new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`, 'g'))) v = m[1].trim();
+      return v;
+    };
+    const low = [];
+    for (const [theme, t] of Object.entries(THEMES)) {
+      const page = parse('var(--panel-2)', t);
+      const row = (kind) => over(parse(val(`.diff-line.${kind}`, 'background'), t), page);
+      const pairs = {
+        'unchanged line': ['.diff-line.ctx .t', page],
+        'removed row line number': [val('.diff-line.del .n', 'color') ? '.diff-line.del .n' : '.diff-line .n', row('del')],
+        'added row line number': [val('.diff-line.add .n', 'color') ? '.diff-line.add .n' : '.diff-line .n', row('add')],
+      };
+      for (const [name, [sel, behind]] of Object.entries(pairs)) {
+        const fg = parse(val(sel, 'color'), t);
+        const r = ratio(over([fg[0], fg[1], fg[2], fg[3] * Number(val(sel, 'opacity') ?? 1)], behind), behind);
+        if (!(r >= 4.5)) low.push(`${theme} ${name} ${r.toFixed(2)}`);
+      }
+    }
+    ok('a settings preview diff: unchanged lines and the line numbers on removed and added rows are at least 4.5:1, light and dark', low.length === 0, low.join(' | '));
+  }
 }
 
 /* ── static: words the views never render on their own ───────────────── */

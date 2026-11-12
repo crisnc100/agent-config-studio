@@ -104,7 +104,7 @@ try {
     ok('the level already set: no change, and apply writes nothing', !same.changes && securityApply('always', same.signature, t.m).changed === false && backups(t).length === 0);
   }
 
-  console.log('\nthe page: three buttons, the diff before anything is saved, Save and Cancel');
+  console.log('\nthe page: three choices, a save bar, the diff before anything is saved, Save and Cancel');
   const t = home();
   put(t.primary, '{\n  "pick": "rotate"\n}\n');
   const writes = [];
@@ -125,20 +125,24 @@ try {
   const tx = (n) => (n ? page.text(n) : '');
   const levels = () => sec().querySelectorAll('.pk-sec-levels button');
   const pressed = () => levels().find((b) => b.getAttribute('aria-pressed') === 'true');
-  ok('the review gate\'s page has the switch, labelled in plain words', !!sec() && /Security pass in PR reviews/.test(tx(sec())), tx(sec()));
+  ok('the review gate\'s page has the switch, labelled in plain words', !!sec() && tx(sec().querySelector('.pk-security .pk-set-name')) === 'Security pass', tx(sec()));
   ok('three buttons: Off, When code changes, Always', levels().map(tx).join('|') === 'Off|When code changes|Always', levels().map(tx).join('|'));
-  ok('the level in force is the pressed one: Off', tx(pressed()) === 'Off' && /Now: PR reviews run no security pass\./.test(tx(sec())), tx(sec()));
-  ok('every button is a styled kind (secondary), and no fold', levels().every((b) => /\bbtn\b/.test(b.className)) && !sec().querySelector('details'));
+  ok('the level in force is the pressed one: Off, with its one line and no other level\'s', tx(pressed()) === 'Off' && tx(sec().querySelector('.pk-security .pk-set-says')) === 'PR reviews run no security pass.'
+    && sec().querySelectorAll('.pk-security .pk-set-says').length === 1 && !/A security reviewer reads/.test(tx(sec().querySelector('.pk-security'))), tx(sec()));
+  ok('every level is a segment of one labelled group, and no fold', levels().every((b) => b.classList.contains('pk-tab')) && sec().querySelector('.pk-sec-levels').getAttribute('role') === 'group' && !sec().querySelector('details'));
   const others = page.eval('PK.data.packs.map((p) => p.id)').filter((id) => id !== 'review-gate');
   const elsewhere = others.filter((id) => { page.navigate(`#packs/${id}`); return c().querySelectorAll('.pk-sec').length > 0; });
   page.navigate('#packs/review-gate');
   ok('only the review gate\'s page has it, once', c().querySelectorAll('.pk-sec').length === 1 && others.length > 0 && elsewhere.length === 0, elsewhere.join(' '));
 
+  const previewIt = async () => { sec().querySelector('.pk-savebar').querySelectorAll('button').find((b) => tx(b) === 'Preview and save').click(); for (let i = 0; i < 100 && !sec().querySelector('.pk-sec-preview'); i++) await sleep(20); };
   levels().find((b) => tx(b) === 'Always').click();
-  for (let i = 0; i < 100 && !sec().querySelector('.pk-sec-preview'); i++) await sleep(20);
+  await settle(5);
+  ok('clicking Always names it in the save bar, with no preview yet', tx(sec().querySelector('.pk-savebar-text')) === '1 change: security pass to “Always”' && !sec().querySelector('.pk-sec-preview'), tx(sec()));
+  await previewIt();
   await settle(5);
   const pre = () => sec().querySelector('.pk-sec-preview');
-  ok('clicking Always shows the file and its diff first', /this changes ~\/\.agent-config-studio\/review-gate\/config\.json, and a copy of it goes to the backups folder first/.test(tx(pre()))
+  ok('Preview and save shows the file and its diff first', /this changes ~\/\.agent-config-studio\/review-gate\/config\.json, and a copy of it goes to the backups folder first/.test(tx(pre()))
     && pre().querySelectorAll('.diff-line.add').some((l) => /"run": "always"/.test(tx(l))), tx(pre()));
   ok('…and nothing is written yet', read(t.primary) === '{\n  "pick": "rotate"\n}\n' && writes.length === 0);
   const acts = () => pre().querySelectorAll('button');
@@ -148,7 +152,8 @@ try {
   ok('Cancel drops the preview and writes nothing', !pre() && writes.length === 0 && read(t.primary) === '{\n  "pick": "rotate"\n}\n');
 
   levels().find((b) => tx(b) === 'When code changes').click();
-  for (let i = 0; i < 100 && !pre(); i++) await sleep(20);
+  await settle(5);
+  await previewIt();
   acts().find((b) => tx(b) === 'Save').click();
   for (let i = 0; i < 100 && !sec().querySelector('.pk-result'); i++) await sleep(20);
   await settle(5);
@@ -160,7 +165,8 @@ try {
 
   // A file that changed after the preview: the server's 409 shows, and the file is left as it is now.
   levels().find((b) => tx(b) === 'Off').click();
-  for (let i = 0; i < 100 && !pre(); i++) await sleep(20);
+  await settle(5);
+  await previewIt();
   put(t.primary, '{"security":{"run":"always"}}\n');
   acts().find((b) => tx(b) === 'Save').click();
   for (let i = 0; i < 100 && !sec().querySelector('.notice.error'); i++) await sleep(20);

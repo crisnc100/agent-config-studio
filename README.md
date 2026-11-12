@@ -699,22 +699,23 @@ again, so an edit made inside a block on Review does not survive it.
 
 The studio sets how its own packs behave on **Packs**; everything else it
 shows and edits as files. Open **Review gate** on Packs: its page has a
-**Settings** section, whose switches appear once its Code review part is
-installed (that part ships the scripts that read them):
+**Settings** section, whose rows appear once its Code review part is
+installed (that part ships the scripts that read them). Each choice row
+shows one line for the option picked:
 
-- **Security pass in PR reviews**: Off, When code changes, or Always
-  (`security.run`).
+- **Security pass**: Off, When code changes, or Always (`security.run`).
 - **Agent merge** (`merge.policy`): Off (the default: you merge every PR),
-  Docs and tests only, Low-risk PRs, or Low and medium-risk PRs (medium-risk
-  code merges without you; high-risk always waits for you). An agent merges
-  only through `merge.mjs`, and only when the review is closed at the tip, CI
-  is green and nobody asked for changes. It needs the `gh` CLI, and a repo
-  with no CI checks waits for you unless the config sets
-  `merge.requireChecks` to `false`.
-- **Always needs you**: the built-in paths (`.github/workflows/**`,
-  `package.json`) and the risky paths (`riskPaths`, or the review gate's
-  defaults) are shown read-only; your own paths (`merge.alwaysHuman`) go one
-  per line below them.
+  Docs and tests only, Low-risk PRs, or Low and medium-risk PRs (high-risk
+  always waits for you). An agent merges only through `merge.mjs`, and only
+  when the review is closed at the tip, CI is green and nobody asked for
+  changes. A repo with no CI checks waits for you unless the config sets
+  `merge.requireChecks` to `false`. When the `gh` CLI is not on your PATH
+  and the pick is not Off, the row warns that agent merge needs it.
+- **Always needs you**: a count of the paths no agent merges (built in,
+  risky, your own) and **Edit paths**, which opens its own page: the
+  built-in paths (`.github/workflows/**`, `package.json`) and the risky
+  paths (`riskPaths`, or the review gate's defaults) read-only, and a box
+  for your own paths (`merge.alwaysHuman`), one per line.
 - **Cross-vendor checks** (`crossFamily`): Prefer another vendor (the
   default; never a blocker) or Off (any reviewer in your roles may check any
   work). The Build pack's Grade follows it.
@@ -725,14 +726,17 @@ marked off while agent merge is off.
 Every change is written to your home review config only: the first of
 `~/.agent-config-studio/review-gate/config.json` and
 `~/.claude/review-config.json` that exists, or the first when neither does:
-the same order the review script reads its home config in. Picks wait in one
-preview showing that file's diff; **Save** writes them together, copies the
-old file into `~/.agent-config-studio/backups/` once, and keeps every other
-key. If the file changed after the preview, Save refuses and asks you to
-preview again; if you edited your own paths after it, Save shows the new
-preview instead of writing. The section names that file for the review settings it has no switch
-for, with **Open in Files** when Files lists it (`~/.claude/review-config.json`
-is listed; the studio's own folder is not).
+the same order the review script reads its home config in. The Settings
+section names that file, with **Open in Files** when Files lists it
+(`~/.claude/review-config.json` is listed; the studio's own folder is not).
+
+A pick, or typing your own paths, opens a save bar that names each
+change. **Cancel** puts back what is saved; **Preview and save**
+replaces the bar with that file's diff and **Save**, which writes every
+change together, copies the old file into `~/.agent-config-studio/backups/`
+once, and keeps every other key. If the file changed after the preview,
+Save refuses and the bar returns so you can preview again; if you edited
+your own paths after it, Save shows the new preview instead of writing.
 
 ## Audit
 

@@ -189,7 +189,7 @@ tests/bunx.mjs                                        ci:bunx ci-only
 # In no gate yet.
 tests/packs-flag.mjs                                  pending-ci                    # not yet run by any gate (PR 2)
 tests/packs-pr.mjs                                    pending-ci                    # not yet run by any gate (PR 2)
-tests/packs-review-settings.mjs                       pending-ci                    # not yet run by any gate (PR 2)
+tests/packs-review-settings.mjs                       local                         # not yet run on a CI runner (PR 2)
 tests/roles-security.mjs                              pending-ci                    # not yet run by any gate (PR 2)
 tests/skill-wizard-blocks.mjs                         pending-ci                    # not yet run by any gate (PR 2)
 tests/skill-wizard-blocks-ui.mjs                      pending-ci                    # not yet run by any gate (PR 2)
