@@ -42,14 +42,15 @@ add coverage and may surface real failures, so they are reviewed apart from the 
 ### PR 1: one list, same tests
 1. `tests/SUITE` lists all 162 files once. The 78 not yet in CI are `local` (the 40) or a `pending-ci` lane (the
    38), which `suite-coverage.mjs` accepts only while PRs 2 and 3 are open work, named in the file.
-2. `verify.sh` runs the same 112 files in the same order as before, plus `suite-coverage.mjs`. The PR body shows
-   the before and after lists and their diff (that one added line).
+2. `verify.sh` runs the same 112 files in the same order as before, plus the guards `suite-coverage.mjs` and
+   `ci-syntax-step.mjs`. The PR body shows the before and after lists and their diff (those two added lines).
 3. CI runs the same 74 files under the same job names. The PR body shows the same comparison per job.
 4. `suite-coverage.mjs` passes, and its negative control fails as designed.
 5. `ci.yml`: `timeout-minutes` on every job (20; the `offline` aggregate 5). Superseded runs of the same PR are
-   cancelled; runs on main never are. `syntax` also checks `packs/`, `tools/` and `blocks/`. The "live containment
-   is a local gate" banner prints once, in the job summary. `setup-guards.mjs` runs once. The macOS comment no
-   longer cites private-repo billing.
+   cancelled; runs on main never are. `syntax` also checks `packs/`, `tools/` and `blocks/`, one file per
+   `node --check`, and fails when it finds no file (`ci-syntax-step.mjs` runs that step from `ci.yml`). The "live
+   containment is a local gate" banner prints once, in the job summary. `setup-guards.mjs` runs once. The macOS
+   comment no longer cites private-repo billing.
 6. `RUNBOOK.md` Testing says what `verify.sh` and CI run now and where the list lives.
 
 ### PR 2: the tests/ files CI skips

@@ -24,6 +24,8 @@ tests/guards.mjs                                      ci:guards
 tests/setup-guards.mjs                                ci:guards
 # Every test file is in this list once, and every ci group has a job that runs it.
 tests/suite-coverage.mjs                              ci:guards
+# ci.yml's syntax step fails on a bad file wherever it sits, and when it finds no file.
+tests/ci-syntax-step.mjs                              ci:guards
 # Nothing shipped names one person's machine; the README claims only what the code does.
 tests/no-personal-paths.mjs                           ci:offline
 tests/readme.mjs                                      ci:offline ci:stranger-macos
