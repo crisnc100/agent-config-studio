@@ -336,14 +336,26 @@ function pkUpdateReady(pack) {
   if (!pack.installed) return false;
   return pack.installed.version !== pack.version || Object.keys(pack.installed.parts || {}).some((id) => pkPartStatuses(pack, id).map(pkKind).includes('update'));
 }
-/**
- * Update is worth offering: an update is ready, a part is edited (Update can take the pack's copy back), or a
- * part is broken in a way the status check says an update puts right (a missing file, not an unset role).
- */
+/** Update does something: an update is ready, or a part is broken in a way the status check says an update puts right (a missing file, not an unset role). */
 const pkUpdateUseful = (pack) => pkUpdateReady(pack) || Object.keys(pack.installed?.parts || {}).some((id) => {
   const kinds = pkPartStatuses(pack, id).map(pkKind);
-  return kinds.includes('edited') || (kinds.includes('broken') && (pkStatusOf(pack, id)?.details || []).some((d) => /acs packs update/.test(d)));
+  return kinds.includes('broken') && (pkStatusOf(pack, id)?.details || []).some((d) => /acs packs update/.test(d));
 });
+/** The CLIs a part could be installed for here but is not. */
+const pkFreshClis = (pack, partId) => (pkPack(pack.id) || pack).parts.find((p) => p.id === partId)?.harnesses.filter(pkUsable)
+  .filter((h) => !(pkStatusOf(pack, partId)?.harnesses || []).includes(h)) || [];
+/**
+ * The one action a pack needs, for its card and its page alike, or null. An edit alone needs none: Update would
+ * keep the edit and change nothing, so the edited part's row offers Restore… instead.
+ */
+function pkPackAction(pack) {
+  if (!pack.installed) return { action: 'install', label: 'Install', extra: {} };
+  if (pkUpdateUseful(pack)) return { action: 'update', label: 'Update', extra: {} };
+  const parts = Object.keys(pack.installed.parts || {}).filter((id) => pkPartStatuses(pack, id).map(pkKind).includes('newHarness'));
+  const clis = [...new Set(parts.flatMap((id) => pkFreshClis(pack, id)))];
+  if (!parts.length || !clis.length) return null;
+  return { action: 'install', label: `Install for ${pkCliNames(clis)}`, extra: { parts, harnesses: clis } };
+}
 /** A card's status: Update ready, Needs setup, Installed or Not installed. */
 function pkState(pack, shared = pkShared()) {
   if (pkUpdateReady(pack)) return { key: 'update', word: 'Update ready', tone: 'warn' };
@@ -446,12 +458,12 @@ function pkCardView(pack, shared) {
   steps.appendChild(el('span', null, pack.workflow?.strip ? PK_SOLO[whos[0]] : plural(whos.length, 'step')));
   foot.appendChild(steps);
   // One primary button, only where something needs doing; it opens the page with the preview loaded.
-  const action = st.key === 'update' ? 'update' : !pack.installed ? 'install' : null;
-  if (action) {
-    foot.appendChild(pkBtn('primary', PK_VERB[action], (e) => {
+  const pa = pkPackAction(pack);
+  if (pa) {
+    foot.appendChild(pkBtn('primary', pa.label, (e) => {
       e.stopPropagation();
       pkGo(pack.id);
-      pkPreview(pack, action, {}, { at: 'pack' });
+      pkPreview(pack, pa.action, pa.extra, { at: 'pack' });
     }));
   } else foot.appendChild(pkIcon('go', 'pk-card-go'));
   k.appendChild(foot);
@@ -566,7 +578,8 @@ function pkPageHead(pack, card, sections) {
   const shared = pkShared();
   const fixes = pkFixes(pack);
   const own = pkOwnFixes(pack, shared);
-  if (!fixes.length) {
+  if (!fixes.length && !inst) meta.appendChild(el('span', 'pk-st pk-ready', 'Ready to install'));
+  else if (!fixes.length) {
     const ready = el('span', 'pk-st ok pk-ready');
     ready.appendChild(pkIcon('check'));
     ready.appendChild(el('span', null, 'Ready to run'));
@@ -598,8 +611,8 @@ function pkPageHead(pack, card, sections) {
   head.appendChild(left);
   const acts = el('div', 'pk-page-actions');
   const busy = !!card.busy;
-  if (!inst) acts.appendChild(pkBtn('primary', 'Install', () => pkPreview(pack, 'install', {}, { at: 'pack' }), busy || !pkDefaults(pack).length));
-  else if (pkUpdateUseful(pack)) acts.appendChild(pkBtn('primary', 'Update', () => pkPreview(pack, 'update', {}, { at: 'pack' }), busy));
+  const pa = pkPackAction(pack);
+  if (pa) acts.appendChild(pkBtn('primary', pa.label, () => pkPreview(pack, pa.action, pa.extra, { at: 'pack' }), busy || (!inst && !pkDefaults(pack).length)));
   if (inst) acts.appendChild(pkBtn('danger', 'Uninstall…', () => pkPreview(pack, 'uninstall', {}, { at: 'pack' }), busy));
   head.appendChild(acts);
   return head;
@@ -691,9 +704,11 @@ function pkPartsView(sec, pack, card) {
     if (!pkInstalled(pack, part.id) || w.kind === 'newHarness') {
       act.appendChild(pkBtn('', 'Add…', () => pkPreview(pack, 'install', { parts: [part.id] }, { at: part.id }), busy));
     } else {
+      // Update is pack-wide: Restore… previews it with the pack's copy taken, so its preview lists every edited file it replaces.
+      if (pkPartStatuses(pack, part.id).map(pkKind).includes('edited')) act.appendChild(pkBtn('', 'Restore…', () => pkPreview(pack, 'update', { replace: true }, { at: part.id, verb: 'Restore' }), busy));
       // The last part out is the pack's uninstall.
       const only = installed.length === 1;
-      act.appendChild(pkBtn('ghost', 'Remove…', () => pkPreview(pack, 'uninstall', only ? {} : { parts: [part.id] }, { at: part.id }), busy));
+      act.appendChild(pkBtn('ghost', 'Remove…', () => pkPreview(pack, 'uninstall', only ? {} : { parts: [part.id] }, { at: part.id, verb: 'Remove' }), busy));
     }
     li.appendChild(act);
     const flow = pkFlowAt(pack, card, part.id);
@@ -1140,12 +1155,12 @@ function pkInstallWhy(pack, card) {
  * of `extra.parts` or the default parts, for every usable CLI, with the preview-only offers unticked.
  * `keepOffers` re-asks for the same action after a choice in the preview changed it.
  */
-async function pkPreview(pack, action, extra = {}, { keepOffers = false, at } = {}) {
+async function pkPreview(pack, action, extra = {}, { keepOffers = false, at, verb } = {}) {
   const card = pkCard(pack);
   if (at !== undefined || !card.flow) {
-    card.flow = { action, at: at ?? 'pack', extra };
-    card.setRoles = {}; card.replace = false;
-    if (action === 'install') { card.parts = new Set(extra.parts || pkDefaults(pack)); card.harnesses = null; card.withDeps = false; }
+    card.flow = { action, at: at ?? 'pack', extra, verb: verb || PK_VERB[action] };
+    card.setRoles = {}; card.replace = !!extra.replace;
+    if (action === 'install') { card.parts = new Set(extra.parts || pkDefaults(pack)); card.harnesses = extra.harnesses ? new Set(extra.harnesses) : null; card.withDeps = false; }
   } else {
     card.flow = { ...card.flow, action };
     if (!keepOffers) { card.setRoles = {}; card.replace = false; }
@@ -1228,7 +1243,8 @@ function pkPreviewView(pack, card) {
   if (card.preview) {
     const { view } = card.preview;
     const can = view.changes && !view.refusals.length;
-    bar.appendChild(pkBtn(action === 'uninstall' ? 'danger pk-apply' : 'primary pk-apply', card.busy === 'apply' ? `${PK_VERB[action].replace(/e$/, '')}ing…` : PK_VERB[action], () => pkApply(pack), !can || !!card.busy));
+    const verb = card.flow.verb || PK_VERB[action];
+    bar.appendChild(pkBtn(action === 'uninstall' ? 'danger pk-apply' : 'primary pk-apply', card.busy === 'apply' ? `${verb.replace(/e$/, '')}ing…` : verb, () => pkApply(pack), !can || !!card.busy));
   } else if (card.error && !card.busy && !why) {
     bar.appendChild(pkBtn('', 'Preview again', () => pkPreview(pack, action, card.flow.extra, { at: card.flow.at })));
   }
@@ -1236,7 +1252,7 @@ function pkPreviewView(pack, card) {
   bar.appendChild(pkBtn('ghost', 'Cancel', () => { card.flow = null; pkDrop(card); card.busy = null; paintPacks(); }, card.busy === 'apply'));
   if (card.busy === 'apply') bar.appendChild(el('span', 'spinner'));
   box.appendChild(bar);
-  if (card.preview?.view.changes && !card.preview.view.refusals.length) box.appendChild(el('div', 'pk-note', `${PK_VERB[action]} applies exactly this preview. If anything on disk changes first, it stops and asks you to preview again.`));
+  if (card.preview?.view.changes && !card.preview.view.refusals.length) box.appendChild(el('div', 'pk-note', `${card.flow.verb || PK_VERB[action]} applies exactly this preview. If anything on disk changes first, it stops and asks you to preview again.`));
   return box;
 }
 
@@ -1260,7 +1276,9 @@ function pkPreviewBody(pack, card, box) {
     list('pk-rows', files, (r) => {
       const li = el('li', `pk-row ${r.action || ''}`);
       pkJoin(li, el('code', 'pk-sym', r.symbol), el('code', 'pk-path', r.path), el('span', 'pk-what', r.what || ''));
-      if (r.note) li.appendChild(el('span', 'pk-note', ` — ${r.note}`));
+      // The planner's keep note ends with "kept" again; the row has said it.
+      const note = r.action === 'keep' ? r.note?.replace(/:\s*kept$/, '') : r.note;
+      if (note) li.appendChild(el('span', 'pk-note', ` — ${note}`));
       return li;
     });
   }
@@ -1269,7 +1287,8 @@ function pkPreviewBody(pack, card, box) {
     list('pk-rows', settings, (r) => pkJoin(el('li', 'pk-row'), el('code', 'pk-sym', '~'), el('code', 'pk-path', r.setting)));
   }
   list('pk-warnings', view.warnings, (w) => el('li', null, `warning: ${w}`));
-  list('pk-kept', view.kept, (k) => el('li', null, `kept: ${k.path} — ${k.why}`));
+  // A kept file already on its own row is not said twice.
+  list('pk-kept', view.kept.filter((k) => !files.some((r) => r.path === k.path)), (k) => el('li', null, `kept: ${k.path} — ${k.why}`));
   list('pk-refusals', view.refusals, (r) => el('li', null, `✖ ${r}`));
 
   // The role fix-up: the CLI's offer, per role — set it to the installed families, through ACS's roles.
@@ -1347,10 +1366,10 @@ function pkResultView(card) {
   n.setAttribute('role', 'status');
   n.appendChild(el('div', 'pk-result-head', `${PK_DONE[action]}: ${r.units.join(', ') || r.packs.join(', ')}.`));
   n.appendChild(el('div', null, r.backupDir ? `Backups of every existing file it changed: ${r.backupDir}` : 'No existing file needed a backup.'));
-  const list = (items, fmt) => { if (!items?.length) return; const ul = el('ul'); for (const x of items) ul.appendChild(el('li', null, fmt(x))); n.appendChild(ul); };
+  const list = (items, fmt, cls) => { if (!items?.length) return; const ul = el('ul', cls); for (const x of items) ul.appendChild(el('li', null, fmt(x))); n.appendChild(ul); };
   list(r.kept, (k) => `kept: ${k.path} — ${k.why}`);
   list(r.notes, (x) => `note: ${x}`);
-  list(r.warnings, (x) => `warning: ${x}`);
+  list(r.warnings, (x) => `warning: ${x}`, 'pk-warnings');
   if (r.log?.length) pkLog(n, r.log);
   n.appendChild(pkBtn('ghost', 'Dismiss', () => { card.result = null; paintPacks(); }));
   return n;
