@@ -63,8 +63,9 @@ function pkRouteOf(hash) {
 const pkMoved = (hash) => pkRouteOf(hash) !== PK.page;
 const pkHash = (page) => (page ? `#packs/${encodeURIComponent(page)}` : '#packs');
 
-async function pkEnter(view, page) {
+async function pkEnter(view, page, { focus = false } = {}) {
   if (!confirmDiscard()) return;
+  const from = PK.page;
   // Within Packs the catalog, roles and status already read stay: only a visit from elsewhere reads them again.
   const fresh = !pkShown();
   S.view = view;
@@ -74,13 +75,13 @@ async function pkEnter(view, page) {
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
   $('content').scrollTop = 0;
-  if (!fresh && PK.data) { paintPacks(); pkFocusPage(); return; }
+  if (!fresh && PK.data) { paintPacks(); if (focus) pkFocusPage(from); return; }
   $('content').innerHTML = '<div class="scope pk"><div class="scope-sub"><span class="spinner"></span> Reading the packs…</div></div>';
   // The roles every diagram names, read fresh each time Packs opens: a role changed on Models shows here (R3).
   const roles = pkLoadRoles();
   await pkLoad();
   await roles;
-  pkFocusPage();
+  if (focus) pkFocusPage(from);
   if (pkShown() && PK.data) pkCheckStatus();
 }
 
@@ -91,14 +92,18 @@ function openPackPage() { return pkEnter('pack', pkRouteOf(location.hash) ?? PK.
 /** Navigate inside Packs. The hash change this makes finds the page already shown and does nothing. */
 function pkGo(page) {
   location.hash = pkHash(page);
-  return page ? pkEnter('pack', page) : pkEnter('packs', null);
+  return page ? pkEnter('pack', page, { focus: true }) : pkEnter('packs', null, { focus: true });
 }
 
-/** After a navigation the old focus is gone with the old page: put it on the new page's heading. */
-function pkFocusPage() {
+/**
+ * After a navigation inside Packs the old focus is gone with the old page: on a pack's page it goes to the
+ * back button, and back on the grid to the card of the pack just left.
+ */
+function pkFocusPage(from) {
   if (!pkShown()) return;
-  const h = $('content').querySelector('.pk-page h1, .pk-title');
-  if (h) { h.tabIndex = -1; h.focus?.(); }
+  const c = $('content');
+  const target = S.view === 'pack' ? c.querySelector('.pk-back') : c.querySelector(`.pk-card[data-pack="${from}"] .pk-card-link`);
+  target?.focus?.();
 }
 
 /* ── loading ── */
@@ -341,9 +346,14 @@ function pkUpdateReady(pack) {
   if (!pack.installed) return false;
   return pack.installed.version !== pack.version || Object.keys(pack.installed.parts || {}).some((id) => pkPartStatuses(pack, id).map(pkKind).includes('update'));
 }
-/** Update is worth offering: an update is ready, or an installed part is edited, broken or missing a CLI. */
-const pkUpdateUseful = (pack) => pkUpdateReady(pack)
-  || Object.keys(pack.installed?.parts || {}).some((id) => pkPartStatuses(pack, id).map(pkKind).some((k) => ['edited', 'broken'].includes(k)));
+/**
+ * Update is worth offering: an update is ready, a part is edited (Update can take the pack's copy back), or a
+ * part is broken in a way the status check says an update puts right (a missing file, not an unset role).
+ */
+const pkUpdateUseful = (pack) => pkUpdateReady(pack) || Object.keys(pack.installed?.parts || {}).some((id) => {
+  const kinds = pkPartStatuses(pack, id).map(pkKind);
+  return kinds.includes('edited') || (kinds.includes('broken') && (pkStatusOf(pack, id)?.details || []).some((d) => /acs packs update/.test(d)));
+});
 /** A card's status: Update ready, Needs setup, Installed or Not installed. */
 function pkState(pack, shared = pkShared()) {
   if (pkUpdateReady(pack)) return { key: 'update', word: 'Update ready', tone: 'warn' };
@@ -713,12 +723,16 @@ function pkPartsView(sec, pack, card) {
   sec.appendChild(ul);
 }
 
-/** "~/.claude/skills/x/ (the skill, …)" as the path and its plain line; text with no leading path stays a line. */
+/**
+ * A change as its path and a plain line: "~/x/ (the skill, …)", "~/x (or $Y): the toolkit" or "~/x, only for …". Text that
+ * does not start with a path stays one line.
+ */
+const PK_PATH = '(?:~|\\$)\\S*(?:(?:,| and) (?:~|\\$)?\\S+)*?';
 function pkChange(text) {
-  const m = /^((?:~|\$)\S*(?:(?:,| and) (?:~|\$)?\S+)*?)(?::\s+|\s+\()(.+?)\)?$/.exec(text);
+  const m = new RegExp(`^(${PK_PATH}(?: \\([^)]*\\))?):\\s+(.+)$`).exec(text) || new RegExp(`^(${PK_PATH})\\s+\\((.+)\\)$`).exec(text)
+    || new RegExp(`^(${PK_PATH}),\\s+(.+)$`).exec(text);
   if (!m) return { path: null, line: text };
-  const line = m[2].trim();
-  return { path: m[1], line: line[0].toUpperCase() + line.slice(1) };
+  return { path: m[1], line: m[2][0].toUpperCase() + m[2].slice(1) };
 }
 
 function pkFilesView(sec, pack) {

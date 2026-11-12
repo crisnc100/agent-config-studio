@@ -1589,8 +1589,6 @@ a { color: var(--accent); }
 }
 .scope.pk { max-width: 1080px; padding: var(--s7) var(--s7) var(--s8); }
 .pk code { font: var(--t-meta) var(--mono); }
-.pk h1:focus { outline: none; }
-.pk h1:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pk-icon { display: inline-flex; width: 15px; height: 15px; flex: none; }
 .pk-icon svg, .pk-card-go svg { width: 100%; height: 100%; }
 .pk-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
@@ -1662,9 +1660,10 @@ a { color: var(--accent); }
 .pk-card-cmd { display: inline-block; margin-top: 2px; color: var(--muted); font: var(--t-meta) var(--mono); }
 .pk-card-line { margin: 0; color: var(--text-dim); font-size: var(--t-body); line-height: 1.5; }
 .pk-card-foot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: var(--s3); min-height: 32px; }
-.pk-card-steps { display: flex; align-items: center; gap: var(--s2); color: var(--muted); font-size: var(--t-meta); min-width: 0; }
-.pk-strip-segs { display: flex; gap: 3px; flex-wrap: wrap; }
-.pk-strip-segs .pk-strip-seg { width: 14px; height: 8px; }
+.pk-card-steps { display: flex; align-items: center; gap: var(--s2); color: var(--muted); font-size: var(--t-meta); min-width: 0; white-space: nowrap; }
+/* Segments narrow before the strip wraps: a nine-step strip stays one line beside the card's button. */
+.pk-strip-segs { display: flex; flex: 0 1 auto; gap: 3px; min-width: 0; }
+.pk-strip-segs .pk-strip-seg { width: 14px; flex-shrink: 1; min-width: 6px; height: 8px; }
 .pk-card-go { display: inline-flex; width: 16px; height: 16px; color: var(--muted); transition: transform .18s ease-out, color .18s; }
 .pk-card:hover .pk-card-go { color: var(--text-dim); transform: translateX(2px); }
 
