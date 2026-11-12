@@ -6,16 +6,19 @@
 #   ci:<group>   runs in the CI job that runs <group>, and in verify.sh; a file may name
 #                more than one group
 #   ci-only      with ci:<group>: CI only, never verify.sh
+#   serial       with ci:<group> or local: under `node tests/run.mjs --jobs N`, this file
+#                runs alone, before the files that run side by side; the reason after #
+#                names what it contends on. Without --jobs every file runs alone anyway.
 #   local        verify.sh only
-#   pending-ci   in no gate yet: PR 2 (tests/) and PR 3 (packs/) of
-#                builds/ci-one-list/plan.md give these files CI jobs and remove the lane
+#   pending-ci   in no gate yet: PR 3 of
+#                builds/ci-one-list/plan.md gives these files a CI job and removes the lane
 #   manual       run by hand, never by a gate
 #   helper       not a test: a module or script other files run
 # local, pending-ci, manual and helper need a reason after #. Lines starting with # are
 # comments.
 #
-# package and bunx keep their own steps in ci.yml (they take the packed tarball);
-# suite-coverage checks that those steps name the files tagged for them.
+# The package job calls its files by name (they take the packed tarball);
+# suite-coverage checks that its steps name every file tagged ci:package.
 
 # Guards first: they are offline and instant, and a regressed security property
 # should stop the run before spending 80s of live model calls proving the rest.
@@ -26,25 +29,27 @@ tests/setup-guards.mjs                                ci:guards
 tests/suite-coverage.mjs                              ci:guards
 # ci.yml's syntax step fails on a bad file wherever it sits, and when it finds no file.
 tests/ci-syntax-step.mjs                              ci:guards
+# run.mjs --jobs: output in run order, the stop rule, serial files, live output without it.
+tests/run-jobs.mjs                                    ci:guards
 # Nothing shipped names one person's machine; the README claims only what the code does.
 tests/no-personal-paths.mjs                           ci:offline
 tests/readme.mjs                                      ci:offline ci:stranger-macos
 # Credentials are never served through an alias: hard links, symlinks, chains.
 tests/setup-credentials.mjs                           ci:offline
 # Before any worktree test: proves the tripwire sees each path the installer writes.
-tests/worktree-tripwire.mjs                           local                         # not yet run on a CI runner (PR 2)
+tests/worktree-tripwire.mjs                           local                         # not yet run on a CI runner (PR 3)
 # …and every project folder roots.json lists, its config files and linked instructions.
 tests/real-home-roots.mjs                             ci:offline
 # Offline too, and it exercises the reader that the whole tracker rests on.
 tests/usage-codex.mjs                                 ci:offline
-tests/usage-codex-limits.mjs                          local                         # not yet run on a CI runner (PR 2)
+tests/usage-codex-limits.mjs                          local                         # not yet run on a CI runner (PR 3)
 tests/usage-claude.mjs                                ci:offline
 tests/usage-grok.mjs                                  ci:offline
 tests/usage-identity.mjs                              ci:offline
-tests/usage-processes.mjs                             local                         # not yet run on a CI runner (PR 2)
-tests/usage-accounts.mjs                              local                         # not yet run on a CI runner (PR 2)
-tests/usage-shell.mjs                                 local                         # not yet run on a CI runner (PR 2)
-tests/usage-seats.mjs                                 ci:offline
+tests/usage-processes.mjs                             local                         # not yet run on a CI runner (PR 3)
+tests/usage-accounts.mjs                              local                         # not yet run on a CI runner (PR 3)
+tests/usage-shell.mjs                                 local                         # not yet run on a CI runner (PR 3)
+tests/usage-seats.mjs                                 ci:offline serial             # starts the real codex CLI when one is on PATH, which creates ~/.codex/tmp under the real HOME when absent; real-home checks running beside it fail when that appears
 tests/usage-routes.mjs                                ci:offline
 # Refresh coalesces into one child and says when it did not refresh (temp HOME).
 tests/usage-refresh.mjs                               ci:offline
@@ -53,9 +58,9 @@ tests/acs-update.mjs                                  ci:offline
 # The launcher from a stranger's shell: links, install/uninstall, no curl or lsof.
 tests/acs-launcher.mjs                                ci:offline ci:stranger-macos
 # Which node it runs: fake node binaries, temp HOMEs.
-tests/acs-node.mjs                                    local                         # not yet run on a CI runner (PR 2)
+tests/acs-node.mjs                                    local                         # not yet run on a CI runner (PR 3)
 # A frozen studio never stays frozen: deep health, acs's restart, the watchdog, a stop that cannot hang (real pool freezes, temp HOMEs).
-tests/liveness.mjs                                    local                         # not yet run on a CI runner (PR 2)
+tests/liveness.mjs                                    local                         # not yet run on a CI runner (PR 3)
 # The folder registry and `acs roots`: temp HOMEs only.
 tests/roots.mjs                                       ci:offline
 # The same, through the real server: custom, legacy and symlinked roots.
@@ -64,24 +69,24 @@ tests/roots-revoke.mjs                                ci:offline
 tests/roots-history.mjs                               ci:offline
 tests/roots-builtins.mjs                              ci:offline
 tests/roots-resolver.mjs                              ci:offline
-tests/roots-live.mjs                                  ci:offline
-tests/skills.mjs                                      local                         # not yet run on a CI runner (PR 2)
+tests/roots-live.mjs                                  ci:offline serial             # wall clock: waits a fixed 600 ms for re-aimed file watchers; under load an edit lands before they settle
+tests/skills.mjs                                      local                         # not yet run on a CI runner (PR 3)
 # verify.sh runs it live; CI sets ACS_SUITE=offline, which skips every check that needs a harness or the network.
 tests/phase1.mjs                                      ci:offline
 # Assist containment, fail-closed: fake CLIs, a real server, temp HOME.
-tests/assist-containment.mjs                          ci:offline
-tests/phase2a.mjs                                     ci:offline
-tests/zip.mjs                                         local                         # not yet run on a CI runner (PR 2)
-tests/export.mjs                                      local                         # not yet run on a CI runner (PR 2)
-tests/skill-usage.mjs                                 local                         # not yet run on a CI runner (PR 2)
-tests/models.mjs                                      local                         # not yet run on a CI runner (PR 2)
-tests/models-fable-prev.mjs                           local                         # not yet run on a CI runner (PR 2)
+tests/assist-containment.mjs                          ci:offline serial             # wall clock: a fake CLI's grandchild writes 1.5 s after a bad init; under load the group kill lands after it
+tests/phase2a.mjs                                     ci:offline serial             # writes ~/.agent-config-studio/history (git init, baseline commit) into the real home when absent, via GET /api/registry with the real HOME; real-home checks in files running beside it fail when it appears
+tests/zip.mjs                                         local                         # not yet run on a CI runner (PR 3)
+tests/export.mjs                                      local                         # not yet run on a CI runner (PR 3)
+tests/skill-usage.mjs                                 local                         # not yet run on a CI runner (PR 3)
+tests/models.mjs                                      local                         # not yet run on a CI runner (PR 3)
+tests/models-fable-prev.mjs                           local                         # not yet run on a CI runner (PR 3)
 # Roles and flavor in the resolver, against the pre-roles resolver kept as a fixture.
 tests/roles.mjs                                       ci:offline
 # …and through the server and in-process: edits, the write boundary, Describe with a fake claude (temp HOME).
 tests/roles-routes.mjs                                ci:offline
 tests/roles-unit.mjs                                  ci:offline
-tests/roles-writer.mjs                                local                         # not yet run on a CI runner (PR 2)
+tests/roles-writer.mjs                                local                         # not yet run on a CI runner (PR 3)
 # ask-model: each CLI's argv, the model proof, every exit code and its install, against stub CLIs (temp HOME).
 tests/ask-model.mjs                                   ci:offline
 # The model guide block: renderer, markers, byte-exact edits (in-process), then through the server (temp HOME).
@@ -90,7 +95,7 @@ tests/model-guide-routes.mjs                          ci:offline
 # The audit: rules, fixes, the class policy and the writer under faults (in-process), then through the server (temp HOME).
 tests/audit.mjs                                       ci:offline
 # Linked git worktrees: real fixtures in a temp HOME, walked last, cut first, their cards kept apart.
-tests/audit-worktrees.mjs                             local                         # not yet run on a CI runner (PR 2)
+tests/audit-worktrees.mjs                             local                         # not yet run on a CI runner (PR 3)
 tests/audit-routes.mjs                                ci:offline
 # Assist finds its own files: manifest, contained loads, framing, facts, proposals (in-process), then the loop with a stubbed backend.
 tests/assist-files.mjs                                ci:offline
@@ -102,32 +107,32 @@ tests/skill-wizard-routes.mjs                         ci:offline
 tests/skill-wizard-structured.mjs                     ci:offline
 # One skill for every harness: defaults, a name taken in one place, per-destination Create and Retry (temp HOME, stubbed detection).
 tests/skill-wizard-multi.mjs                          ci:offline
-tests/models-assist.mjs                               local                         # not yet run on a CI runner (PR 2)
+tests/models-assist.mjs                               local                         # not yet run on a CI runner (PR 3)
 tests/models-roots.mjs                                ci:offline
 tests/models-scripts.mjs                              local                         # executes the skill scripts installed in the real home
-tests/models-backup.mjs                               local                         # not yet run on a CI runner (PR 2)
-tests/models-panel.mjs                                local                         # not yet run on a CI runner (PR 2)
+tests/models-backup.mjs                               local                         # not yet run on a CI runner (PR 3)
+tests/models-panel.mjs                                local                         # not yet run on a CI runner (PR 3)
 # Check now refreshing every Codex home: a fake codex, temp HOMEs.
-tests/models-refresh.mjs                              local                         # not yet run on a CI runner (PR 2)
-tests/memory.mjs                                      local                         # not yet run on a CI runner (PR 2)
-tests/context-map.mjs                                 local                         # not yet run on a CI runner (PR 2)
+tests/models-refresh.mjs                              local                         # not yet run on a CI runner (PR 3)
+tests/memory.mjs                                      local                         # not yet run on a CI runner (PR 3)
+tests/context-map.mjs                                 local                         # not yet run on a CI runner (PR 3)
 # Multi-select delete: the batch route (temp HOME), and Memory's trash-fact over several ids.
 tests/batch-delete.mjs                                ci:offline
 tests/batch-delete-memory.mjs                         ci:offline
 # The worktree toolkit, its installer and the read-only panel: temp HOME, temp repos.
-tests/worktree-install.mjs                            local                         # not yet run on a CI runner (PR 2)
-tests/worktree-tools.mjs                              local                         # not yet run on a CI runner (PR 2)
-tests/worktree-panel.mjs                              local                         # not yet run on a CI runner (PR 2)
+tests/worktree-install.mjs                            local                         # not yet run on a CI runner (PR 3)
+tests/worktree-tools.mjs                              local                         # not yet run on a CI runner (PR 3)
+tests/worktree-panel.mjs                              local                         # not yet run on a CI runner (PR 3)
 # Worktree init refuses read folders and still works in edit ones (B4).
-tests/roots-worktree-init.mjs                         local                         # not yet run on a CI runner (PR 2)
-tests/own-writes.mjs                                  local                         # not yet run on a CI runner (PR 2)
+tests/roots-worktree-init.mjs                         local                         # not yet run on a CI runner (PR 3)
+tests/own-writes.mjs                                  local                         # not yet run on a CI runner (PR 3)
 # A walk cut short never makes files vanish, nor a first index read as outside adds.
 tests/walk-partial.mjs                                ci:offline
 # Notices never cover the open Assist drawer's session row.
 tests/notice-placement-ui.mjs                         ci:offline
 # The front end, in a node VM against stubbed routes: no server, no HOME.
-tests/shell.mjs                                       local                         # not yet run on a CI runner (PR 2)
-tests/home.mjs                                        local                         # not yet run on a CI runner (PR 2)
+tests/shell.mjs                                       local                         # not yet run on a CI runner (PR 3)
+tests/home.mjs                                        local                         # not yet run on a CI runner (PR 3)
 tests/home-refresh.mjs                                ci:offline
 tests/roots-ui.mjs                                    ci:offline
 tests/batch-delete-ui.mjs                             ci:offline
@@ -137,17 +142,17 @@ tests/audit-ui.mjs                                    ci:offline
 tests/assist-files-ui.mjs                             ci:offline
 tests/skill-wizard-ui.mjs                             ci:offline
 tests/skill-wizard-multi-ui.mjs                       ci:offline
-tests/models-layout-ui.mjs                            local                         # not yet run on a CI runner (PR 2)
+tests/models-layout-ui.mjs                            local                         # not yet run on a CI runner (PR 3)
 # One name per thing in every view, no text under 11px, focus you can see; Packs' CLI status from the shared detector (temp HOMEs, stub CLIs).
-tests/ui-words.mjs                                    local                         # not yet run on a CI runner (PR 2)
+tests/ui-words.mjs                                    local                         # not yet run on a CI runner (PR 3)
 # What the registry tells the Files page (temp HOME).
-tests/files-registry.mjs                              local                         # not yet run on a CI runner (PR 2)
+tests/files-registry.mjs                              local                         # not yet run on a CI runner (PR 3)
 # The MCP route's note on a machine with no ~/.claude.json (temp HOME).
-tests/mcp-route.mjs                                   local                         # not yet run on a CI runner (PR 2)
+tests/mcp-route.mjs                                   local                         # not yet run on a CI runner (PR 3)
 # The MCP view: one empty state when nothing is configured, "none configured" said once (stubbed routes).
-tests/mcp-ui.mjs                                      local                         # not yet run on a CI runner (PR 2)
+tests/mcp-ui.mjs                                      local                         # not yet run on a CI runner (PR 3)
 # The Skills page with skills on it: the usage caveat in its closed fold, a path-only monospace subtitle (stubbed routes).
-tests/skills-page.mjs                                 local                         # not yet run on a CI runner (PR 2)
+tests/skills-page.mjs                                 local                         # not yet run on a CI runner (PR 3)
 # The skill-pack installer (acs packs): temp HOMEs, stub CLIs, a copy of the package for updates, the packed tarball.
 tests/packs-catalog.mjs                               ci:offline
 tests/packs-install.mjs                               ci:offline
@@ -161,15 +166,15 @@ tests/cleanup-launcher.mjs                            ci:offline
 tests/packs-server.mjs                                ci:offline
 tests/packs-ui.mjs                                    ci:offline
 # The Packs grid, each pack's page and its routes, and the trust check on Setup (stubbed routes).
-tests/packs-pages.mjs                                 local                         # not yet run on a CI runner (PR 2)
+tests/packs-pages.mjs                                 local                         # not yet run on a CI runner (PR 3)
 # Workflow diagrams: pack.json's workflow, its drift guard, the route, the Packs card and Models' Steps line (temp HOME, stubbed routes).
-tests/packs-workflow.mjs                              local                         # not yet run on a CI runner (PR 2)
-tests/packs-security.mjs                              local                         # not yet run on a CI runner (PR 2)
+tests/packs-workflow.mjs                              local                         # not yet run on a CI runner (PR 3)
+tests/packs-security.mjs                              local                         # not yet run on a CI runner (PR 3)
 # Building blocks: finding and rating copies, the GET-only route (temp HOME), then the page (stubbed routes).
-tests/blocks.mjs                                      local                         # not yet run on a CI runner (PR 2)
-tests/blocks-match.mjs                                local                         # not yet run on a CI runner (PR 2)
-tests/blocks-add.mjs                                  local                         # not yet run on a CI runner (PR 2)
-tests/blocks-ui.mjs                                   local                         # not yet run on a CI runner (PR 2)
+tests/blocks.mjs                                      local                         # not yet run on a CI runner (PR 3)
+tests/blocks-match.mjs                                local                         # not yet run on a CI runner (PR 3)
+tests/blocks-add.mjs                                  local                         # not yet run on a CI runner (PR 3)
+tests/blocks-ui.mjs                                   local                         # not yet run on a CI runner (PR 3)
 # A stranger's machine: empty temp HOME, no agent CLI on PATH, every GET route.
 tests/fresh-home.mjs                                  ci:offline
 # The setup screen's server half: temp HOMEs, fake CLIs, a fixture tree.
@@ -184,19 +189,21 @@ tests/setup-walkthrough.mjs                           ci:offline
 # The README's Get started, followed literally by the production launcher, offline.
 tests/stranger.mjs                                    ci:offline ci:stranger-macos
 # The npm package: packed, installed (global prefix, npx, inside another repo), read-only, offline.
-tests/package.mjs                                     ci:package
+# The package job hands it a tarball on the minimum Node; stranger-macos runs it with none
+# (it packs this tree itself) on a Mac and current Node.
+tests/package.mjs                                     ci:package ci:stranger-macos
 # bunx running the packed tarball it is given (node tests/bunx.mjs <tarball>), with bun required.
-tests/bunx.mjs                                        ci:bunx ci-only
+tests/bunx.mjs                                        ci:package ci-only
 
 # In no gate yet.
-tests/packs-flag.mjs                                  pending-ci                    # not yet run by any gate (PR 2)
-tests/packs-pr.mjs                                    pending-ci                    # not yet run by any gate (PR 2)
-tests/packs-review-settings.mjs                       local                         # not yet run on a CI runner (PR 2)
-tests/roles-security.mjs                              pending-ci                    # not yet run by any gate (PR 2)
-tests/skill-wizard-blocks.mjs                         pending-ci                    # not yet run by any gate (PR 2)
-tests/skill-wizard-blocks-ui.mjs                      pending-ci                    # not yet run by any gate (PR 2)
-tests/ui-clarity-f.mjs                                pending-ci                    # not yet run by any gate (PR 2)
-tests/ui-clarity-g.mjs                                pending-ci                    # not yet run by any gate (PR 2)
+tests/packs-flag.mjs                                  pending-ci                    # not yet run by any gate (PR 3)
+tests/packs-pr.mjs                                    pending-ci                    # not yet run by any gate (PR 3)
+tests/packs-review-settings.mjs                       local                         # not yet run on a CI runner (PR 3)
+tests/roles-security.mjs                              pending-ci                    # not yet run by any gate (PR 3)
+tests/skill-wizard-blocks.mjs                         pending-ci                    # not yet run by any gate (PR 3)
+tests/skill-wizard-blocks-ui.mjs                      pending-ci                    # not yet run by any gate (PR 3)
+tests/ui-clarity-f.mjs                                pending-ci                    # not yet run by any gate (PR 3)
+tests/ui-clarity-g.mjs                                pending-ci                    # not yet run by any gate (PR 3)
 packs/pr/tests/pr.docs-table.test.mjs                 pending-ci                    # not yet run by any gate (PR 3)
 packs/pr/tests/pr.test.mjs                            pending-ci                    # not yet run by any gate (PR 3)
 packs/review-gate/tests/review.basemerge.test.mjs     pending-ci                    # not yet run by any gate (PR 3)

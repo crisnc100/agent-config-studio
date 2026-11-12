@@ -32,12 +32,14 @@ Also: no job has a timeout (run 42070278683 hung in `offline (lts/*)` for 6 hour
   - a `ci:<group>` has no job in `ci.yml` that runs it;
   - a `local`, `manual` or `helper` line has no reason.
   It carries a negative control: a fixture tree with one unlisted file must fail.
-- Every new CI job is a `needs:` of the existing `offline` job, so the required checks (`syntax`, `guards`,
-  `offline`) cover it and branch protection does not change.
+- The required checks are `syntax`, `guards` and `offline`. Tests added to CI join the `offline` group, so the
+  required check covers them and branch protection does not change.
 
 ## Three PRs, one after another
-Each leaves main working alone. PR 1 changes how the gates are wired and must change nothing they run; PRs 2 and 3
-add coverage and may surface real failures, so they are reviewed apart from the rewiring.
+Each leaves main working alone. PR 1 changes how the gates are wired and must change nothing they run. PR 2 cuts
+the checks a PR shows from ten to five and makes the one test job faster, on the same tests, so its speed is
+measured on a like-for-like set. PR 3 adds the tests CI skips and may surface real failures, so it is reviewed
+apart from both.
 
 ### PR 1: one list, same tests
 1. `tests/SUITE` lists all 162 files once. The 78 not yet in CI are `local` (the 40) or a `pending-ci` lane (the
@@ -53,33 +55,47 @@ add coverage and may surface real failures, so they are reviewed apart from the 
    comment no longer cites private-repo billing.
 6. `RUNBOOK.md` Testing says what `verify.sh` and CI run now and where the list lives.
 
-### PR 2: the tests/ files CI skips
-1. The 40 `verify.sh`-only files and the 8 ungated files run on Linux at Node 20.0.0 and LTS, in groups sized from
-   measured time so no job runs longer than about 8 minutes. On a Mac, serially: 366 s and 15 s
-   (`liveness` 122 s, `worktree-tools` 81 s).
-2. The 8 ungated files also join `verify.sh`.
-3. A file that cannot run on a CI runner stays `local` with the specific reason on its line.
-   `models-scripts.mjs` is one: it runs the review script installed in the real home.
-4. A file that fails on Linux for a product reason is a finding: stop and report it with the failing check. It is
-   never skipped, loosened or retried to green.
-5. `pending-ci` holds only the 30 pack tests.
+### PR 2: five checks, one offline job that runs files side by side
+A PR shows five checks instead of ten, and the wait is measured, not assumed.
+1. The checks on a PR are exactly `syntax`, `guards`, `offline`, `package` and `stranger-macos`. `syntax`, `guards`
+   and `offline` keep their names, so branch protection does not change.
+2. `offline` is one job on the declared minimum Node (`package.json` engines, pinned exactly: 20.0.0). The matrix,
+   the LTS leg and the aggregate job are gone. It runs the same files as the `offline` group on main.
+3. `tests/run.mjs --jobs N` runs up to N files of a group at once, one process per file. Output is printed whole per
+   file, in list order. A failure stops new files from starting, the run exits with the first failing file's code
+   (first in list order), and the files not run are named. Without `--jobs`, behaviour is unchanged, so `verify.sh`
+   runs as before.
+4. A file that cannot run beside others carries `serial` on its `tests/SUITE` line with the reason, and runs alone
+   before the rest, while the machine is quiet. A test is never edited to make it run beside others.
+5. `package` is one job (Linux, the minimum Node) and runs the `bunx` test as a step; the separate `bunx` job and
+   the other two `package` variants are gone. `stranger-macos` (current Node) also runs the package test, so the
+   package is still installed on a Mac and on current Node.
+6. Evidence in the PR body: the `offline` wall time and per-file seconds from this PR's own run, against main's
+   (70 files in 314 s on LTS, 325 s on 20.0.0), and the chosen N with the runs that justify it.
+7. `suite-coverage.mjs` passes. New runner behaviour is proven in a new test file; an existing assertion changes
+   only under the test-change rule (own commit, each changed assertion named, checked by another model).
 
-### PR 3: the pack tests
-1. All 30 `packs/*/tests/*.test.mjs` run in CI, one process per file, in 3 groups by measured time (760 s serially
-   on a Mac; `review.basemerge` 118 s), at Node 20.0.0 and LTS.
-2. They are `ci-only`: `verify.sh` does not gain 13 minutes. `node tests/run.mjs packs-1` (2, 3) runs them locally.
+### PR 3: the tests CI skips
+1. The `local` files that can run on a CI runner, and the `pending-ci` files in `tests/`, join the `offline` group.
+   Each either passes on Linux at the minimum Node, or stays `local` with the specific reason on its line
+   (`models-scripts.mjs` is one: it runs the review script installed in the real home).
+2. The 30 pack tests run inside the `offline` job when the PR changes anything under `packs/`, and always on main.
+   They are `ci-only`: `verify.sh` does not gain 13 minutes.
 3. `review.test.mjs` (frozen at 4a5807e) is run, never edited.
-4. A file that fails intermittently, or only at Node 20.0.0, is reported with its failure rate and the failing
-   check. No retry wrapper.
+4. A file that fails on Linux for a product reason, or intermittently, is a finding: stop and report it with the
+   failing check and its failure rate. It is never skipped, loosened or retried to green.
 5. The `pending-ci` lane is gone from `tests/SUITE` and from `suite-coverage.mjs`.
+6. The PR body shows the `offline` wall time before and after.
 
 ## Out of scope
 - Fixing `models-scripts.mjs`, which fails 6 of 9 on main on the developer machine.
-- Branch protection: `package`, `bunx` and `stranger-macos` stay not required.
+- Branch protection: `package` and `stranger-macos` stay not required.
+- Raising the minimum Node above 20: its own PR, since the launcher, the README and two tests pin the number.
+- Running `verify.sh` with `--jobs`.
 - Pinning actions to commit SHAs.
 - The client folder name that `tests/real-home.mjs` prints in CI logs.
-- No existing test file is changed in any of the three PRs.
+- No test that existed before this work is changed in any of the three PRs.
 
 ## Validation
 - PR 1: `node tests/suite-coverage.mjs`, `./verify.sh`, and `gh pr checks <n> --watch` green.
-- PRs 2 and 3: the same, plus the new jobs' per-file timings from the run log in the PR body.
+- PRs 2 and 3: the same, plus the `offline` job's per-file timings from the run log in the PR body.
