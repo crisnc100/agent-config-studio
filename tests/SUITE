@@ -29,7 +29,7 @@ tests/setup-guards.mjs                                ci:guards
 tests/suite-coverage.mjs                              ci:guards
 # ci.yml's syntax step fails on a bad file wherever it sits, and when it finds no file.
 tests/ci-syntax-step.mjs                              ci:guards
-# run.mjs --jobs: output in list order, the stop rule, serial files, live output without it.
+# run.mjs --jobs: output in run order, the stop rule, serial files, live output without it.
 tests/run-jobs.mjs                                    ci:guards
 # Nothing shipped names one person's machine; the README claims only what the code does.
 tests/no-personal-paths.mjs                           ci:offline
@@ -75,7 +75,7 @@ tests/skills.mjs                                      local                     
 tests/phase1.mjs                                      ci:offline
 # Assist containment, fail-closed: fake CLIs, a real server, temp HOME.
 tests/assist-containment.mjs                          ci:offline serial             # wall clock: a fake CLI's grandchild writes 1.5 s after a bad init; under load the group kill lands after it
-tests/phase2a.mjs                                     ci:offline
+tests/phase2a.mjs                                     ci:offline serial             # writes ~/.agent-config-studio/history (git init, baseline commit) into the real home when absent, via GET /api/registry with the real HOME; real-home checks in files running beside it fail when it appears
 tests/zip.mjs                                         local                         # not yet run on a CI runner (PR 3)
 tests/export.mjs                                      local                         # not yet run on a CI runner (PR 3)
 tests/skill-usage.mjs                                 local                         # not yet run on a CI runner (PR 3)
