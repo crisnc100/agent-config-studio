@@ -137,7 +137,7 @@ try {
     const t = home();
     fs.writeFileSync(path.join(t.bin, 'gh'), `#!${process.execPath}\n`, { mode: 0o755 });
     const withGh = catalogView(machine({ HOME: t.h, PATH: t.bin }), { installedOf: () => true }).settings.merge;
-    const noGh = catalogView(machine({ HOME: t.h, PATH: path.dirname(process.execPath) }), { installedOf: () => true }).settings.merge;
+    const noGh = catalogView(machine({ HOME: t.h, PATH: tempDir('acs-no-gh-') }), { installedOf: () => true }).settings.merge;
     ok('gh on PATH: settings.merge.gh is true, the other merge fields kept', withGh.gh === true && withGh.policy === 'off' && withGh.builtIn.length === 2 && withGh.riskPathsFrom === 'default', JSON.stringify(withGh));
     ok('gh not on PATH: settings.merge.gh is false (never a path)', noGh.gh === false && !JSON.stringify(noGh).includes(t.bin), JSON.stringify(noGh));
     ok('…and the writer\'s own view has no gh field', !('gh' in (reviewSettings(t.m).merge)));
@@ -200,6 +200,12 @@ try {
   const acts = () => pre().querySelectorAll('button');
   const result = () => here()?.querySelector('.pk-result');
   const waitFor = async (fn) => { for (let i = 0; i < 100 && !fn(); i++) await sleep(20); await settle(5); };
+  // The element that sticks: the bar or an ancestor a position: sticky rule in styles.css names. Sticky is held inside its
+  // parent, so that parent must hold more than the bar (the rows, or the paths page) or the bar never stays in view.
+  const STICKY = [...fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{[^}]*position:\s*sticky[^}]*\}/g)]
+    .flatMap((m) => m[1].split(',').map((x) => x.trim())).filter((x) => /^(\.[\w-]+)+$/.test(x));
+  const sticks = (n) => STICKY.some((sel) => sel.slice(1).split('.').every((cls) => n.classList?.contains(cls)));
+  const stuck = () => { let n = bar() || pre(); while (n && !sticks(n)) n = n.parentNode; return n; };
   const pick = async (boxOf, label) => { choices(boxOf()).find((b) => tx(b) === label).click(); await settle(5); };
   const previewIt = async () => { barBtn('Preview and save').click(); await waitFor(() => pre() || here()?.querySelector('.notice.error')); };
   const saveIt = async () => { acts().find((b) => tx(b) === 'Save').click(); await waitFor(() => result() || pre() || here()?.querySelector('.notice.error')); };
@@ -276,6 +282,8 @@ try {
   ok('C10: a pick opens the bar: the change named, quiet Cancel and primary Preview and save; nothing previewed or written', tx(bar().querySelector('.pk-savebar-text')) === '1 change: agent merge to “Low-risk PRs”'
     && bar().querySelectorAll('button').map((b) => `${tx(b)}:${b.className}`).join('|') === 'Cancel:btn ghost|Preview and save:btn primary'
     && !pre() && writes.length === 0 && plans() === plansBefore, tx(bar()));
+  ok('C10: the bar sticks inside the whole Settings section (rows and bar), not a wrapper only as tall as the bar', !!stuck() && !!stuck().parentNode?.querySelector('.pk-set-rows')
+    && stuck().parentNode.classList.contains('pk-settings'), stuck() ? `${stuck().className} in ${stuck().parentNode?.className}` : 'no sticky element');
   ok('…the choice shows as picked, and the row\'s one line is the pick\'s', tx(pressed(mg())) === 'Low-risk PRs' && JSON.stringify(says(mg())) === '["An agent may merge any low-risk PR. You merge the rest."]', tx(mg()));
   ok('…with no Now or After Save lines', !/Now:|After Save:/.test(tx(sec())), tx(sec()));
   await pick(cf, 'Off');
@@ -327,7 +335,9 @@ try {
   page.input(box(), 'infra/**\n\n  db/** \ninfra/**');
   await settle(5);
   ok('C9: typing opens the save bar here, the box keeping what was typed', tx(bar()?.querySelector('.pk-savebar-text')) === '1 change: always needs you to “2 paths of your own”' && box().value === 'infra/**\n\n  db/** \ninfra/**', tx(bar()));
+  ok('C9: …and sticks inside the paths page, which holds the lists and the box', !!stuck() && stuck().parentNode === pathsPage() && !!pathsPage().querySelector('textarea'), stuck() ? `${stuck().className} in ${stuck().parentNode?.className}` : 'no sticky element');
   await previewIt();
+  ok('C9/C10: the preview sticks in the same place as the bar', !!stuck() && stuck().parentNode === pathsPage(), stuck() ? stuck().className : 'no sticky element');
   ok('C9: Save there previews first: blank lines dropped, trimmed, repeats once, nothing written', !bar() && added(/"infra\/\*\*"/) && added(/"db\/\*\*"/) && writes.length === 1, tx(pre()));
   await saveIt();
   ok('…Save writes them, and the result counts them', JSON.parse(read(t.primary)).merge.alwaysHuman.join() === 'infra/**,db/**' && writes.length === 2
