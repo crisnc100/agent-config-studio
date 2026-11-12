@@ -783,7 +783,7 @@ try {
     page.navigate('#packs/review-gate');
     await waitFor(page, () => c().querySelector('.pk-page[data-pack="review-gate"]'));
     const rg = c().querySelector('.pk-page');
-    ok('a ready pack says "Ready to run", with no list of needs', /Ready to run/.test(page.text(rg.querySelector('.pk-page-meta .pk-ready'))) && !rg.querySelector('.pk-reqs'));
+    ok('a ready pack that is not installed says "Ready to install", with no tick and no list of needs', page.text(rg.querySelector('.pk-page-meta .pk-ready')) === 'Ready to install' && !rg.querySelector('.pk-page-meta .pk-ready svg') && !rg.querySelector('.pk-reqs'));
     const parts = rg.querySelectorAll('.pk-part');
     ok('no part id or part type on the page: each part row is its title, a line, a status word and one action', parts.length > 0
       && parts.every((r) => /^(On|Off|Edited|Update ready|Not working|New CLI here)$/.test(page.text(r.querySelector('.pk-st'))) && r.querySelectorAll('.pk-part-act button').length === 1)

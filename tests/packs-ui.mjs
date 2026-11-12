@@ -79,7 +79,7 @@ try {
     ok('…one row per part, each with what it does in a line, "Off", and one Add…', rg.querySelectorAll('.pk-part').length === 6
       && rg.querySelectorAll('.pk-part').every((r) => t(r.querySelector('.pk-part-what')).length > 0 && !r.querySelector('details') && t(r.querySelector('.pk-st')) === 'Off'
         && /not installed/.test(r.querySelector('.pk-st').getAttribute('title')) && r.querySelectorAll('button').map(t).join('|') === 'Add…'));
-    ok('…the requirements met: "Ready to run"', /Ready to run/.test(t(rg.querySelector('.pk-page-meta .pk-ready'))) && !rg.querySelector('.pk-reqs'));
+    ok('…the requirements met, not installed: "Ready to install", no tick', t(rg.querySelector('.pk-page-meta .pk-ready')) === 'Ready to install' && !rg.querySelector('.pk-page-meta .pk-ready svg') && !rg.querySelector('.pk-reqs'));
     ok('no request so far wrote anything (only GETs and no apply)', !reqs().some((r) => r.path === '/api/packs/apply' || r.path === '/api/packs/plan'));
     act('review-gate', /^Install$/).click();
     await waitFor(() => previewOf('review-gate')?.querySelector('.pk-preview-head'));
@@ -205,13 +205,17 @@ try {
       `${mentions} mentions | ${rp().querySelectorAll('button').map(t).join('|')}`);
     button(rp(), /^Cancel$/).click();
     await waitFor(() => !rp());
-    act('handoff', /^Update$/).click();
-    await waitFor(() => previewOf('handoff')?.querySelector('.pk-preview-head'));
-    ok('Update (offered for the edit) previews keeping it, says so, and offers the pack\'s copy', /kept: ~\/\.claude\/skills\/handoff\/SKILL\.md — you edited it/.test(t(previewOf('handoff'))) && !!check(previewOf('handoff'), /Take the pack's copy/) && apply('handoff', /^Update$/).disabled);
-    check(previewOf('handoff'), /Take the pack's copy/).click();
-    ok('ticking it re-previews: the edit is backed up, then replaced', await waitFor(() => rows('handoff').some((r) => /your edit is backed up, then replaced/.test(r))) && !apply('handoff', /^Update$/).disabled, rows('handoff').join(' | '));
-    apply('handoff', /^Update$/).click();
-    ok('Update applies it: the pack\'s copy is back, with a backup folder named', await waitFor(() => card('handoff')?.querySelector('.pk-result'))
+    button(part('handoff', 'handoff'), /^Restore…$/).click();
+    const taken = () => check(previewOf('handoff'), /Take the pack's copy/);
+    ok('Restore… previews the update with the pack\'s copy taken: the edit is backed up, then replaced, and Restore is enabled', await waitFor(() => rows('handoff').some((r) => /your edit is backed up, then replaced/.test(r)))
+      && !!taken()?.checked && !apply('handoff', /^Restore$/).disabled && reqs().filter((r) => r.path === '/api/packs/plan').at(-1).body.replace === true, rows('handoff').join(' | '));
+    taken().click();
+    ok('unticking it re-previews keeping the edit, says so, and leaves nothing to apply', await waitFor(() => /kept: ~\/\.claude\/skills\/handoff\/SKILL\.md — you edited it/.test(t(previewOf('handoff'))))
+      && !taken().checked && apply('handoff', /^Restore$/).disabled, t(previewOf('handoff')).slice(0, 400));
+    taken().click();
+    ok('ticking it again re-previews: the edit is backed up, then replaced', await waitFor(() => rows('handoff').some((r) => /your edit is backed up, then replaced/.test(r))) && !apply('handoff', /^Restore$/).disabled, rows('handoff').join(' | '));
+    apply('handoff', /^Restore$/).click();
+    ok('Restore applies it: the pack\'s copy is back, with a backup folder named', await waitFor(() => card('handoff')?.querySelector('.pk-result'))
       && !/my note/.test(sb.read(skill)) && /Backups of every existing file it changed: ~\/\.agent-config-studio\/backups\//.test(t(card('handoff').querySelector('.pk-result'))), t(card('handoff').querySelector('.pk-result')));
   }
 
