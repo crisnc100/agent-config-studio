@@ -77,7 +77,7 @@ async function pkEnter(view, page, { focus = false } = {}) {
   $('content').scrollTop = 0;
   if (!fresh && PK.data) { paintPacks(); if (focus) pkFocusPage(from); return; }
   $('content').innerHTML = '<div class="scope pk"><div class="scope-sub"><span class="spinner"></span> Reading the packs…</div></div>';
-  // The roles every diagram names, read fresh each time Packs opens: a role changed on Models shows here (R3).
+  // The roles every diagram names, read fresh each time Packs opens: a role changed on Models shows here.
   const roles = pkLoadRoles();
   await pkLoad();
   await roles;
@@ -290,7 +290,7 @@ function pkShared() {
     for (const fs of [first, ...rest]) for (const r of fs.find((g) => g.key === f.key).reqs) reqs.set(r.name || r.id, r);
     shared.set(f.key, { key: f.key, reqs: [...reqs.values()] });
   }
-  // The search-path fix is one machine fix, whichever packs it blocks: said once, with every name (final critique P2-2).
+  // The search-path fix is one machine fix, whichever packs it blocks: said once, with every name.
   const pathReqs = new Map();
   let blocked = 0;
   for (const fs of [first, ...rest]) {
