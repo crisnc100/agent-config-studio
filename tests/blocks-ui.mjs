@@ -2,7 +2,8 @@
  * The Shared rules page (builds/building-blocks-page C1–C4, builds/shared-rules-page
  * A1–A6), in the fake DOM against stubbed routes: under Workflows in the sidebar,
  * each rule with its reference text and every copy's place and rating, no fold,
- * every button one of the three kinds, and the only request the page makes is GET /api/blocks.
+ * every button one of the three kinds; reading, the only request is GET /api/blocks, and
+ * only making one copy match (builds/shared-rules-ux B1, B2, B6) posts.
  * The static half reads the view's source and its styles. No server, no HOME.
  */
 import fs from 'node:fs';
@@ -318,7 +319,7 @@ console.log('\nstatic: blocks-view.js and its styles');
 {
   const src = fs.readFileSync(path.join(PUB, 'blocks-view.js'), 'utf8');
   const apiCalls = [...src.matchAll(/api\(\s*'([A-Z]+)'\s*,\s*'([^']+)'/g)].map((m) => `${m[1]} ${m[2]}`);
-  ok('blocks-view.js calls the API once, GET /api/blocks', JSON.stringify(apiCalls) === JSON.stringify(['GET /api/blocks']), apiCalls.join(', '));
+  ok('blocks-view.js calls the API three ways: GET /api/blocks, and the preview and apply of making one copy match', JSON.stringify(apiCalls) === JSON.stringify(['GET /api/blocks', 'POST /api/blocks/match/preview', 'POST /api/blocks/match/apply']), apiCalls.join(', '));
   ok('…and has no other way out: no fetch, form, XHR or beacon', !/\bfetch\(|XMLHttpRequest|sendBeacon|<form|\.submit\(/.test(src));
   const css = fs.readFileSync(path.join(PUB, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const bb = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /\.bb-/.test(m[1]));
