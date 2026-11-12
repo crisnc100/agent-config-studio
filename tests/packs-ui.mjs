@@ -98,6 +98,8 @@ try {
       && rows('handoff').some((r) => /^\+ ~\/\.claude\/skills\/handoff\/SKILL\.md new file/.test(r)) && rows('handoff').some((r) => /~\/\.codex\/skills\/handoff\/SKILL\.md/.test(r)), rows('handoff').join(' | '));
     ok('…and the Install button under it is enabled', !apply('handoff', /^Install$/)?.disabled);
     check(previewOf('handoff'), /^Codex \(/).click();
+    ok('unticking Codex drops the old preview at once: its rows and its Install button are gone until the new one lands', rows('handoff').length === 0 && !apply('handoff', /^Install$/)
+      && !!previewOf('handoff')?.querySelector('.pk-busy'), t(previewOf('handoff')).slice(0, 300));
     ok('unticking Codex drops that preview and previews again for Claude only', await waitFor(() => rows('handoff').length > 0 && !rows('handoff').some((r) => /\.codex/.test(r)))
       && rows('handoff').some((r) => /~\/\.claude\/skills\/handoff/.test(r)), rows('handoff').join(' | '));
     const sent = reqs().filter((r) => r.path === '/api/packs/plan').at(-1).body;
