@@ -250,6 +250,7 @@ try {
     await waitFor(() => sp.$('content').querySelector('[data-cli="codex"]'));
     const box = () => sp.$('content').querySelector('[data-cli="codex"] .setup-trust input');
     ok('Setup: a checkbox under Codex, ticked by default', !!box() && box().checked && !sp.$('content').querySelector('[data-cli="claude"] .setup-trust'), sp.text(sp.$('content').querySelector('[data-cli="codex"]')));
+    ok('…with the trust check\'s (i) on its words', sp.text(sp.$('content').querySelector('[data-cli="codex"] .setup-trust .tip .tip-term')) === 'trust check');
     box().click();
     ok('…unticking it saves the preference', sp.store.get('acs.packs.trust') === '0' && !box().checked);
     sp.navigate('#packs');
