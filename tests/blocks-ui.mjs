@@ -488,7 +488,8 @@ console.log('\nstatic: blocks-view.js and its styles');
 {
   const src = fs.readFileSync(path.join(PUB, 'blocks-view.js'), 'utf8');
   const apiCalls = [...src.matchAll(/api\(\s*'([A-Z]+)'\s*,\s*'([^']+)'/g)].map((m) => `${m[1]} ${m[2]}`);
-  ok('blocks-view.js calls the API three ways: GET /api/blocks, and the preview and apply of making one copy match', JSON.stringify(apiCalls) === JSON.stringify(['GET /api/blocks', 'POST /api/blocks/match/preview', 'POST /api/blocks/match/apply']), apiCalls.join(', '));
+  ok('blocks-view.js calls the API five ways: GET /api/blocks, the preview and apply of making one copy match, and the preview and apply of adding a rule to files',
+    JSON.stringify(apiCalls) === JSON.stringify(['GET /api/blocks', 'POST /api/blocks/match/preview', 'POST /api/blocks/match/apply', 'POST /api/blocks/add/preview', 'POST /api/blocks/add/apply']), apiCalls.join(', '));
   ok('…and has no other way out: no fetch, form, XHR or beacon', !/\bfetch\(|XMLHttpRequest|sendBeacon|<form|\.submit\(/.test(src));
   const css = fs.readFileSync(path.join(PUB, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const bb = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /\.bb-/.test(m[1]));
