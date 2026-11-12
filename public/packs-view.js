@@ -336,11 +336,11 @@ function pkUpdateReady(pack) {
   if (!pack.installed) return false;
   return pack.installed.version !== pack.version || Object.keys(pack.installed.parts || {}).some((id) => pkPartStatuses(pack, id).map(pkKind).includes('update'));
 }
-/** Update does something: an update is ready, or a part is broken in a way the status check says an update puts right (a missing file, not an unset role). */
-const pkUpdateUseful = (pack) => pkUpdateReady(pack) || Object.keys(pack.installed?.parts || {}).some((id) => {
-  const kinds = pkPartStatuses(pack, id).map(pkKind);
-  return kinds.includes('broken') && (pkStatusOf(pack, id)?.details || []).some((d) => /acs packs update/.test(d));
-});
+/** The parts broken in a way the status check says an update puts right (a missing file, not an unset role). */
+const pkUpdateFixes = (pack) => Object.keys(pack.installed?.parts || {}).filter((id) => pkPartStatuses(pack, id).map(pkKind).includes('broken')
+  && (pkStatusOf(pack, id)?.details || []).some((d) => /acs packs update/.test(d)));
+/** Update does something: an update is ready, or it puts a broken part right. */
+const pkUpdateUseful = (pack) => pkUpdateReady(pack) || pkUpdateFixes(pack).length > 0;
 /** The CLIs a part could be installed for here but is not. */
 const pkFreshClis = (pack, partId) => (pkPack(pack.id) || pack).parts.find((p) => p.id === partId)?.harnesses.filter(pkUsable)
   .filter((h) => !(pkStatusOf(pack, partId)?.harnesses || []).includes(h)) || [];
@@ -350,7 +350,8 @@ const pkFreshClis = (pack, partId) => (pkPack(pack.id) || pack).parts.find((p) =
  */
 function pkPackAction(pack) {
   if (!pack.installed) return { action: 'install', label: 'Install', extra: {} };
-  if (pkUpdateUseful(pack)) return { action: 'update', label: 'Update', extra: {} };
+  // A missing file comes back only with replace (the planner keeps a removed file otherwise), so that update starts ticked.
+  if (pkUpdateUseful(pack)) return { action: 'update', label: 'Update', extra: pkUpdateFixes(pack).length ? { replace: true } : {} };
   const parts = Object.keys(pack.installed.parts || {}).filter((id) => pkPartStatuses(pack, id).map(pkKind).includes('newHarness'));
   const clis = [...new Set(parts.flatMap((id) => pkFreshClis(pack, id)))];
   if (!parts.length || !clis.length) return null;
@@ -705,7 +706,8 @@ function pkPartsView(sec, pack, card) {
       act.appendChild(pkBtn('', 'Add…', () => pkPreview(pack, 'install', { parts: [part.id] }, { at: part.id }), busy));
     } else {
       // Update is pack-wide: Restore… previews it with the pack's copy taken, so its preview lists every edited file it replaces.
-      if (pkPartStatuses(pack, part.id).map(pkKind).includes('edited')) act.appendChild(pkBtn('', 'Restore…', () => pkPreview(pack, 'update', { replace: true }, { at: part.id, verb: 'Restore' }), busy));
+      // Only a skill's files: the planner leaves an edited instruction block or worktree file alone even with replace.
+      if (part.kind === 'skill' && pkPartStatuses(pack, part.id).map(pkKind).includes('edited')) act.appendChild(pkBtn('', 'Restore…', () => pkPreview(pack, 'update', { replace: true }, { at: part.id, verb: 'Restore' }), busy));
       // The last part out is the pack's uninstall.
       const only = installed.length === 1;
       act.appendChild(pkBtn('ghost', 'Remove…', () => pkPreview(pack, 'uninstall', only ? {} : { parts: [part.id] }, { at: part.id, verb: 'Remove' }), busy));
