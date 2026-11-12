@@ -483,12 +483,139 @@ console.log('\nCompare copies: QA fixes');
   ok('QA a matching copy\'s section keeps the gap below it that the other sections have', /margin\s*:\s*0 0 14px/.test(sameSec), sameSec);
 }
 
+/* ── Add to… (builds/shared-rules-ux PR B2: D1, D2, D5) ─────────────── */
+console.log('\nAdd to…: add a rule where it is missing');
+{
+  const RP = RICH.blocks.find((b) => b.id === 'review-policy');
+  const OM = RICH.blocks.find((b) => b.id === 'operator-merges');
+  const tg = (file, o = {}) => ({ file, source: 'claude', kind: 'skill', skill: null, project: null, ...o });
+  const TARGETS = [
+    tg('~/.claude/CLAUDE.md', { kind: 'instructions' }),
+    tg('~/.codex/AGENTS.md', { source: 'codex', kind: 'instructions' }),
+    tg('~/.claude/skills/build/SKILL.md', { skill: 'build' }),
+    tg('~/.claude/skills/fresh/SKILL.md', { skill: 'fresh' }),
+    tg('~/.agents/skills/helper/SKILL.md', { source: 'shared', skill: 'helper' }),
+  ];
+  const state = { added: [] };
+  const withAdded = (b) => ({ ...b, copies: [...b.copies.map((c) => ({ ...c, canMatch: false, whyNot: null })),
+    ...state.added.map((file) => ({ ...cp({ ...TARGETS.find((x) => x.file === file), line: 9, endLine: 12, rating: 'same', marked: true, text: RP_TEXT.trim() }), canMatch: false, whyNot: null }))] });
+  const view = () => ({ blocks: [withAdded(RP), OM], targets: TARGETS, scanned: RICH.scanned });
+  const one = (file, o = {}) => ({ file, line: 8, from: 7, heading: 'new', newline: false, added: ['', '## Shared rules', '', '### Review policy'],
+    diff: [{ op: ' ', line: 'Last line.' }, { op: '+', line: '' }, { op: '+', line: '## Shared rules' }, { op: '+', line: '' }, { op: '+', line: '### Review policy' }], signature: `${file.length % 10}`.repeat(64), ...o });
+  const acalls = [];
+  let applyAnswer = (b) => { state.added.push(...b.files.map((f) => f.file)); return { saved: true, rule: b.rule, warnings: [], undo: 'The old versions are in History.',
+    files: b.files.map((f) => ({ file: f.file, line: 9, sha: 'abc', undo: `To put it back, open ${f.file} and choose History.` })) }; };
+  const base = routesFor({
+    'GET /api/blocks': () => view(),
+    'POST /api/blocks/add/preview': (b) => { acalls.push(['preview', b]); return { rule: b.rule, files: b.files.map((f, i) => one(f, i === 1 ? { heading: 'existing', newline: true } : {})) }; },
+    'POST /api/blocks/add/apply': (b) => { acalls.push(['apply', b]); return applyAnswer(b); },
+  });
+  const all = [];
+  const routes = Object.assign(async (m, pth, b, u) => { all.push(`${m} ${pth}`); return base(m, pth, b, u); }, base);
+  try {
+    const p = await bootPage({ routes, hash: '#blocks' });
+    const c = p.$('content');
+    const t = (n) => (n ? p.text(n) : '');
+    const btnIn = (n, label) => n?.querySelectorAll('button').find((b) => t(b) === label);
+    await until(() => c.querySelector('#bb-review-policy'));
+    ok('D1 each rule\'s card has a secondary "Add to…", the rule found nowhere included', btnIn(c.querySelector('#bb-review-policy'), 'Add to…')?.className === 'btn'
+      && btnIn(c.querySelector('#bb-operator-merges'), 'Add to…')?.className === 'btn', c.querySelectorAll('button').map((b) => `${t(b)}:${b.className}`).join(' | '));
+    all.length = 0;
+    btnIn(c.querySelector('#bb-review-policy'), 'Add to…').click();
+    await until(() => c.querySelector('.bb-pick'));
+    ok('D1 it opens the picker for that rule, on its own page', p.eval('S.view') === 'blocks-add' && p.location.hash === '#blocks/add&rule=review-policy'
+      && /Review policy/.test(t(c.querySelector('h2'))), `${p.eval('S.view')} ${p.location.hash} ${t(c.querySelector('h2'))}`);
+    const groups = c.querySelectorAll('.bb-add-group').map((g) => [t(g.querySelector('h3')), g.querySelectorAll('.bb-pick').map((x) => [t(x.querySelector('.bb-place')), t(x.querySelector('.bb-path'))])]);
+    ok('D1 the files without a copy, grouped Instruction files then Skills, each with its plain label and path', JSON.stringify(groups) === JSON.stringify([
+      ['Instruction files', [['CLAUDE.md (Claude, global)', '~/.claude/CLAUDE.md'], ['AGENTS.md (Codex, global)', '~/.codex/AGENTS.md']]],
+      ['Skills', [['SKILL.md in the fresh skill (Claude)', '~/.claude/skills/fresh/SKILL.md'], ['SKILL.md in the helper skill (shared skills folder)', '~/.agents/skills/helper/SKILL.md']]],
+    ]), JSON.stringify(groups));
+    const boxes = () => c.querySelectorAll('.bb-pick input');
+    ok('D1 nothing is ticked, and Preview waits for a file', boxes().length === 4 && boxes().every((x) => x.type === 'checkbox' && !x.checked) && btnIn(c, 'Preview')?.disabled === true,
+      boxes().map((x) => x.checked).join(','));
+    ok('D1 opening the picker asked the server for nothing new', all.every((x) => x.startsWith('GET ')), all.join(', '));
+    ok('no fold, and every button styled', !c.querySelector('details, summary, [aria-expanded]') && c.querySelectorAll('button').every((b) => /\bbtn\b/.test(b.className)));
+    boxes()[3].click();
+    boxes()[1].click();
+    ok('ticking files enables a primary Preview', btnIn(c, 'Preview')?.disabled === false && /\bprimary\b/.test(btnIn(c, 'Preview').className), btnIn(c, 'Preview')?.className);
+    btnIn(c, 'Preview').click();
+    await until(() => c.querySelector('.bb-add-preview .diff'));
+    ok('D2 Preview asks for the ticked files, in the page\'s order, and writes nothing', JSON.stringify(acalls) === JSON.stringify([['preview', { rule: 'review-policy', files: ['~/.codex/AGENTS.md', '~/.agents/skills/helper/SKILL.md'] }]])
+      && !all.some((x) => /apply/.test(x)), JSON.stringify(acalls));
+    const pv = c.querySelector('.bb-add-preview');
+    const files = pv.querySelectorAll('.bb-add-file');
+    ok('D2 the preview shows each file, with the lines added numbered where they land', files.length === 2 && /AGENTS\.md \(Codex, global\)/.test(t(files[0])) && /helper skill/.test(t(files[1]))
+      && files.every((f) => f.querySelectorAll('.diff-line.add').length === 4 && t(f.querySelector('.diff-line .n')) === '7'), t(pv));
+    ok('D2 …and says where: a new heading at the end, or under the file\'s own heading', /at the end of the file, under a new "## Shared rules" heading/i.test(t(files[0]))
+      && /under the file's "## Shared rules" heading/i.test(t(files[1])), `${t(files[0])} || ${t(files[1])}`);
+    ok('D2 …and that a file with no final line break gets one first', /line break/.test(t(files[1])) && !/line break/.test(t(files[0])), t(files[1]));
+    ok('D2 …the old files go to History first; a primary "Add to 2 files" and a quiet Cancel', /History/.test(t(pv)) && /\bprimary\b/.test(btnIn(pv, 'Add to 2 files')?.className)
+      && /\bghost\b/.test(btnIn(pv, 'Cancel')?.className), pv.querySelectorAll('button').map((b) => `${t(b)}:${b.className}`).join(' | '));
+    btnIn(pv, 'Cancel').click();
+    await settle(10);
+    ok('Cancel drops the preview and writes nothing; the ticks stay', !c.querySelector('.bb-add-preview') && acalls.length === 1 && boxes()[1].checked && boxes()[3].checked && !boxes()[0].checked);
+    btnIn(c, 'Preview').click();
+    await until(() => c.querySelector('.bb-add-preview'));
+    boxes()[2].click();
+    await settle(5);
+    ok('changing the ticks drops the preview, so only what was previewed is written', !c.querySelector('.bb-add-preview'));
+    boxes()[2].click();
+
+    // A stale apply: refused, said so, Preview again checks again first.
+    applyAnswer = () => { throw { status: 409, body: { error: '~/.codex/AGENTS.md changed since the preview. Nothing was written; preview it again.' } }; };
+    btnIn(c, 'Preview').click();
+    await until(() => btnIn(c, 'Add to 2 files'));
+    btnIn(c, 'Add to 2 files').click();
+    await until(() => btnIn(c, 'Preview again'));
+    ok('a stale apply says what changed and that nothing was written, with a secondary Preview again', /changed since the preview\. Nothing was written/.test(t(c.querySelector('.bb-add .notice.error')))
+      && btnIn(c, 'Preview again')?.className === 'btn' && !btnIn(c, 'Add to 2 files'), t(c).slice(0, 400));
+    ok('…the apply carried each file with its preview\'s signature', JSON.stringify(acalls.at(-1)) === JSON.stringify(['apply', { rule: 'review-policy',
+      files: [{ file: '~/.codex/AGENTS.md', signature: one('~/.codex/AGENTS.md').signature }, { file: '~/.agents/skills/helper/SKILL.md', signature: one('~/.agents/skills/helper/SKILL.md').signature }] }]), JSON.stringify(acalls.at(-1)));
+    all.length = 0;
+    btnIn(c, 'Preview again').click();
+    await until(() => btnIn(c, 'Add to 2 files'));
+    ok('Preview again checks again (GET /api/blocks), then previews', all.indexOf('GET /api/blocks') > -1 && all.indexOf('GET /api/blocks') < all.lastIndexOf('POST /api/blocks/add/preview'), all.join(', '));
+
+    // Apply: the page checks again; the result lists each file, now matching, and how to restore it.
+    applyAnswer = (b) => { state.added.push(...b.files.map((f) => f.file)); return { saved: true, rule: b.rule, warnings: [], undo: 'The old versions are in History.',
+      files: b.files.map((f) => ({ file: f.file, line: 9, sha: 'abc', undo: `To put it back, open ${f.file} and choose History.` })) }; };
+    all.length = 0;
+    btnIn(c, 'Add to 2 files').click();
+    await until(() => c.querySelector('.bb-add-result'));
+    await settle(10);
+    const res = c.querySelector('.bb-add-result');
+    ok('D5 after the write the page checks again (GET /api/blocks)', all.includes('POST /api/blocks/add/apply') && all.lastIndexOf('GET /api/blocks') > all.indexOf('POST /api/blocks/add/apply'), all.join(', '));
+    const rows = res.querySelectorAll('li');
+    ok('D5 the result lists each file, showing the rule there as matching', rows.length === 2 && rows.every((r) => t(r.querySelector('.bb-rating')) === 'Matches')
+      && /AGENTS\.md \(Codex, global\)/.test(t(rows[0])) && /helper skill/.test(t(rows[1])), t(res));
+    ok('D5 …and how to put each one back from History', rows.every((r) => /choose History/.test(t(r))), t(res));
+    ok('the added files leave the picker; the ones not ticked stay, unticked', JSON.stringify(c.querySelectorAll('.bb-pick .bb-path').map(t)) === JSON.stringify(['~/.claude/CLAUDE.md', '~/.claude/skills/fresh/SKILL.md'])
+      && boxes().every((x) => !x.checked), c.querySelectorAll('.bb-pick').map(t).join(' | '));
+    ok('no "marked" in the page\'s own words', !/\bmarked\b/i.test(t(c)));
+
+    // From Compare copies too.
+    p.navigate('#blocks/compare&rule=review-policy');
+    await until(() => p.eval('S.view') === 'blocks-compare' && c.querySelector('.bb-cmp'));
+    ok('D1 Compare copies has "Add to…" too, secondary', btnIn(c, 'Add to…')?.className === 'btn', c.querySelectorAll('button').map((b) => `${t(b)}:${b.className}`).join(' | '));
+    btnIn(c, 'Add to…').click();
+    await until(() => p.eval('S.view') === 'blocks-add');
+    btnIn(c, 'Back').click();
+    await until(() => p.eval('S.view') === 'blocks-compare');
+    ok('Back from the picker returns to Compare copies when it came from there', p.eval('S.view') === 'blocks-compare' && p.location.hash === '#blocks/compare&rule=review-policy', p.location.hash);
+    ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
+    p.done();
+  } catch (err) {
+    ok(`no Add to test block threw (${err?.message || err})`, false, err?.stack || String(err));
+  }
+}
+
 /* ── static: the view only reads; its colours are the theme's ────────── */
 console.log('\nstatic: blocks-view.js and its styles');
 {
   const src = fs.readFileSync(path.join(PUB, 'blocks-view.js'), 'utf8');
   const apiCalls = [...src.matchAll(/api\(\s*'([A-Z]+)'\s*,\s*'([^']+)'/g)].map((m) => `${m[1]} ${m[2]}`);
-  ok('blocks-view.js calls the API three ways: GET /api/blocks, and the preview and apply of making one copy match', JSON.stringify(apiCalls) === JSON.stringify(['GET /api/blocks', 'POST /api/blocks/match/preview', 'POST /api/blocks/match/apply']), apiCalls.join(', '));
+  ok('blocks-view.js calls the API five ways: GET /api/blocks, the preview and apply of making one copy match, and the preview and apply of adding a rule to files',
+    JSON.stringify(apiCalls) === JSON.stringify(['GET /api/blocks', 'POST /api/blocks/match/preview', 'POST /api/blocks/match/apply', 'POST /api/blocks/add/preview', 'POST /api/blocks/add/apply']), apiCalls.join(', '));
   ok('…and has no other way out: no fetch, form, XHR or beacon', !/\bfetch\(|XMLHttpRequest|sendBeacon|<form|\.submit\(/.test(src));
   const css = fs.readFileSync(path.join(PUB, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const bb = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /\.bb-/.test(m[1]));

@@ -1932,4 +1932,15 @@ pre.pk-log { align-self: stretch; max-height: 240px; overflow: auto; white-space
 .bb-match-note { color: var(--text-dim); font-size: 12.5px; }
 .bb-lines { padding: 6px 0; font-size: 12.5px; max-height: 360px; overflow: auto; background: var(--panel-2); border: 1px solid var(--border-soft); border-radius: 7px; }
 .bb-result { margin: 0 0 12px; }
+.bb-add-group { margin: 16px 0 0; }
+.bb-picks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.bb-pick { display: flex; align-items: baseline; gap: 10px; font-size: 13px; cursor: pointer; min-width: 0; }
+.bb-pick input { flex: 0 0 auto; }
+.bb-add-bar { align-items: center; margin: 16px 0 0; }
+.bb-add-count { color: var(--text-dim); font-size: 13px; }
+.bb-add-preview { display: flex; flex-direction: column; gap: 12px; margin: 16px 0 0; border-top: 1px solid var(--border-soft); padding-top: 14px; font-size: 13px; color: var(--text); min-width: 0; }
+.bb-add-file { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.bb-add-file > p { margin: 0; overflow-wrap: anywhere; }
+.bb-add .notice.error { margin: 12px 0 0; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.bb-add-result ul { margin: 8px 0 0; }
 @media (max-width: 720px) { .bb-card, .bb-cmp { padding: 12px; } .bb-cols { grid-template-columns: minmax(0, 1fr); } }
