@@ -1,13 +1,15 @@
 /**
- * The Packs view (builds/skill-packs P3, C13) in the page: index.html and the
- * real public/ scripts in the test VM (tests/fixtures/shell-page.mjs), every
- * request forwarded to a real `node server.js` in a temp HOME with stub CLIs
- * — so the card renders exactly what the routes say, and its buttons really
- * install into that HOME. Checks the cards and explanations, toggles and
- * harnesses, that the button applies exactly the preview on screen and any
- * change drops it, the dependency and role offers, status badges and the
- * trust check's visible progress, update with replace, uninstall, a stale
- * preview, and the theme. The browser QA run covers how it looks.
+ * The Packs view (builds/skill-packs P3, C13; builds/packs-redesign) in the
+ * page: index.html and the real public/ scripts in the test VM
+ * (tests/fixtures/shell-page.mjs), every request forwarded to a real
+ * `node server.js` in a temp HOME with stub CLIs — so each pack's page renders
+ * exactly what the routes say, and its buttons really install into that HOME.
+ * Checks the grid and a pack's page, its parts and the install preview's CLI
+ * choice, that the button applies exactly the preview on screen and any
+ * change drops it, the dependency and role offers, part statuses and the
+ * trust check's visible progress (its preference set on Setup), update with
+ * replace, uninstall, a stale preview, and the theme. The browser QA run
+ * covers how it looks.
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -46,153 +48,163 @@ const proxy = async (method, p, body, u) => {
 
 const page = await bootPage({ routes: proxy, hash: '#packs' });
 const t = (n) => page.text(n);
-const card = (id) => page.$('content').querySelector(`[data-pack="${id}"]`);
+// A pack's own page, opened through its route when another page is shown: every control lives there now.
+const card = (id) => {
+  if (page.eval('S.view') !== 'pack' || page.eval('PK.page') !== id) page.navigate(`#packs/${id}`);
+  return page.$('content').querySelector(`.pk-page[data-pack="${id}"]`);
+};
 const button = (root, re) => (root ? root.querySelectorAll('button').find((b) => re.test(t(b))) : null);
 const check = (root, re) => (root ? root.querySelectorAll('label').find((l) => re.test(t(l)))?.querySelector('input') : null);
-const statusDone = () => /Status checked at/.test(t(page.$('pk-status')));
+const statusDone = () => /Checked at/.test(t(page.$('pk-status')));
 const previewOf = (id) => card(id)?.querySelector('.pk-preview') || null;
 const rows = (id) => (previewOf(id)?.querySelectorAll('.pk-row') || []).map((r) => t(r));
 const reqs = () => page.requests.filter((r) => r.path.startsWith('/api/packs/'));
+const act = (id, re) => button(card(id)?.querySelector('.pk-page-actions'), re);
+const part = (id, partId) => card(id)?.querySelector(`.pk-part[data-part="${partId}"]`);
+const files = (id) => t(card(id)?.querySelector('#pk-sec-files'));
+/** The preview's own apply button (Install / Update / Uninstall), once the plan is in. */
+const apply = (id, re) => button(previewOf(id)?.querySelector('.pk-actions'), re);
 
 try {
-  console.log('\nthe Packs view: cards, explanations, toggles and harnesses');
+  console.log('\nthe Packs grid, a pack\'s page, its parts and its Install for');
   {
     ok('#packs opens the view, with a Packs item in the sidebar under Workflows', await waitFor(() => page.$('content').querySelectorAll('.pk-card').length === 8)
       && page.eval('S.view') === 'packs' && t(page.$('btn-packs')?.closest('.nav-group')?.querySelector('.nav-group-title')) === 'Workflows' && t(page.$('btn-packs')) === 'Packs', t(page.$('content')).slice(0, 300));
     ok('…and the first status check runs by itself and finishes', await waitFor(statusDone), t(page.$('pk-status')));
+    const grok = page.$('content').querySelectorAll('.pk-cli').find((n) => /Grok/.test(t(n)));
+    ok('the machine line says Grok is not here, and why', !!grok && grok.classList.contains('off') && /not installed, and no ~\/\.grok/.test(grok.getAttribute('title')), grok?.getAttribute('title'));
     const rg = card('review-gate');
-    // PR F: no folds (Cris) — the explain opens from "Files and undo" as a dialog.
-    button(rg, /^Files and undo$/)?.click();
-    const dlg = page.doc.body.querySelector('.pk-dialog');
-    ok('each card has its title, summary and a "Files and undo" dialog with what it is and how to undo it', /Review gate|review/i.test(t(rg.querySelector('h3'))) && t(rg.querySelector('.pk-summary')).length > 20
-      && !!dlg && /What it is:/.test(t(dlg)) && /How to undo it:/.test(t(dlg)) && !rg.querySelector('details'));
-    page.key('Escape');
-    ok('…one row per part, each with what it does in a line and a not-installed badge', rg.querySelectorAll('.pk-part').length === 6
-      && rg.querySelectorAll('.pk-part').every((r) => t(r.querySelector('.pk-part-what')).length > 0 && !r.querySelector('details') && /not installed/.test(t(r.querySelector('.pk-badges')))));
-    // …and every part's full explain is in the dialog: a section per part, titled, with what it is and what it changes.
-    button(rg, /^Files and undo$/)?.click();
-    const partSecs = [...(page.doc.body.querySelector('.pk-dialog')?.querySelectorAll('.pk-dialog-part') || [])];
-    const partTitles = rg.querySelectorAll('.pk-part').map((r) => t(r.querySelector('.pk-check span')));
-    ok('…and the dialog has every part\'s full explain: titled, what it is, what it changes', partSecs.length === 6
-      && partSecs.every((sec, i) => t(sec.querySelector('h4')) === partTitles[i] && /What it is:/.test(t(sec)) && /What it changes:/.test(t(sec)) && sec.querySelectorAll('li').length > 0),
-      partSecs.map((sec) => `${t(sec.querySelector('h4'))}: ${/What it is:/.test(t(sec))}/${/What it changes:/.test(t(sec))}`).join(' | '));
-    page.key('Escape');
-    ok('…the default part ticked, the opt-in parts not', check(rg, /^Code-review skill/i)?.checked && !check(rg, /Agent guard/i)?.checked && !check(rg, /push gate/i)?.checked, rg.querySelectorAll('label').map(t).join(' | '));
-    // PR F: the requirements list is in the card's "Files and undo" dialog (no folds on Packs).
-    button(rg, /^Files and undo$/)?.click();
-    const reqList = page.doc.body.querySelector('.pk-dialog .pk-reqs');
-    ok('…the requirements, met (listed in the "Files and undo" dialog)', !!reqList && reqList.querySelectorAll('li.ok').length >= 4 && !reqList.querySelector('li.missing'));
-    page.key('Escape');
-    ok('…and harness boxes for Claude and Codex, both detected and ticked', check(rg, /^Claude Code \(~\/\.claude\)/)?.checked && check(rg, /^Codex \(~\/\.codex\)/)?.checked && !check(rg, /^Codex \(/)?.disabled, rg.querySelectorAll('label').map(t).join(' | '));
-    ok('the machine line says Grok is not here, and why', /Grok/.test(t(page.$('content').querySelector('.pk-here'))) && /not installed, and no ~\/\.grok/.test(t(page.$('content').querySelector('.pk-here'))));
+    ok('each pack\'s page has its title, its summary and a Files and undo section with what it changes and how to undo it', /Review gate/.test(t(rg.querySelector('h1'))) && t(rg.querySelector('.pk-page-lead')).length > 20
+      && /acs packs uninstall review-gate/.test(files('review-gate')) && /Uninstalling removes/.test(files('review-gate')) && rg.querySelectorAll('#pk-sec-files .pk-paths li').length > 2 && !rg.querySelector('details'));
+    ok('…one row per part, each with what it does in a line, "Off", and one Add…', rg.querySelectorAll('.pk-part').length === 6
+      && rg.querySelectorAll('.pk-part').every((r) => t(r.querySelector('.pk-part-what')).length > 0 && !r.querySelector('details') && t(r.querySelector('.pk-st')) === 'Off'
+        && /not installed/.test(r.querySelector('.pk-st').getAttribute('title')) && r.querySelectorAll('button').map(t).join('|') === 'Add…'));
+    ok('…the requirements met: "Ready to run"', /Ready to run/.test(t(rg.querySelector('.pk-page-meta .pk-ready'))) && !rg.querySelector('.pk-reqs'));
     ok('no request so far wrote anything (only GETs and no apply)', !reqs().some((r) => r.path === '/api/packs/apply' || r.path === '/api/packs/plan'));
+    act('review-gate', /^Install$/).click();
+    await waitFor(() => previewOf('review-gate')?.querySelector('.pk-preview-head'));
+    ok('the page\'s Install previews the default part only', JSON.stringify(reqs().filter((r) => r.path === '/api/packs/plan').at(-1).body) === JSON.stringify({ action: 'install', pack: 'review-gate', parts: ['code-review'] })
+      && /review-gate\/code-review/.test(t(previewOf('review-gate').querySelector('.pk-preview-head'))), t(previewOf('review-gate')).slice(0, 300));
+    ok('…and its Install for boxes: Claude and Codex, both detected and ticked', check(previewOf('review-gate'), /^Claude Code \(~\/\.claude\)/)?.checked && check(previewOf('review-gate'), /^Codex \(~\/\.codex\)/)?.checked
+      && !check(previewOf('review-gate'), /^Codex \(/)?.disabled, previewOf('review-gate').querySelectorAll('label').map(t).join(' | '));
+    button(previewOf('review-gate'), /^Cancel$/).click();
+    ok('…Cancel closes it, nothing applied', await waitFor(() => !previewOf('review-gate')) && !reqs().some((r) => r.path === '/api/packs/apply'));
   }
 
   console.log('\npreview, then install exactly that preview');
   {
-    button(card('handoff'), /^Preview install/).click();
-    ok('Preview install shows every path it will change, with the CLI\'s words', await waitFor(() => rows('handoff').length > 0)
+    act('handoff', /^Install$/).click();
+    ok('Install previews every path it will change, with the CLI\'s words', await waitFor(() => rows('handoff').length > 0)
       && rows('handoff').some((r) => /^\+ ~\/\.claude\/skills\/handoff\/SKILL\.md new file/.test(r)) && rows('handoff').some((r) => /~\/\.codex\/skills\/handoff\/SKILL\.md/.test(r)), rows('handoff').join(' | '));
-    ok('…and the Install button under it is enabled', !button(previewOf('handoff'), /^Install$/)?.disabled);
-    check(card('handoff'), /^Codex \(/).click();
-    ok('unticking Codex drops the preview and its button', await waitFor(() => !previewOf('handoff')) && !button(card('handoff'), /^Install$/));
-    button(card('handoff'), /^Preview install/).click();
-    await waitFor(() => rows('handoff').length > 0);
-    ok('…and the next preview is Claude only', rows('handoff').some((r) => /~\/\.claude\/skills\/handoff/.test(r)) && !rows('handoff').some((r) => /\.codex/.test(r)), rows('handoff').join(' | '));
+    ok('…and the Install button under it is enabled', !apply('handoff', /^Install$/)?.disabled);
+    check(previewOf('handoff'), /^Codex \(/).click();
+    ok('unticking Codex drops that preview and previews again for Claude only', await waitFor(() => rows('handoff').length > 0 && !rows('handoff').some((r) => /\.codex/.test(r)))
+      && rows('handoff').some((r) => /~\/\.claude\/skills\/handoff/.test(r)), rows('handoff').join(' | '));
     const sent = reqs().filter((r) => r.path === '/api/packs/plan').at(-1).body;
     ok('…sent as harnesses: claude', JSON.stringify(sent) === JSON.stringify({ action: 'install', pack: 'handoff', parts: ['handoff'], harnesses: ['claude'] }), JSON.stringify(sent));
-    button(previewOf('handoff'), /^Install$/).click();
-    ok('Install applies it and shows the result', await waitFor(() => card('handoff')?.querySelector('.pk-result')) && /Installed: handoff\/handoff/.test(t(card('handoff').querySelector('.pk-result'))), t(card('handoff')));
+    apply('handoff', /^Install$/).click();
+    ok('Install applies it and shows the result on the page', await waitFor(() => card('handoff')?.querySelector('.pk-result')) && /Installed: handoff\/handoff/.test(t(card('handoff').querySelector('.pk-result'))), t(card('handoff')).slice(0, 400));
     const applied = reqs().filter((r) => r.path === '/api/packs/apply').at(-1).body;
     ok('…the apply carried exactly the previewed request and its signature', JSON.stringify({ ...applied, signature: undefined }) === JSON.stringify({ ...sent, signature: undefined }) && /^[0-9a-f]{64}$/.test(applied.signature));
     ok('…the skill is on disk for Claude, not for Codex', fs.existsSync(path.join(sb.home, '.claude/skills/handoff/SKILL.md')) && !fs.existsSync(path.join(sb.env.CODEX_HOME, 'skills/handoff')));
-    ok('…and after the status refresh the card says installed, for claude, with Update and Uninstall', await waitFor(() => statusDone() && /installed 1\.0\.0/.test(t(card('handoff').querySelector('.pk-head'))))
-      && /for claude$/.test(t(card('handoff').querySelector('.pk-badges'))) && !!button(card('handoff'), /^Preview update/) && !!button(card('handoff'), /^Preview uninstall/), t(card('handoff').querySelector('.pk-part')));
-    ok('…and codex shows as a new harness for it', /a new CLI is here, not installed for it/.test(t(card('handoff').querySelector('.pk-badges'))) && /codex is here now/.test(t(card('handoff').querySelector('.pk-details'))), t(card('handoff').querySelector('.pk-part')));
+    ok('…and after the status refresh the page says installed, for Claude Code, with Uninstall…', await waitFor(() => statusDone() && /Installed · 1\.0\.0/.test(t(card('handoff').querySelector('.pk-page-meta'))))
+      && /Handoff skill: installed for Claude Code/.test(files('handoff')) && !!act('handoff', /^Uninstall…$/), files('handoff'));
+    ok('…and codex shows as a new CLI for it', t(part('handoff', 'handoff').querySelector('.pk-st')) === 'New CLI here'
+      && /a new CLI is here, not installed for it/.test(part('handoff', 'handoff').querySelector('.pk-st').getAttribute('title')) && /codex is here now/.test(files('handoff')), t(part('handoff', 'handoff')));
   }
 
   console.log('\nthe build → review-gate dependency offer');
   {
-    const offer = () => check(card('build'), /Also install the .* pack's skill now/);
-    ok('build offers to add review-gate\'s skill', !!offer() && !offer().checked);
-    button(card('build'), /^Preview install/).click();
-    await waitFor(() => previewOf('build'));
-    ok('without it the preview shows the refusal and no usable button', /needs the review-gate pack/.test(t(previewOf('build').querySelector('.pk-refusals'))) && button(previewOf('build'), /^Install$/).disabled);
+    act('build', /^Install$/).click();
+    await waitFor(() => previewOf('build')?.querySelector('.pk-preview-head'));
+    const offer = () => check(previewOf('build'), /Also install the .* pack's skill now/);
+    ok('build\'s install preview offers to add review-gate\'s skill, unticked', !!offer() && !offer().checked);
+    ok('without it the preview shows the refusal and no usable button', /needs the review-gate pack/.test(t(previewOf('build').querySelector('.pk-refusals'))) && apply('build', /^Install$/).disabled);
     offer().click();
-    ok('ticking the offer drops that preview', await waitFor(() => !previewOf('build')));
-    button(card('build'), /^Preview install/).click();
-    await waitFor(() => previewOf('build'));
-    ok('…and the next one adds review-gate/code-review, with the button enabled', /review-gate\/code-review/.test(t(previewOf('build').querySelector('.pk-preview-head'))) && !previewOf('build').querySelector('.pk-refusals') && !button(previewOf('build'), /^Install$/).disabled, t(previewOf('build')));
+    ok('ticking the offer previews again: it adds review-gate/code-review, with the button enabled', await waitFor(() => /review-gate\/code-review/.test(t(previewOf('build')?.querySelector('.pk-preview-head'))))
+      && !previewOf('build').querySelector('.pk-refusals') && !apply('build', /^Install$/).disabled && reqs().filter((r) => r.path === '/api/packs/plan').at(-1).body.withDeps === true, t(previewOf('build')));
     button(previewOf('build'), /^Cancel$/).click();
     ok('Cancel drops it and writes nothing', await waitFor(() => !previewOf('build')) && !fs.existsSync(path.join(sb.home, '.claude/skills/build')));
   }
 
   console.log('\nthe agent guard: install, and the trust check\'s progress while status runs');
   {
-    check(card('review-gate'), /Agent guard/i).click();
-    await waitFor(() => !!button(card('review-gate'), /^Preview install \(2 parts\)/));
-    button(card('review-gate'), /^Preview install/).click();
-    await waitFor(() => previewOf('review-gate'));
-    ok('the guard preview names Claude\'s settings and the Codex hooks', rows('review-gate').some((r) => /~\/\.claude\/settings\.json/.test(r)) && rows('review-gate').some((r) => /~\/\.codex\/hooks\.json/.test(r)), rows('review-gate').join(' | '));
-    button(previewOf('review-gate'), /^Install$/).click();
+    act('review-gate', /^Install$/).click();
+    await waitFor(() => apply('review-gate', /^Install$/) && !apply('review-gate', /^Install$/).disabled);
+    apply('review-gate', /^Install$/).click();
+    ok('the review gate installs its code-review part from the page', await waitFor(() => card('review-gate')?.querySelector('.pk-result'), 30_000) && /Installed: review-gate\/code-review/.test(t(card('review-gate').querySelector('.pk-result'))));
+    await waitFor(statusDone, 30_000);
+    button(part('review-gate', 'agent-guard'), /^Add…$/).click();
+    await waitFor(() => part('review-gate', 'agent-guard')?.querySelector('.pk-preview .pk-preview-head'));
+    const gp = () => part('review-gate', 'agent-guard')?.querySelector('.pk-preview');
+    const grows = () => (gp()?.querySelectorAll('.pk-row') || []).map(t);
+    ok('the guard\'s Add… previews under its own row: Claude\'s settings and the Codex hooks', grows().some((r) => /~\/\.claude\/settings\.json/.test(r)) && grows().some((r) => /~\/\.codex\/hooks\.json/.test(r)), grows().join(' | '));
+    button(gp(), /^Install$/).click();
     ok('…the button reads Installing… while it runs', await waitFor(() => /Installing…/.test(t(card('review-gate'))), 5000));
-    ok('…and it installs', await waitFor(() => card('review-gate')?.querySelector('.pk-result'), 30_000) && /Installed: review-gate\/code-review, review-gate\/agent-guard/.test(t(card('review-gate').querySelector('.pk-result'))), t(card('review-gate')).slice(0, 600));
-    ok('…with the installers\' output behind a button (no fold)', !!button(card('review-gate').querySelector('.pk-result'), /^Installer output$/) && !card('review-gate').querySelector('.pk-result details'));
+    const res = () => part('review-gate', 'agent-guard')?.querySelector('.pk-result');
+    ok('…and it installs, the result under its row', await waitFor(res, 30_000) && /Installed: review-gate\/agent-guard/.test(t(res())), t(card('review-gate')).slice(0, 600));
+    ok('…with the installers\' output shown in place (no button, no fold, no dialog)', !!res()?.querySelector('pre.pk-log') && /Installer output/.test(t(res())) && !res().querySelector('details, button.pk-log-btn')
+      && !page.doc.body.querySelector('.pk-dialog'));
     ok('the status refresh after it shows a spinner and the trust check\'s progress line', await waitFor(() => page.$('pk-status')?.querySelector('.spinner') && /checking the agent guard/.test(t(page.$('pk-status'))), 10_000), t(page.$('pk-status')));
-    ok('…with the elapsed seconds, and the trust box locked while it runs', /\(\d+ s\)/.test(t(page.$('pk-status'))) && page.$('pk-status').querySelector('input').disabled);
+    ok('…with the elapsed seconds, and no trust checkbox of its own (Setup holds it)', /\(\d+ s\)/.test(t(page.$('pk-status'))) && !page.$('pk-status').querySelector('input'));
     ok('…and then it finishes: the guard is active for claude and the Codex home', await waitFor(statusDone, 30_000)
-      && /claude: active/.test(t(card('review-gate').querySelector('[data-part="agent-guard"]'))) && /codex ~\/\.codex: active/.test(t(card('review-gate').querySelector('[data-part="agent-guard"]'))), t(card('review-gate').querySelector('[data-part="agent-guard"]')));
-    const box = check(page.$('pk-status'), /Include the Codex trust check/);
-    box.click();
-    button(page.$('pk-status'), /^Refresh status$/).click();
-    ok('unticked, Refresh status runs without it and says so', await waitFor(() => statusDone() && /without the Codex trust check/.test(t(page.$('pk-status'))))
-      && /trust not checked/.test(t(card('review-gate').querySelector('[data-part="agent-guard"]'))));
+      && /Agent guard against skipping hooks: claude: active/.test(files('review-gate')) && /codex ~\/\.codex: active/.test(files('review-gate')), files('review-gate'));
+    // The trust check is a preference on Setup, under Codex: turn it off there, then Refresh here.
+    page.navigate('#setup');
+    await waitFor(() => page.$('content').querySelector('[data-cli="codex"] .setup-trust input'), 30_000);
+    page.$('content').querySelector('[data-cli="codex"] .setup-trust input').click();
+    card('review-gate');
+    await waitFor(() => statusDone());
+    button(page.$('pk-status'), /^Refresh$/).click();
+    ok('unticked on Setup, Refresh runs without it and says so', await waitFor(() => statusDone() && /Without the Codex trust check/.test(page.$('pk-status').querySelector('.pk-status-text')?.getAttribute('title') || ''), 30_000)
+      && /trust not checked/.test(files('review-gate')), files('review-gate'));
   }
 
   console.log('\nedited by you, and update with replace');
   {
     const skill = path.join(sb.home, '.claude/skills/handoff/SKILL.md');
     fs.appendFileSync(skill, '\nmy note\n');
-    button(page.$('pk-status'), /^Refresh status$/).click();
-    ok('my edit shows as an "edited by you" badge, naming the file', await waitFor(() => statusDone() && /edited by you/.test(t(card('handoff').querySelector('.pk-badges'))))
-      && /edited: ~\/\.claude\/skills\/handoff\/SKILL\.md/.test(t(card('handoff').querySelector('.pk-details'))));
-    button(card('handoff'), /^Preview update/).click();
-    await waitFor(() => previewOf('handoff'));
-    ok('the update preview keeps it, says so, and offers the pack\'s copy', /kept: ~\/\.claude\/skills\/handoff\/SKILL\.md — you edited it/.test(t(previewOf('handoff'))) && !!check(previewOf('handoff'), /Take the pack's copy/) && button(previewOf('handoff'), /^Update$/).disabled);
+    card('handoff');
+    button(page.$('pk-status'), /^Refresh$/).click();
+    ok('my edit shows as "Edited", and Files and undo names the file', await waitFor(() => statusDone() && t(part('handoff', 'handoff')?.querySelector('.pk-st')) === 'Edited', 30_000)
+      && /edited by you/.test(part('handoff', 'handoff').querySelector('.pk-st').getAttribute('title')) && /edited: ~\/\.claude\/skills\/handoff\/SKILL\.md/.test(files('handoff')), files('handoff'));
+    act('handoff', /^Update$/).click();
+    await waitFor(() => previewOf('handoff')?.querySelector('.pk-preview-head'));
+    ok('Update (offered for the edit) previews keeping it, says so, and offers the pack\'s copy', /kept: ~\/\.claude\/skills\/handoff\/SKILL\.md — you edited it/.test(t(previewOf('handoff'))) && !!check(previewOf('handoff'), /Take the pack's copy/) && apply('handoff', /^Update$/).disabled);
     check(previewOf('handoff'), /Take the pack's copy/).click();
-    ok('ticking it re-previews: the edit is backed up, then replaced', await waitFor(() => rows('handoff').some((r) => /your edit is backed up, then replaced/.test(r))) && !button(previewOf('handoff'), /^Update$/).disabled, rows('handoff').join(' | '));
-    button(previewOf('handoff'), /^Update$/).click();
+    ok('ticking it re-previews: the edit is backed up, then replaced', await waitFor(() => rows('handoff').some((r) => /your edit is backed up, then replaced/.test(r))) && !apply('handoff', /^Update$/).disabled, rows('handoff').join(' | '));
+    apply('handoff', /^Update$/).click();
     ok('Update applies it: the pack\'s copy is back, with a backup folder named', await waitFor(() => card('handoff')?.querySelector('.pk-result'))
       && !/my note/.test(sb.read(skill)) && /Backups of every existing file it changed: ~\/\.agent-config-studio\/backups\//.test(t(card('handoff').querySelector('.pk-result'))), t(card('handoff').querySelector('.pk-result')));
   }
 
   console.log('\na stale preview, and uninstall');
   {
-    await waitFor(statusDone);
-    button(card('handoff'), /^Preview uninstall/).click();
-    await waitFor(() => previewOf('handoff'));
+    await waitFor(statusDone, 30_000);
+    act('handoff', /^Uninstall…$/).click();
+    await waitFor(() => rows('handoff').length > 0);
     ok('the uninstall preview names the skill file it removes', rows('handoff').some((r) => /^- ~\/\.claude\/skills\/handoff\/SKILL\.md removed/.test(r)), rows('handoff').join(' | '));
     fs.appendFileSync(path.join(sb.home, '.claude/skills/handoff/SKILL.md'), '\nedited after the preview\n');
-    button(previewOf('handoff'), /^Uninstall$/).click();
-    ok('a file changed after the preview: the card says to preview again, and drops the preview', await waitFor(() => card('handoff')?.querySelector('.pk-error'))
-      && /different from the preview/.test(t(card('handoff').querySelector('.pk-error'))) && !previewOf('handoff'), t(card('handoff')).slice(0, 500));
+    apply('handoff', /^Uninstall$/).click();
+    ok('a file changed after the preview: the page says to preview again, and drops the preview\'s list and its Uninstall', await waitFor(() => card('handoff')?.querySelector('.pk-error'))
+      && /different from the preview/.test(t(card('handoff').querySelector('.pk-error'))) && rows('handoff').length === 0 && !apply('handoff', /^Uninstall$/) && !!button(previewOf('handoff'), /^Preview again$/), t(card('handoff')).slice(0, 500));
     ok('…and nothing was removed', fs.existsSync(path.join(sb.home, '.claude/skills/handoff/SKILL.md')));
-    button(card('handoff'), /^Preview uninstall/).click();
-    await waitFor(() => previewOf('handoff'));
-    button(previewOf('handoff'), /^Uninstall$/).click();
+    button(previewOf('handoff'), /^Preview again$/).click();
+    await waitFor(() => apply('handoff', /^Uninstall$/) && !apply('handoff', /^Uninstall$/).disabled);
+    apply('handoff', /^Uninstall$/).click();
     ok('previewed again, Uninstall removes it and reports what it kept', await waitFor(() => card('handoff')?.querySelector('.pk-result'))
       && /kept: ~\/\.claude\/skills\/handoff\/SKILL\.md/.test(t(card('handoff').querySelector('.pk-result'))), t(card('handoff').querySelector('.pk-result')));
-    await waitFor(statusDone);
-    const one = card('review-gate').querySelector('[data-part="agent-guard"]');
-    button(one, /^Preview uninstalling this part/).click();
-    await waitFor(() => previewOf('review-gate'));
-    ok('a part\'s own uninstall previews only that part', /^Uninstall: review-gate — review-gate\/agent-guard/.test(t(previewOf('review-gate').querySelector('.pk-preview-head'))), t(previewOf('review-gate').querySelector('.pk-preview-head')));
-    button(card('review-gate'), /^Preview uninstall$/).click();
-    await waitFor(() => /review-gate\/code-review/.test(t(previewOf('review-gate')?.querySelector('.pk-preview-head'))));
-    button(previewOf('review-gate'), /^Uninstall$/).click();
+    await waitFor(statusDone, 30_000);
+    button(part('review-gate', 'agent-guard'), /^Remove…$/).click();
+    await waitFor(() => part('review-gate', 'agent-guard')?.querySelector('.pk-preview-head'));
+    ok('a part\'s Remove… previews only that part, under its row', /^Uninstall: review-gate — review-gate\/agent-guard/.test(t(part('review-gate', 'agent-guard').querySelector('.pk-preview-head'))), t(part('review-gate', 'agent-guard').querySelector('.pk-preview-head')));
+    act('review-gate', /^Uninstall…$/).click();
+    await waitFor(() => /review-gate\/code-review/.test(t(card('review-gate').querySelector(':scope > .pk-preview .pk-preview-head') || card('review-gate').querySelector('.pk-page > .pk-preview .pk-preview-head') || previewOf('review-gate')?.querySelector('.pk-preview-head'))));
+    ok('…and the pack\'s Uninstall… moves the preview up under the page\'s own button', !part('review-gate', 'agent-guard').querySelector('.pk-preview') && /review-gate\/code-review/.test(t(previewOf('review-gate')?.querySelector('.pk-preview-head'))));
+    apply('review-gate', /^Uninstall$/).click();
     ok('the pack\'s Uninstall takes the rest out', await waitFor(() => card('review-gate')?.querySelector('.pk-result'), 30_000)
       && !fs.existsSync(path.join(sb.home, '.claude/skills/code-review')) && !fs.existsSync(path.join(sb.home, '.agent-config-studio/review-gate')), t(card('review-gate')).slice(0, 400));
-    ok('…and the card goes back to not installed', await waitFor(() => /not installed/.test(t(card('review-gate').querySelector('.pk-head')))));
+    ok('…and the page goes back to not installed', await waitFor(() => /Not installed/.test(t(card('review-gate').querySelector('.pk-page-meta')))));
   }
 
   console.log('\nupdate puts back an instructions block I removed');
@@ -201,15 +213,17 @@ try {
     const begin = '<!-- acs-pack:review-gate/instructions begin -->', end = '<!-- acs-pack:review-gate/instructions end -->\n';
     const shipped = fs.readFileSync(path.join(ROOT, 'packs/review-gate/instructions/review-gate.md'), 'utf8');
     await waitFor(statusDone, 30_000);
-    check(card('review-gate'), /^Code-review skill/i).click();
-    check(card('review-gate'), /^Review-gate rules/i).click();
-    check(card('review-gate'), /^Codex \(/).click();
-    await waitFor(() => !!button(card('review-gate'), /^Preview install \(1 part\)/));
-    button(card('review-gate'), /^Preview install/).click();
-    await waitFor(() => previewOf('review-gate'));
-    button(previewOf('review-gate'), /^Install$/).click();
-    ok('the instructions part installs for Claude through the card', await waitFor(() => card('review-gate')?.querySelector('.pk-result'), 30_000)
-      && /Installed: review-gate\/instructions/.test(t(card('review-gate').querySelector('.pk-result'))) && sb.read(claudeMd)?.includes(begin), t(card('review-gate')).slice(0, 600));
+    button(part('review-gate', 'instructions'), /^Add…$/).click();
+    await waitFor(() => part('review-gate', 'instructions')?.querySelector('.pk-preview-head'));
+    const ip = () => part('review-gate', 'instructions')?.querySelector('.pk-preview');
+    check(ip(), /^Codex \(/).click();
+    await waitFor(() => ip()?.querySelector('.pk-preview-head') && !(ip().querySelectorAll('.pk-row').map(t).some((r) => /\.codex/.test(r))) && !button(ip(), /^Install$/)?.disabled);
+    ok('the instructions part previews for Claude alone from its own row', JSON.stringify(reqs().filter((r) => r.path === '/api/packs/plan').at(-1).body) === JSON.stringify({ action: 'install', pack: 'review-gate', parts: ['instructions'], harnesses: ['claude'] }),
+      JSON.stringify(reqs().filter((r) => r.path === '/api/packs/plan').at(-1).body));
+    button(ip(), /^Install$/).click();
+    const ires = () => part('review-gate', 'instructions')?.querySelector('.pk-result');
+    ok('the instructions part installs for Claude through the page', await waitFor(ires, 30_000)
+      && /Installed: review-gate\/instructions/.test(t(ires())) && sb.read(claudeMd)?.includes(begin), t(card('review-gate')).slice(0, 600));
     await waitFor(statusDone, 30_000);
     // A newer pack: the record says an earlier block went in (what an older version shipped), and then I deleted the block.
     const statePath = path.join(sb.home, '.agent-config-studio/packs/state.json');
@@ -220,22 +234,24 @@ try {
     const text = sb.read(claudeMd);
     fs.writeFileSync(claudeMd, text.slice(0, text.indexOf(begin)) + text.slice(text.indexOf(end) + end.length));
     ok('…recorded for CLAUDE.md only, and the block is now gone from it', recs.length === 1 && !sb.read(claudeMd).includes(begin), JSON.stringify(Object.keys(state.packs['review-gate'].parts.instructions.files)));
-    button(card('review-gate'), /^Preview update/).click();
-    await waitFor(() => previewOf('review-gate'));
+    button(page.$('pk-status'), /^Refresh$/).click();
+    ok('after a Refresh the page offers Update for it', await waitFor(() => statusDone() && !!act('review-gate', /^Update$/), 30_000), t(part('review-gate', 'instructions')));
+    act('review-gate', /^Update$/).click();
+    await waitFor(() => previewOf('review-gate')?.querySelector('.pk-preview-head'));
     const offer = () => check(previewOf('review-gate'), /Take the pack's copy/);
     ok('the update preview keeps it, saying the block is gone, and offers the pack\'s copy', (previewOf('review-gate')?.querySelectorAll('.pk-kept li') || []).map(t).join(' | ') === 'kept: ~/.claude/CLAUDE.md — the block is gone from the file'
-      && !!offer() && !offer().checked && button(previewOf('review-gate'), /^Update$/).disabled, t(previewOf('review-gate')).slice(0, 600));
+      && !!offer() && !offer().checked && apply('review-gate', /^Update$/).disabled, t(previewOf('review-gate')).slice(0, 600));
     offer().click();
     ok('ticking it re-previews: CLAUDE.md gets the block, and Update is enabled', await waitFor(() => offer()?.checked && rows('review-gate').some((r) => /~\/\.claude\/CLAUDE\.md/.test(r)))
-      && !previewOf('review-gate').querySelector('.pk-kept') && !button(previewOf('review-gate'), /^Update$/).disabled, t(previewOf('review-gate')).slice(0, 600));
+      && !previewOf('review-gate').querySelector('.pk-kept') && !apply('review-gate', /^Update$/).disabled, t(previewOf('review-gate')).slice(0, 600));
     const sent = reqs().filter((r) => r.path === '/api/packs/plan').at(-1).body;
     ok('…sent as replace: true', JSON.stringify(sent) === JSON.stringify({ action: 'update', pack: 'review-gate', replace: true }), JSON.stringify(sent));
-    button(previewOf('review-gate'), /^Update$/).click();
+    apply('review-gate', /^Update$/).click();
     ok('Update puts the pack\'s block back in CLAUDE.md', await waitFor(() => card('review-gate')?.querySelector('.pk-result'), 30_000)
       && /Updated: review-gate\/instructions/.test(t(card('review-gate').querySelector('.pk-result'))) && sb.read(claudeMd).includes(`${begin}\n${shipped}`), t(card('review-gate')).slice(0, 600));
-    const part = () => card('review-gate')?.querySelector('[data-part="instructions"]');
-    ok('…and the status after it says installed, not broken and no update waiting', await waitFor(() => statusDone() && /installed/.test(t(part()?.querySelector('.pk-badges'))), 30_000)
-      && !/not working|update available|block is gone/.test(t(part())), t(part()));
+    // Installed for Claude only, with Codex here: "New CLI here" is the honest word; never broken or an update waiting.
+    ok('…and the status after it says it is in, not broken and no update waiting', await waitFor(() => statusDone() && /^(On|New CLI here)$/.test(t(part('review-gate', 'instructions')?.querySelector('.pk-st'))), 30_000)
+      && !/not working|update available|block is gone/.test(part('review-gate', 'instructions').querySelector('.pk-st').getAttribute('title')), t(part('review-gate', 'instructions')));
   }
 
   console.log('\nlight and dark');
@@ -243,8 +259,12 @@ try {
     const css = fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8');
     const block = css.slice(css.indexOf('/* ── packs view'));
     ok('the packs styles use only the theme tokens (no literal colours)', block.length > 200 && !/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i.test(block), (block.match(/#[0-9a-f]{3,8}\b|rgba?\([^)]*\)/i) || [])[0]);
+    page.navigate('#packs');
+    await waitFor(() => page.$('content').querySelectorAll('.pk-card').length === 8);
     page.$('btn-theme').click();
-    ok('the theme toggle switches with the Packs view open, and it still renders', page.doc.documentElement.dataset.theme === 'light' && page.$('content').querySelectorAll('.pk-card').length === 8);
+    ok('the theme toggle switches with Packs open, and the grid still renders', page.doc.documentElement.dataset.theme === 'light' && page.$('content').querySelectorAll('.pk-card').length === 8);
+    card('review-gate');
+    ok('…and so does a pack\'s page', page.doc.documentElement.dataset.theme === 'light' && !!page.$('content').querySelector('.pk-page #pk-sec-files'));
   }
   ok('no page errors', page.errors.length === 0, page.errors.join(' | '));
 
@@ -263,15 +283,15 @@ try {
       if (!r.ok) throw { status: r.status, body: data };
       return data;
     };
-    const p1 = await bootPage({ routes: proxy1, hash: '#packs' });
-    const card1 = (id) => p1.$('content').querySelector(`[data-pack="${id}"]`);
-    await waitFor(() => p1.$('content').querySelectorAll('.pk-card').length === 8);
-    const codexBox = card1('review-gate').querySelectorAll('label').find((l) => /^Codex \(/.test(p1.text(l)));
-    ok('Codex\'s box is there, disabled and unticked, with why beside it', codexBox && codexBox.querySelector('input').disabled && !codexBox.querySelector('input').checked
-      && /Codex: not installed, and no ~\/\.codex/.test(p1.text(card1('review-gate').querySelector('.pk-harnesses'))), p1.text(card1('review-gate').querySelector('.pk-harnesses')));
-    card1('review-gate').querySelectorAll('button').find((b) => /^Preview install/.test(p1.text(b))).click();
-    await waitFor(() => card1('review-gate')?.querySelector('.pk-preview'));
-    const pv = () => card1('review-gate').querySelector('.pk-preview');
+    const p1 = await bootPage({ routes: proxy1, hash: '#packs/review-gate' });
+    const card1 = () => p1.$('content').querySelector('.pk-page[data-pack="review-gate"]');
+    await waitFor(() => card1());
+    card1().querySelector('.pk-page-actions').querySelectorAll('button').find((b) => p1.text(b) === 'Install').click();
+    const pv = () => card1().querySelector('.pk-preview');
+    await waitFor(() => pv()?.querySelector('.pk-preview-head'));
+    const codexBox = pv().querySelectorAll('label').find((l) => /^Codex \(/.test(p1.text(l)));
+    ok('in the install preview, Codex\'s box is there, disabled and unticked, with why beside it', codexBox && codexBox.querySelector('input').disabled && !codexBox.querySelector('input').checked
+      && /Codex: not installed, and no ~\/\.codex/.test(p1.text(pv().querySelector('.pk-harnesses'))), p1.text(pv().querySelector('.pk-harnesses')));
     const offer = () => pv()?.querySelector('select.pk-role-pick');
     ok('the preview says the reviewer role is not set and offers the installed families, blank until one is chosen, none put forward',
       /The reviewer role is not set: skills that use it stop until you choose its model/.test(p1.text(pv())) && offer() && offer().value === ''
