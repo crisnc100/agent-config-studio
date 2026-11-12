@@ -589,7 +589,7 @@ function pkPageHead(pack, card, sections) {
     meta.appendChild(ready);
   } else if (own.length) meta.appendChild(pkStatusWord(`Needs ${pkNeedText(own[0])}`, 'warn pk-need'));
   else {
-    meta.appendChild(pkStatusWord('Not ready', 'warn pk-need'));
+    meta.appendChild(pkStatusWord('Not ready', 'warn pk-not-ready'));
     meta.appendChild(pkBtn('ghost', 'See what to set up', () => pkGo(PK_SETUP)));
   }
   left.appendChild(meta);
