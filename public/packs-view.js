@@ -748,10 +748,12 @@ function pkFilesView(sec, pack) {
     ul.appendChild(li);
   }
   what.appendChild(ul);
-  // What the status check found per part: each CLI's state and anything it noticed.
+  // Per part: the CLIs it is installed for, then what the status check found (each home's state, anything it noticed).
   const lines = pack.parts.flatMap((part) => {
     const st = pkStatusOf(pack, part.id);
-    return [...Object.entries(st?.harness || {}).map(([h, s]) => `${part.title}: ${h}: ${s}`), ...(st?.details || []).map((d) => `${part.title}: ${d}`)];
+    const hs = st?.harnesses?.length ? st.harnesses : pack.installed?.parts?.[part.id]?.harnesses || [];
+    return [...(pkInstalled(pack, part.id) && hs.length ? [`${part.title}: installed for ${pkCliNames(hs)}`] : []),
+      ...Object.entries(st?.harness || {}).map(([h, s]) => `${part.title}: ${h}: ${s}`), ...(st?.details || []).map((d) => `${part.title}: ${d}`)];
   });
   if (lines.length) {
     what.appendChild(el('h3', 'pk-box-sub', 'On this machine'));
