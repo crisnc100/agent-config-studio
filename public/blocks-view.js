@@ -2,14 +2,16 @@
 
 /**
  * Loaded before app.js, which owns the helpers this calls (el, api,
- * renderMarkdown, renderSidebar…). Read-only: the one request it makes is
- * GET /api/blocks (tests/blocks-ui.mjs holds it to that); Compare works from
- * the data already read.
+ * renderMarkdown, renderSidebar…). Reading is GET /api/blocks alone; Compare
+ * works from the data already read. The one write is making one copy match:
+ * a preview the person reads, then apply with the preview's signature
+ * (tests/blocks-ui.mjs pins those three calls).
  *
  * Ratings come from the server and measure wording (shared word pairs), never
  * meaning, so no label here may claim two copies mean the same thing.
  */
-const BB = { data: null, error: null, loading: false, rule: null };
+/** match: the one copy being made to match ({ key, rule, copy, busy, preview, error, stale }); matched: the last apply's result. */
+const BB = { data: null, error: null, loading: false, rule: null, match: null, matched: null };
 const BB_LABEL = { same: 'Matches', reworded: 'Small changes', differs: 'Big changes' };
 const BB_ORDER = { differs: 0, reworded: 1, same: 2 };
 const BB_NOTE = {
@@ -275,6 +277,7 @@ const bbRuleMoved = (hash) => bbRuleOf(hash) !== BB.rule;
 
 function bbCompare(id) {
   BB.rule = id;
+  BB.match = null; BB.matched = null;
   location.hash = `${BB_COMPARE_HASH}&rule=${encodeURIComponent(id)}`;
   openBlocksCompare();
 }
@@ -295,6 +298,7 @@ async function openBlocksCompare() {
 }
 
 function bbBack() {
+  BB.match = null; BB.matched = null;
   location.hash = '#blocks';
   openBlocks();
 }
@@ -315,6 +319,12 @@ function paintCompare() {
   if (BB.error && !BB.data) { bbFailed(box); c.appendChild(box); return; }
   if (!b) { box.appendChild(el('p', 'bb-empty', 'That rule is not on the list any more.')); c.appendChild(box); return; }
   box.appendChild(el('p', 'bb-cmp-intro', 'Each of your copies beside the reference version. The studio compares words, not meaning: read both and decide whether the copy still says what you want.'));
+  if (BB.matched?.rule === b.id) {
+    const r = BB.matched;
+    const n = el('div', 'notice bb-result', `Updated ${r.file}: that copy now matches the reference. ${r.undo}`);
+    n.setAttribute('role', 'status');
+    box.appendChild(n);
+  }
   const legend = el('p', 'bb-legend');
   legend.appendChild(el('del', 'bb-missing', 'Missing from this copy'));
   legend.appendChild(el('ins', 'bb-only', 'Only in this copy'));
@@ -341,10 +351,142 @@ function paintCompare() {
       cols.appendChild(own);
       sec.appendChild(cols);
       if (copy.textCut) sec.appendChild(el('p', 'bb-note', 'This copy is long: only its start is shown, so words further on may be marked as missing.'));
+      bbMatchPart(sec, b, copy);
     }
     box.appendChild(sec);
   }
   const packs = bbPacksLine(b);
   if (packs) box.appendChild(packs);
   c.appendChild(box);
+}
+
+const bbKey = (c) => `${c.file}\n${c.line}\n${c.endLine}`;
+
+/** Under a drifted copy: its button, the preview with Make it match and Cancel, or why it cannot be replaced. */
+function bbMatchPart(sec, b, copy) {
+  if (!copy.canMatch) {
+    if (copy.whyNot) sec.appendChild(el('p', 'bb-why', copy.whyNot));
+    return;
+  }
+  const m = BB.match?.key === bbKey(copy) ? BB.match : null;
+  if (!m) {
+    const row = el('div', 'bb-actions');
+    const go = el('button', 'btn', 'Make this copy match');
+    go.disabled = !!BB.match?.busy;
+    go.onclick = () => bbPreview(b.id, copy);
+    row.appendChild(go);
+    sec.appendChild(row);
+    return;
+  }
+  const box = el('div', 'bb-match');
+  box.setAttribute('role', 'region');
+  box.setAttribute('aria-label', 'Preview of the change');
+  const acts = el('div', 'bb-actions');
+  if (m.error) {
+    const n = el('div', 'notice error', m.error);
+    n.setAttribute('role', 'alert');
+    box.appendChild(n);
+    if (m.stale) {
+      const again = el('button', 'btn', 'Preview again');
+      again.disabled = m.busy;
+      again.onclick = () => bbPreviewAgain(m);
+      acts.appendChild(again);
+    }
+  }
+  const p = m.preview;
+  if (p) {
+    const at = p.endLine > p.line ? `lines ${p.line}–${p.endLine}` : `line ${p.line}`;
+    box.appendChild(el('p', null, `In ${p.file}, ${at} ${p.endLine > p.line ? 'become' : 'becomes'} the reference version:`));
+    box.appendChild(bbLineDiff(p.diff, p.line));
+    box.appendChild(el('p', 'bb-match-note', 'The old file is saved to History first, so you can put it back. Nothing else in the file changes.'));
+    const yes = el('button', 'btn primary', m.busy ? 'Saving…' : 'Make it match');
+    yes.disabled = m.busy;
+    yes.onclick = () => bbApply();
+    acts.appendChild(yes);
+  } else if (m.busy) {
+    box.appendChild(el('p', 'bb-match-note', 'Reading the file…'));
+  }
+  const cancel = el('button', 'btn ghost', 'Cancel');
+  cancel.disabled = m.busy;
+  // After a refusal the copy's lines on the page may be out of date: read them again.
+  cancel.onclick = () => { const refused = !!m.error; BB.match = null; if (refused) bbLoad(); else paintCompare(); };
+  acts.appendChild(cancel);
+  box.appendChild(acts);
+  sec.appendChild(box);
+}
+
+/** The server's line diff, numbered from the copy's first line in the file. */
+function bbLineDiff(rows, from) {
+  const wrap = el('div', 'diff bb-lines');
+  const type = { '+': 'add', '-': 'del', ' ': 'ctx' };
+  let a = from - 1, n = from - 1;
+  for (const r of rows) {
+    if (r.op !== '+') a++;
+    if (r.op !== '-') n++;
+    const line = el('div', `diff-line ${type[r.op]}`);
+    line.appendChild(el('span', 'n', String(r.op === '-' ? a : n)));
+    line.appendChild(el('span', 't', `${r.op} ${r.line}`));
+    wrap.appendChild(line);
+  }
+  return wrap;
+}
+
+function bbFocusMatch() {
+  const box = $('content').querySelector('.bb-match');
+  box?.scrollIntoView?.({ block: 'nearest' });
+  box?.querySelector('.btn.primary, .btn:not(.ghost)')?.focus?.({ preventScroll: true });
+}
+
+async function bbPreview(rule, copy) {
+  const m = { key: bbKey(copy), rule, copy, busy: true, preview: null, error: null, stale: false };
+  BB.match = m; BB.matched = null;
+  paintCompare();
+  try { m.preview = await api('POST', '/api/blocks/match/preview', { rule, file: copy.file, line: copy.line, endLine: copy.endLine }); }
+  catch (e) { m.error = e.message; m.stale = e.status === 409; }
+  if (BB.match !== m) return;
+  m.busy = false;
+  paintCompare();
+  bbFocusMatch();
+}
+
+/**
+ * After a refusal the copy may have moved: check again first, then preview
+ * the same copy where it is now — by its place if it is still there, else
+ * the one drifted copy of this rule left in that file. With none, or more
+ * than one, the refreshed page is left for the person to choose from.
+ */
+async function bbPreviewAgain(m) {
+  m.busy = true;
+  paintCompare();
+  await bbLoad();
+  if (BB.match !== m) return;
+  const rule = BB.data?.blocks.find((x) => x.id === m.rule);
+  const offered = (rule?.copies || []).filter((c) => c.canMatch);
+  const here = offered.find((c) => bbKey(c) === m.key) || (() => {
+    const inFile = offered.filter((c) => c.file === m.copy.file);
+    return inFile.length === 1 ? inFile[0] : null;
+  })();
+  if (!here) { BB.match = null; paintCompare(); return; }
+  await bbPreview(m.rule, here);
+}
+
+async function bbApply() {
+  const m = BB.match;
+  if (!m?.preview || m.busy) return;
+  m.busy = true; m.error = null;
+  paintCompare();
+  const { rule, copy, preview } = m;
+  let r;
+  try { r = await api('POST', '/api/blocks/match/apply', { rule, file: copy.file, line: copy.line, endLine: copy.endLine, signature: preview.signature }); }
+  catch (e) {
+    if (BB.match !== m) return;
+    m.busy = false; m.error = e.message; m.stale = e.status === 409;
+    if (m.stale) m.preview = null;
+    paintCompare();
+    bbFocusMatch();
+    return;
+  }
+  if (BB.match === m) BB.match = null;
+  BB.matched = { ...r, rule };
+  await bbLoad();
 }

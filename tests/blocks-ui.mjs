@@ -2,7 +2,8 @@
  * The Shared rules page (builds/building-blocks-page C1–C4, builds/shared-rules-page
  * A1–A6), in the fake DOM against stubbed routes: under Workflows in the sidebar,
  * each rule with its reference text and every copy's place and rating, no fold,
- * every button one of the three kinds, and the only request the page makes is GET /api/blocks.
+ * every button one of the three kinds; reading, the only request is GET /api/blocks, and
+ * only making one copy match (builds/shared-rules-ux B1, B2, B6) posts.
  * The static half reads the view's source and its styles. No server, no HOME.
  */
 import fs from 'node:fs';
@@ -313,12 +314,181 @@ try {
   ok(`no shared-rules test block threw (${err?.message || err})`, false, err?.stack || String(err));
 }
 
+/* ── make one copy match (builds/shared-rules-ux B1, B2, B6) ─────────── */
+console.log('\nCompare copies: make one copy match');
+{
+  const RP = RICH.blocks.find((b) => b.id === 'review-policy');
+  const WHY = 'This copy sits inside a longer paragraph, so the studio cannot tell exactly where the rule starts and ends. Change it by hand.';
+  const fixable = (c) => (c.pack || c.rating === 'same' ? { ...c, canMatch: false, whyNot: null }
+    : c.line === 103 ? { ...c, canMatch: false, whyNot: WHY } : { ...c, canMatch: true, whyNot: null });
+  const state = { matched: false };
+  const view = () => ({ blocks: [{ ...RP, copies: RP.copies.map(fixable).map((c) => (state.matched && c.line === 220 ? { ...c, rating: 'same', canMatch: false, note: null, text: RP_TEXT.trim() } : c)) }], scanned: RICH.scanned });
+  const PREVIEW = { file: '~/.claude/skills/build/SKILL.md', line: 220, endLine: 230, removed: ['old line'], added: ['new line'], signature: 'f'.repeat(64),
+    diff: [{ op: ' ', line: '<!-- block:review-policy sha256:aa -->' }, { op: '-', line: '1. The operator is involved only at merge.' }, { op: '+', line: '1. The operator is involved only at PR merge.' }] };
+  const mcalls = [];
+  let applyAnswer = () => { state.matched = true; return { saved: true, file: '~/.claude/skills/build/SKILL.md', line: 220, sha: 'abc', warnings: [], undo: 'The old version is in History (~/.agent-config-studio/history): open ~/.claude/skills/build/SKILL.md and choose History to put it back.' }; };
+  const base = routesFor({
+    'GET /api/blocks': () => view(),
+    'POST /api/blocks/match/preview': (b) => { mcalls.push(['preview', b]); return PREVIEW; },
+    'POST /api/blocks/match/apply': (b) => { mcalls.push(['apply', b]); return applyAnswer(b); },
+  });
+  const all = [];
+  const routes = Object.assign(async (m, pth, b, u) => { all.push(`${m} ${pth}`); return base(m, pth, b, u); }, base);
+  try {
+    const p = await bootPage({ routes, hash: '#blocks/compare&rule=review-policy' });
+    const c = p.$('content');
+    const t = (n) => (n ? p.text(n) : '');
+    await until(() => c.querySelector('.bb-cmp'));
+    const sec = (line) => c.querySelectorAll('.bb-cmp').find((x) => new RegExp(`· lines? ${line}\\b`).test(t(x.querySelector('.bb-place'))));
+    const btnIn = (n, label) => n?.querySelectorAll('button').find((b) => t(b) === label);
+    ok('B1 a drifted copy of yours has a secondary "Make this copy match"', btnIn(sec(220), 'Make this copy match')?.className === 'btn' && btnIn(sec(65), 'Make this copy match')?.className === 'btn',
+      [sec(220), sec(65)].map((x) => x?.innerHTML.slice(0, 200)).join(' | '));
+    ok('B1 …a matching copy has none, and pack copies are not on the page to offer', !btnIn(sec(40), 'Make this copy match')
+      && c.querySelectorAll('button').filter((b) => t(b) === 'Make this copy match').length === 2);
+    ok('a copy that cannot be replaced exactly has no button, and one line saying why', !btnIn(sec(103), 'Make this copy match') && t(sec(103).querySelector('.bb-why')) === WHY, t(sec(103)));
+    ok('no update-all button', !c.querySelectorAll('button').some((b) => /\ball\b/i.test(t(b))));
+    all.length = 0;
+    btnIn(sec(220), 'Make this copy match').click();
+    await until(() => sec(220)?.querySelector('.bb-match .diff'));
+    const box = sec(220).querySelector('.bb-match');
+    ok('B2 clicking asks for a preview of that copy, as the scan named it, and writes nothing', JSON.stringify(mcalls) === JSON.stringify([['preview', { rule: 'review-policy', file: '~/.claude/skills/build/SKILL.md', line: 220, endLine: 230 }]])
+      && !all.some((x) => /apply/.test(x)), JSON.stringify(mcalls));
+    ok('B2 the preview sits under that copy: the file, and the lines removed and added', /~\/\.claude\/skills\/build\/SKILL\.md/.test(t(box)) && /lines 220–230/.test(t(box))
+      && box.querySelectorAll('.diff-line.del').length === 1 && box.querySelectorAll('.diff-line.add').length === 1 && /involved only at merge/.test(t(box.querySelector('.diff-line.del')))
+      && /only at PR merge/.test(t(box.querySelector('.diff-line.add'))), t(box));
+    ok('B2 …with the real line numbers of the file', t(box.querySelector('.diff-line .n')) === '220', t(box.querySelector('.diff-line .n')));
+    ok('B2 …saying the old file goes to History first', /History/.test(t(box)), t(box));
+    ok('B2 …a primary "Make it match" and a quiet Cancel', /\bprimary\b/.test(btnIn(box, 'Make it match')?.className) && /\bghost\b/.test(btnIn(box, 'Cancel')?.className),
+      box.querySelectorAll('button').map((b) => `${t(b)}:${b.className}`).join(' | '));
+    ok('no fold, and every button styled', !c.querySelector('details, summary, [aria-expanded]') && c.querySelectorAll('button').every((b) => /\bbtn\b/.test(b.className)));
+    btnIn(box, 'Cancel').click();
+    await settle(10);
+    ok('B2 Cancel drops the preview, writes nothing, and the button is back', !sec(220).querySelector('.bb-match') && !!btnIn(sec(220), 'Make this copy match')
+      && mcalls.length === 1, JSON.stringify(mcalls));
+
+    // A stale apply: refused, said so, Preview again.
+    applyAnswer = () => { throw { status: 409, body: { error: 'The file changed since the preview. Nothing was written; preview it again.' } }; };
+    btnIn(sec(220), 'Make this copy match').click();
+    await until(() => btnIn(sec(220)?.querySelector('.bb-match'), 'Make it match'));
+    btnIn(sec(220).querySelector('.bb-match'), 'Make it match').click();
+    await until(() => /changed since the preview/.test(t(sec(220)?.querySelector('.bb-match'))));
+    const st = sec(220).querySelector('.bb-match');
+    ok('a stale apply says the file changed and nothing was written', /The file changed since the preview\. Nothing was written/.test(t(st)), t(st));
+    ok('…offers a secondary Preview again, and no Make it match', btnIn(st, 'Preview again')?.className === 'btn' && !btnIn(st, 'Make it match'), st.querySelectorAll('button').map((b) => `${t(b)}:${b.className}`).join(' | '));
+    ok('…and the apply carried the preview\'s signature', mcalls.at(-1)[0] === 'apply' && mcalls.at(-1)[1].signature === 'f'.repeat(64), JSON.stringify(mcalls.at(-1)));
+    mcalls.length = 0;
+    btnIn(st, 'Preview again').click();
+    await until(() => btnIn(sec(220)?.querySelector('.bb-match'), 'Make it match'));
+    ok('Preview again asks for a fresh preview', mcalls.length === 1 && mcalls[0][0] === 'preview', JSON.stringify(mcalls));
+
+    // Apply: the page checks again and the copy shows as the same.
+    applyAnswer = (b) => { state.matched = true; return { saved: true, file: b.file, line: 220, sha: 'abc', warnings: [], undo: 'The old version is in History (~/.agent-config-studio/history): open ~/.claude/skills/build/SKILL.md and choose History to put it back.' }; };
+    all.length = 0;
+    btnIn(sec(220).querySelector('.bb-match'), 'Make it match').click();
+    await until(() => c.querySelector('.bb-result'));
+    await until(() => sec(220)?.querySelector('.bb-same'));
+    ok('B6 after the write the page checks again (GET /api/blocks)', all.includes('POST /api/blocks/match/apply') && all.indexOf('GET /api/blocks') > all.indexOf('POST /api/blocks/match/apply'), all.join(', '));
+    ok('B6 …and that copy now shows as the same, with no button', t(sec(220).querySelector('.bb-rating')) === 'Matches' && !!sec(220).querySelector('.bb-same') && !btnIn(sec(220), 'Make this copy match'), t(sec(220)));
+    ok('B3 the result line names the file and how to undo', /~\/\.claude\/skills\/build\/SKILL\.md/.test(t(c.querySelector('.bb-result'))) && /History/.test(t(c.querySelector('.bb-result'))),
+      t(c.querySelector('.bb-result')));
+    ok('the page stays on Compare for that rule', p.eval('S.view') === 'blocks-compare' && p.location.hash === '#blocks/compare&rule=review-policy');
+    ok('no "marked" in the page\'s own words', !/\bmarked\b/i.test(c.querySelectorAll('.bb-cmp-intro, .bb-why, .bb-match p, .bb-result').map(t).join(' ')));
+    ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
+    p.done();
+  } catch (err) {
+    ok(`no make-it-match test block threw (${err?.message || err})`, false, err?.stack || String(err));
+  }
+}
+
+/* ── Preview again after the copy moved (review f3) ─────────────────── */
+console.log('\nCompare copies: Preview again checks again first');
+{
+  const RP = RICH.blocks.find((b) => b.id === 'review-policy');
+  const state = { moved: false };
+  const copies = () => RP.copies.filter((c) => !c.pack && c.line === 220).map((c) => ({ ...c, canMatch: true, whyNot: null, ...(state.moved ? { line: 223, endLine: 233 } : {}) }));
+  const view = () => ({ blocks: [{ ...RP, copies: copies() }], scanned: RICH.scanned });
+  const seen = [];
+  const base = routesFor({
+    'GET /api/blocks': () => view(),
+    'POST /api/blocks/match/preview': (b) => {
+      seen.push(['preview', b.line]);
+      if (b.line !== (state.moved ? 223 : 220)) throw { status: 409, body: { error: 'This copy is not where it was: the file changed. Check again.' } };
+      return { file: b.file, line: b.line, endLine: b.endLine, removed: ['a'], added: ['b'], signature: 'e'.repeat(64), diff: [{ op: '-', line: 'a' }, { op: '+', line: 'b' }] };
+    },
+    'POST /api/blocks/match/apply': () => { seen.push(['apply']); throw { status: 409, body: { error: 'The file changed since the preview. Nothing was written; preview it again.' } }; },
+  });
+  const routes = Object.assign(async (m, pth, b, u) => { seen.push([`${m} ${pth}`]); return base(m, pth, b, u); }, base);
+  try {
+    const p = await bootPage({ routes, hash: '#blocks/compare&rule=review-policy' });
+    const c = p.$('content');
+    const t = (n) => (n ? p.text(n) : '');
+    const btn = (label) => c.querySelectorAll('button').find((b) => t(b) === label);
+    await until(() => btn('Make this copy match'));
+    btn('Make this copy match').click();
+    await until(() => btn('Make it match'));
+    state.moved = true;
+    btn('Make it match').click();
+    await until(() => btn('Preview again'));
+    seen.length = 0;
+    btn('Preview again').click();
+    await until(() => btn('Make it match'));
+    const order = seen.map((x) => x[0]);
+    ok('f3 Preview again checks again (GET /api/blocks) before it previews', order.indexOf('GET /api/blocks') > -1 && order.indexOf('GET /api/blocks') < order.lastIndexOf('preview'), JSON.stringify(seen));
+    ok('f3 …and previews the copy where it is now, not at its old lines', seen.filter((x) => x[0] === 'preview').at(-1)?.[1] === 223 && /lines 223–233/.test(t(c.querySelector('.bb-match'))), JSON.stringify(seen));
+    ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
+    p.done();
+  } catch (err) {
+    ok(`no Preview again test block threw (${err?.message || err})`, false, err?.stack || String(err));
+  }
+}
+
+/* ── browser QA fixes: one line's grammar, Cancel after a refusal ────── */
+console.log('\nCompare copies: QA fixes');
+{
+  const RP = RICH.blocks.find((b) => b.id === 'review-policy');
+  const view = () => ({ blocks: [{ ...RP, copies: RP.copies.filter((c) => c.line === 220).map((c) => ({ ...c, canMatch: true, whyNot: null })) }], scanned: RICH.scanned });
+  let answer = (b) => ({ file: b.file, line: 7, endLine: 7, removed: ['a'], added: ['b'], signature: 'd'.repeat(64), diff: [{ op: '-', line: 'a' }, { op: '+', line: 'b' }] });
+  const seen = [];
+  const base = routesFor({ 'GET /api/blocks': () => view(), 'POST /api/blocks/match/preview': (b) => answer(b) });
+  const routes = Object.assign(async (m, pth, b, u) => { seen.push(`${m} ${pth}`); return base(m, pth, b, u); }, base);
+  try {
+    const p = await bootPage({ routes, hash: '#blocks/compare&rule=review-policy' });
+    const c = p.$('content');
+    const t = (n) => (n ? p.text(n) : '');
+    const btn = (label) => c.querySelectorAll('button').find((b) => t(b) === label);
+    await until(() => btn('Make this copy match'));
+    btn('Make this copy match').click();
+    await until(() => btn('Make it match'));
+    ok('QA a one-line preview says "line 7 becomes"', /, line 7 becomes the reference version:/.test(t(c.querySelector('.bb-match'))), t(c.querySelector('.bb-match')));
+    btn('Cancel').click();
+    await settle(10);
+    answer = () => { throw { status: 409, body: { error: 'This copy is not where it was: the file changed. Preview it again.' } }; };
+    btn('Make this copy match').click();
+    await until(() => btn('Preview again'));
+    seen.length = 0;
+    btn('Cancel').click();
+    await until(() => seen.includes('GET /api/blocks') && btn('Make this copy match'));
+    ok('QA Cancel after a refused preview checks again, so the copy\'s lines are current', seen.includes('GET /api/blocks') && !c.querySelector('.bb-match'), seen.join(', '));
+    ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
+    p.done();
+  } catch (err) {
+    ok(`no QA-fix test block threw (${err?.message || err})`, false, err?.stack || String(err));
+  }
+  const css = fs.readFileSync(path.join(PUB, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const bb = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /\.bb-/.test(m[1]));
+  const px = bb.flatMap((m) => [...m[2].matchAll(/font(?:-size)?\s*:\s*[^;]*?(\d+(?:\.\d+)?)px/g)].map((x) => [m[1].trim(), Number(x[1])]));
+  ok('QA nothing on the Shared rules pages is under 12px, the file path under each copy included', px.length > 5 && px.every(([, n]) => n >= 12)
+    && px.some(([sel]) => sel === '.bb-path'), px.filter(([, n]) => n < 12).map((x) => x.join(' ')).join(' | '));
+  const sameSec = bb.filter((m) => m[1].split(',').some((x) => x.trim() === '.bb-cmp.bb-same')).map((m) => m[2]).join(';');
+  ok('QA a matching copy\'s section keeps the gap below it that the other sections have', /margin\s*:\s*0 0 14px/.test(sameSec), sameSec);
+}
+
 /* ── static: the view only reads; its colours are the theme's ────────── */
 console.log('\nstatic: blocks-view.js and its styles');
 {
   const src = fs.readFileSync(path.join(PUB, 'blocks-view.js'), 'utf8');
   const apiCalls = [...src.matchAll(/api\(\s*'([A-Z]+)'\s*,\s*'([^']+)'/g)].map((m) => `${m[1]} ${m[2]}`);
-  ok('blocks-view.js calls the API once, GET /api/blocks', JSON.stringify(apiCalls) === JSON.stringify(['GET /api/blocks']), apiCalls.join(', '));
+  ok('blocks-view.js calls the API three ways: GET /api/blocks, and the preview and apply of making one copy match', JSON.stringify(apiCalls) === JSON.stringify(['GET /api/blocks', 'POST /api/blocks/match/preview', 'POST /api/blocks/match/apply']), apiCalls.join(', '));
   ok('…and has no other way out: no fetch, form, XHR or beacon', !/\bfetch\(|XMLHttpRequest|sendBeacon|<form|\.submit\(/.test(src));
   const css = fs.readFileSync(path.join(PUB, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const bb = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /\.bb-/.test(m[1]));
