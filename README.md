@@ -241,11 +241,8 @@ expected to diverge afterwards.
 
 **New skill, by interview.** **New skill** on the Skills view opens a wizard:
 describe the skill, answer the interview one question at a time, pick where it
-goes, tick any rules from **Shared rules**, then review the drafted
-`SKILL.md` and create it. No block is ticked for you. The model sees only the
-names of the ticked blocks; the studio adds their text word for word at the
-end, under **Shared rules**. Nothing is written until you press **Create**,
-and it writes exactly what Review shows.
+goes, then review the drafted `SKILL.md` and create it. Nothing is written
+until you press **Create**, and it writes exactly what Review shows.
 
 **Deleting is never destructive.** A delete records the current contents in
 history, moves the item to `~/.agent-config-studio/trash/`, then commits the
@@ -648,94 +645,6 @@ never model ids, and points at `model-id` for the current id.
   markers, a file that is not UTF-8, over 1 MB or hard-linked, and invalid
   roles are each shown and refused (removing a block still works while the
   roles are invalid). Hand-written text outside the block is never touched.
-
-## Shared rules
-
-**Shared rules** (under Workflows) lists the rules that many instruction files
-and skills repeat: the review policy, the callback contract, who merges, and
-the rest. Each rule's reference version lives once in `blocks/` in this repo,
-and the page checks every file for copies of it.
-
-It reads the global `CLAUDE.md` and `AGENTS.md` files (Claude, Codex, Grok),
-the Claude and Codex skill folders, the shared `~/.agents/skills`, each
-project's `.claude`, `.codex` and `.agents` skill folders under your edit
-folders, and each pack's `skills/` and `instructions/` in `packs/`; text
-inside a block the studio generates, such as the model guide, is skipped.
-
-Each copy is rated by its wording against the reference: **Matches** (the same
-words in the same order), **Small changes** (close in wording: a few words
-changed, or a sentence swapped or added) or **Big changes** (part left out,
-other rules added, or the rule inside a longer paragraph). Ratings compare
-wording, not meaning. Each rule sits in one group by its worst copy: **Needs a
-look**, **Small wording changes**, **Match everywhere**, or **Not in your
-files** when only the studio's packs carry it or nothing does. The first three
-groups always show, with a line saying so when one is empty. Each rule's card
-leads with how many of your copies match (`2 of 5 copies match`). Copies in
-the studio's own packs are counted on one line per rule and never move a
-rule's group or its count. A copy says where it lives in words
-(`CLAUDE.md (Claude, global) · line 168`, `SKILL.md in the build skill
-(Claude) · lines 75–79`; a project's skill names the project folder) with the
-full path beneath, and a rule found more than once in one file is flagged.
-
-A copy between `<!-- block:<id> sha256:… -->` and `<!-- /block:<id> -->` lines
-was pasted in by the studio. It matches only byte for byte; otherwise it says
-whether it was changed by hand after it was pasted in or came from an older
-version of the rule.
-
-**Compare copies** (on Needs a look and Small wording changes rules) opens
-`#blocks/compare&rule=<id>`: each of your copies beside the reference, with
-words **missing from this copy** marked in the reference and words **only in
-this copy** marked in the copy. A copy's text is sent up to 60 lines or 6,000
-characters; a longer copy says only its start is shown. **Back** returns to
-the list without reading the files again; **Check again** reads everything
-again.
-
-Under a copy that differs, **Make this copy match** previews the change: the
-file, and the lines that become the reference version between block markers.
-**Make it match** saves the old file to History first (if that fails, nothing
-is written), then changes only those lines, keeping the file's line endings;
-the file's History tab puts the old version back. The page then checks again.
-If the file changed after the preview, nothing is written and **Preview
-again** offers a fresh preview. Copies in the studio's packs are never
-changed, and a copy the studio cannot replace exactly (inside a longer
-paragraph, or sharing lines with another rule's copy) says why instead. Each
-change is one copy at a time.
-
-The skill wizard's Blocks step pastes ticked blocks as marked copies: after
-the draft, a `## Shared rules` heading, then each block under its `### name`
-line between its markers, in the order the Blocks step lists them. **Regenerate** pastes them
-again, so an edit made inside a block on Review does not survive it.
-
-**Add to…** (on a rule's card, and beside **Back** in Compare copies) opens
-`#blocks/add&rule=<id>`: a list, under Instruction files and Skills, of the
-files the page reads that have no copy of that rule. The button shows only
-when at least one such file exists. A file is offered only when it is an
-instruction file or a skill's `SKILL.md`, outside the studio's packs, and its
-real path is one too: a link that leads outside the folders the studio may
-change, into the packs, or to anything other than a `CLAUDE.md` or `AGENTS.md`
-(for an instruction file) or a `SKILL.md` inside a `skills` folder (for a
-skill) is left off, as is a file the page could not read.
-
-Tick files and choose **Preview**: for each file it shows where the rule goes
-and the added lines with the lines around them. The rule goes in the skill
-wizard's layout above, as `### <name>` between block markers, in the file's
-own line endings. When the file has a `# Shared rules` or `## Shared rules`
-heading outside code examples (the last one, if several), the rule goes after
-the last block under it, or after its last line; otherwise a new `## Shared
-rules` heading goes at the end of the file. A file whose last line has no
-line break gets one first. Changing a tick drops the preview.
-
-**Add to N files** writes all the files or none. It checks every file against
-its preview, saves each old file to History, checks every file once more, and
-only then writes; as with Make this copy match, a file's History tab puts its
-old version back. If any file changed since the preview, nothing is written
-and **Preview again** checks again, then previews the files still ticked. If
-an old file cannot be saved to History, nothing is written. If a write still
-fails partway, the message names the files written and the files not written.
-Afterwards the page checks again and lists each file with its rating. A file
-that ends inside a code example that is never closed (a line opening a fence
-of three backticks or three tildes, with no closing one) is refused, because the rule would land inside
-it; add the rule there by hand.
 
 ## Review gate settings
 
