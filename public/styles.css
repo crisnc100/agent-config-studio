@@ -1,29 +1,29 @@
 :root {
   color-scheme: dark;
-  --bg: #0e1014;
-  --panel: #15181e;
-  --panel-2: #1b1f27;
-  --panel-3: #222731;
-  --border: #262c36;
-  --border-soft: #1f242c;
-  --text: #e7e9ee;
-  --text-dim: #b3bac7;
-  --muted: #8d97a6; /* 5:1 on the darkest panel */
-  --accent: #e0855f;
-  --accent-dim: #a35f42;
-  --claude: #d97757;
-  --codex: #62a0d8;
-  --green: #6cc08b;
-  --red: #e06b6b;
-  --amber: #d9a441;
-  --on-accent: #16110e;
+  --bg: #1e2125;
+  --panel: #25292e;
+  --panel-2: #2c3036;
+  --panel-3: #343940;
+  --border: #434951;
+  --border-soft: #343940;
+  --text: #e8e6e1;
+  --text-dim: #c6c3bc;
+  --muted: #b0aca5; /* 5:1 on the darkest panel */
+  --accent: #eb9470;
+  --accent-dim: #b8714f;
+  --claude: #e88c68;
+  --codex: #86b6e0;
+  --green: #88cc9e;
+  --red: #f08a82;
+  --amber: #e2b660;
+  --on-accent: #1a120d;
   /* Text that sits on its own colour's tint (badges, hits, diff lines). Dark: the colour itself. */
   --accent-ink: var(--accent);
   --claude-ink: var(--claude);
   --codex-ink: var(--codex);
   --green-ink: var(--green);
   --amber-ink: var(--amber);
-  --shadow: rgba(0, 0, 0, 0.45);
+  --shadow: rgba(0, 0, 0, 0.32);
   --radius: 9px;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
@@ -66,7 +66,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 14px/1.5 var(--sans);
-  -webkit-font-smoothing: antialiased;
+  -webkit-font-smoothing: auto;
   overflow: hidden;
 }
 button, input, textarea, select { font: inherit; color: inherit; }
