@@ -170,11 +170,6 @@ tests/packs-pages.mjs                                 ci:offline
 # Workflow diagrams: pack.json's workflow, its drift guard, the route, the Packs card and Models' Steps line (temp HOME, stubbed routes).
 tests/packs-workflow.mjs                              ci:offline
 tests/packs-security.mjs                              local                         # its backups helper (line 51) needs fs.readdirSync recursive, Node 20.1+; the offline job pins 20.0.0
-# Building blocks: finding and rating copies, the GET-only route (temp HOME), then the page (stubbed routes).
-tests/blocks.mjs                                      ci:offline
-tests/blocks-match.mjs                                ci:offline
-tests/blocks-add.mjs                                  ci:offline
-tests/blocks-ui.mjs                                   ci:offline
 # A stranger's machine: empty temp HOME, no agent CLI on PATH, every GET route.
 tests/fresh-home.mjs                                  ci:offline
 # The setup screen's server half: temp HOMEs, fake CLIs, a fixture tree.
@@ -199,8 +194,6 @@ tests/packs-flag.mjs                                  ci:offline
 tests/packs-pr.mjs                                    ci:offline
 tests/packs-review-settings.mjs                       ci:offline
 tests/roles-security.mjs                              ci:offline
-tests/skill-wizard-blocks.mjs                         ci:offline
-tests/skill-wizard-blocks-ui.mjs                      ci:offline
 tests/ui-clarity-f.mjs                                ci:offline
 tests/ui-clarity-g.mjs                                ci:offline
 # The review gate's and the PR pack's own tests: CI only (about 15 minutes in one

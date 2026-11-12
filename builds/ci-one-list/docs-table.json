@@ -89,11 +89,11 @@
      "claims": [
       {
        "claim": "the pr pack tests are ci:packs ci-only",
-       "at": "tests/SUITE:209"
+       "at": "tests/SUITE:202"
       },
       {
        "claim": "the review-gate pack tests are ci:packs ci-only",
-       "at": "tests/SUITE:211"
+       "at": "tests/SUITE:204"
       },
       {
        "claim": "ci-only lines are never run by verify.sh",

@@ -33,7 +33,7 @@ jobs:
           # node --check reads only its first file (the rest become script
           # arguments), so each file gets its own run; xargs exits non-zero if
           # any run does. An empty match would pass vacuously, so it fails.
-          src=(lib tests public bin packs tools blocks)
+          src=(lib tests public bin packs tools)
           n=$(find "${src[@]}" \( -name '*.js' -o -name '*.mjs' \) | wc -l)
           if [ "$n" -eq 0 ]; then echo "no .js or .mjs file under ${src[*]}" >&2; exit 1; fi
           find "${src[@]}" \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n 1 node --check

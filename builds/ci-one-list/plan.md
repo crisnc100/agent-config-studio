@@ -78,12 +78,12 @@ A PR shows five checks instead of ten, and the wait is measured, not assumed.
    only under the test-change rule (own commit, each changed assertion named, checked by another model).
 
 ### PR 3: the tests CI skips
-1. The `local` files that can run on a CI runner, and the 7 `pending-ci` files in `tests/` (`packs-review-settings`
-   was already `local`), join the `offline` group: 45 files. Each either passes on Linux at the minimum Node, or stays
+1. The `local` files that can run on a CI runner, and the 5 `pending-ci` files in `tests/` (`packs-review-settings`
+   was already `local`), join the `offline` group: 39 files. Each either passes on Linux at the minimum Node, or stays
    `local` with the specific reason on its line. Five stay: `models-scripts` (runs the review script installed in the
    real home), `skill-usage` (reads the real `~/.claude/projects`), `models-backup` (restores this machine's real
    backup), `zip` (cross-checks with macOS `ditto`), `packs-security` (its helper needs `fs.readdirSync`'s
-   `recursive`, Node 20.1+). Joining `ci:offline` also puts the 7 former `pending-ci` files in `verify.sh`.
+   `recursive`, Node 20.1+). Joining `ci:offline` also puts the 5 former `pending-ci` files in `verify.sh`.
    Before files join `offline`, each runs alone with `HOME=<fresh empty temp dir> ACS_SUITE=offline` and no agent
    CLI on PATH, and the temp home is listed afterwards: a file that writes there is a writer the runner's empty home
    exposes and the Mac's full one hides. The scan is repeated whenever files join the group.

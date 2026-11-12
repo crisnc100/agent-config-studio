@@ -383,8 +383,6 @@ put('.claude/skills/beta/helper.md', 'Helper notes.\n');
 put('.claude/skills/beta/run.sh', 'echo beta\n');
 // PR G: a skill the Audit flags (a model-id call with no fallback), so Audit's cards render in the sweep.
 put('.claude/skills/gamma/SKILL.md', '---\nname: gamma\ndescription: calls a model\n---\n\n```bash\ncodex exec -m $(model-id sol) "review"\n```\n');
-// A skill carrying a block copy, so Building blocks shows a real copy row in the sweep.
-put('.claude/skills/delta/SKILL.md', '---\nname: delta\ndescription: carries a block\n---\n\nNever merge a PR or enable auto-merge. Only the operator merges.\n');
 put('.claude/skills/scratch/SKILL.md', '---\nname: scratch\ndescription: goes to trash\n---\n\nScratch.\n');
 put('Documents/Projects/app/CLAUDE.md', '# App\n\nRun the tests.\n');
 put('Documents/Projects/app/AGENTS.md', '# App\n\nRun the tests.\n');
@@ -620,9 +618,7 @@ const RULES = [
       /Checking (?:[a-z]+, )*memory(?:, [a-z]+)*…/g] },
   { name: '"Delete" for something recoverable', re: /\bdelet/i,
     // Permanent actions keep the word: a role (no trash), an Assist session, a file gone outside the studio, and "never deleted" (a promise about history).
-    except: [/Delete role/g, /Delete this session/g, /deleted outside the studio/g, /never deleted/g],
-    // Building blocks quotes rule text word for word: the never-weaken-tests block's own phrase, inside a rendered block text only.
-    quoteIn: { view: 'blocks', within: '.bb-text', phrases: ['Do not delete, skip, weaken, or narrow tests or checks'] } },
+    except: [/Delete role/g, /Delete this session/g, /deleted outside the studio/g, /never deleted/g] },
   // One word for a subscription account: "account", as Home's "Accounts & usage" says.
   { name: '"seat" for an account', re: /\bseats?\b/i },
   // PR F (final critique P1-1, P2-1, P2-2): words a newcomer can't act on. "Trunk" is explained (ⓘ) on Worktrees only.
@@ -639,68 +635,10 @@ const RULES = [
   { name: '"PATH fix"', re: /PATH fix/i },
 ];
 
-/**
- * Where a rule fires on a view: its global exceptions stripped, and a quoted
- * phrase (quoteIn) stripped only as many times as it appears inside the
- * elements it is allowed in — the same words in a button, label or heading
- * still fire.
- */
-function ruleHits(page, v, r, text) {
-  let t = text;
-  if (r.quoteIn?.view === v) {
-    // Outermost allowed elements only, so a nested one never counts its quote twice; each loses the phrase
-    // from its own text, in place, so the same words anywhere else on the view stay in.
-    const cls = r.quoteIn.within.replace(/^\./, '');
-    const inAllowed = (n) => { for (let p = n.parentElement; p; p = p.parentElement) if (p.classList?.contains(cls)) return true; return false; };
-    for (const n of page.$('content').querySelectorAll(r.quoteIn.within).filter((x) => !inAllowed(x))) {
-      const own = page.text(n);
-      const at = t.indexOf(own);
-      if (!own || at === -1) continue;
-      const kept = r.quoteIn.phrases.reduce((x, phrase) => x.split(phrase).join(''), own);
-      t = t.slice(0, at) + kept + t.slice(at + own.length);
-    }
-  }
-  for (const x of r.except || []) t = t.replace(x, '');
-  return t.split('\n').filter((l) => r.re.test(l)).map((l) => { const i = l.search(r.re); return l.slice(Math.max(0, i - 70), i + 70); });
-}
-
 /** A view's empty state ("No MCP servers configured yet.", "No registered projects. …"): not an intro. */
 const EMPTY_STATE = /^No [^.—]*?\b(yet|configured|tracked|registered|apply here|found)\b/;
 
-console.log('\nBuilding blocks: a quoted rule may say "delete" only inside its block text');
-{
-  const DELETE = RULES.find((r) => r.name === '"Delete" for something recoverable');
-  const QUOTE = 'Do not delete, skip, weaken, or narrow tests or checks to make something pass.';
-  const view = (over) => ({ blocks: [{ id: 'never-weaken-tests', name: 'Never weaken tests', summary: 'Keep every test.', text: `${QUOTE}\n`,
-    marker: '', counts: { same: 0, reworded: 0, differs: 0 }, copies: [], ...over }], scanned: { files: 1, unreadable: [] } });
-  const hitsFor = async (data, v = 'blocks', alter = null) => {
-    const pg = await bootPage({ routes: routesFor({ 'GET /api/blocks': () => data }), hash: `#${v}` });
-    for (let i = 0; i < 60 && !pg.$('content').querySelector('.bb-card'); i++) await sleep(10);
-    if (alter) alter(pg);
-    const h = ruleHits(pg, v, DELETE, words(pg));
-    pg.done();
-    return h;
-  };
-  ok('the phrase inside the rendered block text passes', (await hitsFor(view())).length === 0);
-  ok('…the same phrase in the block\'s heading still fails', (await hitsFor(view({ name: QUOTE }))).length > 0);
-  // The page cuts a summary that only repeats the rule's text, so this summary carries the quote beside other text.
-  ok('…and in its summary line', (await hitsFor(view({ summary: QUOTE, text: 'Keep every test whole, and say when one could not run.\n' }))).length > 0);
-  ok('…and a second "delete" beside the quote fails', (await hitsFor(view({ text: `${QUOTE}\n\nDelete this block.\n` }))).length > 0);
-  // One body quote inside nested block-text elements counts once: the heading's quote still fails.
-  const nest = (pg) => {
-    const outer = pg.$('content').querySelector('.bb-text');
-    const inner = outer.ownerDocument.createElement('div');
-    inner.className = 'bb-text';
-    while (outer.childNodes.length) inner.appendChild(outer.childNodes[0]);
-    outer.appendChild(inner);
-  };
-  ok('…a quote in nested block-text elements counts once, so the same quote in the heading still fails',
-    (await hitsFor(view({ name: QUOTE }), 'blocks', nest)).length > 0);
-  ok('…while nested block text alone still passes', (await hitsFor(view(), 'blocks', nest)).length === 0);
-  ok('…and nothing is allowed on another view', DELETE.quoteIn.view === 'blocks');
-}
-
-const VIEWS = ['home', 'files', 'skills', 'blocks', 'packs', 'packs/review-gate', 'packs/build', 'packs/handoff', 'packs/setup', 'mcp', 'models', 'memory', 'context', 'worktrees', 'usage', 'scope', 'audit', 'trash', 'setup', 'folders'];
+const VIEWS = ['home', 'files', 'skills', 'packs', 'packs/review-gate', 'packs/build', 'packs/handoff', 'packs/setup', 'mcp', 'models', 'memory', 'context', 'worktrees', 'usage', 'scope', 'audit', 'trash', 'setup', 'folders'];
 try {
   console.log('\nthe sweep: one name per thing, per view');
   for (const v of VIEWS) {
@@ -713,7 +651,9 @@ try {
     ok(`${v}: the view renders`, shown === (v.startsWith('packs/') ? 'pack' : v) && text.length > 40, `${shown}: ${text.slice(0, 200)}`);
     for (const r of RULES) {
       if (r.allowIn?.includes(v)) continue;
-      const hits = ruleHits(page, v, r, text);
+      let t = text;
+      for (const x of r.except || []) t = t.replace(x, '');
+      const hits = t.split("\n").filter((l) => r.re.test(l)).map((l) => { const i = l.search(r.re); return l.slice(Math.max(0, i - 70), i + 70); });
       ok(`${v}: no ${r.name}`, hits.length === 0, hits.join(' | '));
     }
     // One intro per page: the page never says again what the top bar's subtitle says (any 4 words in a row).
