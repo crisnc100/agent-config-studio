@@ -64,7 +64,7 @@ function pkSubOf(hash) {
   if (!m) return null;
   try { return decodeURIComponent(m[1]); } catch { return m[1]; }
 }
-/** For routeHash: a #packs/<id> link to a page other than the one shown. */
+/** For routeHash: a #packs/<id>[/<sub>] link to a page other than the one shown. */
 const pkMoved = (hash) => pkRouteOf(hash) !== PK.page || pkSubOf(hash) !== PK.sub;
 const pkHash = (page, sub = null) => (page ? `#packs/${encodeURIComponent(page)}${sub ? `/${encodeURIComponent(sub)}` : ''}` : '#packs');
 
@@ -1142,7 +1142,7 @@ async function pkSettingsApply() {
       reviewConfig: { ...(s.reviewConfig || {}), file: r.file, exists: true },
     };
   } catch (e) {
-    // A refused Save (the file moved since the preview) keeps the picks: the bar is back, to preview again.
+    // A refused Save (the file changed since the preview) keeps the picks: the bar is back, to preview again.
     if (seq === PK_SEC.seq) { PK_SEC.error = e.message; PK_SEC.preview = null; }
   }
   if (seq === PK_SEC.seq) PK_SEC.busy = false;
