@@ -136,10 +136,12 @@ The file's header spells out the format.
   includes `tests/package.mjs` packing the tree itself). Current Node is
   covered there and by the `packs` group. Branch protection requires
   `syntax`, `guards` and `offline`.
-- The pack tests tagged `ci:packs ci-only` (the review-gate and pr packs) are
-  never run by `verify.sh`. Later steps of the `offline` job run them with
-  `--jobs 4` on the current LTS Node, since two of them need Node 20.1 or
-  later. They are skipped only when a pull request provably leaves
+- The pack tests tagged `ci:packs ci-only` (the review-gate and pr pack
+  tests that pass on a Linux runner) are never run by `verify.sh`. The other
+  pack tests are `manual`, in no gate, each with its reason in `tests/SUITE`.
+  Later steps of the `offline` job run the `ci:packs` ones with `--jobs 4` on
+  the current LTS Node, since one of them needs a Node newer than the
+  minimum. They are skipped only when a pull request provably leaves
   `packs/` unchanged; on a push to main, a change to `packs/`, or any git
   error they run, and they run even when the offline suite failed.
   `tests/ci-packs-step.mjs`, in `guards`, runs that condition step from

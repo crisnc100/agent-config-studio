@@ -83,9 +83,9 @@ jobs:
           node --version
           nproc
           node tests/run.mjs offline --jobs 4
-      # The pack tests take about 15 minutes of file time, so they run only
-      # when a PR changes packs/, and on every push to main. Anything short of
-      # a clean "packs/ unchanged" answer runs them: a skip must be proven.
+      # The pack tests add minutes, so they run only when a PR changes
+      # packs/, and on every push to main. Anything short of a clean
+      # "packs/ unchanged" answer runs them: a skip must be proven.
       # These three steps run even when the offline suite failed, so one red
       # step does not hide whether the pack tests pass.
       - name: does this change touch packs/
@@ -110,11 +110,11 @@ jobs:
             echo "$EVENT, or no base commit to diff against: pack tests run"
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
-      # LTS, not the minimum: two pack tests cannot test what they mean to on
-      # 20.0.0. review.eval reads its examples with fs.readdirSync's recursive
-      # option, which arrived in 20.1, and review.global's fs.statSync patch
-      # trips 20.0.0's module loader. The offline suite above covers the
-      # minimum-Node promise.
+      # LTS, not the minimum: review.eval reads its examples with
+      # fs.readdirSync's recursive option, which arrived in Node 20.1, so
+      # on 20.0.0 it passes without checking them (every example sits in a
+      # subfolder). The offline suite above covers the minimum-Node
+      # promise.
       - uses: actions/setup-node@v4
         if: ${{ !cancelled() && steps.packs.outputs.run != 'false' }}
         with:
