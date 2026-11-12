@@ -284,8 +284,32 @@ try {
     const upper = rules.filter((r) => /text-transform\s*:\s*uppercase/.test(r.body)).map((r) => r.sel);
     ok('no uppercase labels in the packs or diagram styles', upper.length === 0, upper.join(' | '));
     ok('no literal colours in them either (theme tokens only)', !/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i.test(block.replace(/url\("data:[^"]*"\)/g, '')), (block.match(/#[0-9a-f]{3,8}\b|rgba?\([^)]*\)/i) || [])[0]);
+    const ruleOf = (sel) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((x) => x[1].split(',').map((y) => y.trim()).includes(sel)).map((x) => x[2]).join(';');
+    const navTitle = ruleOf('.nav-group-title');
+    ok('the sidebar group titles: 12px, sentence case, no letter-spacing', /font-size\s*:\s*12px/.test(navTitle) && !/text-transform\s*:\s*uppercase/.test(navTitle) && !/letter-spacing/.test(navTitle), navTitle);
+    ok('…and the sidebar\'s files and versions line is 12px', /font-size\s*:\s*12px/.test(ruleOf('.brand-sub')), ruleOf('.brand-sub'));
     ok('the spacing and type scales are tokens, outside the colour block', /--s7\s*:\s*48px/.test(css) && /--t-page\s*:\s*26px/.test(css)
       && !/--s7/.test(css.slice(css.indexOf(':root {'), css.indexOf('}', css.indexOf(':root {')))));
+  }
+
+  console.log('\nnot installed: ready to install, and warnings in a result read as warnings');
+  {
+    const st = stub(installedAll(base), { 'POST /api/packs/apply': (b) => ({ units: [b.pack], packs: [b.pack], backupDir: null, kept: [], notes: [], warnings: ['codex is not signed in'], log: [] }) });
+    const page = await bootPage({ routes: st.routes, hash: '#packs/handoff' });
+    const c = () => page.$('content');
+    const t = (n) => (n ? page.text(n) : '');
+    await waitFor(() => c().querySelector('.pk-page-meta'));
+    await settle(10);
+    const meta = () => c().querySelector('.pk-page-meta');
+    ok('a ready pack that is not installed says "Ready to install", with no tick and no "Ready to run"', /Not installed/.test(t(meta())) && /Ready to install/.test(t(meta()))
+      && !/Ready to run/.test(t(meta())) && !meta().querySelector('.pk-ready svg'), t(meta()));
+    c().querySelector('.pk-page-actions').querySelectorAll('button').find((b) => t(b) === 'Install').click();
+    await waitFor(() => c().querySelector('.pk-preview .pk-apply') && !c().querySelector('.pk-preview .pk-apply').disabled);
+    c().querySelector('.pk-preview .pk-apply').click();
+    await waitFor(() => c().querySelector('.pk-result'));
+    const w = c().querySelector('.pk-result .pk-warnings');
+    ok('a warning in the install result is in the warnings list (amber, as in the preview)', !!w && /warning: codex is not signed in/.test(t(w)), t(c().querySelector('.pk-result')));
+    page.done();
   }
 
   console.log('\nCancel while a preview is still loading');

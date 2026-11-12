@@ -170,6 +170,41 @@ try {
     button(page.$('pk-status'), /^Refresh$/).click();
     ok('my edit shows as "Edited", and Files and undo names the file', await waitFor(() => statusDone() && t(part('handoff', 'handoff')?.querySelector('.pk-st')) === 'Edited', 30_000)
       && /edited by you/.test(part('handoff', 'handoff').querySelector('.pk-st').getAttribute('title')) && /edited: ~\/\.claude\/skills\/handoff\/SKILL\.md/.test(files('handoff')), files('handoff'));
+    // The QA state: installed for Claude only, its SKILL.md edited, Codex here. The card and the page offer the same thing, and it does something.
+    const primaries = () => card('handoff').querySelector('.pk-page-actions').querySelectorAll('button.primary').map(t);
+    const onPage = primaries();
+    page.navigate('#packs');
+    await waitFor(() => page.$('content').querySelector('.pk-card[data-pack="handoff"]'));
+    const gridBtn = () => page.$('content').querySelector('.pk-card[data-pack="handoff"]').querySelectorAll('button.primary');
+    const onCard = gridBtn().map(t);
+    ok('edited and a new CLI here: the grid card and the page offer the same one action, Install for Codex, and no Update', JSON.stringify(onCard) === '["Install for Codex"]' && JSON.stringify(onPage) === JSON.stringify(onCard)
+      && !act('handoff', /^Update$/), `card: ${onCard.join('|')} / page: ${onPage.join('|')}`);
+    page.navigate('#packs');
+    await waitFor(() => gridBtn().length === 1);
+    gridBtn()[0].click();
+    ok('…the card\'s Install for Codex opens the page with a preview that installs for Codex only, its Install enabled', await waitFor(() => !!apply('handoff', /^Install$/))
+      && !apply('handoff', /^Install$/).disabled && rows('handoff').some((r) => /~\/\.codex\/skills\/handoff\/SKILL\.md/.test(r)) && !rows('handoff').some((r) => /~\/\.claude\/skills/.test(r)), rows('handoff').join(' | '));
+    button(previewOf('handoff'), /^Cancel$/).click();
+    await waitFor(() => !previewOf('handoff'));
+    const shown = primaries();
+    const usable = [];
+    for (const label of shown) {
+      button(card('handoff').querySelector('.pk-page-actions'), new RegExp(`^${label}$`)).click();
+      usable.push(await waitFor(() => { const b = previewOf('handoff')?.querySelector('.pk-actions .pk-apply'); return !!b && !b.disabled; }));
+      button(previewOf('handoff'), /^Cancel$/).click();
+      await waitFor(() => !previewOf('handoff'));
+    }
+    ok('…every primary action on the page previews something it can apply', shown.length > 0 && usable.every(Boolean), `${shown.join('|')}: ${usable.join('|')}`);
+    ok('the edited part\'s row offers Restore… (the pack\'s copy back) beside Remove…', part('handoff', 'handoff').querySelectorAll('button').map(t).join('|') === 'Restore…|Remove…',
+      part('handoff', 'handoff').querySelectorAll('button').map(t).join('|'));
+    button(part('handoff', 'handoff'), /^Remove…$/).click();
+    const rp = () => part('handoff', 'handoff')?.querySelector('.pk-preview');
+    await waitFor(() => rp()?.querySelector('.pk-preview-head'));
+    const mentions = (t(rp()).match(/~\/\.claude\/skills\/handoff\/SKILL\.md/g) || []).length;
+    ok('Remove… says the kept file once, and its button says Remove, not Uninstall', mentions === 1 && !!button(rp().querySelector('.pk-actions'), /^Remove$/) && !button(rp(), /^Uninstall$/),
+      `${mentions} mentions | ${rp().querySelectorAll('button').map(t).join('|')}`);
+    button(rp(), /^Cancel$/).click();
+    await waitFor(() => !rp());
     act('handoff', /^Update$/).click();
     await waitFor(() => previewOf('handoff')?.querySelector('.pk-preview-head'));
     ok('Update (offered for the edit) previews keeping it, says so, and offers the pack\'s copy', /kept: ~\/\.claude\/skills\/handoff\/SKILL\.md — you edited it/.test(t(previewOf('handoff'))) && !!check(previewOf('handoff'), /Take the pack's copy/) && apply('handoff', /^Update$/).disabled);
