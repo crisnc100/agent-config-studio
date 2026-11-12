@@ -22,7 +22,7 @@ import { bootPage, registry, routesFor, settle } from './fixtures/shell-page.mjs
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { machine } from '../lib/packs.js';
 import { catalogView } from '../lib/packs-routes.js';
-import { BUILT_IN_HUMAN, DEFAULT_RISK_PATHS, settingsApply, settingsPlan } from '../lib/review-settings.js';
+import { BUILT_IN_HUMAN, DEFAULT_RISK_PATHS, reviewSettings, settingsApply, settingsPlan } from '../lib/review-settings.js';
 import { securityApply, securityPlan } from '../lib/review-security.js';
 
 const realBefore = snapshotRealHomes();
@@ -132,6 +132,17 @@ try {
     ok('the default risky paths are the review script\'s', src.includes(`: ${JSON.stringify(DEFAULT_RISK_PATHS).replace(/"/g, "'").replace(/,/g, ', ')}`), JSON.stringify(DEFAULT_RISK_PATHS));
   }
 
+  {
+    // gh is read like git: found on PATH or not, sent as a boolean only.
+    const t = home();
+    fs.writeFileSync(path.join(t.bin, 'gh'), `#!${process.execPath}\n`, { mode: 0o755 });
+    const withGh = catalogView(machine({ HOME: t.h, PATH: t.bin }), { installedOf: () => true }).settings.merge;
+    const noGh = catalogView(machine({ HOME: t.h, PATH: path.dirname(process.execPath) }), { installedOf: () => true }).settings.merge;
+    ok('gh on PATH: settings.merge.gh is true, the other merge fields kept', withGh.gh === true && withGh.policy === 'off' && withGh.builtIn.length === 2 && withGh.riskPathsFrom === 'default', JSON.stringify(withGh));
+    ok('gh not on PATH: settings.merge.gh is false (never a path)', noGh.gh === false && !JSON.stringify(noGh).includes(t.bin), JSON.stringify(noGh));
+    ok('…and the writer\'s own view has no gh field', !('gh' in (reviewSettings(t.m).merge)));
+  }
+
   console.log('\nthe catalog: a Merge step in the review gate\'s diagram');
   {
     const t = home();
@@ -155,7 +166,8 @@ try {
     return v;
   };
   const routes = routesFor({
-    'GET /api/packs': () => withGate(view(t)),
+    // gh fixed present here, whatever this machine has; the gh line's own block sets it missing.
+    'GET /api/packs': () => { const v = withGate(view(t)); v.settings.merge.gh = true; return v; },
     'GET /api/packs/status': () => ({ job: { running: false, result: { packs: [], legacy: [], checkedAt: Date.now(), trust: false } } }),
     'GET /api/models/roles': () => roles,
     'POST /api/packs/review-settings/plan': (b) => settingsPlan(b.changes, t.m),
@@ -205,7 +217,7 @@ try {
     choices(mg()).map(tx).join('|'));
   ok('C8: …one line, for the selected choice only', JSON.stringify(says(mg())) === '["You merge every PR."]'
     && !['An agent may merge a low-risk PR', 'An agent may merge any low-risk PR', 'An agent may merge low- and medium-risk PRs'].some((s) => tx(mg()).includes(s)), tx(mg()));
-  ok('C8: with gh not reported missing, no gh or CI line, and no merge.mjs essay', !mg().querySelector('.pk-set-warn') && !/gh CLI|CI checks|merge\.mjs/.test(tx(mg())), tx(mg()));
+  ok('C8: with gh on the PATH, no gh or CI line, and no merge.mjs essay', !mg().querySelector('.pk-set-warn') && !/gh CLI|CI checks|merge\.mjs/.test(tx(mg())), tx(mg()));
   ok('C8: security pass, one line for Off', choices(secRow()).map(tx).join('|') === 'Off|When code changes|Always' && JSON.stringify(says(secRow())) === '["PR reviews run no security pass."]', tx(secRow()));
   ok('R5: Cross-vendor checks, Prefer another vendor pressed, its line only', choices(cf()).map(tx).join('|') === 'Prefer another vendor|Off' && tx(pressed(cf())) === 'Prefer another vendor'
     && JSON.stringify(says(cf())) === '["Reviews and grades use a model from another vendor when one is available; never a blocker."]' && !tx(cf()).includes('Any reviewer in your roles'), tx(cf()));
@@ -517,7 +529,7 @@ try {
     const pkText = await pk.text();
     const pkBody = JSON.parse(pkText);
     ok('GET /api/packs carries the current values, with no absolute HOME path', pkBody.settings?.merge?.policy === 'strict' && pkBody.settings.merge.alwaysHuman.join() === 'infra/**'
-      && pkBody.settings.crossFamily === 'prefer' && !pkText.includes(sb.home), JSON.stringify(pkBody.settings));
+      && pkBody.settings.crossFamily === 'prefer' && typeof pkBody.settings.merge.gh === 'boolean' && !pkText.includes(sb.home), JSON.stringify(pkBody.settings));
     child.kill('SIGKILL');
   } finally { sb.cleanup(); }
 } catch (e) {
