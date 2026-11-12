@@ -49,7 +49,7 @@ tests/usage-identity.mjs                              ci:offline
 tests/usage-processes.mjs                             local                         # not yet run on a CI runner (PR 3)
 tests/usage-accounts.mjs                              local                         # not yet run on a CI runner (PR 3)
 tests/usage-shell.mjs                                 local                         # not yet run on a CI runner (PR 3)
-tests/usage-seats.mjs                                 ci:offline
+tests/usage-seats.mjs                                 ci:offline serial             # starts the real codex CLI when one is on PATH, which creates ~/.codex/tmp under the real HOME when absent; real-home checks running beside it fail when that appears
 tests/usage-routes.mjs                                ci:offline
 # Refresh coalesces into one child and says when it did not refresh (temp HOME).
 tests/usage-refresh.mjs                               ci:offline
