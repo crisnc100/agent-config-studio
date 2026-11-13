@@ -132,6 +132,8 @@ tests/walk-partial.mjs                                ci:offline
 tests/notice-placement-ui.mjs                         ci:offline
 # The front end, in a node VM against stubbed routes: no server, no HOME.
 tests/shell.mjs                                       ci:offline
+# builds/acs-reshape acceptance: the eight sections, old hashes, Context, Tools, Setup, and every file still reachable.
+tests/reshape-nav.mjs                                 ci:offline
 tests/home.mjs                                        local                         # wall clock: clicks Refresh 20 ms after boot and counts two memory requests; under load the first is still in flight and Refresh reuses it
 tests/home-refresh.mjs                                ci:offline
 tests/roots-ui.mjs                                    ci:offline
