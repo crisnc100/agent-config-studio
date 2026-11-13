@@ -564,6 +564,7 @@ function pkPage(box, pack) {
   page.appendChild(pkBackButton());
   const sections = [['does', 'What it does', pkDoesView], ['runs', 'How it runs', pkRunsView],
     ...(pack.id === 'review-gate' ? [['settings', 'Settings', pkSettingsSection]] : []),
+    ...(pack.id === 'worktree' ? [['worktrees', 'Your worktrees', pkWorktreesView]] : []),
     ['parts', 'Parts', pkPartsView], ['files', 'Files and undo', pkFilesView]];
   page.appendChild(pkPageHead(pack, card, sections));
   for (const n of pkFlowAt(pack, card, 'pack')) page.appendChild(n);
@@ -633,6 +634,12 @@ function pkPageHead(pack, card, sections) {
   if (inst) acts.appendChild(pkBtn('danger', 'Uninstall…', () => pkPreview(pack, 'uninstall', {}, { at: 'pack' }), busy));
   head.appendChild(acts);
   return head;
+}
+
+/** The Worktrees page has no sidebar item: this pack's page is the way to it. */
+function pkWorktreesView(sec) {
+  sec.appendChild(el('p', 'pk-sec-lead', 'Every registered project’s worktrees, which are done and safe to remove, and the rules files wnew reads.'));
+  sec.appendChild(pkBtn('', 'Open Worktrees', () => { location.hash = '#worktrees'; }));
 }
 
 function pkDoesView(sec, pack) {
@@ -944,16 +951,16 @@ function pkSettingsView(pack) {
   return wrap;
 }
 
-/** "Saved in <file>", with Open in Files when Files lists it. */
+/** "Saved in <file>", with Open file when the registry lists it. */
 function pkSettingsFoot(rc) {
   const foot = el('div', 'pk-set-foot');
   if (!rc?.file) return foot;
   const where = el('span', null, 'Saved in ');
   where.appendChild(el('code', null, rc.file));
   foot.appendChild(where);
-  // Files lists only what its registry found; ~/.agent-config-studio is outside its folders, so that copy is named only.
+  // The registry lists only what it found; ~/.agent-config-studio is outside its folders, so that copy is named only.
   const entry = rc.exists ? (S.registry?.groups || []).flatMap((g) => g.entries).find((e) => e.files.some((f) => f.display === rc.file)) : null;
-  if (entry) foot.appendChild(pkBtn('ghost', 'Open in Files', () => openEntry(entry, entry.files.find((f) => f.display === rc.file).path, S.view)));
+  if (entry) foot.appendChild(pkBtn('ghost', 'Open file', () => openEntry(entry, entry.files.find((f) => f.display === rc.file).path, S.view)));
   return foot;
 }
 

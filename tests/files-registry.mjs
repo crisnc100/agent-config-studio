@@ -55,13 +55,13 @@ ok('no auto-memory label is a raw slug of the temp HOME', auto.entries.every((e)
 const again = buildRegistry().groups.find((x) => x.id === 'auto-memory');
 ok('a rebuild gives the same labels (decoded once, then memoised)', JSON.stringify(again.entries.map((e) => e.label)) === JSON.stringify(auto.entries.map((e) => e.label)));
 
-// The Files page's own disambiguation, on these real entries: alpha and its worktree share a label.
+// The page lists' own disambiguation (shownLabels), on these real entries: alpha and its worktree share a label.
 const vm = await import('node:vm');
 const ctx = vm.createContext({});
 vm.runInContext(fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'public', 'files-view.js'), 'utf8'), ctx);
-ctx.reg = reg;
-const shown = vm.runInContext(`(() => { const t = filesModel(reg).flatMap((x) => x.types).find((x) => x.key.endsWith(':auto-memory')); return t.labels; })()`, ctx);
-ok('on the Files page the two "alpha" entries are told apart by their folders', shown[a.id] !== shown[w.id] && /alpha/.test(shown[a.id]) && /alpha-feature/.test(shown[w.id]), `${shown[a.id]} | ${shown[w.id]}`);
+ctx.entries = auto.entries;
+const shown = vm.runInContext('shownLabels(entries)', ctx);
+ok('in a list of auto-memory entries the two "alpha" entries are told apart by their folders', shown[a.id] !== shown[w.id] && /alpha/.test(shown[a.id]) && /alpha-feature/.test(shown[w.id]), `${shown[a.id]} | ${shown[w.id]}`);
 
 assertRealHomesUnchanged(realBefore, ok);
 unlockMemoryHome(home);

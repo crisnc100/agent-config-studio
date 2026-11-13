@@ -235,10 +235,10 @@ console.log('\nSidebar: opening a file keeps the view you came from marked');
     && p.$('btn-context').classList.contains('active') && !!p.$('btn-context').getAttribute('aria-current'), p.eval('S.view'));
   const q = await boot({ hash: `#file=${encodeURIComponent(PATHS.claudeMd)}` });
   await settle(10);
-  ok('a file opened straight from a link: Files is marked', q.eval('S.view') === 'entry' && q.$('btn-files').classList.contains('active'));
+  ok('a file opened straight from a link: the page that lists it (Context, for a CLAUDE.md) is marked', q.eval('S.view') === 'entry' && q.$('btn-context').classList.contains('active'));
   q.$('btn-home').click();
   await settle(10);
-  ok('…and leaving for Home moves the mark', q.$('btn-home').classList.contains('active') && !q.$('btn-files').classList.contains('active'));
+  ok('…and leaving for Home moves the mark', q.$('btn-home').classList.contains('active') && !q.$('btn-context').classList.contains('active'));
 }
 
 /* ── Packs: no folds and no dialogs; Files and undo is a section of the pack's page (Cris; builds/packs-redesign) ── */

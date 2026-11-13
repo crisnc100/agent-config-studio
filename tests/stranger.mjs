@@ -262,6 +262,8 @@ console.log('\nstranger A: a copy of this working tree');
         try { return JSON.parse(fs.readFileSync(path.join(m.home, '.agent-config-studio', 'roots.json'), 'utf8')).roots.some((r) => r.access === 'edit' && r.path === path.join(m.home, 'code', 'work')); } catch { return false; }
       }));
       btn('Next').click();
+      await until(() => step() === 'settings');
+      btn('Next').click();
       await until(() => step() === 'done' && !!btn('Finish'));
       const pathRow = page.$('content').querySelector('.setup-path .setup-cmd code')?.textContent;
       ok('A Done shows how to put acs on PATH, with this checkout\'s bin/acs, quoted for its space',
@@ -273,8 +275,8 @@ console.log('\nstranger A: a copy of this working tree');
       ok('5 Home shows the folder', await until(() => /Project folders: 1 you can edit, 0 read-only/.test(text())), text().slice(0, 300));
 
       for (const [view, open, want] of [
-        ['Skills', 'openSkills()', 'hello-stranger'],
-        ['MCP', 'openMcp()', 'stranger-mcp'],
+        ['Tools → Skills', 'openSkills()', 'hello-stranger'],
+        ['Tools → MCP servers', 'openMcp()', 'stranger-mcp'],
         ['Models', 'openModels()', 'claude-opus-5-5'],
         ['Context', 'openContext()', '~/code/work/app'],
         ['Worktrees', 'openWorktrees()', 'app'],

@@ -137,6 +137,8 @@ ok('5 the folder is added as edit', await until(() => {
 }));
 
 btn('Next').click();
+ok('Next moves to Settings and hooks', await until(() => step() === 'settings'));
+btn('Next').click();
 ok('Next moves to Done', await until(() => step() === 'done'));
 await until(() => !!btn('Finish'));
 ok('S16 Done names this checkout\'s bin/acs (acs is not on this PATH)', text().includes(path.join(ROOT, 'bin', 'acs')));

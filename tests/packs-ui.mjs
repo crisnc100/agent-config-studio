@@ -68,8 +68,8 @@ const apply = (id, re) => button(previewOf(id)?.querySelector('.pk-actions'), re
 try {
   console.log('\nthe Packs grid, a pack\'s page, its parts and its Install for');
   {
-    ok('#packs opens the view, with a Packs item in the sidebar under Workflows', await waitFor(() => page.$('content').querySelectorAll('.pk-card').length === 8)
-      && page.eval('S.view') === 'packs' && t(page.$('btn-packs')?.closest('.nav-group')?.querySelector('.nav-group-title')) === 'Workflows' && t(page.$('btn-packs')) === 'Packs', t(page.$('content')).slice(0, 300));
+    ok('#packs opens the view, with a Packs item in the sidebar', await waitFor(() => page.$('content').querySelectorAll('.pk-card').length === 8)
+      && page.eval('S.view') === 'packs' && !!page.$('btn-packs')?.closest('.nav-group') && t(page.$('btn-packs')) === 'Packs', t(page.$('content')).slice(0, 300));
     ok('…and the first status check runs by itself and finishes', await waitFor(statusDone), t(page.$('pk-status')));
     const grok = page.$('content').querySelectorAll('.pk-cli').find((n) => /Grok/.test(t(n)));
     ok('the machine line says Grok is not here, and why', !!grok && grok.classList.contains('off') && /not installed, and no ~\/\.grok/.test(grok.getAttribute('title')), grok?.getAttribute('title'));

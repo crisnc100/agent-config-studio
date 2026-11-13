@@ -238,7 +238,7 @@ const homeRoutes = (over = {}) => routesFor({
   const mem = deferred(), wt = deferred(), reg = deferred();
   const routes = homeRoutes({ 'GET /api/memory': () => mem.promise, 'GET /api/worktree': () => wt.promise, 'GET /api/registry': () => reg.promise });
   const p = await boot({ routes });
-  ok('8 the shell and Home paint before the registry resolves', p.eval('S.registry') === null && !!card(p, 'accounts') && p.$('sidebar').querySelectorAll('.nav-item').length === 15);
+  ok('8 the shell and Home paint before the registry resolves', p.eval('S.registry') === null && !!card(p, 'accounts') && p.$('sidebar').querySelectorAll('.nav-item').length === 10);
   ok('11 the memory index and wclean are asked after first paint, not before it',
      !p.requests.some((r) => r.path === '/api/memory' || r.path === '/api/worktree') || p.requests.findIndex((r) => r.path === '/api/memory') > p.requests.findIndex((r) => r.path === '/api/usage'));
   await settle(20);
@@ -261,12 +261,12 @@ const homeRoutes = (over = {}) => routesFor({
   const usage = deferred();
   const p = await boot({ routes: homeRoutes({ 'GET /api/usage': () => usage.promise }) });
   await settle(10);
-  p.$('btn-skills').click();
+  p.$('btn-tools').click();
   await settle(5);
   usage.resolve({ seats: SEATS });
   await settle(10);
-  ok('8 an answer that lands after you left Home is dropped — nothing painted into Skills',
-     p.eval('S.view') === 'skills' && !p.$('content').querySelector('.home-card') && p.eval('HOME.src.usage.state') === 'loading');
+  ok('8 an answer that lands after you left Home is dropped — nothing painted into Tools',
+     p.eval('S.view') === 'tools' && !p.$('content').querySelector('.home-card') && p.eval('HOME.src.usage.state') === 'loading');
   p.$('btn-home').click();
   await settle(20);
   ok('8 coming back asks again and paints', /Codex \(main\)/.test(p.text(card(p, 'accounts'))));
@@ -281,7 +281,7 @@ const homeRoutes = (over = {}) => routesFor({
   ok('8 Refresh re-asks the sources and keeps a sticky warning', /sticky thing/.test(p.text(p.$('notice-slot')))
      && p.requests.filter((r) => r.path === '/api/memory').length === 2);
   const before = p.requests.length;
-  p.$('btn-skills').click();
+  p.$('btn-tools').click();
   await settle(5);
   p.$('btn-home').click();
   await settle(10);
@@ -484,10 +484,10 @@ const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.ent
   ok('G7 a failed registry shows history unavailable on Recent, not a spinner',
      /History unavailable: registry exploded/.test(p.text(card(p, 'recent'))) && !/Reading history/.test(p.text(card(p, 'recent'))));
   ok('G8 …and all-cards-loaded is still recorded (the card has its answer)', typeof p.eval('HOME.timing.settled') === 'number');
-  p.$('btn-files').click();
+  p.navigate('#setup&step=settings');
   await settle(5);
-  ok('G7 …and the Files page says the file list is unavailable, not loading', /file list is unavailable: registry exploded/i.test(p.text(p.$('content')))
-     && !/Loading files/.test(p.text(p.$('content'))) && !!p.$('search'));
+  ok('G7 …and Setup\'s file lists say the file list is unavailable, not loading', /file list is unavailable: registry exploded/i.test(p.text(p.$('content')))
+     && !/Loading files/.test(p.text(p.$('content'))) && p.eval('S.view') === 'setup');
 }
 {
   const reg = deferred();
@@ -531,7 +531,7 @@ const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.ent
   await attnAll(p);
   const n = p.$('content').querySelectorAll('.home-item').length;
   ok('QA6 the Home header shows "Needs you: N", N the actionable attention items', !!chip() && p.text(chip()) === `Needs you: ${n}` && n === 10, p.text(chip()));
-  p.$('btn-skills').click();
+  p.$('btn-tools').click();
   await settle(5);
   ok('QA6 …only on Home', !chip());
   const clean = await boot({ routes: cleanRoutes() });

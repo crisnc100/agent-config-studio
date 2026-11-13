@@ -14,7 +14,7 @@
  *     cleanup line, nowhere else;
  *   - "Delete" for something that goes to Trash — "Delete" stays only on
  *     permanent actions (the ALLOW list below names them).
- * The static half reads public/styles.css: no font-size under 11px, the four
+ * The static half reads public/styles.css: no font-size under 12px, the four
  * selects and the editor have a :focus-visible rule that draws something,
  * and every `outline: none` sits beside a focus style that replaces it.
  */
@@ -64,11 +64,11 @@ const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]
     for (const part of r.sel.split(',')) {
       for (const [n, unit, raw] of sizes(r.body)) {
         const px = unit === 'px' ? n : unit === 'rem' ? n * 16 : n * parentPx(part);
-        if (px < 11) small.push(`${part.trim()} → ${raw} (${px.toFixed(2)}px)`);
+        if (px < 12) small.push(`${part.trim()} → ${raw} (${px.toFixed(2)}px)`);
       }
     }
   }
-  ok('no CSS font-size under 11px (the 9px badge included; an em resolved against its smallest parent)', small.length === 0, [...new Set(small)].join(' | '));
+  ok('no CSS font-size under 12px (an em resolved against its smallest parent)', small.length === 0, [...new Set(small)].join(' | '));
 }
 {
   // The value is read whole (no backtracking into the whitespace): "outline: none" and "outline: 0" draw nothing.
@@ -105,7 +105,8 @@ console.log('\nstyles.css: PR D');
   // PR G (no folds anywhere): the chevron style PR D added is gone with the last toggle that drew it.
   ok('no chevron toggle style is left (.chev)', !rules.some((r) => /\.chev\b/.test(r.sel)));
   ok('Models cards: the button row sits at the card bottom, so Edit / Reset line up across a row', /margin-top\s*:\s*auto/.test(body('.model-card > .model-card-buttons')));
-  ok('a Files entry\'s file count sits right after its name (the name does not stretch)', !/flex\s*:\s*1\b/.test(body('.files-item-label')) && /margin-left/.test(body('.files-item-count')));
+  ok('a listed file\'s count sits right after its name (a flex line with a gap; nothing stretches)', /display\s*:\s*flex/.test(body('.entry-row .scope-path')) && /gap\s*:/.test(body('.entry-row .scope-path'))
+    && !/flex\s*:\s*1\b/.test(body('.entry-count')));
   // The diagram's encodings, one look each: off = a dashed tile; script = a solid outline chip.
   ok('script chips are solid outlines, not dashed (dashed means "off")', /border\s*:[^;]*solid/.test(body('.pk-flow .w.script')) && !/dashed/.test(body('.pk-flow .w.script'))
     && /border\s*:[^;]*solid/.test(body('.step-mark.script')) && !/dashed/.test(body('.step-mark.script')));
@@ -129,8 +130,8 @@ console.log('\nstyles.css: PR C QA');
   ok('Usage\'s "82% left" stays on one line: no fixed narrow width, no wrap', /white-space\s*:\s*nowrap/.test(body('.usage-pct')) && !/(^|;)\s*width\s*:\s*[1-5]?\d px/.test(body('.usage-pct').replace(/px/g, ' px')));
   ok('Usage\'s stop-tracking × is fully visible when shown (no faded opacity), with a hit area', !/opacity\s*:\s*0?\.\d/.test(body('.usage-seat:hover .usage-drop'))
     && /width\s*:\s*2\dpx/.test(body('.usage-drop')));
-  // PR G: a Files type is a plain heading, never a fold; its "+" keeps a visible box.
-  ok('Files: no type-toggle chevron, and its "+" has a visible box', !rules.some((r) => /files-type-toggle/.test(r.sel)) && /border\s*:/.test(body('.files-add')));
+  // PR G: a file list is a plain heading, never a fold; its New button is a styled .btn.
+  ok('File lists: no type-toggle chevron, and New is a real button', !rules.some((r) => /files-type-toggle/.test(r.sel)) && /el\('button', 'btn entry-new'/.test(fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8')));
   ok('a diagram step title never wraps', /white-space\s*:\s*nowrap/.test(body('.pk-flow .step-name')));
   ok('the steps are one list: each row a mark, the step, its line and who does it', /grid-template-columns\s*:\s*28px\s+\d+px\s+minmax\(0,\s*1fr\)\s+minmax\(0,\s*auto\)/.test(body('.pk-flow .step')));
   // PR F: Packs has no folds at all (Cris) — a part's explain lives in the card's "Files and undo" dialog, so no part fold style is left.
@@ -294,8 +295,6 @@ console.log('\norange and amber controls: text 4.5:1 and edge 3:1, light and dar
     ['pack "Not working"', ['.pk-st', '.pk-st.err'], true],
     ['pack "Not installed", "Off"', ['.pk-st', '.pk-st.off'], true],
     ['agent merge "needs the gh CLI" line', ['.pk-set-warn'], true],
-    ['audit synced class', ['.audit-class', '.audit-class.synced']],
-    ['audit warn', ['.audit-sev', '.audit-sev.warn']],
     ['account offline tag', ['.usage-offline-tag']],
     ['changed-from-default mark', ['.changed-mark']],
     ['default model chip', ['.job-chip', '.job-chip.first']],
@@ -562,7 +561,7 @@ console.log('\nDisabled buttons say why: the editor\'s Save, Skills\' Clear and 
   const ta = e.$('content').querySelector('textarea');
   ok('the editor names its way out: Esc leaves it (Tab still types spaces)', ta?.getAttribute('aria-keyshortcuts') === 'Escape', ta?.getAttribute('aria-keyshortcuts'));
   e.done();
-  const s = await bootPage({ hash: '#skills' });
+  const s = await bootPage({ hash: '#tools/skills' });
   for (let i = 0; i < 100 && !s.$('sk-download'); i++) await sleep(20);
   ok('Skills, nothing selected: Clear and Download are disabled and say why', s.$('sk-download').disabled && s.$('sk-clear').disabled
     && /select/i.test(s.$('sk-download').title) && /select/i.test(s.$('sk-clear').title), `${s.$('sk-download').title} | ${s.$('sk-clear').title}`);
@@ -638,7 +637,10 @@ const RULES = [
 /** A view's empty state ("No MCP servers configured yet.", "No registered projects. …"): not an intro. */
 const EMPTY_STATE = /^No [^.—]*?\b(yet|configured|tracked|registered|apply here|found)\b/;
 
-const VIEWS = ['home', 'files', 'skills', 'packs', 'packs/review-gate', 'packs/build', 'packs/handoff', 'packs/setup', 'mcp', 'models', 'memory', 'context', 'worktrees', 'usage', 'scope', 'audit', 'trash', 'setup', 'folders'];
+const VIEWS = ['home', 'search', 'tools/skills', 'tools/agents', 'tools/mcp', 'packs', 'packs/review-gate', 'packs/build', 'packs/handoff', 'packs/setup', 'packs/worktree',
+  'models', 'memory', 'context', 'worktrees', 'usage', 'trash', 'setup', 'setup&step=folders', 'setup&step=settings'];
+/** The view a swept hash opens: a pack's own page (#packs/<id>) is the "pack" view; a section or step is its page's. */
+const viewOf = (v) => (v.startsWith('packs/') ? 'pack' : v.split(/[/&]/)[0]);
 try {
   console.log('\nthe sweep: one name per thing, per view');
   for (const v of VIEWS) {
@@ -647,8 +649,7 @@ try {
     await sleep(v.startsWith('packs') ? 1500 : 400);
     const text = words(page);
     const shown = page.eval('S.view');
-    // A pack's own page (#packs/<id>) is the "pack" view.
-    ok(`${v}: the view renders`, shown === (v.startsWith('packs/') ? 'pack' : v) && text.length > 40, `${shown}: ${text.slice(0, 200)}`);
+    ok(`${v}: the view renders`, shown === viewOf(v) && text.length > 40, `${shown}: ${text.slice(0, 200)}`);
     for (const r of RULES) {
       if (r.allowIn?.includes(v)) continue;
       let t = text;
@@ -691,10 +692,6 @@ try {
     const loose = page.$('content').querySelectorAll('button').filter((b) => !KINDS.test(b.className || '') && !NAMED.some((c) => b.classList.contains(c)));
     ok(`${v}: every button is primary, secondary or quiet (or a tab, tree row or titled icon)`, loose.length === 0,
       loose.map((b) => `${b.className || '(no class)'}: ${page.text(b).slice(0, 24)}`).join(' | '));
-    if (v === 'audit') {
-      // The seeded gamma skill has a finding, so the sweep sees real Audit cards, not only the empty state.
-      ok('audit: the seeded findings render as cards', page.$('content').querySelectorAll('.audit-file').length > 0, page.text(page.$('content')).slice(0, 200));
-    }
     if (v === 'models') {
       const rows = page.$('content').querySelectorAll('.roles-row');
       ok('models: each role row\'s Edit is a real button (secondary), not a text label', rows.length > 0
@@ -704,24 +701,9 @@ try {
     // PR D: no text glyph stands in for a fold arrow; a toggle draws its chevron in CSS (.chev).
     const glyphs = page.$('content').querySelectorAll('button, summary').filter((b) => /[▸▾▶▼◂◀›⌄]/.test(page.text(b)));
     ok(`${v}: no button or fold uses a text arrow (▸ ▾ ▶ ▼ › ⌄)`, glyphs.length === 0, glyphs.map((b) => page.text(b).slice(0, 30)).join(' | '));
-    // PR D: a Files entry's extra files are said plainly ("2 files"), right after its name — no bare "+N".
-    const plus = page.$('content').querySelectorAll('.files-item .item-badge, .files-item-count').filter((n) => /^\+\d+$/.test(page.text(n).trim()));
+    // PR D: a file entry's extra files are said plainly ("2 files"), right after its name — no bare "+N".
+    const plus = page.$('content').querySelectorAll('.entry-row .item-badge, .entry-count').filter((n) => /^\+\d+$/.test(page.text(n).trim()));
     ok(`${v}: no bare "+N" count on a file entry`, plus.length === 0, plus.map((n) => page.text(n)).join(' | '));
-    if (v === 'files') {
-      // f2: a tool card's header counts files in the same unit as its rows (an entry with no count is one file).
-      const cards = page.$('content').querySelectorAll('.files-tool');
-      const sums = cards.map((c) => {
-        const head = Number((page.text(c.querySelector('.files-count')).match(/\d+/) || [NaN])[0]);
-        const rows = c.querySelectorAll('.files-item').reduce((n, b) => {
-          const k = b.querySelector('.files-item-count');
-          return n + (k ? Number(page.text(k).match(/\d+/)[0]) : 1);
-        }, 0);
-        return [head, rows];
-      });
-      ok('files: some entry holds more than one file (the seed exercises the count)', page.$('content').querySelectorAll('.files-item-count').length > 0);
-      ok('files: each tool card\'s header file count equals the sum of its rows\' file counts', cards.length > 0 && sums.every(([h, r]) => h === r),
-        sums.map(([h, r]) => `${h} vs ${r}`).join(' | '));
-    }
     ok(`${v}: every icon-only button has a title and an accessible name`, icons.every((b) => b.getAttribute('title') && (b.getAttribute('aria-label') || b.getAttribute('title'))),
       icons.filter((b) => !b.getAttribute('title')).map((b) => b.className).join(' | '));
     ok(`${v}: no page errors`, page.errors.length === 0, page.errors.join(' | '));

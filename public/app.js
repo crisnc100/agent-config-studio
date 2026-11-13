@@ -140,60 +140,74 @@ const S = {
 /**
  * Every place the sidebar can take you, in one table: boot's deep links, the
  * runtime hash router, the topbar title, renderContent and the sidebar itself
- * all read it. `kind: 'action'` rows (Files, Theme) act in place rather than
- * switch the view; `group: null` rows are views with no sidebar item.
+ * all read it. `kind: 'action'` rows (Theme) act in place rather than switch
+ * the view; `group: null` rows are views with no sidebar item.
  */
 const VIEWS = [
-  { id: 'home', label: 'Home', group: 'overview', icon: 'home', hash: '#home',
+  { id: 'home', label: 'Home', group: 'main', icon: 'home', hash: '#home',
     title: 'Home', sub: 'What is connected, what is left, and what needs you', open: openHome, render: renderHome,
     titleExtra: homeNeedsChip },
-  { id: 'files', label: 'Files', group: 'files', icon: 'files', hash: '#files',
-    title: 'Files', sub: 'Every config file, by the tool that reads it', open: () => openFiles(), render: renderFiles },
-  { id: 'skills', label: 'Skills', group: 'workflows', icon: 'skills', hash: '#skills',
-    title: 'Skills', sub: 'Every skill on this machine — browse, select, download', open: openSkills },
-  // No sidebar item: the Skills view's New skill button (public/skill-wizard.js).
-  { id: 'skill-new', label: 'New skill', group: null, icon: 'skills', hash: '#skills/new',
+  { id: 'context', label: 'Context', group: 'main', icon: 'context', hash: '#context',
+    title: 'Context', sub: 'What every session is told, then what each project adds', open: openContext },
+  { id: 'tools', label: 'Tools', group: 'main', icon: 'skills', hash: '#tools', match: (h) => /^#tools(\/(skills|agents|mcp))?(&|$)/.test(h),
+    title: 'Tools', sub: 'What your agents can do, and how to add to it', open: () => openTools(toolsSectionOf(location.hash)),
+    moved: (h) => toolsSectionOf(h) !== TL.section },
+  // No sidebar item: the Skills section's New skill button (public/skill-wizard.js).
+  { id: 'skill-new', label: 'New skill', group: null, parent: 'tools', icon: 'skills', hash: '#skills/new',
     title: 'New skill', sub: 'Describe it, answer a few questions, review the SKILL.md', open: openSkillWizard },
-  { id: 'packs', label: 'Packs', group: 'workflows', icon: 'packs', hash: '#packs',
+  { id: 'models', label: 'Models', group: 'main', icon: 'models', hash: '#models',
+    title: 'Models', sub: 'Every model family, its current id, and what the CLIs offer', open: openModels,
+    badge: () => S.badges.models },
+  { id: 'usage', label: 'Usage', group: 'main', icon: 'usage', hash: '#usage',
+    title: 'Usage', sub: 'Room left on each account — where the next task should go', open: openUsage },
+  { id: 'memory', label: 'Memory', group: 'main', icon: 'memory', hash: '#memory',
+    title: 'Memory', sub: 'Claude auto-memory by project — review, and clean up with a preview first', open: openMemory },
+  { id: 'packs', label: 'Packs', group: 'main', icon: 'packs', hash: '#packs',
     title: 'Skill packs', sub: 'Nothing is written until you preview a change and confirm it', open: openPacks },
   // No sidebar item: a pack's own page (#packs/<id>, through `match`) and the shared fixes (#packs/setup); Packs stays marked.
   { id: 'pack', label: 'Pack', group: null, parent: 'packs', icon: 'packs', hash: '#packs/setup', match: (h) => /^#packs\/[^&/]/.test(h),
     title: 'Skill packs', sub: 'Nothing is written until you preview a change and confirm it', open: openPackPage, moved: pkMoved },
-  { id: 'mcp', label: 'MCP', group: 'files', icon: 'mcp', hash: '#mcp',
-    title: 'MCP servers', sub: 'The MCP servers your CLIs can call', open: openMcp },
-  // No sidebar item: reached from the Files page's folder line, and #folders.
-  { id: 'folders', label: 'Folders', group: null, icon: 'folders', hash: '#folders',
-    title: 'Folders', sub: 'The project folders the studio reads and edits', open: openFolders },
+  // No sidebar item: reached from the Worktree setup pack's page, so Packs stays marked.
+  { id: 'worktrees', label: 'Worktrees', group: null, parent: 'packs', icon: 'worktrees', hash: '#worktrees',
+    title: 'Worktrees', sub: 'Every registered project’s worktrees, and which are done', open: openWorktrees },
+  // No sidebar item: ⌘K opens it from anywhere.
+  { id: 'search', label: 'Search', group: null, icon: 'files', hash: '#search',
+    title: 'Search', sub: 'Every config file the studio reads — search by what is in it', open: () => openSearch(), render: renderSearch },
   // First run lands here; afterwards it sits in the sidebar footer, with Trash and Theme.
   { id: 'setup', label: 'Setup', group: 'footer', icon: 'setup', hash: '#setup',
-    title: 'Setup', sub: 'CLIs, accounts and project folders — each step optional', open: openSetup },
-  { id: 'models', label: 'Models', group: 'workflows', icon: 'models', hash: '#models',
-    title: 'Models', sub: 'Every model family, its current id, and what the CLIs offer', open: openModels,
-    badge: () => S.badges.models },
-  { id: 'memory', label: 'Memory', group: 'upkeep', icon: 'memory', hash: '#memory',
-    title: 'Memory', sub: 'Claude auto-memory by project — review, and clean up with a preview first', open: openMemory },
-  { id: 'context', label: 'Context', group: 'files', icon: 'context', hash: '#context',
-    title: 'Context', sub: 'What each project tells its agents — CLAUDE.md, AGENTS.md, Cursor rules', open: openContext },
-  { id: 'worktrees', label: 'Worktrees', group: 'upkeep', icon: 'worktrees', hash: '#worktrees',
-    title: 'Worktrees', sub: 'Every registered project’s worktrees, and which are done', open: openWorktrees },
-  { id: 'usage', label: 'Usage', group: 'overview', icon: 'usage', hash: '#usage',
-    title: 'Usage', sub: 'Room left on each account — where the next task should go', open: openUsage },
-  { id: 'scope', label: 'Scope', group: 'files', icon: 'scope', hash: '#scope',
-    title: 'Scope', sub: 'Which instruction files an agent loads in a folder, in order', open: openScope },
-  { id: 'audit', label: 'Audit', group: 'upkeep', icon: 'audit', hash: '#audit',
-    title: 'Audit', sub: 'Hardcoded and stale models in skills and instruction files — every fix reviewed first', open: () => openAudit() },
+    title: 'Setup', sub: 'CLIs, accounts, project folders, and settings files — each step optional', open: openSetup,
+    moved: (h) => setupStepOf(h) !== SETUP.step },
   { id: 'trash', label: 'Trash', group: 'footer', icon: 'trash', hash: '#trash',
     title: 'Trash', sub: 'Trashed items — restore any of them', open: openTrash },
   { id: 'theme', label: 'Theme', group: 'footer', icon: 'theme', kind: 'action', open: toggleTheme },
 ];
 const viewById = (id) => VIEWS.find((v) => v.id === id) || null;
-/** The sidebar: four groups named for the job, each in this order (C1). Setup sits in the footer with Trash and Theme. */
+/** The sidebar: one list, in this order. Setup sits in the footer with Trash and Theme. */
 const NAV_GROUPS = [
-  ['overview', 'Overview', ['home', 'usage']],
-  ['workflows', 'Workflows', ['packs', 'skills', 'models']],
-  ['files', 'Files', ['files', 'context', 'scope', 'mcp']],
-  ['upkeep', 'Upkeep', ['memory', 'worktrees', 'audit']],
+  ['main', null, ['home', 'context', 'tools', 'models', 'usage', 'memory', 'packs']],
 ];
+/**
+ * Pages that were merged or moved, and where their bookmarks land now. Any
+ * &-parameters on the old hash are dropped: none of them mean anything on
+ * the page it moved to.
+ */
+const MOVED_HASHES = [
+  ['#files', '#search'],
+  ['#scope', '#context'],
+  ['#audit', '#home'],
+  ['#folders', '#setup&step=folders'],
+  ['#skills', '#tools/skills'],
+  ['#mcp', '#tools/mcp'],
+];
+/**
+ * Which page owns a registry group's files: the one a file opened from a
+ * bare link is marked under, and the one the reachability test checks lists it.
+ */
+const GROUP_HOME = {
+  memory: 'context', 'claude-skills': 'tools', 'codex-skills': 'tools', 'plugin-skills': 'tools', retired: 'tools',
+  skills: 'tools', agents: 'tools', commands: 'tools', mcp: 'tools', 'auto-memory': 'memory',
+  hooks: 'setup', settings: 'setup', worktrees: 'worktrees',
+};
 
 /* Stroke icons, 16px, drawn in currentColor so both themes colour them. */
 const svg = (d) => `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
@@ -203,14 +217,11 @@ const ICONS = {
   skills: svg('<path d="M8 2.2l1.6 3.3 3.6.5-2.6 2.5.6 3.6L8 10.4l-3.2 1.7.6-3.6-2.6-2.5 3.6-.5z"/>'),
   mcp: svg('<path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11.5v2"/>'),
   packs: svg('<path d="M2.5 5 8 2.5 13.5 5v6L8 13.5 2.5 11z"/><path d="M2.5 5 8 7.5 13.5 5M8 7.5v6"/>'),
-  folders: svg('<path d="M2.5 5a1 1 0 0 1 1-1h2.5l1.2 1.2h5.3a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/><path d="M2.5 7.5h11"/>'),
   models: svg('<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 1.8v2.2M9.5 1.8v2.2M6.5 12v2.2M9.5 12v2.2M1.8 6.5H4M1.8 9.5H4M12 6.5h2.2M12 9.5h2.2"/>'),
   memory: svg('<path d="M3 3.5A1.5 1.5 0 0 1 4.5 2h8v10.5h-8A1.5 1.5 0 0 0 3 14zM3 14V3.5M6 5h4"/>'),
   context: svg('<path d="M8 2 2.5 5 8 8l5.5-3zM2.5 8 8 11l5.5-3M2.5 11 8 14l5.5-3"/>'),
   worktrees: svg('<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5.5" r="1.5"/><path d="M4.5 5v6M11.5 7c0 2.5-3 2.5-5.5 4"/>'),
   usage: svg('<path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5 10.5 7"/>'),
-  scope: svg('<circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2"/>'),
-  audit: svg('<path d="M3.5 2.5h9v11h-9z"/><path d="M5.5 5.5l1 1 2-2M5.5 9.5l1 1 2-2M10 5.5h1M10 9.5h1"/>'),
   setup: svg('<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.8M8 12.4v1.8M1.8 8h1.8M12.4 8h1.8M3.6 3.6l1.3 1.3M11.1 11.1l1.3 1.3M3.6 12.4l1.3-1.3M11.1 4.9l1.3-1.3"/>'),
   trash: svg('<path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.6 8.6a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.6"/>'),
   sun: svg('<circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/>'),
@@ -312,6 +323,8 @@ async function loadRegistry() {
   $('brand-sub').textContent = `${total} files · ${S.registry.history.commits} versions`;
   renderStatus();
   if (S.view === 'home') paintHome(['recent']);
+  // Setup opens before the registry: its settings list fills in now.
+  if (S.view === 'setup') paintSetup();
   return true;
 }
 
@@ -336,6 +349,7 @@ function firstRunCheck(hash) {
 
 /** Whether routeHash would land this hash on Home: no file, no drawer, no view. */
 function landsOnHome(hash) {
+  hash = movedHash(hash);
   if (hashIs(hash, '#assist') || /^#file=/.test(hash)) return false;
   const v = viewForHash(hash);
   return !v || v.id === 'home';
@@ -352,7 +366,18 @@ const hashIs = (hash, h) => hash === h || hash.startsWith(`${h}&`);
 /** The view a hash opens: its exact hash, or a row's own `match` for a hash that carries a path (#packs/<id>). */
 const viewForHash = (hash) => VIEWS.find((x) => x.hash && (x.match ? x.match(hash) : hashIs(hash, x.hash)));
 
+/** The hash an old bookmark stands for now, or the hash itself. */
+function movedHash(hash) {
+  const m = MOVED_HASHES.find(([old]) => hashIs(hash, old));
+  return m ? m[1] : hash;
+}
+
 function routeHash(hash, { cold = false } = {}) {
+  const now = movedHash(hash);
+  if (now !== hash) {
+    window.history.replaceState(null, '', now === '#home' ? location.pathname + location.search : now);
+    hash = now;
+  }
   if (hashIs(hash, '#assist')) {
     if (cold) goHome();
     return openDrawer();
@@ -364,7 +389,7 @@ function routeHash(hash, { cold = false } = {}) {
     const entry = p && entryForFile(p);
     if (entry) {
       if (!cold && S.view === 'entry' && S.file?.path === p) return;
-      return openEntry(entry, p, 'files');
+      return openEntry(entry, p, homeOf(entry));
     }
     return cold ? goHome() : openHome();
   }
@@ -376,6 +401,12 @@ function routeHash(hash, { cold = false } = {}) {
   }
   if (cold) return goHome();
   if (S.view !== 'home') openHome(); else window.history.replaceState(null, '', location.pathname + location.search);
+}
+
+/** The page a registry entry's files are listed on (GROUP_HOME), or Search for one no page lists. */
+function homeOf(entry) {
+  const g = (S.registry?.groups || []).find((x) => x.entries.includes(entry));
+  return GROUP_HOME[g?.id] || 'search';
 }
 
 function entryForFile(p) {
@@ -443,7 +474,7 @@ function navButton(v) {
  */
 function navNow(v) {
   S.navs++;
-  if (!S.registry && v.kind !== 'action' && v.id !== 'home' && v.id !== 'files' && v.id !== 'setup') { S.pendingNav = v.hash; return false; }
+  if (!S.registry && v.kind !== 'action' && v.id !== 'home' && v.id !== 'search' && v.id !== 'setup') { S.pendingNav = v.hash; return false; }
   if (v.kind !== 'action') S.pendingNav = null;
   return true;
 }
@@ -455,7 +486,8 @@ function syncNav() {
     if (!b) continue;
     const page = v.kind !== 'action' && S.view === v.id;
     // Inside a file, the view it came from stays marked: "you are here, under it", not the page itself.
-    const under = v.kind !== 'action' && ((S.view === 'entry' && (S.fromView || 'files') === v.id) || viewById(S.view)?.parent === v.id);
+    const at = S.view === 'entry' ? S.fromView : S.view;
+    const under = v.kind !== 'action' && S.view !== v.id && (at === v.id || viewById(at)?.parent === v.id);
     const here = page || under;
     b.classList.toggle('active', here);
     if (page) b.setAttribute('aria-current', 'page'); else if (under) b.setAttribute('aria-current', 'location'); else b.removeAttribute('aria-current');
@@ -498,10 +530,10 @@ function setNavOverlay(open, { focusNav = true } = {}) {
   if (open && focusNav) setTimeout(() => { if ($('app').classList.contains('nav-open')) $('sidebar').querySelector('.nav-item')?.focus(); }, 0);
 }
 
-/** ⌘K: search lives at the top of the Files page, so it opens that page. */
+/** ⌘K: the Search page, its box focused. */
 function focusSearch() {
   setNavOverlay(false);
-  if (navNow(viewById('files'))) openFiles({ focus: true });
+  if (navNow(viewById('search'))) openSearch({ focus: true });
 }
 
 function toggleTheme() {
@@ -511,19 +543,12 @@ function toggleTheme() {
   syncNav();
 }
 
-/* ── Files page ──────────────────────────────────────────────────────── */
+/* ── Search page ─────────────────────────────────────────────────────── */
 /**
- * Every config file on one page: search first, then what you opened lately,
- * then each tool's files by type. Hooks, subagents, commands and settings
- * have no other panel, so this is their home, and each type keeps its "+".
+ * ⌘K from anywhere: one box over every config file the registry lists, and
+ * what you opened lately. Each file also has a page that lists it (GROUP_HOME);
+ * this is the way in for someone who knows what is in the file, not where.
  */
-/**
- * No folds: every type is open. A long one shows its first few files, then "Show all N",
- * which expands it in place for this visit. Low-traffic types (the server marks them) show fewer.
- */
-const FILES_CAP = 8;
-const FILES_CAP_QUIET = 3;
-
 const RECENT_KEY = 'acs.recentFiles';
 /** Recently opened, kept in this browser only. It records opens, never edits. */
 function recentFiles() {
@@ -536,24 +561,22 @@ function rememberOpened(f, entry) {
   })));
 }
 
-const FILES = { query: '', timer: null, scrolled: false, expanded: new Set() };
+const FILES = { query: '', timer: null };
 
-function openFiles({ focus = false } = {}) {
-  if (S.view !== 'files') {
+function openSearch({ focus = false } = {}) {
+  if (S.view !== 'search') {
     if (!confirmDiscard()) return;
-    S.view = 'files';
+    S.view = 'search';
     leaveEditor();
     FILES.query = '';
-    FILES.scrolled = false;
-    FILES.expanded = new Set();
-    window.history.replaceState(null, '', '#files');
+    window.history.replaceState(null, '', '#search');
     renderSidebar();
     renderAll();
   }
   if (focus) { $('search')?.focus(); $('search')?.select(); }
 }
 
-function renderFiles(c) {
+function renderSearch(c) {
   const page = el('div', 'files');
   const top = el('div', 'files-search-wrap');
   const input = el('input', 'search files-search');
@@ -566,8 +589,8 @@ function renderFiles(c) {
   input.addEventListener('input', () => {
     clearTimeout(FILES.timer);
     FILES.query = input.value.trim();
-    if (FILES.query.length < 2) return paintFilesBody();
-    FILES.timer = setTimeout(paintFilesBody, 220);
+    if (FILES.query.length < 2) return paintSearchBody();
+    FILES.timer = setTimeout(paintSearchBody, 220);
   });
   top.appendChild(input);
   page.appendChild(top);
@@ -575,51 +598,18 @@ function renderFiles(c) {
   body.id = 'files-body';
   page.appendChild(body);
   c.appendChild(page);
-  paintFilesBody();
+  paintSearchBody();
 }
 
-/** The part below the search box: results while searching, else recent + tools. */
-function paintFilesBody() {
+/** The part below the search box: results while searching, else what was opened lately. */
+function paintSearchBody() {
   const body = $('files-body');
-  if (!body || S.view !== 'files') return;
+  if (!body || S.view !== 'search') return;
   body.innerHTML = '';
   if (FILES.query.length >= 2) return paintSearch(body, FILES.query);
   body.appendChild(recentCard());
-  body.appendChild(foldersLine());
-  if (!S.registry) {
-    body.appendChild(el('div', 'scope-sub', S.registryFailed
-      ? `The file list is unavailable: ${S.registryFailed}. Reload to try again.` : 'Loading files…'));
-    return;
-  }
-  const model = filesModel(S.registry);
-  const tools = el('div', 'files-tools');
-  for (const tool of model) tools.appendChild(toolCard(tool));
-  body.appendChild(tools);
-  const here = tools.querySelector('.files-item.active');
-  if (here && !FILES.scrolled) { FILES.scrolled = true; here.scrollIntoView?.({ block: 'center' }); }
-}
-
-/** One line under Recent: which project folders the file list comes from. */
-function foldersLine() {
-  const line = el('div', 'scope-sub files-folders');
-  if (FOLDERS.data) fillFoldersLine(line, FOLDERS.data);
-  // Filled in place when the list arrives, so the page around it (scroll,
-  // the unfolded type) is not repainted for it.
-  else loadFolders().then((d) => { if (d && line.isConnected !== false) fillFoldersLine(line, d); });
-  return line;
-}
-
-function fillFoldersLine(line, d) {
-  line.innerHTML = '';
-  const more = el('button', 'btn ghost', 'Folders');
-  more.onclick = () => openFolders();
-  if (d.state === 'error') line.appendChild(el('span', null, `Project folders unavailable: ${d.error}. `));
-  else if (!d.roots.length) line.appendChild(el('span', null, 'No project folders yet — run acs roots add <path>. '));
-  else {
-    line.appendChild(el('span', null, `Project folders: ${d.roots.map((r) => `${r.label} (${r.status === 'missing' ? 'missing' : r.access === 'edit' ? 'you can edit' : 'read-only'})`).join(' · ')} `));
-  }
-  line.appendChild(more);
-  return line;
+  body.appendChild(el('div', 'scope-sub files-where',
+    'Files also open from the pages that list them: instruction files on Context, skills, subagents, commands and MCP on Tools, settings and hooks on Setup.'));
 }
 
 function recentCard() {
@@ -643,60 +633,42 @@ function recentCard() {
   return card;
 }
 
-function toolCard(tool) {
-  const card = el('section', `home-card files-tool files-tool-${tool.id}`);
-  const head = el('div', 'home-card-head');
-  head.appendChild(el('h2', 'home-card-title', tool.label));
-  head.appendChild(el('span', 'files-count', `${tool.count} file${tool.count === 1 ? '' : 's'}`));
-  card.appendChild(head);
-  for (const t of tool.types) {
-    const sec = el('div', 'files-type');
-    // A row, not a button — it holds its own "+" button, and nesting
-    // interactive elements inside a button is invalid.
-    const row = el('div', 'files-type-head');
-    const title = el('div', 'files-type-title');
-    title.appendChild(el('span', 'files-type-name', t.label));
-    title.appendChild(el('span', 'files-type-count', String(t.entries.length)));
-    row.appendChild(title);
-    if (t.create) {
-      const add = el('button', 'files-add', '+');
-      add.title = `New ${t.group.title.replace(/s$/, '').toLowerCase()}`;
-      add.setAttribute('aria-label', add.title);
-      add.onclick = () => createInGroup(t.group);
-      row.appendChild(add);
-    }
-    sec.appendChild(row);
-    const list = el('div', 'files-entries');
-    if (!t.entries.length) list.appendChild(el('div', 'files-empty', 'Empty — + creates the first one.'));
-    // The first few, unless expanded — or unless the file you last opened sits past them.
-    const cap = t.group.collapsed ? FILES_CAP_QUIET : FILES_CAP;
-    const all = FILES.expanded.has(t.key) || t.entries.length <= cap || t.entries.findIndex((e) => e.id === S.lastEntryId) >= cap;
-    for (const e of all ? t.entries : t.entries.slice(0, cap)) {
-      const b = el('button', 'files-item' + (S.lastEntryId === e.id ? ' active' : ''));
-      b.dataset.entry = e.id;
-      b.appendChild(el('span', `item-dot ${e.harness}`));
-      b.appendChild(el('span', 'files-item-label', t.labels[e.id]));
-      // An entry that holds more than one file says how many, plainly, right after its name.
-      if (e.extraFiles > 0) b.appendChild(el('span', 'files-item-count', plural(e.extraFiles + 1, 'file')));
-      const where = e.where ? `${e.where}\n${e.display}` : e.display;
-      b.title = e.description ? `${where}\n\n${e.description}` : where;
-      b.onclick = () => openEntry(e);
-      list.appendChild(b);
-    }
-    sec.appendChild(list);
-    if (!all) {
-      const more = el('button', 'btn files-more', `Show all ${t.entries.length}`);
-      more.onclick = () => {
-        FILES.expanded.add(t.key);
-        paintFilesBody();
-        // Keep your place: focus the first file the button revealed.
-        [...($('files-body')?.querySelectorAll('.files-item') || [])].find((x) => x.dataset.entry === t.entries[cap].id)?.focus();
-      };
-      sec.appendChild(more);
-    }
-    card.appendChild(sec);
+/**
+ * A page's list of registry files: one row per entry, its name (told apart
+ * from look-alikes by shownLabels), where it is, and Open. `create` adds the
+ * group's New button, even before the group has its first file.
+ */
+function entryList(groupIds, { create = null, empty = 'None yet.' } = {}) {
+  const wrap = el('div', 'entry-list');
+  const groups = (S.registry?.groups || []).filter((g) => groupIds.includes(g.id));
+  const entries = groups.flatMap((g) => g.entries);
+  const labels = shownLabels(entries);
+  if (!S.registry) wrap.appendChild(el('div', 'scope-sub', S.registryFailed ? `The file list is unavailable: ${S.registryFailed}. Reload to try again.` : 'Loading files…'));
+  else if (!entries.length) wrap.appendChild(el('div', 'scope-sub', empty));
+  for (const e of entries) {
+    const row = el('div', 'scope-item entry-row');
+    row.dataset.entry = e.id;
+    const body = el('div', 'scope-body');
+    const name = el('div', 'scope-path');
+    name.appendChild(el('span', `item-dot ${e.harness}`));
+    name.append(labels[e.id]);
+    if (e.extraFiles > 0) name.appendChild(el('span', 'entry-count', plural(e.extraFiles + 1, 'file')));
+    body.appendChild(name);
+    body.appendChild(el('div', 'scope-note', e.description ? `${e.display} · ${e.description}` : e.display));
+    row.appendChild(body);
+    const open = el('button', 'btn ghost scope-open', 'Open');
+    open.dataset.path = e.primary || e.files[0]?.path || '';
+    open.setAttribute('aria-label', `Open ${labels[e.id]}`);
+    open.onclick = () => openEntry(e);
+    row.appendChild(open);
+    wrap.appendChild(row);
   }
-  return card;
+  if (create) {
+    const add = el('button', 'btn entry-new', create.label);
+    add.onclick = () => createInGroup(groups.find((g) => g.createKind) || { createKind: create.kind, title: create.title });
+    wrap.appendChild(add);
+  }
+  return wrap;
 }
 
 async function paintSearch(body, q) {
@@ -705,11 +677,13 @@ async function paintSearch(body, q) {
   try { data = await api('GET', `/api/search?q=${encodeURIComponent(q)}`); }
   catch (e) { if (FILES.query === q) { body.innerHTML = ''; body.appendChild(el('div', 'scope-sub', e.message)); } return; }
   // Typed on since, or left the page: this answer is for a query nobody holds.
-  if (FILES.query !== q || S.view !== 'files') return;
+  if (FILES.query !== q || S.view !== 'search') return;
   body.innerHTML = '';
   const box = el('div', 'results');
   box.appendChild(el('div', 'scope-sub',
-    data.hits.length ? `${data.hits.length} files contain “${q}”` : `Nothing matches “${q}”.`));
+    !data.hits.length ? `Nothing matches “${q}”.`
+      : data.total > data.hits.length ? `The first ${data.hits.length} of ${data.total} files that match “${q}”, by name or by what is in them — type more to narrow it`
+        : `${plural(data.hits.length, 'file')} ${data.hits.length === 1 ? 'matches' : 'match'} “${q}”, by name or by what is in ${data.hits.length === 1 ? 'it' : 'them'}`));
   const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig');
 
   for (const h of data.hits) {
@@ -738,10 +712,9 @@ async function paintSearch(body, q) {
   body.appendChild(box);
 }
 
-/** Every opener calls this: re-mark the sidebar, and keep an open Files page current. */
+/** Every opener calls this: re-mark the sidebar. */
 function renderSidebar() {
   syncNav();
-  if (S.view === 'files') paintFilesBody();
 }
 
 function findEntry(id) {
@@ -762,11 +735,10 @@ const isDirty = () => S.file && S.draft !== S.original;
 async function openEntry(entry, filePath, from) {
   if (!confirmDiscard()) return;
   S.navs++;
-  // The view this file was opened from stays marked in the sidebar, so you keep your place (a link: Files).
+  // The view this file was opened from stays marked in the sidebar, so you keep your place (a bare link: the page that lists it).
   if (from) S.fromView = from;
-  else if (S.view !== 'entry') S.fromView = VIEWS.some((v) => v.id === S.view && v.kind !== 'action') ? S.view : 'files';
+  else if (S.view !== 'entry') S.fromView = VIEWS.some((v) => v.id === S.view && v.kind !== 'action') ? S.view : homeOf(entry);
   S.entry = entry;
-  S.lastEntryId = entry.id;         // what the Files page highlights when you go there
   S.view = 'entry';
   clearNotice();
   renderSidebar();
@@ -915,7 +887,6 @@ function renderContent() {
  * Every accepted navigation away from a file leaves the editor this way:
  * nothing stays open behind another view, so the discard prompt cannot
  * repeat and Assist cannot attach a file that is no longer on screen.
- * S.lastEntryId stays, for the Files page to highlight.
  */
 function leaveEditor() {
   S.navs++;          // every view change passes here: first run's redirect yields to it
@@ -1223,61 +1194,15 @@ async function save() {
   }
 }
 
-/* ── scope view ──────────────────────────────────────────────────────── */
-async function openScope() {
-  if (!confirmDiscard()) return;
-  S.view = 'scope';
-  leaveEditor();
-  window.history.replaceState(null, '', '#scope');
-  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
-  $('filebar').hidden = true;
-  const c = $('content');
-  c.innerHTML = '';
-  const box = el('div', 'scope');
-  box.appendChild(pageHeading('Scope'));
-  const sel = el('select', 'scope-select');
-  sel.setAttribute('aria-label', 'Folder');
-  box.appendChild(sel);
-  const list = el('div');
-  box.appendChild(list);
-  c.appendChild(box);
-
-  const { dirs } = await api('GET', '/api/scope/dirs');
-  for (const d of dirs) {
-    const o = el('option', null, d.display);
-    o.value = d.path;
-    sel.appendChild(o);
-  }
-  const load = async () => {
-    list.innerHTML = '<div class="scope-sub"><span class="spinner"></span></div>';
-    const { chain } = await api('GET', `/api/scope?dir=${encodeURIComponent(sel.value)}`);
-    list.innerHTML = '';
-    if (!chain.length) { list.appendChild(el('div', 'scope-sub', 'No instruction files apply here.')); return; }
-    chain.forEach((f, i) => {
-      const row = el('div', 'scope-item');
-      row.appendChild(el('div', 'scope-rank', String(i + 1)));
-      const body = el('div', 'scope-body');
-      body.appendChild(el('div', 'scope-path', f.display));
-      body.appendChild(el('div', 'scope-note',
-        `${f.scope === 'global' ? 'Global' : 'Directory'} · ${f.note} · ${(f.size / 1024).toFixed(1)} KB`));
-      row.appendChild(body);
-      const open = el('button', 'btn ghost scope-open', 'Open');
-      open.onclick = () => {
-        for (const g of S.registry.groups) {
-          const e = g.entries.find((x) => x.files.some((ff) => ff.path === f.path));
-          if (e) return openEntry(e, f.path);
-        }
-        notice('warn', 'That file is not in the registry yet — reload to pick it up.');
-      };
-      row.appendChild(open);
-      list.appendChild(row);
-    });
-  };
-  sel.onchange = load;
-  load();
-}
-
 /* ── create / delete ─────────────────────────────────────────────────── */
+
+/** The page on screen, repainted when it lists registry files (entryList), so a file added or removed elsewhere shows. */
+function repaintEntryLists() {
+  if (S.view === 'setup' && SETUP.step === 'settings') paintSetup();
+  else if (S.view === 'tools' && TL.section === 'agents') paintAgents();
+  else if (S.view === 'tools' && TL.section === 'skills' && SK.rows) paintSkills();
+  else if (S.view === 'worktrees') document.querySelector('.wt-rules')?.replaceWith(worktreeRules());
+}
 
 async function refreshRegistry(selectPath) {
   S.registry = await api('GET', '/api/registry');
@@ -1290,6 +1215,7 @@ async function refreshRegistry(selectPath) {
   const total = S.registry.groups.reduce(
     (n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
   $('brand-sub').textContent = `${total} files · ${S.registry.history.commits} versions`;
+  repaintEntryLists();
   if (selectPath) {
     const entry = entryForFile(selectPath);
     if (entry) await openEntry(entry, selectPath);
@@ -1771,9 +1697,11 @@ async function openWorktrees() {
   const terms = el('div', 'wt-terms');
   [['worktree', 'worktree'], ['trunk', 'trunk'], ['env', 'env'], ['done', 'done']].forEach(([t, w], i) => { if (i) terms.append(' · '); terms.appendChild(glossTip(t, w)); });
   box.appendChild(terms);
+  c.appendChild(box);
+  // The rules files and Register a project: below the worktrees, and there even with no project registered.
+  c.appendChild(worktreeRules());
   if (!data.projects?.length) {
-    box.appendChild(el('div', 'scope-sub', 'No registered projects. Register one with + on Worktrees in the sidebar.'));
-    c.appendChild(box);
+    box.appendChild(el('div', 'scope-sub', 'No registered projects. Register one with Register a project below.'));
     return;
   }
   for (const p of data.projects) {
@@ -1809,7 +1737,14 @@ async function openWorktrees() {
       box.appendChild(row);
     }
   }
-  c.appendChild(box);
+}
+
+function worktreeRules() {
+  const rules = el('div', 'scope wt-rules');
+  rules.appendChild(el('h3', 'mem-h3', 'Worktree rules'));
+  rules.appendChild(el('div', 'scope-sub', 'Where agents may branch, and off what: the defaults template and each project’s .worktrees.conf.'));
+  rules.appendChild(entryList(['worktrees'], { create: { kind: 'worktree-project', title: 'Worktrees', label: 'Register a project' } }));
+  return rules;
 }
 
 /* ── trash view ──────────────────────────────────────────────────────── */
@@ -1905,78 +1840,6 @@ const sourceOrder = () => ['global-claude', 'global-codex', 'project',
   ...folderRows().filter((r) => r.access === 'read').map((r) => r.id)];
 
 /**
- * The Folders view: what roots.json holds, read-only. Folders are added and
- * removed with `acs roots`; the page shows the result live (the 'roots'
- * event). A missing folder stays listed and inactive; an entry that failed
- * validation is listed with why; an unreadable roots.json is the whole story.
- */
-async function openFolders() {
-  if (!confirmDiscard()) return;
-  S.view = 'folders';
-  leaveEditor();
-  window.history.replaceState(null, '', '#folders');
-  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
-  $('filebar').hidden = true;
-  $('content').innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span></div></div>';
-  await loadFolders();
-  paintFolders();
-}
-
-function paintFolders() {
-  if (S.view !== 'folders') return;
-  const c = $('content');
-  c.innerHTML = '';
-  const box = el('div', 'scope folders');
-  box.appendChild(pageHeading('Folders'));
-  const d = FOLDERS.data;
-  if (!d) {
-    box.appendChild(el('div', 'notice error', 'Could not read the folder list. Reload to try again.'));
-    c.appendChild(box);
-    return;
-  }
-  box.appendChild(el('div', 'scope-note folders-where', `To change this list, edit ${d.file} from a terminal.`));
-  const cmd = (text) => { const code = el('code', 'folders-cmd', text); return code; };
-  if (d.state === 'error') {
-    const n = el('div', 'notice error folders-error');
-    n.appendChild(el('div', null, `${d.error}. No project folders are active until it is fixed or removed.`));
-    box.appendChild(n);
-  } else if (!d.roots.length) {
-    const empty = el('div', 'folders-empty');
-    empty.appendChild(el('div', null, 'No project folders yet. Add the folder your projects live in:'));
-    empty.appendChild(cmd('acs roots add <path>'));
-    empty.appendChild(el('div', 'scope-sub', 'Read-only unless you add --edit. Then:'));
-    empty.appendChild(cmd('acs roots add <path> --edit'));
-    box.appendChild(empty);
-  } else {
-    for (const r of d.roots) {
-      const row = el('div', 'mem-card folders-row');
-      const top = el('div', 'folders-top');
-      top.appendChild(el('span', 'folders-label', r.label));
-      top.appendChild(el('span', `mem-badge folders-${r.access}`, r.access === 'edit' ? 'you can edit' : 'read-only'));
-      if (r.status === 'missing') top.appendChild(el('span', 'mem-badge folders-missing', 'missing'));
-      if (r.partial) top.appendChild(el('span', 'mem-badge folders-missing', 'large folder — partially indexed'));
-      row.appendChild(top);
-      row.appendChild(el('div', 'mem-note', r.display));
-      if (r.status === 'missing') {
-        row.appendChild(el('div', 'mem-note', 'The folder is not there right now (unmounted or moved). It stays listed and comes back when it does.'));
-      }
-      box.appendChild(row);
-    }
-    box.appendChild(el('div', 'scope-sub', 'Add another with:'));
-    box.appendChild(cmd('acs roots add <path> [--edit]'));
-  }
-  if (d.invalid?.length) {
-    const bad = el('div', 'notice warn folders-invalid');
-    bad.appendChild(el('div', null, `${d.invalid.length} ${d.invalid.length === 1 ? 'entry was' : 'entries were'} skipped:`));
-    const ul = el('ul');
-    for (const x of d.invalid) ul.appendChild(el('li', null, `${x.id ?? 'an entry'}: ${x.reason}`));
-    bad.appendChild(ul);
-    box.appendChild(bad);
-  }
-  c.appendChild(box);
-}
-
-/**
  * roots.json changed (B6). The event carries the new list; everything that
  * shows folders reloads its data. The editor itself is handled by the files
  * event that precedes this one (a revoked file stays open, read-only).
@@ -1984,16 +1847,14 @@ function paintFolders() {
 async function handleRootsEvent(d) {
   FOLDERS.data = { state: d.state, error: d.error, file: d.file, roots: d.roots, invalid: d.invalid, addHint: d.addHint };
   await refreshRegistry().catch(() => {});
-  if (S.view === 'folders') paintFolders();
-  else if (S.view === 'setup') paintSetup();
-  else if (S.view === 'files') paintFilesBody();
+  if (S.view === 'setup') paintSetup();
   else if (S.view === 'home') { HOME.settledAt = 0; renderContent(); }
   else if (S.view === 'context') {
     try { CX.data = await api('GET', '/api/context'); } catch { return; }
     paintContext();
-  } else if (S.view === 'skills') {
+  } else if (S.view === 'tools' && TL.section === 'skills') {
     try { const data = await api('GET', '/api/skills'); SK.rows = data.skills; SK.usage = data.usage; } catch { return; }
-    if (S.view === 'skills') paintSkills();
+    if (S.view === 'tools' && TL.section === 'skills') paintSkills();
   }
 }
 
@@ -2001,14 +1862,78 @@ const fmtSize = (n) => (n >= 1024 * 1024
   ? `${(n / (1024 * 1024)).toFixed(1)} MB`
   : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
 
-async function openSkills() {
-  if (!confirmDiscard()) return;
-  S.view = 'skills';
+/* ── Tools view ──────────────────────────────────────────────────────── */
+/**
+ * What your agents can do, in three sections: Skills, Agents and commands
+ * (subagents and slash commands), and MCP servers. Each section has its own
+ * hash (#tools/skills …), and the sidebar's Tools reopens the last one.
+ */
+const TL = { section: 'skills' };
+const TOOLS_SECTIONS = [['skills', 'Skills'], ['agents', 'Agents and commands'], ['mcp', 'MCP servers']];
+function toolsSectionOf(hash) {
+  const m = /^#tools\/(skills|agents|mcp)/.exec(hash || '');
+  return m ? m[1] : TL.section;
+}
+
+function openTools(section = 'skills') {
+  if (section === 'mcp') return openMcp();
+  if (section === 'agents') return openAgents();
+  return openSkills();
+}
+
+/** Enter the Tools view on one section: the shared steps every section's opener takes. */
+function enterTools(section) {
+  if (!confirmDiscard()) return false;
+  S.view = 'tools';
+  TL.section = section;
   leaveEditor();
-  window.history.replaceState(null, '', '#skills');
+  window.history.replaceState(null, '', `#tools/${section}`);
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
+  return true;
+}
 
+/** The page heading and the section tabs, on top of every section. */
+function toolsHead() {
+  const wrap = el('div', 'tools-head');
+  wrap.appendChild(pageHeading('Tools'));
+  const bar = el('div', 'mem-tabs tools-tabs');
+  bar.setAttribute('role', 'tablist');
+  bar.setAttribute('aria-label', 'Tools sections');
+  for (const [id, label] of TOOLS_SECTIONS) {
+    const b = el('button', 'tab' + (TL.section === id ? ' active' : ''), label);
+    b.dataset.section = id;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(TL.section === id));
+    b.onclick = () => { if (TL.section !== id) openTools(id); };
+    bar.appendChild(b);
+  }
+  wrap.appendChild(bar);
+  return wrap;
+}
+
+/** Subagents and slash commands: Claude Code's files in ~/.claude/agents and ~/.claude/commands. */
+function openAgents() {
+  if (!enterTools('agents')) return;
+  paintAgents();
+}
+
+function paintAgents() {
+  const c = $('content');
+  c.innerHTML = '';
+  c.appendChild(toolsHead());
+  const box = el('div', 'scope');
+  box.appendChild(el('h3', 'mem-h3', 'Subagents'));
+  box.appendChild(el('div', 'scope-sub', 'Agents Claude Code can hand a task to, each with its own instructions and tools.'));
+  box.appendChild(entryList(['agents'], { create: { kind: 'agent', title: 'Subagents', label: 'New subagent' } }));
+  box.appendChild(el('h3', 'mem-h3', 'Slash commands'));
+  box.appendChild(el('div', 'scope-sub', 'Prompts you run by name, as /name, in Claude Code.'));
+  box.appendChild(entryList(['commands'], { create: { kind: 'command', title: 'Slash commands', label: 'New slash command' } }));
+  c.appendChild(box);
+}
+
+async function openSkills() {
+  if (!enterTools('skills')) return;
   const c = $('content');
   c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span></div></div>';
   try {
@@ -2020,23 +1945,25 @@ async function openSkills() {
     const live = new Set(SK.rows.map((r) => r.id));
     for (const id of [...SK.selected]) if (!live.has(id)) SK.selected.delete(id);
   } catch (e) {
+    if (S.view !== 'tools' || TL.section !== 'skills') return;
     c.innerHTML = '';
+    c.appendChild(toolsHead());
     const box = el('div', 'scope');
-    box.appendChild(pageHeading('Skills'));
     box.appendChild(el('div', 'notice error', e.message));
     c.appendChild(box);
     return;
   }
-  paintSkills();
+  if (S.view === 'tools' && TL.section === 'skills') paintSkills();
 }
 
 function paintSkills() {
   const c = $('content');
   c.innerHTML = '';
+  c.appendChild(toolsHead());
   const box = el('div', 'scope');
 
   const head = el('div', 'sw-head');
-  head.appendChild(pageHeading('Skills'));
+  head.appendChild(el('h3', 'mem-h3', 'Skills'));
   const add = el('button', 'btn primary sk-new', 'New skill');
   add.onclick = () => { location.hash = '#skills/new'; };
   head.appendChild(add);
@@ -2064,6 +1991,18 @@ function paintSkills() {
       a.displayName.localeCompare(b.displayName));
     box.appendChild(skillGroup(source, rows));
   }
+  // Skills no CLI loads from a skills folder: they open for editing, and are not part of a download.
+  for (const [id, title, sub] of [['plugin-skills', 'Plugin skills', 'From enabled plugins — edits are lost when the plugin updates.'],
+    ['retired', 'Retired skills', 'In ~/.claude/skills_retired — no CLI loads them.']]) {
+    if (!S.registry?.groups.some((g) => g.id === id && g.entries.length)) continue;
+    const wrap = el('div', 'sk-group');
+    const h = el('div', 'sk-group-head');
+    h.appendChild(el('div', 'sk-group-name', title));
+    wrap.appendChild(h);
+    wrap.appendChild(el('div', 'scope-sub', sub));
+    wrap.appendChild(entryList([id]));
+    box.appendChild(wrap);
+  }
 
   c.appendChild(box);
   syncSkillSelectionUI();
@@ -2089,6 +2028,22 @@ function selectionBar() {
   return bar;
 }
 
+/** Which registry skill group holds a /api/skills source's skills. */
+const SKILL_GROUP_OF = { 'global-claude': 'claude-skills', 'global-codex': 'codex-skills' };
+/**
+ * The registry entry for a /api/skills row. The route sends no path, so the
+ * match is by source and folder name — a global skill's name is its folder's
+ * (lib/skills.js) — under the row's own source, then under its identical copies'.
+ */
+function skillEntryOf(r) {
+  for (const src of [r.source, ...(r.aliasSources || [])]) {
+    const g = S.registry?.groups.find((x) => x.id === SKILL_GROUP_OF[src]);
+    const e = g?.entries.find((x) => x.dir?.split('/').pop() === r.name);
+    if (e) return e;
+  }
+  return null;
+}
+
 function skillGroup(source, rows) {
   const wrap = el('div', 'sk-group');
   const head = el('div', 'sk-group-head');
@@ -2109,7 +2064,21 @@ function skillGroup(source, rows) {
   head.appendChild(none);
 
   wrap.appendChild(head);
-  for (const r of rows) wrap.appendChild(skillRow(r));
+  for (const r of rows) {
+    const line = el('div', 'sk-line');
+    line.appendChild(skillRow(r));
+    // The registry lists the skills the editor can open; a project or read-only folder's skill has no Open.
+    const entry = skillEntryOf(r);
+    if (entry) {
+      const open = el('button', 'btn ghost sk-open', 'Open');
+      const file = entry.primary || entry.files[0]?.path;
+      open.dataset.path = file;
+      open.setAttribute('aria-label', `Open ${r.displayName}`);
+      open.onclick = () => openEntry(entry, file);
+      line.appendChild(open);
+    }
+    wrap.appendChild(line);
+  }
   return wrap;
 }
 
@@ -2507,6 +2476,7 @@ function factRow(r, { review = false, trash = true } = {}) {
 
   const acts = el('div', 'mem-acts');
   const open = el('button', 'btn ghost', 'Open');
+  open.dataset.path = r.openPath;
   open.onclick = () => openInEditor(r.openPath, r.display);
   acts.appendChild(open);
   if (review) {
@@ -2745,7 +2715,15 @@ function projectsTab() {
       for (const x of s.excluded) card.appendChild(el('div', 'mem-flag', `not read: ${x.rel} (${x.reason})`));
     }
     for (const ix of g.indexes) {
-      card.appendChild(el('div', ix.oversized ? 'mem-flag' : 'mem-note', `MEMORY.md: ${ix.lines} lines${ix.oversized ? ' — over the limit' : ''}`));
+      const line = el('div', `${ix.oversized ? 'mem-flag' : 'mem-note'} mem-index`, `MEMORY.md: ${ix.lines} lines${ix.oversized ? ' — over the limit' : ''} `);
+      if (ix.openPath) {
+        const open = el('button', 'btn ghost', 'Open');
+        open.dataset.path = ix.openPath;
+        open.setAttribute('aria-label', `Open ${ix.display}`);
+        open.onclick = () => openInEditor(ix.openPath, ix.display);
+        line.appendChild(open);
+      }
+      card.appendChild(line);
     }
     // Only shown rows are selectable: a file past the cap joins the selection once "Show all" lists it.
     const rows = MV.data.rows.filter((x) => x.group === g.id);
@@ -2887,13 +2865,21 @@ function previewPanel() {
 /* ── Context view ────────────────────────────────────────────────────── */
 
 /**
- * What each project tells its agents, without opening the codebase: every
- * CLAUDE.md / AGENTS.md / .cursor rule per repository, with a heading outline.
- * Identical copies (worktrees, AGENTS.md links) are one entry that still lists
- * every path; a worktree copy that differs from trunk is flagged and diffs.
+ * What your agents are told. First the main instruction files — the global
+ * CLAUDE.md and AGENTS.md every session loads — each with its size and the
+ * outline of its headings. Then one project at a time: what an agent loads in
+ * a folder there, in order (the main files first), and every CLAUDE.md /
+ * AGENTS.md / .cursor rule in it. Identical copies (worktrees, AGENTS.md
+ * links) are one entry that still lists every path; a worktree copy that
+ * differs from trunk is flagged and diffs.
  */
-// `gen` is bumped by every load: an answer from an older one is dropped.
-const CX = { data: null, diff: null, view: null, sel: newSelection(), outdated: null, gen: 0 };
+// `gen` is bumped by every load: an answer from an older one is dropped. `main` holds each main file's
+// numbers by path; `project` and `dir` are the picks; `chain` is the load order for `dir`.
+const CX = { data: null, diff: null, view: null, sel: newSelection(), outdated: null, gen: 0,
+  main: {}, dirs: null, project: null, dir: null, chain: null, chainGen: 0 };
+
+/** The registry's instruction files that are not in a project: the global ones every session loads. */
+const mainEntries = () => (S.registry?.groups.find((g) => g.id === 'memory')?.entries || []).filter((e) => e.scope !== 'project');
 
 async function openContext() {
   if (!confirmDiscard()) return;
@@ -2909,11 +2895,10 @@ async function openContext() {
   const c = $('content');
   c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span></div></div>';
   const gen = ++CX.gen;
+  let data;
   try {
-    const data = await api('GET', '/api/context');
-    if (gen !== CX.gen) return;
-    CX.data = data;
-    CX.outdated = null;
+    [data] = await Promise.all([api('GET', '/api/context'), loadContextMain(),
+      api('GET', '/api/scope/dirs').then((d) => { CX.dirs = d.dirs; }, () => { CX.dirs = []; })]);
   } catch (e) {
     if (gen !== CX.gen) return;
     c.innerHTML = '';
@@ -2923,7 +2908,76 @@ async function openContext() {
     c.appendChild(box);
     return;
   }
+  if (gen !== CX.gen) return;
+  CX.data = data;
+  CX.outdated = null;
+  if (CX.project !== ALL_PROJECTS && !data.groups.some((g) => g.display === CX.project)) { CX.project = data.groups[0]?.display ?? null; CX.dir = CX.project; }
   paintContext();
+  loadContextChain();
+}
+
+/** Each main file's size and heading outline, read the way the editor reads it. */
+async function loadContextMain() {
+  const main = {};
+  await Promise.all(mainEntries().map(async (e) => {
+    const p = e.primary || e.files[0]?.path;
+    try {
+      const f = await api('GET', `/api/file?path=${encodeURIComponent(p)}`);
+      main[p] = { lines: f.content.split('\n').length - (f.content.endsWith('\n') ? 1 : 0), bytes: f.size, outline: mdOutline(f.content) };
+    } catch (e2) { main[p] = { error: e2.message }; }
+  }));
+  CX.main = main;
+}
+
+/** The load order for the folder picked in Projects. */
+async function loadContextChain() {
+  if (!CX.dir) { CX.chain = null; return; }
+  const gen = ++CX.chainGen;
+  const dir = CX.dir;
+  CX.chain = { dir, loading: true };
+  paintContext();
+  let chain;
+  try { chain = (await api('GET', `/api/scope?dir=${encodeURIComponent(dir)}`)).chain; }
+  catch (e) { if (gen === CX.chainGen) { CX.chain = { dir, error: e.message }; paintContext(); } return; }
+  if (gen !== CX.chainGen) return;
+  CX.chain = { dir, chain };
+  paintContext();
+}
+
+/**
+ * Headings, each with the lines its section runs to the next heading of the
+ * same or a higher level; frontmatter and fenced code are not headings. The
+ * same rule as lib/context-map.js outlineOf, so a main file and a project
+ * file outline alike.
+ */
+function mdOutline(text) {
+  const lines = text.split('\n');
+  const heads = [];
+  let i = 0, fence = null;
+  if (lines[0] === '---') { const end = lines.indexOf('---', 1); if (end > 0) i = end + 1; }
+  for (; i < lines.length; i++) {
+    const f = /^\s*(```|~~~)/.exec(lines[i]);
+    if (f) { fence = fence === f[1] ? null : fence ?? f[1]; continue; }
+    if (fence) continue;
+    const m = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(lines[i]);
+    if (m) heads.push({ level: m[1].length, text: m[2], line: i + 1 });
+  }
+  const total = lines.length - (text.endsWith('\n') ? 1 : 0);
+  return heads.map((h, k) => {
+    const next = heads.slice(k + 1).find((x) => x.level <= h.level);
+    return { ...h, lines: (next ? next.line : total + 1) - h.line };
+  });
+}
+
+function outlineBox(outline) {
+  if (!outline.length) return el('div', 'mem-note', 'No headings.');
+  const ol = el('div', 'cx-outline');
+  for (const o of outline) {
+    const line = el('div', 'cx-head', `${'  '.repeat(o.level - 1)}${o.text}`);
+    line.appendChild(el('span', 'cx-lines', `${o.lines} line${o.lines === 1 ? '' : 's'}`));
+    ol.appendChild(line);
+  }
+  return ol;
 }
 
 function paintContext() {
@@ -2934,29 +2988,42 @@ function paintContext() {
   c.innerHTML = '';
   const box = el('div', 'scope mem');
   box.appendChild(pageHeading('Context'));
+
+  box.appendChild(el('h3', 'mem-h3', 'Your main instruction files'));
+  box.appendChild(el('div', 'scope-sub', 'Every session of that CLI loads its file, in every project.'));
+  const main = mainEntries();
+  if (!main.length) box.appendChild(el('div', 'scope-sub', 'None yet. Claude Code reads ~/.claude/CLAUDE.md, Codex ~/.codex/AGENTS.md and Grok ~/.grok/AGENTS.md when they exist.'));
+  for (const e of main) box.appendChild(contextMainCard(e));
+
+  box.appendChild(el('h3', 'mem-h3 cx-projects-h', 'Projects'));
   const roots = Object.values(d.roots || {});
   // One folder's line would only say the totals again.
   const perRoot = roots.length > 1
     ? roots.map((r) => `${r.label}: ${plural(r.files, 'file')} as ${plural(r.entries, 'entry', 'entries')}, ${r.drifted} different`).join(' · ') : null;
-  box.appendChild(el('div', 'scope-note cx-count', `${plural(d.totals.files, 'instruction file')}, shown as ${plural(d.totals.entries, 'entry', 'entries')}`
-    + (d.totals.drifted ? ` — ${d.totals.drifted} ${d.totals.drifted === 1 ? 'differs' : 'differ'} from the main checkout.` : '.') + (perRoot ? ` ${perRoot}.` : '')));
+  if (d.groups.length) {
+    box.appendChild(el('div', 'scope-note cx-count', `${plural(d.totals.files, 'instruction file')}, shown as ${plural(d.totals.entries, 'entry', 'entries')}`
+      + (d.totals.drifted ? ` — ${d.totals.drifted} ${d.totals.drifted === 1 ? 'differs' : 'differ'} from the main checkout.` : '.') + (perRoot ? ` ${perRoot}.` : '')));
+  }
+  if (!d.groups.length) {
+    box.appendChild(el('div', 'scope-sub', 'No project instruction files found. Add project folders on Setup, and their CLAUDE.md and AGENTS.md files show here.'));
+  } else box.appendChild(contextProjectPicker());
   for (const u of d.unreadable) box.appendChild(el('div', 'mem-flag', `not read: ${u.display} (${u.reason})`));
   if (CX.outdated) {
     box.appendChild(el('div', 'notice warn', `Showing Context as it was before the move to Trash — reading it again failed (${CX.outdated}). Reopen Context to try again.`));
   }
-  resetShown(CX.sel);
-  box.appendChild(selectBar(CX.sel, deleteContextSelection));
+  if (CX.project && CX.project !== ALL_PROJECTS) box.appendChild(contextChain());
 
-  let lastRoot = null;
-  for (const g of d.groups) {
-    if (g.root !== lastRoot) {
-      lastRoot = g.root;
-      box.appendChild(el('h3', 'mem-h3', g.readOnly ? `${g.rootLabel} — read-only` : g.rootLabel));
-    }
+  resetShown(CX.sel);
+  const groups = d.groups.filter((g) => CX.project === ALL_PROJECTS || g.display === CX.project);
+  if (groups.length) {
+    box.appendChild(el('h4', 'cx-files-h', CX.project === ALL_PROJECTS ? 'Every project instruction file' : 'Every instruction file in this project'));
+    box.appendChild(selectBar(CX.sel, deleteContextSelection));
+  }
+  for (const g of groups) {
     const card = el('div', 'mem-card');
     const h = el('div', 'sk-head');
     h.appendChild(el('span', 'sk-name', g.label));
-    h.appendChild(el('span', 'mem-where', g.display));
+    h.appendChild(el('span', 'mem-where', g.readOnly ? `${g.display} · ${g.rootLabel}, read-only` : `${g.display} · ${g.rootLabel}`));
     if (g.checkouts.length > 1) h.appendChild(el('span', 'mem-badge', `${g.checkouts.length} checkouts`));
     card.appendChild(h);
     for (const s of g.scopes) card.appendChild(contextScope(s));
@@ -2965,6 +3032,105 @@ function paintContext() {
   pruneSelection(CX.sel);
   c.appendChild(box);
   c.scrollTop = scroll;
+}
+
+function contextMainCard(e) {
+  const p = e.primary || e.files[0]?.path;
+  const info = CX.main[p];
+  const card = el('div', 'mem-card cx-main');
+  const h = el('div', 'sk-head');
+  h.appendChild(el('span', `item-dot ${e.harness}`));
+  h.appendChild(el('span', 'sk-name', e.label));
+  h.appendChild(el('span', 'mem-where', e.display));
+  const open = el('button', 'btn scope-open', 'Open');
+  open.dataset.path = p;
+  open.setAttribute('aria-label', `Open ${e.display}`);
+  open.onclick = () => openEntry(e, p);
+  h.appendChild(open);
+  card.appendChild(h);
+  if (!info) card.appendChild(el('div', 'mem-note', 'Reading…'));
+  else if (info.error) card.appendChild(el('div', 'mem-flag', `Could not read it: ${info.error}`));
+  else {
+    card.appendChild(el('div', 'mem-note cx-size', `${plural(info.lines, 'line')} · ${fmtSize(info.bytes)}`));
+    card.appendChild(outlineBox(info.outline));
+  }
+  return card;
+}
+
+/** The project picker's choice that lists every project's files at once, for a selection across them. */
+const ALL_PROJECTS = '*';
+
+/** Which project, then which folder in it: an agent started there loads what contextChain lists. */
+function contextProjectPicker() {
+  const row = el('div', 'cx-picker');
+  const proj = el('select', 'scope-select cx-project');
+  proj.setAttribute('aria-label', 'Project');
+  const all = el('option', null, 'All projects — every instruction file');
+  all.value = ALL_PROJECTS;
+  if (CX.project === ALL_PROJECTS) all.selected = true;
+  proj.appendChild(all);
+  for (const g of CX.data.groups) {
+    const o = el('option', null, `${g.label} — ${g.display}`);
+    o.value = g.display;
+    if (g.display === CX.project) o.selected = true;
+    proj.appendChild(o);
+  }
+  proj.onchange = () => {
+    CX.project = proj.value; CX.dir = proj.value === ALL_PROJECTS ? null : proj.value; CX.sel = newSelection();
+    paintContext(); loadContextChain();
+  };
+  row.appendChild(proj);
+  if (CX.project === ALL_PROJECTS) return row;
+  // Every checkout of the project (its worktrees sit beside the trunk, not under it), each with the folders below it.
+  const group = CX.data.groups.find((g) => g.display === CX.project);
+  const tops = [CX.project, ...(group?.checkouts || []).map((k) => k.display).filter((x) => x && x !== CX.project)];
+  const inTop = (x, t) => x === t || x.startsWith(`${t}/`);
+  const dirs = tops.flatMap((t) => [t, ...(CX.dirs || []).map((x) => x.display).filter((x) => x !== t && inTop(x, t))]);
+  const dir = el('select', 'scope-select cx-dir');
+  dir.setAttribute('aria-label', 'Folder in this project');
+  for (const x of dirs) {
+    const o = el('option', null, x === CX.project ? 'Project folder' : inTop(x, CX.project) ? x.slice(CX.project.length + 1) : x);
+    o.value = x;
+    if (x === CX.dir) o.selected = true;
+    dir.appendChild(o);
+  }
+  dir.onchange = () => { CX.dir = dir.value; loadContextChain(); };
+  row.appendChild(dir);
+  return row;
+}
+
+/** What an agent started in the picked folder loads, in order. */
+function contextChain() {
+  const wrap = el('div', 'cx-chain');
+  wrap.appendChild(el('h4', null, 'What an agent loads here, in order'));
+  const ch = CX.chain;
+  if (!ch || ch.loading) { wrap.appendChild(el('div', 'scope-sub', 'Reading…')); return wrap; }
+  if (ch.error) { wrap.appendChild(el('div', 'notice error', ch.error)); return wrap; }
+  if (!ch.chain.length) { wrap.appendChild(el('div', 'scope-sub', 'No instruction files apply here.')); return wrap; }
+  ch.chain.forEach((f, i) => {
+    const row = el('div', 'scope-item');
+    row.appendChild(el('div', 'scope-rank', String(i + 1)));
+    const body = el('div', 'scope-body');
+    body.appendChild(el('div', 'scope-path', f.display));
+    body.appendChild(el('div', 'scope-note',
+      `${f.scope === 'global' ? 'Main file' : 'This project'} · ${f.note} · ${(f.size / 1024).toFixed(1)} KB`));
+    row.appendChild(body);
+    // A read folder's file comes with no path: it is shown, never opened in the editor.
+    if (f.readOnly) {
+      row.appendChild(el('span', 'mem-badge', 'read-only'));
+      wrap.appendChild(row);
+      return;
+    }
+    const open = el('button', 'btn ghost scope-open', 'Open');
+    open.onclick = () => {
+      const e = entryForFile(f.path);
+      if (e) return openEntry(e, f.path);
+      notice('warn', 'That file is not in the registry yet — reload to pick it up.');
+    };
+    row.appendChild(open);
+    wrap.appendChild(row);
+  });
+  return wrap;
 }
 
 /**
@@ -3055,6 +3221,7 @@ function contextScope(s) {
       `${v.trunk ? 'main checkout' : v.drift ? 'differs from the main checkout' : 'worktree copy'} · ${v.lines} lines`
       + (v.copies > 1 ? ` · ${v.copies - 1} identical cop${v.copies === 2 ? 'y' : 'ies'} collapsed` : '')));
     const open = el('button', 'btn ghost', v.readOnly ? (CX.view?.id === v.id ? 'Close' : 'View') : 'Open');
+    if (v.open.path) open.dataset.path = v.open.path;
     open.onclick = () => (v.readOnly ? toggleContextView(v.id) : openInEditor(v.open.path, v.open.display));
     top.appendChild(open);
     if (v.readOnly) top.appendChild(el('span', 'mem-badge', 'read-only'));
@@ -3069,17 +3236,7 @@ function contextScope(s) {
       paths.appendChild(el('div', 'mem-note', `${p.display}${p.trunk ? ' (main checkout)' : ''}${p.readOnly && !v.readOnly ? ' (read-only)' : ''}${p.alias ? ` — link ${p.alias}` : ''}`));
     }
     box.appendChild(paths);
-    if (v.outline.length) {
-      const ol = el('div', 'cx-outline');
-      for (const o of v.outline) {
-        const line = el('div', 'cx-head', `${'  '.repeat(o.level - 1)}${o.text}`);
-        line.appendChild(el('span', 'cx-lines', `${o.lines} line${o.lines === 1 ? '' : 's'}`));
-        ol.appendChild(line);
-      }
-      box.appendChild(ol);
-    } else {
-      box.appendChild(el('div', 'mem-note', 'No headings.'));
-    }
+    box.appendChild(outlineBox(v.outline));
     if (CX.view?.id === v.id) {
       const view = el('div', 'cx-read md');
       view.innerHTML = renderMarkdown(CX.view.content);
@@ -3811,12 +3968,12 @@ const HOME = {
 const HOME_ROUTES = {
   usage: '/api/usage', models: '/api/models', context: '/api/context',
   trash: '/api/trash', clis: '/api/setup/clis', roots: '/api/roots',
-  memory: '/api/memory', worktrees: '/api/worktree', audit: '/api/audit/summary',
+  memory: '/api/memory', worktrees: '/api/worktree',
 };
 const HOME_SLOW = new Set(['memory', 'worktrees']);
 const HOME_CARDS_OF = {
   usage: ['accounts', 'clis'], clis: ['clis', 'attention'], roots: ['folders'], trash: ['recent'],
-  models: ['attention'], memory: ['attention'], worktrees: ['attention'], context: ['attention'], audit: ['attention'],
+  models: ['attention'], memory: ['attention'], worktrees: ['attention'], context: ['attention'],
 };
 /** Revisiting Home within this long repaints what it has rather than asking again. */
 const HOME_FRESH_MS = 30_000;
@@ -3869,7 +4026,7 @@ function renderHome(c) {
 
 /** "Needs you: N" beside the Home title — what Needs attention lists, hidden at zero. */
 function homeNeedsChip() {
-  const n = attentionModel(HOME.src).items.length + (auditAttention(HOME.src.audit)?.source ? 1 : 0);
+  const n = attentionModel(HOME.src).items.length;
   return n ? el('span', 'home-needs', `Needs you: ${n}`) : null;
 }
 
@@ -3971,6 +4128,8 @@ function goUsage(focus) {
 function homeAction(action) {
   if (!confirmDiscard()) return;
   if (action.view === 'memory' && action.tab) MV.tab = action.tab;
+  // Setup opens on the step its hash names.
+  if (action.view === 'setup') window.history.replaceState(null, '', `#setup&step=${action.step || 'clis'}`);
   viewById(action.view).open();
 }
 
@@ -4089,9 +4248,8 @@ function paintAccounts(body) {
 
 function paintAttention(body) {
   const m = attentionModel(HOME.src);
-  const audit = auditAttention(HOME.src.audit);
   // The top few by consequence, then the rest behind "Show all N" (C2).
-  const all = rankAttention([...m.items, ...(audit?.source ? [audit] : [])]);
+  const all = rankAttention(m.items);
   const shown = HOME.attentionAll ? all : all.slice(0, ATTENTION_TOP);
   for (const it of shown) {
     const row = el('div', `home-item ${it.kind}`);
@@ -4116,15 +4274,7 @@ function paintAttention(body) {
   }
   for (const f of m.failed) body.appendChild(homeFailed(f.label, f.error));
   if (m.loading.length) body.appendChild(homeLoading(`Checking ${m.loading.map((x) => x.label.toLowerCase()).join(', ')}…`));
-  if (audit && !audit.source) {
-    const row = el('div', 'home-muted home-pad home-audit');
-    row.appendChild(el('span', null, audit.text));
-    const b = el('button', 'btn ghost home-item-btn', audit.action.label);
-    b.onclick = () => homeAction(audit.action);
-    row.appendChild(b);
-    body.appendChild(row);
-  }
-  if (m.clear && !audit?.source) {
+  if (m.clear) {
     const ok = el('div', 'home-clear');
     ok.appendChild(el('div', 'home-clear-title', 'Nothing needs you.'));
     ok.appendChild(el('div', 'home-muted', m.quiet.length
@@ -4141,8 +4291,8 @@ function paintFolderLine(body) {
   if (!r || r.state === 'loading') body.appendChild(el('span', 'home-muted', 'Project folders: …'));
   else if (r.state === 'error') body.appendChild(el('span', 'home-muted', `Project folders unavailable: ${r.error}`));
   else body.appendChild(el('span', 'home-folders-count', folderCountText(r.data)));
-  const open = el('button', 'btn ghost', 'Folders');
-  open.onclick = () => homeAction({ view: 'folders' });
+  const open = el('button', 'btn ghost', 'Project folders');
+  open.onclick = () => homeAction({ view: 'setup', step: 'folders' });
   const again = el('button', 'btn ghost', 'Run setup again');
   again.onclick = () => homeAction({ view: 'setup' });
   body.append(open, again);
@@ -4227,22 +4377,24 @@ function paintRecent(body) {
 
 /* ── MCP view ────────────────────────────────────────────────────────── */
 async function openMcp() {
-  if (!confirmDiscard()) return;
-  S.view = 'mcp';
-  leaveEditor();
-  window.history.replaceState(null, '', '#mcp');
-  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
-  $('filebar').hidden = true;
+  if (!enterTools('mcp')) return;
 
   const c = $('content');
   c.innerHTML = '<div class="scope"><div class="scope-sub"><span class="spinner"></span> reading MCP config…</div></div>';
   let m;
   try { m = await api('GET', '/api/mcp'); }
-  catch (e) { c.innerHTML = `<div class="scope"><div class="scope-sub">${esc(e.message)}</div></div>`; return; }
+  catch (e) {
+    if (S.view !== 'tools' || TL.section !== 'mcp') return;
+    c.innerHTML = '';
+    c.appendChild(toolsHead());
+    c.appendChild(el('div', 'scope')).appendChild(el('div', 'scope-sub', e.message));
+    return;
+  }
+  if (S.view !== 'tools' || TL.section !== 'mcp') return;
 
   c.innerHTML = '';
+  c.appendChild(toolsHead());
   const box = el('div', 'scope');
-  box.appendChild(pageHeading('MCP servers'));
   const editable = S.registry.groups.find((g) => g.id === 'mcp');
   // The route could not read ~/.claude.json: that is what to say — never "none are configured" (f1).
   const unreadable = /^Could not read/.test(m.note || '');
@@ -4288,6 +4440,7 @@ async function openMcp() {
       body.appendChild(el('div', 'scope-note', e.description || ''));
       row.appendChild(body);
       const open = el('button', 'btn ghost scope-open', 'Open');
+      open.dataset.path = e.primary || e.files[0]?.path || '';
       open.onclick = () => openEntry(e);
       row.appendChild(open);
       box.appendChild(row);
@@ -5460,334 +5613,6 @@ function guideProposalView(p) {
   bar.appendChild(cancel);
   box.appendChild(bar);
   return box;
-}
-
-/* ── Audit view ──────────────────────────────────────────────────────── */
-
-/**
- * The deterministic audit (lib/audit.js): findings grouped by file, each
- * labelled with its rule, severity and the file's class. Fix shows the full
- * diff of one file and writes only on Accept; Dismiss is remembered by the
- * server. Plugin, vendor and read-only files show findings only. Info
- * findings wait behind Show info; a file's name+version notes fold into one
- * row; files in a repository's linked worktrees sit in its own collapsed
- * section, each still fixed and dismissed on its own.
- */
-const AU = {
-  data: null, error: null, loading: false,
-  vendor: store.get('acs.audit.vendor') === '1',
-  dismissed: store.get('acs.audit.dismissed') === '1',
-  info: store.get('acs.audit.info') === '1',
-  showAll: {},     // a capped list's key -> every item shown (refusals, worktree cards, model names; no folds)
-  proposals: {},   // file ref -> proposal
-  ack: {},         // file ref -> the synced acknowledgement is ticked
-  busy: {},        // file ref -> a propose or accept in flight
-};
-const AUDIT_RULES = { D1: 'Model id', D2: 'Model flag', D3: 'No fallback', D4: 'Effort', D5: 'Lanes' };
-const AUDIT_CLASS = { user: 'yours', synced: 'synced', plugin: 'plugin', vendor: 'vendor', readonly: 'read-only' };
-const AUDIT_FINDINGS_ONLY = {
-  plugin: 'Findings only: this file belongs to a plugin, and the next plugin update replaces it.',
-  vendor: 'Findings only: this file ships with the CLI itself.',
-  readonly: 'Findings only: this file is in a read-only folder.',
-};
-
-async function openAudit({ refresh = false } = {}) {
-  if (S.view !== 'audit' && !confirmDiscard()) return;
-  S.view = 'audit';
-  leaveEditor();
-  window.history.replaceState(null, '', '#audit');
-  renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
-  $('filebar').hidden = true;
-  AU.loading = true;
-  paintAudit();
-  try { AU.data = await api('GET', `/api/audit${refresh ? '?refresh=1' : ''}`); AU.error = null; }
-  catch (e) { AU.error = e.message; }
-  AU.loading = false;
-  if (S.view === 'audit') paintAudit();
-}
-
-/** The findings a card shows under the current filters; hidden info is never part of a Fix. */
-const auditVisible = (f) => f.findings.filter((x) => (AU.dismissed || !x.dismissed) && (AU.info || x.severity !== 'info'));
-const auditFixable = (f) => auditVisible(f).filter((x) => x.fixable && !x.dismissed);
-/** A name+version note (never fixable): folded into one row per file. */
-const auditNameNote = (x) => x.rule === 'D1' && x.name && x.severity === 'info' && !x.fixable;
-
-function paintAudit() {
-  const c = $('content');
-  c.innerHTML = '';
-  const box = el('div', 'scope audit');
-  const head = el('div', 'audit-head');
-  head.appendChild(pageHeading('Audit'));
-  const again = el('button', 'btn audit-run', AU.loading ? 'Auditing…' : 'Run again');
-  again.disabled = AU.loading;
-  again.onclick = () => openAudit({ refresh: true });
-  head.appendChild(again);
-  box.appendChild(head);
-
-  const d = AU.data;
-  const listed = (f) => AU.vendor || f.cls !== 'vendor';
-  const infoCount = d ? d.files.filter(listed).reduce((n, f) => n + f.findings.filter((x) => x.severity === 'info' && !x.dismissed).length, 0) : 0;
-  const filters = el('div', 'audit-filters');
-  const toggle = (label, key, cls) => {
-    const l = el('label', `audit-filter ${cls}`);
-    const cb = el('input');
-    cb.type = 'checkbox';
-    cb.checked = AU[key];
-    cb.onchange = () => {
-      AU[key] = cb.checked;
-      store.set(`acs.audit.${key}`, cb.checked ? '1' : '0');
-      if (key === 'info' && !cb.checked) dropHiddenProposals();
-      paintAudit();
-    };
-    l.append(cb, document.createTextNode(` ${label}`));
-    filters.appendChild(l);
-  };
-  toggle('Show vendor', 'vendor', 'audit-show-vendor');
-  toggle('Show dismissed', 'dismissed', 'audit-show-dismissed');
-  toggle(`Show info (${infoCount})`, 'info', 'audit-show-info');
-  box.appendChild(filters);
-
-  if (AU.loading && !AU.data) {
-    box.appendChild(el('div', 'scope-sub', 'Reading skills and instruction files…'));
-    c.appendChild(box);
-    return;
-  }
-  if (AU.error) {
-    const n = el('div', 'notice error audit-error');
-    n.setAttribute('role', 'alert');
-    n.appendChild(el('div', null, `The audit could not run: ${AU.error}`));
-    box.appendChild(n);
-    if (!AU.data) { c.appendChild(box); return; }
-  }
-  if (d.policyError) {
-    const n = el('div', 'notice error audit-policy');
-    n.appendChild(el('div', null, 'The model registry or the roles are invalid, so stale ids, efforts and fixes are not checked until they are fixed in Models.'));
-    n.appendChild(el('div', 'models-error-text', d.policyError));
-    box.appendChild(n);
-  }
-  if (d.partial) {
-    const n = el('div', 'notice warn audit-partial');
-    n.appendChild(el('div', null, `This audit is partial: ${d.partialReasons.join('; ')}.`));
-    box.appendChild(n);
-  }
-  const vendorFindings = d.counts.byClass.vendor?.findings || 0;
-  const summary = el('div', 'audit-summary');
-  summary.textContent = `${d.counts.files} file${d.counts.files === 1 ? '' : 's'} read · ${d.counts.findings} finding${d.counts.findings === 1 ? '' : 's'} · ${d.counts.fixable} fixable`
-    + (!AU.vendor && vendorFindings ? ` · ${vendorFindings} in vendor files, hidden` : '')
-    + (!AU.info && infoCount ? ` · ${infoCount} info, hidden` : '');
-  box.appendChild(summary);
-  if (d.refusals.length) {
-    const sec = el('div', 'audit-refusals');
-    sec.appendChild(el('div', 'audit-refusals-head', `${d.counts.refused} file${d.counts.refused === 1 ? ' was' : 's were'} not read`));
-    auditCapped(sec, 'refusals', d.refusals, (r) => el('div', 'scope-note', `${r.path} — ${r.reason}`));
-    box.appendChild(sec);
-  }
-
-  const shown = d.files.filter((f) => listed(f) && auditVisible(f).length);
-  if (!shown.length) box.appendChild(el('div', 'audit-clear', d.files.length ? 'Nothing to show with these filters.' : 'No findings: no hardcoded or stale models found.'));
-  const list = el('div', 'audit-list');
-  const repos = new Map();
-  for (const f of shown) {
-    if (!f.worktree) { list.appendChild(auditCard(f)); continue; }
-    if (!repos.has(f.worktree.repo)) repos.set(f.worktree.repo, []);
-    repos.get(f.worktree.repo).push(f);
-  }
-  for (const [repo, files] of repos) list.appendChild(auditWorktrees(repo, files, d));
-  box.appendChild(list);
-  c.appendChild(box);
-}
-
-/** The first few of a list, then "Show all N", which lists the rest in place (no folds). */
-const AUDIT_CAP = 3;
-function auditCapped(box, key, items, render, cap = AUDIT_CAP) {
-  const all = AU.showAll[key] || items.length <= cap;
-  (all ? items : items.slice(0, cap)).forEach((x, i) => {
-    const n = render(x);
-    // The first item "Show all" revealed takes focus after the repaint: it can hold focus without being a tab stop.
-    if (i === cap) { n.dataset.capFirst = key; n.tabIndex = -1; }
-    box.appendChild(n);
-  });
-  if (!all) {
-    const more = el('button', 'btn audit-more', `Show all ${items.length}`);
-    more.onclick = () => {
-      AU.showAll[key] = true;
-      paintAudit();
-      [...document.querySelectorAll('[data-cap-first]')].find((n) => n.dataset.capFirst === key)?.focus();
-    };
-    box.appendChild(more);
-  }
-}
-
-/** One repository's linked-worktree cards, apart from the main list, under one heading; the counts are of its worktree files. */
-function auditWorktrees(repo, files, d) {
-  const sec = el('section', 'audit-worktrees');
-  sec.dataset.repo = repo;
-  const n = d.worktrees?.find((w) => w.repo === repo)?.files ?? files.length;
-  const m = files.reduce((k, f) => k + f.findings.filter((x) => !x.dismissed).length, 0);
-  sec.appendChild(el('h3', 'audit-worktrees-head',
-    `Worktrees of ${files[0].worktree.label} (${n} file${n === 1 ? '' : 's'}, ${m} finding${m === 1 ? '' : 's'})`));
-  const inner = el('div', 'audit-list');
-  auditCapped(inner, `wt:${repo}`, files, auditCard);
-  sec.appendChild(inner);
-  return sec;
-}
-
-function auditCard(f) {
-  const card = el('section', `audit-file ${f.cls}`);
-  card.dataset.ref = f.ref;
-  const top = el('div', 'audit-file-head');
-  top.appendChild(el('span', 'audit-path', f.display));
-  top.appendChild(el('span', `audit-class ${f.cls}`, AUDIT_CLASS[f.cls] || f.cls));
-  if (f.skill) top.appendChild(el('span', 'audit-kind', `skill · ${f.skill}`));
-  else top.appendChild(el('span', 'audit-kind', f.scope === 'global' ? 'global instructions' : 'instructions'));
-  const fixable = auditFixable(f);
-  const canFix = f.cls === 'user' || f.cls === 'synced';
-  if (canFix && fixable.length) {
-    const b = el('button', 'btn ghost audit-fix', `Fix ${fixable.length}`);
-    b.disabled = !!AU.busy[f.ref] || !!AU.proposals[f.ref] || (f.cls === 'synced' && !AU.ack[f.ref]);
-    b.onclick = () => proposeAudit(f, fixable);
-    top.appendChild(b);
-  }
-  card.appendChild(top);
-  if (!canFix) card.appendChild(el('div', 'scope-note audit-only', AUDIT_FINDINGS_ONLY[f.cls]));
-  if (f.cls === 'synced' && fixable.length) {
-    const l = el('label', 'audit-ack');
-    const cb = el('input');
-    cb.type = 'checkbox';
-    cb.checked = !!AU.ack[f.ref];
-    cb.onchange = () => { AU.ack[f.ref] = cb.checked; paintAudit(); };
-    l.append(cb, document.createTextNode(' This skill is synced: the next sync overwrites a fix here. Fix it anyway.'));
-    card.appendChild(l);
-  }
-  if (f.copies.length) {
-    card.appendChild(el('div', 'scope-note audit-copies',
-      `Also in ${f.copies.length} identical cop${f.copies.length === 1 ? 'y' : 'ies'}: ${f.copies.map((x) => x.display).join(', ')}. A fix changes this file only.`));
-  }
-  if (f.aliases) card.appendChild(el('div', 'scope-note audit-aliases', `${f.aliases} link${f.aliases === 1 ? '' : 's'} point${f.aliases === 1 ? 's' : ''} to this file.`));
-  const rows = el('div', 'audit-findings');
-  const visible = auditVisible(f);
-  const names = visible.filter(auditNameNote);
-  for (const x of visible) if (!names.includes(x)) rows.appendChild(auditRow(f, x));
-  if (names.length) {
-    const sec = el('div', 'audit-names');
-    sec.appendChild(el('div', 'audit-names-head', `${names.length} model name${names.length === 1 ? '' : 's'} written out`));
-    auditCapped(sec, `names:${f.ref}`, names, (x) => auditRow(f, x));
-    rows.appendChild(sec);
-  }
-  card.appendChild(rows);
-  if (AU.proposals[f.ref]) card.appendChild(auditProposalView(f, AU.proposals[f.ref]));
-  return card;
-}
-
-function auditRow(f, x) {
-  const row = el('div', `audit-finding ${x.severity}${x.dismissed ? ' dismissed' : ''}`);
-  row.dataset.id = x.id;
-  const line = el('div', 'audit-finding-line');
-  line.appendChild(el('span', `audit-sev ${x.severity}`, x.severity === 'warn' ? 'warn' : 'info'));
-  line.appendChild(el('span', 'audit-rule', AUDIT_RULES[x.rule] || x.rule));
-  line.appendChild(el('span', 'audit-line', `line ${x.line}`));
-  line.appendChild(el('code', 'audit-match', x.match));
-  if (x.stale) line.appendChild(el('span', 'audit-stale', `stale → ${x.family}`));
-  if (x.guide) line.appendChild(el('span', 'audit-guide', 'model guide'));
-  const b = el('button', 'btn ghost audit-dismiss', x.dismissed ? 'Undismiss' : 'Dismiss');
-  b.onclick = () => dismissAudit(x, !x.dismissed);
-  line.appendChild(b);
-  row.appendChild(line);
-  row.appendChild(el('div', 'scope-note audit-message', x.message));
-  if (x.fixable && x.replacement != null && !x.dismissed) {
-    const fix = el('div', 'scope-note audit-replacement');
-    fix.append(document.createTextNode('Fix: '), el('code', null, x.replacement));
-    row.appendChild(fix);
-  }
-  return row;
-}
-
-async function proposeAudit(f, findings) {
-  AU.busy[f.ref] = true;
-  paintAudit();
-  try {
-    const findingIds = findings.map((x) => x.id);
-    const infoAt = AU.info;
-    const p = { ...await api('POST', '/api/audit/propose', {
-      fileRef: f.ref, findingIds, ...(f.cls === 'synced' ? { ackSync: AU.ack[f.ref] === true } : {}),
-    }), findingIds };
-    // Info hidden while this was in flight: a proposal holding a finding no longer shown is never kept.
-    const now = AU.data?.files.find((x) => x.ref === f.ref);
-    const shown = new Set(now ? auditVisible(now).map((x) => x.id) : []);
-    if (AU.info !== infoAt || !findingIds.every((id) => shown.has(id))) {
-      api('POST', '/api/audit/reject', { id: p.id }).catch(() => {});
-      notice('ok', 'Cancelled a pending fix that included info findings now hidden. Fix again to review what is shown.');
-    } else AU.proposals[f.ref] = p;
-  } catch (e) {
-    notice('error', e.message, null, true);
-    if (e.status === 409 && !/synced/.test(e.body?.reason || '')) { delete AU.busy[f.ref]; return openAudit({ refresh: true }); }
-  }
-  delete AU.busy[f.ref];
-  if (S.view === 'audit') paintAudit();
-}
-
-/** Hiding info: a pending proposal that fixes a finding no longer shown is rejected, never left to Accept. */
-function dropHiddenProposals() {
-  let dropped = 0;
-  for (const [ref, p] of Object.entries(AU.proposals)) {
-    const f = AU.data?.files.find((x) => x.ref === ref);
-    const shown = new Set(f ? auditVisible(f).map((x) => x.id) : []);
-    if (p.findingIds?.every((id) => shown.has(id))) continue;
-    delete AU.proposals[ref];
-    dropped++;
-    api('POST', '/api/audit/reject', { id: p.id }).catch(() => {});
-  }
-  if (dropped) notice('ok', `Cancelled ${dropped === 1 ? 'a pending fix' : `${dropped} pending fixes`} that included info findings now hidden. Fix again to review what is shown.`);
-}
-
-function auditProposalView(f, p) {
-  const box = el('div', 'describe-proposal audit-proposal');
-  box.appendChild(el('div', 'scope-note', `${p.fixes} fix${p.fixes === 1 ? '' : 'es'} in ${p.path}, before → after:`));
-  if (p.copies) box.appendChild(el('div', 'scope-note audit-copies', `The other ${p.copies} identical cop${p.copies === 1 ? 'y is' : 'ies are'} not changed.`));
-  if (p.cls === 'synced') box.appendChild(el('div', 'scope-note guide-warn', 'Synced skill: the next sync overwrites this.'));
-  if (/\r\n/.test(p.current)) box.appendChild(el('div', 'scope-note guide-eol', 'This file uses CRLF line endings; they are kept.'));
-  box.appendChild(diffView(p.current, p.proposed, 'now', 'after'));
-  const bar = el('div', 'models-edit');
-  const acc = el('button', 'btn primary audit-accept', 'Accept');
-  acc.disabled = !!AU.busy[f.ref];
-  acc.onclick = async () => {
-    AU.busy[f.ref] = true;
-    acc.disabled = true;
-    let r;
-    try { r = await api('POST', '/api/audit/accept', { id: p.id }); }
-    catch (e) {
-      delete AU.proposals[f.ref]; delete AU.busy[f.ref];
-      notice('error', e.message, null, true);
-      return openAudit({ refresh: true });
-    }
-    delete AU.proposals[f.ref]; delete AU.busy[f.ref];
-    HOME.settledAt = 0;
-    if (r.warnings?.length) notice('error', `Fixed ${p.path}, with a warning:`, r.warnings, true);
-    else notice('ok', `Fixed ${p.path}.`);
-    openAudit({ refresh: true });
-  };
-  const cancel = el('button', 'btn ghost audit-cancel', 'Cancel');
-  cancel.onclick = async () => {
-    delete AU.proposals[f.ref];
-    try { await api('POST', '/api/audit/reject', { id: p.id }); } catch {}
-    if (S.view === 'audit') paintAudit();
-  };
-  bar.append(acc, cancel);
-  box.appendChild(bar);
-  return box;
-}
-
-/** Dismiss or bring back one finding; the server keeps the list, the counts here follow at once. */
-async function dismissAudit(x, on) {
-  try { await api('POST', on ? '/api/audit/dismiss' : '/api/audit/undismiss', { id: x.id }); }
-  catch (e) { return notice('error', e.message, null, true); }
-  x.dismissed = on;
-  const counts = AU.data.counts;
-  const f = AU.data.files.find((y) => y.findings.includes(x));
-  const step = on ? -1 : 1;
-  if (f && f.cls !== 'vendor') { counts.findings += step; if (x.fixable) counts.fixable += step; }
-  HOME.settledAt = 0;
-  if (S.view === 'audit') paintAudit();
 }
 
 /* ── assist chat ─────────────────────────────────────────────────────── */

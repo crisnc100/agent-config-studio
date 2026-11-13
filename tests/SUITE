@@ -132,13 +132,14 @@ tests/walk-partial.mjs                                ci:offline
 tests/notice-placement-ui.mjs                         ci:offline
 # The front end, in a node VM against stubbed routes: no server, no HOME.
 tests/shell.mjs                                       ci:offline
+# builds/acs-reshape acceptance: the eight sections, old hashes, Context, Tools, Setup, and every file still reachable.
+tests/reshape-nav.mjs                                 ci:offline
 tests/home.mjs                                        local                         # wall clock: clicks Refresh 20 ms after boot and counts two memory requests; under load the first is still in flight and Refresh reuses it
 tests/home-refresh.mjs                                ci:offline
 tests/roots-ui.mjs                                    ci:offline
 tests/batch-delete-ui.mjs                             ci:offline
 tests/roles-ui.mjs                                    ci:offline
 tests/model-guide-ui.mjs                              ci:offline
-tests/audit-ui.mjs                                    ci:offline
 tests/assist-files-ui.mjs                             ci:offline
 tests/skill-wizard-ui.mjs                             ci:offline
 tests/skill-wizard-multi-ui.mjs                       ci:offline
@@ -232,7 +233,6 @@ packs/review-gate/tests/review.worktree.test.mjs      manual                    
 
 # Never run by a gate.
 tests/assist-qa-server.mjs                            manual                        # browser QA server: runs until Ctrl-C
-tests/audit-qa-server.mjs                             manual                        # browser QA server: runs until Ctrl-C
 tests/memory-qa-server.mjs                            manual                        # browser QA server: runs until Ctrl-C
 tests/models-qa-server.mjs                            manual                        # browser QA server: runs until Ctrl-C
 tests/redesign-qa-server.mjs                          manual                        # browser QA server: runs until Ctrl-C
