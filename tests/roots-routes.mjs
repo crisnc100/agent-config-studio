@@ -398,9 +398,12 @@ ok('the real HOME is never a test HOME', !temps.includes(realHome));
   seedProjectTree(work, 'work');
   const s = seedProjectTree(shared, 'shared');
   const outside = mkTemp('scope-outside');
+  const far = path.join(mkTemp('scope-far'), 'far');
+  const f = seedProjectTree(far, 'far');
   writeRoots(home, [
     { id: 'work', path: work, label: 'Work', access: 'edit' },
     { id: 'shared', path: shared, label: 'Shared', access: 'read' },
+    { id: 'far', path: far, label: 'Far', access: 'read' },
   ]);
   const srv = await startServer(home, { root: ROOT });
   const sc = await srv.call(`/api/scope?dir=${encodeURIComponent(s.app)}`);
@@ -410,6 +413,11 @@ ok('the real HOME is never a test HOME', !temps.includes(realHome));
   ok('f3 …the global files in it keep their path (they are the editor\'s)', sc.json?.chain?.some((x) => x.scope === 'global' && x.path && !x.readOnly), sc.text.slice(0, 400));
   const scOut = await srv.call(`/api/scope?dir=${encodeURIComponent(outside)}`);
   ok('f3 …while a folder under neither root still 403s', scOut.status === 403, scOut.text);
+  const fr = await srv.call(`/api/scope?dir=${encodeURIComponent(f.app)}`);
+  const farOwn = fr.json?.chain?.filter((x) => x.scope === 'directory') || [];
+  ok('f3b a read folder outside HOME: its own CLAUDE.md is in the load order (walked from the folder\'s root), read-only, no path',
+     fr.status === 200 && farOwn.some((x) => x.display.endsWith(`${path.basename(f.app)}/CLAUDE.md`) && x.readOnly === true && !('path' in x)), fr.text.slice(0, 400));
+  ok('f3b …nothing above that root is walked', farOwn.every((x) => !x.display.startsWith(path.dirname(far) + '/') || x.display.startsWith(far + '/')), JSON.stringify(farOwn.map((x) => x.display)));
   await srv.stop();
 }
 
