@@ -408,7 +408,8 @@ async function refused(name, paths, { status = 400, re = null, headers } = {}) {
   // boot are already there, and a slow runner's re-read can land later. The
   // server learns of new files through its watcher, so re-open until they show
   // (bounded at ~5 s); the assertion below is unchanged.
-  page.eval('openContext()');
+  // Three projects at once: Context's project picker set to All projects.
+  page.eval('CX.project = ALL_PROJECTS; openContext()');
   for (let i = 0; i < 100 && !pick.every(box); i++) {
     await settle(50);
     if (i % 10 === 9) page.eval('openContext()');

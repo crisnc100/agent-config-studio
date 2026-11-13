@@ -15,7 +15,7 @@
  * comes back to the same step.
  */
 
-const SETUP_STEPS = [['clis', 'CLIs'], ['accounts', 'Accounts'], ['folders', 'Project folders'], ['done', 'Done']];
+const SETUP_STEPS = [['clis', 'CLIs'], ['accounts', 'Accounts'], ['folders', 'Project folders'], ['settings', 'Settings and hooks'], ['done', 'Done']];
 const SETUP = {
   step: 'clis',
   clis: null,          // /api/setup/clis answer
@@ -126,7 +126,7 @@ function paintSetup() {
   box.appendChild(steps);
 
   const body = el('section', 'setup-step');
-  const painters = { clis: setupClisStep, accounts: setupAccountsStep, folders: setupFoldersStep, done: setupDoneStep };
+  const painters = { clis: setupClisStep, accounts: setupAccountsStep, folders: setupFoldersStep, settings: setupSettingsStep, done: setupDoneStep };
   painters[SETUP.step](body);
   box.appendChild(body);
 
@@ -372,7 +372,7 @@ function setupFoldersStep(body) {
   const h = el('h3', null, 'Project folders');
   h.tabIndex = -1;
   body.appendChild(h);
-  body.appendChild(el('div', 'scope-sub', 'The folders your projects live in. Read-only folders are listed in Context, Skills and Worktrees; edit folders also open in the editor, with history. Folders start as read-only.'));
+  body.appendChild(el('div', 'scope-sub', 'The folders your projects live in. Read-only folders are listed in Context, Tools and Worktrees; edit folders also open in the editor, with history. Folders start as read-only.'));
 
   const reg = FOLDERS.data?.roots || [];
   if (reg.length) {
@@ -386,11 +386,23 @@ function setupFoldersStep(body) {
       main.appendChild(el('span', 'home-muted', r.display));
       row.appendChild(main);
       row.appendChild(el('span', `mem-badge folders-${r.access}`, r.access === 'edit' ? 'edit' : 'read-only'));
+      if (r.status === 'missing') row.appendChild(el('span', 'mem-badge folders-missing', 'missing — it comes back when the folder does'));
       if (r.partial) row.appendChild(el('span', 'mem-badge folders-missing', 'large folder — partially indexed'));
       have.appendChild(row);
     }
     body.appendChild(have);
   }
+  const fd = FOLDERS.data;
+  if (fd?.state === 'error') body.appendChild(el('div', 'notice error folders-error', `${fd.error}. No project folders are active until it is fixed or removed.`));
+  if (fd?.invalid?.length) {
+    const bad = el('div', 'notice warn folders-invalid');
+    bad.appendChild(el('div', null, `${fd.invalid.length} ${fd.invalid.length === 1 ? 'entry was' : 'entries were'} skipped:`));
+    const ul = el('ul');
+    for (const x of fd.invalid) ul.appendChild(el('li', null, `${x.id ?? 'an entry'}: ${x.reason}`));
+    bad.appendChild(ul);
+    body.appendChild(bad);
+  }
+  if (fd?.file) body.appendChild(el('div', 'home-muted folders-where', `To remove a folder or change its access, edit ${fd.file} from a terminal.`));
 
   const tools = el('div', 'setup-tools');
   const scanBtn = el('button', 'btn', SETUP.scanning ? 'Scanning…' : 'Scan for projects');
@@ -563,7 +575,20 @@ function setupTypedFolder() {
   return form;
 }
 
-/* ── step 4: done ─────────────────────────────────────────────────────── */
+/* ── step 4: settings and hooks ───────────────────────────────────────── */
+/** The settings files and hook scripts, each opening in the editor (validated before every save). */
+function setupSettingsStep(body) {
+  const h = el('h3', null, 'Settings and hooks');
+  h.tabIndex = -1;
+  body.appendChild(h);
+  body.appendChild(el('div', 'scope-sub', 'Your CLIs’ settings files and the scripts Claude Code runs as hooks. Open one to read or change it; settings are checked before they save.'));
+  body.appendChild(el('h4', null, 'Settings files'));
+  body.appendChild(entryList(['settings'], { empty: 'No settings files yet.' }));
+  body.appendChild(el('h4', null, 'Hooks'));
+  body.appendChild(entryList(['hooks'], { create: { kind: 'hook', title: 'Hooks', label: 'New hook' }, empty: 'No hook scripts in ~/.claude/hooks yet.' }));
+}
+
+/* ── step 5: done ─────────────────────────────────────────────────────── */
 function setupDoneStep(body) {
   const h = el('h3', null, 'Next steps');
   h.tabIndex = -1;
@@ -587,16 +612,6 @@ function setupDoneStep(body) {
     row.appendChild(setupCommand(s.command));
     body.appendChild(row);
   }
-  // Only once done is recorded (Run setup again): a first run finishes onto
-  // Home, whose Needs attention offers the audit from there.
-  if (SETUP.status?.state !== 'done') return;
-  const skills = S.registry?.groups?.find((g) => g.id === 'skills')?.entries?.length;
-  const audit = el('div', 'setup-next setup-audit');
-  audit.appendChild(el('div', null, `Audit your ${skills ? `${skills} skill${skills === 1 ? '' : 's'}` : 'skills'} and instruction files: where they hardcode a model or an effort, or name one that has gone stale.`));
-  const go = el('button', 'btn setup-audit-go', 'Open Audit');
-  go.onclick = () => openAudit();
-  audit.appendChild(go);
-  body.appendChild(audit);
 }
 
 /**

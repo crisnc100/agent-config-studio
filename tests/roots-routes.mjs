@@ -389,6 +389,59 @@ ok('the real HOME is never a test HOME', !temps.includes(realHome));
   await srv.stop();
 }
 
+/* ── Context's load order for a read folder (builds/acs-reshape f3) ───── */
+{
+  const home = mkTemp('scope-read');
+  seedGlobals(home);
+  const work = path.join(home, 'code', 'work');
+  const shared = path.join(home, 'shared');
+  seedProjectTree(work, 'work');
+  const s = seedProjectTree(shared, 'shared');
+  const outside = mkTemp('scope-outside');
+  const far = path.join(mkTemp('scope-far'), 'far');
+  const f = seedProjectTree(far, 'far');
+  // An instruction file just above the read root: the walk must stop at the root and never list it.
+  const above = path.join(path.dirname(far), 'CLAUDE.md');
+  fs.writeFileSync(above, '# ABOVE-THE-ROOT\n');
+  writeRoots(home, [
+    { id: 'work', path: work, label: 'Work', access: 'edit' },
+    { id: 'shared', path: shared, label: 'Shared', access: 'read' },
+    { id: 'far', path: far, label: 'Far', access: 'read' },
+  ]);
+  // ⌘K Search by name: a hook whose text never says its name, and a CLAUDE.md that does.
+  fs.mkdirSync(path.join(home, '.claude', 'hooks'), { recursive: true });
+  const probe = path.join(home, '.claude', 'hooks', 'qa-name-probe.sh');
+  fs.writeFileSync(probe, '#!/usr/bin/env bash\necho hi\n');
+  fs.appendFileSync(path.join(work, 'CLAUDE.md'), '\nSee qa-name-probe for the hook.\n');
+  // 61 more hooks: a folder name ("hooks") must not make them all name hits and crowd out a text match.
+  for (let i = 0; i <= 60; i++) fs.writeFileSync(path.join(home, '.claude', 'hooks', `h${i}.sh`), '#!/usr/bin/env bash\necho crowd\n');
+  fs.appendFileSync(path.join(work, 'CLAUDE.md'), '\nOur hooks live in ~/.claude.\n');
+  const srv = await startServer(home, { root: ROOT });
+  const folderQ = (await srv.call('/api/search?q=hooks')).json;
+  ok('QA search: a folder name is not a file\'s name — every hook under ~/.claude/hooks is not a hit for "hooks", and a text match is still returned',
+     folderQ.hits.some((h) => h.path === path.join(work, 'CLAUDE.md')) && !folderQ.hits.some((h) => /\/hooks\/h\d+\.sh$/.test(h.path)), JSON.stringify(folderQ.hits.map((h) => h.display)).slice(0, 400));
+  const crowd = (await srv.call('/api/search?q=crowd')).json;
+  ok('QA search: when hits are cut at 60, the answer says how many there were in all', crowd.hits.length === 60 && crowd.total === 61, `${crowd.hits.length} of ${crowd.total}`);
+  const byName = (await srv.call('/api/search?q=QA-NAME-PROBE')).json.hits;
+  ok('QA search finds a file by its name, though its text never says it', byName.some((h) => h.path === probe), JSON.stringify(byName.map((h) => h.display)));
+  ok('QA …ranked above a file that only mentions it in its text', byName[0]?.path === probe && byName.some((h) => h.path === path.join(work, 'CLAUDE.md')), JSON.stringify(byName.map((h) => h.display)));
+  const sc = await srv.call(`/api/scope?dir=${encodeURIComponent(s.app)}`);
+  const own = sc.json?.chain?.find((x) => x.display === `~/shared/${path.basename(s.app)}/CLAUDE.md`);
+  ok('f3 the load order of a read folder answers, its own file read-only and sent with no path',
+     sc.status === 200 && !!own && own.readOnly === true && !('path' in own), sc.text.slice(0, 400));
+  ok('f3 …the global files in it keep their path (they are the editor\'s)', sc.json?.chain?.some((x) => x.scope === 'global' && x.path && !x.readOnly), sc.text.slice(0, 400));
+  const scOut = await srv.call(`/api/scope?dir=${encodeURIComponent(outside)}`);
+  ok('f3 …while a folder under neither root still 403s', scOut.status === 403, scOut.text);
+  const fr = await srv.call(`/api/scope?dir=${encodeURIComponent(f.app)}`);
+  const farOwn = fr.json?.chain?.filter((x) => x.scope === 'directory') || [];
+  ok('f3b a read folder outside HOME: its own CLAUDE.md is in the load order (walked from the folder\'s root), read-only, no path',
+     fr.status === 200 && farOwn.some((x) => x.display.endsWith(`${path.basename(f.app)}/CLAUDE.md`) && x.readOnly === true && !('path' in x)), fr.text.slice(0, 400));
+  ok('f3b …the CLAUDE.md seeded just above that root is not in the chain', fr.status === 200 && !fr.json.chain.some((x) => x.display.endsWith(`${path.basename(path.dirname(far))}/CLAUDE.md`)) && !fr.text.includes(above),
+     JSON.stringify(fr.json?.chain?.map((x) => x.display)));
+  ok('f3b …nothing above that root is walked', farOwn.every((x) => !x.display.startsWith(path.dirname(far) + '/') || x.display.startsWith(far + '/')), JSON.stringify(farOwn.map((x) => x.display)));
+  await srv.stop();
+}
+
 for (const t of temps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} }
 assertRealHomesUnchanged(realBefore, ok);
 console.log(`\n${pass} passed, ${fail} failed`);

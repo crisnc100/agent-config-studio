@@ -186,10 +186,11 @@ if (healthy) {
   const view = await bootPage({ routes: proxy, hash: '#folders' });
   // The view waits for the registry before it paints; a slow runner needs
   // more than a fixed beat. Bounded, and the assertion below is unchanged.
-  for (let i = 0; i < 100 && !/No project folders yet/.test(view.text(view.$('content'))); i++) await settle(50);
+  for (let i = 0; i < 100 && !/Scan for projects/.test(view.text(view.$('content'))); i++) await settle(50);
   const folders = view.text(view.$('content'));
-  ok('the Folders view renders its empty state with the add command',
-     view.eval('S.view') === 'folders' && /No project folders yet/.test(folders) && /acs roots add <path>/.test(folders), folders.slice(0, 300));
+  ok('#folders lands on Setup\'s folders step: none added, and the ways to add one (a scan, a typed path)',
+     view.eval('S.view') === 'setup' && view.eval('SETUP.step') === 'folders' && !view.$('content').querySelector('.setup-row[data-root]')
+     && /Scan for projects/.test(folders) && !!view.$('content').querySelector('[data-focus="typed-path"]'), folders.slice(0, 300));
   ok('…with no page errors', view.errors.length === 0, view.errors.join(' | '));
   view.done();
 

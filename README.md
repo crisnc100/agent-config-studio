@@ -42,9 +42,11 @@ your browser. The first time, it opens on the **setup screen**:
    from the CLIs it found. Optional.
 3. **Project folders** — where your repos live. **Scan for projects** looks a
    few levels into `~/Documents`, `~/code`, `~/Projects` and similar, or type a
-   path. Each folder is **read** (listed in Context, Skills and Worktrees) or
+   path. Each folder is **read** (listed in Context, Tools and Worktrees) or
    **edit** (its instruction files are also editable here).
-4. **Done** — optional next steps. **Finish** lands on **Home**.
+4. **Settings and hooks** — your CLIs' settings files and Claude Code's hook
+   scripts, each opening in the editor.
+5. **Done** — optional next steps. **Finish** lands on **Home**.
 
 Leave that terminal open: the studio runs in it. Press Ctrl-C there, or run
 `npx agent-config-studio stop` from another one, to stop it.
@@ -202,25 +204,41 @@ listens on `127.0.0.1` only.
 
 ## What it manages
 
-| Group | Source |
-|---|---|
-| Memory | `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.grok/AGENTS.md`, and every `CLAUDE.md` / `AGENTS.md` in your **edit** folders |
-| Claude skills | `~/.claude/skills/*` (follows the symlink into `~/.agents`) |
-| Codex skills | `~/.codex/skills/*` |
-| Plugin skills | enabled plugins only, read from the plugin cache |
-| Auto-memory | `~/.claude/projects/*/memory/*.md` — what the harness wrote itself, one bucket per project scope |
-| MCP servers | `.mcp.json` in your edit folders (editable); global and Codex servers read-only under **MCP** |
-| Subagents | `~/.claude/agents/*.md` — appears once the directory exists |
-| Slash commands | `~/.claude/commands/*.md` — appears once the directory exists |
-| Hooks | `~/.claude/hooks/*.sh` |
-| Settings & config | `settings.json`, `settings.local.json`, `advisor-config.json`, `investigate-config.json`, `review-config.json`, `~/.codex/config.toml`, `~/.codex/rules/*` |
-| Worktrees | `~/.config/worktree/defaults.conf`, `repos/*.conf`, and each `.worktrees.conf` in your edit folders |
-| Retired | `~/.claude/skills_retired/*` |
+The sidebar holds **Home**, **Context**, **Tools**, **Models**, **Usage**,
+**Memory** and **Packs**; **Setup**, **Trash** and the theme switch sit at its
+foot. Every file the studio manages opens from the page that lists it, and
+`⌘K` searches all of them by content.
 
-**Context** and **Skills** also list your **read** folders, without editing
-them. Change the folders any time under **Folders**, or with `acs roots ls`,
-`acs roots add <path> [--edit]`, and `acs roots rm <id>`. A running studio
-picks the change up by itself.
+| Files | Source | Opens from |
+|---|---|---|
+| Instruction files | `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.grok/AGENTS.md`, and every `CLAUDE.md` / `AGENTS.md` in your **edit** folders | Context |
+| Claude skills | `~/.claude/skills/*` (follows the symlink into `~/.agents`) | Tools → Skills |
+| Codex skills | `~/.codex/skills/*` | Tools → Skills |
+| Plugin skills | enabled plugins only, read from the plugin cache | Tools → Skills |
+| Retired skills | `~/.claude/skills_retired/*` | Tools → Skills |
+| Subagents | `~/.claude/agents/*.md` | Tools → Agents and commands |
+| Slash commands | `~/.claude/commands/*.md` | Tools → Agents and commands |
+| MCP servers | `.mcp.json` in your edit folders (editable); global and Codex servers read-only | Tools → MCP servers |
+| Auto-memory | `~/.claude/projects/*/memory/*.md` — what the harness wrote itself, one bucket per project scope, `MEMORY.md` included | Memory |
+| Settings & config | `settings.json`, `settings.local.json`, `advisor-config.json`, `investigate-config.json`, `review-config.json`, `~/.codex/config.toml`, `~/.codex/rules/*` | Setup → Settings and hooks |
+| Hooks | `~/.claude/hooks/*.sh` | Setup → Settings and hooks |
+| Worktree rules | `~/.config/worktree/defaults.conf`, `repos/*.conf`, and each `.worktrees.conf` in your edit folders | Worktrees (from Packs → Worktree setup) |
+
+**Context** and **Tools** also list your **read** folders, without editing
+them. Add folders any time under **Setup → Project folders**; `acs roots
+ls`, `acs roots add <path> [--edit]` and `acs roots rm <id>` list, add and
+remove them. A running studio picks the change up by itself.
+
+**Context** opens on your main instruction files — the global ones every
+session of that CLI loads — each with its size and the outline of its
+headings. Below them, pick a project, and a folder in it: Context lists what
+an agent started there loads, in order (the main files first, then every
+`CLAUDE.md` / `AGENTS.md` on the path down), and every instruction file in
+that project, with identical worktree copies collapsed and differing ones
+flagged. For a project outside your home folder, the path down starts at
+its registered folder, never above it. In a **read** folder each file in the
+load order is marked read-only, with no **Open**. **All projects** lists every
+project's files at once, so a selection moved to Trash can span projects.
 
 ## The parts that matter
 
@@ -232,14 +250,15 @@ giant bogus heading Markdown would otherwise make of it.
 merely installed. Only skills from plugins actually enabled in `settings.json`
 are listed, because only those are ever loaded.
 
-**Create and delete.** Hover a group in the sidebar for a `+` — it scaffolds a
-new skill, hook, subagent or slash command with valid frontmatter already in
-place (the scaffold passes the app's own validator). `+ file` on a skill adds a
+**Create and delete.** **New subagent** and **New slash command** (Tools →
+Agents and commands) and **New hook** (Setup → Settings and hooks) scaffold
+the file with valid frontmatter already in place (the scaffold passes the
+app's own validator). `+ file` on a skill adds a
 reference doc. **Copy to Codex / Copy to Claude** seeds a skill in the other
 harness from the open one, retargeting the frontmatter `name`; the two are
 expected to diverge afterwards.
 
-**New skill, by interview.** **New skill** on the Skills view opens a wizard:
+**New skill, by interview.** **New skill** on Tools → Skills opens a wizard:
 describe the skill, answer the interview one question at a time, pick where it
 goes, then review the drafted `SKILL.md` and create it. Nothing is written
 until you press **Create**, and it writes exactly what Review shows.
@@ -259,7 +278,7 @@ type their name.
 
 **It watches for changes made outside the studio.** Claude Code writes
 auto-memory, you install a skill from the terminal, an agent edits a CLAUDE.md —
-the sidebar updates live rather than going stale until a reload. The green dot
+the page lists update live rather than going stale until a reload. The green dot
 in the status bar means the watch is connected.
 
 If the file you have open changes on disk, it reloads in place; if you have
@@ -292,10 +311,6 @@ false rejection that blocks a legitimate save is worse than a missed problem.
 iframe, `on*` handlers and `javascript:` URLs are stripped. The preview shows
 third-party plugin skills and model-generated assist output, and those would
 otherwise run with same-origin access to the write API.
-
-**Scope chain.** The `Scope` button answers "what actually applies when an agent
-runs in this directory" — the global files plus every `CLAUDE.md`/`AGENTS.md` on
-the path down, in the order they layer.
 
 **Compare.** Skills that exist in both harnesses get a Compare tab showing the
 Claude and Codex copies side by side. It does not judge them for differing —
@@ -362,7 +377,7 @@ context is conversation for compacting to reclaim anything.
 
 ## Subscription usage
 
-**Usage** in the top bar answers one question: which subscription should the
+**Usage** in the sidebar answers one question: which subscription should the
 next task go to. Seats sort by the headroom of their tightest window, so the
 line at the top is the answer and the cards below are the evidence.
 
@@ -678,7 +693,7 @@ Every change is written to your home review config only: the first of
 `~/.agent-config-studio/review-gate/config.json` and
 `~/.claude/review-config.json` that exists, or the first when neither does:
 the same order the review script reads its home config in. The Settings
-section names that file, with **Open in Files** when Files lists it
+section names that file, with **Open file** when the studio lists it
 (`~/.claude/review-config.json` is listed; the studio's own folder is not).
 
 A pick, or typing your own paths, opens a save bar that names each
@@ -688,46 +703,6 @@ change together, copies the old file into `~/.agent-config-studio/backups/`
 once, and keeps every other key. If the file changed after the preview,
 Save refuses and the bar returns so you can preview again; if you edited
 your own paths after it, Save shows the new preview instead of writing.
-
-## Audit
-
-The **Audit** view (Review) reads your skills and instruction files and shows
-where they write a model or an effort by hand, use a model id the registry has
-moved past, or keep a hand-written lanes section beside the generated model
-guide. It is a deterministic check: no model is called, and nothing changes
-until you accept a fix.
-
-- **What it reads:** `~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills`,
-  the enabled Claude plugins (newest cached version only), `.claude/skills`
-  under every project folder, the three global instruction files, and every
-  `CLAUDE.md` and `AGENTS.md` under your project folders. Codex plugins and
-  Grok's bundled skills are not read. One run reads at most 2000 files, 1 MB
-  each and 32 MB in all, six folders below each place it starts from (a
-  skill's own folders count); a run that hits a limit says it is
-  partial. Links inside a skill, hard-linked files and credential files are
-  refused and listed, never read.
-- **What it finds:** a model id written out (and whether it is stale), a
-  `-m` / `--model` flag or a `"model"` key with a literal id, a
-  `$(model-id …)` with no `|| echo MODEL-ID-UNRESOLVED-…` fallback, an effort
-  value no role in your roles uses for that family or role, and a lanes heading
-  next to the generated model guide. If the model registry or the roles are
-  invalid, the stale, effort and fix checks are off until they are fixed.
-- **Fixes:** offered only where they still run — a `-m` or `--model` argument
-  in a shell script, a bash/sh/zsh fence, or inline code that runs claude,
-  codex or grok (not single-quoted, not in a table row) becomes
-  `"$(model-id <family> || echo MODEL-ID-UNRESOLVED-<family>)"`; a fallback is
-  added to a bare `$(model-id …)`; and in prose an exact current id becomes
-  its family name. **Fix** shows the whole file before and after and writes
-  only that one file on **Accept**, in place, versioned in history. Identical
-  copies elsewhere are listed and left alone. The generated model guide is
-  never edited here.
-- **Who owns the file:** plugin files, files that ship with a CLI (`.system`)
-  and files in read folders show findings only. A synced skill can be fixed
-  after you confirm that the next sync overwrites it. Vendor files are hidden
-  unless you ask for them.
-- **Dismiss** hides a finding; the list is kept in
-  `~/.agent-config-studio/audit-dismissed.json`. Home's Needs attention shows
-  the last run's fixable count and never starts a run.
 
 ## Optional: worktree tools
 
@@ -812,8 +787,8 @@ passes. A check that cannot run makes it unknown, never done. The checks:
 Ignored files other than env files (`node_modules`, build output) are removed
 with the worktree.
 
-The **Worktrees** button in the studio shows the same, per project and
-read-only: the env summary and done (or why not), from `wls --json` and `wclean
+The studio's **Worktrees** page (Packs → Worktree setup → **Open Worktrees**)
+shows the same, per project and read-only: the env summary and done (or why not), from `wls --json` and `wclean
 --json --no-fetch`. A done row shows the command to run.
 
 ## Shortcuts

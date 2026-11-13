@@ -3,8 +3,7 @@
  * gate without saying so. Fails when:
  *  - a test file (tests/*.mjs, packs/<pack>/tests/*.mjs) is not listed, a
  *    listed file does not exist, or a file is listed twice;
- *  - a line is malformed, or a local, pending-ci, manual or helper line has
- *    no reason;
+ *  - a line is malformed, or a local, manual or helper line has no reason;
  *  - a ci:<group> has no job in .github/workflows/ci.yml that runs it, ci.yml
  *    runs a group the list does not have, or a job runs a test file directly
  *    that the list does not give that job;
@@ -148,7 +147,7 @@ const GOOD = {
     'tests/e.mjs        ci:offline ci-only',
     'tests/f.mjs        manual          # runs until Ctrl-C',
     'tests/h.mjs        helper          # verify.sh calls it',
-    'packs/p/tests/x.test.mjs  pending-ci  # later',
+    'packs/p/tests/x.test.mjs  ci:packs ci-only',
     '',
   ].join('\n'),
   '.github/workflows/ci.yml': [
@@ -159,6 +158,8 @@ const GOOD = {
     '    runs-on: ubuntu-latest',
     '    steps:',
     '      - run: node tests/run.mjs offline',
+    "      - if: steps.packs.outputs.run != 'false'",
+    '        run: node tests/run.mjs packs',
     '  mac:',
     '    steps:',
     '      # node tests/c.mjs is only a comment here',
@@ -197,7 +198,7 @@ const BREAKS = [
   ['a file listed twice', edit('tests/SUITE', '# a comment', 'tests/c.mjs local # again'), 'lists tests/c.mjs twice'],
   ['a local line with no reason', edit('tests/SUITE', 'local           # needs the real machine', 'local'), 'is local and needs a reason'],
   ['a manual line with no reason', edit('tests/SUITE', 'manual          # runs until Ctrl-C', 'manual'), 'is manual and needs a reason'],
-  ['a pending-ci line with no reason', edit('tests/SUITE', 'pending-ci  # later', 'pending-ci'), 'is pending-ci and needs a reason'],
+  ['a pending-ci line (the lane is gone)', edit('tests/SUITE', 'ci:packs ci-only', 'pending-ci  # later'), 'unknown lane "pending-ci"'],
   ['an unknown lane', edit('tests/SUITE', 'ci:offline ci-only', 'ci:offline ci-onyl'), 'unknown lane "ci-onyl"'],
   ['ci-only with no group', edit('tests/SUITE', 'ci:offline ci-only', 'ci-only'), 'ci-only needs a ci:<group>'],
   ['a line with no lane', edit('tests/SUITE', 'tests/a.mjs        ci:offline', 'tests/a.mjs'), 'tests/a.mjs has no lane'],

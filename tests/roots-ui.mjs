@@ -85,7 +85,7 @@ console.log('\nroots in the page');
   await settle(5);
   ok('B2 app: a version restore is refused before anything is sent', p.eval('S.draft') === 'my unsaved draft' && !p.requests.some((r) => r.path === '/api/history/restore'));
   p.confirm = () => false;
-  p.$('btn-skills').click();
+  p.$('btn-tools').click();
   await settle(5);
   ok('B2 app: leaving still asks first, since the draft is unsaved', p.eval('S.view') === 'entry' && p.eval('S.draft') === 'my unsaved draft');
 }
@@ -101,7 +101,7 @@ console.log('\nroots in the page');
   ok('B2 app: …and its editor tab will not take typing', p.$('content').querySelector('textarea')?.readOnly === true);
 }
 
-// ── Folders view: list, missing, skipped, empty, error ─────────────────────
+// ── Setup's folders step (Folders folded into it): list, missing, skipped, empty, error ──
 {
   const routes = routesFor({ 'GET /api/roots': () => FOLDERS({
     roots: [
@@ -113,9 +113,9 @@ console.log('\nroots in the page');
   const p = await boot({ routes, hash: '#folders' });
   await settle(10);
   const text = p.text(p.$('content'));
-  ok('Folders: #folders opens the view', p.eval('S.view') === 'folders' && p.text(p.$('title')) === 'Folders');
+  ok('Folders: #folders opens Setup on its project folders step', p.eval('S.view') === 'setup' && p.location.hash === '#setup&step=folders' && /Project folders/.test(text));
   ok('Folders: each root shows label, path and access', /Work/.test(text) && /~\/code\/work/.test(text) && /edit/.test(text) && /USB/.test(text) && /read-only/.test(text), text);
-  ok('B8 Folders: a missing folder is marked missing and explained', /missing/.test(text) && /comes back when it does/.test(text), text);
+  ok('B8 Folders: a missing folder is marked missing and explained', /missing/.test(text) && /comes back when the folder does/.test(text), text);
   ok('AC7 Folders: a skipped entry is reported with its reason', /1 entry was skipped/.test(text) && /keys: ~\/\.ssh holds your keys/.test(text), text);
   ok('Folders: no page errors', p.errors.length === 0, p.errors.join(' | '));
 }
@@ -124,8 +124,9 @@ console.log('\nroots in the page');
   const p = await boot({ routes, hash: '#folders' });
   await settle(10);
   const text = p.text(p.$('content'));
-  ok('AC5 the Folders empty state says there are none and prints the add command',
-     /No project folders yet/.test(text) && /acs roots add <path>/.test(text) && /--edit/.test(text), text);
+  ok('AC5 with no folders, the step lists none and offers the ways to add one: a scan and a typed path',
+     !p.$('content').querySelector('.setup-row[data-root]') && !!p.$('content').querySelectorAll('button').find((b) => b.textContent === 'Scan for projects')
+     && !!p.$('content').querySelector('[data-focus="typed-path"]'), text);
 }
 {
   const routes = routesFor({ 'GET /api/roots': () => FOLDERS({ state: 'error', error: 'roots.json is not valid: Unexpected token', roots: [] }) });
@@ -133,7 +134,7 @@ console.log('\nroots in the page');
   await settle(10);
   const text = p.text(p.$('content'));
   ok('B8 Folders: an unreadable roots.json shows the error, not an empty list',
-     /roots\.json is not valid/.test(text) && /No project folders are active/.test(text) && !/No project folders yet/.test(text), text);
+     /roots\.json is not valid/.test(text) && /No project folders are active/.test(text), text);
 }
 
 // ── labels from the folder list ────────────────────────────────────────────
@@ -145,7 +146,7 @@ console.log('\nroots in the page');
       { id: 'b2', name: 's-skill', displayName: 's-skill', source: 'shared', rootId: 'shared', description: '', files: [], excluded: [], emptyDirs: [], totalBytes: 1, broken: false, aliasCount: 0, aliasSources: [] },
     ] }),
   });
-  const p = await boot({ routes, hash: '#skills' });
+  const p = await boot({ routes, hash: '#tools/skills' });
   await settle(10);
   const groups = p.$('content').querySelectorAll('.sk-group-name').map((g) => p.text(g));
   ok('skill groups are named by the folder list: the edit root by its label, the read root by its label',
@@ -166,34 +167,23 @@ console.log('\nroots in the page');
 
   let reg = count('/api/registry');
   await fire();
-  ok('B6 Folders repaints from the event, and the registry is refetched', /Brand New/.test(p.text(p.$('content'))) && count('/api/registry') > reg);
+  ok('B6 Setup\'s folders step repaints from the event, and the registry is refetched', /Brand New/.test(p.text(p.$('content'))) && count('/api/registry') > reg);
 
   p.$('btn-context').click(); await settle(10);
   let ctx = count('/api/context');
   await fire();
   ok('B6 Context refetches its data on a roots event', count('/api/context') > ctx);
 
-  p.$('btn-skills').click(); await settle(10);
+  p.$('btn-tools').click(); await settle(10);
   const sk = count('/api/skills');
   await fire();
-  ok('B6 Skills refetches its data on a roots event', count('/api/skills') > sk);
-
-  p.$('btn-files').click(); await settle(10);
-  await fire();
-  ok('B6 Files repaints its folder line from the event', /Project folders: .*Brand New \(read-only\)/.test(p.text(p.$('content'))), p.text(p.$('content')).slice(0, 300));
+  ok('B6 Tools\' Skills refetches its data on a roots event', count('/api/skills') > sk);
 
   p.$('btn-home').click(); await settle(10);
   const usage = count('/api/usage');
   await fire();
   ok('B6 Home reloads its cards on a roots event', count('/api/usage') > usage);
   ok('B6 no page errors across the reloads', p.errors.length === 0, p.errors.join(' | '));
-}
-
-// ── the Files page names the folders, or how to add one ────────────────────
-{
-  const p = await boot({ routes: routesFor({ 'GET /api/roots': () => FOLDERS({ roots: [] }) }), hash: '#files' });
-  await settle(10);
-  ok('AC5 the Files page says there are no project folders and how to add one', /No project folders yet — run acs roots add <path>/.test(p.text(p.$('content'))), p.text(p.$('content')).slice(0, 300));
 }
 
 for (const p of pages) p.done();
