@@ -118,7 +118,7 @@ function paintWizard() {
   const head = el('div', 'sw-head');
   head.appendChild(el('h2', 'vh', 'New skill'));
   const back = el('button', 'btn ghost sw-exit', 'Back to Skills');
-  back.onclick = () => { location.hash = '#skills'; };
+  back.onclick = () => { location.hash = '#tools/skills'; };
   back.disabled = swLocked();
   head.appendChild(back);
   box.appendChild(head);

@@ -564,6 +564,7 @@ function pkPage(box, pack) {
   page.appendChild(pkBackButton());
   const sections = [['does', 'What it does', pkDoesView], ['runs', 'How it runs', pkRunsView],
     ...(pack.id === 'review-gate' ? [['settings', 'Settings', pkSettingsSection]] : []),
+    ...(pack.id === 'worktree' ? [['worktrees', 'Your worktrees', pkWorktreesView]] : []),
     ['parts', 'Parts', pkPartsView], ['files', 'Files and undo', pkFilesView]];
   page.appendChild(pkPageHead(pack, card, sections));
   for (const n of pkFlowAt(pack, card, 'pack')) page.appendChild(n);
@@ -633,6 +634,12 @@ function pkPageHead(pack, card, sections) {
   if (inst) acts.appendChild(pkBtn('danger', 'Uninstall…', () => pkPreview(pack, 'uninstall', {}, { at: 'pack' }), busy));
   head.appendChild(acts);
   return head;
+}
+
+/** The Worktrees page has no sidebar item: this pack's page is the way to it. */
+function pkWorktreesView(sec) {
+  sec.appendChild(el('p', 'pk-sec-lead', 'Every registered project’s worktrees, which are done and safe to remove, and the rules files wnew reads.'));
+  sec.appendChild(pkBtn('', 'Open Worktrees', () => { location.hash = '#worktrees'; }));
 }
 
 function pkDoesView(sec, pack) {

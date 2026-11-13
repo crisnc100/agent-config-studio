@@ -28,10 +28,10 @@ const ATTENTION_SOURCES = [
 
 /**
  * Needs attention, most consequential first (C2): a model that is gone or
- * going breaks skills that call it; drifted instructions and fixable audit
- * findings change what agents do; then a newer id; then housekeeping.
+ * going breaks skills that call it; drifted instructions change what agents
+ * do; then a newer id; then housekeeping.
  */
-const ATTENTION_RANK = { vanished: 0, retiring: 1, drift: 2, audit: 3, update: 4, worktrees: 5, memory: 6 };
+const ATTENTION_RANK = { vanished: 0, retiring: 1, drift: 2, update: 4, worktrees: 5, memory: 6 };
 /** Every warning first, then the info items; by rank within each; stable within a rank (the order each source gave). */
 const warnFirst = (it) => (it.kind === 'warn' ? 0 : 1);
 const rankAttention = (items) => items.map((it, i) => [it, i])
@@ -89,25 +89,6 @@ function worktreeItems(d) {
 function contextItems(d) {
   const n = d.totals?.drifted || 0;
   return n ? [{ source: 'context', kind: 'warn', rank: ATTENTION_RANK.drift, text: n === 1 ? '1 instruction file in a worktree differs from the main checkout' : `${n} instruction files in worktrees differ from the main checkout`, action: { view: 'context', label: 'Compare' } }] : [];
-}
-
-/**
- * The audit's line in Needs attention, from /api/audit/summary: the last
- * run's counts, never a new scan. An item (with `source`) when it found
- * something fixable; a quiet line when it has not run or ran only in part;
- * null otherwise, or when the route did not answer — the audit is not one of
- * the sources "Nothing needs you" waits for.
- */
-function auditAttention(src) {
-  if (!src || src.state !== 'ok' || !src.data) return null;
-  const d = src.data;
-  if (d.state === 'not-audited') return { kind: 'muted', text: 'Skills and instruction files: not audited yet.', action: { view: 'audit', label: 'Audit' } };
-  const when = d.stale ? ' (as of the last audit)' : d.state === 'partial' ? ' (partial audit)' : '';
-  if (d.fixable > 0) {
-    return { source: 'audit', kind: 'warn', rank: ATTENTION_RANK.audit, text: `${plural(d.fixable, 'fixable audit finding')} in skills and instruction files${when}`, action: { view: 'audit', label: 'Review' } };
-  }
-  if (d.state === 'partial') return { kind: 'muted', text: 'The last audit was partial: nothing fixable in what it read.', action: { view: 'audit', label: 'Open' } };
-  return null;
 }
 
 /**
