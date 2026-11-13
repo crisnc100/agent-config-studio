@@ -158,10 +158,11 @@ const appJs = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
 const view = appJs.slice(appJs.indexOf('async function openWorktrees'), appJs.indexOf('/* ── trash view'));
 ok('11 the view renders the command for a done row', view.length > 500 && view.includes('w.removeCmd') && view.includes("el('code', 'wt-cmd'"));
 ok('11 the view has no button and makes no POST', !/el\('button'/.test(view) && !/'POST'/.test(view));
-// The sidebar is built from app.js's VIEWS table: an Upkeep row that opens the
-// view, rendered as a btn-<id> button wired to that row's open function.
-ok('11 the Worktrees button opens it', /id: 'worktrees'[^}]*group: 'upkeep'[^}]*open: openWorktrees/.test(appJs) &&
-   appJs.includes("b.id = `btn-${v.id}`") && /b\.onclick = [\s\S]{0,300}v\.open\(\)/.test(appJs));
+// No sidebar item (builds/acs-reshape R6): a VIEWS row whose #worktrees hash opens
+// the view, linked from the Worktree setup pack's page.
+const packsJs = fs.readFileSync(path.join(ROOT, 'public', 'packs-view.js'), 'utf8');
+ok('11 #worktrees opens it, and the Worktree setup pack\'s page links there', /id: 'worktrees'[^}]*group: null[^}]*hash: '#worktrees'[^}]*open: openWorktrees/.test(appJs) &&
+   /pack\.id === 'worktree'/.test(packsJs) && packsJs.includes("location.hash = '#worktrees'"));
 const guards = spawnSync(process.execPath, [path.join(ROOT, 'tests', 'guards.mjs')], { encoding: 'utf8' });
 ok('11 no new spawn kinds: the unmodified guards pass', guards.status === 0, guards.stdout.slice(-400));
 

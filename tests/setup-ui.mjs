@@ -96,7 +96,7 @@ console.log('\nsetup in the page');
   await settle(20);
   ok('1 with no setup.json, the default landing opens #setup', p.eval('S.view') === 'setup' && /^#setup&step=clis$/.test(p.location.hash), `${p.eval('S.view')} ${p.location.hash}`);
   // PR C (C1): Setup now has a sidebar item, in the footer with Trash and Theme — reachable without Home.
-  ok('1 …with one sidebar item for it, in the footer (the nav count is 15)', p.$('sidebar').querySelectorAll('.nav-item').length === 15 && !!p.$('btn-setup')?.closest('.nav-foot'));
+  ok('1 …with one sidebar item for it, in the footer (the nav count is 10)', p.$('sidebar').querySelectorAll('.nav-item').length === 10 && !!p.$('btn-setup')?.closest('.nav-foot'));
   ok('6 no scan request on page load', !p.requests.some((r) => r.path === '/api/setup/scan'));
   ok('no page errors', p.errors.length === 0, p.errors.join(' | '));
 }
@@ -108,19 +108,19 @@ console.log('\nsetup in the page');
   ok('1 with setup.json present (migrated), it lands on Home', p.eval('S.view') === 'home');
 }
 {
-  const p = await boot({ routes: setupRoutes(), hash: '#skills' });
+  const p = await boot({ routes: setupRoutes(), hash: '#tools' });
   await settle(20);
-  ok('1 a deep link to another view still works on first run', p.eval('S.view') === 'skills');
+  ok('1 a deep link to another view still works on first run', p.eval('S.view') === 'tools');
 }
 {
   const gate = deferred();
   const p = await boot({ routes: setupRoutes({ 'GET /api/setup/status': () => gate.promise }) });
   await settle(10);
-  p.$('btn-files').click();
+  p.key('k', { meta: true });
   await settle(5);
   gate.resolve({ state: 'none' });
   await settle(20);
-  ok('S14 navigating before the status answers cancels the redirect', p.eval('S.view') === 'files', p.eval('S.view'));
+  ok('S14 navigating before the status answers cancels the redirect', p.eval('S.view') === 'search', p.eval('S.view'));
 }
 {
   const p = await boot({ routes: setupRoutes(), hash: '#setup&step=folders' });
@@ -204,7 +204,7 @@ console.log('\nsetup in the page');
   btn(p, 'Refresh').click();
   await settle(20);
   ok('4 Refresh calls /api/usage/refresh and repaints', p.requests.some((r) => r.path === '/api/usage/refresh'));
-  p.$('btn-skills').click();
+  p.$('btn-tools').click();
   const n = p.requests.filter((r) => r.path === '/api/usage/connect/state').length;
   await new Promise((r) => setTimeout(r, 2200));
   ok('4 …and stops polling once setup is left', p.requests.filter((r) => r.path === '/api/usage/connect/state').length === n);
@@ -230,12 +230,12 @@ console.log('\nsetup in the page');
   await new Promise((r) => setTimeout(r, 4300));
   const ticks = p.requests.filter((r) => r.path === '/api/usage/connect/state').length - before;
   ok('4 …polling once per tick (2 polls in two ticks, not 3)', ticks === 2, String(ticks));
-  p.$('btn-skills').click();
+  p.$('btn-tools').click();
   await new Promise((r) => setTimeout(r, 2200));
   ok('4 leaving setup stops it', p.eval('LOGIN_POLLS.size') === 0);
 }
 {
-  // A signed-in answer still in flight when the person moves to Skills.
+  // A signed-in answer still in flight when the person moves to Tools.
   const routes = setupRoutes();
   routes.st.seats.push({ id: 'codex', vendor: 'codex', label: 'Codex (primary)', home: '/h/.codex' });
   let hold = null;
@@ -249,12 +249,12 @@ console.log('\nsetup in the page');
   btn(p, 'Sign in with ChatGPT').click();
   await new Promise((r) => setTimeout(r, 2200));
   ok('4 (a poll is out)', !!hold);
-  p.$('btn-skills').click();
+  p.$('btn-tools').click();
   await settle(10);
   hold.resolve({ signedIn: true, running: false, url: null });
   await settle(40);
-  ok('4 a signed-in answer released after moving to Skills posts no refresh and shows no notice',
-     !p.requests.some((r) => r.path === '/api/usage/refresh') && !/is signed in/.test(p.text(p.$('notice-slot'))) && p.eval('S.view') === 'skills');
+  ok('4 a signed-in answer released after moving to Tools posts no refresh and shows no notice',
+     !p.requests.some((r) => r.path === '/api/usage/refresh') && !/is signed in/.test(p.text(p.$('notice-slot'))) && p.eval('S.view') === 'tools');
 }
 
 {
@@ -284,7 +284,7 @@ console.log('\nsetup in the page');
   const before = p.requests.filter((r) => r.path === '/api/usage/connect/state').length;
   await new Promise((r) => setTimeout(r, 2200));
   ok('4 …which keeps polling', p.requests.filter((r) => r.path === '/api/usage/connect/state').length > before);
-  p.$('btn-skills').click();
+  p.$('btn-tools').click();
 }
 {
   // The sign-in finishes while the person is on Folders.
@@ -307,7 +307,7 @@ console.log('\nsetup in the page');
   ok('4 …and no fresh sign-in button is offered over the completed login', !btn(p, 'Sign in with ChatGPT') && /signed in/.test(p.text(p.$('content').querySelector('.usage-hint'))));
   await settle(60);
   ok('4 …the refresh happens once, not on every repaint', p.requests.filter((r) => r.path === '/api/usage/refresh').length === 1);
-  p.$('btn-skills').click();
+  p.$('btn-tools').click();
 }
 
 /* ── P2: every async answer proves it still owns the screen ─────────────── */
@@ -436,7 +436,7 @@ const onPage = (p, n) => n && n !== p.doc.body && p.doc.body.contains(n);
   await settle(40);
   ok('QA1 Enter in "Or type a folder" submits it', p.requests.some((r) => r.path === '/api/roots/add' && r.body.path === '/h/code/notes'));
   ok('QA1 …and focus comes back to the field', onPage(p, focused(p)) && focused(p).dataset.focus === 'typed-path');
-  p.$('btn-skills').click();
+  p.$('btn-tools').click();
 }
 {
   // 2: the popup message tells the truth.
@@ -449,7 +449,7 @@ const onPage = (p, n) => n && n !== p.doc.body && p.doc.body.contains(n);
     btn(p, 'Sign in with ChatGPT').click();
     await settle(30);
     ok(`QA2 a popup that ${what}: ${re.source.includes('waiting') ? 'waiting' : 'blocked'} is said`, re.test(p.text(p.$('content').querySelector('.usage-hint'))), p.text(p.$('content').querySelector('.usage-hint')));
-    p.$('btn-skills').click();
+    p.$('btn-tools').click();
   }
 }
 {
@@ -474,7 +474,7 @@ const onPage = (p, n) => n && n !== p.doc.body && p.doc.body.contains(n);
   const p = await boot({ routes, hash: '#setup&step=accounts' });
   await settle(40);
   ok('QA4 a signed-in seat shows "signed in" on its row', /signed in/.test(p.text(p.$('content').querySelector('[data-seat="codex"]'))), p.text(p.$('content').querySelector('[data-seat="codex"]')));
-  p.$('btn-skills').click();
+  p.$('btn-tools').click();
 }
 {
   // 5, 6, 7: typed add marks the suggestion; one word for read; a failed add keeps the input.
@@ -500,7 +500,7 @@ const onPage = (p, n) => n && n !== p.doc.body && p.doc.body.contains(n);
   btn(p, 'Add folder').click();
   await settle(40);
   ok('QA7 a failed add keeps the typed path', input().value === '/h/code/bad' && /nope, not that one/.test(p.text(p.$('notice-slot'))), input().value);
-  p.$('btn-skills').click();
+  p.$('btn-tools').click();
 }
 {
   // 8: Copied resets; 12: Done's Back and Finish sit where Back and Next do.
@@ -514,7 +514,7 @@ const onPage = (p, n) => n && n !== p.doc.body && p.doc.body.contains(n);
   ok('QA8 the Copy button\'s answer resets after ~2 s', said !== 'Copy' && copy.textContent === 'Copy', `${said} → ${copy.textContent}`);
   const nav = [...p.$('content').querySelector('.setup-nav').querySelectorAll('button')].map((b) => b.textContent);
   ok('QA12 on Done, Back and Finish sit together in the step nav, Finish where Next is', JSON.stringify(nav) === JSON.stringify(['Back', 'Finish']) && p.$('content').querySelectorAll('.setup-finish').length === 1, JSON.stringify(nav));
-  p.$('btn-skills').click();
+  p.$('btn-tools').click();
 }
 {
   // The Done step's PATH row (build 3 QA): a title, `acs` as code, and the
@@ -550,14 +550,14 @@ const onPage = (p, n) => n && n !== p.doc.body && p.doc.body.contains(n);
   const p = await boot({ routes: setupRoutes({ 'GET /api/usage': () => ({ seats: [{ seatId: 'codex', label: 'Codex (primary)', vendor: 'codex', home: '/h/.codex', ok: true, windows: [{ label: 'Weekly (fixture)', usedPercent: 25, resetsAt: Date.now() + 1e8 }] }] }) }), hash: '#setup&step=accounts' });
   await settle(40);
   ok('QA9 …and the reading is rendered in that column, not the Usage panel\'s fixed-width cell', !!p.$('content').querySelector('[data-seat] .setup-seat-pct') && !p.$('content').querySelector('[data-seat] .usage-pct'));
-  p.$('btn-skills').click();
+  p.$('btn-tools').click();
 }
 
 /* ── keyboard: every setup control is a real control ──────────────────── */
 {
   const p = await boot({ routes: setupRoutes() });
   await settle(20);
-  for (const step of ['clis', 'accounts', 'folders', 'done']) {
+  for (const step of ['clis', 'accounts', 'folders', 'settings', 'done']) {
     p.eval(`setupGo('${step}')`);
     await settle(20);
     if (step === 'folders') { btn(p, 'Scan for projects').click(); await settle(20); }

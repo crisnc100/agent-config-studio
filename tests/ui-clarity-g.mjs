@@ -39,38 +39,20 @@ console.log('\nstatic: no folds in public/');
     && /white-space\s*:\s*nowrap/.test(tk) && /flex\s*:\s*none/.test(tk), tk);
 }
 
-/* ── Files: every type open; a long one shows the first few and "Show all N" ── */
-console.log('\nFiles: no group toggles; long types show the first few');
+/* ── File lists on their own pages: every file shown, no folds ── */
+console.log('\nFile lists: every file shown, no group toggles');
 {
   const reg = registry();
-  const skills = reg.groups.find((g) => g.id === 'skills');
-  const base = skills.entries[0];
-  for (let i = 0; i < 11; i++) skills.entries.push({ ...base, id: `skill:x${i}`, label: `x${String(i).padStart(2, '0')}`, display: `~/.claude/skills/x${i}`,
-    dir: `/h/.claude/skills/x${i}`, primary: `/h/.claude/skills/x${i}/SKILL.md`, files: [{ name: 'SKILL.md', path: `/h/.claude/skills/x${i}/SKILL.md`, display: `~/.claude/skills/x${i}/SKILL.md` }] });
-  const am = reg.groups.find((g) => g.id === 'auto-memory');
-  for (let i = 0; i < 5; i++) am.entries.push({ ...am.entries[0], id: `am:f${i}`, label: `f${i}` });
-  const p = await boot({ hash: '#files', routes: routesFor({ 'GET /api/registry': () => reg }) });
+  const hooks = reg.groups.find((g) => g.id === 'hooks');
+  const base = hooks.entries[0];
+  for (let i = 0; i < 11; i++) hooks.entries.push({ ...base, id: `hook:x${i}`, label: `x${String(i).padStart(2, '0')}`, display: `~/.claude/hooks/x${i}.sh`,
+    primary: `/h/.claude/hooks/x${i}.sh`, files: [{ name: `x${i}.sh`, path: `/h/.claude/hooks/x${i}.sh`, display: `~/.claude/hooks/x${i}.sh` }] });
+  const p = await boot({ hash: '#setup&step=settings', routes: routesFor({ 'GET /api/registry': () => reg }) });
+  await settle(10);
   const c = p.$('content');
-  const type = (name) => c.querySelectorAll('.files-type').find((t) => p.text(t.querySelector('.files-type-name')) === name);
-  ok('no fold on Files: no type toggle, no details, no chevron', noFolds(p, c) && !c.querySelector('.files-type-toggle'), `${c.querySelectorAll('.files-type-toggle').length} toggles`);
-  const sk = type('Skills');
-  ok('a long type (12 skills) shows its first 8, then a secondary "Show all 12"', sk.querySelectorAll('.files-item').length === 8
-    && !!btn(p, sk, 'Show all 12') && btn(p, sk, 'Show all 12').classList.contains('btn') && !btn(p, sk, 'Show all 12').classList.contains('primary'),
-    `${sk.querySelectorAll('.files-item').length} shown`);
-  ok('…its count still says all 12', p.text(sk.querySelector('.files-type-count')) === '12');
-  const auto = type('Auto-memory');
-  ok('a low-traffic type (Auto-memory, 6) shows its first 3, then "Show all 6"', auto.querySelectorAll('.files-item').length === 3 && !!btn(p, auto, 'Show all 6'));
-  btn(p, sk, 'Show all 12')?.click();
-  await settle(5);
-  const sk2 = type('Skills');
-  ok('"Show all" expands in place: all 12, and no button left', sk2.querySelectorAll('.files-item').length === 12 && !btn(p, sk2, 'Show all 12') && p.eval('S.view') === 'files');
-
-  // The open file is never hidden behind the cap.
-  const q = await boot({ hash: '#files', routes: routesFor({ 'GET /api/registry': () => reg }) });
-  q.eval(`S.lastEntryId = 'skill:x10'; paintFilesBody();`);
-  await settle(5);
-  const hit = q.$('content').querySelector('.files-item[data-entry="skill:x10"]');
-  ok('the last-opened file shows even past the cap', !!hit && hit.classList.contains('active'));
+  ok('no fold on Setup\'s file lists: every one of the 12 hooks is listed, with no toggle or "Show all"', noFolds(p, c)
+    && hooks.entries.every((e) => c.querySelector(`.entry-row[data-entry="${e.id}"]`)) && !c.querySelectorAll('button').some((b) => /^Show all/.test(p.text(b))),
+    `${c.querySelectorAll('.entry-row').length} rows`);
 }
 
 /* ── Models: Model ids always open; "Used by" opens a dialog ──────────── */
@@ -139,24 +121,6 @@ console.log('\nMemory → Projects: plain cards');
     && p.$('content').querySelectorAll('.mem-card .sel-check').length === 5);
 }
 
-/* ── Audit: refusals listed, capped ───────────────────────────────────── */
-console.log('\nAudit: refused files are listed, not folded');
-{
-  const byClass = Object.fromEntries(['user', 'synced', 'readonly', 'plugin', 'vendor'].map((k) => [k, { files: 0, findings: 0, fixable: 0 }]));
-  const refusals = Array.from({ length: 5 }, (_, i) => ({ path: `~/p/f${i}.md`, reason: 'too large' }));
-  const audit = { scannedAt: 1, run: 1, partial: false, partialReasons: [], policyError: null, refusals, files: [],
-    counts: { files: 0, findings: 0, fixable: 0, skipped: { tooLarge: 0, binary: 0, backup: 0 }, refused: 5, byClass } };
-  const p = await boot({ hash: '#audit', routes: routesFor({ 'GET /api/audit': () => audit, 'GET /api/audit/summary': () => ({ state: 'ok', findings: 0, fixable: 0, scannedAt: 1, stale: false }) }) });
-  const c = p.$('content');
-  const r = c.querySelector('.audit-refusals');
-  ok('refused files: a heading line, the first 3 listed, then "Show all 5"', !!r && noFolds(p, c) && /5 files were not read/.test(p.text(r))
-    && r.querySelectorAll('.scope-note').length === 3 && !!btn(p, r, 'Show all 5'), r ? p.text(r) : '(none)');
-  btn(p, r, 'Show all 5')?.click();
-  await settle(5);
-  const r2 = p.$('content').querySelector('.audit-refusals');
-  ok('…which expands in place', r2.querySelectorAll('.scope-note').length === 5 && !btn(p, r2, 'Show all 5'));
-  ok('f1 …and focus lands on the first newly shown item (the 4th)', p.doc.activeElement === r2.querySelectorAll('.scope-note')[3], p.doc.activeElement?.className);
-}
 
 /* ── Trash: the badge is its own class, sized to its word ──────────────── */
 console.log('\nTrash: the kind badge');
