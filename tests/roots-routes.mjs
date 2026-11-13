@@ -400,6 +400,9 @@ ok('the real HOME is never a test HOME', !temps.includes(realHome));
   const outside = mkTemp('scope-outside');
   const far = path.join(mkTemp('scope-far'), 'far');
   const f = seedProjectTree(far, 'far');
+  // An instruction file just above the read root: the walk must stop at the root and never list it.
+  const above = path.join(path.dirname(far), 'CLAUDE.md');
+  fs.writeFileSync(above, '# ABOVE-THE-ROOT\n');
   writeRoots(home, [
     { id: 'work', path: work, label: 'Work', access: 'edit' },
     { id: 'shared', path: shared, label: 'Shared', access: 'read' },
@@ -417,6 +420,8 @@ ok('the real HOME is never a test HOME', !temps.includes(realHome));
   const farOwn = fr.json?.chain?.filter((x) => x.scope === 'directory') || [];
   ok('f3b a read folder outside HOME: its own CLAUDE.md is in the load order (walked from the folder\'s root), read-only, no path',
      fr.status === 200 && farOwn.some((x) => x.display.endsWith(`${path.basename(f.app)}/CLAUDE.md`) && x.readOnly === true && !('path' in x)), fr.text.slice(0, 400));
+  ok('f3b …the CLAUDE.md seeded just above that root is not in the chain', fr.status === 200 && !fr.json.chain.some((x) => x.display.endsWith(`${path.basename(path.dirname(far))}/CLAUDE.md`)) && !fr.text.includes(above),
+     JSON.stringify(fr.json?.chain?.map((x) => x.display)));
   ok('f3b …nothing above that root is walked', farOwn.every((x) => !x.display.startsWith(path.dirname(far) + '/') || x.display.startsWith(far + '/')), JSON.stringify(farOwn.map((x) => x.display)));
   await srv.stop();
 }
