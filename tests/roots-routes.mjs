@@ -408,7 +408,15 @@ ok('the real HOME is never a test HOME', !temps.includes(realHome));
     { id: 'shared', path: shared, label: 'Shared', access: 'read' },
     { id: 'far', path: far, label: 'Far', access: 'read' },
   ]);
+  // ⌘K Search by name: a hook whose text never says its name, and a CLAUDE.md that does.
+  fs.mkdirSync(path.join(home, '.claude', 'hooks'), { recursive: true });
+  const probe = path.join(home, '.claude', 'hooks', 'qa-name-probe.sh');
+  fs.writeFileSync(probe, '#!/usr/bin/env bash\necho hi\n');
+  fs.appendFileSync(path.join(work, 'CLAUDE.md'), '\nSee qa-name-probe for the hook.\n');
   const srv = await startServer(home, { root: ROOT });
+  const byName = (await srv.call('/api/search?q=QA-NAME-PROBE')).json.hits;
+  ok('QA search finds a file by its name, though its text never says it', byName.some((h) => h.path === probe), JSON.stringify(byName.map((h) => h.display)));
+  ok('QA …ranked above a file that only mentions it in its text', byName[0]?.path === probe && byName.some((h) => h.path === path.join(work, 'CLAUDE.md')), JSON.stringify(byName.map((h) => h.display)));
   const sc = await srv.call(`/api/scope?dir=${encodeURIComponent(s.app)}`);
   const own = sc.json?.chain?.find((x) => x.display === `~/shared/${path.basename(s.app)}/CLAUDE.md`);
   ok('f3 the load order of a read folder answers, its own file read-only and sent with no path',
