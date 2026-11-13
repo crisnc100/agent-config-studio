@@ -681,7 +681,7 @@ async function paintSearch(body, q) {
   body.innerHTML = '';
   const box = el('div', 'results');
   box.appendChild(el('div', 'scope-sub',
-    data.hits.length ? `${data.hits.length} files contain “${q}”` : `Nothing matches “${q}”.`));
+    data.hits.length ? `${plural(data.hits.length, 'file')} ${data.hits.length === 1 ? 'matches' : 'match'} “${q}”, by name or by what is in ${data.hits.length === 1 ? 'it' : 'them'}` : `Nothing matches “${q}”.`));
   const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig');
 
   for (const h of data.hits) {

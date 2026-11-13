@@ -1654,17 +1654,19 @@ export function createApp(opts = {}) {
             text = readUserText(abs, { maxBytes: 1024 * 1024 });
           } catch { continue; }
           const { matches, total } = matchLines(text, q);
-          if (matches.length) {
+          // ⌘K is how any file is reached, so a file is found by its name or where it is, not only by its text.
+          const named = [e.label, f.name, f.display].some((x) => String(x || '').toLowerCase().includes(q.toLowerCase()));
+          if (matches.length || named) {
             hits.push({
               group: g.title, entryId: e.id, entryLabel: e.label,
               file: f.name, path: f.path, display: f.display,
-              harness: e.harness, matches, total,
+              harness: e.harness, matches, total, named,
             });
           }
         }
       }
     }
-    hits.sort((a, b) => b.total - a.total);
+    hits.sort((a, b) => (b.named - a.named) || (b.total - a.total));
     return { hits: hits.slice(0, 60), query: q };
   },
 
