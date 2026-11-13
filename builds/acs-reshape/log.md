@@ -16,7 +16,8 @@
 
 ## Choices the plan left open
 - **Search page, not a hidden Files page.** ⌘K opens a `search` view (no sidebar item) with the box and Recently opened only; no per-tool file tree. `#files` redirects there.
-- **Audit removed in full on the client** (team-lead was told, recommendation proceeded): page code, Home's audit attention line and /api/audit/summary fetch, Setup's "Open Audit" button, audit CSS. Server routes and tests stay. `#audit` → Home.
+- **Audit removed in full on the client** (team-lead approved): page code, Home's audit attention line and /api/audit/summary fetch, Setup's "Open Audit" button, audit CSS. Server routes and tests stay. `#audit` → Home.
+  The fix-preview UI is recoverable from git for PR 2/4: `git show c927783:public/app.js`, section "Audit view" (openAudit … dismissAudit; the one-file preview is proposeAudit + auditProposalView), its CSS in `git show c927783:public/styles.css` ("audit view"), and its tests in `git show c927783:tests/audit-ui.mjs`. Removed in ded9606 (code) and a85ed82 (tests).
 - **Tools sections as tabs** (`#tools/skills|agents|mcp`), the sidebar's Tools reopening the last section. `#skills`, `#mcp` redirect to their section; `#skills/new` stays the wizard's hash, Tools marked.
 - **Context project picker** = the projects /api/context reports (each with instruction files), plus a folder picker for subfolders from /api/scope/dirs (what Scope's single select offered). A project with no instruction file at all is not listed: its load order is the main files, shown above.
 - **Setup's folders step absorbed Folders' read-only facts**: missing badge, skipped entries, unreadable roots.json, and where to edit roots.json. Setup's Done step drops "Open Audit".
