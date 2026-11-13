@@ -78,6 +78,12 @@ console.log('\nreshape: Context opens on the main instruction files (R2)');
   ok('choosing a project shows what an agent loads there, in order, main file first', chain.length === 2 && /Main file/.test(p.text(chain[0])) && /This project/.test(p.text(chain[1]))
     && p.requests.some((r) => r.path === '/api/scope' && r.search === `?dir=${encodeURIComponent('~/Documents/Projects/app')}`), chain.map((x) => p.text(x)).join(' | '));
   ok('…then every instruction file in that project', !!p.$('content').querySelector('.cx-variant') && p.errors.length === 0, p.errors.join(' | '));
+  const proj = p.$('content').querySelector('.cx-project');
+  proj.value = '*';
+  proj.onchange();
+  await settle(10);
+  ok('"All projects" lists every project\'s files at once, with no load order (it needs one folder)', p.$('content').querySelectorAll('.cx-variant').length === 1
+    && !p.$('content').querySelector('.cx-chain') && !p.$('content').querySelector('.cx-dir'));
 }
 
 console.log('\nreshape: Tools has three sections (R3)');
