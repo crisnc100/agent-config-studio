@@ -138,7 +138,6 @@ tests/roots-ui.mjs                                    ci:offline
 tests/batch-delete-ui.mjs                             ci:offline
 tests/roles-ui.mjs                                    ci:offline
 tests/model-guide-ui.mjs                              ci:offline
-tests/audit-ui.mjs                                    ci:offline
 tests/assist-files-ui.mjs                             ci:offline
 tests/skill-wizard-ui.mjs                             ci:offline
 tests/skill-wizard-multi-ui.mjs                       ci:offline
@@ -232,7 +231,6 @@ packs/review-gate/tests/review.worktree.test.mjs      manual                    
 
 # Never run by a gate.
 tests/assist-qa-server.mjs                            manual                        # browser QA server: runs until Ctrl-C
-tests/audit-qa-server.mjs                             manual                        # browser QA server: runs until Ctrl-C
 tests/memory-qa-server.mjs                            manual                        # browser QA server: runs until Ctrl-C
 tests/models-qa-server.mjs                            manual                        # browser QA server: runs until Ctrl-C
 tests/redesign-qa-server.mjs                          manual                        # browser QA server: runs until Ctrl-C
