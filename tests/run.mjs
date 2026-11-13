@@ -35,7 +35,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-export const LANES = ['local', 'pending-ci', 'manual', 'helper'];
+export const LANES = ['local', 'manual', 'helper'];
 const GROUP = /^[a-z0-9][a-z0-9-]*$/;
 
 /**
@@ -169,10 +169,10 @@ async function runSideBySide(chosen, jobs, root, label) {
   const position = new Map(chosen.map((e, i) => [e, i + 1]));
   const shared = chosen.filter((e) => !e.serial);
   const alone = chosen.filter((e) => e.serial);
-  // Serial files assert wall-clock windows, so they run first, while the
-  // machine is quiet: after the shared files, macOS's FSEvents backlog from
-  // their temp-folder churn delayed tests/roots-live.mjs's watcher events
-  // past its fixed settle time.
+  // Serial files assert wall-clock windows or change what files beside them
+  // check. They run first, while the machine is quiet: after the shared
+  // files, macOS's FSEvents backlog from their temp-folder churn delayed
+  // tests/roots-live.mjs's watcher events past its fixed settle time.
   const order = [...alone, ...shared];
   const slots = order.map(() => deferred());
   let stopped = false;

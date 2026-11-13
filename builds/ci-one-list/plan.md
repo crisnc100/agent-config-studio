@@ -66,7 +66,9 @@ A PR shows five checks instead of ten, and the wait is measured, not assumed.
    (first in list order), and the files not run are named. Without `--jobs`, behaviour is unchanged, so `verify.sh`
    runs as before.
 4. A file that cannot run beside others carries `serial` on its `tests/SUITE` line with the reason, and runs alone
-   before the rest, while the machine is quiet. A test is never edited to make it run beside others.
+   before the rest, while the machine is quiet. A test is never edited to make it run beside others. Four files are
+   serial: `assist-containment` and `roots-live` (wall-clock windows), `phase2a` and `usage-seats` (each writes into
+   an absent real-home folder that the real-home checks beside it see).
 5. `package` is one job (Linux, the minimum Node) and runs the `bunx` test as a step; the separate `bunx` job and
    the other two `package` variants are gone. `stranger-macos` (current Node) also runs the package test, so the
    package is still installed on a Mac and on current Node.
@@ -76,12 +78,29 @@ A PR shows five checks instead of ten, and the wait is measured, not assumed.
    only under the test-change rule (own commit, each changed assertion named, checked by another model).
 
 ### PR 3: the tests CI skips
-1. The `local` files that can run on a CI runner, and the `pending-ci` files in `tests/`, join the `offline` group.
-   Each either passes on Linux at the minimum Node, or stays `local` with the specific reason on its line
-   (`models-scripts.mjs` is one: it runs the review script installed in the real home).
-2. The 30 pack tests run inside the `offline` job when the PR changes anything under `packs/`, and always on main.
-   They are `ci-only`: `verify.sh` does not gain 13 minutes.
-3. `review.test.mjs` (frozen at 4a5807e) is run, never edited.
+1. The `local` files that can run on a CI runner, and the 5 `pending-ci` files in `tests/` (`packs-review-settings`
+   was already `local`), join the `offline` group: 36 files. Each either passes on Linux at the minimum Node, or stays
+   `local` with the specific reason on its line. Eight stay: `models-scripts` (runs the review script installed in the
+   real home), `skill-usage` (reads the real `~/.claude/projects`), `models-backup` (restores this machine's real
+   backup), `zip` (cross-checks with macOS `ditto`), `packs-security` (its helper needs `fs.readdirSync`'s
+   `recursive`, Node 20.1+), `liveness` (about 2 minutes on every pull request), `worktree-tools` (its gh-missing
+   checks delete a shim but keep `/usr/bin`, where a runner has gh) and `home` (a 20 ms wall-clock window in its
+   Refresh check that misses under load).
+   Joining `ci:offline` also puts the 5 former `pending-ci` files in `verify.sh`.
+   Before files join `offline`, each runs alone with `HOME=<fresh empty temp dir> ACS_SUITE=offline` and no agent
+   CLI on PATH, and the temp home is listed afterwards: a file that writes there is a writer the runner's empty home
+   exposes and the Mac's full one hides. The scan is repeated whenever files join the group.
+2. 10 of the 30 pack tests, the ones that passed on the Linux runner, are `ci:packs ci-only` (`verify.sh` does not
+   gain their minutes). The other 20 are `manual`, in no gate, each with its reason: `pr.test` and `review.merge.test`
+   assert gh is absent with a PATH that keeps `/usr/bin`, where a runner has gh; `review.close` drives a terminal with
+   BSD `script`, which util-linux rejects; the 17 the proof run never reached are unproven on Linux.
+   The `offline` job runs the 10 in a step after the offline suite when the PR changes anything under `packs/`
+   (`git diff HEAD^1 HEAD -- packs/` on the merge commit, checked out with depth 2), and always on main; an answer short of "unchanged" runs them. That
+   step runs on LTS Node, not 20.0.0: `review.eval` reads with `fs.readdirSync`'s `recursive`, which arrived in 20.1
+   (`review.global`'s `fs.statSync` patch, in no gate, also trips 20.0.0's module loader), and the offline suite
+   covers the minimum Node. `packs/flag/tests/flag.test.mjs` stays `ci:offline ci-only`.
+3. `review.test.mjs` (frozen at 4a5807e) is never edited. It is among the 17 unproven files and runs in no gate, a
+   departure from running it that is the operator's call to revisit.
 4. A file that fails on Linux for a product reason, or intermittently, is a finding: stop and report it with the
    failing check and its failure rate. It is never skipped, loosened or retried to green.
 5. The `pending-ci` lane is gone from `tests/SUITE` and from `suite-coverage.mjs`.

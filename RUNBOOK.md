@@ -108,10 +108,10 @@ cannot run it.
 
 `tests/SUITE` is the one list of test files, in run order, each with a lane:
 `ci:<group>` (that CI job, and `verify.sh` unless also `ci-only`), `local`
-(`verify.sh` only), `pending-ci` (no gate yet), `manual` or `helper` (never a
-gate). Every lane but `ci:` carries its reason on the line. A `serial` mark
-(with `ci:` or `local`) keeps a file from running beside others, with what it
-contends on as the reason. The file's header spells out the format.
+(`verify.sh` only), `manual` or `helper` (never a gate). Every lane but `ci:`
+carries its reason on the line. A `serial` mark (with `ci:` or `local`) keeps
+a file from running beside others, with what it contends on as the reason.
+The file's header spells out the format.
 
 - `node tests/run.mjs <group>` runs one group; `--local` runs what `verify.sh`
   runs; `--list` prints the files without running them. It runs one file at a
@@ -120,19 +120,33 @@ contends on as the reason. The file's header spells out the format.
 - `--jobs N` runs up to N files at once; anything but a positive whole number
   is refused with exit 2. Each file's output is held in a temp file and
   printed whole, in run order, so the log reads like a serial run. `serial`
-  files run (and print) first, one at a time: they assert wall-clock windows,
-  and after the shared files a busy machine made them miss. A failure starts
-  no new file, lets the running ones finish and print, names the files not
-  run, and exits with the code of the first failing file in list order.
+  files run (and print) first, one at a time: each asserts a wall-clock
+  window or changes what files beside it check (the real home). They go
+  first because a wall-clock file run after the shared files missed its
+  window on macOS. A failure starts no new file, lets the running ones finish
+  and print, names the files not run, and exits with the code of the first
+  failing file in list order.
   `verify.sh` does not use it.
 - CI (`.github/workflows/ci.yml`) shows five checks. `syntax`; `guards` (the
   `guards` group); `offline` (the `offline` group with `--jobs 4`, on Node
-  20.0.0, the declared minimum, with `ACS_SUITE=offline`); `package` (Node
-  20.0.0: `npm pack`, then `tests/package.mjs` and `tests/bunx.mjs` named with
-  that tarball, since they take it); and `stranger-macos` (the
-  `stranger-macos` group on the current LTS Node, which includes
-  `tests/package.mjs` packing the tree itself). Current Node is covered only
-  there. Branch protection requires `syntax`, `guards` and `offline`.
+  20.0.0, the declared minimum, with `ACS_SUITE=offline`, then the `packs`
+  group below); `package` (Node 20.0.0: `npm pack`, then `tests/package.mjs`
+  and `tests/bunx.mjs` named with that tarball, since they take it); and
+  `stranger-macos` (the `stranger-macos` group on the current LTS Node, which
+  includes `tests/package.mjs` packing the tree itself). Current Node is
+  covered there and by the `packs` group. Branch protection requires
+  `syntax`, `guards` and `offline`.
+- The pack tests tagged `ci:packs ci-only` (the review-gate and pr pack
+  tests that pass on a Linux runner) are never run by `verify.sh`. The other
+  pack tests are `manual`, in no gate, each with its reason in `tests/SUITE`.
+  Later steps of the `offline` job run the `ci:packs` ones with `--jobs 4` on
+  the current LTS Node, since one of them needs a Node newer than the
+  minimum. They are skipped only when a pull request provably leaves
+  `packs/` unchanged; on a push to main, a change to `packs/`, or any git
+  error they run, and they run even when the offline suite failed.
+  `tests/ci-packs-step.mjs`, in `guards`, runs that condition step from
+  `ci.yml` under `bash -e` in scratch git repos and checks that the pack
+  steps run unless it wrote `false`.
   The `syntax` job runs `node --check` on `server.js` and on each `.js` and
   `.mjs` file under `lib`, `tests`, `public`, `bin`, `packs` and `tools`,
   one file per run, and fails when it finds none;

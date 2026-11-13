@@ -141,7 +141,7 @@ console.log('\nrun.mjs --jobs: serial files');
 }
 {
   const files = { 'tests/a.mjs': FILE('a') };
-  for (const [name, line] of [['a manual line', 'tests/a.mjs manual serial # by hand'], ['a pending-ci line', 'tests/a.mjs pending-ci serial # later'], ['a helper line', 'tests/a.mjs helper serial # module']]) {
+  for (const [name, line] of [['a manual line', 'tests/a.mjs manual serial # by hand'], ['a helper line', 'tests/a.mjs helper serial # module']]) {
     const r = run(`tests/x.mjs ci:g\n${line}\n`, { ...files, 'tests/x.mjs': FILE('x') }, ['g', '--jobs', '2']);
     ok(`serial on ${name} is a malformed list, refused before anything runs`, r.status === 2 && r.started.length === 0
       && /malformed[\s\S]*serial/.test(r.out), `${r.status}\n${r.out}`);
