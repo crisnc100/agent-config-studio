@@ -1610,7 +1610,8 @@ export function createApp(opts = {}) {
     // takes a path from here, and a read folder's file is not the editor's.
     const abs = resolveSafe(dir, [...roots.safeRoots, ...roots.readRoots]);
     const readOnly = (p) => { try { resolveSafe(p); return false; } catch { return true; } };
-    const chain = scopeChain(abs).map((f) => (readOnly(f.path) ? { display: f.display, scope: f.scope, note: f.note, size: f.size, readOnly: true } : f));
+    const floor = [...roots.editRoots, ...roots.readRoots].find((r) => abs === r || abs.startsWith(r + path.sep)) ?? null;
+    const chain = scopeChain(abs, { floor }).map((f) => (readOnly(f.path) ? { display: f.display, scope: f.scope, note: f.note, size: f.size, readOnly: true } : f));
     return { dir: abs, display: tilde(abs), chain };
   },
 
