@@ -148,9 +148,9 @@ const VIEWS = [
     title: 'Home', sub: 'What is connected, what is left, and what needs you', open: openHome, render: renderHome,
     titleExtra: homeNeedsChip },
   { id: 'context', label: 'Context', group: 'main', icon: 'context', hash: '#context',
-    title: 'Context', sub: 'Your main instruction files, then what each project adds on top', open: openContext },
+    title: 'Context', sub: 'What every session is told, then what each project adds', open: openContext },
   { id: 'tools', label: 'Tools', group: 'main', icon: 'skills', hash: '#tools', match: (h) => /^#tools(\/(skills|agents|mcp))?(&|$)/.test(h),
-    title: 'Tools', sub: 'What your agents can do — skills, subagents and commands, MCP servers', open: () => openTools(toolsSectionOf(location.hash)),
+    title: 'Tools', sub: 'What your agents can do, and how to add to it', open: () => openTools(toolsSectionOf(location.hash)),
     moved: (h) => toolsSectionOf(h) !== TL.section },
   // No sidebar item: the Skills section's New skill button (public/skill-wizard.js).
   { id: 'skill-new', label: 'New skill', group: null, parent: 'tools', icon: 'skills', hash: '#skills/new',
@@ -175,7 +175,8 @@ const VIEWS = [
     title: 'Search', sub: 'Every config file the studio reads — search by what is in it', open: () => openSearch(), render: renderSearch },
   // First run lands here; afterwards it sits in the sidebar footer, with Trash and Theme.
   { id: 'setup', label: 'Setup', group: 'footer', icon: 'setup', hash: '#setup',
-    title: 'Setup', sub: 'CLIs, accounts, project folders, and settings files — each step optional', open: openSetup },
+    title: 'Setup', sub: 'CLIs, accounts, project folders, and settings files — each step optional', open: openSetup,
+    moved: (h) => setupStepOf(h) !== SETUP.step },
   { id: 'trash', label: 'Trash', group: 'footer', icon: 'trash', hash: '#trash',
     title: 'Trash', sub: 'Trashed items — restore any of them', open: openTrash },
   { id: 'theme', label: 'Theme', group: 'footer', icon: 'theme', kind: 'action', open: toggleTheme },
@@ -608,7 +609,7 @@ function paintSearchBody() {
   if (FILES.query.length >= 2) return paintSearch(body, FILES.query);
   body.appendChild(recentCard());
   body.appendChild(el('div', 'scope-sub files-where',
-    'Files also open from their own pages: instruction files on Context, skills, subagents, commands and MCP on Tools, auto-memory on Memory, settings and hooks on Setup.'));
+    'Files also open from the pages that list them: instruction files on Context, skills, subagents, commands and MCP on Tools, settings and hooks on Setup.'));
 }
 
 function recentCard() {

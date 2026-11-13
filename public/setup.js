@@ -372,7 +372,7 @@ function setupFoldersStep(body) {
   const h = el('h3', null, 'Project folders');
   h.tabIndex = -1;
   body.appendChild(h);
-  body.appendChild(el('div', 'scope-sub', 'The folders your projects live in. Read-only folders are listed in Context, Skills and Worktrees; edit folders also open in the editor, with history. Folders start as read-only.'));
+  body.appendChild(el('div', 'scope-sub', 'The folders your projects live in. Read-only folders are listed in Context, Tools and Worktrees; edit folders also open in the editor, with history. Folders start as read-only.'));
 
   const reg = FOLDERS.data?.roots || [];
   if (reg.length) {
