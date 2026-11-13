@@ -498,8 +498,8 @@ never reads it, so new data cannot break it.
   and fails if any scanned file's ctime moved during the first or its hash
   changed across the second.
 - Tests: `tests/audit.mjs` (in-process), `tests/audit-routes.mjs` (server,
-  temp HOME), `tests/audit-ui.mjs` (VM). Guard i in `tests/guards.mjs` keeps
-  `child_process` out of both modules.
+  temp HOME). Guard i in `tests/guards.mjs` keeps `child_process` out of both
+  modules. No page in the studio calls the audit routes at present.
 
 ## Troubleshooting
 

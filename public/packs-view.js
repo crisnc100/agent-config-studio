@@ -951,7 +951,7 @@ function pkSettingsView(pack) {
   return wrap;
 }
 
-/** "Saved in <file>", with Open in Files when Files lists it. */
+/** "Saved in <file>", with Open file when the registry lists it. */
 function pkSettingsFoot(rc) {
   const foot = el('div', 'pk-set-foot');
   if (!rc?.file) return foot;
@@ -960,7 +960,7 @@ function pkSettingsFoot(rc) {
   foot.appendChild(where);
   // Files lists only what its registry found; ~/.agent-config-studio is outside its folders, so that copy is named only.
   const entry = rc.exists ? (S.registry?.groups || []).flatMap((g) => g.entries).find((e) => e.files.some((f) => f.display === rc.file)) : null;
-  if (entry) foot.appendChild(pkBtn('ghost', 'Open in Files', () => openEntry(entry, entry.files.find((f) => f.display === rc.file).path, S.view)));
+  if (entry) foot.appendChild(pkBtn('ghost', 'Open file', () => openEntry(entry, entry.files.find((f) => f.display === rc.file).path, S.view)));
   return foot;
 }
 
