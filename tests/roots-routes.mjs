@@ -413,7 +413,15 @@ ok('the real HOME is never a test HOME', !temps.includes(realHome));
   const probe = path.join(home, '.claude', 'hooks', 'qa-name-probe.sh');
   fs.writeFileSync(probe, '#!/usr/bin/env bash\necho hi\n');
   fs.appendFileSync(path.join(work, 'CLAUDE.md'), '\nSee qa-name-probe for the hook.\n');
+  // 61 more hooks: a folder name ("hooks") must not make them all name hits and crowd out a text match.
+  for (let i = 0; i <= 60; i++) fs.writeFileSync(path.join(home, '.claude', 'hooks', `h${i}.sh`), '#!/usr/bin/env bash\necho crowd\n');
+  fs.appendFileSync(path.join(work, 'CLAUDE.md'), '\nOur hooks live in ~/.claude.\n');
   const srv = await startServer(home, { root: ROOT });
+  const folderQ = (await srv.call('/api/search?q=hooks')).json;
+  ok('QA search: a folder name is not a file\'s name — every hook under ~/.claude/hooks is not a hit for "hooks", and a text match is still returned',
+     folderQ.hits.some((h) => h.path === path.join(work, 'CLAUDE.md')) && !folderQ.hits.some((h) => /\/hooks\/h\d+\.sh$/.test(h.path)), JSON.stringify(folderQ.hits.map((h) => h.display)).slice(0, 400));
+  const crowd = (await srv.call('/api/search?q=crowd')).json;
+  ok('QA search: when hits are cut at 60, the answer says how many there were in all', crowd.hits.length === 60 && crowd.total === 61, `${crowd.hits.length} of ${crowd.total}`);
   const byName = (await srv.call('/api/search?q=QA-NAME-PROBE')).json.hits;
   ok('QA search finds a file by its name, though its text never says it', byName.some((h) => h.path === probe), JSON.stringify(byName.map((h) => h.display)));
   ok('QA …ranked above a file that only mentions it in its text', byName[0]?.path === probe && byName.some((h) => h.path === path.join(work, 'CLAUDE.md')), JSON.stringify(byName.map((h) => h.display)));
