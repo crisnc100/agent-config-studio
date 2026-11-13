@@ -1195,6 +1195,14 @@ async function save() {
 /* ── scope view ──────────────────────────────────────────────────────── */
 /* ── create / delete ─────────────────────────────────────────────────── */
 
+/** The page on screen, repainted when it lists registry files (entryList), so a file added or removed elsewhere shows. */
+function repaintEntryLists() {
+  if (S.view === 'setup' && SETUP.step === 'settings') paintSetup();
+  else if (S.view === 'tools' && TL.section === 'agents') paintAgents();
+  else if (S.view === 'tools' && TL.section === 'skills' && SK.rows) paintSkills();
+  else if (S.view === 'worktrees') document.querySelector('.wt-rules')?.replaceWith(worktreeRules());
+}
+
 async function refreshRegistry(selectPath) {
   S.registry = await api('GET', '/api/registry');
   // The rebuild produces fresh entry objects; re-point at the equivalent one so
@@ -1206,6 +1214,7 @@ async function refreshRegistry(selectPath) {
   const total = S.registry.groups.reduce(
     (n, g) => n + g.entries.reduce((m, e) => m + e.files.length, 0), 0);
   $('brand-sub').textContent = `${total} files · ${S.registry.history.commits} versions`;
+  repaintEntryLists();
   if (selectPath) {
     const entry = entryForFile(selectPath);
     if (entry) await openEntry(entry, selectPath);
@@ -1689,11 +1698,7 @@ async function openWorktrees() {
   box.appendChild(terms);
   c.appendChild(box);
   // The rules files and Register a project: below the worktrees, and there even with no project registered.
-  const rules = el('div', 'scope wt-rules');
-  rules.appendChild(el('h3', 'mem-h3', 'Worktree rules'));
-  rules.appendChild(el('div', 'scope-sub', 'Where agents may branch, and off what: the defaults template and each project’s .worktrees.conf.'));
-  rules.appendChild(entryList(['worktrees'], { create: { kind: 'worktree-project', title: 'Worktrees', label: 'Register a project' } }));
-  c.appendChild(rules);
+  c.appendChild(worktreeRules());
   if (!data.projects?.length) {
     box.appendChild(el('div', 'scope-sub', 'No registered projects. Register one with Register a project below.'));
     return;
@@ -1731,6 +1736,14 @@ async function openWorktrees() {
       box.appendChild(row);
     }
   }
+}
+
+function worktreeRules() {
+  const rules = el('div', 'scope wt-rules');
+  rules.appendChild(el('h3', 'mem-h3', 'Worktree rules'));
+  rules.appendChild(el('div', 'scope-sub', 'Where agents may branch, and off what: the defaults template and each project’s .worktrees.conf.'));
+  rules.appendChild(entryList(['worktrees'], { create: { kind: 'worktree-project', title: 'Worktrees', label: 'Register a project' } }));
+  return rules;
 }
 
 /* ── trash view ──────────────────────────────────────────────────────── */
@@ -1901,6 +1914,10 @@ function toolsHead() {
 /** Subagents and slash commands: Claude Code's files in ~/.claude/agents and ~/.claude/commands. */
 function openAgents() {
   if (!enterTools('agents')) return;
+  paintAgents();
+}
+
+function paintAgents() {
   const c = $('content');
   c.innerHTML = '';
   c.appendChild(toolsHead());
@@ -2010,6 +2027,22 @@ function selectionBar() {
   return bar;
 }
 
+/** Which registry skill group holds a /api/skills source's skills. */
+const SKILL_GROUP_OF = { 'global-claude': 'claude-skills', 'global-codex': 'codex-skills' };
+/**
+ * The registry entry for a /api/skills row. The route sends no path, so the
+ * match is by source and folder name — a global skill's name is its folder's
+ * (lib/skills.js) — under the row's own source, then under its identical copies'.
+ */
+function skillEntryOf(r) {
+  for (const src of [r.source, ...(r.aliasSources || [])]) {
+    const g = S.registry?.groups.find((x) => x.id === SKILL_GROUP_OF[src]);
+    const e = g?.entries.find((x) => x.dir?.split('/').pop() === r.name);
+    if (e) return e;
+  }
+  return null;
+}
+
 function skillGroup(source, rows) {
   const wrap = el('div', 'sk-group');
   const head = el('div', 'sk-group-head');
@@ -2033,13 +2066,14 @@ function skillGroup(source, rows) {
   for (const r of rows) {
     const line = el('div', 'sk-line');
     line.appendChild(skillRow(r));
-    // The registry lists the skills the editor can open; a read-only folder's skill has no Open.
-    const entry = entryForFile(`${r.dir}/SKILL.md`);
+    // The registry lists the skills the editor can open; a project or read-only folder's skill has no Open.
+    const entry = skillEntryOf(r);
     if (entry) {
       const open = el('button', 'btn ghost sk-open', 'Open');
-      open.dataset.path = `${r.dir}/SKILL.md`;
+      const file = entry.primary || entry.files[0]?.path;
+      open.dataset.path = file;
       open.setAttribute('aria-label', `Open ${r.displayName}`);
-      open.onclick = () => openEntry(entry, `${r.dir}/SKILL.md`);
+      open.onclick = () => openEntry(entry, file);
       line.appendChild(open);
     }
     wrap.appendChild(line);
@@ -3046,12 +3080,15 @@ function contextProjectPicker() {
   };
   row.appendChild(proj);
   if (CX.project === ALL_PROJECTS) return row;
-  const under = (CX.dirs || []).map((x) => x.display).filter((x) => x === CX.project || x.startsWith(`${CX.project}/`));
-  const dirs = under.includes(CX.project) ? under : [CX.project, ...under];
+  // Every checkout of the project (its worktrees sit beside the trunk, not under it), each with the folders below it.
+  const group = CX.data.groups.find((g) => g.display === CX.project);
+  const tops = [CX.project, ...(group?.checkouts || []).map((k) => k.display).filter((x) => x && x !== CX.project)];
+  const inTop = (x, t) => x === t || x.startsWith(`${t}/`);
+  const dirs = tops.flatMap((t) => [t, ...(CX.dirs || []).map((x) => x.display).filter((x) => x !== t && inTop(x, t))]);
   const dir = el('select', 'scope-select cx-dir');
   dir.setAttribute('aria-label', 'Folder in this project');
   for (const x of dirs) {
-    const o = el('option', null, x === CX.project ? 'Project folder' : x.slice(CX.project.length + 1));
+    const o = el('option', null, x === CX.project ? 'Project folder' : inTop(x, CX.project) ? x.slice(CX.project.length + 1) : x);
     o.value = x;
     if (x === CX.dir) o.selected = true;
     dir.appendChild(o);
@@ -3077,6 +3114,12 @@ function contextChain() {
     body.appendChild(el('div', 'scope-note',
       `${f.scope === 'global' ? 'Main file' : 'This project'} · ${f.note} · ${(f.size / 1024).toFixed(1)} KB`));
     row.appendChild(body);
+    // A read folder's file comes with no path: it is shown, never opened in the editor.
+    if (f.readOnly) {
+      row.appendChild(el('span', 'mem-badge', 'read-only'));
+      wrap.appendChild(row);
+      return;
+    }
     const open = el('button', 'btn ghost scope-open', 'Open');
     open.onclick = () => {
       const e = entryForFile(f.path);

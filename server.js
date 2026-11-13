@@ -1602,10 +1602,16 @@ export function createApp(opts = {}) {
   'GET /api/scope': async (_req, url) => {
     // No folder named and no edit folder registered: nothing to walk, and no
     // phantom default folder a stranger does not have.
-    const dir = url.searchParams.get('dir') || currentRoots().editRoots[0];
+    const roots = currentRoots();
+    const dir = url.searchParams.get('dir') || roots.editRoots[0];
     if (!dir) return { dir: null, display: null, chain: [] };
-    const abs = resolveSafe(dir);
-    return { dir: abs, display: tilde(abs), chain: scopeChain(abs) };
+    // A read folder's load order is shown too (Context's read-only projects).
+    // Its files go out as display paths only, read-only: the editor never
+    // takes a path from here, and a read folder's file is not the editor's.
+    const abs = resolveSafe(dir, [...roots.safeRoots, ...roots.readRoots]);
+    const readOnly = (p) => { try { resolveSafe(p); return false; } catch { return true; } };
+    const chain = scopeChain(abs).map((f) => (readOnly(f.path) ? { display: f.display, scope: f.scope, note: f.note, size: f.size, readOnly: true } : f));
+    return { dir: abs, display: tilde(abs), chain };
   },
 
   'GET /api/scope/dirs': async () => {
