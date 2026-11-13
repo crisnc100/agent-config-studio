@@ -235,7 +235,8 @@ headings. Below them, pick a project, and a folder in it: Context lists what
 an agent started there loads, in order (the main files first, then every
 `CLAUDE.md` / `AGENTS.md` on the path down), and every instruction file in
 that project, with identical worktree copies collapsed and differing ones
-flagged.
+flagged. **All projects** lists every project's files at once, so a selection
+moved to Trash can span projects.
 
 ## The parts that matter
 
