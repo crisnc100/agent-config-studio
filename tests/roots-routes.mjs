@@ -389,6 +389,30 @@ ok('the real HOME is never a test HOME', !temps.includes(realHome));
   await srv.stop();
 }
 
+/* ── Context's load order for a read folder (builds/acs-reshape f3) ───── */
+{
+  const home = mkTemp('scope-read');
+  seedGlobals(home);
+  const work = path.join(home, 'code', 'work');
+  const shared = path.join(home, 'shared');
+  seedProjectTree(work, 'work');
+  const s = seedProjectTree(shared, 'shared');
+  const outside = mkTemp('scope-outside');
+  writeRoots(home, [
+    { id: 'work', path: work, label: 'Work', access: 'edit' },
+    { id: 'shared', path: shared, label: 'Shared', access: 'read' },
+  ]);
+  const srv = await startServer(home, { root: ROOT });
+  const sc = await srv.call(`/api/scope?dir=${encodeURIComponent(s.app)}`);
+  const own = sc.json?.chain?.find((x) => x.display === `~/shared/${path.basename(s.app)}/CLAUDE.md`);
+  ok('f3 the load order of a read folder answers, its own file read-only and sent with no path',
+     sc.status === 200 && !!own && own.readOnly === true && !('path' in own), sc.text.slice(0, 400));
+  ok('f3 …the global files in it keep their path (they are the editor\'s)', sc.json?.chain?.some((x) => x.scope === 'global' && x.path && !x.readOnly), sc.text.slice(0, 400));
+  const scOut = await srv.call(`/api/scope?dir=${encodeURIComponent(outside)}`);
+  ok('f3 …while a folder under neither root still 403s', scOut.status === 403, scOut.text);
+  await srv.stop();
+}
+
 for (const t of temps) { try { fs.rmSync(t, { recursive: true, force: true }); } catch {} }
 assertRealHomesUnchanged(realBefore, ok);
 console.log(`\n${pass} passed, ${fail} failed`);

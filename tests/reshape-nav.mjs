@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { bootPage, routesFor, registry, MEMORY, PATHS, ROOT, settle } from './fixtures/shell-page.mjs';
+import { toPublic } from '../lib/skills.js';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -86,6 +87,50 @@ console.log('\nreshape: Context opens on the main instruction files (R2)');
     && !p.$('content').querySelector('.cx-chain') && !p.$('content').querySelector('.cx-dir'));
 }
 
+console.log('\nreshape: Context — worktree checkouts and read-only projects');
+{
+  const ctx = { totals: { files: 2, entries: 2, drifted: 0 }, roots: {}, unreadable: [], groups: [
+    { root: 'work', rootLabel: 'Work', label: 'app', display: '~/code/app-trunk', readOnly: false, scopes: [],
+      checkouts: [{ label: 'app-trunk', display: '~/code/app-trunk', trunk: true }, { label: 'feature', display: '~/code/app-wt/feature', trunk: false }] },
+    { root: 'shared', rootLabel: 'Shared', label: 'lib', display: '~/shared/lib', readOnly: true, scopes: [],
+      checkouts: [{ label: 'lib', display: '~/shared/lib', trunk: true }] }] };
+  const dirs = ['~/code/app-trunk', '~/code/app-trunk/src', '~/code/app-wt/feature', '~/code/app-wt/feature/src', '~/code/other'].map((d) => ({ path: `${H}${d.slice(1)}`, display: d }));
+  const routes = routesFor({ 'GET /api/context': () => ctx, 'GET /api/scope/dirs': () => ({ dirs }),
+    'GET /api/scope': (_b, u) => (u.searchParams.get('dir') === '~/shared/lib'
+      ? { chain: [{ display: '~/shared/lib/CLAUDE.md', scope: 'directory', note: '~/shared/lib', size: 100, readOnly: true }] }
+      : { chain: [] }) });
+  const p = await boot({ routes, hash: '#context' });
+  const opts = p.$('content').querySelector('.cx-dir').querySelectorAll('option').map((o) => o.value);
+  ok('a project\'s folder picker offers its worktree checkouts too, not only folders under the trunk',
+    ['~/code/app-trunk', '~/code/app-trunk/src', '~/code/app-wt/feature', '~/code/app-wt/feature/src'].every((d) => opts.includes(d)) && !opts.includes('~/code/other'), opts.join(', '));
+  const proj = p.$('content').querySelector('.cx-project');
+  proj.value = '~/shared/lib';
+  proj.onchange();
+  await settle(20);
+  const row = p.$('content').querySelector('.cx-chain .scope-item');
+  ok('a read-only project shows its load order, its files marked read-only with no Open', !!row && /~\/shared\/lib\/CLAUDE\.md/.test(p.text(row))
+    && /read-only/.test(p.text(row)) && !row.querySelector('button') && p.errors.length === 0, row ? p.text(row) : p.text(p.$('content')).slice(0, 300));
+}
+
+console.log('\nreshape: page lists follow the registry live');
+{
+  const routes = routesFor();
+  const p = await boot({ routes, hash: '#setup&step=settings' });
+  const reg = registry();
+  reg.groups.find((g) => g.id === 'hooks').entries.push(one('hook:new', 'post tool', `${H}/.claude/hooks/post tool.sh`));
+  reg.groups.push({ id: 'agents', title: 'Subagents', createKind: 'agent', entries: [one('ag:new', 'writer', `${H}/.claude/agents/writer.md`)] });
+  routes.reg.current = reg;
+  const fire = async () => { p.sources[0].onmessage({ data: JSON.stringify({ type: 'files', origin: 'outside', added: ['x'], removed: [], changed: [], addedPaths: ['x'] }) }); await settle(20); };
+  await fire();
+  ok('a hook added outside the studio shows on Setup → Settings and hooks without a reload', !!p.$('content').querySelector('.entry-row[data-entry="hook:new"]'));
+  p.navigate('#tools/agents');
+  await settle(10);
+  routes.reg.current = registry();
+  await fire();
+  ok('…and one removed leaves Tools → Agents and commands', !p.$('content').querySelector('.entry-row[data-entry="ag:new"]') && /None yet/.test(p.text(p.$('content'))));
+  ok('…with no page errors', p.errors.length === 0, p.errors.join(' | '));
+}
+
 console.log('\nreshape: Tools has three sections (R3)');
 {
   const reg = registry();
@@ -136,16 +181,21 @@ console.log('\nreshape: nothing the Files page listed is unreachable (R1)');
 
   // Live: a registry holding every group, and each file found as an Open on its page.
   const reg = registry();
+  // The fixture's 'skills' group is what the server calls claude-skills: alpha, with a second file (ref.md).
+  const alpha = reg.groups.find((g) => g.id === 'skills').entries[0];
+  reg.groups = reg.groups.filter((g) => g.id !== 'skills');
   const add = (id, title, entries, createKind = null) => reg.groups.push({ id, title, createKind, entries });
-  add('claude-skills', 'Claude skills', [one('cs:a', 'a', `${H}/.claude/skills/a/SKILL.md`)], 'claude-skill');
-  add('codex-skills', 'Codex skills', [one('xs:b', 'b', `${H}/.codex/skills/b/SKILL.md`, { harness: 'codex' })], 'codex-skill');
+  add('claude-skills', 'Claude skills', [alpha, one('cs:a', 'a', `${H}/.claude/skills/a/SKILL.md`, { dir: `${H}/.claude/skills/a` })], 'claude-skill');
+  add('codex-skills', 'Codex skills', [one('xs:b', 'b', `${H}/.codex/skills/b/SKILL.md`, { harness: 'codex', dir: `${H}/.codex/skills/b` })], 'codex-skill');
   add('plugin-skills', 'Plugin skills', [one('ps:c', 'p: c', `${H}/.claude/plugins/p/skills/c/SKILL.md`)]);
   add('retired', 'Retired skills', [one('rs:d', 'd', `${H}/.claude/skills_retired/d/SKILL.md`)]);
   add('agents', 'Subagents', [one('ag:e', 'e', `${H}/.claude/agents/e.md`)], 'agent');
   add('commands', 'Slash commands', [one('cm:f', 'f', `${H}/.claude/commands/f.md`)], 'command');
   const memIx = `${H}/.claude/projects/-app/memory/MEMORY.md`;
   reg.groups.find((g) => g.id === 'auto-memory').entries[0].files.push({ name: 'MEMORY.md', path: memIx, display: '~/.claude/projects/-app/memory/MEMORY.md' });
-  const skillRow = (id, dir, source) => ({ id, name: path.basename(dir), displayName: path.basename(dir), source, dir, description: '', files: [{}], totalBytes: 1, broken: false, aliasCount: 0, aliasSources: [] });
+  // What /api/skills really sends: lib/skills.js toPublic, which carries no path.
+  const skillRow = (id, dir, source) => toPublic({ id, name: path.basename(dir), displayName: path.basename(dir), source, dir, description: '',
+    files: [{ rel: 'SKILL.md', size: 1 }], emptyDirs: [], excluded: [], totalBytes: 1, broken: false, reason: null, aliases: [] });
   const projects = reg.groups.find((g) => g.id === 'memory').entries.filter((e) => e.scope === 'project');
   const context = { totals: { files: projects.length, entries: projects.length, drifted: 0 }, roots: {}, unreadable: [],
     groups: projects.map((e, i) => ({ root: 'projects', rootLabel: 'Projects', label: e.label, display: `~/proj${i}`, checkouts: [{}], scopes: [
@@ -154,19 +204,45 @@ console.log('\nreshape: nothing the Files page listed is unreachable (R1)');
   const memory = { ...MEMORY, groups: [{ ...MEMORY.groups[0], indexes: [{ slug: '-app', lines: 3, oversized: false, openPath: memIx, display: '~/.claude/projects/-app/memory/MEMORY.md' }] }] };
   const routes = routesFor({ 'GET /api/registry': () => reg, 'GET /api/context': () => context, 'GET /api/memory': () => memory,
     'GET /api/skills': () => ({ usage: { caveat: { text: '' } }, skills: [skillRow('s1', `${H}/.claude/skills/a`, 'global-claude'), skillRow('s2', `${H}/.codex/skills/b`, 'global-codex'), skillRow('s3', `${H}/.claude/skills/alpha`, 'global-claude')] }) });
+  for (const f of reg.groups.flatMap((g) => g.entries.flatMap((e) => e.files))) if (!routes.files.has(f.path)) routes.files.set(f.path, `# ${f.name}\n`);
   const p = await boot({ routes });
+  ok('the skill rows the test serves carry no path, as the real route\'s do', p.eval('S.registry') && (await routes('GET', '/api/skills')).skills.every((r) => !('dir' in r)));
+  // Each place a page lists files: how to get there, then every Open on it is clicked and must open its file;
+  // an entry with more files shows them as chips in the file bar, and each chip must open its file too.
+  const PLACES = [['#context', () => {}], ...context.groups.map((g) => ['#context', () => p.eval(`CX.project = ${JSON.stringify(g.display)}; paintContext()`)]),
+    ['#tools/skills', () => {}], ['#tools/agents', () => {}], ['#tools/mcp', () => {}], ['#setup&step=settings', () => {}], ['#worktrees', () => {}],
+    ['#memory', () => p.eval(`MV.tab = 'projects'; paintMemory()`)]];
   const seen = new Map();
-  const collect = (where) => { for (const b of p.$('content').querySelectorAll('[data-path]')) if (b.dataset.path && !seen.has(b.dataset.path)) seen.set(b.dataset.path, where); };
-  for (const h of ['#context', '#tools/skills', '#tools/agents', '#tools/mcp', '#setup&step=settings', '#worktrees']) { p.navigate(h); await settle(20); collect(h); }
-  p.navigate('#context'); await settle(20);
-  for (const g of context.groups) { p.eval(`CX.project = ${JSON.stringify(g.display)}; paintContext()`); collect('#context'); }
-  p.navigate('#memory'); await settle(20);
-  p.eval(`MV.tab = 'projects'; paintMemory()`); collect('#memory');
-  const all = reg.groups.flatMap((g) => g.entries.flatMap((e) => (g.id === 'auto-memory' ? e.files.map((f) => f.path) : [e.primary])));
-  const orphans = all.filter((x) => !seen.has(x));
-  ok(`every one of the ${all.length} registry files is an Open on a page (Context, Tools, Memory, Setup or Worktrees)`, orphans.length === 0, orphans.join(' '));
+  const opened = new Set();
+  const misses = [];
+  const go = async (hash, prep) => { p.navigate('#home'); await settle(10); p.navigate(hash); await settle(20); prep(); await settle(5); };
+  for (const [hash, prep] of PLACES) {
+    await go(hash, prep);
+    const paths = [...new Set(p.$('content').querySelectorAll('[data-path]').map((b) => b.dataset.path).filter(Boolean))];
+    for (const want of paths) {
+      if (!seen.has(want)) seen.set(want, hash);
+      await go(hash, prep);
+      p.$('content').querySelectorAll('[data-path]').find((b) => b.dataset.path === want).click();
+      await settle(15);
+      if (p.eval('S.view') !== 'entry' || p.eval('S.file?.path') !== want) { misses.push(`${hash} Open ${want} → ${p.eval('S.file?.path')}`); continue; }
+      opened.add(want);
+      const files = p.eval('S.entry.files.map((f) => f.path)');
+      if (files.length < 2) continue;
+      for (let i = 0; i < files.length; i++) {
+        p.$('filebar').querySelectorAll('button').filter((b) => b.textContent !== '+ file')[i].click();
+        await settle(10);
+        if (p.eval('S.file?.path') === files[i]) opened.add(files[i]); else misses.push(`${want} chip ${files[i]} → ${p.eval('S.file?.path')}`);
+      }
+    }
+  }
+  ok('every Open clicked, and every file chip after it, opens exactly its file', misses.length === 0, misses.join(' | '));
+  const all = reg.groups.flatMap((g) => g.entries.flatMap((e) => e.files.map((f) => f.path)));
+  const orphans = all.filter((x) => !opened.has(x));
+  ok(`every one of the ${all.length} registry files (an entry's second and later files included) opens from a page (Context, Tools, Memory, Setup or Worktrees)`, orphans.length === 0, orphans.join(' '));
+  ok('…the skill\'s second file (alpha/ref.md) among them', opened.has(PATHS.skillRef));
   ok('…the hooks and settings files on Setup', [PATHS.hook, PATHS.codexConfig, PATHS.codexRules].every((x) => seen.get(x) === '#setup&step=settings'));
   ok('…subagents and commands on Tools', seen.get(`${H}/.claude/agents/e.md`) === '#tools/agents' && seen.get(`${H}/.claude/commands/f.md`) === '#tools/agents');
+  ok('…Claude and Codex skills on Tools\' Skills, from the real row shape', [PATHS.skill, `${H}/.claude/skills/a/SKILL.md`, `${H}/.codex/skills/b/SKILL.md`].every((x) => seen.get(x) === '#tools/skills'));
   ok('…plugin and retired skills on Tools\' Skills', seen.get(`${H}/.claude/plugins/p/skills/c/SKILL.md`) === '#tools/skills' && seen.get(`${H}/.claude/skills_retired/d/SKILL.md`) === '#tools/skills');
   ok('…auto-memory, its MEMORY.md index included, on Memory', seen.get(memIx) === '#memory' && seen.get(PATHS.memory) === '#memory');
   ok('…worktree rules files on Worktrees', seen.get(PATHS.wtDefaults) === '#worktrees');

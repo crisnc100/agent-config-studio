@@ -670,9 +670,17 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
   ok('QA2 with nothing to save, Escape lands on the active tab instead', q.doc.activeElement?.classList?.contains('tab') && q.doc.activeElement.classList.contains('active'));
 }
 {
-  // QA3: labels that collide get their parent segment (shownLabels, which every page's file list uses).
-  const p = await boot();
-  const labels = p.eval(`shownLabels(S.registry.groups.find((g) => g.id === 'memory').entries)`);
+  // QA3: labels that collide get their parent segment, as a page's file list renders them. The fixture's
+  // look-alike instruction files are served as the Worktree rules list, one of the lists that page renders.
+  const routes = routesFor();
+  const reg = registry();
+  const alike = reg.groups.find((g) => g.id === 'memory').entries.filter((e) => e.scope === 'project');
+  reg.groups.find((g) => g.id === 'worktrees').entries = alike;
+  routes.reg.current = reg;
+  const p = await boot({ routes, hash: '#worktrees' });
+  await settle(10);
+  const shownRow = (id) => p.$('content').querySelectorAll('.entry-row').find((r) => r.dataset.entry === id);
+  const labels = Object.fromEntries(alike.map((e) => [e.id, shownRow(e.id) ? p.text(shownRow(e.id).querySelector('.scope-path')) : null]));
   const web = ['md:web1', 'md:web2'].map((id) => labels[id]);
   ok('QA3 two "apps/web" entries are told apart by their parent', JSON.stringify(web) === JSON.stringify(['alpha/apps/web', 'alpha-feature/apps/web']), web.join(' | '));
   const af = ['md:af-trunk', 'md:af-wt'].map((id) => labels[id]);
@@ -680,7 +688,7 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
   const boat = ['md:boat-agents', 'md:boat-claude'].map((id) => labels[id]);
   ok('F2 two files in the same folder are told apart by filename, without growing the path', JSON.stringify(boat) === JSON.stringify(['personal/side-project · AGENTS.md', 'personal/side-project · CLAUDE.md']), boat.join(' | '));
   const all = Object.values(labels);
-  ok('F2 within the list, every label is unique', new Set(all).size === all.length, all.join(', '));
+  ok('F2 within the rendered list, every label is unique', all.every(Boolean) && new Set(all).size === all.length, all.join(', '));
   p.navigate('#setup&step=settings');
   await settle(5);
   const hook = p.$('content').querySelectorAll('.entry-row').find((r) => r.dataset.entry === 'hook:pre');
