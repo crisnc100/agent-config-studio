@@ -1654,8 +1654,9 @@ export function createApp(opts = {}) {
             text = readUserText(abs, { maxBytes: 1024 * 1024 });
           } catch { continue; }
           const { matches, total } = matchLines(text, q);
-          // ⌘K is how any file is reached, so a file is found by its name or where it is, not only by its text.
-          const named = [e.label, f.name, f.display].some((x) => String(x || '').toLowerCase().includes(q.toLowerCase()));
+          // ⌘K is how any file is reached, so a file is found by its own name too. Not by its
+          // folders: "hooks" or "claude" would make every file under them a name hit.
+          const named = [e.label, f.name].some((x) => String(x || '').toLowerCase().includes(q.toLowerCase()));
           if (matches.length || named) {
             hits.push({
               group: g.title, entryId: e.id, entryLabel: e.label,
@@ -1667,7 +1668,7 @@ export function createApp(opts = {}) {
       }
     }
     hits.sort((a, b) => (b.named - a.named) || (b.total - a.total));
-    return { hits: hits.slice(0, 60), query: q };
+    return { hits: hits.slice(0, 60), total: hits.length, query: q };
   },
 
   'POST /api/assist': async (req) => {
