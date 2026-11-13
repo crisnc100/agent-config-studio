@@ -14,7 +14,7 @@
  *     cleanup line, nowhere else;
  *   - "Delete" for something that goes to Trash — "Delete" stays only on
  *     permanent actions (the ALLOW list below names them).
- * The static half reads public/styles.css: no font-size under 11px, the four
+ * The static half reads public/styles.css: no font-size under 12px, the four
  * selects and the editor have a :focus-visible rule that draws something,
  * and every `outline: none` sits beside a focus style that replaces it.
  */
@@ -64,11 +64,11 @@ const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]
     for (const part of r.sel.split(',')) {
       for (const [n, unit, raw] of sizes(r.body)) {
         const px = unit === 'px' ? n : unit === 'rem' ? n * 16 : n * parentPx(part);
-        if (px < 11) small.push(`${part.trim()} → ${raw} (${px.toFixed(2)}px)`);
+        if (px < 12) small.push(`${part.trim()} → ${raw} (${px.toFixed(2)}px)`);
       }
     }
   }
-  ok('no CSS font-size under 11px (the 9px badge included; an em resolved against its smallest parent)', small.length === 0, [...new Set(small)].join(' | '));
+  ok('no CSS font-size under 12px (an em resolved against its smallest parent)', small.length === 0, [...new Set(small)].join(' | '));
 }
 {
   // The value is read whole (no backtracking into the whitespace): "outline: none" and "outline: 0" draw nothing.
