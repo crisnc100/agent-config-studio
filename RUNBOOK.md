@@ -492,7 +492,8 @@ never reads it, so new data cannot break it.
   of that line, and which occurrence on it. File refs are opaque; responses
   carry `~`-relative or `<root label>/…` display paths only.
 - Results are cached for 60 s and shared by concurrent requests; an accept, a
-  dismissal or a roots change drops the cache, and Home's summary turns stale.
+  dismissal or a roots change drops the cache, and `GET /api/audit/summary`
+  then reports the last run as stale.
 - Real-machine check, read-only, not in `./verify.sh`:
   `node tests/audit-real-run.mjs [--vendor] [--clean <word>,…]` runs two passes
   and fails if any scanned file's ctime moved during the first or its hash

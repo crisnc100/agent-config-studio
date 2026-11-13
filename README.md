@@ -225,9 +225,9 @@ foot. Every file the studio manages opens from the page that lists it, and
 | Worktree rules | `~/.config/worktree/defaults.conf`, `repos/*.conf`, and each `.worktrees.conf` in your edit folders | Worktrees (from Packs → Worktree setup) |
 
 **Context** and **Tools** also list your **read** folders, without editing
-them. Change the folders any time under **Setup → Project folders**, or with
-`acs roots ls`, `acs roots add <path> [--edit]`, and `acs roots rm <id>`. A
-running studio picks the change up by itself.
+them. Add folders any time under **Setup → Project folders**; `acs roots
+ls`, `acs roots add <path> [--edit]` and `acs roots rm <id>` list, add and
+remove them. A running studio picks the change up by itself.
 
 **Context** opens on your main instruction files — the global ones every
 session of that CLI loads — each with its size and the outline of its
@@ -235,8 +235,10 @@ headings. Below them, pick a project, and a folder in it: Context lists what
 an agent started there loads, in order (the main files first, then every
 `CLAUDE.md` / `AGENTS.md` on the path down), and every instruction file in
 that project, with identical worktree copies collapsed and differing ones
-flagged. **All projects** lists every project's files at once, so a selection
-moved to Trash can span projects.
+flagged. For a project outside your home folder, the path down starts at
+its registered folder, never above it. In a **read** folder each file in the
+load order is marked read-only, with no **Open**. **All projects** lists every
+project's files at once, so a selection moved to Trash can span projects.
 
 ## The parts that matter
 
@@ -375,7 +377,7 @@ context is conversation for compacting to reclaim anything.
 
 ## Subscription usage
 
-**Usage** in the top bar answers one question: which subscription should the
+**Usage** in the sidebar answers one question: which subscription should the
 next task go to. Seats sort by the headroom of their tightest window, so the
 line at the top is the answer and the cards below are the evidence.
 
