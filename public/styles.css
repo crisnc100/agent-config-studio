@@ -276,7 +276,7 @@ a { color: var(--accent); }
 .md a { text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
 .md a:hover { border-bottom-color: var(--accent); }
 .md code {
-  font: 0.855em var(--mono); background: var(--panel-2);
+  font: 0.89em var(--mono); background: var(--panel-2);
   padding: 0.15em 0.4em; border-radius: 4px; color: var(--accent);
 }
 .md pre {
