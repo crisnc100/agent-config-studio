@@ -521,7 +521,7 @@ try {
     ok('QA 7: light theme, the role chip\'s name and "not set" are at least 4.5:1', Object.values(pairs).every((r) => r >= 4.5), JSON.stringify(pairs));
   }
 
-  console.log('\nR7: the older home config is in Files, so the footer opens it');
+  console.log('\nR7: the older home config is in the registry, so the footer opens it');
   {
     installed = true;
     const t2 = home();
@@ -539,8 +539,8 @@ try {
     for (let i = 0; i < 100 && !foot(); i++) await sleep(30);
     await settle(10);
     const btn = foot()?.querySelector('button');
-    ok('the footer names ~/.claude/review-config.json, with an Open in Files button (quiet)', /^Saved in ~\/\.claude\/review-config\.json/.test(op.text(foot()))
-      && op.text(btn) === 'Open in Files' && /\bbtn ghost\b/.test(btn.className), op.text(foot()));
+    ok('the footer names ~/.claude/review-config.json, with an Open file button (quiet)', /^Saved in ~\/\.claude\/review-config\.json/.test(op.text(foot()))
+      && op.text(btn) === 'Open file' && /\bbtn ghost\b/.test(btn.className), op.text(foot()));
     btn.click();
     for (let i = 0; i < 100 && !op.eval('S.file && S.file.path'); i++) await sleep(20);
     ok('…which opens it in the editor', op.eval('S.view') === 'entry' && op.eval('S.file && S.file.path') === '/h/.claude/review-config.json', `${op.eval('S.view')} ${op.eval('S.file && S.file.path')}`);
