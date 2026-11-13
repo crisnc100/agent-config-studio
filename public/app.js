@@ -1192,7 +1192,6 @@ async function save() {
   }
 }
 
-/* ── scope view ──────────────────────────────────────────────────────── */
 /* ── create / delete ─────────────────────────────────────────────────── */
 
 /** The page on screen, repainted when it lists registry files (entryList), so a file added or removed elsewhere shows. */

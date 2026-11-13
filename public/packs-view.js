@@ -958,7 +958,7 @@ function pkSettingsFoot(rc) {
   const where = el('span', null, 'Saved in ');
   where.appendChild(el('code', null, rc.file));
   foot.appendChild(where);
-  // Files lists only what its registry found; ~/.agent-config-studio is outside its folders, so that copy is named only.
+  // The registry lists only what it found; ~/.agent-config-studio is outside its folders, so that copy is named only.
   const entry = rc.exists ? (S.registry?.groups || []).flatMap((g) => g.entries).find((e) => e.files.some((f) => f.display === rc.file)) : null;
   if (entry) foot.appendChild(pkBtn('ghost', 'Open file', () => openEntry(entry, entry.files.find((f) => f.display === rc.file).path, S.view)));
   return foot;
