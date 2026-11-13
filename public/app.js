@@ -2876,7 +2876,7 @@ async function openContext() {
   if (gen !== CX.gen) return;
   CX.data = data;
   CX.outdated = null;
-  if (!data.groups.some((g) => g.display === CX.project)) { CX.project = data.groups[0]?.display ?? null; CX.dir = CX.project; }
+  if (CX.project !== ALL_PROJECTS && !data.groups.some((g) => g.display === CX.project)) { CX.project = data.groups[0]?.display ?? null; CX.dir = CX.project; }
   paintContext();
   loadContextChain();
 }
@@ -2961,6 +2961,14 @@ function paintContext() {
   for (const e of main) box.appendChild(contextMainCard(e));
 
   box.appendChild(el('h3', 'mem-h3 cx-projects-h', 'Projects'));
+  const roots = Object.values(d.roots || {});
+  // One folder's line would only say the totals again.
+  const perRoot = roots.length > 1
+    ? roots.map((r) => `${r.label}: ${plural(r.files, 'file')} as ${plural(r.entries, 'entry', 'entries')}, ${r.drifted} different`).join(' · ') : null;
+  if (d.groups.length) {
+    box.appendChild(el('div', 'scope-note cx-count', `${plural(d.totals.files, 'instruction file')}, shown as ${plural(d.totals.entries, 'entry', 'entries')}`
+      + (d.totals.drifted ? ` — ${d.totals.drifted} ${d.totals.drifted === 1 ? 'differs' : 'differ'} from the main checkout.` : '.') + (perRoot ? ` ${perRoot}.` : '')));
+  }
   if (!d.groups.length) {
     box.appendChild(el('div', 'scope-sub', 'No project instruction files found. Add project folders on Setup, and their CLAUDE.md and AGENTS.md files show here.'));
   } else box.appendChild(contextProjectPicker());
@@ -2968,12 +2976,12 @@ function paintContext() {
   if (CX.outdated) {
     box.appendChild(el('div', 'notice warn', `Showing Context as it was before the move to Trash — reading it again failed (${CX.outdated}). Reopen Context to try again.`));
   }
-  if (CX.project) box.appendChild(contextChain());
+  if (CX.project && CX.project !== ALL_PROJECTS) box.appendChild(contextChain());
 
   resetShown(CX.sel);
-  const groups = d.groups.filter((g) => g.display === CX.project);
+  const groups = d.groups.filter((g) => CX.project === ALL_PROJECTS || g.display === CX.project);
   if (groups.length) {
-    box.appendChild(el('h4', 'cx-files-h', 'Every instruction file in this project'));
+    box.appendChild(el('h4', 'cx-files-h', CX.project === ALL_PROJECTS ? 'Every project instruction file' : 'Every instruction file in this project'));
     box.appendChild(selectBar(CX.sel, deleteContextSelection));
   }
   for (const g of groups) {
@@ -3014,18 +3022,30 @@ function contextMainCard(e) {
   return card;
 }
 
+/** The project picker's choice that lists every project's files at once, for a selection across them. */
+const ALL_PROJECTS = '*';
+
 /** Which project, then which folder in it: an agent started there loads what contextChain lists. */
 function contextProjectPicker() {
   const row = el('div', 'cx-picker');
   const proj = el('select', 'scope-select cx-project');
   proj.setAttribute('aria-label', 'Project');
+  const all = el('option', null, 'All projects — every instruction file');
+  all.value = ALL_PROJECTS;
+  if (CX.project === ALL_PROJECTS) all.selected = true;
+  proj.appendChild(all);
   for (const g of CX.data.groups) {
     const o = el('option', null, `${g.label} — ${g.display}`);
     o.value = g.display;
     if (g.display === CX.project) o.selected = true;
     proj.appendChild(o);
   }
-  proj.onchange = () => { CX.project = proj.value; CX.dir = proj.value; CX.sel = newSelection(); paintContext(); loadContextChain(); };
+  proj.onchange = () => {
+    CX.project = proj.value; CX.dir = proj.value === ALL_PROJECTS ? null : proj.value; CX.sel = newSelection();
+    paintContext(); loadContextChain();
+  };
+  row.appendChild(proj);
+  if (CX.project === ALL_PROJECTS) return row;
   const under = (CX.dirs || []).map((x) => x.display).filter((x) => x === CX.project || x.startsWith(`${CX.project}/`));
   const dirs = under.includes(CX.project) ? under : [CX.project, ...under];
   const dir = el('select', 'scope-select cx-dir');
@@ -3037,7 +3057,7 @@ function contextProjectPicker() {
     dir.appendChild(o);
   }
   dir.onchange = () => { CX.dir = dir.value; loadContextChain(); };
-  row.append(proj, dir);
+  row.appendChild(dir);
   return row;
 }
 
