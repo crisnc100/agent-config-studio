@@ -112,5 +112,28 @@ console.log('\npause cli: R6 — a stale installed resolver refuses the pause');
   ok('resuming is never refused for a stale resolver (an old one ignores pauses anyway)', r.code === 0 && J(readPausedFile(h).paused) === '[]', J(r));
 }
 
+console.log('\npause cli: two writers at once — neither change is lost');
+{
+  const { pause, resume, _setBeforeRename } = await import('../lib/pause.js');
+  const h = home();
+  // A second writer (a real acs process) lands between this writer's read and its rename.
+  const other = (...args) => _setBeforeRename(() => { _setBeforeRename(null); const r = acs(h, ...args); if (r.code !== 0) throw new Error(J(r)); });
+  other('pause', 'codex', '--until-resume');
+  pause({ name: 'claude', until: null, home: h });
+  ok('a pause racing another pause: both are kept', J(readPausedFile(h).paused.map((e) => e.name).sort()) === J(['claude', 'codex']), J(readPausedFile(h)));
+  other('resume', 'codex');
+  pause({ name: 'grok', until: null, home: h });
+  ok('a pause racing a resume: the resume holds, the pause is added', J(readPausedFile(h).paused.map((e) => e.name).sort()) === J(['claude', 'grok']), J(readPausedFile(h)));
+  other('pause', 'sol', '--until-resume');
+  resume({ name: 'claude', home: h });
+  ok('a resume racing a pause: the pause is kept, the resume holds', J(readPausedFile(h).paused.map((e) => e.name).sort()) === J(['grok', 'sol']), J(readPausedFile(h)));
+  let n = 0;
+  _setBeforeRename(() => { n++; fs.appendFileSync(pausedFile(h), ' '); });
+  let err = null;
+  try { pause({ name: 'codex', until: null, home: h }); } catch (e) { err = e; }
+  _setBeforeRename(null);
+  ok('a file that keeps changing under every try: refused with 409, never overwritten', err?.status === 409 && /changed while it was being saved/.test(err.message) && n === 3 && !readPausedFile(h)?.paused?.some?.((e) => e.name === 'codex'), J({ err: err?.message, n }));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
