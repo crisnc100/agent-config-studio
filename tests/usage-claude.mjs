@@ -192,6 +192,40 @@ ok('every source returns null rather than throwing on a bad path',
   ok('and says it timed out', /timed out/.test(r.reason), r.reason);
 }
 
+// --- keychain: two items share the service name -------------------------------
+{
+  // macOS answers an unqualified lookup with whichever item it finds first, which
+  // can be a stray copy with an empty token while the signed-in one sits beside it.
+  const items = {
+    'me': JSON.stringify({ claudeAiOauth: { accessToken: 'live-token', expiresAt: 4102444800000, subscriptionType: 'max' } }),
+    '': JSON.stringify({ claudeAiOauth: { accessToken: '', refreshToken: 'r' } }),
+  };
+  const asked = [];
+  const read = (args) => {
+    const a = args.indexOf('-a');
+    const acct = a === -1 ? '' : args[a + 1];
+    asked.push(acct);
+    if (!(acct in items)) throw new Error('not found');
+    return items[acct];
+  };
+  if (process.platform === 'darwin') {
+    const c = fromKeychain('Claude Code-credentials', { read, user: 'me' });
+    ok("keychain: the signed-in user's item wins over a stray one", c?.token === 'live-token', JSON.stringify(c));
+    ok('keychain: it asks for that account first', asked[0] === 'me', asked.join(','));
+
+    asked.length = 0;
+    const c2 = fromKeychain('Claude Code-credentials', { read, user: 'nobody' });
+    ok('keychain: no item for the user falls back to the unqualified one', asked.join(',') === 'nobody,', asked.join(','));
+    ok('keychain: an item with an empty token is not a credential', c2 === null, JSON.stringify(c2));
+
+    const c3 = fromKeychain('Claude Code-credentials', {
+      read: (args) => (args.includes('-a') ? JSON.stringify({ claudeAiOauth: { accessToken: '' } }) : items.me), user: 'me' });
+    ok("keychain: an empty token on the user's item falls through to the other", c3?.token === 'live-token', JSON.stringify(c3));
+  } else {
+    skipped('keychain account selection', 'macOS only');
+  }
+}
+
 // --- live, read-only ---------------------------------------------------------
 {
   const c = fromKeychain();
