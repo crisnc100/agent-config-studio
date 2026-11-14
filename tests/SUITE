@@ -87,6 +87,10 @@ tests/roles.mjs                                       ci:offline
 tests/roles-routes.mjs                                ci:offline
 tests/roles-unit.mjs                                  ci:offline
 tests/roles-writer.mjs                                ci:offline
+# Paused accounts: role resolution skips them; model-id, ask-model and the reviewer pool follow.
+tests/roles-pause.mjs                                 ci:offline
+# acs pause / acs resume through bin/acs, and the stale-resolver refusal (temp HOME).
+tests/pause-cli.mjs                                   ci:offline
 # ask-model: each CLI's argv, the model proof, every exit code and its install, against stub CLIs (temp HOME).
 tests/ask-model.mjs                                   ci:offline
 # The model guide block: renderer, markers, byte-exact edits (in-process), then through the server (temp HOME).

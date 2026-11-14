@@ -1,0 +1,42 @@
+## 1. SCOPE VERDICT
+
+**Over-built** — the problem is real, but named profiles add a second copy of the roles system when a "pause this account" switch over the fallback lists Cris already has does the same job.
+
+## 2. ADVISORY
+
+I changed no repo or user files; the two tests ran against a throwaway home under `$TMPDIR`.
+
+**Build "pause", not profiles.** Store a user-owned list of paused families or vendors; `resolveRole` drops them from a role's ordered `use` list and answers with the next one.
+- **It already fits his setup.** Pausing Claude gives builder → sol, reviewer → sol/astra, security → astra; pausing Codex gives builder → opus, reviewer → fable/opus. No authoring needed.
+- **It reaches every skill.** `ask-model` (`tools/ask-model.mjs:732`) and the review pool (`packs/review-gate/runtime/review.mjs:515`) both go through `resolveRole`.
+- **It works for a single-plan user.** Claude limits are per model (`lib/usage/claude.js:94`), so "pause fable" falls to opus on the same plan.
+- **A new user understands it.** "Claude is low — pause it" needs no new concept; profiles need an editor, merge layers and names.
+
+**Keep the pause in its own file, not `roles.json`.**
+- **A new key breaks old resolvers.** I added `profiles` to a copy of his `roles.json`: every role returned `MODEL-ID-UNRESOLVED` (`lib/roles.js:117`). His installed resolver matches the shipped one today, but any other user who updates ACS without re-running `acs install-model-id` would lose every skill.
+- **It keeps the precise lane untouched.** No `writeRoles` change, no version 3, and "defaults untouched" is literally true.
+- **Reuse the existing guard.** Refuse to pause when `resolverStale` is true (`lib/roles-panel.js:64`), or an old resolver silently ignores the file.
+
+**What the pause version must include.**
+- **Loud output.** A stderr line and JSON fields naming what was skipped; the repo's rule is no silent fallback.
+- **Refusal when nothing is left.** Exit 2 with the fix, like an unset role. The writer role must refuse or stay exempt: it needs a Claude family in Claude Code (`packs/review-gate/skills/claude/context-pass/SKILL.md:42`).
+- **Named families still work.** `/build opus` or `REVIEW_REVIEWER=fable` should run while paused; pause affects role resolution only.
+- **One sentence in the model guide.** His `CLAUDE.md` block lists families per role; with profiles it would go stale on every switch and need a proposal-and-accept write per harness (`lib/model-guide.js:16-21`).
+- **A same-vendor notice.** With Claude paused, sol builds and sol/astra check it; say so in the UI.
+
+**Cut.**
+- **Named profiles, the profile editor and `acs profile`.** Add them only if he hits a routing that fallback order plus pause can't express.
+- **The orchestrator role.** A custom `orchestrator` role already resolves today with no code change (tested), no skill reads it, and the guide would print it into `CLAUDE.md`. Make it guidance text beside the switch.
+- **Automatic switching.** The saved snapshot was 46 hours old when I checked, and Codex readings stop counting after 60 minutes (`lib/usage/codex.js:158`). A suggestion is fine; put it in the report card's Routing part with "N roles have no fallback outside Claude".
+- **Multi-seat handling.** Two Codex seats is a `CODEX_HOME` choice, already covered by the shell shortcuts (`lib/usage/shell.js:162`). API keys have no plan limit to pause.
+
+**Set the expectation for "Low Claude".** The brief's own numbers put the main session at ~182M input+cache tokens against 0.74M builder output, and his builder is already sol-first. Pause moves only delegated Fable calls (review, judge, advisor, security), which were not counted. Measure that share in the first week; the larger lever is the main session (`claude --model opus`, or hand off and start fresh).
+
+**Put the switch on the Usage account row**, where the low account is seen, with Models → Roles showing the effect. `bin/usage.mjs:89` already prints "Route to:"; this gives that answer something to act on.
+
+## 3. QUESTIONS
+
+1. **Will you drop hand-made profiles for now in favour of pause?** Recommended: yes; revisit after two weeks if there is a routing you could not express.
+2. **When a paused role has no fallback left, refuse or promote its second opinion?** Recommended: refuse. Advisor, judge and investigator would refuse on day one, so add one fallback to each once; promoting would leave those roles with no second opinion.
+3. **Should a pause expire at the account's reset time?** Recommended: yes, prefilled from the reset time with an "until I resume" option; the realistic failure is forgetting to switch back.
+4. **Does this jump ahead of the report card?** Recommended: yes for the pause-sized version only; the suggestion and the "no fallback" finding go into the report card.
