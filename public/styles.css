@@ -783,7 +783,6 @@ a { color: var(--accent); }
 }
 .usage-offline-why { color: var(--muted); font-size: 12px; }
 .usage-note { color: var(--muted); font: 12px var(--mono); margin-top: 6px; }
-/* Pause: the variables carry light and dark, so a paused row reads the same in both. */
 .usage-pause { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; }
 .usage-pause.paused .usage-pause-text { color: var(--amber); font-weight: 600; }
 .usage-pause-note { color: var(--amber); font-size: 12px; flex-basis: 100%; }

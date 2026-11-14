@@ -454,8 +454,8 @@ case "${1:-}" in
     exec "$NODE" "$DIR/bin/usage.mjs" "$@"
     ;;
   pause|resume)
-    # Pause an account so role resolution skips it, or resume it. Never
-    # starts the studio; a running one reads the file on its next request.
+    # Never starts the studio; a running one reads paused.json on its next
+    # request.
     exec "$NODE" "$DIR/bin/pause.mjs" "$@"
     ;;
   roots)
