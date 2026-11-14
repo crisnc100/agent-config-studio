@@ -74,3 +74,31 @@ function untilText(ts) {
   if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
   return h ? `${h}h ${mn}m` : `${mn}m`;
 }
+
+/**
+ * When a seat's tightest window resets: the window with the most used, the
+ * one that stops you first (lib/pause.js vendorReset reads it the same way).
+ * null when no window says, or the time has passed.
+ */
+function seatReset(s, now = Date.now()) {
+  if (!s?.ok || !Array.isArray(s.windows)) return null;
+  let best = null;
+  for (const w of s.windows) {
+    if (!Number.isFinite(w?.resetsAt) || w.resetsAt <= now || !Number.isFinite(w.usedPercent)) continue;
+    if (!best || w.usedPercent > best.usedPercent) best = w;
+  }
+  return best ? best.resetsAt : null;
+}
+
+/** The pauses in force for a seat's account: the vendor's own, and each of its families paused by name. */
+function seatPauses(s, state) {
+  const live = (state?.entries || []).filter((e) => e.active && e.vendor === s.vendor);
+  return { vendor: live.find((e) => e.kind === 'vendor') || null, families: live.filter((e) => e.kind === 'family') };
+}
+
+/** "until Fri, Nov 14, 3:00 PM", or "until you resume" for a pause with no end. */
+function pausedUntilText(until) {
+  if (!until) return 'until you resume';
+  const t = typeof until === 'number' ? until : Date.parse(until);
+  return `until ${new Date(t).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
+}

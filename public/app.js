@@ -3733,13 +3733,72 @@ function refreshUsage() {
   return run;
 }
 
+/** One pause write from the Usage page, then a repaint; a refusal (a stale model-id, say) is shown as given. */
+async function pauseWrite(route, body, done) {
+  try { await api('POST', route, body); }
+  catch (e) { notice('error', e.message); return; }
+  S.usagePausing = null;
+  notice('ok', done);
+  paintUsage();
+}
+
+/**
+ * A seat's Pause switch. Pausing names the seat's vendor, so every account of
+ * that vendor shows it; a family paused by name (acs pause fable) shows on its
+ * vendor's rows with its own Resume.
+ */
+function pauseRow(s, P) {
+  const row = el('div', 'usage-pause');
+  const { vendor, families } = seatPauses(s, P);
+  if (vendor) {
+    row.classList.add('paused');
+    row.appendChild(el('span', 'usage-pause-text', `Paused ${pausedUntilText(vendor.until)} — roles skip ${s.vendor} models`));
+    const b = el('button', 'btn', 'Resume');
+    b.onclick = () => pauseWrite('/api/pause/resume', { name: vendor.name }, `${vendor.name} resumed. Roles use its models again.`);
+    row.appendChild(b);
+  } else if (S.usagePausing === s.seatId) {
+    row.appendChild(el('span', 'usage-pause-text', `Pause ${s.vendor}: roles skip its models`));
+    const reset = seatReset(s);
+    if (reset) {
+      const at = el('button', 'btn primary', `Until it resets (${pausedUntilText(reset).replace(/^until /, '')})`);
+      at.onclick = () => pauseWrite('/api/pause', { name: s.vendor, until: new Date(reset).toISOString() }, `${s.vendor} paused ${pausedUntilText(reset)}.`);
+      row.appendChild(at);
+    }
+    const open = el('button', reset ? 'btn' : 'btn primary', 'Until I resume');
+    open.onclick = () => pauseWrite('/api/pause', { name: s.vendor, until: null }, `${s.vendor} paused until you resume.`);
+    row.appendChild(open);
+    const cancel = el('button', 'btn ghost', 'Cancel');
+    cancel.onclick = () => { S.usagePausing = null; paintUsage(); };
+    row.appendChild(cancel);
+  } else {
+    const b = el('button', 'btn', 'Pause');
+    b.title = `Roles skip ${s.vendor} models until it resets or you resume`;
+    b.disabled = Boolean(P.resolverStale || P.error);
+    b.onclick = () => { S.usagePausing = s.seatId; paintUsage(); };
+    row.appendChild(b);
+    if (P.resolverStale) row.appendChild(el('span', 'usage-pause-note', P.staleFix));
+  }
+  for (const f of families) {
+    const line = el('div', 'usage-pause-family');
+    line.appendChild(el('span', 'usage-pause-text', `${f.name} paused ${pausedUntilText(f.until)}`));
+    const b = el('button', 'btn ghost', `Resume ${f.name}`);
+    b.onclick = () => pauseWrite('/api/pause/resume', { name: f.name }, `${f.name} resumed.`);
+    line.appendChild(b);
+    row.appendChild(line);
+  }
+  return row;
+}
+
 let usagePaintGen = 0;
 async function paintUsage() {
   const c = $('content');
   // Only the newest paint may land: the 60 s timer and a Refresh can overlap.
   const gen = ++usagePaintGen;
-  let u;
-  try { u = await api('GET', '/api/usage'); }
+  let u, paused;
+  try {
+    // The pauses are read beside the usage, never instead of it: without them each row just offers no switch.
+    [u, paused] = await Promise.all([api('GET', '/api/usage'), api('GET', '/api/pause').catch(() => null)]);
+  }
   catch (e) { if (gen === usagePaintGen) c.innerHTML = `<div class="scope"><div class="scope-sub">${esc(e.message)}</div></div>`; return; }
   if (S.view !== 'usage' || gen !== usagePaintGen) return;   // the view changed, or a newer paint started
 
@@ -3801,6 +3860,12 @@ async function paintUsage() {
     head.appendChild(el('span', 'usage-route-label', 'No account reports room left'));
   }
   box.appendChild(head);
+  if (paused?.error) {
+    const n = el('div', 'notice error usage-pause-error');
+    n.appendChild(el('div', null, 'paused.json is invalid, so nothing is paused. Fix or delete it to pause again:'));
+    n.appendChild(el('div', 'models-error-text', paused.error));
+    box.appendChild(n);
+  }
   // A row may say the codex CLI is missing while other Codex accounts read fine: say once why both are true.
   const codexRows = seats.filter((s) => s.vendor === 'codex');
   if (codexRows.some((s) => /codex CLI is not installed/.test(`${s.reason || ''} ${s.staleReason || ''}`)) && codexRows.some((s) => s.ok)) {
@@ -3912,9 +3977,12 @@ async function paintUsage() {
     // has a reading would otherwise be invisible.
     if (s.sharedHome) card.appendChild(sharedHomeNotice(s));
     if (s.accountChanged) card.appendChild(accountChangedNotice());
+    if (paused) card.appendChild(pauseRow(s, paused));
 
     box.appendChild(card);
   }
+  box.appendChild(el('div', 'scope-sub',
+    'Pause an account when it runs low: every role skips its models and uses its next one, until the account resets or you resume it.'));
 
   box.appendChild(el('div', 'scope-sub',
     'Codex usage is read live from its logs. Refresh reads Claude’s usage in a separate process, so the studio never touches your sign-in.'));
@@ -4870,6 +4938,8 @@ function rolesSection() {
   const rolesSub = introLine(['Pick which model fills each role, and its ', { tip: 'effort' }, ' — how hard it thinks.']);
   rolesSub.classList.add('models-roles-sub');
   sec.appendChild(rolesSub);
+  const paused = rolesPauseNotice(R.pause);
+  if (paused) sec.appendChild(paused);
   if (R.error) {
     const n = el('div', 'notice error models-error');
     n.appendChild(el('div', null, 'roles.json is invalid. Defaults are in use, and edits are refused until it is fixed (or a Describe proposal replaces it):'));
@@ -4889,6 +4959,38 @@ function rolesSection() {
   add.onclick = () => { M.adding = true; paintModels(); };
   sec.appendChild(add);
   return sec;
+}
+
+/**
+ * While anything is paused: what each role answers now, which would refuse,
+ * and when builder and reviewer now come from one vendor. The roles as
+ * written below are unchanged; this is only what they resolve to today.
+ */
+function rolesPauseNotice(P) {
+  if (!P?.active?.length) return null;
+  const box = el('div', 'roles-pause');
+  box.setAttribute('role', 'status');
+  const live = P.entries.filter((e) => e.active);
+  box.appendChild(el('div', 'roles-pause-head', `Paused: ${live.map((e) => `${e.name} ${pausedUntilText(e.until)}`).join('; ')}`));
+  const list = el('ul', 'roles-pause-list');
+  for (const r of P.roles) {
+    if (r.refuses) {
+      list.appendChild(el('li', 'roles-pause-refuses', `${r.name}: refuses — every model for it is paused. Resume one, or add a fallback to this role.`));
+    } else if (r.skipped.length || r.altSkipped) {
+      const bits = [];
+      if (r.skipped.length) bits.push(`skips ${r.skipped.map((x) => x.family).join(', ')}`);
+      if (r.altSkipped) bits.push(`no second opinion (${r.altSkipped.family} is paused)`);
+      list.appendChild(el('li', null, `${r.name} → ${r.family} (${bits.join('; ')})`));
+    } else if (r.family) {
+      list.appendChild(el('li', null, `${r.name} → ${r.family}`));
+    }
+  }
+  box.appendChild(list);
+  if (P.sameVendor) box.appendChild(el('div', 'roles-pause-same', `Builder and reviewer both run on ${P.sameVendor} now, so ${P.sameVendor} checks its own work.`));
+  const go = el('button', 'btn ghost', 'Pause or resume on Usage');
+  go.onclick = () => openUsage();
+  box.appendChild(go);
+  return box;
 }
 
 /** One job: what it is for, its lineup with the effort that applies, its second opinion. */
