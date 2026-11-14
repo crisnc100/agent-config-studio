@@ -416,6 +416,52 @@ credentials.
 From the terminal, `acs usage` prints the same gauge (`--json` for raw,
 `detect --save` to register what's on this machine).
 
+### Pausing an account
+
+When one subscription runs low, **Pause** on its row makes every role skip
+that vendor's models (claude, codex or grok, by the prefix of each model's id)
+and answer with its next one. Pausing offers **until it resets**, filled in
+from the reading's tightest window when it has a reset time, or **until I
+resume**; a paused row says *Paused until …* and has **Resume**. Your roles are
+not changed: the pause lives in `~/.agent-config-studio/paused.json`, its own
+file, and `roles.json` is never written.
+
+While anything is paused, Models → Roles lists what each role answers now,
+marks a role that would refuse, and says when builder and reviewer now come
+from one vendor (so that vendor checks its own work).
+
+- A role skips paused families in its `use` order; its second opinion is
+  skipped the same way and left empty, never promoted.
+- A role whose every model is paused refuses with exit 2 and the fix
+  (*every model for advisor is paused; resume claude or add a fallback in ACS
+  → Models → Roles*). The writer role refuses the same way.
+- `model-id --role` prints one line on stderr when it skipped something
+  (*claude paused: reviewer → sol (skipped fable)*), and its `--json` carries
+  `paused`, `skipped` and `altSkipped`. `ask-model --role` and the review
+  gate's reviewer pool follow the same answer.
+- A family you name yourself is never paused: `model-id opus`,
+  `ask-model --family fable`, `REVIEW_REVIEWER=fable` and `/build opus` run as
+  asked.
+- A missing `paused.json` pauses nothing. An invalid one pauses nothing too,
+  and `model-id`, `acs pause` and Usage say why; edits are refused until you
+  fix or delete it.
+- Pausing is refused while the installed `model-id` is older than the studio
+  (it would ignore the file): run `acs install-model-id` first.
+
+From the terminal:
+
+```
+acs pause
+acs pause claude
+acs pause fable --until 2026-11-14T15:00:00Z
+acs pause codex --until-resume
+acs resume claude
+```
+
+`acs pause` alone lists what is paused and what each role answers now. A pause
+names a vendor or one family; with no flag it ends when the last usage reading
+says that account resets, or lasts until you resume when no reading says.
+
 ## Model registry
 
 A model id lives in one file. `models.default.json` ships family → id

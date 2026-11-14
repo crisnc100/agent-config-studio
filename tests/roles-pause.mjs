@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tempDir } from './fixtures/cleanup.mjs';
-import { pauseLine, readPaused, resolveRole } from '../lib/roles.js';
+import { guideText, loadRoles, pauseLine, readPaused, resolveRole } from '../lib/roles.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MODEL_ID = path.join(ROOT, 'bin', 'model-id.mjs');
@@ -147,6 +147,26 @@ console.log('\npause: R5 — a family named directly is never paused');
   const h = home({ paused: [{ name: 'claude' }] });
   const f = spawnSync(process.execPath, [MODEL_ID, 'fable'], { encoding: 'utf8', env: { HOME: h, PATH: '/usr/bin:/bin' } });
   ok('model-id fable while claude is paused: its id, no note', f.status === 0 && f.stdout === `${IDS.fable}\n` && f.stderr === '', J(f));
+}
+
+console.log('\npause: R10 — one sentence in the model guide, never a rewrite per pause');
+{
+  const free = home(undefined);
+  const paused = home({ paused: [{ name: 'claude' }] });
+  const a = guideText(loadRoles({ home: free }));
+  const b = guideText(loadRoles({ home: paused }));
+  ok('the guide says roles skip paused accounts and how to get the current answer',
+    a.includes('Roles skip paused accounts (ACS → Usage → Pause); `model-id --role <name>` gives the current answer.'), a);
+  ok('the guide is byte-identical whether or not anything is paused', a === b);
+}
+
+console.log('\npause: R11 — the README documents pausing');
+{
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  const sec = readme.slice(readme.indexOf('### Pausing an account'), readme.indexOf('## Model registry'));
+  ok('a Pausing section under Subscription usage', readme.indexOf('## Subscription usage') < readme.indexOf('### Pausing an account') && sec.length > 200);
+  ok('…naming the file, the refusal, named families and the CLI',
+    ['paused.json', 'roles.json` is never written', 'refuses with exit 2', 'never paused', 'acs install-model-id', 'acs pause', 'acs resume'].every((w) => sec.includes(w)), sec);
 }
 
 /* ── ask-model and the reviewer pool, with stub CLIs on PATH ─────────── */

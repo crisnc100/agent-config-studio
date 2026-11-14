@@ -72,7 +72,8 @@ usage() {
     '       acs update               fast-forward this checkout; never starts the studio' \
     '       acs roots ls|add|rm      the project folders the studio reads and edits' \
     '       acs usage [...]          seat usage in the terminal' \
-    '       acs pause|resume [...]   pause an account so roles skip it (acs pause lists)' \
+    '       acs pause [<account>]    pause an account so roles skip its models; alone, lists pauses' \
+    '       acs resume <account>     end a pause' \
     '       acs install-model-id     install the model-id resolver and ask-model' \
     '       acs install-worktree     install the worktree helpers (zsh/macOS only)' \
     '       acs packs list|explain|install|status|update|uninstall   recommended skill packs (acs packs help)' \
