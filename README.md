@@ -432,9 +432,11 @@ from one vendor (so that vendor checks its own work).
 
 - A role skips paused families in its `use` order; its second opinion is
   skipped the same way and left empty, never promoted.
-- A role whose every model is paused refuses with exit 2 and the fix
-  (*every model for advisor is paused; resume claude or add a fallback in ACS
-  → Models → Roles*). The writer role refuses the same way.
+- A role whose every model is paused refuses with exit 2 from `model-id
+  --role` (64 from `ask-model --role`) and the fix (*every model for advisor
+  is paused; resume claude or add a fallback in ACS → Models → Roles*). The
+  writer role refuses the same way. `ask-model --role <name> --second` refuses (64)
+  when that role's second opinion is paused.
 - `model-id --role` prints one line on stderr when it skipped something
   (*claude paused: reviewer → sol (skipped fable)*), and its `--json` carries
   `paused`, `skipped` and `altSkipped`. `ask-model --role` and the review
@@ -458,9 +460,17 @@ acs pause codex --until-resume
 acs resume claude
 ```
 
-`acs pause` alone lists what is paused and what each role answers now. A pause
+`acs pause` alone lists what is paused and each role a pause changes. A pause
 names a vendor or one family; with no flag it ends when the last usage reading
-says that account resets, or lasts until you resume when no reading says.
+says that account resets, or lasts until you resume when no reading says. A
+pause whose time has passed no longer counts and is dropped on the next write.
+
+`acs pause` and `acs resume` exit 2 on a usage error, an unknown name or a
+time that is not ahead, and 1 when the change is refused (a stale `model-id`,
+an invalid `paused.json`, resuming something not paused); the bare listing
+exits 1 while `paused.json` is invalid. If the studio and `acs pause` save at
+the same moment, the change is made again from the other's result; after
+three tries it is refused (HTTP 409 in the studio) and nothing is written.
 
 ## Model registry
 

@@ -10,7 +10,7 @@ import { readSnapshot, snapshotPath } from '../lib/usage/seats.js';
  * terminal. Every write goes through lib/pause.js, so the stale-resolver
  * refusal and the file's rules are the studio's own.
  *
- *   acs pause                                  what is paused, and what each role answers now
+ *   acs pause                                  what is paused, and each role a pause changes
  *   acs pause <vendor|family> [--until <time> | --until-resume]
  *   acs resume <vendor|family>
  *
