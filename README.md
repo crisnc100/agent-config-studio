@@ -469,8 +469,10 @@ pause whose time has passed no longer counts and is dropped on the next write.
 time that is not ahead, and 1 when the change is refused (a stale `model-id`,
 an invalid `paused.json`, resuming something not paused); the bare listing
 exits 1 while `paused.json` is invalid. If the studio and `acs pause` save at
-the same moment, the change is made again from the other's result; after
-three tries it is refused (HTTP 409 in the studio) and nothing is written.
+nearly the same moment, a change based on an outdated file is made again from
+the newer one; after three tries it is refused (HTTP 409 in the studio) and
+nothing is written. Two saves in the same instant can still lose one, so check
+`acs pause` after scripting several at once.
 
 ## Model registry
 
