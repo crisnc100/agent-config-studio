@@ -1,0 +1,16 @@
+Use the qa-tester skill's rules. Browser QA of the "pause an account" feature. Lane: Claude Chrome. Mark the report "same-family QA" (builder is Opus).
+
+Target: http://localhost:53882/ — a sandboxed test studio. Its HOME is /private/var/folders/8k/8pc_bcd90kv7g5n5jj5gl3v80000gn/T/acs-packs-qa-3ihO1C/home (a temp folder, NOT the user's real home). Open a NEW tab; close it when done. Window as it is; never resize or zoom. Avoid any control that opens a native browser confirm/alert.
+
+Setup (files ONLY under /private/var/folders/8k/8pc_bcd90kv7g5n5jj5gl3v80000gn/T/acs-packs-qa-3ihO1C/home): write /private/var/folders/8k/8pc_bcd90kv7g5n5jj5gl3v80000gn/T/acs-packs-qa-3ihO1C/home/.agent-config-studio/roles.json as {"version":2,"roles":{"builder":{"use":["opus","sol"]},"reviewer":{"use":["fable","sol","opus"]},"security":{"use":["fable","astra"]},"advisor":{"use":["fable"]}}} (if the studio rejects it, read the error and adjust to a valid shape; report what you used). Shell commands may use: HOME=/private/var/folders/8k/8pc_bcd90kv7g5n5jj5gl3v80000gn/T/acs-packs-qa-3ihO1C/home node /Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-pause-account/bin/model-id.mjs --role <r> --json and HOME=/private/var/folders/8k/8pc_bcd90kv7g5n5jj5gl3v80000gn/T/acs-packs-qa-3ihO1C/home /Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-pause-account/bin/acs pause|resume ... (never without HOME=/private/var/folders/8k/8pc_bcd90kv7g5n5jj5gl3v80000gn/T/acs-packs-qa-3ihO1C/home).
+
+Criteria (PASS / FAIL / blocked each, with what you saw):
+1. Usage shows a Pause control on each account row (Claude, Codex at least). Pausing Claude from the UI: the row then shows "Paused until …" (a reset time if the reading has one, otherwise "until I resume"), and a Resume control.
+2. With Claude paused, Models → Roles shows a notice listing each role's current answer (builder → sol, reviewer → sol, security → astra) and marks advisor as one that would refuse; a same-vendor note appears where builder and reviewer now share a vendor.
+3. In a shell, HOME=/private/var/folders/8k/8pc_bcd90kv7g5n5jj5gl3v80000gn/T/acs-packs-qa-3ihO1C/home model-id --role reviewer --json gives family sol with paused/skipped fields and prints one stderr line naming what was skipped; --role advisor exits 2 with a plain fix; model-id fable (named) still answers.
+4. CLI: HOME=/private/var/folders/8k/8pc_bcd90kv7g5n5jj5gl3v80000gn/T/acs-packs-qa-3ihO1C/home acs pause (alone) lists the Claude pause; acs pause fable --until-resume adds a family pause that shows in Usage after reload; acs resume claude from the shell is reflected in the UI after reload.
+5. Resume from the UI clears the pause; Roles notice disappears; model-id --role reviewer gives fable again.
+6. Readable light and dark: text ≥12px, contrast ≥4.5:1, every button styled, no folds, no horizontal scroll; plain words a new user would understand.
+7. No console errors on Usage and Models in either theme.
+
+Report improvement observations separately (anything confusing for a new user). One report, table per criterion, screenshot paths for failures. Never edit files outside /private/var/folders/8k/8pc_bcd90kv7g5n5jj5gl3v80000gn/T/acs-packs-qa-3ihO1C/home; never edit the repo; leave the theme as you found it.

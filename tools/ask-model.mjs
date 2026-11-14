@@ -82,7 +82,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EFFORTS, loadRegistry, resolveModel } from '../lib/models.js';
-import { familyEffort, resolveFlavor, resolveRole } from '../lib/roles.js';
+import { familyEffort, pauseLine, resolveFlavor, resolveRole } from '../lib/roles.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools | --x-search] [--json] [--cwd <dir>]'
@@ -730,8 +730,12 @@ function parse(argv) {
 function resolve(o) {
   if (o.role !== undefined) {
     const r = resolveRole(o.role);
+    if (r.pauseError) process.stderr.write(`ask-model: ${r.pauseError} — nothing is paused until it is fixed\n`);
     if (r.error) return { error: r.error };
+    const line = pauseLine(r);
+    if (line) process.stderr.write(`ask-model: ${line}\n`);
     if (o.second) {
+      if (r.altSkipped) return { error: `role "${o.role}"'s second opinion (${r.altSkipped.family}) is paused; resume ${r.altSkipped.by}, or name a family with --family` };
       if (!r.alt) return { error: `role "${o.role}" has no second opinion (alt); set one in ACS → Models → Roles` };
       return { family: r.alt, id: r.altId, effort: o.effort ?? r.altEffort ?? '' };
     }

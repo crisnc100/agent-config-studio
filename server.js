@@ -42,6 +42,7 @@ import {
 } from './lib/models-panel.js';
 import { loadRegistry } from './lib/models.js';
 import { rolesView, setRole, resetRole, deleteRole, setFlavor, resetFlavor } from './lib/roles-panel.js';
+import { pause, pauseEffect, pauseState, resume } from './lib/pause.js';
 import { createDescribe, describeBackend, DESCRIBE_LIMITS } from './lib/describe.js';
 import { createModelGuide } from './lib/model-guide.js';
 import { createSkillWizard, previewTarget, wizardTargets } from './lib/skill-wizard.js';
@@ -782,6 +783,26 @@ export function createApp(opts = {}) {
   'POST /api/usage/refresh': async () => usage.refresh(),
 
   /**
+   * Paused accounts (lib/pause.js): roles skip a paused vendor or family
+   * until its time passes or it is resumed. Strict same-origin like the
+   * roles routes, since a pause changes which model every skill runs.
+   */
+  'GET /api/pause': async (req) => {
+    requireStrict(req);
+    return pauseState();
+  },
+  'POST /api/pause': async (req) => {
+    requireStrict(req);
+    const { name, until } = await objectBody(req);
+    return pause({ name, until: until ?? null });
+  },
+  'POST /api/pause/resume': async (req) => {
+    requireStrict(req);
+    const { name } = await objectBody(req);
+    return resume({ name });
+  },
+
+  /**
    * Shell shortcuts: give each Codex seat a word you can type.
    *
    * The generated file is owned entirely by ACS and rewritten in full; the only
@@ -1308,7 +1329,9 @@ export function createApp(opts = {}) {
   'GET /api/models/roles': async (req) => {
     requireStrict(req);
     const rows = (await models.view()).rows;
-    return { ...rolesView({ modelRows: rows }), describe: { ...describeBackend({ probe: false }), running: describer.running, limits: DESCRIBE_LIMITS } };
+    const paused = pauseState();
+    const effect = paused.active.length ? pauseEffect() : { roles: [], sameVendor: null };
+    return { ...rolesView({ modelRows: rows }), pause: { ...paused, ...effect }, describe: { ...describeBackend({ probe: false }), running: describer.running, limits: DESCRIBE_LIMITS } };
   },
   'POST /api/models/roles/set': async (req) => {
     requireStrict(req);

@@ -783,6 +783,10 @@ a { color: var(--accent); }
 }
 .usage-offline-why { color: var(--muted); font-size: 12px; }
 .usage-note { color: var(--muted); font: 12px var(--mono); margin-top: 6px; }
+.usage-pause { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; }
+.usage-pause.paused .usage-pause-text { color: var(--amber); font-weight: 600; }
+.usage-pause-note { color: var(--amber); font-size: 12px; flex-basis: 100%; }
+.usage-pause-family { display: flex; align-items: center; gap: 8px; flex-basis: 100%; color: var(--amber); }
 
 .usage-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 .usage-actions { display: flex; gap: 6px; flex: none; }
@@ -1441,6 +1445,14 @@ a { color: var(--accent); }
   border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 8%, transparent);
 }
 .roles-conflict { margin-top: 6px; font-size: 12px; color: var(--amber); }
+.roles-pause {
+  margin: 10px 0; padding: 10px 12px; font-size: 13px; border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
+.roles-pause-head { color: var(--amber); font-weight: 600; }
+.roles-pause-list { margin: 6px 0 8px; padding-left: 18px; }
+.roles-pause-refuses { color: var(--amber); }
+.roles-pause-same { margin-bottom: 8px; }
 .describe-conflicts {
   margin: 0 0 10px; padding: 6px 10px; border-radius: 7px; font-size: 12px; color: var(--text-dim);
   border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 8%, transparent);

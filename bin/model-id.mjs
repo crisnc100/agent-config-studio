@@ -154,11 +154,14 @@ function rolesRows(R) {
   const loaded = loadRoles();
   if (loaded.error) return { error: loaded.error };
   const names = [...new Set([...Object.keys(loaded.roles), ...(loaded.unset || [])])].sort();
+  const results = [];
   const rows = names.map((name) => {
     if (loaded.unset?.includes(name)) return [name, '-', '(not set)', '-', '-'];
     const r = resolveRole(name);
+    results.push(r);
     return r.error ? [name, '?', `(${r.error})`, '', ''] : [name, r.family, r.id, r.effort || '-', r.alt || '-'];
   });
+  pauseNotes(R, results);
   return { rows, failed: rows.some((r) => r[1] === '?'), unset: loaded.unset || [], source: loaded.source };
 }
 
@@ -177,6 +180,20 @@ function rolesSection(R) {
 function unresolvedRole(name) {
   const u = `MODEL-ID-UNRESOLVED-${name.replace(/[^A-Za-z0-9._-]/g, '_') || 'missing'}`;
   return `family=${u} id=${u} effort= alt=\n`;
+}
+
+/**
+ * A resolution that skipped a paused family says so on stderr, one line per
+ * role, so a pause is never a silent change of model; an unreadable
+ * paused.json is named once.
+ */
+function pauseNotes(R, results) {
+  const bad = results.find((r) => r.pauseError)?.pauseError;
+  if (bad) process.stderr.write(`model-id: ${bad} — nothing is paused until it is fixed\n`);
+  for (const r of results) {
+    const line = r.error ? '' : R.pauseLine(r);
+    if (line) process.stderr.write(`model-id: ${line}\n`);
+  }
 }
 
 /** --role / --flavor / --roles, with --json anywhere among them. */
@@ -215,6 +232,7 @@ function rolesCli(argv, R) {
     else if (e.effort) process.stdout.write(`${e.effort}\n`);
   } else if (opts.role !== undefined) {
     const r = resolveRole(opts.role);
+    pauseNotes(R, [r]);
     if (r.error) die(r.error, opts.json ? '' : unresolvedRole(opts.role));
     if (opts.json) process.stdout.write(JSON.stringify(r, null, 2) + '\n');
     else process.stdout.write(`family=${r.family} id=${r.id} effort=${r.effort} alt=${r.alt}\n`);
@@ -227,6 +245,7 @@ function rolesCli(argv, R) {
     const loaded = loadRoles();
     if (loaded.error) die(`roles are invalid — ${loaded.error}`);
     const roles = Object.fromEntries(Object.keys(loaded.roles).sort().map((n) => [n, resolveRole(n)]));
+    pauseNotes(R, Object.values(roles));
     const unset = loaded.unset?.length ? { unset: loaded.unset } : {};
     process.stdout.write(JSON.stringify({ roles, ...unset, flavor: loaded.flavor, provenance: loaded.provenance, source: loaded.source }, null, 2) + '\n');
     if (Object.values(roles).some((r) => r.error)) process.exit(2);
