@@ -8,6 +8,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const home = fs.realpathSync(tempDir('acs-agent-'));
 const fake = path.join(home, 'bin');
 fs.mkdirSync(fake);
+const caffeineLog = path.join(home, 'caffeinate-calls');
+fs.writeFileSync(path.join(fake, 'caffeinate'), `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(caffeineLog)},JSON.stringify(process.argv.slice(2))+'\\n');\n`, { mode: 0o755 });
 fs.writeFileSync(path.join(fake, 'cmux'), `#!${process.execPath}\nimport ${JSON.stringify(path.join(root, 'tests/fixtures/agent-cmux.mjs'))};\n`, { mode: 0o755 });
 const env = { ...process.env, HOME: home, PATH: `${fake}:${process.env.PATH}`, CMUX_SOCKET_PATH: path.join(home, 'socket'), CMUX_WORKSPACE_ID: 'workspace:1', CMUX_SURFACE_ID: 'surface:1' };
 const run = (args, extra = {}) => spawnSync(process.execPath, [path.join(root, 'bin/agent.mjs'), ...args], { env: { ...env, ...extra }, encoding: 'utf8' });
@@ -192,3 +194,30 @@ assert.deepEqual(argvOf(codexOptIn), ['-m', codexOptIn.model, '-s', 'workspace-w
 assert.deepEqual(argvOf(grokOptIn), ['-m', grokOptIn.model, '--always-approve', 'MCP opt in']);
 assert.deepEqual(argvOf(grok), ['-m', grok.model, '--always-approve', 'task']);
 console.log('agent all harness launcher argv passed');
+
+const caffeineDeadline = Date.now() + 5000;
+while ((!fs.existsSync(caffeineLog) || fs.readFileSync(caffeineLog, 'utf8').trim().split('\n').length < 8) && Date.now() < caffeineDeadline) await new Promise(resolve => setTimeout(resolve, 50));
+const caffeineCalls = fs.readFileSync(caffeineLog, 'utf8').trim().split('\n').map(JSON.parse);
+assert.equal(caffeineCalls.length, 8);
+for (const args of caffeineCalls) { assert.deepEqual(args.slice(0, 2), ['-i', '-w']); assert.match(args[2], /^[1-9]\d*$/); }
+const pid = fs.readFileSync(c.pidFile, 'utf8').trim();
+assert.ok(caffeineCalls.some(args => args[2] === pid));
+assert.equal(caffeineCalls.filter(args => args[2] === pid).length, 1);
+for (const w of [c, linkedWorker, normalWorker, claudeDefault, claudeOptIn, codexOptIn, grokOptIn, grok]) {
+  const target = fs.readFileSync(w.pidFile, 'utf8').trim();
+  assert.equal(caffeineCalls.filter(args => args[2] === target).length, 1);
+}
+console.log('agent caffeinate targets launcher PID once per process');
+
+const rigWorker = open('sol', ['rig hook'], { AGENT_TEST_MODE: '1', AGENT_TEST_LAUNCH_EXTRA: '["--no-alt-screen"]', AGENT_TEST_BINARY: path.join(home, 'missing-harness') });
+assert.match(scriptOf(rigWorker), /'--no-alt-screen'/);
+assert.ok(scriptOf(rigWorker).includes(`exec '${path.join(home, 'missing-harness')}'`));
+const missing = spawnSync('/bin/sh', [rigWorker.launcher], { env, encoding: 'utf8' });
+assert.equal(fs.existsSync(path.join(home, 'missing-harness')), false);
+assert.ok([126, 127].includes(missing.status), missing.stderr);
+assert.match(missing.stderr, /missing-harness/);
+const ignoredHook = open('sol', ['ignored hook'], { AGENT_TEST_MODE: '0', AGENT_TEST_LAUNCH_EXTRA: '["--no-alt-screen"]', AGENT_TEST_BINARY: path.join(home, 'missing-harness') });
+assert.ok(!scriptOf(ignoredHook).includes('--no-alt-screen'));
+assert.ok(!scriptOf(ignoredHook).includes('missing-harness'));
+json(run(['close', rigWorker.id, '--json']));
+console.log('agent fault-rig launch overrides require explicit test mode');

@@ -253,3 +253,5 @@ tests/run.mjs                                         helper                    
 
 tests/agent-cli.mjs                                   ci:offline
 tests/agent-install.mjs                               ci:offline
+
+tests/agent-reliability.mjs                           ci:offline

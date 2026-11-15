@@ -13,6 +13,7 @@ const put = (f, data) => { fs.mkdirSync(path.dirname(f), { recursive: true }); f
 const line = x => JSON.stringify(x) + '\n';
 function turn(w, text, complete = true) {
   if (w.vendor === 'codex') {
+    fs.appendFileSync(w.transcript, line({ type: 'event_msg', payload: { type: 'task_started' } }));
     fs.appendFileSync(w.transcript, line({ type: 'event_msg', payload: { type: 'user_message', message: text } }));
     if (complete) fs.appendFileSync(w.transcript, line({ type: 'event_msg', payload: { type: 'task_complete', last_agent_message: 'exact\nanswer  ' } }));
   } else if (w.vendor === 'claude') {
@@ -22,6 +23,7 @@ function turn(w, text, complete = true) {
       fs.appendFileSync(path.join(home, '.cmuxterm/events.jsonl'), line({ name: 'agent.hook.Stop', surface_id: w.surface_id, session_id: w.session, occurred_at: new Date().toISOString() }));
     }
   } else {
+    fs.appendFileSync(w.transcript, line({ type: 'turn_started' }));
     fs.appendFileSync(w.history, line({ role: 'user', content: text }));
     if (complete) {
       fs.appendFileSync(w.history, line({ role: 'assistant', content: 'exact\nanswer  ' }));
