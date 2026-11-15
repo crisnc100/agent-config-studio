@@ -648,23 +648,30 @@ workspace and pane. At most four workers run at once across orchestrators; extra
 waiting `open` process alive: there is no background queue service. Every
 command accepts `--json`.
 
-`wait` polls the harness transcript and cmux events. JSON includes `state` and
+`wait` polls the harness transcript, cmux events and worker screen. JSON includes `state` and
 its compatible `status` alias. Plain output starts with the state, followed by
 its details when available:
 
 | State | Exit | Meaning |
 | --- | --- | --- |
 | `done` | 0 | The turn ended. When the final message's last nonempty line starts with `QUESTION:`, JSON includes `question: true` and the exact final answer in `text`. |
-| `stuck` | 3 | A permission prompt; `prompt` contains the screen text. |
+| `stuck` | 3 | A permission or folder-trust prompt; `prompt` contains the dialog. Pre-session folder trust also includes `kind: "trust"`. |
 | `timeout` | 4 | No completion or fault before the requested timeout. |
 | `unsent` | 5 | A send has no confirmed new turn after 10 seconds; `input` is the detected composer line and `screen` preserves the screen for inspection. |
 | `no_start` | 6 | No session or transcript appeared within 60 seconds of open. |
-| `stalled` | 7 | A started, unfinished turn's transcript stopped growing; `steps` contains up to the last three available tool calls or commands. |
+| `stalled` | 7 | A started, unfinished turn has neither transcript growth nor an advancing running indicator; `steps` contains up to the last three available tool calls or commands. |
 
 `--timeout` is in seconds, defaults to 600, and zero checks once. `--stall-after`
 is in seconds and defaults to 300. A waiting orchestrator wakes on the first
 observed completion or fault; when multiple faults are already overdue, the
-oldest threshold wins. A closed worker returns `done` with `closed: true`.
+oldest threshold wins, except a visible startup trust dialog takes precedence over
+`no_start`. Until a session exists, the screen is checked at least every three
+seconds. Trust remains the user’s decision; `agent` never answers the dialog
+or edits trust settings. Running indicators are sampled every three seconds
+and checked again before reporting a stall. Only an advancing elapsed time
+extends the stall deadline; a frozen spinner does not. The first elapsed
+reading starts an observation window so it can be compared with a later sample.
+A closed worker returns `done` with `closed: true`.
 Codex and Grok completion does not rely on cmux Stop hooks.
 
 `send` confirms a new `task_started` event for Codex, a new non-tool-result
@@ -694,8 +701,10 @@ headless Codex turns.
 
 The development-only fault rig is at `builds/agent-command/rig/run.mjs`.
 Run it with Node inside cmux, with `agent` installed and a worker slot available. It uses
-real workers, reports a pass/fail table, retains its scratch Git repository,
-and closes its workers on exit. It is outside the installed package. The rig
+real workers and reports six scenarios in a pass/fail table. Its scratch
+checkout is a detached worktree of this repository under `$TMPDIR`, so existing
+repository trust applies. A separate fresh Git repository checks folder trust.
+It closes its workers and removes the scratch worktree on exit. It is outside the installed package. The rig
 uses `AGENT_TEST_MODE=1` with `AGENT_TEST_LAUNCH_EXTRA` (a JSON array of extra
 harness arguments) or `AGENT_TEST_BINARY` (a replacement executable) to provoke
 permission prompts and launch failures. These overrides are test-only and
