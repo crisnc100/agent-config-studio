@@ -688,6 +688,12 @@ surface was closed manually. `wait` checks surface availability on each poll,
 so a retained transcript does not hide a vanished surface.
 Codex and Grok completion does not rely on cmux Stop hooks.
 
+When a known session's transcript remains unresolved after 30 seconds,
+`wait --json` includes `transcriptMissing: true`, including on a timeout.
+Transcript-based completion and tool checks are unavailable until that file is
+found. The flag clears when discovery succeeds and does not change the exit
+code or wait deadline.
+
 `send` confirms a new `task_started` event for Codex, a new non-tool-result
 user entry for Claude, or `turn_started` for Grok. It retries Enter up to three
 times and waits up to 10 seconds for proof. Failure exits 1 and persists the
