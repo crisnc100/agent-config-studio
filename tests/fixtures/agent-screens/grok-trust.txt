@@ -1,0 +1,6 @@
+Do you trust the contents of this directory?
+Grok Build may run or modify contents in this directory,
+posing security risks.
+y  Yes, proceed
+n  No, quit
+Enter or y to trust · n or Esc to quit

@@ -3,9 +3,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 if (!process.env.CMUX_SOCKET_PATH) throw new Error('Run this rig inside cmux with agent installed on PATH.');
-const scratch = fs.realpathSync(fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'agent-fault-rig-')));
+const repo = fs.realpathSync(fileURLToPath(new URL('../../../', import.meta.url)));
+const temp = fs.realpathSync(fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'agent-fault-rig-')));
+const scratch = path.join(temp, 'worktree');
+let worktreeAdded = false;
 const owned = new Set();
 const rows = [];
 let activeChild = null;
@@ -14,10 +18,10 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { interrupt
 const baseEnv = { ...process.env, AGENT_TEST_MODE: '1' };
 delete baseEnv.AGENT_TEST_BINARY;
 delete baseEnv.AGENT_TEST_LAUNCH_EXTRA;
-function command(binary, args, { env = baseEnv, timeout = 90000 } = {}) {
+function command(binary, args, { env = baseEnv, timeout = 90000, cwd = repo, cleanup = false } = {}) {
   return new Promise((resolve, reject) => {
-    if (interrupted && !(binary === 'agent' && ['close', 'list'].includes(args[0]))) return reject(new Error('rig interrupted'));
-    const child = spawn(binary, args, { env, cwd: scratch, stdio: ['ignore', 'pipe', 'pipe'] });
+    if (interrupted && !cleanup && !(binary === 'agent' && ['close', 'list'].includes(args[0]))) return reject(new Error('rig interrupted'));
+    const child = spawn(binary, args, { env, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     activeChild = child;
     let out = '', err = '';
     child.stdout.on('data', b => out += b);
@@ -28,8 +32,8 @@ function command(binary, args, { env = baseEnv, timeout = 90000 } = {}) {
   });
 }
 async function open(family, folder, task, env = baseEnv) {
-  const cwd = path.join(scratch, folder);
-  fs.mkdirSync(cwd);
+  const cwd = path.isAbsolute(folder) ? folder : path.join(scratch, folder);
+  fs.mkdirSync(cwd, { recursive: true });
   const r = await command('agent', ['open', family, '--cwd', cwd, task, '--json'], { env });
   if (r.code !== 0) throw new Error(r.err || `open failed: ${r.signal}`);
   const w = JSON.parse(r.out);
@@ -54,7 +58,7 @@ async function scenario(name, harness, expected, limit, body) {
     const result = await body(worker => { w = worker; });
     got = result.state;
     seconds = (Date.now() - started) / 1000;
-    pass = got === expected && (limit === null || seconds <= limit) && (name !== 'question' || result.question === true);
+    pass = got === expected && (limit === null || seconds <= limit) && (name !== 'question' || result.question === true) && (name !== 'fresh folder trust' || result.kind === 'trust') && (name !== 'permission' || result.kind !== 'trust');
   } catch (e) { got = e.message; seconds = (Date.now() - started) / 1000; }
   finally {
     try { await close(w); } catch (e) { got += `; ${e.message}`; pass = false; }
@@ -62,8 +66,9 @@ async function scenario(name, harness, expected, limit, body) {
   rows.push({ scenario: name, harness, expected, got, seconds: seconds.toFixed(1), result: pass ? 'PASS' : 'FAIL' });
 }
 try {
-  const git = await command('git', ['init', scratch]);
+  const git = await command('git', ['worktree', 'add', '--detach', scratch, 'HEAD']);
   if (git.code !== 0) throw new Error(git.err);
+  worktreeAdded = true;
   await scenario('long follow-up', 'codex', 'done', null, async set => {
     const w = await open('sol', 'long', 'Reply READY as your only answer.'); set(w);
     const first = await wait(w, 120);
@@ -94,17 +99,30 @@ try {
     const w = await open('sol', 'question', 'Reply with this exact single line, without Markdown or additional text: QUESTION: Should I continue?'); set(w);
     return wait(w, 120);
   });
+  await scenario('fresh folder trust', 'codex', 'stuck', 15, async set => {
+    const folder = path.join(temp, 'untrusted');
+    const git = await command('git', ['init', folder]);
+    if (git.code !== 0) throw new Error(git.err);
+    const w = await open('sol', folder, 'Reply READY as your only answer.'); set(w);
+    return wait(w, 15);
+  });
 } finally {
   try {
     const listed = await command('agent', ['list', '--json'], { timeout: 15000 });
     if (listed.code === 0) for (const w of JSON.parse(listed.out)) {
-      if (w.status !== 'closed' && w.cwd.startsWith(scratch + path.sep)) owned.add(w.id);
+      if (w.status !== 'closed' && w.cwd.startsWith(temp + path.sep)) owned.add(w.id);
     }
   } catch (e) { console.error(`Could not check for orphaned rig workers: ${e.message}`); process.exitCode = 1; }
   for (const id of [...owned]) {
     try { await close({ id }); } catch (e) { console.error(e.message); process.exitCode = 1; }
   }
   console.table(rows);
-  console.log(`Scratch repo and harness transcripts retained: ${scratch}`);
-  if (rows.length !== 5 || rows.some(r => r.result !== 'PASS')) process.exitCode = 1;
+  if (worktreeAdded && owned.size === 0) {
+    const removed = await command('git', ['worktree', 'remove', '--force', scratch], { cleanup: true });
+    if (removed.code !== 0) { console.error(`Could not remove rig worktree ${scratch}: ${removed.err}`); process.exitCode = 1; }
+    else worktreeAdded = false;
+  }
+  if (!worktreeAdded && owned.size === 0) fs.rmSync(temp, { recursive: true, force: true });
+  console.log(worktreeAdded || owned.size ? `Scratch retained for cleanup: ${temp}` : 'Scratch worktree removed; harness transcripts remain in the CLI session folders.');
+  if (rows.length !== 6 || rows.some(r => r.result !== 'PASS')) process.exitCode = 1;
 }
