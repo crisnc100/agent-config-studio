@@ -47,7 +47,10 @@ const q = await waitWorker(question.id, 0, ctx, runtime);
 assert.equal(q.state, 'done'); assert.equal(q.question, true); assert.equal(q.text, 'Need a choice.\nQUESTION: Which branch?\n\n');
 const notLast = worker('codex', [ev('task_complete', { last_agent_message: 'QUESTION: Old question\nResolved.' })]);
 assert.ok(!(await waitWorker(notLast.id, 0, ctx, runtime)).question);
-const steps = [1, 2, 3, 4].map(i => ({ type: 'response_item', payload: { type: 'function_call', name: 'exec_command', arguments: JSON.stringify({ cmd: `step ${i}` }) } }));
+const steps = [1, 2, 3, 4].flatMap(i => [
+  { type: 'response_item', payload: { type: 'function_call', call_id: `step-${i}`, name: 'exec_command', arguments: JSON.stringify({ cmd: `step ${i}` }) } },
+  { type: 'response_item', payload: { type: 'function_call_output', call_id: `step-${i}`, output: 'finished' } },
+]);
 const stalled = worker('codex', [ev('task_started'), ...steps]);
 clock = epoch + 29999;
 assert.equal((await waitWorker(stalled.id, 0, ctx, { ...runtime, stallAfter: 30 })).state, 'timeout');
@@ -116,8 +119,11 @@ for (const vendor of ['claude', 'grok']) {
   clock = epoch + 30000;
   const toolEntries = vendor === 'claude' ? [
     { type: 'user', message: { content: 'task' } },
-    ...[1, 2, 3, 4].map(i => ({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: `command ${i}` } }] } })),
-  ] : [{ type: 'turn_started' }, ...[1, 2, 3, 4].map(i => ({ type: 'tool_call', name: 'shell', input: { command: `command ${i}` } }))];
+    ...[1, 2, 3, 4].flatMap(i => [
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: `tool-${i}`, name: 'Bash', input: { command: `command ${i}` } }] } },
+      { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: `tool-${i}`, content: 'finished' }] } },
+    ]),
+  ] : [{ type: 'turn_started' }, ...[1, 2, 3, 4].flatMap(i => [{ type: 'tool_call', id: `tool-${i}`, name: 'shell', input: { command: `command ${i}` } }, { type: 'tool_result', tool_call_id: `tool-${i}`, content: 'finished' }])];
   const toolWorker = worker(vendor, toolEntries);
   const toolStall = await waitWorker(toolWorker.id, 0, ctx, { ...runtime, stallAfter: 30 });
   assert.equal(toolStall.state, 'stalled'); assert.equal(toolStall.steps.length, 3); assert.match(toolStall.steps[2], /command 4/);
@@ -161,6 +167,6 @@ console.log('agent question detection covers all vendors and Grok screen fallbac
 
 clock = epoch + 30000;
 const historyTools = worker('grok', [{ type: 'turn_started' }]);
-write(path.join(historyTools.runDir, 'chat_history.jsonl'), [1, 2, 3, 4].map(i => JSON.stringify({ type: 'tool_call', name: 'shell', content: `history command ${i}` }) + '\n').join(''));
+write(path.join(historyTools.runDir, 'chat_history.jsonl'), [1, 2, 3, 4].flatMap(i => [{ type: 'tool_call', id: `history-${i}`, name: 'shell', content: `history command ${i}` }, { type: 'tool_result', tool_call_id: `history-${i}`, content: 'finished' }]).map(e => JSON.stringify(e) + '\n').join(''));
 assert.match((await waitWorker(historyTools.id, 0, ctx, { ...runtime, stallAfter: 30 })).steps.at(-1), /history command 4/);
 console.log('agent stalled diagnostics use Grok chat history when available');
