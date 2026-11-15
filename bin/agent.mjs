@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { context, openWorker, waitWorker, sendWorker, answerWorker, closeWorker, listWorkers } from '../lib/agent.js';
-const usage = 'usage: agent open <family> [--effort e] [--cwd d] [--role r] (--prompt-file f | "task") [--json]\n       agent wait <id> [--timeout seconds] [--json]\n       agent send <id> "text" | answer <id> | close <id> | list [--json]';
+const usage = 'usage: agent open <family> [--effort e] [--cwd d] [--role r] [--mcp] (--prompt-file f | "task") [--json]\n       agent wait <id> [--timeout seconds] [--json]\n       agent send <id> "text" | answer <id> | close <id> | list [--json]';
 const argv = process.argv.slice(2);
 async function main() {
   if (argv.includes('--help') || argv.includes('-h')) { console.log(usage); return 0; }
@@ -11,6 +11,7 @@ async function main() {
   for (let i = 0; i < args.length; i++) {
     if (args[i].startsWith('--')) {
       const flag = args[i];
+      if (cmd === 'open' && flag === '--mcp') { opts.mcp = true; continue; }
       const allowed = cmd === 'open' ? ['--effort', '--cwd', '--role', '--prompt-file'] : cmd === 'wait' ? ['--timeout'] : [];
       if (!allowed.includes(flag) || args[i + 1] === undefined) throw Object.assign(new Error(usage), { exitCode: 2 });
       opts[flag === '--prompt-file' ? 'promptFile' : flag.slice(2)] = args[++i];

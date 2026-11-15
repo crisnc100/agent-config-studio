@@ -627,6 +627,19 @@ The launcher reads a private prompt file; prompt text is never typed into the
 terminal. Codex uses workspace-write with approvals disabled, Claude uses auto
 permissions, and Grok uses always-approve.
 
+Claude workers start with `--strict-mcp-config`, so they load no MCP servers.
+Pass `--mcp` to inherit the Claude MCP configuration. Codex and Grok keep their
+configured MCP servers: neither has a verified global switch that disables
+configured servers for a run. Codex supports a per-server
+`mcp_servers.<name>.enabled=false` override, but an empty `mcp_servers` table
+does not clear inherited servers. `--mcp` is accepted and recorded for every
+family; it changes launch flags only for Claude. No persistent CLI config is
+edited.
+
+When a Codex worker's Git common directory is outside its working directory,
+the launcher adds that directory with `--add-dir`. This lets a builder in a
+linked worktree write the shared Git metadata needed to commit.
+
 Workers use tabs in a shared workers pane beside the orchestrator. Grok needs
 its own visible pane to start; focus returns to the orchestrator after its
 session appears, or after six seconds. Workers are scoped to the orchestrator's
