@@ -261,3 +261,5 @@ tests/agent-screens.mjs                               ci:offline
 tests/agent-surfaces.mjs                              ci:offline
 
 tests/agent-commands.mjs                              ci:offline
+
+tests/agent-sessions.mjs                              ci:offline
