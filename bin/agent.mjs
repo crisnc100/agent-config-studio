@@ -30,7 +30,7 @@ async function main() {
     const r = await waitWorker(pos[0], timeout, ctx, { stallAfter });
     const details = r.prompt || r.input || r.text || r.steps?.join('\n');
     console.log(json ? JSON.stringify(r) : r.state + (details ? `\n${details}` : ''));
-    return { done: 0, stuck: 3, timeout: 4, unsent: 5, no_start: 6, stalled: 7 }[r.state];
+    return { done: 0, stuck: 3, timeout: 4, unsent: 5, no_start: 6, stalled: 7, closed: 8 }[r.state];
   }
   if (cmd === 'send' && pos.length === 2) {
     const r = await sendWorker(pos[0], pos[1], ctx);

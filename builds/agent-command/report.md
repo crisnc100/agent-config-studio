@@ -86,3 +86,16 @@ Changes remain uncommitted for the orchestrator, as instructed.
 Validation: `node tests/agent-screens.mjs` passes fake-clock dialog latency for all three harnesses, CLI exit 3, no typing, startup-deadline precedence, session-start cache invalidation, post-start permission, persistent/continuous advancing timers beyond two stall windows, frozen/disappearing indicators, minute formatting and reset rejection. `node tests/agent-reliability.mjs`, `node tests/agent-cli.mjs`, `node tests/agent-install.mjs`, `node tests/guards.mjs` (11), `node tests/setup-guards.mjs` (54), `node tests/suite-coverage.mjs` (33), and `node tests/readme.mjs` (53) pass. Rig syntax and `git diff --check` pass.
 
 Commit-ready groups: tests/fixtures/SUITE plus the development rig; separately `lib/agent.js`, README and this report. Existing assertions, guard files, the frozen review test and review gate are untouched. No new dependencies, live panes, reviews or other models. No scope deviations beyond the documented initial-indicator observation window.
+
+## Phase 3b — manually removed panes and surfaces
+
+Base `b0eda8c`; Phase 3 implementation `ad36dc4`, tests `7c71004`. Changes remain uncommitted for the orchestrator.
+
+- Shared-pane reuse checks `list-pane-surfaces` with explicit workspace and pane refs, using the most recent eligible worker. A missing pane is discarded. A `not_found` race during `new-surface` gets exactly one fresh `new-pane --command` attempt; other errors propagate.
+- `wait` probes the surface on every poll, including completed workers whose transcripts remain. Missing surfaces, explicit closures and idle closures return `state`/`status: "closed"`, `closed: true`, exit 8. Detected disappearance persists in the registry. Closing a manually removed surface is idempotent.
+- `tests/agent-surfaces.mjs` first reproduced the failed second open, then passed: pane removed between opens, valid-pane reuse, workspace-scoped validation, creation race recovery, bounded failed recovery, unrelated creation/screen/socket errors, vanished completed surface, disappearance during a running wait, repeated wait, explicit close, manual removal followed by close, and idle-close exit 8.
+- Existing assertion change: `tests/agent-cli.mjs`'s idle-wait assertion still requires `closed: true`; it now parses the exit-8 result directly instead of the exit-0 JSON helper, and additionally requires state `closed` and exit 8. No assertion was loosened. Suggested test commit message: “Test: preserve idle closed:true, require closed state and exit 8; cover removed panes and surfaces”.
+
+Validation passed: `agent-surfaces`, `agent-cli`, `agent-install`, `agent-reliability`, `agent-screens`, `guards` (11), `setup-guards` (54), `suite-coverage` (33), `readme` (53), rig syntax, and `git diff --check`. All named tests run as `node tests/<name>.mjs`. The rig was not run; no real panes were opened.
+
+Commit groups: test-only (`tests/agent-surfaces.mjs`, `tests/agent-cli.mjs`, `tests/fixtures/agent-cmux.mjs`, `tests/SUITE`); implementation/docs (`lib/agent.js`, `bin/agent.mjs`, README, this report). Guards, frozen tests and review gate untouched; no dependencies or scope deviations.

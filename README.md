@@ -642,7 +642,10 @@ linked worktree write the shared Git metadata needed to commit.
 
 Workers use tabs in a shared workers pane beside the orchestrator. Grok needs
 its own visible pane to start; focus returns to the orchestrator after its
-session appears, or after six seconds. Workers are scoped to the orchestrator's
+session appears, or after six seconds. Before reusing the shared pane, `agent`
+checks it in the current workspace. A manually removed pane is replaced; a
+`not_found` race while adding a tab gets one attempt in a fresh pane.
+Workers are scoped to the orchestrator's
 workspace and pane. At most four workers run at once across orchestrators; extra
 `open` calls and follow-ups to finished workers wait for a slot. Keep the
 waiting `open` process alive: there is no background queue service. Every
@@ -660,6 +663,7 @@ its details when available:
 | `unsent` | 5 | A send has no confirmed new turn after 10 seconds; `input` is the detected composer line and `screen` preserves the screen for inspection. |
 | `no_start` | 6 | No session or transcript appeared within 60 seconds of open. |
 | `stalled` | 7 | A started, unfinished turn has neither transcript growth nor an advancing running indicator; `steps` contains up to the last three available tool calls or commands. |
+| `closed` | 8 | The worker was closed, its surface vanished, or it was closed after 30 idle minutes. JSON includes `closed: true`. |
 
 `--timeout` is in seconds, defaults to 600, and zero checks once. `--stall-after`
 is in seconds and defaults to 300. A waiting orchestrator wakes on the first
@@ -671,7 +675,9 @@ or edits trust settings. Running indicators are sampled every three seconds
 and checked again before reporting a stall. Only an advancing elapsed time
 extends the stall deadline; a frozen spinner does not. The first elapsed
 reading starts an observation window so it can be compared with a later sample.
-A closed worker returns `done` with `closed: true`.
+A closed worker returns `closed` with `closed: true`, including when its
+surface was closed manually. `wait` checks surface availability on each poll,
+so a retained transcript does not hide a vanished surface.
 Codex and Grok completion does not rely on cmux Stop hooks.
 
 `send` confirms a new `task_started` event for Codex, a new non-tool-result
