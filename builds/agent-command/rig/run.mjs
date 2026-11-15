@@ -88,7 +88,7 @@ try {
   });
   await scenario('silent running turn', 'claude', 'stalled', 45, async set => {
     const env = { ...baseEnv, AGENT_TEST_LAUNCH_EXTRA: JSON.stringify(['--permission-mode', 'auto', '--append-system-prompt', 'This is a fault rig. Execute the requested sleep synchronously with run_in_background=false and wait for its result.']) };
-    const w = await open('opus', 'sleep', 'Use the Bash tool to run sleep 600 synchronously with a timeout of 600000 milliseconds. Do not run it in the background and do not cancel it. Wait for it to finish.', env); set(w);
+    const w = await open('opus', 'sleep', 'Use the Bash tool to run python3 -c "import time; time.sleep(600)" synchronously with a timeout of 600000 milliseconds. Do not run it in the background and do not cancel it. Wait for it to finish.', env); set(w);
     return wait(w, 45, ['--stall-after', '30']);
   });
   await scenario('missing binary', 'codex', 'no_start', 75, async set => {
