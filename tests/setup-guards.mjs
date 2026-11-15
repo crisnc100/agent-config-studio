@@ -254,9 +254,24 @@ console.log('setup guards\n');
   const origPr = fs.readFileSync(pr, 'utf8');
   const hj = path.join(copy, 'lib', 'harness.js');
   const origHj = fs.readFileSync(hj, 'utf8');
+  const agent = path.join(copy, 'lib', 'agent.js');
+  const server = path.join(copy, 'server.js');
+  const registry = path.join(copy, 'lib', 'registry.js');
+  const origAgent = fs.readFileSync(agent, 'utf8');
+  const origServer = fs.readFileSync(server, 'utf8');
+  const origRegistry = fs.readFileSync(registry, 'utf8');
   const control = guards();
   ok('pins: guards.mjs passes on the unmodified copy (control)', control.status === 0, control.stderr.slice(-400));
   const variants = [
+    ['agent: a harness binary', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawnSync('codex',")],
+    ['agent: another literal executable', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawnSync('git',")],
+    ['agent: a caller-supplied executable', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawnSync(process.env.AGENT_BINARY,")],
+    ['agent: a different subprocess function', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawn('cmux',")],
+    ['agent: a direct server import', server, origServer, t => t + "\nimport './lib/agent.js';\n"],
+    ['agent: a transitive server import', registry, origRegistry, t => t + "\nimport './agent.js';\n"],
+    ['agent: a dynamic transitive import', registry, origRegistry, t => t + "\nconst workerModule = () => import('./agent.js');\n"],
+    ['agent: a transitive re-export', registry, origRegistry, t => t + "\nexport * from './agent.js';\n"],
+    ['agent: a computed transitive import', registry, origRegistry, t => t + "\nconst workerModule = p => import(p);\n"],
     ['login-path: a caller-supplied argument after the script', lp, origLp, (t) => t.replace("execFile(shell, ['-lc', LOGIN_PATH_SCRIPT]", "execFile(shell, ['-lc', LOGIN_PATH_SCRIPT, env.SHELL]")],
     ['login-path: a non-literal script', lp, origLp, (t) => t.replace("execFile(shell, ['-lc', LOGIN_PATH_SCRIPT]", "execFile(shell, ['-lc', `${LOGIN_PATH_SCRIPT}; ${env.X}`]")],
     ['login-path: the script built from a template', lp, origLp, (t) => t.replace(/const LOGIN_PATH_SCRIPT = '[^']*';/, 'const LOGIN_PATH_SCRIPT = `printf %s ${process.env.X}`;')],
