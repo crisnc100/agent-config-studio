@@ -39,3 +39,35 @@ No ineffective global override was added. Per-server enumeration/config rewritin
 - Implementation/documentation commit: `bin/agent.mjs`, `lib/agent.js`, `README.md`, this report.
 
 Live pane acceptance remains with the orchestrator, as requested. The frozen review test and review-gate files are untouched.
+
+## Phase 2
+
+DONE. Reliability changes are uncommitted, grouped below for the orchestrator. No live panes or fault-rig scenarios were run, and the existing guards were not edited.
+
+- `wait` exposes `state` alongside the compatible `status`: done/0, stuck/3, timeout/4, unsent/5, no_start/6, stalled/7. It recognizes final `QUESTION:` lines, retains exact question-answer text, watches the 10-second submission and 60-second startup deadlines, and checks transcript growth with a default 300-second stall threshold. Stalled diagnostics retain up to three available steps (up to 2,000 characters each), including Grok chat-history tools.
+- `send` requires Codex `task_started`, Claude user text, or Grok `turn_started`; a Codex user-message record alone does not prove submission. Four Enter presses are the maximum, followed by a failure at 10 seconds if no start is confirmed. The pending attempt persists so a separate waiter wakes with unsent. Messages over 400 characters are atomically saved in the worker run directory and replaced with a short file instruction in the composer.
+- Launchers write `harness.pid` before exec and start exactly one `caffeinate -i -w <pid>` per process. Caffeinate output is retained in the run directory; its assertion ends with the target process. README states that a closed lid on battery still sleeps. Interactive stdin is preserved. No non-interactive Codex calls were introduced; the sole Node subprocess (cmux) explicitly ignores stdin.
+- `builds/agent-command/rig/run.mjs` creates a scratch Git repo, checks long follow-up/done, permission/stuck, silent sleep/stalled, missing binary/no_start and QUESTION/done. It prints a results table and closes its workers in finally, including orphan records from interrupted opens. Extra harness args and binary replacement require the explicit test-only `AGENT_TEST_MODE=1` gate. The rig was syntax-checked only; live timing acceptance remains with the orchestrator.
+
+### Coverage and checks
+
+| Check | Result / coverage |
+| --- | --- |
+| `node tests/agent-reliability.mjs` | PASS: fake-clock boundaries, background wait waking at startup deadline, all fault states and exit codes, oldest overdue signal, growth resets, default stall threshold, last-three-step diagnostics, all-vendor question detection, Grok screen/history fallbacks, task-start proof and short/long sends |
+| `node tests/agent-cli.mjs` | PASS: all Phase 1 assertions retained; fake transcript starts added; actual launcher execution against fake caffeinate verifies one assertion per recorded harness PID; test-only launch overrides and ignored overrides without the gate |
+| `node tests/agent-install.mjs` | PASS: installed CLI open/wait lifecycle and existing install/refusal checks |
+| `node tests/guards.mjs` | 11 passed, 0 failed |
+| `node tests/setup-guards.mjs` | 54 passed, 0 failed |
+| `node tests/suite-coverage.mjs` | 33 passed, 0 failed; new reliability test is in the offline suite |
+| `node tests/readme.mjs` | 53 passed, 0 failed |
+| `node --check builds/agent-command/rig/run.mjs` | PASS; the rig itself was not run |
+| `git diff --check` | PASS |
+
+### Choices and commit grouping
+
+- Exit codes 5/6/7 cover the three new failure states; send failure retains its Phase 1 exit code 1. `--stall-after 0` checks a running turn immediately. Runtime clock/sleep injection is a library test seam; CLI time is real.
+- Unsent includes a best-effort composer line plus the full screen, since terminal output does not provide a structured input-box boundary. Transcript signals, not this screen heuristic, determine submission.
+- No daemon was added. Caffeinate is tied to the launcher/harness PID rather than the short-lived `agent open` process. The prior MCP limitations remain unchanged.
+- Test-only commit group: `tests/agent-reliability.mjs`, additions to `tests/agent-cli.mjs`, `tests/fixtures/agent-cmux.mjs`, `tests/SUITE`, and the fault rig. Existing assertions are unchanged.
+- Implementation/docs group: `lib/agent.js`, `bin/agent.mjs`, `README.md`, this report.
+- **The rig is ignored by the repository's `builds/` rule. Include it explicitly with `git add -f builds/agent-command/rig/run.mjs` when committing.** No `.gitignore` or review-gate changes were made.

@@ -648,20 +648,58 @@ workspace and pane. At most four workers run at once across orchestrators; extra
 waiting `open` process alive: there is no background queue service. Every
 command accepts `--json`.
 
-`wait` polls the harness transcript and cmux events. It prints `done` (exit 0),
-`stuck` plus the screen's prompt (exit 3), or `timeout` (exit 4). The timeout is
-in seconds, defaults to 600, and zero checks once. A closed worker returns
-`done` with `closed: true` in JSON. Codex and Grok completion does not rely on
-cmux Stop hooks. `send` verifies a new user turn in the transcript and retries
-Enter up to three times; failure exits 1 so the orchestrator can inspect the
-worker. `answer` preserves the final message's exact bytes, including trailing
-spaces, without adding a newline; Grok falls back to the screen when no
-assistant history exists.
+`wait` polls the harness transcript and cmux events. JSON includes `state` and
+its compatible `status` alias. Plain output starts with the state, followed by
+its details when available:
+
+| State | Exit | Meaning |
+| --- | --- | --- |
+| `done` | 0 | The turn ended. When the final message's last nonempty line starts with `QUESTION:`, JSON includes `question: true` and the exact final answer in `text`. |
+| `stuck` | 3 | A permission prompt; `prompt` contains the screen text. |
+| `timeout` | 4 | No completion or fault before the requested timeout. |
+| `unsent` | 5 | A send has no confirmed new turn after 10 seconds; `input` is the detected composer line and `screen` preserves the screen for inspection. |
+| `no_start` | 6 | No session or transcript appeared within 60 seconds of open. |
+| `stalled` | 7 | A started, unfinished turn's transcript stopped growing; `steps` contains up to the last three available tool calls or commands. |
+
+`--timeout` is in seconds, defaults to 600, and zero checks once. `--stall-after`
+is in seconds and defaults to 300. A waiting orchestrator wakes on the first
+observed completion or fault; when multiple faults are already overdue, the
+oldest threshold wins. A closed worker returns `done` with `closed: true`.
+Codex and Grok completion does not rely on cmux Stop hooks.
+
+`send` confirms a new `task_started` event for Codex, a new non-tool-result
+user entry for Claude, or `turn_started` for Grok. It retries Enter up to three
+times and waits up to 10 seconds for proof. Failure exits 1 and persists the
+send attempt so `wait` also reports `unsent`. A Codex user-message line alone
+is insufficient. Messages longer than 400 characters are saved privately in
+the worker's run directory; only `Read <path> and follow it.` is sent to the
+composer. This avoids the long-paste placeholder that can remain unsubmitted.
+
+`answer` preserves the final message's exact bytes, including trailing spaces,
+without adding a newline; Grok falls back to the screen when no assistant
+history exists.
 
 Worker records, prompt files and launchers live in `~/.agent-config-studio/agents/`.
 `close` force-closes the surface and keeps the transcript. `list` and `wait`
 also close workers that have been done and idle for 30 minutes. Running workers
 remain open, including those waiting for a correction. There is no daemon.
+
+Each launcher records its process id in `<worker-id>/harness.pid` before exec
+and starts one `caffeinate -i -w <pid>` to hold off idle sleep while that worker
+process lives, including between turns. Its log is in the same run directory.
+The assertion ends when the process exits. A closed lid on battery still sleeps;
+caffeinate cannot prevent that. Interactive workers retain their terminal
+stdin; the cmux control subprocess reads no stdin. This command does not run
+headless Codex turns.
+
+The development-only fault rig is at `builds/agent-command/rig/run.mjs`.
+Run it with Node inside cmux, with `agent` installed and a worker slot available. It uses
+real workers, reports a pass/fail table, retains its scratch Git repository,
+and closes its workers on exit. It is outside the installed package. The rig
+uses `AGENT_TEST_MODE=1` with `AGENT_TEST_LAUNCH_EXTRA` (a JSON array of extra
+harness arguments) or `AGENT_TEST_BINARY` (a replacement executable) to provoke
+permission prompts and launch failures. These overrides are test-only and
+are ignored unless test mode is explicitly enabled.
 
 ### Asking another model (`ask-model`)
 
