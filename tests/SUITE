@@ -259,3 +259,5 @@ tests/agent-reliability.mjs                           ci:offline
 tests/agent-screens.mjs                               ci:offline
 
 tests/agent-surfaces.mjs                              ci:offline
+
+tests/agent-commands.mjs                              ci:offline

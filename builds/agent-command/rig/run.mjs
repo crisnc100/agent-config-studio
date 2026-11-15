@@ -86,10 +86,10 @@ try {
     const w = await open('opus', 'permission', 'Use the Bash tool to execute: printf rig_permission_check. Do not answer without executing it.', env); set(w);
     return wait(w, 15);
   });
-  await scenario('silent running turn', 'claude', 'stalled', 45, async set => {
+  await scenario('silent running turn', 'claude', 'long_command', 45, async set => {
     const env = { ...baseEnv, AGENT_TEST_LAUNCH_EXTRA: JSON.stringify(['--permission-mode', 'auto', '--append-system-prompt', 'This is a fault rig. Execute the requested sleep synchronously with run_in_background=false and wait for its result.']) };
     const w = await open('opus', 'sleep', 'Use the Bash tool to run python3 -c "import time; time.sleep(600)" synchronously with a timeout of 600000 milliseconds. Do not run it in the background and do not cancel it. Wait for it to finish.', env); set(w);
-    return wait(w, 45, ['--stall-after', '30']);
+    return wait(w, 45, ['--command-after', '30']);
   });
   await scenario('missing binary', 'codex', 'no_start', 75, async set => {
     const w = await open('sol', 'missing', 'This must never run.', { ...baseEnv, AGENT_TEST_BINARY: path.join(scratch, 'missing-harness') }); set(w);
