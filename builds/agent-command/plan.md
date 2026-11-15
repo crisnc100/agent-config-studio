@@ -22,19 +22,21 @@ Workers from another vendor (Codex: Sol, Terra, Astra; Grok), and every review, 
 - `agent send <id> "<text>"` (submit verified from the transcript, not the screen), `agent answer <id>` (final message, exact), `agent close <id>`, `agent list` (this orchestrator's workers).
 - Registry: one file per worker in ~/.agent-config-studio/agents/ (orchestrator workspace and pane, family, model, effort, cwd, surface, session, status, times). Feeds the board later.
 - Closing: a worker closes when the orchestrator accepts its work (`agent close`), or after 30 idle minutes with its transcript kept. Never on its own while it might get a correction.
+- Light on the Mac: workers start with no MCP servers unless the brief asks for one (`--mcp` to opt in), and at most 4 run at once; extra `agent open` calls queue and start as slots free.
 - Not in cmux: a plain message saying the command needs cmux; nothing else in ACS depends on it.
 
 ### PR 2 — skills use it (Cris's skills on this Mac, Claude and Codex twins)
 - The rule above in the delegation and /build skills; the orchestrator runs `agent wait` as a background task, so it is notified on done or stuck, answers routine prompts in the pane and brings Cris only real decisions.
 - context-pass: the writer may be any family; a non-Claude writer runs through `agent open` with write access.
 
-### PR 3 — watching reviews (review gate: precise lane)
+### PR 3 — watching judgment agents (review gate: precise lane)
+Covers every headless judgment call, not only reviews: code review, security, Grade, advisor, investigator and second opinions (everything through review.mjs and ask-model).
 - Sidebar line: each running review, security pass, advisor or grade sets a cmux sidebar status for its workspace ("security · fable · reading server.js", "review · sol · 1 finding so far"), cleared when it ends.
 - One review pane: all reviewers of a run stream into a single pane, one line per step, tagged by reviewer; opt-in setting in the review gate (default on for Cris), closes when the run ends.
 - Headless calls stay headless: same model proof, same format, same read-only sandbox.
 
 ### Later (separate plan)
-- ACS Agents board: every orchestrator workspace, its native and pane workers, and its reviews, live, with transcripts on click (read-only, localhost).
+- ACS Agents board — a window, not a control panel: it shows what each agent is thinking, doing and returning; it does not start, route or manage agents (stop is the only action). Every orchestrator workspace, its native and pane workers, and its reviews, live, with transcripts on click (read-only, localhost).
 - Phone access to the board.
 
 ## Out of scope

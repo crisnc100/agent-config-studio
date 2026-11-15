@@ -176,7 +176,7 @@ What it writes:
   `~/.agent-config-studio`, plus one `source` line appended to `~/.zshenv`.
 - **Commands you run:** `acs install` links `~/.local/bin/acs`;
   `acs install-model-id` writes `~/.local/bin/model-id` and
-  `~/.local/bin/ask-model`, and their copy in the studio folder; `acs install-worktree` writes `~/.config/worktree` and adds
+  `~/.local/bin/ask-model` and `~/.local/bin/agent`, and their copy in the studio folder; `acs install-worktree` writes `~/.config/worktree` and adds
   one line to `~/.zshrc`.
 - **Your temp folder:** each Grok Assist turn's prompt, in a file that is
   removed when the turn ends (in `~/.agent-config-studio/tmp` when the temp
@@ -496,13 +496,14 @@ model-id --sidecars
 - `--sidecars` lists ids in `~/.claude/settings.json` and `~/.codex/config.toml`
   that are no longer current.
 
-**`acs install-model-id`** puts `model-id` and `ask-model` on your PATH:
+**`acs install-model-id`** puts `model-id`, `ask-model` and `agent` on your PATH:
 
 - It copies the resolver out of this checkout (or the npm package) into
   `~/.agent-config-studio/resolver/`, writes a small launcher at
   `~/.agent-config-studio/bin/model-id`, and symlinks `~/.local/bin/model-id`
   to it. `ask-model` gets the same: a copy beside the resolver, a launcher,
-  and `~/.local/bin/ask-model`.
+  and `~/.local/bin/ask-model`. `agent` is copied and linked the same way at
+  `~/.local/bin/agent`.
 - It is a copy on purpose: skills keep resolving when a worktree is removed or
   a branch changes.
 - The launcher runs the node that did the install, then `node` on PATH, then
@@ -511,7 +512,7 @@ model-id --sidecars
 Re-run it:
 - after node moves (a Homebrew switch, a new machine);
 - after merging a change to `models.default.json`, `lib/models.js`, `lib/roles.js`,
-  `lib/roles.default.json`, `bin/model-id` or `tools/ask-model.mjs` — the
+  `lib/roles.default.json`, `bin/model-id`, `tools/ask-model.mjs` or the agent CLI — the
   installed copy does not follow the checkout;
 - after updating the npm package. The first start after an update says so
   when the installed copy differs from the package's.
@@ -601,6 +602,53 @@ the same checks as a hand edit; you see the whole change as a diff and nothing
 is written until you accept it. Flavor text becomes part of the instructions
 other agents are briefed with, so read a proposal before accepting it — it is
 the AI's reading of what you wrote, not a check of it.
+
+### Watchable workers (`agent`)
+
+`agent` runs an interactive worker in cmux. Install it with `acs install-model-id`
+and put `~/.local/bin` on PATH. `acs agent` also runs it from this checkout.
+It requires a reachable cmux socket; outside cmux it exits 2 with
+“agent needs cmux”. Other ACS commands do not need cmux.
+
+```sh
+acs agent open sol --effort medium --cwd /path/to/project --prompt-file task.md
+acs agent open opus "Read the project and explain its entry points"
+acs agent wait <id> --timeout 600
+acs agent send <id> "Check the error path too"
+acs agent answer <id>
+acs agent close <id>
+acs agent list --json
+```
+
+`open` prints a worker id. A family resolves through the same registry as
+`model-id`; `--role` records the job's role, and `--effort` sets the harness's
+reasoning effort when supported. Use either a task argument or `--prompt-file`.
+The launcher reads a private prompt file; prompt text is never typed into the
+terminal. Codex uses workspace-write with approvals disabled, Claude uses auto
+permissions, and Grok uses always-approve.
+
+Workers use tabs in a shared workers pane beside the orchestrator. Grok needs
+its own visible pane to start; focus returns to the orchestrator after its
+session appears, or after six seconds. Workers are scoped to the orchestrator's
+workspace and pane. At most four workers run at once across orchestrators; extra
+`open` calls and follow-ups to finished workers wait for a slot. Keep the
+waiting `open` process alive: there is no background queue service. Every
+command accepts `--json`.
+
+`wait` polls the harness transcript and cmux events. It prints `done` (exit 0),
+`stuck` plus the screen's prompt (exit 3), or `timeout` (exit 4). The timeout is
+in seconds, defaults to 600, and zero checks once. A closed worker returns
+`done` with `closed: true` in JSON. Codex and Grok completion does not rely on
+cmux Stop hooks. `send` verifies a new user turn in the transcript and retries
+Enter up to three times; failure exits 1 so the orchestrator can inspect the
+worker. `answer` preserves the final message's exact bytes, including trailing
+spaces, without adding a newline; Grok falls back to the screen when no
+assistant history exists.
+
+Worker records, prompt files and launchers live in `~/.agent-config-studio/agents/`.
+`close` force-closes the surface and keeps the transcript. `list` and `wait`
+also close workers that have been done and idle for 30 minutes. Running workers
+remain open, including those waiting for a correction. There is no daemon.
 
 ### Asking another model (`ask-model`)
 
