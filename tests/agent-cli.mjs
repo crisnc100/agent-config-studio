@@ -99,7 +99,10 @@ assert.equal(json(run(['list', '--json'])).find(w => w.id === active.id).status,
 const waitingIdle = records().find(w => w.id === other.id);
 waitingIdle.lastActivityAt = Date.now() - 31 * 60000;
 fs.writeFileSync(path.join(home, '.agent-config-studio/agents', `${waitingIdle.id}.json`), JSON.stringify(waitingIdle));
-assert.equal(json(run(['wait', waitingIdle.id, '--timeout', '0', '--json'])).closed, true);
+const idleWait = run(['wait', waitingIdle.id, '--timeout', '0', '--json']);
+assert.equal(idleWait.status, 8, idleWait.stderr);
+assert.equal(JSON.parse(idleWait.stdout).closed, true);
+assert.equal(JSON.parse(idleWait.stdout).state, 'closed');
 console.log('agent isolation/edge cases passed');
 const captured = path.join(home, 'captured-argv.json');
 fs.writeFileSync(path.join(fake, 'codex'), `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(captured)}, JSON.stringify({args:process.argv.slice(2),cwd:process.cwd()}));\n`, { mode: 0o755 });
