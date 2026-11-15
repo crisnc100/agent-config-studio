@@ -662,18 +662,26 @@ its details when available:
 | `timeout` | 4 | No completion or fault before the requested timeout. |
 | `unsent` | 5 | A send has no confirmed new turn after 10 seconds; `input` is the detected composer line and `screen` preserves the screen for inspection. |
 | `no_start` | 6 | No session or transcript appeared within 60 seconds of open. |
-| `stalled` | 7 | A started, unfinished turn has neither transcript growth nor an advancing running indicator; `steps` contains up to the last three available tool calls or commands. |
+| `stalled` | 7 | A started, unfinished turn has no open tool, transcript growth or advancing thinking indicator; `steps` contains up to the last three available tool calls or commands. |
 | `closed` | 8 | The worker was closed, its surface vanished, or it was closed after 30 idle minutes. JSON includes `closed: true`. |
+| `long_command` | 9 | A tool call has stayed open for `--command-after` seconds without a matching result. `command` contains its input or command text. |
 
 `--timeout` is in seconds, defaults to 600, and zero checks once. `--stall-after`
-is in seconds and defaults to 300. A waiting orchestrator wakes on the first
+is in seconds and defaults to 300. `--command-after` is in seconds and defaults
+to 600; zero checks an open tool immediately. A waiting orchestrator wakes on the first
 observed completion or fault; when multiple faults are already overdue, the
 oldest threshold wins, except a visible startup trust dialog takes precedence over
 `no_start`. Until a session exists, the screen is checked at least every three
 seconds. Trust remains the user’s decision; `agent` never answers the dialog
 or edits trust settings. Running indicators are sampled every three seconds
 and checked again before reporting a stall. Only an advancing elapsed time
-extends the stall deadline; a frozen spinner does not. The first elapsed
+extends the thinking stall deadline; a frozen spinner does not. While a tool
+is open, the UI timer does not count as thinking progress. The tool uses its
+own deadline, measured from its transcript timestamp or first observation
+when no timestamp exists. Matching results close calls individually, including
+failed results; parallel calls keep their own ages. Grok uses structured call
+records when available and otherwise recognizes explicit `Running:` or
+`Executing:` command rows on its screen. The first elapsed
 reading starts an observation window so it can be compared with a later sample.
 A closed worker returns `closed` with `closed: true`, including when its
 surface was closed manually. `wait` checks surface availability on each poll,
@@ -709,7 +717,10 @@ The development-only fault rig is at `builds/agent-command/rig/run.mjs`.
 Run it with Node inside cmux, with `agent` installed and a worker slot available. It uses
 real workers and reports six scenarios in a pass/fail table. Its scratch
 checkout is a detached worktree of this repository under `$TMPDIR`, so existing
-repository trust applies. A separate fresh Git repository checks folder trust.
+repository trust applies. The silent Python command checks `long_command`
+with a 30-second command threshold; `stalled` is covered offline because the
+rig does not reliably provoke a quiet turn without an open tool. A separate
+fresh Git repository checks folder trust.
 It closes its workers and removes the scratch worktree on exit. It is outside the installed package. The rig
 uses `AGENT_TEST_MODE=1` with `AGENT_TEST_LAUNCH_EXTRA` (a JSON array of extra
 harness arguments) or `AGENT_TEST_BINARY` (a replacement executable) to provoke

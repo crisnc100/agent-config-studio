@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { context, openWorker, waitWorker, sendWorker, answerWorker, closeWorker, listWorkers } from '../lib/agent.js';
-const usage = 'usage: agent open <family> [--effort e] [--cwd d] [--role r] [--mcp] (--prompt-file f | "task") [--json]\n       agent wait <id> [--timeout seconds] [--stall-after seconds] [--json]\n       agent send <id> "text" | answer <id> | close <id> | list [--json]';
+const usage = 'usage: agent open <family> [--effort e] [--cwd d] [--role r] [--mcp] (--prompt-file f | "task") [--json]\n       agent wait <id> [--timeout seconds] [--stall-after seconds] [--command-after seconds] [--json]\n       agent send <id> "text" | answer <id> | close <id> | list [--json]';
 const argv = process.argv.slice(2);
 async function main() {
   if (argv.includes('--help') || argv.includes('-h')) { console.log(usage); return 0; }
@@ -12,7 +12,7 @@ async function main() {
     if (args[i].startsWith('--')) {
       const flag = args[i];
       if (cmd === 'open' && flag === '--mcp') { opts.mcp = true; continue; }
-      const allowed = cmd === 'open' ? ['--effort', '--cwd', '--role', '--prompt-file'] : cmd === 'wait' ? ['--timeout', '--stall-after'] : [];
+      const allowed = cmd === 'open' ? ['--effort', '--cwd', '--role', '--prompt-file'] : cmd === 'wait' ? ['--timeout', '--stall-after', '--command-after'] : [];
       if (!allowed.includes(flag) || args[i + 1] === undefined) throw Object.assign(new Error(usage), { exitCode: 2 });
       opts[flag === '--prompt-file' ? 'promptFile' : flag.slice(2)] = args[++i];
     } else pos.push(args[i]);
@@ -27,10 +27,12 @@ async function main() {
     if (!Number.isFinite(timeout) || timeout < 0) throw Object.assign(new Error('invalid timeout'), { exitCode: 2 });
     const stallAfter = opts['stall-after'] === undefined ? 300 : Number(opts['stall-after']);
     if (!Number.isFinite(stallAfter) || stallAfter < 0) throw Object.assign(new Error('invalid stall-after'), { exitCode: 2 });
-    const r = await waitWorker(pos[0], timeout, ctx, { stallAfter });
-    const details = r.prompt || r.input || r.text || r.steps?.join('\n');
+    const commandAfter = opts['command-after'] === undefined ? 600 : Number(opts['command-after']);
+    if (!Number.isFinite(commandAfter) || commandAfter < 0) throw Object.assign(new Error('invalid command-after'), { exitCode: 2 });
+    const r = await waitWorker(pos[0], timeout, ctx, { stallAfter, commandAfter });
+    const details = r.prompt || r.input || r.text || r.command || r.steps?.join('\n');
     console.log(json ? JSON.stringify(r) : r.state + (details ? `\n${details}` : ''));
-    return { done: 0, stuck: 3, timeout: 4, unsent: 5, no_start: 6, stalled: 7, closed: 8 }[r.state];
+    return { done: 0, stuck: 3, timeout: 4, unsent: 5, no_start: 6, stalled: 7, closed: 8, long_command: 9 }[r.state];
   }
   if (cmd === 'send' && pos.length === 2) {
     const r = await sendWorker(pos[0], pos[1], ctx);
