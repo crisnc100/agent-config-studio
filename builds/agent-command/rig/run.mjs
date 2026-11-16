@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-if (!process.env.CMUX_SOCKET_PATH) throw new Error('Run this rig inside cmux with agent installed on PATH.');
+if (!process.env.CMUX_SOCKET_PATH) throw new Error('Run this rig inside cmux with acs-agent installed on PATH.');
 const repo = fs.realpathSync(fileURLToPath(new URL('../../../', import.meta.url)));
 const temp = fs.realpathSync(fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'agent-fault-rig-')));
 const scratch = path.join(temp, 'worktree');
@@ -20,7 +20,7 @@ delete baseEnv.AGENT_TEST_BINARY;
 delete baseEnv.AGENT_TEST_LAUNCH_EXTRA;
 function command(binary, args, { env = baseEnv, timeout = 90000, cwd = repo, cleanup = false } = {}) {
   return new Promise((resolve, reject) => {
-    if (interrupted && !cleanup && !(binary === 'agent' && ['close', 'list'].includes(args[0]))) return reject(new Error('rig interrupted'));
+    if (interrupted && !cleanup && !(binary === 'acs-agent' && ['close', 'list'].includes(args[0]))) return reject(new Error('rig interrupted'));
     const child = spawn(binary, args, { env, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     activeChild = child;
     let out = '', err = '';
@@ -34,20 +34,20 @@ function command(binary, args, { env = baseEnv, timeout = 90000, cwd = repo, cle
 async function open(family, folder, task, env = baseEnv) {
   const cwd = path.isAbsolute(folder) ? folder : path.join(scratch, folder);
   fs.mkdirSync(cwd, { recursive: true });
-  const r = await command('agent', ['open', family, '--cwd', cwd, task, '--json'], { env });
+  const r = await command('acs-agent', ['open', family, '--cwd', cwd, task, '--json'], { env });
   if (r.code !== 0) throw new Error(r.err || `open failed: ${r.signal}`);
   const w = JSON.parse(r.out);
   owned.add(w.id);
   return w;
 }
 async function wait(w, seconds, extra = []) {
-  const r = await command('agent', ['wait', w.id, '--timeout', String(seconds), '--json', ...extra], { timeout: (seconds + 5) * 1000 });
+  const r = await command('acs-agent', ['wait', w.id, '--timeout', String(seconds), '--json', ...extra], { timeout: (seconds + 5) * 1000 });
   if (!r.out.trim()) throw new Error(r.err || `wait failed: ${r.signal}`);
   return JSON.parse(r.out);
 }
 async function close(w) {
   if (!w) return;
-  const r = await command('agent', ['close', w.id], { timeout: 15000 });
+  const r = await command('acs-agent', ['close', w.id], { timeout: 15000 });
   if (r.code !== 0) throw new Error(`close ${w.id}: ${r.err || r.signal}`);
   owned.delete(w.id);
 }
@@ -74,10 +74,10 @@ try {
     const first = await wait(w, 120);
     if (first.state !== 'done') return first;
     const message = `${'Reference context. '.repeat(100)}\nReply LONG_OK as your only answer.`;
-    const sent = await command('agent', ['send', w.id, message, '--json'], { timeout: 20000 });
+    const sent = await command('acs-agent', ['send', w.id, message, '--json'], { timeout: 20000 });
     const result = await wait(w, 120);
     if (sent.code !== 0 && result.state === 'done') throw new Error(`send failed without a reported unsent state: ${sent.err}`);
-    const answer = await command('agent', ['answer', w.id]);
+    const answer = await command('acs-agent', ['answer', w.id]);
     if (result.state === 'done' && answer.out.trim() !== 'LONG_OK') throw new Error('done with an unexpected long-message answer');
     return result;
   });
@@ -108,7 +108,7 @@ try {
   });
 } finally {
   try {
-    const listed = await command('agent', ['list', '--json'], { timeout: 15000 });
+    const listed = await command('acs-agent', ['list', '--json'], { timeout: 15000 });
     if (listed.code === 0) for (const w of JSON.parse(listed.out)) {
       if (w.status !== 'closed' && w.cwd.startsWith(temp + path.sep)) owned.add(w.id);
     }
