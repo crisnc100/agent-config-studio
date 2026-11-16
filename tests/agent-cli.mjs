@@ -191,11 +191,11 @@ const argvOf = w => {
   return JSON.parse(fs.readFileSync(captured)).args;
 };
 const defaultClaudeArgs = argvOf(claudeDefault);
-assert.deepEqual(defaultClaudeArgs, ['--model', claudeDefault.model, '--permission-mode', 'auto', '--strict-mcp-config', 'MCP default']);
-assert.deepEqual(argvOf(claudeOptIn), ['--model', claudeOptIn.model, '--permission-mode', 'auto', 'MCP opt in']);
-assert.deepEqual(argvOf(codexOptIn), ['-m', codexOptIn.model, '-s', 'workspace-write', '-a', 'never', 'MCP opt in']);
-assert.deepEqual(argvOf(grokOptIn), ['-m', grokOptIn.model, '--always-approve', 'MCP opt in']);
-assert.deepEqual(argvOf(grok), ['-m', grok.model, '--always-approve', 'task']);
+assert.deepEqual(defaultClaudeArgs, ['--model', claudeDefault.model, '--permission-mode', 'auto', '--strict-mcp-config', '--', 'MCP default']);
+assert.deepEqual(argvOf(claudeOptIn), ['--model', claudeOptIn.model, '--permission-mode', 'auto', '--', 'MCP opt in']);
+assert.deepEqual(argvOf(codexOptIn), ['-m', codexOptIn.model, '-s', 'workspace-write', '-a', 'never', '--', 'MCP opt in']);
+assert.deepEqual(argvOf(grokOptIn), ['-m', grokOptIn.model, '--always-approve', '--', 'MCP opt in']);
+assert.deepEqual(argvOf(grok), ['-m', grok.model, '--always-approve', '--', 'task']);
 console.log('agent all harness launcher argv passed');
 
 const caffeineDeadline = Date.now() + 5000;
