@@ -16,7 +16,7 @@
       },
       {
        "claim": "--timeout default 600, --stall-after 300, --command-after 600",
-       "at": "bin/agent.mjs:26-32"
+       "at": "bin/agent.mjs:26"
       },
       {
        "claim": "at most four workers; extra opens wait",
@@ -28,11 +28,11 @@
       },
       {
        "claim": "messages over 400 chars sent as 'Read <path> and follow it.'",
-       "at": "lib/agent.js:584-587"
+       "at": "lib/agent.js:584"
       },
       {
        "claim": "done workers closed after 30 idle minutes by list/wait",
-       "at": "lib/agent.js:537-543"
+       "at": "lib/agent.js:537"
       },
       {
        "claim": "Claude gets --strict-mcp-config unless --mcp",
@@ -40,7 +40,7 @@
       },
       {
        "claim": "Codex git grants objects/refs/logs plus worktree admin dir",
-       "at": "lib/agent.js:459-481"
+       "at": "lib/agent.js:459"
       },
       {
        "claim": "launcher writes harness.pid and starts caffeinate -i -w",
@@ -48,7 +48,7 @@
       },
       {
        "claim": "Grok focus returns after session or six seconds",
-       "at": "lib/agent.js:501-506"
+       "at": "lib/agent.js:501"
       }
      ]
     }
@@ -67,11 +67,11 @@
      "claims": [
       {
        "claim": "install-model-id links ~/.local/bin/agent",
-       "at": "bin/agent-install.mjs:20-30"
+       "at": "bin/agent-install.mjs:20"
       },
       {
        "claim": "acs agent runs the CLI from the checkout",
-       "at": "bin/acs:483-485"
+       "at": "bin/acs:483"
       },
       {
        "claim": "re-run install after agent CLI changes",
