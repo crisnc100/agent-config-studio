@@ -12,19 +12,22 @@ export function install({ home, studio, resolver }) {
     try { fs.writeFileSync(tmp, body, { flag: 'wx', mode }); fs.renameSync(tmp, dest); }
     finally { fs.rmSync(tmp, { force: true }); }
   };
-  const link = path.join(home, '.local', 'bin', 'agent');
+  const launcher = path.join(studio, 'bin', 'acs-agent');
+  const link = path.join(home, '.local', 'bin', 'acs-agent');
   let existing;
   try { existing = fs.lstatSync(link); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  if (existing && !existing.isSymbolicLink()) throw new Error('~/.local/bin/agent exists and is not a symlink — not replacing it');
+  if (existing && !existing.isSymbolicLink()) throw new Error('~/.local/bin/acs-agent exists and is not a symlink — not replacing it');
+  if (existing && path.resolve(path.dirname(link), fs.readlinkSync(link)) !== launcher) {
+    throw new Error('~/.local/bin/acs-agent points elsewhere — not replacing it');
+  }
   for (const file of ['lib/paths.js', 'lib/roots.js', 'lib/agent.js', 'bin/agent-install.mjs', 'bin/agent.mjs']) {
     put(path.join(resolver, file), readUserText(path.join(source, file)));
   }
   const quote = s => `'${s.replace(/'/g, `'\\''`)}'`;
-  const launcher = path.join(studio, 'bin', 'agent');
   put(launcher, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(path.join(resolver, 'bin', 'agent.mjs'))} "$@"\n`, 0o755);
   fs.mkdirSync(path.dirname(link), { recursive: true });
   const tmp = `${link}.tmp-${crypto.randomUUID()}`;
   try { fs.symlinkSync(launcher, tmp); fs.renameSync(tmp, link); }
   finally { fs.rmSync(tmp, { force: true }); }
-  return 'linked    ~/.local/bin/agent → ~/.agent-config-studio/bin/agent\n';
+  return 'linked    ~/.local/bin/acs-agent → ~/.agent-config-studio/bin/acs-agent\n';
 }
