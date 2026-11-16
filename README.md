@@ -676,8 +676,8 @@ its details when available:
 is in seconds and defaults to 300. `--command-after` is in seconds and defaults
 to 600; zero checks an open tool immediately. A waiting orchestrator wakes on the first
 observed completion or fault; when multiple faults are already overdue, the
-oldest threshold wins, except a visible startup trust dialog takes precedence over
-`no_start`. Until a session exists, the screen is checked at least every three
+oldest threshold wins, except pending approvals take precedence over other
+faults, including `long_command`, `stalled` and startup `no_start`. Until a session exists, the screen is checked at least every three
 seconds. Trust remains the user’s decision; `agent` never answers the dialog
 or edits trust settings. Running indicators are sampled every three seconds
 and checked again before reporting a stall. Only an advancing elapsed time
@@ -702,7 +702,10 @@ code or wait deadline.
 
 `send` refuses stuck workers with exit 3 and names the stuck state. It checks
 for trust and permission dialogs before sending text and before every Enter
-attempt, stopping if one appears during submission. It never answers dialogs.
+attempt, stopping if one appears during submission. Unresolved permission hooks
+block sending independently of command deadlines. Screen detection requires a
+question and both choice rows in the bottom 20 screen lines, so ordinary answer
+text and older scrollback do not block follow-ups. It never answers dialogs.
 A matching tool result, a later turn, or an observed dialog disappearing
 retires the old permission request.
 
@@ -715,8 +718,9 @@ the worker's run directory; only `Read <path> and follow it.` is sent to the
 composer. This avoids the long-paste placeholder that can remain unsubmitted.
 
 `answer` preserves the final message's exact bytes, including trailing spaces,
-without adding a newline; Grok falls back to the screen when no assistant
-history exists.
+without adding a newline; after a completed turn, Grok falls back to the screen
+when no assistant history exists. Before the current turn finishes, `answer`
+exits nonzero with `no answer yet (state …)`.
 
 Worker records, prompt files and launchers live in `~/.agent-config-studio/agents/`.
 `close` force-closes the surface and keeps the transcript. `list` and `wait`
