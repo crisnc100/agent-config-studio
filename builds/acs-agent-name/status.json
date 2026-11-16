@@ -1,3 +1,1 @@
-{"f1":{"status":"fixed","response":"real","test":"builds/agent-command/rig/run.mjs spawns acs-agent; live rig 6/6 with acs-agent on PATH"},
- "f2":{"status":"deferred","reason":"LOW: filed. Only when ~/.local/bin/acs-agent is someone else's link; the install then stops before ask-model with a stack trace","fix":"catch the agent install error in bin/model-id.mjs, print it in one line, and still install ask-model"},
- "f3":{"status":"deferred","reason":"LOW: filed (also noted by the test-change check). The README audit accepts acs-agent words that aren't verbs","fix":"match verbs against the usage verb list and flags as whole words per verb"}}
+{"f1": {"status": "fixed", "response": "real", "test": "builds/agent-command/rig/run.mjs spawns acs-agent; live rig 6/6 with acs-agent on PATH"}}
