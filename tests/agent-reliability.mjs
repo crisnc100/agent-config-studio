@@ -69,8 +69,9 @@ append(path.join(home, '.cmuxterm/events.jsonl'), { name: 'agent.hook.Permission
 assert.equal((await waitWorker(blocked.id, 0, ctx, runtime)).state, 'stuck');
 for (const vendor of ['codex', 'claude', 'grok']) {
   clock = epoch;
-  const w = worker(vendor);
-  change(w, { pendingSend: { sentAt: epoch, startedBefore: 0 } });
+  const initial = vendor === 'codex' ? ev('task_started') : vendor === 'claude' ? { type: 'user', message: { content: 'launch task' } } : { type: 'turn_started' };
+  const w = worker(vendor, [initial]);
+  change(w, { pendingSend: { sentAt: epoch, startedBefore: 1 } });
   if (vendor === 'codex') append(w.transcript, ev('user_message', { message: 'not started' }));
   clock += 9999;
   assert.equal((await waitWorker(w.id, 0, ctx, runtime)).state, 'timeout');
@@ -83,7 +84,7 @@ for (const vendor of ['codex', 'claude', 'grok']) {
 }
 // Sending waits for task_started, even when a user-message line already exists.
 clock = epoch;
-const send = worker('codex');
+const send = worker('codex', [ev('task_started')]);
 let emittedUser = false;
 const successful = { now: () => clock, sleep: async ms => {
   clock += ms;
@@ -92,7 +93,7 @@ const successful = { now: () => clock, sleep: async ms => {
 } };
 assert.equal((await sendWorker(send.id, 'short message', ctx, successful)).status, 'running');
 assert.ok(clock - epoch >= 1500);
-const long = worker('codex');
+const long = worker('codex', [ev('task_started')]);
 clock = epoch;
 let started = false;
 const longRuntime = { now: () => clock, sleep: async ms => { clock += ms; if (!started) { append(long.transcript, ev('task_started')); started = true; } } };
@@ -105,7 +106,7 @@ const messagePath = sent.slice(5, -15);
 assert.equal(fs.readFileSync(messagePath, 'utf8'), longText);
 assert.ok(messagePath.startsWith(long.runDir + path.sep));
 clock = epoch;
-const failed = worker('codex');
+const failed = worker('codex', [ev('task_started')]);
 await assert.rejects(sendWorker(failed.id, 'unsubmitted', ctx, runtime), /submission/);
 assert.ok(clock - epoch >= 10000);
 assert.equal((await waitWorker(failed.id, 0, ctx, runtime)).state, 'unsent');

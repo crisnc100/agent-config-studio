@@ -79,13 +79,13 @@ function permission(w) {
   fs.appendFileSync(path.join(home, '.cmuxterm/events.jsonl'), line({ name: 'agent.hook.PermissionRequest', surface_id: w.surface_id, occurred_at: new Date().toISOString() }));
 }
 if (cmd === 'send') {
-  const w = state.workers[opt('--surface')]; w.pending = args.at(-1); w.enters = 0;
+  const w = state.workers[opt('--surface')]; w.pending = (w.pending || '') + args.at(-1); w.enters = 0;
   if (process.env.FAKE_PERMISSION_ON_SEND) permission(w);
 }
 if (cmd === 'send-key') {
   const w = state.workers[opt('--surface')];
   if (++w.enters === 1 && process.env.FAKE_PERMISSION_AFTER_ENTER) permission(w);
-  if (w.enters === 2 && !process.env.FAKE_NO_SUBMIT) turn(w, w.pending);
+  if (w.enters === 2 && !process.env.FAKE_NO_SUBMIT) { turn(w, w.pending); w.pending = ''; }
 }
 if (cmd === 'read-screen' || cmd === 'close-surface') {
   const w = state.workers[opt('--surface')];
