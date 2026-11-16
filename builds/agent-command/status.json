@@ -1,0 +1,7 @@
+{"f1":{"status":"fixed","response":"real","test":"tests/agent-review-fixes.mjs case f1 — transcripts found under CODEX_HOME, CLAUDE_CONFIG_DIR and GROK_HOME"},
+ "f2":{"status":"fixed","response":"real","test":"tests/agent-review-fixes.mjs case f2 — a turn typed in the pane counts as running work"},
+ "f3":{"status":"fixed","response":"real","test":"tests/agent-review-fixes.mjs case f3 — a permission request retires on its tool result"},
+ "s1":{"status":"fixed","response":"real","test":"tests/agent-review-fixes.mjs case s1 and tests/agent-cli.mjs — task always follows --; live: Grok and Codex workers with a task starting --config=x"},
+ "s2":{"status":"fixed","response":"real","test":"tests/agent-review-fixes.mjs case s2 — send refuses (exit 3) while stuck; live: send exit 3 on a Grok trust dialog"},
+ "x1":{"status":"fixed","response":"real","test":"tests/agent-review-fixes.mjs — pending approvals block send even with a long command open; Claude edit approvals recognised; tests/agent-reliability.mjs permission outranks stall"},
+ "x2":{"status":"fixed","response":"real","test":"tests/agent-review-fixes.mjs — answer text with 'Would you like to proceed?' and no choice rows is not a dialog"}}
