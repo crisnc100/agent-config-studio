@@ -1,0 +1,10 @@
+**All three commits pass. None of them weakens an assertion.**
+
+**71b87c6: PASS.** The old test only checked `closed === true`. The new one keeps that check and adds two more: the exit code must be `8` (`idleWait.status`), and `state` must be `'closed'`. It's strictly tighter. Broken code that still printed `closed: true` would have passed before and fails now if it exits with the wrong code or reports the wrong state.
+
+**0adc147: PASS.** All five checks still use `deepEqual` on the whole argv, so every flag, the flag order, the model and the exact task text are still pinned. The only change is a required `'--'` just before the task. That is stricter: if the separator is missing, or extra or reordered arguments appear, the test fails. No field became optional.
+
+**96bb4c8 (fixtures only): PASS.** The assertions are unchanged: `state` is still `'stalled'`/`'timeout'`, there are still 3 steps, and the last step still matches `/command 4/` or `/history command 4/`. The fixtures now close each tool call with a result carrying the matching id. I checked that this is a correction, not a way to make the tests pass:
+- In `lib/agent.js:151-179` (`toolsIn`), a call stays open until a result with the same id arrives. An open call is reported as `long_command`, not `stalled`. The old fixtures left every call open, which now correctly means "a command is still running", so they no longer described a stall.
+- The behavior that moved out of these fixtures is still covered in `tests/agent-commands.mjs`. Line 50 checks that an open tool is not stalled at the thinking threshold. Line 61 checks that a quiet turn after the tool result does stall. Line 65 checks that a parallel result doesn't hide the oldest open call, and line 74 that missing ids don't hide an open tool.
+- The new Claude `tool_result` messages hold only array content with no text block. That means they don't trigger the user-turn reset at `lib/agent.js:159`, so the step history the `/command 4/` check reads is kept.
