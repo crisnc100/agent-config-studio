@@ -623,8 +623,12 @@ acs agent list --json
 `open` prints a worker id. A family resolves through the same registry as
 `model-id`; `--role` records the job's role, and `--effort` sets the harness's
 reasoning effort when supported. Use either a task argument or `--prompt-file`.
-The launcher reads a private prompt file; prompt text is never typed into the
-terminal. Codex uses workspace-write with approvals disabled, Claude uses auto
+Each worker records its effective harness home, honoring `CODEX_HOME`,
+`CLAUDE_CONFIG_DIR` and `GROK_HOME` at launch. Later commands use that recorded
+home even if their caller’s environment changes.
+The launcher reads a private prompt file and passes it after the harness’s
+end-of-options delimiter, so option-shaped briefs remain literal task text.
+Prompt text is never typed into the terminal. Codex uses workspace-write with approvals disabled, Claude uses auto
 permissions, and Grok uses always-approve.
 
 Claude workers start with `--strict-mcp-config`, so they load no MCP servers.
@@ -649,7 +653,9 @@ Workers are scoped to the orchestrator's
 workspace and pane. At most four workers run at once across orchestrators; extra
 `open` calls and follow-ups to finished workers wait for a slot. Keep the
 waiting `open` process alive: there is no background queue service. Every
-command accepts `--json`.
+command accepts `--json`. Turns submitted directly in a worker pane count as
+running work, update its activity, occupy a worker slot and keep fault checks
+active.
 
 `wait` polls the harness transcript, cmux events and worker screen. JSON includes `state` and
 its compatible `status` alias. Plain output starts with the state, followed by
@@ -693,6 +699,12 @@ When a known session's transcript remains unresolved after 30 seconds,
 Transcript-based completion and tool checks are unavailable until that file is
 found. The flag clears when discovery succeeds and does not change the exit
 code or wait deadline.
+
+`send` refuses stuck workers with exit 3 and names the stuck state. It checks
+for trust and permission dialogs before sending text and before every Enter
+attempt, stopping if one appears during submission. It never answers dialogs.
+A matching tool result, a later turn, or an observed dialog disappearing
+retires the old permission request.
 
 `send` confirms a new `task_started` event for Codex, a new non-tool-result
 user entry for Claude, or `turn_started` for Grok. It retries Enter up to three
