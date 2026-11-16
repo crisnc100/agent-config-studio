@@ -18,7 +18,7 @@ process.env.PATH = `${bin}:${process.env.PATH}`;
 const env = () => ({ ...process.env, CMUX_SOCKET_PATH: 'fake', CMUX_WORKSPACE_ID: 'workspace:1' });
 const cli = (args, extra = {}) => spawnSync(process.execPath, [path.join(root, 'bin/agent.mjs'), ...args], { env: { ...env(), ...extra }, encoding: 'utf8', timeout: 15000 });
 const json = r => { assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
-const { waitWorker, sendWorker, listWorkers, openWorker } = await import('../lib/agent.js');
+const { waitWorker, sendWorker, listWorkers, openWorker, answerWorker } = await import('../lib/agent.js');
 const records = path.join(home, '.agent-config-studio/agents'); fs.mkdirSync(records, { recursive: true });
 const events = path.join(home, '.cmuxterm/events.jsonl'); fs.mkdirSync(path.dirname(events)); fs.writeFileSync(events, '');
 const statePath = path.join(home, 'fake-cmux.json');
@@ -47,6 +47,72 @@ const result = (id = 'a') => ({ type: 'user', timestamp: stamp(), message: { con
 const permission = (w, id = 'a') => fs.appendFileSync(events, JSON.stringify({ name: 'agent.hook.PermissionRequest', surface_id: w.surface_id, occurred_at: stamp(), payload: { tool_use_id: id } })+'\n');
 const inputCalls = w => state().calls.filter(a => (a.includes('send') || a.includes('send-key')) && a.includes(w.surface_ref));
 const cases = {
+  async x1() {
+    const approvalRuntime = { now: runtime.now, sleep: runtime.sleep };
+    clock = epoch;
+    const w = worker('claude',[started('claude'),tool()]);
+    clock += 610000;
+    permission(w);
+    show(w,'Do you want to make this edit to example.js?\n❯ 1. Yes\n  2. No');
+    await assert.rejects(sendWorker(w.id,'never approve',ctx,approvalRuntime),/stuck/);
+    assert.equal(inputCalls(w).length,0,'a newer approval cannot receive text or Enter behind an old command');
+    assert.equal((await waitWorker(w.id,0,ctx,approvalRuntime)).state,'stuck');
+    show(w,'Worker screen');
+    assert.equal((await waitWorker(w.id,0,ctx,approvalRuntime)).state,'long_command','observed dismissal retires the request');
+    clock += 1000; permission(w,'b');
+    await assert.rejects(sendWorker(w.id,'hook only',ctx,approvalRuntime),/stuck/);
+    assert.equal(inputCalls(w).length,0,'an unresolved hook blocks even without a recognized screen');
+    assert.equal((await waitWorker(w.id,0,ctx,approvalRuntime)).state,'stuck');
+    const postStartTrust = worker('claude',[started('claude')]);
+    show(postStartTrust,'Accessing workspace:\nYes, I trust this folder\nNo, exit');
+    assert.equal((await waitWorker(postStartTrust.id,0,ctx,approvalRuntime)).state,'timeout','session start invalidates the startup wait state');
+    await assert.rejects(sendWorker(postStartTrust.id,'do not trust',ctx,approvalRuntime),/stuck/);
+    assert.equal(inputCalls(postStartTrust).length,0,'sending still checks the visible dialog independently of wait state');
+    for (const question of ['Do you want to make this edit to example.js?', 'Do you want to create example.js?', 'Do you want to write to example.js?', 'Do you want to overwrite example.js?', 'Do you want to allow Claude to fetch this content?']) {
+      const screenOnly = worker('claude',[started('claude'),tool()]);
+      show(screenOnly,`${question}\n❯ 1. Yes\n  2. Yes, allow all edits during this session\n  3. No`);
+      await assert.rejects(sendWorker(screenOnly.id,'screen only',ctx,approvalRuntime),/stuck/);
+      assert.equal(inputCalls(screenOnly).length,0,question);
+      assert.equal((await waitWorker(screenOnly.id,0,ctx,approvalRuntime)).state,'stuck');
+    }
+  },
+  async x2() {
+    for (const output of ['Would you like to proceed?', 'Do you want to proceed?\n1. Yes\n2. No\n'+Array.from({length:30},(_,i)=>`Answer line ${i}`).join('\n')]) {
+      clock = Date.now(); const w = worker('claude',[started('claude'),done('claude')]);
+      show(w,output);
+      assert.equal((await waitWorker(w.id,0,ctx,runtime)).state,'done');
+      await sendWorker(w.id,'a normal follow-up',ctx,runtime);
+      assert.ok(inputCalls(w).some(a=>a.includes('send-key')),'ordinary answer and scrollback do not block submission');
+    }
+  },
+  async g1answer() {
+    clock = Date.now(); const w = worker('grok',[started('grok')]);
+    show(w,'An unfinished screen is not an answer');
+    assert.throws(()=>answerWorker(w.id,ctx),/no answer yet \(state running\)/);
+    const response=cli(['answer',w.id]);
+    assert.notEqual(response.status,0); assert.equal(response.stdout,''); assert.match(response.stderr,/no answer yet \(state running\)/);
+  },
+  async g1() {
+    clock = Date.now(); const w = worker('grok');
+    const saved=record(w); saved.session=null; saved.transcript=null; saved.openedAt=clock-150000;
+    fs.writeFileSync(path.join(records,`${w.id}.json`),JSON.stringify(saved));
+    show(w,fs.readFileSync(path.join(root,'tests/fixtures/agent-screens/grok-trust-narrow.txt'),'utf8'));
+    assert.equal((await waitWorker(w.id,0,ctx,runtime)).state,'stuck');
+    await assert.rejects(sendWorker(w.id,'never trust',ctx,runtime),/stuck/);
+    assert.equal(inputCalls(w).length,0);
+    assert.throws(()=>answerWorker(w.id,ctx),/no answer yet \(state stuck\)/);
+    const response=cli(['answer',w.id]);
+    assert.notEqual(response.status,0); assert.match(response.stderr,/no answer yet \(state stuck\)/); assert.equal(response.stdout,'');
+    for (const vendor of ['codex','claude','grok']) {
+      const active=worker(vendor,[started(vendor)]);
+      assert.throws(()=>answerWorker(active.id,ctx),/no answer yet \(state running\)/);
+      const unfinished=worker(vendor,[started(vendor),done(vendor),started(vendor)]);
+      assert.throws(()=>answerWorker(unfinished.id,ctx),/no answer yet \(state running\)/,'a prior turn is not the current answer');
+    }
+    const fallback=worker('grok',[started('grok'),done('grok')]); show(fallback,'Completed answer');
+    assert.equal(answerWorker(fallback.id,ctx),'Completed answer','screen fallback remains available after completion');
+  },
+
   async f1() {
     for (const [family, variable] of [['sol','CODEX_HOME'], ['opus','CLAUDE_CONFIG_DIR'], ['grok','GROK_HOME']]) {
       const launchHome = path.join(home, `private ${family}`);
