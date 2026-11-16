@@ -55,13 +55,13 @@ if (cmd === 'new-pane' || cmd === 'new-surface') {
   const session = `session-${n}`;
   const w = { vendor, cwd, session, surface_id: `UUID-${n}`, surface_ref: `surface:${n + 10}` };
   if (vendor === 'codex') {
-    w.transcript = path.join(home, '.codex/sessions/2026/11/14', `rollout-${session}.jsonl`);
+    w.transcript = path.join(process.env.CODEX_HOME || path.join(home, '.codex'), 'sessions/2026/11/14', `rollout-${session}.jsonl`);
     put(w.transcript, line({ type: 'session_meta', payload: { id: session, cwd } }));
   } else if (vendor === 'claude') {
-    w.transcript = path.join(home, '.claude/projects', cwd.replace(/\//g, '-'), `${session}.jsonl`);
+    w.transcript = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'projects', cwd.replace(/\//g, '-'), `${session}.jsonl`);
     put(w.transcript, '');
   } else {
-    w.transcript = path.join(home, '.grok/sessions', cwd.replace(/\//g, '%2F'), session, 'events.jsonl');
+    w.transcript = path.join(process.env.GROK_HOME || path.join(home, '.grok'), 'sessions', cwd.replace(/\//g, '%2F'), session, 'events.jsonl');
     w.history = path.join(path.dirname(w.transcript), 'chat_history.jsonl');
     put(w.transcript, ''); put(w.history, '');
   }
@@ -74,17 +74,29 @@ if (cmd === 'new-pane' || cmd === 'new-surface') {
   state.workers[w.surface_ref] = w;
   out = { ...w };
 }
-if (cmd === 'send') { state.workers[opt('--surface')].pending = args.at(-1); state.workers[opt('--surface')].enters = 0; }
+function permission(w) {
+  w.screen = 'Do you want to proceed?\n1. Yes\n2. No';
+  fs.appendFileSync(path.join(home, '.cmuxterm/events.jsonl'), line({ name: 'agent.hook.PermissionRequest', surface_id: w.surface_id, occurred_at: new Date().toISOString() }));
+}
+if (cmd === 'send') {
+  const w = state.workers[opt('--surface')]; w.pending = args.at(-1); w.enters = 0;
+  if (process.env.FAKE_PERMISSION_ON_SEND) permission(w);
+}
 if (cmd === 'send-key') {
   const w = state.workers[opt('--surface')];
-  if (++w.enters === 2 && !process.env.FAKE_NO_SUBMIT) turn(w, w.pending);
+  if (++w.enters === 1 && process.env.FAKE_PERMISSION_AFTER_ENTER) permission(w);
+  if (w.enters === 2 && !process.env.FAKE_NO_SUBMIT) turn(w, w.pending);
 }
 if (cmd === 'read-screen' || cmd === 'close-surface') {
   const w = state.workers[opt('--surface')];
   if (cmd === 'read-screen' && process.env.FAKE_REMOVE_AFTER_READ && (state.removalReads = (state.removalReads || 0) + 1) > 1) w.closed = true;
   if (!w || w.closed || !state.panes.includes(w.pane_ref)) fail('not_found');
   if (cmd === 'close-surface') w.closed = true;
-  else out = { text: 'Allow this command?\n1. Yes' };
+  else {
+    const events = fs.readFileSync(path.join(home, '.cmuxterm/events.jsonl'), 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+    const pending = events.some(e => e.surface_id === w.surface_id && e.name === 'agent.hook.PermissionRequest');
+    out = { text: w.screen ?? (pending || w.vendor === 'grok' && !fs.existsSync(w.history) ? 'Allow this command?\n1. Yes' : 'Worker screen') };
+  }
 }
 if (cmd === 'list-pane-surfaces') out = { surfaces: Object.values(state.workers).filter(w => !w.closed && (!args.includes('--pane') || w.pane_ref === opt('--pane'))) };
 put(file, JSON.stringify(state));

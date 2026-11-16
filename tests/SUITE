@@ -263,3 +263,5 @@ tests/agent-surfaces.mjs                              ci:offline
 tests/agent-commands.mjs                              ci:offline
 
 tests/agent-sessions.mjs                              ci:offline
+
+tests/agent-review-fixes.mjs                          ci:offline
