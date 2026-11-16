@@ -9,7 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const home = fs.realpathSync(tempDir('acs-agent-git-access-'));
 const bin = path.join(home,'bin'); fs.mkdirSync(bin);
 const capture=path.join(home,'argv.json');
-fs.writeFileSync(path.join(bin,'cmux'),`#!${process.execPath}\nimport ${JSON.stringify(path.join(root,'tests/fixtures/agent-cmux.mjs'))};\n`,{mode:0o755});
+fs.writeFileSync(path.join(bin,'cmux'),`#!${process.execPath}\nimport(${JSON.stringify(path.join(root,'tests/fixtures/agent-cmux.mjs'))});\n`,{mode:0o755});
 fs.writeFileSync(path.join(bin,'codex'),`#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(capture)},JSON.stringify(process.argv.slice(2)));\n`,{mode:0o755});
 fs.writeFileSync(path.join(bin,'caffeinate'),'#!/bin/sh\nexit 0\n',{mode:0o755});
 const env={...process.env,HOME:home,PATH:`${bin}:${process.env.PATH}`,CMUX_SOCKET_PATH:'fake',CMUX_WORKSPACE_ID:'workspace:1',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null'};
@@ -50,7 +50,12 @@ assert.deepEqual(grants(argv(spoof)),[],'missing backlink grants nothing');
 const fakeLogs=path.join(home,'unrelated logs'); fs.mkdirSync(fakeLogs);
 fs.renameSync(path.join(common,'logs'),path.join(common,'saved-logs'));
 fs.symlinkSync(fakeLogs,path.join(common,'logs'));
-try { assert.ok(!grants(argv(linked)).includes(path.join(common,'logs')),'symlinked commit directories cannot widen the grant'); }
+try {
+  const actual=grants(argv(linked));
+  assert.deepEqual(actual,expected.filter(p=>p!==path.join(common,'logs')),'symlinked fixture grants only the remaining Git directories');
+  assert.ok(!actual.includes(path.join(common,'logs')),'symlinked commit directories cannot widen the grant');
+  assert.ok(!actual.includes(fakeLogs),'the symlink target receives no grant');
+}
 finally { fs.unlinkSync(path.join(common,'logs')); fs.renameSync(path.join(common,'saved-logs'),path.join(common,'logs')); }
 function files(folder, prefix='') {
   const out={};

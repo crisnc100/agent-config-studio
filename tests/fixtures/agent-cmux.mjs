@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 const home = process.env.HOME;
 const file = path.join(home, 'fake-cmux.json');
@@ -10,7 +11,12 @@ const verbs = ['list-panes', 'identify', 'new-pane', 'new-surface', 'focus-pane'
 const cmd = args.find(a => verbs.includes(a));
 const opt = k => args[args.indexOf(k) + 1];
 state.calls.push(args);
-const put = (f, data) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, data); };
+// A leaked home override must fail before synthetic sessions can touch real harness files.
+const put = (f, data) => {
+  const relative = path.relative(home, f);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error('fake cmux refuses writes outside its temporary HOME');
+  fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, data);
+};
 const line = x => JSON.stringify(x) + '\n';
 function turn(w, text, complete = true) {
   if (w.vendor === 'codex') {
@@ -52,7 +58,7 @@ if (cmd === 'new-pane' || cmd === 'new-surface') {
   const script = fs.readFileSync(opt('--command'), 'utf8');
   const vendor = script.includes('exec codex ') ? 'codex' : script.includes('exec claude ') ? 'claude' : 'grok';
   const cwd = script.match(/cd '((?:[^']|'\\'')*)'/)[1].replace(/'\\''/g, "'");
-  const session = `session-${n}`;
+  const session = `session-${randomUUID()}`;
   const w = { vendor, cwd, session, surface_id: `UUID-${n}`, surface_ref: `surface:${n + 10}` };
   if (vendor === 'codex') {
     w.transcript = path.join(process.env.CODEX_HOME || path.join(home, '.codex'), 'sessions/2026/11/14', `rollout-${session}.jsonl`);

@@ -266,8 +266,12 @@ console.log('setup guards\n');
     ['agent: a harness binary', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawnSync('codex',")],
     ['agent: another literal executable', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawnSync('git',")],
     ['agent: a caller-supplied executable', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawnSync(process.env.AGENT_BINARY,")],
+    ['agent: a literal prefix plus an expression', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawnSync('cmux' + process.env.AGENT_SUFFIX,"), true],
     ['agent: a different subprocess function', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawn('cmux',")],
     ['agent: a direct server import', server, origServer, t => t + "\nimport './lib/agent.js';\n"],
+    ['agent: a compact named server import', server, origServer, t => t + "\nimport{openWorker}from './lib/agent.js';\n", true],
+    ['agent: a compact named transitive import', registry, origRegistry, t => t + "\nimport{openWorker}from './agent.js';\n", true],
+    ['agent: a compact transitive re-export', registry, origRegistry, t => t + "\nexport{openWorker}from './agent.js';\n", true],
     ['agent: a transitive server import', registry, origRegistry, t => t + "\nimport './agent.js';\n"],
     ['agent: a dynamic transitive import', registry, origRegistry, t => t + "\nconst workerModule = () => import('./agent.js');\n"],
     ['agent: a transitive re-export', registry, origRegistry, t => t + "\nexport * from './agent.js';\n"],
@@ -287,9 +291,13 @@ console.log('setup guards\n');
     ['inspectGrok: the same spawn outside inspectGrok', hj, origHj, (t) => t.replace('export function inspectGrok(', "export const inspectAgain = (binary) => spawn(binary, ['inspect', '--json'], {});\nexport function inspectGrok(")],
     ['lsof: a PATH name', pr, origPr, (t) => t.replace("execFile('/usr/bin/lsof', ['-F', 'pcn', '-w', '+D'", "execFile('lsof', ['-F', 'pcn', '-w', '+D'")],
   ];
-  for (const [what, file, orig, plant] of variants) {
+  for (const [what, file, orig, plant, checkSyntax = false] of variants) {
     const planted = plant(orig);
     fs.writeFileSync(file, planted);
+    if (checkSyntax) {
+      const syntax = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
+      ok(`pins: ${what} is valid JavaScript`, syntax.status === 0, syntax.stderr.slice(-300));
+    }
     const r = guards();
     fs.writeFileSync(file, orig);
     ok(`pins: guards.mjs rejects ${what}`, planted !== orig && r.status !== 0 && /FAIL\s+guard b/.test(r.stderr), planted === orig ? 'the variant did not apply' : r.stderr.slice(-300));

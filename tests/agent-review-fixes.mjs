@@ -10,7 +10,7 @@ const home = fs.realpathSync(tempDir('acs-agent-review-fixes-'));
 process.env.HOME = home;
 for (const key of ['CODEX_HOME', 'GROK_HOME', 'CLAUDE_CONFIG_DIR']) delete process.env[key];
 const bin = path.join(home, 'bin'); fs.mkdirSync(bin);
-fs.writeFileSync(path.join(bin, 'cmux'), `#!${process.execPath}\nimport ${JSON.stringify(path.join(root, 'tests/fixtures/agent-cmux.mjs'))};\n`, { mode: 0o755 });
+fs.writeFileSync(path.join(bin, 'cmux'), `#!${process.execPath}\nimport(${JSON.stringify(path.join(root, 'tests/fixtures/agent-cmux.mjs'))});\n`, { mode: 0o755 });
 fs.writeFileSync(path.join(bin, 'caffeinate'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
 const capture = path.join(home, 'capture.json');
 for (const vendor of ['codex', 'claude', 'grok']) fs.writeFileSync(path.join(bin, vendor), `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(capture)},JSON.stringify({argv:process.argv.slice(2),home:process.env[${JSON.stringify({codex:'CODEX_HOME',claude:'CLAUDE_CONFIG_DIR',grok:'GROK_HOME'}[vendor])}]}));\n`, { mode: 0o755 });

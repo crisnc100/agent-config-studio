@@ -394,7 +394,7 @@ function guardB() {
       }
       const cal = calleeLiteral(src, call);
       if (allowed.cmuxOnly) {
-        if (cal.kind !== 'literal' || cal.value !== 'cmux') {
+        if (!/^\s*(['"`])cmux\1\s*,/.test(callArgsText(src, call) || '')) {
           hits.push(`${file}:${call.line} ${call.fn}() must use the literal 'cmux', never a harness or computed executable`);
         }
         continue;
@@ -1060,8 +1060,8 @@ function guardWorkerImports() {
     seen.add(real);
     const specs = [];
     for (const re of [
-      /(?:^|[;\n])\s*import\s+(?:[^'";]*?\s+from\s*)?(['"])([^'"]+)\1/g,
-      /\bexport\s+(?:\*(?:\s+as\s+\w+)?|\{[^}]*\})\s+from\s*(['"])([^'"]+)\1/g,
+      /(?:^|[;\n])\s*import\b\s*(?:[^'";]*?\bfrom\s*)?(['"])([^'"]+)\1/g,
+      /\bexport\s*(?:\*(?:\s+as\s+\w+)?|\{[^}]*\})\s*from\s*(['"])([^'"]+)\1/g,
     ]) for (const m of src.matchAll(re)) specs.push(m[2]);
     for (const m of src.matchAll(/\b(?:import|require)\s*\(\s*([^)]*)\)/g)) {
       const literal = /^(['"`])([^'"`\\$]+)\1\s*$/.exec(m[1].trim());
