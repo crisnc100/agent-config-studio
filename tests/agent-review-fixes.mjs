@@ -34,7 +34,9 @@ const done = v => v === 'codex' ? { type: 'event_msg', timestamp: stamp(), paylo
 function worker(vendor, entries = []) {
   const id = crypto.randomUUID(), runDir = path.join(records, id); fs.mkdirSync(runDir);
   const transcript = path.join(runDir, 'events.jsonl'); fs.writeFileSync(transcript, entries.map(e => JSON.stringify(e)+'\n').join('')); fs.utimesSync(transcript, clock/1000,clock/1000);
-  const w = { id, vendor, family: vendor, cwd: runDir, runDir, transcript, session: id, surface_ref: `surface:${id}`, surface_id: id, pane_ref: 'pane:2', workspace: ctx.workspace, orchestratorPane: ctx.pane, status: 'running', openedAt: epoch, lastActivityAt: epoch, completed: 0, turnComplete: 0, eventStart: 0, baseline: [] };
+  const history = vendor === 'grok' ? path.join(runDir,'chat_history.jsonl') : null;
+  if (history) fs.writeFileSync(history,'');
+  const w = { id, vendor, history, family: vendor, cwd: runDir, runDir, transcript, session: id, surface_ref: `surface:${id}`, surface_id: id, pane_ref: 'pane:2', workspace: ctx.workspace, orchestratorPane: ctx.pane, status: 'running', openedAt: epoch, lastActivityAt: epoch, completed: 0, turnComplete: 0, eventStart: 0, baseline: [] };
   fs.writeFileSync(path.join(records, `${id}.json`), JSON.stringify(w));
   mutate(s => { if (!s.panes.includes('pane:2')) s.panes.push('pane:2'); s.workers[w.surface_ref] = { ...w, screen: 'Worker screen' }; });
   return w;
@@ -47,6 +49,73 @@ const result = (id = 'a') => ({ type: 'user', timestamp: stamp(), message: { con
 const permission = (w, id = 'a') => fs.appendFileSync(events, JSON.stringify({ name: 'agent.hook.PermissionRequest', surface_id: w.surface_id, occurred_at: stamp(), payload: { tool_use_id: id } })+'\n');
 const inputCalls = w => state().calls.filter(a => (a.includes('send') || a.includes('send-key')) && a.includes(w.surface_ref));
 const cases = {
+  async b6f1() {
+    for (const vendor of ['codex','claude','grok']) {
+      clock = Date.now(); const w = worker(vendor);
+      let launched=false;
+      const lateLaunch = { now:()=>clock, sleep:async ms=>{clock+=ms;if(!launched){append(w,started(vendor));launched=true;}} };
+      await assert.rejects(sendWorker(w.id,'unsubmitted correction',ctx,lateLaunch),/startup|launch turn/);
+      assert.equal(inputCalls(w).length,0,'nothing is typed before the launch turn is observed');
+      assert.equal(record(w).pendingSend,undefined);
+      const legacy=worker(vendor);
+      const saved=record(legacy); saved.pendingSend={sentAt:clock-11000,startedBefore:0};
+      fs.writeFileSync(path.join(records,`${legacy.id}.json`),JSON.stringify(saved));
+      append(legacy,started(vendor));
+      assert.equal((await waitWorker(legacy.id,0,ctx,runtime)).state,'unsent','a late launch cannot confirm a legacy pending send');
+      assert.equal(record(legacy).pendingSend.confirmedAt,undefined);
+      append(legacy,started(vendor));
+      await waitWorker(legacy.id,0,ctx,runtime);
+      assert.ok(record(legacy).pendingSend.confirmedAt,'only a turn after launch can confirm a legacy send');
+      const closed=record(legacy); closed.status='closed'; fs.writeFileSync(path.join(records,`${legacy.id}.json`),JSON.stringify(closed));
+      append(w,started(vendor));
+      await sendWorker(w.id,'correction after startup',ctx,runtime);
+      assert.ok(record(w).pendingSend.confirmedAt,'a subsequent turn confirms the correction');
+    }
+  },
+  async b6f2() {
+    for (const vendor of ['codex','claude','grok']) {
+      clock = Date.now(); const w = worker(vendor,[started(vendor),done(vendor)]);
+      process.env.FAKE_NO_SUBMIT='1';
+      try { await assert.rejects(sendWorker(w.id,'first correction',ctx,runtime),/submission/); }
+      finally { delete process.env.FAKE_NO_SUBMIT; }
+      show(w,'› first correction');
+      const pending=record(w).pendingSend, count=inputCalls(w).length;
+      await assert.rejects(sendWorker(w.id,'replacement correction',ctx,runtime),error=>error.exitCode===5 && /unsent/.test(error.message) && /first correction/.test(error.message));
+      assert.equal(inputCalls(w).length,count,'retry cannot append text or press Enter');
+      assert.deepEqual(record(w).pendingSend,pending,'refusal preserves the unresolved attempt');
+      const response=cli(['send',w.id,'replacement correction']);
+      assert.equal(response.status,5,response.stderr); assert.match(response.stderr,/unsent.*first correction/);
+      assert.equal(inputCalls(w).length,count);
+      append(w,started(vendor)); append(w,done(vendor)); show(w,'Worker screen');
+      mutate(s=>{s.workers[w.surface_ref].pending='';});
+      await sendWorker(w.id,'after manual submission',ctx,runtime);
+      assert.ok(record(w).pendingSend.confirmedAt,'manual submission reconciles the old pending attempt');
+      const entries=fs.readFileSync(vendor==='grok'?w.history:w.transcript,'utf8').trim().split('\n').map(line=>JSON.parse(line));
+      const texts=entries.flatMap(e=>vendor==='codex'?(e.payload?.type==='user_message'?[e.payload.message]:[]):vendor==='claude'?(e.type==='user'?[e.message.content]:[]):e.role==='user'?[e.content]:[]);
+      assert.equal(texts.at(-1),'after manual submission','the reconciled next message is submitted without concatenation');
+    }
+  },
+  async b6f3() {
+    const question='Do you want to proceed?\n1. Yes\n2. No\nQUESTION: Choose yes or no.';
+    for (const vendor of ['codex','claude','grok']) {
+      clock = Date.now();
+      const end=done(vendor);
+      if(vendor==='codex')end.payload.last_agent_message=question;
+      else if(vendor==='claude')end.message.content[0].text=question;
+      const w=worker(vendor,[started(vendor),end]);
+      show(w,question);
+      const waited=await waitWorker(w.id,0,ctx,runtime);
+      assert.equal(waited.state,'done'); assert.equal(waited.question,true); assert.equal(waited.text,question);
+      await sendWorker(w.id,'Yes',ctx,runtime);
+      assert.ok(inputCalls(w).some(a=>a.includes('send-key')),'completed choice text permits a reply');
+      clock=Math.max(clock,Date.now())+1000; permission(w,'new');
+      await assert.rejects(sendWorker(w.id,'not permission',ctx,runtime),/stuck/,'a new hook still blocks after completion');
+      const active=worker(vendor,[started(vendor)]); show(active,question);
+      await assert.rejects(sendWorker(active.id,'active dialog',ctx,runtime),/stuck/,'screen-only active approvals remain protected');
+      assert.equal(inputCalls(active).length,0);
+      for (const item of [w,active]) { const saved=record(item); saved.status='closed'; fs.writeFileSync(path.join(records,`${item.id}.json`),JSON.stringify(saved)); }
+    }
+  },
   async x1() {
     const approvalRuntime = { now: runtime.now, sleep: runtime.sleep };
     clock = epoch;
