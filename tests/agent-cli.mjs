@@ -18,6 +18,7 @@ const json = r => { assert.equal(r.status, 0, r.stderr); return JSON.parse(r.std
 const state = () => JSON.parse(fs.readFileSync(path.join(home, 'fake-cmux.json'), 'utf8'));
 const records = () => fs.readdirSync(path.join(home, '.agent-config-studio/agents')).filter(f => f.endsWith('.json')).map(f => JSON.parse(fs.readFileSync(path.join(home, '.agent-config-studio/agents', f))));
 const open = (family, extra = [], vars = {}) => json(run(['open', family, '--cwd', home, '--json', ...extra], vars));
+assert.match(run(['--help']).stdout, /usage: acs-agent open/);
 assert.equal(run(['list'], { CMUX_SOCKET_PATH: '' }).status, 2);
 assert.match(run(['list'], { FAKE_OFFLINE: '1' }).stderr, /agent needs cmux/);
 const prompt = path.join(home, 'long prompt.txt');
