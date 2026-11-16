@@ -129,6 +129,11 @@ async function install() {
   // ask-model imports this resolver's lib/, so it is installed beside it, by its own
   // install(). A checkout keeps it in tools/, apart from bin/, because it runs model
   // CLIs; the installed copy keeps it in bin/, so a re-run from there restores it too.
+  const agentInstaller = path.join(src, 'bin', 'agent-install.mjs');
+  if (fs.existsSync(agentInstaller)) {
+    const { install: installAgent } = await import(pathToFileURL(agentInstaller).href);
+    process.stdout.write(installAgent({ home, studio, resolver }));
+  }
   const askModel = [path.join(src, 'tools', 'ask-model.mjs'), path.join(src, 'bin', 'ask-model.mjs')].find((p) => fs.existsSync(p));
   if (!askModel) return;
   let r;

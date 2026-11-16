@@ -1,0 +1,1439 @@
+review.mjs · /Users/cortega/.agent-config-studio/review-gate/review.mjs · head-aware copy
+▶ reviewer · sol (codex · gpt-6.1-sol · xhigh) — REVIEW_REVIEWER=sol (explicit)
+▶ review · codex-gpt-6.1-sol-xhigh · agent-command vs origin/main · paths tests/fixtures/agent-cmux.mjs · single pass (no fix, no loop)
+
+ℹ security pass: not-required (only docs, tests, static or lockfiles changed, none on riskPaths)
+Reading additional input from stdin...
+OpenAI Codex v0.160.0
+--------
+workdir: /Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-agent-command
+model: gpt-6.1-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: xhigh
+reasoning summaries: none
+session id: 01a1e684-7a0f-7ef3-a381-5c6553d05066
+--------
+user
+Review the branch diff below for CODE CORRECTNESS only — bugs, regressions, broken edge cases, bad error handling, data-integrity issues — judged against what the branch was supposed to do: Slice: CI fix for PR 1. The fake cmux test fixture saves its state by write-then-rename so tests/agent-cli.mjs never reads a half-written fake-cmux.json while a queued agent open polls (CI failed: Unexpected end of JSON input at tests/agent-cli.mjs:134 on Node 20.0.0). Assertions unchanged.. Inspect the diff (open files as needed) BEFORE answering. Do NOT comment on product direction, scope, or style preference.
+
+Already decided; don't re-raise without new evidence:
+[{"issue":"Hardening: `send` fails open on any dialog it does not recognise. `assertSendable` refuses only when the screen matches a fixed list of trust and permission wordings or a hook event is pending; otherwise `sendTurn` types the text and presses Enter up to four times (lines 565-570). It does not refuse a worker that has no session yet or is in `no_start`, which is exactly the state an unrecognised startup dialog produces. Enter on such a dialog accepts its default choice, which for the harness trust dialogs is the trusting one, so the folder's project-level config (hooks, settings) is loaded without the operator deciding. That contradicts the README's \"It never answers dialogs\" and \"Trust remains the user's decision\". Harmed principal: the operator. Attacker: the author of an untrusted folder the worker was opened in. Unverified: I did not find a current harness dialog that misses the patterns; the exposure is a harness update changing wording, or a startup dialog outside the list (unverified example: Claude's project MCP-server approval when `--mcp` is passed).","file":"lib/agent.js","line":"537","quote":"  if (w.approvalPending || result.state === 'stuck' || dialog) {","suggestion":"Make `send` refuse when no turn could accept the text: exit non-zero when the worker has neither a session nor a transcript, or when refresh returns `no_start`, with a message that names the state. Follow-ups only make sense after a session exists, so this costs nothing in normal use.","likelihood":2,"impact":5,"protected":false,"trigger":"`agent wait <id>` returns `no_start` (exit 6) because a startup dialog the patterns do not match is on screen, and the orchestrator then runs `agent send <id> \"...\"` to nudge the worker. No test or documented flow sends before a session; it is reachable but uncommon.","preExisting":false,"risk":10,"severity":"low","filed":true,"status":"verified-quote","source":"security","id":"s2","review":"2026-11-16-20-30-44-7c058b","finding":"s2","decision":"filed"},{"issue":"Regression from the s1 fix: a Codex worker opened in a subdirectory of a linked worktree gets no Git grant at all and cannot commit. The backlink check compares the administration directory's `gitdir` file with `$worktree/.git`, where `worktree` is `$(pwd -P)`, the launch cwd. Git records the worktree root's `.git` there, so from `<worktree>/packages/foo` the comparison fails and neither the data directories nor the administration directory is added. Before the fix the common directory was granted whenever it lay outside the cwd, so this case could commit. A subdirectory of a normal (non-linked) checkout also lost its grant, but that one cannot be narrowed because its Git directory is the common root.","file":"lib/agent.js","line":"470","quote":"      '        if [ \"$backlink\" = \"$worktree/.git\" ]; then',","suggestion":"Compare the backlink with the physical path of `git rev-parse --show-toplevel` plus `/.git` instead of the cwd. The forged-link check still holds, because a crafted folder's toplevel is the crafted folder and the victim's backlink does not point to it.","likelihood":2,"impact":5,"protected":false,"trigger":"`agent open sol --cwd <linked worktree>/<subdir> ...`, for example a package folder in a monorepo worktree; the worker's `git commit` then fails on `index.lock` under the sandbox. The standard builder path opens at the worktree root and is not affected.","preExisting":false,"risk":10,"severity":"low","filed":true,"status":"verified-quote","id":"x3","inFix":true,"review":"fix-1794862432890-32daf4","finding":"x3","decision":"filed"},{"issue":"The f2 refusal has no exit when there is no leftover input to submit. `pendingSend` is saved at line 590 before the text is typed at line 591, and the new check refuses every later send while it is unconfirmed, without checking that the text is still in the composer. If `cmux send` throws (it has a 10 s timeout), or the operator clears the stale text in the pane instead of submitting it, the worker refuses all sends with exit 5 and `wait` reports `unsent` indefinitely. The message tells the operator to submit input that is not there; the only ways out are typing some other turn in the pane or closing the worker. Before the fix the next send re-armed `pendingSend`.","file":"lib/agent.js","line":"571","quote":"  if (w.pendingSend && !w.pendingSend.confirmedAt) {","suggestion":"Keep the sent text in `pendingSend` and refuse only while it is still visible on the worker's screen; when it is gone and no new turn started, drop the stale attempt and let the new send proceed. Also set `pendingSend` only after `cmux send` returns.","likelihood":2,"impact":4,"protected":false,"trigger":"`agent send` fails as unsent, the operator deletes the leftover text in the worker pane rather than pressing Enter, and the orchestrator sends the replacement instructions; or `cmux send` errors after the record is saved.","preExisting":false,"risk":8,"severity":"low","filed":true,"status":"verified-quote","id":"x4","inFix":true,"review":"fix-1794862432890-32daf4","finding":"x4","decision":"filed"},{"issue":"Incomplete repair of f4: the re-export pattern still misses one compact form. After `\\*`, the optional alias group `(?:\\s+as\\s+\\w+)?` requires whitespace before `as`, so `export*as worker from './agent.js';` (valid module syntax) matches neither alternative, and the dynamic import/require scan does not see it either. The specifier is never collected, so lib/agent.js can be reachable from server.js while guard b passes. The fix made `export{...}from` and `export*from` match and pinned only the `export{openWorker}from` form in setup-guards.mjs. Evidence: static reading of the regex at HEAD against that input; not executed (no shell in this session). Same family, also unexecuted: the import pattern's `(?:^|[;\\n])` anchor on line 1063 misses an import that directly follows a block's closing brace, e.g. `function f(){}import'./lib/agent.js';`.","file":"tests/guards.mjs","line":"1064","quote":"      /\\bexport\\s*(?:\\*(?:\\s+as\\s+\\w+)?|\\{[^}]*\\})\\s*from\\s*(['\"])([^'\"]+)\\1/g,","suggestion":"Let the namespace alternative tolerate any alias text, mirroring the import pattern: `/\\bexport\\s*(?:\\*[^'\";]*?|\\{[^}]*\\})\\s*from\\s*(['\"])([^'\"]+)\\1/g`. Add a pin in tests/setup-guards.mjs: `export*as worker from './agent.js';` on registry.js with checkSyntax true.","likelihood":1,"impact":7,"protected":false,"trigger":"No path in normal use: a module in the server's import graph would have to re-export the worker with the whitespace-free namespace form `export*as name from './agent.js'`, which neither hand-written code nor a formatter in this repo produces.","preExisting":false,"risk":7,"severity":"low","filed":true,"status":"verified-quote","id":"x1","inFix":true,"review":"fix-1794866876748-a2a437","finding":"x1","decision":"filed"}]
+
+Your shell is sandboxed read-only and cannot use bash process substitution — `<(...)` fails with "Operation not permitted". Use node one-liners or write intermediate output to files instead.
+
+Every finding MUST carry `quote`: one to three lines copied character-for-character from `file` as it is at HEAD, starting at or within 5 lines of `line` (a single line number). Open the file and copy it — never paraphrase or reconstruct it from memory. A script checks every quote against the file; a finding whose quote is not there is discarded as unlocatable.
+
+If the same defect pattern appears in several places, report it once and list every place in `instances` (file, line and quote each, quoted exactly like the main location, which is one of them); otherwise instances is null.
+
+`preExisting`: true when the defect exists at the base and this branch neither introduced it nor made it newly reachable; otherwise false. A script checks the claim against the diff: a finding near a line the branch changed counts as the branch's.
+
+Score every finding; the script derives its severity from your scores.
+trigger: the concrete input, command or call path in this project's normal use that reaches the defect. If none exists, say so and give likelihood 1. No real trigger means likelihood 1.
+likelihood (1–10): how often this project's normal use reaches it, counting how often its prerequisites occur.
+- 1: no path in normal use reaches it (no real trigger).
+- 3: a named, uncommon but supported path, a few in 100 uses.
+- 5: a regular optional path, about 1 in 10 uses.
+- 7: most uses of that feature.
+- 10: every use, deterministic.
+impact (1–10):
+- 1: cosmetic.
+- 3: friction (minutes lost, a misleading message), with the result still correct.
+- 5: one visible failed or wrong run, redone.
+- 7: silently wrong, a safeguard doesn't apply, or the main workflow is blocked.
+- 10: can't be undone (data lost without ordinary undo, an exploitable hole, wrong money).
+A failure nobody would notice scores one band higher.
+protected: true only when you can demonstrate one of these four cases:
+- a reachable, exploitable security hole;
+- stored data destroyed or overwritten beyond ordinary undo (if revert, reflog, trash or a re-run restores it, it is not protected);
+- wrong money;
+- a way around the review gate in the gate's own logic: the push check, the close, a dispute or a
+  waiver accepting work it should refuse. A command phrasing the agent guard (agent-guard) doesn't
+  recognize is not protected: score it by likelihood × impact like any other bug, because the guard
+  is an accident barrier.
+Protected findings are HIGH however rare, and never filed.
+risk = likelihood × impact:
+- HIGH when protected, or risk >= 40;
+- LOW when risk <= 10 and not protected; LOW is filed, not fixed unless the operator picks it;
+- MEDIUM otherwise.
+Fix HIGH first, then MEDIUM. Both block until fixed, REFUTED or waived by the operator.
+Missing or invalid scores are asked for again once. A finding still unscored blocks as MEDIUM (HIGH if protected is exactly true).
+
+This review is one slice of the branch: it covers only the paths tests/fixtures/agent-cmux.mjs. Other slices review the rest, so report defects in these paths (open other files only for context).
+
+Diff (git diff origin/main...HEAD -- tests/fixtures/agent-cmux.mjs):
+diff --git a/tests/fixtures/agent-cmux.mjs b/tests/fixtures/agent-cmux.mjs
+new file mode 100644
+index 0000000..ec4bfcb
+--- /dev/null
++++ b/tests/fixtures/agent-cmux.mjs
+@@ -0,0 +1,112 @@
++import fs from 'node:fs';
++import path from 'node:path';
++import { randomUUID } from 'node:crypto';
++import { spawnSync } from 'node:child_process';
++const home = process.env.HOME;
++const file = path.join(home, 'fake-cmux.json');
++const state = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { n: 0, calls: [], workers: {} };
++const args = process.argv.slice(2);
++state.panes ||= ['pane:1'];
++const verbs = ['list-panes', 'identify', 'new-pane', 'new-surface', 'focus-pane', 'send', 'send-key', 'read-screen', 'close-surface', 'list-pane-surfaces'];
++const cmd = args.find(a => verbs.includes(a));
++const opt = k => args[args.indexOf(k) + 1];
++state.calls.push(args);
++// A leaked home override must fail before synthetic sessions can touch real harness files.
++const put = (f, data) => {
++  const relative = path.relative(home, f);
++  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error('fake cmux refuses writes outside its temporary HOME');
++  fs.mkdirSync(path.dirname(f), { recursive: true });
++  // Tests read these files while a queued `agent open` keeps calling the fake; a rename is never seen half-written.
++  const tmp = `${f}.${process.pid}.${randomUUID()}.tmp`;
++  fs.writeFileSync(tmp, data); fs.renameSync(tmp, f);
++};
++const line = x => JSON.stringify(x) + '\n';
++function turn(w, text, complete = true) {
++  if (w.vendor === 'codex') {
++    fs.appendFileSync(w.transcript, line({ type: 'event_msg', payload: { type: 'task_started' } }));
++    fs.appendFileSync(w.transcript, line({ type: 'event_msg', payload: { type: 'user_message', message: text } }));
++    if (complete) fs.appendFileSync(w.transcript, line({ type: 'event_msg', payload: { type: 'task_complete', last_agent_message: 'exact\nanswer  ' } }));
++  } else if (w.vendor === 'claude') {
++    fs.appendFileSync(w.transcript, line({ type: 'user', message: { role: 'user', content: text } }));
++    if (complete) {
++      fs.appendFileSync(w.transcript, line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'exact\nanswer  ' }] }, stop_reason: 'end_turn' }));
++      fs.appendFileSync(path.join(home, '.cmuxterm/events.jsonl'), line({ name: 'agent.hook.Stop', surface_id: w.surface_id, session_id: w.session, occurred_at: new Date().toISOString() }));
++    }
++  } else {
++    fs.appendFileSync(w.transcript, line({ type: 'turn_started' }));
++    fs.appendFileSync(w.history, line({ role: 'user', content: text }));
++    if (complete) {
++      fs.appendFileSync(w.history, line({ role: 'assistant', content: 'exact\nanswer  ' }));
++      fs.appendFileSync(w.transcript, line({ type: 'turn_ended' }));
++    }
++  }
++}
++if (process.env.FAKE_OFFLINE) { console.error('socket unreachable'); process.exit(1); }
++function fail(code) {
++  put(file, JSON.stringify(state));
++  if (process.env.FAKE_ERROR_STYLE === 'stderr') console.error(`Error: ${code}: Surface not found for the given surface_id`);
++  else console.log(JSON.stringify({ ok: false, error: { code, message: 'Surface not found for the given surface_id' } }));
++  process.exit(1);
++}
++let out = {};
++if (cmd === 'list-panes') out = { panes: state.panes.map(pane_ref => ({ pane_ref })) };
++if (cmd === 'new-surface' && process.env.FAKE_NEW_SURFACE_ERROR) fail(process.env.FAKE_NEW_SURFACE_ERROR);
++if (cmd === 'new-surface' && !state.panes.includes(opt('--pane'))) fail('not_found');
++if (cmd === 'new-pane' && process.env.FAKE_NEW_PANE_ERROR) fail(process.env.FAKE_NEW_PANE_ERROR);
++if (cmd === 'read-screen' && process.env.FAKE_READ_SCREEN_ERROR) fail(process.env.FAKE_READ_SCREEN_ERROR);
++if (cmd === 'list-pane-surfaces' && !state.panes.includes(opt('--pane'))) fail('not_found');
++if (cmd === 'identify') out = { caller: { workspace_ref: 'workspace:1', pane_ref: process.env.FAKE_PANE || 'pane:1' } };
++if (cmd === 'new-pane' || cmd === 'new-surface') {
++  const n = ++state.n;
++  const script = fs.readFileSync(opt('--command'), 'utf8');
++  const vendor = script.includes('exec codex ') ? 'codex' : script.includes('exec claude ') ? 'claude' : 'grok';
++  const cwd = script.match(/cd '((?:[^']|'\\'')*)'/)[1].replace(/'\\''/g, "'");
++  const session = `session-${randomUUID()}`;
++  const w = { vendor, cwd, session, surface_id: `UUID-${n}`, surface_ref: `surface:${n + 10}` };
++  if (vendor === 'codex') {
++    w.transcript = path.join(process.env.CODEX_HOME || path.join(home, '.codex'), 'sessions/2026/11/14', `rollout-${session}.jsonl`);
++    put(w.transcript, line({ type: 'session_meta', payload: { id: session, cwd } }));
++  } else if (vendor === 'claude') {
++    w.transcript = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'projects', cwd.replace(/\//g, '-'), `${session}.jsonl`);
++    put(w.transcript, '');
++  } else {
++    w.transcript = path.join(process.env.GROK_HOME || path.join(home, '.grok'), 'sessions', cwd.replace(/\//g, '%2F'), session, 'events.jsonl');
++    w.history = path.join(path.dirname(w.transcript), 'chat_history.jsonl');
++    put(w.transcript, ''); put(w.history, '');
++  }
++  const events = path.join(home, '.cmuxterm/events.jsonl');
++  if (!fs.existsSync(events)) put(events, '');
++  fs.appendFileSync(events, line({ name: 'agent.hook.SessionStart', surface_id: w.surface_id, session_id: session, occurred_at: new Date().toISOString() }));
++  turn(w, 'initial', !process.env.FAKE_RUNNING);
++  w.pane_ref = cmd === 'new-pane' ? `pane:${n + 10}` : opt('--pane');
++  if (cmd === 'new-pane') state.panes.push(w.pane_ref);
++  state.workers[w.surface_ref] = w;
++  out = { ...w };
++}
++function permission(w) {
++  w.screen = 'Do you want to proceed?\n1. Yes\n2. No';
++  fs.appendFileSync(path.join(home, '.cmuxterm/events.jsonl'), line({ name: 'agent.hook.PermissionRequest', surface_id: w.surface_id, occurred_at: new Date().toISOString() }));
++}
++if (cmd === 'send') {
++  const w = state.workers[opt('--surface')]; w.pending = (w.pending || '') + args.at(-1); w.enters = 0;
++  if (process.env.FAKE_PERMISSION_ON_SEND) permission(w);
++}
++if (cmd === 'send-key') {
++  const w = state.workers[opt('--surface')];
++  if (++w.enters === 1 && process.env.FAKE_PERMISSION_AFTER_ENTER) permission(w);
++  if (w.enters === 2 && !process.env.FAKE_NO_SUBMIT) { turn(w, w.pending); w.pending = ''; }
++}
++if (cmd === 'read-screen' || cmd === 'close-surface') {
++  const w = state.workers[opt('--surface')];
++  if (cmd === 'read-screen' && process.env.FAKE_REMOVE_AFTER_READ && (state.removalReads = (state.removalReads || 0) + 1) > 1) w.closed = true;
++  if (!w || w.closed || !state.panes.includes(w.pane_ref)) fail('not_found');
++  if (cmd === 'close-surface') w.closed = true;
++  else {
++    const events = fs.readFileSync(path.join(home, '.cmuxterm/events.jsonl'), 'utf8').split('\n').filter(Boolean).map(JSON.parse);
++    const pending = events.some(e => e.surface_id === w.surface_id && e.name === 'agent.hook.PermissionRequest');
++    out = { text: w.screen ?? (pending || w.vendor === 'grok' && !fs.existsSync(w.history) ? 'Allow this command?\n1. Yes' : 'Worker screen') };
++  }
++}
++if (cmd === 'list-pane-surfaces') out = { surfaces: Object.values(state.workers).filter(w => !w.closed && (!args.includes('--pane') || w.pane_ref === opt('--pane'))) };
++put(file, JSON.stringify(state));
++console.log(JSON.stringify(out));
+warning: Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.
+  user (/Users/cortega/.codex/config.toml): `mcp_servers.Neon.type` is ignored.
+warning: Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.
+  user (/Users/cortega/.codex/config.toml): `mcp_servers.Neon.type` is ignored.
+codex
+I’ll inspect the fixture at HEAD and its callers, focusing on whether the rename-based save fixes the CI race.
+
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+/bin/zsh -lc "pwd; git status --short; git branch --show-current; git diff origin/main...HEAD -- tests/fixtures/agent-cmux.mjs; nl -ba tests/fixtures/agent-cmux.mjs; rg -n 'fake-cmux|queued|FAKE_|agent-cmux' tests/agent-cli.mjs package.json; rg --files -g AGENTS.md -g CLAUDE.md" in /Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-agent-command
+ exited 1 in 6613ms:
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-agent-command
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-iWmeXtcc' (errno=Operation not permitted)
+2026-11-16 17:40:11.796 xcodebuild[68511:114001385]  DVTFilePathFSEvents: Failed to start fs event stream.
+2026-11-16 17:40:11.991 xcodebuild[68511:114001383] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 "Input/output error". Using NSCachesDirectory instead.
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-EGTY1rOH' (errno=Operation not permitted)
+2026-11-16 17:40:12.570 xcodebuild[68520:114001415]  DVTFilePathFSEvents: Failed to start fs event stream.
+2026-11-16 17:40:12.692 xcodebuild[68520:114001413] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 "Input/output error". Using NSCachesDirectory instead.
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-sgyUgXKy' (errno=Operation not permitted)
+2026-11-16 17:40:13.682 xcodebuild[68534:114001483]  DVTFilePathFSEvents: Failed to start fs event stream.
+2026-11-16 17:40:13.781 xcodebuild[68534:114001482] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 "Input/output error". Using NSCachesDirectory instead.
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-JGE9k30i' (errno=Operation not permitted)
+2026-11-16 17:40:14.166 xcodebuild[68541:114001501]  DVTFilePathFSEvents: Failed to start fs event stream.
+2026-11-16 17:40:14.262 xcodebuild[68541:114001499] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 "Input/output error". Using NSCachesDirectory instead.
+agent-command
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-VSrlCnrB' (errno=Operation not permitted)
+2026-11-16 17:40:15.900 xcodebuild[68582:114001656]  DVTFilePathFSEvents: Failed to start fs event stream.
+2026-11-16 17:40:16.019 xcodebuild[68582:114001655] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 "Input/output error". Using NSCachesDirectory instead.
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-iHmK6STK' (errno=Operation not permitted)
+2026-11-16 17:40:16.432 xcodebuild[68588:114001670]  DVTFilePathFSEvents: Failed to start fs event stream.
+2026-11-16 17:40:16.556 xcodebuild[68588:114001669] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 "Input/output error". Using NSCachesDirectory instead.
+diff --git a/tests/fixtures/agent-cmux.mjs b/tests/fixtures/agent-cmux.mjs
+new file mode 100644
+index 0000000..ec4bfcb
+--- /dev/null
++++ b/tests/fixtures/agent-cmux.mjs
+@@ -0,0 +1,112 @@
++import fs from 'node:fs';
++import path from 'node:path';
++import { randomUUID } from 'node:crypto';
++import { spawnSync } from 'node:child_process';
++const home = process.env.HOME;
++const file = path.join(home, 'fake-cmux.json');
++const state = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { n: 0, calls: [], workers: {} };
++const args = process.argv.slice(2);
++state.panes ||= ['pane:1'];
++const verbs = ['list-panes', 'identify', 'new-pane', 'new-surface', 'focus-pane', 'send', 'send-key', 'read-screen', 'close-surface', 'list-pane-surfaces'];
++const cmd = args.find(a => verbs.includes(a));
++const opt = k => args[args.indexOf(k) + 1];
++state.calls.push(args);
++// A leaked home override must fail before synthetic sessions can touch real harness files.
++const put = (f, data) => {
++  const relative = path.relative(home, f);
++  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error('fake cmux refuses writes outside its temporary HOME');
++  fs.mkdirSync(path.dirname(f), { recursive: true });
++  // Tests read these files while a queued `agent open` keeps calling the fake; a rename is never seen half-written.
++  const tmp = `${f}.${process.pid}.${randomUUID()}.tmp`;
++  fs.writeFileSync(tmp, data); fs.renameSync(tmp, f);
++};
++const line = x => JSON.stringify(x) + '\n';
++function turn(w, text, complete = true) {
++  if (w.vendor === 'codex') {
++    fs.appendFileSync(w.transcript, line({ type: 'event_msg', payload: { type: 'task_started' } }));
++    fs.appendFileSync(w.transcript, line({ type: 'event_msg', payload: { type: 'user_message', message: text } }));
++    if (complete) fs.appendFileSync(w.transcript, line({ type: 'event_msg', payload: { type: 'task_complete', last_agent_message: 'exact\nanswer  ' } }));
++  } else if (w.vendor === 'claude') {
++    fs.appendFileSync(w.transcript, line({ type: 'user', message: { role: 'user', content: text } }));
++    if (complete) {
++      fs.appendFileSync(w.transcript, line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'exact\nanswer  ' }] }, stop_reason: 'end_turn' }));
++      fs.appendFileSync(path.join(home, '.cmuxterm/events.jsonl'), line({ name: 'agent.hook.Stop', surface_id: w.surface_id, session_id: w.session, occurred_at: new Date().toISOString() }));
++    }
++  } else {
++    fs.appendFileSync(w.transcript, line({ type: 'turn_started' }));
++    fs.appendFileSync(w.history, line({ role: 'user', content: text }));
++    if (complete) {
++      fs.appendFileSync(w.history, line({ role: 'assistant', content: 'exact\nanswer  ' }));
++      fs.appendFileSync(w.transcript, line({ type: 'turn_ended' }));
++    }
++  }
++}
++if (process.env.FAKE_OFFLINE) { console.error('socket unreachable'); process.exit(1); }
++function fail(code) {
++  put(file, JSON.stringify(state));
++  if (process.env.FAKE_ERROR_STYLE === 'stderr') console.error(`Error: ${code}: Surface not found for the given surface_id`);
++  else console.log(JSON.stringify({ ok: false, error: { code, message: 'Surface not found for the given surface_id' } }));
++  process.exit(1);
++}
++let out = {};
++if (cmd === 'list-panes') out = { panes: state.panes.map(pane_ref => ({ pane_ref })) };
++if (cmd === 'new-surface' && process.env.FAKE_NEW_SURFACE_ERROR) fail(process.env.FAKE_NEW_SURFACE_ERROR);
++if (cmd === 'new-surface' && !state.panes.includes(opt('--pane'))) fail('not_found');
++if (cmd === 'new-pane' && process.env.FAKE_NEW_PANE_ERROR) fail(process.env.FAKE_NEW_PANE_ERROR);
++if (cmd === 'read-screen' && process.env.FAKE_READ_SCREEN_ERROR) fail(process.env.FAKE_READ_SCREEN_ERROR);
++if (cmd === 'list-pane-surfaces' && !state.panes.includes(opt('--pane'))) fail('not_found');
++if (cmd === 'identify') out = { caller: { workspace_ref: 'workspace:1', pane_ref: process.env.FAKE_PANE || 'pane:1' } };
++if (cmd === 'new-pane' || cmd === 'new-surface') {
++  const n = ++state.n;
++  const script = fs.readFileSync(opt('--command'), 'utf8');
++  const vendor = script.includes('exec codex ') ? 'codex' : script.includes('exec claude ') ? 'claude' : 'grok';
++  const cwd = script.match(/cd '((?:[^']|'\\'')*)'/)[1].replace(/'\\''/g, "'");
++  const session = `session-${randomUUID()}`;
++  const w = { vendor, cwd, session, surface_id: `UUID-${n}`, surface_ref: `surface:${n + 10}` };
++  if (vendor === 'codex') {
++    w.transcript = path.join(process.env.CODEX_HOME || path.join(home, '.codex'), 'sessions/2026/11/14', `rollout-${session}.jsonl`);
++    put(w.transcript, line({ type: 'session_meta', payload: { id: session, cwd } }));
++  } else if (vendor === 'claude') {
++    w.transcript = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'projects', cwd.replace(/\//g, '-'), `${session}.jsonl`);
++    put(w.transcript, '');
++  } else {
++    w.transcript = path.join(process.env.GROK_HOME || path.join(home, '.grok'), 'sessions', cwd.replace(/\//g, '%2F'), session, 'events.jsonl');
++    w.history = path.join(path.dirname(w.transcript), 'chat_history.jsonl');
++    put(w.transcript, ''); put(w.history, '');
++  }
++  const events = path.join(home, '.cmuxterm/events.jsonl');
++  if (!fs.existsSync(events)) put(events, '');
++  fs.appendFileSync(events, line({ name: 'agent.hook.SessionStart', surface_id: w.surface_id, session_id: session, occurred_at: new Date().toISOString() }));
++  turn(w, 'initial', !process.env.FAKE_RUNNING);
++  w.pane_ref = cmd === 'new-pane' ? `pane:${n + 10}` : opt('--pane');
++  if (cmd === 'new-pane') state.panes.push(w.pane_ref);
++  state.workers[w.surface_ref] = w;
++  out = { ...w };
++}
++function permission(w) {
++  w.screen = 'Do you want to proceed?\n1. Yes\n2. No';
++  fs.appendFileSync(path.join(home, '.cmuxterm/events.jsonl'), line({ name: 'agent.hook.PermissionRequest', surface_id: w.surface_id, occurred_at: new Date().toISOString() }));
++}
++if (cmd === 'send') {
++  const w = state.workers[opt('--surface')]; w.pending = (w.pending || '') + args.at(-1); w.enters = 0;
++  if (process.env.FAKE_PERMISSION_ON_SEND) permission(w);
++}
++if (cmd === 'send-key') {
++  const w = state.workers[opt('--surface')];
++  if (++w.enters === 1 && process.env.FAKE_PERMISSION_AFTER_ENTER) permission(w);
++  if (w.enters === 2 && !process.env.FAKE_NO_SUBMIT) { turn(w, w.pending); w.pending = ''; }
++}
++if (cmd === 'read-screen' || cmd === 'close-surface') {
++  const w = state.workers[opt('--surface')];
++  if (cmd === 'read-screen' && process.env.FAKE_REMOVE_AFTER_READ && (state.removalReads = (state.removalReads || 0) + 1) > 1) w.closed = true;
++  if (!w || w.closed || !state.panes.includes(w.pane_ref)) fail('not_found');
++  if (cmd === 'close-surface') w.closed = true;
++  else {
++    const events = fs.readFileSync(path.join(home, '.cmuxterm/events.jsonl'), 'utf8').split('\n').filter(Boolean).map(JSON.parse);
++    const pending = events.some(e => e.surface_id === w.surface_id && e.name === 'agent.hook.PermissionRequest');
++    out = { text: w.screen ?? (pending || w.vendor === 'grok' && !fs.existsSync(w.history) ? 'Allow this command?\n1. Yes' : 'Worker screen') };
++  }
++}
++if (cmd === 'list-pane-surfaces') out = { surfaces: Object.values(state.workers).filter(w => !w.closed && (!args.includes('--pane') || w.pane_ref === opt('--pane'))) };
++put(file, JSON.stringify(state));
++console.log(JSON.stringify(out));
+     1	import fs from 'node:fs';
+     2	import path from 'node:path';
+     3	import { randomUUID } from 'node:crypto';
+     4	import { spawnSync } from 'node:child_process';
+     5	const home = process.env.HOME;
+     6	const file = path.join(home, 'fake-cmux.json');
+     7	const state = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { n: 0, calls: [], workers: {} };
+     8	const args = process.argv.slice(2);
+     9	state.panes ||= ['pane:1'];
+    10	const verbs = ['list-panes', 'identify', 'new-pane', 'new-surface', 'focus-pane', 'send', 'send-key', 'read-screen', 'close-surface', 'list-pane-surfaces'];
+    11	const cmd = args.find(a => verbs.includes(a));
+    12	const opt = k => args[args.indexOf(k) + 1];
+    13	state.calls.push(args);
+    14	// A leaked home override must fail before synthetic sessions can touch real harness files.
+    15	const put = (f, data) => {
+    16	  const relative = path.relative(home, f);
+    17	  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error('fake cmux refuses writes outside its temporary HOME');
+    18	  fs.mkdirSync(path.dirname(f), { recursive: true });
+    19	  // Tests read these files while a queued `agent open` keeps calling the fake; a rename is never seen half-written.
+    20	  const tmp = `${f}.${process.pid}.${randomUUID()}.tmp`;
+    21	  fs.writeFileSync(tmp, data); fs.renameSync(tmp, f);
+    22	};
+    23	const line = x => JSON.stringify(x) + '\n';
+    24	function turn(w, text, complete = true) {
+    25	  if (w.vendor === 'codex') {
+    26	    fs.appendFileSync(w.transcript, line({ type: 'event_msg', payload: { type: 'task_started' } }));
+    27	    fs.appendFileSync(w.transcript, line({ type: 'event_msg', payload: { type: 'user_message', message: text } }));
+    28	    if (complete) fs.appendFileSync(w.transcript, line({ type: 'event_msg', payload: { type: 'task_complete', last_agent_message: 'exact\nanswer  ' } }));
+    29	  } else if (w.vendor === 'claude') {
+    30	    fs.appendFileSync(w.transcript, line({ type: 'user', message: { role: 'user', content: text } }));
+    31	    if (complete) {
+    32	      fs.appendFileSync(w.transcript, line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'exact\nanswer  ' }] }, stop_reason: 'end_turn' }));
+    33	      fs.appendFileSync(path.join(home, '.cmuxterm/events.jsonl'), line({ name: 'agent.hook.Stop', surface_id: w.surface_id, session_id: w.session, occurred_at: new Date().toISOString() }));
+    34	    }
+    35	  } else {
+    36	    fs.appendFileSync(w.transcript, line({ type: 'turn_started' }));
+    37	    fs.appendFileSync(w.history, line({ role: 'user', content: text }));
+    38	    if (complete) {
+    39	      fs.appendFileSync(w.history, line({ role: 'assistant', content: 'exact\nanswer  ' }));
+    40	      fs.appendFileSync(w.transcript, line({ type: 'turn_ended' }));
+    41	    }
+    42	  }
+    43	}
+    44	if (process.env.FAKE_OFFLINE) { console.error('socket unreachable'); process.exit(1); }
+    45	function fail(code) {
+    46	  put(file, JSON.stringify(state));
+    47	  if (process.env.FAKE_ERROR_STYLE === 'stderr') console.error(`Error: ${code}: Surface not found for the given surface_id`);
+    48	  else console.log(JSON.stringify({ ok: false, error: { code, message: 'Surface not found for the given surface_id' } }));
+    49	  process.exit(1);
+    50	}
+    51	let out = {};
+    52	if (cmd === 'list-panes') out = { panes: state.panes.map(pane_ref => ({ pane_ref })) };
+    53	if (cmd === 'new-surface' && process.env.FAKE_NEW_SURFACE_ERROR) fail(process.env.FAKE_NEW_SURFACE_ERROR);
+    54	if (cmd === 'new-surface' && !state.panes.includes(opt('--pane'))) fail('not_found');
+    55	if (cmd === 'new-pane' && process.env.FAKE_NEW_PANE_ERROR) fail(process.env.FAKE_NEW_PANE_ERROR);
+    56	if (cmd === 'read-screen' && process.env.FAKE_READ_SCREEN_ERROR) fail(process.env.FAKE_READ_SCREEN_ERROR);
+    57	if (cmd === 'list-pane-surfaces' && !state.panes.includes(opt('--pane'))) fail('not_found');
+    58	if (cmd === 'identify') out = { caller: { workspace_ref: 'workspace:1', pane_ref: process.env.FAKE_PANE || 'pane:1' } };
+    59	if (cmd === 'new-pane' || cmd === 'new-surface') {
+    60	  const n = ++state.n;
+    61	  const script = fs.readFileSync(opt('--command'), 'utf8');
+    62	  const vendor = script.includes('exec codex ') ? 'codex' : script.includes('exec claude ') ? 'claude' : 'grok';
+    63	  const cwd = script.match(/cd '((?:[^']|'\\'')*)'/)[1].replace(/'\\''/g, "'");
+    64	  const session = `session-${randomUUID()}`;
+    65	  const w = { vendor, cwd, session, surface_id: `UUID-${n}`, surface_ref: `surface:${n + 10}` };
+    66	  if (vendor === 'codex') {
+    67	    w.transcript = path.join(process.env.CODEX_HOME || path.join(home, '.codex'), 'sessions/2026/11/14', `rollout-${session}.jsonl`);
+    68	    put(w.transcript, line({ type: 'session_meta', payload: { id: session, cwd } }));
+    69	  } else if (vendor === 'claude') {
+    70	    w.transcript = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'projects', cwd.replace(/\//g, '-'), `${session}.jsonl`);
+    71	    put(w.transcript, '');
+    72	  } else {
+    73	    w.transcript = path.join(process.env.GROK_HOME || path.join(home, '.grok'), 'sessions', cwd.replace(/\//g, '%2F'), session, 'events.jsonl');
+    74	    w.history = path.join(path.dirname(w.transcript), 'chat_history.jsonl');
+    75	    put(w.transcript, ''); put(w.history, '');
+    76	  }
+    77	  const events = path.join(home, '.cmuxterm/events.jsonl');
+    78	  if (!fs.existsSync(events)) put(events, '');
+    79	  fs.appendFileSync(events, line({ name: 'agent.hook.SessionStart', surface_id: w.surface_id, session_id: session, occurred_at: new Date().toISOString() }));
+    80	  turn(w, 'initial', !process.env.FAKE_RUNNING);
+    81	  w.pane_ref = cmd === 'new-pane' ? `pane:${n + 10}` : opt('--pane');
+    82	  if (cmd === 'new-pane') state.panes.push(w.pane_ref);
+    83	  state.workers[w.surface_ref] = w;
+    84	  out = { ...w };
+    85	}
+    86	function permission(w) {
+    87	  w.screen = 'Do you want to proceed?\n1. Yes\n2. No';
+    88	  fs.appendFileSync(path.join(home, '.cmuxterm/events.jsonl'), line({ name: 'agent.hook.PermissionRequest', surface_id: w.surface_id, occurred_at: new Date().toISOString() }));
+    89	}
+    90	if (cmd === 'send') {
+    91	  const w = state.workers[opt('--surface')]; w.pending = (w.pending || '') + args.at(-1); w.enters = 0;
+    92	  if (process.env.FAKE_PERMISSION_ON_SEND) permission(w);
+    93	}
+    94	if (cmd === 'send-key') {
+    95	  const w = state.workers[opt('--surface')];
+    96	  if (++w.enters === 1 && process.env.FAKE_PERMISSION_AFTER_ENTER) permission(w);
+    97	  if (w.enters === 2 && !process.env.FAKE_NO_SUBMIT) { turn(w, w.pending); w.pending = ''; }
+    98	}
+    99	if (cmd === 'read-screen' || cmd === 'close-surface') {
+   100	  const w = state.workers[opt('--surface')];
+   101	  if (cmd === 'read-screen' && process.env.FAKE_REMOVE_AFTER_READ && (state.removalReads = (state.removalReads || 0) + 1) > 1) w.closed = true;
+   102	  if (!w || w.closed || !state.panes.includes(w.pane_ref)) fail('not_found');
+   103	  if (cmd === 'close-surface') w.closed = true;
+   104	  else {
+   105	    const events = fs.readFileSync(path.join(home, '.cmuxterm/events.jsonl'), 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+   106	    const pending = events.some(e => e.surface_id === w.surface_id && e.name === 'agent.hook.PermissionRequest');
+   107	    out = { text: w.screen ?? (pending || w.vendor === 'grok' && !fs.existsSync(w.history) ? 'Allow this command?\n1. Yes' : 'Worker screen') };
+   108	  }
+   109	}
+   110	if (cmd === 'list-pane-surfaces') out = { surfaces: Object.values(state.workers).filter(w => !w.closed && (!args.includes('--pane') || w.pane_ref === opt('--pane'))) };
+   111	put(file, JSON.stringify(state));
+   112	console.log(JSON.stringify(out));
+tests/agent-cli.mjs:13:fs.writeFileSync(path.join(fake, 'cmux'), `#!${process.execPath}\nimport(${JSON.stringify(path.join(root, 'tests/fixtures/agent-cmux.mjs'))});\n`, { mode: 0o755 });
+tests/agent-cli.mjs:18:const state = () => JSON.parse(fs.readFileSync(path.join(home, 'fake-cmux.json'), 'utf8'));
+tests/agent-cli.mjs:22:assert.match(run(['list'], { FAKE_OFFLINE: '1' }).stderr, /agent needs cmux/);
+tests/agent-cli.mjs:42:const running = open('sol', ['task'], { FAKE_RUNNING: '1' });
+tests/agent-cli.mjs:59:const noSubmit = run(['send', codex.id, 'never submitted'], { FAKE_NO_SUBMIT: '1' });
+tests/agent-cli.mjs:65:assert.equal(json(run(['list', '--json'], { FAKE_PANE: 'pane:99' })).length, 0);
+tests/agent-cli.mjs:66:assert.equal(run(['send', codex.id, 'wrong owner'], { FAKE_PANE: 'pane:99' }).status, 2);
+tests/agent-cli.mjs:79:const isolated = open('sol', ['isolation task'], { FAKE_RUNNING: '1' });
+tests/agent-cli.mjs:124:const queueEnv = { ...env, HOME: queueHome, FAKE_RUNNING: '1' };
+tests/agent-cli.mjs:134:assert.equal(JSON.parse(fs.readFileSync(path.join(queueHome, 'fake-cmux.json'))).n, 4);
+tests/agent-cli.mjs:135:const firstWorker = JSON.parse(fs.readFileSync(path.join(queueHome, 'fake-cmux.json'))).workers[four[0].surface_ref];
+tests/agent-cli.mjs:141:assert.equal(JSON.parse(fs.readFileSync(path.join(queueHome, 'fake-cmux.json'))).n, 5);
+tests/agent-cli.mjs:143:const queuedSend = spawn(process.execPath, [path.join(root, 'bin/agent.mjs'), 'send', four[0].id, 'queued follow up', '--json'], { env: queueEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+tests/agent-cli.mjs:145:queuedSend.stderr.on('data', s => sendErr += s);
+tests/agent-cli.mjs:146:const sendExit = new Promise(resolve => queuedSend.on('exit', resolve));
+tests/agent-cli.mjs:148:assert.equal(queuedSend.exitCode, null);
+tests/agent-cli.mjs:149:const anotherWorker = JSON.parse(fs.readFileSync(path.join(queueHome, 'fake-cmux.json'))).workers[four[1].surface_ref];
+tests/agent-cli.mjs:151:const sendTimer = setTimeout(() => queuedSend.kill('SIGKILL'), 10000);
+
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+exec
+/bin/zsh -lc "sed -n '1,235p' tests/agent-cli.mjs; cat package.json; sed -n '1,240p' /Users/cortega/.codex/skills/code-review/SKILL.md" in /Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-agent-command
+ succeeded in 0ms:
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { tempDir } from './fixtures/cleanup.mjs';
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const home = fs.realpathSync(tempDir('acs-agent-'));
+const fake = path.join(home, 'bin');
+fs.mkdirSync(fake);
+const caffeineLog = path.join(home, 'caffeinate-calls');
+fs.writeFileSync(path.join(fake, 'caffeinate'), `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(caffeineLog)},JSON.stringify(process.argv.slice(2))+'\\n');\n`, { mode: 0o755 });
+fs.writeFileSync(path.join(fake, 'cmux'), `#!${process.execPath}\nimport(${JSON.stringify(path.join(root, 'tests/fixtures/agent-cmux.mjs'))});\n`, { mode: 0o755 });
+const env = { ...process.env, HOME: home, PATH: `${fake}:${process.env.PATH}`, CMUX_SOCKET_PATH: path.join(home, 'socket'), CMUX_WORKSPACE_ID: 'workspace:1', CMUX_SURFACE_ID: 'surface:1' };
+for (const key of ['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'GROK_HOME']) delete env[key];
+const run = (args, extra = {}) => spawnSync(process.execPath, [path.join(root, 'bin/agent.mjs'), ...args], { env: { ...env, ...extra }, encoding: 'utf8' });
+const json = r => { assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+const state = () => JSON.parse(fs.readFileSync(path.join(home, 'fake-cmux.json'), 'utf8'));
+const records = () => fs.readdirSync(path.join(home, '.agent-config-studio/agents')).filter(f => f.endsWith('.json')).map(f => JSON.parse(fs.readFileSync(path.join(home, '.agent-config-studio/agents', f))));
+const open = (family, extra = [], vars = {}) => json(run(['open', family, '--cwd', home, '--json', ...extra], vars));
+assert.equal(run(['list'], { CMUX_SOCKET_PATH: '' }).status, 2);
+assert.match(run(['list'], { FAKE_OFFLINE: '1' }).stderr, /agent needs cmux/);
+const prompt = path.join(home, 'long prompt.txt');
+fs.writeFileSync(prompt, 'a'.repeat(47000) + '\n$(touch NEVER) `literal` \' "');
+const codex = open('sol', ['--effort', 'high', '--prompt-file', prompt]);
+assert.ok(codex.id);
+const c = records().find(r => r.id === codex.id);
+assert.equal(c.vendor, 'codex');
+const launch = fs.readFileSync(c.launcher, 'utf8');
+assert.match(launch, /'-s' 'workspace-write' '-a' 'never'/);
+assert.match(launch, /model_reasoning_effort=high/);
+assert.ok(!launch.includes('a'.repeat(100)));
+assert.equal(fs.readFileSync(c.promptFile, 'utf8'), fs.readFileSync(prompt, 'utf8'));
+assert.ok(!state().calls.some(a => a.includes('send')));
+assert.equal(json(run(['wait', c.id, '--timeout', '0', '--json'])).status, 'done');
+const claude = open('opus', ['task']);
+const grok = open('grok', ['task']);
+for (const w of [claude, grok]) assert.equal(json(run(['wait', w.id, '--timeout', '0', '--json'])).status, 'done');
+assert.equal(state().calls.filter(a => a.includes('new-pane')).length, 2);
+assert.ok(state().calls.some(a => a.includes('new-surface') && a.includes('pane:11')));
+assert.ok(state().calls.some(a => a.includes('focus-pane') && a.includes('pane:1')));
+const running = open('sol', ['task'], { FAKE_RUNNING: '1' });
+assert.equal(run(['wait', running.id, '--timeout', '0']).status, 4);
+const r = records().find(r => r.id === running.id);
+fs.appendFileSync(path.join(home, '.cmuxterm/events.jsonl'), JSON.stringify({ name: 'agent.hook.PermissionRequest', surface_id: r.surface_id }) + '\n');
+const stuck = run(['wait', r.id, '--timeout', '0', '--json']);
+assert.equal(stuck.status, 3, stuck.stderr);
+assert.match(JSON.parse(stuck.stdout).prompt, /Allow this command/);
+console.log('agent core/open/wait passed');
+for (const w of [codex, claude, grok]) {
+  assert.equal(run(['answer', w.id]).stdout, 'exact\nanswer  ');
+  const sent = json(run(['send', w.id, 'follow up', '--json']));
+  assert.equal(sent.status, 'running');
+  assert.equal(json(run(['wait', w.id, '--timeout', '0', '--json'])).status, 'done');
+  assert.equal(run(['answer', w.id]).stdout, 'exact\nanswer  ');
+  const keys = state().calls.filter(a => a.includes('send-key') && a.includes(w.surface_ref));
+  assert.equal(keys.length, 2);
+}
+const noSubmit = run(['send', codex.id, 'never submitted'], { FAKE_NO_SUBMIT: '1' });
+assert.equal(noSubmit.status, 1);
+assert.match(noSubmit.stderr, /submission/);
+assert.equal(state().calls.filter(a => a.includes('send-key') && a.includes(codex.surface_ref)).length, 6);
+const listed = json(run(['list', '--json']));
+assert.equal(listed.length, 4);
+assert.equal(json(run(['list', '--json'], { FAKE_PANE: 'pane:99' })).length, 0);
+assert.equal(run(['send', codex.id, 'wrong owner'], { FAKE_PANE: 'pane:99' }).status, 2);
+json(run(['close', codex.id, '--json']));
+assert.ok(state().calls.some(a => a.includes('close-surface') && a.includes('--force') && a.includes(codex.surface_ref)));
+assert.equal(records().find(r => r.id === codex.id).status, 'closed');
+assert.equal(run(['send', codex.id, 'closed']).status, 2);
+const idle = records().find(r => r.id === claude.id);
+idle.lastActivityAt = Date.now() - 31 * 60000;
+idle.finishedAt = idle.lastActivityAt;
+fs.writeFileSync(path.join(home, '.agent-config-studio/agents', `${idle.id}.json`), JSON.stringify(idle));
+assert.equal(json(run(['list', '--json'])).find(w => w.id === idle.id).status, 'closed');
+assert.ok(fs.existsSync(idle.transcript));
+console.log('agent send/answer/close/list passed');
+// A different rollout in the same cwd must not complete a pinned worker.
+const isolated = open('sol', ['isolation task'], { FAKE_RUNNING: '1' });
+assert.equal(run(['wait', isolated.id, '--timeout', '0']).status, 4);
+const other = open('sol', ['another task']);
+assert.equal(run(['wait', isolated.id, '--timeout', '0']).status, 4);
+assert.equal(json(run(['wait', other.id, '--timeout', '0', '--json'])).status, 'done');
+const iso = records().find(w => w.id === isolated.id);
+fs.appendFileSync(iso.transcript, '{"type":');
+assert.equal(run(['wait', isolated.id, '--timeout', '0']).status, 4);
+for (const args of [['open', 'no-such-family', 'task'], ['open', 'sol', '--effort', 'bogus', 'task'], ['open', 'sol', '--prompt-file', prompt, 'also task'], ['wait', other.id, '--timeout', '-1'], ['answer', '../escape'], ['send', other.id], ['list', '--unknown']]) assert.equal(run(args).status, 2, JSON.stringify(args));
+const doneRecord = records().find(w => w.id === other.id);
+fs.appendFileSync(path.join(home, '.cmuxterm/events.jsonl'), JSON.stringify({ name: 'agent.hook.Notification', surface_id: doneRecord.surface_id, occurred_at: new Date(doneRecord.finishedAt + 60000).toISOString() }) + '\n');
+assert.equal(json(run(['wait', other.id, '--timeout', '0', '--json'])).status, 'done');
+const fallback = open('grok', ['screen fallback']);
+const fallbackRecord = records().find(w => w.id === fallback.id);
+fs.rmSync(path.join(path.dirname(fallbackRecord.transcript), 'chat_history.jsonl'));
+assert.equal(run(['answer', fallback.id]).stdout, 'Allow this command?\n1. Yes');
+// A running worker is never closed just because its launch was long ago.
+const active = records().find(w => w.id === isolated.id);
+active.lastActivityAt = Date.now() - 31 * 60000;
+fs.writeFileSync(path.join(home, '.agent-config-studio/agents', `${active.id}.json`), JSON.stringify(active));
+assert.equal(json(run(['list', '--json'])).find(w => w.id === active.id).status, 'running');
+const waitingIdle = records().find(w => w.id === other.id);
+waitingIdle.lastActivityAt = Date.now() - 31 * 60000;
+fs.writeFileSync(path.join(home, '.agent-config-studio/agents', `${waitingIdle.id}.json`), JSON.stringify(waitingIdle));
+const idleWait = run(['wait', waitingIdle.id, '--timeout', '0', '--json']);
+assert.equal(idleWait.status, 8, idleWait.stderr);
+assert.equal(JSON.parse(idleWait.stdout).closed, true);
+assert.equal(JSON.parse(idleWait.stdout).state, 'closed');
+console.log('agent isolation/edge cases passed');
+const captured = path.join(home, 'captured-argv.json');
+fs.writeFileSync(path.join(fake, 'codex'), `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(captured)}, JSON.stringify({args:process.argv.slice(2),cwd:process.cwd()}));\n`, { mode: 0o755 });
+const shell = spawnSync('/bin/sh', [c.launcher], { env, encoding: 'utf8' });
+assert.equal(shell.status, 0, shell.stderr);
+const capture = JSON.parse(fs.readFileSync(captured));
+assert.equal(capture.args.at(-1), fs.readFileSync(prompt, 'utf8'));
+assert.equal(capture.cwd, home);
+assert.ok(!fs.existsSync(path.join(home, 'NEVER')));
+const beforeTen = state().calls.filter(a => a.includes('new-pane')).length;
+const ten = Array.from({ length: 10 }, (_, i) => open('sol', [`worker ${i}`]));
+assert.equal(state().calls.filter(a => a.includes('new-pane')).length, beforeTen);
+for (const w of ten) assert.equal(json(run(['wait', w.id, '--timeout', '0', '--json'])).status, 'done');
+assert.equal(new Set(ten.map(w => w.surface_ref)).size, 10);
+console.log('agent safe launcher and ten workers passed');
+const queueHome = path.join(home, 'queue');
+fs.mkdirSync(queueHome);
+const queueEnv = { ...env, HOME: queueHome, FAKE_RUNNING: '1' };
+const queueRun = (...args) => spawnSync(process.execPath, [path.join(root, 'bin/agent.mjs'), ...args], { env: queueEnv, encoding: 'utf8' });
+const four = Array.from({ length: 4 }, () => json(queueRun('open', 'sol', '--cwd', queueHome, 'queue task', '--json')));
+const pending = spawn(process.execPath, [path.join(root, 'bin/agent.mjs'), 'open', 'sol', '--cwd', queueHome, 'fifth task', '--json'], { env: queueEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+let pendingOut = '', pendingErr = '';
+pending.stdout.on('data', s => pendingOut += s);
+pending.stderr.on('data', s => pendingErr += s);
+const exit = new Promise(resolve => pending.on('exit', resolve));
+await new Promise(resolve => setTimeout(resolve, 700));
+assert.equal(pending.exitCode, null);
+assert.equal(JSON.parse(fs.readFileSync(path.join(queueHome, 'fake-cmux.json'))).n, 4);
+const firstWorker = JSON.parse(fs.readFileSync(path.join(queueHome, 'fake-cmux.json'))).workers[four[0].surface_ref];
+fs.appendFileSync(firstWorker.transcript, JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', last_agent_message: 'free slot' } }) + '\n');
+const timer = setTimeout(() => pending.kill('SIGKILL'), 10000);
+assert.equal(await exit, 0, pendingErr);
+clearTimeout(timer);
+assert.ok(JSON.parse(pendingOut).id);
+assert.equal(JSON.parse(fs.readFileSync(path.join(queueHome, 'fake-cmux.json'))).n, 5);
+console.log('agent four-worker queue passed');
+const queuedSend = spawn(process.execPath, [path.join(root, 'bin/agent.mjs'), 'send', four[0].id, 'queued follow up', '--json'], { env: queueEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+let sendErr = '';
+queuedSend.stderr.on('data', s => sendErr += s);
+const sendExit = new Promise(resolve => queuedSend.on('exit', resolve));
+await new Promise(resolve => setTimeout(resolve, 700));
+assert.equal(queuedSend.exitCode, null);
+const anotherWorker = JSON.parse(fs.readFileSync(path.join(queueHome, 'fake-cmux.json'))).workers[four[1].surface_ref];
+fs.appendFileSync(anotherWorker.transcript, JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', last_agent_message: 'free another slot' } }) + '\n');
+const sendTimer = setTimeout(() => queuedSend.kill('SIGKILL'), 10000);
+assert.equal(await sendExit, 0, sendErr);
+clearTimeout(sendTimer);
+console.log('agent follow-up queue passed');
+const claudeDefault = open('opus', ['MCP default']);
+const claudeOptIn = open('opus', ['--mcp', 'MCP opt in']);
+const codexOptIn = open('sol', ['--mcp', 'MCP opt in']);
+const grokOptIn = open('grok', ['--mcp', 'MCP opt in']);
+const scriptOf = w => fs.readFileSync(w.launcher, 'utf8');
+assert.match(scriptOf(claudeDefault), /'--strict-mcp-config'/);
+assert.ok(!scriptOf(claudeDefault).includes('--mcp-config'));
+assert.ok(!scriptOf(claudeOptIn).includes('--strict-mcp-config'));
+for (const w of [codexOptIn, grokOptIn]) assert.ok(!scriptOf(w).includes('--strict-mcp-config'));
+assert.ok(!scriptOf(codexOptIn).includes('orchestrator.mcp.enabled'));
+assert.equal(claudeDefault.mcp, false);
+assert.equal(claudeOptIn.mcp, true);
+const gitRoot = path.join(home, 'git fixture');
+fs.mkdirSync(gitRoot);
+const gitInit = spawnSync('git', ['init', gitRoot], { encoding: 'utf8' });
+assert.equal(gitInit.status, 0, gitInit.stderr);
+const linked = path.join(home, "linked ' worktree");
+fs.mkdirSync(linked);
+fs.mkdirSync(path.join(gitRoot, '.git/logs'));
+const admin = path.join(gitRoot, '.git/worktrees/linked');
+fs.mkdirSync(admin, { recursive: true });
+fs.writeFileSync(path.join(admin, 'commondir'), '../..\n');
+fs.writeFileSync(path.join(admin, 'HEAD'), 'ref: refs/heads/fixture\n');
+fs.writeFileSync(path.join(admin, 'gitdir'), path.join(linked, '.git') + '\n');
+fs.writeFileSync(path.join(linked, '.git'), `gitdir: ${admin}\n`);
+const linkedWorker = open('sol', ['--cwd', linked, 'git shared dir']);
+const linkedLaunch = spawnSync('/bin/sh', [linkedWorker.launcher], { env, encoding: 'utf8' });
+assert.equal(linkedLaunch.status, 0, linkedLaunch.stderr);
+const linkedArgs = JSON.parse(fs.readFileSync(captured)).args;
+assert.deepEqual(linkedArgs.flatMap((arg, i) => arg === '--add-dir' ? [linkedArgs[i + 1]] : []), ['objects', 'refs', 'logs'].map(name => path.join(gitRoot, '.git', name)).concat(admin));
+assert.ok(!linkedArgs.includes(path.join(gitRoot, '.git')), 'the common root is never writable');
+const normalWorker = open('sol', ['--cwd', gitRoot, 'normal repository']);
+assert.equal(spawnSync('/bin/sh', [normalWorker.launcher], { env, encoding: 'utf8' }).status, 0);
+assert.ok(!JSON.parse(fs.readFileSync(captured)).args.includes('--add-dir'));
+console.log('agent MCP argv and shared Git metadata passed');
+for (const cli of ['claude', 'grok']) fs.writeFileSync(path.join(fake, cli), fs.readFileSync(path.join(fake, 'codex')), { mode: 0o755 });
+const argvOf = w => {
+  const result = spawnSync('/bin/sh', [w.launcher], { env, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(fs.readFileSync(captured)).args;
+};
+const defaultClaudeArgs = argvOf(claudeDefault);
+assert.deepEqual(defaultClaudeArgs, ['--model', claudeDefault.model, '--permission-mode', 'auto', '--strict-mcp-config', '--', 'MCP default']);
+assert.deepEqual(argvOf(claudeOptIn), ['--model', claudeOptIn.model, '--permission-mode', 'auto', '--', 'MCP opt in']);
+assert.deepEqual(argvOf(codexOptIn), ['-m', codexOptIn.model, '-s', 'workspace-write', '-a', 'never', '--', 'MCP opt in']);
+assert.deepEqual(argvOf(grokOptIn), ['-m', grokOptIn.model, '--always-approve', '--', 'MCP opt in']);
+assert.deepEqual(argvOf(grok), ['-m', grok.model, '--always-approve', '--', 'task']);
+console.log('agent all harness launcher argv passed');
+
+const caffeineDeadline = Date.now() + 5000;
+while ((!fs.existsSync(caffeineLog) || fs.readFileSync(caffeineLog, 'utf8').trim().split('\n').length < 8) && Date.now() < caffeineDeadline) await new Promise(resolve => setTimeout(resolve, 50));
+const caffeineCalls = fs.readFileSync(caffeineLog, 'utf8').trim().split('\n').map(JSON.parse);
+assert.equal(caffeineCalls.length, 8);
+for (const args of caffeineCalls) { assert.deepEqual(args.slice(0, 2), ['-i', '-w']); assert.match(args[2], /^[1-9]\d*$/); }
+const pid = fs.readFileSync(c.pidFile, 'utf8').trim();
+assert.ok(caffeineCalls.some(args => args[2] === pid));
+assert.equal(caffeineCalls.filter(args => args[2] === pid).length, 1);
+for (const w of [c, linkedWorker, normalWorker, claudeDefault, claudeOptIn, codexOptIn, grokOptIn, grok]) {
+  const target = fs.readFileSync(w.pidFile, 'utf8').trim();
+  assert.equal(caffeineCalls.filter(args => args[2] === target).length, 1);
+}
+console.log('agent caffeinate targets launcher PID once per process');
+
+const rigWorker = open('sol', ['rig hook'], { AGENT_TEST_MODE: '1', AGENT_TEST_LAUNCH_EXTRA: '["--no-alt-screen"]', AGENT_TEST_BINARY: path.join(home, 'missing-harness') });
+assert.match(scriptOf(rigWorker), /'--no-alt-screen'/);
+assert.ok(scriptOf(rigWorker).includes(`exec '${path.join(home, 'missing-harness')}'`));
+const missing = spawnSync('/bin/sh', [rigWorker.launcher], { env, encoding: 'utf8' });
+assert.equal(fs.existsSync(path.join(home, 'missing-harness')), false);
+assert.ok([126, 127].includes(missing.status), missing.stderr);
+assert.match(missing.stderr, /missing-harness/);
+const ignoredHook = open('sol', ['ignored hook'], { AGENT_TEST_MODE: '0', AGENT_TEST_LAUNCH_EXTRA: '["--no-alt-screen"]', AGENT_TEST_BINARY: path.join(home, 'missing-harness') });
+assert.ok(!scriptOf(ignoredHook).includes('--no-alt-screen'));
+assert.ok(!scriptOf(ignoredHook).includes('missing-harness'));
+json(run(['close', rigWorker.id, '--json']));
+console.log('agent fault-rig launch overrides require explicit test mode');
+{
+  "name": "agent-config-studio",
+  "version": "1.3.0",
+  "description": "Local web app to view, edit, and version every Claude Code, Codex and Grok config surface on this machine.",
+  "keywords": ["claude-code", "codex", "grok", "agents", "config", "skills", "mcp", "cli"],
+  "homepage": "https://github.com/crisnc100/agent-config-studio#readme",
+  "bugs": { "url": "https://github.com/crisnc100/agent-config-studio/issues" },
+  "repository": { "type": "git", "url": "git+https://github.com/crisnc100/agent-config-studio.git" },
+  "license": "MIT",
+  "author": "Cristian Ortega",
+  "type": "module",
+  "main": "server.js",
+  "bin": { "acs": "bin/acs" },
+  "files": [
+    "server.js",
+    "lib/",
+    "public/",
+    "bin/",
+    "tools/",
+    "packs/",
+    "!packs/*/tests/",
+    "models.default.json"
+  ],
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": { "node": ">=20" }
+}
+---
+name: code-review
+description: Single-pass, read-only code review of the current branch's committed diff for correctness — logic bugs, regressions, edge cases, error handling, data integrity. Runs the shared review engine (review.mjs), returns structured findings by severity, fixes every HIGH and MEDIUM without asking, defers what the one fix check leaves, and reports once. The script never fixes; no loop.
+---
+
+# code-review — review → fix → one report
+
+Review the committed diff vs the remote's default branch (auto-detected from `origin/HEAD`) for **code correctness only** (not style, not product scope, not security: it runs with `--code-only`, so it never starts a security pass, whatever the review config says).
+One pass, read-only reviewer, findings come back to the seat, every HIGH and MEDIUM is fixed in-context without asking (rule 10 below), then one report.
+
+## Step 1 — run the shared engine
+
+Commit the work first, including the build folder (it reviews the committed diff). Then run the same `review.mjs` every tool shares — repo copy first, shared runtime as the fallback, and also when the repo copy is too old to support `--code-only` (one line says so):
+```bash
+SCRIPT=scripts/review.mjs
+[ -f "$SCRIPT" ] || SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
+[ "$SCRIPT" = scripts/review.mjs ] && ! { grep -q -- --supports "$SCRIPT" && node "$SCRIPT" --supports --code-only; } && echo "scripts/review.mjs does not support --code-only; using the shared runtime" >&2 && SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
+node "$SCRIPT" --code-only "<intent: what the branch delivers, its acceptance criteria, and anything deliberately out of scope>"
+```
+Context comes from files: the orchestrator's plan via --plan <plan.md> or REVIEW_PLAN, the builder's adjacent log.md if present, and already-decided findings from the review log. Inside a build loop, pass the plan; a missing plan file refuses. The optional intent string supplements those files. Decided stays decided: same-branch, same-repository rejections arrive as "already decided; don't re-raise without new evidence".
+It writes `reviews/<ts>/code-review.md` and prints findings as JSON after a `===FINDINGS_JSON===` marker. Parse that block; keep reviewId and each finding's id, including disputed and carried unlocated findings, for the status file. All retain their stored derived severity; every non-filed finding needs a status.
+
+**Who reviews.** The `reviewer` role in ACS (Models → Roles; `model-id --role reviewer --json`) is the pool, each family at its own flavor effort. A family's CLI follows its model id (`claude-…` → claude, `gpt-…` → codex, `grok-…` → grok); families whose CLI is not installed are skipped and one line names them. The run stops with a message naming the fix — never trying another vendor — when `model-id` is missing (`acs install-model-id`), the role is unset (you choose it at install: `acs packs install review-gate --set-role reviewer=<family>[,…]`) or missing, no family in it has its CLI, or a named reviewer has no CLI.
+
+**Routing by size.** With config `routing` set, e.g. `[{"maxLines": 150, "family": "<small-diff family>"}, {"family": "<everything else>"}]`, the first entry whose `maxLines` the diff's changed lines (added + removed) are under picks the reviewer, and an entry without `maxLines` takes the rest; a diff touching riskPaths is never small. Order: `REVIEW_REVIEWER` / `reviewer`, then a `force` rule, then a pick (`REVIEW_PICK` for one run, or config `pick`, which prints a note that it overrides routing), then routing. Routing ignores crossFamily (a route that lands on the author's vendor says so in the why line), each family runs at its own effort, a family must be in the reviewer role, and fix checks route on the fix diff. A family no entry names (grok, say) reviews only when named. `--show-config` shows the route and why. With no `routing`, the pick decides as before.
+
+**Scoring reviewers (`--eval`).** `node "$SCRIPT" --eval [--family <f>,…] [--cases <dir>] [--repeat N] [--timeout 15m] [--yes]` has each family (default: the reviewer role) review every case in a throwaway repo, in eval mode: no security pass, verify or second opinion, and nothing reaches the review log, a close or the push gate. A case is a folder with `case.json` (`id`, `kind` bug|clean, `intent`; a bug lists `expect: [{file, side, lines, what}]`, a clean case may list `allow`) and `base/` + `head/` trees, kept in `~/.agent-config-studio/review-gate/eval/cases/` (two examples sit in `eval/examples/` beside the script). It prints bugs caught and missed, false alarms on clean cases, and errored reviews per family, and appends one record per family to `review-log/eval-log.jsonl`. Over 10 reviews needs `--yes`.
+
+**Grok runs.** A grok review runs with an empty temporary HOME and the real GROK_HOME, so nothing grok borrows from `~/.claude` or `~/.cursor` (plugin MCP servers, hooks) starts, and its login is the usual one. It is refused while grok would still start an MCP server, run the project's hooks, or run in leader mode (set in any grok config layer or by macOS device management; a layer that can't be read counts as on). `grokMcpAllow` lists servers from grok's own `config.toml` that may start anyway (their tools stay denied): operator-only, in the home config or `REVIEW_GROK_MCP_ALLOW`, never a tracked repo config, and empty by default; ask-model reads the same key from the home config.
+
+**Cross-vendor.** Cross-vendor checks follow the review gate's crossFamily setting (default prefer: another vendor when available, never a blocker; the run names who checked and why). Pass `REVIEW_AUTHOR=<family or vendor that built the branch>` and `crossFamily: "prefer"` (the default) skips the author's vendor when the pool has another; `"off"` never filters. If no other vendor can run, review with what is available — never wait — and say so. The home config is the floor: a tracked repo config, `REVIEW_CONFIG` or `REVIEW_CROSS_FAMILY` may turn it on, never off (`REVIEW_CROSS_FAMILY=off` counts only when no config sets `crossFamily`); `--cross-family` prints the setting in force.
+To name one reviewer for a run: `REVIEW_REVIEWER=<family>` (or `codex`, `claude` for the Claude multi-agent team on the role's Claude families, `grok`). Say which reviewer ran.
+
+Per-run knobs (env → config file → built-in): `REVIEW_EFFORT=xhigh` (raise codex reasoning), `REVIEW_BASE=origin/master` (non-standard default branch). The config files are `.claude/review-config.json` (this repo) and `~/.agent-config-studio/review-gate/config.json` (all projects). A repo file sets `verifyCmd`, `classifier`, `base` or a `pick` that names a command only while git doesn't track it; otherwise those are ignored with a warning. Check active config, the merge policy included: `node "$SCRIPT" --show-config`. The review log is `~/.agent-config-studio/review-log/review-log.jsonl` (an existing older log under `~/.claude` keeps being used until that folder exists).
+
+**Docs focus.** `--focus docs` with `REVIEW_PATHS` reviews a slice of comment and doc edits as a full review: the correctness prompt, plus the docs instructions (untrue or unbacked claims, any code-line change, a removed comment that carried a reason, a changed directive). It reviews a slice only. `--since-close <sha>` on a slice gives the reviewer only what changed after a complete close of this branch ended at `<sha>`; it refuses unless that close covered those files there.
+
+**Big diffs: review in slices.** The prompt inlines at most 120k characters of diff; over that, the run warns and names the largest top-level folders.
+Slice the one commit instead: run the review once per path group with `REVIEW_PATHS=<pathspec>,<pathspec>` (git pathspecs, comma- or newline-separated; config `paths` also works). A list that matches no changed file is refused.
+Each slice gets its own record, findings and close, and a sliced close ignores later changes outside its paths. Commit every fix first, then close every slice at the same HEAD.
+**Run the slices in parallel:** `node "$SCRIPT" --slices "<group>;<group>" [--jobs N] --code-only "<intent>"` reviews each group (one `REVIEW_PATHS` value, so commas inside a group, `;` between groups) as its own run, at most N at a time (default 4), in this checkout. Each slice prints under `=== slice i/n: <paths> (exit c) ===` as it finishes; then `===SLICES_JSON===` lists `{paths, exit, reviewId, result}` per slice, `result` being that slice's FINDINGS_JSON. A failed slice makes the run exit non-zero: rerun only that group. A big run outlasts a foreground shell timeout, so start it in the background and wait for it to finish. Then fix, fix-check and close each slice by its review id; one HEAD for all the closes is simplest, though a slice closed earlier still counts.
+The slices together must cover every file of the diff: the push gate and `--summary` accept them only then, and a missing slice blocks the push and names the uncovered files. Coverage is by content, so a late commit needs only its own files reviewed as one more slice, closed at the tip; the slices closed earlier still count.
+
+**What the push gate accepts.** A changed file is covered when its exact state at the pushed tip (content and mode, or deleted) was seen by a complete close or a clean fix check (one with no finding that needs a status), logged in this repository at a commit the tip descends from. A review on another branch or in another clone covers nothing. Content already on the default branch needs no coverage: the gate trusts the commit that `refs/remotes/origin/HEAD` names (a symbolic ref to an existing `refs/remotes/origin/<branch>`, read locally, never set by the gate, never from `REVIEW_BASE` or config `base`), and only for a push to `origin`; any other remote, or a missing, detached or dangling origin/HEAD, keeps the full rule. A file whose diff the 120k cap cut is not covered, and a file changed on both sides of a merge needs a review that saw the merge. `builds/` files need no coverage. The tip also needs one complete close at it (or followed only by `builds/` commits), so the tests ran there. A refusal lists the uncovered files: review just those with `REVIEW_PATHS` and close that slice at the tip. **Update a reviewed branch by merging the default branch into it, never by rebasing** (a rebase needs coverage again). After a clean merge, re-close the existing review at the merge tip: the tests run there and no model is called. A file changed on both sides of the merge, conflict or not, and any file edited inside the merge commit itself, gets a slice review at the tip (`REVIEW_PATHS` = the files the refusal names) closed there; the re-close then refuses (with a fix check) or goes partial (without one) naming those same files, which is expected, and the slice's close is the one the push needs. Generated dependency lockfiles (package-lock.json, yarn.lock, pnpm-lock.yaml, Cargo.lock, go.sum and the others the gate lists, by exact file name in any folder) are exempt by default; the refusal and `--summary` name every exempt file as not reviewed, so the PR shows them. The operator can list more files in `coverageExempt` (globs, like `riskPaths`) or turn the defaults off with `"coverageExemptDefaults": false`: in the home config (`coverageExempt` also through `REVIEW_COVERAGE_EXEMPT`) or an untracked repo config, never a tracked one. A tracked repo config never drops these home-config values either: the home file's `coverageExempt`, `coverageExemptDefaults`, `grokMcpAllow`, `verifyCmd`, `classifier` and `base` stay in force over it. Agents don't add to the list on their own. A refusal for any other file whose diff alone is over the cap goes in the PR as a blocker for the operator, never as a shell command for them to paste.
+
+## Step 2 — triage, then fix without asking
+
+Verify every finding against the actual code before fixing (you have the diff loaded):
+- **Keep the scores and derived severity.** The script derives severity from scores; reviewer labels are comparison text only. Scores cannot change in triage.
+- **Derived severity.** Reviewers supply likelihood and impact (integers 1–10), protected (boolean) and a concrete trigger. HIGH is protected or risk ≥ 40; LOW is unprotected risk ≤ 10 and is filed; MEDIUM is the rest. Fix HIGH first, then MEDIUM. HIGH, MEDIUM and all unscored findings block until fixed, REFUTED or waived. Invalid scores are re-asked once; still-unscored findings block as MEDIUM (HIGH if protected). Legacy unscored LOW findings also block. Filed findings need no close status, are already decided, and are fixed only when the operator picks them. Grade criterion FAILs stay HIGH and are never filed.
+- **Protected cases.** A demonstrated reachable exploit, stored data lost beyond ordinary undo, wrong money, or a way around the review gate in the gate's own logic: the push check, the close, a dispute or a waiver accepting work it should refuse.
+  Guard command phrasings (agent-guard) are not protected; score them by likelihood × impact because the guard is an accident barrier.
+- **Reject with a reason and evidence** (file:line or a test). HIGH/MEDIUM and unscored rejections need a REFUTED verdict from --dispute, a prior REFUTED reference on the same branch and repository, or an operator waiver. One real verdict per finding; no back-and-forth. NO-VERDICT means it stands and may be retried. If CONFIRMED, fix it. When the reviewer role has only one family, so no second family can give a verdict, only an operator waiver can reject the finding: --waive from a real terminal is the operator's own tool, and agents never ask for it (rule 9).
+- **Pre-existing findings.** A reviewer marks `preExisting: true` when the defect exists at the base and this branch neither introduced it nor made it newly reachable; the script then records `inDiff`: whether any of its places is within 3 lines of a line the branch changed (the merge-base review diff). `preExisting: true` with `inDiff: false` is pre-existing: it never blocks, needs no status, is never deferred, and `--summary` lists it with its score under "Pre-existing (not introduced here)". A protected one is listed first as "Pre-existing HIGH" and makes the merge tier HIGH (no agent merge past a known exploit) without blocking the close. With `inDiff` true or null the claim is ignored and the finding blocks as usual. Original review findings only; a fix-check finding is never pre-existing.
+- **Grouped findings.** One defect in several places comes back once, with its other places in `instances` (file, line and quote each). Each instance is quote-checked; an unlocated one is dropped with a note. Fix every place: one status covers them all, and a fixed grouped finding authorizes every instance's file at close.
+
+**No confirmation (rule 10).** Send every HIGH and MEDIUM straight to the fix round, or dispute it with proof; never ask which to fix. A finding that is really a product choice (bug or feature?) gets the safe fix by default and is named in the report so the operator can reverse it. LOWs are filed. **One report, after the fix round and the fix check:** what was fixed, what was deferred and what was filed, each with its numbers (rule 11), plus any product-choice fix the operator may reverse; fixing the filed items is optional. Clean reviews still need --close and tests; a clean report alone is not done.
+
+## Step 3 — apply the fixes in-context
+
+Fix the real cause directly (you have the diff loaded; do NOT re-spawn a model to fix). Keep fixes minimal and faithful; never suppress or paper over. Then run the repo's linter/formatter on the changed files and commit before --close, never afterward. Fixes never get a full re-review. Every non-filed finding needs a fixed or rejected status; unknown keys and any severity field refuse:
+
+```json
+{"f1":{"status":"fixed"},"f2":{"status":"rejected","reason":"<why>","evidence":"<file:line or test>","refutedBy":{"review":"<prior review id>","finding":"<prior finding id>"}}}
+```
+
+After the fix check, its x… findings (and a Grade recheck's r… findings, or a criterion still failing its recheck) may instead be deferred: `{"x1":{"status":"deferred","reason":"<why>","fix":"<fix idea>"}}`. The reason is required; any severity or score field refuses; an original finding can't be deferred.
+
+Label what each fixed or rejected finding turned out to be with `response`: on `fixed`, `"real"` or `"unimportant"` (fixed though not worth it; a fix without a label is logged as real); on `rejected`, `"wrong"` (not a defect) or `"intentional"` (the behavior is meant), required on every rejection, e.g. `{"f2":{"status":"rejected","reason":"<why>","evidence":"<file:line>","response":"intentional"}}`. A label never replaces the REFUTED verdict or waiver a blocking rejection needs. `node "$SCRIPT" --noise-report [--since <date>] [--all]` counts, per reviewer family and severity band, real / unimportant / wrong / intentional / unlabeled / deferred / filed / pre-existing findings from each review's latest close (this repository unless `--all`); legacy statuses count as unlabeled.
+
+Omit refutedBy for this review's own REFUTED verdict or a waiver. The orchestrator disputes serious rejections and closes against the committed fixes:
+
+```bash
+node "$SCRIPT" --dispute <review-id> <finding-id> --reason "<why>" --evidence "<file:line or test>"
+node "$SCRIPT" --close <review-id> --status builds/<slug>/status.json
+node "$SCRIPT" --summary
+```
+
+Close runs the whole test suite using verifyCmd from .claude/review-config.json or --test-cmd. If there are no tests, pass --no-tests "<reason>"; it is logged and appears in the summary. Only when close requires it, the orchestrator runs --fix-check <review-id> once. Fix, dispute or defer its x1… findings, close, then a hard stop, with no further model pass. Config `fixCheck`: `"risk"` (default: a fix touching tests, verify scripts or riskPaths needs a fix check) | `"always"` (the risk rule, plus any other code fix after the review; other docs, static, coverage-exempt and `builds/` files never need one, so it is never looser than "risk"; for a Grade, its recheck counts as the check when nothing either rule counts changed after it). The home config is the floor: a repo file, `REVIEW_CONFIG` or `REVIEW_FIX_CHECK` may raise it, never lower it. Fixes land before the fix check: commits after it may touch only `builds/` and test files, and close still runs the full tests. A file the fix check saw is in scope at close, so a fix to a sibling file is fine once the fix check has seen it. Close counts a changed file as fixed only when it equals, exactly, the path the script recorded when it checked that finding's quote; a finding with no recorded path (unlocated, ambiguous between a/ or b/ and the bare path, a Grade finding, or one logged before paths were recorded) covers no file. A rename counts as a delete plus an add, so the renamed path is never covered by a finding. A fixed finding covers its whole file, not only the lines it cited. A complete close covers what it saw at HEAD (see what the push gate accepts, above); a partial close lists outOfScope files and covers nothing. Use refutedBy for an already-decided finding rather than reopening its dispute without new evidence. Put --summary output in the PR body. --log-outcome is optional telemetry only; it never closes a review.
+
+## Review policy (rules 1–11)
+
+1. The operator is involved only at PR merge; no agent pauses work to ask the operator to run a command.
+2. First round: every HIGH and MEDIUM from the original review is fixed, or rejected with a REFUTED verdict from a different model (`--dispute`). Nothing is deferred in this round; LOWs are filed automatically.
+3. One fix round, then one fix check. What the fix check finds (`x…`, any severity) may be deferred: `{"x1":{"status":"deferred","reason":"<why>","fix":"<fix idea>"}}`. The reason is required, `fix` is optional (the reviewer's suggestion shows otherwise), and the reviewer's score stands. The close then completes; there is no second round. One exception, in this flow rather than in the gate: when the fix check raises a HIGH in the fix itself (`inFix: true`), defer it at close (the close completes), fix it in one more commit, then review that commit's files as one slice (`REVIEW_PATHS=<those files>`) and close the slice at the tip; whatever that slice's own fix check finds is deferred. Hard stop: no third pass.
+4. Grade: a criterion still failing after one fix round and its one recheck may be deferred as "criterion not met" with the same status shape, and so may the recheck's own `r…` findings. It never silently passes.
+5. The PR body (`--summary`) lists, in order: "Acceptance criteria not met", deferred HIGHs, then all other deferred findings; `--deferred` lists them too. Agents merge only through merge.mjs, which follows the review gate's merge policy (default off: the operator merges). Never gh pr merge, auto-merge or the merge button. The merge is the approval, and the operator can send the branch back.
+   **Merge tier** (`--summary` only reports it; merge.mjs below acts on it). Each close logs a tier, and `--summary` prints `Merge tier: LOW|MEDIUM|HIGH (<reasons>). Policy <policy>: would merge | needs a human`. HIGH: a riskPaths or `merge.alwaysHuman` file (plus `.github/workflows/**` and `package.json`), a deferred HIGH or protected finding, a protected pre-existing finding, a security pass the config needs that no review ran, a partial close or `--no-tests`; LOW: nothing deferred and only docs, tests or static files changed; MEDIUM otherwise.
+   `merge.policy` is `off` (default: every tier needs a human) | `strict` (LOW, docs and tests only) | `standard` (LOW) | `always` (LOW and MEDIUM; never HIGH). `merge.classifier` (default null) may move only a MEDIUM to LOW at confidence ≥ `merge.threshold` (0.8); on any failure the rules' tier stands, and the record logs `tierBy` and its probabilities.
+   A tracked repo config may only make `merge.policy` stricter and cannot set `merge.classifier`; set them in the home config or an untracked repo config.
+   **Agent merge.** After opening the PR, the orchestrator runs `node ~/.agent-config-studio/review-gate/merge.mjs` once, always the shared runtime's copy (it uses the repo's `scripts/review.mjs` when there is one; `--pr <n>` names the PR, `--dry-run` only reports). Agents never merge any other way: no `gh pr merge`, no auto-merge, no merge button. It reads `--tier-json` and does one thing: policy `off` does nothing and calls no gh (`none`, exit 0); a tier the policy merges is merged with a merge commit at HEAD (`merged`, exit 0; a base with a merge queue needs a human and is never merged; a merge that only queued the PR or set auto-merge is taken back (dequeued, or auto-merge disabled) and needs a human) only when the PR is open, not a draft, its head is local HEAD, its base is the review's base, the tree is clean, GitHub reports no conflict, branch-protection block or requested changes, no `needs-human` label is on it, the base has not moved (`BEHIND`), and every check passes or is skipped; anything else needs a human: `merge.onHuman` `comment` (default) adds the `needs-human` label and one comment (`merge.humanComment`, then the tier line and why), and a PR that already has the label gets no new comment (`labeled`, exit 10); `none` writes nothing (exit 11). A `BLOCKED` PR (branch protection) needs a human. An `UNKNOWN` merge state is read again up to 3 times, 5 seconds apart. An unsafe state (head, base, draft, closed, dirty tree, conflict, still `UNKNOWN`, gh failure, failed merge) is `refused`, exit 2, with no write. Zero CI checks need a human unless `merge.requireChecks` is false; a failing or pending check never merges. `merge.allowBehind: true` lets a `BEHIND` PR merge. A tracked repo config, or a file `REVIEW_CONFIG` names (unless it is the home config), may set `merge.onHuman`, but never `merge.humanComment` or `merge.classifier`, may only make `merge.policy` stricter, and may only set `merge.requireChecks` to true and `merge.allowBehind` to false. Each run logs an intent and an outcome record to merge-log.jsonl beside the review log. Report the one line it prints; never merge a PR it did not merge.
+6. Agents never re-rate a finding (severity and score fields stay refused), defer in the first round, edit, re-log or forge review records, or ask the operator to run `--waive` or `REVIEW_GATE_OVERRIDE`.
+7. A history rewrite (squash, split, rebase) after a review or Grade is allowed when the final tree is byte-identical: the gate compares tree hashes with the review, Grade, fix-check, recheck and close heads, and logs the carry-over as `carried`. Any other tree gets a fresh review.
+8. An unexpected gate refusal: one fresh review of the final branch through the normal path, then a clean close. A refusal after merging the default branch is not unexpected: re-close the existing review at the merge tip, and slice-review only the both-sides files it names; never a fresh review of the whole branch. If the gate still refuses, stop and tell the operator in chat, quoting the gate's message.
+9. `--waive` and `REVIEW_GATE_OVERRIDE` remain the operator's own emergency tools from the operator's terminal; no normal flow uses them.
+10. No confirmation before fixing: every HIGH and MEDIUM goes straight to the fix round, or is disputed with proof, without asking. A finding that is really a product choice gets the safe fix by default and is named in the report so the operator can reverse it. The operator hears once, after the fix round and fix check: what was fixed and what was filed. When the rule 3 slice ran, that report comes after the slice's close. Fixing the filed items is optional.
+11. Show the numbers: every finding shown to the operator carries its scores, e.g. `LOW 6/100 (likelihood 2/10 × impact 3/10)`, or `unscored`, never just the word. The report, `--summary` and `--deferred` print them that way.
+
+## Hard rules
+
+- Read-only reviewer; it never edits or commits.
+- Never weaken a check to make a finding disappear.
+- Cross-vendor checks follow crossFamily (see Step 1); never wait for a reviewer.
+- Builders commit at phase end and never run reviews, grades or other models themselves. The orchestrator handles those checks, pushes and opens the PR with the review summary.
+- Never push to a protected branch. Agents merge only through merge.mjs, which follows the review gate's merge policy (default off: the operator merges). Never gh pr merge, auto-merge or the merge button.
+
+Every PR body must include a section titled exactly **Deferred findings**, using the deferred and filed findings in --summary (or `none` when empty). When chasing a bug, first check `node <review.mjs> --deferred` and merged PR descriptions with `gh pr list --state merged --search "Deferred findings in:body"`. Resolve <review.mjs> repo-first, with the shared runtime fallback above. `--deferred` lists this repo by repoId, newest first; add `--all` for every repo. The trigger is the input or call path named in the issue.
+
+Use `node <review.mjs> --rubric` for the current version and score anchors. `~/.agent-config-studio/review-gate/calibration.md` contains the eight reference cases; run `node <review.mjs> --calibrate` (or `--calibrate copy.md`) after rubric changes or when evaluating a new model. Historical log records retain their stored bands and filing decisions.
+
+exec
+/bin/zsh -lc "rg -n 'queue|spawnSync|execFileSync|list-pane-surfaces|refresh|reserve|lock|slots|sleep' lib/agent.js; rg --files -g '*agent*' -g '.node-version' -g '.nvmrc' -g 'AGENTS.md' -g '*ci*'; command -v git; command -v node; node --version; ls /opt/homebrew/bin/git /usr/local/bin/git" in /Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-agent-command
+ exited 1 in 0ms:
+4:import { spawnSync } from 'node:child_process';
+9:const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+46:  const r = spawnSync('cmux', ['--json', '--id-format', 'both', ...args], { encoding: 'utf8', env: { ...process.env, CMUX_QUIET: '1' }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000, maxBuffer: 8 * 1024 * 1024 });
+133:    const blocks = e.message?.content ?? e.content;
+134:    const items = Array.isArray(blocks) ? blocks : [e.payload || e];
+160:    const blocks = [...(Array.isArray(body) ? body : [item]), ...(e.tool_calls || []).map(t => ({ ...t, type: 'tool_call' }))];
+161:    for (const [block, t] of blocks.entries()) {
+164:      const key = id ? `call:${id}` : `anonymous:${index}:${block}`;
+285:    const clock = row.match(/\b(\d+):(\d{2})(?::(\d{2}))?\b/);
+286:    if (clock) return clock[3] ? Number(clock[1]) * 3600 + Number(clock[2]) * 60 + Number(clock[3]) : Number(clock[1]) * 60 + Number(clock[2]);
+290:function refresh(w, includePrompt = false, { now = Date.now, stallAfter = 300, commandAfter = 600 } = {}) {
+292:  try { return refreshLive(w, includePrompt, { now, stallAfter, commandAfter }); }
+299:function refreshLive(w, includePrompt, { now, stallAfter, commandAfter }) {
+322:  let stuck = null, blockedKey = null;
+339:    if (!stuck) { stuck = e; blockedKey = index; }
+343:  const blocked = stuck !== null || currentDialog?.kind === 'permission';
+344:  w.approvalPending = blocked || currentDialog !== null;
+377:  if (blocked) {
+378:    if (w.blockedEvent !== blockedKey || w.blockedAt == null) w.blockedAt = Number.isFinite(Date.parse(stuck?.occurred_at)) ? Date.parse(stuck.occurred_at) : at;
+379:    w.blockedEvent = blockedKey;
+380:    signals.push({ state: 'stuck', at: w.blockedAt });
+381:  } else w.blockedAt = null;
+390:  const state = blocked ? 'stuck' : signals[0]?.state || 'running';
+413:  const lock = path.join(dir(), '.open-lock');
+416:    try { fs.mkdirSync(lock); break; }
+417:    catch (e) { if (e.code !== 'EEXIST') throw e; if (Date.now() >= deadline) throw new Error('agent open is busy; retry (remove .open-lock if a previous open crashed)'); await sleep(100); }
+419:  try { return await fn(); } finally { fs.rmdirSync(lock); }
+434:    const active = all().filter(w => w.status !== 'closed').filter(w => { refresh(w); return !['done', 'closed'].includes(w.status); });
+485:      try { cmux(['list-pane-surfaces', '--workspace', ctx.workspace, '--pane', prior.pane_ref]); }
+504:        do { discover(w, hooks(w)); if (w.transcript) break; await sleep(100); } while (Date.now() < end);
+511:    await sleep(250);
+516:  const pause = runtime.sleep || sleep;
+520:    const result = refresh(w, true, runtime);
+542:  return all().filter(w => owned(w, ctx)).map(w => { refresh(w); return expire(w, ctx); });
+546:  const { state } = refresh(w);
+555:  const result = refresh(w, true, runtime);
+565:  const pause = runtime.sleep || sleep;
+580:  w.status = 'running'; w.lastActivityAt = now(); w.blockedAt = null;
+621:          refresh(r);
+629:    await sleep(250);
+lib/agent.js
+bin/agent.mjs
+bin/agent-install.mjs
+packs/review-gate/runtime/hooks/agent-guard
+packs/review-gate/runtime/hooks/agent-guard.mjs
+packs/review-gate/runtime/hooks/install-agent-guard.mjs
+tests/agent-reliability.mjs
+tests/fixtures/agent-cmux.mjs
+tests/agent-git-access.mjs
+tests/agent-review-fixes.mjs
+tests/agent-commands.mjs
+tests/ci-syntax-step.mjs
+tests/agent-screens.mjs
+tests/agent-install.mjs
+tests/agent-sessions.mjs
+tests/agent-cli.mjs
+tests/ci-packs-step.mjs
+tests/agent-surfaces.mjs
+/usr/bin/git
+/usr/local/bin/node
+v23.11.1
+ls: /usr/local/bin/git: No such file or directory
+/opt/homebrew/bin/git
+
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+exec
+/bin/zsh -lc "rg -n 'agent-cmux|fake-cmux|FAKE_' tests/agent-surfaces.mjs tests/agent-review-fixes.mjs tests/agent-git-access.mjs tests/agent-reliability.mjs; sed -n '1,90p' lib/agent.js; sed -n '290,320p' lib/agent.js; sed -n '400,440p' lib/agent.js; sed -n '480,515p' lib/agent.js; sed -n '550,635p' lib/agent.js; sed -n '1,140p' tests/fixtures/cleanup.mjs" in /Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-agent-command
+ succeeded in 0ms:
+tests/agent-review-fixes.mjs:13:fs.writeFileSync(path.join(bin, 'cmux'), `#!${process.execPath}\nimport(${JSON.stringify(path.join(root, 'tests/fixtures/agent-cmux.mjs'))});\n`, { mode: 0o755 });
+tests/agent-review-fixes.mjs:24:const statePath = path.join(home, 'fake-cmux.json');
+tests/agent-review-fixes.mjs:78:      process.env.FAKE_NO_SUBMIT='1';
+tests/agent-review-fixes.mjs:80:      finally { delete process.env.FAKE_NO_SUBMIT; }
+tests/agent-review-fixes.mjs:283:    for (const [flag, expectedKeys] of [['FAKE_PERMISSION_ON_SEND',0], ['FAKE_PERMISSION_AFTER_ENTER',1]]) {
+tests/agent-surfaces.mjs:10:fs.writeFileSync(path.join(bin, 'cmux'), `#!${process.execPath}\nimport(${JSON.stringify(path.join(root, 'tests/fixtures/agent-cmux.mjs'))});\n`, { mode: 0o755 });
+tests/agent-surfaces.mjs:15:const statePath = path.join(home, 'fake-cmux.json');
+tests/agent-surfaces.mjs:29:const raced = open({ FAKE_NEW_SURFACE_ERROR: 'not_found' });
+tests/agent-surfaces.mjs:33:const denied = run(['open', 'sol', '--cwd', home, 'task'], { FAKE_NEW_SURFACE_ERROR: 'permission_denied' });
+tests/agent-surfaces.mjs:37:const failedRecovery = run(['open', 'sol', '--cwd', home, 'task'], { FAKE_NEW_SURFACE_ERROR: 'not_found', FAKE_NEW_PANE_ERROR: 'not_found', FAKE_ERROR_STYLE: 'stderr' });
+tests/agent-surfaces.mjs:63:const moving = open({ FAKE_RUNNING: '1' });
+tests/agent-surfaces.mjs:64:const vanished = run(['wait', moving.id, '--timeout', '3', '--json'], { FAKE_REMOVE_AFTER_READ: '1', FAKE_ERROR_STYLE: 'stderr' });
+tests/agent-surfaces.mjs:67:const offline = open({ FAKE_RUNNING: '1' });
+tests/agent-surfaces.mjs:68:const screenError = run(['wait', offline.id, '--timeout', '0'], { FAKE_READ_SCREEN_ERROR: 'permission_denied' });
+tests/agent-surfaces.mjs:71:assert.equal(run(['wait', offline.id, '--timeout', '0'], { FAKE_OFFLINE: '1' }).status, 2, 'socket errors are not closure');
+tests/agent-reliability.mjs:13:fs.writeFileSync(path.join(fake, 'cmux'), `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(path.join(home, 'cmux-calls'))}, JSON.stringify(process.argv.slice(2))+'\\n');console.log(JSON.stringify(process.argv.includes('identify') ? {caller:{workspace_ref:'workspace:1',pane_ref:'pane:1'}} : {text:process.env.FAKE_AGENT_SCREEN || 'history\\n› [Pasted Content]'}));\n`, { mode: 0o755 });
+tests/agent-reliability.mjs:164:process.env.FAKE_AGENT_SCREEN = 'QUESTION: Screen fallback?';
+tests/agent-reliability.mjs:166:delete process.env.FAKE_AGENT_SCREEN;
+tests/agent-git-access.mjs:12:fs.writeFileSync(path.join(bin,'cmux'),`#!${process.execPath}\nimport(${JSON.stringify(path.join(root,'tests/fixtures/agent-cmux.mjs'))});\n`,{mode:0o755});
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { readUserText } from './paths.js';
+import { homeDir, resolveModel, vendorOf, EFFORTS } from './models.js';
+import { ROLE_RE } from './roles.js';
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const quote = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
+const bad = message => Object.assign(new Error(message), { exitCode: 2 });
+const dir = () => path.join(homeDir(), '.agent-config-studio', 'agents');
+const eventFile = () => path.join(homeDir(), '.cmuxterm', 'events.jsonl');
+function text(file) {
+  try { return readUserText(file); } catch (e) { if (e.code === 'ENOENT') return ''; throw e; }
+}
+function lines(file) {
+  return text(file).split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+}
+function children(folder) {
+  try { return fs.readdirSync(folder, { withFileTypes: true }); } catch (e) { if (e.code === 'ENOENT') return []; throw e; }
+}
+function atomic(file, body, mode = 0o600) {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const tmp = `${file}.tmp-${crypto.randomUUID()}`;
+  try { fs.writeFileSync(tmp, body, { flag: 'wx', mode }); fs.renameSync(tmp, file); }
+  finally { fs.rmSync(tmp, { force: true }); }
+}
+function save(w) { atomic(path.join(dir(), `${w.id}.json`), JSON.stringify(w, null, 2) + '\n'); }
+function decodeSession(value, vendor) {
+  if (typeof value !== 'string' || !value) return null;
+  if (!value.startsWith('cmux-feed-v1:')) return value;
+  const parts = value.split(':');
+  if (parts.length !== 3) return null;
+  const decoded = parts.slice(1).map(part => {
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(part)) return null;
+    const bytes = Buffer.from(part, 'base64');
+    return bytes.toString('base64').replace(/=+$/, '') === part.replace(/=+$/, '') ? bytes.toString('utf8') : null;
+  });
+  return decoded[0] === vendor && decoded[1] && !/[\0\ufffd]/.test(decoded[1]) ? decoded[1] : null;
+}
+function normalizeWorker(w) { w.session = decodeSession(w.session, w.vendor); return w; }
+function all() { return children(dir()).filter(d => d.isFile() && d.name.endsWith('.json')).map(d => normalizeWorker(JSON.parse(readUserText(path.join(dir(), d.name))))); }
+function cmuxError(message) { return Object.assign(new Error(`cmux: ${message}`), { cmuxCode: /\bnot_found\b/.test(message) ? 'not_found' : null }); }
+function cmux(args) {
+  const r = spawnSync('cmux', ['--json', '--id-format', 'both', ...args], { encoding: 'utf8', env: { ...process.env, CMUX_QUIET: '1' }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000, maxBuffer: 8 * 1024 * 1024 });
+  if (r.error || r.status !== 0) throw cmuxError(r.error?.message || r.stderr.trim() || r.stdout.trim());
+  let result;
+  try { result = JSON.parse(r.stdout); } catch {
+    if (args[0] === 'read-screen') return r.stdout;
+    throw new Error('cmux returned invalid JSON');
+  }
+  if (result.ok === false || result.error) throw cmuxError(JSON.stringify(result.error || result));
+  return result.result || result;
+}
+function ref(value, type) {
+  if (typeof value !== 'string' || (!value.startsWith(`${type}:`) && !/^[a-f\d-]{36}$/i.test(value))) throw new Error(`cmux did not return a ${type} ref`);
+  return value;
+}
+export function context() {
+  if (!process.env.CMUX_SOCKET_PATH) throw bad('agent needs cmux: run it inside a cmux terminal');
+  let identity;
+  try { identity = cmux(['identify']); } catch { throw bad('agent needs cmux: its socket is unreachable'); }
+  const caller = identity.caller || {};
+  const workspace = process.env.CMUX_WORKSPACE_ID || caller.workspace_ref || identity.workspace_ref;
+  let pane = caller.pane_ref;
+  if (!pane && process.env.CMUX_SURFACE_ID) {
+    const out = cmux(['identify', '--workspace', ref(workspace, 'workspace'), '--surface', process.env.CMUX_SURFACE_ID]);
+    pane = out.caller?.pane_ref || out.surface?.pane_ref || out.pane_ref;
+
+  }
+  return { workspace: ref(workspace, 'workspace'), pane: ref(pane, 'pane') };
+}
+function owned(w, ctx) { return w.workspace === ctx.workspace && w.orchestratorPane === ctx.pane; }
+function homeVariable(vendor) { return { codex: 'CODEX_HOME', claude: 'CLAUDE_CONFIG_DIR', grok: 'GROK_HOME' }[vendor]; }
+export function worker(id, ctx) {
+  if (!/^[a-f\d-]{36}$/i.test(id || '')) throw bad('invalid worker id');
+  const w = normalizeWorker(JSON.parse(readUserText(path.join(dir(), `${id}.json`))));
+  if (!owned(w, ctx)) throw bad('worker belongs to another orchestrator');
+  return w;
+}
+function candidates(w) {
+  const home = homeDir();
+  const harnessHome = w.harnessHome || path.join(home, `.${w.vendor}`);
+  if (w.vendor === 'codex') {
+    const root = path.join(harnessHome, 'sessions');
+    let dirs = [root];
+    for (let i = 0; i < 3; i++) dirs = dirs.flatMap(d => children(d).filter(e => e.isDirectory()).map(e => path.join(d, e.name)));
+    return dirs.flatMap(d => children(d).filter(e => e.isFile() && /^rollout-.*\.jsonl$/.test(e.name)).map(e => path.join(d, e.name)));
+  }
+function refresh(w, includePrompt = false, { now = Date.now, stallAfter = 300, commandAfter = 600 } = {}) {
+  if (w.status === 'closed') return { status: 'closed', state: 'closed', closed: true };
+  try { return refreshLive(w, includePrompt, { now, stallAfter, commandAfter }); }
+  catch (error) {
+    if (error.cmuxCode !== 'not_found') throw error;
+    w.status = 'closed'; w.closedAt = now(); save(w);
+    return { status: 'closed', state: 'closed', closed: true };
+  }
+}
+function refreshLive(w, includePrompt, { now, stallAfter, commandAfter }) {
+  const at = now();
+  let output;
+  const getScreen = () => output ??= screen(w);
+  // A transcript can outlive its surface, even after the turn finished.
+  if (includePrompt) getScreen();
+  const s = snapshot(w, at);
+  if (w.pendingSend && s.started > Math.max(1, w.pendingSend.startedBefore)) w.pendingSend.confirmedAt ||= at;
+  if (s.complete !== w.completed) {
+    w.completed = s.complete;
+    w.finishedAt = s.finishedAt;
+    w.lastActivityAt = Math.max(w.lastActivityAt, w.finishedAt);
+  }
+  if (s.started > (w.observedStarted || 0)) {
+    w.observedStarted = s.started;
+    if (s.turnRunning) {
+      w.turnComplete = s.complete;
+      w.finishedAt = null;
+      w.lastActivityAt = Math.max(w.lastActivityAt, s.lastStartAt ?? at);
+    }
+  }
+  const retired = new Set(w.retiredPermissions || []);
+    result.input = rows.filter(s => /^[›❯>]|\[Pasted Content|input|composer/i.test(s)).at(-1) || rows.at(-1) || '';
+    result.screen = output;
+  }
+  if (state === 'stalled') result.steps = s.steps;
+  const finalAnswer = state === 'done' && s.answer === null && w.vendor === 'grok' && includePrompt ? getScreen() : s.answer;
+  if (state === 'done' && finalAnswer?.split('\n').map(s => s.trim()).filter(Boolean).at(-1)?.startsWith('QUESTION:')) {
+    result.question = true;
+    result.text = finalAnswer;
+  }
+  return result;
+}
+async function openLock(fn) {
+  fs.mkdirSync(dir(), { recursive: true, mode: 0o700 });
+  const lock = path.join(dir(), '.open-lock');
+  const deadline = Date.now() + 30000;
+  while (true) {
+    try { fs.mkdirSync(lock); break; }
+    catch (e) { if (e.code !== 'EEXIST') throw e; if (Date.now() >= deadline) throw new Error('agent open is busy; retry (remove .open-lock if a previous open crashed)'); await sleep(100); }
+  }
+  try { return await fn(); } finally { fs.rmdirSync(lock); }
+}
+export async function openWorker(family, opts, ctx) {
+  const resolved = resolveModel(family);
+  if (resolved.error) throw bad(resolved.error);
+  const vendor = vendorOf(resolved.id);
+  if (!vendor) throw bad(`no harness for ${resolved.id}`);
+  if (opts.effort && !EFFORTS.has(opts.effort)) throw bad('invalid effort');
+  if (opts.role && !ROLE_RE.test(opts.role)) throw bad('invalid role');
+  const cwd = fs.realpathSync(path.resolve(opts.cwd || process.cwd()));
+  if (!fs.statSync(cwd).isDirectory()) throw bad('cwd must be a directory');
+  const prompt = opts.promptFile ? readUserText(path.resolve(opts.promptFile)) : opts.prompt;
+  if (typeof prompt !== 'string' || !prompt.length) throw bad('a nonempty task or --prompt-file is required');
+  while (true) {
+    const opened = await openLock(async () => {
+    const active = all().filter(w => w.status !== 'closed').filter(w => { refresh(w); return !['done', 'closed'].includes(w.status); });
+    if (active.length >= 4) return null;
+    const id = crypto.randomUUID();
+    const w = { id, family, model: resolved.id, vendor, effort: opts.effort || null, mcp: !!opts.mcp, role: opts.role || null, cwd, workspace: ctx.workspace, orchestratorPane: ctx.pane, status: 'running', session: null, transcript: null, openedAt: Date.now(), lastActivityAt: Date.now(), finishedAt: null, completed: 0, turnComplete: 0, eventStart: lines(eventFile()).length, turnEventStart: 0 };
+    const homeKey = homeVariable(vendor);
+    const homeOverride = process.env[homeKey];
+    w.harnessHome = path.resolve(homeOverride || path.join(homeDir(), `.${vendor}`));
+      'fi',
+    ].join('\n') + '\n' : '';
+    atomic(w.launcher, `#!/bin/sh\ncd ${quote(cwd)} || exit 1\n${homeSetting}\nprintf '%s\\n' "$$" > ${quote(w.pidFile)}\ncaffeinate -i -w "$$" </dev/null > ${quote(path.join(w.runDir, 'caffeinate.log'))} 2>&1 &\nset -- ${args.map(quote).join(' ')}\n${gitAccess}exec ${testMode && process.env.AGENT_TEST_BINARY ? quote(binary) : vendor} "$@" -- "$(cat ${quote(w.promptFile)})"\n`, 0o700);
+    let prior = vendor !== 'grok' ? all().filter(r => owned(r, ctx) && r.vendor !== 'grok' && r.status !== 'closed').sort((a, b) => b.openedAt - a.openedAt)[0] : null;
+    if (prior) {
+      try { cmux(['list-pane-surfaces', '--workspace', ctx.workspace, '--pane', prior.pane_ref]); }
+      catch (error) { if (error.cmuxCode !== 'not_found') throw error; prior = null; }
+    }
+    const paneArgs = vendor !== 'grok' && prior ? ['new-surface', '--pane', prior.pane_ref] : ['new-pane', '--direction', 'right'];
+    const launch = args => cmux([...args, '--workspace', ctx.workspace, '--focus', vendor === 'grok' ? 'true' : 'false', '--command', w.launcher]);
+    let result;
+    try { result = launch(paneArgs); }
+    catch (error) {
+      if (!prior || error.cmuxCode !== 'not_found') throw error;
+      prior = null;
+      result = launch(['new-pane', '--direction', 'right']);
+    }
+    w.surface_ref = ref(result.surface_ref, 'surface');
+    w.surface_id = result.surface_id || w.surface_ref;
+    w.pane_ref = ref(result.pane_ref || prior?.pane_ref, 'pane');
+    save(w);
+    if (vendor === 'grok') {
+      try {
+        const end = Date.now() + 6000;
+        do { discover(w, hooks(w)); if (w.transcript) break; await sleep(100); } while (Date.now() < end);
+      } finally { cmux(['focus-pane', '--workspace', ctx.workspace, '--pane', ctx.pane]); }
+    }
+    save(w);
+    return w;
+    });
+    if (opened) return opened;
+    await sleep(250);
+  }
+}
+export async function waitWorker(id, timeout, ctx, runtime = {}) {
+  const now = runtime.now || Date.now;
+  if (s.answer !== null) return s.answer;
+  if (w.vendor === 'grok' && state === 'done') return screen(w);
+  throw new Error(`no answer yet (state ${state})`);
+}
+function assertSendable(w, runtime) {
+  const result = refresh(w, true, runtime);
+  if (result.state === 'closed') throw bad('worker is closed');
+  const dialog = activeDialog(approvalDialog(w, screen(w)), snapshot(w, (runtime.now || Date.now)()));
+  if (w.approvalPending || result.state === 'stuck' || dialog) {
+    w.status = 'stuck'; save(w);
+    throw Object.assign(new Error(`worker is stuck${dialog ? ` (${dialog.kind})` : ''}; agent never answers approval dialogs`), { exitCode: 3 });
+  }
+}
+async function sendTurn(id, message, ctx, runtime) {
+  const now = runtime.now || Date.now;
+  const pause = runtime.sleep || sleep;
+  const w = worker(id, ctx);
+  if (w.status === 'closed') throw bad('worker is closed');
+  if (!message.length) throw bad('a nonempty message is required');
+  assertSendable(w, runtime);
+  const before = snapshot(w, now());
+  if (w.pendingSend && !w.pendingSend.confirmedAt) {
+    w.status = 'unsent'; save(w);
+    throw Object.assign(new Error(`worker is unsent; leftover input: ${screen(w)}; submit it in the worker pane or close the worker before sending again`), { exitCode: 5 });
+  }
+  if (before.started < 1) throw new Error('worker startup is not established; wait for its launch turn before sending');
+  w.turnComplete = before.complete;
+  w.completed = before.complete;
+  w.turnStarted = before.started;
+  w.turnEventStart = before.events.length;
+  w.status = 'running'; w.lastActivityAt = now(); w.blockedAt = null;
+  w.pendingSend = { sentAt: now(), startedBefore: before.started };
+  w.runDir ||= path.join(dir(), w.id);
+  let sent = message;
+  if (message.length > 400) {
+    const file = path.join(w.runDir, `message-${crypto.randomUUID()}.txt`);
+    atomic(file, message);
+    sent = `Read ${file} and follow it.`;
+    w.pendingSend.messageFile = file;
+  }
+  save(w);
+  cmux(['send', '--workspace', w.workspace, '--surface', w.surface_ref, sent]);
+  const end = w.pendingSend.sentAt + 10000;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    assertSendable(w, runtime);
+    if (w.pendingSend.confirmedAt) return { id, status: 'running', state: 'running' };
+    cmux(['send-key', '--workspace', w.workspace, '--surface', w.surface_ref, 'enter']);
+    const deadline = attempt === 3 ? end : Math.min(end, now() + 1200);
+    do {
+      assertSendable(w, runtime);
+      if (w.pendingSend.confirmedAt) {
+        save(w);
+        return { id, status: 'running', state: 'running' };
+      }
+      if (now() >= deadline) break;
+      await pause(Math.min(100, deadline - now()));
+    } while (true);
+  }
+  w.status = 'unsent';
+  save(w);
+  throw new Error('could not verify message submission within 10s after four Enter presses; agent wait will report unsent');
+}
+
+export async function sendWorker(id, message, ctx, runtime = {}) {
+  while (true) {
+    const sent = await openLock(async () => {
+      const w = worker(id, ctx);
+      if (w.status === 'closed') throw bad('worker is closed');
+      assertSendable(w, runtime);
+      if (w.status === 'done') {
+        const active = all().filter(r => r.id !== id && r.status !== 'closed').filter(r => {
+          refresh(r);
+          return !['done', 'closed'].includes(r.status);
+        });
+        if (active.length >= 4) return null;
+      }
+      return sendTurn(id, message, ctx, runtime);
+    });
+    if (sent) return sent;
+    await sleep(250);
+  }
+}
+/**
+ * Every suite's temp folders and children, gone however the run ends: a
+ * pass, a failure, a thrown error, process.exit(), SIGINT or SIGTERM.
+ *
+ * tempDir(prefix) is fs.mkdtempSync under os.tmpdir() (the same path it
+ * returns), remembered for the sweep. track(child) stops a child still
+ * running at exit, SIGTERM then SIGKILL (its whole process group with
+ * { group: true }, for a detached one). onExit(fn) runs a suite's own
+ * synchronous teardown first.
+ *
+ * A suite's own SIGINT/SIGTERM handler keeps the last word on the exit
+ * code: this module exits on a signal only when no other handler is
+ * listening, and sweeps either way. tests/fixtures/packs-sandbox.mjs keeps
+ * its own sweep, which also asserts that nothing it made is left.
+ */
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const dirs = new Set();
+const children = new Set();
+const hooks = [];
+
+export function tempDir(prefix) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  dirs.add(d);
+  return d;
+}
+
+/** A path made some other way (a fixed name, a fixture's mkdtemp): removed at exit too. */
+export function removeOnExit(p) {
+  dirs.add(p);
+  return p;
+}
+
+export function track(child, { group = false } = {}) {
+  const entry = { child, group };
+  children.add(entry);
+  if (child.pid) ownPids.add(child.pid);
+  child.once('exit', () => children.delete(entry));
+  return child;
+}
+
+export function onExit(fn) { hooks.push(fn); }
+
+function remove(d) {
+  try { fs.rmSync(d, { recursive: true, force: true }); return; } catch {}
+  // A suite that chmods a folder unreadable (an EACCES case) may die before restoring it.
+  spawnSync('/bin/chmod', ['-R', 'u+rwX', d]);
+  try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
+}
+
+// lib/harness.js keeps prompt files in one shared folder under the temp dir, each named
+// <pid>-<ts>-<rand>.txt by the process that wrote it; a server a suite starts with TMPDIR set
+// to os.tmpdir() writes there too. Only this run's files go: this process's and those of the
+// children it tracked. Another run's stay, live or dead. The folder goes only when it was not
+// there at import and is empty after that (rmdir never removes a file).
+const PROMPTS = path.join(os.tmpdir(), 'acs-harness-prompts');
+const promptsBefore = fs.existsSync(PROMPTS);
+const ownPids = new Set([process.pid]);
+function removePrompts() {
+  let names;
+  try { names = fs.readdirSync(PROMPTS); } catch { return; }
+  for (const n of names) {
+    if (ownPids.has(Number.parseInt(n, 10))) { try { fs.unlinkSync(path.join(PROMPTS, n)); } catch {} }
+  }
+  if (!promptsBefore) { try { fs.rmdirSync(PROMPTS); } catch {} }
+}
+
+let swept = false;
+function sweep() {
+  if (swept) return;
+  swept = true;
+  for (const fn of hooks) { try { fn(); } catch {} }
+  // SIGTERM first, so a launcher shell's trap can stop the server it started; then SIGKILL.
+  const live = [...children].filter(({ child }) => child.exitCode === null && child.signalCode === null);
+  const send = (sig) => {
+    for (const { child, group } of live) { try { if (group) process.kill(-child.pid, sig); else child.kill(sig); } catch {} }
+  };
+  if (live.length) { send('SIGTERM'); spawnSync('/bin/sleep', ['0.3']); send('SIGKILL'); }
+  children.clear();
+  for (const d of dirs) remove(d);
+  removePrompts();
+}
+
+process.on('exit', sweep);
+for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+  process.on(sig, function onSignal() {
+    sweep();
+    if (process.listeners(sig).every((l) => l === onSignal)) process.exit(code);
+  });
+}
+
+exec
+/bin/zsh -lc '/opt/homebrew/bin/git log -5 --oneline; /opt/homebrew/bin/git diff HEAD''^ HEAD -- tests/fixtures/agent-cmux.mjs tests/agent-cli.mjs; rg --files -g '"'AGENTS.md' -g 'CLAUDE.md' -g '.github/workflows/*'; node --check tests/fixtures/agent-cmux.mjs" in /Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-agent-command
+ succeeded in 0ms:
+e1bee14 Test: the fake cmux saves its state by write-then-rename, so a test reading it while a queued agent open polls never sees a half-written file (assertions unchanged)
+c692558 Build folder: docs table cites single lines
+5186a44 Build folder: review summary at the tip
+03b6040 Context pass: docs table (README already matched the code)
+f8c11ca Build folder: test-slice fix check and status
+diff --git a/tests/fixtures/agent-cmux.mjs b/tests/fixtures/agent-cmux.mjs
+index 4423c42..ec4bfcb 100644
+--- a/tests/fixtures/agent-cmux.mjs
++++ b/tests/fixtures/agent-cmux.mjs
+@@ -15,7 +15,10 @@ state.calls.push(args);
+ const put = (f, data) => {
+   const relative = path.relative(home, f);
+   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error('fake cmux refuses writes outside its temporary HOME');
+-  fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, data);
++  fs.mkdirSync(path.dirname(f), { recursive: true });
++  // Tests read these files while a queued `agent open` keeps calling the fake; a rename is never seen half-written.
++  const tmp = `${f}.${process.pid}.${randomUUID()}.tmp`;
++  fs.writeFileSync(tmp, data); fs.renameSync(tmp, f);
+ };
+ const line = x => JSON.stringify(x) + '\n';
+ function turn(w, text, complete = true) {
+
+codex
+The save writes a uniquely named sibling file, then renames it over the target. The queue test’s concurrent process only reads that state file. Syntax checking passed; I’ll check the save path in memory, since the sandbox prevents running tests that create files.
+
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+/bin/zsh -lc "node --input-type=module -e '
+import assert from '\\''node:assert/strict'\\'';
+import fs from '\\''node:fs'\\'';
+import path from '\\''node:path'\\'';
+import { randomUUID } from '\\''node:crypto'\\'';
+import vm from '\\''node:vm'\\'';
+const source = fs.readFileSync('\\''tests/fixtures/agent-cmux.mjs'\\'', '\\''utf8'\\'').replace(/"'^import .*;'"\\n/gm, '\\'''\\'');
+for (const failure of [false, true]) {
+  const target = '\\''/fixture/fake-cmux.json'\\'';
+  const before = JSON.stringify({ n: 4, calls: [], workers: {} });
+  const files = new Map([[target, before]]);
+  let writes = 0, renames = 0;
+  const mockFs = {
+    existsSync: f => files.has(f),
+    readFileSync: f => { assert.ok(files.has(f)); return files.get(f); },
+    mkdirSync: () => {},
+    writeFileSync: (f, data) => {
+      writes++;
+      assert.notEqual(f, target);
+      assert.equal(path.dirname(f), path.dirname(target));
+      files.set(f, data.slice(0, Math.floor(data.length / 2)));
+      assert.deepEqual(JSON.parse(files.get(target)), JSON.parse(before));
+      files.set(f, data);
+      assert.deepEqual(JSON.parse(files.get(target)), JSON.parse(before));
+    },
+    renameSync: (from, to) => {
+      renames++;
+      assert.equal(to, target);
+      assert.deepEqual(JSON.parse(files.get(target)), JSON.parse(before));
+      files.set(to, files.get(from));
+      files.delete(from);
+      JSON.parse(files.get(target));
+    }
+  };
+  const env = failure ? { HOME: '\\''/fixture'\\'', FAKE_READ_SCREEN_ERROR: '\\''not_found'\\'' } : { HOME: '\\''/fixture'\\'' };
+  const output = [];
+  const args = failure ? ['\\''read-screen'\\'', '\\''--surface'\\'', '\\''surface:11'\\''] : ['\\''identify'\\''];
+  const exit = new Error('\\''fixture exit'\\'');
+  try {
+    vm.runInNewContext(source, {
+      fs: mockFs, path, randomUUID,
+      process: { env, argv: ['\\''node'\\'', '\\''cmux'\\'', ...args], pid: 123, exit: code => { assert.equal(code, 1); throw exit; } },
+      console: { log: s => output.push(s), error: () => {} }
+    });
+    assert.equal(failure, false);
+  } catch (error) { assert.equal(error, exit); assert.equal(failure, true); }
+  assert.equal(writes, 1);
+  assert.equal(renames, 1);
+  assert.equal(files.size, 1);
+  const state = JSON.parse(files.get(target));
+  assert.equal(state.n, 4);
+  assert.deepEqual(state.calls, [args]);
+  assert.equal(output.length, 1);
+  JSON.parse(output[0]);
+}
+console.log('\\''In-memory fixture checks passed: old state remains parseable during temporary writes; success and failure saves publish complete JSON by rename.'\\'');
+'" in /Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-agent-command
+ succeeded in 0ms:
+In-memory fixture checks passed: old state remains parseable during temporary writes; success and failure saves publish complete JSON by rename.
+
+codex
+{"findings": []}
+tokens used
+43,762
+{"findings": []}
+
+✓ Review complete — 0 finding(s) (0 high, 0 medium, 0 low); 0 disputed, 0 could not be located. Report: reviews/2026-11-16-22-41-25-197b5a/code-review.md
+Review ID: 2026-11-16-22-41-25-197b5a
+
+===FINDINGS_JSON===
+{
+  "schemaVersion": 1,
+  "reviewId": "2026-11-16-22-41-25-197b5a",
+  "reviewer": "codex-gpt-6.1-sol-xhigh",
+  "family": "sol",
+  "base": "origin/main",
+  "branch": "agent-command",
+  "head": "e1bee141b3c8be0eb0c72e8db3e2123d72a16807",
+  "paths": [
+    "tests/fixtures/agent-cmux.mjs"
+  ],
+  "reportPath": "reviews/2026-11-16-22-41-25-197b5a/code-review.md",
+  "diffTruncated": false,
+  "verify": null,
+  "secondOpinion": null,
+  "findings": [],
+  "disputed": [],
+  "unverified": [],
+  "security": {
+    "run": "required",
+    "status": "not-required",
+    "reason": "only docs, tests, static or lockfiles changed, none on riskPaths"
+  }
+}

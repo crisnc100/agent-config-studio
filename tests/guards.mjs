@@ -378,6 +378,9 @@ function guardB() {
       // caller supplies, and never a harness binary. Pinned to exactly those
       // four callees, the way lsof is pinned above.
       'lib/packs.js': { fns: new Set(['spawnSync']), packsOnly: true },
+      // The user's CLI starts model sessions through cmux; the studio server
+      // must never reach this module (checked through its import graph below).
+      'lib/agent.js': { fns: new Set(['spawnSync']), cmuxOnly: true },
     }[file];
 
     for (const call of calls) {
@@ -390,6 +393,12 @@ function guardB() {
         continue;
       }
       const cal = calleeLiteral(src, call);
+      if (allowed.cmuxOnly) {
+        if (!/^\s*(['"`])cmux\1\s*,/.test(callArgsText(src, call) || '')) {
+          hits.push(`${file}:${call.line} ${call.fn}() must use the literal 'cmux', never a harness or computed executable`);
+        }
+        continue;
+      }
       if (allowed.agentStdioOnly) {
         const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
         if (!/^found\.binary\s*,/.test(text)) {
@@ -1035,10 +1044,46 @@ function guardI() {
          hits.join('\n') || 'ok', WHY.i);
 }
 
+
+function guardWorkerImports() {
+  const hits = [];
+  const seen = new Set();
+  const pending = [SERVER];
+  const worker = fs.realpathSync(path.join(LIB, 'agent.js'));
+  while (pending.length) {
+    const file = pending.pop();
+    let real, src;
+    try { real = fs.realpathSync(file); src = stripComments(fs.readFileSync(real, 'utf8')); }
+    catch { hits.push(`${rel(file)} cannot be read while tracing the server's imports`); continue; }
+    if (real === worker) { hits.push(`${rel(file)} is reachable from server.js`); continue; }
+    if (seen.has(real)) continue;
+    seen.add(real);
+    const specs = [];
+    for (const re of [
+      /(?:^|[;\n])\s*import\b\s*(?:[^'";]*?\bfrom\s*)?(['"])([^'"]+)\1/g,
+      /\bexport\s*(?:\*(?:\s+as\s+\w+)?|\{[^}]*\})\s*from\s*(['"])([^'"]+)\1/g,
+    ]) for (const m of src.matchAll(re)) specs.push(m[2]);
+    for (const m of src.matchAll(/\b(?:import|require)\s*\(\s*([^)]*)\)/g)) {
+      const literal = /^(['"`])([^'"`\\$]+)\1\s*$/.exec(m[1].trim());
+      if (literal) specs.push(literal[2]);
+      else hits.push(`${rel(real)} has a computed import; worker isolation cannot be verified`);
+    }
+    for (const spec of specs) {
+      if (!spec.startsWith('.') && !spec.startsWith('/') && !spec.startsWith('file:')) continue;
+      const target = spec.startsWith('file:') ? fileURLToPath(spec) : path.resolve(path.dirname(real), spec);
+      if (/\.[cm]?js$/.test(target)) pending.push(target);
+      else if (path.extname(target) !== '.json') hits.push(`${rel(real)} imports an untraceable local module ${spec}`);
+    }
+  }
+  assert(hits.length === 0, 'guard b: the server import graph cannot reach the worker CLI module',
+         hits.join('\n') || 'ok', 'Only the user CLI may start watchable workers. The studio server and its transitive imports must never load lib/agent.js.');
+}
+
 async function main() {
   console.log('guards — static security properties this branch established\n');
   guardA();
   guardB();
+  guardWorkerImports();
   guardC();
   guardE();
   guardF();

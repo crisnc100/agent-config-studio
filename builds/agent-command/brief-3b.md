@@ -1,0 +1,4 @@
+# Phase 3b — live rig rerun: every scenario failed in 0.2s with
+`cmux: Error: not_found: Surface not found for the given surface_id`
+Cause (orchestrator's read): the orchestrator closed the old workers pane/tabs by hand between runs; `agent open` reuses a remembered workers pane or surface that no longer exists and fails instead of recovering. Real users close panes all the time.
+Do: before adding a tab, check the remembered workers pane still exists in this workspace (cmux list-panes / list-pane-surfaces); if not, forget it and create a fresh workers pane. If cmux returns not_found on new-surface anyway, recreate once and retry. A closed or vanished worker surface makes `wait` return a clear state (`closed`, exit 8) instead of a cmux error. Test both with the fake cmux (pane removed between opens; surface removed while waiting). Same constraints and commit grouping; don't run the rig. Reply DONE.

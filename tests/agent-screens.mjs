@@ -1,0 +1,105 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { tempDir } from './fixtures/cleanup.mjs';
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const home = fs.realpathSync(tempDir('acs-agent-screens-'));
+process.env.HOME = home;
+const bin = path.join(home, 'bin');
+const screenPath = path.join(home, 'screen');
+const callsPath = path.join(home, 'calls');
+fs.mkdirSync(bin);
+fs.writeFileSync(screenPath, 'Starting');
+fs.writeFileSync(path.join(bin, 'cmux'), `#!${process.execPath}\nconst fs=require('node:fs');fs.appendFileSync(${JSON.stringify(callsPath)},JSON.stringify(process.argv.slice(2))+'\\n');console.log(JSON.stringify(process.argv.includes('identify')?{caller:{workspace_ref:'workspace:1',pane_ref:'pane:1'}}:{text:fs.readFileSync(${JSON.stringify(screenPath)},'utf8')}));\n`, { mode: 0o755 });
+process.env.PATH = `${bin}:${process.env.PATH}`;
+const { waitWorker } = await import('../lib/agent.js');
+const ctx = { workspace: 'workspace:1', pane: 'pane:1' };
+const records = path.join(home, '.agent-config-studio/agents');
+fs.mkdirSync(records, { recursive: true });
+const events = path.join(home, '.cmuxterm/events.jsonl');
+fs.mkdirSync(path.dirname(events)); fs.writeFileSync(events, '');
+const epoch = 1800000000000;
+let clock = epoch;
+const runtime = { now: () => clock, sleep: async ms => { clock += ms; }, stallAfter: 30 };
+const fixture = (vendor, kind) => fs.readFileSync(path.join(root, 'tests/fixtures/agent-screens', `${vendor}-${kind}.txt`), 'utf8');
+const show = text => fs.writeFileSync(screenPath, text);
+function worker(vendor, started = false) {
+  const id = crypto.randomUUID(), runDir = path.join(records, id);
+  fs.mkdirSync(runDir);
+  const transcript = started ? path.join(runDir, 'events.jsonl') : null;
+  if (started) {
+    const entry = vendor === 'codex' ? { type: 'event_msg', payload: { type: 'task_started' } } : vendor === 'claude' ? { type: 'user', message: { content: 'task' } } : { type: 'turn_started' };
+    fs.writeFileSync(transcript, JSON.stringify(entry) + '\n');
+    fs.utimesSync(transcript, epoch / 1000, epoch / 1000);
+  }
+  const w = { id, vendor, cwd: runDir, workspace: ctx.workspace, orchestratorPane: ctx.pane, surface_ref: `surface:${id}`, surface_id: id, session: started ? id : null, transcript, runDir, status: 'running', openedAt: epoch, lastActivityAt: epoch, completed: 0, turnComplete: 0, eventStart: 0, baseline: [] };
+  fs.writeFileSync(path.join(records, `${id}.json`), JSON.stringify(w));
+  return w;
+}
+for (const vendor of ['codex', 'claude', 'grok']) {
+  clock = epoch; show('Starting');
+  const w = worker(vendor);
+  let appeared;
+  const r = await waitWorker(w.id, 12, ctx, { ...runtime, sleep: async ms => {
+    clock += ms;
+    if (!appeared && clock >= epoch + 3250) { appeared = clock; show(`\x1b[32m${fixture(vendor, 'trust')}\x1b[0m`); }
+  } });
+  assert.equal(r.state, 'stuck', vendor); assert.equal(r.kind, 'trust');
+  assert.ok(clock - appeared <= 3000, `${vendor}: dialog detection within one screen interval`);
+  assert.match(r.prompt, vendor === 'grok' ? /Yes, proceed/ : vendor === 'claude' ? /Yes, I trust this folder/ : /Trust and continue/);
+  assert.ok(!r.prompt.includes('\x1b'));
+  clock = epoch + 61000;
+  assert.equal((await waitWorker(w.id, 0, ctx, runtime)).kind, 'trust', 'trust beats startup deadline');
+  show('The documentation mentions Trust this folder? as a prompt.');
+  clock += 3000;
+  assert.equal((await waitWorker(w.id, 0, ctx, runtime)).state, 'no_start');
+  show(fixture(vendor, 'running')); clock = epoch;
+  const active = worker(vendor, true);
+  assert.equal((await waitWorker(active.id, 0, ctx, runtime)).state, 'timeout');
+  clock += 3000; show(fixture(vendor, 'running').replace('12s', '15s'));
+  assert.equal((await waitWorker(active.id, 0, ctx, runtime)).state, 'timeout');
+  clock += 29000; show(fixture(vendor, 'running').replace('12s', '44s'));
+  assert.equal((await waitWorker(active.id, 0, ctx, runtime)).state, 'timeout', `${vendor}: advancing elapsed prevents false stall`);
+  const saved = JSON.parse(fs.readFileSync(path.join(records, `${active.id}.json`)));
+  assert.equal(saved.indicator.advancedAt, clock, 'progress persists between wait invocations');
+  clock += 29999;
+  assert.equal((await waitWorker(active.id, 0, ctx, runtime)).state, 'timeout');
+  clock++;
+  assert.equal((await waitWorker(active.id, 0, ctx, runtime)).state, 'stalled', `${vendor}: frozen indicator eventually stalls`);
+  show('Waiting'); clock += 1;
+  assert.equal((await waitWorker(active.id, 0, ctx, runtime)).state, 'stalled', 'disappearing indicator does not reset the clock');
+  clock = epoch; show(fixture(vendor, 'running'));
+  const thinking = worker(vendor, true);
+  const moving = { ...runtime, sleep: async ms => {
+    clock += ms;
+    show(fixture(vendor, 'running').replace('12s', `${12 + Math.floor((clock - epoch) / 1000)}s`));
+  } };
+  assert.equal((await waitWorker(thinking.id, 65, ctx, moving)).state, 'timeout', 'continuous polling observes thinking beyond two stall windows');
+  assert.equal((await waitWorker(thinking.id, 31, ctx, runtime)).state, 'stalled', 'a timer that stops advancing wakes the waiter');
+}
+const calls = fs.readFileSync(callsPath, 'utf8').trim().split('\n').map(JSON.parse);
+assert.ok(calls.every(args => args.includes('read-screen')), 'dialog checks never type or answer');
+clock = epoch; show(fixture('claude', 'trust'));
+const cliWorker = worker('claude');
+const cli = spawnSync(process.execPath, [path.join(root, 'bin/agent.mjs'), 'wait', cliWorker.id, '--timeout', '0', '--json'], { env: { ...process.env, CMUX_SOCKET_PATH: 'fake', CMUX_WORKSPACE_ID: ctx.workspace }, encoding: 'utf8' });
+assert.equal(cli.status, 3, cli.stderr); assert.equal(JSON.parse(cli.stdout).kind, 'trust');
+show('Allow this command?');
+const permitted = worker('claude', true);
+fs.appendFileSync(events, JSON.stringify({ name: 'agent.hook.PermissionRequest', surface_id: permitted.surface_id }) + '\n');
+assert.equal((await waitWorker(permitted.id, 0, ctx, runtime)).state, 'stuck', 'permission hook after session start');
+clock = epoch; show(fixture('claude', 'trust'));
+const trusting = worker('claude');
+assert.equal((await waitWorker(trusting.id, 0, ctx, runtime)).kind, 'trust');
+fs.appendFileSync(events, JSON.stringify({ name: 'agent.hook.SessionStart', surface_id: trusting.surface_id, session_id: trusting.id }) + '\n');
+assert.equal((await waitWorker(trusting.id, 0, ctx, runtime)).state, 'timeout', 'a session start invalidates the cached startup dialog');
+show('• Working (1m 2s • esc to interrupt)'); clock = epoch;
+const minute = worker('codex', true);
+await waitWorker(minute.id, 0, ctx, runtime);
+show('• Working (1m 5s • esc to interrupt)'); clock += 31000;
+assert.equal((await waitWorker(minute.id, 0, ctx, runtime)).state, 'timeout');
+show('• Working (1s • esc to interrupt)'); clock += 30000;
+assert.equal((await waitWorker(minute.id, 0, ctx, runtime)).state, 'stalled', 'a timer reset is not forward progress');
+console.log('agent pre-session trust dialogs, poll latency, CLI exit, post-start permission and advancing/frozen indicators passed');

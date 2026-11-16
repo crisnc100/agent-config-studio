@@ -1,0 +1,76 @@
+## VERDICT
+
+Don't change how agents run: every vendor already writes a live transcript to disk, so watch those. Start with a cmux pane that tails the transcript, then build one ACS "Agents" board on the same files.
+
+The key fact: all 137 Codex sessions today were headless `codex exec`, and each one wrote a full transcript as it ran (messages, every command with exit code and output, reasoning summaries). They also already emit events to cmux's event bus. Your "headless = unwatchable" rule is a viewer gap, not a data gap.
+
+## OPTIONS
+
+| # | Option | What he sees, where | Step in | Effort | Works here? |
+|---|---|---|---|---|---|
+| 1 | **Watch pane**: keep headless, open a cmux split that tails the transcript through `jq` | One line per step (message, command, exit code), live, in a pane next to the orchestrator | Stop only (kill the process); follow-up via `codex exec resume <thread_id>` after the turn | S | Formatter tested on a finished Codex transcript; live tailing and pane opening not run |
+| 2 | **ACS "Agents" board**: ACS tails the transcript folders of all three vendors and pushes to a page | Every running agent, any vendor, one page: role, model, cwd, last step, expandable transcript | Stop button (kill pid); message via resume | M | Pieces exist: ACS has SSE and already parses Codex and Grok session files for usage. Not built |
+| 3 | **Interactive TUI in a cmux pane** (`codex "<brief>"`, `grok "<brief>"`) instead of headless | The vendor's real UI, live | Full: type into it, interrupt, approve | S–M | Your two skills already cover sending prompts and waiting for `Stop`. Not run |
+| 4 | **cmux Feed** (`cmux right-sidebar feed`, `cmux feed tui`) | Tool calls across Claude and Codex in cmux's sidebar | Feed approvals | Zero | Events are flowing (about 1,000 Codex feed items in the last 20k events); I couldn't open the UI |
+| 5 | **Codex daemon viewer** (`codex agents`, `codex remote-control start/pair`) | Codex's own session browser; pairing code for a remote device | Yes (`codex queue --thread --message`) | M | Daemon is not running, so today's exec runs don't go through it. Codex only, experimental |
+| 6 | **Stream ingest**: launchers tee `--json` / `stream-json` / `streaming-json` into a runs folder ACS watches | Same board as #2 | Same as #2 | S–M on top of #2 | Only needed for Grok (see notes) |
+| 7 | **cmux agent-session surface** (`cmux new-surface --type agent-session --provider codex\|claude\|opencode`) | A native GUI session tab in cmux | Presumably full | S to try | Flag exists; no Grok provider; untested |
+| 8 | **Claude wrapper subagent**: a cheap Claude subagent whose only job is to run `codex exec` and relay | Shows in Claude Code's native subagent UI | Via SendMessage to the wrapper | S | Would work, but output arrives in chunks and the wrapper may paraphrase |
+| 9 | **Phone** | See notes | | | |
+
+Notes:
+
+- **Transcript locations (all checked):**
+  - Codex: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`, local date; the final answer is in `task_complete.last_agent_message`.
+  - Claude: `~/.claude/projects/<project>/<session>.jsonl`, with subagents under `<session>/subagents/agent-*.jsonl`.
+  - Grok: `~/.grok/sessions/<cwd>/<id>/`.
+- **Grok is the weak spot.** Its on-disk files are thin: `events.jsonl` is almost all `phase_changed`, and tool calls in `chat_history.jsonl` carry only `kind` and `type`. For Grok, use #6 (`--output-format streaming-json` teed to a file) or #3.
+- **`ask-model` buffers stdout** until exit (`tools/ask-model.mjs:1021`), so it shows nothing live itself. Codex calls through it still write the rollout file, so #1 and #2 cover them without touching it.
+- **#3 loses structured output.** A TUI can't take `--output-schema` or `--json-schema`, so reviewer and grader calls that need a schema should stay headless. It suits builders and the docs writer.
+- **#4 is partly redacted.** The event bus drops tool input; `~/.cmuxterm/workstream.jsonl` keeps it truncated with paths replaced by `<path>`. Good for "is it alive and what tool", not for reading the work.
+- **#5 doesn't see exec runs.** There is no control socket at `~/.codex/app-server-control/`, despite `daemon_auto_start` being on. Using it means launching workers through the daemon (`--remote unix://`), a bigger change than tailing files.
+- **Phone:**
+  - Best route: put the #2 board behind Tailscale (app installed; I couldn't check its status).
+  - ACS blocks this today: it binds to 127.0.0.1 and refuses any non-localhost Host header (`server.js:1783`, `:1915`).
+  - ACS also has write endpoints, so expose a separate read-only board route, not the whole app.
+  - Per-vendor alternatives: `claude --remote-control` for Claude sessions; `codex remote-control pair` for Codex (untested).
+
+## RANKING
+
+1. **Watch pane (#1).** About an hour, no launcher changes, and it removes the constraint for Codex roles today.
+2. **ACS Agents board (#2, plus #6 for Grok).** The "one place, every vendor" answer, and the only one that leads to phone access.
+3. **Interactive pane (#3) for the roles where you want to steer**, such as builders and the docs writer. It is the only option with real mid-turn step-in.
+
+## FIRST PROTOTYPE
+
+The watch pane, on one real Codex run.
+
+1. Start any headless Codex job the way you do now.
+2. In a cmux split, run:
+   ```bash
+   F=$(ls -t ~/.codex/sessions/$(date +%Y/%m/%d)/rollout-*.jsonl | head -1)
+   tail -n +1 -F "$F" | jq -r --unbuffered '
+     select(.type=="event_msg" and .payload.type=="item_completed") | .payload.item |
+     if .type=="CommandExecution" then "$ \(.command[-1]|.[0:200])  → exit \(.exit_code)"
+     elif .type=="AgentMessage" then "\n💬 \(.content|map(.text)|join(""))"
+     else empty end'
+   ```
+3. Once that works by hand, have the orchestrator open it itself with `cmux new-split right --command "<the above>" --focus false` right after launching the worker.
+
+It worked if lines appear while the job is still running, within a second or two of each command, and the final message matches what the orchestrator gets back. I ran this filter's logic against a finished transcript and it printed readable steps; `.command[-1]` and the `.content` join are small tweaks I did not re-run.
+
+One thing to settle in the test: "newest file" picks the wrong run when two Codex jobs start together. The fix is to match on the thread id from `codex exec --json` or on `cwd` in the file's first line.
+
+## RISKS
+
+- **Transcript formats are private and change with CLI updates.** The Codex field names above are from 0.160.0. Keep the parser per-vendor and small.
+- **Experimental surfaces:** the Codex daemon, remote-control, and cmux agent-session are all marked experimental or untested here.
+- **Phone exposure:** anything that opens ACS beyond localhost weakens a deliberate guard. Transcripts contain code and command output.
+- **Interactive panes can stall** on a permission prompt nobody sees. Launch with explicit sandbox and approval flags, and watch for `agent.hook.Notification`.
+- **Not verified:** the sandbox blocked the cmux socket, so no pane or Feed command was run; I could not fetch cmux's Feed docs; no Grok run from today was available to sample.
+
+## QUESTIONS
+
+1. **Is watch-only enough for cross-vendor workers, or do you need to message them mid-turn?** Recommended: watch plus stop is enough for reviewers, advisors and QA; use the interactive pane only for builders and the writer.
+2. **Should the board live in ACS or stay in cmux?** Recommended: ACS. It is the only route to the phone and to a single cross-vendor page; the cmux pane is the stopgap.
+3. **Once the watch pane works, do you want the context-pass rule ("writer must be a native Claude subagent") loosened to allow any vendor?** Recommended: yes, since that rule exists only for watchability. The writer needs write access, which `ask-model` (read-only) can't give, so it would need a `codex exec --sandbox workspace-write` path.

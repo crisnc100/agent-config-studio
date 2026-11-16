@@ -250,3 +250,19 @@ tests/audit-real-run.mjs                              manual                    
 tests/real-home.mjs                                   helper                        # the real-home snapshot verify.sh saves and checks; suites import it
 tests/worktree-sandbox.mjs                            helper                        # the throwaway machine the worktree suites build on
 tests/run.mjs                                         helper                        # the runner that reads this list
+
+tests/agent-cli.mjs                                   ci:offline
+tests/agent-install.mjs                               ci:offline
+
+tests/agent-reliability.mjs                           ci:offline
+
+tests/agent-screens.mjs                               ci:offline
+
+tests/agent-surfaces.mjs                              ci:offline
+
+tests/agent-commands.mjs                              ci:offline
+
+tests/agent-sessions.mjs                              ci:offline
+
+tests/agent-git-access.mjs                            ci:offline
+tests/agent-review-fixes.mjs                          ci:offline

@@ -74,7 +74,8 @@ usage() {
     '       acs usage [...]          seat usage in the terminal' \
     '       acs pause [<account>]    pause an account so roles skip its models; alone, lists pauses' \
     '       acs resume <account>     end a pause' \
-    '       acs install-model-id     install the model-id resolver and ask-model' \
+    '       acs install-model-id     install model-id, ask-model and agent' \
+    '       acs agent [...]          watchable workers in cmux (agent --help)' \
     '       acs install-worktree     install the worktree helpers (zsh/macOS only)' \
     '       acs packs list|explain|install|status|update|uninstall   recommended skill packs (acs packs help)' \
     '       acs help                 this text' \
@@ -365,7 +366,7 @@ update_checkout() {
   if git -C "$DIR" diff --quiet "$before" "$after" -- tools/worktree; then :; else
     echo "  tools/worktree changed — run: acs install-worktree"
   fi
-  if git -C "$DIR" diff --quiet "$before" "$after" -- bin/model-id bin/model-id.mjs tools/ask-model.mjs lib/models.js models.default.json lib/roles.js lib/roles.default.json package.json; then :; else
+  if git -C "$DIR" diff --quiet "$before" "$after" -- bin/model-id bin/model-id.mjs tools/ask-model.mjs bin/agent.mjs bin/agent-install.mjs lib/agent.js lib/paths.js lib/roots.js lib/models.js models.default.json lib/roles.js lib/roles.default.json package.json; then :; else
     echo "  the model-id resolver changed — run: acs install-model-id"
   fi
   if [ -f "$HOME/.agent-config-studio/packs/state.json" ] && ! git -C "$DIR" diff --quiet "$before" "$after" -- packs; then
@@ -386,7 +387,10 @@ stale_copies() {
     # A copy from before roles (or ask-model) existed lacks that file: cmp against a missing file fails, so it is named too.
     if ! cmp -s "$r/bin/model-id.mjs" "$DIR/bin/model-id.mjs" || ! cmp -s "$r/lib/models.js" "$DIR/lib/models.js" ||
       ! cmp -s "$r/models.default.json" "$DIR/models.default.json" || ! cmp -s "$r/lib/roles.js" "$DIR/lib/roles.js" ||
-      ! cmp -s "$r/lib/roles.default.json" "$DIR/lib/roles.default.json" || ! cmp -s "$r/bin/ask-model.mjs" "$DIR/tools/ask-model.mjs"; then
+      ! cmp -s "$r/lib/roles.default.json" "$DIR/lib/roles.default.json" || ! cmp -s "$r/bin/ask-model.mjs" "$DIR/tools/ask-model.mjs" ||
+      ! cmp -s "$r/bin/agent.mjs" "$DIR/bin/agent.mjs" || ! cmp -s "$r/lib/agent.js" "$DIR/lib/agent.js" ||
+      ! cmp -s "$r/bin/agent-install.mjs" "$DIR/bin/agent-install.mjs" || ! cmp -s "$r/lib/paths.js" "$DIR/lib/paths.js" ||
+      ! cmp -s "$r/lib/roots.js" "$DIR/lib/roots.js"; then
       echo "  the installed model-id resolver is older than this package — run: $ACS_CMD install-model-id"
     fi
   fi
@@ -476,9 +480,13 @@ case "${1:-}" in
     shift
     exec "$NODE" "$DIR/bin/packs.mjs" "$@"
     ;;
+  agent)
+    shift
+    exec "$NODE" "$DIR/bin/agent.mjs" "$@"
+    ;;
   install-model-id)
-    # Copies the resolver and ask-model out of this checkout and links
-    # ~/.local/bin/model-id and ask-model, so skills keep resolving when a
+    # Copies the resolver, ask-model and agent out of this checkout and links
+    # ~/.local/bin launchers, so skills keep resolving when a
     # worktree is removed. Re-run after a pull.
     exec "$NODE" "$DIR/bin/model-id.mjs" --install
     ;;

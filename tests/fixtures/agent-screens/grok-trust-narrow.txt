@@ -1,0 +1,6 @@
+Do you trust the contents of this
+/Users/cortega/Documents/Projects
+Grok Build may run or modify cont
+     posing security risks.
+  Yes, proceed                y  
+  No, quit                    n  

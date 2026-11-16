@@ -1,0 +1,6 @@
+{"f1":{"status":"fixed","response":"real","test":"tests/agent-cli.mjs, agent-install.mjs, agent-review-fixes.mjs, agent-surfaces.mjs, agent-git-access.mjs pass on Node 20.0.0 (fake cmux loads by dynamic import)"},
+ "f2":{"status":"fixed","response":"real","test":"tests/fixtures/agent-cmux.mjs throws on any write outside HOME; suites delete CODEX_HOME, CLAUDE_CONFIG_DIR, GROK_HOME; session ids are uuids"},
+ "f3":{"status":"fixed","response":"real","test":"tests/setup-guards.mjs plants spawnSync('cmux' + expr) and guards.mjs rejects it"},
+ "f4":{"status":"fixed","response":"real","test":"tests/setup-guards.mjs plants compact imports and a compact re-export; guards.mjs rejects them"},
+ "f5":{"status":"fixed","response":"real","test":"tests/agent-git-access.mjs asserts exact grants and that the symlink target gets none"},
+ "x1":{"status":"deferred","reason":"LOW: filed. Needs a whitespace-free `export*as name from` re-export of the worker module, which no code or formatter here produces","fix":"allow \\s* before `as` in the re-export pattern and add the variant to setup-guards.mjs"}}
