@@ -640,9 +640,15 @@ does not clear inherited servers. `--mcp` is accepted and recorded for every
 family; it changes launch flags only for Claude. No persistent CLI config is
 edited.
 
-When a Codex worker's Git common directory is outside its working directory,
-the launcher adds that directory with `--add-dir`. This lets a builder in a
-linked worktree write the shared Git metadata needed to commit.
+For a Codex worker in a linked Git worktree, the launcher grants writes only
+to the common directory's `objects/`, `refs/` and `logs/`, and that worktree's
+own Git administration directory. It verifies that the administration directory
+is under the common directory's `worktrees/` and points back to the working
+directory's `.git` file. Forged links and symlinked data directories get no grant
+for those paths. Common `config`, `hooks/`, `info/`, `packed-refs` and root lock
+files receive no extra write permission. A normal commit, including one from a
+packed branch ref, needs no common-root writes; maintenance operations may
+require the operator's separate action.
 
 Workers use tabs in a shared workers pane beside the orchestrator. Grok needs
 its own visible pane to start; focus returns to the orchestrator after its
@@ -704,15 +710,20 @@ code or wait deadline.
 for trust and permission dialogs before sending text and before every Enter
 attempt, stopping if one appears during submission. Unresolved permission hooks
 block sending independently of command deadlines. Screen detection requires a
-question and both choice rows in the bottom 20 screen lines, so ordinary answer
-text and older scrollback do not block follow-ups. It never answers dialogs.
+question and both choice rows in the bottom 20 screen lines. When the transcript
+confirms completion and no permission hook is pending, even Yes/No choices are
+answer text. Older scrollback does not block follow-ups. It never answers dialogs.
 A matching tool result, a later turn, or an observed dialog disappearing
 retires the old permission request.
 
-`send` confirms a new `task_started` event for Codex, a new non-tool-result
+`send` refuses before the initial launch turn is observed. Once startup is
+established, it confirms a new `task_started` event for Codex, a new non-tool-result
 user entry for Claude, or `turn_started` for Grok. It retries Enter up to three
 times and waits up to 10 seconds for proof. Failure exits 1 and persists the
-send attempt so `wait` also reports `unsent`. A Codex user-message line alone
+send attempt so `wait` also reports `unsent`. Another send refuses with exit 5
+and the leftover input until a later turn proves submission. Submit that input
+in the worker pane or close the worker before sending again; retries never
+append new instructions to unresolved input. A Codex user-message line alone
 is insufficient. Messages longer than 400 characters are saved privately in
 the worker's run directory; only `Read <path> and follow it.` is sent to the
 composer. This avoids the long-paste placeholder that can remain unsubmitted.
