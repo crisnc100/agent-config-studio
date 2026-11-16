@@ -1,0 +1,92 @@
+{
+ "rows": [
+  {
+   "behavior": "agent CLI commands, flags, wait states, send/answer semantics",
+   "files": [
+    "bin/agent.mjs",
+    "lib/agent.js"
+   ],
+   "docs": [
+    {
+     "path": "README.md",
+     "claims": [
+      {
+       "claim": "wait exit codes per state (done 0, stuck 3, timeout 4, unsent 5, no_start 6, stalled 7, closed 8, long_command 9)",
+       "at": "bin/agent.mjs:36"
+      },
+      {
+       "claim": "--timeout default 600, --stall-after 300, --command-after 600",
+       "at": "bin/agent.mjs:26-32"
+      },
+      {
+       "claim": "at most four workers; extra opens wait",
+       "at": "lib/agent.js:435"
+      },
+      {
+       "claim": "no_start after 60s; unsent after 10s",
+       "at": "lib/agent.js:384"
+      },
+      {
+       "claim": "messages over 400 chars sent as 'Read <path> and follow it.'",
+       "at": "lib/agent.js:584-587"
+      },
+      {
+       "claim": "done workers closed after 30 idle minutes by list/wait",
+       "at": "lib/agent.js:537-543"
+      },
+      {
+       "claim": "Claude gets --strict-mcp-config unless --mcp",
+       "at": "lib/agent.js:449"
+      },
+      {
+       "claim": "Codex git grants objects/refs/logs plus worktree admin dir",
+       "at": "lib/agent.js:459-481"
+      },
+      {
+       "claim": "launcher writes harness.pid and starts caffeinate -i -w",
+       "at": "lib/agent.js:482"
+      },
+      {
+       "claim": "Grok focus returns after session or six seconds",
+       "at": "lib/agent.js:501-506"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "behavior": "agent installed by acs install-model-id; acs agent and usage; stale-copy and update hints",
+   "files": [
+    "bin/acs",
+    "bin/agent-install.mjs",
+    "bin/model-id.mjs"
+   ],
+   "docs": [
+    {
+     "path": "README.md",
+     "claims": [
+      {
+       "claim": "install-model-id links ~/.local/bin/agent",
+       "at": "bin/agent-install.mjs:20-30"
+      },
+      {
+       "claim": "acs agent runs the CLI from the checkout",
+       "at": "bin/acs:483-485"
+      },
+      {
+       "claim": "re-run install after agent CLI changes",
+       "at": "bin/acs:369"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "behavior": "screen fixtures wording",
+   "files": [
+    "tests/fixtures/agent-screens/README.md"
+   ],
+   "none": "test fixtures and their README describe themselves; no user doc covers them"
+  }
+ ]
+}
