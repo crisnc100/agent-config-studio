@@ -15,7 +15,10 @@ state.calls.push(args);
 const put = (f, data) => {
   const relative = path.relative(home, f);
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error('fake cmux refuses writes outside its temporary HOME');
-  fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, data);
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  // Tests read these files while a queued `agent open` keeps calling the fake; a rename is never seen half-written.
+  const tmp = `${f}.${process.pid}.${randomUUID()}.tmp`;
+  fs.writeFileSync(tmp, data); fs.renameSync(tmp, f);
 };
 const line = x => JSON.stringify(x) + '\n';
 function turn(w, text, complete = true) {
