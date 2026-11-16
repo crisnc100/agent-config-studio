@@ -137,7 +137,7 @@ const earlier = worker('codex', [ev('task_started')]);
 append(path.join(home, '.cmuxterm/events.jsonl'), { name: 'agent.hook.PermissionRequest', surface_id: earlier.surface_id, occurred_at: new Date(epoch + 10000).toISOString() });
 clock = epoch + 60000;
 assert.equal((await waitWorker(earlier.id, 0, ctx, { ...runtime, stallAfter: 30 })).state, 'stuck');
-assert.equal((await waitWorker(earlier.id, 0, ctx, { ...runtime, stallAfter: 5 })).state, 'stalled');
+assert.equal((await waitWorker(earlier.id, 0, ctx, { ...runtime, stallAfter: 5 })).state, 'stuck', 'pending permission outranks an older stall');
 const cli = args => spawnSync(process.execPath, [path.join(root, 'bin/agent.mjs'), ...args], { env: { ...process.env, CMUX_SOCKET_PATH: 'fake', CMUX_WORKSPACE_ID: 'workspace:1' }, encoding: 'utf8' });
 const noStartCli = worker('codex', [], true);
 change(noStartCli, { openedAt: Date.now() - 61000 });
