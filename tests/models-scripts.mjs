@@ -31,16 +31,19 @@ fs.mkdirSync(bin);
 fs.symlinkSync(path.join(ROOT, 'bin', 'model-id'), path.join(bin, 'model-id'));
 const bump = path.join(work, 'models.json');
 fs.writeFileSync(bump, JSON.stringify({ models: { opus: 'claude-opus-6' } }));
+// review.mjs takes its codex reviewer and its team lenses from the reviewer role, and stops when it is unset.
+const roles = path.join(work, 'roles.json');
+fs.writeFileSync(roles, JSON.stringify({ version: 2, roles: { reviewer: { use: ['astra', 'opus'], effort: 'high' } } }));
 
 const call = (res, key, role) => res[`none/${key}`]?.calls.find((c) => c.role === role);
 
-const base = inspect({ modelIdDir: bin, homes: ['none'] });
+const base = inspect({ modelIdDir: bin, homes: ['none'], rolesFile: roles });
 ok('control: with no user file the opus lens is the registry default',
    call(base, 'review.mjs/claude-team', 'lens:correctness')?.model === DEFAULTS.models.opus, JSON.stringify(base['none/review.mjs/claude-team']));
 ok('control: codex runs the registry astra at high', call(base, 'review.mjs/default', 'codex')?.model === DEFAULTS.models.astra &&
    call(base, 'review.mjs/default', 'codex')?.effort === 'high');
 
-const bumped = inspect({ modelIdDir: bin, homes: ['none'], homeFile: bump });
+const bumped = inspect({ modelIdDir: bin, homes: ['none'], homeFile: bump, rolesFile: roles });
 ok('one edit: review.mjs opus lens → claude-opus-6', call(bumped, 'review.mjs/claude-team', 'lens:correctness')?.model === 'claude-opus-6',
    JSON.stringify(bumped['none/review.mjs/claude-team']));
 ok('one edit: review-loop.mjs verifier → claude-opus-6, effort unchanged', call(bumped, 'review-loop.mjs/default', 'verifier')?.model === 'claude-opus-6' &&
@@ -53,7 +56,7 @@ ok('one edit: nothing else moved', call(bumped, 'review.mjs/default', 'codex')?.
 // A missing resolver must fail loudly, never hand a CLI an empty model.
 const empty = path.join(work, 'empty');
 fs.mkdirSync(empty);
-const lost = inspect({ modelIdDir: empty, homes: ['none'] });
+const lost = inspect({ modelIdDir: empty, homes: ['none'], rolesFile: roles });
 const m = call(lost, 'review.mjs/default', 'codex')?.model;
 ok('no model-id on PATH → the codex model is MODEL-ID-UNRESOLVED-astra, not empty', m === 'MODEL-ID-UNRESOLVED-astra', String(m));
 
