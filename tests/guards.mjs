@@ -289,6 +289,7 @@ const LOGIN_SHELL_FN = "function loginShell(env = process.env) { const want = en
 
 /** lib/agent.js's watcher inspectors: the only callees there besides 'cmux', each with its exact argv. */
 const AGENT_INSPECTOR_FN = "const inspector = (bin, name) => process.env.AGENT_TEST_MODE === '1' && process.env[name] || bin;";
+const AGENT_INSPECTOR_CALLS = ["inspector('/bin/ps', 'AGENT_TEST_PS')", "inspector('/usr/sbin/lsof', 'AGENT_TEST_LSOF')"];
 const AGENT_INSPECTORS = [
   /^inspector\('\/bin\/ps', 'AGENT_TEST_PS'\), \['-axww', '-o', 'pid,ppid,command'\],/,
   /^inspector\('\/usr\/sbin\/lsof', 'AGENT_TEST_LSOF'\), \['-w', '-nP', '-F', 'pfan', '-p', pids\.join\(','\)\],/,
@@ -413,9 +414,17 @@ function guardB() {
         }
         if (!inspectorPinned) {
           inspectorPinned = true;
-          const defs = src.match(/\binspector\s*=/g) || [];
-          if (defs.length !== 1 || !src.includes(AGENT_INSPECTOR_FN)) {
-            hits.push(`${file} must define inspector exactly once as: ${AGENT_INSPECTOR_FN} (a test binary is honoured only under AGENT_TEST_MODE=1)`);
+          // Counting assignments misses a nested function, a parameter or a destructured name, any of which would
+          // shadow the pinned helper at a spawn. So every mention of the name must be the one pinned definition or
+          // one of the two pinned calls; and nothing may switch test mode on.
+          const rest = src.split(AGENT_INSPECTOR_FN);
+          const stray = rest.slice(rest.length === 2 ? 0 : rest.length).join('').split(AGENT_INSPECTOR_CALLS[0]).join('').split(AGENT_INSPECTOR_CALLS[1]).join('');
+          if (rest.length !== 2 || /\binspector\b/.test(stray)) {
+            hits.push(`${file} must name inspector only in its one definition (${AGENT_INSPECTOR_FN}) and the two pinned calls; any other binding or use can shadow it`);
+          }
+          const modes = [...src.matchAll(/(?:\.|\[\s*['"`])AGENT_TEST_MODE(?:['"`]\s*\])?([^\n]{0,12})/g)];
+          if (modes.some((m) => !/^\s*===\s*'1'/.test(m[1]))) {
+            hits.push(`${file} may only compare process.env.AGENT_TEST_MODE === '1', never set or read it another way`);
           }
         }
         continue;
