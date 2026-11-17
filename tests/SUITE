@@ -40,6 +40,8 @@ tests/setup-credentials.mjs                           ci:offline
 tests/worktree-tripwire.mjs                           ci:offline
 # …and every project folder roots.json lists, its config files and linked instructions.
 tests/real-home-roots.mjs                             ci:offline
+# …but not acs-agent's live runs/ and agents/, while every other write under ~/.agent-config-studio still fails.
+tests/real-home-live-state.mjs                        ci:offline
 # Offline too, and it exercises the reader that the whole tracker rests on.
 tests/usage-codex.mjs                                 ci:offline
 tests/usage-codex-limits.mjs                          ci:offline
