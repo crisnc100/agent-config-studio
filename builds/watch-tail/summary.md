@@ -1,0 +1,9 @@
+review.mjs · /Users/cortega/.agent-config-studio/review-gate/review.mjs · head-aware copy
+Reviewer: fable (claude-fable-5-2)
+Security: astra (gpt-6-astra) — ran, 0 findings
+Review: 2026-11-17-15-53-11-38cdfe
+HEAD: 25af756c0bce14e3b198867fd62b6f1ac726b20b
+Counts: 1 findings; 0 fixed; 0 rejected
+Merge tier: HIGH (security pass did not see builds/watch-tail/review.out, builds/watch-tail/status.json (changed after review); deferred: f1). Policy standard: needs a human
+Deferred findings
+f1 LOW 8/100 (likelihood 2/10 × impact 4/10) lib/agent.js:1141 — `acs-agent tail` with no run id treats a run as live from pid liveness alone (`alive(r.pid)`), and `follow` only returns when the log says `run finished`, the log disappears after being read, or both the gate pid and the watcher pid are dead. A run file whose pid is alive but which has no watcher writing its log is therefore followed indefinitely: tail prints `following <kind> <id>` (and replays any stale log left beside it), then never returns to the picker, so reviews that start afterwards are never shown. Nothing ties the pid to the process that wrote the run file (for example its `started` time), so a reused pid counts as a live run. The log-only sweep added on this branch deliberately leaves dead cmux watchers' sidecars and logs in place, which adds to the stale files that can be picked this way.; Trigger: Leave `acs-agent tail` open in a pane. Either (a) a watcher dies or exits while its gate is still running (killed, or five failed `ps` reads), or (b) an orphaned run file / dead cmux watcher sidecar remains in ~/.agent-config-studio/runs and its pid is later reused by a live process. Tail follows that run, shows nothing new, and does not pick up the next review until that pid exits.; also at lib/agent.js:1141, lib/agent.js:1128
