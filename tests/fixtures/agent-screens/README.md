@@ -18,3 +18,9 @@ Claude approval regressions use its 2.1.325 bundle's shared question template
 The fetch question is `Do you want to allow Claude to fetch this content?`.
 The bundle supplies `Yes` and `No` choices; test numbering and filenames are
 synthetic.
+
+The Codex subdirectory fixture preserves the supplied 80-column probe screen.
+Restricted-folder and existing-task fixtures use the installed 0.160.0 bundle's
+strings and its matching upstream trust-directory snapshots. Tests exercise all
+three cancel labels: `Quit`, `Back to Agent Command Center`, and
+`Keep current directory`.

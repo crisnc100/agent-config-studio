@@ -644,13 +644,32 @@ edited.
 
 For a Codex worker in a linked Git worktree, the launcher grants writes only
 to the common directory's `objects/`, `refs/` and `logs/`, and that worktree's
-own Git administration directory. It verifies that the administration directory
-is under the common directory's `worktrees/` and points back to the working
-directory's `.git` file. Forged links and symlinked data directories get no grant
-for those paths. Common `config`, `hooks/`, `info/`, `packed-refs` and root lock
-files receive no extra write permission. A normal commit, including one from a
-packed branch ref, needs no common-root writes; maintenance operations may
-require the operator's separate action.
+`index`, `index.lock`, `HEAD`, `HEAD.lock`, `COMMIT_EDITMSG` and `logs/` paths.
+Codex's macOS sandbox supports file grants, including missing lock files;
+the administration directory itself receives no grant. Its `commondir`,
+`gitdir`, `config.worktree` and other configuration or object redirects remain
+read-only. Every Codex launcher clears inherited extra writable roots and
+excludes default writable temp directories, including for normal checkouts,
+subdirectories and rejected Git links. Each worker receives its own private
+scratch directory, exported as `TMPDIR`, `TMP` and `TEMP` and explicitly granted
+write access, so tests can create temp files without exposing other temp repos.
+Worker Git processes use a runtime `core.splitIndex=false` override, preserving
+other runtime Git settings and persistent repository config. This avoids granting
+the administration directory to create unpredictable `sharedindex.*` files.
+It verifies that the administration directory is under the common directory's
+`worktrees/` and points back to the working directory's `.git` file. Forged links,
+symlinked data directories and symlinked commit files get no grant for those
+paths. Common `config`, `hooks/`, `info/`, `packed-refs` and root lock files receive
+no extra write permission. Normal branch and detached-HEAD commits, including
+one from a packed branch ref, need no common-root writes; maintenance operations
+may require the operator's separate action.
+The launcher records granted admin paths outside the worker's write grants.
+On wait, send, answer, close and list (including idle expiry), ACS checks those
+paths and their reflog entries with `lstat`. Unsafe symlink or nonregular scratch
+entries are removed without following them; unexpected nonempty directories
+remain blocked. ACS reports `stuck` with kind `git_tamper` and the affected paths,
+and retains that warning after cleanup and close. Closing still terminates the
+worker surface; a flagged worker cannot send a follow-up or supply an answer.
 
 Workers use tabs in a shared workers pane beside the orchestrator. Grok needs
 its own visible pane to start; focus returns to the orchestrator after its
