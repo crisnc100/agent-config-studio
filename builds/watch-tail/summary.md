@@ -2,7 +2,7 @@ review.mjs · /Users/cortega/.agent-config-studio/review-gate/review.mjs · head
 Reviewer: fable (claude-fable-5-2)
 Security: astra (gpt-6-astra) — ran, 0 findings
 Review: 2026-11-17-15-53-11-38cdfe
-HEAD: 25af756c0bce14e3b198867fd62b6f1ac726b20b
+HEAD: efb9ce6b75f4b7833eb25e000f977afcc81d5666
 Counts: 1 findings; 0 fixed; 0 rejected
 Merge tier: HIGH (security pass did not see builds/watch-tail/review.out, builds/watch-tail/status.json (changed after review); deferred: f1). Policy standard: needs a human
 Deferred findings
