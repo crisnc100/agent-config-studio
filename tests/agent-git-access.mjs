@@ -20,6 +20,7 @@ function argv(cwd) {
   const w=JSON.parse(run(process.execPath,[path.join(root,'bin/agent.mjs'),'open','sol','--cwd',cwd,'test task','--json']));
   run('/bin/sh',[w.launcher]);
   const args=JSON.parse(fs.readFileSync(capture));
+  run(process.execPath,[path.join(root,'bin/agent.mjs'),'close',w.id,'--json']);
   const scratch=path.join(w.runDir,'tmp'), index=args.indexOf('--add-dir');
   assert.equal(args[index+1],scratch,'each Codex worker first grants its own private temp directory');
   assert.equal(fs.statSync(scratch).mode&0o777,0o700);
