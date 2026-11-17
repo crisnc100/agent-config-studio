@@ -37,7 +37,11 @@ let files = [];
 try { files = fs.readdirSync(runs).map((name) => ({ name, body: JSON.parse(fs.readFileSync(path.join(runs, name), 'utf8')) })); } catch {}
 fs.appendFileSync(${J(AGENT_LOG)}, JSON.stringify({ argv: a, ppid: process.ppid, runs: files }) + '\\n');
 if (process.env.STUB_AGENT_OLD) { console.error('usage: acs-agent open <family>'); process.exit(2); }
-if (a[0] === 'watch' && a[1] === '--version') console.log('acs-agent watch 1');
+if (a[0] === 'watch' && a[1] === '--version') console.log('acs-agent watch ' + (process.env.STUB_AGENT_VERSION || '1'));
+`, { mode: 0o755 });
+const CMUX_LOG = path.join(tmp, 'cmux.jsonl');
+fs.writeFileSync(path.join(AGENT, 'cmux'), `#!${process.execPath}
+require('node:fs').appendFileSync(${J(CMUX_LOG)}, JSON.stringify(process.argv.slice(2)) + '\\n');
 `, { mode: 0o755 });
 const PF = path.join(tmp, 'prompt.txt');
 fs.writeFileSync(PF, 'Say hello.\n');
@@ -101,10 +105,23 @@ fs.rmSync(path.join(tmp, '.claude'), { recursive: true });
 
 ask(['--role', 'advisor'], { ...CMUX, REVIEW_WATCH_CHILD: '1' });
 ok('a child of a watched run (REVIEW_WATCH_CHILD=1) starts nothing', log(AGENT_LOG).length === 0 && watches(false).length === 0);
-ask(['--role', 'advisor']);
-ok('outside cmux: nothing', log(AGENT_LOG).length === 0 && watches(false).length === 0);
-const old = ask(['--role', 'advisor'], { ...CMUX, STUB_AGENT_OLD: '1' });
 const runsLeft = () => { try { return fs.readdirSync(path.join(HOME, '.agent-config-studio', 'runs')); } catch { return []; } };
+ask(['--role', 'advisor']);
+ok('outside cmux, an acs-agent at watch 1: probed once, no watcher, no run file left',
+  probes().length === 1 && watches(false).length === 0 && runsLeft().length === 0, J({ calls: log(AGENT_LOG), runs: runsLeft() }));
+for (const [name, outside] of [['outside cmux', {}], ['a cmux shell without a workspace', { CMUX_SOCKET_PATH: CMUX.CMUX_SOCKET_PATH }]]) {
+  ask(['--role', 'advisor'], { ...outside, STUB_AGENT_VERSION: '2' });
+  const [lo, ...loMore] = watches(true);
+  const loPid = lo?.argv[2];
+  const loFile = lo?.runs.find((f) => f.body.pid === Number(loPid));
+  ok(`${name}, watch 2: one --log-only watcher for its own pid, its run file without a workspace`,
+    !!lo && !loMore.length && probes().length === 1 && J(lo.argv) === J(['watch', '--pid', loPid, '--kind', 'advisor', '--log-only'])
+    && String(lo.ppid) === loPid && !!loFile && J(Object.keys(loFile.body).sort()) === J(['kind', 'pid', 'started', 'version']), J(log(AGENT_LOG)));
+}
+ask(['--role', 'advisor'], { REVIEW_WATCH: 'off', STUB_AGENT_VERSION: '2' });
+ok('outside cmux, watch off: no probe, no watcher, no run file', log(AGENT_LOG).length === 0 && watches(false).length === 0 && runsLeft().length === 0, J(log(AGENT_LOG)));
+ok('outside cmux: never a cmux call', log(CMUX_LOG).length === 0, J(log(CMUX_LOG)));
+const old = ask(['--role', 'advisor'], { ...CMUX, STUB_AGENT_OLD: '1' });
 ok('an old acs-agent: probed once, no watcher, no run file left, the call still answers',
   old.code === 0 && old.out === off.out && probes().length === 1 && watches(false).length === 0 && runsLeft().length === 0, J({ calls: log(AGENT_LOG), runs: runsLeft() }));
 const missing = ask(['--role', 'advisor'], CMUX, { paths: [STUBS, '/usr/bin', '/bin'] });

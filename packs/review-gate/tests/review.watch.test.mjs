@@ -62,7 +62,7 @@ let files = []
 try { files = fs.readdirSync(runs).map((name) => ({ name, body: JSON.parse(fs.readFileSync(path.join(runs, name), 'utf8')) })) } catch {}
 fs.appendFileSync(${JSON.stringify(AGENT_CALLS)}, JSON.stringify({ argv: a, ppid: process.ppid, runs: files, child: process.env.REVIEW_WATCH_CHILD ?? null }) + '\\n')
 if (process.env.STUB_AGENT_OLD) { console.error('usage: acs-agent open <family>'); process.exit(2) }
-if (a[0] === 'watch' && a[1] === '--version') console.log('acs-agent watch 1')
+if (a[0] === 'watch' && a[1] === '--version') console.log('acs-agent watch ' + (process.env.STUB_AGENT_VERSION || '1'))
 `)
 stub(BIN, 'cmux', `require('node:fs').appendFileSync(${JSON.stringify(CMUX_CALLS)}, JSON.stringify(process.argv.slice(2)) + '\\n'); console.log('OK')`)
 after(() => rmSync(ROOT, { recursive: true, force: true }))
@@ -166,13 +166,32 @@ test('2 watch: pane adds --pane; off (home config or REVIEW_WATCH) starts nothin
   assert.deepEqual(agentCalls(), [])
 })
 
-test('3 outside cmux, or a cmux shell without a workspace: no watcher, no probe', () => {
+test('3 outside cmux, or a cmux shell without a workspace: watch 1 is only probed; watch 2 runs one --log-only watcher, no workspace, no cmux', () => {
   allowed(script(['x']))
   noWatch()
-  allowed(script(['x'], { CMUX_SOCKET_PATH: CMUX.CMUX_SOCKET_PATH }))
-  allowed(script(['x'], { ...CMUX, CMUX_WORKSPACE_ID: '--pane' }))
+  assert.equal(probes().length, 1, 'probed once; watch 1 has no --log-only')
+  assert.deepEqual(existsSync(RUNS) ? readdirSync(RUNS) : [], [], 'no run file left')
+  homeConfig({ watch: 'pane' })
+  for (const outside of [{}, { CMUX_SOCKET_PATH: CMUX.CMUX_SOCKET_PATH }, { ...CMUX, CMUX_WORKSPACE_ID: '--pane' }]) {
+    rmSync(AGENT_CALLS, { force: true })
+    allowed(script(['x'], { ...outside, STUB_AGENT_VERSION: '2' }))
+    const [w, ...more] = waitForWatch()
+    assert.equal(more.length, 0, JSON.stringify(watchCalls()))
+    assert.equal(probes().length, 1)
+    const pid = w.argv[2]
+    assert.deepEqual(w.argv, ['watch', '--pid', pid, '--kind', 'review', '--log-only'], 'log-only, even with watch: pane')
+    assert.equal(String(w.ppid), pid)
+    const file = w.runs.find((f) => f.body.pid === Number(pid))
+    assert.ok(file, JSON.stringify(w.runs))
+    assert.deepEqual(Object.keys(file.body).sort(), ['intent', 'kind', 'pid', 'started', 'version'], 'no workspace outside cmux')
+  }
+  rmSync(AGENT_CALLS, { force: true }); rmSync(RUNS, { recursive: true, force: true })
+  homeConfig({ watch: 'off' })
+  allowed(script(['x'], { STUB_AGENT_VERSION: '2' }))
   noWatch()
-  assert.deepEqual(agentCalls(), [])
+  assert.deepEqual(agentCalls(), [], 'watch off outside cmux: no probe')
+  assert.deepEqual(existsSync(RUNS) ? readdirSync(RUNS) : [], [], 'watch off outside cmux: no run file')
+  assert.deepEqual(lines(CMUX_CALLS), [], 'the gate never calls cmux itself')
 })
 
 test('4 acs-agent missing or too old: the review runs as before, no watcher, no run file left', () => {
