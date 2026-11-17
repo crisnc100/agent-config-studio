@@ -117,7 +117,8 @@ for (const [name, outside] of [['outside cmux', {}], ['a cmux shell without a wo
   const loFile = lo?.runs.find((f) => f.body.pid === Number(loPid));
   ok(`${name}, watch 2: one --log-only watcher for its own pid, its run file without a workspace`,
     !!lo && !loMore.length && probes().length === 1 && J(lo.argv) === J(['watch', '--pid', loPid, '--kind', 'advisor', '--log-only'])
-    && String(lo.ppid) === loPid && !!loFile && J(Object.keys(loFile.body).sort()) === J(['branch', 'kind', 'pid', 'started', 'version']), J(log(AGENT_LOG)));
+    && String(lo.ppid) === loPid && !!loFile && J(Object.keys(loFile.body).sort()) === J(['branch', 'kind', 'pid', 'started', 'version'])
+    && loFile.body.branch === path.basename(tmp), J(log(AGENT_LOG)));
 }
 ask(['--role', 'advisor'], { REVIEW_WATCH: 'off', STUB_AGENT_VERSION: '2' });
 ok('outside cmux, watch off: no probe, no watcher, no run file', log(AGENT_LOG).length === 0 && watches(false).length === 0 && runsLeft().length === 0, J(log(AGENT_LOG)));

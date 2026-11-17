@@ -17,7 +17,15 @@ const state = () => JSON.parse(fs.readFileSync(statePath));
 const mutate = fn => { const s = state(); fn(s); fs.writeFileSync(statePath, JSON.stringify(s)); };
 const calls = verb => state().calls.filter(a => a.includes(verb));
 const flag = (a, f) => a[a.indexOf(f) + 1];
-const open = (extra = {}) => json(run(['open', 'sol', '--cwd', home, 'task', '--json'], extra));
+// Every open is checked on its own: one new-surface in the caller's pane and workspace, without focus.
+const open = (extra = {}) => {
+  const before = fs.existsSync(statePath) ? state().calls.length : 0;
+  const w = json(run(['open', 'sol', '--cwd', home, 'task', '--json'], extra));
+  const placed = state().calls.slice(before).filter(a => a.includes('new-surface') || a.includes('new-pane'));
+  assert.equal(placed.length, 1, JSON.stringify(placed));
+  assert.deepEqual(['new-surface', '--pane', '--workspace', '--focus'].map(f => f === 'new-surface' ? placed[0].includes(f) : placed[0][placed[0].indexOf(f) + 1]), [true, 'pane:1', 'workspace:1', 'false'], JSON.stringify(placed[0]));
+  return w;
+};
 const first = open();
 const second = open();
 const third = open();

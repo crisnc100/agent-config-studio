@@ -17,7 +17,22 @@ const run = (args, extra = {}) => spawnSync(process.execPath, [path.join(root, '
 const json = r => { assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
 const state = () => JSON.parse(fs.readFileSync(path.join(home, 'fake-cmux.json'), 'utf8'));
 const records = () => fs.readdirSync(path.join(home, '.agent-config-studio/agents')).filter(f => f.endsWith('.json')).map(f => JSON.parse(fs.readFileSync(path.join(home, '.agent-config-studio/agents', f))));
-const open = (family, extra = [], vars = {}) => json(run(['open', family, '--cwd', home, '--json', ...extra], vars));
+// Every open is checked on its own: Grok is the one new pane, focused; any other worker is a tab in the caller's pane
+// without focus; both in the caller's workspace.
+const placement = (family, vars, before) => {
+  const placed = state().calls.slice(before).filter(a => a.includes('new-surface') || a.includes('new-pane'));
+  assert.equal(placed.length, 1, `one placement per open: ${JSON.stringify(placed)}`);
+  const [a] = placed, at = f => a[a.indexOf(f) + 1];
+  if (family === 'grok') assert.deepEqual([a.includes('new-pane'), at('--focus')], [true, 'true'], `grok gets its own focused pane: ${JSON.stringify(a)}`);
+  else assert.deepEqual([a.includes('new-surface'), at('--pane'), at('--focus')], [true, vars.FAKE_PANE || 'pane:1', 'false'], `${family} is a background tab in the caller's pane: ${JSON.stringify(a)}`);
+  assert.equal(at('--workspace'), vars.CMUX_WORKSPACE_ID || 'workspace:1', "the caller's workspace");
+};
+const open = (family, extra = [], vars = {}) => {
+  const before = fs.existsSync(path.join(home, 'fake-cmux.json')) ? state().calls.length : 0;
+  const w = json(run(['open', family, '--cwd', home, '--json', ...extra], vars));
+  placement(family, vars, before);
+  return w;
+};
 assert.match(run(['--help']).stdout, /usage: acs-agent open/);
 assert.equal(run(['list'], { CMUX_SOCKET_PATH: '' }).status, 2);
 assert.match(run(['list'], { FAKE_OFFLINE: '1' }).stderr, /agent needs cmux/);
@@ -37,6 +52,8 @@ assert.equal(json(run(['wait', c.id, '--timeout', '0', '--json'])).status, 'done
 const claude = open('opus', ['task']);
 const grok = open('grok', ['task']);
 for (const w of [claude, grok]) assert.equal(json(run(['wait', w.id, '--timeout', '0', '--json'])).status, 'done');
+assert.deepEqual([codex.pane_ref, claude.pane_ref], ['pane:1', 'pane:1'], "codex and claude are in the caller's pane");
+assert.notEqual(grok.pane_ref, 'pane:1', 'grok is in a pane of its own');
 assert.equal(state().calls.filter(a => a.includes('new-pane')).length, 1, 'only grok gets a pane of its own');
 assert.equal(state().calls.filter(a => a.includes('new-surface') && a[a.indexOf('--pane') + 1] === 'pane:1').length, 2, 'codex and claude open as tabs in the caller pane');
 assert.ok(state().calls.some(a => a.includes('focus-pane') && a.includes('pane:1')));

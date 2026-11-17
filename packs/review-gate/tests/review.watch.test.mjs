@@ -189,6 +189,7 @@ test('3 outside cmux, or a cmux shell without a workspace: watch 1 is only probe
     const file = w.runs.find((f) => f.body.pid === Number(pid))
     assert.ok(file, JSON.stringify(w.runs))
     assert.deepEqual(Object.keys(file.body).sort(), ['branch', 'intent', 'kind', 'pid', 'started', 'version'], 'no workspace outside cmux')
+    assert.equal(file.body.branch, 'feat', "outside cmux too: the branch checked out in the gate's cwd")
   }
   rmSync(AGENT_CALLS, { force: true }); rmSync(RUNS, { recursive: true, force: true })
   homeConfig({ watch: 'off' })
