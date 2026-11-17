@@ -1,0 +1,180 @@
+review.mjs · /Users/cortega/.agent-config-studio/review-gate/review.mjs · head-aware copy
+▶ reviewer · fable (claude · claude-fable-5-2 · high) — REVIEW_REVIEWER=fable (explicit)
+▶ review · claude-solo(claude-fable-5-2) · acs-agent-name vs origin/main · single pass (no fix, no loop)
+
+▶ security · astra (codex · gpt-6-astra · high) started beside the code reviewer
+▶ security pass · astra: 0 finding(s), 0 could not be located
+
+✓ Review complete — 3 finding(s) (0 high, 1 medium, 2 low); 0 disputed, 0 could not be located. Report: reviews/2026-11-16-23-36-54-2de516/code-review.md
+Review ID: 2026-11-16-23-36-54-2de516
+
+===FINDINGS_JSON===
+{
+  "schemaVersion": 1,
+  "reviewId": "2026-11-16-23-36-54-2de516",
+  "reviewer": "claude-solo(claude-fable-5-2)",
+  "family": "fable",
+  "base": "origin/main",
+  "branch": "acs-agent-name",
+  "head": "fbc71c71b9d7b49b0dcbb59f9203e56a0e329a6c",
+  "reportPath": "reviews/2026-11-16-23-36-54-2de516/code-review.md",
+  "diffTruncated": false,
+  "verify": null,
+  "secondOpinion": null,
+  "findings": [
+    {
+      "issue": "The fault rig still spawns the worker CLI as `agent` from PATH, but this branch stops installing that name and the README now says the rig needs `acs-agent` installed. On a fresh install every rig scenario fails with spawn ENOENT; on a Mac with Grok Build it runs Grok's `agent` (the collision this branch exists to fix); it only still works where a stale #91 `~/.local/bin/agent` link wins on PATH. The rig's own error text on line 8 also still says `agent`. Read only, not run: no shell in this session.",
+      "file": "README.md",
+      "line": "752",
+      "quote": "Run it with Node inside cmux, with `acs-agent` installed and a worker slot available. It uses",
+      "suggestion": "Change the rig's binary name to `acs-agent` in every `command('agent', …)` call, in the `binary === 'agent'` interrupt check on line 23 and in the line 8 message. If the rig is out of this PR's file list, revert the README sentence instead so it does not claim something false.",
+      "likelihood": 3,
+      "impact": 5,
+      "protected": false,
+      "trigger": "Run `node builds/agent-command/rig/run.mjs` inside cmux after `acs install-model-id` from this branch, on a machine with no leftover `agent` link or with Grok's `agent` earlier on PATH (the operator's Mac).",
+      "preExisting": false,
+      "risk": 15,
+      "severity": "medium",
+      "filed": false,
+      "instances": [
+        {
+          "file": "README.md",
+          "line": "752",
+          "quote": "Run it with Node inside cmux, with `acs-agent` installed and a worker slot available. It uses"
+        },
+        {
+          "file": "builds/agent-command/rig/run.mjs",
+          "line": "8",
+          "quote": "if (!process.env.CMUX_SOCKET_PATH) throw new Error('Run this rig inside cmux with agent installed on PATH.');"
+        },
+        {
+          "file": "builds/agent-command/rig/run.mjs",
+          "line": "23",
+          "quote": "if (interrupted && !cleanup && !(binary === 'agent' && ['close', 'list'].includes(args[0]))) return reject(new Error('rig interrupted'));"
+        },
+        {
+          "file": "builds/agent-command/rig/run.mjs",
+          "line": "37",
+          "quote": "const r = await command('agent', ['open', family, '--cwd', cwd, task, '--json'], { env });"
+        },
+        {
+          "file": "builds/agent-command/rig/run.mjs",
+          "line": "44",
+          "quote": "const r = await command('agent', ['wait', w.id, '--timeout', String(seconds), '--json', ...extra], { timeout: (seconds + 5) * 1000 });"
+        },
+        {
+          "file": "builds/agent-command/rig/run.mjs",
+          "line": "50",
+          "quote": "const r = await command('agent', ['close', w.id], { timeout: 15000 });"
+        },
+        {
+          "file": "builds/agent-command/rig/run.mjs",
+          "line": "77",
+          "quote": "const sent = await command('agent', ['send', w.id, message, '--json'], { timeout: 20000 });"
+        },
+        {
+          "file": "builds/agent-command/rig/run.mjs",
+          "line": "80",
+          "quote": "const answer = await command('agent', ['answer', w.id]);"
+        },
+        {
+          "file": "builds/agent-command/rig/run.mjs",
+          "line": "111",
+          "quote": "const listed = await command('agent', ['list', '--json'], { timeout: 15000 });"
+        }
+      ],
+      "status": "verified-quote",
+      "id": "f1"
+    },
+    {
+      "issue": "The new foreign-link refusal throws from inside `acs install-model-id` after model-id is already copied and linked and before ask-model is installed (bin/model-id.mjs:132-146 calls installAgent uncaught, then ask-model). So a foreign `~/.local/bin/acs-agent` symlink now aborts the whole command with a raw stack trace and exit 1, ask-model is never installed or updated, and the stale-copy hint keeps telling the user to re-run the same failing command. At base a foreign symlink was replaced and ask-model went on; only the non-symlink case aborted this way.",
+      "file": "bin/agent-install.mjs",
+      "line": "21",
+      "quote": "throw new Error('~/.local/bin/acs-agent points elsewhere — not replacing it');",
+      "suggestion": "In bin/model-id.mjs, catch the installAgent error the way the ask-model error is handled: print `model-id: acs-agent was not installed: <message>`, continue to the ask-model install, then exit 1.",
+      "likelihood": 2,
+      "impact": 3,
+      "protected": false,
+      "trigger": "`acs install-model-id` when `~/.local/bin/acs-agent` is a symlink to anything but `~/.agent-config-studio/bin/acs-agent`, for example a developer's own link into a checkout.",
+      "preExisting": false,
+      "risk": 6,
+      "severity": "low",
+      "filed": true,
+      "status": "verified-quote",
+      "id": "f2"
+    },
+    {
+      "issue": "The new README audit for `acs-agent` accepts commands that do not exist. The verb check on line 57 passes any whole word found anywhere in the usage text, so `acs-agent family`, `acs-agent task`, `acs-agent id`, `acs-agent seconds` and `acs-agent usage` count as documented verbs. The flag check on line 58 is a substring match against the whole help, so `acs-agent list --effort x` passes although `list` has no `--effort`, and a truncated flag such as `--stall` passes because it is inside `--stall-after`. The planted `surely-invalid` cases do not exercise either gap.",
+      "file": "tests/readme.mjs",
+      "line": "58",
+      "quote": "return words.some(w => /^--/.test(w) && w !== '--help' && !agentHelp.stdout.includes(w));",
+      "suggestion": "Check words[1] against the verb set parsed from the usage (open, wait, send, answer, close, list), and match flags as whole tokens (`--flag` followed by a space, `]` or end of line), ideally against that verb's own usage line.",
+      "likelihood": 1,
+      "impact": 2,
+      "protected": false,
+      "trigger": "No path in normal use: it needs a README edit that documents a non-existent `acs-agent` verb or flag whose text happens to appear in the usage string.",
+      "preExisting": false,
+      "risk": 2,
+      "severity": "low",
+      "filed": true,
+      "status": "verified-quote",
+      "id": "f3"
+    }
+  ],
+  "disputed": [],
+  "unverified": [],
+  "security": {
+    "run": "required",
+    "required": "logic or other files: bin/acs, bin/agent-install.mjs, bin/agent.mjs, lib/agent.js",
+    "why": "security role, a vendor other than the code reviewer's (claude) first",
+    "status": "ran",
+    "family": "astra",
+    "model": "gpt-6-astra",
+    "effort": "high",
+    "vendor": "codex",
+    "durationMs": 126119,
+    "rescored": {
+      "asked": 0,
+      "scored": 0
+    },
+    "findings": 0,
+    "saw": [
+      [
+        "README.md",
+        "100644 e6256e8fc9794c9c9464a6686ac2fff178dc8c62"
+      ],
+      [
+        "bin/acs",
+        "100755 4c29a22f8874e5ed391499014a61599588dcdbb4"
+      ],
+      [
+        "bin/agent-install.mjs",
+        "100644 754c6c6f0cb64e4bcfb93ed68e4d2de1c96dbaec"
+      ],
+      [
+        "bin/agent.mjs",
+        "100755 50a4908864fde4cc36ecde0e2adf743db691fa5a"
+      ],
+      [
+        "builds/acs-agent-name/brief.md",
+        "100644 e5724aa2f40e40eff6c44b31002cf8072c2f3f2d"
+      ],
+      [
+        "lib/agent.js",
+        "100644 69f813cefe916be23478bf153564b0f98c1aabea"
+      ],
+      [
+        "tests/agent-cli.mjs",
+        "100644 04450ac2acc03e3fd3ccf4898ab91b503b9af73f"
+      ],
+      [
+        "tests/agent-install.mjs",
+        "100644 16053e79efdf368eea64ef981d393a52c3c49e43"
+      ],
+      [
+        "tests/readme.mjs",
+        "100644 377f5a4c8f0149b0c69b20405bdef0170e877224"
+      ]
+    ]
+  }
+}

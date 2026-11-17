@@ -51,6 +51,12 @@ ok('acs help exits 0', help.status === 0, help.stderr);
 const subs = new Set([...help.stdout.matchAll(/^\s+(?:usage: )?acs ([a-z-]+)/gm)].map((m) => m[1]));
 const modelUsage = src('bin/model-id').match(/usage: model-id ([^']+)'/)?.[1] || '';
 const wtFns = new Set([...src('tools/worktree/wt.zsh').matchAll(/^([a-z]+)\s*\(\)\s*\{/gm)].map((m) => m[1]));
+const agentHelp = spawnSync(process.execPath, [path.join(ROOT, 'bin/agent.mjs'), '--help'], { encoding: 'utf8' });
+ok('acs-agent help exits 0', agentHelp.status === 0, agentHelp.stderr);
+function agentProblem(words) {
+  if (words[1] && !words[1].startsWith('-') && !new RegExp(`\\b${words[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(agentHelp.stdout)) return true;
+  return words.some(w => /^--/.test(w) && w !== '--help' && !agentHelp.stdout.includes(w));
+}
 const outside = blocks(text.replace(started, ''));
 const unknown = [];
 for (const { lines } of outside) {
@@ -58,6 +64,8 @@ for (const { lines } of outside) {
     const words = line.trim().split(/\s+/);
     if (words[0] === 'acs' || words[0] === './bin/acs') {
       if (words[1] && !words[1].startsWith('-') && !subs.has(words[1])) unknown.push(line);
+    } else if (words[0] === 'acs-agent') {
+      if (agentProblem(words)) unknown.push(line);
     } else if (words[0] === 'model-id') {
       if (words[1]?.startsWith('--') && !modelUsage.includes(words[1])) unknown.push(line);
     } else if (!wtFns.has(words[0])) {
@@ -76,7 +84,7 @@ ok('…and acs help lists what the README relies on', ['stop', 'install', 'unins
 const prose = text.replace(/^```[\s\S]*?^```$/gm, '');
 // A pipe in a table cell is written \| (as in commands.md).
 const spans = [...new Set([...prose.matchAll(/`([^`]+)`/g)].map((m) => m[1].replace(/\s+/g, ' ').replace(/\\\|/g, '|').trim()))];
-const CMD = /^(?:[A-Z_]+=\S+ )*(\.\/bin\/acs|acs|model-id|git|node|npm|curl|claude|codex|grok|gh|direnv|hash|wtinit|wnew|wls|wgo|wtrunk|wenv|wclean|wdev|wrm|wtreg)(?: |$)/;
+const CMD = /^(?:[A-Z_]+=\S+ )*(\.\/bin\/acs|acs-agent|acs|model-id|git|node|npm|curl|claude|codex|grok|gh|direnv|hash|wtinit|wnew|wls|wgo|wtrunk|wenv|wclean|wdev|wrm|wtreg)(?: |$)/;
 const commands = spans.filter((sp) => CMD.test(sp) && sp !== 'node:sqlite');
 const usageOf = {
   roots: src('bin/roots.mjs'), usage: src('bin/usage.mjs'), 'install-worktree': src('bin/install-worktree.mjs'),
@@ -113,6 +121,8 @@ function spanProblem(sp) {
     }
     const env = sp.match(/^((?:[A-Z_]+=\S+ )+)/)?.[1].trim().split(' ').map((a) => a.split('=')[0]) || [];
     for (const v of env) if (!help.stdout.includes(v)) unchecked.push(`${sp} (${v} not in acs help)`);
+  } else if (words[0] === 'acs-agent') {
+    if (agentProblem(words)) unchecked.push(sp);
   } else if (words[0] === 'model-id') {
     if (words[1]?.startsWith('--') && !modelUsage.includes(words[1])) unchecked.push(sp);
   } else if (wtFns.has(words[0])) {
@@ -124,6 +134,8 @@ function spanProblem(sp) {
   }
   return unchecked.length ? unchecked.join(' | ') : null;
 }
+ok('the worker command audit rejects unknown verbs and flags', spanProblem('acs-agent surely-invalid') !== null && spanProblem('acs-agent list --surely-invalid') !== null);
+ok('the worker command audit accepts documented verbs and flags', spanProblem('acs-agent list --json') === null);
 const unchecked = [];
 for (const sp of commands) {
   if (executed.has(sp)) continue;

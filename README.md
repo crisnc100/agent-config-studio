@@ -176,7 +176,7 @@ What it writes:
   `~/.agent-config-studio`, plus one `source` line appended to `~/.zshenv`.
 - **Commands you run:** `acs install` links `~/.local/bin/acs`;
   `acs install-model-id` writes `~/.local/bin/model-id` and
-  `~/.local/bin/ask-model` and `~/.local/bin/agent`, and their copy in the studio folder; `acs install-worktree` writes `~/.config/worktree` and adds
+  `~/.local/bin/ask-model` and `~/.local/bin/acs-agent`, and their copy in the studio folder; `acs install-worktree` writes `~/.config/worktree` and adds
   one line to `~/.zshrc`.
 - **Your temp folder:** each Grok Assist turn's prompt, in a file that is
   removed when the turn ends (in `~/.agent-config-studio/tmp` when the temp
@@ -496,14 +496,16 @@ model-id --sidecars
 - `--sidecars` lists ids in `~/.claude/settings.json` and `~/.codex/config.toml`
   that are no longer current.
 
-**`acs install-model-id`** puts `model-id`, `ask-model` and `agent` on your PATH:
+**`acs install-model-id`** puts `model-id`, `ask-model` and `acs-agent` on your PATH:
 
 - It copies the resolver out of this checkout (or the npm package) into
   `~/.agent-config-studio/resolver/`, writes a small launcher at
   `~/.agent-config-studio/bin/model-id`, and symlinks `~/.local/bin/model-id`
   to it. `ask-model` gets the same: a copy beside the resolver, a launcher,
-  and `~/.local/bin/ask-model`. `agent` is copied and linked the same way at
-  `~/.local/bin/agent`.
+  and `~/.local/bin/ask-model`. `acs-agent` is copied and linked the same way at
+  `~/.local/bin/acs-agent`, pointing to `~/.agent-config-studio/bin/acs-agent`.
+  An existing `acs-agent` entry is replaced only when it is a symlink to that launcher; files and links elsewhere are refused. The installer
+  never touches `~/.local/bin/agent`.
 - It is a copy on purpose: skills keep resolving when a worktree is removed or
   a branch changes.
 - The launcher runs the node that did the install, then `node` on PATH, then
@@ -603,21 +605,21 @@ is written until you accept it. Flavor text becomes part of the instructions
 other agents are briefed with, so read a proposal before accepting it — it is
 the AI's reading of what you wrote, not a check of it.
 
-### Watchable workers (`agent`)
+### Watchable workers (`acs-agent`)
 
-`agent` runs an interactive worker in cmux. Install it with `acs install-model-id`
+`acs-agent` runs an interactive worker in cmux. Install it with `acs install-model-id`
 and put `~/.local/bin` on PATH. `acs agent` also runs it from this checkout.
 It requires a reachable cmux socket; outside cmux it exits 2 with
-“agent needs cmux”. Other ACS commands do not need cmux.
+“acs-agent needs cmux”. Other ACS commands do not need cmux.
 
 ```sh
-acs agent open sol --effort medium --cwd /path/to/project --prompt-file task.md
-acs agent open opus "Read the project and explain its entry points"
-acs agent wait <id> --timeout 600
-acs agent send <id> "Check the error path too"
-acs agent answer <id>
-acs agent close <id>
-acs agent list --json
+acs-agent open sol --effort medium --cwd /path/to/project --prompt-file task.md
+acs-agent open opus "Read the project and explain its entry points"
+acs-agent wait <id> --timeout 600
+acs-agent send <id> "Check the error path too"
+acs-agent answer <id>
+acs-agent close <id>
+acs-agent list --json
 ```
 
 `open` prints a worker id. A family resolves through the same registry as
@@ -652,7 +654,7 @@ require the operator's separate action.
 
 Workers use tabs in a shared workers pane beside the orchestrator. Grok needs
 its own visible pane to start; focus returns to the orchestrator after its
-session appears, or after six seconds. Before reusing the shared pane, `agent`
+session appears, or after six seconds. Before reusing the shared pane, `acs-agent`
 checks it in the current workspace. A manually removed pane is replaced; a
 `not_found` race while adding a tab gets one attempt in a fresh pane.
 Workers are scoped to the orchestrator's
@@ -684,7 +686,7 @@ to 600; zero checks an open tool immediately. A waiting orchestrator wakes on th
 observed completion or fault; when multiple faults are already overdue, the
 oldest threshold wins, except pending approvals take precedence over other
 faults, including `long_command`, `stalled` and startup `no_start`. Until a session exists, the screen is checked at least every three
-seconds. Trust remains the user’s decision; `agent` never answers the dialog
+seconds. Trust remains the user’s decision; `acs-agent` never answers the dialog
 or edits trust settings. Running indicators are sampled every three seconds
 and checked again before reporting a stall. Only an advancing elapsed time
 extends the thinking stall deadline; a frozen spinner does not. While a tool
@@ -747,7 +749,7 @@ stdin; the cmux control subprocess reads no stdin. This command does not run
 headless Codex turns.
 
 The development-only fault rig is at `builds/agent-command/rig/run.mjs`.
-Run it with Node inside cmux, with `agent` installed and a worker slot available. It uses
+Run it with Node inside cmux, with `acs-agent` installed and a worker slot available. It uses
 real workers and reports six scenarios in a pass/fail table. Its scratch
 checkout is a detached worktree of this repository under `$TMPDIR`, so existing
 repository trust applies. The silent Python command checks `long_command`

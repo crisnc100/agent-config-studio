@@ -74,8 +74,8 @@ usage() {
     '       acs usage [...]          seat usage in the terminal' \
     '       acs pause [<account>]    pause an account so roles skip its models; alone, lists pauses' \
     '       acs resume <account>     end a pause' \
-    '       acs install-model-id     install model-id, ask-model and agent' \
-    '       acs agent [...]          watchable workers in cmux (agent --help)' \
+    '       acs install-model-id     install model-id, ask-model and acs-agent' \
+    '       acs agent [...]          watchable workers in cmux (acs-agent --help)' \
     '       acs install-worktree     install the worktree helpers (zsh/macOS only)' \
     '       acs packs list|explain|install|status|update|uninstall   recommended skill packs (acs packs help)' \
     '       acs help                 this text' \
@@ -485,7 +485,7 @@ case "${1:-}" in
     exec "$NODE" "$DIR/bin/agent.mjs" "$@"
     ;;
   install-model-id)
-    # Copies the resolver, ask-model and agent out of this checkout and links
+    # Copies the resolver, ask-model and acs-agent out of this checkout and links
     # ~/.local/bin launchers, so skills keep resolving when a
     # worktree is removed. Re-run after a pull.
     exec "$NODE" "$DIR/bin/model-id.mjs" --install

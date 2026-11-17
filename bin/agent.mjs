@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { context, openWorker, waitWorker, sendWorker, answerWorker, closeWorker, listWorkers } from '../lib/agent.js';
-const usage = 'usage: agent open <family> [--effort e] [--cwd d] [--role r] [--mcp] (--prompt-file f | "task") [--json]\n       agent wait <id> [--timeout seconds] [--stall-after seconds] [--command-after seconds] [--json]\n       agent send <id> "text" | answer <id> | close <id> | list [--json]';
+const usage = 'usage: acs-agent open <family> [--effort e] [--cwd d] [--role r] [--mcp] (--prompt-file f | "task") [--json]\n       acs-agent wait <id> [--timeout seconds] [--stall-after seconds] [--command-after seconds] [--json]\n       acs-agent send <id> "text" | answer <id> | close <id> | list [--json]';
 const argv = process.argv.slice(2);
 async function main() {
   if (argv.includes('--help') || argv.includes('-h')) { console.log(usage); return 0; }

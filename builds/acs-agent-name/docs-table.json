@@ -1,0 +1,8 @@
+{"rows":[
+ {"behavior":"the worker CLI installs and runs as acs-agent; the installer replaces only its own link and never touches ~/.local/bin/agent","files":["bin/agent-install.mjs","bin/acs","bin/agent.mjs","lib/agent.js"],
+  "docs":[{"path":"README.md","claims":[
+   {"claim":"acs install-model-id puts acs-agent on PATH at ~/.local/bin/acs-agent, linked to ~/.agent-config-studio/bin/acs-agent","at":"bin/agent-install.mjs:16"},
+   {"claim":"an existing acs-agent entry is replaced only when it is a symlink to that launcher; files and links elsewhere are refused","at":"bin/agent-install.mjs:21"},
+   {"claim":"acs agent … runs the same CLI","at":"bin/acs:78"},
+   {"claim":"usage and help say acs-agent","at":"bin/agent.mjs:3"}]}]}
+]}
