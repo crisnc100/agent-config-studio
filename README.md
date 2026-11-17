@@ -903,6 +903,8 @@ shows one line for the option picked:
 - **Cross-vendor checks** (`crossFamily`): Prefer another vendor (the
   default; never a blocker) or Off (any reviewer in your roles may check any
   work). The Build pack's Grade follows it.
+- **Watch reviews** (`watch`): Sidebar (the default), Sidebar and pane
+  (`pane`), or Off. See [Watching reviews](#watching-reviews).
 
 The review gate's steps under **How it runs** end with a **Merge** step,
 marked off while agent merge is off.
@@ -921,6 +923,31 @@ change together, copies the old file into `~/.agent-config-studio/backups/`
 once, and keeps every other key. If the file changed after the preview,
 Save refuses and the bar returns so you can preview again; if you edited
 your own paths after it, Save shows the new preview instead of writing.
+
+### Watching reviews
+
+Inside cmux, a review (and its fix check, slices, security pass, dispute or
+eval) and an `ask-model` call show their model calls while they run:
+
+- **Sidebar** (the default): one sidebar line per running reviewer, for
+  example `review · sol · 4m · read lib/agent.js`: what it is, its family,
+  how long it has run and its current step. A security pass shows as
+  `security`. The line goes when that call ends. If no transcript turns up
+  for a call, its line says `running` rather than guess.
+- **Sidebar and pane** (`pane`): the same lines, plus one pane for the run
+  that lists every step, each tagged with its reviewer. It opens without
+  taking focus and closes 30 seconds after the run ends.
+- **Off**: nothing is shown.
+
+Watching never changes a review: the same output, report and exit code,
+whatever the setting. It is a home-config setting only (the Settings section
+above, `watch` in your home review config, or `REVIEW_WATCH` for one run); a
+repo config that git tracks cannot set it, and an unknown value means off.
+It needs cmux and an `acs-agent` that has its `watch` command
+(`acs install-model-id` installs it); without either, reviews run as before
+and show nothing. The review starts `acs-agent watch` itself, outside any
+pane, so it needs no pane of its own. It clears its lines when the review
+ends, on Ctrl-C, and, after a hard kill, when the next review starts.
 
 ## Optional: worktree tools
 

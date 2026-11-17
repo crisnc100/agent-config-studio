@@ -847,6 +847,11 @@ const PK_CROSS_MODES = [
   ['prefer', 'Prefer another vendor', 'Reviews and grades use a model from another vendor when one is available; never a blocker.'],
   ['off', 'Off', 'Any reviewer in your roles may check any work.'],
 ];
+const PK_WATCH_MODES = [
+  ['off', 'Off', 'Reviews show nothing while they run.'],
+  ['sidebar', 'Sidebar', 'Inside cmux, each running reviewer gets a sidebar line with its time and current step.'],
+  ['pane', 'Sidebar and pane', 'The sidebar lines, plus a pane that lists every reviewer\'s steps and closes when the review ends.'],
+];
 /** The review gate's own page for the paths that always need you: #packs/review-gate/paths. */
 const PK_PATHS = 'paths';
 /**
@@ -859,7 +864,7 @@ const PK_PATHS = 'paths';
 const PK_SEC = { draft: {}, paths: null, preview: null, busy: false, error: null, result: null, seq: 0 };
 const pkSaved = () => {
   const s = PK.data.settings || {};
-  return { 'security.run': s.security || 'off', 'merge.policy': s.merge?.policy || 'off', 'merge.alwaysHuman': s.merge?.alwaysHuman || [], crossFamily: s.crossFamily || 'prefer' };
+  return { 'security.run': s.security || 'off', 'merge.policy': s.merge?.policy || 'off', 'merge.alwaysHuman': s.merge?.alwaysHuman || [], crossFamily: s.crossFamily || 'prefer', watch: s.watch || 'sidebar' };
 };
 const pkPicked = (key) => (Object.hasOwn(PK_SEC.draft, key) ? PK_SEC.draft[key] : pkSaved()[key]);
 const pkPathsOf = (text) => [...new Set(String(text || '').split('\n').map((l) => l.trim()).filter(Boolean))];
@@ -869,8 +874,9 @@ const pkLabelOf = {
   'merge.policy': (v) => PK_MERGE_POLICIES.find(([l]) => l === v)?.[1] || v,
   'merge.alwaysHuman': (v) => (v.length ? `${v.length} path${v.length === 1 ? '' : 's'} of your own` : 'no paths of your own'),
   crossFamily: (v) => PK_CROSS_MODES.find(([l]) => l === v)?.[1] || v,
+  watch: (v) => PK_WATCH_MODES.find(([l]) => l === v)?.[1] || v,
 };
-const PK_SETTING_NAME = { 'security.run': 'security pass', 'merge.policy': 'agent merge', 'merge.alwaysHuman': 'always needs you', crossFamily: 'cross-vendor checks' };
+const PK_SETTING_NAME = { 'security.run': 'security pass', 'merge.policy': 'agent merge', 'merge.alwaysHuman': 'always needs you', crossFamily: 'cross-vendor checks', watch: 'watch reviews' };
 const pkAnd = (items) => (items.length > 1 ? `${items.slice(0, -1).join(', ')} and ${items.at(-1)}` : items[0]);
 /** “When code changes”, or “Low-risk PRs” (agent merge) and “Off” (cross-vendor checks) when more than one changed. */
 function pkSaysText(changes) {
@@ -923,8 +929,8 @@ function pkPathsCount(merge) {
 }
 
 /**
- * The review gate's Settings: the security pass, agent merge, the paths that always need you and
- * cross-vendor checks. Only with the code-review part installed: it ships the scripts that read them.
+ * The review gate's Settings: the security pass, agent merge, the paths that always need you,
+ * cross-vendor checks and how a running review shows in cmux. Only with the code-review part installed: it ships the scripts that read them.
  */
 function pkSettingsView(pack) {
   if (!pack.installed?.parts?.['code-review']) return pkSettingsNone();
@@ -945,6 +951,7 @@ function pkSettingsView(pack) {
   inline.appendChild(pkBtn('pk-edit-paths', 'Edit paths', () => pkGo(pack.id, PK_PATHS)));
   rows.appendChild(pkSetRow('Always needs you', 'pk-always', 'merge.alwaysHuman', inline));
   rows.appendChild(pkChoiceRow('Cross-vendor checks', 'pk-cross', 'crossFamily', PK_CROSS_MODES));
+  rows.appendChild(pkChoiceRow('Watch reviews', 'pk-watch', 'watch', PK_WATCH_MODES));
   rows.appendChild(pkSettingsFoot(s.reviewConfig));
   wrap.appendChild(rows);
   pkSaveSlot(wrap);
@@ -1148,6 +1155,7 @@ async function pkSettingsApply() {
       security: v('security.run', s.security || 'off'),
       merge: { ...(s.merge || {}), policy: v('merge.policy', s.merge?.policy || 'off'), alwaysHuman: v('merge.alwaysHuman', s.merge?.alwaysHuman || []) },
       crossFamily: v('crossFamily', s.crossFamily || 'prefer'),
+      watch: v('watch', s.watch || 'sidebar'),
       reviewConfig: { ...(s.reviewConfig || {}), file: r.file, exists: true },
     };
   } catch (e) {

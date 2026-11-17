@@ -389,6 +389,12 @@ const SECURITY = (() => {
   return settings
 })()
 const cfg = (envName, key, dflt) => process.env[envName] ?? CONFIG[key] ?? dflt
+// watch: "sidebar" (the default) | "pane" | "off"; anything else is off, so a typo never opens a pane.
+const WATCH_MODES = ['off', 'sidebar', 'pane']
+const WATCH = (() => {
+  const mode = String(cfg('REVIEW_WATCH', 'watch', 'sidebar')).trim().toLowerCase()
+  return WATCH_MODES.includes(mode) ? mode : 'off'
+})()
 // crossFamily: "prefer" (the default: reviews, /build's Grade and the check on test changes prefer a vendor other than
 // the author's) | "off". The home config is the floor: REVIEW_CONFIG and a tracked repo file, which an agent or the
 // repository can set, and REVIEW_CROSS_FAMILY may turn it on, never off. An untracked repo file is the operator's own.
@@ -1411,6 +1417,7 @@ if (hasFlag('--show-config')) {
         verifyCmd: VERIFY_CMD || '(none)',
         fixCheck: FIX_CHECK,
         security: SECURITY.run,
+        watch: WATCH,
         merge: { policy: MERGE.policy, alwaysHuman: MERGE.alwaysHuman, onHuman: MERGE.onHuman },
         source: CONFIG._source || '(built-in defaults / env only)',
         log: LOG_PATH,
@@ -5018,8 +5025,7 @@ async function runEval() {
 function startWatch(kind) {
   try {
     if (process.env.REVIEW_WATCH_CHILD === '1' || EVAL_MODE) return
-    const mode = String(cfg('REVIEW_WATCH', 'watch', 'sidebar')).trim().toLowerCase()
-    if (mode !== 'sidebar' && mode !== 'pane') return
+    if (WATCH === 'off') return
     const workspace = process.env.CMUX_WORKSPACE_ID
     if (!process.env.CMUX_SOCKET_PATH || !/^(?:workspace:\d+|[a-f\d-]{36})$/i.test(workspace ?? '')) return
     // An acs-agent from before watch prints its usage into nobody's terminal; ask once instead.
@@ -5030,7 +5036,7 @@ function startWatch(kind) {
     const run = { version: 1, pid: process.pid, kind, ...(INTENT && { intent: INTENT }), ...(SLICE && { slice: SLICE.join(', ') }),
       workspace, started: new Date().toISOString() }
     writeFileSync(join(runs, `r${process.pid}-${randomBytes(4).toString('hex')}.json`), `${JSON.stringify(run)}\n`, { mode: 0o600, flag: 'wx' })
-    const child = spawn('acs-agent', ['watch', '--pid', String(process.pid), '--kind', kind, '--workspace', workspace, ...(mode === 'pane' ? ['--pane'] : [])],
+    const child = spawn('acs-agent', ['watch', '--pid', String(process.pid), '--kind', kind, '--workspace', workspace, ...(WATCH === 'pane' ? ['--pane'] : [])],
       { detached: true, stdio: 'ignore' })
     child.on('error', () => {})
     child.unref()
