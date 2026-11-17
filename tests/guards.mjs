@@ -287,12 +287,20 @@ const LOGIN_SHELL_FN = "function loginShell(env = process.env) { const want = en
   "let listed = []; try { listed = fs.readFileSync('/etc/shells', 'utf8').split('\\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')); } catch {} " +
   "return listed.includes(want) && fs.existsSync(want) ? want : '/bin/sh'; }";
 
+/** lib/agent.js's watcher inspectors: the only callees there besides 'cmux', each with its exact argv. */
+const AGENT_INSPECTOR_FN = "const inspector = (bin, name) => process.env.AGENT_TEST_MODE === '1' && process.env[name] || bin;";
+const AGENT_INSPECTORS = [
+  /^inspector\('\/bin\/ps', 'AGENT_TEST_PS'\), \['-axww', '-o', 'pid,ppid,command'\],/,
+  /^inspector\('\/usr\/sbin\/lsof', 'AGENT_TEST_LSOF'\), \['-w', '-nP', '-F', 'pfan', '-p', pids\.join\(','\)\],/,
+];
+
 function guardB() {
   const hits = [];
   for (const abs of scanTargets()) {
     const src = readStripped(abs);
     const file = rel(abs);
     const calls = childCalls(src);
+    let inspectorPinned = false;
 
     if (abs === HARNESS) {
       const contained = functionSpan(src, 'spawnContained');
@@ -380,6 +388,11 @@ function guardB() {
       'lib/packs.js': { fns: new Set(['spawnSync']), packsOnly: true },
       // The user's CLI starts model sessions through cmux; the studio server
       // must never reach this module (checked through its import graph below).
+      // Its review watcher also reads the process table and which files a
+      // model CLI holds open: /bin/ps and /usr/sbin/lsof, read-only
+      // inspectors pinned like processes.js, by absolute path and exact argv.
+      // A test reaches its fakes only through AGENT_INSPECTOR_FN, which
+      // honours an override solely under AGENT_TEST_MODE=1.
       'lib/agent.js': { fns: new Set(['spawnSync']), cmuxOnly: true },
     }[file];
 
@@ -394,8 +407,16 @@ function guardB() {
       }
       const cal = calleeLiteral(src, call);
       if (allowed.cmuxOnly) {
-        if (!/^\s*(['"`])cmux\1\s*,/.test(callArgsText(src, call) || '')) {
-          hits.push(`${file}:${call.line} ${call.fn}() must use the literal 'cmux', never a harness or computed executable`);
+        const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
+        if (!/^\s*(['"`])cmux\1\s*,/.test(callArgsText(src, call) || '') && !AGENT_INSPECTORS.some((re) => re.test(text))) {
+          hits.push(`${file}:${call.line} ${call.fn}() must use the literal 'cmux', or inspector('/bin/ps', …) / inspector('/usr/sbin/lsof', …) with their pinned argv, never a harness or computed executable`);
+        }
+        if (!inspectorPinned) {
+          inspectorPinned = true;
+          const defs = src.match(/\binspector\s*=/g) || [];
+          if (defs.length !== 1 || !src.includes(AGENT_INSPECTOR_FN)) {
+            hits.push(`${file} must define inspector exactly once as: ${AGENT_INSPECTOR_FN} (a test binary is honoured only under AGENT_TEST_MODE=1)`);
+          }
         }
         continue;
       }
