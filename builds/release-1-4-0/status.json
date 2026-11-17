@@ -1,0 +1,1 @@
+{"s1":{"status":"fixed","response":"real","test":"CHANGELOG.md now states the actual grants: shared objects, refs and logs writable; shared config, shared hooks folder and admin redirects read-only (lib/agent.js grant list)"}}
