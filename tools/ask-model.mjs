@@ -217,7 +217,11 @@ function startWatch(kind) {
     if (!inCmux && !(Number(/^acs-agent watch (\d+)\s*$/.exec(probe.stdout)?.[1]) >= 2)) return;
     const runs = path.join(os.homedir(), '.agent-config-studio', 'runs');
     fs.mkdirSync(runs, { recursive: true, mode: 0o700 });
-    const run = { version: 1, pid: process.pid, kind, ...(inCmux && { workspace }), started: new Date().toISOString() };
+    // The watcher titles the call's tab and line with it; detached or outside Git, the folder names the work.
+    const git = which('git');
+    const current = git ? spawnSync(git, ['branch', '--show-current'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }) : null;
+    const branch = (current?.status === 0 && current.stdout.trim()) || path.basename(process.cwd());
+    const run = { version: 1, pid: process.pid, kind, ...(inCmux && { workspace }), branch, started: new Date().toISOString() };
     fs.writeFileSync(path.join(runs, `a${process.pid}-${crypto.randomBytes(4).toString('hex')}.json`), `${JSON.stringify(run)}\n`, { mode: 0o600, flag: 'wx' });
     const where = inCmux ? ['--workspace', workspace, ...(mode === 'pane' ? ['--pane'] : [])] : ['--log-only'];
     const child = spawn(agent, ['watch', '--pid', String(process.pid), '--kind', kind, ...where],
