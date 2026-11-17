@@ -37,8 +37,8 @@ assert.equal(json(run(['wait', c.id, '--timeout', '0', '--json'])).status, 'done
 const claude = open('opus', ['task']);
 const grok = open('grok', ['task']);
 for (const w of [claude, grok]) assert.equal(json(run(['wait', w.id, '--timeout', '0', '--json'])).status, 'done');
-assert.equal(state().calls.filter(a => a.includes('new-pane')).length, 2);
-assert.ok(state().calls.some(a => a.includes('new-surface') && a.includes('pane:11')));
+assert.equal(state().calls.filter(a => a.includes('new-pane')).length, 1, 'only grok gets a pane of its own');
+assert.equal(state().calls.filter(a => a.includes('new-surface') && a[a.indexOf('--pane') + 1] === 'pane:1').length, 2, 'codex and claude open as tabs in the caller pane');
 assert.ok(state().calls.some(a => a.includes('focus-pane') && a.includes('pane:1')));
 const running = open('sol', ['task'], { FAKE_RUNNING: '1' });
 assert.equal(run(['wait', running.id, '--timeout', '0']).status, 4);

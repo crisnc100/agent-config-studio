@@ -136,8 +136,9 @@ test('1 a review inside cmux: one probe, one detached watcher for its own pid, i
   assert.equal(runFiles.length, 1, JSON.stringify(w.runs))
   const [file] = runFiles
   assert.match(file.name, /^[A-Za-z0-9-]+\.json$/)
-  assert.deepEqual(Object.keys(file.body).sort(), ['intent', 'kind', 'pid', 'started', 'version', 'workspace'])
+  assert.deepEqual(Object.keys(file.body).sort(), ['branch', 'intent', 'kind', 'pid', 'started', 'version', 'workspace'])
   assert.equal(file.body.version, 1)
+  assert.equal(file.body.branch, 'feat', "the branch checked out in the gate's cwd")
   assert.equal(file.body.kind, 'review')
   assert.equal(file.body.intent, 'watch intent')
   assert.equal(file.body.workspace, WS)
@@ -187,7 +188,7 @@ test('3 outside cmux, or a cmux shell without a workspace: watch 1 is only probe
     assert.equal(String(w.ppid), pid)
     const file = w.runs.find((f) => f.body.pid === Number(pid))
     assert.ok(file, JSON.stringify(w.runs))
-    assert.deepEqual(Object.keys(file.body).sort(), ['intent', 'kind', 'pid', 'started', 'version'], 'no workspace outside cmux')
+    assert.deepEqual(Object.keys(file.body).sort(), ['branch', 'intent', 'kind', 'pid', 'started', 'version'], 'no workspace outside cmux')
   }
   rmSync(AGENT_CALLS, { force: true }); rmSync(RUNS, { recursive: true, force: true })
   homeConfig({ watch: 'off' })

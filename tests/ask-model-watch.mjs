@@ -77,8 +77,9 @@ const pid = w?.argv[2];
 ok('…for its own pid, kind = its role, its workspace, sidebar by default',
   J(w?.argv) === J(['watch', '--pid', pid, '--kind', 'advisor', '--workspace', 'workspace:4']) && String(w?.ppid) === pid, J(w));
 const file = w?.runs.find((f) => f.body.pid === Number(pid));
-ok('…with its run file written first (version, pid, kind, workspace, started)',
-  !!file && J(Object.keys(file.body).sort()) === J(['kind', 'pid', 'started', 'version', 'workspace']) && file.body.version === 1
+ok('…with its run file written first (version, pid, kind, workspace, branch, started)',
+  !!file && J(Object.keys(file.body).sort()) === J(['branch', 'kind', 'pid', 'started', 'version', 'workspace']) && file.body.version === 1
+  && file.body.branch === path.basename(tmp)
   && file.body.kind === 'advisor' && file.body.workspace === 'workspace:4' && Number.isFinite(Date.parse(file.body.started)), J(w?.runs));
 ok('output unchanged: the same stdout and stderr as with watch off, within 2s',
   on.code === off.code && on.out === off.out && on.err === off.err && Math.abs(on.ms - off.ms) < 2000, J({ on, off }));
@@ -116,7 +117,7 @@ for (const [name, outside] of [['outside cmux', {}], ['a cmux shell without a wo
   const loFile = lo?.runs.find((f) => f.body.pid === Number(loPid));
   ok(`${name}, watch 2: one --log-only watcher for its own pid, its run file without a workspace`,
     !!lo && !loMore.length && probes().length === 1 && J(lo.argv) === J(['watch', '--pid', loPid, '--kind', 'advisor', '--log-only'])
-    && String(lo.ppid) === loPid && !!loFile && J(Object.keys(loFile.body).sort()) === J(['kind', 'pid', 'started', 'version']), J(log(AGENT_LOG)));
+    && String(lo.ppid) === loPid && !!loFile && J(Object.keys(loFile.body).sort()) === J(['branch', 'kind', 'pid', 'started', 'version']), J(log(AGENT_LOG)));
 }
 ask(['--role', 'advisor'], { REVIEW_WATCH: 'off', STUB_AGENT_VERSION: '2' });
 ok('outside cmux, watch off: no probe, no watcher, no run file', log(AGENT_LOG).length === 0 && watches(false).length === 0 && runsLeft().length === 0, J(log(AGENT_LOG)));
