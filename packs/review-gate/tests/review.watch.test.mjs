@@ -167,12 +167,16 @@ test('2 watch: pane adds --pane; off (home config or REVIEW_WATCH) starts nothin
 })
 
 test('3 outside cmux, or a cmux shell without a workspace: watch 1 is only probed; watch 2 runs one --log-only watcher, no workspace, no cmux', () => {
-  allowed(script(['x']))
-  noWatch()
-  assert.equal(probes().length, 1, 'probed once; watch 1 has no --log-only')
-  assert.deepEqual(existsSync(RUNS) ? readdirSync(RUNS) : [], [], 'no run file left')
+  const outsides = [{}, { CMUX_SOCKET_PATH: CMUX.CMUX_SOCKET_PATH }, { ...CMUX, CMUX_WORKSPACE_ID: '--pane' }]
+  for (const outside of outsides) {
+    rmSync(AGENT_CALLS, { force: true })
+    allowed(script(['x'], outside))
+    noWatch()
+    assert.equal(probes().length, 1, `probed once; watch 1 has no --log-only: ${JSON.stringify(outside)}`)
+    assert.deepEqual(existsSync(RUNS) ? readdirSync(RUNS) : [], [], `no run file left: ${JSON.stringify(outside)}`)
+  }
   homeConfig({ watch: 'pane' })
-  for (const outside of [{}, { CMUX_SOCKET_PATH: CMUX.CMUX_SOCKET_PATH }, { ...CMUX, CMUX_WORKSPACE_ID: '--pane' }]) {
+  for (const outside of outsides) {
     rmSync(AGENT_CALLS, { force: true })
     allowed(script(['x'], { ...outside, STUB_AGENT_VERSION: '2' }))
     const [w, ...more] = waitForWatch()
