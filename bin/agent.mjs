@@ -1,22 +1,32 @@
 #!/usr/bin/env node
-import { context, openWorker, waitWorker, sendWorker, answerWorker, closeWorker, listWorkers, watchRun, WATCH_VERSION, KIND_RE, WORKSPACE_RE } from '../lib/agent.js';
-const usage = 'usage: acs-agent open <family> [--effort e] [--cwd d] [--role r] [--mcp] (--prompt-file f | "task") [--json]\n       acs-agent wait <id> [--timeout seconds] [--stall-after seconds] [--command-after seconds] [--json]\n       acs-agent send <id> "text" | answer <id> | close <id> | list [--json]\n       acs-agent watch --pid <pid> --kind <kind> --workspace <ref> [--pane] | watch --version';
+import { context, openWorker, waitWorker, sendWorker, answerWorker, closeWorker, listWorkers, watchRun, tailRun, WATCH_CLI_VERSION, KIND_RE, WORKSPACE_RE, RUN_ID_RE } from '../lib/agent.js';
+const usage = 'usage: acs-agent open <family> [--effort e] [--cwd d] [--role r] [--mcp] (--prompt-file f | "task") [--json]\n       acs-agent wait <id> [--timeout seconds] [--stall-after seconds] [--command-after seconds] [--json]\n       acs-agent send <id> "text" | answer <id> | close <id> | list [--json]\n       acs-agent tail [run id] [--once]\n       acs-agent watch --pid <pid> --kind <kind> (--workspace <ref> [--pane] | --log-only) | watch --version';
 const argv = process.argv.slice(2);
 // The gate starts the watcher detached, outside any pane: it takes its workspace as a flag and never asks cmux who is calling.
+// Outside cmux it passes --log-only instead, and the watcher writes only the log `acs-agent tail` reads.
 async function watch(args) {
-  if (args.length === 1 && args[0] === '--version') { console.log(`acs-agent watch ${WATCH_VERSION}`); return 0; }
-  const opts = { pane: false };
+  if (args.length === 1 && args[0] === '--version') { console.log(`acs-agent watch ${WATCH_CLI_VERSION}`); return 0; }
+  const opts = { pane: false, logOnly: false };
   for (let i = 0; i < args.length; i++) {
     const flag = args[i], value = args[i + 1];
     if (flag === '--pane') { opts.pane = true; continue; }
+    if (flag === '--log-only') { opts.logOnly = true; continue; }
     if (!['--pid', '--kind', '--workspace'].includes(flag) || value === undefined || value.startsWith('-')) throw Object.assign(new Error(usage), { exitCode: 2 });
     opts[flag.slice(2)] = value; i++;
   }
-  if (!/^[1-9]\d{0,9}$/.test(opts.pid || '') || !KIND_RE.test(opts.kind || '') || !WORKSPACE_RE.test(opts.workspace || '')) throw Object.assign(new Error(usage), { exitCode: 2 });
+  const where = opts.logOnly ? opts.workspace === undefined && !opts.pane : WORKSPACE_RE.test(opts.workspace || '');
+  if (!/^[1-9]\d{0,9}$/.test(opts.pid || '') || !KIND_RE.test(opts.kind || '') || !where) throw Object.assign(new Error(usage), { exitCode: 2 });
   return watchRun({ ...opts, pid: Number(opts.pid) });
+}
+function tail(args) {
+  const once = args.includes('--once');
+  const rest = args.filter(a => a !== '--once');
+  if (rest.length > 1 || rest.some(a => a.startsWith('-') || !RUN_ID_RE.test(a))) throw Object.assign(new Error(usage), { exitCode: 2 });
+  return tailRun({ id: rest[0] || null, once });
 }
 async function main() {
   if (argv[0] === 'watch') return watch(argv.slice(1));
+  if (argv[0] === 'tail' && !argv.includes('--help') && !argv.includes('-h')) return tail(argv.slice(1));
   if (argv.includes('--help') || argv.includes('-h')) { console.log(usage); return 0; }
   const json = argv.includes('--json');
   const args = argv.filter(a => a !== '--json');

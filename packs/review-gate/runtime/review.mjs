@@ -5019,7 +5019,9 @@ async function runEval() {
   console.log(`\n===EVAL_JSON===\n${JSON.stringify(records, null, 2)}`)
 }
 // watch: "sidebar" (the default) | "pane" | "off". Inside cmux, a top-level run that calls models hands them to
-// `acs-agent watch`, which keeps a live sidebar line per call (and, for pane, a pane of their steps). The watcher is
+// `acs-agent watch`, which keeps a live sidebar line per call (and, for pane, a pane of their steps). Outside cmux the
+// watcher runs --log-only (an acs-agent whose `watch --version` is 2 or later): no cmux at all, only the log that
+// `acs-agent tail` follows. The watcher is
 // started detached and never waited on; every failure is silent, so output, exit codes and timing do not change.
 // Children (slices, eval cases, the security worker) carry REVIEW_WATCH_CHILD=1: the parent's watcher follows them.
 function startWatch(kind) {
@@ -5027,16 +5029,18 @@ function startWatch(kind) {
     if (process.env.REVIEW_WATCH_CHILD === '1' || EVAL_MODE) return
     if (WATCH === 'off') return
     const workspace = process.env.CMUX_WORKSPACE_ID
-    if (!process.env.CMUX_SOCKET_PATH || !/^(?:workspace:\d+|[a-f\d-]{36})$/i.test(workspace ?? '')) return
+    const inCmux = !!process.env.CMUX_SOCKET_PATH && /^(?:workspace:\d+|[a-f\d-]{36})$/i.test(workspace ?? '')
     // An acs-agent from before watch prints its usage into nobody's terminal; ask once instead.
-    const probe = spawnSync('acs-agent', ['watch', '--version'], { stdio: 'ignore', timeout: 1000, killSignal: 'SIGKILL' })
+    const probe = spawnSync('acs-agent', ['watch', '--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 1000, killSignal: 'SIGKILL' })
     if (probe.error || probe.status !== 0) return
+    if (!inCmux && !(Number(/^acs-agent watch (\d+)\s*$/.exec(probe.stdout)?.[1]) >= 2)) return
     const runs = join(homedir(), '.agent-config-studio', 'runs')
     mkdirSync(runs, { recursive: true, mode: 0o700 })
     const run = { version: 1, pid: process.pid, kind, ...(INTENT && { intent: INTENT }), ...(SLICE && { slice: SLICE.join(', ') }),
-      workspace, started: new Date().toISOString() }
+      ...(inCmux && { workspace }), started: new Date().toISOString() }
     writeFileSync(join(runs, `r${process.pid}-${randomBytes(4).toString('hex')}.json`), `${JSON.stringify(run)}\n`, { mode: 0o600, flag: 'wx' })
-    const child = spawn('acs-agent', ['watch', '--pid', String(process.pid), '--kind', kind, '--workspace', workspace, ...(WATCH === 'pane' ? ['--pane'] : [])],
+    const where = inCmux ? ['--workspace', workspace, ...(WATCH === 'pane' ? ['--pane'] : [])] : ['--log-only']
+    const child = spawn('acs-agent', ['watch', '--pid', String(process.pid), '--kind', kind, ...where],
       { detached: true, stdio: 'ignore' })
     child.on('error', () => {})
     child.unref()

@@ -272,3 +272,4 @@ tests/agent-git-fix2.mjs                              ci:offline
 tests/agent-git-tamper.mjs                            ci:offline
 tests/agent-review-fixes.mjs                          ci:offline
 tests/agent-watch.mjs                                 ci:offline
+tests/agent-tail.mjs                                  ci:offline
