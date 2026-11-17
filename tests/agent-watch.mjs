@@ -22,7 +22,7 @@ function scenario() {
   for (const tool of ['ps', 'lsof', 'cmux']) {
     fs.writeFileSync(path.join(bin, tool), `#!${process.execPath}\nprocess.argv.splice(2, 0, ${JSON.stringify(tool)});\nimport(${JSON.stringify(fakes)});\n`, { mode: 0o755 });
   }
-  const env = { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, AGENT_TEST_MODE: '1', AGENT_TEST_POLL_MS: '40', AGENT_TEST_LINGER_MS: '0', AGENT_TEST_NO_TRANSCRIPT_MS: '400', CMUX_SOCKET_PATH: path.join(home, 'socket') };
+  const env = { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, AGENT_TEST_MODE: '1', AGENT_TEST_POLL_MS: '40', AGENT_TEST_LINGER_MS: '0', AGENT_TEST_NO_TRANSCRIPT_MS: '400', AGENT_TEST_PS: path.join(bin, 'ps'), AGENT_TEST_LSOF: path.join(bin, 'lsof'), CMUX_SOCKET_PATH: path.join(home, 'socket') };
   // The watcher is started detached by the gate: no pane of its own to identify.
   for (const key of ['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'GROK_HOME', 'CMUX_SURFACE_ID', 'CMUX_WORKSPACE_ID', 'CMUX_PANEL_ID']) delete env[key];
   const s = {
@@ -236,7 +236,7 @@ if (want('pane')) {
   ]);
   const w = s.start(['--pid', '43000', '--kind', 'review', '--workspace', 'workspace:1', '--pane']);
   await until('stale keys swept', () => s.cleared().has('review-deadrun-1') && s.cleared().has('review-deadrun-2'));
-  assert.ok(s.calls().some(c => c.includes('close-surface') && c.includes('surface:5')), 'the dead run pane is closed');
+  await until('the dead run pane is closed', () => s.calls().some(c => c.includes('close-surface') && c.includes('surface:5')));
   await until('dead run files removed', () => !fs.existsSync(path.join(runs, 'deadrun.json')) && !fs.existsSync(path.join(runs, 'deadrun.watch.json')));
   assert.ok(fs.existsSync(path.join(runs, 'liverun.json')), 'a live run is left alone');
   await until('starting line', () => has(s, /^fix check · fable · <1m · starting$/));
