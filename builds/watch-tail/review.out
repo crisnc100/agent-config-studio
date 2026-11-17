@@ -1,0 +1,111 @@
+review.mjs · /Users/cortega/.agent-config-studio/review-gate/review.mjs · head-aware copy
+▶ reviewer · fable (claude · claude-fable-5-2 · high) — REVIEW_REVIEWER=fable (explicit)
+▶ review · claude-solo(claude-fable-5-2) · watch-tail vs origin/main · single pass (no fix, no loop)
+
+▶ security · astra (codex · gpt-6-astra · high) started beside the code reviewer
+▶ security pass · astra: 0 finding(s), 0 could not be located
+
+✓ Review complete — 1 finding(s) (0 high, 0 medium, 1 low); 0 disputed, 0 could not be located. Report: reviews/2026-11-17-15-53-11-38cdfe/code-review.md
+Review ID: 2026-11-17-15-53-11-38cdfe
+
+===FINDINGS_JSON===
+{
+  "schemaVersion": 1,
+  "reviewId": "2026-11-17-15-53-11-38cdfe",
+  "reviewer": "claude-solo(claude-fable-5-2)",
+  "family": "fable",
+  "base": "origin/main",
+  "branch": "watch-tail",
+  "head": "5fe39a62ffff70292bad312aadac1ad0186c49e4",
+  "reportPath": "reviews/2026-11-17-15-53-11-38cdfe/code-review.md",
+  "diffTruncated": false,
+  "verify": null,
+  "secondOpinion": null,
+  "findings": [
+    {
+      "issue": "`acs-agent tail` with no run id treats a run as live from pid liveness alone (`alive(r.pid)`), and `follow` only returns when the log says `run finished`, the log disappears after being read, or both the gate pid and the watcher pid are dead. A run file whose pid is alive but which has no watcher writing its log is therefore followed indefinitely: tail prints `following <kind> <id>` (and replays any stale log left beside it), then never returns to the picker, so reviews that start afterwards are never shown. Nothing ties the pid to the process that wrote the run file (for example its `started` time), so a reused pid counts as a live run. The log-only sweep added on this branch deliberately leaves dead cmux watchers' sidecars and logs in place, which adds to the stale files that can be picked this way.",
+      "file": "lib/agent.js",
+      "line": "1141",
+      "quote": "    const run = [...runsById().values()].filter(r => !done.has(r.id) && alive(r.pid)).sort((a, b) => b.mtime - a.mtime)[0];",
+      "suggestion": "Do not let one run block the picker: in the no-id loop, leave `follow` (or re-pick) when a newer live run appears while the current one has produced no log lines and has no live watcher, and/or require a live watcher sidecar (or a `started` time consistent with the process) before treating a run file as a live run.",
+      "likelihood": 2,
+      "impact": 4,
+      "protected": false,
+      "trigger": "Leave `acs-agent tail` open in a pane. Either (a) a watcher dies or exits while its gate is still running (killed, or five failed `ps` reads), or (b) an orphaned run file / dead cmux watcher sidecar remains in ~/.agent-config-studio/runs and its pid is later reused by a live process. Tail follows that run, shows nothing new, and does not pick up the next review until that pid exits.",
+      "preExisting": false,
+      "risk": 8,
+      "severity": "low",
+      "filed": true,
+      "instances": [
+        {
+          "file": "lib/agent.js",
+          "line": "1141",
+          "quote": "    const run = [...runsById().values()].filter(r => !done.has(r.id) && alive(r.pid)).sort((a, b) => b.mtime - a.mtime)[0];"
+        },
+        {
+          "file": "lib/agent.js",
+          "line": "1128",
+          "quote": "      ending = seen && !fs.existsSync(call.file) || !alive(now?.pid ?? run.pid) && !alive(now?.watch?.watcherPid);"
+        }
+      ],
+      "status": "verified-quote",
+      "id": "f1"
+    }
+  ],
+  "disputed": [],
+  "unverified": [],
+  "security": {
+    "run": "required",
+    "required": "logic or other files: bin/agent.mjs, lib/agent.js, packs/review-gate/runtime/review.mjs, tools/ask-model.mjs",
+    "why": "security role, a vendor other than the code reviewer's (claude) first",
+    "status": "ran",
+    "family": "astra",
+    "model": "gpt-6-astra",
+    "effort": "high",
+    "vendor": "codex",
+    "durationMs": 397787,
+    "rescored": {
+      "asked": 0,
+      "scored": 0
+    },
+    "findings": 0,
+    "saw": [
+      [
+        "README.md",
+        "100644 46619964fc7e635639fa2d4104db598c34af130f"
+      ],
+      [
+        "bin/agent.mjs",
+        "100755 6925414093de15e7d181a933237d48d871b86aff"
+      ],
+      [
+        "lib/agent.js",
+        "100644 8dad812eca60e652f8bd7aca1925d1a580e89106"
+      ],
+      [
+        "packs/review-gate/runtime/review.mjs",
+        "100644 fb4d9d8d357bbb45c9bf62bcf91436065e80e9c3"
+      ],
+      [
+        "packs/review-gate/tests/review.watch.test.mjs",
+        "100644 69df2a0c5596b0afd147f40d386e1b580a437e0d"
+      ],
+      [
+        "tests/SUITE",
+        "100644 6b985f1e72d0480a296531d1187988aedf4841d1"
+      ],
+      [
+        "tests/agent-tail.mjs",
+        "100644 6da848aad65c834f68e8debe83ae69d1985c7ea8"
+      ],
+      [
+        "tests/ask-model-watch.mjs",
+        "100644 b2dc31d18b4ab426ea25a2f7ecdd6043886eddbd"
+      ],
+      [
+        "tools/ask-model.mjs",
+        "100644 158ddc3eccf54160bd96c4c8ad7055d9558847e4"
+      ]
+    ]
+  }
+}
