@@ -77,10 +77,15 @@ for (const d of ['runs', 'agents']) {
     fs.unlinkSync(path.join(T, ACS, d));
     fs.symlinkSync(path.join(T, ACS, 'history'), path.join(T, ACS, d));
   }, true);
-  scenario(`~/.agent-config-studio/${d} replaced by a plain file`, () => {
-    fs.unlinkSync(path.join(T, ACS, d));
+  // Back to a real directory before saving, so the next case starts from
+  // the exempt shape and only the swap to a file can fail it.
+  fs.unlinkSync(path.join(T, ACS, d));
+  put(`${ACS}/${d}/r.json`);
+  scenario(`~/.agent-config-studio/${d}, a real directory, replaced by a plain file`, () => {
+    fs.rmSync(path.join(T, ACS, d), { recursive: true });
     put(`${ACS}/${d}`, 'a\n');
   }, true);
+  scenario(`~/.agent-config-studio/${d} as a plain file, edited in place`, () => put(`${ACS}/${d}`, 'b\n'), true);
 }
 
 fs.rmSync(snap, { force: true });
