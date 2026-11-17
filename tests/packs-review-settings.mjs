@@ -222,8 +222,8 @@ try {
 
   ok('one Settings section on the review gate page, holding the security switch, agent merge and cross-vendor checks', c().querySelectorAll('.pk-settings').length === 1
     && !!sec().querySelector('.pk-sec-levels') && !!mg() && !!cf(), tx(sec()));
-  ok('C8: four rows, in order: Security pass, Agent merge, Always needs you, Cross-vendor checks', sec().querySelectorAll('.pk-set').map((r) => tx(r.querySelector('.pk-set-name'))).join('|')
-    === 'Security pass|Agent merge|Always needs you|Cross-vendor checks', sec().querySelectorAll('.pk-set-name').map(tx).join('|'));
+  ok('C8: five rows, in order: Security pass, Agent merge, Always needs you, Cross-vendor checks, Watch reviews', sec().querySelectorAll('.pk-set').map((r) => tx(r.querySelector('.pk-set-name'))).join('|')
+    === 'Security pass|Agent merge|Always needs you|Cross-vendor checks|Watch reviews', sec().querySelectorAll('.pk-set-name').map(tx).join('|'));
   ok('…under the lead "Nothing is saved until you preview the change."', tx(card().querySelector('#pk-sec-settings .pk-sec-lead')) === 'Nothing is saved until you preview the change.');
   ok('R3: four merge choices in plain words, Off pressed', choices(mg()).map(tx).join('|') === 'Off|Docs and tests only|Low-risk PRs|Low and medium-risk PRs' && tx(pressed(mg())) === 'Off',
     choices(mg()).map(tx).join('|'));
