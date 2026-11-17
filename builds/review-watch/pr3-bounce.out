@@ -1,0 +1,109 @@
+**Verdict: not ready to build.** Five gaps are blockers; the rest are listed by area below.
+
+- **Transcript matching:** "cwd + start time" cannot tell apart the calls the gate itself runs in parallel (gaps 1–2).
+- **Grok location:** the plan looks in the wrong place (gap 3).
+- **Sidebar default:** the decided default has no process to keep its line current (gap 9).
+- **Ctrl-C cleanup:** the existing exit handler cannot deliver it (gap 15).
+- **Acceptance bar:** the stub suites have no cmux and no transcripts, so it exercises none of this (gap 19).
+
+Paths are in `agent-config-studio-trunk`: `review.mjs` is `packs/review-gate/runtime/review.mjs`, `ask-model.mjs` is `tools/ask-model.mjs`, `agent.js` is `lib/agent.js`. Nothing was changed. I also listed names, sizes and first-line fields in `~/.codex/sessions`, `~/.claude/projects` and `~/.grok/sessions` to check the transcript claims.
+
+## Finding the right transcript
+
+1. **The gate's own concurrency defeats "cwd + start time".**
+   - Team lenses start N `claude -p` calls in one cwd at the same instant (`review.mjs:2412-2424`).
+   - The security worker starts just before the code reviewer (`review.mjs:5071`, `5073`), inherits its cwd (`review.mjs:3375`), and can be the same vendor (`review.mjs:3355-3359`).
+   - Slices run 4 at a time by default in one checkout (`review.mjs:3693`, `3700`), each with its own security worker, so up to 8 CLIs.
+   - The existing matcher refuses when more than one file matches and waits for a cmux SessionStart hook on a surface (`agent.js:99-104`, `124-125`). A headless call has no surface.
+   - The result is blank lines, or steps shown under the wrong reviewer's tag. The handles that would settle it are an argv change, which the plan forbids, or matching prompt text, which it never mentions.
+
+2. **Other sessions share the cwd.** The operator's own Claude session and `acs-agent` workers write to the same folders. Claims only cover the `agents/` registry (`agent.js:111-115`), so the new `runs/` registry and the old one cannot exclude each other's files. This worktree's Claude project folder already holds two headless (`sdk-cli`) transcripts started seven minutes apart.
+
+3. **The Grok location is wrong.** Only `HOME` is temporary; `GROK_HOME` stays real (`review.mjs:2007`, `ask-model.mjs:163`). Sessions land in `<GROK_HOME>/sessions/<encoded cwd>/<id>/` (`ask-model.mjs:1042-1053`). A `homeHint` pointing at the temp HOME finds nothing, and that folder is deleted at the end of the call anyway (`review.mjs:2317`).
+
+4. **Grok lookup and liveness are unproven.** `agent.js:95` encodes only slashes, while Grok URL-encodes the real path and hashes long names (`ask-model.mjs:1050-1052`). So a cwd with a space is missed. `agent.js` falls back to reading the screen for Grok tool calls (`agent.js:348-351`); a headless call has no screen. I did not verify whether headless Grok writes its events during the run.
+
+5. **Harness homes are not recorded.** The watcher runs in a fresh pane shell, not the review's environment. `CODEX_HOME` and `CLAUDE_CONFIG_DIR` set in the review's environment are invisible to it. Workers record this (`agent.js:438-441`); the run file does not.
+
+6. **The cwd is not always the repo.**
+   - A dispute changes into a temp clone before the call and deletes it afterwards (`review.mjs:3772-3789`).
+   - ask-model resolves `--cwd` without realpath (`ask-model.mjs:1147`), though its own Grok lookup needs realpath (`ask-model.mjs:1049`).
+
+7. **"Reuse the watcher" is mostly new code.**
+   - `agent.js` relies on a baseline taken before launch (`agent.js:445`, `115`); the plan has none.
+   - It parses a whole file to read its first line (`agent.js:117`), reads every new Claude project file (`agent.js:120`), and re-parses the whole transcript each poll (`agent.js:190`).
+   - It has no incremental tail; `lastSteps` returns the last three steps (`agent.js:130-144`).
+   - `bin/agent.mjs:20` requires a cmux pane context for every command.
+   - This machine holds 3,164 Codex rollouts (3.7 GB) and 2,322 Claude transcripts (3.5 GB). This session's transcript is 857 KB for 126 lines.
+
+8. **No behaviour when nothing appears.** The plan assumes every user's CLI saves sessions and says nothing for the case where no transcript shows up. "2 findings so far" cannot be produced: the structured answer arrives only at the end (`review.mjs:1933-1934`, `2353`).
+
+## The sidebar default
+
+9. **No process updates the line.** The watcher is launched by the pane. In `sidebar` mode nothing runs to show elapsed time or the current step. `review.mjs` cannot do it either: Codex and Grok calls block in `spawnSync` (`review.mjs:1920`, `2309`). So new users get a static line, or a hidden background process the plan never describes.
+
+10. **ask-model has no run owner.**
+    - No pane opener or run id is defined for it.
+    - `--family` calls carry no role to label the line with (`ask-model.mjs:711`).
+    - Parallel ask-model calls in one cwd hit gap 1.
+    - Both files are standalone (`review.mjs:2207`, `ask-model.mjs:573`), so the announce code must be written twice and kept in step. Where ask-model reads `watch` from is unstated.
+
+## Slices, the security worker, eval
+
+11. **Nothing tells a child it is not top-level.** A slice child is an ordinary run (`review.mjs:3709`). Eval children keep the cmux variables (`review.mjs:4772`, `4802-4806`). Without a marker, each slice and each eval case opens its own pane.
+
+12. **Stray output breaks existing behaviour.**
+    - The slice parent parses everything after `===FINDINGS_JSON===` to the end of the child's stdout (`review.mjs:3714-3716`); one extra line fails the slice.
+    - Several tests pin stderr exactly (`review.global.test.mjs:82`, `review.guard.test.mjs:126` and `523`, `review.behavior.test.mjs:481`).
+    - "Swallowed" must mean silent, with cmux's own output discarded.
+
+13. **The watcher's exit rule is wrong in both directions.** `runVerify()` runs before the first model call (`review.mjs:5064`), so a slow `verifyCmd` closes a pane opened at start. One stale file keeps it open forever. It needs to follow the top-level process, not the file count.
+
+14. **A hung cmux socket costs real time.** The existing cmux helper waits up to 10 s per call (`agent.js:46`), and the security deadline is already running by then (`review.mjs:3370`). "Missing cmux" is tested; "cmux hangs" is not.
+
+## Cleanup on crash
+
+15. **The exit handler does not run on signals.** The review path has no SIGINT or SIGTERM handler; only eval does (`review.mjs:4977-4978`). Ctrl-C kills the process without the `exit` event (`review.mjs:3364`). Adding a handler changes how the gate dies, and it cannot run while blocked in `spawnSync`. The plan promises the outcome without owning that change.
+
+16. **The detached worker outlives Ctrl-C** (`review.mjs:3376`), so it keeps its line until its deadline. A worker killed at timeout cleans nothing (`review.mjs:3388`). Its `finish()` calls `process.exit` inside the try (`review.mjs:3484-3490`), so a `finally` there never runs.
+
+17. **No reaper for hard kills.** SIGKILL, a harness timeout or a power loss leaves the run file and a sticky status line. In sidebar mode nothing exists to sweep them. Names built from the pid collide when pids are reused, and two reviews in one workspace can clear each other's status key.
+
+18. **Pane behaviour is unspecified.**
+    - Workers close their surface explicitly (`agent.js:531`); the plan assumes the pane closes when the command exits. I did not test which is true.
+    - Focus must stay put (`agent.js:489`), or keystrokes land in the new pane.
+    - Placement beside up to four worker panes is unstated.
+
+## Tests and the acceptance bar
+
+19. **The stub suites cannot see the feature.** They run with a built environment: no `CMUX_SOCKET_PATH`, no cmux on PATH, and stubs that write no transcripts (`review.test.mjs:134-140`, `review.security.test.mjs:56-57`, `tests/ask-model.mjs:141`). "Watch on vs off" compares off against cmux-missing. A stub cmux, as in `tests/agent-cli.mjs:13-14`, plus transcript fixtures per harness are required.
+
+20. **"Byte for byte" is impossible as written.** The review id is built from the clock and random bytes (`review.mjs:2787`), and durations and timestamps differ per run. Without a stated normalisation the builder will invent one.
+
+21. **The live check is one happy path.** These are all untested:
+    - team lenses, a same-vendor security pass, and slices;
+    - Grok, and ask-model callers;
+    - two reviews in one workspace;
+    - a hard kill;
+    - sidebar mode, which is the default.
+
+    Nothing checks that the steps shown belong to the tagged reviewer.
+
+22. **Version skew is untested.** The pack is installed on its own; an absent or older `acs-agent` prints usage and exits 2 inside the pane (`bin/agent.mjs:53`). The run file is a new contract with no version field.
+
+23. **The scope is understated.** Beyond "2 files + a subcommand", the plan needs:
+    - the settings allow-list and its tests (`lib/review-settings.js:50-66`, `tests/packs-review-settings.mjs:569`);
+    - the example config;
+    - the review page's UI field for `watch`.
+
+## Security
+
+24. **Hostile text reaches a terminal and a command line.** Tool-call arguments come from a model reading a hostile diff (`review.mjs:1912`). `lastSteps` does no cleaning (`agent.js:130-144`). Escape sequences can spoof lines in the pane, and a value starting with `--` can be read as a flag by `cmux set-status`.
+
+25. **`watch` is not marked home-only.** It is not in `OWN_FILE_KEYS` (`review.mjs:176`), and project config outranks home config (`review.mjs:166`). A tracked repo config could turn the pane on for someone who chose `off`.
+
+## What I verified
+
+- **Codex:** read-only `exec` does write rollouts. 199 of the 247 from the last three days are marked `codex_exec`.
+- **Claude:** headless calls do write project transcripts with tool calls, live.
+- **Grok:** the location comes from the code, not from a run.
