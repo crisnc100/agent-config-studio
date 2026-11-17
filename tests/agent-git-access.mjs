@@ -28,8 +28,9 @@ fs.writeFileSync(path.join(repo,'file.txt'),'base\n'); git(repo,'add','file.txt'
 const linked=path.join(home,"linked ' worktree"); git(repo,'worktree','add','-b','builder',linked);
 const common=fs.realpathSync(path.join(repo,'.git'));
 const own=fs.realpathSync(git(linked,'rev-parse','--absolute-git-dir'));
-const expected=['objects','refs','logs'].map(n=>path.join(common,n)).concat(own);
-assert.deepEqual(grants(argv(linked)),expected,'grant only commit data and this worktree administration directory');
+const commitFiles=['index','index.lock','HEAD','HEAD.lock','COMMIT_EDITMSG'];
+const expected=['objects','refs','logs'].map(n=>path.join(common,n)).concat(commitFiles.concat('logs').map(n=>path.join(own,n)));
+assert.deepEqual(grants(argv(linked)),expected,'grant only common commit data and specific worktree commit paths');
 assert.ok(!expected.includes(common));
 assert.deepEqual(grants(argv(repo)),[],'a normal checkout needs no extra grant');
 const sibling=path.join(home,'sibling'); git(repo,'worktree','add','-b','sibling',sibling);
@@ -78,10 +79,40 @@ try {
   git(linked,'commit','-m','commit with read-only common root');
 } finally { locked.forEach((p,i)=>fs.chmodSync(p,modes[i])); fs.chmodSync(config,configMode); }
 const after=files(common), changed=[...new Set([...Object.keys(before),...Object.keys(after)])].filter(p=>before[p]!==after[p]);
-const allowed=['objects/','refs/','logs/',path.relative(common,own)+'/'];
+const allowed=['objects/','refs/','logs/'];
+const adminPrefix=path.relative(common,own)+'/';
 assert.ok(changed.length>0);
-assert.ok(changed.every(p=>allowed.some(prefix=>p.startsWith(prefix))),JSON.stringify(changed));
+assert.ok(changed.every(p=>allowed.some(prefix=>p.startsWith(prefix)) || commitFiles.concat('logs/HEAD').some(n=>p===adminPrefix+n)),JSON.stringify(changed));
 assert.equal(after.config,before.config); assert.equal(after['packed-refs'],before['packed-refs']);
 assert.equal(git(linked,'log','-1','--format=%s'),'commit with read-only common root');
 assert.ok(!fs.existsSync(path.join(common,'packed-refs.lock')));
-console.log('agent grants only validated linked-worktree commit directories; forged links are rejected; packed-ref commit needs no common-root writes');
+const linkedArgs=argv(linked);
+for (const setting of ['sandbox_workspace_write.writable_roots=[]','sandbox_workspace_write.exclude_tmpdir_env_var=true','sandbox_workspace_write.exclude_slash_tmp=true']) {
+  assert.ok(linkedArgs.some((arg,i)=>arg==='-c' && linkedArgs[i+1]===setting),`linked workers pin ${setting}`);
+}
+for (const forbidden of [own,'commondir','gitdir','config.worktree','config','hooks','objects'].map(n=>n===own?n:path.join(own,n))) {
+  assert.ok(!grants(linkedArgs).some(p=>forbidden===p || forbidden.startsWith(p+path.sep)),`${forbidden} has no writable ancestor`);
+}
+assert.ok(!fs.existsSync(path.join(own,'index.lock')),'granting a missing lock does not create it');
+assert.ok(!fs.existsSync(path.join(own,'HEAD.lock')),'granting a missing HEAD lock does not create it');
+for (const name of ['index','index.lock','HEAD','HEAD.lock','COMMIT_EDITMSG','logs']) {
+  const target=path.join(own,name), saved=target+'.saved', existed=fs.existsSync(target);
+  if (existed) fs.renameSync(target,saved);
+  fs.symlinkSync(fakeLogs,target);
+  try {
+    const actual=grants(argv(linked));
+    assert.ok(!actual.includes(target),`symlinked ${name} receives no grant`);
+    assert.ok(!actual.includes(fakeLogs),`symlinked ${name} target receives no grant`);
+    assert.ok(!actual.includes(own),'no fallback to the admin directory');
+  } finally { fs.unlinkSync(target); if(existed) fs.renameSync(saved,target); }
+}
+git(linked,'checkout','--detach');
+fs.writeFileSync(path.join(linked,'file.txt'),'detached commit\n');
+const detachedBefore=files(own);
+git(linked,'add','file.txt'); git(linked,'commit','-m','detached builder commit');
+const detachedAfter=files(own);
+const detachedChanged=[...new Set([...Object.keys(detachedBefore),...Object.keys(detachedAfter)])].filter(p=>detachedBefore[p]!==detachedAfter[p]);
+assert.ok(detachedChanged.includes('HEAD'),'detached commits need writable HEAD');
+assert.ok(detachedChanged.every(p=>commitFiles.includes(p)||p==='logs/HEAD'),JSON.stringify(detachedChanged));
+for (const name of ['commondir','gitdir','ORIG_HEAD']) assert.equal(detachedAfter[name],detachedBefore[name],`${name} is unchanged by a commit`);
+console.log('agent grants specific commit paths without config redirects; symlinks and forged links are rejected; branch and detached commits fit the allowlist');

@@ -182,7 +182,7 @@ const linkedWorker = open('sol', ['--cwd', linked, 'git shared dir']);
 const linkedLaunch = spawnSync('/bin/sh', [linkedWorker.launcher], { env, encoding: 'utf8' });
 assert.equal(linkedLaunch.status, 0, linkedLaunch.stderr);
 const linkedArgs = JSON.parse(fs.readFileSync(captured)).args;
-assert.deepEqual(linkedArgs.flatMap((arg, i) => arg === '--add-dir' ? [linkedArgs[i + 1]] : []), ['objects', 'refs', 'logs'].map(name => path.join(gitRoot, '.git', name)).concat(admin));
+assert.deepEqual(linkedArgs.flatMap((arg, i) => arg === '--add-dir' ? [linkedArgs[i + 1]] : []), ['objects', 'refs', 'logs'].map(name => path.join(gitRoot, '.git', name)).concat(['index', 'index.lock', 'HEAD', 'HEAD.lock', 'COMMIT_EDITMSG', 'logs'].map(name => path.join(admin, name))));
 assert.ok(!linkedArgs.includes(path.join(gitRoot, '.git')), 'the common root is never writable');
 const normalWorker = open('sol', ['--cwd', gitRoot, 'normal repository']);
 assert.equal(spawnSync('/bin/sh', [normalWorker.launcher], { env, encoding: 'utf8' }).status, 0);
