@@ -64,4 +64,4 @@ assert.equal(screenError.status, 1); assert.match(screenError.stderr, /permissio
 assert.notEqual(record(offline.id).status, 'closed', 'unrelated screen errors must not close a worker');
 assert.equal(run(['wait', offline.id, '--timeout', '0'], { FAKE_OFFLINE: '1' }).status, 2, 'socket errors are not closure');
 assert.notEqual(record(offline.id).status, 'closed');
-console.log('agent stale-pane recovery, bounded race retry, missing surfaces, closure exit 8 and unrelated errors passed');
+console.log('agent tabs in the caller pane, no pane on errors, missing surfaces, closure exit 8 and unrelated errors passed');

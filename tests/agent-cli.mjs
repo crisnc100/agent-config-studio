@@ -49,8 +49,9 @@ for (const a of state().calls.filter(a => a.includes('new-surface'))) {
   assert.equal(flag(a, '--focus'), 'false');
 }
 for (const a of state().calls.filter(a => ['new-surface', 'new-pane', 'rename-tab'].some(v => a.includes(v)))) assert.equal(flag(a, '--workspace'), 'workspace:1', "only the caller's workspace");
+const callsBefore = state().calls.length;
 const elsewhere = open('opus', ['task'], { CMUX_WORKSPACE_ID: 'workspace:7' });
-const elsewhereCalls = state().calls.filter(a => ['new-surface', 'rename-tab'].some(v => a.includes(v)) && a.includes(elsewhere.surface_ref));
+const elsewhereCalls = state().calls.slice(callsBefore).filter(a => ['new-surface', 'rename-tab'].some(v => a.includes(v)));
 assert.equal(elsewhereCalls.length, 2);
 for (const a of elsewhereCalls) assert.equal(flag(a, '--workspace'), 'workspace:7', "a caller in another workspace opens there");
 const hostileDir = path.join(home, `evil\u001b]0;pwned\u0007${'x'.repeat(200)}`);
