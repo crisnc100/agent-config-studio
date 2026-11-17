@@ -1,0 +1,15 @@
+# Close the last Codex git gap (deferred x2 MEDIUM 14/100 from #91)
+
+Finding (verbatim from the fix check): the worktree's own Git administration directory (`<common>/worktrees/<name>/`) is granted whole to a Codex worker (lib/agent.js ~line 475, `--add-dir "$gitdir"`). It holds the `commondir` file that tells Git which common directory (and so which `config` and `hooks/`) that worktree uses. A sandboxed Codex worker could rewrite `commondir` (or write `config.worktree`) to point at a directory it controls with its own `config` (core.fsmonitor, core.sshCommand, core.hooksPath, reviewgate.enabled) and objects/refs linked to the real ones. The orchestrator's next git command in that worktree, including the push, then runs that config outside the sandbox.
+
+Goal: a Codex worker in a linked worktree can still `git add` + `git commit` (the builder path), and cannot change which config/hooks git uses there: `commondir`, `gitdir`, `config.worktree` (and anything else in the admin dir that redirects config, hooks or objects) stay unwritable.
+
+Investigate first (stop and report if no option works):
+- What a commit in a linked worktree writes inside its admin dir (index, index.lock, HEAD, ORIG_HEAD, logs/HEAD, COMMIT_EDITMSG, …). Verify with a real temp repo + worktree (fs_usage is not needed; diff the admin dir before/after a commit).
+- Whether Codex's sandbox can express "this dir writable except these files" (writable_roots + read-only subpaths in its config/`-c sandbox_workspace_write…`, or --add-dir on files). Read the installed Codex's own help/config docs; don't guess.
+- Options, in order of preference: (a) Codex config that keeps commondir/gitdir/config.worktree read-only inside the granted dir; (b) granting only the subpaths a commit needs if Codex accepts file-level grants; (c) no admin-dir grant: the worker commits through some other safe path. Say which works and why.
+Then implement the chosen option with tests (fake codex/cmux as the existing tests do) that fail on main first, and a small script `builds/codex-git-admin/probe.sh` the orchestrator can run live: it opens a real Codex worker via `acs-agent` in a temp linked worktree and asks it to (1) commit, (2) overwrite commondir, (3) write config.worktree, (4) write <common>/hooks/x and <common>/config; prints ok/denied per step. Don't run the probe with a live worker yourself.
+Constraints: lib/agent.js and tests only (plus README if the git-access description changes); no new deps; existing-assertion changes in their own test-only commit naming each; commit at the end; never push, open a PR, or run reviews or other models.
+Validate: node tests/agent-git-access.mjs && node tests/agent-cli.mjs && node tests/agent-review-fixes.mjs && node tests/guards.mjs && node tests/readme.mjs.
+How to wait: run every command in the foreground with a timeout long enough to finish; never end a turn waiting on a background job.
+Stop when: validation passes and work is committed — reply DONE with the chosen option, why, and the commit shas. Or stop early with the report if no option keeps commits working.
