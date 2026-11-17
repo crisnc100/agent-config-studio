@@ -7,7 +7,10 @@ const file = path.join(home, 'fake-cmux.json');
 const state = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { n: 0, calls: [], workers: {} };
 const args = process.argv.slice(2);
 state.panes ||= ['pane:1'];
-const verbs = ['list-panes', 'identify', 'new-pane', 'new-surface', 'focus-pane', 'send', 'send-key', 'read-screen', 'close-surface', 'list-pane-surfaces', 'rename-tab'];
+// Like cmux: a new tab becomes its pane's selected tab even with --focus false; reorder-surface reselects one.
+state.selected ||= { 'pane:1': 'surface:1' };
+state.focused ||= 'pane:1';
+const verbs = ['list-panes', 'identify', 'new-pane', 'new-surface', 'focus-pane', 'send', 'send-key', 'read-screen', 'close-surface', 'list-pane-surfaces', 'rename-tab', 'reorder-surface'];
 const cmd = args.find(a => verbs.includes(a));
 const opt = k => args[args.indexOf(k) + 1];
 state.calls.push(args);
@@ -55,7 +58,11 @@ if (cmd === 'new-surface' && !state.panes.includes(opt('--pane'))) fail('not_fou
 if (cmd === 'new-pane' && process.env.FAKE_NEW_PANE_ERROR) fail(process.env.FAKE_NEW_PANE_ERROR);
 if (cmd === 'read-screen' && process.env.FAKE_READ_SCREEN_ERROR) fail(process.env.FAKE_READ_SCREEN_ERROR);
 if (cmd === 'list-pane-surfaces' && !state.panes.includes(opt('--pane'))) fail('not_found');
-if (cmd === 'identify') out = { caller: { workspace_ref: 'workspace:1', pane_ref: process.env.FAKE_PANE || 'pane:1' } };
+if (cmd === 'identify') out = { caller: { workspace_ref: 'workspace:1', pane_ref: process.env.FAKE_PANE || 'pane:1' }, focused: { workspace_ref: process.env.CMUX_WORKSPACE_ID || 'workspace:1', pane_ref: state.focused } };
+if (cmd === 'list-pane-surfaces' && process.env.FAKE_LIST_SURFACES_ERROR) fail(process.env.FAKE_LIST_SURFACES_ERROR);
+if (cmd === 'reorder-surface' && process.env.FAKE_REORDER_ERROR) fail(process.env.FAKE_REORDER_ERROR);
+if (cmd === 'reorder-surface') { state.selected['pane:1'] = opt('--surface'); state.focused = 'pane:1'; }
+if (cmd === 'focus-pane') state.focused = opt('--pane');
 if (cmd === 'new-pane' || cmd === 'new-surface') {
   const n = ++state.n;
   const script = fs.readFileSync(opt('--command'), 'utf8');
@@ -80,6 +87,7 @@ if (cmd === 'new-pane' || cmd === 'new-surface') {
   turn(w, 'initial', !process.env.FAKE_RUNNING);
   w.pane_ref = cmd === 'new-pane' ? `pane:${n + 10}` : opt('--pane');
   if (cmd === 'new-pane') state.panes.push(w.pane_ref);
+  state.selected[w.pane_ref] = w.surface_ref;
   state.workers[w.surface_ref] = w;
   out = { ...w };
 }
@@ -107,6 +115,11 @@ if (cmd === 'read-screen' || cmd === 'close-surface') {
     out = { text: w.screen ?? (pending || w.vendor === 'grok' && !fs.existsSync(w.history) ? 'Allow this command?\n1. Yes' : 'Worker screen') };
   }
 }
-if (cmd === 'list-pane-surfaces') out = { surfaces: Object.values(state.workers).filter(w => !w.closed && (!args.includes('--pane') || w.pane_ref === opt('--pane'))) };
+if (cmd === 'list-pane-surfaces') {
+  const pane = opt('--pane');
+  const live = Object.values(state.workers).filter(w => !w.closed && w.pane_ref === pane).map(w => w.surface_ref);
+  const refs = pane === 'pane:1' ? ['surface:1', ...live] : live;
+  out = { pane_ref: pane, surfaces: refs.map((ref, index) => ({ ref, index, selected: state.selected[pane] === ref })) };
+}
 put(file, JSON.stringify(state));
 console.log(JSON.stringify(out));

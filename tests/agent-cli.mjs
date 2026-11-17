@@ -63,6 +63,29 @@ assert.ok(!/[\u0000-\u001f\u007f-\u009f]/.test(hostileTitle), JSON.stringify(hos
 assert.ok([...hostileTitle].length <= 80, `capped: ${[...hostileTitle].length}`);
 assert.match(hostileTitle, /^builder · sol · evil/);
 for (const w of [elsewhere, hostile]) assert.equal(json(run(['wait', w.id, '--timeout', '0', '--json'], { CMUX_WORKSPACE_ID: 'workspace:7' })).status, 'done');
+// new-surface still selects the new tab: the caller's tab is reselected, then focus goes back where it was.
+// In workspace:7, so the list below still counts only this orchestrator's four workers.
+{
+  const ws7 = { CMUX_WORKSPACE_ID: 'workspace:7' };
+  const start = state().calls.length;
+  const w = open('sol', ['reselect'], ws7);
+  const after = state().calls.slice(start);
+  const at = verb => after.findIndex(a => a.includes(verb));
+  assert.ok(at('list-pane-surfaces') >= 0 && at('list-pane-surfaces') < at('new-surface'), 'the selected tab is read before the new tab opens');
+  const reorder = after[at('reorder-surface')];
+  assert.ok(reorder && at('reorder-surface') > at('rename-tab'), JSON.stringify(after));
+  assert.deepEqual([flag(reorder, '--surface'), flag(reorder, '--index'), flag(reorder, '--focus'), flag(reorder, '--workspace')], ['surface:1', '0', 'false', 'workspace:7']);
+  const refocus = after.slice(at('reorder-surface')).find(a => a.includes('focus-pane'));
+  assert.ok(refocus, 'focus goes back after the reselect');
+  assert.deepEqual([flag(refocus, '--pane'), flag(refocus, '--workspace')], ['pane:1', 'workspace:7']);
+  assert.equal(state().selected['pane:1'], 'surface:1', "the caller's tab is selected again");
+  assert.equal(json(run(['wait', w.id, '--timeout', '0', '--json'], ws7)).status, 'done');
+  for (const vars of [{ FAKE_REORDER_ERROR: 'internal_error' }, { FAKE_LIST_SURFACES_ERROR: 'internal_error' }]) {
+    const r = open('sol', ['restore fails'], { ...ws7, ...vars });
+    assert.ok(r.id, 'a failed restore never fails the open');
+    assert.equal(json(run(['wait', r.id, '--timeout', '0', '--json'], ws7)).status, 'done');
+  }
+}
 console.log('agent builder tabs: caller pane, no focus, titled, caller workspace passed');
 const running = open('sol', ['task'], { FAKE_RUNNING: '1' });
 assert.equal(run(['wait', running.id, '--timeout', '0']).status, 4);
