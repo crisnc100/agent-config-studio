@@ -181,6 +181,49 @@ function grokMcpAllow() {
   return { names: [] };
 }
 
+/**
+ * The review gate's watch setting ("sidebar", the default, | "pane" | "off"): REVIEW_WATCH, else the gate's home
+ * config files, the first that exists. Never a repository's file: a branch must not open a pane in your terminal.
+ */
+function watchMode() {
+  if (process.env.REVIEW_WATCH !== undefined) return String(process.env.REVIEW_WATCH).trim().toLowerCase();
+  for (const file of [path.join(os.homedir(), '.agent-config-studio', 'review-gate', 'config.json'), path.join(os.homedir(), '.claude', 'review-config.json')]) {
+    let doc;
+    // A file that is missing or not JSON is passed over, as the review gate passes over a malformed config.
+    try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { continue; }
+    return String(doc?.watch ?? 'sidebar').trim().toLowerCase();
+  }
+  return 'sidebar';
+}
+
+/**
+ * Inside cmux, hand this call to `acs-agent watch` (packs/review-gate/runtime/review.mjs startWatch does the same for a
+ * review): a run file, then the watcher, detached and never waited on. Every failure is silent, so the call's output,
+ * exit code and timing do not change.
+ */
+function startWatch(kind) {
+  try {
+    if (process.env.REVIEW_WATCH_CHILD === '1') return;
+    const mode = watchMode();
+    if (mode !== 'sidebar' && mode !== 'pane') return;
+    const workspace = process.env.CMUX_WORKSPACE_ID;
+    if (!process.env.CMUX_SOCKET_PATH || !/^(?:workspace:\d+|[a-f\d-]{36})$/i.test(workspace ?? '')) return;
+    const agent = which('acs-agent');
+    if (!agent) return;
+    // An acs-agent from before watch prints its usage into nobody's terminal; ask once instead.
+    const probe = spawnSync(agent, ['watch', '--version'], { stdio: 'ignore', timeout: 1000, killSignal: 'SIGKILL' });
+    if (probe.error || probe.status !== 0) return;
+    const runs = path.join(os.homedir(), '.agent-config-studio', 'runs');
+    fs.mkdirSync(runs, { recursive: true, mode: 0o700 });
+    const run = { version: 1, pid: process.pid, kind, workspace, started: new Date().toISOString() };
+    fs.writeFileSync(path.join(runs, `a${process.pid}-${crypto.randomBytes(4).toString('hex')}.json`), `${JSON.stringify(run)}\n`, { mode: 0o600, flag: 'wx' });
+    const child = spawn(agent, ['watch', '--pid', String(process.pid), '--kind', kind, '--workspace', workspace, ...(mode === 'pane' ? ['--pane'] : [])],
+      { detached: true, stdio: 'ignore' });
+    child.on('error', () => {});
+    child.unref();
+  } catch { /* watching is optional; the call never depends on it */ }
+}
+
 // The entry lists whose settings patch a grok config file.
 const PATCHES = ['experiments', 'version_overrides', 'campaigns'];
 
@@ -1225,6 +1268,8 @@ async function main(argv) {
   const before = o.investigate ? snapshot(cwd) : null;
   if (before?.error) { result.error = `${before.error}, so changes under --investigate could not be checked — ${vendor} was not run`; return finish(4); }
   if (o.investigate && !before) process.stderr.write(`ask-model: ${cwd} is not in a git work tree — changes are not checked\n`);
+  // A role name is a watch kind as it stands; a family names no job, so its line says ask.
+  startWatch(o.role !== undefined && /^[a-z][a-z0-9-]{0,31}$/.test(o.role) ? o.role : 'ask');
   const r = await run(bin, argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff, schema }), cwd, env);
   // A call grok refused for want of approval leaves only this line, and grok still exits 0.
   if (vendor === 'grok') {

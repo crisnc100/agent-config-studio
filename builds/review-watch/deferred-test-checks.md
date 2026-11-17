@@ -1,0 +1,3 @@
+# Deferred from the test-change checks
+
+- g2 MEDIUM 24/100 (likelihood 4/10 × impact 6/10), Sol recheck of afad4c2 (builds/review-watch/guard-recheck.out): the static guard still accepts `Object.assign(process.env, { AGENT_TEST_MODE: '1' })`, `process.env = { ...process.env, AGENT_TEST_MODE: '1' }`, `process.env. AGENT_TEST_MODE = '1'` (space after the dot), and a write from an imported lib file. Deferred: one fix round and one recheck already ran on this guard; it is an accident barrier, and each bypass needs a deliberate production edit that review would see. Fix: forbid every write to process.env across lib/ (assignment, Object.assign, defineProperty, delete) rather than matching the one property name.

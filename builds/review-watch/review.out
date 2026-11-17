@@ -1,0 +1,158 @@
+review.mjs · /Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-review-watch/packs/review-gate/runtime/review.mjs · head-aware copy
+▶ reviewer · fable (claude · claude-fable-5-2 · high) — REVIEW_REVIEWER=fable (explicit)
+▶ review · claude-solo(claude-fable-5-2) · review-watch vs origin/main · single pass (no fix, no loop)
+
+⚠ Diff is 126981 chars — only the first 120000 were inlined in the prompt.
+  The reviewer was told to open files for the rest; findings may under-cover this branch.
+  Slice it instead: review each path group with REVIEW_PATHS=<pathspec>,<pathspec>, close every slice at
+  the same HEAD, and make the slices together cover the whole diff (the push gate checks that).
+  Largest top-level folders: tests/ (510 changed lines), lib/ (372 changed lines), packs/ (347 changed lines), builds/ (179 changed lines), tools/ (45 changed lines)
+
+▶ security · astra (codex · gpt-6-astra · high) started beside the code reviewer
+▶ security pass · astra: 0 finding(s), 0 could not be located
+
+✓ Review complete — 2 finding(s) (0 high, 0 medium, 2 low); 0 disputed, 0 could not be located. Report: reviews/2026-11-17-02-15-12-3dda64/code-review.md
+Review ID: 2026-11-17-02-15-12-3dda64
+
+===FINDINGS_JSON===
+{
+  "schemaVersion": 1,
+  "reviewId": "2026-11-17-02-15-12-3dda64",
+  "reviewer": "claude-solo(claude-fable-5-2)",
+  "family": "fable",
+  "base": "origin/main",
+  "branch": "review-watch",
+  "head": "eabfaa17a4e9bc7ae044ddf383dabcfe4fb51d91",
+  "reportPath": "reviews/2026-11-17-02-15-12-3dda64/code-review.md",
+  "diffTruncated": true,
+  "verify": null,
+  "secondOpinion": null,
+  "findings": [
+    {
+      "issue": "The home config's `watch` value is silently dropped whenever review.mjs loads a different config file that lacks the key. loadConfig returns the first existing file whole: REVIEW_CONFIG (`if (!repo) return config`, line 363) or an untracked repo `.claude/review-config.json` (withoutRepoCommands returns it unchanged when repoFileIsOwn, line 232). Only `merge` and `security` are back-filled from home (lines 366-367); `watch` is carried over only on the tracked-file path (`fromHome`, line 236). So with home `watch: off` (or `pane`) and such a file present, WATCH falls to the built-in `sidebar`. This contradicts the README ('a home-config setting only') and the ACS Settings row, and diverges from ask-model.mjs:188-197, which reads the home files only: on the same machine a review shows sidebar lines while ask-model honours off/pane.",
+      "file": "packs/review-gate/runtime/review.mjs",
+      "line": "395",
+      "quote": "  const mode = String(cfg('REVIEW_WATCH', 'watch', 'sidebar')).trim().toLowerCase()",
+      "suggestion": "Resolve watch as env > loaded config's own `watch` (already stripped when tracked) > homeKey(homes, 'watch') > 'sidebar', e.g. back-fill `checked.watch`/`config.watch` from homeKey in loadConfig the way merge and security are, including the REVIEW_CONFIG path.",
+      "likelihood": 2,
+      "impact": 3,
+      "protected": false,
+      "trigger": "Home config has `watch: off` or `pane` (set in ACS), and the review runs in a repo with an untracked `.claude/review-config.json` that has no `watch` key (e.g. one holding only verifyCmd), or with REVIEW_CONFIG pointing at a file without `watch`. The review then shows sidebar lines (or no pane) against the saved setting.",
+      "preExisting": false,
+      "risk": 6,
+      "severity": "low",
+      "filed": true,
+      "status": "verified-quote",
+      "id": "f1"
+    },
+    {
+      "issue": "The slice suffix can never appear for a `--slices` run. Slice children carry REVIEW_WATCH_CHILD=1, so startWatch returns (review.mjs:5027) before writing a run file; the ancestor walk `run ||= runs.get(q)` (line 941) therefore only ever finds the parent's run file, and the `--slices` parent has SLICE null (its groups go to children via REVIEW_PATHS). Every slice's reviewer and security call gets the same prefix, so up to 4 parallel slices (8 lines) are indistinguishable in the sidebar and pane. `run.slice` only shows for a single top-level REVIEW_PATHS run. Cosmetic: nothing else is affected.",
+      "file": "lib/agent.js",
+      "line": "947",
+      "quote": "        const slice = run.slice !== undefined && run.slice !== null ? ` · ${shown(run.slice, 24)}` : '';",
+      "suggestion": "Give the watcher the slice per child without a second watcher: either have a REVIEW_WATCH_CHILD run still write its run file (pid, kind, slice) and skip only the probe and spawn, or have the parent record each slice child's pid and group in its own run file, so the ancestor walk at line 941 finds it.",
+      "likelihood": 5,
+      "impact": 1,
+      "protected": false,
+      "trigger": "`review.mjs --slices 'a;b;c'` inside cmux with watch on: all lines read `<label> · <family> · <time> · <step>` with no slice name.",
+      "preExisting": false,
+      "risk": 5,
+      "severity": "low",
+      "filed": true,
+      "status": "verified-quote",
+      "id": "f2"
+    }
+  ],
+  "disputed": [],
+  "unverified": [],
+  "security": {
+    "run": "required",
+    "required": "logic or other files: bin/agent.mjs, builds/review-watch/guard-recheck.out, builds/review-watch/pr3-bounce.out, lib/agent.js, lib/review-settings.js and 4 more",
+    "why": "security role, a vendor other than the code reviewer's (claude) first",
+    "status": "ran",
+    "family": "astra",
+    "model": "gpt-6-astra",
+    "effort": "high",
+    "vendor": "codex",
+    "durationMs": 496817,
+    "rescored": {
+      "asked": 0,
+      "scored": 0
+    },
+    "findings": 0,
+    "saw": [
+      [
+        "README.md",
+        "100644 f99b9e6c89787afcafe262cbb519bb9c6bc27315"
+      ],
+      [
+        "bin/agent.mjs",
+        "100755 520060592f5eea39b389952c1f48d160b8f4b9b2"
+      ],
+      [
+        "builds/review-watch/deferred-test-checks.md",
+        "100644 d29b3fe14c1056c0136f4867d7fa95186f9bfd6f"
+      ],
+      [
+        "builds/review-watch/guard-recheck.out",
+        "100644 88f4f48ca11b1635fd1c8ea250a0dc358c934343"
+      ],
+      [
+        "builds/review-watch/plan.md",
+        "100644 3a263e1e035cbcd48eb76d0bb1474f3a8678eb0b"
+      ],
+      [
+        "builds/review-watch/pr3-bounce.out",
+        "100644 52b6bda6023d1365358a6a9234ba58ce9ce2b977"
+      ],
+      [
+        "lib/agent.js",
+        "100644 d2c3b8e8b90fd0b284c5dea3de97f778d231ead6"
+      ],
+      [
+        "lib/review-settings.js",
+        "100644 ed226616a107c2c0f4816a6143cc2ea4a63eba86"
+      ],
+      [
+        "packs/review-gate/runtime/review-config.example.json",
+        "100644 9a2e9637b50fa7f44481fcc3f1411428b58233cb"
+      ],
+      [
+        "packs/review-gate/runtime/review.mjs",
+        "100644 c3150cee4c780edfe2fd1326372fa330b5ebfafc"
+      ],
+      [
+        "packs/review-gate/tests/review.watch.test.mjs",
+        "100644 7b717caeaa88282a706711b33b9da6c4017804c1"
+      ],
+      [
+        "public/packs-view.js",
+        "100644 06c636ac32080bc3bceef1bc302b1be2a9d89c18"
+      ],
+      [
+        "tests/SUITE",
+        "100644 753818636683a24b89add1c725dca3ef986b21bb"
+      ],
+      [
+        "tests/agent-watch.mjs",
+        "100644 b3b47a4589b70265fe93bd91f4dae96c8f6834fb"
+      ],
+      [
+        "tests/ask-model-watch.mjs",
+        "100644 9545fc46d53151aa14fa37865e55e3b225c63258"
+      ],
+      [
+        "tests/fixtures/watch-fakes.mjs",
+        "100644 5afaae73d2d571774dc0562d5a342a584d49d7a8"
+      ],
+      [
+        "tests/guards.mjs",
+        "100644 35e0d2e905dcac6200484da692eccfb39e50a4f2"
+      ],
+      [
+        "tests/packs-review-settings.mjs",
+        "100644 33e2b6886a963bde136f98ead38f2ea0cd29c58e"
+      ]
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+
+**MEDIUM 24/100 (likelihood 4/10 × impact 6/10):** the check at [tests/guards.mjs:425](/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-review-watch/tests/guards.mjs:425) accepts these valid additions:
+
+```js
+Object.assign(process.env, { AGENT_TEST_MODE: '1' });
+process.env = { ...process.env, AGENT_TEST_MODE: '1' };
+process.env. AGENT_TEST_MODE = '1';
+```
+
+Each passed all 10 static checks against the exact commit in memory. Executing each against an isolated environment initially set to mode `0` made the pinned helper select the override. A direct assignment in imported `lib/roles.js` also passes: this restriction runs only against `lib/agent.js`.
+
+The other results are positive:
+
+- **Inspector binding protection:** ordinary declaration, parameter, destructuring, assignment, catch and loop forms tested were rejected.
+- **Negative controls:** all **42/42** were rejected, including all seven additions. The parent accepted exactly the four variants the author identified.
+- **Existing assertions:** none became weaker. The new name restriction strengthens the assignment check; the existing executable, argv and import restrictions remain intact.
+
+Arbitrary computed property names are a reasonable documented limit for an accident barrier. **`Object.assign(process.env, …)` is ordinary JavaScript and is not an acceptable exclusion from the requested guarantee.**
+
+All probes ran in memory; no files were changed.
+
+[exited with code 0]

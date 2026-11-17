@@ -93,6 +93,9 @@ console.log('setup guards\n');
   // the bytes, and the usage CLI child's credential readers (a separate
   // process by design). Anything new fails until it is routed or listed.
   const ALLOW = {
+    'lib/agent.js': [
+      ['fs.readSync(fd, chunk, 0, length, call.offset)', 'the review watcher\'s incremental transcript tail (a byte offset per file, so a long transcript is never read twice); the descriptor gets openUserFile\'s checks (a regular file, one link, not a credential) and only cleaned, length-capped step lines reach the pane log'],
+    ],
     'lib/roots.js': [
       ['readFile(home)', 'not a file read: roots.js\'s own function of that name (its definition and two calls)'],
       ['readFile(home)', 'not a file read: roots.js\'s own function of that name (its definition and two calls)'],
@@ -268,6 +271,21 @@ console.log('setup guards\n');
     ['agent: a caller-supplied executable', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawnSync(process.env.AGENT_BINARY,")],
     ['agent: a literal prefix plus an expression', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawnSync('cmux' + process.env.AGENT_SUFFIX,"), true],
     ['agent: a different subprocess function', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawn('cmux',")],
+    ['agent: a harness binary as an inspector', agent, origAgent, t => t.replace("inspector('/bin/ps', 'AGENT_TEST_PS')", "inspector('claude', 'AGENT_TEST_PS')")],
+    ['agent: a PATH-relative ps', agent, origAgent, t => t.replace("inspector('/bin/ps', 'AGENT_TEST_PS')", "inspector('ps', 'AGENT_TEST_PS')")],
+    ['agent: a PATH-relative lsof', agent, origAgent, t => t.replace("inspector('/usr/sbin/lsof', 'AGENT_TEST_LSOF')", "inspector('lsof', 'AGENT_TEST_LSOF')")],
+    ['agent: a different ps argv', agent, origAgent, t => t.replace("['-axww', '-o', 'pid,ppid,command']", "['-axww', '-E', '-o', 'pid,ppid,command']")],
+    ['agent: a different lsof argv', agent, origAgent, t => t.replace("['-w', '-nP', '-F', 'pfan', '-p', pids.join(',')]", "['-w', '-nP', '-F', 'pfan', '+D', pids.join(',')]")],
+    ['agent: an inspector override outside test mode', agent, origAgent, t => t.replace("process.env.AGENT_TEST_MODE === '1' && process.env[name] || bin", "process.env[name] || bin")],
+    ['agent: a second inspector definition', agent, origAgent, t => t + "\nexport const inspector2 = 1; inspector = () => process.env.X;\n"],
+    ['agent: the inspector bypassed by its env name', agent, origAgent, t => t.replace("inspector('/bin/ps', 'AGENT_TEST_PS')", "process.env.AGENT_TEST_PS")],
+    ['agent: a nested function shadowing the inspector', agent, origAgent, t => t.replace('function processTable() {\n', 'function processTable() {\n  function inspector(bin, name) { return process.env[name] || bin; }\n'), true],
+    ['agent: a let shadowing the inspector in an inner block', agent, origAgent, t => t.replace('function processTable() {\n', 'function processTable() {\n  let inspector = (bin, name) => process.env[name] || bin;\n'), true],
+    ['agent: a const shadowing the inspector in an inner block', agent, origAgent, t => t.replace('  if (!pids.length) return out;\n', '  if (!pids.length) return out;\n  const inspector = (bin, name) => process.env[name] || bin;\n'), true],
+    ['agent: a parameter named like the inspector', agent, origAgent, t => t.replace('function processTable() {\n', 'function processTable(inspector = (bin, name) => process.env[name] || bin) {\n'), true],
+    ['agent: a destructured binding named like the inspector', agent, origAgent, t => t.replace('  if (!pids.length) return out;\n', '  if (!pids.length) return out;\n  const { inspector } = { inspector: (bin, name) => process.env[name] || bin };\n'), true],
+    ['agent: test mode switched on in production code', agent, origAgent, t => t.replace('export const WATCH_VERSION = 1;', "export const WATCH_VERSION = 1;\nprocess.env.AGENT_TEST_MODE = '1';"), true],
+    ['agent: test mode switched on through a bracket', agent, origAgent, t => t.replace('export const WATCH_VERSION = 1;', "export const WATCH_VERSION = 1;\nprocess.env['AGENT_TEST_MODE'] = '1';"), true],
     ['agent: a direct server import', server, origServer, t => t + "\nimport './lib/agent.js';\n"],
     ['agent: a compact named server import', server, origServer, t => t + "\nimport{openWorker}from './lib/agent.js';\n", true],
     ['agent: a compact named transitive import', registry, origRegistry, t => t + "\nimport{openWorker}from './agent.js';\n", true],

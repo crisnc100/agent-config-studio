@@ -287,12 +287,21 @@ const LOGIN_SHELL_FN = "function loginShell(env = process.env) { const want = en
   "let listed = []; try { listed = fs.readFileSync('/etc/shells', 'utf8').split('\\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')); } catch {} " +
   "return listed.includes(want) && fs.existsSync(want) ? want : '/bin/sh'; }";
 
+/** lib/agent.js's watcher inspectors: the only callees there besides 'cmux', each with its exact argv. */
+const AGENT_INSPECTOR_FN = "const inspector = (bin, name) => process.env.AGENT_TEST_MODE === '1' && process.env[name] || bin;";
+const AGENT_INSPECTOR_CALLS = ["inspector('/bin/ps', 'AGENT_TEST_PS')", "inspector('/usr/sbin/lsof', 'AGENT_TEST_LSOF')"];
+const AGENT_INSPECTORS = [
+  /^inspector\('\/bin\/ps', 'AGENT_TEST_PS'\), \['-axww', '-o', 'pid,ppid,command'\],/,
+  /^inspector\('\/usr\/sbin\/lsof', 'AGENT_TEST_LSOF'\), \['-w', '-nP', '-F', 'pfan', '-p', pids\.join\(','\)\],/,
+];
+
 function guardB() {
   const hits = [];
   for (const abs of scanTargets()) {
     const src = readStripped(abs);
     const file = rel(abs);
     const calls = childCalls(src);
+    let inspectorPinned = false;
 
     if (abs === HARNESS) {
       const contained = functionSpan(src, 'spawnContained');
@@ -380,6 +389,11 @@ function guardB() {
       'lib/packs.js': { fns: new Set(['spawnSync']), packsOnly: true },
       // The user's CLI starts model sessions through cmux; the studio server
       // must never reach this module (checked through its import graph below).
+      // Its review watcher also reads the process table and which files a
+      // model CLI holds open: /bin/ps and /usr/sbin/lsof, read-only
+      // inspectors pinned like processes.js, by absolute path and exact argv.
+      // A test reaches its fakes only through AGENT_INSPECTOR_FN, which
+      // honours an override solely under AGENT_TEST_MODE=1.
       'lib/agent.js': { fns: new Set(['spawnSync']), cmuxOnly: true },
     }[file];
 
@@ -394,8 +408,24 @@ function guardB() {
       }
       const cal = calleeLiteral(src, call);
       if (allowed.cmuxOnly) {
-        if (!/^\s*(['"`])cmux\1\s*,/.test(callArgsText(src, call) || '')) {
-          hits.push(`${file}:${call.line} ${call.fn}() must use the literal 'cmux', never a harness or computed executable`);
+        const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
+        if (!/^\s*(['"`])cmux\1\s*,/.test(callArgsText(src, call) || '') && !AGENT_INSPECTORS.some((re) => re.test(text))) {
+          hits.push(`${file}:${call.line} ${call.fn}() must use the literal 'cmux', or inspector('/bin/ps', …) / inspector('/usr/sbin/lsof', …) with their pinned argv, never a harness or computed executable`);
+        }
+        if (!inspectorPinned) {
+          inspectorPinned = true;
+          // Counting assignments misses a nested function, a parameter or a destructured name, any of which would
+          // shadow the pinned helper at a spawn. So every mention of the name must be the one pinned definition or
+          // one of the two pinned calls; and nothing may switch test mode on.
+          const rest = src.split(AGENT_INSPECTOR_FN);
+          const stray = rest.slice(rest.length === 2 ? 0 : rest.length).join('').split(AGENT_INSPECTOR_CALLS[0]).join('').split(AGENT_INSPECTOR_CALLS[1]).join('');
+          if (rest.length !== 2 || /\binspector\b/.test(stray)) {
+            hits.push(`${file} must name inspector only in its one definition (${AGENT_INSPECTOR_FN}) and the two pinned calls; any other binding or use can shadow it`);
+          }
+          const modes = [...src.matchAll(/(?:\.|\[\s*['"`])AGENT_TEST_MODE(?:['"`]\s*\])?([^\n]{0,12})/g)];
+          if (modes.some((m) => !/^\s*===\s*'1'/.test(m[1]))) {
+            hits.push(`${file} may only compare process.env.AGENT_TEST_MODE === '1', never set or read it another way`);
+          }
         }
         continue;
       }

@@ -1,0 +1,57 @@
+review.mjs · /Users/cortega/.agent-config-studio/review-gate/review.mjs · head-aware copy
+▶ reviewer · fable (claude · claude-fable-5-2 · high) — REVIEW_REVIEWER=fable (explicit)
+▶ review · claude-solo(claude-fable-5-2) · review-watch vs origin/main · paths README.md, lib/agent.js · single pass (no fix, no loop)
+
+▶ security · astra (codex · gpt-6-astra · high) started beside the code reviewer
+▶ security pass · astra: 0 finding(s), 0 could not be located
+
+✓ Review complete — 0 finding(s) (0 high, 0 medium, 0 low); 0 disputed, 0 could not be located. Report: reviews/2026-11-17-14-38-44-c59358/code-review.md
+Review ID: 2026-11-17-14-38-44-c59358
+
+===FINDINGS_JSON===
+{
+  "schemaVersion": 1,
+  "reviewId": "2026-11-17-14-38-44-c59358",
+  "reviewer": "claude-solo(claude-fable-5-2)",
+  "family": "fable",
+  "base": "origin/main",
+  "branch": "review-watch",
+  "head": "79df36fa97914414dc2bc659c291700d4d765452",
+  "paths": [
+    "README.md",
+    "lib/agent.js"
+  ],
+  "reportPath": "reviews/2026-11-17-14-38-44-c59358/code-review.md",
+  "diffTruncated": false,
+  "verify": null,
+  "secondOpinion": null,
+  "findings": [],
+  "disputed": [],
+  "unverified": [],
+  "security": {
+    "run": "required",
+    "required": "logic or other files: lib/agent.js",
+    "why": "security role, a vendor other than the code reviewer's (claude) first",
+    "status": "ran",
+    "family": "astra",
+    "model": "gpt-6-astra",
+    "effort": "high",
+    "vendor": "codex",
+    "durationMs": 190994,
+    "rescored": {
+      "asked": 0,
+      "scored": 0
+    },
+    "findings": 0,
+    "saw": [
+      [
+        "README.md",
+        "100644 f46d26d694844a90a6fbb39fd9c50379ce84a220"
+      ],
+      [
+        "lib/agent.js",
+        "100644 d1562ee941ea6d846bfd5439cffd9bfa034cd920"
+      ]
+    ]
+  }
+}

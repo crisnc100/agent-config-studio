@@ -86,6 +86,17 @@ try {
   }
   {
     const t = home();
+    ok('watch: sidebar when the home config says nothing', view(t).settings.watch === 'sidebar' && gate(t).json?.watch === 'sidebar', JSON.stringify(view(t).settings.watch));
+    ok('watch: a value outside off, sidebar, pane is refused (400)', ['always', 'Pane', '', 1, null].every((v) => status(() => settingsPlan({ watch: v }, t.m)) === 400));
+    const plan = settingsPlan({ watch: 'pane' }, t.m);
+    settingsApply({ watch: 'pane' }, plan.signature, t.m);
+    ok('watch: pane is written at the top level, and the review script and the studio read it back', JSON.parse(read(t.primary)).watch === 'pane'
+      && gate(t).json?.watch === 'pane' && view(t).settings.watch === 'pane', read(t.primary));
+    put(t.primary, '{"watch":"banana"}');
+    ok('watch: an unknown value reads as off, as the review script runs it', view(t).settings.watch === 'off' && gate(t).json?.watch === 'off', gate(t).stdout.slice(0, 200));
+  }
+  {
+    const t = home();
     const before = '{\n  "reviewer": "sol",\n  "riskPaths": ["*vault*"],\n  "security": { "run": "required", "timeoutMs": 60000 },\n  "merge": { "policy": "off", "onHuman": "none", "threshold": 0.9, "alwaysHuman": ["db/**"] }\n}\n';
     put(t.older, before);
     ok('the risky paths come from the home config when it sets them', JSON.stringify(view(t).settings.merge.riskPaths) === '["*vault*"]' && view(t).settings.merge.riskPathsFrom === 'config');
@@ -222,8 +233,8 @@ try {
 
   ok('one Settings section on the review gate page, holding the security switch, agent merge and cross-vendor checks', c().querySelectorAll('.pk-settings').length === 1
     && !!sec().querySelector('.pk-sec-levels') && !!mg() && !!cf(), tx(sec()));
-  ok('C8: four rows, in order: Security pass, Agent merge, Always needs you, Cross-vendor checks', sec().querySelectorAll('.pk-set').map((r) => tx(r.querySelector('.pk-set-name'))).join('|')
-    === 'Security pass|Agent merge|Always needs you|Cross-vendor checks', sec().querySelectorAll('.pk-set-name').map(tx).join('|'));
+  ok('C8: five rows, in order: Security pass, Agent merge, Always needs you, Cross-vendor checks, Watch reviews', sec().querySelectorAll('.pk-set').map((r) => tx(r.querySelector('.pk-set-name'))).join('|')
+    === 'Security pass|Agent merge|Always needs you|Cross-vendor checks|Watch reviews', sec().querySelectorAll('.pk-set-name').map(tx).join('|'));
   ok('…under the lead "Nothing is saved until you preview the change."', tx(card().querySelector('#pk-sec-settings .pk-sec-lead')) === 'Nothing is saved until you preview the change.');
   ok('R3: four merge choices in plain words, Off pressed', choices(mg()).map(tx).join('|') === 'Off|Docs and tests only|Low-risk PRs|Low and medium-risk PRs' && tx(pressed(mg())) === 'Off',
     choices(mg()).map(tx).join('|'));
@@ -258,6 +269,25 @@ try {
       if (bar()) { barBtn('Cancel').click(); await settle(5); }
     }
     ok('C8: every choice of all three rows, picked in turn, shows its own exact line and no other choice\'s', wrong.length === 0 && writes.length === 0 && !bar(), wrong.join(' | '));
+  }
+  {
+    const wt = () => sec()?.querySelector('.pk-watch');
+    ok('Watch reviews: Off, Sidebar, Sidebar and pane in plain words, Sidebar pressed, its line only', choices(wt()).map(tx).join('|') === 'Off|Sidebar|Sidebar and pane'
+      && tx(pressed(wt())) === 'Sidebar' && JSON.stringify(says(wt())) === '["Inside cmux, each running reviewer gets a sidebar line with its time and current step."]', tx(wt()));
+    const lines = [['Off', 'Reviews show nothing while they run.'], ['Sidebar and pane', 'The sidebar lines, plus a pane that lists every reviewer\'s steps and closes when the review ends.'],
+      ['Sidebar', 'Inside cmux, each running reviewer gets a sidebar line with its time and current step.']];
+    const wrong = [];
+    for (const [label, line] of lines) {
+      await pick(wt, label);
+      if (tx(pressed(wt())) !== label || JSON.stringify(says(wt())) !== JSON.stringify([line])) wrong.push(`${label}: ${tx(wt())}`);
+    }
+    ok('Watch reviews: each choice shows its own exact line', wrong.length === 0, wrong.join(' | '));
+    await pick(wt, 'Sidebar and pane');
+    const named = tx(bar()?.querySelector('.pk-savebar-text')) === '1 change: watch reviews to “Sidebar and pane”';
+    await previewIt();
+    ok('Watch reviews: a pick names itself in the bar, and Preview and save shows "watch": "pane"', named && !!pre() && added(/"watch": "pane"/) && writes.length === 0, tx(sec()));
+    acts().find((b) => tx(b) === 'Cancel').click();
+    await settle(5);
   }
 
   console.log('\nR6 and R5: the diagram, the Grade and the Build page follow the settings');
@@ -579,6 +609,7 @@ try {
     const pkBody = JSON.parse(pkText);
     ok('GET /api/packs carries the current values, with no absolute HOME path', pkBody.settings?.merge?.policy === 'strict' && pkBody.settings.merge.alwaysHuman.join() === 'infra/**'
       && pkBody.settings.crossFamily === 'prefer' && typeof pkBody.settings.merge.gh === 'boolean' && !pkText.includes(sb.home), JSON.stringify(pkBody.settings));
+    ok('…and watch, sidebar by default', pkBody.settings.watch === 'sidebar', JSON.stringify(pkBody.settings));
     child.kill('SIGKILL');
   } finally { sb.cleanup(); }
 } catch (e) {
