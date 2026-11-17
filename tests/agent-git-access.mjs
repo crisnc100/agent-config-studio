@@ -19,7 +19,12 @@ const git=(cwd,...args)=>run('git',['-C',cwd,...args]);
 function argv(cwd) {
   const w=JSON.parse(run(process.execPath,[path.join(root,'bin/agent.mjs'),'open','sol','--cwd',cwd,'test task','--json']));
   run('/bin/sh',[w.launcher]);
-  return JSON.parse(fs.readFileSync(capture));
+  const args=JSON.parse(fs.readFileSync(capture));
+  const scratch=path.join(w.runDir,'tmp'), index=args.indexOf('--add-dir');
+  assert.equal(args[index+1],scratch,'each Codex worker first grants its own private temp directory');
+  assert.equal(fs.statSync(scratch).mode&0o777,0o700);
+  args.splice(index,2);
+  return args;
 }
 const grants=args=>args.flatMap((a,i)=>a==='--add-dir'?[args[i+1]]:[]);
 const repo=path.join(home,'source repo'); fs.mkdirSync(repo);

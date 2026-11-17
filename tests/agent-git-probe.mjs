@@ -75,6 +75,7 @@ for (const mode of ['denied', 'leaks', 'stuck']) {
   assert.match(r.stdout, /Probe worktree removed/);
   if (mode !== 'stuck') {
     assert.match(r.stdout, /commit: ok/);
+    assert.match(r.stdout, /tempdir: ok/, 'probe requires a successful write under os.tmpdir()');
     assert.match(r.stdout, new RegExp('commondir: ' + (mode === 'denied' ? 'denied' : 'ok')));
     const hook = opened.attempts.find(p=>path.basename(p).startsWith('acs-codex-git-admin-'));
     assert.ok(hook, 'worker attempted the unique hook write');

@@ -182,11 +182,12 @@ const linkedWorker = open('sol', ['--cwd', linked, 'git shared dir']);
 const linkedLaunch = spawnSync('/bin/sh', [linkedWorker.launcher], { env, encoding: 'utf8' });
 assert.equal(linkedLaunch.status, 0, linkedLaunch.stderr);
 const linkedArgs = JSON.parse(fs.readFileSync(captured)).args;
-assert.deepEqual(linkedArgs.flatMap((arg, i) => arg === '--add-dir' ? [linkedArgs[i + 1]] : []), ['objects', 'refs', 'logs'].map(name => path.join(gitRoot, '.git', name)).concat(['index', 'index.lock', 'HEAD', 'HEAD.lock', 'COMMIT_EDITMSG', 'logs'].map(name => path.join(admin, name))));
+assert.deepEqual(linkedArgs.flatMap((arg, i) => arg === '--add-dir' ? [linkedArgs[i + 1]] : []), [path.join(linkedWorker.runDir, 'tmp')].concat(['objects', 'refs', 'logs'].map(name => path.join(gitRoot, '.git', name)), ['index', 'index.lock', 'HEAD', 'HEAD.lock', 'COMMIT_EDITMSG', 'logs'].map(name => path.join(admin, name))));
 assert.ok(!linkedArgs.includes(path.join(gitRoot, '.git')), 'the common root is never writable');
 const normalWorker = open('sol', ['--cwd', gitRoot, 'normal repository']);
 assert.equal(spawnSync('/bin/sh', [normalWorker.launcher], { env, encoding: 'utf8' }).status, 0);
-assert.ok(!JSON.parse(fs.readFileSync(captured)).args.includes('--add-dir'));
+const normalArgs = JSON.parse(fs.readFileSync(captured)).args;
+assert.deepEqual(normalArgs.flatMap((arg,i)=>arg==='--add-dir'?[normalArgs[i+1]]:[]), [path.join(normalWorker.runDir, 'tmp')], 'normal checkouts grant only worker scratch');
 console.log('agent MCP argv and shared Git metadata passed');
 for (const cli of ['claude', 'grok']) fs.writeFileSync(path.join(fake, cli), fs.readFileSync(path.join(fake, 'codex')), { mode: 0o755 });
 const argvOf = w => {
@@ -197,7 +198,7 @@ const argvOf = w => {
 const defaultClaudeArgs = argvOf(claudeDefault);
 assert.deepEqual(defaultClaudeArgs, ['--model', claudeDefault.model, '--permission-mode', 'auto', '--strict-mcp-config', '--', 'MCP default']);
 assert.deepEqual(argvOf(claudeOptIn), ['--model', claudeOptIn.model, '--permission-mode', 'auto', '--', 'MCP opt in']);
-assert.deepEqual(argvOf(codexOptIn), ['-m', codexOptIn.model, '-s', 'workspace-write', '-a', 'never', '--', 'MCP opt in']);
+assert.deepEqual(argvOf(codexOptIn), ['-m', codexOptIn.model, '-s', 'workspace-write', '-a', 'never', '-c', 'sandbox_workspace_write.writable_roots=[]', '-c', 'sandbox_workspace_write.exclude_tmpdir_env_var=true', '-c', 'sandbox_workspace_write.exclude_slash_tmp=true', '--add-dir', path.join(codexOptIn.runDir, 'tmp'), '--', 'MCP opt in']);
 assert.deepEqual(argvOf(grokOptIn), ['-m', grokOptIn.model, '--always-approve', '--', 'MCP opt in']);
 assert.deepEqual(argvOf(grok), ['-m', grok.model, '--always-approve', '--', 'task']);
 console.log('agent all harness launcher argv passed');
