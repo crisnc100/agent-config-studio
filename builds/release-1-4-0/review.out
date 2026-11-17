@@ -1,0 +1,89 @@
+review.mjs · /Users/cortega/.agent-config-studio/review-gate/review.mjs · head-aware copy
+▶ reviewer · fable (claude · claude-fable-5-2 · high) — REVIEW_REVIEWER=fable (explicit)
+▶ review · claude-solo(claude-fable-5-2) · release-1-4-0 vs origin/main · single pass (no fix, no loop)
+
+▶ security · astra (codex · gpt-6.2-astra · high) started beside the code reviewer
+▶ security pass · astra: 1 finding(s), 0 could not be located
+
+✓ Review complete — 2 finding(s) (0 high, 1 medium, 1 low); 0 disputed, 0 could not be located. Report: reviews/2026-11-17-18-44-51-c83d11/code-review.md
+Review ID: 2026-11-17-18-44-51-c83d11
+
+===FINDINGS_JSON===
+{
+  "schemaVersion": 1,
+  "reviewId": "2026-11-17-18-44-51-c83d11",
+  "reviewer": "claude-solo(claude-fable-5-2)",
+  "family": "fable",
+  "base": "origin/main",
+  "branch": "release-1-4-0",
+  "head": "cc85c7ca93485986bb1f3c8f0c9d945159346966",
+  "reportPath": "reviews/2026-11-17-18-44-51-c83d11/code-review.md",
+  "diffTruncated": false,
+  "verify": null,
+  "secondOpinion": null,
+  "findings": [
+    {
+      "issue": "The changelog says the Sidebar-and-pane watch mode opens \"a narrow pane on the right\", but nothing in the code makes that pane narrow. The watcher opens it with `cmux new-pane --workspace <ws> --direction right` and no size or resize call (lib/agent.js:1033), the same call that gives a Grok builder its own pane (lib/agent.js:574). README.md:958 and the Settings text in public/packs-view.js:853 only say \"a pane on the right\". Unverified: cmux's default split width was not checked, so the pane may be an even split. Every other 1.4.0 claim checked out against the code: the acs-agent verbs and wait states, the sidebar line fields, tail and --log-only, acs pause/resume, the builder tab title and Grok pane, the Codex worktree git grants and private temp folder, the keychain lookup, the v1.3.0 tag, and the package.json version that publish.yml matches against the tag.",
+      "file": "CHANGELOG.md",
+      "line": "17",
+      "quote": "  pane**, a narrow pane on the right has one tab per reviewer. **Off** shows",
+      "suggestion": "Drop \"narrow\" so the line matches the README: \"With **Sidebar and pane**, a pane on the right has one tab per reviewer.\" Alternatively, size the pane in openTab if a narrow pane is the intent.",
+      "likelihood": 3,
+      "impact": 1,
+      "protected": false,
+      "trigger": "Set Watch reviews to Sidebar and pane (`watch: \"pane\"`) and run a review inside cmux: the pane opens at cmux's default split size, not a narrow one as the changelog says.",
+      "preExisting": false,
+      "risk": 3,
+      "severity": "low",
+      "filed": true,
+      "status": "verified-quote",
+      "id": "f1"
+    },
+    {
+      "issue": "The changelog promises a narrower write boundary than Codex enforces. On main, lib/agent.js grants write access to the entire shared Git objects, refs and logs directories. A builder can therefore change another local branch’s ref. The promise about hooks also fails when a repository keeps its hooks inside the writable checkout, as with a relative core.hooksPath.",
+      "file": "CHANGELOG.md",
+      "line": "30",
+      "quote": "- A Codex builder in a git worktree can commit: it gets write access only to\n  the exact git files a commit needs, never git's config or hooks, plus its\n  own private temp folder.",
+      "suggestion": "Describe the actual grants: selected per-worktree files, shared Git objects, refs and logs, and a private temp folder. Limit the hook assurance to the default Git hooks directory.",
+      "likelihood": 3,
+      "impact": 7,
+      "protected": false,
+      "trigger": "A maintainer relies on the release note when assigning untrusted work to a Codex builder in a linked worktree. A task that induces the builder to modify a sibling branch’s ref can affect that branch despite the advertised limit.",
+      "preExisting": false,
+      "risk": 21,
+      "severity": "medium",
+      "filed": false,
+      "status": "verified-quote",
+      "source": "security",
+      "id": "s1"
+    }
+  ],
+  "disputed": [],
+  "unverified": [],
+  "security": {
+    "run": "required",
+    "required": "logic or other files: package.json",
+    "why": "security role, a vendor other than the code reviewer's (claude) first",
+    "status": "ran",
+    "family": "astra",
+    "model": "gpt-6.2-astra",
+    "effort": "high",
+    "vendor": "codex",
+    "durationMs": 126970,
+    "rescored": {
+      "asked": 0,
+      "scored": 0
+    },
+    "findings": 1,
+    "saw": [
+      [
+        "CHANGELOG.md",
+        "100644 b24fb48c22886dbe59f0b2f246cf46d5aacc4da3"
+      ],
+      [
+        "package.json",
+        "100644 1edc6435bbc7e841bbca0227f48be20b6d34b2a1"
+      ]
+    ]
+  }
+}
