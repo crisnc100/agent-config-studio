@@ -644,13 +644,20 @@ edited.
 
 For a Codex worker in a linked Git worktree, the launcher grants writes only
 to the common directory's `objects/`, `refs/` and `logs/`, and that worktree's
-own Git administration directory. It verifies that the administration directory
-is under the common directory's `worktrees/` and points back to the working
-directory's `.git` file. Forged links and symlinked data directories get no grant
-for those paths. Common `config`, `hooks/`, `info/`, `packed-refs` and root lock
-files receive no extra write permission. A normal commit, including one from a
-packed branch ref, needs no common-root writes; maintenance operations may
-require the operator's separate action.
+`index`, `index.lock`, `HEAD`, `HEAD.lock`, `COMMIT_EDITMSG` and `logs/` paths.
+Codex's macOS sandbox supports file grants, including missing lock files;
+the administration directory itself receives no grant. Its `commondir`,
+`gitdir`, `config.worktree` and other configuration or object redirects remain
+read-only. The launcher clears inherited extra writable roots and excludes
+default writable temp directories for these workers, so placing a repository
+in a temp directory does not bypass the boundary.
+It verifies that the administration directory is under the common directory's
+`worktrees/` and points back to the working directory's `.git` file. Forged links,
+symlinked data directories and symlinked commit files get no grant for those
+paths. Common `config`, `hooks/`, `info/`, `packed-refs` and root lock files receive
+no extra write permission. Normal branch and detached-HEAD commits, including
+one from a packed branch ref, need no common-root writes; maintenance operations
+may require the operator's separate action.
 
 Workers use tabs in a shared workers pane beside the orchestrator. Grok needs
 its own visible pane to start; focus returns to the orchestrator after its
