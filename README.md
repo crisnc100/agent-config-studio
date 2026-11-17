@@ -968,6 +968,14 @@ and show nothing. The review starts `acs-agent watch` itself, outside any
 pane, so it needs no pane of its own. It clears its lines when the review
 ends, on Ctrl-C, and, after a hard kill, when the next review starts.
 
+In any terminal, cmux or not, open a pane or split and run `acs-agent tail`:
+it prints the running review's steps, each tagged with its reviewer (the text
+the cmux pane shows), and new ones as they come. When that review ends it says
+so and waits for the next, so a pane left open keeps showing reviews; Ctrl-C
+stops it. `acs-agent tail <run id>` follows one run and exits when it ends;
+`--once` prints what is there and exits. Outside cmux the review still starts
+the watcher, which writes only that log and never calls cmux.
+
 ## Optional: worktree tools
 
 `tools/worktree/wt.zsh` is a zsh toolkit for parallel git worktrees: each
