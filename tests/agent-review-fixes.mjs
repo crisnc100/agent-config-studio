@@ -264,6 +264,29 @@ const cases = {
       assert.ok(!argv.slice(0,argv.indexOf('--')).some(a=>a.includes('mcp_servers.evil')));
     }
   },
+  async codexTrustVariants() {
+    for (const fixture of ['subdir','restricted','existing']) for (const cancel of ['Quit','Back to Agent Command Center','Keep current directory']) {
+      clock = Date.now();
+      const w = worker('codex');
+      const saved = record(w); saved.session = null; saved.transcript = null; saved.openedAt = clock - 61000;
+      fs.writeFileSync(path.join(records,`${w.id}.json`),JSON.stringify(saved));
+      const screen = fs.readFileSync(path.join(root,`tests/fixtures/agent-screens/codex-trust-${fixture}.txt`),'utf8')
+        .replace(/2\. (?:Quit|Back to Agent Command Center)/,`2. ${cancel}`);
+      show(w,`\x1b[32m${screen}\x1b[0m`);
+      const waited = await waitWorker(w.id,0,ctx,runtime);
+      assert.equal(waited.state,'stuck',`${fixture}/${cancel}: trust beats no_start`);
+      assert.equal(waited.kind,'trust',`${fixture}/${cancel}: classify the folder consent dialog`);
+      const response = cli(['wait',w.id,'--timeout','0','--json']);
+      assert.equal(response.status,3,response.stderr);
+      assert.equal(JSON.parse(response.stdout).kind,'trust');
+      await assert.rejects(sendWorker(w.id,'Do not answer the trust dialog',ctx,runtime),/stuck/);
+      assert.equal(inputCalls(w).length,0,'trust detection never sends text or keys');
+      show(w,screen.replace(/^.*(?:Folder access|Trust this folder\?|Config, hooks, and exec policies|This existing task may retain settings).*$/gm,''));
+      clock += 3000;
+      assert.equal((await waitWorker(w.id,0,ctx,runtime)).state,'no_start','choices without a known dialog heading are insufficient');
+      const closed = record(w); closed.status = 'closed'; fs.writeFileSync(path.join(records,`${w.id}.json`),JSON.stringify(closed));
+    }
+  },
   async s2() {
     for (const vendor of ['claude','codex','grok']) for (const kind of ['trust','permission']) {
       clock = Date.now();
