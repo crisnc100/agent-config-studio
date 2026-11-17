@@ -663,6 +663,13 @@ paths. Common `config`, `hooks/`, `info/`, `packed-refs` and root lock files rec
 no extra write permission. Normal branch and detached-HEAD commits, including
 one from a packed branch ref, need no common-root writes; maintenance operations
 may require the operator's separate action.
+The launcher records granted admin paths outside the worker's write grants.
+On wait, send, answer, close and list (including idle expiry), ACS checks those
+paths and their reflog entries with `lstat`. Unsafe symlink or nonregular scratch
+entries are removed without following them; unexpected nonempty directories
+remain blocked. ACS reports `stuck` with kind `git_tamper` and the affected paths,
+and retains that warning after cleanup and close. Closing still terminates the
+worker surface; a flagged worker cannot send a follow-up or supply an answer.
 
 Workers use tabs in a shared workers pane beside the orchestrator. Grok needs
 its own visible pane to start; focus returns to the orchestrator after its
