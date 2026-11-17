@@ -1,0 +1,62 @@
+review.mjs · /Users/cortega/.agent-config-studio/review-gate/review.mjs · head-aware copy
+▶ reviewer · fable (claude · claude-fable-5-2 · high) — REVIEW_REVIEWER=fable (explicit)
+▶ review · claude-solo(claude-fable-5-2) · review-watch vs origin/main · paths tests/SUITE, tests/setup-guards.mjs, tools/ask-model.mjs · single pass (no fix, no loop)
+
+▶ security · astra (codex · gpt-6-astra · high) started beside the code reviewer
+▶ security pass · astra: 0 finding(s), 0 could not be located
+
+✓ Review complete — 0 finding(s) (0 high, 0 medium, 0 low); 0 disputed, 0 could not be located. Report: reviews/2026-11-17-15-01-00-ec65e7/code-review.md
+Review ID: 2026-11-17-15-01-00-ec65e7
+
+===FINDINGS_JSON===
+{
+  "schemaVersion": 1,
+  "reviewId": "2026-11-17-15-01-00-ec65e7",
+  "reviewer": "claude-solo(claude-fable-5-2)",
+  "family": "fable",
+  "base": "origin/main",
+  "branch": "review-watch",
+  "head": "8773909ecc1c5ef50d231388de662f17295d07ea",
+  "paths": [
+    "tests/SUITE",
+    "tests/setup-guards.mjs",
+    "tools/ask-model.mjs"
+  ],
+  "reportPath": "reviews/2026-11-17-15-01-00-ec65e7/code-review.md",
+  "diffTruncated": false,
+  "verify": null,
+  "secondOpinion": null,
+  "findings": [],
+  "disputed": [],
+  "unverified": [],
+  "security": {
+    "run": "required",
+    "required": "logic or other files: tools/ask-model.mjs",
+    "why": "security role, a vendor other than the code reviewer's (claude) first",
+    "status": "ran",
+    "family": "astra",
+    "model": "gpt-6-astra",
+    "effort": "high",
+    "vendor": "codex",
+    "durationMs": 254332,
+    "rescored": {
+      "asked": 0,
+      "scored": 0
+    },
+    "findings": 0,
+    "saw": [
+      [
+        "tests/SUITE",
+        "100644 e0ea7c1c3c0c1f8b0f813e32cefa433cce00da95"
+      ],
+      [
+        "tests/setup-guards.mjs",
+        "100644 cdc42ed75860db78be6b06e24c601e13a5dbcaee"
+      ],
+      [
+        "tools/ask-model.mjs",
+        "100644 b85d4bfc0fab8508498555bb1e260d75ed710f62"
+      ]
+    ]
+  }
+}
