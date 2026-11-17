@@ -1,0 +1,5 @@
+{"f1":{"status":"fixed","response":"real","test":"tests/agent-git-access.mjs and tests/agent-cli.mjs: workers get a private runDir/tmp TMPDIR granted first; live probe: tempdir write ok"},
+ "f2":{"status":"fixed","response":"real","test":"tests/agent-git-access.mjs: split-index repos commit with an ordinary index; no admin-dir grant"},
+ "s1":{"status":"fixed","response":"real","test":"tests/agent-cli.mjs: sandbox pins on every Codex launch, normal checkout included"},
+ "x1":{"status":"deferred","reason":"Under Codex's default shell environment policy (this Mac sets none) the live probe's real Codex worker committed with the override in place, so the variables arrive intact; only a user who explicitly sets ignore_default_excludes=false could hit it","fix":"pass the split-index override without KEY in the variable names (e.g. a generated GIT_CONFIG_GLOBAL include file) or detect the policy and warn"},
+ "x2":{"status":"deferred","reason":"LOW: filed. Private worker temp folders are not removed on close","fix":"remove <runDir>/tmp in closeWorker and expire"}}
