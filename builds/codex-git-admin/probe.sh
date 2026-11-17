@@ -54,6 +54,11 @@ function workerProbe({ payload, hookName, resultName }) {
     git('add', payload);
     git('-c', 'user.name=Codex sandbox probe', '-c', 'user.email=probe@example.invalid', 'commit', '-m', 'sandbox probe commit');
   });
+  attempt('tempdir', () => {
+    const folder = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'acs-git-admin-probe-'));
+    try { fs.writeFileSync(path.join(folder, 'file'), 'ok\n'); }
+    finally { fs.rmSync(folder, { recursive: true, force: true }); }
+  });
   for (const name of ['commondir', 'gitdir']) attempt(name, () => identicalWrite(path.join(admin, name)));
   attempt('config.worktree', () => {
     const target = path.join(admin, 'config.worktree');
@@ -91,11 +96,11 @@ try {
   if (!done) throw new Error('Worker exceeded the ten-minute probe deadline.');
   fs.copyFileSync(path.join(worktree, resultName), path.join(temp, resultName));
   const results = JSON.parse(fs.readFileSync(path.join(temp, resultName), 'utf8'));
-  const steps = ['commit', 'commondir', 'gitdir', 'config.worktree', 'common/hooks/unique', 'common/config'];
+  const steps = ['commit', 'tempdir', 'commondir', 'gitdir', 'config.worktree', 'common/hooks/unique', 'common/config'];
   if (results.length !== steps.length) throw new Error('Incomplete worker results.');
   let failed = false;
   steps.forEach((step, i) => {
-    const expected = i === 0 ? 'ok' : 'denied', result = results[i];
+    const expected = i < 2 ? 'ok' : 'denied', result = results[i];
     console.log(`${step}: ${result.status}`);
     if (result.step !== step || result.status !== expected) failed = true;
   });

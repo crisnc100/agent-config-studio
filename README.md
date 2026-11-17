@@ -648,9 +648,14 @@ to the common directory's `objects/`, `refs/` and `logs/`, and that worktree's
 Codex's macOS sandbox supports file grants, including missing lock files;
 the administration directory itself receives no grant. Its `commondir`,
 `gitdir`, `config.worktree` and other configuration or object redirects remain
-read-only. The launcher clears inherited extra writable roots and excludes
-default writable temp directories for these workers, so placing a repository
-in a temp directory does not bypass the boundary.
+read-only. Every Codex launcher clears inherited extra writable roots and
+excludes default writable temp directories, including for normal checkouts,
+subdirectories and rejected Git links. Each worker receives its own private
+scratch directory, exported as `TMPDIR`, `TMP` and `TEMP` and explicitly granted
+write access, so tests can create temp files without exposing other temp repos.
+Worker Git processes use a runtime `core.splitIndex=false` override, preserving
+other runtime Git settings and persistent repository config. This avoids granting
+the administration directory to create unpredictable `sharedindex.*` files.
 It verifies that the administration directory is under the common directory's
 `worktrees/` and points back to the working directory's `.git` file. Forged links,
 symlinked data directories and symlinked commit files get no grant for those
