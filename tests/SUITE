@@ -95,6 +95,7 @@ tests/pause-cli.mjs                                   ci:offline
 tests/pause-routes.mjs                                ci:offline
 # ask-model: each CLI's argv, the model proof, every exit code and its install, against stub CLIs (temp HOME).
 tests/ask-model.mjs                                   ci:offline
+tests/ask-model-watch.mjs                             ci:offline
 # The model guide block: renderer, markers, byte-exact edits (in-process), then through the server (temp HOME).
 tests/model-guide.mjs                                 ci:offline
 tests/model-guide-routes.mjs                          ci:offline
@@ -237,6 +238,7 @@ packs/review-gate/tests/review.skills.test.mjs        manual                    
 packs/review-gate/tests/review.slices.test.mjs        manual                        # unproven on a Linux runner: the CI proof run stopped before it
 packs/review-gate/tests/review.test.mjs               manual                        # unproven on a Linux runner: the CI proof run stopped before it
 packs/review-gate/tests/review.tier.test.mjs          manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.watch.test.mjs         ci:packs ci-only
 packs/review-gate/tests/review.worktree.test.mjs      manual                        # unproven on a Linux runner: the CI proof run stopped before it
 
 # Never run by a gate.
