@@ -3,7 +3,9 @@
  * ~/.agent-config-studio/agents, the live state acs-agent writes for every
  * session on the machine, and still fails on any other write under
  * ~/.agent-config-studio — including a runs/ or agents/ folder somewhere
- * else. Run against a scratch HOME, never the real one.
+ * else, or a link standing where either folder should be. Run against a
+ * scratch HOME, never the real one. Each must-fail write goes into a folder
+ * already in the baseline, so only the exemption could hide it.
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -37,6 +39,8 @@ put(`${ACS}/roles.json`, '{"version":1}\n');
 put(`${ACS}/runs/r1-aaaa.json`, '{}\n');
 put(`${ACS}/runs/r1-aaaa.1.log`, 'log\n');
 put(`${ACS}/agents/w1.json`, '{}\n');
+for (const d of ['review-gate/runs', 'review-gate/agents', 'runs-backup', 'agents.old', 'history']) put(`${ACS}/${d}/keep`);
+put('.claude/skills/agents/keep');
 
 scenario('an untouched tree', () => {}, false);
 scenario('a run appearing in runs/ (.json, .log, .<n>.log, .watch.json)', () => {
@@ -56,8 +60,28 @@ scenario('runs/ created when absent', () => put(`${ACS}/runs/r3-cccc.json`), fal
 scenario('a new file in another folder under ~/.agent-config-studio', () => put(`${ACS}/history/leak.tmpfile`), true);
 scenario('a new file at the top of ~/.agent-config-studio', () => put(`${ACS}/leak.json`), true);
 scenario('an edit to a file beside runs/', () => put(`${ACS}/roles.json`, '{"version":2}\n'), true);
-scenario('a runs/ folder nested elsewhere under ~/.agent-config-studio', () => put(`${ACS}/review-gate/runs/r.json`), true);
-scenario('an agents/ folder under another guarded tree', () => put('.claude/skills/agents/x.md'), true);
+scenario('a new file in an existing runs/ nested elsewhere under ~/.agent-config-studio', () => put(`${ACS}/review-gate/runs/r.json`), true);
+scenario('a new file in an existing agents/ nested elsewhere under ~/.agent-config-studio', () => put(`${ACS}/review-gate/agents/w.json`), true);
+scenario('a new file in an existing sibling runs-backup/', () => put(`${ACS}/runs-backup/r.json`), true);
+scenario('a new file in an existing sibling agents.old/', () => put(`${ACS}/agents.old/w.json`), true);
+scenario('a new file in an existing agents/ under another guarded tree', () => put('.claude/skills/agents/x.md'), true);
+
+const elsewhere = path.join(T, 'elsewhere');
+fs.mkdirSync(elsewhere);
+for (const d of ['runs', 'agents']) {
+  scenario(`~/.agent-config-studio/${d} replaced by a link`, () => {
+    fs.rmSync(path.join(T, ACS, d), { recursive: true, force: true });
+    fs.symlinkSync(elsewhere, path.join(T, ACS, d));
+  }, true);
+  scenario(`~/.agent-config-studio/${d} as a link, re-pointed`, () => {
+    fs.unlinkSync(path.join(T, ACS, d));
+    fs.symlinkSync(path.join(T, ACS, 'history'), path.join(T, ACS, d));
+  }, true);
+  scenario(`~/.agent-config-studio/${d} replaced by a plain file`, () => {
+    fs.unlinkSync(path.join(T, ACS, d));
+    put(`${ACS}/${d}`, 'a\n');
+  }, true);
+}
 
 fs.rmSync(snap, { force: true });
 console.log(`\n${pass} passed, ${fail} failed`);

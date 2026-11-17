@@ -245,9 +245,10 @@ export const isLiveSuiteProbeSlug = (slug) => PROBE_SLUG.test(slug);
 export function snapshotRealHomes() {
   const out = {};
   const walk = (entry, follow = false, seen = new Set()) => {
-    if (LIVE_STATE.has(entry)) return;
     let st;
     try { st = fs.lstatSync(entry); } catch { return; }
+    // Only as real directories: a link or file in their place is recorded below.
+    if (LIVE_STATE.has(entry) && st.isDirectory()) return;
     if (st.isSymbolicLink()) {
       out[entry] = `link:${fs.readlinkSync(entry)}`;
       if (!follow) return;
