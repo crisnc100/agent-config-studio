@@ -173,7 +173,8 @@ if (hasFlag('--gate')) {
 // ever adds tracked files and links. Env and the home configs always count.
 let gateConfigError
 const COMMAND_KEYS = ['verifyCmd', 'classifier', 'base']
-const OWN_FILE_KEYS = [...COMMAND_KEYS, 'coverageExempt', 'coverageExemptDefaults', 'grokMcpAllow']
+// watch opens a pane in your terminal: a branch you check out must not turn it on.
+const OWN_FILE_KEYS = [...COMMAND_KEYS, 'coverageExempt', 'coverageExemptDefaults', 'grokMcpAllow', 'watch']
 // Set when the repo file failed that check: its `pick` may name a family, never a command to run.
 let REPO_PICK_UNTRUSTED = false
 // Whether the loaded config may turn crossFamily off: the home config, or a repo file git doesn't track.
@@ -3373,7 +3374,7 @@ function startSecurityWorker(job, member) {
   let child
   try {
     child = spawnFile(process.execPath, [COPY_PATH, '--security-worker', file],
-      { detached: true, stdio: ['ignore', out, out], env: { ...process.env, REVIEW_BASE: BASE, REVIEW_BASE_FETCHED: BASE, GROK_HOME } })
+      { detached: true, stdio: ['ignore', out, out], env: { ...process.env, REVIEW_BASE: BASE, REVIEW_BASE_FETCHED: BASE, GROK_HOME, REVIEW_WATCH_CHILD: '1' } })
   } finally {
     closeSync(out)
   }
@@ -3702,7 +3703,7 @@ async function runSlices() {
   requireClean()
   fetchBase()
   const passed = args.filter((a, i) => !['--slices', '--jobs'].includes(a) && !['--slices', '--jobs'].includes(args[i - 1]))
-  const env = { ...process.env, REVIEW_PATHS: '', REVIEW_BASE: BASE, REVIEW_BASE_FETCHED: BASE }
+  const env = { ...process.env, REVIEW_PATHS: '', REVIEW_BASE: BASE, REVIEW_BASE_FETCHED: BASE, REVIEW_WATCH_CHILD: '1' }
   const results = []
   const one = (i) => new Promise((done) => {
     let out = '', err = ''
@@ -4800,7 +4801,7 @@ function evalRepo(c, dir) {
 const EVAL_CHILDREN = new Set()
 // One case review: a child review.mjs in the case's repo, in eval mode, with nothing of this run's REVIEW_* settings.
 function evalChild(m, c, repo, logDir, root, timeoutMs) {
-  const env = { ...evalEnv(), REVIEW_EVAL: '1', REVIEW_EVAL_ROOT: root, REVIEW_EVAL_LOG_DIR: logDir, REVIEW_BASE: 'main', REVIEW_REVIEWER: m.family, REVIEW_PATHS: '' }
+  const env = { ...evalEnv(), REVIEW_EVAL: '1', REVIEW_EVAL_ROOT: root, REVIEW_EVAL_LOG_DIR: logDir, REVIEW_BASE: 'main', REVIEW_REVIEWER: m.family, REVIEW_PATHS: '', REVIEW_WATCH_CHILD: '1' }
   return new Promise((done) => {
     let out = '', err = '', timedOut = false
     const child = spawnFile(process.execPath, [COPY_PATH, c.intent], { cwd: repo, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -5010,26 +5011,67 @@ async function runEval() {
   console.log(`ℹ logged ${plural(records.length, 'record')} to ${evalLog}`)
   console.log(`\n===EVAL_JSON===\n${JSON.stringify(records, null, 2)}`)
 }
+// watch: "sidebar" (the default) | "pane" | "off". Inside cmux, a top-level run that calls models hands them to
+// `acs-agent watch`, which keeps a live sidebar line per call (and, for pane, a pane of their steps). The watcher is
+// started detached and never waited on; every failure is silent, so output, exit codes and timing do not change.
+// Children (slices, eval cases, the security worker) carry REVIEW_WATCH_CHILD=1: the parent's watcher follows them.
+function startWatch(kind) {
+  try {
+    if (process.env.REVIEW_WATCH_CHILD === '1' || EVAL_MODE) return
+    const mode = String(cfg('REVIEW_WATCH', 'watch', 'sidebar')).trim().toLowerCase()
+    if (mode !== 'sidebar' && mode !== 'pane') return
+    const workspace = process.env.CMUX_WORKSPACE_ID
+    if (!process.env.CMUX_SOCKET_PATH || !/^(?:workspace:\d+|[a-f\d-]{36})$/i.test(workspace ?? '')) return
+    // An acs-agent from before watch prints its usage into nobody's terminal; ask once instead.
+    const probe = spawnSync('acs-agent', ['watch', '--version'], { stdio: 'ignore', timeout: 1000, killSignal: 'SIGKILL' })
+    if (probe.error || probe.status !== 0) return
+    const runs = join(homedir(), '.agent-config-studio', 'runs')
+    mkdirSync(runs, { recursive: true, mode: 0o700 })
+    const run = { version: 1, pid: process.pid, kind, ...(INTENT && { intent: INTENT }), ...(SLICE && { slice: SLICE.join(', ') }),
+      workspace, started: new Date().toISOString() }
+    writeFileSync(join(runs, `r${process.pid}-${randomBytes(4).toString('hex')}.json`), `${JSON.stringify(run)}\n`, { mode: 0o600, flag: 'wx' })
+    const child = spawn('acs-agent', ['watch', '--pid', String(process.pid), '--kind', kind, '--workspace', workspace, ...(mode === 'pane' ? ['--pane'] : [])],
+      { detached: true, stdio: 'ignore' })
+    child.on('error', () => {})
+    child.unref()
+  } catch { /* watching is optional; the review never depends on it */ }
+}
 // ── main ─────────────────────────────────────────────────────────────────────
 ;(async function main() {
   if (hasFlag('--rubric')) return console.log(`Rubric version: ${RUBRIC_VERSION}\n${RUBRIC}`)
   if (hasFlag('--calibrate')) return calibrate()
-  if (hasFlag('--eval')) return runEval()
+  if (hasFlag('--eval')) {
+    startWatch('eval')
+    return runEval()
+  }
   if (hasFlag('--gate')) return pushGate()
   if (hasFlag('--log-grade')) return logGrade(option('--log-grade'))
   if (hasFlag('--recheck-of')) throw new Error('--recheck-of requires --log-grade <verdict.json>')
   if (hasFlag('--close')) return closeReview(option('--close'))
-  if (hasFlag('--dispute')) return disputeFinding(option('--dispute'), args[flagAt('--dispute') + 2])
+  if (hasFlag('--dispute')) {
+    startWatch('dispute')
+    return disputeFinding(option('--dispute'), args[flagAt('--dispute') + 2])
+  }
   if (hasFlag('--waive')) return waiveFinding(option('--waive'), args[flagAt('--waive') + 2])
   if (hasFlag('--summary')) return printSummary()
   if (hasFlag('--tier-json')) return printTierJson()
   if (hasFlag('--deferred')) return printDeferred()
   if (hasFlag('--noise-report')) return noiseReport()
-  if (hasFlag('--fix-check')) return fixCheck(option('--fix-check'))
-  if (hasFlag('--slices')) return runSlices()
+  if (hasFlag('--fix-check')) {
+    startWatch('fix-check')
+    return fixCheck(option('--fix-check'))
+  }
+  if (hasFlag('--slices')) {
+    startWatch('review')
+    return runSlices()
+  }
   if (hasFlag('--security-worker')) return securityWorker(option('--security-worker'))
-  if (hasFlag('--security-only')) return runSecurityOnly()
+  if (hasFlag('--security-only')) {
+    startWatch('security')
+    return runSecurityOnly()
+  }
   if (hasFlag('--security-findings')) return printSecurityFindings()
+  startWatch('review')
   const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList, sliceDiff, since } = getDiff()
   refuseLinkedReviews()
   CONTEXT = reviewContext(branch)
