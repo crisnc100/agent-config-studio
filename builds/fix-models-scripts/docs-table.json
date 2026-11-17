@@ -1,0 +1,1 @@
+{"rows":[{"behavior":"models-scripts test setup and two assertions updated to current review gate behavior","files":["tests/models-scripts.mjs","tests/fixtures/model-registry/inspect-scripts.mjs"],"none":"test files only"}]}

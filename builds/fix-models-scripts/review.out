@@ -1,0 +1,50 @@
+review.mjs · /Users/cortega/.agent-config-studio/review-gate/review.mjs · head-aware copy
+▶ reviewer · fable (claude · claude-fable-5-2 · high) — REVIEW_REVIEWER=fable (explicit)
+▶ review · claude-solo(claude-fable-5-2) · fix-models-scripts vs origin/main · single pass (no fix, no loop)
+
+ℹ security pass: not-required (only docs, tests, static or lockfiles changed, none on riskPaths)
+
+✓ Review complete — 1 finding(s) (0 high, 0 medium, 1 low); 0 disputed, 0 could not be located. Report: reviews/2026-11-17-18-10-45-608ddb/code-review.md
+Review ID: 2026-11-17-18-10-45-608ddb
+
+===FINDINGS_JSON===
+{
+  "schemaVersion": 1,
+  "reviewId": "2026-11-17-18-10-45-608ddb",
+  "reviewer": "claude-solo(claude-fable-5-2)",
+  "family": "fable",
+  "base": "origin/main",
+  "branch": "fix-models-scripts",
+  "head": "4205133bfa505c307e90bb8f201b6d06583e34b3",
+  "reportPath": "reviews/2026-11-17-18-10-45-608ddb/code-review.md",
+  "diffTruncated": false,
+  "verify": null,
+  "secondOpinion": null,
+  "findings": [
+    {
+      "issue": "The fixture's own CLI entry never passes a roles file, so its temp-HOME ('none') runs of review.mjs still stop with no reviewer role. With no roles.json, lib/roles.js leaves the reviewer role unset, `model-id --role reviewer --json` exits 2, and review.mjs's poolOrStop exits 1. The CLI therefore reports all three none/review.mjs scenarios as FAILED and exits 1. The branch fixed this for tests/models-scripts.mjs only, by adding the `rolesFile` option, which the CLI has no flag for. Derived from reading the code; not run.",
+      "file": "tests/fixtures/model-registry/inspect-scripts.mjs",
+      "line": "154",
+      "quote": "  const res = inspect({ homeFile: hf === -1 ? null : process.argv[hf + 1] });",
+      "suggestion": "Add a `--roles-file <roles.json>` flag to the CLI entry and pass it through as `rolesFile` (or write a default reviewer role into the temp HOME when none is given), and name the flag in the header usage line.",
+      "likelihood": 2,
+      "impact": 3,
+      "protected": false,
+      "trigger": "Running the documented CLI by hand: `node tests/fixtures/model-registry/inspect-scripts.mjs out.json` (with or without --home-file). Nothing in the repo calls this entry; tests/models-scripts.mjs imports inspect() directly and is not affected.",
+      "preExisting": true,
+      "risk": 6,
+      "severity": "low",
+      "filed": true,
+      "status": "verified-quote",
+      "id": "f1",
+      "inDiff": false
+    }
+  ],
+  "disputed": [],
+  "unverified": [],
+  "security": {
+    "run": "required",
+    "status": "not-required",
+    "reason": "only docs, tests, static or lockfiles changed, none on riskPaths"
+  }
+}

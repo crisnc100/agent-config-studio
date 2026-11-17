@@ -11,7 +11,8 @@
  *
  * Every scenario runs twice: with the live HOME (live configs) and with an empty
  * temp HOME (no configs). --home-file drops a registry user file into the temp
- * HOME instead — that is criterion 4's one-edit proof.
+ * HOME instead — that is criterion 4's one-edit proof. The `rolesFile` option
+ * drops a roles.json there too: review.mjs refuses to run without a reviewer role.
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -49,7 +50,9 @@ function writeStubs(dir, log) {
   const node = process.execPath;
   const common = `const fs=require('fs');fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({bin:process.argv[1].split('/').pop(),argv:process.argv.slice(2)})+'\\n');`;
   fs.writeFileSync(path.join(dir, 'codex'),
-    `#!${node}\n${common}const a=process.argv.slice(2);const o=a.indexOf('-o');` +
+    // `codex mcp list` is review.mjs's MCP-off check, not a review: answer with no servers and log nothing.
+    `#!${node}\nif(process.argv[2]==='mcp'){process.stdout.write('[]');process.exit(0);}\n` +
+    `${common}const a=process.argv.slice(2);const o=a.indexOf('-o');` +
     `if(o!==-1)fs.writeFileSync(a[o+1],JSON.stringify({findings:[${JSON.stringify(FINDING)}]}));\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(dir, 'claude'),
     `#!${node}\n${common}process.stdout.write(JSON.stringify({is_error:false,result:JSON.stringify({findings:[${JSON.stringify(FINDING)}]})}));\n`,
@@ -89,7 +92,7 @@ function summarize(calls, stdout) {
   return { calls: out, labels };
 }
 
-export function inspect({ homeFile = null, modelIdDir = path.join(REAL_HOME, '.local', 'bin'), homes = ['live', 'none'] } = {}) {
+export function inspect({ homeFile = null, rolesFile = null, modelIdDir = path.join(REAL_HOME, '.local', 'bin'), homes = ['live', 'none'] } = {}) {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'mr-inspect-'));
   const results = {};
   try {
@@ -105,6 +108,10 @@ export function inspect({ homeFile = null, modelIdDir = path.join(REAL_HOME, '.l
         if (homeFile) {
           fs.mkdirSync(path.join(home, '.agent-config-studio'), { recursive: true });
           fs.copyFileSync(homeFile, path.join(home, '.agent-config-studio', 'models.json'));
+        }
+        if (rolesFile) {
+          fs.mkdirSync(path.join(home, '.agent-config-studio'), { recursive: true });
+          fs.copyFileSync(rolesFile, path.join(home, '.agent-config-studio', 'roles.json'));
         }
       }
       for (const [script, list] of Object.entries(SCENARIOS)) {
