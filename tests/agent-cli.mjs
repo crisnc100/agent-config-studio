@@ -17,7 +17,22 @@ const run = (args, extra = {}) => spawnSync(process.execPath, [path.join(root, '
 const json = r => { assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
 const state = () => JSON.parse(fs.readFileSync(path.join(home, 'fake-cmux.json'), 'utf8'));
 const records = () => fs.readdirSync(path.join(home, '.agent-config-studio/agents')).filter(f => f.endsWith('.json')).map(f => JSON.parse(fs.readFileSync(path.join(home, '.agent-config-studio/agents', f))));
-const open = (family, extra = [], vars = {}) => json(run(['open', family, '--cwd', home, '--json', ...extra], vars));
+// Every open is checked on its own: Grok is the one new pane, focused; any other worker is a tab in the caller's pane
+// without focus; both in the caller's workspace.
+const placement = (family, vars, before) => {
+  const placed = state().calls.slice(before).filter(a => a.includes('new-surface') || a.includes('new-pane'));
+  assert.equal(placed.length, 1, `one placement per open: ${JSON.stringify(placed)}`);
+  const [a] = placed, at = f => a[a.indexOf(f) + 1];
+  if (family === 'grok') assert.deepEqual([a.includes('new-pane'), at('--focus')], [true, 'true'], `grok gets its own focused pane: ${JSON.stringify(a)}`);
+  else assert.deepEqual([a.includes('new-surface'), at('--pane'), at('--focus')], [true, vars.FAKE_PANE || 'pane:1', 'false'], `${family} is a background tab in the caller's pane: ${JSON.stringify(a)}`);
+  assert.equal(at('--workspace'), vars.CMUX_WORKSPACE_ID || 'workspace:1', "the caller's workspace");
+};
+const open = (family, extra = [], vars = {}) => {
+  const before = fs.existsSync(path.join(home, 'fake-cmux.json')) ? state().calls.length : 0;
+  const w = json(run(['open', family, '--cwd', home, '--json', ...extra], vars));
+  placement(family, vars, before);
+  return w;
+};
 assert.match(run(['--help']).stdout, /usage: acs-agent open/);
 assert.equal(run(['list'], { CMUX_SOCKET_PATH: '' }).status, 2);
 assert.match(run(['list'], { FAKE_OFFLINE: '1' }).stderr, /agent needs cmux/);
@@ -37,9 +52,58 @@ assert.equal(json(run(['wait', c.id, '--timeout', '0', '--json'])).status, 'done
 const claude = open('opus', ['task']);
 const grok = open('grok', ['task']);
 for (const w of [claude, grok]) assert.equal(json(run(['wait', w.id, '--timeout', '0', '--json'])).status, 'done');
-assert.equal(state().calls.filter(a => a.includes('new-pane')).length, 2);
-assert.ok(state().calls.some(a => a.includes('new-surface') && a.includes('pane:11')));
+assert.deepEqual([codex.pane_ref, claude.pane_ref], ['pane:1', 'pane:1'], "codex and claude are in the caller's pane");
+assert.notEqual(grok.pane_ref, 'pane:1', 'grok is in a pane of its own');
+assert.equal(state().calls.filter(a => a.includes('new-pane')).length, 1, 'only grok gets a pane of its own');
+assert.equal(state().calls.filter(a => a.includes('new-surface') && a[a.indexOf('--pane') + 1] === 'pane:1').length, 2, 'codex and claude open as tabs in the caller pane');
 assert.ok(state().calls.some(a => a.includes('focus-pane') && a.includes('pane:1')));
+// A builder opens as a tab in the caller's own pane without taking focus, titled for what it builds where.
+const flag = (a, f) => a[a.indexOf(f) + 1];
+const titleOf = w => { const a = state().calls.find(a => a.includes('rename-tab') && flag(a, '--surface') === w.surface_ref); assert.ok(a, `no title for ${w.surface_ref}`); assert.equal(a.at(-2), '--', 'the title comes after the flags'); return a.at(-1); };
+for (const [w, family] of [[codex, 'sol'], [claude, 'opus'], [grok, 'grok']]) assert.equal(titleOf(w), `builder · ${family} · ${path.basename(home)}`, 'outside git: the folder name');
+for (const a of state().calls.filter(a => a.includes('new-surface'))) {
+  assert.equal(flag(a, '--pane'), 'pane:1', "the caller's pane");
+  assert.equal(flag(a, '--focus'), 'false');
+}
+for (const a of state().calls.filter(a => ['new-surface', 'new-pane', 'rename-tab'].some(v => a.includes(v)))) assert.equal(flag(a, '--workspace'), 'workspace:1', "only the caller's workspace");
+const callsBefore = state().calls.length;
+const elsewhere = open('opus', ['task'], { CMUX_WORKSPACE_ID: 'workspace:7' });
+const elsewhereCalls = state().calls.slice(callsBefore).filter(a => ['new-surface', 'rename-tab'].some(v => a.includes(v)));
+assert.equal(elsewhereCalls.length, 2);
+for (const a of elsewhereCalls) assert.equal(flag(a, '--workspace'), 'workspace:7', "a caller in another workspace opens there");
+const hostileDir = path.join(home, `evil\u001b]0;pwned\u0007${'x'.repeat(200)}`);
+fs.mkdirSync(hostileDir);
+// In workspace:7 too, so the list below still counts only this orchestrator's four workers.
+const hostile = open('sol', ['--cwd', hostileDir, 'task'], { CMUX_WORKSPACE_ID: 'workspace:7' });
+const hostileTitle = titleOf(hostile);
+assert.ok(!/[\u0000-\u001f\u007f-\u009f]/.test(hostileTitle), JSON.stringify(hostileTitle));
+assert.ok([...hostileTitle].length <= 80, `capped: ${[...hostileTitle].length}`);
+assert.match(hostileTitle, /^builder · sol · evil/);
+for (const w of [elsewhere, hostile]) assert.equal(json(run(['wait', w.id, '--timeout', '0', '--json'], { CMUX_WORKSPACE_ID: 'workspace:7' })).status, 'done');
+// new-surface still selects the new tab: the caller's tab is reselected, then focus goes back where it was.
+// In workspace:7, so the list below still counts only this orchestrator's four workers.
+{
+  const ws7 = { CMUX_WORKSPACE_ID: 'workspace:7' };
+  const start = state().calls.length;
+  const w = open('sol', ['reselect'], ws7);
+  const after = state().calls.slice(start);
+  const at = verb => after.findIndex(a => a.includes(verb));
+  assert.ok(at('list-pane-surfaces') >= 0 && at('list-pane-surfaces') < at('new-surface'), 'the selected tab is read before the new tab opens');
+  const reorder = after[at('reorder-surface')];
+  assert.ok(reorder && at('reorder-surface') > at('rename-tab'), JSON.stringify(after));
+  assert.deepEqual([flag(reorder, '--surface'), flag(reorder, '--index'), flag(reorder, '--focus'), flag(reorder, '--workspace')], ['surface:1', '0', 'false', 'workspace:7']);
+  const refocus = after.slice(at('reorder-surface')).find(a => a.includes('focus-pane'));
+  assert.ok(refocus, 'focus goes back after the reselect');
+  assert.deepEqual([flag(refocus, '--pane'), flag(refocus, '--workspace')], ['pane:1', 'workspace:7']);
+  assert.equal(state().selected['pane:1'], 'surface:1', "the caller's tab is selected again");
+  assert.equal(json(run(['wait', w.id, '--timeout', '0', '--json'], ws7)).status, 'done');
+  for (const vars of [{ FAKE_REORDER_ERROR: 'internal_error' }, { FAKE_LIST_SURFACES_ERROR: 'internal_error' }]) {
+    const r = open('sol', ['restore fails'], { ...ws7, ...vars });
+    assert.ok(r.id, 'a failed restore never fails the open');
+    assert.equal(json(run(['wait', r.id, '--timeout', '0', '--json'], ws7)).status, 'done');
+  }
+}
+console.log('agent builder tabs: caller pane, no focus, titled, caller workspace passed');
 const running = open('sol', ['task'], { FAKE_RUNNING: '1' });
 assert.equal(run(['wait', running.id, '--timeout', '0']).status, 4);
 const r = records().find(r => r.id === running.id);
@@ -179,6 +243,11 @@ fs.writeFileSync(path.join(admin, 'HEAD'), 'ref: refs/heads/fixture\n');
 fs.writeFileSync(path.join(admin, 'gitdir'), path.join(linked, '.git') + '\n');
 fs.writeFileSync(path.join(linked, '.git'), `gitdir: ${admin}\n`);
 const linkedWorker = open('sol', ['--cwd', linked, 'git shared dir']);
+assert.equal(titleOf(linkedWorker), 'builder · sol · fixture', "a linked worktree: its own branch");
+const branched = path.join(home, 'branched repo');
+assert.equal(spawnSync('git', ['init', '-q', '-b', 'feature/tabs', branched], { encoding: 'utf8' }).status, 0);
+const branchWorker = open('sol', ['--cwd', branched, 'branch title']);
+assert.equal(titleOf(branchWorker), 'builder · sol · feature/tabs', 'a repository: its branch');
 const linkedLaunch = spawnSync('/bin/sh', [linkedWorker.launcher], { env, encoding: 'utf8' });
 assert.equal(linkedLaunch.status, 0, linkedLaunch.stderr);
 const linkedArgs = JSON.parse(fs.readFileSync(captured)).args;

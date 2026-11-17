@@ -671,12 +671,13 @@ remain blocked. ACS reports `stuck` with kind `git_tamper` and the affected path
 and retains that warning after cleanup and close. Closing still terminates the
 worker surface; a flagged worker cannot send a follow-up or supply an answer.
 
-Workers use tabs in a shared workers pane beside the orchestrator. Grok needs
-its own visible pane to start; focus returns to the orchestrator after its
-session appears, or after six seconds. Before reusing the shared pane, `acs-agent`
-checks it in the current workspace. A manually removed pane is replaced; a
-`not_found` race while adding a tab gets one attempt in a fresh pane.
-Workers are scoped to the orchestrator's
+Each worker opens as a background tab in the orchestrator's own pane, in its
+workspace, without taking focus, so the orchestrator's screen stays as it is.
+The tab is titled `builder · <family> · <branch>`, the branch checked out in
+its folder (the folder name outside Git or on a detached HEAD). Grok needs
+its own visible pane to start, so it opens in a pane beside the orchestrator;
+focus returns to the orchestrator after its session appears, or after six
+seconds. Workers are scoped to the orchestrator's
 workspace and pane. At most four workers run at once across orchestrators; extra
 `open` calls and follow-ups to finished workers wait for a slot. Keep the
 waiting `open` process alive: there is no background queue service. Every
@@ -949,13 +950,17 @@ Inside cmux, a review (and its fix check, slices, security pass, dispute or
 eval) and an `ask-model` call show their model calls while they run:
 
 - **Sidebar** (the default): one sidebar line per running reviewer, for
-  example `review · sol · 4m · read lib/agent.js`: what it is, its family,
-  how long it has run and its current step. A security pass shows as
-  `security`. The line goes when that call ends. If no transcript turns up
-  for a call, its line says `running` rather than guess.
-- **Sidebar and pane** (`pane`): the same lines, plus one pane for the run
-  that lists every step, each tagged with its reviewer. It opens without
-  taking focus and closes 30 seconds after the run ends.
+  example `review · sol · watch-tail · 4m · read lib/agent.js`: what it is,
+  its family, the branch it runs on (the folder name outside Git), how long
+  it has run and its current step. A security pass shows as `security`. The
+  line goes when that call ends. If no transcript turns up for a call, its
+  line says `running` rather than guess.
+- **Sidebar and pane** (`pane`): the same lines, plus one pane on the right
+  for the run, with one tab per reviewer, titled like
+  `security · astra · watch-tail`, showing only that reviewer's steps. The
+  pane opens at the first model call without taking focus, in the review's
+  own workspace, and closes with its tabs 30 seconds after the run ends, or at
+  once on Ctrl-C.
 - **Off**: nothing is shown.
 
 Watching never changes a review: the same output, report and exit code,
@@ -969,8 +974,8 @@ pane, so it needs no pane of its own. It clears its lines when the review
 ends, on Ctrl-C, and, after a hard kill, when the next review starts.
 
 In any terminal, cmux or not, open a pane or split and run `acs-agent tail`:
-it prints the running review's steps, each tagged with its reviewer (the text
-the cmux pane shows), and new ones as they come. When that review ends it says
+it prints the running review's steps, each tagged with its reviewer (every
+tab of the cmux pane in one stream), and new ones as they come. When that review ends it says
 so and waits for the next, so a pane left open keeps showing reviews; Ctrl-C
 stops it. `acs-agent tail <run id>` follows one run and exits when it ends;
 `--once` prints what is there and exits. Outside cmux the review still starts

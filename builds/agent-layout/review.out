@@ -1,0 +1,128 @@
+review.mjs · /Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-agent-layout/packs/review-gate/runtime/review.mjs · head-aware copy
+▶ reviewer · fable (claude · claude-fable-5-2 · high) — REVIEW_REVIEWER=fable (explicit)
+▶ review · claude-solo(claude-fable-5-2) · agent-layout vs origin/main · single pass (no fix, no loop)
+
+▶ security · astra (codex · gpt-6-astra · high) started beside the code reviewer
+▶ security pass · astra: 0 finding(s), 0 could not be located
+
+✓ Review complete — 2 finding(s) (0 high, 0 medium, 2 low); 0 disputed, 0 could not be located. Report: reviews/2026-11-17-17-10-15-14ce3e/code-review.md
+Review ID: 2026-11-17-17-10-15-14ce3e
+
+===FINDINGS_JSON===
+{
+  "schemaVersion": 1,
+  "reviewId": "2026-11-17-17-10-15-14ce3e",
+  "reviewer": "claude-solo(claude-fable-5-2)",
+  "family": "fable",
+  "base": "origin/main",
+  "branch": "agent-layout",
+  "head": "6bd23c7de5d70f8a0640597798ecc2410bb79650",
+  "reportPath": "reviews/2026-11-17-17-10-15-14ce3e/code-review.md",
+  "diffTruncated": false,
+  "verify": null,
+  "secondOpinion": null,
+  "findings": [
+    {
+      "issue": "Putting workers in the orchestrator's own pane removes the separation the ownership check relied on. `owned()` (lib/agent.js:109) scopes workers by (workspace, orchestratorPane), and `context()` (lib/agent.js:101) takes the caller's pane from `cmux identify`. Before this branch a Codex/Claude worker ran in a separate workers pane, so `acs-agent` run from inside a worker was refused with 'worker belongs to another orchestrator'. Now a non-Grok worker is a tab in ctx.pane, so its own `acs-agent list/send/close/answer/wait` calls pass `owned()` for every sibling worker, and an `acs-agent open` from a worker is recorded as the orchestrator's (same orchestratorPane) and opens another tab in the orchestrator's pane.",
+      "file": "lib/agent.js",
+      "line": "574",
+      "quote": "const place = vendor === 'grok' ? ['new-pane', '--direction', 'right'] : ['new-surface', '--pane', ctx.pane];",
+      "suggestion": "Scope ownership by something a worker tab does not share with the orchestrator: record the orchestrator's own surface (caller.surface_ref) at open and compare it in owned(), or refuse acs-agent commands whose caller surface is a recorded worker surface.",
+      "likelihood": 2,
+      "impact": 5,
+      "protected": false,
+      "trigger": "A Claude builder worker (permission-mode auto) opened with `acs-agent open opus ...` runs `acs-agent list`, `acs-agent close <sibling id>` or `acs-agent open ...` itself, e.g. because it tries to delegate. Builders are briefed not to run other models, so this is an uncommon path.",
+      "preExisting": false,
+      "risk": 10,
+      "severity": "low",
+      "filed": true,
+      "status": "verified-quote",
+      "id": "f1"
+    },
+    {
+      "issue": "ask-model reads the branch for the run file from the process's working directory, not from `--cwd`. The model call runs in `cwd = path.resolve(o.cwd ?? process.cwd())` (tools/ask-model.mjs:1197), but startWatch spawns `git branch --show-current` with no `cwd` option and falls back to `path.basename(process.cwd())`. With `--cwd` pointing at another worktree or repo, the sidebar line and the pane tab title name the caller's branch (or folder) instead of the one the model is working in, contradicting the README's 'the branch it runs on'.",
+      "file": "tools/ask-model.mjs",
+      "line": "222",
+      "quote": "const current = git ? spawnSync(git, ['branch', '--show-current'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }) : null;",
+      "suggestion": "Pass the resolved cwd into startWatch and use it for both the git call (`cwd` option) and the basename fallback.",
+      "likelihood": 3,
+      "impact": 2,
+      "protected": false,
+      "trigger": "Inside cmux with watch on sidebar or pane: `ask-model --role advisor --cwd <another worktree> --prompt-file f` run from a checkout on a different branch.",
+      "preExisting": false,
+      "risk": 6,
+      "severity": "low",
+      "filed": true,
+      "status": "verified-quote",
+      "id": "f2"
+    }
+  ],
+  "disputed": [],
+  "unverified": [],
+  "security": {
+    "run": "required",
+    "required": "logic or other files: lib/agent.js, packs/review-gate/runtime/review.mjs, tools/ask-model.mjs",
+    "why": "security role, a vendor other than the code reviewer's (claude) first",
+    "status": "ran",
+    "family": "astra",
+    "model": "gpt-6-astra",
+    "effort": "high",
+    "vendor": "codex",
+    "durationMs": 310343,
+    "rescored": {
+      "asked": 0,
+      "scored": 0
+    },
+    "findings": 0,
+    "saw": [
+      [
+        "README.md",
+        "100644 c1871a837b3813d0ba45cce8297b0c5abaa4ad39"
+      ],
+      [
+        "builds/agent-layout/plan.md",
+        "100644 f4395273de1efb970a0b965f21cba41e7b975e75"
+      ],
+      [
+        "lib/agent.js",
+        "100644 10c52b9c446cfc71f39576912775f78ba7f49c06"
+      ],
+      [
+        "packs/review-gate/runtime/review.mjs",
+        "100644 9ae978f79e187b6f2f6d14fda40562dd347f257f"
+      ],
+      [
+        "packs/review-gate/tests/review.watch.test.mjs",
+        "100644 65d0f8041d77d35bd2aeb564502e05170754381b"
+      ],
+      [
+        "tests/agent-cli.mjs",
+        "100644 7eea0df676b91850ad579b6120adadadb0f195e1"
+      ],
+      [
+        "tests/agent-surfaces.mjs",
+        "100644 ccddc1d978a36566660c2f17ab95bdfe5bde25a7"
+      ],
+      [
+        "tests/agent-watch.mjs",
+        "100644 199c563559166e9f13b94aa3cdf8a6d253eec408"
+      ],
+      [
+        "tests/ask-model-watch.mjs",
+        "100644 2384b7a2f4d8c46c1632321f9a120b15792d3ebc"
+      ],
+      [
+        "tests/fixtures/agent-cmux.mjs",
+        "100644 1041e862f11532721a39a24cda62c1e5ee7f3a7d"
+      ],
+      [
+        "tests/fixtures/watch-fakes.mjs",
+        "100644 95e83ab3ba1ccdf61338eac4aa10f0ea01965169"
+      ],
+      [
+        "tools/ask-model.mjs",
+        "100644 8b4da221be4f8708e13e7248cc5c9afd216b1cd1"
+      ]
+    ]
+  }
+}

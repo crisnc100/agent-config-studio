@@ -5036,8 +5036,10 @@ function startWatch(kind) {
     if (!inCmux && !(Number(/^acs-agent watch (\d+)\s*$/.exec(probe.stdout)?.[1]) >= 2)) return
     const runs = join(homedir(), '.agent-config-studio', 'runs')
     mkdirSync(runs, { recursive: true, mode: 0o700 })
+    // The watcher titles each reviewer's tab and line with it; detached or outside Git, the folder names the work.
+    const branch = sh('git', ['branch', '--show-current'], { allowFailure: true }) || basename(process.cwd())
     const run = { version: 1, pid: process.pid, kind, ...(INTENT && { intent: INTENT }), ...(SLICE && { slice: SLICE.join(', ') }),
-      ...(inCmux && { workspace }), started: new Date().toISOString() }
+      ...(inCmux && { workspace }), branch, started: new Date().toISOString() }
     writeFileSync(join(runs, `r${process.pid}-${randomBytes(4).toString('hex')}.json`), `${JSON.stringify(run)}\n`, { mode: 0o600, flag: 'wx' })
     const where = inCmux ? ['--workspace', workspace, ...(WATCH === 'pane' ? ['--pane'] : [])] : ['--log-only']
     const child = spawn('acs-agent', ['watch', '--pid', String(process.pid), '--kind', kind, ...where],

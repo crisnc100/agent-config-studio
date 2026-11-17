@@ -129,6 +129,7 @@ if (want('claude')) {
     assert.match(positionals(c, 'set-status')[0], /^review-[A-Za-z0-9-]+-\d+$/);
   }
   assert.ok(!s.calls().some(c => c.includes('identify') || c.includes('focus-pane') || c.includes('new-pane')), 'sidebar mode: no pane, no pane context needed');
+  assert.ok(!s.calls().some(c => c.includes('new-surface') || c.includes('rename-tab')), 'sidebar mode: no tabs either');
   // Lens A finishes first: its line goes, the others stay.
   s.ps([
     { pid: 40000, ppid: 1, command: 'node /x/review.mjs' },
@@ -258,6 +259,87 @@ if (want('pane')) {
   assert.ok(s.calls().some(c => c.includes('close-surface') && c.includes('surface:77')), 'the pane closes at the end');
   assert.ok(!fs.existsSync(path.join(runs, 'gate.json')), 'its own run file goes with it');
   console.log('watch: honest line, pane, stale sweep passed');
+}
+
+// Pane mode with two reviewers: one pane for the run, one tab per reviewer inside it, each tab titled with its kind,
+// family and the gate's branch and showing only that reviewer's steps; every cmux call names the gate's workspace.
+// Everything opened closes when the run ends; a dead run's tabs are swept with its pane.
+const flag = (c, f) => c[c.indexOf(f) + 1];
+const logOf = c => flag(c, '--command').match(/'([^']+)'$/)[1];
+function tabScenario(branch) {
+  const s = scenario();
+  const runs = path.join(s.home, '.agent-config-studio/runs');
+  fs.mkdirSync(runs, { recursive: true });
+  const cwd = path.join(s.home, 'repo');
+  fs.mkdirSync(cwd);
+  fs.writeFileSync(path.join(runs, 'tabgate.json'), JSON.stringify({ version: 1, pid: 46000, kind: 'review', workspace: 'workspace:3', branch }));
+  const a = claudeCall(s.home, 46001, 'ffff6666-0000-4000-8000-000000000006', cwd);
+  const b = claudeCall(s.home, 46021, 'abab7777-0000-4000-8000-000000000007', cwd);
+  fs.appendFileSync(a, claudeTool('Read', { file_path: path.join(cwd, 'lib/a.js') }));
+  fs.appendFileSync(b, claudeTool('Read', { file_path: path.join(cwd, 'lib/secret.js') }));
+  s.ps([
+    { pid: 46000, ppid: 1, command: 'node /x/review.mjs' },
+    { pid: 46001, ppid: 46000, command: claudeArgv(models.opus) },
+    { pid: 46020, ppid: 46000, command: 'node /x/review.mjs --security-worker /tmp/review-security-2/job.json' },
+    { pid: 46021, ppid: 46020, command: claudeArgv(models.sonnet) },
+  ]);
+  return { s, runs };
+}
+if (want('tabs')) {
+  const { s, runs } = tabScenario('watch-tail\u001b]0;pwned\u0007');
+  fs.writeFileSync(path.join(runs, 'deadtabs.watch.json'), JSON.stringify({ version: 1, runId: 'deadtabs', pid: 99011, watcherPid: 99012, workspace: 'workspace:3', keys: [], surface: 'surface:5', surfaces: ['surface:5', 'surface:6'] }));
+  fs.writeFileSync(path.join(runs, 'deadtabs.1.log'), 'old\n');
+  const w = s.start(['--pid', '46000', '--kind', 'review', '--workspace', 'workspace:3', '--pane']);
+  await until('both lines with a step', () => s.statuses().size === 2 && statusValues(s).every(v => /read lib/.test(v)));
+  assert.deepEqual(statusValues(s), ['review · opus · watch-tail · <1m · read lib/a.js', 'security · sonnet · watch-tail · <1m · read lib/secret.js']);
+  await until('the dead run tabs are closed', () => ['surface:5', 'surface:6'].every(r => s.calls().some(c => c.includes('close-surface') && c.includes(r))));
+  assert.ok(!fs.existsSync(path.join(runs, 'deadtabs.1.log')), "a dead run's per-reviewer logs are removed");
+  await until('both tabs titled', () => s.calls().filter(c => c.includes('rename-tab')).length === 2);
+  const panes = s.calls().filter(c => c.includes('new-pane'));
+  const tabs = s.calls().filter(c => c.includes('new-surface'));
+  assert.equal(panes.length, 1, 'one pane per run');
+  assert.equal(tabs.length, 1, "the second reviewer opens a tab in the run's pane");
+  for (const c of [...panes, ...tabs]) assert.equal(flag(c, '--focus'), 'false', 'never takes focus');
+  assert.equal(flag(tabs[0], '--pane'), 'pane:77');
+  for (const c of s.calls()) {
+    assert.equal(flag(c, '--workspace'), 'workspace:3', `every cmux call names the gate's workspace: ${JSON.stringify(c)}`);
+    for (const arg of c) assert.ok(noControlChars(arg), JSON.stringify(arg));
+  }
+  const titles = new Map(s.calls().filter(c => c.includes('rename-tab')).map(c => {
+    assert.equal(c.at(-2), '--', 'the title comes after the flags');
+    return [flag(c, '--surface'), c.at(-1)];
+  }));
+  assert.deepEqual(new Set(titles.keys()), new Set(['surface:77', 'surface:78']));
+  const logs = new Map([[ 'surface:77', logOf(panes[0])], ['surface:78', logOf(tabs[0])]]);
+  const tabFor = title => [...titles].find(([, t]) => t === title)?.[0];
+  const opus = tabFor('review · opus · watch-tail'), sonnet = tabFor('security · sonnet · watch-tail');
+  assert.ok(opus && sonnet, JSON.stringify([...titles]));
+  assert.notEqual(logs.get(opus), logs.get(sonnet));
+  await until('each tab shows its own steps', () => {
+    const own = f => { try { return fs.readFileSync(logs.get(f), 'utf8'); } catch { return ''; } };
+    return /read lib\/a\.js/.test(own(opus)) && /read lib\/secret\.js/.test(own(sonnet));
+  });
+  assert.ok(!/secret/.test(fs.readFileSync(logs.get(opus), 'utf8')), 'the review tab never shows the security steps');
+  assert.ok(!/lib\/a\.js/.test(fs.readFileSync(logs.get(sonnet), 'utf8')), 'the security tab never shows the review steps');
+  s.ps([]);
+  await finished(w, 'tabs');
+  for (const ref of ['surface:77', 'surface:78']) assert.ok(s.calls().some(c => c.includes('close-surface') && c.includes(ref)), `${ref} closes at the end`);
+  assert.equal(s.statuses().size, 0);
+  assert.deepEqual(fs.readdirSync(runs), [], 'the run, its logs and its sidecar are gone');
+  console.log('watch: one pane, a titled tab per reviewer, own steps, all closed passed');
+}
+
+// A signal closes every tab and the pane at once, without the linger.
+if (want('tabs-signal')) {
+  const { s } = tabScenario('watch-tail');
+  const w = s.start(['--pid', '46000', '--kind', 'review', '--workspace', 'workspace:3', '--pane'], { AGENT_TEST_LINGER_MS: '60000' });
+  await until('both tabs open', () => s.calls().filter(c => c.includes('rename-tab')).length === 2);
+  const t = Date.now();
+  w.kill('SIGTERM');
+  await finished(w, 'tabs-signal');
+  assert.ok(Date.now() - t < 5000, 'no linger after a signal');
+  for (const ref of ['surface:77', 'surface:78']) assert.ok(s.calls().some(c => c.includes('close-surface') && c.includes(ref)), `${ref} closes on a signal`);
+  console.log('watch: a signal closes every tab at once passed');
 }
 
 // Version probe for the gate, a bad pid, and a hung or missing cmux never fail the watcher.
