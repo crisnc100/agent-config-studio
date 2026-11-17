@@ -27,9 +27,11 @@
   `builder · <model> · <branch>`, so the main agent keeps its screen and
   focus. Grok still opens in its own pane, because it only starts while
   visible.
-- A Codex builder in a git worktree can commit: it gets write access only to
-  the exact git files a commit needs, never git's config or hooks, plus its
-  own private temp folder.
+- A Codex builder in a linked git worktree can commit. It can write the
+  repository's shared objects, refs and logs, and its own worktree's index,
+  HEAD and commit-message files, plus its own private temp folder. The shared
+  git config, the shared hooks folder and the worktree's admin redirects stay
+  read-only.
 
 ### Fixed
 
