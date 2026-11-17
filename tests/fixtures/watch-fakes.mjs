@@ -24,5 +24,10 @@ if (tool === 'ps') {
   fs.appendFileSync(path.join(home, 'fake-cmux-calls.jsonl'), JSON.stringify(args) + '\n');
   if (process.env.FAKE_CMUX_FAIL) { console.error('socket unreachable'); process.exit(1); }
   if (args.includes('new-pane')) console.log(JSON.stringify({ ok: true, result: { surface_ref: 'surface:77', pane_ref: 'pane:77' } }));
-  else console.log('OK');
+  else if (args.includes('new-surface')) {
+    // Each tab gets the next ref after the pane's own surface:77.
+    const n = read('fake-cmux-surfaces.json', 77) + 1;
+    fs.writeFileSync(path.join(home, 'fake-cmux-surfaces.json'), JSON.stringify(n));
+    console.log(JSON.stringify({ ok: true, result: { surface_ref: `surface:${n}`, pane_ref: args[args.indexOf('--pane') + 1] } }));
+  } else console.log('OK');
 }

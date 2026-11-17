@@ -7,7 +7,7 @@ const file = path.join(home, 'fake-cmux.json');
 const state = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { n: 0, calls: [], workers: {} };
 const args = process.argv.slice(2);
 state.panes ||= ['pane:1'];
-const verbs = ['list-panes', 'identify', 'new-pane', 'new-surface', 'focus-pane', 'send', 'send-key', 'read-screen', 'close-surface', 'list-pane-surfaces'];
+const verbs = ['list-panes', 'identify', 'new-pane', 'new-surface', 'focus-pane', 'send', 'send-key', 'read-screen', 'close-surface', 'list-pane-surfaces', 'rename-tab'];
 const cmd = args.find(a => verbs.includes(a));
 const opt = k => args[args.indexOf(k) + 1];
 state.calls.push(args);

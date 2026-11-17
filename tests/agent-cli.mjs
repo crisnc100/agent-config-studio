@@ -40,6 +40,29 @@ for (const w of [claude, grok]) assert.equal(json(run(['wait', w.id, '--timeout'
 assert.equal(state().calls.filter(a => a.includes('new-pane')).length, 1, 'only grok gets a pane of its own');
 assert.equal(state().calls.filter(a => a.includes('new-surface') && a[a.indexOf('--pane') + 1] === 'pane:1').length, 2, 'codex and claude open as tabs in the caller pane');
 assert.ok(state().calls.some(a => a.includes('focus-pane') && a.includes('pane:1')));
+// A builder opens as a tab in the caller's own pane without taking focus, titled for what it builds where.
+const flag = (a, f) => a[a.indexOf(f) + 1];
+const titleOf = w => { const a = state().calls.find(a => a.includes('rename-tab') && flag(a, '--surface') === w.surface_ref); assert.ok(a, `no title for ${w.surface_ref}`); assert.equal(a.at(-2), '--', 'the title comes after the flags'); return a.at(-1); };
+for (const [w, family] of [[codex, 'sol'], [claude, 'opus'], [grok, 'grok']]) assert.equal(titleOf(w), `builder · ${family} · ${path.basename(home)}`, 'outside git: the folder name');
+for (const a of state().calls.filter(a => a.includes('new-surface'))) {
+  assert.equal(flag(a, '--pane'), 'pane:1', "the caller's pane");
+  assert.equal(flag(a, '--focus'), 'false');
+}
+for (const a of state().calls.filter(a => ['new-surface', 'new-pane', 'rename-tab'].some(v => a.includes(v)))) assert.equal(flag(a, '--workspace'), 'workspace:1', "only the caller's workspace");
+const elsewhere = open('opus', ['task'], { CMUX_WORKSPACE_ID: 'workspace:7' });
+const elsewhereCalls = state().calls.filter(a => ['new-surface', 'rename-tab'].some(v => a.includes(v)) && a.includes(elsewhere.surface_ref));
+assert.equal(elsewhereCalls.length, 2);
+for (const a of elsewhereCalls) assert.equal(flag(a, '--workspace'), 'workspace:7', "a caller in another workspace opens there");
+const hostileDir = path.join(home, `evil\u001b]0;pwned\u0007${'x'.repeat(200)}`);
+fs.mkdirSync(hostileDir);
+// In workspace:7 too, so the list below still counts only this orchestrator's four workers.
+const hostile = open('sol', ['--cwd', hostileDir, 'task'], { CMUX_WORKSPACE_ID: 'workspace:7' });
+const hostileTitle = titleOf(hostile);
+assert.ok(!/[\u0000-\u001f\u007f-\u009f]/.test(hostileTitle), JSON.stringify(hostileTitle));
+assert.ok([...hostileTitle].length <= 80, `capped: ${[...hostileTitle].length}`);
+assert.match(hostileTitle, /^builder · sol · evil/);
+for (const w of [elsewhere, hostile]) assert.equal(json(run(['wait', w.id, '--timeout', '0', '--json'], { CMUX_WORKSPACE_ID: 'workspace:7' })).status, 'done');
+console.log('agent builder tabs: caller pane, no focus, titled, caller workspace passed');
 const running = open('sol', ['task'], { FAKE_RUNNING: '1' });
 assert.equal(run(['wait', running.id, '--timeout', '0']).status, 4);
 const r = records().find(r => r.id === running.id);
@@ -179,6 +202,11 @@ fs.writeFileSync(path.join(admin, 'HEAD'), 'ref: refs/heads/fixture\n');
 fs.writeFileSync(path.join(admin, 'gitdir'), path.join(linked, '.git') + '\n');
 fs.writeFileSync(path.join(linked, '.git'), `gitdir: ${admin}\n`);
 const linkedWorker = open('sol', ['--cwd', linked, 'git shared dir']);
+assert.equal(titleOf(linkedWorker), 'builder · sol · fixture', "a linked worktree: its own branch");
+const branched = path.join(home, 'branched repo');
+assert.equal(spawnSync('git', ['init', '-q', '-b', 'feature/tabs', branched], { encoding: 'utf8' }).status, 0);
+const branchWorker = open('sol', ['--cwd', branched, 'branch title']);
+assert.equal(titleOf(branchWorker), 'builder · sol · feature/tabs', 'a repository: its branch');
 const linkedLaunch = spawnSync('/bin/sh', [linkedWorker.launcher], { env, encoding: 'utf8' });
 assert.equal(linkedLaunch.status, 0, linkedLaunch.stderr);
 const linkedArgs = JSON.parse(fs.readFileSync(captured)).args;
