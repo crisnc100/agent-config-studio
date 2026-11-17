@@ -12,7 +12,8 @@
  * Three kinds of evidence, and each assertion says which one it is:
  *
  *  - CONTENT, by sha256, for every tree ACS reads or writes that nothing else
- *    churns: every file and directory under ~/.agent-config-studio, the skills
+ *    churns: every file and directory under ~/.agent-config-studio but its
+ *    runs/ and agents/ (LIVE_STATE below), the skills
  *    trees, ~/.claude/{hooks,agents,commands,skills_retired}, ~/.codex/rules
  *    and ~/.agents (symlinks by target, not followed); every project skill tree
  *    the skills feature walks under every project folder (each path in the
@@ -73,6 +74,15 @@ const ROOTS = [
   // (lib/registry.js), and a SAFE_ROOT the file editor can write.
   '.config/worktree',
 ].map((r) => path.join(HOME, r));
+/**
+ * Live runtime state inside ROOTS, never walked: `acs-agent watch` (lib/agent.js
+ * runsDir, and the review gate's review.mjs) writes and prunes runs/, and
+ * `acs-agent open` writes worker records, prompts and launchers to agents/, for
+ * every review or model call any session on the machine makes, so they change
+ * mid-run without this suite. The suites that drive acs-agent run it under a
+ * temp HOME. Full paths, so a runs/ or agents/ anywhere else still counts.
+ */
+const LIVE_STATE = new Set(['runs', 'agents'].map((d) => path.join(HOME, '.agent-config-studio', d)));
 /**
  * Every project folder ACS reads: each path in the real roots.json — parsed
  * here with plain fs, never through lib/roots.js, so a bug there cannot also
@@ -237,6 +247,8 @@ export function snapshotRealHomes() {
   const walk = (entry, follow = false, seen = new Set()) => {
     let st;
     try { st = fs.lstatSync(entry); } catch { return; }
+    // Only as real directories: a link or file in their place is recorded below.
+    if (LIVE_STATE.has(entry) && st.isDirectory()) return;
     if (st.isSymbolicLink()) {
       out[entry] = `link:${fs.readlinkSync(entry)}`;
       if (!follow) return;
@@ -401,7 +413,7 @@ export function compareRealHomes(before, after) {
 }
 
 const hashedCount = (snap) => Object.keys(snap).filter((k) => !/^(raw|meta|names|trees|slugs|context|config):/.test(k)).length;
-const CONTENT_LABEL = (n) => `${n} entries (files by sha256, directories by presence) under ~/.agent-config-studio, ` +
+const CONTENT_LABEL = (n) => `${n} entries (files by sha256, directories by presence) under ~/.agent-config-studio (but its live runs/ and agents/), ` +
   '~/.claude/{skills,hooks,agents,commands,skills_retired}, ~/.codex/{skills,rules}, ~/.agents, ~/.config/worktree (links followed), every project skill ' +
   'tree and the loose files atop every project folder, every ~/.claude/projects slug directory and its memory/ tree, every CLAUDE.md / AGENTS.md / ' +
   `.cursor rule, .mcp.json and .worktrees.conf (links followed) under ${PROJECT_ROOTS.map(tilde).join(', ')}, ` +

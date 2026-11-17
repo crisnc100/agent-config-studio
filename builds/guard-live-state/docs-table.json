@@ -1,0 +1,1 @@
+{"rows":[{"behavior":"real-home guard skips the two live-state folders when they are real directories","files":["tests/real-home.mjs","tests/real-home-live-state.mjs","tests/SUITE"],"none":"test files only"}]}
