@@ -228,7 +228,7 @@ if (want('pane')) {
   fs.writeFileSync(path.join(runs, 'deadrun.json'), JSON.stringify({ version: 1, pid: 99001, kind: 'review' }));
   fs.writeFileSync(path.join(runs, 'deadrun.watch.json'), JSON.stringify({ version: 1, runId: 'deadrun', pid: 99001, watcherPid: 99002, workspace: 'workspace:1', keys: ['review-deadrun-1', 'review-deadrun-2'], surface: 'surface:5' }));
   fs.writeFileSync(path.join(runs, 'liverun.json'), JSON.stringify({ version: 1, pid: 43500, kind: 'review' }));
-  fs.writeFileSync(path.join(runs, 'gate.json'), JSON.stringify({ version: 1, pid: 43000, kind: 'review', intent: 'fix check' }));
+  fs.writeFileSync(path.join(runs, 'gate.json'), JSON.stringify({ version: 1, pid: 43000, kind: 'fix-check', intent: 'PR 3: watch the review agents, phase two' }));
   s.ps([
     { pid: 43000, ppid: 1, command: 'node /x/review.mjs' },
     { pid: 43001, ppid: 43000, command: claudeArgv(models.fable) },
@@ -239,19 +239,19 @@ if (want('pane')) {
   await until('the dead run pane is closed', () => s.calls().some(c => c.includes('close-surface') && c.includes('surface:5')));
   await until('dead run files removed', () => !fs.existsSync(path.join(runs, 'deadrun.json')) && !fs.existsSync(path.join(runs, 'deadrun.watch.json')));
   assert.ok(fs.existsSync(path.join(runs, 'liverun.json')), 'a live run is left alone');
-  await until('starting line', () => has(s, /^fix check · fable · <1m · starting$/));
-  await until('honest running line', () => has(s, /^fix check · fable · <1m · running$/));
+  await until('starting line', () => has(s, /^fix-check · fable · <1m · starting$/));
+  await until('honest running line', () => has(s, /^fix-check · fable · <1m · running$/));
   const pane = s.calls().find(c => c.includes('new-pane'));
   assert.ok(pane, 'pane mode opens a pane');
   assert.equal(pane[pane.indexOf('--focus') + 1], 'false');
   assert.ok(!s.calls().some(c => c.includes('focus-pane') || c.includes('identify')));
   const log = pane[pane.indexOf('--command') + 1].match(/'([^']+)'$/)[1];
-  await until('pane line', () => /fix check · fable.*no transcript/.test(fs.readFileSync(log, 'utf8')));
+  await until('pane line', () => /fix-check · fable.*no transcript/.test(fs.readFileSync(log, 'utf8')));
   // A late session file is pid-specific evidence, not a guess: the call picks it up.
   const t = claudeCall(s.home, 43001, 'eeee5555-0000-4000-8000-000000000005', s.home);
   fs.appendFileSync(t, claudeTool('Glob', { pattern: '**/*.md' }));
   await until('late transcript', () => has(s, /glob \*\*\/\*\.md$/));
-  assert.match(fs.readFileSync(log, 'utf8'), /\[fix check · fable\] glob \*\*\/\*\.md/);
+  assert.match(fs.readFileSync(log, 'utf8'), /\[fix-check · fable\] glob \*\*\/\*\.md/);
   s.ps([{ pid: 43500, ppid: 1, command: 'node /x/review.mjs' }]);
   await finished(w, 'pane');
   assert.equal(s.statuses().size, 0);
