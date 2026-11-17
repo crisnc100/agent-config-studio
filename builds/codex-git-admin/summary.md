@@ -1,4 +1,4 @@
 review.mjs · /Users/cortega/.agent-config-studio/review-gate/review.mjs · head-aware copy
 
-✖ No complete close covers HEAD; the complete closes at e1ed63d55347310ecac9de20fa7bf9a0f31a7db8 leave 6 file(s) uncovered: lib/agent.js, tests/SUITE, tests/agent-cli.mjs, tests/agent-git-access.mjs, tests/agent-git-fix2.mjs, tests/agent-git-probe.mjs — review them as a slice (REVIEW_PATHS=lib/agent.js,tests/SUITE,tests/agent-cli.mjs,tests/agent-git-access.mjs,tests/agent-git-fix2.mjs,tests/agent-git-probe.mjs) and close it at the tip
+✖ No complete close covers HEAD; the complete slice closes at ae09261a9ec1c1b7f133ef03602eb54198f72284 leave 2 file(s) uncovered: README.md, tests/agent-git-tamper.mjs — review them as a slice (REVIEW_PATHS=README.md,tests/agent-git-tamper.mjs) and close it at the tip
 
