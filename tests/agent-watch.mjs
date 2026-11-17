@@ -261,6 +261,25 @@ if (want('pane')) {
 }
 
 // Version probe for the gate, a bad pid, and a hung or missing cmux never fail the watcher.
+// Only the security worker itself marks a call as security: a code reviewer's prompt holds the diff, which can quote
+// `node review.mjs --security-worker …`, and that text must not relabel it.
+if (want('labels')) {
+  const s = scenario();
+  const quoted = 'the diff adds child = spawnFile(node, [review.mjs, --security-worker, file]) and node /x/review.mjs --security-worker /tmp/j.json';
+  s.ps([
+    { pid: 45000, ppid: 1, command: 'node /x/review.mjs PR 3 --security-worker review' },
+    { pid: 45001, ppid: 45000, command: `codex exec -c model=${models.sol} -s read-only -o /tmp/o.json ${quoted}` },
+    { pid: 45010, ppid: 45000, command: 'node /x/review.mjs --security-worker /tmp/review-security-9/job.json' },
+    { pid: 45011, ppid: 45010, command: claudeArgv(models.opus) },
+  ]);
+  const w = s.start(['--pid', '45000', '--kind', 'review', '--workspace', 'workspace:1']);
+  await until('two lines', () => s.statuses().size === 2);
+  assert.deepEqual(statusValues(s), ['review · sol · <1m · starting', 'security · opus · <1m · starting']);
+  s.ps([]);
+  await finished(w, 'labels');
+  console.log('watch: security label only from the worker process passed');
+}
+
 if (want('args')) {
   const s = scenario();
   const probe = s.start(['--version']);
