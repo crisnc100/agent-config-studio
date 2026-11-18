@@ -37,12 +37,12 @@ const rolesIn = (wf) => {
     && catalog.filter((p) => !p.workflow?.strip).every((p) => p.workflow.steps.length >= 3), JSON.stringify(strips));
   const rg = catalog.find((p) => p.id === 'review-gate').workflow;
   ok('review-gate: the /pr-review flow, with no variant tabs (the reviewer tiers are /code-review\'s)', rg.command === '/pr-review' && !rg.variants?.length, JSON.stringify(rg.variants));
-  ok('review-gate: the steps /pr-review names, in order', JSON.stringify(rg.steps.map((s) => s.id)) === '["review","security","fix","dispute","check","close","context","gate","merge"]',
+  ok('review-gate: the steps /pr-review names, in order', JSON.stringify(rg.steps.map((s) => s.id)) === '["review","security","fix","dispute","context","check","close","gate","merge"]',
     JSON.stringify(rg.steps.map((s) => s.id)));
   ok('…the code review and the security check run side by side, and the note says each runs alone too', rg.steps.find((s) => s.id === 'security').beside === 'review'
     && rg.steps.filter((s) => s.beside).length === 1 && /\/code-review/.test(rg.note || '') && /\/security-check/.test(rg.note || ''), JSON.stringify(rg.note));
-  ok('…the context pass comes right after Close, run by the writer role, and the note says /pr writes the description after the push',
-    rg.steps.findIndex((s) => s.id === 'context') === rg.steps.findIndex((s) => s.id === 'close') + 1 && rg.steps.find((s) => s.id === 'context').role === 'writer'
+  ok('…the context pass comes right before the fix check, run by the writer role, and the note says /pr writes the description after the push',
+    rg.steps.findIndex((s) => s.id === 'context') === rg.steps.findIndex((s) => s.id === 'check') - 1 && rg.steps.find((s) => s.id === 'context').role === 'writer'
     && /\/context-pass/.test(rg.steps.find((s) => s.id === 'context').what) && /After the push, \/pr writes the description/.test(rg.note || ''), JSON.stringify(rg.note));
   // PR C: eight steps share one row, so each says what it does in one short line.
   const whats = rg.steps.flatMap((st) => [st.what, ...Object.values(st.variants || {}).map((o) => o.what)]).filter(Boolean);
@@ -233,8 +233,8 @@ try {
   ok('who is you, your session agent, or a script with no model', /^you\b/.test(who('build', 'judge')) && /your session agent/.test(who('build', 'understand'))
     && who('review-gate', 'close') === 'script' && who('review-gate', 'gate') === 'git hook',
     `${who('build', 'judge')} | ${who('build', 'understand')} | ${who('review-gate', 'close')} | ${who('review-gate', 'gate')}`);
-  ok('the context pass names the writer role, Opus or Sonnet, and its docs slice', /^writer/.test(who('review-gate', 'context')) && /Opus or Sonnet/.test(who('review-gate', 'context'))
-    && /then a docs-focus slice review/.test(who('review-gate', 'context')), who('review-gate', 'context'));
+  ok('the context pass names the writer role, Opus or Sonnet, and the fix check that reviews it', /^writer/.test(who('review-gate', 'context')) && /Opus or Sonnet/.test(who('review-gate', 'context'))
+    && /before the fix check, which reviews it/.test(who('review-gate', 'context')), who('review-gate', 'context'));
   const flowKids = card('review-gate').querySelector('.flow').children;
   const at2 = flowKids.indexOf(step('review-gate', 'review'));
   ok('the security check is the row after the code review, shaded, saying it runs at the same time', at2 !== -1

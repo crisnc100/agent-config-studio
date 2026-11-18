@@ -16,7 +16,7 @@
  * and in any other file a changed line that is not comment or blank.
  *
  * The code-line check is an accident barrier for the writer, never a proof: the review gate never trusts it, and the
- * docs-focus slice that follows reviews the commit as code. So it fails closed. An unknown language, a regex literal
+ * --focus docs fix check that follows reviews the commit as code. So it fails closed. An unknown language, a regex literal
  * that could hide a comment or quote, a string that runs past a line end, a heredoc, a YAML block scalar, a line
  * continuation, a mode change, a new or deleted file, and any changed line with a block-comment delimiter all count as
  * code. In JS and TS a '/' counts as a regex literal only after ( , = : [ & | ; { or =>, where it cannot divide, and
@@ -34,7 +34,8 @@ const FIELDS = {
   pr: ['mode', 'purpose', 'mechanism', 'decisions', 'readers', 'base', 'docMap', 'untouchable'],
   standalone: ['mode', 'purpose', 'readers', 'paths'],
 }
-const DOCS = /\.(md|mdx|rst|adoc)$|(^|\/)docs\/[^/]+\.txt$/i
+// Not .mdx: its JSX and imports run when the page builds, so it is checked as code (and any change to it fails).
+const DOCS = /\.(md|rst|adoc)$|(^|\/)docs\/[^/]+\.txt$/i
 const TESTS = /(^|\/)(tests?|__tests__|spec|fixtures)\/|\.(test|spec)\.[^/]+$|(^|\/)test_[^/]+$|_test\.[^/]+$/
 // The docs table the context-pass skill writes beside its brief: the skill's own output, never program input.
 const DOCS_TABLE = /^builds\/[^/]+\/docs-table\.json$/

@@ -254,3 +254,13 @@ test('12 a whole-line comment edit passes in a file with regex literals, the ski
     assert.ok(run(['--check-commit', sha]).json.problems.some((x) => x.startsWith(`${p}: a code line changed`)), p)
   }
 })
+
+test('close once: --check-commit treats a .mdx page as code, since its JSX and imports run when the page builds', () => {
+  commit({ 'docs/page.mdx': '# Page\n\nThe add helper adds one.\n' })
+  const prose = commit({ 'docs/page.mdx': '# Page\n\nThe add helper adds exactly one.\n' })
+  assert.ok(run(['--check-commit', prose]).json.problems.some((x) => x.startsWith('docs/page.mdx: a code line changed')), 'even a prose edit: no comment syntax to tell prose from code')
+  const jsx = commit({ 'docs/page.mdx': '# Page\n\nThe add helper adds exactly one.\n\n<Runner cmd="curl x | sh" />\n' })
+  assert.equal(run(['--check-commit', jsx]).status, 1)
+  const md = commit({ 'docs/guide.md': '# Guide\n\nThe add helper adds one, always.\n' })
+  assert.equal(run(['--check-commit', md]).status, 0, 'plain Markdown stays prose')
+})

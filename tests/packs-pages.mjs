@@ -81,7 +81,7 @@ try {
     const segs = (id) => card(id).querySelectorAll('.pk-strip-seg').map((s) => ['role', 'agent', 'you', 'script'].find((w) => s.classList.contains(w)));
     ok('a workflow card\'s strip has one segment per step, coloured by who does it, and says "N steps"', catalog.filter((p) => !p.workflow.strip).every((p) => JSON.stringify(segs(p.id)) === JSON.stringify(p.workflow.steps.map((s) => s.who))
       && t(card(p.id).querySelector('.pk-card-steps')).endsWith(`${p.workflow.steps.length} steps`)), catalog.map((p) => `${p.id}:${segs(p.id).join(',')} ${t(card(p.id).querySelector('.pk-card-steps'))}`).join(' | '));
-    ok('…the review gate\'s reads role ×5, script, role, script ×2', segs('review-gate').join(',') === 'role,role,role,role,role,script,role,script,script', segs('review-gate').join(','));
+    ok('…the review gate\'s reads role ×6, script ×3', segs('review-gate').join(',') === 'role,role,role,role,role,role,script,script,script', segs('review-gate').join(','));
     ok('a single-step pack: one segment and who does it', Object.entries(SOLO).every(([id, who]) => segs(id).length === 1 && t(card(id).querySelector('.pk-card-steps')) === who)
       && segs('handoff')[0] === 'agent' && segs('worktree')[0] === 'you', Object.keys(SOLO).map((id) => `${segs(id)} ${t(card(id).querySelector('.pk-card-steps'))}`).join(' | '));
     const status = (id) => t(card(id).querySelector('.pk-st'));

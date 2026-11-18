@@ -265,3 +265,344 @@ test('9 --since-close: a file the security prompt cut at the cap stays out of wh
   assert.ok(close.tierReasons.some((r) => /security pass did not see src\/z\.js/.test(r)), JSON.stringify(close.tierReasons))
   assert.equal(close.tier, 'high')
 })
+
+// ── close once: the context pass runs before the one fix check, which reviews it with the docs focus ──
+// The docs focus names the context commit; in these tests it is the last commit.
+const DOCS_CHECK = 'docs'
+const fixCheck = (id, extra = {}, args = [DOCS_CHECK]) => {
+  args = args.flatMap((a) => a === DOCS_CHECK ? ['--focus', 'docs', '--context-commit', git('rev-parse', 'HEAD')] : [a])
+  const r = script(['--fix-check', id, ...args], { REVIEW_REVIEWER: 'sol', ...extra })
+  allowed(r)
+  return lines(LOG).filter((e) => e.kind === 'fix-check' && e.review === id).at(-1)
+}
+const closes = () => lines(LOG).filter((e) => e.type === 'close')
+const COMMENTED = `// Callers read these three numbers at start.\n${APP}`
+// The docs block a --focus docs fix check adds, verbatim, for its context commit and that commit's files.
+const docsBlock = (sha, files) => `DOCS AND COMMENTS, as well: the comment and doc edits in this diff are a context pass, ` +
+  `made so comments and technical docs describe the code as it is now. For every changed doc line and comment, open the ` +
+  `code it describes and also report: a claim that is untrue of the code; a claim not backed by the code (name the ` +
+  `file:line that would back it, or say none does); any code-line change in the context commit ${sha} ` +
+  `(its files: ${files.join(', ')}), meaning a line it changed that is not comment or doc text: the rest of this ` +
+  `diff is the fix round, whose code lines are expected; ` +
+  `a removed comment that carried a reason, constraint, trade-off or trap the code cannot show; a changed directive or ` +
+  `executable comment (lint or type directives, build tags, doc tests). Quote the changed line. Do NOT report wording, ` +
+  `tone or style preferences.\n\n`
+// Structural, not by wording: the docs prompt is the plain fix check's prompt (no --focus, a twin review at the same head,
+// the same HEAD) plus exactly that block, once. Any other added or changed text, anywhere, fails.
+const codeCall = () => calls().filter((c) => c.kind === 'code').at(-1).prompt
+function plainPrompt(twin) {
+  rmSync(CALLS, { force: true })
+  allowed(script(['--fix-check', twin], { REVIEW_REVIEWER: 'sol' }))
+  return codeCall()
+}
+// And across the whole prompt, code lines come up only in the block's scoped ask and its fix-round note: an instruction
+// about code lines added to every fix check would change both prompts alike, so (b) alone would miss it.
+function assertDocsPrompt(prompt, plainText, sha, files) {
+  const block = docsBlock(sha, files)
+  assert.equal(prompt.split(block).length, 2, `the docs block, verbatim and once:\n${prompt}`)
+  assert.equal(prompt.replace(block, ''), plainText)
+  const asks = (prompt.match(/code[- ]lines?/gi) || []).map((a) => a.toLowerCase())
+  assert.deepEqual(asks, ['code-line', 'code lines'], `only the scoped ask and its fix-round note mention code lines:\n${asks.join(' | ')}`)
+}
+
+test('10 --fix-check --focus docs runs the fix check with the docs instructions for the diff\'s comment and doc edits, and the record logs the focus', () => {
+  const id = reviewed(), twin = reviewed()
+  commit({ 'src/app.js': COMMENTED, 'README.md': 'base\nThe app exports one, two and three numbers.\n' })
+  const plainText = plainPrompt(twin)
+  rmSync(CALLS, { force: true })
+  const check = fixCheck(id)
+  const code = calls().filter((c) => c.kind === 'code')
+  assert.equal(code.length, 1)
+  assert.match(code[0].prompt, /^Fix check: review only this fix diff/)
+  assert.match(code[0].prompt, /DOCS AND COMMENTS/)
+  assert.match(code[0].prompt, /the comment and doc edits in this diff/)
+  for (const part of ['untrue', 'not backed by the code', '+// Callers read these three numbers at start.']) assert.ok(code[0].prompt.includes(part), part)
+  assertDocsPrompt(code[0].prompt, plainText, git('rev-parse', 'HEAD'), ['README.md', 'src/app.js'])
+  assert.equal(check.focus, 'docs')
+  // A plain fix check records no focus and gets no docs instructions.
+  const other = reviewed({ REVIEW_PATHS: 'README.md' })
+  commit({ 'README.md': 'base\nThe app exports three numbers.\n' })
+  rmSync(CALLS, { force: true })
+  const plain = fixCheck(other, {}, [])
+  assert.equal(Object.hasOwn(plain, 'focus'), false)
+  assert.doesNotMatch(calls().find((c) => c.kind === 'code').prompt, /DOCS AND COMMENTS/)
+})
+
+test('11 the unsliced close-once flow: review → fix → context commit → fix check --focus docs → one close; the push, --summary and the tier are clean', () => {
+  homeConfig({ security: { run: 'required' } })
+  const id = reviewed({ STUB_FINDINGS: findings(finding({ issue: 'two should be 22' })) })
+  commit({ 'src/app.js': 'export const one = 1\nexport const two = 22\nexport const three = 3\n' })
+  commit({ 'src/app.js': '// Callers read these three numbers at start.\nexport const one = 1\nexport const two = 22\nexport const three = 3\n',
+    'README.md': 'base\nThe app exports one, two (22) and three.\n' })
+  rmSync(CALLS, { force: true })
+  const check = fixCheck(id)
+  assert.deepEqual(calls().map((c) => c.kind).sort(), ['code', 'security'], 'the fix round changed src/app.js after the review\'s pass saw it')
+  assert.equal(check.security.status, 'ran')
+  const close = closed(id, { f1: { status: 'fixed' } })
+  assert.equal(close.status, 'complete')
+  assert.equal(closes().length, 1, 'exactly one close')
+  const state = git('ls-tree', 'HEAD', 'src/app.js').split(/\s+/)
+  assert.deepEqual(close.coverage.find(([p]) => p === 'src/app.js'), ['src/app.js', `${state[0]} ${state[2]}`], 'the commented file is covered at its tip state')
+  assert.ok(!close.tierReasons.some((t) => /security/.test(t)), JSON.stringify(close.tierReasons))
+  assert.notEqual(close.tier, 'high')
+  allowed(gate())
+  const tier = JSON.parse(script(['--tier-json']).stdout)
+  assert.equal(tier.covered, true); assert.notEqual(tier.tier, 'high', JSON.stringify(tier))
+  const summary = script(['--summary'])
+  allowed(summary)
+  assert.doesNotMatch(summary.out, /security pass did not|no security pass ran/)
+})
+
+test('12 a fix check whose fix round and context commit touched only docs and tests starts no security pass, says why, and the tier does not count it', () => {
+  homeConfig({ security: { run: 'required' } })
+  const id = reviewed({ STUB_FINDINGS: findings(finding({ issue: 'README is wrong', file: 'README.md', line: '2', quote: 'The app exports one, two and three.' })) })
+  commit({ 'README.md': 'base\nThe app exports one, two and three numbers.\n', 'test/app.test.js': 'import "../src/app.js"\n' })
+  rmSync(CALLS, { force: true })
+  const r = script(['--fix-check', id, '--focus', 'docs', '--context-commit', git('rev-parse', 'HEAD')], { REVIEW_REVIEWER: 'sol' })
+  allowed(r)
+  assert.deepEqual(calls().map((c) => c.kind), ['code'])
+  assert.match(r.out, /security pass: not-required \(no security-relevant file changed since a security pass saw it\)/)
+  const check = lines(LOG).find((e) => e.kind === 'fix-check' && e.review === id)
+  assert.equal(check.security.status, 'not-required')
+  const close = closed(id, { f1: { status: 'fixed' } })
+  assert.equal(close.status, 'complete')
+  assert.ok(!close.tierReasons.some((t) => /security/.test(t)), JSON.stringify(close.tierReasons))
+})
+
+test('13 security.run "always" runs the pass in every fix check; off and --code-only run none', () => {
+  homeConfig({ security: { run: 'always' } })
+  const id = reviewed()
+  commit({ 'README.md': 'base\nThe app exports one, two and three numbers.\n' })
+  rmSync(CALLS, { force: true })
+  assert.equal(fixCheck(id).security.status, 'ran')
+  assert.deepEqual(calls().map((c) => c.kind).sort(), ['code', 'security'])
+  for (const [config, args, status, n] of [[{ security: { run: 'off' } }, [DOCS_CHECK], 'off', 4], [{ security: { run: 'required' } }, ['--code-only'], 'not-asked', 5]]) {
+    homeConfig(config)
+    const next = reviewed({ REVIEW_PATHS: 'src/app.js' }, args.includes('--code-only') ? ['--code-only'] : [])
+    commit({ 'src/app.js': `${APP}export const n = ${n}\n` })
+    rmSync(CALLS, { force: true })
+    const check = fixCheck(next, {}, args)
+    assert.deepEqual(calls().map((c) => c.kind), ['code'], status)
+    assert.equal(check.security?.status ?? 'off', status)
+  }
+})
+
+test('14 docs findings of a --focus docs fix check are deferred like any fix-check finding, and --summary lists them with their numbers', () => {
+  const id = reviewed()
+  commit({ 'src/app.js': `// Callers read these three numbers once.\nexport const one = 1\nexport const two = 2\nexport const three = 30\n`,
+    'README.md': 'base\nThe app exports one, two and four.\n' })
+  const medium = { likelihood: 5, impact: 5 }
+  const docs = finding({ ...medium, issue: 'README says four', file: 'README.md', line: '2', quote: 'The app exports one, two and four.' })
+  const comment = finding({ ...medium, issue: 'the comment says once', file: 'src/app.js', line: '1', quote: '// Callers read these three numbers once.' })
+  const code = finding({ ...medium, issue: 'three became 30', file: 'src/app.js', line: '4', quote: 'export const three = 30' })
+  const check = fixCheck(id, { STUB_FINDINGS: findings(docs, comment, code) })
+  assert.deepEqual(check.findingDetails.map((f) => [f.id, f.severity]), [['x1', 'medium'], ['x2', 'medium'], ['x3', 'medium']])
+  const statusFile = join(ROOT, 'statuses.json')
+  const defer = { status: 'deferred', reason: 'later' }
+  writeFileSync(statusFile, JSON.stringify({ x1: defer, x2: defer, x3: defer }))
+  allowed(script(['--close', id, '--status', statusFile, '--test-cmd', 'true']))
+  assert.equal(closes().length, 1)
+  const summary = script(['--summary'])
+  allowed(summary)
+  const deferred = summary.out.slice(summary.out.indexOf('Deferred findings'))
+  for (const issue of ['README says four', 'the comment says once', 'three became 30']) assert.ok(deferred.includes(issue), issue)
+  assert.equal((deferred.match(/MEDIUM 25\/100 \(likelihood 5\/10 × impact 5\/10\)/g) || []).length, 3, deferred)
+})
+
+// ── the fix check's security pass vouches only for what it read; a close counts only this review's passes ──
+const secCalls = () => calls().filter((c) => c.kind === 'security')
+test('15 after a --code-only review, the fix check\'s security pass reads the whole base..HEAD change of each file it vouches for, not only the fix', () => {
+  homeConfig({ security: { run: 'required' } })
+  const id = reviewed({}, ['--code-only'])
+  commit({ 'src/app.js': 'export const one = 1\nexport const two = 2\nexport const three = 33\n' })
+  rmSync(CALLS, { force: true })
+  const check = fixCheck(id, {}, [])
+  assert.equal(check.security.status, 'ran')
+  assert.match(secCalls()[0].prompt, /\+export const one = 1/, 'the branch\'s original change to src/app.js, which no pass had seen')
+  const close = closed(id)
+  assert.ok(!close.tierReasons.some((t) => /security/.test(t)), JSON.stringify(close.tierReasons))
+})
+
+test('16 a close never borrows another review\'s security pass', () => {
+  homeConfig({ security: { run: 'required' } })
+  const other = reviewed()
+  assert.equal(lines(LOG).find((e) => e.id === other).security.status, 'ran')
+  const id = reviewed({}, ['--code-only'])
+  const close = closed(id)
+  assert.equal(close.tier, 'high')
+  assert.ok(close.tierReasons.some((t) => /security pass did not cover/.test(t)), JSON.stringify(close.tierReasons))
+})
+
+test('17 a rename needs its source\'s deletion seen too, not only the destination', () => {
+  const BODY = Array.from({ length: 30 }, (_, i) => `export const v${i} = ${i}`).join('\n') + '\n'
+  git('checkout', '-q', 'main'); commit({ 'src/old.js': BODY }); git('checkout', '-qb', 'feat4')
+  homeConfig({ security: { run: 'required' } })
+  commit({ 'src/new.js': `${BODY}export const extra = 1\n` })
+  const id = reviewed()
+  assert.ok(lines(LOG).find((e) => e.id === id).security.saw.some(([p]) => p === 'src/new.js'))
+  git('rm', '-q', 'src/old.js'); git('commit', '-qm', 'drop old')
+  fixCheck(id, {}, ['--code-only'])
+  const close = closed(id)
+  assert.ok(close.tierReasons.some((t) => /security pass did not see .*src\/new\.js/.test(t)), JSON.stringify(close.tierReasons))
+})
+
+test('18 a required fix-check security pass that failed puts a reason in the tier, even when nothing else is unseen', () => {
+  homeConfig({ security: { run: 'always' } })
+  const id = reviewed()
+  commit({ 'README.md': 'base\nThe app exports one, two and three numbers.\n' })
+  const check = fixCheck(id, { REVIEW_SECURITY_TEST_FAULT: 'exit' })
+  assert.equal(check.security.status, 'failed')
+  const close = closed(id)
+  assert.equal(close.tier, 'high')
+  assert.ok(close.tierReasons.some((t) => /fix check's security pass failed/.test(t)), JSON.stringify(close.tierReasons))
+})
+
+test('19 under security.run "always" a close with no security pass at all is HIGH, docs-only included', () => {
+  git('checkout', '-q', 'main'); git('checkout', '-qb', 'docs-only')
+  commit({ 'README.md': 'base\nOnly docs.\n' })
+  homeConfig({ security: { run: 'always' } })
+  const close = closed(reviewed({}, ['--code-only']))
+  assert.equal(close.tier, 'high')
+  assert.ok(close.tierReasons.some((t) => /security/.test(t)), JSON.stringify(close.tierReasons))
+})
+
+test('20 a fix check whose security pass ran lists the security family among its reviewers, so it cannot judge its own finding', () => {
+  homeConfig({ security: { run: 'required' } })
+  const id = reviewed()
+  commit({ 'src/app.js': 'export const one = 1\nexport const two = 2\nexport const three = 33\n' })
+  const check = fixCheck(id, { STUB_SEC_FINDINGS: findings(finding({ file: 'src/app.js', line: '3', quote: 'export const three = 33' })) }, [])
+  assert.equal(check.security.status, 'ran')
+  assert.deepEqual(check.families.sort(), [check.family, check.security.family].sort())
+  assert.equal(check.findingDetails.find((f) => f.quote === 'export const three = 33').source, 'security')
+})
+
+test('21 under "always", a changed docs file no pass saw after the review is named at close, as code would be', () => {
+  homeConfig({ security: { run: 'always' } })
+  const id = reviewed()
+  commit({ 'README.md': 'base\nThe app exports one, two and three numbers.\n' })
+  fixCheck(id, {}, ['--code-only'])
+  const close = closed(id)
+  assert.equal(close.tier, 'high')
+  assert.ok(close.tierReasons.some((t) => /security pass did not see README\.md/.test(t)), JSON.stringify(close.tierReasons))
+})
+
+test('22 a fix check whose required security pass failed covers nothing for the push gate', () => {
+  homeConfig({ security: { run: 'required' } })
+  const a = reviewed({ REVIEW_PATHS: 'src/app.js' })
+  commit({ 'src/app.js': 'export const one = 1\nexport const two = 2\nexport const three = 33\n' })
+  const check = fixCheck(a, { REVIEW_SECURITY_TEST_FAULT: 'exit', STUB_FINDINGS: findings() }, [])
+  assert.equal(check.security.status, 'failed')
+  assert.equal(check.findings, 0)
+  closed(reviewed({ REVIEW_PATHS: 'README.md' }))
+  const pushed = gate()
+  refused(pushed, /src\/app\.js/)
+})
+
+test('23 a binary diff of a code file is never recorded as seen, by the security pass or the reviewer; a binary image stays covered', () => {
+  homeConfig({ security: { run: 'required' } })
+  commit({ 'src/blob.js': 'export const x = 1\u0000\n', 'img/logo.png': '\u0089PNG\u0000\u0001' })
+  const id = reviewed()
+  const record = lines(LOG).find((e) => e.id === id)
+  assert.ok(record.truncated.includes('src/blob.js'), JSON.stringify(record.truncated))
+  assert.ok(!record.truncated.includes('img/logo.png'), JSON.stringify(record.truncated))
+  assert.ok(!record.security.saw.some(([p]) => p === 'src/blob.js'), JSON.stringify(record.security.saw))
+  commit({ 'src/blob.js': 'export const x = 2\u0000\n' })
+  const check = fixCheck(id, {}, [])
+  assert.equal(check.security.status, 'ran')
+  assert.ok(!check.security.saw.some(([p]) => p === 'src/blob.js'), JSON.stringify(check.security.saw))
+  assert.ok(!check.coverage.some(([p]) => p === 'src/blob.js'), JSON.stringify(check.coverage))
+})
+
+test('24 a --focus docs fix check needs --context-commit inside the fix range; its prompt names that commit and its files and asks for any code-line change there', () => {
+  const id = reviewed()
+  commit({ 'src/app.js': 'export const one = 1\nexport const two = 2\nexport const three = 33\n' })
+  commit({ 'src/app.js': '// Callers read these at start.\nexport const one = 1\nexport const two = 2\nexport const three = 33\n', 'README.md': 'base\nThree numbers.\n' })
+  const context = git('rev-parse', 'HEAD')
+  refused(script(['--fix-check', id, '--focus', 'docs'], { REVIEW_REVIEWER: 'sol' }), /--context-commit/)
+  refused(script(['--fix-check', id, '--focus', 'docs', '--context-commit', git('rev-parse', 'main')], { REVIEW_REVIEWER: 'sol' }), /--context-commit .* is not a commit after the review/)
+  rmSync(CALLS, { force: true })
+  const check = fixCheck(id)
+  const prompt = calls().find((c) => c.kind === 'code').prompt
+  assert.ok(prompt.includes(`context commit ${context}`), 'names the commit')
+  assert.match(prompt, /README\.md, src\/app\.js/)
+  assert.match(prompt, /any code-line change in the context commit/)
+  assert.equal(check.contextCommit, context)
+})
+
+test('25 a security finding of the fix check on code outside the fix diff is fixed or disputed, never deferred; one in the fix may be deferred', () => {
+  homeConfig({ security: { run: 'required' } })
+  const LONG = (last) => ['export const one = 1', ...Array.from({ length: 12 }, (_, i) => `export const pad${i} = ${i}`), `export const last = ${last}`].join('\n') + '\n'
+  commit({ 'src/app.js': LONG(1) })
+  const id = reviewed({}, ['--code-only'])
+  commit({ 'src/app.js': LONG(2) })
+  const old = finding({ issue: 'one leaks', file: 'src/app.js', line: '1', quote: 'export const one = 1', likelihood: 5, impact: 5 })
+  const inFix = finding({ issue: 'last leaks', file: 'src/app.js', line: '14', quote: 'export const last = 2', likelihood: 5, impact: 5 })
+  const check = fixCheck(id, { STUB_SEC_FINDINGS: findings(old, inFix) }, [])
+  const [x1, x2] = check.findingDetails
+  assert.deepEqual([x1.source, x1.inFix, x2.source, x2.inFix], ['security', false, 'security', true])
+  const statusFile = join(ROOT, 'statuses.json')
+  const defer = { status: 'deferred', reason: 'later' }
+  writeFileSync(statusFile, JSON.stringify({ x1: defer, x2: defer }))
+  refused(script(['--close', id, '--status', statusFile, '--test-cmd', 'true']), /x1.*code no security pass had read.*fix it or dispute it/)
+  writeFileSync(statusFile, JSON.stringify({ x1: { status: 'fixed' }, x2: defer }))
+  allowed(script(['--close', id, '--status', statusFile, '--test-cmd', 'true']))
+})
+
+test('26 when a fix commit lands after the context commit, the prompt and record name the context commit and its files, not HEAD\'s', () => {
+  const id = reviewed(), twin = reviewed()
+  commit({ 'src/app.js': COMMENTED, 'README.md': 'base\nThe app exports one, two and three numbers.\n' })
+  const context = git('rev-parse', 'HEAD')
+  commit({ 'src/other.js': 'export const other = 1\n' })
+  const head = git('rev-parse', 'HEAD')
+  assert.notEqual(context, head)
+  const plainText = plainPrompt(twin)
+  rmSync(CALLS, { force: true })
+  const r = script(['--fix-check', id, '--focus', 'docs', '--context-commit', context], { REVIEW_REVIEWER: 'sol' })
+  allowed(r)
+  const prompt = calls().find((c) => c.kind === 'code').prompt
+  assertDocsPrompt(prompt, plainText, context, ['README.md', 'src/app.js'])
+  assert.ok(!prompt.includes(`context commit ${head}`), 'not HEAD')
+  assert.match(prompt, /\+export const other = 1/, 'the later fix commit is still in the reviewed diff')
+  const check = lines(LOG).find((e) => e.kind === 'fix-check' && e.review === id)
+  assert.equal(check.contextCommit, context)
+})
+
+test('27 a fix check gives the push gate coverage only for files its security pass read: one clipped by the cap is uncovered', () => {
+  homeConfig({ security: { run: 'required' } })
+  const body = (name, from, n) => Array.from({ length: n }, (_, i) => `export const ${name}${from + i} = ${from + i}`).join('\n') + '\n'
+  commit({ 'src/a.js': body('a', 0, 2600), 'src/z.js': 'export const z = 1\n' })
+  const id = reviewed({ REVIEW_PATHS: 'src/a.js,src/z.js' })
+  const record = lines(LOG).find((e) => e.id === id)
+  assert.deepEqual(record.security.saw.map(([p]) => p), ['src/a.js', 'src/z.js'], 'the review saw both, under the cap')
+  commit({ 'src/a.js': body('a', 0, 2600) + body('a', 2600, 2400), 'src/z.js': 'export const z = 2\n' })
+  const check = fixCheck(id, { STUB_FINDINGS: findings() }, [])
+  assert.equal(check.security.status, 'ran')
+  assert.ok(!check.security.saw.some(([p]) => p === 'src/z.js'), `the pass's base..HEAD diff is over the cap: ${JSON.stringify(check.security.saw)}`)
+  assert.ok(check.coverage.some(([p]) => p === 'src/z.js'), 'the code reviewer\'s short fix diff did show it')
+  closed(reviewed({ REVIEW_PATHS: 'README.md,src/app.js' }))
+  refused(gate(), /src\/z\.js/)
+})
+
+test('28 a binary code file is unseen whatever its name: a Git-quoted path or a non-ASCII one; readable files with such names stay seen, and a renamed text file too', () => {
+  homeConfig({ security: { run: 'required' } })
+  git('checkout', '-q', 'main'); commit({ 'src/old.js': Array.from({ length: 20 }, (_, i) => `export const o${i} = ${i}`).join('\n') + '\n' }); git('checkout', '-qb', 'names')
+  git('mv', 'src/old.js', 'src/moved.js'); git('commit', '-qm', 'move')
+  commit({ 'src/bin"q.js': 'export const q = 1\u0000\n', 'src/bïn.js': 'export const n = 1\u0000\n', 'src/txt"q.js': 'export const t = 1\n', 'src/tëxt.js': 'export const e = 1\n' })
+  const id = reviewed()
+  const record = lines(LOG).find((e) => e.id === id)
+  for (const p of ['src/bin"q.js', 'src/bïn.js']) {
+    assert.ok(record.truncated.includes(p), `${p}: ${JSON.stringify(record.truncated)}`)
+    assert.ok(!record.security.saw.some(([s]) => s === p), p)
+  }
+  for (const p of ['src/txt"q.js', 'src/tëxt.js', 'src/moved.js', 'src/old.js']) assert.ok(!record.truncated.includes(p), `${p} was readable: ${JSON.stringify(record.truncated)}`)
+})
+
+test('29 the binary exemption is only for opaque assets: a stylesheet Git renders as binary is unseen; an image is not', () => {
+  homeConfig({ security: { run: 'always' } })
+  commit({ 'src/style.css': 'b\u0000o\u0000d\u0000y\u0000{\u0000}\u0000', 'img/logo.png': '\u0089PNG\u0000\u0001' })
+  const id = reviewed()
+  const record = lines(LOG).find((e) => e.id === id)
+  assert.ok(record.truncated.includes('src/style.css'), JSON.stringify(record.truncated))
+  assert.ok(!record.security.saw.some(([p]) => p === 'src/style.css'))
+  assert.ok(!record.truncated.includes('img/logo.png'))
+})

@@ -1,0 +1,12 @@
+{
+ "f1":{"status":"fixed","response":"real","test":"review.context.test.mjs test 25 — a fix-check security finding outside the fix cannot be deferred"},
+ "f2":{"status":"fixed","response":"real","test":"review.skills.test.mjs — pr-review closes every open record at the tip with security.run off"},
+ "s1":{"status":"fixed","response":"real","test":"review.context.test.mjs test 21 — under always, docs and tests need a pass that saw them"},
+ "s2":{"status":"fixed","response":"real","test":"review.context.test.mjs test 22 — a failed fix-check security pass gives the push gate no coverage"},
+ "s3":{"status":"fixed","response":"real","test":"review.context.test.mjs test 23 — a binary-notice diff is never recorded as seen"},
+ "s4":{"status":"fixed","response":"real","test":"review.context.test.mjs test 24 and review.context-pass.test.mjs .mdx case — the docs fix check names the context commit; .mdx counts as code"},
+ "x1":{"status":"deferred","reason":"HIGH 14/100 (likelihood 2/10 × impact 7/10): a path git quotes (non-ASCII, quote, backslash) is not found by the binary check, so a binary file with such a name counts as read. Needs a rare file name plus a binary source file; one fix check per review, so it goes to close-once PR 2.","fix":"run the binary diff with -c core.quotePath=false and also match the quoted header form"},
+ "x2":{"status":"deferred","reason":"MEDIUM 18/100 (likelihood 3/10 × impact 6/10): a binary file outside the static list (pdf, zip, wasm, mp4…) can never be covered, so a branch that changes one cannot pass the push gate. Fails safe (refuses, never ships unreviewed); fixed in close-once PR 2 before this flow is relied on.","fix":"treat any binary diff as covered by the reviews (no reviewer can read it) but name it in the close and the tier, instead of a fixed extension list"},
+ "x3":{"status":"deferred","reason":"MEDIUM 15/100 (likelihood 3/10 × impact 5/10): on risk-area /build work, the last phase review may already have used its one fix check mid-build, so pr-review's 'its own fix check' step cannot run for it. PR 2's batch close covers the phase records together.","fix":"close-once PR 2: --close a,b,c accepts the phase review's existing fix check"},
+ "x4":{"status":"deferred","reason":"LOW: filed. The comment above docsFocus still says a fix check leaves code lines to the correctness prompt; no behavior effect.","fix":"reword the comment in the context pass"}
+}
