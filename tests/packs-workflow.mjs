@@ -37,12 +37,12 @@ const rolesIn = (wf) => {
     && catalog.filter((p) => !p.workflow?.strip).every((p) => p.workflow.steps.length >= 3), JSON.stringify(strips));
   const rg = catalog.find((p) => p.id === 'review-gate').workflow;
   ok('review-gate: the /pr-review flow, with no variant tabs (the reviewer tiers are /code-review\'s)', rg.command === '/pr-review' && !rg.variants?.length, JSON.stringify(rg.variants));
-  ok('review-gate: the steps /pr-review names, in order', JSON.stringify(rg.steps.map((s) => s.id)) === '["review","security","fix","dispute","check","close","context","gate","merge"]',
+  ok('review-gate: the steps /pr-review names, in order', JSON.stringify(rg.steps.map((s) => s.id)) === '["review","security","fix","dispute","context","check","close","gate","merge"]',
     JSON.stringify(rg.steps.map((s) => s.id)));
   ok('…the code review and the security check run side by side, and the note says each runs alone too', rg.steps.find((s) => s.id === 'security').beside === 'review'
     && rg.steps.filter((s) => s.beside).length === 1 && /\/code-review/.test(rg.note || '') && /\/security-check/.test(rg.note || ''), JSON.stringify(rg.note));
-  ok('…the context pass comes right after Close, run by the writer role, and the note says /pr writes the description after the push',
-    rg.steps.findIndex((s) => s.id === 'context') === rg.steps.findIndex((s) => s.id === 'close') + 1 && rg.steps.find((s) => s.id === 'context').role === 'writer'
+  ok('…the context pass comes right before the fix check, run by the writer role, and the note says /pr writes the description after the push',
+    rg.steps.findIndex((s) => s.id === 'context') === rg.steps.findIndex((s) => s.id === 'check') - 1 && rg.steps.find((s) => s.id === 'context').role === 'writer'
     && /\/context-pass/.test(rg.steps.find((s) => s.id === 'context').what) && /After the push, \/pr writes the description/.test(rg.note || ''), JSON.stringify(rg.note));
   // PR C: eight steps share one row, so each says what it does in one short line.
   const whats = rg.steps.flatMap((st) => [st.what, ...Object.values(st.variants || {}).map((o) => o.what)]).filter(Boolean);
