@@ -342,6 +342,8 @@ test('D15 a summary reads the close that covers its tip: a later close outside t
   const check = fixChecked(review, [X_HIGH])
   closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later' } })
   commit({ 'src/one.test.js': 'test one, x1 fixed\n' })
+  // x1 is protected and src/one.js is unchanged, so its fixed status needs a REFUTED dispute.
+  writeFileSync(LOG, readFileSync(LOG, 'utf8') + JSON.stringify({ type: 'dispute', review: check.id, finding: 'x1', verdict: 'REFUTED', verifier: 'grok' }) + '\n')
   closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'fixed' } })
   const fixedThere = script(['--summary']); allowed(fixedThere)
   assert.doesNotMatch(fixedThere.stdout, /Deferred: later/)
