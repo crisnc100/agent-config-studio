@@ -1680,7 +1680,7 @@ const RAW_DIFF = ['-c', 'core.quotePath=false', 'diff', '--raw', '-z', '--no-ren
   '--ignore-submodules=none', '--no-relative']
 const NUMSTAT_DIFF = ['diff', '--numstat', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--no-relative']
 const SECTION_DIFF = ['-c', 'core.quotePath=false', '-c', 'diff.noprefix=false', 'diff', '--no-ext-diff', '--no-textconv', '--no-color',
-  '--src-prefix=a/', '--dst-prefix=b/', '--no-renames', '--no-relative']
+  '--src-prefix=a/', '--dst-prefix=b/', '--no-renames', '--no-relative', '--ignore-submodules=none', '--submodule=short']
 const GITLINK = '160000'
 // Riskiest first: riskPaths, logic, other, tests, docs, static, then coverage-exempt files and builds/.
 const SECTION_RANK = { logic: 1, other: 2, tests: 3, docs: 4, static: 5 }
@@ -1711,12 +1711,19 @@ function buildSections(base, head, scope = null, cap = DIFF_CAP) {
     if (m && m[1] === '-' && m[2] === '-') binary.add(m[3])
   }
   const sections = [...states].map(([path, [s0, s1]]) => {
-    if ([s0, s1].some((s) => s?.startsWith(`${GITLINK} `))) return { path, why: 'submodule' }
-    if (binary.has(path)) return { path, why: 'binary' }
-    const text = gitBytes([...SECTION_DIFF, base, head, '--', `:(top,literal)${path}`], `git diff ${base} ${head} -- ${path}`).toString('utf8')
-    if (!text) throw new Error(`${path}: git diff ${range} listed it but shows no change`)
+    const links = [s0, s1].filter((s) => s?.startsWith(`${GITLINK} `)).length
+    // A gitlink alone (added, removed or moved) is only a commit id. One replaced by a file, or a file by one, is read
+    // only when the file side is inlined: as text, in the section that also holds the gitlink's line.
+    if (links && links + [s0, s1].filter((s) => s === null).length === 2) return { path, why: 'submodule' }
+    const unreadable = links ? 'submodule-change' : 'binary'
+    if (binary.has(path)) return { path, why: unreadable }
+    const bytes = gitBytes([...SECTION_DIFF, base, head, '--', `:(top,literal)${path}`], `git diff ${base} ${head} -- ${path}`)
+    if (!bytes.length) throw new Error(`${path}: git diff ${range} listed it but shows no change`)
+    const text = bytes.toString('utf8')
+    // Decoding would replace each invalid byte with U+FFFD, so two different byte values could reach the reviewer as one.
+    if (!Buffer.from(text, 'utf8').equals(bytes)) return { path, why: links ? 'submodule-change' : 'encoding' }
     // Content lines carry a +, - or space prefix, so only git itself can write this line.
-    if (/^(?:Binary files .* differ|GIT binary patch)$/m.test(text)) return { path, why: 'binary' }
+    if (/^(?:Binary files .* differ|GIT binary patch)$/m.test(text)) return { path, why: unreadable }
     return { path, text }
   }).sort((a, b) => sectionRank(a.path) - sectionRank(b.path) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
   const parts = [], read = [], unread = []
@@ -1737,6 +1744,8 @@ const UNREAD_WHY = {
   oversize: 'its diff alone is over the size cap',
   capped: 'its diff did not fit in what was left of the size cap',
   submodule: 'a submodule',
+  'submodule-change': 'a submodule replaced by a file (or a file by one) whose content has no text diff',
+  encoding: 'its diff is not valid UTF-8, so it cannot be sent byte for byte',
 }
 // What a reviewer is sent: the sections verbatim, then the files it was not shown and why.
 const diffBlock = (sections) => `${sections.text}${sections.unread.length
@@ -1751,11 +1760,24 @@ function capNote(sections) {
   const cut = sections.unread.filter(([, why]) => why === 'capped' || why === 'oversize').map(([path]) => path)
   return cut.length ? `${cut.length} file(s) did not fit in the ${sections.cap}-char cap and were not inlined: ${listed(cut)}` : null
 }
-// The files the older coverage inference treats as cut: whatever the cap left out, and binaries other than opaque assets
-// and deletions (Git's notice for those was all there was to read). A submodule's one-line change counted as seen.
+// What the older coverage inference may credit a pass with: each of `files` whose state at the pass's head is in its
+// manifest's read list, plus the unread entries that inference always counted as seen, each named in the manifest: an
+// opaque asset's or a deleted file's binary notice, and a gitlink's commit id. A file in neither list gets nothing.
 const OPAQUE_ASSET = /\.(png|jpe?g|gif|webp|avif|bmp|ico|tiff?|woff2?|ttf|otf|eot|mp3|wav|ogg|flac|m4a|mp4|webm|mov|avi)$/i
-const legacyCut = (sections) => sections.unread.filter(([path, why]) => why === 'capped' || why === 'oversize' ||
-  why === 'binary' && !OPAQUE_ASSET.test(path) && sections.states.get(path)?.[1] != null).map(([path]) => path)
+function legacyCredit(sections, files) {
+  const at = treeStates(sections.head)
+  const ok = new Set([
+    ...sections.read.filter(([path, , s1]) => s1 === (at.get(path) ?? null)).map(([path]) => path),
+    ...sections.unread.filter(([path, why]) => why === 'submodule' ||
+      why === 'binary' && (OPAQUE_ASSET.test(path) || sections.states.get(path)?.[1] == null)).map(([path]) => path),
+  ])
+  return files.filter((path) => ok.has(path))
+}
+// The older inference's cut list: every one of `files` the manifest gives no credit for.
+const legacyCut = (sections, files) => {
+  const credited = new Set(legacyCredit(sections, files))
+  return files.filter((path) => !credited.has(path))
+}
 // --manifest <id>: a logged review's or fix check's manifests, as JSON, for checking real runs.
 function printManifest(id) {
   const record = readLog().find((e) => e.type === 'review' && e.id === id)
@@ -4029,11 +4051,10 @@ async function fixCheck(id) {
   if (headNow() !== head) throw new Error('HEAD changed during fix check')
   // What it covers: the fix diff's files at its head, minus any the cap cut here or in the original review (it read
   // only the later change); nothing when the original's cut is unknown.
-  const files = fixFiles, truncated = legacyCut(sections)
+  const files = fixFiles, truncated = legacyCut(sections, files)
   const missed = original.kind === 'grade' || fullObjectId(original.baseSha) ? reviewTruncated(original) : null
   if (security.record.status === 'ran') {
-    const securityCut = securitySections ? legacyCut(securitySections) : []
-    security.record.saw = coverageOf(head, vouch.filter((p) => !securityCut.includes(p)))
+    security.record.saw = securitySections ? coverageOf(head, legacyCredit(securitySections, vouch)) : []
     if (securitySections) security.record.manifest = manifestOf(securitySections, 'security')
   }
   const checkId = `fix-${Date.now()}-${randomBytes(3).toString('hex')}`
@@ -5363,12 +5384,11 @@ function startWatch(kind) {
   warnDropped(findingDetails)
   const allFindings = [...findings, ...securityLocated], allUnlocated = [...unlocated, ...securityUnlocated]
   const reviewedFiles = sliceFileList || filesBetween(baseSha, reviewedHead)
-  const truncated = legacyCut(sections)
-  // The file states the security pass saw, minus what the size cap cut from the diff it was sent (a --since-close slice
-  // sends it the whole slice, bigger than the code reviewer's delta): close checks the closing HEAD against them.
-  const securityCut = legacyCut(securitySections)
+  const truncated = legacyCut(sections, reviewedFiles)
+  // The file states the security pass read (a --since-close slice sends it the whole slice, bigger than the code
+  // reviewer's delta): close checks the closing HEAD against them.
   if (security.record.status === 'ran') {
-    security.record.saw = coverageOf(reviewedHead, reviewedFiles.filter((p) => !securityCut.includes(p)))
+    security.record.saw = coverageOf(reviewedHead, legacyCredit(securitySections, reviewedFiles))
     security.record.manifest = manifestOf(securitySections, 'security')
   }
   const dir = writeReport(branch, reviewer, { findings: allFindings, unlocated: allUnlocated, disputed }, cut, opinion.verifier, security.record)
