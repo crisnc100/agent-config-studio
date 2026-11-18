@@ -499,3 +499,17 @@ test('pr-review: the agent merge step runs merge.mjs unless --tier-json says the
       }
   }
 })
+
+test('close once: pr-review runs the context pass before the one fix check and closes once, at the tip, in both harnesses', () => {
+  for (const f of SKILLS('pr-review')) {
+    const text = shipped(f)
+    const order = text.slice(text.indexOf('```\n', text.indexOf('This skill owns the order')) + 4)
+    const steps = order.slice(0, order.indexOf('```')).split('\n').map((l) => l.split(/\s+/)[0]).filter(Boolean)
+    assert.ok(steps.indexOf('FIX') < steps.indexOf('CONTEXT') && steps.indexOf('CONTEXT') < steps.indexOf('CHECK') && steps.indexOf('CHECK') < steps.indexOf('CLOSE'), `${f}: ${steps.join(' ')}`)
+    assert.equal(steps.filter((s) => s === 'CLOSE').length, 1, f)
+    assert.match(text, /--fix-check <review-id> --focus docs/, f)
+    assert.doesNotMatch(text, /docs-focus slice|--since-close "\$CLOSE_HEAD"/, f)
+  }
+  for (const f of [...SKILLS('code-review'), ...SKILLS('build', 'build'), ...SKILLS('pr-review'), 'packs/review-gate/instructions/review-gate.md'])
+    assert.match(shipped(f), /close once, at the tip/i, f)
+})

@@ -265,3 +265,119 @@ test('9 --since-close: a file the security prompt cut at the cap stays out of wh
   assert.ok(close.tierReasons.some((r) => /security pass did not see src\/z\.js/.test(r)), JSON.stringify(close.tierReasons))
   assert.equal(close.tier, 'high')
 })
+
+// ── close once: the context pass runs before the one fix check, which reviews it with the docs focus ──
+const fixCheck = (id, extra = {}, args = ['--focus', 'docs']) => {
+  const r = script(['--fix-check', id, ...args], { REVIEW_REVIEWER: 'sol', ...extra })
+  allowed(r)
+  return lines(LOG).filter((e) => e.kind === 'fix-check' && e.review === id).at(-1)
+}
+const closes = () => lines(LOG).filter((e) => e.type === 'close')
+const COMMENTED = `// Callers read these three numbers at start.\n${APP}`
+
+test('10 --fix-check --focus docs runs the fix check with the docs instructions for the diff\'s comment and doc edits, and the record logs the focus', () => {
+  const id = reviewed()
+  commit({ 'src/app.js': COMMENTED, 'README.md': 'base\nThe app exports one, two and three numbers.\n' })
+  rmSync(CALLS, { force: true })
+  const check = fixCheck(id)
+  const code = calls().filter((c) => c.kind === 'code')
+  assert.equal(code.length, 1)
+  assert.match(code[0].prompt, /^Fix check: review only this fix diff/)
+  assert.match(code[0].prompt, /DOCS AND COMMENTS/)
+  assert.match(code[0].prompt, /the comment and doc edits in this diff/)
+  for (const part of ['untrue', 'not backed by the code', '+// Callers read these three numbers at start.']) assert.ok(code[0].prompt.includes(part), part)
+  assert.doesNotMatch(code[0].prompt, /any code-line change/, 'a fix check\'s diff holds the fix round\'s code lines too')
+  assert.equal(check.focus, 'docs')
+  // A plain fix check records no focus and gets no docs instructions.
+  const other = reviewed({ REVIEW_PATHS: 'README.md' })
+  commit({ 'README.md': 'base\nThe app exports three numbers.\n' })
+  rmSync(CALLS, { force: true })
+  const plain = fixCheck(other, {}, [])
+  assert.equal(Object.hasOwn(plain, 'focus'), false)
+  assert.doesNotMatch(calls().find((c) => c.kind === 'code').prompt, /DOCS AND COMMENTS/)
+})
+
+test('11 the unsliced close-once flow: review → fix → context commit → fix check --focus docs → one close; the push, --summary and the tier are clean', () => {
+  homeConfig({ security: { run: 'required' } })
+  const id = reviewed({ STUB_FINDINGS: findings(finding({ issue: 'two should be 22' })) })
+  commit({ 'src/app.js': 'export const one = 1\nexport const two = 22\nexport const three = 3\n' })
+  commit({ 'src/app.js': '// Callers read these three numbers at start.\nexport const one = 1\nexport const two = 22\nexport const three = 3\n',
+    'README.md': 'base\nThe app exports one, two (22) and three.\n' })
+  rmSync(CALLS, { force: true })
+  const check = fixCheck(id)
+  assert.deepEqual(calls().map((c) => c.kind).sort(), ['code', 'security'], 'the fix round changed src/app.js after the review\'s pass saw it')
+  assert.equal(check.security.status, 'ran')
+  const close = closed(id, { f1: { status: 'fixed' } })
+  assert.equal(close.status, 'complete')
+  assert.equal(closes().length, 1, 'exactly one close')
+  const state = git('ls-tree', 'HEAD', 'src/app.js').split(/\s+/)
+  assert.deepEqual(close.coverage.find(([p]) => p === 'src/app.js'), ['src/app.js', `${state[0]} ${state[2]}`], 'the commented file is covered at its tip state')
+  assert.ok(!close.tierReasons.some((t) => /security/.test(t)), JSON.stringify(close.tierReasons))
+  assert.notEqual(close.tier, 'high')
+  allowed(gate())
+  const tier = JSON.parse(script(['--tier-json']).stdout)
+  assert.equal(tier.covered, true); assert.notEqual(tier.tier, 'high', JSON.stringify(tier))
+  const summary = script(['--summary'])
+  allowed(summary)
+  assert.doesNotMatch(summary.out, /security pass did not|no security pass ran/)
+})
+
+test('12 a fix check whose fix round and context commit touched only docs and tests starts no security pass, says why, and the tier does not count it', () => {
+  homeConfig({ security: { run: 'required' } })
+  const id = reviewed({ STUB_FINDINGS: findings(finding({ issue: 'README is wrong', file: 'README.md', line: '2', quote: 'The app exports one, two and three.' })) })
+  commit({ 'README.md': 'base\nThe app exports one, two and three numbers.\n', 'test/app.test.js': 'import "../src/app.js"\n' })
+  rmSync(CALLS, { force: true })
+  const r = script(['--fix-check', id, '--focus', 'docs'], { REVIEW_REVIEWER: 'sol' })
+  allowed(r)
+  assert.deepEqual(calls().map((c) => c.kind), ['code'])
+  assert.match(r.out, /security pass: not-required \(no security-relevant file changed since a security pass saw it\)/)
+  const check = lines(LOG).find((e) => e.kind === 'fix-check' && e.review === id)
+  assert.equal(check.security.status, 'not-required')
+  const close = closed(id, { f1: { status: 'fixed' } })
+  assert.equal(close.status, 'complete')
+  assert.ok(!close.tierReasons.some((t) => /security/.test(t)), JSON.stringify(close.tierReasons))
+})
+
+test('13 security.run "always" runs the pass in every fix check; off and --code-only run none', () => {
+  homeConfig({ security: { run: 'always' } })
+  const id = reviewed()
+  commit({ 'README.md': 'base\nThe app exports one, two and three numbers.\n' })
+  rmSync(CALLS, { force: true })
+  assert.equal(fixCheck(id).security.status, 'ran')
+  assert.deepEqual(calls().map((c) => c.kind).sort(), ['code', 'security'])
+  for (const [config, args, status] of [[{ security: { run: 'off' } }, ['--focus', 'docs'], 'off'], [{ security: { run: 'required' } }, ['--code-only'], 'not-asked']]) {
+    homeConfig(config)
+    const next = reviewed({ REVIEW_PATHS: 'src/app.js' }, args.includes('--code-only') ? ['--code-only'] : [])
+    commit({ 'src/app.js': `${APP}export const four = 4\n` })
+    rmSync(CALLS, { force: true })
+    const check = fixCheck(next, {}, args)
+    assert.deepEqual(calls().map((c) => c.kind), ['code'], status)
+    assert.equal(check.security?.status ?? 'off', status)
+  }
+})
+
+test('14 a docs MEDIUM from a --focus docs fix check cannot be deferred; a code MEDIUM still can, and so can a docs one from a plain fix check', () => {
+  const id = reviewed()
+  commit({ 'src/app.js': `// Callers read these three numbers once.\nexport const one = 1\nexport const two = 2\nexport const three = 30\n`,
+    'README.md': 'base\nThe app exports one, two and four.\n' })
+  const docs = finding({ issue: 'README says four', file: 'README.md', line: '2', quote: 'The app exports one, two and four.' })
+  const comment = finding({ issue: 'the comment says once', file: 'src/app.js', line: '1', quote: '// Callers read these three numbers once.' })
+  const code = finding({ issue: 'three became 30', file: 'src/app.js', line: '4', quote: 'export const three = 30' })
+  const check = fixCheck(id, { STUB_FINDINGS: findings(docs, comment, code) })
+  assert.deepEqual(check.findingDetails.map((f) => [f.id, f.severity]), [['x1', 'medium'], ['x2', 'medium'], ['x3', 'medium']])
+  const statusFile = join(ROOT, 'statuses.json')
+  const defer = { status: 'deferred', reason: 'later' }
+  const tryClose = (statuses) => { writeFileSync(statusFile, JSON.stringify(statuses)); return script(['--close', id, '--status', statusFile, '--test-cmd', 'true']) }
+  refused(tryClose({ x1: defer, x2: { status: 'fixed' }, x3: defer }), /x1.*docs.*fix it or dispute it/)
+  refused(tryClose({ x1: { status: 'fixed' }, x2: defer, x3: defer }), /x2.*docs.*fix it or dispute it/)
+  assert.equal(closes().length, 0)
+  allowed(tryClose({ x1: { status: 'fixed' }, x2: { status: 'fixed' }, x3: defer }))
+  // A plain fix check's docs MEDIUM keeps today's deferral.
+  git('checkout', '-qb', 'feat3', 'main')
+  commit({ 'src/app.js': APP, 'README.md': 'base\nMore.\n' })
+  const plain = reviewed()
+  commit({ 'README.md': 'base\nThe app exports one, two and four.\n' })
+  fixCheck(plain, { STUB_FINDINGS: findings(docs) }, [])
+  writeFileSync(statusFile, JSON.stringify({ x1: defer }))
+  allowed(script(['--close', plain, '--status', statusFile, '--test-cmd', 'true']))
+})
