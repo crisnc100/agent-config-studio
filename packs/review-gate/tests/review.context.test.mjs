@@ -277,6 +277,18 @@ const fixCheck = (id, extra = {}, args = [DOCS_CHECK]) => {
 }
 const closes = () => lines(LOG).filter((e) => e.type === 'close')
 const COMMENTED = `// Callers read these three numbers at start.\n${APP}`
+// The fix check's prompt asks about code lines exactly once, inside the docs block, scoped to the context commit and its
+// files, and says the rest of the diff is the fix round: any other code-line ask (diff-wide, the fix round, the slice's
+// unscoped one) adds a second mention and fails.
+function assertCodeLineAskScoped(prompt, sha, files) {
+  const asks = prompt.match(/code[- ]lines?/gi) || []
+  const block = prompt.slice(prompt.indexOf('DOCS AND COMMENTS'), prompt.indexOf('\n\n', prompt.indexOf('DOCS AND COMMENTS')))
+  assert.ok(prompt.includes('DOCS AND COMMENTS') && block.length > 0, 'the docs block is there')
+  const scoped = `any code-line change in the context commit ${sha} (its files: ${files.join(', ')}), meaning a line it changed that is not comment or doc text: ` +
+    'the rest of this diff is the fix round, whose code lines are expected;'
+  assert.ok(block.includes(scoped), `the scoped ask, in the docs block:\n${block}`)
+  assert.deepEqual(asks.map((a) => a.toLowerCase()), ['code-line', 'code lines'], `only the scoped ask and its fix-round note mention code lines:\n${asks.join(' | ')}`)
+}
 
 test('10 --fix-check --focus docs runs the fix check with the docs instructions for the diff\'s comment and doc edits, and the record logs the focus', () => {
   const id = reviewed()
@@ -289,8 +301,7 @@ test('10 --fix-check --focus docs runs the fix check with the docs instructions 
   assert.match(code[0].prompt, /DOCS AND COMMENTS/)
   assert.match(code[0].prompt, /the comment and doc edits in this diff/)
   for (const part of ['untrue', 'not backed by the code', '+// Callers read these three numbers at start.']) assert.ok(code[0].prompt.includes(part), part)
-  assert.match(code[0].prompt, /any code-line change in the context commit/, 'only the context commit\'s code lines are findings')
-  assert.doesNotMatch(code[0].prompt, /any code-line change, meaning a changed line/, 'a fix check\'s diff holds the fix round\'s code lines too')
+  assertCodeLineAskScoped(code[0].prompt, git('rev-parse', 'HEAD'), ['README.md', 'src/app.js'])
   assert.equal(check.focus, 'docs')
   // A plain fix check records no focus and gets no docs instructions.
   const other = reviewed({ REVIEW_PATHS: 'README.md' })
@@ -519,4 +530,22 @@ test('25 a security finding of the fix check on code outside the fix diff is fix
   refused(script(['--close', id, '--status', statusFile, '--test-cmd', 'true']), /x1.*code no security pass had read.*fix it or dispute it/)
   writeFileSync(statusFile, JSON.stringify({ x1: { status: 'fixed' }, x2: defer }))
   allowed(script(['--close', id, '--status', statusFile, '--test-cmd', 'true']))
+})
+
+test('26 when a fix commit lands after the context commit, the prompt and record name the context commit and its files, not HEAD\'s', () => {
+  const id = reviewed()
+  commit({ 'src/app.js': COMMENTED, 'README.md': 'base\nThe app exports one, two and three numbers.\n' })
+  const context = git('rev-parse', 'HEAD')
+  commit({ 'src/other.js': 'export const other = 1\n' })
+  const head = git('rev-parse', 'HEAD')
+  assert.notEqual(context, head)
+  rmSync(CALLS, { force: true })
+  const r = script(['--fix-check', id, '--focus', 'docs', '--context-commit', context], { REVIEW_REVIEWER: 'sol' })
+  allowed(r)
+  const prompt = calls().find((c) => c.kind === 'code').prompt
+  assertCodeLineAskScoped(prompt, context, ['README.md', 'src/app.js'])
+  assert.ok(!prompt.includes(`context commit ${head}`), 'not HEAD')
+  assert.match(prompt, /\+export const other = 1/, 'the later fix commit is still in the reviewed diff')
+  const check = lines(LOG).find((e) => e.kind === 'fix-check' && e.review === id)
+  assert.equal(check.contextCommit, context)
 })
