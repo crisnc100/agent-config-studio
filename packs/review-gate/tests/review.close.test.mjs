@@ -1027,9 +1027,11 @@ test('6.4 failed score follow-up keeps findings blocking and legacy LOW needs RE
   const missing = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true'])
   assert.notEqual(missing.status, 0); assert.match(missing.out, /Finding f2 needs a fixed or rejected status/)
   const values = { f1: { status: 'fixed' }, f2: { status: 'fixed' }, f3: { status: 'rejected', reason: 'legacy low', response: 'wrong', evidence: 'a.js:1' } }
-  const refused = close(r.id, values, ['--test-cmd', 'true']); assert.notEqual(refused.status, 0); assert.match(refused.out, /REFUTED/)
-  seed({ type: 'dispute', review: r.id, finding: 'f3', verdict: 'REFUTED' })
   commit('a.js', 'export const a = 3\n')
+  const refused = close(r.id, values, ['--test-cmd', 'true']); assert.notEqual(refused.status, 0)
+  assert.match(refused.out, /Rejected f3 requires a REFUTED verdict or an operator waiver/)
+  assert.doesNotMatch(refused.out, /Fixed f2 is protected/)
+  seed({ type: 'dispute', review: r.id, finding: 'f3', verdict: 'REFUTED' })
   const accepted = close(r.id, values, ['--test-cmd', 'true']); assert.equal(accepted.status, 0, accepted.out)
   assert.match(run(['--summary']).stdout, /f3 LOW wrong return: legacy low/)
 })
