@@ -566,3 +566,43 @@ test('26 when a fix commit lands after the context commit, the prompt and record
   const check = lines(LOG).find((e) => e.kind === 'fix-check' && e.review === id)
   assert.equal(check.contextCommit, context)
 })
+
+test('27 a fix check gives the push gate coverage only for files its security pass read: one clipped by the cap is uncovered', () => {
+  homeConfig({ security: { run: 'required' } })
+  const body = (name, from, n) => Array.from({ length: n }, (_, i) => `export const ${name}${from + i} = ${from + i}`).join('\n') + '\n'
+  commit({ 'src/a.js': body('a', 0, 2600), 'src/z.js': 'export const z = 1\n' })
+  const id = reviewed({ REVIEW_PATHS: 'src/a.js,src/z.js' })
+  const record = lines(LOG).find((e) => e.id === id)
+  assert.deepEqual(record.security.saw.map(([p]) => p), ['src/a.js', 'src/z.js'], 'the review saw both, under the cap')
+  commit({ 'src/a.js': body('a', 0, 2600) + body('a', 2600, 2400), 'src/z.js': 'export const z = 2\n' })
+  const check = fixCheck(id, { STUB_FINDINGS: findings() }, [])
+  assert.equal(check.security.status, 'ran')
+  assert.ok(!check.security.saw.some(([p]) => p === 'src/z.js'), `the pass's base..HEAD diff is over the cap: ${JSON.stringify(check.security.saw)}`)
+  assert.ok(check.coverage.some(([p]) => p === 'src/z.js'), 'the code reviewer\'s short fix diff did show it')
+  closed(reviewed({ REVIEW_PATHS: 'README.md,src/app.js' }))
+  refused(gate(), /src\/z\.js/)
+})
+
+test('28 a binary code file is unseen whatever its name: a Git-quoted path or a non-ASCII one; readable files with such names stay seen, and a renamed text file too', () => {
+  homeConfig({ security: { run: 'required' } })
+  git('checkout', '-q', 'main'); commit({ 'src/old.js': Array.from({ length: 20 }, (_, i) => `export const o${i} = ${i}`).join('\n') + '\n' }); git('checkout', '-qb', 'names')
+  git('mv', 'src/old.js', 'src/moved.js'); git('commit', '-qm', 'move')
+  commit({ 'src/bin"q.js': 'export const q = 1\u0000\n', 'src/bïn.js': 'export const n = 1\u0000\n', 'src/txt"q.js': 'export const t = 1\n', 'src/tëxt.js': 'export const e = 1\n' })
+  const id = reviewed()
+  const record = lines(LOG).find((e) => e.id === id)
+  for (const p of ['src/bin"q.js', 'src/bïn.js']) {
+    assert.ok(record.truncated.includes(p), `${p}: ${JSON.stringify(record.truncated)}`)
+    assert.ok(!record.security.saw.some(([s]) => s === p), p)
+  }
+  for (const p of ['src/txt"q.js', 'src/tëxt.js', 'src/moved.js', 'src/old.js']) assert.ok(!record.truncated.includes(p), `${p} was readable: ${JSON.stringify(record.truncated)}`)
+})
+
+test('29 the binary exemption is only for opaque assets: a stylesheet Git renders as binary is unseen; an image is not', () => {
+  homeConfig({ security: { run: 'always' } })
+  commit({ 'src/style.css': 'b\u0000o\u0000d\u0000y\u0000{\u0000}\u0000', 'img/logo.png': '\u0089PNG\u0000\u0001' })
+  const id = reviewed()
+  const record = lines(LOG).find((e) => e.id === id)
+  assert.ok(record.truncated.includes('src/style.css'), JSON.stringify(record.truncated))
+  assert.ok(!record.security.saw.some(([p]) => p === 'src/style.css'))
+  assert.ok(!record.truncated.includes('img/logo.png'))
+})
