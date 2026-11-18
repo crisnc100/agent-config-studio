@@ -90,7 +90,7 @@ const APP = 'export const one = 1\nexport const two = 2\nexport const three = 3\
 // The per-file command the design names for a reviewer section: fixed flags, so no user git config can change it.
 function section(cwd, home, base, head, path) {
   const r = run('git', ['-c', 'core.quotePath=false', '-c', 'diff.noprefix=false', 'diff', '--no-ext-diff', '--no-textconv', '--no-color',
-    '--src-prefix=a/', '--dst-prefix=b/', '--no-renames', '--no-relative', base, head, '--', `:(top,literal)${path}`], { cwd, home })
+    '--src-prefix=a/', '--dst-prefix=b/', '--no-renames', '--no-relative', '--ignore-submodules=none', '--submodule=short', base, head, '--', `:(top,literal)${path}`], { cwd, home })
   assert.equal(r.status, 0, r.out)
   return r.stdout
 }
@@ -132,7 +132,7 @@ function checkManifest(m, prompt, { cwd = REPO, home = HOME } = {}) {
   assert.equal(m.promptSha256, sha256(block), 'promptSha256 is the hash of exactly the inlined sections')
   assert.ok(block.length <= m.cap, 'the block fits the cap')
   for (const [p, why] of m.unread) {
-    assert.ok(['binary', 'oversize', 'capped', 'submodule'].includes(why), `${p}: ${why}`)
+    assert.ok(['binary', 'oversize', 'capped', 'submodule', 'submodule-change', 'encoding'].includes(why), `${p}: ${why}`)
     assert.ok(!paths.includes(p), `${p} is read and unread`)
     assert.ok(!`\n${prompt}`.includes(`\n${headerOf(p)}\n`), `${p} (${why}) has no section in the prompt`)
     assert.ok(prompt.includes(JSON.stringify(p)), `${p}: the prompt names what it was not shown`)
@@ -329,6 +329,56 @@ test('M8 user git config cannot change the sections: noprefix, mnemonicPrefix, a
   rmSync(USER_GITCONFIG, { force: true })
 })
 
+test('M11 a section that is not valid UTF-8 is never sent lossily: it is unread for its encoding, and the old inference cuts it', () => {
+  homeConfig({ security: { run: 'always' } })
+  writeFileSync(join(REPO, 'src/latin.js'), Buffer.from('export const allow = ["caf\xe9", "caf\xe8"]\n', 'latin1'))
+  git('add', 'src/latin.js'); git('commit', '-qm', 'latin-1')
+  const r = reviewed()
+  assert.deepEqual(r.manifest.unread, [['src/latin.js', 'encoding']])
+  assert.ok(!r.manifest.read.some(([p]) => p === 'src/latin.js'))
+  assert.ok(!promptOf('code').includes('\ufffd'), 'no replacement character reaches the reviewer')
+  checkManifest(r.manifest, promptOf('code'))
+  assert.ok(r.truncated.includes('src/latin.js'))
+  assert.ok(!r.security.saw.some(([p]) => p === 'src/latin.js'))
+})
+
+test('M12 a submodule replaced by a file is read only when the file side is inlined; a binary replacement is unread and cut', () => {
+  homeConfig({ security: { run: 'always' } })
+  git('checkout', '-q', 'main')
+  const root = git('rev-parse', 'HEAD')
+  for (const p of ['vendor/text', 'vendor/bin']) mkdirSync(join(REPO, p), { recursive: true })
+  git('update-index', '--add', '--cacheinfo', `160000,${root},vendor/text`, '--cacheinfo', `160000,${root},vendor/bin`); git('commit', '-qm', 'gitlinks')
+  git('checkout', '-q', 'feat'); git('merge', '-q', '--no-edit', 'main')
+  git('rm', '-q', '--cached', 'vendor/text', 'vendor/bin')
+  rmSync(join(REPO, 'vendor'), { recursive: true, force: true }); mkdirSync(join(REPO, 'vendor'))
+  writeFileSync(join(REPO, 'vendor/text'), 'export const replaced = 1\n'); writeFileSync(join(REPO, 'vendor/bin'), 'export const b = 1\u0000\n')
+  git('add', 'vendor/text', 'vendor/bin'); git('commit', '-qm', 'replace the submodules')
+  const r = reviewed()
+  const text = r.manifest.read.find(([p]) => p === 'vendor/text')
+  assert.ok(text, JSON.stringify(r.manifest))
+  assert.match(text[1], /^160000 /); assert.match(text[2], /^100644 /)
+  assert.ok(promptOf('code').includes('+export const replaced = 1'), 'the file side is in the prompt')
+  assert.deepEqual(r.manifest.unread, [['vendor/bin', 'submodule-change']])
+  checkManifest(r.manifest, promptOf('code'))
+  assert.ok(r.truncated.includes('vendor/bin'), JSON.stringify(r.truncated))
+  assert.ok(!r.truncated.includes('vendor/text'))
+  assert.ok(!r.security.saw.some(([p]) => p === 'vendor/bin'))
+  // A capped replacement is cut too.
+  const capped = reviewed({ REVIEW_TEST_DIFF_CAP: '50' })
+  assert.ok(capped.truncated.includes('vendor/text'), JSON.stringify(capped.truncated))
+})
+
+test('M13 a fix check credits its security pass only with files its own manifest read: a file restored to the base is not seen', () => {
+  homeConfig({ security: { run: 'always' } })
+  const r = reviewed()
+  commit({ 'src/app.js': APP, 'README.md': 'base\n' }, 'restore both files to the base')
+  const check = fixChecked(r.id)
+  assert.equal(check.security.status, 'ran')
+  const read = new Set(check.security.manifest.read.map(([p]) => p))
+  for (const [p] of check.security.saw) assert.ok(read.has(p), `${p} is credited with no section in the security prompt`)
+  assert.ok(!check.security.saw.some(([p]) => p === 'src/app.js'), JSON.stringify(check.security.saw))
+})
+
 test('M9 an empty-tree base records the empty tree as its base', () => {
   rmSync(REPO, { recursive: true, force: true }); mkdirSync(REPO)
   git('init', '-q', '-b', 'feat')
@@ -386,6 +436,9 @@ function propertyRun(seed) {
     'src/blob.js': `export const b = ${seed}\u0000\n`, 'src/huge.js': body(200 + Math.floor(rand() * 200), 'h'),
     'src/ñame.js': body(3, 'n'), 'src/q"t.js': body(3, 'q'), '.gitattributes': 'src/hidden.js -diff\nsrc/conv.js diff=conv\n',
     'src/hidden.js': body(4, 'x'), 'src/conv.js': body(6, 'c') }, 'branch')
+  if (chance(0.5)) {
+    writeFileSync(join(repo, 'src/latin.js'), Buffer.from(`export const s = "caf\xe9 ${seed}"\n`, 'latin1')); g('add', 'src/latin.js'); g('commit', '-qm', 'latin-1')
+  }
   g('mv', 'src/rename-me.js', 'src/renamed.js'); g('commit', '-qm', 'rename')
   g('rm', '-q', 'src/kind.js'); step({ 'src/kind.js': pick([body(3, 'k'), `export const k = 1\u0000\n`]) }, 'type change')
   mkdirSync(join(repo, 'vendor/sub'), { recursive: true })
