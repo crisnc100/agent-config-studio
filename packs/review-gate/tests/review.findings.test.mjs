@@ -157,7 +157,7 @@ test('P1 a protected pre-existing finding is listed first as Pre-existing HIGH, 
   assert.ok(!record.tierReasons.some((r) => /deferred/.test(r)), JSON.stringify(record.tierReasons))
   const text = summary()
   assert.deepEqual(section(text, 'Pre-existing (not introduced here)'), [
-    'Pre-existing HIGH f2 HIGH 6/100 (likelihood 2/10 × impact 3/10) src/one.js:17 — v17 leaks a secret; Trigger: reading v17',
+    'Pre-existing HIGH f2 MEDIUM 6/100 (likelihood 2/10 × impact 3/10) src/one.js:17 — v17 leaks a secret; Trigger: reading v17',
     'f1 MEDIUM 25/100 (likelihood 5/10 × impact 5/10) src/one.js:18 — v18 overflows; Trigger: reading v18',
   ])
   assert.match(text, /^Merge tier: HIGH \(.*pre-existing protected: f2.*\)/m)
@@ -573,7 +573,7 @@ test('X2 a protected pre-existing finding keeps the tip HIGH after a later slice
   const text = summary()
   assert.ok(text.includes('Sliced review: 1 slice(s)'), text)
   assert.deepEqual(section(text, 'Pre-existing (not introduced here)'),
-    ['Pre-existing HIGH f1 HIGH 6/100 (likelihood 2/10 × impact 3/10) src/one.js:17 — v17 leaks a secret; Trigger: reading v17'])
+    ['Pre-existing HIGH f1 MEDIUM 6/100 (likelihood 2/10 × impact 3/10) src/one.js:17 — v17 leaks a secret; Trigger: reading v17'])
   const line = text.split('\n').find((l) => l.startsWith('Merge tier: '))
   assert.match(line, /^Merge tier: HIGH \(.*pre-existing protected: f1.*\)\. Policy always: needs a human$/)
   const tier = JSON.parse(script(['--tier-json']).stdout)

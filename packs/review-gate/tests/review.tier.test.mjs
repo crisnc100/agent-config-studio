@@ -151,7 +151,7 @@ test('2 a deferred finding marked protected makes a docs-only change HIGH', () =
   commit({ 'docs/guide.md': '# Guide\nfixed\n' })
   allowed(script(['--fix-check', review.id], { STUB_FINDINGS: JSON.stringify({ findings: [
     scored({ issue: 'guide is thin', file: 'docs/guide.md', quote: '# Guide' }),
-    scored({ issue: 'guide wipes data', file: 'docs/guide.md', line: '2', quote: 'fixed', likelihood: 1, impact: 2, protected: true }),
+    scored({ issue: 'guide wipes data', file: 'docs/guide.md', line: '2', quote: 'fixed', likelihood: 2, impact: 2, protected: true }),
   ] }) }))
   const record = closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later' }, x2: { status: 'deferred', reason: 'later' } })
   assert.equal(record.tier, 'high')
@@ -689,4 +689,19 @@ test('t1 a merge-tier classifier that never answers is killed with its process g
   const pid = Number(readFileSync(childFile, 'utf8'))
   const alive = (() => { try { process.kill(pid, 0); return true } catch { return false } })()
   assert.equal(alive, false, `the classifier's own child ${pid} was killed with its group`)
+})
+
+test('2 a filed protected LOW keeps a docs-only tier at MEDIUM, names it "filed protected", and the summary marks it', () => {
+  commit({ 'docs/guide.md': '# Guide\n' })
+  const review = reviewed([scored({ issue: 'guide wipes data', file: 'docs/guide.md', quote: '# Guide', likelihood: 1, impact: 7, protected: true, trigger: 'a tag pushed to a branch' })])
+  assert.deepEqual([review.findingDetails[0].severity, review.findingDetails[0].filed], ['low', true])
+  const record = closed(review.id, {})
+  assert.equal(record.tier, 'medium')
+  assert.ok(record.tierReasons.includes('filed protected: f1'), JSON.stringify(record.tierReasons))
+  assert.ok(!record.tierReasons.some((r) => /deferred protected/.test(r)), JSON.stringify(record.tierReasons))
+  const text = summary().stdout
+  assert.match(tierLine(text)[0], /^Merge tier: MEDIUM \(.*filed protected: f1.*\)\./)
+  assert.ok(text.split('\n').includes('f1 LOW 7/100 (likelihood 1/10 × impact 7/10) docs/guide.md:1 — [protected] guide wipes data; Trigger: a tag pushed to a branch'), text)
+  const tip = JSON.parse(script(['--tier-json']).stdout)
+  assert.equal(tip.tier, 'medium'); assert.equal(tip.reasons.filter((r) => r === 'filed protected: f1').length, 1, JSON.stringify(tip.reasons))
 })

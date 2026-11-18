@@ -622,3 +622,16 @@ test('13 requirements*.txt gets the supply-chain list despite its .txt; an agent
   // Other .txt files are still docs.
   assert.deepEqual(listsIn(securityPromptFor({ 'notes/server-install.txt': 'notes\n' })), [])
 })
+
+test('threat model: the code prompt and the security prompt both carry it', () => {
+  required()
+  commit({ 'src/app.ts': APP })
+  reviewed({ STUB_FINDINGS: findings(), STUB_SEC_FINDINGS: findings() })
+  const code = codeCalls(), security = securityCalls()
+  assert.equal(code.length, 1); assert.equal(security.length, 1)
+  for (const c of [code[0], security[0]]) {
+    assert.ok(c.prompt.includes('THREAT MODEL: one operator working alone on their own repositories'), c.kind)
+    assert.ok(c.prompt.includes('a hostile outside contributor'), c.kind)
+    assert.ok(c.prompt.includes('which assumption the finding needs'), c.kind)
+  }
+})

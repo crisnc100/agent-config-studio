@@ -1,11 +1,11 @@
 # Review severity calibration
 
-Rubric version: 2026-10-29.2
+Rubric version: 2026-11-18.1
 
 | # | Finding | likelihood | impact | protected | risk | expected band | Why |
 |---|---|---|---|---|---|---|---|
 | 1 | Grade-failure fixes wrongly count as out of scope and block the push | 7 | 7 | no | 49 | HIGH | Every Grade-failure fix; the main workflow is blocked |
-| 2 | Pushing a local tag to a branch bypasses the review gate | 1 | 7 | yes | 7 | HIGH | Uncommon, but a push-check bug: the gate's own logic lets unreviewed code onto a branch, so protected |
+| 2 | Pushing a local tag to a branch bypasses the review gate | 1 | 7 | yes | 7 | LOW | A push-check bug, so protected, but no normal-use path pushes a tag to a branch: likelihood 1 files it as LOW, listed as protected in the summary and the merge tier |
 | 3 | A dispute verifier sees only the last commit rather than the reviewed diff | 5 | 7 | no | 35 | MEDIUM | Disputes are a regular optional path; a silently wrong verdict |
 | 4 | A never-deployed build-only legacy record cannot use its own REFUTED dispute | 1 | 3 | no | 3 | LOW | No normal-use path |
 | 5 | updateInstead accepts a push but leaves the working tree stale | 3 | 7 | no | 21 | MEDIUM | Named, supported, uncommon config; the stale tree is silent and the next commit undoes the push, but history, revert or reflog restores it, so not protected |

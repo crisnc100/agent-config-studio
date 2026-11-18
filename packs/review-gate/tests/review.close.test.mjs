@@ -855,7 +855,7 @@ test('5.2 scores file risk at the boundary, protect sensitive bugs and preserve 
     { likelihood: 1, impact: null, protected: false, trigger: 'normal fixture input' },
   ]
   const r = review({ STUB_FINDINGS: JSON.stringify({ findings: variants.map((v) => ({ ...FINDING, ...v })) }) })
-  assert.deepEqual(r.findingDetails.map((f) => !!f.filed), [true, false, false, false, false, false, false, false, false, false])
+  assert.deepEqual(r.findingDetails.map((f) => !!f.filed), [true, true, false, false, false, false, false, false, false, false])
   assert.equal(r.findingDetails[0].risk, 10); assert.equal(r.findingDetails[1].risk, 10)
   assert.deepEqual(r.findingDetails[3], { ...FINDING, status: 'verified-quote', id: 'f4', unscored: true, reviewerSeverity: 'high' })
   const prompt = calls().at(-1).prompt
@@ -965,12 +965,12 @@ test('5.3 both skill copies and global instruction files require the deferred PR
 })
 
 const SCORED = { ...FINDING, likelihood: 5, impact: 5, protected: false, trigger: 'supported fixture command' }
-test('6.1 severity derives from scores at both boundaries and protected is always HIGH; labels are comparison only', () => {
+test('6.1 severity derives from scores at both boundaries and a protected likelihood-1 finding is a filed LOW; labels are comparison only', () => {
   const scores = [{ likelihood: 2, impact: 5 }, { likelihood: 3, impact: 4 }, { likelihood: 5, impact: 7 }, { likelihood: 5, impact: 8 }, { likelihood: 1, impact: 1, protected: true }]
   const r = review({ STUB_FINDINGS: JSON.stringify({ findings: scores.map((f) => ({ ...SCORED, severity: 'low', ...f })) }) })
-  assert.deepEqual(r.findingDetails.map((f) => [f.risk, f.severity, f.filed]), [[10, 'low', true], [12, 'medium', false], [35, 'medium', false], [40, 'high', false], [1, 'high', false]])
+  assert.deepEqual(r.findingDetails.map((f) => [f.risk, f.severity, f.filed]), [[10, 'low', true], [12, 'medium', false], [35, 'medium', false], [40, 'high', false], [1, 'low', true]])
   assert.ok(r.findingDetails.every((f) => f.reviewerSeverity === 'low'))
-  assert.equal(r.rubricVersion, '2026-10-29.2'); assert.deepEqual(r.rescored, { asked: 0, scored: 0 })
+  assert.equal(r.rubricVersion, '2026-11-18.1'); assert.deepEqual(r.rescored, { asked: 0, scored: 0 })
   const schema = calls().find((c) => c.schema.properties.findings).schema.properties.findings.items
   assert.equal(Object.hasOwn(schema.properties, 'severity'), false)
   for (const key of ['likelihood', 'impact', 'protected', 'trigger']) {
@@ -1003,7 +1003,12 @@ test('6.4 exactly one same-reviewer score follow-up merges valid indexed answers
     { index: 999, likelihood: 1, impact: 1, protected: false, trigger: 'ignore' },
   ] }) })
   assert.deepEqual(r.rescored, { asked: 4, scored: 2 })
-  assert.deepEqual(Array.from({ length: 5 }, (_, i) => r.findingDetails.find((f) => f.issue === 'score-' + i)).map((f) => [f.severity, !!f.unscored, !!f.filed]), [['low', false, true], ['medium', false, false], ['medium', true, false], ['high', true, false], ['high', true, false]])
+  assert.deepEqual(Array.from({ length: 5 }, (_, i) => r.findingDetails.find((f) => f.issue === 'score-' + i)).map((f) => [f.severity, !!f.unscored, !!f.filed]), [['low', false, true], ['medium', false, false], ['medium', true, false], ['medium', true, false], ['high', true, false]])
+  const unscoredProtected = r.findingDetails.find((f) => f.issue === 'score-3')
+  assert.equal(unscoredProtected.protected, true)
+  const others = Object.fromEntries(r.findingDetails.filter((f) => f !== unscoredProtected && !f.filed).map((f) => [f.id, { status: 'fixed' }]))
+  const blocked = close(r.id, others, ['--test-cmd', 'true'])
+  assert.notEqual(blocked.status, 0); assert.match(blocked.out, new RegExp(`Finding ${unscoredProtected.id} needs a fixed or rejected status`))
   const followups = calls().filter((c) => c.schema.properties.scores)
   assert.equal(followups.length, 1)
   assert.equal(followups[0].a.includes('--output-schema'), true, 'same Codex reviewer')
@@ -1017,9 +1022,15 @@ test('6.4 failed score follow-up keeps findings blocking and legacy LOW needs RE
     { ...SCORED, impact: 11 }, { ...SCORED, protected: true, trigger: '' }, { ...FINDING, severity: 'low' },
   ] }) })
   assert.deepEqual(r.rescored, { asked: 2, scored: 0 })
-  assert.deepEqual(r.findingDetails.map((f) => [f.severity, f.unscored, !!f.filed]), [['medium', true, false], ['high', true, false], ['low', true, false]])
+  assert.deepEqual(r.findingDetails.map((f) => [f.severity, f.unscored, !!f.filed]), [['medium', true, false], ['medium', true, false], ['low', true, false]])
+  assert.equal(r.findingDetails[1].protected, true)
+  const missing = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true'])
+  assert.notEqual(missing.status, 0); assert.match(missing.out, /Finding f2 needs a fixed or rejected status/)
   const values = { f1: { status: 'fixed' }, f2: { status: 'fixed' }, f3: { status: 'rejected', reason: 'legacy low', response: 'wrong', evidence: 'a.js:1' } }
-  const refused = close(r.id, values, ['--test-cmd', 'true']); assert.notEqual(refused.status, 0); assert.match(refused.out, /REFUTED/)
+  commit('a.js', 'export const a = 3\n')
+  const refused = close(r.id, values, ['--test-cmd', 'true']); assert.notEqual(refused.status, 0)
+  assert.match(refused.out, /Rejected f3 requires a REFUTED verdict or an operator waiver/)
+  assert.doesNotMatch(refused.out, /Fixed f2 is protected/)
   seed({ type: 'dispute', review: r.id, finding: 'f3', verdict: 'REFUTED' })
   const accepted = close(r.id, values, ['--test-cmd', 'true']); assert.equal(accepted.status, 0, accepted.out)
   assert.match(run(['--summary']).stdout, /f3 LOW wrong return: legacy low/)
@@ -1029,21 +1040,27 @@ test('6.1 and 6.4 Grade and recheck derive extra findings without calls and ever
   const { severity, quote, suggestion, ...plain } = SCORED
   const scores = { ...plain, evidence: 'fixture evidence' }
   const g = logGrade({ ...gradeVerdict(), findings: [scores, { ...scores, severity: 'low', protected: true, impact: null }] })
-  assert.deepEqual(g.findingDetails.map((f) => [f.severity, !!f.unscored, !!f.filed]), [['high', false, false], ['medium', false, false], ['high', true, false]])
+  assert.deepEqual(g.findingDetails.map((f) => [f.severity, !!f.unscored, !!f.filed]), [['high', false, false], ['medium', false, false], ['medium', true, false]])
   assert.equal(Object.hasOwn(g.findingDetails[1], 'reviewerSeverity'), false)
   assert.equal(g.findingDetails[2].reviewerSeverity, 'low')
-  assert.equal(g.rubricVersion, '2026-10-29.2'); assert.equal(calls().length, 0)
+  assert.equal(g.findingDetails[2].protected, true)
+  assert.equal(g.rubricVersion, '2026-11-18.1'); assert.equal(calls().length, 0)
   const rc = logGrade({ ...recheckVerdict(), findings: [{ issue: 'Missing scores', evidence: 'fixture test' }] }, ['--recheck-of', g.id])
   assert.equal(rc.findingDetails[0].severity, 'medium'); assert.equal(rc.findingDetails[0].unscored, true)
   assert.equal(rc.rubricVersion, g.rubricVersion); assert.equal(calls().length, 0)
+  const passing = logGrade({ ...gradeVerdict(), criteria: [gradeVerdict().criteria[1]], findings: [{ ...scores, protected: true, impact: null }] })
+  const [unresolved] = passing.findingDetails
+  assert.deepEqual([unresolved.severity, unresolved.unscored, unresolved.protected], ['medium', true, true])
+  const blocked = close(passing.id, {}, ['--test-cmd', 'true'])
+  assert.notEqual(blocked.status, 0); assert.match(blocked.out, new RegExp(`Finding ${unresolved.id} needs a fixed or rejected status`))
 })
 
-test('6.4 fix-check uses the identical rubric and one re-ask, retaining unscored HIGH if protected', () => {
+test('6.4 fix-check uses the identical rubric and one re-ask, a re-scored protected finding at likelihood 3 is HIGH', () => {
   const r = review(); commit('a.js', 'export const a = 3\n')
-  const result = run(['--fix-check', r.id], { STUB_FINDINGS: JSON.stringify({ findings: [{ ...SCORED, quote: 'export const a = 3', trigger: '' }] }), STUB_SCORES: JSON.stringify({ scores: [{ index: 0, likelihood: 1, impact: 1, protected: true, trigger: 'gate bypass' }] }) })
+  const result = run(['--fix-check', r.id], { STUB_FINDINGS: JSON.stringify({ findings: [{ ...SCORED, quote: 'export const a = 3', trigger: '' }] }), STUB_SCORES: JSON.stringify({ scores: [{ index: 0, likelihood: 3, impact: 1, protected: true, trigger: 'gate bypass' }] }) })
   assert.equal(result.status, 0, result.out)
   const check = lines().at(-1)
-  assert.deepEqual(check.rescored, { asked: 1, scored: 1 }); assert.equal(check.rubricVersion, '2026-10-29.2')
+  assert.deepEqual(check.rescored, { asked: 1, scored: 1 }); assert.equal(check.rubricVersion, '2026-11-18.1')
   assert.equal(check.findingDetails[0].severity, 'high'); assert.equal(check.findingDetails[0].filed, false)
   const rubric = run(['--rubric']).stdout.split('\n').slice(1).join('\n').trim()
   assert.ok(calls().filter((c) => c.schema.properties.scores || c.prompt.startsWith('Fix check:')).every((c) => c.prompt.includes(rubric)))
@@ -1087,7 +1104,7 @@ test('6.7 calibration is model-free, checks all eight rows, bands, numeric risk 
   const result = run(['--calibrate']); assert.equal(result.status, 0, result.out)
   assert.equal(result.stdout.split('\n').filter((line) => /derived.*expected/.test(line)).length, 8)
   const source = readFileSync(join(dirname(SCRIPT), 'calibration.md'), 'utf8'), file = join(ROOT, 'calibration.md')
-  for (const text of [source.replace('2026-10-29.2', 'old-version'), source.replace('| 49 | HIGH |', '| 49 | LOW |'), source.replace('| 49 | HIGH |', '| 48 | HIGH |')]) {
+  for (const text of [source.replace('2026-11-18.1', 'old-version'), source.replace('| 49 | HIGH |', '| 49 | LOW |'), source.replace('| 49 | HIGH |', '| 48 | HIGH |')]) {
     writeFileSync(file, text); assert.notEqual(run(['--calibrate', file]).status, 0)
   }
   assert.equal(calls().length, 0)
@@ -1188,4 +1205,57 @@ test('close once: a review, a fix commit and a comment-only commit, one --fix-ch
   const tip = git('rev-parse', 'HEAD').trim()
   const gated = spawnSync(process.execPath, [SCRIPT, '--gate'], { cwd: REPO, env: environment(), encoding: 'utf8', input: `refs/heads/feat ${tip} refs/heads/feat ${'0'.repeat(40)}\n` })
   assert.equal(gated.status, 0, `${gated.stdout}\n${gated.stderr}`)
+})
+
+test('7.1 a protected finding takes its band from its likelihood: 3 or more HIGH, 2 MEDIUM and never filed, 1 LOW, filed and still protected', () => {
+  const scores = [{ likelihood: 3, impact: 1 }, { likelihood: 2, impact: 10 }, { likelihood: 2, impact: 1 }, { likelihood: 1, impact: 10 }]
+  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: scores.map((f) => ({ ...SCORED, ...f, protected: true })) }) })
+  assert.deepEqual(r.findingDetails.map((f) => [f.risk, f.severity, !!f.filed, f.protected]),
+    [[3, 'high', false, true], [20, 'medium', false, true], [2, 'medium', false, true], [10, 'low', true, true]])
+  const refused = close(r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' } }, ['--test-cmd', 'true'])
+  assert.notEqual(refused.status, 0); assert.match(refused.out, /Finding f3 needs a fixed or rejected status/)
+  commit('a.js', 'export const a = 3\n')
+  const accepted = close(r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' }, f3: { status: 'fixed' } }, ['--test-cmd', 'true'])
+  assert.equal(accepted.status, 0, accepted.out)
+})
+
+test('7.2 an unscored protected finding blocks as MEDIUM, never HIGH, in a review and a Grade', () => {
+  const r = review({ STUB_SCORE_FAIL: '1', STUB_FINDINGS: JSON.stringify({ findings: [{ ...SCORED, protected: true, trigger: '' }] }) })
+  assert.deepEqual(r.findingDetails.map((f) => [f.severity, f.unscored, !!f.filed]), [['medium', true, false]])
+  const { severity, quote, suggestion, ...plain } = SCORED
+  const g = logGrade({ ...gradeVerdict(), findings: [{ ...plain, evidence: 'fixture evidence', protected: true, impact: null },
+    { ...plain, evidence: 'fixture evidence', protected: true, likelihood: 1, impact: 9 }] })
+  assert.deepEqual(g.findingDetails.map((f) => [f.severity, !!f.unscored, !!f.filed]), [['high', false, false], ['medium', true, false], ['low', false, true]])
+})
+
+test('7.3 the rubric states the threat model and the protected bands by likelihood', () => {
+  const text = run(['--rubric']); assert.equal(text.status, 0, text.out)
+  for (const phrase of ['THREAT MODEL', 'one operator working alone on their own repositories', 'honest but make mistakes', 'prompt injection',
+    'a run that fails, times out or is interrupted', 'size caps and cut-off diffs', 'content no reviewer read', 'a builder weakening a test',
+    'a failure treated as success', 'a setting the operator chose being ignored', 'a hostile outside contributor', 'deliberately crafted file names or paths',
+    'unusual git config, attributes or drivers', 'which assumption the finding needs',
+    'protected with likelihood >= 3', 'protected with likelihood 1', 'likelihood 2 is MEDIUM, never filed']) assert.ok(text.stdout.includes(phrase), phrase)
+  assert.doesNotMatch(text.stdout, /however rare/)
+  assert.doesNotMatch(text.stdout, /HIGH if protected/)
+  assert.ok(text.stdout.indexOf('THREAT MODEL') > text.stdout.indexOf('10: every use') && text.stdout.indexOf('THREAT MODEL') < text.stdout.indexOf('impact (1–10)'), 'beside the likelihood anchors')
+})
+
+test('7.4 a blocking protected finding is fixed only by a change to its file; an unprotected one and a filed protected LOW are not held to it', () => {
+  const PROTECTED = { ...SCORED, issue: 'gate bypass', protected: true, likelihood: 3, impact: 7 }
+  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [PROTECTED, { ...SCORED, issue: 'plain bug' }, { ...SCORED, issue: 'rare bypass', protected: true, likelihood: 1 }] }) })
+  assert.deepEqual(r.findingDetails.map((f) => f.severity), ['high', 'medium', 'low'])
+  const stale = close(r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' } }, ['--test-cmd', 'true'])
+  assert.notEqual(stale.status, 0); assert.match(stale.out, /Fixed f1 is protected, but a\.js is unchanged since the review/)
+  assert.equal(lines().filter((e) => e.type === 'close').length, 0)
+  commit('a.js', 'export const a = 3\n')
+  const fixed = close(r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' } }, ['--test-cmd', 'true'])
+  assert.equal(fixed.status, 0, fixed.out); assert.equal(lines().at(-1).status, 'complete')
+})
+
+test('7.4 a REFUTED dispute lets a protected finding close as fixed on an unchanged file', () => {
+  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [{ ...SCORED, protected: true, likelihood: 2, impact: 7 }] }) })
+  assert.equal(r.findingDetails[0].severity, 'medium')
+  assert.notEqual(close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true']).status, 0)
+  seed({ type: 'dispute', review: r.id, finding: 'f1', verdict: 'REFUTED', verifier: 'grok' })
+  const accepted = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true']); assert.equal(accepted.status, 0, accepted.out)
 })
