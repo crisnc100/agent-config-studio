@@ -447,3 +447,75 @@ test('20 a fix check whose security pass ran lists the security family among its
   assert.deepEqual(check.families.sort(), [check.family, check.security.family].sort())
   assert.equal(check.findingDetails.find((f) => f.quote === 'export const three = 33').source, 'security')
 })
+
+test('21 under "always", a changed docs file no pass saw after the review is named at close, as code would be', () => {
+  homeConfig({ security: { run: 'always' } })
+  const id = reviewed()
+  commit({ 'README.md': 'base\nThe app exports one, two and three numbers.\n' })
+  fixCheck(id, {}, ['--code-only'])
+  const close = closed(id)
+  assert.equal(close.tier, 'high')
+  assert.ok(close.tierReasons.some((t) => /security pass did not see README\.md/.test(t)), JSON.stringify(close.tierReasons))
+})
+
+test('22 a fix check whose required security pass failed covers nothing for the push gate', () => {
+  homeConfig({ security: { run: 'required' } })
+  const a = reviewed({ REVIEW_PATHS: 'src/app.js' })
+  commit({ 'src/app.js': 'export const one = 1\nexport const two = 2\nexport const three = 33\n' })
+  const check = fixCheck(a, { REVIEW_SECURITY_TEST_FAULT: 'exit', STUB_FINDINGS: findings() }, [])
+  assert.equal(check.security.status, 'failed')
+  assert.equal(check.findings, 0)
+  closed(reviewed({ REVIEW_PATHS: 'README.md' }))
+  const pushed = gate()
+  refused(pushed, /src\/app\.js/)
+})
+
+test('23 a binary diff of a code file is never recorded as seen, by the security pass or the reviewer; a binary image stays covered', () => {
+  homeConfig({ security: { run: 'required' } })
+  commit({ 'src/blob.js': 'export const x = 1\u0000\n', 'img/logo.png': '\u0089PNG\u0000\u0001' })
+  const id = reviewed()
+  const record = lines(LOG).find((e) => e.id === id)
+  assert.ok(record.truncated.includes('src/blob.js'), JSON.stringify(record.truncated))
+  assert.ok(!record.truncated.includes('img/logo.png'), JSON.stringify(record.truncated))
+  assert.ok(!record.security.saw.some(([p]) => p === 'src/blob.js'), JSON.stringify(record.security.saw))
+  commit({ 'src/blob.js': 'export const x = 2\u0000\n' })
+  const check = fixCheck(id, {}, [])
+  assert.equal(check.security.status, 'ran')
+  assert.ok(!check.security.saw.some(([p]) => p === 'src/blob.js'), JSON.stringify(check.security.saw))
+  assert.ok(!check.coverage.some(([p]) => p === 'src/blob.js'), JSON.stringify(check.coverage))
+})
+
+test('24 a --focus docs fix check needs --context-commit inside the fix range; its prompt names that commit and its files and asks for any code-line change there', () => {
+  const id = reviewed()
+  commit({ 'src/app.js': 'export const one = 1\nexport const two = 2\nexport const three = 33\n' })
+  commit({ 'src/app.js': '// Callers read these at start.\nexport const one = 1\nexport const two = 2\nexport const three = 33\n', 'README.md': 'base\nThree numbers.\n' })
+  const context = git('rev-parse', 'HEAD')
+  refused(script(['--fix-check', id, '--focus', 'docs'], { REVIEW_REVIEWER: 'sol' }), /--context-commit/)
+  refused(script(['--fix-check', id, '--focus', 'docs', '--context-commit', git('rev-parse', 'main')], { REVIEW_REVIEWER: 'sol' }), /--context-commit .* is not a commit after the review/)
+  rmSync(CALLS, { force: true })
+  const check = fixCheck(id)
+  const prompt = calls().find((c) => c.kind === 'code').prompt
+  assert.ok(prompt.includes(`context commit ${context}`), 'names the commit')
+  assert.match(prompt, /README\.md, src\/app\.js/)
+  assert.match(prompt, /any code-line change in the context commit/)
+  assert.equal(check.contextCommit, context)
+})
+
+test('25 a security finding of the fix check on code outside the fix diff is fixed or disputed, never deferred; one in the fix may be deferred', () => {
+  homeConfig({ security: { run: 'required' } })
+  const LONG = (last) => ['export const one = 1', ...Array.from({ length: 12 }, (_, i) => `export const pad${i} = ${i}`), `export const last = ${last}`].join('\n') + '\n'
+  commit({ 'src/app.js': LONG(1) })
+  const id = reviewed({}, ['--code-only'])
+  commit({ 'src/app.js': LONG(2) })
+  const old = finding({ issue: 'one leaks', file: 'src/app.js', line: '1', quote: 'export const one = 1', likelihood: 5, impact: 5 })
+  const inFix = finding({ issue: 'last leaks', file: 'src/app.js', line: '14', quote: 'export const last = 2', likelihood: 5, impact: 5 })
+  const check = fixCheck(id, { STUB_SEC_FINDINGS: findings(old, inFix) }, [])
+  const [x1, x2] = check.findingDetails
+  assert.deepEqual([x1.source, x1.inFix, x2.source, x2.inFix], ['security', false, 'security', true])
+  const statusFile = join(ROOT, 'statuses.json')
+  const defer = { status: 'deferred', reason: 'later' }
+  writeFileSync(statusFile, JSON.stringify({ x1: defer, x2: defer }))
+  refused(script(['--close', id, '--status', statusFile, '--test-cmd', 'true']), /x1.*code no security pass had read.*fix it or dispute it/)
+  writeFileSync(statusFile, JSON.stringify({ x1: { status: 'fixed' }, x2: defer }))
+  allowed(script(['--close', id, '--status', statusFile, '--test-cmd', 'true']))
+})

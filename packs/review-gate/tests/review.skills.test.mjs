@@ -517,3 +517,11 @@ test('close once: pr-review runs the context pass before the one fix check and c
 test('close once: with security.run on, pr-review closes a /build Grade at its own head before the review starts', () => {
   for (const f of SKILLS('pr-review')) assert.match(shipped(f), /close the Grade at its own head \(`--close <grade-id>`\) before this step/, f)
 })
+
+test('close once: with security.run off, pr-review gives every open record at the tip its own fix check and close; build and code-review say the last phase\'s review closes there too', () => {
+  for (const f of SKILLS('pr-review')) {
+    assert.match(shipped(f), /every open record at the tip/, f)
+    assert.match(shipped(f), /--context-commit/, f)
+  }
+  for (const f of [...SKILLS('build', 'build'), ...SKILLS('code-review')]) assert.match(shipped(f), /the last phase's review/, f)
+})
