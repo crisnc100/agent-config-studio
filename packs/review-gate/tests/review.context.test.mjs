@@ -356,7 +356,7 @@ test('13 security.run "always" runs the pass in every fix check; off and --code-
   }
 })
 
-test('14 a docs MEDIUM from a --focus docs fix check cannot be deferred; a code MEDIUM still can, and so can a docs one from a plain fix check', () => {
+test('14 docs findings of a --focus docs fix check are deferred like any fix-check finding, and --summary lists them with their numbers', () => {
   const id = reviewed()
   commit({ 'src/app.js': `// Callers read these three numbers once.\nexport const one = 1\nexport const two = 2\nexport const three = 30\n`,
     'README.md': 'base\nThe app exports one, two and four.\n' })
@@ -368,17 +368,12 @@ test('14 a docs MEDIUM from a --focus docs fix check cannot be deferred; a code 
   assert.deepEqual(check.findingDetails.map((f) => [f.id, f.severity]), [['x1', 'medium'], ['x2', 'medium'], ['x3', 'medium']])
   const statusFile = join(ROOT, 'statuses.json')
   const defer = { status: 'deferred', reason: 'later' }
-  const tryClose = (statuses) => { writeFileSync(statusFile, JSON.stringify(statuses)); return script(['--close', id, '--status', statusFile, '--test-cmd', 'true']) }
-  refused(tryClose({ x1: defer, x2: { status: 'fixed' }, x3: defer }), /x1.*docs.*fix it or dispute it/)
-  refused(tryClose({ x1: { status: 'fixed' }, x2: defer, x3: defer }), /x2.*docs.*fix it or dispute it/)
-  assert.equal(closes().length, 0)
-  allowed(tryClose({ x1: { status: 'fixed' }, x2: { status: 'fixed' }, x3: defer }))
-  // A plain fix check's docs MEDIUM keeps today's deferral.
-  git('checkout', '-qb', 'feat3', 'main')
-  commit({ 'src/app.js': APP, 'README.md': 'base\nMore.\n' })
-  const plain = reviewed()
-  commit({ 'README.md': 'base\nThe app exports one, two and four.\n' })
-  fixCheck(plain, { STUB_FINDINGS: findings(docs) }, [])
-  writeFileSync(statusFile, JSON.stringify({ x1: defer }))
-  allowed(script(['--close', plain, '--status', statusFile, '--test-cmd', 'true']))
+  writeFileSync(statusFile, JSON.stringify({ x1: defer, x2: defer, x3: defer }))
+  allowed(script(['--close', id, '--status', statusFile, '--test-cmd', 'true']))
+  assert.equal(closes().length, 1)
+  const summary = script(['--summary'])
+  allowed(summary)
+  const deferred = summary.out.slice(summary.out.indexOf('Deferred findings'))
+  for (const issue of ['README says four', 'the comment says once', 'three became 30']) assert.ok(deferred.includes(issue), issue)
+  assert.equal((deferred.match(/MEDIUM 25\/100 \(likelihood 5\/10 × impact 5\/10\)/g) || []).length, 3, deferred)
 })
