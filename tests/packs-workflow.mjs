@@ -233,8 +233,8 @@ try {
   ok('who is you, your session agent, or a script with no model', /^you\b/.test(who('build', 'judge')) && /your session agent/.test(who('build', 'understand'))
     && who('review-gate', 'close') === 'script' && who('review-gate', 'gate') === 'git hook',
     `${who('build', 'judge')} | ${who('build', 'understand')} | ${who('review-gate', 'close')} | ${who('review-gate', 'gate')}`);
-  ok('the context pass names the writer role, Opus or Sonnet, and its docs slice', /^writer/.test(who('review-gate', 'context')) && /Opus or Sonnet/.test(who('review-gate', 'context'))
-    && /then a docs-focus slice review/.test(who('review-gate', 'context')), who('review-gate', 'context'));
+  ok('the context pass names the writer role, Opus or Sonnet, and the fix check that reviews it', /^writer/.test(who('review-gate', 'context')) && /Opus or Sonnet/.test(who('review-gate', 'context'))
+    && /before the fix check, which reviews it/.test(who('review-gate', 'context')), who('review-gate', 'context'));
   const flowKids = card('review-gate').querySelector('.flow').children;
   const at2 = flowKids.indexOf(step('review-gate', 'review'));
   ok('the security check is the row after the code review, shaded, saying it runs at the same time', at2 !== -1
