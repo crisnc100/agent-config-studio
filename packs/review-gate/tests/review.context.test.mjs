@@ -295,10 +295,14 @@ function plainPrompt(twin) {
   allowed(script(['--fix-check', twin], { REVIEW_REVIEWER: 'sol' }))
   return codeCall()
 }
+// And across the whole prompt, code lines come up only in the block's scoped ask and its fix-round note: an instruction
+// about code lines added to every fix check would change both prompts alike, so (b) alone would miss it.
 function assertDocsPrompt(prompt, plainText, sha, files) {
   const block = docsBlock(sha, files)
   assert.equal(prompt.split(block).length, 2, `the docs block, verbatim and once:\n${prompt}`)
   assert.equal(prompt.replace(block, ''), plainText)
+  const asks = (prompt.match(/code[- ]lines?/gi) || []).map((a) => a.toLowerCase())
+  assert.deepEqual(asks, ['code-line', 'code lines'], `only the scoped ask and its fix-round note mention code lines:\n${asks.join(' | ')}`)
 }
 
 test('10 --fix-check --focus docs runs the fix check with the docs instructions for the diff\'s comment and doc edits, and the record logs the focus', () => {
