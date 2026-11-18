@@ -1221,3 +1221,23 @@ test('7.3 the rubric states the threat model and the protected bands by likeliho
   assert.doesNotMatch(text.stdout, /HIGH if protected/)
   assert.ok(text.stdout.indexOf('THREAT MODEL') > text.stdout.indexOf('10: every use') && text.stdout.indexOf('THREAT MODEL') < text.stdout.indexOf('impact (1–10)'), 'beside the likelihood anchors')
 })
+
+test('7.4 a blocking protected finding is fixed only by a change to its file; an unprotected one and a filed protected LOW are not held to it', () => {
+  const PROTECTED = { ...SCORED, issue: 'gate bypass', protected: true, likelihood: 3, impact: 7 }
+  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [PROTECTED, { ...SCORED, issue: 'plain bug' }, { ...SCORED, issue: 'rare bypass', protected: true, likelihood: 1 }] }) })
+  assert.deepEqual(r.findingDetails.map((f) => f.severity), ['high', 'medium', 'low'])
+  const stale = close(r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' } }, ['--test-cmd', 'true'])
+  assert.notEqual(stale.status, 0); assert.match(stale.out, /Fixed f1 is protected, but a\.js is unchanged since the review/)
+  assert.equal(lines().filter((e) => e.type === 'close').length, 0)
+  commit('a.js', 'export const a = 3\n')
+  const fixed = close(r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' } }, ['--test-cmd', 'true'])
+  assert.equal(fixed.status, 0, fixed.out); assert.equal(lines().at(-1).status, 'complete')
+})
+
+test('7.4 a REFUTED dispute lets a protected finding close as fixed on an unchanged file', () => {
+  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [{ ...SCORED, protected: true, likelihood: 2, impact: 7 }] }) })
+  assert.equal(r.findingDetails[0].severity, 'medium')
+  assert.notEqual(close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true']).status, 0)
+  seed({ type: 'dispute', review: r.id, finding: 'f1', verdict: 'REFUTED', verifier: 'grok' })
+  const accepted = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true']); assert.equal(accepted.status, 0, accepted.out)
+})

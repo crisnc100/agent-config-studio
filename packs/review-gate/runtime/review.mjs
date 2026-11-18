@@ -3303,6 +3303,16 @@ async function closeReview(id) {
   const ids = new Set(reviews.flatMap((r) => r.findingDetails.map((f) => f.id)))
   for (const key of Object.keys(statuses)) if (!ids.has(key)) throw new Error(`Unknown finding status key: ${key}`)
   for (const r of reviews) validateStatuses(entries, r, statuses)
+  // A blocking protected finding marked fixed on a file still in the state the reviewer read is still there (a stale
+  // status after an interrupted fix, say): it needs a change to that file, or a REFUTED dispute.
+  for (const r of reviews) for (const f of r.findingDetails) {
+    if (statuses[f.id]?.status !== 'fixed' || f.protected !== true || f.criterionId || !blocking(f)) continue
+    const path = r.resolvedPaths?.[f.id]?.path ?? f.file
+    if (typeof path !== 'string' || !path || !fullObjectId(r.head)) continue
+    if (stateAt(r.head, path) === stateAt(head, path) && !refuted(entries, r, f))
+      throw new Error(`Fixed ${f.id} is protected, but ${path} is unchanged since the review at ${r.head.slice(0, 12)}: ` +
+        'change that file to fix it, or dispute it (REFUTED)')
+  }
   // A fix logged without a label was real; only closes logged before labels existed count as unlabeled.
   for (const status of Object.values(statuses)) if (status?.status === 'fixed' && !Object.hasOwn(status, 'response')) status.response = 'real'
   const fixedFiles = recordedPaths(reviews, statuses)
