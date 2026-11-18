@@ -1783,7 +1783,7 @@ function reviewPrompt(diff) {
 }
 // Added to the correctness prompt under --focus docs: the context pass's edits are judged as code and as docs. A slice
 // holds only the context commit, so a code-line change there is a finding; a fix check's diff also holds the fix round's
-// code, so it leaves code lines to the correctness prompt (context-pass.mjs --check-commit refuses them in the commit).
+// code lines, which are expected, so it asks only about code-line changes in the named context commit.
 const docsFocus = (fixCheck) => `DOCS AND COMMENTS, as well: the comment and doc edits in this diff are a context pass, ` +
   `made so comments and technical docs describe the code as it is now. For every changed doc line and comment, open the ` +
   `code it describes and also report: a claim that is untrue of the code; a claim not backed by the code (name the ` +
@@ -3023,7 +3023,7 @@ function pathReasons(diff) {
 // HIGH by the security pass: required and it did not run (failed or skipped), or it was off or not required at review
 // while the security pass is on now and the close diff (base to the closing HEAD) would require it.
 // A pass that ran covers only the file states it saw: a logic, other-kind or riskPaths file whose state at the closing HEAD
-// differs (changed by fix commits, say) is HIGH. A fix check is not a security pass and covers nothing here.
+// differs (changed by fix commits, say) is HIGH. The fix check's own security pass counts too, for the states it saw.
 function securityReasons(review, diff, head, check = null) {
   const sec = review.security, fix = check?.security
   const failed = [[sec, 'security pass'], [fix, "fix check's security pass"]].filter(([s]) => s?.status === 'failed' || s?.status === 'skipped')
