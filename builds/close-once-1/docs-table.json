@@ -1,0 +1,57 @@
+{
+ "rows": [
+  {
+   "behavior": "fix check takes --focus docs with --context-commit; docs prompt asks about code-line changes in that commit only",
+   "files": [
+    "packs/review-gate/runtime/review.mjs"
+   ],
+   "none": "comment fix not made: context-pass.mjs's comment parser returns no map for review.mjs, so --check-commit refuses any comment edit there; reported to the lead as a manual edit"
+  },
+  {
+   "behavior": "close counts the review's own security pass and its fix check's pass; a failed or skipped fix-check pass is HIGH",
+   "files": [
+    "packs/review-gate/runtime/review.mjs"
+   ],
+   "none": "comment fix not made: context-pass.mjs's comment parser returns no map for review.mjs, so --check-commit refuses any comment edit there; reported to the lead as a manual edit"
+  },
+  {
+   "behavior": ".mdx counts as code in --check-commit",
+   "files": [
+    "packs/review-gate/runtime/context-pass.mjs"
+   ],
+   "docs": [
+    {
+     "path": "packs/review-gate/runtime/context-pass.mjs",
+     "claims": [
+      {
+       "claim": "comment explains .mdx is checked as code",
+       "at": "packs/review-gate/runtime/context-pass.mjs:37"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "behavior": "workflow card order",
+   "files": [
+    "packs/review-gate/pack.json"
+   ],
+   "none": "pack.json is user-facing card data, not prose that describes other code; README, packs/README.md and KNOWN-LIMITS.md contain no text on the docs-focus slice or the old order"
+  },
+  {
+   "behavior": "skills and instructions describe the new order",
+   "files": [
+    "packs/build/skills/claude/build/SKILL.md",
+    "packs/build/skills/codex/build/SKILL.md",
+    "packs/review-gate/instructions/review-gate.md",
+    "packs/review-gate/skills/claude/code-review/SKILL.md",
+    "packs/review-gate/skills/claude/context-pass/SKILL.md",
+    "packs/review-gate/skills/claude/pr-review/SKILL.md",
+    "packs/review-gate/skills/codex/code-review/SKILL.md",
+    "packs/review-gate/skills/codex/context-pass/SKILL.md",
+    "packs/review-gate/skills/codex/pr-review/SKILL.md"
+   ],
+   "none": "untouchable instruction files; they are the doc for this behavior"
+  }
+ ]
+}
