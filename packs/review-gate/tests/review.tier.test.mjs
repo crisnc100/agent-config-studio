@@ -151,7 +151,7 @@ test('2 a deferred finding marked protected makes a docs-only change HIGH', () =
   commit({ 'docs/guide.md': '# Guide\nfixed\n' })
   allowed(script(['--fix-check', review.id], { STUB_FINDINGS: JSON.stringify({ findings: [
     scored({ issue: 'guide is thin', file: 'docs/guide.md', quote: '# Guide' }),
-    scored({ issue: 'guide wipes data', file: 'docs/guide.md', line: '2', quote: 'fixed', likelihood: 1, impact: 2, protected: true }),
+    scored({ issue: 'guide wipes data', file: 'docs/guide.md', line: '2', quote: 'fixed', likelihood: 2, impact: 2, protected: true }),
   ] }) }))
   const record = closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later' }, x2: { status: 'deferred', reason: 'later' } })
   assert.equal(record.tier, 'high')
