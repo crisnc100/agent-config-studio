@@ -319,10 +319,10 @@ test('R2 a fixed file whose fix diff the size cap cut leaves that file uncovered
   const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
   commit({ 'src/one.js': `export const one = 3\n${BIG}`, 'src/one.test.js': 'test one\n' })
   const check = fixCheck(r.id)
-  assert.deepEqual(check.truncated, ['src/one.js', 'src/one.test.js'])
+  assert.deepEqual(check.truncated, ['src/one.js'])
   const record = closed(r.id, { f1: { status: 'fixed' } })
-  assert.deepEqual(record.coverage.map(([path]) => path), ['docs/three.md'])
-  blocked(push(), /leave 2 file\(s\) uncovered: src\/one\.js, src\/one\.test\.js —/)
+  assert.deepEqual(record.coverage.map(([path]) => path), ['docs/three.md', 'src/one.test.js'])
+  blocked(push(), /leave 1 file\(s\) uncovered: src\/one\.js —/)
 })
 
 test('R3 a file the review saw only in part stays uncovered after the fix check sees its later change, in the close and in the check', () => {
