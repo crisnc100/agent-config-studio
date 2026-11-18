@@ -1,0 +1,7 @@
+{
+ "s1":{"status":"fixed","response":"real","test":"review.context.test.mjs test 27 — the push gate refuses a file the fix check's security pass never read"},
+ "s2":{"status":"fixed","response":"real","test":"review.context.test.mjs test 28 — a quoted or non-ASCII binary file name counts as unseen"},
+ "s3":{"status":"fixed","response":"real","test":"review.context.test.mjs test 29 — a stylesheet git shows as binary counts as unseen"},
+ "x1":{"status":"deferred","reason":"HIGH 7/100 (likelihood 1/10 × impact 7/10): fileSection matches a diff header by suffix, so a text file named like 'a b/evil.js' can stand in for a binary evil.js and mark it read. Needs a crafted file name with a space beside a binary source file; one fix check per review, so it goes to close-once PR 2.","fix":"parse each header into its exact a/ and b/ paths (quoted or plain) and compare whole paths, never by prefix or suffix"},
+ "x2":{"status":"deferred","reason":"LOW: filed. With diff.noprefix, diff.srcPrefix/dstPrefix or diff.external set in the user's git config, no header matches and every file counts as unread; fails closed (the push gate refuses).","fix":"run the reviewers' diffs with --no-ext-diff --src-prefix=a/ --dst-prefix=b/"}
+}
