@@ -345,10 +345,10 @@ test('13 security.run "always" runs the pass in every fix check; off and --code-
   rmSync(CALLS, { force: true })
   assert.equal(fixCheck(id).security.status, 'ran')
   assert.deepEqual(calls().map((c) => c.kind).sort(), ['code', 'security'])
-  for (const [config, args, status] of [[{ security: { run: 'off' } }, ['--focus', 'docs'], 'off'], [{ security: { run: 'required' } }, ['--code-only'], 'not-asked']]) {
+  for (const [config, args, status, n] of [[{ security: { run: 'off' } }, ['--focus', 'docs'], 'off', 4], [{ security: { run: 'required' } }, ['--code-only'], 'not-asked', 5]]) {
     homeConfig(config)
     const next = reviewed({ REVIEW_PATHS: 'src/app.js' }, args.includes('--code-only') ? ['--code-only'] : [])
-    commit({ 'src/app.js': `${APP}export const four = 4\n` })
+    commit({ 'src/app.js': `${APP}export const n = ${n}\n` })
     rmSync(CALLS, { force: true })
     const check = fixCheck(next, {}, args)
     assert.deepEqual(calls().map((c) => c.kind), ['code'], status)
@@ -360,9 +360,10 @@ test('14 a docs MEDIUM from a --focus docs fix check cannot be deferred; a code 
   const id = reviewed()
   commit({ 'src/app.js': `// Callers read these three numbers once.\nexport const one = 1\nexport const two = 2\nexport const three = 30\n`,
     'README.md': 'base\nThe app exports one, two and four.\n' })
-  const docs = finding({ issue: 'README says four', file: 'README.md', line: '2', quote: 'The app exports one, two and four.' })
-  const comment = finding({ issue: 'the comment says once', file: 'src/app.js', line: '1', quote: '// Callers read these three numbers once.' })
-  const code = finding({ issue: 'three became 30', file: 'src/app.js', line: '4', quote: 'export const three = 30' })
+  const medium = { likelihood: 5, impact: 5 }
+  const docs = finding({ ...medium, issue: 'README says four', file: 'README.md', line: '2', quote: 'The app exports one, two and four.' })
+  const comment = finding({ ...medium, issue: 'the comment says once', file: 'src/app.js', line: '1', quote: '// Callers read these three numbers once.' })
+  const code = finding({ ...medium, issue: 'three became 30', file: 'src/app.js', line: '4', quote: 'export const three = 30' })
   const check = fixCheck(id, { STUB_FINDINGS: findings(docs, comment, code) })
   assert.deepEqual(check.findingDetails.map((f) => [f.id, f.severity]), [['x1', 'medium'], ['x2', 'medium'], ['x3', 'medium']])
   const statusFile = join(ROOT, 'statuses.json')
