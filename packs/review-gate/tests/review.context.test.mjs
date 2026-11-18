@@ -377,3 +377,70 @@ test('14 docs findings of a --focus docs fix check are deferred like any fix-che
   for (const issue of ['README says four', 'the comment says once', 'three became 30']) assert.ok(deferred.includes(issue), issue)
   assert.equal((deferred.match(/MEDIUM 25\/100 \(likelihood 5\/10 × impact 5\/10\)/g) || []).length, 3, deferred)
 })
+
+// ── the fix check's security pass vouches only for what it read; a close counts only this review's passes ──
+const secCalls = () => calls().filter((c) => c.kind === 'security')
+test('15 after a --code-only review, the fix check\'s security pass reads the whole base..HEAD change of each file it vouches for, not only the fix', () => {
+  homeConfig({ security: { run: 'required' } })
+  const id = reviewed({}, ['--code-only'])
+  commit({ 'src/app.js': 'export const one = 1\nexport const two = 2\nexport const three = 33\n' })
+  rmSync(CALLS, { force: true })
+  const check = fixCheck(id, {}, [])
+  assert.equal(check.security.status, 'ran')
+  assert.match(secCalls()[0].prompt, /\+export const one = 1/, 'the branch\'s original change to src/app.js, which no pass had seen')
+  const close = closed(id)
+  assert.ok(!close.tierReasons.some((t) => /security/.test(t)), JSON.stringify(close.tierReasons))
+})
+
+test('16 a close never borrows another review\'s security pass', () => {
+  homeConfig({ security: { run: 'required' } })
+  const other = reviewed()
+  assert.equal(lines(LOG).find((e) => e.id === other).security.status, 'ran')
+  const id = reviewed({}, ['--code-only'])
+  const close = closed(id)
+  assert.equal(close.tier, 'high')
+  assert.ok(close.tierReasons.some((t) => /security pass did not cover/.test(t)), JSON.stringify(close.tierReasons))
+})
+
+test('17 a rename needs its source\'s deletion seen too, not only the destination', () => {
+  const BODY = Array.from({ length: 30 }, (_, i) => `export const v${i} = ${i}`).join('\n') + '\n'
+  git('checkout', '-q', 'main'); commit({ 'src/old.js': BODY }); git('checkout', '-qb', 'feat4')
+  homeConfig({ security: { run: 'required' } })
+  commit({ 'src/new.js': `${BODY}export const extra = 1\n` })
+  const id = reviewed()
+  assert.ok(lines(LOG).find((e) => e.id === id).security.saw.some(([p]) => p === 'src/new.js'))
+  git('rm', '-q', 'src/old.js'); git('commit', '-qm', 'drop old')
+  fixCheck(id, {}, ['--code-only'])
+  const close = closed(id)
+  assert.ok(close.tierReasons.some((t) => /security pass did not see .*src\/new\.js/.test(t)), JSON.stringify(close.tierReasons))
+})
+
+test('18 a required fix-check security pass that failed puts a reason in the tier, even when nothing else is unseen', () => {
+  homeConfig({ security: { run: 'always' } })
+  const id = reviewed()
+  commit({ 'README.md': 'base\nThe app exports one, two and three numbers.\n' })
+  const check = fixCheck(id, { REVIEW_SECURITY_TEST_FAULT: 'exit' })
+  assert.equal(check.security.status, 'failed')
+  const close = closed(id)
+  assert.equal(close.tier, 'high')
+  assert.ok(close.tierReasons.some((t) => /fix check's security pass failed/.test(t)), JSON.stringify(close.tierReasons))
+})
+
+test('19 under security.run "always" a close with no security pass at all is HIGH, docs-only included', () => {
+  git('checkout', '-q', 'main'); git('checkout', '-qb', 'docs-only')
+  commit({ 'README.md': 'base\nOnly docs.\n' })
+  homeConfig({ security: { run: 'always' } })
+  const close = closed(reviewed({}, ['--code-only']))
+  assert.equal(close.tier, 'high')
+  assert.ok(close.tierReasons.some((t) => /security/.test(t)), JSON.stringify(close.tierReasons))
+})
+
+test('20 a fix check whose security pass ran lists the security family among its reviewers, so it cannot judge its own finding', () => {
+  homeConfig({ security: { run: 'required' } })
+  const id = reviewed()
+  commit({ 'src/app.js': 'export const one = 1\nexport const two = 2\nexport const three = 33\n' })
+  const check = fixCheck(id, { STUB_SEC_FINDINGS: findings(finding({ file: 'src/app.js', line: '3', quote: 'export const three = 33' })) }, [])
+  assert.equal(check.security.status, 'ran')
+  assert.deepEqual(check.families.sort(), [check.family, check.security.family].sort())
+  assert.equal(check.findingDetails.find((f) => f.quote === 'export const three = 33').source, 'security')
+})
