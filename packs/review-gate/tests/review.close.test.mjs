@@ -1174,7 +1174,7 @@ test('close once: a review, a fix commit and a comment-only commit, one --fix-ch
   const r = review()
   commit('a.js', 'export const a = 3\n')
   commit('a.js', '// a is three: callers read it once at start.\nexport const a = 3\n')
-  const checked = run(['--fix-check', r.id, '--focus', 'docs'], { STUB_FINDINGS: '{"findings":[]}' })
+  const checked = run(['--fix-check', r.id, '--focus', 'docs', '--context-commit', git('rev-parse', 'HEAD')], { STUB_FINDINGS: '{"findings":[]}' })
   assert.equal(checked.status, 0, checked.out)
   const check = lines().find((e) => e.kind === 'fix-check' && e.review === r.id)
   assert.equal(check.focus, 'docs')

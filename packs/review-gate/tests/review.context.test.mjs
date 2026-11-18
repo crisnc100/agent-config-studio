@@ -267,7 +267,10 @@ test('9 --since-close: a file the security prompt cut at the cap stays out of wh
 })
 
 // ── close once: the context pass runs before the one fix check, which reviews it with the docs focus ──
-const fixCheck = (id, extra = {}, args = ['--focus', 'docs']) => {
+// The docs focus names the context commit; in these tests it is the last commit.
+const DOCS_CHECK = 'docs'
+const fixCheck = (id, extra = {}, args = [DOCS_CHECK]) => {
+  args = args.flatMap((a) => a === DOCS_CHECK ? ['--focus', 'docs', '--context-commit', git('rev-parse', 'HEAD')] : [a])
   const r = script(['--fix-check', id, ...args], { REVIEW_REVIEWER: 'sol', ...extra })
   allowed(r)
   return lines(LOG).filter((e) => e.kind === 'fix-check' && e.review === id).at(-1)
@@ -327,7 +330,7 @@ test('12 a fix check whose fix round and context commit touched only docs and te
   const id = reviewed({ STUB_FINDINGS: findings(finding({ issue: 'README is wrong', file: 'README.md', line: '2', quote: 'The app exports one, two and three.' })) })
   commit({ 'README.md': 'base\nThe app exports one, two and three numbers.\n', 'test/app.test.js': 'import "../src/app.js"\n' })
   rmSync(CALLS, { force: true })
-  const r = script(['--fix-check', id, '--focus', 'docs'], { REVIEW_REVIEWER: 'sol' })
+  const r = script(['--fix-check', id, '--focus', 'docs', '--context-commit', git('rev-parse', 'HEAD')], { REVIEW_REVIEWER: 'sol' })
   allowed(r)
   assert.deepEqual(calls().map((c) => c.kind), ['code'])
   assert.match(r.out, /security pass: not-required \(no security-relevant file changed since a security pass saw it\)/)
@@ -345,7 +348,7 @@ test('13 security.run "always" runs the pass in every fix check; off and --code-
   rmSync(CALLS, { force: true })
   assert.equal(fixCheck(id).security.status, 'ran')
   assert.deepEqual(calls().map((c) => c.kind).sort(), ['code', 'security'])
-  for (const [config, args, status, n] of [[{ security: { run: 'off' } }, ['--focus', 'docs'], 'off', 4], [{ security: { run: 'required' } }, ['--code-only'], 'not-asked', 5]]) {
+  for (const [config, args, status, n] of [[{ security: { run: 'off' } }, [DOCS_CHECK], 'off', 4], [{ security: { run: 'required' } }, ['--code-only'], 'not-asked', 5]]) {
     homeConfig(config)
     const next = reviewed({ REVIEW_PATHS: 'src/app.js' }, args.includes('--code-only') ? ['--code-only'] : [])
     commit({ 'src/app.js': `${APP}export const n = ${n}\n` })
