@@ -4,3 +4,4 @@
 - 2026-11-18: new tests (bands, unscored, rubric text, both prompts, filed protected tier and summary mark) failed before the code and pass after.
 - The summary mark is limited to filed protected LOWs: marking every protected line broke exact deferred-line tests for HIGHs that already read HIGH.
 - Suites green: review-gate and pr tests (PTY ones outside the sandbox), and the listed tests/*.mjs.
+- Fix round: s1 (a protected finding fixed on an unchanged file) now refused at close unless REFUTED; Sol FAILs on the unscored-protected tests strengthened; full listed suite rerun at the tip.
