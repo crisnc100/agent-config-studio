@@ -1189,3 +1189,35 @@ test('close once: a review, a fix commit and a comment-only commit, one --fix-ch
   const gated = spawnSync(process.execPath, [SCRIPT, '--gate'], { cwd: REPO, env: environment(), encoding: 'utf8', input: `refs/heads/feat ${tip} refs/heads/feat ${'0'.repeat(40)}\n` })
   assert.equal(gated.status, 0, `${gated.stdout}\n${gated.stderr}`)
 })
+
+test('7.1 a protected finding takes its band from its likelihood: 3 or more HIGH, 2 MEDIUM and never filed, 1 LOW, filed and still protected', () => {
+  const scores = [{ likelihood: 3, impact: 1 }, { likelihood: 2, impact: 10 }, { likelihood: 2, impact: 1 }, { likelihood: 1, impact: 10 }]
+  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: scores.map((f) => ({ ...SCORED, ...f, protected: true })) }) })
+  assert.deepEqual(r.findingDetails.map((f) => [f.risk, f.severity, !!f.filed, f.protected]),
+    [[3, 'high', false, true], [20, 'medium', false, true], [2, 'medium', false, true], [10, 'low', true, true]])
+  const refused = close(r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' } }, ['--test-cmd', 'true'])
+  assert.notEqual(refused.status, 0); assert.match(refused.out, /Finding f3 needs a fixed or rejected status/)
+  const accepted = close(r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' }, f3: { status: 'fixed' } }, ['--test-cmd', 'true'])
+  assert.equal(accepted.status, 0, accepted.out)
+})
+
+test('7.2 an unscored protected finding blocks as MEDIUM, never HIGH, in a review and a Grade', () => {
+  const r = review({ STUB_SCORE_FAIL: '1', STUB_FINDINGS: JSON.stringify({ findings: [{ ...SCORED, protected: true, trigger: '' }] }) })
+  assert.deepEqual(r.findingDetails.map((f) => [f.severity, f.unscored, !!f.filed]), [['medium', true, false]])
+  const { severity, quote, suggestion, ...plain } = SCORED
+  const g = logGrade({ ...gradeVerdict(), findings: [{ ...plain, evidence: 'fixture evidence', protected: true, impact: null },
+    { ...plain, evidence: 'fixture evidence', protected: true, likelihood: 1, impact: 9 }] })
+  assert.deepEqual(g.findingDetails.map((f) => [f.severity, !!f.unscored, !!f.filed]), [['high', false, false], ['medium', true, false], ['low', false, true]])
+})
+
+test('7.3 the rubric states the threat model and the protected bands by likelihood', () => {
+  const text = run(['--rubric']); assert.equal(text.status, 0, text.out)
+  for (const phrase of ['THREAT MODEL', 'one operator working alone on their own repositories', 'honest but make mistakes', 'prompt injection',
+    'a run that fails, times out or is interrupted', 'size caps and cut-off diffs', 'content no reviewer read', 'a builder weakening a test',
+    'a failure treated as success', 'a setting the operator chose being ignored', 'a hostile outside contributor', 'deliberately crafted file names or paths',
+    'unusual git config, attributes or drivers', 'which assumption the finding needs',
+    'protected with likelihood >= 3', 'protected with likelihood 1', 'likelihood 2 is MEDIUM, never filed']) assert.ok(text.stdout.includes(phrase), phrase)
+  assert.doesNotMatch(text.stdout, /however rare/)
+  assert.doesNotMatch(text.stdout, /HIGH if protected/)
+  assert.ok(text.stdout.indexOf('THREAT MODEL') > text.stdout.indexOf('10: every use') && text.stdout.indexOf('THREAT MODEL') < text.stdout.indexOf('impact (1–10)'), 'beside the likelihood anchors')
+})

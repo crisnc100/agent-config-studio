@@ -29,7 +29,7 @@ Add `--plan <plan.md>` when there is a plan. `REVIEW_PATHS=<pathspec>,<pathspec>
 
 The run prints the findings as JSON after `===FINDINGS_JSON===` and writes a report to `reviews/security/<id>/security-check.md`. Every HIGH also prints as one plain line.
 
-- Findings are `s1`, `s2`, … Each carries likelihood and impact (1–10), `protected` and a trigger, and its severity comes from those scores: HIGH when protected or risk ≥ 40, LOW (filed) when risk ≤ 10, MEDIUM otherwise. `node "$SCRIPT" --rubric` prints the scale.
+- Findings are `s1`, `s2`, … Each carries likelihood and impact (1–10), `protected` and a trigger, and its severity comes from those scores: HIGH when risk ≥ 40 or protected with likelihood ≥ 3, LOW (filed) when unprotected risk ≤ 10 or protected with likelihood 1, MEDIUM otherwise. `node "$SCRIPT" --rubric` prints the scale.
 - A finding whose quote is not at the cited place in the code is listed apart, under "could not be located", never as a finding.
 - Show every finding with its numbers, e.g. `HIGH 42/100 (likelihood 6/10 × impact 7/10)`, with its file:line and trigger. Lead with the HIGHs.
 

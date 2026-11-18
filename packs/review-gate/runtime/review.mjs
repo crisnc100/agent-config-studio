@@ -865,7 +865,7 @@ const UNQUOTED = ['-c', 'core.quotePath=false']
 const sliceSuffix = (paths) => (paths ? ` -- ${paths.join(' ')}` : '')
 const FILE_AT_OR_BELOW = 10
 const HIGH_AT_OR_ABOVE = 40
-const RUBRIC_VERSION = '2026-10-29.2'
+const RUBRIC_VERSION = '2026-11-18.1'
 const RUBRIC = `Score every finding; the script derives its severity from your scores.
 trigger: the concrete input, command or call path in this project's normal use that reaches the defect. If none exists, say so and give likelihood 1. No real trigger means likelihood 1.
 likelihood (1–10): how often this project's normal use reaches it, counting how often its prerequisites occur.
@@ -874,6 +874,13 @@ likelihood (1–10): how often this project's normal use reaches it, counting ho
 - 5: a regular optional path, about 1 in 10 uses.
 - 7: most uses of that feature.
 - 10: every use, deterministic.
+THREAT MODEL: one operator working alone on their own repositories.
+AI builders write the code; they are honest but make mistakes, and repository content can steer them (prompt injection).
+- In scope, at normal likelihood: a run that fails, times out or is interrupted; size caps and cut-off diffs;
+  the review, fix, fix check and close sequence giving credit for content no reviewer read; a builder weakening a test;
+  a failure treated as success; a setting the operator chose being ignored.
+- Out of scope: a hostile outside contributor; deliberately crafted file names or paths; unusual git config, attributes or drivers.
+  Score those likelihood 1 (no path in normal use), and say in the trigger which assumption the finding needs.
 impact (1–10):
 - 1: cosmetic.
 - 3: friction (minutes lost, a misleading message), with the result still correct.
@@ -889,13 +896,14 @@ protected: true only when you can demonstrate one of these four cases:
   waiver accepting work it should refuse. A command phrasing the agent guard (agent-guard) doesn't
   recognize is not protected: score it by likelihood × impact like any other bug, because the guard
   is an accident barrier.
-Protected findings are HIGH however rare, and never filed.
+A protected finding's band follows its likelihood: 3 or more is HIGH; likelihood 2 is MEDIUM, never filed;
+likelihood 1 is LOW and filed, and the summary and merge tier still show it as protected.
 risk = likelihood × impact:
-- HIGH when protected, or risk >= ${HIGH_AT_OR_ABOVE};
-- LOW when risk <= ${FILE_AT_OR_BELOW} and not protected; LOW is filed, not fixed unless the operator picks it;
+- HIGH when risk >= ${HIGH_AT_OR_ABOVE}, or protected with likelihood >= 3;
+- LOW when risk <= ${FILE_AT_OR_BELOW} and not protected, or protected with likelihood 1; LOW is filed, not fixed unless the operator picks it;
 - MEDIUM otherwise.
 Fix HIGH first, then MEDIUM. Both block until fixed, REFUTED or waived by the operator.
-Missing or invalid scores are asked for again once. A finding still unscored blocks as MEDIUM (HIGH if protected is exactly true).`
+Missing or invalid scores are asked for again once. A finding still unscored blocks as MEDIUM.`
 const INTENT = hasFlag('--dispute') || hasFlag('--waive') || hasFlag('--log-grade')
   ? ''
   : args.filter((a, i) => !a.startsWith('--') && !VALUE_FLAGS.includes(args[i - 1])).join(' ').trim()
@@ -1513,8 +1521,9 @@ const SCORE_FIELDS = ['likelihood', 'impact', 'protected', 'trigger']
 const isLegacy = (f) => !SCORE_FIELDS.some((key) => Object.hasOwn(f, key))
 const validScores = (f) => ['likelihood', 'impact'].every((k) => Number.isInteger(f[k]) && f[k] >= 1 && f[k] <= 10) &&
   typeof f.protected === 'boolean' && typeof f.trigger === 'string' && !!f.trigger.trim()
-const derivedSeverity = (f) => f.protected || f.likelihood * f.impact >= HIGH_AT_OR_ABOVE ? 'high' :
-  f.likelihood * f.impact <= FILE_AT_OR_BELOW ? 'low' : 'medium'
+// A protected finding is banded by likelihood alone: a rare one is still listed, but no longer forces HIGH.
+const derivedSeverity = (f) => f.protected ? (f.likelihood >= 3 ? 'high' : f.likelihood === 2 ? 'medium' : 'low') :
+  f.likelihood * f.impact >= HIGH_AT_OR_ABOVE ? 'high' : f.likelihood * f.impact <= FILE_AT_OR_BELOW ? 'low' : 'medium'
 // Pre-existing: the reviewer says the defect is at the base and this branch neither introduced it nor made it newly
 // reachable, and the script found every located place of it outside the review diff (inDiff false, set only by the script).
 // It never blocks and needs no status; a review or security finding only (a fix check's never carries inDiff).
@@ -1535,7 +1544,7 @@ function scoreFinding(finding, legacyAllowed = true) {
     const label = String(severity || '').toLowerCase()
     return { ...plain, severity: ['high', 'medium', 'low'].includes(label) ? label : 'high', unscored: true, ...comparison }
   }
-  if (!validScores(finding)) return { ...plain, ...comparison, severity: finding.protected === true ? 'high' : 'medium', risk: null, filed: false, unscored: true }
+  if (!validScores(finding)) return { ...plain, ...comparison, severity: 'medium', risk: null, filed: false, unscored: true }
   const band = derivedSeverity(finding)
   return { ...plain, ...comparison, risk: finding.likelihood * finding.impact, severity: band, filed: band === 'low' }
 }
@@ -2992,8 +3001,8 @@ function closeCoverage(review, since, check, head, recheck = null, held = new Se
   return coverageOf(head, [...reviewed, ...since].filter((p) => !truncated.has(p) && !cut?.has(p) && !left.has(p) && !held.has(p) && !onMain(p)))
 }
 // ── merge tier (report only: nothing merges, comments or labels) ────────────
-// Rules first: HIGH on a riskPaths or always-human file, a deferred HIGH or protected finding, a partial close or
-// --no-tests; LOW when nothing is deferred (filed findings left unfixed count) and no logic or other-kind file changed;
+// Rules first: HIGH on a riskPaths or always-human file, a deferred HIGH or protected finding (a filed protected LOW
+// only keeps it from LOW), a partial close or --no-tests; LOW when nothing is deferred (filed findings left unfixed count) and no logic or other-kind file changed;
 // MEDIUM otherwise. merge.classifier may move a MEDIUM, and only a MEDIUM, to LOW at confidence ≥ merge.threshold.
 const ALWAYS_HUMAN = ['.github/workflows/**', 'package.json']
 const TIER_RANK = { low: 0, medium: 1, high: 2 }
@@ -3050,14 +3059,19 @@ const sawOf = (...passes) => new Set(passes.filter((s) => s?.status === 'ran' &&
 // HEAD no pass in `seen` saw.
 const unseenChanges = (files, states, seen, relevant = securityRelevant) => files.filter((f) => pathsOf(f).some(relevant))
   .filter((f) => pathsOf(f).some((p) => !seen.has(JSON.stringify([p, states.get(p) ?? null])))).map((f) => f.path)
-// HIGH and not-LOW by deferred findings: a deferred HIGH (a deferred criterion is HIGH) or protected one is HIGH.
+// HIGH and not-LOW by deferred findings: a deferred HIGH (a deferred criterion is HIGH) or protected one is HIGH; a filed
+// protected LOW (likelihood 1) is named among the MEDIUM reasons, so the PR body shows it and the tier never goes LOW.
 function deferredReasons(deferred) {
-  const high = [], ids = (list) => list.map((f) => f.id).join(', ')
+  const high = [], medium = [], ids = (list) => list.map((f) => f.id).join(', ')
   const deferredHigh = deferred.filter((f) => f.severity === 'high')
   if (deferredHigh.length) high.push(`deferred HIGH: ${ids(deferredHigh)}`)
-  const deferredProtected = deferred.filter((f) => f.protected === true)
+  const filedProtected = (f) => f.protected === true && isFiled(f) && f.severity === 'low'
+  const deferredProtected = deferred.filter((f) => f.protected === true && !filedProtected(f))
   if (deferredProtected.length) high.push(`deferred protected: ${ids(deferredProtected)}`)
-  return { high, medium: deferred.length ? [`deferred: ${ids(deferred)}`] : [] }
+  const filed = deferred.filter(filedProtected)
+  if (filed.length) medium.push(`filed protected: ${ids(filed)}`)
+  if (deferred.length) medium.push(`deferred: ${ids(deferred)}`)
+  return { high, medium }
 }
 function closeTier({ review, reviews, statuses, files, outOfScope, noTests, head }) {
   const base = fullObjectId(review.baseSha) ? coverBase(review, head) : review.base || BASE
@@ -3151,7 +3165,7 @@ async function mergeTier(input) {
 // fix check included), and every deferred finding the summary lists (earlier closes' included). Their reasons replace
 // the closes' reasons of the same kind. A close logged before tiers counts as HIGH beside tiered ones; when none has a
 // tier the summary prints no line, exactly as before.
-const BRANCH_REASON = /^(riskPaths|always human|deferred( HIGH| protected)?|pre-existing protected): |^nothing deferred$/
+const BRANCH_REASON = /^(riskPaths|always human|deferred( HIGH| protected)?|filed protected|pre-existing protected): |^nothing deferred$/
 // Files the tip changes that no close's own diff judged (covered by a clean fix check, say): their kinds count here,
 // so logic or another kind keeps the summary from LOW and anything but docs or tests fails strict. A close's own files
 // keep its tier, so a classifier's LOW stands, but only while the file's state at the tip (mode and blob, or absent) is
@@ -4079,7 +4093,9 @@ function deferredLine(finding) {
   const decision = deferral ? `; Deferred: ${deferral.reason}${fix ? `; Fix idea: ${fix}` : ''}` : ''
   if (finding.criterionId)
     return oneLine(`${finding.id} criterion ${finding.criterionId} not met: ${finding.criterion}; recheck: ${finding.recheckEvidence || 'evidence not recorded'}${decision}`)
-  return oneLine(`${finding.id} ${scoreText(finding)} ${finding.file || '?'}:${finding.line || '?'} — ${finding.issue}; Trigger: ${finding.trigger || 'trigger not recorded'}${alsoAt(finding)}${decision}`)
+  // A protected finding at likelihood 1 is filed as LOW; the mark keeps it from reading like an ordinary LOW in the PR body.
+  const mark = finding.protected === true && isFiled(finding) && finding.severity === 'low' && !isPreExisting(finding) ? '[protected] ' : ''
+  return oneLine(`${finding.id} ${scoreText(finding)} ${finding.file || '?'}:${finding.line || '?'} — ${mark}${finding.issue}; Trigger: ${finding.trigger || 'trigger not recorded'}${alsoAt(finding)}${decision}`)
 }
 // The close whose statuses count for one review record. In a summary: the covering close that links it, else the
 // latest close that links it and is not at a commit outside the tip's history. Without a tip (--deferred): the latest.
