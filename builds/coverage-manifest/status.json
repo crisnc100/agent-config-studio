@@ -1,0 +1,7 @@
+{
+ "s2":{"status":"fixed","response":"real","test":"review.manifest.test.mjs M13 — a pass gets credit only for paths in its own manifest's read list; a restored file absent from the security prompt gets none"},
+ "s3":{"status":"fixed","response":"real","test":"review.manifest.test.mjs M11 — a diff that is not valid UTF-8 is unread (encoding) and never sent with replacement characters"},
+ "f1":{"status":"fixed","response":"real","test":"review.manifest.test.mjs M12 — a submodule replaced by a file is read only when its text section is inlined; otherwise unread and cut"},
+ "s1":{"status":"fixed","response":"real","test":"review.manifest.test.mjs M12 — same fix as f1"},
+ "x1":{"status":"deferred","reason":"HIGH 21/100 (likelihood 3/10 × impact 7/10): a plain submodule pointer update is credited through the old inference even though neither prompt now shows the commit ids. PR 1 kept the old inference's credit for submodules on purpose (no coverage change in PR 1); PR 2, approved and next, makes submodules unreadable with tier HIGH, which removes this credit. The tier is HIGH here too, so a human merges.","fix":"coverage-manifest PR 2: submodule paths are unread and set tier HIGH; or show the pointer diff lines in the section"}
+}

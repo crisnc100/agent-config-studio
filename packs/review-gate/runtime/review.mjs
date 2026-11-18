@@ -110,7 +110,7 @@ const option = (flag) => {
 // opinion; the review logs to its own folder, and nothing that reads or writes the review gate's own records runs.
 const EVAL_MODE = !!String(process.env.REVIEW_EVAL ?? '').trim()
 const EVAL_REFUSED = ['--gate', '--close', '--summary', '--tier-json', '--deferred', '--fix-check', '--dispute', '--waive', '--log-grade',
-  '--recheck-of', '--log-outcome', '--slices', '--eval', '--security-worker', '--calibrate', '--noise-report', '--security-only', '--security-findings']
+  '--recheck-of', '--log-outcome', '--slices', '--eval', '--security-worker', '--calibrate', '--noise-report', '--security-only', '--security-findings', '--manifest']
 // Git variables that move the repo, work tree or index away from the working directory: eval mode refuses them.
 const GIT_LOCATION_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
   'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM']
@@ -118,7 +118,7 @@ const GIT_LOCATION_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_CO
 const REMOVED_FLAGS = ['--shadow-run', '--shadow-report', '--pick-shadow-run', '--pick-report']
 const removedFlag = args.find((a) => REMOVED_FLAGS.includes(a))
 if (removedFlag) stop(`unknown flag ${removedFlag}`)
-const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat', '--supports', '--focus', '--since-close', '--context-commit']
+const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat', '--supports', '--focus', '--since-close', '--context-commit', '--manifest']
 // Every flag this copy reads. Anything else is refused: an older copy that ignored an unknown flag ran a full review in
 // its place, so a skill asking for a mode this copy lacks gets an error, never a different command.
 const KNOWN_FLAGS = [...VALUE_FLAGS, '--all', '--calibrate', '--code-only', '--deferred', '--eval', '--gate', '--log-outcome', '--noise-report',
@@ -827,7 +827,12 @@ if (BASE && !hasFlag('--gate') && !BASE_RE.test(BASE))
 const blankCommand = (value) => value == null || !String(value).trim()
 const VERIFY_CMD = EVAL_MODE || blankCommand(cfg('REVIEW_VERIFY_CMD', 'verifyCmd', '')) ? '' : cfg('REVIEW_VERIFY_CMD', 'verifyCmd', '')
 let VERIFY_RESULT = null
-const DIFF_CAP = 120_000 // chars of diff inlined into the review prompt
+// Chars of diff inlined into a reviewer prompt. REVIEW_TEST_DIFF_CAP (tests only) can only lower it: a smaller cap reads
+// fewer sections, so it can never make a pass count for more than it read.
+const DIFF_CAP = (() => {
+  const test = Number(process.env.REVIEW_TEST_DIFF_CAP)
+  return Number.isSafeInteger(test) && test > 0 && test < 120_000 ? test : 120_000
+})()
 // REVIEW_PATHS / config "paths": git pathspecs (comma- or newline-separated, or a config array) that
 // slice a review to `git diff <base>...HEAD -- <paths>`. Each slice has its own record and close; the
 // push gate accepts slices only when, together, they cover every file of the diff.
@@ -859,9 +864,6 @@ const sliceOf = (record) => (Array.isArray(record?.paths) && record.paths.length
 // list, never the pathspecs: their expansion can change later (attributes, config) with no new review.
 const sliceFiles = (record) => (Array.isArray(record?.files) ? record.files.filter((f) => typeof f === 'string') : [])
 const pathspec = (paths) => (paths ? ['--', ...paths] : [])
-// The diffs a reviewer reads keep non-ASCII names as they are, so binaryFiles can find each file's section; a name with a
-// quote, backslash or control character is still C-quoted, and fileSection matches that form too.
-const UNQUOTED = ['-c', 'core.quotePath=false']
 const sliceSuffix = (paths) => (paths ? ` -- ${paths.join(' ')}` : '')
 const FILE_AT_OR_BELOW = 10
 const HIGH_AT_OR_ABOVE = 40
@@ -1660,14 +1662,128 @@ function getDiff() {
   if (SLICE && !files.length)
     die(`REVIEW_PATHS (${SLICE.join(', ')}) matches no file changed between ${BASE} and HEAD; nothing was reviewed.\n` +
       `  Check the pathspecs against: git diff --name-only ${diffRange(baseSha)}`)
-  const diff = sh('git', [...UNQUOTED, ...(SLICE ? ['-C', TOP] : []), 'diff', diffRange(baseSha, head), ...pathspec(SLICE)])
-  if (!SINCE_CLOSE) return { branch, diff, head, baseSha, files }
+  const sections = buildSections(baseSha, head, SLICE)
+  if (!SINCE_CLOSE) return { branch, sections, head, baseSha, files }
   const since = sinceCloseHead(branch, head, baseSha)
   const sinceFiles = filesBetween(since, head, SLICE).sort()
   if (!sinceFiles.length) die(`REVIEW_PATHS (${SLICE.join(', ')}) matches no file changed after ${since}; nothing was reviewed.`)
   DIFF_BASE = since
-  const delta = sh('git', [...UNQUOTED, '-C', TOP, 'diff', `${since}..${head}`, ...pathspec(SLICE)])
-  return { branch, diff: delta, sliceDiff: diff, head, baseSha, files: sinceFiles, since }
+  return { branch, sections: buildSections(since, head, SLICE), sliceSections: sections, head, baseSha, files: sinceFiles, since }
+}
+// ── reviewer diffs: sections and their manifest ─────────────────────────────
+// The only place a reviewer diff is made. Each changed file is diffed on its own with fixed flags, so no user or repo
+// git config (prefixes, an external diff, textconv, color, relative paths, renames, quoting) changes what a reviewer
+// reads, and the text is assembled here, section by section: which files it holds whole is known, never parsed back out.
+// The change list and the binaries come from git's machine output; both states of each file come from it and must
+// match ls-tree at both ends. A section goes in only whole, in priority order, while it fits the cap.
+const RAW_DIFF = ['-c', 'core.quotePath=false', 'diff', '--raw', '-z', '--no-renames', '--full-index', '--no-abbrev', '--no-ext-diff', '--no-textconv',
+  '--ignore-submodules=none', '--no-relative']
+const NUMSTAT_DIFF = ['diff', '--numstat', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--no-relative']
+const SECTION_DIFF = ['-c', 'core.quotePath=false', '-c', 'diff.noprefix=false', 'diff', '--no-ext-diff', '--no-textconv', '--no-color',
+  '--src-prefix=a/', '--dst-prefix=b/', '--no-renames', '--no-relative', '--ignore-submodules=none', '--submodule=short']
+const GITLINK = '160000'
+// Riskiest first: riskPaths, logic, other, tests, docs, static, then coverage-exempt files and builds/.
+const SECTION_RANK = { logic: 1, other: 2, tests: 3, docs: 4, static: 5 }
+const sectionRank = (p) => matchesAny(p, RISK_PATHS) ? 0 : coverageExempt(p) || p.startsWith('builds/') ? 6 : SECTION_RANK[fileKind(p)] ?? 2
+function gitBytes(argv, what) {
+  const r = spawnSync('git', ['-C', TOP, ...argv], { maxBuffer: 1024 * 1024 * 1024 })
+  if (r.error || r.status !== 0) throw new Error(`${what} failed: ${r.error?.message || r.stderr}`)
+  return r.stdout
+}
+// { base, head, cap, text, sha, read: [[path, state at base, state at head]], unread: [[path, reason]], files, states }.
+// A state is "mode blob" as treeStates gives it, null for an absent file. scope: pathspecs from the top, or null.
+function buildSections(base, head, scope = null, cap = DIFF_CAP) {
+  const range = `${base} ${head}${sliceSuffix(scope)}`
+  const fields = nulNames(gitBytes([...RAW_DIFF, base, head, ...pathspec(scope)], `git diff --raw ${range}`), `git diff --raw ${range}`)
+  const before = treeStates(base), after = treeStates(head), states = new Map()
+  for (let i = 0; i < fields.length; i += 2) {
+    const meta = fields[i].match(/^:(\d{6}) (\d{6}) ([0-9a-f]+) ([0-9a-f]+) [A-Z]\d*$/), path = fields[i + 1]
+    if (!meta || path === undefined) throw new Error(`git diff --raw ${range}: unexpected entry ${JSON.stringify(fields[i])}`)
+    const state = (mode, blob) => (/^0+$/.test(mode) ? null : `${mode} ${blob}`)
+    const pair = [state(meta[1], meta[3]), state(meta[2], meta[4])]
+    if (pair[0] !== (before.get(path) ?? null) || pair[1] !== (after.get(path) ?? null))
+      throw new Error(`${path}: git diff --raw ${range} disagrees with ls-tree`)
+    states.set(path, pair)
+  }
+  const binary = new Set()
+  for (const entry of nulNames(gitBytes([...NUMSTAT_DIFF, base, head, ...pathspec(scope)], `git diff --numstat ${range}`), `git diff --numstat ${range}`)) {
+    const m = entry.match(/^(-|\d+)\t(-|\d+)\t([\s\S]*)$/)
+    if (m && m[1] === '-' && m[2] === '-') binary.add(m[3])
+  }
+  const sections = [...states].map(([path, [s0, s1]]) => {
+    const links = [s0, s1].filter((s) => s?.startsWith(`${GITLINK} `)).length
+    // A gitlink alone (added, removed or moved) is only a commit id. One replaced by a file, or a file by one, is read
+    // only when the file side is inlined: as text, in the section that also holds the gitlink's line.
+    if (links && links + [s0, s1].filter((s) => s === null).length === 2) return { path, why: 'submodule' }
+    const unreadable = links ? 'submodule-change' : 'binary'
+    if (binary.has(path)) return { path, why: unreadable }
+    const bytes = gitBytes([...SECTION_DIFF, base, head, '--', `:(top,literal)${path}`], `git diff ${base} ${head} -- ${path}`)
+    if (!bytes.length) throw new Error(`${path}: git diff ${range} listed it but shows no change`)
+    const text = bytes.toString('utf8')
+    // Decoding would replace each invalid byte with U+FFFD, so two different byte values could reach the reviewer as one.
+    if (!Buffer.from(text, 'utf8').equals(bytes)) return { path, why: links ? 'submodule-change' : 'encoding' }
+    // Content lines carry a +, - or space prefix, so only git itself can write this line.
+    if (/^(?:Binary files .* differ|GIT binary patch)$/m.test(text)) return { path, why: unreadable }
+    return { path, text }
+  }).sort((a, b) => sectionRank(a.path) - sectionRank(b.path) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  const parts = [], read = [], unread = []
+  let used = 0
+  for (const { path, why, text } of sections) {
+    const reason = why || (text.length > cap ? 'oversize' : used + text.length > cap ? 'capped' : null)
+    if (reason) { unread.push([path, reason]); continue }
+    parts.push(text)
+    used += text.length
+    read.push([path, ...states.get(path)])
+  }
+  const byPath = (a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
+  const text = parts.join('')
+  return { base, head, cap, text, sha: sha256(text), read: read.sort(byPath), unread: unread.sort(byPath), files: [...states.keys()].sort(), states }
+}
+const UNREAD_WHY = {
+  binary: 'binary, so it has no text diff',
+  oversize: 'its diff alone is over the size cap',
+  capped: 'its diff did not fit in what was left of the size cap',
+  submodule: 'a submodule',
+  'submodule-change': 'a submodule replaced by a file (or a file by one) whose content has no text diff',
+  encoding: 'its diff is not valid UTF-8, so it cannot be sent byte for byte',
+}
+// What a reviewer is sent: the sections verbatim, then the files it was not shown and why.
+const diffBlock = (sections) => `${sections.text}${sections.unread.length
+  ? `\nNot in the diff above (open them yourself if they matter; this pass is not counted as reading them):\n${
+    sections.unread.map(([path, why]) => `- ${JSON.stringify(path)}: ${UNREAD_WHY[why]}`).join('\n')}\n`
+  : ''}`
+// The record of what one completed pass inlined whole.
+const manifestOf = (sections, role) => ({ v: 1, role, base: sections.base, head: sections.head, read: sections.read, unread: sections.unread,
+  promptSha256: sections.sha, cap: sections.cap })
+// What the size cap left out, for the console and the report: null when every text section fit.
+function capNote(sections) {
+  const cut = sections.unread.filter(([, why]) => why === 'capped' || why === 'oversize').map(([path]) => path)
+  return cut.length ? `${cut.length} file(s) did not fit in the ${sections.cap}-char cap and were not inlined: ${listed(cut)}` : null
+}
+// What the older coverage inference may credit a pass with: each of `files` whose state at the pass's head is in its
+// manifest's read list, plus the unread entries that inference always counted as seen, each named in the manifest: an
+// opaque asset's or a deleted file's binary notice, and a gitlink's commit id. A file in neither list gets nothing.
+const OPAQUE_ASSET = /\.(png|jpe?g|gif|webp|avif|bmp|ico|tiff?|woff2?|ttf|otf|eot|mp3|wav|ogg|flac|m4a|mp4|webm|mov|avi)$/i
+function legacyCredit(sections, files) {
+  const at = treeStates(sections.head)
+  const ok = new Set([
+    ...sections.read.filter(([path, , s1]) => s1 === (at.get(path) ?? null)).map(([path]) => path),
+    ...sections.unread.filter(([path, why]) => why === 'submodule' ||
+      why === 'binary' && (OPAQUE_ASSET.test(path) || sections.states.get(path)?.[1] == null)).map(([path]) => path),
+  ])
+  return files.filter((path) => ok.has(path))
+}
+// The older inference's cut list: every one of `files` the manifest gives no credit for.
+const legacyCut = (sections, files) => {
+  const credited = new Set(legacyCredit(sections, files))
+  return files.filter((path) => !credited.has(path))
+}
+// --manifest <id>: a logged review's or fix check's manifests, as JSON, for checking real runs.
+function printManifest(id) {
+  const record = readLog().find((e) => e.type === 'review' && e.id === id)
+  if (!record) throw new Error(`No logged review matches "${id}"`)
+  if (!record.manifest) console.error(`ℹ ${id} predates prompt manifests (or no pass of it inlined a diff)`)
+  console.log(JSON.stringify({ id, kind: record.kind, manifest: record.manifest ?? null, security: record.security?.manifest ?? null }, null, 2))
 }
 // The commit --since-close names, checked: an ancestor of HEAD where a complete close of a review on this branch and
 // repository ended, whose coverage holds every slice file's state there (or the file is as it was at the base).
@@ -1712,8 +1828,6 @@ function ensureReviewsIgnored() {
   }
 }
 
-const clip = (diff) =>
-  diff.length > DIFF_CAP ? `${diff.slice(0, DIFF_CAP)}\n…[diff truncated; read files for the rest]` : diff
 // For an unsliced diff over DIFF_CAP: how to slice it, naming the top-level folders with the most changed lines.
 function sliceHint(stats) {
   const lines = {}
@@ -1779,8 +1893,7 @@ function promptNotes(vendor) {
     )
   return notes
 }
-function reviewPrompt(diff) {
-  const clipped = clip(diff)
+function reviewPrompt(block) {
   const notes = promptNotes(SEL.vendor)
   return (
     `Review the branch diff below for CODE CORRECTNESS only — bugs, regressions, broken edge cases, ` +
@@ -1790,7 +1903,7 @@ function reviewPrompt(diff) {
     `${FOCUS === 'docs' ? docsFocus(FIX_CHECK_RUN) : ''}` +
     `${CONTEXT ? `${CONTEXT}\n` : ''}` +
     `${notes.length ? `${notes.join('\n\n')}\n\n` : ''}` +
-    `Diff (git diff ${SINCE_CLOSE ? `${DIFF_BASE}..HEAD` : diffRange(DIFF_BASE)}${sliceSuffix(SLICE)}):\n${clipped}`
+    `Diff (git diff ${SINCE_CLOSE ? `${DIFF_BASE}..HEAD` : diffRange(DIFF_BASE)}${sliceSuffix(SLICE)}):\n${block}`
   )
 }
 // Added to the correctness prompt under --focus docs: the context pass's edits are judged as code and as docs. A slice
@@ -1842,7 +1955,7 @@ function securityClassLists(paths = []) {
   const named = paths.filter((p) => typeof p === 'string')
   return SECURITY_CLASSES.filter((c) => named.some(c.test)).map((c) => c.list)
 }
-function securityPrompt(diff, vendor, intent, paths = []) {
+function securityPrompt(block, vendor, intent, paths = []) {
   const lists = securityClassLists(paths)
   return (
     `${SECURITY_MARKER} Review the branch diff below for security defects, judged against what the branch was supposed to do` +
@@ -1856,11 +1969,11 @@ function securityPrompt(diff, vendor, intent, paths = []) {
     `Do not report a vulnerability without a concrete harmed principal: who is harmed, and how an attacker reaches them.\n\n` +
     `${CONTEXT ? `${CONTEXT}\n` : ''}` +
     `${promptNotes(vendor).join('\n\n')}\n\n` +
-    `Diff (git diff ${diffRange(DIFF_BASE)}${sliceSuffix(SLICE)}):\n${clip(diff)}`
+    `Diff (git diff ${diffRange(DIFF_BASE)}${sliceSuffix(SLICE)}):\n${block}`
   )
 }
 
-function verifierPrompt(diff, findings, vendor, range = `${diffRange(DIFF_BASE)}${sliceSuffix(SLICE)}`) {
+function verifierPrompt(block, findings, vendor, range = `${diffRange(DIFF_BASE)}${sliceSuffix(SLICE)}`) {
   const list = findings
     .map(
       (f, i) =>
@@ -1874,7 +1987,7 @@ function verifierPrompt(diff, findings, vendor, range = `${diffRange(DIFF_BASE)}
     `REFUTED if it is not (the code does not do that, the scenario cannot occur, or the behavior is ` +
     `intended). Give one line of evidence naming file:line and what the code there shows. Return ` +
     `exactly one verdict per finding, keyed by its [index].\n\n` +
-    `${toolNotes(vendor).join('\n\n')}\n\nFindings:\n${list}\n\nDiff (git diff ${range}):\n${clip(diff)}`
+    `${toolNotes(vendor).join('\n\n')}\n\nFindings:\n${list}\n\nDiff (git diff ${range}):\n${block}`
   )
 }
 
@@ -2431,18 +2544,23 @@ async function runModel(m, prompt, schema, role) {
 
 // Claude MULTI-AGENT single pass: parallel reviewers, each a distinct lens (LENSES, teamLenses()),
 // merged + deduped. Still one pass (no loop) — just several agents looking at once.
-async function review(diff) {
+// A parsed answer with no findings array is a failed pass, never a clean one: it throws, so nothing is recorded.
+function findingsList(result, who) {
+  if (!Array.isArray(result?.findings)) throw new Error(`the ${who}'s answer has no findings list`)
+  return result.findings
+}
+async function review(block) {
   // Anything but the team runs as ONE agent, one comprehensive pass; a Claude reviewer gets
   // every lens's focus in that one pass.
   if (!SEL.team) {
     const focus = SEL.vendor === 'claude' ? `\n\nFocus especially on: ${LENSES.map((l) => l.focus).join('; ')}.` : ''
-    const { result, modelUsed } = await runModel(SEL, `${reviewPrompt(diff)}${focus}`, SCHEMA, 'comprehensive code reviewer')
+    const { result, modelUsed } = await runModel(SEL, `${reviewPrompt(block)}${focus}`, SCHEMA, 'comprehensive code reviewer')
     if (modelUsed) SEL.modelUsed = modelUsed
-    return result?.findings || []
+    return findingsList(result, 'code reviewer')
   }
   const perLens = await Promise.all(
     SEL.lenses.map(async (lens) => {
-      const prompt = `${reviewPrompt(diff)}\n\nFocus especially on: ${lens.focus}.`
+      const prompt = `${reviewPrompt(block)}\n\nFocus especially on: ${lens.focus}.`
       const { result, modelUsed } = await runClaude(
         { id: lens.model, effort: TEAM_EFFORT },
         prompt,
@@ -2450,7 +2568,7 @@ async function review(diff) {
         `${lens.key} code reviewer`,
       )
       if (modelUsed) lens.modelUsed = modelUsed
-      return result?.findings || []
+      return findingsList(result, `${lens.key} code reviewer`)
     }),
   )
   // Merge + dedup across lenses. Same file:line from two lenses is the same
@@ -2599,7 +2717,7 @@ function pickVerifier() {
   return m && { ...m, effort: effortFor(m) }
 }
 
-async function secondOpinion(diff, targets) {
+async function secondOpinion(block, targets) {
   const v = pickVerifier()
   if (!v) {
     console.warn(`⚠ verify=second-opinion: no family in the reviewer pool besides the reviewing ${reviewingFamilies(SEL).join(', ')} — skipped`)
@@ -2607,7 +2725,7 @@ async function secondOpinion(diff, targets) {
   }
   console.log(`▶ second opinion · ${v.family} (${v.vendor} · ${v.id} · ${v.effort}) on ${targets.length} HIGH/MEDIUM finding(s)`)
   try {
-    const { result } = await runModel(v, verifierPrompt(diff, targets, v.vendor), VERDICT_SCHEMA, 'code-review verifier')
+    const { result } = await runModel(v, verifierPrompt(block, targets, v.vendor), VERDICT_SCHEMA, 'code-review verifier')
     const byIndex = new Map((result?.verdicts || []).map((x) => [Number(x.index), x]))
     targets.forEach((f, i) => {
       const x = byIndex.get(i)
@@ -2636,7 +2754,7 @@ function refuseLinkedReviews() {
     die('reviews is a symlink, so the report would be written wherever it points. Remove it (git rm reviews) and review again.')
   if (!stat.isDirectory()) die('reviews is not a folder. Remove it and review again.')
 }
-function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTruncated, verifier, security = null) {
+function writeReport(branch, reviewer, { findings, unlocated, disputed }, cut, verifier, security = null) {
   if (EVAL_MODE) evalOwnRepo() // the report and the info/exclude edit stay in the eval run's temp repo
   refuseLinkedReviews()
   ensureReviewsIgnored()
@@ -2674,7 +2792,7 @@ function writeReport(branch, reviewer, { findings, unlocated, disputed }, diffTr
     (VERIFY_RESULT ? `Verify (${VERIFY_RESULT.cmd}): ${VERIFY_RESULT.passed ? 'passed' : 'FAILED'}\n` : '') +
     (verifier ? `Second opinion: ${verifier.family} (${verifier.id})\n` : '') +
     (security && security.status !== 'off' ? `${securityLine(security)}\n` : '') +
-    (diffTruncated ? `⚠ Diff exceeded ${DIFF_CAP} chars — only the first ${DIFF_CAP} were inlined.\n` : '') +
+    (cut ? `⚠ ${cut}.\n` : '') +
     `Findings: ${findings.length} (plus ${disputed.length} disputed, ${unlocated.length} could not be located)\n\n` +
     `## HIGH\n${bySev('high')}\n\n## MEDIUM\n${bySev('medium')}\n\n## LOW / Info\n${bySev('low')}\n` +
     (disputed.length
@@ -3611,7 +3729,7 @@ function refuseLinkedSecurityReports() {
   if (stat.isSymbolicLink()) die('reviews/security is a symlink, so the report would be written wherever it points. Remove it and check again.')
   if (!stat.isDirectory()) die('reviews/security is not a folder. Remove it and check again.')
 }
-function writeSecurityReport(id, branch, member, findings, unlocated, diffTruncated) {
+function writeSecurityReport(id, branch, member, findings, unlocated, cut) {
   refuseLinkedSecurityReports()
   ensureReviewsIgnored()
   const dir = `reviews/security/${id}`
@@ -3625,7 +3743,7 @@ function writeSecurityReport(id, branch, member, findings, unlocated, diffTrunca
   const md = `Security check: ${id}\nReviewer: ${member ? `${member.family} (${member.id})` : 'none'}\nBranch: ${branch} → ${BASE}\nHEAD: ${headNow()}\n` +
     (SLICE ? `Paths: ${SLICE.join(', ')}\n` : '') +
     `Reviewed against: ${INTENT || '(inferred from diff)'}\n` +
-    (diffTruncated ? `⚠ Diff exceeded ${DIFF_CAP} chars — only the first ${DIFF_CAP} were inlined.\n` : '') +
+    (cut ? `⚠ ${cut}.\n` : '') +
     `This is a standalone security check: it closes nothing and covers no push.\n` +
     `Findings: ${findings.length} (plus ${unlocated.length} could not be located)\n\n` +
     `## HIGH\n${bySev('high')}\n\n## MEDIUM\n${bySev('medium')}\n\n## LOW / Info\n${bySev('low')}\n` +
@@ -3634,22 +3752,22 @@ function writeSecurityReport(id, branch, member, findings, unlocated, diffTrunca
   return dir
 }
 async function runSecurityOnly() {
-  const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList } = getDiff()
+  const { branch, sections, head: reviewedHead, baseSha, files: sliceFileList } = getDiff()
   refuseLinkedSecurityReports()
   CONTEXT = reviewContext(branch)
-  if (!diff) {
+  if (!sections.files.length) {
     console.log(`Nothing to check — no diff against ${BASE}.`)
     process.exit(0)
   }
   const stats = diffStats(isEmptyTree(baseSha) ? diffRange(baseSha, reviewedHead) : undefined, SLICE)
-  const diffTruncated = diff.length > DIFF_CAP
-  if (diffTruncated) console.warn(`⚠ Diff is ${diff.length} chars — only the first ${DIFF_CAP} were inlined in the prompt.`)
+  const cut = capNote(sections), diffTruncated = !!cut
+  if (cut) console.warn(`⚠ ${cut}.`)
   // No code reviewer runs here, so "another vendor" means another than the branch's author, when it is known.
   const author = String(cfg('REVIEW_AUTHOR', 'author', '')).trim().toLowerCase()
   const authorVendor = author ? vendorOfName(author, null) : null
   const chosen = securityMembers({ vendor: authorVendor })
   if (chosen.error) stop(`security check: ${chosen.error}\n  Fix: choose the security role in ACS → Models → Roles, or pin one with REVIEW_SECURITY_REVIEWER=<family>.`)
-  const job = { diff, context: CONTEXT, verify: null, slice: SLICE, diffBase: DIFF_BASE, intent: INTENT || null,
+  const job = { diff: diffBlock(sections), context: CONTEXT, verify: null, slice: SLICE, diffBase: DIFF_BASE, intent: INTENT || null,
     paths: [...new Set((stats?.files || []).flatMap(pathsOf))] }
   const base = { run: 'standalone', why: authorVendor || chosen.why.startsWith('REVIEW_SECURITY_REVIEWER') ? chosen.why.replaceAll('the code reviewer', 'the author') : 'security role' }
   const security = await finishSecurity({ base, job, members: chosen.members, worker: startSecurityWorker(job, chosen.members[0]) })
@@ -3666,7 +3784,7 @@ async function runSecurityOnly() {
   findingDetails.forEach((finding, i) => { finding.id = `s${i + 1}` })
   markPreExisting(findingDetails, baseSha, reviewedHead)
   const id = `sec-${new Date().toISOString().slice(0, 19).replaceAll(':', '-').replace('T', '-')}-${randomBytes(3).toString('hex')}`
-  const dir = writeSecurityReport(id, branch, security.member, located, unlocated, diffTruncated)
+  const dir = writeSecurityReport(id, branch, security.member, located, unlocated, cut)
   const record = { type: 'security-check', kind: 'security-only', securityOnly: true, id, ts: new Date().toISOString(), head: reviewedHead, branch,
     base: BASE, baseSha, repoId: repoIdentity(), repo: repoName(), ...(SLICE && { paths: SLICE, files: sliceFileList }), plan: PLAN_PATH ?? null,
     intent: INTENT || null, rubricVersion: RUBRIC_VERSION, findingDetails, ...recordedLocations(findingDetails), findings: located.length,
@@ -3840,7 +3958,7 @@ async function disputeFinding(id, findingId) {
         : review.baseSha || reviewBase(review.base || BASE, review.head)
       const range = review.kind === 'fix-check' ? `${baseSha}..${review.head}` : diffRange(baseSha, review.head)
       const paths = sliceOf(review)
-      const diff = sh('git', [...(paths ? ['-C', TOP] : []), 'diff', range, ...pathspec(paths)])
+      const block = diffBlock(buildSections(baseSha, review.head, paths))
       const snapshot = join(temp, 'snapshot')
       sh('git', ['clone', '--quiet', '--no-hardlinks', '--no-checkout', TOP, snapshot])
       process.chdir(snapshot)
@@ -3848,7 +3966,7 @@ async function disputeFinding(id, findingId) {
       const prompt = `Judge this dispute against the reviewed snapshot ${review.head}, never the current branch.\n` +
         `Reason: ${reason}\nEvidence: ${evidence}\n` +
         (finding.criterion ? `Grade criterion: ${finding.criterion}\nCriterion evidence: ${finding.evidence || ''}\n` : '') +
-        verifierPrompt(diff, [finding], verifier.vendor, `${range}${sliceSuffix(paths)}`)
+        verifierPrompt(block, [finding], verifier.vendor, `${range}${sliceSuffix(paths)}`)
       const { result } = await runModel(verifier, prompt, VERDICT_SCHEMA, 'code-review dispute verifier')
       const answer = result?.verdicts?.find((v) => v.index === 0)
       if (answer && ['CONFIRMED', 'REFUTED'].includes(answer.verdict) && String(answer.evidence || '').trim()) {
@@ -3901,8 +4019,8 @@ async function fixCheck(id) {
   }
   if (onlyFiles && !onlyFiles.length) throw new Error('No fix diff to check')
   const scope = onlyFiles ? onlyFiles.map((p) => `:(top,literal)${p}`) : SLICE
-  const diff = sh('git', [...UNQUOTED, ...(scope ? ['-C', TOP] : []), 'diff', '--no-renames', `${original.head}..${head}`, ...pathspec(scope)])
-  if (!diff) throw new Error('No fix diff to check')
+  const sections = buildSections(original.head, head, scope)
+  if (!sections.files.length) throw new Error('No fix diff to check')
   DIFF_BASE = original.head
   const branch = sh('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
   CONTEXT = reviewContext(branch)
@@ -3912,11 +4030,12 @@ async function fixCheck(id) {
   if (SEL.team) throw new Error('A fix check requires one reviewer family, not the multi-agent team')
   const fixFiles = filesBetween(original.head, head, scope)
   const { need: securityNeeded, vouch } = fixCheckSecurity(original, fixFiles, head, mergeBase)
-  const securityDiff = vouch.length ? sh('git', [...UNQUOTED, '-C', TOP, 'diff', '--no-renames', `${mergeBase}..${head}`, '--', ...vouch.map((p) => `:(top,literal)${p}`)]) : ''
-  const securityPlan = beginSecurity({ stats: fixStats, diff: securityDiff, diffBase: mergeBase, need: securityNeeded })
+  const securitySections = vouch.length ? buildSections(mergeBase, head, vouch.map((p) => `:(top,literal)${p}`)) : null
+  const securityPlan = beginSecurity({ stats: fixStats, diff: securitySections ? diffBlock(securitySections) : '', diffBase: mergeBase, need: securityNeeded })
   const started = Date.now()
-  const { result } = await runModel(SEL, `Fix check: review only this fix diff, not the original branch diff.\n${originalFindingsNote(original)}${reviewPrompt(diff)}`, SCHEMA, 'fix-check reviewer')
-  const scored = await scoredFindings(result?.findings || [], SEL)
+  const asked = fixTargets(original).map((f) => f.id)
+  const { result } = await runModel(SEL, `Fix check: review only this fix diff, not the original branch diff.\n${originalFindingsNote(original)}${reviewPrompt(diffBlock(sections))}`, SCHEMA, 'fix-check reviewer')
+  const scored = await scoredFindings(findingsList(result, 'fix-check reviewer'), SEL)
   const durationMs = Date.now() - started
   const security = await finishSecurity(securityPlan)
   if (security.record.status === 'ran') console.log(`▶ security pass · ${security.record.family}: ${security.raw.length} finding(s)`)
@@ -3932,9 +4051,12 @@ async function fixCheck(id) {
   if (headNow() !== head) throw new Error('HEAD changed during fix check')
   // What it covers: the fix diff's files at its head, minus any the cap cut here or in the original review (it read
   // only the later change); nothing when the original's cut is unknown.
-  const files = fixFiles, truncated = truncatedFiles(diff, files)
+  const files = fixFiles, truncated = legacyCut(sections, files)
   const missed = original.kind === 'grade' || fullObjectId(original.baseSha) ? reviewTruncated(original) : null
-  if (security.record.status === 'ran') security.record.saw = coverageOf(head, vouch.filter((p) => !truncatedFiles(securityDiff, vouch).includes(p)))
+  if (security.record.status === 'ran') {
+    security.record.saw = securitySections ? coverageOf(head, legacyCredit(securitySections, vouch)) : []
+    if (securitySections) security.record.manifest = manifestOf(securitySections, 'security')
+  }
   const checkId = `fix-${Date.now()}-${randomBytes(3).toString('hex')}`
   appendLog({ type: 'review', kind: 'fix-check', rubricVersion: RUBRIC_VERSION, rescored: scored.rescored, id: checkId, review: id, ts: new Date().toISOString(), head, branch,
     repo: repoName(), repoId: repoIdentity(), base: original.head, baseSha: original.head, family: SEL.family, model: SEL.id, vendor: SEL.vendor, copy: COPY_PATH,
@@ -3942,6 +4064,7 @@ async function fixCheck(id) {
     ...(SLICE && { paths: SLICE }), ...(onlyFiles && { onlyFiles }), ...(FOCUS && { focus: FOCUS }), ...(CONTEXT_COMMIT && { contextCommit: CONTEXT_COMMIT.sha }), ...(SECURITY.run !== 'off' && { security: security.record }),
     findings: findingDetails.length, findingDetails, ...recordedLocations(findingDetails),
     truncated, coverage: missed ? coverageOf(head, files.filter((p) => !truncated.includes(p) && !missed.has(p))) : [], noRenames: true,
+    manifest: manifestOf(sections, 'code'), asked,
     stats: recordStats(fixStats), plan: PLAN_PATH ?? null, durationMs })
   console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)`)
   warnDropped(findingDetails)
@@ -3979,8 +4102,9 @@ function markPreExisting(findings, baseSha, head) {
 }
 // The original findings a fix check's fix is meant to repair (every one not filed), so the reviewer can tell an
 // incomplete repair from a new regression. Empty when there are none.
+const fixTargets = (original) => (original.findingDetails || []).filter((f) => !isFiled(f) && !isPreExisting(f))
 function originalFindingsNote(original) {
-  const targets = (original.findingDetails || []).filter((f) => !isFiled(f) && !isPreExisting(f))
+  const targets = fixTargets(original)
   if (!targets.length) return ''
   const list = targets.map((f) => `- ${f.id} ${String(f.severity || '?').toUpperCase()} ${f.file || '?'}:${f.line || '?'} — ${f.issue || f.criterion || ''}; ` +
     `Trigger: ${f.trigger || 'trigger not recorded'}${alsoAt(f)}`).join('\n')
@@ -4255,48 +4379,6 @@ const coverageOf = (commit, paths) => [...new Set(paths)].sort().map((path) => [
 const coverageMap = (record) => Array.isArray(record?.coverage) &&
   record.coverage.every((e) => Array.isArray(e) && e.length === 2 && typeof e[0] === 'string' && (e[1] === null || typeof e[1] === 'string'))
   ? new Map(record.coverage) : null
-// Files whose diff section the size cap cut. A section counts as seen only when its exact header line and the next
-// section's header both fall inside the inlined part; diff lines carry a +, - or space prefix, so a header line can't
-// be forged by file content. A quoted or renamed header never matches, so over the cap such a file counts as cut.
-function truncatedFiles(diff, files) {
-  const binary = binaryFiles(diff, files)
-  if (diff.length <= DIFF_CAP) return binary
-  return [...new Set([...binary, ...cappedFiles(diff, files)])]
-}
-// Files whose content no reviewer read: the diff section is only Git's binary notice, or no section names the file (fail
-// closed). An opaque asset (an image, a font, audio or video, which no reviewer reads anyway) never counts, nor does a
-// deletion, which has no content to read. Diff lines start with +, - or a space, so file content cannot forge a header
-// or the notice.
-const OPAQUE_ASSET = /\.(png|jpe?g|gif|webp|avif|bmp|ico|tiff?|woff2?|ttf|otf|eot|mp3|wav|ogg|flac|m4a|mp4|webm|mov|avi)$/i
-function binaryFiles(diff, files) {
-  return files.filter((path) => {
-    if (OPAQUE_ASSET.test(path)) return false
-    const section = fileSection(diff, path)
-    if (section === null) return true
-    return /\n(?:Binary files .* and "?b\/.* differ|GIT binary patch)(?:\n|$)/.test(section)
-  })
-}
-// A file's section of a diff: the one whose header names it on the a side (a deletion, a rename's source) or the b side,
-// plain or C-quoted. null when none does.
-function fileSection(diff, path) {
-  const quoted = (p) => `"${p.replace(/[\\"]/g, (c) => `\\${c}`).replace(/\t/g, '\\t').replace(/\n/g, '\\n')}"`
-  const starts = [`diff --git a/${path} b/`, `diff --git ${quoted(`a/${path}`)} `], ends = [` b/${path}`, ` ${quoted(`b/${path}`)}`]
-  const heads = diff.startsWith('diff --git ') ? [0] : []
-  for (let at = diff.indexOf('\ndiff --git '); at !== -1; at = diff.indexOf('\ndiff --git ', at + 1)) heads.push(at + 1)
-  for (const [i, at] of heads.entries()) {
-    const lineEnd = diff.indexOf('\n', at), line = diff.slice(at, lineEnd === -1 ? undefined : lineEnd)
-    if (starts.some((h) => line.startsWith(h)) || ends.some((t) => line.endsWith(t))) return diff.slice(at, heads[i + 1])
-  }
-  return null
-}
-function cappedFiles(diff, files) {
-  const shown = diff.slice(0, DIFF_CAP)
-  return files.filter((path) => {
-    const header = `diff --git a/${path} b/${path}\n`
-    const at = shown.startsWith(header) ? 0 : shown.indexOf(`\n${header}`)
-    return at === -1 || shown.indexOf('\ndiff --git ', at + 1) === -1
-  })
-}
 // A merge's paths changed on two or more sides since their merge base; null when the sides share no history.
 const SIDES = new Map()
 function bothSides(merge) {
@@ -5210,11 +5292,15 @@ function startWatch(kind) {
     return runSecurityOnly()
   }
   if (hasFlag('--security-findings')) return printSecurityFindings()
+  if (hasFlag('--manifest')) return printManifest(option('--manifest'))
   startWatch('review')
-  const { branch, diff, head: reviewedHead, baseSha, files: sliceFileList, sliceDiff, since } = getDiff()
+  const { branch, sections, head: reviewedHead, baseSha, files: sliceFileList, sliceSections, since } = getDiff()
+  // A --since-close slice sends its code reviewer the delta and its security pass the whole slice.
+  const securitySections = sliceSections ?? sections
+  const diff = diffBlock(sections)
   refuseLinkedReviews()
   CONTEXT = reviewContext(branch)
-  if (!diff) {
+  if (!sections.files.length) {
     console.log(`Nothing to review — no diff against ${BASE}.`)
     process.exit(0)
   }
@@ -5231,12 +5317,12 @@ function startWatch(kind) {
   console.log(`▶ reviewer · ${SEL.family} (${SEL.vendor} · ${SEL.id} · ${SEL.effort}) — ${SELECTION.why}`)
   console.log(`▶ review · ${reviewer} · ${branch} vs ${BASE}${SLICE ? ` · paths ${SLICE.join(', ')}` : ''} · single pass (no fix, no loop)\n`)
 
-  // A silently clipped diff looks identical to a fully-reviewed one — say so in the console,
+  // A diff the cap cut looks identical to a fully-reviewed one — say so in the console,
   // the report, and the JSON, not just inside the prompt where only the model sees it.
-  const diffTruncated = diff.length > DIFF_CAP
-  if (diffTruncated)
+  const cut = capNote(sections), diffTruncated = !!cut
+  if (cut)
     console.warn(
-      `⚠ Diff is ${diff.length} chars — only the first ${DIFF_CAP} were inlined in the prompt.\n` +
+      `⚠ ${cut}.\n` +
         `  The reviewer was told to open files for the rest; findings may under-cover this branch.\n` +
         (SLICE ? '' : sliceHint(stats)),
     )
@@ -5249,7 +5335,7 @@ function startWatch(kind) {
   // security.run that is on needed one.
   const securityPlan = hasFlag('--code-only') && SECURITY.run !== 'off'
     ? { record: { run: SECURITY.run, status: 'not-asked', reason: 'code-only run' } }
-    : beginSecurity({ stats, diff: sliceDiff ?? diff, diffBase: since ? baseSha : null })
+    : beginSecurity({ stats, diff: diffBlock(securitySections), diffBase: since ? baseSha : null })
   const started = Date.now()
   const scored = await scoredFindings(await review(diff), SEL)
   const raw = scored.findings
@@ -5298,12 +5384,14 @@ function startWatch(kind) {
   warnDropped(findingDetails)
   const allFindings = [...findings, ...securityLocated], allUnlocated = [...unlocated, ...securityUnlocated]
   const reviewedFiles = sliceFileList || filesBetween(baseSha, reviewedHead)
-  const truncated = truncatedFiles(diff, reviewedFiles)
-  // The file states the security pass saw, minus what the size cap cut from the diff it was sent (a --since-close slice
-  // sends it the whole slice, bigger than the code reviewer's delta): close checks the closing HEAD against them.
-  const securityCut = sliceDiff ? truncatedFiles(sliceDiff, reviewedFiles) : truncated
-  if (security.record.status === 'ran') security.record.saw = coverageOf(reviewedHead, reviewedFiles.filter((p) => !securityCut.includes(p)))
-  const dir = writeReport(branch, reviewer, { findings: allFindings, unlocated: allUnlocated, disputed }, diffTruncated, opinion.verifier, security.record)
+  const truncated = legacyCut(sections, reviewedFiles)
+  // The file states the security pass read (a --since-close slice sends it the whole slice, bigger than the code
+  // reviewer's delta): close checks the closing HEAD against them.
+  if (security.record.status === 'ran') {
+    security.record.saw = coverageOf(reviewedHead, legacyCredit(securitySections, reviewedFiles))
+    security.record.manifest = manifestOf(securitySections, 'security')
+  }
+  const dir = writeReport(branch, reviewer, { findings: allFindings, unlocated: allUnlocated, disputed }, cut, opinion.verifier, security.record)
   const reviewId = basename(dir)
   appendLog({
     type: 'review',
@@ -5326,6 +5414,7 @@ function startWatch(kind) {
     ...(FOCUS && { focus: FOCUS }),
     ...(since && { sinceClose: since }),
     truncated,
+    manifest: manifestOf(sections, 'code'),
     stats: recordStats(stats),
     plan: PLAN_PATH ?? null,
     intent: INTENT || null,

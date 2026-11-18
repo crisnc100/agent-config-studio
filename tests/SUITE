@@ -227,6 +227,7 @@ packs/review-gate/tests/review.fixclose.test.mjs      manual                    
 packs/review-gate/tests/review.gate.test.mjs          manual                        # unproven on a Linux runner: the CI proof run stopped before it
 packs/review-gate/tests/review.global.test.mjs        manual                        # unproven on a Linux runner: the CI proof run stopped before it
 packs/review-gate/tests/review.guard.test.mjs         manual                        # unproven on a Linux runner: the CI proof run stopped before it
+packs/review-gate/tests/review.manifest.test.mjs      local                         # its 50-seed property test takes about 95 s, too slow for the CI wait
 packs/review-gate/tests/review.merge.test.mjs         manual                        # asserts gh is absent with a PATH that keeps /usr/bin, where a CI runner has gh
 packs/review-gate/tests/review.packs.test.mjs         manual                        # unproven on a Linux runner: the CI proof run stopped before it
 packs/review-gate/tests/review.parallel.test.mjs      manual                        # unproven on a Linux runner: the CI proof run stopped before it

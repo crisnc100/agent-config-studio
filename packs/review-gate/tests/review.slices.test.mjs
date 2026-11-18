@@ -294,11 +294,11 @@ test('S7 an unsliced diff over DIFF_CAP suggests REVIEW_PATHS and names the larg
   const big = Array.from({ length: 3000 }, (_, i) => `export const value${i} = '${'x'.repeat(40)}'`).join('\n')
   commit({ 'src/big.js': `${big}\n`, 'lib/more.js': 'export const more = [\n' + '  1,\n'.repeat(200) + ']\n' })
   const whole = review()
-  assert.match(whole.out, /⚠ Diff is \d+ chars — only the first 120000 were inlined/)
+  assert.match(whole.out, /⚠ 1 file\(s\) did not fit in the 120000-char cap and were not inlined: src\/big\.js/)
   assert.match(whole.out, /Slice it instead: review each path group with REVIEW_PATHS=<pathspec>,<pathspec>, close every slice at\n {2}the same HEAD, and make the slices together cover the whole diff/)
   assert.match(whole.out, /Largest top-level folders: src\/ \(3002 changed lines\), lib\/ \(204 changed lines\), docs\/ \(2 changed lines\)\n/)
   const sliced = review('src/')
-  assert.match(sliced.out, /⚠ Diff is \d+ chars/)
+  assert.match(sliced.out, /⚠ 1 file\(s\) did not fit in the 120000-char cap/)
   assert.doesNotMatch(sliced.out, /Slice it instead|Largest top-level folders/)
 })
 

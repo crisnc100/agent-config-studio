@@ -577,10 +577,11 @@ test('27 a fix check gives the push gate coverage only for files its security pa
   commit({ 'src/a.js': body('a', 0, 2600) + body('a', 2600, 2400), 'src/z.js': 'export const z = 2\n' })
   const check = fixCheck(id, { STUB_FINDINGS: findings() }, [])
   assert.equal(check.security.status, 'ran')
-  assert.ok(!check.security.saw.some(([p]) => p === 'src/z.js'), `the pass's base..HEAD diff is over the cap: ${JSON.stringify(check.security.saw)}`)
-  assert.ok(check.coverage.some(([p]) => p === 'src/z.js'), 'the code reviewer\'s short fix diff did show it')
+  assert.ok(!check.security.saw.some(([p]) => p === 'src/a.js'), `the pass's base..HEAD diff of a.js is over the cap: ${JSON.stringify(check.security.saw)}`)
+  assert.ok(check.security.saw.some(([p]) => p === 'src/z.js'), 'z.js fit beside it')
+  assert.ok(check.coverage.some(([p]) => p === 'src/a.js'), 'the code reviewer\'s short fix diff did show it')
   closed(reviewed({ REVIEW_PATHS: 'README.md,src/app.js' }))
-  refused(gate(), /src\/z\.js/)
+  refused(gate(), /src\/a\.js/)
 })
 
 test('28 a binary code file is unseen whatever its name: a Git-quoted path or a non-ASCII one; readable files with such names stay seen, and a renamed text file too', () => {
