@@ -1,0 +1,3 @@
+{"rows":[
+ {"behavior":"Reviewer threat model in both prompts; protected findings banded by likelihood; filed protected LOW keeps the tier at least MEDIUM; a protected finding needs a changed file or a REFUTED dispute to close as fixed","files":["packs/review-gate/runtime/review.mjs"],"none":"The rule is stated where reviewers and operators read it: the rubric in review.mjs (sent in both prompts and printed by --rubric), calibration.md, and the code-review, security-check and build skills, all updated in this PR. No user doc described the old protected rule."}
+]}
