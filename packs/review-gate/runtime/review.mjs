@@ -859,6 +859,9 @@ const sliceOf = (record) => (Array.isArray(record?.paths) && record.paths.length
 // list, never the pathspecs: their expansion can change later (attributes, config) with no new review.
 const sliceFiles = (record) => (Array.isArray(record?.files) ? record.files.filter((f) => typeof f === 'string') : [])
 const pathspec = (paths) => (paths ? ['--', ...paths] : [])
+// The diffs a reviewer reads keep non-ASCII names as they are, so binaryFiles can find each file's section; a name with a
+// quote, backslash or control character is still C-quoted, and fileSection matches that form too.
+const UNQUOTED = ['-c', 'core.quotePath=false']
 const sliceSuffix = (paths) => (paths ? ` -- ${paths.join(' ')}` : '')
 const FILE_AT_OR_BELOW = 10
 const HIGH_AT_OR_ABOVE = 40
@@ -1648,13 +1651,13 @@ function getDiff() {
   if (SLICE && !files.length)
     die(`REVIEW_PATHS (${SLICE.join(', ')}) matches no file changed between ${BASE} and HEAD; nothing was reviewed.\n` +
       `  Check the pathspecs against: git diff --name-only ${diffRange(baseSha)}`)
-  const diff = sh('git', [...(SLICE ? ['-C', TOP] : []), 'diff', diffRange(baseSha, head), ...pathspec(SLICE)])
+  const diff = sh('git', [...UNQUOTED, ...(SLICE ? ['-C', TOP] : []), 'diff', diffRange(baseSha, head), ...pathspec(SLICE)])
   if (!SINCE_CLOSE) return { branch, diff, head, baseSha, files }
   const since = sinceCloseHead(branch, head, baseSha)
   const sinceFiles = filesBetween(since, head, SLICE).sort()
   if (!sinceFiles.length) die(`REVIEW_PATHS (${SLICE.join(', ')}) matches no file changed after ${since}; nothing was reviewed.`)
   DIFF_BASE = since
-  const delta = sh('git', ['-C', TOP, 'diff', `${since}..${head}`, ...pathspec(SLICE)])
+  const delta = sh('git', [...UNQUOTED, '-C', TOP, 'diff', `${since}..${head}`, ...pathspec(SLICE)])
   return { branch, diff: delta, sliceDiff: diff, head, baseSha, files: sinceFiles, since }
 }
 // The commit --since-close names, checked: an ancestor of HEAD where a complete close of a review on this branch and
@@ -3874,7 +3877,7 @@ async function fixCheck(id) {
   }
   if (onlyFiles && !onlyFiles.length) throw new Error('No fix diff to check')
   const scope = onlyFiles ? onlyFiles.map((p) => `:(top,literal)${p}`) : SLICE
-  const diff = sh('git', [...(scope ? ['-C', TOP] : []), 'diff', '--no-renames', `${original.head}..${head}`, ...pathspec(scope)])
+  const diff = sh('git', [...UNQUOTED, ...(scope ? ['-C', TOP] : []), 'diff', '--no-renames', `${original.head}..${head}`, ...pathspec(scope)])
   if (!diff) throw new Error('No fix diff to check')
   DIFF_BASE = original.head
   const branch = sh('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
@@ -3885,7 +3888,7 @@ async function fixCheck(id) {
   if (SEL.team) throw new Error('A fix check requires one reviewer family, not the multi-agent team')
   const fixFiles = filesBetween(original.head, head, scope)
   const { need: securityNeeded, vouch } = fixCheckSecurity(original, fixFiles, head, mergeBase)
-  const securityDiff = vouch.length ? sh('git', ['-C', TOP, 'diff', '--no-renames', `${mergeBase}..${head}`, '--', ...vouch.map((p) => `:(top,literal)${p}`)]) : ''
+  const securityDiff = vouch.length ? sh('git', [...UNQUOTED, '-C', TOP, 'diff', '--no-renames', `${mergeBase}..${head}`, '--', ...vouch.map((p) => `:(top,literal)${p}`)]) : ''
   const securityPlan = beginSecurity({ stats: fixStats, diff: securityDiff, diffBase: mergeBase, need: securityNeeded })
   const started = Date.now()
   const { result } = await runModel(SEL, `Fix check: review only this fix diff, not the original branch diff.\n${originalFindingsNote(original)}${reviewPrompt(diff)}`, SCHEMA, 'fix-check reviewer')
@@ -4234,18 +4237,31 @@ function truncatedFiles(diff, files) {
   if (diff.length <= DIFF_CAP) return binary
   return [...new Set([...binary, ...cappedFiles(diff, files)])]
 }
-// Files whose diff section is only Git's binary notice, so no reviewer read their content; a static asset (an image or a
-// font, which no reviewer reads anyway) and a deletion do not count. Diff lines start with +, - or a space, so file
-// content cannot forge the notice.
+// Files whose content no reviewer read: the diff section is only Git's binary notice, or no section names the file (fail
+// closed). An opaque asset (an image, a font, audio or video, which no reviewer reads anyway) never counts, nor does a
+// deletion, which has no content to read. Diff lines start with +, - or a space, so file content cannot forge a header
+// or the notice.
+const OPAQUE_ASSET = /\.(png|jpe?g|gif|webp|avif|bmp|ico|tiff?|woff2?|ttf|otf|eot|mp3|wav|ogg|flac|m4a|mp4|webm|mov|avi)$/i
 function binaryFiles(diff, files) {
   return files.filter((path) => {
-    if (extKind(path) === 'static') return false
-    const header = `diff --git a/${path} b/${path}\n`
-    const at = diff.startsWith(header) ? 0 : diff.indexOf(`\n${header}`)
-    if (at === -1) return false
-    const end = diff.indexOf('\ndiff --git ', at + 1)
-    return /\n(?:Binary files .* and b\/.* differ|GIT binary patch)(?:\n|$)/.test(diff.slice(at, end === -1 ? undefined : end))
+    if (OPAQUE_ASSET.test(path)) return false
+    const section = fileSection(diff, path)
+    if (section === null) return true
+    return /\n(?:Binary files .* and "?b\/.* differ|GIT binary patch)(?:\n|$)/.test(section)
   })
+}
+// A file's section of a diff: the one whose header names it on the a side (a deletion, a rename's source) or the b side,
+// plain or C-quoted. null when none does.
+function fileSection(diff, path) {
+  const quoted = (p) => `"${p.replace(/[\\"]/g, (c) => `\\${c}`).replace(/\t/g, '\\t').replace(/\n/g, '\\n')}"`
+  const starts = [`diff --git a/${path} b/`, `diff --git ${quoted(`a/${path}`)} `], ends = [` b/${path}`, ` ${quoted(`b/${path}`)}`]
+  const heads = diff.startsWith('diff --git ') ? [0] : []
+  for (let at = diff.indexOf('\ndiff --git '); at !== -1; at = diff.indexOf('\ndiff --git ', at + 1)) heads.push(at + 1)
+  for (const [i, at] of heads.entries()) {
+    const lineEnd = diff.indexOf('\n', at), line = diff.slice(at, lineEnd === -1 ? undefined : lineEnd)
+    if (starts.some((h) => line.startsWith(h)) || ends.some((t) => line.endsWith(t))) return diff.slice(at, heads[i + 1])
+  }
+  return null
 }
 function cappedFiles(diff, files) {
   const shown = diff.slice(0, DIFF_CAP)
@@ -4383,6 +4399,13 @@ function contentCover(entries, tip, risk = false, checkedTip = tip) {
     const map = coverageMap(check), review = reviewOf(check.review)
     if (map && review && review.repoId === repoId && cleanCheck(check) && isAncestor(check.head, tip) && (check.noRenames === true || fullObjectId(check.baseSha))) {
       for (const path of renamedInCheck(check)) map.delete(path)
+      // A fix check whose security pass ran gives a path the pass owed only in a state a pass saw: what it read, or what
+      // the review's own pass read.
+      if (check.security?.status === 'ran') {
+        const seen = sawOf(review.security, check.security)
+        const owed = SECURITY.run === 'always' ? (p) => !p.startsWith('builds/') : securityRelevant
+        for (const [path, state] of [...map]) if (owed(path) && !seen.has(JSON.stringify([path, state]))) map.delete(path)
+      }
       records.push({ check, review, head: check.head, map })
     }
   }
