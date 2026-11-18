@@ -837,7 +837,8 @@ const PATHS = normalisePaths(cfg('REVIEW_PATHS', 'paths', ''))
 // The slice in force: REVIEW_PATHS for a review, the original's stored paths for its fix check.
 let SLICE = PATHS.length ? PATHS : null
 // --focus docs: the context pass's slice review. It is a full review (the correctness prompt, the security pass when
-// security.run is on) with docs instructions added, and only ever of a slice.
+// security.run is on) with docs instructions added, and only ever of a slice. With --since-close its security pass is
+// skipped when an earlier pass already saw every slice file at that close (docsFocusSkips).
 const FOCUS = hasFlag('--focus') ? option('--focus') : null
 if (FOCUS !== null && FOCUS !== 'docs') stop(`--focus must be docs, not ${JSON.stringify(FOCUS)}`)
 if (FOCUS && !SLICE && !hasFlag('--slices'))
@@ -3020,6 +3021,14 @@ function securityReasons(review, diff, head) {
       .filter((p) => !saw.has(p) || saw.get(p) !== (states.get(p) ?? null))
     return unseen.length ? [`security pass did not see ${listed(unseen)} (changed after review)`] : []
   }
+  if (sec?.status === 'not-required' && sec.reason === DOCS_FOCUS_SKIP && review.focus === 'docs' && review.sinceClose &&
+    fullObjectId(review.head) && fullObjectId(review.baseSha)) {
+    const paths = [...new Set(diff.files.flatMap(pathsOf))]
+    const then = treeStates(review.head), now = treeStates(head)
+    const changed = paths.filter((p) => securityRelevant(p) && (then.get(p) ?? null) !== (now.get(p) ?? null))
+    const unseen = [...new Set([...securityUnseenAt(paths, review.sinceClose, review.baseSha), ...changed])].sort()
+    return unseen.length ? [`security pass did not see ${listed(unseen)} (the docs-focus slice skipped the pass)`] : []
+  }
   const need = securityNeed(diff)
   if (!need.required) return []
   if (review.kind === 'grade') return ['no security pass ran (Grade-only close; run /pr-review for the security pass)']
@@ -3335,6 +3344,27 @@ function securityNeed(stats, run = SECURITY.run) {
 // environment or a config never does, so an agent cannot exempt the code it changed.
 const securityCode = (p) => !isTestFile(p) && !DEFAULT_EXEMPT.includes(p.split('/').at(-1)) && ['logic', 'other'].includes(extKind(p))
 const securityRelevant = (p) => securityCode(p) || matchesAny(p, RISK_PATHS)
+// A --since-close docs-focus slice adds only comment and doc edits (context-pass.mjs --check-commit and the docs reviewer
+// both check that) on top of the close it names. Its security pass is redundant when a logged pass already saw every
+// security-relevant slice file in its state at that close; then it is skipped. "always" still runs it.
+const DOCS_FOCUS_SKIP = 'docs-focus slice: comments and docs only'
+function docsFocusSkips(stats, since, baseSha) {
+  if (FOCUS !== 'docs' || !since || SECURITY.run === 'always' || !stats || !fullObjectId(baseSha)) return false
+  return !securityUnseenAt([...new Set(stats.files.flatMap(pathsOf))], since, baseSha).length
+}
+// The security-relevant paths changed from base whose state at `at` no security pass logged in this repository, at an
+// ancestor of `at`, saw.
+function securityUnseenAt(paths, at, baseSha) {
+  const repoId = repoIdentity(), seen = new Set()
+  for (const e of readLog()) {
+    if (e.type !== 'review' || e.repoId !== repoId || e.security?.status !== 'ran' || !Array.isArray(e.security.saw)) continue
+    if (!fullObjectId(e.head) || !isAncestor(e.head, at)) continue
+    for (const x of e.security.saw) if (Array.isArray(x) && typeof x[0] === 'string') seen.add(JSON.stringify(x))
+  }
+  const states = treeStates(at), base = treeStates(baseSha)
+  return paths.filter((p) => securityRelevant(p) && (states.get(p) ?? null) !== (base.get(p) ?? null) &&
+    !seen.has(JSON.stringify([p, states.get(p) ?? null])))
+}
 // The report's and the summary's line: "Security: <family> (<model>) — <status>, N findings", with the reason.
 function securityLine(sec) {
   if (!sec) return 'Security: off (not recorded)'
@@ -3431,9 +3461,10 @@ async function securityOutcome(w) {
   return reason ? { reason, durationMs } : { data, durationMs }
 }
 // Starts the pass, if any, once the diff, context and verify result are known. Returns what finishSecurity waits on.
-function beginSecurity({ stats, diff, diffBase = null }) {
-  const need = securityNeed(stats)
+function beginSecurity({ stats, diff, diffBase = null, since = null }) {
+  let need = securityNeed(stats)
   const base = { run: SECURITY.run, ...(SECURITY.raisedBy && { raisedBy: SECURITY.raisedBy }) }
+  if (need.required && docsFocusSkips(stats, since, diffBase)) need = { required: false, status: 'not-required', reason: DOCS_FOCUS_SKIP }
   if (!need.required) {
     console.log(`ℹ security pass: ${need.status} (${need.reason})`)
     return { record: { ...base, status: need.status, reason: need.reason } }
@@ -5122,7 +5153,7 @@ function startWatch(kind) {
   // security.run that is on needed one.
   const securityPlan = hasFlag('--code-only') && SECURITY.run !== 'off'
     ? { record: { run: SECURITY.run, status: 'not-asked', reason: 'code-only run' } }
-    : beginSecurity({ stats, diff: sliceDiff ?? diff, diffBase: since ? baseSha : null })
+    : beginSecurity({ stats, diff: sliceDiff ?? diff, diffBase: since ? baseSha : null, since })
   const started = Date.now()
   const scored = await scoredFindings(await review(diff), SEL)
   const raw = scored.findings

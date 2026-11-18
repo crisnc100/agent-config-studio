@@ -65,7 +65,7 @@ It runs after the close, on the final code, so the docs describe the code after 
    REVIEW_PATHS="$FILES" node "$SCRIPT" --focus docs --since-close "$CLOSE_HEAD" "<intent: the context pass for this branch — comments and docs only>"
    node "$SCRIPT" --close <slice-id> --status builds/<slug>/docs-status.json
    ```
-   The docs-focus slice is a full review: its reviewer checks the commit as code and also reads every changed doc line and comment against the code, reporting untrue or unbacked claims and any code-line change; the security pass runs on it when security.run is on. The merge tier follows the usual rules.
+   The docs-focus slice is a full review: its reviewer checks the commit as code and also reads every changed doc line and comment against the code, reporting untrue or unbacked claims and any code-line change; when security.run is on, the security pass runs on it unless a logged security pass already saw every slice file in its state at `$CLOSE_HEAD` (then it logs `security pass: not-required (docs-focus slice: comments and docs only)` and the tier counts the earlier pass); `always` runs it every time. A fix round that changed code after the Step 2 pass saw it is what keeps the pass running here. The merge tier follows the usual rules.
 
 ## Step 5 — Push, then /pr
 
