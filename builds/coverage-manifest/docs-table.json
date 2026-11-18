@@ -1,0 +1,4 @@
+{"rows":[
+ {"behavior":"Reviewer prompts are built from whole per-file diff sections with fixed git flags; every pass records a manifest of what it read and lists unread files with a reason; --manifest prints it; a code answer without findings fails the pass","files":["packs/review-gate/runtime/review.mjs"],"none":"PR 1 of 2 adds recording only: the old coverage rules still decide every close, tier and push, so no user-facing behavior or documented rule changes. The code-review skill's 120k-character slicing advice stays true. The user docs and skills change with PR 2, which switches coverage to the manifests."},
+ {"behavior":"The manifest test file is listed in the local suite","files":["tests/SUITE"],"none":"Test registry only."}
+]}
