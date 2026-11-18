@@ -244,7 +244,6 @@ test('8 --since-close refuses without a slice, at a commit no complete close of 
 })
 
 test('9 --since-close: a file the security prompt cut at the cap stays out of what the pass saw, and the close names it', () => {
-  homeConfig({ security: { run: 'required' } })
   const body = (name, n) => Array.from({ length: n }, (_, i) => `export const ${name}${i} = ${i}`).join('\n') + '\n'
   const A = body('a', 4300), Z = body('z', 800)
   commit({ 'src/a.js': A, 'src/z.js': Z })
@@ -253,6 +252,8 @@ test('9 --since-close: a file the security prompt cut at the cap stays out of wh
   const aClose = closed(reviewed({ REVIEW_PATHS: 'src/a.js' }))
   const zClose = closed(reviewed({ REVIEW_PATHS: 'src/z.js' }))
   assert.equal(aClose.closeHead, head); assert.equal(zClose.closeHead, head)
+  // On only now: no security pass saw a.js or z.js at the main close, so the docs slice's pass runs.
+  homeConfig({ security: { run: 'required' } })
   commit({ 'src/a.js': `// The a numbers.\n${A}`, 'src/z.js': `// The z numbers.\n${Z}` })
   rmSync(CALLS, { force: true })
   const id = reviewed({ REVIEW_PATHS: 'src/a.js,src/z.js' }, ['--focus', 'docs', '--since-close', head])
