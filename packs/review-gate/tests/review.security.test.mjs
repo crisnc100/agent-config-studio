@@ -490,14 +490,14 @@ test('fix 3 coverage exemptions from env or config never make the pass not-requi
   assert.ok(tier.tierReasons.some((r) => /^security pass did not cover logic changed after review/.test(r)), JSON.stringify(tier.tierReasons))
 })
 
-test('fix 4 logic changed after a pass that ran: HIGH "security pass did not see"; a fix check does not count; docs do not', () => {
+test('fix 4 logic changed after a pass that ran: HIGH "security pass did not see"; a fix check that ran no pass does not count; docs do not', () => {
   required()
   commit({ 'src/app.ts': APP })
   const { record } = reviewed({ STUB_FINDINGS: findings(finding()) })
   assert.equal(record.security.status, 'ran')
   assert.ok(Array.isArray(record.security.saw) && record.security.saw.some(([path, state]) => path === 'src/app.ts' && /^100644 [0-9a-f]{40}$/.test(state)), JSON.stringify(record.security.saw))
   commit({ 'src/app.ts': APP.replace('export const one = 1', 'export const one = 10'), 'docs/notes.md': '# notes\n' })
-  allowed(script(['--fix-check', record.id]))
+  allowed(script(['--fix-check', record.id, '--code-only']))
   const tier = closed(record.id, { f1: { status: 'fixed' } })
   assert.equal(tier.tier, 'high')
   assert.ok(tier.tierReasons.includes('security pass did not see src/app.ts (changed after review)'), JSON.stringify(tier.tierReasons))
