@@ -289,7 +289,8 @@ test('10 --fix-check --focus docs runs the fix check with the docs instructions 
   assert.match(code[0].prompt, /DOCS AND COMMENTS/)
   assert.match(code[0].prompt, /the comment and doc edits in this diff/)
   for (const part of ['untrue', 'not backed by the code', '+// Callers read these three numbers at start.']) assert.ok(code[0].prompt.includes(part), part)
-  assert.doesNotMatch(code[0].prompt, /any code-line change/, 'a fix check\'s diff holds the fix round\'s code lines too')
+  assert.match(code[0].prompt, /any code-line change in the context commit/, 'only the context commit\'s code lines are findings')
+  assert.doesNotMatch(code[0].prompt, /any code-line change, meaning a changed line/, 'a fix check\'s diff holds the fix round\'s code lines too')
   assert.equal(check.focus, 'docs')
   // A plain fix check records no focus and gets no docs instructions.
   const other = reviewed({ REVIEW_PATHS: 'README.md' })
