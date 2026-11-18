@@ -54,9 +54,17 @@
         "noteMany": "another model from the pool than the one that found it"
       },
       {
+        "id": "context",
+        "label": "Context pass",
+        "what": "/context-pass: comments and docs.",
+        "who": "role",
+        "role": "writer",
+        "note": "before the fix check, which reviews it"
+      },
+      {
         "id": "check",
         "label": "Fix check",
-        "what": "One look at the fixes.",
+        "what": "One look at fixes and doc edits.",
         "who": "role",
         "role": "reviewer",
         "note": "same pick"
@@ -64,16 +72,8 @@
       {
         "id": "close",
         "label": "Close",
-        "what": "Tests, defers the rest, logs it.",
+        "what": "Once: tests, defers the rest, logs.",
         "who": "script"
-      },
-      {
-        "id": "context",
-        "label": "Context pass",
-        "what": "/context-pass: comments and docs.",
-        "who": "role",
-        "role": "writer",
-        "note": "then a docs-focus slice review"
       },
       {
         "id": "gate",

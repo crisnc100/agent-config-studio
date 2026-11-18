@@ -16,7 +16,7 @@
  * and in any other file a changed line that is not comment or blank.
  *
  * The code-line check is an accident barrier for the writer, never a proof: the review gate never trusts it, and the
- * docs-focus slice that follows reviews the commit as code. So it fails closed. An unknown language, a regex literal
+ * --focus docs fix check that follows reviews the commit as code. So it fails closed. An unknown language, a regex literal
  * that could hide a comment or quote, a string that runs past a line end, a heredoc, a YAML block scalar, a line
  * continuation, a mode change, a new or deleted file, and any changed line with a block-comment delimiter all count as
  * code. In JS and TS a '/' counts as a regex literal only after ( , = : [ & | ; { or =>, where it cannot divide, and

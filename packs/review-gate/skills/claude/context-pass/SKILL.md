@@ -1,12 +1,12 @@
 ---
 name: context-pass
-description: Bring comments and technical docs in line with the final code, once. A writer from the `writer` role in ACS (Models → Roles) edits comments and docs only, from a brief a script checks first; every doc claim it writes is backed by a file:line in its docs table; a script fails its commit if it touched code lines, tests, agent-instruction files, generated blocks or doc text a test pins. PR mode takes a JSON brief and runs inside /pr-review after the close; standalone mode works on a folder or files with a short brief. Use when asked for a "context pass", to "fix the comments", or to "update the docs to match the code".
+description: Bring comments and technical docs in line with the final code, once. A writer from the `writer` role in ACS (Models → Roles) edits comments and docs only, from a brief a script checks first; every doc claim it writes is backed by a file:line in its docs table; a script fails its commit if it touched code lines, tests, agent-instruction files, generated blocks or doc text a test pins. PR mode takes a JSON brief and runs inside /pr-review after the fix round, before the one fix check; standalone mode works on a folder or files with a short brief. Use when asked for a "context pass", to "fix the comments", or to "update the docs to match the code".
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent
 ---
 
 # /context-pass — comments and docs that match the code
 
-One writer, one commit of comment and doc edits, one table that backs every claim. It runs once per PR, on the final code, never per phase or per fix. It never edits a code line.
+One writer, one commit of comment and doc edits, one table that backs every claim. It runs once per PR, on the fixed code before the one fix check, never per phase or per fix. It never edits a code line.
 
 The checks live in the shared runtime:
 ```bash
@@ -75,4 +75,4 @@ Every changed code file sits in some row. `pr-facts --check` fails a changed cod
 - the docs table;
 - a report of the changes needed in untouchable files, each with its target file and level.
 
-In PR mode, /pr-review then reviews exactly the files that commit touched as one docs-focus slice and closes it. Standalone, report the table and the needed changes, and stop.
+In PR mode, /pr-review's one fix check then reviews that commit with the docs focus (`--fix-check <review-id> --focus docs`), beside the fix round, and the one close at the tip covers it. Standalone, report the table and the needed changes, and stop.

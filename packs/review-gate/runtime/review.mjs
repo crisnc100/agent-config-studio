@@ -142,7 +142,9 @@ function flagAt(flag) {
 const unknownFlag = args.find((a, i) => a.startsWith('--') && !KNOWN_FLAGS.includes(a) && !VALUE_FLAGS.includes(args[i - 1]) && !args.slice(0, i).includes('--log-outcome'))
 if (unknownFlag !== undefined) stop(`unknown flag ${unknownFlag}`)
 // --supports <flag>: exit 0 when this copy reads the flag, 1 when it does not. Skills ask before using a newer mode.
-if (hasFlag('--supports')) process.exit(KNOWN_FLAGS.includes(args[flagAt('--supports') + 1]) ? 0 : 1)
+// Flag pairs a skill needs together, each asked as one --supports value: a copy can know both flags and still refuse the pair.
+const KNOWN_PAIRS = ['--fix-check --focus']
+if (hasFlag('--supports')) process.exit([...KNOWN_FLAGS, ...KNOWN_PAIRS].includes(args[flagAt('--supports') + 1]) ? 0 : 1)
 // --eval takes only its own flags: with --gate (or any other command) it would run instead of that command.
 const EVAL_FLAGS = ['--eval', '--family', '--cases', '--timeout', '--repeat', '--yes']
 if (hasFlag('--eval')) {
@@ -836,12 +838,13 @@ function normalisePaths(value) {
 const PATHS = normalisePaths(cfg('REVIEW_PATHS', 'paths', ''))
 // The slice in force: REVIEW_PATHS for a review, the original's stored paths for its fix check.
 let SLICE = PATHS.length ? PATHS : null
-// --focus docs: the context pass's slice review. It is a full review (the correctness prompt, the security pass when
-// security.run is on) with docs instructions added, and only ever of a slice.
+// --focus docs: the docs instructions added to the correctness prompt, for the context pass's comment and doc edits. On a
+// fix check (the /pr-review flow: the context commit lands before it) or on a slice of a review (the security pass
+// still runs when security.run is on); never on a whole-branch review.
 const FOCUS = hasFlag('--focus') ? option('--focus') : null
 if (FOCUS !== null && FOCUS !== 'docs') stop(`--focus must be docs, not ${JSON.stringify(FOCUS)}`)
-if (FOCUS && !SLICE && !hasFlag('--slices'))
-  stop('--focus docs reviews a slice: set REVIEW_PATHS to the files the context commit touched (or use --slices).')
+if (FOCUS && !SLICE && !hasFlag('--slices') && !hasFlag('--fix-check'))
+  stop('--focus docs reviews a slice or a fix check: set REVIEW_PATHS to the files the context commit touched (or use --slices), or pass it with --fix-check.')
 // --since-close <sha>: a slice whose code reviewer reads only what changed after a complete close of this branch ended at
 // <sha>. It is sound only because each of its files was already covered at <sha> (getDiff checks), and its security pass
 // still reads the whole slice, so the pass never vouches for code it did not see.
@@ -1769,19 +1772,22 @@ function reviewPrompt(diff) {
     `bad error handling, data-integrity issues — judged against what the branch was supposed to do` +
     `${INTENT ? `: ${INTENT}` : ' (infer from the diff)'}. Inspect the diff (open files as needed) BEFORE answering. ` +
     `Do NOT comment on product direction, scope, or style preference.\n\n` +
-    `${FOCUS === 'docs' ? DOCS_FOCUS : ''}` +
+    `${FOCUS === 'docs' ? docsFocus(FIX_CHECK_RUN) : ''}` +
     `${CONTEXT ? `${CONTEXT}\n` : ''}` +
     `${notes.length ? `${notes.join('\n\n')}\n\n` : ''}` +
     `Diff (git diff ${SINCE_CLOSE ? `${DIFF_BASE}..HEAD` : diffRange(DIFF_BASE)}${sliceSuffix(SLICE)}):\n${clipped}`
   )
 }
-// Added to the correctness prompt for a --focus docs slice: the context pass's edits are judged as code and as docs.
-const DOCS_FOCUS = `DOCS AND COMMENTS, as well: this slice is a context pass, edits to comments and technical docs made so they ` +
-  `describe the code as it is now. For every changed doc line and comment, open the code it describes and also report: a ` +
-  `claim that is untrue of the code; a claim not backed by the code (name the file:line that would back it, or say none ` +
-  `does); any code-line change, meaning a changed line that is not comment or doc text; a removed comment that carried a ` +
-  `reason, constraint, trade-off or trap the code cannot show; a changed directive or executable comment (lint or type ` +
-  `directives, build tags, doc tests). Quote the changed line. Do NOT report wording, tone or style preferences.\n\n`
+// Added to the correctness prompt under --focus docs: the context pass's edits are judged as code and as docs. A slice
+// holds only the context commit, so a code-line change there is a finding; a fix check's diff also holds the fix round's
+// code, so it leaves code lines to the correctness prompt (context-pass.mjs --check-commit refuses them in the commit).
+const docsFocus = (fixCheck) => `DOCS AND COMMENTS, as well: the comment and doc edits in this diff are a context pass, ` +
+  `made so comments and technical docs describe the code as it is now. For every changed doc line and comment, open the ` +
+  `code it describes and also report: a claim that is untrue of the code; a claim not backed by the code (name the ` +
+  `file:line that would back it, or say none does); ${fixCheck ? '' : 'any code-line change, meaning a changed line that is not comment or doc text; '}` +
+  `a removed comment that carried a reason, constraint, trade-off or trap the code cannot show; a changed directive or ` +
+  `executable comment (lint or type directives, build tags, doc tests). Quote the changed line. Do NOT report wording, ` +
+  `tone or style preferences.\n\n`
 
 // The security pass's prompt: the same diff, context, notes and schema as the code review, a security-only instruction.
 // SECURITY_MARKER names it (tests find the security call by it).
@@ -2847,6 +2853,8 @@ function validateDeferral(entries, review, f, status) {
   const later = review.kind === 'fix-check' || review.kind === 'recheck'
   if (!later && !(review.kind === 'grade' && f.criterionId))
     throw new Error(`Finding ${f.id} is from the original ${review.kind === 'grade' ? 'Grade' : 'review'}; only findings a fix check or recheck raised, or a criterion still failing after its recheck, may be deferred`)
+  if (review.kind === 'fix-check' && review.focus === 'docs' && f.severity !== 'low' && docsFinding(review, f))
+    throw new Error(`Finding ${f.id} is a docs finding of the context pass (a fix check with --focus docs); it is never deferred: fix it or dispute it`)
   if (Object.keys(status).some((key) => !['status', 'reason', 'fix'].includes(key)))
     throw new Error(`Unknown status field for ${f.id}; reviewer severity cannot be changed`)
   if (typeof status.reason !== 'string' || !status.reason.trim()) throw new Error(`Deferred ${f.id} requires a nonempty reason`)
@@ -2856,6 +2864,15 @@ function validateDeferral(entries, review, f, status) {
   const criterion = recheck?.criteria?.find((c) => c.id === f.criterionId)
   if (!criterion) throw new Error(`Deferred criterion ${f.id} needs its one recheck first`)
   if (criterion.verdict !== 'FAIL') throw new Error(`Criterion ${f.id} passed its recheck; mark it fixed rather than deferred`)
+}
+// A finding on doc text: in a docs file, or quoting only comment lines. The docs slice it replaces never let one be
+// deferred. Its recorded path when the quote was located, else the file it names.
+const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*|#(?!!)|--\s|<!--)/
+function docsFinding(review, f) {
+  const path = review.resolvedPaths?.[f.id]?.path || f.file || ''
+  if (extKind(path) === 'docs') return true
+  const quote = String(f.quote || '').split('\n').filter((l) => l.trim())
+  return quote.length > 0 && quote.every((l) => COMMENT_LINE.test(l))
 }
 // A fixed status's optional `test`: a nonempty relative path that stays inside the repository.
 const repoRelativePath = (p) => typeof p === 'string' && !!p.trim() && p === p.trim() && !p.startsWith('/') && !/^[a-z]:/i.test(p) &&
@@ -3013,15 +3030,13 @@ function securityReasons(review, diff, head) {
   const sec = review.security
   if (sec?.status === 'failed' || sec?.status === 'skipped') return [`security pass ${sec.status}${sec.reason ? `: ${sec.reason}` : ''}`]
   if (SECURITY.run === 'off' || !diff) return []
-  if (sec?.status === 'ran') {
-    const saw = new Map(Array.isArray(sec.saw) ? sec.saw.filter((e) => Array.isArray(e) && typeof e[0] === 'string') : [])
-    const states = treeStates(head)
-    const unseen = diff.files.filter((f) => pathsOf(f).some(securityRelevant)).map((f) => f.path)
-      .filter((p) => !saw.has(p) || saw.get(p) !== (states.get(p) ?? null))
-    return unseen.length ? [`security pass did not see ${listed(unseen)} (changed after review)`] : []
-  }
+  // A file's state at the closing HEAD counts as seen when any logged pass saw it: this review's, or its fix check's.
+  const states = treeStates(head), seen = securitySaw(head)
+  const unseen = diff.files.filter((f) => pathsOf(f).some(securityRelevant)).map((f) => f.path)
+    .filter((p) => !seen.has(JSON.stringify([p, states.get(p) ?? null])))
+  if (sec?.status === 'ran') return unseen.length ? [`security pass did not see ${listed(unseen)} (changed after review)`] : []
   const need = securityNeed(diff)
-  if (!need.required) return []
+  if (!need.required || !unseen.length) return []
   if (review.kind === 'grade') return ['no security pass ran (Grade-only close; run /pr-review for the security pass)']
   return [`security pass did not cover logic changed after review (${sec?.status ?? 'not recorded'} at review; ${need.why})`]
 }
@@ -3335,6 +3350,36 @@ function securityNeed(stats, run = SECURITY.run) {
 // environment or a config never does, so an agent cannot exempt the code it changed.
 const securityCode = (p) => !isTestFile(p) && !DEFAULT_EXEMPT.includes(p.split('/').at(-1)) && ['logic', 'other'].includes(extKind(p))
 const securityRelevant = (p) => securityCode(p) || matchesAny(p, RISK_PATHS)
+// Every [path, state] a security pass saw: the passes of reviews and fix checks logged in this repository at a head that
+// `at` descends from. A standalone --security-only run is not here: it never counts toward a close.
+function securitySaw(at) {
+  const repoId = repoIdentity(), seen = new Set(), heads = new Map()
+  for (const e of readLog()) {
+    if (e.type !== 'review' || !['review', 'fix-check'].includes(e.kind ?? 'review') || e.repoId !== repoId) continue
+    if (e.security?.status !== 'ran' || !Array.isArray(e.security.saw) || !fullObjectId(e.head)) continue
+    if (!heads.has(e.head)) heads.set(e.head, isAncestor(e.head, at))
+    if (!heads.get(e.head)) continue
+    for (const x of e.security.saw) if (Array.isArray(x) && typeof x[0] === 'string') seen.add(JSON.stringify(x))
+  }
+  return seen
+}
+// The security-relevant paths whose state at `at` differs from the base's and no security pass saw (securitySaw).
+function securityUnseen(paths, at, baseSha) {
+  const seen = securitySaw(at), states = treeStates(at), base = treeStates(baseSha)
+  return [...new Set(paths)].filter((p) => securityRelevant(p) && (states.get(p) ?? null) !== (base.get(p) ?? null) &&
+    !seen.has(JSON.stringify([p, states.get(p) ?? null]))).sort()
+}
+// The fix check's security pass: only for security-relevant files the fix round or the context commit left in a state no
+// security pass saw. "always" runs it every time; off and --code-only never.
+const FIX_CHECK_SEEN = 'no security-relevant file changed since a security pass saw it'
+function fixCheckSecurityNeed(files, head, baseSha) {
+  if (SECURITY.run === 'off') return { required: false, status: 'off', reason: 'security.run is off' }
+  if (hasFlag('--code-only')) return { required: false, status: 'not-asked', reason: 'code-only run' }
+  if (SECURITY.run === 'always') return { required: true, why: 'security.run is always' }
+  const unseen = securityUnseen(files, head, baseSha)
+  return unseen.length ? { required: true, why: `changed after a security pass saw them: ${listed(unseen)}` }
+    : { required: false, status: 'not-required', reason: FIX_CHECK_SEEN }
+}
 // The report's and the summary's line: "Security: <family> (<model>) — <status>, N findings", with the reason.
 function securityLine(sec) {
   if (!sec) return 'Security: off (not recorded)'
@@ -3431,8 +3476,7 @@ async function securityOutcome(w) {
   return reason ? { reason, durationMs } : { data, durationMs }
 }
 // Starts the pass, if any, once the diff, context and verify result are known. Returns what finishSecurity waits on.
-function beginSecurity({ stats, diff, diffBase = null }) {
-  const need = securityNeed(stats)
+function beginSecurity({ stats, diff, diffBase = null, need = securityNeed(stats) }) {
   const base = { run: SECURITY.run, ...(SECURITY.raisedBy && { raisedBy: SECURITY.raisedBy }) }
   if (!need.required) {
     console.log(`ℹ security pass: ${need.status} (${need.reason})`)
@@ -3835,13 +3879,18 @@ async function fixCheck(id) {
   SELECTION = selectReviewer(fixStats)
   SEL = SELECTION.sel
   if (SEL.team) throw new Error('A fix check requires one reviewer family, not the multi-agent team')
+  const fixFiles = filesBetween(original.head, head, scope)
+  const securityPlan = beginSecurity({ stats: fixStats, diff, diffBase: original.head,
+    need: fixCheckSecurityNeed(fixFiles, head, fullObjectId(original.baseSha) ? original.baseSha : original.head) })
   const started = Date.now()
   const { result } = await runModel(SEL, `Fix check: review only this fix diff, not the original branch diff.\n${originalFindingsNote(original)}${reviewPrompt(diff)}`, SCHEMA, 'fix-check reviewer')
   const scored = await scoredFindings(result?.findings || [], SEL)
   const durationMs = Date.now() - started
+  const security = await finishSecurity(securityPlan)
+  if (security.record.status === 'ran') console.log(`▶ security pass · ${security.record.family}: ${security.raw.length} finding(s)`)
   // inFix: any place of the finding (main or instance) near a line the fix changed, judged as inDiff is (inDiffOf).
   const changed = changedSides(original.head, head, scope)
-  const findingDetails = scored.findings.map((f, i) => {
+  const findingDetails = [...scored.findings, ...security.raw.map((f) => ({ ...scoreFinding(f), source: 'security' }))].map((f, i) => {
     const finding = { ...locatedFinding(f), id: `x${i + 1}` }
     return { ...finding, inFix: inDiffOf(finding, changed, original.head) }
   })
@@ -3849,12 +3898,14 @@ async function fixCheck(id) {
   if (headNow() !== head) throw new Error('HEAD changed during fix check')
   // What it covers: the fix diff's files at its head, minus any the cap cut here or in the original review (it read
   // only the later change); nothing when the original's cut is unknown.
-  const files = filesBetween(original.head, head, scope), truncated = truncatedFiles(diff, files)
+  const files = fixFiles, truncated = truncatedFiles(diff, files)
   const missed = original.kind === 'grade' || fullObjectId(original.baseSha) ? reviewTruncated(original) : null
+  if (security.record.status === 'ran') security.record.saw = coverageOf(head, files.filter((p) => !truncated.includes(p)))
   const checkId = `fix-${Date.now()}-${randomBytes(3).toString('hex')}`
   appendLog({ type: 'review', kind: 'fix-check', rubricVersion: RUBRIC_VERSION, rescored: scored.rescored, id: checkId, review: id, ts: new Date().toISOString(), head, branch,
     repo: repoName(), repoId: repoIdentity(), base: original.head, baseSha: original.head, family: SEL.family, model: SEL.id, vendor: SEL.vendor, copy: COPY_PATH,
-    ...(SLICE && { paths: SLICE }), ...(onlyFiles && { onlyFiles }), findings: findingDetails.length, findingDetails, ...recordedLocations(findingDetails),
+    ...(SLICE && { paths: SLICE }), ...(onlyFiles && { onlyFiles }), ...(FOCUS && { focus: FOCUS }), ...(SECURITY.run !== 'off' && { security: security.record }),
+    findings: findingDetails.length, findingDetails, ...recordedLocations(findingDetails),
     truncated, coverage: missed ? coverageOf(head, files.filter((p) => !truncated.includes(p) && !missed.has(p))) : [], noRenames: true,
     stats: recordStats(fixStats), plan: PLAN_PATH ?? null, durationMs })
   console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)`)
