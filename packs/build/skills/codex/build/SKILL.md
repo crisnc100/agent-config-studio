@@ -90,7 +90,7 @@ family, model and non-empty criteria are required. Optional top-level keys: vend
 
 ## Record and close (orchestrator only)
 
-Use the repo copy first, the shared runtime as the fallback. Record the Grade against the same committed HEAD it saw. Commit fixes before the one recheck of failed criteria, then record it. Close once, at the tip: no phase Grade is closed mid-build; the last phase's Grade is closed by the pr-review skill's one close, after the context pass and the fix check:
+Use the repo copy first, the shared runtime as the fallback. Record the Grade against the same committed HEAD it saw. Commit fixes before the one recheck of failed criteria, then record it. Close once, at the tip: no phase Grade is closed mid-build; the last phase's Grade (and, for risk-area work, the last phase's review) is closed by the pr-review skill's one close, after the context pass and the fix check:
 
 ```bash
 REVIEW_SCRIPT=scripts/review.mjs

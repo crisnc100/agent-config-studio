@@ -68,7 +68,7 @@ After the fix check, its x… findings (and a Grade recheck's r… findings, or 
 
 Label what each fixed or rejected finding turned out to be with `response`: on `fixed`, `"real"` or `"unimportant"` (fixed though not worth it; a fix without a label is logged as real); on `rejected`, `"wrong"` (not a defect) or `"intentional"` (the behavior is meant), required on every rejection, e.g. `{"f2":{"status":"rejected","reason":"<why>","evidence":"<file:line>","response":"intentional"}}`. A label never replaces the REFUTED verdict or waiver a blocking rejection needs. `node "$SCRIPT" --noise-report [--since <date>] [--all]` counts, per reviewer family and severity band, real / unimportant / wrong / intentional / unlabeled / deferred / filed / pre-existing findings from each review's latest close (this repository unless `--all`); legacy statuses count as unlabeled.
 
-Omit refutedBy for this review's own REFUTED verdict or a waiver. The orchestrator disputes serious rejections and closes against the committed fixes. Close once, at the tip: a review inside a build phase is findings-only, and the one close runs after the last fix:
+Omit refutedBy for this review's own REFUTED verdict or a waiver. The orchestrator disputes serious rejections and closes against the committed fixes. Close once, at the tip: a review inside a build phase is findings-only, and the one close runs after the last fix; the last phase's review is closed by pr-review, beside the Grade:
 
 ```bash
 node "$SCRIPT" --dispute <review-id> <finding-id> --reason "<why>" --evidence "<file:line or test>"

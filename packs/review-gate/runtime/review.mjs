@@ -118,7 +118,7 @@ const GIT_LOCATION_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_CO
 const REMOVED_FLAGS = ['--shadow-run', '--shadow-report', '--pick-shadow-run', '--pick-report']
 const removedFlag = args.find((a) => REMOVED_FLAGS.includes(a))
 if (removedFlag) stop(`unknown flag ${removedFlag}`)
-const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat', '--supports', '--focus', '--since-close']
+const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--plan', '--close', '--status', '--test-cmd', '--no-tests', '--fix-check', '--dispute', '--reason', '--evidence', '--waive', '--log-grade', '--recheck-of', '--remote', '--family', '--cases', '--timeout', '--repeat', '--supports', '--focus', '--since-close', '--context-commit']
 // Every flag this copy reads. Anything else is refused: an older copy that ignored an unknown flag ran a full review in
 // its place, so a skill asking for a mode this copy lacks gets an error, never a different command.
 const KNOWN_FLAGS = [...VALUE_FLAGS, '--all', '--calibrate', '--code-only', '--deferred', '--eval', '--gate', '--log-outcome', '--noise-report',
@@ -845,6 +845,9 @@ const FOCUS = hasFlag('--focus') ? option('--focus') : null
 if (FOCUS !== null && FOCUS !== 'docs') stop(`--focus must be docs, not ${JSON.stringify(FOCUS)}`)
 if (FOCUS && !SLICE && !hasFlag('--slices') && !hasFlag('--fix-check'))
   stop('--focus docs reviews a slice or a fix check: set REVIEW_PATHS to the files the context commit touched (or use --slices), or pass it with --fix-check.')
+if (hasFlag('--context-commit') && !(FOCUS && hasFlag('--fix-check'))) stop('--context-commit names the context pass\'s commit for --fix-check <id> --focus docs, and nothing else.')
+// The fix check's docs focus: the context pass's commit and the files it touched, set in fixCheck.
+let CONTEXT_COMMIT = null
 // --since-close <sha>: a slice whose code reviewer reads only what changed after a complete close of this branch ended at
 // <sha>. It is sound only because each of its files was already covered at <sha> (getDiff checks), and its security pass
 // still reads the whole slice, so the pass never vouches for code it did not see.
@@ -1784,7 +1787,9 @@ function reviewPrompt(diff) {
 const docsFocus = (fixCheck) => `DOCS AND COMMENTS, as well: the comment and doc edits in this diff are a context pass, ` +
   `made so comments and technical docs describe the code as it is now. For every changed doc line and comment, open the ` +
   `code it describes and also report: a claim that is untrue of the code; a claim not backed by the code (name the ` +
-  `file:line that would back it, or say none does); ${fixCheck ? '' : 'any code-line change, meaning a changed line that is not comment or doc text; '}` +
+  `file:line that would back it, or say none does); ${fixCheck ? `any code-line change in the context commit ${CONTEXT_COMMIT?.sha} ` +
+  `(its files: ${CONTEXT_COMMIT?.files.join(', ')}), meaning a line it changed that is not comment or doc text: the rest of this ` +
+  `diff is the fix round, whose code lines are expected; ` : 'any code-line change, meaning a changed line that is not comment or doc text; '}` +
   `a removed comment that carried a reason, constraint, trade-off or trap the code cannot show; a changed directive or ` +
   `executable comment (lint or type directives, build tags, doc tests). Quote the changed line. Do NOT report wording, ` +
   `tone or style preferences.\n\n`
@@ -2853,6 +2858,10 @@ function validateDeferral(entries, review, f, status) {
   const later = review.kind === 'fix-check' || review.kind === 'recheck'
   if (!later && !(review.kind === 'grade' && f.criterionId))
     throw new Error(`Finding ${f.id} is from the original ${review.kind === 'grade' ? 'Grade' : 'review'}; only findings a fix check or recheck raised, or a criterion still failing after its recheck, may be deferred`)
+  // The fix check's security pass reads code no pass had read before (the whole change of each file it vouches for); a
+  // finding there outside the fix is the original review's kind, so it follows the original rules.
+  if (review.kind === 'fix-check' && f.source === 'security' && f.inFix !== true)
+    throw new Error(`Finding ${f.id} is a security finding on code no security pass had read before this fix check, outside the fix; like an s… finding it is never deferred: fix it or dispute it`)
   if (Object.keys(status).some((key) => !['status', 'reason', 'fix'].includes(key)))
     throw new Error(`Unknown status field for ${f.id}; reviewer severity cannot be changed`)
   if (typeof status.reason !== 'string' || !status.reason.trim()) throw new Error(`Deferred ${f.id} requires a nonempty reason`)
@@ -3021,7 +3030,9 @@ function securityReasons(review, diff, head, check = null) {
   if (failed.length) return failed.map(([s, name]) => `${name} ${s.status}${s.reason ? `: ${s.reason}` : ''}`)
   if (SECURITY.run === 'off' || !diff) return []
   // Only this review's pass and its own fix check's count: another review's pass never vouches for this close.
-  const unseen = unseenChanges(diff.files, treeStates(head), sawOf(sec, fix))
+  // Under "always" every changed file needs a pass that saw it, docs and tests too; builds/ never counts.
+  const relevant = SECURITY.run === 'always' ? (p) => !p.startsWith('builds/') : securityRelevant
+  const unseen = unseenChanges(diff.files, treeStates(head), sawOf(sec, fix), relevant)
   if (sec?.status === 'ran') return unseen.length ? [`security pass did not see ${listed(unseen)} (changed after review)`] : []
   const need = securityNeed(diff)
   if (!need.required) return []
@@ -3034,7 +3045,7 @@ const sawOf = (...passes) => new Set(passes.filter((s) => s?.status === 'ran' &&
   .flatMap((s) => s.saw.filter((x) => Array.isArray(x) && typeof x[0] === 'string').map((x) => JSON.stringify(x))))
 // The security-relevant changes some name of which (both names of a rename, so a source deletion counts) is in a state at
 // HEAD no pass in `seen` saw.
-const unseenChanges = (files, states, seen) => files.filter((f) => pathsOf(f).some(securityRelevant))
+const unseenChanges = (files, states, seen, relevant = securityRelevant) => files.filter((f) => pathsOf(f).some(relevant))
   .filter((f) => pathsOf(f).some((p) => !seen.has(JSON.stringify([p, states.get(p) ?? null])))).map((f) => f.path)
 // HIGH and not-LOW by deferred findings: a deferred HIGH (a deferred criterion is HIGH) or protected one is HIGH.
 function deferredReasons(deferred) {
@@ -3838,6 +3849,15 @@ async function fixCheck(id) {
     throw new Error('One fix check per review; unresolved findings go to the operator, no third model pass')
   const head = headNow()
   if (!isAncestor(original.head, head)) throw new Error('HEAD is neither the reviewed commit nor a descendant')
+  if (FOCUS === 'docs') {
+    if (!hasFlag('--context-commit')) throw new Error('--focus docs on a fix check needs --context-commit <sha>: the context pass\'s commit, so its code-line changes are told apart from the fix round\'s')
+    const given = option('--context-commit')
+    const r = spawnSync('git', ['rev-parse', '--verify', '--quiet', '--end-of-options', `${given}^{commit}`], { encoding: 'utf8' })
+    const sha = r.status === 0 ? r.stdout.trim() : ''
+    if (!sha || sha === original.head || !isAncestor(original.head, sha) || !isAncestor(sha, head))
+      throw new Error(`--context-commit ${given} is not a commit after the review's head ${original.head} and at or before HEAD`)
+    CONTEXT_COMMIT = { sha, files: filesBetween(`${sha}^`, sha).sort() }
+  }
   // A sliced review's fix check reviews only the fix diff inside its paths. No rename detection: a moved file shows
   // whole and meets the size cap like any other, so content the review cut can't pass as a short rename.
   SLICE = sliceOf(original)
@@ -3892,7 +3912,7 @@ async function fixCheck(id) {
   appendLog({ type: 'review', kind: 'fix-check', rubricVersion: RUBRIC_VERSION, rescored: scored.rescored, id: checkId, review: id, ts: new Date().toISOString(), head, branch,
     repo: repoName(), repoId: repoIdentity(), base: original.head, baseSha: original.head, family: SEL.family, model: SEL.id, vendor: SEL.vendor, copy: COPY_PATH,
     families: [...new Set([...reviewingFamilies(SEL), ...(security.record.status === 'ran' ? [security.record.family] : [])])],
-    ...(SLICE && { paths: SLICE }), ...(onlyFiles && { onlyFiles }), ...(FOCUS && { focus: FOCUS }), ...(SECURITY.run !== 'off' && { security: security.record }),
+    ...(SLICE && { paths: SLICE }), ...(onlyFiles && { onlyFiles }), ...(FOCUS && { focus: FOCUS }), ...(CONTEXT_COMMIT && { contextCommit: CONTEXT_COMMIT.sha }), ...(SECURITY.run !== 'off' && { security: security.record }),
     findings: findingDetails.length, findingDetails, ...recordedLocations(findingDetails),
     truncated, coverage: missed ? coverageOf(head, files.filter((p) => !truncated.includes(p) && !missed.has(p))) : [], noRenames: true,
     stats: recordStats(fixStats), plan: PLAN_PATH ?? null, durationMs })
@@ -4210,7 +4230,24 @@ const coverageMap = (record) => Array.isArray(record?.coverage) &&
 // section's header both fall inside the inlined part; diff lines carry a +, - or space prefix, so a header line can't
 // be forged by file content. A quoted or renamed header never matches, so over the cap such a file counts as cut.
 function truncatedFiles(diff, files) {
-  if (diff.length <= DIFF_CAP) return []
+  const binary = binaryFiles(diff, files)
+  if (diff.length <= DIFF_CAP) return binary
+  return [...new Set([...binary, ...cappedFiles(diff, files)])]
+}
+// Files whose diff section is only Git's binary notice, so no reviewer read their content; a static asset (an image or a
+// font, which no reviewer reads anyway) and a deletion do not count. Diff lines start with +, - or a space, so file
+// content cannot forge the notice.
+function binaryFiles(diff, files) {
+  return files.filter((path) => {
+    if (extKind(path) === 'static') return false
+    const header = `diff --git a/${path} b/${path}\n`
+    const at = diff.startsWith(header) ? 0 : diff.indexOf(`\n${header}`)
+    if (at === -1) return false
+    const end = diff.indexOf('\ndiff --git ', at + 1)
+    return /\n(?:Binary files .* and b\/.* differ|GIT binary patch)(?:\n|$)/.test(diff.slice(at, end === -1 ? undefined : end))
+  })
+}
+function cappedFiles(diff, files) {
   const shown = diff.slice(0, DIFF_CAP)
   return files.filter((path) => {
     const header = `diff --git a/${path} b/${path}\n`
@@ -4320,7 +4357,9 @@ const sidesNote = (files, id) => `${files.length === 1 ? 'it' : 'they'} changed 
 const buildsOnlySince = (closeHead, tip) => closeHead === tip || commitsIn([`${closeHead}..${tip}`])
   .every((commit) => commitPaths(commit).every((path) => path.startsWith('builds/')))
 // A fix check is clean when no finding of its own needs a status.
-const cleanCheck = (check) => Array.isArray(check.findingDetails) && check.findingDetails.every((f) => !resolutionRules(check, f).status)
+// A fix check whose security pass failed or was skipped is never clean: the pass it owed did not happen.
+const cleanCheck = (check) => Array.isArray(check.findingDetails) && check.findingDetails.every((f) => !resolutionRules(check, f).status) &&
+  !['failed', 'skipped'].includes(check.security?.status)
 // Content coverage. The tip needs one complete close at it (or followed only by builds/ commits), so the tests ran
 // there; that close's review baseSha is the base. Every file changed from the base to the tip, builds/ aside, is
 // covered when its exact state at the tip (mode and blob, or absent) is the state a complete close or a clean fix check

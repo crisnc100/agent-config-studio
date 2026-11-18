@@ -34,7 +34,8 @@ const FIELDS = {
   pr: ['mode', 'purpose', 'mechanism', 'decisions', 'readers', 'base', 'docMap', 'untouchable'],
   standalone: ['mode', 'purpose', 'readers', 'paths'],
 }
-const DOCS = /\.(md|mdx|rst|adoc)$|(^|\/)docs\/[^/]+\.txt$/i
+// Not .mdx: its JSX and imports run when the page builds, so it is checked as code (and any change to it fails).
+const DOCS = /\.(md|rst|adoc)$|(^|\/)docs\/[^/]+\.txt$/i
 const TESTS = /(^|\/)(tests?|__tests__|spec|fixtures)\/|\.(test|spec)\.[^/]+$|(^|\/)test_[^/]+$|_test\.[^/]+$/
 // The docs table the context-pass skill writes beside its brief: the skill's own output, never program input.
 const DOCS_TABLE = /^builds\/[^/]+\/docs-table\.json$/

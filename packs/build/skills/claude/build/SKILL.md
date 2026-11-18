@@ -170,7 +170,7 @@ family, model and a non-empty criteria array are required. vendor (codex, claude
 `codex review` does NOT accept `-m`, and its positional-prompt parsing is unreliable, so a codex-CLI grade goes through ask-model like any other.
 The verdict prints on stdout; logs go to stderr. (A read-only sandbox can't run a `verify.sh` that writes temp files, which is fine: the deterministic checks already ran; the grade is the independent reasoned review on top.)
 
-**Record and close (orchestrator only).** Use the repo's scripts/review.mjs, otherwise the shared runtime. Save the Grade's JSON to builds/<slug>/grade.json and record it against the same committed HEAD. Commit fixes before the one failed-criterion recheck, then record that JSON. Close once, at the tip: no phase Grade is closed mid-build; the last phase's Grade is closed by `/pr-review`'s one close, after the context pass and the fix check:
+**Record and close (orchestrator only).** Use the repo's scripts/review.mjs, otherwise the shared runtime. Save the Grade's JSON to builds/<slug>/grade.json and record it against the same committed HEAD. Commit fixes before the one failed-criterion recheck, then record that JSON. Close once, at the tip: no phase Grade is closed mid-build; the last phase's Grade (and, for risk-area work, the last phase's review) is closed by `/pr-review`'s one close, after the context pass and the fix check:
 
 ```bash
 REVIEW_SCRIPT=scripts/review.mjs
