@@ -3210,7 +3210,7 @@ async function closeReview(id) {
   const paths = sliceOf(review), base = recordBase(review, head), changes = changesBetween(base, head)
   const inSlice = paths && new Set([...sliceFiles(review), ...filesBetween(base, head, paths)])
   const scope = inSlice ? changes.filter(([p]) => inSlice.has(p)) : changes
-  const chain = [review, ...(check ? [check] : [])]
+  const chain = ['grade', 'recheck'].includes(review.kind) ? [] : [review, ...(check ? [check] : [])]
   const judged = judge(scope, chainEvidence(chain))
   const { unseen } = judged
   let tests = null
@@ -3260,6 +3260,12 @@ function checkFixed(review, r, check, statuses) {
     if (!paths.length) continue
     const code = check.manifest
     if (!code) throw new Error(`Fixed ${f.id}: the fix check ${check.id} predates prompt manifests, so it shows no file it read; reject it with a REFUTED dispute or an operator waiver`)
+    // A fix check from before the coverage rule diffed from the review head, so a cited file the fix round left alone
+    // was never in it: like a record from before manifests, it shows nothing about that file.
+    const coverage = recordBase(review, check.head)
+    if (code.base !== coverage)
+      throw new Error(`Fixed ${f.id}: the fix check ${check.id} predates the coverage rule: it read from ${code.base}, not the coverage base ${coverage}; ` +
+        'reject it with a REFUTED dispute or an operator waiver')
     const before = treeStates(code.base), after = treeStates(code.head)
     const missing = []
     for (const p of paths.filter((p) => (before.get(p) ?? null) !== (after.get(p) ?? null))) {
@@ -3620,21 +3626,29 @@ function standaloneLines(branch, { open, unknown }) {
 // The blocking and protected findings of this branch's phase reviews and Grades (this repository) that no close has
 // judged: each record at an ancestor of HEAD with no close of its own, with its fix check's or recheck's findings. A
 // Grade's criteria are judged by its recheck, so they are not listed.
-function phaseFindings(entries, branch, repoId) {
+function phaseFindings(entries, branch, repoId, inSlice = null) {
   const closed = new Set(entries.filter((e) => e.type === 'close').map((e) => e.review))
   const head = headNow(), out = []
   for (const r of entries.filter((e) => e.type === 'review' && ['review', 'grade'].includes(e.kind ?? 'review') && e.branch === branch && e.repoId === repoId)) {
     if (closed.has(r.id) || !fullObjectId(r.head) || !isAncestor(r.head, head)) continue
     const children = entries.filter((e) => e.type === 'review' && ['fix-check', 'recheck'].includes(e.kind) && e.review === r.id)
     for (const record of [r, ...children]) for (const f of record.findingDetails || [])
-      if (!f.criterionId && (blocking(f) || f.protected === true)) out.push({ record, f })
+      if (!f.criterionId && (blocking(f) || f.protected === true) && (!inSlice || inSlice(findingPaths(record, f).length ? findingPaths(record, f) : typeof f.file === 'string' && f.file ? [f.file] : [])))
+        out.push({ record, f })
   }
   return out
 }
 const RECORD_LABEL = { review: 'review', grade: 'Grade', recheck: 'Grade recheck', 'fix-check': 'fix check' }
 // Every open finding a review is handed, as text, and the phase ones' ids: { text, ids }. Never "already decided".
-function openFindingsNow(branch) {
-  const repoId = repoIdentity(), phase = phaseFindings(readLog(), branch, repoId)
+// A slice is handed, and records, only the phase findings with a path among its files, so a Grade finding is carried only
+// by a review that was shown it; a finding with no path needs an unsliced review.
+function openFindingsNow(branch, slice = null) {
+  let inSlice = null
+  if (slice) {
+    const files = new Set([...slice.files, ...nulNames(spawnSync('git', ['-C', TOP, 'ls-files', '-z', ...pathspec(slice.paths)], { maxBuffer: 256 * 1024 * 1024 }).stdout, 'git ls-files')])
+    inSlice = (paths) => paths.some((p) => files.has(p))
+  }
+  const repoId = repoIdentity(), phase = phaseFindings(readLog(), branch, repoId, inSlice)
   const lines = phase.length ? [`Open findings from earlier reviews and Grades on ${branch} that no close has judged. They are not decided: check whether each still holds, and report it again if it does.`,
     ...phase.map(({ record, f }) => `- ${scoreText(f)} ${f.file || '?'}:${f.line || '?'} — ${f.issue || ''} (${RECORD_LABEL[record.kind ?? 'review']} ${record.id}, ${f.id})${f.quote ? quoted(f) : ''}`)] : []
   lines.push(...standaloneLines(branch, standaloneFindings(branch, repoId)))
@@ -3833,7 +3847,10 @@ async function fixCheck(id) {
   const unread = changesBetween(base, head).filter(([p, s0, s1]) => (!inSlice || inSlice.has(p)) && !coverageExempt(p) && !readBefore.has(tripleKey(p, s0, s1)))
   const scope = [...new Set([...unread.map(([p]) => p), ...targets.flatMap((f) => findingPaths(original, f))])].sort()
   const sections = sectionsFor(base, head, scope)
-  const fix = buildSections(original.head, head, SLICE, Math.max(DIFF_CAP - sections.text.length, 1))
+  // The fix diff only shows what moved; for a slice whose fix landed outside its paths, it shows the whole branch's.
+  let fixScope = SLICE
+  let fix = buildSections(original.head, head, fixScope, Math.max(DIFF_CAP - sections.text.length, 1))
+  if (!fix.files.length && SLICE) fix = buildSections(original.head, head, fixScope = null, Math.max(DIFF_CAP - sections.text.length, 1))
   if (!fix.files.length) throw new Error('No fix diff to check')
   DIFF_BASE = base
   const branch = sh('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
@@ -3854,14 +3871,14 @@ async function fixCheck(id) {
   const range = `${diffRange(base)} -- <each file changed since review ${original.id} that it did not read, and each file the findings below cite>`
   const prompt = `Fix check: review ${original.id} was followed by a fix round. Review the full change of each file below, from the branch's base, ` +
     `so the fix is read in context, and check whether each listed finding is repaired.\n${originalFindingsNote(original)}${reviewPrompt(diffBlock(sections), range)}` +
-    `\n\nWhat moved since the review (git diff ${original.head}..HEAD${sliceSuffix(SLICE)}), to show the fix itself; review the files above:\n${diffBlock(fix)}`
+    `\n\nWhat moved since the review (git diff ${original.head}..HEAD${sliceSuffix(fixScope)}), to show the fix itself; review the files above:\n${diffBlock(fix)}`
   const { result } = await runModel(SEL, prompt, SCHEMA, 'fix-check reviewer')
   const scored = await scoredFindings(findingsList(result, 'fix-check reviewer'), SEL)
   const durationMs = Date.now() - started
   const security = await finishSecurity(securityPlan)
   if (security.record.status === 'ran') console.log(`▶ security pass · ${security.record.family}: ${security.raw.length} finding(s)`)
   // inFix: any place of the finding (main or instance) near a line the fix changed, judged as inDiff is (inDiffOf).
-  const changed = changedSides(original.head, head, SLICE)
+  const changed = changedSides(original.head, head, fixScope)
   // source is set after locatedFinding, which drops any source a reviewer wrote.
   const codeCount = scored.findings.length
   const findingDetails = [...scored.findings, ...security.raw.map(scoreFinding)].map((f, i) => {
@@ -4237,8 +4254,11 @@ const UNREADABLE = ['binary', 'oversize', 'submodule', 'submodule-change', 'enco
 const tripleKey = (path, s0, s1) => JSON.stringify([path, s0 ?? null, s1 ?? null])
 const predatesManifests = (record) => ['review', 'fix-check'].includes(record.kind ?? 'review') && !record.manifest
 // A close's chain: its review and the fix check it closed with.
-const chainOf = (entries, close) => [close.review, close.fixCheck].filter(Boolean)
-  .map((id) => entries.find((e) => e.type === 'review' && e.id === id)).filter(Boolean)
+// A Grade-rooted close's chain is empty: a Grade reads no diff, and a fix check run against a Grade grants nothing either.
+const chainOf = (entries, close) => {
+  const records = [close.review, close.fixCheck].filter(Boolean).map((id) => entries.find((e) => e.type === 'review' && e.id === id)).filter(Boolean)
+  return records[0]?.id === close.review && !['grade', 'recheck'].includes(records[0].kind) ? records : []
+}
 // What the given records' completed passes read, by role (a security manifest only when its pass ran), the code
 // manifests' unreadable entries, and the security passes that failed or were skipped.
 function chainEvidence(records) {
@@ -4283,6 +4303,8 @@ function judge(changes, evidence) {
 // close's review gives the coverage base. Every close of this repository at an ancestor of the tip adds its chain's
 // manifests, whatever its status. Returns null when no close gives a base, else { covered, base, tipClose, anchor,
 // used, legacy } plus judge's lists; used: the closes whose chains read a covered file, and every close at the tip close's head.
+// checkedTip: the commit being judged. A carried rewrite passes its own tip, so its change list is measured from its
+// own base (the closes still come from the logged history at tip).
 function manifestCover(entries, tip, checkedTip = tip) {
   const repoId = repoIdentity()
   const closes = []
@@ -4299,8 +4321,8 @@ function manifestCover(entries, tip, checkedTip = tip) {
   const tipClose = usable.find(atTip) || null
   const anchor = tipClose || usable[0]
   if (!anchor) return null
-  const base = coverBase(anchor.review, tip)
-  const changes = changesBetween(base, tip)
+  const base = coverBase(anchor.review, checkedTip)
+  const changes = changesBetween(base, checkedTip)
   const result = judge(changes, chainEvidence(usable.flatMap((r) => r.records)))
   const used = new Map(), covered = new Set(result.covered)
   for (const r of usable) if (tipClose && r.head === tipClose.head) used.set(r, [])
@@ -5024,7 +5046,7 @@ function startWatch(kind) {
   // The branch's open findings reach both reviewers as checks to make; the phase ones are recorded, so a Grade's close
   // can mark them carried to this review. Not on a --code-only run: phase reviews are never closed, so every later
   // phase review would be handed the same findings again.
-  const open = EVAL_MODE || hasFlag('--code-only') ? { text: '', ids: [] } : openFindingsNow(branch)
+  const open = EVAL_MODE || hasFlag('--code-only') ? { text: '', ids: [] } : openFindingsNow(branch, SLICE && { paths: SLICE, files: sliceFileList || [] })
   CONTEXT += open.text
   if (!sections.files.length) {
     console.log(`Nothing to review — no diff against ${BASE}.`)
