@@ -519,8 +519,12 @@ test('a blocking fix-check finding marked fixed is refused: defer it and slice; 
   const check = fixCheck(r.id, { REVIEW_TEST_DIFF_CAP: '1500', STUB_FINDINGS: JSON.stringify({ findings: [x1] }) })
   assert.ok(check.manifest.unread.some(([p, why]) => p === 'src/b.js' && why === 'capped'), JSON.stringify(check.manifest.unread))
   const deferX1 = { x1: { status: 'deferred', reason: 'next PR' } }
-  refused(close(r.id, { f1: fixed, x1: fixed }), /Fixed x1 is a fix-check finding.*defer it.*REVIEW_PATHS/s)
   refused(close(r.id, { f1: fixed, ...deferX1 }), /Fixed f1: the fix check did not read src\/b\.js \(capped\).*dispute.*waive/s)
+  // With f1 settled by a REFUTED from another family, the fix-check finding's own refusal shows.
+  appendFileSync(LOG, `${JSON.stringify({ type: 'dispute', ts: new Date().toISOString(), review: r.id, finding: 'f1', verdict: 'REFUTED', verifier: 'opus', family: 'sol' })}\n`)
+  const rejectF1 = { f1: { status: 'rejected', reason: 'a and b are meant', evidence: 'src/a.js:1', response: 'intentional' } }
+  refused(close(r.id, { ...rejectF1, x1: fixed }), /Fixed x1 is a fix-check finding.*defer it.*REVIEW_PATHS/s)
+  closed(r.id, { ...rejectF1, ...deferX1 }, 'partial')
 })
 
 test('a failed security pass counts only in a chain that still supplies coverage at the tip', () => {
