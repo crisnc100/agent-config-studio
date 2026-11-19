@@ -229,7 +229,7 @@ test('a binary change is not read by any reviewer: the push goes through, the ti
   const tier = tierJson()
   assert.equal(tier.covered, true)
   assert.equal(tier.tier, 'high')
-  assert.ok(tier.tierReasons.some((x) => /^not read by any reviewer: src\/blob\.dat/.test(x)), JSON.stringify(tier))
+  assert.ok(tier.reasons.some((x) => /^not read by any reviewer: src\/blob\.dat/.test(x)), JSON.stringify(tier))
   const p = push()
   allowed(p)
   assert.match(p.out, /not read by any reviewer: src\/blob\.dat/)
@@ -244,7 +244,7 @@ test('a submodule pointer update is unreadable: it grants no coverage, the tier 
   closed(r.id, {})
   const tier = tierJson()
   assert.equal(tier.tier, 'high')
-  assert.ok(tier.tierReasons.some((x) => /^not read by any reviewer: vendor\/sub/.test(x)), JSON.stringify(tier))
+  assert.ok(tier.reasons.some((x) => /^not read by any reviewer: vendor\/sub/.test(x)), JSON.stringify(tier))
 })
 
 test('a capped file is unseen: the push refuses naming it, and a slice of it at the tip lets the push through', () => {
@@ -267,7 +267,7 @@ test('an oversize file is unreadable: the push goes through and the tier is HIGH
   closed(r.id, {})
   const tier = tierJson()
   assert.equal(tier.tier, 'high')
-  assert.ok(tier.tierReasons.some((x) => /^not read by any reviewer: src\/huge\.js/.test(x)), JSON.stringify(tier))
+  assert.ok(tier.reasons.some((x) => /^not read by any reviewer: src\/huge\.js/.test(x)), JSON.stringify(tier))
   allowed(push())
 })
 
@@ -296,14 +296,14 @@ test('security.run always with a docs-only change and no security pass: the tier
   const tier = tierJson()
   assert.equal(tier.covered, true)
   assert.equal(tier.tier, 'high')
-  assert.ok(tier.tierReasons.some((x) => /^security pass did not read: docs\/three\.md/.test(x)), JSON.stringify(tier))
+  assert.ok(tier.reasons.some((x) => /^security pass did not read: docs\/three\.md/.test(x)), JSON.stringify(tier))
 })
 
 test('a security pass that read every owed file keeps the security reason out of the tier', () => {
   homeConfig({ security: { run: 'always' } })
   closed(review().id, {})
   const tier = tierJson()
-  assert.ok(!tier.tierReasons.some((x) => /security pass/.test(x)), JSON.stringify(tier))
+  assert.ok(!tier.reasons.some((x) => /security pass/.test(x)), JSON.stringify(tier))
 })
 
 test('an old record grants no coverage: the push refuses, saying the close predates prompt manifests', () => {
@@ -327,7 +327,7 @@ test('a failed security pass in the chain makes the tier HIGH, naming the pass',
   closed(r.id, {})
   const tier = tierJson()
   assert.equal(tier.tier, 'high')
-  assert.ok(tier.tierReasons.some((x) => /^security pass failed/.test(x)), JSON.stringify(tier))
+  assert.ok(tier.reasons.some((x) => /^security pass failed/.test(x)), JSON.stringify(tier))
 })
 
 test('the fix check reads every file changed since the review in full from the base, and every cited file; the fix diff grants nothing', () => {

@@ -297,7 +297,7 @@ test('9 --code-only (the /code-review skill) never starts the security pass; wit
   assert.equal(review.security.run, 'required')
   const tier = closed(id)
   assert.equal(tier.tier, 'high')
-  assert.ok(tier.tierReasons.some((r) => /security pass did not cover logic changed after review \(not-asked at review/.test(r)), JSON.stringify(tier.tierReasons))
+  assert.ok(tier.tierReasons.some((r) => /^security pass did not read: src\/app\.js/.test(r)), JSON.stringify(tier.tierReasons))
   // The same run without --code-only (the /pr-review flow) runs the pass in the same record.
   rmSync(CALLS, { force: true })
   const both = script([], { REVIEW_REVIEWER: 'sol' })

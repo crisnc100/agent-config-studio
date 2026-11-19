@@ -150,7 +150,7 @@ const CONTEXT_PASS = join(dirname(SCRIPT), 'context-pass.mjs')
 const PR_FACTS = join(dirname(SCRIPT), '..', '..', 'pr', 'skills', 'claude', 'pr', 'pr-facts.mjs')
 const node = (file, args) => run(process.execPath, [file, ...args])
 
-test('6 the coordinated flow: code and security in one record, one fix round, one fix check, close, then a checked context commit covered by a closed docs-focus slice of its own diff; the push passes', () => {
+test('6 the coordinated flow: code and security in one record, one fix round, one fix check, close, then a checked context commit covered by a closed docs-focus slice of its files; the push passes', () => {
   homeConfig({ security: { run: 'required' } })
   commit({ 'builds/feat/plan.md': '# Plan\n\n## Outcome\nThe app exports three numbers.\n' })
   // Review: one record with a code finding and a security finding.
@@ -180,17 +180,19 @@ test('6 the coordinated flow: code and security in one record, one fix round, on
   // The docs table, committed in the build folder beside the plan.
   commit({ 'builds/feat/docs-table.json': JSON.stringify({ rows: [{ behavior: 'the exported numbers', files: ['src/app.js'],
     docs: [{ path: 'README.md', claims: [{ claim: 'two is 22', at: 'src/app.js:3' }, { claim: 'three is 0', at: 'src/app.js:4' }] }] }] }) })
-  // A docs-focus slice of exactly the files the context commit touched, since the main close's head, closed at the tip.
+  // A docs-focus slice of exactly the files the context commit touched, closed at the tip: it reads their whole change
+  // from the base, since only a read of the current triple covers a file.
+  assert.deepEqual(mainClose.unseen, [])
   rmSync(CALLS, { force: true })
-  const slice = reviewed({ REVIEW_PATHS: touched.join(',') }, ['--focus', 'docs', '--since-close', mainClose.closeHead])
+  const slice = reviewed({ REVIEW_PATHS: touched.join(',') }, ['--focus', 'docs'])
   assert.deepEqual(calls().map((c) => c.kind).sort(), ['code', 'security'], 'exactly one docs reviewer and one security pass, nothing else')
   const code = calls().filter((c) => c.kind === 'code'), security = calls().filter((c) => c.kind === 'security')
   assert.match(code[0].prompt, /\+\/\/ Callers read these three numbers/, 'the docs reviewer sees the context commit')
-  assert.doesNotMatch(code[0].prompt, /\+export const two = 22/, 'and only it: not the fix the main review already covered')
-  assert.match(security[0].prompt, /\+export const two = 22/, 'the security pass reads the whole slice, the fix it never saw included')
+  assert.match(code[0].prompt, /\+export const two = 22/, 'in the whole change of its files from the base')
+  assert.match(security[0].prompt, /\+export const two = 22/, 'and so does the security pass')
   const sliceClose = closed(slice)
   assert.equal(sliceClose.status, 'complete')
-  assert.ok(!sliceClose.tierReasons.some((r) => /security pass did not see/.test(r)), JSON.stringify(sliceClose.tierReasons))
+  assert.ok(!sliceClose.tierReasons.some((r) => /security pass did not read/.test(r)), JSON.stringify(sliceClose.tierReasons))
   // The push passes through the normal gate: no override, no new exception.
   const pushed = gate()
   allowed(pushed)
@@ -202,68 +204,6 @@ test('6 the coordinated flow: code and security in one record, one fix round, on
   assert.deepEqual(docsProblems(), [])
   commit({ 'src/extra.js': 'export const extra = 1\n' })
   assert.deepEqual(docsProblems(), ['docs table: src/extra.js changed, but no row covers it'])
-})
-
-// ── --since-close: a slice that reviews only what changed after a close ──
-function closedMain() {
-  const main = reviewed()
-  return closed(main)
-}
-test('7 --since-close reviews only the delta after a complete close, records it, covers its files at the tip, and the push passes', () => {
-  const mainClose = closedMain()
-  commit({ 'src/app.js': `// The three numbers.\n${APP}` })
-  rmSync(CALLS, { force: true })
-  const id = reviewed({ REVIEW_PATHS: 'src/app.js' }, ['--focus', 'docs', '--since-close', mainClose.closeHead])
-  const prompt = calls().find((c) => c.kind === 'code').prompt
-  assert.match(prompt, /\+\/\/ The three numbers\./)
-  assert.doesNotMatch(prompt, /\+export const one = 1/, 'lines the main review saw are not in the delta')
-  assert.match(prompt, new RegExp(`git diff ${mainClose.closeHead}\\.\\.HEAD -- src/app\\.js`))
-  const record = lines(LOG).find((e) => e.id === id)
-  assert.equal(record.sinceClose, mainClose.closeHead)
-  assert.deepEqual(record.files, ['src/app.js'])
-  assert.equal(record.baseSha, lines(LOG).find((e) => e.id === mainClose.review).baseSha, 'the base stays the branch base')
-  closed(id)
-  allowed(gate())
-})
-
-test('8 --since-close refuses without a slice, at a commit no complete close of this branch ended at, and for a file that close did not cover', () => {
-  const mainClose = closedMain()
-  commit({ 'src/app.js': `// The three numbers.\n${APP}` })
-  refused(script(['--since-close', mainClose.closeHead], { REVIEW_REVIEWER: 'sol' }), /--since-close reviews a slice/)
-  const first = git('rev-list', '--max-parents=0', 'HEAD')
-  refused(script(['--since-close', first], { REVIEW_REVIEWER: 'sol', REVIEW_PATHS: 'src/app.js' }), /no complete close of this branch ended at/)
-  refused(script(['--since-close', 'nope'], { REVIEW_REVIEWER: 'sol', REVIEW_PATHS: 'src/app.js' }), /does not name a commit/)
-  assert.equal(calls().filter((c) => c.kind === 'code').length, 1, 'only the main review ran a model')
-  // A main close that was a slice of README only never covered src/app.js at its head.
-  git('checkout', '-qb', 'feat2', 'main')
-  commit({ 'src/app.js': APP, 'README.md': 'base\nMore.\n' })
-  const readmeOnly = closed(reviewed({ REVIEW_PATHS: 'README.md' }))
-  commit({ 'src/app.js': `// The three numbers.\n${APP}` })
-  refused(script(['--since-close', readmeOnly.closeHead], { REVIEW_REVIEWER: 'sol', REVIEW_PATHS: 'src/app.js' }),
-    /src\/app\.js: its state at .* was not covered by that close/)
-})
-
-test('9 --since-close: a file the security prompt cut at the cap stays out of what the pass saw, and the close names it', () => {
-  homeConfig({ security: { run: 'required' } })
-  const body = (name, n) => Array.from({ length: n }, (_, i) => `export const ${name}${i} = ${i}`).join('\n') + '\n'
-  const A = body('a', 4300), Z = body('z', 800)
-  commit({ 'src/a.js': A, 'src/z.js': Z })
-  const head = git('rev-parse', 'HEAD')
-  // The main review in two slices, each under the cap on its own, closed at one head: both files covered there.
-  const aClose = closed(reviewed({ REVIEW_PATHS: 'src/a.js' }))
-  const zClose = closed(reviewed({ REVIEW_PATHS: 'src/z.js' }))
-  assert.equal(aClose.closeHead, head); assert.equal(zClose.closeHead, head)
-  commit({ 'src/a.js': `// The a numbers.\n${A}`, 'src/z.js': `// The z numbers.\n${Z}` })
-  rmSync(CALLS, { force: true })
-  const id = reviewed({ REVIEW_PATHS: 'src/a.js,src/z.js' }, ['--focus', 'docs', '--since-close', head])
-  const record = lines(LOG).find((e) => e.id === id)
-  assert.equal(record.security.status, 'ran')
-  const saw = new Map(record.security.saw)
-  assert.ok(saw.has('src/a.js'), 'a.js is inside the cap')
-  assert.equal(saw.has('src/z.js'), false, 'z.js is past the cap in the diff the security pass got')
-  const close = closed(id)
-  assert.ok(close.tierReasons.some((r) => /security pass did not see src\/z\.js/.test(r)), JSON.stringify(close.tierReasons))
-  assert.equal(close.tier, 'high')
 })
 
 // ── close once: the context pass runs before the one fix check, which reviews it with the docs focus ──
@@ -288,7 +228,7 @@ const docsBlock = (sha, files) => `DOCS AND COMMENTS, as well: the comment and d
   `executable comment (lint or type directives, build tags, doc tests). Quote the changed line. Do NOT report wording, ` +
   `tone or style preferences.\n\n`
 // Structural, not by wording: the docs prompt is the plain fix check's prompt (no --focus, a twin review at the same head,
-// the same HEAD) plus exactly that block, once. Any other added or changed text, anywhere, fails.
+// the same HEAD, its review id swapped for this one's) plus exactly that block, once. Any other added or changed text, anywhere, fails.
 const codeCall = () => calls().filter((c) => c.kind === 'code').at(-1).prompt
 function plainPrompt(twin) {
   rmSync(CALLS, { force: true })
@@ -308,12 +248,12 @@ function assertDocsPrompt(prompt, plainText, sha, files) {
 test('10 --fix-check --focus docs runs the fix check with the docs instructions for the diff\'s comment and doc edits, and the record logs the focus', () => {
   const id = reviewed(), twin = reviewed()
   commit({ 'src/app.js': COMMENTED, 'README.md': 'base\nThe app exports one, two and three numbers.\n' })
-  const plainText = plainPrompt(twin)
+  const plainText = plainPrompt(twin).replaceAll(twin, id)
   rmSync(CALLS, { force: true })
   const check = fixCheck(id)
   const code = calls().filter((c) => c.kind === 'code')
   assert.equal(code.length, 1)
-  assert.match(code[0].prompt, /^Fix check: review only this fix diff/)
+  assert.match(code[0].prompt, new RegExp(`^Fix check: review ${id} was followed by a fix round`))
   assert.match(code[0].prompt, /DOCS AND COMMENTS/)
   assert.match(code[0].prompt, /the comment and doc edits in this diff/)
   for (const part of ['untrue', 'not backed by the code', '+// Callers read these three numbers at start.']) assert.ok(code[0].prompt.includes(part), part)
@@ -342,7 +282,8 @@ test('11 the unsliced close-once flow: review → fix → context commit → fix
   assert.equal(close.status, 'complete')
   assert.equal(closes().length, 1, 'exactly one close')
   const state = git('ls-tree', 'HEAD', 'src/app.js').split(/\s+/)
-  assert.deepEqual(close.coverage.find(([p]) => p === 'src/app.js'), ['src/app.js', `${state[0]} ${state[2]}`], 'the commented file is covered at its tip state')
+  assert.deepEqual(close.unseen, [])
+  assert.equal(check.manifest.read.find(([p]) => p === 'src/app.js')?.[2], `${state[0]} ${state[2]}`, 'the commented file is read at its tip state')
   assert.ok(!close.tierReasons.some((t) => /security/.test(t)), JSON.stringify(close.tierReasons))
   assert.notEqual(close.tier, 'high')
   allowed(gate())
@@ -361,7 +302,7 @@ test('12 a fix check whose fix round and context commit touched only docs and te
   const r = script(['--fix-check', id, '--focus', 'docs', '--context-commit', git('rev-parse', 'HEAD')], { REVIEW_REVIEWER: 'sol' })
   allowed(r)
   assert.deepEqual(calls().map((c) => c.kind), ['code'])
-  assert.match(r.out, /security pass: not-required \(no security-relevant file changed since a security pass saw it\)/)
+  assert.match(r.out, /security pass: not-required \(no file the security pass owes changed since a security pass read it\)/)
   const check = lines(LOG).find((e) => e.kind === 'fix-check' && e.review === id)
   assert.equal(check.security.status, 'not-required')
   const close = closed(id, { f1: { status: 'fixed' } })
@@ -430,20 +371,20 @@ test('16 a close never borrows another review\'s security pass', () => {
   const id = reviewed({}, ['--code-only'])
   const close = closed(id)
   assert.equal(close.tier, 'high')
-  assert.ok(close.tierReasons.some((t) => /security pass did not cover/.test(t)), JSON.stringify(close.tierReasons))
+  assert.ok(close.tierReasons.some((t) => /^security pass did not read: src\/app\.js/.test(t)), JSON.stringify(close.tierReasons))
 })
 
-test('17 a rename needs its source\'s deletion seen too, not only the destination', () => {
+test('17 a rename needs its source\'s deletion read by the security pass too, not only the destination', () => {
   const BODY = Array.from({ length: 30 }, (_, i) => `export const v${i} = ${i}`).join('\n') + '\n'
   git('checkout', '-q', 'main'); commit({ 'src/old.js': BODY }); git('checkout', '-qb', 'feat4')
   homeConfig({ security: { run: 'required' } })
   commit({ 'src/new.js': `${BODY}export const extra = 1\n` })
   const id = reviewed()
-  assert.ok(lines(LOG).find((e) => e.id === id).security.saw.some(([p]) => p === 'src/new.js'))
+  assert.ok(lines(LOG).find((e) => e.id === id).security.manifest.read.some(([p]) => p === 'src/new.js'))
   git('rm', '-q', 'src/old.js'); git('commit', '-qm', 'drop old')
   fixCheck(id, {}, ['--code-only'])
   const close = closed(id)
-  assert.ok(close.tierReasons.some((t) => /security pass did not see .*src\/new\.js/.test(t)), JSON.stringify(close.tierReasons))
+  assert.ok(close.tierReasons.some((t) => /^security pass did not read: src\/old\.js/.test(t)), JSON.stringify(close.tierReasons))
 })
 
 test('18 a required fix-check security pass that failed puts a reason in the tier, even when nothing else is unseen', () => {
@@ -476,14 +417,14 @@ test('20 a fix check whose security pass ran lists the security family among its
   assert.equal(check.findingDetails.find((f) => f.quote === 'export const three = 33').source, 'security')
 })
 
-test('21 under "always", a changed docs file no pass saw after the review is named at close, as code would be', () => {
+test('21 under "always", a changed docs file no security pass read after the review is named at close, as code would be', () => {
   homeConfig({ security: { run: 'always' } })
   const id = reviewed()
   commit({ 'README.md': 'base\nThe app exports one, two and three numbers.\n' })
   fixCheck(id, {}, ['--code-only'])
   const close = closed(id)
   assert.equal(close.tier, 'high')
-  assert.ok(close.tierReasons.some((t) => /security pass did not see README\.md/.test(t)), JSON.stringify(close.tierReasons))
+  assert.ok(close.tierReasons.some((t) => /^security pass did not read: README\.md/.test(t)), JSON.stringify(close.tierReasons))
 })
 
 test('22 a fix check whose required security pass failed covers nothing for the push gate', () => {
@@ -498,19 +439,19 @@ test('22 a fix check whose required security pass failed covers nothing for the 
   refused(pushed, /src\/app\.js/)
 })
 
-test('23 a binary diff of a code file is never recorded as seen, by the security pass or the reviewer; a binary image stays covered', () => {
+test('23 a binary diff, of a code file or an image, is never recorded as read, by the security pass or the reviewer', () => {
   homeConfig({ security: { run: 'required' } })
   commit({ 'src/blob.js': 'export const x = 1\u0000\n', 'img/logo.png': '\u0089PNG\u0000\u0001' })
   const id = reviewed()
   const record = lines(LOG).find((e) => e.id === id)
-  assert.ok(record.truncated.includes('src/blob.js'), JSON.stringify(record.truncated))
-  assert.ok(!record.truncated.includes('img/logo.png'), JSON.stringify(record.truncated))
-  assert.ok(!record.security.saw.some(([p]) => p === 'src/blob.js'), JSON.stringify(record.security.saw))
+  assert.deepEqual(record.manifest.unread, [['img/logo.png', 'binary'], ['src/blob.js', 'binary']])
+  assert.ok(!record.security.manifest.read.some(([p]) => p === 'src/blob.js'), JSON.stringify(record.security.manifest))
   commit({ 'src/blob.js': 'export const x = 2\u0000\n' })
   const check = fixCheck(id, {}, [])
   assert.equal(check.security.status, 'ran')
-  assert.ok(!check.security.saw.some(([p]) => p === 'src/blob.js'), JSON.stringify(check.security.saw))
-  assert.ok(!check.coverage.some(([p]) => p === 'src/blob.js'), JSON.stringify(check.coverage))
+  assert.ok(!check.security.manifest.read.some(([p]) => p === 'src/blob.js'), JSON.stringify(check.security.manifest))
+  assert.ok(!check.manifest.read.some(([p]) => p === 'src/blob.js'), JSON.stringify(check.manifest))
+  assert.ok(check.manifest.unread.some(([p, why]) => p === 'src/blob.js' && why === 'binary'))
 })
 
 test('24 a --focus docs fix check needs --context-commit inside the fix range; its prompt names that commit and its files and asks for any code-line change there', () => {
@@ -555,7 +496,7 @@ test('26 when a fix commit lands after the context commit, the prompt and record
   commit({ 'src/other.js': 'export const other = 1\n' })
   const head = git('rev-parse', 'HEAD')
   assert.notEqual(context, head)
-  const plainText = plainPrompt(twin)
+  const plainText = plainPrompt(twin).replaceAll(twin, id)
   rmSync(CALLS, { force: true })
   const r = script(['--fix-check', id, '--focus', 'docs', '--context-commit', context], { REVIEW_REVIEWER: 'sol' })
   allowed(r)
@@ -567,21 +508,22 @@ test('26 when a fix commit lands after the context commit, the prompt and record
   assert.equal(check.contextCommit, context)
 })
 
-test('27 a fix check gives the push gate coverage only for files its security pass read: one clipped by the cap is uncovered', () => {
+test('27 a fix check\'s security pass records only the files it read: one over the cap is not read, and the tier names what no reviewer read', () => {
   homeConfig({ security: { run: 'required' } })
   const body = (name, from, n) => Array.from({ length: n }, (_, i) => `export const ${name}${from + i} = ${from + i}`).join('\n') + '\n'
   commit({ 'src/a.js': body('a', 0, 2600), 'src/z.js': 'export const z = 1\n' })
   const id = reviewed({ REVIEW_PATHS: 'src/a.js,src/z.js' })
   const record = lines(LOG).find((e) => e.id === id)
-  assert.deepEqual(record.security.saw.map(([p]) => p), ['src/a.js', 'src/z.js'], 'the review saw both, under the cap')
+  assert.deepEqual(record.security.manifest.read.map(([p]) => p), ['src/a.js', 'src/z.js'], 'the review read both, under the cap')
   commit({ 'src/a.js': body('a', 0, 2600) + body('a', 2600, 2400), 'src/z.js': 'export const z = 2\n' })
   const check = fixCheck(id, { STUB_FINDINGS: findings() }, [])
   assert.equal(check.security.status, 'ran')
-  assert.ok(!check.security.saw.some(([p]) => p === 'src/a.js'), `the pass's base..HEAD diff of a.js is over the cap: ${JSON.stringify(check.security.saw)}`)
-  assert.ok(check.security.saw.some(([p]) => p === 'src/z.js'), 'z.js fit beside it')
-  assert.ok(check.coverage.some(([p]) => p === 'src/a.js'), 'the code reviewer\'s short fix diff did show it')
-  closed(reviewed({ REVIEW_PATHS: 'README.md,src/app.js' }))
-  refused(gate(), /src\/a\.js/)
+  assert.ok(!check.security.manifest.read.some(([p]) => p === 'src/a.js'), `the pass's base..HEAD diff of a.js is over the cap: ${JSON.stringify(check.security.manifest)}`)
+  assert.ok(check.security.manifest.read.some(([p]) => p === 'src/z.js'), 'z.js fit beside it')
+  assert.ok(check.manifest.unread.some(([p, why]) => p === 'src/a.js' && why === 'oversize'), 'the code pass could not read it either')
+  const close = closed(id)
+  assert.equal(close.tier, 'high')
+  assert.ok(close.tierReasons.some((t) => /^not read by any reviewer: src\/a\.js/.test(t)), JSON.stringify(close.tierReasons))
 })
 
 test('28 a binary code file is unseen whatever its name: a Git-quoted path or a non-ASCII one; readable files with such names stay seen, and a renamed text file too', () => {
@@ -592,18 +534,18 @@ test('28 a binary code file is unseen whatever its name: a Git-quoted path or a 
   const id = reviewed()
   const record = lines(LOG).find((e) => e.id === id)
   for (const p of ['src/bin"q.js', 'src/bïn.js']) {
-    assert.ok(record.truncated.includes(p), `${p}: ${JSON.stringify(record.truncated)}`)
-    assert.ok(!record.security.saw.some(([s]) => s === p), p)
+    assert.ok(record.manifest.unread.some(([q, why]) => q === p && why === 'binary'), `${p}: ${JSON.stringify(record.manifest.unread)}`)
+    assert.ok(!record.security.manifest.read.some(([q]) => q === p), p)
   }
-  for (const p of ['src/txt"q.js', 'src/tëxt.js', 'src/moved.js', 'src/old.js']) assert.ok(!record.truncated.includes(p), `${p} was readable: ${JSON.stringify(record.truncated)}`)
+  for (const p of ['src/txt"q.js', 'src/tëxt.js', 'src/moved.js', 'src/old.js'])
+    assert.ok(record.manifest.read.some(([q]) => q === p), `${p} was readable: ${JSON.stringify(record.manifest)}`)
 })
 
-test('29 the binary exemption is only for opaque assets: a stylesheet Git renders as binary is unseen; an image is not', () => {
+test('29 there is no binary exemption by extension: a stylesheet Git renders as binary and an image are both unread', () => {
   homeConfig({ security: { run: 'always' } })
   commit({ 'src/style.css': 'b\u0000o\u0000d\u0000y\u0000{\u0000}\u0000', 'img/logo.png': '\u0089PNG\u0000\u0001' })
   const id = reviewed()
   const record = lines(LOG).find((e) => e.id === id)
-  assert.ok(record.truncated.includes('src/style.css'), JSON.stringify(record.truncated))
-  assert.ok(!record.security.saw.some(([p]) => p === 'src/style.css'))
-  assert.ok(!record.truncated.includes('img/logo.png'))
+  assert.deepEqual(record.manifest.unread, [['img/logo.png', 'binary'], ['src/style.css', 'binary']])
+  assert.ok(!record.security.manifest.read.some(([p]) => ['src/style.css', 'img/logo.png'].includes(p)))
 })

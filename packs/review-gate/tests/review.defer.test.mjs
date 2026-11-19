@@ -67,11 +67,16 @@ function close(id, statuses) {
   const r = script(['--close', id, '--status', path, '--test-cmd', 'true'])
   return { ...r, record: records().length > before ? records().at(-1) : null }
 }
-function closed(id, statuses = {}) {
+function closed(id, statuses = {}, status = 'complete') {
   const r = close(id, statuses)
-  allowed(r); assert.equal(r.record?.type, 'close', r.out); assert.equal(r.record.status, 'complete', r.out)
-  assert.deepEqual(r.record.outOfScope, [])
+  allowed(r); assert.equal(r.record?.type, 'close', r.out); assert.equal(r.record.status, status, r.out)
+  if (status === 'complete') assert.deepEqual(r.record.unseen, [])
   return r.record
+}
+// A review of exactly these files at the tip, closed there: what a Grade close leaves unseen, a slice reads.
+function sliceClosed(paths) {
+  allowed(script([], { REVIEW_PATHS: paths }))
+  return closed(records().filter((e) => e.type === 'review').at(-1).id)
 }
 function refused(id, statuses, pattern) {
   const r = close(id, statuses)
@@ -127,6 +132,7 @@ const ORIGINAL = /is from the original (review|Grade); only findings a fix check
 test('D1 deferral is refused for an original finding, of a review or of a Grade, and for a criterion before its recheck', () => {
   const review = reviewed([scored()])
   refused(review.id, { f1: { status: 'deferred', reason: 'later' } }, /Finding f1 is from the original review/)
+  fixChecked(review, [])
   closed(review.id, { f1: { status: 'fixed' } })
   const grade = graded()
   refused(grade.id, { c1: { status: 'deferred', reason: 'later' } }, /Deferred criterion c1 needs its one recheck first/)
@@ -141,7 +147,7 @@ test('D2 deferral is refused before a fix check exists', () => {
   refused(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later' } }, /Unknown finding status key: x1/)
   refused(review.id, { f1: { status: 'deferred', reason: 'later' } }, ORIGINAL)
   commit({ 'src/one.test.js': 'test one\n' })
-  refused(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later' } }, /run --fix-check first/)
+  refused(review.id, { f1: { status: 'fixed' } }, /Fixed f1 needs a fix check/)
   assert.equal(records().filter((e) => e.type === 'close').length, 0)
 })
 test('D3 deferral without a nonempty reason, or with an empty fix idea, is refused', () => {
@@ -176,9 +182,9 @@ test('D5 x… findings deferred after the fix check close complete, keep their s
   assert.match(deferred.stdout, new RegExp(`${check.id} \\S+ x2 MEDIUM 25/100 \\(likelihood 5/10 × impact 5/10\\) .*Deferred: thin but passing`))
   const pushed = gate(); allowed(pushed)
   assert.ok(pushed.stderr.includes(summary.stdout.trim()), pushed.out)
-  // A deferred finding is not fixed: it authorizes no change after the fix check.
+  // A deferred finding is not fixed: a change after the fix check is unseen until a slice reads it.
   commit({ 'src/one.js': 'export const one = 4\n' })
-  refused(review.id, statuses, /may touch only builds\/ and test files: src\/one\.js\./)
+  assert.deepEqual(closed(review.id, statuses, 'partial').unseen, ['src/one.js'])
 })
 test('D6 a Grade criterion still failing after its one recheck, and the recheck findings, may be deferred; a criterion that passed may not', () => {
   const grade = graded()
@@ -188,8 +194,10 @@ test('D6 a Grade criterion still failing after its one recheck, and the recheck 
   refused(grade.id, { c1: { status: 'fixed' }, r1: { status: 'deferred', reason: 'later' } }, /requires a PASS in the single recheck/)
   refused(grade.id, { c1: { status: 'deferred', reason: 'later' } }, /Finding r1 needs a fixed or rejected status, or deferred with a reason/)
   const statuses = { c1: { status: 'deferred', reason: 'account rework is its own PR', fix: 'split the account module' }, r1: { status: 'deferred', reason: 'same rework' } }
-  const record = closed(grade.id, statuses)
+  const record = closed(grade.id, statuses, 'partial')
   assert.equal(record.recheck, recheck.id)
+  assert.deepEqual(record.unseen, ['src/one.js'], 'a Grade reads no diff, so its close covers nothing')
+  sliceClosed('src/one.js')
   const summary = script(['--summary']); allowed(summary)
   const lines = summary.stdout.trim().split('\n')
   assert.equal(lines[0], 'Acceptance criteria not met')
@@ -203,7 +211,7 @@ test('D6 a Grade criterion still failing after its one recheck, and the recheck 
   commit({ 'src/one.js': 'export const one = 4\n' })
   rechecked(passing, 'PASS')
   refused(passing.id, { c1: { status: 'deferred', reason: 'later' } }, /Criterion c1 passed its recheck; mark it fixed rather than deferred/)
-  closed(passing.id, { c1: { status: 'fixed' } })
+  closed(passing.id, { c1: { status: 'fixed' } }, 'partial')
 })
 test('D7 --summary puts criteria not met on top, then deferred HIGHs, then every other deferred finding', () => {
   // Log order is LOW (filed in the review), then MEDIUM and HIGH (the fix check), then the criterion (the Grade).
@@ -213,7 +221,7 @@ test('D7 --summary puts criteria not met on top, then deferred HIGHs, then every
   closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'medium later' }, x2: { status: 'deferred', reason: 'high later' } })
   const grade = graded()
   rechecked(grade, 'FAIL')
-  closed(grade.id, { c1: { status: 'deferred', reason: 'criterion later' } })
+  closed(grade.id, { c1: { status: 'deferred', reason: 'criterion later' } }, 'partial')
   const summary = script(['--summary']); allowed(summary)
   const lines = summary.stdout.trim().split('\n')
   const at = (prefix) => lines.findIndex((line) => line.startsWith(prefix))
@@ -244,6 +252,7 @@ test('D8b a close, then a squash with the closed tree: the push gate and --summa
   commit({ 'lib/two.js': 'export const two = 2\n' })
   const review = reviewed([scored()])
   const fixed = commit({ 'src/one.js': 'export const one = 3\n' })
+  allowed(script(['--fix-check', review.id]))
   closed(review.id, { f1: { status: 'fixed' } })
   const squashed = squash()
   assert.equal(tree(squashed), tree(fixed))
@@ -282,8 +291,11 @@ test('D11 a squash with the recheck tree closes as carried from the recheck head
   commit({ 'src/one.js': 'export const one = 3\n' })
   const recheck = rechecked(grade)
   squash()
-  const record = closed(grade.id, { c1: { status: 'deferred', reason: 'later' } })
+  const record = closed(grade.id, { c1: { status: 'deferred', reason: 'later' } }, 'partial')
   assert.deepEqual(record.carried, { from: recheck.head, kind: 'recheck', record: recheck.id, tree: tree(recheck.head) })
+  // A Grade reads no diff: its close covers nothing, so the push needs a review that reads the change.
+  assert.notEqual(gate().status, 0)
+  sliceClosed('src/one.js')
   allowed(gate())
 })
 test('D12 a rewrite where one byte differs is refused at close, at --summary and at the push gate, and logs no carry-over', () => {
@@ -307,6 +319,7 @@ test('D13 a rewrite back to the reviewed tree that drops a closed fix is refused
   const original = commit({ 'lib/two.js': 'export const two = 2\n' })
   const review = reviewed([scored({ file: 'lib/two.js', quote: 'export const two = 2' })])
   commit({ 'lib/two.js': 'export const two = 4\n' })
+  allowed(script(['--fix-check', review.id]))
   closed(review.id, { f1: { status: 'fixed' } })
   allowed(gate())
   git('reset', '-q', '--hard', original)
@@ -342,9 +355,9 @@ test('D15 a summary reads the close that covers its tip: a later close outside t
   const check = fixChecked(review, [X_HIGH])
   closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later' } })
   commit({ 'src/one.test.js': 'test one, x1 fixed\n' })
-  // x1 is protected and src/one.js is unchanged, so its fixed status needs a REFUTED dispute.
-  writeFileSync(LOG, readFileSync(LOG, 'utf8') + JSON.stringify({ type: 'dispute', review: check.id, finding: 'x1', verdict: 'REFUTED', verifier: 'grok' }) + '\n')
-  closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'fixed' } })
+  // The x1 fix lands after the fix check, so a slice reads it before the review closes again with x1 fixed.
+  sliceClosed('src/one.test.js')
+  closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'fixed' } }, 'partial')
   const fixedThere = script(['--summary']); allowed(fixedThere)
   assert.doesNotMatch(fixedThere.stdout, /Deferred: later/)
   // Back to the tree the first close covered: as that very commit, then as a rewrite with its tree.

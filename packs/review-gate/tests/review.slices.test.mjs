@@ -86,13 +86,19 @@ function closed(id, statuses) {
   allowed(r); assert.equal(r.record.type, 'close'); assert.equal(r.record.status, 'complete', r.out)
   return r.record
 }
-// A sliced review record logged as the script logs one, for gate cases a real run can't set up.
+// "mode blob" of a path at a commit, as ls-tree prints it; null when absent.
+const stateAt = (rev, path) => { const [mode, , blob] = git('ls-tree', rev, '--', path).split(/\s+/); return blob ? `${mode} ${blob}` : null }
+// A sliced review record logged as the script logs one, for gate cases a real run can't set up: its code manifest read
+// every file of the slice whole. A Grade reads no diff, so it has none; manifest: undefined logs one from before manifests.
 function slice(paths, extra = {}) {
   const record = { type: 'review', kind: 'review', id: `slice-${records().length}`, head: git('rev-parse', 'HEAD'), repo: 'repo',
     repoId: realpathSync(join(REPO, '.git')), branch: 'feat', baseSha: git('merge-base', 'main', 'HEAD'), paths,
     family: 'fixture', model: 'fixture-only', findingDetails: [], ...extra }
   if (!Object.hasOwn(extra, 'files')) record.files = git('diff', '--name-only', record.baseSha, record.head, '--', ...paths).split('\n').filter(Boolean).sort()
-  else if (extra.files === undefined) delete record.files
+  if (record.kind === 'review' && !Object.hasOwn(extra, 'manifest'))
+    record.manifest = { v: 1, role: 'code', base: record.baseSha, head: record.head, unread: [], promptSha256: 'fixture', cap: 120000,
+      read: record.files.map((p) => [p, stateAt(record.baseSha, p), stateAt(record.head, p)]) }
+  else if (extra.manifest === undefined) delete record.manifest
   seed(record)
   return record
 }
@@ -155,37 +161,39 @@ test('S4 an unsliced review stores no paths, and its prompt, banner and report c
   assert.doesNotMatch(readFileSync(join(REPO, r.dir, 'code-review.md'), 'utf8'), /Paths:/)
 })
 
-test('S2 a sliced close ignores post-review changes outside its paths and applies outOfScope inside them', () => {
+test('S2 a sliced close ignores post-review changes outside its paths and lists what no pass read inside them as unseen', () => {
   const r = review('src/')
   commit({ 'lib/two.js': 'export const two = 3\n' })
   const outside = closed(r.id)
-  assert.deepEqual(outside.outOfScope, [])
+  assert.deepEqual(outside.unseen, [])
   assert.match(close(r.id).out, /closed \(complete\) at [0-9a-f]{40} for paths src\//)
   commit({ 'src/extra.js': 'export const extra = 1\n' })
   const inside = close(r.id)
   allowed(inside)
-  assert.equal(inside.record.status, 'partial'); assert.deepEqual(inside.record.outOfScope, ['src/extra.js'])
+  assert.equal(inside.record.status, 'partial'); assert.deepEqual(inside.record.unseen, ['src/extra.js'])
   // The same post-review changes make an unsliced close partial for both files.
   const whole = review(undefined, { REVIEW_PATHS: '' })
   commit({ 'lib/two.js': 'export const two = 4\n', 'src/extra.js': 'export const extra = 2\n' })
-  assert.deepEqual(close(whole.id).record.outOfScope, ['lib/two.js', 'src/extra.js'])
+  assert.deepEqual(close(whole.id).record.unseen, ['lib/two.js', 'src/extra.js'])
 })
-test('S2 inside its paths the fix-check rule is unchanged; a test change outside its paths needs none, and the fix check sees only the slice', () => {
+test('S2 a sliced review\'s fix check reads only its slice: a test change inside it is read, one outside it is not and needs none', () => {
   const r = review('src/', { STUB_FINDINGS: JSON.stringify({ findings: [scored()] }) })
   assert.deepEqual(r.findingDetails.map((f) => [f.id, f.severity]), [['f1', 'medium']])
-  commit({ 'src/one.js': 'export const one = 1\n', 'lib/two.test.js': 'test outside\n' })
-  closed(r.id, { f1: { status: 'fixed' } })
-  commit({ 'src/one.test.js': 'test inside\n' })
+  commit({ 'src/one.js': 'export const one = 3\n', 'lib/two.test.js': 'test outside\n', 'src/one.test.js': 'test inside\n' })
   const needs = close(r.id, { f1: { status: 'fixed' } })
-  assert.notEqual(needs.status, 0); assert.match(needs.out, /run --fix-check first/)
+  assert.notEqual(needs.status, 0); assert.match(needs.out, /Fixed f1 needs a fix check/)
   rmSync(CALLS, { recursive: true }); mkdirSync(CALLS)
   allowed(script(['--fix-check', r.id]))
   const check = records().at(-1)
   assert.equal(check.kind, 'fix-check'); assert.deepEqual(check.paths, ['src/'])
+  assert.deepEqual(check.manifest.read.map(([p]) => p), ['src/one.js', 'src/one.test.js'])
   const [call] = calls()
   assert.match(call.prompt, /test inside/); assert.doesNotMatch(call.prompt, /test outside/)
-  assert.match(call.prompt, /-- src\/\):/)
+  assert.match(call.prompt, /-- src\/\)/)
   closed(r.id, { f1: { status: 'fixed' } })
+  commit({ 'src/one.test.js': 'test inside, later\n' })
+  const later = close(r.id, { f1: { status: 'fixed' } })
+  allowed(later); assert.deepEqual(later.record.unseen, ['src/one.test.js'])
 })
 
 test('S3 two complete slices with one baseSha and closeHead pass the actual push gate, which runs no model', () => {
@@ -200,20 +208,20 @@ test('S3 two complete slices with one baseSha and closeHead pass the actual push
 test('S3 a missing slice blocks the push and the message names the uncovered files', () => {
   closed(review('src/').id)
   const r = push()
-  blocked(r, /No complete close covers tip [0-9a-f]{40}; the complete slice closes at [0-9a-f]{40} leave 2 file\(s\) uncovered: docs\/three\.md, lib\/two\.js/)
+  blocked(r, /No complete close covers tip [0-9a-f]{40}; the closes at [0-9a-f]{40} leave 2 file\(s\) uncovered: docs\/three\.md, lib\/two\.js/)
   assert.equal(git('ls-remote', 'origin'), '')
   const summary = script(['--summary'])
   assert.notEqual(summary.status, 0); assert.match(summary.out, /No complete close covers HEAD; .*uncovered: docs\/three\.md, lib\/two\.js/)
 })
-test('S3 slices count together only with the same repoId, branch and baseSha', () => {
+test('S3 slices count together only with the same repoId; the branch name does not matter', () => {
   const first = slice(['src/']), second = slice(['docs/', 'lib/'])
   closed(first.id); closed(second.id)
   allowed(push(['HEAD:refs/heads/control']))
   rewrite((e) => e.id === second.id ? { ...e, repoId: '/elsewhere/.git' } : null)
   blocked(push(['HEAD:refs/heads/repoId']), /uncovered: docs\/three\.md, lib\/two\.js —/)
   rewrite((e) => e.id === second.id ? second : null)
-  // Coverage is by content: the branch name and base a slice was logged under do not matter.
-  for (const [field, value] of [['branch', 'other'], ['baseSha', git('rev-parse', 'main~1')]]) {
+  // Coverage is by content: the branch name a slice was logged under does not matter.
+  for (const [field, value] of [['branch', 'other']]) {
     rewrite((e) => e.id === second.id ? { ...e, [field]: value } : null)
     allowed(push([`HEAD:refs/heads/${field}`]))
     rewrite((e) => e.id === second.id ? second : null)
@@ -240,26 +248,22 @@ test('S3 the tip may descend from the shared closeHead through builds/ commits o
   commit({ 'lib/two.js': 'export const two = 3\n' })
   blocked(push())
 })
-test('S3 riskPaths must sit in a slice of kind review', () => {
+test('S3 a Grade grants no coverage: a file a Grade slice names still needs a review\'s manifest to read it', () => {
   commit({ 'auth/login.js': 'export const login = 1\n' })
   closed(slice(['docs/', 'lib/', 'src/']).id)
-  closed(slice(['auth/'], { kind: 'grade' }).id)
-  blocked(push(), /code-review close covers tip.*riskPaths.*uncovered: auth\/login\.js/)
+  const grade = close(slice(['auth/'], { kind: 'grade' }).id)
+  allowed(grade); assert.equal(grade.record.status, 'partial')
+  blocked(push(), /1 file\(s\) uncovered: auth\/login\.js —/)
   closed(slice(['auth/']).id)
   allowed(push())
-})
-test('S3 without pushed riskPaths a non-review slice still counts for ordinary files', () => {
-  closed(slice(['lib/', 'src/']).id)
-  closed(slice(['docs/'], { kind: 'grade' }).id)
-  const r = push(); allowed(r)
-  assert.match(r.stderr, /Sliced review: 2 slice\(s\)/)
 })
 
 test('S5 --summary lists every slice covering HEAD with reviewer, paths and counts, then the branch-wide deferred findings', () => {
   const first = review('src/', { STUB_FINDINGS: JSON.stringify({ findings: [scored(), scored({ issue: 'one is a little odd', likelihood: 1 })] }) })
   assert.deepEqual(first.findingDetails.map((f) => [f.id, f.severity, f.filed]), [['f1', 'medium', false], ['f2', 'low', true]])
   const second = review('lib/,docs/')
-  commit({ 'src/one.js': 'export const one = 1\n' })
+  commit({ 'src/one.js': 'export const one = 3\n' })
+  allowed(script(['--fix-check', first.id]))
   closed(first.id, { f1: { status: 'fixed' } }); closed(second.id)
   const r = script(['--summary']); allowed(r)
   const head = git('rev-parse', 'HEAD')
@@ -277,17 +281,17 @@ test('S5 --summary lists every slice covering HEAD with reviewer, paths and coun
   assert.ok(pushed.stderr.includes(r.stdout.trim()), pushed.out)
 })
 
-test('S6 slices may overlap, and a file is covered when any complete slice close covers it', () => {
+test('S6 slices may overlap, and a file is covered when any slice close\'s manifest read it, a partial close\'s included', () => {
   const reviewed = git('rev-parse', 'HEAD')
   commit({ 'docs/four.md': 'added after one slice was reviewed\n' })
   closed(slice(['lib/', 'src/']).id)
   const partial = slice(['docs/', 'lib/'], { head: reviewed })
   assert.equal(close(partial.id).record.status, 'partial')
-  // lib/ stays covered by the complete slice even though the overlapping one is partial.
-  blocked(push(), /2 file\(s\) uncovered: docs\/four\.md, docs\/three\.md —/)
+  // The partial close's manifest still read docs/three.md and lib/two.js at their tip states; only the later file is unseen.
+  blocked(push(), /1 file\(s\) uncovered: docs\/four\.md —/)
   closed(slice(['docs/', 'src/']).id)
   const r = push(); allowed(r)
-  assert.match(r.stderr, /Sliced review: 2 slice\(s\)/)
+  assert.match(r.stderr, /Sliced review: 3 slice\(s\)/, 'every close at the tip is listed, the partial one too')
 })
 
 test('S7 an unsliced diff over DIFF_CAP suggests REVIEW_PATHS and names the largest top-level folders; a sliced one does not', () => {
@@ -324,11 +328,12 @@ test('S9 a sliced review records the files it covered, and an attributes edit af
   blocked(push(), /uncovered: \.gitattributes, lib\/two\.js, src\/one\.js/)
   assert.equal(git('ls-remote', 'origin'), '')
 })
-test('S9 a real sliced review logs the sorted files it covered; a sliced record without files covers nothing', () => {
+test('S9 a real sliced review logs the sorted files it covered; a sliced record from before manifests covers nothing', () => {
   const r = review('src/,lib/')
   assert.deepEqual(r.files, ['lib/two.js', 'src/one.js'])
   closed(r.id)
-  closed(slice(['docs/'], { files: undefined }).id)
+  const old = close(slice(['docs/'], { manifest: undefined }).id)
+  allowed(old); assert.equal(old.record.status, 'partial')
   blocked(push(), /1 file\(s\) uncovered: docs\/three\.md/)
   closed(slice(['docs/']).id)
   allowed(push())
@@ -342,7 +347,7 @@ test('S9 pathspec magic in REVIEW_PATHS is refused before any model runs or log 
   assert.deepEqual(calls(), []); assert.deepEqual(records(), [])
   assert.deepEqual(review('lib/*.js,src/').files, ['lib/two.js', 'src/one.js'])
 })
-test('S9 a file added after the slices were reviewed blocks the gate, naming it, even though the slice closes are complete', () => {
+test('S9 a file added after the slices were reviewed blocks the gate, naming it, and is unseen in the close whose paths match it', () => {
   const first = review('src/'), second = review('lib/,docs/')
   commit({ 'extra/new.js': 'export const added = 1\n' })
   closed(first.id); closed(second.id)
@@ -352,5 +357,5 @@ test('S9 a file added after the slices were reviewed blocks the gate, naming it,
   // A new file inside a slice's paths makes that slice's close partial instead.
   commit({ 'src/later.js': 'export const later = 1\n' })
   const inside = close(first.id)
-  allowed(inside); assert.equal(inside.record.status, 'partial'); assert.deepEqual(inside.record.outOfScope, ['src/later.js'])
+  allowed(inside); assert.equal(inside.record.status, 'partial'); assert.deepEqual(inside.record.unseen, ['src/later.js'])
 })

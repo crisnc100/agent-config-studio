@@ -192,7 +192,7 @@ test('M1 a review records the code and security manifests: base, head, the tripl
   refused(script(['--manifest', 'no-such-review']), /No logged review matches/)
 })
 
-test('M2 a fix check records its manifests and the findings it asked about; the code pass reads the fix diff from the review head', () => {
+test('M2 a fix check records its manifests and the findings it asked about; the code pass reads every file changed since the review, and the cited one, from the base', () => {
   homeConfig({ security: { run: 'always' } })
   const f1 = { issue: 'three is wrong', file: 'src/app.js', line: '3', quote: 'export const three = 33', suggestion: 'fix it',
     likelihood: 5, impact: 5, protected: false, trigger: 'importing three' }
@@ -203,7 +203,7 @@ test('M2 a fix check records its manifests and the findings it asked about; the 
   const head = git('rev-parse', 'HEAD')
   assert.deepEqual(check.asked, ['f1'])
   assert.equal(check.manifest.role, 'code')
-  assert.equal(check.manifest.base, r.head); assert.equal(check.manifest.head, head)
+  assert.equal(check.manifest.base, git('merge-base', 'main', 'HEAD'), 'the coverage base, not the review head'); assert.equal(check.manifest.head, head)
   assert.deepEqual(check.manifest.read.map(([p]) => p), ['src/app.js', 'src/new.js'])
   checkManifest(check.manifest, promptOf('code'))
   assert.equal(check.security.status, 'ran')
@@ -225,7 +225,7 @@ test('M3 a security pass that fails or times out records no manifest; the code m
   const r = reviewed({}, ['--code-only'])
   assert.equal(r.security.status, 'not-asked')
   assert.equal(Object.hasOwn(r.security, 'manifest'), false)
-  commit({ 'src/app.js': APP })
+  commit({ 'src/app.js': APP.replace('three = 3', 'three = 34') })
   const check = fixChecked(r.id, { REVIEW_SECURITY_TEST_FAULT: 'exit' })
   assert.equal(check.security.status, 'failed')
   assert.equal(Object.hasOwn(check.security, 'manifest'), false)
@@ -249,7 +249,7 @@ test('M4 a code reviewer answer with no findings array fails the pass: no record
   assert.equal(lines(LOG).length, count)
 })
 
-test('M5 binary, oversize, capped and submodule changes are unread with their reason, never sections in the prompt; the old truncated list is unchanged in meaning', () => {
+test('M5 binary, oversize, capped and submodule changes are unread with their reason, never sections in the prompt', () => {
   homeConfig({ security: { run: 'always' } })
   const root = git('rev-parse', 'main')
   const pad = (name, n) => Array.from({ length: n }, (_, i) => `export const ${name}${i} = ${i}`).join('\n') + '\n'
@@ -272,9 +272,9 @@ test('M5 binary, oversize, capped and submodule changes are unread with their re
   checkManifest(r.manifest, promptOf('code'))
   checkManifest(r.security.manifest, promptOf('security'))
   assert.deepEqual(r.security.manifest.unread, r.manifest.unread)
-  // What the old coverage inference reads: cut files, binaries other than opaque assets; never the image or the gitlink.
-  assert.deepEqual([...r.truncated].sort(), ['docs/fill.md', 'src/blob.js', 'src/huge.js'])
-  assert.ok(!r.security.saw.some(([p]) => ['docs/fill.md', 'src/blob.js', 'src/huge.js'].includes(p)))
+  // Nothing unread is in either read list: the image and the gitlink included.
+  for (const m of [r.manifest, r.security.manifest])
+    assert.ok(!m.read.some(([p]) => ['docs/fill.md', 'src/blob.js', 'src/huge.js', 'img/logo.png', 'vendor/sub'].includes(p)), JSON.stringify(m.read))
   // The cap seam only lowers the cap.
   const high = reviewed({ REVIEW_TEST_DIFF_CAP: '999999999' })
   assert.equal(high.manifest.cap, 120000)
@@ -299,7 +299,6 @@ test('M6 renames are two paths, a deletion and an addition; a type change is one
   assert.ok(prompt.includes(link))
   assert.deepEqual(r.manifest.unread, [['bin.js', 'binary']])
   checkManifest(r.manifest, prompt)
-  assert.ok(r.truncated.includes('bin.js'))
 })
 
 test('M7 quoted and non-ASCII paths are recorded by their exact names and inlined byte for byte', () => {
@@ -329,7 +328,7 @@ test('M8 user git config cannot change the sections: noprefix, mnemonicPrefix, a
   rmSync(USER_GITCONFIG, { force: true })
 })
 
-test('M11 a section that is not valid UTF-8 is never sent lossily: it is unread for its encoding, and the old inference cuts it', () => {
+test('M11 a section that is not valid UTF-8 is never sent lossily: it is unread for its encoding, by both passes', () => {
   homeConfig({ security: { run: 'always' } })
   writeFileSync(join(REPO, 'src/latin.js'), Buffer.from('export const allow = ["caf\xe9", "caf\xe8"]\n', 'latin1'))
   git('add', 'src/latin.js'); git('commit', '-qm', 'latin-1')
@@ -338,11 +337,10 @@ test('M11 a section that is not valid UTF-8 is never sent lossily: it is unread 
   assert.ok(!r.manifest.read.some(([p]) => p === 'src/latin.js'))
   assert.ok(!promptOf('code').includes('\ufffd'), 'no replacement character reaches the reviewer')
   checkManifest(r.manifest, promptOf('code'))
-  assert.ok(r.truncated.includes('src/latin.js'))
-  assert.ok(!r.security.saw.some(([p]) => p === 'src/latin.js'))
+  assert.deepEqual(r.security.manifest.unread, [['src/latin.js', 'encoding']])
 })
 
-test('M12 a submodule replaced by a file is read only when the file side is inlined; a binary replacement is unread and cut', () => {
+test('M12 a submodule replaced by a file is read only when the file side is inlined; a binary replacement is unread', () => {
   homeConfig({ security: { run: 'always' } })
   git('checkout', '-q', 'main')
   const root = git('rev-parse', 'HEAD')
@@ -360,23 +358,21 @@ test('M12 a submodule replaced by a file is read only when the file side is inli
   assert.ok(promptOf('code').includes('+export const replaced = 1'), 'the file side is in the prompt')
   assert.deepEqual(r.manifest.unread, [['vendor/bin', 'submodule-change']])
   checkManifest(r.manifest, promptOf('code'))
-  assert.ok(r.truncated.includes('vendor/bin'), JSON.stringify(r.truncated))
-  assert.ok(!r.truncated.includes('vendor/text'))
-  assert.ok(!r.security.saw.some(([p]) => p === 'vendor/bin'))
-  // A capped replacement is cut too.
+  assert.ok(!r.security.manifest.read.some(([p]) => p === 'vendor/bin'))
+  assert.ok(r.security.manifest.read.some(([p]) => p === 'vendor/text'))
+  // A replacement over the cap is unread too.
   const capped = reviewed({ REVIEW_TEST_DIFF_CAP: '50' })
-  assert.ok(capped.truncated.includes('vendor/text'), JSON.stringify(capped.truncated))
+  assert.ok(capped.manifest.unread.some(([p, why]) => p === 'vendor/text' && why === 'oversize'), JSON.stringify(capped.manifest.unread))
 })
 
-test('M13 a fix check credits its security pass only with files its own manifest read: a file restored to the base is not seen', () => {
+test('M13 a fix check reads only what changed from the base: files restored to the base have no section, so nothing is read and no security pass is owed', () => {
   homeConfig({ security: { run: 'always' } })
   const r = reviewed()
   commit({ 'src/app.js': APP, 'README.md': 'base\n' }, 'restore both files to the base')
   const check = fixChecked(r.id)
-  assert.equal(check.security.status, 'ran')
-  const read = new Set(check.security.manifest.read.map(([p]) => p))
-  for (const [p] of check.security.saw) assert.ok(read.has(p), `${p} is credited with no section in the security prompt`)
-  assert.ok(!check.security.saw.some(([p]) => p === 'src/app.js'), JSON.stringify(check.security.saw))
+  assert.deepEqual(check.manifest.read, [])
+  assert.equal(check.security.status, 'not-required')
+  assert.equal(Object.hasOwn(check.security, 'manifest'), false)
 })
 
 test('M9 an empty-tree base records the empty tree as its base', () => {

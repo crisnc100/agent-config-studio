@@ -36,9 +36,27 @@ function commit(path, content) {
 }
 const records = () => existsSync(LOG) ? readFileSync(LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : []
 const seed = (...values) => appendFileSync(LOG, values.map(JSON.stringify).join('\n') + '\n')
+// "mode blob" by path at a commit, as git ls-tree prints it.
+function states(rev) {
+  const map = new Map()
+  for (const entry of git('ls-tree', '-r', '-z', '--full-tree', rev).split('\0').filter(Boolean)) {
+    const tab = entry.indexOf('\t'), [mode, , object] = entry.slice(0, tab).split(' ')
+    map.set(entry.slice(tab + 1), `${mode} ${object}`)
+  }
+  return map
+}
+// What a review of base..head reads when every changed file fits: each one's [path, base state, head state].
+function manifestOf(base, head) {
+  const before = states(base), after = states(head)
+  const read = git('diff', '--name-only', '-z', '--no-renames', base, head).split('\0').filter(Boolean).sort()
+    .map((p) => [p, before.get(p) ?? null, after.get(p) ?? null])
+  return { v: 1, role: 'code', base, head, read, unread: [], promptSha256: 'fixture', cap: 120000 }
+}
 function review(kind = 'review', details = []) {
-  const record = { type: 'review', kind, id: `fixture-${records().length}`, head: git('rev-parse', 'HEAD'), repo: 'repo',
-    repoId: realpathSync(join(REPO, '.git')), branch: 'feat', family: 'fixture', model: 'fixture-only', findingDetails: details }
+  const head = git('rev-parse', 'HEAD'), baseSha = git('merge-base', 'main', 'HEAD')
+  const record = { type: 'review', kind, id: `fixture-${records().length}`, head, repo: 'repo', base: 'main', baseSha,
+    repoId: realpathSync(join(REPO, '.git')), branch: 'feat', family: 'fixture', model: 'fixture-only', findingDetails: details,
+    ...(kind === 'review' && { manifest: manifestOf(baseSha, head) }) }
   seed(record)
   return record
 }
@@ -130,8 +148,8 @@ test('3.1 merge ancestry is checked commit by commit', () => {
 test('3.1 a leading-space path outside builds is never treated as builds-only', () => {
   close(); commit(' builds/log.md', 'code\n'); blocked(push())
 })
-test('3.1 matching uses full commit alone, independent of branch, remote and repo metadata', () => {
-  const r = review(); r.repoId = '/different/repo'; r.branch = 'other'; r.remote = 'different'
+test('3.1 matching uses full commit alone, independent of branch and remote metadata', () => {
+  const r = review(); r.branch = 'other'; r.remote = 'different'
   writeFileSync(LOG, JSON.stringify(r) + '\n'); close(r); allowed(push())
 })
 test('3.1 abbreviated close heads do not match; the pushed ref rather than HEAD is checked', () => {
@@ -140,10 +158,6 @@ test('3.1 abbreviated close heads do not match; the pushed ref rather than HEAD 
   writeFileSync(LOG, all.map(JSON.stringify).join('\n') + '\n'); blocked(push())
   seed(c); git('branch', 'covered'); commit('a.js', 'new code\n')
   allowed(push(['covered:refs/heads/covered']))
-})
-test('3.1 an old script record without head is explained', () => {
-  seed({ type: 'review', id: 'old', repo: 'repo' })
-  blocked(push(), /old script copy that did not log head/)
 })
 test('3.1 tag pushes and branch deletions pass without a log', () => {
   git('tag', '-a', 'v1', '-m', 'tag')
@@ -156,21 +170,15 @@ test('3.1 one uncovered ref blocks the entire multi-ref push', () => {
   blocked(push(['covered:refs/heads/covered', 'HEAD:refs/heads/feat']))
   assert.equal(git('ls-remote', 'origin'), '')
 })
-test('3.2 pushed risk paths require a review close, even when a Grade is complete', () => {
-  commit('auth/login.js', 'risk\n'); close(review('grade'))
-  blocked(push(), /code-review close.*riskPaths/)
-  close(review()); close(review('grade')); allowed(push())
-})
-test('3.2 configured riskPaths are respected and risk changes followed by reverts still count', () => {
-  writeFileSync(join(SKILL, 'config.json'), JSON.stringify({ riskPaths: ['private/**'] }))
-  commit('private/data.js', 'secret\n'); git('rm', '-q', 'private/data.js'); git('commit', '-qm', 'revert risk')
-  close(review('grade')); blocked(push(), /riskPaths/)
-})
-test('3.2 update ranges and new-branch remote exclusions do not include already-pushed risk work', () => {
-  commit('auth/login.js', 'risk\n'); close(); allowed(push())
-  commit('a.js', 'nonrisk\n'); close(review('grade')); allowed(push())
-  commit('other.js', 'also nonrisk\n'); close(review('grade'))
-  allowed(push(['HEAD:refs/heads/another']))
+test('3.2 a Grade close covers nothing, risk paths or not: the push needs a review that read the files', () => {
+  commit('auth/login.js', 'risk\n')
+  const grade = review('grade')
+  const path = join(ROOT, 'statuses.json'); writeFileSync(path, '{}')
+  allowed(run(process.execPath, [SCRIPT, '--close', grade.id, '--status', path, '--test-cmd', 'true'], { REVIEW_BASE: 'main' }))
+  assert.equal(records().at(-1).status, 'partial')
+  assert.deepEqual(records().at(-1).unseen, ['a.js', 'auth/login.js'])
+  blocked(push(), /uncovered: a\.js, auth\/login\.js/)
+  close(review()); allowed(push())
 })
 test('3.4 any unreadable log line blocks even with a covering complete close', () => {
   close(); appendFileSync(LOG, 'broken\nnull\n'); blocked(push(), /2 unreadable log line/)
@@ -221,8 +229,8 @@ test('3.4 malformed ref lines and gate git errors fail closed; a real PTY can ov
   for (const input of [`refs/heads/feat ${tip}\n`, `HEAD ${tip} invalid-ref ${ZERO}\n`, `HEAD abbreviated refs/heads/feat ${ZERO}\n`])
     blocked(run(process.execPath, [SCRIPT, '--gate'], {}, { input }), /Malformed pre-push ref line/)
   close()
-  const input = `HEAD ${tip} refs/heads/feat ${'f'.repeat(40)}\n`
-  blocked(run(process.execPath, [SCRIPT, '--gate'], {}, { input }), /git rev-list.*failed/)
+  const input = `HEAD ${'f'.repeat(40)} refs/heads/feat ${ZERO}\n`
+  blocked(run(process.execPath, [SCRIPT, '--gate'], {}, { input }), /git rev-parse.*failed|fatal/)
   // script's command gets a file as stdin through a POSIX shell; stderr is a real PTY.
   const inputPath = join(ROOT, 'refs'), runner = join(ROOT, 'run-gate.sh')
   writeFileSync(runner, `#!/bin/sh\nexec "$1" "$2" --gate < "$3"\n`)
@@ -273,31 +281,16 @@ function criterionClose(original, status = { status: 'fixed' }) {
   allowed(run(process.execPath, [SCRIPT, '--close', original.id, '--status', path, '--test-cmd', 'true'], { REVIEW_BASE: 'main' }))
   return records().at(-1)
 }
-test('H1 a FAIL criterion code fix with recheck PASS closes complete and passes the actual hook', () => {
+test('H1 a FAIL criterion fixed with a recheck PASS closes, but a Grade covers nothing: its files stay unseen until a review reads them', () => {
   const original = criterionGrade('FAIL')
   commit('a.js', 'export const a = 3\n')
   criterionGrade('PASS', original)
   const result = criterionClose(original)
-  assert.equal(result.status, 'complete')
-  assert.deepEqual(result.outOfScope, [])
-  allowed(push())
-})
-test('H1 code after the PASS recheck stays out of scope', () => {
-  const original = criterionGrade('FAIL')
-  commit('a.js', 'export const a = 3\n'); criterionGrade('PASS', original)
-  commit('unrelated.js', 'new work\n')
-  const result = criterionClose(original)
   assert.equal(result.status, 'partial')
-  assert.deepEqual(result.outOfScope, ['unrelated.js'])
-  blocked(push())
-})
-test('H1 a rejected criterion does not exempt files changed before the recheck', () => {
-  const original = criterionGrade('FAIL')
-  commit('a.js', 'export const a = 3\n'); criterionGrade('PASS', original)
-  seed({ type: 'dispute', review: original.id, finding: 'c1', verdict: 'REFUTED' })
-  const result = criterionClose(original, { status: 'rejected', reason: 'intended', response: 'intentional', evidence: 'account test' })
-  assert.equal(result.status, 'partial'); assert.deepEqual(result.outOfScope, ['a.js'])
-  blocked(push())
+  assert.deepEqual(result.unseen, ['a.js'])
+  assert.equal(result.statuses.c1.status, 'fixed')
+  blocked(push(), /uncovered: a\.js/)
+  close(review()); allowed(push())
 })
 test('M1 a local tag pushed to a branch never exempts an unreviewed commit', () => {
   git('tag', 'unreviewed')
@@ -320,7 +313,7 @@ test('L1 a refused override for covered work reports only override refusal', () 
   assert.doesNotMatch(result.out, /Uncovered tip|First commits|Run \/code-review|Operator-only action/)
 })
 test('L2 malformed repo or global config blocks the actual hook with its reason and permits a logged PTY override', () => {
-  commit('private/data.js', 'custom risk\n'); close(review('grade'))
+  commit('private/data.js', 'custom risk\n'); close(review())
   for (const [place, path] of [['repo', join(REPO, '.claude/review-config.json')], ['global', join(SKILL, 'config.json')], ['legacy-global', join(HOME, '.claude/review-config.json')]]) {
     mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, '{"riskPaths":["private/**"]')
     const args = [`HEAD:refs/heads/bad-${place}`]

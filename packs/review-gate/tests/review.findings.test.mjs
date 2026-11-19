@@ -167,6 +167,7 @@ test('P1 a protected pre-existing finding is listed first as Pre-existing HIGH, 
 test('P1 a pre-existing finding that was fixed anyway leaves the summary list and the tier', () => {
   const review = reviewed([scored({ ...OLD, protected: true })])
   commit({ 'src/one.js': lines({ 2: 'export const v2 = 20', 18: 'export const v18 = 0' }) })
+  allowed(script(['--fix-check', review.id]))
   const record = closed(review.id, { f1: { status: 'fixed' } })
   assert.ok(!record.tierReasons.some((r) => /pre-existing/.test(r)), JSON.stringify(record.tierReasons))
   assert.equal(section(summary(), 'Pre-existing (not introduced here)'), null)
@@ -204,7 +205,7 @@ const GROUPED = scored({ issue: 'constants set to 20', instances: [
   { file: 'src/two.js', line: '1', quote: 'export const w1 = 20' },
   { file: 'src/one.js', line: '2', quote: 'export const v2 = 20' },
 ] })
-test('I1 two located instances: one finding, both places recorded, one fixed status authorizes both files', () => {
+test('I1 two located instances: one finding, both places recorded, one fixed status once the fix check read both files', () => {
   commit({ 'src/two.js': two() })
   const review = reviewed([GROUPED])
   assert.equal(review.findingDetails.length, 1)
@@ -213,16 +214,12 @@ test('I1 two located instances: one finding, both places recorded, one fixed sta
   assert.equal(f.instancesDropped, undefined)
   assert.deepEqual(review.instancePaths, { f1: ['src/two.js', 'src/one.js'] })
   assert.match(readFileSync(join(REPO, review.dir, 'code-review.md'), 'utf8'), /\n  Also at: src\/two\.js:1, src\/one\.js:2\n/)
-  commit({ 'src/one.js': lines(), 'src/two.js': two({ 1: 'export const w1 = 1' }) })
+  commit({ 'src/one.js': lines({ 2: 'export const v2 = 22' }), 'src/two.js': two({ 1: 'export const w1 = 1' }) })
+  allowed(script(['--fix-check', review.id]))
+  const check = records().at(-1)
+  assert.deepEqual(check.manifest.read.map(([p]) => p), ['src/one.js', 'src/two.js'])
   const record = closed(review.id, { f1: { status: 'fixed' } })
-  assert.deepEqual(record.outOfScope, [])
-})
-test('I1 without the instance, the second file is out of scope: the instances are what authorize it', () => {
-  commit({ 'src/two.js': two() })
-  const review = reviewed([scored()])
-  commit({ 'src/one.js': lines(), 'src/two.js': two({ 1: 'export const w1 = 1' }) })
-  const r = close(review.id, { f1: { status: 'fixed' } })
-  allowed(r); assert.deepEqual(r.record.outOfScope, ['src/two.js'])
+  assert.deepEqual(record.unseen, [])
 })
 test('I2 an unlocated instance is dropped with a note; the finding keeps its located places', () => {
   commit({ 'src/two.js': two() })
@@ -260,7 +257,8 @@ test('I3 the summary lists a deferred or pre-existing finding\'s other places', 
 // ── 3. response labels and --noise-report ───────────────────────────────────
 test('R1 a fixed status may say real or unimportant; anything else is refused, and the label is logged on the close', () => {
   const review = reviewed([scored()])
-  commit({ 'src/one.js': lines() })
+  commit({ 'src/one.js': lines({ 2: 'export const v2 = 22' }) })
+  allowed(script(['--fix-check', review.id]))
   refused(review.id, { f1: { status: 'fixed', response: 'wrong' } }, 'Fixed f1 response must be real or unimportant')
   refused(review.id, { f1: { status: 'fixed', response: 'nice' } }, 'Fixed f1 response must be real or unimportant')
   const record = closed(review.id, { f1: { status: 'fixed', response: 'unimportant' } })
@@ -333,60 +331,21 @@ test('R2 --noise-report with nothing closed says so', () => {
   assert.deepEqual(noise(), ['Noise report (this repository): 0 review(s) closed', 'no closes'])
 })
 
-// ── 4. fixCheck: "risk" (default) | "always" ────────────────────────────────
-const ALWAYS_REFUSAL = '✖ Fix changes code after the review and fixCheck is "always": src/one.js; run --fix-check first (docs, static, coverage-exempt and builds/ files never need one)'
-test('F1 fixCheck "always": a code fix after review with no fix check is refused, with the reason in full; a fix check lets it close', () => {
+// ── 4. fixCheck, retired ────────────────────────────────────────────────────
+// fixCheck is retired: a fixed finding always needs the fix check (coverrule x1), and every change after a pass is
+// unseen until one reads it. Wherever the key is still set, a run says so instead of ignoring it.
+test('F1 the retired fixCheck key, in the home config, a repo config or REVIEW_FIX_CHECK, prints the notice once and no longer shows in --show-config', () => {
+  const NOTICE = 'ℹ fixCheck is retired: every change after a review is reviewed before it counts'
+  const notices = (r) => r.out.split('\n').filter((l) => l === NOTICE).length
+  const plain = script(['--show-config']); allowed(plain)
+  assert.equal(notices(plain), 0)
+  assert.doesNotMatch(plain.stdout, /fixCheck/)
   homeConfig({ fixCheck: 'always' })
-  const review = reviewed([scored()])
-  commit({ 'src/one.js': lines() })
-  refused(review.id, { f1: { status: 'fixed' } }, ALWAYS_REFUSAL)
-  allowed(script(['--fix-check', review.id]))
-  closed(review.id, { f1: { status: 'fixed' } })
-  assert.match(script(['--show-config']).stdout, /"fixCheck": "always"/)
-})
-test('F1 the default ("risk") still closes a plain code fix without a fix check', () => {
-  const review = reviewed([scored()])
-  commit({ 'src/one.js': lines() })
-  closed(review.id, { f1: { status: 'fixed' } })
-  assert.match(script(['--show-config']).stdout, /"fixCheck": "risk"/)
-})
-test('F2 under "always", builds/, docs, static and coverage-exempt files never need a fix check', () => {
-  homeConfig({ fixCheck: 'always' })
-  const review = reviewed([])
-  commit({ 'builds/x/log.md': 'note\n', 'docs/guide.md': '# Guide\n', 'web/app.css': 'a{}\n', 'package-lock.json': '{}\n' })
-  const r = close(review.id, {})
-  allowed(r); assert.ok(!r.out.includes('run --fix-check first'), r.out)
-})
-test('F3 a tracked repo config or REVIEW_FIX_CHECK can raise fixCheck to "always", never lower the home config\'s', () => {
-  homeConfig({ fixCheck: 'always' })
-  commit({ '.claude/review-config.json': JSON.stringify({ fixCheck: 'risk' }) })
-  const review = reviewed([scored()])
-  commit({ 'src/one.js': lines() })
-  refused(review.id, { f1: { status: 'fixed' } }, ALWAYS_REFUSAL)
-  refused(review.id, { f1: { status: 'fixed' } }, ALWAYS_REFUSAL, { REVIEW_FIX_CHECK: 'risk' })
+  assert.equal(notices(script(['--show-config'])), 1)
   homeConfig({})
-  closed(review.id, { f1: { status: 'fixed' } })
-  refused(review.id, { f1: { status: 'fixed' } }, ALWAYS_REFUSAL, { REVIEW_FIX_CHECK: 'always' })
-  const odd = script(['--show-config'], { REVIEW_FIX_CHECK: 'sometimes' })
-  assert.match(odd.out, /Unknown fixCheck "sometimes" in REVIEW_FIX_CHECK; using the others \(risk \| always\)/)
-})
-test('F4 a Grade close under "always": the recheck counts as its check; without one a code fix needs a fix check', () => {
-  homeConfig({ fixCheck: 'always' })
-  const grade = (value, args = []) => {
-    const path = join(ROOT, 'grade.json'); writeFileSync(path, JSON.stringify(value))
-    allowed(script(['--log-grade', path, ...args]))
-    return records().at(-1)
-  }
-  const criteria = (verdict) => [{ id: 'k1', criterion: 'v2 is 2', verdict, evidence: 'src/one.js:2' }]
-  const failed = grade({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('FAIL') })
-  commit({ 'src/one.js': lines() })
-  refused(failed.id, { c1: { status: 'fixed' } }, ALWAYS_REFUSAL)
-  grade({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('PASS') }, ['--recheck-of', failed.id])
-  closed(failed.id, { c1: { status: 'fixed' } })
-  const passed = grade({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('PASS'),
-    findings: [{ issue: 'v18 off', evidence: 'src/one.js:18', likelihood: 5, impact: 5, protected: false, trigger: 'reading v18' }] })
-  commit({ 'src/one.js': lines({ 18: 'export const v18 = 0' }) })
-  refused(passed.id, { f1: { status: 'fixed' } }, '✖ Fix changes code after the review and fixCheck is "always": src/one.js; run --fix-check first')
+  assert.equal(notices(script(['--show-config'], { REVIEW_FIX_CHECK: 'risk' })), 1)
+  mkdirSync(join(REPO, '.claude'), { recursive: true }); writeFileSync(join(REPO, '.claude/review-config.json'), JSON.stringify({ fixCheck: 'risk' }))
+  assert.equal(notices(script(['--show-config'])), 1)
 })
 
 // ── 6. skill text (claude and codex twins) ──────────────────────────────────
@@ -405,22 +364,21 @@ test('K1 both code-review skills describe pre-existing, grouped findings, respon
 })
 
 // ── end to end ──────────────────────────────────────────────────────────────
-test('E1 one close with a pre-existing finding, a grouped finding, a labelled rejection and fixCheck "always", then the summary, tier and noise report', () => {
-  homeConfig({ fixCheck: 'always' })
+test('E1 one close with a pre-existing finding, a grouped finding, a labelled rejection and a fix check, then the summary, tier and noise report', () => {
   commit({ 'src/two.js': two() })
   const REJ = scored({ issue: 'v3 is odd', line: '3', quote: 'export const v3 = 3', trigger: 'reading v3' })
   const review = reviewed([GROUPED, OLD, REJ])
   assert.deepEqual(review.findingDetails.map((f) => [f.id, f.severity, f.inDiff ?? null]), [['f1', 'medium', null], ['f2', 'medium', false], ['f3', 'medium', null]])
   refute(review.id, 'f3')
-  commit({ 'src/one.js': lines(), 'src/two.js': two({ 1: 'export const w1 = 1' }) })
+  commit({ 'src/one.js': lines({ 2: 'export const v2 = 22' }), 'src/two.js': two({ 1: 'export const w1 = 1' }) })
   const statuses = { f1: { status: 'fixed', response: 'real' }, f3: { status: 'rejected', reason: 'v3 is meant', evidence: 'src/one.js:3', response: 'wrong' } }
-  refused(review.id, statuses, '✖ Fix changes code after the review and fixCheck is "always": src/one.js, src/two.js; run --fix-check first (docs, static, coverage-exempt and builds/ files never need one)')
+  refused(review.id, statuses, `✖ Fixed f1 needs a fix check to read it after the fix: run --fix-check ${review.id}`)
   allowed(script(['--fix-check', review.id], { STUB_FINDINGS: JSON.stringify({ findings: [scored({ issue: 'w1 = 1 breaks callers', file: 'src/two.js', line: '1', quote: 'export const w1 = 1', likelihood: 8, impact: 8, trigger: 'importing w1' })] }) }))
   const check = records().at(-1)
   assert.deepEqual(check.findingDetails.map((f) => [f.id, f.severity, f.inFix]), [['x1', 'high', true]])
   refused(review.id, statuses, /Finding x1 needs a fixed or rejected status, or deferred with a reason/)
   const record = closed(review.id, { ...statuses, x1: { status: 'deferred', reason: 'next PR' } })
-  assert.deepEqual(record.outOfScope, [])
+  assert.deepEqual(record.unseen, [])
   assert.equal(record.fixCheck, check.id)
   assert.deepEqual([record.statuses.f1.response, record.statuses.f3.response], ['real', 'wrong'])
   assert.equal(record.tier, 'high')
@@ -480,51 +438,10 @@ test('Q2 the fix check is not asked to repair a pre-existing finding, as with a 
   const note = prompt.slice(prompt.indexOf('The fix is meant to repair')).split('\n\n')[0]
   assert.deepEqual(note.split('\n').filter((l) => l.startsWith('- ')), ['- f1 MEDIUM src/one.js:2 — v2 is wrong; Trigger: importing v2 at startup'])
 })
-const gradeLog = (value, args = []) => {
-  const path = join(ROOT, 'grade.json'); writeFileSync(path, JSON.stringify(value))
-  allowed(script(['--log-grade', path, ...args]))
-  return records().at(-1)
-}
-const criteria = (verdict) => [{ id: 'k1', criterion: 'v2 is 2', verdict, evidence: 'src/one.js:2' }]
-test('Q3a under "always" a Grade recheck after the fix covers a code and test-file change', () => {
-  homeConfig({ fixCheck: 'always' })
-  const failed = gradeLog({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('FAIL') })
-  commit({ 'src/one.js': lines(), 'src/one.test.js': 'test v2\n' })
-  gradeLog({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('PASS') }, ['--recheck-of', failed.id])
-  closed(failed.id, { c1: { status: 'fixed' } })
-})
-test('Q3c "always" is never looser than "risk": a docs file on riskPaths still needs a fix check in both modes', () => {
-  const review = reviewed([])
-  commit({ 'docs/auth.md': '# Auth\n' })
-  refused(review.id, {}, '✖ Fix changes tests, verify scripts or risk paths; run --fix-check first')
-  homeConfig({ fixCheck: 'always' })
-  refused(review.id, {}, '✖ Fix changes tests, verify scripts or risk paths; run --fix-check first')
-  allowed(script(['--fix-check', review.id]))
-  allowed(close(review.id, {}))
-})
-test('Q3d under "always" a test-file change needs a fix check unless a Grade recheck came after it', () => {
-  homeConfig({ fixCheck: 'always' })
-  const review = reviewed([])
-  commit({ 'src/one.test.js': 'test v2\n' })
-  refused(review.id, {}, '✖ Fix changes code after the review and fixCheck is "always": src/one.test.js; run --fix-check first')
-  const failed = gradeLog({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('FAIL') })
-  commit({ 'src/one.test.js': 'test v2 again\n' })
-  gradeLog({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('PASS') }, ['--recheck-of', failed.id])
-  closed(failed.id, { c1: { status: 'fixed' } })
-  commit({ 'src/one.test.js': 'test v2 after the recheck\n' })
-  refused(failed.id, { c1: { status: 'fixed' } }, '✖ Fix changes code after the review and fixCheck is "always": src/one.test.js; run --fix-check first')
-})
-test('Q3b under "always" a code change after the Grade recheck still needs a fix check', () => {
-  homeConfig({ fixCheck: 'always' })
-  const failed = gradeLog({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('FAIL') })
-  commit({ 'src/one.js': lines() })
-  gradeLog({ family: 'opus', model: 'claude-stub-opus', criteria: criteria('PASS') }, ['--recheck-of', failed.id])
-  commit({ 'src/one.js': lines({ 18: 'export const v18 = 0' }) })
-  refused(failed.id, { c1: { status: 'fixed' } }, '✖ Fix changes code after the review and fixCheck is "always": src/one.js; run --fix-check first')
-})
 test('Q4 a new fixed status without a response is logged as real; a legacy close without labels stays unlabeled', () => {
   const review = reviewed([scored()])
-  commit({ 'src/one.js': lines() })
+  commit({ 'src/one.js': lines({ 2: 'export const v2 = 22' }) })
+  allowed(script(['--fix-check', review.id]))
   const record = closed(review.id, { f1: { status: 'fixed' } })
   assert.equal(record.statuses.f1.response, 'real')
   appendFileSync(LOG, [JSON.stringify({ type: 'review', kind: 'review', id: 'legacy', family: 'grok', repoId: realpathSync(join(REPO, '.git')), findingDetails: [{ id: 'f1', severity: 'medium' }] }),
@@ -543,12 +460,6 @@ test('Q5 a team lens family that also ran the security pass keeps its code findi
   ].map((e) => JSON.stringify(e)).join('\n') + '\n')
   assert.deepEqual(noise(), ['Noise report (this repository): 2 review(s) closed',
     row('fable', 'MEDIUM', { real: 1 }), row('opus', 'MEDIUM', { real: 2 }), row('opus', 'LOW', { unimportant: 1 }), row('sol', 'MEDIUM', { real: 1 })])
-})
-test('Q6 an unknown fixCheck in the home config warns once, naming that file', () => {
-  homeConfig({ fixCheck: 'sometimes' })
-  const r = script(['--show-config'])
-  const warnings = r.out.split('\n').filter((l) => l.includes('Unknown fixCheck'))
-  assert.deepEqual(warnings, [`⚠ Unknown fixCheck "sometimes" in ${HOME_CONFIG}; using the others (risk | always)`])
 })
 test('X1 inDiff checks every place the quote matches near the cited line: the same "return true;" unchanged at 10 and introduced at 15 is the branch\'s', () => {
   // public() returns true at line 10 on main; the branch makes admin() at line 15 return true as well.

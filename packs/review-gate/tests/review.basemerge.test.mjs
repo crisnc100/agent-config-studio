@@ -6,9 +6,10 @@ import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-// A reviewed, closed branch that merges in the default branch: content already on origin's default branch needs no
-// coverage, a clean merge re-closes the existing review at the merge tip with no model call, and files changed on both
-// sides (or edited inside the merge commit) still need a review. The default branch comes only from a symbolic
+// A reviewed, closed branch that merges in the default branch. Coverage is measured from the coverage base, the tip's
+// merge base with the default branch: a file only main changed is no change there, a file only the branch changed keeps
+// the triple its review read, so a clean merge re-closes the existing review at the merge tip with no model call, and a
+// file both sides changed (or edited inside the merge commit) has a new triple that needs a fresh read. The default branch comes only from a symbolic
 // refs/remotes/origin/HEAD whose target exists, and only for pushes to origin. Pushes go through the installed hook
 // with REVIEW_BASE unset; reviews and closes keep REVIEW_BASE=main as in the coverage fixture.
 const SOURCE = join(dirname(fileURLToPath(import.meta.url)), '..', 'runtime')
@@ -151,13 +152,12 @@ test('BM1 a clean merge of the default branch re-closes the existing review at t
   resetCalls()
   // Before the re-close every file is covered; the note asks for the re-close, not a review.
   const early = push()
-  blocked(early, /every changed file is covered, but no complete close is at the tip: re-close the existing review/)
-  assert.doesNotMatch(early.out, /close a review at the tip/)
+  blocked(early, /every changed file is covered, but no close is at the tip/)
   const summary = script(['--summary'], { REVIEW_BASE: null })
   assert.notEqual(summary.status, 0)
-  assert.match(summary.out, /re-close the existing review/)
+  assert.match(summary.out, /every changed file is covered, but no close is at the tip/)
   const record = closed(r.id)
-  assert.equal(record.closeHead, head()); assert.deepEqual(record.outOfScope, [])
+  assert.equal(record.closeHead, head()); assert.deepEqual(record.unseen, [])
   // The re-close's tier measures from the new base: main's lib/two.js is not the branch's change.
   assert.equal(record.stats.files, 2, JSON.stringify(record.stats))
   assert.ok(!record.tierReasons.some((reason) => /lib\/two\.js/.test(reason)), JSON.stringify(record.tierReasons))
@@ -181,15 +181,13 @@ test('BM2 a file both sides changed (a resolved conflict) is the only one named;
   resetCalls()
   const refused = push()
   blocked(refused, uncovered(['shared.js']))
-  assert.match(refused.out, /changed on both sides of a merge of the default branch/)
   assert.match(refused.out, /REVIEW_PATHS=shared\.js/)
   assert.doesNotMatch(refused.out, /lib\/two\.js|src\/one\.js|docs\/three\.md/)
   const summary = script(['--summary'], { REVIEW_BASE: null })
   assert.notEqual(summary.status, 0); assert.match(summary.out, uncovered(['shared.js']))
   // Re-closing the existing review without a fix check goes partial and names the both-sides file.
   const partial = close(r.id)
-  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.deepEqual(partial.record.outOfScope, ['shared.js'])
-  assert.match(partial.out, /changed on both sides of a merge of the default branch: shared\.js/)
+  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.deepEqual(partial.record.unseen, ['shared.js'])
   assert.match(partial.out, /REVIEW_PATHS=shared\.js/)
   closed(review('shared.js').id)
   const [call] = calls()
@@ -208,8 +206,8 @@ test('BM3 a merged branch that is not on the default branch stays uncovered, wha
   git('checkout', '-q', 'feat')
   git('merge', '--no-ff', '--no-edit', '-q', 'unreviewed')
   const partial = close(r.id)
-  // A merge of any other branch keeps the old rule: every file its diff against either parent lists.
-  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.ok(partial.record.outOfScope.includes('extra.js'))
+  // A merge of any other branch brings content no review read.
+  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.deepEqual(partial.record.unseen, ['extra.js'])
   blocked(push(), uncovered(['extra.js']))
   blocked(push(undefined, { REVIEW_BASE: 'unreviewed' }), uncovered(['extra.js']))
   blocked(push(undefined, { REVIEW_BASE: 'feat' }), uncovered(['extra.js']))
@@ -223,10 +221,10 @@ test('BM4 origin/HEAD missing, detached or dangling, or a push to another remote
   closed(r.id)
   landOnMain({ 'lib/two.js': 'export const two = 2\n' })
   mergeMain()
-  // With origin/HEAD missing, the close keeps the old rule too: main's file is out of scope.
+  // With origin/HEAD missing, the close measures from the review's own base: main's file is unseen.
   git('symbolic-ref', '--delete', 'refs/remotes/origin/HEAD')
   const old = close(r.id)
-  allowed(old); assert.equal(old.record.status, 'partial'); assert.deepEqual(old.record.outOfScope, ['docs/three.md', 'lib/two.js', 'src/one.js'])
+  allowed(old); assert.equal(old.record.status, 'partial'); assert.deepEqual(old.record.unseen, ['lib/two.js'])
   assert.notEqual(originHeadStatus().status, 0, 'the close set no origin/HEAD')
   setOriginHead()
   closed(r.id)
@@ -268,7 +266,7 @@ test('BM5 an evil merge edit is never hidden: a branch-only file or an untouched
   assert.equal(git('rev-list', '--parents', '-n', '1', 'HEAD').split(' ').length, 3, 'still a merge commit')
   resetCalls()
   const partial = close(r.id)
-  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.deepEqual(partial.record.outOfScope, ['README.md', 'src/one.js'])
+  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.deepEqual(partial.record.unseen, ['README.md', 'src/one.js'])
   blocked(push(), uncovered(['README.md', 'src/one.js']))
 })
 
@@ -280,10 +278,8 @@ test('BM5 a file git auto-merged from both sides (different lines, no conflict) 
   mergeMain()
   assert.equal(readFileSync(join(REPO, 'shared.js'), 'utf8'), SHARED.replace('a\n', 'A-feat\n').replace('g\n', 'G-main\n'))
   const partial = close(r.id)
-  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.deepEqual(partial.record.outOfScope, ['shared.js'])
-  const refused = push()
-  blocked(refused, uncovered(['shared.js']))
-  assert.match(refused.out, /changed on both sides of a merge of the default branch/)
+  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.deepEqual(partial.record.unseen, ['shared.js'])
+  blocked(push(), uncovered(['shared.js']))
 })
 
 test('BM5b a clean fix check before the merge re-closes cleanly, even when main touched a riskPaths file', () => {
@@ -296,16 +292,16 @@ test('BM5b a clean fix check before the merge re-closes cleanly, even when main 
   mergeMain()
   resetCalls()
   const early = push()
-  blocked(early, /re-close the existing review/)
+  blocked(early, /every changed file is covered, but no close is at the tip/)
   assert.doesNotMatch(early.out, /code-review close|touch riskPaths/)
   const record = closed(r.id, { f1: { status: 'fixed' } })
-  assert.deepEqual(record.outOfScope, [])
+  assert.deepEqual(record.unseen, [])
   assert.ok(!record.tierReasons.some((reason) => /auth/.test(reason)), JSON.stringify(record.tierReasons))
   allowed(push())
   assert.equal(calls().length, 0, 'no model call after the merge')
 })
 
-test('BM5b with a fix check, a both-sides file refuses the re-close and names it; its slice at the tip lets the push through', () => {
+test('BM5b with a fix check, a both-sides file leaves the re-close partial naming it; its slice at the tip lets the push through', () => {
   commit({ 'shared.js': SHARED.replace('a\n', 'A-feat\n') })
   const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
   commit({ 'src/one.js': 'export const one = 3\n' })
@@ -313,11 +309,9 @@ test('BM5b with a fix check, a both-sides file refuses the re-close and names it
   closed(r.id, { f1: { status: 'fixed' } })
   landOnMain({ 'shared.js': SHARED.replace('g\n', 'G-main\n') })
   mergeMain()
-  const refused = close(r.id, { f1: { status: 'fixed' } })
-  assert.notEqual(refused.status, 0); assert.equal(refused.record, null)
-  assert.match(refused.out, /changed on both sides of a merge of the default branch: shared\.js/)
-  assert.match(refused.out, /REVIEW_PATHS=shared\.js/)
-  assert.doesNotMatch(refused.out, /Fixes land before the fix check/)
+  const partial = close(r.id, { f1: { status: 'fixed' } })
+  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.deepEqual(partial.record.unseen, ['shared.js'])
+  assert.match(partial.out, /REVIEW_PATHS=shared\.js/)
   resetCalls()
   closed(review('shared.js').id)
   assert.equal(calls().length, 1)
@@ -331,7 +325,7 @@ test('BM5b a sliced review re-closed at a merge tip covers the tip together with
   mergeMain()
   resetCalls()
   const record = closed(src.id)
-  assert.deepEqual(record.outOfScope, [])
+  assert.deepEqual(record.unseen, [])
   allowed(push())
   assert.equal(calls().length, 0)
 })
@@ -350,26 +344,28 @@ test('BM6 a rebase onto the new default branch still needs coverage, as before',
 const FS = { ...F1, issue: 'shared is wrong', file: 'shared.js', quote: 'A-feat', trigger: 'loading shared' }
 const mirror = () => { git('init', '--bare', '-q', MIRROR); git('remote', 'add', 'mirror', MIRROR) }
 
-test('BM7 an edit inside the merge commit to a file fixed before the merge is out of scope at the re-close and uncovered at the gate', () => {
+test('BM7 an edit inside the merge commit to a file fixed before the merge is unseen at the re-close and uncovered at the gate', () => {
   const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
   commit({ 'src/one.js': 'export const one = 3\n' })
+  fixCheck(r.id)
   closed(r.id, { f1: { status: 'fixed' } })
   landOnMain({ 'lib/two.js': 'export const two = 2\n' })
   mergeMain()
   write({ 'src/one.js': 'export const one = 99\n' })
   git('commit', '--amend', '--no-edit', '-q')
   const partial = close(r.id, { f1: { status: 'fixed' } })
-  allowed(partial); assert.equal(partial.record.status, 'partial', partial.out); assert.deepEqual(partial.record.outOfScope, ['src/one.js'])
+  allowed(partial); assert.equal(partial.record.status, 'partial', partial.out); assert.deepEqual(partial.record.unseen, ['src/one.js'])
   blocked(push(), uncovered(['src/one.js']))
   mirror()
   const elsewhere = push(undefined, {}, 'mirror')
   blocked(elsewhere, /src\/one\.js/)
 })
 
-test('BM7 a both-sides file with a fixed status, resolved to main\'s version, gains no coverage: origin trusts main\'s content, another remote does not', () => {
+test('BM7 a both-sides file resolved to main\'s version needs no read for origin, which trusts main\'s content; another remote still names it', () => {
   commit({ 'g.js': 'export const g = 1\n', 'shared.js': SHARED.replace('a\n', 'A-feat\n') })
   const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [FS] }) })
   commit({ 'shared.js': SHARED.replace('a\n', 'A-fix\n') })
+  fixCheck(r.id)
   closed(r.id, { f1: { status: 'fixed' } })
   landOnMain({ 'lib/two.js': 'export const two = 2\n', 'shared.js': SHARED.replace('a\n', 'A-main\n') })
   assert.notEqual(gitTry('merge', '--no-edit', '-q', 'origin/main').status, 0, 'the merge conflicts')
@@ -377,27 +373,10 @@ test('BM7 a both-sides file with a fixed status, resolved to main\'s version, ga
   git('commit', '--no-edit', '-q')
   assert.equal(readFileSync(join(REPO, 'shared.js'), 'utf8'), SHARED.replace('a\n', 'A-main\n'))
   const record = closed(r.id, { f1: { status: 'fixed' } })
-  assert.ok(!record.coverage.some(([path]) => path === 'shared.js'), JSON.stringify(record.coverage))
+  assert.deepEqual(record.unseen, [])
   allowed(push())
   mirror()
   blocked(push(undefined, {}, 'mirror'), uncovered(['lib/two.js', 'shared.js']))
-})
-
-test('BM7 a file a merge-tip fix check left out (onlyFiles) gains no coverage from a fixed status', () => {
-  commit({ 'shared.js': SHARED.replace('a\n', 'A-feat\n') })
-  const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [FS] }) })
-  landOnMain({ 'lib/two.js': 'export const two = 2\n', 'shared.js': SHARED.replace('a\n', 'A-main\n') })
-  assert.notEqual(gitTry('merge', '--no-edit', '-q', 'origin/main').status, 0, 'the merge conflicts')
-  git('checkout', '--theirs', 'shared.js'); git('add', 'shared.js')
-  git('commit', '--no-edit', '-q')
-  commit({ 'src/one.js': 'export const one = 3\n' })
-  const check = fixCheck(r.id)
-  assert.ok(check.onlyFiles.includes('src/one.js') && !check.onlyFiles.includes('shared.js'), JSON.stringify(check.onlyFiles))
-  const record = closed(r.id, { f1: { status: 'fixed' } })
-  assert.ok(!record.coverage.some(([path]) => path === 'shared.js'), JSON.stringify(record.coverage))
-  allowed(push())
-  mirror()
-  blocked(push(undefined, {}, 'mirror'), /shared\.js/)
 })
 
 test('BM7 a both-sides file a fix check saw at the merge tip is in scope with a fixed status, and covered', () => {
@@ -406,9 +385,10 @@ test('BM7 a both-sides file a fix check saw at the merge tip is in scope with a 
   landOnMain({ 'shared.js': SHARED.replace('g\n', 'G-main\n') })
   mergeMain()
   commit({ 'shared.js': SHARED.replace('a\n', 'A-fix\n').replace('g\n', 'G-main\n') })
-  fixCheck(r.id)
+  const check = fixCheck(r.id)
+  assert.ok(check.manifest.read.some(([path]) => path === 'shared.js'), JSON.stringify(check.manifest.read))
   const record = closed(r.id, { f1: { status: 'fixed' } })
-  assert.ok(record.coverage.some(([path]) => path === 'shared.js'))
+  assert.deepEqual(record.unseen, [])
   allowed(push())
 })
 
@@ -420,7 +400,7 @@ test('BM8 an origin/HEAD naming a missing remote ref never resolves through a ta
   git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/missing')
   git('tag', 'refs/remotes/origin/missing', 'origin/main')
   const old = close(r.id)
-  allowed(old); assert.equal(old.record.status, 'partial'); assert.ok(old.record.outOfScope.includes('lib/two.js'))
+  allowed(old); assert.equal(old.record.status, 'partial'); assert.ok(old.record.unseen.includes('lib/two.js'))
   setOriginHead()
   closed(r.id)
   git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/missing')
@@ -435,56 +415,13 @@ test('BM9 with REVIEW_BASE unset and origin/HEAD missing, close and --summary do
   mergeMain()
   git('symbolic-ref', '--delete', 'refs/remotes/origin/HEAD')
   const old = close(r.id, {}, { REVIEW_BASE: null })
-  allowed(old); assert.equal(old.record.status, 'partial', old.out); assert.ok(old.record.outOfScope.includes('lib/two.js'))
+  allowed(old); assert.equal(old.record.status, 'partial', old.out); assert.ok(old.record.unseen.includes('lib/two.js'))
   gitTry('symbolic-ref', '--delete', 'refs/remotes/origin/HEAD')
   const summary = script(['--summary'], { REVIEW_BASE: null })
   assert.notEqual(summary.status, 0, summary.out); assert.match(summary.out, /lib\/two\.js/)
 })
 
-test('BM10 a both-sides refusal names the existing review that keeps covering every other file, at the gate and at close', () => {
-  commit({ 'shared.js': SHARED.replace('a\n', 'A-feat\n') })
-  const r = review()
-  closed(r.id)
-  landOnMain({ 'shared.js': SHARED.replace('g\n', 'G-main\n') })
-  mergeMain()
-  const keeps = new RegExp(`slice-review just (that file|those files) at the tip \\(REVIEW_PATHS=shared\\.js\\) and close that slice; review ${r.id} keeps covering every other file`)
-  blocked(push(), keeps)
-  const partial = close(r.id)
-  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.match(partial.out, keeps)
-})
-
-test('BM10 with a fix check, the both-sides refusal at close names the existing review', () => {
-  commit({ 'shared.js': SHARED.replace('a\n', 'A-feat\n') })
-  const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
-  commit({ 'src/one.js': 'export const one = 3\n' })
-  fixCheck(r.id)
-  closed(r.id, { f1: { status: 'fixed' } })
-  landOnMain({ 'shared.js': SHARED.replace('g\n', 'G-main\n') })
-  mergeMain()
-  const refused = close(r.id, { f1: { status: 'fixed' } })
-  assert.notEqual(refused.status, 0)
-  assert.match(refused.out, new RegExp(`close that slice; review ${r.id} keeps covering every other file`))
-})
-
 // ── leftovers after the merge of main ──
-test('BM11 a PASS Grade recheck after the merge counts as having seen the both-sides file it graded: the Grade close is complete', () => {
-  commit({ 'shared.js': SHARED.replace('a\n', 'A-feat\n') })
-  const verdict = join(ROOT, 'verdict.json')
-  const criterion = { id: '2.1', criterion: 'Shared reads A', verdict: 'FAIL', evidence: 'shared test fails' }
-  writeFileSync(verdict, JSON.stringify({ family: 'opus', model: 'stub-opus', criteria: [criterion] }))
-  allowed(script(['--log-grade', verdict]))
-  const grade = records().at(-1)
-  assert.equal(grade.kind, 'grade')
-  landOnMain({ 'shared.js': SHARED.replace('g\n', 'G-main\n') })
-  mergeMain()
-  commit({ 'shared.js': SHARED.replace('a\n', 'A-fix\n').replace('g\n', 'G-main\n') })
-  writeFileSync(verdict, JSON.stringify({ family: 'opus', model: 'stub-opus', criteria: [{ ...criterion, verdict: 'PASS', evidence: 'shared recheck passes' }] }))
-  allowed(script(['--log-grade', verdict, '--recheck-of', grade.id]))
-  const record = closed(grade.id, { c1: { status: 'fixed' } })
-  assert.deepEqual(record.outOfScope, [])
-  assert.ok(record.coverage.some(([path]) => path === 'shared.js'), JSON.stringify(record.coverage))
-})
-
 test('BM12 close and --summary never write origin/HEAD: a missing one is warned about and falls back, with no ref created', () => {
   run('git', ['--git-dir', REMOTE, 'symbolic-ref', 'HEAD', 'refs/heads/main'])
   const r = review()
@@ -497,17 +434,17 @@ test('BM12 close and --summary never write origin/HEAD: a missing one is warned 
   assert.notEqual(originHeadStatus().status, 0, 'close created no origin/HEAD')
 })
 
-test('BM13 a both-sides file whose state a pre-merge review saw is not stamped by the re-close: another remote names it until a post-merge record sees it', () => {
+test('BM13 a file both sides changed to the same blob: origin needs no read; for another remote the pre-merge review\'s exact triple still covers it, main\'s other file does not', () => {
   commit({ 'lib/two.js': 'export const two = 2\n' })
   const r = review()
   closed(r.id)
   landOnMain({ 'lib/two.js': 'export const two = 2\n', 'lib/four.js': 'export const four = 4\n' })
   mergeMain()
   const record = closed(r.id)
-  assert.ok(!record.coverage.some(([path]) => path === 'lib/two.js'), JSON.stringify(record.coverage))
+  assert.deepEqual(record.unseen, [])
   allowed(push())
   mirror()
-  blocked(push(undefined, {}, 'mirror'), uncovered(['lib/four.js', 'lib/two.js']))
+  blocked(push(undefined, {}, 'mirror'), uncovered(['lib/four.js']))
 })
 
 // ── fresh-review fix round ──
@@ -524,12 +461,12 @@ test('BM14 a review based on another branch gets none of the default-branch rule
   assert.equal(readFileSync(join(REPO, 'lib/two.js'), 'utf8'), 'export const two = 2\n')
   const reclose = close(r.id)
   allowed(reclose)
-  assert.ok(reclose.record.status === 'partial' || !reclose.record.coverage.some(([path]) => path === 'lib/two.js'), JSON.stringify(reclose.record))
+  assert.equal(reclose.record.status, 'partial'); assert.ok(reclose.record.unseen.includes('lib/two.js'), JSON.stringify(reclose.record))
   mirror()
   blocked(push('HEAD:refs/heads/fromrelease', {}, 'mirror'), /lib\/two\.js/)
 })
 
-test('BM15 a test file conflict resolved wholly to main\'s version needs no fix check: the re-close completes', () => {
+test('BM15 a test file conflict resolved wholly to main\'s version needs no read: the re-close completes', () => {
   commit({ 'src/one.test.js': 'test one feat\n' })
   const r = review()
   closed(r.id)
@@ -538,39 +475,11 @@ test('BM15 a test file conflict resolved wholly to main\'s version needs no fix 
   git('checkout', '--theirs', 'src/one.test.js'); git('add', 'src/one.test.js')
   git('commit', '--no-edit', '-q')
   const record = closed(r.id)
-  assert.deepEqual(record.outOfScope, [])
-  assert.ok(!record.coverage.some(([path]) => path === 'src/one.test.js'), JSON.stringify(record.coverage))
+  assert.deepEqual(record.unseen, [])
   allowed(push())
 })
 
-// ── fix-check round: main-content exemptions only for what a merge of main brought ──
-test('BM16 after a main merge, a later commit deleting a test the branch added still needs a fix check', () => {
-  commit({ 'src/one.test.js': 'test one feat\n' })
-  const r = review()
-  closed(r.id)
-  landOnMain({ 'lib/two.js': 'export const two = 2\n' })
-  mergeMain()
-  commit({ 'src/one.test.js': null })
-  const refused = close(r.id)
-  assert.notEqual(refused.status, 0, refused.out); assert.equal(refused.record, null)
-  assert.match(refused.out, /run --fix-check first/)
-})
-
-test('BM16 after a main merge, a later commit restoring a test to main\'s version still needs a fix check', () => {
-  landOnMain({ 't/x.test.js': 'main v1\n' }, 'seed')
-  mergeMain()
-  commit({ 't/x.test.js': 'feat v2\n' })
-  const r = review()
-  closed(r.id)
-  landOnMain({ 'lib/two.js': 'export const two = 2\n' })
-  mergeMain()
-  commit({ 't/x.test.js': 'main v1\n' })
-  const refused = close(r.id)
-  assert.notEqual(refused.status, 0, refused.out); assert.equal(refused.record, null)
-  assert.match(refused.out, /run --fix-check first/)
-})
-
-test('BM17 with a pre-merge fix check, a both-sides file resolved wholly to main\'s version re-closes; it is not stamped and the origin push passes', () => {
+test('BM17 with a pre-merge fix check, a both-sides file resolved wholly to main\'s version re-closes complete and the origin push passes', () => {
   commit({ 'shared.js': SHARED.replace('a\n', 'A-feat\n') })
   const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
   commit({ 'src/one.js': 'export const one = 3\n' })
@@ -581,12 +490,12 @@ test('BM17 with a pre-merge fix check, a both-sides file resolved wholly to main
   git('checkout', '--theirs', 'shared.js'); git('add', 'shared.js')
   git('commit', '--no-edit', '-q')
   const record = closed(r.id, { f1: { status: 'fixed' } })
-  assert.ok(!record.coverage.some(([path]) => path === 'shared.js'), JSON.stringify(record.coverage))
+  assert.deepEqual(record.unseen, [])
   allowed(push())
 })
 
-// ── slice-review round: the fix check leaves out only what a merge of main alone brought ──
-const fixPrompt = () => calls().map((c) => c.prompt).find((p) => p.includes('Fix check: review only this fix diff'))
+// ── the fix check after a merge of main ──
+const fixPrompt = () => calls().map((c) => c.prompt).find((p) => p.includes('Fix check:'))
 test('BM18 a fix check after a main merge reviews a later deletion of a test the branch added, beside an unrelated fix', () => {
   commit({ 'src/one.test.js': 'test one feat\n' })
   const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
@@ -598,8 +507,8 @@ test('BM18 a fix check after a main merge reviews a later deletion of a test the
   const prompt = fixPrompt()
   assert.ok(prompt, 'the fix check called the model')
   assert.match(prompt, /src\/one\.test\.js/); assert.match(prompt, /test one feat/)
-  assert.doesNotMatch(prompt, /export const two = 2/)
-  assert.ok(!check.onlyFiles || check.onlyFiles.includes('src/one.test.js'), JSON.stringify(check.onlyFiles))
+  // Its coverage block reads only the branch's change from the merge base: main's file is in no manifest.
+  assert.ok(!check.manifest.read.some(([path]) => path === 'lib/two.js'), JSON.stringify(check.manifest.read))
 })
 
 test('BM18 a fix check after a main merge reviews a later restore of a test to main\'s version, beside an unrelated fix', () => {
@@ -611,122 +520,10 @@ test('BM18 a fix check after a main merge reviews a later restore of a test to m
   mergeMain()
   commit({ 't/x.test.js': 'main v1\n', 'src/one.js': 'export const one = 3\n' })
   resetCalls()
-  fixCheck(r.id)
+  const check = fixCheck(r.id)
   const prompt = fixPrompt()
   assert.ok(prompt, 'the fix check called the model')
   assert.match(prompt, /t\/x\.test\.js/); assert.match(prompt, /feat v2/)
-  assert.doesNotMatch(prompt, /export const two = 2/)
+  assert.ok(!check.manifest.read.some(([path]) => path === 'lib/two.js'), JSON.stringify(check.manifest.read))
 })
 
-test('BM19 a both-sides file a later branch commit restores to main\'s version is not in scope as main content', () => {
-  commit({ 'shared.js': SHARED.replace('a\n', 'A-feat\n') })
-  const r = review()
-  closed(r.id)
-  landOnMain({ 'shared.js': SHARED.replace('a\n', 'A-main\n') })
-  assert.notEqual(gitTry('merge', '--no-edit', '-q', 'origin/main').status, 0, 'the merge conflicts')
-  git('checkout', '--ours', 'shared.js'); git('add', 'shared.js')
-  git('commit', '--no-edit', '-q')
-  commit({ 'shared.js': SHARED.replace('a\n', 'A-main\n') })
-  const partial = close(r.id)
-  allowed(partial); assert.equal(partial.record.status, 'partial', partial.out); assert.deepEqual(partial.record.outOfScope, ['shared.js'])
-})
-
-// ── follow-up: a deletion or restore made inside the merge commit itself ──
-// `git merge --no-commit` of main, then an edit that takes main's side for a file only the branch changed.
-function mergeMainWith(edit) {
-  gitTry('merge', '--no-commit', '--no-ff', '-q', 'origin/main')
-  edit()
-  git('commit', '--no-edit', '-q')
-  assert.equal(git('rev-list', '--parents', '-n', '1', 'HEAD').split(' ').length, 3, 'a merge commit')
-}
-
-test('BM20 a reviewed test deleted inside the merge commit needs a fix check at close and is named at the gate; the fix check sees it', () => {
-  commit({ 'src/one.test.js': 'test one feat\n' })
-  const r = review()
-  closed(r.id)
-  landOnMain({ 'lib/two.js': 'export const two = 2\n' })
-  mergeMainWith(() => git('rm', '-q', 'src/one.test.js'))
-  const refused = close(r.id)
-  assert.notEqual(refused.status, 0, refused.out); assert.equal(refused.record, null)
-  assert.match(refused.out, /run --fix-check first/)
-  blocked(push(), /src\/one\.test\.js/)
-  resetCalls()
-  fixCheck(r.id)
-  const prompt = calls().map((c) => c.prompt).find((p) => p.includes('Fix check: review only this fix diff'))
-  assert.match(prompt, /src\/one\.test\.js/); assert.match(prompt, /test one feat/); assert.doesNotMatch(prompt, /export const two = 2/)
-  closed(r.id)
-  allowed(push())
-})
-
-test('BM20 a reviewed test restored to main\'s copy inside the merge commit needs a fix check at close and is named at the gate', () => {
-  landOnMain({ 't/x.test.js': 'main v1\n' }, 'seed')
-  mergeMain()
-  commit({ 't/x.test.js': 'feat v2\n' })
-  const r = review()
-  closed(r.id)
-  landOnMain({ 'lib/two.js': 'export const two = 2\n' })
-  mergeMainWith(() => git('checkout', 'origin/main', '--', 't/x.test.js'))
-  assert.equal(readFileSync(join(REPO, 't/x.test.js'), 'utf8'), 'main v1\n')
-  const refused = close(r.id)
-  assert.notEqual(refused.status, 0, refused.out); assert.equal(refused.record, null)
-  assert.match(refused.out, /run --fix-check first/)
-  blocked(push(), /t\/x\.test\.js/)
-})
-
-test('BM20 a reviewed logic file restored to main\'s copy inside the merge commit is out of scope at the re-close and named at the gate', () => {
-  const r = review()
-  closed(r.id)
-  landOnMain({ 'lib/two.js': 'export const two = 2\n' })
-  mergeMainWith(() => git('checkout', 'origin/main', '--', 'src/one.js'))
-  const partial = close(r.id)
-  allowed(partial); assert.equal(partial.record.status, 'partial', partial.out); assert.deepEqual(partial.record.outOfScope, ['src/one.js'])
-  blocked(push(), /src\/one\.js/)
-})
-
-test('BM21 a slice review closed at the tip does not cover a reviewed file changed back to main\'s copy inside the merge', () => {
-  const r = review()
-  closed(r.id)
-  landOnMain({ 'lib/two.js': 'export const two = 2\n' })
-  mergeMainWith(() => git('checkout', 'origin/main', '--', 'src/one.js'))
-  commit({ 'lib/new.js': 'export const fresh = 1\n' })
-  closed(review('lib/new.js').id)
-  const refused = push()
-  blocked(refused, /src\/one\.js changed back to main's copy inside a merge of the default branch/)
-  assert.match(refused.out, /run the review's fix check/)
-  const summary = script(['--summary'], { REVIEW_BASE: null })
-  assert.notEqual(summary.status, 0); assert.match(summary.out, /src\/one\.js changed back/)
-})
-
-// ── merge-commit-edits fix round ──
-test('BM22 a whole-branch review after the merge excuses a file changed back inside it, whatever close comes later at the tip', () => {
-  const r = review()
-  closed(r.id)
-  landOnMain({ 'lib/two.js': 'export const two = 2\n' })
-  mergeMainWith(() => git('checkout', 'origin/main', '--', 'src/one.js'))
-  closed(review().id)
-  commit({ 'lib/new.js': 'export const fresh = 1\n' })
-  closed(review('lib/new.js').id)
-  allowed(push())
-})
-
-test('BM22 the same with the closes in the other order: the slice first, the whole-branch review last', () => {
-  const r = review()
-  closed(r.id)
-  landOnMain({ 'lib/two.js': 'export const two = 2\n' })
-  mergeMainWith(() => git('checkout', 'origin/main', '--', 'src/one.js'))
-  commit({ 'lib/new.js': 'export const fresh = 1\n' })
-  closed(review('lib/new.js').id)
-  closed(review().id)
-  allowed(push())
-})
-
-test('BM23 an edit inside the merge to a state that differs from main keeps the slice hint; only files back at main\'s copy get the fix-check note', () => {
-  const r = review()
-  closed(r.id)
-  landOnMain({ 'lib/two.js': 'export const two = 2\n' })
-  mergeMainWith(() => { write({ 'src/one.js': 'export const one = 99\n' }); git('checkout', 'origin/main', '--', 'docs/three.md') })
-  const refused = push()
-  blocked(refused, /REVIEW_PATHS=src\/one\.js\)/)
-  // Only docs/three.md is listed before "changed back"; src/one.js keeps its own slice hint.
-  assert.match(refused.out, /uncovered: src\/one\.js, docs\/three\.md — docs\/three\.md changed back to main's copy inside a merge/)
-})

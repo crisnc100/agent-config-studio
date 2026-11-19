@@ -363,10 +363,14 @@ function installGlobalGate() {
   git('init', '--bare', '-q', REMOTE); git('remote', 'add', 'origin', REMOTE)
 }
 const push = (ref = 'feat', options = {}) => sh('git', ['push', 'origin', `HEAD:refs/heads/${ref}`], options)
+// A closed review of the branch whose manifest read every changed file at its exact base and head states.
 function cover() {
-  const head = git('rev-parse', 'HEAD')
-  put(LOG, [{ type: 'review', kind: 'review', id: 'fixture', head, family: 'fixture', model: 'fixture-only', findingDetails: [] },
-    { type: 'close', review: 'fixture', closeHead: head, status: 'complete', statuses: {} }].map((e) => J(e)).join('\n') + '\n')
+  const head = git('rev-parse', 'HEAD'), baseSha = git('merge-base', 'main', 'HEAD'), repoId = realpathSync(join(REPO, '.git'))
+  const state = (rev, p) => { const r = sh('git', ['ls-tree', rev, '--', p]); const [mode, , object] = r.stdout.split('\t')[0].split(' '); return r.stdout.trim() ? `${mode} ${object}` : null }
+  const read = git('diff', '--name-only', baseSha, head).split('\n').filter(Boolean).sort().map((p) => [p, state(baseSha, p), state(head, p)])
+  put(LOG, [{ type: 'review', kind: 'review', id: 'fixture', head, base: 'main', baseSha, repoId, family: 'fixture', model: 'fixture-only', findingDetails: [],
+    manifest: { v: 1, role: 'code', base: baseSha, head, read, unread: [], promptSha256: 'fixture', cap: 120000 } },
+    { type: 'close', review: 'fixture', closeHead: head, repoId, status: 'complete', statuses: {} }].map((e) => J(e)).join('\n') + '\n')
 }
 const refused = (r, pattern) => { assert.notEqual(r.status, 0, r.out); assert.match(r.out, pattern) }
 const pushed = (r) => assert.equal(r.status, 0, r.out)
