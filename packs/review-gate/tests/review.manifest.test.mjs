@@ -50,8 +50,8 @@ after(() => rmSync(ROOT, { recursive: true, force: true }))
 
 const env = (extra = {}, home = HOME) => ({ HOME: home, CODEX_HOME: join(home, '.codex'), GROK_HOME: join(home, '.grok'), GIT_CONFIG_GLOBAL: join(home, 'isolated.gitconfig'),
   GIT_CONFIG_NOSYSTEM: '1', PATH: [BIN, dirname(process.execPath), '/usr/bin', '/bin'].join(':'), TMPDIR: ROOT, REVIEW_BASE: 'main', REVIEW_REVIEWER: 'sol', ...extra })
-function run(command, args, { extra = {}, cwd = REPO, home = HOME, encoding = 'utf8' } = {}) {
-  const r = spawnSync(command, args, { cwd, env: env(extra, home), encoding, timeout: 120000, maxBuffer: 256 * 1024 * 1024 })
+function run(command, args, { extra = {}, cwd = REPO, home = HOME, encoding = 'utf8', input } = {}) {
+  const r = spawnSync(command, args, { cwd, env: env(extra, home), encoding, input, timeout: 120000, maxBuffer: 256 * 1024 * 1024 })
   return encoding ? { ...r, out: `${r.stdout || ''}\n${r.stderr || ''}` } : r
 }
 const script = (args, extra = {}, cwd = REPO, home = HOME) => run(process.execPath, [SCRIPT, ...args], { extra, cwd, home })
@@ -451,9 +451,9 @@ function propertyRun(seed) {
   }
   const cap = String(3000 + Math.floor(rand() * 5000))
   const extra = { REVIEW_TEST_DIFF_CAP: cap }
-  const pass = (args) => {
+  const pass = (args, more = {}) => {
     rmSync(CALLS, { force: true })
-    const r = run(process.execPath, [SCRIPT, ...args], { extra, cwd: repo, home })
+    const r = run(process.execPath, [SCRIPT, ...args], { extra: { ...extra, ...more }, cwd: repo, home })
     allowed(r)
     return r
   }
@@ -478,20 +478,37 @@ function propertyRun(seed) {
   if (fix.security?.status === 'ran') check(fix.security.manifest, 'security')
   const statuses = join(dir, 'statuses.json'); writeFileSync(statuses, '{}')
   pass(['--close', id, '--status', statuses, '--test-cmd', 'true'])
-  const close = records().at(-1)
+  let close = records().at(-1)
   assert.equal(close.type, 'close')
-  // (b) What the close counts as covered, each at its tip state, is in the read list of a code manifest of its chain. The
-  // older inference that still decides coverage also counts three things no reviewer read, each named here so nothing
-  // else can hide among them: a submodule, an opaque asset and a deleted binary, all unread in a manifest.
   const manifests = [review.manifest, fix.manifest]
-  const exempt = (p, state) => manifests.some((m) => m.unread.some(([q, why]) => q === p &&
-    (why === 'submodule' || why === 'binary' && (state === null || /\.(png|jpe?g|gif|webp|woff2?|ttf|mp3|mp4)$/i.test(p)))))
-  for (const [p, state] of close.coverage || [])
-    assert.ok(manifests.some((m) => m.read.some(([q, , s1]) => q === p && s1 === state)) || exempt(p, state),
-      `seed ${seed}: ${p} is covered at ${state} with no manifest read`)
+  // What no pass read is unseen; slices of exactly those files at the tip read them, until nothing is left.
+  for (let round = 0; close.unseen.length; round++) {
+    assert.ok(round < 4, `seed ${seed}: still unseen after ${round} slice rounds: ${close.unseen.join(', ')}`)
+    const slice = records().find((e) => e.id === findingsJson(pass([], { REVIEW_PATHS: close.unseen.join(',') })).reviewId)
+    check(slice.manifest, 'code')
+    manifests.push(slice.manifest)
+    pass(['--close', slice.id, '--status', statuses, '--test-cmd', 'true'])
+    close = records().at(-1)
+  }
+  const tip = g('rev-parse', 'HEAD')
+  const gate = run(process.execPath, [SCRIPT, '--gate'], { extra, cwd: repo, home, input: `refs/heads/feat ${tip} refs/heads/feat ${'0'.repeat(40)}\n` })
+  allowed(gate)
+  // (b) Every changed file the push gate let through is either in a code manifest's read list at its exact
+  // [path, base state, tip state], or named unread as unreadable in one, and then the tier names it. Nothing else.
+  const atBase = lsTree(repo, home, review.baseSha), atTip = lsTree(repo, home, tip)
+  const changed = [...new Set([...atBase.keys(), ...atTip.keys()])].filter((p) => (atBase.get(p) ?? null) !== (atTip.get(p) ?? null) && !p.startsWith('builds/'))
+  const unreadable = []
+  for (const p of changed) {
+    const triple = JSON.stringify([p, atBase.get(p) ?? null, atTip.get(p) ?? null])
+    if (manifests.some((m) => m.read.some((t) => JSON.stringify(t) === triple))) continue
+    assert.ok(manifests.some((m) => m.unread.some(([q, why]) => q === p && ['binary', 'oversize', 'submodule', 'submodule-change', 'encoding'].includes(why))),
+      `seed ${seed}: ${p} passed the gate with no manifest read at its tip triple`)
+    unreadable.push(p)
+  }
+  if (unreadable.length) assert.match(gate.stderr, /not read by any reviewer: /, `seed ${seed}`)
   rmSync(dir, { recursive: true, force: true })
 }
-test(`M10 property: on ${SEEDS.length} seeded random branches every manifest matches its prompt byte for byte and the close covers only what a manifest read`, () => {
+test(`M10 property: on ${SEEDS.length} seeded random branches every manifest matches its prompt byte for byte and the push gate lets through only what a manifest read, or names as unreadable`, () => {
   for (const seed of SEEDS) {
     rmSync(CALLS, { force: true })
     propertyRun(seed)

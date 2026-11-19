@@ -220,6 +220,7 @@ packs/review-gate/tests/review.config-trust.test.mjs  ci:packs ci-only
 packs/review-gate/tests/review.context-pass.test.mjs  ci:packs ci-only
 packs/review-gate/tests/review.context.test.mjs       ci:packs ci-only
 packs/review-gate/tests/review.coverage.test.mjs      ci:packs ci-only
+packs/review-gate/tests/review.coverrule.test.mjs     ci:packs ci-only
 packs/review-gate/tests/review.defer.test.mjs         ci:packs ci-only
 packs/review-gate/tests/review.eval.test.mjs          ci:packs ci-only
 packs/review-gate/tests/review.findings.test.mjs      ci:packs ci-only
