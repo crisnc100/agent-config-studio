@@ -390,3 +390,146 @@ test('x6 a closed review\'s findings are not open; an unclosed phase review\'s b
   closed(phase.id, { f1: fixed })
   assert.match(script(['--open-findings']).stdout, /No open findings on feat/)
 })
+
+// ── PR 2 decisions ──────────────────────────────────────────────────────────
+test('open findings: a --code-only review neither reads nor records them; a full review does', () => {
+  const phase = review({ STUB_FINDINGS: JSON.stringify({ findings: [ONE] }) })
+  rmSync(CALLS, { recursive: true, force: true }); mkdirSync(CALLS)
+  const codeOnly = review({}, ['--code-only'])
+  assert.equal(Object.hasOwn(codeOnly, 'openFindings'), false)
+  assert.ok(!calls().find((c) => c.kind === 'code').prompt.includes('one is wrong'), 'a --code-only prompt is not handed open findings')
+  rmSync(CALLS, { recursive: true, force: true }); mkdirSync(CALLS)
+  const full = review()
+  assert.deepEqual(full.openFindings, [{ record: phase.id, id: 'f1' }])
+  assert.ok(calls().find((c) => c.kind === 'code').prompt.includes('one is wrong'))
+})
+
+test('a Grade close covers nothing and prints no slice hint; a LOW Grade finding marked fixed is refused, saying a LOW one needs no status', () => {
+  const g = grade([{ ...GRADE_FINDING, protected: false, likelihood: 1, impact: 2 }])
+  refused(close(g.id, { f1: fixed }), /Fixed f1 is a Grade finding.*a LOW one needs no status/s)
+  const c = close(g.id, {})
+  allowed(c)
+  assert.equal(c.record.type, 'close')
+  assert.ok(c.record.unseen.length, 'a Grade reads no diff, so its close covers nothing')
+  assert.doesNotMatch(c.out, /REVIEW_PATHS=|Review exactly/)
+  assert.ok(!c.record.tierReasons.some((x) => /not read by any reviewer|security pass/.test(x)), JSON.stringify(c.record.tierReasons))
+})
+
+test('coverage reasons stay out of a close\'s stored tier: the tip computes them once from every manifest', () => {
+  commit({ 'src/blob.dat': 'payload\u0000\u0001\n' })
+  homeConfig({ security: { run: 'always' } })
+  const codeOnly = review({}, ['--code-only'])
+  const first = closed(codeOnly.id, {})
+  assert.ok(!first.tierReasons.some((x) => /not read by any reviewer|security pass did not read/.test(x)), JSON.stringify(first.tierReasons))
+  // A second review at the same tip runs the security pass over every file the first one left unread by it.
+  closed(review().id, {})
+  const tier = tierJson()
+  assert.ok(!tier.reasons.some((x) => /security pass did not read/.test(x)), JSON.stringify(tier))
+  assert.ok(tier.reasons.some((x) => /^not read by any reviewer: src\/blob\.dat/.test(x)), JSON.stringify(tier))
+})
+
+test('the tier classifier is told the rules that are left: no partial-close rule, and a LOW close says only that tests passed', () => {
+  const seen = join(ROOT, 'classifier-input.json')
+  stub('tierstub', `require('node:fs').writeFileSync(${JSON.stringify(seen)}, require('node:fs').readFileSync(0, 'utf8'))
+console.log(JSON.stringify({ answers: { tier: { type: 'choice', choice: 'medium', confidence: 0.9 } } }))`)
+  homeConfig({ merge: { classifier: 'tierstub' } })
+  closed(review().id, {})
+  const rules = JSON.parse(readFileSync(seen, 'utf8')).state.rules
+  assert.doesNotMatch(rules.high, /partial close/)
+  git('checkout', '-q', 'main'); git('checkout', '-qb', 'docs-only')
+  commit({ 'docs/three.md': 'three, docs only\n' })
+  const low = closed(review().id, {})
+  assert.equal(low.tier, 'low')
+  assert.ok(low.tierReasons.includes('tests passed') && !low.tierReasons.some((x) => /complete close/.test(x)), JSON.stringify(low.tierReasons))
+})
+
+test('a security finding on a path the security pass does not owe is judged by the fix check\'s code manifest', () => {
+  homeConfig({ security: { run: 'required' } })
+  const onDocs = scored({ issue: 'docs leak a token', file: 'docs/three.md', line: '1', quote: 'three, edited' })
+  const r = review({ STUB_SEC_FINDINGS: JSON.stringify({ findings: [onDocs] }) })
+  assert.equal(r.security.status, 'ran')
+  const s1 = r.findingDetails.find((f) => f.source === 'security')
+  assert.equal(s1.id, 's1')
+  commit({ 'docs/three.md': 'three, scrubbed\n', 'src/one.js': 'export const one = 3\n' })
+  const check = fixCheck(r.id)
+  assert.equal(check.security.status, 'ran')
+  assert.ok(!check.security.manifest.read.some(([p]) => p === 'docs/three.md'), 'a docs file is not owed under required')
+  assert.ok(check.manifest.read.some(([p]) => p === 'docs/three.md'))
+  closed(r.id, { s1: fixed })
+})
+
+test('a sliced review\'s fix check reads only the slice\'s scope, plus every cited file; builds/ and coverage-exempt files are left out', () => {
+  const onTwo = scored({ issue: 'two is wrong', file: 'src/two.js', line: '1', quote: 'export const two = 2' })
+  const r = review({ REVIEW_PATHS: 'src/one.js', STUB_FINDINGS: JSON.stringify({ findings: [onTwo] }) })
+  commit({ 'src/one.js': 'export const one = 3\n', 'src/two.js': 'export const two = 3\n', 'docs/three.md': 'three, again\n', 'builds/x/log.md': 'log\n',
+    'src/package-lock.json': '{}\n' })
+  const check = fixCheck(r.id)
+  assert.deepEqual(check.manifest.read.map(([p]) => p), ['src/one.js', 'src/two.js'])
+})
+
+test('a cited path unchanged since the base: the fixed rule needs only the asking; without a fix diff there is no fix check', () => {
+  const onBase = scored({ issue: 'caller breaks', file: 'src/base-only.js', line: '1', quote: 'export const one = 2 // here too' })
+  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [onBase] }) })
+  assert.equal(r.resolvedPaths.f1.path, 'src/base-only.js')
+  refused(script(['--fix-check', r.id]), /No fix diff to check/)
+  refused(close(r.id, { f1: fixed }), /Fixed f1 needs a fix check/)
+  commit({ 'src/one.js': 'export const one = 3\n' }, 'fix the caller through one')
+  const check = fixCheck(r.id)
+  assert.deepEqual(check.asked, ['f1'])
+  assert.ok(!check.manifest.read.some(([p]) => p === 'src/base-only.js'))
+  closed(r.id, { f1: fixed })
+})
+
+test('a file that is not UTF-8 is unreadable: the push goes through and the tier is HIGH', () => {
+  commit({ 'src/latin.js': Buffer.from('export const café = 1\n', 'latin1') })
+  const r = review()
+  assert.deepEqual(r.manifest.unread, [['src/latin.js', 'encoding']])
+  closed(r.id, {})
+  const tier = tierJson()
+  assert.equal(tier.tier, 'high')
+  assert.ok(tier.reasons.some((x) => /^not read by any reviewer: src\/latin\.js/.test(x)), JSON.stringify(tier))
+  allowed(push())
+})
+
+test('a gitlink replaced by a binary file is unreadable: the push goes through and the tier is HIGH', () => {
+  git('checkout', '-q', 'main')
+  mkdirSync(join(REPO, 'vendor/sub'), { recursive: true })
+  git('update-index', '--add', '--cacheinfo', `160000,${git('rev-parse', 'HEAD')},vendor/sub`); git('commit', '-qm', 'submodule on main')
+  git('push', '-q', '--no-verify', 'origin', 'main'); git('fetch', '-q', 'origin')
+  git('checkout', '-qb', 'unsub')
+  git('rm', '-q', '--cached', 'vendor/sub'); rmSync(join(REPO, 'vendor/sub'), { recursive: true, force: true })
+  commit({ 'vendor/sub': 'blob\u0000\u0001\n' }, 'replace the gitlink')
+  const r = review()
+  assert.deepEqual(r.manifest.unread, [['vendor/sub', 'submodule-change']])
+  closed(r.id, {})
+  const tier = tierJson()
+  assert.equal(tier.tier, 'high')
+  assert.ok(tier.reasons.some((x) => /^not read by any reviewer: vendor\/sub/.test(x)), JSON.stringify(tier))
+  allowed(push('HEAD:refs/heads/unsub'))
+})
+
+test('a blocking fix-check finding marked fixed is refused: defer it and slice; a cited path the fix check capped is refused, naming dispute or waive', () => {
+  const pad = (n, name) => Array.from({ length: n }, (_, i) => `export const ${name}${i} = ${i}`).join('\n') + '\n'
+  commit({ 'src/a.js': 'export const a = 1\n', 'src/b.js': 'export const b = 1\n' })
+  const grouped = scored({ issue: 'a and b are wrong', file: 'src/a.js', line: '1', quote: 'export const a = 1',
+    instances: [{ file: 'src/a.js', line: '1', quote: 'export const a = 1' }, { file: 'src/b.js', line: '1', quote: 'export const b = 1' }] })
+  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [grouped] }) })
+  commit({ 'src/a.js': pad(40, 'a'), 'src/b.js': pad(40, 'b') })
+  const x1 = scored({ issue: 'a0 is wrong', file: 'src/a.js', line: '1', quote: 'export const a0 = 0' })
+  const check = fixCheck(r.id, { REVIEW_TEST_DIFF_CAP: '1500', STUB_FINDINGS: JSON.stringify({ findings: [x1] }) })
+  assert.ok(check.manifest.unread.some(([p, why]) => p === 'src/b.js' && why === 'capped'), JSON.stringify(check.manifest.unread))
+  const deferX1 = { x1: { status: 'deferred', reason: 'next PR' } }
+  refused(close(r.id, { f1: fixed, x1: fixed }), /Fixed x1 is a fix-check finding.*defer it.*REVIEW_PATHS/s)
+  refused(close(r.id, { f1: fixed, ...deferX1 }), /Fixed f1: the fix check did not read src\/b\.js \(capped\).*dispute.*waive/s)
+})
+
+test('a failed security pass counts only in a chain that still supplies coverage at the tip', () => {
+  homeConfig({ security: { run: 'always', timeoutMs: 3000 } })
+  const failed = review({ REVIEW_SECURITY_TEST_FAULT: 'exit' })
+  assert.equal(failed.security.status, 'failed')
+  closed(failed.id, {})
+  commit({ 'src/one.js': 'export const one = 5\n', 'src/two.js': 'export const two = 5\n', 'docs/three.md': 'three, once more\n' })
+  closed(review().id, {})
+  const tier = tierJson()
+  assert.ok(!tier.reasons.some((x) => /security pass failed/.test(x)), JSON.stringify(tier))
+})
