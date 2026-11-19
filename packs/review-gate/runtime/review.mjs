@@ -816,9 +816,10 @@ const VERIFY_CMD = EVAL_MODE || blankCommand(cfg('REVIEW_VERIFY_CMD', 'verifyCmd
 let VERIFY_RESULT = null
 // Chars of diff inlined into a reviewer prompt. REVIEW_TEST_DIFF_CAP (tests only) can only lower it: a smaller cap reads
 // fewer sections, so it can never make a pass count for more than it read.
+const FULL_DIFF_CAP = 120_000
 const DIFF_CAP = (() => {
   const test = Number(process.env.REVIEW_TEST_DIFF_CAP)
-  return Number.isSafeInteger(test) && test > 0 && test < 120_000 ? test : 120_000
+  return Number.isSafeInteger(test) && test > 0 && test < FULL_DIFF_CAP ? test : FULL_DIFF_CAP
 })()
 // REVIEW_PATHS / config "paths": git pathspecs (comma- or newline-separated, or a config array) that
 // slice a review to `git diff <base>...HEAD -- <paths>`. Each slice has its own record and close; the
@@ -4267,7 +4268,9 @@ function chainEvidence(records) {
     for (const [m, role] of [[r.manifest, 'code'], [r.security?.status === 'ran' ? r.security.manifest : null, 'security']]) {
       if (!m || !Array.isArray(m.read)) continue
       for (const t of m.read) read[role].add(JSON.stringify(t))
-      if (role === 'code') for (const [path, why] of Array.isArray(m.unread) ? m.unread : []) if (UNREADABLE.includes(why)) unread.push({ m, path })
+      // Oversize counts only at the production cap: under a lowered one, a slice at the real cap could still read it.
+      if (role === 'code') for (const [path, why] of Array.isArray(m.unread) ? m.unread : [])
+        if (UNREADABLE.includes(why) && (why !== 'oversize' || m.cap >= FULL_DIFF_CAP)) unread.push({ m, path })
     }
     if (['failed', 'skipped'].includes(r.security?.status))
       failed.push(`${r.kind === 'fix-check' ? "fix check's security pass" : 'security pass'} ${r.security.status}${r.security.reason ? `: ${r.security.reason}` : ''}`)
