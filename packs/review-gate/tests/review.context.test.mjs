@@ -474,7 +474,7 @@ test('24 a --focus docs fix check needs --context-commit inside the fix range; i
   assert.equal(check.contextCommit, context)
 })
 
-test('25 a security finding of the fix check on code outside the fix diff is fixed or disputed, never deferred; one in the fix may be deferred', () => {
+test('25 a security finding of the fix check, outside the fix diff or in it, is deferred, never fixed, and the tier names it', () => {
   homeConfig({ security: { run: 'required' } })
   const LONG = (last) => ['export const one = 1', ...Array.from({ length: 12 }, (_, i) => `export const pad${i} = ${i}`), `export const last = ${last}`].join('\n') + '\n'
   commit({ 'src/app.js': LONG(1) })
@@ -487,10 +487,13 @@ test('25 a security finding of the fix check on code outside the fix diff is fix
   assert.deepEqual([x1.source, x1.inFix, x2.source, x2.inFix], ['security', false, 'security', true])
   const statusFile = join(ROOT, 'statuses.json')
   const defer = { status: 'deferred', reason: 'later' }
-  writeFileSync(statusFile, JSON.stringify({ x1: defer, x2: defer }))
-  refused(script(['--close', id, '--status', statusFile, '--test-cmd', 'true']), /x1.*code no security pass had read.*fix it or dispute it/)
   writeFileSync(statusFile, JSON.stringify({ x1: { status: 'fixed' }, x2: defer }))
+  refused(script(['--close', id, '--status', statusFile, '--test-cmd', 'true']), /Fixed x1 is a fix-check finding.*defer it/s)
+  writeFileSync(statusFile, JSON.stringify({ x1: defer, x2: defer }))
   allowed(script(['--close', id, '--status', statusFile, '--test-cmd', 'true']))
+  const close = lines(LOG).at(-1)
+  assert.equal(close.type, 'close')
+  assert.ok(close.tierReasons.some((t) => /^deferred.*x1/.test(t)), JSON.stringify(close.tierReasons))
 })
 
 test('26 when a fix commit lands after the context commit, the prompt and record name the context commit and its files, not HEAD\'s', () => {
