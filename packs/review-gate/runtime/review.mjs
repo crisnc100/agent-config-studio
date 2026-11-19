@@ -3210,7 +3210,7 @@ async function closeReview(id) {
   for (const status of Object.values(statuses)) if (status?.status === 'fixed' && !Object.hasOwn(status, 'response')) status.response = 'real'
   // The close answers for every file changed since the coverage base (for a slice, the files it recorded plus whatever its
   // paths match now), and counts as read only what its own review's and fix check's manifests read at the current triple.
-  const paths = sliceOf(review), base = coverBase(review, head), changes = changesBetween(base, head)
+  const paths = sliceOf(review), base = recordBase(review, head), changes = changesBetween(base, head)
   const inSlice = paths && new Set([...sliceFiles(review), ...filesBetween(base, head, paths)])
   const scope = inSlice ? changes.filter(([p]) => inSlice.has(p)) : changes
   const chain = [review, ...(check ? [check] : [])]
@@ -3780,7 +3780,7 @@ async function fixCheck(id) {
   // The coverage block, the only part of the prompt its manifest records: the whole change from the coverage base of
   // every file in the review's scope whose current triple the review's code manifest did not read, and of every file a
   // finding it is asked about cites. The fix diff after it only shows what moved, and grants nothing.
-  const base = coverBase(original, head)
+  const base = recordBase(original, head)
   const targets = fixTargets(original), asked = targets.map((f) => f.id)
   const inSlice = SLICE && new Set([...sliceFiles(original), ...filesBetween(base, head, SLICE)])
   const readBefore = new Set((original.manifest?.read || []).map((t) => JSON.stringify(t)))
@@ -4177,6 +4177,8 @@ function coverBase(review, tip) {
   const mb = sh('git', ['merge-base', tip, def], { allowFailure: true })
   return fullObjectId(mb) && mb !== baseSha && isAncestor(baseSha, mb) ? mb : baseSha
 }
+// The coverage base for a record: coverBase, or for a record logged before baseSha, its base ref's merge base now.
+const recordBase = (record, tip) => fullObjectId(record.baseSha) ? coverBase(record, tip) : reviewBase(record.base || BASE, tip)
 const buildsOnlySince = (closeHead, tip) => closeHead === tip || commitsIn([`${closeHead}..${tip}`])
   .every((commit) => commitPaths(commit).every((path) => path.startsWith('builds/')))
 // ── coverage: only what reviewers were shown ────────────────────────────────
@@ -4213,14 +4215,17 @@ function changesBetween(base, tip) {
 }
 // Sorts changes against the evidence: covered (a code manifest read the exact triple), unreadable (a code manifest named it
 // unread, at the same two states, for a reason no slice fixes), exempt (coverageExempt: listed, never checked) or unseen.
-// secMissing: covered files the security pass owes whose triple no security manifest read.
+// secMissing: covered or exempt files the security pass owes whose triple no security manifest read (coverageExempt never
+// exempts a file from the security pass, so an agent cannot exempt the code it changed).
 function judge(changes, evidence) {
   const out = { covered: [], unreadable: [], exempt: [], unseen: [], secMissing: [], failed: evidence.failed }
   const stateAt = (commit, p) => treeStates(commit).get(p) ?? null
   for (const [p, s0, s1] of changes) {
-    if (coverageExempt(p)) { out.exempt.push(p); continue }
     const key = tripleKey(p, s0, s1)
-    if (evidence.read.code.has(key)) {
+    if (coverageExempt(p)) {
+      out.exempt.push(p)
+      if (securityOwed(p) && !evidence.read.security.has(key)) out.secMissing.push(p)
+    } else if (evidence.read.code.has(key)) {
       out.covered.push(p)
       if (securityOwed(p) && !evidence.read.security.has(key)) out.secMissing.push(p)
     } else if (evidence.unread.some(({ m, path }) => path === p && stateAt(m.base, p) === s0 && stateAt(m.head, p) === s1)) out.unreadable.push(p)
