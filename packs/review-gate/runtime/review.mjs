@@ -893,7 +893,7 @@ const INTENT = hasFlag('--dispute') || hasFlag('--waive') || hasFlag('--log-grad
 const PLAN_PATH = option('--plan') ?? process.env.REVIEW_PLAN
 let CONTEXT = ''
 let DIFF_BASE = BASE
-let IN_FIX_CHECK = false
+let CHECKING_FIX = false
 // verify: "second-opinion" sends surviving HIGH/MEDIUM findings to one other pool family.
 const SECOND_OPINION = !EVAL_MODE && String(cfg('REVIEW_VERIFY', 'verify', 'off')).trim().toLowerCase() === 'second-opinion'
 const QUOTE_WINDOW = 5 // a quote must start within ±this many lines of the cited line
@@ -1812,7 +1812,7 @@ function promptNotes(vendor) {
     `If the same defect pattern appears in several places, report it once and list every place in \`instances\` ` +
       `(file, line and quote each, quoted exactly like the main location, which is one of them); otherwise instances is null.`,
   )
-  if (!IN_FIX_CHECK)
+  if (!CHECKING_FIX)
     notes.push(
       `\`preExisting\`: true when the defect exists at the base and this branch neither introduced it nor made it newly ` +
         `reachable; otherwise false. A script checks the claim against the diff: a finding near a line the branch changed counts as the branch's.`,
@@ -1838,7 +1838,7 @@ function reviewPrompt(block, range = `${diffRange(DIFF_BASE)}${sliceSuffix(SLICE
     `bad error handling, data-integrity issues — judged against what the branch was supposed to do` +
     `${INTENT ? `: ${INTENT}` : ' (infer from the diff)'}. Inspect the diff (open files as needed) BEFORE answering. ` +
     `Do NOT comment on product direction, scope, or style preference.\n\n` +
-    `${FOCUS === 'docs' ? docsFocus(IN_FIX_CHECK) : ''}` +
+    `${FOCUS === 'docs' ? docsFocus(CHECKING_FIX) : ''}` +
     `${CONTEXT ? `${CONTEXT}\n` : ''}` +
     `${notes.length ? `${notes.join('\n\n')}\n\n` : ''}` +
     `Diff (git diff ${range}):\n${block}`
@@ -2915,10 +2915,6 @@ function validateDeferral(entries, review, f, status) {
   const later = review.kind === 'fix-check' || review.kind === 'recheck'
   if (!later && !(review.kind === 'grade' && f.criterionId))
     throw new Error(`Finding ${f.id} is from the original ${review.kind === 'grade' ? 'Grade' : 'review'}; only findings a fix check or recheck raised, or a criterion still failing after its recheck, may be deferred`)
-  // The fix check's security pass reads code no pass had read before (the whole change of each file it vouches for); a
-  // finding there outside the fix is the original review's kind, so it follows the original rules.
-  if (review.kind === 'fix-check' && f.source === 'security' && f.inFix !== true)
-    throw new Error(`Finding ${f.id} is a security finding on code no security pass had read before this fix check, outside the fix; like an s… finding it is never deferred: fix it or dispute it`)
   if (Object.keys(status).some((key) => !['status', 'reason', 'fix'].includes(key)))
     throw new Error(`Unknown status field for ${f.id}; reviewer severity cannot be changed`)
   if (typeof status.reason !== 'string' || !status.reason.trim()) throw new Error(`Deferred ${f.id} requires a nonempty reason`)
@@ -2995,7 +2991,7 @@ function validateStatuses(entries, review, statuses) {
 }
 // ── merge tier (report only: nothing merges, comments or labels) ────────────
 // Rules first: HIGH on a riskPaths or always-human file, a deferred HIGH or protected finding (a filed protected LOW
-// only keeps it from LOW), a partial close or --no-tests; LOW when nothing is deferred (filed findings left unfixed count) and no logic or other-kind file changed;
+// only keeps it from LOW), a failed or skipped security pass or --no-tests (the summary adds what no pass read); LOW when nothing is deferred (filed findings left unfixed count) and no logic or other-kind file changed;
 // MEDIUM otherwise. merge.classifier may move a MEDIUM, and only a MEDIUM, to LOW at confidence ≥ merge.threshold.
 const ALWAYS_HUMAN = ['.github/workflows/**', 'package.json']
 const TIER_RANK = { low: 0, medium: 1, high: 2 }
@@ -3053,7 +3049,8 @@ function closeTier({ review, reviews, statuses, files, judged, noTests, head }) 
   const high = []
   if (!diff) high.push('the diff could not be read, so its paths are unchecked')
   if (diff) high.push(...pathReasons(diff))
-  high.push(...readReasons(judged))
+  // Only the chain's failed or skipped passes: what no pass read is judged once at the tip, over every manifest.
+  high.push(...readReasons({ failed: judged.failed }))
   high.push(...deferredReasons(deferred).high)
   // A known exploit the branch did not introduce never blocks the close, but no agent merges past it.
   const preProtected = findings.filter((f) => isPreExisting(f) && f.protected === true && statuses[f.id]?.status !== 'fixed')
@@ -3063,7 +3060,7 @@ function closeTier({ review, reviews, statuses, files, judged, noTests, head }) 
   if (high.length) return { tier: 'high', reasons: high, stats, facts }
   const { kinds, logicLines } = stats
   if (!kinds.logic && !kinds.other && !deferred.length)
-    return { tier: 'low', stats, facts, reasons: [`no logic or other files changed (docs ${kinds.docs}, tests ${kinds.tests}, static ${kinds.static})`, 'nothing deferred', 'complete close, tests passed'] }
+    return { tier: 'low', stats, facts, reasons: [`no logic or other files changed (docs ${kinds.docs}, tests ${kinds.tests}, static ${kinds.static})`, 'nothing deferred', 'tests passed'] }
   const medium = []
   if (kinds.logic) medium.push(`logic changed: ${logicLines} line(s) in ${kinds.logic} file(s)`)
   if (kinds.other) medium.push(`${kinds.other} other file(s) changed (config, lockfiles or unknown kinds)`)
@@ -3078,7 +3075,7 @@ async function tierClassifier(command, { stats, facts }, review) {
     state: {
       task: 'Decide the merge tier of a reviewed and closed change. Rules already ruled out HIGH; answer whether it is LOW or stays MEDIUM.',
       rules: {
-        high: 'Any changed file on riskPaths or always-human paths, any deferred HIGH or protected finding, a partial close, or tests that did not run. Already excluded here.',
+        high: 'Any changed file on riskPaths or always-human paths, any deferred HIGH or protected finding, a file no reviewer could read, a security pass that failed, was skipped or did not read a file it owed, or tests that did not run. Already excluded here.',
         low: 'Nothing deferred and no logic changed: docs, tests and static files only. A human review adds little.',
         medium: 'Anything else: logic or config changed, or findings were deferred. A human should look before merging.',
       },
@@ -3230,25 +3227,30 @@ async function closeReview(id) {
     ...(carried && { carried }), ...(carriedAlso.length && { carriedAlso }), ...tier })
   console.log(`✓ Review ${id} closed (${unseen.length ? 'partial' : 'complete'}) at ${head}${paths ? ` for paths ${paths.join(', ')}` : ''}` +
     (carried ? `, carried from the ${carried.kind} head ${carried.from} (identical tree ${carried.tree})` : ''))
-  if (unseen.length) {
+  // A Grade reads no diff: the tip review covers its files, so its close names no slice.
+  if (unseen.length && !['grade', 'recheck'].includes(review.kind)) {
     const old = chain.filter(predatesManifests).map((r) => r.id)
     console.log(`Unseen: ${unseen.join(', ')} — no pass of this review read ${unseen.length === 1 ? 'its' : 'their'} current change` +
       `${old.length ? ` (${old.join(', ')} predates prompt manifests)` : ''}. Review exactly ${unseen.length === 1 ? 'that file' : 'those files'} at the tip ` +
       `(REVIEW_PATHS=${unseen.join(',')}) and close that slice.`)
   }
 }
-// The fixed rule: a blocking or protected finding of the review (or of its Grade) marked fixed needs a reader after the fix,
-// the review's one fix check. It must have run, been asked about the finding (and, for a security finding, its security
-// pass must have run when one was owed), and read every path the finding cites, in the manifest of the matching role.
-// A finding with no resolvable path needs only the first two. A Grade's findings are carried to the tip review instead,
-// and its criteria are judged by the recheck; the fix check's own findings have no later reader, so their fixes land
-// after it and are unseen until a slice reads them.
+// The fixed rule: a blocking or protected finding of the review marked fixed needs a reader after the fix, the review's
+// one fix check. It must have run, been asked about the finding (and, for a security finding, its security pass must
+// have run when one was owed), and read every path the finding cites that changed since the coverage base: a path the
+// security pass owes in its security manifest, any other in its code manifest. A finding with no resolvable path, or
+// whose paths are all at their base state (the fix landed elsewhere, or restored them), needs only the first two.
+// A Grade's findings are carried to the tip review instead, and its criteria are judged by the recheck. The fix check's
+// own findings have no later reader: a blocking or protected one is deferred and its fix sliced at the tip.
 function checkFixed(review, r, check, statuses) {
-  if (r.kind === 'fix-check') return
   for (const f of r.findingDetails) {
-    if (statuses[f.id]?.status !== 'fixed' || f.criterionId || !(blocking(f) || f.protected === true)) continue
+    if (statuses[f.id]?.status !== 'fixed' || f.criterionId) continue
     if (r.kind === 'grade' || r.kind === 'recheck')
-      throw new Error(`Fixed ${f.id} is a Grade finding: it is carried to the tip review (status "carried"), never fixed at the Grade's close`)
+      throw new Error(`Fixed ${f.id} is a Grade finding: it is carried to the tip review (status "carried"), never fixed at the Grade's close; a LOW one needs no status`)
+    if (!(blocking(f) || f.protected === true)) continue
+    if (r.kind === 'fix-check')
+      throw new Error(`Fixed ${f.id} is a fix-check finding, and no later pass reads its fix: defer it at close, then review the fix commit's files ` +
+        'as one slice at the tip (REVIEW_PATHS=<those files>) and close that slice (code-review rule 3)')
     if (!check) throw new Error(`Fixed ${f.id} needs a fix check to read it after the fix: run --fix-check ${review.id}, or reject it with a REFUTED dispute or an operator waiver`)
     if (f.source === 'security' && ['failed', 'skipped', 'not-asked'].includes(check.security?.status))
       throw new Error(`Fixed ${f.id} is a security finding, and the fix check's security pass did not run (${check.security.status}); reject it with a REFUTED dispute or an operator waiver`)
@@ -3256,12 +3258,19 @@ function checkFixed(review, r, check, statuses) {
       throw new Error(`Fixed ${f.id}: the fix check ${check.id} was not asked about it; reject it with a REFUTED dispute or an operator waiver`)
     const paths = findingPaths(r, f)
     if (!paths.length) continue
-    const m = f.source === 'security' && check.security?.status === 'ran' && check.security.manifest ? check.security.manifest : check.manifest
-    const read = new Set((m?.read || []).map(([p]) => p))
-    const missing = paths.filter((p) => !read.has(p))
+    const code = check.manifest
+    if (!code) throw new Error(`Fixed ${f.id}: the fix check ${check.id} predates prompt manifests, so it shows no file it read; reject it with a REFUTED dispute or an operator waiver`)
+    const before = treeStates(code.base), after = treeStates(code.head)
+    const missing = []
+    for (const p of paths.filter((p) => (before.get(p) ?? null) !== (after.get(p) ?? null))) {
+      const m = f.source === 'security' && securityOwed(p) ? (check.security?.status === 'ran' ? check.security.manifest : null) : code
+      if ((m?.read || []).some(([q]) => q === p)) continue
+      const why = (m?.unread || []).find(([q]) => q === p)?.[1]
+      missing.push(`${p}${why ? ` (${why})` : m === code ? '' : ' (no security manifest)'}`)
+    }
     if (missing.length)
-      throw new Error(`Fixed ${f.id}: the fix check did not read ${missing.join(', ')}${m ? '' : ' (it predates prompt manifests)'}; only a file whose change it read can show the fix. ` +
-        'Reject it with a REFUTED dispute or an operator waiver')
+      throw new Error(`Fixed ${f.id}: the fix check did not read ${missing.join(', ')}; only a file whose change it read can show the fix, and a file too big ` +
+        'for its prompt stays unread. Dispute it (reject it with a REFUTED dispute) or have the operator waive it')
   }
 }
 // The exact paths a finding cites, as its quotes were checked: its main place and every instance. None for an unlocated,
@@ -3799,7 +3808,7 @@ async function fixCheck(id) {
   const entries = readLog()
   const original = loggedReview(entries, id)
   if (original.kind === 'fix-check' || original.kind === 'recheck') throw new Error('No third model pass; fix checks target the original review')
-  IN_FIX_CHECK = true
+  CHECKING_FIX = true
   if (entries.some((e) => e.type === 'review' && e.kind === 'fix-check' && e.review === id))
     throw new Error('One fix check per review; unresolved findings go to the operator, no third model pass')
   const head = headNow()
@@ -5013,8 +5022,9 @@ function startWatch(kind) {
   refuseLinkedReviews()
   CONTEXT = reviewContext(branch)
   // The branch's open findings reach both reviewers as checks to make; the phase ones are recorded, so a Grade's close
-  // can mark them carried to this review.
-  const open = EVAL_MODE ? { text: '', ids: [] } : openFindingsNow(branch)
+  // can mark them carried to this review. Not on a --code-only run: phase reviews are never closed, so every later
+  // phase review would be handed the same findings again.
+  const open = EVAL_MODE || hasFlag('--code-only') ? { text: '', ids: [] } : openFindingsNow(branch)
   CONTEXT += open.text
   if (!sections.files.length) {
     console.log(`Nothing to review — no diff against ${BASE}.`)
