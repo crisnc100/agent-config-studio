@@ -263,9 +263,12 @@ test('a capped file is unseen: the push refuses naming it, and a slice of it at 
 
 test('an oversize file is unreadable: the push goes through and the tier is HIGH', () => {
   const pad = (n) => Array.from({ length: n }, (_, i) => `export const p${i} = ${i}`).join('\n') + '\n'
-  commit({ 'src/huge.js': pad(200) })
-  const r = review({ REVIEW_TEST_DIFF_CAP: '1500' })
+  // Over the production cap on its own (about 150,000 characters of section), so no slice can ever read it.
+  commit({ 'src/huge.js': pad(6000) })
+  const r = review()
+  assert.equal(r.manifest.cap, 120000)
   assert.ok(r.manifest.unread.some(([p, why]) => p === 'src/huge.js' && why === 'oversize'))
+  assert.ok(!r.manifest.read.some(([p]) => p === 'src/huge.js'))
   closed(r.id, {})
   const tier = tierJson()
   assert.equal(tier.tier, 'high')

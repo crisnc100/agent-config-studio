@@ -480,7 +480,8 @@ function propertyRun(seed) {
   // What no pass read is unseen; slices of exactly those files at the tip read them, until nothing is left.
   for (let round = 0; close.unseen.length; round++) {
     assert.ok(round < 4, `seed ${seed}: still unseen after ${round} slice rounds: ${close.unseen.join(', ')}`)
-    const sliceId = findingsJson(pass([], { REVIEW_PATHS: close.unseen.join(',') })).reviewId
+    // At the production cap: a file oversize only under the lowered cap is unseen, and a slice must read it.
+    const sliceId = findingsJson(pass([], { REVIEW_PATHS: close.unseen.join(','), REVIEW_TEST_DIFF_CAP: '' })).reviewId
     const slice = records().find((e) => e.id === sliceId)
     check(slice.manifest, 'code')
     manifests.push(slice.manifest)
