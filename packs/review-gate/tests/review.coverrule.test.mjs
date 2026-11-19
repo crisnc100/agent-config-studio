@@ -346,3 +346,45 @@ test('the fix check reads every file changed since the review in full from the b
   assert.ok(prompt.includes('-export const two = 1\n+export const two = 3'), 'the coverage block diffs two.js from the base')
   assert.ok(prompt.includes('-export const two = 2\n+export const two = 3'), 'the fix diff shows what moved since the review')
 })
+
+// ── Grade findings: carried to the tip review ───────────────────────────────
+function grade(findings) {
+  const path = join(ROOT, 'verdict.json')
+  writeFileSync(path, JSON.stringify({ family: 'opus', model: 'claude-stub-opus', criteria: [{ id: 'c', criterion: 'works', verdict: 'PASS', evidence: 'tests pass' }], findings }))
+  const r = script(['--log-grade', path])
+  allowed(r)
+  return records().at(-1)
+}
+const GRADE_FINDING = { issue: 'no check on two', evidence: 'two accepts anything', likelihood: 4, impact: 6, protected: true, trigger: 'calling two' }
+
+test('x6 a Grade finding is carried, never fixed: refused until a tip review lists it among its open findings, which reach both reviewers', () => {
+  homeConfig({ security: { run: 'always' } })
+  const g = grade([GRADE_FINDING])
+  assert.equal(g.findingDetails[0].id, 'f1')
+  refused(close(g.id, { f1: fixed }), /Fixed f1 is a Grade finding: it is carried to the tip review/)
+  refused(close(g.id, { f1: { status: 'carried' } }), /Carried f1 needs a review after the Grade that lists it among its open findings/)
+  const open = script(['--open-findings'])
+  allowed(open)
+  assert.match(open.stdout, new RegExp(`no check on two \\(Grade ${g.id}, f1\\)`))
+  rmSync(CALLS, { recursive: true, force: true }); mkdirSync(CALLS)
+  const r = review()
+  assert.deepEqual(r.openFindings, [{ record: g.id, id: 'f1' }])
+  for (const kind of ['code', 'security']) assert.ok(calls().find((c) => c.kind === kind).prompt.includes('no check on two'), `the ${kind} prompt lists it`)
+  const c = close(g.id, { f1: { status: 'carried' } })
+  allowed(c)
+  assert.equal(c.record.statuses.f1.status, 'carried')
+  // Once its Grade is closed, a finding is no longer open.
+  assert.doesNotMatch(script(['--open-findings']).stdout, /no check on two/)
+})
+
+test('x6 a closed review\'s findings are not open; an unclosed phase review\'s blocking findings are, and a filed unprotected one is not', () => {
+  const low = scored({ issue: 'tiny nit', file: 'src/two.js', line: '1', quote: 'export const two = 2', likelihood: 1, impact: 2 })
+  const phase = review({ STUB_FINDINGS: JSON.stringify({ findings: [ONE, low] }) })
+  const open = script(['--open-findings']).stdout
+  assert.match(open, new RegExp(`one is wrong \\(review ${phase.id}, f1\\)`))
+  assert.doesNotMatch(open, /tiny nit/)
+  commit({ 'src/one.js': 'export const one = 3\n' })
+  fixCheck(phase.id)
+  closed(phase.id, { f1: fixed })
+  assert.match(script(['--open-findings']).stdout, /No open findings on feat/)
+})
