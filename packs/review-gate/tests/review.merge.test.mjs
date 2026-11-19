@@ -66,6 +66,7 @@ for (const name of ['codex', 'claude', 'grok']) stub(name, modelBody)
 
 // The fake review script: prints FAKE_TIER over a covered LOW at HEAD; { "covered": false } prints the uncovered shape.
 const FAKE_REVIEW = `import { execFileSync } from 'node:child_process'
+if (process.argv[2] === '--supports') process.exit(process.argv[3] === '--open-findings' ? 0 : 1)
 if (!process.argv.includes('--tier-json')) { console.error('fake review: --tier-json only'); process.exit(9) }
 import { accessSync, constants } from 'node:fs'
 const gitBin = process.env.PATH.split(':').filter((d) => d.startsWith('/')).map((d) => d + '/git').find((p) => { try { accessSync(p, constants.X_OK); return true } catch { return false } })
@@ -727,4 +728,14 @@ test('B20 auto-merge still set after --disable-auto succeeded is refused too', (
   assert.equal(r.status, 2, r.out)
   assert.match(r.stdout, /^refused: auto-merge may still be enabled on PR 41; disable it in GitHub/)
   assert.equal(calls().filter((a) => keyOf(a) === 'graphql pr').length, 2, 're-read after disabling')
+})
+
+test('B19 a repo scripts/review.mjs too old for --open-findings is skipped for the shared runtime, as the skills skip it', () => {
+  gh()
+  // The same fake, minus its --supports answer: a copy from before the manifest rule, which still prints LOW and merges.
+  writeFileSync(join(REPO, 'scripts/review.mjs'), FAKE_REVIEW.replace(/^if \(process\.argv\[2\] === '--supports'\).*\n/m, ''))
+  const r = fake()
+  assert.match(r.stderr, /scripts\/review\.mjs does not support --open-findings; using the shared runtime/)
+  assert.deepEqual(writes(), [], 'the shared runtime finds no close covering the tip, so nothing merges')
+  assert.doesNotMatch(r.stdout, /^merged: /)
 })
