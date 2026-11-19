@@ -1,27 +1,24 @@
-# Coverage manifest, PR 1: record manifests
+# Coverage manifest, PR 2: the switch
 
-Design: /Users/cortega/Documents/Projects/personal/skills-work/builds/coverage-manifest/design.md (sections 1, 3.3 and 6).
+Design: /Users/cortega/Documents/Projects/personal/skills-work/builds/coverage-manifest/design.md (sections 2, 3.1, 4, 5 and 6), with the ten binding decisions in pr2-decisions.md beside it.
 
-## Two PRs
+## One PR
 
-Two PRs, and this is the first. PR 1 only adds: every reviewer diff is built from per-file sections, and each code and security pass records which sections it inlined. The old coverage inference still decides every close, tier and push, so main keeps working on its own after PR 1 merges. PR 2 switches the close, the summary and the push gate to the manifests and deletes the inference; it cannot be split further, because the new rule and the old inference contradict each other. Keeping PR 1 apart lands the risky builder alone, with its property test, and lets real runs show manifest sizes before the switch.
+This is the second of two PRs, and it ships as one. The new rule and the old inference contradict each other, and half-deleted merge logic would leave main unsafe, so it cannot be split further. PR 1 (merged) records the manifests.
 
-## PR 1 scope
+## Scope
 
-- `buildSections(base, head, scope, cap)`: the change list from `git diff --raw -z --no-renames --no-abbrev`, binaries from `--numstat -z`, gitlinks by mode 160000, and one fixed-flag `git diff` per remaining path. Both states of every path are checked against `ls-tree`. Sections are packed whole, in priority order (riskPaths, logic, other, tests, docs, static, coverage-exempt and builds/), and a section over the cap on its own is `oversize`, one that no longer fits is `capped`.
-- Every reviewer prompt is built from those sections, verbatim, followed by the list of what it was not shown: the review's code and security passes, the `--since-close` delta and its whole-slice security pass, the fix check's code pass and its security pass, `--security-only`, disputes, the second opinion and (through the review path) the eval child. `clip()` is gone.
-- Records: `manifest` (role code) on every review and fix check; `security.manifest` only when `security.status` is `ran`. A fix check also records `asked`, the finding ids its prompt listed.
-- A code answer with no findings array throws (single reviewer, every team lens, fix check): no record, no manifest.
-- `--manifest <id>` prints a review's or fix check's manifests.
-- `REVIEW_TEST_DIFF_CAP`: tests only, and it can only lower the cap.
-- The old `truncated` list and `security.saw` are now derived from the manifest (`legacyCut`): what the cap left out, plus binaries other than opaque assets and deletions. Submodules, opaque assets and binary deletions stay as the old inference counted them. `truncatedFiles`, `binaryFiles`, `fileSection` and `cappedFiles` are removed, since nothing parses diff text any more.
-
-Out of scope (PR 2): the coverage rule, the fix check's coverage block, the widened findings note, the fixed rule, `carried`, `--open-findings`, every deletion in design 3.1, retiring `fixCheck`, the skill text.
-
-## Tests
-
-New `packs/review-gate/tests/review.manifest.test.mjs`, failing on main before the code: the manifest fields per pass (review and fix check), failed and timed-out security passes, a missing findings array (single, team, fix check), unread reasons (binary, oversize, capped, submodule), renames and type changes, quoted and non-ASCII names, user git config, an empty-tree base, and the seeded property test (50 seeds; `PROPERTY_SEEDS` or `PROPERTY_SEED` narrows it).
+- Coverage only from manifests. A changed file is covered at the tip only when its exact [path, base state, head state] is in the read list of a code manifest. That manifest must come from the chain (the review and its fix check) of a close the tip descends from, and partial closes count too. Nothing is inferred from diff text, a Grade covers nothing, and a record from before manifests covers nothing; the refusal says it predates prompt manifests.
+- Unreadable files (binary, oversize, submodule, submodule-change, encoding) pass the push and are named in a HIGH tier. A capped file is unseen: a slice at the tip reads it.
+- The tier. A close's stored tier keeps only its chain's failed or skipped passes. "Not read by any reviewer" and "security pass did not read" are computed once at the tip, over every manifest. A failed pass counts only in a chain that supplies coverage.
+- The fix check reads the whole change from the base of two sets of files: those changed since the review that it did not read, within the review's close scope (builds/ and coverage-exempt files left out), and every cited file. Its security pass reads the owed ones.
+- The fixed rule. A blocking or protected fixed finding needs the fix check to have been asked about it, and to have read every cited path that changed since its base. An owed path must be in the security manifest, any other path in the code manifest. A path at its base state needs only the asking. A path left unread (capped or oversize) means dispute or waive.
+- Fix-check findings. A blocking or protected fix-check finding marked fixed is refused: it is deferred and its fix sliced at the tip, security findings outside the fix included (the never-deferred rule is lifted).
+- Grade findings are carried to the tip review. A Grade close prints no slice hint and refuses fixed on any non-criterion finding.
+- Open findings. --open-findings prints them, and the review collects them itself, on runs without --code-only only.
+- fixCheck is retired with a one-time notice, --since-close is removed, and all the legacy inference is deleted (design 3.1).
+- The skill text follows (design 5).
 
 ## Acceptance
 
-Every packs/review-gate and packs/pr test, plus the listed repo suites, pass at the tip. The frozen `review.test.mjs` is untouched.
+The full repository test command passes at the tip. The frozen `review.test.mjs` is untouched. The grep in design 6.2 finds only `REVIEW_FIX_CHECK`, in the retirement notice, and `review.mjs` shows net deletions against main.
