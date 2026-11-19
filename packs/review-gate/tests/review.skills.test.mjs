@@ -514,14 +514,34 @@ test('close once: pr-review runs the context pass before the one fix check and c
     assert.match(shipped(f), /close once, at the tip/i, f)
 })
 
-test('close once: with security.run on, pr-review closes a /build Grade at its own head before the review starts', () => {
-  for (const f of SKILLS('pr-review')) assert.match(shipped(f), /close the Grade at its own head \(`--close <grade-id>`\) before this step/, f)
+test('manifests: a /build tip gets the same single review, and the last Grade\'s criteria close after it marks its findings carried', () => {
+  for (const f of SKILLS('pr-review')) {
+    assert.match(shipped(f), /tip gets the same single review as any branch, run at the tip in this step: it reads the phase reviews' and Grades' open findings itself/, f)
+    assert.match(shipped(f), /except the last Grade's criteria close, which marks its findings `carried`: run it after this review is recorded/, f)
+  }
+  for (const f of SKILLS('build', 'build')) assert.match(shipped(f), /The last phase's Grade gets a criteria close at the tip, after the tip review is recorded: its findings are `carried`/, f)
 })
 
-test('close once: with security.run off, pr-review gives every open record at the tip its own fix check and close; build and code-review say the last phase\'s review closes there too', () => {
-  for (const f of SKILLS('pr-review')) {
-    assert.match(shipped(f), /every open record at the tip/, f)
-    assert.match(shipped(f), /--context-commit/, f)
+test('manifests: the skills state the coverage rule, the fix check\'s reads and the unseen slice', () => {
+  for (const f of SKILLS('code-review')) {
+    const text = shipped(f)
+    for (const phrase of ['in the read list of a prompt manifest', 'a record from before manifests covers nothing', 'What no pass read is unseen: a close lists it (`unseen`) and is partial',
+      'Binary, oversize and submodule changes are named as not read and make the tier HIGH; they never block the push.',
+      "A blocking or protected finding marked fixed needs the review's one fix check",
+      'or whose files are back at their base state (the fix landed in another file, or restored them), needs only the asking',
+      "A cited file too big for the fix check's prompt stays unread: dispute or waive that finding.",
+      'no later pass reads a fix to an `x…` finding, so `fixed` on a blocking or protected one is refused; fix it, defer it, and slice its files at the tip.']) assert.ok(text.includes(phrase), `${f}: ${phrase}`)
   }
+  for (const f of SKILLS('pr-review')) {
+    const text = shipped(f)
+    for (const phrase of ['--open-findings', 'a close lists what no pass read (`unseen`): slice exactly those files at the tip (`REVIEW_PATHS=…`) and close the slice.',
+      'No later pass reads a fix to one, so `fixed` on a blocking or protected `x…` finding is refused: fix it, defer it, and slice its files at the tip.',
+      'It reads the full change from the base of every file changed since the review that the review did not read, and of every file a finding cites; its security pass reads the owed ones'])
+      assert.ok(text.includes(phrase), `${f}: ${phrase}`)
+  }
+})
+
+test('close once: pr-review runs the fix check with the context commit; build and code-review name the last phase\'s review', () => {
+  for (const f of SKILLS('pr-review')) assert.match(shipped(f), /--context-commit/, f)
   for (const f of [...SKILLS('build', 'build'), ...SKILLS('code-review')]) assert.match(shipped(f), /the last phase's review/, f)
 })

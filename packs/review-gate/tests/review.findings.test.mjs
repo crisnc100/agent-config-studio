@@ -350,7 +350,7 @@ test('F1 the retired fixCheck key, in the home config, a repo config or REVIEW_F
 })
 
 // ── 6. skill text (claude and codex twins) ──────────────────────────────────
-test('K1 both code-review skills describe pre-existing, grouped findings, responses and --noise-report, fixCheck, and the one-slice flow for a fix-check HIGH', () => {
+test('K1 both code-review skills describe pre-existing, grouped findings, responses and --noise-report, the fixed rule, and the one-slice flow for a fix-check HIGH', () => {
   const skills = join(dirname(SCRIPT), '..', 'skills')
   for (const harness of ['claude', 'codex']) {
     const text = readFileSync(join(skills, harness, 'code-review', 'SKILL.md'), 'utf8')
@@ -358,7 +358,7 @@ test('K1 both code-review skills describe pre-existing, grouped findings, respon
     for (const phrase of ['**Pre-existing findings.**', '`preExisting: true`', '`inDiff`', 'Pre-existing (not introduced here)', '"Pre-existing HIGH"',
       'makes the merge tier HIGH', '**Grouped findings.**', '`instances`', 'one status covers them all',
       '`"real"` or `"unimportant"`', '`"wrong"` (not a defect) or `"intentional"`', 'required on every rejection', '--noise-report [--since <date>] [--all]',
-      'Config `fixCheck`: `"risk"` (default', '`"always"` (the risk rule, plus any other code fix after the review', 'never looser than "risk"', 'a protected pre-existing finding']) has(phrase)
+      "A blocking or protected finding marked fixed needs the review's one fix check", 'a protected pre-existing finding']) has(phrase)
     assert.match(text, /fix check raises a HIGH in the fix itself \(`inFix: true`\), defer it at close.*one more commit.*`REVIEW_PATHS=<those files>`.*close the slice at the tip; whatever that slice's own fix check finds is deferred\. Hard stop/, harness)
     assert.match(text, /When the rule 3 slice ran, that report comes after the slice's close/, harness)
   }
