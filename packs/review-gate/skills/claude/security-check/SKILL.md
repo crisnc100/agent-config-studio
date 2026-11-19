@@ -43,4 +43,4 @@ The check writes to its own log, `security-log.jsonl` beside the review log, and
 - it never moves `reviews/latest` and never counts toward reviewer rotation;
 - its findings never reach a later review as "already decided".
 
-A PR's security review is the pass that runs inside the PR's own review record. When a branch is made ready for a PR, `node "$SCRIPT" --security-findings` lists this branch's standalone findings that are still open (not filed, and their quoted code is still there), so the PR review can be told to check them.
+A PR's security review is the pass that runs inside the PR's own review record. The PR review reads this branch's standalone findings that are still open (not filed, and their quoted code is still there) and tells both reviewers to check them; `node "$SCRIPT" --open-findings` prints them.

@@ -90,7 +90,7 @@ family, model and non-empty criteria are required. Optional top-level keys: vend
 
 ## Record and close (orchestrator only)
 
-Use the repo copy first, the shared runtime as the fallback. Record the Grade against the same committed HEAD it saw. Commit fixes before the one recheck of failed criteria, then record it. Close once, at the tip: no phase Grade is closed mid-build; the last phase's Grade (and, for risk-area work, the last phase's review) is closed by the pr-review skill's one close, after the context pass and the fix check:
+Use the repo copy first, the shared runtime as the fallback. Record the Grade against the same committed HEAD it saw. Commit fixes before the one recheck of failed criteria, then record it. Close once, at the tip: no phase Grade is closed mid-build, and no phase record grants coverage. The last phase's Grade gets a criteria close at the tip, after the tip review is recorded: its findings are `carried` to that review, which reads them as open findings, and the last phase's review stays findings-only the same way:
 
 ```bash
 REVIEW_SCRIPT=scripts/review.mjs
@@ -101,9 +101,9 @@ node "$REVIEW_SCRIPT" --log-grade builds/<slug>/recheck.json --recheck-of <grade
 
 Skip recheck when there were no failed criteria. It needs no close of its own. A criterion needs a recheck PASS to be fixed; a remaining FAIL is disputed, or deferred as criterion not met with a reason (rule 4), never waived on request. Use the code-review skill's status-file shape and resolution commands. The one close at the tip (`--close <grade-id> --status builds/<slug>/status.json`) runs the whole test suite, even for a clean Grade: configure verifyCmd, pass --test-cmd, or give --no-tests a reason when there are no tests. Its --summary output goes in the PR body.
 
-One review per phase; fixes never get a full re-review. Run --fix-check only when fixes changed tests, test settings, verify scripts or riskPaths. Deal with its findings once (fix, reject or defer each), then a hard stop. At most two review passes per phase; risk-area /build work allows three (Grade, /code-review, fix check). Risk-area work that went through /build gets both a Grade and /code-review. Stop before exceeding the limit.
+One review per phase; fixes never get a full re-review. Run --fix-check once after a fix round: a close accepts a fixed blocking or protected finding only when the fix check was asked about it and read its files. Deal with its findings once (reject or defer each; a fix to one is sliced at the tip, since no later pass reads it), then a hard stop. At most two review passes per phase; risk-area /build work allows three (Grade, /code-review, fix check). Risk-area work that went through /build gets both a Grade and /code-review. Stop before exceeding the limit.
 
-**Hand-off to the PR.** When the last phase's Grade (and any /code-review) is recorded and rechecked, hand the finished tip to the pr-review skill, with nothing closed. It owns the rest, in order: the security pass when `security.run` is on, the fix round, the context pass, the one fix check (which also reviews the context commit), the one close at the tip (the Grade's included), the push, and the PR description. The context pass runs once, at the PR, never per phase or per fix.
+**Hand-off to the PR.** When the last phase's Grade (and any /code-review) is recorded and rechecked, hand the finished tip to the pr-review skill, with nothing closed. It owns the rest, in order: the security pass when `security.run` is on, the fix round, the context pass, the one fix check (which also reviews the context commit), the one close at the tip, then the last Grade's criteria close (findings `carried`), the push, and the PR description. The context pass runs once, at the PR, never per phase or per fix.
 
 ## Hard rules
 

@@ -34,4 +34,4 @@ This skill does not fix anything. A fix the operator asks for is ordinary work o
 
 The check writes to its own log, `security-log.jsonl` beside the review log, and the review gate never reads it. It never closes a review (`--close` and `--fix-check` refuse its id), never covers a push, `--summary` or `--tier-json`, never moves `reviews/latest`, never counts toward reviewer rotation, and its findings never reach a later review as "already decided".
 
-A PR's security review is the pass that runs inside the PR's own review record. `node "$SCRIPT" --security-findings` lists this branch's standalone findings that are still open (not filed, and their quoted code is still there), so the PR review can be told to check them.
+A PR's security review is the pass that runs inside the PR's own review record. The PR review reads this branch's standalone findings that are still open (not filed, and their quoted code is still there) and tells both reviewers to check them; `node "$SCRIPT" --open-findings` prints them.
