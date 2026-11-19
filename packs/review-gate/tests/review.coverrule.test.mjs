@@ -537,3 +537,62 @@ test('a failed security pass counts only in a chain that still supplies coverage
   const tier = tierJson()
   assert.ok(!tier.reasons.some((x) => /security pass failed/.test(x)), JSON.stringify(tier))
 })
+
+// ── PR 2 review fixes ───────────────────────────────────────────────────────
+test('code s3: a Grade chain grants no coverage, also through a fix check run against the Grade', () => {
+  const g = grade([])
+  commit({ 'src/one.js': 'export const one = 3\n' })
+  const check = fixCheck(g.id)
+  assert.ok(check.manifest.read.length, 'the fix check read the branch')
+  const c = close(g.id, {})
+  allowed(c)
+  assert.deepEqual([...c.record.unseen].sort(), ['docs/three.md', 'src/one.js', 'src/two.js'])
+  blocked(push(), /src\/one\.js/)
+})
+
+test('code s4: a slice records only the open findings within its own paths; a Grade finding is carried only by a review shown it', () => {
+  const g = grade([{ ...GRADE_FINDING, file: 'src/two.js' }, { ...GRADE_FINDING, issue: 'no file at all' }])
+  rmSync(CALLS, { recursive: true, force: true }); mkdirSync(CALLS)
+  const docs = review({ REVIEW_PATHS: 'docs/three.md' })
+  assert.equal(Object.hasOwn(docs, 'openFindings'), false, 'a docs slice is not handed a finding in src/two.js, nor one with no file')
+  assert.ok(!calls().find((c) => c.kind === 'code').prompt.includes('no check on two'))
+  refused(close(g.id, { f1: { status: 'carried' }, f2: { status: 'carried' } }), /Carried f1 needs a review after the Grade that lists it/)
+  const two = review({ REVIEW_PATHS: 'src/two.js' })
+  assert.deepEqual(two.openFindings, [{ record: g.id, id: 'f1' }], 'the slice holding src/two.js carries f1 only')
+  refused(close(g.id, { f1: { status: 'carried' }, f2: { status: 'carried' } }), /Carried f2 needs a review after the Grade that lists it/)
+  const all = review()
+  assert.deepEqual(all.openFindings, [{ record: g.id, id: 'f1' }, { record: g.id, id: 'f2' }])
+  allowed(close(g.id, { f1: { status: 'carried' }, f2: { status: 'carried' } }))
+})
+
+test('code f1: a sliced review\'s fix check runs when the fix landed outside the slice, and the fixed finding closes', () => {
+  const r = review({ REVIEW_PATHS: 'src/one.js', STUB_FINDINGS: JSON.stringify({ findings: [ONE] }) })
+  commit({ 'src/two.js': 'export const two = 3 // guards one\n' }, 'fix one through two')
+  rmSync(CALLS, { recursive: true, force: true }); mkdirSync(CALLS)
+  const check = fixCheck(r.id)
+  assert.deepEqual(check.asked, ['f1'])
+  assert.ok(calls().find((c) => c.kind === 'code').prompt.includes('-export const two = 2\n+export const two = 3 // guards one'), 'the fix outside the slice is shown')
+  closed(r.id, { f1: fixed })
+})
+
+test('code s2: a fix check whose manifest was diffed from the review head (PR 1) never satisfies the fixed rule', () => {
+  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [ONE] }) })
+  commit({ 'src/two.js': 'export const two = 3\n' })
+  const head = git('rev-parse', 'HEAD'), state = (rev, p) => `100644 ${git('rev-parse', `${rev}:${p}`)}`
+  appendFileSync(LOG, `${JSON.stringify({ type: 'review', kind: 'fix-check', id: 'fix-pr1-1', review: r.id, ts: new Date().toISOString(), head, branch: 'feat', repo: 'repo',
+    repoId: r.repoId, base: r.head, baseSha: r.head, family: 'sol', model: 'gpt-stub-sol', vendor: 'codex', families: ['sol'], findings: 0, findingDetails: [], asked: ['f1'],
+    manifest: { v: 1, role: 'code', base: r.head, head, read: [['src/two.js', state(r.head, 'src/two.js'), state(head, 'src/two.js')]], unread: [], promptSha256: 'x', cap: 120000 } })}\n`)
+  refused(close(r.id, { f1: fixed }), /Fixed f1: the fix check fix-pr1-1 predates/)
+})
+
+test('code s6: a tree-identical rewrite onto newer main is judged against the new base, so a file main changed and the rewrite restored is unseen', () => {
+  closed(review().id, {})
+  const reviewed = git('rev-parse', 'HEAD')
+  git('checkout', '-q', 'main')
+  commit({ 'src/base-only.js': 'export const one = 2 // here too\nexport const guard = true\n' }, 'main adds a guard')
+  git('push', '-q', '--no-verify', 'origin', 'main'); git('fetch', '-q', 'origin')
+  git('checkout', '-qb', 'rewritten')
+  git('checkout', reviewed, '--', '.'); git('commit', '-qm', 'the reviewed tree on newer main')
+  assert.equal(git('rev-parse', 'HEAD^{tree}'), git('rev-parse', `${reviewed}^{tree}`))
+  blocked(push('HEAD:refs/heads/rewritten'), /src\/base-only\.js/)
+})
