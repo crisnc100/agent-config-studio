@@ -594,5 +594,6 @@ test('code s6: a tree-identical rewrite onto newer main is judged against the ne
   git('checkout', '-qb', 'rewritten')
   git('checkout', reviewed, '--', '.'); git('commit', '-qm', 'the reviewed tree on newer main')
   assert.equal(git('rev-parse', 'HEAD^{tree}'), git('rev-parse', `${reviewed}^{tree}`))
-  blocked(push('HEAD:refs/heads/rewritten'), /src\/base-only\.js/)
+  // The carry finds src/base-only.js unread against the new base, so nothing covers the tip.
+  blocked(push('HEAD:refs/heads/rewritten'), /No complete close covers tip/)
 })
