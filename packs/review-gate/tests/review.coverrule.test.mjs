@@ -600,3 +600,15 @@ test('code s6: a tree-identical rewrite onto newer main is judged against the ne
   // The carry finds src/base-only.js unread against the new base, so nothing covers the tip.
   blocked(push('HEAD:refs/heads/rewritten'), /No complete close covers tip/)
 })
+
+test('code s5: a section oversize only under a lowered cap is unseen, not unreadable: the push refuses it until a slice at the real cap reads it', () => {
+  const pad = (n) => Array.from({ length: n }, (_, i) => `export const p${i} = ${i}`).join('\n') + '\n'
+  commit({ 'src/huge.js': pad(200) })
+  const r = review({ REVIEW_TEST_DIFF_CAP: '1500' })
+  assert.ok(r.manifest.unread.some(([p, why]) => p === 'src/huge.js' && why === 'oversize'))
+  const c = closed(r.id, {}, 'partial')
+  assert.deepEqual(c.unseen, ['src/huge.js'])
+  blocked(push(), /src\/huge\.js/)
+  closed(review({ REVIEW_PATHS: 'src/huge.js' }).id, {})
+  allowed(push())
+})
