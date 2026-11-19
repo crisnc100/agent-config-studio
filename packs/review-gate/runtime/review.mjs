@@ -110,7 +110,7 @@ const option = (flag) => {
 // opinion; the review logs to its own folder, and nothing that reads or writes the review gate's own records runs.
 const EVAL_MODE = !!String(process.env.REVIEW_EVAL ?? '').trim()
 const EVAL_REFUSED = ['--gate', '--close', '--summary', '--tier-json', '--deferred', '--fix-check', '--dispute', '--waive', '--log-grade',
-  '--recheck-of', '--log-outcome', '--slices', '--eval', '--security-worker', '--calibrate', '--noise-report', '--security-only', '--security-findings', '--manifest']
+  '--recheck-of', '--log-outcome', '--slices', '--eval', '--security-worker', '--calibrate', '--noise-report', '--security-only', '--security-findings', '--open-findings', '--manifest']
 // Git variables that move the repo, work tree or index away from the working directory: eval mode refuses them.
 const GIT_LOCATION_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
   'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM']
@@ -122,7 +122,7 @@ const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--pl
 // Every flag this copy reads. Anything else is refused: an older copy that ignored an unknown flag ran a full review in
 // its place, so a skill asking for a mode this copy lacks gets an error, never a different command.
 const KNOWN_FLAGS = [...VALUE_FLAGS, '--all', '--calibrate', '--code-only', '--deferred', '--eval', '--gate', '--log-outcome', '--noise-report',
-  '--rubric', '--security-findings', '--security-only', '--show-config', '--summary', '--tier-json', '--yes', '--cross-family']
+  '--rubric', '--open-findings', '--security-findings', '--security-only', '--show-config', '--summary', '--tier-json', '--yes', '--cross-family']
 // The flags that pick a mode, with every value flag's value left out: a value is data, never a mode. --remote's value
 // (a git remote name, from the pre-push hook) and --supports' (a flag name) may start with --; option() refuses any
 // other value that does, so a --flag after any other value flag is a flag.
@@ -3577,11 +3577,9 @@ async function runSecurityOnly() {
   await Promise.all([process.stdout, process.stderr].map((stream) => new Promise((done) => stream.write('', done))))
   process.exit(0)
 }
-// --security-findings: the open findings of this branch's standalone checks (this repository), as text a PR review is
-// handed as context. They are never "already decided". A finding is fixed only when its quote is gone from its file
-// (followed through renames since the check's head); a file that is gone or can't be read is listed as can't tell.
-function printSecurityFindings() {
-  const branch = sh('git', ['rev-parse', '--abbrev-ref', 'HEAD']), repoId = repoIdentity()
+// The open findings of this branch's standalone checks (this repository). A finding is fixed only when its quote is gone
+// from its file (followed through renames since the check's head); a file that is gone or can't be read is can't tell.
+function standaloneFindings(branch, repoId) {
   const flat = (t) => String(t ?? '').replace(/\s+/g, ' ').trim()
   const seen = new Set(), open = [], unknown = []
   for (const check of readSecurityLog().filter((e) => e.branch === branch && e.repoId === repoId).reverse()) {
@@ -3597,14 +3595,53 @@ function printSecurityFindings() {
       if (flat(text.stdout).includes(flat(f.quote))) open.push({ check: check.id, ...f, now: where.path })
     }
   }
-  if (!open.length && !unknown.length) return console.log(`No open standalone security findings on ${branch}.`)
-  console.log(`Standalone security findings on ${branch} (from /security-check). They are not decided: check whether each still holds.`)
-  const quoted = (f) => `\n  > ${String(f.quote ?? '').split('\n').join('\n  > ')}`
-  for (const f of open) console.log(`- ${scoreText(f)} ${f.now === f.file ? `${f.file}:${f.line}` : `${f.now} (was ${f.file}:${f.line})`} — ${f.issue} (check ${f.check}, ${f.id})${quoted(f)}`)
+  return { open, unknown }
+}
+const quoted = (f) => `\n  > ${String(f.quote ?? '').split('\n').join('\n  > ')}`
+function standaloneLines(branch, { open, unknown }) {
+  if (!open.length && !unknown.length) return []
+  const lines = [`Standalone security findings on ${branch} (from /security-check). They are not decided: check whether each still holds.`]
+  for (const f of open) lines.push(`- ${scoreText(f)} ${f.now === f.file ? `${f.file}:${f.line}` : `${f.now} (was ${f.file}:${f.line})`} — ${f.issue} (check ${f.check}, ${f.id})${quoted(f)}`)
   if (unknown.length) {
-    console.log(`Can't tell whether these are fixed (${unknown.length}): check each by hand.`)
-    for (const f of unknown) console.log(`- ${scoreText(f)} ${f.file}:${f.line} — ${f.issue} (check ${f.check}, ${f.id}; ${f.why})${quoted(f)}`)
+    lines.push(`Can't tell whether these are fixed (${unknown.length}): check each by hand.`)
+    for (const f of unknown) lines.push(`- ${scoreText(f)} ${f.file}:${f.line} — ${f.issue} (check ${f.check}, ${f.id}; ${f.why})${quoted(f)}`)
   }
+  return lines
+}
+// The blocking and protected findings of this branch's phase reviews and Grades (this repository) that no close has
+// judged: each record at an ancestor of HEAD with no close of its own, with its fix check's or recheck's findings. A
+// Grade's criteria are judged by its recheck, so they are not listed.
+function phaseFindings(entries, branch, repoId) {
+  const closed = new Set(entries.filter((e) => e.type === 'close').map((e) => e.review))
+  const head = headNow(), out = []
+  for (const r of entries.filter((e) => e.type === 'review' && ['review', 'grade'].includes(e.kind ?? 'review') && e.branch === branch && e.repoId === repoId)) {
+    if (closed.has(r.id) || !fullObjectId(r.head) || !isAncestor(r.head, head)) continue
+    const children = entries.filter((e) => e.type === 'review' && ['fix-check', 'recheck'].includes(e.kind) && e.review === r.id)
+    for (const record of [r, ...children]) for (const f of record.findingDetails || [])
+      if (!f.criterionId && (blocking(f) || f.protected === true)) out.push({ record, f })
+  }
+  return out
+}
+const RECORD_LABEL = { review: 'review', grade: 'Grade', recheck: 'Grade recheck', 'fix-check': 'fix check' }
+// Every open finding a review is handed, as text, and the phase ones' ids: { text, ids }. Never "already decided".
+function openFindingsNow(branch) {
+  const repoId = repoIdentity(), phase = phaseFindings(readLog(), branch, repoId)
+  const lines = phase.length ? [`Open findings from earlier reviews and Grades on ${branch} that no close has judged. They are not decided: check whether each still holds, and report it again if it does.`,
+    ...phase.map(({ record, f }) => `- ${scoreText(f)} ${f.file || '?'}:${f.line || '?'} — ${f.issue || ''} (${RECORD_LABEL[record.kind ?? 'review']} ${record.id}, ${f.id})${f.quote ? quoted(f) : ''}`)] : []
+  lines.push(...standaloneLines(branch, standaloneFindings(branch, repoId)))
+  return { text: lines.length ? `${lines.join('\n')}\n` : '', ids: phase.map(({ record, f }) => ({ record: record.id, id: f.id })) }
+}
+// --open-findings: what openFindingsNow hands the review, for the operator to read.
+function printOpenFindings() {
+  const branch = sh('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
+  const { text } = openFindingsNow(branch)
+  console.log(text.trimEnd() || `No open findings on ${branch}.`)
+}
+// --security-findings: the standalone part alone.
+function printSecurityFindings() {
+  const branch = sh('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
+  const lines = standaloneLines(branch, standaloneFindings(branch, repoIdentity()))
+  console.log(lines.length ? lines.join('\n') : `No open standalone security findings on ${branch}.`)
 }
 // Where a file a check saw at `from` is at HEAD: { path }, or { why } it can't be told. Renames are followed commit by
 // commit along the first-parent line, so a file both moved and edited is still found.
@@ -4968,12 +5005,17 @@ function startWatch(kind) {
     return runSecurityOnly()
   }
   if (hasFlag('--security-findings')) return printSecurityFindings()
+  if (hasFlag('--open-findings')) return printOpenFindings()
   if (hasFlag('--manifest')) return printManifest(option('--manifest'))
   startWatch('review')
   const { branch, sections, head: reviewedHead, baseSha, files: sliceFileList } = getDiff()
   const diff = diffBlock(sections)
   refuseLinkedReviews()
   CONTEXT = reviewContext(branch)
+  // The branch's open findings reach both reviewers as checks to make; the phase ones are recorded, so a Grade's close
+  // can mark them carried to this review.
+  const open = EVAL_MODE ? { text: '', ids: [] } : openFindingsNow(branch)
+  CONTEXT += open.text
   if (!sections.files.length) {
     console.log(`Nothing to review — no diff against ${BASE}.`)
     process.exit(0)
@@ -5079,6 +5121,7 @@ function startWatch(kind) {
     repoId: repoIdentity(),
     ...(SLICE && { paths: SLICE, files: sliceFileList }),
     ...(FOCUS && { focus: FOCUS }),
+    ...(open.ids.length && { openFindings: open.ids }),
     manifest: manifestOf(sections, 'code'),
     stats: recordStats(stats),
     plan: PLAN_PATH ?? null,
