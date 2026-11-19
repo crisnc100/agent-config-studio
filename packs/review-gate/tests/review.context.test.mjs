@@ -369,9 +369,10 @@ test('16 a close never borrows another review\'s security pass', () => {
   const other = reviewed()
   assert.equal(lines(LOG).find((e) => e.id === other).security.status, 'ran')
   const id = reviewed({}, ['--code-only'])
-  const close = closed(id)
-  assert.equal(close.tier, 'high')
-  assert.ok(close.tierReasons.some((t) => /^security pass did not read: src\/app\.js/.test(t)), JSON.stringify(close.tierReasons))
+  closed(id)
+  const tier = JSON.parse(script(['--tier-json']).stdout)
+  assert.equal(tier.tier, 'high')
+  assert.ok(tier.reasons.some((t) => /^security pass did not read: src\/app\.js/.test(t)), JSON.stringify(tier.reasons))
 })
 
 test('17 a rename needs its source\'s deletion read by the security pass too, not only the destination', () => {
@@ -383,8 +384,9 @@ test('17 a rename needs its source\'s deletion read by the security pass too, no
   assert.ok(lines(LOG).find((e) => e.id === id).security.manifest.read.some(([p]) => p === 'src/new.js'))
   git('rm', '-q', 'src/old.js'); git('commit', '-qm', 'drop old')
   fixCheck(id, {}, ['--code-only'])
-  const close = closed(id)
-  assert.ok(close.tierReasons.some((t) => /^security pass did not read: src\/old\.js/.test(t)), JSON.stringify(close.tierReasons))
+  closed(id)
+  const tier = JSON.parse(script(['--tier-json']).stdout)
+  assert.ok(tier.reasons.some((t) => /^security pass did not read: src\/old\.js/.test(t)), JSON.stringify(tier.reasons))
 })
 
 test('18 a required fix-check security pass that failed puts a reason in the tier, even when nothing else is unseen', () => {
@@ -402,9 +404,10 @@ test('19 under security.run "always" a close with no security pass at all is HIG
   git('checkout', '-q', 'main'); git('checkout', '-qb', 'docs-only')
   commit({ 'README.md': 'base\nOnly docs.\n' })
   homeConfig({ security: { run: 'always' } })
-  const close = closed(reviewed({}, ['--code-only']))
-  assert.equal(close.tier, 'high')
-  assert.ok(close.tierReasons.some((t) => /security/.test(t)), JSON.stringify(close.tierReasons))
+  closed(reviewed({}, ['--code-only']))
+  const tier = JSON.parse(script(['--tier-json']).stdout)
+  assert.equal(tier.tier, 'high')
+  assert.ok(tier.reasons.some((t) => /security/.test(t)), JSON.stringify(tier.reasons))
 })
 
 test('20 a fix check whose security pass ran lists the security family among its reviewers, so it cannot judge its own finding', () => {
@@ -422,9 +425,10 @@ test('21 under "always", a changed docs file no security pass read after the rev
   const id = reviewed()
   commit({ 'README.md': 'base\nThe app exports one, two and three numbers.\n' })
   fixCheck(id, {}, ['--code-only'])
-  const close = closed(id)
-  assert.equal(close.tier, 'high')
-  assert.ok(close.tierReasons.some((t) => /^security pass did not read: README\.md/.test(t)), JSON.stringify(close.tierReasons))
+  closed(id)
+  const tier = JSON.parse(script(['--tier-json']).stdout)
+  assert.equal(tier.tier, 'high')
+  assert.ok(tier.reasons.some((t) => /^security pass did not read: README\.md/.test(t)), JSON.stringify(tier.reasons))
 })
 
 test('22 a fix check whose required security pass failed covers nothing for the push gate', () => {
@@ -521,9 +525,12 @@ test('27 a fix check\'s security pass records only the files it read: one over t
   assert.ok(!check.security.manifest.read.some(([p]) => p === 'src/a.js'), `the pass's base..HEAD diff of a.js is over the cap: ${JSON.stringify(check.security.manifest)}`)
   assert.ok(check.security.manifest.read.some(([p]) => p === 'src/z.js'), 'z.js fit beside it')
   assert.ok(check.manifest.unread.some(([p, why]) => p === 'src/a.js' && why === 'oversize'), 'the code pass could not read it either')
-  const close = closed(id)
-  assert.equal(close.tier, 'high')
-  assert.ok(close.tierReasons.some((t) => /^not read by any reviewer: src\/a\.js/.test(t)), JSON.stringify(close.tierReasons))
+  closed(id)
+  // The tip tier needs the branch's other files covered too; their slice reads them.
+  closed(reviewed({ REVIEW_PATHS: 'README.md,src/app.js' }))
+  const tier = JSON.parse(script(['--tier-json']).stdout)
+  assert.equal(tier.tier, 'high', JSON.stringify(tier))
+  assert.ok(tier.reasons.some((t) => /^not read by any reviewer: src\/a\.js/.test(t)), JSON.stringify(tier.reasons))
 })
 
 test('28 a binary code file is unseen whatever its name: a Git-quoted path or a non-ASCII one; readable files with such names stay seen, and a renamed text file too', () => {

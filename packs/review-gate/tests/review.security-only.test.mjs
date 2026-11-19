@@ -277,7 +277,7 @@ test('11 /pr-review\'s review command hands open standalone findings to both rev
   rmSync(CALLS, { force: true })
   for (const harness of ['claude', 'codex']) {
     const body = readFileSync(join(SKILLS, harness, 'pr-review', 'SKILL.md'), 'utf8')
-    const block = fenced(body, 'OPEN=$(node').replace('--plan <plan.md> ', '').replace(/"<intent:[^"]*>"/, '"add app"')
+    const block = fenced(body, 'node "$SCRIPT" --plan <plan.md>').replace('--plan <plan.md> ', '').replace(/"<intent:[^"]*>"/, '"add app"')
     const r = run('bash', ['-c', `SCRIPT=${JSON.stringify(SCRIPT)}\n${block}`], { REVIEW_REVIEWER: 'sol' })
     allowed(r)
     const json = findingsJson(r)
@@ -298,9 +298,10 @@ test('9 --code-only (the /code-review skill) never starts the security pass; wit
   const review = lines(LOG).find((e) => e.id === id)
   assert.equal(review.security.status, 'not-asked')
   assert.equal(review.security.run, 'required')
-  const tier = closed(id)
+  closed(id)
+  const tier = JSON.parse(script(['--tier-json'], { REVIEW_REVIEWER: 'sol' }).stdout)
   assert.equal(tier.tier, 'high')
-  assert.ok(tier.tierReasons.some((r) => /^security pass did not read: src\/app\.js/.test(r)), JSON.stringify(tier.tierReasons))
+  assert.ok(tier.reasons.some((r) => /^security pass did not read: src\/app\.js/.test(r)), JSON.stringify(tier.reasons))
   // The same run without --code-only (the /pr-review flow) runs the pass in the same record.
   rmSync(CALLS, { force: true })
   const both = script([], { REVIEW_REVIEWER: 'sol' })

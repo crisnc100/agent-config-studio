@@ -325,6 +325,12 @@ const closed = (id, statuses = {}, extra = {}) => {
   allowed(r); assert.equal(r.record?.type, 'close', r.out)
   return r.record
 }
+// The tip's tier, where what no pass read is judged (a close's own tier names only failed or skipped passes).
+const tipTier = (extra = {}) => {
+  const t = JSON.parse(script(['--tier-json'], extra).stdout)
+  assert.equal(t.covered, true, JSON.stringify(t))
+  return { tier: t.tier, tierReasons: t.reasons }
+}
 
 test('6 close refuses an s HIGH without a status, and closes once it has one', () => {
   required()
@@ -409,7 +415,8 @@ test('8 security off or not required at review, then logic in the close diff wit
   const off = reviewed().record
   assert.equal(off.security.status, 'off')
   required()
-  let tier = closed(off.id)
+  closed(off.id)
+  let tier = tipTier()
   assert.equal(tier.tier, 'high')
   assert.ok(tier.tierReasons.some((r) => /^security pass did not read: src\/app\.ts/.test(r)), JSON.stringify(tier.tierReasons))
   // Not required at review (docs only); later commits add logic, unseen until a slice reads it, and a slice with no
@@ -423,7 +430,8 @@ test('8 security off or not required at review, then logic in the close diff wit
   allowed(r)
   assert.deepEqual(r.record.unseen, ['src/late.ts'])
   const slice = reviewed({ REVIEW_PATHS: 'src/late.ts' }, ['--code-only']).record
-  const sliceTier = closed(slice.id)
+  closed(slice.id)
+  const sliceTier = tipTier()
   assert.equal(sliceTier.tier, 'high')
   assert.ok(sliceTier.tierReasons.some((x) => /^security pass did not read: src\/late\.ts/.test(x)), JSON.stringify(sliceTier.tierReasons))
   // With the pass off at close as well, a review without it adds no reason.
@@ -495,7 +503,8 @@ test('fix 3 coverage exemptions from env or config never make the pass not-requi
   commit({ 'src/app.ts': APP })
   const off = reviewed().record
   required()
-  const tier = closed(off.id, {}, { REVIEW_COVERAGE_EXEMPT: 'src/**' })
+  closed(off.id, {}, { REVIEW_COVERAGE_EXEMPT: 'src/**' })
+  const tier = tipTier({ REVIEW_COVERAGE_EXEMPT: 'src/**' })
   assert.ok(tier.tierReasons.some((r) => /^security pass did not read: src\/app\.ts/.test(r)), JSON.stringify(tier.tierReasons))
 })
 
@@ -507,7 +516,8 @@ test('fix 4 logic changed after a pass that ran: HIGH "security pass did not rea
   assert.ok(record.security.manifest.read.some(([path, , state]) => path === 'src/app.ts' && /^100644 [0-9a-f]{40}$/.test(state)), JSON.stringify(record.security.manifest))
   commit({ 'src/app.ts': APP.replace('export const one = 1', 'export const one = 10'), 'docs/notes.md': '# notes\n' })
   allowed(script(['--fix-check', record.id, '--code-only']))
-  const tier = closed(record.id, { f1: { status: 'fixed' } })
+  closed(record.id, { f1: { status: 'fixed' } })
+  const tier = tipTier()
   assert.equal(tier.tier, 'high')
   assert.ok(tier.tierReasons.includes('security pass did not read: src/app.ts'), JSON.stringify(tier.tierReasons))
   assert.ok(!tier.tierReasons.some((r) => r.includes('docs/notes.md')), JSON.stringify(tier.tierReasons))
@@ -516,7 +526,9 @@ test('fix 4 logic changed after a pass that ran: HIGH "security pass did not rea
   commit({ 'src/app.ts': APP })
   const clean = reviewed().record
   commit({ 'docs/notes.md': '# notes\n' })
-  const tier2 = closed(clean.id)
+  closed(clean.id)
+  closed(reviewed({ REVIEW_PATHS: 'docs/notes.md' }).record.id)
+  const tier2 = tipTier()
   assert.ok(!tier2.tierReasons.some((r) => /security pass did not read/.test(r)), JSON.stringify(tier2.tierReasons))
 })
 

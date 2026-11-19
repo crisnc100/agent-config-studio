@@ -78,7 +78,7 @@ const notRead = (files) => new RegExp(`Fixed f1: the fix check did not read ${fi
 const finding = (file, quote, extra = {}) => ({ issue: 'it is wrong', file, line: '1', quote, suggestion: 'fix it',
   likelihood: 5, impact: 5, protected: false, trigger: 'importing it', ...extra })
 const ONE = finding('src/one.js', 'export const one = 2')
-const FIXED = { f1: { status: 'fixed' } }, X_FIXED = { x1: { status: 'fixed' } }
+const FIXED = { f1: { status: 'fixed' } }, X_FIXED = { x1: { status: 'deferred', reason: 'fixed after the fix check; sliced at the tip' } }
 // A review through the stub reviewer with the given findings; returns the logged record and the command output.
 function review(findings = [], extra = {}) {
   const r = script([], { STUB_FINDINGS: JSON.stringify({ findings }), ...extra })
@@ -91,6 +91,12 @@ function checked(original, findings = []) {
   const check = records().at(-1)
   assert.equal(check.kind, 'fix-check')
   return check
+}
+// A file whose section alone is over the 1500-character cap cappedCheck runs the fix check with: oversize.
+const PAD = Array.from({ length: 200 }, (_, i) => `export const p${i} = ${i}`).join('\n') + '\n'
+function cappedCheck(original) {
+  allowed(script(['--fix-check', original.id], { STUB_FINDINGS: JSON.stringify({ findings: [] }), REVIEW_TEST_DIFF_CAP: '1500' }))
+  return records().at(-1)
 }
 // The review, a test change, and the fix check with one finding x1.
 function fixChecked(x1, status = 'verified-quote') {
@@ -147,21 +153,24 @@ test('P4 hole 3: a b/src/one.test.js finding is validated against src/one.test.j
 })
 
 test('P5 hole 1 in the fixed rule: a fix check that read src/one.js has not read the leading-space file a finding cites', () => {
-  git('checkout', '-q', 'main'); commit({ ' src/one.js': 'export const spaced = 1\n' }); git('checkout', '-q', 'feat'); git('merge', '-q', '--no-edit', 'main')
+  // The cited file changed on the branch, so the fixed rule needs it read; the fix makes it too big for the fix check.
+  commit({ ' src/one.js': 'export const spaced = 1\n' })
   const { record } = review([finding(' src/one.js', 'export const spaced = 1')])
   assert.equal(record.resolvedPaths.f1.path, ' src/one.js')
-  commit({ 'src/one.js': 'export const one = 3\n' })
-  const check = checked(record)
+  commit({ 'src/one.js': 'export const one = 3\n', ' src/one.js': PAD })
+  const check = cappedCheck(record)
   assert.ok(check.manifest.read.some(([p]) => p === 'src/one.js'))
-  refused(record.id, FIXED, notRead([' src/one.js']))
+  assert.ok(check.manifest.unread.some(([p, why]) => p === ' src/one.js' && why === 'oversize'), JSON.stringify(check.manifest.unread))
+  refused(record.id, FIXED, /Fixed f1: the fix check did not read  src\/one\.js \(oversize\);/)
 })
 test('P6 hole 2 in the fixed rule: a fix check that read the root src/one.js has not read the real b/src/one.js a finding cites', () => {
-  git('checkout', '-q', 'main'); commit({ 'b/src/one.js': 'export const b = 1\n' }); git('checkout', '-q', 'feat'); git('merge', '-q', '--no-edit', 'main')
+  commit({ 'b/src/one.js': 'export const b = 1\n' })
   const { record } = review([finding('b/src/one.js', 'export const b = 1')])
   assert.equal(record.resolvedPaths.f1.path, 'b/src/one.js')
-  commit({ 'src/one.js': 'export const one = 3\n' })
-  checked(record)
-  refused(record.id, FIXED, notRead(['b/src/one.js']))
+  commit({ 'src/one.js': 'export const one = 3\n', 'b/src/one.js': PAD })
+  const check = cappedCheck(record)
+  assert.ok(check.manifest.read.some(([p]) => p === 'src/one.js'))
+  refused(record.id, FIXED, /Fixed f1: the fix check did not read b\/src\/one\.js \(oversize\);/)
 })
 test('P7 a diff-prefixed finding validated against the root file is fixed once the fix check read the root file; after the fix check its change is unseen', () => {
   const { record } = review([finding('b/src/one.js', 'export const one = 2')])

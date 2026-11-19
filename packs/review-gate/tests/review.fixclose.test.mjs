@@ -89,7 +89,7 @@ function refused(id, statuses, pattern) {
 }
 const X1 = { issue: 'one is wrong', file: 'src/one.js', line: '1', quote: 'export const one = 2', suggestion: 'fix it',
   likelihood: 5, impact: 5, protected: false, trigger: 'importing one' }
-const FIXED = { x1: { status: 'fixed' } }
+const FIXED = { x1: { status: 'deferred', reason: 'fixed after the fix check; sliced at the tip' } }
 const REJECTED = { x1: { status: 'rejected', reason: 'intended', response: 'intentional', evidence: 'src/one.js:1' } }
 // The review, a test change, and the fix check with x1 (on src/one.js by default),
 // whose record holds the path the quote check resolved.

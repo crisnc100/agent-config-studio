@@ -355,11 +355,13 @@ test('D15 a summary reads the close that covers its tip: a later close outside t
   const check = fixChecked(review, [X_HIGH])
   closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'later' } })
   commit({ 'src/one.test.js': 'test one, x1 fixed\n' })
-  // The x1 fix lands after the fix check, so a slice reads it before the review closes again with x1 fixed.
+  // The x1 fix lands after the fix check, so a slice reads it before the review closes again; x1 has no later reader
+  // of its own, so it stays deferred, now with the slice as its reason.
   sliceClosed('src/one.test.js')
-  closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'fixed' } }, 'partial')
+  closed(review.id, { f1: { status: 'fixed' }, x1: { status: 'deferred', reason: 'sliced at the tip' } }, 'partial')
   const fixedThere = script(['--summary']); allowed(fixedThere)
   assert.doesNotMatch(fixedThere.stdout, /Deferred: later/)
+  assert.match(fixedThere.stdout, /Deferred: sliced at the tip/)
   // Back to the tree the first close covered: as that very commit, then as a rewrite with its tree.
   git('reset', '-q', '--hard', check.head)
   listed(script(['--summary'])); listed(gate())
