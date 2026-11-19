@@ -182,18 +182,21 @@ test('4 leak: --fix-check and --close refuse a security check id, from its own l
   assert.equal(calls().filter((c) => c.kind === 'code').length, 0, 'no fix check model ran')
 })
 
-test('5 leak: a security check\'s filed and open findings never reach a later review as already decided', () => {
+test('5 leak: a security check\'s filed findings never reach a later review, and its open ones reach it only as not decided', () => {
   securityOnly({ STUB_SEC_FINDINGS: findings(finding({ issue: 'FILED-SEC-7731', likelihood: 1, impact: 2 }), finding({ issue: 'OPEN-SEC-7732' })) })
   reviewed()
   const code = calls().filter((c) => c.kind === 'code')
   assert.equal(code.length, 1)
   assert.doesNotMatch(code[0].prompt, /Already decided/)
-  assert.doesNotMatch(code[0].prompt, /FILED-SEC-7731|OPEN-SEC-7732/)
-  // Planted in the review log as a review of this branch, it still feeds nothing forward.
+  assert.doesNotMatch(code[0].prompt, /FILED-SEC-7731/)
+  const open = code[0].prompt.indexOf('OPEN-SEC-7732'), header = code[0].prompt.indexOf('They are not decided: check whether each still holds')
+  assert.ok(header !== -1 && open > header, 'the open finding is listed under the not-decided header')
+  // Planted in the review log as a review of this branch, it still feeds nothing forward as decided.
   appendFileSync(LOG, `${JSON.stringify({ ...lines(SEC_LOG).at(-1), type: 'review', kind: 'review' })}\n`)
   reviewed()
   const again = calls().filter((c) => c.kind === 'code').at(-1)
-  assert.doesNotMatch(again.prompt, /FILED-SEC-7731|OPEN-SEC-7732/)
+  assert.doesNotMatch(again.prompt, /Already decided/)
+  assert.doesNotMatch(again.prompt, /FILED-SEC-7731/)
 })
 
 test('6 --security-findings lists this branch\'s open standalone findings, not filed ones, and drops one whose code changed', () => {

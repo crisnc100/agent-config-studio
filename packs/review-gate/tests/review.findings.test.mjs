@@ -205,7 +205,7 @@ const GROUPED = scored({ issue: 'constants set to 20', instances: [
   { file: 'src/two.js', line: '1', quote: 'export const w1 = 20' },
   { file: 'src/one.js', line: '2', quote: 'export const v2 = 20' },
 ] })
-test('I1 two located instances: one finding, both places recorded, one fixed status once the fix check read both files', () => {
+test('I1 two located instances: one finding, both places recorded, one fixed status once the fix check read the changed one; the file the fix restored to the base needs only the asking', () => {
   commit({ 'src/two.js': two() })
   const review = reviewed([GROUPED])
   assert.equal(review.findingDetails.length, 1)
@@ -214,10 +214,11 @@ test('I1 two located instances: one finding, both places recorded, one fixed sta
   assert.equal(f.instancesDropped, undefined)
   assert.deepEqual(review.instancePaths, { f1: ['src/two.js', 'src/one.js'] })
   assert.match(readFileSync(join(REPO, review.dir, 'code-review.md'), 'utf8'), /\n  Also at: src\/two\.js:1, src\/one\.js:2\n/)
-  commit({ 'src/one.js': lines({ 2: 'export const v2 = 22' }), 'src/two.js': two({ 1: 'export const w1 = 1' }) })
+  commit({ 'src/one.js': lines(), 'src/two.js': two({ 1: 'export const w1 = 1' }) })
   allowed(script(['--fix-check', review.id]))
   const check = records().at(-1)
-  assert.deepEqual(check.manifest.read.map(([p]) => p), ['src/one.js', 'src/two.js'])
+  assert.deepEqual(check.manifest.read.map(([p]) => p), ['src/two.js'], 'src/one.js is back at its base state: no section to read')
+  assert.deepEqual(check.asked, ['f1'])
   const record = closed(review.id, { f1: { status: 'fixed' } })
   assert.deepEqual(record.unseen, [])
 })
@@ -257,7 +258,7 @@ test('I3 the summary lists a deferred or pre-existing finding\'s other places', 
 // ── 3. response labels and --noise-report ───────────────────────────────────
 test('R1 a fixed status may say real or unimportant; anything else is refused, and the label is logged on the close', () => {
   const review = reviewed([scored()])
-  commit({ 'src/one.js': lines({ 2: 'export const v2 = 22' }) })
+  commit({ 'src/one.js': lines() })
   allowed(script(['--fix-check', review.id]))
   refused(review.id, { f1: { status: 'fixed', response: 'wrong' } }, 'Fixed f1 response must be real or unimportant')
   refused(review.id, { f1: { status: 'fixed', response: 'nice' } }, 'Fixed f1 response must be real or unimportant')
@@ -370,7 +371,7 @@ test('E1 one close with a pre-existing finding, a grouped finding, a labelled re
   const review = reviewed([GROUPED, OLD, REJ])
   assert.deepEqual(review.findingDetails.map((f) => [f.id, f.severity, f.inDiff ?? null]), [['f1', 'medium', null], ['f2', 'medium', false], ['f3', 'medium', null]])
   refute(review.id, 'f3')
-  commit({ 'src/one.js': lines({ 2: 'export const v2 = 22' }), 'src/two.js': two({ 1: 'export const w1 = 1' }) })
+  commit({ 'src/one.js': lines(), 'src/two.js': two({ 1: 'export const w1 = 1' }) })
   const statuses = { f1: { status: 'fixed', response: 'real' }, f3: { status: 'rejected', reason: 'v3 is meant', evidence: 'src/one.js:3', response: 'wrong' } }
   refused(review.id, statuses, `✖ Fixed f1 needs a fix check to read it after the fix: run --fix-check ${review.id}`)
   allowed(script(['--fix-check', review.id], { STUB_FINDINGS: JSON.stringify({ findings: [scored({ issue: 'w1 = 1 breaks callers', file: 'src/two.js', line: '1', quote: 'export const w1 = 1', likelihood: 8, impact: 8, trigger: 'importing w1' })] }) }))
@@ -440,7 +441,7 @@ test('Q2 the fix check is not asked to repair a pre-existing finding, as with a 
 })
 test('Q4 a new fixed status without a response is logged as real; a legacy close without labels stays unlabeled', () => {
   const review = reviewed([scored()])
-  commit({ 'src/one.js': lines({ 2: 'export const v2 = 22' }) })
+  commit({ 'src/one.js': lines() })
   allowed(script(['--fix-check', review.id]))
   const record = closed(review.id, { f1: { status: 'fixed' } })
   assert.equal(record.statuses.f1.response, 'real')

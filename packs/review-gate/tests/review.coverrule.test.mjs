@@ -168,27 +168,29 @@ test('x4 a filed protected finding marked fixed needs the fix check to have aske
   closed(r.id, { f1: fixed })
 })
 
-test('x5 grouped instances: a fixed status needs every instance path in the fix check\'s read list', () => {
+test('x5 grouped instances: a fixed status needs every changed instance path in the fix check\'s read list; an oversize one is refused, naming dispute or waive', () => {
+  const pad = (n) => Array.from({ length: n }, (_, i) => `export const p${i} = ${i}`).join('\n') + '\n'
+  commit({ 'src/huge.js': 'export const huge = 1\n' })
   const grouped = { ...ONE, instances: [
     { file: 'src/one.js', line: '1', quote: 'export const one = 2' },
     { file: 'src/two.js', line: '1', quote: 'export const two = 2' },
-    { file: 'src/base-only.js', line: '1', quote: 'export const one = 2 // here too' }] }
+    { file: 'src/huge.js', line: '1', quote: 'export const huge = 1' }] }
   const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [grouped] }) })
-  assert.deepEqual(r.instancePaths.f1.sort(), ['src/base-only.js', 'src/one.js', 'src/two.js'])
-  commit({ 'src/one.js': 'export const one = 3\n', 'src/two.js': 'export const two = 3\n' })
-  const check = fixCheck(r.id)
-  assert.ok(!check.manifest.read.some(([p]) => p === 'src/base-only.js'), 'an unchanged file has no section to read')
-  refused(close(r.id, { f1: fixed }), /Fixed f1: the fix check did not read src\/base-only\.js/)
+  assert.deepEqual(r.instancePaths.f1.sort(), ['src/huge.js', 'src/one.js', 'src/two.js'])
+  commit({ 'src/one.js': 'export const one = 3\n', 'src/two.js': 'export const two = 3\n', 'src/huge.js': pad(200) })
+  const check = fixCheck(r.id, { REVIEW_TEST_DIFF_CAP: '1500' })
+  assert.ok(check.manifest.unread.some(([p, why]) => p === 'src/huge.js' && why === 'oversize'), JSON.stringify(check.manifest.unread))
+  refused(close(r.id, { f1: fixed }), /Fixed f1: the fix check did not read src\/huge\.js \(oversize\).*dispute.*waive/s)
   assert.equal(records().filter((e) => e.type === 'close').length, 0)
 })
 
-test('x1 the fix check\'s own findings are not held to the fixed rule: their fix lands after it and is unseen until a slice reads it', () => {
+test('x1 a blocking fix-check finding has no later reader: it is deferred, and its fix is unseen until a slice reads it', () => {
   const r = review()
   commit({ 'src/one.js': 'export const one = 3\n' })
   const x1 = scored({ issue: 'three is wrong', file: 'src/one.js', line: '1', quote: 'export const one = 3' })
   fixCheck(r.id, { STUB_FINDINGS: JSON.stringify({ findings: [x1] }) })
   commit({ 'src/one.js': 'export const one = 4\n' })
-  const c = closed(r.id, { x1: fixed }, 'partial')
+  const c = closed(r.id, { x1: { status: 'deferred', reason: 'fixed after the fix check; sliced at the tip' } }, 'partial')
   assert.deepEqual(c.unseen, ['src/one.js'])
 })
 
