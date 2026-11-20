@@ -1189,6 +1189,8 @@ function selectReviewer(stats, { dryRun = false } = {}) {
       const familyName = pinnedModel.toLowerCase()
       const asFamily = FAMILY_NAME.test(familyName)
       if (asFamily && !vendorOf(id)) unresolved(pinnedModel, source('REVIEW_MODEL', 'model'), loaded)
+      if (!vendorOf(id))
+        stop(`${source('REVIEW_MODEL', 'model')}=${pinnedModel} resolves to "${id}", whose prefix names no known CLI (claude-, gpt-, grok-).`)
       const family = asFamily ? familyName : pool?.find((p) => p.id === id)?.family || pinnedModel
       const known = pool?.find((p) => p.family === family)
       m = { family, vendor: 'codex', id, effort: known?.effort || (asFamily ? flavorEffort(family) : 'high') }

@@ -222,6 +222,21 @@ test('B1 raw model ids a user passes still pass through', () => {
   assert.deepEqual([JSON.parse(pinned.stdout).selected.model, JSON.parse(pinned.stdout).selected.vendor], ['gpt-custom-1', 'codex'])
 })
 
+test('B1 a raw model pin whose id has no known prefix stops naming the setting and the id; it never runs as codex', () => {
+  const config = join(ROOT, 'pin-config.json')
+  writeFileSync(config, J({ model: 'acme-1' }))
+  const cases = [
+    [{ REVIEW_MODEL: 'acme-1' }, /REVIEW_MODEL=acme-1 resolves to "acme-1", whose prefix names no known CLI \(claude-, gpt-, grok-\)/],
+    [{ REVIEW_REVIEWER: 'codex', REVIEW_MODEL: 'acme-1' }, /REVIEW_MODEL=acme-1 resolves to "acme-1", whose prefix names no known CLI/],
+    [{ REVIEW_CONFIG: config }, /config "model"=acme-1 resolves to "acme-1", whose prefix names no known CLI/],
+  ]
+  for (const [extra, pattern] of cases) {
+    for (const args of [[], ['--show-config']]) stopped(run(args, extra), pattern)
+  }
+  noModelRan()
+  assert.equal(logLines().length, 0)
+})
+
 test('B1 a pick naming a role family whose CLI is missing stops with the fix; it never reviews on another family', () => {
   const claudeOnly = machine(['model-id', 'claude'])
   const config = join(ROOT, 'pick-config.json')
