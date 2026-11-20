@@ -941,6 +941,7 @@ a { color: var(--accent); }
 /* ── models view ─────────────────────────────────────────────────────── */
 .scope.models { max-width: 1040px; }
 .item-dot.grok { background: var(--text-dim); }
+.item-dot.agy { background: var(--green); }
 /* A vendor with no colour of its own is a ring, never another vendor's dot. */
 .item-dot.unknown { box-shadow: inset 0 0 0 1px var(--muted); }
 /* The worktree toolkit's files belong to no harness. */

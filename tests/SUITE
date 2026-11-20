@@ -82,6 +82,8 @@ tests/zip.mjs                                         local                     
 tests/export.mjs                                      ci:offline
 tests/skill-usage.mjs                                 local                         # reads the real ~/.claude/projects at start (line 44); a CI runner has none
 tests/models.mjs                                      ci:offline
+# One id-prefix → vendor table: lib/models.js, and identical copies in the review runtime and public/workflow.js.
+tests/vendor-prefixes.mjs                             ci:offline
 tests/models-fable-prev.mjs                           ci:offline
 # Roles and flavor in the resolver, against the pre-roles resolver kept as a fixture.
 tests/roles.mjs                                       ci:offline

@@ -470,16 +470,16 @@ function modelIdJson(args) {
   }
 }
 
-// Which CLI runs a model: its id's prefix, the rule ACS uses (lib/models-catalog.js vendorOf),
-// copied so this script stays standalone. An id with any other prefix has no known CLI.
+// Which CLI runs a model: its id's prefix. A copy of lib/models.js VENDOR_PREFIXES, so this script
+// stays standalone; tests/vendor-prefixes.mjs keeps the copies identical. Any other prefix has no known CLI.
+const VENDOR_PREFIXES = { 'claude-': 'claude', 'gpt-': 'codex', 'grok-': 'grok', 'gemini-': 'agy' }
 function vendorOf(id) {
   const s = String(id ?? '')
-  if (s.startsWith('claude-')) return 'claude'
-  if (s.startsWith('gpt-')) return 'codex'
-  if (s.startsWith('grok-')) return 'grok'
+  for (const [prefix, vendor] of Object.entries(VENDOR_PREFIXES)) if (s.startsWith(prefix)) return vendor
   return null
 }
-const VENDORS = ['codex', 'claude', 'grok']
+const VENDORS = ['codex', 'claude', 'grok', 'agy']
+const KNOWN_PREFIXES = Object.keys(VENDOR_PREFIXES).join(', ')
 // Found on PATH without running it, the way spawnSync will find it.
 const onPath = (command) => (String(command).includes('/') ? isExecutable(command) : which(command) !== null)
 
@@ -526,7 +526,7 @@ function loadPool(role = 'reviewer') {
     const id = ids[i] || modelId(family)
     const vendor = vendorOf(id)
     if (!vendor) {
-      console.warn(`⚠ ${role} role family "${family}" has id "${id}", whose prefix names no known CLI (claude-, gpt-, grok-) — skipped`)
+      console.warn(`⚠ ${role} role family "${family}" has id "${id}", whose prefix names no known CLI (${KNOWN_PREFIXES}) — skipped`)
       unusable.push({ family, vendor, id })
       return
     }
@@ -1190,7 +1190,7 @@ function selectReviewer(stats, { dryRun = false } = {}) {
       const asFamily = FAMILY_NAME.test(familyName)
       if (asFamily && !vendorOf(id)) unresolved(pinnedModel, source('REVIEW_MODEL', 'model'), loaded)
       if (!vendorOf(id))
-        stop(`${source('REVIEW_MODEL', 'model')}=${pinnedModel} resolves to "${id}", whose prefix names no known CLI (claude-, gpt-, grok-).`)
+        stop(`${source('REVIEW_MODEL', 'model')}=${pinnedModel} resolves to "${id}", whose prefix names no known CLI (${KNOWN_PREFIXES}).`)
       const family = asFamily ? familyName : pool?.find((p) => p.id === id)?.family || pinnedModel
       const known = pool?.find((p) => p.family === family)
       m = { family, vendor: 'codex', id, effort: known?.effort || (asFamily ? flavorEffort(family) : 'high') }
@@ -1235,7 +1235,7 @@ function selectReviewer(stats, { dryRun = false } = {}) {
   if (unusablePick) {
     const named = `${source('REVIEW_PICK', 'pick')}=${pick}`
     if (!unusablePick.vendor)
-      stop(`${named} names a reviewer role family whose id "${unusablePick.id}" has no known CLI prefix (claude-, gpt-, grok-).\n` +
+      stop(`${named} names a reviewer role family whose id "${unusablePick.id}" has no known CLI prefix (${KNOWN_PREFIXES}).\n` +
         `  Fix: check \`model-id ${pick}\` and the families in ACS → Models, or pick another family.`)
     requireCli(unusablePick, named)
   }
@@ -3332,7 +3332,7 @@ function securityMembers(codeSel) {
       const id = modelId(pinned)
       m = { family: pinned, vendor: vendorOf(id), id, effort: vendorOf(id) ? flavorEffort(pinned) : 'high' }
     } else if (!m.effort) m = { ...m, effort: flavorEffort(pinned) }
-    if (!m.vendor) return { error: `REVIEW_SECURITY_REVIEWER=${pinned} does not resolve to a model with a known CLI (claude-, gpt-, grok-)` }
+    if (!m.vendor) return { error: `REVIEW_SECURITY_REVIEWER=${pinned} does not resolve to a model with a known CLI (${KNOWN_PREFIXES})` }
     if (!onPath(m.vendor)) return { error: `REVIEW_SECURITY_REVIEWER=${pinned} needs the ${m.vendor} CLI, which is not on PATH` }
     return { members: [m], why: `REVIEW_SECURITY_REVIEWER=${pinned} (pinned)` }
   }

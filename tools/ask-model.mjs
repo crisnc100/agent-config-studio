@@ -81,7 +81,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EFFORTS, loadRegistry, resolveModel } from '../lib/models.js';
+import { EFFORTS, VENDOR_PREFIXES, loadRegistry, resolveModel, vendorOf } from '../lib/models.js';
 import { familyEffort, pauseLine, resolveFlavor, resolveRole } from '../lib/roles.js';
 
 const SELF = fileURLToPath(import.meta.url);
@@ -471,13 +471,6 @@ function sandboxProblem(vendor) {
   return lsm.trim().split(',').includes('landlock') ? null : 'Landlock is not active in this kernel, and grok would run its sandbox unenforced';
 }
 
-/** Which CLI runs an id: its prefix, the rule ACS and the review runtime use. */
-function vendorOf(id) {
-  if (id.startsWith('claude-')) return 'claude';
-  if (id.startsWith('gpt-')) return 'codex';
-  if (id.startsWith('grok-')) return 'grok';
-  return null;
-}
 const VENDORS = ['claude', 'codex', 'grok'];
 const unwired = (vendor) => `ask-model has no ${vendor} CLI wiring (it runs ${VENDORS.join(', ')})`;
 
@@ -1207,7 +1200,7 @@ async function main(argv) {
   const m = resolve(o);
   if (m.error) return usage(m.error);
   const vendor = vendorOf(m.id);
-  if (!vendor) return usage(`${m.family} resolves to "${m.id}", whose prefix names no known CLI (claude-, gpt-, grok-)`);
+  if (!vendor) return usage(`${m.family} resolves to "${m.id}", whose prefix names no known CLI (${Object.keys(VENDOR_PREFIXES).join(', ')})`);
   if (o.xSearch && vendor !== 'grok') return usage(`--x-search uses grok's own X tools, so it needs a family grok runs; ${m.family} resolves to "${m.id}" (${vendor})`);
   // --min-tools is --no-tools for a CLI that can run with none.
   const mode = o.xSearch ? 'x-search' : o.investigate ? 'investigate' : o.noTools || (o.minTools && vendor === 'claude') ? 'no-tools' : o.minTools ? 'min-tools' : 'read-only';
