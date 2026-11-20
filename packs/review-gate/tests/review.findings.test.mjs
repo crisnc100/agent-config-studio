@@ -341,12 +341,13 @@ test('F1 the retired fixCheck key, in the home config, a repo config or REVIEW_F
   const plain = script(['--show-config']); allowed(plain)
   assert.equal(notices(plain), 0)
   assert.doesNotMatch(plain.stdout, /fixCheck/)
+  const configured = (r) => { assert.equal(notices(r), 1); assert.doesNotMatch(r.stdout, /fixCheck/, 'a configured value never shows') }
   homeConfig({ fixCheck: 'always' })
-  assert.equal(notices(script(['--show-config'])), 1)
+  configured(script(['--show-config']))
   homeConfig({})
-  assert.equal(notices(script(['--show-config'], { REVIEW_FIX_CHECK: 'risk' })), 1)
+  configured(script(['--show-config'], { REVIEW_FIX_CHECK: 'risk' }))
   mkdirSync(join(REPO, '.claude'), { recursive: true }); writeFileSync(join(REPO, '.claude/review-config.json'), JSON.stringify({ fixCheck: 'risk' }))
-  assert.equal(notices(script(['--show-config'])), 1)
+  configured(script(['--show-config']))
 })
 
 // ── 6. skill text (claude and codex twins) ──────────────────────────────────

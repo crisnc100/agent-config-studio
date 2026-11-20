@@ -192,6 +192,7 @@ test('x1 a blocking fix-check finding has no later reader: it is deferred, and i
   commit({ 'src/one.js': 'export const one = 4\n' })
   const c = closed(r.id, { x1: { status: 'deferred', reason: 'fixed after the fix check; sliced at the tip' } }, 'partial')
   assert.deepEqual(c.unseen, ['src/one.js'])
+  blocked(push(), /uncovered: src\/one\.js/)
 })
 
 // ── the coverage rule ───────────────────────────────────────────────────────

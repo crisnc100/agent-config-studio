@@ -338,6 +338,7 @@ test('M11 a section that is not valid UTF-8 is never sent lossily: it is unread 
   assert.ok(!promptOf('code').includes('\ufffd'), 'no replacement character reaches the reviewer')
   checkManifest(r.manifest, promptOf('code'))
   assert.deepEqual(r.security.manifest.unread, [['src/latin.js', 'encoding']])
+  assert.ok(!r.security.manifest.read.some(([p]) => p === 'src/latin.js'))
 })
 
 test('M12 a submodule replaced by a file is read only when the file side is inlined; a binary replacement is unread', () => {

@@ -235,6 +235,11 @@ test('P11 a legacy log entry without resolvedPaths fails closed: a fixed finding
   seed({ type: 'review', kind: 'fix-check', id: 'legacy-check', review: 'legacy-review', head: git('rev-parse', 'HEAD'), branch: 'feat', repo: 'repo', family: 'fixture', model: 'fixture-only',
     findingDetails: [] })
   refused('legacy-review', FIXED, /Fixed f1: the fix check legacy-check was not asked about it/)
+  // A populated asked list that leaves f1 out is the same refusal.
+  seed({ type: 'review', kind: 'review', id: 'legacy-review-2', head, base: 'main', baseSha: base, branch: 'feat', repo: 'repo', family: 'fixture', model: 'fixture-only', findingDetails: [legacy] })
+  seed({ type: 'review', kind: 'fix-check', id: 'legacy-check-2', review: 'legacy-review-2', head: git('rev-parse', 'HEAD'), branch: 'feat', repo: 'repo', family: 'fixture', model: 'fixture-only',
+    findingDetails: [], asked: ['f2'] })
+  refused('legacy-review-2', FIXED, /Fixed f1: the fix check legacy-check-2 was not asked about it/)
 })
 test('P12 a rename after the fix check is a delete plus an add: both paths are unseen', () => {
   const { original } = fixChecked(ONE)

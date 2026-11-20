@@ -185,6 +185,9 @@ test('D5 x… findings deferred after the fix check close complete, keep their s
   // A deferred finding is not fixed: a change after the fix check is unseen until a slice reads it.
   commit({ 'src/one.js': 'export const one = 4\n' })
   assert.deepEqual(closed(review.id, statuses, 'partial').unseen, ['src/one.js'])
+  const after = gate()
+  assert.notEqual(after.status, 0, after.out)
+  assert.match(after.out, /uncovered: src\/one\.js/, 'the deferred finding\'s later edit is not credited at the push')
 })
 test('D6 a Grade criterion still failing after its one recheck, and the recheck findings, may be deferred; a criterion that passed may not', () => {
   const grade = graded()

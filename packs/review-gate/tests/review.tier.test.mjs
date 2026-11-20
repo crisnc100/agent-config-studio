@@ -95,6 +95,11 @@ function closed(id, statuses = {}, options = {}) {
 const reviewAndClose = (options = {}, findings = [], statuses = {}) => closed(reviewed(findings, options.extra).id, statuses, options)
 const summary = (extra = {}) => { const r = script(['--summary'], extra); allowed(r); return r }
 const tierLine = (text) => text.split('\n').filter((line) => line.startsWith('Merge tier: '))
+// Every close's own tier set to LOW, so a HIGH can only come from the summary's own whole-diff rules.
+const forgeLowCloses = () => writeFileSync(LOG, readFileSync(LOG, 'utf8').trim().split('\n').map((line) => {
+  const e = JSON.parse(line)
+  return JSON.stringify(e.type === 'close' ? { ...e, tier: 'low', tierReasons: ['forged LOW'], tierBy: 'rules' } : e)
+}).join('\n') + '\n')
 const gate = () => script(['--gate'], {}, `refs/heads/feat ${git('rev-parse', 'HEAD')} refs/heads/feat ${ZERO}\n`)
 const TSX = 'export const A = 1\nexport const B = 2\n'
 const scored = (over = {}) => ({ issue: 'a is wrong', file: 'web/App.tsx', line: '1', quote: 'export const A = 1', suggestion: 'fix a',
@@ -366,6 +371,7 @@ test('f1 the summary judges every file the tip changes against base: a package.j
   commit({ 'package.json': '{"name":"x"}\n', 'docs/more.md': 'more\n' })
   allowed(script(['--fix-check', first.id], { STUB_FINDINGS: JSON.stringify({ findings: [] }) }))
   closed(first.id)
+  forgeLowCloses()
   homeConfig({ merge: { policy: 'standard' } })
   const [line] = tierLine(summary().stdout)
   assert.match(line, /^Merge tier: HIGH \(.*always human: package\.json.*\)\. Policy standard: needs a human$/)
@@ -572,6 +578,7 @@ test('A3 --tier-json for content coverage across two closes matches its line', (
   closed(first.id)
   commit({ 'package.json': '{"name":"x"}\n', 'docs/more.md': 'more\n' })
   closed(reviewed([], { REVIEW_PATHS: 'package.json,docs/more.md' }).id)
+  forgeLowCloses()
   homeConfig({ merge: { policy: 'standard' } })
   const text = summary().stdout
   assert.match(text, /^Content coverage: /m)

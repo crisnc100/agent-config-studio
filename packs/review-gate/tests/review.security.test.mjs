@@ -505,6 +505,7 @@ test('fix 3 coverage exemptions from env or config never make the pass not-requi
   required()
   closed(off.id, {}, { REVIEW_COVERAGE_EXEMPT: 'src/**' })
   const tier = tipTier({ REVIEW_COVERAGE_EXEMPT: 'src/**' })
+  assert.equal(tier.tier, 'high')
   assert.ok(tier.tierReasons.some((r) => /^security pass did not read: src\/app\.ts/.test(r)), JSON.stringify(tier.tierReasons))
 })
 

@@ -191,12 +191,16 @@ test('5 leak: a security check\'s filed findings never reach a later review, and
   assert.doesNotMatch(code[0].prompt, /FILED-SEC-7731/)
   const open = code[0].prompt.indexOf('OPEN-SEC-7732'), header = code[0].prompt.indexOf('They are not decided: check whether each still holds')
   assert.ok(header !== -1 && open > header, 'the open finding is listed under the not-decided header')
-  // Planted in the review log as a review of this branch, it still feeds nothing forward as decided.
-  appendFileSync(LOG, `${JSON.stringify({ ...lines(SEC_LOG).at(-1), type: 'review', kind: 'review' })}\n`)
+  // Planted in the review log as a review of this branch (its findings renamed, so they are told apart from the check's),
+  // it feeds nothing forward: neither planted finding reaches the prompt, and the check's own open finding is listed once.
+  const planted = lines(SEC_LOG).at(-1)
+  appendFileSync(LOG, `${JSON.stringify({ ...planted, type: 'review', kind: 'review', findingDetails: planted.findingDetails.map((f) => ({ ...f, issue: f.issue.replace('-SEC-', '-PLANT-') })) })}\n`)
   reviewed()
-  const again = calls().filter((c) => c.kind === 'code').at(-1)
-  assert.doesNotMatch(again.prompt, /Already decided/)
-  assert.doesNotMatch(again.prompt, /FILED-SEC-7731/)
+  const again = calls().filter((c) => c.kind === 'code').at(-1).prompt
+  assert.doesNotMatch(again, /Already decided/)
+  assert.doesNotMatch(again, /FILED-SEC-7731|PLANT-77/)
+  assert.equal(again.match(/OPEN-SEC-7732/g)?.length, 1, 'the standalone finding once, not again as a phase finding')
+  assert.ok(again.indexOf('OPEN-SEC-7732') > again.indexOf('Standalone security findings on feat (from /security-check). They are not decided'))
 })
 
 test('6 --security-findings lists this branch\'s open standalone findings, not filed ones, and drops one whose code changed', () => {

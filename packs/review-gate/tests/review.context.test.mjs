@@ -192,7 +192,9 @@ test('6 the coordinated flow: code and security in one record, one fix round, on
   assert.match(security[0].prompt, /\+export const two = 22/, 'and so does the security pass')
   const sliceClose = closed(slice)
   assert.equal(sliceClose.status, 'complete')
-  assert.ok(!sliceClose.tierReasons.some((r) => /security pass did not read/.test(r)), JSON.stringify(sliceClose.tierReasons))
+  const tip = JSON.parse(script(['--tier-json']).stdout)
+  assert.equal(tip.covered, true, JSON.stringify(tip))
+  assert.ok(!tip.reasons.some((r) => /security pass did not read/.test(r)), JSON.stringify(tip.reasons))
   // The push passes through the normal gate: no override, no new exception.
   const pushed = gate()
   allowed(pushed)
@@ -386,6 +388,7 @@ test('17 a rename needs its source\'s deletion read by the security pass too, no
   fixCheck(id, {}, ['--code-only'])
   closed(id)
   const tier = JSON.parse(script(['--tier-json']).stdout)
+  assert.equal(tier.tier, 'high', JSON.stringify(tier))
   assert.ok(tier.reasons.some((t) => /^security pass did not read: src\/old\.js/.test(t)), JSON.stringify(tier.reasons))
 })
 
@@ -449,6 +452,7 @@ test('23 a binary diff, of a code file or an image, is never recorded as read, b
   const id = reviewed()
   const record = lines(LOG).find((e) => e.id === id)
   assert.deepEqual(record.manifest.unread, [['img/logo.png', 'binary'], ['src/blob.js', 'binary']])
+  assert.ok(!record.manifest.read.some(([p]) => ['img/logo.png', 'src/blob.js'].includes(p)), JSON.stringify(record.manifest))
   assert.ok(!record.security.manifest.read.some(([p]) => p === 'src/blob.js'), JSON.stringify(record.security.manifest))
   commit({ 'src/blob.js': 'export const x = 2\u0000\n' })
   const check = fixCheck(id, {}, [])
@@ -489,6 +493,8 @@ test('25 a security finding of the fix check, outside the fix diff or in it, is 
   const defer = { status: 'deferred', reason: 'later' }
   writeFileSync(statusFile, JSON.stringify({ x1: { status: 'fixed' }, x2: defer }))
   refused(script(['--close', id, '--status', statusFile, '--test-cmd', 'true']), /Fixed x1 is a fix-check finding.*defer it/s)
+  writeFileSync(statusFile, JSON.stringify({ x1: defer, x2: { status: 'fixed' } }))
+  refused(script(['--close', id, '--status', statusFile, '--test-cmd', 'true']), /Fixed x2 is a fix-check finding.*defer it/s)
   writeFileSync(statusFile, JSON.stringify({ x1: defer, x2: defer }))
   allowed(script(['--close', id, '--status', statusFile, '--test-cmd', 'true']))
   const close = lines(LOG).at(-1)
@@ -545,6 +551,7 @@ test('28 a binary code file is unseen whatever its name: a Git-quoted path or a 
   const record = lines(LOG).find((e) => e.id === id)
   for (const p of ['src/bin"q.js', 'src/bïn.js']) {
     assert.ok(record.manifest.unread.some(([q, why]) => q === p && why === 'binary'), `${p}: ${JSON.stringify(record.manifest.unread)}`)
+    assert.ok(!record.manifest.read.some(([q]) => q === p), `${p} is not also listed as read`)
     assert.ok(!record.security.manifest.read.some(([q]) => q === p), p)
   }
   for (const p of ['src/txt"q.js', 'src/tëxt.js', 'src/moved.js', 'src/old.js'])
@@ -557,5 +564,6 @@ test('29 there is no binary exemption by extension: a stylesheet Git renders as 
   const id = reviewed()
   const record = lines(LOG).find((e) => e.id === id)
   assert.deepEqual(record.manifest.unread, [['img/logo.png', 'binary'], ['src/style.css', 'binary']])
+  assert.ok(!record.manifest.read.some(([p]) => ['src/style.css', 'img/logo.png'].includes(p)))
   assert.ok(!record.security.manifest.read.some(([p]) => ['src/style.css', 'img/logo.png'].includes(p)))
 })
