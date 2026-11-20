@@ -15,7 +15,7 @@ Use for a real feature, script, tool, or change where correctness matters. NOT f
 
 ## Who runs each stage
 
-Families come from the ACS roles (`model-id --role <role>`); the CLI follows the model id's prefix: `claude-…` → `claude`, `gpt-…` → `codex`, `grok-…` → `grok`.
+Families come from the ACS roles (`model-id --role <role>`); the CLI follows the model id's prefix: `claude-…` → `claude`, `gpt-…` → `codex`, `grok-…` → `grok`, `gemini-…` → `agy`.
 
 | Stage | Runner | How |
 |---|---|---|

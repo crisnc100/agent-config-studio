@@ -51,3 +51,4 @@
 - s1: agents/ refuses in all four folders; probe/agents.sh showed a custom agent's hooks fire under the deny list.
 - Test checks from Sol: cliOf literal again, union fixture neither catalog satisfies, exact model-id output, subscriptionOf inherited keys, pause-cli family list.
 - Real agy: ask-model neon from the worktree answered; one-case --eval --family neon caught the bug (56.4s), model unverified on both lines.
+- Docs: the four skills that state the CLI-by-prefix rule now include gemini- → agy (build claude/codex, code-review claude/codex).
