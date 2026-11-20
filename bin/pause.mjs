@@ -18,7 +18,7 @@ import { readSnapshot, snapshotPath } from '../lib/usage/seats.js';
  * account resets, or lasts until you resume when no reading says.
  */
 
-const USAGE = 'usage: acs pause [<claude|codex|grok|family> [--until <time> | --until-resume]]\n       acs resume <claude|codex|grok|family>';
+const USAGE = 'usage: acs pause [<claude|codex|grok|agy|family> [--until <time> | --until-resume]]\n       acs resume <claude|codex|grok|agy|family>';
 const home = homeDir();
 const [cmd, ...argv] = process.argv.slice(2);
 
