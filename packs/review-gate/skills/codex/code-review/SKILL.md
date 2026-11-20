@@ -10,11 +10,9 @@ One pass, read-only reviewer, findings come back to the seat, every HIGH and MED
 
 ## Step 1 — run the shared engine
 
-Commit the work first, including the build folder (it reviews the committed diff). Then run the same `review.mjs` every tool shares — repo copy first, shared runtime as the fallback, and also when the repo copy is too old to support `--code-only` (one line says so):
+Commit the work first, including the build folder (it reviews the committed diff). Then run the same `review.mjs` every tool shares, the installed runtime, never a copy in the checkout, which is the branch's own code and could write false review evidence:
 ```bash
-SCRIPT=scripts/review.mjs
-[ -f "$SCRIPT" ] || SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
-[ "$SCRIPT" = scripts/review.mjs ] && ! { grep -q -- --supports "$SCRIPT" && node "$SCRIPT" --supports --code-only && node "$SCRIPT" --supports --open-findings; } && echo "scripts/review.mjs does not support --code-only and --open-findings; using the shared runtime" >&2 && SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
+SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
 node "$SCRIPT" --code-only "<intent: what the branch delivers, its acceptance criteria, and anything deliberately out of scope>"
 ```
 Context comes from files: the orchestrator's plan via --plan <plan.md> or REVIEW_PLAN, the builder's adjacent log.md if present, and already-decided findings from the review log. Inside a build loop, pass the plan; a missing plan file refuses. The optional intent string supplements those files. Decided stays decided: same-branch, same-repository rejections arrive as "already decided; don't re-raise without new evidence".
@@ -111,6 +109,6 @@ Close runs the whole test suite using verifyCmd from .claude/review-config.json 
 - Builders commit at phase end and never run reviews, grades or other models themselves. The orchestrator handles those checks, pushes and opens the PR with the review summary.
 - Never push to a protected branch. Agents merge only through merge.mjs, which follows the review gate's merge policy (default off: the operator merges). Never gh pr merge, auto-merge or the merge button.
 
-Every PR body must include a section titled exactly **Deferred findings**, using the deferred and filed findings in --summary (or `none` when empty). When chasing a bug, first check `node <review.mjs> --deferred` and merged PR descriptions with `gh pr list --state merged --search "Deferred findings in:body"`. Resolve <review.mjs> repo-first, with the shared runtime fallback above. `--deferred` lists this repo by repoId, newest first; add `--all` for every repo. The trigger is the input or call path named in the issue.
+Every PR body must include a section titled exactly **Deferred findings**, using the deferred and filed findings in --summary (or `none` when empty). When chasing a bug, first check `node <review.mjs> --deferred` and merged PR descriptions with `gh pr list --state merged --search "Deferred findings in:body"`. <review.mjs> is the installed `~/.agent-config-studio/review-gate/review.mjs`. `--deferred` lists this repo by repoId, newest first; add `--all` for every repo. The trigger is the input or call path named in the issue.
 
 Use `node <review.mjs> --rubric` for the current version and score anchors. `~/.agent-config-studio/review-gate/calibration.md` contains the eight reference cases; run `node <review.mjs> --calibrate` (or `--calibrate copy.md`) after rubric changes or when evaluating a new model. Historical log records retain their stored bands and filing decisions.

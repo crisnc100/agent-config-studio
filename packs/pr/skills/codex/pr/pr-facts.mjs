@@ -21,8 +21,9 @@
  * a *.test.* / *.spec.* / *_test.* / test_* name; docs = *.md, *.mdx, *.txt or docs/; static = images, fonts,
  * css; config = json, yaml, toml, lock and dotfiles; code = everything else.
  *
- * Review: the review gate's review.mjs (the repo's scripts/review.mjs, else ~/.agent-config-studio/review-gate/
- * review.mjs). Not there: state "absent". There but HEAD not closed: state "in-progress" with the gate's reason.
+ * Review: the review gate's installed review.mjs (~/.agent-config-studio/review-gate/review.mjs), never a copy in
+ * the checkout, which is the branch's own code and could report a false tier. Not there: state "absent". There
+ * but HEAD not closed: state "in-progress" with the gate's reason.
  * Closed: state "closed", with the --summary text, the --tier-json data and the summary's lines split out, plus each
  * finding (id, severity, score, status, one-line issue) and counts by severity, read from the review log --tier-json names.
  * Each deferred line is also split into its parts (deferredItems), so the description can say it in plain words and
@@ -343,8 +344,7 @@ export function reviewFindings(summary, logPath) {
 }
 
 function review(cwd) {
-  const repoScript = join(cwd, 'scripts', 'review.mjs')
-  const script = existsSync(repoScript) ? repoScript : existsSync(GATE_SCRIPT) ? GATE_SCRIPT : null
+  const script = existsSync(GATE_SCRIPT) ? GATE_SCRIPT : null
   if (!script) return { state: 'absent', note: 'not reviewed (no review gate)' }
   const tier = run(process.execPath, [script, '--tier-json'], cwd)
   let data = null

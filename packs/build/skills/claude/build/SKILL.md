@@ -7,7 +7,7 @@ description: "Build something through the Frame -> Bar -> Judge loop. Runs four 
 
 You (the driver) make three moves and nothing else: **Frame** the outcome, set the **Bar** (how you'll know it's right), and **Judge** the result against that bar. The agents do all the producing and checking in between. If the driver is exploring, planning, coding, or verifying by hand, the loop is mis-run.
 
-The Grade and the close use the review gate's script (the review-gate pack): `scripts/review.mjs` in the repo when present, otherwise `~/.agent-config-studio/review-gate/review.mjs`.
+The Grade and the close use the review gate's installed runtime (the review-gate pack), `~/.agent-config-studio/review-gate/review.mjs`, never a copy in the checkout, which is the branch's own code and could write false review evidence.
 
 ## When to use
 
@@ -101,9 +101,8 @@ EFFORT=<effort>                     # the effort the user named; none named: EFF
 
 The grader swap's setting, read once before the Grade:
 ```bash
-REVIEW_SCRIPT=scripts/review.mjs
-[ -f "$REVIEW_SCRIPT" ] || REVIEW_SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
-# prefer unless this copy supports --cross-family and answers prefer or off: a copy too old for --supports runs a
+REVIEW_SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
+# prefer unless the runtime supports --cross-family and answers prefer or off: a runtime too old for --supports runs a
 # review on an unknown flag, so it is never asked.
 CROSS_FAMILY=prefer
 if grep -q -- --supports "$REVIEW_SCRIPT" 2>/dev/null && node "$REVIEW_SCRIPT" --supports --cross-family 2>/dev/null; then
@@ -170,11 +169,10 @@ family, model and a non-empty criteria array are required. vendor (codex, claude
 `codex review` does NOT accept `-m`, and its positional-prompt parsing is unreliable, so a codex-CLI grade goes through ask-model like any other.
 The verdict prints on stdout; logs go to stderr. (A read-only sandbox can't run a `verify.sh` that writes temp files, which is fine: the deterministic checks already ran; the grade is the independent reasoned review on top.)
 
-**Record and close (orchestrator only).** Use the repo's scripts/review.mjs, otherwise the shared runtime. Save the Grade's JSON to builds/<slug>/grade.json and record it against the same committed HEAD. Commit fixes before the one failed-criterion recheck, then record that JSON. Close once, at the tip: no phase Grade is closed mid-build, and no phase record grants coverage. The last phase's Grade gets a criteria close at the tip, after the tip review is recorded: its findings are `carried` to that review, which reads them as open findings, and the last phase's review stays findings-only the same way:
+**Record and close (orchestrator only).** Use the installed runtime. Save the Grade's JSON to builds/<slug>/grade.json and record it against the same committed HEAD. Commit fixes before the one failed-criterion recheck, then record that JSON. Close once, at the tip: no phase Grade is closed mid-build, and no phase record grants coverage. The last phase's Grade gets a criteria close at the tip, after the tip review is recorded: its findings are `carried` to that review, which reads them as open findings, and the last phase's review stays findings-only the same way:
 
 ```bash
-REVIEW_SCRIPT=scripts/review.mjs
-[ -f "$REVIEW_SCRIPT" ] || REVIEW_SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
+REVIEW_SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
 node "$REVIEW_SCRIPT" --log-grade builds/<slug>/grade.json
 node "$REVIEW_SCRIPT" --log-grade builds/<slug>/recheck.json --recheck-of <grade-id>
 ```
@@ -242,6 +240,6 @@ If any of those is missing, the loop is not done, regardless of how finished the
 10. No confirmation before fixing: every HIGH and MEDIUM goes straight to the fix round, or is disputed with proof, without asking. A finding that is really a product choice gets the safe fix by default and is named in the report so the operator can reverse it. The operator hears once, after the fix round and fix check: what was fixed and what was filed. Fixing the filed items is optional.
 11. Show the numbers: every finding shown to the operator carries its scores, e.g. `LOW 6/100 (likelihood 2/10 × impact 3/10)`, or `unscored`, never just the word. The report, `--summary` and `--deferred` print them that way.
 
-Every PR body must include a section titled exactly **Deferred findings**, using the deferred and filed findings in --summary (or `none` when empty). When chasing a bug, first check `node <review.mjs> --deferred` and merged PR descriptions with `gh pr list --state merged --search "Deferred findings in:body"`. Resolve <review.mjs> repo-first, with the shared runtime fallback. `--deferred` lists this repo by repoId, newest first; add `--all` for every repo. The trigger is the input or call path named in the issue.
+Every PR body must include a section titled exactly **Deferred findings**, using the deferred and filed findings in --summary (or `none` when empty). When chasing a bug, first check `node <review.mjs> --deferred` and merged PR descriptions with `gh pr list --state merged --search "Deferred findings in:body"`. <review.mjs> is the installed `~/.agent-config-studio/review-gate/review.mjs`. `--deferred` lists this repo by repoId, newest first; add `--all` for every repo. The trigger is the input or call path named in the issue.
 
 The script derives severity from scores; scores cannot be changed in triage. Fix HIGH first, then MEDIUM; LOW is filed. Unscored findings block. Use `node <review.mjs> --rubric` and `~/.agent-config-studio/review-gate/calibration.md`, then `node <review.mjs> --calibrate` to check the reference cases. Filed findings (unprotected risk ≤ 10, or protected with likelihood 1) need no close status and may be fixed when the operator picks them; missing or invalid scores never file a finding. Grade criterion FAILs are never filed.
