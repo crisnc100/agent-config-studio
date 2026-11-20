@@ -268,7 +268,7 @@ function guardA() {
     }
     for (const call of childCalls(src)) {
       const cal = calleeLiteral(src, call);
-      if (cal.kind === 'literal' && /^(claude|grok|codex)$/.test(cal.value)) {
+      if (cal.kind === 'literal' && /^(claude|grok|codex|agy)$/.test(cal.value)) {
         hits.push(`${file}:${call.line} ${call.fn}('${cal.value}') — PATH name, not the resolved absolute binary`);
       }
     }
@@ -381,6 +381,12 @@ function guardB() {
       // guard widened to permit a prompt, and it spent the user's subscription
       // on every refresh.
       'lib/usage/codex-limits.js': { fns: new Set(['spawn']), appServerOnly: true },
+      // A Gemini seat's quota, read through agy's print-mode /usage. A harness
+      // binary again, so pinned: argv is exactly ['--version'] or
+      // ['-p','/usage','--output-format','json']. Print mode answers /usage
+      // without a turn only from agy 1.1.11 on; the module refuses an older agy
+      // and any reply that is not the usage command with zero turns.
+      'lib/usage/gemini.js': { fns: new Set(['spawn']), agyUsageOnly: true },
       // The pack installer (acs packs). It runs git, /bin/sh on the push
       // gate's installer, and process.execPath on a script this package ships
       // (install-worktree, the agent guard's installer) — never a name a
@@ -441,6 +447,21 @@ function guardB() {
           hits.push(`${file}:${call.line} argv must be the literal ['agent','stdio'], got ` +
                     `${argv ?? 'nothing parseable'} — a prompt or model flag here would be an ` +
                     `uncontained model turn`);
+        }
+        continue;
+      }
+      if (allowed.agyUsageOnly) {
+        const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
+        if (!/^found\.binary\s*,/.test(text)) {
+          hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 50)}…) — must spawn the detected ` +
+                    `absolute binary (found.binary), never a PATH name`);
+        }
+        const am = /^[^,]+,\s*(\[[^\]]*\])/.exec(text);
+        const argv = am ? am[1].replace(/\s+/g, '') : null;
+        if (!argv || (argv !== "['--version']" && argv !== "['-p','/usage','--output-format','json']")) {
+          hits.push(`${file}:${call.line} argv must be the literal ['--version'] or ` +
+                    `['-p','/usage','--output-format','json'], got ${argv ?? 'nothing parseable'} — ` +
+                    `any other prompt here would be an uncontained model turn`);
         }
         continue;
       }
@@ -545,7 +566,7 @@ function guardB() {
       if (cal.kind === 'literal' && !allowed.bins.has(cal.value)) {
         hits.push(`${file}:${call.line} ${call.fn}('${cal.value}') — not an allowed binary for this file`);
       }
-      if (cal.kind === 'literal' && /^(claude|grok|codex)$/.test(cal.value)) {
+      if (cal.kind === 'literal' && /^(claude|grok|codex|agy)$/.test(cal.value)) {
         hits.push(`${file}:${call.line} ${call.fn}('${cal.value}') — harness spawn outside the chokepoint`);
       }
     }
