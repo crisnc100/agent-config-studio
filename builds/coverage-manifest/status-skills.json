@@ -1,0 +1,4 @@
+{
+ "s1":{"status":"fixed","response":"real","test":"review.merge.test.mjs B19 — merge.mjs keeps a repo runtime only when it answers --supports --open-findings"},
+ "s2":{"status":"fixed","response":"real","test":"review.skills.test.mjs skills s2; review.security-only.test.mjs fix m2 — code-review's probe also requires --open-findings"}
+}

@@ -1,0 +1,11 @@
+{
+ "s1":{"status":"fixed","response":"real","test":"review.coverrule.test.mjs code s1 rows 1, 4, 8, legit, gone head — the fix round's files belong to the fix check"},
+ "s3":{"status":"fixed","response":"real","test":"review.coverrule.test.mjs code s3; review.defer.test.mjs D17 — a Grade chain grants no coverage, even through its fix check"},
+ "s4":{"status":"fixed","response":"real","test":"review.coverrule.test.mjs code s4 — a slice records only open findings with a path in its files"},
+ "f1":{"status":"fixed","response":"real","test":"review.coverrule.test.mjs code f1 — a sliced fix check uses the whole branch's fix diff when the slice's is empty"},
+ "s2":{"status":"fixed","response":"real","test":"review.coverrule.test.mjs code s2 — a PR 1-era fix check never satisfies the fixed rule"},
+ "s5":{"status":"fixed","response":"real","test":"review.coverrule.test.mjs code s5 — oversize is a push exception only at the production cap"},
+ "f4":{"status":"fixed","response":"real","test":"review.coverrule.test.mjs code s5 (same defect as s5)"},
+ "s6":{"status":"fixed","response":"real","test":"review.coverrule.test.mjs code s6 — a rewrite is judged against its own new base"},
+ "x1":{"status":"deferred","reason":"MEDIUM 14/100 (likelihood 2/10 × impact 7/10), protected: the s1 rule misses a reverted fix when the fix round only changed files that were at their base state at the review (untouched or new files). Fix-check findings are deferred, never fixed (decision 9); one fix round and one fix check per review. The tier stays HIGH so a human merges.","fix":"Follow-up: in fixRoundKeeps, also drop a review entry when the fix round changed a file the review saw at its base state; or slice the reverted file at the tip."}
+}
