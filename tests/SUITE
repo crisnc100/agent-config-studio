@@ -100,6 +100,8 @@ tests/pause-routes.mjs                                ci:offline
 # ask-model: each CLI's argv, the model proof, every exit code and its install, against stub CLIs (temp HOME).
 tests/ask-model.mjs                                   ci:offline
 tests/ask-model-watch.mjs                             ci:offline
+# ask-model on agy: the read-only argv, the ~/.gemini/config refusals, unverified served model, failure exits.
+tests/ask-model-agy.mjs                               ci:offline
 # The model guide block: renderer, markers, byte-exact edits (in-process), then through the server (temp HOME).
 tests/model-guide.mjs                                 ci:offline
 tests/model-guide-routes.mjs                          ci:offline

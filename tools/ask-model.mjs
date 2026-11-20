@@ -25,6 +25,12 @@
  * same env shows no MCP server, plugin MCP or project hook that would start, and leader mode is off. grokMcpAllow in
  * the review gate's home config lists servers from grok's own config.toml that may start anyway; MCP tools stay denied.
  *
+ * agy (a gemini- id) runs read-only by AGY_SETTINGS, a deny list passed with --settings for the call alone; web search
+ * cannot be denied and stays on. It runs only when ~/.gemini/config holds no MCP server and no hook but cmux's
+ * (agyConfigProblem), never with --investigate, --no-tools or --min-tools (exit 4, nothing run), and its answer is
+ * labelled unverified: agy names only the model it was asked for. Each call's agy log is kept under
+ * ~/.agent-config-studio/logs/agy/; --json carries `served` and `logFile`.
+ *
  * --investigate adds a shell (claude's Bash; grok's run_terminal_cmd, with
  * shell commands allowed; codex's read-only sandbox already runs commands) and
  * compares the git work tree before and after the call. Anything that changed
@@ -151,6 +157,18 @@ const GROK_ENV = { GROK_CLAUDE_MCPS_ENABLED: '0', GROK_CURSOR_MCPS_ENABLED: '0',
 
 // GROK_HOME made absolute once, at start: grok runs with --cwd, which would read a relative one from somewhere else.
 const GROK_HOME = path.resolve(process.env.GROK_HOME || path.join(os.homedir(), '.grok'));
+
+// agy (Antigravity): read-only by a deny list passed per call with --settings, never saved. Its --mode plan does not
+// enforce read-only; the deny list does (a workspace settings file, a workspace allow rule and a PreToolUse hook's
+// allow were each seen not to undo it), its subagents inherit it, and web search is not a permission, so it stays on.
+// builds/gemini-family/containment-probe.md has the runs.
+const AGY_SETTINGS = { permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)'] } };
+// A bound on the turn: agy exits 3 with DEADLINE_EXCEEDED past it, which ask-model reads as a failed call.
+const AGY_PRINT_TIMEOUT = '1800s';
+// cmux writes its own hooks into ~/.gemini/config/hooks.json, each command carrying this marker; with
+// CMUX_ANTIGRAVITY_HOOKS_DISABLED=1 each of them exits at once. Any other hook there runs a command of its own.
+const AGY_CMUX_HOOK = 'cmux-antigravity-hook-v2';
+const AGY_ENV = { CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1' };
 
 /**
  * Grok's environment for one call: an empty temporary HOME, so what grok borrows from ~/.claude and ~/.cursor
@@ -459,8 +477,9 @@ function grokLeader(grokHome) {
  * Linux; grok's on Linux only, and there it needs Landlock, which the kernel lists among its active security modules.
  */
 function sandboxProblem(vendor) {
-  if (!VENDORS.includes(vendor)) return `ask-model knows no shell sandbox for ${vendor}`;
   if (vendor === 'codex') return null;
+  if (vendor === 'agy') return 'ask-model gives agy no shell: its commands run unconfined, outside any sandbox ask-model can check';
+  if (vendor !== 'claude' && vendor !== 'grok') return `ask-model knows no shell sandbox for ${vendor}`;
   if (process.platform !== 'darwin' && process.platform !== 'linux') return `${vendor}'s shell sandbox does not run on ${process.platform}`;
   if (vendor === 'claude') return null;
   if (process.platform === 'darwin') return "grok's sandbox can't block a command's network on macOS";
@@ -471,11 +490,11 @@ function sandboxProblem(vendor) {
   return lsm.trim().split(',').includes('landlock') ? null : 'Landlock is not active in this kernel, and grok would run its sandbox unenforced';
 }
 
-const VENDORS = ['claude', 'codex', 'grok'];
+const VENDORS = ['claude', 'codex', 'grok', 'agy'];
 const unwired = (vendor) => `ask-model has no ${vendor} CLI wiring (it runs ${VENDORS.join(', ')})`;
 
 /** The argv for one call. `mcpOff` is codex's overrides that switch its MCP servers off (codexMcpOff). */
-function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = null }) {
+function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = null, logFile = null }) {
   // The structured-output flags review.mjs passes: the schema's JSON for claude and grok, its file for codex.
   const json = schema ? ['--json-schema', JSON.stringify(schema.doc)] : [];
   if (vendor === 'claude') {
@@ -493,6 +512,15 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = 
     const min = mode === 'min-tools' ? [...CODEX_TOOL_FEATURES.flatMap((f) => ['--disable', f]), '-c', 'web_search="disabled"'] : [];
     return ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', id,
       ...(effort ? ['-c', `model_reasoning_effort=${effort}`] : []), ...min, ...mcpOff, ...(schema ? ['--output-schema', schema.file] : []), prompt];
+  }
+  if (vendor === 'agy') {
+    if (mode !== 'read-only') throw new Error(`agy runs read-only only, not ${mode}`);
+    if (!logFile) throw new Error('agy needs a --log-file path for the call');
+    // stream-json for its init event (the model agy was asked for) and each tool step (a denied one ends ERROR);
+    // --disable-slash-commands so a prompt starting with / is text; --log-file so the call's own log is kept.
+    return ['-p', prompt, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'stream-json',
+      '--print-timeout', AGY_PRINT_TIMEOUT, '--disable-slash-commands', '--settings', JSON.stringify(AGY_SETTINGS),
+      '--log-file', logFile, ...json];
   }
   if (vendor !== 'grok') throw new Error(unwired(vendor));
   // --disallowed-tools and --deny MCPTool keep configured MCP servers out of reach (grok has no strict-MCP flag).
@@ -688,6 +716,48 @@ function grokHookFolders(cwd) {
     if (dir === root || path.dirname(dir) === dir) break;
   }
   return found;
+}
+
+/**
+ * Why agy's own config (~/.gemini/config) would run something besides the model, or null. agy has no flag that
+ * keeps its MCP servers or hooks out of a call: any server in mcp_config.json starts, and every hooks.json hook
+ * runs a shell command. cmux's own hooks are let through: each carries AGY_CMUX_HOOK and exits at once under
+ * AGY_ENV. A file that can't be read or parsed refuses, since nothing in it could be ruled out.
+ */
+function agyConfigProblem(home = os.homedir()) {
+  const dir = path.join(home, '.gemini', 'config');
+  const load = (name) => {
+    const file = path.join(dir, name);
+    let text;
+    try { text = fs.readFileSync(file, 'utf8'); } catch (e) { return e.code === 'ENOENT' ? { doc: null } : { error: `${file} could not be read (${e.code || e.message})` }; }
+    if (!text.trim()) return { doc: null };
+    try { return { doc: JSON.parse(text), file }; } catch { return { error: `${file} is not JSON` }; }
+  };
+  const mcp = load('mcp_config.json');
+  if (mcp.error) return mcp.error;
+  if (mcp.doc !== null) {
+    const other = isObject(mcp.doc) ? Object.keys(mcp.doc).filter((k) => k !== 'mcpServers') : null;
+    const servers = isObject(mcp.doc) && isObject(mcp.doc.mcpServers ?? {}) ? Object.keys(mcp.doc.mcpServers ?? {}) : null;
+    if (!servers || other.length || servers.length) {
+      return `${mcp.file} configures ${servers?.length ? `MCP servers (${servers.join(', ')})` : 'more than an empty server list'}, which agy starts on every call and no flag keeps out`;
+    }
+  }
+  const hooks = load('hooks.json');
+  if (hooks.error) return hooks.error;
+  if (hooks.doc === null) return null;
+  if (!isObject(hooks.doc)) return `${hooks.file} is not a JSON object of named hooks`;
+  const foreign = [];
+  for (const [name, spec] of Object.entries(hooks.doc)) {
+    if (!isObject(spec)) return `${hooks.file}: hook "${name}" is not an object`;
+    for (const [event, list] of Object.entries(spec)) {
+      if (event === 'enabled') continue;
+      if (!Array.isArray(list)) return `${hooks.file}: ${name}.${event} is not a list`;
+      // A tool event's entries are { matcher, hooks: [...] } groups; every other event lists handlers directly.
+      const handlers = list.flatMap((h) => (isObject(h) && Array.isArray(h.hooks) ? h.hooks : [h]));
+      if (handlers.some((h) => !isObject(h) || typeof h.command !== 'string' || !h.command.includes(AGY_CMUX_HOOK))) foreign.push(`${name}.${event}`);
+    }
+  }
+  return foreign.length ? `${hooks.file} has hooks that are not cmux's (${foreign.join(', ')}); agy runs every hook's command on its calls` : null;
 }
 
 /**
@@ -1122,6 +1192,32 @@ function grokBuildProof(id, sessionId, cwd, grokHome) {
 }
 
 /**
+ * agy's answer from its stream-json events: the result event's response. agy reports no model that answered, only
+ * init.model, the echo of what it was asked for, so that is kept as requested and unverified (a different echo still
+ * refuses, exit 2). A denied tool call does not fail agy's turn (status SUCCESS, exit 0); it shows as a tool step that
+ * ended ERROR on a deny rule, and with no answer beside it the call failed.
+ */
+function readAgy(id, r) {
+  const events = [];
+  for (const line of String(r.stdout || '').split('\n')) {
+    if (!line.trim()) continue;
+    try { events.push(JSON.parse(line)); } catch { /* agy prints only events on stdout; a stray line is not one */ }
+  }
+  const init = events.find((e) => e?.event === 'init')?.init;
+  const result = events.findLast((e) => e?.event === 'result')?.result;
+  const denied = events.map((e) => e?.step_update).filter((u) => u?.state === 'ERROR' && /deny rule/i.test(String(u?.tool_info?.error?.message ?? '')))
+    .map((u) => `${u.tool_name}: ${String(u.tool_info.error.message).slice(0, 300)}`);
+  if (r.code !== 0 || !isObject(result)) return { exit: 4, error: `agy failed (exit ${r.code}${result?.status ? `, status ${result.status}` : ''}): ${tail(r.stderr || r.stdout)}` };
+  if (result.status !== 'SUCCESS') return { exit: 4, error: `agy reported status ${JSON.stringify(result.status ?? null)}: ${tail(result.response ?? r.stderr)}` };
+  if (typeof init?.model === 'string' && init.model !== id) return { exit: 2, error: `asked for ${id}, but agy reports it was asked for ${init.model} — not its answer` };
+  const served = { requested: typeof init?.model === 'string' ? init.model : null, verified: false };
+  if (typeof result.response !== 'string' || !result.response.trim()) {
+    return { exit: 4, error: `agy returned an empty answer${denied.length ? ` after its deny list refused ${denied.length} tool call(s): ${denied.join('; ')}` : ''}`, served, denied };
+  }
+  return { answer: result.response, served, denied };
+}
+
+/**
  * The answer from one CLI's output, or an exit code and why. With a schema, the structured answer: claude's
  * structured_output (else its result), grok's structuredOutput (else its text), codex's stdout, as JSON text.
  */
@@ -1130,7 +1226,12 @@ function readAnswer(vendor, id, r, schema = null, { cwd, grokHome } = {}) {
   if (r.error) return { exit: r.error.code === 'ENOENT' ? 3 : 4, error: `${vendor} could not start: ${r.error.message}` };
   if (r.signal) return { exit: 4, error: `${vendor} was stopped by ${r.signal}` };
   let answer;
-  if (vendor === 'codex') {
+  let extra = {};
+  if (vendor === 'agy') {
+    const got = readAgy(id, r);
+    if (got.answer === undefined) return got;
+    ({ answer, ...extra } = got);
+  } else if (vendor === 'codex') {
     // Codex reports no model, so its answer cannot be checked; the review runtime has no check either.
     if (r.code !== 0) return { exit: 4, error: `codex exited ${r.code}: ${tail(r.stderr || r.stdout)}` };
     answer = r.stdout;
@@ -1151,7 +1252,7 @@ function readAnswer(vendor, id, r, schema = null, { cwd, grokHome } = {}) {
       const used = Object.keys(env.modelUsage || {});
       if (!used.includes(id)) return { exit: 2, error: `asked for ${id}, but ${used.length ? used.join(', ') : 'no model'} answered — not its answer` };
       answer = schema && isObject(env.structured_output) ? JSON.stringify(env.structured_output) : env.result;
-    } else {
+    } else if (vendor === 'grok') {
       if (env?.type === 'error' || r.code !== 0) return { exit: 4, error: `grok failed (exit ${r.code}): ${tail(env?.message ?? r.stderr)}` };
       // The resolved id itself, as for claude: neither the registry nor the review runtime names a grok alias.
       // Only one usage row: the id, or `<id>-build` when grok's session record names the id. Any other row beside
@@ -1167,17 +1268,17 @@ function readAnswer(vendor, id, r, schema = null, { cwd, grokHome } = {}) {
       }
       const structured = env.structuredOutput;
       answer = schema && structured != null ? (typeof structured === 'string' ? structured : JSON.stringify(structured)) : env.text;
-    }
+    } else return { exit: 4, error: unwired(vendor) };
   }
-  if (typeof answer !== 'string' || !answer.trim()) return { exit: 4, error: `${vendor} returned an empty answer` };
-  if (!schema) return { answer: answer.trimEnd() };
+  if (typeof answer !== 'string' || !answer.trim()) return { exit: 4, error: `${vendor} returned an empty answer`, ...extra };
+  if (!schema) return { answer: answer.trimEnd(), ...extra };
   let value;
-  try { value = JSON.parse(answer); } catch (e) { return { exit: 6, error: `the answer is not JSON (${e.message}): ${tail(answer)}` }; }
+  try { value = JSON.parse(answer); } catch (e) { return { exit: 6, error: `the answer is not JSON (${e.message}): ${tail(answer)}`, ...extra }; }
   const huge = nonFinite(value);
-  if (huge) return { exit: 6, error: `the answer is not usable JSON: ${huge} is not a finite number` };
+  if (huge) return { exit: 6, error: `the answer is not usable JSON: ${huge} is not a finite number`, ...extra };
   const wrong = schemaError(value, schema.doc);
-  if (wrong) return { exit: 6, error: `the answer does not match --schema ${schema.file}: ${wrong}` };
-  return { answer: JSON.stringify(value, null, 2) };
+  if (wrong) return { exit: 6, error: `the answer does not match --schema ${schema.file}: ${wrong}`, ...extra };
+  return { answer: JSON.stringify(value, null, 2), ...extra };
 }
 
 async function main(argv) {
@@ -1217,6 +1318,12 @@ async function main(argv) {
     return exit;
   };
 
+  if (vendor === 'agy' && mode !== 'read-only') {
+    result.error = mode === 'investigate'
+      ? `${sandboxProblem('agy')}, so --investigate is not available for agy — agy was not run`
+      : `agy has no switch that removes its tools, so --${o.noTools ? 'no-tools' : 'min-tools'} is not available for it — agy was not run`;
+    return finish(4);
+  }
   if (mode === 'no-tools' && !Object.hasOwn(TOOLS[vendor] || {}, 'no-tools')) {
     result.error = `${vendor} cannot run with no tools (it has no switch that removes every tool) — not asked`;
     return finish(4);
@@ -1232,8 +1339,18 @@ async function main(argv) {
     if (off.error) { result.error = `${off.error} — codex was not run`; return finish(4); }
     mcpOff = off.args;
   }
+  let logFile = null;
+  if (vendor === 'agy') {
+    const problem = agyConfigProblem();
+    if (problem) { result.error = `${problem}, so agy was not run`; return finish(4); }
+    // Kept after the call: agy's own log of it, where a model fallback agy does not report would show.
+    const dir = path.join(os.homedir(), '.agent-config-studio', 'logs', 'agy');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { result.error = `${dir} could not be created (${e.code || e.message}), so agy was not run`; return finish(4); }
+    logFile = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}-${crypto.randomBytes(3).toString('hex')}.log`);
+    result.logFile = logFile;
+  }
   if (vendor === 'grok') grokCall = grokCallEnv();
-  const env = grokCall ? grokCall.env : process.env;
+  const env = grokCall ? grokCall.env : vendor === 'agy' ? { ...process.env, ...AGY_ENV } : process.env;
   if (vendor === 'grok') {
     const leader = grokLeader(grokCall.grokHome);
     if (leader) {
@@ -1276,7 +1393,7 @@ async function main(argv) {
   // A role name is a watch kind as it stands; a family names no job, so its line says ask.
   startWatch(o.role !== undefined && /^[a-z][a-z0-9-]{0,31}$/.test(o.role) ? o.role : 'ask');
   let args;
-  try { args = argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff, schema }); } catch (e) { result.error = `${e.message} — ${vendor} was not run`; return finish(4); }
+  try { args = argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff, schema, logFile }); } catch (e) { result.error = `${e.message} — ${vendor} was not run`; return finish(4); }
   const r = await run(bin, args, cwd, env);
   // A call grok refused for want of approval leaves only this line, and grok still exits 0.
   if (vendor === 'grok') {
@@ -1285,6 +1402,13 @@ async function main(argv) {
   const got = readAnswer(vendor, m.id, r, schema, { cwd, grokHome: grokCall?.grokHome });
   if (got.answer !== undefined) result.answer = got.answer;
   else result.error = got.error;
+  if (vendor === 'agy') {
+    for (const d of got.denied || []) process.stderr.write(`ask-model: agy: denied ${d}\n`);
+    if (got.served) {
+      result.served = got.served;
+      process.stderr.write(`ask-model: agy does not report which model answered; ${got.served.requested ?? m.id} was requested (unverified). Its log: ${logFile}\n`);
+    }
+  }
 
   if (before) {
     const read = snapshot(cwd, before);
