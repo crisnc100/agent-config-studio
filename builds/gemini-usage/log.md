@@ -15,3 +15,21 @@
 - lib/harness.js: agy candidates (~/.local/bin/agy first, then PATH; the cmux wrapper is skipped as a shim).
 - Live run on this Mac (agy 1.5.13): ok, 5h 7.7% used, weekly 8.5%, Argon 0%.
 - Checks: tests/usage-gemini.mjs 43/43, tests/guards.mjs 11/11, tests/suite-coverage.mjs 33/33, tests/setup-guards.mjs 84/84.
+
+## Phase 2 — seats (builder, 2026-11-20)
+- VENDORS gains `gemini`; HARNESSES = { gemini: ['agy'] }. validateSeat: a gemini seat needs harness `agy`, has no home,
+  and only one may exist (agy keeps one keychain login per machine). Checked in validateSeat so every path (createSeat,
+  addSuggestedSeat, `acs-usage add`, `detect --save`) gets the same rule.
+- loadSeats returns `hidden` (entries this build cannot read); saveSeats writes them back from the file as it is at
+  write time, so addSeat/removeSeat/moveSeatToPrivateHome never delete a newer build's seat. uniqueSeatId avoids hidden
+  ids. A hidden entry cannot be removed by a build that cannot read it (removeSeat throws, as for an unknown id).
+- readSeat 'gemini' → readGeminiSeat (dynamic import). Not CREDENTIAL_FREE: renderSnapshot shows the stored reading.
+- detectSeats suggests `gemini-1` (harness agy, no home) when ~/.gemini/antigravity-cli exists or agy is installed;
+  suggestSeats carries `harness` (it dropped it, and adding the suggestion then failed validation — the new
+  setup-accounts test caught it). server.js installedClis includes agy.
+- createSeat({ vendor:'gemini', harness }) defaults harness to agy, refuses another; its note says to sign in inside
+  agy. Both seat routes pass `harness` through; createSeat checks it against the fixed list.
+- `acs-usage add gemini <label>` sets harness agy; the gauge prints extraWindows (Argon) as a grey line, unranked.
+- Checks: usage-seats 138/138, usage-routes 82/82, usage-cli 18/18, setup-accounts and setup-routes all pass except
+  one real-home byte-identity check that flagged ~/.agent-config-studio/logs/agy/review-*.log — written by the
+  background benchmark's ask-model runs, not by these tests; setup-ui 92/92, setup-guards 84/84.

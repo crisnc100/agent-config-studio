@@ -93,6 +93,15 @@ const post = (p, b) => fetch(B + p, {
   ok('nothing was created outside the fake home', !fs.existsSync('/etc/pwned'));
 }
 {
+  // Gemini runs through agy; the body may name the harness, only from the fixed list, and never a home.
+  ok('a gemini seat through another harness is 400', (await post('/api/usage/seats', { vendor: 'gemini', label: 'G', harness: 'opencode' }))[0] === 400);
+  ok('a harness that is not a string is 400', (await post('/api/usage/seats', { vendor: 'gemini', label: 'G', harness: { x: 1 } }))[0] === 400);
+  const [s, j] = await post('/api/usage/seats', { vendor: 'gemini', label: 'Gemini', home: '/etc/pwned' });
+  ok('a gemini seat is added through agy', s === 200 && j.seat?.harness === 'agy' && j.seat.home === undefined, JSON.stringify(j));
+  ok('a second gemini seat is 400', (await post('/api/usage/seats', { vendor: 'gemini', label: 'Gemini 2', harness: 'agy' }))[0] === 400);
+  await post('/api/usage/seats/remove', { id: j.seat.id });
+}
+{
   const [s] = await post('/api/usage/seats', { vendor: '__proto__', label: 'x' });
   ok('a prototype-polluting vendor is rejected', s === 400);
   ok('Object.prototype is unpolluted', ({}).vendor === undefined && ({}).label === undefined);

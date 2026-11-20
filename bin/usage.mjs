@@ -118,6 +118,11 @@ async function gauge(argv) {
         const reset = w.resetsAt ? C.grey(` resets in ${until(w.resetsAt)}`) : '';
         console.log(`    ${bar(left)} ${pct}  ${w.label}${reset}`);
       }
+      // Gemini's Argon weekly limit: its own pool on Pro plans, shown but not ranked.
+      for (const w of s.extraWindows || []) {
+        const left = Math.min(100, Math.max(0, 100 - w.usedPercent));
+        console.log(`    ${C.grey(`${Math.round(left)}% left  ${w.label}${w.resetsAt ? ` · resets in ${until(w.resetsAt)}` : ''}`)}`);
+      }
       if (s.credits?.hasCredits) {
         // balance is null on plans that report credits without a figure.
         const b = s.credits.unlimited ? 'unlimited'
@@ -201,8 +206,9 @@ function add(args) {
   const homeIdx = rest.indexOf('--home');
   const home = homeIdx === -1 ? undefined : rest[homeIdx + 1];
   const label = (homeIdx === -1 ? rest : rest.slice(0, homeIdx)).join(' ');
-  if (!vendor || !label) { console.error('usage: acs-usage add <claude|codex|grok> <label> [--home <path>]'); return 2; }
-  const seat = { id: uniqueSeatId(slugify(label, vendor)), vendor, label, ...(home ? { home: path.resolve(home) } : {}) };
+  if (!vendor || !label) { console.error('usage: acs-usage add <claude|codex|grok|gemini> <label> [--home <path>]'); return 2; }
+  const seat = { id: uniqueSeatId(slugify(label, vendor)), vendor, label, ...(home ? { home: path.resolve(home) } : {}),
+                 ...(vendor === 'gemini' ? { harness: 'agy' } : {}) };
   addSeat(seat);
   console.log(`registered ${seat.id} (${seat.vendor})`);
   return 0;
