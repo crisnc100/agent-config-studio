@@ -427,6 +427,10 @@ credentials.
 
 From the terminal, `acs usage` prints the same gauge (`--json` for raw,
 `detect --save` to register what's on this machine).
+`detect` suggests a Gemini seat when agy is installed and none is tracked yet;
+`acs usage add gemini <label>` adds one by hand. Seats a newer ACS registered
+in `seats.json` that this version cannot read are left in the file untouched,
+not shown, and their ids are never reused.
 
 ### Pausing an account
 
