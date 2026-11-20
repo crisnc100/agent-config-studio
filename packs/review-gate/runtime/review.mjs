@@ -2524,6 +2524,34 @@ function lastTurnText(steps) {
     if (u.step_type === 'agent_response' && typeof u.text_delta === 'string') turns.set(u.step_index, (turns.get(u.step_index) ?? '') + u.text_delta)
   return [...turns.entries()].sort((x, y) => y[0] - x[0]).map(([, t]) => t).find((t) => t.trim()) ?? null
 }
+// Deny-rule refusals inside the subagents a turn invoked, read from each subagent's transcript (its steps are not in
+// the parent's stream); a transcript outside ~/.gemini/antigravity-cli/brain is not read. ask-model's agySubagentDenials.
+function agySubagentDenials(steps, home = homedir()) {
+  const denied = [], notes = [], seen = new Set()
+  let brain = null
+  try { brain = realpathSync(join(home, '.gemini', 'antigravity-cli', 'brain')) + sep } catch { /* no brain folder: every transcript is outside it */ }
+  for (const u of steps) {
+    for (const s of Array.isArray(u?.subagent_info?.subagents) ? u.subagent_info.subagents : []) {
+      if (typeof s?.log_uri !== 'string' || seen.has(s.log_uri)) continue
+      seen.add(s.log_uri)
+      const name = String(s.type_name ?? s.conversation_id ?? 'a subagent')
+      let file
+      try { file = realpathSync(fileURLToPath(s.log_uri)) } catch (e) { notes.push(`subagent ${name}'s transcript could not be read (${e.code || e.message}); its denied calls are unknown`); continue }
+      if (!brain || !file.startsWith(brain) || basename(file) !== 'transcript.jsonl') { notes.push(`subagent ${name}'s transcript is not in agy's brain folder, so it was not read; its denied calls are unknown`); continue }
+      let text
+      try {
+        if (statSync(file).size > 32 * 1024 * 1024) throw new Error('over 32 MB')
+        text = readFileSync(file, 'utf8')
+      } catch (e) { notes.push(`subagent ${name}'s transcript could not be read (${e.code || e.message}); its denied calls are unknown`); continue }
+      for (const line of text.split('\n')) {
+        let step
+        try { step = JSON.parse(line) } catch { continue }
+        if (step?.status === 'ERROR' && /deny rule/i.test(String(step.error ?? ''))) denied.push(`(subagent ${name}) ${String(step.error).slice(0, 300)}`)
+      }
+    }
+  }
+  return { denied, notes }
+}
 // The structured answer from agy's stream-json events. A denied tool call does not fail agy's turn (SUCCESS, exit 0):
 // it is a tool step that ended ERROR on a deny rule, so each is named on stderr, and an empty answer fails the review.
 function parseAgy(id, r) {
@@ -2540,13 +2568,16 @@ function parseAgy(id, r) {
   // Actions that needed an approval print mode cannot give (a read outside the workspace, say); the turn still succeeds.
   const unapproved = Array.isArray(res?.denied_actions) ? res.denied_actions : []
   for (const d of unapproved) console.warn(`⚠ agy review: denied ${d?.action ?? '(unnamed)'}: needed an approval print mode cannot give`)
+  const sub = agySubagentDenials(steps)
+  for (const d of sub.denied) console.warn(`⚠ agy review: denied ${d}`)
+  for (const n of sub.notes) console.warn(`⚠ agy review: ${n}`)
   if (r.error || r.status !== 0 || !isPlainObject(res))
     throw new Error(`agy review failed (exit ${r.status}${res?.status ? `, status ${res.status}` : ''}): ${r.error?.message || tail(r.stderr || r.stdout)}`)
   if (res.status !== 'SUCCESS') throw new Error(`agy review failed: status ${JSON.stringify(res.status ?? null)}: ${tail(res.response)}`)
   if (typeof init?.model === 'string' && init.model !== id) throw new Error(`agy review: asked for ${id}, but agy reports it was asked for ${init.model}`)
   const text = lastTurnText(steps) ?? res.response
   if (typeof text !== 'string' || !text.trim())
-    throw new Error(`agy review: empty answer${denied.length + unapproved.length ? ` after ${denied.length + unapproved.length} denied tool call(s)` : ''}`)
+    throw new Error(`agy review: empty answer${denied.length + unapproved.length + sub.denied.length ? ` after ${denied.length + unapproved.length + sub.denied.length} denied tool call(s)` : ''}`)
   let result
   try { result = JSON.parse(text) } catch (e) {
     // The parser's reason goes last, where a caller that keeps only the tail of stderr (--eval) still has it.
@@ -3058,10 +3089,14 @@ function logGrade(path) {
   const entry = { type: 'review', kind, rubricVersion: RUBRIC_VERSION, id, ts: new Date().toISOString(), head, branch, ...(original && { review: original.id }),
     base: original?.head || BASE, baseSha: original?.head || reviewBase(BASE, head), repo: repoName(), repoId, copy: COPY_PATH,
     family: value.family, model: value.model, vendor, ...(value.effort && { effort: value.effort }),
+    // ask-model reports agy's served model apart from the verdict, so the verdict file can't carry it: an agy Grade is
+    // unverified whatever the file says.
+    ...((vendor === 'agy' || vendorOf(value.model) === 'agy') && { modelVerified: false }),
     criteria: value.criteria, findings: findingDetails.length, findingDetails }
   requireClean()
   if (headNow() !== head) throw new Error('HEAD changed during Grade logging')
   appendLog(entry)
+  if (entry.modelVerified === false) console.log(`ℹ ${kind} by ${value.family} (${value.model}) — model unverified`)
   console.log(`Review ID: ${id}\n===FINDINGS_JSON===`)
   console.log(JSON.stringify({ schemaVersion: 1, reviewId: id, kind: entry.kind, head, branch, criteria: entry.criteria,
     findings: findingDetails, disputed: [], unverified: [] }, null, 2))

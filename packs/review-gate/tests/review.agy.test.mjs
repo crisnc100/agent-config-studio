@@ -63,6 +63,11 @@ if (mode === 'retry') {
   out({ event: 'result', result: { status: 'SUCCESS', response: first + '\\n' + final + '\\n' } })
   process.exit(0)
 }
+if (mode === 'subagent') {
+  // The saved agy 1.5.13 subagent run's own steps, its transcript path moved under this HOME.
+  const saved = fs.readFileSync(${J(join(dirname(SCRIPT), '..', '..', '..', 'tests', 'fixtures', 'agy-subagent', 'stream.jsonl'))}, 'utf8').trim().split('\\n')
+  for (const l of saved) if (/"subagent_info"/.test(l)) console.log(l.replaceAll('file:///Users/someone/', 'file://' + process.env.HOME + '/'))
+}
 if (mode === 'approval-denied') {
   out({ event: 'result', result: { status: 'SUCCESS', response: '', denied_actions: [{ action: 'read_file', display_name: 'ReadFile' }] } })
   process.exit(0)
@@ -296,6 +301,62 @@ test('a foreign handler grouped under a tool hook refuses agy, beside cmux\'s ow
   assert.notEqual(r.status, 0, r.out)
   assert.match(r.out, /agy review refused: .*hooks\.json has hooks that are not cmux's \(cmux\.PreToolUse\)/)
   assert.equal(calls('agy').length, 0, 'agy never ran')
+})
+
+const TRANSCRIPT = readFileSync(join(dirname(SCRIPT), '..', '..', '..', 'tests', 'fixtures', 'agy-subagent', 'transcript.jsonl'), 'utf8')
+const SUB_ID = '7239ab1f-70aa-4146-a081-4d09347c094a'
+test('denials inside a subagent (its transcript, not the parent stream) are reported on stderr; the review still succeeds', () => {
+  put(join(HOME, '.gemini/antigravity-cli/brain', SUB_ID, '.system_generated/logs/transcript.jsonl'), TRANSCRIPT)
+  const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'subagent' })
+  assert.equal(r.status, 0, r.out)
+  const lines = r.stderr.split('\n').filter((l) => l.startsWith('⚠ agy review: denied (subagent perm-test-subagent)'))
+  assert.equal(lines.length, 2, r.stderr)
+  assert.match(lines[0], /Permission denied for command\(touch .*Matches user-configured deny rule/)
+  assert.match(lines[1], /Permission denied for write_file\(.*Matches user-configured deny rule/)
+  assert.equal(logLines().filter((e) => e.type === 'review').length, 1)
+})
+
+test('a subagent transcript outside agy\'s brain folder, or missing, is not read and is named as unknown', () => {
+  const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'subagent' })
+  assert.equal(r.status, 0, r.out)
+  assert.match(r.stderr, /⚠ agy review: subagent perm-test-subagent's transcript could not be read \(ENOENT\); its denied calls are unknown/)
+  const outside = join(ROOT, 'elsewhere', SUB_ID, '.system_generated/logs/transcript.jsonl')
+  put(outside, TRANSCRIPT)
+  mkdirSync(join(HOME, '.gemini/antigravity-cli/brain', SUB_ID, '.system_generated/logs'), { recursive: true })
+  symlinkSync(outside, join(HOME, '.gemini/antigravity-cli/brain', SUB_ID, '.system_generated/logs/transcript.jsonl'))
+  const linked = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'subagent' })
+  assert.equal(linked.status, 0, linked.out)
+  assert.match(linked.stderr, /transcript is not in agy's brain folder, so it was not read/)
+  assert.doesNotMatch(linked.stderr, /denied \(subagent/)
+})
+
+test('a Grade or recheck from an agy model is recorded and shown model unverified, whatever its verdict file says', () => {
+  const verdict = (extra = {}) => ({ family: 'neon', model: 'gemini-4-neon', criteria: [
+    { id: '1', criterion: 'Works', verdict: 'FAIL', evidence: 'test fails' }], ...extra })
+  const file = join(ROOT, 'verdict.json')
+  writeFileSync(file, J(verdict()))
+  const g = run(['--log-grade', file])
+  assert.equal(g.status, 0, g.out)
+  assert.match(g.stdout, /ℹ grade by neon \(gemini-4-neon\) — model unverified/)
+  const grade = logLines().at(-1)
+  assert.equal(grade.kind, 'grade')
+  assert.equal(grade.vendor, 'agy')
+  assert.equal(grade.modelVerified, false)
+  writeFileSync(file, J(verdict({ vendor: 'claude' })))
+  const claimed = run(['--log-grade', file])
+  assert.equal(claimed.status, 0, claimed.out)
+  assert.equal(logLines().at(-1).modelVerified, false, 'a gemini- model is agy whatever vendor the file claims')
+  writeFileSync(file, J({ ...verdict(), criteria: [{ id: '1', criterion: 'Works', verdict: 'PASS', evidence: 'test passes' }] }))
+  const re = run(['--log-grade', file, '--recheck-of', grade.id])
+  assert.equal(re.status, 0, re.out)
+  assert.match(re.stdout, /ℹ recheck by neon \(gemini-4-neon\) — model unverified/)
+  assert.equal(logLines().at(-1).kind, 'recheck')
+  assert.equal(logLines().at(-1).modelVerified, false)
+  writeFileSync(file, J({ family: 'opus', model: 'claude-opus-stub', criteria: [{ id: '1', criterion: 'Works', verdict: 'PASS', evidence: 'ok' }] }))
+  const other = run(['--log-grade', file])
+  assert.equal(other.status, 0, other.out)
+  assert.equal(Object.hasOwn(logLines().at(-1), 'modelVerified'), false)
+  assert.doesNotMatch(other.stdout, /model unverified/)
 })
 
 test('custom agents (an agents/ folder in any of the four workspace folders) refuse agy', () => {

@@ -1264,6 +1264,8 @@ function readAgy(id, r) {
   if (Array.isArray(result?.denied_actions)) {
     for (const d of result.denied_actions) denied.push(`${d?.action ?? '(unnamed)'}: needed an approval print mode cannot give`);
   }
+  const sub = agySubagentDenials(steps);
+  denied.push(...sub.denied);
   if (r.code !== 0 || !isObject(result)) return { exit: 4, error: `agy failed (exit ${r.code}${result?.status ? `, status ${result.status}` : ''}): ${tail(r.stderr || r.stdout)}` };
   if (result.status !== 'SUCCESS') return { exit: 4, error: `agy reported status ${JSON.stringify(result.status ?? null)}: ${tail(result.response ?? r.stderr)}` };
   if (typeof init?.model === 'string' && init.model !== id) return { exit: 2, error: `asked for ${id}, but agy reports it was asked for ${init.model} — not its answer` };
@@ -1274,9 +1276,42 @@ function readAgy(id, r) {
   for (const u of steps) if (u.step_type === 'agent_response' && typeof u.text_delta === 'string') turns.set(u.step_index, (turns.get(u.step_index) ?? '') + u.text_delta);
   const text = [...turns.entries()].sort((x, y) => y[0] - x[0]).map(([, t]) => t).find((t) => t.trim()) ?? result.response;
   if (typeof text !== 'string' || !text.trim()) {
-    return { exit: 4, error: `agy returned an empty answer${denied.length ? ` after ${denied.length} denied tool call(s): ${denied.join('; ')}` : ''}`, served, denied };
+    return { exit: 4, error: `agy returned an empty answer${denied.length ? ` after ${denied.length} denied tool call(s): ${denied.join('; ')}` : ''}`, served, denied, notes: sub.notes };
   }
-  return { answer: text, served, denied };
+  return { answer: text, served, denied, notes: sub.notes };
+}
+
+/**
+ * Deny-rule refusals inside the subagents a turn invoked. A subagent's own steps are not in the parent's stream: agy
+ * names each subagent's transcript (subagent_info.subagents[].log_uri), a JSONL file under
+ * ~/.gemini/antigravity-cli/brain, where a refused step is `status: "ERROR"` with the deny-rule message. A transcript
+ * outside that folder is not read, and one that can't be read is named in `notes`: its refusals are unknown.
+ */
+function agySubagentDenials(steps, home = os.homedir()) {
+  const denied = [], notes = [], seen = new Set();
+  let brain = null;
+  try { brain = fs.realpathSync(path.join(home, '.gemini', 'antigravity-cli', 'brain')) + path.sep; } catch { /* no brain folder: every transcript is outside it */ }
+  for (const u of steps) {
+    for (const s of Array.isArray(u?.subagent_info?.subagents) ? u.subagent_info.subagents : []) {
+      if (typeof s?.log_uri !== 'string' || seen.has(s.log_uri)) continue;
+      seen.add(s.log_uri);
+      const name = String(s.type_name ?? s.conversation_id ?? 'a subagent');
+      let file;
+      try { file = fs.realpathSync(fileURLToPath(s.log_uri)); } catch (e) { notes.push(`subagent ${name}'s transcript could not be read (${e.code || e.message}); its denied calls are unknown`); continue; }
+      if (!brain || !file.startsWith(brain) || path.basename(file) !== 'transcript.jsonl') { notes.push(`subagent ${name}'s transcript is not in agy's brain folder, so it was not read; its denied calls are unknown`); continue; }
+      let text;
+      try {
+        if (fs.statSync(file).size > 32 * 1024 * 1024) throw new Error('over 32 MB');
+        text = fs.readFileSync(file, 'utf8');
+      } catch (e) { notes.push(`subagent ${name}'s transcript could not be read (${e.code || e.message}); its denied calls are unknown`); continue; }
+      for (const line of text.split('\n')) {
+        let step;
+        try { step = JSON.parse(line); } catch { continue; }
+        if (step?.status === 'ERROR' && /deny rule/i.test(String(step.error ?? ''))) denied.push(`(subagent ${name}) ${String(step.error).slice(0, 300)}`);
+      }
+    }
+  }
+  return { denied, notes };
 }
 
 /**
@@ -1484,6 +1519,7 @@ async function main(argv) {
   else result.error = got.error;
   if (vendor === 'agy') {
     for (const d of got.denied || []) process.stderr.write(`ask-model: agy: denied ${d}\n`);
+    for (const n of got.notes || []) process.stderr.write(`ask-model: agy: ${n}\n`);
     if (got.served) {
       result.served = got.served;
       process.stderr.write(`ask-model: agy does not report which model answered; ${got.served.requested ?? m.id} was requested (unverified). Its log: ${logFile}\n`);

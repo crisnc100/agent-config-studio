@@ -50,6 +50,11 @@ if (mode === 'denied-empty') {
   out({ event: 'step_update', step_update: { conversation_id: cid, step_index: 2, state: 'ERROR', step_type: 'tool', tool_name: 'write_file',
     tool_info: { name: 'write_file', error: { type: 'TOOL_ERROR', message: 'permission check failed for write_file "x": Permission denied for write_file(x). Matches user-configured deny rule.' } } } });
 }
+if (mode === 'subagent') {
+  // The saved agy 1.5.13 subagent run's own steps, its transcript path moved under this HOME.
+  const saved = fs.readFileSync(${J(path.join(ROOT, 'tests', 'fixtures', 'agy-subagent', 'stream.jsonl'))}, 'utf8').trim().split('\\n');
+  for (const l of saved) if (/"subagent_info"/.test(l)) console.log(l.replaceAll('file:///Users/someone/', 'file://' + process.env.HOME + '/'));
+}
 if (mode === 'approval-denied') {
   out({ event: 'result', result: { conversation_id: cid, status: 'SUCCESS', response: '', denied_actions: [{ action: 'read_file', display_name: 'ReadFile' }] } });
   process.exit(0);
@@ -182,6 +187,29 @@ console.log('\nask-model agy: ~/.gemini/config');
     const r = ask(['--family', 'neon'], { h: home(files) });
     ok(name, r.code === code && (code === 0 ? r.calls.length === 1 : r.calls.length === 0 && re.test(r.err) && /so agy was not run/.test(r.err)), show(r));
   }
+}
+
+console.log('\nask-model agy: denials inside a subagent');
+{
+  const SUB = '7239ab1f-70aa-4146-a081-4d09347c094a';
+  const TRANSCRIPT = fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'agy-subagent', 'transcript.jsonl'), 'utf8');
+  const h = home();
+  const file = path.join(h, '.gemini', 'antigravity-cli', 'brain', SUB, '.system_generated', 'logs', 'transcript.jsonl');
+  fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, TRANSCRIPT);
+  const r = ask(['--family', 'neon', '--json'], { h, env: { STUB_MODE: 'subagent' } });
+  const lines = r.err.split('\n').filter((l) => l.startsWith('ask-model: agy: denied (subagent perm-test-subagent)'));
+  ok('the saved subagent run: its two deny-rule refusals are on stderr, the answer still stands', r.code === 0 && r.j?.answer && lines.length === 2
+    && /command\(touch .*deny rule/.test(lines[0]) && /write_file\(.*deny rule/.test(lines[1]), show(r));
+  const missing = ask(['--family', 'neon'], { env: { STUB_MODE: 'subagent' } });
+  ok('a transcript that is not there is named, its denials unknown; the answer still stands', missing.code === 0
+    && /ask-model: agy: subagent perm-test-subagent's transcript could not be read \(ENOENT\); its denied calls are unknown/.test(missing.err), show(missing));
+  const h2 = home(), outside = path.join(tmp, 'outside-transcript.jsonl');
+  fs.writeFileSync(outside, TRANSCRIPT);
+  const link = path.join(h2, '.gemini', 'antigravity-cli', 'brain', SUB, '.system_generated', 'logs', 'transcript.jsonl');
+  fs.mkdirSync(path.dirname(link), { recursive: true }); fs.symlinkSync(outside, link);
+  const linked = ask(['--family', 'neon'], { h: h2, env: { STUB_MODE: 'subagent' } });
+  ok('a transcript that resolves outside agy\'s brain folder is not read', linked.code === 0 && /not in agy's brain folder, so it was not read/.test(linked.err)
+    && !/denied \(subagent/.test(linked.err), show(linked));
 }
 
 console.log('\nask-model agy: the probed version only');
