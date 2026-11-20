@@ -247,7 +247,8 @@ test('skills that run models name roles through model-id, and point at the share
     for (const [id, name] of [['review-gate', 'code-review'], ['build', 'build']]) {
       const body = skill(id, harness, name)
       assert.match(body, /\$HOME\/\.agent-config-studio\/review-gate\/review\.mjs/, `${id}/${harness}`)
-      assert.match(body, /=scripts\/review\.mjs\n\[ -f "\$[A-Z_]+" \] \|\| [A-Z_]+="\$HOME\/\.agent-config-studio\/review-gate\/review\.mjs"/, `${id}/${harness}: repo copy first`)
+      assert.match(body, /^[A-Z_]+="\$HOME\/\.agent-config-studio\/review-gate\/review\.mjs"$/m, `${id}/${harness}: the installed runtime`)
+      assert.doesNotMatch(body, /scripts\/review\.mjs/, `${id}/${harness}: never a checkout copy`)
       assert.doesNotMatch(body, /\.claude\/skills\/code-review\/review\.mjs/, `${id}/${harness}`)
     }
   }

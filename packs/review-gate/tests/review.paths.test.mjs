@@ -7,8 +7,9 @@ import { after, beforeEach, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 // Recorded finding paths: the quote check records the exact path that held each quote on the review or fix-check
-// record (resolvedPaths, keyed by finding id), and close compares changed files to those paths byte for byte,
-// in the fix-check allowance and in outOfScope. Stub CLIs, temporary HOME and Git config; nothing runs a model.
+// record (resolvedPaths, keyed by finding id), and close compares them byte for byte: a fixed finding needs the fix
+// check to have read every recorded path, and what no pass read is unseen under its exact name. Stub CLIs, temporary
+// HOME and Git config; nothing runs a model.
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'runtime', 'review.mjs')
 const ROOT = mkdtempSync(join(tmpdir(), 'review-paths-test-'))
 const HOME = join(ROOT, 'home'), REPO = join(ROOT, 'repo'), BIN = join(ROOT, 'bin')
@@ -62,10 +63,10 @@ function close(id, statuses) {
   const r = script(['--close', id, '--status', path, '--test-cmd', 'true'])
   return { ...r, record: records().length > before ? records().at(-1) : null }
 }
-function closedAs(id, statuses, status, outOfScope) {
+function closedAs(id, statuses, status, unseen) {
   const r = close(id, statuses)
   allowed(r); assert.equal(r.record?.type, 'close', r.out)
-  assert.equal(r.record.status, status, r.out); assert.deepEqual(r.record.outOfScope, outOfScope)
+  assert.equal(r.record.status, status, r.out); assert.deepEqual(r.record.unseen, unseen)
   return r.record
 }
 function refused(id, statuses, pattern) {
@@ -73,22 +74,34 @@ function refused(id, statuses, pattern) {
   assert.notEqual(r.status, 0, r.out); assert.equal(r.record, null, 'a refused close logs nothing')
   assert.match(r.out, pattern)
 }
-const named = (files) => new RegExp(`may touch only builds/ and test files: ${files.map((f) => f.replace(/[./]/g, '\\$&')).join(', ')}\\. Fixes land before the fix check`)
+const notRead = (files) => new RegExp(`Fixed f1: the fix check did not read ${files.map((f) => f.replace(/[./]/g, '\\$&')).join(', ')};`)
 const finding = (file, quote, extra = {}) => ({ issue: 'it is wrong', file, line: '1', quote, suggestion: 'fix it',
   likelihood: 5, impact: 5, protected: false, trigger: 'importing it', ...extra })
 const ONE = finding('src/one.js', 'export const one = 2')
-const FIXED = { f1: { status: 'fixed' } }, X_FIXED = { x1: { status: 'fixed' } }
+const FIXED = { f1: { status: 'fixed' } }, X_FIXED = { x1: { status: 'deferred', reason: 'fixed after the fix check; sliced at the tip' } }
 // A review through the stub reviewer with the given findings; returns the logged record and the command output.
 function review(findings = [], extra = {}) {
   const r = script([], { STUB_FINDINGS: JSON.stringify({ findings }), ...extra })
   allowed(r)
   return { record: records().filter((e) => e.type === 'review').at(-1), out: r.out, stdout: r.stdout }
 }
-// The review, a test change that needs a fix check, and the fix check with one finding x1.
+// The review's fix check, with the given findings of its own.
+function checked(original, findings = []) {
+  allowed(script(['--fix-check', original.id], { STUB_FINDINGS: JSON.stringify({ findings }) }))
+  const check = records().at(-1)
+  assert.equal(check.kind, 'fix-check')
+  return check
+}
+// A file whose section alone is over the 1500-character cap cappedCheck runs the fix check with: oversize.
+const PAD = Array.from({ length: 200 }, (_, i) => `export const p${i} = ${i}`).join('\n') + '\n'
+function cappedCheck(original) {
+  allowed(script(['--fix-check', original.id], { STUB_FINDINGS: JSON.stringify({ findings: [] }), REVIEW_TEST_DIFF_CAP: '1500' }))
+  return records().at(-1)
+}
+// The review, a test change, and the fix check with one finding x1.
 function fixChecked(x1, status = 'verified-quote') {
   const { record: original } = review()
   commit({ 'src/one.test.js': 'test one\n' })
-  refused(original.id, {}, /run --fix-check first/)
   const r = script(['--fix-check', original.id], { STUB_FINDINGS: JSON.stringify({ findings: [x1] }) })
   allowed(r)
   const check = records().at(-1)
@@ -120,48 +133,57 @@ test('P1 the review and fix-check records carry resolvedPaths with the commit ea
   assert.deepEqual(check.resolvedPaths, { x1: { path: 'src/one.test.js', commit: check.head } })
 })
 
-test('P2 hole 1, after a fix check: a leading-space file changed alongside the x1 file is refused', () => {
+test('P2 hole 1, after a fix check: a leading-space file changed alongside the x1 file is its own unseen file', () => {
   const { original } = fixChecked(ONE)
   commit({ 'src/one.js': 'export const one = 3\n', ' src/one.js': 'a different file\n' })
-  refused(original.id, X_FIXED, named([' src/one.js', 'src/one.js']))
+  closedAs(original.id, X_FIXED, 'partial', [' src/one.js', 'src/one.js'])
 })
-test('P3 hole 2, after a fix check: a finding on a real b/src/one.js does not authorize the root src/one.js', () => {
+test('P3 hole 2, after a fix check: a finding on a real b/src/one.js does not stand for the root src/one.js', () => {
   commit({ 'b/src/one.js': 'export const b = 1\n' })
   const { original, check } = fixChecked(finding('b/src/one.js', 'export const b = 1'))
   assert.equal(check.resolvedPaths.x1.path, 'b/src/one.js')
   commit({ 'src/one.js': 'export const one = 3\n' })
-  refused(original.id, X_FIXED, named(['src/one.js']))
+  closedAs(original.id, X_FIXED, 'partial', ['src/one.js'])
 })
-test('P4 hole 3: a b/src/one.test.js finding is validated against src/one.test.js, and a test change after the fix check closes', () => {
+test('P4 hole 3: a b/src/one.test.js finding is validated against src/one.test.js; a test change after the fix check is unseen', () => {
   const { original, check } = fixChecked(finding('b/src/one.test.js', 'test one'))
   assert.deepEqual(check.resolvedPaths.x1, { path: 'src/one.test.js', commit: check.head })
   commit({ 'src/one.test.js': 'test one, fixed\n' })
-  closedAs(original.id, X_FIXED, 'complete', [])
+  closedAs(original.id, X_FIXED, 'partial', ['src/one.test.js'])
 })
 
-test('P5 hole 1 in outOfScope: a leading-space file changed alongside the fixed file makes the close partial', () => {
-  const { record } = review([ONE])
-  commit({ 'src/one.js': 'export const one = 3\n', ' src/one.js': 'a different file\n' })
-  closedAs(record.id, FIXED, 'partial', [' src/one.js'])
+test('P5 hole 1 in the fixed rule: a fix check that read src/one.js has not read the leading-space file a finding cites', () => {
+  // The cited file changed on the branch, so the fixed rule needs it read; the fix makes it too big for the fix check.
+  commit({ ' src/one.js': 'export const spaced = 1\n' })
+  const { record } = review([finding(' src/one.js', 'export const spaced = 1')])
+  assert.equal(record.resolvedPaths.f1.path, ' src/one.js')
+  commit({ 'src/one.js': 'export const one = 3\n', ' src/one.js': PAD })
+  const check = cappedCheck(record)
+  assert.ok(check.manifest.read.some(([p]) => p === 'src/one.js'))
+  assert.ok(check.manifest.unread.some(([p, why]) => p === ' src/one.js' && why === 'oversize'), JSON.stringify(check.manifest.unread))
+  refused(record.id, FIXED, /Fixed f1: the fix check did not read  src\/one\.js \(oversize\);/)
 })
-test('P6 hole 2 in outOfScope: a fixed finding on a real b/src/one.js leaves a change to the root src/one.js out of scope', () => {
+test('P6 hole 2 in the fixed rule: a fix check that read the root src/one.js has not read the real b/src/one.js a finding cites', () => {
   commit({ 'b/src/one.js': 'export const b = 1\n' })
   const { record } = review([finding('b/src/one.js', 'export const b = 1')])
   assert.equal(record.resolvedPaths.f1.path, 'b/src/one.js')
-  commit({ 'src/one.js': 'export const one = 3\n', 'b/src/one.js': 'export const b = 2\n' })
-  closedAs(record.id, FIXED, 'partial', ['src/one.js'])
+  commit({ 'src/one.js': 'export const one = 3\n', 'b/src/one.js': PAD })
+  const check = cappedCheck(record)
+  assert.ok(check.manifest.read.some(([p]) => p === 'src/one.js'))
+  refused(record.id, FIXED, /Fixed f1: the fix check did not read b\/src\/one\.js \(oversize\);/)
 })
-test('P7 a diff-prefixed finding validated against the root file authorizes the root file in outOfScope; after a fix check the root file change is refused', () => {
+test('P7 a diff-prefixed finding validated against the root file is fixed once the fix check read the root file; after the fix check its change is unseen', () => {
   const { record } = review([finding('b/src/one.js', 'export const one = 2')])
   assert.equal(existsSync(join(REPO, 'b')), false); assert.equal(record.resolvedPaths.f1.path, 'src/one.js')
   commit({ 'src/one.js': 'export const one = 3\n' })
+  checked(record)
   closedAs(record.id, FIXED, 'complete', [])
   const { original, check } = fixChecked(finding('a/src/one.js', 'export const one = 3'))
   assert.equal(check.resolvedPaths.x1.path, 'src/one.js')
   commit({ 'src/one.js': 'export const one = 4\n' })
-  refused(original.id, X_FIXED, named(['src/one.js']))
+  closedAs(original.id, X_FIXED, 'partial', ['src/one.js'])
 })
-test('P8 an ambiguous finding (the quote is in both b/x.js and x.js) records no path, is reported, and authorizes nothing', () => {
+test('P8 an ambiguous finding (the quote is in both b/x.js and x.js) records no path, is reported, and needs only that the fix check was asked', () => {
   commit({ 'x.js': 'export const x = 1\n', 'b/x.js': 'export const x = 1\n' })
   const { record, out } = review([finding('b/x.js', 'export const x = 1')])
   assert.equal(record.findingDetails[0].status, 'verified-quote')
@@ -170,53 +192,61 @@ test('P8 an ambiguous finding (the quote is in both b/x.js and x.js) records no 
   assert.match(readFileSync(join(REPO, 'reviews/latest/code-review.md'), 'utf8'),
     /\(id f1\)[\s\S]*Path ambiguous: the quote is in both b\/x\.js and x\.js, so this finding authorizes no file at close/)
   commit({ 'x.js': 'export const x = 2\n', 'b/x.js': 'export const x = 2\n' })
-  closedAs(record.id, FIXED, 'partial', ['b/x.js', 'x.js'])
-  const { original, check, out: checked } = fixChecked(finding('b/x.js', 'export const x = 2'))
+  refused(record.id, FIXED, /Fixed f1 needs a fix check/)
+  assert.deepEqual(checked(record).asked, ['f1'])
+  closedAs(record.id, FIXED, 'complete', [])
+  const { original, check, out: checkedOut } = fixChecked(finding('b/x.js', 'export const x = 2'))
   assert.deepEqual(check.resolvedPaths, {}); assert.deepEqual(check.ambiguousPaths, { x1: ['b/x.js', 'x.js'] })
-  assert.match(checked, /x1: path ambiguous, the quote is in both b\/x\.js and x\.js; it authorizes no file at close/)
+  assert.match(checkedOut, /x1: path ambiguous, the quote is in both b\/x\.js and x\.js; it authorizes no file at close/)
   commit({ 'x.js': 'export const x = 3\n' })
-  refused(original.id, X_FIXED, named(['x.js']))
+  closedAs(original.id, X_FIXED, 'partial', ['x.js'])
 })
-test('P9 an unverified finding records no path and authorizes nothing', () => {
+test('P9 an unverified finding records no path: it needs only that the fix check was asked about it', () => {
   const { record } = review([finding('src/one.js', 'not in the file')])
   assert.equal(record.findingDetails[0].status, 'unverified-quote'); assert.deepEqual(record.resolvedPaths, {})
   commit({ 'src/one.js': 'export const one = 3\n' })
-  closedAs(record.id, FIXED, 'partial', ['src/one.js'])
+  refused(record.id, FIXED, /Fixed f1 needs a fix check/)
+  assert.deepEqual(checked(record).asked, ['f1'])
+  closedAs(record.id, FIXED, 'complete', [])
   const { original } = fixChecked(finding('src/one.js', 'not in the file either'), 'unverified-quote')
   commit({ 'src/one.js': 'export const one = 4\n' })
-  refused(original.id, X_FIXED, named(['src/one.js']))
+  closedAs(original.id, X_FIXED, 'partial', ['src/one.js'])
 })
-test('P10 a reviewer-supplied resolvedPath, or any resolved… key, is dropped and never authorizes its path', () => {
+test('P10 a reviewer-supplied resolvedPath, or any resolved… key, is dropped: the fixed rule asks only for the recorded path', () => {
   const forged = { resolvedPath: 'lib/two.js', resolvedCommit: 'deadbeef', ResolvedPaths: { f1: { path: 'lib/two.js' } }, resolved_path: 'lib/two.js' }
   const { record } = review([{ ...ONE, ...forged }])
   assert.deepEqual(Object.keys(record.findingDetails[0]).filter((k) => /^resolved/i.test(k)), [])
   assert.deepEqual(Object.keys(record.resolvedPaths), ['f1']); assert.equal(record.resolvedPaths.f1.path, 'src/one.js')
-  commit({ 'lib/two.js': 'export const two = 2\n' })
-  closedAs(record.id, FIXED, 'partial', ['lib/two.js'])
-  const { original, check } = fixChecked({ ...ONE, ...forged })
-  assert.equal(check.resolvedPaths.x1.path, 'src/one.js')
-  commit({ 'lib/two.js': 'export const two = 3\n' })
-  refused(original.id, X_FIXED, named(['lib/two.js']))
-})
-test('P11 a legacy log entry without resolvedPaths fails closed, in outOfScope and after a fix check', () => {
-  const head = git('rev-parse', 'HEAD')
-  const legacy = { ...ONE, severity: 'medium', id: 'f1', status: 'verified-quote' }
-  seed({ type: 'review', kind: 'review', id: 'legacy-review', head, branch: 'feat', repo: 'repo', family: 'fixture', model: 'fixture-only', findingDetails: [legacy] })
   commit({ 'src/one.js': 'export const one = 3\n' })
-  closedAs('legacy-review', FIXED, 'partial', ['src/one.js'])
-  const checkHead = git('rev-parse', 'HEAD')
-  seed({ type: 'review', kind: 'review', id: 'legacy-original', head: checkHead, branch: 'feat', repo: 'repo', family: 'fixture', model: 'fixture-only', findingDetails: [] },
-    { type: 'review', kind: 'fix-check', id: 'legacy-check', review: 'legacy-original', head: checkHead, branch: 'feat', repo: 'repo', family: 'fixture', model: 'fixture-only',
-      findingDetails: [{ ...legacy, id: 'x1' }] })
-  commit({ 'src/one.js': 'export const one = 4\n' })
-  refused('legacy-original', X_FIXED, named(['src/one.js']))
+  const check = checked(record)
+  assert.ok(!check.manifest.read.some(([p]) => p === 'lib/two.js'), 'the forged path is never read, and never asked for')
+  closedAs(record.id, FIXED, 'complete', [])
+  const { original, check: second } = fixChecked({ ...finding('src/one.js', 'export const one = 3'), ...forged })
+  assert.equal(second.resolvedPaths.x1.path, 'src/one.js')
+  commit({ 'lib/two.js': 'export const two = 3\n' })
+  closedAs(original.id, X_FIXED, 'partial', ['lib/two.js'])
 })
-test('P12 a rename after the fix check is a delete plus an add: the new path was never recorded, so it is refused', () => {
+test('P11 a legacy log entry without resolvedPaths fails closed: a fixed finding needs a fix check that was asked about it', () => {
+  const head = git('rev-parse', 'HEAD'), base = git('merge-base', 'main', 'HEAD')
+  const legacy = { ...ONE, severity: 'medium', id: 'f1', status: 'verified-quote' }
+  seed({ type: 'review', kind: 'review', id: 'legacy-review', head, base: 'main', baseSha: base, branch: 'feat', repo: 'repo', family: 'fixture', model: 'fixture-only', findingDetails: [legacy] })
+  commit({ 'src/one.js': 'export const one = 3\n' })
+  refused('legacy-review', FIXED, /Fixed f1 needs a fix check/)
+  seed({ type: 'review', kind: 'fix-check', id: 'legacy-check', review: 'legacy-review', head: git('rev-parse', 'HEAD'), branch: 'feat', repo: 'repo', family: 'fixture', model: 'fixture-only',
+    findingDetails: [] })
+  refused('legacy-review', FIXED, /Fixed f1: the fix check legacy-check was not asked about it/)
+  // A populated asked list that leaves f1 out is the same refusal.
+  seed({ type: 'review', kind: 'review', id: 'legacy-review-2', head, base: 'main', baseSha: base, branch: 'feat', repo: 'repo', family: 'fixture', model: 'fixture-only', findingDetails: [legacy] })
+  seed({ type: 'review', kind: 'fix-check', id: 'legacy-check-2', review: 'legacy-review-2', head: git('rev-parse', 'HEAD'), branch: 'feat', repo: 'repo', family: 'fixture', model: 'fixture-only',
+    findingDetails: [], asked: ['f2'] })
+  refused('legacy-review-2', FIXED, /Fixed f1: the fix check legacy-check-2 was not asked about it/)
+})
+test('P12 a rename after the fix check is a delete plus an add: both paths are unseen', () => {
   const { original } = fixChecked(ONE)
   git('mv', 'src/one.js', 'src/uno.js'); git('commit', '-qm', 'rename one')
-  refused(original.id, X_FIXED, named(['src/one.js', 'src/uno.js']))
+  closedAs(original.id, X_FIXED, 'partial', ['src/one.js', 'src/uno.js'])
 })
-test('P13 the Grade recheck range is untrimmed: a leading-space file there does not cover the file without the space', () => {
+test('P13 a Grade reads no diff: its close covers nothing, the leading-space file and the file without the space are each unseen', () => {
   const grade = (verdict, recheckOf) => {
     const path = join(ROOT, 'grade.json')
     writeFileSync(path, JSON.stringify({ family: 'fixture', model: 'fixture-only', vendor: 'codex', criteria: [
@@ -228,7 +258,7 @@ test('P13 the Grade recheck range is untrimmed: a leading-space file there does 
   commit({ ' src/one.js': 'the fix lives here\n' })
   grade('PASS', original.id)
   commit({ 'src/one.js': 'export const one = 3\n' })
-  closedAs(original.id, { c1: { status: 'fixed' } }, 'partial', ['src/one.js'])
+  closedAs(original.id, { c1: { status: 'fixed' } }, 'partial', [' src/one.js', 'src/one.js'])
 })
 
 // A file whose name has a raw 0xff byte, which APFS cannot hold on disk: added through the index and marked
@@ -245,43 +275,47 @@ function stageByteName(prefix, suffix, content) {
   plumb(['update-index', '-z', '--skip-worktree', '--stdin'], Buffer.concat([name, Buffer.from([0])]))
 }
 const FFFD = 'src/�.js'
-const notUtf8 = /git diff-tree [0-9a-f]{40} lists a file name that is not valid UTF-8 \(bytes 7372632fff2e6a73\); the gate compares exact names, so it refuses/
 
-test('P14 a file changed and then reverted after the fix check still counts: refused', () => {
+const notUtf8 = /git diff --name-only [0-9a-f]{40} [0-9a-f]{40} lists a file name that is not valid UTF-8 \(bytes 7372632fff2e6a73\); the gate compares exact names, so it refuses/
+
+test('P14 a file changed and then reverted after the fix check is no change: only the net diff is unseen', () => {
   const { original, check } = fixChecked(ONE)
   commit({ 'lib/two.js': 'export const two = 2\n' })
   commit({ 'lib/two.js': 'export const two = 1\n' })
   commit({ 'src/one.js': 'export const one = 3\n' })
   assert.equal(git('diff', '--name-only', check.head, 'HEAD'), 'src/one.js')
-  refused(original.id, X_FIXED, named(['lib/two.js', 'src/one.js']))
+  closedAs(original.id, X_FIXED, 'partial', ['src/one.js'])
 })
-test('P15 in outOfScope, a file changed and then reverted after the review makes the close partial', () => {
+test('P15 a file changed and then reverted after the review is no change: the fix check reads the net diff and the close completes', () => {
   const { record } = review([ONE])
   commit({ 'lib/two.js': 'export const two = 2\n' })
   commit({ 'lib/two.js': 'export const two = 1\n' })
   commit({ 'src/one.js': 'export const one = 3\n' })
   assert.equal(git('diff', '--name-only', record.head, 'HEAD'), 'src/one.js')
-  closedAs(record.id, FIXED, 'partial', ['lib/two.js'])
+  assert.deepEqual(checked(record).manifest.read.map(([p]) => p), ['src/one.js'])
+  closedAs(record.id, FIXED, 'complete', [])
 })
-test('P16 a merge after the fix check that brings in an unnamed file is refused, even when the merge drops its change', () => {
+test('P16 a merge after the fix check that brings in an unnamed file leaves it unseen; one whose change the merge dropped is no change', () => {
   const { original, check } = fixChecked(ONE)
   git('checkout', '-qb', 'side'); commit({ 'm.js': 'export const m = 1\n' }); git('checkout', '-q', 'feat')
   commit({ 'src/one.js': 'export const one = 3\n' })
   git('merge', '--no-ff', '-qm', 'merge side', 'side')
-  refused(original.id, X_FIXED, named(['m.js', 'src/one.js']))
+  closedAs(original.id, X_FIXED, 'partial', ['m.js', 'src/one.js'])
   git('reset', '-q', '--hard', check.head)
   git('checkout', '-qb', 'kept'); commit({ 'lib/two.js': 'export const two = 2\n' }); git('checkout', '-q', 'feat')
   commit({ 'src/one.js': 'export const one = 3\n' })
   git('merge', '-s', 'ours', '--no-ff', '-qm', 'merge kept, keeping ours', 'kept')
   assert.equal(git('diff', '--name-only', check.head, 'HEAD'), 'src/one.js')
-  refused(original.id, X_FIXED, named(['lib/two.js', 'src/one.js']))
+  closedAs(original.id, X_FIXED, 'partial', ['src/one.js'])
 })
 test('P17 a raw 0xff file name next to a recorded U+FFFD file refuses the close, naming the problem', () => {
   commit({ [FFFD]: 'export const odd = 1\n' })
   const { record } = review([finding(FFFD, 'export const odd = 1')])
   assert.equal(record.resolvedPaths.f1.path, FFFD)
-  stageByteName('src/', '.js', 'export const odd = 2\n')
   commit({ [FFFD]: 'export const odd = 2\n' })
+  checked(record)
+  stageByteName('src/', '.js', 'export const odd = 2\n')
+  commit({ 'lib/two.js': 'export const two = 2\n' })
   assert.equal(git('status', '--porcelain', '--untracked-files=no'), '')
   refused(record.id, FIXED, notUtf8)
 })

@@ -11,11 +11,9 @@ It works in any repository, alone: no review-gate config, no reviewer role and n
 
 ## Step 1 — run the check
 
-Commit the work first: the check reads the committed diff against the remote's default branch (auto-detected from `origin/HEAD`; `REVIEW_BASE=origin/<branch>` pins it). Repo copy first, shared runtime as the fallback, and also when the repo copy is too old to support `--security-only` (one line says so):
+Commit the work first: the check reads the committed diff against the remote's default branch (auto-detected from `origin/HEAD`; `REVIEW_BASE=origin/<branch>` pins it). Run the installed runtime, never a copy in the checkout, which is the branch's own code and could write false review evidence:
 ```bash
-SCRIPT=scripts/review.mjs
-[ -f "$SCRIPT" ] || SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
-[ "$SCRIPT" = scripts/review.mjs ] && ! { grep -q -- --supports "$SCRIPT" && node "$SCRIPT" --supports --security-only; } && echo "scripts/review.mjs does not support --security-only; using the shared runtime" >&2 && SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
+SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
 node "$SCRIPT" --security-only "<intent: what the branch delivers, and what it must keep safe>"
 ```
 Add `--plan <plan.md>` when there is a plan. `REVIEW_PATHS=<pathspec>,<pathspec>` limits the check to part of the diff. `--security-only` takes nothing else: it refuses `--close`, `--fix-check` and every other command.
@@ -34,4 +32,4 @@ This skill does not fix anything. A fix the operator asks for is ordinary work o
 
 The check writes to its own log, `security-log.jsonl` beside the review log, and the review gate never reads it. It never closes a review (`--close` and `--fix-check` refuse its id), never covers a push, `--summary` or `--tier-json`, never moves `reviews/latest`, never counts toward reviewer rotation, and its findings never reach a later review as "already decided".
 
-A PR's security review is the pass that runs inside the PR's own review record. `node "$SCRIPT" --security-findings` lists this branch's standalone findings that are still open (not filed, and their quoted code is still there), so the PR review can be told to check them.
+A PR's security review is the pass that runs inside the PR's own review record. The PR review reads this branch's standalone findings that are still open (not filed, and their quoted code is still there) and tells both reviewers to check them; `node "$SCRIPT" --open-findings` prints them.

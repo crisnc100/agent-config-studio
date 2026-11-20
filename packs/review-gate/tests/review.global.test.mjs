@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -39,12 +39,20 @@ function ownHook(name, exit = 0) {
   writeFileSync(path, `#!${process.execPath}\nconst fs=require('node:fs');fs.writeFileSync(${JSON.stringify(CALL)},JSON.stringify({args:process.argv.slice(2),input:fs.readFileSync(0).toString('base64')}));fs.appendFileSync(${JSON.stringify(ORDER)},'own\\n');process.stdout.write('own stdout\\n');process.exit(${exit});\n`)
   chmodSync(path, 0o755)
 }
+// A closed review of the unpublished history (base: the empty tree) whose manifest read every file at HEAD.
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 function cover(cwd = REPO) {
-  const r = run('git', ['rev-parse', 'HEAD'], { cwd }); allowed(r)
-  const head = r.stdout.trim()
+  const out = (...args) => { const r = run('git', args, { cwd }); allowed(r); return r.stdout }
+  const head = out('rev-parse', 'HEAD').trim()
+  const repoId = realpathSync(resolve(cwd, out('rev-parse', '--git-common-dir').trim()))
+  const read = out('ls-tree', '-r', '-z', '--full-tree', head).split('\0').filter(Boolean).map((entry) => {
+    const tab = entry.indexOf('\t'), [mode, , object] = entry.slice(0, tab).split(' ')
+    return [entry.slice(tab + 1), null, `${mode} ${object}`]
+  }).sort((a, b) => (a[0] < b[0] ? -1 : 1))
   writeFileSync(LOG, [
-    { type: 'review', kind: 'review', id: 'fixture', head, family: 'fixture', model: 'fixture-only', findingDetails: [] },
-    { type: 'close', review: 'fixture', closeHead: head, status: 'complete', statuses: {} },
+    { type: 'review', kind: 'review', id: 'fixture', head, baseSha: EMPTY_TREE, repoId, family: 'fixture', model: 'fixture-only', findingDetails: [],
+      manifest: { v: 1, role: 'code', base: EMPTY_TREE, head, read, unread: [], promptSha256: 'fixture', cap: 120000 } },
+    { type: 'close', review: 'fixture', closeHead: head, repoId, status: 'complete', statuses: {} },
   ].map(JSON.stringify).join('\n') + '\n')
   return head
 }

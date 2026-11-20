@@ -1,6 +1,6 @@
 ## Review gate
 
-- Code review runs through the code-review skill and the shared review script: `scripts/review.mjs` in the repo when present, otherwise `~/.agent-config-studio/review-gate/review.mjs` (<review.mjs> below).
+- Code review runs through the code-review skill and the shared review script, always the installed `~/.agent-config-studio/review-gate/review.mjs` and never a copy in the checkout (<review.mjs> below).
 - A finished branch is made ready for its PR with the pr-review skill, which owns the order: the code review, plus the security pass when `security.run` is on (ACS → Packs → Review gate), in one record, one fix round, the context pass, one fix check that also reviews the context commit, then close once, at the tip, push, then the PR description. A standalone security-check never counts toward a close or a push.
 - Reviewers come from the `reviewer` role in ACS (Models → Roles). If the script stops and names a fix (install `model-id`, set the role, install a CLI), relay that fix; never review with a model the role does not list.
 - Builders commit their work and never run reviews, grades or other models themselves; the orchestrator runs those checks and opens the PR.

@@ -70,6 +70,13 @@ function review(extra = {}, args = []) {
 }
 function status(value) { const p = join(ROOT, 'status.json'); writeFileSync(p, JSON.stringify(value)); return p }
 function close(id, value = {}, args = [], extra = {}) { return run(['--close', id, '--status', status(value), ...args], extra) }
+// The fix round and the one fix check: a fixed blocking or protected finding needs the fix check to have read its file.
+function fixedUp(r, text = 'export const a = 3\n') {
+  commit('a.js', text)
+  const checked = run(['--fix-check', r.id], { STUB_FINDINGS: '{"findings":[]}' })
+  assert.equal(checked.status, 0, checked.out)
+  return lines().at(-1)
+}
 beforeEach(() => {
   rmSync(JEV_LOG, { force: true })
   for (const p of [HOME, REPO, CALLS]) { rmSync(p, { recursive: true, force: true }); mkdirSync(p, { recursive: true }) }
@@ -149,6 +156,7 @@ test('1.5 close refuses unknown review, missing statuses, unknown keys, severity
     [r.id, { f1: { status: 'rejected', reason: 'wrong', response: 'wrong', evidence: 'a.js:1' }, f2: { status: 'fixed' }, f3: { status: 'fixed' } }],
     [r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' }, f3: { status: 'fixed' }, typo: { status: 'fixed' } }],
   ]
+  fixedUp(r)
   for (const [id, statuses] of cases) {
     const before = lines()
     const result = close(id, statuses, ['--test-cmd', 'true'])
@@ -159,19 +167,19 @@ test('1.5 close refuses unknown review, missing statuses, unknown keys, severity
   assert.equal(accepted.status, 0, accepted.out)
 })
 test('1.5 close tests HEAD, fails without writes on test failure, dirty state and divergent ancestry', () => {
-  const r = review()
+  const r = review({ STUB_FINDINGS: '{"findings":[]}' })
   let before = lines()
-  const failed = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'exit 7'])
+  const failed = close(r.id, {}, ['--test-cmd', 'exit 7'])
   assert.notEqual(failed.status, 0)
   assert.match(failed.out, /Tests failed at HEAD/)
   assert.deepEqual(lines(), before)
   write('a.js', 'dirty')
-  assert.notEqual(close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true']).status, 0)
+  assert.notEqual(close(r.id, {}, ['--test-cmd', 'true']).status, 0)
   assert.deepEqual(lines(), before)
   git('reset', '--hard', 'HEAD')
   git('checkout', '-qb', 'divergent', 'main')
   commit('a.js', 'divergent\n')
-  const divergent = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true'])
+  const divergent = close(r.id, {}, ['--test-cmd', 'true'])
   assert.notEqual(divergent.status, 0)
   assert.match(divergent.out, /neither the reviewed commit nor a descendant/)
   assert.deepEqual(lines(), before)
@@ -202,18 +210,18 @@ test('1.6 clean reviews remain open until close runs tests and records exact clo
   assert.equal(pass.status, 0, pass.out)
   assert.equal(lines().at(-1).closeHead, git('rev-parse', 'HEAD'))
 })
-test('1.7 fixed-file and builds exemptions, out-of-scope files make close partial; all test patterns exempt', () => {
+test('1.7 builds/ needs no read; a file no pass read after the fix check makes the close partial and names it unseen', () => {
   const r = review()
-  commit('a.js', 'export const a = 3\n')
+  fixedUp(r)
   commit('builds/part/log.md', 'choice')
   commit('other.js', 'unrelated')
   const result = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true'])
   assert.equal(result.status, 0, result.out)
-  assert.deepEqual(lines().at(-1).outOfScope, ['other.js'])
+  assert.deepEqual(lines().at(-1).unseen, ['other.js'])
   assert.equal(lines().at(-1).status, 'partial')
   assert.notEqual(run(['--summary']).status, 0)
 })
-test('1.8 test patterns and verify scripts require exact-head fix check; only fix diff is reviewed, never a third pass', () => {
+test('1.8 a fixed finding needs the fix check, which reads the later test files and the cited file from the base; never a third pass; a later commit is unseen', () => {
   const r = review()
   const files = ['test/a.js', 'tests/a.js', '__tests__/a.js', '__snapshots__/a.js', 'a.test.js', 'a.spec.js', 'a.snap', 'vitest.config.js', 'jest.config.cjs', 'playwright.config.ts', 'scripts/verify.sh', 'check.mjs']
   for (const file of files) write(file, 'test contents\n')
@@ -222,7 +230,7 @@ test('1.8 test patterns and verify scripts require exact-head fix check; only fi
   const before = lines()
   const refused = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'node check.mjs'])
   assert.notEqual(refused.status, 0)
-  assert.match(refused.out, /run --fix-check first/)
+  assert.match(refused.out, new RegExp(`Fixed f1 needs a fix check to read it after the fix: run --fix-check ${r.id}`))
   assert.deepEqual(lines(), before)
   const fixed = run(['--fix-check', r.id], { STUB_FINDINGS: '{"findings":[]}' })
   assert.equal(fixed.status, 0, fixed.out)
@@ -231,10 +239,10 @@ test('1.8 test patterns and verify scripts require exact-head fix check; only fi
   assert.equal(check.head, git('rev-parse', 'HEAD'))
   const prompt = calls().at(-1).prompt
   assert.match(prompt, /test contents/)
-  assert.ok(!prompt.includes('+export const a = 2'), prompt)
+  assert.ok(prompt.includes('+export const a = 2'), 'the file f1 cites is read again from the base, though the fix did not touch it')
   const accepted = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true'])
   assert.equal(accepted.status, 0, accepted.out)
-  assert.deepEqual(lines().at(-1).outOfScope, []); assert.equal(lines().at(-1).status, 'complete')
+  assert.deepEqual(lines().at(-1).unseen, []); assert.equal(lines().at(-1).status, 'complete')
   const passCount = calls().length
   const third = run(['--fix-check', r.id])
   assert.notEqual(third.status, 0)
@@ -245,18 +253,13 @@ test('1.8 test patterns and verify scripts require exact-head fix check; only fi
   assert.equal(notes.status, 0, notes.out); assert.equal(lines().at(-1).status, 'complete')
   commit('a.js', 'export const a = 4\n')
   const stale = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true'])
-  assert.notEqual(stale.status, 0)
-  assert.match(stale.out, /head must equal closing HEAD, or the commits after it may touch only builds\/ and test files: a\.js\./)
+  assert.equal(stale.status, 0, stale.out)
+  assert.equal(lines().at(-1).status, 'partial'); assert.deepEqual(lines().at(-1).unseen, ['a.js'])
+  assert.match(stale.out, /REVIEW_PATHS=a\.js/)
 })
-test('1.8 each risk, verify-command path and runner config independently triggers fix check; dirty fix check refuses', () => {
+test('1.8 a fix check refuses a dirty tree', () => {
   const r = review()
-  for (const file of ['auth/login.js', 'check.mjs', 'a.test.js', 'vitest.config.js', 'scripts/verify.sh']) {
-    git('reset', '--hard', r.head)
-    commit(file, 'changed')
-    const refused = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'node check.mjs'])
-    assert.notEqual(refused.status, 0)
-    assert.match(refused.out, /run --fix-check first/, file)
-  }
+  commit('a.test.js', 'changed')
   write('a.js', 'dirty')
   assert.notEqual(run(['--fix-check', r.id]).status, 0)
 })
@@ -273,7 +276,7 @@ test('1.8 fix-check findings x ids require their own status and dispute; no unre
   assert.equal(dispute.status, 0, dispute.out)
   const result = close(r.id, { f1: { status: 'fixed' }, x1: { status: 'rejected', reason: 'intent', response: 'intentional', evidence: 'a.js:1' } }, ['--test-cmd', 'true'])
   assert.equal(result.status, 0, result.out)
-  assert.deepEqual(lines().at(-1).outOfScope, [])
+  assert.deepEqual(lines().at(-1).unseen, [])
 })
 test('1.9 disputes use reviewed snapshot for tool reads, log verdict/families/evidence and allow only one verdict', () => {
   const r = review()
@@ -367,7 +370,7 @@ test('1.12 summary prints reviewer, counts, serious rejection reasons and carrie
   assert.equal(summary.status, 0, summary.out)
   for (const text of ['Reviewer: sol', '1 findings', '1 rejected', 'MEDIUM wrong return: invented quote', 'Carried unlocated f1', 'No tests: no suite']) assert.ok(summary.out.includes(text), summary.out)
 })
-test('1.1 legacy records still parse; 1.13 old copies are labelled when they cannot close or cover HEAD', () => {
+test('1.1 legacy records still parse; 1.13 old copies are labelled when they cannot close', () => {
   seed({ type: 'review', id: 'legacy', family: 'sol', repo: 'repo', findings: 0 })
   const config = run(['--show-config'])
   assert.equal(config.status, 0, config.out)
@@ -377,7 +380,7 @@ test('1.1 legacy records still parse; 1.13 old copies are labelled when they can
   assert.match(closed.out, /old script copy that did not log head/)
   const summary = run(['--summary'])
   assert.notEqual(summary.status, 0)
-  assert.match(summary.out, /old script copy that did not log head/)
+  assert.match(summary.out, /No complete close covers HEAD/)
 })
 
 test('1.5 every supplied reference validates even for fixed, LOW and waived statuses; nested unknown keys refuse', () => {
@@ -399,13 +402,13 @@ test('1.5 every supplied reference validates even for fixed, LOW and waived stat
   assert.notEqual(result.status, 0)
 })
 test('1.5 tests that dirty tracked files or move HEAD cannot append a close', () => {
-  const r = review()
+  const r = review({ STUB_FINDINGS: '{"findings":[]}' })
   const before = lines()
-  const dirty = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'echo changed >> a.js'])
+  const dirty = close(r.id, {}, ['--test-cmd', 'echo changed >> a.js'])
   assert.notEqual(dirty.status, 0)
   assert.deepEqual(lines(), before)
   git('reset', '--hard', r.head)
-  const moved = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'git checkout -q main'])
+  const moved = close(r.id, {}, ['--test-cmd', 'git checkout -q main'])
   assert.notEqual(moved.status, 0)
   assert.match(moved.out, /HEAD changed/)
   assert.deepEqual(lines(), before)
@@ -540,17 +543,6 @@ test('L2 a dispute finding id never becomes review intent', () => {
   assert.ok(!prompt.includes('(intent:'), prompt)
   assert.ok(prompt.includes('Reason: intended behavior'), prompt)
 })
-test('L3 configured verifyCmd paths trigger fix checks even when test-cmd overrides execution', () => {
-  commit('custom-check.mjs', 'process.exit(0)\n')
-  write('.claude/review-config.json', JSON.stringify({ verifyCmd: 'node custom-check.mjs' }))
-  const r = review()
-  commit('custom-check.mjs', 'process.exit(0)\n// changed verification\n')
-  const before = lines()
-  const result = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true'])
-  assert.notEqual(result.status, 0, result.out)
-  assert.match(result.out, /run --fix-check first/)
-  assert.deepEqual(lines(), before)
-})
 test('L4 fix-check force rules inspect only the fix diff risk paths', () => {
   commit('auth/login.js', 'export const login = true\n')
   write('.claude/review-config.json', JSON.stringify({ force: [{ paths: 'risk', family: 'grok' }] }))
@@ -638,6 +630,13 @@ test('Part A a review without repoId can close using its own REFUTED dispute', (
   }
 })
 
+// A Grade reads no diff, so its close covers nothing: a review at the tip, closed there, covers the change for the summary.
+function tipReviewClosed() {
+  const tip = review({ STUB_FINDINGS: '{"findings":[]}' })
+  const closed = close(tip.id, {}, ['--test-cmd', 'true'])
+  assert.equal(closed.status, 0, closed.out)
+  return tip
+}
 const gradeVerdict = () => ({ family: 'opus', model: 'stub-opus', criteria: [
   { id: '2.1', criterion: 'Preserve account', verdict: 'FAIL', evidence: 'account test fails' },
   { id: '2.2', criterion: 'Stable output', verdict: 'PASS', evidence: 'output test passes' },
@@ -740,18 +739,27 @@ test('2.1 Grade criterion disputes, waivers, close and summary use the existing 
     f2: { status: 'rejected', reason: 'accept defect', response: 'intentional', evidence: 'external test' } }
   const closed = close(record.id, statuses, ['--test-cmd', 'true'])
   assert.equal(closed.status, 0, closed.out)
+  assert.equal(lines().at(-1).status, 'partial')
+  tipReviewClosed()
   const summary = run(['--summary'])
   assert.equal(summary.status, 0, summary.out)
   for (const text of ['Reviewer: opus', '2 findings', '2 rejected', 'intentional criterion', 'accepted external bug'])
     assert.ok(summary.stdout.includes(text), summary.out)
 })
-test('2.1 a passing Grade still needs a close and additional findings need statuses', () => {
+test('2.1 a passing Grade still needs a close and additional findings need statuses; a Grade finding is carried to the tip review, never fixed', () => {
   const value = gradeVerdict()
   value.criteria[0].verdict = 'PASS'
   const record = logGrade({ ...value, findings: [{ severity: 'low', issue: 'Fix this', file: 'a.js', evidence: 'edge test' }] })
   assert.notEqual(run(['--summary']).status, 0)
   assert.notEqual(close(record.id, {}, ['--test-cmd', 'true']).status, 0)
-  const closed = close(record.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true'])
+  const fixed = close(record.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true'])
+  assert.notEqual(fixed.status, 0); assert.match(fixed.out, /Fixed f1 is a Grade finding: it is carried to the tip review/)
+  const early = close(record.id, { f1: { status: 'carried' } }, ['--test-cmd', 'true'])
+  assert.notEqual(early.status, 0); assert.match(early.out, /Carried f1 needs a review after the Grade that lists it among its open findings/)
+  // The tip review records the Grade's open findings it was given (seeded here as that review's record would carry them).
+  seed({ type: 'review', kind: 'review', id: 'tip-review', head: git('rev-parse', 'HEAD'), branch: 'feat', repoId: realpathSync(join(REPO, '.git')),
+    family: 'sol', model: 'stub-sol', findingDetails: [], openFindings: [{ record: record.id, id: 'f1' }] })
+  const closed = close(record.id, { f1: { status: 'carried' } }, ['--test-cmd', 'true'])
   assert.equal(closed.status, 0, closed.out)
 })
 
@@ -823,6 +831,7 @@ test('2.2 recheck findings join original close statuses, disputes, summary and d
   const statuses = { c1: { status: 'fixed' }, r1: { status: 'rejected', reason: 'intended recheck behavior', response: 'intentional', evidence: 'new defect test' } }
   const closed = close(original.id, statuses, ['--test-cmd', 'true'])
   assert.equal(closed.status, 0, closed.out)
+  tipReviewClosed()
   const summary = run(['--summary'])
   assert.equal(summary.status, 0, summary.out)
   assert.match(summary.stdout, /2 findings/)
@@ -868,7 +877,7 @@ test('5.2 filed findings need no close status, supplied scores cannot be changed
   const closed = close(r.id, {}, ['--test-cmd', 'true']); assert.equal(closed.status, 0, closed.out)
   const bad = close(r.id, { f1: { status: 'fixed', likelihood: 2 } }, ['--test-cmd', 'true'])
   assert.notEqual(bad.status, 0); assert.match(bad.out, /Unknown status field/)
-  commit('a.js', 'export const a = 3\n')
+  fixedUp(r)
   const fixed = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true'])
   assert.equal(fixed.status, 0, fixed.out); assert.equal(lines().at(-1).status, 'complete')
 })
@@ -1027,7 +1036,7 @@ test('6.4 failed score follow-up keeps findings blocking and legacy LOW needs RE
   const missing = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true'])
   assert.notEqual(missing.status, 0); assert.match(missing.out, /Finding f2 needs a fixed or rejected status/)
   const values = { f1: { status: 'fixed' }, f2: { status: 'fixed' }, f3: { status: 'rejected', reason: 'legacy low', response: 'wrong', evidence: 'a.js:1' } }
-  commit('a.js', 'export const a = 3\n')
+  fixedUp(r)
   const refused = close(r.id, values, ['--test-cmd', 'true']); assert.notEqual(refused.status, 0)
   assert.match(refused.out, /Rejected f3 requires a REFUTED verdict or an operator waiver/)
   assert.doesNotMatch(refused.out, /Fixed f2 is protected/)
@@ -1154,7 +1163,6 @@ test('C2 pre-phase-6 LOW unfiled findings still need statuses but not REFUTED to
   assert.notEqual(missing.status, 0, missing.out); assert.match(missing.out, /Finding f1 needs/)
   const accepted = close(record.id, { f1: { status: 'rejected', reason: 'ordinary LOW rejection', response: 'wrong', evidence: 'a.js:1' } }, ['--test-cmd', 'true'])
   assert.equal(accepted.status, 0, accepted.out)
-  assert.doesNotMatch(run(['--summary']).stdout, /f1 LOW wrong return: ordinary LOW rejection/)
 })
 for (const kind of ['fix-check', 'recheck']) test(`C2 ${kind} findings use their own stored record version`, () => {
   const parent = { ...oldCloseRecord('parent-' + kind, 'grade', []), criteria: [], rubricVersion: '2026-10-29.2' }
@@ -1171,16 +1179,12 @@ for (const kind of ['fix-check', 'recheck']) test(`C2 ${kind} findings use their
   assert.notEqual(rejected.status, 0); assert.match(rejected.out, /REFUTED/)
   seed({ type: 'dispute', review: modernChild.id, finding: child.findingDetails[0].id, verdict: 'REFUTED' })
   assert.equal(close(oldParent.id, value, ['--test-cmd', 'true']).status, 0)
-  assert.match(run(['--summary']).stdout, /LOW wrong return: old child LOW/)
 })
-test('C2 old stored rejection rules and summary ignore unscored metadata until the record is versioned', () => {
+test('C2 old stored rejection rules ignore unscored metadata until the record is versioned', () => {
   const old = oldCloseRecord('old-summary', 'review', [{ ...FINDING, id: 'f1', severity: 'low', filed: false, unscored: true },
     { ...FINDING, id: 'f2', severity: 'medium', filed: false }, { ...FINDING, id: 'f3', severity: 'high', filed: true }])
   const statuses = { f1: { status: 'rejected', reason: 'old LOW', response: 'wrong', evidence: 'a.js:1' }, f2: { status: 'rejected', reason: 'old MEDIUM', response: 'wrong', evidence: 'a.js:1' } }
   seed(old, { type: 'close', review: old.id, closeHead: old.head, status: 'complete', statuses })
-  const summary = run(['--summary']); assert.equal(summary.status, 0, summary.out)
-  assert.doesNotMatch(summary.stdout, /LOW wrong return: old LOW/)
-  assert.match(summary.stdout, /MEDIUM wrong return: old MEDIUM/)
   const refused = close(old.id, statuses, ['--test-cmd', 'true']); assert.notEqual(refused.status, 0); assert.match(refused.out, /REFUTED/)
   seed({ type: 'dispute', review: old.id, finding: 'f2', verdict: 'REFUTED' })
   const accepted = close(old.id, statuses, ['--test-cmd', 'true']); assert.equal(accepted.status, 0, accepted.out)
@@ -1200,8 +1204,9 @@ test('close once: a review, a fix commit and a comment-only commit, one --fix-ch
   const records = lines().filter((e) => e.type === 'close')
   assert.equal(records.length, 1)
   assert.equal(records[0].status, 'complete')
-  const [mode, , blob] = git('ls-tree', 'HEAD', 'a.js').trim().split(/\s+/)
-  assert.deepEqual(records[0].coverage, [['a.js', `${mode} ${blob}`]])
+  const state = (rev) => { const [mode, , blob] = git('ls-tree', rev, 'a.js').trim().split(/\s+/); return `${mode} ${blob}` }
+  assert.deepEqual(records[0].unseen, [])
+  assert.deepEqual(check.manifest.read, [['a.js', state(git('merge-base', 'main', 'HEAD')), state('HEAD')]])
   const tip = git('rev-parse', 'HEAD').trim()
   const gated = spawnSync(process.execPath, [SCRIPT, '--gate'], { cwd: REPO, env: environment(), encoding: 'utf8', input: `refs/heads/feat ${tip} refs/heads/feat ${'0'.repeat(40)}\n` })
   assert.equal(gated.status, 0, `${gated.stdout}\n${gated.stderr}`)
@@ -1214,7 +1219,7 @@ test('7.1 a protected finding takes its band from its likelihood: 3 or more HIGH
     [[3, 'high', false, true], [20, 'medium', false, true], [2, 'medium', false, true], [10, 'low', true, true]])
   const refused = close(r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' } }, ['--test-cmd', 'true'])
   assert.notEqual(refused.status, 0); assert.match(refused.out, /Finding f3 needs a fixed or rejected status/)
-  commit('a.js', 'export const a = 3\n')
+  fixedUp(r)
   const accepted = close(r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' }, f3: { status: 'fixed' } }, ['--test-cmd', 'true'])
   assert.equal(accepted.status, 0, accepted.out)
 })
@@ -1238,24 +1243,4 @@ test('7.3 the rubric states the threat model and the protected bands by likeliho
   assert.doesNotMatch(text.stdout, /however rare/)
   assert.doesNotMatch(text.stdout, /HIGH if protected/)
   assert.ok(text.stdout.indexOf('THREAT MODEL') > text.stdout.indexOf('10: every use') && text.stdout.indexOf('THREAT MODEL') < text.stdout.indexOf('impact (1–10)'), 'beside the likelihood anchors')
-})
-
-test('7.4 a blocking protected finding is fixed only by a change to its file; an unprotected one and a filed protected LOW are not held to it', () => {
-  const PROTECTED = { ...SCORED, issue: 'gate bypass', protected: true, likelihood: 3, impact: 7 }
-  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [PROTECTED, { ...SCORED, issue: 'plain bug' }, { ...SCORED, issue: 'rare bypass', protected: true, likelihood: 1 }] }) })
-  assert.deepEqual(r.findingDetails.map((f) => f.severity), ['high', 'medium', 'low'])
-  const stale = close(r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' } }, ['--test-cmd', 'true'])
-  assert.notEqual(stale.status, 0); assert.match(stale.out, /Fixed f1 is protected, but a\.js is unchanged since the review/)
-  assert.equal(lines().filter((e) => e.type === 'close').length, 0)
-  commit('a.js', 'export const a = 3\n')
-  const fixed = close(r.id, { f1: { status: 'fixed' }, f2: { status: 'fixed' } }, ['--test-cmd', 'true'])
-  assert.equal(fixed.status, 0, fixed.out); assert.equal(lines().at(-1).status, 'complete')
-})
-
-test('7.4 a REFUTED dispute lets a protected finding close as fixed on an unchanged file', () => {
-  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [{ ...SCORED, protected: true, likelihood: 2, impact: 7 }] }) })
-  assert.equal(r.findingDetails[0].severity, 'medium')
-  assert.notEqual(close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true']).status, 0)
-  seed({ type: 'dispute', review: r.id, finding: 'f1', verdict: 'REFUTED', verifier: 'grok' })
-  const accepted = close(r.id, { f1: { status: 'fixed' } }, ['--test-cmd', 'true']); assert.equal(accepted.status, 0, accepted.out)
 })

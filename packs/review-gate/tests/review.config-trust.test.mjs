@@ -160,6 +160,10 @@ test('an untracked, ignored repo config still runs its verifyCmd, pick and class
   assert.ok(existsSync(marker('pick')), r.out)
   assert.ok(!/Ignoring/.test(r.out), r.out)
   rmSync(marker('verify'))
+  // A fixed blocking finding needs the review's fix check to have read the fix.
+  commit('a.js', 'export const a = 3\n')
+  const check = run(['--fix-check', r.record.id], { REVIEW_BASE: 'main' })
+  assert.equal(check.status, 0, check.out)
   const status = join(ROOT, 'status.json')
   writeFileSync(status, JSON.stringify({ f1: { status: 'fixed' } }))
   const close = run(['--close', r.record.id, '--status', status], { REVIEW_BASE: 'main' })

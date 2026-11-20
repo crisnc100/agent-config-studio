@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 // every model call; temporary HOME and Git config; no real model.
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'runtime', 'review.mjs')
 const SKILLS = join(dirname(SCRIPT), '..', 'skills')
+const INSTALLED = '="$HOME/.agent-config-studio/review-gate/review.mjs"'
 const ROOT = mkdtempSync(join(tmpdir(), 'review-security-only-test-'))
 const HOME = join(ROOT, 'home'), REPO = join(ROOT, 'repo'), BIN = join(ROOT, 'bin'), CALLS = join(ROOT, 'calls.jsonl')
 const LOG = join(HOME, '.agent-config-studio/review-log/review-log.jsonl')
@@ -182,18 +183,25 @@ test('4 leak: --fix-check and --close refuse a security check id, from its own l
   assert.equal(calls().filter((c) => c.kind === 'code').length, 0, 'no fix check model ran')
 })
 
-test('5 leak: a security check\'s filed and open findings never reach a later review as already decided', () => {
+test('5 leak: a security check\'s filed findings never reach a later review, and its open ones reach it only as not decided', () => {
   securityOnly({ STUB_SEC_FINDINGS: findings(finding({ issue: 'FILED-SEC-7731', likelihood: 1, impact: 2 }), finding({ issue: 'OPEN-SEC-7732' })) })
   reviewed()
   const code = calls().filter((c) => c.kind === 'code')
   assert.equal(code.length, 1)
   assert.doesNotMatch(code[0].prompt, /Already decided/)
-  assert.doesNotMatch(code[0].prompt, /FILED-SEC-7731|OPEN-SEC-7732/)
-  // Planted in the review log as a review of this branch, it still feeds nothing forward.
-  appendFileSync(LOG, `${JSON.stringify({ ...lines(SEC_LOG).at(-1), type: 'review', kind: 'review' })}\n`)
+  assert.doesNotMatch(code[0].prompt, /FILED-SEC-7731/)
+  const open = code[0].prompt.indexOf('OPEN-SEC-7732'), header = code[0].prompt.indexOf('They are not decided: check whether each still holds')
+  assert.ok(header !== -1 && open > header, 'the open finding is listed under the not-decided header')
+  // Planted in the review log as a review of this branch (its findings renamed, so they are told apart from the check's),
+  // it feeds nothing forward: neither planted finding reaches the prompt, and the check's own open finding is listed once.
+  const planted = lines(SEC_LOG).at(-1)
+  appendFileSync(LOG, `${JSON.stringify({ ...planted, type: 'review', kind: 'review', findingDetails: planted.findingDetails.map((f) => ({ ...f, issue: f.issue.replace('-SEC-', '-PLANT-') })) })}\n`)
   reviewed()
-  const again = calls().filter((c) => c.kind === 'code').at(-1)
-  assert.doesNotMatch(again.prompt, /FILED-SEC-7731|OPEN-SEC-7732/)
+  const again = calls().filter((c) => c.kind === 'code').at(-1).prompt
+  assert.doesNotMatch(again, /Already decided/)
+  assert.doesNotMatch(again, /FILED-SEC-7731|PLANT-77/)
+  assert.equal(again.match(/OPEN-SEC-7732/g)?.length, 1, 'the standalone finding once, not again as a phase finding')
+  assert.ok(again.indexOf('OPEN-SEC-7732') > again.indexOf('Standalone security findings on feat (from /security-check). They are not decided'))
 })
 
 test('6 --security-findings lists this branch\'s open standalone findings, not filed ones, and drops one whose code changed', () => {
@@ -244,7 +252,7 @@ function scratch() {
     'mkdir src && printf "export const one = 1\\n" > src/a.js && git add src && git -c user.name=t -c user.email=t@t commit -qm a']) allowed(sh(c))
   return { home, repo, sh }
 }
-for (const [skill, opener, roles, kind] of [['code-review', '=scripts/review.mjs', 'reviewer', 'code'], ['security-check', '=scripts/review.mjs', 'security', 'security']]) {
+for (const [skill, opener, roles, kind] of [['code-review', INSTALLED, 'reviewer', 'code'], ['security-check', INSTALLED, 'security', 'security']]) {
   test(`8 portability: /${skill}'s command runs in a scratch repo with no review-gate config, only its own role, and no other skill`, () => {
     for (const harness of ['claude', 'codex']) {
       rmSync(CALLS, { force: true })
@@ -274,7 +282,7 @@ test('11 /pr-review\'s review command hands open standalone findings to both rev
   rmSync(CALLS, { force: true })
   for (const harness of ['claude', 'codex']) {
     const body = readFileSync(join(SKILLS, harness, 'pr-review', 'SKILL.md'), 'utf8')
-    const block = fenced(body, 'OPEN=$(node').replace('--plan <plan.md> ', '').replace(/"<intent:[^"]*>"/, '"add app"')
+    const block = fenced(body, 'node "$SCRIPT" --plan <plan.md>').replace('--plan <plan.md> ', '').replace(/"<intent:[^"]*>"/, '"add app"')
     const r = run('bash', ['-c', `SCRIPT=${JSON.stringify(SCRIPT)}\n${block}`], { REVIEW_REVIEWER: 'sol' })
     allowed(r)
     const json = findingsJson(r)
@@ -295,9 +303,10 @@ test('9 --code-only (the /code-review skill) never starts the security pass; wit
   const review = lines(LOG).find((e) => e.id === id)
   assert.equal(review.security.status, 'not-asked')
   assert.equal(review.security.run, 'required')
-  const tier = closed(id)
+  closed(id)
+  const tier = JSON.parse(script(['--tier-json'], { REVIEW_REVIEWER: 'sol' }).stdout)
   assert.equal(tier.tier, 'high')
-  assert.ok(tier.tierReasons.some((r) => /security pass did not cover logic changed after review \(not-asked at review/.test(r)), JSON.stringify(tier.tierReasons))
+  assert.ok(tier.reasons.some((r) => /^security pass did not read: src\/app\.js/.test(r)), JSON.stringify(tier.reasons))
   // The same run without --code-only (the /pr-review flow) runs the pass in the same record.
   rmSync(CALLS, { force: true })
   const both = script([], { REVIEW_REVIEWER: 'sol' })
@@ -362,40 +371,45 @@ test('fix m2 an unknown flag is a plain error with no review; --supports answers
   assert.equal(script(['--supports', '--nope']).status, 1)
 })
 
+// A copy in the checkout is the branch's own code, so it could write false review evidence: it never runs, however
+// current it looks. REPO_COPY answers every --supports probe, so only the skill's own choice keeps it out.
+const REPO_COPY = "const a = process.argv.slice(2)\nif (a[0] === '--supports') process.exit(0)\nif (a[0] === '--cross-family') { console.log('off'); process.exit(0) }\nconsole.log('REPO COPY RAN ' + a.join(' '))\n"
 for (const [skill, flag] of [['security-check', '--security-only'], ['code-review', '--code-only']]) {
-  test(`fix m2 /${skill}: an older repo copy without ${flag} is skipped for the shared runtime, and says so`, () => {
+  test(`x1 /${skill}: a scripts/review.mjs in the checkout never runs, old or answering every flag; the installed runtime does`, () => {
     for (const harness of ['claude', 'codex']) {
-      rmSync(CALLS, { force: true })
       const { repo, sh } = scratch()
-      const block = fenced(readFileSync(join(SKILLS, harness, skill, 'SKILL.md'), 'utf8'), '=scripts/review.mjs').replace(/"<intent:[^"]*>"/g, '"add a"')
+      const block = fenced(readFileSync(join(SKILLS, harness, skill, 'SKILL.md'), 'utf8'), INSTALLED).replace(/"<intent:[^"]*>"/g, '"add a"')
+      assert.match(block, new RegExp(`node "\\$(REVIEW_)?SCRIPT" ${flag}`), harness)
       mkdirSync(join(repo, 'scripts'))
-      writeFileSync(join(repo, 'scripts/review.mjs'), "console.log('OLD COPY RAN ' + process.argv.slice(2).join(' '))\n")
-      const old = sh(block)
-      allowed(old)
-      assert.doesNotMatch(old.out, /OLD COPY RAN/, `${harness}: ${old.out}`)
-      assert.match(old.out, new RegExp(`scripts/review\\.mjs does not support ${flag}; using the shared runtime`), harness)
-      assert.match(old.stdout, /===FINDINGS_JSON===/)
-      // A current copy in the repo is the one that runs.
-      cpSync(SCRIPT, join(repo, 'scripts/review.mjs'))
-      const now = sh(block)
-      allowed(now)
-      assert.match(now.out, /review\.mjs · \S*scripts\/review\.mjs · /, `${harness}: ${now.out.slice(0, 400)}`)
+      for (const copy of ["console.log('REPO COPY RAN ' + process.argv.slice(2).join(' '))\n", REPO_COPY]) {
+        rmSync(CALLS, { force: true })
+        writeFileSync(join(repo, 'scripts/review.mjs'), copy)
+        const r = sh(block)
+        allowed(r)
+        assert.doesNotMatch(r.out, /REPO COPY RAN/, `${harness}: ${r.out}`)
+        assert.match(r.stdout, /===FINDINGS_JSON===/, harness)
+        assert.match(r.out, /review\.mjs · \S*\.agent-config-studio\/review-gate\/review\.mjs · /, `${harness}: ${r.out.slice(0, 400)}`)
+      }
     }
   })
 }
 
-test('fix f8 /pr-review: a repo copy that lacks any flag the flow uses (--focus here) is skipped for the shared runtime, and says so', () => {
+test('x1 /pr-review and /build: with a scripts/review.mjs in the checkout answering every flag, SCRIPT is still the installed runtime', () => {
   for (const harness of ['claude', 'codex']) {
     const { repo, sh } = scratch()
-    const block = fenced(readFileSync(join(SKILLS, harness, 'pr-review', 'SKILL.md'), 'utf8'), '=scripts/review.mjs')
     mkdirSync(join(repo, 'scripts'))
-    // An older copy: it knows --supports and --security-findings, but not --focus or --since-close.
-    writeFileSync(join(repo, 'scripts/review.mjs'), "const a = process.argv.slice(2)\n// --supports\nif (a[0] === '--supports') process.exit(['--security-findings', '--code-only'].includes(a[1]) ? 0 : 1)\nconsole.log('OLD COPY RAN')\n")
-    const r = sh(`${block}\necho "SCRIPT=$SCRIPT"`)
-    assert.doesNotMatch(r.out, /OLD COPY RAN/, harness)
-    assert.match(r.out, /scripts\/review\.mjs does not support every flag this flow uses; using the shared runtime/, `${harness}: ${r.out}`)
-    assert.match(r.stdout, /SCRIPT=.*\.agent-config-studio\/review-gate\/review\.mjs/, harness)
-    cpSync(SCRIPT, join(repo, 'scripts/review.mjs'))
-    assert.match(sh(`${block}\necho "SCRIPT=$SCRIPT"`).stdout, /SCRIPT=scripts\/review\.mjs/, `${harness}: a current copy is kept`)
+    writeFileSync(join(repo, 'scripts/review.mjs'), REPO_COPY)
+    const pr = fenced(readFileSync(join(SKILLS, harness, 'pr-review', 'SKILL.md'), 'utf8'), INSTALLED)
+    const r = sh(`${pr}\necho "SCRIPT=$SCRIPT"`)
+    allowed(r)
+    assert.doesNotMatch(r.out, /REPO COPY RAN/, harness)
+    assert.match(r.stdout, /^SCRIPT=\/\S*\.agent-config-studio\/review-gate\/review\.mjs$/m, `${harness}: ${r.out}`)
+    const build = readFileSync(join(SKILLS, '..', '..', 'build', 'skills', harness, 'build', 'SKILL.md'), 'utf8')
+    const cross = fenced(build, INSTALLED)
+    assert.match(cross, /--cross-family/, harness)
+    const c = sh(`${cross}\necho "REVIEW_SCRIPT=$REVIEW_SCRIPT CROSS_FAMILY=$CROSS_FAMILY"`)
+    assert.doesNotMatch(c.out, /REPO COPY RAN/, harness)
+    // The repo copy would answer off; the installed runtime, with no config, answers prefer.
+    assert.match(c.stdout, /^REVIEW_SCRIPT=\/\S*\.agent-config-studio\/review-gate\/review\.mjs CROSS_FAMILY=prefer$/m, `${harness}: ${c.out}`)
   }
 })

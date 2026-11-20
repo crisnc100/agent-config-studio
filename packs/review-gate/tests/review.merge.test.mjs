@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
@@ -8,8 +8,9 @@ import { fileURLToPath } from 'node:url'
 
 // merge.mjs: reads the tip's tier (review.mjs --tier-json) and the merge policy, then merges the PR, labels it
 // needs-human and comments once, or does nothing. gh is a PATH stub that logs every argv and answers only the calls
-// a test's table names; anything else exits 2. Most tests stand a fake scripts/review.mjs in the repo (merge.mjs
-// prefers it) that prints a chosen --tier-json; the B9 and B10 tests run the real review.mjs end to end.
+// a test's table names; anything else exits 2. Most tests install a fake review.mjs as the operator's runtime
+// (~/.agent-config-studio/review-gate/review.mjs, the only one merge.mjs reads) that prints a chosen --tier-json; the B9
+// and B10 tests install the real review.mjs there and run it end to end.
 // gh fixture shapes come from real read-only calls on 2026-11-05 (gh 2.83.2): `gh pr view 40 --json number,state,
 // isDraft,headRefOid,baseRefName,mergeStateStatus,reviewDecision,labels,url` and `gh pr checks 40 --json
 // name,state,bucket` on crisnc100/agent-config-studio; that `pr checks --json` exited 0 with a pending check. The
@@ -22,6 +23,7 @@ const GH_LOG = join(ROOT, 'gh-calls.jsonl'), GH_TABLE = join(ROOT, 'gh-table.jso
 const FAKE_LOG = join(ROOT, 'fake-log', 'review-log.jsonl'), MERGE_LOG = join(ROOT, 'fake-log', 'merge-log.jsonl')
 const REAL_LOG = join(HOME, '.agent-config-studio/review-log/review-log.jsonl')
 const HOME_CONFIG = join(HOME, '.agent-config-studio/review-gate/config.json')
+const INSTALLED = join(HOME, '.agent-config-studio/review-gate/review.mjs')
 mkdirSync(BIN)
 after(() => rmSync(ROOT, { recursive: true, force: true }))
 const stub = (name, body) => { writeFileSync(join(BIN, name), `#!${process.execPath}\n${body}`); chmodSync(join(BIN, name), 0o755) }
@@ -133,8 +135,7 @@ beforeEach(() => {
   git('init', '-q', '-b', 'main')
   git('remote', 'add', 'origin', 'https://example.invalid/o/r.git')
   commit({ 'README.md': 'base\n' })
-  // Untracked, so the tree stays clean and removing it changes no diff.
-  mkdirSync(join(REPO, 'scripts')); writeFileSync(join(REPO, 'scripts/review.mjs'), FAKE_REVIEW)
+  mkdirSync(dirname(INSTALLED), { recursive: true }); writeFileSync(INSTALLED, FAKE_REVIEW)
   git('checkout', '-qb', 'feat')
   commit({ 'docs/guide.md': '# Guide\n' })
 })
@@ -150,7 +151,7 @@ test('B1 policy off: no gh call at all, none, exit 0, logged', () => {
 })
 
 test('B1 with the real review.mjs and no config the policy is off: no gh call', () => {
-  rmSync(join(REPO, 'scripts'), { recursive: true })
+  copyFileSync(REVIEW, INSTALLED)
   assert.equal(run(process.execPath, [REVIEW], {}).status, 0)
   const id = jsonl(REAL_LOG).filter((e) => e.type === 'review').at(-1).id
   writeFileSync(join(ROOT, 'statuses.json'), '{}')
@@ -383,7 +384,7 @@ test('B10 an intent record, then an outcome record, on every path, in merge-log.
 
 // Real review.mjs: review, close, then merge.mjs reads the real --tier-json.
 function realClose(extra = {}) {
-  rmSync(join(REPO, 'scripts'), { recursive: true, force: true })
+  copyFileSync(REVIEW, INSTALLED)
   const r = run(process.execPath, [REVIEW], extra)
   assert.equal(r.status, 0, r.out)
   const id = jsonl(REAL_LOG).filter((e) => e.type === 'review').at(-1).id
@@ -570,13 +571,15 @@ test('B14 a merge whose result cannot be read again is refused after disabling a
 })
 
 const ACS_LOG_DIR = join(HOME, '.agent-config-studio', 'review-log')
+// The installed runtime is the only thing under ~/.agent-config-studio in these two: merge.mjs adds nothing beside it.
+const onlyRuntime = () => assert.deepEqual(readdirSync(join(HOME, '.agent-config-studio'), { recursive: true }).sort(), ['review-gate', 'review-gate/review.mjs'])
 test('B15 an early refusal on a legacy-only install writes beside the legacy log and creates no ACS folder', () => {
   mkdirSync(join(HOME, '.claude'), { recursive: true })
   writeFileSync(join(HOME, '.claude/review-log.jsonl'), '')
   gh()
   const r = merge([], { FAKE_TIER_RAW: 'not json', FAKE_TIER_CODE: '1' })
   assert.equal(r.status, 2, r.out)
-  assert.equal(existsSync(join(HOME, '.agent-config-studio')), false, 'no ACS folder')
+  onlyRuntime()
   assert.deepEqual(jsonl(join(HOME, '.claude/merge-log.jsonl')).map((e) => e.phase), ['intent', 'outcome'])
 })
 
@@ -584,7 +587,7 @@ test('B15 with no review log anywhere an early refusal prints its records to std
   gh()
   const r = merge([], { FAKE_TIER_RAW: 'not json', FAKE_TIER_CODE: '1' })
   assert.equal(r.status, 2, r.out)
-  assert.equal(existsSync(join(HOME, '.agent-config-studio')), false)
+  onlyRuntime()
   assert.equal(existsSync(join(HOME, '.claude')), false)
   assert.match(r.stderr, /"phase":"outcome"/)
 })
@@ -727,4 +730,36 @@ test('B20 auto-merge still set after --disable-auto succeeded is refused too', (
   assert.equal(r.status, 2, r.out)
   assert.match(r.stdout, /^refused: auto-merge may still be enabled on PR 41; disable it in GitHub/)
   assert.equal(calls().filter((a) => keyOf(a) === 'graphql pr').length, 2, 're-read after disabling')
+})
+
+// A shim in the checkout that answers every capability and reports a covered, mergeable LOW for any tip.
+const SHIM = `if (process.argv[2] === '--supports') process.exit(0)
+console.log(JSON.stringify({ tip: process.env.SHIM_TIP, covered: true, base: 'a'.repeat(40), baseRef: 'origin/main', tier: 'low', reasons: ['shim'],
+  policy: 'standard', merges: true, docsTestsOnly: true, deferred: [], logPath: process.env.FAKE_LOG,
+  merge: { onHuman: 'comment', humanComment: 'Needs human approval before merging.', requireChecks: true, allowBehind: false } }))
+`
+test('B20 a scripts/review.mjs in the checkout, untracked or tracked and answering every flag, never supplies the tier: merge reads the installed runtime', () => {
+  mkdirSync(join(REPO, 'scripts')); writeFileSync(join(REPO, 'scripts/review.mjs'), SHIM)
+  const humanTier = { tier: 'medium', merges: false, reasons: ['logic changed'] }
+  gh({ repoLabels: [label('needs-human')] })
+  const untracked = fake(humanTier, [], { SHIM_TIP: head() })
+  assert.equal(untracked.status, 10, untracked.out)
+  assert.match(untracked.stdout, /^labeled: /)
+  assert.ok(!calls().some((a) => keyOf(a) === 'pr merge'), 'no merge call')
+  git('add', 'scripts/review.mjs'); git('commit', '-qm', 'track the shim')
+  rmSync(GH_LOG, { force: true })
+  gh({ repoLabels: [label('needs-human')] })
+  const tracked = fake(humanTier, [], { SHIM_TIP: head() })
+  assert.equal(tracked.status, 10, tracked.out)
+  assert.ok(!calls().some((a) => keyOf(a) === 'pr merge'), 'no merge call')
+})
+
+test('B20 a missing installed runtime refuses before any gh call, naming the file', () => {
+  rmSync(INSTALLED)
+  mkdirSync(join(REPO, 'scripts')); writeFileSync(join(REPO, 'scripts/review.mjs'), SHIM)
+  gh()
+  const r = fake({}, [], { SHIM_TIP: head() })
+  assert.equal(r.status, 2, r.out)
+  assert.match(r.stdout, /^refused: the installed review runtime \S*\.agent-config-studio\/review-gate\/review\.mjs is missing/)
+  assert.deepEqual(calls(), [])
 })

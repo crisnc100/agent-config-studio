@@ -95,6 +95,11 @@ function closed(id, statuses = {}, options = {}) {
 const reviewAndClose = (options = {}, findings = [], statuses = {}) => closed(reviewed(findings, options.extra).id, statuses, options)
 const summary = (extra = {}) => { const r = script(['--summary'], extra); allowed(r); return r }
 const tierLine = (text) => text.split('\n').filter((line) => line.startsWith('Merge tier: '))
+// Every close's own tier set to LOW, so a HIGH can only come from the summary's own whole-diff rules.
+const forgeLowCloses = () => writeFileSync(LOG, readFileSync(LOG, 'utf8').trim().split('\n').map((line) => {
+  const e = JSON.parse(line)
+  return JSON.stringify(e.type === 'close' ? { ...e, tier: 'low', tierReasons: ['forged LOW'], tierBy: 'rules' } : e)
+}).join('\n') + '\n')
 const gate = () => script(['--gate'], {}, `refs/heads/feat ${git('rev-parse', 'HEAD')} refs/heads/feat ${ZERO}\n`)
 const TSX = 'export const A = 1\nexport const B = 2\n'
 const scored = (over = {}) => ({ issue: 'a is wrong', file: 'web/App.tsx', line: '1', quote: 'export const A = 1', suggestion: 'fix a',
@@ -158,7 +163,7 @@ test('2 a deferred finding marked protected makes a docs-only change HIGH', () =
   assert.ok(record.tierReasons.some((r) => /protected/.test(r) && r.includes('x2')), JSON.stringify(record.tierReasons))
 })
 
-test('2 --no-tests makes the tier HIGH, and so does a partial close', () => {
+test('2 --no-tests makes the tier HIGH; a partial close leaves its unseen file for the push to refuse', () => {
   commit({ 'docs/guide.md': '# Guide\n' })
   const record = reviewAndClose({ tests: ['--no-tests', 'no suite here'] })
   assert.equal(record.tier, 'high')
@@ -168,8 +173,10 @@ test('2 --no-tests makes the tier HIGH, and so does a partial close', () => {
   commit({ 'docs/late.md': 'late\n' })
   const partial = closed(review.id)
   assert.equal(partial.status, 'partial')
-  assert.equal(partial.tier, 'high')
-  assert.ok(partial.tierReasons.some((r) => /partial/.test(r)), JSON.stringify(partial.tierReasons))
+  assert.deepEqual(partial.unseen, ['docs/late.md'])
+  const refused = gate()
+  assert.notEqual(refused.status, 0, refused.out)
+  assert.match(refused.out, /uncovered: docs\/late\.md/)
 })
 
 test('2 alwaysHuman: .github/workflows and package.json by default, plus merge.alwaysHuman globs; lockfiles are not on it', () => {
@@ -357,13 +364,14 @@ test('8 the skills describe the tier and the policy keys; the example config car
 })
 
 // Fix round (review 2026-11-05-16-43-13-bb1c0a and the orchestrator's o1).
-test('f1 the summary judges every file the tip changes against base: a package.json covered only by a clean fix check is HIGH', () => {
+test('f1 the summary judges every file the tip changes against base: a package.json read only by the fix check, closed at the tip, is HIGH', () => {
   commit({ 'docs/guide.md': '# Guide\n' })
   const first = reviewed()
   closed(first.id)
   commit({ 'package.json': '{"name":"x"}\n', 'docs/more.md': 'more\n' })
   allowed(script(['--fix-check', first.id], { STUB_FINDINGS: JSON.stringify({ findings: [] }) }))
-  closed(reviewed([], { REVIEW_PATHS: 'docs/more.md' }).id)
+  closed(first.id)
+  forgeLowCloses()
   homeConfig({ merge: { policy: 'standard' } })
   const [line] = tierLine(summary().stdout)
   assert.match(line, /^Merge tier: HIGH \(.*always human: package\.json.*\)\. Policy standard: needs a human$/)
@@ -447,21 +455,21 @@ test('o1 the classifier is never asked when anything is deferred, even one that 
   assert.deepEqual(tierCalls(), [])
 })
 
-// Same class as f1, for file kinds: a file covered only by a clean fix check still counts toward LOW and strict.
+// Same class as f1, for file kinds: a file only the fix check read still counts toward LOW and strict.
 function fixCheckCovers(files) {
   commit({ 'docs/guide.md': '# Guide\n' })
   const first = reviewed()
   closed(first.id)
   commit({ ...files, 'docs/more.md': 'more\n' })
   allowed(script(['--fix-check', first.id], { STUB_FINDINGS: JSON.stringify({ findings: [] }) }))
-  closed(reviewed([], { REVIEW_PATHS: 'docs/more.md' }).id)
+  closed(first.id)
 }
-test('f1k a logic file covered only by a clean fix check keeps the summary from LOW', () => {
+test('f1k a logic file only the fix check read keeps the summary from LOW', () => {
   fixCheckCovers({ 'src/two.js': 'export const two = 2\n' })
   homeConfig({ merge: { policy: 'standard' } })
-  assert.match(tierLine(summary().stdout)[0], /^Merge tier: MEDIUM \(.*src\/two\.js.*\)\. Policy standard: needs a human$/)
+  assert.match(tierLine(summary().stdout)[0], /^Merge tier: MEDIUM \(.*logic changed: 1 line\(s\) in 1 file\(s\).*\)\. Policy standard: needs a human$/)
 })
-test('f1k a static file covered only by a clean fix check leaves LOW but fails strict\'s docs-and-tests-only check', () => {
+test('f1k a static file only the fix check read leaves LOW but fails strict\'s docs-and-tests-only check', () => {
   fixCheckCovers({ 'web/app.css': 'a{}\n' })
   homeConfig({ merge: { policy: 'strict' } })
   assert.match(tierLine(summary().stdout)[0], /^Merge tier: LOW .*Policy strict: needs a human$/)
@@ -493,7 +501,7 @@ function sameAsLine(json, text) {
   assert.equal(json.logPath, LOG)
 }
 
-test('A1 a classifier-LOW file edited after its close is judged again: covered by a clean fix check, it keeps the summary from LOW', () => {
+test('A1 a classifier-LOW file edited after its close is judged again: read by the fix check and closed at the tip, it keeps the summary from LOW', () => {
   homeConfig({ merge: { classifier: 'tierjev' } })
   // docs/guide.md stays as the first close judged it, so that close still covers a file and counts in the summary.
   commit({ 'web/App.tsx': TSX, 'docs/guide.md': '# Guide\n' })
@@ -501,11 +509,10 @@ test('A1 a classifier-LOW file edited after its close is judged again: covered b
   assert.equal(closed(first.id, {}, { extra: { STUB_TIER: answer('low', 0.9, { low: 0.9, medium: 0.1 }) } }).tier, 'low')
   commit({ 'web/App.tsx': `${TSX}export const C = 3\n`, 'docs/more.md': 'more\n' })
   allowed(script(['--fix-check', first.id], { STUB_FINDINGS: JSON.stringify({ findings: [] }) }))
-  closed(reviewed([], { REVIEW_PATHS: 'docs/more.md' }).id)
+  closed(first.id)
   homeConfig({ merge: { classifier: 'tierjev', policy: 'standard' } })
   const text = summary().stdout
-  assert.match(text, /^Content coverage: 3 record/m)
-  assert.match(tierLine(text)[0], /^Merge tier: MEDIUM \(.*web\/App\.tsx.*\)\. Policy standard: needs a human$/)
+  assert.match(tierLine(text)[0], /^Merge tier: MEDIUM \(.*logic changed: 3 line\(s\) in 1 file\(s\).*\)\. Policy standard: needs a human$/)
 })
 
 test('A1 a builds/-only commit after a classifier-LOW close keeps LOW, a new builds/ file and an edited one alike', () => {
@@ -525,27 +532,6 @@ test('A1 a file whose tip state is the state its close judged stays judged', () 
   commit({ 'docs/more.md': 'more\n' })
   closed(reviewed([], { REVIEW_PATHS: 'docs/more.md' }).id)
   assert.match(tierLine(summary().stdout)[0], /^Merge tier: LOW .*Policy standard: would merge$/)
-})
-
-// A review logged before baseSha: its close's own diff can't be read, so every file the tip changes is unjudged.
-function legacyBase() {
-  writeFileSync(LOG, records().map((e) => {
-    if (e.type === 'review') { const { baseSha, ...rest } = e; return JSON.stringify(rest) }
-    if (e.type === 'close') { const { coverage, ...rest } = e; return JSON.stringify(rest) }
-    return JSON.stringify(e)
-  }).join('\n') + '\n')
-}
-test('A2 a close whose own diff cannot be read: --summary and the push gate print a tier line instead of crashing', () => {
-  commit({ 'web/App.tsx': TSX, 'docs/guide.md': '# Guide\n' })
-  reviewAndClose()
-  legacyBase()
-  homeConfig({ merge: { policy: 'standard' } })
-  const text = summary().stdout
-  assert.match(tierLine(text)[0], /^Merge tier: MEDIUM \(.*web\/App\.tsx.*\)\. Policy standard: needs a human$/)
-  const pushed = gate(); allowed(pushed)
-  assert.ok(pushed.stderr.includes(tierLine(text)[0]), pushed.out)
-  assert.doesNotMatch(pushed.out, /TypeError/)
-  sameAsLine(tipTier(), text)
 })
 
 test('A3 --tier-json for a single close: the summary line\'s tier and decision, the base, deferred ids and the log path', () => {
@@ -586,13 +572,13 @@ test('A3 --tier-json for sliced closes matches the sliced summary\'s line', () =
   assert.equal(json.tier, 'medium')
 })
 
-test('A3 --tier-json for content coverage with a linked fix check matches its line', () => {
+test('A3 --tier-json for content coverage across two closes matches its line', () => {
   commit({ 'docs/guide.md': '# Guide\n' })
   const first = reviewed()
   closed(first.id)
   commit({ 'package.json': '{"name":"x"}\n', 'docs/more.md': 'more\n' })
-  allowed(script(['--fix-check', first.id], { STUB_FINDINGS: JSON.stringify({ findings: [] }) }))
-  closed(reviewed([], { REVIEW_PATHS: 'docs/more.md' }).id)
+  closed(reviewed([], { REVIEW_PATHS: 'package.json,docs/more.md' }).id)
+  forgeLowCloses()
   homeConfig({ merge: { policy: 'standard' } })
   const text = summary().stdout
   assert.match(text, /^Content coverage: /m)
@@ -649,7 +635,7 @@ test('A1f1 from a subdirectory with diff.relative=true, an edited classifier-LOW
   assert.equal(closed(first.id, {}, { extra: { STUB_TIER: answer('low', 0.9, { low: 0.9, medium: 0.1 }) } }).tier, 'low')
   commit({ 'web/App.tsx': `${TSX}export const C = 3\n`, 'docs/more.md': 'more\n' })
   allowed(script(['--fix-check', first.id], { STUB_FINDINGS: JSON.stringify({ findings: [] }) }))
-  closed(reviewed([], { REVIEW_PATHS: 'docs/more.md' }).id)
+  closed(first.id)
   homeConfig({ merge: { classifier: 'tierjev', policy: 'standard' } })
   git('config', 'diff.relative', 'true')
   const fromWeb = (args) => {
@@ -658,7 +644,7 @@ test('A1f1 from a subdirectory with diff.relative=true, an edited classifier-LOW
     return r.stdout
   }
   const text = fromWeb(['--summary'])
-  assert.match(tierLine(text)[0], /^Merge tier: MEDIUM \(.*web\/App\.tsx.*\)\. Policy standard: needs a human$/)
+  assert.match(tierLine(text)[0], /^Merge tier: MEDIUM \(.*logic changed: 3 line\(s\) in 1 file\(s\).*\)\. Policy standard: needs a human$/)
   const json = JSON.parse(fromWeb(['--tier-json']))
   assert.equal(json.tier, 'medium')
   assert.equal(json.merges, false)

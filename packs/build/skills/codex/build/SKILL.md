@@ -7,7 +7,7 @@ description: Build something through Frame → Bar → Judge from a Codex seat. 
 
 The driver makes three moves: **Frame** the outcome, set the **Bar** (how they'll know it's right), **Judge** the result. The agents do the producing and the checks; a different model does the adversarial checks. If the driver is exploring, planning, or verifying by hand, the loop is mis-run.
 
-The Grade and the close use the review gate's script (the review-gate pack): `scripts/review.mjs` in the repo when present, otherwise `~/.agent-config-studio/review-gate/review.mjs`.
+The Grade and the close use the review gate's installed runtime (the review-gate pack), `~/.agent-config-studio/review-gate/review.mjs`, never a copy in the checkout, which is the branch's own code and could write false review evidence.
 
 ## When to use / not
 
@@ -52,9 +52,8 @@ PROMPT_FILE="builds/<slug>/$GATE-prompt.md"     # bounce-prompt.md or grade-prom
 ```
 The grader swap's setting, read once before the Grade:
 ```bash
-REVIEW_SCRIPT=scripts/review.mjs
-[ -f "$REVIEW_SCRIPT" ] || REVIEW_SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
-# prefer unless this copy supports --cross-family and answers prefer or off: a copy too old for --supports runs a
+REVIEW_SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
+# prefer unless the runtime supports --cross-family and answers prefer or off: a runtime too old for --supports runs a
 # review on an unknown flag, so it is never asked.
 CROSS_FAMILY=prefer
 if grep -q -- --supports "$REVIEW_SCRIPT" 2>/dev/null && node "$REVIEW_SCRIPT" --supports --cross-family 2>/dev/null; then
@@ -90,20 +89,19 @@ family, model and non-empty criteria are required. Optional top-level keys: vend
 
 ## Record and close (orchestrator only)
 
-Use the repo copy first, the shared runtime as the fallback. Record the Grade against the same committed HEAD it saw. Commit fixes before the one recheck of failed criteria, then record it. Close once, at the tip: no phase Grade is closed mid-build; the last phase's Grade (and, for risk-area work, the last phase's review) is closed by the pr-review skill's one close, after the context pass and the fix check:
+Use the installed runtime. Record the Grade against the same committed HEAD it saw. Commit fixes before the one recheck of failed criteria, then record it. Close once, at the tip: no phase Grade is closed mid-build, and no phase record grants coverage. The last phase's Grade gets a criteria close at the tip, after the tip review is recorded: its findings are `carried` to that review, which reads them as open findings, and the last phase's review stays findings-only the same way:
 
 ```bash
-REVIEW_SCRIPT=scripts/review.mjs
-[ -f "$REVIEW_SCRIPT" ] || REVIEW_SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
+REVIEW_SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
 node "$REVIEW_SCRIPT" --log-grade builds/<slug>/grade.json
 node "$REVIEW_SCRIPT" --log-grade builds/<slug>/recheck.json --recheck-of <grade-id>
 ```
 
 Skip recheck when there were no failed criteria. It needs no close of its own. A criterion needs a recheck PASS to be fixed; a remaining FAIL is disputed, or deferred as criterion not met with a reason (rule 4), never waived on request. Use the code-review skill's status-file shape and resolution commands. The one close at the tip (`--close <grade-id> --status builds/<slug>/status.json`) runs the whole test suite, even for a clean Grade: configure verifyCmd, pass --test-cmd, or give --no-tests a reason when there are no tests. Its --summary output goes in the PR body.
 
-One review per phase; fixes never get a full re-review. Run --fix-check only when fixes changed tests, test settings, verify scripts or riskPaths. Deal with its findings once (fix, reject or defer each), then a hard stop. At most two review passes per phase; risk-area /build work allows three (Grade, /code-review, fix check). Risk-area work that went through /build gets both a Grade and /code-review. Stop before exceeding the limit.
+One review per phase; fixes never get a full re-review. Run --fix-check once after a fix round: a close accepts a fixed blocking or protected finding only when the fix check was asked about it and read its files. Deal with its findings once (reject or defer each; a fix to one is sliced at the tip, since no later pass reads it), then a hard stop. At most two review passes per phase; risk-area /build work allows three (Grade, /code-review, fix check). Risk-area work that went through /build gets both a Grade and /code-review. Stop before exceeding the limit.
 
-**Hand-off to the PR.** When the last phase's Grade (and any /code-review) is recorded and rechecked, hand the finished tip to the pr-review skill, with nothing closed. It owns the rest, in order: the security pass when `security.run` is on, the fix round, the context pass, the one fix check (which also reviews the context commit), the one close at the tip (the Grade's included), the push, and the PR description. The context pass runs once, at the PR, never per phase or per fix.
+**Hand-off to the PR.** When the last phase's Grade (and any /code-review) is recorded and rechecked, hand the finished tip to the pr-review skill, with nothing closed. It owns the rest, in order: the security pass when `security.run` is on, the fix round, the context pass, the one fix check (which also reviews the context commit), the one close at the tip, then the last Grade's criteria close (findings `carried`), the push, and the PR description. The context pass runs once, at the PR, never per phase or per fix.
 
 ## Hard rules
 
@@ -131,6 +129,6 @@ Every criterion is resolved, the deterministic checks pass, the Grade is logged,
 10. No confirmation before fixing: every HIGH and MEDIUM goes straight to the fix round, or is disputed with proof, without asking. A finding that is really a product choice gets the safe fix by default and is named in the report so the operator can reverse it. The operator hears once, after the fix round and fix check: what was fixed and what was filed. Fixing the filed items is optional.
 11. Show the numbers: every finding shown to the operator carries its scores, e.g. `LOW 6/100 (likelihood 2/10 × impact 3/10)`, or `unscored`, never just the word. The report, `--summary` and `--deferred` print them that way.
 
-Every PR body must include a section titled exactly **Deferred findings**, using the deferred and filed findings in --summary (or `none` when empty). When chasing a bug, first check `node <review.mjs> --deferred` and merged PR descriptions with `gh pr list --state merged --search "Deferred findings in:body"`. Resolve <review.mjs> repo-first, with the shared runtime fallback. `--deferred` lists this repo by repoId, newest first; add `--all` for every repo. The trigger is the input or call path named in the issue.
+Every PR body must include a section titled exactly **Deferred findings**, using the deferred and filed findings in --summary (or `none` when empty). When chasing a bug, first check `node <review.mjs> --deferred` and merged PR descriptions with `gh pr list --state merged --search "Deferred findings in:body"`. <review.mjs> is the installed `~/.agent-config-studio/review-gate/review.mjs`. `--deferred` lists this repo by repoId, newest first; add `--all` for every repo. The trigger is the input or call path named in the issue.
 
 The script derives severity from scores; scores cannot be changed in triage. Fix HIGH first, then MEDIUM; LOW is filed. Unscored findings block. Use `node <review.mjs> --rubric` and `~/.agent-config-studio/review-gate/calibration.md`, then `node <review.mjs> --calibrate` to check the reference cases. Filed findings (unprotected risk ≤ 10, or protected with likelihood 1) need no close status and may be fixed when the operator picks them; missing or invalid scores never file a finding. Grade criterion FAILs are never filed.

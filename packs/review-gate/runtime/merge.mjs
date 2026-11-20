@@ -10,7 +10,6 @@ import { spawnSync } from 'node:child_process'
 import { accessSync, appendFileSync, constants, existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { randomBytes } from 'node:crypto'
 
 const args = process.argv.slice(2)
@@ -81,11 +80,12 @@ function finish(action, detail, code = EXIT[action]) {
 }
 const refuse = (reason) => finish('refused', reason)
 
-// 1. The review script: the repo's scripts/review.mjs, else the shared runtime beside this file.
+// 1. The review script: always the operator's installed runtime. A script in the checkout, tracked or not, is written by
+// builders, so it never supplies the tier that authorizes a merge.
 const top = git('rev-parse', '--show-toplevel')
 if (top.code !== 0) refuse(`not in a git work tree: ${firstLine(top)}`)
-const repoScript = join(top.stdout.trim(), 'scripts', 'review.mjs')
-const script = existsSync(repoScript) ? repoScript : join(dirname(fileURLToPath(import.meta.url)), 'review.mjs')
+const script = join(homedir(), '.agent-config-studio', 'review-gate', 'review.mjs')
+if (!existsSync(script)) refuse(`the installed review runtime ${script} is missing: install the review gate pack`)
 // From the toplevel, so the repo's .claude/review-config.json counts wherever merge.mjs was started.
 const tierRun = run(process.execPath, [script, '--tier-json'], top.stdout.trim())
 if (tierRun.stderr) process.stderr.write(tierRun.stderr)

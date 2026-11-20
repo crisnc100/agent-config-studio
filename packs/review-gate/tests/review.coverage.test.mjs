@@ -6,8 +6,8 @@ import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-// Content coverage at the push gate: a file is covered when its exact state at the tip was seen by a complete close
-// or a clean fix check in this repository, at a head the tip descends from. Stub CLIs, a temporary HOME and Git config,
+// Content coverage at the push gate: a file is covered when its exact [path, base state, tip state] is in the read list of
+// a code manifest in the chain (review and fix check) of a close in this repository, at a head the tip descends from. Stub CLIs, a temporary HOME and Git config,
 // and the push gate through the actual installed pre-push hook.
 const SOURCE = join(dirname(fileURLToPath(import.meta.url)), '..', 'runtime')
 const ROOT = mkdtempSync(join(tmpdir(), 'review-coverage-test-'))
@@ -79,9 +79,9 @@ function close(id, statuses = {}, cwd = REPO) {
   const r = script(['--close', id, '--status', path, '--test-cmd', 'true'], {}, cwd)
   return { ...r, record: records().length > before ? records().at(-1) : null }
 }
-function closed(id, statuses, cwd) {
+function closed(id, statuses, cwd, status = 'complete') {
   const r = close(id, statuses, cwd)
-  allowed(r); assert.equal(r.record.type, 'close'); assert.equal(r.record.status, 'complete', r.out)
+  allowed(r); assert.equal(r.record.type, 'close'); assert.equal(r.record.status, status, r.out)
   return r.record
 }
 function fixCheck(id, findings = []) {
@@ -109,45 +109,34 @@ beforeEach(() => {
   allowed(run('sh', [join(SKILL, 'hooks/install-hook.sh'), REPO]))
 })
 
-test('C1 a sibling-file fix seen by the fix check keeps the close complete, and the fix check logs what it saw and how long it took', () => {
+test('C1 a sibling-file fix seen by the fix check keeps the close complete, and the fix check logs what it read and how long it took', () => {
   const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
-  assert.deepEqual(r.truncated, [])
+  assert.deepEqual(r.manifest.unread, [])
   commit({ 'src/one.js': 'export const one = 3\n', 'lib/two.js': 'export const two = 3\n' })
-  const partial = close(r.id, { f1: { status: 'fixed' } })
-  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.deepEqual(partial.record.outOfScope, ['lib/two.js'])
-  assert.equal(Object.hasOwn(partial.record, 'coverage'), false, 'a partial close logs no coverage')
+  const early = close(r.id, { f1: { status: 'fixed' } })
+  assert.notEqual(early.status, 0); assert.equal(early.record, null)
+  assert.match(early.out, /Fixed f1 needs a fix check/)
   const check = fixCheck(r.id)
   assert.equal(typeof check.durationMs, 'number'); assert.ok(check.durationMs >= 0)
-  assert.deepEqual(check.truncated, [])
-  const head = git('rev-parse', 'HEAD')
-  assert.deepEqual(check.coverage, [['lib/two.js', `100644 ${blob(head, 'lib/two.js')}`], ['src/one.js', `100644 ${blob(head, 'src/one.js')}`]])
+  assert.deepEqual(check.manifest.unread, [])
+  const head = git('rev-parse', 'HEAD'), base = git('merge-base', 'main', 'HEAD')
+  assert.deepEqual(check.manifest.read, [['lib/two.js', `100644 ${blob(base, 'lib/two.js')}`, `100644 ${blob(head, 'lib/two.js')}`],
+    ['src/one.js', `100644 ${blob(base, 'src/one.js')}`, `100644 ${blob(head, 'src/one.js')}`]])
   const record = closed(r.id, { f1: { status: 'fixed' } })
-  assert.deepEqual(record.outOfScope, []); assert.equal(record.fixCheck, check.id)
+  assert.deepEqual(record.unseen, []); assert.equal(record.fixCheck, check.id)
   assert.equal(record.repoId, records().find((e) => e.id === r.id).repoId)
-  assert.deepEqual(record.coverage.map(([path]) => path), ['docs/three.md', 'lib/two.js', 'src/one.js'])
   allowed(push())
 })
 
-test('C1 a clean fix check covers the files it saw on its own; one with a finding that needs a status covers none', () => {
+test('C1 a fix check counts only through its review\'s close: one logged after the close covers nothing', () => {
   const r = review()
   closed(r.id)
   commit({ 'lib/two.js': 'export const two = 3\n', 'shared.js': 'shared v2\n' })
-  const check = fixCheck(r.id, [{ ...F1, file: 'lib/two.js', quote: 'export const two = 3' }])
-  assert.equal(check.findingDetails[0].severity, 'medium')
-  // The tip close comes from a slice of the other file; the fix check with a finding leaves lib/two.js uncovered.
+  const late = fixCheck(r.id)
+  assert.ok(late.manifest.read.some(([p]) => p === 'lib/two.js'), 'the unlinked check did read the file the gate still refuses')
+  // The tip close comes from a slice of the other file; the fix check is in no close's chain, so lib/two.js is uncovered.
   closed(review('shared.js').id)
   blocked(push(), uncovered(['lib/two.js']))
-  // Rewound and redone with a clean fix check, the same file is covered by that check alone.
-  git('reset', '-q', '--hard', r.head)
-  rmSync(LOG)
-  const again = review()
-  closed(again.id)
-  commit({ 'lib/two.js': 'export const two = 3\n', 'shared.js': 'shared v2\n' })
-  fixCheck(again.id)
-  closed(review('shared.js').id)
-  const pushed = push(); allowed(pushed)
-  assert.match(pushed.stderr, /Content coverage: 3 record\(s\) together cover every file changed from [0-9a-f]{40} to [0-9a-f]{40}/)
-  assert.match(pushed.stderr, /Fix check 3 of 3: fix-\S+ of review \S+, clean at [0-9a-f]{40}; covers 1 file\(s\)/)
 })
 
 test('C2 a late one-file commit needs only that file reviewed and one close at the tip, not a re-review of the rest', () => {
@@ -156,7 +145,7 @@ test('C2 a late one-file commit needs only that file reviewed and one close at t
   allowed(push())
   commit({ 'lib/two.js': 'export const two = 2\n' })
   const r = push(); blocked(r, uncovered(['lib/two.js']))
-  assert.match(r.out, /no complete close or clean fix check saw the tip state of 1 file\(s\)/)
+  assert.match(r.out, /no close this tip descends from has a manifest that read the tip state of 1 file\(s\)/)
   const summary = script(['--summary'])
   assert.notEqual(summary.status, 0); assert.match(summary.out, uncovered(['lib/two.js']))
   rmSync(CALLS, { recursive: true }); mkdirSync(CALLS)
@@ -175,10 +164,10 @@ test('C2 every file can be covered while no close is at the tip: the push still 
   closed(r.id)
   commit({ 'lib/two.js': 'export const two = 2\n' })
   commit({ 'lib/two.js': 'export const two = 1\n' })
-  blocked(push(), /every changed file is covered, but no complete close is at the tip/)
+  blocked(push(), /every changed file is covered, but no close is at the tip/)
 })
 
-test('C3 a merge of two reviewed branches is refused for the file both sides changed, and only that file', () => {
+test('C3 a merge of two reviewed branches: each file is covered by the manifest that read its exact change from the base', () => {
   git('checkout', '-q', 'main'); git('checkout', '-qb', 'left')
   commit({ 'left.js': 'export const left = 1\n', 'shared.js': 'shared v2\n' })
   closed(review().id)
@@ -187,36 +176,33 @@ test('C3 a merge of two reviewed branches is refused for the file both sides cha
   closed(review().id)
   git('checkout', '-q', 'left')
   git('-c', 'user.name=t', '-c', 'user.email=t@t', 'merge', '--no-ff', '-qm', 'merge right', 'right')
-  // Both sides logged the very blob the merge has; each saw it without the other side's changes.
+  // Both sides read shared.js from main's v1 to the very blob the merge has; right.js only the right side read.
   assert.equal(blob('HEAD', 'shared.js'), blob('right', 'shared.js'))
-  blocked(push('HEAD:refs/heads/left'), uncovered(['shared.js']))
+  blocked(push('HEAD:refs/heads/left'), /every changed file is covered, but no close is at the tip/)
   closed(review('shared.js').id)
   allowed(push('HEAD:refs/heads/left'))
+  // A third state of the shared file is read by neither side.
+  commit({ 'shared.js': 'shared v3\n' })
+  closed(review('left.js').id)
+  blocked(push('HEAD:refs/heads/left'), uncovered(['shared.js']))
 })
 
 test('C4 a deletion and a chmod-only change are uncovered until reviewed', () => {
   closed(review().id)
+  const base = git('merge-base', 'main', 'HEAD')
   commit({ 'docs/three.md': null })
   blocked(push(), uncovered(['docs/three.md']))
-  const deleted = closed(review('docs/three.md').id)
-  assert.deepEqual(deleted.coverage, [['docs/three.md', null]])
+  const deletion = review('docs/three.md')
+  assert.deepEqual(deletion.manifest.read, [['docs/three.md', `100644 ${blob(base, 'docs/three.md')}`, null]])
+  closed(deletion.id)
   allowed(push())
   chmodSync(join(REPO, 'src/one.js'), 0o755)
   git('add', 'src/one.js'); git('commit', '-qm', 'executable')
   blocked(push(), uncovered(['src/one.js']))
-  const mode = closed(review('src/one.js').id)
-  assert.deepEqual(mode.coverage, [['src/one.js', `100755 ${blob('HEAD', 'src/one.js')}`]])
+  const mode = review('src/one.js')
+  assert.deepEqual(mode.manifest.read, [['src/one.js', `100644 ${blob(base, 'src/one.js')}`, `100755 ${blob('HEAD', 'src/one.js')}`]])
+  closed(mode.id)
   allowed(push())
-})
-
-test('C5 a file whose diff the size cap cut is not covered; the files before the cut are', () => {
-  const big = Array.from({ length: 3000 }, (_, i) => `export const value${i} = '${'x'.repeat(40)}'`).join('\n')
-  commit({ 'z/big.js': `${big}\n` })
-  const r = review()
-  assert.deepEqual(r.truncated, ['z/big.js'])
-  const record = closed(r.id)
-  assert.deepEqual(record.coverage.map(([path]) => path), ['docs/three.md', 'src/one.js'])
-  blocked(push(), /the complete closes at [0-9a-f]{40} leave 1 file\(s\) uncovered: z\/big\.js —/)
 })
 
 test('C6 a review on an unrelated branch or in another repository covers nothing, even for the same blob at the same commit', () => {
@@ -224,8 +210,9 @@ test('C6 a review on an unrelated branch or in another repository covers nothing
   const tip = commit({ 'lib/two.js': 'export const two = 2\n' })
   git('checkout', '-q', 'main'); git('checkout', '-qb', 'other')
   commit({ 'lib/two.js': 'export const two = 2\n' })
-  const elsewhere = closed(review('lib/two.js').id)
-  assert.deepEqual(elsewhere.coverage, [['lib/two.js', `100644 ${blob('feat', 'lib/two.js')}`]])
+  const elsewhere = review('lib/two.js')
+  assert.deepEqual(elsewhere.manifest.read, [['lib/two.js', `100644 ${blob('main', 'lib/two.js')}`, `100644 ${blob('feat', 'lib/two.js')}`]])
+  closed(elsewhere.id)
   git('checkout', '-q', 'feat')
   blocked(push(), uncovered(['lib/two.js']))
   // A clone holds the same commits; its review and close at this very tip still count only there.
@@ -238,44 +225,16 @@ test('C6 a review on an unrelated branch or in another repository covers nothing
   blocked(push(), uncovered(['lib/two.js']))
 })
 
-test('C7 a close logged without coverage gives no content coverage; only the old whole-tip rule still applies to it', () => {
-  const r = review()
-  const record = closed(r.id)
-  const legacy = { type: 'close', ts: record.ts, review: r.id, closeHead: record.closeHead, statuses: {}, outOfScope: [], status: 'complete', tests: record.tests }
-  writeFileSync(LOG, records().map((e) => JSON.stringify(e.type === 'close' ? legacy : e)).join('\n') + '\n')
-  allowed(push())
-  commit({ 'lib/two.js': 'export const two = 2\n' })
-  closed(review('lib/two.js').id)
-  blocked(push(), /the complete slice closes at [0-9a-f]{40} leave 2 file\(s\) uncovered: docs\/three\.md, src\/one\.js —/)
-})
-
-test('C8 a code commit after the fix check is refused at close and uncovered at the gate; builds/ and test files may follow it', () => {
-  const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
-  commit({ 'src/one.js': 'export const one = 3\n', 'src/one.test.js': 'test one\n' })
-  const check = fixCheck(r.id)
-  commit({ 'src/one.js': 'export const one = 4\n' })
-  const refused = close(r.id, { f1: { status: 'fixed' } })
-  assert.notEqual(refused.status, 0); assert.equal(refused.record, null)
-  assert.match(refused.out, /Fix check head must equal closing HEAD, or the commits after it may touch only builds\/ and test files: src\/one\.js\. Fixes land before the fix check/)
-  // Closed at the fix check head, the later commit is the one uncovered file.
-  git('checkout', '-q', '--detach', check.head)
-  closed(r.id, { f1: { status: 'fixed' } })
-  git('checkout', '-q', 'feat')
-  blocked(push(), uncovered(['src/one.js']))
-  closed(review('src/one.js').id)
-  allowed(push())
-  // builds/ and test-only commits after the fix check close complete.
-  git('reset', '-q', '--hard', check.head)
-  commit({ 'builds/demo/log.md': 'notes\n', 'src/one.test.js': 'test one, tightened\n' })
-  const later = closed(r.id, { f1: { status: 'fixed' } })
-  assert.deepEqual(later.outOfScope, [])
-  allowed(push('HEAD:refs/heads/later'))
-})
-
 const BIG = Array.from({ length: 3000 }, (_, i) => `export const value${i} = '${'x'.repeat(40)}'`).join('\n') + '\n'
+// Under the 120000-char cap on its own, so a lower cap can leave it out as capped.
+const MID = Array.from({ length: 200 }, (_, i) => `export const value${i} = '${'x'.repeat(40)}'`).join('\n') + '\n'
+// A cap under which `path`'s section no longer fits after the src/one.js section ahead of it, though it fits alone.
+const capFor = (path) => ({ REVIEW_TEST_DIFF_CAP: String(git('diff', 'main...HEAD', '--', path).length + 40) })
 test('E1 coverageExempt from the environment or the home config skips those files, and the summary and refusal name them as not reviewed', () => {
-  commit({ 'z/big.js': BIG })
-  closed(review().id)
+  commit({ 'z/big.js': MID })
+  const r = review('', capFor('z/big.js'))
+  assert.ok(r.manifest.unread.some(([p, why]) => p === 'z/big.js' && why === 'capped'), JSON.stringify(r.manifest.unread))
+  closed(r.id, {}, REPO, 'partial')
   blocked(push(), uncovered(['z/big.js']))
   const pushed = run('git', ['push', 'origin', 'HEAD:refs/heads/feat'], { REVIEW_COVERAGE_EXEMPT: 'z/**' }); allowed(pushed)
   assert.match(pushed.stderr, /\nCoverage exempt \(not reviewed\): z\/big\.js\n/)
@@ -290,13 +249,13 @@ test('E1 coverageExempt from the environment or the home config skips those file
 })
 
 test('E2 a tracked repo config cannot set coverageExempt; an untracked one can', () => {
-  commit({ '.claude/review-config.json': JSON.stringify({ coverageExempt: ['z/**'] }), 'z/big.js': BIG })
-  closed(review().id)
+  commit({ '.claude/review-config.json': JSON.stringify({ coverageExempt: ['z/**'] }), 'z/big.js': MID })
+  closed(review('', capFor('z/big.js')).id, {}, REPO, 'partial')
   blocked(push(), uncovered(['z/big.js']))
   rmSync(LOG)
   git('rm', '-q', '--cached', '.claude/review-config.json'); git('commit', '-qm', 'untrack the config')
   assert.equal(existsSync(join(REPO, '.claude/review-config.json')), true)
-  closed(review().id)
+  closed(review('', capFor('z/big.js')).id)
   const pushed = push(); allowed(pushed)
   assert.match(pushed.stderr, /Coverage exempt \(not reviewed\): z\/big\.js/)
 })
@@ -315,78 +274,47 @@ test('R1 a tracked repo config cannot set coverageExempt or a command key with a
   }
 })
 
-test('R2 a fixed file whose fix diff the size cap cut leaves that file uncovered after a complete close', () => {
+test('R2 a fixed finding whose file the fix check could not read (its change from the base is over the cap) is refused at close', () => {
   const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
   commit({ 'src/one.js': `export const one = 3\n${BIG}`, 'src/one.test.js': 'test one\n' })
   const check = fixCheck(r.id)
-  assert.deepEqual(check.truncated, ['src/one.js'])
-  const record = closed(r.id, { f1: { status: 'fixed' } })
-  assert.deepEqual(record.coverage.map(([path]) => path), ['docs/three.md', 'src/one.test.js'])
-  blocked(push(), /leave 1 file\(s\) uncovered: src\/one\.js —/)
+  assert.deepEqual(check.manifest.unread, [['src/one.js', 'oversize']])
+  const refused = close(r.id, { f1: { status: 'fixed' } })
+  assert.notEqual(refused.status, 0); assert.equal(refused.record, null)
+  assert.match(refused.out, /Fixed f1: the fix check did not read src\/one\.js/)
 })
 
-test('R3 a file the review saw only in part stays uncovered after the fix check sees its later change, in the close and in the check', () => {
-  commit({ 'z/big.js': BIG })
-  const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
-  assert.deepEqual(r.truncated, ['z/big.js'])
-  commit({ 'z/big.js': `${BIG}export const more = 1\n`, 'src/one.js': 'export const one = 3\n', 'src/one.test.js': 'test one\n' })
+test('R3 a file the review read only in part is read whole by the fix check, from the base, and is covered', () => {
+  commit({ 'z/big.js': MID })
+  const r = review('', { ...capFor('z/big.js'), STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
+  assert.ok(r.manifest.unread.some(([p, why]) => p === 'z/big.js' && why === 'capped'))
+  commit({ 'src/one.js': 'export const one = 3\n', 'src/one.test.js': 'test one\n' })
+  rmSync(CALLS, { recursive: true, force: true }); mkdirSync(CALLS)
   const check = fixCheck(r.id)
-  assert.deepEqual(check.truncated, [])
-  assert.deepEqual(check.coverage.map(([path]) => path), ['src/one.js', 'src/one.test.js'])
-  // The check saw the change, so the close is complete; the cut part was never read, so the file is not covered.
+  assert.deepEqual(check.manifest.unread, [])
+  assert.deepEqual(check.manifest.read.map(([path]) => path), ['src/one.js', 'src/one.test.js', 'z/big.js'])
+  const prompt = calls().map((c) => c.prompt).find((p) => p.startsWith('Fix check:'))
+  assert.ok(prompt.includes('+++ b/z/big.js') && MID.split('\n').filter(Boolean).every((l) => prompt.includes(`+${l}`)), 'the prompt holds z/big.js whole')
   const record = closed(r.id, { f1: { status: 'fixed' } })
-  assert.deepEqual(record.outOfScope, [])
-  assert.deepEqual(record.coverage.map(([path]) => path), ['docs/three.md', 'src/one.js', 'src/one.test.js'])
-  blocked(push(), /leave 1 file\(s\) uncovered: z\/big\.js —/)
+  assert.deepEqual(record.unseen, [])
+  allowed(push())
 })
 
-test('R4 a new close of an old review whose diff measures over the cap logs empty coverage and is not taken as a legacy close', () => {
-  commit({ 'z/big.js': BIG })
-  const r = review()
-  writeFileSync(LOG, records().map((e) => {
-    if (e.id !== r.id) return JSON.stringify(e)
-    const { truncated, ...old } = e
-    return JSON.stringify(old)
-  }).join('\n') + '\n')
-  const record = closed(r.id)
-  assert.deepEqual(record.coverage, [])
-  blocked(push())
-})
-
-// A truncated file, moved by the fix round: the review cut it, so no later pass may cover it under its new name.
-function movedAfterCut() {
-  commit({ 'z/big.js': BIG })
-  const r = review('', { STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
-  assert.deepEqual(r.truncated, ['z/big.js'])
+test('X1 a file the review left out, moved before the fix check, is read whole under its new name by the fix check', () => {
+  commit({ 'z/big.js': MID })
+  const r = review('', { ...capFor('z/big.js'), STUB_FINDINGS: JSON.stringify({ findings: [F1] }) })
+  assert.ok(r.manifest.unread.some(([p, why]) => p === 'z/big.js' && why === 'capped'))
   git('mv', 'z/big.js', 'z/moved.js')
   commit({ 'src/one.js': 'export const one = 3\n', 'src/one.test.js': 'test one\n' }, 'move big, fix one')
-  return { r, check: fixCheck(r.id) }
-}
-test('X1 a file the review truncated, moved before the fix check, is diffed whole and stays uncovered', () => {
-  const { r, check } = movedAfterCut()
-  assert.equal(check.noRenames, true)
-  assert.ok(check.truncated.includes('z/moved.js'), check.truncated.join(', '))
-  assert.equal(check.coverage.some(([path]) => path === 'z/moved.js'), false)
-  // The close can't vouch for the moved file either, and a slice of the rest leaves exactly it uncovered.
-  const partial = close(r.id, { f1: { status: 'fixed' } })
-  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.ok(partial.record.outOfScope.includes('z/moved.js'))
-  closed(review('src/,docs/').id)
-  blocked(push(), uncovered(['z/moved.js']))
-})
-test('X1 a fix-check record from before noRenames never covers a rename destination, in the close or on its own', () => {
-  const { r, check } = movedAfterCut()
-  const head = git('rev-parse', 'HEAD')
-  // As PR A's runtime logged it: the rename diff fit under the cap, so nothing was cut and the moved blob was covered.
-  writeFileSync(LOG, records().map((e) => {
-    if (e.id !== check.id) return JSON.stringify(e)
-    const { noRenames, ...old } = e
-    return JSON.stringify({ ...old, truncated: [], coverage: [['src/one.js', `100644 ${blob(head, 'src/one.js')}`],
-      ['src/one.test.js', `100644 ${blob(head, 'src/one.test.js')}`], ['z/moved.js', `100644 ${blob(head, 'z/moved.js')}`]] })
-  }).join('\n') + '\n')
-  const partial = close(r.id, { f1: { status: 'fixed' } })
-  allowed(partial); assert.equal(partial.record.status, 'partial'); assert.ok(partial.record.outOfScope.includes('z/moved.js'))
-  closed(review('src/,docs/').id)
-  blocked(push(), uncovered(['z/moved.js']))
+  rmSync(CALLS, { recursive: true, force: true }); mkdirSync(CALLS)
+  const check = fixCheck(r.id)
+  const prompt = calls().map((c) => c.prompt).find((p) => p.startsWith('Fix check:'))
+  assert.ok(prompt.includes('+++ b/z/moved.js') && MID.split('\n').filter(Boolean).every((l) => prompt.includes(`+${l}`)), 'the prompt holds z/moved.js whole')
+  const moved = check.manifest.read.find(([path]) => path === 'z/moved.js')
+  assert.deepEqual(moved, ['z/moved.js', null, `100644 ${blob('HEAD', 'z/moved.js')}`], 'an addition, never a short rename section')
+  assert.equal(check.manifest.read.some(([path]) => path === 'z/big.js'), false, 'added and removed since the base: no change to read')
+  closed(r.id, { f1: { status: 'fixed' } })
+  allowed(push())
 })
 
 test('X2 a tracked repo config loses every own-file key it sets, blank values included', () => {
@@ -469,4 +397,17 @@ test('K3 a tracked repo config, even {}, keeps the home config\'s coverageExempt
   assert.match(r.out, /Ignoring coverageExempt in \.claude\/review-config\.json/)
   closed(records().filter((e) => e.type === 'review').at(-1).id)
   blocked(push(), /1 file\(s\) uncovered: y\/big\.js .*exempt \(not reviewed\): z\/big\.js/)
+})
+
+test('X1 a current close whose linked fix check predates manifests: its old coverage field grants nothing', () => {
+  const r = review()
+  commit({ 'lib/two.js': 'export const two = 3\n' })
+  const head = git('rev-parse', 'HEAD')
+  appendFileSync(LOG, `${JSON.stringify({ type: 'review', kind: 'fix-check', id: 'fix-legacy-1', review: r.id, ts: new Date().toISOString(), head, branch: 'feat', repo: 'repo',
+    repoId: r.repoId, base: r.head, baseSha: r.head, family: 'sol', model: 'gpt-stub-sol', findings: 0, findingDetails: [],
+    coverage: [['lib/two.js', `100644 ${git('rev-parse', 'HEAD:lib/two.js')}`]], truncated: [] })}\n`)
+  const record = closed(r.id, {}, undefined, 'partial')
+  assert.equal(record.fixCheck, 'fix-legacy-1')
+  assert.deepEqual(record.unseen, ['lib/two.js'])
+  blocked(push(), uncovered(['lib/two.js']))
 })

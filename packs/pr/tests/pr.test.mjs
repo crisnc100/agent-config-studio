@@ -203,7 +203,10 @@ test('C1 review: absent, in progress and closed are three different states', () 
   assert.deepEqual(c.security, ['Security: fam2 (model-y) — ran, 0 findings'])
   assert.match(c.tierLine, /^Merge tier: HIGH/)
   b.write({ 'scripts/review.mjs': 'console.log(JSON.stringify({ covered: false, reason: "repo copy" })); process.exit(3)\n' })
-  assert.equal(b.facts().review.reason, 'repo copy', 'the repo\'s own scripts/review.mjs comes first')
+  const kept = b.facts().review
+  assert.equal(kept.state, 'closed', 'a scripts/review.mjs in the checkout never supplies the review state')
+  assert.equal(kept.script, b.gate)
+  assert.equal(kept.reason, undefined)
 })
 
 /* ── C2 the style ────────────────────────────────────────────────────── */

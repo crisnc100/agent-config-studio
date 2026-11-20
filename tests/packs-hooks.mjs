@@ -202,7 +202,16 @@ console.log('\nC5 the push gate');
   const head = sb.git(gated, 'rev-parse', 'HEAD').stdout.trim();
   const log = path.join(sb.home, '.agent-config-studio/review-log/review-log.jsonl');
   fs.mkdirSync(path.dirname(log), { recursive: true });
-  fs.writeFileSync(log, [{ type: 'review', kind: 'review', id: 'fixture', head, family: 'fixture', model: 'fixture-only', findingDetails: [] }, { type: 'close', review: 'fixture', closeHead: head, status: 'complete', statuses: {} }].map((x) => JSON.stringify(x)).join('\n') + '\n');
+  // Coverage comes only from a pass's manifest: this one read every file at HEAD against the empty tree, as a review
+  // of unpublished history does.
+  const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+  const read = sb.git(gated, 'ls-tree', '-r', '-z', '--full-tree', head).stdout.split('\0').filter(Boolean).map((entry) => {
+    const tab = entry.indexOf('\t'), [mode, , object] = entry.slice(0, tab).split(' ');
+    return [entry.slice(tab + 1), null, `${mode} ${object}`];
+  }).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  const repoId = fs.realpathSync(path.resolve(gated, sb.git(gated, 'rev-parse', '--git-common-dir').stdout.trim()));
+  const manifest = { v: 1, role: 'code', base: EMPTY_TREE, head, read, unread: [], promptSha256: 'fixture', cap: 120000 };
+  fs.writeFileSync(log, [{ type: 'review', kind: 'review', id: 'fixture', head, baseSha: EMPTY_TREE, repoId, family: 'fixture', model: 'fixture-only', findingDetails: [], manifest }, { type: 'close', review: 'fixture', closeHead: head, repoId, status: 'complete', statuses: {} }].map((x) => JSON.stringify(x)).join('\n') + '\n');
   const closedPush = sb.git(gated, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
   ok('C5 …and lets a closed one through', closedPush.code === 0, closedPush.out);
   const wt = mk('wtproject');
