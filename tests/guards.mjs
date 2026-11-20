@@ -287,6 +287,11 @@ const LOGIN_SHELL_FN = "function loginShell(env = process.env) { const want = en
   "let listed = []; try { listed = fs.readFileSync('/etc/shells', 'utf8').split('\\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')); } catch {} " +
   "return listed.includes(want) && fs.existsSync(want) ? want : '/bin/sh'; }";
 
+/** lib/usage/gemini.js: its only two spawns, whole, and the options and folder they run with. */
+const AGY_USAGE_CALLS = ["found.binary, ['--version'], opts", "found.binary, ['-p', '/usage', '--output-format', 'json'], opts"];
+const AGY_USAGE_OPTS = "const opts = { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1' } };";
+const AGY_USAGE_DIRS = ['null', "fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-usage-'))"];
+
 /** lib/agent.js's watcher inspectors: the only callees there besides 'cmux', each with its exact argv. */
 const AGENT_INSPECTOR_FN = "const inspector = (bin, name) => process.env.AGENT_TEST_MODE === '1' && process.env[name] || bin;";
 const AGENT_INSPECTOR_CALLS = ["inspector('/bin/ps', 'AGENT_TEST_PS')", "inspector('/usr/sbin/lsof', 'AGENT_TEST_LSOF')"];
@@ -302,6 +307,7 @@ function guardB() {
     const file = rel(abs);
     const calls = childCalls(src);
     let inspectorPinned = false;
+    let agyPinned = false;
 
     if (abs === HARNESS) {
       const contained = functionSpan(src, 'spawnContained');
@@ -451,17 +457,27 @@ function guardB() {
         continue;
       }
       if (allowed.agyUsageOnly) {
+        // The whole call, not a prefix: a .concat(), a spread or a changed
+        // options argument would each hand agy something unpinned.
         const text = (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
-        if (!/^found\.binary\s*,/.test(text)) {
-          hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 50)}…) — must spawn the detected ` +
-                    `absolute binary (found.binary), never a PATH name`);
+        if (!AGY_USAGE_CALLS.includes(text)) {
+          hits.push(`${file}:${call.line} ${call.fn}(${text.slice(0, 80)}…) — must be exactly ` +
+                    `${AGY_USAGE_CALLS.map((c) => `spawn(${c})`).join(' or ')}: the detected binary, the pinned ` +
+                    `argv with nothing appended, and the pinned opts — any other prompt here would be an ` +
+                    `uncontained model turn`);
         }
-        const am = /^[^,]+,\s*(\[[^\]]*\])/.exec(text);
-        const argv = am ? am[1].replace(/\s+/g, '') : null;
-        if (!argv || (argv !== "['--version']" && argv !== "['-p','/usage','--output-format','json']")) {
-          hits.push(`${file}:${call.line} argv must be the literal ['--version'] or ` +
-                    `['-p','/usage','--output-format','json'], got ${argv ?? 'nothing parseable'} — ` +
-                    `any other prompt here would be an uncontained model turn`);
+        if (!agyPinned) {
+          agyPinned = true;
+          // opts is defined once, as this literal: an empty folder as cwd, stdin closed, cmux's agy hooks off.
+          const optsDefs = [...src.matchAll(/\bopts\s*=(?!=)/g)];
+          if (optsDefs.length !== 1 || !src.replace(/\s+/g, ' ').includes(AGY_USAGE_OPTS)) {
+            hits.push(`${file} opts must be assigned once, as ${AGY_USAGE_OPTS}`);
+          }
+          // and that folder is only ever a fresh mkdtemp (or cleared).
+          const dirSets = [...src.matchAll(/\bdir\s*=(?!=)\s*([^;\n]*)/g)].map((m) => m[1].replace(/\s+/g, ' ').trim());
+          if (dirSets.some((v) => !AGY_USAGE_DIRS.includes(v))) {
+            hits.push(`${file} dir may only be ${AGY_USAGE_DIRS.join(' or ')}, got ${dirSets.join(' | ')}`);
+          }
         }
         continue;
       }

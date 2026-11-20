@@ -311,6 +311,13 @@ console.log('setup guards\n');
     ['inspectGrok: the same spawn outside inspectGrok', hj, origHj, (t) => t.replace('export function inspectGrok(', "export const inspectAgain = (binary) => spawn(binary, ['inspect', '--json'], {});\nexport function inspectGrok(")],
     ['agy usage: a prompt instead of /usage', gm, origGm, (t) => t.replace("['-p', '/usage', '--output-format', 'json']", "['-p', 'summarise this folder', '--output-format', 'json']")],
     ['agy usage: an extra flag', gm, origGm, (t) => t.replace("['-p', '/usage', '--output-format', 'json']", "['-p', '/usage', '--output-format', 'json', '--dangerously-skip-permissions']")],
+    ['agy usage: a .concat() after the pinned argv', gm, origGm, (t) => t.replace("['-p', '/usage', '--output-format', 'json'], opts", "['-p', '/usage', '--output-format', 'json'].concat(process.env.AGY_EXTRA || []), opts")],
+    ['agy usage: a spread into the pinned argv', gm, origGm, (t) => t.replace("['--version'], opts", "['--version', ...(process.env.AGY_EXTRA ? [process.env.AGY_EXTRA] : [])], opts")],
+    ['agy usage: options other than opts', gm, origGm, (t) => t.replace("['--version'], opts", "['--version'], { stdio: 'ignore' }")],
+    ['agy usage: the empty-folder cwd dropped', gm, origGm, (t) => t.replace("const opts = { cwd: dir, stdio:", "const opts = { stdio:")],
+    ['agy usage: stdin opened', gm, origGm, (t) => t.replace("stdio: ['ignore', 'pipe', 'ignore'], env:", "stdio: ['pipe', 'pipe', 'ignore'], env:")],
+    ['agy usage: opts reassigned', gm, origGm, (t) => t.replace("      child = which === 'version'", "      Object.assign(opts, {}); opts = { ...opts, cwd: process.cwd() };\n      child = which === 'version'"), true],
+    ['agy usage: the folder pointed elsewhere', gm, origGm, (t) => t.replace("dir = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-usage-'));", "dir = process.cwd();")],
     ['agy usage: a PATH name', gm, origGm, (t) => t.replace("spawn(found.binary, ['--version'], opts)", "spawn('agy', ['--version'], opts)")],
     ['lsof: a PATH name', pr, origPr, (t) => t.replace("execFile('/usr/bin/lsof', ['-F', 'pcn', '-w', '+D'", "execFile('lsof', ['-F', 'pcn', '-w', '+D'")],
   ];
