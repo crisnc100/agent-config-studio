@@ -93,7 +93,14 @@ try {
     t('full tokens, every occurrence: two ids on one line', fence('codex -m gpt-6-sol && codex -m gpt-6-astra'), 'SKILL.md', (f) => f.map((x) => x.match).join() === 'gpt-6-sol,gpt-6-astra');
     t('a longer id is one token, not its prefix', 'claude-fable-5-1.', 'SKILL.md', (f) => f.length === 1 && f[0].match === 'claude-fable-5-1' && !f[0].stale);
     t('grok: an exact registry id names its family', 'grok-4.6 and grok-4.7', 'SKILL.md', (f) => f[0]?.family === 'grok-prev' && f[1]?.family === 'grok' && !f[0].stale && !f[1].stale);
-    t('grok: an id that fits both grok and grok-prev is ambiguous, with no fix', fence('grok -m grok-4.5 x'), 'SKILL.md', (f) => f.length === 1 && !f[0].family && !f[0].fix && /grok or grok-prev/.test(f[0].message));
+    // Two tracked families of one shape: the ambiguity is real, so no fix.
+    writeModels({ version: 1, models: { sol: 'gpt-6.1-sol' }, families: { 'grok-prev': { track: true } } });
+    t('grok: an id that fits both grok and grok-prev, both tracked, is ambiguous, with no fix', fence('grok -m grok-4.5 x'), 'SKILL.md', (f) => f.length === 1 && !f[0].family && !f[0].fix && /grok or grok-prev/.test(f[0].message));
+    writeModels({ version: 1, models: { sol: 'gpt-6.1-sol' } });
+    t('grok: an older id that fits grok and the pinned grok-prev is grok\'s, stale and fixable', fence('grok -m grok-4.5 x'), 'SKILL.md', (f) => f.length === 1 && f[0].family === 'grok' && f[0].stale && f[0].fix);
+    writeModels({ version: 1, models: { sol: 'gpt-6.1-sol' }, families: { terra: { track: false } } });
+    t('a lone pinned family keeps its stale ids: track: false is a fallback, never a filter', fence('codex -m gpt-5.5-terra x'), 'SKILL.md', (f) => f.length === 1 && f[0].family === 'terra' && f[0].stale && f[0].fix);
+    writeModels({ version: 1, models: { sol: 'gpt-6.1-sol' } });
     t('an id with no family in the registry → flagged, no fix', fence('codex -m gpt-5 x'), 'SKILL.md', (f) => f.length === 1 && !f[0].family && !f[0].fix);
     t('D2 a family name on a codex command line → info, no fix', fence('codex exec -m sol "x"'), 'SKILL.md', (f) => f.length === 1 && f[0].rule === 'D2' && f[0].severity === 'info' && !f[0].fix);
     t('-m on another tool is not a model flag', fence('git commit -m fix && python -m venv x'), 'SKILL.md', (f) => f.length === 0);
@@ -176,7 +183,9 @@ try {
       (f) => f.length === 1 && f[0].rule === 'D2' && f[0].family === 'sol' && !f[0].fix && label(f[0]));
     t('C2 a preset label in prose with a current base → info, no fix', 'Pick gpt-6-astra-high for reviews.', 'SKILL.md',
       (f) => f.length === 1 && f[0].severity === 'info' && f[0].family === 'astra' && !f[0].fix && label(f[0]));
+    writeModels({ version: 1, models: { sol: 'gpt-6.1-sol' }, families: { 'grok-prev': { track: true } } });
     t('C2 an ambiguous base stays ambiguous', 'Pick grok-4.5-high.', 'SKILL.md', (f) => f.length === 1 && !f[0].family && /grok or grok-prev/.test(f[0].message) && !f[0].fix);
+    writeModels({ version: 1, models: { sol: 'gpt-6.1-sol' } });
     t('C2 an unknown base says so about the base, not the label', 'Pick gpt-9-zeta-high.', 'SKILL.md',
       (f) => f.length === 1 && !f[0].family && /`gpt-9-zeta` looks like a model id/.test(f[0].message) && /preset label/.test(f[0].message) && !f[0].fix);
     writeModels({ version: 1, models: { sol: 'gpt-6.1-sol', terra: 'gpt-6-terra-max' } });
@@ -235,7 +244,9 @@ try {
       cur = A.applyFixes(cur, cur.toString('utf8'), [f]);
     }
     ok('several fixes at once give the same bytes as one at a time', cur.equals(fixed));
+    writeModels({ version: 1, models: { sol: 'gpt-6.1-sol', terra: 'gpt-6-terra-max' }, families: { 'grok-prev': { track: true } } });
     const amb = scan(fence('grok -m grok-4.5 x', 'codex -m gpt-5 y'));
+    writeModels({ version: 1, models: { sol: 'gpt-6.1-sol', terra: 'gpt-6-terra-max' } });
     ok('a fix is never offered when the family mapping is ambiguous or unknown', amb.length === 2 && amb.every((f) => !f.fix));
 
     // The fixed command line still runs, and expands to the right ids.
