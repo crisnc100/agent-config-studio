@@ -90,7 +90,7 @@ The gate model is called at the **gates** (once after the plan is drafted, once 
 
 ### Exact commands
 
-No command names a model. Resolve the family, its id and its effort from the role; the CLI follows the id's prefix: `claude-…` runs on `claude`, `gpt-…` on `codex`, `grok-…` on `grok`. The gates go through `ask-model`, which does both; the role lookups below give the grader swap its vendors (the id's prefix) and the Grade contract its family and model id.
+No command names a model. Resolve the family, its id and its effort from the role; the CLI follows the id's prefix: `claude-…` runs on `claude`, `gpt-…` on `codex`, `grok-…` on `grok`, `gemini-…` on `agy`. The gates go through `ask-model`, which does both; the role lookups below give the grader swap its vendors (the id's prefix) and the Grade contract its family and model id.
 
 ```
 eval "$(model-id --role advisor || echo 'echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1')"   # Bounce: sets family=…, id=…, effort=… (alt=… is the second opinion)

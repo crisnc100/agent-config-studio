@@ -49,6 +49,11 @@
       "likes": ["backend and automation builds", "executing a brief as written"],
       "quirks": ["under-fills a vague brief rather than asking"],
       "brief": "Spell out every file, the full shape of the outcome and the edge cases; it will not fill gaps on its own."
+    },
+    "neon": {
+      "likes": ["a view from another vendor (Google)", "reading a diff and reporting findings"],
+      "quirks": ["runs through Antigravity (agy), which cannot prove which model answered", "keeps web search on: the only reviewer that can reach the web"],
+      "brief": "Give it the diff or the question, the bar it must meet, and ask for findings with file:line evidence."
     }
   }
 }

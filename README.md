@@ -419,8 +419,9 @@ From the terminal, `acs usage` prints the same gauge (`--json` for raw,
 ### Pausing an account
 
 When one subscription runs low, **Pause** on its row makes every role skip
-that vendor's models (claude, codex or grok, by the prefix of each model's id)
-and answer with its next one. Pausing offers **until it resets**, filled in
+that account's models (claude, codex, grok or gemini; a model belongs to
+the account its id's prefix names, and `gemini-` models run through agy on
+the Gemini subscription) and answer with its next one. Pausing offers **until it resets**, filled in
 from the reading's tightest window when it has a reset time, or **until I
 resume**; a paused row says *Paused until …* and has **Resume**. Your roles are
 not changed: the pause lives in `~/.agent-config-studio/paused.json`, its own
@@ -457,11 +458,12 @@ acs pause
 acs pause claude
 acs pause fable --until 2026-11-14T15:00:00Z
 acs pause codex --until-resume
+acs pause gemini
 acs resume claude
 ```
 
 `acs pause` alone lists what is paused and each role a pause changes. A pause
-names a vendor or one family; with no flag it ends when the last usage reading
+names an account (claude, codex, grok or gemini; not agy) or one family; with no flag it ends when the last usage reading
 says that account resets, or lasts until you resume when no reading says. A
 pause whose time has passed no longer counts and is dropped on the next write.
 
@@ -806,8 +808,36 @@ skill.
   call. If a server, or a plugin that brings one, would still start, Grok is
   not run (exit 4) and the message names each one. Switch it off with
   `grok mcp disable <name>` (a plugin's with Grok's plugin disable command).
-- `ask-model` runs claude, codex and grok. A model whose vendor it has no CLI
-  wiring for is not run: it exits 4 and names the vendor.
+- `ask-model` runs claude, codex, grok and agy (Antigravity, for a `gemini-`
+  id). A family whose id starts with none of their prefixes is not run: it
+  exits 64 and names the id.
+- Agy runs read-only through a deny list passed for that call only (no
+  commands, file writes, MCP tools, or URL reads, downloads or runs); web
+  search cannot be denied, so it stays on. Agy itself runs workspace hooks,
+  MCP servers and plugins whatever the deny list says, so the call stops
+  first (exit 4, naming what it found) when any of these holds, checked in
+  this order:
+  - any folder from the working folder up to `/` has a `.agents`, `.agent`,
+    `_agents` or `_agent` folder holding `hooks.json`, `mcp_config.json`,
+    `plugins.json`, `agents.json`, `plugins` or `agents` (custom agents,
+    which can name hooks of their own);
+  - `~/.gemini/config/plugins/` holds anything, or `plugins.json` exists
+    there;
+  - `~/.gemini/config/mcp_config.json` holds anything beyond an empty server
+    list, or cannot be read as JSON;
+  - `~/.gemini/config/hooks.json` has a hook whose command is not exactly
+    one of cmux's;
+  - `agy --version`, run in an empty temporary folder, is not the version
+    its containment was checked on.
+  `--role security` (or its `--second`) that resolves to an agy family
+  exits 4 without running it, since agy's web search stays on.
+  A tool call agy refused is printed on stderr and does not fail the call.
+  `--investigate`, `--no-tools` and `--min-tools` exit 4
+  for agy without running it. Agy reports only the model it was asked for,
+  so its answer is labelled unverified (`--json` adds `served` with
+  `verified: false`), and each call keeps its own agy log under
+  `~/.agent-config-studio/logs/agy/` (`logFile`). A failed status, an empty
+  answer (a turn its deny list ended, say) or a deadline exits 4.
 - The answer goes to stdout, and one line on stderr names the family, id,
   effort and mode. `--json` prints `family`, `id`, `effort`, `mode`, `answer`,
   `changed` and `error` instead. `--cwd <dir>` is where the model works.

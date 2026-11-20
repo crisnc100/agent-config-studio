@@ -126,7 +126,8 @@ function attentionModel(sources) {
       items.push(...modelItems(s.data));
       if (s.data.registryError) partial.push({ id, label, text: 'the model registry file is invalid — defaults are in use' });
       for (const c of (s.data.catalogs || []).filter((x) => !x.ok)) {
-        if (c.missing) quiet.push({ id, label, text: missingCatalogText(c, sources.clis) });
+        if (c.noCatalog) quiet.push({ id, label, text: `${c.label}: keeps no model catalog — not checked` });
+        else if (c.missing) quiet.push({ id, label, text: missingCatalogText(c, sources.clis) });
         else partial.push({ id, label, text: c.note || `the ${c.label} catalog could not be read` });
       }
     } else if (id === 'memory') items.push(...memoryItems(s.data));

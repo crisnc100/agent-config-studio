@@ -233,5 +233,18 @@ function showConfig(h, env = {}) {
   ok('REVIEW_REVIEWER=fable while claude is paused: fable reviews', named.code === 0 && named.data?.selected?.family === 'fable', J(named).slice(0, 600));
 }
 
+console.log('\npause: the Gemini subscription — agy is the CLI, gemini the account');
+{
+  const roles = { version: 2, roles: { reviewer: { use: ['neon', 'sol'] } } };
+  const g = resolveRole('reviewer', { home: home({ version: 1, paused: [{ name: 'gemini' }] }, roles) });
+  ok('a paused gemini pauses neon (its id runs on agy)', g.family === 'sol' && J(g.skipped?.map((x) => [x.family, x.by])) === J([['neon', 'gemini']]), J(g));
+  const c = resolveRole('reviewer', { home: home({ version: 1, paused: [{ name: 'codex' }] }, roles) });
+  ok('a paused codex leaves neon alone', c.family === 'neon', J(c));
+  const a = readPaused({ home: home({ version: 1, paused: [{ name: 'agy' }] }, roles) });
+  ok('agy is a CLI, not an account: a pause naming it is refused', a.entries.length === 0 && /"agy" is not a vendor \(claude, codex, grok, gemini\) or a model family/.test(a.error ?? ''), J(a));
+  const m = spawnSync(process.execPath, [MODEL_ID, '--role', 'reviewer'], { encoding: 'utf8', env: { HOME: home({ version: 1, paused: [{ name: 'gemini' }] }, roles), PATH: '/usr/bin:/bin' } });
+  ok('model-id --role answers past a paused gemini', m.status === 0 && m.stdout === `family=sol id=${IDS.sol} effort= alt=\n` && m.stderr === 'model-id: gemini paused: reviewer → sol (skipped neon)\n', J({ code: m.status, out: m.stdout, err: m.stderr }));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

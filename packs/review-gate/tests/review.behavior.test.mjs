@@ -152,7 +152,7 @@ test('B1 a family whose id has an unknown prefix is skipped with a one-line mess
   const r = run(['--show-config'], role(['mystery', 'zeta'], ['acme-1', 'gpt-zeta-1']))
   assert.equal(r.status, 0, r.out)
   const lines = r.stderr.split('\n').filter((line) => /mystery/.test(line))
-  assert.deepEqual(lines, ['⚠ reviewer role family "mystery" has id "acme-1", whose prefix names no known CLI (claude-, gpt-, grok-) — skipped'])
+  assert.deepEqual(lines, ['⚠ reviewer role family "mystery" has id "acme-1", whose prefix names no known CLI (claude-, gpt-, grok-, gemini-) — skipped'])
   assert.deepEqual(JSON.parse(r.stdout).pool.map((m) => m.family), ['zeta'])
 })
 
@@ -226,7 +226,7 @@ test('B1 a raw model pin whose id has no known prefix stops naming the setting a
   const config = join(ROOT, 'pin-config.json')
   writeFileSync(config, J({ model: 'acme-1' }))
   const cases = [
-    [{ REVIEW_MODEL: 'acme-1' }, /REVIEW_MODEL=acme-1 resolves to "acme-1", whose prefix names no known CLI \(claude-, gpt-, grok-\)/],
+    [{ REVIEW_MODEL: 'acme-1' }, /REVIEW_MODEL=acme-1 resolves to "acme-1", whose prefix names no known CLI \(claude-, gpt-, grok-, gemini-\)/],
     [{ REVIEW_REVIEWER: 'codex', REVIEW_MODEL: 'acme-1' }, /REVIEW_MODEL=acme-1 resolves to "acme-1", whose prefix names no known CLI/],
     [{ REVIEW_CONFIG: config }, /config "model"=acme-1 resolves to "acme-1", whose prefix names no known CLI/],
   ]

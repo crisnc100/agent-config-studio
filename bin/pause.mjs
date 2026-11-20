@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import path from 'node:path';
-import { homeDir, loadRegistry, vendorOf } from '../lib/models.js';
+import { homeDir, loadRegistry, subscriptionOf, vendorOf } from '../lib/models.js';
 import { pause, pauseEffect, pauseState, resume, vendorReset } from '../lib/pause.js';
 import { pauseKind } from '../lib/roles.js';
 import { readSnapshot, snapshotPath } from '../lib/usage/seats.js';
@@ -18,7 +18,7 @@ import { readSnapshot, snapshotPath } from '../lib/usage/seats.js';
  * account resets, or lasts until you resume when no reading says.
  */
 
-const USAGE = 'usage: acs pause [<claude|codex|grok|family> [--until <time> | --until-resume]]\n       acs resume <claude|codex|grok|family>';
+const USAGE = 'usage: acs pause [<claude|codex|grok|gemini|family> [--until <time> | --until-resume]]\n       acs resume <claude|codex|grok|gemini|family>';
 const home = homeDir();
 const [cmd, ...argv] = process.argv.slice(2);
 
@@ -43,7 +43,7 @@ function list() {
 }
 
 function defaultUntil(name) {
-  const vendor = pauseKind(name) === 'vendor' ? name : vendorOf(loadRegistry({ home }).registry.models[name]);
+  const vendor = pauseKind(name) === 'vendor' ? name : subscriptionOf(vendorOf(loadRegistry({ home }).registry.models[name]));
   const snap = readSnapshot(snapshotPath(path.join(home, '.agent-config-studio')));
   const at = vendorReset(snap?.seats, vendor);
   return at ? new Date(at).toISOString() : null;

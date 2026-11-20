@@ -1,0 +1,9 @@
+{
+ "f1": {
+  "status": "fixed"
+ },
+ "x1": {
+  "status": "deferred",
+  "reason": "fix-check finding: one fix round and one fix check ran; deferred to the PR A follow-up per the review policy"
+ }
+}

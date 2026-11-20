@@ -10,8 +10,9 @@
 
 /** A family's display name: "opus" → "Opus". */
 const wfName = (f) => (f ? f[0].toUpperCase() + f.slice(1) : '');
-/** A model id's vendor, by its prefix (lib/models-catalog.js vendorOf). */
-const wfVendor = (id) => (typeof id !== 'string' ? null : id.startsWith('claude-') ? 'claude' : id.startsWith('gpt-') ? 'codex' : id.startsWith('grok-') ? 'grok' : null);
+/** A model id's vendor, by its prefix: a copy of lib/models.js VENDOR_PREFIXES (this file runs in the browser), kept identical by tests/vendor-prefixes.mjs. */
+const WF_VENDOR_PREFIXES = { 'claude-': 'claude', 'gpt-': 'codex', 'grok-': 'grok', 'gemini-': 'agy' };
+const wfVendor = (id) => (typeof id !== 'string' ? null : Object.entries(WF_VENDOR_PREFIXES).find(([p]) => id.startsWith(p))?.[1] ?? null);
 
 /** A role's members as [{ family, effort, id }], in order; worked out from `use` for an older payload without them. */
 function wfMembers(role) {

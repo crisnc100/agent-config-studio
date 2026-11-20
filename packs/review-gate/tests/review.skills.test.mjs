@@ -100,8 +100,8 @@ function effortIn(cli, argv) {
   return argv.includes(flag) ? argv[argv.indexOf(flag) + 1] ?? '' : null
 }
 const modelIn = (cli, argv) => argv[argv.indexOf(cli === 'claude' ? '--model' : '-m') + 1]
-/** The CLI an id runs on: its prefix, the rule ask-model uses. */
-const cliOf = (id) => ({ claude: 'claude', gpt: 'codex', grok: 'grok' })[id.split('-')[0]]
+/** The CLI an id runs on, stated here rather than read from the router under test. */
+const cliOf = (id) => ({ claude: 'claude', gpt: 'codex', grok: 'grok', gemini: 'agy' })[id.split('-')[0]]
 /** The one model call a snippet made: on `cli`, and on no other CLI. */
 function onlyCall(calls, cli, label) {
   for (const name of ['claude', 'codex', 'grok']) assert.equal(calls[name].length, name === cli ? 1 : 0, `${label}: ${name} calls`)

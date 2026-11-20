@@ -15,3 +15,44 @@
 - f2 LOW filed, not fixed.
 - Docs: the code-review skill (claude) says a raw model pin with no known prefix stops the run. The codex twin has no pin sentence, so it is unchanged.
 - Comments: review.mjs pin comment now names the known-prefix stop; ask-model's test export moved above install()'s doc comment.
+
+## PR A phase 1 — neon family, one prefix table (builder, 2026-11-20)
+- VENDOR_PREFIXES in lib/models.js; identical copies in review.mjs and public/workflow.js, ask-model imports it; tests/vendor-prefixes.mjs.
+- neon → gemini-4-neon, sol-prev → gpt-6.1-sol (track:false), sol default → gpt-6.2-sol; neon flavor (no avoid list: tests/roles.mjs pins "shipped defaults set no avoid list").
+- agy: pause vendor, vendor dot, Antigravity catalog reported as "keeps no catalog on disk" (guard f forbids a spawn), gemini lint patterns, audit name/command matching, picker label.
+- Open: sol-prev makes stale sol ids ambiguous in the audit (tests/audit.mjs, audit-routes.mjs fail); proposal sent to the orchestrator.
+
+## PR A phase 2 — containment probe (builder, 2026-11-20)
+- containment-probe.md: the deny list holds for tool calls (workspace settings, hook allow/permissionOverrides don't undo it), but workspace .agents/hooks.json, .agents/mcp_config.json and .agents/plugins run shell commands, trusted or not, also via --add-dir. Recommended refusal sent to the orchestrator; not built.
+
+## PR A phase 3 — ask-model on agy (builder, 2026-11-20)
+- argv per brief + per-call --log-file; refusals (MCP config, non-cmux hooks, --investigate/--no-tools/--min-tools, --x-search); failures exit 4; init.model ≠ id exit 2; served model recorded unverified. f2 and x1 closed. tests/ask-model-agy.mjs.
+
+## PR A phase 4 — review gate on agy (builder, 2026-11-20)
+- runAgy, model unverified in reviewer line/report/FINDINGS_JSON/record/close/eval; never security (pinned, role, worker); REVIEW_AUTHOR=agy unknown; x2 built as refuse (non-codex pin stops). review.agy.test.mjs.
+- First real eval errored: agy's result.response joins every response turn (its finish tool refused the first schema answer; the retry followed), so the JSON did not parse. The answer is now the last response turn's text, in review.mjs and ask-model.
+- Proof: `PATH=<worktree>/bin:$PATH node packs/review-gate/runtime/review.mjs --eval --family neon --cases <clean-advisor-no-edit, logic-schema-enum-key-order> --yes` → clean 140.8s, caught (medium) 216.4s, modelVerified false (eval-proof/eval-neon-2cases.out).
+
+## PR A round 2 — lead's decisions (builder, 2026-11-20)
+- familyIndex: the shape path uses the exact path's rule (one tracked family wins; pinned stay a fallback). Audit tests where grok-4.5 was ambiguous now use a registry with grok-prev tracked; added an older-grok-is-grok and a lone-pinned-terra assertion (test-only commit 890b105).
+- Subscription split: SUBSCRIPTION_OF {agy: gemini} in lib/models.js; PAUSE_VENDORS has gemini, not agy; pausedBy, describe and defaultUntil join through it. `acs pause gemini` pauses neon (test-only commit a96532d for the pause-cli account list).
+- Containment: version pin 1.5.13; workspace refusal from the cwd to `/` (.agents/.agent/_agents/_agent × hooks.json/mcp_config.json/plugins.json/agents.json/plugins, any type or unreadable); home plugins/ and plugins.json refuse; deny list adds download_url, execute_url. unsandboxed(*) left off: agy 1.5.13 logs it as invalid and ignores it.
+- Probes (real agy): subagents inherit the deny list; empty-cwd absolute-path read is refused by print mode and reported in result.denied_actions (the field exists for approval refusals, not deny-rule ones), so both runtimes print those too.
+- REVIEW_AUTHOR=agy note in --security-only. SKILL.md pin sentence, README refusal list.
+- Gate: 143 local test files pass one by one (6 at a time); packs 915/915.
+
+## PR A fix round (review 2026-11-20-19-56-35-141781) — builder, 2026-11-20
+- f1/f2: probe scripts work only in tagged folders they made under the temp folder; set -euo pipefail and a workspace check before any delete or agy launch. Checked against a foreign folder: exit 2, nothing touched.
+- f3: workspace and home refusals before agy --version; the version runs in a fresh empty temp folder (both runtimes).
+- f4: ask-model refuses agy for --role security (and --second).
+- f5: fix check, second opinion, dispute and eval summary say model unverified; records carry modelVerified / verifierModelVerified false.
+- f6: a home hook passes only as cmux's exact command template (fixture from the real hooks.json, user path removed).
+- f7: the Gemini display-name pattern matches only whole names.
+- s1: agents/ refuses in all four folders; probe/agents.sh showed a custom agent's hooks fire under the deny list.
+- Test checks from Sol: cliOf literal again, union fixture neither catalog satisfies, exact model-id output, subscriptionOf inherited keys, pause-cli family list.
+- Real agy: ask-model neon from the worktree answered; one-case --eval --family neon caught the bug (56.4s), model unverified on both lines.
+- Docs: the four skills that state the CLI-by-prefix rule now include gemini- → agy (build claude/codex, code-review claude/codex).
+- review.agy.test: a foreign grouped hook handler refuses agy (Sol's check of a7504f3); review-config.example.json _pool_help names gemini- → agy.
+- Probe fix round (review 2026-11-20-20-41-43-6767e4): the scripts take no caller paths; each run is one mktemp folder (ws/marks/out), fixed modes/labels/--sub/planted names, a ready marker before any agy call, set -euo pipefail and `|| exit 2` on sourcing common.sh; setup.sh folded into common.sh's plant_full; all.sh re-runs every probe. Proved: unknown modes and bad arguments exit 2 with no agy call; TMPDIR pointed at a foreign folder only adds fresh acs-agy-probe.* folders; an unfinished setup refuses. Real all.sh on agy 1.5.13 matched containment-probe.md.
+- Fix round (review 2026-11-20-21-11-22-91a2a0): all.sh runs agy --version from an empty folder in its own run folder; subagent denials read from agy's transcripts in both runtimes (saved probe as fixture; real ask-model run named the subagent's denied touch); --log-grade marks agy Grades/rechecks modelVerified false.
+- Fix round (slice reviews 4c55da, 0e4aff, 19a6ff): extra.sh subagent passes only on the child transcript's command and write denials (subagent-verdict.mjs, ask-model's agySubagentDenials), real re-run: pass; eval cases and slices forward agy warnings to stderr and an eval case counts its denials; audit never marks an id stale (or fixes it) unless it is older than the family's current id.

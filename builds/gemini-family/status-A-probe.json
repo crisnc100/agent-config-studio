@@ -1,0 +1,31 @@
+{
+ "s1": {
+  "status": "fixed"
+ },
+ "s2": {
+  "status": "fixed"
+ },
+ "s3": {
+  "status": "fixed"
+ },
+ "s4": {
+  "status": "fixed"
+ },
+ "s5": {
+  "status": "fixed"
+ },
+ "s6": {
+  "status": "fixed"
+ },
+ "f1": {
+  "status": "fixed"
+ },
+ "x1": {
+  "status": "deferred",
+  "reason": "fix-check finding on the probe scripts (research tooling, not shipped): affects the accuracy of a probe run, not what the probe can touch; deferred to the PR A follow-up"
+ },
+ "x2": {
+  "status": "deferred",
+  "reason": "fix-check finding on the probe scripts (research tooling, not shipped): affects the accuracy of a probe run, not what the probe can touch; deferred to the PR A follow-up"
+ }
+}

@@ -1,0 +1,100 @@
+review.mjs · /Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-family/packs/review-gate/runtime/review.mjs · head-aware copy
+▶ eval · 1 family (neon) × 2 cases × 1 run = 2 reviews · cases /private/tmp/claude-501/-Users-cortega/4cb140f1-7b68-4bbe-91ef-4f10b5331acd/scratchpad/eval-cases
+ℹ a finding with missing scores adds one model call to its review; each review times out after 15m
+
+▶ neon (agy · gemini-4-neon)
+  clean-advisor-no-edit [clean] clean · 140.8s
+  logic-schema-enum-key-order [bug] caught (medium, f1) · 216.4s
+
+neon (gemini-4-neon · high) · bugs caught 1/1 · missed 0 · false alarms 0 (0/1 clean cases) · extra 0 · unlocated 0 · errored 0 · n=1 · 357.2s
+ℹ logged 1 record to /Users/cortega/.claude/review-log/eval-log.jsonl
+
+===EVAL_JSON===
+[
+  {
+    "type": "eval",
+    "ts": "2026-11-20T19:17:38.603Z",
+    "runId": "2026-11-20T19-11-41-338Z-403c04",
+    "family": "neon",
+    "vendor": "agy",
+    "model": "gemini-4-neon",
+    "effort": "high",
+    "modelUsed": [
+      "gemini-4-neon"
+    ],
+    "modelVerified": false,
+    "rubricVersion": "2026-11-18.1",
+    "runtimeHash": "8c3bff6c0589dd7bda4d263af2b3c670253320ed49525b44bec20b4992ba75bb",
+    "promptHash": "f3b52e06fa2d9000b8e0d36701bed8d0d139bdd5d272e8d4a26178e7d45660b3",
+    "casesDir": "/private/tmp/claude-501/-Users-cortega/4cb140f1-7b68-4bbe-91ef-4f10b5331acd/scratchpad/eval-cases",
+    "caseIds": [
+      "clean-advisor-no-edit",
+      "logic-schema-enum-key-order"
+    ],
+    "repeat": 1,
+    "timeoutMs": 900000,
+    "totals": {
+      "bugs": 1,
+      "caught": 1,
+      "missed": 0,
+      "clean": 1,
+      "cleanWithAlarms": 0,
+      "falseAlarms": 0,
+      "extra": 0,
+      "unlocated": 0,
+      "errored": 0,
+      "durationMs": 357248
+    },
+    "cases": [
+      {
+        "id": "clean-advisor-no-edit",
+        "kind": "clean",
+        "run": 1,
+        "caseHash": "dd9833319c756d0ffd4edf3e9c1b449d3c821181335fb2e3e113cbdf6f559814",
+        "outcome": "clean",
+        "falseAlarms": 0,
+        "alarms": [],
+        "lows": 0,
+        "allowed": 0,
+        "unlocated": 0,
+        "durationMs": 140838,
+        "reviewId": "2026-11-20-19-14-02-45a7bf",
+        "model": "gemini-4-neon",
+        "modelUsed": "gemini-4-neon",
+        "modelVerified": false,
+        "effort": "high",
+        "security": "off"
+      },
+      {
+        "id": "logic-schema-enum-key-order",
+        "kind": "bug",
+        "run": 1,
+        "caseHash": "532dbef6b2de505a9afa989e8d8369c33cad03286d9358ccb5f70244856190b6",
+        "outcome": "caught",
+        "severity": "medium",
+        "expects": [
+          {
+            "file": "tools/ask-model.mjs",
+            "side": "head",
+            "lines": [
+              138,
+              140
+            ],
+            "caught": true,
+            "by": "f1",
+            "severity": "medium"
+          }
+        ],
+        "extra": 0,
+        "unlocated": 0,
+        "durationMs": 216410,
+        "reviewId": "2026-11-20-19-17-38-154ddf",
+        "model": "gemini-4-neon",
+        "modelUsed": "gemini-4-neon",
+        "modelVerified": false,
+        "effort": "high",
+        "security": "off"
+      }
+    ]
+  }
+]

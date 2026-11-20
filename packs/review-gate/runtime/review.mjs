@@ -470,16 +470,16 @@ function modelIdJson(args) {
   }
 }
 
-// Which CLI runs a model: its id's prefix, the rule ACS uses (lib/models-catalog.js vendorOf),
-// copied so this script stays standalone. An id with any other prefix has no known CLI.
+// Which CLI runs a model: its id's prefix. A copy of lib/models.js VENDOR_PREFIXES, so this script
+// stays standalone; tests/vendor-prefixes.mjs keeps the copies identical. Any other prefix has no known CLI.
+const VENDOR_PREFIXES = { 'claude-': 'claude', 'gpt-': 'codex', 'grok-': 'grok', 'gemini-': 'agy' }
 function vendorOf(id) {
   const s = String(id ?? '')
-  if (s.startsWith('claude-')) return 'claude'
-  if (s.startsWith('gpt-')) return 'codex'
-  if (s.startsWith('grok-')) return 'grok'
+  for (const [prefix, vendor] of Object.entries(VENDOR_PREFIXES)) if (s.startsWith(prefix)) return vendor
   return null
 }
-const VENDORS = ['codex', 'claude', 'grok']
+const VENDORS = ['codex', 'claude', 'grok', 'agy']
+const KNOWN_PREFIXES = Object.keys(VENDOR_PREFIXES).join(', ')
 // Found on PATH without running it, the way spawnSync will find it.
 const onPath = (command) => (String(command).includes('/') ? isExecutable(command) : which(command) !== null)
 
@@ -526,7 +526,7 @@ function loadPool(role = 'reviewer') {
     const id = ids[i] || modelId(family)
     const vendor = vendorOf(id)
     if (!vendor) {
-      console.warn(`⚠ ${role} role family "${family}" has id "${id}", whose prefix names no known CLI (claude-, gpt-, grok-) — skipped`)
+      console.warn(`⚠ ${role} role family "${family}" has id "${id}", whose prefix names no known CLI (${KNOWN_PREFIXES}) — skipped`)
       unusable.push({ family, vendor, id })
       return
     }
@@ -1104,6 +1104,8 @@ const poolMember = (family, pool) => {
 }
 // A vendor name, a pool family, a raw id, or a family model-id can resolve; else null.
 function vendorOfName(name, pool) {
+  // agy names a CLI, not a maker: a branch built in Antigravity on a Claude model would pass as Google-authored.
+  if (name === 'agy') return null
   if (VENDORS.includes(name)) return name
   const known = pool?.find((m) => m.family === name)
   if (known) return known.vendor
@@ -1190,7 +1192,11 @@ function selectReviewer(stats, { dryRun = false } = {}) {
       const asFamily = FAMILY_NAME.test(familyName)
       if (asFamily && !vendorOf(id)) unresolved(pinnedModel, source('REVIEW_MODEL', 'model'), loaded)
       if (!vendorOf(id))
-        stop(`${source('REVIEW_MODEL', 'model')}=${pinnedModel} resolves to "${id}", whose prefix names no known CLI (claude-, gpt-, grok-).`)
+        stop(`${source('REVIEW_MODEL', 'model')}=${pinnedModel} resolves to "${id}", whose prefix names no known CLI (${KNOWN_PREFIXES}).`)
+      // The pin is the codex model: an id another CLI runs never goes to codex, and the pin does not move the review to that CLI.
+      if (vendorOf(id) !== 'codex')
+        stop(`${source('REVIEW_MODEL', 'model')}=${pinnedModel} resolves to "${id}", which is not a codex model (it runs on ${vendorOf(id)}).\n` +
+          `  Fix: name that family with REVIEW_REVIEWER=<family> instead, or pin a codex model.`)
       const family = asFamily ? familyName : pool?.find((p) => p.id === id)?.family || pinnedModel
       const known = pool?.find((p) => p.family === family)
       m = { family, vendor: 'codex', id, effort: known?.effort || (asFamily ? flavorEffort(family) : 'high') }
@@ -1235,7 +1241,7 @@ function selectReviewer(stats, { dryRun = false } = {}) {
   if (unusablePick) {
     const named = `${source('REVIEW_PICK', 'pick')}=${pick}`
     if (!unusablePick.vendor)
-      stop(`${named} names a reviewer role family whose id "${unusablePick.id}" has no known CLI prefix (claude-, gpt-, grok-).\n` +
+      stop(`${named} names a reviewer role family whose id "${unusablePick.id}" has no known CLI prefix (${KNOWN_PREFIXES}).\n` +
         `  Fix: check \`model-id ${pick}\` and the families in ACS → Models, or pick another family.`)
     requireCli(unusablePick, named)
   }
@@ -1243,7 +1249,7 @@ function selectReviewer(stats, { dryRun = false } = {}) {
   notes.push(...CROSS_FAMILY_NOTES)
   const author = String(cfg('REVIEW_AUTHOR', 'author', '')).trim().toLowerCase()
   const authorVendor = author ? vendorOfName(author, members) : null
-  if (author && !authorVendor) notes.push(`⚠ author "${author}" is not a known family or vendor — treated as unknown`)
+  if (author && !authorVendor) notes.push(unknownAuthorNote(author))
 
   let candidates = members
   let crossWhy = ''
@@ -1783,6 +1789,13 @@ function sliceHint(stats) {
     (largest.length ? `  Largest top-level folders: ${largest.map(([top, n]) => `${top} (${n} changed lines)`).join(', ')}\n` : '')
 }
 
+// A REVIEW_AUTHOR that names no family or vendor; agy is a CLI any model can run in, so it names no maker either.
+function unknownAuthorNote(author) {
+  return author === 'agy'
+    ? '⚠ author "agy" names the Antigravity CLI, not the model that wrote the branch — treated as unknown; set REVIEW_AUTHOR to the family that wrote it'
+    : `⚠ author "${author}" is not a known family or vendor — treated as unknown`
+}
+
 function toolNotes(vendor) {
   // Codex gets a sandboxed shell that can't open /dev/fd, so `diff <(cmd) <(cmd)` dies before it
   // runs — one sentence here saves a wasted verification round trip. The Claude lenses have no
@@ -1797,6 +1810,13 @@ function toolNotes(vendor) {
     return [
       `Your only tools are read_file, list_dir and grep — there is no shell. This is a read-only ` +
         `review: never try to modify files.`,
+    ]
+  // agy's deny list refuses commands, writes, MCP tools and URL reads; web search cannot be denied.
+  if (vendor === 'agy')
+    return [
+      `Running commands, writing files, MCP tools and reading URLs are all denied, so there is no shell: read the ` +
+        `files with your file tools. This is a read-only review: never try to modify files. Web search is ` +
+        `available, but never put repository content into a search.`,
     ]
   return []
 }
@@ -1870,7 +1890,7 @@ const AGENT_FILES = /(^|\/)(SKILL|AGENTS|CLAUDE|GEMINI)\.md$/i
 const plainFile = (p) => !AGENT_FILES.test(p) && extKind(p) !== 'docs'
 const SECURITY_CLASSES = [
   {
-    test: (p) => AGENT_FILES.test(p) || plainFile(p) && /(^|[/._-])(agents?|prompts?|skills?|mcp|llm|ai|tool-?use|tool-?calls?|ask-model|claude|codex|grok|openai|anthropic)([/._-]|$)/i.test(p),
+    test: (p) => AGENT_FILES.test(p) || plainFile(p) && /(^|[/._-])(agents?|prompts?|skills?|mcp|llm|ai|tool-?use|tool-?calls?|ask-model|claude|codex|grok|gemini|antigravity|agy|openai|anthropic)([/._-]|$)/i.test(p),
     list: 'Checklist: AI and agent tools. Prompt injection through tool output (files, web pages, command output or model replies that ' +
       'reach a model and steer what it does next); tool permissions (what each tool may read, write or run, and who grants that); ' +
       'commands a model chooses (commands, paths or URLs picked by a model that run without a fixed allowlist or a human check).',
@@ -2406,6 +2426,196 @@ function runGrok(m, prompt, schema) {
   return parseGrok(r.stdout)
 }
 
+// agy (Antigravity) is read-only by a deny list passed per call with --settings, never saved: its --mode plan does
+// not enforce read-only, the deny list does (a workspace settings file, allow rule or PreToolUse hook's allow was each
+// seen not to undo it), and its subagents inherit it. Web search is not a permission and stays on, so agy never runs
+// the security pass. agy names only the model it was asked for, so its reviews are recorded as model unverified.
+// tools/ask-model.mjs's agy wiring, copied to keep the runtime standalone; builds/gemini-family/containment-probe.md.
+// unsandboxed(*) is not on the list: agy 1.5.13 ignores that rule kind (command(*) covers it).
+const AGY_SETTINGS = { permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'] } }
+// The agy the containment was probed on; a newer one may read a workspace file that runs something. Re-run the probe
+// (builds/gemini-family/probe in Agent Config Studio) before moving this.
+const AGY_VERSION = '1.5.13'
+// Workspace customizations agy runs from the folder it starts in and every folder above it. tests/vendor-prefixes.mjs
+// keeps this literal identical to ask-model's.
+const AGY_WORKSPACE = { dirs: ['.agents', '.agent', '_agents', '_agent'], names: ['hooks.json', 'mcp_config.json', 'plugins.json', 'agents.json', 'plugins', 'agents'] }
+const AGY_PRINT_TIMEOUT = '3600s'
+// cmux's own home hook: the whole command must be this template, socket path and event name filled in (ask-model's
+// agyCmuxHook has the reasons). tests/vendor-prefixes.mjs keeps it identical to ask-model's.
+const AGY_CMUX_HOOK = ": cmux-antigravity-hook-v2; :; printenv CMUX_ANTIGRAVITY_HOOKS_DISABLED | grep -qx 1 && { :; { cat >/dev/null 2>/dev/null || true; echo '{}'; }; } || { cmux_hook_ambient_socket=$(printenv CMUX_SOCKET_PATH || printf '\\n'; printf '.'); cmux_hook_ambient_socket=${cmux_hook_ambient_socket%??}; cmux_hook_ambient_cli=$(printenv CMUX_BUNDLED_CLI_PATH || printf '\\n'; printf '.'); cmux_hook_ambient_cli=${cmux_hook_ambient_cli%??}; if [ -n \"${cmux_hook_ambient_socket:-}\" ] && [ -S \"${cmux_hook_ambient_socket:-}\" ] && [ -f \"${cmux_hook_ambient_cli:-}\" ] && [ -x \"${cmux_hook_ambient_cli:-}\" ] && CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5 \"${cmux_hook_ambient_cli:-}\" --socket \"${cmux_hook_ambient_socket:-}\" hooks enqueue antigravity <EVENT>; then :; elif [ -x '/Applications/cmux.app/Contents/Resources/bin/cmux' ]; then CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5 '/Applications/cmux.app/Contents/Resources/bin/cmux' --socket '<SOCK>' hooks enqueue antigravity <EVENT>; elif command -v cmux >/dev/null 2>&1; then CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5 cmux --socket '<SOCK>' hooks enqueue antigravity <EVENT>; else { cat >/dev/null 2>/dev/null || true; echo '{}'; }; fi; cmux_hook_status=$?; :; if [ \"$cmux_hook_status\" -ne 0 ]; then { cat >/dev/null 2>/dev/null || true; echo '{}'; }; fi; exit 0; }"
+const AGY_CMUX_HOOK_RE = new RegExp(`^${AGY_CMUX_HOOK.split(/(<SOCK>|<EVENT>)/).map((p) => (p === '<SOCK>' ? "/[^']*" : p === '<EVENT>' ? '[a-z-]+'
+  : p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('')}$`)
+const agyCmuxHook = (command) => typeof command === 'string' && AGY_CMUX_HOOK_RE.test(command)
+const AGY_ENV = { CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1' }
+const AGY_NO_SECURITY = 'agy keeps web search on (no permission turns it off), and the security pass reads a diff that may try to steer its reviewer'
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
+// Why ~/.gemini/config would run something besides the model, or null: any MCP server in mcp_config.json starts, and
+// every hooks.json hook runs a shell command, except cmux's own (each exactly AGY_CMUX_HOOK, which does nothing under
+// AGY_ENV). A file that can't be read or parsed refuses. ask-model's agyConfigProblem.
+function agyConfigProblem(home = homedir()) {
+  const dir = join(home, '.gemini', 'config')
+  // A plugin brings its own hooks and MCP servers, and plugins.json can declare one anywhere on disk.
+  const plugins = join(dir, 'plugins')
+  try { if (readdirSync(plugins).length) return `${plugins} holds plugins, whose hooks and MCP servers agy runs` }
+  catch (e) { if (e.code !== 'ENOENT') return `${plugins} could not be read (${e.code || e.message})` }
+  try { lstatSync(join(dir, 'plugins.json')); return `${join(dir, 'plugins.json')} declares plugins, whose hooks and MCP servers agy runs` }
+  catch (e) { if (e.code !== 'ENOENT') return `${join(dir, 'plugins.json')} could not be read (${e.code || e.message})` }
+  const load = (name) => {
+    const file = join(dir, name)
+    let text
+    try { text = readFileSync(file, 'utf8') } catch (e) { return e.code === 'ENOENT' ? { doc: null } : { error: `${file} could not be read (${e.code || e.message})` } }
+    if (!text.trim()) return { doc: null }
+    try { return { doc: JSON.parse(text), file } } catch { return { error: `${file} is not JSON` } }
+  }
+  const mcp = load('mcp_config.json')
+  if (mcp.error) return mcp.error
+  if (mcp.doc !== null) {
+    const other = isPlainObject(mcp.doc) ? Object.keys(mcp.doc).filter((k) => k !== 'mcpServers') : null
+    const servers = isPlainObject(mcp.doc) && isPlainObject(mcp.doc.mcpServers ?? {}) ? Object.keys(mcp.doc.mcpServers ?? {}) : null
+    if (!servers || other.length || servers.length)
+      return `${mcp.file} configures ${servers?.length ? `MCP servers (${servers.join(', ')})` : 'more than an empty server list'}, which agy starts on every call and no flag keeps out`
+  }
+  const hooks = load('hooks.json')
+  if (hooks.error) return hooks.error
+  if (hooks.doc === null) return null
+  if (!isPlainObject(hooks.doc)) return `${hooks.file} is not a JSON object of named hooks`
+  const foreign = []
+  for (const [name, spec] of Object.entries(hooks.doc)) {
+    if (!isPlainObject(spec)) return `${hooks.file}: hook "${name}" is not an object`
+    for (const [event, list] of Object.entries(spec)) {
+      if (event === 'enabled') continue
+      if (!Array.isArray(list)) return `${hooks.file}: ${name}.${event} is not a list`
+      const handlers = list.flatMap((h) => (isPlainObject(h) && Array.isArray(h.hooks) ? h.hooks : [h]))
+      if (handlers.some((h) => !isPlainObject(h) || !agyCmuxHook(h.command))) foreign.push(`${name}.${event}`)
+    }
+  }
+  return foreign.length ? `${hooks.file} has hooks that are not cmux's (${foreign.join(', ')}); agy runs every hook's command on its calls` : null
+}
+// What `agy --version` prints, or null when it fails; run in a fresh empty temp folder, away from the reviewed tree.
+function agyVersion() {
+  let dir = null
+  try {
+    dir = mkdtempSync(join(tmpdir(), 'acs-agy-version-'))
+    const v = spawnSync('agy', ['--version'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000, env: { ...process.env, ...AGY_ENV } })
+    return v.error || v.status !== 0 ? null : String(v.stdout || '').trim() || null
+  } catch { return null } finally { if (dir) rmSync(dir, { recursive: true, force: true }) }
+}
+// Every AGY_WORKSPACE name, of any type, from `cwd` up to the filesystem root (not git's top folder: agy's stop rule
+// is its own, and a linked worktree's .git is a file). One that can't be looked at counts; no folder is exempt.
+function agyWorkspaceFiles(cwd) {
+  let dir
+  try { dir = realpathSync(cwd) } catch { dir = resolve(cwd) }
+  const found = []
+  for (;;) {
+    for (const d of AGY_WORKSPACE.dirs) for (const n of AGY_WORKSPACE.names) {
+      const p = join(dir, d, n)
+      try { lstatSync(p); found.push(p) } catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') found.push(p) }
+    }
+    if (dirname(dir) === dir) break
+    dir = dirname(dir)
+  }
+  return found
+}
+// agy's result.response joins the text of every response turn: an answer its finish tool refused against the schema
+// and the retry after it both land there. The answer is the last response turn that has text; null when none has.
+function lastTurnText(steps) {
+  const turns = new Map()
+  for (const u of steps)
+    if (u.step_type === 'agent_response' && typeof u.text_delta === 'string') turns.set(u.step_index, (turns.get(u.step_index) ?? '') + u.text_delta)
+  return [...turns.entries()].sort((x, y) => y[0] - x[0]).map(([, t]) => t).find((t) => t.trim()) ?? null
+}
+// Deny-rule refusals inside the subagents a turn invoked, read from each subagent's transcript (its steps are not in
+// the parent's stream); a transcript outside ~/.gemini/antigravity-cli/brain is not read. ask-model's agySubagentDenials.
+function agySubagentDenials(steps, home = homedir()) {
+  const denied = [], notes = [], seen = new Set()
+  let brain = null
+  try { brain = realpathSync(join(home, '.gemini', 'antigravity-cli', 'brain')) + sep } catch { /* no brain folder: every transcript is outside it */ }
+  for (const u of steps) {
+    for (const s of Array.isArray(u?.subagent_info?.subagents) ? u.subagent_info.subagents : []) {
+      if (typeof s?.log_uri !== 'string' || seen.has(s.log_uri)) continue
+      seen.add(s.log_uri)
+      const name = String(s.type_name ?? s.conversation_id ?? 'a subagent')
+      let file
+      try { file = realpathSync(fileURLToPath(s.log_uri)) } catch (e) { notes.push(`subagent ${name}'s transcript could not be read (${e.code || e.message}); its denied calls are unknown`); continue }
+      if (!brain || !file.startsWith(brain) || basename(file) !== 'transcript.jsonl') { notes.push(`subagent ${name}'s transcript is not in agy's brain folder, so it was not read; its denied calls are unknown`); continue }
+      let text
+      try {
+        if (statSync(file).size > 32 * 1024 * 1024) throw new Error('over 32 MB')
+        text = readFileSync(file, 'utf8')
+      } catch (e) { notes.push(`subagent ${name}'s transcript could not be read (${e.code || e.message}); its denied calls are unknown`); continue }
+      for (const line of text.split('\n')) {
+        let step
+        try { step = JSON.parse(line) } catch { continue }
+        if (step?.status === 'ERROR' && /deny rule/i.test(String(step.error ?? ''))) denied.push(`(subagent ${name}) ${String(step.error).slice(0, 300)}`)
+      }
+    }
+  }
+  return { denied, notes }
+}
+// The structured answer from agy's stream-json events. A denied tool call does not fail agy's turn (SUCCESS, exit 0):
+// it is a tool step that ended ERROR on a deny rule, so each is named on stderr, and an empty answer fails the review.
+function parseAgy(id, r) {
+  const events = []
+  for (const line of String(r.stdout || '').split('\n')) {
+    if (!line.trim()) continue
+    try { events.push(JSON.parse(line)) } catch { /* only events go to stdout */ }
+  }
+  const init = events.find((e) => e?.event === 'init')?.init
+  const res = events.findLast((e) => e?.event === 'result')?.result
+  const steps = events.map((e) => e?.step_update).filter(isPlainObject)
+  const denied = steps.filter((u) => u.state === 'ERROR' && /deny rule/i.test(String(u.tool_info?.error?.message ?? '')))
+  for (const u of denied) console.warn(`⚠ agy review: denied ${u.tool_name}: ${String(u.tool_info.error.message).slice(0, 300)}`)
+  // Actions that needed an approval print mode cannot give (a read outside the workspace, say); the turn still succeeds.
+  const unapproved = Array.isArray(res?.denied_actions) ? res.denied_actions : []
+  for (const d of unapproved) console.warn(`⚠ agy review: denied ${d?.action ?? '(unnamed)'}: needed an approval print mode cannot give`)
+  const sub = agySubagentDenials(steps)
+  for (const d of sub.denied) console.warn(`⚠ agy review: denied ${d}`)
+  for (const n of sub.notes) console.warn(`⚠ agy review: ${n}`)
+  if (r.error || r.status !== 0 || !isPlainObject(res))
+    throw new Error(`agy review failed (exit ${r.status}${res?.status ? `, status ${res.status}` : ''}): ${r.error?.message || tail(r.stderr || r.stdout)}`)
+  if (res.status !== 'SUCCESS') throw new Error(`agy review failed: status ${JSON.stringify(res.status ?? null)}: ${tail(res.response)}`)
+  if (typeof init?.model === 'string' && init.model !== id) throw new Error(`agy review: asked for ${id}, but agy reports it was asked for ${init.model}`)
+  const text = lastTurnText(steps) ?? res.response
+  if (typeof text !== 'string' || !text.trim())
+    throw new Error(`agy review: empty answer${denied.length + unapproved.length + sub.denied.length ? ` after ${denied.length + unapproved.length + sub.denied.length} denied tool call(s)` : ''}`)
+  let result
+  try { result = JSON.parse(text) } catch (e) {
+    // The parser's reason goes last, where a caller that keeps only the tail of stderr (--eval) still has it.
+    throw new Error(`agy review: the answer is not JSON: ${text.length > 600 ? `${text.slice(0, 300)} … ${text.slice(-300)}` : text} (${e.message})`)
+  }
+  if (!isPlainObject(result)) throw new Error(`agy review: the answer is not a JSON object: ${text.slice(0, 300)}`)
+  return { result, modelUsed: typeof init?.model === 'string' ? init.model : id, modelVerified: false }
+}
+// A model run through agy is never verified: every record and line that names one says so.
+function agyRun(m) { return m?.vendor === 'agy' }
+function runAgy(m, prompt, schema) {
+  // The workspace and home first: they need no agy process, and an unprobed agy could load what they would refuse.
+  const workspace = agyWorkspaceFiles(process.cwd())
+  if (workspace.length)
+    throw new Error(`agy review refused: ${workspace.join(', ')}: agy runs a workspace's hooks, MCP servers, plugins and agents on every call and no flag turns them off; review with another family`)
+  const problem = agyConfigProblem()
+  if (problem) throw new Error(`agy review refused: ${problem}`)
+  const version = agyVersion()
+  if (version !== AGY_VERSION)
+    throw new Error(`agy review refused: agy reports version ${JSON.stringify(version)}, but its containment was probed on ${AGY_VERSION}; re-run the probe (builds/gemini-family/probe in Agent Config Studio) and update AGY_VERSION`)
+  // Each call's own agy log, kept: a model fallback agy does not report would show there.
+  const dir = join(homedir(), '.agent-config-studio', 'logs', 'agy')
+  mkdirSync(dir, { recursive: true })
+  const logFile = join(dir, `review-${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}-${randomBytes(3).toString('hex')}.log`)
+  const r = spawnSync('agy', ['-p', prompt, '--model', m.id, ...(m.effort ? ['--effort', String(m.effort)] : []), '--output-format', 'stream-json',
+    '--print-timeout', AGY_PRINT_TIMEOUT, '--disable-slash-commands', '--settings', JSON.stringify(AGY_SETTINGS), '--log-file', logFile,
+    '--json-schema', JSON.stringify(schema)], {
+    cwd: process.cwd(),
+    env: { ...process.env, ...AGY_ENV },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 64 * 1024 * 1024,
+    ...deadlineOptions(),
+  })
+  console.warn(`ℹ agy review: model unverified (agy names only the model it was asked for, ${m.id}); its log: ${logFile}`)
+  return parseAgy(m.id, r)
+}
+
 function spawnAsync(cmd, args) {
   return new Promise((resolve, reject) => {
     const c = spawn(cmd, args, { maxBuffer: 64 * 1024 * 1024 })
@@ -2481,6 +2691,10 @@ async function runModel(m, prompt, schema, role) {
   if (m.vendor === 'claude') return runClaude(m, prompt, schema, role)
   if (m.vendor === 'grok') return runGrok(m, prompt, schema)
   if (m.vendor === 'codex') return runCodex(m, prompt, schema)
+  if (m.vendor === 'agy') {
+    if (role === 'security reviewer') throw new Error(`agy cannot run the security pass: ${AGY_NO_SECURITY}`)
+    return runAgy(m, prompt, schema)
+  }
   throw new Error(`no CLI runs vendor "${m.vendor}" (${m.family ?? m.id}); known: ${VENDORS.join(', ')}`)
 }
 
@@ -2496,8 +2710,9 @@ async function review(block) {
   // every lens's focus in that one pass.
   if (!SEL.team) {
     const focus = SEL.vendor === 'claude' ? `\n\nFocus especially on: ${LENSES.map((l) => l.focus).join('; ')}.` : ''
-    const { result, modelUsed } = await runModel(SEL, `${reviewPrompt(block)}${focus}`, SCHEMA, 'comprehensive code reviewer')
+    const { result, modelUsed, modelVerified } = await runModel(SEL, `${reviewPrompt(block)}${focus}`, SCHEMA, 'comprehensive code reviewer')
     if (modelUsed) SEL.modelUsed = modelUsed
+    if (modelVerified === false) SEL.modelVerified = false
     return findingsList(result, 'code reviewer')
   }
   const perLens = await Promise.all(
@@ -2665,7 +2880,7 @@ async function secondOpinion(block, targets) {
     console.warn(`⚠ verify=second-opinion: no family in the reviewer pool besides the reviewing ${reviewingFamilies(SEL).join(', ')} — skipped`)
     return { verifier: null, error: 'no other pool family' }
   }
-  console.log(`▶ second opinion · ${v.family} (${v.vendor} · ${v.id} · ${v.effort}) on ${targets.length} HIGH/MEDIUM finding(s)`)
+  console.log(`▶ second opinion · ${v.family} (${v.vendor} · ${v.id} · ${v.effort}${agyRun(v) ? ' · model unverified' : ''}) on ${targets.length} HIGH/MEDIUM finding(s)`)
   try {
     const { result } = await runModel(v, verifierPrompt(block, targets, v.vendor), VERDICT_SCHEMA, 'code-review verifier')
     const byIndex = new Map((result?.verdicts || []).map((x) => [Number(x.index), x]))
@@ -2732,7 +2947,7 @@ function writeReport(branch, reviewer, { findings, unlocated, disputed }, cut, v
     (SLICE ? `Paths: ${SLICE.join(', ')} (one slice; other slices cover the rest of the diff)\n` : '') +
     `Reviewed against: ${INTENT || '(inferred from diff)'}\n` +
     (VERIFY_RESULT ? `Verify (${VERIFY_RESULT.cmd}): ${VERIFY_RESULT.passed ? 'passed' : 'FAILED'}\n` : '') +
-    (verifier ? `Second opinion: ${verifier.family} (${verifier.id})\n` : '') +
+    (verifier ? `Second opinion: ${verifier.family} (${verifier.id})${agyRun(verifier) ? ' — model unverified' : ''}\n` : '') +
     (security && security.status !== 'off' ? `${securityLine(security)}\n` : '') +
     (cut ? `⚠ ${cut}.\n` : '') +
     `Findings: ${findings.length} (plus ${disputed.length} disputed, ${unlocated.length} could not be located)\n\n` +
@@ -2874,10 +3089,14 @@ function logGrade(path) {
   const entry = { type: 'review', kind, rubricVersion: RUBRIC_VERSION, id, ts: new Date().toISOString(), head, branch, ...(original && { review: original.id }),
     base: original?.head || BASE, baseSha: original?.head || reviewBase(BASE, head), repo: repoName(), repoId, copy: COPY_PATH,
     family: value.family, model: value.model, vendor, ...(value.effort && { effort: value.effort }),
+    // ask-model reports agy's served model apart from the verdict, so the verdict file can't carry it: an agy Grade is
+    // unverified whatever the file says.
+    ...((vendor === 'agy' || vendorOf(value.model) === 'agy') && { modelVerified: false }),
     criteria: value.criteria, findings: findingDetails.length, findingDetails }
   requireClean()
   if (headNow() !== head) throw new Error('HEAD changed during Grade logging')
   appendLog(entry)
+  if (entry.modelVerified === false) console.log(`ℹ ${kind} by ${value.family} (${value.model}) — model unverified`)
   console.log(`Review ID: ${id}\n===FINDINGS_JSON===`)
   console.log(JSON.stringify({ schemaVersion: 1, reviewId: id, kind: entry.kind, head, branch, criteria: entry.criteria,
     findings: findingDetails, disputed: [], unverified: [] }, null, 2))
@@ -3332,16 +3551,21 @@ function securityMembers(codeSel) {
       const id = modelId(pinned)
       m = { family: pinned, vendor: vendorOf(id), id, effort: vendorOf(id) ? flavorEffort(pinned) : 'high' }
     } else if (!m.effort) m = { ...m, effort: flavorEffort(pinned) }
-    if (!m.vendor) return { error: `REVIEW_SECURITY_REVIEWER=${pinned} does not resolve to a model with a known CLI (claude-, gpt-, grok-)` }
+    if (!m.vendor) return { error: `REVIEW_SECURITY_REVIEWER=${pinned} does not resolve to a model with a known CLI (${KNOWN_PREFIXES})` }
+    if (m.vendor === 'agy') return { error: `REVIEW_SECURITY_REVIEWER=${pinned} runs on agy, which never runs the security pass: ${AGY_NO_SECURITY}` }
     if (!onPath(m.vendor)) return { error: `REVIEW_SECURITY_REVIEWER=${pinned} needs the ${m.vendor} CLI, which is not on PATH` }
     return { members: [m], why: `REVIEW_SECURITY_REVIEWER=${pinned} (pinned)` }
   }
   if (!loaded.pool) return { error: `security role: ${loaded.error}` }
-  const other = loaded.pool.filter((m) => m.vendor !== codeSel.vendor)
-  const same = loaded.pool.filter((m) => m.vendor === codeSel.vendor)
+  const noAgy = loaded.pool.filter((m) => m.vendor === 'agy').map((m) => m.family)
+  const pool = loaded.pool.filter((m) => m.vendor !== 'agy')
+  const skipped = noAgy.length ? `; skipped ${noAgy.join(', ')} (${AGY_NO_SECURITY})` : ''
+  if (!pool.length) return { error: `security role: every usable member runs on agy (${noAgy.join(', ')}), which never runs the security pass: ${AGY_NO_SECURITY}` }
+  const other = pool.filter((m) => m.vendor !== codeSel.vendor)
+  const same = pool.filter((m) => m.vendor === codeSel.vendor)
   return {
     members: [...other, ...same],
-    why: other.length ? `security role, a vendor other than the code reviewer's (${codeSel.vendor}) first` : `security role (every member is ${codeSel.vendor}, the code reviewer's vendor)`,
+    why: (other.length ? `security role, a vendor other than the code reviewer's (${codeSel.vendor}) first` : `security role (every member is ${codeSel.vendor}, the code reviewer's vendor)`) + skipped,
   }
 }
 // Workers still running when this process exits (a thrown error, say) are killed with it: none is left orphaned.
@@ -3557,6 +3781,7 @@ async function runSecurityOnly() {
   // No code reviewer runs here, so "another vendor" means another than the branch's author, when it is known.
   const author = String(cfg('REVIEW_AUTHOR', 'author', '')).trim().toLowerCase()
   const authorVendor = author ? vendorOfName(author, null) : null
+  if (author && !authorVendor) console.warn(unknownAuthorNote(author))
   const chosen = securityMembers({ vendor: authorVendor })
   if (chosen.error) stop(`security check: ${chosen.error}\n  Fix: choose the security role in ACS → Models → Roles, or pin one with REVIEW_SECURITY_REVIEWER=<family>.`)
   const job = { diff: diffBlock(sections), context: CONTEXT, verify: null, slice: SLICE, diffBase: DIFF_BASE, intent: INTENT || null,
@@ -3748,6 +3973,7 @@ async function runSlices() {
       const exit = error ? 1 : code ?? 1
       results[i] = { paths: groups[i], exit, reviewId: result?.reviewId ?? null, result, ...(error && { error }) }
       console.log(`=== slice ${i + 1}/${groups.length}: ${groups[i]} (exit ${exit}${error ? `: ${error}` : ''}) ===\n${err.trim()}\n${out.trim()}\n`)
+      for (const line of agyWarnings(err).all) console.error(`slice ${i + 1}/${groups.length}: ${line}`)
       done()
     })
   })
@@ -3818,8 +4044,9 @@ async function disputeFinding(id, findingId) {
     rmSync(temp, { recursive: true, force: true })
   }
   appendLog({ type: 'dispute', ts: new Date().toISOString(), review: id, finding: findingId, head: review.head,
-    verdict, reason, evidence, verdictEvidence, family: review.family, verifier: verifier?.family || null, ...classifierRecord(command, answer) })
-  console.log(`${verdict}: ${verdictEvidence}`)
+    verdict, reason, evidence, verdictEvidence, family: review.family, verifier: verifier?.family || null,
+    ...(agyRun(verifier) && { verifierModelVerified: false }), ...classifierRecord(command, answer) })
+  console.log(`${verdict}: ${verdictEvidence}${agyRun(verifier) ? ` (verifier ${verifier.family}, model unverified)` : ''}`)
 }
 async function fixCheck(id) {
   requireClean()
@@ -3895,12 +4122,13 @@ async function fixCheck(id) {
   const checkId = `fix-${Date.now()}-${randomBytes(3).toString('hex')}`
   appendLog({ type: 'review', kind: 'fix-check', rubricVersion: RUBRIC_VERSION, rescored: scored.rescored, id: checkId, review: id, ts: new Date().toISOString(), head, branch,
     repo: repoName(), repoId: repoIdentity(), base: original.head, baseSha: original.head, family: SEL.family, model: SEL.id, vendor: SEL.vendor, copy: COPY_PATH,
+    ...(agyRun(SEL) && { modelVerified: false }),
     families: [...new Set([...reviewingFamilies(SEL), ...(security.record.status === 'ran' ? [security.record.family] : [])])],
     ...(SLICE && { paths: SLICE }), ...(FOCUS && { focus: FOCUS }), ...(CONTEXT_COMMIT && { contextCommit: CONTEXT_COMMIT.sha }), ...(SECURITY.run !== 'off' && { security: security.record }),
     findings: findingDetails.length, findingDetails, ...recordedLocations(findingDetails),
     manifest: manifestOf(sections, 'code'), asked,
     stats: recordStats(fixStats), plan: PLAN_PATH ?? null, durationMs })
-  console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)`)
+  console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)${agyRun(SEL) ? ` · ${SEL.family} model unverified` : ''}`)
   warnDropped(findingDetails)
   for (const f of findingDetails.filter((f) => f[WHERE]?.ambiguous))
     console.warn(`⚠ ${f.id}: path ambiguous, the quote is in both ${f[WHERE].ambiguous.join(' and ')}; it authorizes no file at close`)
@@ -4010,7 +4238,7 @@ function closeLines(entries, close, head, carry = null) {
   const recheck = close.recheck && loggedReview(entries, close.recheck)
   const findings = [review, ...(recheck ? [recheck] : []), ...(check ? [check] : [])].flatMap((r) => r.findingDetails.map((f) => ({ ...f, review: r.id, owner: r })))
   const count = (status) => Object.values(close.statuses).filter((s) => s?.status === status).length
-  const lines = [`Reviewer: ${review.family} (${review.model})`, ...(review.security && review.security.status !== 'off' ? [securityLine(review.security)] : []),
+  const lines = [`Reviewer: ${review.family} (${review.model})${review.modelVerified === false ? ' — model unverified' : ''}`, ...(review.security && review.security.status !== 'off' ? [securityLine(review.security)] : []),
     `Review: ${review.id}`, `HEAD: ${head}`,
     `Counts: ${findings.length} findings; ${count('fixed')} fixed; ${count('rejected')} rejected${count('deferred') ? `; ${count('deferred')} deferred` : ''}`]
   if (carry) lines.push(carriedLine(carry, head))
@@ -4882,14 +5110,22 @@ function scoreEvalCase(c, record, repo = null) {
     unlocated: unlocated.length,
   }
 }
+// The agy lines a child review printed on stderr (each denied tool call, and each subagent transcript it could not
+// read): a parent that keeps the child's stderr only on failure passes these on itself.
+function agyWarnings(text) {
+  const all = String(text || '').split('\n').filter((l) => l.startsWith('⚠ agy review: '))
+  return { all, denied: all.filter((l) => l.startsWith('⚠ agy review: denied ')).length }
+}
 async function evalOne(m, c, run, root, timeoutMs) {
   const dir = join(root, `${m.family}-${c.id}-${run}`), logDir = join(dir, 'log')
   const started = Date.now()
   const base = { id: c.id, kind: c.kind, run, caseHash: c.hash }
-  let error = null, record = null, repo = null
+  let error = null, record = null, repo = null, denials = { all: [], denied: 0 }
   try {
     repo = evalRepo(c, dir)
     const r = await evalChild(m, c, repo, logDir, root, timeoutMs)
+    denials = agyWarnings(r.err)
+    for (const line of denials.all) console.error(`  ${c.id}: ${line}`)
     if (r.timedOut) error = `timed out after ${evalDuration(timeoutMs)}`
     else if (r.code !== 0) error = `the review exited ${r.code ?? r.signal}: ${tail(r.err || r.out)}`
     else {
@@ -4904,11 +5140,13 @@ async function evalOne(m, c, run, root, timeoutMs) {
     }
   } catch (e) { error = e.message }
   const durationMs = Date.now() - started
-  if (error) return { ...base, outcome: 'errored', error, durationMs, kept: dir }
+  const denied = denials.denied ? { denied: denials.denied } : {}
+  if (error) return { ...base, outcome: 'errored', error, ...denied, durationMs, kept: dir }
   rmSync(dir, { recursive: true, force: true })
   return {
-    ...base, ...scoreEvalCase(c, record, repo), durationMs, reviewId: record.id, model: record.model ?? null,
-    ...(record.modelUsed && { modelUsed: record.modelUsed }), ...(record.lenses && { lenses: record.lenses }), effort: record.effort ?? null,
+    ...base, ...scoreEvalCase(c, record, repo), ...denied, durationMs, reviewId: record.id, model: record.model ?? null,
+    ...(record.modelUsed && { modelUsed: record.modelUsed }), ...(record.modelVerified === false && { modelVerified: false }),
+    ...(record.lenses && { lenses: record.lenses }), effort: record.effort ?? null,
     security: record.security?.status ?? null,
   }
 }
@@ -4926,7 +5164,8 @@ const evalCaseLine = (c, repeat) => {
   const detail = c.outcome === 'caught' ? ` (${c.severity}, ${c.expects.map((e) => e.by).join(', ')})`
     : c.outcome === 'false-alarm' ? ` (${c.alarms.map((a) => `${a.severity} ${a.file}:${a.line}`).join(', ')})`
     : c.outcome === 'errored' ? `: ${c.error.split('\n').at(-1) || c.error}` : ''
-  const counts = [c.extra && `${c.extra} extra`, c.lows && `${c.lows} low`, c.unlocated && `${c.unlocated} unlocated`].filter(Boolean)
+  const counts = [c.extra && `${c.extra} extra`, c.lows && `${c.lows} low`, c.unlocated && `${c.unlocated} unlocated`,
+    c.denied && `${c.denied} denied tool call${c.denied === 1 ? '' : 's'}`].filter(Boolean)
   return `  ${c.id} [${c.kind}] ${c.outcome}${detail}${counts.length ? ` · ${counts.join(', ')}` : ''}${repeat > 1 ? ` · run ${c.run}` : ''} · ${(c.durationMs / 1000).toFixed(1)}s`
 }
 async function runEval() {
@@ -4958,7 +5197,7 @@ async function runEval() {
   const root = mkdtempSync(join(tmpdir(), 'review-eval-'))
   const records = []
   for (const m of families) {
-    console.log(`\n▶ ${m.family} (${m.vendor}${m.id ? ` · ${m.id}` : ''})`)
+    console.log(`\n▶ ${m.family} (${m.vendor}${m.id ? ` · ${m.id}` : ''}${agyRun(m) ? ' · model unverified' : ''})`)
     const results = []
     for (const c of cases)
       for (let run = 1; run <= repeat; run++) {
@@ -4970,7 +5209,8 @@ async function runEval() {
     const modelUsed = [...new Set(results.map((r) => r.modelUsed).filter(Boolean))]
     records.push({
       type: 'eval', ts: new Date().toISOString(), runId, family: m.family, vendor: m.vendor, model: ran?.model ?? m.id ?? null,
-      effort: ran?.effort ?? m.effort ?? null, ...(modelUsed.length && { modelUsed }), rubricVersion: RUBRIC_VERSION, runtimeHash,
+      effort: ran?.effort ?? m.effort ?? null, ...(modelUsed.length && { modelUsed }),
+      ...(results.some((r) => r.modelVerified === false) && { modelVerified: false }), rubricVersion: RUBRIC_VERSION, runtimeHash,
       promptHash: evalPromptHash(m), casesDir, caseIds: cases.map((c) => c.id), repeat, timeoutMs, totals: evalTotals(results), cases: results,
     })
   }
@@ -4980,7 +5220,7 @@ async function runEval() {
   console.log('')
   for (const r of records) {
     const t = r.totals
-    console.log(`${r.family} (${r.model} · ${r.effort}) · bugs caught ${t.caught}/${t.bugs} · missed ${t.missed} · false alarms ${t.falseAlarms} ` +
+    console.log(`${r.family} (${r.model} · ${r.effort}${r.modelVerified === false ? ' · model unverified' : ''}) · bugs caught ${t.caught}/${t.bugs} · missed ${t.missed} · false alarms ${t.falseAlarms} ` +
       `(${t.cleanWithAlarms}/${t.clean} clean cases) · extra ${t.extra} · unlocated ${t.unlocated} · errored ${t.errored} · n=${r.repeat} · ${(t.durationMs / 1000).toFixed(1)}s`)
   }
   if (readdirSync(root).length) console.log(`ℹ kept for inspection: ${root} (the repos and logs of the reviews that errored)`)
@@ -5077,9 +5317,9 @@ function startWatch(kind) {
       ? SEL.team
         ? `claude-team(${SEL.id})`
         : `claude-solo(${SEL.id})`
-      : `${SEL.vendor}-${SEL.id}-${SEL.effort}`
+      : `${SEL.vendor}-${SEL.id}-${SEL.effort}${SEL.vendor === 'agy' ? ' (model unverified)' : ''}`
   for (const n of SELECTION.notes) console.log(n)
-  console.log(`▶ reviewer · ${SEL.family} (${SEL.vendor} · ${SEL.id} · ${SEL.effort}) — ${SELECTION.why}`)
+  console.log(`▶ reviewer · ${SEL.family} (${SEL.vendor} · ${SEL.id} · ${SEL.effort}${SEL.vendor === 'agy' ? ' · model unverified' : ''}) — ${SELECTION.why}`)
   console.log(`▶ review · ${reviewer} · ${branch} vs ${BASE}${SLICE ? ` · paths ${SLICE.join(', ')}` : ''} · single pass (no fix, no loop)\n`)
 
   // A diff the cap cut looks identical to a fully-reviewed one — say so in the console,
@@ -5179,6 +5419,7 @@ function startWatch(kind) {
     families: [...new Set([...reviewingFamilies(SEL), ...(security.record.status === 'ran' ? [security.record.family] : [])])],
     model: SEL.id,
     ...(SEL.modelUsed && { modelUsed: SEL.modelUsed }),
+    ...(SEL.modelVerified === false && { modelVerified: false }),
     effort: SEL.effort,
     vendor: SEL.vendor,
     findings: allFindings.length,
@@ -5188,7 +5429,7 @@ function startWatch(kind) {
     ...(SELECTION.classifier && classifierRecord(SELECTION.classifier.command, SELECTION.classifier.answer)),
     ...(SECOND_OPINION && {
       secondOpinion: opinion.verifier
-        ? { family: opinion.verifier.family, model: opinion.verifier.id, ...(opinion.error && { error: opinion.error }) }
+        ? { family: opinion.verifier.family, model: opinion.verifier.id, ...(agyRun(opinion.verifier) && { modelVerified: false }), ...(opinion.error && { error: opinion.error }) }
         : { error: opinion.error || 'no HIGH/MEDIUM findings' },
     }),
     durationMs,
@@ -5219,7 +5460,7 @@ function startWatch(kind) {
       reportPath: `${dir}/code-review.md`,
       diffTruncated,
       verify: VERIFY_RESULT && { cmd: VERIFY_RESULT.cmd, passed: VERIFY_RESULT.passed },
-      secondOpinion: opinion.verifier && { family: opinion.verifier.family, model: opinion.verifier.id },
+      secondOpinion: opinion.verifier && { family: opinion.verifier.family, model: opinion.verifier.id, ...(agyRun(opinion.verifier) && { modelVerified: false }) },
       findings: allFindings.map(publicFinding),
       disputed: disputed.map(publicFinding),
       unverified: allUnlocated.map(publicFinding),
