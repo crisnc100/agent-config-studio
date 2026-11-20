@@ -1,0 +1,5 @@
+{
+ "s1":{"status":"fixed","response":"real","test":"review.merge.test.mjs B20 — a checkout scripts/review.mjs (tracked or untracked, answering every flag) never supplies the merge tier"},
+ "s2":{"status":"fixed","response":"real","test":"review.merge.test.mjs B20 (untracked case) — merge.mjs reads the tier only from the installed runtime"},
+ "x1":{"status":"deferred","reason":"MEDIUM 14/100 (likelihood 2/10 × impact 7/10), protected, outside the fix: the review skills still run a repo scripts/review.mjs when it passes their capability probe, so a builder-modified copy could write false review evidence to the log. Pre-existing design (repo-pinned runtimes), not introduced here; merges and pushes already decide only from the installed runtime. Fix-check findings are deferred (decision 9); tier stays HIGH so a human merges.","fix":"Follow-up: the skills use only the installed runtime, like merge.mjs and the pre-push hook."}
+}
