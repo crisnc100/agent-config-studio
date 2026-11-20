@@ -31,6 +31,7 @@ const SYSTEM = ['/usr/bin', '/bin'];
 fs.writeFileSync(path.join(STUBS, 'agy'), `#!${process.execPath}
 const fs = require('node:fs');
 const a = process.argv.slice(2);
+if (a[0] === '--version') { if (process.env.STUB_VERSION_FAIL) process.exit(1); console.log(process.env.STUB_VERSION || '1.5.13'); process.exit(0); }
 const val = (f) => { const i = a.indexOf(f); return i === -1 ? undefined : a[i + 1]; };
 const st = fs.fstatSync(0);
 fs.appendFileSync(process.env.STUB_LOG, JSON.stringify({ argv: a, cwd: process.cwd(), stdin: st.isCharacterDevice() ? 'chardev' : 'other',
@@ -45,6 +46,10 @@ if (mode === 'no-result') process.exit(0);
 if (mode === 'denied-empty') {
   out({ event: 'step_update', step_update: { conversation_id: cid, step_index: 2, state: 'ERROR', step_type: 'tool', tool_name: 'write_file',
     tool_info: { name: 'write_file', error: { type: 'TOOL_ERROR', message: 'permission check failed for write_file "x": Permission denied for write_file(x). Matches user-configured deny rule.' } } } });
+}
+if (mode === 'approval-denied') {
+  out({ event: 'result', result: { conversation_id: cid, status: 'SUCCESS', response: '', denied_actions: [{ action: 'read_file', display_name: 'ReadFile' }] } });
+  process.exit(0);
 }
 if (mode === 'two-turns') {
   out({ event: 'step_update', step_update: { step_index: 1, state: 'DONE', step_type: 'agent_response', text_delta: 'Let me read the files.' } });
@@ -73,10 +78,10 @@ function home(gemini = {}) {
   for (const [name, text] of Object.entries(gemini)) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, name), text); }
   return h;
 }
-function ask(args, { env = {}, h = home(), pathDirs = [STUBS, ...SYSTEM] } = {}) {
+function ask(args, { env = {}, h = home(), pathDirs = [STUBS, ...SYSTEM], cwd = WORK } = {}) {
   fs.writeFileSync(LOG, '');
   const r = spawnSync(process.execPath, [ASK, '--prompt-file', PF, ...args], {
-    cwd: WORK, encoding: 'utf8', env: { HOME: h, PATH: pathDirs.join(':'), STUB_LOG: LOG, ...env },
+    cwd, encoding: 'utf8', env: { HOME: h, PATH: pathDirs.join(':'), STUB_LOG: LOG, ...env },
   });
   const calls = fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   let j = null;
@@ -84,7 +89,7 @@ function ask(args, { env = {}, h = home(), pathDirs = [STUBS, ...SYSTEM] } = {})
   return { code: r.status, out: r.stdout, err: r.stderr, calls, argv: calls[0]?.argv, j, home: h };
 }
 const show = (r) => J({ code: r.code, out: r.out, err: r.err, calls: r.calls });
-const DENY = J({ permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)'] } });
+const DENY = J({ permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'] } });
 
 console.log('\nask-model agy: no real agy is reachable');
 {
@@ -125,7 +130,10 @@ console.log('\nask-model agy: failures');
   ok('no result event → exit 4', nr.code === 4 && /agy failed/.test(nr.j?.error ?? ''), show(nr));
   const de = ask(['--family', 'neon', '--json'], { env: { STUB_MODE: 'denied-empty' } });
   ok('SUCCESS with an empty answer after a denied tool call → exit 4 naming the denial', de.code === 4
-    && /empty answer after its deny list refused 1 tool call\(s\): write_file: permission check failed/.test(de.j?.error ?? ''), show(de));
+    && /empty answer after 1 denied tool call\(s\): write_file: permission check failed/.test(de.j?.error ?? ''), show(de));
+  const ad = ask(['--family', 'neon', '--json'], { env: { STUB_MODE: 'approval-denied' } });
+  ok('denied_actions (an approval print mode cannot give) are named; with no answer → exit 4', ad.code === 4
+    && /empty answer after 1 denied tool call\(s\): read_file: needed an approval/.test(ad.j?.error ?? '') && /ask-model: agy: denied read_file: needed an approval/.test(ad.err), show(ad));
   ok('...and the denied step is on stderr', /ask-model: agy: denied write_file: /.test(de.err), de.err);
   const blank = ask(['--family', 'neon', '--json'], { env: { STUB_ANSWER: '   \n' } });
   ok('a blank answer → exit 4', blank.code === 4 && /empty answer/.test(blank.j?.error ?? ''), show(blank));
@@ -168,6 +176,61 @@ console.log('\nask-model agy: ~/.gemini/config');
     const r = ask(['--family', 'neon'], { h: home(files) });
     ok(name, r.code === code && (code === 0 ? r.calls.length === 1 : r.calls.length === 0 && re.test(r.err) && /so agy was not run/.test(r.err)), show(r));
   }
+}
+
+console.log('\nask-model agy: the probed version only');
+{
+  const nv = ask(['--family', 'neon'], { env: { STUB_VERSION: '1.6.0' } });
+  ok('another agy version → exit 4 naming both and the probe, agy not run', nv.code === 4 && /agy reports version "1\.6\.0", but its containment was probed on 1\.5\.13: re-run the probe/.test(nv.err) && nv.calls.length === 0, show(nv));
+  const vf = ask(['--family', 'neon'], { env: { STUB_VERSION_FAIL: '1' } });
+  ok('a version check that fails → exit 4, agy not run', vf.code === 4 && /agy reports version null/.test(vf.err) && vf.calls.length === 0, show(vf));
+}
+
+console.log('\nask-model agy: workspace customizations, from the cwd up to the filesystem root');
+{
+  const base = mk('ws');
+  const sub = mk('ws', 'repo', 'src', 'deep');
+  const plant = (rel, dir = false) => { const p = path.join(base, rel); fs.mkdirSync(dir ? p : path.dirname(p), { recursive: true }); if (!dir) fs.writeFileSync(p, '{}'); return p; };
+  const clean = () => { for (const d of ['.agents', '.agent', '_agents', '_agent']) for (const at of [base, path.join(base, 'repo')]) fs.rmSync(path.join(at, d), { recursive: true, force: true }); };
+  for (const [rel, dir] of [['.agents/hooks.json'], ['repo/.agent/mcp_config.json'], ['_agents/plugins.json'], ['_agent/agents.json'], ['.agents/plugins', true]]) {
+    clean();
+    const p = plant(rel, dir);
+    const r = ask(['--family', 'neon'], { cwd: sub });
+    ok(`${rel} above the cwd → exit 4 naming it, agy not run`, r.code === 4 && r.err.includes(p) && /agy runs a workspace's hooks, MCP servers, plugins and agents/.test(r.err) && r.calls.length === 0, show(r));
+  }
+  clean();
+  plant('.agents/skills/x/SKILL.md');
+  plant('.agents/rules/r.md');
+  const ok1 = ask(['--family', 'neon'], { cwd: sub });
+  ok('skills and rules (text the model reads) do not refuse', ok1.code === 0 && ok1.calls.length === 1, show(ok1));
+  clean();
+  const hooksLink = plant('repo/.agents/hooks.json');
+  fs.rmSync(hooksLink); fs.symlinkSync('/nonexistent-target', hooksLink);
+  const dangling = ask(['--family', 'neon'], { cwd: sub });
+  ok('a dangling symlink at a listed name refuses (any type counts)', dangling.code === 4 && dangling.calls.length === 0, show(dangling));
+  clean();
+  if (process.getuid?.() !== 0) {
+    const locked = path.join(base, 'repo', '.agents');
+    fs.mkdirSync(locked, { recursive: true }); fs.chmodSync(locked, 0o000);
+    const ur = ask(['--family', 'neon'], { cwd: sub });
+    fs.chmodSync(locked, 0o755);
+    ok('a .agents folder that cannot be looked into refuses', ur.code === 4 && ur.err.includes(path.join(locked, 'hooks.json')) && ur.calls.length === 0, show(ur));
+    clean();
+  }
+}
+
+console.log('\nask-model agy: ~/.gemini/config plugins');
+{
+  const withPlugin = home({});
+  fs.mkdirSync(path.join(withPlugin, '.gemini', 'config', 'plugins', 'p'), { recursive: true });
+  const r = ask(['--family', 'neon'], { h: withPlugin });
+  ok('a plugin under ~/.gemini/config/plugins → exit 4, agy not run', r.code === 4 && /config\/plugins holds plugins/.test(r.err) && r.calls.length === 0, show(r));
+  const empty = home({});
+  fs.mkdirSync(path.join(empty, '.gemini', 'config', 'plugins'), { recursive: true });
+  const e = ask(['--family', 'neon'], { h: empty });
+  ok('an empty plugins folder runs', e.code === 0 && e.calls.length === 1, show(e));
+  const pj = ask(['--family', 'neon'], { h: home({ 'plugins.json': '{}' }) });
+  ok('a ~/.gemini/config/plugins.json → exit 4, agy not run', pj.code === 4 && /plugins\.json declares plugins/.test(pj.err) && pj.calls.length === 0, show(pj));
 }
 
 console.log('\nask-model agy: --schema');

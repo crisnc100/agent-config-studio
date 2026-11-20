@@ -40,6 +40,20 @@ for (const [file, name] of [['packs/review-gate/runtime/review.mjs', 'VENDOR_PRE
 }
 
 const ask = read('tools/ask-model.mjs');
+
+// agy's containment lives in two runtimes (ask-model and the review gate, installed apart): the same deny list, the
+// same probed version and the same workspace names, or one of them refuses less than the other.
+const rev = read('packs/review-gate/runtime/review.mjs');
+const line = (src, name) => (new RegExp(`^const ${name} = (.+?);?$`, 'm').exec(src)?.[1] ?? null);
+for (const name of ['AGY_SETTINGS', 'AGY_VERSION', 'AGY_WORKSPACE', 'AGY_CMUX_HOOK', 'AGY_ENV']) {
+  const a = line(ask, name), r = line(rev, name);
+  ok(`${name} is the same literal in ask-model and the review runtime`, a !== null && a === r, `${a} | ${r}`);
+}
+const ws = Function(`return (${line(ask, 'AGY_WORKSPACE')})`)();
+ok('AGY_WORKSPACE names the approved folders and files', JSON.stringify(ws) === JSON.stringify({
+  dirs: ['.agents', '.agent', '_agents', '_agent'], names: ['hooks.json', 'mcp_config.json', 'plugins.json', 'agents.json', 'plugins'] }), JSON.stringify(ws));
+const deny = Function(`return (${line(ask, 'AGY_SETTINGS')})`)().permissions.deny;
+ok('the agy deny list covers commands, writes, MCP and every URL action', ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'].every((d) => deny.includes(d)), JSON.stringify(deny));
 ok('tools/ask-model.mjs imports vendorOf from lib/models.js', /import \{[^}]*\bvendorOf\b[^}]*\} from '\.\.\/lib\/models\.js'/.test(ask));
 ok('tools/ask-model.mjs defines no vendorOf of its own', !/function vendorOf\b|const vendorOf\b/.test(ask));
 

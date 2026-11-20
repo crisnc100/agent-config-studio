@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
@@ -32,10 +32,12 @@ symlinkSync(process.execPath, join(NODE_BIN, 'node'))
 
 const FINDING = { issue: 'off-by-one in loop', file: 'a.js', line: '2', quote: 'for (let i = 0; i <= n; i++) {}', suggestion: 'use <', likelihood: 5, impact: 5, protected: false, trigger: 'calling f(3)' }
 const replyFor = `(schema) => String(schema).includes('"verdicts"') ? '{"verdicts":[]}' : String(schema).includes('"scores"') ? '{"scores":[]}' : ${J(J({ findings: [FINDING] }))}`
-// STUB_AGY: ok | status-error | denied-empty | other-model | not-json.
+// STUB_AGY: ok | status-error | denied-empty | approval-denied | other-model | not-json | clean | retry. STUB_AGY_VERSION
+// overrides what --version prints; STUB_AGY_VERSION=fail exits 1.
 put(join(STUBS, 'agy'), `#!${process.execPath}
 const fs = require('node:fs'), path = require('node:path')
 const a = process.argv.slice(2)
+if (a[0] === '--version') { if (process.env.STUB_AGY_VERSION === 'fail') process.exit(1); console.log(process.env.STUB_AGY_VERSION || '1.5.13'); process.exit(0) }
 const st = fs.fstatSync(0)
 fs.writeFileSync(path.join(${J(ARGV)}, 'agy-' + process.pid + '.json'), JSON.stringify({ argv: a, cwd: process.cwd(),
   stdin: st.isCharacterDevice() ? 'chardev' : 'other', cmuxHooksOff: process.env.CMUX_ANTIGRAVITY_HOOKS_DISABLED ?? null }))
@@ -56,6 +58,10 @@ if (mode === 'retry') {
   out({ event: 'step_update', step_update: { step_index: 6, state: 'DONE', step_type: 'agent_response', text_delta: final + '\\n' } })
   out({ event: 'step_update', step_update: { step_index: 7, state: 'DONE', step_type: 'agent_response', text_delta: '' } })
   out({ event: 'result', result: { status: 'SUCCESS', response: first + '\\n' + final + '\\n' } })
+  process.exit(0)
+}
+if (mode === 'approval-denied') {
+  out({ event: 'result', result: { status: 'SUCCESS', response: '', denied_actions: [{ action: 'read_file', display_name: 'ReadFile' }] } })
   process.exit(0)
 }
 const response = mode === 'denied-empty' ? '' : mode === 'not-json' ? 'I looked and it is fine.' : mode === 'clean' ? '{"findings":[]}' : (${replyFor})(a[a.indexOf('--json-schema') + 1])
@@ -100,7 +106,7 @@ const calls = (name) => readdirSync(ARGV).filter((f) => f.startsWith(`${name}-`)
 const logLines = () => (existsSync(LOG) ? readFileSync(LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [])
 const findingsJson = (r) => JSON.parse(r.stdout.split('===FINDINGS_JSON===')[1])
 const gemini = (files) => { for (const [name, text] of Object.entries(files)) put(join(HOME, '.gemini/config', name), text) }
-const DENY = J({ permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)'] } })
+const DENY = J({ permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'] } })
 
 beforeEach(() => {
   for (const path of [HOME, REPO, ARGV, GITCONFIG]) rmSync(path, { recursive: true, force: true })
@@ -178,7 +184,8 @@ test('another family\'s review carries no modelVerified field', () => {
 test('a failed agy turn fails the review and logs none: a bad status, an empty answer after a denial, another model, an answer that is not JSON', () => {
   for (const [mode, pattern] of [
     ['status-error', /agy review failed \(exit 1, status ERROR\)/],
-    ['denied-empty', /agy review: empty answer after its deny list refused 1 tool call/],
+    ['denied-empty', /agy review: empty answer after 1 denied tool call/],
+    ['approval-denied', /agy review: empty answer after 1 denied tool call/],
     ['other-model', /asked for gemini-4-neon, but agy reports it was asked for gemini-other/],
     ['not-json', /agy review: the answer is not JSON/],
   ]) {
@@ -189,6 +196,55 @@ test('a failed agy turn fails the review and logs none: a bad status, an empty a
   }
   const denied = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'denied-empty' })
   assert.match(denied.stderr, /⚠ agy review: denied write_file: permission check failed/)
+  const unapproved = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'approval-denied' })
+  assert.match(unapproved.stderr, /⚠ agy review: denied read_file: needed an approval print mode cannot give/)
+})
+
+test('agy runs only on the version its containment was probed on', () => {
+  for (const [version, shown] of [['1.6.0', '"1.6.0"'], ['fail', 'null']]) {
+    const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY_VERSION: version })
+    assert.notEqual(r.status, 0, r.out)
+    assert.match(r.out, new RegExp(`agy review refused: agy reports version ${shown}, but its containment was probed on 1\\.5\\.13; re-run the probe`))
+    assert.equal(calls('agy').length, 0, 'agy never ran a review')
+    assert.equal(logLines().filter((e) => e.type === 'review').length, 0)
+  }
+})
+
+test('a workspace customization agy would run, from the cwd up to the filesystem root, refuses agy before it runs', () => {
+  const OUTER = dirname(REPO)
+  const planted = [[REPO, '.agents', 'hooks.json'], [REPO, '.agent', 'mcp_config.json'], [OUTER, '_agents', 'plugins.json'], [REPO, '_agent', 'agents.json'], [REPO, '.agents', 'plugins', 'p.json']]
+  for (const [at, dir, ...rest] of planted) {
+    const p = join(at, dir, ...rest)
+    put(p, '{}')
+    const r = run([], { REVIEW_REVIEWER: 'neon' })
+    rmSync(join(at, dir), { recursive: true, force: true })
+    assert.notEqual(r.status, 0, r.out)
+    assert.match(r.out, /agy review refused: .*agy runs a workspace's hooks, MCP servers, plugins and agents on every call/)
+    assert.ok(r.out.includes(join(realpathSync(at), dir, rest[0])), `${p} is named: ${r.out}`)
+    assert.equal(calls('agy').length, 0, 'agy never ran a review')
+  }
+  put(join(REPO, '.agents', 'rules', 'r.md'), 'text')
+  const ok = run([], { REVIEW_REVIEWER: 'neon' })
+  rmSync(join(REPO, '.agents'), { recursive: true, force: true })
+  assert.equal(ok.status, 0, `rules the model reads do not refuse: ${ok.out}`)
+})
+
+test('~/.gemini/config plugins refuse agy: a plugin in plugins/ or a plugins.json; an empty plugins folder does not', () => {
+  put(join(HOME, '.gemini/config/plugins/p/plugin.json'), '{}')
+  const dirPlugin = run([], { REVIEW_REVIEWER: 'neon' })
+  assert.notEqual(dirPlugin.status, 0, dirPlugin.out)
+  assert.match(dirPlugin.out, /agy review refused: .*config\/plugins holds plugins/)
+  rmSync(join(HOME, '.gemini'), { recursive: true, force: true })
+  gemini({ 'plugins.json': '{}' })
+  const json = run([], { REVIEW_REVIEWER: 'neon' })
+  assert.notEqual(json.status, 0, json.out)
+  assert.match(json.out, /agy review refused: .*plugins\.json declares plugins/)
+  assert.equal(calls('agy').length, 0)
+  rmSync(join(HOME, '.gemini'), { recursive: true, force: true })
+  mkdirSync(join(HOME, '.gemini/config/plugins'), { recursive: true })
+  gemini({ 'mcp_config.json': '' })
+  const empty = run([], { REVIEW_REVIEWER: 'neon' })
+  assert.equal(empty.status, 0, `an empty plugins folder and a zero-length mcp_config.json run: ${empty.out}`)
 })
 
 test('~/.gemini/config: an MCP server or a hook that is not cmux\'s refuses agy before it runs; cmux\'s own hooks and an empty server list do not', () => {
@@ -244,6 +300,12 @@ test('REVIEW_AUTHOR=agy is not a vendor alias: the author is unknown, with a not
   const notes = JSON.parse(r.stdout).notes.join('\n')
   assert.match(notes, /author "agy" names the Antigravity CLI, not the model that wrote the branch — treated as unknown; set REVIEW_AUTHOR to the family/)
   assert.match(notes, /author unknown — crossFamily not applied/)
+})
+
+test('--security-only names REVIEW_AUTHOR=agy as unknown too, and picks the security reviewer without it', () => {
+  const r = run(['--security-only'], { REVIEW_AUTHOR: 'agy' })
+  assert.equal(r.status, 0, r.out)
+  assert.match(r.stderr, /author "agy" names the Antigravity CLI, not the model that wrote the branch — treated as unknown; set REVIEW_AUTHOR to the family/)
 })
 
 test('REVIEW_AUTHOR=neon is a family: crossFamily skips the agy reviewer', () => {

@@ -1249,10 +1249,7 @@ function selectReviewer(stats, { dryRun = false } = {}) {
   notes.push(...CROSS_FAMILY_NOTES)
   const author = String(cfg('REVIEW_AUTHOR', 'author', '')).trim().toLowerCase()
   const authorVendor = author ? vendorOfName(author, members) : null
-  if (author && !authorVendor)
-    notes.push(author === 'agy'
-      ? '⚠ author "agy" names the Antigravity CLI, not the model that wrote the branch — treated as unknown; set REVIEW_AUTHOR to the family that wrote it'
-      : `⚠ author "${author}" is not a known family or vendor — treated as unknown`)
+  if (author && !authorVendor) notes.push(unknownAuthorNote(author))
 
   let candidates = members
   let crossWhy = ''
@@ -1790,6 +1787,13 @@ function sliceHint(stats) {
   return `  Slice it instead: review each path group with REVIEW_PATHS=<pathspec>,<pathspec>, close every slice at\n` +
     `  the same HEAD, and make the slices together cover the whole diff (the push gate checks that).\n` +
     (largest.length ? `  Largest top-level folders: ${largest.map(([top, n]) => `${top} (${n} changed lines)`).join(', ')}\n` : '')
+}
+
+// A REVIEW_AUTHOR that names no family or vendor; agy is a CLI any model can run in, so it names no maker either.
+function unknownAuthorNote(author) {
+  return author === 'agy'
+    ? '⚠ author "agy" names the Antigravity CLI, not the model that wrote the branch — treated as unknown; set REVIEW_AUTHOR to the family that wrote it'
+    : `⚠ author "${author}" is not a known family or vendor — treated as unknown`
 }
 
 function toolNotes(vendor) {
@@ -2427,7 +2431,14 @@ function runGrok(m, prompt, schema) {
 // seen not to undo it), and its subagents inherit it. Web search is not a permission and stays on, so agy never runs
 // the security pass. agy names only the model it was asked for, so its reviews are recorded as model unverified.
 // tools/ask-model.mjs's agy wiring, copied to keep the runtime standalone; builds/gemini-family/containment-probe.md.
-const AGY_SETTINGS = { permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)'] } }
+// unsandboxed(*) is not on the list: agy 1.5.13 ignores that rule kind (command(*) covers it).
+const AGY_SETTINGS = { permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'] } }
+// The agy the containment was probed on; a newer one may read a workspace file that runs something. Re-run the probe
+// (builds/gemini-family/probe in Agent Config Studio) before moving this.
+const AGY_VERSION = '1.5.13'
+// Workspace customizations agy runs from the folder it starts in and every folder above it. tests/vendor-prefixes.mjs
+// keeps this literal identical to ask-model's.
+const AGY_WORKSPACE = { dirs: ['.agents', '.agent', '_agents', '_agent'], names: ['hooks.json', 'mcp_config.json', 'plugins.json', 'agents.json', 'plugins'] }
 const AGY_PRINT_TIMEOUT = '3600s'
 const AGY_CMUX_HOOK = 'cmux-antigravity-hook-v2'
 const AGY_ENV = { CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1' }
@@ -2438,6 +2449,12 @@ const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArr
 // AGY_ENV). A file that can't be read or parsed refuses. ask-model's agyConfigProblem.
 function agyConfigProblem(home = homedir()) {
   const dir = join(home, '.gemini', 'config')
+  // A plugin brings its own hooks and MCP servers, and plugins.json can declare one anywhere on disk.
+  const plugins = join(dir, 'plugins')
+  try { if (readdirSync(plugins).length) return `${plugins} holds plugins, whose hooks and MCP servers agy runs` }
+  catch (e) { if (e.code !== 'ENOENT') return `${plugins} could not be read (${e.code || e.message})` }
+  try { lstatSync(join(dir, 'plugins.json')); return `${join(dir, 'plugins.json')} declares plugins, whose hooks and MCP servers agy runs` }
+  catch (e) { if (e.code !== 'ENOENT') return `${join(dir, 'plugins.json')} could not be read (${e.code || e.message})` }
   const load = (name) => {
     const file = join(dir, name)
     let text
@@ -2469,6 +2486,22 @@ function agyConfigProblem(home = homedir()) {
   }
   return foreign.length ? `${hooks.file} has hooks that are not cmux's (${foreign.join(', ')}); agy runs every hook's command on its calls` : null
 }
+// Every AGY_WORKSPACE name, of any type, from `cwd` up to the filesystem root (not git's top folder: agy's stop rule
+// is its own, and a linked worktree's .git is a file). One that can't be looked at counts; no folder is exempt.
+function agyWorkspaceFiles(cwd) {
+  let dir
+  try { dir = realpathSync(cwd) } catch { dir = resolve(cwd) }
+  const found = []
+  for (;;) {
+    for (const d of AGY_WORKSPACE.dirs) for (const n of AGY_WORKSPACE.names) {
+      const p = join(dir, d, n)
+      try { lstatSync(p); found.push(p) } catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') found.push(p) }
+    }
+    if (dirname(dir) === dir) break
+    dir = dirname(dir)
+  }
+  return found
+}
 // agy's result.response joins the text of every response turn: an answer its finish tool refused against the schema
 // and the retry after it both land there. The answer is the last response turn that has text; null when none has.
 function lastTurnText(steps) {
@@ -2490,13 +2523,16 @@ function parseAgy(id, r) {
   const steps = events.map((e) => e?.step_update).filter(isPlainObject)
   const denied = steps.filter((u) => u.state === 'ERROR' && /deny rule/i.test(String(u.tool_info?.error?.message ?? '')))
   for (const u of denied) console.warn(`⚠ agy review: denied ${u.tool_name}: ${String(u.tool_info.error.message).slice(0, 300)}`)
+  // Actions that needed an approval print mode cannot give (a read outside the workspace, say); the turn still succeeds.
+  const unapproved = Array.isArray(res?.denied_actions) ? res.denied_actions : []
+  for (const d of unapproved) console.warn(`⚠ agy review: denied ${d?.action ?? '(unnamed)'}: needed an approval print mode cannot give`)
   if (r.error || r.status !== 0 || !isPlainObject(res))
     throw new Error(`agy review failed (exit ${r.status}${res?.status ? `, status ${res.status}` : ''}): ${r.error?.message || tail(r.stderr || r.stdout)}`)
   if (res.status !== 'SUCCESS') throw new Error(`agy review failed: status ${JSON.stringify(res.status ?? null)}: ${tail(res.response)}`)
   if (typeof init?.model === 'string' && init.model !== id) throw new Error(`agy review: asked for ${id}, but agy reports it was asked for ${init.model}`)
   const text = lastTurnText(steps) ?? res.response
   if (typeof text !== 'string' || !text.trim())
-    throw new Error(`agy review: empty answer${denied.length ? ` after its deny list refused ${denied.length} tool call(s)` : ''}`)
+    throw new Error(`agy review: empty answer${denied.length + unapproved.length ? ` after ${denied.length + unapproved.length} denied tool call(s)` : ''}`)
   let result
   try { result = JSON.parse(text) } catch (e) {
     // The parser's reason goes last, where a caller that keeps only the tail of stderr (--eval) still has it.
@@ -2506,8 +2542,15 @@ function parseAgy(id, r) {
   return { result, modelUsed: typeof init?.model === 'string' ? init.model : id, modelVerified: false }
 }
 function runAgy(m, prompt, schema) {
+  const v = spawnSync('agy', ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000, env: { ...process.env, ...AGY_ENV } })
+  const version = String(v.stdout || '').trim()
+  if (v.error || v.status !== 0 || version !== AGY_VERSION)
+    throw new Error(`agy review refused: agy reports version ${JSON.stringify(version || null)}, but its containment was probed on ${AGY_VERSION}; re-run the probe (builds/gemini-family/probe in Agent Config Studio) and update AGY_VERSION`)
   const problem = agyConfigProblem()
   if (problem) throw new Error(`agy review refused: ${problem}`)
+  const workspace = agyWorkspaceFiles(process.cwd())
+  if (workspace.length)
+    throw new Error(`agy review refused: ${workspace.join(', ')}: agy runs a workspace's hooks, MCP servers, plugins and agents on every call and no flag turns them off; review with another family`)
   // Each call's own agy log, kept: a model fallback agy does not report would show there.
   const dir = join(homedir(), '.agent-config-studio', 'logs', 'agy')
   mkdirSync(dir, { recursive: true })
@@ -3687,6 +3730,7 @@ async function runSecurityOnly() {
   // No code reviewer runs here, so "another vendor" means another than the branch's author, when it is known.
   const author = String(cfg('REVIEW_AUTHOR', 'author', '')).trim().toLowerCase()
   const authorVendor = author ? vendorOfName(author, null) : null
+  if (author && !authorVendor) console.warn(unknownAuthorNote(author))
   const chosen = securityMembers({ vendor: authorVendor })
   if (chosen.error) stop(`security check: ${chosen.error}\n  Fix: choose the security role in ACS → Models → Roles, or pin one with REVIEW_SECURITY_REVIEWER=<family>.`)
   const job = { diff: diffBlock(sections), context: CONTEXT, verify: null, slice: SLICE, diffBase: DIFF_BASE, intent: INTENT || null,

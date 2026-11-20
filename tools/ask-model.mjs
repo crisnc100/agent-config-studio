@@ -26,8 +26,8 @@
  * the review gate's home config lists servers from grok's own config.toml that may start anyway; MCP tools stay denied.
  *
  * agy (a gemini- id) runs read-only by AGY_SETTINGS, a deny list passed with --settings for the call alone; web search
- * cannot be denied and stays on. It runs only when ~/.gemini/config holds no MCP server and no hook but cmux's
- * (agyConfigProblem), never with --investigate, --no-tools or --min-tools (exit 4, nothing run), and its answer is
+ * cannot be denied and stays on. It runs only on AGY_VERSION, when ~/.gemini/config holds no MCP server, no plugin and
+ * no hook but cmux's (agyConfigProblem), and when no workspace customization would run (agyWorkspaceFiles); never with --investigate, --no-tools or --min-tools (exit 4, nothing run), and its answer is
  * labelled unverified: agy names only the model it was asked for. Each call's agy log is kept under
  * ~/.agent-config-studio/logs/agy/; --json carries `served` and `logFile`.
  *
@@ -161,8 +161,15 @@ const GROK_HOME = path.resolve(process.env.GROK_HOME || path.join(os.homedir(), 
 // agy (Antigravity): read-only by a deny list passed per call with --settings, never saved. Its --mode plan does not
 // enforce read-only; the deny list does (a workspace settings file, a workspace allow rule and a PreToolUse hook's
 // allow were each seen not to undo it), its subagents inherit it, and web search is not a permission, so it stays on.
-// builds/gemini-family/containment-probe.md has the runs.
-const AGY_SETTINGS = { permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)'] } };
+// unsandboxed(*) is not on it: agy 1.5.13 ignores that rule kind (command(*) covers it). builds/gemini-family/containment-probe.md.
+const AGY_SETTINGS = { permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'] } };
+// The agy the containment was probed on. A newer one may read a workspace file that runs something; re-run the probe
+// (builds/gemini-family/probe) before moving this.
+const AGY_VERSION = '1.5.13';
+// Workspace customizations agy runs from the folder it starts in and every folder above it: hooks, MCP servers,
+// plugins and agents. Any of these names, in any of these folders, from the cwd up to the filesystem root, refuses.
+// The review runtime carries the same literal; tests/vendor-prefixes.mjs keeps them identical.
+const AGY_WORKSPACE = { dirs: ['.agents', '.agent', '_agents', '_agent'], names: ['hooks.json', 'mcp_config.json', 'plugins.json', 'agents.json', 'plugins'] };
 // A bound on the turn: agy exits 3 with DEADLINE_EXCEEDED past it, which ask-model reads as a failed call.
 const AGY_PRINT_TIMEOUT = '1800s';
 // cmux writes its own hooks into ~/.gemini/config/hooks.json, each command carrying this marker; with
@@ -726,6 +733,12 @@ function grokHookFolders(cwd) {
  */
 function agyConfigProblem(home = os.homedir()) {
   const dir = path.join(home, '.gemini', 'config');
+  // A plugin brings its own hooks and MCP servers, and plugins.json can declare one anywhere on disk.
+  const plugins = path.join(dir, 'plugins');
+  try { if (fs.readdirSync(plugins).length) return `${plugins} holds plugins, whose hooks and MCP servers agy runs`; }
+  catch (e) { if (e.code !== 'ENOENT') return `${plugins} could not be read (${e.code || e.message})`; }
+  try { fs.lstatSync(path.join(dir, 'plugins.json')); return `${path.join(dir, 'plugins.json')} declares plugins, whose hooks and MCP servers agy runs`; }
+  catch (e) { if (e.code !== 'ENOENT') return `${path.join(dir, 'plugins.json')} could not be read (${e.code || e.message})`; }
   const load = (name) => {
     const file = path.join(dir, name);
     let text;
@@ -758,6 +771,26 @@ function agyConfigProblem(home = os.homedir()) {
     }
   }
   return foreign.length ? `${hooks.file} has hooks that are not cmux's (${foreign.join(', ')}); agy runs every hook's command on its calls` : null;
+}
+
+/**
+ * The workspace customizations agy would run for a call in `cwd`: every AGY_WORKSPACE name, of any type, from `cwd`
+ * up to the filesystem root, not git's top folder (agy's own stop rule is its own, and a linked worktree's .git is a
+ * file). One that can't be looked at counts. No folder is exempt, home included.
+ */
+function agyWorkspaceFiles(cwd) {
+  let dir;
+  try { dir = fs.realpathSync(cwd); } catch { dir = path.resolve(cwd); }
+  const found = [];
+  for (;;) {
+    for (const d of AGY_WORKSPACE.dirs) for (const n of AGY_WORKSPACE.names) {
+      const p = path.join(dir, d, n);
+      try { fs.lstatSync(p); found.push(p); } catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') found.push(p); }
+    }
+    if (path.dirname(dir) === dir) break;
+    dir = path.dirname(dir);
+  }
+  return found;
 }
 
 /**
@@ -1208,6 +1241,11 @@ function readAgy(id, r) {
   const steps = events.map((e) => e?.step_update).filter(isObject);
   const denied = steps.filter((u) => u.state === 'ERROR' && /deny rule/i.test(String(u.tool_info?.error?.message ?? '')))
     .map((u) => `${u.tool_name}: ${String(u.tool_info.error.message).slice(0, 300)}`);
+  // Actions that needed an approval print mode cannot give (a read outside the workspace, say): agy lists them in
+  // denied_actions, and the turn still ends SUCCESS.
+  if (Array.isArray(result?.denied_actions)) {
+    for (const d of result.denied_actions) denied.push(`${d?.action ?? '(unnamed)'}: needed an approval print mode cannot give`);
+  }
   if (r.code !== 0 || !isObject(result)) return { exit: 4, error: `agy failed (exit ${r.code}${result?.status ? `, status ${result.status}` : ''}): ${tail(r.stderr || r.stdout)}` };
   if (result.status !== 'SUCCESS') return { exit: 4, error: `agy reported status ${JSON.stringify(result.status ?? null)}: ${tail(result.response ?? r.stderr)}` };
   if (typeof init?.model === 'string' && init.model !== id) return { exit: 2, error: `asked for ${id}, but agy reports it was asked for ${init.model} — not its answer` };
@@ -1218,7 +1256,7 @@ function readAgy(id, r) {
   for (const u of steps) if (u.step_type === 'agent_response' && typeof u.text_delta === 'string') turns.set(u.step_index, (turns.get(u.step_index) ?? '') + u.text_delta);
   const text = [...turns.entries()].sort((x, y) => y[0] - x[0]).map(([, t]) => t).find((t) => t.trim()) ?? result.response;
   if (typeof text !== 'string' || !text.trim()) {
-    return { exit: 4, error: `agy returned an empty answer${denied.length ? ` after its deny list refused ${denied.length} tool call(s): ${denied.join('; ')}` : ''}`, served, denied };
+    return { exit: 4, error: `agy returned an empty answer${denied.length ? ` after ${denied.length} denied tool call(s): ${denied.join('; ')}` : ''}`, served, denied };
   }
   return { answer: text, served, denied };
 }
@@ -1347,8 +1385,21 @@ async function main(argv) {
   }
   let logFile = null;
   if (vendor === 'agy') {
+    const v = spawnSync(bin, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000, env: { ...process.env, ...AGY_ENV } });
+    const version = String(v.stdout || '').trim();
+    if (v.error || v.status !== 0 || version !== AGY_VERSION) {
+      result.error = `agy reports version ${JSON.stringify(version || null)}, but its containment was probed on ${AGY_VERSION}: re-run the probe `
+        + '(builds/gemini-family/probe in Agent Config Studio) and update AGY_VERSION before using it, so agy was not run';
+      return finish(4);
+    }
     const problem = agyConfigProblem();
     if (problem) { result.error = `${problem}, so agy was not run`; return finish(4); }
+    const workspace = agyWorkspaceFiles(cwd);
+    if (workspace.length) {
+      result.error = `${workspace.join(', ')}: agy runs a workspace's hooks, MCP servers, plugins and agents on every call, and no flag `
+        + 'turns them off, so agy was not run. Ask another family, or run from a folder without them.';
+      return finish(4);
+    }
     // Kept after the call: agy's own log of it, where a model fallback agy does not report would show.
     const dir = path.join(os.homedir(), '.agent-config-studio', 'logs', 'agy');
     try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { result.error = `${dir} could not be created (${e.code || e.message}), so agy was not run`; return finish(4); }
