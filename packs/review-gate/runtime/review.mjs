@@ -1184,11 +1184,13 @@ function selectReviewer(stats, { dryRun = false } = {}) {
     let m
     let why
     if (pinnedModel) {
-      // A raw id passes through as given; a family name must resolve.
+      // A family name must resolve; a raw id passes through only with a known prefix (the stop below refuses the rest).
       const id = modelId(pinnedModel)
       const familyName = pinnedModel.toLowerCase()
       const asFamily = FAMILY_NAME.test(familyName)
       if (asFamily && !vendorOf(id)) unresolved(pinnedModel, source('REVIEW_MODEL', 'model'), loaded)
+      if (!vendorOf(id))
+        stop(`${source('REVIEW_MODEL', 'model')}=${pinnedModel} resolves to "${id}", whose prefix names no known CLI (claude-, gpt-, grok-).`)
       const family = asFamily ? familyName : pool?.find((p) => p.id === id)?.family || pinnedModel
       const known = pool?.find((p) => p.family === family)
       m = { family, vendor: 'codex', id, effort: known?.effort || (asFamily ? flavorEffort(family) : 'high') }
@@ -2478,7 +2480,8 @@ async function runClaude(m, prompt, schema, role) {
 async function runModel(m, prompt, schema, role) {
   if (m.vendor === 'claude') return runClaude(m, prompt, schema, role)
   if (m.vendor === 'grok') return runGrok(m, prompt, schema)
-  return runCodex(m, prompt, schema)
+  if (m.vendor === 'codex') return runCodex(m, prompt, schema)
+  throw new Error(`no CLI runs vendor "${m.vendor}" (${m.family ?? m.id}); known: ${VENDORS.join(', ')}`)
 }
 
 // Claude MULTI-AGENT single pass: parallel reviewers, each a distinct lens (LENSES, teamLenses()),

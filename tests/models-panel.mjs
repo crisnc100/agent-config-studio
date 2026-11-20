@@ -10,12 +10,13 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import {
   MARKERS, claudeModel, codexModel, defaultCatalogs, grokModel, seedHome,
   writeClaudeCatalog, writeCodexCatalog, writeGrokCatalog,
 } from './fixtures/models-home.mjs';
-import { compareVersions, detect, parseVersion, readCatalogs } from '../lib/models-catalog.js';
+import { compareVersions, detect, parseVersion, readCatalogs, vendorLabel } from '../lib/models-catalog.js';
 import { withModel, withoutModel } from '../lib/models-panel.js';
 import { track } from './fixtures/cleanup.mjs';
 
@@ -240,6 +241,20 @@ async function main() {
     fs.writeFileSync(path.join(h4, '.grok', 'models_cache.json'), `{"x": "${MARKERS.identity}"`);
     const broken = readCatalogs({ home: h4 }).grok;
     ok('a broken catalog is a note, and the note quotes none of its contents', !broken.ok && /could not be read/.test(broken.note) && !broken.note.includes('MARKER'), broken.note);
+  }
+
+  {
+    let thrown = null;
+    try { vendorLabel('acme'); } catch (e) { thrown = e; }
+    ok('a vendor with no label is refused by name, never printed as "undefined"', /no label for vendor "acme"/.test(thrown?.message ?? ''), String(thrown));
+    ok('each known vendor keeps its label', ['claude', 'codex', 'grok'].map(vendorLabel).join() === 'Claude,Codex,Grok');
+    const src = read(path.join(ROOT, 'public', 'app.js'));
+    const line = src.match(/^const vendorDot = .*$/m)?.[0];
+    const vendorDot = line && vm.runInNewContext(`${line}\nvendorDot`);
+    ok('app.js: a vendor it has no colour for is drawn as unknown, not as grok',
+       vendorDot && vendorDot('acme') === 'unknown' && vendorDot(null) === 'unknown', line);
+    ok('app.js: each known vendor keeps its own dot', vendorDot && ['claude', 'codex', 'grok'].map(vendorDot).join() === 'claude,codex,grok');
+    ok('styles.css: the unknown dot has a style', /\.item-dot\.unknown\s*\{/.test(read(path.join(ROOT, 'public', 'styles.css'))));
   }
 
   // ── positional edits of the user file ─────────────────────────────────

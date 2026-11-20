@@ -1,0 +1,45 @@
+## 1. SCOPE VERDICT
+
+**Over-built** in one place: the vendor/harness split changes no behaviour in PR A and should be cut. The rest of the plan is right-sized, but A0's list of silent fallbacks is incomplete.
+
+## 2. ADVISORY
+
+**Cut the vendor/harness split and the per-family harness override (Decision 1: not now).**
+- With `gemini-` → `agy`, every model's maker and CLI still match one-to-one, as do the three existing subscription seats. The split would buy nothing in PR A.
+- "Vendor" is not two meanings but three: maker, CLI, and subscription seat (`lib/roles.js:337` `PAUSE_VENDORS`, `lib/usage/seats.js:68`). It appears 316 times in 44 files.
+- It is persisted and user-facing: grade records reject unknown values (`review.mjs:2817`), and `REVIEW_REVIEWER=codex` and `REVIEW_AUTHOR=<family|vendor>` take it as input.
+- The codebase already equates the two words: `lib/packs.js:137` says "vendor must be a harness id". Redefining vendor as anthropic/openai/xai/google is a data migration, not a refactor.
+- A `harness` key in `FAMILY_KEYS` with no consumer is a trap: `checkShape` would accept `opus → agy` and nothing would honour it.
+- If a model ever runs on a CLI its prefix does not imply, add a `makerOf(id)` and use it only at the cross-vendor comparisons (`review.mjs:1251, 1289, 1301, 1332, 2655, 3337`; `public/workflow.js:69`). Put that sentence in the PR description, not in code.
+- The first real trigger is agy's GPT-OSS: an id starting `gpt-` would route to codex today.
+
+**Use `agy` as the fourth value of the existing token.** `onPath(m.vendor)` uses the token as the binary name (`review.mjs:533, 4727`), and it leaves the `'gemini'` test at `review.test.mjs:248` untouched. Leave the error text at `review.mjs:1217` alone, because `review.test.mjs:250` asserts it.
+
+**Do not accept `agy` as a `REVIEW_AUTHOR` vendor alias.** This is the one place the conflation bites without any override: a branch built in Antigravity on Opus with author `agy` would count as Google-authored and could get a Claude reviewer. In `vendorOfName` (`review.mjs:1106-1107`), make `agy` resolve to unknown with a note to name the family.
+
+**Keep A0 separate, and widen it (Decision 3).** It changes no reachable behaviour today, so it reviews fast and turns any branch PR A misses into a loud failure. The brief's list misses these:
+- **`lib/agent.js:488-519`**: `openWorker` uses the shared `vendorOf`. Once that returns `agy`, the worker falls through to grok's argv (`-m … --always-approve`), `homeVariable` returns undefined (`:110`), and 12 more else-grok ternaries follow. Gate `openWorker` to claude/codex/grok.
+- **`tools/ask-model.mjs:464`**: `sandboxProblem` returns null for anything that is not grok, so agy `--investigate` would report a sandbox it does not have. Refuse `--investigate` and `--no-tools` for agy explicitly; `TOOLS`, `SHELL_SANDBOX` and `MIN_TOOLS` (`:95, 110, 137`) have no agy entry.
+- **`lib/models-panel.js:20`, `lib/models-catalog.js:21`**: `LABEL[vendor]` would print "moves neon … to undefined".
+- **`review.mjs:1784-1799`**: `toolNotes` and `effortFor` fall through harmlessly; give agy a tool note.
+
+**Single source of truth (Decision 2): no shared-table loader.** `review.mjs` and the `model-id` copy are installed separately, so any runtime lookup needs a local fallback, which is the copy again. Instead, put one identical literal (`{'claude-':'claude','gpt-':'codex','grok-':'grok','gemini-':'agy'}`) in each runtime copy, and add one parity test against `lib/models.js`. Have `review.skills.test.mjs:104` import it.
+
+**Missing: served-model honesty.** Grok is held to "a wrong or silently substituted model must not pass" (`review.mjs:2064-2067`), and agy cannot meet that. Do not fabricate `modelUsed` from the echo. Record it as unverified, and capture `--log-file` per call so a quota fallback is at least greppable. Without this the benchmark's Neon column is unprovable.
+
+**Missing: an agy containment probe before it reviews anything.** agy 1.5.13 has no `--setting-sources` or strict-MCP flag (I read its `--help`). Claude gets `--setting-sources user` precisely because a branch can ship settings and hooks (`review.mjs:2457-2461`). Prove in a throwaway repo that workspace settings, hooks and plugins cannot undo the `--settings` deny list. I did not run this, as it would spend Cris's quota.
+
+**Smaller items for PR A.**
+- `neon` needs a flavor entry in `lib/roles.default.json`.
+- `sol-prev` is needed, since `--eval --family` takes family names only (`review.mjs:4715`), and it needs `"track": false`.
+- The shipped `sol` is `gpt-6-sol` (`models.default.json:9`), while this machine resolves it to `gpt-6.2-sol`. Shipping `sol-prev = gpt-6.1-sol` makes "prev" newer than current on a fresh install, so bump the default in the same PR.
+- Keep neon out of the shipped default roles.
+- Note in `packs/KNOWN-LIMITS.md` that agy is the only reviewer with web access; grok, claude and codex all run with it off.
+
+**B1 and B2 after the benchmark** is the right order.
+
+## 3. QUESTIONS
+
+1. **Does "web search accepted" cover the `security` role, or only reviewer, ask-model and eval?** The rubric's own threat model says repository content can steer a model, and agy would be the only reviewer with an outbound channel. Recommended: reviewer and eval yes, security role no.
+2. **May a Neon review count toward closing the gate when the served model cannot be verified?** Recommended: yes, with "model unverified" printed on the reviewer line and stored in the record; treat benchmark results as "requested Neon".
+3. **How many repeats for the benchmark?** One pass over 30 cases cannot separate models that differ by two or three cases; more passes cost subscription quota across five models. Recommended: `--repeat 3`, dropping to 2 if quota bites.

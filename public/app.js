@@ -4706,7 +4706,7 @@ function idsSection(m) {
   return sec;
 }
 
-const vendorDot = (v) => (v === 'claude' ? 'claude' : v === 'codex' ? 'codex' : 'grok');
+const vendorDot = (v) => (['claude', 'codex', 'grok'].includes(v) ? v : 'unknown');
 
 /** The one place the CLI is named: what skills and scripts call to read all of this. */
 function scriptsNote() {

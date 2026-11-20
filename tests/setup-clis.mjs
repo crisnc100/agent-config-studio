@@ -225,6 +225,12 @@ await srv.stop();
   ok('S10 a login shell that fails falls back to the installer directories',
      dirs.includes(path.join(h, '.local', 'bin')) && dirs.includes('/opt/homebrew/bin'), JSON.stringify(dirs));
 }
+{
+  const { signInFor } = await import('../lib/setup-clis.js');
+  let thrown = null;
+  try { signInFor('acme', { home: sandbox, env: {} }); } catch (e) { thrown = e; }
+  ok('a CLI with no sign-in check is refused by name, never checked as grok', /no sign-in check for acme/.test(thrown?.message ?? ''), String(thrown));
+}
 assertRealHomesUnchanged(realBefore, ok);
 fs.rmSync(sandbox, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);

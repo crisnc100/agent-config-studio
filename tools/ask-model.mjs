@@ -459,9 +459,10 @@ function grokLeader(grokHome) {
  * Linux; grok's on Linux only, and there it needs Landlock, which the kernel lists among its active security modules.
  */
 function sandboxProblem(vendor) {
+  if (!VENDORS.includes(vendor)) return `ask-model knows no shell sandbox for ${vendor}`;
   if (vendor === 'codex') return null;
   if (process.platform !== 'darwin' && process.platform !== 'linux') return `${vendor}'s shell sandbox does not run on ${process.platform}`;
-  if (vendor !== 'grok') return null;
+  if (vendor === 'claude') return null;
   if (process.platform === 'darwin') return "grok's sandbox can't block a command's network on macOS";
   let lsm;
   try { lsm = fs.readFileSync('/sys/kernel/security/lsm', 'utf8'); } catch (e) {
@@ -477,6 +478,8 @@ function vendorOf(id) {
   if (id.startsWith('grok-')) return 'grok';
   return null;
 }
+const VENDORS = ['claude', 'codex', 'grok'];
+const unwired = (vendor) => `ask-model has no ${vendor} CLI wiring (it runs ${VENDORS.join(', ')})`;
 
 /** The argv for one call. `mcpOff` is codex's overrides that switch its MCP servers off (codexMcpOff). */
 function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = null }) {
@@ -498,6 +501,7 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = 
     return ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', id,
       ...(effort ? ['-c', `model_reasoning_effort=${effort}`] : []), ...min, ...mcpOff, ...(schema ? ['--output-schema', schema.file] : []), prompt];
   }
+  if (vendor !== 'grok') throw new Error(unwired(vendor));
   // --disallowed-tools and --deny MCPTool keep configured MCP servers out of reach (grok has no strict-MCP flag).
   // Headless grok refuses any call that needs approval and still exits 0, so --investigate allows the shell
   // (an allow rule approves the call; deny rules still win).
@@ -1129,6 +1133,7 @@ function grokBuildProof(id, sessionId, cwd, grokHome) {
  * structured_output (else its result), grok's structuredOutput (else its text), codex's stdout, as JSON text.
  */
 function readAnswer(vendor, id, r, schema = null, { cwd, grokHome } = {}) {
+  if (!VENDORS.includes(vendor)) return { exit: 4, error: unwired(vendor) };
   if (r.error) return { exit: r.error.code === 'ENOENT' ? 3 : 4, error: `${vendor} could not start: ${r.error.message}` };
   if (r.signal) return { exit: 4, error: `${vendor} was stopped by ${r.signal}` };
   let answer;
@@ -1277,7 +1282,9 @@ async function main(argv) {
   if (o.investigate && !before) process.stderr.write(`ask-model: ${cwd} is not in a git work tree — changes are not checked\n`);
   // A role name is a watch kind as it stands; a family names no job, so its line says ask.
   startWatch(o.role !== undefined && /^[a-z][a-z0-9-]{0,31}$/.test(o.role) ? o.role : 'ask');
-  const r = await run(bin, argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff, schema }), cwd, env);
+  let args;
+  try { args = argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff, schema }); } catch (e) { result.error = `${e.message} — ${vendor} was not run`; return finish(4); }
+  const r = await run(bin, args, cwd, env);
   // A call grok refused for want of approval leaves only this line, and grok still exits 0.
   if (vendor === 'grok') {
     for (const line of String(r.stderr || '').split('\n')) if (/permission required:/.test(line)) process.stderr.write(`ask-model: grok: ${line.trim()}\n`);
@@ -1300,6 +1307,8 @@ async function main(argv) {
   }
   return finish(got.exit ?? 0);
 }
+
+export { argvFor, readAnswer, sandboxProblem };
 
 /**
  * For `model-id --install`, after it has copied the resolver: this file beside

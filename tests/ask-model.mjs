@@ -1517,6 +1517,22 @@ console.log('\nask-model: the snapshot keeps git\'s ignore precedence (info/excl
      r.code === 5 && (j.changed ?? []).includes('keep.tmp'), show(r));
 }
 
+console.log('\nask-model: a vendor it has no CLI wiring for is refused, never run as another');
+{
+  const h = mk('home-unknown-vendor', '.agent-config-studio');
+  fs.writeFileSync(path.join(h, 'models.json'), J({ version: 1, models: { sol: 'acme-1' } }));
+  const r = ask(['--family', 'sol', '--json'], { home: path.dirname(h) });
+  ok('a family whose id has an unknown prefix: exit 64 naming the id, and no CLI runs',
+     r.code === 64 && /sol resolves to "acme-1", whose prefix names no known CLI/.test(r.err) && r.calls.length === 0, show(r));
+  const { argvFor, sandboxProblem, readAnswer } = await import(ASK);
+  let thrown = null;
+  try { argvFor('acme', { id: 'acme-1', prompt: 'p', cwd: tmp, mode: 'read-only' }); } catch (e) { thrown = e; }
+  ok('argvFor refuses a vendor it has no argv for, naming it', /no acme CLI wiring/.test(thrown?.message ?? ''), String(thrown));
+  ok('sandboxProblem names a vendor whose shell sandbox it does not know', /acme/.test(sandboxProblem('acme') ?? ''), J(sandboxProblem('acme')));
+  const got = readAnswer('acme', 'acme-1', { code: 0, stdout: J({ text: 'hi', modelUsage: { 'acme-1': {} } }), stderr: '' });
+  ok('readAnswer refuses an answer from a vendor it cannot read, exit 4 naming it', got.exit === 4 && /no acme CLI wiring/.test(got.error ?? ''), J(got));
+}
+
 console.log('\nask-model: live');
 if (process.env.ACS_LIVE_CHECKS === '1') {
   const live = path.join(tmp, 'live-prompt.txt');
