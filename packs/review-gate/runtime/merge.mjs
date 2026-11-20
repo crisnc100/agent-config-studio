@@ -7,7 +7,7 @@
 // Never --auto, --admin, --squash or --rebase. Every run logs an intent record, then an outcome record, to
 // merge-log.jsonl beside the review log.
 import { spawnSync } from 'node:child_process'
-import { accessSync, appendFileSync, constants, existsSync, statSync } from 'node:fs'
+import { accessSync, appendFileSync, constants, existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -81,11 +81,18 @@ function finish(action, detail, code = EXIT[action]) {
 }
 const refuse = (reason) => finish('refused', reason)
 
-// 1. The review script: the repo's scripts/review.mjs, else the shared runtime beside this file.
+// 1. The review script: the repo's scripts/review.mjs when it supports --open-findings (the manifest coverage rule), else
+// the shared runtime beside this file: the same choice the skills make, so an older repo copy never reports the tier.
 const top = git('rev-parse', '--show-toplevel')
 if (top.code !== 0) refuse(`not in a git work tree: ${firstLine(top)}`)
 const repoScript = join(top.stdout.trim(), 'scripts', 'review.mjs')
-const script = existsSync(repoScript) ? repoScript : join(dirname(fileURLToPath(import.meta.url)), 'review.mjs')
+const current = (path) => {
+  try { if (!readFileSync(path, 'utf8').includes('--supports')) return false } catch { return false }
+  return run(process.execPath, [path, '--supports', '--open-findings'], top.stdout.trim()).code === 0
+}
+const useRepo = existsSync(repoScript) && current(repoScript)
+if (existsSync(repoScript) && !useRepo) process.stderr.write('scripts/review.mjs does not support --open-findings; using the shared runtime\n')
+const script = useRepo ? repoScript : join(dirname(fileURLToPath(import.meta.url)), 'review.mjs')
 // From the toplevel, so the repo's .claude/review-config.json counts wherever merge.mjs was started.
 const tierRun = run(process.execPath, [script, '--tier-json'], top.stdout.trim())
 if (tierRun.stderr) process.stderr.write(tierRun.stderr)
