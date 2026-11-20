@@ -67,10 +67,11 @@ const fs = require('fs');
 const mode = process.env.FAKE_AGY_MODE || 'ok';
 const cwd = process.cwd();
 fs.appendFileSync(${JSON.stringify(LOG)}, JSON.stringify({ argv: process.argv.slice(2), cwd, entries: fs.readdirSync(cwd), hooksOff: process.env.CMUX_ANTIGRAVITY_HOOKS_DISABLED }) + '\\n');
-if (process.argv[2] === '--version') { process.stdout.write(mode === 'old' ? '1.1.10\\n' : mode === 'noversion' ? 'agy\\n' : '1.5.13\\n'); process.exit(0); }
-if (mode === 'apikey') process.exit(2);
-if (mode === 'signedout') process.exit(1);
-if (mode === 'hang') setTimeout(() => {}, 60000);
+if (process.argv[2] === '--version' && mode === 'slowversion') { setTimeout(() => { process.stdout.write('1.5.13\\n'); process.exit(0); }, 700); }
+else if (process.argv[2] === '--version') { process.stdout.write(mode === 'old' ? '1.1.10\\n' : mode === 'noversion' ? 'agy\\n' : '1.5.13\\n'); process.exit(0); }
+else if (mode === 'apikey') process.exit(2);
+else if (mode === 'signedout') process.exit(1);
+else if (mode === 'hang' || mode === 'slowversion') setTimeout(() => {}, 60000);
 else if (mode === 'notjson') process.stdout.write('hello');
 else if (mode === 'turn') process.stdout.write(${JSON.stringify(JSON.stringify({ ...REAL, num_turns: 1 }))});
 else process.stdout.write(fs.readFileSync(${JSON.stringify(path.join(here, 'fixtures', 'agy-usage', 'usage-1.5.13.json'))}, 'utf8'));
@@ -128,6 +129,12 @@ const run = async (mode, extra = {}) => {
   const r = await run('hang', { timeoutMs: 800 });
   ok('a hang is cut at the deadline', r.ok === false && /did not answer/.test(r.reason) && Date.now() - t0 < 5000, r.reason);
   ok('...and its folder is removed', calls().every((x) => !fs.existsSync(x.cwd)));
+}
+{
+  const t0 = Date.now();
+  const r = await run('slowversion', { timeoutMs: 1200 });
+  const took = Date.now() - t0;
+  ok('one deadline covers both calls: a slow --version leaves /usage only what is left', r.ok === false && /did not answer/.test(r.reason) && took < 2000, `${took}ms ${r.reason}`);
 }
 {
   const r = await readGeminiSeat({ found: { installed: false } });

@@ -48,3 +48,10 @@
 - Checks: pause-ui 36/36, setup-ui 94/94, home 125/125 (one earlier run failed "8 Refresh re-asks the sources and
   keeps a sticky warning", a timing test; three reruns passed, and the change does not touch it), pause-routes
   23/23, roles-pause 50/50, pause-cli 26/26, readme 56/56, guards 11/11.
+
+## Sibling check fixes (builder, 2026-11-20)
+- gemini.js: one 20 s deadline for both agy calls (was 30 s per call, 60 s worst case). The usage CLI is killed at 30 s
+  by lib/usage/refresh.js, so a slow agy would have cost every seat's reading. Test: a slow --version leaves /usage
+  only the time that is left.
+- tests/setup-guards.mjs: three pins proving guards.mjs rejects gemini.js spawning a prompt, an extra flag, or a PATH name.
+- Checks: usage-gemini 44/44, setup-guards 87/87.
