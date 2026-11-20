@@ -1,11 +1,9 @@
 {
  "f1": {
-  "status": "deferred",
-  "reason": "fix is in (probe scripts refuse paths they did not create; see e87ad12); the one fix check's prompt hit the size cap and did not read the probe scripts, so a tip slice reviews them"
+  "status": "fixed"
  },
  "f2": {
-  "status": "deferred",
-  "reason": "fix is in (probe scripts refuse paths they did not create; see e87ad12); the one fix check's prompt hit the size cap and did not read the probe scripts, so a tip slice reviews them"
+  "status": "fixed"
  },
  "f3": {
   "status": "fixed"
