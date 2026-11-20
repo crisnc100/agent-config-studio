@@ -9,6 +9,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tempDir } from './fixtures/cleanup.mjs';
 
+// Every family the shipped registry names, read from the data, not from the code that lists them.
+const FAMILIES = Object.keys(JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'models.default.json'), 'utf8')).models);
+
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ACS = path.join(ROOT, 'bin', 'acs');
 const J = JSON.stringify;
@@ -62,7 +65,7 @@ console.log('\npause cli: R9 — pause, list, resume');
   const again = acs(h, 'resume', 'claude');
   ok('resuming what is not paused: exit 1, says so', again.code === 1 && /claude is not paused/.test(again.err), J(again));
   const unknown = acs(h, 'pause', 'opuss', '--until-resume');
-  ok('an unknown name: exit 2, lists what can be paused', unknown.code === 2 && /"opuss" is not an account \(claude, codex, grok, gemini\) or a model family/.test(unknown.err), J(unknown));
+  ok('an unknown name: exit 2, lists what can be paused', unknown.code === 2 && unknown.err.includes(`"opuss" is not an account (claude, codex, grok, gemini) or a model family (${FAMILIES.join(', ')})`), J(unknown));
   const past = acs(h, 'pause', 'codex', '--until', new Date(Date.now() - HOUR).toISOString());
   ok('a time already passed: exit 2, nothing written', past.code === 2 && /has already passed/.test(past.err) && !readPausedFile(h).paused.some((e) => e.name === 'codex'), J(past));
   const junk = acs(h, 'pause', 'codex', '--until', 'soonish');

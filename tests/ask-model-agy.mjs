@@ -163,8 +163,8 @@ for (const [flag, re] of [['--investigate', /--investigate is not available for 
 
 console.log('\nask-model agy: ~/.gemini/config');
 {
-  const CMUX = (cmd) => J({ cmux: { SessionStart: [{ type: 'command', command: `: cmux-antigravity-hook-v2; ${cmd}`, timeout: 10 }],
-    PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: ': cmux-antigravity-hook-v2; true' }] }] } });
+  const CMUX = () => J({ cmux: { SessionStart: [{ type: 'command', command: cmuxCommand('session-start'), timeout: 10 }],
+    PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: cmuxCommand('stop') }] }] } });
   const cases = [
     ['an empty mcp_config.json (0 bytes) runs', { 'mcp_config.json': '' }, 0],
     ['an empty server list runs', { 'mcp_config.json': J({ mcpServers: {} }) }, 0],
@@ -172,7 +172,7 @@ console.log('\nask-model agy: ~/.gemini/config');
     ['an MCP server → exit 4 naming it', { 'mcp_config.json': J({ mcpServers: { probe: { command: 'sh' } } }) }, 4, /configures MCP servers \(probe\)/],
     ['an mcp_config.json that is not JSON → exit 4', { 'mcp_config.json': '{nope' }, 4, /mcp_config\.json is not JSON/],
     ['another top-level key beside an empty list → exit 4', { 'mcp_config.json': J({ mcpServers: {}, servers: { x: {} } }) }, 4, /more than an empty server list/],
-    ['only cmux\'s hooks (flat and grouped) run', { 'hooks.json': CMUX('true') }, 0],
+    ['only cmux\'s hooks (flat and grouped) run', { 'hooks.json': CMUX() }, 0],
     ['a hook without the cmux marker → exit 4 naming it', { 'hooks.json': J({ mine: { SessionStart: [{ type: 'command', command: 'touch x' }] } }) }, 4, /not cmux's \(mine\.SessionStart\)/],
     ['a foreign handler inside a grouped tool hook → exit 4', { 'hooks.json': J({ cmux: { PreToolUse: [{ matcher: '*', hooks: [{ command: 'evil' }] }] } }) }, 4, /cmux\.PreToolUse/],
     ['a hooks.json that is not JSON → exit 4', { 'hooks.json': '[' }, 4, /hooks\.json is not JSON/],

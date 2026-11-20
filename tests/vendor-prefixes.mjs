@@ -51,7 +51,7 @@ for (const name of ['AGY_SETTINGS', 'AGY_VERSION', 'AGY_WORKSPACE', 'AGY_CMUX_HO
 }
 const ws = Function(`return (${line(ask, 'AGY_WORKSPACE')})`)();
 ok('AGY_WORKSPACE names the approved folders and files', JSON.stringify(ws) === JSON.stringify({
-  dirs: ['.agents', '.agent', '_agents', '_agent'], names: ['hooks.json', 'mcp_config.json', 'plugins.json', 'agents.json', 'plugins'] }), JSON.stringify(ws));
+  dirs: ['.agents', '.agent', '_agents', '_agent'], names: ['hooks.json', 'mcp_config.json', 'plugins.json', 'agents.json', 'plugins', 'agents'] }), JSON.stringify(ws));
 const cmux = Function(`return (${line(ask, 'AGY_CMUX_HOOK')})`)();
 ok('AGY_CMUX_HOOK is cmux\'s hook command as cmux writes it (tests/fixtures/cmux-antigravity-hook.txt)', cmux === read('tests/fixtures/cmux-antigravity-hook.txt').trim());
 // The part that makes the hook harmless: under CMUX_ANTIGRAVITY_HOOKS_DISABLED=1 it drains stdin, prints {} and skips the rest.

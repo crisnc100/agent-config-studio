@@ -268,8 +268,8 @@ test('~/.gemini/config: an MCP server or a hook that is not cmux\'s refuses agy 
     assert.equal(calls('agy').length, 0, 'agy never ran')
   }
   rmSync(join(HOME, '.gemini'), { recursive: true, force: true })
-  gemini({ 'mcp_config.json': J({ mcpServers: {} }), 'hooks.json': J({ cmux: { Stop: [{ type: 'command', command: ': cmux-antigravity-hook-v2; true' }],
-    PreToolUse: [{ matcher: '*', hooks: [{ command: ': cmux-antigravity-hook-v2; true' }] }] } }) })
+  gemini({ 'mcp_config.json': J({ mcpServers: {} }), 'hooks.json': J({ cmux: { Stop: [{ type: 'command', command: cmuxCommand('stop') }],
+    PreToolUse: [{ matcher: '*', hooks: [{ command: cmuxCommand('stop') }] }] } }) })
   const ok = run([], { REVIEW_REVIEWER: 'neon' })
   assert.equal(ok.status, 0, ok.out)
   assert.equal(calls('agy').length >= 1, true)

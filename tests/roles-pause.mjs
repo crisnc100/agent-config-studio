@@ -243,7 +243,7 @@ console.log('\npause: the Gemini subscription — agy is the CLI, gemini the acc
   const a = readPaused({ home: home({ version: 1, paused: [{ name: 'agy' }] }, roles) });
   ok('agy is a CLI, not an account: a pause naming it is refused', a.entries.length === 0 && /"agy" is not a vendor \(claude, codex, grok, gemini\) or a model family/.test(a.error ?? ''), J(a));
   const m = spawnSync(process.execPath, [MODEL_ID, '--role', 'reviewer'], { encoding: 'utf8', env: { HOME: home({ version: 1, paused: [{ name: 'gemini' }] }, roles), PATH: '/usr/bin:/bin' } });
-  ok('model-id --role answers past a paused gemini', m.status === 0 && m.stdout.includes(`id=${IDS.sol}`) && /gemini paused: reviewer → sol \(skipped neon\)/.test(m.stderr), J({ code: m.status, out: m.stdout, err: m.stderr }));
+  ok('model-id --role answers past a paused gemini', m.status === 0 && m.stdout === `family=sol id=${IDS.sol} effort= alt=\n` && m.stderr === 'model-id: gemini paused: reviewer → sol (skipped neon)\n', J({ code: m.status, out: m.stdout, err: m.stderr }));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
