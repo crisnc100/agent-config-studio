@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
@@ -571,13 +571,15 @@ test('B14 a merge whose result cannot be read again is refused after disabling a
 })
 
 const ACS_LOG_DIR = join(HOME, '.agent-config-studio', 'review-log')
+// The installed runtime is the only thing under ~/.agent-config-studio in these two: merge.mjs adds nothing beside it.
+const onlyRuntime = () => assert.deepEqual(readdirSync(join(HOME, '.agent-config-studio'), { recursive: true }).sort(), ['review-gate', 'review-gate/review.mjs'])
 test('B15 an early refusal on a legacy-only install writes beside the legacy log and creates no ACS folder', () => {
   mkdirSync(join(HOME, '.claude'), { recursive: true })
   writeFileSync(join(HOME, '.claude/review-log.jsonl'), '')
   gh()
   const r = merge([], { FAKE_TIER_RAW: 'not json', FAKE_TIER_CODE: '1' })
   assert.equal(r.status, 2, r.out)
-  assert.equal(existsSync(join(HOME, '.agent-config-studio')), false, 'no ACS folder')
+  onlyRuntime()
   assert.deepEqual(jsonl(join(HOME, '.claude/merge-log.jsonl')).map((e) => e.phase), ['intent', 'outcome'])
 })
 
@@ -585,7 +587,7 @@ test('B15 with no review log anywhere an early refusal prints its records to std
   gh()
   const r = merge([], { FAKE_TIER_RAW: 'not json', FAKE_TIER_CODE: '1' })
   assert.equal(r.status, 2, r.out)
-  assert.equal(existsSync(join(HOME, '.agent-config-studio')), false)
+  onlyRuntime()
   assert.equal(existsSync(join(HOME, '.claude')), false)
   assert.match(r.stderr, /"phase":"outcome"/)
 })
