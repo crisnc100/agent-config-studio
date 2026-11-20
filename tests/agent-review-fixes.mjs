@@ -49,6 +49,15 @@ const result = (id = 'a') => ({ type: 'user', timestamp: stamp(), message: { con
 const permission = (w, id = 'a') => fs.appendFileSync(events, JSON.stringify({ name: 'agent.hook.PermissionRequest', surface_id: w.surface_id, occurred_at: stamp(), payload: { tool_use_id: id } })+'\n');
 const inputCalls = w => state().calls.filter(a => (a.includes('send') || a.includes('send-key')) && a.includes(w.surface_ref));
 const cases = {
+  async unknownVendor() {
+    const registry = path.join(home, '.agent-config-studio/models.json');
+    fs.writeFileSync(registry, JSON.stringify({ version: 1, models: { sol: 'acme-1' } }));
+    const before = fs.readdirSync(records).length, calls = state().calls.length;
+    try { await assert.rejects(openWorker('sol', { cwd: home, prompt: 'task' }, ctx), /no harness for acme-1/); }
+    finally { fs.rmSync(registry); }
+    assert.equal(fs.readdirSync(records).length, before, 'no worker record is written');
+    assert.equal(state().calls.length, calls, 'nothing is launched');
+  },
   async b6f1() {
     for (const vendor of ['codex','claude','grok']) {
       clock = Date.now(); const w = worker(vendor);

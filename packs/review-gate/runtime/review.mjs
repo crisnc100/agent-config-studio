@@ -2478,7 +2478,8 @@ async function runClaude(m, prompt, schema, role) {
 async function runModel(m, prompt, schema, role) {
   if (m.vendor === 'claude') return runClaude(m, prompt, schema, role)
   if (m.vendor === 'grok') return runGrok(m, prompt, schema)
-  return runCodex(m, prompt, schema)
+  if (m.vendor === 'codex') return runCodex(m, prompt, schema)
+  throw new Error(`no CLI runs vendor "${m.vendor}" (${m.family ?? m.id}); known: ${VENDORS.join(', ')}`)
 }
 
 // Claude MULTI-AGENT single pass: parallel reviewers, each a distinct lens (LENSES, teamLenses()),

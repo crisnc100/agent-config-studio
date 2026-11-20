@@ -156,6 +156,26 @@ test('B1 a family whose id has an unknown prefix is skipped with a one-line mess
   assert.deepEqual(JSON.parse(r.stdout).pool.map((m) => m.family), ['zeta'])
 })
 
+test('B1 a family whose id has an unknown prefix, named as the reviewer, stops with a named error and runs no model', () => {
+  for (const args of [[], ['--show-config']]) {
+    stopped(run(args, { ...role(['mystery', 'zeta'], ['acme-1', 'gpt-zeta-1']), REVIEW_REVIEWER: 'mystery' }), /must be codex, claude, grok, or a reviewer family/)
+  }
+  noModelRan()
+  assert.equal(logLines().length, 0)
+})
+
+test('B1 a model call for a vendor no CLI runs fails with a named error and runs no model', () => {
+  const job = join(ROOT, 'unknown-vendor-job.json'), result = join(ROOT, 'unknown-vendor-result.json')
+  rmSync(result, { force: true })
+  writeFileSync(job, J({ member: { family: 'mystery', vendor: 'acme', id: 'acme-1', effort: 'high' }, result, diff: 'diff --git a/a.js b/a.js', paths: ['a.js'] }))
+  const r = run(['--security-worker', job])
+  assert.notEqual(r.status, 0, r.out)
+  const out = JSON.parse(readFileSync(result, 'utf8'))
+  assert.equal(out.ok, false, J(out))
+  assert.match(out.error, /no CLI runs vendor "acme" \(mystery\)/)
+  noModelRan()
+})
+
 test('B1 loud stops: no model-id, no reviewer role, no installed reviewer CLI, a named reviewer without its CLI — each names the fix and runs no model', () => {
   const cases = [
     ['no model-id', {}, machine(['claude', 'codex', 'grok']), [/could not resolve the reviewer role: model-id is not installed/, /run: acs install-model-id/]],
