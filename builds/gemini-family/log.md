@@ -24,3 +24,11 @@
 
 ## PR A phase 2 — containment probe (builder, 2026-11-20)
 - containment-probe.md: the deny list holds for tool calls (workspace settings, hook allow/permissionOverrides don't undo it), but workspace .agents/hooks.json, .agents/mcp_config.json and .agents/plugins run shell commands, trusted or not, also via --add-dir. Recommended refusal sent to the orchestrator; not built.
+
+## PR A phase 3 — ask-model on agy (builder, 2026-11-20)
+- argv per brief + per-call --log-file; refusals (MCP config, non-cmux hooks, --investigate/--no-tools/--min-tools, --x-search); failures exit 4; init.model ≠ id exit 2; served model recorded unverified. f2 and x1 closed. tests/ask-model-agy.mjs.
+
+## PR A phase 4 — review gate on agy (builder, 2026-11-20)
+- runAgy, model unverified in reviewer line/report/FINDINGS_JSON/record/close/eval; never security (pinned, role, worker); REVIEW_AUTHOR=agy unknown; x2 built as refuse (non-codex pin stops). review.agy.test.mjs.
+- First real eval errored: agy's result.response joins every response turn (its finish tool refused the first schema answer; the retry followed), so the JSON did not parse. The answer is now the last response turn's text, in review.mjs and ask-model.
+- Proof: `PATH=<worktree>/bin:$PATH node packs/review-gate/runtime/review.mjs --eval --family neon --cases <clean-advisor-no-edit, logic-schema-enum-key-order> --yes` → clean 140.8s, caught (medium) 216.4s, modelVerified false (eval-proof/eval-neon-2cases.out).
