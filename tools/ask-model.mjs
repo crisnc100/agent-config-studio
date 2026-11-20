@@ -1308,14 +1308,14 @@ async function main(argv) {
   return finish(got.exit ?? 0);
 }
 
+export { argvFor, readAnswer, sandboxProblem };
+
 /**
  * For `model-id --install`, after it has copied the resolver: this file beside
  * it (resolver/bin/ask-model.mjs, so ../lib/ is the resolver's lib), a launcher
  * pinned to the node running the install, and ~/.local/bin/ask-model linked to
  * it. Returns the lines to print, and an error when the link is refused.
  */
-export { argvFor, readAnswer, sandboxProblem };
-
 export function install({ home, studio, resolver }) {
   const tilde = (p) => (p.startsWith(home + path.sep) ? '~' + p.slice(home.length) : p);
   const put = (dest, body, mode) => {

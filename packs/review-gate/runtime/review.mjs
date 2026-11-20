@@ -1184,7 +1184,7 @@ function selectReviewer(stats, { dryRun = false } = {}) {
     let m
     let why
     if (pinnedModel) {
-      // A raw id passes through as given; a family name must resolve.
+      // A family name must resolve; a raw id passes through only with a known prefix (the stop below refuses the rest).
       const id = modelId(pinnedModel)
       const familyName = pinnedModel.toLowerCase()
       const asFamily = FAMILY_NAME.test(familyName)

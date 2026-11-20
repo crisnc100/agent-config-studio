@@ -14,3 +14,4 @@
 - Test-only commit before it: review.security.test.mjs "4 selection" pins REVIEW_MODEL 'sol' instead of 'gpt-stub-sol' (the file's model-id stub rewrote the raw id to 'stub-gpt-stub-sol'). No assertion changed.
 - f2 LOW filed, not fixed.
 - Docs: the code-review skill (claude) says a raw model pin with no known prefix stops the run. The codex twin has no pin sentence, so it is unchanged.
+- Comments: review.mjs pin comment now names the known-prefix stop; ask-model's test export moved above install()'s doc comment.
