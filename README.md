@@ -419,8 +419,9 @@ From the terminal, `acs usage` prints the same gauge (`--json` for raw,
 ### Pausing an account
 
 When one subscription runs low, **Pause** on its row makes every role skip
-that vendor's models (claude, codex or grok, by the prefix of each model's id)
-and answer with its next one. Pausing offers **until it resets**, filled in
+that account's models (claude, codex, grok or gemini; a model belongs to
+the account its id's prefix names, and `gemini-` models run through agy on
+the Gemini subscription) and answer with its next one. Pausing offers **until it resets**, filled in
 from the reading's tightest window when it has a reset time, or **until I
 resume**; a paused row says *Paused until …* and has **Resume**. Your roles are
 not changed: the pause lives in `~/.agent-config-studio/paused.json`, its own
@@ -457,11 +458,12 @@ acs pause
 acs pause claude
 acs pause fable --until 2026-11-14T15:00:00Z
 acs pause codex --until-resume
+acs pause gemini
 acs resume claude
 ```
 
 `acs pause` alone lists what is paused and each role a pause changes. A pause
-names a vendor or one family; with no flag it ends when the last usage reading
+names an account (claude, codex, grok or gemini; not agy) or one family; with no flag it ends when the last usage reading
 says that account resets, or lasts until you resume when no reading says. A
 pause whose time has passed no longer counts and is dropped on the next write.
 
@@ -819,11 +821,12 @@ skill.
     `_agents` or `_agent` folder holding `hooks.json`, `mcp_config.json`,
     `plugins.json`, `agents.json`, `plugins` or `agents` (custom agents,
     which can name hooks of their own);
-  - `~/.gemini/config/mcp_config.json` names a server;
-  - `~/.gemini/config/hooks.json` has a hook whose command is not exactly
-    one of cmux's;
   - `~/.gemini/config/plugins/` holds anything, or `plugins.json` exists
     there;
+  - `~/.gemini/config/mcp_config.json` holds anything beyond an empty server
+    list, or cannot be read as JSON;
+  - `~/.gemini/config/hooks.json` has a hook whose command is not exactly
+    one of cmux's;
   - `agy --version`, run in an empty temporary folder, is not the version
     its containment was checked on.
   `--role security` (or its `--second`) that resolves to an agy family

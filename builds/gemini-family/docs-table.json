@@ -1,5 +1,23 @@
 {"rows":[
-{"behavior":"review gate refuses an unknown vendor and an unknown-prefix model pin","files":["packs/review-gate/runtime/review.mjs"],"docs":[{"path":"packs/review-gate/skills/claude/code-review/SKILL.md","claims":[{"claim":"a raw model id with no known prefix (claude-, gpt-, grok-) stops the run with an error naming the setting and the id","at":"packs/review-gate/runtime/review.mjs:1192"}]},{"path":"packs/review-gate/runtime/review.mjs","claims":[{"claim":"a family name must resolve; a raw id passes only with a known prefix","at":"packs/review-gate/runtime/review.mjs:1190"}]}]},
-{"behavior":"ask-model refuses an unknown vendor (exit 4)","files":["tools/ask-model.mjs"],"docs":[{"path":"README.md","claims":[{"claim":"ask-model runs claude, codex and grok; an unwired vendor is not run, exits 4 and names the vendor","at":"tools/ask-model.mjs:1286"}]}]},
-{"behavior":"setup-clis, models catalog/panel labels, openWorker and the vendor dot refuse or mark an unknown vendor","files":["lib/setup-clis.js","lib/models-catalog.js","lib/models-panel.js","lib/agent.js","public/app.js","public/styles.css"],"none":"internal guards with no user-facing doc; their error text and the code comment in lib/agent.js already state the behavior"}
+{"behavior":"neon family on agy; id-prefix table maps gemini- to agy; CLI follows the prefix","files":["lib/models.js","tools/ask-model.mjs","packs/review-gate/runtime/review.mjs","public/workflow.js","packs/review-gate/runtime/review-config.example.json","lib/roles.default.json"],"docs":[
+ {"path":"packs/README.md","claims":[{"claim":"gemini- -> agy (Antigravity) alongside claude-, gpt-, grok-","at":"lib/models.js:31"}]},
+ {"path":"README.md","claims":[{"claim":"ask-model runs claude, codex, grok and agy for a gemini- id; an id with none of those prefixes exits 64 and names the id","at":"tools/ask-model.mjs:1366"}]}]},
+{"behavior":"agy refusals, read-only deny list, denials reported, model unverified","files":["tools/ask-model.mjs","packs/review-gate/runtime/review.mjs"],"docs":[
+ {"path":"README.md","claims":[
+  {"claim":"deny list: commands, file writes, MCP, URL read/download/run; web search stays on","at":"tools/ask-model.mjs:165"},
+  {"claim":"checks run in order: workspace walk, then home config (plugins, mcp_config.json, hooks.json), then version","at":"tools/ask-model.mjs:1412"},
+  {"claim":"plugins/ non-empty or plugins.json present refuses","at":"tools/ask-model.mjs:739"},
+  {"claim":"mcp_config.json holding more than an empty server list, or unreadable/not JSON, refuses","at":"tools/ask-model.mjs:739"},
+  {"claim":"a hook whose command is not exactly cmux's refuses","at":"tools/ask-model.mjs:739"},
+  {"claim":"agy --version in an empty temp folder must match the probed version","at":"tools/ask-model.mjs:1421"},
+  {"claim":"security role exits 4 without running agy","at":"tools/ask-model.mjs:1383"},
+  {"claim":"--investigate, --no-tools, --min-tools exit 4 for agy","at":"tools/ask-model.mjs:1388"},
+  {"claim":"answer labelled unverified; --json carries served verified:false and logFile","at":"tools/ask-model.mjs:1270"},
+  {"claim":"non-SUCCESS status or empty answer exits 4","at":"tools/ask-model.mjs:1268"}]},
+ {"path":"packs/KNOWN-LIMITS.md","claims":[{"claim":"agy reviewer has web access; never runs the security pass","at":"tools/ask-model.mjs:1383"},{"claim":"agy reviews recorded model unverified; per-call log kept","at":"tools/ask-model.mjs:1270"}]}]},
+{"behavior":"pause names the gemini subscription; agy is not a pause name","files":["lib/models.js","lib/roles.js","lib/pause.js","bin/pause.mjs"],"docs":[
+ {"path":"README.md","claims":[{"claim":"pause accounts are claude, codex, grok, gemini; gemini- models belong to gemini","at":"lib/roles.js:337"},{"claim":"a model belongs to the account its id's prefix names, via the subscription map","at":"lib/models.js:37"},{"claim":"acs pause gemini is accepted","at":"bin/pause.mjs:21"}]}]},
+{"behavior":"audit stale-id rule and Gemini display names","files":["lib/audit.js"],"none":"internal audit heuristics; no user-facing doc states them"},
+{"behavior":"sol-prev added, sol default moved to gpt-6.2-sol","files":["models.default.json"],"none":"README names no model ids or family list; the registry file is the one home"},
+{"behavior":"Models panel shows agy as keeping no catalog; harness/UI labels","files":["lib/models-catalog.js","lib/models-panel.js","lib/harness.js","public/app.js","public/home.js","public/styles.css"],"none":"doc comment in lib/models-catalog.js already states it; no user doc names it"}
 ]}

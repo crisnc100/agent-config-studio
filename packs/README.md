@@ -22,7 +22,7 @@ ahead of time; Enter leaves a role unset). With `--yes` and no `--set-role`, the
 unset: the output and `acs packs status` name each one and the command that sets it, and a skill that needs
 one stops with that line until it is set. Skills read the families from your ACS roles
 (`model-id --role <role>`, `model-id <family>`), and the CLI that runs a model follows its id: `claude-…` →
-claude, `gpt-…` → codex, `grok-…` → grok.
+claude, `gpt-…` → codex, `grok-…` → grok, `gemini-…` → agy (Antigravity).
 
 What the packs and the review gate can't do yet, and how likely each limit is to matter: [KNOWN-LIMITS.md](KNOWN-LIMITS.md).
 
