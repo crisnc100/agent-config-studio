@@ -22,3 +22,5 @@ Out of scope: agy-served claude-/GPT-OSS ids, usage seats, acs-agent sessions on
 
 ## PR B1 — Antigravity instructions + model guide; PR B2 — packs install skills into ~/.gemini/config/skills (codex twin)
 As in the scoping report; later PR B3 ports the review-gate guard to agy hooks.
+
+Decisions (Cris, 2026-11-20, second round): Neon may be a code reviewer and run in benchmarks, never in the security role (it has web access); a Neon review counts toward a close, labelled "model unverified" on the reviewer line and in the record; the benchmark runs 3 passes (drop to 2 if quota runs low).
