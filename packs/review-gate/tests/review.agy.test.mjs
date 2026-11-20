@@ -330,6 +330,21 @@ test('a subagent transcript outside agy\'s brain folder, or missing, is not read
   assert.doesNotMatch(linked.stderr, /denied \(subagent/)
 })
 
+test('agy denials inside eval cases and slices reach the parent\'s stderr, and an eval case counts them', () => {
+  put(join(HOME, '.gemini/antigravity-cli/brain', SUB_ID, '.system_generated/logs/transcript.jsonl'), TRANSCRIPT)
+  const cases = join(dirname(SCRIPT), 'eval', 'examples')
+  const e = run(['--eval', '--family', 'neon', '--cases', cases, '--yes'], { STUB_AGY: 'subagent' })
+  assert.equal(e.status, 0, e.out)
+  const forwarded = e.stderr.split('\n').filter((l) => / {2}[\w-]+: ⚠ agy review: denied \(subagent perm-test-subagent\)/.test(l))
+  assert.equal(forwarded.length, 4, `two cases × two denials on stderr: ${e.stderr}`)
+  assert.match(e.stdout, /^ {2}example-clean-helper \[clean\] .*\b2 denied tool calls · [\d.]+s$/m)
+  const records = JSON.parse(e.stdout.split('===EVAL_JSON===')[1])
+  assert.deepEqual(records[0].cases.map((c) => c.denied), [2, 2])
+  const s = run(['--slices', 'a.js'], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'subagent' })
+  assert.equal(s.status, 0, s.out)
+  assert.equal(s.stderr.split('\n').filter((l) => l.startsWith('slice 1/1: ⚠ agy review: denied (subagent perm-test-subagent)')).length, 2, s.stderr)
+})
+
 test('a Grade or recheck from an agy model is recorded and shown model unverified, whatever its verdict file says', () => {
   const verdict = (extra = {}) => ({ family: 'neon', model: 'gemini-4-neon', criteria: [
     { id: '1', criterion: 'Works', verdict: 'FAIL', evidence: 'test fails' }], ...extra })

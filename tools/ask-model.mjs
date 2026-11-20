@@ -1541,7 +1541,7 @@ async function main(argv) {
   return finish(got.exit ?? 0);
 }
 
-export { argvFor, readAnswer, sandboxProblem };
+export { agySubagentDenials, argvFor, readAnswer, sandboxProblem };
 
 /**
  * For `model-id --install`, after it has copied the resolver: this file beside

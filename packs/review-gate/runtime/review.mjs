@@ -3973,6 +3973,7 @@ async function runSlices() {
       const exit = error ? 1 : code ?? 1
       results[i] = { paths: groups[i], exit, reviewId: result?.reviewId ?? null, result, ...(error && { error }) }
       console.log(`=== slice ${i + 1}/${groups.length}: ${groups[i]} (exit ${exit}${error ? `: ${error}` : ''}) ===\n${err.trim()}\n${out.trim()}\n`)
+      for (const line of agyWarnings(err).all) console.error(`slice ${i + 1}/${groups.length}: ${line}`)
       done()
     })
   })
@@ -5109,14 +5110,22 @@ function scoreEvalCase(c, record, repo = null) {
     unlocated: unlocated.length,
   }
 }
+// The agy lines a child review printed on stderr (each denied tool call, and each subagent transcript it could not
+// read): a parent that keeps the child's stderr only on failure passes these on itself.
+function agyWarnings(text) {
+  const all = String(text || '').split('\n').filter((l) => l.startsWith('⚠ agy review: '))
+  return { all, denied: all.filter((l) => l.startsWith('⚠ agy review: denied ')).length }
+}
 async function evalOne(m, c, run, root, timeoutMs) {
   const dir = join(root, `${m.family}-${c.id}-${run}`), logDir = join(dir, 'log')
   const started = Date.now()
   const base = { id: c.id, kind: c.kind, run, caseHash: c.hash }
-  let error = null, record = null, repo = null
+  let error = null, record = null, repo = null, denials = { all: [], denied: 0 }
   try {
     repo = evalRepo(c, dir)
     const r = await evalChild(m, c, repo, logDir, root, timeoutMs)
+    denials = agyWarnings(r.err)
+    for (const line of denials.all) console.error(`  ${c.id}: ${line}`)
     if (r.timedOut) error = `timed out after ${evalDuration(timeoutMs)}`
     else if (r.code !== 0) error = `the review exited ${r.code ?? r.signal}: ${tail(r.err || r.out)}`
     else {
@@ -5131,10 +5140,11 @@ async function evalOne(m, c, run, root, timeoutMs) {
     }
   } catch (e) { error = e.message }
   const durationMs = Date.now() - started
-  if (error) return { ...base, outcome: 'errored', error, durationMs, kept: dir }
+  const denied = denials.denied ? { denied: denials.denied } : {}
+  if (error) return { ...base, outcome: 'errored', error, ...denied, durationMs, kept: dir }
   rmSync(dir, { recursive: true, force: true })
   return {
-    ...base, ...scoreEvalCase(c, record, repo), durationMs, reviewId: record.id, model: record.model ?? null,
+    ...base, ...scoreEvalCase(c, record, repo), ...denied, durationMs, reviewId: record.id, model: record.model ?? null,
     ...(record.modelUsed && { modelUsed: record.modelUsed }), ...(record.modelVerified === false && { modelVerified: false }),
     ...(record.lenses && { lenses: record.lenses }), effort: record.effort ?? null,
     security: record.security?.status ?? null,
@@ -5154,7 +5164,8 @@ const evalCaseLine = (c, repeat) => {
   const detail = c.outcome === 'caught' ? ` (${c.severity}, ${c.expects.map((e) => e.by).join(', ')})`
     : c.outcome === 'false-alarm' ? ` (${c.alarms.map((a) => `${a.severity} ${a.file}:${a.line}`).join(', ')})`
     : c.outcome === 'errored' ? `: ${c.error.split('\n').at(-1) || c.error}` : ''
-  const counts = [c.extra && `${c.extra} extra`, c.lows && `${c.lows} low`, c.unlocated && `${c.unlocated} unlocated`].filter(Boolean)
+  const counts = [c.extra && `${c.extra} extra`, c.lows && `${c.lows} low`, c.unlocated && `${c.unlocated} unlocated`,
+    c.denied && `${c.denied} denied tool call${c.denied === 1 ? '' : 's'}`].filter(Boolean)
   return `  ${c.id} [${c.kind}] ${c.outcome}${detail}${counts.length ? ` · ${counts.join(', ')}` : ''}${repeat > 1 ? ` · run ${c.run}` : ''} · ${(c.durationMs / 1000).toFixed(1)}s`
 }
 async function runEval() {

@@ -102,6 +102,16 @@ try {
     t('grok: an id that fits both grok and grok-prev, both tracked, is ambiguous, with no fix', fence('grok -m grok-4.5 x'), 'SKILL.md', (f) => f.length === 1 && !f[0].family && !f[0].fix && /grok or grok-prev/.test(f[0].message));
     writeModels({ version: 1, models: { sol: 'gpt-6.1-sol' } });
     t('grok: an older id that fits grok and the pinned grok-prev is grok\'s, stale and fixable', fence('grok -m grok-4.5 x'), 'SKILL.md', (f) => f.length === 1 && f[0].family === 'grok' && f[0].stale && f[0].fix);
+    // Stale means older: an id newer than the one tracked family's current id is never "fixed" back to it.
+    writeModels({ version: 1, models: { sol: 'gpt-6.1-sol', grok: 'grok-4.5', 'grok-prev': 'grok-4.6' } });
+    t('grok pinned older than the id in use (and grok-prev between): ambiguous, no fix — never a downgrade', fence('grok -m grok-4.7 x'), 'SKILL.md',
+      (f) => f.length === 1 && !f[0].family && !f[0].fix && !f[0].stale && /grok or grok-prev/.test(f[0].message));
+    t('…while an id older than grok\'s current one is still grok\'s, stale and fixable', fence('grok -m grok-4.4 x'), 'SKILL.md',
+      (f) => f.length === 1 && f[0].family === 'grok' && f[0].stale && f[0].fix);
+    writeModels({ version: 1, models: { sol: 'gpt-6.1-sol', terra: 'gpt-5.5-terra' } });
+    t('a lone family: an id newer than its current one is not stale and gets no fix', fence('codex -m gpt-6-terra x'), 'SKILL.md',
+      (f) => f.length === 1 && !f[0].family && !f[0].fix && !f[0].stale && /not older than the registry's terra \(`gpt-5\.5-terra`\)/.test(f[0].message));
+    t('…and an older one is stale and fixable', fence('codex -m gpt-5-terra x'), 'SKILL.md', (f) => f.length === 1 && f[0].family === 'terra' && f[0].stale && f[0].fix);
     writeModels({ version: 1, models: { sol: 'gpt-6.1-sol' }, families: { terra: { track: false } } });
     t('a lone pinned family keeps its stale ids: track: false is a fallback, never a filter', fence('codex -m gpt-5.5-terra x'), 'SKILL.md', (f) => f.length === 1 && f[0].family === 'terra' && f[0].stale && f[0].fix);
     writeModels({ version: 1, models: { sol: 'gpt-6.1-sol' } });
