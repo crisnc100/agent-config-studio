@@ -15,3 +15,12 @@
 - f2 LOW filed, not fixed.
 - Docs: the code-review skill (claude) says a raw model pin with no known prefix stops the run. The codex twin has no pin sentence, so it is unchanged.
 - Comments: review.mjs pin comment now names the known-prefix stop; ask-model's test export moved above install()'s doc comment.
+
+## PR A phase 1 — neon family, one prefix table (builder, 2026-11-20)
+- VENDOR_PREFIXES in lib/models.js; identical copies in review.mjs and public/workflow.js, ask-model imports it; tests/vendor-prefixes.mjs.
+- neon → gemini-4-neon, sol-prev → gpt-6.1-sol (track:false), sol default → gpt-6.2-sol; neon flavor (no avoid list: tests/roles.mjs pins "shipped defaults set no avoid list").
+- agy: pause vendor, vendor dot, Antigravity catalog reported as "keeps no catalog on disk" (guard f forbids a spawn), gemini lint patterns, audit name/command matching, picker label.
+- Open: sol-prev makes stale sol ids ambiguous in the audit (tests/audit.mjs, audit-routes.mjs fail); proposal sent to the orchestrator.
+
+## PR A phase 2 — containment probe (builder, 2026-11-20)
+- containment-probe.md: the deny list holds for tool calls (workspace settings, hook allow/permissionOverrides don't undo it), but workspace .agents/hooks.json, .agents/mcp_config.json and .agents/plugins run shell commands, trusted or not, also via --add-dir. Recommended refusal sent to the orchestrator; not built.
