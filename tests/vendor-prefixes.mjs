@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VENDOR_PREFIXES, vendorOf, loadRegistry, tracks } from '../lib/models.js';
+import { SUBSCRIPTION_OF, VENDOR_PREFIXES, subscriptionOf, vendorOf, loadRegistry, tracks } from '../lib/models.js';
 import { parseVersion, compareVersions } from '../lib/models-catalog.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -44,6 +44,9 @@ ok('tools/ask-model.mjs imports vendorOf from lib/models.js', /import \{[^}]*\bv
 ok('tools/ask-model.mjs defines no vendorOf of its own', !/function vendorOf\b|const vendorOf\b/.test(ask));
 
 ok('a gemini- id runs on agy', vendorOf('gemini-4-neon') === 'agy');
+ok('every vendor in the table has a subscription; agy draws on gemini', Object.values(VENDOR_PREFIXES).every((v) => Object.hasOwn(SUBSCRIPTION_OF, v)) && subscriptionOf('agy') === 'gemini'
+  && ['claude', 'codex', 'grok'].every((v) => subscriptionOf(v) === v), JSON.stringify(SUBSCRIPTION_OF));
+ok('an unknown vendor has no subscription', subscriptionOf('acme') === null && subscriptionOf(null) === null);
 ok('an id that only starts with "gemini" (no dash) has no vendor', vendorOf('gemini4') === null);
 ok('a bare vendor word is not an id', vendorOf('agy') === null);
 
