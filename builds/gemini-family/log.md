@@ -13,3 +13,4 @@
 - f1: a REVIEW_MODEL / config "model" pin whose id has no known prefix stops with `<setting>=<pin> resolves to "<id>", whose prefix names no known CLI`, on the implicit pin and with REVIEW_REVIEWER=codex. New test in review.behavior.test.mjs (failed before, exit 0).
 - Test-only commit before it: review.security.test.mjs "4 selection" pins REVIEW_MODEL 'sol' instead of 'gpt-stub-sol' (the file's model-id stub rewrote the raw id to 'stub-gpt-stub-sol'). No assertion changed.
 - f2 LOW filed, not fixed.
+- Docs: the code-review skill (claude) says a raw model pin with no known prefix stops the run. The codex twin has no pin sentence, so it is unchanged.
