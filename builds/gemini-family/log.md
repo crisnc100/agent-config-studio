@@ -52,3 +52,4 @@
 - Test checks from Sol: cliOf literal again, union fixture neither catalog satisfies, exact model-id output, subscriptionOf inherited keys, pause-cli family list.
 - Real agy: ask-model neon from the worktree answered; one-case --eval --family neon caught the bug (56.4s), model unverified on both lines.
 - Docs: the four skills that state the CLI-by-prefix rule now include gemini- → agy (build claude/codex, code-review claude/codex).
+- review.agy.test: a foreign grouped hook handler refuses agy (Sol's check of a7504f3); review-config.example.json _pool_help names gemini- → agy.

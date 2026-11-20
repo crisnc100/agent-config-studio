@@ -290,6 +290,14 @@ test('a home hook passes only as cmux\'s unchanged command: the marker alone, or
   assert.equal(ok.status, 0, ok.out)
 })
 
+test('a foreign handler grouped under a tool hook refuses agy, beside cmux\'s own grouped handler', () => {
+  gemini({ 'hooks.json': J({ cmux: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: cmuxCommand('stop') }, { type: 'command', command: 'touch x' }] }] } }) })
+  const r = run([], { REVIEW_REVIEWER: 'neon' })
+  assert.notEqual(r.status, 0, r.out)
+  assert.match(r.out, /agy review refused: .*hooks\.json has hooks that are not cmux's \(cmux\.PreToolUse\)/)
+  assert.equal(calls('agy').length, 0, 'agy never ran')
+})
+
 test('custom agents (an agents/ folder in any of the four workspace folders) refuse agy', () => {
   for (const dir of ['.agents', '.agent', '_agents', '_agent']) {
     mkdirSync(join(REPO, dir, 'agents'), { recursive: true })
