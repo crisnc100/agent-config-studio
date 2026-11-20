@@ -184,7 +184,9 @@ function detect() {
   const fresh = found.filter((s) =>
     !knownIds.has(s.id)
     && !(s.home && knownHomes.has(`${s.vendor}:${path.resolve(s.home)}`))
-    && !(s.vendor === 'codex' && hasCodexSeat && s.home && isSharedCodexHome(s.home)));
+    && !(s.vendor === 'codex' && hasCodexSeat && s.home && isSharedCodexHome(s.home))
+    // One Gemini seat per machine (agy has one sign-in), whatever its id — Setup's rule (suggestSeats).
+    && !(s.vendor === 'gemini' && seats.some((x) => x.vendor === 'gemini')));
   console.log('');
   if (!fresh.length) { console.log('  nothing new detected\n'); return 0; }
   for (const s of fresh) console.log(`  ${C.bold(s.id.padEnd(12))} ${s.vendor.padEnd(7)} ${s.label}${s.home ? C.grey(`  ${s.home}`) : ''}`);

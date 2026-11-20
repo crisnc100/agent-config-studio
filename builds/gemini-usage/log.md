@@ -74,3 +74,6 @@
 - f5 (+ s2): guards.mjs matches each gemini.js spawn whole — `found.binary, <pinned argv>, opts` — pins the opts
   literal (cwd: dir, stdin ignored, hooks off) assigned once, and allows `dir` only null or the mkdtemp. setup-guards
   proves .concat(), a spread, other options, a dropped cwd, opened stdin, a reassigned opts and a moved folder fail.
+- f6 (orchestrator asked, after f3 made it fire on every run): `acs usage detect` drops the Gemini suggestion when
+  any Gemini seat is registered, whatever its id — suggestSeats' rule on the CLI path. usage-cli test: agy installed +
+  a UI-added `gemini` seat → no suggestion; fails on the previous CLI. usage-cli 24/24.

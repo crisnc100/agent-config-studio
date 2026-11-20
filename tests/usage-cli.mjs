@@ -158,6 +158,21 @@ ok('HOME is redirected', home !== realHome);
   ok('...registers Gemini under a fresh id', mine && mine.id !== 'gemini-1' && mine.harness === 'agy', JSON.stringify(seats));
   ok('...and says which id it registered', mine && new RegExp(`registered ${mine.id} \\(gemini\\)`).test(saved), saved);
 }
+{
+  // A Gemini seat added from the UI gets the id `gemini`, not detection's `gemini-1`.
+  const g = tempDir('acs-cli-gemini-ui-');
+  const reg = path.join(g, '.agent-config-studio', 'seats.json');
+  fs.mkdirSync(path.dirname(reg), { recursive: true });
+  fs.writeFileSync(reg, JSON.stringify({ version: 1, seats: [{ id: 'gemini', vendor: 'gemini', harness: 'agy', label: 'Gemini' }] }));
+  const fakeBin = path.join(g, 'bin');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(path.join(fakeBin, 'agy'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const out = (() => {
+    try { return execFileSync(process.execPath, [CLI, 'detect'], { encoding: 'utf8', env: { ...process.env, HOME: g, CODEX_HOME: '', NO_COLOR: '1', PATH: `${fakeBin}${path.delimiter}${PATH_NO_AGY}` } }); }
+    catch (e) { return `EXIT ${e.status}\n${e.stdout || ''}${e.stderr || ''}`; }
+  })();
+  ok('detect does not suggest a second Gemini seat beside a UI-added one', !/gemini-1/.test(out) && !/\bgemini\b/.test(out), out);
+}
 
 fs.rmSync(home, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed\n`);
