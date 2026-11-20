@@ -4260,17 +4260,28 @@ const chainOf = (entries, close) => {
   const records = [close.review, close.fixCheck].filter(Boolean).map((id) => entries.find((e) => e.type === 'review' && e.id === id)).filter(Boolean)
   return records[0]?.id === close.review && !['grade', 'recheck'].includes(records[0].kind) ? records : []
 }
+const statesOrNull = (commit) => { try { return treeStates(commit) } catch { return null } }
+// The fix round's files belong to the fix check: a review whose fix check is among the records keeps a manifest entry
+// only while the file is still in that state at the fix check's head, so a fix reverted after the check is unseen until a
+// pass reads it. A fix-check head that can no longer be read keeps none of the review's entries.
+function fixRoundKeeps(records, r) {
+  const check = r.kind !== 'fix-check' && records.find((x) => x.kind === 'fix-check' && x.review === r.id)
+  if (!check) return () => true
+  const atCheck = statesOrNull(check.head)
+  return (path, state) => !!atCheck && (atCheck.get(path) ?? null) === (state ?? null)
+}
 // What the given records' completed passes read, by role (a security manifest only when its pass ran), the code
 // manifests' unreadable entries, and the security passes that failed or were skipped.
 function chainEvidence(records) {
   const read = { code: new Set(), security: new Set() }, unread = [], failed = []
   for (const r of records) {
+    const kept = fixRoundKeeps(records, r)
     for (const [m, role] of [[r.manifest, 'code'], [r.security?.status === 'ran' ? r.security.manifest : null, 'security']]) {
       if (!m || !Array.isArray(m.read)) continue
-      for (const t of m.read) read[role].add(JSON.stringify(t))
+      for (const t of m.read) if (kept(t[0], t[2])) read[role].add(JSON.stringify(t))
       // Oversize counts only at the production cap: under a lowered one, a slice at the real cap could still read it.
       if (role === 'code') for (const [path, why] of Array.isArray(m.unread) ? m.unread : [])
-        if (UNREADABLE.includes(why) && (why !== 'oversize' || m.cap >= FULL_DIFF_CAP)) unread.push({ m, path })
+        if (UNREADABLE.includes(why) && (why !== 'oversize' || m.cap >= FULL_DIFF_CAP) && kept(path, statesOrNull(m.head)?.get(path))) unread.push({ m, path })
     }
     if (['failed', 'skipped'].includes(r.security?.status))
       failed.push(`${r.kind === 'fix-check' ? "fix check's security pass" : 'security pass'} ${r.security.status}${r.security.reason ? `: ${r.security.reason}` : ''}`)
@@ -4332,7 +4343,7 @@ function manifestCover(entries, tip, checkedTip = tip) {
   for (const [p, s0, s1] of changes) {
     if (!covered.has(p)) continue
     const key = tripleKey(p, s0, s1)
-    const r = usable.find((c) => c.records.some((x) => x.manifest?.read?.some((t) => JSON.stringify(t) === key)))
+    const r = usable.find((c) => chainEvidence(c.records).read.code.has(key))
     used.set(r, [...(used.get(r) || []), p])
   }
   const usedList = [...used].map(([r, files]) => ({ ...r, files }))
