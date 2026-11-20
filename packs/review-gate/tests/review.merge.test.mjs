@@ -729,3 +729,35 @@ test('B20 auto-merge still set after --disable-auto succeeded is refused too', (
   assert.match(r.stdout, /^refused: auto-merge may still be enabled on PR 41; disable it in GitHub/)
   assert.equal(calls().filter((a) => keyOf(a) === 'graphql pr').length, 2, 're-read after disabling')
 })
+
+// A shim in the checkout that answers every capability and reports a covered, mergeable LOW for any tip.
+const SHIM = `if (process.argv[2] === '--supports') process.exit(0)
+console.log(JSON.stringify({ tip: process.env.SHIM_TIP, covered: true, base: 'a'.repeat(40), baseRef: 'origin/main', tier: 'low', reasons: ['shim'],
+  policy: 'standard', merges: true, docsTestsOnly: true, deferred: [], logPath: process.env.FAKE_LOG,
+  merge: { onHuman: 'comment', humanComment: 'Needs human approval before merging.', requireChecks: true, allowBehind: false } }))
+`
+test('B20 a scripts/review.mjs in the checkout, untracked or tracked and answering every flag, never supplies the tier: merge reads the installed runtime', () => {
+  mkdirSync(join(REPO, 'scripts')); writeFileSync(join(REPO, 'scripts/review.mjs'), SHIM)
+  const humanTier = { tier: 'medium', merges: false, reasons: ['logic changed'] }
+  gh({ repoLabels: [label('needs-human')] })
+  const untracked = fake(humanTier, [], { SHIM_TIP: head() })
+  assert.equal(untracked.status, 10, untracked.out)
+  assert.match(untracked.stdout, /^labeled: /)
+  assert.ok(!calls().some((a) => keyOf(a) === 'pr merge'), 'no merge call')
+  git('add', 'scripts/review.mjs'); git('commit', '-qm', 'track the shim')
+  rmSync(GH_LOG, { force: true })
+  gh({ repoLabels: [label('needs-human')] })
+  const tracked = fake(humanTier, [], { SHIM_TIP: head() })
+  assert.equal(tracked.status, 10, tracked.out)
+  assert.ok(!calls().some((a) => keyOf(a) === 'pr merge'), 'no merge call')
+})
+
+test('B20 a missing installed runtime refuses before any gh call, naming the file', () => {
+  rmSync(INSTALLED)
+  mkdirSync(join(REPO, 'scripts')); writeFileSync(join(REPO, 'scripts/review.mjs'), SHIM)
+  gh()
+  const r = fake({}, [], { SHIM_TIP: head() })
+  assert.equal(r.status, 2, r.out)
+  assert.match(r.stdout, /^refused: the installed review runtime \S*\.agent-config-studio\/review-gate\/review\.mjs is missing/)
+  assert.deepEqual(calls(), [])
+})
