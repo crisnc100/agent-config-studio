@@ -1,6 +1,6 @@
 # agy containment probe (PR A, phase 2) — 2026-11-20
 
-agy 1.5.13 (`~/.local/bin/agy`; the cmux path is a wrapper that execs it), model gemini-4-neon at effort low, run outside the Bash sandbox (agy binds 127.0.0.1:0). Scripts: `builds/gemini-family/probe/{setup.sh,run.sh,attr.sh}`.
+agy 1.5.13 (`~/.local/bin/agy`; the cmux path is a wrapper that execs it), model gemini-4-neon at effort low, run outside the Bash sandbox (agy binds 127.0.0.1:0). Scripts: `builds/gemini-family/probe/{setup.sh,run.sh,attr.sh,common.sh}`. They take their paths as arguments or environment (`W`, `M`, `SUB`, `PROBE_OUT`, `AGY`) and carry the shipped deny list in `common.sh`, so they re-run as is when `AGY_VERSION` needs moving.
 
 ## Verdict
 
@@ -40,10 +40,27 @@ Per agy's own customization guide (in the binary): workspace customizations live
 ## Other observations
 
 - `--settings` rejects unknown keys (`Error: --settings: unknown setting "hooks"`, exit 1); `pluginsDisabled`, `mcpEnabled`, `hooks`, `hooksEnabled`, `enableHooks` are all unknown, so no per-call switch to turn hooks, plugins or MCP off was found.
-- A denied action does not fail the turn: status SUCCESS, exit 0, and the response is the model explaining the denial. Neither `json` nor `stream-json` output carried a `denied_actions` field in 1.5.13; the denial shows as a tool `step_update` with `"state":"ERROR"` and `error.type` `TOOL_ERROR`, message `permission check failed … Matches user-configured deny rule`.
+- A denied action does not fail the turn: status SUCCESS, exit 0. A deny-rule refusal shows as a tool `step_update` with `"state":"ERROR"` and `error.type` `TOOL_ERROR`, message `permission check failed … Matches user-configured deny rule`; it is not in any result field. A different refusal, an action that needs an approval print mode cannot give (a read outside the workspace, run m), is listed in `result.denied_actions` (`[{"action":"read_file","display_name":"ReadFile"}]`), in both `json` and `stream-json`, and has no tool step. Both runtimes print each kind on stderr and never fail on it; an empty answer fails.
 - stream-json's `init` event: `{model, cwd, tools, permission_mode}`; `model` echoes the request (`gemini-4-neon`).
 - `init.tools` lists browser, notebook, schedule, send_message and other tools. Asked to use notebook_execution, open_browser_url, execute_browser_javascript, replace_file_content and sed_file under the deny list, the model reported each as not in its toolset and none ran (nothing written); search_web ran (web search cannot be denied, as scoped).
 
-## Recommended refusal (not built: needs the orchestrator's yes)
+## Second round (after the advisor's containment read) — 2026-11-20
 
-Before any agy call (ask-model and the review gate), from the call's cwd up to the top of its repository (cwd alone when not in one), refuse with a named error when any of `.agents/`, `.agent/`, `_agents/`, `_agent/` holds `hooks.json`, `mcp_config.json`, `plugins.json` or a `plugins/` folder — the grok twin is ask-model's grokHookFolders. Rules, skills and workflows there are text the model reads under the deny list, so they do not refuse. Also extend the home check beyond `~/.gemini/config/{hooks,mcp_config}.json` to `~/.gemini/config/plugins/*/{hooks.json,mcp_config.json}` (a user-installed plugin's hooks run the same way), with the same rules (hooks need the cmux marker, MCP config must be empty).
+Deny list as shipped: `["command(*)","write_file(*)","mcp(*)","read_url(*)","download_url(*)","execute_url(*)"]`.
+
+| Run | Setup | Result |
+| --- | --- | --- |
+| l | the deny list above plus `unsandboxed(*)`, empty cwd | exit 0, SUCCESS. agy's log: `Invalid "unsandboxed" permission rules found; they are ignored and grant nothing: Fix: replace "unsandboxed" with "command"`. `download_url` and `execute_url` were accepted without a warning (a made-up `bogus(*)` logs `ignoring invalid deny entry … unknown action`). So `unsandboxed(*)` is left off; `command(*)` already covers it. |
+| subagent | the deny list, empty git repo; the model asked to define and invoke a subagent that runs `touch <marks>/sub-cmd` and writes `sub-write.txt` | `define_subagent` ran; the subagent's `run_command` and `write_file` were both refused with `Matches user-configured deny rule`. No marker, no file. **Subagents inherit the deny list.** |
+| m | the deny list, cwd an empty folder under `/private/tmp`, no `--add-dir`; the model asked to read the planted repo's README by absolute path | exit 0, SUCCESS, empty response, `denied_actions: [{"action":"read_file"}]`. Print mode refused the out-of-workspace read for want of an approval; no hook or marker ran (the planted repo was not the workspace). Recorded only: the refusal ships regardless. |
+| version | `agy --version` | prints `1.5.13`; no planted hook ran. |
+
+## What ships
+
+Both runtimes (ask-model's agy path, the review gate's runAgy) refuse before agy runs, with a named error:
+
+- **Version:** `agy --version` must print `AGY_VERSION` (`1.5.13`). Any other answer, or a failed call, refuses and says to re-run this probe.
+- **Workspace:** from `process.cwd()` at call time up to the filesystem root (not git's top folder; a linked worktree's `.git` is a file), any of `hooks.json`, `mcp_config.json`, `plugins.json`, `agents.json`, `plugins` inside `.agents/`, `.agent/`, `_agents/`, `_agent/`, of any type (a dangling symlink included) or not lstat-able. No folder is exempt, home included. `agents.json` is unprobed: the binary carries an `agents_paths` discovery key. Rules, skills and workflows are text the model reads under the deny list, so they do not refuse.
+- **Home:** `~/.gemini/config/mcp_config.json` must be empty (zero-length, `{}` or `{"mcpServers":{}}`); every `hooks.json` handler must carry the cmux marker; `~/.gemini/config/plugins/` must be empty or absent and `plugins.json` absent.
+
+The deny list, version, marker, env and workspace names are one literal per runtime, kept identical by `tests/vendor-prefixes.mjs`.

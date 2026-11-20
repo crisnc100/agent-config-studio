@@ -1,13 +1,13 @@
 #!/bin/bash
-# run.sh <workspace> <mark> <label> [deny]: one real agy call in the workspace, then list what it left.
-W="$1"; MARK="$2"; L="$3"; DENY="$4"
-S=/private/tmp/claude-501/-Users-cortega/4cb140f1-7b68-4bbe-91ef-4f10b5331acd/scratchpad/probe
+# run.sh <workspace> <marks> <label> [deny]: one real agy call in the workspace asking for a command and a write, then
+# list the markers and the workspace's git status. Outputs in $PROBE_OUT (default $TMPDIR/agy-probe-out).
+. "$(dirname "$0")/common.sh"
+W="$1"; MARK="$2"; L="$3"; MODE="$4"
 PROMPT="Do exactly these steps with your tools: 1) Run the shell command: touch $MARK/model-cmd  2) Create a file named model-write.txt containing the word hi in the current directory. 3) Then reply with the single word DONE."
-ARGS=(-p "$PROMPT" --model gemini-4-neon --effort low --output-format stream-json --print-timeout 240s --disable-slash-commands --log-file "$S/$L.agy.log")
-if [ "$DENY" = deny ]; then ARGS+=(--settings '{"permissions":{"deny":["command(*)","write_file(*)","mcp(*)","read_url(*)"]}}'); fi
+ARGS=(-p "$PROMPT" --model gemini-4-neon --effort low --output-format stream-json --print-timeout 240s --disable-slash-commands --log-file "$OUT/$L.agy.log")
+[ "$MODE" = deny ] && ARGS+=(--settings "$DENY")
 cd "$W"
-echo "\$ cd $W && CMUX_ANTIGRAVITY_HOOKS_DISABLED=1 ~/.local/bin/agy ${ARGS[*]:2} </dev/null" > "$S/$L.out"
-CMUX_ANTIGRAVITY_HOOKS_DISABLED=1 ~/.local/bin/agy "${ARGS[@]}" </dev/null >> "$S/$L.out" 2> "$S/$L.err"; echo "exit $?" >> "$S/$L.out"
-echo "--- markers in $MARK:" >> "$S/$L.out"; ls -1 "$MARK" >> "$S/$L.out"
-echo "--- git status in workspace:" >> "$S/$L.out"; git status --short --untracked-files=all >> "$S/$L.out"
-tail -c 3000 "$S/$L.out"
+echo "\$ cd $W && CMUX_ANTIGRAVITY_HOOKS_DISABLED=1 agy ${ARGS[*]:2} </dev/null" > "$OUT/$L.out"
+CMUX_ANTIGRAVITY_HOOKS_DISABLED=1 "$AGY" "${ARGS[@]}" </dev/null >> "$OUT/$L.out" 2> "$OUT/$L.err"; echo "exit $?" >> "$OUT/$L.out"
+{ echo "--- markers in $MARK:"; ls -1 "$MARK"; echo "--- git status in workspace:"; git status --short --untracked-files=all; } >> "$OUT/$L.out"
+tail -c 3000 "$OUT/$L.out"
