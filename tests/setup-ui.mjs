@@ -190,6 +190,18 @@ console.log('\nsetup in the page');
   ok('4 suggestions appear', /Codex \(primary\)/.test(content()) && /~\/\.codex/.test(content()) && /Claude/.test(content()));
   ok('4 …and none is added without a click', !p.requests.some((r) => r.path === '/api/setup/seats'));
   ok('S2 the manual "Add an account" is always there', /Add an account/.test(content()));
+  {
+    const manual = p.$('content').querySelector('.setup-manual');
+    const [vendor, harness] = manual.querySelectorAll('select');
+    vendor.value = 'gemini';
+    vendor.dispatchEvent({ type: 'change', bubbles: false });
+    ok('S2 the manual form offers Gemini, through Antigravity', !harness.hidden && harness.value === 'agy', p.text(manual));
+    manual.querySelector('.usage-add-label').value = 'Gemini';
+    btn(p, 'Add', manual).click();
+    await settle(20);
+    ok('S2 …and sends the harness with it', p.requests.some((r) => r.path === '/api/setup/seats' && r.body.vendor === 'gemini' && r.body.harness === 'agy' && !r.body.home),
+       JSON.stringify(p.requests.filter((r) => r.path === '/api/setup/seats').map((r) => r.body)));
+  }
   p.$('content').querySelector('[data-suggestion="codex"] button').click();
   await settle(20);
   ok('4 clicking Add sends exactly that suggestion\'s key', p.requests.some((r) => r.path === '/api/setup/seats' && r.body.key === 'codex' && !r.body.home));

@@ -163,5 +163,54 @@ console.log('\npause ui: R11 — styles');
   ok('colours come from the theme variables, so light and dark both hold', literal.length === 0, J(literal.map((m) => m[1])));
 }
 
+console.log('\npause ui: the Gemini subscription, through Antigravity');
+{
+  const GRESET = Date.now() + 3 * HOUR;
+  const gemini = { seatId: 'gemini', label: 'Gemini', vendor: 'gemini', harness: 'agy', ok: true, agyVersion: '1.5.13',
+    windows: [{ label: '5-hour', usedPercent: 40, resetsAt: GRESET, windowMinutes: 300 },
+              { label: 'Weekly', usedPercent: 8, resetsAt: Date.now() + 100 * HOUR, windowMinutes: 10080 }],
+    extraWindows: [{ label: 'Gemini 4 Argon weekly', usedPercent: 25, resetsAt: Date.now() + 50 * HOUR, windowMinutes: 10080 }] };
+  const st = { pause: state() };
+  const added = [];
+  const routes = routesFor({
+    'GET /api/usage': () => ({ seats: [gemini] }),
+    'GET /api/pause': () => st.pause,
+    'POST /api/pause': (b) => { st.pause = state([{ name: b.name, kind: 'vendor', vendor: b.name, until: b.until, active: true }]); return st.pause; },
+    'POST /api/usage/seats': (b) => { added.push(b); return { seat: { id: 'g', label: b.label, vendor: b.vendor }, note: 'Sign in inside Antigravity' }; },
+  });
+  const p = await bootPage({ routes, hash: '#usage' });
+  await settle(20);
+  const c = card(p, 'gemini');
+  ok('the Gemini card names the harness it runs through', /gemini · through Antigravity/.test(text(c)), c && text(c));
+  ok('…draws the Gemini Models windows as gauges', c.querySelectorAll('.usage-row').length === 2);
+  const argon = c.querySelectorAll('.usage-extra-window');
+  ok('…and Argon\'s weekly limit as one line without a gauge', argon.length === 1 && /Gemini 4 Argon weekly: 75% left/.test(text(argon[0])) && argon[0].querySelectorAll('.usage-track').length === 0, argon[0] && text(argon[0]));
+  button(c, 'Pause').click();
+  await settle(10);
+  const at = buttons(card(p, 'gemini')).find((b) => /^Until it resets \(/.test(text(b)));
+  ok('pausing Gemini offers "until it resets" from the tightest Gemini window', !!at, text(card(p, 'gemini')));
+  at.click();
+  await settle(20);
+  const sent = posts(p, '/api/pause');
+  ok('…and pauses the gemini account at that reset', sent.length === 1 && sent[0].body.name === 'gemini' && sent[0].body.until === new Date(GRESET).toISOString(), J(sent));
+  ok('…the row then says roles skip gemini models', /Paused until .* — roles skip gemini models/.test(text(card(p, 'gemini'))), text(card(p, 'gemini')));
+
+  button(p.$('content'), '+ Add account').click();
+  await settle(10);
+  const form = p.$('content').querySelector('.usage-add');
+  const [vendor, harness] = form.querySelectorAll('select');
+  ok('the Add form offers Gemini', vendor.querySelectorAll('option').some((o) => o.value === 'gemini'), form && text(form));
+  ok('…with no harness choice for the others', harness.hidden === true);
+  vendor.value = 'gemini';
+  vendor.dispatchEvent({ type: 'change', bubbles: false });
+  ok('choosing Gemini shows the harness choice: Antigravity only', harness.hidden === false
+    && J(harness.querySelectorAll('option').map((o) => o.value)) === J(['agy']), harness && text(harness));
+  form.querySelector('.usage-add-label').value = 'Gemini Pro';
+  button(form, 'Add').click();
+  await settle(20);
+  ok('Add sends the harness with the subscription', added.length === 1 && J(added[0]) === J({ vendor: 'gemini', label: 'Gemini Pro', harness: 'agy' }), J(added));
+  p.done();
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

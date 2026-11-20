@@ -33,3 +33,18 @@
 - Checks: usage-seats 138/138, usage-routes 82/82, usage-cli 18/18, setup-accounts and setup-routes all pass except
   one real-home byte-identity check that flagged ~/.agent-config-studio/logs/agy/review-*.log — written by the
   background benchmark's ask-model runs, not by these tests; setup-ui 92/92, setup-guards 84/84.
+
+## Phase 3 — screen and pause (builder, 2026-11-20)
+- public/usage-view.js: SEAT_VENDORS / SEAT_HARNESSES (gemini → agy only) and seatMeta ("gemini · through
+  Antigravity"); used by the Usage card and Home's Accounts card so both label a seat the same way.
+- public/app.js: seatVendorPicker() + seatBody() build the Add form for Usage and setup's manual form (one picker, two
+  forms). The harness select is hidden unless the subscription has one; the body carries `harness` only then.
+  The Usage card prints extraWindows (Argon weekly) as a line with no gauge. The Add note says to sign in inside agy.
+- Pause needed no code: the gemini pause account and seatReset/vendorReset already read `windows`; with a gemini
+  seat accepted, the row offers "until it resets" from the tightest Gemini Models window (finding x8).
+- README: Gemini in Subscription usage (one seat, sign in inside agy, the source table row, the API-key case) and in
+  the usage collector's list of what it runs.
+- Not done (out of scope): the setup screen's CLIs step still lists claude, codex and grok only.
+- Checks: pause-ui 36/36, setup-ui 94/94, home 125/125 (one earlier run failed "8 Refresh re-asks the sources and
+  keeps a sticky warning", a timing test; three reruns passed, and the change does not touch it), pause-routes
+  23/23, roles-pause 50/50, pause-cli 26/26, readme 56/56, guards 11/11.
