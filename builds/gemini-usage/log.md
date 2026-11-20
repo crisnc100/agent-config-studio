@@ -55,3 +55,22 @@
   only the time that is left.
 - tests/setup-guards.mjs: three pins proving guards.mjs rejects gemini.js spawning a prompt, an extra flag, or a PATH name.
 - Checks: usage-gemini 44/44, setup-guards 87/87.
+
+## Fix round, review 2026-11-20-23-46-51-1998e5 (builder, 2026-11-20)
+- f1: addSeat refuses an id held by an entry this build cannot read; saveSeats carries every such entry whatever ids
+  the new list holds (no filter), so no write path drops or replaces one. `detect --save` allocates a fresh id with
+  uniqueSeatId at save time and prints each id it registered. Tests: usage-seats (refusal, saveSeats past addSeat),
+  usage-cli (hidden `gemini-1` kept, Gemini registered as another id, message names it).
+- f2: usedPercent is stored unrounded (decision: store raw, round only where shown — every display already rounds,
+  as Codex and Claude readings are stored raw). Test: 7.048% vs 7.042% (both 7.0 rounded) → vendorReset picks the
+  weekly reset; fails on the rounded code.
+- f3: `acs usage detect` passes `binaries: { agy: locateBinary('agy').installed }`, Setup's lookup for agy. Only agy:
+  passing claude/codex/grok too would change the CLI's detection for them, outside this brief.
+- f4: no other reader solves this (codex/grok use findBinary on the inherited PATH). refresh.js now hands the worker
+  the server's login-shell directories in ACS_LOGIN_PATH_DIRS; lib/login-path.js seeds its cache from that variable,
+  so candidatesFor('agy') in the worker searches what Setup searched. Absolute entries only; candidates still pass
+  harness.js's file and shim checks. Test: an end-to-end refresh whose fake agy is only in the login directory (the
+  variable is deleted after import, so only the handoff can deliver it); fails without the refresh.js change.
+- f5 (+ s2): guards.mjs matches each gemini.js spawn whole — `found.binary, <pinned argv>, opts` — pins the opts
+  literal (cwd: dir, stdin ignored, hooks off) assigned once, and allows `dir` only null or the mkdtemp. setup-guards
+  proves .concat(), a spread, other options, a dropped cwd, opened stdin, a reassigned opts and a moved folder fail.

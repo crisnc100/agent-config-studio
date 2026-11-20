@@ -129,6 +129,34 @@ ok('HOME is redirected', home !== realHome);
   ok('it got a fresh directory rather than colliding', dirs.length === 2, JSON.stringify(dirs));
 }
 
+// --- Gemini: detect finds agy as Setup does, and never takes another build's id ---
+{
+  const g = tempDir('acs-cli-gemini-');
+  const reg = path.join(g, '.agent-config-studio', 'seats.json');
+  // PATH without any real agy, so nothing here can start one; a fake goes first where a test wants agy installed.
+  const noAgy = (process.env.PATH || '').split(path.delimiter).filter((d) => d && !fs.existsSync(path.join(d, 'agy'))).join(path.delimiter);
+  const fakeBin = path.join(g, 'bin');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(path.join(fakeBin, 'agy'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const runG = (pathVar, ...args) => {
+    try { return execFileSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env: { ...process.env, HOME: g, CODEX_HOME: '', NO_COLOR: '1', PATH: pathVar } }); }
+    catch (e) { return `EXIT ${e.status}\n${e.stdout || ''}${e.stderr || ''}`; }
+  };
+  const out = runG(`${fakeBin}${path.delimiter}${noAgy}`, 'detect');
+  ok('detect suggests Gemini when agy is installed, before agy has made its folder', /gemini-1\s+gemini/.test(out) && !fs.existsSync(path.join(g, '.gemini')), out);
+  ok('...and not without agy', !/gemini/.test(runG(noAgy, 'detect')));
+
+  fs.mkdirSync(path.dirname(reg), { recursive: true });
+  const future = { id: 'gemini-1', vendor: 'someday', label: 'From a newer build' };
+  fs.writeFileSync(reg, JSON.stringify({ version: 1, seats: [future] }));
+  const saved = runG(`${fakeBin}${path.delimiter}${noAgy}`, 'detect', '--save');
+  const seats = JSON.parse(fs.readFileSync(reg, 'utf8')).seats;
+  ok('detect --save keeps the entry another build owns', seats.some((x) => JSON.stringify(x) === JSON.stringify(future)), JSON.stringify(seats));
+  const mine = seats.find((x) => x.vendor === 'gemini');
+  ok('...registers Gemini under a fresh id', mine && mine.id !== 'gemini-1' && mine.harness === 'agy', JSON.stringify(seats));
+  ok('...and says which id it registered', mine && new RegExp(`registered ${mine.id} \\(gemini\\)`).test(saved), saved);
+}
+
 fs.rmSync(home, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

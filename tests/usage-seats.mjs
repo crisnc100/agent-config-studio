@@ -760,6 +760,14 @@ function defaultGrokHomePath() {
   saveSeats(loadSeats(f).seats, f);
   ok('saveSeats keeps it', raw().filter((x) => x.id === 'later-1').length === 1);
   ok('a new seat never takes its id', uniqueSeatId('later-1', f, path.join(tmp, 'gem-ids')) === 'later-1-2');
+  let clash = null;
+  try { addSeat({ id: 'later-1', vendor: 'claude', label: 'Same id' }, f); } catch (e) { clash = e; }
+  ok('addSeat refuses an id an unreadable entry holds', clash && /cannot read/.test(clash.message), clash?.message);
+  ok('...and leaves that entry as it was', JSON.stringify(raw().find((x) => x.id === 'later-1')) === JSON.stringify(future) && raw().filter((x) => x.id === 'later-1').length === 1);
+  saveSeats([...loadSeats(f).seats, { id: 'later-1', vendor: 'claude', label: 'Written past addSeat' }], f);
+  ok('saveSeats never drops or replaces an unreadable entry, even on a matching id',
+     raw().some((x) => JSON.stringify(x) === JSON.stringify(future)), JSON.stringify(raw()));
+  fs.writeFileSync(f, JSON.stringify({ version: 1, seats: [{ id: 'claude-1', vendor: 'claude', label: 'Claude' }, future] }));
   let t = null;
   try { removeSeat('later-1', f); } catch (e) { t = e; }
   ok('it cannot be removed by a build that cannot read it', t !== null && raw().some((x) => x.id === 'later-1'));

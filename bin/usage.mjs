@@ -7,6 +7,7 @@ import {
   writeSnapshot, createCodexHome, uniqueSeatId,
   sharedCodexHome, isSharedCodexHome, seatHomeRoot,
 } from '../lib/usage/seats.js';
+import { locateBinary } from '../lib/harness.js';
 
 /**
  * The routing gauge: which subscription has room right now.
@@ -162,7 +163,9 @@ function listSeats() {
 }
 
 function detect() {
-  const found = detectSeats();
+  // agy the way Setup finds it (installedClis in server.js): an installed CLI
+  // is evidence even before it has written ~/.gemini/antigravity-cli.
+  const found = detectSeats({ binaries: { agy: locateBinary('agy').installed } });
   const { seats } = loadSeats();
   // Deduplicating by generated id alone re-registers a home that is already
   // tracked under a different label — the same subscription counted twice.
@@ -192,9 +195,12 @@ function detect() {
     // Go through addSeat so each one is validated against the growing registry
     // rather than written straight past the checks.
     let added = 0;
-    for (const seat of fresh) {
-      try { addSeat(seat); added++; }
-      catch (e) { console.log(`  ${C.yellow('skipped')} ${seat.id}: ${e.message}`); }
+    for (const detected of fresh) {
+      // A fresh id at save time: the detected one is fixed (`gemini-1`) and may
+      // belong to an entry this build cannot read, which addSeat refuses.
+      const seat = { ...detected, id: uniqueSeatId(detected.id) };
+      try { addSeat(seat); added++; console.log(`  ${C.green('registered')} ${seat.id} (${seat.vendor})`); }
+      catch (e) { console.log(`  ${C.yellow('skipped')} ${detected.id}: ${e.message}`); }
     }
     console.log(`  ${C.green('registered')} ${added} seat(s)\n`);
   }
