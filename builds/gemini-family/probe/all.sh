@@ -4,7 +4,11 @@
 set -euo pipefail
 . "$(dirname "$0")/common.sh" || exit 2
 P="$PROBE_DIR"
-echo "agy $("$AGY" --version)"
+# Like the runtimes, --version runs from an empty folder this run made, never the caller's.
+new_run
+mkdir "$RUN/version"
+cd "$RUN/version"
+echo "agy $(CMUX_ANTIGRAVITY_HOOKS_DISABLED=1 "$AGY" --version </dev/null)"
 "$P/run.sh" control
 "$P/run.sh" deny
 "$P/attr.sh" a .agent/hooks.json
