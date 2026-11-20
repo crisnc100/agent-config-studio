@@ -40,3 +40,14 @@
 - Probes (real agy): subagents inherit the deny list; empty-cwd absolute-path read is refused by print mode and reported in result.denied_actions (the field exists for approval refusals, not deny-rule ones), so both runtimes print those too.
 - REVIEW_AUTHOR=agy note in --security-only. SKILL.md pin sentence, README refusal list.
 - Gate: 143 local test files pass one by one (6 at a time); packs 915/915.
+
+## PR A fix round (review 2026-11-20-19-56-35-141781) — builder, 2026-11-20
+- f1/f2: probe scripts work only in tagged folders they made under the temp folder; set -euo pipefail and a workspace check before any delete or agy launch. Checked against a foreign folder: exit 2, nothing touched.
+- f3: workspace and home refusals before agy --version; the version runs in a fresh empty temp folder (both runtimes).
+- f4: ask-model refuses agy for --role security (and --second).
+- f5: fix check, second opinion, dispute and eval summary say model unverified; records carry modelVerified / verifierModelVerified false.
+- f6: a home hook passes only as cmux's exact command template (fixture from the real hooks.json, user path removed).
+- f7: the Gemini display-name pattern matches only whole names.
+- s1: agents/ refuses in all four folders; probe/agents.sh showed a custom agent's hooks fire under the deny list.
+- Test checks from Sol: cliOf literal again, union fixture neither catalog satisfies, exact model-id output, subscriptionOf inherited keys, pause-cli family list.
+- Real agy: ask-model neon from the worktree answered; one-case --eval --family neon caught the bug (56.4s), model unverified on both lines.

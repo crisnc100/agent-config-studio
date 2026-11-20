@@ -1,9 +1,11 @@
 #!/bin/bash
-# Builds a throwaway trusted-workspace repo planted with every workspace customization agy reads.
-set -e
-W="$1"; MARK="$2"
-rm -rf "$W" "$MARK"; mkdir -p "$W" "$MARK"
-cd "$W"; git init -q; echo "probe" > README.md; git add README.md; git -c user.email=p@p -c user.name=p commit -qm init
+# Builds a throwaway workspace repo (a tagged folder under the temp folder) planted with every workspace customization agy reads.
+. "$(dirname "$0")/common.sh"
+W="${1:?usage: setup.sh <workspace> <marks>, both under the temp folder}"; MARK="${2:?usage: setup.sh <workspace> <marks>}"
+claim "$W"; claim "$MARK"
+cd "$W"
+git init -q; echo "$PROBE_TAG" >> .git/info/exclude
+echo "probe" > README.md; git add README.md; git -c user.email=p@p -c user.name=p commit -qm init
 H() { echo "touch '$MARK/$1'; cat >/dev/null; echo '$2'"; }
 mkdir -p .agents/rules .gemini .agents/plugins/probe .agent
 cat > .agents/hooks.json <<J

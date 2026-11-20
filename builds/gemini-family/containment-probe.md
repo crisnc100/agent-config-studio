@@ -55,12 +55,22 @@ Deny list as shipped: `["command(*)","write_file(*)","mcp(*)","read_url(*)","dow
 | m | the deny list, cwd an empty folder under `/private/tmp`, no `--add-dir`; the model asked to read the planted repo's README by absolute path | exit 0, SUCCESS, empty response, `denied_actions: [{"action":"read_file"}]`. Print mode refused the out-of-workspace read for want of an approval; no hook or marker ran (the planted repo was not the workspace). Recorded only: the refusal ships regardless. |
 | version | `agy --version` | prints `1.5.13`; no planted hook ran. |
 
+## Third round (fix round for the PR review) — 2026-11-20
+
+| Run | Setup | Result |
+| --- | --- | --- |
+| agents | `probe/agents.sh`: `.agents/agents/probe-agent.md` (subagent, `hooks: [../../hookdir/h.json]`), the hooks file outside every refused name; the model asked to invoke `probe-agent`, under the deny list | exit 0, SUCCESS. **All four hook markers fired** (sessionstart, preinvocation, pretooluse, stop): a custom agent's hooks run shell commands under the deny list, wherever the agent's frontmatter points. The subagent's own read_file was blocked by its PreToolUse hook. `agents/` in any of the four folders now refuses. Re-run once to check the script: same markers. |
+| cmux hooks | the real `~/.gemini/config/hooks.json` (read only) | every handler is one command template with only the socket path and event varying. Its first branch, under `CMUX_ANTIGRAVITY_HOOKS_DISABLED=1`, drains stdin and prints `{}`. A hook now passes only when its whole command is that template (`tests/fixtures/cmux-antigravity-hook.txt`); the marker alone, or anything added, refuses. A real `ask-model --family neon` and a one-case `--eval --family neon` ran clean against the real home after the change. |
+
+The probe scripts work only in folders they made: each is under the temp folder and carries `.acs-agy-probe-owned`, written when the script created it, and every script stops (`set -euo pipefail`, plus a check that it is in its own workspace) before it deletes a file or starts agy. Pointed at any other folder, they exit 2 and touch nothing.
+
 ## What ships
 
 Both runtimes (ask-model's agy path, the review gate's runAgy) refuse before agy runs, with a named error:
 
+- **Order:** the workspace and home checks run first; only then does `agy --version` run, in a fresh empty temp folder.
 - **Version:** `agy --version` must print `AGY_VERSION` (`1.5.13`). Any other answer, or a failed call, refuses and says to re-run this probe.
-- **Workspace:** from `process.cwd()` at call time up to the filesystem root (not git's top folder; a linked worktree's `.git` is a file), any of `hooks.json`, `mcp_config.json`, `plugins.json`, `agents.json`, `plugins` inside `.agents/`, `.agent/`, `_agents/`, `_agent/`, of any type (a dangling symlink included) or not lstat-able. No folder is exempt, home included. `agents.json` is unprobed: the binary carries an `agents_paths` discovery key. Rules, skills and workflows are text the model reads under the deny list, so they do not refuse.
-- **Home:** `~/.gemini/config/mcp_config.json` must be empty (zero-length, `{}` or `{"mcpServers":{}}`); every `hooks.json` handler must carry the cmux marker; `~/.gemini/config/plugins/` must be empty or absent and `plugins.json` absent.
+- **Workspace:** from `process.cwd()` at call time up to the filesystem root (not git's top folder; a linked worktree's `.git` is a file), any of `hooks.json`, `mcp_config.json`, `plugins.json`, `agents.json`, `plugins`, `agents` inside `.agents/`, `.agent/`, `_agents/`, `_agent/`, of any type (a dangling symlink included) or not lstat-able. No folder is exempt, home included. `agents.json` is unprobed: the binary carries an `agents_paths` discovery key. Rules, skills and workflows are text the model reads under the deny list, so they do not refuse.
+- **Home:** `~/.gemini/config/mcp_config.json` must be empty (zero-length, `{}` or `{"mcpServers":{}}`); every `hooks.json` handler's command must be exactly cmux's template (socket path and event filled in); `~/.gemini/config/plugins/` must be empty or absent and `plugins.json` absent.
 
 The deny list, version, marker, env and workspace names are one literal per runtime, kept identical by `tests/vendor-prefixes.mjs`.
