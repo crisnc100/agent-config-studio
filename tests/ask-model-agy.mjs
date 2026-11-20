@@ -31,7 +31,10 @@ const SYSTEM = ['/usr/bin', '/bin'];
 fs.writeFileSync(path.join(STUBS, 'agy'), `#!${process.execPath}
 const fs = require('node:fs');
 const a = process.argv.slice(2);
-if (a[0] === '--version') { if (process.env.STUB_VERSION_FAIL) process.exit(1); console.log(process.env.STUB_VERSION || '1.5.13'); process.exit(0); }
+if (a[0] === '--version') {
+  if (process.env.STUB_VERSION_LOG) fs.appendFileSync(process.env.STUB_VERSION_LOG, JSON.stringify({ cwd: process.cwd(), entries: fs.readdirSync(process.cwd()) }) + '\\n');
+  if (process.env.STUB_VERSION_FAIL) process.exit(1); console.log(process.env.STUB_VERSION || '1.5.13'); process.exit(0);
+}
 const val = (f) => { const i = a.indexOf(f); return i === -1 ? undefined : a[i + 1]; };
 const st = fs.fstatSync(0);
 fs.appendFileSync(process.env.STUB_LOG, JSON.stringify({ argv: a, cwd: process.cwd(), stdin: st.isCharacterDevice() ? 'chardev' : 'other',
@@ -88,6 +91,9 @@ function ask(args, { env = {}, h = home(), pathDirs = [STUBS, ...SYSTEM], cwd = 
   try { j = JSON.parse(r.stdout); } catch {}
   return { code: r.status, out: r.stdout, err: r.stderr, calls, argv: calls[0]?.argv, j, home: h };
 }
+// cmux's hook command as it writes it into ~/.gemini/config/hooks.json (socket path and event left open).
+const CMUX_TEMPLATE = fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'cmux-antigravity-hook.txt'), 'utf8').trim();
+const cmuxCommand = (event, sock = '/Users/someone/.local/state/cmux/cmux.sock') => CMUX_TEMPLATE.replaceAll('<SOCK>', sock).replaceAll('<EVENT>', event);
 const show = (r) => J({ code: r.code, out: r.out, err: r.err, calls: r.calls });
 const DENY = J({ permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'] } });
 
@@ -231,6 +237,68 @@ console.log('\nask-model agy: ~/.gemini/config plugins');
   ok('an empty plugins folder runs', e.code === 0 && e.calls.length === 1, show(e));
   const pj = ask(['--family', 'neon'], { h: home({ 'plugins.json': '{}' }) });
   ok('a ~/.gemini/config/plugins.json → exit 4, agy not run', pj.code === 4 && /plugins\.json declares plugins/.test(pj.err) && pj.calls.length === 0, show(pj));
+}
+
+console.log('\nask-model agy: only cmux\'s unchanged hook command passes');
+{
+  const one = (command) => J({ cmux: { SessionStart: [{ type: 'command', command, timeout: 10 }] } });
+  for (const [name, command] of [
+    ['the cmux marker alone', ': cmux-antigravity-hook-v2; true'],
+    ['cmux\'s command with a command added after it', `${cmuxCommand('session-start')}; touch /tmp/x`],
+    ['cmux\'s command with a command added before it', `touch /tmp/x; ${cmuxCommand('session-start')}`],
+    ['cmux\'s command with a quote in its socket path', cmuxCommand('session-start', "/tmp/a'; touch /tmp/x; '")],
+    ['cmux\'s command with a shell word as its event', cmuxCommand('stop;touch')],
+  ]) {
+    const r = ask(['--family', 'neon'], { h: home({ 'hooks.json': one(command) }) });
+    ok(`${name} → exit 4, agy not run`, r.code === 4 && /not cmux's \(cmux\.SessionStart\)/.test(r.err) && r.calls.length === 0, show(r));
+  }
+  const all = J({ cmux: Object.fromEntries([['Notification', 'notification'], ['PreInvocation', 'prompt-submit'], ['SessionEnd', 'session-end'],
+    ['SessionStart', 'session-start'], ['Stop', 'stop'], ['turn-completion', 'stop']].map(([e, v]) => [e, [{ type: 'command', command: cmuxCommand(v), timeout: 10 }]])) });
+  const r = ask(['--family', 'neon'], { h: home({ 'hooks.json': all }) });
+  ok('every hook cmux writes, unchanged, runs', r.code === 0 && r.calls.length === 1, show(r));
+}
+
+console.log('\nask-model agy: custom agents in the workspace');
+{
+  const base = mk('ws-agents');
+  for (const dir of ['.agents', '.agent', '_agents', '_agent']) {
+    fs.mkdirSync(path.join(base, dir, 'agents'), { recursive: true });
+    const r = ask(['--family', 'neon'], { cwd: base });
+    fs.rmSync(path.join(base, dir), { recursive: true, force: true });
+    ok(`${dir}/agents (custom agents, which can name hooks and plugins) → exit 4, agy not run`, r.code === 4 && r.err.includes(path.join(base, dir, 'agents')) && r.calls.length === 0, show(r));
+  }
+}
+
+console.log('\nask-model agy: the checks that need no agy come first; --version runs in an empty folder');
+{
+  const VLOG = path.join(tmp, 'version.jsonl');
+  const base = mk('ws-order');
+  fs.mkdirSync(path.join(base, '.agents'), { recursive: true }); fs.writeFileSync(path.join(base, '.agents', 'hooks.json'), '{}');
+  fs.writeFileSync(VLOG, '');
+  const w = ask(['--family', 'neon'], { cwd: base, env: { STUB_VERSION: '1.6.0', STUB_VERSION_LOG: VLOG } });
+  ok('a workspace refusal names the workspace file, and agy --version never ran', w.code === 4 && /\.agents\/hooks\.json: agy runs a workspace's hooks/.test(w.err)
+    && fs.readFileSync(VLOG, 'utf8') === '', show(w));
+  fs.writeFileSync(VLOG, '');
+  const hm = ask(['--family', 'neon'], { h: home({ 'hooks.json': J({ mine: { Stop: [{ command: 'x' }] } }) }), env: { STUB_VERSION_LOG: VLOG } });
+  ok('a home refusal comes before agy --version too', hm.code === 4 && /not cmux's/.test(hm.err) && fs.readFileSync(VLOG, 'utf8') === '', show(hm));
+  fs.writeFileSync(VLOG, '');
+  const okRun = ask(['--family', 'neon', '--cwd', WORK], { cwd: base, env: { STUB_VERSION_LOG: VLOG } });
+  const v = fs.readFileSync(VLOG, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  ok('agy --version runs in a fresh empty folder, not the caller\'s or the --cwd folder, and that folder is removed', okRun.code === 0 && v.length === 1
+    && v[0].entries.length === 0 && ![base, WORK].includes(v[0].cwd) && /acs-agy-version-/.test(v[0].cwd) && !fs.existsSync(v[0].cwd), J({ v, err: okRun.err }));
+  fs.rmSync(path.join(base, '.agents'), { recursive: true, force: true });
+}
+
+console.log('\nask-model agy: never for the security role');
+{
+  const h = home();
+  fs.writeFileSync(path.join(h, '.agent-config-studio', 'roles.json'), J({ version: 2, roles: { security: { use: ['neon'], alt: 'neon' }, reviewer: { use: ['neon'] } } }));
+  const sec = ask(['--role', 'security'], { h });
+  ok('--role security resolving to neon → exit 4 naming why, agy not run', sec.code === 4 && /never answers for the security role — agy was not run/.test(sec.err) && sec.calls.length === 0, show(sec));
+  const alt = ask(['--role', 'security', '--second'], { h });
+  ok('…and its second opinion too', alt.code === 4 && /never answers for the security role/.test(alt.err) && alt.calls.length === 0, show(alt));
+  const rev = ask(['--role', 'reviewer'], { h });
+  ok('another role resolving to neon runs', rev.code === 0 && rev.calls.length === 1, show(rev));
 }
 
 console.log('\nask-model agy: --schema');

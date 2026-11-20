@@ -37,7 +37,10 @@ const replyFor = `(schema) => String(schema).includes('"verdicts"') ? '{"verdict
 put(join(STUBS, 'agy'), `#!${process.execPath}
 const fs = require('node:fs'), path = require('node:path')
 const a = process.argv.slice(2)
-if (a[0] === '--version') { if (process.env.STUB_AGY_VERSION === 'fail') process.exit(1); console.log(process.env.STUB_AGY_VERSION || '1.5.13'); process.exit(0) }
+if (a[0] === '--version') {
+  fs.writeFileSync(path.join(${J(ARGV)}, 'version-' + process.pid + '.json'), JSON.stringify({ cwd: process.cwd(), entries: fs.readdirSync(process.cwd()) }))
+  if (process.env.STUB_AGY_VERSION === 'fail') process.exit(1); console.log(process.env.STUB_AGY_VERSION || '1.5.13'); process.exit(0)
+}
 const st = fs.fstatSync(0)
 fs.writeFileSync(path.join(${J(ARGV)}, 'agy-' + process.pid + '.json'), JSON.stringify({ argv: a, cwd: process.cwd(),
   stdin: st.isCharacterDevice() ? 'chardev' : 'other', cmuxHooksOff: process.env.CMUX_ANTIGRAVITY_HOOKS_DISABLED ?? null }))
@@ -106,6 +109,9 @@ const calls = (name) => readdirSync(ARGV).filter((f) => f.startsWith(`${name}-`)
 const logLines = () => (existsSync(LOG) ? readFileSync(LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [])
 const findingsJson = (r) => JSON.parse(r.stdout.split('===FINDINGS_JSON===')[1])
 const gemini = (files) => { for (const [name, text] of Object.entries(files)) put(join(HOME, '.gemini/config', name), text) }
+// cmux's hook command as it writes it into ~/.gemini/config/hooks.json (socket path and event left open).
+const CMUX_TEMPLATE = readFileSync(join(dirname(SCRIPT), '..', '..', '..', 'tests', 'fixtures', 'cmux-antigravity-hook.txt'), 'utf8').trim()
+const cmuxCommand = (event, sock = '/Users/someone/.local/state/cmux/cmux.sock') => CMUX_TEMPLATE.replaceAll('<SOCK>', sock).replaceAll('<EVENT>', event)
 const DENY = J({ permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'] } })
 
 beforeEach(() => {
@@ -267,6 +273,100 @@ test('~/.gemini/config: an MCP server or a hook that is not cmux\'s refuses agy 
   const ok = run([], { REVIEW_REVIEWER: 'neon' })
   assert.equal(ok.status, 0, ok.out)
   assert.equal(calls('agy').length >= 1, true)
+})
+
+test('a home hook passes only as cmux\'s unchanged command: the marker alone, or cmux\'s command with more added, refuses', () => {
+  for (const command of [': cmux-antigravity-hook-v2; true', `${cmuxCommand('stop')}; touch x`, cmuxCommand('stop', "/tmp/a'; touch x; '")]) {
+    rmSync(join(HOME, '.gemini'), { recursive: true, force: true })
+    gemini({ 'hooks.json': J({ cmux: { Stop: [{ type: 'command', command }] } }) })
+    const r = run([], { REVIEW_REVIEWER: 'neon' })
+    assert.notEqual(r.status, 0, r.out)
+    assert.match(r.out, /agy review refused: .*hooks\.json has hooks that are not cmux's \(cmux\.Stop\)/)
+    assert.equal(calls('agy').length, 0, 'agy never ran')
+  }
+  rmSync(join(HOME, '.gemini'), { recursive: true, force: true })
+  gemini({ 'hooks.json': J({ cmux: { Stop: [{ type: 'command', command: cmuxCommand('stop'), timeout: 10 }], SessionStart: [{ type: 'command', command: cmuxCommand('session-start') }] } }) })
+  const ok = run([], { REVIEW_REVIEWER: 'neon' })
+  assert.equal(ok.status, 0, ok.out)
+})
+
+test('custom agents (an agents/ folder in any of the four workspace folders) refuse agy', () => {
+  for (const dir of ['.agents', '.agent', '_agents', '_agent']) {
+    mkdirSync(join(REPO, dir, 'agents'), { recursive: true })
+    writeFileSync(join(REPO, dir, 'agents', 'x.md'), '---\nname: x\n---\n# x\n')
+    const r = run([], { REVIEW_REVIEWER: 'neon' })
+    rmSync(join(REPO, dir), { recursive: true, force: true })
+    assert.notEqual(r.status, 0, r.out)
+    assert.ok(r.out.includes(join(realpathSync(REPO), dir, 'agents')), r.out)
+    assert.equal(calls('agy').length, 0, 'agy never ran')
+  }
+})
+
+test('the workspace and home checks run before agy --version, which runs in a fresh empty folder', () => {
+  const versions = () => readdirSync(ARGV).filter((f) => f.startsWith('version-')).map((f) => JSON.parse(readFileSync(join(ARGV, f), 'utf8')))
+  put(join(REPO, '.agents', 'hooks.json'), '{}')
+  const w = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY_VERSION: '9.9.9' })
+  rmSync(join(REPO, '.agents'), { recursive: true, force: true })
+  assert.match(w.out, /agy review refused: .*\.agents\/hooks\.json: agy runs a workspace's hooks/)
+  gemini({ 'hooks.json': J({ mine: { Stop: [{ command: 'x' }] } }) })
+  const h = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY_VERSION: '9.9.9' })
+  rmSync(join(HOME, '.gemini'), { recursive: true, force: true })
+  assert.match(h.out, /agy review refused: .*not cmux's/)
+  assert.equal(versions().length, 0, 'agy --version never ran')
+  const ok = run([], { REVIEW_REVIEWER: 'neon' })
+  assert.equal(ok.status, 0, ok.out)
+  const v = versions()
+  assert.equal(v.length >= 1, true)
+  for (const x of v) {
+    assert.deepEqual(x.entries, [])
+    assert.notEqual(x.cwd, realpathSync(REPO))
+    assert.match(x.cwd, /acs-agy-version-/)
+    assert.equal(existsSync(x.cwd), false, 'the folder is removed')
+  }
+})
+
+test('a fix check by Neon is recorded and printed model unverified', () => {
+  const r = run([], { REVIEW_REVIEWER: 'neon' })
+  assert.equal(r.status, 0, r.out)
+  const id = findingsJson(r).reviewId
+  writeFileSync(join(REPO, 'a.js'), 'export const f = (n) => {\n  for (let i = 0; i < n; i++) {}\n  return n\n}\n')
+  git('add', '.'); git('commit', '-qm', 'fix')
+  const c = run(['--fix-check', id], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'clean' })
+  assert.equal(c.status, 0, c.out)
+  assert.match(c.stdout, /✓ Fix check \S+ recorded at \S+: 0 finding\(s\) · neon model unverified/)
+  const record = logLines().find((e) => e.kind === 'fix-check')
+  assert.equal(record.family, 'neon')
+  assert.equal(record.modelVerified, false)
+})
+
+test('a Neon second opinion and a Neon dispute verifier are recorded model unverified; another verifier carries no such field', () => {
+  const pool = J({ use: ['opus', 'neon'], ids: ['claude-opus-stub', 'gemini-4-neon'] })
+  const r = run([], { REVIEW_REVIEWER: 'opus', STUB_ROLE: pool, REVIEW_VERIFY: 'second-opinion' })
+  assert.equal(r.status, 0, r.out)
+  assert.match(r.stdout, /▶ second opinion · neon \(agy · gemini-4-neon · \S+ · model unverified\)/)
+  const record = logLines().find((e) => e.type === 'review')
+  assert.equal(record.secondOpinion.family, 'neon')
+  assert.equal(record.secondOpinion.modelVerified, false)
+  assert.equal(Object.hasOwn(record, 'modelVerified'), false, 'the reviewer itself (opus) is not marked')
+  assert.equal(findingsJson(r).secondOpinion.modelVerified, false)
+  const report = readFileSync(join(REPO, record.dir, 'code-review.md'), 'utf8')
+  assert.match(report, /^Second opinion: neon \(gemini-4-neon\) — model unverified$/m)
+  const d = run(['--dispute', record.id, 'f1', '--reason', 'intended behavior', '--evidence', 'a.js:2'], { STUB_ROLE: pool })
+  assert.equal(d.status, 0, d.out)
+  const dispute = logLines().find((e) => e.type === 'dispute')
+  assert.equal(dispute.verifier, 'neon')
+  assert.equal(dispute.verifierModelVerified, false)
+  assert.match(d.stdout, /\(verifier neon, model unverified\)/)
+})
+
+test('the eval summary marks a Neon run model unverified, per family and in its total line', () => {
+  const cases = join(dirname(SCRIPT), 'eval', 'examples')
+  const r = run(['--eval', '--family', 'neon,opus', '--cases', cases, '--yes'], { STUB_ROLE: J({ use: ['neon', 'opus'], ids: ['gemini-4-neon', 'claude-opus-stub'] }) })
+  assert.equal(r.status, 0, r.out)
+  assert.match(r.stdout, /▶ neon \(agy · gemini-4-neon · model unverified\)/)
+  assert.match(r.stdout, /^neon \(gemini-4-neon · \S+ · model unverified\) · bugs caught/m)
+  assert.match(r.stdout, /^opus \(claude-opus-stub · \S+\) · bugs caught/m)
+  assert.doesNotMatch(r.stdout, /▶ opus \([^)]*model unverified/)
 })
 
 test('agy never runs the security pass: a pinned agy family refuses, a role of agy families only refuses, and agy members are skipped', () => {

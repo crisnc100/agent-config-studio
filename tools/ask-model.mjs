@@ -167,14 +167,19 @@ const AGY_SETTINGS = { permissions: { deny: ['command(*)', 'write_file(*)', 'mcp
 // (builds/gemini-family/probe) before moving this.
 const AGY_VERSION = '1.5.13';
 // Workspace customizations agy runs from the folder it starts in and every folder above it: hooks, MCP servers,
-// plugins and agents. Any of these names, in any of these folders, from the cwd up to the filesystem root, refuses.
+// plugins and agents (agents.json, and custom agents in agents/, whose frontmatter can name hooks and plugins). Any of these names, in any of these folders, from the cwd up to the filesystem root, refuses.
 // The review runtime carries the same literal; tests/vendor-prefixes.mjs keeps them identical.
-const AGY_WORKSPACE = { dirs: ['.agents', '.agent', '_agents', '_agent'], names: ['hooks.json', 'mcp_config.json', 'plugins.json', 'agents.json', 'plugins'] };
+const AGY_WORKSPACE = { dirs: ['.agents', '.agent', '_agents', '_agent'], names: ['hooks.json', 'mcp_config.json', 'plugins.json', 'agents.json', 'plugins', 'agents'] };
 // A bound on the turn: agy exits 3 with DEADLINE_EXCEEDED past it, which ask-model reads as a failed call.
 const AGY_PRINT_TIMEOUT = '1800s';
-// cmux writes its own hooks into ~/.gemini/config/hooks.json, each command carrying this marker; with
-// CMUX_ANTIGRAVITY_HOOKS_DISABLED=1 each of them exits at once. Any other hook there runs a command of its own.
-const AGY_CMUX_HOOK = 'cmux-antigravity-hook-v2';
+// cmux writes its own hooks into ~/.gemini/config/hooks.json, every one this exact command with only the socket path
+// and the event name filled in; under CMUX_ANTIGRAVITY_HOOKS_DISABLED=1 it reads stdin, prints {} and does nothing
+// else. A hook is let through only when its whole command is this template (agyCmuxHook): a marker alone, or the
+// template with anything added, could run a command of its own. A new cmux template refuses until this is updated.
+const AGY_CMUX_HOOK = ": cmux-antigravity-hook-v2; :; printenv CMUX_ANTIGRAVITY_HOOKS_DISABLED | grep -qx 1 && { :; { cat >/dev/null 2>/dev/null || true; echo '{}'; }; } || { cmux_hook_ambient_socket=$(printenv CMUX_SOCKET_PATH || printf '\\n'; printf '.'); cmux_hook_ambient_socket=${cmux_hook_ambient_socket%??}; cmux_hook_ambient_cli=$(printenv CMUX_BUNDLED_CLI_PATH || printf '\\n'; printf '.'); cmux_hook_ambient_cli=${cmux_hook_ambient_cli%??}; if [ -n \"${cmux_hook_ambient_socket:-}\" ] && [ -S \"${cmux_hook_ambient_socket:-}\" ] && [ -f \"${cmux_hook_ambient_cli:-}\" ] && [ -x \"${cmux_hook_ambient_cli:-}\" ] && CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5 \"${cmux_hook_ambient_cli:-}\" --socket \"${cmux_hook_ambient_socket:-}\" hooks enqueue antigravity <EVENT>; then :; elif [ -x '/Applications/cmux.app/Contents/Resources/bin/cmux' ]; then CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5 '/Applications/cmux.app/Contents/Resources/bin/cmux' --socket '<SOCK>' hooks enqueue antigravity <EVENT>; elif command -v cmux >/dev/null 2>&1; then CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5 cmux --socket '<SOCK>' hooks enqueue antigravity <EVENT>; else { cat >/dev/null 2>/dev/null || true; echo '{}'; }; fi; cmux_hook_status=$?; :; if [ \"$cmux_hook_status\" -ne 0 ]; then { cat >/dev/null 2>/dev/null || true; echo '{}'; }; fi; exit 0; }";
+const AGY_CMUX_HOOK_RE = new RegExp(`^${AGY_CMUX_HOOK.split(/(<SOCK>|<EVENT>)/).map((p) => (p === '<SOCK>' ? "/[^']*" : p === '<EVENT>' ? '[a-z-]+'
+  : p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('')}$`);
+const agyCmuxHook = (command) => typeof command === 'string' && AGY_CMUX_HOOK_RE.test(command);
 const AGY_ENV = { CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1' };
 
 /**
@@ -728,7 +733,7 @@ function grokHookFolders(cwd) {
 /**
  * Why agy's own config (~/.gemini/config) would run something besides the model, or null. agy has no flag that
  * keeps its MCP servers or hooks out of a call: any server in mcp_config.json starts, and every hooks.json hook
- * runs a shell command. cmux's own hooks are let through: each carries AGY_CMUX_HOOK and exits at once under
+ * runs a shell command. cmux's own hooks are let through: each is AGY_CMUX_HOOK exactly and does nothing under
  * AGY_ENV. A file that can't be read or parsed refuses, since nothing in it could be ruled out.
  */
 function agyConfigProblem(home = os.homedir()) {
@@ -767,10 +772,23 @@ function agyConfigProblem(home = os.homedir()) {
       if (!Array.isArray(list)) return `${hooks.file}: ${name}.${event} is not a list`;
       // A tool event's entries are { matcher, hooks: [...] } groups; every other event lists handlers directly.
       const handlers = list.flatMap((h) => (isObject(h) && Array.isArray(h.hooks) ? h.hooks : [h]));
-      if (handlers.some((h) => !isObject(h) || typeof h.command !== 'string' || !h.command.includes(AGY_CMUX_HOOK))) foreign.push(`${name}.${event}`);
+      if (handlers.some((h) => !isObject(h) || !agyCmuxHook(h.command))) foreign.push(`${name}.${event}`);
     }
   }
   return foreign.length ? `${hooks.file} has hooks that are not cmux's (${foreign.join(', ')}); agy runs every hook's command on its calls` : null;
+}
+
+/**
+ * What `agy --version` prints, or null when it fails. It runs in a fresh empty folder under the temp dir, so it starts
+ * nowhere near the workspace it is about to be asked about.
+ */
+function agyVersion(bin) {
+  let dir = null;
+  try {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-version-'));
+    const v = spawnSync(bin, ['--version'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000, env: { ...process.env, ...AGY_ENV } });
+    return v.error || v.status !== 0 ? null : String(v.stdout || '').trim() || null;
+  } catch { return null; } finally { if (dir) fs.rmSync(dir, { recursive: true, force: true }); }
 }
 
 /**
@@ -1362,6 +1380,11 @@ async function main(argv) {
     return exit;
   };
 
+  if (vendor === 'agy' && o.role === 'security') {
+    result.error = 'agy keeps web search on (no permission turns it off), and a security prompt may carry content that tries to steer its '
+      + 'model, so it never answers for the security role — agy was not run. Choose another family for the role, or name one with --family';
+    return finish(4);
+  }
   if (vendor === 'agy' && mode !== 'read-only') {
     result.error = mode === 'investigate'
       ? `${sandboxProblem('agy')}, so --investigate is not available for agy — agy was not run`
@@ -1385,19 +1408,19 @@ async function main(argv) {
   }
   let logFile = null;
   if (vendor === 'agy') {
-    const v = spawnSync(bin, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000, env: { ...process.env, ...AGY_ENV } });
-    const version = String(v.stdout || '').trim();
-    if (v.error || v.status !== 0 || version !== AGY_VERSION) {
-      result.error = `agy reports version ${JSON.stringify(version || null)}, but its containment was probed on ${AGY_VERSION}: re-run the probe `
-        + '(builds/gemini-family/probe in Agent Config Studio) and update AGY_VERSION before using it, so agy was not run';
-      return finish(4);
-    }
-    const problem = agyConfigProblem();
-    if (problem) { result.error = `${problem}, so agy was not run`; return finish(4); }
+    // The workspace and home first: they need no agy process, and an unprobed agy could load what they would refuse.
     const workspace = agyWorkspaceFiles(cwd);
     if (workspace.length) {
       result.error = `${workspace.join(', ')}: agy runs a workspace's hooks, MCP servers, plugins and agents on every call, and no flag `
         + 'turns them off, so agy was not run. Ask another family, or run from a folder without them.';
+      return finish(4);
+    }
+    const problem = agyConfigProblem();
+    if (problem) { result.error = `${problem}, so agy was not run`; return finish(4); }
+    const version = agyVersion(bin);
+    if (version !== AGY_VERSION) {
+      result.error = `agy reports version ${JSON.stringify(version)}, but its containment was probed on ${AGY_VERSION}: re-run the probe `
+        + '(builds/gemini-family/probe in Agent Config Studio) and update AGY_VERSION before using it, so agy was not run';
       return finish(4);
     }
     // Kept after the call: agy's own log of it, where a model fallback agy does not report would show.

@@ -90,6 +90,10 @@ try {
     t('D4 effort: "<e>" beside a resolver → flagged when unused', 'run({ model: "$(model-id sol || echo MODEL-ID-UNRESOLVED-sol)", effort: "max" })', 'cfg.mjs', (f) => only(f, 'D4').length === 1 && only(f, 'D4')[0].family === 'sol');
     t('the word "model" in prose is not flagged', 'Pick a model: whichever fits.\nThe model is fast. model = big', 'NOTES.md', (f) => f.length === 0);
     t('a model name with a version in prose → D1 info, no fix', 'Opus 5 is good; GPT-6 too.', 'SKILL.md', (f) => f.length === 2 && f.every((x) => x.rule === 'D1' && x.severity === 'info' && !x.fix));
+    t('a whole Gemini display name with its tier names its family', 'Reviews go to Gemini 4 Neon now.', 'SKILL.md', (f) => f.length === 1 && f[0].match === 'Gemini 4 Neon');
+    t('a Gemini name whose tier runs on (Neon-beta) is the bare name, with no fix', 'Try Gemini 4 Neon-beta.', 'SKILL.md', (f) => f.length === 1 && f[0].match === 'Gemini 4' && !f[0].fix);
+    t('a Gemini name never takes the next sentence as its tier', 'We tried Gemini 4. Neon is faster.', 'SKILL.md', (f) => f.length === 1 && f[0].match === 'Gemini 4' && !f[0].fix);
+    t('a Gemini version keeps dots only between digits', 'Gemini 4.1 Neon and Gemini 4.', 'SKILL.md', (f) => f.map((x) => x.match).join('|') === 'Gemini 4.1 Neon|Gemini 4');
     t('full tokens, every occurrence: two ids on one line', fence('codex -m gpt-6-sol && codex -m gpt-6-astra'), 'SKILL.md', (f) => f.map((x) => x.match).join() === 'gpt-6-sol,gpt-6-astra');
     t('a longer id is one token, not its prefix', 'claude-fable-5-1.', 'SKILL.md', (f) => f.length === 1 && f[0].match === 'claude-fable-5-1' && !f[0].stale);
     t('grok: an exact registry id names its family', 'grok-4.6 and grok-4.7', 'SKILL.md', (f) => f[0]?.family === 'grok-prev' && f[1]?.family === 'grok' && !f[0].stale && !f[1].stale);

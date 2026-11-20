@@ -52,6 +52,12 @@ for (const name of ['AGY_SETTINGS', 'AGY_VERSION', 'AGY_WORKSPACE', 'AGY_CMUX_HO
 const ws = Function(`return (${line(ask, 'AGY_WORKSPACE')})`)();
 ok('AGY_WORKSPACE names the approved folders and files', JSON.stringify(ws) === JSON.stringify({
   dirs: ['.agents', '.agent', '_agents', '_agent'], names: ['hooks.json', 'mcp_config.json', 'plugins.json', 'agents.json', 'plugins'] }), JSON.stringify(ws));
+const cmux = Function(`return (${line(ask, 'AGY_CMUX_HOOK')})`)();
+ok('AGY_CMUX_HOOK is cmux\'s hook command as cmux writes it (tests/fixtures/cmux-antigravity-hook.txt)', cmux === read('tests/fixtures/cmux-antigravity-hook.txt').trim());
+// The part that makes the hook harmless: under CMUX_ANTIGRAVITY_HOOKS_DISABLED=1 it drains stdin, prints {} and skips the rest.
+ok('the template opens with the disable check', cmux.startsWith(": cmux-antigravity-hook-v2; :; printenv CMUX_ANTIGRAVITY_HOOKS_DISABLED | grep -qx 1 && { :; { cat >/dev/null 2>/dev/null || true; echo '{}'; }; } || { "));
+ok('the template leaves open only the socket path (quoted) and the event', (cmux.match(/<SOCK>/g) || []).length === 2 && (cmux.match(/'<SOCK>'/g) || []).length === 2
+  && (cmux.match(/<EVENT>/g) || []).length === 3 && !/<(?!SOCK>|EVENT>)[A-Z]+>/.test(cmux));
 const deny = Function(`return (${line(ask, 'AGY_SETTINGS')})`)().permissions.deny;
 ok('the agy deny list covers commands, writes, MCP and every URL action', ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'].every((d) => deny.includes(d)), JSON.stringify(deny));
 ok('tools/ask-model.mjs imports vendorOf from lib/models.js', /import \{[^}]*\bvendorOf\b[^}]*\} from '\.\.\/lib\/models\.js'/.test(ask));
@@ -61,6 +67,7 @@ ok('a gemini- id runs on agy', vendorOf('gemini-4-neon') === 'agy');
 ok('every vendor in the table has a subscription; agy draws on gemini', Object.values(VENDOR_PREFIXES).every((v) => Object.hasOwn(SUBSCRIPTION_OF, v)) && subscriptionOf('agy') === 'gemini'
   && ['claude', 'codex', 'grok'].every((v) => subscriptionOf(v) === v), JSON.stringify(SUBSCRIPTION_OF));
 ok('an unknown vendor has no subscription', subscriptionOf('acme') === null && subscriptionOf(null) === null);
+ok('an inherited key is no vendor: toString, constructor and __proto__ have no subscription', ['toString', 'constructor', '__proto__', 'hasOwnProperty'].every((k) => subscriptionOf(k) === null));
 ok('an id that only starts with "gemini" (no dash) has no vendor', vendorOf('gemini4') === null);
 ok('a bare vendor word is not an id', vendorOf('agy') === null);
 

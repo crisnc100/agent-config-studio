@@ -222,6 +222,14 @@ async function main() {
       registry: { ...DEFAULTS, models: { ...DEFAULTS.models, sol: 'gpt-6-nope-sol' } }, defaults: DEFAULTS, catalogs: u,
     }), 'sol').alerts.some((a) => a.kind === 'vanished'));
     ok('agreeing catalogs raise no disagreement note', readCatalogs({ home: h3 }).codex.disagree === null);
+    {
+      // Neither catalog holds every id: only a union offers both, whichever catalog is newest or from the newest client.
+      const h4 = home(), seat4 = path.join(h4, '.codex-seats', 'second');
+      writeCodexCatalog(path.join(h4, '.codex'), [codexModel('gpt-6.2-sol', 'Sol'), codexModel('gpt-6.1-sol', 'Sol 6.1')], Date.now() - 60 * 1000, '0.155.0');
+      writeCodexCatalog(seat4, [codexModel('gpt-6.2-sol', 'Sol'), codexModel('gpt-6-astra', 'Astra')], Date.now() - 2 * HOUR, '0.156.0');
+      const ids = readCatalogs({ home: h4, codexHomes: [seat4] }).codex.models.map((m) => m.id).sort();
+      ok('union: an id only the older client lists and one only the newer client lists are both offered', JSON.stringify(ids) === JSON.stringify(['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6.2-sol']), JSON.stringify(ids));
+    }
 
     // Missing and stale.
     const h4 = home();

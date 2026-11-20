@@ -2438,14 +2438,19 @@ const AGY_SETTINGS = { permissions: { deny: ['command(*)', 'write_file(*)', 'mcp
 const AGY_VERSION = '1.5.13'
 // Workspace customizations agy runs from the folder it starts in and every folder above it. tests/vendor-prefixes.mjs
 // keeps this literal identical to ask-model's.
-const AGY_WORKSPACE = { dirs: ['.agents', '.agent', '_agents', '_agent'], names: ['hooks.json', 'mcp_config.json', 'plugins.json', 'agents.json', 'plugins'] }
+const AGY_WORKSPACE = { dirs: ['.agents', '.agent', '_agents', '_agent'], names: ['hooks.json', 'mcp_config.json', 'plugins.json', 'agents.json', 'plugins', 'agents'] }
 const AGY_PRINT_TIMEOUT = '3600s'
-const AGY_CMUX_HOOK = 'cmux-antigravity-hook-v2'
+// cmux's own home hook: the whole command must be this template, socket path and event name filled in (ask-model's
+// agyCmuxHook has the reasons). tests/vendor-prefixes.mjs keeps it identical to ask-model's.
+const AGY_CMUX_HOOK = ": cmux-antigravity-hook-v2; :; printenv CMUX_ANTIGRAVITY_HOOKS_DISABLED | grep -qx 1 && { :; { cat >/dev/null 2>/dev/null || true; echo '{}'; }; } || { cmux_hook_ambient_socket=$(printenv CMUX_SOCKET_PATH || printf '\\n'; printf '.'); cmux_hook_ambient_socket=${cmux_hook_ambient_socket%??}; cmux_hook_ambient_cli=$(printenv CMUX_BUNDLED_CLI_PATH || printf '\\n'; printf '.'); cmux_hook_ambient_cli=${cmux_hook_ambient_cli%??}; if [ -n \"${cmux_hook_ambient_socket:-}\" ] && [ -S \"${cmux_hook_ambient_socket:-}\" ] && [ -f \"${cmux_hook_ambient_cli:-}\" ] && [ -x \"${cmux_hook_ambient_cli:-}\" ] && CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5 \"${cmux_hook_ambient_cli:-}\" --socket \"${cmux_hook_ambient_socket:-}\" hooks enqueue antigravity <EVENT>; then :; elif [ -x '/Applications/cmux.app/Contents/Resources/bin/cmux' ]; then CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5 '/Applications/cmux.app/Contents/Resources/bin/cmux' --socket '<SOCK>' hooks enqueue antigravity <EVENT>; elif command -v cmux >/dev/null 2>&1; then CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5 cmux --socket '<SOCK>' hooks enqueue antigravity <EVENT>; else { cat >/dev/null 2>/dev/null || true; echo '{}'; }; fi; cmux_hook_status=$?; :; if [ \"$cmux_hook_status\" -ne 0 ]; then { cat >/dev/null 2>/dev/null || true; echo '{}'; }; fi; exit 0; }"
+const AGY_CMUX_HOOK_RE = new RegExp(`^${AGY_CMUX_HOOK.split(/(<SOCK>|<EVENT>)/).map((p) => (p === '<SOCK>' ? "/[^']*" : p === '<EVENT>' ? '[a-z-]+'
+  : p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('')}$`)
+const agyCmuxHook = (command) => typeof command === 'string' && AGY_CMUX_HOOK_RE.test(command)
 const AGY_ENV = { CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1' }
 const AGY_NO_SECURITY = 'agy keeps web search on (no permission turns it off), and the security pass reads a diff that may try to steer its reviewer'
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 // Why ~/.gemini/config would run something besides the model, or null: any MCP server in mcp_config.json starts, and
-// every hooks.json hook runs a shell command, except cmux's own (each carries AGY_CMUX_HOOK and exits at once under
+// every hooks.json hook runs a shell command, except cmux's own (each exactly AGY_CMUX_HOOK, which does nothing under
 // AGY_ENV). A file that can't be read or parsed refuses. ask-model's agyConfigProblem.
 function agyConfigProblem(home = homedir()) {
   const dir = join(home, '.gemini', 'config')
@@ -2481,10 +2486,19 @@ function agyConfigProblem(home = homedir()) {
       if (event === 'enabled') continue
       if (!Array.isArray(list)) return `${hooks.file}: ${name}.${event} is not a list`
       const handlers = list.flatMap((h) => (isPlainObject(h) && Array.isArray(h.hooks) ? h.hooks : [h]))
-      if (handlers.some((h) => !isPlainObject(h) || typeof h.command !== 'string' || !h.command.includes(AGY_CMUX_HOOK))) foreign.push(`${name}.${event}`)
+      if (handlers.some((h) => !isPlainObject(h) || !agyCmuxHook(h.command))) foreign.push(`${name}.${event}`)
     }
   }
   return foreign.length ? `${hooks.file} has hooks that are not cmux's (${foreign.join(', ')}); agy runs every hook's command on its calls` : null
+}
+// What `agy --version` prints, or null when it fails; run in a fresh empty temp folder, away from the reviewed tree.
+function agyVersion() {
+  let dir = null
+  try {
+    dir = mkdtempSync(join(tmpdir(), 'acs-agy-version-'))
+    const v = spawnSync('agy', ['--version'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000, env: { ...process.env, ...AGY_ENV } })
+    return v.error || v.status !== 0 ? null : String(v.stdout || '').trim() || null
+  } catch { return null } finally { if (dir) rmSync(dir, { recursive: true, force: true }) }
 }
 // Every AGY_WORKSPACE name, of any type, from `cwd` up to the filesystem root (not git's top folder: agy's stop rule
 // is its own, and a linked worktree's .git is a file). One that can't be looked at counts; no folder is exempt.
@@ -2541,16 +2555,18 @@ function parseAgy(id, r) {
   if (!isPlainObject(result)) throw new Error(`agy review: the answer is not a JSON object: ${text.slice(0, 300)}`)
   return { result, modelUsed: typeof init?.model === 'string' ? init.model : id, modelVerified: false }
 }
+// A model run through agy is never verified: every record and line that names one says so.
+function agyRun(m) { return m?.vendor === 'agy' }
 function runAgy(m, prompt, schema) {
-  const v = spawnSync('agy', ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000, env: { ...process.env, ...AGY_ENV } })
-  const version = String(v.stdout || '').trim()
-  if (v.error || v.status !== 0 || version !== AGY_VERSION)
-    throw new Error(`agy review refused: agy reports version ${JSON.stringify(version || null)}, but its containment was probed on ${AGY_VERSION}; re-run the probe (builds/gemini-family/probe in Agent Config Studio) and update AGY_VERSION`)
-  const problem = agyConfigProblem()
-  if (problem) throw new Error(`agy review refused: ${problem}`)
+  // The workspace and home first: they need no agy process, and an unprobed agy could load what they would refuse.
   const workspace = agyWorkspaceFiles(process.cwd())
   if (workspace.length)
     throw new Error(`agy review refused: ${workspace.join(', ')}: agy runs a workspace's hooks, MCP servers, plugins and agents on every call and no flag turns them off; review with another family`)
+  const problem = agyConfigProblem()
+  if (problem) throw new Error(`agy review refused: ${problem}`)
+  const version = agyVersion()
+  if (version !== AGY_VERSION)
+    throw new Error(`agy review refused: agy reports version ${JSON.stringify(version)}, but its containment was probed on ${AGY_VERSION}; re-run the probe (builds/gemini-family/probe in Agent Config Studio) and update AGY_VERSION`)
   // Each call's own agy log, kept: a model fallback agy does not report would show there.
   const dir = join(homedir(), '.agent-config-studio', 'logs', 'agy')
   mkdirSync(dir, { recursive: true })
@@ -2833,7 +2849,7 @@ async function secondOpinion(block, targets) {
     console.warn(`⚠ verify=second-opinion: no family in the reviewer pool besides the reviewing ${reviewingFamilies(SEL).join(', ')} — skipped`)
     return { verifier: null, error: 'no other pool family' }
   }
-  console.log(`▶ second opinion · ${v.family} (${v.vendor} · ${v.id} · ${v.effort}) on ${targets.length} HIGH/MEDIUM finding(s)`)
+  console.log(`▶ second opinion · ${v.family} (${v.vendor} · ${v.id} · ${v.effort}${agyRun(v) ? ' · model unverified' : ''}) on ${targets.length} HIGH/MEDIUM finding(s)`)
   try {
     const { result } = await runModel(v, verifierPrompt(block, targets, v.vendor), VERDICT_SCHEMA, 'code-review verifier')
     const byIndex = new Map((result?.verdicts || []).map((x) => [Number(x.index), x]))
@@ -2900,7 +2916,7 @@ function writeReport(branch, reviewer, { findings, unlocated, disputed }, cut, v
     (SLICE ? `Paths: ${SLICE.join(', ')} (one slice; other slices cover the rest of the diff)\n` : '') +
     `Reviewed against: ${INTENT || '(inferred from diff)'}\n` +
     (VERIFY_RESULT ? `Verify (${VERIFY_RESULT.cmd}): ${VERIFY_RESULT.passed ? 'passed' : 'FAILED'}\n` : '') +
-    (verifier ? `Second opinion: ${verifier.family} (${verifier.id})\n` : '') +
+    (verifier ? `Second opinion: ${verifier.family} (${verifier.id})${agyRun(verifier) ? ' — model unverified' : ''}\n` : '') +
     (security && security.status !== 'off' ? `${securityLine(security)}\n` : '') +
     (cut ? `⚠ ${cut}.\n` : '') +
     `Findings: ${findings.length} (plus ${disputed.length} disputed, ${unlocated.length} could not be located)\n\n` +
@@ -3992,8 +4008,9 @@ async function disputeFinding(id, findingId) {
     rmSync(temp, { recursive: true, force: true })
   }
   appendLog({ type: 'dispute', ts: new Date().toISOString(), review: id, finding: findingId, head: review.head,
-    verdict, reason, evidence, verdictEvidence, family: review.family, verifier: verifier?.family || null, ...classifierRecord(command, answer) })
-  console.log(`${verdict}: ${verdictEvidence}`)
+    verdict, reason, evidence, verdictEvidence, family: review.family, verifier: verifier?.family || null,
+    ...(agyRun(verifier) && { verifierModelVerified: false }), ...classifierRecord(command, answer) })
+  console.log(`${verdict}: ${verdictEvidence}${agyRun(verifier) ? ` (verifier ${verifier.family}, model unverified)` : ''}`)
 }
 async function fixCheck(id) {
   requireClean()
@@ -4069,12 +4086,13 @@ async function fixCheck(id) {
   const checkId = `fix-${Date.now()}-${randomBytes(3).toString('hex')}`
   appendLog({ type: 'review', kind: 'fix-check', rubricVersion: RUBRIC_VERSION, rescored: scored.rescored, id: checkId, review: id, ts: new Date().toISOString(), head, branch,
     repo: repoName(), repoId: repoIdentity(), base: original.head, baseSha: original.head, family: SEL.family, model: SEL.id, vendor: SEL.vendor, copy: COPY_PATH,
+    ...(agyRun(SEL) && { modelVerified: false }),
     families: [...new Set([...reviewingFamilies(SEL), ...(security.record.status === 'ran' ? [security.record.family] : [])])],
     ...(SLICE && { paths: SLICE }), ...(FOCUS && { focus: FOCUS }), ...(CONTEXT_COMMIT && { contextCommit: CONTEXT_COMMIT.sha }), ...(SECURITY.run !== 'off' && { security: security.record }),
     findings: findingDetails.length, findingDetails, ...recordedLocations(findingDetails),
     manifest: manifestOf(sections, 'code'), asked,
     stats: recordStats(fixStats), plan: PLAN_PATH ?? null, durationMs })
-  console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)`)
+  console.log(`✓ Fix check ${checkId} recorded at ${head}: ${findingDetails.length} finding(s)${agyRun(SEL) ? ` · ${SEL.family} model unverified` : ''}`)
   warnDropped(findingDetails)
   for (const f of findingDetails.filter((f) => f[WHERE]?.ambiguous))
     console.warn(`⚠ ${f.id}: path ambiguous, the quote is in both ${f[WHERE].ambiguous.join(' and ')}; it authorizes no file at close`)
@@ -5133,7 +5151,7 @@ async function runEval() {
   const root = mkdtempSync(join(tmpdir(), 'review-eval-'))
   const records = []
   for (const m of families) {
-    console.log(`\n▶ ${m.family} (${m.vendor}${m.id ? ` · ${m.id}` : ''})`)
+    console.log(`\n▶ ${m.family} (${m.vendor}${m.id ? ` · ${m.id}` : ''}${agyRun(m) ? ' · model unverified' : ''})`)
     const results = []
     for (const c of cases)
       for (let run = 1; run <= repeat; run++) {
@@ -5156,7 +5174,7 @@ async function runEval() {
   console.log('')
   for (const r of records) {
     const t = r.totals
-    console.log(`${r.family} (${r.model} · ${r.effort}) · bugs caught ${t.caught}/${t.bugs} · missed ${t.missed} · false alarms ${t.falseAlarms} ` +
+    console.log(`${r.family} (${r.model} · ${r.effort}${r.modelVerified === false ? ' · model unverified' : ''}) · bugs caught ${t.caught}/${t.bugs} · missed ${t.missed} · false alarms ${t.falseAlarms} ` +
       `(${t.cleanWithAlarms}/${t.clean} clean cases) · extra ${t.extra} · unlocated ${t.unlocated} · errored ${t.errored} · n=${r.repeat} · ${(t.durationMs / 1000).toFixed(1)}s`)
   }
   if (readdirSync(root).length) console.log(`ℹ kept for inspection: ${root} (the repos and logs of the reviews that errored)`)
@@ -5365,7 +5383,7 @@ function startWatch(kind) {
     ...(SELECTION.classifier && classifierRecord(SELECTION.classifier.command, SELECTION.classifier.answer)),
     ...(SECOND_OPINION && {
       secondOpinion: opinion.verifier
-        ? { family: opinion.verifier.family, model: opinion.verifier.id, ...(opinion.error && { error: opinion.error }) }
+        ? { family: opinion.verifier.family, model: opinion.verifier.id, ...(agyRun(opinion.verifier) && { modelVerified: false }), ...(opinion.error && { error: opinion.error }) }
         : { error: opinion.error || 'no HIGH/MEDIUM findings' },
     }),
     durationMs,
@@ -5396,7 +5414,7 @@ function startWatch(kind) {
       reportPath: `${dir}/code-review.md`,
       diffTruncated,
       verify: VERIFY_RESULT && { cmd: VERIFY_RESULT.cmd, passed: VERIFY_RESULT.passed },
-      secondOpinion: opinion.verifier && { family: opinion.verifier.family, model: opinion.verifier.id },
+      secondOpinion: opinion.verifier && { family: opinion.verifier.family, model: opinion.verifier.id, ...(agyRun(opinion.verifier) && { modelVerified: false }) },
       findings: allFindings.map(publicFinding),
       disputed: disputed.map(publicFinding),
       unverified: allUnlocated.map(publicFinding),
