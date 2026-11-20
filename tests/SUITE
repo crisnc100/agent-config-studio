@@ -217,6 +217,7 @@ tests/ui-clarity-g.mjs                                ci:offline
 # says why); the manual ones are in no gate, each for the reason on its line.
 packs/pr/tests/pr.docs-table.test.mjs                 ci:packs ci-only
 packs/pr/tests/pr.test.mjs                            manual                        # asserts gh is absent with a PATH that keeps /usr/bin, where a CI runner has gh
+packs/review-gate/tests/review.agy.test.mjs           ci:packs ci-only
 packs/review-gate/tests/review.basemerge.test.mjs     ci:packs ci-only
 packs/review-gate/tests/review.behavior.test.mjs      ci:packs ci-only
 packs/review-gate/tests/review.close.test.mjs         manual                        # its waiver checks open a terminal with BSD `script -q /dev/null <cmd>` (line 61), which Linux's util-linux script rejects; 5 tests fail on a Linux runner
