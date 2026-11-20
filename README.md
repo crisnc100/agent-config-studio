@@ -813,15 +813,21 @@ skill.
   commands, file writes, MCP tools, or URL reads, downloads or runs); web
   search cannot be denied, so it stays on. Agy itself runs workspace hooks,
   MCP servers and plugins whatever the deny list says, so the call stops
-  first (exit 4, naming what it found) when any of these holds:
-  - `agy --version` is not the version its containment was checked on;
-  - `~/.gemini/config/mcp_config.json` names a server;
-  - `~/.gemini/config/hooks.json` has a hook that is not one of cmux's;
-  - `~/.gemini/config/plugins/` holds anything, or `plugins.json` exists
-    there;
+  first (exit 4, naming what it found) when any of these holds, checked in
+  this order:
   - any folder from the working folder up to `/` has a `.agents`, `.agent`,
     `_agents` or `_agent` folder holding `hooks.json`, `mcp_config.json`,
-    `plugins.json`, `agents.json` or `plugins`.
+    `plugins.json`, `agents.json`, `plugins` or `agents` (custom agents,
+    which can name hooks of their own);
+  - `~/.gemini/config/mcp_config.json` names a server;
+  - `~/.gemini/config/hooks.json` has a hook whose command is not exactly
+    one of cmux's;
+  - `~/.gemini/config/plugins/` holds anything, or `plugins.json` exists
+    there;
+  - `agy --version`, run in an empty temporary folder, is not the version
+    its containment was checked on.
+  `--role security` (or its `--second`) that resolves to an agy family
+  exits 4 without running it, since agy's web search stays on.
   A tool call agy refused is printed on stderr and does not fail the call.
   `--investigate`, `--no-tools` and `--min-tools` exit 4
   for agy without running it. Agy reports only the model it was asked for,
