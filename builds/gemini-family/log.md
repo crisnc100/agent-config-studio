@@ -32,3 +32,11 @@
 - runAgy, model unverified in reviewer line/report/FINDINGS_JSON/record/close/eval; never security (pinned, role, worker); REVIEW_AUTHOR=agy unknown; x2 built as refuse (non-codex pin stops). review.agy.test.mjs.
 - First real eval errored: agy's result.response joins every response turn (its finish tool refused the first schema answer; the retry followed), so the JSON did not parse. The answer is now the last response turn's text, in review.mjs and ask-model.
 - Proof: `PATH=<worktree>/bin:$PATH node packs/review-gate/runtime/review.mjs --eval --family neon --cases <clean-advisor-no-edit, logic-schema-enum-key-order> --yes` → clean 140.8s, caught (medium) 216.4s, modelVerified false (eval-proof/eval-neon-2cases.out).
+
+## PR A round 2 — lead's decisions (builder, 2026-11-20)
+- familyIndex: the shape path uses the exact path's rule (one tracked family wins; pinned stay a fallback). Audit tests where grok-4.5 was ambiguous now use a registry with grok-prev tracked; added an older-grok-is-grok and a lone-pinned-terra assertion (test-only commit 890b105).
+- Subscription split: SUBSCRIPTION_OF {agy: gemini} in lib/models.js; PAUSE_VENDORS has gemini, not agy; pausedBy, describe and defaultUntil join through it. `acs pause gemini` pauses neon (test-only commit a96532d for the pause-cli account list).
+- Containment: version pin 1.5.13; workspace refusal from the cwd to `/` (.agents/.agent/_agents/_agent × hooks.json/mcp_config.json/plugins.json/agents.json/plugins, any type or unreadable); home plugins/ and plugins.json refuse; deny list adds download_url, execute_url. unsandboxed(*) left off: agy 1.5.13 logs it as invalid and ignores it.
+- Probes (real agy): subagents inherit the deny list; empty-cwd absolute-path read is refused by print mode and reported in result.denied_actions (the field exists for approval refusals, not deny-rule ones), so both runtimes print those too.
+- REVIEW_AUTHOR=agy note in --security-only. SKILL.md pin sentence, README refusal list.
+- Gate: 143 local test files pass one by one (6 at a time); packs 915/915.
