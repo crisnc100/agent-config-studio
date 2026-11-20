@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
@@ -8,8 +8,9 @@ import { fileURLToPath } from 'node:url'
 
 // merge.mjs: reads the tip's tier (review.mjs --tier-json) and the merge policy, then merges the PR, labels it
 // needs-human and comments once, or does nothing. gh is a PATH stub that logs every argv and answers only the calls
-// a test's table names; anything else exits 2. Most tests stand a fake scripts/review.mjs in the repo (merge.mjs
-// prefers it) that prints a chosen --tier-json; the B9 and B10 tests run the real review.mjs end to end.
+// a test's table names; anything else exits 2. Most tests install a fake review.mjs as the operator's runtime
+// (~/.agent-config-studio/review-gate/review.mjs, the only one merge.mjs reads) that prints a chosen --tier-json; the B9
+// and B10 tests install the real review.mjs there and run it end to end.
 // gh fixture shapes come from real read-only calls on 2026-11-05 (gh 2.83.2): `gh pr view 40 --json number,state,
 // isDraft,headRefOid,baseRefName,mergeStateStatus,reviewDecision,labels,url` and `gh pr checks 40 --json
 // name,state,bucket` on crisnc100/agent-config-studio; that `pr checks --json` exited 0 with a pending check. The
@@ -22,6 +23,7 @@ const GH_LOG = join(ROOT, 'gh-calls.jsonl'), GH_TABLE = join(ROOT, 'gh-table.jso
 const FAKE_LOG = join(ROOT, 'fake-log', 'review-log.jsonl'), MERGE_LOG = join(ROOT, 'fake-log', 'merge-log.jsonl')
 const REAL_LOG = join(HOME, '.agent-config-studio/review-log/review-log.jsonl')
 const HOME_CONFIG = join(HOME, '.agent-config-studio/review-gate/config.json')
+const INSTALLED = join(HOME, '.agent-config-studio/review-gate/review.mjs')
 mkdirSync(BIN)
 after(() => rmSync(ROOT, { recursive: true, force: true }))
 const stub = (name, body) => { writeFileSync(join(BIN, name), `#!${process.execPath}\n${body}`); chmodSync(join(BIN, name), 0o755) }
@@ -66,7 +68,6 @@ for (const name of ['codex', 'claude', 'grok']) stub(name, modelBody)
 
 // The fake review script: prints FAKE_TIER over a covered LOW at HEAD; { "covered": false } prints the uncovered shape.
 const FAKE_REVIEW = `import { execFileSync } from 'node:child_process'
-if (process.argv[2] === '--supports') process.exit(process.argv[3] === '--open-findings' ? 0 : 1)
 if (!process.argv.includes('--tier-json')) { console.error('fake review: --tier-json only'); process.exit(9) }
 import { accessSync, constants } from 'node:fs'
 const gitBin = process.env.PATH.split(':').filter((d) => d.startsWith('/')).map((d) => d + '/git').find((p) => { try { accessSync(p, constants.X_OK); return true } catch { return false } })
@@ -134,8 +135,7 @@ beforeEach(() => {
   git('init', '-q', '-b', 'main')
   git('remote', 'add', 'origin', 'https://example.invalid/o/r.git')
   commit({ 'README.md': 'base\n' })
-  // Untracked, so the tree stays clean and removing it changes no diff.
-  mkdirSync(join(REPO, 'scripts')); writeFileSync(join(REPO, 'scripts/review.mjs'), FAKE_REVIEW)
+  mkdirSync(dirname(INSTALLED), { recursive: true }); writeFileSync(INSTALLED, FAKE_REVIEW)
   git('checkout', '-qb', 'feat')
   commit({ 'docs/guide.md': '# Guide\n' })
 })
@@ -151,7 +151,7 @@ test('B1 policy off: no gh call at all, none, exit 0, logged', () => {
 })
 
 test('B1 with the real review.mjs and no config the policy is off: no gh call', () => {
-  rmSync(join(REPO, 'scripts'), { recursive: true })
+  copyFileSync(REVIEW, INSTALLED)
   assert.equal(run(process.execPath, [REVIEW], {}).status, 0)
   const id = jsonl(REAL_LOG).filter((e) => e.type === 'review').at(-1).id
   writeFileSync(join(ROOT, 'statuses.json'), '{}')
@@ -384,7 +384,7 @@ test('B10 an intent record, then an outcome record, on every path, in merge-log.
 
 // Real review.mjs: review, close, then merge.mjs reads the real --tier-json.
 function realClose(extra = {}) {
-  rmSync(join(REPO, 'scripts'), { recursive: true, force: true })
+  copyFileSync(REVIEW, INSTALLED)
   const r = run(process.execPath, [REVIEW], extra)
   assert.equal(r.status, 0, r.out)
   const id = jsonl(REAL_LOG).filter((e) => e.type === 'review').at(-1).id
@@ -728,14 +728,4 @@ test('B20 auto-merge still set after --disable-auto succeeded is refused too', (
   assert.equal(r.status, 2, r.out)
   assert.match(r.stdout, /^refused: auto-merge may still be enabled on PR 41; disable it in GitHub/)
   assert.equal(calls().filter((a) => keyOf(a) === 'graphql pr').length, 2, 're-read after disabling')
-})
-
-test('B19 a repo scripts/review.mjs too old for --open-findings is skipped for the shared runtime, as the skills skip it', () => {
-  gh()
-  // The same fake, minus its --supports answer: a copy from before the manifest rule, which still prints LOW and merges.
-  writeFileSync(join(REPO, 'scripts/review.mjs'), FAKE_REVIEW.replace(/^if \(process\.argv\[2\] === '--supports'\).*\n/m, ''))
-  const r = fake()
-  assert.match(r.stderr, /scripts\/review\.mjs does not support --open-findings; using the shared runtime/)
-  assert.deepEqual(writes(), [], 'the shared runtime finds no close covering the tip, so nothing merges')
-  assert.doesNotMatch(r.stdout, /^merged: /)
 })
