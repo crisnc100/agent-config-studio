@@ -1,0 +1,54 @@
+{
+ "f1": {
+  "status": "fixed"
+ },
+ "f2": {
+  "status": "fixed"
+ },
+ "f3": {
+  "status": "fixed"
+ },
+ "f4": {
+  "status": "fixed"
+ },
+ "f5": {
+  "status": "fixed"
+ },
+ "f6": {
+  "status": "fixed"
+ },
+ "f7": {
+  "status": "fixed"
+ },
+ "s1": {
+  "status": "fixed"
+ },
+ "x1": {
+  "status": "deferred",
+  "reason": "fix-check finding: one fix round and one fix check ran; deferred to the PR A follow-up per the review policy"
+ },
+ "x2": {
+  "status": "deferred",
+  "reason": "fix-check finding: one fix round and one fix check ran; deferred to the PR A follow-up per the review policy"
+ },
+ "x3": {
+  "status": "deferred",
+  "reason": "fix-check finding: one fix round and one fix check ran; deferred to the PR A follow-up per the review policy"
+ },
+ "x5": {
+  "status": "deferred",
+  "reason": "fix-check finding: one fix round and one fix check ran; deferred to the PR A follow-up per the review policy"
+ },
+ "x6": {
+  "status": "deferred",
+  "reason": "fix-check finding: one fix round and one fix check ran; deferred to the PR A follow-up per the review policy"
+ },
+ "x7": {
+  "status": "deferred",
+  "reason": "fix-check finding: one fix round and one fix check ran; deferred to the PR A follow-up per the review policy"
+ },
+ "x10": {
+  "status": "deferred",
+  "reason": "fix-check finding: one fix round and one fix check ran; deferred to the PR A follow-up per the review policy"
+ }
+}
