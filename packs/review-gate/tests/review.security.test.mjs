@@ -193,7 +193,7 @@ test('4 selection: another vendor first; REVIEW_SECURITY_REVIEWER pins; the code
   assert.equal(pinned.family, 'fable'); assert.equal(pinned.model, 'claude-stub-fable')
   // A single-member role: REVIEW_REVIEWER, REVIEW_MODEL, REVIEW_PICK, REVIEW_CLAUDE_MODEL=team and routing are the code review's.
   rmSync(CALLS, { force: true })
-  const solo = reviewed({ STUB_SECURITY_ROLE: 'opus', REVIEW_REVIEWER: '', REVIEW_MODEL: 'gpt-stub-sol', REVIEW_PICK: 'grok', REVIEW_CLAUDE_MODEL: 'team' }).record
+  const solo = reviewed({ STUB_SECURITY_ROLE: 'opus', REVIEW_REVIEWER: '', REVIEW_MODEL: 'sol', REVIEW_PICK: 'grok', REVIEW_CLAUDE_MODEL: 'team' }).record
   assert.equal(solo.security.family, 'opus'); assert.equal(solo.security.model, 'claude-stub-opus')
   assert.equal(securityCalls().length, 1, 'one security agent, never the team')
   assert.equal(securityCalls()[0].model, 'claude-stub-opus')
