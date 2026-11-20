@@ -377,7 +377,8 @@ for (const [skill, flag] of [['security-check', '--security-only'], ['code-revie
       const old = sh(block)
       allowed(old)
       assert.doesNotMatch(old.out, /OLD COPY RAN/, `${harness}: ${old.out}`)
-      assert.match(old.out, new RegExp(`scripts/review\\.mjs does not support ${flag}; using the shared runtime`), harness)
+      // code-review's probe also asks for --open-findings, the manifest coverage rule's flag.
+      assert.match(old.out, new RegExp(`scripts/review\\.mjs does not support ${skill === 'code-review' ? '--code-only and --open-findings' : flag}; using the shared runtime`), harness)
       assert.match(old.stdout, /===FINDINGS_JSON===/)
       // A current copy in the repo is the one that runs.
       cpSync(SCRIPT, join(repo, 'scripts/review.mjs'))

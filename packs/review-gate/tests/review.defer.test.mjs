@@ -387,10 +387,13 @@ test('D17 a recheck and a fix check that straddle a tree-preserving amend close,
   allowed(script(['--fix-check', grade.id], { STUB_FINDINGS: JSON.stringify({ findings: [X_HIGH] }) }))
   const check = records().at(-1)
   assert.equal(check.kind, 'fix-check'); assert.equal(check.head, amended)
-  const record = closed(grade.id, { c1: { status: 'deferred', reason: 'later' }, x1: { status: 'deferred', reason: 'later too' } })
+  // A Grade-rooted close covers nothing, its fix check included: the close is partial, the push refuses its files.
+  const record = closed(grade.id, { c1: { status: 'deferred', reason: 'later' }, x1: { status: 'deferred', reason: 'later too' } }, 'partial')
   assert.deepEqual(record.carried, { from: recheck.head, kind: 'recheck', record: recheck.id, tree: tree(amended) })
   assert.equal(record.fixCheck, check.id); assert.equal(record.recheck, recheck.id); assert.equal(Object.hasOwn(record, 'carriedAlso'), false)
-  allowed(gate())
+  const pushed = gate()
+  assert.notEqual(pushed.status, 0, pushed.out)
+  assert.match(pushed.out, /src\/one\.js/)
 })
 
 function isAncestorOf(a, b) {
