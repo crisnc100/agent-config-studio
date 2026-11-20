@@ -205,7 +205,7 @@ function registryPathIn(h) { return path.join(h, '.agent-config-studio', 'seats.
   ok('an empty registry snapshots to zero seats, not an error', (await snapshot({ seats: [] })).seats.length === 0);
 }
 
-ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,grok');
+ok('vendor list is the three harnesses and gemini', VENDORS.join(',') === 'claude,codex,grok,gemini');
 
 // --- creating seats from the UI ---------------------------------------------
 {
