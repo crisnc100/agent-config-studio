@@ -1192,7 +1192,7 @@ function grokBuildProof(id, sessionId, cwd, grokHome) {
 }
 
 /**
- * agy's answer from its stream-json events: the result event's response. agy reports no model that answered, only
+ * agy's answer from its stream-json events: the last response turn's text (else the result event's response). agy reports no model that answered, only
  * init.model, the echo of what it was asked for, so that is kept as requested and unverified (a different echo still
  * refuses, exit 2). A denied tool call does not fail agy's turn (status SUCCESS, exit 0); it shows as a tool step that
  * ended ERROR on a deny rule, and with no answer beside it the call failed.
@@ -1205,16 +1205,22 @@ function readAgy(id, r) {
   }
   const init = events.find((e) => e?.event === 'init')?.init;
   const result = events.findLast((e) => e?.event === 'result')?.result;
-  const denied = events.map((e) => e?.step_update).filter((u) => u?.state === 'ERROR' && /deny rule/i.test(String(u?.tool_info?.error?.message ?? '')))
+  const steps = events.map((e) => e?.step_update).filter(isObject);
+  const denied = steps.filter((u) => u.state === 'ERROR' && /deny rule/i.test(String(u.tool_info?.error?.message ?? '')))
     .map((u) => `${u.tool_name}: ${String(u.tool_info.error.message).slice(0, 300)}`);
   if (r.code !== 0 || !isObject(result)) return { exit: 4, error: `agy failed (exit ${r.code}${result?.status ? `, status ${result.status}` : ''}): ${tail(r.stderr || r.stdout)}` };
   if (result.status !== 'SUCCESS') return { exit: 4, error: `agy reported status ${JSON.stringify(result.status ?? null)}: ${tail(result.response ?? r.stderr)}` };
   if (typeof init?.model === 'string' && init.model !== id) return { exit: 2, error: `asked for ${id}, but agy reports it was asked for ${init.model} — not its answer` };
   const served = { requested: typeof init?.model === 'string' ? init.model : null, verified: false };
-  if (typeof result.response !== 'string' || !result.response.trim()) {
+  // result.response joins every response turn's text (a schema answer agy's finish tool refused, then the retry):
+  // the answer is the last turn that has text.
+  const turns = new Map();
+  for (const u of steps) if (u.step_type === 'agent_response' && typeof u.text_delta === 'string') turns.set(u.step_index, (turns.get(u.step_index) ?? '') + u.text_delta);
+  const text = [...turns.entries()].sort((x, y) => y[0] - x[0]).map(([, t]) => t).find((t) => t.trim()) ?? result.response;
+  if (typeof text !== 'string' || !text.trim()) {
     return { exit: 4, error: `agy returned an empty answer${denied.length ? ` after its deny list refused ${denied.length} tool call(s): ${denied.join('; ')}` : ''}`, served, denied };
   }
-  return { answer: result.response, served, denied };
+  return { answer: text, served, denied };
 }
 
 /**

@@ -2469,6 +2469,14 @@ function agyConfigProblem(home = homedir()) {
   }
   return foreign.length ? `${hooks.file} has hooks that are not cmux's (${foreign.join(', ')}); agy runs every hook's command on its calls` : null
 }
+// agy's result.response joins the text of every response turn: an answer its finish tool refused against the schema
+// and the retry after it both land there. The answer is the last response turn that has text; null when none has.
+function lastTurnText(steps) {
+  const turns = new Map()
+  for (const u of steps)
+    if (u.step_type === 'agent_response' && typeof u.text_delta === 'string') turns.set(u.step_index, (turns.get(u.step_index) ?? '') + u.text_delta)
+  return [...turns.entries()].sort((x, y) => y[0] - x[0]).map(([, t]) => t).find((t) => t.trim()) ?? null
+}
 // The structured answer from agy's stream-json events. A denied tool call does not fail agy's turn (SUCCESS, exit 0):
 // it is a tool step that ended ERROR on a deny rule, so each is named on stderr, and an empty answer fails the review.
 function parseAgy(id, r) {
@@ -2479,17 +2487,22 @@ function parseAgy(id, r) {
   }
   const init = events.find((e) => e?.event === 'init')?.init
   const res = events.findLast((e) => e?.event === 'result')?.result
-  const denied = events.map((e) => e?.step_update).filter((u) => u?.state === 'ERROR' && /deny rule/i.test(String(u?.tool_info?.error?.message ?? '')))
+  const steps = events.map((e) => e?.step_update).filter(isPlainObject)
+  const denied = steps.filter((u) => u.state === 'ERROR' && /deny rule/i.test(String(u.tool_info?.error?.message ?? '')))
   for (const u of denied) console.warn(`⚠ agy review: denied ${u.tool_name}: ${String(u.tool_info.error.message).slice(0, 300)}`)
   if (r.error || r.status !== 0 || !isPlainObject(res))
     throw new Error(`agy review failed (exit ${r.status}${res?.status ? `, status ${res.status}` : ''}): ${r.error?.message || tail(r.stderr || r.stdout)}`)
   if (res.status !== 'SUCCESS') throw new Error(`agy review failed: status ${JSON.stringify(res.status ?? null)}: ${tail(res.response)}`)
   if (typeof init?.model === 'string' && init.model !== id) throw new Error(`agy review: asked for ${id}, but agy reports it was asked for ${init.model}`)
-  if (typeof res.response !== 'string' || !res.response.trim())
+  const text = lastTurnText(steps) ?? res.response
+  if (typeof text !== 'string' || !text.trim())
     throw new Error(`agy review: empty answer${denied.length ? ` after its deny list refused ${denied.length} tool call(s)` : ''}`)
   let result
-  try { result = JSON.parse(res.response) } catch { throw new Error(`agy review: the answer is not JSON: ${res.response.slice(0, 300)}`) }
-  if (!isPlainObject(result)) throw new Error(`agy review: the answer is not a JSON object: ${res.response.slice(0, 300)}`)
+  try { result = JSON.parse(text) } catch (e) {
+    // The parser's reason goes last, where a caller that keeps only the tail of stderr (--eval) still has it.
+    throw new Error(`agy review: the answer is not JSON: ${text.length > 600 ? `${text.slice(0, 300)} … ${text.slice(-300)}` : text} (${e.message})`)
+  }
+  if (!isPlainObject(result)) throw new Error(`agy review: the answer is not a JSON object: ${text.slice(0, 300)}`)
   return { result, modelUsed: typeof init?.model === 'string' ? init.model : id, modelVerified: false }
 }
 function runAgy(m, prompt, schema) {

@@ -46,6 +46,14 @@ if (mode === 'denied-empty') {
   out({ event: 'step_update', step_update: { conversation_id: cid, step_index: 2, state: 'ERROR', step_type: 'tool', tool_name: 'write_file',
     tool_info: { name: 'write_file', error: { type: 'TOOL_ERROR', message: 'permission check failed for write_file "x": Permission denied for write_file(x). Matches user-configured deny rule.' } } } });
 }
+if (mode === 'two-turns') {
+  out({ event: 'step_update', step_update: { step_index: 1, state: 'DONE', step_type: 'agent_response', text_delta: 'Let me read the files.' } });
+  out({ event: 'step_update', step_update: { step_index: 2, state: 'DONE', step_type: 'tool', tool_name: 'view_file' } });
+  out({ event: 'step_update', step_update: { step_index: 3, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'final ' } });
+  out({ event: 'step_update', step_update: { step_index: 3, state: 'DONE', step_type: 'agent_response', text_delta: 'answer\\n' } });
+  out({ event: 'result', result: { status: 'SUCCESS', response: 'Let me read the files.\\nfinal answer\\n' } });
+  process.exit(0);
+}
 const status = mode === 'status-error' ? 'ERROR' : 'SUCCESS';
 const response = process.env.STUB_ANSWER ?? (mode === 'denied-empty' ? '' : 'answer from ' + model);
 out({ event: 'result', result: { conversation_id: cid, status, response, duration_seconds: 1, num_turns: 1, usage: { total_tokens: 1 } } });
@@ -123,6 +131,8 @@ console.log('\nask-model agy: failures');
   ok('a blank answer → exit 4', blank.code === 4 && /empty answer/.test(blank.j?.error ?? ''), show(blank));
   const om = ask(['--family', 'neon', '--json'], { env: { STUB_MODE: 'other-model' } });
   ok('init names another model → exit 2, not its answer', om.code === 2 && /asked for .*, but agy reports it was asked for gemini-other/.test(om.j?.error ?? '') && om.j?.answer === null, show(om));
+  const tt = ask(['--family', 'neon'], { env: { STUB_MODE: 'two-turns' } });
+  ok('the answer is the last response turn, not result.response (which joins every turn)', tt.code === 0 && tt.out === 'final answer\n', show(tt));
   const none = ask(['--family', 'neon'], { pathDirs: SYSTEM });
   ok('agy not on PATH → exit 3', none.code === 3 && /the agy CLI is not on PATH/.test(none.err), show(none));
 }

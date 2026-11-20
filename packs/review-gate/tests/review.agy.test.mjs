@@ -45,6 +45,19 @@ const out = (o) => console.log(JSON.stringify(o))
 out({ event: 'init', conversation_id: 'c', init: { model: mode === 'other-model' ? 'gemini-other' : model, cwd: process.cwd(), tools: [], permission_mode: 'default' } })
 if (mode === 'denied-empty') out({ event: 'step_update', step_update: { state: 'ERROR', step_type: 'tool', tool_name: 'write_file',
   tool_info: { name: 'write_file', error: { type: 'TOOL_ERROR', message: 'permission check failed: Matches user-configured deny rule.' } } } })
+if (mode === 'retry') {
+  // As agy 1.5.13 did on a real case: an answer its finish tool refused, a system message, then the corrected answer;
+  // result.response holds both texts on two lines.
+  const first = JSON.stringify({ findings: [] }), final = (${replyFor})(a[a.indexOf('--json-schema') + 1])
+  out({ event: 'step_update', step_update: { step_index: 3, state: 'ACTIVE', step_type: 'agent_response', text_delta: first.slice(0, 5) } })
+  out({ event: 'step_update', step_update: { step_index: 3, state: 'DONE', step_type: 'agent_response', text_delta: first.slice(5) } })
+  out({ event: 'step_update', step_update: { step_index: 4, state: 'ERROR', step_type: 'finish' } })
+  out({ event: 'step_update', step_update: { step_index: 5, state: 'DONE', step_type: 'system_message' } })
+  out({ event: 'step_update', step_update: { step_index: 6, state: 'DONE', step_type: 'agent_response', text_delta: final + '\\n' } })
+  out({ event: 'step_update', step_update: { step_index: 7, state: 'DONE', step_type: 'agent_response', text_delta: '' } })
+  out({ event: 'result', result: { status: 'SUCCESS', response: first + '\\n' + final + '\\n' } })
+  process.exit(0)
+}
 const response = mode === 'denied-empty' ? '' : mode === 'not-json' ? 'I looked and it is fine.' : mode === 'clean' ? '{"findings":[]}' : (${replyFor})(a[a.indexOf('--json-schema') + 1])
 out({ event: 'result', result: { conversation_id: 'c', status: mode === 'status-error' ? 'ERROR' : 'SUCCESS', response, num_turns: 1 } })
 process.exit(mode === 'status-error' ? 1 : 0)
@@ -145,6 +158,12 @@ test('a Neon review counts toward a close, and the close names it model unverifi
   assert.equal(close.review, id)
   const summary = run(['--summary'])
   assert.match(summary.out, /Reviewer: neon \(gemini-4-neon\) — model unverified/)
+})
+
+test('the answer is agy\'s last response turn, not result.response, which joins a refused answer and its retry', () => {
+  const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'retry' })
+  assert.equal(r.status, 0, r.out)
+  assert.equal(logLines().find((e) => e.type === 'review').findings, 1, 'the final answer\'s one finding, not the first empty list')
 })
 
 test('another family\'s review carries no modelVerified field', () => {
