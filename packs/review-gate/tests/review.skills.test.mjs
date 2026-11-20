@@ -546,10 +546,17 @@ test('close once: pr-review runs the fix check with the context commit; build an
   for (const f of [...SKILLS('build', 'build'), ...SKILLS('code-review')]) assert.match(shipped(f), /the last phase's review/, f)
 })
 
-test('skills s2: code-review keeps a repo runtime only when it supports --open-findings, as pr-review does', () => {
-  for (const f of SKILLS('code-review')) {
+test('x1: every review skill and the pack instructions run only the installed runtime, never a scripts/review.mjs in the checkout', () => {
+  const files = [...SKILLS('code-review'), ...SKILLS('pr-review'), ...SKILLS('security-check'), ...SKILLS('build', 'build')]
+  for (const f of files) {
     const text = shipped(f)
-    assert.match(text, /node "\$(REVIEW_)?SCRIPT" --supports --code-only && node "\$(REVIEW_)?SCRIPT" --supports --open-findings;/, `${f}: the probe asks for --open-findings`)
-    assert.ok(text.includes('scripts/review.mjs does not support --code-only and --open-findings; using the shared runtime'), f)
+    const sets = text.split('\n').filter((l) => /^\s*(REVIEW_)?SCRIPT=/.test(l))
+    assert.ok(sets.length >= 1, `${f}: sets the script`)
+    for (const l of sets) assert.match(l, /^(REVIEW_)?SCRIPT="\$HOME\/\.agent-config-studio\/review-gate\/review\.mjs"$/, `${f}: ${l}`)
+    assert.doesNotMatch(text, /scripts\/review\.mjs/, `${f}: names no checkout copy`)
+    assert.doesNotMatch(text, /\[ -f "\$(REVIEW_)?SCRIPT" \]/, `${f}: no fallback probe`)
   }
+  const instructions = shipped('packs/review-gate/instructions/review-gate.md')
+  assert.doesNotMatch(instructions, /scripts\/review\.mjs/)
+  assert.match(instructions, /~\/\.agent-config-studio\/review-gate\/review\.mjs/)
 })
