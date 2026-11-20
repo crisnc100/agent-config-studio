@@ -613,3 +613,58 @@ test('code s5: a section oversize only under a lowered cap is unseen, not unread
   closed(review({ REVIEW_PATHS: 'src/huge.js' }).id, {})
   allowed(push())
 })
+
+// ── code s1: the fix round's files belong to the fix check ──────────────────
+// When a close's chain has a fix check, a triple the original review read counts only if the file was still in that
+// state at the fix check's head.
+test('code s1 row 1: a cited file reverted to the flagged version after the fix check is unseen; the push refuses it until a slice reads it', () => {
+  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [ONE] }) })
+  commit({ 'src/one.js': 'export const one = 3\n' })
+  fixCheck(r.id)
+  commit({ 'src/one.js': 'export const one = 2\n' }, 'revert the fix')
+  const c = closed(r.id, { f1: fixed }, 'partial')
+  assert.deepEqual(c.unseen, ['src/one.js'])
+  blocked(push(), /uncovered: src\/one\.js/)
+  closed(review({ REVIEW_PATHS: 'src/one.js' }).id, {})
+  allowed(push())
+})
+
+test('code s1 row 4: a fix that landed in another file, reverted later, leaves that file unseen', () => {
+  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [{ ...ONE, protected: true }] }) })
+  commit({ 'src/two.js': 'export const two = 3 // guards one\n' }, 'fix one through two')
+  fixCheck(r.id)
+  commit({ 'src/two.js': 'export const two = 2\n' }, 'revert the guard')
+  const c = closed(r.id, { f1: fixed }, 'partial')
+  assert.deepEqual(c.unseen, ['src/two.js'])
+  blocked(push(), /uncovered: src\/two\.js/)
+})
+
+test('code s1 row 8: an unrelated file edited in the fix round and restored after the fix check is unseen until sliced', () => {
+  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [ONE] }) })
+  commit({ 'src/one.js': 'export const one = 3\n', 'docs/three.md': 'three, rewritten in the fix round\n' })
+  fixCheck(r.id)
+  commit({ 'docs/three.md': 'three, edited\n' }, 'restore three')
+  const c = closed(r.id, { f1: fixed }, 'partial')
+  assert.deepEqual(c.unseen, ['docs/three.md'])
+  closed(review({ REVIEW_PATHS: 'docs/three.md' }).id, {})
+  allowed(push())
+})
+
+test('code s1 legit: a fix in place with nothing reverted keeps every review triple the fix round left alone', () => {
+  const r = review({ STUB_FINDINGS: JSON.stringify({ findings: [ONE] }) })
+  commit({ 'src/one.js': 'export const one = 3\n' })
+  const check = fixCheck(r.id)
+  assert.deepEqual(check.manifest.read.map(([p]) => p), ['src/one.js'], 'the fix check reads only what the fix round changed and the cited file')
+  closed(r.id, { f1: fixed })
+  allowed(push())
+})
+
+test('code s1: a fix-check head that is gone counts none of its review\'s triples at the push', () => {
+  const r = review()
+  commit({ 'src/one.js': 'export const one = 3\n' })
+  const check = fixCheck(r.id)
+  closed(r.id, {})
+  allowed(push())
+  writeFileSync(LOG, records().map((e) => JSON.stringify(e.id === check.id ? { ...e, head: 'f'.repeat(40) } : e)).join('\n') + '\n')
+  blocked(push('HEAD:refs/heads/feat2'), /uncovered: docs\/three\.md, src\/two\.js/)
+})
