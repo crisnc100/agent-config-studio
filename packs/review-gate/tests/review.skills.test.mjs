@@ -549,7 +549,7 @@ test('close once: pr-review runs the fix check with the context commit; build an
 test('skills s2: code-review keeps a repo runtime only when it supports --open-findings, as pr-review does', () => {
   for (const f of SKILLS('code-review')) {
     const text = shipped(f)
-    assert.ok(text.includes('node "$SCRIPT" --supports --code-only && node "$SCRIPT" --supports --open-findings'), `${f}: the probe asks for --open-findings`)
+    assert.match(text, /node "\$(REVIEW_)?SCRIPT" --supports --code-only && node "\$(REVIEW_)?SCRIPT" --supports --open-findings;/, `${f}: the probe asks for --open-findings`)
     assert.ok(text.includes('scripts/review.mjs does not support --code-only and --open-findings; using the shared runtime'), f)
   }
 })
