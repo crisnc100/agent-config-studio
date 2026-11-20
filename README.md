@@ -806,6 +806,8 @@ skill.
   call. If a server, or a plugin that brings one, would still start, Grok is
   not run (exit 4) and the message names each one. Switch it off with
   `grok mcp disable <name>` (a plugin's with Grok's plugin disable command).
+- `ask-model` runs claude, codex and grok. A model whose vendor it has no CLI
+  wiring for is not run: it exits 4 and names the vendor.
 - The answer goes to stdout, and one line on stderr names the family, id,
   effort and mode. `--json` prints `family`, `id`, `effort`, `mode`, `answer`,
   `changed` and `error` instead. `--cwd <dir>` is where the model works.
