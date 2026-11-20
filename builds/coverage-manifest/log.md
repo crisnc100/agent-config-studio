@@ -13,3 +13,11 @@
 - Decision 9 clashed with the rule that a fix-check security finding outside the fix is never deferred: together they left only dispute or waive. The orchestrator chose to lift that rule (option A).
 - Decision 6 made paths P5 and P6 pass by accident, because their cited files came from main and so sat at their base state. The cited files now change on the branch, and the fix check sees them as oversize.
 - While the machine slept, test durations ran to 900 s or more and several unrelated suites failed (guard, routing). Rerun awake, they pass.
+
+## PR 2 fix round
+
+- I committed the s3/s4/f1/s2/s6 code after running only coverrule, so defer D17 failed until its test-only fix (df0f397). Now the full set of suites runs before every code commit.
+- s1 uses the advisor's rule: the fix round's files belong to the fix check. If a close's chain has a fix check, an entry from the original review counts only while the file is still in that state at the fix check's head. This rule is keyed on tree states, not on statuses or cited paths, so it also catches a fix landing in another file being reverted, and a no-path finding's fix being reverted.
+- Decided: after a revert, a fresh read of the reverted file by a tip slice is enough. The old finding is not handed to that slice, and its stored status still says fixed.
+- Accepted residual: a fix that landed in another slice's file, where that slice has no fix check, can still be reverted unseen.
+- Known limit, filed: the build skill's "Record and close" checks only `--cross-family` before using a repo's scripts/review.mjs. A pre-manifest copy there would close a Grade under the old rules. The close then refuses `carried`, and a Grade covers nothing at the push.
