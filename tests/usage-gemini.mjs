@@ -21,8 +21,10 @@ console.log('\nusage/gemini');
   ok('the real reply reads', r.ok === true, r.reason);
   ok('windows are the Gemini Models pool only: 5h and weekly', r.windows.length === 2
     && r.windows[0].windowMinutes === 300 && r.windows[1].windowMinutes === 10080, JSON.stringify(r.windows));
-  ok('remaining 0.9283 → 7.2% used', r.windows[1].usedPercent === 7.2, String(r.windows[1].usedPercent));
-  ok('remaining 0.9429 → 5.7% used', r.windows[0].usedPercent === 5.7, String(r.windows[0].usedPercent));
+  ok('remaining 0.9283… → 7.17% used, exactly (1 − fraction) × 100', Math.abs(r.windows[1].usedPercent - (1 - 0.9283005595207214) * 100) < 1e-9
+     && Math.round(r.windows[1].usedPercent * 10) / 10 === 7.2, String(r.windows[1].usedPercent));
+  ok('remaining 0.9429… → 5.71% used, exactly (1 − fraction) × 100', Math.abs(r.windows[0].usedPercent - (1 - 0.9429367184638977) * 100) < 1e-9
+     && Math.round(r.windows[0].usedPercent * 10) / 10 === 5.7, String(r.windows[0].usedPercent));
   ok('reset is epoch ms', r.windows[1].resetsAt === Date.parse('2026-11-27T15:07:18Z'));
   ok('labels', r.windows[0].label === '5-hour' && r.windows[1].label === 'Weekly');
   ok('Argon weekly rides separately', r.extraWindows.length === 1 && r.extraWindows[0].usedPercent === 0

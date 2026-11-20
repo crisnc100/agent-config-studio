@@ -18,10 +18,12 @@ const ok = (name, cond, detail = '') => {
   if (cond) { pass++; console.log(`  ok   ${name}`); }
   else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 };
+// No real agy on PATH: detect now suggests Gemini whenever agy is installed, and the next --json would run it.
+const PATH_NO_AGY = (process.env.PATH || '').split(path.delimiter).filter((d) => d && !fs.existsSync(path.join(d, 'agy'))).join(path.delimiter);
 const run = (...args) => {
   try {
     return execFileSync(process.execPath, [CLI, ...args],
-      { encoding: 'utf8', env: { ...process.env, HOME: home, CODEX_HOME: '', NO_COLOR: '1' } });
+      { encoding: 'utf8', env: { ...process.env, HOME: home, CODEX_HOME: '', NO_COLOR: '1', PATH: PATH_NO_AGY } });
   } catch (e) { return `EXIT ${e.status}\n${e.stdout || ''}${e.stderr || ''}`; }
 };
 const snapFile = path.join(home, '.agent-config-studio', 'usage-snapshot.json');
