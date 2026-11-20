@@ -257,7 +257,7 @@ test('skills that run models name roles through model-id, and point at the share
 test('the runtime script names no reviewer family and keeps the vendor rule to the id prefix', () => {
   const script = readFileSync(join(PACKS, 'review-gate/runtime/review.mjs'), 'utf8')
   assert.doesNotMatch(script, /\bconst VENDOR = \{/)
-  assert.match(script, /if \(s\.startsWith\('claude-'\)\) return 'claude'\n  if \(s\.startsWith\('gpt-'\)\) return 'codex'\n  if \(s\.startsWith\('grok-'\)\) return 'grok'/)
+  assert.match(script, /const VENDOR_PREFIXES = \{ 'claude-': 'claude', 'gpt-': 'codex', 'grok-': 'grok', 'gemini-': 'agy' \}\nfunction vendorOf\(id\) \{\n  const s = String\(id \?\? ''\)\n  for \(const \[prefix, vendor\] of Object\.entries\(VENDOR_PREFIXES\)\) if \(s\.startsWith\(prefix\)\) return vendor\n  return null\n\}/)
   assert.match(script, /function operatorOnly\(reason\)/)
   assert.doesNotMatch(script, /crisOnly/)
 })

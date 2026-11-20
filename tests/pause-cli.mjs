@@ -62,7 +62,7 @@ console.log('\npause cli: R9 — pause, list, resume');
   const again = acs(h, 'resume', 'claude');
   ok('resuming what is not paused: exit 1, says so', again.code === 1 && /claude is not paused/.test(again.err), J(again));
   const unknown = acs(h, 'pause', 'opuss', '--until-resume');
-  ok('an unknown name: exit 2, lists what can be paused', unknown.code === 2 && /"opuss" is not an account \(claude, codex, grok\) or a model family/.test(unknown.err), J(unknown));
+  ok('an unknown name: exit 2, lists what can be paused', unknown.code === 2 && /"opuss" is not an account \(claude, codex, grok, agy\) or a model family/.test(unknown.err), J(unknown));
   const past = acs(h, 'pause', 'codex', '--until', new Date(Date.now() - HOUR).toISOString());
   ok('a time already passed: exit 2, nothing written', past.code === 2 && /has already passed/.test(past.err) && !readPausedFile(h).paused.some((e) => e.name === 'codex'), J(past));
   const junk = acs(h, 'pause', 'codex', '--until', 'soonish');

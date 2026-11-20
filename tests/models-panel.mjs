@@ -132,13 +132,13 @@ async function main() {
     const codexFam = Object.fromEntries(cats.codex.models.map((m) => [m.id, m.family]));
     ok('gpt-5.5 (numeric trailing word) has no family', codexFam['gpt-5.5'] === null);
     ok('codex-* and hidden slugs have no family', codexFam['codex-9-sol'] === null && codexFam['gpt-7-sol'] === null && codexFam['gpt-reserve'] === null);
-    const latest = detectWith({ models: { sol: 'gpt-6-sol' }, codex: [
-      { vendor: 'codex', id: 'gpt-6-sol', family: 'sol', hidden: false },
+    const latest = detectWith({ models: { sol: 'gpt-6.2-sol' }, codex: [
+      { vendor: 'codex', id: 'gpt-6.2-sol', family: 'sol', hidden: false },
     ] });
     ok('(control) a pinned id present in its catalog raises nothing', live(row(latest, 'sol')).length === 0);
     {
       const h2 = home();
-      writeCodexCatalog(path.join(h2, '.codex'), [codexModel('gpt-6-sol', 'Sol'), codexModel('gpt-9-sol-latest', 'Latest'), codexModel('gpt-9-sol', 'Nine', 'hide')], Date.now());
+      writeCodexCatalog(path.join(h2, '.codex'), [codexModel('gpt-6.2-sol', 'Sol'), codexModel('gpt-9-sol-latest', 'Latest'), codexModel('gpt-9-sol', 'Nine', 'hide')], Date.now());
       const c2 = readCatalogs({ home: h2 });
       ok('a -latest slug has no family', c2.codex.models.find((m) => m.id === 'gpt-9-sol-latest').family === null);
     }
@@ -156,7 +156,7 @@ async function main() {
     ok('a Claude candidate above the installed CLI is shown as not acceptable', sonnet && sonnet.candidate === 'claude-sonnet-5-1' && sonnet.acceptable === false && /9\.0\.0/.test(sonnet.reason), JSON.stringify(sonnet));
     ok('...and one within it is acceptable', opus.alerts.find((a) => a.kind === 'update').acceptable === true);
     const terra = row(d, 'terra').alerts.find((a) => a.kind === 'retiring');
-    ok('a Codex upgrade/retirement_at on a pinned id raises Retiring with date and suggestion', terra && terra.date === '2026-12-01T19:00:00Z' && terra.candidate === 'gpt-6-sol' && /retiring/.test(terra.message), JSON.stringify(terra));
+    ok('a Codex upgrade/retirement_at on a pinned id raises Retiring with date and suggestion', terra && terra.date === '2026-12-01T19:00:00Z' && terra.candidate === 'gpt-6.2-sol' && /retiring/.test(terra.message), JSON.stringify(terra));
     ok('a pinned id missing from its catalog raises Vanished', row(d, 'haiku').alerts.some((a) => a.kind === 'vanished'));
 
     const dated = detectWith({ claude: [
@@ -196,22 +196,22 @@ async function main() {
 
     // Codex: the UNION of ~/.codex and every seat home.
     const seat = path.join(h3, '.codex-seats', 'second');
-    writeCodexCatalog(path.join(h3, '.codex'), [codexModel('gpt-6-sol', 'Sol')], Date.now() - 5 * HOUR);
-    writeCodexCatalog(seat, [codexModel('gpt-6-sol', 'Sol'), codexModel('gpt-6-luna', 'Luna')], Date.now() - HOUR);
+    writeCodexCatalog(path.join(h3, '.codex'), [codexModel('gpt-6.2-sol', 'Sol')], Date.now() - 5 * HOUR);
+    writeCodexCatalog(seat, [codexModel('gpt-6.2-sol', 'Sol'), codexModel('gpt-6-luna', 'Luna')], Date.now() - HOUR);
     ok('a seat-home Codex cache is read beside ~/.codex', readCatalogs({ home: h3, codexHomes: [seat] }).codex.models.some((m) => m.id === 'gpt-6-luna'));
     ok('...and ~/.codex alone is read without seats', !readCatalogs({ home: h3 }).codex.models.some((m) => m.id === 'gpt-6-luna'));
 
-    // Catalog A (an older client, fetched last) lacks gpt-6-sol; catalog B lists it.
+    // Catalog A (an older client, fetched last) lacks gpt-6.2-sol; catalog B lists it.
     const now = Date.now();
     writeCodexCatalog(path.join(h3, '.codex'), [
       codexModel('gpt-6-astra', 'Astra (old client)'), codexModel('gpt-5.6-sol', 'Sol 5.6 (old client)'), codexModel('gpt-5.6-terra', 'Terra'),
     ], now - 60 * 1000, '0.155.0');
     writeCodexCatalog(seat, [
-      codexModel('gpt-6-astra', 'GPT-6-Astra'), codexModel('gpt-6-sol', 'GPT-6-Sol'), codexModel('gpt-5.6-sol', 'GPT-5.6-Sol'), codexModel('gpt-5.6-terra', 'Terra'),
+      codexModel('gpt-6-astra', 'GPT-6-Astra'), codexModel('gpt-6.2-sol', 'GPT-6-Sol'), codexModel('gpt-5.6-sol', 'GPT-5.6-Sol'), codexModel('gpt-5.6-terra', 'Terra'),
     ], now - 2 * HOUR, '0.156.0');
     const u = readCatalogs({ home: h3, codexHomes: [seat] });
     const du = detect({ registry: DEFAULTS, defaults: DEFAULTS, catalogs: u });
-    ok('union: an id listed by any catalog is offered — gpt-6-sol raises no Vanished', !row(du, 'sol').alerts.length, JSON.stringify(row(du, 'sol').alerts));
+    ok('union: an id listed by any catalog is offered — gpt-6.2-sol raises no Vanished', !row(du, 'sol').alerts.length, JSON.stringify(row(du, 'sol').alerts));
     ok('...and no false candidate for sol or astra', !row(du, 'sol').alerts.some((a) => a.kind === 'update') && !row(du, 'astra').alerts.length);
     ok('...per-id metadata comes from the highest client_version', u.codex.models.find((m) => m.id === 'gpt-6-astra').displayName === 'GPT-6-Astra');
     ok('...catalog age is the newest fetched_at', Math.abs(u.codex.fetchedAt - (now - 60 * 1000)) < 1000);
@@ -226,7 +226,7 @@ async function main() {
     // Missing and stale.
     const h4 = home();
     fs.rmSync(path.join(h4, '.grok', 'models_cache.json'));
-    writeCodexCatalog(path.join(h4, '.codex'), [codexModel('gpt-6-sol', 'Sol')], Date.now() - 9 * 24 * HOUR);
+    writeCodexCatalog(path.join(h4, '.codex'), [codexModel('gpt-6.2-sol', 'Sol')], Date.now() - 9 * 24 * HOUR);
     const c4 = readCatalogs({ home: h4 });
     ok('a missing catalog gives a per-vendor note', !c4.grok.ok && /No Grok catalog/.test(c4.grok.note) && /run `grok` once/.test(c4.grok.note), c4.grok.note);
     ok('a stale catalog gives a stale note', c4.codex.ok && c4.codex.stale && /9 days old/.test(c4.codex.note) && /run `codex` once/.test(c4.codex.note), c4.codex.note);
@@ -259,9 +259,9 @@ async function main() {
 
   // ── positional edits of the user file ─────────────────────────────────
   {
-    const src = '{\n  "models": {\n    "sol": "gpt-6-sol"\n  },\n  "assist": {"claude":{"default":"opus"}}\n}\n';
+    const src = '{\n  "models": {\n    "sol": "gpt-6.2-sol"\n  },\n  "assist": {"claude":{"default":"opus"}}\n}\n';
     const a = withModel(src, 'opus', 'claude-opus-5-6');
-    ok('withModel adds exactly one member', a === '{\n  "models": {\n    "sol": "gpt-6-sol",\n    "opus": "claude-opus-5-6"\n  },\n  "assist": {"claude":{"default":"opus"}}\n}\n', JSON.stringify(a));
+    ok('withModel adds exactly one member', a === '{\n  "models": {\n    "sol": "gpt-6.2-sol",\n    "opus": "claude-opus-5-6"\n  },\n  "assist": {"claude":{"default":"opus"}}\n}\n', JSON.stringify(a));
     ok('withoutModel removes exactly that member', withoutModel(a, 'opus') === src, JSON.stringify(withoutModel(a, 'opus')));
     ok('withModel on a file with no models key keeps everything else', JSON.parse(withModel('{"assist": {}}', 'opus', 'x-1')).models.opus === 'x-1' &&
        withModel('{"assist": {}}', 'opus', 'x-1').startsWith('{"assist": {}'));
@@ -296,12 +296,12 @@ async function main() {
       ok(`bad id ${JSON.stringify(bad.length > 10 ? `${bad.slice(0, 6)}…(${bad.length})` : bad)} → 400, file unchanged`, r.status === 400 && read(userFile(h)) === assistUser, `${r.status} ${r.text}`);
     }
     ok('an unknown family → 400', (await post(srv.base, '/api/models/set', { family: 'opsu', id: 'claude-opus-5-6' })).status === 400);
-    const cross = await post(srv.base, '/api/models/set', { family: 'opus', id: 'gpt-6-sol' });
+    const cross = await post(srv.base, '/api/models/set', { family: 'opus', id: 'gpt-6.2-sol' });
     ok('a vendor-prefix change needs confirm, and nothing is written', cross.body.needsConfirm === true && /Claude to Codex/.test(cross.body.warnings.join(' ')) && read(userFile(h)) === assistUser, cross.text);
     const absent = await post(srv.base, '/api/models/set', { family: 'opus', id: 'claude-opus-9-9' });
     ok('an id absent from the catalog needs confirm, and nothing is written', absent.body.needsConfirm === true && /not in the Claude catalog/.test(absent.body.warnings.join(' ')) && read(userFile(h)) === assistUser, absent.text);
-    const cross2 = await post(srv.base, '/api/models/set', { family: 'opus', id: 'gpt-6-sol', confirm: true });
-    ok('...confirmed, it saves', cross2.body.saved === true && JSON.parse(read(userFile(h))).models.opus === 'gpt-6-sol', cross2.text);
+    const cross2 = await post(srv.base, '/api/models/set', { family: 'opus', id: 'gpt-6.2-sol', confirm: true });
+    ok('...confirmed, it saves', cross2.body.saved === true && JSON.parse(read(userFile(h))).models.opus === 'gpt-6.2-sol', cross2.text);
     await post(srv.base, '/api/models/reset', { family: 'opus' });
     ok('...and reset puts the file back byte-for-byte', read(userFile(h)) === assistUser, read(userFile(h)));
 
@@ -358,18 +358,18 @@ async function main() {
     const tm2 = { ...tm, mtime: fs.statSync(tomlFile).mtimeMs };
     const tAcc = await post(srv.base, '/api/models/sidecar', tm2);
     ok('config.toml changes only its top-level model = line', tAcc.body?.saved &&
-       read(tomlFile) === tomlBefore.replace(/^model = "gpt-6-sol"/, 'model = "gpt-5.6-sol"'), JSON.stringify(read(tomlFile)));
-    ok('...the [profiles.review] model line is untouched', read(tomlFile).includes('[profiles.review]\nmodel = "gpt-6-sol"'));
+       read(tomlFile) === tomlBefore.replace(/^model = "gpt-6.2-sol"/, 'model = "gpt-5.6-sol"'), JSON.stringify(read(tomlFile)));
+    ok('...the [profiles.review] model line is untouched', read(tomlFile).includes('[profiles.review]\nmodel = "gpt-6.2-sol"'));
     await post(srv.base, '/api/models/reset', { family: 'sol' });
 
     // A multi-line array whose continuation lines start with `[` is not a table header.
-    const tomlArray = 'notify = [\n  ["say", "done"],\n  [ "beep" ]\n]\nmodel = "gpt-6-sol"\n\n[profiles.review]\nmodel = "gpt-6-sol"\n';
+    const tomlArray = 'notify = [\n  ["say", "done"],\n  [ "beep" ]\n]\nmodel = "gpt-6.2-sol"\n\n[profiles.review]\nmodel = "gpt-6.2-sol"\n';
     fs.writeFileSync(tomlFile, tomlArray);
     const solArr = await post(srv.base, '/api/models/set', { family: 'sol', id: 'gpt-5.6-sol' });
     const ta = (solArr.body.sidecars || []).find((x) => x.kind === 'codexModel');
     ok('a top-level model after a multi-line array of arrays is still found', !!ta, solArr.text);
     const taAcc = ta ? await post(srv.base, '/api/models/sidecar', ta) : { body: null };
-    ok('...and only that line changes', taAcc.body?.saved && read(tomlFile) === tomlArray.replace('\nmodel = "gpt-6-sol"\n\n', '\nmodel = "gpt-5.6-sol"\n\n'), JSON.stringify(read(tomlFile)));
+    ok('...and only that line changes', taAcc.body?.saved && read(tomlFile) === tomlArray.replace('\nmodel = "gpt-6.2-sol"\n\n', '\nmodel = "gpt-5.6-sol"\n\n'), JSON.stringify(read(tomlFile)));
     fs.writeFileSync(tomlFile, 'x = 1\n[profiles.review]\nmodel = "gpt-5.6-sol"\n');
     ok('...while a model = line under a real table header is never proposed',
        !(await post(srv.base, '/api/models/reset', { family: 'sol' })).body.sidecars?.some((x) => x.kind === 'codexModel'));

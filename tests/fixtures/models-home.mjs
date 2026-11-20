@@ -57,12 +57,13 @@ export function defaultCatalogs(now = Date.now()) {
     claudeFetchedAt: now - HOUR,
     codex: [
       codexModel('gpt-6-astra', 'GPT-6-Astra'),
-      codexModel('gpt-6-sol', 'GPT-6-Sol'),
+      codexModel('gpt-6.2-sol', 'GPT-6.2-Sol'),
+      codexModel('gpt-6.1-sol', 'GPT-6.1-Sol'),
       codexModel('gpt-7-sol', 'GPT-7-Sol', 'hide'),
       codexModel('codex-9-sol', 'Codex 9 Sol'),
       codexModel('gpt-5.6-sol', 'GPT-5.6-Sol'),
       codexModel('gpt-5.6-terra', 'GPT-5.6-Terra', 'list', {
-        model: 'gpt-6-sol', migration_markdown: 'Terra is retiring; move to Sol.', retirement_at: '2026-12-01T19:00:00Z',
+        model: 'gpt-6.2-sol', migration_markdown: 'Terra is retiring; move to Sol.', retirement_at: '2026-12-01T19:00:00Z',
       }),
       codexModel('gpt-5.5', 'GPT-5.5', 'list', {
         model: 'gpt-5.6-sol', migration_markdown: 'Move to 5.6.', retirement_at: '2026-10-14T19:00:00Z',
@@ -131,7 +132,7 @@ export function seedHome({ prefix = 'acs-models-', claudeVersion = '2.1.300 (Cla
     '{\n  "model": "claude-opus-5-5",\n  "theme": "dark",\n  "modelSettings": {\n    "claude-opus-5-5": { "effortLevel": "medium" },\n' +
     '    "claude-sonnet-5": {\n      "effortLevel": "high"\n    }\n  },\n  "permissions": { "allow": [] }\n}\n');
   write(path.join(home, '.codex', 'config.toml'),
-    'model = "gpt-6-sol"\nmodel_reasoning_effort = "high"\n\n[profiles.review]\nmodel = "gpt-6-sol"\n');
+    'model = "gpt-6.2-sol"\nmodel_reasoning_effort = "high"\n\n[profiles.review]\nmodel = "gpt-6.2-sol"\n');
   write(path.join(home, '.claude', 'skills', 'review', 'SKILL.md'),
     '---\nname: review\n---\nRun `claude -p --model "$(model-id opus 2>/dev/null || echo MODEL-ID-UNRESOLVED-opus)"` <!-- fixture-review-skill -->\n' +
     'Opus is the reviewer here; that prose line is not a callsite.\n' +

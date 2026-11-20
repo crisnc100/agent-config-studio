@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { after, beforeEach, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { vendorOf } from '../../../lib/models.js'
 
 const PACKS = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PACKAGE = resolve(PACKS, '..')
@@ -100,8 +101,8 @@ function effortIn(cli, argv) {
   return argv.includes(flag) ? argv[argv.indexOf(flag) + 1] ?? '' : null
 }
 const modelIn = (cli, argv) => argv[argv.indexOf(cli === 'claude' ? '--model' : '-m') + 1]
-/** The CLI an id runs on: its prefix, the rule ask-model uses. */
-const cliOf = (id) => ({ claude: 'claude', gpt: 'codex', grok: 'grok' })[id.split('-')[0]]
+/** The CLI an id runs on: lib/models.js vendorOf, the table ask-model imports. */
+const cliOf = (id) => vendorOf(id)
 /** The one model call a snippet made: on `cli`, and on no other CLI. */
 function onlyCall(calls, cli, label) {
   for (const name of ['claude', 'codex', 'grok']) assert.equal(calls[name].length, name === cli ? 1 : 0, `${label}: ${name} calls`)
