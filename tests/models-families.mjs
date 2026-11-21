@@ -131,6 +131,10 @@ console.log('\nmodels/families: an entry this build cannot use is hidden, alone'
   ok('an unknown top-level key is ignored, not an error', reg.familiesError === null);
   const o = run(h, 'opusish');
   ok('model-id on a hidden entry names families.json and why', o.code === 1 && o.err.includes('families.json has it, but hidden: its id is not a gemini- id'), o.err);
+  for (const args of [['--flavor', 'opusish'], ['--effort', 'opusish']]) {
+    const f = run(h, ...args);
+    ok(`model-id ${args[0]} on a hidden entry says the same`, f.code !== 0 && f.err.includes('families.json has it, but hidden: its id is not a gemini- id'), J(f));
+  }
 }
 
 console.log('\nmodels/families: roles and pauses');
