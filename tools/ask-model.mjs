@@ -29,7 +29,10 @@
  * cannot be denied and stays on. It runs only on AGY_VERSION, when ~/.gemini/config holds no MCP server, no plugin and
  * no hook but cmux's (agyConfigProblem), and when no workspace customization would run (agyWorkspaceFiles); never with --investigate, --no-tools or --min-tools (exit 4, nothing run), and its answer is
  * labelled unverified: agy names only the model it was asked for. Each call's agy log is kept under
- * ~/.agent-config-studio/logs/agy/; --json carries `served` and `logFile`.
+ * ~/.agent-config-studio/logs/agy/; --json carries `served` and `logFile`. agy runs only on macOS, inside the
+ * sandbox-exec wall AGY_WALL: it reads only the git work tree holding --cwd (or --cwd itself, never HOME or a folder
+ * holding it), its own temp folder and log, and the few files of its own state a call needs. A per-call check
+ * (agyWallCanary) proves the wall holds before agy starts; a call whose log says agy kept its token in a file fails.
  *
  * --investigate adds a shell (claude's Bash; grok's run_terminal_cmd, with
  * shell commands allowed; codex's read-only sandbox already runs commands) and
@@ -180,7 +183,40 @@ const AGY_CMUX_HOOK = ": cmux-antigravity-hook-v2; :; printenv CMUX_ANTIGRAVITY_
 const AGY_CMUX_HOOK_RE = new RegExp(`^${AGY_CMUX_HOOK.split(/(<SOCK>|<EVENT>)/).map((p) => (p === '<SOCK>' ? "/[^']*" : p === '<EVENT>' ? '[a-z-]+'
   : p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('')}$`);
 const agyCmuxHook = (command) => typeof command === 'string' && AGY_CMUX_HOOK_RE.test(command);
-const AGY_ENV = { CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1' };
+// agy honours AGY_CLI_DISABLE_AUTO_UPDATE only as "true" (1.5.14 logs "Auto-update disabled via environment variable");
+// "1" is ignored and its updater runs, which is how a call ends up on an agy nobody probed.
+const AGY_ENV = { CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1', AGY_CLI_DISABLE_AUTO_UPDATE: 'true' };
+// The macOS sandbox every agy call runs in (agyWall). agy 1.5.14 reads any file the model names by absolute path, and
+// its deny list cannot narrow reads to a folder, so the operating system does it. File contents are refused under every
+// folder that holds user data (/Users, /Volumes, the temp folders, HOME), then allowed back for: the folder under
+// review (ROOT), the call's own temp folder and log, the agy executable, and the few files of agy's own state a
+// print-mode call reads. Its past conversations, brain, history and summaries (cache/conversation_metadata.json holds
+// summaries too) stay walled off; a call runs without them. The login keychain's file is allowed back because securityd
+// lets a sandboxed process use the keychain only when it may read that file; it holds the keychain encrypted.
+// xcrun_db in macOS's own temp folder keeps git (an xcrun shim) from rebuilding its cache on every call. Only reads
+// of contents (file-read-data) are refused: a path still resolves and stats. Writes are not limited. Every path comes
+// in as a -D parameter, never spliced into this text; the review runtime carries the same literal and
+// tests/agy-wall.mjs keeps them identical. builds/gemini-family/containment-probe.md (the 1.5.14 round).
+const AGY_WALL = [
+  '(version 1)',
+  '(allow default)',
+  '(deny file-read-data (subpath "/Users") (subpath "/Volumes") (subpath "/private/tmp") (subpath (param "TMP")) (subpath (param "USER_TMP")) (subpath (param "HOME")))',
+  '(allow file-read-data',
+  '  (subpath (param "ROOT")) (subpath (param "CALL_TMP")) (literal (param "LOG")) (literal (param "AGY"))',
+  '  (literal (string-append (param "HOME") "/Library/Keychains/login.keychain-db"))',
+  '  (subpath (string-append (param "HOME") "/.gemini/config"))',
+  '  (subpath (string-append (param "HOME") "/.gemini/antigravity-cli/builtin"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/settings.json"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/installation_id"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/jetski_state.pbtxt"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/cache/default_project_id.txt"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/cache/onboarding.json"))',
+  '  (literal (string-append (param "USER_TMP") "/xcrun_db")))',
+].join('\n');
+const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
+// agy's log line when it keeps the Google sign-in token in a file rather than the keychain (after a keychain timeout,
+// a failed keychain write, or on request). A walled call that logs it fails: that file may sit where a later call reads.
+const AGY_TOKEN_FILE = /file-based token storage/i;
 
 /**
  * Grok's environment for one call: an empty temporary HOME, so what grok borrows from ~/.claude and ~/.cursor
@@ -789,6 +825,87 @@ function agyVersion(bin) {
     const v = spawnSync(bin, ['--version'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000, env: { ...process.env, ...AGY_ENV } });
     return v.error || v.status !== 0 ? null : String(v.stdout || '').trim() || null;
   } catch { return null; } finally { if (dir) fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+/** Why agy cannot be walled in on this machine, or null. The wall is macOS's sandbox-exec; nothing else is used. */
+function agyWallProblem(platform = process.platform) {
+  if (platform !== 'darwin') return `agy runs only inside its macOS sandbox (sandbox-exec), and this is ${platform}`;
+  try { fs.accessSync(SANDBOX_EXEC, fs.constants.X_OK); } catch { return `${SANDBOX_EXEC} is missing, and agy runs only inside the sandbox it applies`; }
+  return null;
+}
+
+/**
+ * The folder a walled agy call in `cwd` may read: the real path of the top of the git work tree holding `cwd`, else of
+ * `cwd`. HOME, or a folder holding it, is refused: allowing it back would reopen everything the wall closes.
+ */
+function agyReadRoot(cwd, home = os.homedir()) {
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  const git = which('git');
+  const top = git ? spawnSync(git, ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }) : null;
+  const root = top?.status === 0 && top.stdout.trim() ? real(top.stdout.trim()) : real(cwd);
+  const h = real(home);
+  if (h === root || h.startsWith(root.endsWith('/') ? root : `${root}/`)) {
+    return { error: `agy would read ${root}, which is your home folder or holds it, so the wall would keep nothing out` };
+  }
+  return { root };
+}
+
+/**
+ * The -D parameters AGY_WALL reads, each a real path: the sandbox matches the path the kernel resolves (/var is
+ * /private/var). USER_TMP is macOS's own per-user temp folder, which tools that ignore TMPDIR use. { params } or { error }.
+ */
+function agyWallParams({ root, callTmp, logFile, bin, home = os.homedir(), tmp = os.tmpdir() }) {
+  const ut = spawnSync('/usr/bin/getconf', ['DARWIN_USER_TEMP_DIR'], { encoding: 'utf8' });
+  if (ut.error || ut.status !== 0 || !ut.stdout.trim()) return { error: "macOS's per-user temp folder could not be found (getconf DARWIN_USER_TEMP_DIR failed)" };
+  try {
+    return { params: { ROOT: fs.realpathSync(root), CALL_TMP: fs.realpathSync(callTmp),
+      LOG: path.join(fs.realpathSync(path.dirname(logFile)), path.basename(logFile)), AGY: fs.realpathSync(bin),
+      HOME: fs.realpathSync(home), TMP: fs.realpathSync(tmp), USER_TMP: fs.realpathSync(ut.stdout.trim()) } };
+  } catch (e) { return { error: `a path the wall names could not be resolved (${e.path ?? ''}: ${e.code || e.message})` }; }
+}
+
+/** Whether agy's log of a call says it kept the sign-in token in a file (AGY_TOKEN_FILE), or exists but can't be read. */
+function agyTokenFile(logFile) {
+  try { return AGY_TOKEN_FILE.test(fs.readFileSync(logFile, 'utf8')); } catch (e) { return e.code !== 'ENOENT'; }
+}
+
+/** sandbox-exec's arguments for `command` run inside AGY_WALL with `params`. */
+const agyWall = (params, command) => [...Object.entries(params).flatMap(([k, v]) => ['-D', `${k}=${v}`]), '-p', AGY_WALL, ...command];
+
+/**
+ * Proof, before each call, that the wall holds on this machine's real paths, with the call's own profile and
+ * parameters: /bin/cat of a fresh file in each temp folder and beside the log (in HOME) must be refused, and /bin/ls
+ * of the read root must work. null when it holds, else why not. The files are made here and removed before it returns.
+ */
+function agyWallCanary(params) {
+  const token = crypto.randomBytes(16).toString('hex');
+  const dirs = [];
+  try {
+    const files = [...new Set([params.TMP, params.USER_TMP, path.dirname(params.LOG)])].map((d) => {
+      const dir = fs.mkdtempSync(path.join(d, 'acs-agy-canary-'));
+      dirs.push(dir);
+      const f = path.join(dir, 'canary');
+      fs.writeFileSync(f, token, { mode: 0o600 });
+      return f;
+    });
+    const walled = (command) => spawnSync(SANDBOX_EXEC, agyWall(params, command), { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000 });
+    for (const f of files) {
+      const r = walled(['/bin/cat', f]);
+      if (r.status === 71 && /sandbox_apply/.test(r.stderr)) {
+        return 'this process already runs inside a sandbox, where sandbox-exec cannot apply agy\'s wall (sandbox_apply: Operation not permitted); run it from a shell outside any sandbox';
+      }
+      if (r.error) return `the wall's check could not run (${r.error.code || r.error.message})`;
+      if (r.status === 0 || String(r.stdout).includes(token)) return `the wall let a test read ${f}, which it should refuse`;
+      if (!/Operation not permitted/.test(r.stderr)) return `the wall's check of ${f} ended without the sandbox's refusal (exit ${r.status ?? r.signal}: ${tail(r.stderr)})`;
+    }
+    const ls = walled(['/bin/ls', '-a', params.ROOT]);
+    if (ls.error || ls.status !== 0) return `the wall refused to list the folder under review, ${params.ROOT} (${tail(ls.stderr || ls.error?.message)})`;
+    return null;
+  } catch (e) {
+    return `the wall's check could not set up its test files (${e.code || e.message})`;
+  } finally {
+    for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -1407,8 +1524,10 @@ async function main(argv) {
   const result = { family: m.family, id: m.id, effort: m.effort || null, mode, ...(o.minTools && MIN_TOOLS[vendor]), ...(mode === 'x-search' && X_SEARCH_TOOLS),
     ...(mode === 'investigate' && { shellSandbox: SHELL_SANDBOX[vendor] }), answer: null, changed: null, error: null };
   let grokCall = null;
+  let agyTmp = null;
   const finish = (exit) => {
     grokCall?.done();
+    if (agyTmp) fs.rmSync(agyTmp, { recursive: true, force: true });
     if (result.error) process.stderr.write(`ask-model: ${result.error}\n`);
     if (o.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     else if (result.answer !== null) process.stdout.write(`${result.answer}\n`);
@@ -1442,6 +1561,7 @@ async function main(argv) {
     mcpOff = off.args;
   }
   let logFile = null;
+  let wall = null;
   if (vendor === 'agy') {
     // The workspace and home first: they need no agy process, and an unprobed agy could load what they would refuse.
     const workspace = agyWorkspaceFiles(cwd);
@@ -1458,14 +1578,25 @@ async function main(argv) {
         + '(builds/gemini-family/probe in Agent Config Studio) and update AGY_VERSION before using it, so agy was not run';
       return finish(4);
     }
+    const unwalled = agyWallProblem();
+    if (unwalled) { result.error = `${unwalled}, so agy was not run`; return finish(4); }
+    const read = agyReadRoot(cwd);
+    if (read.error) { result.error = `${read.error}, so agy was not run`; return finish(4); }
     // Kept after the call: agy's own log of it, where a model fallback agy does not report would show.
     const dir = path.join(os.homedir(), '.agent-config-studio', 'logs', 'agy');
     try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { result.error = `${dir} could not be created (${e.code || e.message}), so agy was not run`; return finish(4); }
     logFile = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}-${crypto.randomBytes(3).toString('hex')}.log`);
     result.logFile = logFile;
+    // agy's TMPDIR for the call: the temp folders it would otherwise share are walled off.
+    try { agyTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-call-')); } catch (e) { result.error = `a temp folder for agy could not be made (${e.code || e.message}), so agy was not run`; return finish(4); }
+    const walled = agyWallParams({ root: read.root, callTmp: agyTmp, logFile, bin });
+    if (walled.error) { result.error = `${walled.error}, so agy was not run`; return finish(4); }
+    const broken = agyWallCanary(walled.params);
+    if (broken) { result.error = `${broken}, so agy was not run`; return finish(4); }
+    wall = walled.params;
   }
   if (vendor === 'grok') grokCall = grokCallEnv();
-  const env = grokCall ? grokCall.env : vendor === 'agy' ? { ...process.env, ...AGY_ENV } : process.env;
+  const env = grokCall ? grokCall.env : wall ? { ...process.env, ...AGY_ENV, TMPDIR: wall.CALL_TMP } : process.env;
   if (vendor === 'grok') {
     const leader = grokLeader(grokCall.grokHome);
     if (leader) {
@@ -1509,12 +1640,18 @@ async function main(argv) {
   startWatch(o.role !== undefined && /^[a-z][a-z0-9-]{0,31}$/.test(o.role) ? o.role : 'ask');
   let args;
   try { args = argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff, schema, logFile }); } catch (e) { result.error = `${e.message} — ${vendor} was not run`; return finish(4); }
-  const r = await run(bin, args, cwd, env);
+  const r = wall ? await run(SANDBOX_EXEC, agyWall(wall, [bin, ...args]), cwd, env) : await run(bin, args, cwd, env);
   // A call grok refused for want of approval leaves only this line, and grok still exits 0.
   if (vendor === 'grok') {
     for (const line of String(r.stderr || '').split('\n')) if (/permission required:/.test(line)) process.stderr.write(`ask-model: grok: ${line.trim()}\n`);
   }
   const got = readAnswer(vendor, m.id, r, schema, { cwd, grokHome: grokCall?.grokHome });
+  if (wall && agyTokenFile(logFile)) {
+    got.answer = undefined;
+    got.exit = 4;
+    got.error = `agy switched to keeping its Google sign-in token in a file instead of the keychain (its log, ${logFile}, says `
+      + '"file-based token storage"), so its answer was not used: check what it wrote under ~/.gemini before running agy again';
+  }
   if (got.answer !== undefined) result.answer = got.answer;
   else result.error = got.error;
   if (vendor === 'agy') {
@@ -1541,7 +1678,7 @@ async function main(argv) {
   return finish(got.exit ?? 0);
 }
 
-export { agySubagentDenials, argvFor, readAnswer, sandboxProblem };
+export { AGY_ENV, AGY_WALL, SANDBOX_EXEC, agyReadRoot, agySubagentDenials, agyTokenFile, agyWall, agyWallCanary, agyWallParams, agyWallProblem, argvFor, readAnswer, sandboxProblem };
 
 /**
  * For `model-id --install`, after it has copied the resolver: this file beside
