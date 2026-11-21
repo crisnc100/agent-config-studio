@@ -874,6 +874,15 @@ skill.
     one of cmux's;
   - `agy --version`, run in an empty temporary folder, is not the version
     its containment was checked on.
+  Agy then runs only on macOS, inside a `sandbox-exec` sandbox that lets it
+  read the git work tree holding `--cwd` (or `--cwd` itself), its own temp
+  folder and log, and the few agy settings files it needs to start and sign
+  in (your login keychain's file among them), and nothing else under your
+  home or temp folders. It exits 4 without running agy off macOS, inside
+  another sandbox (run it from a plain terminal), when that folder is your
+  home or holds it, or when a check made before each call shows the sandbox
+  not holding. A call whose agy log says it kept its sign-in token in a file
+  exits 4 too.
   `--role security` (or its `--second`) that resolves to an agy family
   exits 4 without running it, since agy's web search stays on.
   A tool call agy refused is printed on stderr and does not fail the call.
