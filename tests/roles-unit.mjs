@@ -400,6 +400,29 @@ if (!process.env.ACS_ROLES_UNIT_SIGINT_PROBE) {
   }
 }
 
+console.log('\nroles unit: a family removed while a roles write is in flight');
+{
+  const { familiesPath } = await import('../lib/models.js');
+  const { agyModelsPath } = await import('../lib/models-catalog.js');
+  const { removeFamily } = await import('../lib/models-panel.js');
+  const put = (f, body) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(body)); };
+  put(familiesPath(home), { version: 1, families: { argon: { id: 'gemini-4-argon' } } });
+  // Antigravity no longer offers argon, and nothing names it yet: Remove is allowed.
+  put(agyModelsPath(home), { version: 1, fetchedAt: Date.now(), agyVersion: '1.5.13', models: [{ id: 'gemini-4-neon', displayName: 'Gemini 4 Neon', efforts: null }] });
+  const quiet = { recordBaseline: async () => null, record: async () => null };
+  const file = rolesUserPath(home);
+  const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+  let removed = null;
+  _setWriteHook(async () => { _setWriteHook(null); removed = await removeFamily({ family: 'argon', home }).catch((e) => e); });
+  const e = await rejects(writeRoles({ text: '{"version":1,"roles":{"judge":{"use":"argon"}}}\n', base: hashOf(before), message: 'argon', home, hist: quiet }));
+  ok('(argon was removed after the roles write checked it, before its rename)', removed?.saved === true, removed?.message ?? JSON.stringify(removed));
+  ok('the roles write naming argon is refused', e?.status === 400 && /argon/.test(e.message), e?.message);
+  ok('…roles.json is unchanged', (fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null) === before);
+  ok('…and no temp file is left beside it', fs.readdirSync(path.dirname(file)).every((f) => !f.includes('.tmp-')));
+  fs.rmSync(familiesPath(home), { force: true });
+  fs.rmSync(agyModelsPath(home), { force: true });
+}
+
 assertRealHomesUnchanged(realBefore, ok);
 fs.rmSync(home, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed\n`);
