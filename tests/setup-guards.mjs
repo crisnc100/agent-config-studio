@@ -257,6 +257,8 @@ console.log('setup guards\n');
   const origPr = fs.readFileSync(pr, 'utf8');
   const hj = path.join(copy, 'lib', 'harness.js');
   const origHj = fs.readFileSync(hj, 'utf8');
+  const gm = path.join(copy, 'lib', 'usage', 'gemini.js');
+  const origGm = fs.readFileSync(gm, 'utf8');
   const agent = path.join(copy, 'lib', 'agent.js');
   const server = path.join(copy, 'server.js');
   const registry = path.join(copy, 'lib', 'registry.js');
@@ -307,6 +309,19 @@ console.log('setup guards\n');
     ['lsof: a third location', pr, origPr, (t) => t.replace("execFile('/usr/bin/lsof', ['-F', 'pcn', '-w', '+d'", "execFile('/usr/local/bin/lsof', ['-F', 'pcn', '-w', '+d'")],
     ['inspectGrok: a different argv (a session prompt)', hj, origHj, (t) => t.replace("spawn(binary, ['inspect', '--json']", "spawn(binary, ['-p', 'hello']")],
     ['inspectGrok: the same spawn outside inspectGrok', hj, origHj, (t) => t.replace('export function inspectGrok(', "export const inspectAgain = (binary) => spawn(binary, ['inspect', '--json'], {});\nexport function inspectGrok(")],
+    ['agy usage: a prompt instead of /usage', gm, origGm, (t) => t.replace("['-p', '/usage', '--output-format', 'json']", "['-p', 'summarise this folder', '--output-format', 'json']")],
+    ['agy usage: an extra flag', gm, origGm, (t) => t.replace("['-p', '/usage', '--output-format', 'json']", "['-p', '/usage', '--output-format', 'json', '--dangerously-skip-permissions']")],
+    ['agy usage: a .concat() after the pinned argv', gm, origGm, (t) => t.replace("['-p', '/usage', '--output-format', 'json'], opts", "['-p', '/usage', '--output-format', 'json'].concat(process.env.AGY_EXTRA || []), opts")],
+    ['agy usage: a spread into the pinned argv', gm, origGm, (t) => t.replace("['--version'], opts", "['--version', ...(process.env.AGY_EXTRA ? [process.env.AGY_EXTRA] : [])], opts")],
+    ['agy usage: options other than opts', gm, origGm, (t) => t.replace("['--version'], opts", "['--version'], { stdio: 'ignore' }")],
+    ['agy usage: the empty-folder cwd dropped', gm, origGm, (t) => t.replace("const opts = { cwd: dir, stdio:", "const opts = { stdio:")],
+    ['agy usage: stdin opened', gm, origGm, (t) => t.replace("stdio: ['ignore', 'pipe', 'ignore'], env:", "stdio: ['pipe', 'pipe', 'ignore'], env:")],
+    ['agy usage: opts reassigned', gm, origGm, (t) => t.replace("      child = which === 'version'", "      Object.assign(opts, {}); opts = { ...opts, cwd: process.cwd() };\n      child = which === 'version'"), true],
+    ['agy usage: stdin opened after the opts literal', gm, origGm, (t) => t.replace("      child = which === 'version'", "      opts.stdio[0] = 'pipe';\n      child = which === 'version'"), true],
+    ['agy usage: opts changed through Object.assign', gm, origGm, (t) => t.replace("      child = which === 'version'", "      Object.assign(opts, { cwd: process.cwd() });\n      child = which === 'version'"), true],
+    ['agy usage: the mkdtemp assignment deleted', gm, origGm, (t) => t.replace("      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-usage-'));\n", '')],
+    ['agy usage: the folder pointed elsewhere', gm, origGm, (t) => t.replace("dir = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-usage-'));", "dir = process.cwd();")],
+    ['agy usage: a PATH name', gm, origGm, (t) => t.replace("spawn(found.binary, ['--version'], opts)", "spawn('agy', ['--version'], opts)")],
     ['lsof: a PATH name', pr, origPr, (t) => t.replace("execFile('/usr/bin/lsof', ['-F', 'pcn', '-w', '+D'", "execFile('lsof', ['-F', 'pcn', '-w', '+D'")],
   ];
   for (const [what, file, orig, plant, checkSyntax = false] of variants) {

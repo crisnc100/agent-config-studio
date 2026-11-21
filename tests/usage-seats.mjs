@@ -205,7 +205,7 @@ function registryPathIn(h) { return path.join(h, '.agent-config-studio', 'seats.
   ok('an empty registry snapshots to zero seats, not an error', (await snapshot({ seats: [] })).seats.length === 0);
 }
 
-ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,grok');
+ok('vendor list is the three harnesses and gemini', VENDORS.join(',') === 'claude,codex,grok,gemini');
 
 // --- creating seats from the UI ---------------------------------------------
 {
@@ -712,6 +712,79 @@ ok('vendor list is the three harnesses', VENDORS.join(',') === 'claude,codex,gro
 }
 function defaultGrokHomePath() {
   return process.env.GROK_HOME || path.join(os.homedir(), '.grok');
+}
+
+// --- gemini: one seat, through agy, no home ---------------------------------
+{
+  const gem = (id = 'gemini', extra = {}) => ({ id, vendor: 'gemini', harness: 'agy', label: 'Gemini', ...extra });
+  ok('gemini is a vendor', VENDORS.includes('gemini'));
+  ok('a gemini seat through agy validates', validateSeat(gem()).length === 0, validateSeat(gem()).join('; '));
+  ok('a gemini seat without a harness is refused', validateSeat({ ...gem(), harness: undefined }).some((p) => /harness/.test(p)));
+  ok('a gemini seat through another harness is refused', validateSeat(gem('g', { harness: 'opencode' })).some((p) => /harness/.test(p)));
+  ok('a gemini seat with a home is refused', validateSeat(gem('g', { home: '/x' })).some((p) => /no home/.test(p)));
+  ok('a second gemini seat is refused', validateSeat(gem('g2'), [gem()]).some((p) => /already tracked/.test(p)));
+
+  const f = reg();
+  const r = createSeat({ vendor: 'gemini', label: 'Gemini Pro', file: f, home: path.join(tmp, 'gem-home') });
+  ok('createSeat stores harness agy', r.seat.harness === 'agy' && r.seat.vendor === 'gemini' && r.seat.home === undefined, JSON.stringify(r.seat));
+  ok('...and points sign-in at agy, never a login command of ours', r.loginCommand === null && /`agy`/.test(r.note || ''), r.note);
+  let threw = null;
+  try { createSeat({ vendor: 'gemini', label: 'Again', file: f, home: path.join(tmp, 'gem-home') }); } catch (e) { threw = e; }
+  ok('createSeat refuses a second gemini seat', threw && /already tracked/.test(threw.message), threw?.message);
+  let bad = null;
+  try { createSeat({ vendor: 'gemini', label: 'X', harness: 'opencode', file: reg(), home: path.join(tmp, 'gem-home') }); } catch (e) { bad = e; }
+  ok('createSeat refuses a harness it does not know', bad && /runs through agy/.test(bad.message), bad?.message);
+
+  const home = path.join(tmp, 'gem-detect');
+  fs.mkdirSync(path.join(home, '.gemini', 'antigravity-cli'), { recursive: true });
+  const d = detectSeats({ home, env: {} });
+  ok('detects a gemini seat from ~/.gemini/antigravity-cli', d.some((x) => x.vendor === 'gemini' && x.harness === 'agy' && !x.home), JSON.stringify(d));
+  ok('...or from agy being installed', detectSeats({ home: path.join(tmp, 'gem-bare'), env: {}, binaries: { agy: true } }).some((x) => x.vendor === 'gemini'));
+  ok('...and not on a bare machine', !detectSeats({ home: path.join(tmp, 'gem-bare'), env: {} }).some((x) => x.vendor === 'gemini'));
+}
+
+// --- entries this build cannot read survive its writes -----------------------
+{
+  // An older ACS sharing ~/.agent-config-studio sees a newer build's seat as
+  // invalid; writing back only what it understood would delete that seat.
+  const f = reg();
+  const future = { id: 'later-1', vendor: 'someday', label: 'From a newer build', extra: { kept: true } };
+  fs.writeFileSync(f, JSON.stringify({ version: 1, seats: [{ id: 'claude-1', vendor: 'claude', label: 'Claude' }, future] }));
+  const loaded = loadSeats(f);
+  ok('an unknown entry is hidden, not shown', loaded.seats.length === 1 && loaded.hidden.length === 1);
+  addSeat(codexSeat('codex-9'), f);
+  const raw = () => JSON.parse(fs.readFileSync(f, 'utf8')).seats;
+  ok('addSeat keeps it, untouched', JSON.stringify(raw().find((x) => x.id === 'later-1')) === JSON.stringify(future), JSON.stringify(raw()));
+  removeSeat('codex-9', f);
+  ok('removeSeat keeps it', raw().some((x) => x.id === 'later-1') && !raw().some((x) => x.id === 'codex-9'));
+  saveSeats(loadSeats(f).seats, f);
+  ok('saveSeats keeps it', raw().filter((x) => x.id === 'later-1').length === 1);
+  ok('a new seat never takes its id', uniqueSeatId('later-1', f, path.join(tmp, 'gem-ids')) === 'later-1-2');
+  let clash = null;
+  try { addSeat({ id: 'later-1', vendor: 'claude', label: 'Same id' }, f); } catch (e) { clash = e; }
+  ok('addSeat refuses an id an unreadable entry holds', clash && /cannot read/.test(clash.message), clash?.message);
+  ok('...and leaves that entry as it was', JSON.stringify(raw().find((x) => x.id === 'later-1')) === JSON.stringify(future) && raw().filter((x) => x.id === 'later-1').length === 1);
+  saveSeats([...loadSeats(f).seats, { id: 'later-1', vendor: 'claude', label: 'Written past addSeat' }], f);
+  ok('saveSeats never drops or replaces an unreadable entry, even on a matching id',
+     raw().some((x) => JSON.stringify(x) === JSON.stringify(future)), JSON.stringify(raw()));
+  fs.writeFileSync(f, JSON.stringify({ version: 1, seats: [{ id: 'claude-1', vendor: 'claude', label: 'Claude' }, future] }));
+  let t = null;
+  try { removeSeat('later-1', f); } catch (e) { t = e; }
+  ok('it cannot be removed by a build that cannot read it', t !== null && raw().some((x) => x.id === 'later-1'));
+}
+
+// --- a gemini seat renders its stored reading --------------------------------
+{
+  const f = reg();
+  const snapFile = path.join(path.dirname(f), 'usage-snapshot.json');
+  addSeat({ id: 'gemini', vendor: 'gemini', harness: 'agy', label: 'Gemini' }, f);
+  const windows = [{ label: '5-hour', usedPercent: 5.7, resetsAt: Date.now() + 3600_000, windowMinutes: 300 }];
+  const extraWindows = [{ label: 'Gemini 4 Argon weekly', usedPercent: 0, resetsAt: Date.now() + 86400_000, windowMinutes: 10080 }];
+  writeSnapshot({ takenAt: Date.now() - 1000, seats: [{ seatId: 'gemini', vendor: 'gemini', label: 'Gemini', ok: true, windows, extraWindows, agyVersion: '1.5.13', observedAt: Date.now() - 1000 }] }, snapFile);
+  const r = await renderSnapshot({ file: f, snapshotFile: snapFile });
+  const g = r.seats.find((x) => x.seatId === 'gemini');
+  ok('the stored gemini reading is shown, not re-read live', g?.ok === true && g.windows.length === 1 && g.extraWindows.length === 1 && g.agyVersion === '1.5.13', JSON.stringify(g));
+  ok('...with its age', Number.isFinite(g?.readingAge));
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

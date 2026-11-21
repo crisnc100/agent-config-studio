@@ -49,6 +49,19 @@ function seatState(s) {
   return { kind: 'offline', tag: 'not connected', tone: null };
 }
 
+/**
+ * The subscriptions an account can be added for, and the harness each runs
+ * through when that is a CLI of another name (lib/usage/seats.js HARNESSES).
+ * Usage and setup both build their Add form from these.
+ */
+const SEAT_VENDORS = [['codex', 'Codex (ChatGPT)'], ['claude', 'Claude'], ['grok', 'Grok'], ['gemini', 'Gemini']];
+const SEAT_HARNESSES = { gemini: [['agy', 'Antigravity (agy)']] };
+const HARNESS_NAMES = { agy: 'Antigravity' };
+
+/** The card's subtitle: subscription, the harness it runs through, plan. */
+const seatMeta = (s) => [s.vendor, s.harness || (s.vendor === 'gemini' ? 'agy' : null), s.planType, s.subscriptionType]
+  .filter(Boolean).map((x) => (HARNESS_NAMES[x] ? `through ${HARNESS_NAMES[x]}` : x)).join(' · ');
+
 /** Everything measures what is LEFT, never what is spent, clamped to 0–100. */
 const windowLeft = (w) => Math.min(100, Math.max(0, 100 - w.usedPercent));
 /** Tinted by pressure, not vendor, so a colour means the same on every gauge. */

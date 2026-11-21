@@ -155,7 +155,7 @@ function accountsModel(usage) {
     return {
       id: s.seatId,
       label: s.label,
-      meta: [s.vendor, s.planType, s.subscriptionType].filter(Boolean).join(' · '),
+      meta: seatMeta(s),
       state: st,
       windows: s.ok ? (s.windows || []).map((w) => ({ label: w.label, left: Math.round(windowLeft(w)), level: pressure(windowLeft(w)), resetsAt: w.resetsAt || null })) : [],
       reason: s.ok ? null : (s.reason || null),

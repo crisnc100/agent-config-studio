@@ -18,10 +18,13 @@ const ok = (name, cond, detail = '') => {
   if (cond) { pass++; console.log(`  ok   ${name}`); }
   else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 };
+// No real agy on PATH or in the login directories the refresh hands on (ACS_LOGIN_PATH_DIRS, lib/login-path.js):
+// detect suggests Gemini whenever agy is installed, and the next --json would run it.
+const PATH_NO_AGY = (process.env.PATH || '').split(path.delimiter).filter((d) => d && !fs.existsSync(path.join(d, 'agy'))).join(path.delimiter);
 const run = (...args) => {
   try {
     return execFileSync(process.execPath, [CLI, ...args],
-      { encoding: 'utf8', env: { ...process.env, HOME: home, CODEX_HOME: '', NO_COLOR: '1' } });
+      { encoding: 'utf8', env: { ...process.env, ACS_LOGIN_PATH_DIRS: '', HOME: home, CODEX_HOME: '', NO_COLOR: '1', PATH: PATH_NO_AGY } });
   } catch (e) { return `EXIT ${e.status}\n${e.stdout || ''}${e.stderr || ''}`; }
 };
 const snapFile = path.join(home, '.agent-config-studio', 'usage-snapshot.json');
@@ -105,7 +108,7 @@ ok('HOME is redirected', home !== realHome);
   const out = (() => {
     try {
       return execFileSync(acs, ['usage', '--json'],
-        { encoding: 'utf8', env: { ...process.env, HOME: home, NO_COLOR: '1' } });
+        { encoding: 'utf8', env: { ...process.env, ACS_LOGIN_PATH_DIRS: '', HOME: home, NO_COLOR: '1' } });
     } catch (e) { return `EXIT ${e.status}\n${e.stdout || ''}${e.stderr || ''}`; }
   })();
   let parsed = null;
@@ -127,6 +130,50 @@ ok('HOME is redirected', home !== realHome);
      second.slice(0, 160));
   const dirs = fs.readdirSync(path.join(home, '.codex-seats'));
   ok('it got a fresh directory rather than colliding', dirs.length === 2, JSON.stringify(dirs));
+}
+
+// --- Gemini: detect finds agy as Setup does, and never takes another build's id ---
+{
+  const g = tempDir('acs-cli-gemini-');
+  const reg = path.join(g, '.agent-config-studio', 'seats.json');
+  // PATH without any real agy, so nothing here can start one; a fake goes first where a test wants agy installed.
+  const noAgy = (process.env.PATH || '').split(path.delimiter).filter((d) => d && !fs.existsSync(path.join(d, 'agy'))).join(path.delimiter);
+  const fakeBin = path.join(g, 'bin');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(path.join(fakeBin, 'agy'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const runG = (pathVar, ...args) => {
+    try { return execFileSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env: { ...process.env, ACS_LOGIN_PATH_DIRS: '', HOME: g, CODEX_HOME: '', NO_COLOR: '1', PATH: pathVar } }); }
+    catch (e) { return `EXIT ${e.status}\n${e.stdout || ''}${e.stderr || ''}`; }
+  };
+  const out = runG(`${fakeBin}${path.delimiter}${noAgy}`, 'detect');
+  ok('detect suggests Gemini when agy is installed, before agy has made its folder', /^\s*gemini\s+gemini\s+Gemini\b/m.test(out) && !fs.existsSync(path.join(g, '.gemini')), out);
+  ok('...and not without agy', !/gemini/.test(runG(noAgy, 'detect')));
+
+  fs.mkdirSync(path.dirname(reg), { recursive: true });
+  const future = { id: 'gemini', vendor: 'someday', label: 'From a newer build' };
+  fs.writeFileSync(reg, JSON.stringify({ version: 1, seats: [future] }));
+  const saved = runG(`${fakeBin}${path.delimiter}${noAgy}`, 'detect', '--save');
+  const seats = JSON.parse(fs.readFileSync(reg, 'utf8')).seats;
+  ok('detect --save keeps the entry another build owns', seats.some((x) => JSON.stringify(x) === JSON.stringify(future)), JSON.stringify(seats));
+  const mine = seats.find((x) => x.vendor === 'gemini');
+  ok('...registers Gemini under a fresh id', mine && mine.id !== 'gemini' && mine.harness === 'agy', JSON.stringify(seats));
+  ok('...and says which id it registered', mine && new RegExp(`registered ${mine.id} \\(gemini\\)`).test(saved), saved);
+}
+{
+  // A Gemini seat under an id detection does not use (a UI label slugs to anything), so only the
+  // vendor-level rule can keep a second suggestion away; a matching id would hide it on its own.
+  const g = tempDir('acs-cli-gemini-ui-');
+  const reg = path.join(g, '.agent-config-studio', 'seats.json');
+  fs.mkdirSync(path.dirname(reg), { recursive: true });
+  fs.writeFileSync(reg, JSON.stringify({ version: 1, seats: [{ id: 'work', vendor: 'gemini', harness: 'agy', label: 'Work' }] }));
+  const fakeBin = path.join(g, 'bin');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(path.join(fakeBin, 'agy'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const out = (() => {
+    try { return execFileSync(process.execPath, [CLI, 'detect'], { encoding: 'utf8', env: { ...process.env, ACS_LOGIN_PATH_DIRS: '', HOME: g, CODEX_HOME: '', NO_COLOR: '1', PATH: `${fakeBin}${path.delimiter}${PATH_NO_AGY}` } }); }
+    catch (e) { return `EXIT ${e.status}\n${e.stdout || ''}${e.stderr || ''}`; }
+  })();
+  ok('detect does not suggest a second Gemini seat beside a UI-added one', !/\bgemini\b/i.test(out), out);
 }
 
 fs.rmSync(home, { recursive: true, force: true });

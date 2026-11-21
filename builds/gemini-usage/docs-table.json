@@ -1,0 +1,113 @@
+{
+ "rows": [
+  {
+   "behavior": "Gemini seat on Usage through Antigravity, its 5h/weekly limits and Argon line",
+   "files": [
+    "lib/usage/gemini.js",
+    "lib/harness.js",
+    "public/app.js",
+    "public/setup.js",
+    "public/usage-view.js",
+    "public/home.js",
+    "server.js"
+   ],
+   "docs": [
+    {
+     "path": "README.md",
+     "claims": [
+      {
+       "claim": "usage collector runs agy -p /usage --output-format json (1.1.11+) in an empty temp folder",
+       "at": "lib/usage/gemini.js:120"
+      },
+      {
+       "claim": "Gemini table row: 5h and weekly for Gemini models, Argon weekly as a line without a gauge",
+       "at": "lib/usage/gemini.js:98"
+      },
+      {
+       "claim": "GEMINI_API_KEY login has no subscription quota and says so",
+       "at": "lib/usage/gemini.js:104"
+      },
+      {
+       "claim": "Gemini added the same way, harness agy only",
+       "at": "lib/usage/seats.js:85"
+      },
+      {
+       "claim": "one Gemini seat tracked per machine",
+       "at": "lib/usage/seats.js:87"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "behavior": "Pause on the gemini account from the Usage row",
+   "files": [
+    "public/app.js"
+   ],
+   "docs": [
+    {
+     "path": "README.md",
+     "claims": [
+      {
+       "claim": "acs pause accepts gemini as an account (pre-existing README text at 'Pausing an account')",
+       "at": "README.md:434"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "behavior": "acs usage detect / add / --save with gemini and fresh ids",
+   "files": [
+    "bin/usage.mjs"
+   ],
+   "docs": [
+    {
+     "path": "README.md",
+     "claims": [
+      {
+       "claim": "detect suggests Gemini when agy installed and none tracked",
+       "at": "bin/usage.mjs:168"
+      },
+      {
+       "claim": "add gemini <label> adds one",
+       "at": "bin/usage.mjs:217"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "behavior": "seats.json keeps entries a build cannot read",
+   "files": [
+    "lib/usage/seats.js"
+   ],
+   "docs": [
+    {
+     "path": "README.md",
+     "claims": [
+      {
+       "claim": "unreadable entries left untouched, not shown, ids not reused",
+       "at": "lib/usage/seats.js:124"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "behavior": "refresh worker finds agy through the login-shell PATH",
+   "files": [
+    "lib/usage/refresh.js",
+    "lib/login-path.js"
+   ],
+   "none": "internal; the code comments in login-path.js and refresh.js already say why"
+  },
+  {
+   "behavior": "guard pinning agy usage spawns",
+   "files": [
+    "tests/guards.mjs"
+   ],
+   "none": "a test-side guard; lib/usage/gemini.js header comment explains why it may spawn agy"
+  }
+ ]
+}

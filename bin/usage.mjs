@@ -7,6 +7,7 @@ import {
   writeSnapshot, createCodexHome, uniqueSeatId,
   sharedCodexHome, isSharedCodexHome, seatHomeRoot,
 } from '../lib/usage/seats.js';
+import { locateBinary } from '../lib/harness.js';
 
 /**
  * The routing gauge: which subscription has room right now.
@@ -118,6 +119,11 @@ async function gauge(argv) {
         const reset = w.resetsAt ? C.grey(` resets in ${until(w.resetsAt)}`) : '';
         console.log(`    ${bar(left)} ${pct}  ${w.label}${reset}`);
       }
+      // Gemini's Argon weekly limit: its own pool on Pro plans, shown but not ranked.
+      for (const w of s.extraWindows || []) {
+        const left = Math.min(100, Math.max(0, 100 - w.usedPercent));
+        console.log(`    ${C.grey(`${Math.round(left)}% left  ${w.label}${w.resetsAt ? ` · resets in ${until(w.resetsAt)}` : ''}`)}`);
+      }
       if (s.credits?.hasCredits) {
         // balance is null on plans that report credits without a figure.
         const b = s.credits.unlimited ? 'unlimited'
@@ -157,7 +163,9 @@ function listSeats() {
 }
 
 function detect() {
-  const found = detectSeats();
+  // agy the way Setup finds it (installedClis in server.js): an installed CLI
+  // is evidence even before it has written ~/.gemini/antigravity-cli.
+  const found = detectSeats({ binaries: { agy: locateBinary('agy').installed } });
   const { seats } = loadSeats();
   // Deduplicating by generated id alone re-registers a home that is already
   // tracked under a different label — the same subscription counted twice.
@@ -176,7 +184,9 @@ function detect() {
   const fresh = found.filter((s) =>
     !knownIds.has(s.id)
     && !(s.home && knownHomes.has(`${s.vendor}:${path.resolve(s.home)}`))
-    && !(s.vendor === 'codex' && hasCodexSeat && s.home && isSharedCodexHome(s.home)));
+    && !(s.vendor === 'codex' && hasCodexSeat && s.home && isSharedCodexHome(s.home))
+    // One Gemini seat per machine (agy has one sign-in), whatever its id — Setup's rule (suggestSeats).
+    && !(s.vendor === 'gemini' && seats.some((x) => x.vendor === 'gemini')));
   console.log('');
   if (!fresh.length) { console.log('  nothing new detected\n'); return 0; }
   for (const s of fresh) console.log(`  ${C.bold(s.id.padEnd(12))} ${s.vendor.padEnd(7)} ${s.label}${s.home ? C.grey(`  ${s.home}`) : ''}`);
@@ -187,9 +197,12 @@ function detect() {
     // Go through addSeat so each one is validated against the growing registry
     // rather than written straight past the checks.
     let added = 0;
-    for (const seat of fresh) {
-      try { addSeat(seat); added++; }
-      catch (e) { console.log(`  ${C.yellow('skipped')} ${seat.id}: ${e.message}`); }
+    for (const detected of fresh) {
+      // A fresh id at save time: the detected one is fixed (`gemini`) and may
+      // belong to an entry this build cannot read, which addSeat refuses.
+      const seat = { ...detected, id: uniqueSeatId(detected.id) };
+      try { addSeat(seat); added++; console.log(`  ${C.green('registered')} ${seat.id} (${seat.vendor})`); }
+      catch (e) { console.log(`  ${C.yellow('skipped')} ${detected.id}: ${e.message}`); }
     }
     console.log(`  ${C.green('registered')} ${added} seat(s)\n`);
   }
@@ -201,8 +214,9 @@ function add(args) {
   const homeIdx = rest.indexOf('--home');
   const home = homeIdx === -1 ? undefined : rest[homeIdx + 1];
   const label = (homeIdx === -1 ? rest : rest.slice(0, homeIdx)).join(' ');
-  if (!vendor || !label) { console.error('usage: acs-usage add <claude|codex|grok> <label> [--home <path>]'); return 2; }
-  const seat = { id: uniqueSeatId(slugify(label, vendor)), vendor, label, ...(home ? { home: path.resolve(home) } : {}) };
+  if (!vendor || !label) { console.error('usage: acs-usage add <claude|codex|grok|gemini> <label> [--home <path>]'); return 2; }
+  const seat = { id: uniqueSeatId(slugify(label, vendor)), vendor, label, ...(home ? { home: path.resolve(home) } : {}),
+                 ...(vendor === 'gemini' ? { harness: 'agy' } : {}) };
   addSeat(seat);
   console.log(`registered ${seat.id} (${seat.vendor})`);
   return 0;

@@ -80,6 +80,14 @@ console.log('\nsetup: accounts');
   try { S.addSeat({ id: 'codex-alias', vendor: 'codex', label: 'x', home: path.join(H3, 'alias-codex') }, registry(H3)); } catch (e) { dup = e.message; }
   ok('S3 the registry itself refuses a second seat on the same home by another spelling', /already used/.test(dup || ''), dup);
 
+  const HG = mkTemp('gemini');
+  const gs = S.suggestSeats({ home: HG, env: {}, binaries: { agy: true }, file: registry(HG) }).find((x) => x.key === 'gemini');
+  ok('S3 agy installed → a Gemini suggestion, no home', gs && !gs.added && gs.home === null, JSON.stringify(gs));
+  const ga = S.addSuggestedSeat({ key: 'gemini', home: HG, env: {}, binaries: { agy: true }, file: registry(HG) });
+  ok('S3 adding it stores harness agy', ga.seat.vendor === 'gemini' && ga.seat.harness === 'agy' && ga.seat.home === undefined, JSON.stringify(ga.seat));
+  const gAgain = S.addSuggestedSeat({ key: 'gemini', home: HG, env: {}, binaries: { agy: true }, file: registry(HG) });
+  ok('S3 Gemini twice is still one seat', gAgain.already === true && seatsIn(HG).filter((s) => s.vendor === 'gemini').length === 1);
+
   const H2 = mkTemp('split');
   fs.mkdirSync(path.join(H2, '.codex-seats', 'old'), { recursive: true });
   ok('S3 once Codex seats were split, the shared ~/.codex is not offered',
@@ -112,6 +120,10 @@ const PATH = isolatedPath(bin);
   ok('S3 the same click twice adds nothing', twice.status === 200 && twice.json.already && seatsIn(home).length === 1);
   const manual = await api('/api/setup/seats', { vendor: 'grok', label: 'Grok at work' });
   ok('S2 the manual "Add an account" (vendor + label) works', manual.status === 200 && seatsIn(home).some((s) => s.vendor === 'grok' && s.label === 'Grok at work'), JSON.stringify(manual.json));
+  const gem = await api('/api/setup/seats', { vendor: 'gemini', label: 'Gemini' });
+  ok('S2 a manual Gemini account is added through agy', gem.status === 200 && seatsIn(home).some((s) => s.vendor === 'gemini' && s.harness === 'agy' && !s.home), JSON.stringify(gem.json));
+  const gemBad = await api('/api/setup/seats', { vendor: 'gemini', label: 'G', harness: 'opencode' });
+  ok('S11 a Gemini harness that is not agy is a 400', gemBad.status === 400, JSON.stringify(gemBad.json));
   const badVendor = await api('/api/setup/seats', { vendor: 'openai', label: 'x' });
   const badKey = await api('/api/setup/seats', { key: 7 });
   ok('S11 a bad vendor or a non-string key is a 400', badVendor.status === 400 && badKey.status === 400);

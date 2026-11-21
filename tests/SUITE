@@ -47,6 +47,7 @@ tests/usage-codex.mjs                                 ci:offline
 tests/usage-codex-limits.mjs                          ci:offline
 tests/usage-claude.mjs                                ci:offline
 tests/usage-grok.mjs                                  ci:offline
+tests/usage-gemini.mjs                                ci:offline
 tests/usage-identity.mjs                              ci:offline
 tests/usage-processes.mjs                             ci:offline
 tests/usage-accounts.mjs                              ci:offline

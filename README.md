@@ -152,7 +152,10 @@ There is no telemetry. What reaches the network, and when:
   - the Claude Code credential, from the macOS Keychain or
     `~/.claude/.credentials.json`, and calls Anthropic's usage endpoint;
   - the Codex and Grok `auth.json` files, for account identity;
-  - quota, by asking `codex app-server` and `grok agent stdio`.
+  - quota, by asking `codex app-server` and `grok agent stdio`, and by running
+    `agy -p /usage --output-format json` (agy 1.1.11 or later, where print mode
+    answers `/usage` without a model turn) in an empty temporary folder; agy
+    signs itself in from its own login.
 - **Signing a Codex seat in** from Usage or setup runs `codex login`, which
   opens OpenAI's sign-in page and writes that seat's `auth.json`.
 - **Check now** on the Models page runs `codex app-server` `model/list`, which
@@ -388,6 +391,11 @@ Codex seat gets its own `CODEX_HOME` under `~/.codex-seats/`, sharing
 the login and session history differ. You sign in from the panel — it opens the
 OAuth tab and the card flips to connected on its own.
 
+A Gemini subscription is added the same way and runs through Antigravity
+(`agy`), the only harness offered for it today. Sign in inside agy itself
+(run `agy`); ACS never handles that login. agy keeps one sign-in per machine,
+so one Gemini seat can be tracked.
+
 Where each number comes from:
 
 | Vendor | Source | Windows |
@@ -395,6 +403,10 @@ Where each number comes from:
 | Codex | `rate_limits` in its own rollout logs — offline, no credential | weekly, plus a 5h rolling window on some plans |
 | Claude | `/api/oauth/usage` (undocumented) | session (5h), weekly all-models, weekly per-model |
 | Grok | the `_x.ai/billing` method over `grok agent stdio` | weekly |
+| Gemini | `agy -p /usage --output-format json` | 5h and weekly for the Gemini models; Gemini 4 Argon's own weekly limit as a line without a gauge |
+
+A Gemini seat signed in to agy with a `GEMINI_API_KEY` has no subscription
+quota to read and says so.
 
 Readings that need a credential are taken by the usage collector in a child
 process, which writes a snapshot. The studio renders the snapshot and shows how
@@ -415,6 +427,10 @@ credentials.
 
 From the terminal, `acs usage` prints the same gauge (`--json` for raw,
 `detect --save` to register what's on this machine).
+`detect` suggests a Gemini seat when agy is installed and none is tracked yet;
+`acs usage add gemini <label>` adds one by hand. Seats a newer ACS registered
+in `seats.json` that this version cannot read are left in the file untouched,
+not shown, and their ids are never reused.
 
 ### Pausing an account
 

@@ -1,0 +1,28 @@
+{
+ "f1": {
+  "status": "fixed"
+ },
+ "f2": {
+  "status": "fixed"
+ },
+ "f3": {
+  "status": "fixed"
+ },
+ "f4": {
+  "status": "fixed"
+ },
+ "f5": {
+  "status": "fixed"
+ },
+ "f6": {
+  "status": "fixed"
+ },
+ "x1": {
+  "status": "deferred",
+  "reason": "fix-check finding: one fix round and one fix check ran; deferred to a PR B follow-up per the review policy"
+ },
+ "x2": {
+  "status": "deferred",
+  "reason": "fix-check finding: one fix round and one fix check ran; deferred to a PR B follow-up per the review policy"
+ }
+}

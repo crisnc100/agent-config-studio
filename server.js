@@ -649,7 +649,7 @@ function typedFolder(body) {
 const registeredReal = () => currentRoots().roots.map((r) => r.real).filter(Boolean);
 
 /** Which agent CLIs are installed, for seat suggestions: located only, no --version run. */
-const installedClis = () => Object.fromEntries(['claude', 'codex', 'grok'].map((id) => [id, locateBinary(id).installed]));
+const installedClis = () => Object.fromEntries(['claude', 'codex', 'grok', 'agy'].map((id) => [id, locateBinary(id).installed]));
 
 export function createApp(opts = {}) {
   const detectFn = opts.detectHarnesses || detectHarnesses;
@@ -746,14 +746,15 @@ export function createApp(opts = {}) {
    * the OAuth flow needs a browser and the credential must not pass through
    * here.
    *
-   * Only vendor and label are accepted. The home is always derived server-side
-   * from the generated id: taking a path from the request body would turn this
-   * into a directory-creation primitive.
+   * Only vendor, label and (for gemini) the harness name are accepted. The
+   * home is always derived server-side from the generated id: taking a path
+   * from the request body would turn this into a directory-creation primitive.
+   * The harness is checked against a fixed list in createSeat.
    */
   'POST /api/usage/seats': async (req) => {
-    const { vendor, label } = await readBody(req);
+    const { vendor, label, harness } = await readBody(req);
     let res;
-    try { res = createSeat({ vendor, label }); }
+    try { res = createSeat({ vendor, label, harness }); }
     catch (e) { const err = new Error(e.message); err.status = 400; throw err; }
     resyncShortcuts();
     return res;
@@ -1103,7 +1104,7 @@ export function createApp(opts = {}) {
     let res;
     try {
       if (body.key !== undefined) res = addSuggestedSeat({ key: field(body, 'key', { max: 20 }), label, home: HOME, binaries: installedClis() });
-      else res = createSeat({ vendor: field(body, 'vendor', { max: 20 }), label: label ?? '' });
+      else res = createSeat({ vendor: field(body, 'vendor', { max: 20 }), label: label ?? '', harness: field(body, 'harness', { optional: true, max: 20 }) });
     } catch (e) { throw bad(e.message, e.status || 400); }
     resyncShortcuts();
     return res;

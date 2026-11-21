@@ -101,6 +101,8 @@ const CLEAN = {
      && acc.rows.find((r) => r.id === 'wait').connect === null && acc.rows.find((r) => r.id === 'err').connect === null);
   ok('9 no seat reporting headroom → no route', run(`accountsModel({ seats: SEATS.filter((s) => !s.ok || s.stale) })`).route === null);
   ok('9 a missing seats list is no seats, not a crash', run('accountsModel({})').rows.length === 0);
+  ok('9 a Gemini seat is labelled with the harness it runs through, as Usage labels it',
+     run(`accountsModel({ seats: [{ seatId: 'g', label: 'Gemini', vendor: 'gemini', harness: 'agy', ok: false, windows: [] }] })`).rows[0].meta === 'gemini · through Antigravity');
 
   const until = (min) => run(`untilText(Date.now() + ${min * 60_000})`);
   ok('reset times: 59.5 minutes reads "1h 0m", not "60m"', until(59.5) === '1h 0m', until(59.5));

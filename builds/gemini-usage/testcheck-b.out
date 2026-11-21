@@ -1,0 +1,3 @@
+| Assertion | Verdict | Evidence |
+|---|---|---|
+| Vendor list equals `claude,codex,grok,gemini` in order | **PASS (not weakened)** | The parent assertion expected `claude,codex,grok`, but the implementation already exported all four vendors in both commits. The updated assertion keeps strict equality. I evaluated it in isolation and verified it rejects missing, extra, renamed, and reordered vendors. [tests/usage-seats.mjs:208](/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-gemini-usage/tests/usage-seats.mjs:208), [lib/usage/seats.js:27](/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-gemini-usage/lib/usage/seats.js:27) |

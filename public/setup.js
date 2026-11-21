@@ -331,14 +331,7 @@ function setupManualSeat() {
   const form = el('div', 'usage-add setup-manual');
   form.appendChild(el('div', 'usage-add-title', 'Add an account'));
   const row = el('div', 'usage-add-row');
-  const vendor = document.createElement('select');
-  vendor.className = 'usage-add-vendor';
-  vendor.setAttribute('aria-label', 'Vendor');
-  for (const [value, text] of [['codex', 'Codex (ChatGPT)'], ['claude', 'Claude'], ['grok', 'Grok']]) {
-    const o = document.createElement('option');
-    o.value = value; o.textContent = text;
-    vendor.appendChild(o);
-  }
+  const { vendor, harness } = seatVendorPicker();
   const label = document.createElement('input');
   label.className = 'usage-add-label';
   label.setAttribute('aria-label', 'Name');
@@ -347,11 +340,11 @@ function setupManualSeat() {
   const add = el('button', 'btn', 'Add');
   const submit = () => {
     if (!label.value.trim()) return label.focus();
-    setupAddSeat({ vendor: vendor.value, label: label.value.trim() }, add);
+    setupAddSeat(seatBody(vendor, harness, label.value.trim()), add);
   };
   add.onclick = submit;
   label.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
-  row.append(vendor, label, add);
+  row.append(vendor, harness, label, add);
   form.appendChild(row);
   return form;
 }

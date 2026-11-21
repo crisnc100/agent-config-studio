@@ -3630,13 +3630,7 @@ function addSeatForm() {
   form.appendChild(el('div', 'usage-add-title', 'Track another subscription'));
 
   const row = el('div', 'usage-add-row');
-  const vendor = document.createElement('select');
-  vendor.className = 'usage-add-vendor';
-  for (const [value, text] of [['codex', 'Codex (ChatGPT)'], ['claude', 'Claude'], ['grok', 'Grok']]) {
-    const o = document.createElement('option');
-    o.value = value; o.textContent = text;
-    vendor.appendChild(o);
-  }
+  const { vendor, harness } = seatVendorPicker();
   const label = document.createElement('input');
   label.className = 'usage-add-label';
   label.placeholder = 'Name it — e.g. "Codex (work)"';
@@ -3647,7 +3641,7 @@ function addSeatForm() {
     if (!label.value.trim()) return label.focus();
     save.disabled = true;
     let res;
-    try { res = await api('POST', '/api/usage/seats', { vendor: vendor.value, label: label.value.trim() }); }
+    try { res = await api('POST', '/api/usage/seats', seatBody(vendor, harness, label.value.trim())); }
     catch (e) { save.disabled = false; return notice('error', e.message); }
     S.usageAdding = false;
     await paintUsage();
@@ -3660,14 +3654,52 @@ function addSeatForm() {
   save.onclick = submit;
   label.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
 
-  row.appendChild(vendor); row.appendChild(label); row.appendChild(save);
+  row.appendChild(vendor); row.appendChild(harness); row.appendChild(label); row.appendChild(save);
   form.appendChild(row);
   form.appendChild(el('div', 'usage-add-note',
     'A second Codex account gets its own folder, sharing your config by symlink — only the login and ' +
     'session history differ. You sign in from here; no terminal needed. ' +
-    'A Grok account reads its weekly quota through the Grok CLI, so sign in with `grok login` first.'));
+    'A Grok account reads its weekly quota through the Grok CLI, so sign in with `grok login` first. ' +
+    'A Gemini subscription runs through Antigravity: sign in inside `agy` first; its limits are read through agy.'));
   return form;
 }
+
+/**
+ * The subscription picker and, beside it, the harness picker for a
+ * subscription reached through a CLI of another name. The harness picker is
+ * hidden for the others, and carries the only harness each allows today.
+ */
+function seatVendorPicker() {
+  const vendor = document.createElement('select');
+  vendor.className = 'usage-add-vendor';
+  vendor.setAttribute('aria-label', 'Subscription');
+  for (const [value, text] of SEAT_VENDORS) {
+    const o = document.createElement('option');
+    o.value = value; o.textContent = text;
+    vendor.appendChild(o);
+  }
+  const harness = document.createElement('select');
+  harness.className = 'usage-add-vendor usage-add-harness';
+  harness.setAttribute('aria-label', 'Runs through');
+  const sync = () => {
+    const opts = SEAT_HARNESSES[vendor.value] || [];
+    while (harness.firstChild) harness.removeChild(harness.firstChild);
+    for (const [value, text] of opts) {
+      const o = document.createElement('option');
+      o.value = value; o.textContent = `through ${text}`;
+      harness.appendChild(o);
+    }
+    harness.hidden = opts.length === 0;
+  };
+  vendor.addEventListener('change', sync);
+  sync();
+  return { vendor, harness };
+}
+
+/** The POST body for a new seat: the harness only when the subscription has one. */
+const seatBody = (vendor, harness, label) => ({
+  vendor: vendor.value, label, ...(harness.hidden || !harness.value ? {} : { harness: harness.value }),
+});
 
 
 // seatHeadroom, rankSeats, routeSeat, seatState, seatConnect, windowLeft,
@@ -3877,8 +3909,7 @@ async function paintUsage() {
     card.dataset.seat = s.seatId;
     const title = el('div', 'usage-seat-head');
     title.appendChild(el('span', 'usage-seat-name', s.label));
-    const meta = [s.vendor, s.planType, s.subscriptionType].filter(Boolean).join(' · ');
-    title.appendChild(el('span', 'usage-seat-meta', meta));
+    title.appendChild(el('span', 'usage-seat-meta', seatMeta(s)));
     card.appendChild(title);
 
     const drop = el('button', 'usage-drop', '×');
@@ -3946,6 +3977,13 @@ async function paintUsage() {
         if (w.resetsAt) lbl.appendChild(el('span', 'usage-reset', ` resets in ${untilText(w.resetsAt)}`));
         row.appendChild(lbl);
         card.appendChild(row);
+      }
+      // Argon's weekly limit is its own pool on Pro plans: shown, but no gauge,
+      // since it neither ranks the seat nor times its pause.
+      for (const w of s.extraWindows || []) {
+        const line = el('div', 'usage-note usage-extra-window', `${w.label}: ${Math.round(windowLeft(w))}% left`);
+        if (w.resetsAt) line.appendChild(el('span', 'usage-reset', ` · resets in ${untilText(w.resetsAt)}`));
+        card.appendChild(line);
       }
       const notes = [];
       if (s.credits?.hasCredits) {

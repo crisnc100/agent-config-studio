@@ -1,0 +1,91 @@
+# Gemini usage seat — log
+
+## Phase 1 — reader (builder, 2026-11-20)
+- lib/usage/gemini.js runs agy twice per reading, both in a fresh empty temp folder removed afterwards, stdin closed,
+  CMUX_ANTIGRAVITY_HOOKS_DISABLED=1: `--version` (its own spawn, not harness readVersion, so it too starts in an empty
+  folder), then `-p /usage --output-format json` only on agy ≥ 1.1.11. An unreadable version is refused like an old one.
+- A reply counts only with `command.name === 'usage'` and `num_turns === 0`; anything else is ok:false, so a future agy
+  that turns /usage into a prompt shows as an error, never as numbers.
+- usedPercent = (1 − remaining_fraction) × 100, rounded to 0.1. A fraction outside 0–1 or non-numeric is refused (no 0%).
+- Exit 2 → the API-key reason (decision 3). Any other non-zero exit → "exited N — if agy is signed out, run `agy` and
+  sign in"; the signed-out exit code was not probed (Cris was not signed out).
+- Argon weekly → `extraWindows`, Gemini Models 5h/weekly → `windows` (decision 1). `agyVersion` is on every result.
+- tests/guards.mjs: gemini.js pinned to spawn(found.binary, ['--version'] | ['-p','/usage','--output-format','json']);
+  checked it fails on a changed argv. `agy` added to both PATH-name literal checks (guard a and b), beside claude/grok/codex.
+- lib/harness.js: agy candidates (~/.local/bin/agy first, then PATH; the cmux wrapper is skipped as a shim).
+- Live run on this Mac (agy 1.5.13): ok, 5h 7.7% used, weekly 8.5%, Argon 0%.
+- Checks: tests/usage-gemini.mjs 43/43, tests/guards.mjs 11/11, tests/suite-coverage.mjs 33/33, tests/setup-guards.mjs 84/84.
+
+## Phase 2 — seats (builder, 2026-11-20)
+- VENDORS gains `gemini`; HARNESSES = { gemini: ['agy'] }. validateSeat: a gemini seat needs harness `agy`, has no home,
+  and only one may exist (agy keeps one keychain login per machine). Checked in validateSeat so every path (createSeat,
+  addSuggestedSeat, `acs-usage add`, `detect --save`) gets the same rule.
+- loadSeats returns `hidden` (entries this build cannot read); saveSeats writes them back from the file as it is at
+  write time, so addSeat/removeSeat/moveSeatToPrivateHome never delete a newer build's seat. uniqueSeatId avoids hidden
+  ids. A hidden entry cannot be removed by a build that cannot read it (removeSeat throws, as for an unknown id).
+- readSeat 'gemini' → readGeminiSeat (dynamic import). Not CREDENTIAL_FREE: renderSnapshot shows the stored reading.
+- detectSeats suggests `gemini-1` (harness agy, no home) when ~/.gemini/antigravity-cli exists or agy is installed;
+  suggestSeats carries `harness` (it dropped it, and adding the suggestion then failed validation — the new
+  setup-accounts test caught it). server.js installedClis includes agy.
+- createSeat({ vendor:'gemini', harness }) defaults harness to agy, refuses another; its note says to sign in inside
+  agy. Both seat routes pass `harness` through; createSeat checks it against the fixed list.
+- `acs-usage add gemini <label>` sets harness agy; the gauge prints extraWindows (Argon) as a grey line, unranked.
+- Checks: usage-seats 138/138, usage-routes 82/82, usage-cli 18/18, setup-accounts and setup-routes all pass except
+  one real-home byte-identity check that flagged ~/.agent-config-studio/logs/agy/review-*.log — written by the
+  background benchmark's ask-model runs, not by these tests; setup-ui 92/92, setup-guards 84/84.
+
+## Phase 3 — screen and pause (builder, 2026-11-20)
+- public/usage-view.js: SEAT_VENDORS / SEAT_HARNESSES (gemini → agy only) and seatMeta ("gemini · through
+  Antigravity"); used by the Usage card and Home's Accounts card so both label a seat the same way.
+- public/app.js: seatVendorPicker() + seatBody() build the Add form for Usage and setup's manual form (one picker, two
+  forms). The harness select is hidden unless the subscription has one; the body carries `harness` only then.
+  The Usage card prints extraWindows (Argon weekly) as a line with no gauge. The Add note says to sign in inside agy.
+- Pause needed no code: the gemini pause account and seatReset/vendorReset already read `windows`; with a gemini
+  seat accepted, the row offers "until it resets" from the tightest Gemini Models window (finding x8).
+- README: Gemini in Subscription usage (one seat, sign in inside agy, the source table row, the API-key case) and in
+  the usage collector's list of what it runs.
+- Not done (out of scope): the setup screen's CLIs step still lists claude, codex and grok only.
+- Checks: pause-ui 36/36, setup-ui 94/94, home 125/125 (one earlier run failed "8 Refresh re-asks the sources and
+  keeps a sticky warning", a timing test; three reruns passed, and the change does not touch it), pause-routes
+  23/23, roles-pause 50/50, pause-cli 26/26, readme 56/56, guards 11/11.
+
+## Sibling check fixes (builder, 2026-11-20)
+- gemini.js: one 20 s deadline for both agy calls (was 30 s per call, 60 s worst case). The usage CLI is killed at 30 s
+  by lib/usage/refresh.js, so a slow agy would have cost every seat's reading. Test: a slow --version leaves /usage
+  only the time that is left.
+- tests/setup-guards.mjs: three pins proving guards.mjs rejects gemini.js spawning a prompt, an extra flag, or a PATH name.
+- Checks: usage-gemini 44/44, setup-guards 87/87.
+
+## Fix round, review 2026-11-20-23-46-51-1998e5 (builder, 2026-11-20)
+- f1: addSeat refuses an id held by an entry this build cannot read; saveSeats carries every such entry whatever ids
+  the new list holds (no filter), so no write path drops or replaces one. `detect --save` allocates a fresh id with
+  uniqueSeatId at save time and prints each id it registered. Tests: usage-seats (refusal, saveSeats past addSeat),
+  usage-cli (hidden `gemini-1` kept, Gemini registered as another id, message names it).
+- f2: usedPercent is stored unrounded (decision: store raw, round only where shown — every display already rounds,
+  as Codex and Claude readings are stored raw). Test: 7.048% vs 7.042% (both 7.0 rounded) → vendorReset picks the
+  weekly reset; fails on the rounded code.
+- f3: `acs usage detect` passes `binaries: { agy: locateBinary('agy').installed }`, Setup's lookup for agy. Only agy:
+  passing claude/codex/grok too would change the CLI's detection for them, outside this brief.
+- f4: no other reader solves this (codex/grok use findBinary on the inherited PATH). refresh.js now hands the worker
+  the server's login-shell directories in ACS_LOGIN_PATH_DIRS; lib/login-path.js seeds its cache from that variable,
+  so candidatesFor('agy') in the worker searches what Setup searched. Absolute entries only; candidates still pass
+  harness.js's file and shim checks. Test: an end-to-end refresh whose fake agy is only in the login directory (the
+  variable is deleted after import, so only the handoff can deliver it); fails without the refresh.js change.
+- f5 (+ s2): guards.mjs matches each gemini.js spawn whole — `found.binary, <pinned argv>, opts` — pins the opts
+  literal (cwd: dir, stdin ignored, hooks off) assigned once, and allows `dir` only null or the mkdtemp. setup-guards
+  proves .concat(), a spread, other options, a dropped cwd, opened stdin, a reassigned opts and a moved folder fail.
+- f6 (orchestrator asked, after f3 made it fire on every run): `acs usage detect` drops the Gemini suggestion when
+  any Gemini seat is registered, whatever its id — suggestSeats' rule on the CLI path. usage-cli test: agy installed +
+  a UI-added `gemini` seat → no suggestion; fails on the previous CLI. usage-cli 24/24.
+
+## CI: tests/models.mjs source lint (builder, 2026-11-21)
+- The lint has no exception mechanism in source: its only allowance is hardcoded in tests/models.mjs (`grok-1` in
+  seats.js), which is off limits. So no versioned name in lib/, server.js, public/.
+- gemini.js: the Argon group is matched by family name (/\bargon\b/i, never the Gemini Models group), labelled
+  "Argon weekly". A renamed group ("Gemini 5 Argon") still reads.
+- Sibling grep (model-id --lint over lib, server.js, all of public, bin) found one more: the detected seat id
+  `gemini-1` in seats.js, and the same token in a comment. The detected id is now `gemini` (one seat per machine, and
+  a UI-added seat gets the same slug; detect --save still allocates with uniqueSeatId). Remaining hits: grok-1
+  (allowed) and bin/model-id.mjs's own examples (bin is outside the test's scope, untouched).
+- Checks: models 64/64, usage-gemini 50/50, usage-seats 141/141, pause-ui 36/36, setup-accounts passes (one rerun:
+  the real-home check had flagged a file the benchmark writes).
