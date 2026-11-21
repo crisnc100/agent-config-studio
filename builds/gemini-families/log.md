@@ -318,3 +318,17 @@ Each check, guard, rule or output added or changed; the other paths to the same 
      outside a list: not handled, the proposal is shown before it is accepted and the call fails loudly.
   2. Server-side writes (role, member, flavor effort) do not check the list: not handled, by design (the brief asks
      for the pickers; the known limit covers saved values).
+
+## Fix round: weakened test-only rewrites (builder, 2026-11-21)
+- Sol's check of the three test-only commits: 57 PASS, 3 weakened. All three are restored in 83fff49 (test-only), each
+  proven against a planted break that was then reverted:
+  1. the families.json queue: sync+Pin and Pin+Pin at the same time must both land. With serialized() calling fn
+     directly: 2 FAIL, 3 runs out of 3; the file was also left corrupt (two writes on one temp name).
+  2. a cross-site POST to Check now → 403, agy not asked, no families.json (real server; start sync has nothing
+     to add), with a same-origin control. With /api/models/check let past the global non-GET origin check: 2 FAIL.
+  3. the screen after Check now, Pin, Unpin and Save shows the server's new state. Check now without repaint:
+     4 FAIL; model writes without the GET /api/models reload: 2 FAIL (Pin, Save).
+- Checks: tests/models-families.mjs 188/188, tests/models-layout-ui.mjs 101/101.
+- One line, not fixed: Check now is guarded only by the global non-GET policy (sameOriginRequest), which passes
+  `Sec-Fetch-Site: same-site` from another localhost port; Pin and Remove use requireStrict. Check now spawns
+  codex/agy (since PR C) and now writes families.json.
