@@ -122,7 +122,7 @@ const VALUE_FLAGS = ['--security-worker', '--since', '--slices', '--jobs', '--pl
 // Every flag this copy reads. Anything else is refused: an older copy that ignored an unknown flag ran a full review in
 // its place, so a skill asking for a mode this copy lacks gets an error, never a different command.
 const KNOWN_FLAGS = [...VALUE_FLAGS, '--all', '--calibrate', '--code-only', '--deferred', '--eval', '--gate', '--log-outcome', '--noise-report',
-  '--rubric', '--open-findings', '--security-findings', '--security-only', '--show-config', '--summary', '--tier-json', '--yes', '--cross-family']
+  '--rubric', '--open-findings', '--security-findings', '--security-only', '--show-config', '--summary', '--tier-json', '--yes', '--cross-family', '--fresh']
 // The flags that pick a mode, with every value flag's value left out: a value is data, never a mode. --remote's value
 // (a git remote name, from the pre-push hook) and --supports' (a flag name) may start with --; option() refuses any
 // other value that does, so a --flag after any other value flag is a flag.
@@ -146,7 +146,7 @@ if (unknownFlag !== undefined) stop(`unknown flag ${unknownFlag}`)
 const KNOWN_PAIRS = ['--fix-check --focus']
 if (hasFlag('--supports')) process.exit([...KNOWN_FLAGS, ...KNOWN_PAIRS].includes(args[flagAt('--supports') + 1]) ? 0 : 1)
 // --eval takes only its own flags: with --gate (or any other command) it would run instead of that command.
-const EVAL_FLAGS = ['--eval', '--family', '--cases', '--timeout', '--repeat', '--yes']
+const EVAL_FLAGS = ['--eval', '--family', '--cases', '--timeout', '--repeat', '--jobs', '--fresh', '--yes']
 if (hasFlag('--eval')) {
   const others = args.filter((a) => a.startsWith('--') && !EVAL_FLAGS.includes(a))
   if (others.length) stop(`--eval runs alone: it cannot be combined with ${others.join(', ')} (its flags: ${EVAL_FLAGS.slice(1).join(', ')}).`)
@@ -4763,10 +4763,11 @@ function pushGate() {
   for (const summary of summaries) console.error(summary)
 }
 // ── eval: reviewer families against known cases ──────────────────────────────
-// --eval [--family <f>,…] [--cases <dir>] [--repeat N] [--timeout 15m] [--yes]: every family reviews every case folder
+// --eval [--family <f>,…] [--cases <dir>] [--repeat N] [--timeout 15m] [--jobs N] [--fresh] [--yes]: every family reviews every case folder
 // (case.json, base/ and head/ trees) in a throwaway repo of its own, base commit on main and head commit on a branch,
-// through a child review in eval mode. Each case is scored from that child's own record; one record per family per run
-// is appended to eval-log.jsonl beside the review log. Nothing reaches the review log, a close or the push gate.
+// through a child review in eval mode. Each case is scored from that child's own record; a family's record is appended to
+// eval-log.jsonl beside the review log once all its reviews are in, across resumed runs. Nothing reaches the review log,
+// a close or the push gate.
 const EVAL_CASES = join(homedir(), '.agent-config-studio', 'review-gate', 'eval', 'cases')
 const EVAL_GUARD = 10 // more reviews than this need --yes
 const EVAL_SLACK = 3 // a finding's lines may sit this far outside an expected range and still match it
@@ -5116,14 +5117,33 @@ function agyWarnings(text) {
   const all = String(text || '').split('\n').filter((l) => l.startsWith('⚠ agy review: '))
   return { all, denied: all.filter((l) => l.startsWith('⚠ agy review: denied ')).length }
 }
+// A child that failed because its subscription is used up, as agy, codex and claude word it: { reset } (null when the
+// message gives no reset time). Any other failure is null and stays an ordinary errored review.
+const EVAL_QUOTA = /Individual quota reached|RESOURCE_EXHAUSTED|usage_limit_reached|usage limit reached|hit your (?:usage )?limit|limit reached\s*[∙·]\s*resets|limit will reset/i
+function evalQuota(text) {
+  const t = String(text || '')
+  if (!EVAL_QUOTA.test(t)) return null
+  const relative = t.match(/Resets in ((?:\d+[hms])+)/i)
+  if (relative) {
+    const [, h = 0, mins = 0, sec = 0] = relative[1].match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/) || []
+    const at = new Date(Date.now() + ((Number(h) * 60 + Number(mins)) * 60 + Number(sec)) * 1000)
+    return { reset: `in ${relative[1]} (about ${at.getHours()}:${String(at.getMinutes()).padStart(2, '0')})` }
+  }
+  const epoch = t.match(/usage limit reached\|(\d{10})\b/i)
+  if (epoch) return { reset: `at ${new Date(Number(epoch[1]) * 1000).toLocaleString()}` }
+  const again = t.match(/try again (at|in) (.+?)\.?\s*$/im)
+  if (again) return { reset: `${again[1]} ${again[2]}` }
+  const resets = t.match(/resets? ((?:at )?[^\n.]+?)\.?\s*$/im)
+  return { reset: resets ? resets[1] : null }
+}
 async function evalOne(m, c, run, root, timeoutMs) {
   const dir = join(root, `${m.family}-${c.id}-${run}`), logDir = join(dir, 'log')
   const started = Date.now()
   const base = { id: c.id, kind: c.kind, run, caseHash: c.hash }
-  let error = null, record = null, repo = null, denials = { all: [], denied: 0 }
+  let error = null, record = null, repo = null, r = null, denials = { all: [], denied: 0 }
   try {
     repo = evalRepo(c, dir)
-    const r = await evalChild(m, c, repo, logDir, root, timeoutMs)
+    r = await evalChild(m, c, repo, logDir, root, timeoutMs)
     denials = agyWarnings(r.err)
     for (const line of denials.all) console.error(`  ${c.id}: ${line}`)
     if (r.timedOut) error = `timed out after ${evalDuration(timeoutMs)}`
@@ -5141,6 +5161,8 @@ async function evalOne(m, c, run, root, timeoutMs) {
   } catch (e) { error = e.message }
   const durationMs = Date.now() - started
   const denied = denials.denied ? { denied: denials.denied } : {}
+  const quota = error && !record ? evalQuota(r?.err) : null
+  if (quota) { rmSync(dir, { recursive: true, force: true }); return { ...base, outcome: 'errored', error, quota } }
   if (error) return { ...base, outcome: 'errored', error, ...denied, durationMs, kept: dir }
   rmSync(dir, { recursive: true, force: true })
   return {
@@ -5173,6 +5195,8 @@ async function runEval() {
   const repeat = Number(option('--repeat') ?? 1)
   if (!Number.isSafeInteger(repeat) || repeat < 1) throw new Error('--repeat must be a whole number of 1 or more')
   const timeoutMs = evalTimeout(option('--timeout'))
+  const jobs = Number(option('--jobs') ?? 1)
+  if (!Number.isSafeInteger(jobs) || jobs < 1) throw new Error('--jobs must be a whole number of 1 or more (the families run at once)')
   const { cases, skipped } = loadEvalCases(casesDir)
   for (const s of skipped) console.warn(`⚠ skipped ${s.name}: ${s.error}`)
   if (!cases.length) throw new Error(`No valid case in ${casesDir}${skipped.length ? ' (every entry was skipped above)' : ''}`)
@@ -5190,39 +5214,80 @@ async function runEval() {
     process.exitCode = 1
     return
   }
-  const stopChildren = () => { for (const child of EVAL_CHILDREN) try { process.kill(-child.pid, 'SIGKILL') } catch { /* gone */ } process.exit(130) }
+  const stopChildren = () => {
+    for (const child of EVAL_CHILDREN) try { process.kill(-child.pid, 'SIGKILL') } catch { /* gone */ }
+    console.error('ℹ the finished reviews are saved: re-run the same command to resume (--fresh starts over)')
+    process.exit(130)
+  }
   process.once('SIGINT', stopChildren)
   process.once('SIGTERM', stopChildren)
   const runtimeHash = sha256(readFileSync(COPY_PATH)), runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomBytes(3).toString('hex')}`
   const root = mkdtempSync(join(tmpdir(), 'review-eval-'))
-  const records = []
-  for (const m of families) {
+  const evalLog = join(dirname(LOG_PATH), 'eval-log.jsonl'), progressDir = join(dirname(LOG_PATH), 'eval-progress')
+  mkdirSync(progressDir, { recursive: true })
+  const prefix = jobs > 1 ? (m) => `${m.family}: ` : () => ''
+  const byFamily = new Map(), stopped = []
+  // One family's reviews, each saved to its progress file as it finishes. A run with the same family, cases folder,
+  // repeat, runtime and prompt picks up the saved reviews of cases whose hash still matches; the file goes once the
+  // family's record is logged, so only an unfinished run is ever resumed.
+  const runFamily = async (m) => {
+    const promptHash = evalPromptHash(m)
+    const key = sha256(JSON.stringify({ family: m.family, casesDir, repeat, runtimeHash, promptHash })).slice(0, 16)
+    const progress = join(progressDir, `${m.family}-${key}.jsonl`)
+    if (hasFlag('--fresh')) rmSync(progress, { force: true })
+    const saved = new Map()
+    for (const line of existsSync(progress) ? readFileSync(progress, 'utf8').split('\n') : []) {
+      try {
+        const r = JSON.parse(line)
+        const k = `${r?.id}\0${r?.run}`
+        if (r && r.outcome !== 'errored' && !saved.has(k)) saved.set(k, r)
+      } catch { /* a line cut short by a stop */ }
+    }
+    const hashes = new Map(cases.map((c) => [c.id, c.hash]))
+    for (const [k, r] of saved) if (hashes.get(r.id) !== r.caseHash || r.run > repeat) saved.delete(k)
     console.log(`\n▶ ${m.family} (${m.vendor}${m.id ? ` · ${m.id}` : ''}${agyRun(m) ? ' · model unverified' : ''})`)
+    const total = cases.length * repeat
+    if (saved.size) console.log(`ℹ ${prefix(m)}resuming: ${saved.size} of ${total} reviews saved by an earlier run (${progress}); --fresh starts over`)
     const results = []
     for (const c of cases)
       for (let run = 1; run <= repeat; run++) {
+        const done = saved.get(`${c.id}\0${run}`)
+        if (done) { results.push(done); continue }
         const result = await evalOne(m, c, run, root, timeoutMs)
+        if (result.quota) {
+          const kept = results.filter((x) => x.outcome !== 'errored').length
+          stopped.push({ m, line: `✖ ${m.family} stopped: its quota is used up; ${result.quota.reset ? `it resets ${result.quota.reset}` : 'it did not say when it resets'}. ` +
+            `${kept} of ${total} reviews saved; re-run the same command to resume.` })
+          console.error(stopped.at(-1).line)
+          return
+        }
+        if (result.outcome !== 'errored') appendFileSync(progress, `${JSON.stringify(result)}\n`)
         results.push(result)
-        console.log(evalCaseLine(result, repeat))
+        console.log(evalCaseLine(result, repeat).replace(/^ {2}/, `  ${prefix(m)}`))
       }
     const ran = results.find((r) => r.outcome !== 'errored')
     const modelUsed = [...new Set(results.map((r) => r.modelUsed).filter(Boolean))]
-    records.push({
+    const record = {
       type: 'eval', ts: new Date().toISOString(), runId, family: m.family, vendor: m.vendor, model: ran?.model ?? m.id ?? null,
       effort: ran?.effort ?? m.effort ?? null, ...(modelUsed.length && { modelUsed }),
       ...(results.some((r) => r.modelVerified === false) && { modelVerified: false }), rubricVersion: RUBRIC_VERSION, runtimeHash,
-      promptHash: evalPromptHash(m), casesDir, caseIds: cases.map((c) => c.id), repeat, timeoutMs, totals: evalTotals(results), cases: results,
-    })
+      promptHash, casesDir, caseIds: cases.map((c) => c.id), repeat, timeoutMs, totals: evalTotals(results), cases: results,
+    }
+    withLogLock(() => appendFileSync(evalLog, `${JSON.stringify(record)}\n`), evalLog)
+    rmSync(progress, { force: true })
+    byFamily.set(m, record)
   }
-  const evalLog = join(dirname(LOG_PATH), 'eval-log.jsonl')
-  mkdirSync(dirname(evalLog), { recursive: true })
-  withLogLock(() => appendFileSync(evalLog, records.map((r) => `${JSON.stringify(r)}\n`).join('')), evalLog)
+  const queue = [...families]
+  await Promise.all(Array.from({ length: Math.min(jobs, families.length) }, async () => { while (queue.length) await runFamily(queue.shift()) }))
+  const records = families.filter((m) => byFamily.has(m)).map((m) => byFamily.get(m))
   console.log('')
   for (const r of records) {
     const t = r.totals
     console.log(`${r.family} (${r.model} · ${r.effort}${r.modelVerified === false ? ' · model unverified' : ''}) · bugs caught ${t.caught}/${t.bugs} · missed ${t.missed} · false alarms ${t.falseAlarms} ` +
       `(${t.cleanWithAlarms}/${t.clean} clean cases) · extra ${t.extra} · unlocated ${t.unlocated} · errored ${t.errored} · n=${r.repeat} · ${(t.durationMs / 1000).toFixed(1)}s`)
   }
+  for (const s of stopped) console.error(s.line)
+  if (stopped.length) process.exitCode = 1
   if (readdirSync(root).length) console.log(`ℹ kept for inspection: ${root} (the repos and logs of the reviews that errored)`)
   else rmSync(root, { recursive: true, force: true })
   console.log(`ℹ logged ${plural(records.length, 'record')} to ${evalLog}`)
