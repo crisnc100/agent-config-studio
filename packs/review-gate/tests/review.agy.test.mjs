@@ -45,7 +45,7 @@ const fs = require('node:fs'), path = require('node:path')
 const a = process.argv.slice(2)
 if (a[0] === '--version') {
   fs.writeFileSync(path.join(${J(ARGV)}, 'version-' + process.pid + '.json'), JSON.stringify({ cwd: process.cwd(), entries: fs.readdirSync(process.cwd()) }))
-  if (process.env.STUB_AGY_VERSION === 'fail') process.exit(1); console.log(process.env.STUB_AGY_VERSION || '1.5.13'); process.exit(0)
+  if (process.env.STUB_AGY_VERSION === 'fail') process.exit(1); console.log(process.env.STUB_AGY_VERSION || '1.5.14'); process.exit(0)
 }
 const st = fs.fstatSync(0)
 const peek = {}
@@ -288,7 +288,7 @@ test('agy runs only on the version its containment was probed on', () => {
   for (const [version, shown] of [['1.6.0', '"1.6.0"'], ['fail', 'null']]) {
     const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY_VERSION: version })
     assert.notEqual(r.status, 0, r.out)
-    assert.match(r.out, new RegExp(`agy review refused: agy reports version ${shown}, but its containment was probed on 1\\.5\\.13; re-run the probe`))
+    assert.match(r.out, new RegExp(`agy review refused: agy reports version ${shown}, but its containment was probed on 1\\.5\\.14; re-run the probe`))
     assert.equal(calls('agy').length, 0, 'agy never ran a review')
     assert.equal(logLines().filter((e) => e.type === 'review').length, 0)
   }

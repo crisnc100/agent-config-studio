@@ -40,7 +40,7 @@ const fs = require('node:fs');
 const a = process.argv.slice(2);
 if (a[0] === '--version') {
   if (process.env.STUB_VERSION_LOG) fs.appendFileSync(process.env.STUB_VERSION_LOG, JSON.stringify({ cwd: process.cwd(), entries: fs.readdirSync(process.cwd()) }) + '\\n');
-  if (process.env.STUB_VERSION_FAIL) process.exit(1); console.log(process.env.STUB_VERSION || '1.5.13'); process.exit(0);
+  if (process.env.STUB_VERSION_FAIL) process.exit(1); console.log(process.env.STUB_VERSION || '1.5.14'); process.exit(0);
 }
 const val = (f) => { const i = a.indexOf(f); return i === -1 ? undefined : a[i + 1]; };
 const st = fs.fstatSync(0);
@@ -278,7 +278,7 @@ else {
 console.log('\nask-model agy: the probed version only');
 {
   const nv = ask(['--family', 'neon'], { env: { STUB_VERSION: '1.6.0' } });
-  ok('another agy version → exit 4 naming both and the probe, agy not run', nv.code === 4 && /agy reports version "1\.6\.0", but its containment was probed on 1\.5\.13: re-run the probe/.test(nv.err) && nv.calls.length === 0, show(nv));
+  ok('another agy version → exit 4 naming both and the probe, agy not run', nv.code === 4 && /agy reports version "1\.6\.0", but its containment was probed on 1\.5\.14: re-run the probe/.test(nv.err) && nv.calls.length === 0, show(nv));
   const vf = ask(['--family', 'neon'], { env: { STUB_VERSION_FAIL: '1' } });
   ok('a version check that fails → exit 4, agy not run', vf.code === 4 && /agy reports version null/.test(vf.err) && vf.calls.length === 0, show(vf));
 }
