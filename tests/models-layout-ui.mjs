@@ -505,6 +505,49 @@ const ids = (p) => content(p).querySelector('.models-ids');
   ok('...opus keeps every effort', J(opts(fo)) === J(['(none)', 'low', 'medium', 'high', 'xhigh', 'max']), J(opts(fo)));
 }
 
+// ── Check now and the model writes repaint from the server: what changed shows without a reload ─────
+{
+  const at = Date.now() - 5 * 60000;
+  const agy = { vendor: 'agy', label: 'Antigravity', ok: true, missing: false, fetchedAt: at, note: null, stale: false, checkOnly: true, refreshNote: null, count: 2, names: ['Neon', 'Argon'] };
+  const base = { ...models(), catalogs: [agy], familiesError: null, familiesHidden: {}, sync: null };
+  const argon = { family: 'argon', id: 'gemini-4-argon', vendor: 'agy', track: true, source: 'synced', defaultId: null, displayName: 'Gemini 4 Argon',
+    efforts: null, offered: true, heldBy: [], alerts: [] };
+  let state = base;
+  const withRow = (f) => ({ ...state, rows: state.rows.map((r) => (r.family === 'argon' ? f(r) : r)) });
+  const p = await boot(base, {
+    'GET /api/models': () => state,
+    'POST /api/models/check': () => {
+      state = { ...base, rows: [...base.rows, argon], sync: { at, error: null, added: [{ family: 'argon', vendor: 'agy', id: 'gemini-4-argon' }], moved: [], skipped: [] } };
+      return state;
+    },
+    'POST /api/models/pin': (b) => { state = withRow((r) => ({ ...r, track: !b.pinned })); return { saved: true, family: b.family, pinned: b.pinned }; },
+    'POST /api/models/set': (b) => { state = withRow((r) => ({ ...r, id: b.id, track: false })); return { saved: true, family: b.family, id: b.id, pinned: true, sidecars: [] }; },
+  });
+  const famRow = (f) => ids(p).querySelectorAll('.models-row').find((r) => r.dataset.family === f);
+  const editor = () => ids(p).querySelector('.models-detail');
+  ok('(before Check now: no argon row)', !famRow('argon'));
+  button(ids(p), 'Check now').click();
+  await settle(20);
+  const syncText = ids(p).querySelectorAll('.models-catalog').map(txt).find((t) => t.startsWith('Sync')) || '';
+  ok('Check now: a list that newly offers argon puts its synced row on screen, and the sync line says so',
+    !!famRow('argon') && txt(famRow('argon').querySelector('.models-source')) === 'synced from Antigravity' && /added argon \(gemini-4-argon, from Antigravity\)/.test(syncText), syncText);
+  famRow('argon')?.click();
+  await settle(5);
+  button(editor(), 'Pin')?.click();
+  await settle(20);
+  ok('after Pin, the row shows pinned and its editor offers Unpin, with no reload', !!famRow('argon') && /pinned/.test(txt(famRow('argon').querySelector('.models-family')))
+    && !!button(editor(), 'Unpin') && !button(editor(), 'Pin'), famRow('argon') && txt(famRow('argon')));
+  button(editor(), 'Unpin')?.click();
+  await settle(20);
+  ok('after Unpin, the badge is gone and Pin is back', !!famRow('argon') && !/pinned/.test(txt(famRow('argon').querySelector('.models-family'))) && !!button(editor(), 'Pin'));
+  const input = editor()?.querySelector('.models-input');
+  if (input) input.value = 'gemini-4.1-argon';
+  button(editor(), 'Save')?.click();
+  await settle(20);
+  ok('after Save, the row shows the new id and the pin', !!famRow('argon') && txt(famRow('argon').querySelector('.models-id')) === 'gemini-4.1-argon'
+    && /pinned/.test(txt(famRow('argon').querySelector('.models-family'))), famRow('argon') && txt(famRow('argon')));
+}
+
 for (const p of pages) p.done();
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

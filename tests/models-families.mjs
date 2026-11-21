@@ -591,6 +591,20 @@ console.log('\nmodels/families: Pin, and Set pins');
     && !JSON.parse(readOr(studio(h, 'models.json'))).families);
 }
 
+console.log('\nmodels/families: families.json writes made at the same time all land (one queue)');
+{
+  const h = home();
+  families(h, { argon: { id: ARGON }, flash: { id: 'gemini-3.8-flash' } });
+  plantAgy(h);
+  // allSettled: without the queue the two can also collide on the temp file, and that must read as a FAIL, not a crash.
+  const [s, p] = await Promise.allSettled([syncFamilies({ catalogs: catalogsOf(h), home: h }), pinFamily({ family: 'argon', pinned: true, home: h })]);
+  ok('a sync and a Pin at the same time: the sync\'s hydrogen and the pin both land', s.value?.added.map((a) => a.family).join() === 'hydrogen' && p.value?.saved === true
+    && famDoc(h).families.hydrogen?.id === HYDROGEN && famDoc(h).families.argon.track === false, J({ file: readOr(familiesPath(h)), s: s.reason?.message, p: p.reason?.message }));
+  const two = await Promise.allSettled([pinFamily({ family: 'flash', pinned: true, home: h }), pinFamily({ family: 'argon', pinned: false, home: h })]);
+  ok('two Pins at the same time: both land', two.every((r) => r.value?.saved === true) && famDoc(h).families.flash.track === false
+    && !Object.hasOwn(famDoc(h).families.argon, 'track') && famDoc(h).families.hydrogen?.id === HYDROGEN, J({ file: readOr(familiesPath(h)), two: two.map((r) => r.reason?.message ?? r.value?.saved) }));
+}
+
 console.log('\nmodels/families: sync at studio start and on Check now, through the real server');
 async function startStudio(h) {
   const port = await freePort();
@@ -695,6 +709,33 @@ process.exit(9);
     const adopt = await srv.post('/api/models/adopt', { id: ARGON });
     ok('the adopt route is gone', adopt.status === 404, J(adopt));
     ok('neon is the shipped id throughout', run(h, 'neon').out === `${DEFAULTS.models.neon}\n` && !Object.hasOwn(famDoc(h).families, 'neon'));
+  } finally { await srv.stop(); }
+}
+
+console.log('\nmodels/families: Check now, the route that adds families, refuses a cross-site request');
+{
+  const h = home();
+  plantAll(h, { agy: [agyEntry(DEFAULTS.models.neon, 'Gemini 4 Neon')] });
+  const bin = path.join(h, '.local', 'bin');
+  const log = path.join(h, 'agy-calls.jsonl');
+  const reply = fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'agy-models', 'models-1.5.13.json'), 'utf8');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'agy'), `#!${process.execPath}
+const fs = require('fs');
+fs.appendFileSync(${J(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+if (process.argv[2] === '--version') { process.stdout.write('1.5.13\\n'); process.exit(0); }
+if (process.argv.slice(2).join(' ') === '--output-format json models') { process.stdout.write(${J(reply)}); process.exit(0); }
+process.exit(9);
+`, { mode: 0o755 });
+  const calls = () => { try { return fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean); } catch { return []; } };
+  const srv = await startStudio(h);
+  try {
+    ok('(start: the saved list offers nothing new, so no families.json)', srv.up && !fs.existsSync(familiesPath(h)), srv.out().slice(-400));
+    const x = await srv.post('/api/models/check', {}, { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' });
+    ok('a cross-site Check now → 403: agy is not asked and no families.json is written', x.status === 403 && calls().length === 0 && !fs.existsSync(familiesPath(h)), J({ x, calls: calls() }));
+    const same = await srv.post('/api/models/check', {});
+    ok('...the same Check now from the page asks agy and adds what it offers anew', same.status === 200 && calls().length === 2
+      && ids(h).argon === ARGON && ids(h).hydrogen === HYDROGEN && ids(h).flash === 'gemini-3.8-flash', readOr(familiesPath(h)));
   } finally { await srv.stop(); }
 }
 
