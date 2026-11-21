@@ -857,12 +857,15 @@ function agyWallProblem(platform = process.platform) {
 
 /**
  * The folder a walled agy call in `cwd` may read: the real path of the top of the git work tree holding `cwd`, else of
- * `cwd`. HOME, or a folder holding it, is refused: allowing it back would reopen everything the wall closes.
+ * `cwd`. HOME, or a folder holding it, is refused: allowing it back would reopen everything the wall closes. git runs
+ * without any inherited GIT_* variable: a GIT_DIR, GIT_WORK_TREE or env-set core.worktree (a hook's, say) would
+ * otherwise name another tree, and the wall would let agy read that one.
  */
 function agyReadRoot(cwd, home = os.homedir()) {
   const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
   const git = which('git');
-  const top = git ? spawnSync(git, ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }) : null;
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
+  const top = git ? spawnSync(git, ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env }) : null;
   const root = top?.status === 0 && top.stdout.trim() ? real(top.stdout.trim()) : real(cwd);
   const h = real(home);
   if (h === root || h.startsWith(root.endsWith('/') ? root : `${root}/`)) {

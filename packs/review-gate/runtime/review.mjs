@@ -2543,10 +2543,12 @@ function agyWallProblem(platform = process.platform) {
   return null
 }
 // The real path of the top of the git work tree holding `cwd`, else of `cwd`; HOME or a folder holding it is refused.
-// Computed per call: a dispute's verifier runs from a snapshot clone it changes into, not from TOP.
+// Computed per call: a dispute's verifier runs from a snapshot clone it changes into, not from TOP. git runs without any
+// inherited GIT_* variable, so a GIT_DIR or GIT_WORK_TREE (which also moves TOP) cannot point the wall at another tree.
 function agyReadRoot(cwd, home = homedir()) {
   const real = (p) => { try { return realpathSync(p) } catch { return resolve(p) } }
-  const top = spawnSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' })
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')))
+  const top = spawnSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env })
   const root = top.status === 0 && top.stdout?.trim() ? real(top.stdout.trim()) : real(cwd)
   const h = real(home)
   if (h === root || h.startsWith(root.endsWith('/') ? root : `${root}/`))
