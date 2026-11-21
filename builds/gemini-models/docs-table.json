@@ -1,0 +1,10 @@
+{"rows":[
+{"behavior":"Check now asks agy for its model list and saves it to ~/.agent-config-studio/cache/agy-models.json","files":["lib/usage/gemini.js","lib/models-panel.js","lib/models-catalog.js","server.js"],"docs":[{"path":"README.md","claims":[
+{"claim":"Check now runs `agy --output-format json models` (agy 1.1.12 or later, no model turn) in an empty temporary folder","at":"lib/usage/gemini.js:51"},
+{"claim":"the argv is `--output-format json models`, spawned from a fresh empty folder","at":"lib/usage/gemini.js:192"},
+{"claim":"Check now saves the Antigravity model list in the ACS folder","at":"lib/models-catalog.js:244"},
+{"claim":"the saved list is written by Check now","at":"lib/models-panel.js:150"}]}]},
+{"behavior":"Antigravity catalog line lists base model names; family from gemini-<n>-<word>; Check now sentence names Antigravity","files":["public/app.js","lib/models-panel.js","lib/models-catalog.js"],"docs":[{"path":"README.md","claims":[
+{"claim":"the Antigravity model list is among what Check now saves under ~/.agent-config-studio","at":"lib/models-catalog.js:244"}]}]},
+{"behavior":"Home line for Antigravity without a list","files":["public/home.js"],"none":"README does not describe individual Home lines"}
+]}
