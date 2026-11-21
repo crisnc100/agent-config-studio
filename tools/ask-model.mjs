@@ -234,6 +234,10 @@ const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
 // a failed keychain write, or on request). A walled call that logs it fails: the file is a plaintext Google token at
 // rest, readable by everything on this Mac outside the wall.
 const AGY_TOKEN_FILE = /file-based token storage/i;
+// Where agy keeps that token, under HOME. agy neither moves it back into the keychain nor removes it (a later unwalled
+// start signed in from the keychain and left it), so a call refuses while it exists, and the fix is to delete it.
+const AGY_TOKEN_PATH = path.join('.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+const AGY_TOKEN_FIX = 'delete it: agy signs in from the keychain without it (if it then asks you to sign in, run agy once and sign in)';
 
 /**
  * Grok's environment for one call: an empty temporary HOME, so what grok borrows from ~/.claude and ~/.cursor
@@ -879,6 +883,17 @@ function agyWallParams({ root, callTmp, logFile, bin, home = os.homedir(), tmp =
       LOG: path.join(fs.realpathSync(path.dirname(logFile)), path.basename(logFile)), AGY: fs.realpathSync(bin),
       HOME: fs.realpathSync(home), TMP: fs.realpathSync(tmp), USER_TMP: fs.realpathSync(ut.stdout.trim()) } };
   } catch (e) { return { error: `a path the wall names could not be resolved (${e.path ?? ''}: ${e.code || e.message})` }; }
+}
+
+/** agy's plaintext token file under `home` and why it refuses a call ({ file, why }), or null when there is none. */
+function agyTokenLeft(home = os.homedir()) {
+  const file = path.join(home, AGY_TOKEN_PATH);
+  try {
+    fs.lstatSync(file);
+    return { file, why: "holds agy's Google sign-in token in plain text (agy writes it when it cannot save a refreshed token in the keychain)" };
+  } catch (e) {
+    return e.code === 'ENOENT' ? null : { file, why: `could not be checked (${e.code || e.message}), and it would hold agy's Google sign-in token in plain text` };
+  }
 }
 
 /** Whether agy's log of a call says it kept the sign-in token in a file (AGY_TOKEN_FILE), or exists but can't be read. */
@@ -1595,6 +1610,8 @@ async function main(argv) {
     }
     const problem = agyConfigProblem();
     if (problem) { result.error = `${problem}, so agy was not run`; return finish(4); }
+    const left = agyTokenLeft();
+    if (left) { result.error = `${left.file} ${left.why}, so agy was not run: ${AGY_TOKEN_FIX}`; return finish(4); }
     const version = agyVersion(bin);
     if (version !== AGY_VERSION) {
       result.error = `agy reports version ${JSON.stringify(version)}, but its containment was probed on ${AGY_VERSION}: re-run the probe `
@@ -1673,7 +1690,7 @@ async function main(argv) {
     got.answer = undefined;
     got.exit = 4;
     got.error = `agy switched to keeping its Google sign-in token in a file instead of the keychain (its log, ${logFile}, says `
-      + '"file-based token storage"), so its answer was not used: check what it wrote under ~/.gemini before running agy again';
+      + `"file-based token storage"), so its answer was not used. If ${path.join(os.homedir(), AGY_TOKEN_PATH)} now exists, ${AGY_TOKEN_FIX}`;
   }
   if (got.answer !== undefined) result.answer = got.answer;
   else result.error = got.error;
@@ -1701,7 +1718,7 @@ async function main(argv) {
   return finish(got.exit ?? 0);
 }
 
-export { AGY_ENV, AGY_WALL, SANDBOX_EXEC, agyReadRoot, agySubagentDenials, agyTokenFile, agyWall, agyWallCanary, agyWallParams, agyWallProblem, argvFor, readAnswer, sandboxProblem };
+export { AGY_ENV, AGY_TOKEN_FIX, AGY_TOKEN_PATH, AGY_WALL, SANDBOX_EXEC, agyReadRoot, agySubagentDenials, agyTokenFile, agyTokenLeft, agyWall, agyWallCanary, agyWallParams, agyWallProblem, argvFor, readAnswer, sandboxProblem };
 
 /**
  * For `model-id --install`, after it has copied the resolver: this file beside

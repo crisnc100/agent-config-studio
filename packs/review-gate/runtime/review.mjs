@@ -2479,6 +2479,9 @@ const AGY_WALL = [
 ].join('\n')
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec'
 const AGY_TOKEN_FILE = /file-based token storage/i
+// agy's plaintext token file under HOME, and what to do about it (ask-model's AGY_TOKEN_PATH and AGY_TOKEN_FIX).
+const AGY_TOKEN_PATH = join('.gemini', 'antigravity-cli', 'antigravity-oauth-token')
+const AGY_TOKEN_FIX = 'delete it: agy signs in from the keychain without it (if it then asks you to sign in, run agy once and sign in)'
 const AGY_NO_SECURITY = 'agy keeps web search on (no permission turns it off), and the security pass reads a diff that may try to steer its reviewer'
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 // Why ~/.gemini/config would run something besides the model, or null: any MCP server in mcp_config.json starts, and
@@ -2558,6 +2561,15 @@ function agyWallParams({ root, callTmp, logFile, bin, home = homedir(), tmp = tm
       LOG: join(realpathSync(dirname(logFile)), basename(logFile)), AGY: realpathSync(bin),
       HOME: realpathSync(home), TMP: realpathSync(tmp), USER_TMP: realpathSync(ut.stdout.trim()) } }
   } catch (e) { return { error: `a path the wall names could not be resolved (${e.path ?? ''}: ${e.code || e.message})` } }
+}
+function agyTokenLeft(home = homedir()) {
+  const file = join(home, AGY_TOKEN_PATH)
+  try {
+    lstatSync(file)
+    return { file, why: "holds agy's Google sign-in token in plain text (agy writes it when it cannot save a refreshed token in the keychain)" }
+  } catch (e) {
+    return e.code === 'ENOENT' ? null : { file, why: `could not be checked (${e.code || e.message}), and it would hold agy's Google sign-in token in plain text` }
+  }
 }
 function agyTokenFile(logFile) {
   try { return AGY_TOKEN_FILE.test(readFileSync(logFile, 'utf8')) } catch (e) { return e.code !== 'ENOENT' }
@@ -2692,6 +2704,8 @@ function runAgy(m, prompt, schema) {
     throw new Error(`agy review refused: ${workspace.join(', ')}: agy runs a workspace's hooks, MCP servers, plugins and agents on every call and no flag turns them off; review with another family`)
   const problem = agyConfigProblem()
   if (problem) throw new Error(`agy review refused: ${problem}`)
+  const left = agyTokenLeft()
+  if (left) throw new Error(`agy review refused: ${left.file} ${left.why}; ${AGY_TOKEN_FIX}`)
   const version = agyVersion()
   if (version !== AGY_VERSION)
     throw new Error(`agy review refused: agy reports version ${JSON.stringify(version)}, but its containment was probed on ${AGY_VERSION}; re-run the probe (builds/gemini-family/probe in Agent Config Studio) and update AGY_VERSION`)
@@ -2724,7 +2738,7 @@ function runAgy(m, prompt, schema) {
     })
     console.warn(`ℹ agy review: model unverified (agy names only the model it was asked for, ${m.id}); its log: ${logFile}`)
     if (agyTokenFile(logFile))
-      throw new Error(`agy review failed: agy switched to keeping its Google sign-in token in a file instead of the keychain (its log, ${logFile}, says "file-based token storage"); check what it wrote under ~/.gemini before running agy again`)
+      throw new Error(`agy review failed: agy switched to keeping its Google sign-in token in a file instead of the keychain (its log, ${logFile}, says "file-based token storage"). If ${join(homedir(), AGY_TOKEN_PATH)} now exists, ${AGY_TOKEN_FIX}`)
     return parseAgy(m.id, r, m.family)
   } finally {
     rmSync(callTmp, { recursive: true, force: true })
