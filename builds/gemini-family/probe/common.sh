@@ -1,6 +1,7 @@
 # Sourced by every probe script (each sets -euo pipefail itself first and stops if this file fails to load).
 # A probe run takes no path from its caller: it makes one fresh folder with mktemp and writes, plants and starts agy
-# only inside it (ws/ the workspace, marks/ the files hooks and commands touch, out/ the outputs).
+# only inside it (ws/ the workspace, marks/ the files hooks and commands touch, out/ the outputs). Every agy call
+# starts through walled.mjs, the sandbox-exec wall the runtimes ship; only `agy --version` runs bare, as there.
 set -euo pipefail
 unset CDPATH
 PROBE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -75,14 +76,22 @@ J
 }
 PLANTED=".agent/hooks.json .agents/hooks.json .agents/mcp_config.json .agents/plugins.json .agents/plugins .agents/rules .agents/settings.json .gemini/mcp_config.json .gemini/settings.json AGENTS.md GEMINI.md"
 
-# agy <label> <format> <prompt> [deny]: one agy call from the current folder, output in OUT/<label>.*; prints its exit.
+# agy <label> <format> <prompt> [deny]: one walled agy call from the current folder, output in OUT/<label>.*; prints
+# its exit (2 when the wall refused it: OUT/<label>.err says why).
 agy_call() {
   local label="$1" format="$2" prompt="$3" deny="${4:-}" status=0
   case "$label" in *[!a-z0-9-]*|'') die "label \"$label\" must be lower-case letters, digits and dashes";; esac
   require_ready
   local args=(-p "$prompt" --model gemini-4-neon --effort low --output-format "$format" --print-timeout 240s --disable-slash-commands --log-file "$OUT/$label.agy.log")
   [ "$deny" = deny ] && args+=(--settings "$DENY")
-  CMUX_ANTIGRAVITY_HOOKS_DISABLED=1 "$AGY" "${args[@]}" </dev/null > "$OUT/$label.out" 2> "$OUT/$label.err" || status=$?
+  node "$PROBE_DIR/walled.mjs" "$AGY" "${args[@]}" </dev/null > "$OUT/$label.out" 2> "$OUT/$label.err" || status=$?
   echo "$status"
 }
 markers() { ls "$M" | tr '\n' ' '; }
+# What a walled call's own log says about the things the wall depends on: agy's updater, and the sign-in token.
+wall_log() {
+  local log="$OUT/$1.agy.log" up tok
+  up=$(grep -q 'Auto-update disabled via environment variable AGY_CLI_DISABLE_AUTO_UPDATE' "$log" 2>/dev/null && echo off || echo NOT-OFF)
+  tok=$(grep -qi 'file-based token storage' "$log" 2>/dev/null && echo FILE || echo keychain)
+  echo "updater $up · token $tok"
+}
