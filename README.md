@@ -882,8 +882,9 @@ skill.
   write agy's conversation summaries, which it cannot read there and would
   otherwise empty. It exits 4 without running agy off macOS, inside another
   sandbox (run it from a plain terminal), when that folder is your home or
-  holds it, or when a check made before each call shows the sandbox not
-  holding. It also exits 4 while
+  holds it, when git names a work tree that does not hold `--cwd` (a
+  repository's own config can), or when a check made before each call
+  shows the sandbox not holding. It also exits 4 while
   `~/.gemini/antigravity-cli/antigravity-oauth-token` exists: agy writes
   your Google sign-in token there in plain text when it cannot save it in
   the keychain, and leaves it. Delete it; agy signs in from the keychain
