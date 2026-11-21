@@ -38,10 +38,14 @@ console.log('\nagy wall: one profile, the same in both runtimes');
   ok('the refused roots: /Users, /Volumes, /private/tmp, TMPDIR, macOS\'s per-user temp folder and HOME', lines[2]
     === '(deny file-read-data (subpath "/Users") (subpath "/Volumes") (subpath "/private/tmp") (subpath (param "TMP")) (subpath (param "USER_TMP")) (subpath (param "HOME")))', lines[2]);
   const [allowBlock, writeBlock = ''] = AGY_WALL.split('(allow file-read-data')[1].split('(deny file-write*');
-  const allowed = [...allowBlock.matchAll(/\((subpath|literal) (\(param "[A-Z_]+"\)|\(string-append \(param "[A-Z_]+"\) "[^"]+"\))\)/g)].map((m) => `${m[1]} ${m[2]}`);
+  const allowed = [...allowBlock.matchAll(
+    /\((subpath|literal|regex) (\(param "[A-Z_]+"\)|\(string-append (?:\(param "[A-Z_]+"\)|"\^" \(regex-quote \(param "[A-Z_]+"\)\)) "[^"]+"\))\)/g)]
+    .map((m) => `${m[1]} ${m[2]}`);
   ok('the allowed-back list is exactly the approved one', J(allowed) === J([
     'subpath (param "ROOT")', 'subpath (param "CALL_TMP")', 'literal (param "LOG")', 'literal (param "AGY")',
     'literal (string-append (param "HOME") "/Library/Keychains/login.keychain-db")',
+    'regex (string-append "^" (regex-quote (param "HOME")) "/Library/Keychains/\\\\.fl[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]$")',
+    'regex (string-append "^" (regex-quote (param "HOME")) "/Library/Keychains/login\\\\.keychain-db\\\\.sb-[0-9a-f]+-[A-Za-z0-9]+$")',
     'subpath (string-append (param "HOME") "/.gemini/config")',
     'subpath (string-append (param "HOME") "/.gemini/antigravity-cli/builtin")',
     'literal (string-append (param "HOME") "/.gemini/antigravity-cli/settings.json")',
@@ -115,11 +119,14 @@ if (process.platform !== 'darwin') {
   const files = {
     allowed: ['.gemini/config/hooks.json', '.gemini/config/projects/default-cli-project.json', '.gemini/antigravity-cli/settings.json',
       '.gemini/antigravity-cli/installation_id', '.gemini/antigravity-cli/jetski_state.pbtxt', '.gemini/antigravity-cli/cache/default_project_id.txt',
-      '.gemini/antigravity-cli/cache/onboarding.json', '.gemini/antigravity-cli/builtin/skills/x/SKILL.md', 'Library/Keychains/login.keychain-db'],
+      '.gemini/antigravity-cli/cache/onboarding.json', '.gemini/antigravity-cli/builtin/skills/x/SKILL.md', 'Library/Keychains/login.keychain-db',
+      'Library/Keychains/.flDEADBEEF', 'Library/Keychains/login.keychain-db.sb-8ea883a1-WYOv2i'],
     denied: ['.gemini/antigravity-cli/history.jsonl', '.gemini/antigravity-cli/conversation_summaries.db', '.gemini/antigravity-cli/conversations/c.db',
       '.gemini/antigravity-cli/brain/c/.system_generated/logs/transcript.jsonl', '.gemini/antigravity-cli/cache/conversation_metadata.json',
       '.gemini/antigravity-cli/cache/last_conversations.json', '.gemini/antigravity-cli/jetbox_summaries_proto.pb', '.gemini/antigravity-cli/implicit/x.pb',
-      '.gemini/antigravity-cli/log/cli.log', '.gemini/sandbox/x', 'Library/Keychains/metadata.keychain-db', '.ssh/id_ed25519', '.codex/auth.json', '.config/gh/hosts.yml'],
+      '.gemini/antigravity-cli/log/cli.log', '.gemini/sandbox/x', '.gemini/antigravity-cli/antigravity-oauth-token', 'Library/Keychains/metadata.keychain-db',
+      'Library/Keychains/.flDEADBEEF.x', 'Library/Keychains/.flDEADBEE', 'Library/Keychains/login.keychain-db.bak',
+      'Library/Keychains/2C4E543B-3573-52A2-A306-C052855C84D6/keychain-2.db', '.ssh/id_ed25519', '.codex/auth.json', '.config/gh/hosts.yml'],
   };
   for (const rel of [...files.allowed, ...files.denied]) {
     fs.mkdirSync(path.dirname(path.join(home, rel)), { recursive: true });
