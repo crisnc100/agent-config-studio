@@ -88,3 +88,35 @@
 ## Live check (builder, 2026-11-20)
 - readGeminiModels() with the default locateBinary on this Mac (real agy 1.5.13, past the cmux wrapper): ok, six
   entries, neon low..xhigh, argon and flash low..high, hydrogen low..xhigh, two orchestrators with no efforts.
+
+## Fix round — review 2026-11-21-02-30-14-c07dfa (builder, 2026-11-20)
+- Found while fixing: phase 1's runAgy rewrite broke three tests/setup-guards.mjs variants ("the variant did not
+  apply"); setup-guards was not run in phase 1. Re-anchored in test-only 75932b9; setup-guards 100/100 then.
+- Sol's test check of 886f0a4: guard b now requires each pinned agy call exactly once and takes the opts definition and
+  each pinned call out of the source before looking for any other opts mention (test-only a414f06). Five planted
+  models variants added to setup-guards; "second --version spawn" and "void opts" pass the 886f0a4 guard and fail now.
+- f1 (+ s1): readGeminiModels and readGeminiSeat both require status === 'SUCCESS'; a missing, empty or non-string
+  status reads "agy <what> reported no SUCCESS status". Tested for omitted, null, false, 0 and "" on both paths, and
+  through the server: a no-status reply leaves the saved list byte for byte, with the note.
+- f2: runAgy registers each call in flight; stopAgyCalls() SIGKILLs them and removes their folders synchronously, and
+  server.js's stop handler calls it before re-raising the signal. The suggested process group was checked first and
+  not used: agy 1.5.13 starts no child process during `models` or `/usage` (ps sampled every 150–200 ms through both),
+  so a group kill has nothing more to kill, and detaching would take agy out of the terminal's foreground group, so
+  Ctrl-C on `acs usage` (a CLI with no stop handler) would no longer reach it. opts is unchanged.
+  Tested in process (stopAgyCalls) and through the real server: SIGTERM while Check now waits on a hanging fake agy
+  → the studio exits, the fake's pid is gone, its folder removed. Dropping the server hook fails both checks.
+- Checks: tests/usage-gemini.mjs 102/102, tests/models-agy.mjs 50/50, tests/guards.mjs 11/11,
+  tests/setup-guards.mjs 106/106, tests/models.mjs 64/64, tests/models-panel.mjs 118/118, tests/models-refresh.mjs 29/29.
+
+## Sibling check (fix round)
+1. status === 'SUCCESS': applied on both agy readers (models, /usage). shapeModels/shapeUsage are only called
+   unchecked by tests; their production callers check first. ask-model and the review runtime parse agy turn replies
+   under their own rules (off limits). Consumers: refreshAgyList (writes only on ok) and the usage snapshot.
+2. stopAgyCalls: applied to the studio's SIGINT/SIGTERM handler, which also serves the self-SIGTERM route
+   (server.js:720). Not needed for the acs-usage worker: it is its own process, keeps its own 20 s deadline, and
+   refresh.js kills it only at 30 s. Not handled: a studio ended by SIGKILL (the fs watchdog's die(), or acs stop's
+   SIGKILL after 3 s) runs no handler, so agy lives until it answers and its folder stays; bounding that needs new
+   logic (a sweep of stale acs-agy-usage-* folders, or a self-timeout in the child), proposal only. Not handled, out of
+   scope: the codex app-server child of the same Check now (lib/usage/codex-limits.js) has the same gap on stop.
+3. Guard b exactly-once and positional opts: applied to the one agyUsageOnly file. The agent inspector pin already
+   checks positions (split on the pinned texts); not needed there.

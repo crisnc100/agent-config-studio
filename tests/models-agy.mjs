@@ -172,13 +172,20 @@ function freePort() {
   const h = home();
   const bin = path.join(h, '.local', 'bin');
   const log = path.join(h, 'agy-calls.jsonl');
+  // ok answers; nostatus answers without a status; hang never answers.
+  const modeFile = path.join(h, 'agy-mode');
+  const { status: _status, ...noStatus } = REPLY;
   fs.mkdirSync(bin, { recursive: true });
   fs.writeFileSync(path.join(bin, 'agy'), `#!${process.execPath}
 const fs = require('fs');
-fs.appendFileSync(${J(log)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), entries: fs.readdirSync(process.cwd()) }) + '\\n');
+let mode = 'ok';
+try { mode = fs.readFileSync(${J(modeFile)}, 'utf8').trim(); } catch {}
+fs.appendFileSync(${J(log)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), entries: fs.readdirSync(process.cwd()), pid: process.pid }) + '\\n');
 if (process.argv[2] === '--version') { process.stdout.write('1.5.13\\n'); process.exit(0); }
-if (process.argv.slice(2).join(' ') === '--output-format json models') { process.stdout.write(${J(J(REPLY))}); process.exit(0); }
-process.exit(9);
+if (process.argv.slice(2).join(' ') === '--output-format json models') {
+  if (mode === 'hang') setTimeout(() => {}, 60000);
+  else { process.stdout.write(mode === 'nostatus' ? ${J(J(noStatus))} : ${J(J(REPLY))}); process.exit(0); }
+} else process.exit(9);
 `, { mode: 0o755 });
   const calls = () => { try { return fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
   const port = await freePort();
@@ -212,8 +219,37 @@ process.exit(9);
     ok('...neon reads Gemini 4 Neon with no alert', v.rows.find((x) => x.family === 'neon')?.displayName === 'Gemini 4 Neon'
       && v.rows.find((x) => x.family === 'neon').alerts.length === 0, J(v.rows.find((x) => x.family === 'neon')));
     ok('...and no file path leaves the response', !JSON.stringify(v).includes('agy-models.json') && !JSON.stringify(v).includes(h));
+
+    // A reply without status "SUCCESS" must not replace the saved list.
+    const saved = fs.readFileSync(agyModelsPath(h), 'utf8');
+    fs.writeFileSync(modeFile, 'nostatus');
+    const ns = await (await fetch(`${base}/api/models/check`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: '{}' })).json();
+    ok('a models reply with no status leaves the saved list byte for byte', fs.readFileSync(agyModelsPath(h), 'utf8') === saved);
+    ok('...still shown, with why it was not refreshed', agyCat(ns).ok === true && /^Not refreshed: agy models reported no SUCCESS status\. Shown as last fetched\.$/.test(agyCat(ns).refreshNote || ''), J(agyCat(ns)));
+
+    // Stopping the studio (acs stop sends SIGTERM) while Check now waits on agy: agy and its folder go with it.
+    fs.writeFileSync(modeFile, 'hang');
+    const before = calls().length;
+    const inflight = fetch(`${base}/api/models/check`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: '{}' }).catch(() => null);
+    let hung = null;
+    for (let i = 0; i < 150 && !hung; i++) {
+      hung = calls().slice(before).find((x) => x.argv.join(' ') === '--output-format json models') || null;
+      if (!hung) await new Promise((r) => setTimeout(r, 30));
+    }
+    ok('Check now is waiting on a hanging agy', !!hung && fs.existsSync(hung.cwd), J(calls().slice(before)));
+    const exited = new Promise((r) => child.once('exit', (code, signal) => r({ code, signal })));
+    child.kill('SIGTERM');
+    const ended = await exited;
+    await inflight;
+    let alive = true;
+    for (let i = 0; i < 50 && alive && hung; i++) {
+      try { process.kill(hung.pid, 0); await new Promise((r) => setTimeout(r, 20)); } catch { alive = false; }
+    }
+    ok('the studio stops on SIGTERM', ended.signal === 'SIGTERM', J(ended));
+    ok('...and agy does not outlive it', !!hung && alive === false, String(hung?.pid));
+    ok('...nor does agy\'s temp folder', !!hung && !fs.existsSync(hung.cwd), hung?.cwd);
   } finally {
-    if (child.exitCode === null) {
+    if (child.exitCode === null && child.signalCode === null) {
       const gone = new Promise((r) => child.once('exit', r));
       child.kill('SIGINT');
       await gone;

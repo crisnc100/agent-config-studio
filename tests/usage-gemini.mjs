@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { shapeUsage, shapeModels, readGeminiSeat, readGeminiModels, parseVersion, versionAtLeast } from '../lib/usage/gemini.js';
+import { shapeUsage, shapeModels, readGeminiSeat, readGeminiModels, parseVersion, stopAgyCalls, versionAtLeast } from '../lib/usage/gemini.js';
 import { vendorOf } from '../lib/models.js';
 import { tempDir } from './fixtures/cleanup.mjs';
 import { vendorReset } from '../lib/pause.js';
@@ -153,13 +153,18 @@ fs.writeFileSync(fake, `#!${process.execPath}
 const fs = require('fs');
 const mode = process.env.FAKE_AGY_MODE || 'ok';
 const cwd = process.cwd();
-fs.appendFileSync(${JSON.stringify(LOG)}, JSON.stringify({ argv: process.argv.slice(2), cwd, entries: fs.readdirSync(cwd), hooksOff: process.env.CMUX_ANTIGRAVITY_HOOKS_DISABLED }) + '\\n');
+fs.appendFileSync(${JSON.stringify(LOG)}, JSON.stringify({ argv: process.argv.slice(2), cwd, entries: fs.readdirSync(cwd), hooksOff: process.env.CMUX_ANTIGRAVITY_HOOKS_DISABLED, pid: process.pid }) + '\\n');
 if (process.argv[2] === '--version' && mode === 'slowversion') { setTimeout(() => { process.stdout.write('1.5.13\\n'); process.exit(0); }, 700); }
 else if (process.argv[2] === '--version') { process.stdout.write(mode === 'old' ? '1.1.10\\n' : mode === 'v1111' ? '1.1.11\\n' : mode === 'noversion' ? 'agy\\n' : '1.5.13\\n'); process.exit(0); }
 else if (mode === 'apikey') process.exit(2);
 else if (mode === 'signedout') process.exit(1);
 else if (mode === 'hang' || mode === 'slowversion') setTimeout(() => {}, 60000);
 else if (mode === 'notjson') process.stdout.write('hello');
+else if (mode === 'status') {
+  const reply = JSON.parse(process.argv[4] === 'models' ? ${JSON.stringify(JSON.stringify(MODELS))} : fs.readFileSync(${JSON.stringify(path.join(here, 'fixtures', 'agy-usage', 'usage-1.5.13.json'))}, 'utf8'));
+  if (process.env.FAKE_AGY_STATUS === 'omit') delete reply.status; else reply.status = JSON.parse(process.env.FAKE_AGY_STATUS);
+  process.stdout.write(JSON.stringify(reply));
+}
 else if (process.argv[4] === 'models' && mode === 'turn') process.stdout.write(${JSON.stringify(JSON.stringify({ ...MODELS, num_turns: 1 }))});
 else if (process.argv[4] === 'models' && mode === 'failed') process.stdout.write(${JSON.stringify(JSON.stringify({ ...MODELS, status: 'ERROR' }))});
 else if (process.argv[4] === 'models' && mode === 'nogemini') process.stdout.write(${JSON.stringify(JSON.stringify(nonGemini()))});
@@ -293,6 +298,45 @@ const runModels = async (mode, extra = {}) => {
 {
   const r = await readGeminiModels({ found: { installed: false } });
   ok('models: not installed → a reason, no spawn', r.ok === false && /not installed/.test(r.reason) && r.models.length === 0);
+}
+
+// --- only an explicit "SUCCESS" status is a reading, for models and /usage alike ----
+for (const [shown, value] of [['omitted', 'omit'], ['null', 'null'], ['false', 'false'], ['0', '0'], ['""', '""']]) {
+  process.env.FAKE_AGY_STATUS = value;
+  try {
+    const m = await runModels('status');
+    ok(`models: status ${shown} is refused`, m.ok === false && /models reported no SUCCESS status/.test(m.reason) && m.models.length === 0, m.reason);
+    const u = await run('status');
+    ok(`/usage: status ${shown} is refused`, u.ok === false && /\/usage reported no SUCCESS status/.test(u.reason) && u.windows.length === 0, u.reason);
+  } finally { delete process.env.FAKE_AGY_STATUS; }
+}
+{
+  process.env.FAKE_AGY_STATUS = '"SUCCESS"';
+  try {
+    ok('models: status "SUCCESS" still reads', (await runModels('status')).ok === true);
+    ok('/usage: status "SUCCESS" still reads', (await run('status')).ok === true);
+  } finally { delete process.env.FAKE_AGY_STATUS; }
+}
+
+// --- the studio stopping ends a call in flight -----------------------------------
+{
+  const t0 = Date.now();
+  const pending = runModels('hang', { timeoutMs: 15000 });
+  let call = null;
+  for (let i = 0; i < 100 && !call; i++) {
+    call = calls().find((c) => c.argv.join(' ') === '--output-format json models') || null;
+    if (!call) await new Promise((r) => setTimeout(r, 30));
+  }
+  ok('a hanging models call is running', !!call && fs.existsSync(call.cwd), JSON.stringify(calls()));
+  stopAgyCalls();
+  ok('stopAgyCalls removes its folder at once, before the call settles', !!call && !fs.existsSync(call.cwd));
+  const r = await pending;
+  ok('...and settles the call as stopped, long before its deadline', r.ok === false && /stopped/.test(r.reason) && Date.now() - t0 < 5000, r.reason);
+  let alive = true;
+  for (let i = 0; i < 50 && alive; i++) {
+    try { process.kill(call.pid, 0); await new Promise((res) => setTimeout(res, 20)); } catch { alive = false; }
+  }
+  ok('...and agy itself is gone', alive === false, String(call?.pid));
 }
 
 // --- the refresh worker finds the agy Setup found --------------------------------
