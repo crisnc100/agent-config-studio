@@ -4,6 +4,9 @@
  * "model unverified" label on the reviewer line and in the record, the ~/.gemini/config refusals, the failures agy
  * reports as success, its exclusion from the security pass, REVIEW_AUTHOR=agy, and a REVIEW_MODEL pin that is not a
  * codex model. A stub agy answers in agy 1.5.13's stream-json shape; temp HOME, Git config and PATH; no real model.
+ * On macOS the stub runs inside the real sandbox-exec wall, as agy does, so this file must run from a shell outside any
+ * sandbox. Elsewhere a review that passes every check is refused at the wall (reached()), and the tests that need agy's
+ * answer are skipped.
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -32,8 +35,11 @@ symlinkSync(process.execPath, join(NODE_BIN, 'node'))
 
 const FINDING = { issue: 'off-by-one in loop', file: 'a.js', line: '2', quote: 'for (let i = 0; i <= n; i++) {}', suggestion: 'use <', likelihood: 5, impact: 5, protected: false, trigger: 'calling f(3)' }
 const replyFor = `(schema) => String(schema).includes('"verdicts"') ? '{"verdicts":[]}' : String(schema).includes('"scores"') ? '{"scores":[]}' : ${J(J({ findings: [FINDING] }))}`
-// STUB_AGY: ok | status-error | denied-empty | approval-denied | other-model | not-json | clean | retry. STUB_AGY_VERSION
-// overrides what --version prints; STUB_AGY_VERSION=fail exits 1.
+// STUB_AGY: ok | status-error | denied-empty | approval-denied | other-model | not-json | clean | retry | token-file.
+// STUB_AGY_VERSION overrides what --version prints; STUB_AGY_VERSION=fail exits 1. STUB_PEEK: paths (joined by \n) the
+// stub tries to read, recording each result. The saved subagent run is written into the stub: inside the wall it
+// cannot read this checkout.
+const SUBAGENT_STREAM = readFileSync(join(dirname(SCRIPT), '..', '..', '..', 'tests', 'fixtures', 'agy-subagent', 'stream.jsonl'), 'utf8')
 put(join(STUBS, 'agy'), `#!${process.execPath}
 const fs = require('node:fs'), path = require('node:path')
 const a = process.argv.slice(2)
@@ -42,9 +48,14 @@ if (a[0] === '--version') {
   if (process.env.STUB_AGY_VERSION === 'fail') process.exit(1); console.log(process.env.STUB_AGY_VERSION || '1.5.13'); process.exit(0)
 }
 const st = fs.fstatSync(0)
+const peek = {}
+for (const p of (process.env.STUB_PEEK || '').split('\\n').filter(Boolean)) { try { peek[p] = fs.readFileSync(p, 'utf8') } catch (e) { peek[p] = e.code } }
 fs.writeFileSync(path.join(${J(ARGV)}, 'agy-' + process.pid + '.json'), JSON.stringify({ argv: a, cwd: process.cwd(),
-  stdin: st.isCharacterDevice() ? 'chardev' : 'other', cmuxHooksOff: process.env.CMUX_ANTIGRAVITY_HOOKS_DISABLED ?? null }))
+  stdin: st.isCharacterDevice() ? 'chardev' : 'other', cmuxHooksOff: process.env.CMUX_ANTIGRAVITY_HOOKS_DISABLED ?? null,
+  autoUpdateOff: process.env.AGY_CLI_DISABLE_AUTO_UPDATE ?? null, tmpdir: process.env.TMPDIR ?? null,
+  tmpdirExists: !!process.env.TMPDIR && fs.existsSync(process.env.TMPDIR), peek }))
 const mode = process.env.STUB_AGY || 'ok'
+if (mode === 'token-file') fs.appendFileSync(a[a.indexOf('--log-file') + 1], 'W1121 keyring.go] Using file-based token storage because a keyring timeout was recorded within the last 1h0m0s\\n')
 const model = a[a.indexOf('--model') + 1]
 const out = (o) => console.log(JSON.stringify(o))
 out({ event: 'init', conversation_id: 'c', init: { model: mode === 'other-model' ? 'gemini-other' : model, cwd: process.cwd(), tools: [], permission_mode: 'default' } })
@@ -65,7 +76,7 @@ if (mode === 'retry') {
 }
 if (mode === 'subagent') {
   // The saved agy 1.5.13 subagent run's own steps, its transcript path moved under this HOME.
-  const saved = fs.readFileSync(${J(join(dirname(SCRIPT), '..', '..', '..', 'tests', 'fixtures', 'agy-subagent', 'stream.jsonl'))}, 'utf8').trim().split('\\n')
+  const saved = ${J(SUBAGENT_STREAM)}.trim().split('\\n')
   for (const l of saved) if (/"subagent_info"/.test(l)) console.log(l.replaceAll('file:///Users/someone/', 'file://' + process.env.HOME + '/'))
 }
 if (mode === 'approval-denied') {
@@ -118,6 +129,21 @@ const gemini = (files) => { for (const [name, text] of Object.entries(files)) pu
 const CMUX_TEMPLATE = readFileSync(join(dirname(SCRIPT), '..', '..', '..', 'tests', 'fixtures', 'cmux-antigravity-hook.txt'), 'utf8').trim()
 const cmuxCommand = (event, sock = '/Users/someone/.local/state/cmux/cmux.sock') => CMUX_TEMPLATE.replaceAll('<SOCK>', sock).replaceAll('<EVENT>', event)
 const DENY = J({ permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'] } })
+// sandbox-exec is macOS only. Elsewhere a review that passes every check reaches the wall and is refused there.
+const WALLED = process.platform === 'darwin'
+const WALL_REFUSAL = /agy review refused: agy runs only inside its macOS sandbox \(sandbox-exec\), and this is \w+/
+const macTest = (name, fn) => test(name, { skip: !WALLED && 'agy runs only inside sandbox-exec, which is macOS only' }, fn)
+// A review that passed every check before the wall: on macOS it ran; elsewhere the wall refused it, agy never started.
+function reached(r, what = 'the review') {
+  if (WALLED) return assert.equal(r.status, 0, `${what}: ${r.out}`)
+  assert.notEqual(r.status, 0, r.out)
+  assert.match(r.out, WALL_REFUSAL, what)
+  assert.equal(calls('agy').length, 0, `${what}: agy never started`)
+}
+if (WALLED) {
+  const nested = spawnSync('/usr/bin/sandbox-exec', ['-p', '(version 1)(allow default)', '/usr/bin/true'], { encoding: 'utf8' })
+  assert.equal(nested.status, 0, `sandbox-exec must run here; run this file from a shell outside any sandbox (exit ${nested.status}: ${nested.stderr})`)
+}
 
 beforeEach(() => {
   for (const path of [HOME, REPO, ARGV, GITCONFIG]) rmSync(path, { recursive: true, force: true })
@@ -131,7 +157,7 @@ beforeEach(() => {
   git('add', '.'); git('commit', '-qm', 'change')
 })
 
-test('agy reviews read-only: the deny list, stream-json, a schema, a per-call log, /dev/null stdin and cmux hooks off', () => {
+macTest('agy reviews read-only: the deny list, stream-json, a schema, a per-call log, /dev/null stdin and cmux hooks off', () => {
   const r = run([], { REVIEW_REVIEWER: 'neon' })
   assert.equal(r.status, 0, r.out)
   const [call] = calls('agy')
@@ -149,7 +175,54 @@ test('agy reviews read-only: the deny list, stream-json, a schema, a per-call lo
   assert.equal(calls('codex').length + calls('claude').length, 0, 'no other CLI ran')
 })
 
-test('agy reviews are labelled model unverified: the reviewer line, the report, FINDINGS_JSON and the record', () => {
+test('off macOS an agy review is refused at the wall, agy never started', { skip: WALLED && 'this is macOS' }, () => {
+  const r = run([], { REVIEW_REVIEWER: 'neon' })
+  reached(r)
+  assert.equal(logLines().filter((e) => e.type === 'review').length, 0)
+})
+
+macTest('an agy review runs inside the wall: the reviewed tree is readable, the temp folder beside it and HOME are not', () => {
+  const outside = join(ROOT, 'outside', 'secret.txt'), key = join(HOME, '.ssh', 'id_ed25519')
+  put(outside, 'token:outside'); put(key, 'token:key')
+  const r = run([], { REVIEW_REVIEWER: 'neon', STUB_PEEK: [outside, key, join(REPO, 'a.js')].join('\n') })
+  assert.equal(r.status, 0, r.out)
+  const [call] = calls('agy')
+  assert.deepEqual([call.peek[outside], call.peek[key]], ['EPERM', 'EPERM'])
+  assert.match(call.peek[join(REPO, 'a.js')], /export const f/)
+  assert.equal(call.autoUpdateOff, 'true', 'agy\'s updater is switched off')
+  assert.equal(call.tmpdirExists, true)
+  assert.match(call.tmpdir, /\/acs-agy-call-[^/]+$/, 'a TMPDIR of its own')
+  assert.equal(existsSync(call.tmpdir), false, 'removed after the review')
+  rmSync(join(ROOT, 'outside'), { recursive: true, force: true })
+})
+
+macTest('a dispute verifier on agy reads the snapshot clone it judges, not the checkout the review ran in', () => {
+  const pool = J({ use: ['opus', 'neon'], ids: ['claude-opus-stub', 'gemini-4-neon'] })
+  const r = run([], { REVIEW_REVIEWER: 'opus', STUB_ROLE: pool })
+  assert.equal(r.status, 0, r.out)
+  const record = logLines().find((e) => e.type === 'review')
+  const d = run(['--dispute', record.id, 'f1', '--reason', 'intended behavior', '--evidence', 'a.js:2'], { STUB_ROLE: pool, STUB_PEEK: join(REPO, 'a.js') })
+  assert.equal(d.status, 0, d.out)
+  const [call] = calls('agy')
+  assert.match(call.cwd, /\/snapshot$/, 'it runs in the snapshot')
+  assert.equal(call.peek[join(REPO, 'a.js')], 'EPERM', 'the checkout is outside its read root')
+})
+
+macTest('a review from HOME, or a folder holding it, is refused: the wall would keep nothing out', () => {
+  const r = run([], { REVIEW_REVIEWER: 'neon', HOME: REPO })
+  assert.notEqual(r.status, 0, r.out)
+  assert.match(r.out, /agy review refused: agy would read .*, which is your home folder or holds it/)
+  assert.equal(calls('agy').length, 0)
+})
+
+macTest('a review whose agy log says it kept the sign-in token in a file fails and logs none', () => {
+  const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'token-file' })
+  assert.notEqual(r.status, 0, r.out)
+  assert.match(r.out, /agy review failed: agy switched to keeping its Google sign-in token in a file .*"file-based token storage"/)
+  assert.equal(logLines().filter((e) => e.type === 'review').length, 0)
+})
+
+macTest('agy reviews are labelled model unverified: the reviewer line, the report, FINDINGS_JSON and the record', () => {
   const r = run([], { REVIEW_REVIEWER: 'neon' })
   assert.equal(r.status, 0, r.out)
   assert.match(r.stdout, /▶ reviewer · neon \(agy · gemini-4-neon · high · model unverified\)/)
@@ -163,7 +236,7 @@ test('agy reviews are labelled model unverified: the reviewer line, the report, 
   assert.match(report, /^Reviewer: agy-gemini-4-neon-high \(model unverified\)$/m)
 })
 
-test('a Neon review counts toward a close, and the close names it model unverified', () => {
+macTest('a Neon review counts toward a close, and the close names it model unverified', () => {
   const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'clean' })
   assert.equal(r.status, 0, r.out)
   const id = findingsJson(r).reviewId
@@ -177,7 +250,7 @@ test('a Neon review counts toward a close, and the close names it model unverifi
   assert.match(summary.out, /Reviewer: neon \(gemini-4-neon\) — model unverified/)
 })
 
-test('the answer is agy\'s last response turn, not result.response, which joins a refused answer and its retry', () => {
+macTest('the answer is agy\'s last response turn, not result.response, which joins a refused answer and its retry', () => {
   const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'retry' })
   assert.equal(r.status, 0, r.out)
   assert.equal(logLines().find((e) => e.type === 'review').findings, 1, 'the final answer\'s one finding, not the first empty list')
@@ -192,7 +265,7 @@ test('another family\'s review carries no modelVerified field', () => {
   assert.doesNotMatch(r.stdout, /model unverified/)
 })
 
-test('a failed agy turn fails the review and logs none: a bad status, an empty answer after a denial, another model, an answer that is not JSON', () => {
+macTest('a failed agy turn fails the review and logs none: a bad status, an empty answer after a denial, another model, an answer that is not JSON', () => {
   for (const [mode, pattern] of [
     ['status-error', /agy review failed \(exit 1, status ERROR\)/],
     ['denied-empty', /agy review: empty answer after 1 denied tool call/],
@@ -237,7 +310,7 @@ test('a workspace customization agy would run, from the cwd up to the filesystem
   put(join(REPO, '.agents', 'rules', 'r.md'), 'text')
   const ok = run([], { REVIEW_REVIEWER: 'neon' })
   rmSync(join(REPO, '.agents'), { recursive: true, force: true })
-  assert.equal(ok.status, 0, `rules the model reads do not refuse: ${ok.out}`)
+  reached(ok, 'rules the model reads do not refuse')
 })
 
 test('~/.gemini/config plugins refuse agy: a plugin in plugins/ or a plugins.json; an empty plugins folder does not', () => {
@@ -255,7 +328,7 @@ test('~/.gemini/config plugins refuse agy: a plugin in plugins/ or a plugins.jso
   mkdirSync(join(HOME, '.gemini/config/plugins'), { recursive: true })
   gemini({ 'mcp_config.json': '' })
   const empty = run([], { REVIEW_REVIEWER: 'neon' })
-  assert.equal(empty.status, 0, `an empty plugins folder and a zero-length mcp_config.json run: ${empty.out}`)
+  reached(empty, 'an empty plugins folder and a zero-length mcp_config.json run')
 })
 
 test('~/.gemini/config: an MCP server or a hook that is not cmux\'s refuses agy before it runs; cmux\'s own hooks and an empty server list do not', () => {
@@ -276,8 +349,8 @@ test('~/.gemini/config: an MCP server or a hook that is not cmux\'s refuses agy 
   gemini({ 'mcp_config.json': J({ mcpServers: {} }), 'hooks.json': J({ cmux: { Stop: [{ type: 'command', command: cmuxCommand('stop') }],
     PreToolUse: [{ matcher: '*', hooks: [{ command: cmuxCommand('stop') }] }] } }) })
   const ok = run([], { REVIEW_REVIEWER: 'neon' })
-  assert.equal(ok.status, 0, ok.out)
-  assert.equal(calls('agy').length >= 1, true)
+  reached(ok)
+  if (WALLED) assert.equal(calls('agy').length >= 1, true)
 })
 
 test('a home hook passes only as cmux\'s unchanged command: the marker alone, or cmux\'s command with more added, refuses', () => {
@@ -292,7 +365,7 @@ test('a home hook passes only as cmux\'s unchanged command: the marker alone, or
   rmSync(join(HOME, '.gemini'), { recursive: true, force: true })
   gemini({ 'hooks.json': J({ cmux: { Stop: [{ type: 'command', command: cmuxCommand('stop'), timeout: 10 }], SessionStart: [{ type: 'command', command: cmuxCommand('session-start') }] } }) })
   const ok = run([], { REVIEW_REVIEWER: 'neon' })
-  assert.equal(ok.status, 0, ok.out)
+  reached(ok)
 })
 
 test('a foreign handler grouped under a tool hook refuses agy, beside cmux\'s own grouped handler', () => {
@@ -305,7 +378,7 @@ test('a foreign handler grouped under a tool hook refuses agy, beside cmux\'s ow
 
 const TRANSCRIPT = readFileSync(join(dirname(SCRIPT), '..', '..', '..', 'tests', 'fixtures', 'agy-subagent', 'transcript.jsonl'), 'utf8')
 const SUB_ID = '7239ab1f-70aa-4146-a081-4d09347c094a'
-test('denials inside a subagent (its transcript, not the parent stream) are reported on stderr; the review still succeeds', () => {
+macTest('denials inside a subagent (its transcript, not the parent stream) are reported on stderr; the review still succeeds', () => {
   put(join(HOME, '.gemini/antigravity-cli/brain', SUB_ID, '.system_generated/logs/transcript.jsonl'), TRANSCRIPT)
   const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'subagent' })
   assert.equal(r.status, 0, r.out)
@@ -316,7 +389,7 @@ test('denials inside a subagent (its transcript, not the parent stream) are repo
   assert.equal(logLines().filter((e) => e.type === 'review').length, 1)
 })
 
-test('a subagent transcript outside agy\'s brain folder, or missing, is not read and is named as unknown', () => {
+macTest('a subagent transcript outside agy\'s brain folder, or missing, is not read and is named as unknown', () => {
   const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'subagent' })
   assert.equal(r.status, 0, r.out)
   assert.match(r.stderr, /⚠ agy review: subagent perm-test-subagent's transcript could not be read \(ENOENT\); its denied calls are unknown/)
@@ -330,7 +403,7 @@ test('a subagent transcript outside agy\'s brain folder, or missing, is not read
   assert.doesNotMatch(linked.stderr, /denied \(subagent/)
 })
 
-test('agy denials inside eval cases and slices reach the parent\'s stderr, and an eval case counts them', () => {
+macTest('agy denials inside eval cases and slices reach the parent\'s stderr, and an eval case counts them', () => {
   put(join(HOME, '.gemini/antigravity-cli/brain', SUB_ID, '.system_generated/logs/transcript.jsonl'), TRANSCRIPT)
   const cases = join(dirname(SCRIPT), 'eval', 'examples')
   const e = run(['--eval', '--family', 'neon', '--cases', cases, '--yes'], { STUB_AGY: 'subagent' })
@@ -398,7 +471,7 @@ test('the workspace and home checks run before agy --version, which runs in a fr
   assert.match(h.out, /agy review refused: .*not cmux's/)
   assert.equal(versions().length, 0, 'agy --version never ran')
   const ok = run([], { REVIEW_REVIEWER: 'neon' })
-  assert.equal(ok.status, 0, ok.out)
+  reached(ok)
   const v = versions()
   assert.equal(v.length >= 1, true)
   for (const x of v) {
@@ -409,7 +482,7 @@ test('the workspace and home checks run before agy --version, which runs in a fr
   }
 })
 
-test('a fix check by Neon is recorded and printed model unverified', () => {
+macTest('a fix check by Neon is recorded and printed model unverified', () => {
   const r = run([], { REVIEW_REVIEWER: 'neon' })
   assert.equal(r.status, 0, r.out)
   const id = findingsJson(r).reviewId
@@ -423,7 +496,7 @@ test('a fix check by Neon is recorded and printed model unverified', () => {
   assert.equal(record.modelVerified, false)
 })
 
-test('a Neon second opinion and a Neon dispute verifier are recorded model unverified; another verifier carries no such field', () => {
+macTest('a Neon second opinion and a Neon dispute verifier are recorded model unverified; another verifier carries no such field', () => {
   const pool = J({ use: ['opus', 'neon'], ids: ['claude-opus-stub', 'gemini-4-neon'] })
   const r = run([], { REVIEW_REVIEWER: 'opus', STUB_ROLE: pool, REVIEW_VERIFY: 'second-opinion' })
   assert.equal(r.status, 0, r.out)
@@ -443,7 +516,7 @@ test('a Neon second opinion and a Neon dispute verifier are recorded model unver
   assert.match(d.stdout, /\(verifier neon, model unverified\)/)
 })
 
-test('the eval summary marks a Neon run model unverified, per family and in its total line', () => {
+macTest('the eval summary marks a Neon run model unverified, per family and in its total line', () => {
   const cases = join(dirname(SCRIPT), 'eval', 'examples')
   const r = run(['--eval', '--family', 'neon,opus', '--cases', cases, '--yes'], { STUB_ROLE: J({ use: ['neon', 'opus'], ids: ['gemini-4-neon', 'claude-opus-stub'] }) })
   assert.equal(r.status, 0, r.out)
