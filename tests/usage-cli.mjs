@@ -160,11 +160,12 @@ ok('HOME is redirected', home !== realHome);
   ok('...and says which id it registered', mine && new RegExp(`registered ${mine.id} \\(gemini\\)`).test(saved), saved);
 }
 {
-  // A Gemini seat added from the UI; detection would suggest one under the same id.
+  // A Gemini seat under an id detection does not use (a UI label slugs to anything), so only the
+  // vendor-level rule can keep a second suggestion away; a matching id would hide it on its own.
   const g = tempDir('acs-cli-gemini-ui-');
   const reg = path.join(g, '.agent-config-studio', 'seats.json');
   fs.mkdirSync(path.dirname(reg), { recursive: true });
-  fs.writeFileSync(reg, JSON.stringify({ version: 1, seats: [{ id: 'gemini', vendor: 'gemini', harness: 'agy', label: 'Gemini' }] }));
+  fs.writeFileSync(reg, JSON.stringify({ version: 1, seats: [{ id: 'work', vendor: 'gemini', harness: 'agy', label: 'Work' }] }));
   const fakeBin = path.join(g, 'bin');
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.writeFileSync(path.join(fakeBin, 'agy'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
