@@ -241,3 +241,58 @@ code that consumes it:
   models-refresh 29/29; roots-history 10/10; own-writes 43/43; guards 11/11; setup-guards 106/106.
 - `taskpolicy -b` fails inside the sandbox (setpriority: Operation not permitted), so every run here was with the
   sandbox off.
+
+## Sync phase 4 — screen (builder, 2026-11-21)
+- public/app.js:
+  - Set by: "synced from <catalog label>";
+  - a synced row's editor: Save, Pin/Unpin, and Remove only when `offered === false`; no Reset. Save's notice says
+    it pinned;
+  - an update chip on a held synced family adds "held by …, so it was not moved";
+  - syncLines under the catalog lines: added/moved, then "Not synced: … (why)"; a sync error is an amber line;
+    nothing when the sync did nothing;
+  - the broken-families.json notice speaks of synced families; addableLine and its three CSS rules are deleted.
+- Test-only commit 7e32a1d rewrites the branch's adopt UI assertions (listed in its message).
+- Planted bugs, each caught by tests/models-layout-ui.mjs: Remove always shown (2 FAIL), no hold reason (1), the
+  sync line drawn under each catalog (2).
+- Dry run of planSync on this Mac's real catalogs and roles (no write): add luna (gpt-6-luna), argon
+  (gemini-4-argon), flash (gemini-3.8-flash), hydrogen (gemini-4-hydrogen); nothing moved, nothing skipped. No
+  families.json exists on the real HOME.
+- Checks: tests/models.mjs 64/64; models-layout-ui 86/86; ui-clarity-g 17/17.
+
+## Sibling check (sync build, before the last commit)
+Each check, guard, rule or output added or changed; the other paths to the same data or state; the consumers.
+1. familyEntryProblem takes any known prefix and a boolean `track` (lib/models.js):
+   - read side (readFamilies), Set/Accept hard refusal (setAddedModel), sync adds (planSync): applied, tested;
+   - the installed resolver copy: applied (no new import; VENDOR_PREFIXES is in the same module);
+   - review gate (name regex, CLI by prefix), ask-model, pause (subscription by prefix): not needed, prefix-based;
+   - acs-agent: a synced codex/claude family (luna) can now build if a role names it: not needed, that takes
+     Cris's own role edit, like any shipped family.
+2. `track: false` merged into registry.families:
+   - detect/tracks (update alerts, pinned badge): applied, tested;
+   - model-id --json spreads registry: applied, top-level keys tested unchanged (pins sit inside `families`);
+   - lib/audit.js familyIndex and lib/packs.js installedFamilies/roleProblems read `track`: not needed, a pinned
+     synced family is treated like a shipped -prev pin, as intended.
+3. newestFor (one ordering): detect and planSync: applied. lib/audit.js keeps its own older-than check for lint
+   suggestions: not needed (it answers "is this id older", not "which is newest").
+4. planSync rules (skips, claim order, moves only managed/unpinned/unused, forward only, Claude Code gate):
+   - every families.json writer (sync, Set/Accept, Pin, Remove) shares the queue and the parse-back: applied;
+   - hand edits: hidden with reason, never overwritten by sync: applied, tested;
+   - a second studio process: not handled in-process; sync is add/forward-only and idempotent, the rename is
+     atomic and the parse-back refuses a file that changed under it.
+5. heldBy (in use): sync moves, the view's heldBy (Models chip, Home line), Remove's namedBy: applied, tested.
+   whereUsed (skills calling model-id): not needed, settled choice 5.
+6. check() catches the sync: its only caller is check(); the start call (server.js:1928) and Check now both get a
+   state either way: applied, tested in-process (EACCES). The other steps in check() already catch.
+7. The view (source `synced`, offered, heldBy, sync; no addable):
+   - app.js rows/editor/chip/sync line, home.js lines and partials: applied, tested;
+   - roles-panel familyWarnings and server liveAlert read rows/alerts only: not needed;
+   - tests/models-panel.mjs:287/:441 (source default|override): not needed, they pass unchanged (no synced word
+     in defaultCatalogs).
+8. POST /api/models/pin: strict same-origin and object body like remove: applied, tested. Pin on a shipped family
+   is refused (400); a shipped pin stays a hand edit of models.json `families.<f>.track`: not handled (no UI asked).
+9. Set pins: the Set route passes pin, Accept does not; setModel has no other callers: applied, tested.
+10. Home partials (familiesError, sync error, no duplicate): applied, tested in the VM.
+11. History (families.json as a studio file): allowedRoots and snapshotAll's list: applied, tested through the real
+    server. paused.json is not in history either: not handled (before this branch, out of scope).
+12. Remove only when the word is no longer offered: UI only. removeFamily itself does not check `offered`, so a
+    direct POST can remove an offered family and the next sync adds it back: not handled (harmless; filed).
