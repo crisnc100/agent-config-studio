@@ -4651,7 +4651,7 @@ async function paintModels(load) {
   }
   if (m.familiesError) {
     const n = el('div', 'notice error models-error');
-    n.appendChild(el('div', null, 'families.json is invalid. The models you added are left out, and adding or removing one is refused until it is fixed:'));
+    n.appendChild(el('div', null, 'families.json is invalid. The families synced from the model lists are left out, and syncing, changing or removing one is refused until it is fixed:'));
     n.appendChild(el('div', 'models-error-text', m.familiesError));
     box.appendChild(n);
   }
@@ -4717,8 +4717,8 @@ function idsSection(m) {
     cats.appendChild(line);
     if (cat.disagree) cats.appendChild(el('div', 'models-catalog stale', cat.disagree));
     if (cat.refreshNote) cats.appendChild(el('div', 'models-catalog stale', cat.refreshNote));
-    if (cat.vendor === 'agy' && m.addable?.length) cats.appendChild(addableLine(m.addable));
   }
+  for (const line of syncLines(m)) cats.appendChild(line);
   sec.appendChild(cats);
   if (M.sidecars.length) sec.appendChild(sidecarStrip());
 
@@ -4744,7 +4744,8 @@ function idsSection(m) {
     tr.appendChild(fam);
     tr.appendChild(el('td', 'models-id', r.id));
     tr.appendChild(el('td', 'models-name', r.displayName || '—'));
-    tr.appendChild(el('td', `models-source ${r.source}`, { override: 'your override', added: 'added by you' }[r.source] || 'default'));
+    tr.appendChild(el('td', `models-source ${r.source}`, r.source === 'synced' ? `synced from ${listLabel(m, r.vendor)}`
+      : r.source === 'override' ? 'your override' : 'default'));
     const al = el('td', 'models-alerts');
     const live = r.alerts.filter((a) => !a.dismissed);
     if (!live.length) al.appendChild(el('span', 'models-none', r.alerts.length ? 'dismissed' : '—'));
@@ -4760,25 +4761,31 @@ function idsSection(m) {
 
 const vendorDot = (v) => (['claude', 'codex', 'grok', 'agy'].includes(v) ? v : 'unknown');
 
+/** The catalog's own name for a vendor (Antigravity, Codex…), as the catalog lines above show it. */
+const listLabel = (m, vendor) => m.catalogs.find((c) => c.vendor === vendor)?.label || vendor || 'its list';
+
 /**
- * Antigravity's models no family uses yet, each one click from being one. The family takes the model's own word
- * (Argon → argon), so a newer release of it shows up as an update alert.
+ * What the last check's sync did, under the catalog lines: the families it added or moved, and each word it left
+ * out with why. Nothing when it did nothing.
  */
-function addableLine(addable) {
-  const line = el('div', 'models-catalog models-addable');
-  line.appendChild(el('span', 'models-catalog-name', 'Not added yet'));
-  const list = el('span', 'models-addable-list');
-  for (const a of addable) {
-    const item = el('span', 'models-addable-item');
-    item.appendChild(el('span', null, a.displayName || a.id));
-    const add = el('button', 'btn models-alert-btn', `Add as ${a.family}`);
-    add.title = `Add ${a.id} as a model named ${a.family}`;
-    add.onclick = () => modelWrite('/api/models/adopt', { id: a.id }, `${a.family} added: it points to ${a.id}.`);
-    item.appendChild(add);
-    list.appendChild(item);
-  }
-  line.appendChild(list);
-  return line;
+function syncLines(m) {
+  const s = m.sync;
+  if (!s) return [];
+  const line = (cls, text) => {
+    const l = el('div', `models-catalog${cls}`);
+    l.appendChild(el('span', 'models-catalog-name', 'Sync'));
+    l.appendChild(el('span', null, text));
+    return l;
+  };
+  const out = [];
+  if (s.error) out.push(line(' stale', s.error));
+  const done = [
+    ...s.added.map((a) => `added ${a.family} (${a.id}, from ${listLabel(m, a.vendor)})`),
+    ...s.moved.map((x) => `moved ${x.family} to ${x.to}`),
+  ];
+  if (done.length) out.push(line('', `${done.join('; ')}.`));
+  if (s.skipped.length) out.push(line('', `Not synced: ${s.skipped.map((x) => `${x.family} from ${listLabel(m, x.vendor)} (${x.why})`).join('; ')}.`));
+  return out;
 }
 
 /** The one place the CLI is named: what skills and scripts call to read all of this. */
@@ -4801,10 +4808,11 @@ function alertChip(row, a) {
   chip.appendChild(el('span', 'models-alert-text', text));
   if (a.message) chip.title = a.message;
   if (a.reason) chip.appendChild(el('span', 'models-alert-why', a.reason));
+  if (a.kind === 'update' && row.heldBy?.length) chip.appendChild(el('span', 'models-alert-why', `held by ${row.heldBy.join(', ')}, so it was not moved`));
   if (a.candidate) {
     const acc = el('button', 'btn ghost models-alert-btn', 'Accept');
-    // An added family's id lives in families.json, which a broken models.json does not touch.
-    acc.disabled = !a.acceptable || (row.source !== 'added' && !!M.data.registryError);
+    // A synced family's id lives in families.json, which a broken models.json does not touch.
+    acc.disabled = !a.acceptable || (row.source !== 'synced' && !!M.data.registryError);
     acc.title = a.reason || `Set ${row.family} to ${a.candidate}`;
     acc.onclick = () => modelWrite('/api/models/accept', { family: row.family, key: a.key },
       `${row.family} is now ${a.candidate}.`);
@@ -4833,27 +4841,41 @@ function modelDetail(r, m) {
   input.spellcheck = false;
   input.setAttribute('aria-label', `${r.family} model id`);
   const save = el('button', 'btn primary', 'Save');
-  const added = r.source === 'added';
-  // An added family has no shipped id to go back to: it is removed instead, and Remove is refused while anything names it.
-  const reset = added ? el('button', 'btn', 'Remove') : el('button', 'btn', 'Reset to default');
-  const refused = !added && !!m.registryError;
+  const synced = r.source === 'synced';
+  const list = listLabel(m, r.vendor);
+  const refused = !synced && !!m.registryError;
   save.disabled = refused;
-  reset.disabled = refused || (!added && r.source !== 'override');
-  reset.title = added ? `Remove ${r.family}; families.json is the only file that changes`
-    : r.source === 'override' ? `Remove your override; the default is ${r.defaultId}` : 'Already the default';
   const submit = () => {
     const id = input.value.trim();
     if (!ID_SHAPE.test(id)) return notice('error', `${id || '(empty)'} is not a valid model id — lowercase letters, digits, "." and "-", up to 64 characters.`);
-    modelWrite('/api/models/set', { family: r.family, id }, `${r.family} is now ${id}.`);
+    // A typed id pins a synced family (the server does it), or the next check could move it on.
+    modelWrite('/api/models/set', { family: r.family, id }, synced ? `${r.family} is now ${id}, pinned. Unpin to follow ${list} again.` : `${r.family} is now ${id}.`);
   };
   save.onclick = submit;
   input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
-  reset.onclick = added
-    ? () => modelWrite('/api/models/remove', { family: r.family }, `${r.family} removed.`)
-    : () => modelWrite('/api/models/reset', { family: r.family }, `${r.family} is back to the default, ${r.defaultId}.`);
   edit.appendChild(input);
   edit.appendChild(save);
-  edit.appendChild(reset);
+  if (synced) {
+    const pinned = r.track === false;
+    const pin = el('button', 'btn', pinned ? 'Unpin' : 'Pin');
+    pin.title = pinned ? `Follow ${list}: the next check moves ${r.family} to its newest id when nothing holds it` : `Keep ${r.family} on ${r.id}`;
+    pin.onclick = () => modelWrite('/api/models/pin', { family: r.family, pinned: !pinned },
+      pinned ? `${r.family} follows ${list} again from the next check.` : `${r.family} is pinned to ${r.id}.`);
+    edit.appendChild(pin);
+    // Only once its list stops offering it: while it is offered, the next sync would add it straight back.
+    if (r.offered === false) {
+      const remove = el('button', 'btn', 'Remove');
+      remove.title = `${list} no longer offers ${r.family}. Remove it from families.json, the only file that changes`;
+      remove.onclick = () => modelWrite('/api/models/remove', { family: r.family }, `${r.family} removed.`);
+      edit.appendChild(remove);
+    }
+  } else {
+    const reset = el('button', 'btn', 'Reset to default');
+    reset.disabled = refused || r.source !== 'override';
+    reset.title = r.source === 'override' ? `Remove your override; the default is ${r.defaultId}` : 'Already the default';
+    reset.onclick = () => modelWrite('/api/models/reset', { family: r.family }, `${r.family} is back to the default, ${r.defaultId}.`);
+    edit.appendChild(reset);
+  }
   td.appendChild(edit);
   if (refused) td.appendChild(el('div', 'scope-note', 'Edits are refused while the registry file is invalid.'));
 

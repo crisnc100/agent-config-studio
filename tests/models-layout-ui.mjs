@@ -406,6 +406,89 @@ const ids = (p) => content(p).querySelector('.models-ids');
   ok('...and each hidden entry is named with why', errs.some((t) => /argontwo: it has a key this ACS does not know \("harness"\)/.test(t)), JSON.stringify(errs));
 }
 
+// ── families synced from the model lists: the sync line, synced rows, Pin, Remove, the hold reason ─────
+{
+  const J = JSON.stringify;
+  const at = Date.now() - 5 * 60000;
+  const cat = (vendor, label, count) => ({ vendor, label, ok: true, missing: false, fetchedAt: at, note: null, stale: false, count });
+  const CATS = [cat('claude', 'Claude', 9), cat('codex', 'Codex', 4), cat('agy', 'Antigravity', 4)];
+  const syncedRow = (family, over = {}) => ({ family, id: `${family}-id-1`, vendor: 'agy', track: true, source: 'synced', defaultId: null, displayName: null,
+    offered: true, heldBy: [], alerts: [], ...over });
+  const withSynced = (rows, over = {}) => ({ ...models(), catalogs: CATS, rows: [...models().rows, ...rows], familiesError: null, familiesHidden: {}, sync: null, ...over });
+  const lineText = (l) => l.querySelectorAll('span').filter((x) => !x.querySelector('span')).map(txt).join(' | ');
+  const syncLines = (p) => ids(p).querySelectorAll('.models-catalog').filter((l) => txt(l.querySelector('.models-catalog-name')) === 'Sync');
+  const notice = (p) => p.$('notice-slot').querySelector('.notice');
+  const famRow = (p, f) => ids(p).querySelectorAll('.models-row').find((r) => r.dataset.family === f);
+  const open = async (p, f) => { famRow(p, f).click(); await settle(5); return ids(p).querySelector('.models-detail'); };
+
+  const SYNC = {
+    at, error: null,
+    added: [{ family: 'argon', vendor: 'agy', id: 'argon-id-1' }, { family: 'luna', vendor: 'codex', id: 'gpt-6-luna' }],
+    moved: [{ family: 'flash', vendor: 'agy', from: 'flash-id-1', to: 'flash-id-2' }],
+    skipped: [{ family: 'sol', vendor: 'agy', why: 'the shipped Codex family has that name' }],
+  };
+  const p = await boot(withSynced([syncedRow('argon')], { sync: SYNC }));
+  const lines = syncLines(p).map(lineText);
+  ok('the sync line says what it added and moved, naming each list', lines[0] === 'Sync | added argon (argon-id-1, from Antigravity); added luna (gpt-6-luna, from Codex); moved flash to flash-id-2.', J(lines));
+  ok('...and what it left out, with why', lines[1] === 'Sync | Not synced: sol from Antigravity (the shipped Codex family has that name).', J(lines));
+  const all = ids(p).querySelectorAll('.models-catalog').map((l) => txt(l.querySelector('.models-catalog-name')));
+  ok('...under the catalog lines', J(all) === J(['Claude', 'Codex', 'Antigravity', 'Sync', 'Sync']), J(all));
+  ok('a sync that did nothing draws no line', syncLines(await boot(withSynced([], { sync: { at, error: null, added: [], moved: [], skipped: [] } }))).length === 0);
+  ok('no sync yet: no line', syncLines(await boot(withSynced([]))).length === 0);
+  const failed = syncLines(await boot(withSynced([], { sync: { at, error: 'The sync from the model lists failed: EACCES', added: [], moved: [], skipped: [] } })));
+  ok('a failed sync is a warning line with its error', failed.length === 1 && failed[0].classList.contains('stale') && lineText(failed[0]) === 'Sync | The sync from the model lists failed: EACCES', J(failed.map(lineText)));
+
+  ok('a synced row says which list it follows', txt(famRow(p, 'argon').querySelector('.models-source')) === 'synced from Antigravity', txt(famRow(p, 'argon')));
+
+  const posts = [];
+  const q = await boot(withSynced([syncedRow('argon'), syncedRow('flash', { track: false }), syncedRow('xenon', { offered: false })], { registryError: 'models.json: not valid JSON' }), {
+    'POST /api/models/pin': (b) => { posts.push(['pin', b]); return { saved: true, family: b.family, pinned: b.pinned }; },
+    'POST /api/models/set': (b) => { posts.push(['set', b]); return { saved: true, family: b.family, id: b.id, pinned: true, sidecars: [] }; },
+    'POST /api/models/remove': (b) => { posts.push(['remove', b]); return { saved: true, removed: b.family }; },
+  });
+  let d = await open(q, 'argon');
+  ok('a synced row\'s editor: Save and Pin, no Reset and no Remove while its list offers it', J(d.querySelectorAll('button').map(txt)) === '["Save","Pin"]', J(d.querySelectorAll('button').map(txt)));
+  ok('...usable while models.json is broken (its id lives in families.json)', !button(d, 'Save').disabled && !button(d, 'Pin').disabled);
+  button(d, 'Pin').click();
+  await settle(20);
+  ok('Pin posts the family and pinned: true, and says so', J(posts.at(-1)) === J(['pin', { family: 'argon', pinned: true }]) && /argon is pinned to argon-id-1\./.test(q.text(notice(q))), J(posts));
+  d = ids(q).querySelector('.models-detail');
+  d.querySelector('.models-input').value = 'argon-id-9';
+  button(d, 'Save').click();
+  await settle(20);
+  ok('Save on a synced row says it is now pinned', J(posts.at(-1)) === J(['set', { family: 'argon', id: 'argon-id-9' }])
+    && /argon is now argon-id-9, pinned\. Unpin to follow Antigravity again\./.test(q.text(notice(q))), q.text(notice(q)));
+  famRow(q, 'argon').click();
+  await settle(5);
+  ok('a pinned row carries the pinned badge', /pinned/.test(txt(famRow(q, 'flash').querySelector('.models-family'))));
+  d = await open(q, 'flash');
+  ok('...and its editor offers Unpin', J(d.querySelectorAll('button').map(txt)) === '["Save","Unpin"]', J(d.querySelectorAll('button').map(txt)));
+  button(d, 'Unpin').click();
+  await settle(20);
+  ok('Unpin posts pinned: false, and says it follows again', J(posts.at(-1)) === J(['pin', { family: 'flash', pinned: false }])
+    && /flash follows Antigravity again from the next check\./.test(q.text(notice(q))), q.text(notice(q)));
+  famRow(q, 'flash').click();
+  await settle(5);
+  d = await open(q, 'xenon');
+  ok('once its list no longer offers it, Remove shows', J(d.querySelectorAll('button').map(txt)) === '["Save","Pin","Remove"]', J(d.querySelectorAll('button').map(txt)));
+  button(d, 'Remove').click();
+  await settle(20);
+  ok('...and posts the family', J(posts.at(-1)) === J(['remove', { family: 'xenon' }]) && /xenon removed\./.test(q.text(notice(q))), J(posts));
+  famRow(q, 'xenon').click();
+  await settle(5);
+  ok('a shipped row still has Reset to default (refused while models.json is broken), and no Pin', (() => {
+    famRow(q, 'opus').click();
+    const sd = ids(q).querySelector('.models-detail');
+    return !!button(sd, 'Reset to default') && button(sd, 'Save').disabled && !button(sd, 'Pin');
+  })());
+
+  const UPD = (n) => ({ kind: 'update', key: `update:${n}`, candidate: n, displayName: null, acceptable: true, dismissed: false });
+  const h = await boot(withSynced([syncedRow('argon', { heldBy: ['the reviewer role', 'its flavor'], alerts: [UPD('argon-id-2')] }), syncedRow('luna', { vendor: 'codex', alerts: [UPD('luna-id-2')] })]));
+  const why = (f) => famRow(h, f).querySelectorAll('.models-alert-why').map(txt);
+  ok('an update on a held synced family says what holds it', J(why('argon')) === J(['held by the reviewer role, its flavor, so it was not moved']), J(why('argon')));
+  ok('...one nothing holds says nothing extra', why('luna').length === 0, J(why('luna')));
+}
+
 for (const p of pages) p.done();
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
