@@ -287,8 +287,12 @@ const LOGIN_SHELL_FN = "function loginShell(env = process.env) { const want = en
   "let listed = []; try { listed = fs.readFileSync('/etc/shells', 'utf8').split('\\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')); } catch {} " +
   "return listed.includes(want) && fs.existsSync(want) ? want : '/bin/sh'; }";
 
-/** lib/usage/gemini.js: its only two spawns, whole, and the options and folder they run with. */
-const AGY_USAGE_CALLS = ["found.binary, ['--version'], opts", "found.binary, ['-p', '/usage', '--output-format', 'json'], opts"];
+/** lib/usage/gemini.js: its only three spawns, whole, and the options and folder they run with. */
+const AGY_USAGE_CALLS = [
+  "found.binary, ['--version'], opts",
+  "found.binary, ['-p', '/usage', '--output-format', 'json'], opts",
+  "found.binary, ['--output-format', 'json', 'models'], opts",
+];
 const AGY_USAGE_OPTS = "const opts = { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1' } };";
 const AGY_USAGE_DIRS = ['null', "fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-usage-'))"];
 
@@ -387,11 +391,14 @@ function guardB() {
       // guard widened to permit a prompt, and it spent the user's subscription
       // on every refresh.
       'lib/usage/codex-limits.js': { fns: new Set(['spawn']), appServerOnly: true },
-      // A Gemini seat's quota, read through agy's print-mode /usage. A harness
-      // binary again, so pinned: argv is exactly ['--version'] or
-      // ['-p','/usage','--output-format','json']. Print mode answers /usage
-      // without a turn only from agy 1.1.11 on; the module refuses an older agy
-      // and any reply that is not the usage command with zero turns.
+      // A Gemini seat's quota, read through agy's print-mode /usage, and the
+      // models agy offers, read through its `models` subcommand. A harness
+      // binary again, so pinned: argv is exactly ['--version'],
+      // ['-p','/usage','--output-format','json'] or
+      // ['--output-format','json','models']. Print mode answers /usage without
+      // a turn only from agy 1.1.11 on, and `models` prints JSON from 1.1.12;
+      // the module refuses an older agy and any reply that is not the command
+      // it asked for with zero turns.
       'lib/usage/gemini.js': { fns: new Set(['spawn']), agyUsageOnly: true },
       // The pack installer (acs packs). It runs git, /bin/sh on the push
       // gate's installer, and process.execPath on a script this package ships
