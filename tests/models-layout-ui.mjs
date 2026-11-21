@@ -454,6 +454,57 @@ const ids = (p) => content(p).querySelector('.models-ids');
   ok('...one nothing holds says nothing extra', why('luna').length === 0, J(why('luna')));
 }
 
+// ── effort pickers offer only what a family's catalog lists (agy refuses any other effort) ─────
+{
+  const J = JSON.stringify;
+  const agyRow = (family, efforts, source = 'synced') => ({ family, id: `gemini-4-${family}`, vendor: 'agy', track: true, source, defaultId: source === 'default' ? `gemini-4-${family}` : null,
+    displayName: null, efforts, offered: true, heldBy: [], alerts: [] });
+  const m = { ...models(), rows: [...models().rows, agyRow('argon', ['low', 'medium', 'high']), agyRow('neon', ['low', 'medium', 'high', 'xhigh'], 'default')] };
+  const scout = { name: 'scout', use: ['argon', 'opus'], ids: ['gemini-4-argon', 'opus-id-1'], effort: 'xhigh', resolvedEffort: 'xhigh', alt: '', altId: '', note: 'scouts ahead',
+    custom: true, provenance: prov(['use', 'effort', 'note'], { use: 'user', effort: 'user', note: 'user' }), defaults: null, warnings: [] };
+  const v = () => {
+    const base = view();
+    return { ...base, roles: [...base.roles, scout], families: [...base.families, 'argon', 'neon'],
+      flavor: [...base.flavor, fl('argon', { likes: [], quirks: [], brief: '', effort: '' }), fl('neon', { likes: [], quirks: [], brief: '', effort: 'xhigh' })] };
+  };
+  const p = await boot(m, { 'GET /api/models/roles': () => v() });
+  const opts = (sel) => sel.querySelectorAll('option').map(txt);
+  roleRow(p, 'scout').click();
+  await settle(5);
+  const ed = () => content(p).querySelector('.roles-detail');
+  const member = (f) => ed().querySelectorAll('.roles-member').find((x) => x.dataset.family === f)?.querySelector('select');
+  ok('member effort: argon offers only what its list has', J(opts(member('argon'))) === J(['role default', 'low', 'medium', 'high']), J(opts(member('argon'))));
+  ok('...opus, with no list, keeps every effort', J(opts(member('opus'))) === J(['role default', 'low', 'medium', 'high', 'xhigh', 'max']), J(opts(member('opus'))));
+  const roleEffort = () => ed().querySelector('.roles-effort-input');
+  ok('role effort with argon and opus: what both take, and the saved xhigh kept, marked', J(opts(roleEffort())) === J(['(each model’s default)', 'low', 'medium', 'high', 'xhigh (not offered for Argon)'])
+    && roleEffort().value === 'xhigh', J(opts(roleEffort())));
+  const pick = (f) => ed().querySelectorAll('.roles-pick').find((b) => b.dataset.family === f);
+  pick('argon').click();
+  await settle(5);
+  ok('...argon taken out: the full list, xhigh unmarked', J(opts(roleEffort())) === J(['(each model’s default)', 'low', 'medium', 'high', 'xhigh', 'max']) && roleEffort().value === 'xhigh', J(opts(roleEffort())));
+  pick('neon').click();
+  await settle(5);
+  ok('...neon added: xhigh stays, max goes', J(opts(roleEffort())) === J(['(each model’s default)', 'low', 'medium', 'high', 'xhigh']), J(opts(roleEffort())));
+  ok('...neon\'s member picker has xhigh', J(opts(member('neon'))) === J(['role default', 'low', 'medium', 'high', 'xhigh']), J(opts(member('neon'))));
+  const alt = ed().querySelector('.roles-alt-input');
+  alt.value = 'argon';
+  alt.dispatchEvent({ type: 'change', bubbles: false });
+  await settle(5);
+  ok('...argon as the second opinion narrows the role effort again', J(opts(roleEffort())) === J(['(each model’s default)', 'low', 'medium', 'high', 'xhigh (not offered for Argon)']), J(opts(roleEffort())));
+
+  const flavorSelect = async (f) => {
+    button(card(p, f), 'Edit').click();
+    await settle(5);
+    return card(p, f).querySelector('.flavor-effort');
+  };
+  const fa = await flavorSelect('argon');
+  ok('flavor effort: argon offers no xhigh', J(opts(fa)) === J(['(none)', 'low', 'medium', 'high']), J(opts(fa)));
+  const fn = await flavorSelect('neon');
+  ok('...neon offers xhigh, and keeps its saved xhigh', J(opts(fn)) === J(['(none)', 'low', 'medium', 'high', 'xhigh']) && fn.value === 'xhigh', J(opts(fn)));
+  const fo = await flavorSelect('opus');
+  ok('...opus keeps every effort', J(opts(fo)) === J(['(none)', 'low', 'medium', 'high', 'xhigh', 'max']), J(opts(fo)));
+}
+
 for (const p of pages) p.done();
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

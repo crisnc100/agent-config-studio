@@ -5166,6 +5166,21 @@ const familySelect = (families, value, blank) => {
   return sel;
 };
 
+/** The efforts a family's catalog lists for its current id, or null when it lists none. */
+const listedEfforts = (family) => M.data?.rows?.find((r) => r.family === family)?.efforts || null;
+
+/**
+ * Effort options for `families`: only what every one of them accepts where its catalog lists efforts (agy refuses
+ * any other), the full list where none does. A saved value outside them stays, marked, so a save never changes it
+ * without being asked.
+ */
+function effortOptions(sel, families, value) {
+  const lists = families.map((f) => [f, listedEfforts(f)]).filter(([, l]) => l);
+  for (const e of M.roles.efforts.filter((x) => lists.every(([, l]) => l.includes(x)))) sel.appendChild(el('option', null, e)).value = e;
+  const lacking = value ? lists.filter(([, l]) => !l.includes(value)).map(([f]) => famLabel(f)) : [];
+  if (lacking.length) sel.appendChild(el('option', null, `${value} (not offered for ${lacking.join(', ')})`)).value = value;
+}
+
 /** One role's edit form, right under its row; `role` null is a new role. Drafts are kept in M.roleDrafts. */
 function roleEditor(role) {
   const R = M.roles;
@@ -5190,7 +5205,7 @@ function roleEditor(role) {
     f.appendChild(l);
     const sel = el('select', 'models-input roles-select roles-member-effort');
     sel.appendChild(el('option', null, 'role default')).value = '';
-    for (const e of R.efforts) sel.appendChild(el('option', null, e)).value = e;
+    effortOptions(sel, [family], value);
     sel.value = value || '';
     sel.onchange = () => onchange(sel.value);
     f.appendChild(sel);
@@ -5242,6 +5257,7 @@ function roleEditor(role) {
         box.querySelector('.models-write-error')?.remove();
         paintPicks();
         paintMembers();
+        paintEffort();
         // The repaint replaced the pressed button: keep keyboard focus on the same model's new one.
         [...use.querySelectorAll('.roles-pick')].find((x) => x.dataset.family === f)?.focus();
       };
@@ -5262,9 +5278,14 @@ function roleEditor(role) {
     }
   };
   const effort = field('Effort', el('select', 'models-input roles-select roles-effort-input'), 'effort');
-  effort.appendChild(el('option', null, role?.defaults?.effort && !d.effort ? '(each model’s default — cleared)' : '(each model’s default)')).value = '';
-  for (const e of R.efforts) effort.appendChild(el('option', null, e)).value = e;
-  effort.value = d.effort || '';
+  // The role's effort reaches every model in it and the second opinion, unless one has its own: offer what they all take.
+  const paintEffort = () => {
+    effort.textContent = '';
+    effort.appendChild(el('option', null, role?.defaults?.effort && !d.effort ? '(each model’s default — cleared)' : '(each model’s default)')).value = '';
+    effortOptions(effort, [...new Set([...families(), ...(d.alt ? [d.alt] : [])])], d.effort);
+    effort.value = d.effort || '';
+  };
+  paintEffort();
   effort.onchange = () => { d.effort = effort.value; };
   const alt = field('Second opinion (optional, never automatic)', familySelect(R.families, d.alt, '(none)'), 'alt');
   alt.classList.add('roles-alt-input');
@@ -5273,7 +5294,7 @@ function roleEditor(role) {
     altOwn.textContent = '';
     if (d.alt) altOwn.appendChild(ownSelect(d.alt, d.altOwn[d.alt], 'alt', (v) => { if (v) d.altOwn[d.alt] = v; else delete d.altOwn[d.alt]; }));
   };
-  alt.onchange = () => { d.alt = alt.value; paintAltOwn(); };
+  alt.onchange = () => { d.alt = alt.value; paintAltOwn(); paintEffort(); };
   form.appendChild(altOwn);
   paintAltOwn();
   const note = field('What this role does', el('input', 'models-input roles-note'), 'note');
@@ -5447,7 +5468,7 @@ function flavorForm(f, marked) {
   brief.value = d.brief; brief.rows = 3; brief.maxLength = R.limits.brief; brief.oninput = () => { d.brief = brief.value; };
   const effort = field('Default effort (when a role sets none)', el('select', 'models-input roles-select flavor-effort'), 'effort');
   effort.appendChild(el('option', null, '(none)')).value = '';
-  for (const e of R.efforts) effort.appendChild(el('option', null, e)).value = e;
+  effortOptions(effort, [family], d.effort);
   effort.value = d.effort; effort.onchange = () => { d.effort = effort.value; };
   box.appendChild(grid);
   box.appendChild(avoidPicker(d, marked('avoid')));

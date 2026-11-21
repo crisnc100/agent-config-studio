@@ -554,6 +554,15 @@ console.log('\nmodels/families: check() runs the sync, and survives it failing')
   ok('...offered is unknown (null) when the list cannot be read', unread.rows.find((r) => r.family === 'flash').offered === null);
 }
 
+{
+  const h = home();
+  plantAgy(h);
+  const v = await createModelsState({ detectFn: async () => [], codexHomes: () => [], home: h }).view();
+  const efforts = (f) => v.rows.find((r) => r.family === f)?.efforts;
+  ok('rows carry the efforts their list gives the current id (argon, neon); none where the list has none (opus)', J(efforts('argon')) === J(['low', 'medium', 'high'])
+    && J(efforts('neon')) === J(['low', 'high']) && efforts('opus') === null, J(v.rows.map((r) => [r.family, r.efforts])));
+}
+
 console.log('\nmodels/families: Pin, and Set pins');
 {
   const h = home();
