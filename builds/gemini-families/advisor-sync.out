@@ -1,0 +1,42 @@
+## 1. SCOPE VERDICT
+
+**Over-built in one place** — add and move-forward are right-sized and match what Cris chose, but automatic removal (and its cousin, moving to an older id) carries most of the risk for a cosmetic gain, and its guard does not cover the failure that can actually happen.
+
+## 2. ADVISORY
+
+**Decision 1: sync adds and moves forward; it never removes and never moves backward. Cut §4 Removal.**
+- **The guard misses the real case.** plan.md:150-151 says an empty agy answer is saved as the list. It is not: I ran `shapeModels` and an empty or non-Gemini answer is refused (`lib/usage/gemini.js:160`). A *partial* answer is saved: a list with only neon came back ok, and the "no worded entry at all" guard lets it through. Argon, hydrogen and flash would then be removed.
+- **The other catalogs shift too.**
+  - Codex is a union over seat homes (`server.js:667`), and the code says it does not know why one home's list is shorter (`lib/models-catalog.js:174-178`).
+  - Claude takes whichever login fetched last (`lib/models-catalog.js:133`).
+- **Removal hits Cris's real usage.** Neon is in no role, config or skill on this Mac, so he calls agy families by name. Under the plan's rule his argon and hydrogen are "unused", which is the removable kind.
+- **Two studios will not always agree.** plan.md:89-90 assumes both run the same code. His `acs` is trunk and he runs worktree studios, so two builds with different word rules would add and remove each other's entries. Add-only cannot flap.
+- **Silent downgrade.** plan.md:129 moves an unused family to "the newest with the word" when its id is no longer listed. If a short list has `gpt-5.6-luna` but not `gpt-6-luna`, that is a quiet step backward. Only move when the version is strictly higher, as `detect()` does (`lib/models-catalog.js:317`); an unlisted id gets the existing vanished alert.
+- **What replaces removal.** Keep the already built and tested `removeFamily` (`lib/models-panel.js:413`), and show Remove only on a synced row whose word is gone from its catalog. Otherwise the next sync would add it back.
+
+**A sync failure must not fail check().**
+- The plan puts sync before `state` is set (plan.md:79). Today nothing in that path can throw; sync brings the first steps that can: a 409 from the parse-back, a write error, a roles read.
+- I made a step inside `check()` throw under a temp HOME: every later `view()` stayed rejected until Check now, because `current()` reuses the rejected promise (`lib/models-panel.js:168`). The start call swallows the error (`server.js:1928`), so the Models page would just be broken.
+- Catch around the sync, put the error in the sync summary, always set `state`, and add a pass/fail line for it.
+
+**Auto-move must respect the Claude Code version gate.**
+- `detect()` marks an update unacceptable when the installed Claude Code is too old (`lib/models-catalog.js:323-324`).
+- The shared newest-id helper should carry that check for adds and moves. No Claude word is synced today, so this is one condition and one test.
+
+**The rest of the plan holds.**
+- **Facts.** I re-ran the catalogs on this Mac: sync adds exactly argon, hydrogen, flash and luna (at `gpt-6-luna`). The installed resolver and trunk both equal main 0f98786.
+- **Open choices.** 1, 3, 4 and 5 are right as recommended. Choice 2 is replaced by the cut above.
+- **Decision 3, surprises.** None found for families he uses.
+  - Sync writes only `families.json`, which trunk and the installed resolver ignore.
+  - Neon and every shipped family stay on alert plus Accept.
+  - His version-2 `roles.json` cannot name a synced family until he runs `acs install-model-id` (`lib/roles-panel.js:134`).
+- **Decision 4, one PR.** Keep it as one. Luna is the only non-agy add and the vendors share one code path, so an agy-only split would build the gemini-only rule just to delete it.
+- **Pin.** Keep "Set pins" and Unpin; auto-move needs them.
+
+**Two small corrections to the plan text.**
+- **Tests, Phase 3.** `tests/models-panel.mjs:287` asserts every row is default or override, and its fixtures plant `gpt-6-luna` (`tests/models-panel.mjs:200`). Decide the test change now instead of "stop and report".
+- **Efforts.** Argon and flash list no xhigh, and Cris's flavors use xhigh widely. Before merge, have him run one agy call on argon at xhigh. I did not run agy from here.
+
+## 3. QUESTIONS
+
+1. **Is pressing Check now acceptable as the only moment Antigravity's list refreshes?** Claude and Codex catalogs refresh whenever those CLIs run, but agy's list is written only by Check now (`lib/models-catalog.js:25`), so a new Gemini model will not appear "automatically" at studio start. Recommended: yes for this PR, stated in Known limits. Refreshing at start means spawning agy at start, which the project has avoided so far.
