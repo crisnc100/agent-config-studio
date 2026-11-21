@@ -33,6 +33,8 @@
  * sandbox-exec wall AGY_WALL: it reads only the git work tree holding --cwd (or --cwd itself, never HOME or a folder
  * holding it), its own temp folder and log, and the few files of its own state a call needs. A per-call check
  * (agyWallCanary) proves the wall holds before agy starts; a call whose log says agy kept its token in a file fails.
+ * While agy's plaintext token file exists a call refuses before it starts (agyTokenLeft), and a call that leaves it
+ * behind fails after it ends (agyAfterCall).
  *
  * --investigate adds a shell (claude's Bash; grok's run_terminal_cmd, with
  * shell commands allowed; codex's read-only sandbox already runs commands) and
@@ -164,7 +166,7 @@ const GROK_HOME = path.resolve(process.env.GROK_HOME || path.join(os.homedir(), 
 // agy (Antigravity): read-only by a deny list passed per call with --settings, never saved. Its --mode plan does not
 // enforce read-only; the deny list does (a workspace settings file, a workspace allow rule and a PreToolUse hook's
 // allow were each seen not to undo it), its subagents inherit it, and web search is not a permission, so it stays on.
-// unsandboxed(*) is not on it: agy 1.5.13 ignores that rule kind (command(*) covers it). builds/gemini-family/containment-probe.md.
+// unsandboxed(*) is not on it: agy logs that rule kind as invalid and ignores it (command(*) covers it). builds/gemini-family/containment-probe.md.
 const AGY_SETTINGS = { permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'] } };
 // The agy the containment was probed on. Reads are the wall's job (AGY_WALL); this pin guards what the wall does not:
 // that the deny list still refuses what it refused, and that the workspace and home file names agy loads hooks, MCP
@@ -205,7 +207,7 @@ const AGY_ENV = { CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1', AGY_CLI_DISABLE_AUTO_UPD
 // them inside the wall, agy would replace them with files holding only this call, emptying them for every agy session
 // until one started outside the wall rebuilt them; refused, it logs "summary store recreate failed" and carries on.
 // Every path comes in as a -D parameter, never spliced into this text; the review runtime carries the same literal and
-// tests/agy-wall.mjs keeps them identical. builds/gemini-family/containment-probe.md (the 1.5.14 round).
+// tests/agy-wall.mjs keeps them identical. builds/gemini-family/containment-probe.md.
 const AGY_WALL = [
   '(version 1)',
   '(allow default)',
@@ -1471,8 +1473,8 @@ function agySubagentDenials(steps, home = os.homedir(), who = 'the model') {
       const name = String(s.type_name ?? s.conversation_id ?? 'a subagent');
       let file;
       try { file = fs.realpathSync(fileURLToPath(s.log_uri)); } catch (e) {
-        // Inside the wall a subagent never gets its instructions (agy passes them through brain/, which stays walled
-        // off), so it does nothing and leaves no transcript: a note, not a refusal and not a failure.
+        // Inside the wall a subagent gets no instructions (agy passes them through brain/, which stays walled off), so it
+        // does nothing and leaves no transcript: a note, not a refusal and not a failure.
         notes.push(e.code === 'ENOENT' ? `${who} tried to start a subagent (${name}); subagents can't run inside the sandbox wall`
           : `subagent ${name}'s transcript could not be read (${e.code || e.message}); its denied calls are unknown`);
         continue;

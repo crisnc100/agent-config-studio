@@ -2431,7 +2431,7 @@ function runGrok(m, prompt, schema) {
 // seen not to undo it), and its subagents inherit it. Web search is not a permission and stays on, so agy never runs
 // the security pass. agy names only the model it was asked for, so its reviews are recorded as model unverified.
 // tools/ask-model.mjs's agy wiring, copied to keep the runtime standalone; builds/gemini-family/containment-probe.md.
-// unsandboxed(*) is not on the list: agy 1.5.13 ignores that rule kind (command(*) covers it).
+// unsandboxed(*) is not on the list: agy logs that rule kind as invalid and ignores it (command(*) covers it).
 const AGY_SETTINGS = { permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'] } }
 // The agy the containment was probed on. Reads are the wall's job (AGY_WALL); the pin guards the deny list and the
 // file names agy loads hooks, MCP servers, plugins and agents from. Re-run the probe (builds/gemini-family/probe in
@@ -2452,8 +2452,7 @@ const AGY_ENV = { CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1', AGY_CLI_DISABLE_AUTO_UPD
 // The macOS sandbox every agy review runs in: file contents are refused under /Users, /Volumes, the temp folders and
 // HOME, then allowed back for the reviewed tree, the call's temp folder and log, the agy executable and the few files
 // of agy's own state a call reads, never its past conversations; agy may not rewrite its conversation summaries.
-// ask-model's AGY_WALL has the reasons for each line;
-// tests/agy-wall.mjs keeps the two identical.
+// ask-model's AGY_WALL has the reasons for each line; tests/agy-wall.mjs keeps the two identical.
 const AGY_WALL = [
   '(version 1)',
   '(allow default)',
@@ -2657,7 +2656,8 @@ function agySubagentDenials(steps, home = homedir(), who = 'the model') {
       const name = String(s.type_name ?? s.conversation_id ?? 'a subagent')
       let file
       try { file = realpathSync(fileURLToPath(s.log_uri)) } catch (e) {
-        // Inside the wall a subagent never starts and leaves no transcript (ask-model's agySubagentDenials).
+        // Inside the wall a subagent gets no instructions (agy passes them through brain/, which stays walled off), so it
+        // does nothing and leaves no transcript: a note, not a refusal and not a failure.
         notes.push(e.code === 'ENOENT' ? `${who} tried to start a subagent (${name}); subagents can't run inside the sandbox wall`
           : `subagent ${name}'s transcript could not be read (${e.code || e.message}); its denied calls are unknown`)
         continue
