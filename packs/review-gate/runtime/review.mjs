@@ -2433,9 +2433,10 @@ function runGrok(m, prompt, schema) {
 // tools/ask-model.mjs's agy wiring, copied to keep the runtime standalone; builds/gemini-family/containment-probe.md.
 // unsandboxed(*) is not on the list: agy 1.5.13 ignores that rule kind (command(*) covers it).
 const AGY_SETTINGS = { permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'] } }
-// The agy the containment was probed on; a newer one may read a workspace file that runs something. Re-run the probe
-// (builds/gemini-family/probe in Agent Config Studio) before moving this.
-const AGY_VERSION = '1.5.13'
+// The agy the containment was probed on. Reads are the wall's job (AGY_WALL); the pin guards the deny list and the
+// file names agy loads hooks, MCP servers, plugins and agents from. Re-run the probe (builds/gemini-family/probe in
+// Agent Config Studio) before moving it.
+const AGY_VERSION = '1.5.14'
 // Workspace customizations agy runs from the folder it starts in and every folder above it. tests/vendor-prefixes.mjs
 // keeps this literal identical to ask-model's.
 const AGY_WORKSPACE = { dirs: ['.agents', '.agent', '_agents', '_agent'], names: ['hooks.json', 'mcp_config.json', 'plugins.json', 'agents.json', 'plugins', 'agents'] }

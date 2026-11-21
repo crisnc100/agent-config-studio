@@ -166,9 +166,11 @@ const GROK_HOME = path.resolve(process.env.GROK_HOME || path.join(os.homedir(), 
 // allow were each seen not to undo it), its subagents inherit it, and web search is not a permission, so it stays on.
 // unsandboxed(*) is not on it: agy 1.5.13 ignores that rule kind (command(*) covers it). builds/gemini-family/containment-probe.md.
 const AGY_SETTINGS = { permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'] } };
-// The agy the containment was probed on. A newer one may read a workspace file that runs something; re-run the probe
-// (builds/gemini-family/probe) before moving this.
-const AGY_VERSION = '1.5.13';
+// The agy the containment was probed on. Reads are the wall's job (AGY_WALL); this pin guards what the wall does not:
+// that the deny list still refuses what it refused, and that the workspace and home file names agy loads hooks, MCP
+// servers, plugins and agents from are still the ones checked. Re-run the probe (builds/gemini-family/probe) before
+// moving it.
+const AGY_VERSION = '1.5.14';
 // Workspace customizations agy runs from the folder it starts in and every folder above it: hooks, MCP servers,
 // plugins and agents (agents.json, and custom agents in agents/, whose frontmatter can name hooks and plugins). Any of these names, in any of these folders, from the cwd up to the filesystem root, refuses.
 // The review runtime carries the same literal; tests/vendor-prefixes.mjs keeps them identical.
