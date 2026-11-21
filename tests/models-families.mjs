@@ -607,6 +607,162 @@ console.log('\nmodels/families: families.json writes made at the same time all l
     && !Object.hasOwn(famDoc(h).families.argon, 'track') && famDoc(h).families.hydrogen?.id === HYDROGEN, J({ file: readOr(familiesPath(h)), two: two.map((r) => r.reason?.message ?? r.value?.saved) }));
 }
 
+console.log('\nmodels/families: every catalog\'s published efforts reach the rows');
+{
+  const h = home();
+  const at = Date.now() - 60000;
+  writeClaudeCatalog(h, [
+    { ...claudeModel('claude-opus-5-5', 'Opus 5.5', 'Opus'), thinking: { type: 'effort', effort_options: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }, { id: 'max', name: 'Max' }, { id: 'turbo' }] } },
+    { ...claudeModel('claude-haiku-4-5-20251001', 'Haiku 4.5', 'Haiku'), thinking: { type: 'none' } },
+  ], at);
+  writeCodexCatalog(path.join(h, '.codex'), [{ ...codexModel('gpt-6.2-sol', 'Sol'), supported_reasoning_levels: [{ effort: 'medium', description: 'x' }, { effort: 'xhigh' }, { effort: 'ultra' }] }], at);
+  const grok = grokModel('grok-4.7', 'Grok 4.7');
+  grok.info.reasoning_efforts = [{ id: 'xhigh', value: 'xhigh', label: 'Extra High' }, { id: 'high', value: 'high' }, { id: 'medium', value: 'medium' }, { id: 'low', value: 'low' }];
+  writeGrokCatalog(h, [grok], at);
+  const cats = catalogsOf(h);
+  const e = (v, id) => cats[v].models.find((m) => m.id === id)?.efforts;
+  ok('Claude: thinking.effort_options, keeping only the efforts ACS knows', J(e('claude', 'claude-opus-5-5')) === J(['low', 'high', 'max']), J(e('claude', 'claude-opus-5-5')));
+  ok('...a model whose thinking takes no effort lists none (null)', e('claude', 'claude-haiku-4-5-20251001') === null, J(e('claude', 'claude-haiku-4-5-20251001')));
+  ok('Codex: supported_reasoning_levels', J(e('codex', 'gpt-6.2-sol')) === J(['medium', 'xhigh']), J(e('codex', 'gpt-6.2-sol')));
+  ok('Grok: reasoning_efforts', J(e('grok', 'grok-4.7')) === J(['xhigh', 'high', 'medium', 'low']), J(e('grok', 'grok-4.7')));
+  ok('...and nothing else of the Grok entry leaves the reader', !J(cats.grok.models).includes('Extra High'));
+  const v = await createModelsState({ detectFn: async () => [], codexHomes: () => [], home: h }).view();
+  const efforts = (f) => v.rows.find((r) => r.family === f)?.efforts;
+  ok('rows carry them, so the pickers offer only these: grok has no max, sol no low', J(efforts('grok')) === J(['xhigh', 'high', 'medium', 'low']) && J(efforts('sol')) === J(['medium', 'xhigh'])
+    && J(efforts('opus')) === J(['low', 'high', 'max']), J(v.rows.map((r) => [r.family, r.efforts])));
+}
+
+console.log('\nmodels/families: sync ranks only ids the registry accepts, from the vendor whose list it reads');
+{
+  const h = home();
+  plantAll(h, {
+    claude: [claudeModel('claude-opus-5-5', 'Opus 5.5', 'Opus'), claudeModel('gpt-8-mira', 'Mira', 'Mira')],
+    codex: [codexModel('gpt-6-luna', 'Luna'), codexModel('gpt-6.5-luna', 'Luna 6.5'), codexModel('gpt-7-X-luna', 'Luna X'), codexModel('claude-9-luna', 'Luna?'),
+      codexModel('gpt-6-zeta', 'Zeta'), codexModel('gpt-9-Q-zeta', 'Zeta Q')],
+  });
+  families(h, { luna: { id: 'gpt-6-luna' } });
+  const r = await sync(h);
+  ok('a move skips a higher id the registry would hide (uppercase) and one another CLI runs (claude- from Codex\'s list)', ids(h).luna === 'gpt-6.5-luna'
+    && J(r.moved) === J([{ family: 'luna', vendor: 'codex', from: 'gpt-6-luna', to: 'gpt-6.5-luna' }]), J({ ids: ids(h), moved: r.moved }));
+  ok('a new word is added at its newest valid id, not blocked by an invalid higher one', ids(h).zeta === 'gpt-6-zeta', J(ids(h)));
+  ok('an id with another vendor\'s prefix in Claude\'s list is never added', !Object.hasOwn(ids(h), 'mira'), J(ids(h)));
+}
+
+console.log('\nmodels/families: Set on the id a synced family already has pins it');
+{
+  const h = home();
+  plantAgy(h);
+  families(h, { argon: { id: ARGON } });
+  const r = await setModel({ family: 'argon', id: ARGON, pin: true, catalogs: catalogsOf(h), home: h });
+  ok('Set to its current id, unpinned: it writes the pin, the id unchanged', r.saved === true && r.pinned === true && famDoc(h).families.argon.id === ARGON
+    && famDoc(h).families.argon.track === false, J({ r, file: readOr(familiesPath(h)) }));
+  const before = readOr(familiesPath(h));
+  const again = await setModel({ family: 'argon', id: ARGON, pin: true, catalogs: catalogsOf(h), home: h });
+  ok('...already pinned: nothing to change', again.unchanged === true && readOr(familiesPath(h)) === before, J(again));
+  families(h, { argon: { id: ARGON } });
+  const accept = await setModel({ family: 'argon', id: ARGON, catalogs: catalogsOf(h), home: h });
+  ok('...without pin (Accept) the same id stays unchanged, unpinned', accept.unchanged === true && !Object.hasOwn(famDoc(h).families.argon, 'track'), J(accept));
+}
+
+console.log('\nmodels/families: a second opinion stored on an unset shipped role protects its family');
+{
+  const h = home();
+  plantAgy(h, [...CATALOG.filter((m) => m.id !== ARGON), agyEntry('gemini-4.1-argon', 'Gemini 4.1 Argon')]);
+  families(h, { argon: { id: ARGON } });
+  write(studio(h, 'roles.json'), { version: 2, roles: { reviewer: { alt: 'argon' } } });
+  ok('(roles.json is valid, and reviewer stays unset)', (() => { const held = heldBy(h); return held !== null; })());
+  ok('heldBy names it', J(heldBy(h)?.get('argon')) === J(['the reviewer role\'s second opinion']), J([...(heldBy(h) || new Map())]));
+  const r = await sync(h);
+  ok('...so sync does not move it', ids(h).argon === ARGON && !r.moved.length, J(r));
+  plantAgy(h, CATALOG.filter((m) => m.id !== ARGON));
+  const e = await refused(removeFamily({ family: 'argon', home: h }));
+  ok('...and Remove is refused', e?.status === 409 && /second opinion/.test(e.message) && ids(h).argon === ARGON, e?.message);
+}
+
+console.log('\nmodels/families: Remove is refused while the word\'s list still offers it');
+{
+  const h = home();
+  plantAgy(h);
+  families(h, { argon: { id: ARGON } });
+  const fam = readOr(familiesPath(h));
+  const offered = await refused(removeFamily({ family: 'argon', home: h }));
+  ok('Antigravity still offers argon → 409, the entry and its bytes unchanged', offered?.status === 409 && /offer/.test(offered.message) && readOr(familiesPath(h)) === fam, offered?.message);
+  write(agyModelsPath(h), '{ nope');
+  const unread = await refused(removeFamily({ family: 'argon', home: h }));
+  ok('a list that cannot be read → 409: ACS cannot tell, so it keeps the entry', unread?.status === 409 && readOr(familiesPath(h)) === fam, unread?.message);
+  plantAgy(h, CATALOG.filter((m) => m.id !== ARGON));
+  const r = await removeFamily({ family: 'argon', home: h }).catch((err) => ({ error: err.message }));
+  ok('...once the list no longer offers it, Remove goes through', r.saved === true && !Object.hasOwn(famDoc(h).families, 'argon'), J(r));
+}
+
+console.log('\nmodels/families: a sync records a failed history write as a warning, beside what it did');
+{
+  const h = home();
+  plantAgy(h);
+  const v = await createModelsState({ detectFn: async () => [], codexHomes: () => [], home: h }).view();
+  ok('the sync\'s changes stand, and view.sync says history did not record them', J(v.sync.added.map((a) => a.family)) === '["argon","hydrogen"]' && v.sync.error === null
+    && /outside allowed roots/.test(v.sync.historyError || ''), J(v.sync));
+}
+
+console.log('\nmodels/families: the start check runs no CLI; the version is learned off the start path');
+{
+  const h = home();
+  plantAll(h, { claude: [claudeModel('claude-opus-5-5', 'Opus 5.5', 'Opus'), claudeModel('claude-lyra-2', 'Lyra 2', 'Lyra', '2.1.0')] });
+  let probes = 0;
+  const st = createModelsState({ detectFn: async () => { probes++; return [{ id: 'claude', version: CC }]; }, codexHomes: () => [], home: h });
+  await st.check();
+  ok('the start check asks no CLI for its version', probes === 0, String(probes));
+  ok('...so an id that needs a newer Claude Code is not synced while the version is unknown', !fs.existsSync(familiesPath(h)) || !Object.hasOwn(ids(h), 'lyra'), readOr(familiesPath(h)));
+  const v = await st.view();
+  ok('the view learns the version, once', probes === 1 && v.claudeVersion === CC && why(v.sync, 'lyra', 'claude') === 'needs Claude Code ≥ 2.1.0', J({ probes, cv: v.claudeVersion, sync: v.sync }));
+  await st.view();
+  ok('...and keeps it', probes === 1, String(probes));
+  await st.check({ refresh: true });
+  ok('Check now asks again, and its sync adds lyra', probes === 2 && ids(h).lyra === 'claude-lyra-2', J({ probes, file: readOr(familiesPath(h)) }));
+}
+
+console.log('\nmodels/families: a change that lands while a families.json write waits on history is seen before the write');
+{
+  // The process's own HOME: only there does history record families.json, so the write really waits on a baseline.
+  const h = process.env.HOME;
+  const { HISTORY_REPO, historyRelPath } = await import('../lib/paths.js');
+  // `act` runs the moment the baseline's mirror holds families.json's current bytes: the write is then awaiting git.
+  const duringBaseline = (act) => {
+    const want = readOr(familiesPath(h));
+    const mirrored = path.join(HISTORY_REPO, historyRelPath(familiesPath(h)));
+    const until = Date.now() + 10000;
+    return new Promise((resolve) => {
+      const tick = () => {
+        if (readOr(mirrored) === want) { act(); resolve(true); } else if (Date.now() > until) resolve(false); else setImmediate(tick);
+      };
+      tick();
+    });
+  };
+  plantAgy(h, [...CATALOG, agyEntry('gemini-4.1-argon', 'Gemini 4.1 Argon')]);
+  families(h, { argon: { id: ARGON }, hydrogen: { id: HYDROGEN }, flash: { id: 'gemini-3.8-flash' } });
+  const roleSave = duringBaseline(() => write(studio(h, 'roles.json'), { version: 2, roles: { reviewer: { use: ['opus', 'argon'] } } }));
+  const r = await sync(h);
+  ok('(a role naming argon was saved while the sync waited)', await roleSave);
+  ok('a sync does not move a family a role started naming before its write', ids(h).argon === ARGON && !r.moved.length, J({ r, file: readOr(familiesPath(h)) }));
+  fs.rmSync(studio(h, 'roles.json'), { force: true });
+
+  families(h, { argon: { id: ARGON }, hydrogen: { id: HYDROGEN } });
+  const handEdit = J({ version: 1, families: { argon: { id: 'gemini-4.2-argon', track: false }, hydrogen: { id: HYDROGEN } } });
+  const edited = duringBaseline(() => write(familiesPath(h), handEdit));
+  const r2 = await sync(h);
+  ok('(families.json was edited while the sync waited)', await edited);
+  ok('a stale sync never writes an older id over a newer pinned one', ids(h).argon === 'gemini-4.2-argon' && famDoc(h).families.argon.track === false && !r2.moved.length,
+    J({ r2, file: readOr(familiesPath(h)) }));
+
+  plantAgy(h, CATALOG.filter((m) => m.id !== ARGON));
+  families(h, { argon: { id: ARGON }, flash: { id: 'gemini-3.8-flash' } });
+  const flavorSave = duringBaseline(() => write(studio(h, 'roles.json'), { version: 2, flavor: { argon: { brief: 'x' } } }));
+  const e = await refused(removeFamily({ family: 'argon', home: h }));
+  ok('(a flavor for argon was saved while Remove waited)', await flavorSave);
+  ok('Remove is refused when a flavor started naming the family before its write', e?.status === 409 && /its flavor/.test(e.message) && ids(h).argon === ARGON, e?.message ?? J(readOr(familiesPath(h))));
+  for (const f of [familiesPath(h), studio(h, 'roles.json'), agyModelsPath(h)]) fs.rmSync(f, { force: true });
+}
+
 console.log('\nmodels/families: sync at studio start and on Check now, through the real server');
 async function startStudio(h) {
   const port = await freePort();
@@ -711,6 +867,27 @@ process.exit(9);
     const adopt = await srv.post('/api/models/adopt', { id: ARGON });
     ok('the adopt route is gone', adopt.status === 404, J(adopt));
     ok('neon is the shipped id throughout', run(h, 'neon').out === `${DEFAULTS.models.neon}\n` && !Object.hasOwn(famDoc(h).families, 'neon'));
+  } finally { await srv.stop(); }
+}
+
+console.log('\nmodels/families: the studio starts without running claude; the Models page learns its version');
+{
+  const h = home();
+  plantAll(h, { claude: [claudeModel('claude-opus-5-5', 'Opus 5.5', 'Opus')] });
+  const log = path.join(h, 'claude-calls.jsonl');
+  const bin = path.join(h, '.local', 'bin', 'claude');
+  fs.mkdirSync(path.dirname(bin), { recursive: true });
+  fs.writeFileSync(bin, `#!${process.execPath}
+require('fs').appendFileSync(${J(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+if (process.argv[2] === '--version') console.log('2.1.300 (Claude Code)');
+`, { mode: 0o755 });
+  const calls = () => { try { return fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean); } catch { return []; } };
+  const srv = await startStudio(h);
+  try {
+    await new Promise((r) => setTimeout(r, 1500));
+    ok('after start, claude has not been run', srv.up && calls().length === 0, J({ up: srv.up, calls: calls(), out: srv.out().slice(-300) }));
+    const v = await srv.get('/api/models');
+    ok('the Models page asks it once for --version, and shows it', J(calls()) === J(['["--version"]']) && v.claudeVersion === '2.1.300 (Claude Code)', J({ calls: calls(), cv: v.claudeVersion }));
   } finally { await srv.stop(); }
 }
 

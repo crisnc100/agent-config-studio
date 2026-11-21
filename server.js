@@ -13,6 +13,7 @@ import { scanOnce } from './lib/setup-scan.js';
 import { acsInstalled, nextSteps, pathStep } from './lib/setup-commands.js';
 import { isPartial } from './lib/walk-budget.js';
 import { locateBinary } from './lib/harness.js';
+import { probeVersion } from './lib/version-probe.js';
 import { refreshLoginDirs, loginDirs, loginDirsKnown, loginDirsSettled, LOGIN_READ_MS } from './lib/login-path.js';
 import { buildRegistry, scopeChain, onWalkDone, staleLargeWalks, protectedFiles } from './lib/registry.js';
 import { listSkills, resolveSkills, toPublic, readInSkill, parseFrontmatter, SKILL_LIMITS } from './lib/skills.js';
@@ -662,9 +663,15 @@ export function createApp(opts = {}) {
   const streamTurnFn = opts.streamTurn || streamTurn;
   const runAssistFn = opts.runAssist || runAssist;
   const sessions = new Map();
+  const codexHomes = () => loadSeats().seats.filter((x) => x.vendor === 'codex' && x.home).map((x) => x.home);
+  // The Models page needs only Claude Code's version: one probe, off the main thread, so a slow CLI holds no request.
+  const claudeOnly = async () => {
+    const { binary } = locateBinary('claude');
+    return binary ? [{ id: 'claude', version: await probeVersion(binary) }] : [];
+  };
   const models = createModelsState({
-    detectFn,
-    codexHomes: () => loadSeats().seats.filter((x) => x.vendor === 'codex' && x.home).map((x) => x.home),
+    detectFn: opts.detectHarnesses || claudeOnly,
+    codexHomes,
     refreshCodex: opts.refreshCodexCatalogs || refreshCodexCatalogs,
     refreshAgy: opts.refreshAgyModels || readGeminiModels,
   });
@@ -1318,7 +1325,7 @@ export function createApp(opts = {}) {
   'POST /api/models/remove': async (req) => {
     requireStrict(req);
     const { family } = await objectBody(req);
-    return removeFamily({ family });
+    return removeFamily({ family, codexHomes: codexHomes() });
   },
 
   /** Accepting writes exactly what a manual edit of the same id writes. */
