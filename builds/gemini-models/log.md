@@ -41,3 +41,46 @@
   plain read; family from any last word) each failed it.
 - Checks: tests/models-agy.mjs 44/44, tests/guards.mjs 11/11, tests/models.mjs 64/64, tests/suite-coverage.mjs 33/33,
   tests/models-panel.mjs 118/118, tests/models-refresh.mjs 29/29.
+
+## Phase 3 — screen and Home (builder, 2026-11-20)
+- public/app.js: the Antigravity line reads "N models: <names> · fetched X ago" (names only where the view sends
+  them, agy only); Check now's sentence says it asks Antigravity for its models too. A stale or missing list shows
+  its note instead, as every catalog does; the refreshNote line below it says why Check now did not fill it.
+- public/home.js: a never-fetched Antigravity list is one quiet line, "Antigravity: no model list yet — press Check
+  now on Models" (setup's CLI check does not cover agy, so Home never says "not installed" for it); an unreadable one
+  is partial, like any catalog. The noCatalog branch is gone (nothing sets it now).
+- Home does not show agy's refreshNote, the same as Codex's: a failed Check now is reported on Models, where it was
+  pressed.
+- README: what Check now runs (agy models, 1.1.12+, empty folder, no turn) and the saved list in
+  ~/.agent-config-studio; "a run file per port" kept on one line (tests/readme.mjs pins it).
+- Checks: tests/models-layout-ui.mjs 58/58, tests/home.mjs 127/127 (the new Home check fails with the checkOnly line
+  removed), tests/setup-ui.mjs 94/94, tests/readme.mjs 56/56, tests/models.mjs 64/64, tests/guards.mjs 11/11.
+- tests/no-personal-paths.mjs fails locally on reviews/2026-11-20-23-46-51-1998e5/code-review.md, a gitignored PR B
+  review artifact in this worktree that names the maintainer; not shipped, not from this branch, left alone.
+
+## Sibling check (before the last commit)
+1. Guard b's third pinned call (tests/guards.mjs). Other agy spawn paths: lib/usage/gemini.js runAgy is the only one
+   in lib/ (guard b scans all of lib/, bin/, server.js); tools/ask-model.mjs and the review runtime run agy turns
+   under their own containment (off limits). Applied.
+2. MODELS_MIN_VERSION (1.1.12). The only path to the `models` argv is readGeminiModels → runAgy('models'), after the
+   gate; runAgy is module-private. Applied. readGeminiSeat keeps 1.1.11 (tested on a 1.1.11 fake).
+3. runAgy refuses a call name it has no literal for. Callers: readGeminiSeat (version, usage), readGeminiModels
+   (version, models). Applied.
+4. Zero-turn, command-name and status checks for models: shapeModels + readGeminiModels; the one consumer,
+   refreshAgyList, also requires ok and a models array before writing. Applied.
+5. Gemini-only + ID_RE filter: at shapeModels (what agy says) and again at readAgy (the saved file, which an
+   injected refresher or a hand edit could fill). Applied on both.
+6. Effort collapse: shapeModels only. Not needed elsewhere: the saved list's only writer is refreshAgyList, from
+   shapeModels' output.
+7. efforts projection: project() keeps only EFFORTS values; other vendors get null. Consumers: none render it yet
+   (PR D). Applied.
+8. geminiFamily: agy entries only; detect() also needs parseVersion, which is null for orchestrators. Applied.
+9. Notes per vendor (refreshHint) and checkOnly. Consumers: the Models line (app.js shows note), Home (missing →
+   missingCatalogText checkOnly; failed read → partial). Applied. noCatalog had no other consumer (grep: none left).
+10. names in the view: agy only, from displayName (capped at 200 chars by project, list at 200 by shapeModels).
+    Consumer: app.js catalog line. Home ignores it. Applied.
+11. agy refreshNote. Consumers: app.js renders every catalog's refreshNote. Home does not render it (not handled, by
+    design, the same as Codex's).
+12. Saved-list write: only POST /api/models/check → check({refresh:true}); server start's models.check() has no
+    refresh (server.js:1917), tested. Two Check nows share one run. Guard g holds. Applied.
+13. Check now sentence and README: the only places that describe Check now. Applied.

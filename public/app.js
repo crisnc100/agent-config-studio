@@ -4692,7 +4692,7 @@ function idsSection(m) {
   head.appendChild(check);
   sec.appendChild(head);
   sec.appendChild(el('div', 'scope-sub models-roles-sub',
-    `The exact model id each name points to, from each CLI's own model list. Check now asks Codex to refresh its list first; it uses no tokens. Checked ${agoText(Date.now() - m.checkedAt)}` +
+    `The exact model id each name points to, from each CLI's own model list. Check now asks Codex to refresh its list and Antigravity for its models first; it uses no tokens. Checked ${agoText(Date.now() - m.checkedAt)}` +
     (m.claudeVersion ? ` · Claude Code ${m.claudeVersion.split(' ')[0]}` : '') + '.'));
 
   const cats = el('div', 'models-catalogs');
@@ -4700,7 +4700,7 @@ function idsSection(m) {
     const line = el('div', `models-catalog${cat.note ? (cat.ok ? ' stale' : ' missing') : ''}`);
     line.appendChild(el('span', 'models-catalog-name', cat.label));
     line.appendChild(el('span', null, cat.note ||
-      `${cat.count} models · fetched ${agoText(Date.now() - cat.fetchedAt)}`));
+      `${cat.count} models${cat.names?.length ? `: ${cat.names.join(', ')}` : ''} · fetched ${agoText(Date.now() - cat.fetchedAt)}`));
     cats.appendChild(line);
     if (cat.disagree) cats.appendChild(el('div', 'models-catalog stale', cat.disagree));
     if (cat.refreshNote) cats.appendChild(el('div', 'models-catalog stale', cat.refreshNote));

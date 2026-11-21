@@ -95,9 +95,12 @@ function contextItems(d) {
  * A CLI's model catalog is missing. That is "not installed" only when setup's
  * own check (/api/setup/clis) has not found the CLI either: an installed CLI
  * just has not written its catalog yet, and Home must never contradict the
- * CLIs card about what is installed.
+ * CLIs card about what is installed. A list only Check now writes (Antigravity)
+ * says so instead: running that CLI would not create it, and setup's check does
+ * not cover it.
  */
 function missingCatalogText(c, clis) {
+  if (c.checkOnly) return `${c.label}: no model list yet — press Check now on Models`;
   const cli = clis?.state === 'ok' && c.vendor ? (clis.data.clis || []).find((x) => x.id === c.vendor) : null;
   if (cli?.installed) return `${c.label}: installed, no model catalog yet — run it once to check`;
   return `${c.label}: not installed — not checked`;
@@ -126,8 +129,7 @@ function attentionModel(sources) {
       items.push(...modelItems(s.data));
       if (s.data.registryError) partial.push({ id, label, text: 'the model registry file is invalid — defaults are in use' });
       for (const c of (s.data.catalogs || []).filter((x) => !x.ok)) {
-        if (c.noCatalog) quiet.push({ id, label, text: `${c.label}: keeps no model catalog — not checked` });
-        else if (c.missing) quiet.push({ id, label, text: missingCatalogText(c, sources.clis) });
+        if (c.missing) quiet.push({ id, label, text: missingCatalogText(c, sources.clis) });
         else partial.push({ id, label, text: c.note || `the ${c.label} catalog could not be read` });
       }
     } else if (id === 'memory') items.push(...memoryItems(s.data));
