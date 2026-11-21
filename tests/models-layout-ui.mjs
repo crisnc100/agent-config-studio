@@ -319,60 +319,25 @@ const ids = (p) => content(p).querySelector('.models-ids');
     && qLines[1] === 'Not refreshed: the Antigravity CLI (agy) is not installed.', J(qLines));
 }
 
-// ── models added from Antigravity's list: Add, "added by you", Remove ─────
+// ── a families.json row next to shipped ones; Remove refused while something names it ─────
 {
   const J = JSON.stringify;
   const at = Date.now() - 5 * 60000;
   const agy = { vendor: 'agy', label: 'Antigravity', ok: true, missing: false, fetchedAt: at, note: null, stale: false, checkOnly: true, refreshNote: null,
     count: 4, names: ['Neon Test', 'Argon Test', 'Hydrogen Test', 'Orchestrator (Neon)'] };
   const claude = { vendor: 'claude', label: 'Claude', ok: true, missing: false, fetchedAt: at, note: null, stale: false, count: 9 };
-  const ADDABLE = [{ id: 'argon-id-1', displayName: 'Argon Test', family: 'argon' }, { id: 'hydrogen-id-1', displayName: null, family: 'hydrogen' }];
-  const addedRow = { family: 'xenon', id: 'xenon-id-1', vendor: 'agy', track: true, source: 'added', defaultId: null, displayName: 'Xenon Test', alerts: [] };
-  const withAdded = (over = {}) => ({ ...models(), catalogs: [claude, agy], rows: [...models().rows, addedRow], addable: ADDABLE, familiesError: null, familiesHidden: {}, ...over });
-  const lineText = (l) => l.querySelectorAll('span').filter((x) => !x.querySelector('span')).map(txt).join(' | ');
-  const addLine = (p) => ids(p).querySelector('.models-addable');
-  const notice = (p) => p.$('notice-slot').querySelector('.notice');
-
-  const adopted = [];
-  let after = null;
-  const p = await boot(withAdded(), {
-    'GET /api/models': () => after || withAdded(),
-    'POST /api/models/adopt': (b) => {
-      adopted.push(b);
-      if (b.id === 'hydrogen-id-1') throw { status: 409, body: { error: 'A family named hydrogen already exists, so hydrogen-id-1 cannot be added under that name.' } };
-      after = withAdded({ addable: ADDABLE.slice(1) });
-      return { saved: true, family: 'argon', id: 'argon-id-1' };
-    },
-  });
-  const lines = ids(p).querySelectorAll('.models-catalog');
-  const agyAt = lines.findIndex((l) => /^Antigravity/.test(txt(l)));
-  ok('"Not added yet" sits right under the Antigravity line', agyAt >= 0 && lines[agyAt + 1]?.classList.contains('models-addable'), J(lines.map(txt)));
-  ok('...listing each model with an Add naming the family it becomes', lineText(addLine(p)) === 'Not added yet | Argon Test | hydrogen-id-1'
-    && J(addLine(p).querySelectorAll('button').map(txt)) === '["Add as argon","Add as hydrogen"]', lineText(addLine(p)));
-  button(addLine(p), 'Add as argon').click();
-  await settle(20);
-  ok('Add posts the id alone', J(adopted) === '[{"id":"argon-id-1"}]', J(adopted));
-  ok('...says what it added, and the list is fetched again', /argon added: it points to argon-id-1\./.test(p.text(notice(p)))
-    && !addLine(p).querySelectorAll('button').some((b) => txt(b) === 'Add as argon'), p.text(notice(p)));
-  button(addLine(p), 'Add as hydrogen').click();
-  await settle(20);
-  ok('a refused Add shows why', notice(p)?.classList.contains('error') && /A family named hydrogen already exists/.test(p.text(notice(p))), p.text(notice(p)));
-
+  const syncedRow = { family: 'xenon', id: 'xenon-id-1', vendor: 'agy', track: true, source: 'synced', defaultId: null, displayName: 'Xenon Test', offered: true, heldBy: [], alerts: [] };
+  const p = await boot({ ...models(), catalogs: [claude, agy], rows: [...models().rows, syncedRow], familiesError: null, familiesHidden: {} });
   const row = ids(p).querySelectorAll('.models-row').find((r) => r.dataset.family === 'xenon');
-  ok('an added family\'s row says "added by you"', txt(row.querySelector('.models-source')) === 'added by you', txt(row));
+  ok('a synced family\'s row says "synced from Antigravity"', txt(row.querySelector('.models-source')) === 'synced from Antigravity', txt(row));
   ok('...a shipped one still says default', txt(ids(p).querySelectorAll('.models-row').find((r) => r.dataset.family === 'opus').querySelector('.models-source')) === 'default');
-
-  const none = await boot({ ...models(), catalogs: [claude, agy], addable: [] });
-  ok('nothing left to add: no line', !addLine(none));
-  const missing = await boot({ ...models(), catalogs: [{ ...agy, ok: false, missing: true, count: 0, names: [], note: 'No Antigravity catalog on this machine — press Check now to create it.' }], addable: [] });
-  ok('no Antigravity list: no line', !addLine(missing));
 }
 {
   const J = JSON.stringify;
-  const addedRow = { family: 'xenon', id: 'xenon-id-1', vendor: 'agy', track: true, source: 'added', defaultId: null, displayName: null, alerts: [] };
+  const goneRow = { family: 'xenon', id: 'xenon-id-1', vendor: 'agy', track: true, source: 'synced', defaultId: null, displayName: null, offered: false, heldBy: [], alerts: [] };
   const removed = [];
   let named = true;
-  const p = await boot({ ...models(), rows: [...models().rows, addedRow], addable: [], registryError: 'models.json: not valid JSON' }, {
+  const p = await boot({ ...models(), rows: [...models().rows, goneRow], registryError: 'models.json: not valid JSON' }, {
     'POST /api/models/remove': (b) => {
       removed.push(b);
       if (named) throw { status: 409, body: { error: 'xenon is still named by the reviewer role. Take it out there first.' } };
@@ -383,7 +348,7 @@ const ids = (p) => content(p).querySelector('.models-ids');
   open('xenon');
   await settle(5);
   const detail = ids(p).querySelector('.models-detail');
-  ok('an added family\'s editor offers Save and Remove, no Reset to default', J(detail.querySelectorAll('button').map(txt)) === '["Save","Remove"]', J(detail.querySelectorAll('button').map(txt)));
+  ok('a synced family its list no longer offers: Save, Pin and Remove, no Reset to default', J(detail.querySelectorAll('button').map(txt)) === '["Save","Pin","Remove"]', J(detail.querySelectorAll('button').map(txt)));
   ok('...and stays usable while models.json is broken (its id lives in families.json)', !button(detail, 'Save').disabled && !button(detail, 'Remove').disabled);
   button(detail, 'Remove').click();
   await settle(20);
@@ -400,9 +365,9 @@ const ids = (p) => content(p).querySelector('.models-ids');
   ok('a shipped family keeps Reset to default, refused while models.json is broken', !!button(shipped, 'Reset to default') && button(shipped, 'Save').disabled);
 }
 {
-  const p = await boot({ ...models(), addable: [], familiesError: '~/.agent-config-studio/families.json: not valid JSON', familiesHidden: { argontwo: 'it has a key this ACS does not know ("harness")' } });
+  const p = await boot({ ...models(), familiesError: '~/.agent-config-studio/families.json: not valid JSON', familiesHidden: { argontwo: 'it has a key this ACS does not know ("harness")' } });
   const errs = content(p).querySelectorAll('.models-error').map(txt);
-  ok('a broken families.json is a notice at the top', errs.some((t) => /^families\.json is invalid\. The models you added are left out/.test(t) && /not valid JSON/.test(t)), JSON.stringify(errs));
+  ok('a broken families.json is a notice at the top', errs.some((t) => /^families\.json is invalid\. The families synced from the model lists are left out/.test(t) && /not valid JSON/.test(t)), JSON.stringify(errs));
   ok('...and each hidden entry is named with why', errs.some((t) => /argontwo: it has a key this ACS does not know \("harness"\)/.test(t)), JSON.stringify(errs));
 }
 
