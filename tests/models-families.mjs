@@ -15,10 +15,10 @@ import { tempDir, track } from './fixtures/cleanup.mjs';
 
 const realBefore = snapshotRealHomes();
 process.env.HOME = fs.realpathSync(tempDir('acs-families-proc-'));
-const { familiesPath, loadRegistry } = await import('../lib/models.js');
+const { familiesPath, loadRegistry, tracks } = await import('../lib/models.js');
 const { readPaused } = await import('../lib/roles.js');
 const { resolverStale } = await import('../lib/roles-panel.js');
-const { readCatalogs, agyModelsPath } = await import('../lib/models-catalog.js');
+const { readCatalogs, agyModelsPath, detect } = await import('../lib/models-catalog.js');
 const { ADD_STALE, addable, adoptFamily, createModelsState, removeFamily, resetModel, setModel } = await import('../lib/models-panel.js');
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -135,6 +135,37 @@ console.log('\nmodels/families: an entry this build cannot use is hidden, alone'
     const f = run(h, ...args);
     ok(`model-id ${args[0]} on a hidden entry says the same`, f.code !== 0 && f.err.includes('families.json has it, but hidden: its id is not a gemini- id'), J(f));
   }
+}
+
+console.log('\nmodels/families: every vendor\'s ids, and pins');
+{
+  const h = home();
+  families(h, {
+    luna: { id: 'gpt-6-luna' },
+    mythos: { id: 'claude-mythos-1' },
+    nova: { id: 'grok-5' },
+    argon: { id: ARGON, track: false },
+    flash: { id: 'gemini-3.8-flash', track: true },
+    llamaish: { id: 'llama-4-x' },
+    pinny: { id: HYDROGEN, track: 'no' },
+  });
+  for (const [name, id] of [['luna', 'gpt-6-luna'], ['mythos', 'claude-mythos-1'], ['nova', 'grok-5']]) {
+    const r = run(h, name);
+    ok(`a ${id.split('-')[0]}- entry resolves (${name})`, r.code === 0 && r.out === `${id}\n`, J(r));
+  }
+  const reg = loadRegistry({ home: h });
+  ok('an id with no known prefix is hidden, with why', reg.familiesHidden.llamaish === 'its id does not start with claude-, gpt-, grok-, gemini-', reg.familiesHidden.llamaish);
+  ok('a track that is not true or false is hidden, with why', reg.familiesHidden.pinny === 'track must be true or false', reg.familiesHidden.pinny);
+  ok('track: false pins the family where tracks() reads it', reg.registry.families.argon?.track === false && tracks(reg.registry, 'argon') === false, J(reg.registry.families));
+  ok('...track: true and no track both follow', tracks(reg.registry, 'flash') && tracks(reg.registry, 'luna') && !Object.hasOwn(reg.registry.families, 'flash'));
+  ok('...and the shipped pins stay', reg.registry.families['grok-prev']?.track === false);
+  ok('...the shipped document is untouched', !Object.hasOwn(reg.defaults.families, 'argon'));
+  const cats = { agy: { ok: true, models: [{ id: ARGON, family: 'argon', hidden: false }, { id: 'gemini-4.1-argon', family: 'argon', hidden: false }] } };
+  const row = detect({ registry: reg.registry, defaults: reg.defaults, catalogs: cats }).rows.find((x) => x.family === 'argon');
+  ok('a pinned family\'s row is untracked, with no update alert', row.track === false && !row.alerts.some((a) => a.kind === 'update'), J(row));
+  const j = JSON.parse(run(h, '--json').out);
+  ok('model-id --json: no new top-level key with a pin', J(Object.keys(j).sort()) === J(Object.keys(JSON.parse(run(home(), '--json').out)).sort()), J(Object.keys(j)));
+  ok('neon still resolves to the shipped id', run(h, 'neon').out === `${DEFAULTS.models.neon}\n`);
 }
 
 console.log('\nmodels/families: roles and pauses');
