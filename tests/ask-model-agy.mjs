@@ -31,7 +31,9 @@ const STUBS = mk('stubs');
 const LOG = path.join(tmp, 'calls.jsonl');
 const SYSTEM = ['/usr/bin', '/bin'];
 
-// STUB_MODE: ok | status-error | deadline | denied-empty | other-model | no-result | token-file. STUB_ANSWER replaces the
+// STUB_MODE: ok | status-error | deadline | denied-empty | other-model | no-result | token-file | no-log | token-left. Every
+// mode but no-log writes a log line to --log-file, as agy does; token-left leaves agy's plaintext token file in HOME.
+// STUB_ANSWER replaces the
 // response. STUB_PEEK: paths (joined by \n) the stub tries to read, recording each result, to show what the wall lets in.
 // The saved subagent run is written into the stub: inside the wall it cannot read this checkout.
 const SUBAGENT_STREAM = fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'agy-subagent', 'stream.jsonl'), 'utf8');
@@ -50,7 +52,12 @@ fs.appendFileSync(process.env.STUB_LOG, JSON.stringify({ argv: a, cwd: process.c
   cmuxHooksOff: process.env.CMUX_ANTIGRAVITY_HOOKS_DISABLED ?? null, autoUpdateOff: process.env.AGY_CLI_DISABLE_AUTO_UPDATE ?? null,
   tmpdir: process.env.TMPDIR ?? null, tmpdirExists: !!process.env.TMPDIR && fs.existsSync(process.env.TMPDIR), peek }) + '\\n');
 const mode = process.env.STUB_MODE || 'ok';
+if (mode !== 'no-log') fs.appendFileSync(val('--log-file'), 'I1121 keyring.go:64] keyringAuth: loaded token\\n');
 if (mode === 'token-file') fs.appendFileSync(val('--log-file'), 'W1121 keyring.go] Using file-based token storage because a keyring timeout was recorded within the last 1h0m0s\\n');
+if (mode === 'token-left') {
+  const f = require('node:path').join(require('node:os').homedir(), '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+  fs.mkdirSync(require('node:path').dirname(f), { recursive: true }); fs.writeFileSync(f, '{}');
+}
 const model = val('--model');
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const cid = 'c0ffee';
@@ -194,6 +201,14 @@ else {
   const tf = ask(['--family', 'neon', '--json'], { env: { STUB_MODE: 'token-file' } });
   ok('a log saying agy kept its token in a file → exit 4, the answer not used', tf.code === 4 && tf.j?.answer === null
     && /keeping its Google sign-in token in a file .*"file-based token storage"/.test(tf.j?.error ?? ''), show(tf));
+  const nolog = ask(['--family', 'neon', '--json'], { env: { STUB_MODE: 'no-log' } });
+  ok('a call that leaves no log → exit 4, the answer not used: whether the token went to a file is unknown', nolog.code === 4 && nolog.j?.answer === null
+    && /its answer was not used: agy left no log of the call at .*, so whether it kept its Google sign-in token in a file is unknown/.test(nolog.j?.error ?? ''), show(nolog));
+  const leftH = home();
+  const left = ask(['--family', 'neon', '--json'], { h: leftH, env: { STUB_MODE: 'token-left' } });
+  ok('a call after which the token file exists → exit 4, naming it and the fix, even with no line in the log', left.code === 4 && left.j?.answer === null
+    && (left.j?.error ?? '').includes(`${path.join(leftH, '.gemini', 'antigravity-cli', 'antigravity-oauth-token')} holds agy's Google sign-in token in plain text`)
+    && /delete it: agy signs in from the keychain without it/.test(left.j?.error ?? ''), show(left));
   ok('…and the error names the token file and the fix', /If \/.*\/\.gemini\/antigravity-cli\/antigravity-oauth-token now exists, delete it: agy signs in from the keychain without it/
     .test(tf.j?.error ?? '') && !/check what it wrote/.test(tf.j?.error ?? ''), show(tf));
   fs.rmSync(inside);

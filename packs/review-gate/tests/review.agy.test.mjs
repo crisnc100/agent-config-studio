@@ -35,7 +35,8 @@ symlinkSync(process.execPath, join(NODE_BIN, 'node'))
 
 const FINDING = { issue: 'off-by-one in loop', file: 'a.js', line: '2', quote: 'for (let i = 0; i <= n; i++) {}', suggestion: 'use <', likelihood: 5, impact: 5, protected: false, trigger: 'calling f(3)' }
 const replyFor = `(schema) => String(schema).includes('"verdicts"') ? '{"verdicts":[]}' : String(schema).includes('"scores"') ? '{"scores":[]}' : ${J(J({ findings: [FINDING] }))}`
-// STUB_AGY: ok | status-error | denied-empty | approval-denied | other-model | not-json | clean | retry | token-file.
+// STUB_AGY: ok | status-error | denied-empty | approval-denied | other-model | not-json | clean | retry | token-file | no-log |
+// token-left. Every mode but no-log writes a log line to --log-file, as agy does; token-left leaves agy's token file in HOME.
 // STUB_AGY_VERSION overrides what --version prints; STUB_AGY_VERSION=fail exits 1. STUB_PEEK: paths (joined by \n) the
 // stub tries to read, recording each result. The saved subagent run is written into the stub: inside the wall it
 // cannot read this checkout.
@@ -55,7 +56,12 @@ fs.writeFileSync(path.join(${J(ARGV)}, 'agy-' + process.pid + '.json'), JSON.str
   autoUpdateOff: process.env.AGY_CLI_DISABLE_AUTO_UPDATE ?? null, tmpdir: process.env.TMPDIR ?? null,
   tmpdirExists: !!process.env.TMPDIR && fs.existsSync(process.env.TMPDIR), peek }))
 const mode = process.env.STUB_AGY || 'ok'
+if (mode !== 'no-log' && mode !== 'status-error-no-log') fs.appendFileSync(a[a.indexOf('--log-file') + 1], 'I1121 keyring.go:64] keyringAuth: loaded token\\n')
 if (mode === 'token-file') fs.appendFileSync(a[a.indexOf('--log-file') + 1], 'W1121 keyring.go] Using file-based token storage because a keyring timeout was recorded within the last 1h0m0s\\n')
+if (mode === 'token-left') {
+  const f = path.join(require('node:os').homedir(), '.gemini', 'antigravity-cli', 'antigravity-oauth-token')
+  fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, '{}')
+}
 const model = a[a.indexOf('--model') + 1]
 const out = (o) => console.log(JSON.stringify(o))
 out({ event: 'init', conversation_id: 'c', init: { model: mode === 'other-model' ? 'gemini-other' : model, cwd: process.cwd(), tools: [], permission_mode: 'default' } })
@@ -84,8 +90,8 @@ if (mode === 'approval-denied') {
   process.exit(0)
 }
 const response = mode === 'denied-empty' ? '' : mode === 'not-json' ? 'I looked and it is fine.' : mode === 'clean' ? '{"findings":[]}' : (${replyFor})(a[a.indexOf('--json-schema') + 1])
-out({ event: 'result', result: { conversation_id: 'c', status: mode === 'status-error' ? 'ERROR' : 'SUCCESS', response, num_turns: 1 } })
-process.exit(mode === 'status-error' ? 1 : 0)
+out({ event: 'result', result: { conversation_id: 'c', status: mode.startsWith('status-error') ? 'ERROR' : 'SUCCESS', response, num_turns: 1 } })
+process.exit(mode.startsWith('status-error') ? 1 : 0)
 `, 0o755)
 // claude and codex: a structured answer, every call recorded.
 const model = (name) => `#!${process.execPath}
@@ -227,6 +233,27 @@ macTest('a review from HOME, or a folder holding it, is refused: the wall would 
   assert.notEqual(r.status, 0, r.out)
   assert.match(r.out, /agy review refused: agy would read .*, which is your home folder or holds it/)
   assert.equal(calls('agy').length, 0)
+})
+
+macTest('a review whose agy left no log fails and logs none: whether the token went to a file is unknown', () => {
+  const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'no-log' })
+  assert.notEqual(r.status, 0, r.out)
+  assert.match(r.out, /agy review failed: agy left no log of the call at .*, so whether it kept its Google sign-in token in a file is unknown/)
+  assert.equal(logLines().filter((e) => e.type === 'review').length, 0)
+})
+
+macTest('a failed agy call that left no log keeps its own error beside the missing log', () => {
+  const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'status-error-no-log' })
+  assert.notEqual(r.status, 0, r.out)
+  assert.match(r.out, /agy review failed \(exit 1, status ERROR\)[\s\S]*; agy left no log of the call/)
+})
+
+macTest('a review after which agy\'s token file exists fails naming it and the fix, even with no line in the log', () => {
+  const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'token-left' })
+  assert.notEqual(r.status, 0, r.out)
+  assert.ok(r.out.includes(`agy review failed: ${join(HOME, '.gemini/antigravity-cli/antigravity-oauth-token')} holds agy's Google sign-in token in plain text`), r.out)
+  assert.match(r.out, /delete it: agy signs in from the keychain without it/)
+  assert.equal(logLines().filter((e) => e.type === 'review').length, 0)
 })
 
 macTest('a review whose agy log says it kept the sign-in token in a file fails and logs none', () => {

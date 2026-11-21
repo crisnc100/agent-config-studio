@@ -15,7 +15,7 @@ import { tempDir } from './fixtures/cleanup.mjs';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ASK = path.join(ROOT, 'tools', 'ask-model.mjs');
 const J = JSON.stringify;
-const { AGY_ENV, AGY_WALL, SANDBOX_EXEC, agyReadRoot, agyTokenFile, agyTokenLeft, agyWall, agyWallCanary, agyWallParams, agyWallProblem } = await import(ASK);
+const { AGY_ENV, AGY_WALL, SANDBOX_EXEC, agyAfterCall, agyReadRoot, agyTokenLeft, agyWall, agyWallCanary, agyWallParams, agyWallProblem } = await import(ASK);
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -113,10 +113,19 @@ console.log('\nagy wall: refusals that need no sandbox');
   ok('a folder whose name only starts with HOME\'s is not HOME', agyReadRoot(near, home).root === near, J(agyReadRoot(near, home)));
   fs.rmSync(near, { recursive: true });
   const log = path.join(plain, 'call.log');
-  ok('agyTokenFile: a log without the line is fine', (fs.writeFileSync(log, 'I keyringAuth: loaded token\n'), agyTokenFile(log)) === false);
-  ok('…the line agy writes when it keeps the token in a file is caught', (fs.writeFileSync(log, 'W Using file-based token storage because a keyring timeout was recorded within the last 1h0m0s\n'), agyTokenFile(log)) === true);
-  ok('…as is its other wording', (fs.writeFileSync(log, 'Keyring set failed (x); using file-based token storage for writes for the rest of this process\n'), agyTokenFile(log)) === true);
-  ok('…a log agy never wrote is not', agyTokenFile(path.join(plain, 'none.log')) === false);
+  const after = (text, h = plain) => { fs.writeFileSync(log, text); return agyAfterCall(log, h); };
+  ok('agyAfterCall: a log without the line, and no token file, is fine', after('I keyringAuth: loaded token\n') === null, J(after('I keyringAuth: loaded token\n')));
+  ok('…the line agy writes when it keeps the token in a file is caught', /"file-based token storage"/.test(after('W Using file-based token storage because a keyring timeout was recorded within the last 1h0m0s\n') ?? ''));
+  ok('…as is its other wording', /"file-based token storage"/.test(after('Keyring set failed (x); using file-based token storage for writes for the rest of this process\n') ?? ''));
+  const missing = agyAfterCall(path.join(plain, 'none.log'), plain);
+  ok('…a log agy never wrote is refused with its own message', /agy left no log of the call at .*none\.log, so whether it kept its Google sign-in token in a file is unknown/.test(missing ?? ''), J(missing));
+  if (process.getuid?.() !== 0) {
+    fs.writeFileSync(log, 'I keyringAuth: loaded token\n'); fs.chmodSync(log, 0o000);
+    const unreadable = agyAfterCall(log, plain);
+    fs.chmodSync(log, 0o600);
+    ok('…an unreadable one with its own message, not as if the line were read', /could not be read \(EACCES\), so whether it kept/.test(unreadable ?? '')
+      && !/"file-based token storage"\)/.test(unreadable ?? ''), J(unreadable));
+  }
   const th = fs.realpathSync(tempDir('acs-agy-wall-token-home-'));
   const tf = path.join(th, '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
   ok('agyTokenLeft: no token file is fine', agyTokenLeft(th) === null, J(agyTokenLeft(th)));
@@ -126,6 +135,11 @@ console.log('\nagy wall: refusals that need no sandbox');
   ok('…the file agy writes is named', found?.file === tf && /holds agy's Google sign-in token in plain text/.test(found.why), J(found));
   fs.rmSync(tf); fs.symlinkSync(path.join(th, 'nowhere'), tf);
   ok('…so is a link at that path, even one that leads nowhere', agyTokenLeft(th)?.file === tf, J(agyTokenLeft(th)));
+  fs.rmSync(tf);
+  fs.writeFileSync(tf, '{}');
+  const leftBehind = agyAfterCall((fs.writeFileSync(path.join(th, 'call.log'), 'I keyringAuth: loaded token\n'), path.join(th, 'call.log')), th);
+  ok('agyAfterCall: a token file found after the call is named with the fix, though the log is clean', leftBehind?.includes(`${tf} holds agy's Google sign-in token in plain text`)
+    && /delete it: agy signs in from the keychain without it/.test(leftBehind), J(leftBehind));
   fs.rmSync(tf);
   if (process.getuid?.() !== 0) {
     fs.chmodSync(path.dirname(tf), 0o000);
