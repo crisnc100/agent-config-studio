@@ -194,7 +194,11 @@ const AGY_ENV = { CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1', AGY_CLI_DISABLE_AUTO_UPD
 // review (ROOT), the call's own temp folder and log, the agy executable, and the few files of agy's own state a
 // print-mode call reads. Its past conversations, brain, history and summaries (cache/conversation_metadata.json holds
 // summaries too) stay walled off; a call runs without them. The login keychain's file is allowed back because securityd
-// lets a sandboxed process use the keychain only when it may read that file; it holds the keychain encrypted.
+// lets a sandboxed process use the keychain only when it may read that file; its secrets are encrypted, but which
+// services and accounts it holds is in clear text. Saving a refreshed token (agy runs /usr/bin/security) also reads
+// the keychain's empty lock file (.fl and eight hex digits) and the login.keychain-db.sb-* copy it writes before
+// renaming it into place; refused either, the save fails (exit 161) and agy keeps the token in a plain file instead.
+// The sandbox's regex has no {n} counts, hence the eight classes.
 // xcrun_db in macOS's own temp folder keeps git (an xcrun shim) from rebuilding its cache on every call. Only reads
 // of contents (file-read-data) are refused: a path still resolves and stats. Writes are refused only to agy's
 // conversation summaries (conversation_summaries.db with its -wal and -shm, jetbox_summaries_proto.pb): unable to read
@@ -209,6 +213,8 @@ const AGY_WALL = [
   '(allow file-read-data',
   '  (subpath (param "ROOT")) (subpath (param "CALL_TMP")) (literal (param "LOG")) (literal (param "AGY"))',
   '  (literal (string-append (param "HOME") "/Library/Keychains/login.keychain-db"))',
+  '  (regex (string-append "^" (regex-quote (param "HOME")) "/Library/Keychains/\\\\.fl[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]$"))',
+  '  (regex (string-append "^" (regex-quote (param "HOME")) "/Library/Keychains/login\\\\.keychain-db\\\\.sb-[0-9a-f]+-[A-Za-z0-9]+$"))',
   '  (subpath (string-append (param "HOME") "/.gemini/config"))',
   '  (subpath (string-append (param "HOME") "/.gemini/antigravity-cli/builtin"))',
   '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/settings.json"))',
@@ -225,7 +231,8 @@ const AGY_WALL = [
 ].join('\n');
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
 // agy's log line when it keeps the Google sign-in token in a file rather than the keychain (after a keychain timeout,
-// a failed keychain write, or on request). A walled call that logs it fails: that file may sit where a later call reads.
+// a failed keychain write, or on request). A walled call that logs it fails: the file is a plaintext Google token at
+// rest, readable by everything on this Mac outside the wall.
 const AGY_TOKEN_FILE = /file-based token storage/i;
 
 /**

@@ -2461,6 +2461,8 @@ const AGY_WALL = [
   '(allow file-read-data',
   '  (subpath (param "ROOT")) (subpath (param "CALL_TMP")) (literal (param "LOG")) (literal (param "AGY"))',
   '  (literal (string-append (param "HOME") "/Library/Keychains/login.keychain-db"))',
+  '  (regex (string-append "^" (regex-quote (param "HOME")) "/Library/Keychains/\\\\.fl[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]$"))',
+  '  (regex (string-append "^" (regex-quote (param "HOME")) "/Library/Keychains/login\\\\.keychain-db\\\\.sb-[0-9a-f]+-[A-Za-z0-9]+$"))',
   '  (subpath (string-append (param "HOME") "/.gemini/config"))',
   '  (subpath (string-append (param "HOME") "/.gemini/antigravity-cli/builtin"))',
   '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/settings.json"))',
