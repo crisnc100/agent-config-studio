@@ -39,7 +39,7 @@ import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
 import { codexProcessesUsingHome, stopProcesses } from './lib/usage/processes.js';
 import { loadSeats } from './lib/usage/seats.js';
 import {
-  createModelsState, setModel, resetModel, dismiss, applySidecar, whereUsed,
+  createModelsState, setModel, resetModel, dismiss, applySidecar, whereUsed, adoptFamily, removeFamily,
 } from './lib/models-panel.js';
 import { loadRegistry } from './lib/models.js';
 import { rolesView, setRole, resetRole, deleteRole, setFlavor, resetFlavor } from './lib/roles-panel.js';
@@ -1305,6 +1305,17 @@ export function createApp(opts = {}) {
     return setModel({ family, id, confirm: confirm === true, catalogs: s.catalogs, claudeVersion: s.claudeVersion });
   },
   'POST /api/models/reset': async (req) => resetModel({ family: (await readBody(req)).family }),
+  /** Families added from Antigravity's list: families.json only, never models.json. */
+  'POST /api/models/adopt': async (req) => {
+    requireStrict(req);
+    const { id } = await objectBody(req);
+    return adoptFamily({ id, catalogs: (await models.current()).catalogs });
+  },
+  'POST /api/models/remove': async (req) => {
+    requireStrict(req);
+    const { family } = await objectBody(req);
+    return removeFamily({ family });
+  },
 
   /** Accepting writes exactly what a manual edit of the same id writes. */
   'POST /api/models/accept': async (req) => {
