@@ -37,7 +37,16 @@ console.log('\nagy wall: one profile, the same in both runtimes');
     && /^\(deny file-write\*$/m.test(AGY_WALL), AGY_WALL);
   ok('the refused roots: /Users, /Volumes, /private/tmp, TMPDIR, macOS\'s per-user temp folder and HOME', lines[2]
     === '(deny file-read-data (subpath "/Users") (subpath "/Volumes") (subpath "/private/tmp") (subpath (param "TMP")) (subpath (param "USER_TMP")) (subpath (param "HOME")))', lines[2]);
-  const [allowBlock, writeBlock = ''] = AGY_WALL.split('(allow file-read-data')[1].split('(deny file-write*');
+  // The write rule, found by matching its parentheses, so nothing after it is mistaken for part of it.
+  const writeStart = AGY_WALL.indexOf('(deny file-write*');
+  let writeEnd = writeStart;
+  for (let depth = 0; writeStart !== -1 && writeEnd < AGY_WALL.length; writeEnd++) {
+    if (AGY_WALL[writeEnd] === '(') depth++;
+    else if (AGY_WALL[writeEnd] === ')' && --depth === 0) break;
+  }
+  const writeBlock = writeStart === -1 ? '' : AGY_WALL.slice(writeStart, writeEnd + 1);
+  const outsideWrite = writeStart === -1 ? AGY_WALL : AGY_WALL.slice(0, writeStart) + AGY_WALL.slice(writeEnd + 1);
+  const allowBlock = outsideWrite.split('(allow file-read-data')[1] ?? '';
   const allowed = [...allowBlock.matchAll(
     /\((subpath|literal|regex) (\(param "[A-Z_]+"\)|\(string-append (?:\(param "[A-Z_]+"\)|"\^" \(regex-quote \(param "[A-Z_]+"\)\)) "[^"]+"\))\)/g)]
     .map((m) => `${m[1]} ${m[2]}`);
@@ -66,7 +75,8 @@ console.log('\nagy wall: one profile, the same in both runtimes');
   const filters = (AGY_WALL.match(/\((subpath|literal|regex|prefix) /g) || []).length;
   ok('every filter in the profile is one of those three lists', filters === 6 + allowed.length + unwritable.length,
     `${filters} filters, ${6 + allowed.length + unwritable.length} listed`);
-  ok('nothing of agy\'s past conversations is allowed back', !/conversations|brain|history|summar|conversation_metadata|last_conversations|implicit|annotations/.test(allowBlock));
+  ok('nothing of agy\'s past conversations is allowed back anywhere in the profile outside the write rule',
+    !/conversations|brain|history|summar|conversation_metadata|last_conversations|implicit|annotations/.test(outsideWrite), outsideWrite);
   ok('SANDBOX_EXEC is the system binary by absolute path', SANDBOX_EXEC === '/usr/bin/sandbox-exec');
   ok('agy\'s updater is switched off the way it honours ("true", not "1")', AGY_ENV.AGY_CLI_DISABLE_AUTO_UPDATE === 'true', J(AGY_ENV));
   ok('agyWall passes each parameter with -D and the profile with -p, then the command, in that order',
@@ -238,8 +248,12 @@ if (process.platform !== 'darwin') {
   ok('agy\'s other state files stay writable', rewrite.status === 0 && fs.readFileSync(onboarding, 'utf8') === '{}\n', J(rewrite));
 
   ok('the canary passes on the real paths', agyWallCanary(p.params) === null, J(agyWallCanary(p.params)));
-  ok('…and leaves no test file behind', fs.readdirSync(logs).filter((f) => f.startsWith('acs-agy-canary-')).length === 0
-    && fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith('acs-agy-canary-')).length === 0, J(fs.readdirSync(logs)));
+  // Cleanup is checked in folders this test owns: another agy call on the machine can have a canary of its own in the
+  // shared temp folder at any moment.
+  const own = { ...p.params, TMP: fs.realpathSync(tempDir('acs-agy-wall-own-tmp-')), USER_TMP: fs.realpathSync(tempDir('acs-agy-wall-own-user-tmp-')) };
+  const ownCanary = agyWallCanary(own);
+  const leftover = [own.TMP, own.USER_TMP, logs].flatMap((d) => fs.readdirSync(d).filter((f) => f.startsWith('acs-agy-canary-')).map((f) => path.join(d, f)));
+  ok('…and, run on folders this test owns, passes and leaves no test file behind', ownCanary === null && leftover.length === 0, J({ ownCanary, leftover }));
   const leaky = agyWallCanary({ ...p.params, ROOT: p.params.TMP });
   ok('a wall that lets the temp folder through fails the canary', /the wall let a test read .*acs-agy-canary-/.test(leaky ?? ''), J(leaky));
   const homeLeak = agyWallCanary({ ...p.params, ROOT: logs });
