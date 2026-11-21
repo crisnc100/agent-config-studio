@@ -2632,11 +2632,13 @@ function spawnAsync(cmd, args) {
       err += d
     })
     c.on('error', reject)
-    c.on('close', (code) =>
-      code === 0
-        ? resolve(out)
-        : reject(new Error(`${cmd} exited ${code}: ${String(err).slice(0, 300)}`)),
-    )
+    c.on('close', (code) => {
+      if (code === 0) return resolve(out)
+      // Claude can report a failure (a usage limit, say) only as its is_error JSON on stdout.
+      let said = ''
+      try { const wrap = JSON.parse(out); if (wrap?.is_error && wrap.result != null) said = ` · ${String(wrap.result).slice(0, 300)}` } catch { /* not its JSON */ }
+      reject(new Error(`${cmd} exited ${code}: ${String(err).slice(0, 300)}${said}`))
+    })
   })
 }
 
@@ -5137,7 +5139,8 @@ function evalQuota(text) {
   return { reset: resets ? resets[1] : null }
 }
 async function evalOne(m, c, run, root, timeoutMs) {
-  const dir = join(root, `${m.family}-${c.id}-${run}`), logDir = join(dir, 'log')
+  // A folder per family: case ids and family names both may hold a dash, so one joined name could belong to two pairs.
+  const dir = join(root, m.family, `${c.id}-${run}`), logDir = join(dir, 'log')
   const started = Date.now()
   const base = { id: c.id, kind: c.kind, run, caseHash: c.hash }
   let error = null, record = null, repo = null, r = null, denials = { all: [], denied: 0 }
@@ -5214,9 +5217,15 @@ async function runEval() {
     process.exitCode = 1
     return
   }
+  // Following the hint after a --fresh run would discard what it just saved.
+  const resumeHint = `re-run the same command ${hasFlag('--fresh') ? 'without --fresh ' : ''}to resume`
+  // The case reviews run detached, in groups of their own: whatever ends this process (a signal, a thrown write
+  // error, a normal exit) takes every live group with it, so none keeps spending quota with nobody to save its result.
+  const killChildren = () => { for (const child of EVAL_CHILDREN) try { process.kill(-child.pid, 'SIGKILL') } catch { /* gone */ } }
+  process.once('exit', killChildren)
   const stopChildren = () => {
-    for (const child of EVAL_CHILDREN) try { process.kill(-child.pid, 'SIGKILL') } catch { /* gone */ }
-    console.error('ℹ the finished reviews are saved: re-run the same command to resume (--fresh starts over)')
+    killChildren()
+    console.error(`ℹ the finished reviews are saved: ${resumeHint}`)
     process.exit(130)
   }
   process.once('SIGINT', stopChildren)
@@ -5226,45 +5235,56 @@ async function runEval() {
   const evalLog = join(dirname(LOG_PATH), 'eval-log.jsonl'), progressDir = join(dirname(LOG_PATH), 'eval-progress')
   mkdirSync(progressDir, { recursive: true })
   const prefix = jobs > 1 ? (m) => `${m.family}: ` : () => ''
-  const byFamily = new Map(), stopped = []
-  // One family's reviews, each saved to its progress file as it finishes. A run with the same family, cases folder,
-  // repeat, runtime and prompt picks up the saved reviews of cases whose hash still matches; the file goes once the
-  // family's record is logged, so only an unfinished run is ever resumed.
+  const byFamily = new Map(), stopped = [], progressFiles = []
+  const hashes = new Map(cases.map((c) => [c.id, c.hash]))
+  // One family's reviews, each saved to its progress file as it finishes. A run with the same family, model, effort,
+  // cases folder, repeat, runtime and prompt picks up the saved reviews of cases whose hash still matches (the newest
+  // entry per case and run). Once the family's record is logged, the file ends with that record, so a resume reuses it
+  // instead of running the family again; the files go only when every family of the invocation has its record.
   const runFamily = async (m) => {
     const promptHash = evalPromptHash(m)
-    const key = sha256(JSON.stringify({ family: m.family, casesDir, repeat, runtimeHash, promptHash })).slice(0, 16)
+    const key = sha256(JSON.stringify({ family: m.family, model: m.id ?? null, effort: m.effort ?? null, team: !!m.team, casesDir, repeat,
+      runtimeHash, promptHash })).slice(0, 16)
     const progress = join(progressDir, `${m.family}-${key}.jsonl`)
+    progressFiles.push(progress)
     if (hasFlag('--fresh')) rmSync(progress, { force: true })
     const saved = new Map()
+    let logged = null
     for (const line of existsSync(progress) ? readFileSync(progress, 'utf8').split('\n') : []) {
-      try {
-        const r = JSON.parse(line)
-        const k = `${r?.id}\0${r?.run}`
-        if (r && r.outcome !== 'errored' && !saved.has(k)) saved.set(k, r)
-      } catch { /* a line cut short by a stop */ }
+      let r
+      try { r = JSON.parse(line) } catch { continue } // a line cut short by a stop
+      if (r?.done?.type === 'eval') logged = r.done
+      else if (r && r.outcome !== 'errored' && hashes.get(r.id) === r.caseHash && Number.isSafeInteger(r.run) && r.run <= repeat) saved.set(`${r.id}\0${r.run}`, r)
     }
-    const hashes = new Map(cases.map((c) => [c.id, c.hash]))
-    for (const [k, r] of saved) if (hashes.get(r.id) !== r.caseHash || r.run > repeat) saved.delete(k)
     console.log(`\n▶ ${m.family} (${m.vendor}${m.id ? ` · ${m.id}` : ''}${agyRun(m) ? ' · model unverified' : ''})`)
+    if (logged) {
+      console.log(`ℹ ${prefix(m)}its record was logged by an earlier run of this command that did not finish; reusing it`)
+      byFamily.set(m, logged)
+      return
+    }
     const total = cases.length * repeat
     if (saved.size) console.log(`ℹ ${prefix(m)}resuming: ${saved.size} of ${total} reviews saved by an earlier run (${progress}); --fresh starts over`)
     const results = []
-    for (const c of cases)
-      for (let run = 1; run <= repeat; run++) {
-        const done = saved.get(`${c.id}\0${run}`)
-        if (done) { results.push(done); continue }
-        const result = await evalOne(m, c, run, root, timeoutMs)
-        if (result.quota) {
-          const kept = results.filter((x) => x.outcome !== 'errored').length
-          stopped.push({ m, line: `✖ ${m.family} stopped: its quota is used up; ${result.quota.reset ? `it resets ${result.quota.reset}` : 'it did not say when it resets'}. ` +
-            `${kept} of ${total} reviews saved; re-run the same command to resume.` })
-          console.error(stopped.at(-1).line)
-          return
+    try {
+      for (const c of cases)
+        for (let run = 1; run <= repeat; run++) {
+          const done = saved.get(`${c.id}\0${run}`)
+          if (done) { results.push(done); continue }
+          const result = await evalOne(m, c, run, root, timeoutMs)
+          if (result.quota) {
+            const kept = results.filter((x) => x.outcome !== 'errored').length
+            stopped.push({ m, line: `✖ ${m.family} stopped: its quota is used up; ${result.quota.reset ? `it resets ${result.quota.reset}` : 'it did not say when it resets'}. ` +
+              `${kept} of ${total} reviews saved; ${resumeHint}.` })
+            console.error(stopped.at(-1).line)
+            return
+          }
+          if (result.outcome !== 'errored') appendFileSync(progress, `${JSON.stringify(result)}\n`)
+          results.push(result)
+          console.log(evalCaseLine(result, repeat).replace(/^ {2}/, `  ${prefix(m)}`))
         }
-        if (result.outcome !== 'errored') appendFileSync(progress, `${JSON.stringify(result)}\n`)
-        results.push(result)
-        console.log(evalCaseLine(result, repeat).replace(/^ {2}/, `  ${prefix(m)}`))
-      }
+    } finally {
+      try { if (!readdirSync(join(root, m.family)).length) rmSync(join(root, m.family), { recursive: true }) } catch { /* never made */ }
+    }
     const ran = results.find((r) => r.outcome !== 'errored')
     const modelUsed = [...new Set(results.map((r) => r.modelUsed).filter(Boolean))]
     const record = {
@@ -5274,11 +5294,12 @@ async function runEval() {
       promptHash, casesDir, caseIds: cases.map((c) => c.id), repeat, timeoutMs, totals: evalTotals(results), cases: results,
     }
     withLogLock(() => appendFileSync(evalLog, `${JSON.stringify(record)}\n`), evalLog)
-    rmSync(progress, { force: true })
+    appendFileSync(progress, `${JSON.stringify({ done: record })}\n`)
     byFamily.set(m, record)
   }
   const queue = [...families]
   await Promise.all(Array.from({ length: Math.min(jobs, families.length) }, async () => { while (queue.length) await runFamily(queue.shift()) }))
+  if (!stopped.length) for (const file of progressFiles) rmSync(file, { force: true })
   const records = families.filter((m) => byFamily.has(m)).map((m) => byFamily.get(m))
   console.log('')
   for (const r of records) {
