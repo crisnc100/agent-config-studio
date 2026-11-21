@@ -2451,7 +2451,8 @@ const agyCmuxHook = (command) => typeof command === 'string' && AGY_CMUX_HOOK_RE
 const AGY_ENV = { CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1', AGY_CLI_DISABLE_AUTO_UPDATE: 'true' }
 // The macOS sandbox every agy review runs in: file contents are refused under /Users, /Volumes, the temp folders and
 // HOME, then allowed back for the reviewed tree, the call's temp folder and log, the agy executable and the few files
-// of agy's own state a call reads, never its past conversations. ask-model's AGY_WALL has the reasons for each line;
+// of agy's own state a call reads, never its past conversations; agy may not rewrite its conversation summaries.
+// ask-model's AGY_WALL has the reasons for each line;
 // tests/agy-wall.mjs keeps the two identical.
 const AGY_WALL = [
   '(version 1)',
@@ -2468,6 +2469,11 @@ const AGY_WALL = [
   '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/cache/default_project_id.txt"))',
   '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/cache/onboarding.json"))',
   '  (literal (string-append (param "USER_TMP") "/xcrun_db")))',
+  '(deny file-write*',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/conversation_summaries.db"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/conversation_summaries.db-wal"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/conversation_summaries.db-shm"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/jetbox_summaries_proto.pb")))',
 ].join('\n')
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec'
 const AGY_TOKEN_FILE = /file-based token storage/i
@@ -2610,7 +2616,7 @@ function lastTurnText(steps) {
 }
 // Deny-rule refusals inside the subagents a turn invoked, read from each subagent's transcript (its steps are not in
 // the parent's stream); a transcript outside ~/.gemini/antigravity-cli/brain is not read. ask-model's agySubagentDenials.
-function agySubagentDenials(steps, home = homedir()) {
+function agySubagentDenials(steps, home = homedir(), who = 'the model') {
   const denied = [], notes = [], seen = new Set()
   let brain = null
   try { brain = realpathSync(join(home, '.gemini', 'antigravity-cli', 'brain')) + sep } catch { /* no brain folder: every transcript is outside it */ }
@@ -2620,7 +2626,12 @@ function agySubagentDenials(steps, home = homedir()) {
       seen.add(s.log_uri)
       const name = String(s.type_name ?? s.conversation_id ?? 'a subagent')
       let file
-      try { file = realpathSync(fileURLToPath(s.log_uri)) } catch (e) { notes.push(`subagent ${name}'s transcript could not be read (${e.code || e.message}); its denied calls are unknown`); continue }
+      try { file = realpathSync(fileURLToPath(s.log_uri)) } catch (e) {
+        // Inside the wall a subagent never starts and leaves no transcript (ask-model's agySubagentDenials).
+        notes.push(e.code === 'ENOENT' ? `${who} tried to start a subagent (${name}); subagents can't run inside the sandbox wall`
+          : `subagent ${name}'s transcript could not be read (${e.code || e.message}); its denied calls are unknown`)
+        continue
+      }
       if (!brain || !file.startsWith(brain) || basename(file) !== 'transcript.jsonl') { notes.push(`subagent ${name}'s transcript is not in agy's brain folder, so it was not read; its denied calls are unknown`); continue }
       let text
       try {
@@ -2638,7 +2649,7 @@ function agySubagentDenials(steps, home = homedir()) {
 }
 // The structured answer from agy's stream-json events. A denied tool call does not fail agy's turn (SUCCESS, exit 0):
 // it is a tool step that ended ERROR on a deny rule, so each is named on stderr, and an empty answer fails the review.
-function parseAgy(id, r) {
+function parseAgy(id, r, family = id) {
   const events = []
   for (const line of String(r.stdout || '').split('\n')) {
     if (!line.trim()) continue
@@ -2652,7 +2663,7 @@ function parseAgy(id, r) {
   // Actions that needed an approval print mode cannot give (a read outside the workspace, say); the turn still succeeds.
   const unapproved = Array.isArray(res?.denied_actions) ? res.denied_actions : []
   for (const d of unapproved) console.warn(`⚠ agy review: denied ${d?.action ?? '(unnamed)'}: needed an approval print mode cannot give`)
-  const sub = agySubagentDenials(steps)
+  const sub = agySubagentDenials(steps, undefined, family)
   for (const d of sub.denied) console.warn(`⚠ agy review: denied ${d}`)
   for (const n of sub.notes) console.warn(`⚠ agy review: ${n}`)
   if (r.error || r.status !== 0 || !isPlainObject(res))
@@ -2712,7 +2723,7 @@ function runAgy(m, prompt, schema) {
     console.warn(`ℹ agy review: model unverified (agy names only the model it was asked for, ${m.id}); its log: ${logFile}`)
     if (agyTokenFile(logFile))
       throw new Error(`agy review failed: agy switched to keeping its Google sign-in token in a file instead of the keychain (its log, ${logFile}, says "file-based token storage"); check what it wrote under ~/.gemini before running agy again`)
-    return parseAgy(m.id, r)
+    return parseAgy(m.id, r, m.family)
   } finally {
     rmSync(callTmp, { recursive: true, force: true })
   }

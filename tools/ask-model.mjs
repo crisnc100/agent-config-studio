@@ -196,8 +196,11 @@ const AGY_ENV = { CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1', AGY_CLI_DISABLE_AUTO_UPD
 // summaries too) stay walled off; a call runs without them. The login keychain's file is allowed back because securityd
 // lets a sandboxed process use the keychain only when it may read that file; it holds the keychain encrypted.
 // xcrun_db in macOS's own temp folder keeps git (an xcrun shim) from rebuilding its cache on every call. Only reads
-// of contents (file-read-data) are refused: a path still resolves and stats. Writes are not limited. Every path comes
-// in as a -D parameter, never spliced into this text; the review runtime carries the same literal and
+// of contents (file-read-data) are refused: a path still resolves and stats. Writes are refused only to agy's
+// conversation summaries (conversation_summaries.db with its -wal and -shm, jetbox_summaries_proto.pb): unable to read
+// them inside the wall, agy would replace them with files holding only this call, emptying them for every agy session
+// until one started outside the wall rebuilt them; refused, it logs "summary store recreate failed" and carries on.
+// Every path comes in as a -D parameter, never spliced into this text; the review runtime carries the same literal and
 // tests/agy-wall.mjs keeps them identical. builds/gemini-family/containment-probe.md (the 1.5.14 round).
 const AGY_WALL = [
   '(version 1)',
@@ -214,6 +217,11 @@ const AGY_WALL = [
   '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/cache/default_project_id.txt"))',
   '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/cache/onboarding.json"))',
   '  (literal (string-append (param "USER_TMP") "/xcrun_db")))',
+  '(deny file-write*',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/conversation_summaries.db"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/conversation_summaries.db-wal"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/conversation_summaries.db-shm"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/jetbox_summaries_proto.pb")))',
 ].join('\n');
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
 // agy's log line when it keeps the Google sign-in token in a file rather than the keychain (after a keychain timeout,
@@ -1367,7 +1375,7 @@ function grokBuildProof(id, sessionId, cwd, grokHome) {
  * refuses, exit 2). A denied tool call does not fail agy's turn (status SUCCESS, exit 0); it shows as a tool step that
  * ended ERROR on a deny rule, and with no answer beside it the call failed.
  */
-function readAgy(id, r) {
+function readAgy(id, r, family) {
   const events = [];
   for (const line of String(r.stdout || '').split('\n')) {
     if (!line.trim()) continue;
@@ -1383,7 +1391,7 @@ function readAgy(id, r) {
   if (Array.isArray(result?.denied_actions)) {
     for (const d of result.denied_actions) denied.push(`${d?.action ?? '(unnamed)'}: needed an approval print mode cannot give`);
   }
-  const sub = agySubagentDenials(steps);
+  const sub = agySubagentDenials(steps, undefined, family);
   denied.push(...sub.denied);
   if (r.code !== 0 || !isObject(result)) return { exit: 4, error: `agy failed (exit ${r.code}${result?.status ? `, status ${result.status}` : ''}): ${tail(r.stderr || r.stdout)}` };
   if (result.status !== 'SUCCESS') return { exit: 4, error: `agy reported status ${JSON.stringify(result.status ?? null)}: ${tail(result.response ?? r.stderr)}` };
@@ -1406,7 +1414,7 @@ function readAgy(id, r) {
  * ~/.gemini/antigravity-cli/brain, where a refused step is `status: "ERROR"` with the deny-rule message. A transcript
  * outside that folder is not read, and one that can't be read is named in `notes`: its refusals are unknown.
  */
-function agySubagentDenials(steps, home = os.homedir()) {
+function agySubagentDenials(steps, home = os.homedir(), who = 'the model') {
   const denied = [], notes = [], seen = new Set();
   let brain = null;
   try { brain = fs.realpathSync(path.join(home, '.gemini', 'antigravity-cli', 'brain')) + path.sep; } catch { /* no brain folder: every transcript is outside it */ }
@@ -1416,7 +1424,13 @@ function agySubagentDenials(steps, home = os.homedir()) {
       seen.add(s.log_uri);
       const name = String(s.type_name ?? s.conversation_id ?? 'a subagent');
       let file;
-      try { file = fs.realpathSync(fileURLToPath(s.log_uri)); } catch (e) { notes.push(`subagent ${name}'s transcript could not be read (${e.code || e.message}); its denied calls are unknown`); continue; }
+      try { file = fs.realpathSync(fileURLToPath(s.log_uri)); } catch (e) {
+        // Inside the wall a subagent never gets its instructions (agy passes them through brain/, which stays walled
+        // off), so it does nothing and leaves no transcript: a note, not a refusal and not a failure.
+        notes.push(e.code === 'ENOENT' ? `${who} tried to start a subagent (${name}); subagents can't run inside the sandbox wall`
+          : `subagent ${name}'s transcript could not be read (${e.code || e.message}); its denied calls are unknown`);
+        continue;
+      }
       if (!brain || !file.startsWith(brain) || path.basename(file) !== 'transcript.jsonl') { notes.push(`subagent ${name}'s transcript is not in agy's brain folder, so it was not read; its denied calls are unknown`); continue; }
       let text;
       try {
@@ -1437,14 +1451,14 @@ function agySubagentDenials(steps, home = os.homedir()) {
  * The answer from one CLI's output, or an exit code and why. With a schema, the structured answer: claude's
  * structured_output (else its result), grok's structuredOutput (else its text), codex's stdout, as JSON text.
  */
-function readAnswer(vendor, id, r, schema = null, { cwd, grokHome } = {}) {
+function readAnswer(vendor, id, r, schema = null, { cwd, grokHome, family } = {}) {
   if (!VENDORS.includes(vendor)) return { exit: 4, error: unwired(vendor) };
   if (r.error) return { exit: r.error.code === 'ENOENT' ? 3 : 4, error: `${vendor} could not start: ${r.error.message}` };
   if (r.signal) return { exit: 4, error: `${vendor} was stopped by ${r.signal}` };
   let answer;
   let extra = {};
   if (vendor === 'agy') {
-    const got = readAgy(id, r);
+    const got = readAgy(id, r, family);
     if (got.answer === undefined) return got;
     ({ answer, ...extra } = got);
   } else if (vendor === 'codex') {
@@ -1647,7 +1661,7 @@ async function main(argv) {
   if (vendor === 'grok') {
     for (const line of String(r.stderr || '').split('\n')) if (/permission required:/.test(line)) process.stderr.write(`ask-model: grok: ${line.trim()}\n`);
   }
-  const got = readAnswer(vendor, m.id, r, schema, { cwd, grokHome: grokCall?.grokHome });
+  const got = readAnswer(vendor, m.id, r, schema, { cwd, grokHome: grokCall?.grokHome, family: m.family });
   if (wall && agyTokenFile(logFile)) {
     got.answer = undefined;
     got.exit = 4;
