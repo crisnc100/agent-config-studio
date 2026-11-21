@@ -200,9 +200,11 @@ if (settings.onHuman === 'none') finish('none', `PR #${n} needs a human (${why})
 if (labeled) finish('labeled', `PR #${n} already has ${LABEL} (${why}); no new comment`)
 if (DRY) finish('labeled', `PR #${n} would get ${LABEL} and one comment (${why})`)
 const listed = run('gh', ['label', 'list', '--search', LABEL, '--json', 'name', '--limit', '100'])
+if (listed.code !== 0) refuse(`gh label list failed (exit ${listed.code}): ${firstLine(listed)}`)
+// A search that matches no label prints nothing at all, not [].
 let repoLabels
-try { repoLabels = JSON.parse(listed.stdout) } catch { repoLabels = null }
-if (listed.code !== 0 || !Array.isArray(repoLabels)) refuse(`gh label list failed: ${firstLine(listed)}`)
+try { repoLabels = listed.stdout.trim() ? JSON.parse(listed.stdout) : [] } catch { repoLabels = null }
+if (!Array.isArray(repoLabels)) refuse(`gh label list gave unreadable output (exit 0): ${listed.stdout.trim().split('\n')[0].slice(0, 200)}`)
 if (!repoLabels.some((l) => l?.name === LABEL)) {
   const created = run('gh', ['label', 'create', LABEL, '--color', 'D93F0B', '--description', 'A human approves before this merges'])
   if (created.code !== 0) refuse(`gh label create failed: ${firstLine(created)}`)
