@@ -37,16 +37,22 @@ console.log('\nagy wall: one profile, the same in both runtimes');
     && /^\(deny file-write\*$/m.test(AGY_WALL), AGY_WALL);
   ok('the refused roots: /Users, /Volumes, /private/tmp, TMPDIR, macOS\'s per-user temp folder and HOME', lines[2]
     === '(deny file-read-data (subpath "/Users") (subpath "/Volumes") (subpath "/private/tmp") (subpath (param "TMP")) (subpath (param "USER_TMP")) (subpath (param "HOME")))', lines[2]);
-  // The write rule, found by matching its parentheses, so nothing after it is mistaken for part of it.
-  const writeStart = AGY_WALL.indexOf('(deny file-write*');
-  let writeEnd = writeStart;
-  for (let depth = 0; writeStart !== -1 && writeEnd < AGY_WALL.length; writeEnd++) {
-    if (AGY_WALL[writeEnd] === '(') depth++;
-    else if (AGY_WALL[writeEnd] === ')' && --depth === 0) break;
+  // The profile's top-level rules, each read whole by matching its parentheses (strings skipped), so every filter is
+  // counted in the rule it actually sits in and a filter moved into any other rule shows.
+  const rules = [];
+  for (let i = 0, depth = 0, from = -1, inString = false; i < AGY_WALL.length; i++) {
+    const c = AGY_WALL[i];
+    if (inString) { if (c === '\\') i++; else if (c === '"') inString = false; continue; }
+    if (c === '"') inString = true;
+    else if (c === '(') { if (depth++ === 0) from = i; }
+    else if (c === ')' && --depth === 0) rules.push(AGY_WALL.slice(from, i + 1));
   }
-  const writeBlock = writeStart === -1 ? '' : AGY_WALL.slice(writeStart, writeEnd + 1);
-  const outsideWrite = writeStart === -1 ? AGY_WALL : AGY_WALL.slice(0, writeStart) + AGY_WALL.slice(writeEnd + 1);
-  const allowBlock = outsideWrite.split('(allow file-read-data')[1] ?? '';
+  const head = (rule) => /^\((\S+(?: [^\s()]+)?)/.exec(rule)?.[1];
+  ok('the profile is exactly five rules: version, allow default, the read refusal, the read allow-back, the write refusal',
+    J(rules.map(head)) === J(['version 1', 'allow default', 'deny file-read-data', 'allow file-read-data', 'deny file-write*']), J(rules.map(head)));
+  const ruleOf = (h) => rules.find((r) => head(r) === h) ?? '';
+  const allowBlock = ruleOf('allow file-read-data'), writeBlock = ruleOf('deny file-write*');
+  const outsideWrite = rules.filter((r) => r !== writeBlock).join('\n');
   const allowed = [...allowBlock.matchAll(
     /\((subpath|literal|regex) (\(param "[A-Z_]+"\)|\(string-append (?:\(param "[A-Z_]+"\)|"\^" \(regex-quote \(param "[A-Z_]+"\)\)) "[^"]+"\))\)/g)]
     .map((m) => `${m[1]} ${m[2]}`);
@@ -71,10 +77,13 @@ console.log('\nagy wall: one profile, the same in both runtimes');
     '(string-append (param "HOME") "/.gemini/antigravity-cli/conversation_summaries.db-shm")',
     '(string-append (param "HOME") "/.gemini/antigravity-cli/jetbox_summaries_proto.pb")',
   ]), J(unwritable, null, 1));
-  // A filter written any other way (a path spelled out, a regex) would be missing from the lists above.
-  const filters = (AGY_WALL.match(/\((subpath|literal|regex|prefix) /g) || []).length;
-  ok('every filter in the profile is one of those three lists', filters === 6 + allowed.length + unwritable.length,
-    `${filters} filters, ${6 + allowed.length + unwritable.length} listed`);
+  // Each rule's own filters, counted in that rule alone: a filter written any other way (a path spelled out, a prefix)
+  // is missing from its rule's list, and one moved into another rule is counted there.
+  const filtersIn = (rule) => (rule.match(/\((subpath|literal|regex|prefix) /g) || []).length;
+  const perRule = rules.map((r) => [head(r), filtersIn(r)]);
+  ok('every filter sits in the rule its list belongs to: 6 refused roots, the allow-back list, the write list, none elsewhere',
+    J(perRule) === J([['version 1', 0], ['allow default', 0], ['deny file-read-data', 6], ['allow file-read-data', allowed.length], ['deny file-write*', unwritable.length]])
+    && filtersIn(AGY_WALL) === 6 + allowed.length + unwritable.length, J(perRule));
   ok('nothing of agy\'s past conversations is allowed back anywhere in the profile outside the write rule',
     !/conversations|brain|history|summar|conversation_metadata|last_conversations|implicit|annotations/.test(outsideWrite), outsideWrite);
   ok('SANDBOX_EXEC is the system binary by absolute path', SANDBOX_EXEC === '/usr/bin/sandbox-exec');
@@ -291,7 +300,17 @@ if (process.platform !== 'darwin') {
   const rewrite = spawnSync(SANDBOX_EXEC, agyWall(p.params, ['/bin/sh', '-c', `echo '{}' > '${onboarding}'`]), { encoding: 'utf8' });
   ok('agy\'s other state files stay writable', rewrite.status === 0 && fs.readFileSync(onboarding, 'utf8') === '{}\n', J(rewrite));
 
-  ok('the canary passes on the real paths', agyWallCanary(p.params) === null, J(agyWallCanary(p.params)));
+  // On the real paths, the folders this call's canary made are recorded as it makes them (its fs is this process's fs),
+  // so a canary another agy call has open in the shared temp folder cannot fail the check.
+  const made = [], mkdtemp = fs.mkdtempSync;
+  fs.mkdtempSync = (prefix, ...rest) => { const d = mkdtemp(prefix, ...rest); if (path.basename(prefix) === 'acs-agy-canary-') made.push(d); return d; };
+  let realCanary;
+  try { realCanary = agyWallCanary(p.params); } finally { fs.mkdtempSync = mkdtemp; }
+  ok('the canary passes on the real paths', realCanary === null, J(realCanary));
+  const madeIn = [...new Set(made.map((d) => path.dirname(d)))].sort();
+  ok('…and removes each folder it made there: one in the temp folder, the per-user temp folder and the log\'s folder',
+    J(madeIn) === J([...new Set([p.params.TMP, p.params.USER_TMP, logs])].sort()) && made.every((d) => !fs.existsSync(d)),
+    J({ made, left: made.filter((d) => fs.existsSync(d)) }));
   // Cleanup is checked in folders this test owns: another agy call on the machine can have a canary of its own in the
   // shared temp folder at any moment.
   const own = { ...p.params, TMP: fs.realpathSync(tempDir('acs-agy-wall-own-tmp-')), USER_TMP: fs.realpathSync(tempDir('acs-agy-wall-own-user-tmp-')) };
