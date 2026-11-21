@@ -389,10 +389,12 @@ macTest('denials inside a subagent (its transcript, not the parent stream) are r
   assert.equal(logLines().filter((e) => e.type === 'review').length, 1)
 })
 
-macTest('a subagent transcript outside agy\'s brain folder, or missing, is not read and is named as unknown', () => {
+macTest('a subagent with no transcript is named as one the wall stops; one outside agy\'s brain folder is not read and is named as unknown', () => {
   const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'subagent' })
   assert.equal(r.status, 0, r.out)
-  assert.match(r.stderr, /⚠ agy review: subagent perm-test-subagent's transcript could not be read \(ENOENT\); its denied calls are unknown/)
+  assert.match(r.stderr, /^⚠ agy review: neon tried to start a subagent \(perm-test-subagent\); subagents can't run inside the sandbox wall$/m)
+  assert.doesNotMatch(r.stderr, /transcript could not be read|⚠ agy review: denied/)
+  assert.equal(logLines().filter((e) => e.type === 'review').length, 1)
   const outside = join(ROOT, 'elsewhere', SUB_ID, '.system_generated/logs/transcript.jsonl')
   put(outside, TRANSCRIPT)
   mkdirSync(join(HOME, '.gemini/antigravity-cli/brain', SUB_ID, '.system_generated/logs'), { recursive: true })
@@ -416,6 +418,16 @@ macTest('agy denials inside eval cases and slices reach the parent\'s stderr, an
   const s = run(['--slices', 'a.js'], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'subagent' })
   assert.equal(s.status, 0, s.out)
   assert.equal(s.stderr.split('\n').filter((l) => l.startsWith('slice 1/1: ⚠ agy review: denied (subagent perm-test-subagent)')).length, 2, s.stderr)
+})
+
+macTest('in an eval, a subagent the wall stopped is passed on as a note, not counted as a denied call or an error', () => {
+  const cases = join(dirname(SCRIPT), 'eval', 'examples')
+  const e = run(['--eval', '--family', 'neon', '--cases', cases, '--yes'], { STUB_AGY: 'subagent' })
+  assert.equal(e.status, 0, e.out)
+  const notes = e.stderr.split('\n').filter((l) => / {2}[\w-]+: ⚠ agy review: neon tried to start a subagent \(perm-test-subagent\); subagents can't run inside the sandbox wall$/.test(l))
+  assert.equal(notes.length, 2, `one note per case: ${e.stderr}`)
+  const records = JSON.parse(e.stdout.split('===EVAL_JSON===')[1])
+  assert.deepEqual(records[0].cases.map((c) => [c.outcome === 'errored', c.denied ?? 0]), [[false, 0], [false, 0]], J(records[0].cases))
 })
 
 test('a Grade or recheck from an agy model is recorded and shown model unverified, whatever its verdict file says', () => {

@@ -263,9 +263,10 @@ else {
   const lines = r.err.split('\n').filter((l) => l.startsWith('ask-model: agy: denied (subagent perm-test-subagent)'));
   ok('the saved subagent run: its two deny-rule refusals are on stderr, the answer still stands', r.code === 0 && r.j?.answer && lines.length === 2
     && /command\(touch .*deny rule/.test(lines[0]) && /write_file\(.*deny rule/.test(lines[1]), show(r));
-  const missing = ask(['--family', 'neon'], { env: { STUB_MODE: 'subagent' } });
-  ok('a transcript that is not there is named, its denials unknown; the answer still stands', missing.code === 0
-    && /ask-model: agy: subagent perm-test-subagent's transcript could not be read \(ENOENT\); its denied calls are unknown/.test(missing.err), show(missing));
+  const missing = ask(['--family', 'neon', '--json'], { env: { STUB_MODE: 'subagent' } });
+  ok('a subagent with no transcript (the wall stops it starting) is named plainly; the answer still stands', missing.code === 0 && missing.j?.answer
+    && !missing.j?.error && /^ask-model: agy: neon tried to start a subagent \(perm-test-subagent\); subagents can't run inside the sandbox wall$/m.test(missing.err)
+    && !/transcript could not be read|denied \(subagent/.test(missing.err), show(missing));
   const h2 = home(), outside = path.join(tmp, 'outside-transcript.jsonl');
   fs.writeFileSync(outside, TRANSCRIPT);
   const link = path.join(h2, '.gemini', 'antigravity-cli', 'brain', SUB, '.system_generated', 'logs', 'transcript.jsonl');

@@ -32,11 +32,13 @@ console.log('\nagy wall: one profile, the same in both runtimes');
   ok('AGY_WALL is the same literal in ask-model and the review runtime', a !== null && a === r, `${a}\n---\n${r}`);
   ok('…and it is the profile ask-model exports', a !== null && Function(`return (${a})`)() === AGY_WALL);
   const lines = AGY_WALL.split('\n');
-  ok('it allows by default and refuses reads of contents only, never metadata or writes', lines[0] === '(version 1)' && lines[1] === '(allow default)'
-    && !/file-read\*|file-write|file-read-metadata/.test(AGY_WALL), AGY_WALL);
+  ok('it allows by default and refuses reads of contents, never metadata; its one write rule is the summaries\' (below)', lines[0] === '(version 1)'
+    && lines[1] === '(allow default)' && !/file-read\*|file-read-metadata/.test(AGY_WALL) && (AGY_WALL.match(/file-write/g) || []).length === 1
+    && /^\(deny file-write\*$/m.test(AGY_WALL), AGY_WALL);
   ok('the refused roots: /Users, /Volumes, /private/tmp, TMPDIR, macOS\'s per-user temp folder and HOME', lines[2]
     === '(deny file-read-data (subpath "/Users") (subpath "/Volumes") (subpath "/private/tmp") (subpath (param "TMP")) (subpath (param "USER_TMP")) (subpath (param "HOME")))', lines[2]);
-  const allowed = [...AGY_WALL.split('(allow file-read-data')[1].matchAll(/\((subpath|literal) (\(param "[A-Z_]+"\)|\(string-append \(param "[A-Z_]+"\) "[^"]+"\))\)/g)].map((m) => `${m[1]} ${m[2]}`);
+  const [allowBlock, writeBlock = ''] = AGY_WALL.split('(allow file-read-data')[1].split('(deny file-write*');
+  const allowed = [...allowBlock.matchAll(/\((subpath|literal) (\(param "[A-Z_]+"\)|\(string-append \(param "[A-Z_]+"\) "[^"]+"\))\)/g)].map((m) => `${m[1]} ${m[2]}`);
   ok('the allowed-back list is exactly the approved one', J(allowed) === J([
     'subpath (param "ROOT")', 'subpath (param "CALL_TMP")', 'literal (param "LOG")', 'literal (param "AGY")',
     'literal (string-append (param "HOME") "/Library/Keychains/login.keychain-db")',
@@ -49,10 +51,18 @@ console.log('\nagy wall: one profile, the same in both runtimes');
     'literal (string-append (param "HOME") "/.gemini/antigravity-cli/cache/onboarding.json")',
     'literal (string-append (param "USER_TMP") "/xcrun_db")',
   ]), J(allowed, null, 1));
+  const unwritable = [...writeBlock.matchAll(/\(literal (\(string-append \(param "HOME"\) "[^"]+"\))\)/g)].map((m) => m[1]);
+  ok('writes are refused to exactly agy\'s conversation summaries: the database, its -wal and -shm, and the proto', J(unwritable) === J([
+    '(string-append (param "HOME") "/.gemini/antigravity-cli/conversation_summaries.db")',
+    '(string-append (param "HOME") "/.gemini/antigravity-cli/conversation_summaries.db-wal")',
+    '(string-append (param "HOME") "/.gemini/antigravity-cli/conversation_summaries.db-shm")',
+    '(string-append (param "HOME") "/.gemini/antigravity-cli/jetbox_summaries_proto.pb")',
+  ]), J(unwritable, null, 1));
   // A filter written any other way (a path spelled out, a regex) would be missing from the lists above.
   const filters = (AGY_WALL.match(/\((subpath|literal|regex|prefix) /g) || []).length;
-  ok('every filter in the profile is one of those two lists', filters === 6 + allowed.length, `${filters} filters, ${6 + allowed.length} listed`);
-  ok('nothing of agy\'s past conversations is allowed back', !/conversations|brain|history|summar|conversation_metadata|last_conversations|implicit|annotations/.test(AGY_WALL));
+  ok('every filter in the profile is one of those three lists', filters === 6 + allowed.length + unwritable.length,
+    `${filters} filters, ${6 + allowed.length + unwritable.length} listed`);
+  ok('nothing of agy\'s past conversations is allowed back', !/conversations|brain|history|summar|conversation_metadata|last_conversations|implicit|annotations/.test(allowBlock));
   ok('SANDBOX_EXEC is the system binary by absolute path', SANDBOX_EXEC === '/usr/bin/sandbox-exec');
   ok('agy\'s updater is switched off the way it honours ("true", not "1")', AGY_ENV.AGY_CLI_DISABLE_AUTO_UPDATE === 'true', J(AGY_ENV));
   ok('agyWall passes each parameter with -D and the profile with -p, then the command, in that order',
@@ -152,6 +162,27 @@ if (process.platform !== 'darwin') {
   ok('…and through the data volume\'s own path for it', firm.status !== 0 && !firm.stdout.includes('token:'), J(firm));
   const ls = spawnSync(SANDBOX_EXEC, agyWall(p.params, ['/bin/ls', path.join(home, '.gemini', 'antigravity-cli')]), { encoding: 'utf8' });
   ok('a walled-off folder cannot be listed', ls.status !== 0 && !/history/.test(ls.stdout), J(ls));
+
+  // agy's summaries: a walled process that tries every kind of write leaves each file's bytes and mtime as they were,
+  // and cannot create the -wal or -shm; agy's other state files stay writable.
+  const state = path.join(home, '.gemini', 'antigravity-cli');
+  const kept = ['conversation_summaries.db', 'jetbox_summaries_proto.pb'].map((f) => path.join(state, f));
+  const past = new Date('2026-01-02T03:04:05Z');
+  for (const f of kept) { fs.writeFileSync(f, `summaries:${path.basename(f)}`); fs.utimesSync(f, past, past); }
+  const snap = () => kept.map((f) => ({ f, bytes: fs.readFileSync(f, 'utf8'), mtime: fs.statSync(f).mtimeMs }));
+  const before = snap();
+  const tries = kept.flatMap((f) => [`echo x >> '${f}'`, `echo x > '${f}'`, `touch '${f}'`, `rm -f '${f}'`, `mv -f '${f}' '${f}.old'`,
+    `echo new > '${f}.tmp' && mv -f '${f}.tmp' '${f}'`, `ln -sf /etc/hosts '${f}'`]);
+  const writes = tries.map((cmd) => spawnSync(SANDBOX_EXEC, agyWall(p.params, ['/bin/sh', '-c', cmd]), { encoding: 'utf8' }));
+  ok('every write to the summaries is refused by the sandbox', writes.every((w) => w.status !== 0 && /Operation not permitted/.test(w.stderr)),
+    J(writes.map((w, i) => [tries[i], w.status, w.stderr.trim()]).filter(([, s]) => s === 0)));
+  ok('…and their bytes and mtimes are unchanged', J(snap()) === J(before), J({ before, after: snap() }));
+  const sidecars = ['conversation_summaries.db-wal', 'conversation_summaries.db-shm'].map((f) => path.join(state, f));
+  for (const f of sidecars) spawnSync(SANDBOX_EXEC, agyWall(p.params, ['/bin/sh', '-c', `echo x > '${f}'`]), { encoding: 'utf8' });
+  ok('the database\'s -wal and -shm cannot be created', sidecars.every((f) => !fs.existsSync(f)), J(sidecars.filter((f) => fs.existsSync(f))));
+  const onboarding = path.join(state, 'cache', 'onboarding.json');
+  const rewrite = spawnSync(SANDBOX_EXEC, agyWall(p.params, ['/bin/sh', '-c', `echo '{}' > '${onboarding}'`]), { encoding: 'utf8' });
+  ok('agy\'s other state files stay writable', rewrite.status === 0 && fs.readFileSync(onboarding, 'utf8') === '{}\n', J(rewrite));
 
   ok('the canary passes on the real paths', agyWallCanary(p.params) === null, J(agyWallCanary(p.params)));
   ok('…and leaves no test file behind', fs.readdirSync(logs).filter((f) => f.startsWith('acs-agy-canary-')).length === 0
