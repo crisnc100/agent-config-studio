@@ -319,6 +319,303 @@ const ids = (p) => content(p).querySelector('.models-ids');
     && qLines[1] === 'Not refreshed: the Antigravity CLI (agy) is not installed.', J(qLines));
 }
 
+// ── a families.json row next to shipped ones; Remove refused while something names it ─────
+{
+  const J = JSON.stringify;
+  const at = Date.now() - 5 * 60000;
+  const agy = { vendor: 'agy', label: 'Antigravity', ok: true, missing: false, fetchedAt: at, note: null, stale: false, checkOnly: true, refreshNote: null,
+    count: 4, names: ['Neon Test', 'Argon Test', 'Hydrogen Test', 'Orchestrator (Neon)'] };
+  const claude = { vendor: 'claude', label: 'Claude', ok: true, missing: false, fetchedAt: at, note: null, stale: false, count: 9 };
+  const syncedRow = { family: 'xenon', id: 'xenon-id-1', vendor: 'agy', track: true, source: 'synced', defaultId: null, displayName: 'Xenon Test', offered: true, heldBy: [], alerts: [] };
+  const p = await boot({ ...models(), catalogs: [claude, agy], rows: [...models().rows, syncedRow], familiesError: null, familiesHidden: {} });
+  const row = ids(p).querySelectorAll('.models-row').find((r) => r.dataset.family === 'xenon');
+  ok('a synced family\'s row says "synced from Antigravity"', txt(row.querySelector('.models-source')) === 'synced from Antigravity', txt(row));
+  ok('...a shipped one still says default', txt(ids(p).querySelectorAll('.models-row').find((r) => r.dataset.family === 'opus').querySelector('.models-source')) === 'default');
+}
+{
+  const J = JSON.stringify;
+  const goneRow = { family: 'xenon', id: 'xenon-id-1', vendor: 'agy', track: true, source: 'synced', defaultId: null, displayName: null, offered: false, heldBy: [], alerts: [] };
+  const removed = [];
+  let named = true;
+  const p = await boot({ ...models(), rows: [...models().rows, goneRow], registryError: 'models.json: not valid JSON' }, {
+    'POST /api/models/remove': (b) => {
+      removed.push(b);
+      if (named) throw { status: 409, body: { error: 'xenon is still named by the reviewer role. Take it out there first.' } };
+      return { saved: true, removed: 'xenon', id: 'xenon-id-1' };
+    },
+  });
+  const open = (family) => { ids(p).querySelectorAll('.models-row').find((r) => r.dataset.family === family).click(); };
+  open('xenon');
+  await settle(5);
+  const detail = ids(p).querySelector('.models-detail');
+  ok('a synced family its list no longer offers: Save, Pin and Remove, no Reset to default', J(detail.querySelectorAll('button').map(txt)) === '["Save","Pin","Remove"]', J(detail.querySelectorAll('button').map(txt)));
+  ok('...and stays usable while models.json is broken (its id lives in families.json)', !button(detail, 'Save').disabled && !button(detail, 'Remove').disabled);
+  button(detail, 'Remove').click();
+  await settle(20);
+  const n = p.$('notice-slot').querySelector('.notice');
+  ok('Remove posts the family; refused, it says where the family is named', J(removed) === '[{"family":"xenon"}]' && n?.classList.contains('error')
+    && /xenon is still named by the reviewer role\. Take it out there first\./.test(p.text(n)), p.text(n));
+  named = false;
+  button(ids(p).querySelector('.models-detail'), 'Remove').click();
+  await settle(20);
+  ok('...once nothing names it, Remove goes through', removed.length === 2 && /xenon removed\./.test(p.text(p.$('notice-slot').querySelector('.notice'))));
+  open('opus');
+  await settle(5);
+  const shipped = ids(p).querySelectorAll('.models-detail').find((d) => !button(d, 'Remove'));
+  ok('a shipped family keeps Reset to default, refused while models.json is broken', !!button(shipped, 'Reset to default') && button(shipped, 'Save').disabled);
+}
+{
+  const p = await boot({ ...models(), familiesError: '~/.agent-config-studio/families.json: not valid JSON', familiesHidden: { argontwo: 'it has a key this ACS does not know ("harness")' } });
+  const errs = content(p).querySelectorAll('.models-error').map(txt);
+  ok('a broken families.json is a notice at the top', errs.some((t) => /^families\.json is invalid\. The families synced from the model lists are left out/.test(t) && /not valid JSON/.test(t)), JSON.stringify(errs));
+  ok('...and each hidden entry is named with why', errs.some((t) => /argontwo: it has a key this ACS does not know \("harness"\)/.test(t)), JSON.stringify(errs));
+}
+
+// ── families synced from the model lists: the sync line, synced rows, Pin, Remove, the hold reason ─────
+{
+  const J = JSON.stringify;
+  const at = Date.now() - 5 * 60000;
+  const cat = (vendor, label, count) => ({ vendor, label, ok: true, missing: false, fetchedAt: at, note: null, stale: false, count });
+  const CATS = [cat('claude', 'Claude', 9), cat('codex', 'Codex', 4), cat('agy', 'Antigravity', 4)];
+  const syncedRow = (family, over = {}) => ({ family, id: `${family}-id-1`, vendor: 'agy', track: true, source: 'synced', defaultId: null, displayName: null,
+    offered: true, heldBy: [], alerts: [], ...over });
+  const withSynced = (rows, over = {}) => ({ ...models(), catalogs: CATS, rows: [...models().rows, ...rows], familiesError: null, familiesHidden: {}, sync: null, ...over });
+  const lineText = (l) => l.querySelectorAll('span').filter((x) => !x.querySelector('span')).map(txt).join(' | ');
+  const syncLines = (p) => ids(p).querySelectorAll('.models-catalog').filter((l) => txt(l.querySelector('.models-catalog-name')) === 'Sync');
+  const notice = (p) => p.$('notice-slot').querySelector('.notice');
+  const famRow = (p, f) => ids(p).querySelectorAll('.models-row').find((r) => r.dataset.family === f);
+  const open = async (p, f) => { famRow(p, f).click(); await settle(5); return ids(p).querySelector('.models-detail'); };
+
+  const SYNC = {
+    at, error: null,
+    added: [{ family: 'argon', vendor: 'agy', id: 'argon-id-1' }, { family: 'luna', vendor: 'codex', id: 'gpt-6-luna' }],
+    moved: [{ family: 'flash', vendor: 'agy', from: 'flash-id-1', to: 'flash-id-2' }],
+    skipped: [{ family: 'sol', vendor: 'agy', why: 'the shipped Codex family has that name' }],
+  };
+  const p = await boot(withSynced([syncedRow('argon')], { sync: SYNC }));
+  const lines = syncLines(p).map(lineText);
+  ok('the sync line says what it added and moved, naming each list', lines[0] === 'Sync | added argon (argon-id-1, from Antigravity); added luna (gpt-6-luna, from Codex); moved flash to flash-id-2.', J(lines));
+  ok('...and what it left out, with why', lines[1] === 'Sync | Not synced: sol from Antigravity (the shipped Codex family has that name).', J(lines));
+  const all = ids(p).querySelectorAll('.models-catalog').map((l) => txt(l.querySelector('.models-catalog-name')));
+  ok('...under the catalog lines', J(all) === J(['Claude', 'Codex', 'Antigravity', 'Sync', 'Sync']), J(all));
+  ok('a sync that did nothing draws no line', syncLines(await boot(withSynced([], { sync: { at, error: null, added: [], moved: [], skipped: [] } }))).length === 0);
+  ok('no sync yet: no line', syncLines(await boot(withSynced([]))).length === 0);
+  const failed = syncLines(await boot(withSynced([], { sync: { at, error: 'The sync from the model lists failed: EACCES', added: [], moved: [], skipped: [] } })));
+  ok('a failed sync is a warning line with its error', failed.length === 1 && failed[0].classList.contains('stale') && lineText(failed[0]) === 'Sync | The sync from the model lists failed: EACCES', J(failed.map(lineText)));
+
+  ok('a synced row says which list it follows', txt(famRow(p, 'argon').querySelector('.models-source')) === 'synced from Antigravity', txt(famRow(p, 'argon')));
+
+  const posts = [];
+  const q = await boot(withSynced([syncedRow('argon'), syncedRow('flash', { track: false }), syncedRow('xenon', { offered: false })], { registryError: 'models.json: not valid JSON' }), {
+    'POST /api/models/pin': (b) => { posts.push(['pin', b]); return { saved: true, family: b.family, pinned: b.pinned }; },
+    'POST /api/models/set': (b) => { posts.push(['set', b]); return { saved: true, family: b.family, id: b.id, pinned: true, sidecars: [] }; },
+    'POST /api/models/remove': (b) => { posts.push(['remove', b]); return { saved: true, removed: b.family }; },
+  });
+  let d = await open(q, 'argon');
+  ok('a synced row\'s editor: Save and Pin, no Reset and no Remove while its list offers it', J(d.querySelectorAll('button').map(txt)) === '["Save","Pin"]', J(d.querySelectorAll('button').map(txt)));
+  ok('...usable while models.json is broken (its id lives in families.json)', !button(d, 'Save').disabled && !button(d, 'Pin').disabled);
+  button(d, 'Pin').click();
+  await settle(20);
+  ok('Pin posts the family and pinned: true, and says so', J(posts.at(-1)) === J(['pin', { family: 'argon', pinned: true }]) && /argon is pinned to argon-id-1\./.test(q.text(notice(q))), J(posts));
+  d = ids(q).querySelector('.models-detail');
+  d.querySelector('.models-input').value = 'argon-id-9';
+  button(d, 'Save').click();
+  await settle(20);
+  ok('Save on a synced row says it is now pinned', J(posts.at(-1)) === J(['set', { family: 'argon', id: 'argon-id-9' }])
+    && /argon is now argon-id-9, pinned\. Unpin to follow Antigravity again\./.test(q.text(notice(q))), q.text(notice(q)));
+  famRow(q, 'argon').click();
+  await settle(5);
+  ok('a pinned row carries the pinned badge', /pinned/.test(txt(famRow(q, 'flash').querySelector('.models-family'))));
+  d = await open(q, 'flash');
+  ok('...and its editor offers Unpin', J(d.querySelectorAll('button').map(txt)) === '["Save","Unpin"]', J(d.querySelectorAll('button').map(txt)));
+  button(d, 'Unpin').click();
+  await settle(20);
+  ok('Unpin posts pinned: false, and says it follows again', J(posts.at(-1)) === J(['pin', { family: 'flash', pinned: false }])
+    && /flash follows Antigravity again from the next check\./.test(q.text(notice(q))), q.text(notice(q)));
+  famRow(q, 'flash').click();
+  await settle(5);
+  d = await open(q, 'xenon');
+  ok('once its list no longer offers it, Remove shows', J(d.querySelectorAll('button').map(txt)) === '["Save","Pin","Remove"]', J(d.querySelectorAll('button').map(txt)));
+  button(d, 'Remove').click();
+  await settle(20);
+  ok('...and posts the family', J(posts.at(-1)) === J(['remove', { family: 'xenon' }]) && /xenon removed\./.test(q.text(notice(q))), J(posts));
+  famRow(q, 'xenon').click();
+  await settle(5);
+  ok('a shipped row still has Reset to default (refused while models.json is broken), and no Pin', (() => {
+    famRow(q, 'opus').click();
+    const sd = ids(q).querySelector('.models-detail');
+    return !!button(sd, 'Reset to default') && button(sd, 'Save').disabled && !button(sd, 'Pin');
+  })());
+
+  const UPD = (n) => ({ kind: 'update', key: `update:${n}`, candidate: n, displayName: null, acceptable: true, dismissed: false });
+  const h = await boot(withSynced([syncedRow('argon', { heldBy: ['the reviewer role', 'its flavor'], alerts: [UPD('argon-id-2')] }), syncedRow('luna', { vendor: 'codex', alerts: [UPD('luna-id-2')] })]));
+  const why = (f) => famRow(h, f).querySelectorAll('.models-alert-why').map(txt);
+  ok('an update on a held synced family says what holds it', J(why('argon')) === J(['held by the reviewer role, its flavor, so it was not moved']), J(why('argon')));
+  ok('...one nothing holds says nothing extra', why('luna').length === 0, J(why('luna')));
+}
+
+// ── effort pickers offer only what a family's catalog lists (agy refuses any other effort) ─────
+{
+  const J = JSON.stringify;
+  const agyRow = (family, efforts, source = 'synced') => ({ family, id: `gemini-4-${family}`, vendor: 'agy', track: true, source, defaultId: source === 'default' ? `gemini-4-${family}` : null,
+    displayName: null, efforts, offered: true, heldBy: [], alerts: [] });
+  const m = { ...models(), rows: [...models().rows, agyRow('argon', ['low', 'medium', 'high']), agyRow('neon', ['low', 'medium', 'high', 'xhigh'], 'default')] };
+  const scout = { name: 'scout', use: ['argon', 'opus'], ids: ['gemini-4-argon', 'opus-id-1'], effort: 'xhigh', resolvedEffort: 'xhigh', alt: '', altId: '', note: 'scouts ahead',
+    custom: true, provenance: prov(['use', 'effort', 'note'], { use: 'user', effort: 'user', note: 'user' }), defaults: null, warnings: [] };
+  const v = () => {
+    const base = view();
+    return { ...base, roles: [...base.roles, scout], families: [...base.families, 'argon', 'neon'],
+      flavor: [...base.flavor, fl('argon', { likes: [], quirks: [], brief: '', effort: '' }), fl('neon', { likes: [], quirks: [], brief: '', effort: 'xhigh' })] };
+  };
+  const p = await boot(m, { 'GET /api/models/roles': () => v() });
+  const opts = (sel) => sel.querySelectorAll('option').map(txt);
+  roleRow(p, 'scout').click();
+  await settle(5);
+  const ed = () => content(p).querySelector('.roles-detail');
+  const member = (f) => ed().querySelectorAll('.roles-member').find((x) => x.dataset.family === f)?.querySelector('select');
+  ok('member effort: argon offers only what its list has', J(opts(member('argon'))) === J(['role default', 'low', 'medium', 'high']), J(opts(member('argon'))));
+  ok('...opus, with no list, keeps every effort', J(opts(member('opus'))) === J(['role default', 'low', 'medium', 'high', 'xhigh', 'max']), J(opts(member('opus'))));
+  const roleEffort = () => ed().querySelector('.roles-effort-input');
+  ok('role effort with argon and opus: what both take, and the saved xhigh kept, marked', J(opts(roleEffort())) === J(['(each model’s default)', 'low', 'medium', 'high', 'xhigh (not offered for Argon)'])
+    && roleEffort().value === 'xhigh', J(opts(roleEffort())));
+  const pick = (f) => ed().querySelectorAll('.roles-pick').find((b) => b.dataset.family === f);
+  pick('argon').click();
+  await settle(5);
+  ok('...argon taken out: the full list, xhigh unmarked', J(opts(roleEffort())) === J(['(each model’s default)', 'low', 'medium', 'high', 'xhigh', 'max']) && roleEffort().value === 'xhigh', J(opts(roleEffort())));
+  pick('neon').click();
+  await settle(5);
+  ok('...neon added: xhigh stays, max goes', J(opts(roleEffort())) === J(['(each model’s default)', 'low', 'medium', 'high', 'xhigh']), J(opts(roleEffort())));
+  ok('...neon\'s member picker has xhigh', J(opts(member('neon'))) === J(['role default', 'low', 'medium', 'high', 'xhigh']), J(opts(member('neon'))));
+  const alt = ed().querySelector('.roles-alt-input');
+  alt.value = 'argon';
+  alt.dispatchEvent({ type: 'change', bubbles: false });
+  await settle(5);
+  ok('...argon as the second opinion narrows the role effort again', J(opts(roleEffort())) === J(['(each model’s default)', 'low', 'medium', 'high', 'xhigh (not offered for Argon)']), J(opts(roleEffort())));
+
+  const flavorSelect = async (f) => {
+    button(card(p, f), 'Edit').click();
+    await settle(5);
+    return card(p, f).querySelector('.flavor-effort');
+  };
+  const fa = await flavorSelect('argon');
+  ok('flavor effort: argon offers no xhigh', J(opts(fa)) === J(['(none)', 'low', 'medium', 'high']), J(opts(fa)));
+  const fn = await flavorSelect('neon');
+  ok('...neon offers xhigh, and keeps its saved xhigh', J(opts(fn)) === J(['(none)', 'low', 'medium', 'high', 'xhigh']) && fn.value === 'xhigh', J(opts(fn)));
+  const fo = await flavorSelect('opus');
+  ok('...opus keeps every effort', J(opts(fo)) === J(['(none)', 'low', 'medium', 'high', 'xhigh', 'max']), J(opts(fo)));
+}
+
+// ── Check now and the model writes repaint from the server: what changed shows without a reload ─────
+{
+  const at = Date.now() - 5 * 60000;
+  const agy = { vendor: 'agy', label: 'Antigravity', ok: true, missing: false, fetchedAt: at, note: null, stale: false, checkOnly: true, refreshNote: null, count: 2, names: ['Neon', 'Argon'] };
+  const base = { ...models(), catalogs: [agy], familiesError: null, familiesHidden: {}, sync: null };
+  const argon = { family: 'argon', id: 'gemini-4-argon', vendor: 'agy', track: true, source: 'synced', defaultId: null, displayName: 'Gemini 4 Argon',
+    efforts: null, offered: true, heldBy: [], alerts: [] };
+  let state = base;
+  const withRow = (f) => ({ ...state, rows: state.rows.map((r) => (r.family === 'argon' ? f(r) : r)) });
+  const p = await boot(base, {
+    'GET /api/models': () => state,
+    'POST /api/models/check': () => {
+      state = { ...base, rows: [...base.rows, argon], sync: { at, error: null, added: [{ family: 'argon', vendor: 'agy', id: 'gemini-4-argon' }], moved: [], skipped: [] } };
+      return state;
+    },
+    'POST /api/models/pin': (b) => { state = withRow((r) => ({ ...r, track: !b.pinned })); return { saved: true, family: b.family, pinned: b.pinned }; },
+    'POST /api/models/set': (b) => { state = withRow((r) => ({ ...r, id: b.id, track: false })); return { saved: true, family: b.family, id: b.id, pinned: true, sidecars: [] }; },
+  });
+  const famRow = (f) => ids(p).querySelectorAll('.models-row').find((r) => r.dataset.family === f);
+  const editor = () => ids(p).querySelector('.models-detail');
+  ok('(before Check now: no argon row)', !famRow('argon'));
+  button(ids(p), 'Check now').click();
+  await settle(20);
+  const syncText = ids(p).querySelectorAll('.models-catalog').map(txt).find((t) => t.startsWith('Sync')) || '';
+  ok('Check now: a list that newly offers argon puts its synced row on screen, and the sync line says so',
+    !!famRow('argon') && txt(famRow('argon').querySelector('.models-source')) === 'synced from Antigravity' && /added argon \(gemini-4-argon, from Antigravity\)/.test(syncText), syncText);
+  famRow('argon')?.click();
+  await settle(5);
+  button(editor(), 'Pin')?.click();
+  await settle(20);
+  ok('after Pin, the row shows pinned and its editor offers Unpin, with no reload', !!famRow('argon') && /pinned/.test(txt(famRow('argon').querySelector('.models-family')))
+    && !!button(editor(), 'Unpin') && !button(editor(), 'Pin'), famRow('argon') && txt(famRow('argon')));
+  button(editor(), 'Unpin')?.click();
+  await settle(20);
+  ok('after Unpin, the badge is gone and Pin is back', !!famRow('argon') && !/pinned/.test(txt(famRow('argon').querySelector('.models-family'))) && !!button(editor(), 'Pin'));
+  const input = editor()?.querySelector('.models-input');
+  if (input) input.value = 'gemini-4.1-argon';
+  button(editor(), 'Save')?.click();
+  await settle(20);
+  ok('after Save, the row shows the new id and the pin', !!famRow('argon') && txt(famRow('argon').querySelector('.models-id')) === 'gemini-4.1-argon'
+    && /pinned/.test(txt(famRow('argon').querySelector('.models-family'))), famRow('argon') && txt(famRow('argon')));
+}
+
+// ── one refresh reaches every panel that reads the registry ─────
+{
+  const J = JSON.stringify;
+  const UPD = { kind: 'update', key: 'update:gemini-4.1-argon', candidate: 'gemini-4.1-argon', displayName: null, acceptable: true, dismissed: false };
+  const argon = (heldBy) => ({ family: 'argon', id: 'gemini-4-argon', vendor: 'agy', track: true, source: 'synced', defaultId: null, displayName: 'Gemini 4 Argon',
+    efforts: null, offered: true, heldBy, alerts: [UPD] });
+  const blank = { likes: [], quirks: [], brief: '', effort: '' };
+  const withArgon = (flavor, over) => ({ ...view(), families: [...view().families, 'argon'], flavor: [...view().flavor, fl('argon', flavor, over, blank)] });
+  let rows = models().rows;
+  let roles = view();
+  const p = await boot(models(), {
+    'GET /api/models': () => ({ ...models(), rows }),
+    'GET /api/models/roles': () => roles,
+    'POST /api/models/check': () => {
+      rows = [...models().rows, argon(['its flavor'])];
+      roles = withArgon({ ...blank, brief: 'x' }, { brief: 'user' });
+      return { ...models(), rows, sync: { at: Date.now(), error: null, historyError: 'disk full', added: [{ family: 'argon', vendor: 'agy', id: 'gemini-4-argon' }], moved: [], skipped: [] } };
+    },
+    'POST /api/models/flavor/reset': () => { rows = [...models().rows, argon([])]; roles = withArgon(blank); return { saved: true, base: 'sha256:base-2', warnings: [] }; },
+  });
+  const famRow = (f) => ids(p).querySelectorAll('.models-row').find((r) => r.dataset.family === f);
+  const why = () => (famRow('argon') ? famRow('argon').querySelectorAll('.models-alert-why').map(txt) : []);
+  ok('(before Check now: no argon card)', !card(p, 'argon'));
+  button(ids(p), 'Check now').click();
+  await settle(30);
+  ok('Check now: the newly synced argon shows in Your models too, with no reload', !!card(p, 'argon'));
+  const syncText = ids(p).querySelectorAll('.models-catalog').map(txt).filter((t) => t.startsWith('Sync')).join(' | ');
+  ok('...and the sync line says history did not record it', /added argon/.test(syncText) && /history: disk full/.test(syncText), syncText);
+  roleRow(p, 'builder')?.click();
+  await settle(5);
+  ok('...and the role editor offers argon', !!content(p).querySelector('.roles-detail')?.querySelectorAll('.roles-pick').some((b) => b.dataset.family === 'argon'));
+  ok('(its update says its flavor holds argon)', J(why()) === J(['held by its flavor, so it was not moved']), J(why()));
+  button(card(p, 'argon'), 'Reset to default')?.click();
+  await settle(30);
+  ok('after a flavor write, Model ids reads again: argon is no longer held', !!famRow('argon') && why().length === 0, J(why()));
+}
+
+// ── an unsaved effort the lineup no longer takes falls back; only a saved one stays, marked ─────
+{
+  const J = JSON.stringify;
+  const argonRow = { family: 'argon', id: 'gemini-4-argon', vendor: 'agy', track: true, source: 'synced', defaultId: null, displayName: null,
+    efforts: ['low', 'medium', 'high'], offered: true, heldBy: [], alerts: [] };
+  const lookout = { name: 'lookout', use: ['opus'], ids: ['opus-id-1'], effort: 'high', resolvedEffort: 'high', alt: '', altId: '', note: 'looks out', custom: true,
+    provenance: prov(['use', 'effort', 'note'], { use: 'user', effort: 'user', note: 'user' }), defaults: null, warnings: [] };
+  const v = () => ({ ...view(), roles: [...view().roles, lookout], families: [...view().families, 'argon'],
+    flavor: [...view().flavor, fl('argon', { likes: [], quirks: [], brief: '', effort: '' })] });
+  const p = await boot({ ...models(), rows: [...models().rows, argonRow] }, {
+    'GET /api/models/roles': () => v(),
+    'POST /api/models/roles/set': () => ({ saved: true, base: 'sha256:base-2', warnings: [] }),
+  });
+  roleRow(p, 'lookout').click();
+  await settle(5);
+  const ed = () => content(p).querySelector('.roles-detail');
+  const roleEffort = () => ed().querySelector('.roles-effort-input');
+  const opts = (sel) => sel.querySelectorAll('option').map(txt);
+  roleEffort().value = 'max';
+  roleEffort().dispatchEvent({ type: 'change', bubbles: false });
+  await settle(5);
+  ed().querySelectorAll('.roles-pick').find((b) => b.dataset.family === 'argon').click();
+  await settle(5);
+  ok('a picked max that argon does not take is not kept: the saved high shows instead', !opts(roleEffort()).some((o) => /^max/.test(o)) && roleEffort().value === 'high',
+    J({ opts: opts(roleEffort()), value: roleEffort().value }));
+  button(ed(), 'Save').click();
+  await settle(20);
+  const sent = posts(p, '/api/models/roles/set').at(-1)?.body;
+  ok('...and Save sends high, never max', sent?.fields?.effort === 'high', J(sent));
+}
+
 for (const p of pages) p.done();
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

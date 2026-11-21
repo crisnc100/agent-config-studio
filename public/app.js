@@ -4618,6 +4618,11 @@ async function loadRoles() {
   if (S.view === 'models' && M.data) paintModels();
 }
 
+/** Model ids say which role, flavor or pause holds a family: read them again after a roles write. Painted by loadRoles. */
+async function reloadModelRows() {
+  try { M.data = await api('GET', '/api/models'); paintModelsBadge(M.data.pending); } catch { /* the rows keep their last read */ }
+}
+
 function setGuide(r) {
   if (r.status === 'fulfilled') { M.guide = r.value; M.guideError = null; } else M.guideError = r.reason.message;
 }
@@ -4647,6 +4652,19 @@ async function paintModels(load) {
     const n = el('div', 'notice error models-error');
     n.appendChild(el('div', null, 'The model registry file is invalid. Defaults are in use, and edits are refused until it is fixed:'));
     n.appendChild(el('div', 'models-error-text', m.registryError));
+    box.appendChild(n);
+  }
+  if (m.familiesError) {
+    const n = el('div', 'notice error models-error');
+    n.appendChild(el('div', null, 'families.json is invalid. The families synced from the model lists are left out, and syncing, changing or removing one is refused until it is fixed:'));
+    n.appendChild(el('div', 'models-error-text', m.familiesError));
+    box.appendChild(n);
+  }
+  const hidden = Object.entries(m.familiesHidden || {});
+  if (hidden.length) {
+    const n = el('div', 'notice warn models-error');
+    n.appendChild(el('div', null, 'families.json has entries this ACS cannot use; a role, flavor or pause naming one is refused:'));
+    for (const [name, why] of hidden) n.appendChild(el('div', 'models-error-text', `${name}: ${why}`));
     box.appendChild(n);
   }
   // The out-of-date guide leads the page: one banner, and the review right under it (no scrolling down).
@@ -4688,6 +4706,9 @@ function idsSection(m) {
   check.onclick = async () => {
     check.disabled = true; check.textContent = 'Checking…';
     await paintModels(() => api('POST', '/api/models/check'));
+    // A sync can add a family: the Assist picker, the role editor and Your models read the registry too.
+    await refreshRegistry().catch(() => {});
+    await loadRoles();
   };
   head.appendChild(check);
   sec.appendChild(head);
@@ -4705,6 +4726,7 @@ function idsSection(m) {
     if (cat.disagree) cats.appendChild(el('div', 'models-catalog stale', cat.disagree));
     if (cat.refreshNote) cats.appendChild(el('div', 'models-catalog stale', cat.refreshNote));
   }
+  for (const line of syncLines(m)) cats.appendChild(line);
   sec.appendChild(cats);
   if (M.sidecars.length) sec.appendChild(sidecarStrip());
 
@@ -4730,7 +4752,8 @@ function idsSection(m) {
     tr.appendChild(fam);
     tr.appendChild(el('td', 'models-id', r.id));
     tr.appendChild(el('td', 'models-name', r.displayName || '—'));
-    tr.appendChild(el('td', `models-source ${r.source}`, r.source === 'override' ? 'your override' : 'default'));
+    tr.appendChild(el('td', `models-source ${r.source}`, r.source === 'synced' ? `synced from ${listLabel(m, r.vendor)}`
+      : r.source === 'override' ? 'your override' : 'default'));
     const al = el('td', 'models-alerts');
     const live = r.alerts.filter((a) => !a.dismissed);
     if (!live.length) al.appendChild(el('span', 'models-none', r.alerts.length ? 'dismissed' : '—'));
@@ -4745,6 +4768,33 @@ function idsSection(m) {
 }
 
 const vendorDot = (v) => (['claude', 'codex', 'grok', 'agy'].includes(v) ? v : 'unknown');
+
+/** The catalog's own name for a vendor (Antigravity, Codex…), as the catalog lines above show it. */
+const listLabel = (m, vendor) => m.catalogs.find((c) => c.vendor === vendor)?.label || vendor || 'its list';
+
+/**
+ * What the last check's sync did, under the catalog lines: the families it added or moved, and each word it left
+ * out with why. Nothing when it did nothing.
+ */
+function syncLines(m) {
+  const s = m.sync;
+  if (!s) return [];
+  const line = (cls, text) => {
+    const l = el('div', `models-catalog${cls}`);
+    l.appendChild(el('span', 'models-catalog-name', 'Sync'));
+    l.appendChild(el('span', null, text));
+    return l;
+  };
+  const out = [];
+  if (s.error) out.push(line(' stale', s.error));
+  const done = [
+    ...s.added.map((a) => `added ${a.family} (${a.id}, from ${listLabel(m, a.vendor)})`),
+    ...s.moved.map((x) => `moved ${x.family} to ${x.to}`),
+  ];
+  if (done.length) out.push(line(s.historyError ? ' stale' : '', `${done.join('; ')}.${s.historyError ? ` (history: ${s.historyError})` : ''}`));
+  if (s.skipped.length) out.push(line('', `Not synced: ${s.skipped.map((x) => `${x.family} from ${listLabel(m, x.vendor)} (${x.why})`).join('; ')}.`));
+  return out;
+}
 
 /** The one place the CLI is named: what skills and scripts call to read all of this. */
 function scriptsNote() {
@@ -4766,9 +4816,11 @@ function alertChip(row, a) {
   chip.appendChild(el('span', 'models-alert-text', text));
   if (a.message) chip.title = a.message;
   if (a.reason) chip.appendChild(el('span', 'models-alert-why', a.reason));
+  if (a.kind === 'update' && row.heldBy?.length) chip.appendChild(el('span', 'models-alert-why', `held by ${row.heldBy.join(', ')}, so it was not moved`));
   if (a.candidate) {
     const acc = el('button', 'btn ghost models-alert-btn', 'Accept');
-    acc.disabled = !a.acceptable || !!M.data.registryError;
+    // A synced family's id lives in families.json, which a broken models.json does not touch.
+    acc.disabled = !a.acceptable || (row.source !== 'synced' && !!M.data.registryError);
     acc.title = a.reason || `Set ${row.family} to ${a.candidate}`;
     acc.onclick = () => modelWrite('/api/models/accept', { family: row.family, key: a.key },
       `${row.family} is now ${a.candidate}.`);
@@ -4797,22 +4849,41 @@ function modelDetail(r, m) {
   input.spellcheck = false;
   input.setAttribute('aria-label', `${r.family} model id`);
   const save = el('button', 'btn primary', 'Save');
-  const reset = el('button', 'btn', 'Reset to default');
-  const refused = !!m.registryError;
+  const synced = r.source === 'synced';
+  const list = listLabel(m, r.vendor);
+  const refused = !synced && !!m.registryError;
   save.disabled = refused;
-  reset.disabled = refused || r.source !== 'override';
-  reset.title = r.source === 'override' ? `Remove your override; the default is ${r.defaultId}` : 'Already the default';
   const submit = () => {
     const id = input.value.trim();
     if (!ID_SHAPE.test(id)) return notice('error', `${id || '(empty)'} is not a valid model id — lowercase letters, digits, "." and "-", up to 64 characters.`);
-    modelWrite('/api/models/set', { family: r.family, id }, `${r.family} is now ${id}.`);
+    // A typed id pins a synced family (the server does it), or the next check could move it on.
+    modelWrite('/api/models/set', { family: r.family, id }, synced ? `${r.family} is now ${id}, pinned. Unpin to follow ${list} again.` : `${r.family} is now ${id}.`);
   };
   save.onclick = submit;
   input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
-  reset.onclick = () => modelWrite('/api/models/reset', { family: r.family }, `${r.family} is back to the default, ${r.defaultId}.`);
   edit.appendChild(input);
   edit.appendChild(save);
-  edit.appendChild(reset);
+  if (synced) {
+    const pinned = r.track === false;
+    const pin = el('button', 'btn', pinned ? 'Unpin' : 'Pin');
+    pin.title = pinned ? `Follow ${list}: the next check moves ${r.family} to its newest id when nothing holds it` : `Keep ${r.family} on ${r.id}`;
+    pin.onclick = () => modelWrite('/api/models/pin', { family: r.family, pinned: !pinned },
+      pinned ? `${r.family} follows ${list} again from the next check.` : `${r.family} is pinned to ${r.id}.`);
+    edit.appendChild(pin);
+    // Only once its list stops offering it: while it is offered, the next sync would add it straight back.
+    if (r.offered === false) {
+      const remove = el('button', 'btn', 'Remove');
+      remove.title = `${list} no longer offers ${r.family}. Remove it from families.json, the only file that changes`;
+      remove.onclick = () => modelWrite('/api/models/remove', { family: r.family }, `${r.family} removed.`);
+      edit.appendChild(remove);
+    }
+  } else {
+    const reset = el('button', 'btn', 'Reset to default');
+    reset.disabled = refused || r.source !== 'override';
+    reset.title = r.source === 'override' ? `Remove your override; the default is ${r.defaultId}` : 'Already the default';
+    reset.onclick = () => modelWrite('/api/models/reset', { family: r.family }, `${r.family} is back to the default, ${r.defaultId}.`);
+    edit.appendChild(reset);
+  }
   td.appendChild(edit);
   if (refused) td.appendChild(el('div', 'scope-note', 'Edits are refused while the registry file is invalid.'));
 
@@ -4941,6 +5012,7 @@ async function rolesWrite(path, body, okText, done, errKey) {
   M.where = {};
   done?.();
   const before = new Set((M.roles?.conflicts || []).map(conflictKey));
+  await reloadModelRows();
   await loadRoles();
   // Saved either way: a conflict is a warning, never a refusal.
   const added = (M.roles?.conflicts || []).filter((c) => !before.has(conflictKey(c)));
@@ -5103,6 +5175,28 @@ const familySelect = (families, value, blank) => {
   return sel;
 };
 
+/** The efforts a family's catalog lists for its current id, or null when it lists none. */
+const listedEfforts = (family) => M.data?.rows?.find((r) => r.family === family)?.efforts || null;
+
+/**
+ * Effort options for `families`: only what every one of them accepts where its catalog lists efforts (agy refuses
+ * any other), the full list where none does. The `saved` value outside them stays, marked, so a save never changes
+ * it without being asked; an unsaved pick outside them gives way to the saved value when that is offered, else to
+ * none. Returns the value the select shows, which the caller keeps as its draft.
+ */
+function effortOptions(sel, families, value, saved) {
+  const lists = families.map((f) => [f, listedEfforts(f)]).filter(([, l]) => l);
+  const offered = M.roles.efforts.filter((x) => lists.every(([, l]) => l.includes(x)));
+  for (const e of offered) sel.appendChild(el('option', null, e)).value = e;
+  const lacking = value ? lists.filter(([, l]) => !l.includes(value)).map(([f]) => famLabel(f)) : [];
+  if (!lacking.length) return value || '';
+  if (value === saved) {
+    sel.appendChild(el('option', null, `${value} (not offered for ${lacking.join(', ')})`)).value = value;
+    return value;
+  }
+  return saved && offered.includes(saved) ? saved : '';
+}
+
 /** One role's edit form, right under its row; `role` null is a new role. Drafts are kept in M.roleDrafts. */
 function roleEditor(role) {
   const R = M.roles;
@@ -5127,8 +5221,10 @@ function roleEditor(role) {
     f.appendChild(l);
     const sel = el('select', 'models-input roles-select roles-member-effort');
     sel.appendChild(el('option', null, 'role default')).value = '';
-    for (const e of R.efforts) sel.appendChild(el('option', null, e)).value = e;
-    sel.value = value || '';
+    const saved = role ? (k === 'alt' ? (role.alt === family ? altMemberOf(role)?.own : '') : membersOf(role).find((m) => m.family === family)?.own) : '';
+    const shown = effortOptions(sel, [family], value, saved || '');
+    sel.value = shown;
+    if (shown !== (value || '')) onchange(shown);
     sel.onchange = () => onchange(sel.value);
     f.appendChild(sel);
     return f;
@@ -5179,6 +5275,7 @@ function roleEditor(role) {
         box.querySelector('.models-write-error')?.remove();
         paintPicks();
         paintMembers();
+        paintEffort();
         // The repaint replaced the pressed button: keep keyboard focus on the same model's new one.
         [...use.querySelectorAll('.roles-pick')].find((x) => x.dataset.family === f)?.focus();
       };
@@ -5199,9 +5296,14 @@ function roleEditor(role) {
     }
   };
   const effort = field('Effort', el('select', 'models-input roles-select roles-effort-input'), 'effort');
-  effort.appendChild(el('option', null, role?.defaults?.effort && !d.effort ? '(each model’s default — cleared)' : '(each model’s default)')).value = '';
-  for (const e of R.efforts) effort.appendChild(el('option', null, e)).value = e;
-  effort.value = d.effort || '';
+  // The role's effort reaches every model in it and the second opinion, unless one has its own: offer what they all take.
+  const paintEffort = () => {
+    effort.textContent = '';
+    effort.appendChild(el('option', null, role?.defaults?.effort && !d.effort ? '(each model’s default — cleared)' : '(each model’s default)')).value = '';
+    d.effort = effortOptions(effort, [...new Set([...families(), ...(d.alt ? [d.alt] : [])])], d.effort, role?.effort || '');
+    effort.value = d.effort;
+  };
+  paintEffort();
   effort.onchange = () => { d.effort = effort.value; };
   const alt = field('Second opinion (optional, never automatic)', familySelect(R.families, d.alt, '(none)'), 'alt');
   alt.classList.add('roles-alt-input');
@@ -5210,7 +5312,7 @@ function roleEditor(role) {
     altOwn.textContent = '';
     if (d.alt) altOwn.appendChild(ownSelect(d.alt, d.altOwn[d.alt], 'alt', (v) => { if (v) d.altOwn[d.alt] = v; else delete d.altOwn[d.alt]; }));
   };
-  alt.onchange = () => { d.alt = alt.value; paintAltOwn(); };
+  alt.onchange = () => { d.alt = alt.value; paintAltOwn(); paintEffort(); };
   form.appendChild(altOwn);
   paintAltOwn();
   const note = field('What this role does', el('input', 'models-input roles-note'), 'note');
@@ -5384,7 +5486,7 @@ function flavorForm(f, marked) {
   brief.value = d.brief; brief.rows = 3; brief.maxLength = R.limits.brief; brief.oninput = () => { d.brief = brief.value; };
   const effort = field('Default effort (when a role sets none)', el('select', 'models-input roles-select flavor-effort'), 'effort');
   effort.appendChild(el('option', null, '(none)')).value = '';
-  for (const e of R.efforts) effort.appendChild(el('option', null, e)).value = e;
+  d.effort = effortOptions(effort, [family], d.effort, f.flavor.effort || '');
   effort.value = d.effort; effort.onchange = () => { d.effort = effort.value; };
   box.appendChild(grid);
   box.appendChild(avoidPicker(d, marked('avoid')));
@@ -5565,6 +5667,7 @@ function proposalView(p) {
     M.describe.text = '';
     M.roleDrafts = {}; M.flavorDrafts = {};
     notice('ok', 'roles.json updated from your description.' + (r.warnings?.length ? ` (${r.warnings.join(' ')})` : ''));
+    await reloadModelRows();
     await loadRoles();
   };
   const rej = el('button', 'btn ghost describe-reject', 'Reject');

@@ -1,0 +1,52 @@
+## 1. SCOPE VERDICT
+
+**Over-built** — the core (a separate `families.json` merged in `lib/models.js`, one PR) is right, but about a third of the plan serves cases that cannot occur yet, and one default contradicts the plan's own back-compat claim.
+
+## 2. ADVISORY
+
+**Keep as planned**
+- **Storage (Decision 1):** `families.json` is right. In a temp HOME, an unknown family in `models.json` made `model-id opus` fail, while today's resolver ignored a `families.json`.
+- **Back-compat limit:** acceptable. It is the same class as roles version 2, `avoid` and member effort, with the same stale guard.
+- **Stale guard on `models.js`:** fine. That file changed 3 times in 90 days against 10 for `roles.js`, so it adds few refusals.
+- **One PR (Decision 4), hidden-not-dropped, Accept/Set, and a Remove:** keep.
+
+**Cut the flavor write at adoption (choice 6)**
+- It breaks older readers at adoption, not "once a role names it" as plan lines 41 and 135-136 say.
+- I tested a `roles.json` holding only `flavor.argon`: today's resolver refused every role (`lib/roles.js:154`, exit 2).
+- Your shell's `acs` is aliased to the trunk checkout on main, so the "older studio" is your everyday CLI until trunk is pulled.
+- The default buys little:
+  - builder on an agy family is already refused outright (`lib/agent.js:110`, `:491`);
+  - `avoid: ['builder']` covers one of three agy limits (security and `--investigate` are refused at `tools/ask-model.mjs:1418-1426`);
+  - neon ships with no `avoid`.
+- If you want the warning, do it by vendor for neon too, as a separate change.
+- Remove then touches one file: refuse while a role, flavor or pause names the family.
+
+**Cut `harness` and `from` (Decision 2: leave out)**
+- The plan's own rule, unknown key means hidden, already gives the forward compatibility that recording them was meant to buy.
+- A later opencode entry carries a key this build does not know and is hidden, with no version bump.
+- The entry becomes `{ id, addedAt }`.
+
+**Fix the name to the catalog word and cut the inline form**
+- Update alerts match catalog entries by family name (`lib/models-catalog.js:315`).
+- A renamed family would silently never get an update alert.
+- Add becomes one click; refuse on a name collision.
+
+**Cut the effort picker change**
+- Three pickers use the full effort list (`public/app.js:5130`, `:5203`, `:5387`) and the plan limits only the card's.
+- First find out whether agy rejects an unlisted effort. I could not run agy in this sandbox.
+
+**Cut the special states**
+- Fold "shadowed" into the hidden reasons.
+- Treat a version other than 1 like the sibling files do: an error, no user families, no writes.
+
+**Missing from the plan**
+- **Cache key:** `loadRegistry` caches on two files' stats (`lib/models.js:172`). Add `families.json`, or a running studio will not see an adoption.
+- **Output keys:** put `userFamilies` and the hidden list beside `defaults`, not inside `registry`. `model-id --json` spreads `registry` (`bin/model-id.mjs:274`), which would break "no new output key".
+- **Blast radius:** a hidden or broken entry that a role, flavor or pause names invalidates all of `roles.json`, so every role refuses and the editor locks (`lib/roles-panel.js:223`). Say so, make the error name `families.json` and the reason, and test it.
+- **Writes match reads:** Set and Accept on a user family must hard-refuse anything the read side would hide, such as a non-gemini id. `setModel`'s confirm warning is not enough.
+- **QA:** do browser QA under a temp HOME, not your real one, while `acs` is still trunk.
+
+## 3. QUESTIONS
+
+1. **Is the goal the adoption feature, or just having Argon and Hydrogen?** Recommended: build the trimmed PR D, because the approved flow ends at "choose models". If time is tight, ship both as neon was shipped (two lines in `models.default.json` plus flavor) and do D later.
+2. **Do you need to name adopted families yourself?** Recommended: no — use the catalog word, and hand-edit `families.json` in the rare collision.

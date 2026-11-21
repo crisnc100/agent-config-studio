@@ -13,6 +13,7 @@ import { scanOnce } from './lib/setup-scan.js';
 import { acsInstalled, nextSteps, pathStep } from './lib/setup-commands.js';
 import { isPartial } from './lib/walk-budget.js';
 import { locateBinary } from './lib/harness.js';
+import { probeVersion } from './lib/version-probe.js';
 import { refreshLoginDirs, loginDirs, loginDirsKnown, loginDirsSettled, LOGIN_READ_MS } from './lib/login-path.js';
 import { buildRegistry, scopeChain, onWalkDone, staleLargeWalks, protectedFiles } from './lib/registry.js';
 import { listSkills, resolveSkills, toPublic, readInSkill, parseFrontmatter, SKILL_LIMITS } from './lib/skills.js';
@@ -39,7 +40,7 @@ import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
 import { codexProcessesUsingHome, stopProcesses } from './lib/usage/processes.js';
 import { loadSeats } from './lib/usage/seats.js';
 import {
-  createModelsState, setModel, resetModel, dismiss, applySidecar, whereUsed,
+  createModelsState, setModel, resetModel, dismiss, applySidecar, whereUsed, pinFamily, removeFamily,
 } from './lib/models-panel.js';
 import { loadRegistry } from './lib/models.js';
 import { rolesView, setRole, resetRole, deleteRole, setFlavor, resetFlavor } from './lib/roles-panel.js';
@@ -662,9 +663,15 @@ export function createApp(opts = {}) {
   const streamTurnFn = opts.streamTurn || streamTurn;
   const runAssistFn = opts.runAssist || runAssist;
   const sessions = new Map();
+  const codexHomes = () => loadSeats().seats.filter((x) => x.vendor === 'codex' && x.home).map((x) => x.home);
+  // The Models page needs only Claude Code's version: one probe, off the main thread, so a slow CLI holds no request.
+  const claudeOnly = async () => {
+    const { binary } = locateBinary('claude');
+    return binary ? [{ id: 'claude', version: await probeVersion(binary) }] : [];
+  };
   const models = createModelsState({
-    detectFn,
-    codexHomes: () => loadSeats().seats.filter((x) => x.vendor === 'codex' && x.home).map((x) => x.home),
+    detectFn: opts.detectHarnesses || claudeOnly,
+    codexHomes,
     refreshCodex: opts.refreshCodexCatalogs || refreshCodexCatalogs,
     refreshAgy: opts.refreshAgyModels || readGeminiModels,
   });
@@ -682,9 +689,9 @@ export function createApp(opts = {}) {
   const liveTurns = new Map();
   fileChangeHooks.add(() => assistFiles.invalidate());
 
-  /** A family the registry knows, or a 400 — never a path or free text. */
+  /** A family the registry knows, shipped or added, or a 400 — never a path or free text. */
   const knownFamily = (family) => {
-    if (typeof family !== 'string' || !Object.hasOwn(loadRegistry().defaults.models, family)) {
+    if (typeof family !== 'string' || !Object.hasOwn(loadRegistry().registry.models, family)) {
       throw Object.assign(new Error(`unknown model family "${family}"`), { status: 400 });
     }
     return family;
@@ -1296,15 +1303,30 @@ export function createApp(opts = {}) {
    * reads no credential either way.
    */
   'GET /api/models': async () => models.view(),
-  'POST /api/models/check': async () => { await models.check({ refresh: true }); return models.view(); },
+  'POST /api/models/check': async (req) => {
+    requireStrict(req);
+    await models.check({ refresh: true });
+    return models.view();
+  },
   'GET /api/models/where': async (_req, url) => whereUsed(knownFamily(url.searchParams.get('family'))),
 
   'POST /api/models/set': async (req) => {
     const { family, id, confirm } = await readBody(req);
     const s = await models.current();
-    return setModel({ family, id, confirm: confirm === true, catalogs: s.catalogs, claudeVersion: s.claudeVersion });
+    return setModel({ family, id, confirm: confirm === true, pin: true, catalogs: s.catalogs, claudeVersion: s.claudeVersion });
   },
   'POST /api/models/reset': async (req) => resetModel({ family: (await readBody(req)).family }),
+  /** Families synced from the CLIs' model lists: families.json only, never models.json. */
+  'POST /api/models/pin': async (req) => {
+    requireStrict(req);
+    const { family, pinned } = await objectBody(req);
+    return pinFamily({ family, pinned });
+  },
+  'POST /api/models/remove': async (req) => {
+    requireStrict(req);
+    const { family } = await objectBody(req);
+    return removeFamily({ family, codexHomes: codexHomes() });
+  },
 
   /** Accepting writes exactly what a manual edit of the same id writes. */
   'POST /api/models/accept': async (req) => {

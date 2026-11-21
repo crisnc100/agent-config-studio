@@ -294,6 +294,15 @@ never reads it, so new data cannot break it.
   `use`/`ids` plus `--flavor <family>` effort (or the role's `effort`).
   `writeRoles` refuses a document with any object member (409, "per-model
   effort") while the installed resolver is stale, as it does for `avoid`.
+- Families added by the sync live in `~/.agent-config-studio/families.json`
+  (`lib/models.js` merges them, checking each entry on its own and hiding an
+  unusable one with its reason). `check()` in `lib/models-panel.js` syncs at
+  start and on Check now; a failing sync is reported on the Models page and
+  does not fail the check. `commitFamilies` plans, awaits the history baseline,
+  plans again, then edits and renames with no await between. `writeRoles`
+  re-validates families right before its rename. `acs install-model-id` copies
+  `lib/models.js` with `lib/roles.js`, and the Roles panel calls the install
+  stale when either differs.
 - `bin/model-id.mjs` imports `lib/roles.js` only when a role flag asks. An
   installed copy that lacks it (or `lib/roles.default.json`) still resolves
   families and answers role flags with "run: acs install-model-id". A
