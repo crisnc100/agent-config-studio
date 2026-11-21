@@ -178,6 +178,13 @@ else {
   fs.mkdirSync(path.join(repo, 'src'), { recursive: true }); fs.writeFileSync(path.join(repo, 'top.md'), 'top');
   const sub = ask(['--family', 'neon', '--cwd', path.join(repo, 'src')], { env: { STUB_PEEK: path.join(repo, 'top.md') } });
   ok('from a subfolder of a git work tree, its top folder is readable', sub.code === 0 && sub.calls[0]?.peek[path.join(repo, 'top.md')] === 'top', show(sub));
+  const mine = mk('repo-gitenv'), theirs = mk('other-gitenv');
+  for (const d of [mine, theirs]) spawnSync('git', ['init', '-q', d]);
+  fs.writeFileSync(path.join(mine, 'in.md'), 'in'); fs.writeFileSync(path.join(theirs, 'secret.md'), 'token:other');
+  const moved = ask(['--family', 'neon', '--cwd', mine], { env: { GIT_DIR: path.join(theirs, '.git'), GIT_WORK_TREE: theirs,
+    STUB_PEEK: [path.join(mine, 'in.md'), path.join(theirs, 'secret.md')].join('\n') } });
+  ok('an inherited GIT_DIR and GIT_WORK_TREE do not move the wall: the --cwd tree is readable, theirs is not', moved.code === 0
+    && moved.calls[0]?.peek[path.join(mine, 'in.md')] === 'in' && moved.calls[0]?.peek[path.join(theirs, 'secret.md')] === 'EPERM', show(moved));
   const atHome = ask(['--family', 'neon', '--cwd', h], { h });
   ok('--cwd HOME → exit 4, agy not run: the wall would keep nothing out', atHome.code === 4 && /is your home folder or holds it/.test(atHome.err) && atHome.calls.length === 0, show(atHome));
   const leaky = ask(['--family', 'neon', '--cwd', WORK], { env: { TMPDIR: mk('work', 'tmp') } });

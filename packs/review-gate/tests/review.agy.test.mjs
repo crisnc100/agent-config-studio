@@ -196,6 +196,20 @@ macTest('an agy review runs inside the wall: the reviewed tree is readable, the 
   rmSync(join(ROOT, 'outside'), { recursive: true, force: true })
 })
 
+macTest('an inherited GIT_DIR and GIT_WORK_TREE do not move the wall: agy reads the tree it runs in, not theirs', () => {
+  const other = join(ROOT, 'other')
+  rmSync(other, { recursive: true, force: true })
+  assert.equal(spawnSync('git', ['clone', '-q', REPO, other], { env: env(), encoding: 'utf8' }).status, 0)
+  assert.equal(spawnSync('git', ['-C', other, 'branch', 'main', 'origin/main'], { env: env(), encoding: 'utf8' }).status, 0)
+  put(join(other, 'secret.md'), 'token:other')
+  run([], { REVIEW_REVIEWER: 'neon', GIT_DIR: join(other, '.git'), GIT_WORK_TREE: other, STUB_PEEK: [join(REPO, 'a.js'), join(other, 'secret.md')].join('\n') })
+  const [call] = calls('agy').filter((c) => c.peek)
+  assert.ok(call, 'agy was called')
+  assert.match(call.peek[join(REPO, 'a.js')], /export const f/)
+  assert.equal(call.peek[join(other, 'secret.md')], 'EPERM')
+  rmSync(other, { recursive: true, force: true })
+})
+
 macTest('a dispute verifier on agy reads the snapshot clone it judges, not the checkout the review ran in', () => {
   const pool = J({ use: ['opus', 'neon'], ids: ['claude-opus-stub', 'gemini-4-neon'] })
   const r = run([], { REVIEW_REVIEWER: 'opus', STUB_ROLE: pool })

@@ -94,6 +94,18 @@ console.log('\nagy wall: refusals that need no sandbox');
   spawnSync('git', ['init', '-q', repo]);
   const inRepo = agyReadRoot(path.join(repo, 'src', 'deep'), home);
   ok('inside a git work tree the root is its top folder', inRepo.root === repo, J(inRepo));
+  // Git variables a caller inherits (a hook sets GIT_DIR, say) must not move the root to another tree.
+  const other = path.join(home, 'other');
+  fs.mkdirSync(other); spawnSync('git', ['init', '-q', other]);
+  const inherited = { GIT_DIR: path.join(other, '.git'), GIT_WORK_TREE: other, GIT_COMMON_DIR: path.join(other, '.git'),
+    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.worktree', GIT_CONFIG_VALUE_0: other, GIT_CONFIG_PARAMETERS: `'core.worktree=${other}'` };
+  const saved = Object.fromEntries(Object.keys(inherited).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, inherited);
+  let moved;
+  try { moved = agyReadRoot(path.join(repo, 'src', 'deep'), home); } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+  ok('inherited GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR and env-set core.worktree do not move the root', moved.root === repo, J(moved));
   const plain = fs.realpathSync(tempDir('acs-agy-wall-plain-'));
   ok('outside one it is the folder itself', agyReadRoot(plain, home).root === plain, J(agyReadRoot(plain, home)));
   const near = `${home}-other`;
