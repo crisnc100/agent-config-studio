@@ -213,3 +213,31 @@ code that consumes it:
   no Claude Code gate (6); pin ignored (1); writing when nothing changed (1, plus a crash on no file).
 - Checks: tests/models.mjs 64/64; tests/models-families.mjs 168/168; tests/models-panel.mjs 118/118;
   tests/models-agy.mjs 50/50.
+
+## Sync phase 3 — trigger and routes (builder, 2026-11-21)
+- lib/models-panel.js:
+  - check() runs syncFamilies after readCatalogs and before `state`, in a catch; the error goes to
+    `sync.error` ("The sync from the model lists failed: …"), historyError is not passed to the view.
+  - view(): rows from families.json get source `synced` (detect's `added` param is now `synced`), `offered`
+    (true/false; null when the list is unreadable) and `heldBy` (null when roles/paused cannot be read). `sync`
+    replaces `addable`.
+  - pinFamily({family, pinned}); setModel/setAddedModel take `pin` (Set route passes it, Accept does not);
+    withFamilyPin writes `"track": false` or removes the key. adoptFamily, addable, ADD_STALE are deleted.
+  - Reset/Remove/Pin messages say "families.json" instead of "added by you".
+- server.js: POST /api/models/pin (strict same-origin, object body); Set passes pin: true; adopt route deleted.
+- public/home.js: familiesError → partial ("families.json is invalid — the families synced from the model lists
+  are left out"); a sync error → partial unless familiesError already says it; an update line on a held synced
+  family ends "(held by …)".
+- **Found and fixed (sibling):** lib/history.js allowed only models.json and roles.json among studio files, so every
+  families.json write — Set, Accept, Remove on the adopt branch, and now sync and Pin — came back with
+  historyError "path outside allowed roots" and was never recorded. families.json joins both lists (allowedRoots and
+  snapshotAll's studio files). A test asserts the sync and a Pin land in the history log; it fails without the fix.
+- tests/models-panel.mjs:287 and :441 were not changed: they pass unchanged (their HOMEs come from defaultCatalogs,
+  whose only words are shipped families). The lead's brief asked for a test-only change there; it was not needed,
+  and widening the source list with no synced row in that HOME would only loosen it.
+- Planted bugs: a sync throw escaping check() (crash), Set not pinning (1 FAIL), no heldBy (4), history fix
+  reverted (2).
+- Checks: tests/models.mjs 64/64; models-families 182/182; home 130/130; models-panel 118/118; models-agy 50/50;
+  models-refresh 29/29; roots-history 10/10; own-writes 43/43; guards 11/11; setup-guards 106/106.
+- `taskpolicy -b` fails inside the sandbox (setpriority: Operation not permitted), so every run here was with the
+  sandbox off.
