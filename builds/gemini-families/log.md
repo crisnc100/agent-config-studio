@@ -366,3 +366,18 @@ Reviews 2026-11-21-14-53-16-aa4710 (screen) and 2026-11-21-14-56-35-dfd95e (lib 
 - Checks: models-families 223/223, models-layout-ui 109/109, models 64/64, models-panel 118/118, models-agy 50/50,
   models-refresh 29/29, guards 11/11, setup-guards 106/106, own-writes 43/43, roots-history 10/10, roles-ui 75/75,
   model-guide-ui 50/50, ui-clarity-f 59/59, ui-clarity-g 17/17, packs-workflow 111/111, pause-ui 36/36, home 130/130.
+
+## Fix round: a Remove during a roles write (builder, 2026-11-21)
+- The lead put sibling item 4's reverse direction in scope: PR D's Remove is what makes this race reachable.
+- lib/roles-panel.js replaceRoles: validateRoles(text, home) is run again in the no-await section, right before
+  renameSync. A refused write keeps the existing shape (400, unknown family), and the temp file is removed.
+- Test-first, in tests/roles-unit.mjs: the write hook (_setWriteHook, inside the compare-and-rename) runs a real
+  removeFamily of argon, which commits. Before the fix: 2 FAIL (the write saved; roles.json named argon). After:
+  100/100.
+- Pause writes (lib/pause.js): pauseName checks the family, then update() writes the temp file and renames with
+  no await anywhere, so an in-process Remove cannot land between them. Not the same shape; left unchanged. Another
+  studio process could, which is the two-process limit already filed.
+- Checks: roles-unit 100, roles-routes 157, roles-writer 9, roles-security 9, pause-routes 23,
+  packs-review-settings 135, packs-security 44, packs-pages 81, models-families 223, models 64.
+- One run of roles-unit showed the real-home snapshot check failing (activity on the real home during the run);
+  the next two runs passed it, as did every other check.
