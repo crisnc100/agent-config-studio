@@ -887,8 +887,9 @@ skill.
   `~/.gemini/antigravity-cli/antigravity-oauth-token` exists: agy writes
   your Google sign-in token there in plain text when it cannot save it in
   the keychain, and leaves it. Delete it; agy signs in from the keychain
-  without it. A call whose agy log says it kept its sign-in token in a file
-  exits 4 too.
+  without it. A call exits 4 too when agy left no readable log of it, when
+  that log says agy kept its sign-in token in a file, or when the token file
+  is there afterwards.
   `--role security` (or its `--second`) that resolves to an agy family
   exits 4 without running it, since agy's web search stays on.
   A tool call agy refused is printed on stderr and does not fail the call.
