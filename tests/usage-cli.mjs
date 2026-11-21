@@ -18,12 +18,13 @@ const ok = (name, cond, detail = '') => {
   if (cond) { pass++; console.log(`  ok   ${name}`); }
   else { fail++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 };
-// No real agy on PATH: detect now suggests Gemini whenever agy is installed, and the next --json would run it.
+// No real agy on PATH or in the login directories the refresh hands on (ACS_LOGIN_PATH_DIRS, lib/login-path.js):
+// detect suggests Gemini whenever agy is installed, and the next --json would run it.
 const PATH_NO_AGY = (process.env.PATH || '').split(path.delimiter).filter((d) => d && !fs.existsSync(path.join(d, 'agy'))).join(path.delimiter);
 const run = (...args) => {
   try {
     return execFileSync(process.execPath, [CLI, ...args],
-      { encoding: 'utf8', env: { ...process.env, HOME: home, CODEX_HOME: '', NO_COLOR: '1', PATH: PATH_NO_AGY } });
+      { encoding: 'utf8', env: { ...process.env, ACS_LOGIN_PATH_DIRS: '', HOME: home, CODEX_HOME: '', NO_COLOR: '1', PATH: PATH_NO_AGY } });
   } catch (e) { return `EXIT ${e.status}\n${e.stdout || ''}${e.stderr || ''}`; }
 };
 const snapFile = path.join(home, '.agent-config-studio', 'usage-snapshot.json');
@@ -107,7 +108,7 @@ ok('HOME is redirected', home !== realHome);
   const out = (() => {
     try {
       return execFileSync(acs, ['usage', '--json'],
-        { encoding: 'utf8', env: { ...process.env, HOME: home, NO_COLOR: '1' } });
+        { encoding: 'utf8', env: { ...process.env, ACS_LOGIN_PATH_DIRS: '', HOME: home, NO_COLOR: '1' } });
     } catch (e) { return `EXIT ${e.status}\n${e.stdout || ''}${e.stderr || ''}`; }
   })();
   let parsed = null;
@@ -141,7 +142,7 @@ ok('HOME is redirected', home !== realHome);
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.writeFileSync(path.join(fakeBin, 'agy'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   const runG = (pathVar, ...args) => {
-    try { return execFileSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env: { ...process.env, HOME: g, CODEX_HOME: '', NO_COLOR: '1', PATH: pathVar } }); }
+    try { return execFileSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env: { ...process.env, ACS_LOGIN_PATH_DIRS: '', HOME: g, CODEX_HOME: '', NO_COLOR: '1', PATH: pathVar } }); }
     catch (e) { return `EXIT ${e.status}\n${e.stdout || ''}${e.stderr || ''}`; }
   };
   const out = runG(`${fakeBin}${path.delimiter}${noAgy}`, 'detect');
@@ -168,7 +169,7 @@ ok('HOME is redirected', home !== realHome);
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.writeFileSync(path.join(fakeBin, 'agy'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   const out = (() => {
-    try { return execFileSync(process.execPath, [CLI, 'detect'], { encoding: 'utf8', env: { ...process.env, HOME: g, CODEX_HOME: '', NO_COLOR: '1', PATH: `${fakeBin}${path.delimiter}${PATH_NO_AGY}` } }); }
+    try { return execFileSync(process.execPath, [CLI, 'detect'], { encoding: 'utf8', env: { ...process.env, ACS_LOGIN_PATH_DIRS: '', HOME: g, CODEX_HOME: '', NO_COLOR: '1', PATH: `${fakeBin}${path.delimiter}${PATH_NO_AGY}` } }); }
     catch (e) { return `EXIT ${e.status}\n${e.stdout || ''}${e.stderr || ''}`; }
   })();
   ok('detect does not suggest a second Gemini seat beside a UI-added one', !/gemini-1/.test(out) && !/\bgemini\b/.test(out), out);
