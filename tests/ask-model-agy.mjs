@@ -187,6 +187,8 @@ else {
   const tf = ask(['--family', 'neon', '--json'], { env: { STUB_MODE: 'token-file' } });
   ok('a log saying agy kept its token in a file → exit 4, the answer not used', tf.code === 4 && tf.j?.answer === null
     && /keeping its Google sign-in token in a file .*"file-based token storage"/.test(tf.j?.error ?? ''), show(tf));
+  ok('…and the error names the token file and the fix', /If \/.*\/\.gemini\/antigravity-cli\/antigravity-oauth-token now exists, delete it: agy signs in from the keychain without it/
+    .test(tf.j?.error ?? '') && !/check what it wrote/.test(tf.j?.error ?? ''), show(tf));
   fs.rmSync(inside);
 }
 
@@ -226,6 +228,28 @@ for (const [flag, re] of [['--investigate', /--investigate is not available for 
 {
   const r = ask(['--family', 'neon', '--x-search']);
   ok('--x-search → exit 64 (grok only), agy not run', r.code === 64 && /--x-search uses grok/.test(r.err) && r.calls.length === 0, show(r));
+}
+
+console.log('\nask-model agy: a plaintext token file left by agy refuses the call');
+{
+  const TOKEN = path.join('.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+  const plant = (h, how) => {
+    fs.mkdirSync(path.dirname(path.join(h, TOKEN)), { recursive: true });
+    if (how === 'file') fs.writeFileSync(path.join(h, TOKEN), '{"token":"x"}', { mode: 0o600 });
+    else fs.symlinkSync(path.join(h, 'nowhere'), path.join(h, TOKEN));
+    return h;
+  };
+  for (const how of ['file', 'dangling link']) {
+    const h = plant(home(), how);
+    const r = ask(['--family', 'neon'], { h });
+    ok(`a token file (${how}) → exit 4 before agy runs, naming it and the fix`, r.code === 4 && r.calls.length === 0
+      && r.err.includes(`${path.join(h, TOKEN)} holds agy's Google sign-in token in plain text`)
+      && /so agy was not run: delete it: agy signs in from the keychain without it \(if it then asks you to sign in, run agy once and sign in\)/.test(r.err), show(r));
+  }
+  const none = home();
+  fs.mkdirSync(path.join(none, '.gemini', 'antigravity-cli'), { recursive: true });
+  fs.writeFileSync(path.join(none, '.gemini', 'antigravity-cli', 'antigravity-oauth-token.bak'), 'x');
+  ok('another file beside it does not refuse', ran(ask(['--family', 'neon'], { h: none })));
 }
 
 console.log('\nask-model agy: ~/.gemini/config');

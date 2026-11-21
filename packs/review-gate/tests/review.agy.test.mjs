@@ -219,6 +219,19 @@ macTest('a review whose agy log says it kept the sign-in token in a file fails a
   const r = run([], { REVIEW_REVIEWER: 'neon', STUB_AGY: 'token-file' })
   assert.notEqual(r.status, 0, r.out)
   assert.match(r.out, /agy review failed: agy switched to keeping its Google sign-in token in a file .*"file-based token storage"/)
+  assert.match(r.out, /If \/.*\/home\/\.gemini\/antigravity-cli\/antigravity-oauth-token now exists, delete it: agy signs in from the keychain without it/)
+  assert.doesNotMatch(r.out, /check what it wrote/)
+  assert.equal(logLines().filter((e) => e.type === 'review').length, 0)
+})
+
+test('a plaintext token file left by agy refuses the review before agy runs, naming the file and the fix', () => {
+  const file = join(HOME, '.gemini/antigravity-cli/antigravity-oauth-token')
+  put(file, '{"token":"x"}')
+  const r = run([], { REVIEW_REVIEWER: 'neon' })
+  assert.notEqual(r.status, 0, r.out)
+  assert.ok(r.out.includes(`agy review refused: ${file} holds agy's Google sign-in token in plain text`), r.out)
+  assert.match(r.out, /; delete it: agy signs in from the keychain without it \(if it then asks you to sign in, run agy once and sign in\)/)
+  assert.equal(calls('agy').length, 0)
   assert.equal(logLines().filter((e) => e.type === 'review').length, 0)
 })
 

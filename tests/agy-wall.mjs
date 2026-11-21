@@ -15,7 +15,7 @@ import { tempDir } from './fixtures/cleanup.mjs';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ASK = path.join(ROOT, 'tools', 'ask-model.mjs');
 const J = JSON.stringify;
-const { AGY_ENV, AGY_WALL, SANDBOX_EXEC, agyReadRoot, agyTokenFile, agyWall, agyWallCanary, agyWallParams, agyWallProblem } = await import(ASK);
+const { AGY_ENV, AGY_WALL, SANDBOX_EXEC, agyReadRoot, agyTokenFile, agyTokenLeft, agyWall, agyWallCanary, agyWallParams, agyWallProblem } = await import(ASK);
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -71,7 +71,11 @@ console.log('\nagy wall: one profile, the same in both runtimes');
   ok('agy\'s updater is switched off the way it honours ("true", not "1")', AGY_ENV.AGY_CLI_DISABLE_AUTO_UPDATE === 'true', J(AGY_ENV));
   ok('agyWall passes each parameter with -D and the profile with -p, then the command, in that order',
     J(agyWall({ ROOT: '/r', LOG: '/l' }, ['/bin/cat', 'x'])) === J(['-D', 'ROOT=/r', '-D', 'LOG=/l', '-p', AGY_WALL, '/bin/cat', 'x']));
-  const rev = read('packs/review-gate/runtime/review.mjs');
+  const rev = read('packs/review-gate/runtime/review.mjs'), ask = read('tools/ask-model.mjs');
+  const fix = (src) => /^const AGY_TOKEN_FIX = ('[^'\n]+');?$/m.exec(src)?.[1];
+  const tokenPath = (src) => /^const AGY_TOKEN_PATH = (?:path\.)?join\(('.gemini', 'antigravity-cli', 'antigravity-oauth-token')\);?$/m.exec(src)?.[1];
+  ok('both runtimes name the same token file and give the same fix', fix(ask) !== undefined && fix(ask) === fix(rev)
+    && tokenPath(ask) !== undefined && tokenPath(ask) === tokenPath(rev), J({ ask: [fix(ask), tokenPath(ask)], rev: [fix(rev), tokenPath(rev)] }));
   ok('the review runtime spawns agy for a review only through sandbox-exec; only --version runs bare',
     (rev.match(/spawnSync\('agy'/g) || []).length === 1 && /spawnSync\('agy', \['--version'\]/.test(rev) && /spawnSync\(SANDBOX_EXEC, agyWall\(walled\.params, \[bin, '-p'/.test(rev));
 }
@@ -101,6 +105,22 @@ console.log('\nagy wall: refusals that need no sandbox');
   ok('…the line agy writes when it keeps the token in a file is caught', (fs.writeFileSync(log, 'W Using file-based token storage because a keyring timeout was recorded within the last 1h0m0s\n'), agyTokenFile(log)) === true);
   ok('…as is its other wording', (fs.writeFileSync(log, 'Keyring set failed (x); using file-based token storage for writes for the rest of this process\n'), agyTokenFile(log)) === true);
   ok('…a log agy never wrote is not', agyTokenFile(path.join(plain, 'none.log')) === false);
+  const th = fs.realpathSync(tempDir('acs-agy-wall-token-home-'));
+  const tf = path.join(th, '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+  ok('agyTokenLeft: no token file is fine', agyTokenLeft(th) === null, J(agyTokenLeft(th)));
+  fs.mkdirSync(path.dirname(tf), { recursive: true });
+  fs.writeFileSync(tf, '{}');
+  const found = agyTokenLeft(th);
+  ok('…the file agy writes is named', found?.file === tf && /holds agy's Google sign-in token in plain text/.test(found.why), J(found));
+  fs.rmSync(tf); fs.symlinkSync(path.join(th, 'nowhere'), tf);
+  ok('…so is a link at that path, even one that leads nowhere', agyTokenLeft(th)?.file === tf, J(agyTokenLeft(th)));
+  fs.rmSync(tf);
+  if (process.getuid?.() !== 0) {
+    fs.chmodSync(path.dirname(tf), 0o000);
+    const blind = agyTokenLeft(th);
+    fs.chmodSync(path.dirname(tf), 0o755);
+    ok('…and a folder that cannot be looked into counts as one, not as none', /could not be checked \(EACCES\)/.test(blind?.why ?? ''), J(blind));
+  }
 }
 
 if (process.platform !== 'darwin') {
