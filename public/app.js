@@ -4649,6 +4649,19 @@ async function paintModels(load) {
     n.appendChild(el('div', 'models-error-text', m.registryError));
     box.appendChild(n);
   }
+  if (m.familiesError) {
+    const n = el('div', 'notice error models-error');
+    n.appendChild(el('div', null, 'families.json is invalid. The models you added are left out, and adding or removing one is refused until it is fixed:'));
+    n.appendChild(el('div', 'models-error-text', m.familiesError));
+    box.appendChild(n);
+  }
+  const hidden = Object.entries(m.familiesHidden || {});
+  if (hidden.length) {
+    const n = el('div', 'notice warn models-error');
+    n.appendChild(el('div', null, 'families.json has entries this ACS cannot use; a role, flavor or pause naming one is refused:'));
+    for (const [name, why] of hidden) n.appendChild(el('div', 'models-error-text', `${name}: ${why}`));
+    box.appendChild(n);
+  }
   // The out-of-date guide leads the page: one banner, and the review right under it (no scrolling down).
   const stale = guideStrip();
   if (stale) box.appendChild(stale);
@@ -4704,6 +4717,7 @@ function idsSection(m) {
     cats.appendChild(line);
     if (cat.disagree) cats.appendChild(el('div', 'models-catalog stale', cat.disagree));
     if (cat.refreshNote) cats.appendChild(el('div', 'models-catalog stale', cat.refreshNote));
+    if (cat.vendor === 'agy' && m.addable?.length) cats.appendChild(addableLine(m.addable));
   }
   sec.appendChild(cats);
   if (M.sidecars.length) sec.appendChild(sidecarStrip());
@@ -4730,7 +4744,7 @@ function idsSection(m) {
     tr.appendChild(fam);
     tr.appendChild(el('td', 'models-id', r.id));
     tr.appendChild(el('td', 'models-name', r.displayName || '—'));
-    tr.appendChild(el('td', `models-source ${r.source}`, r.source === 'override' ? 'your override' : 'default'));
+    tr.appendChild(el('td', `models-source ${r.source}`, { override: 'your override', added: 'added by you' }[r.source] || 'default'));
     const al = el('td', 'models-alerts');
     const live = r.alerts.filter((a) => !a.dismissed);
     if (!live.length) al.appendChild(el('span', 'models-none', r.alerts.length ? 'dismissed' : '—'));
@@ -4745,6 +4759,27 @@ function idsSection(m) {
 }
 
 const vendorDot = (v) => (['claude', 'codex', 'grok', 'agy'].includes(v) ? v : 'unknown');
+
+/**
+ * Antigravity's models no family uses yet, each one click from being one. The family takes the model's own word
+ * (Argon → argon), so a newer release of it shows up as an update alert.
+ */
+function addableLine(addable) {
+  const line = el('div', 'models-catalog models-addable');
+  line.appendChild(el('span', 'models-catalog-name', 'Not added yet'));
+  const list = el('span', 'models-addable-list');
+  for (const a of addable) {
+    const item = el('span', 'models-addable-item');
+    item.appendChild(el('span', null, a.displayName || a.id));
+    const add = el('button', 'btn models-alert-btn', `Add as ${a.family}`);
+    add.title = `Add ${a.id} as a model named ${a.family}`;
+    add.onclick = () => modelWrite('/api/models/adopt', { id: a.id }, `${a.family} added: it points to ${a.id}.`);
+    item.appendChild(add);
+    list.appendChild(item);
+  }
+  line.appendChild(list);
+  return line;
+}
 
 /** The one place the CLI is named: what skills and scripts call to read all of this. */
 function scriptsNote() {
@@ -4768,7 +4803,8 @@ function alertChip(row, a) {
   if (a.reason) chip.appendChild(el('span', 'models-alert-why', a.reason));
   if (a.candidate) {
     const acc = el('button', 'btn ghost models-alert-btn', 'Accept');
-    acc.disabled = !a.acceptable || !!M.data.registryError;
+    // An added family's id lives in families.json, which a broken models.json does not touch.
+    acc.disabled = !a.acceptable || (row.source !== 'added' && !!M.data.registryError);
     acc.title = a.reason || `Set ${row.family} to ${a.candidate}`;
     acc.onclick = () => modelWrite('/api/models/accept', { family: row.family, key: a.key },
       `${row.family} is now ${a.candidate}.`);
@@ -4797,11 +4833,14 @@ function modelDetail(r, m) {
   input.spellcheck = false;
   input.setAttribute('aria-label', `${r.family} model id`);
   const save = el('button', 'btn primary', 'Save');
-  const reset = el('button', 'btn', 'Reset to default');
-  const refused = !!m.registryError;
+  const added = r.source === 'added';
+  // An added family has no shipped id to go back to: it is removed instead, and Remove is refused while anything names it.
+  const reset = added ? el('button', 'btn', 'Remove') : el('button', 'btn', 'Reset to default');
+  const refused = !added && !!m.registryError;
   save.disabled = refused;
-  reset.disabled = refused || r.source !== 'override';
-  reset.title = r.source === 'override' ? `Remove your override; the default is ${r.defaultId}` : 'Already the default';
+  reset.disabled = refused || (!added && r.source !== 'override');
+  reset.title = added ? `Remove ${r.family}; families.json is the only file that changes`
+    : r.source === 'override' ? `Remove your override; the default is ${r.defaultId}` : 'Already the default';
   const submit = () => {
     const id = input.value.trim();
     if (!ID_SHAPE.test(id)) return notice('error', `${id || '(empty)'} is not a valid model id — lowercase letters, digits, "." and "-", up to 64 characters.`);
@@ -4809,7 +4848,9 @@ function modelDetail(r, m) {
   };
   save.onclick = submit;
   input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
-  reset.onclick = () => modelWrite('/api/models/reset', { family: r.family }, `${r.family} is back to the default, ${r.defaultId}.`);
+  reset.onclick = added
+    ? () => modelWrite('/api/models/remove', { family: r.family }, `${r.family} removed.`)
+    : () => modelWrite('/api/models/reset', { family: r.family }, `${r.family} is back to the default, ${r.defaultId}.`);
   edit.appendChild(input);
   edit.appendChild(save);
   edit.appendChild(reset);

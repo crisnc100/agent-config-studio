@@ -951,6 +951,9 @@ a { color: var(--accent); }
 .models-catalog { font-size: 12px; color: var(--muted); display: flex; gap: 10px; }
 .models-catalog.stale, .models-catalog.missing { color: var(--amber); }
 .models-catalog-name { min-width: 52px; color: var(--text-dim); }
+.models-addable { align-items: baseline; }
+.models-addable-list { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.models-addable-item { display: inline-flex; align-items: baseline; gap: 6px; }
 
 .models-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .models-table th {
