@@ -712,7 +712,7 @@ process.exit(9);
   } finally { await srv.stop(); }
 }
 
-console.log('\nmodels/families: Check now, the route that adds families, refuses a cross-site request');
+console.log('\nmodels/families: Check now, the route that adds families, refuses a cross-site or same-site request');
 {
   const h = home();
   plantAll(h, { agy: [agyEntry(DEFAULTS.models.neon, 'Gemini 4 Neon')] });
@@ -733,6 +733,11 @@ process.exit(9);
     ok('(start: the saved list offers nothing new, so no families.json)', srv.up && !fs.existsSync(familiesPath(h)), srv.out().slice(-400));
     const x = await srv.post('/api/models/check', {}, { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' });
     ok('a cross-site Check now → 403: agy is not asked and no families.json is written', x.status === 403 && calls().length === 0 && !fs.existsSync(familiesPath(h)), J({ x, calls: calls() }));
+    const other = `http://localhost:${Number(new URL(srv.base).port) + 1}`;
+    const ss = await srv.post('/api/models/check', {}, { origin: other, 'sec-fetch-site': 'same-site' });
+    ok('a same-site Check now from another localhost port → 403: agy is not asked and no families.json is written', ss.status === 403 && calls().length === 0 && !fs.existsSync(familiesPath(h)), J({ ss, calls: calls() }));
+    const bare = await srv.post('/api/models/check', {}, { 'sec-fetch-site': 'same-site' });
+    ok('...and with no Origin header (the case the global guard lets through) → 403, agy not asked, nothing written', bare.status === 403 && calls().length === 0 && !fs.existsSync(familiesPath(h)), J({ bare, calls: calls() }));
     const same = await srv.post('/api/models/check', {});
     ok('...the same Check now from the page asks agy and adds what it offers anew', same.status === 200 && calls().length === 2
       && ids(h).argon === ARGON && ids(h).hydrogen === HYDROGEN && ids(h).flash === 'gemini-3.8-flash', readOr(familiesPath(h)));

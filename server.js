@@ -1296,7 +1296,11 @@ export function createApp(opts = {}) {
    * reads no credential either way.
    */
   'GET /api/models': async () => models.view(),
-  'POST /api/models/check': async () => { await models.check({ refresh: true }); return models.view(); },
+  'POST /api/models/check': async (req) => {
+    requireStrict(req);
+    await models.check({ refresh: true });
+    return models.view();
+  },
   'GET /api/models/where': async (_req, url) => whereUsed(knownFamily(url.searchParams.get('family'))),
 
   'POST /api/models/set': async (req) => {
