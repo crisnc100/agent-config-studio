@@ -22,3 +22,22 @@
   Gemini model is a failure, not an empty catalog (it would make every Antigravity family look vanished).
 - Real fixture → gemini-4-neon "Gemini 4 Neon" low..xhigh, argon, hydrogen, 3.8-flash, two orchestrators kept whole.
 - Checks: tests/usage-gemini.mjs 86/86, tests/guards.mjs 11/11, tests/models.mjs 64/64.
+
+## Phase 2 — catalog and Check now (builder, 2026-11-20)
+- lib/models-catalog.js: agyModelsPath = ~/.agent-config-studio/cache/agy-models.json; readAgy reads it through the
+  same readJson (ENOENT → missing, anything else a failed read), keeps only ID_RE-valid agy ids, family = the word of
+  a `gemini-<numbers>-<word>` id (orchestrators null). project() carries `efforts` (null for other vendors). The
+  noCatalog state is gone; agy's catalog is `checkOnly`, and its notes say "press Check now" where the others say
+  "run `<cli>` once".
+- lib/models-panel.js: createModelsState takes refreshAgy; only check({refresh:true}) calls it, beside the Codex
+  refresh (Promise.all); a success writes {version, fetchedAt, agyVersion, models[{id,displayName,efforts}]} with the
+  existing writeAtomic; a failure, a throw or an answer without a list writes nothing and sets agy's refreshNote
+  ("Not refreshed: <reason>." + " Shown as last fetched." when a list is saved). The view adds `names` for agy only.
+  Guard g holds: models-panel.js writes but names no CLI catalog path; models-catalog.js names them and never writes.
+- server.js: refreshAgy = opts.refreshAgyModels || readGeminiModels; nothing runs agy at start.
+- tests/models-agy.mjs (new, ci:offline in tests/SUITE): reading, detect (neon name, newer neon → update, gone →
+  vanished, orchestrators silent), stale/broken lists, Check now in process (writes, failures keep the file, one ask
+  for two Check nows) and through the real server with a fake agy in HOME/.local/bin. Planted bugs (agy asked on a
+  plain read; family from any last word) each failed it.
+- Checks: tests/models-agy.mjs 44/44, tests/guards.mjs 11/11, tests/models.mjs 64/64, tests/suite-coverage.mjs 33/33,
+  tests/models-panel.mjs 118/118, tests/models-refresh.mjs 29/29.

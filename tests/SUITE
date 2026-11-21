@@ -128,6 +128,8 @@ tests/models-backup.mjs                               local                     
 tests/models-panel.mjs                                ci:offline
 # Check now refreshing every Codex home: a fake codex, temp HOMEs.
 tests/models-refresh.mjs                              ci:offline
+# Check now asking agy for its Gemini models, and ACS's saved Antigravity list: fake agy, temp HOMEs.
+tests/models-agy.mjs                                  ci:offline
 tests/memory.mjs                                      ci:offline
 tests/context-map.mjs                                 ci:offline
 # Multi-select delete: the batch route (temp HOME), and Memory's trash-fact over several ids.

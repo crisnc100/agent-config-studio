@@ -34,6 +34,7 @@ import { createWatcher, snapshotOf, diffSnapshots, splitIndexed, expectWrite, ta
 import { renderSnapshot, createSeat, removeSeat, moveSeatToPrivateHome, suggestSeats, addSuggestedSeat } from './lib/usage/seats.js';
 import { refreshSnapshot } from './lib/usage/refresh.js';
 import { refreshCodexCatalogs } from './lib/usage/codex-limits.js';
+import { readGeminiModels } from './lib/usage/gemini.js';
 import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
 import { codexProcessesUsingHome, stopProcesses } from './lib/usage/processes.js';
 import { loadSeats } from './lib/usage/seats.js';
@@ -665,6 +666,7 @@ export function createApp(opts = {}) {
     detectFn,
     codexHomes: () => loadSeats().seats.filter((x) => x.vendor === 'codex' && x.home).map((x) => x.home),
     refreshCodex: opts.refreshCodexCatalogs || refreshCodexCatalogs,
+    refreshAgy: opts.refreshAgyModels || readGeminiModels,
   });
 
   const describer = createDescribe();
@@ -1289,7 +1291,9 @@ export function createApp(opts = {}) {
    * The Models panel. Catalogs are the CLIs' own on-disk caches, read at
    * start and on "Check now", and only projected fields leave
    * lib/models-catalog.js. "Check now" first has Codex refresh its catalogs
-   * through lib/usage/codex-limits.js; ACS reads no credential either way.
+   * through lib/usage/codex-limits.js, and asks agy for the Gemini models
+   * through lib/usage/gemini.js, saving them as ACS's Antigravity list; ACS
+   * reads no credential either way.
    */
   'GET /api/models': async () => models.view(),
   'POST /api/models/check': async () => { await models.check({ refresh: true }); return models.view(); },
