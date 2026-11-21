@@ -858,15 +858,23 @@ function agyWallProblem(platform = process.platform) {
 /**
  * The folder a walled agy call in `cwd` may read: the real path of the top of the git work tree holding `cwd`, else of
  * `cwd`. HOME, or a folder holding it, is refused: allowing it back would reopen everything the wall closes. git runs
- * without any inherited GIT_* variable: a GIT_DIR, GIT_WORK_TREE or env-set core.worktree (a hook's, say) would
- * otherwise name another tree, and the wall would let agy read that one.
+ * without any inherited GIT_* variable, since an inherited GIT_DIR or GIT_WORK_TREE (a hook's, say) would name another
+ * tree. A root that does not hold `cwd` is refused, not replaced: a repository's own config can name any folder as its
+ * work tree (core.worktree), and a committed folder holding HEAD, objects/ and refs/ is a repository with a config of
+ * its own, so repository content alone could otherwise point the wall at ~/.ssh. Paths are the kernel's spelling
+ * (realpathSync.native): the default keeps the caller's case, and HOME in the wrong case would not read as HOME.
  */
 function agyReadRoot(cwd, home = os.homedir()) {
-  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  const real = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
   const git = which('git');
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
   const top = git ? spawnSync(git, ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env }) : null;
-  const root = top?.status === 0 && top.stdout.trim() ? real(top.stdout.trim()) : real(cwd);
+  const here = real(cwd);
+  const root = top?.status === 0 && top.stdout.trim() ? real(top.stdout.trim()) : here;
+  if (root !== here && !here.startsWith(root.endsWith('/') ? root : `${root}/`)) {
+    return { error: `${root}, the work tree git names, does not hold ${here}, the folder the call runs in (a repository's own `
+      + 'config can name any tree as its work tree), so the wall would let agy read another tree' };
+  }
   const h = real(home);
   if (h === root || h.startsWith(root.endsWith('/') ? root : `${root}/`)) {
     return { error: `agy would read ${root}, which is your home folder or holds it, so the wall would keep nothing out` };
@@ -882,9 +890,9 @@ function agyWallParams({ root, callTmp, logFile, bin, home = os.homedir(), tmp =
   const ut = spawnSync('/usr/bin/getconf', ['DARWIN_USER_TEMP_DIR'], { encoding: 'utf8' });
   if (ut.error || ut.status !== 0 || !ut.stdout.trim()) return { error: "macOS's per-user temp folder could not be found (getconf DARWIN_USER_TEMP_DIR failed)" };
   try {
-    return { params: { ROOT: fs.realpathSync(root), CALL_TMP: fs.realpathSync(callTmp),
-      LOG: path.join(fs.realpathSync(path.dirname(logFile)), path.basename(logFile)), AGY: fs.realpathSync(bin),
-      HOME: fs.realpathSync(home), TMP: fs.realpathSync(tmp), USER_TMP: fs.realpathSync(ut.stdout.trim()) } };
+    const real = fs.realpathSync.native;
+    return { params: { ROOT: real(root), CALL_TMP: real(callTmp), LOG: path.join(real(path.dirname(logFile)), path.basename(logFile)),
+      AGY: real(bin), HOME: real(home), TMP: real(tmp), USER_TMP: real(ut.stdout.trim()) } };
   } catch (e) { return { error: `a path the wall names could not be resolved (${e.path ?? ''}: ${e.code || e.message})` }; }
 }
 

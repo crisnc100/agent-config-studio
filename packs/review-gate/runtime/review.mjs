@@ -2544,12 +2544,17 @@ function agyWallProblem(platform = process.platform) {
 }
 // The real path of the top of the git work tree holding `cwd`, else of `cwd`; HOME or a folder holding it is refused.
 // Computed per call: a dispute's verifier runs from a snapshot clone it changes into, not from TOP. git runs without any
-// inherited GIT_* variable, so a GIT_DIR or GIT_WORK_TREE (which also moves TOP) cannot point the wall at another tree.
+// inherited GIT_* variable, so a GIT_DIR or GIT_WORK_TREE (which also moves TOP) cannot point the wall at another tree,
+// and a root that does not hold cwd (a repository's own core.worktree) is refused; paths are the kernel's spelling
+// (ask-model's agyReadRoot).
 function agyReadRoot(cwd, home = homedir()) {
-  const real = (p) => { try { return realpathSync(p) } catch { return resolve(p) } }
+  const real = (p) => { try { return realpathSync.native(p) } catch { return resolve(p) } }
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')))
   const top = spawnSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env })
-  const root = top.status === 0 && top.stdout?.trim() ? real(top.stdout.trim()) : real(cwd)
+  const here = real(cwd)
+  const root = top.status === 0 && top.stdout?.trim() ? real(top.stdout.trim()) : here
+  if (root !== here && !here.startsWith(root.endsWith('/') ? root : `${root}/`))
+    return { error: `${root}, the work tree git names, does not hold ${here}, the folder the call runs in (a repository's own config can name any tree as its work tree), so the wall would let agy read another tree` }
   const h = real(home)
   if (h === root || h.startsWith(root.endsWith('/') ? root : `${root}/`))
     return { error: `agy would read ${root}, which is your home folder or holds it, so the wall would keep nothing out` }
@@ -2559,9 +2564,9 @@ function agyWallParams({ root, callTmp, logFile, bin, home = homedir(), tmp = tm
   const ut = spawnSync('/usr/bin/getconf', ['DARWIN_USER_TEMP_DIR'], { encoding: 'utf8' })
   if (ut.error || ut.status !== 0 || !ut.stdout.trim()) return { error: "macOS's per-user temp folder could not be found (getconf DARWIN_USER_TEMP_DIR failed)" }
   try {
-    return { params: { ROOT: realpathSync(root), CALL_TMP: realpathSync(callTmp),
-      LOG: join(realpathSync(dirname(logFile)), basename(logFile)), AGY: realpathSync(bin),
-      HOME: realpathSync(home), TMP: realpathSync(tmp), USER_TMP: realpathSync(ut.stdout.trim()) } }
+    const real = realpathSync.native
+    return { params: { ROOT: real(root), CALL_TMP: real(callTmp), LOG: join(real(dirname(logFile)), basename(logFile)),
+      AGY: real(bin), HOME: real(home), TMP: real(tmp), USER_TMP: real(ut.stdout.trim()) } }
   } catch (e) { return { error: `a path the wall names could not be resolved (${e.path ?? ''}: ${e.code || e.message})` } }
 }
 function agyTokenLeft(home = homedir()) {
