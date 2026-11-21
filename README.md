@@ -878,7 +878,8 @@ skill.
   read the git work tree holding `--cwd` (or `--cwd` itself), its own temp
   folder and log, and the few agy settings files it needs to start and sign
   in (your login keychain's file among them), and nothing else under your
-  home or temp folders. It exits 4 without running agy off macOS, inside
+  home or temp folders. It may not write agy's conversation summaries,
+  which it cannot read there and would otherwise empty. It exits 4 without running agy off macOS, inside
   another sandbox (run it from a plain terminal), when that folder is your
   home or holds it, or when a check made before each call shows the sandbox
   not holding. A call whose agy log says it kept its sign-in token in a file
@@ -886,6 +887,8 @@ skill.
   `--role security` (or its `--second`) that resolves to an agy family
   exits 4 without running it, since agy's web search stays on.
   A tool call agy refused is printed on stderr and does not fail the call.
+  A subagent the model tries to start is named there too: subagents can't
+  run inside the sandbox, and that does not fail the call either.
   `--investigate`, `--no-tools` and `--min-tools` exit 4
   for agy without running it. Agy reports only the model it was asked for,
   so its answer is labelled unverified (`--json` adds `served` with
