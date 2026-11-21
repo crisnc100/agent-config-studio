@@ -4618,6 +4618,11 @@ async function loadRoles() {
   if (S.view === 'models' && M.data) paintModels();
 }
 
+/** Model ids say which role, flavor or pause holds a family: read them again after a roles write. Painted by loadRoles. */
+async function reloadModelRows() {
+  try { M.data = await api('GET', '/api/models'); paintModelsBadge(M.data.pending); } catch { /* the rows keep their last read */ }
+}
+
 function setGuide(r) {
   if (r.status === 'fulfilled') { M.guide = r.value; M.guideError = null; } else M.guideError = r.reason.message;
 }
@@ -4701,6 +4706,9 @@ function idsSection(m) {
   check.onclick = async () => {
     check.disabled = true; check.textContent = 'Checking…';
     await paintModels(() => api('POST', '/api/models/check'));
+    // A sync can add a family: the Assist picker, the role editor and Your models read the registry too.
+    await refreshRegistry().catch(() => {});
+    await loadRoles();
   };
   head.appendChild(check);
   sec.appendChild(head);
@@ -4783,7 +4791,7 @@ function syncLines(m) {
     ...s.added.map((a) => `added ${a.family} (${a.id}, from ${listLabel(m, a.vendor)})`),
     ...s.moved.map((x) => `moved ${x.family} to ${x.to}`),
   ];
-  if (done.length) out.push(line('', `${done.join('; ')}.`));
+  if (done.length) out.push(line(s.historyError ? ' stale' : '', `${done.join('; ')}.${s.historyError ? ` (history: ${s.historyError})` : ''}`));
   if (s.skipped.length) out.push(line('', `Not synced: ${s.skipped.map((x) => `${x.family} from ${listLabel(m, x.vendor)} (${x.why})`).join('; ')}.`));
   return out;
 }
@@ -5004,6 +5012,7 @@ async function rolesWrite(path, body, okText, done, errKey) {
   M.where = {};
   done?.();
   const before = new Set((M.roles?.conflicts || []).map(conflictKey));
+  await reloadModelRows();
   await loadRoles();
   // Saved either way: a conflict is a warning, never a refusal.
   const added = (M.roles?.conflicts || []).filter((c) => !before.has(conflictKey(c)));
@@ -5171,14 +5180,21 @@ const listedEfforts = (family) => M.data?.rows?.find((r) => r.family === family)
 
 /**
  * Effort options for `families`: only what every one of them accepts where its catalog lists efforts (agy refuses
- * any other), the full list where none does. A saved value outside them stays, marked, so a save never changes it
- * without being asked.
+ * any other), the full list where none does. The `saved` value outside them stays, marked, so a save never changes
+ * it without being asked; an unsaved pick outside them gives way to the saved value when that is offered, else to
+ * none. Returns the value the select shows, which the caller keeps as its draft.
  */
-function effortOptions(sel, families, value) {
+function effortOptions(sel, families, value, saved) {
   const lists = families.map((f) => [f, listedEfforts(f)]).filter(([, l]) => l);
-  for (const e of M.roles.efforts.filter((x) => lists.every(([, l]) => l.includes(x)))) sel.appendChild(el('option', null, e)).value = e;
+  const offered = M.roles.efforts.filter((x) => lists.every(([, l]) => l.includes(x)));
+  for (const e of offered) sel.appendChild(el('option', null, e)).value = e;
   const lacking = value ? lists.filter(([, l]) => !l.includes(value)).map(([f]) => famLabel(f)) : [];
-  if (lacking.length) sel.appendChild(el('option', null, `${value} (not offered for ${lacking.join(', ')})`)).value = value;
+  if (!lacking.length) return value || '';
+  if (value === saved) {
+    sel.appendChild(el('option', null, `${value} (not offered for ${lacking.join(', ')})`)).value = value;
+    return value;
+  }
+  return saved && offered.includes(saved) ? saved : '';
 }
 
 /** One role's edit form, right under its row; `role` null is a new role. Drafts are kept in M.roleDrafts. */
@@ -5205,8 +5221,10 @@ function roleEditor(role) {
     f.appendChild(l);
     const sel = el('select', 'models-input roles-select roles-member-effort');
     sel.appendChild(el('option', null, 'role default')).value = '';
-    effortOptions(sel, [family], value);
-    sel.value = value || '';
+    const saved = role ? (k === 'alt' ? (role.alt === family ? altMemberOf(role)?.own : '') : membersOf(role).find((m) => m.family === family)?.own) : '';
+    const shown = effortOptions(sel, [family], value, saved || '');
+    sel.value = shown;
+    if (shown !== (value || '')) onchange(shown);
     sel.onchange = () => onchange(sel.value);
     f.appendChild(sel);
     return f;
@@ -5282,8 +5300,8 @@ function roleEditor(role) {
   const paintEffort = () => {
     effort.textContent = '';
     effort.appendChild(el('option', null, role?.defaults?.effort && !d.effort ? '(each model’s default — cleared)' : '(each model’s default)')).value = '';
-    effortOptions(effort, [...new Set([...families(), ...(d.alt ? [d.alt] : [])])], d.effort);
-    effort.value = d.effort || '';
+    d.effort = effortOptions(effort, [...new Set([...families(), ...(d.alt ? [d.alt] : [])])], d.effort, role?.effort || '');
+    effort.value = d.effort;
   };
   paintEffort();
   effort.onchange = () => { d.effort = effort.value; };
@@ -5468,7 +5486,7 @@ function flavorForm(f, marked) {
   brief.value = d.brief; brief.rows = 3; brief.maxLength = R.limits.brief; brief.oninput = () => { d.brief = brief.value; };
   const effort = field('Default effort (when a role sets none)', el('select', 'models-input roles-select flavor-effort'), 'effort');
   effort.appendChild(el('option', null, '(none)')).value = '';
-  effortOptions(effort, [family], d.effort);
+  d.effort = effortOptions(effort, [family], d.effort, f.flavor.effort || '');
   effort.value = d.effort; effort.onchange = () => { d.effort = effort.value; };
   box.appendChild(grid);
   box.appendChild(avoidPicker(d, marked('avoid')));
@@ -5649,6 +5667,7 @@ function proposalView(p) {
     M.describe.text = '';
     M.roleDrafts = {}; M.flavorDrafts = {};
     notice('ok', 'roles.json updated from your description.' + (r.warnings?.length ? ` (${r.warnings.join(' ')})` : ''));
+    await reloadModelRows();
     await loadRoles();
   };
   const rej = el('button', 'btn ghost describe-reject', 'Reject');

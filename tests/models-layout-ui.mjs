@@ -548,6 +548,74 @@ const ids = (p) => content(p).querySelector('.models-ids');
     && /pinned/.test(txt(famRow('argon').querySelector('.models-family'))), famRow('argon') && txt(famRow('argon')));
 }
 
+// ── one refresh reaches every panel that reads the registry ─────
+{
+  const J = JSON.stringify;
+  const UPD = { kind: 'update', key: 'update:gemini-4.1-argon', candidate: 'gemini-4.1-argon', displayName: null, acceptable: true, dismissed: false };
+  const argon = (heldBy) => ({ family: 'argon', id: 'gemini-4-argon', vendor: 'agy', track: true, source: 'synced', defaultId: null, displayName: 'Gemini 4 Argon',
+    efforts: null, offered: true, heldBy, alerts: [UPD] });
+  const blank = { likes: [], quirks: [], brief: '', effort: '' };
+  const withArgon = (flavor, over) => ({ ...view(), families: [...view().families, 'argon'], flavor: [...view().flavor, fl('argon', flavor, over, blank)] });
+  let rows = models().rows;
+  let roles = view();
+  const p = await boot(models(), {
+    'GET /api/models': () => ({ ...models(), rows }),
+    'GET /api/models/roles': () => roles,
+    'POST /api/models/check': () => {
+      rows = [...models().rows, argon(['its flavor'])];
+      roles = withArgon({ ...blank, brief: 'x' }, { brief: 'user' });
+      return { ...models(), rows, sync: { at: Date.now(), error: null, historyError: 'disk full', added: [{ family: 'argon', vendor: 'agy', id: 'gemini-4-argon' }], moved: [], skipped: [] } };
+    },
+    'POST /api/models/flavor/reset': () => { rows = [...models().rows, argon([])]; roles = withArgon(blank); return { saved: true, base: 'sha256:base-2', warnings: [] }; },
+  });
+  const famRow = (f) => ids(p).querySelectorAll('.models-row').find((r) => r.dataset.family === f);
+  const why = () => (famRow('argon') ? famRow('argon').querySelectorAll('.models-alert-why').map(txt) : []);
+  ok('(before Check now: no argon card)', !card(p, 'argon'));
+  button(ids(p), 'Check now').click();
+  await settle(30);
+  ok('Check now: the newly synced argon shows in Your models too, with no reload', !!card(p, 'argon'));
+  const syncText = ids(p).querySelectorAll('.models-catalog').map(txt).filter((t) => t.startsWith('Sync')).join(' | ');
+  ok('...and the sync line says history did not record it', /added argon/.test(syncText) && /history: disk full/.test(syncText), syncText);
+  roleRow(p, 'builder')?.click();
+  await settle(5);
+  ok('...and the role editor offers argon', !!content(p).querySelector('.roles-detail')?.querySelectorAll('.roles-pick').some((b) => b.dataset.family === 'argon'));
+  ok('(its update says its flavor holds argon)', J(why()) === J(['held by its flavor, so it was not moved']), J(why()));
+  button(card(p, 'argon'), 'Reset to default')?.click();
+  await settle(30);
+  ok('after a flavor write, Model ids reads again: argon is no longer held', !!famRow('argon') && why().length === 0, J(why()));
+}
+
+// ── an unsaved effort the lineup no longer takes falls back; only a saved one stays, marked ─────
+{
+  const J = JSON.stringify;
+  const argonRow = { family: 'argon', id: 'gemini-4-argon', vendor: 'agy', track: true, source: 'synced', defaultId: null, displayName: null,
+    efforts: ['low', 'medium', 'high'], offered: true, heldBy: [], alerts: [] };
+  const lookout = { name: 'lookout', use: ['opus'], ids: ['opus-id-1'], effort: 'high', resolvedEffort: 'high', alt: '', altId: '', note: 'looks out', custom: true,
+    provenance: prov(['use', 'effort', 'note'], { use: 'user', effort: 'user', note: 'user' }), defaults: null, warnings: [] };
+  const v = () => ({ ...view(), roles: [...view().roles, lookout], families: [...view().families, 'argon'],
+    flavor: [...view().flavor, fl('argon', { likes: [], quirks: [], brief: '', effort: '' })] });
+  const p = await boot({ ...models(), rows: [...models().rows, argonRow] }, {
+    'GET /api/models/roles': () => v(),
+    'POST /api/models/roles/set': () => ({ saved: true, base: 'sha256:base-2', warnings: [] }),
+  });
+  roleRow(p, 'lookout').click();
+  await settle(5);
+  const ed = () => content(p).querySelector('.roles-detail');
+  const roleEffort = () => ed().querySelector('.roles-effort-input');
+  const opts = (sel) => sel.querySelectorAll('option').map(txt);
+  roleEffort().value = 'max';
+  roleEffort().dispatchEvent({ type: 'change', bubbles: false });
+  await settle(5);
+  ed().querySelectorAll('.roles-pick').find((b) => b.dataset.family === 'argon').click();
+  await settle(5);
+  ok('a picked max that argon does not take is not kept: the saved high shows instead', !opts(roleEffort()).some((o) => /^max/.test(o)) && roleEffort().value === 'high',
+    J({ opts: opts(roleEffort()), value: roleEffort().value }));
+  button(ed(), 'Save').click();
+  await settle(20);
+  const sent = posts(p, '/api/models/roles/set').at(-1)?.body;
+  ok('...and Save sends high, never max', sent?.fields?.effort === 'high', J(sent));
+}
+
 for (const p of pages) p.done();
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
