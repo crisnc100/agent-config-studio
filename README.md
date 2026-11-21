@@ -517,6 +517,32 @@ model-id --sidecars
 - `--sidecars` lists ids in `~/.claude/settings.json` and `~/.codex/config.toml`
   that are no longer current.
 
+**Synced families.** Every model your signed-in CLIs offer (Claude, Codex,
+Antigravity, Grok) becomes a family without an edit: when ACS starts, and on
+**Check now**, it reads each vendor's model list and writes new words to
+`~/.agent-config-studio/families.json`, a file apart from `models.json` (an
+older resolver refuses `models.json` whole on a family it does not know, and
+never opens this one). `model-id` reads it too, once `acs install-model-id`
+has copied the newer resolver.
+
+- A sync only adds a family at its newest id, or moves one forward to a
+  strictly higher id from the same CLI. It never removes a family and never
+  moves one down, because a partial list must not take away a family you call
+  by name. The start check runs no CLI, so the Antigravity list refreshes only
+  on Check now.
+- A family that a role, a flavor or a pause names never moves by itself, nor
+  does one you pinned. The Models page says what holds it. Shipped families
+  never follow a list: they keep the update alert and **Accept**.
+- Words that cannot be added (a CLI name, a name two vendors share, an id that
+  needs a newer Claude Code) are listed under the catalog lines with why.
+- Typing an id for a synced family pins it. **Pin** keeps the id; **Unpin**
+  lets it follow its list again. **Remove** shows only once the list no longer
+  offers the word, and is refused while a role, flavor or pause still names the
+  family, since the next sync would otherwise add it back.
+- Effort pickers offer only the efforts the family's list gives (a role picks
+  from the efforts all its models accept).
+- Every write to `families.json` is recorded in history.
+
 **`acs install-model-id`** puts `model-id`, `ask-model` and `acs-agent` on your PATH:
 
 - It copies the resolver out of this checkout (or the npm package) into
