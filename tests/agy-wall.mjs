@@ -115,7 +115,51 @@ console.log('\nagy wall: refusals that need no sandbox');
   try { moved = agyReadRoot(path.join(repo, 'src', 'deep'), home); } finally {
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
-  ok('inherited GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR and env-set core.worktree do not move the root', moved.root === repo, J(moved));
+  ok('an inherited GIT_DIR or GIT_WORK_TREE does not move the root', moved.root === repo, J(moved));
+  // A repository's own config can name another work tree (core.worktree), and a committed folder holding HEAD,
+  // objects/ and refs/ is a repository with its own config: from inside either, git names that tree. Refused.
+  const elsewhere = path.join(home, 'elsewhere');
+  fs.mkdirSync(elsewhere);
+  const cfgRepo = path.join(home, 'cfg-repo');
+  fs.mkdirSync(path.join(cfgRepo, 'src'), { recursive: true });
+  spawnSync('git', ['init', '-q', cfgRepo]); spawnSync('git', ['-C', cfgRepo, 'config', 'core.worktree', elsewhere]);
+  const viaConfig = agyReadRoot(path.join(cfgRepo, 'src'), home);
+  ok('core.worktree in the repository\'s own config naming another tree is refused', /does not hold .*cfg-repo\/src/.test(viaConfig.error ?? ''), J(viaConfig));
+  const tracked = path.join(repo, 'fixtures', 'gd');
+  for (const d of ['objects', 'refs/heads', 'deeper']) fs.mkdirSync(path.join(tracked, d), { recursive: true });
+  fs.writeFileSync(path.join(tracked, 'HEAD'), 'ref: refs/heads/main\n');
+  fs.writeFileSync(path.join(tracked, 'config'), `[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tworktree = ${elsewhere}\n`);
+  const viaFolder = agyReadRoot(path.join(tracked, 'deeper'), home);
+  ok('…and so is a cwd inside a tracked folder git takes for a repository naming another tree', /does not hold .*fixtures\/gd\/deeper/.test(viaFolder.error ?? ''), J(viaFolder));
+  ok('…while the repository holding that folder still reads as itself from its top', agyReadRoot(repo, home).root === repo, J(agyReadRoot(repo, home)));
+  spawnSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'base']);
+  const linked = path.join(home, 'linked');
+  spawnSync('git', ['-C', repo, 'worktree', 'add', '-q', linked]);
+  fs.mkdirSync(path.join(linked, 'sub'), { recursive: true });
+  const inLinked = agyReadRoot(path.join(linked, 'sub'), home);
+  ok('a subfolder of a linked worktree is accepted, its root the worktree', inLinked.root === fs.realpathSync(linked), J(inLinked));
+  const wrongCase = home.replace(/acs-agy-wall-home-/, 'ACS-AGY-WALL-HOME-');
+  if (fs.existsSync(wrongCase)) {
+    const shouted = agyReadRoot(wrongCase, home);
+    ok('HOME spelled in the wrong case is still refused as HOME', /is your home folder or holds it/.test(shouted.error ?? ''), J(shouted));
+  } else console.log('  SKIP the wrong-case HOME spelling (this file system tells case apart)');
+  // The review runtime's copy, lifted out of its source (the runtime is a script, not a module) and run on the same cases.
+  const revSrc = read('packs/review-gate/runtime/review.mjs');
+  const start = revSrc.indexOf('function agyReadRoot(cwd, home = homedir()) {');
+  const body = start === -1 ? null : revSrc.slice(start, revSrc.indexOf('\n}\n', start) + 2);
+  const revReadRoot = body && Function('spawnSync', 'realpathSync', 'resolve', 'homedir', `${body}\nreturn agyReadRoot;`)(spawnSync, fs.realpathSync, path.resolve, os.homedir);
+  ok('the review runtime has its own agyReadRoot', typeof revReadRoot === 'function');
+  if (revReadRoot) {
+    const same = [
+      ['HOME', revReadRoot(home, home).error, /is your home folder or holds it/],
+      ['a repo subfolder', revReadRoot(path.join(repo, 'src', 'deep'), home).root, repo],
+      ['core.worktree in its config', revReadRoot(path.join(cfgRepo, 'src'), home).error, /does not hold .*cfg-repo\/src/],
+      ['a tracked repository folder', revReadRoot(path.join(tracked, 'deeper'), home).error, /does not hold .*fixtures\/gd\/deeper/],
+      ['a linked worktree subfolder', revReadRoot(path.join(linked, 'sub'), home).root, fs.realpathSync(linked)],
+      ...(fs.existsSync(wrongCase) ? [['HOME in the wrong case', revReadRoot(wrongCase, home).error, /is your home folder or holds it/]] : []),
+    ].filter(([, got, want]) => !(want instanceof RegExp ? want.test(got ?? '') : got === want));
+    ok('…and it decides every case above the way ask-model\'s does', same.length === 0, J(same));
+  }
   const plain = fs.realpathSync(tempDir('acs-agy-wall-plain-'));
   ok('outside one it is the folder itself', agyReadRoot(plain, home).root === plain, J(agyReadRoot(plain, home)));
   const near = `${home}-other`;
