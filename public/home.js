@@ -44,7 +44,9 @@ function modelItems(m) {
   const out = [];
   for (const r of m.rows || []) {
     for (const a of (r.alerts || []).filter((x) => !x.dismissed)) {
-      const text = a.kind === 'update' ? `${r.family}: a newer id is available${a.candidate ? ` — ${a.candidate}` : ''}`
+      // A synced family that something holds does not follow its list by itself: say what holds it.
+      const held = a.kind === 'update' && r.heldBy?.length ? ` (held by ${r.heldBy.join(', ')})` : '';
+      const text = a.kind === 'update' ? `${r.family}: a newer id is available${a.candidate ? ` — ${a.candidate}` : ''}${held}`
         : a.kind === 'retiring' ? `${r.family} is retiring${a.date ? ` on ${new Date(a.date).toLocaleDateString()}` : ''}`
         : `${r.family} is no longer offered by its CLI`;
       out.push({ source: 'models', kind: a.kind === 'update' ? 'info' : 'warn', rank: ATTENTION_RANK[a.kind === 'update' ? 'update' : a.kind === 'retiring' ? 'retiring' : 'vanished'],
@@ -128,6 +130,8 @@ function attentionModel(sources) {
     if (id === 'models') {
       items.push(...modelItems(s.data));
       if (s.data.registryError) partial.push({ id, label, text: 'the model registry file is invalid — defaults are in use' });
+      if (s.data.familiesError) partial.push({ id, label, text: 'families.json is invalid — the families synced from the model lists are left out' });
+      else if (s.data.sync?.error) partial.push({ id, label, text: s.data.sync.error });
       for (const c of (s.data.catalogs || []).filter((x) => !x.ok)) {
         if (c.missing) quiet.push({ id, label, text: missingCatalogText(c, sources.clis) });
         else partial.push({ id, label, text: c.note || `the ${c.label} catalog could not be read` });

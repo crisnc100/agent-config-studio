@@ -39,7 +39,7 @@ import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
 import { codexProcessesUsingHome, stopProcesses } from './lib/usage/processes.js';
 import { loadSeats } from './lib/usage/seats.js';
 import {
-  createModelsState, setModel, resetModel, dismiss, applySidecar, whereUsed, adoptFamily, removeFamily,
+  createModelsState, setModel, resetModel, dismiss, applySidecar, whereUsed, pinFamily, removeFamily,
 } from './lib/models-panel.js';
 import { loadRegistry } from './lib/models.js';
 import { rolesView, setRole, resetRole, deleteRole, setFlavor, resetFlavor } from './lib/roles-panel.js';
@@ -1302,14 +1302,14 @@ export function createApp(opts = {}) {
   'POST /api/models/set': async (req) => {
     const { family, id, confirm } = await readBody(req);
     const s = await models.current();
-    return setModel({ family, id, confirm: confirm === true, catalogs: s.catalogs, claudeVersion: s.claudeVersion });
+    return setModel({ family, id, confirm: confirm === true, pin: true, catalogs: s.catalogs, claudeVersion: s.claudeVersion });
   },
   'POST /api/models/reset': async (req) => resetModel({ family: (await readBody(req)).family }),
-  /** Families added from Antigravity's list: families.json only, never models.json. */
-  'POST /api/models/adopt': async (req) => {
+  /** Families synced from the CLIs' model lists: families.json only, never models.json. */
+  'POST /api/models/pin': async (req) => {
     requireStrict(req);
-    const { id } = await objectBody(req);
-    return adoptFamily({ id, catalogs: (await models.current()).catalogs });
+    const { family, pinned } = await objectBody(req);
+    return pinFamily({ family, pinned });
   },
   'POST /api/models/remove': async (req) => {
     requireStrict(req);

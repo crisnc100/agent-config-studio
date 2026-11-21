@@ -144,6 +144,23 @@ const CLEAN = {
     const m = run(`attentionModel({ ...clean, models: { state: 'ok', data: { ...clean.models.data, registryError: 'Unexpected token } in models.json' } } })`);
     return m.clear === false && m.partial.some((x) => x.id === 'models' && /registry file is invalid/.test(x.text));
   })());
+  ok('G1 a broken families.json is a partial source, said once even though the sync reports it too', (() => {
+    const m = run(`attentionModel({ ...clean, models: { state: 'ok', data: { ...clean.models.data, familiesError: 'not valid JSON',
+      sync: { error: 'families.json is invalid, so nothing was synced: not valid JSON' } } } })`);
+    const said = m.partial.filter((x) => x.id === 'models');
+    return m.clear === false && said.length === 1 && /families\.json is invalid — the families synced from the model lists are left out/.test(said[0].text);
+  })());
+  ok('G1 a sync that failed is a partial source, with its error', (() => {
+    const m = run(`attentionModel({ ...clean, models: { state: 'ok', data: { ...clean.models.data, sync: { error: 'The sync from the model lists failed: EACCES' } } } })`);
+    return m.clear === false && m.partial.some((x) => x.id === 'models' && x.text === 'The sync from the model lists failed: EACCES');
+  })());
+  ok('10 a synced family something holds: its update line says what holds it', (() => {
+    const m = run(`attentionModel({ ...clean, models: { state: 'ok', data: { ...clean.models.data, rows: [
+      { family: 'argon', source: 'synced', heldBy: ['the reviewer role', 'its flavor'], alerts: [{ kind: 'update', candidate: 'gemini-4.1-argon', dismissed: false }] },
+      { family: 'luna', source: 'synced', heldBy: [], alerts: [{ kind: 'update', candidate: 'gpt-7-luna', dismissed: false }] }] } } })`);
+    const t = m.items.map((i) => i.text);
+    return t.includes('argon: a newer id is available — gemini-4.1-argon (held by the reviewer role, its flavor)') && t.includes('luna: a newer id is available — gpt-7-luna');
+  })());
   ok('G1 a catalog that failed to load is a partial source', (() => {
     const m = run(`attentionModel({ ...clean, models: { state: 'ok', data: { ...clean.models.data, catalogs: [
       { label: 'Claude', ok: true, note: null }, { label: 'Grok', ok: false, note: 'Grok catalog could not be read (EACCES)' }] } } })`);

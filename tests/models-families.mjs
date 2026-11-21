@@ -20,7 +20,8 @@ const { familiesPath, loadRegistry, tracks } = await import('../lib/models.js');
 const { readPaused } = await import('../lib/roles.js');
 const { resolverStale } = await import('../lib/roles-panel.js');
 const { readCatalogs, agyModelsPath, detect, newestFor, planSync } = await import('../lib/models-catalog.js');
-const { ADD_STALE, addable, adoptFamily, createModelsState, heldBy, removeFamily, resetModel, setModel, syncFamilies } = await import('../lib/models-panel.js');
+const { shapeModels } = await import('../lib/usage/gemini.js');
+const { ADD_STALE, addable, adoptFamily, createModelsState, heldBy, pinFamily, removeFamily, resetModel, setModel, syncFamilies } = await import('../lib/models-panel.js');
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = path.join(ROOT, 'bin', 'model-id');
@@ -580,6 +581,183 @@ console.log('\nmodels/families: sync leaves the rest of families.json alone');
   plantAll(h, { agy: [agyEntry('gemini-4-luna')] });
   const r = await sync(h);
   ok('a word another vendor\'s families.json entry has is skipped, never moved across', ids(h).luna === 'gpt-6-luna' && why(r, 'luna', 'agy') === 'the Codex family luna in families.json has that name', J(r));
+}
+
+console.log('\nmodels/families: check() runs the sync, and survives it failing');
+{
+  const h = home();
+  plantAgy(h);
+  fs.chmodSync(studio(h, ''), 0o555);
+  let v;
+  try {
+    const st = createModelsState({ detectFn: async () => [], codexHomes: () => [], home: h });
+    v = await st.view();
+    ok('a sync that throws: the view still answers, with the rows', v.rows.some((r) => r.family === 'neon') && !fs.existsSync(familiesPath(h)), J(v.rows.map((r) => r.family)));
+    ok('...and says why in `sync`', /^The sync from the model lists failed: .*EACCES/.test(v.sync?.error || ''), J(v.sync));
+    fs.chmodSync(studio(h, ''), 0o755);
+    await st.check();
+    const after = await st.view();
+    ok('...the next check syncs', after.sync.error === null && J(after.sync.added.map((a) => a.family)) === '["argon","hydrogen"]' && ids(h).argon === ARGON, J(after.sync));
+  } finally { fs.chmodSync(studio(h, ''), 0o755); }
+}
+{
+  const h = home();
+  plantAgy(h);
+  write(familiesPath(h), J({ version: 2, families: {} }));
+  const v = await createModelsState({ detectFn: async () => [], codexHomes: () => [], home: h }).view();
+  ok('a newer families.json: nothing synced, and the view says why', /^families\.json is invalid, so nothing was synced: .*version 2 is newer/.test(v.sync?.error || '')
+    && J(JSON.parse(readOr(familiesPath(h)))) === J({ version: 2, families: {} }), J(v.sync));
+}
+{
+  const h = home();
+  families(h, { argon: { id: ARGON }, flash: { id: 'gemini-3.8-flash' } });
+  write(studio(h, 'roles.json'), { version: 2, roles: { reviewer: { use: ['opus', 'argon'] } } });
+  plantAgy(h, [agyEntry(ARGON), agyEntry('gemini-4.1-argon')]);
+  const v = await createModelsState({ detectFn: async () => [], codexHomes: () => [], home: h }).view();
+  const row = (f) => v.rows.find((r) => r.family === f);
+  ok('a synced row: source, vendor, whether its list still offers it, and what holds it', row('argon').source === 'synced' && row('argon').vendor === 'agy'
+    && row('argon').offered === true && J(row('argon').heldBy) === '["the reviewer role"]', J(row('argon')));
+  ok('...a held family keeps its id, with the update alert', row('argon').id === ARGON && row('argon').alerts.some((a) => a.kind === 'update' && a.candidate === 'gemini-4.1-argon'));
+  ok('...a word gone from its list reads offered: false, held by nothing', row('flash').offered === false && J(row('flash').heldBy) === '[]', J(row('flash')));
+  ok('...shipped rows carry neither', !Object.hasOwn(row('neon'), 'offered') && !Object.hasOwn(row('neon'), 'heldBy') && row('neon').source === 'default');
+  write(agyModelsPath(h), '{ nope');
+  const unread = await createModelsState({ detectFn: async () => [], codexHomes: () => [], home: h }).view();
+  ok('...offered is unknown (null) when the list cannot be read', unread.rows.find((r) => r.family === 'flash').offered === null);
+}
+
+console.log('\nmodels/families: Pin, and Set pins');
+{
+  const h = home();
+  families(h, { argon: { id: ARGON } });
+  const cats = catalogsOf(h);
+  const p = await pinFamily({ family: 'argon', pinned: true, home: h });
+  ok('Pin writes track: false into the entry', p.saved === true && famDoc(h).families.argon.track === false && loadRegistry({ home: h }).registry.families.argon?.track === false, readOr(familiesPath(h)));
+  ok('...pinning again changes nothing', (await pinFamily({ family: 'argon', pinned: true, home: h })).unchanged === true);
+  const u = await pinFamily({ family: 'argon', pinned: false, home: h });
+  ok('Unpin takes the track key out', u.saved === true && J(Object.keys(famDoc(h).families.argon)) === '["id"]', readOr(familiesPath(h)));
+  for (const [what, args, re] of [
+    ['a shipped family', { family: 'neon', pinned: true }, /is not a family in families\.json/],
+    ['an unknown family', { family: 'xenon', pinned: true }, /is not a family in families\.json/],
+    ['a pinned that is not true or false', { family: 'argon', pinned: 'yes' }, /pinned must be true or false/],
+  ]) {
+    const e = await refused(pinFamily({ ...args, home: h }));
+    ok(`Pin refuses ${what}: 400`, e?.status === 400 && re.test(e.message), e?.message);
+  }
+  const set = await setModel({ family: 'argon', id: 'gemini-4.1-argon', confirm: true, pin: true, catalogs: cats, home: h });
+  ok('Set with pin (a typed id) also pins', set.saved === true && set.pinned === true && famDoc(h).families.argon.id === 'gemini-4.1-argon' && famDoc(h).families.argon.track === false, readOr(familiesPath(h)));
+  await pinFamily({ family: 'argon', pinned: false, home: h });
+  const acc = await setModel({ family: 'argon', id: ARGON, confirm: true, catalogs: cats, home: h });
+  ok('Set without pin (Accept) never pins', acc.saved === true && acc.pinned === false && !Object.hasOwn(famDoc(h).families.argon, 'track'), readOr(familiesPath(h)));
+  const shipped = await setModel({ family: 'opus', id: 'claude-opus-9-9', confirm: true, pin: true, catalogs: cats, home: h });
+  ok('pin on a shipped family\'s Set writes models.json as before, with no pin', shipped.saved === true && JSON.parse(readOr(studio(h, 'models.json'))).models.opus === 'claude-opus-9-9'
+    && !JSON.parse(readOr(studio(h, 'models.json'))).families);
+}
+
+console.log('\nmodels/families: sync at studio start and on Check now, through the real server');
+async function startStudio(h) {
+  const port = await freePort();
+  const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
+    cwd: ROOT,
+    env: { HOME: h, PORT: String(port), PATH: [path.dirname(process.execPath), '/usr/bin', '/bin'].join(':'), TMPDIR: os.tmpdir() },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  track(child);
+  let out = '';
+  child.stdout.on('data', (d) => { out += d; });
+  child.stderr.on('data', (d) => { out += d; });
+  const base = `http://localhost:${port}`;
+  let up = false;
+  for (let i = 0; i < 100 && !up; i++) {
+    if (child.exitCode !== null) break;
+    try { up = (await fetch(`${base}/api/health`)).ok; } catch {}
+    if (!up) await new Promise((r) => setTimeout(r, 100));
+  }
+  const post = async (route, body, headers = { origin: base, 'sec-fetch-site': 'same-origin' }) => {
+    const r = await fetch(`${base}${route}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: J(body) });
+    return { status: r.status, body: await r.json().catch(() => null) };
+  };
+  const get = async (route) => (await fetch(`${base}${route}`)).json();
+  const stop = async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const gone = new Promise((r) => child.once('exit', r));
+      child.kill('SIGINT');
+      await gone;
+    }
+  };
+  return { up, out: () => out, base, post, get, stop };
+}
+{
+  const h = home();
+  const REPLY = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'agy-models', 'models-1.5.13.json'), 'utf8'));
+  const replyWith = (extra) => ({ ...REPLY, command: { ...REPLY.command, data: { ...REPLY.command.data, models: [...REPLY.command.data.models, ...extra] } } });
+  plantAll(h, {
+    claude: [claudeModel('claude-opus-5-5', 'Opus 5.5', 'Opus')],
+    codex: [codexModel('gpt-6.2-sol', 'Sol'), codexModel('gpt-6-luna', 'Luna'), codexModel('gpt-5.6-luna', 'Luna 5.6')],
+    grok: [grokModel('grok-4.7', 'Grok 4.7'), grokModel('grok-4.8-build-fast', 'Fast')],
+    agy: shapeModels(REPLY).models,
+  });
+  const bin = path.join(h, '.local', 'bin');
+  const log = path.join(h, 'agy-calls.jsonl');
+  const replyFile = path.join(h, 'agy-reply.json');
+  write(replyFile, replyWith([{ id: 'gemini-4.1-argon-high', label: 'Gemini 4.1 Argon (High)' }, { id: 'gemini-4.1-hydrogen-high', label: 'Gemini 4.1 Hydrogen (High)' }]));
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'agy'), `#!${process.execPath}
+const fs = require('fs');
+fs.appendFileSync(${J(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+if (process.argv[2] === '--version') { process.stdout.write('1.5.13\\n'); process.exit(0); }
+if (process.argv.slice(2).join(' ') === '--output-format json models') { process.stdout.write(fs.readFileSync(${J(replyFile)}, 'utf8')); process.exit(0); }
+process.exit(9);
+`, { mode: 0o755 });
+  const calls = () => { try { return fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean); } catch { return []; } };
+  const srv = await startStudio(h);
+  try {
+    ok('the server starts', srv.up, srv.out().slice(-400));
+    const v = await srv.get('/api/models');
+    ok('at start, families.json gains exactly what the lists offer anew: argon, flash, hydrogen and luna', J(ids(h)) === J({ luna: 'gpt-6-luna', argon: ARGON, flash: 'gemini-3.8-flash', hydrogen: HYDROGEN }), readOr(familiesPath(h)));
+    ok('...without running agy', calls().length === 0, J(calls()));
+    ok('...and the view says what the sync added', J(v.sync.added.map((a) => `${a.vendor}:${a.family}`)) === J(['codex:luna', 'agy:argon', 'agy:flash', 'agy:hydrogen']) && v.sync.error === null, J(v.sync));
+    const histLog = () => spawnSync('git', ['-C', studio(h, 'history'), 'log', '--format=%s', '--', 'home/.agent-config-studio/families.json'], { encoding: 'utf8' }).stdout;
+    ok('...recorded in ACS history', histLog().includes('families: synced — added luna (gpt-6-luna), argon (gemini-4-argon), flash (gemini-3.8-flash), hydrogen (gemini-4-hydrogen)'), histLog());
+    const luna = v.rows.find((r) => r.family === 'luna');
+    ok('...luna is a synced Codex row, offered, held by nothing', luna?.source === 'synced' && luna.vendor === 'codex' && luna.id === 'gpt-6-luna' && luna.offered === true && J(luna.heldBy) === '[]', J(luna));
+    ok('...no file path leaves the response', !J(v).includes(h));
+    ok('model-id resolves the synced families', run(h, 'luna').out === 'gpt-6-luna\n' && run(h, 'flash').out === 'gemini-3.8-flash\n');
+
+    write(studio(h, 'roles.json'), { version: 2, roles: { reviewer: { use: ['opus', 'hydrogen'] } } });
+    const c = await srv.post('/api/models/check', {});
+    ok('Check now asks agy, and moves the unused argon to the newer id', c.status === 200 && calls().length === 2 && ids(h).argon === 'gemini-4.1-argon'
+      && J(c.body.sync.moved) === J([{ family: 'argon', vendor: 'agy', from: ARGON, to: 'gemini-4.1-argon' }]), J(c.body.sync));
+    const hyd = c.body.rows.find((r) => r.family === 'hydrogen');
+    const alert = hyd.alerts.find((a) => a.kind === 'update');
+    ok('...but not the hydrogen the reviewer role uses: an update alert that says what holds it', ids(h).hydrogen === HYDROGEN && alert?.candidate === 'gemini-4.1-hydrogen'
+      && J(hyd.heldBy) === '["the reviewer role"]', J(hyd));
+    ok('...counted for the badge', (await srv.get('/api/registry')).modelAlerts >= 1);
+    const acc = await srv.post('/api/models/accept', { family: 'hydrogen', key: alert.key });
+    ok('Accept moves it, without a pin', acc.status === 200 && ids(h).hydrogen === 'gemini-4.1-hydrogen' && !Object.hasOwn(famDoc(h).families.hydrogen, 'track'), J(acc));
+
+    const xp = await srv.post('/api/models/pin', { family: 'argon', pinned: true }, { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' });
+    ok('a cross-site Pin → 403, nothing written', xp.status === 403 && !Object.hasOwn(famDoc(h).families.argon, 'track'), J(xp));
+    const arr = await srv.post('/api/models/pin', ['argon']);
+    ok('a Pin body that is not an object → 400', arr.status === 400, J(arr));
+    const pin = await srv.post('/api/models/pin', { family: 'argon', pinned: true });
+    ok('Pin through the route, recorded in history', pin.status === 200 && famDoc(h).families.argon.track === false && /^[0-9a-f]{40}$/.test(pin.body.sha || '') && !pin.body.historyError
+      && histLog().includes('families: pinned argon'), J(pin));
+    write(replyFile, replyWith([{ id: 'gemini-4.2-argon-high', label: 'Gemini 4.2 Argon (High)' }]));
+    const c2 = await srv.post('/api/models/check', {});
+    const argon = c2.body.rows.find((r) => r.family === 'argon');
+    ok('a pinned argon stays put at the next Check now, with no update alert', ids(h).argon === 'gemini-4.1-argon' && argon.track === false && !argon.alerts.some((a) => a.kind === 'update'), J(argon));
+    await srv.post('/api/models/pin', { family: 'argon', pinned: false });
+    await srv.post('/api/models/check', {});
+    ok('...unpinned, it follows again', ids(h).argon === 'gemini-4.2-argon');
+
+    const s1 = await srv.post('/api/models/set', { family: 'flash', id: 'gemini-3.9-flash' });
+    const s2 = await srv.post('/api/models/set', { family: 'flash', id: 'gemini-3.9-flash', confirm: true });
+    ok('Set through the route asks to confirm an id not in the list, then saves and pins', s1.body.needsConfirm === true && s2.status === 200 && s2.body.pinned === true
+      && famDoc(h).families.flash.id === 'gemini-3.9-flash' && famDoc(h).families.flash.track === false, J([s1.body, s2.body]));
+    const adopt = await srv.post('/api/models/adopt', { id: ARGON });
+    ok('the adopt route is gone', adopt.status === 404, J(adopt));
+    ok('neon is the shipped id throughout', run(h, 'neon').out === `${DEFAULTS.models.neon}\n` && !Object.hasOwn(famDoc(h).families, 'neon'));
+  } finally { await srv.stop(); }
 }
 
 console.log('\nmodels/families: the routes, through the real server');
