@@ -130,6 +130,8 @@ tests/models-panel.mjs                                ci:offline
 tests/models-refresh.mjs                              ci:offline
 # Check now asking agy for its Gemini models, and ACS's saved Antigravity list: fake agy, temp HOMEs.
 tests/models-agy.mjs                                  ci:offline
+# Families added from a CLI's model list (families.json): registry, model-id, roles, pauses, adoption. Temp HOMEs.
+tests/models-families.mjs                             ci:offline
 tests/memory.mjs                                      ci:offline
 tests/context-map.mjs                                 ci:offline
 # Multi-select delete: the batch route (temp HOME), and Memory's trash-fact over several ids.

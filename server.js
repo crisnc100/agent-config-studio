@@ -682,9 +682,9 @@ export function createApp(opts = {}) {
   const liveTurns = new Map();
   fileChangeHooks.add(() => assistFiles.invalidate());
 
-  /** A family the registry knows, or a 400 — never a path or free text. */
+  /** A family the registry knows, shipped or added, or a 400 — never a path or free text. */
   const knownFamily = (family) => {
-    if (typeof family !== 'string' || !Object.hasOwn(loadRegistry().defaults.models, family)) {
+    if (typeof family !== 'string' || !Object.hasOwn(loadRegistry().registry.models, family)) {
       throw Object.assign(new Error(`unknown model family "${family}"`), { status: 400 });
     }
     return family;
