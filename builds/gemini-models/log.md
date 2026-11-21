@@ -84,3 +84,7 @@
 12. Saved-list write: only POST /api/models/check → check({refresh:true}); server start's models.check() has no
     refresh (server.js:1917), tested. Two Check nows share one run. Guard g holds. Applied.
 13. Check now sentence and README: the only places that describe Check now. Applied.
+
+## Live check (builder, 2026-11-20)
+- readGeminiModels() with the default locateBinary on this Mac (real agy 1.5.13, past the cmux wrapper): ok, six
+  entries, neon low..xhigh, argon and flash low..high, hydrogen low..xhigh, two orchestrators with no efforts.
