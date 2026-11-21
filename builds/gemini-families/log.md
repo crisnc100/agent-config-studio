@@ -332,3 +332,37 @@ Each check, guard, rule or output added or changed; the other paths to the same 
 - One line, not fixed: Check now is guarded only by the global non-GET policy (sameOriginRequest), which passes
   `Sec-Fetch-Site: same-site` from another localhost port; Pin and Remove use requireStrict. Check now spawns
   codex/agy (since PR C) and now writes families.json.
+
+## Fix round: PR D review MEDIUMs (builder, 2026-11-21)
+Reviews 2026-11-21-14-53-16-aa4710 (screen) and 2026-11-21-14-56-35-dfd95e (lib and server).
+- 2a58e76 Check now under requireStrict. The global guard already refuses same-site with a foreign Origin (it
+  compares the port); the gap was same-site with no Origin. New tests: both get 403, agy not asked, nothing
+  written. The no-Origin case failed before the fix (200, agy asked, three families added).
+- f50cf3d (test-only) three existing removals now plant a list without argon first (assertions unchanged).
+- 584f009 lib and server:
+  - dfd95e f1: Claude thinking.effort_options, Codex supported_reasoning_levels, Grok reasoning_efforts reach
+    `efforts` (only EFFORTS values; `thinking.type` other than effort → null).
+  - f8 (+ s1): planSync ranks only ids that pass ID_RE and carry the source vendor's prefix; add and move share
+    familyEntryProblem.
+  - f2, f3: commitFamilies(home, prepare) replaces writeFamilies. prepare() runs, the history baseline is awaited,
+    prepare() runs again, then edit, parse-back check and a synchronous temp+rename with no await between; history
+    records the bytes written. All four writers (Set, Pin, Remove, sync) use it. writeAtomic is synchronous.
+  - f4: Set on the current id of an unpinned family writes the pin.
+  - f5: Remove refuses while a readable list (read fresh from disk) offers the word, and when it cannot be read.
+  - f6: view.sync.historyError.
+  - f7: heldBy also reads a stored alt on a role the merged view leaves out.
+  - f11: the start check runs no CLI; its sync uses the version already known (none at first), so nothing needing
+    a newer Claude Code is synced. The version is probed when a view or write first needs it and on each Check now;
+    the server's probe is claude only, off the main thread (lib/version-probe.js).
+- a3e128b screen: aa4710 f1 (Check now reloads the registry and roles; role, flavor and describe writes reload the
+  model rows); aa4710 f2 (effortOptions keeps an out-of-list value only when it is the saved one; an unsaved pick
+  falls back to the saved value if offered, else none, and is kept as the draft); the sync line shows the history
+  error.
+- Test-first: every new test failed on the code before its fix (21 in models-families, 6 in models-layout-ui).
+  Planted breaks after the fix, each reverted: start probe back (4 FAIL incl. the real-server test), no replan after
+  the baseline (3), no offered check + no raw alt + no id filter (9).
+- The race tests run in the process's own HOME, where history records families.json, and act the moment the
+  baseline's mirror holds the file's bytes (the write is then awaiting git).
+- Checks: models-families 223/223, models-layout-ui 109/109, models 64/64, models-panel 118/118, models-agy 50/50,
+  models-refresh 29/29, guards 11/11, setup-guards 106/106, own-writes 43/43, roots-history 10/10, roles-ui 75/75,
+  model-guide-ui 50/50, ui-clarity-f 59/59, ui-clarity-g 17/17, packs-workflow 111/111, pause-ui 36/36, home 130/130.
