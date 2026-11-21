@@ -251,6 +251,27 @@ Delete or move the branch's adopt UI assertions in tests/models-layout-ui.mjs, n
   hold reason.
 - The orchestrator runs one browser QA under a temp HOME.
 
+### Phase 5: effort pickers follow the catalog's efforts
+agy 1.5.13 refuses an effort a model does not list, with exit 1. The orchestrator checked this on 2026-11-21:
+`--model gemini-4-argon --effort xhigh` gives "invalid model selection: gemini-4-argon has no "xhigh" effort
+(available: low, medium, high)", and gemini-3.8-flash does the same.
+
+**Code**
+- detect() rows carry `efforts`: the catalog entry's list for the current id, or null when the catalog lists none.
+  Only agy's list has efforts today.
+- The three pickers in public/app.js (member effort, role effort, flavor effort) offer only those efforts for a
+  family whose catalog lists them. Other families keep the full list.
+- The role effort applies to every member and the alt without its own effort. It therefore offers the efforts all
+  of them accept, and refreshes when the models or the alt change.
+- A saved value outside the offered list stays selectable, marked "not offered for <family>", so a save never
+  changes it silently.
+
+**Pass/fail** (tests/models-layout-ui.mjs, and a row check in tests/models-families.mjs)
+- argon (low, medium, high) shows no xhigh in its member or flavor picker; neon shows xhigh; opus shows the full
+  list.
+- A role with argon and opus offers no xhigh or max. With argon taken out, it offers the full list.
+- A saved xhigh on a role with argon stays selected, marked.
+
 ## Known limits
 - Shipped families never follow their catalog on their own; they keep the update alert and Accept.
 - agy's list refreshes only on Check now, since nothing spawns agy at start. A new Gemini model appears after Check
@@ -259,9 +280,11 @@ Delete or move the branch's adopt UI assertions in tests/models-layout-ui.mjs, n
 - Every families.json row reads "synced from <Vendor>". A hand-written entry has no marker that sets it apart.
 - A roles.json naming a synced family is invalid on a machine whose catalogs never listed it.
 - An older ACS checkout shows roles.json invalid once a role names a synced family. It never rewrites the file.
+- A role, member or flavor effort already saved outside a family's listed efforts (such as xhigh on argon) still
+  fails loudly at call time: agy exits 1 naming the efforts it has. The pickers show such a value as not offered,
+  but they do not rewrite it.
 
 ## Follow-ups (filed)
-- Efforts: argon and flash list no xhigh. The pickers stay as they are; the orchestrator checks agy at xhigh.
 - A builder or security warning by vendor for agy families, if wanted.
 - Editor and describe errors lack the families.json note, and a legacy roles write is not stale-guarded.
 
