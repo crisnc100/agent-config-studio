@@ -108,7 +108,7 @@ console.log('\nmodels/families: an entry this build cannot use is hidden, alone'
     hydrogen2: { id: HYDROGEN },
     gemini: { id: HYDROGEN },
     neon: { id: HYDROGEN },
-    opusish: { id: 'claude-opus-9' },
+    llamaish: { id: 'llama-4-x' },
     badid: { id: 'Gemini 4' },
     when: { id: HYDROGEN, addedAt: 5 },
     notobj: 'gemini-4-x',
@@ -120,20 +120,20 @@ console.log('\nmodels/families: an entry this build cannot use is hidden, alone'
     hydrogen2: 'its name must be 2–24 lowercase letters',
     gemini: '"gemini" is reserved (a CLI or account name)',
     neon: 'a shipped family has this name',
-    opusish: 'its id is not a gemini- id',
+    llamaish: 'its id does not start with claude-, gpt-, grok-, gemini-',
     badid: 'its id is not a valid model id',
     when: 'addedAt must be a date and time',
     notobj: 'it must be an object',
   };
   for (const [name, why] of Object.entries(want)) ok(`hidden: ${name} — ${why}`, reg.familiesHidden[name] === why, reg.familiesHidden[name]);
-  ok('no hidden entry reaches the registry; a shipped name keeps the shipped id', !['argontwo', 'hydrogen2', 'gemini', 'opusish', 'badid', 'when', 'notobj'].some((n) => Object.hasOwn(reg.registry.models, n))
+  ok('no hidden entry reaches the registry; a shipped name keeps the shipped id', !['argontwo', 'hydrogen2', 'gemini', 'llamaish', 'badid', 'when', 'notobj'].some((n) => Object.hasOwn(reg.registry.models, n))
     && reg.registry.models.neon === DEFAULTS.models.neon);
   ok('an unknown top-level key is ignored, not an error', reg.familiesError === null);
-  const o = run(h, 'opusish');
-  ok('model-id on a hidden entry names families.json and why', o.code === 1 && o.err.includes('families.json has it, but hidden: its id is not a gemini- id'), o.err);
-  for (const args of [['--flavor', 'opusish'], ['--effort', 'opusish']]) {
+  const o = run(h, 'llamaish');
+  ok('model-id on a hidden entry names families.json and why', o.code === 1 && o.err.includes('families.json has it, but hidden: its id does not start with claude-, gpt-, grok-, gemini-'), o.err);
+  for (const args of [['--flavor', 'llamaish'], ['--effort', 'llamaish']]) {
     const f = run(h, ...args);
-    ok(`model-id ${args[0]} on a hidden entry says the same`, f.code !== 0 && f.err.includes('families.json has it, but hidden: its id is not a gemini- id'), J(f));
+    ok(`model-id ${args[0]} on a hidden entry says the same`, f.code !== 0 && f.err.includes('families.json has it, but hidden: its id does not start with claude-, gpt-, grok-, gemini-'), J(f));
   }
 }
 
@@ -184,14 +184,14 @@ console.log('\nmodels/families: roles and pauses');
 }
 {
   const h = home();
-  families(h, { argon: { id: 'claude-opus-9' } });
+  families(h, { argon: { id: 'llama-4-x' } });
   write(studio(h, 'roles.json'), { version: 2, roles: { reviewer: { use: ['argon'] } } });
   const r = run(h, '--role', 'reviewer');
   ok('a role naming a hidden entry: roles.json is invalid, and the error names families.json and why', r.code === 2
-    && r.err.includes('unknown family "argon"') && r.err.includes('families.json has it, but hidden: its id is not a gemini- id'), r.err);
+    && r.err.includes('unknown family "argon"') && r.err.includes('families.json has it, but hidden: its id does not start with claude-, gpt-, grok-, gemini-'), r.err);
   write(studio(h, 'roles.json'), { version: 2, roles: { reviewer: { use: ['opus'] } }, flavor: { argon: { brief: 'x' } } });
   const f = run(h, '--role', 'reviewer');
-  ok('a flavor naming it: the same', f.code === 2 && f.err.includes('flavor: unknown family "argon"') && f.err.includes('hidden: its id is not a gemini- id'), f.err);
+  ok('a flavor naming it: the same', f.code === 2 && f.err.includes('flavor: unknown family "argon"') && f.err.includes('hidden: its id does not start with claude-, gpt-, grok-, gemini-'), f.err);
   write(studio(h, 'paused.json'), { version: 1, paused: [{ name: 'argon' }] });
   const p = readPaused({ home: h });
   ok('a pause naming it: paused.json is invalid, with families.json and why', /is not a vendor .* or a model family — ~\/\.agent-config-studio\/families\.json has it, but hidden/.test(p.error || ''), p.error);
@@ -327,9 +327,9 @@ console.log('\nmodels/families: Set, Accept and Reset on an added family');
   ok('...confirmed, it writes families.json and never models.json', set.saved === true && set.old === ARGON
     && JSON.parse(readOr(familiesPath(h))).families.argon.id === 'gemini-4-argon-x' && !fs.existsSync(studio(h, 'models.json')), J(set));
   const before = readOr(familiesPath(h));
-  for (const id of ['claude-opus-9', 'gpt-6.2-sol']) {
+  for (const id of ['llama-4-x', 'mistral-9']) {
     const e = await refused(setModel({ family: 'argon', id, confirm: true, catalogs: cats, home: h }));
-    ok(`Set to ${id} is refused even confirmed: the read side would hide it`, e?.status === 400 && /its id is not a gemini- id/.test(e.message), e?.message);
+    ok(`Set to ${id} is refused even confirmed: the read side would hide it`, e?.status === 400 && /its id does not start with claude-, gpt-, grok-, gemini-/.test(e.message), e?.message);
   }
   ok('...and nothing is written', readOr(familiesPath(h)) === before && !fs.existsSync(studio(h, 'models.json')));
   const rs = await refused(resetModel({ family: 'argon', home: h }));
