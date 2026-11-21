@@ -101,10 +101,11 @@ tests/pause-routes.mjs                                ci:offline
 # ask-model: each CLI's argv, the model proof, every exit code and its install, against stub CLIs (temp HOME).
 tests/ask-model.mjs                                   ci:offline
 tests/ask-model-watch.mjs                             ci:offline
-# ask-model on agy: the read-only argv, the ~/.gemini/config refusals, unverified served model, failure exits.
-tests/ask-model-agy.mjs                               ci:offline
+# ask-model on agy: the read-only argv, the ~/.gemini/config refusals, unverified served model, failure exits. agy runs
+# only inside macOS's sandbox-exec, so the Linux jobs see the refusal and stranger-macos runs the rest through the wall.
+tests/ask-model-agy.mjs                               ci:offline ci:stranger-macos
 # agy's sandbox-exec wall: one profile in both runtimes; on macOS, the canary and the files it lets through (no model).
-tests/agy-wall.mjs                                    ci:offline
+tests/agy-wall.mjs                                    ci:offline ci:stranger-macos
 # The model guide block: renderer, markers, byte-exact edits (in-process), then through the server (temp HOME).
 tests/model-guide.mjs                                 ci:offline
 tests/model-guide-routes.mjs                          ci:offline
@@ -224,8 +225,9 @@ tests/ui-clarity-g.mjs                                ci:offline
 # says why); the manual ones are in no gate, each for the reason on its line.
 packs/pr/tests/pr.docs-table.test.mjs                 ci:packs ci-only
 packs/pr/tests/pr.test.mjs                            manual                        # asserts gh is absent with a PATH that keeps /usr/bin, where a CI runner has gh
-# Not ci-only: verify.sh on macOS runs its stub agy inside the real sandbox-exec wall; CI's Linux job only sees it refused.
-packs/review-gate/tests/review.agy.test.mjs           ci:packs
+# Not ci-only: verify.sh on macOS runs its stub agy inside the real sandbox-exec wall. CI's Linux job only sees it
+# refused; stranger-macos runs it through the wall.
+packs/review-gate/tests/review.agy.test.mjs           ci:packs ci:stranger-macos
 packs/review-gate/tests/review.basemerge.test.mjs     ci:packs ci-only
 packs/review-gate/tests/review.behavior.test.mjs      ci:packs ci-only
 packs/review-gate/tests/review.close.test.mjs         manual                        # its waiver checks open a terminal with BSD `script -q /dev/null <cmd>` (line 61), which Linux's util-linux script rejects; 5 tests fail on a Linux runner
