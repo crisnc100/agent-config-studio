@@ -193,3 +193,23 @@ code that consumes it:
   (gpt-6-luna), mythos (claude-) and a pinned argon. Main's `model-id luna` is "unknown model family" (exit 1), and
   a role naming luna refuses roles.json (exit 2): the known limit resolverStale guards.
 - Checks: tests/models.mjs 64/64; tests/models-families.mjs 117/117.
+
+## Sync phase 2 — sync engine (builder, 2026-11-21)
+- lib/models-catalog.js:
+  - newestFor(models, word, {above, cli, gated}) is detect()'s ordering, moved out: hidden and unorderable ids
+    never win; strictly above the current id; a dated id never beats an undated current one, or (no current id)
+    any undated entry. `gated` passes over an id whose minCliVersion the installed Claude Code does not meet;
+    detect() calls it ungated and keeps showing the reason.
+  - planSync({catalogs, reg, inUse, cli}) → {add, move, skipped}. Vendors in the order claude, codex, grok, agy.
+    Moves only families.json entries whose id's vendor offers their name, unpinned, and not in `inUse` (null →
+    nothing moves). No removal, no downward move.
+- lib/models-panel.js:
+  - heldBy(home): family → where a role (use member, alt when not also a member), the merged flavor, or any pause
+    entry names it; null when roles.json or paused.json cannot be read. namedBy (Remove) reads it.
+  - syncFamilies({catalogs, claudeVersion, home}) plans inside the families.json queue, writes once through
+    writeFamilies only when something changes, and returns {at, added, moved, skipped, error, historyError}.
+    A broken families.json → no write, `error` says why.
+- Planted bugs, each caught by tests/models-families.mjs: no strictly-higher floor (4 FAIL); in-use ignored (6);
+  no Claude Code gate (6); pin ignored (1); writing when nothing changed (1, plus a crash on no file).
+- Checks: tests/models.mjs 64/64; tests/models-families.mjs 168/168; tests/models-panel.mjs 118/118;
+  tests/models-agy.mjs 50/50.
