@@ -159,7 +159,9 @@ There is no telemetry. What reaches the network, and when:
 - **Signing a Codex seat in** from Usage or setup runs `codex login`, which
   opens OpenAI's sign-in page and writes that seat's `auth.json`.
 - **Check now** on the Models page runs `codex app-server` `model/list`, which
-  fetches Codex's model catalog.
+  fetches Codex's model catalog, and `agy --output-format json models` (agy
+  1.1.12 or later, no model turn) in an empty temporary folder, which lists the
+  Gemini models your Antigravity sign-in offers.
 - **The Worktrees view** runs the toolkit's `wclean`, which asks `gh` (when
   installed) whether a branch's pull request was merged. It never fetches.
 
@@ -172,7 +174,8 @@ What it writes:
   up under **Worktrees** also runs `wtinit` there, which creates the project's
   trunk checkout.
 - **Its own folder,** `~/.agent-config-studio` (settings, history, trash, the
-  usage snapshot, and a run file per port for `acs stop`).
+  usage snapshot, the Antigravity model list Check now saves, and
+  a run file per port for `acs stop`).
 - **When you add a second Codex seat:** its own home under `~/.codex-seats/`,
   sharing `~/.codex`'s config, skills, rules and plugins by symlink.
 - **When you turn on Terminal shortcuts in Usage:** a generated file in

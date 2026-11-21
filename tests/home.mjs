@@ -481,6 +481,18 @@ const cleanRoutes = (over = {}) => homeRoutes({ ...Object.fromEntries(Object.ent
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 {
+  // Antigravity's list is written only by Check now (lib/models-catalog.js checkOnly), and setup's CLI check does not cover agy.
+  const hv = vm.createContext({});
+  for (const f of ['usage-view.js', 'home.js']) vm.runInContext(fs.readFileSync(path.join(PUB, f), 'utf8'), hv);
+  hv.clean = Object.fromEntries(Object.entries(CLEAN).map(([k, v]) => [k, { state: 'ok', data: v }]));
+  const verdict = (cats) => { hv.cats = cats; return vm.runInContext(`attentionModel({ ...clean, models: { state: 'ok', data: { ...clean.models.data, catalogs: cats } } })`, hv); };
+  const never = verdict([{ vendor: 'agy', label: 'Antigravity', ok: false, missing: true, checkOnly: true, note: 'No Antigravity catalog on this machine — press Check now to create it.' }]);
+  ok('AG Home: an Antigravity list never fetched → one quiet "press Check now" line, and "Nothing needs you" stands',
+     never.clear === true && never.partial.length === 0 && never.quiet.map((x) => x.text).join() === 'Antigravity: no model list yet — press Check now on Models', JSON.stringify(never.quiet));
+  const broken = verdict([{ vendor: 'agy', label: 'Antigravity', ok: false, missing: false, checkOnly: true, note: 'Antigravity catalog could not be read (catalog is not valid JSON) — press Check now to refresh it.' }]);
+  ok('AG Home: an unreadable Antigravity list keeps the empty state away and names it', broken.clear === false && /Antigravity catalog could not be read/.test(broken.partial.map((x) => x.text).join()), JSON.stringify(broken.partial));
+}
+{
   const p = await boot({ routes: homeRoutes({ 'GET /api/registry': () => { throw { status: 500, body: { error: 'registry exploded' } }; } }) });
   await settle(20);
   ok('G7 a failed registry shows history unavailable on Recent, not a spinner',

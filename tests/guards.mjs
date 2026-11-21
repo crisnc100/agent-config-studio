@@ -287,8 +287,12 @@ const LOGIN_SHELL_FN = "function loginShell(env = process.env) { const want = en
   "let listed = []; try { listed = fs.readFileSync('/etc/shells', 'utf8').split('\\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')); } catch {} " +
   "return listed.includes(want) && fs.existsSync(want) ? want : '/bin/sh'; }";
 
-/** lib/usage/gemini.js: its only two spawns, whole, and the options and folder they run with. */
-const AGY_USAGE_CALLS = ["found.binary, ['--version'], opts", "found.binary, ['-p', '/usage', '--output-format', 'json'], opts"];
+/** lib/usage/gemini.js: its only three spawns, whole, and the options and folder they run with. */
+const AGY_USAGE_CALLS = [
+  "found.binary, ['--version'], opts",
+  "found.binary, ['-p', '/usage', '--output-format', 'json'], opts",
+  "found.binary, ['--output-format', 'json', 'models'], opts",
+];
 const AGY_USAGE_OPTS = "const opts = { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1' } };";
 const AGY_USAGE_DIRS = ['null', "fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-usage-'))"];
 
@@ -387,11 +391,14 @@ function guardB() {
       // guard widened to permit a prompt, and it spent the user's subscription
       // on every refresh.
       'lib/usage/codex-limits.js': { fns: new Set(['spawn']), appServerOnly: true },
-      // A Gemini seat's quota, read through agy's print-mode /usage. A harness
-      // binary again, so pinned: argv is exactly ['--version'] or
-      // ['-p','/usage','--output-format','json']. Print mode answers /usage
-      // without a turn only from agy 1.1.11 on; the module refuses an older agy
-      // and any reply that is not the usage command with zero turns.
+      // A Gemini seat's quota, read through agy's print-mode /usage, and the
+      // models agy offers, read through its `models` subcommand. A harness
+      // binary again, so pinned: argv is exactly ['--version'],
+      // ['-p','/usage','--output-format','json'] or
+      // ['--output-format','json','models']. Print mode answers /usage without
+      // a turn only from agy 1.1.11 on, and `models` prints JSON from 1.1.12;
+      // the module refuses an older agy and any reply that is not the command
+      // it asked for with zero turns.
       'lib/usage/gemini.js': { fns: new Set(['spawn']), agyUsageOnly: true },
       // The pack installer (acs packs). It runs git, /bin/sh on the push
       // gate's installer, and process.execPath on a script this package ships
@@ -468,13 +475,31 @@ function guardB() {
         }
         if (!agyPinned) {
           agyPinned = true;
+          // Each pinned call exactly once: allowed one by one, a second --version spawn in place of another call would
+          // still pass.
+          const texts = calls.filter((c) => allowed.fns.has(c.fn)).map((c) => (callArgsText(src, c) || '').replace(/\s+/g, ' ').trim());
+          for (const pinned of AGY_USAGE_CALLS) {
+            const n = texts.filter((t) => t === pinned).length;
+            if (n !== 1) hits.push(`${file} must spawn(${pinned}) exactly once (found ${n})`);
+          }
           // opts is this literal (an empty folder as cwd, stdin closed, cmux's agy hooks off), and is named nowhere
-          // but its definition and the two pinned calls: any other mention (opts.stdio[0] = …, Object.assign(opts, …),
-          // a second binding) could change it after the definition is checked.
-          const optsMentions = [...src.matchAll(/\bopts\b/g)].length;
-          if (optsMentions !== 1 + AGY_USAGE_CALLS.length || !src.replace(/\s+/g, ' ').includes(AGY_USAGE_OPTS)) {
+          // but its definition and the pinned calls: any other mention (opts.stdio[0] = …, Object.assign(opts, …),
+          // void opts, a second binding) could change it after the definition is checked. Where each mention sits
+          // is checked, not how many there are: the definition and each call are taken out, and none may be left.
+          let rest = src.replace(/\s+/g, ' ');
+          const take = (needle) => {
+            const i = rest.indexOf(needle);
+            if (i === -1) return false;
+            rest = rest.slice(0, i) + rest.slice(i + needle.length);
+            return true;
+          };
+          const defined = take(AGY_USAGE_OPTS);
+          const missing = AGY_USAGE_CALLS.filter((c) => !take(`spawn(${c})`));
+          const stray = [...rest.matchAll(/\bopts\b/g)].length;
+          if (!defined || missing.length || stray) {
             hits.push(`${file} opts must be named only in ${AGY_USAGE_OPTS} and the ${AGY_USAGE_CALLS.length} pinned spawns ` +
-                      `(found ${optsMentions} mentions)`);
+                      `(${!defined ? 'definition not found; ' : ''}${missing.length ? `${missing.length} pinned call(s) not found; ` : ''}` +
+                      `${stray} other mention(s))`);
           }
           // and that folder is only ever cleared or a fresh mkdtemp, which must be there: without it cwd is null and
           // agy starts in the caller's folder.

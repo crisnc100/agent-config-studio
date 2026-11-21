@@ -297,6 +297,28 @@ const ids = (p) => content(p).querySelector('.models-ids');
   ok('…and Accept is still offered', !!button(prop, 'Accept') && !button(prop, 'Accept').disabled);
 }
 
+// ── the catalog lines: Antigravity lists its models by name ─────────────
+{
+  const J = JSON.stringify;
+  const at = Date.now() - 5 * 60000;
+  const cats = [
+    { vendor: 'claude', label: 'Claude', ok: true, missing: false, fetchedAt: at, note: null, stale: false, count: 9 },
+    { vendor: 'agy', label: 'Antigravity', ok: true, missing: false, fetchedAt: at, note: null, stale: false, checkOnly: true, refreshNote: null,
+      count: 3, names: ['Neon Test', 'Argon Test', 'Orchestrator (Neon)'] },
+  ];
+  const p = await boot({ ...models(), catalogs: cats });
+  // Each line is the CLI's name, then its text, in two spans.
+  const lines = ids(p).querySelectorAll('.models-catalog').map((l) => l.querySelectorAll('span').map(txt).join(' | '));
+  ok('Antigravity\'s line names its models', lines.some((l) => /^Antigravity \| 3 models: Neon Test, Argon Test, Orchestrator \(Neon\) · fetched /.test(l)), J(lines));
+  ok('…the other lines keep their count alone', lines.some((l) => /^Claude \| 9 models · fetched /.test(l)), J(lines));
+  ok('Check now says it asks Antigravity too', /Check now asks Codex to refresh its list and Antigravity for its models first; it uses no tokens\./.test(p.text(ids(p))), p.text(ids(p)));
+  const q = await boot({ ...models(), catalogs: [{ vendor: 'agy', label: 'Antigravity', ok: false, missing: true, fetchedAt: null, stale: false, checkOnly: true, count: 0, names: [],
+    note: 'No Antigravity catalog on this machine — press Check now to create it.', refreshNote: 'Not refreshed: the Antigravity CLI (agy) is not installed.' }] });
+  const qLines = ids(q).querySelectorAll('.models-catalog').map((l) => l.querySelectorAll('span').map(txt).join(' | ') || txt(l));
+  ok('no list yet: the note, and why Check now did not fill it', qLines[0] === 'Antigravity | No Antigravity catalog on this machine — press Check now to create it.'
+    && qLines[1] === 'Not refreshed: the Antigravity CLI (agy) is not installed.', J(qLines));
+}
+
 for (const p of pages) p.done();
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

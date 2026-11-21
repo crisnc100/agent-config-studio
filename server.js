@@ -34,6 +34,7 @@ import { createWatcher, snapshotOf, diffSnapshots, splitIndexed, expectWrite, ta
 import { renderSnapshot, createSeat, removeSeat, moveSeatToPrivateHome, suggestSeats, addSuggestedSeat } from './lib/usage/seats.js';
 import { refreshSnapshot } from './lib/usage/refresh.js';
 import { refreshCodexCatalogs } from './lib/usage/codex-limits.js';
+import { readGeminiModels, stopAgyCalls } from './lib/usage/gemini.js';
 import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
 import { codexProcessesUsingHome, stopProcesses } from './lib/usage/processes.js';
 import { loadSeats } from './lib/usage/seats.js';
@@ -665,6 +666,7 @@ export function createApp(opts = {}) {
     detectFn,
     codexHomes: () => loadSeats().seats.filter((x) => x.vendor === 'codex' && x.home).map((x) => x.home),
     refreshCodex: opts.refreshCodexCatalogs || refreshCodexCatalogs,
+    refreshAgy: opts.refreshAgyModels || readGeminiModels,
   });
 
   const describer = createDescribe();
@@ -1289,7 +1291,9 @@ export function createApp(opts = {}) {
    * The Models panel. Catalogs are the CLIs' own on-disk caches, read at
    * start and on "Check now", and only projected fields leave
    * lib/models-catalog.js. "Check now" first has Codex refresh its catalogs
-   * through lib/usage/codex-limits.js; ACS reads no credential either way.
+   * through lib/usage/codex-limits.js, and asks agy for the Gemini models
+   * through lib/usage/gemini.js, saving them as ACS's Antigravity list; ACS
+   * reads no credential either way.
    */
   'GET /api/models': async () => models.view(),
   'POST /api/models/check': async () => { await models.check({ refresh: true }); return models.view(); },
@@ -1948,6 +1952,8 @@ ${rootsBanner()}
     if (stopping) return;
     stopping = true;
     try { rootsWatch.close(); watcher.close(); } catch {}
+    // A Check now still asking agy: its deadline and temp folder live in this process, which the signal below ends.
+    try { stopAgyCalls(); } catch {}
     removeRunFile();
     try { fs.writeSync(1, '\n  stopped.\n'); } catch {}
     // Ended by the signal itself, its default action restored, never by
