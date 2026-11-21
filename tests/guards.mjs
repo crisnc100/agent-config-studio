@@ -468,15 +468,22 @@ function guardB() {
         }
         if (!agyPinned) {
           agyPinned = true;
-          // opts is defined once, as this literal: an empty folder as cwd, stdin closed, cmux's agy hooks off.
-          const optsDefs = [...src.matchAll(/\bopts\s*=(?!=)/g)];
-          if (optsDefs.length !== 1 || !src.replace(/\s+/g, ' ').includes(AGY_USAGE_OPTS)) {
-            hits.push(`${file} opts must be assigned once, as ${AGY_USAGE_OPTS}`);
+          // opts is this literal (an empty folder as cwd, stdin closed, cmux's agy hooks off), and is named nowhere
+          // but its definition and the two pinned calls: any other mention (opts.stdio[0] = …, Object.assign(opts, …),
+          // a second binding) could change it after the definition is checked.
+          const optsMentions = [...src.matchAll(/\bopts\b/g)].length;
+          if (optsMentions !== 1 + AGY_USAGE_CALLS.length || !src.replace(/\s+/g, ' ').includes(AGY_USAGE_OPTS)) {
+            hits.push(`${file} opts must be named only in ${AGY_USAGE_OPTS} and the ${AGY_USAGE_CALLS.length} pinned spawns ` +
+                      `(found ${optsMentions} mentions)`);
           }
-          // and that folder is only ever a fresh mkdtemp (or cleared).
+          // and that folder is only ever cleared or a fresh mkdtemp, which must be there: without it cwd is null and
+          // agy starts in the caller's folder.
           const dirSets = [...src.matchAll(/\bdir\s*=(?!=)\s*([^;\n]*)/g)].map((m) => m[1].replace(/\s+/g, ' ').trim());
           if (dirSets.some((v) => !AGY_USAGE_DIRS.includes(v))) {
             hits.push(`${file} dir may only be ${AGY_USAGE_DIRS.join(' or ')}, got ${dirSets.join(' | ')}`);
+          }
+          if (dirSets.filter((v) => v === AGY_USAGE_DIRS[1]).length !== 1) {
+            hits.push(`${file} dir must be set exactly once to ${AGY_USAGE_DIRS[1]}`);
           }
         }
         continue;
