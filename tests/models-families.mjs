@@ -241,6 +241,7 @@ const refused = async (p) => { try { await p; return null; } catch (e) { return 
   write(familiesPath(h), hidden);
   await syncFamilies({ catalogs: catalogsOf(h), home: h });
   ok('(sync added argon beside the hidden entries)', JSON.parse(readOr(familiesPath(h))).families.argon?.id === ARGON);
+  plantAgy(h, CATALOG.filter((m) => m.id !== ARGON));
   const r = await removeFamily({ family: 'argon', home: h });
   ok('Remove brings the file back byte for byte', r.saved === true && readOr(familiesPath(h)) === hidden, readOr(familiesPath(h)));
   const rh = await refused(removeFamily({ family: 'hydrogen', home: h }));
@@ -299,6 +300,7 @@ console.log('\nmodels/families: Remove');
   }
   fs.rmSync(studio(h, 'paused.json'), { force: true });
   write(studio(h, 'roles.json'), { version: 2, roles: { reviewer: { use: ['opus'] } } });
+  plantAgy(h, CATALOG.filter((m) => m.id !== ARGON));
   const rolesBefore = readOr(studio(h, 'roles.json'));
   const r = await removeFamily({ family: 'argon', home: h });
   ok('named nowhere: Remove takes it out of families.json only', r.saved === true && J(JSON.parse(readOr(familiesPath(h))).families) === '{}'
@@ -795,6 +797,7 @@ function freePort() {
     const xr = await post('/api/models/remove', { family: 'argon' }, { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' });
     ok('a cross-site Remove → 403, nothing removed', xr.status === 403 && !!JSON.parse(readOr(familiesPath(h))).families.argon, J(xr));
     write(studio(h, 'roles.json'), { version: 2, roles: { reviewer: { use: ['opus'] } } });
+    plantAgy(h, CATALOG.filter((m) => m.id !== ARGON));
     const rm = await post('/api/models/remove', { family: 'argon' });
     ok('Remove through the route', rm.status === 200 && rm.body.removed === 'argon' && !JSON.parse(readOr(familiesPath(h))).families.argon, J(rm));
   } finally {
