@@ -168,3 +168,15 @@ code that consumes it:
   (public/app.js role effort, member effort, flavor effort) to the catalog's `efforts` for agy families.
 - A builder/security warning by vendor for agy families (neon included), if wanted.
 - The two "not handled" items above (4: editor/describe errors without the note; 5: legacy write while stale).
+
+## Merge main + sync redesign (builder, 2026-11-21)
+- Merged origin/main (0f98786, PR C #107) into gemini-families: 3c6c694. Three conflicts (lib/models-panel.js view,
+  tests/SUITE, tests/models-layout-ui.mjs); main's side of each was empty, so the branch side was kept. After the
+  merge: models-families 105/105, models-layout-ui 74/74, models-agy 50/50, models-panel 118/118, models-refresh
+  29/29. The four server-backed files need local port binding (EPERM inside the sandbox).
+- Cris chose "sync automatically". plan.md is rewritten for it; the adopt/remove write side and UI are what it
+  replaces. No code changed this turn.
+- Read on this Mac (projected catalog fields only): sync would add argon, hydrogen and flash (agy) and luna (Codex).
+  Claude and Grok offer no word that is not a shipped family. roles.default.json ships a flavor for all nine primary
+  families, so every shipped family is already "in use" by the brief's rule. Neon is in no role and has no where-used
+  hit, so only its shipped flavor and being shipped protect it.
