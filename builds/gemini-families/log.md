@@ -180,3 +180,16 @@ code that consumes it:
   Claude and Grok offer no word that is not a shipped family. roles.default.json ships a flavor for all nine primary
   families, so every shipped family is already "in use" by the brief's rule. Neon is in no role and has no where-used
   hit, so only its shipped flavor and being shipped protect it.
+
+## Sync phase 1 — read side for every vendor (builder, 2026-11-21)
+- lib/models.js: a families.json id may start with claude-, gpt-, grok- or gemini- (an unknown prefix hides the entry:
+  "its id does not start with claude-, gpt-, grok-, gemini-"). Entries take `track` (boolean; anything else hides
+  the entry). loadRegistry merges `track: false` into `registry.families`, only when there is a pin.
+- lib/models-panel.js: Set's hard refusal says "lives in families.json" (no longer Antigravity-only).
+- Test-only commit 168bfd2 moves the hidden-id assertions from claude-/gpt- ids to llama-4-x / mistral-9.
+- Scripted check against main 0f98786 (git archive of bin, lib, models.default.json): main's model-id on a temp HOME
+  with a v2 roles.json (member effort, alt), a flavor and a pause printed byte-identical output for opus, neon,
+  --table, --role reviewer, --roles, --json and --flavor sol with and without a families.json holding luna
+  (gpt-6-luna), mythos (claude-) and a pinned argon. Main's `model-id luna` is "unknown model family" (exit 1), and
+  a role naming luna refuses roles.json (exit 2): the known limit resolverStale guards.
+- Checks: tests/models.mjs 64/64; tests/models-families.mjs 117/117.
