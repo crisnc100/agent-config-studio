@@ -12,14 +12,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { snapshotRealHomes, assertRealHomesUnchanged } from './real-home.mjs';
 import { tempDir, track } from './fixtures/cleanup.mjs';
+import { claudeModel, codexModel, grokModel, writeClaudeCatalog, writeCodexCatalog, writeGrokCatalog } from './fixtures/models-home.mjs';
 
 const realBefore = snapshotRealHomes();
 process.env.HOME = fs.realpathSync(tempDir('acs-families-proc-'));
 const { familiesPath, loadRegistry, tracks } = await import('../lib/models.js');
 const { readPaused } = await import('../lib/roles.js');
 const { resolverStale } = await import('../lib/roles-panel.js');
-const { readCatalogs, agyModelsPath, detect } = await import('../lib/models-catalog.js');
-const { ADD_STALE, addable, adoptFamily, createModelsState, removeFamily, resetModel, setModel } = await import('../lib/models-panel.js');
+const { readCatalogs, agyModelsPath, detect, newestFor, planSync } = await import('../lib/models-catalog.js');
+const { ADD_STALE, addable, adoptFamily, createModelsState, heldBy, removeFamily, resetModel, setModel, syncFamilies } = await import('../lib/models-panel.js');
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = path.join(ROOT, 'bin', 'model-id');
@@ -397,6 +398,188 @@ console.log('\nmodels/families: the panel view');
   write(familiesPath(h), '{ broken');
   const broken = await st.view();
   ok('a broken families.json: the view says so, and the family has no row', /not valid JSON/.test(broken.familiesError || '') && !broken.rows.some((r) => r.family === 'argon'), broken.familiesError);
+}
+
+console.log('\nmodels/families: sync plans from every catalog');
+const CC = '2.1.300 (Claude Code)';
+const agyEntry = (id, displayName = id, efforts = null) => ({ id, displayName, efforts });
+const SYNC = {
+  claude: [
+    claudeModel('claude-opus-5-5', 'Opus 5.5', 'Opus'),
+    claudeModel('claude-lyra-2', 'Lyra 2', 'Lyra'),
+    claudeModel('claude-lyra-2-20260101', 'Lyra 2 (snapshot)', 'Lyra'),
+    claudeModel('claude-mythos-1', 'Mythos 1', 'Mythos', '9.0.0'),
+  ],
+  codex: [
+    codexModel('gpt-6.2-sol', 'Sol'),
+    codexModel('gpt-6-luna', 'Luna'),
+    codexModel('gpt-5.6-luna', 'Luna 5.6'),
+    codexModel('gpt-7-vega', 'Vega', 'hide'),
+    codexModel('gpt-6-latest', 'Latest'),
+    codexModel('codex-6-nova', 'Codex Nova'),
+    codexModel('gpt-6-gemini', 'Gemini?'),
+  ],
+  grok: [grokModel('grok-4.7', 'Grok 4.7'), grokModel('grok-4.8-build-fast', 'Grok 4.8 Fast')],
+  agy: [
+    agyEntry(DEFAULTS.models.neon, 'Gemini 4 Neon'), agyEntry('gemini-4.1-neon', 'Gemini 4.1 Neon'),
+    agyEntry(ARGON, 'Gemini 4 Argon'), agyEntry(HYDROGEN, 'Gemini 4 Hydrogen'),
+    agyEntry('gemini-pro-orchestrator-neon', 'Orchestrator'), agyEntry('gemini-4-sol', 'Gemini 4 Sol'), agyEntry('gemini-4-luna', 'Gemini 4 Luna'),
+  ],
+};
+function plantAll(h, c = SYNC) {
+  const at = Date.now() - 60000;
+  if (c.claude) writeClaudeCatalog(h, c.claude, at);
+  if (c.codex) writeCodexCatalog(path.join(h, '.codex'), c.codex, at);
+  if (c.grok) writeGrokCatalog(h, c.grok, at);
+  if (c.agy) plantAgy(h, c.agy);
+}
+const sync = (h, cc = CC) => syncFamilies({ catalogs: catalogsOf(h), claudeVersion: cc, home: h });
+const famDoc = (h) => JSON.parse(readOr(familiesPath(h)));
+const ids = (h) => Object.fromEntries(Object.entries(famDoc(h).families).map(([k, v]) => [k, v.id]));
+const why = (r, family, vendor) => r.skipped.find((x) => x.family === family && x.vendor === vendor)?.why;
+{
+  const h = home();
+  plantAll(h);
+  const r = await sync(h);
+  ok('a sync adds each new word at its newest id, and nothing else', J(ids(h)) === J({ lyra: 'claude-lyra-2', luna: 'gpt-6-luna', argon: ARGON, hydrogen: HYDROGEN }), readOr(familiesPath(h)));
+  ok('...each entry is id and addedAt, no pin', Object.values(famDoc(h).families).every((e) => J(Object.keys(e)) === '["id","addedAt"]' && Number.isFinite(Date.parse(e.addedAt))));
+  ok('...and says what it added, by vendor', J(r.added.map((a) => `${a.vendor}:${a.family}`)) === J(['claude:lyra', 'codex:luna', 'agy:argon', 'agy:hydrogen']) && r.moved.length === 0 && r.error === null, J(r));
+  ok('a dated snapshot does not beat the undated id (lyra)', ids(h).lyra === 'claude-lyra-2');
+  ok('an entry needing a newer Claude Code is not added, and says so', !ids(h).mythos && why(r, 'mythos', 'claude') === 'needs Claude Code ≥ 9.0.0', J(r.skipped));
+  ok('hidden, -latest and codex- slugs, Grok variants and orchestrators are never offered', !['vega', 'latest', 'nova', 'fast', 'orchestrator'].some((n) => Object.hasOwn(ids(h), n) || r.skipped.some((x) => x.family === n)), J(r.skipped));
+  ok('a shipped word from the same vendor is that family: no entry, no note (opus, sol, grok, neon)', !['opus', 'sol', 'grok', 'neon'].some((n) => Object.hasOwn(ids(h), n))
+    && !r.skipped.some((x) => ['opus', 'grok', 'neon'].includes(x.family) || (x.family === 'sol' && x.vendor === 'codex')), J(r.skipped));
+  ok('a shipped word from another vendor is skipped, naming the family', why(r, 'sol', 'agy') === 'the shipped Codex family has that name', J(r.skipped));
+  ok('a reserved word is skipped with why', why(r, 'gemini', 'codex') === '"gemini" is reserved (a CLI or account name)', J(r.skipped));
+  ok('a word two vendors offer anew: the first in order has it, the other is skipped', ids(h).luna === 'gpt-6-luna' && why(r, 'luna', 'agy') === 'Codex offers luna too, and has the name', J(r.skipped));
+  ok('model-id resolves what sync added', run(h, 'luna').out === 'gpt-6-luna\n' && run(h, 'argon').out === `${ARGON}\n`);
+  ok('neon is never written, and resolves to the shipped id', run(h, 'neon').out === `${DEFAULTS.models.neon}\n`);
+  const neon = detect({ registry: loadRegistry({ home: h }).registry, defaults: DEFAULTS, catalogs: catalogsOf(h) }).rows.find((x) => x.family === 'neon');
+  ok('...a newer neon is still an update alert for Accept', neon.alerts.some((a) => a.kind === 'update' && a.candidate === 'gemini-4.1-neon'), J(neon.alerts));
+  ok('nothing but families.json is written', !fs.existsSync(studio(h, 'models.json')) && !fs.existsSync(studio(h, 'roles.json')) && !fs.existsSync(studio(h, 'paused.json')));
+  const before = readOr(familiesPath(h));
+  const stamp = (f) => { const st = fs.statSync(f, { bigint: true }); return `${st.ino}:${st.mtimeNs}`; };
+  const was = stamp(familiesPath(h));
+  const again = await sync(h);
+  ok('a second sync writes nothing: same bytes, same file', readOr(familiesPath(h)) === before && stamp(familiesPath(h)) === was
+    && again.added.length === 0 && again.moved.length === 0 && again.error === null, J(again));
+  ok('...and the other vendor\'s luna is now skipped for the families.json entry', why(again, 'luna', 'agy') === 'the Codex family luna in families.json has that name', J(again.skipped));
+  const newer = await sync(h, '9.1.0 (Claude Code)');
+  ok('with a new enough Claude Code, the gated word is added', newer.added.map((a) => a.family).join() === 'mythos' && ids(h).mythos === 'claude-mythos-1', J(newer));
+}
+
+{
+  const h = home();
+  plantAll(h, { claude: SYNC.claude.slice(0, 1), agy: SYNC.agy.slice(0, 2) });
+  const r = await sync(h);
+  ok('nothing new to add: no families.json is created', !fs.existsSync(familiesPath(h)) && r.error === null && r.added.length === 0, J(r));
+}
+
+console.log('\nmodels/families: sync moves only forward, and only what nothing holds');
+const ARGON41 = 'gemini-4.1-argon';
+const withArgon = (h, entry, list) => { families(h, { argon: entry }); plantAll(h, { agy: list }); };
+{
+  const h = home();
+  withArgon(h, { id: ARGON }, [agyEntry(ARGON), agyEntry(ARGON41)]);
+  const r = await sync(h);
+  ok('an unused family moves to a strictly higher id', ids(h).argon === ARGON41 && J(r.moved) === J([{ family: 'argon', vendor: 'agy', from: ARGON, to: ARGON41 }]), J(r));
+  ok('...changing only its id', J(Object.keys(famDoc(h).families.argon)) === '["id"]');
+}
+for (const [what, roles, paused] of [
+  ['a role uses it', { version: 2, roles: { reviewer: { use: ['opus', 'argon'] } } }, null],
+  ['a role uses it as a member object', { version: 2, roles: { reviewer: { use: [{ family: 'argon', effort: 'high' }] } } }, null],
+  ['it is a role\'s second opinion', { version: 2, roles: { reviewer: { use: ['opus'], alt: 'argon' } } }, null],
+  ['its flavor names it', { version: 2, flavor: { argon: { brief: 'x' } } }, null],
+  ['an expired pause names it', null, { version: 1, paused: [{ name: 'argon', until: '2000-01-01T00:00:00Z' }] }],
+  ['roles.json cannot be read', '{ nope', null],
+]) {
+  const h = home();
+  withArgon(h, { id: ARGON }, [agyEntry(ARGON), agyEntry(ARGON41), agyEntry(HYDROGEN)]);
+  if (roles) write(studio(h, 'roles.json'), roles);
+  if (paused) write(studio(h, 'paused.json'), paused);
+  const r = await sync(h);
+  ok(`not moved while ${what}`, ids(h).argon === ARGON && r.moved.length === 0, J(r));
+  ok(`...and a new word is still added (${what})`, ids(h).hydrogen === HYDROGEN);
+}
+{
+  const h = home();
+  write(studio(h, 'roles.json'), { version: 2, roles: { reviewer: { use: ['opus', 'argon'] } } });
+  withArgon(h, { id: ARGON }, [agyEntry(ARGON)]);
+  ok('heldBy names each place a family is held', J(heldBy(h).get('argon')) === '["the reviewer role"]' && J(heldBy(h).get('opus')).includes('the reviewer role'));
+  write(studio(h, 'roles.json'), '{ nope');
+  ok('...and is null when roles.json cannot be read', heldBy(h) === null);
+}
+{
+  const h = home();
+  withArgon(h, { id: ARGON, track: false }, [agyEntry(ARGON), agyEntry(ARGON41)]);
+  const r = await sync(h);
+  ok('a pinned family is not moved', ids(h).argon === ARGON && r.moved.length === 0 && famDoc(h).families.argon.track === false, J(r));
+}
+for (const [what, current, list, want] of [
+  ['only a lower id is listed', ARGON41, [agyEntry(ARGON)], ARGON41],
+  ['its id is gone and only a lower one is listed', 'gemini-4.2-argon', [agyEntry(ARGON41)], 'gemini-4.2-argon'],
+  ['its id is gone and a higher one is listed', ARGON, [agyEntry(ARGON41)], ARGON41],
+  ['its word is gone from the list', ARGON, [agyEntry(HYDROGEN)], ARGON],
+  ['the list cannot be read', ARGON, null, ARGON],
+]) {
+  const h = home();
+  families(h, { argon: { id: current } });
+  if (list) plantAll(h, { agy: list }); else write(agyModelsPath(h), '{ nope');
+  await sync(h);
+  ok(`${what}: argon is ${want === current ? 'kept as it is' : `moved to ${want}`}`, ids(h).argon === want, readOr(familiesPath(h)));
+}
+{
+  const h = home();
+  families(h, { argon: { id: ARGON } });
+  plantAll(h, { agy: [agyEntry(HYDROGEN)] });
+  await sync(h);
+  const row = detect({ registry: loadRegistry({ home: h }).registry, defaults: DEFAULTS, catalogs: catalogsOf(h) }).rows.find((x) => x.family === 'argon');
+  ok('a family whose word is gone keeps its row, with the vanished alert', row?.id === ARGON && row.alerts.some((a) => a.kind === 'vanished'), J(row));
+}
+{
+  const h = home();
+  families(h, { lyra: { id: 'claude-lyra-2' } });
+  plantAll(h, { claude: [claudeModel('claude-lyra-2', 'Lyra 2', 'Lyra'), claudeModel('claude-lyra-3', 'Lyra 3', 'Lyra', '9.0.0')] });
+  await sync(h);
+  ok('a move needing a newer Claude Code is not made', ids(h).lyra === 'claude-lyra-2');
+  await sync(h, null);
+  ok('...nor with the Claude Code version unknown', ids(h).lyra === 'claude-lyra-2');
+  await sync(h, '9.0.0 (Claude Code)');
+  ok('...and is made once it is new enough', ids(h).lyra === 'claude-lyra-3');
+}
+{
+  const m = [{ id: 'x-1', family: 'x', hidden: false }, { id: 'x-3', family: 'x', hidden: true }, { id: 'x-2-20260101', family: 'x', hidden: false }, { id: 'x-next', family: 'x', hidden: false }];
+  ok('newestFor: hidden and unorderable ids never win; a dated one never beats an undated current id', newestFor(m, 'x', { above: 'x-1' }) === null && newestFor(m, 'x')?.id === 'x-1');
+  ok('...a dated current id may move to a newer dated one', newestFor(m, 'x', { above: 'x-1-20250101' })?.id === 'x-2-20260101');
+  ok('...an unorderable current id never moves', newestFor(m, 'x', { above: 'x-next' }) === null);
+}
+
+console.log('\nmodels/families: sync leaves the rest of families.json alone');
+{
+  const h = home();
+  const text = '{\n  "version": 1,\n  "families": {\n    "argon": { "id": "gemini-4-argon", "harness": "opencode" },\n    "zz9": {"id":"gemini-4-zz"}\n  },\n  "note": "kept"\n}\n';
+  write(familiesPath(h), text);
+  plantAll(h, { agy: SYNC.agy });
+  const r = await sync(h);
+  const after = readOr(familiesPath(h));
+  ok('a hidden entry by a word\'s name is never overwritten, and the skip says why', JSON.parse(after).families.argon.harness === 'opencode'
+    && why(r, 'argon', 'agy') === 'families.json has a hidden entry by that name (it has a key this ACS does not know ("harness"))', J(r.skipped));
+  ok('hidden entries and an unknown key are kept byte for byte around the added one', after.startsWith(text.slice(0, text.indexOf('\n  },'))) && after.endsWith('\n  },\n  "note": "kept"\n}\n')
+    && JSON.parse(after).families.hydrogen.id === HYDROGEN, after);
+}
+{
+  const h = home();
+  write(familiesPath(h), '{ broken');
+  plantAll(h, { agy: SYNC.agy });
+  const r = await sync(h);
+  ok('a broken families.json: no write, and the summary says why', readOr(familiesPath(h)) === '{ broken' && /families\.json is invalid, so nothing was synced: .*not valid JSON/.test(r.error || ''), J(r));
+}
+{
+  const h = home();
+  write(familiesPath(h), J({ version: 1, families: { luna: { id: 'gpt-6-luna' } } }));
+  plantAll(h, { agy: [agyEntry('gemini-4-luna')] });
+  const r = await sync(h);
+  ok('a word another vendor\'s families.json entry has is skipped, never moved across', ids(h).luna === 'gpt-6-luna' && why(r, 'luna', 'agy') === 'the Codex family luna in families.json has that name', J(r));
 }
 
 console.log('\nmodels/families: the routes, through the real server');
