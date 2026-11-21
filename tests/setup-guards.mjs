@@ -322,6 +322,11 @@ console.log('setup guards\n');
     ['agy usage: the mkdtemp assignment deleted', gm, origGm, (t) => t.replace("      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-usage-'));\n", '')],
     ['agy usage: the folder pointed elsewhere', gm, origGm, (t) => t.replace("dir = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-usage-'));", "dir = process.cwd();")],
     ['agy usage: a PATH name', gm, origGm, (t) => t.replace("spawn(found.binary, ['--version'], opts)", "spawn('agy', ['--version'], opts)")],
+    ['agy models: a second --version spawn in place of the models call', gm, origGm, (t) => t.replace("spawn(found.binary, ['--output-format', 'json', 'models'], opts)", "spawn(found.binary, ['--version'], opts)")],
+    ['agy models: void opts in place of the models call', gm, origGm, (t) => t.replace("child = spawn(found.binary, ['--output-format', 'json', 'models'], opts);", 'void opts;'), true],
+    ['agy models: the models call dropped', gm, origGm, (t) => t.replace("      else if (which === 'models') child = spawn(found.binary, ['--output-format', 'json', 'models'], opts);\n", '')],
+    ['agy models: an extra flag', gm, origGm, (t) => t.replace("['--output-format', 'json', 'models']", "['--output-format', 'json', 'models', '--dangerously-skip-permissions']")],
+    ['agy models: a prompt instead of the subcommand', gm, origGm, (t) => t.replace("['--output-format', 'json', 'models']", "['-p', 'list the models', '--output-format', 'json']")],
     ['lsof: a PATH name', pr, origPr, (t) => t.replace("execFile('/usr/bin/lsof', ['-F', 'pcn', '-w', '+D'", "execFile('lsof', ['-F', 'pcn', '-w', '+D'")],
   ];
   for (const [what, file, orig, plant, checkSyntax = false] of variants) {

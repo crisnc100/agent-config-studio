@@ -475,13 +475,31 @@ function guardB() {
         }
         if (!agyPinned) {
           agyPinned = true;
+          // Each pinned call exactly once: allowed one by one, a second --version spawn in place of another call would
+          // still pass.
+          const texts = calls.filter((c) => allowed.fns.has(c.fn)).map((c) => (callArgsText(src, c) || '').replace(/\s+/g, ' ').trim());
+          for (const pinned of AGY_USAGE_CALLS) {
+            const n = texts.filter((t) => t === pinned).length;
+            if (n !== 1) hits.push(`${file} must spawn(${pinned}) exactly once (found ${n})`);
+          }
           // opts is this literal (an empty folder as cwd, stdin closed, cmux's agy hooks off), and is named nowhere
-          // but its definition and the two pinned calls: any other mention (opts.stdio[0] = …, Object.assign(opts, …),
-          // a second binding) could change it after the definition is checked.
-          const optsMentions = [...src.matchAll(/\bopts\b/g)].length;
-          if (optsMentions !== 1 + AGY_USAGE_CALLS.length || !src.replace(/\s+/g, ' ').includes(AGY_USAGE_OPTS)) {
+          // but its definition and the pinned calls: any other mention (opts.stdio[0] = …, Object.assign(opts, …),
+          // void opts, a second binding) could change it after the definition is checked. Where each mention sits
+          // is checked, not how many there are: the definition and each call are taken out, and none may be left.
+          let rest = src.replace(/\s+/g, ' ');
+          const take = (needle) => {
+            const i = rest.indexOf(needle);
+            if (i === -1) return false;
+            rest = rest.slice(0, i) + rest.slice(i + needle.length);
+            return true;
+          };
+          const defined = take(AGY_USAGE_OPTS);
+          const missing = AGY_USAGE_CALLS.filter((c) => !take(`spawn(${c})`));
+          const stray = [...rest.matchAll(/\bopts\b/g)].length;
+          if (!defined || missing.length || stray) {
             hits.push(`${file} opts must be named only in ${AGY_USAGE_OPTS} and the ${AGY_USAGE_CALLS.length} pinned spawns ` +
-                      `(found ${optsMentions} mentions)`);
+                      `(${!defined ? 'definition not found; ' : ''}${missing.length ? `${missing.length} pinned call(s) not found; ` : ''}` +
+                      `${stray} other mention(s))`);
           }
           // and that folder is only ever cleared or a fresh mkdtemp, which must be there: without it cwd is null and
           // agy starts in the caller's folder.
