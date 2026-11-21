@@ -296,3 +296,25 @@ Each check, guard, rule or output added or changed; the other paths to the same 
     server. paused.json is not in history either: not handled (before this branch, out of scope).
 12. Remove only when the word is no longer offered: UI only. removeFamily itself does not check `offered`, so a
     direct POST can remove an offered family and the next sync adds it back: not handled (harmless; filed).
+
+## Phase 5 — effort pickers follow the catalog (builder, 2026-11-21)
+- The orchestrator checked agy 1.5.13 by hand: `--model gemini-4-argon --effort xhigh` (and the same for
+  gemini-3.8-flash) exits 1 with "invalid model selection: … has no "xhigh" effort (available: low, medium, high)".
+- lib/models-catalog.js detect(): rows carry `efforts` (the catalog entry's list for the current id; null when
+  none). Claude, Codex and Grok projections have no efforts, so their rows are null.
+- public/app.js: effortOptions(sel, families, value) feeds the member, role and flavor pickers. The role picker
+  takes the role's models plus its second opinion, since the role effort reaches each one without its own effort;
+  it repaints on a model pick and on a second-opinion change. A saved value outside the offered list is kept as a
+  marked option. The intersection across a role's families is how the brief's per-family rule applies to the one
+  picker that serves several families.
+- Planted bugs, each caught by tests/models-layout-ui.mjs: lists ignored (7 FAIL), no repaint on a pick (2), the
+  saved value dropped (2), the second opinion ignored (1).
+- Checks: tests/models.mjs 64/64; models-layout-ui 96/96; models-families 183/183; models-panel 118/118;
+  models-agy 50/50; roles-ui 75/75; ui-clarity-g 17/17.
+- Sibling check for this phase:
+  1. `efforts` on rows: the three pickers read it (applied). Other effort inputs: none on the Models page; the Usage
+     pause controls and the CLI (`model-id --effort`, ask-model) pass a saved effort through and fail loudly at
+     agy (not handled, the known limit). The roles describe proposals (AI-suggested roles) can propose an effort
+     outside a list: not handled, the proposal is shown before it is accepted and the call fails loudly.
+  2. Server-side writes (role, member, flavor effort) do not check the list: not handled, by design (the brief asks
+     for the pickers; the known limit covers saved values).
