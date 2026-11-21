@@ -877,12 +877,17 @@ skill.
   Agy then runs only on macOS, inside a `sandbox-exec` sandbox that lets it
   read the git work tree holding `--cwd` (or `--cwd` itself), its own temp
   folder and log, and the few agy settings files it needs to start and sign
-  in (your login keychain's file among them), and nothing else under your
-  home or temp folders. It may not write agy's conversation summaries,
-  which it cannot read there and would otherwise empty. It exits 4 without running agy off macOS, inside
-  another sandbox (run it from a plain terminal), when that folder is your
-  home or holds it, or when a check made before each call shows the sandbox
-  not holding. A call whose agy log says it kept its sign-in token in a file
+  in (your login keychain's file, its lock file and the copy a save writes
+  among them), and nothing else under your home or temp folders. It may not
+  write agy's conversation summaries, which it cannot read there and would
+  otherwise empty. It exits 4 without running agy off macOS, inside another
+  sandbox (run it from a plain terminal), when that folder is your home or
+  holds it, or when a check made before each call shows the sandbox not
+  holding. It also exits 4 while
+  `~/.gemini/antigravity-cli/antigravity-oauth-token` exists: agy writes
+  your Google sign-in token there in plain text when it cannot save it in
+  the keychain, and leaves it. Delete it; agy signs in from the keychain
+  without it. A call whose agy log says it kept its sign-in token in a file
   exits 4 too.
   `--role security` (or its `--second`) that resolves to an agy family
   exits 4 without running it, since agy's web search stays on.

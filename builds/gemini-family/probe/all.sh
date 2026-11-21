@@ -32,6 +32,7 @@ echo "agy $(CMUX_ANTIGRAVITY_HOOKS_DISABLED=1 AGY_CLI_DISABLE_AUTO_UPDATE=true "
 "$P/wall.sh" search
 "$P/wall.sh" subagent
 "$P/wall.sh" session
+"$P/wall.sh" keychain
 # Every file the runs left under ~/.gemini and Antigravity's app data, beside the per-conversation folders and logs.
 echo "new files under ~/.gemini and Antigravity's app data: $(find "$HOME/.gemini" "$HOME/Library/Application Support/antigravity" -type f -newer "$RUN/start" 2>/dev/null \
   | grep -v -E '/(conversations|brain|log|presence|implicit|annotations)/' | sed "s|^$HOME/|~/|" | sort | tr '\n' ' ')(end)"

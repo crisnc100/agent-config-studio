@@ -88,10 +88,12 @@ agy_call() {
   echo "$status"
 }
 markers() { ls "$M" | tr '\n' ' '; }
-# What a walled call's own log says about the things the wall depends on: agy's updater, and the sign-in token.
+# What a walled call's own log says about the things the wall depends on: agy's updater, and the sign-in token (kept in
+# the keychain or a file, and whether this call refreshed it: only a refresh exercises the keychain save).
 wall_log() {
-  local log="$OUT/$1.agy.log" up tok
+  local log="$OUT/$1.agy.log" up tok ref
   up=$(grep -q 'Auto-update disabled via environment variable AGY_CLI_DISABLE_AUTO_UPDATE' "$log" 2>/dev/null && echo off || echo NOT-OFF)
   tok=$(grep -qi 'file-based token storage' "$log" 2>/dev/null && echo FILE || echo keychain)
-  echo "updater $up · token $tok"
+  ref=$(grep -q 'token refreshed' "$log" 2>/dev/null && echo refreshed || echo "not refreshed")
+  echo "updater $up · token $tok ($ref)"
 }

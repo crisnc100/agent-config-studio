@@ -1,5 +1,5 @@
 #!/bin/bash
-# wall.sh tmpread|homeread|search|subagent|session: what the model can reach outside the folder under review, through
+# wall.sh tmpread|homeread|search|subagent|session|keychain: what the model can reach outside the folder under review, through
 # the sandbox-exec wall (walled.mjs), under the deny list. Each plants an unguessable token outside the read root and
 # prints whether it came back in agy's output (or, for a subagent, in its transcript), and what the call's log says
 # about agy's updater and sign-in token.
@@ -9,10 +9,12 @@
 #   subagent  a subagent the model defines is told to read both outside files
 #   session   an interactive agy session open (unwalled) while a walled call reads outside, then the same call with
 #             ANTIGRAVITY_LS_ADDRESS naming the open session's language server
+#   keychain  no agy: whether a keychain save (what agy runs to store a refreshed token) works inside the wall
+#             (keychain.mjs)
 set -euo pipefail
 . "$(dirname "$0")/common.sh" || exit 2
 MODE="${1:-}"
-case "$MODE" in tmpread|homeread|search|subagent|session) ;; *) die "usage: wall.sh tmpread|homeread|search|subagent|session";; esac
+case "$MODE" in tmpread|homeread|search|subagent|session) ;; keychain) exec node "$PROBE_DIR/keychain.mjs";; *) die "usage: wall.sh tmpread|homeread|search|subagent|session|keychain";; esac
 new_run
 git_ws; mark_ready
 TOKEN="acs-wall-$(openssl rand -hex 12)"; NAME_TOKEN="acs-name-$(openssl rand -hex 12)"
