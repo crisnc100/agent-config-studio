@@ -899,9 +899,22 @@ function agyTokenLeft(home = os.homedir()) {
   }
 }
 
-/** Whether agy's log of a call says it kept the sign-in token in a file (AGY_TOKEN_FILE), or exists but can't be read. */
-function agyTokenFile(logFile) {
-  try { return AGY_TOKEN_FILE.test(fs.readFileSync(logFile, 'utf8')); } catch (e) { return e.code !== 'ENOENT'; }
+/**
+ * Why a finished walled call's answer cannot be used on sign-in grounds, or null: its log is missing or unreadable (so
+ * whether agy kept the token in a file is unknown), the log says it did (AGY_TOKEN_FILE), or the token file is there now.
+ */
+function agyAfterCall(logFile, home = os.homedir()) {
+  const unknown = 'so whether it kept its Google sign-in token in a file is unknown';
+  let log;
+  try { log = fs.readFileSync(logFile, 'utf8'); } catch (e) {
+    return e.code === 'ENOENT' ? `agy left no log of the call at ${logFile}, ${unknown}` : `agy's log of the call, ${logFile}, could not be read (${e.code || e.message}), ${unknown}`;
+  }
+  if (AGY_TOKEN_FILE.test(log)) {
+    return `agy switched to keeping its Google sign-in token in a file instead of the keychain (its log, ${logFile}, says `
+      + `"file-based token storage"). If ${path.join(home, AGY_TOKEN_PATH)} now exists, ${AGY_TOKEN_FIX}`;
+  }
+  const left = agyTokenLeft(home);
+  return left ? `${left.file} ${left.why}; ${AGY_TOKEN_FIX}` : null;
 }
 
 /** sandbox-exec's arguments for `command` run inside AGY_WALL with `params`. */
@@ -1689,12 +1702,12 @@ async function main(argv) {
     for (const line of String(r.stderr || '').split('\n')) if (/permission required:/.test(line)) process.stderr.write(`ask-model: grok: ${line.trim()}\n`);
   }
   const got = readAnswer(vendor, m.id, r, schema, { cwd, grokHome: grokCall?.grokHome, family: m.family });
-  if (wall && agyTokenFile(logFile)) {
+  const signIn = wall ? agyAfterCall(logFile) : null;
+  if (signIn && got.answer !== undefined) {
     got.answer = undefined;
     got.exit = 4;
-    got.error = `agy switched to keeping its Google sign-in token in a file instead of the keychain (its log, ${logFile}, says `
-      + `"file-based token storage"), so its answer was not used. If ${path.join(os.homedir(), AGY_TOKEN_PATH)} now exists, ${AGY_TOKEN_FIX}`;
-  }
+    got.error = `its answer was not used: ${signIn}`;
+  } else if (signIn) got.error = `${got.error}; ${signIn}`;
   if (got.answer !== undefined) result.answer = got.answer;
   else result.error = got.error;
   if (vendor === 'agy') {
@@ -1721,7 +1734,7 @@ async function main(argv) {
   return finish(got.exit ?? 0);
 }
 
-export { AGY_ENV, AGY_TOKEN_FIX, AGY_TOKEN_PATH, AGY_WALL, SANDBOX_EXEC, agyReadRoot, agySubagentDenials, agyTokenFile, agyTokenLeft, agyWall, agyWallCanary, agyWallParams, agyWallProblem, argvFor, readAnswer, sandboxProblem };
+export { AGY_ENV, AGY_TOKEN_FIX, AGY_TOKEN_PATH, AGY_WALL, SANDBOX_EXEC, agyAfterCall, agyReadRoot, agySubagentDenials, agyTokenLeft, agyWall, agyWallCanary, agyWallParams, agyWallProblem, argvFor, readAnswer, sandboxProblem };
 
 /**
  * For `model-id --install`, after it has copied the resolver: this file beside

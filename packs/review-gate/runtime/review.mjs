@@ -2536,7 +2536,7 @@ function agyVersion() {
   } catch { return null } finally { if (dir) rmSync(dir, { recursive: true, force: true }) }
 }
 // The wall around each agy call, ask-model's agyWallProblem, agyReadRoot, agyWallParams, agyWall, agyWallCanary and
-// agyTokenFile, carried here because this runtime is installed alone.
+// agyAfterCall, carried here because this runtime is installed alone.
 function agyWallProblem(platform = process.platform) {
   if (platform !== 'darwin') return `agy runs only inside its macOS sandbox (sandbox-exec), and this is ${platform}`
   try { accessSync(SANDBOX_EXEC, constants.X_OK) } catch { return `${SANDBOX_EXEC} is missing, and agy runs only inside the sandbox it applies` }
@@ -2573,8 +2573,17 @@ function agyTokenLeft(home = homedir()) {
     return e.code === 'ENOENT' ? null : { file, why: `could not be checked (${e.code || e.message}), and it would hold agy's Google sign-in token in plain text` }
   }
 }
-function agyTokenFile(logFile) {
-  try { return AGY_TOKEN_FILE.test(readFileSync(logFile, 'utf8')) } catch (e) { return e.code !== 'ENOENT' }
+// Why a finished walled review's answer cannot be used on sign-in grounds, or null (ask-model's agyAfterCall).
+function agyAfterCall(logFile, home = homedir()) {
+  const unknown = 'so whether it kept its Google sign-in token in a file is unknown'
+  let log
+  try { log = readFileSync(logFile, 'utf8') } catch (e) {
+    return e.code === 'ENOENT' ? `agy left no log of the call at ${logFile}, ${unknown}` : `agy's log of the call, ${logFile}, could not be read (${e.code || e.message}), ${unknown}`
+  }
+  if (AGY_TOKEN_FILE.test(log))
+    return `agy switched to keeping its Google sign-in token in a file instead of the keychain (its log, ${logFile}, says "file-based token storage"). If ${join(home, AGY_TOKEN_PATH)} now exists, ${AGY_TOKEN_FIX}`
+  const left = agyTokenLeft(home)
+  return left ? `${left.file} ${left.why}; ${AGY_TOKEN_FIX}` : null
 }
 const agyWall = (params, command) => [...Object.entries(params).flatMap(([k, v]) => ['-D', `${k}=${v}`]), '-p', AGY_WALL, ...command]
 function agyWallCanary(params) {
@@ -2739,9 +2748,12 @@ function runAgy(m, prompt, schema) {
       ...deadlineOptions(),
     })
     console.warn(`ℹ agy review: model unverified (agy names only the model it was asked for, ${m.id}); its log: ${logFile}`)
-    if (agyTokenFile(logFile))
-      throw new Error(`agy review failed: agy switched to keeping its Google sign-in token in a file instead of the keychain (its log, ${logFile}, says "file-based token storage"). If ${join(homedir(), AGY_TOKEN_PATH)} now exists, ${AGY_TOKEN_FIX}`)
-    return parseAgy(m.id, r, m.family)
+    // A failed call keeps its own error, with the sign-in problem beside it.
+    const signIn = agyAfterCall(logFile)
+    let parsed
+    try { parsed = parseAgy(m.id, r, m.family) } catch (e) { throw signIn ? new Error(`${e.message}; ${signIn}`) : e }
+    if (signIn) throw new Error(`agy review failed: ${signIn}`)
+    return parsed
   } finally {
     rmSync(callTmp, { recursive: true, force: true })
   }
