@@ -146,21 +146,21 @@ ok('HOME is redirected', home !== realHome);
     catch (e) { return `EXIT ${e.status}\n${e.stdout || ''}${e.stderr || ''}`; }
   };
   const out = runG(`${fakeBin}${path.delimiter}${noAgy}`, 'detect');
-  ok('detect suggests Gemini when agy is installed, before agy has made its folder', /gemini-1\s+gemini/.test(out) && !fs.existsSync(path.join(g, '.gemini')), out);
+  ok('detect suggests Gemini when agy is installed, before agy has made its folder', /^\s*gemini\s+gemini\s+Gemini\b/m.test(out) && !fs.existsSync(path.join(g, '.gemini')), out);
   ok('...and not without agy', !/gemini/.test(runG(noAgy, 'detect')));
 
   fs.mkdirSync(path.dirname(reg), { recursive: true });
-  const future = { id: 'gemini-1', vendor: 'someday', label: 'From a newer build' };
+  const future = { id: 'gemini', vendor: 'someday', label: 'From a newer build' };
   fs.writeFileSync(reg, JSON.stringify({ version: 1, seats: [future] }));
   const saved = runG(`${fakeBin}${path.delimiter}${noAgy}`, 'detect', '--save');
   const seats = JSON.parse(fs.readFileSync(reg, 'utf8')).seats;
   ok('detect --save keeps the entry another build owns', seats.some((x) => JSON.stringify(x) === JSON.stringify(future)), JSON.stringify(seats));
   const mine = seats.find((x) => x.vendor === 'gemini');
-  ok('...registers Gemini under a fresh id', mine && mine.id !== 'gemini-1' && mine.harness === 'agy', JSON.stringify(seats));
+  ok('...registers Gemini under a fresh id', mine && mine.id !== 'gemini' && mine.harness === 'agy', JSON.stringify(seats));
   ok('...and says which id it registered', mine && new RegExp(`registered ${mine.id} \\(gemini\\)`).test(saved), saved);
 }
 {
-  // A Gemini seat added from the UI gets the id `gemini`, not detection's `gemini-1`.
+  // A Gemini seat added from the UI; detection would suggest one under the same id.
   const g = tempDir('acs-cli-gemini-ui-');
   const reg = path.join(g, '.agent-config-studio', 'seats.json');
   fs.mkdirSync(path.dirname(reg), { recursive: true });
@@ -172,7 +172,7 @@ ok('HOME is redirected', home !== realHome);
     try { return execFileSync(process.execPath, [CLI, 'detect'], { encoding: 'utf8', env: { ...process.env, ACS_LOGIN_PATH_DIRS: '', HOME: g, CODEX_HOME: '', NO_COLOR: '1', PATH: `${fakeBin}${path.delimiter}${PATH_NO_AGY}` } }); }
     catch (e) { return `EXIT ${e.status}\n${e.stdout || ''}${e.stderr || ''}`; }
   })();
-  ok('detect does not suggest a second Gemini seat beside a UI-added one', !/gemini-1/.test(out) && !/\bgemini\b/.test(out), out);
+  ok('detect does not suggest a second Gemini seat beside a UI-added one', !/\bgemini\b/i.test(out), out);
 }
 
 fs.rmSync(home, { recursive: true, force: true });
