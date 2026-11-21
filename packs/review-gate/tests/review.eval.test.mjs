@@ -25,15 +25,18 @@ const stub = (dir, name, body) => {
   chmodSync(join(dir, name), 0o755)
 }
 stub(BIN, 'model-id', `
-const a = process.argv.slice(2), ids = { sol: 'gpt-stub-sol', opus: 'claude-stub-opus', grok: 'grok-stub', fable: 'claude-stub-fable' }
+const a = process.argv.slice(2), ids = { sol: process.env.STUB_SOL_ID || 'gpt-stub-sol', 'sol-prev': 'gpt-stub-sol-prev', opus: 'claude-stub-opus', grok: 'grok-stub', fable: 'claude-stub-fable' }
 if (a[0] === '--role') {
   const use = a[1] === 'security' ? ['opus', 'sol'] : ['sol', 'opus', 'grok']
   console.log(JSON.stringify({ use, ids: use.map((f) => ids[f]) }))
-} else if (a[0] === '--flavor') console.log(JSON.stringify({ flavor: { effort: 'high' } }))
+} else if (a[0] === '--flavor') console.log(JSON.stringify({ flavor: { effort: process.env.STUB_EFFORT || 'high' } }))
 else console.log(ids[a[0]] || 'stub-' + a[0])
 `)
 // STUB_REPLIES: [{ model?, intent?, reply }] — the first entry whose model and intent (a substring of the prompt) match
 // answers a code call; else STUB_FINDINGS. STUB_FAIL: models that fail with a quota error. STUB_SLEEP_MS: code calls hang.
+// STUB_QUOTA: { model?, intent?, message, stdout? } — a matching code call prints message on stderr (or, with stdout, as
+// Claude's is_error JSON on stdout) and fails. STUB_SPANS: a file each code call appends { model, start, end } to.
+// STUB_SLEEPS: { model: ms }, a per-model STUB_SLEEP_MS.
 const modelBody = `
 const fs = require('node:fs')
 const a = process.argv.slice(2), cli = require('node:path').basename(process.argv[1])
@@ -45,7 +48,16 @@ const model = cli === 'codex' ? (a.find((x) => x.startsWith('model=')) || '').sl
 const kind = schema.includes('"scores"') ? 'scores' : schema.includes('"verdicts"') ? 'verdicts' : prompt.includes('SECURITY REVIEW ONLY.') ? 'security' : 'code'
 fs.appendFileSync(${JSON.stringify(CALLS)}, JSON.stringify({ cli, model, kind, cwd: process.cwd() }) + '\\n')
 if (kind === 'code' && (process.env.STUB_FAIL || '').split(',').includes(model)) { console.error('quota exhausted'); process.exit(3) }
-if (kind === 'code' && process.env.STUB_SLEEP_MS) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.STUB_SLEEP_MS))
+const quota = JSON.parse(process.env.STUB_QUOTA || 'null')
+if (kind === 'code' && quota && (!quota.model || quota.model === model) && (!quota.intent || prompt.includes(quota.intent))) {
+  if (quota.stdout) console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: quota.message }))
+  else console.error(quota.message)
+  process.exit(1)
+}
+const start = Date.now()
+const sleep = JSON.parse(process.env.STUB_SLEEPS || '{}')[model] ?? process.env.STUB_SLEEP_MS
+if (kind === 'code' && sleep) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(sleep))
+if (kind === 'code' && process.env.STUB_SPANS) fs.appendFileSync(process.env.STUB_SPANS, JSON.stringify({ model, start, end: Date.now() }) + '\\n')
 const replies = JSON.parse(process.env.STUB_REPLIES || '[]')
 const hit = replies.find((r) => (!r.model || r.model === model) && (!r.intent || prompt.includes(r.intent)))
 const reply = (kind === 'scores' ? '{"scores":[]}' : kind === 'verdicts' ? '{"verdicts":[]}' : kind === 'security' ? '{"findings":[]}'
@@ -660,4 +672,224 @@ test('merge slice f1 a grouped finding scores at every place: an instance catche
   assert.equal(cases.grouped.outcome, 'caught'); assert.equal(cases.grouped.expects[0].by, 'f1'); assert.equal(cases.grouped.extra, 0)
   assert.equal(cases['allowed-main'].outcome, 'false-alarm'); assert.deepEqual(cases['allowed-main'].alarms.map((a) => a.id), ['f1'])
   assert.equal(cases['allowed-all'].outcome, 'clean'); assert.equal(cases['allowed-all'].allowed, 1)
+})
+
+// Saved progress: one file per family and run settings, one finished review per line, gone once the family's record lands.
+const PROGRESS = join(LOG_DIR, 'eval-progress')
+const progressFiles = () => existsSync(PROGRESS) ? readdirSync(PROGRESS) : []
+const progressLines = () => progressFiles().flatMap((f) => lines(join(PROGRESS, f)))
+const codeCalls = () => calls().filter((c) => c.kind === 'code')
+const AGY_QUOTA = 'agy review failed (exit 1, status ERROR): error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h3m4s.\n' +
+  'AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 2h3m4s.","status":"RESOURCE_EXHAUSTED","error_code":429}'
+const quotaOn = (message, over = {}) => ({ STUB_QUOTA: JSON.stringify({ intent: 'last(items, n)', message, ...over }) })
+
+test('resume 1 each finished review is saved as it lands; a quota stop leaves no record, and re-running runs only what is missing', () => {
+  examples()
+  let r = evalRun(['--family', 'sol'], { ...quotaOn(AGY_QUOTA), STUB_REPLIES: JSON.stringify([{ intent: 'last(items, n)', reply: findings(BUG_HIT) }]) })
+  assert.equal(r.status, 1, r.out)
+  assert.match(r.out, /sol stopped: its quota is used up; it resets in 2h3m4s \(about \d{1,2}:\d{2}\)/)
+  assert.match(r.out, /1 of 2 reviews saved; re-run the same command to resume/)
+  assert.deepEqual(lines(EVAL_LOG), [], 'no partial record')
+  assert.equal(r.stdout.includes('===EVAL_JSON===\n[]'), true, r.stdout)
+  assert.deepEqual(progressLines().map((c) => [c.id, c.outcome]), [['example-clean-helper', 'clean']])
+
+  rmSync(CALLS, { force: true })
+  r = evalRun(['--family', 'sol'], { STUB_REPLIES: JSON.stringify([{ intent: 'last(items, n)', reply: findings(BUG_HIT) }]) })
+  assert.equal(r.status, 0, r.out)
+  assert.match(r.out, /resuming: 1 of 2 reviews saved by an earlier run/)
+  assert.equal(codeCalls().length, 1, 'only the missing review ran')
+  const [record] = evalJson(r)
+  assert.deepEqual(record.cases.map((c) => [c.id, c.outcome]), [['example-clean-helper', 'clean'], ['example-off-by-one', 'caught']])
+  assert.equal(record.totals.caught, 1); assert.equal(record.totals.clean, 1); assert.equal(record.totals.errored, 0)
+  assert.deepEqual(lines(EVAL_LOG).map((x) => x.family), ['sol'])
+  assert.deepEqual(progressFiles(), [], 'the saved progress goes once the record lands')
+
+  // A finished run leaves nothing to resume: the same command runs every review again.
+  rmSync(CALLS, { force: true })
+  r = evalRun(['--family', 'sol'])
+  assert.equal(r.status, 0, r.out)
+  assert.doesNotMatch(r.out, /resuming/)
+  assert.equal(codeCalls().length, 2)
+})
+
+test('resume 2 --fresh starts over; a different --repeat, case or family is not resumed; an errored review runs again', () => {
+  examples()
+  let r = evalRun(['--family', 'sol'], quotaOn(AGY_QUOTA))
+  assert.equal(r.status, 1, r.out)
+  rmSync(CALLS, { force: true })
+  r = evalRun(['--family', 'sol', '--fresh'])
+  assert.equal(r.status, 0, r.out)
+  assert.doesNotMatch(r.out, /resuming/)
+  assert.equal(codeCalls().length, 2)
+
+  r = evalRun(['--family', 'sol'], quotaOn(AGY_QUOTA))
+  assert.equal(r.status, 1, r.out)
+  rmSync(CALLS, { force: true })
+  r = evalRun(['--family', 'sol', '--repeat', '2'])
+  assert.equal(r.status, 0, r.out)
+  assert.equal(codeCalls().length, 4, 'other settings, other progress')
+
+  r = evalRun(['--family', 'sol'], quotaOn(AGY_QUOTA))
+  assert.equal(r.status, 1, r.out)
+  writeFileSync(join(CASES, 'clean-helper', 'head', 'src', 'extra.js'), 'export const extra = 1\n')
+  rmSync(CALLS, { force: true })
+  r = evalRun(['--family', 'sol'])
+  assert.equal(r.status, 0, r.out)
+  assert.equal(codeCalls().length, 2, 'a changed case runs again')
+
+  r = evalRun(['--family', 'sol'], quotaOn(AGY_QUOTA))
+  assert.equal(r.status, 1, r.out)
+  rmSync(CALLS, { force: true })
+  r = evalRun(['--family', 'opus'])
+  assert.equal(r.status, 0, r.out)
+  assert.equal(codeCalls().filter((c) => c.model === 'claude-stub-opus').length, 2, 'another family never takes sol\'s reviews')
+
+  // An ordinary failure is not saved: the run completes with it errored, and nothing is left to resume.
+  r = evalRun(['--family', 'sol', '--fresh'], { STUB_FAIL: 'gpt-stub-sol' })
+  assert.equal(r.status, 0, r.out)
+  assert.equal(evalJson(r)[0].totals.errored, 2)
+  assert.equal(progressFiles().filter((f) => f.startsWith('sol-')).length, 0)
+})
+
+test('quota 1 a quota message stops that family at once, says when it resets, and the other families still run and log', () => {
+  examples()
+  const r = evalRun(['--family', 'sol,opus', '--repeat', '3', '--yes'], quotaOn(AGY_QUOTA, { intent: '', model: 'gpt-stub-sol' }))
+  assert.equal(r.status, 1, r.out)
+  assert.equal(codeCalls().filter((c) => c.model === 'gpt-stub-sol').length, 1, 'no review after the quota stop')
+  assert.equal(codeCalls().filter((c) => c.model === 'claude-stub-opus').length, 6)
+  assert.match(r.out, /sol stopped: its quota is used up; it resets in 2h3m4s/)
+  assert.match(r.out, /0 of 6 reviews saved; re-run the same command to resume/)
+  assert.deepEqual(lines(EVAL_LOG).map((x) => x.family), ['opus'])
+  assert.deepEqual(evalJson(r).map((x) => x.family), ['opus'])
+})
+
+test('quota 2 each CLI\'s usage-limit wording stops the family, with its reset time when it gives one; other failures do not', () => {
+  examples()
+  const stops = [
+    ['You\'ve hit your usage limit. Upgrade to Pro (https://example.test) or try again at 3:05 PM.', /resets at 3:05 PM/],
+    ['You\'ve hit your usage limit. Try again in 2 days 3 hours 4 minutes.', /resets in 2 days 3 hours 4 minutes/],
+    ['Claude AI usage limit reached|1789047414', /resets at \S/],
+    ['5-hour limit reached ∙ resets 3pm', /resets 3pm/],
+    ['You\'ve hit your limit · resets 11am (America/New_York)', /resets 11am \(America\/New_York\)/],
+    ['{"status":"RESOURCE_EXHAUSTED","error_code":429}', /quota is used up; it did not say when it resets/],
+  ]
+  for (const [message, reset] of stops) {
+    rmSync(PROGRESS, { recursive: true, force: true })
+    const r = evalRun(['--family', 'sol'], quotaOn(message, { intent: '' }))
+    assert.equal(r.status, 1, `${message}\n${r.out}`)
+    assert.match(r.out, /sol stopped: its quota is used up/, message)
+    assert.match(r.out, reset, message)
+  }
+  for (const message of ['rate limited, retry later', 'context window exceeded']) {
+    rmSync(CALLS, { force: true })
+    const r = evalRun(['--family', 'sol', '--fresh'], quotaOn(message, { intent: '' }))
+    assert.equal(r.status, 0, `${message}\n${r.out}`)
+    assert.equal(codeCalls().length, 2, message)
+    assert.equal(evalJson(r)[0].totals.errored, 2)
+  }
+})
+
+test('jobs --jobs 2 runs two families at the same time; both records land, in family order', () => {
+  examples()
+  const spans = join(MARKS, 'spans.jsonl')
+  const r = evalRun(['--family', 'sol,opus', '--jobs', '2'], { STUB_SLEEP_MS: '1500', STUB_SPANS: spans })
+  assert.equal(r.status, 0, r.out)
+  const s = lines(spans), sol = s.filter((x) => x.model === 'gpt-stub-sol'), opus = s.filter((x) => x.model === 'claude-stub-opus')
+  assert.equal(sol.length, 2); assert.equal(opus.length, 2)
+  assert.ok(sol.some((a) => opus.some((b) => a.start < b.end && b.start < a.end)), `the two families overlapped: ${JSON.stringify(s)}`)
+  assert.deepEqual(evalJson(r).map((x) => x.family), ['sol', 'opus'])
+  assert.deepEqual(lines(EVAL_LOG).map((x) => x.family).sort(), ['opus', 'sol'])
+  assert.match(r.stdout, /^ {2}sol: example-clean-helper \[clean\] clean/m)
+  const bad = evalRun(['--family', 'sol', '--jobs', '0'])
+  assert.notEqual(bad.status, 0)
+  assert.match(bad.out, /--jobs must be a whole number of 1 or more/)
+})
+
+test('fix f1 a Claude quota error printed as JSON on stdout still stops the family, with its reset time', () => {
+  examples()
+  const r = evalRun(['--family', 'opus'], quotaOn('Claude AI usage limit reached|1789047414', { intent: '', stdout: true }))
+  assert.equal(r.status, 1, r.out)
+  assert.match(r.out, /opus stopped: its quota is used up; it resets at \S/)
+  assert.equal(codeCalls().length, 1)
+})
+
+test('fix f2 resuming a stopped multi-family run never re-runs a family whose record already landed', () => {
+  examples()
+  let r = evalRun(['--family', 'sol,opus'], quotaOn(AGY_QUOTA, { model: 'claude-stub-opus' }))
+  assert.equal(r.status, 1, r.out)
+  assert.deepEqual(lines(EVAL_LOG).map((x) => x.family), ['sol'])
+  rmSync(CALLS, { force: true })
+  r = evalRun(['--family', 'sol,opus'])
+  assert.equal(r.status, 0, r.out)
+  assert.deepEqual(codeCalls().map((c) => c.model), ['claude-stub-opus'], 'only opus\'s missing review ran')
+  assert.deepEqual(lines(EVAL_LOG).map((x) => x.family), ['sol', 'opus'], 'sol logged once')
+  assert.deepEqual(evalJson(r).map((x) => x.family), ['sol', 'opus'])
+  assert.deepEqual(progressFiles(), [], 'a completed invocation leaves nothing to resume')
+  rmSync(CALLS, { force: true })
+  r = evalRun(['--family', 'sol,opus'])
+  assert.equal(r.status, 0, r.out)
+  assert.equal(codeCalls().length, 4)
+})
+
+test('fix f3 a changed model id or effort never reuses saved reviews', () => {
+  examples()
+  let r = evalRun(['--family', 'sol'], quotaOn(AGY_QUOTA))
+  assert.equal(r.status, 1, r.out)
+  rmSync(CALLS, { force: true })
+  r = evalRun(['--family', 'sol'], { STUB_EFFORT: 'medium' })
+  assert.equal(r.status, 0, r.out)
+  assert.equal(codeCalls().length, 2, 'another effort runs every review')
+  r = evalRun(['--family', 'sol'], quotaOn(AGY_QUOTA))
+  assert.equal(r.status, 1, r.out)
+  rmSync(CALLS, { force: true })
+  r = evalRun(['--family', 'sol'], { STUB_SOL_ID: 'gpt-stub-sol-next' })
+  assert.equal(r.status, 0, r.out)
+  assert.equal(codeCalls().length, 2, 'another model runs every review')
+})
+
+test('fix f4 a stale saved review never masks a newer one for the same case and run', () => {
+  examples()
+  let r = evalRun(['--family', 'sol'], quotaOn(AGY_QUOTA))
+  assert.equal(r.status, 1, r.out)
+  writeFileSync(join(CASES, 'clean-helper', 'head', 'src', 'extra.js'), 'export const extra = 1\n')
+  r = evalRun(['--family', 'sol'], quotaOn(AGY_QUOTA))
+  assert.equal(r.status, 1, r.out)
+  assert.equal(progressLines().filter((x) => x.id === 'example-clean-helper').length, 2, 'the stale and the newer entry')
+  rmSync(CALLS, { force: true })
+  r = evalRun(['--family', 'sol'])
+  assert.equal(r.status, 0, r.out)
+  assert.equal(codeCalls().length, 1, 'the newer entry for the changed case is reused')
+})
+
+test('fix f5 after a --fresh run the resume hint says to drop --fresh', () => {
+  examples()
+  const r = evalRun(['--family', 'sol', '--fresh'], quotaOn(AGY_QUOTA))
+  assert.equal(r.status, 1, r.out)
+  assert.match(r.out, /re-run the same command without --fresh to resume/)
+  assert.doesNotMatch(r.out, /re-run the same command to resume/)
+})
+
+test('fix f6 scratch repos are per family: sol on prev-render and sol-prev on render never share a folder', () => {
+  const tree = { 'a.js': 'export const a = 1\n' }, head = { 'a.js': 'export const a = 2\n' }
+  makeCase('prev-render', { id: 'prev-render', kind: 'clean', intent: 'Change a to two.' }, tree, head)
+  makeCase('render', { id: 'render', kind: 'clean', intent: 'Change a to two.' }, tree, head)
+  const r = evalRun(['--family', 'sol,sol-prev'], { STUB_FAIL: 'gpt-stub-sol,gpt-stub-sol-prev' })
+  assert.equal(r.status, 0, r.out)
+  const kept = evalJson(r).flatMap((x) => x.cases.map((c) => c.kept))
+  assert.equal(kept.length, 4)
+  assert.equal(new Set(kept).size, 4, kept.join('\n'))
+})
+
+test('fix f7 when the parent dies on a write failure, every other family\'s live review is killed', () => {
+  examples()
+  mkdirSync(PROGRESS, { recursive: true })
+  chmodSync(PROGRESS, 0o555)
+  const spans = join(MARKS, 'spans.jsonl')
+  try {
+    const r = evalRun(['--family', 'sol,opus', '--jobs', '2'], { STUB_SLEEPS: JSON.stringify({ 'gpt-stub-sol': 0, 'claude-stub-opus': 6000 }), STUB_SPANS: spans })
+    assert.notEqual(r.status, 0, r.out)
+    assert.match(r.out, /EACCES|permission denied/i, 'the parent died on the progress write')
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 8000)
+    assert.deepEqual(lines(spans).filter((x) => x.model === 'claude-stub-opus'), [], 'opus\'s review was killed, not left running')
+  } finally { chmodSync(PROGRESS, 0o755) }
 })
