@@ -198,7 +198,7 @@ function detect() {
     // rather than written straight past the checks.
     let added = 0;
     for (const detected of fresh) {
-      // A fresh id at save time: the detected one is fixed (`gemini-1`) and may
+      // A fresh id at save time: the detected one is fixed (`gemini`) and may
       // belong to an entry this build cannot read, which addSeat refuses.
       const seat = { ...detected, id: uniqueSeatId(detected.id) };
       try { addSeat(seat); added++; console.log(`  ${C.green('registered')} ${seat.id} (${seat.vendor})`); }

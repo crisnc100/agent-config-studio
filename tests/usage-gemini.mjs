@@ -33,6 +33,20 @@ console.log('\nusage/gemini');
     && ![...r.windows, ...r.extraWindows].some((w) => w.resetsAt === Date.parse('2026-11-21T03:32:38Z')));
 }
 
+// --- Argon is found by family name, whatever version agy puts in it ----------------
+{
+  const r = shapeUsage(clone());
+  ok('the Argon line is labelled without a model version', r.extraWindows[0]?.label === 'Argon weekly', JSON.stringify(r.extraWindows));
+  const later = clone();
+  later.command.data.groups.find((g) => /Argon/.test(g.name)).name = 'Gemini 5 Argon';
+  later.command.data.groups.find((g) => /Argon/.test(g.name)).buckets[0].remaining_fraction = 0.6;
+  const rl = shapeUsage(later);
+  ok('...so a renamed Argon group still reads', rl.extraWindows.length === 1 && Math.round(rl.extraWindows[0].usedPercent) === 40, JSON.stringify(rl.extraWindows));
+  const none = clone();
+  none.command.data.groups = none.command.data.groups.filter((g) => !/Argon/.test(g.name));
+  ok('...and no Argon group means no Argon line', shapeUsage(none).extraWindows.length === 0);
+}
+
 // --- Pause's reset choice sees the real difference ----------------------------
 {
   // 7.048% and 7.042% used both round to 7.0; the weekly window is still the tighter one.

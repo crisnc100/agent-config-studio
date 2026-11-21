@@ -77,3 +77,15 @@
 - f6 (orchestrator asked, after f3 made it fire on every run): `acs usage detect` drops the Gemini suggestion when
   any Gemini seat is registered, whatever its id — suggestSeats' rule on the CLI path. usage-cli test: agy installed +
   a UI-added `gemini` seat → no suggestion; fails on the previous CLI. usage-cli 24/24.
+
+## CI: tests/models.mjs source lint (builder, 2026-11-21)
+- The lint has no exception mechanism in source: its only allowance is hardcoded in tests/models.mjs (`grok-1` in
+  seats.js), which is off limits. So no versioned name in lib/, server.js, public/.
+- gemini.js: the Argon group is matched by family name (/\bargon\b/i, never the Gemini Models group), labelled
+  "Argon weekly". A renamed group ("Gemini 5 Argon") still reads.
+- Sibling grep (model-id --lint over lib, server.js, all of public, bin) found one more: the detected seat id
+  `gemini-1` in seats.js, and the same token in a comment. The detected id is now `gemini` (one seat per machine, and
+  a UI-added seat gets the same slug; detect --save still allocates with uniqueSeatId). Remaining hits: grok-1
+  (allowed) and bin/model-id.mjs's own examples (bin is outside the test's scope, untouched).
+- Checks: models 64/64, usage-gemini 50/50, usage-seats 141/141, pause-ui 36/36, setup-accounts passes (one rerun:
+  the real-home check had flagged a file the benchmark writes).
