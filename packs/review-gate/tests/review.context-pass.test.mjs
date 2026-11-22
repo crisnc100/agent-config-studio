@@ -375,6 +375,104 @@ test('16 a moved hashbang, a line break other than LF, and a change git shows wi
   }
 })
 
+// A git on PATH that fails, as a broken object store or a killed process would, for each call matching FAIL_GIT (a sh
+// case pattern over its arguments) and runs the real git for the rest.
+const failingGit = () => {
+  const dir = join(ROOT, 'failing-git')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'git'), '#!/bin/sh\ncase "$*" in $FAIL_GIT) echo "fatal: simulated failure" >&2; exit 128;; esac\nPATH="${PATH#*:}" exec git "$@"\n', { mode: 0o755 })
+  return dir
+}
+const runFailing = (args, pattern) => {
+  const r = spawnSync(process.execPath, [SCRIPT, ...args], { cwd: REPO, env: { ...env, PATH: `${failingGit()}:${env.PATH}`, FAIL_GIT: pattern }, encoding: 'utf8' })
+  let json = null
+  try { json = JSON.parse(r.stdout) } catch { /* the test says what it got */ }
+  return { ...r, json, out: `${r.stdout}\n${r.stderr}` }
+}
+test('17 a git command that fails refuses, naming the command, and never stands in for an empty answer', () => {
+  const refused = (r, cmd, label) => {
+    assert.equal(r.status, 1, `${label}: ${r.out}`)
+    assert.equal(r.json?.ok, false, `${label}: ${r.out}`)
+    assert.match(r.json?.error || '', new RegExp(`^git ${cmd}.* failed \\(exit 128: fatal: simulated failure\\)$`), `${label}: ${r.out}`)
+  }
+  const code = commit({ 'src/app.js': '// Adds one.\nexport const add = (n) => n + 2\n' })
+  refused(runFailing(['--check-commit', code], 'diff --name-only*'), 'diff --name-only', 'the changed-file listing')
+  refused(runFailing(['--check-commit', code], 'rev-parse * --end-of-options *'), 'rev-parse', 'resolving the commit')
+  refused(runFailing(['--check-commit', code], '*^1*'), 'rev-parse', 'resolving its parent')
+  git('reset', '-q', '--hard', 'HEAD~1')
+
+  const unpinned = commit({ 'README.md': README.replace('The exact line a test pins stays put.', 'A reworded line.') })
+  refused(runFailing(['--check-commit', unpinned], 'ls-tree -r*'), 'ls-tree -r', 'listing the test files')
+  refused(runFailing(['--check-commit', unpinned], 'show *:tests/readme.test.mjs'), 'show', 'reading a test file')
+  refused(runFailing(['--check-commit', unpinned], `show ${git('rev-parse', 'HEAD~1')}:README.md`), 'show', 'reading the doc before')
+  git('reset', '-q', '--hard', 'HEAD~1')
+
+  const block = commit({ 'docs/guide.md': `${GUIDE}<!-- acs:x v1 -->\nnew\n<!-- /acs:x -->\n` })
+  refused(runFailing(['--check-commit', block], `show ${block}:docs/guide.md`), 'show', 'reading the doc after')
+  git('reset', '-q', '--hard', 'HEAD~1')
+
+  writeFileSync(join(REPO, 'src/app.js'), '// Adds one to n.\nexport const add = (n) => n + 1\n')
+  git('add', 'src/app.js'); git('update-index', '--chmod=+x', 'src/app.js'); git('commit', '-qm', 'mode and comment')
+  const mode = git('rev-parse', 'HEAD')
+  refused(runFailing(['--check-commit', mode], 'ls-tree [!-]* -- *'), 'ls-tree', 'reading the file modes')
+  git('reset', '-q', '--hard', 'HEAD~1')
+
+  const comment = commit({ 'src/app.js': '// Adds one to n.\nexport const add = (n) => n + 1\n' })
+  refused(runFailing(['--check-commit', comment], 'diff -U0*'), 'diff -U0', 'reading the changed lines')
+  refused(runFailing(['--check-commit', comment], 'show *:src/app.js'), 'show', 'reading the code file')
+  const none = spawnSync(process.execPath, [SCRIPT, '--check-commit', comment], { cwd: REPO, env: { ...env, PATH: join(ROOT, 'no-git') }, encoding: 'utf8' })
+  assert.equal(none.status, 1, none.stdout)
+  assert.match(JSON.parse(none.stdout).error, /^git rev-parse .* failed \(.*ENOENT.*\)$/, 'git missing from PATH')
+
+  refused(runFailing(['--check-brief', brief(PR)], 'rev-parse*'), 'rev-parse', 'the brief\'s base')
+})
+test('18 an answer git gives by exit code still reads as that answer: no such commit, no parent, nothing changed, a submodule among the tests', () => {
+  const nope = run(['--check-commit', 'nope'])
+  assert.equal(nope.status, 1); assert.equal(nope.json.error, 'nope does not name a commit')
+  const root = git('rev-list', '--max-parents=0', 'HEAD')
+  const orphan = run(['--check-commit', root])
+  assert.equal(orphan.status, 1); assert.equal(orphan.json.error, `${root} has no parent to compare with`)
+  const missingBase = run(['--check-brief', brief({ ...PR, base: 'no-such-branch' })])
+  assert.ok(missingBase.json.problems.includes('base: no-such-branch does not name a commit here'), missingBase.out)
+  git('commit', '-q', '--allow-empty', '-m', 'nothing')
+  const nothing = run(['--check-commit', 'HEAD'])
+  assert.equal(nothing.status, 0, nothing.out); assert.deepEqual(nothing.json.files, [])
+  git('update-index', '--add', '--cacheinfo', '160000,0123456789abcdef0123456789abcdef01234567,tests/sub'); git('commit', '-qm', 'a submodule among the tests')
+  const unpinned = commit({ 'README.md': README.replace('The exact line a test pins stays put.', 'A reworded line.') })
+  const r = run(['--check-commit', unpinned])
+  assert.deepEqual(r.json.problems, ['README.md: a line a test pins: "The exact line a test pins stays put." (untouchable)'], r.out)
+  const added = commit({ 'docs/new.md': '# New\n\nA page.\n', 'src/new.js': '// New.\nexport const n = 1\n' })
+  assert.deepEqual(run(['--check-commit', added]).json.problems, ['src/new.js: a code line changed (only comments may change in code)'], 'a new doc passes; a new code file is code')
+})
+
+test('19 the verdict is the same from any directory inside the repo, whatever diff.relative says', () => {
+  mkdirSync(join(REPO, 'sub'), { recursive: true })
+  const runIn = (dir, args) => {
+    const r = spawnSync(process.execPath, [SCRIPT, ...args], { cwd: join(REPO, dir), env, encoding: 'utf8' })
+    let json = null
+    try { json = JSON.parse(r.stdout) } catch { /* the assertion shows the output */ }
+    return { ...r, json, out: `${r.stdout}\n${r.stderr}` }
+  }
+  const cases = [
+    ['a code change', { 'src/app.js': '// Adds one.\nexport const add = (n) => n + 2\n' }, false],
+    ['a comment edit', { 'src/app.js': '// Adds one to n.\nexport const add = (n) => n + 1\n' }, true],
+    ['a removed pinned line', { 'README.md': README.replace('The exact line a test pins stays put.', 'A reworded line.') }, false],
+    ['an added generated block', { 'docs/guide.md': `${GUIDE}<!-- acs:x v1 -->\nnew\n<!-- /acs:x -->\n` }, false],
+  ]
+  for (const relative of [false, true]) {
+    if (relative) git('config', 'diff.relative', 'true')
+    for (const [label, files, want] of cases) {
+      const sha = commit(files)
+      for (const dir of ['', 'sub', 'src', 'docs']) {
+        const r = runIn(dir, ['--check-commit', sha])
+        assert.equal(r.json?.ok, want, `${label} from ${dir || 'the top'}${relative ? ' with diff.relative' : ''}: ${r.out}`)
+      }
+      git('reset', '-q', '--hard', 'HEAD~1')
+    }
+  }
+  assert.equal(runIn('sub', ['--check-brief', brief(PR)]).json?.ok, true, 'the brief check from a subdirectory')
+})
+
 test('close once: --check-commit treats a .mdx page as code, since its JSX and imports run when the page builds', () => {
   commit({ 'docs/page.mdx': '# Page\n\nThe add helper adds one.\n' })
   const prose = commit({ 'docs/page.mdx': '# Page\n\nThe add helper adds exactly one.\n' })

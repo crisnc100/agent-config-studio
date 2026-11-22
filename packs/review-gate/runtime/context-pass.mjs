@@ -13,7 +13,8 @@
  * test file, an agent-instruction file (SKILL.md, CLAUDE.md, AGENTS.md, GEMINI.md, .cursor/rules, a pack's
  * instructions/, .claude/, .codex/, .agents/), a path the brief lists as untouchable (program-input .md files, say), a
  * change inside a generated block (<!-- ns:name … --> … <!-- /ns:name -->), a removed doc line that a test file quotes,
- * and in any other file a changed line that is not comment or blank.
+ * and in any other file a changed line that is not comment or blank. Both modes refuse outright, naming the command,
+ * when a git command they rely on fails; only rev-parse's "no such commit" (exit 1) is read as an answer.
  *
  * The code-line check is an accident barrier for the writer, never a proof: the review gate never trusts it, and the
  * --focus docs fix check that follows reviews the commit as code. So it fails closed. An unknown language, a regex
@@ -52,10 +53,28 @@ const PINNED_MIN = 12
 
 class Refusal extends Error {}
 const refuse = (message) => { throw new Refusal(message) }
-function git(...args) {
-  const r = spawnSync('git', args, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
-  return r.status === 0 ? r.stdout : null
+// Any git failure (an exit code the caller does not take as an answer, a signal, git missing, output past the buffer)
+// refuses the whole check by naming the command: an empty result never stands in for one git could not give.
+function gitIn(cwd, args, answers) {
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
+  if (r.status === 0 && !r.error) return r.stdout
+  if (!r.error && answers.includes(r.status)) return null
+  const why = r.error ? r.error.message : r.signal ? `killed by ${r.signal}` : `exit ${r.status}${r.stderr.trim() ? `: ${r.stderr.trim().split('\n')[0]}` : ''}`
+  refuse(`git ${args.join(' ')} failed (${why})`)
 }
+// Every git call runs from the top of the work tree: diff --name-only gives paths from there, while ls-tree and
+// pathspecs read a path against the current directory, and diff.relative narrows a diff to it.
+let top = null
+function gitRun(args, answers) {
+  top ??= gitIn(process.cwd(), ['rev-parse', '--show-toplevel'], []).replace(/\n$/, '')
+  return gitIn(top, args, answers)
+}
+const git = (...args) => gitRun(args, [])
+// The full sha of the commit spec names, or null when it names none: rev-parse --verify --quiet exits 1 for that alone.
+const commitOf = (spec) => gitRun(['rev-parse', '--verify', '--quiet', '--end-of-options', `${spec}^{commit}`], [1])?.trim() || null
+// A path's text at a commit, or null when the commit has no such path. ls-tree tells that apart from a failure (exit 0
+// with no entry); git show cannot (exit 128 for both).
+const textAt = (commit, path) => (git('ls-tree', commit, '--', path) ? git('show', `${commit}:${path}`) : null)
 const empty = (v) => v === undefined || v === null || (typeof v === 'string' && !v.trim()) || (Array.isArray(v) && !v.length) ||
   (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length)
 // A glob as the review gate reads riskPaths: ** spans folders, * stays in one, a pattern with no / matches any segment.
@@ -97,7 +116,7 @@ export function checkBrief(doc) {
     if (!Array.isArray(doc[k]) || doc[k].some((x) => typeof x !== 'string' || !x.trim())) problems.push(`${k}: must be a list of paths`)
   }
   if (mode === 'pr' && !empty(doc.base)) {
-    if (typeof doc.base !== 'string' || git('rev-parse', '--verify', '--quiet', '--end-of-options', `${doc.base}^{commit}`) === null)
+    if (typeof doc.base !== 'string' || commitOf(doc.base) === null)
       problems.push(`base: ${doc.base} does not name a commit here`)
   }
   if (mode === 'pr' && !empty(doc.docMap)) {
@@ -128,16 +147,20 @@ function blocks(text) {
 }
 
 export function checkCommit(commit, brief = null) {
-  const sha = git('rev-parse', '--verify', '--quiet', '--end-of-options', `${commit}^{commit}`)?.trim()
+  const sha = commitOf(commit)
   if (!sha) refuse(`${commit} does not name a commit`)
-  const parent = git('rev-parse', '--verify', '--quiet', `${sha}^1`)?.trim()
+  const parent = commitOf(`${sha}^1`)
   if (!parent) refuse(`${commit} has no parent to compare with`)
-  const files = (git('diff', '--name-only', '--no-renames', '-z', parent, sha) || '').split('\0').filter(Boolean).sort()
+  const files = git('diff', '--name-only', '--no-renames', '-z', parent, sha).split('\0').filter(Boolean).sort()
   const listed = (brief?.untouchable || []).map((g) => [g, globRe(g)])
-  const testFiles = (git('ls-tree', '-r', '-z', '--name-only', sha) || '').split('\0').filter((p) => TESTS.test(p))
+  // Blobs only: a submodule under tests/ has no text to read.
+  const testFiles = git('ls-tree', '-r', '-z', sha).split('\0').filter(Boolean).flatMap((entry) => {
+    const tab = entry.indexOf('\t'), path = entry.slice(tab + 1)
+    return entry.slice(0, tab).split(' ')[1] === 'blob' && TESTS.test(path) ? [path] : []
+  })
   let testText = null
   const pinned = (line) => {
-    testText ??= testFiles.map((p) => git('show', `${sha}:${p}`) || '').join('\n')
+    testText ??= testFiles.map((p) => git('show', `${sha}:${p}`)).join('\n')
     return testText.includes(line)
   }
   const problems = [], code = []
@@ -148,7 +171,7 @@ export function checkCommit(commit, brief = null) {
     if (hit) { problems.push(`${p}: listed untouchable in the brief (${hit[0]})`); continue }
     if (DOCS_TABLE.test(p)) continue
     if (!DOCS.test(p)) { code.push(p); continue }
-    const before = git('show', `${parent}:${p}`), after = git('show', `${sha}:${p}`)
+    const before = textAt(parent, p), after = textAt(sha, p)
     const was = blocks(before), now = blocks(after)
     for (const name of new Set([...was.keys(), ...now.keys()]))
       if (was.get(name) !== now.get(name)) problems.push(`${p}: inside the generated block ${name} (untouchable)`)
@@ -290,7 +313,6 @@ function regexEnd(line, i) {
 // The line numbers git diff -U0 says changed: { old: [n…], now: [n…] }.
 function changedLines(parent, sha, path) {
   const diff = git('diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', parent, sha, '--', path)
-  if (diff === null) return null
   const old = [], now = []
   for (const m of diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)) {
     const [a, b, c, d] = [Number(m[1]), m[2] === undefined ? 1 : Number(m[2]), Number(m[3]), m[4] === undefined ? 1 : Number(m[4])]
@@ -300,18 +322,18 @@ function changedLines(parent, sha, path) {
   return { old, now }
 }
 const HASHBANG = /^\uFEFF?#!/
-const modeOf = (commit, path) => (git('ls-tree', commit, '--', path) || '').split(' ')[0] || null
+const modeOf = (commit, path) => git('ls-tree', commit, '--', path).split(' ')[0] || null
 function commentOnly(parent, sha, path) {
   const style = styleOf(path)
   if (!style) return false
-  const before = git('show', `${parent}:${path}`), after = git('show', `${sha}:${path}`)
+  const before = textAt(parent, path), after = textAt(sha, path)
   if (before === null || after === null || modeOf(parent, path) !== modeOf(sha, path)) return false
   // A hashbang works only on the first line, so a line put above one changes how the file runs.
   const first = (t) => t.split('\n', 1)[0]
   if ((HASHBANG.test(before) || HASHBANG.test(after)) && first(before) !== first(after)) return false
   const was = commentMap(before, style), now = commentMap(after, style), changed = changedLines(parent, sha, path)
   // A changed file whose diff names no line (git shows it as binary, say) is one whose change was never read.
-  if (!was || !now || !changed || (!changed.old.length && !changed.now.length)) return false
+  if (!was || !now || (!changed.old.length && !changed.now.length)) return false
   const ok = (map, lines, n) => map[n - 1] === true && !DIRECTIVE.test(lines[n - 1]) && !(style.block && /\/\*|\*\//.test(lines[n - 1]))
   const a = before.split('\n'), b = after.split('\n')
   return changed.old.every((n) => ok(was, a, n)) && changed.now.every((n) => ok(now, b, n))
