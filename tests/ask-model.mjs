@@ -1157,23 +1157,25 @@ console.log('\nask-model: --x-search');
   const X_RULES = ['--deny', 'MCPTool', ...['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch'].flatMap((r) => ['--deny', r])];
   // The grok version GROK_X_DENY was listed against; any other one refuses --x-search.
   const X_INSPECT = { STUB_GROK_INSPECT: J({ grokVersion: '1.0.92', mcpServers: [], plugins: [] }) };
-  // grok's record of an --x-search session, as 1.0.92 writes it: sessions/<URL-encoded cwd>/<id>/ with an empty
-  // tool_definitions.json and a chat_history.jsonl whose only tool calls are X searches. false leaves a file out.
+  // grok's record of an --x-search session, as 1.0.92 writes it: <GROK_HOME>/sessions/<URL-encoded cwd>/<id>/ with an
+  // empty tool_definitions.json and a chat_history.jsonl whose only tool calls are X searches. false leaves a file out.
+  // It goes where the run's default GROK_HOME (<HOME>/.grok, no GROK_HOME set) puts it, so a launch from the plain home
+  // is what answers.
   const XSID = '01a2052d-a502-7162-85e4-383f928feb61';
-  const XGH = mk('grok-home-x', '.grok');
-  const XDIR = path.join(XGH, 'sessions', encodeURIComponent(XC), XSID);
+  const xdir = (home) => path.join(home, '.grok', 'sessions', encodeURIComponent(XC), XSID);
   const xcall = (name) => ({ type: 'backend_tool_call', kind: { tool_type: 'x_search', call_id: 'xs_call-0', input: '{}', name, id: 'xs-0' } });
   const X_LINES = [{ type: 'system', content: 'sys' }, { type: 'user', content: 'q' }, { type: 'reasoning', content: 'r' },
     xcall('x_keyword_search'), xcall('x_semantic_search'), xcall('x_user_search'), xcall('x_thread_fetch'), { type: 'assistant', content: 'a' }];
-  const xsession = ({ defs = '[]', lines = X_LINES, folder = true } = {}) => {
-    fs.rmSync(path.join(XGH, 'sessions'), { recursive: true, force: true });
+  const xsession = ({ home = HOME, defs = '[]', lines = X_LINES, folder = true } = {}) => {
+    const dir = xdir(home);
+    fs.rmSync(path.join(home, '.grok', 'sessions'), { recursive: true, force: true });
     if (!folder) return;
-    fs.mkdirSync(XDIR, { recursive: true });
-    if (defs !== false) fs.writeFileSync(path.join(XDIR, 'tool_definitions.json'), defs);
-    if (lines !== false) fs.writeFileSync(path.join(XDIR, 'chat_history.jsonl'), lines.map((l) => (typeof l === 'string' ? l : J(l))).join('\n') + '\n');
+    fs.mkdirSync(dir, { recursive: true });
+    if (defs !== false) fs.writeFileSync(path.join(dir, 'tool_definitions.json'), defs);
+    if (lines !== false) fs.writeFileSync(path.join(dir, 'chat_history.jsonl'), lines.map((l) => (typeof l === 'string' ? l : J(l))).join('\n') + '\n');
   };
-  const X_ENV = { ...X_INSPECT, GROK_HOME: XGH, STUB_SESSION_ID: XSID };
-  const xask = (args, opts = {}) => { if (!opts.keep) xsession(); return ask(args, { ...opts, env: { ...X_ENV, ...opts.env } }); };
+  const X_ENV = { ...X_INSPECT, STUB_SESSION_ID: XSID };
+  const xask = (args, opts = {}) => { if (!opts.keep) xsession({ home: opts.home ?? HOME }); return ask(args, { ...opts, env: { ...X_ENV, ...opts.env } }); };
   const g = xask(['--family', 'grok', '--x-search', '--json', '--cwd', XC]);
   const gj = g.code === 0 ? JSON.parse(g.out) : {};
   ok('grok --x-search: exact argv, every other built-in disallowed, MCP and file, shell and fetch rules denied, no subagents, low turn cap, from --cwd',
@@ -1224,7 +1226,7 @@ console.log('\nask-model: --x-search');
   ok('--x-search, an X-only session record: the answer stands', xonly.code === 0 && JSON.parse(xonly.out).answer === `answer from ${IDS.grok}`, show(xonly));
   // Other modes never read the record.
   xsession({ folder: false });
-  const roX = ask(['--family', 'grok', '--json', '--cwd', XC], { env: { GROK_HOME: XGH, STUB_SESSION_ID: XSID } });
+  const roX = ask(['--family', 'grok', '--json', '--cwd', XC], { env: { STUB_SESSION_ID: XSID } });
   ok('without --x-search no session record is needed', roX.code === 0, show(roX));
 
   for (const [what, inspect] of [['an older grok (1.0.77)', { grokVersion: '1.0.77', mcpServers: [], plugins: [] }], ['a newer grok (1.0.93)', { grokVersion: '1.0.93', mcpServers: [], plugins: [] }],
