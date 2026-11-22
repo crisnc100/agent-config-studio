@@ -55,12 +55,19 @@ class Refusal extends Error {}
 const refuse = (message) => { throw new Refusal(message) }
 // Any git failure (an exit code the caller does not take as an answer, a signal, git missing, output past the buffer)
 // refuses the whole check by naming the command: an empty result never stands in for one git could not give.
-function gitRun(args, answers) {
-  const r = spawnSync('git', args, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
+function gitIn(cwd, args, answers) {
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
   if (r.status === 0 && !r.error) return r.stdout
   if (!r.error && answers.includes(r.status)) return null
   const why = r.error ? r.error.message : r.signal ? `killed by ${r.signal}` : `exit ${r.status}${r.stderr.trim() ? `: ${r.stderr.trim().split('\n')[0]}` : ''}`
   refuse(`git ${args.join(' ')} failed (${why})`)
+}
+// Every git call runs from the top of the work tree: diff --name-only gives paths from there, while ls-tree and
+// pathspecs read a path against the current directory, and diff.relative narrows a diff to it.
+let top = null
+function gitRun(args, answers) {
+  top ??= gitIn(process.cwd(), ['rev-parse', '--show-toplevel'], []).replace(/\n$/, '')
+  return gitIn(top, args, answers)
 }
 const git = (...args) => gitRun(args, [])
 // The full sha of the commit spec names, or null when it names none: rev-parse --verify --quiet exits 1 for that alone.
