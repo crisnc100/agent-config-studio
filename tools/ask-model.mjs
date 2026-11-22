@@ -101,7 +101,7 @@ import { familyEffort, pauseLine, resolveFlavor, resolveRole } from '../lib/role
 const SELF = fileURLToPath(import.meta.url);
 const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools | --x-search] [--json] [--cwd <dir>]'
   + '\n  --x-search: grok only; leaves x_keyword_search, x_semantic_search, x_user_search and x_thread_fetch; open_page and open_page_with_find '
-  + 'cannot be disallowed by name, and the grok it was checked against offers neither';
+  + 'cannot be disallowed by name; each run is checked afterwards against grok\'s session record';
 const VALUE_FLAGS = { '--role': 'role', '--family': 'family', '--effort': 'effort', '--effort-from': 'effortFrom', '--prompt-file': 'promptFile', '--schema': 'schemaFile', '--cwd': 'cwd' };
 
 // What each CLI may use. Claude and grok are read-only by these allowlists alone
@@ -1431,10 +1431,16 @@ function grokBuildProof(id, sessionId, cwd, grokHome) {
 }
 
 /**
- * --x-search, after the run: null when grok's record of the session shows an X-only run, else why not. The record is
- * the folder grokBuildProof reads: tool_definitions.json must be [] (no client tool offered), and chat_history.jsonl
- * may hold only X_HISTORY_TYPES lines, every backend_tool_call one of the four X tools. A record of any other shape,
- * or none (grok's daemon route keeps its sessions elsewhere), refuses.
+ * --x-search, after the run: null when grok's record of the session shows a complete X-only run, else why not. The
+ * record is the folder grokBuildProof reads, and every file in it that records a call is read; one that is missing or
+ * unreadable refuses, as does a record of any other shape or none (grok's daemon route keeps its sessions elsewhere).
+ * - tool_definitions.json is [] (no client tool offered).
+ * - chat_history.jsonl holds only X_HISTORY_TYPES lines, every backend_tool_call one of X_TOOLS, no assistant line
+ *   with tool_calls, and it ends with an assistant line: a blank or cut-short history proves nothing.
+ * - updates.jsonl: grok's compaction can leave a call here alone. Every toolCallId of a tool_call or tool_call_update
+ *   is an XSearch-variant call whose rawOutput names an X tool, and no name it carries is another tool.
+ * - updates.jsonl and events.jsonl name no other tool_name (a tool hook, a started or permission-checked tool).
+ * - signals.json's toolsUsed is a list holding nothing but x_search.
  */
 const X_TOOLS = ['x_keyword_search', 'x_semantic_search', 'x_user_search', 'x_thread_fetch'];
 const X_HISTORY_TYPES = ['system', 'user', 'reasoning', 'assistant', 'backend_tool_call'];
@@ -1444,29 +1450,90 @@ function grokXRecord(sessionId, cwd, grokHome) {
   const read = (name) => {
     try { return { text: fs.readFileSync(path.join(dir, name), 'utf8') }; } catch (e) { return { error: `${path.join(dir, name)} could not be read (${e.code || e.message})` }; }
   };
+  const readLines = (name) => {
+    const got = read(name);
+    if (got.error) return got;
+    const entries = [];
+    for (const line of got.text.split('\n')) {
+      if (!line.trim()) continue;
+      try { entries.push(JSON.parse(line)); } catch { return { error: `its ${name} holds a line that is not JSON` }; }
+    }
+    return { entries };
+  };
+  const call = (name, what) => `its ${name} records a call to ${JSON.stringify(what)}`;
+
   const defs = read('tool_definitions.json');
   if (defs.error) return defs.error;
   let offered;
   try { offered = JSON.parse(defs.text); } catch { return 'its tool_definitions.json is not JSON'; }
   if (!Array.isArray(offered)) return 'its tool_definitions.json is not a list';
   if (offered.length) {
-    const names = offered.map((t) => (isObject(t) && typeof t.name === 'string' ? t.name : '?'));
+    const names = offered.map((t) => (isObject(t) ? t.name ?? t.function?.name ?? '?' : '?'));
     return `its tool_definitions.json offered ${offered.length} tool${offered.length === 1 ? '' : 's'} (${names.join(', ')})`;
   }
-  const history = read('chat_history.jsonl');
+
+  const history = readLines('chat_history.jsonl');
   if (history.error) return history.error;
-  for (const line of history.text.split('\n')) {
-    if (!line.trim()) continue;
-    let entry;
-    try { entry = JSON.parse(line); } catch { return 'its chat_history.jsonl holds a line that is not JSON'; }
+  for (const entry of history.entries) {
     const type = isObject(entry) ? entry.type : undefined;
     if (!X_HISTORY_TYPES.includes(type)) return `its chat_history.jsonl holds a ${JSON.stringify(type ?? null)} line`;
     if (type === 'backend_tool_call') {
       const name = isObject(entry.kind) ? entry.kind.name : undefined;
       if (!X_TOOLS.includes(name)) return `its chat_history.jsonl holds a backend call to ${JSON.stringify(name ?? null)}`;
     }
+    if (type === 'assistant' && entry.tool_calls !== undefined && !(Array.isArray(entry.tool_calls) && !entry.tool_calls.length)) {
+      const first = Array.isArray(entry.tool_calls) && isObject(entry.tool_calls[0]) ? entry.tool_calls[0].name : undefined;
+      return call('chat_history.jsonl', first ?? '(unnamed)');
+    }
   }
-  return null;
+  if (history.entries.at(-1)?.type !== 'assistant') return 'its chat_history.jsonl does not end with the assistant\'s reply';
+
+  const otherToolName = (name, entries) => {
+    let found;
+    const walk = (v) => {
+      if (found !== undefined) return;
+      if (Array.isArray(v)) v.forEach(walk);
+      else if (isObject(v)) for (const [k, x] of Object.entries(v)) { if (k === 'tool_name' && !X_TOOLS.includes(x)) found = x ?? '(unnamed)'; walk(x); }
+    };
+    walk(entries);
+    return found === undefined ? null : call(name, found);
+  };
+  const updates = readLines('updates.jsonl');
+  if (updates.error) return updates.error;
+  const calls = new Map();
+  for (const entry of updates.entries) {
+    const u = isObject(entry) && isObject(entry.params) && isObject(entry.params.update) ? entry.params.update : null;
+    if (!u || (u.sessionUpdate !== 'tool_call' && u.sessionUpdate !== 'tool_call_update')) continue;
+    const c = calls.get(u.toolCallId) ?? { names: [], x: false };
+    calls.set(u.toolCallId, c);
+    if (u.sessionUpdate === 'tool_call' && !(isObject(u.rawInput) && u.rawInput.variant === 'XSearch')) {
+      c.names.push(u._meta?.['x.ai/tool']?.name ?? u.title ?? '(unnamed)');
+    }
+    for (const n of [u.rawOutput?.name, u._meta?.['x.ai/tool']?.name]) {
+      if (n === undefined) continue;
+      if (X_TOOLS.includes(n)) c.x = true;
+      else c.names.push(n);
+    }
+  }
+  for (const c of calls.values()) {
+    if (c.names.length) return call('updates.jsonl', c.names[0]);
+    if (!c.x) return call('updates.jsonl', '(unnamed)');
+  }
+  const hooked = otherToolName('updates.jsonl', updates.entries);
+  if (hooked) return hooked;
+
+  const events = readLines('events.jsonl');
+  if (events.error) return events.error;
+  const started = otherToolName('events.jsonl', events.entries);
+  if (started) return started;
+
+  const signals = read('signals.json');
+  if (signals.error) return signals.error;
+  let used;
+  try { used = JSON.parse(signals.text)?.toolsUsed; } catch { return 'its signals.json is not JSON'; }
+  if (!Array.isArray(used)) return 'its signals.json has no toolsUsed list';
+  const other = used.find((t) => t !== 'x_search');
+  return other === undefined ? null : `its signals.json lists ${JSON.stringify(other)} as used`;
 }
 
 /**

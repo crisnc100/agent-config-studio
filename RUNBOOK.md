@@ -370,10 +370,15 @@ never reads it, so new data cannot break it.
   bumping `GROK_X_VERSION`. `open_page` and `open_page_with_find` cannot be
   disallowed by name. Each run is checked after the run against grok's
   session record (`grokXRecord`, the session folder `grokBuildProof`
-  reads): `tool_definitions.json` must be `[]`, and `chat_history.jsonl` may
-  hold only system, user, reasoning, assistant and `backend_tool_call`
-  lines, each call one of the four X tools. Any other record, or none (grok's
-  daemon route keeps its sessions elsewhere), exits 4 with no answer. The
+  reads). It must hold a complete X-only conversation:
+  `tool_definitions.json` is `[]`; `chat_history.jsonl` holds only system,
+  user, reasoning, assistant and `backend_tool_call` lines, each call one of
+  the four X tools, and ends with an assistant line; every call in
+  `updates.jsonl` (where compaction can leave a call alone) is an X search;
+  neither `updates.jsonl` nor `events.jsonl` names another tool; and
+  `signals.json` lists only `x_search` as used. A file missing or
+  unreadable, any other record, or none (grok's daemon route keeps its
+  sessions elsewhere), exits 4 with no answer. The
   check refuses the answer; it undoes nothing the run did. The leader-mode,
   hook-folder and MCP checks run as for every grok call.
 - Codex has no strict-MCP flag, and `-c mcp_servers={}` is merged, not a
