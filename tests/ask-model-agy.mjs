@@ -2,6 +2,10 @@
  * ask-model on agy (a gemini- id), run as a child process against a stub agy that records its argv, cwd, stdin and
  * env and answers in agy 1.5.13's stream-json shape (builds/gemini-family/containment-probe.md). PATH holds no real
  * model CLI and HOME is a temp folder, so no model is called and the real ~/.gemini is never read.
+ *
+ * On macOS the stub runs inside the real sandbox-exec wall, as agy does, so this file must run from a shell outside
+ * any sandbox. Elsewhere agy is refused at the wall, after every check before it: those checks are still tested, and
+ * a call that would have run is shown refused there with agy never started (ran()).
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -27,19 +31,33 @@ const STUBS = mk('stubs');
 const LOG = path.join(tmp, 'calls.jsonl');
 const SYSTEM = ['/usr/bin', '/bin'];
 
-// STUB_MODE: ok | status-error | deadline | denied-empty | other-model | no-result. STUB_ANSWER replaces the response.
+// STUB_MODE: ok | status-error | deadline | denied-empty | other-model | no-result | token-file | no-log | token-left. Every
+// mode but no-log writes a log line to --log-file, as agy does; token-left leaves agy's plaintext token file in HOME.
+// STUB_ANSWER replaces the
+// response. STUB_PEEK: paths (joined by \n) the stub tries to read, recording each result, to show what the wall lets in.
+// The saved subagent run is written into the stub: inside the wall it cannot read this checkout.
+const SUBAGENT_STREAM = fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'agy-subagent', 'stream.jsonl'), 'utf8');
 fs.writeFileSync(path.join(STUBS, 'agy'), `#!${process.execPath}
 const fs = require('node:fs');
 const a = process.argv.slice(2);
 if (a[0] === '--version') {
   if (process.env.STUB_VERSION_LOG) fs.appendFileSync(process.env.STUB_VERSION_LOG, JSON.stringify({ cwd: process.cwd(), entries: fs.readdirSync(process.cwd()) }) + '\\n');
-  if (process.env.STUB_VERSION_FAIL) process.exit(1); console.log(process.env.STUB_VERSION || '1.5.13'); process.exit(0);
+  if (process.env.STUB_VERSION_FAIL) process.exit(1); console.log(process.env.STUB_VERSION || '1.5.14'); process.exit(0);
 }
 const val = (f) => { const i = a.indexOf(f); return i === -1 ? undefined : a[i + 1]; };
 const st = fs.fstatSync(0);
+const peek = {};
+for (const p of (process.env.STUB_PEEK || '').split('\\n').filter(Boolean)) { try { peek[p] = fs.readFileSync(p, 'utf8'); } catch (e) { peek[p] = e.code; } }
 fs.appendFileSync(process.env.STUB_LOG, JSON.stringify({ argv: a, cwd: process.cwd(), stdin: st.isCharacterDevice() ? 'chardev' : 'other',
-  cmuxHooksOff: process.env.CMUX_ANTIGRAVITY_HOOKS_DISABLED ?? null }) + '\\n');
+  cmuxHooksOff: process.env.CMUX_ANTIGRAVITY_HOOKS_DISABLED ?? null, autoUpdateOff: process.env.AGY_CLI_DISABLE_AUTO_UPDATE ?? null,
+  tmpdir: process.env.TMPDIR ?? null, tmpdirExists: !!process.env.TMPDIR && fs.existsSync(process.env.TMPDIR), peek }) + '\\n');
 const mode = process.env.STUB_MODE || 'ok';
+if (mode !== 'no-log') fs.appendFileSync(val('--log-file'), 'I1121 keyring.go:64] keyringAuth: loaded token\\n');
+if (mode === 'token-file') fs.appendFileSync(val('--log-file'), 'W1121 keyring.go] Using file-based token storage because a keyring timeout was recorded within the last 1h0m0s\\n');
+if (mode === 'token-left') {
+  const f = require('node:path').join(require('node:os').homedir(), '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+  fs.mkdirSync(require('node:path').dirname(f), { recursive: true }); fs.writeFileSync(f, '{}');
+}
 const model = val('--model');
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const cid = 'c0ffee';
@@ -52,7 +70,7 @@ if (mode === 'denied-empty') {
 }
 if (mode === 'subagent') {
   // The saved agy 1.5.13 subagent run's own steps, its transcript path moved under this HOME.
-  const saved = fs.readFileSync(${J(path.join(ROOT, 'tests', 'fixtures', 'agy-subagent', 'stream.jsonl'))}, 'utf8').trim().split('\\n');
+  const saved = ${J(SUBAGENT_STREAM)}.trim().split('\\n');
   for (const l of saved) if (/"subagent_info"/.test(l)) console.log(l.replaceAll('file:///Users/someone/', 'file://' + process.env.HOME + '/'));
 }
 if (mode === 'approval-denied') {
@@ -101,16 +119,35 @@ const CMUX_TEMPLATE = fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'cmux
 const cmuxCommand = (event, sock = '/Users/someone/.local/state/cmux/cmux.sock') => CMUX_TEMPLATE.replaceAll('<SOCK>', sock).replaceAll('<EVENT>', event);
 const show = (r) => J({ code: r.code, out: r.out, err: r.err, calls: r.calls });
 const DENY = J({ permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'] } });
+// sandbox-exec is macOS only. Elsewhere a call that passes every check reaches the wall and is refused there.
+const WALLED = process.platform === 'darwin';
+const WALL_REFUSAL = /agy runs only inside its macOS sandbox \(sandbox-exec\), and this is \w+, so agy was not run/;
+// A call that passed every check before the wall: on macOS it ran, once; elsewhere the wall refused it, agy not started.
+const ran = (r) => (WALLED ? r.code === 0 && r.calls.length === 1 : r.code === 4 && WALL_REFUSAL.test(r.err) && r.calls.length === 0);
+const skip = (what) => console.log(`  SKIP ${what} (agy runs only inside sandbox-exec, which is macOS only)`);
 
 console.log('\nask-model agy: no real agy is reachable');
 {
   const real = SYSTEM.map((d) => path.join(d, 'agy')).filter((p) => fs.existsSync(p));
   ok('no agy in /usr/bin or /bin (the only system dirs on PATH)', real.length === 0, real.join(' '));
   if (real.length) process.exit(1);
+  if (WALLED) {
+    const nested = spawnSync('/usr/bin/sandbox-exec', ['-p', '(version 1)(allow default)', '/usr/bin/true'], { encoding: 'utf8' });
+    ok('sandbox-exec runs here (run this file from a shell outside any sandbox)', nested.status === 0, `exit ${nested.status}: ${nested.stderr.trim()}`);
+    if (nested.status !== 0) process.exit(1);
+  }
+}
+
+console.log('\nask-model agy: off macOS the wall refuses agy');
+if (WALLED) console.log('  SKIP the refusal off macOS (this is macOS)');
+else {
+  const r = ask(['--family', 'neon', '--cwd', WORK]);
+  ok('a call that passes every check → exit 4 naming the platform, agy never started', r.code === 4 && WALL_REFUSAL.test(r.err) && r.calls.length === 0, show(r));
 }
 
 console.log('\nask-model agy: the call');
-{
+if (!WALLED) skip('the call itself');
+else {
   const r = ask(['--family', 'neon', '--effort', 'high', '--cwd', WORK, '--json']);
   const logFile = r.j?.logFile;
   const want = ['-p', PROMPT, '--model', NEON, '--effort', 'high', '--output-format', 'stream-json', '--print-timeout', '1800s',
@@ -131,8 +168,55 @@ console.log('\nask-model agy: the call');
   ok('each call gets its own log file', two[0] && two[1] && two[0] !== two[1], J(two));
 }
 
+console.log('\nask-model agy: the call runs inside the wall');
+if (!WALLED) skip('the wall around the call');
+else {
+  const h = home();
+  const outside = path.join(mk('outside'), 'secret.txt'), key = path.join(h, '.ssh', 'id_ed25519'), inside = path.join(WORK, 'brief.md');
+  fs.writeFileSync(outside, 'token:outside'); fs.mkdirSync(path.dirname(key), { recursive: true }); fs.writeFileSync(key, 'token:key'); fs.writeFileSync(inside, 'inside');
+  const r = ask(['--family', 'neon', '--cwd', WORK, '--json'], { h, env: { STUB_PEEK: [outside, key, inside].join('\n') } });
+  const c = r.calls[0];
+  ok('agy reads the folder under review, but not the temp folder beside it or a file in HOME', r.code === 0 && c?.peek[inside] === 'inside'
+    && c.peek[outside] === 'EPERM' && c.peek[key] === 'EPERM', show(r));
+  ok('its TMPDIR is a fresh folder of its own, removed after the call', c?.tmpdirExists === true && /\/acs-agy-call-[^/]+$/.test(c.tmpdir) && !fs.existsSync(c.tmpdir), J(c));
+  ok('agy\'s updater is switched off ("true")', c?.autoUpdateOff === 'true', J(c));
+  const repo = mk('repo-wall');
+  spawnSync('git', ['init', '-q', repo]);
+  fs.mkdirSync(path.join(repo, 'src'), { recursive: true }); fs.writeFileSync(path.join(repo, 'top.md'), 'top');
+  const sub = ask(['--family', 'neon', '--cwd', path.join(repo, 'src')], { env: { STUB_PEEK: path.join(repo, 'top.md') } });
+  ok('from a subfolder of a git work tree, its top folder is readable', sub.code === 0 && sub.calls[0]?.peek[path.join(repo, 'top.md')] === 'top', show(sub));
+  const mine = mk('repo-gitenv'), theirs = mk('other-gitenv');
+  for (const d of [mine, theirs]) spawnSync('git', ['init', '-q', d]);
+  fs.writeFileSync(path.join(mine, 'in.md'), 'in'); fs.writeFileSync(path.join(theirs, 'secret.md'), 'token:other');
+  const moved = ask(['--family', 'neon', '--cwd', mine], { env: { GIT_DIR: path.join(theirs, '.git'), GIT_WORK_TREE: theirs,
+    STUB_PEEK: [path.join(mine, 'in.md'), path.join(theirs, 'secret.md')].join('\n') } });
+  ok('an inherited GIT_DIR and GIT_WORK_TREE do not move the wall: the --cwd tree is readable, theirs is not', moved.code === 0
+    && moved.calls[0]?.peek[path.join(mine, 'in.md')] === 'in' && moved.calls[0]?.peek[path.join(theirs, 'secret.md')] === 'EPERM', show(moved));
+  const atHome = ask(['--family', 'neon', '--cwd', h], { h });
+  ok('--cwd HOME → exit 4, agy not run: the wall would keep nothing out', atHome.code === 4 && /is your home folder or holds it/.test(atHome.err) && atHome.calls.length === 0, show(atHome));
+  const leaky = ask(['--family', 'neon', '--cwd', WORK], { env: { TMPDIR: mk('work', 'tmp') } });
+  ok('a temp folder inside the folder under review fails the canary → exit 4, agy not run', leaky.code === 4
+    && /the wall let a test read .*\/work\/tmp\/acs-agy-canary-.*, so agy was not run/.test(leaky.err) && leaky.calls.length === 0, show(leaky));
+  fs.rmSync(path.join(WORK, 'tmp'), { recursive: true, force: true });
+  const tf = ask(['--family', 'neon', '--json'], { env: { STUB_MODE: 'token-file' } });
+  ok('a log saying agy kept its token in a file → exit 4, the answer not used', tf.code === 4 && tf.j?.answer === null
+    && /keeping its Google sign-in token in a file .*"file-based token storage"/.test(tf.j?.error ?? ''), show(tf));
+  const nolog = ask(['--family', 'neon', '--json'], { env: { STUB_MODE: 'no-log' } });
+  ok('a call that leaves no log → exit 4, the answer not used: whether the token went to a file is unknown', nolog.code === 4 && nolog.j?.answer === null
+    && /its answer was not used: agy left no log of the call at .*, so whether it kept its Google sign-in token in a file is unknown/.test(nolog.j?.error ?? ''), show(nolog));
+  const leftH = home();
+  const left = ask(['--family', 'neon', '--json'], { h: leftH, env: { STUB_MODE: 'token-left' } });
+  ok('a call after which the token file exists → exit 4, naming it and the fix, even with no line in the log', left.code === 4 && left.j?.answer === null
+    && (left.j?.error ?? '').includes(`${path.join(leftH, '.gemini', 'antigravity-cli', 'antigravity-oauth-token')} holds agy's Google sign-in token in plain text`)
+    && /delete it: agy signs in from the keychain without it/.test(left.j?.error ?? ''), show(left));
+  ok('…and the error names the token file and the fix', /If \/.*\/\.gemini\/antigravity-cli\/antigravity-oauth-token now exists, delete it: agy signs in from the keychain without it/
+    .test(tf.j?.error ?? '') && !/check what it wrote/.test(tf.j?.error ?? ''), show(tf));
+  fs.rmSync(inside);
+}
+
 console.log('\nask-model agy: failures');
-{
+if (!WALLED) skip('what agy reports');
+else {
   const st = ask(['--family', 'neon', '--json'], { env: { STUB_MODE: 'status-error' } });
   ok('status other than SUCCESS → exit 4 naming it', st.code === 4 && /agy failed \(exit 1, status ERROR\)|agy reported status "ERROR"/.test(st.j?.error ?? ''), show(st));
   const dl = ask(['--family', 'neon', '--json'], { env: { STUB_MODE: 'deadline' } });
@@ -152,6 +236,8 @@ console.log('\nask-model agy: failures');
   ok('init names another model → exit 2, not its answer', om.code === 2 && /asked for .*, but agy reports it was asked for gemini-other/.test(om.j?.error ?? '') && om.j?.answer === null, show(om));
   const tt = ask(['--family', 'neon'], { env: { STUB_MODE: 'two-turns' } });
   ok('the answer is the last response turn, not result.response (which joins every turn)', tt.code === 0 && tt.out === 'final answer\n', show(tt));
+}
+{
   const none = ask(['--family', 'neon'], { pathDirs: SYSTEM });
   ok('agy not on PATH → exit 3', none.code === 3 && /the agy CLI is not on PATH/.test(none.err), show(none));
 }
@@ -164,6 +250,28 @@ for (const [flag, re] of [['--investigate', /--investigate is not available for 
 {
   const r = ask(['--family', 'neon', '--x-search']);
   ok('--x-search → exit 64 (grok only), agy not run', r.code === 64 && /--x-search uses grok/.test(r.err) && r.calls.length === 0, show(r));
+}
+
+console.log('\nask-model agy: a plaintext token file left by agy refuses the call');
+{
+  const TOKEN = path.join('.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+  const plant = (h, how) => {
+    fs.mkdirSync(path.dirname(path.join(h, TOKEN)), { recursive: true });
+    if (how === 'file') fs.writeFileSync(path.join(h, TOKEN), '{"token":"x"}', { mode: 0o600 });
+    else fs.symlinkSync(path.join(h, 'nowhere'), path.join(h, TOKEN));
+    return h;
+  };
+  for (const how of ['file', 'dangling link']) {
+    const h = plant(home(), how);
+    const r = ask(['--family', 'neon'], { h });
+    ok(`a token file (${how}) → exit 4 before agy runs, naming it and the fix`, r.code === 4 && r.calls.length === 0
+      && r.err.includes(`${path.join(h, TOKEN)} holds agy's Google sign-in token in plain text`)
+      && /so agy was not run: delete it: agy signs in from the keychain without it \(if it then asks you to sign in, run agy once and sign in\)/.test(r.err), show(r));
+  }
+  const none = home();
+  fs.mkdirSync(path.join(none, '.gemini', 'antigravity-cli'), { recursive: true });
+  fs.writeFileSync(path.join(none, '.gemini', 'antigravity-cli', 'antigravity-oauth-token.bak'), 'x');
+  ok('another file beside it does not refuse', ran(ask(['--family', 'neon'], { h: none })));
 }
 
 console.log('\nask-model agy: ~/.gemini/config');
@@ -185,12 +293,13 @@ console.log('\nask-model agy: ~/.gemini/config');
   ];
   for (const [name, files, code, re] of cases) {
     const r = ask(['--family', 'neon'], { h: home(files) });
-    ok(name, r.code === code && (code === 0 ? r.calls.length === 1 : r.calls.length === 0 && re.test(r.err) && /so agy was not run/.test(r.err)), show(r));
+    ok(name, code === 0 ? ran(r) : r.code === code && r.calls.length === 0 && re.test(r.err) && /so agy was not run/.test(r.err), show(r));
   }
 }
 
 console.log('\nask-model agy: denials inside a subagent');
-{
+if (!WALLED) skip('subagent denials');
+else {
   const SUB = '7239ab1f-70aa-4146-a081-4d09347c094a';
   const TRANSCRIPT = fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'agy-subagent', 'transcript.jsonl'), 'utf8');
   const h = home();
@@ -200,9 +309,10 @@ console.log('\nask-model agy: denials inside a subagent');
   const lines = r.err.split('\n').filter((l) => l.startsWith('ask-model: agy: denied (subagent perm-test-subagent)'));
   ok('the saved subagent run: its two deny-rule refusals are on stderr, the answer still stands', r.code === 0 && r.j?.answer && lines.length === 2
     && /command\(touch .*deny rule/.test(lines[0]) && /write_file\(.*deny rule/.test(lines[1]), show(r));
-  const missing = ask(['--family', 'neon'], { env: { STUB_MODE: 'subagent' } });
-  ok('a transcript that is not there is named, its denials unknown; the answer still stands', missing.code === 0
-    && /ask-model: agy: subagent perm-test-subagent's transcript could not be read \(ENOENT\); its denied calls are unknown/.test(missing.err), show(missing));
+  const missing = ask(['--family', 'neon', '--json'], { env: { STUB_MODE: 'subagent' } });
+  ok('a subagent with no transcript (the wall stops it starting) is named plainly; the answer still stands', missing.code === 0 && missing.j?.answer
+    && !missing.j?.error && /^ask-model: agy: neon tried to start a subagent \(perm-test-subagent\); subagents can't run inside the sandbox wall$/m.test(missing.err)
+    && !/transcript could not be read|denied \(subagent/.test(missing.err), show(missing));
   const h2 = home(), outside = path.join(tmp, 'outside-transcript.jsonl');
   fs.writeFileSync(outside, TRANSCRIPT);
   const link = path.join(h2, '.gemini', 'antigravity-cli', 'brain', SUB, '.system_generated', 'logs', 'transcript.jsonl');
@@ -215,7 +325,7 @@ console.log('\nask-model agy: denials inside a subagent');
 console.log('\nask-model agy: the probed version only');
 {
   const nv = ask(['--family', 'neon'], { env: { STUB_VERSION: '1.6.0' } });
-  ok('another agy version → exit 4 naming both and the probe, agy not run', nv.code === 4 && /agy reports version "1\.6\.0", but its containment was probed on 1\.5\.13: re-run the probe/.test(nv.err) && nv.calls.length === 0, show(nv));
+  ok('another agy version → exit 4 naming both and the probe, agy not run', nv.code === 4 && /agy reports version "1\.6\.0", but its containment was probed on 1\.5\.14: re-run the probe/.test(nv.err) && nv.calls.length === 0, show(nv));
   const vf = ask(['--family', 'neon'], { env: { STUB_VERSION_FAIL: '1' } });
   ok('a version check that fails → exit 4, agy not run', vf.code === 4 && /agy reports version null/.test(vf.err) && vf.calls.length === 0, show(vf));
 }
@@ -236,7 +346,7 @@ console.log('\nask-model agy: workspace customizations, from the cwd up to the f
   plant('.agents/skills/x/SKILL.md');
   plant('.agents/rules/r.md');
   const ok1 = ask(['--family', 'neon'], { cwd: sub });
-  ok('skills and rules (text the model reads) do not refuse', ok1.code === 0 && ok1.calls.length === 1, show(ok1));
+  ok('skills and rules (text the model reads) do not refuse', ran(ok1), show(ok1));
   clean();
   const hooksLink = plant('repo/.agents/hooks.json');
   fs.rmSync(hooksLink); fs.symlinkSync('/nonexistent-target', hooksLink);
@@ -262,7 +372,7 @@ console.log('\nask-model agy: ~/.gemini/config plugins');
   const empty = home({});
   fs.mkdirSync(path.join(empty, '.gemini', 'config', 'plugins'), { recursive: true });
   const e = ask(['--family', 'neon'], { h: empty });
-  ok('an empty plugins folder runs', e.code === 0 && e.calls.length === 1, show(e));
+  ok('an empty plugins folder runs', ran(e), show(e));
   const pj = ask(['--family', 'neon'], { h: home({ 'plugins.json': '{}' }) });
   ok('a ~/.gemini/config/plugins.json → exit 4, agy not run', pj.code === 4 && /plugins\.json declares plugins/.test(pj.err) && pj.calls.length === 0, show(pj));
 }
@@ -283,7 +393,7 @@ console.log('\nask-model agy: only cmux\'s unchanged hook command passes');
   const all = J({ cmux: Object.fromEntries([['Notification', 'notification'], ['PreInvocation', 'prompt-submit'], ['SessionEnd', 'session-end'],
     ['SessionStart', 'session-start'], ['Stop', 'stop'], ['turn-completion', 'stop']].map(([e, v]) => [e, [{ type: 'command', command: cmuxCommand(v), timeout: 10 }]])) });
   const r = ask(['--family', 'neon'], { h: home({ 'hooks.json': all }) });
-  ok('every hook cmux writes, unchanged, runs', r.code === 0 && r.calls.length === 1, show(r));
+  ok('every hook cmux writes, unchanged, runs', ran(r), show(r));
 }
 
 console.log('\nask-model agy: custom agents in the workspace');
@@ -312,7 +422,7 @@ console.log('\nask-model agy: the checks that need no agy come first; --version 
   fs.writeFileSync(VLOG, '');
   const okRun = ask(['--family', 'neon', '--cwd', WORK], { cwd: base, env: { STUB_VERSION_LOG: VLOG } });
   const v = fs.readFileSync(VLOG, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  ok('agy --version runs in a fresh empty folder, not the caller\'s or the --cwd folder, and that folder is removed', okRun.code === 0 && v.length === 1
+  ok('agy --version runs in a fresh empty folder, not the caller\'s or the --cwd folder, and that folder is removed', ran(okRun) && v.length === 1
     && v[0].entries.length === 0 && ![base, WORK].includes(v[0].cwd) && /acs-agy-version-/.test(v[0].cwd) && !fs.existsSync(v[0].cwd), J({ v, err: okRun.err }));
   fs.rmSync(path.join(base, '.agents'), { recursive: true, force: true });
 }
@@ -326,11 +436,12 @@ console.log('\nask-model agy: never for the security role');
   const alt = ask(['--role', 'security', '--second'], { h });
   ok('…and its second opinion too', alt.code === 4 && /never answers for the security role/.test(alt.err) && alt.calls.length === 0, show(alt));
   const rev = ask(['--role', 'reviewer'], { h });
-  ok('another role resolving to neon runs', rev.code === 0 && rev.calls.length === 1, show(rev));
+  ok('another role resolving to neon runs', ran(rev), show(rev));
 }
 
 console.log('\nask-model agy: --schema');
-{
+if (!WALLED) skip('--schema');
+else {
   const sf = path.join(tmp, 'schema.json');
   const schema = { type: 'object', properties: { verdict: { type: 'string' } }, required: ['verdict'], additionalProperties: false };
   fs.writeFileSync(sf, J(schema));

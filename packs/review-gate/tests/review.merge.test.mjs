@@ -218,6 +218,33 @@ test('B3 a label the repo already has is not created again', () => {
   assert.equal(calls().filter((a) => a[1] === 'comment').length, 1)
 })
 
+// gh 2.83 prints nothing, exit 0, when `gh label list --search needs-human --json name` matches no label.
+test('B3 a repo without the label (gh label list prints nothing) gets it created, added and one comment', () => {
+  gh({ extra: { 'label list': { stdout: '' } } })
+  const r = fake({ tier: 'medium', merges: false })
+  assert.equal(r.status, 10, r.out)
+  assert.match(r.stdout, /^labeled: PR #41 labeled needs-human/)
+  assert.equal(calls().filter((a) => a[0] === 'label' && a[1] === 'create').length, 1)
+  assert.deepEqual(calls().find((a) => a[1] === 'edit'), ['pr', 'edit', '41', '--add-label', 'needs-human'])
+  assert.equal(calls().filter((a) => a[1] === 'comment').length, 1)
+})
+
+test('B3 a failing or unreadable gh label list refuses with the exit code and gh\'s own words, and writes nothing', () => {
+  const cases = [
+    [{ stderr: 'HTTP 401: Bad credentials\n', code: 1 }, /^refused: gh label list failed \(exit 1\): HTTP 401: Bad credentials$/m],
+    [{ stdout: 'not json at all\n' }, /^refused: gh label list gave unreadable output \(exit 0\): not json at all$/m],
+    [{ stdout: '{"name":"needs-human"}\n' }, /^refused: gh label list gave unreadable output \(exit 0\): \{"name":"needs-human"\}$/m],
+  ]
+  for (const [answer, message] of cases) {
+    rmSync(GH_LOG, { force: true })
+    gh({ extra: { 'label list': answer } })
+    const r = fake({ tier: 'medium', merges: false })
+    assert.equal(r.status, 2, r.out)
+    assert.match(r.stdout, message)
+    assert.deepEqual(writes(), [])
+  }
+})
+
 const bodyOf = () => { const c = calls().find((a) => a[1] === 'comment'); return c && c[c.indexOf('--body') + 1] }
 test('B4 LOW with a failing, pending or cancelled check, zero checks, BEHIND, or a needs-human label: needs a human, with the reason', () => {
   const cases = [
