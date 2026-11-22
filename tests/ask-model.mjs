@@ -1152,10 +1152,11 @@ console.log('\nask-model: --x-search');
   const XC = mk('x-search-cwd');
   const X_DENY = ['run_terminal_command', 'run_terminal_cmd', 'search_replace', 'write', 'read_file', 'list_dir', 'grep', 'kill_command_or_subagent', 'todo_write',
     'get_command_or_subagent_output', 'spawn_subagent', 'scheduler_create', 'scheduler_delete', 'scheduler_list', 'monitor', 'search_tool', 'use_tool', 'workflow',
-    'enter_plan_mode', 'exit_plan_mode', 'ask_user_question', 'send_feedback', 'web_fetch', 'image_gen', 'image_edit', 'image_to_video', 'reference_to_video', 'web_search'];
+    'enter_plan_mode', 'exit_plan_mode', 'ask_user_question', 'send_feedback', 'web_fetch', 'image_gen', 'image_edit', 'image_to_video', 'reference_to_video', 'web_search',
+    'wait_commands_or_subagents', 'get_terminal_command_output', 'kill_terminal_command', 'send_subagent_message', 'skill', 'lsp', 'update_goal', 'view_image', 'request_access'];
   const X_RULES = ['--deny', 'MCPTool', ...['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch'].flatMap((r) => ['--deny', r])];
   // The grok version GROK_X_DENY was listed against; any other one refuses --x-search.
-  const X_INSPECT = { STUB_GROK_INSPECT: J({ grokVersion: '1.0.77', mcpServers: [], plugins: [] }) };
+  const X_INSPECT = { STUB_GROK_INSPECT: J({ grokVersion: '1.0.92', mcpServers: [], plugins: [] }) };
   const xask = (args, opts = {}) => ask(args, { ...opts, env: { ...X_INSPECT, ...opts.env } });
   const g = xask(['--family', 'grok', '--x-search', '--json', '--cwd', XC]);
   const gj = g.code === 0 ? JSON.parse(g.out) : {};
@@ -1163,17 +1164,20 @@ console.log('\nask-model: --x-search');
      g.code === 0 && same(g.argv, ['-p', PROMPT, '-m', IDS.grok, ...(gj.effort ? ['--reasoning-effort', gj.effort] : []), '--cwd', XC,
        '--disallowed-tools', X_DENY.join(','), ...X_RULES, '--no-subagents', '--max-turns', '8', '--output-format', 'json'])
      && g.calls[0].cwd === XC, show(g));
+  ok('grok --x-search: the tools grok 1.0.92 names beyond 1.0.77\'s list are disallowed',
+     g.code === 0 && ['wait_commands_or_subagents', 'get_terminal_command_output', 'kill_terminal_command', 'send_subagent_message', 'skill', 'lsp', 'update_goal', 'view_image', 'request_access']
+       .every((t) => g.argv[g.argv.indexOf('--disallowed-tools') + 1].split(',').includes(t)), show(g));
   ok('grok --x-search: write, spawn_subagent and reference_to_video are disallowed',
      g.code === 0 && ['write', 'spawn_subagent', 'reference_to_video'].every((t) => g.argv[g.argv.indexOf('--disallowed-tools') + 1].split(',').includes(t)), show(g));
   ok('grok --x-search --json: tools "restricted", a note naming the four X tools and what is denied',
      gj.tools === 'restricted' && ['x_keyword_search', 'x_semantic_search', 'x_user_search', 'x_thread_fetch'].every((t) => gj.toolsNote?.includes(t))
      && /open_page/.test(gj.toolsNote) && /denied/.test(gj.toolsNote), show(g));
 
-  for (const [what, inspect] of [['another grok version', { grokVersion: '1.0.78', mcpServers: [], plugins: [] }], ['no grokVersion', { mcpServers: [], plugins: [] }]]) {
+  for (const [what, inspect] of [['another grok version', { grokVersion: '1.0.77', mcpServers: [], plugins: [] }], ['no grokVersion', { mcpServers: [], plugins: [] }]]) {
     const d = ask(['--family', 'grok', '--x-search', '--json', '--cwd', XC], { env: { STUB_GROK_INSPECT: J(inspect) } });
     const dj = d.out ? JSON.parse(d.out) : {};
     ok(`--x-search with ${what} in grok inspect: exit 4, the X-search tool list must be re-checked, grok never run`,
-       d.code === 4 && d.inspect.length === 1 && d.calls.length === 0 && /1\.0\.77/.test(dj.error) && /re-check/.test(dj.error) && dj.answer === null, show(d));
+       d.code === 4 && d.inspect.length === 1 && d.calls.length === 0 && /1\.0\.92/.test(dj.error) && /re-check/.test(dj.error) && dj.answer === null, show(d));
   }
   const otherVer = ask(['--family', 'grok', '--json', '--cwd', XC], { env: { STUB_GROK_INSPECT: J({ grokVersion: '1.0.78', mcpServers: [], plugins: [] }) } });
   ok('without --x-search another grok version still runs', otherVer.code === 0 && otherVer.calls.length === 1, show(otherVer));
