@@ -18,7 +18,7 @@ node "$SCRIPT" --security-only "<intent: what the branch delivers, and what it m
 ```
 Add `--plan <plan.md>` when there is a plan. `REVIEW_PATHS=<pathspec>,<pathspec>` limits the check to part of the diff. `--security-only` takes nothing else: it refuses `--close`, `--fix-check` and every other command.
 
-**Who checks.** The `security` role's families, in role order, each at its own flavor effort. With `REVIEW_AUTHOR=<family or vendor that built the branch>`, a family from another vendor goes first. `REVIEW_SECURITY_REVIEWER=<family>` pins one for a run. When a family fails, the next one in the role is tried. Each try times out after `security.timeoutMs` (default 15 minutes). It runs whatever `security.run` says: that setting decides only whether a PR review runs the security pass. When `model-id` is missing, the security role is unset, or no family in it has its CLI, the run stops and names the fix, never falling back to another model.
+**Who checks.** The `security` role's families, in role order, each at its own flavor effort. With `REVIEW_AUTHOR=<family or vendor that built the branch>`, a family from another vendor goes first, unless `crossFamily` is `"off"`. `REVIEW_SECURITY_REVIEWER=<family>` pins one for a run. When a family fails, the next one in the role is tried. Each try times out after `security.timeoutMs` (default 15 minutes). It runs whatever `security.run` says: that setting decides only whether a PR review runs the security pass. When `model-id` is missing, the security role is unset, or no family in it has its CLI, the run stops and names the fix, never falling back to another model.
 
 ## Step 2 — report the findings
 

@@ -844,7 +844,7 @@ const PK_MERGE_POLICIES = [
   ['always', 'Low and medium-risk PRs', 'An agent may merge low- and medium-risk PRs; high-risk always waits for you.'],
 ];
 const PK_CROSS_MODES = [
-  ['prefer', 'Prefer another vendor', 'Reviews and grades use a model from another vendor when one is available; never a blocker.'],
+  ['prefer', 'Prefer another vendor', 'Reviews, grades and the security pass use a model from another vendor when one is available; never a blocker.'],
   ['off', 'Off', 'Any reviewer in your roles may check any work.'],
 ];
 const PK_WATCH_MODES = [

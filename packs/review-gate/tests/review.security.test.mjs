@@ -23,7 +23,7 @@ const stub = (name, body) => {
 // The reviewer role is sol, opus, grok; the security role is STUB_SECURITY_ROLE (families, comma-separated; "unset"
 // answers the way model-id does for a role nobody chose), opus then sol by default.
 stub('model-id', `
-const a = process.argv.slice(2), ids = { sol: 'gpt-stub-sol', opus: 'claude-stub-opus', grok: 'grok-stub', fable: 'claude-stub-fable' }
+const a = process.argv.slice(2), ids = { sol: 'gpt-stub-sol', opus: 'claude-stub-opus', grok: 'grok-stub', fable: 'claude-stub-fable', mythos: 'claude-stub-mythos', astra: 'gpt-stub-astra' }
 if (a[0] === '--role') {
   const role = a[1] === 'security' ? (process.env.STUB_SECURITY_ROLE ?? 'opus,sol') : 'sol,opus,grok'
   if (role === 'unset') { console.error('model-id: role "security" is not set — choose its model'); console.log('family=MODEL-ID-UNRESOLVED-security'); process.exit(2) }
@@ -200,6 +200,22 @@ test('4 selection: another vendor first; REVIEW_SECURITY_REVIEWER pins; the code
   rmSync(CALLS, { force: true })
   const same = reviewed({ STUB_SECURITY_ROLE: 'sol' }).record
   assert.equal(same.security.family, 'sol', 'a role with only the code reviewer’s vendor still runs')
+})
+
+test('4 crossFamily off: the security role runs in role order, even on the code reviewer\'s vendor', () => {
+  required({ crossFamily: 'off' })
+  commit({ 'src/app.ts': APP })
+  const sec = reviewed({ REVIEW_REVIEWER: 'opus', REVIEW_CLAUDE_MODEL: 'opus', STUB_SECURITY_ROLE: 'mythos,fable,astra' }).record.security
+  assert.equal(sec.family, 'mythos')
+  assert.equal(sec.why, 'security role, in role order (crossFamily off)')
+})
+
+test('4 crossFamily prefer: a vendor other than the code reviewer\'s still goes first', () => {
+  required({ crossFamily: 'prefer' })
+  commit({ 'src/app.ts': APP })
+  const sec = reviewed({ REVIEW_REVIEWER: 'opus', REVIEW_CLAUDE_MODEL: 'opus', STUB_SECURITY_ROLE: 'mythos,fable,astra' }).record.security
+  assert.equal(sec.family, 'astra')
+  assert.equal(sec.why, "security role, a vendor other than the code reviewer's (claude) first")
 })
 
 test('4 the first member fails after its CLI was found: the next member runs', () => {
