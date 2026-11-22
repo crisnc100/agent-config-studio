@@ -445,6 +445,34 @@ test('18 an answer git gives by exit code still reads as that answer: no such co
   assert.deepEqual(run(['--check-commit', added]).json.problems, ['src/new.js: a code line changed (only comments may change in code)'], 'a new doc passes; a new code file is code')
 })
 
+test('19 the verdict is the same from any directory inside the repo, whatever diff.relative says', () => {
+  mkdirSync(join(REPO, 'sub'), { recursive: true })
+  const runIn = (dir, args) => {
+    const r = spawnSync(process.execPath, [SCRIPT, ...args], { cwd: join(REPO, dir), env, encoding: 'utf8' })
+    let json = null
+    try { json = JSON.parse(r.stdout) } catch { /* the assertion shows the output */ }
+    return { ...r, json, out: `${r.stdout}\n${r.stderr}` }
+  }
+  const cases = [
+    ['a code change', { 'src/app.js': '// Adds one.\nexport const add = (n) => n + 2\n' }, false],
+    ['a comment edit', { 'src/app.js': '// Adds one to n.\nexport const add = (n) => n + 1\n' }, true],
+    ['a removed pinned line', { 'README.md': README.replace('The exact line a test pins stays put.', 'A reworded line.') }, false],
+    ['an added generated block', { 'docs/guide.md': `${GUIDE}<!-- acs:x v1 -->\nnew\n<!-- /acs:x -->\n` }, false],
+  ]
+  for (const relative of [false, true]) {
+    if (relative) git('config', 'diff.relative', 'true')
+    for (const [label, files, want] of cases) {
+      const sha = commit(files)
+      for (const dir of ['', 'sub', 'src', 'docs']) {
+        const r = runIn(dir, ['--check-commit', sha])
+        assert.equal(r.json?.ok, want, `${label} from ${dir || 'the top'}${relative ? ' with diff.relative' : ''}: ${r.out}`)
+      }
+      git('reset', '-q', '--hard', 'HEAD~1')
+    }
+  }
+  assert.equal(runIn('sub', ['--check-brief', brief(PR)]).json?.ok, true, 'the brief check from a subdirectory')
+})
+
 test('close once: --check-commit treats a .mdx page as code, since its JSX and imports run when the page builds', () => {
   commit({ 'docs/page.mdx': '# Page\n\nThe add helper adds one.\n' })
   const prose = commit({ 'docs/page.mdx': '# Page\n\nThe add helper adds exactly one.\n' })
