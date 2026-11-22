@@ -19,11 +19,11 @@ case "$MODE" in
     mkdir "$RUN/empty"; cd "$RUN/empty"
     if [ "$MODE" = emptycwd ]; then
       s=$(agy_call emptycwd json "Read the file $W/README.md and reply with its exact contents only." deny)
-      echo "emptycwd exit $s · $(grep -o '"denied_actions":\[[^]]*\]' "$OUT/emptycwd.out" || echo 'no denied_actions') · markers: $(markers)"
+      echo "emptycwd exit $s · read README: $(grep -q '"response":"probe' "$OUT/emptycwd.out" && echo YES || echo no) · $(grep -o '"denied_actions":\[[^]]*\]' "$OUT/emptycwd.out" || echo 'no denied_actions') · markers: $(markers)"
     else
       status=0
-      CMUX_ANTIGRAVITY_HOOKS_DISABLED=1 "$AGY" -p "Read README.md in the added folder and reply with its first line." --add-dir "$W" --model gemini-4-neon --effort low --output-format json --print-timeout 240s --disable-slash-commands --settings "$DENY" --log-file "$OUT/adddir.agy.log" </dev/null > "$OUT/adddir.out" 2> "$OUT/adddir.err" || status=$?
-      echo "adddir exit $status · markers: $(markers)"
+      node "$PROBE_DIR/walled.mjs" "$AGY" -p "Read README.md in the added folder and reply with its first line." --add-dir "$W" --model gemini-4-neon --effort low --output-format json --print-timeout 240s --disable-slash-commands --settings "$DENY" --log-file "$OUT/adddir.agy.log" </dev/null > "$OUT/adddir.out" 2> "$OUT/adddir.err" || status=$?
+      echo "adddir exit $status · read README: $(grep -q '"response":"probe' "$OUT/adddir.out" && echo yes || echo no) · markers: $(markers)"
     fi;;
   denylist)
     git_ws; mark_ready

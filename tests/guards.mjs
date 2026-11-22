@@ -293,7 +293,7 @@ const AGY_USAGE_CALLS = [
   "found.binary, ['-p', '/usage', '--output-format', 'json'], opts",
   "found.binary, ['--output-format', 'json', 'models'], opts",
 ];
-const AGY_USAGE_OPTS = "const opts = { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1' } };";
+const AGY_USAGE_OPTS = "const opts = { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1', AGY_CLI_DISABLE_AUTO_UPDATE: 'true' } };";
 const AGY_USAGE_DIRS = ['null', "fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-usage-'))"];
 
 /** lib/agent.js's watcher inspectors: the only callees there besides 'cmux', each with its exact argv. */

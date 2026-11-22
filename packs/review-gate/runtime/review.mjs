@@ -2431,11 +2431,12 @@ function runGrok(m, prompt, schema) {
 // seen not to undo it), and its subagents inherit it. Web search is not a permission and stays on, so agy never runs
 // the security pass. agy names only the model it was asked for, so its reviews are recorded as model unverified.
 // tools/ask-model.mjs's agy wiring, copied to keep the runtime standalone; builds/gemini-family/containment-probe.md.
-// unsandboxed(*) is not on the list: agy 1.5.13 ignores that rule kind (command(*) covers it).
+// unsandboxed(*) is not on the list: agy logs that rule kind as invalid and ignores it (command(*) covers it).
 const AGY_SETTINGS = { permissions: { deny: ['command(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'download_url(*)', 'execute_url(*)'] } }
-// The agy the containment was probed on; a newer one may read a workspace file that runs something. Re-run the probe
-// (builds/gemini-family/probe in Agent Config Studio) before moving this.
-const AGY_VERSION = '1.5.13'
+// The agy the containment was probed on. Reads are the wall's job (AGY_WALL); the pin guards the deny list and the
+// file names agy loads hooks, MCP servers, plugins and agents from. Re-run the probe (builds/gemini-family/probe in
+// Agent Config Studio) before moving it.
+const AGY_VERSION = '1.5.14'
 // Workspace customizations agy runs from the folder it starts in and every folder above it. tests/vendor-prefixes.mjs
 // keeps this literal identical to ask-model's.
 const AGY_WORKSPACE = { dirs: ['.agents', '.agent', '_agents', '_agent'], names: ['hooks.json', 'mcp_config.json', 'plugins.json', 'agents.json', 'plugins', 'agents'] }
@@ -2446,7 +2447,40 @@ const AGY_CMUX_HOOK = ": cmux-antigravity-hook-v2; :; printenv CMUX_ANTIGRAVITY_
 const AGY_CMUX_HOOK_RE = new RegExp(`^${AGY_CMUX_HOOK.split(/(<SOCK>|<EVENT>)/).map((p) => (p === '<SOCK>' ? "/[^']*" : p === '<EVENT>' ? '[a-z-]+'
   : p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('')}$`)
 const agyCmuxHook = (command) => typeof command === 'string' && AGY_CMUX_HOOK_RE.test(command)
-const AGY_ENV = { CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1' }
+// AGY_CLI_DISABLE_AUTO_UPDATE works only as "true"; with "1" agy's updater still runs (ask-model's AGY_ENV).
+const AGY_ENV = { CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1', AGY_CLI_DISABLE_AUTO_UPDATE: 'true' }
+// The macOS sandbox every agy review runs in: file contents are refused under /Users, /Volumes, the temp folders and
+// HOME, then allowed back for the reviewed tree, the call's temp folder and log, the agy executable and the few files
+// of agy's own state a call reads, never its past conversations; agy may not rewrite its conversation summaries.
+// ask-model's AGY_WALL has the reasons for each line; tests/agy-wall.mjs keeps the two identical.
+const AGY_WALL = [
+  '(version 1)',
+  '(allow default)',
+  '(deny file-read-data (subpath "/Users") (subpath "/Volumes") (subpath "/private/tmp") (subpath (param "TMP")) (subpath (param "USER_TMP")) (subpath (param "HOME")))',
+  '(allow file-read-data',
+  '  (subpath (param "ROOT")) (subpath (param "CALL_TMP")) (literal (param "LOG")) (literal (param "AGY"))',
+  '  (literal (string-append (param "HOME") "/Library/Keychains/login.keychain-db"))',
+  '  (regex (string-append "^" (regex-quote (param "HOME")) "/Library/Keychains/\\\\.fl[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]$"))',
+  '  (regex (string-append "^" (regex-quote (param "HOME")) "/Library/Keychains/login\\\\.keychain-db\\\\.sb-[0-9a-f]+-[A-Za-z0-9]+$"))',
+  '  (subpath (string-append (param "HOME") "/.gemini/config"))',
+  '  (subpath (string-append (param "HOME") "/.gemini/antigravity-cli/builtin"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/settings.json"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/installation_id"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/jetski_state.pbtxt"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/cache/default_project_id.txt"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/cache/onboarding.json"))',
+  '  (literal (string-append (param "USER_TMP") "/xcrun_db")))',
+  '(deny file-write*',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/conversation_summaries.db"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/conversation_summaries.db-wal"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/conversation_summaries.db-shm"))',
+  '  (literal (string-append (param "HOME") "/.gemini/antigravity-cli/jetbox_summaries_proto.pb")))',
+].join('\n')
+const SANDBOX_EXEC = '/usr/bin/sandbox-exec'
+const AGY_TOKEN_FILE = /file-based token storage/i
+// agy's plaintext token file under HOME, and what to do about it (ask-model's AGY_TOKEN_PATH and AGY_TOKEN_FIX).
+const AGY_TOKEN_PATH = join('.gemini', 'antigravity-cli', 'antigravity-oauth-token')
+const AGY_TOKEN_FIX = 'delete it: agy signs in from the keychain without it (if it then asks you to sign in, run agy once and sign in)'
 const AGY_NO_SECURITY = 'agy keeps web search on (no permission turns it off), and the security pass reads a diff that may try to steer its reviewer'
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 // Why ~/.gemini/config would run something besides the model, or null: any MCP server in mcp_config.json starts, and
@@ -2500,6 +2534,91 @@ function agyVersion() {
     return v.error || v.status !== 0 ? null : String(v.stdout || '').trim() || null
   } catch { return null } finally { if (dir) rmSync(dir, { recursive: true, force: true }) }
 }
+// The wall around each agy call, ask-model's agyWallProblem, agyReadRoot, agyWallParams, agyWall, agyWallCanary and
+// agyAfterCall, carried here because this runtime is installed alone.
+function agyWallProblem(platform = process.platform) {
+  if (platform !== 'darwin') return `agy runs only inside its macOS sandbox (sandbox-exec), and this is ${platform}`
+  try { accessSync(SANDBOX_EXEC, constants.X_OK) } catch { return `${SANDBOX_EXEC} is missing, and agy runs only inside the sandbox it applies` }
+  return null
+}
+// The real path of the top of the git work tree holding `cwd`, else of `cwd`; HOME or a folder holding it is refused.
+// Computed per call: a dispute's verifier runs from a snapshot clone it changes into, not from TOP. git runs without any
+// inherited GIT_* variable, so a GIT_DIR or GIT_WORK_TREE (which also moves TOP) cannot point the wall at another tree,
+// and a root that does not hold cwd (a repository's own core.worktree) is refused; paths are the kernel's spelling
+// (ask-model's agyReadRoot).
+function agyReadRoot(cwd, home = homedir()) {
+  const real = (p) => { try { return realpathSync.native(p) } catch { return resolve(p) } }
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')))
+  const top = spawnSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env })
+  const here = real(cwd)
+  const root = top.status === 0 && top.stdout?.trim() ? real(top.stdout.trim()) : here
+  if (root !== here && !here.startsWith(root.endsWith('/') ? root : `${root}/`))
+    return { error: `${root}, the work tree git names, does not hold ${here}, the folder the call runs in (a repository's own config can name any tree as its work tree), so the wall would let agy read another tree` }
+  const h = real(home)
+  if (h === root || h.startsWith(root.endsWith('/') ? root : `${root}/`))
+    return { error: `agy would read ${root}, which is your home folder or holds it, so the wall would keep nothing out` }
+  return { root }
+}
+function agyWallParams({ root, callTmp, logFile, bin, home = homedir(), tmp = tmpdir() }) {
+  const ut = spawnSync('/usr/bin/getconf', ['DARWIN_USER_TEMP_DIR'], { encoding: 'utf8' })
+  if (ut.error || ut.status !== 0 || !ut.stdout.trim()) return { error: "macOS's per-user temp folder could not be found (getconf DARWIN_USER_TEMP_DIR failed)" }
+  try {
+    const real = realpathSync.native
+    return { params: { ROOT: real(root), CALL_TMP: real(callTmp), LOG: join(real(dirname(logFile)), basename(logFile)),
+      AGY: real(bin), HOME: real(home), TMP: real(tmp), USER_TMP: real(ut.stdout.trim()) } }
+  } catch (e) { return { error: `a path the wall names could not be resolved (${e.path ?? ''}: ${e.code || e.message})` } }
+}
+function agyTokenLeft(home = homedir()) {
+  const file = join(home, AGY_TOKEN_PATH)
+  try {
+    lstatSync(file)
+    return { file, why: "holds agy's Google sign-in token in plain text (agy writes it when it cannot save a refreshed token in the keychain)" }
+  } catch (e) {
+    return e.code === 'ENOENT' ? null : { file, why: `could not be checked (${e.code || e.message}), and it would hold agy's Google sign-in token in plain text` }
+  }
+}
+// Why a finished walled review's answer cannot be used on sign-in grounds, or null (ask-model's agyAfterCall).
+function agyAfterCall(logFile, home = homedir()) {
+  const unknown = 'so whether it kept its Google sign-in token in a file is unknown'
+  let log
+  try { log = readFileSync(logFile, 'utf8') } catch (e) {
+    return e.code === 'ENOENT' ? `agy left no log of the call at ${logFile}, ${unknown}` : `agy's log of the call, ${logFile}, could not be read (${e.code || e.message}), ${unknown}`
+  }
+  if (AGY_TOKEN_FILE.test(log))
+    return `agy switched to keeping its Google sign-in token in a file instead of the keychain (its log, ${logFile}, says "file-based token storage"). If ${join(home, AGY_TOKEN_PATH)} now exists, ${AGY_TOKEN_FIX}`
+  const left = agyTokenLeft(home)
+  return left ? `${left.file} ${left.why}; ${AGY_TOKEN_FIX}` : null
+}
+const agyWall = (params, command) => [...Object.entries(params).flatMap(([k, v]) => ['-D', `${k}=${v}`]), '-p', AGY_WALL, ...command]
+function agyWallCanary(params) {
+  const token = randomBytes(16).toString('hex')
+  const dirs = []
+  try {
+    const files = [...new Set([params.TMP, params.USER_TMP, dirname(params.LOG)])].map((d) => {
+      const dir = mkdtempSync(join(d, 'acs-agy-canary-'))
+      dirs.push(dir)
+      const f = join(dir, 'canary')
+      writeFileSync(f, token, { mode: 0o600 })
+      return f
+    })
+    const walled = (command) => spawnSync(SANDBOX_EXEC, agyWall(params, command), { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000 })
+    for (const f of files) {
+      const r = walled(['/bin/cat', f])
+      if (r.status === 71 && /sandbox_apply/.test(r.stderr))
+        return 'this process already runs inside a sandbox, where sandbox-exec cannot apply agy\'s wall (sandbox_apply: Operation not permitted); run it from a shell outside any sandbox'
+      if (r.error) return `the wall's check could not run (${r.error.code || r.error.message})`
+      if (r.status === 0 || String(r.stdout).includes(token)) return `the wall let a test read ${f}, which it should refuse`
+      if (!/Operation not permitted/.test(r.stderr)) return `the wall's check of ${f} ended without the sandbox's refusal (exit ${r.status ?? r.signal}: ${tail(r.stderr)})`
+    }
+    const ls = walled(['/bin/ls', '-a', params.ROOT])
+    if (ls.error || ls.status !== 0) return `the wall refused to list the folder under review, ${params.ROOT} (${tail(ls.stderr || ls.error?.message)})`
+    return null
+  } catch (e) {
+    return `the wall's check could not set up its test files (${e.code || e.message})`
+  } finally {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true })
+  }
+}
 // Every AGY_WORKSPACE name, of any type, from `cwd` up to the filesystem root (not git's top folder: agy's stop rule
 // is its own, and a linked worktree's .git is a file). One that can't be looked at counts; no folder is exempt.
 function agyWorkspaceFiles(cwd) {
@@ -2526,7 +2645,7 @@ function lastTurnText(steps) {
 }
 // Deny-rule refusals inside the subagents a turn invoked, read from each subagent's transcript (its steps are not in
 // the parent's stream); a transcript outside ~/.gemini/antigravity-cli/brain is not read. ask-model's agySubagentDenials.
-function agySubagentDenials(steps, home = homedir()) {
+function agySubagentDenials(steps, home = homedir(), who = 'the model') {
   const denied = [], notes = [], seen = new Set()
   let brain = null
   try { brain = realpathSync(join(home, '.gemini', 'antigravity-cli', 'brain')) + sep } catch { /* no brain folder: every transcript is outside it */ }
@@ -2536,7 +2655,13 @@ function agySubagentDenials(steps, home = homedir()) {
       seen.add(s.log_uri)
       const name = String(s.type_name ?? s.conversation_id ?? 'a subagent')
       let file
-      try { file = realpathSync(fileURLToPath(s.log_uri)) } catch (e) { notes.push(`subagent ${name}'s transcript could not be read (${e.code || e.message}); its denied calls are unknown`); continue }
+      try { file = realpathSync(fileURLToPath(s.log_uri)) } catch (e) {
+        // Inside the wall a subagent gets no instructions (agy passes them through brain/, which stays walled off), so it
+        // does nothing and leaves no transcript: a note, not a refusal and not a failure.
+        notes.push(e.code === 'ENOENT' ? `${who} tried to start a subagent (${name}); subagents can't run inside the sandbox wall`
+          : `subagent ${name}'s transcript could not be read (${e.code || e.message}); its denied calls are unknown`)
+        continue
+      }
       if (!brain || !file.startsWith(brain) || basename(file) !== 'transcript.jsonl') { notes.push(`subagent ${name}'s transcript is not in agy's brain folder, so it was not read; its denied calls are unknown`); continue }
       let text
       try {
@@ -2554,7 +2679,7 @@ function agySubagentDenials(steps, home = homedir()) {
 }
 // The structured answer from agy's stream-json events. A denied tool call does not fail agy's turn (SUCCESS, exit 0):
 // it is a tool step that ended ERROR on a deny rule, so each is named on stderr, and an empty answer fails the review.
-function parseAgy(id, r) {
+function parseAgy(id, r, family = id) {
   const events = []
   for (const line of String(r.stdout || '').split('\n')) {
     if (!line.trim()) continue
@@ -2568,7 +2693,7 @@ function parseAgy(id, r) {
   // Actions that needed an approval print mode cannot give (a read outside the workspace, say); the turn still succeeds.
   const unapproved = Array.isArray(res?.denied_actions) ? res.denied_actions : []
   for (const d of unapproved) console.warn(`⚠ agy review: denied ${d?.action ?? '(unnamed)'}: needed an approval print mode cannot give`)
-  const sub = agySubagentDenials(steps)
+  const sub = agySubagentDenials(steps, undefined, family)
   for (const d of sub.denied) console.warn(`⚠ agy review: denied ${d}`)
   for (const n of sub.notes) console.warn(`⚠ agy review: ${n}`)
   if (r.error || r.status !== 0 || !isPlainObject(res))
@@ -2595,25 +2720,48 @@ function runAgy(m, prompt, schema) {
     throw new Error(`agy review refused: ${workspace.join(', ')}: agy runs a workspace's hooks, MCP servers, plugins and agents on every call and no flag turns them off; review with another family`)
   const problem = agyConfigProblem()
   if (problem) throw new Error(`agy review refused: ${problem}`)
+  const left = agyTokenLeft()
+  if (left) throw new Error(`agy review refused: ${left.file} ${left.why}; ${AGY_TOKEN_FIX}`)
   const version = agyVersion()
   if (version !== AGY_VERSION)
     throw new Error(`agy review refused: agy reports version ${JSON.stringify(version)}, but its containment was probed on ${AGY_VERSION}; re-run the probe (builds/gemini-family/probe in Agent Config Studio) and update AGY_VERSION`)
+  const unwalled = agyWallProblem()
+  if (unwalled) throw new Error(`agy review refused: ${unwalled}`)
+  const read = agyReadRoot(process.cwd())
+  if (read.error) throw new Error(`agy review refused: ${read.error}`)
+  const bin = which('agy')
+  if (!bin) throw new Error('agy review refused: agy is not on PATH')
   // Each call's own agy log, kept: a model fallback agy does not report would show there.
   const dir = join(homedir(), '.agent-config-studio', 'logs', 'agy')
   mkdirSync(dir, { recursive: true })
   const logFile = join(dir, `review-${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}-${randomBytes(3).toString('hex')}.log`)
-  const r = spawnSync('agy', ['-p', prompt, '--model', m.id, ...(m.effort ? ['--effort', String(m.effort)] : []), '--output-format', 'stream-json',
-    '--print-timeout', AGY_PRINT_TIMEOUT, '--disable-slash-commands', '--settings', JSON.stringify(AGY_SETTINGS), '--log-file', logFile,
-    '--json-schema', JSON.stringify(schema)], {
-    cwd: process.cwd(),
-    env: { ...process.env, ...AGY_ENV },
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: 64 * 1024 * 1024,
-    ...deadlineOptions(),
-  })
-  console.warn(`ℹ agy review: model unverified (agy names only the model it was asked for, ${m.id}); its log: ${logFile}`)
-  return parseAgy(m.id, r)
+  // agy's TMPDIR for the call: the temp folders it would otherwise share are walled off.
+  const callTmp = mkdtempSync(join(tmpdir(), 'acs-agy-call-'))
+  try {
+    const walled = agyWallParams({ root: read.root, callTmp, logFile, bin })
+    if (walled.error) throw new Error(`agy review refused: ${walled.error}`)
+    const broken = agyWallCanary(walled.params)
+    if (broken) throw new Error(`agy review refused: ${broken}`)
+    const r = spawnSync(SANDBOX_EXEC, agyWall(walled.params, [bin, '-p', prompt, '--model', m.id, ...(m.effort ? ['--effort', String(m.effort)] : []),
+      '--output-format', 'stream-json', '--print-timeout', AGY_PRINT_TIMEOUT, '--disable-slash-commands', '--settings', JSON.stringify(AGY_SETTINGS),
+      '--log-file', logFile, '--json-schema', JSON.stringify(schema)]), {
+      cwd: process.cwd(),
+      env: { ...process.env, ...AGY_ENV, TMPDIR: walled.params.CALL_TMP },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 64 * 1024 * 1024,
+      ...deadlineOptions(),
+    })
+    console.warn(`ℹ agy review: model unverified (agy names only the model it was asked for, ${m.id}); its log: ${logFile}`)
+    // A failed call keeps its own error, with the sign-in problem beside it.
+    const signIn = agyAfterCall(logFile)
+    let parsed
+    try { parsed = parseAgy(m.id, r, m.family) } catch (e) { throw signIn ? new Error(`${e.message}; ${signIn}`) : e }
+    if (signIn) throw new Error(`agy review failed: ${signIn}`)
+    return parsed
+  } finally {
+    rmSync(callTmp, { recursive: true, force: true })
+  }
 }
 
 function spawnAsync(cmd, args) {

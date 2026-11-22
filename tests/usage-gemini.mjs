@@ -153,7 +153,7 @@ fs.writeFileSync(fake, `#!${process.execPath}
 const fs = require('fs');
 const mode = process.env.FAKE_AGY_MODE || 'ok';
 const cwd = process.cwd();
-fs.appendFileSync(${JSON.stringify(LOG)}, JSON.stringify({ argv: process.argv.slice(2), cwd, entries: fs.readdirSync(cwd), hooksOff: process.env.CMUX_ANTIGRAVITY_HOOKS_DISABLED, pid: process.pid }) + '\\n');
+fs.appendFileSync(${JSON.stringify(LOG)}, JSON.stringify({ argv: process.argv.slice(2), cwd, entries: fs.readdirSync(cwd), hooksOff: process.env.CMUX_ANTIGRAVITY_HOOKS_DISABLED, updaterOff: process.env.AGY_CLI_DISABLE_AUTO_UPDATE, pid: process.pid }) + '\\n');
 if (process.argv[2] === '--version' && mode === 'slowversion') { setTimeout(() => { process.stdout.write('1.5.13\\n'); process.exit(0); }, 700); }
 else if (process.argv[2] === '--version') { process.stdout.write(mode === 'old' ? '1.1.10\\n' : mode === 'v1111' ? '1.1.11\\n' : mode === 'noversion' ? 'agy\\n' : '1.5.13\\n'); process.exit(0); }
 else if (mode === 'apikey') process.exit(2);
@@ -192,6 +192,7 @@ const run = async (mode, extra = {}) => {
   ok('each call runs in its own empty folder', c.every((x) => x.entries.length === 0) && c[0].cwd !== c[1].cwd);
   ok('the folders are removed afterwards', c.every((x) => !fs.existsSync(x.cwd)));
   ok('cmux agy hooks are switched off', c.every((x) => x.hooksOff === '1'));
+  ok("agy's self-updater is off for every call", c.length > 0 && c.every((x) => x.updaterOff === 'true'), JSON.stringify(c.map((x) => x.updaterOff)));
   ok('the process cwd is not used', c.every((x) => path.resolve(x.cwd) !== path.resolve(process.cwd())));
 }
 {
@@ -252,6 +253,7 @@ const runModels = async (mode, extra = {}) => {
     && c[1].argv.join(' ') === '--output-format json models', JSON.stringify(c.map((x) => x.argv)));
   ok('each models call runs in its own empty folder, removed afterwards', c.every((x) => x.entries.length === 0 && !fs.existsSync(x.cwd)) && c[0].cwd !== c[1].cwd);
   ok('cmux agy hooks are off for the models call', c.every((x) => x.hooksOff === '1'));
+  ok("agy's self-updater is off for the models call", c.length > 0 && c.every((x) => x.updaterOff === 'true'), JSON.stringify(c.map((x) => x.updaterOff)));
 }
 {
   const r = await runModels('v1111');

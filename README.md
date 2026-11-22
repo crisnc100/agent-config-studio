@@ -874,9 +874,28 @@ skill.
     one of cmux's;
   - `agy --version`, run in an empty temporary folder, is not the version
     its containment was checked on.
+  Agy then runs only on macOS, inside a `sandbox-exec` sandbox that lets it
+  read the git work tree holding `--cwd` (or `--cwd` itself), its own temp
+  folder and log, and the few agy settings files it needs to start and sign
+  in (your login keychain's file, its lock file and the copy a save writes
+  among them), and nothing else under your home or temp folders. It may not
+  write agy's conversation summaries, which it cannot read there and would
+  otherwise empty. It exits 4 without running agy off macOS, inside another
+  sandbox (run it from a plain terminal), when that folder is your home or
+  holds it, when git names a work tree that does not hold `--cwd` (a
+  repository's own config can), or when a check made before each call
+  shows the sandbox not holding. It also exits 4 while
+  `~/.gemini/antigravity-cli/antigravity-oauth-token` exists: agy writes
+  your Google sign-in token there in plain text when it cannot save it in
+  the keychain, and leaves it. Delete it; agy signs in from the keychain
+  without it. A call exits 4 too when agy left no readable log of it, when
+  that log says agy kept its sign-in token in a file, or when the token file
+  is there afterwards.
   `--role security` (or its `--second`) that resolves to an agy family
   exits 4 without running it, since agy's web search stays on.
   A tool call agy refused is printed on stderr and does not fail the call.
+  A subagent the model tries to start is named there too: subagents can't
+  run inside the sandbox, and that does not fail the call either.
   `--investigate`, `--no-tools` and `--min-tools` exit 4
   for agy without running it. Agy reports only the model it was asked for,
   so its answer is labelled unverified (`--json` adds `served` with
