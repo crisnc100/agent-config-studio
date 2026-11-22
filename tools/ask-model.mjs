@@ -72,7 +72,7 @@
  * x_semantic_search, x_user_search and x_thread_fetch: every other built-in in GROK_X_DENY is disallowed, permission
  * rules deny Bash, Read, Edit, Write, Grep, Glob, WebFetch and MCP tools whatever grant GROK_HOME holds, subagents are
  * off and the turn cap is low. Web search is not switched off, since the X tools go with it. open_page and
- * open_page_with_find, which come with web_search, can't be disallowed by name; with web_search disallowed grok 1.0.77
+ * open_page_with_find, which come with web_search, can't be disallowed by name; with web_search disallowed grok 1.0.92
  * offered neither. Only for a family grok runs (any other exits 64), not with --investigate, --no-tools, --min-tools or
  * --schema, and only when `grok inspect` reports GROK_X_VERSION (exit 4 otherwise, nothing run).
  *
@@ -129,16 +129,18 @@ const GROK_MAX_TURNS = '40';
 const GROK_MIN_TURNS = '5';
 // --x-search: a denylist, because a --tools allowlist ignores the X tool names (grok warns they name no tool and leaves
 // every tool available). A tool a later grok adds would not be on it, so the mode runs only on GROK_X_VERSION, the grok
-// this list was taken from (every client tool its sessions' tool_definitions.json named, with run_terminal_cmd, the name
-// --investigate allows, beside run_terminal_command). The deny rules are the second wall: a write or command a name
-// misses is still refused, and deny wins over any allow grant or always-approve setting in GROK_HOME. Under them a
-// session's tool_definitions.json was empty and a `write` left off the list was refused ("deny rule on edit").
-// 8 turns returned real posts.
+// this list was taken from: every client tool its sessions' tool_definitions.json named, with run_terminal_cmd, the name
+// --investigate allows, beside run_terminal_command, and every further name in grok's own tool-name list that
+// --disallowed-tools accepts without its "name no tool" warning (the last line; aliases of a listed tool left out).
+// The deny rules are the second wall: a write or command a name misses is still refused, and deny wins over any allow
+// grant or always-approve setting in GROK_HOME. Under them a session's tool_definitions.json was empty, and a `write`
+// and a shell command, both left off the list, were refused. 8 turns returned real posts.
 const GROK_X_DENY = ['run_terminal_command', 'run_terminal_cmd', 'search_replace', 'write', 'read_file', 'list_dir', 'grep', 'kill_command_or_subagent', 'todo_write',
   'get_command_or_subagent_output', 'spawn_subagent', 'scheduler_create', 'scheduler_delete', 'scheduler_list', 'monitor', 'search_tool', 'use_tool', 'workflow',
-  'enter_plan_mode', 'exit_plan_mode', 'ask_user_question', 'send_feedback', 'web_fetch', 'image_gen', 'image_edit', 'image_to_video', 'reference_to_video', 'web_search'];
+  'enter_plan_mode', 'exit_plan_mode', 'ask_user_question', 'send_feedback', 'web_fetch', 'image_gen', 'image_edit', 'image_to_video', 'reference_to_video', 'web_search',
+  'wait_commands_or_subagents', 'get_terminal_command_output', 'kill_terminal_command', 'send_subagent_message', 'skill', 'lsp', 'update_goal', 'view_image', 'request_access'];
 const GROK_X_RULES = ['MCPTool', 'Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch'];
-const GROK_X_VERSION = '1.0.77';
+const GROK_X_VERSION = '1.0.92';
 const GROK_X_TURNS = '8';
 // codex features that give the model a tool (`codex features list`), all off under --min-tools; web search has no
 // feature of its own (`web_search` in config.toml: live, indexed, cached or disabled).
