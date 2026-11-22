@@ -1173,7 +1173,8 @@ console.log('\nask-model: --x-search');
      gj.tools === 'restricted' && ['x_keyword_search', 'x_semantic_search', 'x_user_search', 'x_thread_fetch'].every((t) => gj.toolsNote?.includes(t))
      && /open_page/.test(gj.toolsNote) && /denied/.test(gj.toolsNote), show(g));
 
-  for (const [what, inspect] of [['another grok version', { grokVersion: '1.0.77', mcpServers: [], plugins: [] }], ['no grokVersion', { mcpServers: [], plugins: [] }]]) {
+  for (const [what, inspect] of [['an older grok (1.0.77)', { grokVersion: '1.0.77', mcpServers: [], plugins: [] }], ['a newer grok (1.0.93)', { grokVersion: '1.0.93', mcpServers: [], plugins: [] }],
+    ['no grokVersion', { mcpServers: [], plugins: [] }]]) {
     const d = ask(['--family', 'grok', '--x-search', '--json', '--cwd', XC], { env: { STUB_GROK_INSPECT: J(inspect) } });
     const dj = d.out ? JSON.parse(d.out) : {};
     ok(`--x-search with ${what} in grok inspect: exit 4, the X-search tool list must be re-checked, grok never run`,
