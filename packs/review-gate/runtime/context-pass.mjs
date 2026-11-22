@@ -16,13 +16,20 @@
  * and in any other file a changed line that is not comment or blank.
  *
  * The code-line check is an accident barrier for the writer, never a proof: the review gate never trusts it, and the
- * --focus docs fix check that follows reviews the commit as code. So it fails closed. An unknown language, a regex literal
- * that could hide a comment or quote, a string that runs past a line end, a heredoc, a YAML block scalar, a line
- * continuation, a mode change, a new or deleted file, and any changed line with a block-comment delimiter all count as
- * code. In JS and TS a '/' counts as a regex literal only after ( , = : [ & | ; { or =>, where it cannot divide, and
- * only when it closes on its line; any other '/' followed on its line by a comment marker or quote still counts as
- * code. Files are known by extension, and .env-style files (.env, .env.example) by name. builds/<slug>/docs-table.json,
- * the skill's own output, passes. Changed lines come from git diff, so a file's length never decides the answer.
+ * --focus docs fix check that follows reviews the commit as code. So it fails closed. An unknown language, a regex
+ * literal that could hide a comment or quote, a string (other than a JS or TS template literal) that runs past a line
+ * end, a heredoc, a YAML block scalar, a line continuation, a mode change, a new or deleted file, a line put above a
+ * hashbang, a bare CR (or, in JS and TS, U+2028 or U+2029), a change git shows with no changed lines (a binary diff),
+ * and any changed line with a block-comment delimiter all count as code. In JS and TS a template literal may run across
+ * lines and its ${…} substitutions are read as code; every line of template text counts as code, even a blank one. A
+ * '/' opens a regex literal only where it cannot divide (after ( , = : [ & | ; { or =>, a unary !, or return, typeof
+ * and the other reserved words an expression follows), and only when it closes on its line. A '/' divides when no regex
+ * could close on its line, or when a name that is not a keyword, a number, ] or a string comes before it on the same
+ * line. Any other '/' followed on its line by a comment marker or quote, or by a brace inside a substitution, makes the
+ * whole file count as code, as does a '\' or an HTML-like comment (<!-- or -->) outside strings and comments. .jsx and
+ * .tsx files are code only: JSX text can read as a comment. Files are known by extension, and .env-style files (.env,
+ * .env.example) by name. builds/<slug>/docs-table.json, the skill's own output, passes. Changed lines come from git
+ * diff, so a file's length never decides the answer.
  *
  * Output: one JSON object. Exit 0 ok · 1 a problem or bad input.
  */
@@ -157,8 +164,9 @@ export function checkCommit(commit, brief = null) {
 
 /* ── the code-line check ─────────────────────────────────────────────── */
 
+// Not .jsx or .tsx: a line of JSX text can read as a comment, so any change to one fails.
 const STYLES = [
-  { exts: ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'cts'], line: '//', block: ['/*', '*/'], quotes: ['"', "'", '`'], regex: true, regexLiterals: true },
+  { exts: ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts'], line: '//', block: ['/*', '*/'], quotes: ['"', "'", '`'], regex: true, regexLiterals: true },
   { exts: ['c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'java', 'kt', 'kts', 'swift', 'go', 'rs', 'scala', 'dart', 'php', 'css', 'scss', 'less'],
     line: '//', block: ['/*', '*/'], quotes: ['"', "'", '`'], regex: true },
   { exts: ['sh', 'bash', 'zsh', 'fish'], line: '#', block: null, quotes: ['"', "'"], heredoc: true },
@@ -172,6 +180,20 @@ const ENV_NAME = /(^|\/)\.env(\.[\w-]+)*$/
 // In JS and TS, a '/' after one of these (or after =>) can only open a regex literal, never divide. Not after } ! or ?:
 // an object literal, a non-null assertion or an optional chain can end an operand.
 const REGEX_AFTER = /[(,=:[&|{;]/
+// Reserved words an expression follows, so a '/' after one opens a regex (return /x/). Not await, yield or of: a script
+// may use them as names.
+const EXPR_WORDS = new Set(['return', 'typeof', 'void', 'delete', 'throw', 'case', 'do', 'else', 'in', 'instanceof', 'new', 'extends'])
+// Every word that is a keyword somewhere in JS or TS: after one, a '/' is never taken for a sure division.
+const KEYWORDS = new Set([...EXPR_WORDS, 'await', 'yield', 'of', 'let', 'async', 'get', 'set', 'static', 'as', 'satisfies', 'break',
+  'continue', 'if', 'while', 'for', 'with', 'switch', 'catch', 'try', 'finally', 'var', 'const', 'class', 'function', 'import', 'export',
+  'default', 'debugger', 'enum', 'implements', 'interface', 'package', 'private', 'protected', 'public', 'from', 'type', 'keyof', 'infer',
+  'is', 'declare', 'abstract', 'readonly', 'asserts', 'unique', 'out', 'accessor', 'using', 'module', 'namespace', 'global', 'override'])
+// What may stand before an EXPR_WORDS word for it to be that keyword: not part of a longer name (éreturn), a member
+// (a.return) or a private name (#return).
+const WORD_START = /^$|[(){}[\];,:=&|!?+\-*%<>~^]/
+// What a '/' that might open a regex could hide from the rest of its line; inside a substitution a brace too, since a
+// hidden } would end it early.
+const HIDES = /\/\*|\*\/|\/\/|["'`]/, HIDES_IN_SUB = /\/\*|\*\/|\/\/|["'`{}]/
 const DIRECTIVE = /^\s*(?:#!|\/\/\/|\/\/!|\/\/\s*go:|\/\/\s*\+build|\/\/\s*Output:)|@ts-|eslint|prettier-ignore|istanbul |\bc8 |biome-ignore|deno-lint|jshint|@flow\b|@jsx|@vite-ignore|webpack[A-Z]|#__PURE__|\bnoqa\b|#\s*type:|pylint:|mypy:|pyright:|rubocop:|nolint|fmt:\s*(?:off|on)|isort:|-\*-.*-\*-|swiftlint:|NOSONAR|pragma/
 const styleOf = (path) => {
   if (ENV_NAME.test(path)) return ENV_STYLE
@@ -181,12 +203,22 @@ const styleOf = (path) => {
 // Per line, whether every non-blank character on it is comment; null when the text has anything this scanner cannot
 // read for sure.
 function commentMap(text, style) {
+  // Lines here end at LF, as git diff's do. A bare CR also ends a line in JS, Python and YAML, and U+2028 and U+2029 do
+  // in JS, so a file holding one cannot be read line by line.
+  if (/\r(?!\n)/.test(text) || (style.regexLiterals && /[\u2028\u2029]/.test(text))) return null
   const out = []
+  const js = !!style.regexLiterals
   // prev: the last code character, carried across lines, so a regex literal that starts a line after || is still known.
-  let state = 'code', quote = null, code = false, prev = ''
+  // word: the name or keyword that ends at prev ('' after anything else); beforeWord: the code character before it.
+  let state = 'code', quote = null, code = false, prev = '', word = '', beforeWord = ''
+  // The brace depth each open ${ started at, innermost last: the } that brings depth back to it resumes template text.
+  const subs = []
+  let depth = 0
   const lines = text.split('\n')
   for (const line of lines) {
     if (style.blockScalar && /(^|[:\s-])[|>][+-]?\d*\s*(#.*)?$/.test(line) && state === 'code') return null
+    // A line that starts inside template text is part of the string, even when blank.
+    if (state === 'string') code = true
     for (let i = 0; i < line.length; i++) {
       const c = line[i]
       if (state === 'block') {
@@ -196,25 +228,45 @@ function commentMap(text, style) {
       if (state === 'string') {
         code = true
         if (c === '\\') i++
-        else if (c === quote) state = 'code'
+        else if (c === quote) { state = 'code'; prev = quote; word = '' }
+        else if (js && quote === '`' && c === '$' && line[i + 1] === '{') { subs.push(depth++); state = 'code'; prev = '{'; word = ''; i++ }
         continue
       }
       if (/\s/.test(c)) continue
       if (style.block && line.startsWith(style.block[0], i)) { state = 'block'; i += style.block[0].length - 1; continue }
       if (line.startsWith(style.line, i) && (style.line !== '#' || i === 0 || /\s/.test(line[i - 1]))) break
       if (style.heredoc && line.startsWith('<<', i)) return null
-      if (style.regexLiterals && c === '/' && REGEX_AFTER.test(prev)) {
+      // A name spelled with an escape (\u0072eturn) and a script's HTML-like comments change how the rest reads.
+      if (js && (c === '\\' || line.startsWith('<!--', i) || line.startsWith('-->', i))) return null
+      const exprStart = js && (REGEX_AFTER.test(prev) || (EXPR_WORDS.has(word) && WORD_START.test(beforeWord)))
+      if (c === '/' && exprStart) {
         const end = regexEnd(line, i)
         if (end < 0) return null
-        i = end; code = true; prev = 'a'
+        i = end; code = true; prev = 'a'; word = ''
         continue
       }
-      if (style.regex && c === '/' && /\/\*|\*\/|\/\/|["'`]/.test(line.slice(i + 1))) return null
-      if (style.quotes.includes(c)) { state = 'string'; quote = c; code = true; prev = c; continue }
+      if (style.regex && c === '/') {
+        // Sure to divide: no regex could close on this line, or an operand came before it on this same line, where no
+        // semicolon can be inserted. prev 'a' with no word is the end of a regex literal.
+        const operand = word ? !KEYWORDS.has(word) : /^[a\]"'`]$/.test(prev)
+        const divides = js && ((code && operand) || regexEnd(line, i) < 0)
+        if (!divides && (subs.length ? HIDES_IN_SUB : HIDES).test(line.slice(i + 1))) return null
+      }
       code = true
+      if (style.quotes.includes(c)) { state = 'string'; quote = c; prev = c; word = ''; continue }
+      if (js && /[\w$]/.test(c)) {
+        let j = i
+        while (j + 1 < line.length && /[\w$]/.test(line[j + 1])) j++
+        beforeWord = prev; word = line.slice(i, j + 1); prev = line[j]; i = j
+        continue
+      }
+      word = ''
+      if (js && c === '{') depth++
+      if (js && c === '}' && --depth === subs.at(-1)) { subs.pop(); state = 'string'; quote = '`'; continue }
+      if (c === '!' && exprStart) { prev = '('; continue }
       prev = c === '>' && prev === '=' ? '(' : c
     }
-    if (state === 'string') return null
+    if (state === 'string' && !(js && quote === '`')) return null
     if (state === 'code' && /\\\s*$/.test(line)) return null
     out.push(!code)
     code = false
@@ -237,7 +289,7 @@ function regexEnd(line, i) {
 }
 // The line numbers git diff -U0 says changed: { old: [n…], now: [n…] }.
 function changedLines(parent, sha, path) {
-  const diff = git('diff', '-U0', '--no-color', '--no-ext-diff', '--no-renames', parent, sha, '--', path)
+  const diff = git('diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', parent, sha, '--', path)
   if (diff === null) return null
   const old = [], now = []
   for (const m of diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)) {
@@ -247,14 +299,19 @@ function changedLines(parent, sha, path) {
   }
   return { old, now }
 }
+const HASHBANG = /^\uFEFF?#!/
 const modeOf = (commit, path) => (git('ls-tree', commit, '--', path) || '').split(' ')[0] || null
 function commentOnly(parent, sha, path) {
   const style = styleOf(path)
   if (!style) return false
   const before = git('show', `${parent}:${path}`), after = git('show', `${sha}:${path}`)
   if (before === null || after === null || modeOf(parent, path) !== modeOf(sha, path)) return false
+  // A hashbang works only on the first line, so a line put above one changes how the file runs.
+  const first = (t) => t.split('\n', 1)[0]
+  if ((HASHBANG.test(before) || HASHBANG.test(after)) && first(before) !== first(after)) return false
   const was = commentMap(before, style), now = commentMap(after, style), changed = changedLines(parent, sha, path)
-  if (!was || !now || !changed) return false
+  // A changed file whose diff names no line (git shows it as binary, say) is one whose change was never read.
+  if (!was || !now || !changed || (!changed.old.length && !changed.now.length)) return false
   const ok = (map, lines, n) => map[n - 1] === true && !DIRECTIVE.test(lines[n - 1]) && !(style.block && /\/\*|\*\//.test(lines[n - 1]))
   const a = before.split('\n'), b = after.split('\n')
   return changed.old.every((n) => ok(was, a, n)) && changed.now.every((n) => ok(now, b, n))

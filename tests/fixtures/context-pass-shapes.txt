@@ -1,0 +1,46 @@
+// The shapes that kept whole files unreadable to context-pass.mjs --check-commit, each copied from the file named above it.
+// review.mjs: a division inside a substitution.
+function lockWait(lock, deadline, LOCK_WAIT_MS) {
+      if (Date.now() > deadline) throw new Error(`${lock} has been held for over ${LOCK_WAIT_MS / 1000}s by another review run`)
+}
+// review.mjs: a template inside a substitution.
+function many(ref, matches) {
+    console.error(
+      `✖ "${ref}" matches ${matches.length} logged reviews (${matches.map((e) => `${e.repo}/${e.dir}`).join(', ')}) — ` +
+        'pass the full report path to pick one',
+    )
+}
+// review.mjs: template text across lines.
+const RUBRIC = `Score every finding; the script derives its severity from your scores.
+- 1: no path in normal use reaches it (no real trigger).
+Missing or invalid scores are asked for again once. A finding still unscored blocks as MEDIUM.`
+// review.mjs: a regex after a unary !, with a quote later on its line.
+function unescape(hex, digits, fail) {
+        if (!hex || !/^[0-9a-fA-F]+$/.test(digits) || digits.length !== hex) fail('an escape it does not know')
+}
+// review.mjs: a regex after return.
+function sides(p) {
+  return /^[ab]\//.test(p) ? [p, p.slice(2)] : [p]
+}
+// tools/ask-model.mjs: a substitution across lines.
+const AGY_CMUX_HOOK_RE = new RegExp(`^${AGY_CMUX_HOOK.split(/(<SOCK>|<EVENT>)/).map((p) => (p === '<SOCK>' ? "/[^']*" : p === '<EVENT>' ? '[a-z-]+'
+  : p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('')}$`);
+// public/app.js: a regex after return !, then '//' in a string.
+function remote(v) {
+  return !/^[a-z][a-z0-9+.-]*:/.test(v) && !v.startsWith('//') && !v.includes('\\');
+}
+// server.js: a regex after a unary ! inside if (.
+function sha(sha) {
+    if (!/^[0-9a-f]{7,40}$/.test(sha || '')) throw Object.assign(new Error('bad sha'), { status: 400 });
+}
+// server.js: a division after ) inside a substitution.
+function stuck(die, timeoutMs) {
+      die(`no async file operation completed in ${(2 * timeoutMs) / 1000} s (a probe, then a fresh one beside it) — the thread pool is stuck`);
+}
+// public/packs-view.js: a template inside a conditional inside a substitution.
+const pkHash = (page, sub = null) => (page ? `#packs/${encodeURIComponent(page)}${sub ? `/${encodeURIComponent(sub)}` : ''}` : '#packs');
+// public/packs-view.js: a division after ) inside a substitution.
+function status(el, last, PK) {
+    const live = el('span', 'pk-status-text', `${last} (${Math.round((PK.job.elapsedMs || 0) / 1000)} s)`);
+}
+// The last line, read only when every shape above was read.
