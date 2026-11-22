@@ -344,6 +344,37 @@ test('15 a comment edit passes beside a regex after ! or return, a substitution 
   }
 })
 
+test('16 a moved hashbang, a line break other than LF, and a change git shows with no changed lines count as code', () => {
+  const fail = [
+    ['a.mjs', '#!/usr/bin/env node\nconsole.log(1)\n', '// A header.\n#!/usr/bin/env node\nconsole.log(1)\n', 'a comment put above a hashbang'],
+    ['b.mjs', '#!/usr/bin/env node\nconsole.log(1)\n', '\n#!/usr/bin/env node\nconsole.log(1)\n', 'a blank line put above a hashbang'],
+    ['c.sh', '#!/bin/sh\necho hi\n', '# A header.\n#!/bin/sh\necho hi\n', 'a comment put above a shell hashbang'],
+    ['d.sh', '#!/bin/sh\necho hi\n', '\n#!/bin/sh\necho hi\n', 'a blank line put above a shell hashbang'],
+    ['e.js', 'var x\r/`/.test(s); t = `\n// c\n`\n', 'var x\r/`/.test(s); t = `\n// d\n`\n', 'a bare CR ending a statement before a regex'],
+    ['f.js', '// note\nx()\n', '// note\u2028evil()\nx()\n', 'U+2028 ending a // comment before code'],
+    ['g.js', '// note\nx()\n', '// note\u2029evil()\nx()\n', 'U+2029 ending a // comment before code'],
+    ['h.js', '// note\nx()\n', '// note\revil()\nx()\n', 'a bare CR ending a // comment before code'],
+    ['i.py', '# note\nx()\n', '# note\revil()\nx()\n', 'a bare CR ending a # comment before code'],
+    ['j.js', 'const t = `a\u0000\nb`\n', 'const t = `a\u0000\nc`\n', 'a NUL, so git shows the change as binary'],
+  ]
+  for (const [p, a, b, why] of fail) {
+    assert.deepEqual(verdicts([[p, a, b]]), { [p]: false }, `${p}: ${why}`)
+    git('reset', '-q', '--hard', 'HEAD~2')
+  }
+  const marked = verdicts([['.gitattributes', '*.js binary\n', '*.js binary\n'], ['k.js', 'const a = 1\n', 'const a = 2\n']])
+  assert.equal(marked['k.js'], false, 'a code change in a file .gitattributes marks binary')
+  git('reset', '-q', '--hard', 'HEAD~2')
+  const pass = [
+    ['l.js', '// note\r\nx()\r\n', '// a note\r\nx()\r\n'],
+    ['m.mjs', '#!/usr/bin/env node\n// note\nconsole.log(1)\n', '#!/usr/bin/env node\n// a note\nconsole.log(1)\n'],
+    ['n.sh', '#!/bin/sh\n# note\necho hi\n', '#!/bin/sh\n# a note\necho hi\n'],
+  ]
+  for (const [p, a, b] of pass) {
+    assert.deepEqual(verdicts([[p, a, b]]), { [p]: true }, `${p}: CRLF line ends and a comment below a hashbang still pass`)
+    git('reset', '-q', '--hard', 'HEAD~2')
+  }
+})
+
 test('close once: --check-commit treats a .mdx page as code, since its JSX and imports run when the page builds', () => {
   commit({ 'docs/page.mdx': '# Page\n\nThe add helper adds one.\n' })
   const prose = commit({ 'docs/page.mdx': '# Page\n\nThe add helper adds exactly one.\n' })
