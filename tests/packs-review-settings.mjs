@@ -243,7 +243,7 @@ try {
   ok('C8: with gh on the PATH, no gh or CI line, and no merge.mjs essay', !mg().querySelector('.pk-set-warn') && !/gh CLI|CI checks|merge\.mjs/.test(tx(mg())), tx(mg()));
   ok('C8: security pass, one line for Off', choices(secRow()).map(tx).join('|') === 'Off|When code changes|Always' && JSON.stringify(says(secRow())) === '["PR reviews run no security pass."]', tx(secRow()));
   ok('R5: Cross-vendor checks, Prefer another vendor pressed, its line only', choices(cf()).map(tx).join('|') === 'Prefer another vendor|Off' && tx(pressed(cf())) === 'Prefer another vendor'
-    && JSON.stringify(says(cf())) === '["Reviews and grades use a model from another vendor when one is available; never a blocker."]' && !tx(cf()).includes('Any reviewer in your roles'), tx(cf()));
+    && JSON.stringify(says(cf())) === '["Reviews, grades and the security pass use a model from another vendor when one is available; never a blocker."]' && !tx(cf()).includes('Any reviewer in your roles'), tx(cf()));
   ok('R4: Always needs you is a count and Edit paths (secondary); no box, no lists on the pack page', tx(always().querySelector('.pk-set-inline span')) === '9 paths: 2 built in, 7 risky, none of your own'
     && always().querySelectorAll('button').map((b) => `${tx(b)}:${b.className}`).join('|') === 'Edit paths:btn pk-edit-paths' && !sec().querySelector('textarea') && !/package\.json|\*auth\*/.test(tx(sec())), tx(always()));
   ok('R7: the footer says where it is saved (the primary file has no Files entry, so no button), and no "Saved as" key line', /^Saved in ~\/\.agent-config-studio\/review-gate\/config\.json$/.test(tx(sec().querySelector('.pk-set-foot')))
@@ -253,17 +253,19 @@ try {
   ok('no raw key name in a label or a choice', [...sec().querySelectorAll('.pk-tabs button'), ...sec().querySelectorAll('.pk-set-name')].every((n) => !/merge\.policy|alwaysHuman|crossFamily|riskPaths|strict|standard/.test(tx(n))));
 
   {
-    // Each choice in turn: the row's one line is that choice's own explanation, exactly, and no other's.
+    // Each choice in turn: the row's one line is that choice's own explanation, exactly, and no other's. A row's fourth
+    // entry lists retired wording that must never reappear under any choice.
     const rows = [[secRow, 'security pass', [['Off', 'PR reviews run no security pass.'], ['When code changes', 'A security reviewer reads the PR review whenever the change touches code or a risky path.'],
       ['Always', 'A security reviewer reads every PR review.']]],
     [mg, 'agent merge', [['Off', 'You merge every PR.'], ['Docs and tests only', 'An agent may merge a low-risk PR that changes only docs or tests.'],
       ['Low-risk PRs', 'An agent may merge any low-risk PR. You merge the rest.'], ['Low and medium-risk PRs', 'An agent may merge low- and medium-risk PRs; high-risk always waits for you.']]],
-    [cf, 'cross-vendor checks', [['Off', 'Any reviewer in your roles may check any work.'], ['Prefer another vendor', 'Reviews and grades use a model from another vendor when one is available; never a blocker.']]]];
+    [cf, 'cross-vendor checks', [['Off', 'Any reviewer in your roles may check any work.'], ['Prefer another vendor', 'Reviews, grades and the security pass use a model from another vendor when one is available; never a blocker.']],
+      ['Reviews and grades use a model from another vendor']]];
     const wrong = [];
-    for (const [boxOf, name, options] of rows) {
+    for (const [boxOf, name, options, retired = []] of rows) {
       for (const [label, line] of options) {
         await pick(boxOf, label);
-        const others = options.filter(([l]) => l !== label).map(([, x]) => x);
+        const others = [...options.filter(([l]) => l !== label).map(([, x]) => x), ...retired];
         if (tx(pressed(boxOf())) !== label || JSON.stringify(says(boxOf())) !== JSON.stringify([line]) || others.some((x) => tx(boxOf()).includes(x))) wrong.push(`${name} ${label}: ${tx(boxOf())}`);
       }
       if (bar()) { barBtn('Cancel').click(); await settle(5); }
