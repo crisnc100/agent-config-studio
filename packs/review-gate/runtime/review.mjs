@@ -398,8 +398,9 @@ const WATCH = (() => {
   return WATCH_MODES.includes(mode) ? mode : 'off'
 })()
 // crossFamily: "prefer" (the default: reviews, /build's Grade and the check on test changes prefer a vendor other than
-// the author's) | "off". The home config is the floor: REVIEW_CONFIG and a tracked repo file, which an agent or the
-// repository can set, and REVIEW_CROSS_FAMILY may turn it on, never off. An untracked repo file is the operator's own.
+// the author's, and the security pass one other than the code reviewer's) | "off" (every pick follows role order). The
+// home config is the floor: REVIEW_CONFIG and a tracked repo file, which an agent or the repository can set, and
+// REVIEW_CROSS_FAMILY may turn it on, never off. An untracked repo file is the operator's own.
 // REVIEW_CROSS_FAMILY=off still counts when no config sets crossFamily at all.
 const CROSS_FAMILY_MODES = ['prefer', 'off']
 const CROSS_FAMILY_NOTES = []
@@ -3540,7 +3541,7 @@ function securityLine(sec) {
   return `Security: ${who} — ${sec.status}${sec.status === 'ran' ? `, ${sec.findings ?? 0} findings` : ''}${sec.reason ? ` (${sec.reason})` : ''}`
 }
 // Who runs it: REVIEW_SECURITY_REVIEWER pins one family; else the security role's members whose CLI is on PATH, each at
-// its own effort, another vendor than the code reviewer's first. The code review's reviewer, model, pick, routing, force
+// its own effort, another vendor than the code reviewer's first unless crossFamily is off. The code review's reviewer, model, pick, routing, force
 // and team settings never apply here, and a Claude family runs as one agent. { members, why } or { error }.
 function securityMembers(codeSel) {
   const pinned = String(process.env.REVIEW_SECURITY_REVIEWER ?? '').trim().toLowerCase()
@@ -3563,6 +3564,7 @@ function securityMembers(codeSel) {
   const pool = loaded.pool.filter((m) => m.vendor !== 'agy')
   const skipped = noAgy.length ? `; skipped ${noAgy.join(', ')} (${AGY_NO_SECURITY})` : ''
   if (!pool.length) return { error: `security role: every usable member runs on agy (${noAgy.join(', ')}), which never runs the security pass: ${AGY_NO_SECURITY}` }
+  if (CROSS_FAMILY === 'off') return { members: pool, why: `security role, in role order (crossFamily off)${skipped}` }
   const other = pool.filter((m) => m.vendor !== codeSel.vendor)
   const same = pool.filter((m) => m.vendor === codeSel.vendor)
   return {
