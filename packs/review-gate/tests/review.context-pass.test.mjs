@@ -220,6 +220,7 @@ test('12 a whole-line comment edit passes in a file with regex literals, the ski
     ['src/s.mjs', REGEXES, REGEXES.replace('// A two-line comment: "quoted", (in parens) and ✅,\n', '')],
     ['.env.example', '# The port it listens on\nPORT=3000\n', '# The port the server listens on (default "3000")\nPORT=3000\n'],
     ['config/.env.sample', '# A key\nKEY=x\n', '# The API key\nKEY=x\n'],
+    ['src/x.js', 'function q(s) { return /"/.test(s) }\n// note\n', 'function q(s) { return /"/.test(s) }\n// a note\n'],
   ]
   const fail = [
     ['src/t.mjs', REGEXES, REGEXES.replace('export const n = 1', 'export const n = 2'), 'a changed code line'],
@@ -227,7 +228,6 @@ test('12 a whole-line comment edit passes in a file with regex literals, the ski
     ['src/v.mjs', REGEXES, REGEXES.replace('// kept as plain text.', '/* kept as plain text. */'), 'a block-comment delimiter'],
     ['src/w.mjs', REGEXES, REGEXES.replace("|^test_'/", "|^test_x'/"), 'a changed regex'],
     ['src/z.js', 'const q = a /"/ 2\n// note\n', 'const q = a /"/ 2\n// a note\n', 'a slash with a quote after an identifier (a /"/), which may divide'],
-    ['src/x.js', 'function q(s) { return /"/.test(s) }\n// note\n', 'function q(s) { return /"/.test(s) }\n// a note\n', 'a regex after a keyword, which could be a division'],
     ['src/y.js', "const a = b\n  / 2; const s = '/'\n// note\n", "const a = b\n  / 2; const s = '/'\n// a note\n", 'a slash starting a line after an operand'],
     ['src/aa.mjs', 'const q = {} / 2; const t = tag`a/\n// in the template\n`; // end `\n', 'const q = {} / 2; const t = tag`a/\n// changed template text\n`; // end `\n', 'a division after }, then a template across lines'],
     ['src/ab.ts', 'const n = a! / 2; const t = `x/\n// in the template\n`; // end `\n', 'const n = a! / 2; const t = `x/\n// changed template text\n`; // end `\n', 'a division after a TS non-null !'],
