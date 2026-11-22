@@ -18,15 +18,16 @@
  * The code-line check is an accident barrier for the writer, never a proof: the review gate never trusts it, and the
  * --focus docs fix check that follows reviews the commit as code. So it fails closed. An unknown language, a regex
  * literal that could hide a comment or quote, a string (other than a JS or TS template literal) that runs past a line
- * end, a heredoc, a YAML block scalar, a line continuation, a mode change, a new or deleted file, and any changed line
- * with a block-comment delimiter all count as code. In JS and TS a template literal may run across lines and its ${…}
- * substitutions are read as code; every line of template text counts as code, even a blank one. A '/' opens a regex
- * literal only where it cannot divide (after ( , = : [ & | ; { or =>, a unary !, or return, typeof and the other
- * reserved words an expression follows), and only when it closes on its line. A '/' divides when no regex could close
- * on its line, or when a name that is not a keyword, a number, ] or a string comes before it on the same line. Any
- * other '/' followed on its line by a comment marker or quote, or by a brace inside a substitution, makes the whole
- * file count as code, as does a '\' or an HTML-like comment (<!-- or -->) outside strings and comments. .jsx and .tsx
- * files are code only: JSX text can read as a comment. Files are known by extension, and .env-style files (.env,
+ * end, a heredoc, a YAML block scalar, a line continuation, a mode change, a new or deleted file, a line put above a
+ * hashbang, a bare CR (or, in JS and TS, U+2028 or U+2029), a change git shows with no changed lines (a binary diff),
+ * and any changed line with a block-comment delimiter all count as code. In JS and TS a template literal may run across
+ * lines and its ${…} substitutions are read as code; every line of template text counts as code, even a blank one. A
+ * '/' opens a regex literal only where it cannot divide (after ( , = : [ & | ; { or =>, a unary !, or return, typeof
+ * and the other reserved words an expression follows), and only when it closes on its line. A '/' divides when no regex
+ * could close on its line, or when a name that is not a keyword, a number, ] or a string comes before it on the same
+ * line. Any other '/' followed on its line by a comment marker or quote, or by a brace inside a substitution, makes the
+ * whole file count as code, as does a '\' or an HTML-like comment (<!-- or -->) outside strings and comments. .jsx and
+ * .tsx files are code only: JSX text can read as a comment. Files are known by extension, and .env-style files (.env,
  * .env.example) by name. builds/<slug>/docs-table.json, the skill's own output, passes. Changed lines come from git
  * diff, so a file's length never decides the answer.
  *
@@ -202,6 +203,9 @@ const styleOf = (path) => {
 // Per line, whether every non-blank character on it is comment; null when the text has anything this scanner cannot
 // read for sure.
 function commentMap(text, style) {
+  // Lines here end at LF, as git diff's do. A bare CR also ends a line in JS, Python and YAML, and U+2028 and U+2029 do
+  // in JS, so a file holding one cannot be read line by line.
+  if (/\r(?!\n)/.test(text) || (style.regexLiterals && /[\u2028\u2029]/.test(text))) return null
   const out = []
   const js = !!style.regexLiterals
   // prev: the last code character, carried across lines, so a regex literal that starts a line after || is still known.
@@ -285,7 +289,7 @@ function regexEnd(line, i) {
 }
 // The line numbers git diff -U0 says changed: { old: [n…], now: [n…] }.
 function changedLines(parent, sha, path) {
-  const diff = git('diff', '-U0', '--no-color', '--no-ext-diff', '--no-renames', parent, sha, '--', path)
+  const diff = git('diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', parent, sha, '--', path)
   if (diff === null) return null
   const old = [], now = []
   for (const m of diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)) {
@@ -295,14 +299,19 @@ function changedLines(parent, sha, path) {
   }
   return { old, now }
 }
+const HASHBANG = /^\uFEFF?#!/
 const modeOf = (commit, path) => (git('ls-tree', commit, '--', path) || '').split(' ')[0] || null
 function commentOnly(parent, sha, path) {
   const style = styleOf(path)
   if (!style) return false
   const before = git('show', `${parent}:${path}`), after = git('show', `${sha}:${path}`)
   if (before === null || after === null || modeOf(parent, path) !== modeOf(sha, path)) return false
+  // A hashbang works only on the first line, so a line put above one changes how the file runs.
+  const first = (t) => t.split('\n', 1)[0]
+  if ((HASHBANG.test(before) || HASHBANG.test(after)) && first(before) !== first(after)) return false
   const was = commentMap(before, style), now = commentMap(after, style), changed = changedLines(parent, sha, path)
-  if (!was || !now || !changed) return false
+  // A changed file whose diff names no line (git shows it as binary, say) is one whose change was never read.
+  if (!was || !now || !changed || (!changed.old.length && !changed.now.length)) return false
   const ok = (map, lines, n) => map[n - 1] === true && !DIRECTIVE.test(lines[n - 1]) && !(style.block && /\/\*|\*\//.test(lines[n - 1]))
   const a = before.split('\n'), b = after.split('\n')
   return changed.old.every((n) => ok(was, a, n)) && changed.now.every((n) => ok(now, b, n))
