@@ -253,17 +253,19 @@ try {
   ok('no raw key name in a label or a choice', [...sec().querySelectorAll('.pk-tabs button'), ...sec().querySelectorAll('.pk-set-name')].every((n) => !/merge\.policy|alwaysHuman|crossFamily|riskPaths|strict|standard/.test(tx(n))));
 
   {
-    // Each choice in turn: the row's one line is that choice's own explanation, exactly, and no other's.
+    // Each choice in turn: the row's one line is that choice's own explanation, exactly, and no other's. A row's fourth
+    // entry lists retired wording that must never reappear under any choice.
     const rows = [[secRow, 'security pass', [['Off', 'PR reviews run no security pass.'], ['When code changes', 'A security reviewer reads the PR review whenever the change touches code or a risky path.'],
       ['Always', 'A security reviewer reads every PR review.']]],
     [mg, 'agent merge', [['Off', 'You merge every PR.'], ['Docs and tests only', 'An agent may merge a low-risk PR that changes only docs or tests.'],
       ['Low-risk PRs', 'An agent may merge any low-risk PR. You merge the rest.'], ['Low and medium-risk PRs', 'An agent may merge low- and medium-risk PRs; high-risk always waits for you.']]],
-    [cf, 'cross-vendor checks', [['Off', 'Any reviewer in your roles may check any work.'], ['Prefer another vendor', 'Reviews, grades and the security pass use a model from another vendor when one is available; never a blocker.']]]];
+    [cf, 'cross-vendor checks', [['Off', 'Any reviewer in your roles may check any work.'], ['Prefer another vendor', 'Reviews, grades and the security pass use a model from another vendor when one is available; never a blocker.']],
+      ['Reviews and grades use a model from another vendor']]];
     const wrong = [];
-    for (const [boxOf, name, options] of rows) {
+    for (const [boxOf, name, options, retired = []] of rows) {
       for (const [label, line] of options) {
         await pick(boxOf, label);
-        const others = options.filter(([l]) => l !== label).map(([, x]) => x);
+        const others = [...options.filter(([l]) => l !== label).map(([, x]) => x), ...retired];
         if (tx(pressed(boxOf())) !== label || JSON.stringify(says(boxOf())) !== JSON.stringify([line]) || others.some((x) => tx(boxOf()).includes(x))) wrong.push(`${name} ${label}: ${tx(boxOf())}`);
       }
       if (bar()) { barBtn('Cancel').click(); await settle(5); }
