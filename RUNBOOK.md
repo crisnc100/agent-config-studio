@@ -368,7 +368,13 @@ never reads it, so new data cannot break it.
   list was taken from grok 1.0.92, so any other version `grok inspect`
   reports exits 4: re-check `GROK_X_DENY` against the new grok before
   bumping `GROK_X_VERSION`. `open_page` and `open_page_with_find` cannot be
-  disallowed by name; 1.0.92 offers neither in this mode. The leader-mode,
+  disallowed by name. Each run is checked after the run against grok's
+  session record (`grokXRecord`, the session folder `grokBuildProof`
+  reads): `tool_definitions.json` must be `[]`, and `chat_history.jsonl` may
+  hold only system, user, reasoning, assistant and `backend_tool_call`
+  lines, each call one of the four X tools. Any other record, or none (grok's
+  daemon route keeps its sessions elsewhere), exits 4 with no answer. The
+  check refuses the answer; it undoes nothing the run did. The leader-mode,
   hook-folder and MCP checks run as for every grok call.
 - Codex has no strict-MCP flag, and `-c mcp_servers={}` is merged, not a
   replacement. So `codex mcp list --json` in the call's folder names the

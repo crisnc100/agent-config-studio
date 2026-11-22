@@ -72,9 +72,12 @@
  * x_semantic_search, x_user_search and x_thread_fetch: every other built-in in GROK_X_DENY is disallowed, permission
  * rules deny Bash, Read, Edit, Write, Grep, Glob, WebFetch and MCP tools whatever grant GROK_HOME holds, subagents are
  * off and the turn cap is low. Web search is not switched off, since the X tools go with it. open_page and
- * open_page_with_find, which come with web_search, can't be disallowed by name; with web_search disallowed grok 1.0.92
- * offered neither. Only for a family grok runs (any other exits 64), not with --investigate, --no-tools, --min-tools or
- * --schema, and only when `grok inspect` reports GROK_X_VERSION (exit 4 otherwise, nothing run).
+ * open_page_with_find, which come with web_search, can't be disallowed by name. The run is checked after the run against
+ * grok's session record: its answer counts only when the record shows no client tool offered and no tool called but the
+ * four X tools; any other record, or none (grok's daemon route keeps its sessions elsewhere), exits 4 with no answer.
+ * The check refuses an answer; it undoes nothing the run did. Only for a family grok runs (any other exits 64), not with
+ * --investigate, --no-tools, --min-tools or --schema, and only when `grok inspect` reports GROK_X_VERSION (exit 4
+ * otherwise, nothing run).
  *
  * Exit: 0 answered · 2 another model answered · 3 the CLI (or node) is not
  * installed · 4 the call failed or returned an error · 5 files changed under
@@ -134,7 +137,9 @@ const GROK_MIN_TURNS = '5';
 // --disallowed-tools accepts without its "name no tool" warning (the last line; aliases of a listed tool left out).
 // The deny rules are the second wall: a write or command a name misses is still refused, and deny wins over any allow
 // grant or always-approve setting in GROK_HOME. Under them a session's tool_definitions.json was empty, and a `write`
-// and a shell command, both left off the list, were refused. 8 turns returned real posts.
+// and a shell command, both left off the list, were refused. 8 turns returned real posts. Neither is proof on grok's
+// daemon route, whose tools have other names, so each run is checked after the run against grok's session record
+// (grokXRecord).
 const GROK_X_DENY = ['run_terminal_command', 'run_terminal_cmd', 'search_replace', 'write', 'read_file', 'list_dir', 'grep', 'kill_command_or_subagent', 'todo_write',
   'get_command_or_subagent_output', 'spawn_subagent', 'scheduler_create', 'scheduler_delete', 'scheduler_list', 'monitor', 'search_tool', 'use_tool', 'workflow',
   'enter_plan_mode', 'exit_plan_mode', 'ask_user_question', 'send_feedback', 'web_fetch', 'image_gen', 'image_edit', 'image_to_video', 'reference_to_video', 'web_search',
@@ -156,7 +161,8 @@ const MIN_TOOLS = {
 };
 const X_SEARCH_TOOLS = { tools: 'restricted', toolsNote: 'x_keyword_search, x_semantic_search, x_user_search and x_thread_fetch only; every other built-in disallowed, '
     + 'Bash, Read, Edit, Write, Grep, Glob, WebFetch and MCP tools denied by rule, subagents off. open_page and open_page_with_find come with '
-    + 'web search and cannot be disallowed by name; grok ' + GROK_X_VERSION + ' offered neither with web_search disallowed' };
+    + 'web search and cannot be disallowed by name. Checked after the run against grok\'s session record: the answer counts only when '
+    + 'that record shows no tool offered and only X tool calls' };
 // grok's own switches for the MCP servers and hooks it borrows from Claude Code's and Cursor's configs, set for
 // its preflight and its run alike (the studio's GROK_ASSIST_ENV, lib/containment.js). Its own MCP servers have
 // none, and its own .grok/hooks have none short of turning folder trust off (see grokHookFolders).
@@ -1388,14 +1394,19 @@ const tail = (s) => String(s || '').trim().slice(-500) || '(no output)';
  * summary.json for that session whose current_model_id is `id`, and an events.jsonl whose every model_id is `id`;
  * else why not.
  */
-function grokBuildProof(id, sessionId, cwd, grokHome) {
-  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(sessionId)) return 'grok reported no session id to look it up by';
+function grokSessionDir(sessionId, cwd, grokHome) {
+  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(sessionId)) return { error: 'grok reported no session id to look it up by' };
   let real;
-  try { real = fs.realpathSync(cwd); } catch (e) { return `its folder could not be resolved (${e.code || e.message})`; }
+  try { real = fs.realpathSync(cwd); } catch (e) { return { error: `its folder could not be resolved (${e.code || e.message})` }; }
   const group = encodeURIComponent(real);
   // A longer name grok replaces with a slug and a hash, which this does not look up.
-  if (Buffer.byteLength(group) > 255) return 'its session folder name is too long to look up';
-  const dir = path.join(grokHome, 'sessions', group, sessionId);
+  if (Buffer.byteLength(group) > 255) return { error: 'its session folder name is too long to look up' };
+  return { dir: path.join(grokHome, 'sessions', group, sessionId) };
+}
+
+function grokBuildProof(id, sessionId, cwd, grokHome) {
+  const { dir, error } = grokSessionDir(sessionId, cwd, grokHome);
+  if (error) return error;
   let summary;
   try { summary = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8')); } catch (e) {
     return `${path.join(dir, 'summary.json')} could not be read (${e.code || 'not JSON'})`;
@@ -1417,6 +1428,45 @@ function grokBuildProof(id, sessionId, cwd, grokHome) {
   if (!named.length) return 'its session events name no model';
   const other = named.find((x) => x !== id);
   return other === undefined ? null : `its session events name ${JSON.stringify(other)}`;
+}
+
+/**
+ * --x-search, after the run: null when grok's record of the session shows an X-only run, else why not. The record is
+ * the folder grokBuildProof reads: tool_definitions.json must be [] (no client tool offered), and chat_history.jsonl
+ * may hold only X_HISTORY_TYPES lines, every backend_tool_call one of the four X tools. A record of any other shape,
+ * or none (grok's daemon route keeps its sessions elsewhere), refuses.
+ */
+const X_TOOLS = ['x_keyword_search', 'x_semantic_search', 'x_user_search', 'x_thread_fetch'];
+const X_HISTORY_TYPES = ['system', 'user', 'reasoning', 'assistant', 'backend_tool_call'];
+function grokXRecord(sessionId, cwd, grokHome) {
+  const { dir, error } = grokSessionDir(sessionId, cwd, grokHome);
+  if (error) return error;
+  const read = (name) => {
+    try { return { text: fs.readFileSync(path.join(dir, name), 'utf8') }; } catch (e) { return { error: `${path.join(dir, name)} could not be read (${e.code || e.message})` }; }
+  };
+  const defs = read('tool_definitions.json');
+  if (defs.error) return defs.error;
+  let offered;
+  try { offered = JSON.parse(defs.text); } catch { return 'its tool_definitions.json is not JSON'; }
+  if (!Array.isArray(offered)) return 'its tool_definitions.json is not a list';
+  if (offered.length) {
+    const names = offered.map((t) => (isObject(t) && typeof t.name === 'string' ? t.name : '?'));
+    return `its tool_definitions.json offered ${offered.length} tool${offered.length === 1 ? '' : 's'} (${names.join(', ')})`;
+  }
+  const history = read('chat_history.jsonl');
+  if (history.error) return history.error;
+  for (const line of history.text.split('\n')) {
+    if (!line.trim()) continue;
+    let entry;
+    try { entry = JSON.parse(line); } catch { return 'its chat_history.jsonl holds a line that is not JSON'; }
+    const type = isObject(entry) ? entry.type : undefined;
+    if (!X_HISTORY_TYPES.includes(type)) return `its chat_history.jsonl holds a ${JSON.stringify(type ?? null)} line`;
+    if (type === 'backend_tool_call') {
+      const name = isObject(entry.kind) ? entry.kind.name : undefined;
+      if (!X_TOOLS.includes(name)) return `its chat_history.jsonl holds a backend call to ${JSON.stringify(name ?? null)}`;
+    }
+  }
+  return null;
 }
 
 /**
@@ -1501,7 +1551,7 @@ function agySubagentDenials(steps, home = os.homedir(), who = 'the model') {
  * The answer from one CLI's output, or an exit code and why. With a schema, the structured answer: claude's
  * structured_output (else its result), grok's structuredOutput (else its text), codex's stdout, as JSON text.
  */
-function readAnswer(vendor, id, r, schema = null, { cwd, grokHome, family } = {}) {
+function readAnswer(vendor, id, r, schema = null, { cwd, grokHome, family, xSearch = false } = {}) {
   if (!VENDORS.includes(vendor)) return { exit: 4, error: unwired(vendor) };
   if (r.error) return { exit: r.error.code === 'ENOENT' ? 3 : 4, error: `${vendor} could not start: ${r.error.message}` };
   if (r.signal) return { exit: 4, error: `${vendor} was stopped by ${r.signal}` };
@@ -1545,6 +1595,10 @@ function readAnswer(vendor, id, r, schema = null, { cwd, grokHome, family } = {}
           const confirm = used.length > 1 ? ` (${why})` : why ? ` and grok's session record does not confirm ${id} (${why})` : '';
           return { exit: 2, error: `asked for ${id}, but ${used.length ? used.join(', ') : 'no model'} answered${confirm} — not its answer` };
         }
+      }
+      if (xSearch) {
+        const why = grokXRecord(env.sessionId, cwd, grokHome);
+        if (why !== null) return { exit: 4, error: `--x-search is checked after the run against grok's session record, and ${why}, so its answer was not used` };
       }
       const structured = env.structuredOutput;
       answer = schema && structured != null ? (typeof structured === 'string' ? structured : JSON.stringify(structured)) : env.text;
@@ -1713,7 +1767,7 @@ async function main(argv) {
   if (vendor === 'grok') {
     for (const line of String(r.stderr || '').split('\n')) if (/permission required:/.test(line)) process.stderr.write(`ask-model: grok: ${line.trim()}\n`);
   }
-  const got = readAnswer(vendor, m.id, r, schema, { cwd, grokHome: grokCall?.grokHome, family: m.family });
+  const got = readAnswer(vendor, m.id, r, schema, { cwd, grokHome: grokCall?.grokHome, family: m.family, xSearch: mode === 'x-search' });
   const signIn = wall ? agyAfterCall(logFile) : null;
   if (signIn && got.answer !== undefined) {
     got.answer = undefined;
