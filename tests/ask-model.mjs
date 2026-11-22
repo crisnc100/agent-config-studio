@@ -1166,13 +1166,33 @@ console.log('\nask-model: --x-search');
   const xcall = (name) => ({ type: 'backend_tool_call', kind: { tool_type: 'x_search', call_id: 'xs_call-0', input: '{}', name, id: 'xs-0' } });
   const X_LINES = [{ type: 'system', content: 'sys' }, { type: 'user', content: 'q' }, { type: 'reasoning', content: 'r' },
     xcall('x_keyword_search'), xcall('x_semantic_search'), xcall('x_user_search'), xcall('x_thread_fetch'), { type: 'assistant', content: 'a' }];
-  const xsession = ({ home = HOME, defs = '[]', lines = X_LINES, folder = true } = {}) => {
+  // The same calls in updates.jsonl, as grok 1.0.92 streams them: a tool_call naming the XSearch variant, then a
+  // tool_call_update whose rawOutput names the X tool. events.jsonl and signals.json as an X-only run leaves them.
+  const xupdate = (update) => ({ method: 'session/update', params: { sessionId: XSID, update } });
+  const xstream = (name, n) => [
+    xupdate({ sessionUpdate: 'tool_call', toolCallId: `ctc_${n}`, title: 'X search:', kind: 'search', status: 'in_progress', rawInput: { variant: 'XSearch', backend: true }, _meta: { backend: true } }),
+    xupdate({ sessionUpdate: 'tool_call_update', toolCallId: `ctc_${n}`, status: 'completed', title: 'X search:', rawOutput: { call_id: `xs_call-${n}`, input: '{}', name, id: `ctc_${n}` } }),
+  ];
+  const X_UPDATES = [
+    { method: '_x.ai/session/update', params: { sessionId: XSID, update: { sessionUpdate: 'hook_execution', event_name: 'session_start', runs: [] } } },
+    xupdate({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'q' } }),
+    ...xstream('x_keyword_search', 0), ...xstream('x_semantic_search', 1), ...xstream('x_user_search', 2), ...xstream('x_thread_fetch', 3),
+    xupdate({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'a' } }),
+    { method: '_x.ai/session/update', params: { sessionId: XSID, update: { sessionUpdate: 'turn_completed' } } },
+  ];
+  const X_EVENTS = [{ type: 'turn_started', session_id: XSID, turn_number: 0, model_id: IDS.grok }, { type: 'phase_changed' }, { type: 'turn_ended', outcome: 'completed' }];
+  const X_SIGNALS = J({ turnCount: 1, toolCallCount: 0, toolsUsed: ['x_search'] });
+  const jsonl = (ls) => ls.map((l) => (typeof l === 'string' ? l : J(l))).join('\n') + (ls.length ? '\n' : '');
+  const xsession = ({ home = HOME, defs = '[]', lines = X_LINES, updates = X_UPDATES, events = X_EVENTS, signals = X_SIGNALS, folder = true } = {}) => {
     const dir = xdir(home);
     fs.rmSync(path.join(home, '.grok', 'sessions'), { recursive: true, force: true });
     if (!folder) return;
     fs.mkdirSync(dir, { recursive: true });
     if (defs !== false) fs.writeFileSync(path.join(dir, 'tool_definitions.json'), defs);
-    if (lines !== false) fs.writeFileSync(path.join(dir, 'chat_history.jsonl'), lines.map((l) => (typeof l === 'string' ? l : J(l))).join('\n') + '\n');
+    if (lines !== false) fs.writeFileSync(path.join(dir, 'chat_history.jsonl'), typeof lines === 'string' ? lines : jsonl(lines));
+    if (updates !== false) fs.writeFileSync(path.join(dir, 'updates.jsonl'), typeof updates === 'string' ? updates : jsonl(updates));
+    if (events !== false) fs.writeFileSync(path.join(dir, 'events.jsonl'), typeof events === 'string' ? events : jsonl(events));
+    if (signals !== false) fs.writeFileSync(path.join(dir, 'signals.json'), signals);
   };
   const X_ENV = { ...X_INSPECT, STUB_SESSION_ID: XSID };
   const xask = (args, opts = {}) => { if (!opts.keep) xsession({ home: opts.home ?? HOME }); return ask(args, { ...opts, env: { ...X_ENV, ...opts.env } }); };
@@ -1207,6 +1227,23 @@ console.log('\nask-model: --x-search');
     ['a backend call that is not an X tool (open_page)', { lines: [...X_LINES, xcall('open_page')] }, /"open_page"/],
     ['a backend call with no name', { lines: [...X_LINES, { type: 'backend_tool_call', kind: { tool_type: 'web_search' } }] }, /null/],
     ['a line that is not JSON', { lines: [...X_LINES, '{oops'] }, /not JSON/],
+    // A complete conversation: a blank or cut-short history proves nothing.
+    ['an empty chat_history.jsonl', { lines: '' }, /does not end with the assistant's reply/],
+    ['a chat_history.jsonl of blank lines', { lines: '\n\n' }, /does not end with the assistant's reply/],
+    ['a chat_history.jsonl cut before the last assistant line', { lines: X_LINES.slice(0, -1) }, /does not end with the assistant's reply/],
+    ['a chat_history.jsonl with no assistant line at all', { lines: X_LINES.filter((l) => l.type !== 'assistant') }, /does not end with the assistant's reply/],
+    ['an assistant line carrying a client tool call', { lines: [...X_LINES.slice(0, -1), { type: 'assistant', content: 'a', tool_calls: [{ id: 'call-0', name: 'write', arguments: '{}' }] }] }, /"write"/],
+    // Every call the session records, wherever: grok's compaction can leave a call in updates.jsonl alone.
+    ['a client call only in updates.jsonl', { updates: [...X_UPDATES, xupdate({ sessionUpdate: 'tool_call', toolCallId: 'call-9', title: 'write', rawInput: { file_path: 'p', content: 'x' }, _meta: { 'x.ai/tool': { name: 'write', kind: 'write' } } })] }, /updates\.jsonl records a call to "write"/],
+    ['a backend call to open_page only in updates.jsonl', { updates: [...X_UPDATES, ...xstream('open_page', 9)] }, /updates\.jsonl records a call to "open_page"/],
+    ['an X-variant call in updates.jsonl that never names its tool', { updates: [...X_UPDATES, xstream('x_keyword_search', 9)[0]] }, /updates\.jsonl records a call to "\(unnamed\)"/],
+    ['a tool hook in updates.jsonl', { updates: [...X_UPDATES, { method: '_x.ai/session/update', params: { sessionId: XSID, update: { sessionUpdate: 'hook_execution', event_name: 'pre_tool_use', tool_name: 'run_terminal_command', runs: [] } } }] }, /updates\.jsonl records a call to "run_terminal_command"/],
+    ['no updates.jsonl', { updates: false }, /updates\.jsonl could not be read/],
+    ['an updates.jsonl line that is not JSON', { updates: [...X_UPDATES, '{oops'] }, /updates\.jsonl holds a line that is not JSON/],
+    ['a tool started in events.jsonl', { events: [...X_EVENTS, { type: 'tool_started', tool_name: 'write' }] }, /events\.jsonl records a call to "write"/],
+    ['no events.jsonl', { events: false }, /events\.jsonl could not be read/],
+    ['signals.json listing a client tool as used', { signals: J({ toolsUsed: ['x_search', 'write'] }) }, /signals\.json lists "write"/],
+    ['no signals.json', { signals: false }, /signals\.json could not be read/],
   ]) {
     xsession(setup);
     const d = xask(['--family', 'grok', '--x-search', '--json', '--cwd', XC], { keep: true });
