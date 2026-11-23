@@ -10,7 +10,7 @@
       "~/.cursor/hooks.json: one sessionStart entry",
       "~/.agent-config-studio/cursor/hooks/: the launcher, script, Cursor note and path to Node.js"
     ],
-    "undo": "Uninstall removes the installed hook entry and the files it installed. Any other hooks stay in place."
+    "undo": "Uninstall removes the installed hook entry and the files it installed. A hook entry or file you edited after installing is kept and reported. Any other hooks stay in place."
   },
   "workflow": {
     "command": "sessionStart",

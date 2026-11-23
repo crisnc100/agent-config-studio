@@ -1,5 +1,6 @@
 #!/bin/sh
-# Cursor may launch with a bare PATH. Skip relative entries when the pinned Node.js is gone.
+# Cursor may launch with a bare PATH, and a relative entry would resolve against the session's
+# folder, so only absolute entries are kept. node-path pins the installing Node.js; PATH is the fallback.
 kept=; rest=${PATH:-}:
 while [ -n "$rest" ]; do
   entry=${rest%%:*}; rest=${rest#*:}
