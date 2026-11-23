@@ -1,0 +1,48 @@
+{
+  "id": "cursor",
+  "title": "Cursor instructions",
+  "version": "1.0.0",
+  "summary": "Load your working agreement when a Cursor agent session starts.",
+  "explain": {
+    "what": "A Cursor sessionStart hook for the IDE and the agent CLI.",
+    "does": "Each session reads your current ~/.claude/CLAUDE.md and adds a short note on how to follow it in Cursor.",
+    "changes": [
+      "~/.cursor/hooks.json: one sessionStart entry",
+      "~/.agent-config-studio/cursor/hooks/: the launcher, script, Cursor note and path to Node.js"
+    ],
+    "undo": "Uninstall removes the installed hook entry and the files it installed. Any other hooks stay in place."
+  },
+  "workflow": {
+    "command": "sessionStart",
+    "strip": "read your live working agreement and add the Cursor note to the session.",
+    "stripWho": "script"
+  },
+  "requires": {
+    "node": ">=20",
+    "git": false,
+    "modelId": false,
+    "askModel": false,
+    "clis": { "anyOf": [] },
+    "packs": []
+  },
+  "parts": [
+    {
+      "id": "session-context",
+      "title": "Working agreement at session start",
+      "default": true,
+      "kind": "cursor-session",
+      "harnesses": [],
+      "files": [
+        "packs/cursor/session/session-context",
+        "packs/cursor/session/session-context.mjs",
+        "packs/cursor/session/cursor-note.md"
+      ],
+      "explain": {
+        "changes": [
+          "~/.cursor/hooks.json: one sessionStart entry",
+          "~/.agent-config-studio/cursor/hooks/: the launcher, script, Cursor note and path to Node.js"
+        ]
+      }
+    }
+  ]
+}

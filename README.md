@@ -167,7 +167,7 @@ There is no telemetry. What reaches the network, and when:
 
 What it writes:
 
-- **Your CLIs' own homes** (`~/.claude`, `~/.codex`, `~/.agents`, `~/.grok`,
+- **Your CLIs' own homes** (`~/.claude`, `~/.codex`, `~/.agents`, `~/.grok`, `~/.cursor`,
   `~/.config/worktree`): editable regardless of your folder choices.
 - **Inside project folders you marked edit:** the instruction files
   (`CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `.worktrees.conf`). Setting a project
@@ -226,7 +226,7 @@ foot. Every file the studio manages opens from the page that lists it, and
 | Slash commands | `~/.claude/commands/*.md` | Tools → Agents and commands |
 | MCP servers | `.mcp.json` in your edit folders (editable); global and Codex servers read-only | Tools → MCP servers |
 | Auto-memory | `~/.claude/projects/*/memory/*.md` — what the harness wrote itself, one bucket per project scope, `MEMORY.md` included | Memory |
-| Settings & config | `settings.json`, `settings.local.json`, `advisor-config.json`, `investigate-config.json`, `review-config.json`, `~/.codex/config.toml`, `~/.codex/rules/*` | Setup → Settings and hooks |
+| Settings & config | `settings.json`, `settings.local.json`, `advisor-config.json`, `investigate-config.json`, `review-config.json`, `~/.codex/config.toml`, `~/.codex/rules/*`, `~/.cursor/hooks.json`, `~/.cursor/cli-config.json` | Setup → Settings and hooks |
 | Hooks | `~/.claude/hooks/*.sh` | Setup → Settings and hooks |
 | Worktree rules | `~/.config/worktree/defaults.conf`, `repos/*.conf`, and each `.worktrees.conf` in your edit folders | Worktrees (from Packs → Worktree setup) |
 

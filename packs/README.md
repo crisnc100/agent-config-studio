@@ -14,6 +14,7 @@ what it is, what it does day to day, every file and setting it will change, and 
 | `flag` | redacted field reports when the agent workflow goes wrong, and a review that proposes rule fixes from them |
 | `pr` | PR descriptions in your own style, from the branch's real facts, checked before the PR opens |
 | `worktree` | zsh commands for a parked trunk checkout plus one worktree per goal |
+| `cursor` | a session-start hook that reads your live working agreement and adds the Cursor note |
 
 No pack names a model, and none ships one: you choose which model does each job when you install.
 `acs packs install <pack>` asks for every role the pack uses that is not set yet, offering only the
@@ -47,6 +48,7 @@ Where each file lands:
 | `packs/<id>/skills/codex/<skill>/…` | `$CODEX_HOME/skills/<skill>/…` (default `~/.codex`) |
 | `packs/review-gate/runtime/…` | `~/.agent-config-studio/review-gate/…`, once, whichever harnesses use it |
 | `packs/review-gate/instructions/review-gate.md` | a marked block in `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` |
+| `packs/cursor/session/…` | `~/.agent-config-studio/cursor/hooks/…`, with a `sessionStart` entry in `~/.cursor/hooks.json` |
 
 The review gate's shared state lives under `~/.agent-config-studio/`:
 
@@ -77,7 +79,7 @@ Each part is `{ id, title, default, kind, harnesses, files, explain }`:
 
 - `default` — on when you pick the pack. Skills are on by default; anything that changes machine-wide state (the
   agent guard, the push gate, Codex log access) or your global instruction files is off until you turn it on.
-- `kind` — `skill | instructions | guard | push-gate | codex-log-access | worktree`; it decides how ACS installs,
+- `kind` — `skill | instructions | guard | push-gate | codex-log-access | worktree | cursor-session`; it decides how ACS installs,
   checks and removes the part. Manifests never contain commands. A `codex-log-access` part also names
   `writableRoot`, the folder under `~/` it adds to `writable_roots` in each Codex home's config.toml (review-gate's
   review log, flag's field reports).

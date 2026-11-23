@@ -391,6 +391,7 @@ const PK_LINES = {
   handoff: 'Leaves a resume-here note so the next session picks up cleanly.',
   flag: 'Files a short report when the agent workflow itself goes wrong.',
   worktree: 'Shell commands that give each goal its own tidy worktree.',
+  cursor: 'Load your working agreement when a Cursor agent session starts.',
 };
 const PK_WHO = [['role', 'a model from your roles'], ['agent', 'your session agent'], ['you', 'you'], ['script', 'a script']];
 /** Who does a single-step pack, said on its card. */
@@ -659,6 +660,7 @@ function pkRunsLead(wf) {
   const p = el('p', 'pk-sec-lead');
   const cmd = el('code', null, wf.command);
   if (wf.strip && wf.stripWho === 'you') { p.append('Run ', cmd, ' in your terminal.'); return p; }
+  if (wf.strip && wf.stripWho === 'script') { p.append('Runs automatically on ', cmd, '.'); return p; }
   p.append(wf.command === '/pr-review' ? 'When a branch is ready, say ' : 'Say ', cmd, wf.strip ? '.' : '. These steps run in order.');
   return p;
 }
@@ -729,8 +731,7 @@ function pkPartsView(sec, pack, card) {
       act.appendChild(pkBtn('', 'Add…', () => pkPreview(pack, 'install', { parts: [part.id] }, { at: part.id }), busy));
     } else {
       // Update is pack-wide: Restore… previews it with the pack's copy taken, so its preview lists every edited file it replaces.
-      // Only a skill's files: the planner leaves an edited instruction block or worktree file alone even with replace.
-      if (part.kind === 'skill' && pkPartStatuses(pack, part.id).map(pkKind).includes('edited')) act.appendChild(pkBtn('', 'Restore…', () => pkPreview(pack, 'update', { replace: true }, { at: part.id, verb: 'Restore' }), busy));
+      if (['skill', 'cursor-session'].includes(part.kind) && pkPartStatuses(pack, part.id).map(pkKind).includes('edited')) act.appendChild(pkBtn('', 'Restore…', () => pkPreview(pack, 'update', { replace: true }, { at: part.id, verb: 'Restore' }), busy));
       // The last part out is the pack's uninstall.
       const only = installed.length === 1;
       act.appendChild(pkBtn('ghost', 'Remove…', () => pkPreview(pack, 'uninstall', only ? {} : { parts: [part.id] }, { at: part.id, verb: 'Remove' }), busy));
