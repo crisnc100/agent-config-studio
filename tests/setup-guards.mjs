@@ -103,6 +103,8 @@ console.log('setup guards\n');
       ["fs.readFileSync(file, 'utf8')", 'roots.json, the studio\'s own folder registry'],
     ],
     'lib/setup-state.js': [["fs.readFileSync(file, 'utf8')", 'setup.json, the studio\'s own first-run marker']],
+    'lib/harnesses.js': [['fs.readFileSync(fd)', 'harnesses.json, the studio\'s own list of added CLIs; the descriptor is opened with O_NOFOLLOW and must be one regular file under 1 MB']],
+    'lib/model-guide.js': [['fs.readFileSync(entry.note)', 'packs/cursor/session/cursor-note.md in this checkout, the shipped Cursor note used when the installed one is missing']],
     'lib/setup-commands.js': [["fs.readFileSync(file, 'utf8')", 'lib/commands.md, the setup command table in this checkout']],
     'lib/login-path.js': [["fs.readFileSync('/etc/shells', 'utf8')", '/etc/shells, the system list of login shells']],
     'lib/history.js': [["fs.readFileSync(mirrored, 'utf8')", 'the history mirror, the studio\'s own copy (the live side is openUserFile)']],
