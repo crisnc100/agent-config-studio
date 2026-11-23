@@ -181,11 +181,13 @@
       "kind": "guard",
       "harnesses": [
         "claude",
-        "codex"
+        "codex",
+        "cursor"
       ],
       "files": [
         "packs/review-gate/runtime/hooks/agent-guard",
         "packs/review-gate/runtime/hooks/agent-guard.mjs",
+        "packs/review-gate/runtime/hooks/cursor-hooks.mjs",
         "packs/review-gate/runtime/hooks/install-agent-guard.mjs"
       ],
       "explain": {
@@ -195,6 +197,7 @@
           "~/.claude/settings.json: PreToolUse hooks for Bash and Monitor that run the guard (only if ~/.claude exists)",
           "hooks.json in each Codex home: a PreToolUse hook for Bash (~/.codex if it exists, $CODEX_HOME, and any codexHomes listed in ~/.agent-config-studio/review-gate/config.json)",
           "config.toml in each Codex home: a marked trust block (# review-gate agent guard begin … # end) so Codex runs the hook",
+          "~/.cursor/hooks.json: one fail-closed beforeShellExecution hook when ~/.cursor exists or cursor-agent is on PATH",
           "~/.agent-config-studio/review-gate/hooks/agent-guard, agent-guard.mjs and node-path (the guard and the node it runs on)",
           "~/.agent-config-studio/review-gate-agent-guard.json (what was installed, for a clean uninstall)",
           "~/.agent-config-studio/backups/review-gate-guard-<time>/ (a copy of every file before it changed)"

@@ -441,18 +441,35 @@ function inspectShell(text, inherited = new Set(), depth = 0, outputAsCode = fal
   }
   return null
 }
-let raw = ''
+function answerCursor(reason) {
+  const message = `review gate: ${reason}`
+  console.log(JSON.stringify(reason ? { permission: 'deny', user_message: message, agent_message: message } : { permission: 'allow' }))
+}
+
+let raw = '', cursor = false
 try {
   raw = readFileSync(0, 'utf8')
-  const payload = JSON.parse(raw), tool = payload.tool_name ?? payload.toolName
-  if (tool && !['Bash', 'Monitor', 'run_terminal_command'].includes(tool)) process.exit(0)
-  const command = payload.tool_input?.command ?? payload.toolInput?.command
-  let reason
-  if (typeof command === 'string') reason = inspectShell(command)
-  else if (Array.isArray(command) && command.every((word) => typeof word === 'string')) reason = inspectWords(command, new Set(), 0)
-  if (reason) { console.error(`review gate: ${reason}`); process.exitCode = 2 }
+  const payload = JSON.parse(raw)
+  cursor = payload?.hook_event_name === 'beforeShellExecution'
+  if (cursor) {
+    const command = payload.command
+    answerCursor(typeof command === 'string' ? inspectShell(command) : 'Cursor hook payload must contain a command string')
+  } else {
+    const tool = payload.tool_name ?? payload.toolName
+    if (tool && !['Bash', 'Monitor', 'run_terminal_command'].includes(tool)) process.exit(0)
+    const command = payload.tool_input?.command ?? payload.toolInput?.command
+    let reason
+    if (typeof command === 'string') reason = inspectShell(command)
+    else if (Array.isArray(command) && command.every((word) => typeof word === 'string')) reason = inspectWords(command, new Set(), 0)
+    if (reason) { console.error(`review gate: ${reason}`); process.exitCode = 2 }
+  }
 } catch (error) {
-  const blocked = sensitive(raw)
-  console.error(`review gate: ${blocked ? '' : 'warning: '}guard error: ${String(error.message).replace(/[\r\n]/g, ' ')}`)
-  process.exitCode = blocked ? 2 : 0
+  const reason = `guard error: ${String(error.message).replace(/[\r\n]/g, ' ')}`
+  if (cursor || (error instanceof SyntaxError && /[{,]\s*"hook_event_name"\s*:\s*"beforeShellExecution"/.test(raw))) {
+    answerCursor(reason)
+  } else {
+    const blocked = sensitive(raw)
+    console.error(`review gate: ${blocked ? '' : 'warning: '}${reason}`)
+    process.exitCode = blocked ? 2 : 0
+  }
 }
