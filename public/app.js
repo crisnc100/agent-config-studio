@@ -5902,7 +5902,8 @@ function guideRow(t) {
   const note = (text, cls = '') => row.appendChild(el('div', `scope-note guide-note${cls ? ` ${cls}` : ''}`, text));
   if (t.viaClaude) {
     note('The model guide comes from Claude’s file.');
-    note(t.hookInstalled ? 'Session hook installed.' : 'Session hook is not installed. Cursor can’t read this note without it.');
+    if (t.hookUpdate) note(t.hookUpdate, 'guide-warn');
+    else note(t.hookInstalled ? 'Session hook installed.' : 'Session hook is not installed. Cursor can’t read this note without it.');
   }
   const fileStatus = t.viaClaude ? t.noteStatus : t.status;
   if (fileStatus === 'not-installed') note(`${t.label} isn’t installed here. ACS never creates its folder.`);

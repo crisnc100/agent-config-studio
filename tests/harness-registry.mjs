@@ -1,11 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, sandbox, tests } from './fixtures/packs-sandbox.mjs';
+import { bootPage, routesFor, settle } from './fixtures/shell-page.mjs';
 
 const { ok, done } = tests();
 const sb = sandbox('guide-targets', { clis: [], modelId: false, dirs: ['claude', 'codex'] });
 Object.assign(process.env, sb.env);
 const { createApp } = await import('../server.js');
+const { createModelGuide } = await import('../lib/model-guide.js');
+const { hashSnap, snapshot } = await import('../lib/packs-files.js');
 const { server } = createApp();
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 
@@ -36,8 +39,8 @@ const propose = (target, action = 'template') => request(`${route}/propose`, { t
 const accept = (p) => request(`${route}/accept`, { id: p.id });
 const register = (spec, headers) => request(`${route}/targets`, spec, headers);
 const remove = (key) => request(`${route}/targets/remove`, { key });
-const hook = () => {
-  const r = sb.run(path.join(installed, 'session-context'), [], { input: '{}\n' });
+const hook = (extra) => {
+  const r = sb.run(path.join(installed, 'session-context'), [], { input: '{}\n', extra });
   return r.code === 0 ? JSON.parse(r.stdout).additional_context : null;
 };
 
@@ -72,6 +75,40 @@ try {
   ok('the Cursor pack installs in the temp home', pack.code === 0, pack.out);
   const legacy = `${read(claude)}\n\n${shipped}`;
   ok('the installed hook still serves the agreement and installed note with no override', hook() === legacy);
+
+  const script = path.join(installed, 'session-context.mjs');
+  write(script, 'import fs from "node:fs";\n'
+    + 'for await (const chunk of process.stdin) {}\n'
+    + 'const agreement = fs.readFileSync(`${process.env.HOME}/.claude/CLAUDE.md`, "utf8");\n'
+    + 'const note = fs.readFileSync(new URL("cursor-note.md", import.meta.url), "utf8");\n'
+    + 'console.log(JSON.stringify({ additional_context: `${agreement}\\n\\n${note}` }));\n');
+  const packState = sb.state();
+  packState.packs.cursor.parts['session-context'].files[script].hash = hashSnap(snapshot(script));
+  json(path.join(studio, 'packs', 'state.json'), packState);
+  const outdated = await guide();
+  const outdatedCursor = outdated.targets.find((t) => t.key === 'cursor');
+  const offers = createModelGuide({ home: sb.home });
+  ok('a registered legacy hook still serves context and reports that it needs an update', hook() === legacy
+    && outdatedCursor.hookInstalled === false && outdatedCursor.hookUpdate.includes('acs packs update cursor'));
+  ok('a legacy hook suppresses the template offer', outdatedCursor.canTemplate === false && offers.templateOffer('cursor') === null);
+  const refused = await propose('cursor');
+  ok('a direct template request also names the required update', refused.status === 409
+    && refused.data.error.includes('acs packs update cursor') && !fs.existsSync(cursor));
+  const page = await bootPage({ hash: '#models&template=cursor', routes: routesFor({ 'GET /api/model-guide': () => outdated }) });
+  try {
+    await settle(20);
+    const cursorRow = page.$('content').querySelector('.guide-row[data-target="cursor"]');
+    ok('the Cursor row names the update command and offers no template button or preview', !!cursorRow
+      && page.text(cursorRow).includes('acs packs update cursor') && !cursorRow.querySelector('.guide-template')
+      && !page.requests.some((r) => r.path === `${route}/propose`), page.errors.join(' | '));
+  } finally {
+    page.done();
+  }
+  const upgrade = sb.packs(['update', 'cursor', '--yes']);
+  const updatedCursor = await row('cursor');
+  ok('the ordinary pack update restores the template offer', upgrade.code === 0 && updatedCursor.hookInstalled
+    && !updatedCursor.hookUpdate && updatedCursor.canTemplate && offers.templateOffer('cursor') === 'cursor', upgrade.out);
+
   write(path.join(installed, 'cursor-note.md'), 'Keep this installed edit.\n');
   ok('Cursor reports the hook and inherits the guide status', (await row('cursor')).hookInstalled && (await row('cursor')).status === 'current');
   ok('Cursor refuses an independent guide block', (await propose('cursor', 'install')).status === 409);
@@ -79,6 +116,58 @@ try {
   ok('a missing installed note uses the shipped bytes and reports the incomplete hook',
     (await propose('cursor')).data.proposed === shipped && !(await row('cursor')).hookInstalled);
   write(path.join(installed, 'cursor-note.md'), 'Keep this installed edit.\n');
+  const refusedContext = (why) => `${read(claude)}\n\nKeep this installed edit.\nLocal session note skipped because ${why}.\n`;
+  const linkTarget = home('linked-note.md');
+  write(linkTarget, 'This text must stay out of the context.\n');
+  fs.symlinkSync(linkTarget, cursor);
+  ok('a symbolic link falls back to the installed note and explains the refusal', hook() === refusedContext('the path is a symbolic link'));
+  fs.unlinkSync(linkTarget);
+  ok('a dangling symbolic link also explains the refusal', hook() === refusedContext('the path is a symbolic link'));
+  fs.unlinkSync(cursor);
+  fs.mkdirSync(cursor);
+  ok('a directory falls back to the installed note and explains the refusal', hook() === refusedContext('the path is not a regular file'));
+  fs.rmdirSync(cursor);
+  const fifo = sb.run('mkfifo', [cursor]);
+  ok('a named pipe falls back to the installed note without waiting for a writer', fifo.code === 0
+    && hook() === refusedContext('the path is not a regular file'), fifo.out);
+  fs.rmSync(cursor, { force: true });
+  write(linkTarget, 'This text must stay out of the context.\n');
+  fs.linkSync(linkTarget, cursor);
+  ok('a hard link falls back to the installed note and explains the refusal', hook() === refusedContext('the file has hard links'));
+  fs.unlinkSync(cursor);
+
+  // Inject permission and read errors so these cases also run under a privileged test user.
+  const preload = path.join(sb.root, 'note-errors.cjs');
+  write(preload, `
+const fs = require('node:fs');
+const open = fs.openSync;
+const read = fs.readFileSync;
+const note = ${JSON.stringify(cursor)};
+let noteFd;
+fs.openSync = (file, ...args) => {
+  if (file !== note) return open(file, ...args);
+  if (process.env.NOTE_ERROR === 'EACCES') throw Object.assign(new Error('test permission error'), { code: 'EACCES' });
+  noteFd = open(file, ...args);
+  return noteFd;
+};
+fs.readFileSync = (file, ...args) => {
+  if (file === noteFd) {
+    noteFd = undefined;
+    throw Object.assign(new Error('test read error'), { code: 'EIO' });
+  }
+  return read(file, ...args);
+};
+`);
+  write(cursor, 'This text must stay out of the context.\n');
+  const withNoteError = (code) => hook({ NODE_OPTIONS: `--require ${JSON.stringify(preload)}`, NOTE_ERROR: code });
+  ok('permission denied falls back to the installed note and explains the refusal', withNoteError('EACCES') === refusedContext('permission denied'));
+  ok('another read error falls back to the installed note and explains the refusal', withNoteError('EIO') === refusedContext('the file could not be read (EIO)'));
+  fs.unlinkSync(path.join(installed, 'cursor-note.md'));
+  ok('a refused local note still delivers the agreement if the installed note is missing',
+    withNoteError('EACCES') === `${read(claude)}Local session note skipped because permission denied.\n`);
+  write(path.join(installed, 'cursor-note.md'), 'Keep this installed edit.\n');
+  fs.unlinkSync(cursor);
+
   const cursorPreview = await propose('cursor');
   ok('the Cursor preview contains the edited installed note and writes nothing', cursorPreview.status === 200
     && cursorPreview.data.proposed === 'Keep this installed edit.\n' && !fs.existsSync(cursor));
