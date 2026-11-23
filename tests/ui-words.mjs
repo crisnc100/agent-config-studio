@@ -721,7 +721,7 @@ try {
     // Nothing is installed in this home, so a ready pack's card says exactly "Not installed".
     const expected = Object.fromEntries(cards.map((k) => [k.dataset.pack, k.dataset.pack === 'build' ? 'Needs setup' : 'Not installed']));
     ok('a machine with everything: no shared-fixes notice, and each card\'s exact status: "Not installed", nothing needs setup…', !c().querySelector('.pk-shared')
-      && cards.length === 8 && cards.every((k) => status(k) === expected[k.dataset.pack]), cards.map((k) => `${k.dataset.pack}: ${status(k)}`).join(' | '));
+      && cards.length === 9 && cards.every((k) => status(k) === expected[k.dataset.pack]), cards.map((k) => `${k.dataset.pack}: ${status(k)}`).join(' | '));
     ok('…except a pack that needs another pack first: its card "Needs setup"', status(c().querySelector('.pk-card[data-pack="build"]')) === 'Needs setup');
     page.navigate('#packs/build');
     await waitFor(page, () => c().querySelector('.pk-page'));
