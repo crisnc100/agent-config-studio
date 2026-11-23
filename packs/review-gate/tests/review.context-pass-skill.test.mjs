@@ -13,6 +13,7 @@ test('Step 2 resolves the role in order and routes by the tools at hand', () => 
   const step = body('claude').match(/^## Step 2[^\n]*\n([\s\S]*?)(?=^## )/m)?.[1] ?? ''
   assert.match(step, /model-id --role writer --json/)
   assert.match(step, /Pair `use` and `ids` in order/)
+  assert.match(step, /set `id` to its paired model id and `effort` to the output of `model-id --effort <family> --role writer --no-alt`/)
   assert.match(step, /Identify the harness by its available tools\. Claude Code has the Agent tool, Cursor has the Task tool, and Codex has neither/)
   assert.match(step, /use the first one the harness can launch/)
   assert.match(step, /^\| Claude Code \| Agent tool with `model` set to the family \| `codex exec --sandbox workspace-write` \| Unavailable \|$/m)

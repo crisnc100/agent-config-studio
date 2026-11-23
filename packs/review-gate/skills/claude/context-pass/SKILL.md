@@ -37,7 +37,7 @@ It refuses a missing, empty or unknown field and names each one. Fix the brief u
 
 ## Step 2 — The writer
 
-Run `model-id --role writer --json`. Pair `use` and `ids` in order and use the role's `effort`. If `model-id` is missing, run `acs install-model-id` and try again. If the role is unset, stop and point to ACS → Models → Roles or `acs packs install review-gate --set-role writer=<family>[,…]`.
+Run `model-id --role writer --json`. Pair `use` and `ids` in order. If `model-id` is missing, run `acs install-model-id` and try again. If the role is unset, stop and point to ACS → Models → Roles or `acs packs install review-gate --set-role writer=<family>[,…]`.
 
 Identify the harness by its available tools. Claude Code has the Agent tool, Cursor has the Task tool, and Codex has neither. Walk the configured families in order and use the first one the harness can launch.
 
@@ -47,11 +47,13 @@ Identify the harness by its available tools. Claude Code has the Agent tool, Cur
 | Cursor | Task tool with a listed slug for the id | Task tool with a listed slug for the id, or `codex exec` if Cursor lists no slug for that id | Unavailable |
 | Codex | `claude -p` with file tools only | `codex exec --sandbox workspace-write` | Unavailable |
 
+Once you select a family, set `id` to its paired model id and `effort` to the output of `model-id --effort <family> --role writer --no-alt`. Use this effort for the CLI flags and the Cursor slug.
+
 For the Cursor Task tool, use `<id>-<effort>` if listed. Otherwise use another listed slug for the same id and name the effort that ran in the report. For a CLI route, check that the command is available. If no family can be launched, stop, name the role's families, and point to ACS → Models → Roles. Use `ask-model` only for read-only work.
 
 Give every route the same prompt. Include the brief, the writer's rules below word for word, and these instructions. Edit only comments and docs. Make one commit named `Context pass: <one line>`. Never push. Write the docs table and report needed changes to untouchable files.
 
-For a CLI route, write that prompt to `builds/<slug>/context-prompt.md`. Set `id` to the selected model id and `effort` to the role's effort. Run the command for the selected route. The `claude -p` route has file tools only and disables MCP servers.
+For a CLI route, write that prompt to `builds/<slug>/context-prompt.md`. Run the command for the selected route. The `claude -p` route has file tools only and disables MCP servers.
 
 ```bash
 codex exec --skip-git-repo-check --sandbox workspace-write -m "$id" -c model_reasoning_effort="$effort" "$(cat builds/<slug>/context-prompt.md)"
