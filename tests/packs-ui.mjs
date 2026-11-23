@@ -68,7 +68,7 @@ const apply = (id, re) => button(previewOf(id)?.querySelector('.pk-actions'), re
 try {
   console.log('\nthe Packs grid, a pack\'s page, its parts and its Install for');
   {
-    ok('#packs opens the view, with a Packs item in the sidebar', await waitFor(() => page.$('content').querySelectorAll('.pk-card').length === 8)
+    ok('#packs opens the view, with a Packs item in the sidebar', await waitFor(() => page.$('content').querySelectorAll('.pk-card').length === 9)
       && page.eval('S.view') === 'packs' && !!page.$('btn-packs')?.closest('.nav-group') && t(page.$('btn-packs')) === 'Packs', t(page.$('content')).slice(0, 300));
     ok('…and the first status check runs by itself and finishes', await waitFor(statusDone), t(page.$('pk-status')));
     const grok = page.$('content').querySelectorAll('.pk-cli').find((n) => /Grok/.test(t(n)));
@@ -317,9 +317,9 @@ try {
     const block = css.slice(css.indexOf('/* ── packs view'));
     ok('the packs styles use only the theme tokens (no literal colours)', block.length > 200 && !/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i.test(block), (block.match(/#[0-9a-f]{3,8}\b|rgba?\([^)]*\)/i) || [])[0]);
     page.navigate('#packs');
-    await waitFor(() => page.$('content').querySelectorAll('.pk-card').length === 8);
+    await waitFor(() => page.$('content').querySelectorAll('.pk-card').length === 9);
     page.$('btn-theme').click();
-    ok('the theme toggle switches with Packs open, and the grid still renders', page.doc.documentElement.dataset.theme === 'light' && page.$('content').querySelectorAll('.pk-card').length === 8);
+    ok('the theme toggle switches with Packs open, and the grid still renders', page.doc.documentElement.dataset.theme === 'light' && page.$('content').querySelectorAll('.pk-card').length === 9);
     card('review-gate');
     ok('…and so does a pack\'s page', page.doc.documentElement.dataset.theme === 'light' && !!page.$('content').querySelector('.pk-page #pk-sec-files'));
   }

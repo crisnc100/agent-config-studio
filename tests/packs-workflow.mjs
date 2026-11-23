@@ -33,7 +33,7 @@ const rolesIn = (wf) => {
 {
   ok('every pack has a workflow', catalog.every((p) => p.workflow && typeof p.workflow === 'object'), catalog.filter((p) => !p.workflow).map((p) => p.id).join(', '));
   const strips = catalog.filter((p) => p.workflow?.strip).map((p) => p.id).sort();
-  ok('handoff, flag and worktree are one-line strips; every other pack is a diagram of steps', JSON.stringify(strips) === '["flag","handoff","worktree"]'
+  ok('handoff, flag, worktree and cursor are one-line strips; every other pack is a diagram of steps', JSON.stringify(strips) === '["cursor","flag","handoff","worktree"]'
     && catalog.filter((p) => !p.workflow?.strip).every((p) => p.workflow.steps.length >= 3), JSON.stringify(strips));
   const rg = catalog.find((p) => p.id === 'review-gate').workflow;
   ok('review-gate: the /pr-review flow, with no variant tabs (the reviewer tiers are /code-review\'s)', rg.command === '/pr-review' && !rg.variants?.length, JSON.stringify(rg.variants));
@@ -67,8 +67,9 @@ const rolesIn = (wf) => {
   ok('second-opinion "Its take": the advisor and its second opinion, plus the reviewer pool (f1)', so.role === 'advisor' && so.use === 'both' && so.also === 'reviewer', JSON.stringify(so));
   ok('every summary in plain words: no "ACS", no "Frame, Bar and Judge", no "role" jargon', catalog.every((p) => !/\bACS\b|Frame, Bar|\brole\b/.test(p.summary)),
     catalog.filter((p) => /\bACS\b|Frame, Bar|\brole\b/.test(p.summary)).map((p) => `${p.id}: ${p.summary}`).join(' | '));
-  ok('the strips say who does them: handoff and flag your session agent, worktree you', ['handoff', 'flag'].every((id) => catalog.find((p) => p.id === id).workflow.stripWho === 'agent')
-    && catalog.find((p) => p.id === 'worktree').workflow.stripWho === 'you');
+  ok('the strips say who does them: handoff and flag your session agent, worktree you, Cursor a script', ['handoff', 'flag'].every((id) => catalog.find((p) => p.id === id).workflow.stripWho === 'agent')
+    && catalog.find((p) => p.id === 'worktree').workflow.stripWho === 'you'
+    && catalog.find((p) => p.id === 'cursor').workflow.stripWho === 'script');
   for (const id of ['handoff', 'flag', 'worktree']) {
     const s = catalog.find((p) => p.id === id).workflow.strip;
     ok(`${id}: its strip names who does it and that no extra model is called`, typeof s === 'string' && /no extra model/i.test(s), s);

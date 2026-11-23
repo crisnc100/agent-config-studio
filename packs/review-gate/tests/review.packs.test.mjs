@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 
 const PACKS = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PACKAGE = resolve(PACKS, '..')
-const IDS = ['review-gate', 'build', 'advisor', 'second-opinion', 'handoff', 'flag', 'pr', 'worktree']
+const IDS = ['review-gate', 'build', 'advisor', 'second-opinion', 'handoff', 'flag', 'pr', 'worktree', 'cursor']
 const KINDS = ['skill', 'instructions', 'guard', 'push-gate', 'codex-log-access', 'worktree']
 const HARNESSES = ['claude', 'codex']
 const manifest = (id) => JSON.parse(readFileSync(join(PACKS, id, 'pack.json'), 'utf8'))
@@ -27,7 +27,7 @@ function shipped(dir = PACKS) {
   })
 }
 
-test('the eight packs exist, each with a pack.json whose id matches its folder', () => {
+test('the nine packs exist, each with a pack.json whose id matches its folder', () => {
   const folders = readdirSync(PACKS).filter((name) => existsSync(join(PACKS, name, 'pack.json'))).sort()
   assert.deepEqual(folders, [...IDS].sort())
   for (const id of IDS) assert.equal(manifest(id).id, id)
@@ -78,7 +78,7 @@ test('every part has its fields, a known kind, existing files and its own non-em
       if (part.kind === 'codex-log-access') assert.match(part.writableRoot, /^~\/\.agent-config-studio\/[a-z-]+$/, `${where}: writableRoot`)
       assert.ok(text(part.id) && text(part.title), where)
       assert.equal(typeof part.default, 'boolean', where)
-      assert.ok(KINDS.includes(part.kind), `${where}: kind ${part.kind}`)
+      assert.ok((id === 'cursor' ? ['cursor-session'] : KINDS).includes(part.kind), `${where}: kind ${part.kind}`)
       assert.ok(Array.isArray(part.harnesses) && part.harnesses.every((h) => HARNESSES.includes(h)), where)
       assert.ok(Array.isArray(part.files), where)
       for (const file of part.files) assert.ok(existsSync(join(PACKAGE, file)) || lstatSync(join(PACKAGE, file)).isSymbolicLink(), `${where}: ${file}`)

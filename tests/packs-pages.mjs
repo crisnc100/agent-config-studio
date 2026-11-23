@@ -45,8 +45,9 @@ const ONE_LINERS = {
   handoff: 'Leaves a resume-here note so the next session picks up cleanly.',
   flag: 'Files a short report when the agent workflow itself goes wrong.',
   worktree: 'Shell commands that give each goal its own tidy worktree.',
+  cursor: 'Load your working agreement when a Cursor agent session starts.',
 };
-const SOLO = { handoff: 'Your session agent', flag: 'Your session agent', worktree: 'You run them' };
+const SOLO = { handoff: 'Your session agent', flag: 'Your session agent', worktree: 'You run them', cursor: 'A script' };
 
 function stub(view, extra = {}) {
   const state = { view, statusAsks: [], plans: [], applies: [] };
@@ -69,10 +70,10 @@ try {
     const page = await bootPage({ routes: st.routes, hash: '#packs' });
     const c = () => page.$('content');
     const t = (n) => (n ? page.text(n) : '');
-    await waitFor(() => c().querySelectorAll('.pk-card').length === 8);
+    await waitFor(() => c().querySelectorAll('.pk-card').length === 9);
     await settle(10);
     const card = (id) => c().querySelector(`.pk-card[data-pack="${id}"]`);
-    ok('#packs shows eight cards, one per pack, in the catalog order', page.eval('S.view') === 'packs'
+    ok('#packs shows nine cards, one per pack, in the catalog order', page.eval('S.view') === 'packs'
       && JSON.stringify(c().querySelectorAll('.pk-card').map((k) => k.dataset.pack)) === JSON.stringify(catalog.map((p) => p.id)), c().querySelectorAll('.pk-card').map((k) => k.dataset.pack).join(' '));
     ok('each card: its name and its command', catalog.every((p) => t(card(p.id).querySelector('.pk-card-name')) === p.title && t(card(p.id).querySelector('.pk-card-cmd')) === p.workflow.command),
       catalog.map((p) => `${t(card(p.id).querySelector('.pk-card-name'))} ${t(card(p.id).querySelector('.pk-card-cmd'))}`).join(' | '));
@@ -83,7 +84,7 @@ try {
       && t(card(p.id).querySelector('.pk-card-steps')).endsWith(`${p.workflow.steps.length} steps`)), catalog.map((p) => `${p.id}:${segs(p.id).join(',')} ${t(card(p.id).querySelector('.pk-card-steps'))}`).join(' | '));
     ok('…the review gate\'s reads role ×6, script ×3', segs('review-gate').join(',') === 'role,role,role,role,role,role,script,script,script', segs('review-gate').join(','));
     ok('a single-step pack: one segment and who does it', Object.entries(SOLO).every(([id, who]) => segs(id).length === 1 && t(card(id).querySelector('.pk-card-steps')) === who)
-      && segs('handoff')[0] === 'agent' && segs('worktree')[0] === 'you', Object.keys(SOLO).map((id) => `${segs(id)} ${t(card(id).querySelector('.pk-card-steps'))}`).join(' | '));
+      && segs('handoff')[0] === 'agent' && segs('worktree')[0] === 'you' && segs('cursor')[0] === 'script', Object.keys(SOLO).map((id) => `${segs(id)} ${t(card(id).querySelector('.pk-card-steps'))}`).join(' | '));
     const status = (id) => t(card(id).querySelector('.pk-st'));
     ok('status: Installed, Not installed and Update ready', status('build') === 'Installed' && status('handoff') === 'Not installed' && status('review-gate') === 'Update ready',
       catalog.map((p) => `${p.id}: ${status(p.id)}`).join(' | '));
@@ -111,7 +112,7 @@ try {
     const page = await bootPage({ routes: st.routes, hash: '#packs' });
     const c = () => page.$('content');
     const t = (n) => (n ? page.text(n) : '');
-    await waitFor(() => c().querySelectorAll('.pk-card').length === 8);
+    await waitFor(() => c().querySelectorAll('.pk-card').length === 9);
     c().querySelector('.pk-card[data-pack="build"]').click();
     await settle(10);
     ok('clicking a card opens #packs/<id>', page.eval('S.view') === 'pack' && page.location.hash === '#packs/build' && t(c().querySelector('.pk-page h1')) === 'Build loop', `${page.eval('S.view')} ${page.location.hash}`);
@@ -122,12 +123,12 @@ try {
     ok('the hashchange its own navigation fires changes nothing', page.eval('S.view') === 'pack' && t(c().querySelector('.pk-page h1')) === 'Build loop');
     c().querySelectorAll('button').find((b) => t(b) === 'Skill packs').click();
     await settle(10);
-    ok('the back button returns to the grid', page.eval('S.view') === 'packs' && page.location.hash === '#packs' && c().querySelectorAll('.pk-card').length === 8);
+    ok('the back button returns to the grid', page.eval('S.view') === 'packs' && page.location.hash === '#packs' && c().querySelectorAll('.pk-card').length === 9);
     c().querySelector('.pk-card[data-pack="advisor"]').click();
     await settle(10);
     page.$('btn-packs').click();
     await settle(10);
-    ok('the sidebar\'s Packs returns to the grid from a pack page', page.eval('S.view') === 'packs' && page.location.hash === '#packs' && c().querySelectorAll('.pk-card').length === 8);
+    ok('the sidebar\'s Packs returns to the grid from a pack page', page.eval('S.view') === 'packs' && page.location.hash === '#packs' && c().querySelectorAll('.pk-card').length === 9);
     page.navigate('#packs/flag');
     await settle(10);
     ok('a link to #packs/<id> opens that pack', page.eval('S.view') === 'pack' && t(c().querySelector('.pk-page h1')) === 'Flag');
@@ -151,7 +152,7 @@ try {
       && !nope.$('content').querySelector('.pk-card, .pk-sec-block'), nope.text(nope.$('content')).slice(0, 200));
     nope.$('content').querySelectorAll('button').find((b) => nope.text(b) === 'Skill packs').click();
     await settle(10);
-    ok('…with a way back to the grid', nope.eval('S.view') === 'packs' && nope.$('content').querySelectorAll('.pk-card').length === 8);
+    ok('…with a way back to the grid', nope.eval('S.view') === 'packs' && nope.$('content').querySelectorAll('.pk-card').length === 9);
     ok('…and no page errors', nope.errors.length === 0, nope.errors.join(' | '));
     nope.done();
   }
@@ -161,7 +162,7 @@ try {
     const st = stub(installedAll(base));
     const page = await bootPage({ routes: st.routes, hash: '#packs' });
     const c = () => page.$('content');
-    await waitFor(() => c().querySelectorAll('.pk-card').length === 8);
+    await waitFor(() => c().querySelectorAll('.pk-card').length === 9);
     c().querySelector('.pk-card[data-pack="handoff"]').querySelector('button').click();
     await waitFor(() => c().querySelector('.pk-preview .pk-apply'));
     ok('Install on the card opens #packs/handoff with its install preview', page.location.hash === '#packs/handoff' && !!c().querySelector('.pk-page .pk-preview-install')
@@ -224,7 +225,7 @@ try {
     const page = await bootPage({ routes: stub(v).routes, hash: '#packs' });
     const c = () => page.$('content');
     const t = (n) => (n ? page.text(n) : '');
-    await waitFor(() => c().querySelectorAll('.pk-card').length === 8);
+    await waitFor(() => c().querySelectorAll('.pk-card').length === 9);
     const n = c().querySelector('.pk-shared');
     ok('one line above the grid: "1 thing to set up before packs run"', !!n && /^1 thing to set up before packs run/.test(t(n)), t(n));
     const show = n.querySelectorAll('button').find((b) => t(b) === 'Show me');
