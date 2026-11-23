@@ -63,7 +63,9 @@ The turn-count part counts finished agent turns for the Usage page. Cursor runs 
 when a session ends, and the launcher runs `turn-count.mjs` the same way (`node-path`, then `node` on PATH). The script
 appends one line to `~/.agent-config-studio/cursor/turns.jsonl`: `{ts, event, conversation_id, generation_id, model,
 status}`, with the model taken from `model_id` when Cursor sends it and from `model` otherwise. Nothing else is
-written: no prompts, replies, email or paths. A payload missing any of those fields is skipped. A write that takes the file
+written: no prompts, replies, email or paths. `ts` is the time of the write and `event` is Cursor's `hook_event_name`;
+`status` is Cursor's `status` on `stop` and its `final_status`, else `reason`, on `sessionEnd`. Only `stop` and
+`sessionEnd` are logged, and one missing a conversation id, generation id, model or status is skipped. A write that takes the file
 past 1 MB also drops lines older than 30 days. The script always prints `{}` and exits 0, and any failure is
 silent, so counting never slows or stops Cursor. Install adds one `{ "command": … }` entry to each of `hooks.stop` and
 `hooks.sessionEnd`, and update, status, `--replace` and uninstall treat them like the `sessionStart` entry
