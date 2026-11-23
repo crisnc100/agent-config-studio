@@ -235,6 +235,7 @@ packs/review-gate/tests/review.basemerge.test.mjs     ci:packs ci-only
 packs/review-gate/tests/review.behavior.test.mjs      ci:packs ci-only
 packs/review-gate/tests/review.close.test.mjs         manual                        # its waiver checks open a terminal with BSD `script -q /dev/null <cmd>` (line 61), which Linux's util-linux script rejects; 5 tests fail on a Linux runner
 packs/review-gate/tests/review.config-trust.test.mjs  ci:packs ci-only
+packs/review-gate/tests/review.context-pass-skill.test.mjs ci:packs ci-only
 packs/review-gate/tests/review.context-pass.test.mjs  ci:packs ci-only
 packs/review-gate/tests/review.context.test.mjs       ci:packs ci-only
 packs/review-gate/tests/review.coverage.test.mjs      ci:packs ci-only
