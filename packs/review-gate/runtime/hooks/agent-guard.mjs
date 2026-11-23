@@ -446,13 +446,14 @@ function answerCursor(reason) {
   console.log(JSON.stringify(reason ? { permission: 'deny', user_message: message, agent_message: message } : { permission: 'allow' }))
 }
 
-let raw = '', cursor = false
+let raw = '', cursor = process.argv.includes('--cursor', 2)
 try {
   raw = readFileSync(0, 'utf8')
   const payload = JSON.parse(raw)
-  cursor = payload?.hook_event_name === 'beforeShellExecution'
+  cursor ||= payload?.hook_event_name === 'beforeShellExecution'
   if (cursor) {
-    const command = payload.command
+    const isObject = payload !== null && typeof payload === 'object' && !Array.isArray(payload)
+    const command = isObject && Object.hasOwn(payload, 'command') ? payload.command : undefined
     answerCursor(typeof command === 'string' ? inspectShell(command) : 'Cursor hook payload must contain a command string')
   } else {
     const tool = payload.tool_name ?? payload.toolName

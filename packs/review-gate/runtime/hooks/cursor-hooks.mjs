@@ -16,10 +16,13 @@ export function readCursorConfig(path, bytes, event) {
 
 export const shellCommand = (path) => /^[a-zA-Z0-9_./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`
 
+export const cursorCommand = (command) => `${command} --cursor`
+
 // A matcher or timeout can belong to another hook that calls the same launcher.
-export const isCursorGuardEntry = (entry, command) => entry?.command === command
+export const isCursorGuardEntry = (entry, command) => (entry?.command === command || entry?.command === cursorCommand(command))
   && Object.keys(entry).every((key) => key === 'command' || key === 'failClosed')
 
-export const cursorGuardActive = (doc, command) => doc.hooks?.[CURSOR_SHELL_EVENT]?.some(
-  (entry) => isCursorGuardEntry(entry, command) && entry.failClosed === true,
-) ?? false
+export function cursorGuardActive(doc, command) {
+  const entries = doc.hooks?.[CURSOR_SHELL_EVENT]?.filter((entry) => isCursorGuardEntry(entry, command))
+  return entries?.length === 1 && entries[0].command === cursorCommand(command) && entries[0].failClosed === true
+}

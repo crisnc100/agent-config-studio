@@ -4,6 +4,7 @@ import { ROOT, sandbox, tests } from './fixtures/packs-sandbox.mjs';
 import { catalogView, parseRequest } from '../lib/packs-routes.js';
 import { hashSnap, snapshot } from '../lib/packs-files.js';
 import { loadCatalog, machine, planInstall } from '../lib/packs.js';
+import { shellCommand } from '../packs/review-gate/runtime/hooks/cursor-hooks.mjs';
 import { assertRealHomesUnchanged, snapshotRealHomes } from './real-home.mjs';
 
 const realBefore = snapshotRealHomes();
@@ -26,7 +27,8 @@ const denied = (r, reason) => {
 
 {
   const sb = sandbox('cursor-guard-payload', { clis: [], modelId: false });
-  const run = (input) => sb.run('/bin/sh', [path.join(source, 'agent-guard')], { input });
+  const launcher = path.join(source, 'agent-guard');
+  const run = (input, ...args) => sb.run('/bin/sh', [launcher, ...args], { input });
   const allowed = run(payload({ command: 'git status' }));
   ok('Cursor gets one explicit allow for a readable command', allowed.code === 0 && allowed.stderr === ''
     && allowed.stdout === '{"permission":"allow"}\n', allowed.out);
@@ -41,6 +43,22 @@ const denied = (r, reason) => {
     const result = run(input);
     ok(`Cursor is denied for ${label} input`, denied(result, reason), result.out);
   }
+  const explicitAllow = run(JSON.stringify({ command: 'git status' }), '--cursor');
+  ok('--cursor allows a readable command without an event name', explicitAllow.code === 0 && explicitAllow.stderr === ''
+    && explicitAllow.stdout === '{"permission":"allow"}\n', explicitAllow.out);
+  for (const [label, input, reason] of [
+    ['blocked command without an event name', JSON.stringify({ command: 'git push --no-verify --dry-run' }), /agents may not run git push --no-verify/],
+    ['invalid JSON', '{', /guard error/],
+    ['empty stdin', '', /guard error/],
+    ['empty object', '{}', /command string/],
+    ['non-object payload', 'null', /command string/],
+    ['non-string command', '{"command":42}', /command string/],
+  ]) {
+    const result = run(input, '--cursor');
+    ok(`--cursor denies ${label}`, denied(result, reason), result.out);
+  }
+  const unreadable = sb.run('/bin/sh', ['-c', 'exec "$@" < .', 'sh', launcher, '--cursor']);
+  ok('--cursor denies unreadable stdin', denied(unreadable, /guard error/), unreadable.out);
   const noNode = path.join(sb.root, 'no-node');
   fs.mkdirSync(noNode);
   for (const [name, bin] of [['cat', '/bin/cat'], ['grep', '/usr/bin/grep']]) fs.symlinkSync(bin, path.join(noNode, name));
@@ -48,6 +66,8 @@ const denied = (r, reason) => {
     input: payload({ command: 'git status' }), extra: { PATH: noNode },
   });
   ok('the launcher denies Cursor when Node cannot start', denied(unavailable, /node could not start/), unavailable.out);
+  const unavailableExplicit = sb.run('/bin/sh', [launcher, '--cursor'], { input: '', extra: { PATH: noNode } });
+  ok('the launcher denies --cursor without Node or an event name', denied(unavailableExplicit, /node could not start/), unavailableExplicit.out);
   const reordered = sb.run('/bin/sh', [path.join(source, 'agent-guard')], {
     input: '{ "command": "hook_event_name", "hook_event_name":\n "beforeShellExecution" }', extra: { PATH: noNode },
   });
@@ -73,7 +93,8 @@ const denied = (r, reason) => {
     && /Cursor.*missing/.test(missing.stdout) && /install-agent-guard\.mjs.*install/.test(missing.stdout), missing.out);
   const added = invoke('install');
   const expected = structuredClone(original);
-  expected.hooks.beforeShellExecution.push({ command: path.join(source, 'agent-guard'), failClosed: true });
+  const command = shellCommand(path.join(source, 'agent-guard'));
+  expected.hooks.beforeShellExecution.push({ command: `${command} --cursor`, failClosed: true });
   ok('standalone install appends one fail-closed entry beside every existing hook', added.code === 0
     && JSON.stringify(read(file)) === JSON.stringify(expected), added.out);
   const installed = invoke('status');
@@ -96,18 +117,25 @@ const denied = (r, reason) => {
       && /JSON|beforeShellExecution/.test(result.stderr) && fs.readFileSync(file, 'utf8') === invalid, result.out);
   }
   const prior = { version: 1, hooks: { beforeShellExecution: [
-    { command: path.join(source, 'agent-guard'), failClosed: false },
-    { command: path.join(source, 'agent-guard'), matcher: 'git', timeout: 10 },
+    { command, failClosed: true },
+    { command, matcher: 'git', timeout: 10 },
   ] } };
   write(file, prior);
+  const legacy = invoke('status');
+  ok('standalone status reports the old launcher entry as needing repair', legacy.code === 0
+    && /Cursor.*repair with:/.test(legacy.stdout), legacy.out);
   const fixed = invoke('install');
   const repaired = read(file).hooks.beforeShellExecution;
-  ok('standalone install repairs a fail-open entry and preserves a user hook using the same launcher', fixed.code === 0
-    && repaired.length === 2 && repaired[0].failClosed === true
+  ok('standalone install repairs the old entry in place and preserves a user hook using the same launcher', fixed.code === 0
+    && repaired.length === 2 && repaired[0].command === `${command} --cursor` && repaired[0].failClosed === true
     && JSON.stringify(repaired[1]) === JSON.stringify(prior.hooks.beforeShellExecution[1]), fixed.out);
   const cleaned = invoke('uninstall');
   ok('uninstall removes the repaired entry and keeps the user hook', cleaned.code === 0
     && JSON.stringify(read(file).hooks.beforeShellExecution) === JSON.stringify(prior.hooks.beforeShellExecution.slice(1)), cleaned.out);
+  write(file, prior);
+  const legacyRemoved = invoke('uninstall');
+  ok('uninstall also removes an old entry before repair and keeps the user hook', legacyRemoved.code === 0
+    && JSON.stringify(read(file).hooks.beforeShellExecution) === JSON.stringify(prior.hooks.beforeShellExecution.slice(1)), legacyRemoved.out);
 }
 
 {
@@ -132,11 +160,11 @@ const denied = (r, reason) => {
   const result = sb.packs([...install, '--yes']);
   ok('the pack creates a version 1 Cursor file with the installed launcher', result.code === 0
     && fs.existsSync(file) && JSON.stringify(read(file)) === JSON.stringify({ version: 1, hooks: {
-      beforeShellExecution: [{ command: guard(sb.home), failClosed: true }],
+      beforeShellExecution: [{ command: `${guard(sb.home)} --cursor`, failClosed: true }],
     } }), result.out);
   if (fs.existsSync(file)) {
     const run = sb.run('/bin/sh', ['-c', read(file).hooks.beforeShellExecution[0].command], {
-      input: payload({ command: 'git push --no-verify --dry-run' }),
+      input: JSON.stringify({ command: 'git push --no-verify --dry-run' }),
     });
     ok('Cursor can execute the installed launcher', denied(run, /agents may not run git push --no-verify/), run.out);
     const instructions = sb.packs(['install', 'cursor', '--yes']);
@@ -152,6 +180,16 @@ const denied = (r, reason) => {
     const repaired = sb.packs(['update', 'review-gate', '--replace', '--yes']);
     ok('the suggested repair restores failClosed without adding a duplicate', repaired.code === 0
       && read(file).hooks.beforeShellExecution.length === 1 && read(file).hooks.beforeShellExecution[0].failClosed === true, repaired.out);
+    const legacy = read(file);
+    legacy.hooks.beforeShellExecution[0].command = guard(sb.home);
+    write(file, legacy);
+    const legacyStatus = partStatus();
+    ok('pack status reports the old launcher entry as needing repair', legacyStatus?.harness?.cursor === 'not installed'
+      && legacyStatus.details.some((d) => d.includes('acs packs update review-gate --replace')), JSON.stringify(legacyStatus));
+    const migrated = sb.packs(['update', 'review-gate', '--replace', '--yes']);
+    legacy.hooks.beforeShellExecution[0].command += ' --cursor';
+    ok('pack repair replaces the old launcher entry in place without adding a duplicate', migrated.code === 0
+      && JSON.stringify(read(file)) === JSON.stringify(legacy), migrated.out);
     const removal = sb.json([...uninstall, '--dry-run']);
     ok('pack uninstall previews touching the Cursor config', removal.data?.preview.some((r) => r.path === file), removal.out);
     const removed = sb.packs([...uninstall, '--yes']);

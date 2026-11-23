@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { CURSOR_SHELL_EVENT, cursorGuardActive, isCursorGuardEntry, readCursorConfig, shellCommand } from './cursor-hooks.mjs'
+import { CURSOR_SHELL_EVENT, cursorCommand, cursorGuardActive, isCursorGuardEntry, readCursorConfig, shellCommand } from './cursor-hooks.mjs'
 
 const BEGIN = '# review-gate agent guard begin', END = '# end'
 const launcher = join(dirname(fileURLToPath(import.meta.url)), 'agent-guard')
@@ -47,9 +47,13 @@ function addCursorGuard(doc) {
   if (cursorGuardActive(doc, command)) return false
   doc.hooks ??= {}
   const entries = doc.hooks[CURSOR_SHELL_EVENT] ??= []
-  const entry = entries.find((entry) => isCursorGuardEntry(entry, command))
-  if (entry) entry.failClosed = true
-  else entries.push({ command, failClosed: true })
+  const at = entries.findIndex((entry) => isCursorGuardEntry(entry, command))
+  const desired = { command: cursorCommand(command), failClosed: true }
+  if (at === -1) entries.push(desired)
+  else {
+    entries[at] = desired
+    doc.hooks[CURSOR_SHELL_EVENT] = entries.filter((entry, index) => index === at || !isCursorGuardEntry(entry, command))
+  }
   return true
 }
 function removeCursorGuard(doc) {
@@ -296,7 +300,7 @@ try {
     }
     const remember = (file) => {
       const saved = state.files[file.path]
-      // A repaired fail-open entry must be removed on uninstall, even if it predated the installer.
+      // A repaired entry must be removed on uninstall, even if it predated the installer.
       const repaired = !saved && file.kinds.has('cursor') && hasCursorGuard(readCursorHooks(file.path, file.before))
       state.files[file.path] = { before: saved ? saved.before : file.before, after: snapshot(file.path),
         kind: [...file.kinds].find((kind) => kind !== 'claude') ?? 'claude',

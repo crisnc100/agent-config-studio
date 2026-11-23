@@ -11,10 +11,15 @@ node=
 if [ -r "$folder/node-path" ]; then IFS= read -r node < "$folder/node-path" || :; fi
 { [ -n "$node" ] && [ -x "$node" ]; } || node=node
 if command -v "$node" >/dev/null 2>&1 && "$node" --version >/dev/null 2>&1; then
-  exec "$node" "$folder/agent-guard.mjs"
+  exec "$node" "$folder/agent-guard.mjs" "$@"
 fi
-input=$(cat)
 # Cursor needs an explicit denial even for a command the fallback cannot inspect.
+deny_cursor() {
+  printf '%s\n' '{"permission":"deny","user_message":"review gate: node could not start","agent_message":"review gate: node could not start"}'
+  exit 0
+}
+[ "${1-}" = --cursor ] && deny_cursor
+input=$(cat)
 event=$input
 while :; do
   case $event in
@@ -27,9 +32,7 @@ while :; do
       event=${event#:}
       event=${event#"${event%%[![:space:]]*}"}
       case $event in
-        '"beforeShellExecution"'*)
-          printf '%s\n' '{"permission":"deny","user_message":"review gate: node could not start","agent_message":"review gate: node could not start"}'
-          exit 0 ;;
+        '"beforeShellExecution"'*) deny_cursor ;;
       esac ;;
   esac
 done
