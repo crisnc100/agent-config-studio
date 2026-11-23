@@ -52,10 +52,14 @@ Where each file lands:
 | `packs/cursor/turns/…` | `~/.agent-config-studio/cursor/hooks/turns/…`, with `stop` and `sessionEnd` entries in `~/.cursor/hooks.json` |
 
 The Cursor hook is a small launcher that Cursor runs at the start of each session. It runs `session-context.mjs` on the node that installed it (`node-path`; `node` on PATH when that is gone), which
-prints your live `~/.claude/CLAUDE.md` followed by `cursor-note.md` as the session's `additional_context`. If node or
-either file is unusable it prints `{}` and the session starts without them. Install adds one `{ "command": … }` entry
+prints your live `~/.claude/CLAUDE.md` followed by a note as the session's `additional_context`. The note is
+`~/.cursor/acs-note.md` when that file is present (Models → Model guide creates it), else the installed `cursor-note.md`.
+A local note it refuses (a symbolic link, not a regular file, hard-linked or unreadable) is skipped in favor of the
+installed note, and one line at the end of the context says so; the agreement is never dropped for it. If node or
+`CLAUDE.md` is unusable, or there is no local note and the installed one is unusable, it prints `{}` and the session
+starts without them. Install adds one `{ "command": … }` entry
 to `hooks.sessionStart` in `~/.cursor/hooks.json` (creating the file when absent, keeping every other entry, and
-refusing a file that is not valid JSON of the expected shape). `acs packs update cursor` refreshes the files;
+refusing a file that is not valid JSON of the expected shape). `acs packs update cursor` refreshes the files and leaves `~/.cursor/acs-note.md` alone;
 `--replace` also puts back a deleted hook entry and the launcher's execute bit. Uninstall removes only an entry
 that holds nothing but that command.
 

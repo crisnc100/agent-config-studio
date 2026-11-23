@@ -761,6 +761,9 @@ export function createApp(opts = {}) {
    * home is always derived server-side from the generated id: taking a path
    * from the request body would turn this into a directory-creation primitive.
    * The harness is checked against a fixed list in createSeat.
+   *
+   * The first seat of a vendor whose CLI is a model guide target with no file
+   * yet comes back with `guideTemplate`, that target's key.
    */
   'POST /api/usage/seats': async (req) => {
     const { vendor, label, harness } = await readBody(req);
@@ -1408,9 +1411,11 @@ export function createApp(opts = {}) {
   },
 
   /**
-   * The model guide block in each harness's global instruction file
+   * The model guide block in each CLI's global instruction file
    * (lib/model-guide.js). Strict same-origin, GET included; a target is a
    * key, never a path, and nothing is written except an accepted proposal.
+   * The only other writes are adding and removing a user CLI in the list
+   * lib/harnesses.js keeps.
    */
   'GET /api/model-guide': async (req) => {
     requireStrict(req);

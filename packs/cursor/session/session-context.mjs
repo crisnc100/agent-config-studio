@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+// ACS reads the next line to tell an installed hook that serves ~/.cursor/acs-note.md from an older one; keep it.
 // acs:cursor-local-note
 
 // O_NONBLOCK and the regular-file check keep a FIFO or device at either path from hanging session start.
@@ -24,10 +25,13 @@ function refusalReason(error) {
   return error.code ? `the file could not be read (${error.code})` : error.message.replace(/\s+/g, ' ');
 }
 
+// Any failure leaves {}: the session starts without the agreement instead of failing.
 let output = {};
 try {
   for await (const chunk of process.stdin) { /* Cursor expects the hook to wait for EOF. */ }
   const agreement = readText(path.join(os.homedir(), '.claude', 'CLAUDE.md'));
+  // ~/.cursor/acs-note.md replaces the installed note when it is there. One that is refused (a link, not a
+  // regular file, a hard link, unreadable) is skipped with a line saying so; the agreement is still served.
   let note;
   let skipped;
   try { note = readText(path.join(os.homedir(), '.cursor', 'acs-note.md'), true); }
