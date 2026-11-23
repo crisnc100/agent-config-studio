@@ -47,7 +47,7 @@ Identify the harness by its available tools. Claude Code has the Agent tool, Cur
 | Cursor | Task tool with a listed slug for the id | Task tool with a listed slug for the id, or `codex exec` if Cursor lists no slug for that id | Unavailable |
 | Codex | `claude -p` with file tools only | `codex exec --sandbox workspace-write` | Unavailable |
 
-Once you select a family, set `id` to its paired model id and `effort` to the output of `model-id --effort <family> --role writer --no-alt`. Use this effort for the CLI flags and the Cursor slug.
+Once you select a family, set `id` to its paired model id and `effort` to the output of `model-id --effort <family> --role writer --no-alt`. Use this effort for the CLI flags and the Cursor slug. If it prints nothing, the CLI lines leave the effort flag out and the CLI default runs.
 
 For the Cursor Task tool, use `<id>-<effort>` if listed. Otherwise use another listed slug for the same id and name the effort that ran in the report. For a CLI route, check that the command is available. If no family can be launched, stop, name the role's families, and point to ACS → Models → Roles. Use `ask-model` only for read-only work.
 
@@ -56,11 +56,11 @@ Give every route the same prompt. Include the brief, the writer's rules below wo
 For a CLI route, write that prompt to `builds/<slug>/context-prompt.md`. Run the command for the selected route. The `claude -p` route has file tools only and disables MCP servers.
 
 ```bash
-codex exec --skip-git-repo-check --sandbox workspace-write -m "$id" -c model_reasoning_effort="$effort" "$(cat builds/<slug>/context-prompt.md)"
+codex exec --skip-git-repo-check --sandbox workspace-write -m "$id" ${effort:+-c} ${effort:+model_reasoning_effort=$effort} "$(cat builds/<slug>/context-prompt.md)"
 ```
 
 ```bash
-claude -p "$(cat builds/<slug>/context-prompt.md)" --model "$id" --effort "$effort" --tools Read,Edit,Write,Grep,Glob --permission-mode acceptEdits --strict-mcp-config
+claude -p "$(cat builds/<slug>/context-prompt.md)" --model "$id" ${effort:+--effort} $effort --tools Read,Edit,Write,Grep,Glob --permission-mode acceptEdits --strict-mcp-config
 ```
 
 If the writer lacks a shell or cannot write git metadata, have it leave its edits uncommitted. The orchestrator commits the writer's edits as `Context pass: <one line>` before Step 3.
