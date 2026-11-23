@@ -180,8 +180,10 @@ What it writes:
   sharing `~/.codex`'s config, skills, rules and plugins by symlink.
 - **When you turn on Terminal shortcuts in Usage:** a generated file in
   `~/.agent-config-studio`, plus one `source` line appended to `~/.zshenv`.
-- **When you install the Cursor pack:** one `sessionStart` entry in
-  `~/.cursor/hooks.json` and the hook's files in `~/.agent-config-studio/cursor/hooks`.
+- **When you install the Cursor pack:** `sessionStart`, `stop` and `sessionEnd`
+  entries in `~/.cursor/hooks.json`, the hooks' files in
+  `~/.agent-config-studio/cursor/hooks`, and a turn log,
+  `~/.agent-config-studio/cursor/turns.jsonl` (ids, model, status and time only).
   Details: [packs/README.md](packs/README.md).
 - **Commands you run:** `acs install` links `~/.local/bin/acs`;
   `acs install-model-id` writes `~/.local/bin/model-id` and
@@ -415,6 +417,17 @@ Where each number comes from:
 
 A Gemini seat signed in to agy with a `GEMINI_API_KEY` has no subscription
 quota to read and says so.
+
+Cursor appears as its own card below the seats, and it is not a subscription
+reading: ACS does not read Cursor's plan usage. It counts completed agent
+turns on this Mac, by model, for today, the last 7 days and the last 30 days,
+and the card is labelled as exactly that. Counting comes from the Cursor pack's
+turn-count part, which is on by default: run `acs packs install cursor` and
+turns are counted from then on. Until it is
+installed the card says how to turn it on; once installed and before any turn
+finishes it says no completed turns are counted yet. Aborted and errored turns
+are left out, and the log keeps ids, model, status and time, never your prompts
+or replies. Details: [packs/README.md](packs/README.md).
 
 Readings that need a credential are taken by the usage collector in a child
 process, which writes a snapshot. The studio renders the snapshot and shows how
