@@ -29,9 +29,11 @@ const denied = (r, reason) => {
   const sb = sandbox('cursor-guard-payload', { clis: [], modelId: false });
   const launcher = path.join(source, 'agent-guard');
   const run = (input, ...args) => sb.run('/bin/sh', [launcher, ...args], { input });
-  const allowed = run(payload({ command: 'git status' }));
-  ok('Cursor gets one explicit allow for a readable command', allowed.code === 0 && allowed.stderr === ''
-    && allowed.stdout === '{"permission":"allow"}\n', allowed.out);
+  const pass = run(payload({ command: 'git status' }));
+  ok('Cursor gets an empty object for a readable command', pass.code === 0 && pass.stderr === ''
+    && pass.stdout === '{}\n', pass.out);
+  const passReply = jsonReply(pass);
+  ok('Cursor pass has no permission key', passReply !== null && !Object.hasOwn(passReply, 'permission'), pass.out);
   const blocked = run(payload({ command: 'git push --no-verify --dry-run' }));
   ok('Cursor gets one explicit denial with the existing reason', denied(blocked, /agents may not run git push --no-verify/), blocked.out);
   for (const [label, input, reason] of [
@@ -43,9 +45,9 @@ const denied = (r, reason) => {
     const result = run(input);
     ok(`Cursor is denied for ${label} input`, denied(result, reason), result.out);
   }
-  const explicitAllow = run(JSON.stringify({ command: 'git status' }), '--cursor');
-  ok('--cursor allows a readable command without an event name', explicitAllow.code === 0 && explicitAllow.stderr === ''
-    && explicitAllow.stdout === '{"permission":"allow"}\n', explicitAllow.out);
+  const explicitPass = run(JSON.stringify({ command: 'git status' }), '--cursor');
+  ok('--cursor returns an empty object for a readable command without an event name', explicitPass.code === 0 && explicitPass.stderr === ''
+    && explicitPass.stdout === '{}\n', explicitPass.out);
   for (const [label, input, reason] of [
     ['blocked command without an event name', JSON.stringify({ command: 'git push --no-verify --dry-run' }), /agents may not run git push --no-verify/],
     ['invalid JSON', '{', /guard error/],

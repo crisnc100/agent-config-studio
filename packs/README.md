@@ -62,8 +62,9 @@ The agent guard part also installs into Cursor, which runs a hook before each sh
 when `~/.cursor` exists or `cursor-agent` is on PATH. Install adds one entry,
 `{ "command": "<launcher> --cursor", "failClosed": true }`, to `hooks.beforeShellExecution` in `~/.cursor/hooks.json`
 (keeping every other entry, and refusing a file that is not valid JSON of the expected shape). The guard applies the
-same rules it applies to Claude Code and Codex, but Cursor gets an explicit answer on stdout: `{"permission":"allow"}`,
-or a deny with the reason. Input the guard cannot read, and a node that cannot start, are denied. `acs packs status`
+same rules it applies to Claude Code and Codex. For a command the guard allows, it writes `{}` to stdout to express no
+opinion, so Cursor's own approval still applies. For a blocked command, it writes a deny with the reason. Input the guard
+cannot read, and a node that cannot start, are denied. `acs packs status`
 reports the Cursor entry as active or missing (an entry without `--cursor` counts as missing); `acs packs update
 review-gate --replace` rewrites it in place; uninstall removes only the entry the guard wrote.
 
