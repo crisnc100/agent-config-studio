@@ -3645,11 +3645,11 @@ function addSeatForm() {
     catch (e) { save.disabled = false; return notice('error', e.message); }
     S.usageAdding = false;
     await paintUsage();
-    if (res.loginCommand) {
-      notice('info', `Account added. Run the login command shown on "${res.seat.label}" to connect it.`);
-    } else if (res.note) {
-      notice('info', res.note);
-    }
+    const message = res.loginCommand
+      ? `Account added. Run the login command shown on "${res.seat.label}" to connect it.`
+      : res.note || 'Account added.';
+    const offer = guideTemplateAction(res);
+    if (offer || res.loginCommand || res.note) notice('info', message, null, !!offer, offer);
   };
   save.onclick = submit;
   label.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
@@ -4612,7 +4612,7 @@ const M = {
   writeErrors: {},
   describe: { text: '', busy: false, error: null, proposal: null },
   // The model guide block per target (GET /api/model-guide), and any open proposal by target key.
-  guide: null, guideError: null, guideProposals: {},
+  guide: null, guideError: null, guideProposals: Object.create(null), guideAdding: false,
   // Targets whose update is under review at the top of Models (the banner's "Review and update").
   guideTop: new Set(),
 };
@@ -4629,6 +4629,7 @@ async function openModels() {
   // #models&role=<name> (Packs' "not set — choose" line) lands on that role's row with its editor open.
   let want = null;
   try { want = decodeURIComponent(/[&]role=([^&]+)/.exec(location.hash)?.[1] || '') || null; } catch { /* a malformed link opens Models plainly */ }
+  const template = new URLSearchParams(location.hash.split('&').slice(1).join('&')).get('template');
   window.history.replaceState(null, '', '#models');
   renderSidebar(); renderTopbar(); renderTabs(); renderStatus();
   $('filebar').hidden = true;
@@ -4642,6 +4643,16 @@ async function openModels() {
     const row = [...$('content').querySelectorAll('.roles-row')].find((r) => r.dataset.role === want);
     row?.scrollIntoView?.({ block: 'center' });
     row?.focus();
+  }
+  if (template && S.view === 'models') {
+    const target = guideByKey(template);
+    if (target?.canTemplate && (!M.guide.rolesError || target.viaClaude) && !M.guideProposals[template]) {
+      await proposeGuide(template, 'template');
+    }
+    if (S.view !== 'models') return;
+    const row = [...$('content').querySelectorAll('.guide-row')].find((r) => r.dataset.target === template);
+    row?.scrollIntoView?.({ block: 'center' });
+    row?.querySelector('.guide-accept, .guide-template')?.focus();
   }
 }
 
@@ -5737,7 +5748,7 @@ const guideByKey = (key) => M.guide?.targets.find((t) => t.key === key);
 function staleGuides() {
   const out = [];
   for (const t of M.guide?.targets || []) {
-    if (t.status === 'stale' && !out.some((o) => t.sharedWith?.includes(o.key))) out.push(t);
+    if (!t.viaClaude && t.status === 'stale' && !out.some((o) => t.sharedWith?.includes(o.key))) out.push(t);
   }
   return out;
 }
@@ -5796,6 +5807,15 @@ function guideSection() {
   sec.appendChild(el('div', 'scope-sub models-roles-sub',
     'Agents read this file at the start of every session. The block tells them which model does each role.'));
   if (!M.guide) { sec.appendChild(el('div', 'scope-note', M.guideError || 'reading…')); return sec; }
+  const add = el('button', 'btn', M.guideAdding ? 'Cancel' : 'Add a CLI');
+  add.onclick = () => {
+    M.guideAdding = !M.guideAdding;
+    paintModels();
+    if (M.guideAdding) $('content').querySelector('.guide-add input')?.focus();
+  };
+  sec.appendChild(add);
+  if (M.guideAdding) sec.appendChild(guideTargetForm());
+  for (const warning of M.guide.registryWarnings || []) sec.appendChild(el('div', 'scope-note guide-warn', warning));
   if (M.guide.rolesError) {
     const n = el('div', 'notice error guide-roles-error');
     n.appendChild(el('div', null, 'Roles invalid — fix in Models → Roles. The guide can’t be added or updated until then; removing it still works.'));
@@ -5808,11 +5828,43 @@ function guideSection() {
   return sec;
 }
 
+function guideTargetForm() {
+  const form = el('form', 'guide-add');
+  const fields = {};
+  for (const [key, label] of [['label', 'CLI name'], ['home', 'Home folder'], ['file', 'Instruction file name']]) {
+    const field = el('label', null, label);
+    const input = el('input', 'models-input');
+    input.required = true;
+    field.appendChild(input);
+    form.appendChild(field);
+    fields[key] = input;
+  }
+  fields.label.maxLength = 60;
+  const save = el('button', 'btn primary', 'Add');
+  form.appendChild(save);
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    save.disabled = true;
+    try {
+      await api('POST', '/api/model-guide/targets', Object.fromEntries(Object.entries(fields).map(([key, input]) => [key, input.value])));
+    } catch (e) {
+      save.disabled = false;
+      notice('error', e.message, null, true);
+      return;
+    }
+    M.guideAdding = false;
+    clearNotice();
+    await loadGuide();
+  };
+  return form;
+}
+
 function guideRow(t) {
   const row = el('div', `guide-row ${t.status}`);
   row.dataset.target = t.key;
   const line = el('div', 'guide-line');
   const where = el('span', 'guide-path', t.path);
+  if (t.custom || t.viaClaude) line.appendChild(el('span', 'guide-label', t.label));
   line.appendChild(where);
   if (t.linkedTo) line.appendChild(el('span', 'guide-link', `→ ${t.linkedTo}`));
   line.appendChild(el('span', `guide-chip ${t.status}${t.reason ? ` ${t.reason}` : ''}`, guideChip(t)));
@@ -5825,18 +5877,40 @@ function guideRow(t) {
     b.onclick = () => proposeGuide(t.key, action);
     acts.appendChild(b);
   };
-  if (t.status === 'absent') button('Add', 'install', !blocked);
-  if (t.status === 'stale' || t.status === 'edited') button('Update', 'update', !blocked);
-  if (['current', 'stale', 'edited', 'roles-invalid'].includes(t.status)) button('Remove', 'remove', true);
+  if (t.canTemplate) {
+    button('Create from template', 'template', !blocked || t.viaClaude);
+  } else if (!t.viaClaude && t.status === 'absent' && (!t.newFile || t.key === 'claude')) {
+    button('Add', 'install', !blocked);
+  }
+  if (!t.viaClaude && (t.status === 'stale' || t.status === 'edited')) button('Update', 'update', !blocked);
+  if (!t.viaClaude && ['current', 'stale', 'edited', 'roles-invalid'].includes(t.status)) button('Remove', 'remove', true);
+  if (t.custom) {
+    const remove = el('button', 'btn ghost', 'Remove CLI');
+    remove.title = 'Remove this CLI from the list and keep its file';
+    remove.disabled = busy;
+    remove.onclick = async () => {
+      remove.disabled = true;
+      try { await api('POST', '/api/model-guide/targets/remove', { key: t.key }); }
+      catch (e) { remove.disabled = false; notice('error', e.message, null, true); return; }
+      await loadGuide();
+    };
+    acts.appendChild(remove);
+  }
   line.appendChild(acts);
   row.appendChild(line);
 
   const note = (text, cls = '') => row.appendChild(el('div', `scope-note guide-note${cls ? ` ${cls}` : ''}`, text));
-  if (t.status === 'not-installed') note(`${t.label} isn’t installed here; ACS never creates its folder.`);
-  if (t.status === 'absent' && t.newFile) note('The file doesn’t exist yet; Add creates it holding only the block.');
-  if (t.status === 'malformed') note(`The markers are broken (${t.reason}, line${t.lines.length > 1 ? 's' : ''} ${t.lines.join(', ')}). Fix or delete those lines by hand.`, 'guide-warn');
-  if (t.status === 'edited') note('Someone edited the block by hand. Update or Remove replaces those edits.', 'guide-warn');
-  if (t.status === 'error' || t.status === 'not-utf8') note(t.message || 'This file can’t be used.', 'guide-warn');
+  if (t.viaClaude) {
+    note('The model guide comes from Claude’s file.');
+    note(t.hookInstalled ? 'Session hook installed.' : 'Session hook is not installed. Cursor can’t read this note without it.');
+  }
+  const fileStatus = t.viaClaude ? t.noteStatus : t.status;
+  if (fileStatus === 'not-installed') note(`${t.label} isn’t installed here. ACS never creates its folder.`);
+  if (t.key === 'claude' && t.newFile) note('Add proposes a new file holding only the block.');
+  if (t.newFile && t.key !== 'claude' && !t.canTemplate && t.linkedTo) note('Create from template needs an unused file name. This link already uses that name.', 'guide-warn');
+  if (!t.viaClaude && fileStatus === 'malformed') note(`The markers are broken (${t.reason}, line${t.lines.length > 1 ? 's' : ''} ${t.lines.join(', ')}). Fix or delete those lines by hand.`, 'guide-warn');
+  if (!t.viaClaude && fileStatus === 'edited') note('Someone edited the block by hand. Update or Remove replaces those edits.', 'guide-warn');
+  if (fileStatus === 'error' || fileStatus === 'not-utf8') note(t.message || 'This file can’t be used.', 'guide-warn');
   if (t.sharedWith?.length) {
     const others = t.sharedWith.map((k) => guideByKey(k)?.path || k).join(', ');
     note(`Shared with ${others}: it is the same file, so a change here changes every target sharing it.`, 'guide-shared');
@@ -5850,7 +5924,7 @@ function guideRow(t) {
 function guideProposalView(p) {
   const box = el('div', 'describe-proposal guide-proposal');
   box.dataset.target = p.target;
-  const verb = { install: 'Add the model guide to', update: 'Update the model guide in', remove: 'Remove the model guide from' }[p.action];
+  const verb = { template: 'Create', install: 'Add the model guide to', update: 'Update the model guide in', remove: 'Remove the model guide from' }[p.action];
   if (p.overwritesEdits) {
     const w = el('div', 'notice error guide-overwrites');
     w.setAttribute('role', 'alert');
@@ -5858,6 +5932,7 @@ function guideProposalView(p) {
     box.appendChild(w);
   }
   box.appendChild(el('div', 'scope-note', `${verb} ${p.path}${p.newFile ? ' (new file)' : ''}, before → after:`));
+  if (p.note) box.appendChild(el('div', 'scope-note', p.note));
   if (p.sharedWith?.length) box.appendChild(el('div', 'scope-note guide-shared', `This also changes ${p.sharedWith.map((k) => guideByKey(k)?.path || k).join(', ')}: the same file.`));
   if (/\r\n/.test(p.current) || /\r\n/.test(p.proposed)) box.appendChild(el('div', 'scope-note guide-eol', 'This file uses CRLF line endings; they are kept.'));
   const endsNl = (s) => s === '' || /\n$/.test(s);
@@ -5881,7 +5956,7 @@ function guideProposalView(p) {
     delete M.guideProposals[p.target];
     M.guideTop.delete(p.target);
     for (const k of p.sharedWith || []) { delete M.guideProposals[k]; M.guideTop.delete(k); }
-    const done = { install: 'Model guide added to', update: 'Model guide updated in', remove: 'Model guide removed from' }[p.action];
+    const done = { template: 'Created', install: 'Model guide added to', update: 'Model guide updated in', remove: 'Model guide removed from' }[p.action];
     if (r.warnings?.length) notice('error', `${done} ${p.path}, with a warning:`, r.warnings, true);
     else notice('ok', `${done} ${p.path}.`);
     await loadGuide();

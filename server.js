@@ -764,11 +764,13 @@ export function createApp(opts = {}) {
    */
   'POST /api/usage/seats': async (req) => {
     const { vendor, label, harness } = await readBody(req);
+    const existing = loadSeats().seats.some((seat) => seat.vendor === vendor);
     let res;
     try { res = createSeat({ vendor, label, harness }); }
     catch (e) { const err = new Error(e.message); err.status = 400; throw err; }
     resyncShortcuts();
-    return res;
+    const guideTemplate = !existing && guide.templateOffer(res.seat.harness || res.seat.vendor);
+    return guideTemplate ? { ...res, guideTemplate } : res;
   },
 
   /**
@@ -1413,6 +1415,14 @@ export function createApp(opts = {}) {
   'GET /api/model-guide': async (req) => {
     requireStrict(req);
     return guide.status();
+  },
+  'POST /api/model-guide/targets': async (req) => {
+    requireStrict(req);
+    return guide.addHarness(await objectBody(req));
+  },
+  'POST /api/model-guide/targets/remove': async (req) => {
+    requireStrict(req);
+    return guide.removeHarness((await objectBody(req)).key);
   },
   'POST /api/model-guide/propose': async (req) => {
     requireStrict(req);

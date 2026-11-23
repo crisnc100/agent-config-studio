@@ -110,6 +110,7 @@ tests/agy-wall.mjs                                    ci:offline ci:stranger-mac
 # The model guide block: renderer, markers, byte-exact edits (in-process), then through the server (temp HOME).
 tests/model-guide.mjs                                 ci:offline
 tests/model-guide-routes.mjs                          ci:offline
+tests/harness-registry.mjs                            ci:offline
 # The audit: rules, fixes, the class policy and the writer under faults (in-process), then through the server (temp HOME).
 tests/audit.mjs                                       ci:offline
 # Linked git worktrees: real fixtures in a temp HOME, walked last, cut first, their cards kept apart.
