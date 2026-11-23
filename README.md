@@ -167,7 +167,7 @@ There is no telemetry. What reaches the network, and when:
 
 What it writes:
 
-- **Your CLIs' own homes** (`~/.claude`, `~/.codex`, `~/.agents`, `~/.grok`,
+- **Your CLIs' own homes** (`~/.claude`, `~/.codex`, `~/.agents`, `~/.grok`, `~/.cursor`,
   `~/.config/worktree`): editable regardless of your folder choices.
 - **Inside project folders you marked edit:** the instruction files
   (`CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `.worktrees.conf`). Setting a project
@@ -180,6 +180,9 @@ What it writes:
   sharing `~/.codex`'s config, skills, rules and plugins by symlink.
 - **When you turn on Terminal shortcuts in Usage:** a generated file in
   `~/.agent-config-studio`, plus one `source` line appended to `~/.zshenv`.
+- **When you install the Cursor pack:** one `sessionStart` entry in
+  `~/.cursor/hooks.json` and the hook's files in `~/.agent-config-studio/cursor/hooks`.
+  Details: [packs/README.md](packs/README.md).
 - **Commands you run:** `acs install` links `~/.local/bin/acs`;
   `acs install-model-id` writes `~/.local/bin/model-id` and
   `~/.local/bin/ask-model` and `~/.local/bin/acs-agent`, and their copy in the studio folder; `acs install-worktree` writes `~/.config/worktree` and adds
@@ -190,7 +193,8 @@ What it writes:
   package.
 
 The file API serves only files in those places and in your **read** folders,
-and never serves `.credentials.json`, `auth.json` or `~/.claude.json`. Only the
+and never serves `.credentials.json`, `auth.json`, `~/.cursor/mcp.json` or
+`~/.claude.json`. Only the
 `mcpServers` key of `~/.claude.json` is extracted, read-only. The server
 listens on `127.0.0.1` only.
 
@@ -226,7 +230,7 @@ foot. Every file the studio manages opens from the page that lists it, and
 | Slash commands | `~/.claude/commands/*.md` | Tools → Agents and commands |
 | MCP servers | `.mcp.json` in your edit folders (editable); global and Codex servers read-only | Tools → MCP servers |
 | Auto-memory | `~/.claude/projects/*/memory/*.md` — what the harness wrote itself, one bucket per project scope, `MEMORY.md` included | Memory |
-| Settings & config | `settings.json`, `settings.local.json`, `advisor-config.json`, `investigate-config.json`, `review-config.json`, `~/.codex/config.toml`, `~/.codex/rules/*` | Setup → Settings and hooks |
+| Settings & config | `settings.json`, `settings.local.json`, `advisor-config.json`, `investigate-config.json`, `review-config.json`, `~/.codex/config.toml`, `~/.codex/rules/*`, `~/.cursor/hooks.json`, `~/.cursor/cli-config.json` | Setup → Settings and hooks |
 | Hooks | `~/.claude/hooks/*.sh` | Setup → Settings and hooks |
 | Worktree rules | `~/.config/worktree/defaults.conf`, `repos/*.conf`, and each `.worktrees.conf` in your edit folders | Worktrees (from Packs → Worktree setup) |
 

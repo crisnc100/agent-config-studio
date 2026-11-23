@@ -179,6 +179,7 @@ tests/mcp-ui.mjs                                      ci:offline
 tests/skills-page.mjs                                 ci:offline
 # The skill-pack installer (acs packs): temp HOMEs, stub CLIs, a copy of the package for updates, the packed tarball.
 tests/packs-catalog.mjs                               ci:offline
+tests/packs-cursor.mjs                                ci:offline
 tests/packs-install.mjs                               ci:offline
 tests/packs-update.mjs                                ci:offline
 tests/packs-hooks.mjs                                 ci:offline

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Cursor may launch with a bare PATH, and a relative entry would resolve against the session's
+# folder, so only absolute entries are kept. node-path pins the installing Node.js; PATH is the fallback.
+kept=; rest=${PATH:-}:
+while [ -n "$rest" ]; do
+  entry=${rest%%:*}; rest=${rest#*:}
+  case $entry in /*) kept=${kept:+$kept:}$entry ;; esac
+done
+PATH=${kept:-/usr/bin:/bin}; export PATH
+
+folder=${0%/*}
+node=
+if [ -r "$folder/node-path" ]; then IFS= read -r node < "$folder/node-path" || :; fi
+case $node in /*) [ -x "$node" ] || node=node ;; *) node=node ;; esac
+if [ -r "$folder/session-context.mjs" ] && "$node" --version >/dev/null 2>&1; then
+  exec "$node" "$folder/session-context.mjs"
+fi
+/bin/cat >/dev/null
+printf '%s\n' '{}'
