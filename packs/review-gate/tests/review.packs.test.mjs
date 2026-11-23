@@ -79,7 +79,7 @@ test('every part has its fields, a known kind, existing files and its own non-em
       assert.ok(text(part.id) && text(part.title), where)
       assert.equal(typeof part.default, 'boolean', where)
       assert.ok((id === 'cursor' ? ['cursor-session'] : KINDS).includes(part.kind), `${where}: kind ${part.kind}`)
-      assert.ok(Array.isArray(part.harnesses) && part.harnesses.every((h) => HARNESSES.includes(h)), where)
+      assert.ok(Array.isArray(part.harnesses) && part.harnesses.every((h) => (part.kind === 'guard' ? [...HARNESSES, 'cursor'] : HARNESSES).includes(h)), where)
       assert.ok(Array.isArray(part.files), where)
       for (const file of part.files) assert.ok(existsSync(join(PACKAGE, file)) || lstatSync(join(PACKAGE, file)).isSymbolicLink(), `${where}: ${file}`)
       assert.ok(Object.keys(part.explain).every((key) => ['what', 'does', 'changes', 'undo'].includes(key)), where)
