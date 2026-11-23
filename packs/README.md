@@ -58,6 +58,15 @@ refusing a file that is not valid JSON of the expected shape). `acs packs update
 `--replace` also puts back a deleted hook entry and the launcher's execute bit. Uninstall removes only an entry
 that holds nothing but that command.
 
+The agent guard part also installs into Cursor, which runs a hook before each shell command. Cursor counts as here
+when `~/.cursor` exists or `cursor-agent` is on PATH. Install adds one entry,
+`{ "command": "<launcher> --cursor", "failClosed": true }`, to `hooks.beforeShellExecution` in `~/.cursor/hooks.json`
+(keeping every other entry, and refusing a file that is not valid JSON of the expected shape). The guard applies the
+same rules it applies to Claude Code and Codex, but Cursor gets an explicit answer on stdout: `{"permission":"allow"}`,
+or a deny with the reason. Input the guard cannot read, and a node that cannot start, are denied. `acs packs status`
+reports the Cursor entry as active or missing (an entry without `--cursor` counts as missing); `acs packs update
+review-gate --replace` rewrites it in place; uninstall removes only the entry the guard wrote.
+
 The review gate's shared state lives under `~/.agent-config-studio/`:
 
 - `review-gate/config.json` — your review settings for every project (copy `review-config.example.json`). The
@@ -92,7 +101,7 @@ Each part is `{ id, title, default, kind, harnesses, files, explain }`:
   checks and removes the part. Manifests never contain commands. A `codex-log-access` part also names
   `writableRoot`, the folder under `~/` it adds to `writable_roots` in each Codex home's config.toml (review-gate's
   review log, flag's field reports).
-- `harnesses` — the harnesses the part installs into (`claude`, `codex`); empty when it does not depend on one.
+- `harnesses` — the harnesses the part installs into (`claude`, `codex`, `cursor`); empty when it does not depend on one.
 - `files` — the source files, as paths from the root of the ACS package. The worktree part points at
   `bin/install-worktree.mjs` and `tools/worktree/`, which ACS already ships, rather than copying them.
 - `explain` — inherits the pack's `explain` and overrides only the fields that differ. Its `changes` is always its

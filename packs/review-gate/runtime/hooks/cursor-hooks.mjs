@@ -1,3 +1,4 @@
+// Shared by install-agent-guard.mjs and lib/packs.js so both read ~/.cursor/hooks.json and recognise the guard's entry the same way.
 export const CURSOR_SHELL_EVENT = 'beforeShellExecution'
 
 const jsonObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -22,6 +23,7 @@ export const cursorCommand = (command) => `${command} --cursor`
 export const isCursorGuardEntry = (entry, command) => (entry?.command === command || entry?.command === cursorCommand(command))
   && Object.keys(entry).every((key) => key === 'command' || key === 'failClosed')
 
+// Active means exactly one guard entry, with --cursor and failClosed; anything else counts as needing repair.
 export function cursorGuardActive(doc, command) {
   const entries = doc.hooks?.[CURSOR_SHELL_EVENT]?.filter((entry) => isCursorGuardEntry(entry, command))
   return entries?.length === 1 && entries[0].command === cursorCommand(command) && entries[0].failClosed === true

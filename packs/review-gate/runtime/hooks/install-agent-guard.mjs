@@ -219,7 +219,8 @@ try {
     for (const extra of configuredCodexHomes(home)) homes.push(extra)
   }
   const cursorHome = join(home, '.cursor')
-  // Pack plans must opt in explicitly, even when a standalone run would detect Cursor.
+  // `acs packs` sets ACS_PACKS_CURSOR_GUARD to 1 (install into Cursor) or 0 (leave Cursor alone). A standalone
+  // run uses Cursor when ~/.cursor exists or cursor-agent is on PATH.
   const cursorTarget = process.env.ACS_PACKS_CURSOR_GUARD
   const useCursor = cursorTarget === '1' || (cursorTarget !== '0' && (existsSync(cursorHome) || which('cursor-agent')))
   const codexHomes = [...new Set(homes)]

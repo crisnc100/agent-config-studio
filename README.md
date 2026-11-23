@@ -362,9 +362,10 @@ is used.
   `grok inspect` what it would load, and refuses if that includes any server.
   The message names the servers and the fix (`grok mcp disable <name>`).
   Grok Assist is unavailable while grok has MCP servers configured.
-- **Claude Code's and Cursor's MCP sources are switched off for Assist runs**
-  (grok imports `~/.claude.json` and Cursor's `mcp.json` by default), so
-  servers configured there do not count.
+- **Claude Code's and Cursor's MCP sources and hooks are switched off for Assist
+  runs** (grok imports `~/.claude.json` and Cursor's `mcp.json` by default, and
+  borrows hooks from both), so servers configured there do not count and those
+  hooks do not run.
 - Claude Assist is unaffected; `--strict-mcp-config` loads no MCP server.
 
 **Which models.** The picker comes from the model registry (below), as do the
