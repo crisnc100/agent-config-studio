@@ -69,6 +69,37 @@ const status = (sb, env) => sb.json(['status', '--no-trust-check'], env).data.pa
 }
 
 {
+  const sb = sandbox('cursor-launcher-mode', { clis: [], modelId: false });
+  const dir = runtime(sb.home);
+  const launcher = path.join(dir, 'session-context');
+  const mode = (file) => fs.statSync(file).mode & 0o777;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(launcher, 'original launcher\n', { mode: 0o600 });
+  fs.chmodSync(launcher, 0o600);
+
+  ok('install sets the launcher mode to 0755', sb.packs(install).code === 0 && mode(launcher) === 0o755);
+  const installed = read(launcher);
+  const siblingFiles = ['session-context.mjs', 'cursor-note.md', 'node-path'].map((name) => path.join(dir, name));
+  siblingFiles.push(hooksPath(sb.home));
+  const siblingState = () => siblingFiles.map((file) => [read(file), mode(file), fs.statSync(file).ino]);
+  const siblings = siblingState();
+  fs.chmodSync(launcher, 0o644);
+
+  const broken = status(sb);
+  ok('status reports a non-executable launcher and gives the repair command', broken.statuses.includes('installed but not working')
+    && broken.details.some((detail) => detail.includes('session-context') && detail.includes('acs packs update cursor --replace')), JSON.stringify(broken));
+  const update = sb.packs(['update', 'cursor', '--yes']);
+  ok('ordinary update keeps the launcher mode', update.code === 0 && mode(launcher) === 0o644, update.out);
+  const repair = sb.packs(['update', 'cursor', '--replace', '--yes']);
+  ok('update --replace restores the launcher mode with identical bytes', repair.code === 0 && mode(launcher) === 0o755
+    && read(launcher) === installed, repair.out);
+  equal('mode repair leaves the other installed files untouched', siblingState(), siblings);
+  equal('status reports the repaired part as installed', status(sb).statuses, ['installed']);
+  ok('uninstall restores the original launcher bytes and mode', sb.packs(uninstall).code === 0
+    && read(launcher) === 'original launcher\n' && mode(launcher) === 0o600);
+}
+
+{
   const sb = sandbox('cursor-existing', { clis: [], modelId: false });
   const hooks = hooksPath(sb.home);
   fs.mkdirSync(path.dirname(hooks));
