@@ -79,7 +79,7 @@ test('every part has its fields, a known kind, existing files and its own non-em
       assert.ok(text(part.id) && text(part.title), where)
       assert.equal(typeof part.default, 'boolean', where)
       assert.ok((id === 'cursor' ? ['cursor-session'] : KINDS).includes(part.kind), `${where}: kind ${part.kind}`)
-      assert.ok(Array.isArray(part.harnesses) && part.harnesses.every((h) => HARNESSES.includes(h)), where)
+      assert.ok(Array.isArray(part.harnesses) && part.harnesses.every((h) => (part.kind === 'guard' ? [...HARNESSES, 'cursor'] : HARNESSES).includes(h)), where)
       assert.ok(Array.isArray(part.files), where)
       for (const file of part.files) assert.ok(existsSync(join(PACKAGE, file)) || lstatSync(join(PACKAGE, file)).isSymbolicLink(), `${where}: ${file}`)
       assert.ok(Object.keys(part.explain).every((key) => ['what', 'does', 'changes', 'undo'].includes(key)), where)
@@ -289,16 +289,21 @@ test('every read-only claude -p command in a shipped skill drops MCP tools with 
 // A raw model call: claude -p, codex exec or grok -p run as a command (at the start of a line, or after $( | & ; ( ),
 // not named in prose. Two callers write, and ask-model only asks read-only, so they are the exceptions: the build
 // skill's builder calls (codex exec with --sandbox workspace-write, and codex exec resume, which inherits it) and the
-// Codex context-pass skill's writer call (codex exec with --sandbox workspace-write, nothing else).
+// two exact writer calls in either copy of context-pass.
 const RAW_CALL = /(?:^|\$\(|[|&;(])\s*(?:claude\s+-p|codex\s+exec|grok\s+-p)(?:\s|$)/
-// The context-pass writer call, exactly: one line, in one file.
-const WRITER_CALL = 'codex exec --skip-git-repo-check --sandbox workspace-write -m "$id" -c model_reasoning_effort="$effort" "$(cat builds/<slug>/context-prompt.md)"'
-const builderCall = (rel, line) => rel.startsWith('build/') && (/^\s*codex\s+exec\s+resume\b/.test(line) || /^\s*codex\s+exec\b.*\s--sandbox\s+workspace-write\b/.test(line)) ||
-  rel === 'review-gate/skills/codex/context-pass/SKILL.md' && line === WRITER_CALL
+const CODEX_WRITER_CALL = 'codex exec --skip-git-repo-check --sandbox workspace-write -m "$id" -c model_reasoning_effort="$effort" "$(cat builds/<slug>/context-prompt.md)"'
+const CLAUDE_WRITER_CALL = 'claude -p "$(cat builds/<slug>/context-prompt.md)" --model "$id" --effort "$effort" --tools Read,Edit,Write,Grep,Glob --permission-mode acceptEdits --strict-mcp-config'
+const WRITER_CALLS = [CODEX_WRITER_CALL, CLAUDE_WRITER_CALL]
+const CONTEXT_PASS_SKILLS = [
+  'review-gate/skills/claude/context-pass/SKILL.md',
+  'review-gate/skills/codex/context-pass/SKILL.md',
+]
+const allowedModelCall = (rel, line) => rel.startsWith('build/') && (/^\s*codex\s+exec\s+resume\b/.test(line) || /^\s*codex\s+exec\b.*\s--sandbox\s+workspace-write\b/.test(line)) ||
+  CONTEXT_PASS_SKILLS.includes(rel) && WRITER_CALLS.includes(line)
 function rawModelCalls(rel, source) {
-  return source.split('\n').flatMap((line, i) => (RAW_CALL.test(line) && !builderCall(rel, line) ? [`${rel}:${i + 1}: ${line.trim().slice(0, 100)}`] : []))
+  return source.split('\n').flatMap((line, i) => (RAW_CALL.test(line) && !allowedModelCall(rel, line) ? [`${rel}:${i + 1}: ${line.trim().slice(0, 100)}`] : []))
 }
-test('the raw-call lint finds planted calls and lets only the build skill\'s and the Codex context-pass writer\'s write calls through (it cannot pass vacuously)', () => {
+test('the raw-call lint finds planted calls and allows build calls and the exact context-pass writer lines', () => {
   for (const planted of ['claude -p "$P" --model x', '  codex exec --skip-git-repo-check --sandbox read-only -m x "go"', 'grok -p "$P" -m x',
     '  claude -p --model "$id" \\', 'out=$(codex exec -m x "go")', 'cat p | grok -p "$P"', 'true && claude -p "$P"'])
     assert.equal(rawModelCalls('advisor/claude/advisor/SKILL.md', planted).length, 1, planted)
@@ -308,19 +313,28 @@ test('the raw-call lint finds planted calls and lets only the build skill\'s and
   assert.equal(rawModelCalls('build/skills/claude/build/SKILL.md', `${write}\n${resume}`).length, 0, 'the builder\'s calls in build')
   assert.equal(rawModelCalls('advisor/skills/claude/advisor/SKILL.md', `${write}\n${resume}`).length, 2, 'the same lines anywhere else')
   assert.equal(rawModelCalls('build/skills/claude/build/SKILL.md', 'codex exec --skip-git-repo-check --sandbox read-only -m x "go"').length, 1, 'a read-only gate in build')
-  const cp = 'review-gate/skills/codex/context-pass/SKILL.md'
-  assert.equal(rawModelCalls(cp, WRITER_CALL).length, 0, 'the Codex context-pass writer call, exactly')
-  for (const lookAlike of [`other-${cp}`, `x/${cp}`, `${cp}.bak`])
-    assert.equal(rawModelCalls(lookAlike, WRITER_CALL).length, 1, `the writer line in a look-alike path is still flagged: ${lookAlike}`)
-  for (const planted of [
-    `  ${WRITER_CALL}`, `${WRITER_CALL} && rm -rf build`, WRITER_CALL.replace('"$(cat builds/<slug>/context-prompt.md)"', '"go"'),
-    'codex exec --skip-git-repo-check --sandbox workspace-write -m x "go"', 'codex exec --sandbox workspace-write --dangerously-bypass-approvals-and-sandbox -m x "go"',
-    'codex exec --skip-git-repo-check --sandbox read-only -m x "go"', 'codex exec resume <thread_id> -m x', 'claude -p "$P" --permission-mode acceptEdits',
-    'grok -p "$P" -m x', 'out=$(codex exec -m x "go")',
-  ]) assert.equal(rawModelCalls(cp, planted).length, 1, `still flagged in context-pass: ${planted}`)
-  assert.equal(rawModelCalls('review-gate/skills/claude/context-pass/SKILL.md', WRITER_CALL).length, 1, 'the same call in the Claude context-pass skill')
-  assert.equal(rawModelCalls('review-gate/skills/codex/code-review/SKILL.md', WRITER_CALL).length, 1, 'the writer call in any other review-gate skill')
-  assert.ok(readFileSync(join(PACKS, cp), 'utf8').split('\n').includes(WRITER_CALL), 'the exception names the line the skill really ships')
+  for (const cp of CONTEXT_PASS_SKILLS) {
+    const shippedLines = readFileSync(join(PACKS, cp), 'utf8').split('\n')
+    for (const call of WRITER_CALLS) {
+      assert.equal(rawModelCalls(cp, call).length, 0, `the exact writer line passes in ${cp}: ${call}`)
+      assert.ok(shippedLines.includes(call), `${cp} ships the exact writer line: ${call}`)
+      for (const lookAlike of [`other-${cp}`, `x/${cp}`, `${cp}.bak`])
+        assert.equal(rawModelCalls(lookAlike, call).length, 1, `the writer line in a look-alike path is still flagged: ${lookAlike}: ${call}`)
+      for (const planted of [`  ${call}`, `${call} && rm -rf build`, call.replace('"$(cat builds/<slug>/context-prompt.md)"', '"go"')])
+        assert.equal(rawModelCalls(cp, planted).length, 1, `still flagged in ${cp}: ${planted}`)
+    }
+    for (const planted of [
+      'codex exec --skip-git-repo-check --sandbox workspace-write -m x "go"', 'codex exec --sandbox workspace-write --dangerously-bypass-approvals-and-sandbox -m x "go"',
+      'codex exec --skip-git-repo-check --sandbox read-only -m x "go"', 'codex exec resume <thread_id> -m x', 'claude -p "$P" --permission-mode acceptEdits',
+      'grok -p "$P" -m x', 'out=$(codex exec -m x "go")',
+      CODEX_WRITER_CALL.replace('--sandbox workspace-write', '--sandbox read-only'),
+      CLAUDE_WRITER_CALL.replace('--permission-mode acceptEdits', '--permission-mode default'),
+      CLAUDE_WRITER_CALL.replace('Grep,Glob', 'Grep,Glob,Bash'),
+      CLAUDE_WRITER_CALL.replace(' --strict-mcp-config', ''),
+    ]) assert.equal(rawModelCalls(cp, planted).length, 1, `still flagged in ${cp}: ${planted}`)
+  }
+  for (const call of WRITER_CALLS)
+    assert.equal(rawModelCalls('review-gate/skills/codex/code-review/SKILL.md', call).length, 1, `the writer line in another review-gate skill: ${call}`)
 })
 test('no shipped skill makes a raw claude -p, codex exec or grok -p model call: they ask through ask-model', () => {
   const files = shipped().filter((path) => relative(PACKS, path).split('/')[1] === 'skills')
