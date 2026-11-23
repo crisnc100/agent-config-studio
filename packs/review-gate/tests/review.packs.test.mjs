@@ -78,7 +78,7 @@ test('every part has its fields, a known kind, existing files and its own non-em
       if (part.kind === 'codex-log-access') assert.match(part.writableRoot, /^~\/\.agent-config-studio\/[a-z-]+$/, `${where}: writableRoot`)
       assert.ok(text(part.id) && text(part.title), where)
       assert.equal(typeof part.default, 'boolean', where)
-      assert.ok((id === 'cursor' ? ['cursor-session'] : KINDS).includes(part.kind), `${where}: kind ${part.kind}`)
+      assert.ok((id === 'cursor' ? ['cursor-session', 'cursor-turns'] : KINDS).includes(part.kind), `${where}: kind ${part.kind}`)
       assert.ok(Array.isArray(part.harnesses) && part.harnesses.every((h) => HARNESSES.includes(h)), where)
       assert.ok(Array.isArray(part.files), where)
       for (const file of part.files) assert.ok(existsSync(join(PACKAGE, file)) || lstatSync(join(PACKAGE, file)).isSymbolicLink(), `${where}: ${file}`)
