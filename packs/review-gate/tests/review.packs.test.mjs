@@ -291,8 +291,8 @@ test('every read-only claude -p command in a shipped skill drops MCP tools with 
 // skill's builder calls (codex exec with --sandbox workspace-write, and codex exec resume, which inherits it) and the
 // two exact writer calls in either copy of context-pass.
 const RAW_CALL = /(?:^|\$\(|[|&;(])\s*(?:claude\s+-p|codex\s+exec|grok\s+-p)(?:\s|$)/
-const CODEX_WRITER_CALL = 'codex exec --skip-git-repo-check --sandbox workspace-write -m "$id" -c model_reasoning_effort="$effort" "$(cat builds/<slug>/context-prompt.md)"'
-const CLAUDE_WRITER_CALL = 'claude -p "$(cat builds/<slug>/context-prompt.md)" --model "$id" --effort "$effort" --tools Read,Edit,Write,Grep,Glob --permission-mode acceptEdits --strict-mcp-config'
+const CODEX_WRITER_CALL = 'codex exec --skip-git-repo-check --sandbox workspace-write -m "$id" ${effort:+-c} ${effort:+model_reasoning_effort=$effort} "$(cat builds/<slug>/context-prompt.md)"'
+const CLAUDE_WRITER_CALL = 'claude -p "$(cat builds/<slug>/context-prompt.md)" --model "$id" ${effort:+--effort} $effort --tools Read,Edit,Write,Grep,Glob --permission-mode acceptEdits --strict-mcp-config'
 const WRITER_CALLS = [CODEX_WRITER_CALL, CLAUDE_WRITER_CALL]
 const CONTEXT_PASS_SKILLS = [
   'review-gate/skills/claude/context-pass/SKILL.md',
@@ -331,6 +331,8 @@ test('the raw-call lint finds planted calls and allows build calls and the exact
       CLAUDE_WRITER_CALL.replace('--permission-mode acceptEdits', '--permission-mode default'),
       CLAUDE_WRITER_CALL.replace('Grep,Glob', 'Grep,Glob,Bash'),
       CLAUDE_WRITER_CALL.replace(' --strict-mcp-config', ''),
+      CODEX_WRITER_CALL.replace('${effort:+-c} ${effort:+model_reasoning_effort=$effort}', '-c model_reasoning_effort="$effort"'),
+      CLAUDE_WRITER_CALL.replace('${effort:+--effort} $effort', '--effort "$effort"'),
     ]) assert.equal(rawModelCalls(cp, planted).length, 1, `still flagged in ${cp}: ${planted}`)
   }
   for (const call of WRITER_CALLS)
