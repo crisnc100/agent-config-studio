@@ -3,7 +3,7 @@
  *
  * What it prints is read, per call, from `mode.json` beside it, so one running
  * server can be driven through every case. Every call is appended to
- * `calls.jsonl` (argv and the GROK_*_MCPS_ENABLED env), and a session start —
+ * `calls.jsonl` (argv and the Grok compatibility switches), and a session start —
  * anything but `--version` and `inspect` — appends to `started.log`: the
  * observable side effect a refused-before-spawn turn must never produce.
  *
@@ -30,6 +30,8 @@ const mode = (() => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'mo
 fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ harness: HARNESS, argv: a, env: {
   GROK_CLAUDE_MCPS_ENABLED: process.env.GROK_CLAUDE_MCPS_ENABLED ?? null,
   GROK_CURSOR_MCPS_ENABLED: process.env.GROK_CURSOR_MCPS_ENABLED ?? null,
+  GROK_CLAUDE_HOOKS_ENABLED: process.env.GROK_CLAUDE_HOOKS_ENABLED ?? null,
+  GROK_CURSOR_HOOKS_ENABLED: process.env.GROK_CURSOR_HOOKS_ENABLED ?? null,
 }, envHash: crypto.createHash('sha256').update(JSON.stringify(Object.entries(process.env).sort())).digest('hex') }) + '\\n');
 if (a[0] === '--version') { console.log('9.9.9 (fake)'); process.exit(0); }
 if (a[0] === 'inspect') {

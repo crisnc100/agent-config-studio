@@ -104,7 +104,8 @@ async function startServer(home) {
   const port = await freePort();
   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: ROOT,
-    env: { HOME: home, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir() },
+    env: { HOME: home, PORT: String(port), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, TMPDIR: os.tmpdir(),
+      GROK_CLAUDE_HOOKS_ENABLED: '1', GROK_CURSOR_HOOKS_ENABLED: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   }); track(child);
   let log = '';
@@ -174,6 +175,9 @@ try {
   const env = calls('grok');
   ok('B1 the inspect and the turn both ran with the compat MCP sources off',
      env.length >= 2 && env.every((c) => c.argv[0] === '--version' || (c.env.GROK_CLAUDE_MCPS_ENABLED === '0' && c.env.GROK_CURSOR_MCPS_ENABLED === '0')),
+     JSON.stringify(env.map((c) => [c.argv[0], c.env])));
+  ok('the inspect and the turn override inherited Claude and Cursor hook switches',
+     env.length >= 2 && env.every((c) => c.argv[0] === '--version' || (c.env.GROK_CLAUDE_HOOKS_ENABLED === '0' && c.env.GROK_CURSOR_HOOKS_ENABLED === '0')),
      JSON.stringify(env.map((c) => [c.argv[0], c.env])));
   const inspectCall = env.find((c) => c.argv[0] === 'inspect');
   const turnCall = env.find((c) => c.argv.includes('--prompt-file'));
