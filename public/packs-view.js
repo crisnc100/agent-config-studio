@@ -731,7 +731,7 @@ function pkPartsView(sec, pack, card) {
       act.appendChild(pkBtn('', 'Add…', () => pkPreview(pack, 'install', { parts: [part.id] }, { at: part.id }), busy));
     } else {
       // Update is pack-wide: Restore… previews it with the pack's copy taken, so its preview lists every edited file it replaces.
-      if (['skill', 'cursor-session'].includes(part.kind) && pkPartStatuses(pack, part.id).map(pkKind).includes('edited')) act.appendChild(pkBtn('', 'Restore…', () => pkPreview(pack, 'update', { replace: true }, { at: part.id, verb: 'Restore' }), busy));
+      if (['skill', 'cursor-session', 'cursor-turns'].includes(part.kind) && pkPartStatuses(pack, part.id).map(pkKind).includes('edited')) act.appendChild(pkBtn('', 'Restore…', () => pkPreview(pack, 'update', { replace: true }, { at: part.id, verb: 'Restore' }), busy));
       // The last part out is the pack's uninstall.
       const only = installed.length === 1;
       act.appendChild(pkBtn('ghost', 'Remove…', () => pkPreview(pack, 'uninstall', only ? {} : { parts: [part.id] }, { at: part.id, verb: 'Remove' }), busy));

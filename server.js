@@ -39,6 +39,7 @@ import { readGeminiModels, stopAgyCalls } from './lib/usage/gemini.js';
 import { startLogin, loginState, cancelLogin } from './lib/usage/connect.js';
 import { codexProcessesUsingHome, stopProcesses } from './lib/usage/processes.js';
 import { loadSeats } from './lib/usage/seats.js';
+import { readCursorUsage } from './lib/usage/cursor.js';
 import {
   createModelsState, setModel, resetModel, dismiss, applySidecar, whereUsed, pinFamily, removeFamily,
 } from './lib/models-panel.js';
@@ -744,8 +745,9 @@ export function createApp(opts = {}) {
    * credential (it reads its own rollout logs), so it is refreshed live here.
    */
   'GET /api/usage': async () => {
-    try { return await usage.render(); }
-    catch (e) { return { takenAt: Date.now(), storedAt: null, seats: [], error: e.message }; }
+    const cursor = readCursorUsage();
+    try { return { ...await usage.render(), cursor }; }
+    catch (e) { return { takenAt: Date.now(), storedAt: null, seats: [], cursor, error: e.message }; }
   },
 
   /**

@@ -758,6 +758,13 @@ a { color: var(--accent); }
 .usage-seat-name { font-size: 14px; font-weight: 600; }
 .usage-seat-meta { color: var(--muted); font: 12px var(--mono); }
 
+.usage-turns { border-collapse: collapse; width: 100%; max-width: 560px; font-size: 12px; }
+.usage-turns th, .usage-turns td { padding: 6px; text-align: right; border-bottom: 1px solid var(--border-soft); }
+.usage-turns th:first-child { text-align: left; overflow-wrap: anywhere; }
+.usage-turns thead { color: var(--muted); }
+.usage-turns td { font-variant-numeric: tabular-nums; }
+.usage-turns tbody tr:last-child { font-weight: 600; }
+
 .usage-row { display: flex; align-items: center; gap: 10px; margin-bottom: 5px; }
 /* Tabular figures and a fixed width so the bars line up as a column even when
    the percentages are 7% and 100%. */

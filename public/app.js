@@ -3821,6 +3821,45 @@ function pauseRow(s, P) {
   return row;
 }
 
+function cursorUsageCard(usage) {
+  const card = el('section', 'usage-seat');
+  card.setAttribute('aria-label', 'Cursor');
+  const title = el('div', 'usage-seat-head');
+  title.appendChild(el('span', 'usage-seat-name', 'Cursor'));
+  card.appendChild(title);
+  card.appendChild(el('p', 'usage-note', "Completed turns counted on this Mac; not Cursor's plan usage."));
+  if (!usage.installed) {
+    const hint = el('p', 'usage-offline-why');
+    hint.append('Turn on counting with ', el('code', null, 'acs packs install cursor'), '.');
+    card.appendChild(hint);
+  } else if (!usage.total.days30) {
+    card.appendChild(el('p', 'usage-offline-why', 'No completed turns counted yet.'));
+  } else {
+    const table = el('table', 'usage-turns');
+    const head = el('thead');
+    const labels = el('tr');
+    for (const label of ['Selected model', 'Today', 'Last 7 days', 'Last 30 days']) {
+      const cell = el('th', null, label);
+      cell.setAttribute('scope', 'col');
+      labels.appendChild(cell);
+    }
+    head.appendChild(labels);
+    table.appendChild(head);
+    const body = el('tbody');
+    for (const { model, today, days7, days30 } of [...usage.models, { ...usage.total, model: 'Total' }]) {
+      const row = el('tr');
+      const modelCell = el('th', null, model);
+      modelCell.setAttribute('scope', 'row');
+      row.appendChild(modelCell);
+      for (const count of [today, days7, days30]) row.appendChild(el('td', null, String(count)));
+      body.appendChild(row);
+    }
+    table.appendChild(body);
+    card.appendChild(table);
+  }
+  return card;
+}
+
 let usagePaintGen = 0;
 async function paintUsage() {
   const c = $('content');
@@ -3877,6 +3916,7 @@ async function paintUsage() {
   if (!seats.length) {
     box.appendChild(el('div', 'scope-sub',
       'No subscriptions tracked yet — use + Add account above.'));
+    if (u.cursor) box.appendChild(cursorUsageCard(u.cursor));
     c.appendChild(box);
     revealUsageFocus(box);
     return;
@@ -4019,6 +4059,7 @@ async function paintUsage() {
 
     box.appendChild(card);
   }
+  if (u.cursor) box.appendChild(cursorUsageCard(u.cursor));
   box.appendChild(el('div', 'scope-sub',
     'Pause an account when it runs low: every role skips its models and uses its next one, until the account resets or you resume it.'));
 
