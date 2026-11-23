@@ -441,18 +441,38 @@ function inspectShell(text, inherited = new Set(), depth = 0, outputAsCode = fal
   }
   return null
 }
-let raw = ''
+// A pass is {} so Cursor's own approval still decides. Every outcome is JSON on stdout with exit 0.
+function answerCursor(reason) {
+  const message = `review gate: ${reason}`
+  console.log(JSON.stringify(reason ? { permission: 'deny', user_message: message, agent_message: message } : {}))
+}
+
+let raw = '', cursor = process.argv.includes('--cursor', 2)
 try {
   raw = readFileSync(0, 'utf8')
-  const payload = JSON.parse(raw), tool = payload.tool_name ?? payload.toolName
-  if (tool && !['Bash', 'Monitor', 'run_terminal_command'].includes(tool)) process.exit(0)
-  const command = payload.tool_input?.command ?? payload.toolInput?.command
-  let reason
-  if (typeof command === 'string') reason = inspectShell(command)
-  else if (Array.isArray(command) && command.every((word) => typeof word === 'string')) reason = inspectWords(command, new Set(), 0)
-  if (reason) { console.error(`review gate: ${reason}`); process.exitCode = 2 }
+  const payload = JSON.parse(raw)
+  cursor ||= payload?.hook_event_name === 'beforeShellExecution'
+  if (cursor) {
+    const isObject = payload !== null && typeof payload === 'object' && !Array.isArray(payload)
+    const command = isObject && Object.hasOwn(payload, 'command') ? payload.command : undefined
+    answerCursor(typeof command === 'string' ? inspectShell(command) : 'Cursor hook payload must contain a command string')
+  } else {
+    const tool = payload.tool_name ?? payload.toolName
+    if (tool && !['Bash', 'Monitor', 'run_terminal_command'].includes(tool)) process.exit(0)
+    const command = payload.tool_input?.command ?? payload.toolInput?.command
+    let reason
+    if (typeof command === 'string') reason = inspectShell(command)
+    else if (Array.isArray(command) && command.every((word) => typeof word === 'string')) reason = inspectWords(command, new Set(), 0)
+    if (reason) { console.error(`review gate: ${reason}`); process.exitCode = 2 }
+  }
 } catch (error) {
-  const blocked = sensitive(raw)
-  console.error(`review gate: ${blocked ? '' : 'warning: '}guard error: ${String(error.message).replace(/[\r\n]/g, ' ')}`)
-  process.exitCode = blocked ? 2 : 0
+  const reason = `guard error: ${String(error.message).replace(/[\r\n]/g, ' ')}`
+  // Unparseable input that still names the Cursor event is denied in Cursor's format, not Claude's exit code.
+  if (cursor || (error instanceof SyntaxError && /[{,]\s*"hook_event_name"\s*:\s*"beforeShellExecution"/.test(raw))) {
+    answerCursor(reason)
+  } else {
+    const blocked = sensitive(raw)
+    console.error(`review gate: ${blocked ? '' : 'warning: '}${reason}`)
+    process.exitCode = blocked ? 2 : 0
+  }
 }

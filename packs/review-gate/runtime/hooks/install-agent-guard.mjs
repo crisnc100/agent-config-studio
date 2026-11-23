@@ -5,10 +5,11 @@ import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { CURSOR_SHELL_EVENT, cursorCommand, cursorGuardActive, isCursorGuardEntry, readCursorConfig, shellCommand } from './cursor-hooks.mjs'
 
 const BEGIN = '# review-gate agent guard begin', END = '# end'
 const launcher = join(dirname(fileURLToPath(import.meta.url)), 'agent-guard')
-const command = /^[a-zA-Z0-9_./-]+$/.test(launcher) ? launcher : `'${launcher.replaceAll("'", "'\\''")}'`
+const command = shellCommand(launcher)
 const own = (handler) => handler?.type === 'command' && handler.command === command
 const snapshot = (path) => existsSync(path) ? { bytes: readFileSync(path).toString('base64'), mode: statSync(path).mode & 0o777 } : null
 const textOf = (info) => info ? Buffer.from(info.bytes, 'base64').toString() : ''
@@ -37,6 +38,32 @@ function jsonFile(info) {
     if (!group || !Array.isArray(group.hooks)) throw new Error(`Invalid hook group: ${info.path}`)
   return value
 }
+const readCursorHooks = (path, info) => readCursorConfig(path, info && Buffer.from(info.bytes, 'base64'), CURSOR_SHELL_EVENT)
+function hookFile(file, before = file.before) {
+  const legacy = file.kinds.has('claude') || file.kinds.has('codex') ? jsonFile({ ...file, before }) : null
+  return file.kinds.has('cursor') ? readCursorHooks(file.path, before) : legacy
+}
+function addCursorGuard(doc) {
+  if (cursorGuardActive(doc, command)) return false
+  doc.hooks ??= {}
+  const entries = doc.hooks[CURSOR_SHELL_EVENT] ??= []
+  const at = entries.findIndex((entry) => isCursorGuardEntry(entry, command))
+  const desired = { command: cursorCommand(command), failClosed: true }
+  if (at === -1) entries.push(desired)
+  else {
+    entries[at] = desired
+    doc.hooks[CURSOR_SHELL_EVENT] = entries.filter((entry, index) => index === at || !isCursorGuardEntry(entry, command))
+  }
+  return true
+}
+function removeCursorGuard(doc) {
+  const entries = doc.hooks?.[CURSOR_SHELL_EVENT]
+  if (entries) doc.hooks[CURSOR_SHELL_EVENT] = entries.filter((entry) => !isCursorGuardEntry(entry, command))
+}
+const hasCursorGuard = (doc) => Array.isArray(doc.hooks?.[CURSOR_SHELL_EVENT])
+  && doc.hooks[CURSOR_SHELL_EVENT].some((entry) => isCursorGuardEntry(entry, command))
+const hasLegacyGuard = (doc) => Array.isArray(doc.hooks?.PreToolUse)
+  && doc.hooks.PreToolUse.some((group) => Array.isArray(group?.hooks) && group.hooks.some(own))
 function addHooks(value, matchers, codex = false) {
   let changed = false
   for (const matcher of matchers) {
@@ -191,6 +218,11 @@ try {
     if (process.env.CODEX_HOME) homes.push(resolve(process.env.CODEX_HOME))
     for (const extra of configuredCodexHomes(home)) homes.push(extra)
   }
+  const cursorHome = join(home, '.cursor')
+  // `acs packs` sets ACS_PACKS_CURSOR_GUARD to 1 (install into Cursor) or 0 (leave Cursor alone). A standalone
+  // run uses Cursor when ~/.cursor exists or cursor-agent is on PATH.
+  const cursorTarget = process.env.ACS_PACKS_CURSOR_GUARD
+  const useCursor = cursorTarget === '1' || (cursorTarget !== '0' && (existsSync(cursorHome) || which('cursor-agent')))
   const codexHomes = [...new Set(homes)]
   const byPath = new Map()
   const fileFor = (path, kind) => {
@@ -201,13 +233,14 @@ try {
   }
   const claude = settings ? fileFor(settings, 'claude') : null
   const routes = codexHomes.map((home) => ({ home, hooks: fileFor(join(home, 'hooks.json'), 'codex'), trust: fileFor(join(home, 'config.toml'), 'trust') }))
+  const cursor = useCursor ? fileFor(join(cursorHome, 'hooks.json'), 'cursor') : null
   const files = [...byPath.values()]
   // Parse each real file before any backup, RPC or write.
   for (const file of files) {
     if (file.kinds.has('trust')) {
       if (file.kinds.size !== 1) throw new Error(`JSON and TOML cannot share a file: ${file.path}`)
       withoutTrust(textOf(file.before))
-    } else file.value = jsonFile(file)
+    } else file.value = hookFile(file)
   }
   const statePath = realFile(join(home, '.agent-config-studio/review-gate-agent-guard.json')), stateBefore = snapshot(statePath)
   const originalState = stateBefore ? JSON.parse(textOf(stateBefore)) : { files: {}, homes: {} }
@@ -242,6 +275,10 @@ try {
   if (action === 'status') {
     if (claude) for (const matcher of ['Bash', 'Monitor']) console.log(`Claude ${matcher}: ${entry(claude, matcher) ? 'present' : 'missing'}`)
     for (const route of routes) report(route, entry(route.hooks, '^Bash$') ? await listHooks(route.home) : null, true)
+    if (cursor) {
+      const repair = `${shellCommand(process.execPath)} ${shellCommand(fileURLToPath(import.meta.url))} install --no-claude --no-codex`
+      console.log(`Cursor ${cursor.path}: ${cursorGuardActive(cursor.value, command) ? 'active' : `missing — repair with: ${repair}`}`)
+    }
   } else {
     let backup
     const changed = new Set()
@@ -264,15 +301,18 @@ try {
     }
     const remember = (file) => {
       const saved = state.files[file.path]
+      // A repaired entry must be removed on uninstall, even if it predated the installer.
+      const repaired = !saved && file.kinds.has('cursor') && hasCursorGuard(readCursorHooks(file.path, file.before))
       state.files[file.path] = { before: saved ? saved.before : file.before, after: snapshot(file.path),
-        kind: file.kinds.has('trust') ? 'trust' : file.kinds.has('codex') ? 'codex' : 'claude',
-        modified: !!saved?.modified || !!saved && !same(file.before, saved.after) }
+        kind: [...file.kinds].find((kind) => kind !== 'claude') ?? 'claude',
+        modified: repaired || !!saved?.modified || !!saved && !same(file.before, saved.after) }
     }
     if (action === 'install') {
       for (const file of files.filter((f) => !f.kinds.has('trust'))) {
         let added = false
         if (file.kinds.has('claude')) added = addHooks(file.value, ['Bash', 'Monitor']) || added
         if (file.kinds.has('codex')) added = addHooks(file.value, ['^Bash$'], true) || added
+        if (file.kinds.has('cursor')) added = addCursorGuard(file.value) || added
         if (added) write(file, JSON.stringify(file.value, null, 2) + '\n')
       }
       const collected = new Map(), results = new Map()
@@ -312,9 +352,13 @@ try {
           const keepCodex = remaining.some((h) => h.hooks === file.path), keepClaude = file.kinds.has('claude') && !noCodex && remaining.length > 0
           if (file.kinds.has('codex') && !keepCodex) matchers.push('^Bash$')
           if (file.kinds.has('claude') && !keepClaude) matchers.push('Bash', 'Monitor')
-          const clean = removeHooks(jsonFile({ ...file, before: current }), matchers)
+          const clean = hookFile(file, current)
+          if (file.kinds.has('claude') || file.kinds.has('codex')) removeHooks(clean, matchers)
+          if (file.kinds.has('cursor')) removeCursorGuard(clean)
           text = same(clean, file.value) ? textOf(current) : JSON.stringify(clean, null, 2) + '\n'
-          keep = keepCodex || keepClaude
+          // Cursor's hooks.json can resolve to the same file as another harness's settings.
+          keep = keepCodex || keepClaude || (!file.kinds.has('cursor') && hasCursorGuard(clean))
+            || (file.kinds.has('cursor') && hasLegacyGuard(clean))
         }
         if (!keep && saved && !saved.modified && same(current, saved.after)) text = saved.before ? textOf(saved.before) : null
         else if (!keep && saved?.before === null && (file.kinds.has('trust') ? !text.trim() : !Object.keys(JSON.parse(text)).length)) text = null

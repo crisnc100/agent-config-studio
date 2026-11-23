@@ -14,7 +14,7 @@ import { readState } from '../lib/packs-files.js';
 
 const USAGE = `usage: acs packs list [--json]
        acs packs explain <id>
-       acs packs install <id> [--part <part>]... [--harness claude,codex,grok] [--force] [--with-deps]
+       acs packs install <id> [--part <part>]... [--harness claude,codex,grok,cursor] [--force] [--with-deps]
                               [--fix-roles] [--set-role <role>=<family>[,<family>...]] [--dry-run] [--yes] [--json]
        acs packs status [<id>] [--no-trust-check] [--json]
        acs packs update [<id>] [--replace] [--dry-run] [--yes] [--json]

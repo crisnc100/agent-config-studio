@@ -11,9 +11,32 @@ node=
 if [ -r "$folder/node-path" ]; then IFS= read -r node < "$folder/node-path" || :; fi
 { [ -n "$node" ] && [ -x "$node" ]; } || node=node
 if command -v "$node" >/dev/null 2>&1 && "$node" --version >/dev/null 2>&1; then
-  exec "$node" "$folder/agent-guard.mjs"
+  exec "$node" "$folder/agent-guard.mjs" "$@"
 fi
+# Cursor needs an explicit denial even for a command the fallback cannot inspect.
+deny_cursor() {
+  printf '%s\n' '{"permission":"deny","user_message":"review gate: node could not start","agent_message":"review gate: node could not start"}'
+  exit 0
+}
+[ "${1-}" = --cursor ] && deny_cursor
 input=$(cat)
+# An entry installed without --cursor still gets a Cursor answer: deny any payload whose hook_event_name is beforeShellExecution.
+event=$input
+while :; do
+  case $event in
+    *'"hook_event_name"'*) event=${event#*'"hook_event_name"'} ;;
+    *) break ;;
+  esac
+  event=${event#"${event%%[![:space:]]*}"}
+  case $event in
+    :*)
+      event=${event#:}
+      event=${event#"${event%%[![:space:]]*}"}
+      case $event in
+        '"beforeShellExecution"'*) deny_cursor ;;
+      esac ;;
+  esac
+done
 if printf '%s' "$input" | LC_ALL=C grep -Ei 'no-veri|hookspath|reviewgate|include\.path|includeif\.' >/dev/null 2>&1 ||
    { printf '%s' "$input" | LC_ALL=C grep -i 'commit' >/dev/null 2>&1 &&
      printf '%s' "$input" | LC_ALL=C grep -E -- '-[[:alpha:]]*n' >/dev/null 2>&1; }; then
