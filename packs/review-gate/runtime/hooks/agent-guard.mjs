@@ -441,6 +441,7 @@ function inspectShell(text, inherited = new Set(), depth = 0, outputAsCode = fal
   }
   return null
 }
+// Every Cursor outcome is JSON on stdout with exit 0 (the Claude/Codex path uses exit 2 and stderr).
 function answerCursor(reason) {
   const message = `review gate: ${reason}`
   console.log(JSON.stringify(reason ? { permission: 'deny', user_message: message, agent_message: message } : { permission: 'allow' }))
@@ -466,6 +467,7 @@ try {
   }
 } catch (error) {
   const reason = `guard error: ${String(error.message).replace(/[\r\n]/g, ' ')}`
+  // Unparseable input that still names the Cursor event is denied in Cursor's format, not Claude's exit code.
   if (cursor || (error instanceof SyntaxError && /[{,]\s*"hook_event_name"\s*:\s*"beforeShellExecution"/.test(raw))) {
     answerCursor(reason)
   } else {

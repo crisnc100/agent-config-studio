@@ -20,6 +20,7 @@ deny_cursor() {
 }
 [ "${1-}" = --cursor ] && deny_cursor
 input=$(cat)
+# An entry installed without --cursor still gets a Cursor answer: deny any payload whose hook_event_name is beforeShellExecution.
 event=$input
 while :; do
   case $event in
