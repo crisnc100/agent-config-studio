@@ -956,9 +956,12 @@ skill.
 - `--x-search` asks Grok what people on X are saying, with Grok's four X
   search tools and no others: every other built-in tool is disallowed, rules
   deny shell, file and fetch tools and MCP tools, and subagents are off.
-  Only a family Grok runs can use it, and only on Grok 1.0.77, the version
+  Only a family Grok runs can use it, and only on Grok 1.0.92, the version
   its tool list was checked against; any other version exits 4 without
-  running. `--json` marks `tools` as `restricted` with a `toolsNote`. It
+  running. Each run is checked after the run against Grok's session
+  record: unless it shows no tool offered and only X searches called, the
+  call exits 4 with no answer. `--json` marks `tools` as `restricted` with a
+  `toolsNote`. It
   cannot be combined with `--investigate`, `--no-tools`, `--min-tools` or
   `--schema`, and any of those, or a non-Grok family, exits 64.
 - Exit codes: 0 answered, 2 another model answered, 3 the CLI (or node) is

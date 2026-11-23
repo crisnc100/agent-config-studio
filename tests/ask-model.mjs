@@ -1152,28 +1152,126 @@ console.log('\nask-model: --x-search');
   const XC = mk('x-search-cwd');
   const X_DENY = ['run_terminal_command', 'run_terminal_cmd', 'search_replace', 'write', 'read_file', 'list_dir', 'grep', 'kill_command_or_subagent', 'todo_write',
     'get_command_or_subagent_output', 'spawn_subagent', 'scheduler_create', 'scheduler_delete', 'scheduler_list', 'monitor', 'search_tool', 'use_tool', 'workflow',
-    'enter_plan_mode', 'exit_plan_mode', 'ask_user_question', 'send_feedback', 'web_fetch', 'image_gen', 'image_edit', 'image_to_video', 'reference_to_video', 'web_search'];
+    'enter_plan_mode', 'exit_plan_mode', 'ask_user_question', 'send_feedback', 'web_fetch', 'image_gen', 'image_edit', 'image_to_video', 'reference_to_video', 'web_search',
+    'wait_commands_or_subagents', 'get_terminal_command_output', 'kill_terminal_command', 'send_subagent_message', 'skill', 'lsp', 'update_goal', 'view_image', 'request_access'];
   const X_RULES = ['--deny', 'MCPTool', ...['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch'].flatMap((r) => ['--deny', r])];
   // The grok version GROK_X_DENY was listed against; any other one refuses --x-search.
-  const X_INSPECT = { STUB_GROK_INSPECT: J({ grokVersion: '1.0.77', mcpServers: [], plugins: [] }) };
-  const xask = (args, opts = {}) => ask(args, { ...opts, env: { ...X_INSPECT, ...opts.env } });
+  const X_INSPECT = { STUB_GROK_INSPECT: J({ grokVersion: '1.0.92', mcpServers: [], plugins: [] }) };
+  // grok's record of an --x-search session, as 1.0.92 writes it: <GROK_HOME>/sessions/<URL-encoded cwd>/<id>/ with an
+  // empty tool_definitions.json and a chat_history.jsonl whose only tool calls are X searches. false leaves a file out.
+  // It goes where the run's default GROK_HOME (<HOME>/.grok, no GROK_HOME set) puts it, so a launch from the plain home
+  // is what answers.
+  const XSID = '01a2052d-a502-7162-85e4-383f928feb61';
+  const xdir = (home) => path.join(home, '.grok', 'sessions', encodeURIComponent(XC), XSID);
+  const xcall = (name) => ({ type: 'backend_tool_call', kind: { tool_type: 'x_search', call_id: 'xs_call-0', input: '{}', name, id: 'xs-0' } });
+  const X_LINES = [{ type: 'system', content: 'sys' }, { type: 'user', content: 'q' }, { type: 'reasoning', content: 'r' },
+    xcall('x_keyword_search'), xcall('x_semantic_search'), xcall('x_user_search'), xcall('x_thread_fetch'), { type: 'assistant', content: 'a' }];
+  // The same calls in updates.jsonl, as grok 1.0.92 streams them: a tool_call naming the XSearch variant, then a
+  // tool_call_update whose rawOutput names the X tool. events.jsonl and signals.json as an X-only run leaves them.
+  const xupdate = (update) => ({ method: 'session/update', params: { sessionId: XSID, update } });
+  const xstream = (name, n) => [
+    xupdate({ sessionUpdate: 'tool_call', toolCallId: `ctc_${n}`, title: 'X search:', kind: 'search', status: 'in_progress', rawInput: { variant: 'XSearch', backend: true }, _meta: { backend: true } }),
+    xupdate({ sessionUpdate: 'tool_call_update', toolCallId: `ctc_${n}`, status: 'completed', title: 'X search:', rawOutput: { call_id: `xs_call-${n}`, input: '{}', name, id: `ctc_${n}` } }),
+  ];
+  const X_UPDATES = [
+    { method: '_x.ai/session/update', params: { sessionId: XSID, update: { sessionUpdate: 'hook_execution', event_name: 'session_start', runs: [] } } },
+    xupdate({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'q' } }),
+    ...xstream('x_keyword_search', 0), ...xstream('x_semantic_search', 1), ...xstream('x_user_search', 2), ...xstream('x_thread_fetch', 3),
+    xupdate({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'a' } }),
+    { method: '_x.ai/session/update', params: { sessionId: XSID, update: { sessionUpdate: 'turn_completed' } } },
+  ];
+  const X_EVENTS = [{ type: 'turn_started', session_id: XSID, turn_number: 0, model_id: IDS.grok }, { type: 'phase_changed' }, { type: 'turn_ended', outcome: 'completed' }];
+  const X_SIGNALS = J({ turnCount: 1, toolCallCount: 0, toolsUsed: ['x_search'] });
+  const jsonl = (ls) => ls.map((l) => (typeof l === 'string' ? l : J(l))).join('\n') + (ls.length ? '\n' : '');
+  const xsession = ({ home = HOME, defs = '[]', lines = X_LINES, updates = X_UPDATES, events = X_EVENTS, signals = X_SIGNALS, folder = true } = {}) => {
+    const dir = xdir(home);
+    fs.rmSync(path.join(home, '.grok', 'sessions'), { recursive: true, force: true });
+    if (!folder) return;
+    fs.mkdirSync(dir, { recursive: true });
+    if (defs !== false) fs.writeFileSync(path.join(dir, 'tool_definitions.json'), defs);
+    if (lines !== false) fs.writeFileSync(path.join(dir, 'chat_history.jsonl'), typeof lines === 'string' ? lines : jsonl(lines));
+    if (updates !== false) fs.writeFileSync(path.join(dir, 'updates.jsonl'), typeof updates === 'string' ? updates : jsonl(updates));
+    if (events !== false) fs.writeFileSync(path.join(dir, 'events.jsonl'), typeof events === 'string' ? events : jsonl(events));
+    if (signals !== false) fs.writeFileSync(path.join(dir, 'signals.json'), signals);
+  };
+  const X_ENV = { ...X_INSPECT, STUB_SESSION_ID: XSID };
+  const xask = (args, opts = {}) => { if (!opts.keep) xsession({ home: opts.home ?? HOME }); return ask(args, { ...opts, env: { ...X_ENV, ...opts.env } }); };
   const g = xask(['--family', 'grok', '--x-search', '--json', '--cwd', XC]);
   const gj = g.code === 0 ? JSON.parse(g.out) : {};
   ok('grok --x-search: exact argv, every other built-in disallowed, MCP and file, shell and fetch rules denied, no subagents, low turn cap, from --cwd',
      g.code === 0 && same(g.argv, ['-p', PROMPT, '-m', IDS.grok, ...(gj.effort ? ['--reasoning-effort', gj.effort] : []), '--cwd', XC,
        '--disallowed-tools', X_DENY.join(','), ...X_RULES, '--no-subagents', '--max-turns', '8', '--output-format', 'json'])
      && g.calls[0].cwd === XC, show(g));
+  ok('grok --x-search: the tools grok 1.0.92 names beyond 1.0.77\'s list are disallowed',
+     g.code === 0 && ['wait_commands_or_subagents', 'get_terminal_command_output', 'kill_terminal_command', 'send_subagent_message', 'skill', 'lsp', 'update_goal', 'view_image', 'request_access']
+       .every((t) => g.argv[g.argv.indexOf('--disallowed-tools') + 1].split(',').includes(t)), show(g));
   ok('grok --x-search: write, spawn_subagent and reference_to_video are disallowed',
      g.code === 0 && ['write', 'spawn_subagent', 'reference_to_video'].every((t) => g.argv[g.argv.indexOf('--disallowed-tools') + 1].split(',').includes(t)), show(g));
   ok('grok --x-search --json: tools "restricted", a note naming the four X tools and what is denied',
      gj.tools === 'restricted' && ['x_keyword_search', 'x_semantic_search', 'x_user_search', 'x_thread_fetch'].every((t) => gj.toolsNote?.includes(t))
      && /open_page/.test(gj.toolsNote) && /denied/.test(gj.toolsNote), show(g));
 
-  for (const [what, inspect] of [['another grok version', { grokVersion: '1.0.78', mcpServers: [], plugins: [] }], ['no grokVersion', { mcpServers: [], plugins: [] }]]) {
+  // Checked after the run against grok's session record: anything but an X-only run refuses, its answer unused.
+  const xrefused = (r, why) => {
+    const j = (() => { try { return JSON.parse(r.out); } catch { return {}; } })();
+    return r.code === 4 && r.calls.length === 1 && j.answer === null && !r.out.includes(`answer from ${IDS.grok}`)
+      && /session record/.test(j.error ?? '') && why.test(j.error ?? '');
+  };
+  for (const [what, setup, why] of [
+    ['no session folder', { folder: false }, /tool_definitions\.json could not be read/],
+    ['no tool_definitions.json', { defs: false }, /tool_definitions\.json could not be read/],
+    ['tool_definitions.json offering a tool', { defs: J([{ name: 'write' }]) }, /offered 1 tool/],
+    ['tool_definitions.json that is not JSON', { defs: '[' }, /tool_definitions\.json is not JSON/],
+    ['no chat_history.jsonl', { lines: false }, /chat_history\.jsonl could not be read/],
+    ['a line type outside the allowlist (tool_result)', { lines: [...X_LINES, { type: 'tool_result', content: 'denied' }] }, /"tool_result"/],
+    ['a backend call that is not an X tool (open_page)', { lines: [...X_LINES, xcall('open_page')] }, /"open_page"/],
+    ['a backend call with no name', { lines: [...X_LINES, { type: 'backend_tool_call', kind: { tool_type: 'web_search' } }] }, /null/],
+    ['a line that is not JSON', { lines: [...X_LINES, '{oops'] }, /not JSON/],
+    // A complete conversation: a blank or cut-short history proves nothing.
+    ['an empty chat_history.jsonl', { lines: '' }, /does not end with the assistant's reply/],
+    ['a chat_history.jsonl of blank lines', { lines: '\n\n' }, /does not end with the assistant's reply/],
+    ['a chat_history.jsonl cut before the last assistant line', { lines: X_LINES.slice(0, -1) }, /does not end with the assistant's reply/],
+    ['a chat_history.jsonl with no assistant line at all', { lines: X_LINES.filter((l) => l.type !== 'assistant') }, /does not end with the assistant's reply/],
+    ['an assistant line carrying a client tool call', { lines: [...X_LINES.slice(0, -1), { type: 'assistant', content: 'a', tool_calls: [{ id: 'call-0', name: 'write', arguments: '{}' }] }] }, /"write"/],
+    // Every call the session records, wherever: grok's compaction can leave a call in updates.jsonl alone.
+    ['a client call only in updates.jsonl', { updates: [...X_UPDATES, xupdate({ sessionUpdate: 'tool_call', toolCallId: 'call-9', title: 'write', rawInput: { file_path: 'p', content: 'x' }, _meta: { 'x.ai/tool': { name: 'write', kind: 'write' } } })] }, /updates\.jsonl records a call to "write"/],
+    ['a backend call to open_page only in updates.jsonl', { updates: [...X_UPDATES, ...xstream('open_page', 9)] }, /updates\.jsonl records a call to "open_page"/],
+    ['an X-variant call in updates.jsonl that never names its tool', { updates: [...X_UPDATES, xstream('x_keyword_search', 9)[0]] }, /updates\.jsonl records a call to "\(unnamed\)"/],
+    ['a tool hook in updates.jsonl', { updates: [...X_UPDATES, { method: '_x.ai/session/update', params: { sessionId: XSID, update: { sessionUpdate: 'hook_execution', event_name: 'pre_tool_use', tool_name: 'run_terminal_command', runs: [] } } }] }, /updates\.jsonl records a call to "run_terminal_command"/],
+    ['no updates.jsonl', { updates: false }, /updates\.jsonl could not be read/],
+    ['an updates.jsonl line that is not JSON', { updates: [...X_UPDATES, '{oops'] }, /updates\.jsonl holds a line that is not JSON/],
+    ['a tool started in events.jsonl', { events: [...X_EVENTS, { type: 'tool_started', tool_name: 'write' }] }, /events\.jsonl records a call to "write"/],
+    ['no events.jsonl', { events: false }, /events\.jsonl could not be read/],
+    ['signals.json listing a client tool as used', { signals: J({ toolsUsed: ['x_search', 'write'] }) }, /signals\.json lists "write"/],
+    ['no signals.json', { signals: false }, /signals\.json could not be read/],
+  ]) {
+    xsession(setup);
+    const d = xask(['--family', 'grok', '--x-search', '--json', '--cwd', XC], { keep: true });
+    ok(`--x-search, ${what} in grok's session record: exit 4, no answer, the reason named`, xrefused(d, why), show(d));
+  }
+  const noSid = xask(['--family', 'grok', '--x-search', '--json', '--cwd', XC], { env: { STUB_SESSION_ID: '' } });
+  ok('--x-search, no sessionId in grok\'s reply: exit 4, no answer', xrefused(noSid, /no session id/), show(noSid));
+  const badSid = xask(['--family', 'grok', '--x-search', '--json', '--cwd', XC], { env: { STUB_SESSION_ID: '../x' } });
+  ok('--x-search, a sessionId that is not a plain id: exit 4, never read as a path', xrefused(badSid, /no session id/), show(badSid));
+  xsession({ folder: false });
+  const plain = xask(['--family', 'grok', '--x-search', '--cwd', XC], { keep: true });
+  ok('--x-search without --json, no session record: exit 4, nothing on stdout, the reason on stderr',
+     plain.code === 4 && plain.out === '' && /session record/.test(plain.err), show(plain));
+  const otherSession = xask(['--family', 'grok', '--x-search', '--json', '--cwd', XC], { env: { STUB_SESSION_ID: '01a2052d-0000-0000-0000-000000000000' } });
+  ok('--x-search, the record of another session id is not read for this one: exit 4', xrefused(otherSession, /could not be read/), show(otherSession));
+  const xonly = xask(['--family', 'grok', '--x-search', '--json', '--cwd', XC]);
+  ok('--x-search, an X-only session record: the answer stands', xonly.code === 0 && JSON.parse(xonly.out).answer === `answer from ${IDS.grok}`, show(xonly));
+  // Other modes never read the record.
+  xsession({ folder: false });
+  const roX = ask(['--family', 'grok', '--json', '--cwd', XC], { env: { STUB_SESSION_ID: XSID } });
+  ok('without --x-search no session record is needed', roX.code === 0, show(roX));
+
+  for (const [what, inspect] of [['an older grok (1.0.77)', { grokVersion: '1.0.77', mcpServers: [], plugins: [] }], ['a newer grok (1.0.93)', { grokVersion: '1.0.93', mcpServers: [], plugins: [] }],
+    ['no grokVersion', { mcpServers: [], plugins: [] }]]) {
     const d = ask(['--family', 'grok', '--x-search', '--json', '--cwd', XC], { env: { STUB_GROK_INSPECT: J(inspect) } });
     const dj = d.out ? JSON.parse(d.out) : {};
     ok(`--x-search with ${what} in grok inspect: exit 4, the X-search tool list must be re-checked, grok never run`,
-       d.code === 4 && d.inspect.length === 1 && d.calls.length === 0 && /1\.0\.77/.test(dj.error) && /re-check/.test(dj.error) && dj.answer === null, show(d));
+       d.code === 4 && d.inspect.length === 1 && d.calls.length === 0 && /1\.0\.92/.test(dj.error) && /re-check/.test(dj.error) && dj.answer === null, show(d));
   }
   const otherVer = ask(['--family', 'grok', '--json', '--cwd', XC], { env: { STUB_GROK_INSPECT: J({ grokVersion: '1.0.78', mcpServers: [], plugins: [] }) } });
   ok('without --x-search another grok version still runs', otherVer.code === 0 && otherVer.calls.length === 1, show(otherVer));

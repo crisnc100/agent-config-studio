@@ -72,9 +72,12 @@
  * x_semantic_search, x_user_search and x_thread_fetch: every other built-in in GROK_X_DENY is disallowed, permission
  * rules deny Bash, Read, Edit, Write, Grep, Glob, WebFetch and MCP tools whatever grant GROK_HOME holds, subagents are
  * off and the turn cap is low. Web search is not switched off, since the X tools go with it. open_page and
- * open_page_with_find, which come with web_search, can't be disallowed by name; with web_search disallowed grok 1.0.77
- * offered neither. Only for a family grok runs (any other exits 64), not with --investigate, --no-tools, --min-tools or
- * --schema, and only when `grok inspect` reports GROK_X_VERSION (exit 4 otherwise, nothing run).
+ * open_page_with_find, which come with web_search, can't be disallowed by name. The run is checked after the run against
+ * grok's session record: its answer counts only when the record shows no client tool offered and no tool called but the
+ * four X tools; any other record, or none (grok's daemon route keeps its sessions elsewhere), exits 4 with no answer.
+ * The check refuses an answer; it undoes nothing the run did. Only for a family grok runs (any other exits 64), not with
+ * --investigate, --no-tools, --min-tools or --schema, and only when `grok inspect` reports GROK_X_VERSION (exit 4
+ * otherwise, nothing run).
  *
  * Exit: 0 answered · 2 another model answered · 3 the CLI (or node) is not
  * installed · 4 the call failed or returned an error · 5 files changed under
@@ -98,7 +101,7 @@ import { familyEffort, pauseLine, resolveFlavor, resolveRole } from '../lib/role
 const SELF = fileURLToPath(import.meta.url);
 const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools | --x-search] [--json] [--cwd <dir>]'
   + '\n  --x-search: grok only; leaves x_keyword_search, x_semantic_search, x_user_search and x_thread_fetch; open_page and open_page_with_find '
-  + 'cannot be disallowed by name, and the grok it was checked against offers neither';
+  + 'cannot be disallowed by name; each run is checked afterwards against grok\'s session record';
 const VALUE_FLAGS = { '--role': 'role', '--family': 'family', '--effort': 'effort', '--effort-from': 'effortFrom', '--prompt-file': 'promptFile', '--schema': 'schemaFile', '--cwd': 'cwd' };
 
 // What each CLI may use. Claude and grok are read-only by these allowlists alone
@@ -129,16 +132,20 @@ const GROK_MAX_TURNS = '40';
 const GROK_MIN_TURNS = '5';
 // --x-search: a denylist, because a --tools allowlist ignores the X tool names (grok warns they name no tool and leaves
 // every tool available). A tool a later grok adds would not be on it, so the mode runs only on GROK_X_VERSION, the grok
-// this list was taken from (every client tool its sessions' tool_definitions.json named, with run_terminal_cmd, the name
-// --investigate allows, beside run_terminal_command). The deny rules are the second wall: a write or command a name
-// misses is still refused, and deny wins over any allow grant or always-approve setting in GROK_HOME. Under them a
-// session's tool_definitions.json was empty and a `write` left off the list was refused ("deny rule on edit").
-// 8 turns returned real posts.
+// this list was taken from: every client tool its sessions' tool_definitions.json named, with run_terminal_cmd, the name
+// --investigate allows, beside run_terminal_command, and every further name in grok's own tool-name list that
+// --disallowed-tools accepts without its "name no tool" warning (the last line; aliases of a listed tool left out).
+// The deny rules are the second wall: a write or command a name misses is still refused, and deny wins over any allow
+// grant or always-approve setting in GROK_HOME. Under them a session's tool_definitions.json was empty, and a `write`
+// and a shell command, both left off the list, were refused. 8 turns returned real posts. Neither is proof on grok's
+// daemon route, whose tools have other names, so each run is checked after the run against grok's session record
+// (grokXRecord).
 const GROK_X_DENY = ['run_terminal_command', 'run_terminal_cmd', 'search_replace', 'write', 'read_file', 'list_dir', 'grep', 'kill_command_or_subagent', 'todo_write',
   'get_command_or_subagent_output', 'spawn_subagent', 'scheduler_create', 'scheduler_delete', 'scheduler_list', 'monitor', 'search_tool', 'use_tool', 'workflow',
-  'enter_plan_mode', 'exit_plan_mode', 'ask_user_question', 'send_feedback', 'web_fetch', 'image_gen', 'image_edit', 'image_to_video', 'reference_to_video', 'web_search'];
+  'enter_plan_mode', 'exit_plan_mode', 'ask_user_question', 'send_feedback', 'web_fetch', 'image_gen', 'image_edit', 'image_to_video', 'reference_to_video', 'web_search',
+  'wait_commands_or_subagents', 'get_terminal_command_output', 'kill_terminal_command', 'send_subagent_message', 'skill', 'lsp', 'update_goal', 'view_image', 'request_access'];
 const GROK_X_RULES = ['MCPTool', 'Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch'];
-const GROK_X_VERSION = '1.0.77';
+const GROK_X_VERSION = '1.0.92';
 const GROK_X_TURNS = '8';
 // codex features that give the model a tool (`codex features list`), all off under --min-tools; web search has no
 // feature of its own (`web_search` in config.toml: live, indexed, cached or disabled).
@@ -154,7 +161,8 @@ const MIN_TOOLS = {
 };
 const X_SEARCH_TOOLS = { tools: 'restricted', toolsNote: 'x_keyword_search, x_semantic_search, x_user_search and x_thread_fetch only; every other built-in disallowed, '
     + 'Bash, Read, Edit, Write, Grep, Glob, WebFetch and MCP tools denied by rule, subagents off. open_page and open_page_with_find come with '
-    + 'web search and cannot be disallowed by name; grok ' + GROK_X_VERSION + ' offered neither with web_search disallowed' };
+    + 'web search and cannot be disallowed by name. Checked after the run against grok\'s session record: the answer counts only when '
+    + 'that record shows no tool offered and only X tool calls' };
 // grok's own switches for the MCP servers and hooks it borrows from Claude Code's and Cursor's configs, set for
 // its preflight and its run alike (the studio's GROK_ASSIST_ENV, lib/containment.js). Its own MCP servers have
 // none, and its own .grok/hooks have none short of turning folder trust off (see grokHookFolders).
@@ -1386,14 +1394,19 @@ const tail = (s) => String(s || '').trim().slice(-500) || '(no output)';
  * summary.json for that session whose current_model_id is `id`, and an events.jsonl whose every model_id is `id`;
  * else why not.
  */
-function grokBuildProof(id, sessionId, cwd, grokHome) {
-  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(sessionId)) return 'grok reported no session id to look it up by';
+function grokSessionDir(sessionId, cwd, grokHome) {
+  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(sessionId)) return { error: 'grok reported no session id to look it up by' };
   let real;
-  try { real = fs.realpathSync(cwd); } catch (e) { return `its folder could not be resolved (${e.code || e.message})`; }
+  try { real = fs.realpathSync(cwd); } catch (e) { return { error: `its folder could not be resolved (${e.code || e.message})` }; }
   const group = encodeURIComponent(real);
   // A longer name grok replaces with a slug and a hash, which this does not look up.
-  if (Buffer.byteLength(group) > 255) return 'its session folder name is too long to look up';
-  const dir = path.join(grokHome, 'sessions', group, sessionId);
+  if (Buffer.byteLength(group) > 255) return { error: 'its session folder name is too long to look up' };
+  return { dir: path.join(grokHome, 'sessions', group, sessionId) };
+}
+
+function grokBuildProof(id, sessionId, cwd, grokHome) {
+  const { dir, error } = grokSessionDir(sessionId, cwd, grokHome);
+  if (error) return error;
   let summary;
   try { summary = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8')); } catch (e) {
     return `${path.join(dir, 'summary.json')} could not be read (${e.code || 'not JSON'})`;
@@ -1415,6 +1428,112 @@ function grokBuildProof(id, sessionId, cwd, grokHome) {
   if (!named.length) return 'its session events name no model';
   const other = named.find((x) => x !== id);
   return other === undefined ? null : `its session events name ${JSON.stringify(other)}`;
+}
+
+/**
+ * --x-search, after the run: null when grok's record of the session shows a complete X-only run, else why not. The
+ * record is the folder grokBuildProof reads, and every file in it that records a call is read; one that is missing or
+ * unreadable refuses, as does a record of any other shape or none (grok's daemon route keeps its sessions elsewhere).
+ * - tool_definitions.json is [] (no client tool offered).
+ * - chat_history.jsonl holds only X_HISTORY_TYPES lines, every backend_tool_call one of X_TOOLS, no assistant line
+ *   with tool_calls, and it ends with an assistant line: a blank or cut-short history proves nothing.
+ * - updates.jsonl: grok's compaction can leave a call here alone. Every toolCallId of a tool_call or tool_call_update
+ *   is an XSearch-variant call whose rawOutput names an X tool, and no name it carries is another tool.
+ * - updates.jsonl and events.jsonl name no other tool_name (a tool hook, a started or permission-checked tool).
+ * - signals.json's toolsUsed is a list holding nothing but x_search.
+ */
+const X_TOOLS = ['x_keyword_search', 'x_semantic_search', 'x_user_search', 'x_thread_fetch'];
+const X_HISTORY_TYPES = ['system', 'user', 'reasoning', 'assistant', 'backend_tool_call'];
+function grokXRecord(sessionId, cwd, grokHome) {
+  const { dir, error } = grokSessionDir(sessionId, cwd, grokHome);
+  if (error) return error;
+  const read = (name) => {
+    try { return { text: fs.readFileSync(path.join(dir, name), 'utf8') }; } catch (e) { return { error: `${path.join(dir, name)} could not be read (${e.code || e.message})` }; }
+  };
+  const readLines = (name) => {
+    const got = read(name);
+    if (got.error) return got;
+    const entries = [];
+    for (const line of got.text.split('\n')) {
+      if (!line.trim()) continue;
+      try { entries.push(JSON.parse(line)); } catch { return { error: `its ${name} holds a line that is not JSON` }; }
+    }
+    return { entries };
+  };
+  const call = (name, what) => `its ${name} records a call to ${JSON.stringify(what)}`;
+
+  const defs = read('tool_definitions.json');
+  if (defs.error) return defs.error;
+  let offered;
+  try { offered = JSON.parse(defs.text); } catch { return 'its tool_definitions.json is not JSON'; }
+  if (!Array.isArray(offered)) return 'its tool_definitions.json is not a list';
+  if (offered.length) {
+    const names = offered.map((t) => (isObject(t) ? t.name ?? t.function?.name ?? '?' : '?'));
+    return `its tool_definitions.json offered ${offered.length} tool${offered.length === 1 ? '' : 's'} (${names.join(', ')})`;
+  }
+
+  const history = readLines('chat_history.jsonl');
+  if (history.error) return history.error;
+  for (const entry of history.entries) {
+    const type = isObject(entry) ? entry.type : undefined;
+    if (!X_HISTORY_TYPES.includes(type)) return `its chat_history.jsonl holds a ${JSON.stringify(type ?? null)} line`;
+    if (type === 'backend_tool_call') {
+      const name = isObject(entry.kind) ? entry.kind.name : undefined;
+      if (!X_TOOLS.includes(name)) return `its chat_history.jsonl holds a backend call to ${JSON.stringify(name ?? null)}`;
+    }
+    if (type === 'assistant' && entry.tool_calls !== undefined && !(Array.isArray(entry.tool_calls) && !entry.tool_calls.length)) {
+      const first = Array.isArray(entry.tool_calls) && isObject(entry.tool_calls[0]) ? entry.tool_calls[0].name : undefined;
+      return call('chat_history.jsonl', first ?? '(unnamed)');
+    }
+  }
+  if (history.entries.at(-1)?.type !== 'assistant') return 'its chat_history.jsonl does not end with the assistant\'s reply';
+
+  const otherToolName = (name, entries) => {
+    let found;
+    const walk = (v) => {
+      if (found !== undefined) return;
+      if (Array.isArray(v)) v.forEach(walk);
+      else if (isObject(v)) for (const [k, x] of Object.entries(v)) { if (k === 'tool_name' && !X_TOOLS.includes(x)) found = x ?? '(unnamed)'; walk(x); }
+    };
+    walk(entries);
+    return found === undefined ? null : call(name, found);
+  };
+  const updates = readLines('updates.jsonl');
+  if (updates.error) return updates.error;
+  const calls = new Map();
+  for (const entry of updates.entries) {
+    const u = isObject(entry) && isObject(entry.params) && isObject(entry.params.update) ? entry.params.update : null;
+    if (!u || (u.sessionUpdate !== 'tool_call' && u.sessionUpdate !== 'tool_call_update')) continue;
+    const c = calls.get(u.toolCallId) ?? { names: [], x: false };
+    calls.set(u.toolCallId, c);
+    if (u.sessionUpdate === 'tool_call' && !(isObject(u.rawInput) && u.rawInput.variant === 'XSearch')) {
+      c.names.push(u._meta?.['x.ai/tool']?.name ?? u.title ?? '(unnamed)');
+    }
+    for (const n of [u.rawOutput?.name, u._meta?.['x.ai/tool']?.name]) {
+      if (n === undefined) continue;
+      if (X_TOOLS.includes(n)) c.x = true;
+      else c.names.push(n);
+    }
+  }
+  for (const c of calls.values()) {
+    if (c.names.length) return call('updates.jsonl', c.names[0]);
+    if (!c.x) return call('updates.jsonl', '(unnamed)');
+  }
+  const hooked = otherToolName('updates.jsonl', updates.entries);
+  if (hooked) return hooked;
+
+  const events = readLines('events.jsonl');
+  if (events.error) return events.error;
+  const started = otherToolName('events.jsonl', events.entries);
+  if (started) return started;
+
+  const signals = read('signals.json');
+  if (signals.error) return signals.error;
+  let used;
+  try { used = JSON.parse(signals.text)?.toolsUsed; } catch { return 'its signals.json is not JSON'; }
+  if (!Array.isArray(used)) return 'its signals.json has no toolsUsed list';
+  const other = used.find((t) => t !== 'x_search');
+  return other === undefined ? null : `its signals.json lists ${JSON.stringify(other)} as used`;
 }
 
 /**
@@ -1499,7 +1618,7 @@ function agySubagentDenials(steps, home = os.homedir(), who = 'the model') {
  * The answer from one CLI's output, or an exit code and why. With a schema, the structured answer: claude's
  * structured_output (else its result), grok's structuredOutput (else its text), codex's stdout, as JSON text.
  */
-function readAnswer(vendor, id, r, schema = null, { cwd, grokHome, family } = {}) {
+function readAnswer(vendor, id, r, schema = null, { cwd, grokHome, family, xSearch = false } = {}) {
   if (!VENDORS.includes(vendor)) return { exit: 4, error: unwired(vendor) };
   if (r.error) return { exit: r.error.code === 'ENOENT' ? 3 : 4, error: `${vendor} could not start: ${r.error.message}` };
   if (r.signal) return { exit: 4, error: `${vendor} was stopped by ${r.signal}` };
@@ -1543,6 +1662,10 @@ function readAnswer(vendor, id, r, schema = null, { cwd, grokHome, family } = {}
           const confirm = used.length > 1 ? ` (${why})` : why ? ` and grok's session record does not confirm ${id} (${why})` : '';
           return { exit: 2, error: `asked for ${id}, but ${used.length ? used.join(', ') : 'no model'} answered${confirm} — not its answer` };
         }
+      }
+      if (xSearch) {
+        const why = grokXRecord(env.sessionId, cwd, grokHome);
+        if (why !== null) return { exit: 4, error: `--x-search is checked after the run against grok's session record, and ${why}, so its answer was not used` };
       }
       const structured = env.structuredOutput;
       answer = schema && structured != null ? (typeof structured === 'string' ? structured : JSON.stringify(structured)) : env.text;
@@ -1711,7 +1834,7 @@ async function main(argv) {
   if (vendor === 'grok') {
     for (const line of String(r.stderr || '').split('\n')) if (/permission required:/.test(line)) process.stderr.write(`ask-model: grok: ${line.trim()}\n`);
   }
-  const got = readAnswer(vendor, m.id, r, schema, { cwd, grokHome: grokCall?.grokHome, family: m.family });
+  const got = readAnswer(vendor, m.id, r, schema, { cwd, grokHome: grokCall?.grokHome, family: m.family, xSearch: mode === 'x-search' });
   const signIn = wall ? agyAfterCall(logFile) : null;
   if (signIn && got.answer !== undefined) {
     got.answer = undefined;
