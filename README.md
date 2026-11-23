@@ -988,10 +988,11 @@ skill.
 
 ### Model guide
 
-The Models panel's **Model guide** section puts one generated block into each
-harness's global instruction file: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`
-and `~/.grok/AGENTS.md`. Every agent reads that file at the start of every
-session, so **the block's contents become instructions for every agent
+The Models panel's **Model guide** section puts one generated block into the
+global instruction file of each CLI it lists: `~/.claude/CLAUDE.md`,
+`~/.codex/AGENTS.md` and `~/.grok/AGENTS.md`, plus any CLI you add (below).
+Cursor has a row too, but its guide is Claude's block (below). Every agent
+reads that file at the start of every session, so **the block's contents become instructions for every agent
 session** — the roles (which family does which job, at what effort, with its
 fallbacks and second opinion) and how to brief each family. It names families,
 never model ids, and points at `model-id` for the current id.
@@ -1009,12 +1010,42 @@ never model ids, and points at `model-id` for the current id.
   right under it, with **Accept** and **Cancel**. Saving a role that leaves the
   guide behind also shows a notice with the same button. ACS never rewrites a
   file on its own.
-- A harness whose folder does not exist reads "Not installed"; ACS never
-  creates it. A missing file in an existing folder is created holding only the
-  block. A symlinked file is written in place, so the link stays a link. Broken
-  markers, a file that is not UTF-8, over 1 MB or hard-linked, and invalid
-  roles are each shown and refused (removing a block still works while the
-  roles are invalid). Hand-written text outside the block is never touched.
+- A CLI whose folder does not exist reads "Not installed"; ACS never
+  creates it. A symlinked file is written in place, so the link stays a link.
+  Broken markers, a file that is not UTF-8, over 1 MB or hard-linked, and
+  invalid roles are each shown and refused (removing a block still works while
+  the roles are invalid). Hand-written text outside the block is never touched.
+- **Create from template** is offered on a row whose file does not exist yet
+  (Claude's row offers **Add**, which proposes a file holding only the block).
+  It proposes a new file: your working agreement from `~/.claude/CLAUDE.md`
+  with its guide block cut, one freshly rendered guide block, then a short note
+  for that CLI. If `~/.claude/CLAUDE.md` does not exist, the proposal says the
+  agreement was left out. Accept writes exactly the bytes shown. The file is a
+  one-time copy: only its guide block stays managed, and the rest of the
+  agreement is not kept in step with `CLAUDE.md`. Adding the first subscription
+  for a CLI whose file is missing offers the same button on the Usage page,
+  which opens Models with that proposal ready to review.
+- **Cursor** reads no block of its own. Its row shows Claude's guide status,
+  and a role change needs no extra Accept for it. The row manages one file,
+  `~/.cursor/acs-note.md`, created from the Cursor pack's installed note (the
+  shipped one when that is missing). The Cursor pack's session hook serves
+  `CLAUDE.md`, then that file when it is there, else the installed note
+  ([packs/README.md](packs/README.md)). The row says whether the hook is
+  installed; when the installed hook is too old to read the local note, it says
+  to run `acs packs update cursor`, and Create from template waits until then.
+  Updating or replacing the pack leaves `~/.cursor/acs-note.md` alone.
+- **Add a CLI** lists one ACS does not ship, by a name, a home folder (an
+  absolute path, or one starting with `~/`) and an instruction file name in
+  that folder, without slashes. The home must already exist and be a folder ACS
+  may edit: a CLI's own home or a project folder you added with edit access.
+  The name may not match Claude, Codex, Grok or Cursor, or one already added,
+  and the file may not be one already listed. A new row offers Create from
+  template. **Remove CLI** drops the entry and keeps its file. Added CLIs are
+  guide targets only; packs, usage and roles do not change. They are kept in
+  `~/.agent-config-studio/harnesses.json`, which ACS writes. An entry that
+  fails these checks when read is ignored, with the reason shown in the
+  section; a file that cannot be read or is not valid blocks adding and
+  removing until it is fixed.
 
 ## Review gate settings
 

@@ -132,7 +132,7 @@ try {
   {
     const st = (await get('/api/model-guide')).body;
     const by = Object.fromEntries(st.targets.map((t) => [t.key, t]));
-    ok('GET lists the three targets with display paths', st.targets.map((t) => t.key).join() === 'claude,codex,grok' && by.claude.path === '~/.claude/CLAUDE.md' && by.codex.path === '~/.codex/AGENTS.md');
+    ok('GET lists the four targets with display paths', st.targets.map((t) => t.key).join() === 'claude,codex,grok,cursor' && by.claude.path === '~/.claude/CLAUDE.md' && by.codex.path === '~/.codex/AGENTS.md' && by.cursor.path === '~/.cursor/acs-note.md');
     ok('…a missing harness home reads "not installed"', by.grok.status === 'not-installed' && by.grok.harnessInstalled === false && by.grok.installed === false);
     ok('…and a file without a block reads absent', by.claude.status === 'absent' && by.claude.exists === true && by.claude.installed === false);
     ok('…a symlinked target names where it goes', by.codex.linkedTo === '~/.agents/AGENTS.md');
@@ -168,7 +168,8 @@ try {
     const pg = (await post('/api/model-guide/propose', { target: 'grok', action: 'install' })).body;
     ok('…its proposal is a new file holding only the block', pg.newFile === true && pg.current === '' && pg.base === 'absent' && pg.proposed.startsWith('<!-- acs:model-guide v1 sep=0'));
     ok('…and accept creates it', (await post('/api/model-guide/accept', { id: pg.id })).status === 200 && fs.readFileSync(files.grok, 'utf8') === pg.proposed);
-    ok('all three are now current', (await get('/api/model-guide')).body.targets.every((t) => t.status === 'current'));
+    const updated = (await get('/api/model-guide')).body.targets;
+    ok('all four guide statuses are now current', updated.length === 4 && updated.every((t) => t.status === 'current'));
 
     const pr = (await post('/api/model-guide/propose', { target: 'claude', action: 'remove' })).body;
     fs.appendFileSync(files.claude, 'an edit made in an editor\n');

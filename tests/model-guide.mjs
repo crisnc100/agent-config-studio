@@ -431,7 +431,7 @@ try {
     const g = createModelGuide({ hist: quiet });
     const st = g.status().targets;
     const by = Object.fromEntries(st.map((t) => [t.key, t]));
-    ok('all three are listed', st.length === 3);
+    ok('all four are listed', st.length === 4);
     ok('a folder in place of the file → error: directory', by.grok.status === 'error' && by.grok.reason === 'directory', JSON.stringify(by.grok));
     ok('over 1 MB → error: too large', by.claude.status === 'error' && by.claude.reason === 'too-large', JSON.stringify(by.claude));
     ok('R5 not UTF-8 → its own status, no proposals', by.codex.status === 'not-utf8' && (await rejects(() => g.propose({ target: 'codex', action: 'install' })))?.status === 409);

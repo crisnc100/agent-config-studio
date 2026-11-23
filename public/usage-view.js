@@ -58,6 +58,14 @@ const SEAT_VENDORS = [['codex', 'Codex (ChatGPT)'], ['claude', 'Claude'], ['grok
 const SEAT_HARNESSES = { gemini: [['agy', 'Antigravity (agy)']] };
 const HARNESS_NAMES = { agy: 'Antigravity' };
 
+function guideTemplateAction(result) {
+  if (!result.guideTemplate) return null;
+  return {
+    label: 'Create from template',
+    run: () => { location.hash = `#models&template=${encodeURIComponent(result.guideTemplate)}`; },
+  };
+}
+
 /** The card's subtitle: subscription, the harness it runs through, plan. */
 const seatMeta = (s) => [s.vendor, s.harness || (s.vendor === 'gemini' ? 'agy' : null), s.planType, s.subscriptionType]
   .filter(Boolean).map((x) => (HARNESS_NAMES[x] ? `through ${HARNESS_NAMES[x]}` : x)).join(' · ');

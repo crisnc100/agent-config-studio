@@ -119,11 +119,11 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
 // ── Cancel, a new file, CRLF, edited, history warnings, a 409 ────────────
 {
   const state = {
-    guide: guide([target('claude', 'edited'), target('codex', 'absent', { newFile: true, exists: false }), target('grok', 'current')]),
+    guide: guide([target('claude', 'edited'), target('codex', 'absent', { newFile: true, exists: false, canTemplate: true }), target('grok', 'current')]),
     propose: (b) => (b.target === 'claude'
       ? { id: 'b'.repeat(32), target: 'claude', action: b.action, path: '~/.claude/CLAUDE.md', status: 'edited', current: `x\r\n\r\n${BLOCK.replace(/\n/g, '\r\n')}`, proposed: 'x\r\n', newFile: false, overwritesEdits: true }
       : b.target === 'codex'
-        ? { id: 'c'.repeat(32), target: 'codex', action: 'install', path: '~/.codex/AGENTS.md', status: 'absent', current: '', proposed: BLOCK, newFile: true, overwritesEdits: false }
+        ? { id: 'c'.repeat(32), target: 'codex', action: 'template', path: '~/.codex/AGENTS.md', status: 'absent', current: '', proposed: BLOCK, newFile: true, overwritesEdits: false }
         : { id: 'd'.repeat(32), target: 'grok', action: 'remove', path: '~/.grok/AGENTS.md', status: 'current', current: `notes\n\n${BLOCK.trimEnd()}`, proposed: 'notes\n', newFile: false, overwritesEdits: false }),
     accept: (b) => {
       if (b.id === 'b'.repeat(32)) throw { status: 409, body: { error: 'The file changed since this was proposed. Nothing was written; propose again.' } };
@@ -141,7 +141,8 @@ const posts = (p, route) => p.requests.filter((r) => r.method === 'POST' && r.pa
   await settle(10);
   ok('Cancel drops the proposal, rejects it, and accepts nothing', !row(p, 'claude').querySelector('.guide-proposal') && posts(p, '/api/model-guide/reject').length === 1 && posts(p, '/api/model-guide/accept').length === 0);
 
-  button(row(p, 'codex'), 'Add').click();
+  button(row(p, 'codex'), 'Create from template').click();
+  ok('Create from template proposes the template action', posts(p, '/api/model-guide/propose').at(-1)?.body.action === 'template');
   await settle(10);
   const np = row(p, 'codex').querySelector('.guide-proposal');
   ok('a new file is named as one', /\(new file\)/.test(p.text(np)) && /no file → after/.test(p.text(np)));

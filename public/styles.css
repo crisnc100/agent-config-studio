@@ -1339,6 +1339,9 @@ a { color: var(--accent); }
 .home-refresh-note { margin-bottom: 8px; color: var(--amber); }
 
 /* ── models view: the model guide block ──────────────────────────────── */
+.guide-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin: 8px 0; }
+.guide-add label { display: grid; gap: 4px; }
+.models-guide > .btn { margin-bottom: 8px; }
 .guide-list { display: flex; flex-direction: column; gap: 8px; }
 .guide-row { padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
 .guide-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
