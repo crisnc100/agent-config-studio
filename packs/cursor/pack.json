@@ -2,15 +2,16 @@
   "id": "cursor",
   "title": "Cursor instructions",
   "version": "1.0.0",
-  "summary": "Load your working agreement when a Cursor agent session starts.",
+  "summary": "Load your working agreement and count completed agent turns locally.",
   "explain": {
-    "what": "A Cursor sessionStart hook for the IDE and the agent CLI.",
-    "does": "Each session reads your current ~/.claude/CLAUDE.md and adds a short note on how to follow it in Cursor.",
+    "what": "Cursor hooks for the IDE and the agent CLI.",
+    "does": "Each session reads your current ~/.claude/CLAUDE.md and adds a short Cursor note. The Usage page shows completed turns by selected model.",
     "changes": [
-      "~/.cursor/hooks.json: one sessionStart entry",
-      "~/.agent-config-studio/cursor/hooks/: the launcher, script, Cursor note and path to Node.js"
+      "~/.cursor/hooks.json: one entry each for sessionStart, stop and sessionEnd",
+      "~/.agent-config-studio/cursor/hooks/: launchers, scripts, Cursor note and paths to Node.js",
+      "~/.agent-config-studio/cursor/turns.jsonl: local turn records"
     ],
-    "undo": "Uninstall removes the installed hook entry and the files it installed. A hook entry or file you edited after installing is kept and reported. Any other hooks stay in place."
+    "undo": "Uninstall removes installed hook entries and launcher files. Other hooks, entries you edited and local turn records stay in place."
   },
   "workflow": {
     "command": "sessionStart",
@@ -22,7 +23,9 @@
     "git": false,
     "modelId": false,
     "askModel": false,
-    "clis": { "anyOf": [] },
+    "clis": {
+      "anyOf": []
+    },
     "packs": []
   },
   "parts": [
@@ -41,7 +44,31 @@
         "changes": [
           "~/.cursor/hooks.json: one sessionStart entry",
           "~/.agent-config-studio/cursor/hooks/: the launcher, script, Cursor note and path to Node.js"
-        ]
+        ],
+        "what": "A Cursor sessionStart hook for the IDE and the agent CLI.",
+        "does": "Each session reads your current ~/.claude/CLAUDE.md and adds a short note on how to follow it in Cursor.",
+        "undo": "Uninstall removes the installed hook entry and its files. Other hooks and entries or files you edited stay in place."
+      }
+    },
+    {
+      "id": "turn-count",
+      "title": "Completed turns on the Usage page",
+      "default": true,
+      "kind": "cursor-turns",
+      "harnesses": [],
+      "files": [
+        "packs/cursor/turns/turn-count",
+        "packs/cursor/turns/turn-count.mjs"
+      ],
+      "explain": {
+        "what": "Local counts of completed Cursor turns by selected model.",
+        "does": "The Usage page shows counts for today, the last 7 days and the last 30 days.",
+        "changes": [
+          "~/.cursor/hooks.json: one entry each for stop and sessionEnd",
+          "~/.agent-config-studio/cursor/hooks/turns/: launcher, script and path to Node.js",
+          "~/.agent-config-studio/cursor/turns.jsonl: timestamps, events, conversation and generation IDs, models and statuses"
+        ],
+        "undo": "Uninstall removes installed hook entries and launcher files. Other hooks, entries or files you edited and local turn records stay in place."
       }
     }
   ]

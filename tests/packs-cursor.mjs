@@ -30,7 +30,8 @@ const status = (sb, env) => sb.json(['status', '--no-trust-check'], env).data.pa
   const result = sb.packs(install, env);
   ok('install succeeds in an empty home', result.code === 0, result.out);
   const command = `'${launcher.replaceAll("'", "'\\''")}'`;
-  const config = { version: 1, hooks: { sessionStart: [{ command }] } };
+  const turnCommand = command.replace(/session-context'$/, "turns/turn-count'");
+  const config = { version: 1, hooks: { sessionStart: [{ command }], stop: [{ command: turnCommand }], sessionEnd: [{ command: turnCommand }] } };
   equal('a new hooks file has one sessionStart entry with an absolute shell command', JSON.parse(read(hooks)), config);
   equal('Cursor installs no review-gate runtime or harness skills', JSON.parse(read(path.join(home, '.agent-config-studio', 'packs', 'state.json'))).runtime, null);
   equal('status reports the installed part', status(sb, env).statuses, ['installed']);
@@ -62,9 +63,9 @@ const status = (sb, env) => sb.json(['status', '--no-trust-check'], env).data.pa
     && JSON.parse(read(hooks)).hooks.sessionStart === undefined && read(path.join(dir, 'cursor-note.md')) === 'changed installed note\n');
   const repair = sb.packs(['update', 'cursor', '--replace', '--yes'], env);
   ok('update --replace repairs the entry and the note', repair.code === 0 && read(path.join(dir, 'cursor-note.md')) === shippedNote, repair.out);
-  equal('repair preserves other events', JSON.parse(read(hooks)).hooks, { sessionEnd: [{ command: 'leave' }], sessionStart: [{ command }] });
+  equal('repair preserves other events', JSON.parse(read(hooks)).hooks, { sessionEnd: [{ command: 'leave' }, { command: turnCommand }], sessionStart: [{ command }], stop: [{ command: turnCommand }] });
   ok('uninstall succeeds after repair', sb.packs(uninstall, env).code === 0);
-  equal('uninstall after repair strips only the added entry', JSON.parse(read(hooks)).hooks, { sessionEnd: [{ command: 'leave' }], sessionStart: [] });
+  equal('uninstall after repair strips only the added entry', JSON.parse(read(hooks)).hooks, { sessionEnd: [{ command: 'leave' }], sessionStart: [], stop: [] });
   ok('uninstall removes the launcher', !fs.existsSync(launcher));
 }
 
@@ -110,7 +111,8 @@ const status = (sb, env) => sb.json(['status', '--no-trust-check'], env).data.pa
   fs.writeFileSync(hooks, bytes, { mode: 0o600 });
   const command = path.join(runtime(sb.home), 'session-context');
   ok('install succeeds with other sessionStart entries and other hook events', sb.packs(install).code === 0);
-  const installed = { ...original, hooks: { ...events, sessionStart: [...commands, { command }] } };
+  const turnEntry = { command: path.join(runtime(sb.home), 'turns', 'turn-count') };
+  const installed = { ...original, hooks: { ...events, sessionStart: [...commands, { command }], stop: [turnEntry], sessionEnd: [turnEntry] } };
   equal('merge keeps the existing keys, event order and hook options', JSON.parse(read(hooks)), installed);
   equal('merge keeps the hooks file mode', fs.statSync(hooks).mode & 0o777, 0o600);
   const recorded = structuredClone(sb.state());
@@ -123,7 +125,7 @@ const status = (sb, env) => sb.json(['status', '--no-trust-check'], env).data.pa
   write(hooks, handEdited);
   ok('uninstall succeeds when other hooks were added', sb.packs(uninstall).code === 0);
   equal('surgical uninstall preserves all other entries, including an authored variant with the launcher command', JSON.parse(read(hooks)), {
-    ...handEdited, hooks: { ...events, sessionStart: [{ command, timeout: 6 }, ...commands, { command: 'later' }] },
+    ...handEdited, hooks: { ...events, sessionStart: [{ command, timeout: 6 }, ...commands, { command: 'later' }], stop: [], sessionEnd: [] },
   });
 }
 

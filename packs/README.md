@@ -14,7 +14,7 @@ what it is, what it does day to day, every file and setting it will change, and 
 | `flag` | redacted field reports when the agent workflow goes wrong, and a review that proposes rule fixes from them |
 | `pr` | PR descriptions in your own style, from the branch's real facts, checked before the PR opens |
 | `worktree` | zsh commands for a parked trunk checkout plus one worktree per goal |
-| `cursor` | a session-start hook that reads your live working agreement and adds the Cursor note |
+| `cursor` | a session-start hook that reads your live working agreement and adds the Cursor note; a local count of completed turns for the Usage page |
 
 No pack names a model, and none ships one: you choose which model does each job when you install.
 `acs packs install <pack>` asks for every role the pack uses that is not set yet, offering only the
@@ -49,6 +49,7 @@ Where each file lands:
 | `packs/review-gate/runtime/…` | `~/.agent-config-studio/review-gate/…`, once, whichever harnesses use it |
 | `packs/review-gate/instructions/review-gate.md` | a marked block in `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` |
 | `packs/cursor/session/…` | `~/.agent-config-studio/cursor/hooks/…`, with a `sessionStart` entry in `~/.cursor/hooks.json` |
+| `packs/cursor/turns/…` | `~/.agent-config-studio/cursor/hooks/turns/…`, with `stop` and `sessionEnd` entries in `~/.cursor/hooks.json` |
 
 The Cursor hook is a small launcher that Cursor runs at the start of each session. It runs `session-context.mjs` on the node that installed it (`node-path`; `node` on PATH when that is gone), which
 prints your live `~/.claude/CLAUDE.md` followed by `cursor-note.md` as the session's `additional_context`. If node or
@@ -57,6 +58,20 @@ to `hooks.sessionStart` in `~/.cursor/hooks.json` (creating the file when absent
 refusing a file that is not valid JSON of the expected shape). `acs packs update cursor` refreshes the files;
 `--replace` also puts back a deleted hook entry and the launcher's execute bit. Uninstall removes only an entry
 that holds nothing but that command.
+
+The turn-count part counts finished agent turns for the Usage page. Cursor runs its launcher when a turn stops and
+when a session ends, and the launcher runs `turn-count.mjs` the same way (`node-path`, then `node` on PATH). The script
+appends one line to `~/.agent-config-studio/cursor/turns.jsonl`: `{ts, event, conversation_id, generation_id, model,
+status}`, with the model taken from `model_id` when Cursor sends it and from `model` otherwise. Nothing else is
+written: no prompts, replies, email or paths. `ts` is the time of the write and `event` is Cursor's `hook_event_name`;
+`status` is Cursor's `status` on `stop` and its `final_status`, else `reason`, on `sessionEnd`. Only `stop` and
+`sessionEnd` are logged, and one missing a conversation id, generation id, model or status is skipped. A write that takes the file
+past 1 MB also drops lines older than 30 days. The script always prints `{}` and exits 0, and any failure is
+silent, so counting never slows or stops Cursor. Install adds one `{ "command": … }` entry to each of `hooks.stop` and
+`hooks.sessionEnd`, and update, status, `--replace` and uninstall treat them like the `sessionStart` entry
+(uninstall also leaves `turns.jsonl` in place). The Usage page reads the file: a `stop` with status `completed` counts
+once per conversation and generation, and a `sessionEnd` that completed counts only for a conversation with no `stop`
+line (`cursor-agent -p` sends only `sessionEnd`). Aborted and errored turns are not counted.
 
 The agent guard part also installs into Cursor, which runs a hook before each shell command. Cursor counts as here
 when `~/.cursor` exists or `cursor-agent` is on PATH. Install adds one entry,
@@ -95,10 +110,10 @@ The review gate's shared state lives under `~/.agent-config-studio/`:
 
 Each part is `{ id, title, default, kind, harnesses, files, explain }`:
 
-- `default` — on when you pick the pack. Skills are on by default, and so is the Cursor pack's session hook, which
-  edits `~/.cursor/hooks.json`. Anything else that changes machine-wide state (the agent guard, the push gate, Codex
+- `default` — on when you pick the pack. Skills are on by default, and so are the Cursor pack's session hook and turn
+  count, which edit `~/.cursor/hooks.json`. Anything else that changes machine-wide state (the agent guard, the push gate, Codex
   log access) or your global instruction files is off until you turn it on.
-- `kind` — `skill | instructions | guard | push-gate | codex-log-access | worktree | cursor-session`; it decides how ACS installs,
+- `kind` — `skill | instructions | guard | push-gate | codex-log-access | worktree | cursor-session | cursor-turns`; it decides how ACS installs,
   checks and removes the part. Manifests never contain commands. A `codex-log-access` part also names
   `writableRoot`, the folder under `~/` it adds to `writable_roots` in each Codex home's config.toml (review-gate's
   review log, flag's field reports).
