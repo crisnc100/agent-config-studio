@@ -46,7 +46,7 @@
           "~/.agent-config-studio/cursor/hooks/: the launcher, script, Cursor note and path to Node.js"
         ],
         "what": "A Cursor sessionStart hook for the IDE and the agent CLI.",
-        "does": "Each session reads your current ~/.claude/CLAUDE.md and adds a short note on how to follow it in Cursor.",
+        "does": "Each session reads your current ~/.claude/CLAUDE.md and adds a short note on how to follow it in Cursor: yours in ~/.cursor/acs-note.md once you create it on Models, else the one this pack installs.",
         "undo": "Uninstall removes the installed hook entry and its files. Other hooks and entries or files you edited stay in place."
       }
     },
