@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+// O_NONBLOCK and the regular-file check keep a FIFO or device at either path from hanging session start.
 function readText(file) {
   const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
   try {
@@ -12,6 +13,7 @@ function readText(file) {
   }
 }
 
+// Any failure leaves {}: the session starts without the agreement instead of failing.
 let output = {};
 try {
   for await (const chunk of process.stdin) { /* Cursor expects the hook to wait for EOF. */ }

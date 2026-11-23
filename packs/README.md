@@ -50,6 +50,14 @@ Where each file lands:
 | `packs/review-gate/instructions/review-gate.md` | a marked block in `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` |
 | `packs/cursor/session/…` | `~/.agent-config-studio/cursor/hooks/…`, with a `sessionStart` entry in `~/.cursor/hooks.json` |
 
+The Cursor hook is a small launcher that Cursor runs at the start of each session. It runs `session-context.mjs` on the node that installed it (`node-path`; `node` on PATH when that is gone), which
+prints your live `~/.claude/CLAUDE.md` followed by `cursor-note.md` as the session's `additional_context`. If node or
+either file is unusable it prints `{}` and the session starts without them. Install adds one `{ "command": … }` entry
+to `hooks.sessionStart` in `~/.cursor/hooks.json` (creating the file when absent, keeping every other entry, and
+refusing a file that is not valid JSON of the expected shape). `acs packs update cursor` refreshes the files;
+`--replace` also puts back a deleted hook entry and the launcher's execute bit. Uninstall removes only an entry
+that holds nothing but that command.
+
 The review gate's shared state lives under `~/.agent-config-studio/`:
 
 - `review-gate/config.json` — your review settings for every project (copy `review-config.example.json`). The
@@ -77,8 +85,9 @@ The review gate's shared state lives under `~/.agent-config-studio/`:
 
 Each part is `{ id, title, default, kind, harnesses, files, explain }`:
 
-- `default` — on when you pick the pack. Skills are on by default; anything that changes machine-wide state (the
-  agent guard, the push gate, Codex log access) or your global instruction files is off until you turn it on.
+- `default` — on when you pick the pack. Skills are on by default, and so is the Cursor pack's session hook, which
+  edits `~/.cursor/hooks.json`. Anything else that changes machine-wide state (the agent guard, the push gate, Codex
+  log access) or your global instruction files is off until you turn it on.
 - `kind` — `skill | instructions | guard | push-gate | codex-log-access | worktree | cursor-session`; it decides how ACS installs,
   checks and removes the part. Manifests never contain commands. A `codex-log-access` part also names
   `writableRoot`, the folder under `~/` it adds to `writable_roots` in each Codex home's config.toml (review-gate's

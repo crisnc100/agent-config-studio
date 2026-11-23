@@ -180,6 +180,9 @@ What it writes:
   sharing `~/.codex`'s config, skills, rules and plugins by symlink.
 - **When you turn on Terminal shortcuts in Usage:** a generated file in
   `~/.agent-config-studio`, plus one `source` line appended to `~/.zshenv`.
+- **When you install the Cursor pack:** one `sessionStart` entry in
+  `~/.cursor/hooks.json` and the hook's files in `~/.agent-config-studio/cursor/hooks`.
+  Details: [packs/README.md](packs/README.md).
 - **Commands you run:** `acs install` links `~/.local/bin/acs`;
   `acs install-model-id` writes `~/.local/bin/model-id` and
   `~/.local/bin/ask-model` and `~/.local/bin/acs-agent`, and their copy in the studio folder; `acs install-worktree` writes `~/.config/worktree` and adds
@@ -190,7 +193,8 @@ What it writes:
   package.
 
 The file API serves only files in those places and in your **read** folders,
-and never serves `.credentials.json`, `auth.json` or `~/.claude.json`. Only the
+and never serves `.credentials.json`, `auth.json`, `~/.cursor/mcp.json` or
+`~/.claude.json`. Only the
 `mcpServers` key of `~/.claude.json` is extracted, read-only. The server
 listens on `127.0.0.1` only.
 
