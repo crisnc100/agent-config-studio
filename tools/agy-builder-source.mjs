@@ -231,10 +231,11 @@ export function captureAgySource(root, { source, gitState, home }) {
       }
     }
     if (!candidates.length) break;
-    const ignored = new Set(checkIgnored(candidates.map((name) => name + '/')));
+    // A trailing slash also matches rules that ignore only the directory's contents.
+    const ignored = new Set(checkIgnored(candidates));
     parents = [];
     for (const name of candidates) {
-      if (ignored.has(name + '/') || !guardDirectory(name, true)) continue;
+      if (ignored.has(name) || !guardDirectory(name, true)) continue;
       if (statAt(path.join(root, name, '.git'))) {
         excluded.add(name);
         continue;

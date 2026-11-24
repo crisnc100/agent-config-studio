@@ -749,7 +749,7 @@ async function runBuild(ctx, fam, c, rep, dirs) {
     const neon = referenceCheck || fam.vendor === 'agy';
     let grade;
     if (neon) {
-      try { grade = prepareNeonGrade(c.testCommand, dirs); }
+      try { grade = prepareNeonGrade(c.testCommand, dirs, { needsGit: c.id === 'acs-lockfile-exempt' }); }
       catch (e) { return { ...record, stop: { why: e.message } }; }
       env = { ...env, ...grade.setupEnv };
     }
@@ -769,13 +769,12 @@ async function runBuild(ctx, fam, c, rep, dirs) {
       if (r.code !== 0) return { ...record, outcome: 'errored', error: `setup failed: ${line}: ${r.timedOut ? 'timed out' : tail(r.stderr || r.stdout || r.error, 300)}`, durationMs: 0 };
     }
     if (neon) {
-      const cmd = { uv: 'uv run --no-sync python --version', bun: 'bun -e "console.log(Bun.version)"',
-        node: 'node -e "require(\'node:crypto\'); console.log(process.version)"' }[grade.runtime];
+      const cmd = grade.preflight;
       const probe = grade.invocation(cmd, services[0]);
       const r = await runChild(probe.cmd, probe.args, { cwd: dirs.repo, env: probe.env, timeoutMs: 30_000,
         logFile: ctx.logFile(fam.family, c, rep, 'grade-preflight'), shown: `sandbox-exec <grade rules> /bin/sh -c ${cmd}`, confinedGrade: true });
       if (r.code !== 0) {
-        return { ...record, stop: { why: `the ${grade.runtime} runtime failed inside the grade sandbox: ${tail(r.stderr || r.error || r.signal, 300)}` } };
+        return { ...record, stop: { why: `the ${grade.runtime}${grade.needsGit ? ' and Git' : ''} runtime failed inside the grade sandbox: ${tail(r.stderr || r.error || r.signal, 300)}` } };
       }
     }
     if (!referenceCheck) {

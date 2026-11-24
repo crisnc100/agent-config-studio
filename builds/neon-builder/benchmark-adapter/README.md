@@ -75,7 +75,9 @@ node run.mjs --dry-run --families neon --kinds builder --effort neon=high --out 
 node run.mjs --families neon --kinds builder --jobs 1 --effort neon=high --out ~/benchmark/runner-out-neon-builder
 ```
 
-The fixture suite uses fake model CLIs and exercises the real macOS grade sandbox. It requires Node, Bun, uv with a managed Python 3.12, and PostgreSQL 17.
+The fixture suite uses fake model CLIs and exercises the real macOS grade sandbox. It requires Node, Apple Git from the active Xcode or Command Line Tools installation, Bun, uv with a managed Python 3.12, and PostgreSQL 17.
+
+The confined `acs-lockfile-exempt` grade stages copies of Node, Apple Git and its repository templates in the disposable case before the build. Its preflight checks that the private Node can resolve and run Git with the same PATH reset the reference test uses. `/usr/bin/xcrun --find git` must resolve the underlying Git executable.
 
 ## Mac mini setup
 

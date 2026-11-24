@@ -1548,27 +1548,50 @@ function grokXRecord(sessionId, cwd, grokHome) {
 
 const agyToolName = (value) => typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/i.test(value);
 
-function agyBuildActions(steps) {
+function agyBuildActions(steps, complete) {
   const actions = new Map();
+  let actionsTruncated = false;
   const pathKeys = ['AbsolutePath', 'TargetFile', 'FilePath', 'TargetPath', 'DirectoryPath', 'Path'];
   const urlKeys = ['Url', 'URL', 'TargetUrl'];
   const usable = (value) => typeof value === 'string' && value.length > 0 && value.length <= 1024 && !/[\x00-\x1f\x7f]/.test(value);
   for (const step of steps) {
-    const key = Number.isSafeInteger(step.step_index) ? JSON.stringify([step.conversation_id ?? null, step.step_index]) : Symbol();
+    const indexed = Number.isSafeInteger(step.step_index) && step.step_index >= 0;
+    const key = indexed ? JSON.stringify([step.conversation_id ?? null, step.step_index]) : Symbol();
     const previous = actions.get(key);
     const info = step.tool_info;
     const tool = step.tool_name ?? info?.name ?? previous?.tool;
     const state = step.state ?? previous?.state;
+    if (step.subagent_info || step.step_type === 'subagent') complete = false;
+    if (!step.tool_name && !info && ['user_input', 'agent_response', 'system_message'].includes(step.step_type)) {
+      if (previous) complete = false;
+      continue;
+    }
+    if (!indexed || !agyToolName(tool) || !['ACTIVE', 'DONE', 'ERROR', 'CANCELLED', 'DENIED'].includes(state)) complete = false;
     if (!agyToolName(tool) || !['ACTIVE', 'DONE', 'ERROR', 'CANCELLED', 'DENIED'].includes(state)) continue;
-    if (!previous && actions.size >= 64) continue;
+    if (!previous && actions.size >= 64) {
+      actionsTruncated = true;
+      continue;
+    }
+    if ((step.tool_name && info?.name && step.tool_name !== info.name) ||
+        (previous && (previous.tool !== tool || (previous.state !== 'ACTIVE' && previous.state !== state)))) complete = false;
     const action = { ...previous, tool, state };
     const params = info?.parameters;
+    if (params !== undefined && !isObject(params)) complete = false;
     if (isObject(params)) {
-      const file = pathKeys.map((name) => params[name]).find((value) => usable(value) && path.isAbsolute(value));
-      if (file) action.target = file;
-      const url = urlKeys.map((name) => params[name]).find(usable);
-      const parsed = url && URL.canParse(url) ? new URL(url) : null;
-      if (parsed && ['http:', 'https:'].includes(parsed.protocol)) action.target = `${parsed.origin}${parsed.pathname}`;
+      const files = pathKeys.filter((name) => Object.hasOwn(params, name)).map((name) => params[name]);
+      const urls = urlKeys.filter((name) => Object.hasOwn(params, name)).map((name) => params[name]);
+      const targets = new Set();
+      for (const file of files) {
+        if (usable(file) && (path.isAbsolute(file) || /^[a-z0-9_.-][a-z0-9_./-]*$/i.test(file))) targets.add(file);
+        else complete = false;
+      }
+      for (const url of urls) {
+        const parsed = usable(url) && URL.canParse(url) ? new URL(url) : null;
+        if (parsed && ['http:', 'https:'].includes(parsed.protocol)) targets.add(`${parsed.origin}${parsed.pathname}`);
+        else complete = false;
+      }
+      if (targets.size > 1 || (action.target && targets.size && !targets.has(action.target))) complete = false;
+      if (targets.size === 1) [action.target] = targets;
     }
     if (state === 'ERROR' || state === 'DENIED') {
       const error = String(info?.error?.message ?? '');
@@ -1580,7 +1603,9 @@ function agyBuildActions(steps) {
     } else delete action.refusal;
     actions.set(key, action);
   }
-  return [...actions.values()];
+  const reported = [...actions.values()];
+  return { actions: reported, actionsTruncated, actionsComplete: complete && !actionsTruncated &&
+    reported.every(({ state }) => state !== 'ACTIVE') };
 }
 
 /**
@@ -1591,9 +1616,10 @@ function agyBuildActions(steps) {
  */
 function readAgy(id, r, family, build) {
   const events = [];
+  let streamParsed = true;
   for (const line of String(r.stdout || '').split('\n')) {
     if (!line.trim()) continue;
-    try { events.push(JSON.parse(line)); } catch { /* agy prints only events on stdout; a stray line is not one */ }
+    try { events.push(JSON.parse(line)); } catch { streamParsed = false; }
   }
   const init = events.find((e) => e?.event === 'init')?.init;
   const result = events.findLast((e) => e?.event === 'result')?.result;
@@ -1612,7 +1638,9 @@ function readAgy(id, r, family, build) {
   const sub = agySubagentDenials(steps, undefined, family, { includeTranscripts: !build });
   denied.push(...sub.denied);
   // Builder diagnostics leave the private launch directory only as structured denial evidence.
-  const trace = build ? { actions: agyBuildActions(steps) } : {};
+  const trace = build ? agyBuildActions(steps, streamParsed && isObject(init) && isObject(result) &&
+    events[0]?.event === 'init' && events.at(-1)?.event === 'result' && events.slice(1, -1).every((event) =>
+      event?.event === 'step_update' && isObject(event.step_update))) : {};
   const evidence = build ? { denied, notes: sub.notes, ...trace } : {};
   if (r.code !== 0 || !isObject(result)) {
     const why = build ? `agy builder failed (exit ${r.code})`
@@ -1840,7 +1868,11 @@ async function main(argv) {
       failure = got?.exit ?? 4;
       result.error = e.message;
     }
-    if (got?.actions?.length) result.actions = got.actions;
+    if (got?.actions) {
+      result.actions = got.actions;
+      result.actionsTruncated = got.actionsTruncated;
+      result.actionsComplete = got.actionsComplete;
+    }
     if (got?.denied?.length) {
       result.denied = got.denied;
       for (const d of got.denied) process.stderr.write(`ask-model: agy: denied ${d}\n`);

@@ -6,6 +6,7 @@ import http from 'node:http';
 import https from 'node:https';
 import tls from 'node:tls';
 import { spawn, spawnSync } from 'node:child_process';
+import { setImmediate as yieldToSignals } from 'node:timers/promises';
 import { captureAgySource, protectedSourcePattern } from './agy-builder-source.mjs';
 
 const SAFE_ENV = { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' };
@@ -228,7 +229,7 @@ async function verifiedBinary(bin, directory) {
   return pinned;
 }
 
-function runWalled(args, cwd, env) {
+function runWalled(args, cwd, env, interruption) {
   return new Promise((resolve, reject) => {
     const child = spawn(SANDBOX, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const stop = () => {
@@ -239,9 +240,8 @@ function runWalled(args, cwd, env) {
       cancelled = true;
       stop();
     };
-    const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
     const timer = setTimeout(cancel, 1_815_000);
-    for (const signal of signals) process.on(signal, cancel);
+    interruption.addEventListener('abort', cancel, { once: true });
     const out = [];
     const err = [];
     child.stdout.on('data', (bytes) => out.push(bytes));
@@ -250,7 +250,7 @@ function runWalled(args, cwd, env) {
     child.once('error', reject);
     child.once('close', (code, signal) => {
       clearTimeout(timer);
-      for (const name of signals) process.off(name, cancel);
+      interruption.removeEventListener('abort', cancel);
       resolve({ code, signal, cancelled, stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString() });
     });
   });
@@ -317,6 +317,13 @@ export async function runAgyBuilder({ root, bin, id, effort, prompt, home = os.h
   if (config) throw new Error(config);
   if (checkToken(home)) throw new Error('agy builder refused a plaintext token before launch');
   const callRoot = fs.mkdtempSync('/private/tmp/acs-agy-builder-');
+  const interruption = new AbortController();
+  const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+  const cancel = () => interruption.abort();
+  const checkCancellation = () => {
+    if (interruption.signal.aborted) throw new Error('agy builder invocation cancelled');
+  };
+  for (const name of signals) process.on(name, cancel);
   let launch;
   try {
     const layout = agyBuildLayout(callRoot);
@@ -328,8 +335,12 @@ export async function runAgyBuilder({ root, bin, id, effort, prompt, home = os.h
     const { params, env, broker } = launch;
     const logFile = path.join(runtime, 'agy.log');
     const args = agyBuildArgs({ id, effort, prompt, logFile, source, runtime, home, certificate: broker.certificate });
-    const reply = await (test.invoke ?? runWalled)(agyBuildWall(params, [params.bin, ...args]), source, env);
+    checkCancellation();
+    const reply = await (test.invoke ?? runWalled)(
+      agyBuildWall(params, [params.bin, ...args]), source, env, interruption.signal,
+    );
     if (reply.cancelled) throw new Error('agy builder invocation cancelled');
+    checkCancellation();
     const log = fs.lstatSync(logFile, { throwIfNoEntry: false });
     if (checkToken(home) || checkToken(privateHome) || !log?.isFile() || log.nlink !== 1 ||
         fs.realpathSync.native(logFile) !== logFile || checkSignIn(logFile, privateHome)) {
@@ -344,14 +355,22 @@ export async function runAgyBuilder({ root, bin, id, effort, prompt, home = os.h
         !result.answer.trim() || result.served?.requested && result.served.requested !== id) {
       throw new Error(hideProxy(result?.error || 'agy builder did not return a valid answer for the requested model'));
     }
+    await yieldToSignals();
+    checkCancellation();
+    // Once installation starts, an interruption must leave either the completed publication or a rollback.
     const changed = publish();
     return { ...result, mode: 'build', served: { requested: id, id, verified: false }, build: { published: true }, changed };
   } finally {
     try {
-      launch?.broker.close();
-      fs.rmSync(callRoot, { recursive: true, force: true });
+      try {
+        launch?.broker.close();
+        fs.rmSync(callRoot, { recursive: true, force: true });
+      } finally {
+        if (launch?.broker.events) onBrokerAudit?.(launch.broker.events.slice());
+      }
     } finally {
-      if (launch?.broker.events) onBrokerAudit?.(launch.broker.events.slice());
+      await yieldToSignals();
+      for (const name of signals) process.off(name, cancel);
     }
   }
 }
