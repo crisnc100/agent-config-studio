@@ -1,67 +1,24 @@
-# Neon builder
+# Native Neon builder
 
-Outcome: Neon can edit one explicitly selected worktree through agy 1.5.14 while every existing read-only route retains its current containment.
+Cris approved a normal local Antigravity builder with native file and network permissions on2026-11-24 (his answer: "yes test please"). Existing read-only Neon protections remain unchanged. This supersedes the custom builder isolation bar in the earlier plan (preserved in git680805b). The native local test passed: one high-effort call read, edited and re-read its owned file, matched the expected SHA256, and passed plaintext-token postflight. The served model remains unverified.
 
-One PR. The entry point and its security boundary only work together. Benchmark execution and the live role update are rollout evidence, not a second feature PR. Cursor-seat remains paused and untouched. No general round-robin scheduler is in scope: add Neon as a high-effort builder candidate only after containment passes.
+One PR. The public build route, tests and documentation ship together. No scheduler or new harness. The orchestrator rotates eligible Sol/Opus/Neon, skips quota/startup failures, and prefers Opus for frontend design taste. The Mini is not a local-release blocker; its Neon benchmark is deferred unless separately unblocked. No heavy laptop benchmark is authorized.
 
-## Phase 1: transport and OS-wall checkpoint
+## Phase: use the native session path
 
-The first implementation phase ends at a tested Google-origin broker and deny-default OS profile, before entry-point wiring uses them. Pass: non-inference agy metadata works through this route, actual Mac tests prove forbidden file/network/IPC operations fail, and an independent checkpoint review reads the committed helper. No live inference or role enrollment. A fresh builder takes phase 2 from that checkpoint.
+Reuse ask-model's existing process runner, normal HOME and AGY_ENV with `agy --mode accept-edits --model <resolved> --effort <resolved> --output-format stream-json -p <prompt>`. Keep explicit canonical Git-top --cwd and existing build argument conflict checks. No private source copy, Google broker, OS sandbox, custom permission overrides or atomic-publication claim in build mode. Keep token preflight/postflight and the tested CLI-version guard. Logs may use an owned temporary directory and be removed after parsing. A failed/cancelled native build can leave edits for the orchestrator to inspect; never report successful completion then. No parent-side push/merge/commit/PR action. The implementer remains subject to the task's no-push/no-merge instructions.
 
-## Phase 2: explicit builder mode and file containment
+Prefer integrating this in the existing runner over a new launch subsystem. Archive the unshipped isolated helpers under builds/neon-builder/probe/isolated-runtime, preserve their tests against those archived modules, and stop installing them. Do not delete or skip tests to hide a regression. Existing test changes go in their own commit, with every changed assertion and retained behavior named and independently checked. Frozen review.test.mjs stays untouched.
 
-- Add an opt-in agy builder route to ask-model, requiring an explicit worktree root. Refuse other vendors, mixed modes, missing/unsafe roots, redirected git roots and unwalled execution before starting the model.
-- Keep the existing AGY_WALL and read-only CLI settings unchanged, including the review runtime. Retain the version pin, customization checks, disabled auto-update, plaintext-token preflight and after-call refusal, and unverified model label.
-- Use a separate builder wall. Reads of other projects and secrets stay denied. Project writes are limited to the canonical selected root; protect git metadata and any runtime policy files. Symlinks must not escape. Only narrowly named runtime temp/log/keychain state may be written outside the tree when essential to run agy; no project writes elsewhere. Prefer keeping command, MCP and URL tools denied while allowing file edits, if this meets the builder cases. Never provide push or merge capability.
-- Enforce Google-only network access at the OS/transport boundary, not just by prompt or tool names. The advisor must settle the smallest sound mechanism; shared-IP/hostname confusion, loopback brokers, environment credentials and subprocess escape are part of the threat model. Do not permit arbitrary proxy/IPC access. Refuse rather than fall back to an unwalled route.
-- Add meaningful deterministic tests of parsing, default read-only behavior, actual macOS containment, canonical roots, link escapes, forbidden writes/reads/network, token handling and model labels. Existing tests remain strong; any existing test edit is isolated in a test-only commit and independently checked. Never edit frozen review.test.mjs.
+The build success envelope should identify native execution and completed:true, with served.verified:false. It must not claim a confined publication or enforced worktree-only access. The external benchmark adapter must accept the native completion envelope before future use; keep its independent grader and exact case commands. No second benchmark feature is required for this local milestone.
 
-## Phase 3: rollout proof and benchmark
+## Acceptance bar
 
-- First use deterministic commands and fake CLI tests, which spend no Neon quota. Then one combined live Neon probe, with a second only for a diagnosed fix. Record attempts, successful model calls and refusal evidence separately. Use harmless canaries, never real secret contents.
-- Prove a real file edit inside the selected tree; attempts to write outside, read another project and a secret-shaped canary, and contact a non-Google host fail. Prove keychain login works and no plaintext token appears. Preserve stdout/log evidence without credentials.
-- Only after the probe passes, add Neon at high effort through the ACS roles API as a builder candidate, preserving existing members. Do not implement a scheduler or change unrelated roles.
-- Coordinate with the existing Mac mini compute-pool agent at cmux surface:1000080000. Run the existing 10 builder cases at high effort through this exact builder boundary. Avoid competing with the review eval; ask the runner for current quota/status and keep reviews paused while builder cases run. Keep the benchmark's checks and judging rules unchanged; model identity remains unverified. Capture per-case results and total model calls.
-- Finish with the installed /pr-review flow: code review plus Mythos security in one record, one fix round, context pass, one fix check, close at tip, push, PR, CI green, needs-human. Never merge.
+- N1: opt-in --build invokes native agy at the explicit canonical Git top, using normal HOME and accept-edits mode; unsafe/missing roots and conflicting flags still refuse before a provider call.
+- N2: default read-only ask-model and review runtime retain byte-identical AGY_WALL/AGY_SETTINGS and unchanged refusal behavior. Existing read-only tests pass without weaker assertions.
+- N3: builder token preflight/postflight and tested version behavior remain; errors/cancellation do not become successful completion. No claim of outside-read/write or Google-only enforcement for native builders.
+- N4: served-model identity remains unverified. Native live edit proof exists; one public-CLI proof follows implementation. Counts include all failed and successful live attempts.
+- N5: Neon becomes a high-effort builder candidate only after the public native route passes; preserve Sol/Opus, medium defaults, unrelated roles and Opus frontend preference through the API. The role resolver itself still chooses first available.
+- N6: final code plus Mythos security review, one fix round, context pass, one fix check per applicable record, close at tip, push, PR, CI green and needs-human. Never merge. Preserve old review findings/scores/history and name retired paths honestly.
 
-## Acceptance criteria
-
-- A1: `--build` requires an explicit canonical worktree and rejects unsafe roots and conflicting modes before agy starts; deterministic CLI tests pass.
-- A2: read-only ask-model and review behavior remains exactly as walled today; existing agy tests and wall-equality checks pass without weaker assertions.
-- A3: actual macOS builder-wall tests allow an in-tree edit and deny out-of-tree writes (including symlinks/hard links), protected metadata changes, other-project/secret reads and non-Google network; no fallback exists.
-- A4: a live high-effort Neon probe proves an edit, the requested refusals, working keychain sign-in and no plaintext token, with an explicit probe count.
-- A5: every builder answer/record still labels the answering model unverified; existing model checks are preserved.
-- A6: the builder role gains Neon at high effort only after A4 passes, via ACS API; other role settings are preserved.
-- A7: the 10 existing builder cases run on the Mac mini via the approved compute-pool runner at high effort; record scores, errors, quota delays and model-call counts honestly. Benchmark quality is measured, not promised to be 10/10.
-- A8: the branch has the required review/security evidence, closed tip, green CI and an open needs-human PR; no push to main and no merge.
-
-Validation: focused ask-model/agy tests and newly added wall/probe tests, then the existing benchmark commands as supplied by the compute-pool runner. No local full suite, Docker, e2e or local benchmark is authorized; use focused checks locally and CI for the full suite.
-
-## Advisor decisions before implementation
-
-Astra high advised in a fresh read-only ask-model call (exit 0); same vendor as this seat, different family. Its six advice scores were 80, 72, 72, 90, 70 and 72 out of 100. Full output is retained in advisor-result.md.
-
-- Adopt a per-call origin-enforcing Google broker, direct network denial, scrubbed child environment, exact TLS authority and upstream certificate checks. Prove pinned agy transport compatibility with a non-model metadata operation first; no silent network fallback.
-- Adopt private source inodes, protected policy/git paths, and validate changes before publishing them to the selected worktree. Preserve intended uncommitted source. Do not copy env files or operator secrets. Confine the benchmark's execution of model-edited code as well as the model process.
-- Preserve the operator's existing keychain sign-in. A separate macOS identity is not required by Cris and would add OS account setup and a new login; do not create accounts or change global trust/keychain policy. Use isolated per-call state and tool/OS restrictions to prevent model access to sign-in storage; prove normal keychain load and refresh/save where observable. If safe reuse cannot be established, stop with evidence before enrollment.
-- The minimal route may keep arbitrary command/MCP/URL tools denied. The benchmark's requested test execution must be represented honestly; the existing external grader remains authoritative, with its case commands unchanged. A narrow test action can be added only if needed to meet the brief, never a general unwalled shell.
-- A1–A5 need deterministic proof before a live model call. If pinned agy cannot use the bounded transport or sign-in, report the concrete failure and do not enroll Neon.
-- Scope of the benchmark adapter is explicitly included. Fresh output directory; containment/sign-in failures stop grading and discard unpublished edits. All agy outcomes carry modelVerified:false.
-
-Quota: compute-pool reports Gemini 5-hour and weekly 100% remaining after a metadata usage read. No jobs running on the mini; agy 1.5.14. No Neon model calls so far. The 10-case benchmark is authorized on the Mac mini only.
-
-## Listener experiment decision
-
-The first builder committed only experimental evidence at 6cca2e4. A wildcard-listener canary showed that Seatbelt's localhost inbound rule is not an interface restriction. Two blind opinions (Astra and Sol-prev) agreed this does not establish a reachable escape through the exact pinned, edit-only route; both requested observation of actual agy before redesign. Their full outputs are listener-astra.md and listener-sol-prev.md.
-
-The deciding zero-turn observation is `probe/actual-listener.mjs` and its redacted output. Across 26 observations of the agy process tree, agy opened two loopback-only listeners. Independent connections through both available non-loopback IPv4 interfaces were refused for both ports. Metadata succeeded with zero turns, clean token postflight and no plaintext token.
-
-Continue the exact pinned route with the native binary and builder-immutable launch configuration explicitly part of containment. Do not claim Seatbelt's inbound rule alone limits interfaces. The production execution allowlist must not include the canary/test executable, arbitrary commands stay denied, private source inputs cannot alter agy's own configuration, and the live print/inference probe must also observe its listener scopes. Stop if actual agy opens a non-loopback listener or if a builder-reachable operation can repurpose one. The existing read-only paths remain unchanged. No inference, live roles or installed runtimes changed during these experiments.
-
-## Local-first rollout (Cris, 2026-11-24)
-
-The active target is Cris's laptop. The Mini's builder sign-in failure is not a release blocker; retain its failed evidence and use another eligible builder there. Its 10-case Neon run is deferred until that route works. The local live edit/refusal proof still gates Neon's enrollment. Preserve the original read-only walls and the builder boundary while testing locally.
-
-The orchestrator selects builders and monitors their sessions. Rotate eligible Sol, Opus and Neon, skipping quota or startup failures; prefer Opus for work that depends heavily on frontend design taste. Use measured task results to refine selection. This plan does not add a background scheduler or claim that ACS's first-available resolver already rotates. Sol and Opus are eligible now; Neon remains pending a successful live edit. Existing role effort stays medium; the Neon proof runs high.
-
-The current laptop production-wall metadata check passes: 27 models, zero turns, keyring loaded/authenticated and clean token postflight. An expired token refreshed through the exact Google token endpoint. The first local live edit failed without publication; no generation request was admitted. A bootstrap-only diagnostic observed the refused Google origins aicode.googleapis.com and www.googleapis.com. Inspect their exact paths locally without forwarding any request to those new origins before proposing a minimal broker change. Advisor and Mythos must see any production allowance.
+Focused local validation only; full suite location needs the working-agreement placement decision. Mini reference infrastructure already passed10/10 cases and324assertions with zero model calls. No Neon quality benchmark score is claimed.

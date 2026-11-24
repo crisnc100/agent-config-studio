@@ -1,5 +1,17 @@
 # Neon builder: current orchestrator state
 
+## CURRENT: native permission approval and successful local edit
+
+Cris explicitly approved the pending normal-local-Antigravity-permission question: "yes test please". He also requested /anti-sleep3hours and automatic compaction at10%context where available. The earlier pending permission question below is SUPERSEDED. Do not ask again.
+
+The ordinary native local test PASSED at high effort: process0, read_file/write_file/read_file DONE, exact expected content/SHA256 and clean token postflight. Evidence probe/native-session-edit.result.json; actual file probe/native-edit-d731cec77d29babd.txt. Served model remains UNVERIFIED. This is1successfulnativeCLIcall after2failedcustom livebuildattempts (3totalactualtaskbuildattempts). No further customwall experiments.
+
+User was told the working native path will replace the failed public custombuilder route, existing readonlypaths staywalled, review finishes beforeNeonactivepool. The active plan.md has been rewritten for this nativepermissionbar; old strictplan remains Git680805b. MiniNeonbenchmark deferred; no heavyLaptopbenchmarkauthorized. Sol/Opuspoolmediumcurrently;NeonnotyetaddeduntilpublicnativeCLIproof.
+
+Advisor-roleAstrahigh native-plan read exited0. native-advisor-result.md approves reuseexistingrunner, canonicalGittopbeforeanyprovider invocation, privateper-calllog, tokenpre/postafterALLattempts, independentcancellationflag(evenchildexits0), no atomicpublicationclaim, unverifiedmodel. Archiveoldhelpers/tests, stopinstallingthem; benchmarkbothpublishedassumptionsmustbeupdated. No questions. Next: freshnativeSolbuilder publicCLI+archive/tests, originalbenchmarkauthor adapterenvelope inparallel; rootserializescode/testcommits. No contextpass/finalfixchecks/closes/push/PR yet. ExistingfinalreviewIDs/scores belowremainhistorical; actualnativeboundarydelta mustbe read byMythos.
+
+Anti-sleep uses the skill at /Users/cortega/.claude/skills/anti-sleep/SKILL.md. The firstbackgroundshellcaffeinate died; the verified visible cmux version is PID27926, flags -d -i -t10800, activepreventdisplay+idlesleep, expires2026-11-24 1:51:08PM EST. Pane pane:1000080124 in callerworkspace:1000080002; timer surface:1000080341, completednativeprobe surface:1000080342. Caller is surface:1000080337; nevertouchpausedcompute-poolsurface1000080000. Model/testterminalproofvisible. Do notextendtimerwithoutuserrequest. /tmp/neon-builder-caffeinate.{pid,expires} holdsmetadata. No compacttoolis exposed; checkpointis maintainedforharnessautomaticcompaction, do notclaimacustomthresholdwasscheduled.
+
 ## Latest: waiting for the builder-permission choice
 
 The quota-only diagnostic ran once. The exact quota-summary POST returned200 twice, keychain authentication and postflight passed, but agy still returned ERROR with eligibilityFailed:true. No generation request was observed/admitted. fetchAdminControls and fetchUserInfo remained refused. The bounded allowlist experiment has ENDED; do not add further routes or rerun model probes without resolving the scope choice. The diagnostic also emitted an extra parent usage line because its copied bootstrap source retained an active CLI entry point; the actual child failure and dispatch evidence are present, but repair that diagnostic entry-point side effect before any future reuse. It did not pass and must never be represented as passing.

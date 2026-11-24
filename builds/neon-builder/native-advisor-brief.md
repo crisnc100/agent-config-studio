@@ -1,0 +1,15 @@
+THE ASK
+Finish a simple native Neon build route after Cris explicitly approved normal local Antigravity permissions, while every existing read-only Neon path stays exactly walled.
+WHAT WE KNOW
+The ordinary native local proof PASSED at high effort: read_file/write_file/read_file DONE, exact SHA256, process0, clean token postflight. Model is labelledunverified. Earlier custombuilderwall experiments are unshipped and no longer the approved approach. Public--build currently still uses the failed customhelper. User wants orchestratorprompt+monitor anotherAGYsession, thennormalreview; poolSol/Opus/Neon, Opus forfrontendtaste, skipquota/startupfailures; no automaticscheduler.
+CURRENT DIRECTION
+Use the existing ask-model run/bin/argvFor/readAnswer/lifecycle for opt-in build instead of building another subsystem. Native realHOME+AGY_ENV, --modeaccept-edits, streamJSON, optionalprivateephemerallog, tokenpre/post andtestedversionguard. Keep all readonlycode/wall/settings/runtimes byteequal except necessaryif-buildfork; don't requirebuilderprivateHOME/configisolation/broker. ExplicitcanonicalGittop stillscopeanchor; no OSenforcementpromise, no atomicpublication; build.execution=native/completedtrue andservedverifiedfalse, no build.publishedclaim. Archive2oldhelpersunderbuilds witholdunit/walltests retainedagainstarchive(import-pathchangesonly). Stopinstallingobsoletehelpers. ReviseexistingbuildCLIintegrationtestsfortheexplicitlyapprovednativebehavior, preserveexistingreadonlychecks; separateexistingtestcommitandindependentweakeningcheck. Benchmarkacceptsenvelope butMiniNeon10benchmarkdeferred; no localheavybench.
+DECISIONS
+Attackthisminimaldirection. Isreuseexistingrunner the smallestsoundroute? Whatmustremainforno-push/no-merge handling/nativefailededits/modelunverified/tokenrefusal? Howbestretiretheunshippedhelperwithoutgamingtestsorcarryingdeadproductioncode? Cutanythingunnecessary. Atmost400words; no newpermissionquestion—theoperatorapprovednormalbuilderpermissions. FinalMythosmustseetheactualdelta.
+READ FIRST
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/tools/ask-model.mjs
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/tools/agy-builder.mjs
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/tools/agy-builder-source.mjs
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/tests/ask-model-build.mjs
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/builds/neon-builder/probe/native-session-edit.result.json
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/builds/neon-builder/plan.md
