@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import childProcess, { spawnSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { syncBuiltinESMExports } from 'node:module';
 import { test } from 'node:test';
 import { agyBuildEnv, runAgyBuilder } from '../tools/agy-builder.mjs';
 
@@ -129,5 +131,47 @@ test('builder refuses configuration, unsafe roots, token leftovers and wrong bin
       /configured hook|customization|operator home|plaintext token|tested macOS arm64/, kind);
     assert.ok(!prepared, kind);
     assert.equal(original(), 'operator', kind);
+  }
+});
+
+
+test('cancellation between clean child exit and stream close discards the build', async (t) => {
+  for (const cancellation of ['SIGINT', 'SIGTERM', 'SIGHUP', 'timeout', null]) {
+    await t.test(cancellation ?? 'ordinary close', async (t) => {
+      const { opts, prepare, original, removed } = setup(t);
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const spawn = t.mock.method(childProcess, 'spawn', (_bin, _args, { cwd: source }) => {
+        fs.writeFileSync(path.join(path.dirname(source), 'runtime', 'agy.log'), 'fixture log');
+        fs.writeFileSync(path.join(source, 'file.txt'), 'model edit');
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        queueMicrotask(() => {
+          child.emit('exit', 0, null);
+          if (cancellation === 'timeout') t.mock.timers.tick(1_815_000);
+          else if (cancellation) process.emit(cancellation, cancellation);
+          child.stdout.emit('data', Buffer.from('valid answer'));
+          child.emit('close', 0, null);
+        });
+        return child;
+      });
+      syncBuiltinESMExports();
+      try {
+        const call = runAgyBuilder(opts, { prepare });
+        if (cancellation) {
+          await assert.rejects(call, /agy builder invocation cancelled/);
+          assert.equal(original(), 'operator');
+        } else {
+          const result = await call;
+          assert.deepEqual(result.changed, ['file.txt']);
+          assert.equal(original(), 'model edit');
+        }
+        assert.ok(removed());
+        assert.equal(spawn.mock.callCount(), 1);
+      } finally {
+        spawn.mock.restore();
+        syncBuiltinESMExports();
+      }
+    });
   }
 });

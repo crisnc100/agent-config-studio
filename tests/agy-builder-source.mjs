@@ -223,3 +223,34 @@ test('publication rolls back earlier changes when a later replacement fails', (t
   assert.equal(get('b.txt'), 'before b');
   assert.equal(fs.readdirSync(root).some((entry) => entry.startsWith('.acs-agy-')), false);
 });
+
+test('publication accepts additions in eligible directories without captured files', (t) => {
+  const { root, source, capture, put, get } = workspace(t);
+  put('.gitignore', '*.local\nignored/\n');
+  put('only-excluded/secret.local', 'operator canary');
+  put('only-excluded/.env', 'protected canary');
+  put('ignored/secret.local', 'ignored canary');
+  fs.mkdirSync(path.join(root, 'empty', 'nested'), { recursive: true });
+
+  const { publish } = capture();
+  put('empty/nested/new.txt', 'new under empty directory', source);
+  put('only-excluded/new.txt', 'new alongside excluded paths', source);
+  assert.deepEqual(publish(), ['empty/nested/new.txt', 'only-excluded/new.txt']);
+  assert.equal(get('empty/nested/new.txt'), 'new under empty directory');
+  assert.equal(get('only-excluded/new.txt'), 'new alongside excluded paths');
+  assert.equal(get('only-excluded/secret.local'), 'operator canary');
+  assert.equal(get('only-excluded/.env'), 'protected canary');
+  assert.deepEqual(fs.readdirSync(path.join(source, 'only-excluded')), ['new.txt']);
+  assert.equal(fs.existsSync(path.join(source, 'ignored')), false);
+});
+
+test('publication refuses a new file after its previously empty parent is replaced', (t) => {
+  const { base, root, source, capture, put } = workspace(t);
+  fs.mkdirSync(path.join(root, 'empty'));
+  const { publish } = capture();
+  put('empty/new.txt', 'must be discarded', source);
+  fs.renameSync(path.join(root, 'empty'), path.join(base, 'moved'));
+  fs.mkdirSync(path.join(root, 'empty'));
+  assert.throws(publish, /source directory changed: empty/);
+  assert.equal(fs.existsSync(path.join(root, 'empty/new.txt')), false);
+});
