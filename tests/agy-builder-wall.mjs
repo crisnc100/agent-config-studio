@@ -40,7 +40,7 @@ async function connectBroker(broker, target, authenticated = true) {
   return { status, socket };
 }
 
-async function brokerRequest(broker, { authority = origin, hostname = origin, host = origin, pathname = firstPath, method = 'POST', extra = '' } = {}) {
+async function brokerRequest(broker, { authority = origin, hostname = origin, host = origin, pathname = firstPath, method = 'POST', extra = '', framing = 'Content-Length: 0\r\n', body = '' } = {}) {
   const { socket, status } = await connectBroker(broker, `${authority}:443`);
   assert.equal(status, '200');
   const connection = tls.connect({
@@ -48,7 +48,7 @@ async function brokerRequest(broker, { authority = origin, hostname = origin, ho
   });
   try {
     await waitFor(connection, 'secureConnect');
-    connection.write(`${method} ${pathname} HTTP/1.1\r\nHost: ${host}\r\n${extra}Connection: close\r\nContent-Length: 0\r\n\r\n`);
+    connection.write(`${method} ${pathname} HTTP/1.1\r\nHost: ${host}\r\n${extra}Connection: close\r\n${framing}\r\n${body}`);
     let reply = '';
     for await (const chunk of connection) reply += chunk.toString();
     return reply;
@@ -168,6 +168,69 @@ test('Google broker allows only authenticated play telemetry on the exact HTTPS 
   assert.equal(forwarded.length, 2);
   assert.ok(broker.events.some((event) => event.origin === play && event.path === '/log' &&
     event.status === 502 && event.upstreamStatus === 302 && event.reason === 'upstream redirect denied'));
+});
+
+test('Google broker forwards only the exact authenticated bodyless metadata GETs', async (t) => {
+  const forwarded = [];
+  const broker = await agyGoogleBroker(temp(t), {
+    requestUpstream(options, callback) {
+      const dispatch = { ...options, body: null };
+      forwarded.push(dispatch);
+      const request = new PassThrough();
+      const parts = [];
+      request.on('data', (part) => parts.push(part));
+      request.on('end', () => {
+        dispatch.body = Buffer.concat(parts).toString();
+        const response = Readable.from([]);
+        response.statusCode = 200;
+        response.headers = {};
+        callback(response);
+      });
+      return request;
+    },
+  });
+  t.after(() => broker.close());
+  const approved = [
+    ['www.googleapis.com', '/oauth2/v2/userinfo'],
+    ['aicode.googleapis.com', '/v1alpha:fetchConfig'],
+  ];
+  for (const [authority, pathname] of approved) {
+    const rpc = { authority, hostname: authority, host: authority, pathname, method: 'GET' };
+    assert.equal((await connectBroker(broker, `${authority}:443`, false)).status, '403');
+    assert.equal((await connectBroker(broker, `${authority}:444`)).status, '403');
+    assert.equal((await connectBroker(broker, `${authority}.example.test:443`)).status, '403');
+    await assert.rejects(brokerRequest(broker, { ...rpc, hostname: origin }));
+    for (const variant of [
+      { host: origin }, { extra: `Host: ${authority}\r\n` },
+      { pathname: pathname + '?fixture=1' }, { method: 'POST' }, { method: 'HEAD' },
+      { framing: 'Content-Length: 1\r\n', body: 'x' },
+      { framing: 'Content-Length: 00\r\n' },
+      { framing: 'Transfer-Encoding: chunked\r\n', body: '1\r\nx\r\n0\r\n\r\n' },
+      { framing: 'Transfer-Encoding: chunked\r\n', body: '0\r\n\r\n' },
+      { extra: 'X-HTTP-Method-Override: POST\r\n' },
+      { extra: 'X-HttpMethodOverride: POST\r\n' },
+      { extra: 'X-HTTP-Method: POST\r\n' },
+      { extra: 'X-Method-Override: POST\r\n' },
+      { extra: 'X-Override-Method: POST\r\n' },
+      { extra: 'X-Original-Method: POST\r\n' },
+    ]) assert.match(await brokerRequest(broker, { ...rpc, ...variant }), /^HTTP\/1[.]1 403/);
+  }
+  assert.deepEqual(forwarded, []);
+
+  for (const [index, [authority, pathname]] of approved.entries()) {
+    const rpc = { authority, hostname: authority, host: authority, pathname, method: 'GET' };
+    assert.match(await brokerRequest(broker, { ...rpc, ...(index === 0 && { framing: '' }) }), /^HTTP\/1[.]1 200/);
+    assert.equal(forwarded.length, index + 1);
+    const request = forwarded[index];
+    assert.equal(request.hostname, authority);
+    assert.equal(request.servername, authority);
+    assert.equal(request.headers.host, authority);
+    assert.equal(request.path, pathname);
+    assert.equal(request.method, 'GET');
+    assert.equal(request.body, '');
+    assert.equal(request.rejectUnauthorized, true);
+    assert.deepEqual(request.ca, tls.rootCertificates);
+  }
 });
 
 function listen(t, options) {
