@@ -1,0 +1,9 @@
+{
+  "f1": {"status": "fixed", "response": "real"},
+  "f2": {"status": "fixed", "response": "real"},
+  "x1": {
+    "status": "deferred",
+    "reason": "The single helper fix check found a remaining fail-closed eligibility edge for a new child explicitly allowed beneath a wildcard ignore rule. Ordinary empty-directory additions and cancellation are repaired and tested. This edge refuses publication rather than widening file access; retain it for the operator under the one-fix-check policy.",
+    "fix": "Check directory eligibility without an appended slash and add a regression for output/* with !output/new.txt."
+  }
+}

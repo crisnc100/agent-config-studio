@@ -1,0 +1,32 @@
+# Objective
+
+Implement the production agy builder containment helper from the tested prototype, including private source capture/publication and a pinned, edit-only invocation interface. This is the next coherent phase, without public ask-model/installer wiring yet. End with tests and a commit for independent checkpoint review. Keep the helper small and self-contained.
+
+# Read first
+
+~/.codex/AGENTS.md; builds/neon-builder/{plan,context,transport-evidence,listener-astra,listener-sol-prev}.md; builds/neon-builder/probe/{transport,metadata,actual-listener,transport-controls}.mjs and actual-listener.out; tools/ask-model.mjs AGY constants/preflight/after-call; bin/model-id.mjs installer. Benchmark adapter is prepared outside this worktree and snapshotted under builds/neon-builder/benchmark-adapter; don't edit it.
+
+# Known evidence and decisions
+
+Prototype broker successfully proxies agy 1.5.14 zero-turn metadata with keychain load and no plaintext token. It verifies upstream TLS/authority/paths and rejects other hosts, redirects, direct egress and arbitrary IPC. Seatbelt's localhost inbound rule alone permits wildcard binding; the test-only canary demonstrates that. The actual pinned binary was observed with two loopback-only listeners; connections via both non-loopback interfaces were refused. Blind Astra and Sol-prev agree to test actual reachability before architectural expansion. The production executable pin and immutable agy configuration are part of the guarantee. Do not silently add the canary executable, a shell, broad loopback outbound or general IPC. Live print/inference listener observation remains required before enrollment. Models metadata was 0 turns; live Neon model calls used: 0.
+
+# Constraints
+
+- Edit only /Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder. Do not touch Cursor-seat, trunk, installed runtimes, live roles, benchmark runner/cases or global trust/accounts. No reviews, other models, push, merge, Docker/full suites/e2e/benchmark. Never print credentials/settings values.
+- Do not invoke Neon inference. Non-model metadata calls are allowed only when needed to validate a diagnosed change; count them and retain redacted evidence. Existing tests need ACS_LIVE_CHECKS disabled to avoid unrelated live calls.
+- Existing read-only AGY_WALL and AGY_SETTINGS, and review runtime, stay byte-identical. Do not wire --build into ask-model/installer in this phase. A fresh builder does that after the checkpoint review.
+- Implement a production helper in tools (likely tools/agy-builder.mjs), with an explicit API for later ask-model wiring. It may import/reuse pure existing token/preflight helpers if that causes no import cycle or read-only dependency failure; otherwise accept callbacks from ask-model. Preserve 1.5.14 pin, customization checks, disabled updater, no plaintext token creation and pre/post refusal. No route or automatic fallback without the wall.
+- Add exact required inference Google routes to the broker based on pinned binary/previous logs/docs; do not blanket permit all Google paths/domains. Metadata compatibility alone does not establish inference success: mark it unverified until orchestrator's live probe. Upstream TLS cert/authority and redirects enforced, scrub env, private authenticated broker, no ambient proxy/credentials/GIT/SSH config or arbitrary handles.
+- Model capabilities: source-file reads/edits, with arbitrary commands, MCP and URL actions denied; write permissions only for source paths, never runtime/keychain/config. First-party web search stays on as in existing Neon routes; no permission disables it, and its server-side work through Google does not grant direct non-Google traffic from this Mac. Do not claim a file-only tool set. Do not grant --dangerously-skip-permissions broadly. Probe permissions with deterministic fake CLI assertions where possible. The actual agy source-edit refusal/allow behavior is for the live probe.
+- Require explicit canonical existing Git top, standalone and linked worktrees supported. Snapshot approved source including intended uncommitted files to fresh private inodes; exclude secrets/env, git metadata, dependency runtimes, hooks/agent policy and special files. Reject unsafe links, escapes and hardlink hazards. Keep binary, helper, policy, certificates/config and broker immutable to the model. Discard stage on containment/sign-in/model errors.
+- Safe publication only after all checks: regular source changes into the original selected root, atomically replace rather than modify shared hardlink inodes, reject target/ancestor symlink and concurrent changes, preserve unmodified operator source and don't reset/revert files. Explicit denied paths protect .git, policy/customization/runtime/secret files. No commits/push/merge capability from model.
+- Public success contract for wiring: mode:'build', served.verified:false and served.requested/id equal requested, build:{published:true}, top-level changed array; only report published after validated postflight/publication succeeds. Failure must not publish. Keep requested/answered identity unverified.
+- Add focused deterministic tests and actual Mac wall tests of allowed edits and forbidden reads/writes, links, metadata/policy changes, network/IPC/exec and failure/discard behavior. Do not edit frozen review.test.mjs. Existing test edits must be in a separate test-only commit, with assertions/behavior named. Prefer new test files. No installer changes yet.
+
+# Validation
+
+Run `taskpolicy -b node <new focused tests>` sequentially; preserve commands/counts. Run existing agy-wall and ask-model-agy checks only if your changes affect them, with ACS_LIVE_CHECKS=0. No full suite or model calls. Validate new helper syntax and mocked invoke/publication API; test safe copying/publishing with harmless link/secret fixtures, not actual secret reads. Keep output concise and redacted.
+
+# Stop
+
+Stop at the coherent tested helper boundary before public CLI/installer wiring and before any inference. Commit production helper, new tests and build evidence; stage existing-test changes separately if needed. Return interface, changed files, commands/results, remaining inference/refresh limits and exact wiring instructions. Ask only the orchestrator about contradictions; never Cris. If a reachable escape appears, report with proof and stop rather than weaken the boundary. No new architecture based only on an unavailable canary capability.
