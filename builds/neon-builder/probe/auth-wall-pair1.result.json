@@ -1,0 +1,246 @@
+{
+  "mode": "paired-private-walls",
+  "originalPinVerified": true,
+  "freshPrivateInputsMatched": true,
+  "modelsCliResults": 2,
+  "preflightFailedAt": null,
+  "allPassed": false,
+  "arms": [
+    {
+      "name": "private-read-only-wall",
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "interrupted": false,
+      "turns": 0,
+      "reportedZeroTurns": true,
+      "modelCount": 27,
+      "passed": true,
+      "plaintextAbsent": true,
+      "cleanPostflight": true,
+      "aliasMatchesAfter": true,
+      "seedsMatchAfter": false,
+      "anyKeyringPrefix": true,
+      "unknownKeyringPrefix": false,
+      "invalidStoredToken": false,
+      "failedTokenRemoval": false,
+      "failedUserInfo": false,
+      "failedOAuthParams": false,
+      "failedStoredTokenLookup": false,
+      "keychainLoaded": true,
+      "cancelledKeyring": false,
+      "missingWifEmailClaim": false,
+      "keyringTimedOut": false,
+      "keyringValidationNetworkError": false,
+      "incompleteGcpOnboarding": false,
+      "tokenStorageInitializationError": false,
+      "keyringMarkerHomeError": false,
+      "keyringMarkerStatError": false,
+      "keyringMarkerCleanupError": false,
+      "keyringMarkerWriteError": false,
+      "keyringMarkerRenameError": false,
+      "keyringMarkerDirectoryError": false,
+      "keyringMarkerTempCreateError": false,
+      "keyringMarkerTempCloseError": false,
+      "keyringMarkerPermissionsError": false,
+      "recentTimeoutFileFallback": false,
+      "requestedFileFallback": false,
+      "detectedFileFallback": false,
+      "fileFallbackMentioned": false,
+      "failedOnboardingLoad": false,
+      "keychainAuthenticated": true,
+      "signInNeeded": false,
+      "nativeSettingsWriteDenied": false,
+      "seedsChangedAfter": {
+        "installation_id": false,
+        "jetski_state.pbtxt": false,
+        "default_project_id.txt": false,
+        "onboarding.json": false,
+        "settings.json": true
+      },
+      "keychainLookupCommandMentioned": false,
+      "backendAuthSuccessMarker": true,
+      "nonKeyringBackendAuthSuccessMarker": false,
+      "interactiveBackendCompletionMarker": false,
+      "noStoredCredentialMarker": false,
+      "oauthObserved": false,
+      "tokenRefreshMarker": false,
+      "operatorKeychainChanged": false,
+      "operatorSettingsChanged": false,
+      "operatorSeedChanged": false,
+      "brokerEvents": [
+        {
+          "method": "CONNECT",
+          "status": 403
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "path": "/v1internal:loadCodeAssist",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "status": 403
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "status": 403
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "status": 403
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "path": "/v1internal:fetchAvailableModels",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "status": 403
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "path": "/v1internal:listExperiments",
+          "status": 502
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "path": "/v1internal:loadCodeAssist",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        },
+        {
+          "method": "CONNECT",
+          "status": 403
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "name": "private-builder-wall",
+      "code": 1,
+      "signal": null,
+      "timedOut": false,
+      "interrupted": false,
+      "turns": null,
+      "reportedZeroTurns": false,
+      "modelCount": null,
+      "passed": false,
+      "plaintextAbsent": true,
+      "cleanPostflight": true,
+      "aliasMatchesAfter": true,
+      "seedsMatchAfter": true,
+      "anyKeyringPrefix": false,
+      "unknownKeyringPrefix": false,
+      "invalidStoredToken": false,
+      "failedTokenRemoval": false,
+      "failedUserInfo": false,
+      "failedOAuthParams": false,
+      "failedStoredTokenLookup": false,
+      "keychainLoaded": false,
+      "cancelledKeyring": false,
+      "missingWifEmailClaim": false,
+      "keyringTimedOut": false,
+      "keyringValidationNetworkError": false,
+      "incompleteGcpOnboarding": false,
+      "tokenStorageInitializationError": false,
+      "keyringMarkerHomeError": false,
+      "keyringMarkerStatError": false,
+      "keyringMarkerCleanupError": false,
+      "keyringMarkerWriteError": false,
+      "keyringMarkerRenameError": false,
+      "keyringMarkerDirectoryError": false,
+      "keyringMarkerTempCreateError": false,
+      "keyringMarkerTempCloseError": false,
+      "keyringMarkerPermissionsError": false,
+      "recentTimeoutFileFallback": false,
+      "requestedFileFallback": false,
+      "detectedFileFallback": false,
+      "fileFallbackMentioned": false,
+      "failedOnboardingLoad": false,
+      "keychainAuthenticated": false,
+      "signInNeeded": true,
+      "nativeSettingsWriteDenied": true,
+      "seedsChangedAfter": {
+        "installation_id": false,
+        "jetski_state.pbtxt": false,
+        "default_project_id.txt": false,
+        "onboarding.json": false,
+        "settings.json": false
+      },
+      "keychainLookupCommandMentioned": false,
+      "backendAuthSuccessMarker": false,
+      "nonKeyringBackendAuthSuccessMarker": false,
+      "interactiveBackendCompletionMarker": false,
+      "noStoredCredentialMarker": false,
+      "oauthObserved": false,
+      "tokenRefreshMarker": false,
+      "operatorKeychainChanged": false,
+      "operatorSettingsChanged": false,
+      "operatorSeedChanged": false,
+      "brokerEvents": [
+        {
+          "origin": "play.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        }
+      ]
+    }
+  ]
+}
