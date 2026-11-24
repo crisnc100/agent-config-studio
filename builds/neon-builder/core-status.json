@@ -1,0 +1,32 @@
+{
+  "f1": {
+    "status": "fixed",
+    "response": "real",
+    "evidence": "39b8734 and 440f0c5 repair publication cancellation; aeefad0 removes the publisher from the production launcher and archives it with retained regressions."
+  },
+  "s1": {
+    "status": "fixed",
+    "response": "real",
+    "evidence": "39b8734 and 440f0c5 preserve the negated-child directory eligibility. The whole custom publisher is now archived and no longer installed."
+  },
+  "s3": {
+    "status": "fixed",
+    "response": "real",
+    "evidence": "The same cancellation regression and subsequent production publisher retirement repair this duplicate edge."
+  },
+  "x1": {
+    "status": "deferred",
+    "reason": "One fix check is complete. The docs overstate bounds: only actions are capped; denials and notes are uncapped. This does not affect the positive edit proof or its unverified-model label. Correct the wording in a follow-up.",
+    "fix": "State that actions are bounded while denied and notes are uncapped."
+  },
+  "x2": {
+    "status": "deferred",
+    "reason": "One fix check is complete. SIGKILL cannot run the wrapper cancellation handler; normal INT/TERM/HUP are tested. Do not SIGKILL the wrapper to stop a live native builder. Benchmark execution is deferred until its caller forwards graceful cancellation.",
+    "fix": "Fix the caller side first: in run.mjs onSignal send SIGTERM to live children and wait briefly before SIGKILL, as its timeout path at run.mjs:330-338 already does; ask-model then kills agy's group itself. Optionally document in docs/neon-builder.md that SIGKILL of ask-model does not stop agy."
+  },
+  "x3": {
+    "status": "deferred",
+    "reason": "One fix check is complete. Native builds intentionally inherit normal environment; unusual inherited GIT_DIR/GIT_WORK_TREE can redirect Git operations. Run builders from a clean shell until this hardening is added.",
+    "fix": "Drop GIT_* variables from the environment given to the native build, the same filter agyBuildRootProblem applies, or refuse --build when GIT_DIR or GIT_WORK_TREE is set."
+  }
+}

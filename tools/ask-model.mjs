@@ -99,9 +99,10 @@ import { EFFORTS, VENDOR_PREFIXES, loadRegistry, resolveModel, vendorOf } from '
 import { familyEffort, pauseLine, resolveFlavor, resolveRole } from '../lib/roles.js';
 
 const SELF = fileURLToPath(import.meta.url);
-const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools | --x-search] [--json] [--cwd <dir>]'
+const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools | --x-search | --build] [--json] [--cwd <dir>]'
   + '\n  --x-search: grok only; leaves x_keyword_search, x_semantic_search, x_user_search and x_thread_fetch; open_page and open_page_with_find '
-  + 'cannot be disallowed by name; each run is checked afterwards against grok\'s session record';
+  + 'cannot be disallowed by name; each run is checked afterwards against grok\'s session record'
+  + '\n  --build: uses the tested agy version with normal Antigravity permissions; requires --family or --role builder and an explicit canonical Git worktree root in --cwd';
 const VALUE_FLAGS = { '--role': 'role', '--family': 'family', '--effort': 'effort', '--effort-from': 'effortFrom', '--prompt-file': 'promptFile', '--schema': 'schemaFile', '--cwd': 'cwd' };
 
 // What each CLI may use. Claude and grok are read-only by these allowlists alone
@@ -593,12 +594,13 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = 
       ...(effort ? ['-c', `model_reasoning_effort=${effort}`] : []), ...min, ...mcpOff, ...(schema ? ['--output-schema', schema.file] : []), prompt];
   }
   if (vendor === 'agy') {
-    if (mode !== 'read-only') throw new Error(`agy runs read-only only, not ${mode}`);
+    if (mode !== 'read-only' && mode !== 'build') throw new Error(`agy runs read-only only, not ${mode}`);
     if (!logFile) throw new Error('agy needs a --log-file path for the call');
     // stream-json for its init event (the model agy was asked for) and each tool step (a denied one ends ERROR);
     // --disable-slash-commands so a prompt starting with / is text; --log-file so the call's own log is kept.
     return ['-p', prompt, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'stream-json',
-      '--print-timeout', AGY_PRINT_TIMEOUT, '--disable-slash-commands', '--settings', JSON.stringify(AGY_SETTINGS),
+      '--print-timeout', AGY_PRINT_TIMEOUT, '--disable-slash-commands',
+      ...(mode === 'build' ? ['--mode', 'accept-edits'] : ['--settings', JSON.stringify(AGY_SETTINGS)]),
       '--log-file', logFile, ...json];
   }
   if (vendor !== 'grok') throw new Error(unwired(vendor));
@@ -935,6 +937,43 @@ function agyAfterCall(logFile, home = os.homedir()) {
   return left ? `${left.file} ${left.why}; ${AGY_TOKEN_FIX}` : null;
 }
 
+function agyBuildRootProblem(cwd, home = os.homedir()) {
+  try {
+    const realHome = fs.realpathSync.native(home);
+    if (cwd === path.parse(cwd).root || realHome === cwd || realHome.startsWith(cwd + path.sep)) {
+      return 'the Git worktree root cannot be the filesystem root, your home folder or a folder holding it';
+    }
+    const git = which('git');
+    if (!git) return 'git is not on PATH';
+    // Inherited Git variables can make rev-parse accept a folder from a different checkout.
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+    const top = spawnSync(git, ['rev-parse', '--show-toplevel'], { cwd, env, encoding: 'utf8', timeout: 15_000 });
+    if (top.status === 0 && fs.realpathSync.native(top.stdout.replace(/\r?\n$/, '')) === cwd) return null;
+  } catch { /* A Git top that cannot be resolved is not a valid build root. */ }
+  return '--build requires a canonical Git worktree root in --cwd';
+}
+
+function agyBuildAfterCall(logFile) {
+  const left = agyTokenLeft();
+  if (left) return `${left.file} ${left.why}. ${AGY_TOKEN_FIX}`;
+  const unreadable = 'agy did not leave a readable, owned regular log for the token postflight';
+  let fd;
+  let log;
+  try {
+    fd = fs.openSync(logFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid() || stat.nlink !== 1 || !(stat.mode & 0o400)) {
+      return unreadable;
+    }
+    log = fs.readFileSync(fd, 'utf8');
+  } catch {
+    return unreadable;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  return AGY_TOKEN_FILE.test(log) ? 'agy logged that it fell back to file-based token storage instead of the keychain' : null;
+}
+
 /** sandbox-exec's arguments for `command` run inside AGY_WALL with `params`. */
 const agyWall = (params, command) => [...Object.entries(params).flatMap(([k, v]) => ['-D', `${k}=${v}`]), '-p', AGY_WALL, ...command];
 
@@ -1047,7 +1086,7 @@ function parse(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '-h' || a === '--help') return { help: true };
-    if (a === '--investigate' || a === '--json' || a === '--second') { o[a.slice(2)] = true; continue; }
+    if (a === '--investigate' || a === '--json' || a === '--second' || a === '--build') { o[a.slice(2)] = true; continue; }
     if (a === '--no-tools') { o.noTools = true; continue; }
     if (a === '--min-tools') { o.minTools = true; continue; }
     if (a === '--x-search') { o.xSearch = true; continue; }
@@ -1067,6 +1106,13 @@ function parse(argv) {
     if (o.effortFrom.some((n) => !n)) return { error: '--effort-from takes role names separated by commas' };
   }
   if (o.promptFile === undefined) return { error: '--prompt-file is required' };
+  if (o.build) {
+    if (o.cwd === undefined) return { error: '--build requires an explicit --cwd at the canonical Git worktree root' };
+    if (o.role !== undefined && o.role !== 'builder') return { error: '--build only accepts the builder role' };
+    const other = o.investigate ? '--investigate' : o.noTools ? '--no-tools' : o.minTools ? '--min-tools'
+      : o.xSearch ? '--x-search' : o.schemaFile !== undefined ? '--schema' : null;
+    if (other) return { error: `--build and ${other} cannot both be given` };
+  }
   if (o.noTools && o.investigate) return { error: '--no-tools and --investigate cannot both be given' };
   if (o.minTools && (o.investigate || o.noTools)) return { error: `--min-tools and ${o.investigate ? '--investigate' : '--no-tools'} cannot both be given` };
   if (o.xSearch) {
@@ -1101,8 +1147,8 @@ function resolve(o) {
   const m = resolveModel(o.family);
   if (m.error) return { error: m.error };
   if (o.effort !== undefined) return { family: o.family, id: m.id, effort: o.effort };
-  if (o.effortFrom !== undefined) {
-    const e = familyEffort(o.family, o.effortFrom);
+  if (o.effortFrom !== undefined || o.build) {
+    const e = familyEffort(o.family, o.effortFrom ?? ['builder'], { alt: o.effortFrom !== undefined });
     if (e.error) return { error: e.error };
     return { family: o.family, id: m.id, effort: e.effort };
   }
@@ -1356,20 +1402,30 @@ function changedPaths(before, after) {
 }
 
 /** Run the CLI with stdin from /dev/null; a signal to ask-model goes on to the CLI. */
-function run(bin, argv, cwd, env) {
+function run(bin, argv, cwd, env, { nativeBuild = false } = {}) {
   return new Promise((done) => {
     const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
     let child;
     let finished = false;
-    const forward = (sig) => { try { child.kill(sig); } catch {} };
+    let cancelledBy;
+    let escalation;
+    const signalGroup = (sig) => { try { if (child.pid) process.kill(-child.pid, sig); } catch {} };
+    const forward = (sig) => {
+      if (!nativeBuild) { try { child.kill(sig); } catch {} return; }
+      cancelledBy ??= sig;
+      signalGroup(sig);
+      escalation ??= setTimeout(() => signalGroup('SIGKILL'), 2000);
+    };
     const finish = (r) => {
       if (finished) return;
       finished = true;
       for (const s of signals) process.off(s, forward);
-      done(r);
+      clearTimeout(escalation);
+      if (cancelledBy) signalGroup('SIGKILL');
+      done(cancelledBy ? { ...r, cancelledBy } : r);
     };
     try {
-      child = spawn(bin, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(bin, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], ...(nativeBuild && { detached: true }) });
     } catch (e) {
       finish({ error: e });
       return;
@@ -1380,9 +1436,11 @@ function run(bin, argv, cwd, env) {
     child.stdout.on('data', (d) => out.push(d));
     child.stderr.on('data', (d) => err.push(d));
     child.on('error', (e) => finish({ error: e }));
-    child.on('close', (code, signal) => finish({
-      code, signal, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8'),
-    }));
+    child.on('close', (code, signal) => {
+      const result = { code, signal, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') };
+      if (nativeBuild) setImmediate(finish, result);
+      else finish(result);
+    });
   });
 }
 
@@ -1536,33 +1594,116 @@ function grokXRecord(sessionId, cwd, grokHome) {
   return other === undefined ? null : `its signals.json lists ${JSON.stringify(other)} as used`;
 }
 
+const agyToolName = (value) => typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/i.test(value);
+
+function agyBuildActions(steps, complete) {
+  const actions = new Map();
+  let actionsTruncated = false;
+  const pathKeys = ['AbsolutePath', 'TargetFile', 'FilePath', 'TargetPath', 'DirectoryPath', 'Path'];
+  const urlKeys = ['Url', 'URL', 'TargetUrl'];
+  const usable = (value) => typeof value === 'string' && value.length > 0 && value.length <= 1024 && !/[\x00-\x1f\x7f]/.test(value);
+  for (const step of steps) {
+    const indexed = Number.isSafeInteger(step.step_index) && step.step_index >= 0;
+    const key = indexed ? JSON.stringify([step.conversation_id ?? null, step.step_index]) : Symbol();
+    const previous = actions.get(key);
+    const info = step.tool_info;
+    const tool = step.tool_name ?? info?.name ?? previous?.tool;
+    const state = step.state ?? previous?.state;
+    if (step.subagent_info || step.step_type === 'subagent') complete = false;
+    if (!step.tool_name && !info && ['user_input', 'agent_response', 'system_message'].includes(step.step_type)) {
+      if (previous) complete = false;
+      continue;
+    }
+    if (!indexed || !agyToolName(tool) || !['ACTIVE', 'DONE', 'ERROR', 'CANCELLED', 'DENIED'].includes(state)) complete = false;
+    if (!agyToolName(tool) || !['ACTIVE', 'DONE', 'ERROR', 'CANCELLED', 'DENIED'].includes(state)) continue;
+    if (!previous && actions.size >= 64) {
+      actionsTruncated = true;
+      continue;
+    }
+    if ((step.tool_name && info?.name && step.tool_name !== info.name) ||
+        (previous && (previous.tool !== tool || (previous.state !== 'ACTIVE' && previous.state !== state)))) complete = false;
+    const action = { ...previous, tool, state };
+    const params = info?.parameters;
+    if (params !== undefined && !isObject(params)) complete = false;
+    if (isObject(params)) {
+      const files = pathKeys.filter((name) => Object.hasOwn(params, name)).map((name) => params[name]);
+      const urls = urlKeys.filter((name) => Object.hasOwn(params, name)).map((name) => params[name]);
+      const targets = new Set();
+      for (const file of files) {
+        if (usable(file) && (path.isAbsolute(file) || /^[a-z0-9_.-][a-z0-9_./-]*$/i.test(file))) targets.add(file);
+        else complete = false;
+      }
+      for (const url of urls) {
+        const parsed = usable(url) && URL.canParse(url) ? new URL(url) : null;
+        if (parsed && ['http:', 'https:'].includes(parsed.protocol)) targets.add(`${parsed.origin}${parsed.pathname}`);
+        else complete = false;
+      }
+      if (targets.size > 1 || (action.target && targets.size && !targets.has(action.target))) complete = false;
+      if (targets.size === 1) [action.target] = targets;
+    }
+    if (state === 'ERROR' || state === 'DENIED') {
+      const error = String(info?.error?.message ?? '');
+      action.refusal = /deny rule/i.test(error) ? 'deny-rule'
+        : /approval|consent/i.test(error) ? 'approval-required'
+          : /EACCES|EPERM|permission denied|operation not permitted/i.test(error) ? 'permission-denied'
+            : /ENOENT|no such file|not found/i.test(error) ? 'not-found'
+              : state === 'DENIED' ? 'denied' : previous?.refusal ?? 'tool-error';
+    } else delete action.refusal;
+    actions.set(key, action);
+  }
+  const reported = [...actions.values()];
+  return { actions: reported, actionsTruncated, actionsComplete: complete && !actionsTruncated &&
+    reported.every(({ state }) => state !== 'ACTIVE') };
+}
+
 /**
  * agy's answer from its stream-json events: the last response turn's text (else the result event's response). agy reports no model that answered, only
  * init.model, the echo of what it was asked for, so that is kept as requested and unverified (a different echo still
  * refuses, exit 2). A denied tool call does not fail agy's turn (status SUCCESS, exit 0); it shows as a tool step that
  * ended ERROR on a deny rule, and with no answer beside it the call failed.
  */
-function readAgy(id, r, family) {
+function readAgy(id, r, family, build) {
   const events = [];
+  let streamParsed = true;
   for (const line of String(r.stdout || '').split('\n')) {
     if (!line.trim()) continue;
-    try { events.push(JSON.parse(line)); } catch { /* agy prints only events on stdout; a stray line is not one */ }
+    try { events.push(JSON.parse(line)); } catch { streamParsed = false; }
   }
   const init = events.find((e) => e?.event === 'init')?.init;
   const result = events.findLast((e) => e?.event === 'result')?.result;
   const steps = events.map((e) => e?.step_update).filter(isObject);
   const denied = steps.filter((u) => u.state === 'ERROR' && /deny rule/i.test(String(u.tool_info?.error?.message ?? '')))
-    .map((u) => `${u.tool_name}: ${String(u.tool_info.error.message).slice(0, 300)}`);
+    .map((u) => build ? `${agyToolName(u.tool_name) ? u.tool_name : '(unnamed)'}: blocked by deny rule`
+      : `${u.tool_name}: ${String(u.tool_info.error.message).slice(0, 300)}`);
   // Actions that needed an approval print mode cannot give (a read outside the workspace, say): agy lists them in
   // denied_actions, and the turn still ends SUCCESS.
   if (Array.isArray(result?.denied_actions)) {
-    for (const d of result.denied_actions) denied.push(`${d?.action ?? '(unnamed)'}: needed an approval print mode cannot give`);
+    for (const d of result.denied_actions) {
+      const action = build && (typeof d?.action !== 'string' || !/^[a-z][a-z0-9_ -]{0,63}$/i.test(d.action)) ? null : d?.action;
+      denied.push(`${action ?? '(unnamed)'}: needed an approval print mode cannot give`);
+    }
   }
-  const sub = agySubagentDenials(steps, undefined, family);
+  const sub = agySubagentDenials(steps, undefined, family, { includeTranscripts: !build });
   denied.push(...sub.denied);
-  if (r.code !== 0 || !isObject(result)) return { exit: 4, error: `agy failed (exit ${r.code}${result?.status ? `, status ${result.status}` : ''}): ${tail(r.stderr || r.stdout)}` };
-  if (result.status !== 'SUCCESS') return { exit: 4, error: `agy reported status ${JSON.stringify(result.status ?? null)}: ${tail(result.response ?? r.stderr)}` };
-  if (typeof init?.model === 'string' && init.model !== id) return { exit: 2, error: `asked for ${id}, but agy reports it was asked for ${init.model} — not its answer` };
+  // Builder diagnostics leave the private launch directory only as structured denial evidence.
+  const trace = build ? agyBuildActions(steps, streamParsed && isObject(init) && isObject(result) &&
+    events[0]?.event === 'init' && events.at(-1)?.event === 'result' && events.slice(1, -1).every((event) =>
+      event?.event === 'step_update' && isObject(event.step_update))) : {};
+  const evidence = build ? { denied, notes: sub.notes, ...trace } : {};
+  if (r.code !== 0 || !isObject(result)) {
+    const why = build ? `agy builder failed (exit ${r.code})`
+      : `agy failed (exit ${r.code}${result?.status ? `, status ${result.status}` : ''}): ${tail(r.stderr || r.stdout)}`;
+    return { exit: 4, error: why, ...evidence };
+  }
+  if (result.status !== 'SUCCESS') {
+    const why = build ? 'agy builder did not report a successful result'
+      : `agy reported status ${JSON.stringify(result.status ?? null)}: ${tail(result.response ?? r.stderr)}`;
+    return { exit: 4, error: why, ...evidence };
+  }
+  if (typeof init?.model === 'string' && init.model !== id) {
+    const reported = build && !/^[a-z0-9][a-z0-9_.-]{0,127}$/i.test(init.model) ? '(invalid model id)' : init.model;
+    return { exit: 2, error: `asked for ${id}, but agy reports it was asked for ${reported} — not its answer`, ...evidence };
+  }
   const served = { requested: typeof init?.model === 'string' ? init.model : null, verified: false };
   // result.response joins every response turn's text (a schema answer agy's finish tool refused, then the retry):
   // the answer is the last turn that has text.
@@ -1570,9 +1711,9 @@ function readAgy(id, r, family) {
   for (const u of steps) if (u.step_type === 'agent_response' && typeof u.text_delta === 'string') turns.set(u.step_index, (turns.get(u.step_index) ?? '') + u.text_delta);
   const text = [...turns.entries()].sort((x, y) => y[0] - x[0]).map(([, t]) => t).find((t) => t.trim()) ?? result.response;
   if (typeof text !== 'string' || !text.trim()) {
-    return { exit: 4, error: `agy returned an empty answer${denied.length ? ` after ${denied.length} denied tool call(s): ${denied.join('; ')}` : ''}`, served, denied, notes: sub.notes };
+    return { exit: 4, error: `agy returned an empty answer${denied.length ? ` after ${denied.length} denied tool call(s): ${denied.join('; ')}` : ''}`, served, denied, notes: sub.notes, ...trace };
   }
-  return { answer: text, served, denied, notes: sub.notes };
+  return { answer: text, served, denied, notes: sub.notes, ...trace };
 }
 
 /**
@@ -1581,15 +1722,22 @@ function readAgy(id, r, family) {
  * ~/.gemini/antigravity-cli/brain, where a refused step is `status: "ERROR"` with the deny-rule message. A transcript
  * outside that folder is not read, and one that can't be read is named in `notes`: its refusals are unknown.
  */
-function agySubagentDenials(steps, home = os.homedir(), who = 'the model') {
+function agySubagentDenials(steps, home = os.homedir(), who = 'the model', { includeTranscripts = true } = {}) {
   const denied = [], notes = [], seen = new Set();
   let brain = null;
-  try { brain = fs.realpathSync(path.join(home, '.gemini', 'antigravity-cli', 'brain')) + path.sep; } catch { /* no brain folder: every transcript is outside it */ }
+  if (includeTranscripts) {
+    try { brain = fs.realpathSync(path.join(home, '.gemini', 'antigravity-cli', 'brain')) + path.sep; } catch { /* no brain folder: every transcript is outside it */ }
+  }
   for (const u of steps) {
     for (const s of Array.isArray(u?.subagent_info?.subagents) ? u.subagent_info.subagents : []) {
       if (typeof s?.log_uri !== 'string' || seen.has(s.log_uri)) continue;
       seen.add(s.log_uri);
       const name = String(s.type_name ?? s.conversation_id ?? 'a subagent');
+      if (!includeTranscripts) {
+        const label = /^[a-z][a-z0-9_ -]{0,63}$/i.test(name) ? ` (${name})` : '';
+        notes.push(`${who} tried to start a subagent${label}; its denied calls are unknown`);
+        continue;
+      }
       let file;
       try { file = fs.realpathSync(fileURLToPath(s.log_uri)); } catch (e) {
         // Inside the wall a subagent gets no instructions (agy passes them through brain/, which stays walled off), so it
@@ -1618,14 +1766,14 @@ function agySubagentDenials(steps, home = os.homedir(), who = 'the model') {
  * The answer from one CLI's output, or an exit code and why. With a schema, the structured answer: claude's
  * structured_output (else its result), grok's structuredOutput (else its text), codex's stdout, as JSON text.
  */
-function readAnswer(vendor, id, r, schema = null, { cwd, grokHome, family, xSearch = false } = {}) {
+function readAnswer(vendor, id, r, schema = null, { cwd, grokHome, family, xSearch = false, agyBuild = false } = {}) {
   if (!VENDORS.includes(vendor)) return { exit: 4, error: unwired(vendor) };
   if (r.error) return { exit: r.error.code === 'ENOENT' ? 3 : 4, error: `${vendor} could not start: ${r.error.message}` };
   if (r.signal) return { exit: 4, error: `${vendor} was stopped by ${r.signal}` };
   let answer;
   let extra = {};
   if (vendor === 'agy') {
-    const got = readAgy(id, r, family);
+    const got = readAgy(id, r, family, agyBuild);
     if (got.answer === undefined) return got;
     ({ answer, ...extra } = got);
   } else if (vendor === 'codex') {
@@ -1696,6 +1844,11 @@ async function main(argv) {
   if (prompt.startsWith('-')) prompt = `\n${prompt}`;
   const cwd = path.resolve(o.cwd ?? process.cwd());
   try { if (!fs.statSync(cwd).isDirectory()) return usage(`--cwd ${cwd} is not a directory`); } catch { return usage(`--cwd ${cwd} does not exist`); }
+  if (o.build) {
+    try {
+      if (fs.realpathSync.native(o.cwd) !== cwd) return usage('--build requires a canonical Git worktree root in --cwd');
+    } catch { return usage('--build requires a canonical Git worktree root in --cwd'); }
+  }
   const schema = o.schemaFile === undefined ? null : loadSchema(o.schemaFile);
   if (schema?.error) return usage(schema.error);
 
@@ -1703,9 +1856,10 @@ async function main(argv) {
   if (m.error) return usage(m.error);
   const vendor = vendorOf(m.id);
   if (!vendor) return usage(`${m.family} resolves to "${m.id}", whose prefix names no known CLI (${Object.keys(VENDOR_PREFIXES).join(', ')})`);
+  if (o.build && vendor !== 'agy') return usage(`--build uses the agy builder; ${m.family} resolves to "${m.id}" (${vendor})`);
   if (o.xSearch && vendor !== 'grok') return usage(`--x-search uses grok's own X tools, so it needs a family grok runs; ${m.family} resolves to "${m.id}" (${vendor})`);
   // --min-tools is --no-tools for a CLI that can run with none.
-  const mode = o.xSearch ? 'x-search' : o.investigate ? 'investigate' : o.noTools || (o.minTools && vendor === 'claude') ? 'no-tools' : o.minTools ? 'min-tools' : 'read-only';
+  const mode = o.build ? 'build' : o.xSearch ? 'x-search' : o.investigate ? 'investigate' : o.noTools || (o.minTools && vendor === 'claude') ? 'no-tools' : o.minTools ? 'min-tools' : 'read-only';
   process.stderr.write(`ask-model: ${m.family} (${m.id}, effort ${m.effort || 'none'}, ${mode})\n`);
 
   const result = { family: m.family, id: m.id, effort: m.effort || null, mode, ...(o.minTools && MIN_TOOLS[vendor]), ...(mode === 'x-search' && X_SEARCH_TOOLS),
@@ -1726,7 +1880,7 @@ async function main(argv) {
       + 'model, so it never answers for the security role — agy was not run. Choose another family for the role, or name one with --family';
     return finish(4);
   }
-  if (vendor === 'agy' && mode !== 'read-only') {
+  if (vendor === 'agy' && mode !== 'read-only' && mode !== 'build') {
     result.error = mode === 'investigate'
       ? `${sandboxProblem('agy')}, so --investigate is not available for agy — agy was not run`
       : `agy has no switch that removes its tools, so --${o.noTools ? 'no-tools' : 'min-tools'} is not available for it — agy was not run`;
@@ -1749,7 +1903,24 @@ async function main(argv) {
   }
   let logFile = null;
   let wall = null;
-  if (vendor === 'agy') {
+  if (o.build) {
+    const rootProblem = agyBuildRootProblem(cwd);
+    if (rootProblem) { result.error = `${rootProblem}, so agy was not run`; return finish(4); }
+    let left = agyTokenLeft();
+    if (left) { result.error = `${left.file} ${left.why}, so agy was not run: ${AGY_TOKEN_FIX}`; return finish(4); }
+    const version = agyVersion(bin);
+    left = agyTokenLeft();
+    if (left) { result.error = `${left.file} ${left.why}, so the build was not started: ${AGY_TOKEN_FIX}`; return finish(4); }
+    if (version !== AGY_VERSION) {
+      result.error = `the native agy builder requires the tested CLI version ${AGY_VERSION}, so the build was not started`;
+      return finish(4);
+    }
+    try { agyTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-build-')); }
+    catch { result.error = 'a private log directory could not be created, so agy was not run'; return finish(4); }
+    logFile = path.join(agyTmp, 'agy.log');
+    prompt = 'You are the implementer for this task. Do not invoke other models, delegate, or run reviews or grades. '
+      + 'Do not push, open a pull request, or merge. Follow the task and report what you changed and checked.\n\n' + prompt;
+  } else if (vendor === 'agy') {
     // The workspace and home first: they need no agy process, and an unprobed agy could load what they would refuse.
     const workspace = agyWorkspaceFiles(cwd);
     if (workspace.length) {
@@ -1785,7 +1956,8 @@ async function main(argv) {
     wall = walled.params;
   }
   if (vendor === 'grok') grokCall = grokCallEnv();
-  const env = grokCall ? grokCall.env : wall ? { ...process.env, ...AGY_ENV, TMPDIR: wall.CALL_TMP } : process.env;
+  const env = grokCall ? grokCall.env : wall ? { ...process.env, ...AGY_ENV, TMPDIR: wall.CALL_TMP }
+    : o.build ? { ...process.env, ...AGY_ENV } : process.env;
   if (vendor === 'grok') {
     const leader = grokLeader(grokCall.grokHome);
     if (leader) {
@@ -1829,10 +2001,44 @@ async function main(argv) {
   startWatch(o.role !== undefined && /^[a-z][a-z0-9-]{0,31}$/.test(o.role) ? o.role : 'ask');
   let args;
   try { args = argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff, schema, logFile }); } catch (e) { result.error = `${e.message} — ${vendor} was not run`; return finish(4); }
-  const r = wall ? await run(SANDBOX_EXEC, agyWall(wall, [bin, ...args]), cwd, env) : await run(bin, args, cwd, env);
+  const r = wall ? await run(SANDBOX_EXEC, agyWall(wall, [bin, ...args]), cwd, env)
+    : await run(bin, args, cwd, env, { nativeBuild: o.build });
   // A call grok refused for want of approval leaves only this line, and grok still exits 0.
   if (vendor === 'grok') {
     for (const line of String(r.stderr || '').split('\n')) if (/permission required:/.test(line)) process.stderr.write(`ask-model: grok: ${line.trim()}\n`);
+  }
+  if (o.build) {
+    const signIn = agyBuildAfterCall(logFile);
+    const inspect = 'Inspect the worktree before retrying because edits may remain.';
+    fs.rmSync(agyTmp, { recursive: true, force: true });
+    agyTmp = null;
+    if (r.cancelledBy) {
+      result.error = [`agy builder cancelled by ${r.cancelledBy}`, signIn, inspect].filter(Boolean).join('. ');
+      return finish(4);
+    }
+    const got = readAnswer(vendor, m.id, r, schema, { family: m.family, agyBuild: true });
+    if (got.actions) {
+      result.actions = got.actions;
+      result.actionsTruncated = got.actionsTruncated;
+      result.actionsComplete = got.actionsComplete;
+    }
+    if (got.denied?.length) {
+      result.denied = got.denied;
+      for (const d of got.denied) process.stderr.write(`ask-model: agy: denied ${d}\n`);
+    }
+    if (got.notes?.length) {
+      result.notes = got.notes;
+      for (const n of got.notes) process.stderr.write(`ask-model: agy: ${n}\n`);
+    }
+    if (signIn || got.exit !== undefined) {
+      result.error = [got.error, signIn, inspect].filter(Boolean).join('. ');
+      return finish(signIn ? 4 : got.exit);
+    }
+    result.answer = got.answer;
+    result.served = { requested: m.id, id: m.id, verified: false };
+    result.build = { execution: 'native', completed: true };
+    process.stderr.write(`ask-model: agy does not report which model answered; ${m.id} was requested (unverified).\n`);
+    return finish(0);
   }
   const got = readAnswer(vendor, m.id, r, schema, { cwd, grokHome: grokCall?.grokHome, family: m.family, xSearch: mode === 'x-search' });
   const signIn = wall ? agyAfterCall(logFile) : null;

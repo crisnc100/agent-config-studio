@@ -1,0 +1,14 @@
+THE ASK
+Enable Neon locally as an agy builder behind the approved explicit-worktree boundary. Cris says the Mini must not block local use; defer its Neon benchmark until its route works. Orchestrator rotates eligible Sol/Opus/Neon, skipping startup/quota failures and preferring Opus for frontend design taste. No scheduler feature, no Mini auth research, no weakening the existing read-only paths.
+WHAT WE KNOW
+Current production helper startup on Laptop passes27models/0turns/keychainloaded+authenticated/postflightclean; expired token refreshed POSToauth2.googleapis.com/token200. Firstlocalactualeditprobe fails beforegeneration/publication: nochangedfiles/actions, alloutsidecanariesunchanged,cleanuptrue,actualListenerbarpasses48samples16interfaces. Totalactualbuildattempts2(1Mini+1Laptop), no generationforwarded in either. ExactCONNECT-onlydiagnosticobservedrefused www.googleapis.com+aicode.googleapis.com. SecondTLS-localdiagnosticgavebothoriginsEMPTYroute maps, soalltheirrequestsanswered403locally, no upstreamrequestthere. Observed ONLYGETwww.googleapis.com/oauth2/v2/userinfo andGETaicode.googleapis.com/v1alpha:fetchConfig; otherdailycloudmetadataalso403butmodelsmetadataitselfworks. This is actualruntimeevidence, notguessedhost. Bothdiagnosticsdoubleblockgeneration,noinferenceforwarded.
+CURRENT DIRECTION
+Add ONLYthose2 exactGET routes tobuilderGOOGLE_ROUTES, keepTLS/authority/SNI/method/path/redirect/environments andallfile/command/config restrictionsunchanged. No permission delta toexistingread-only routes orlocalOSwall. Beforeanotheractuallivecall, run ONE no-generationbootstrapcontrol admittingthese2GETs butstilldenyinggenerationbothbrokerlookupandupstreamgate; requirekeyringsuccessandobservationofattemptedgenerationRPCwith0forwarded. Ifnewpathneeded,stopatcurrentevidence; donotguess/wildcard. Thenonecombinedlocaledit/refusalprobe; onlypassmeansNeonroleeligiblehigh. FinalMythosfixcheckmustreadactualnewbrokerrouteaddition andtests.
+DECISIONS
+Is this minimalGooglemetadataallowance justified and scoped? Any missing concrete guard forread-onlyprovideruserinfo/config? Is 0generation-controlthenactualprobe right proofbar? Atmost350words; do notexpandintoanotherharnessorMiniinvestigation.
+READ FIRST
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/tools/agy-builder.mjs
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/builds/neon-builder/probe/laptop-rpc-diagnostic.mjs
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/builds/neon-builder/probe/laptop-rpc-1.result.json
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/tests/agy-builder.mjs
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/builds/neon-builder/plan.md

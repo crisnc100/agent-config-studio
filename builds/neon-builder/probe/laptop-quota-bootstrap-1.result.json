@@ -1,0 +1,820 @@
+{
+  "phase": "print",
+  "printReply": {
+    "code": 1,
+    "signal": null,
+    "parserExit": 4,
+    "errorClass": "process-failed",
+    "terminalStatus": "ERROR",
+    "stderr": [
+      {
+        "ordinal": 1,
+        "level": "unstructured",
+        "source": null,
+        "sourceLine": null,
+        "labels": [],
+        "words": [
+          "error",
+          "check",
+          "failed",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      }
+    ],
+    "resultError": [
+      {
+        "ordinal": 1,
+        "level": "unstructured",
+        "source": null,
+        "sourceLine": null,
+        "labels": [],
+        "words": [
+          "check",
+          "failed",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      }
+    ]
+  },
+  "ownedLog": {
+    "nonemptyLines": 185,
+    "truncated": false,
+    "faults": [
+      {
+        "ordinal": 10,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 169,
+        "labels": [],
+        "words": [
+          "cache",
+          "refresh",
+          "failed",
+          "error",
+          "token",
+          "source",
+          "not"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 11,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 169,
+        "labels": [],
+        "words": [
+          "cache",
+          "refresh",
+          "failed",
+          "failed",
+          "load",
+          "code",
+          "response",
+          "error",
+          "token",
+          "source",
+          "not"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 12,
+        "level": "error",
+        "source": "errorreport.go",
+        "sourceLine": 282,
+        "labels": [],
+        "words": [
+          "failed",
+          "error",
+          "token",
+          "source",
+          "not"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 15,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 169,
+        "labels": [],
+        "words": [
+          "cache",
+          "refresh",
+          "failed",
+          "error",
+          "token",
+          "source",
+          "not"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 16,
+        "level": "error",
+        "source": "errorreport.go",
+        "sourceLine": 282,
+        "labels": [],
+        "words": [
+          "error",
+          "token",
+          "source",
+          "not"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 17,
+        "level": "warning",
+        "source": "defaults.go",
+        "sourceLine": 709,
+        "labels": [],
+        "words": [
+          "failed",
+          "path",
+          "path",
+          "invalid"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 33,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 169,
+        "labels": [],
+        "words": [
+          "cache",
+          "refresh",
+          "failed",
+          "error",
+          "token",
+          "source",
+          "not"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 34,
+        "level": "error",
+        "source": "errorreport.go",
+        "sourceLine": 282,
+        "labels": [],
+        "words": [
+          "error",
+          "token",
+          "source",
+          "not"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 36,
+        "level": "error",
+        "source": "errorreport.go",
+        "sourceLine": 282,
+        "labels": [],
+        "words": [
+          "failed",
+          "error",
+          "token",
+          "source",
+          "not"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 37,
+        "level": "warning",
+        "source": "rpcs_plugin_auth.go",
+        "sourceLine": 110,
+        "labels": [],
+        "words": [
+          "not",
+          "cannot",
+          "user",
+          "error",
+          "token",
+          "source",
+          "not"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 40,
+        "level": "error",
+        "source": "launchsteps.go",
+        "sourceLine": 108,
+        "labels": [],
+        "words": [
+          "failed",
+          "resolve",
+          "path",
+          "path",
+          "not",
+          "default"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 63,
+        "level": "warning",
+        "source": "project.go",
+        "sourceLine": 120,
+        "labels": [],
+        "words": [
+          "project",
+          "default",
+          "project",
+          "default",
+          "cli",
+          "project",
+          "found",
+          "cache",
+          "failed",
+          "read",
+          "project",
+          "file",
+          "read",
+          "project",
+          "file",
+          "open",
+          "no",
+          "file"
+        ],
+        "errno": "ENOENT"
+      },
+      {
+        "ordinal": 64,
+        "level": "error",
+        "source": "server.go",
+        "sourceLine": 3376,
+        "labels": [
+          "conversation-directory-read-failed"
+        ],
+        "words": [
+          "failed",
+          "read",
+          "directory",
+          "open",
+          "no",
+          "file",
+          "directory"
+        ],
+        "errno": "ENOENT"
+      },
+      {
+        "ordinal": 72,
+        "level": "error",
+        "source": "cli_setting_manager.go",
+        "sourceLine": 884,
+        "labels": [
+          "settings-write-failed"
+        ],
+        "words": [
+          "failed",
+          "write",
+          "validated",
+          "settings",
+          "private",
+          "settings",
+          "not"
+        ],
+        "errno": "EPERM"
+      },
+      {
+        "ordinal": 73,
+        "level": "error",
+        "source": "cli_setting_manager.go",
+        "sourceLine": 52,
+        "labels": [
+          "settings-default-fallback"
+        ],
+        "words": [
+          "failed",
+          "load",
+          "cli",
+          "settings",
+          "private",
+          "settings",
+          "not"
+        ],
+        "errno": "EPERM"
+      },
+      {
+        "ordinal": 87,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 201,
+        "labels": [],
+        "words": [
+          "failed",
+          "refresh",
+          "cache",
+          "not"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 88,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 201,
+        "labels": [],
+        "words": [
+          "failed",
+          "refresh",
+          "cache",
+          "not"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 89,
+        "level": "warning",
+        "source": "user_management.go",
+        "sourceLine": 139,
+        "labels": [],
+        "words": [
+          "failed",
+          "forbidden"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 92,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 169,
+        "labels": [],
+        "words": [
+          "cache",
+          "refresh",
+          "failed",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 93,
+        "level": "error",
+        "source": "errorreport.go",
+        "sourceLine": 282,
+        "labels": [],
+        "words": [
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 94,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 201,
+        "labels": [],
+        "words": [
+          "failed",
+          "refresh",
+          "cache",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 95,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 201,
+        "labels": [],
+        "words": [
+          "failed",
+          "refresh",
+          "cache",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 97,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 169,
+        "labels": [],
+        "words": [
+          "cache",
+          "refresh",
+          "failed",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 98,
+        "level": "error",
+        "source": "errorreport.go",
+        "sourceLine": 282,
+        "labels": [],
+        "words": [
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 99,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 201,
+        "labels": [],
+        "words": [
+          "failed",
+          "refresh",
+          "cache",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 100,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 201,
+        "labels": [],
+        "words": [
+          "failed",
+          "refresh",
+          "cache",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 105,
+        "level": "warning",
+        "source": "cli_setting_manager.go",
+        "sourceLine": 1065,
+        "labels": [
+          "telemetry-setting-default-disabled"
+        ],
+        "words": [
+          "failed",
+          "read",
+          "telemetry",
+          "setting",
+          "server",
+          "disabled",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 120,
+        "level": "warning",
+        "source": "user_management.go",
+        "sourceLine": 139,
+        "labels": [],
+        "words": [
+          "failed",
+          "forbidden"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 123,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 169,
+        "labels": [],
+        "words": [
+          "cache",
+          "refresh",
+          "failed",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 124,
+        "level": "error",
+        "source": "errorreport.go",
+        "sourceLine": 282,
+        "labels": [],
+        "words": [
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 125,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 201,
+        "labels": [],
+        "words": [
+          "failed",
+          "refresh",
+          "cache",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 126,
+        "level": "error",
+        "source": "error_parsing.go",
+        "sourceLine": 87,
+        "labels": [],
+        "words": [
+          "error",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 170,
+        "level": "error",
+        "source": "server_oauth.go",
+        "sourceLine": 112,
+        "labels": [],
+        "words": [
+          "validation",
+          "failed",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 172,
+        "level": "warning",
+        "source": "cli_setting_manager.go",
+        "sourceLine": 1065,
+        "labels": [
+          "telemetry-setting-default-disabled"
+        ],
+        "words": [
+          "failed",
+          "read",
+          "telemetry",
+          "setting",
+          "server",
+          "disabled",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 174,
+        "level": "error",
+        "source": "printmode.go",
+        "sourceLine": 298,
+        "labels": [],
+        "words": [
+          "check",
+          "failed",
+          "check",
+          "failed",
+          "request",
+          "failed",
+          "empty",
+          "code"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 177,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 169,
+        "labels": [],
+        "words": [
+          "cache",
+          "refresh",
+          "failed"
+        ],
+        "errno": null
+      },
+      {
+        "ordinal": 178,
+        "level": "warning",
+        "source": "cache.go",
+        "sourceLine": 201,
+        "labels": [],
+        "words": [
+          "failed",
+          "refresh",
+          "cache"
+        ],
+        "errno": null
+      }
+    ]
+  },
+  "refusedPublication": true,
+  "resultCallbackReached": true,
+  "generationDeniedAfterQuota200": false,
+  "eligibilityFailed": true,
+  "keychainLoaded": true,
+  "keychainAuthenticated": true,
+  "cleanPostflight": true,
+  "noOperatorPlaintext": true,
+  "authorities": [
+    {
+      "authorityClass": "named-google",
+      "googleHost": "www.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "daily-cloudcode-pa.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "non-google",
+      "portIs443": true,
+      "authorityExact": false,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "daily-cloudcode-pa.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "daily-cloudcode-pa.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "daily-cloudcode-pa.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "aicode.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "aicode.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "non-google",
+      "portIs443": true,
+      "authorityExact": false,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "play.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    }
+  ],
+  "denied": [
+    {
+      "label": "fetchAdminControls",
+      "queryPresent": false,
+      "generationDenied": false,
+      "status": 403
+    },
+    {
+      "label": "fetchUserInfo",
+      "queryPresent": false,
+      "generationDenied": false,
+      "status": 403
+    },
+    {
+      "label": "fetchUserInfo",
+      "queryPresent": false,
+      "generationDenied": false,
+      "status": 403
+    }
+  ],
+  "truncated": false,
+  "dispatches": {
+    "google-userinfo": {
+      "count": 2,
+      "statuses": {
+        "200": 2
+      }
+    },
+    "load-code-assist": {
+      "count": 3,
+      "statuses": {
+        "200": 3
+      }
+    },
+    "quota-summary": {
+      "count": 2,
+      "statuses": {
+        "200": 2
+      }
+    },
+    "models": {
+      "count": 1,
+      "statuses": {
+        "200": 1
+      }
+    },
+    "experiments": {
+      "count": 1,
+      "statuses": {
+        "200": 1
+      }
+    },
+    "aicode-config": {
+      "count": 2,
+      "statuses": {
+        "200": 2
+      }
+    },
+    "telemetry": {
+      "count": 2,
+      "statuses": {
+        "200": 2
+      }
+    }
+  },
+  "gateRejections": 0,
+  "forwardedInference": 0,
+  "passed": false
+}

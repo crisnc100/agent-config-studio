@@ -1,0 +1,13 @@
+## SCOPE VERDICT
+
+right-sized — If the pending public error output cannot identify the failing step, a reversible five-grant test on the real `agy models` command can establish whether those permissions restore keychain sign-in.
+
+## ADVISORY
+
+- **Test the five observed denials together.** Use matched private homes and the pinned executable. Change only the exact directory-metadata grant, three named Mach lookups, and single preferences-file read in the diagnostic profile. Keep settings immutable and retain both generation blocks. The brief reports that directory metadata alone and a writable settings file each failed to restore sign-in. Cut further settings probes and the requirement for an internal trace. [Advisor brief, lines 4–7](/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/builds/neon-builder/auth-next-advisor-brief.md:4)
+- **Require failure → success → failure → success** as the group is added, withdrawn, and restored. Both strict controls must reproduce the sign-in error. Each success must exit zero, return a nonempty model list with zero turns, show both keyring-loaded and keyring-authenticated markers, and pass plaintext and postflight checks. Record the count; 27 is the observed value. Stop as inconclusive on timeout, interruption, token refresh, or operator-state change. These checks distinguish a permission effect from a changed login session. [Metadata success criteria](/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/builds/neon-builder/probe/auth-factor-ladder.mjs:101) · [Reversal and state checks](/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/builds/neon-builder/probe/auth-settings-write-control.mjs:82)
+- **Stop at the first clean failure with all five grants enabled.** That establishes that the group was insufficient under the tested conditions. Cut additional analytics, DNS, socket, and general IPC grants. If the reversal succeeds, it establishes sufficiency for metadata sign-in only. Remove grants and retest until withdrawing any remaining grant breaks the rescue. Confirm that reduced set on the pinned private clone before submitting the exact delta for advisor and security review. The builder’s worktree edit still needs its own proof. [Clone confirmation precedent](/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/builds/neon-builder/probe/auth-settings-write-control.mjs:123) · [Production clone launch](/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/tools/agy-builder.mjs:291)
+
+## QUESTIONS
+
+No real questions — the scope is determined.

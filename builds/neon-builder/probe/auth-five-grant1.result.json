@@ -1,0 +1,284 @@
+{
+  "mode": "auth-five-grant-control",
+  "freshPrivateInputsMatched": true,
+  "originalPinVerified": true,
+  "modelsCliResults": 2,
+  "stopped": "five-grant-group-insufficient",
+  "groupDependencyReproduced": false,
+  "arms": [
+    {
+      "name": "strict-baseline",
+      "code": 1,
+      "signal": null,
+      "timedOut": false,
+      "interrupted": false,
+      "turns": null,
+      "reportedZeroTurns": false,
+      "modelCount": null,
+      "passed": false,
+      "plaintextAbsent": true,
+      "cleanPostflight": true,
+      "aliasMatchesAfter": true,
+      "seedsMatchAfter": true,
+      "anyKeyringPrefix": false,
+      "unknownKeyringPrefix": false,
+      "invalidStoredToken": false,
+      "failedTokenRemoval": false,
+      "failedUserInfo": false,
+      "failedOAuthParams": false,
+      "failedStoredTokenLookup": false,
+      "keychainLoaded": false,
+      "cancelledKeyring": false,
+      "missingWifEmailClaim": false,
+      "keyringTimedOut": false,
+      "keyringValidationNetworkError": false,
+      "incompleteGcpOnboarding": false,
+      "tokenStorageInitializationError": false,
+      "keyringMarkerHomeError": false,
+      "keyringMarkerStatError": false,
+      "keyringMarkerCleanupError": false,
+      "keyringMarkerWriteError": false,
+      "keyringMarkerRenameError": false,
+      "keyringMarkerDirectoryError": false,
+      "keyringMarkerTempCreateError": false,
+      "keyringMarkerTempCloseError": false,
+      "keyringMarkerPermissionsError": false,
+      "recentTimeoutFileFallback": false,
+      "requestedFileFallback": false,
+      "detectedFileFallback": false,
+      "fileFallbackMentioned": false,
+      "failedOnboardingLoad": false,
+      "keychainAuthenticated": false,
+      "signInNeeded": true,
+      "nativeSettingsWriteDenied": true,
+      "seedsChangedAfter": {
+        "installation_id": false,
+        "jetski_state.pbtxt": false,
+        "default_project_id.txt": false,
+        "onboarding.json": false,
+        "settings.json": false
+      },
+      "keychainLookupCommandMentioned": false,
+      "backendAuthSuccessMarker": false,
+      "nonKeyringBackendAuthSuccessMarker": false,
+      "interactiveBackendCompletionMarker": false,
+      "noStoredCredentialMarker": false,
+      "oauthObserved": false,
+      "tokenRefreshMarker": false,
+      "operatorKeychainChanged": false,
+      "operatorSettingsChanged": false,
+      "operatorSeedChanged": false,
+      "brokerEvents": [
+        {
+          "origin": "play.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        }
+      ],
+      "grantGroup": false,
+      "sinks": {
+        "stdout": {
+          "empty": true,
+          "nonemptyLines": 0,
+          "unclassifiedLines": 0,
+          "markerCounts": {},
+          "severityCounts": {},
+          "sourceCounts": {},
+          "sensitiveContentOmitted": true,
+          "truncated": false,
+          "native": []
+        },
+        "stderr": {
+          "empty": false,
+          "nonemptyLines": 2,
+          "unclassifiedLines": 1,
+          "markerCounts": {
+            "signInNeeded": 1
+          },
+          "severityCounts": {
+            "unstructured": 2
+          },
+          "sourceCounts": {
+            "unstructured": 2
+          },
+          "sensitiveContentOmitted": true,
+          "truncated": false,
+          "native": []
+        },
+        "ownedLog": {
+          "empty": false,
+          "nonemptyLines": 80,
+          "unclassifiedLines": 79,
+          "markerCounts": {
+            "settingsWriteFailed": 1
+          },
+          "severityCounts": {
+            "info": 63,
+            "warning": 7,
+            "error": 10
+          },
+          "sourceCounts": {
+            "server.go": 20,
+            "other-public-code": 21,
+            "errorreport.go": 5,
+            "manager.go": 27,
+            "common.go": 3,
+            "cli_setting_manager.go": 4
+          },
+          "sensitiveContentOmitted": true,
+          "truncated": false,
+          "native": []
+        }
+      }
+    },
+    {
+      "name": "five-grant-group",
+      "code": 1,
+      "signal": null,
+      "timedOut": false,
+      "interrupted": false,
+      "turns": null,
+      "reportedZeroTurns": false,
+      "modelCount": null,
+      "passed": false,
+      "plaintextAbsent": true,
+      "cleanPostflight": true,
+      "aliasMatchesAfter": true,
+      "seedsMatchAfter": true,
+      "anyKeyringPrefix": false,
+      "unknownKeyringPrefix": false,
+      "invalidStoredToken": false,
+      "failedTokenRemoval": false,
+      "failedUserInfo": false,
+      "failedOAuthParams": false,
+      "failedStoredTokenLookup": false,
+      "keychainLoaded": false,
+      "cancelledKeyring": false,
+      "missingWifEmailClaim": false,
+      "keyringTimedOut": false,
+      "keyringValidationNetworkError": false,
+      "incompleteGcpOnboarding": false,
+      "tokenStorageInitializationError": false,
+      "keyringMarkerHomeError": false,
+      "keyringMarkerStatError": false,
+      "keyringMarkerCleanupError": false,
+      "keyringMarkerWriteError": false,
+      "keyringMarkerRenameError": false,
+      "keyringMarkerDirectoryError": false,
+      "keyringMarkerTempCreateError": false,
+      "keyringMarkerTempCloseError": false,
+      "keyringMarkerPermissionsError": false,
+      "recentTimeoutFileFallback": false,
+      "requestedFileFallback": false,
+      "detectedFileFallback": false,
+      "fileFallbackMentioned": false,
+      "failedOnboardingLoad": false,
+      "keychainAuthenticated": false,
+      "signInNeeded": true,
+      "nativeSettingsWriteDenied": true,
+      "seedsChangedAfter": {
+        "installation_id": false,
+        "jetski_state.pbtxt": false,
+        "default_project_id.txt": false,
+        "onboarding.json": false,
+        "settings.json": false
+      },
+      "keychainLookupCommandMentioned": false,
+      "backendAuthSuccessMarker": false,
+      "nonKeyringBackendAuthSuccessMarker": false,
+      "interactiveBackendCompletionMarker": false,
+      "noStoredCredentialMarker": false,
+      "oauthObserved": false,
+      "tokenRefreshMarker": false,
+      "operatorKeychainChanged": false,
+      "operatorSettingsChanged": false,
+      "operatorSeedChanged": false,
+      "brokerEvents": [
+        {
+          "origin": "play.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        }
+      ],
+      "grantGroup": true,
+      "sinks": {
+        "stdout": {
+          "empty": true,
+          "nonemptyLines": 0,
+          "unclassifiedLines": 0,
+          "markerCounts": {},
+          "severityCounts": {},
+          "sourceCounts": {},
+          "sensitiveContentOmitted": true,
+          "truncated": false,
+          "native": []
+        },
+        "stderr": {
+          "empty": false,
+          "nonemptyLines": 2,
+          "unclassifiedLines": 1,
+          "markerCounts": {
+            "signInNeeded": 1
+          },
+          "severityCounts": {
+            "unstructured": 2
+          },
+          "sourceCounts": {
+            "unstructured": 2
+          },
+          "sensitiveContentOmitted": true,
+          "truncated": false,
+          "native": []
+        },
+        "ownedLog": {
+          "empty": false,
+          "nonemptyLines": 79,
+          "unclassifiedLines": 78,
+          "markerCounts": {
+            "settingsWriteFailed": 1
+          },
+          "severityCounts": {
+            "info": 63,
+            "warning": 7,
+            "error": 9
+          },
+          "sourceCounts": {
+            "server.go": 20,
+            "other-public-code": 21,
+            "errorreport.go": 4,
+            "manager.go": 27,
+            "common.go": 3,
+            "cli_setting_manager.go": 4
+          },
+          "sensitiveContentOmitted": true,
+          "truncated": false,
+          "native": []
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,210 @@
+{
+  "mode": "private-settings-write-control",
+  "matchedInitialPrivateInputs": true,
+  "modelsCliResults": 2,
+  "stopped": "settings-write-did-not-rescue",
+  "originalDependencyReproduced": false,
+  "privateCloneConfirmed": false,
+  "arms": [
+    {
+      "name": "strict-blocked-baseline",
+      "code": 1,
+      "signal": null,
+      "timedOut": false,
+      "interrupted": false,
+      "turns": null,
+      "reportedZeroTurns": false,
+      "modelCount": null,
+      "passed": false,
+      "plaintextAbsent": true,
+      "cleanPostflight": true,
+      "aliasMatchesAfter": true,
+      "seedsMatchAfter": true,
+      "anyKeyringPrefix": false,
+      "unknownKeyringPrefix": false,
+      "invalidStoredToken": false,
+      "failedTokenRemoval": false,
+      "failedUserInfo": false,
+      "failedOAuthParams": false,
+      "failedStoredTokenLookup": false,
+      "keychainLoaded": false,
+      "cancelledKeyring": false,
+      "missingWifEmailClaim": false,
+      "keyringTimedOut": false,
+      "keyringValidationNetworkError": false,
+      "incompleteGcpOnboarding": false,
+      "tokenStorageInitializationError": false,
+      "keyringMarkerHomeError": false,
+      "keyringMarkerStatError": false,
+      "keyringMarkerCleanupError": false,
+      "keyringMarkerWriteError": false,
+      "keyringMarkerRenameError": false,
+      "keyringMarkerDirectoryError": false,
+      "keyringMarkerTempCreateError": false,
+      "keyringMarkerTempCloseError": false,
+      "keyringMarkerPermissionsError": false,
+      "recentTimeoutFileFallback": false,
+      "requestedFileFallback": false,
+      "detectedFileFallback": false,
+      "fileFallbackMentioned": false,
+      "failedOnboardingLoad": false,
+      "keychainAuthenticated": false,
+      "signInNeeded": true,
+      "nativeSettingsWriteDenied": true,
+      "seedsChangedAfter": {
+        "installation_id": false,
+        "jetski_state.pbtxt": false,
+        "default_project_id.txt": false,
+        "onboarding.json": false,
+        "settings.json": false
+      },
+      "keychainLookupCommandMentioned": false,
+      "backendAuthSuccessMarker": false,
+      "nonKeyringBackendAuthSuccessMarker": false,
+      "interactiveBackendCompletionMarker": false,
+      "noStoredCredentialMarker": false,
+      "oauthObserved": false,
+      "tokenRefreshMarker": false,
+      "operatorKeychainChanged": false,
+      "operatorSettingsChanged": false,
+      "operatorSeedChanged": false,
+      "brokerEvents": [
+        {
+          "origin": "play.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        }
+      ],
+      "settingsReplaced": false,
+      "settings": {
+        "validObject": true,
+        "keyCount": 0,
+        "typeCounts": {},
+        "semanticEmpty": true
+      }
+    },
+    {
+      "name": "private-settings-write",
+      "code": 1,
+      "signal": null,
+      "timedOut": false,
+      "interrupted": false,
+      "turns": null,
+      "reportedZeroTurns": false,
+      "modelCount": null,
+      "passed": false,
+      "plaintextAbsent": true,
+      "cleanPostflight": true,
+      "aliasMatchesAfter": true,
+      "seedsMatchAfter": false,
+      "anyKeyringPrefix": false,
+      "unknownKeyringPrefix": false,
+      "invalidStoredToken": false,
+      "failedTokenRemoval": false,
+      "failedUserInfo": false,
+      "failedOAuthParams": false,
+      "failedStoredTokenLookup": false,
+      "keychainLoaded": false,
+      "cancelledKeyring": false,
+      "missingWifEmailClaim": false,
+      "keyringTimedOut": false,
+      "keyringValidationNetworkError": false,
+      "incompleteGcpOnboarding": false,
+      "tokenStorageInitializationError": false,
+      "keyringMarkerHomeError": false,
+      "keyringMarkerStatError": false,
+      "keyringMarkerCleanupError": false,
+      "keyringMarkerWriteError": false,
+      "keyringMarkerRenameError": false,
+      "keyringMarkerDirectoryError": false,
+      "keyringMarkerTempCreateError": false,
+      "keyringMarkerTempCloseError": false,
+      "keyringMarkerPermissionsError": false,
+      "recentTimeoutFileFallback": false,
+      "requestedFileFallback": false,
+      "detectedFileFallback": false,
+      "fileFallbackMentioned": false,
+      "failedOnboardingLoad": false,
+      "keychainAuthenticated": false,
+      "signInNeeded": true,
+      "nativeSettingsWriteDenied": false,
+      "seedsChangedAfter": {
+        "installation_id": false,
+        "jetski_state.pbtxt": false,
+        "default_project_id.txt": false,
+        "onboarding.json": false,
+        "settings.json": true
+      },
+      "keychainLookupCommandMentioned": false,
+      "backendAuthSuccessMarker": false,
+      "nonKeyringBackendAuthSuccessMarker": false,
+      "interactiveBackendCompletionMarker": false,
+      "noStoredCredentialMarker": false,
+      "oauthObserved": false,
+      "tokenRefreshMarker": false,
+      "operatorKeychainChanged": false,
+      "operatorSettingsChanged": false,
+      "operatorSeedChanged": false,
+      "brokerEvents": [
+        {
+          "origin": "play.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        }
+      ],
+      "settingsReplaced": true,
+      "settings": {
+        "validObject": true,
+        "keyCount": 0,
+        "typeCounts": {},
+        "semanticEmpty": true
+      }
+    }
+  ]
+}

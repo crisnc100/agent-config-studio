@@ -1,0 +1,13 @@
+**Observe the first point where the Mini’s working and failing routes diverge during auth bootstrap.** Use a metadata-only auth run on the working normal-HOME route as the positive control. Establish which backend it selects, whether it issues a credential lookup, and the lookup’s return status. On the private-HOME builder route, observe the same decision. Record only whether selectors match and the full status. Keep credential values out of the trace and forward no model turn.
+
+**Proof bar**
+
+- **Missing native prerequisite:** With the executable, private HOME, seeds, and selector fixed, the same agy lookup succeeds under a diagnostic control and fails under the builder wall. That establishes a wall-dependent failure at the relevant operation. It does not yet identify the prerequisite.
+- **Private-HOME bootstrap or selector issue:** With the wall and executable fixed, changing the HOME setup changes an *observed* bootstrap decision. For example, the working run selects keyring storage and issues the lookup, while the private run takes an identified return branch before lookup or selects a different credential. If the selector matches but the lookup result changes with HOME, that shows a HOME-dependent lookup result. The selector itself is still unimplicated.
+- **Inconclusive:** The working route uses cached auth and never demonstrates a lookup, the failing trace has a coverage gap, or the comparison changes HOME and wall together. Silence cannot establish a branch decision.
+
+**The native settings experiment has a narrower proof bar.** Exit 166 is a process exit status. A safely captured public error class could clarify why `show-keychain-info` failed. Even a clean, repeatable rescue from bisecting the observed denials would establish what that *settings query* needs. It would leave agy credential retrieval untested.
+
+**The reporter overclaims** at “wasn’t enough to open the keychain,” “fails to open with error 166,” and “never reaches its keychain sign-in step.” The observations support three statements: the directory grant removed its denial, the settings query still exited 166, and agy still reported sign-in needed without emitting a recognized keyring message. The remaining denials do not select a causal candidate.
+
+**A production change is justified** when one narrowly scoped change reversibly restores the demonstrated agy auth operation *and* authenticated metadata access on the confined, pinned Mini route. Removing the change should reproduce the failure. Verify plaintext-token refusal, Google-only egress, immutable settings, and existing read-only routes before adoption.

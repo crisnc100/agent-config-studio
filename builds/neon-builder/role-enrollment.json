@@ -1,0 +1,26 @@
+{
+  "scope": "Local operator configuration, not shipped defaults",
+  "builder": {
+    "use": [
+      "sol",
+      "opus",
+      {
+        "family": "neon",
+        "effort": "high"
+      }
+    ],
+    "effort": "medium",
+    "note": "Rotate available builders; skip quota/startup failures. Prefer Opus for frontend design taste. Neon uses native agy permissions."
+  },
+  "modelVerified": false,
+  "nativeLiveProofs": [
+    "probe/native-session-edit.result.json",
+    "probe/installed-native-edit.result.json"
+  ],
+  "guidesUpdated": [
+    "claude",
+    "codex",
+    "grok"
+  ],
+  "cursorWorktreeUntouched": true
+}

@@ -1,0 +1,47 @@
+{
+  "code": 0,
+  "signal": null,
+  "version": "1.5.14",
+  "turns": 0,
+  "status": "SUCCESS",
+  "observations": 26,
+  "listeners": [
+    {
+      "process": "agy",
+      "scope": "loopback",
+      "port": 55856,
+      "probes": [
+        {
+          "via": "non-loopback IPv4",
+          "connected": false,
+          "code": "ECONNREFUSED"
+        },
+        {
+          "via": "non-loopback IPv4",
+          "connected": false,
+          "code": "ECONNREFUSED"
+        }
+      ]
+    },
+    {
+      "process": "agy",
+      "scope": "loopback",
+      "port": 55857,
+      "probes": [
+        {
+          "via": "non-loopback IPv4",
+          "connected": false,
+          "code": "ECONNREFUSED"
+        },
+        {
+          "via": "non-loopback IPv4",
+          "connected": false,
+          "code": "ECONNREFUSED"
+        }
+      ]
+    }
+  ],
+  "externalInterfaces": 2,
+  "cleanPostflight": true,
+  "noPlaintext": true
+}

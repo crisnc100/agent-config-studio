@@ -1,0 +1,10 @@
+{
+  "family": "neon",
+  "requested": "gemini-4-neon",
+  "effort": "high",
+  "rootMode": "temporary",
+  "startedAt": "2026-11-24T13:07:50.491Z",
+  "cliAttempts": 1,
+  "successfulPublishedProof": "unproven",
+  "providerCalls": "unknown"
+}

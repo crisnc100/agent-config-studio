@@ -1,0 +1,158 @@
+{
+  "modelCalls": 0,
+  "caseCount": 10,
+  "passed": 10,
+  "failed": 0,
+  "rows": [
+    {
+      "type": "reference-check",
+      "family": "reference-check",
+      "caseId": "acs-lockfile-exempt",
+      "model": null,
+      "refSha": "1113d75c206a30d64732e26f50eb669f68fa0058",
+      "outcome": "reference-passed",
+      "grade": {
+        "ok": true,
+        "exitCode": 0,
+        "passed": 22,
+        "failed": 0,
+        "errors": 0
+      }
+    },
+    {
+      "type": "reference-check",
+      "family": "reference-check",
+      "caseId": "acs-usage-credential-race",
+      "model": null,
+      "refSha": "5b65548e7bb098568ba24465f4ced10f94a9f734",
+      "outcome": "reference-passed",
+      "grade": {
+        "ok": true,
+        "exitCode": 0,
+        "passed": 113,
+        "failed": 0,
+        "errors": 0
+      }
+    },
+    {
+      "type": "reference-check",
+      "family": "reference-check",
+      "caseId": "airflo-reread-deleted-pdf",
+      "model": null,
+      "refSha": "31c832e7bc58aaf37bc1402be250f764dd5b13c4",
+      "outcome": "reference-passed",
+      "grade": {
+        "ok": true,
+        "exitCode": 0,
+        "passed": 25,
+        "failed": 0,
+        "errors": 0
+      }
+    },
+    {
+      "type": "reference-check",
+      "family": "reference-check",
+      "caseId": "airflo-staff-mail-skip",
+      "model": null,
+      "refSha": "b46966fc3143ba0a7a0bce3160e30be4f6a15cd4",
+      "outcome": "reference-passed",
+      "grade": {
+        "ok": true,
+        "exitCode": 0,
+        "passed": 61,
+        "failed": 0,
+        "errors": 0
+      }
+    },
+    {
+      "type": "reference-check",
+      "family": "reference-check",
+      "caseId": "askwell-length-limit-charge",
+      "model": null,
+      "refSha": "cb7b7ee9047c4ee3af1c418cf55c91d23bca1c72",
+      "outcome": "reference-passed",
+      "grade": {
+        "ok": true,
+        "exitCode": 0,
+        "passed": 8,
+        "failed": 0,
+        "errors": 0
+      }
+    },
+    {
+      "type": "reference-check",
+      "family": "reference-check",
+      "caseId": "askwell-row-key",
+      "model": null,
+      "refSha": "e65c4f9baed9e8d1f678d999016ee1da895212a3",
+      "outcome": "reference-passed",
+      "grade": {
+        "ok": true,
+        "exitCode": 0,
+        "passed": 4,
+        "failed": 0,
+        "errors": 0
+      }
+    },
+    {
+      "type": "reference-check",
+      "family": "reference-check",
+      "caseId": "docket-price-snapshot",
+      "model": null,
+      "refSha": "d864d0dd314da80245fb3fe7010c7fb0b0aa3952",
+      "outcome": "reference-passed",
+      "grade": {
+        "ok": true,
+        "exitCode": 0,
+        "passed": 6,
+        "failed": 0,
+        "errors": 0
+      }
+    },
+    {
+      "type": "reference-check",
+      "family": "reference-check",
+      "caseId": "docket-sample-generator",
+      "model": null,
+      "refSha": "f9ff7a8affaf25651be3cfce9d04f71112001260",
+      "outcome": "reference-passed",
+      "grade": {
+        "ok": true,
+        "exitCode": 0,
+        "passed": 24,
+        "failed": 0,
+        "errors": 0
+      }
+    },
+    {
+      "type": "reference-check",
+      "family": "reference-check",
+      "caseId": "firstcall-forward-br-bare-cr",
+      "model": null,
+      "refSha": "fee911976a7c13f8f4d13d4d30674c82a6abd832",
+      "outcome": "reference-passed",
+      "grade": {
+        "ok": true,
+        "exitCode": 0,
+        "passed": 7,
+        "failed": 0,
+        "errors": 0
+      }
+    },
+    {
+      "type": "reference-check",
+      "family": "reference-check",
+      "caseId": "firstcall-note-number-boundaries",
+      "model": null,
+      "refSha": "edc8a4abfa78b4c8f0a0aec7e8e6da10ae1ce46a",
+      "outcome": "reference-passed",
+      "grade": {
+        "ok": true,
+        "exitCode": 0,
+        "passed": 54,
+        "failed": 0,
+        "errors": 0
+      }
+    }
+  ]
+}

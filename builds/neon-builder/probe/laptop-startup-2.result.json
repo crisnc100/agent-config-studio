@@ -1,0 +1,125 @@
+{
+  "code": 0,
+  "signal": null,
+  "status": "SUCCESS",
+  "turns": 0,
+  "models": 27,
+  "keychainLoaded": true,
+  "keychainAuthenticated": true,
+  "tokenExpired": true,
+  "cleanPostflight": true,
+  "blockedNativeSettingsUpdate": true,
+  "brokerEvents": [
+    {
+      "origin": "oauth2.googleapis.com",
+      "method": "CONNECT",
+      "status": 200
+    },
+    {
+      "origin": "oauth2.googleapis.com",
+      "method": "POST",
+      "path": "/token",
+      "status": 200
+    },
+    {
+      "method": "CONNECT",
+      "status": 403,
+      "reason": "CONNECT denied"
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "CONNECT",
+      "status": 200
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "POST",
+      "path": "/v1internal:loadCodeAssist",
+      "status": 200
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "POST",
+      "path": "/v1internal:retrieveUserQuotaSummary",
+      "status": 403,
+      "reason": "request denied"
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "POST",
+      "path": "/v1internal:fetchAdminControls",
+      "status": 403,
+      "reason": "request denied"
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "CONNECT",
+      "status": 200
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "CONNECT",
+      "status": 200
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "CONNECT",
+      "status": 200
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "POST",
+      "path": "/v1internal:fetchUserInfo",
+      "status": 403,
+      "reason": "request denied"
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "POST",
+      "path": "/v1internal:fetchAvailableModels",
+      "status": 200
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "POST",
+      "path": "/v1internal:retrieveUserQuotaSummary",
+      "status": 403,
+      "reason": "request denied"
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "POST",
+      "path": "/v1internal:listExperiments",
+      "status": 502,
+      "reason": "upstream failed"
+    },
+    {
+      "origin": "play.googleapis.com",
+      "method": "CONNECT",
+      "status": 200
+    },
+    {
+      "origin": "play.googleapis.com",
+      "method": "CONNECT",
+      "status": 200
+    },
+    {
+      "origin": "play.googleapis.com",
+      "method": "POST",
+      "path": "/log",
+      "status": 200
+    },
+    {
+      "origin": "play.googleapis.com",
+      "method": "POST",
+      "path": "/log",
+      "status": 200
+    },
+    {
+      "origin": "play.googleapis.com",
+      "method": "POST",
+      "path": "/log",
+      "status": 200
+    }
+  ]
+}

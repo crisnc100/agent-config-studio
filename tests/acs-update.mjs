@@ -84,6 +84,14 @@ ok('HOME is redirected', tmp !== os.homedir());
   ok('a pull that changes only bin/model-id.mjs says to reinstall it', /acs install-model-id/.test(acs(co).out));
   merge('lib/models.js', '// v2\n', 'models code');
   ok('a pull that changes only lib/models.js says to reinstall it', /acs install-model-id/.test(acs(co).out));
+  merge('tools/ask-model.mjs', '// v2\n', 'ask-model code');
+  ok('a pull that changes only ask-model says to reinstall it', /acs install-model-id/.test(acs(co).out));
+  for (const helper of ['agy-builder.mjs', 'agy-builder-source.mjs']) {
+    const head = merge(`builds/neon-builder/probe/isolated-runtime/${helper}`, '// builder helper\n', helper);
+    const updated = acs(co);
+    ok(`a pull that changes only the archived ${helper} skips the resolver reminder`,
+       updated.code === 0 && git(co, 'rev-parse', 'HEAD') === head && !/acs install-model-id/.test(updated.out), updated.out);
+  }
 }
 
 {

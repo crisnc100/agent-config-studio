@@ -1,0 +1,30 @@
+{
+  "requested": "gemini-4-neon",
+  "effort": "high",
+  "nativePermissions": true,
+  "servedModelVerified": false,
+  "code": 0,
+  "signal": null,
+  "file": "builds/neon-builder/probe/native-edit-d731cec77d29babd.txt",
+  "beforeSha256": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb",
+  "expectedSha256": "b5ade37533f73f64f46376a5c6d934fde806754e1278efbad68f3aa44a3aa842",
+  "actualSha256": "b5ade37533f73f64f46376a5c6d934fde806754e1278efbad68f3aa44a3aa842",
+  "exactEdit": true,
+  "cleanPostflight": true,
+  "successfulAnswer": true,
+  "actions": [
+    {
+      "tool": "read_file",
+      "state": "DONE"
+    },
+    {
+      "tool": "write_file",
+      "state": "DONE"
+    },
+    {
+      "tool": "read_file",
+      "state": "DONE"
+    }
+  ],
+  "passed": true
+}
