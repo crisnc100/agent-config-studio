@@ -99,12 +99,10 @@ import { EFFORTS, VENDOR_PREFIXES, loadRegistry, resolveModel, vendorOf } from '
 import { familyEffort, pauseLine, resolveFlavor, resolveRole } from '../lib/roles.js';
 
 const SELF = fileURLToPath(import.meta.url);
-const AGY_BUILD_MODULES = ['agy-builder-source.mjs', 'agy-builder.mjs'];
 const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools | --x-search | --build] [--json] [--cwd <dir>]'
   + '\n  --x-search: grok only; leaves x_keyword_search, x_semantic_search, x_user_search and x_thread_fetch; open_page and open_page_with_find '
   + 'cannot be disallowed by name; each run is checked afterwards against grok\'s session record'
-  + '\n  --build: pinned macOS arm64 agy only; requires --family or --role builder and an explicit canonical Git worktree root in --cwd; '
-  + 'allows source edits, with command, MCP and URL actions denied';
+  + '\n  --build: uses the tested agy version with normal Antigravity permissions; requires --family or --role builder and an explicit canonical Git worktree root in --cwd';
 const VALUE_FLAGS = { '--role': 'role', '--family': 'family', '--effort': 'effort', '--effort-from': 'effortFrom', '--prompt-file': 'promptFile', '--schema': 'schemaFile', '--cwd': 'cwd' };
 
 // What each CLI may use. Claude and grok are read-only by these allowlists alone
@@ -596,12 +594,13 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = 
       ...(effort ? ['-c', `model_reasoning_effort=${effort}`] : []), ...min, ...mcpOff, ...(schema ? ['--output-schema', schema.file] : []), prompt];
   }
   if (vendor === 'agy') {
-    if (mode !== 'read-only') throw new Error(`agy runs read-only only, not ${mode}`);
+    if (mode !== 'read-only' && mode !== 'build') throw new Error(`agy runs read-only only, not ${mode}`);
     if (!logFile) throw new Error('agy needs a --log-file path for the call');
     // stream-json for its init event (the model agy was asked for) and each tool step (a denied one ends ERROR);
     // --disable-slash-commands so a prompt starting with / is text; --log-file so the call's own log is kept.
     return ['-p', prompt, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'stream-json',
-      '--print-timeout', AGY_PRINT_TIMEOUT, '--disable-slash-commands', '--settings', JSON.stringify(AGY_SETTINGS),
+      '--print-timeout', AGY_PRINT_TIMEOUT, '--disable-slash-commands',
+      ...(mode === 'build' ? ['--mode', 'accept-edits'] : ['--settings', JSON.stringify(AGY_SETTINGS)]),
       '--log-file', logFile, ...json];
   }
   if (vendor !== 'grok') throw new Error(unwired(vendor));
@@ -936,6 +935,43 @@ function agyAfterCall(logFile, home = os.homedir()) {
   }
   const left = agyTokenLeft(home);
   return left ? `${left.file} ${left.why}; ${AGY_TOKEN_FIX}` : null;
+}
+
+function agyBuildRootProblem(cwd, home = os.homedir()) {
+  try {
+    const realHome = fs.realpathSync.native(home);
+    if (cwd === path.parse(cwd).root || realHome === cwd || realHome.startsWith(cwd + path.sep)) {
+      return 'the Git worktree root cannot be the filesystem root, your home folder or a folder holding it';
+    }
+    const git = which('git');
+    if (!git) return 'git is not on PATH';
+    // Inherited Git variables can make rev-parse accept a folder from a different checkout.
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+    const top = spawnSync(git, ['rev-parse', '--show-toplevel'], { cwd, env, encoding: 'utf8', timeout: 15_000 });
+    if (top.status === 0 && fs.realpathSync.native(top.stdout.replace(/\r?\n$/, '')) === cwd) return null;
+  } catch { /* A Git top that cannot be resolved is not a valid build root. */ }
+  return '--build requires a canonical Git worktree root in --cwd';
+}
+
+function agyBuildAfterCall(logFile) {
+  const left = agyTokenLeft();
+  if (left) return `${left.file} ${left.why}. ${AGY_TOKEN_FIX}`;
+  const unreadable = 'agy did not leave a readable, owned regular log for the token postflight';
+  let fd;
+  let log;
+  try {
+    fd = fs.openSync(logFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid() || stat.nlink !== 1 || !(stat.mode & 0o400)) {
+      return unreadable;
+    }
+    log = fs.readFileSync(fd, 'utf8');
+  } catch {
+    return unreadable;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  return AGY_TOKEN_FILE.test(log) ? 'agy logged that it fell back to file-based token storage instead of the keychain' : null;
 }
 
 /** sandbox-exec's arguments for `command` run inside AGY_WALL with `params`. */
@@ -1366,20 +1402,30 @@ function changedPaths(before, after) {
 }
 
 /** Run the CLI with stdin from /dev/null; a signal to ask-model goes on to the CLI. */
-function run(bin, argv, cwd, env) {
+function run(bin, argv, cwd, env, { nativeBuild = false } = {}) {
   return new Promise((done) => {
     const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
     let child;
     let finished = false;
-    const forward = (sig) => { try { child.kill(sig); } catch {} };
+    let cancelledBy;
+    let escalation;
+    const signalGroup = (sig) => { try { if (child.pid) process.kill(-child.pid, sig); } catch {} };
+    const forward = (sig) => {
+      if (!nativeBuild) { try { child.kill(sig); } catch {} return; }
+      cancelledBy ??= sig;
+      signalGroup(sig);
+      escalation ??= setTimeout(() => signalGroup('SIGKILL'), 2000);
+    };
     const finish = (r) => {
       if (finished) return;
       finished = true;
       for (const s of signals) process.off(s, forward);
-      done(r);
+      clearTimeout(escalation);
+      if (cancelledBy) signalGroup('SIGKILL');
+      done(cancelledBy ? { ...r, cancelledBy } : r);
     };
     try {
-      child = spawn(bin, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(bin, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], ...(nativeBuild && { detached: true }) });
     } catch (e) {
       finish({ error: e });
       return;
@@ -1390,9 +1436,11 @@ function run(bin, argv, cwd, env) {
     child.stdout.on('data', (d) => out.push(d));
     child.stderr.on('data', (d) => err.push(d));
     child.on('error', (e) => finish({ error: e }));
-    child.on('close', (code, signal) => finish({
-      code, signal, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8'),
-    }));
+    child.on('close', (code, signal) => {
+      const result = { code, signal, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') };
+      if (nativeBuild) setImmediate(finish, result);
+      else finish(result);
+    });
   });
 }
 
@@ -1815,7 +1863,7 @@ async function main(argv) {
   process.stderr.write(`ask-model: ${m.family} (${m.id}, effort ${m.effort || 'none'}, ${mode})\n`);
 
   const result = { family: m.family, id: m.id, effort: m.effort || null, mode, ...(o.minTools && MIN_TOOLS[vendor]), ...(mode === 'x-search' && X_SEARCH_TOOLS),
-    ...(mode === 'investigate' && { shellSandbox: SHELL_SANDBOX[vendor] }), ...(o.build && { brokerEvents: [] }), answer: null, changed: null, error: null };
+    ...(mode === 'investigate' && { shellSandbox: SHELL_SANDBOX[vendor] }), answer: null, changed: null, error: null };
   let grokCall = null;
   let agyTmp = null;
   const finish = (exit) => {
@@ -1847,46 +1895,6 @@ async function main(argv) {
   const bin = which(vendor);
   if (!bin) { result.error = `the ${vendor} CLI is not on PATH`; return finish(3); }
 
-  if (o.build) {
-    let got;
-    let failure;
-    try {
-      const { runAgyBuilder } = await import('./agy-builder.mjs');
-      const built = await runAgyBuilder({
-        root: cwd, bin, id: m.id, effort: m.effort || undefined, prompt,
-        checkWorkspace: agyWorkspaceFiles, checkConfig: agyConfigProblem,
-        checkToken: agyTokenLeft, checkSignIn: agyAfterCall,
-        onBrokerAudit(events) { result.brokerEvents = events; },
-        readResult(id, reply) {
-          got = readAnswer('agy', id, reply, null, { family: m.family, agyBuild: true });
-          return got;
-        },
-      });
-      const { answer, changed, served, build } = built;
-      Object.assign(result, { answer, changed, served, build });
-    } catch (e) {
-      failure = got?.exit ?? 4;
-      result.error = e.message;
-    }
-    if (got?.actions) {
-      result.actions = got.actions;
-      result.actionsTruncated = got.actionsTruncated;
-      result.actionsComplete = got.actionsComplete;
-    }
-    if (got?.denied?.length) {
-      result.denied = got.denied;
-      for (const d of got.denied) process.stderr.write(`ask-model: agy: denied ${d}\n`);
-    }
-    if (got?.notes?.length) {
-      result.notes = got.notes;
-      for (const n of got.notes) process.stderr.write(`ask-model: agy: ${n}\n`);
-    }
-    if (result.served) {
-      process.stderr.write(`ask-model: agy does not report which model answered; ${result.served.requested} was requested (unverified).\n`);
-    }
-    return finish(failure ?? 0);
-  }
-
   let mcpOff = [];
   if (vendor === 'codex') {
     const off = codexMcpOff(bin, cwd);
@@ -1895,7 +1903,24 @@ async function main(argv) {
   }
   let logFile = null;
   let wall = null;
-  if (vendor === 'agy') {
+  if (o.build) {
+    const rootProblem = agyBuildRootProblem(cwd);
+    if (rootProblem) { result.error = `${rootProblem}, so agy was not run`; return finish(4); }
+    let left = agyTokenLeft();
+    if (left) { result.error = `${left.file} ${left.why}, so agy was not run: ${AGY_TOKEN_FIX}`; return finish(4); }
+    const version = agyVersion(bin);
+    left = agyTokenLeft();
+    if (left) { result.error = `${left.file} ${left.why}, so the build was not started: ${AGY_TOKEN_FIX}`; return finish(4); }
+    if (version !== AGY_VERSION) {
+      result.error = `the native agy builder requires the tested CLI version ${AGY_VERSION}, so the build was not started`;
+      return finish(4);
+    }
+    try { agyTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-build-')); }
+    catch { result.error = 'a private log directory could not be created, so agy was not run'; return finish(4); }
+    logFile = path.join(agyTmp, 'agy.log');
+    prompt = 'You are the implementer for this task. Do not invoke other models, delegate, or run reviews or grades. '
+      + 'Do not push, open a pull request, or merge. Follow the task and report what you changed and checked.\n\n' + prompt;
+  } else if (vendor === 'agy') {
     // The workspace and home first: they need no agy process, and an unprobed agy could load what they would refuse.
     const workspace = agyWorkspaceFiles(cwd);
     if (workspace.length) {
@@ -1931,7 +1956,8 @@ async function main(argv) {
     wall = walled.params;
   }
   if (vendor === 'grok') grokCall = grokCallEnv();
-  const env = grokCall ? grokCall.env : wall ? { ...process.env, ...AGY_ENV, TMPDIR: wall.CALL_TMP } : process.env;
+  const env = grokCall ? grokCall.env : wall ? { ...process.env, ...AGY_ENV, TMPDIR: wall.CALL_TMP }
+    : o.build ? { ...process.env, ...AGY_ENV } : process.env;
   if (vendor === 'grok') {
     const leader = grokLeader(grokCall.grokHome);
     if (leader) {
@@ -1975,10 +2001,44 @@ async function main(argv) {
   startWatch(o.role !== undefined && /^[a-z][a-z0-9-]{0,31}$/.test(o.role) ? o.role : 'ask');
   let args;
   try { args = argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff, schema, logFile }); } catch (e) { result.error = `${e.message} — ${vendor} was not run`; return finish(4); }
-  const r = wall ? await run(SANDBOX_EXEC, agyWall(wall, [bin, ...args]), cwd, env) : await run(bin, args, cwd, env);
+  const r = wall ? await run(SANDBOX_EXEC, agyWall(wall, [bin, ...args]), cwd, env)
+    : await run(bin, args, cwd, env, { nativeBuild: o.build });
   // A call grok refused for want of approval leaves only this line, and grok still exits 0.
   if (vendor === 'grok') {
     for (const line of String(r.stderr || '').split('\n')) if (/permission required:/.test(line)) process.stderr.write(`ask-model: grok: ${line.trim()}\n`);
+  }
+  if (o.build) {
+    const signIn = agyBuildAfterCall(logFile);
+    const inspect = 'Inspect the worktree before retrying because edits may remain.';
+    fs.rmSync(agyTmp, { recursive: true, force: true });
+    agyTmp = null;
+    if (r.cancelledBy) {
+      result.error = [`agy builder cancelled by ${r.cancelledBy}`, signIn, inspect].filter(Boolean).join('. ');
+      return finish(4);
+    }
+    const got = readAnswer(vendor, m.id, r, schema, { family: m.family, agyBuild: true });
+    if (got.actions) {
+      result.actions = got.actions;
+      result.actionsTruncated = got.actionsTruncated;
+      result.actionsComplete = got.actionsComplete;
+    }
+    if (got.denied?.length) {
+      result.denied = got.denied;
+      for (const d of got.denied) process.stderr.write(`ask-model: agy: denied ${d}\n`);
+    }
+    if (got.notes?.length) {
+      result.notes = got.notes;
+      for (const n of got.notes) process.stderr.write(`ask-model: agy: ${n}\n`);
+    }
+    if (signIn || got.exit !== undefined) {
+      result.error = [got.error, signIn, inspect].filter(Boolean).join('. ');
+      return finish(signIn ? 4 : got.exit);
+    }
+    result.answer = got.answer;
+    result.served = { requested: m.id, id: m.id, verified: false };
+    result.build = { execution: 'native', completed: true };
+    process.stderr.write(`ask-model: agy does not report which model answered; ${m.id} was requested (unverified).\n`);
+    return finish(0);
   }
   const got = readAnswer(vendor, m.id, r, schema, { cwd, grokHome: grokCall?.grokHome, family: m.family, xSearch: mode === 'x-search' });
   const signIn = wall ? agyAfterCall(logFile) : null;
@@ -2032,9 +2092,6 @@ export function install({ home, studio, resolver }) {
       fs.renameSync(tmp, dest);
     } finally { fs.rmSync(tmp, { force: true }); }
   };
-  for (const name of AGY_BUILD_MODULES) {
-    put(path.join(resolver, 'bin', name), fs.readFileSync(path.join(path.dirname(SELF), name)), 0o644);
-  }
   const entry = path.join(resolver, 'bin', 'ask-model.mjs');
   put(entry, fs.readFileSync(SELF), 0o644);
   const q = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
