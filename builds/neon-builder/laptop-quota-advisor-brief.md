@@ -1,0 +1,13 @@
+THE ASK
+Finish the approved confined local Neon builder without spending more live calls before startup reaches generation. Keep Mini deferred, no scheduler, no newOSpermissions.
+WHAT WE KNOW
+Current2exactmetadataGETs bothreturn200, keyringloaded/authenticatedtrue andcleanpostflight; bootstrapcontrolstillFAILS beforegeneration. Actualprintreply exit1, terminalERROR, stderr/result fixedvocab says "check failed ... request failed ... empty ... code"; ownedlogendsprintmode.go:298samecheckfailure, quota_manager.go:57failedretrieveuserquotasummary andserver_oauth.go:112validationfailed. Brokerexplicitly403deniesactualPOSTdaily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary, plusfetchAdminControls/fetchUserInfo. Noquerypresent. No generationattempt/dispatch; unknown2CONNECTsremain403andnoextragrants. Staticexactpinnedbinaryhaspublic literal"eligibility check failed:"/"Eligibility check failed:" and3referencesretrieveUserQuotaSummary. This suggestsquotaeligibility—notconfirmedcausalyet. Currentdiagnosticerrorredactorlackswordeligibility; addonlypublicboolnextcontrol.
+DIRECTION
+DIAGNOSTICONLY: add ONE observed exactPOST /v1internal:retrieveUserQuotaSummary totemporaryhelperGOOGLE_ROUTES andindependentmetadata dispatchgate, keepingactualproductionunchanged. Same2GETs, same25sfixture/privateHOME/wall/pin. No fetchAdminControls/fetchUserInfo/neworigins or anynonGoogleallowance. CaptureeligibilityFailedbooleanfromfixedpublicphrase; preservekeyringpostflight, generation denied atbothgates andactualupstreamcounts. IfthisonequotaRPCreturns200andactualknownproductiongenerationRPCisthenobserveddenied, thisispositiveevidenceforaminimal1-routeproductionfix; otherwiseSTOPatresult, do notwiden. Prior3matchedlocalcontrolswithoutquotaRPCallfailedbeforegeneration. FinalMythoswillreviewactualproductionchangeifconfirmed.
+DECISION
+Approveorcutthissinglezero-inferencecausalexperiment? Setbaratmost250words. No needanotherprovider/harnessoruserquestion. No speculative3-routemetadatawidening.
+READ FIRST
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/tools/agy-builder.mjs
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/builds/neon-builder/probe/laptop-bootstrap-control.mjs
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/builds/neon-builder/probe/laptop-bootstrap-failure-trace.mjs
+/Users/cortega/Documents/Projects/personal/agent-config-studio-wt/agent-config-studio-neon-builder/builds/neon-builder/probe/laptop-bootstrap-2.result.json
