@@ -31,7 +31,7 @@ function runGrade(grade, command, cwd, pg) {
   return exec(inv.cmd, inv.args, { cwd, env: inv.env, timeout: 30_000 });
 }
 
-test('the Neon builder probes support, keeps reference tests hidden, and stops on quota or incomplete publication', (t) => {
+test('the Neon builder probes support, keeps reference tests hidden, and stops on quota or invalid native completion', (t) => {
   const root = fixture(t);
   const make = (name) => { const dir = path.join(root, name); fs.mkdirSync(dir, { recursive: true }); return dir; };
   const bin = make('bin');
@@ -80,9 +80,11 @@ case "$SCENARIO" in
   quota) echo '{"error":"Individual quota reached. Resets in 1h"}'; exit 4;;
   refused) echo 'keychain sign-in unavailable' >&2; exit 3;;
   invalid) echo '{"mode":"read-only","id":"gemini-fixture","answer":"wrong mode","served":{"requested":"gemini-fixture","verified":false}}'; exit 0;;
-  unpublished) echo '{"mode":"build","id":"gemini-fixture","answer":"edited","served":{"requested":"gemini-fixture","verified":false},"build":{"published":false},"changed":[]}'; exit 0;;
+  incomplete) echo '{"mode":"build","id":"gemini-fixture","answer":"edited","served":{"requested":"gemini-fixture","verified":false},"build":{"execution":"native","completed":false},"changed":null}'; exit 0;;
+  legacy-published) echo '{"mode":"build","id":"gemini-fixture","answer":"edited","served":{"requested":"gemini-fixture","verified":false},"build":{"published":true},"changed":["source.mjs"]}'; exit 0;;
+  mixed-publication) echo '{"mode":"build","id":"gemini-fixture","answer":"edited","served":{"requested":"gemini-fixture","verified":false},"build":{"execution":"native","completed":true,"published":true},"changed":null}'; exit 0;;
 esac
-echo '{"mode":"build","id":"gemini-fixture","answer":"edited","served":{"requested":"gemini-fixture","verified":false},"build":{"published":true},"changed":["source.mjs"]}'
+echo '{"mode":"build","id":"gemini-fixture","answer":"edited","served":{"requested":"gemini-fixture","verified":false},"build":{"execution":"native","completed":true},"changed":null}'
 `);
 
   const call = (scenario, destination, extra = []) => spawnSync(process.execPath, [runner, '--families', 'neon', '--kinds', 'builder',
@@ -99,7 +101,10 @@ echo '{"mode":"build","id":"gemini-fixture","answer":"edited","served":{"request
   r = call('working', 'old', ['--dry-run']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /1 to run/);
-  for (const [scenario, error] of [['quota', /quota reached/i], ['refused', /keychain/], ['invalid', /did not confirm/], ['unpublished', /did not confirm/]]) {
+  for (const [scenario, error] of [
+    ['quota', /quota reached/i], ['refused', /keychain/], ['invalid', /did not confirm/],
+    ['incomplete', /did not confirm/], ['legacy-published', /did not confirm/], ['mixed-publication', /did not confirm/],
+  ]) {
     const out = call(scenario, scenario);
     assert.equal(out.status, 3, JSON.stringify(out));
     const [row] = rows(scenario);
@@ -117,7 +122,9 @@ echo '{"mode":"build","id":"gemini-fixture","answer":"edited","served":{"request
   assert.equal(resumed.grade.ok, true, resumed.grade.outputTail);
   assert.equal(resumed.modelVerified, false);
   assert.equal(resumed.served.verified, false);
-  assert.equal(resumed.build.published, true);
+  assert.equal(resumed.build.execution, 'native');
+  assert.equal(resumed.build.completed, true);
+  assert.equal(Object.hasOwn(resumed.build, 'published'), false);
   assert.deepEqual(resumed.filesChanged, ['M source.mjs']);
   assert.equal(fs.readFileSync(world, 'utf8'), 'outside canary');
   r = call('working', 'quota');
