@@ -652,10 +652,12 @@ async function agyBuilderCall(ctx, fam, dirs, env, logFile) {
   if (r.timedOut) return stop(`ask-model builder timed out after ${Math.round(ctx.timeoutMs / 60_000)} min`);
   if (r.code !== 0) return stop(problem, r.code === 4 ? quotaOf(`${j?.error ?? ''}\n${r.stderr}`) : null);
   if (j?.mode !== 'build' || j.id !== fam.id || j.served?.requested !== fam.id || j.served.verified !== false
-      || j.build?.published !== true || !Array.isArray(j.changed) || j.error || typeof j.answer !== 'string' || !j.answer.trim()) {
-    return stop('ask-model did not confirm a successful unverified Neon build');
+      || j.build?.execution !== 'native' || j.build.completed !== true || Object.hasOwn(j.build, 'published')
+      || j.error || typeof j.answer !== 'string' || !j.answer.trim()) {
+    return stop('ask-model did not confirm successful native Neon completion with unverified model identity');
   }
-  return { ms: r.ms, report: j.answer, served: j.served, buildAttempted: true };
+  return { ms: r.ms, report: j.answer, served: j.served, buildAttempted: true,
+    build: { execution: j.build.execution, completed: j.build.completed } };
 }
 
 /** The CLI call that lets a family write in the work tree, or null for a vendor with no confined write mode. */
@@ -790,7 +792,7 @@ async function runBuild(ctx, fam, c, rep, dirs) {
       const files = changedFiles(before, snapshot(dirs.repo));
       Object.assign(record, { promptHash: sha256(prompt).slice(0, 12), durationMs: b.ms, filesChanged: files,
         ...(neon && { buildAttempted: true, served: b.served }),
-        build: { ...(neon && { published: true }), error: b.error, report: b.report ? String(b.report).slice(0, 6000) : null, ...(b.costUsd != null && { costUsd: b.costUsd }), ...(b.turns != null && { turns: b.turns }) } });
+        build: { ...(neon && b.build), error: b.error, report: b.report ? String(b.report).slice(0, 6000) : null, ...(b.costUsd != null && { costUsd: b.costUsd }), ...(b.turns != null && { turns: b.turns }) } });
       // A failed call that changed nothing is a failed run, not a failed build: it is retried on the next run.
       if (b.error && (!files.length || b.otherModel)) return { ...record, outcome: 'errored', error: b.error };
     }
