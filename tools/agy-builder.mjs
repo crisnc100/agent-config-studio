@@ -92,16 +92,21 @@ export async function agyGoogleBroker(directory, { requestUpstream = https.reque
   const { certificate, context } = makeCertificate(directory, origins);
   const username = 'agy';
   const password = crypto.randomBytes(24).toString('hex');
-  const auth = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+  const credentials = Buffer.from(`${username}:${password}`).toString('base64');
+  const auth = `Basic ${credentials}`;
   const sockets = new Set();
   const events = [];
   const record = (event) => { if (events.length < 1000) events.push(event); };
   const processed = http.createServer((req, res) => {
     const origin = req.socket.allowedOrigin;
+    const pathname = req.url.split(/[?#]/, 1)[0];
+    const evidence = { origin, method: req.method };
+    if (/^\/(?!\/)[a-z0-9/_:.-]{0,255}$/i.test(pathname) && !pathname.includes(password) &&
+      !pathname.includes(credentials.replace(/=+$/, ''))) evidence.path = pathname;
     const route = Object.hasOwn(GOOGLE_ROUTES[origin], req.url);
     if (!route || GOOGLE_ROUTES[origin][req.url] !== req.method || req.headersDistinct.host?.length !== 1 ||
       ![origin, `${origin}:443`].includes(req.headers.host)) {
-      record({ reason: 'request denied', origin });
+      record({ ...evidence, status: 403, reason: 'request denied' });
       return res.writeHead(403).end();
     }
     const upstream = requestUpstream({
@@ -109,12 +114,13 @@ export async function agyGoogleBroker(directory, { requestUpstream = https.reque
       rejectUnauthorized: true, ca: tls.rootCertificates, agent: false,
       headers: { ...endToEnd(req.headers), host: origin },
     }, (response) => {
-      record({ origin, path: req.url, status: response.statusCode });
       if (response.statusCode >= 300 && response.statusCode < 400) {
+        record({ ...evidence, status: 502, upstreamStatus: response.statusCode, reason: 'upstream redirect denied' });
         response.resume();
         res.writeHead(502).end();
         return;
       }
+      record({ ...evidence, status: response.statusCode });
       const headers = endToEnd(response.headers);
       delete headers['alt-svc'];
       delete headers.location;
@@ -122,8 +128,8 @@ export async function agyGoogleBroker(directory, { requestUpstream = https.reque
       response.on('error', () => res.destroy());
       response.pipe(res);
     });
-    upstream.on('error', (err) => {
-      record({ reason: 'upstream failed', origin, code: err.code });
+    upstream.on('error', () => {
+      record({ ...evidence, status: res.headersSent ? undefined : 502, reason: 'upstream failed' });
       if (res.headersSent) res.destroy();
       else res.writeHead(502).end();
     });
@@ -142,16 +148,17 @@ export async function agyGoogleBroker(directory, { requestUpstream = https.reque
     socket.on('error', () => {});
     const origin = origins.find((name) => req.url === `${name}:443`);
     if (!origin || req.headersDistinct['proxy-authorization']?.length !== 1 || req.headers['proxy-authorization'] !== auth) {
-      record({ reason: 'CONNECT denied' });
+      record({ origin, method: 'CONNECT', status: 403, reason: 'CONNECT denied' });
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       return;
     }
+    record({ origin, method: 'CONNECT', status: 200 });
     socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
     const wrapped = new tls.TLSSocket(socket, {
       isServer: true, secureContext: context, ALPNProtocols: ['http/1.1'],
       SNICallback: (servername, done) => done(servername === origin ? null : new Error('TLS authority mismatch'), context),
     });
-    wrapped.on('error', () => { record({ reason: 'client TLS failed', origin }); wrapped.destroy(); });
+    wrapped.on('error', () => { record({ origin, method: 'CONNECT', reason: 'client TLS failed' }); wrapped.destroy(); });
     if (head.length) socket.unshift(head);
     wrapped.once('secure', () => {
       if (wrapped.servername !== origin) return wrapped.destroy();
@@ -299,7 +306,7 @@ export async function prepareAgyLaunch({ source, runtime, assembly, ca, privateH
 }
 
 export async function runAgyBuilder({ root, bin, id, effort, prompt, home = os.homedir(),
-  checkWorkspace, checkConfig, checkToken, checkSignIn, readResult }, test = {}) {
+  checkWorkspace, checkConfig, checkToken, checkSignIn, readResult, onBrokerAudit }, test = {}) {
   if (process.platform !== 'darwin') throw new Error('agy builder requires macOS sandbox-exec');
   if (typeof id !== 'string' || !id || typeof prompt !== 'string' || !prompt.trim() ||
       effort !== undefined && !['low', 'medium', 'high', 'xhigh'].includes(effort)) {
@@ -340,7 +347,11 @@ export async function runAgyBuilder({ root, bin, id, effort, prompt, home = os.h
     const changed = publish();
     return { ...result, mode: 'build', served: { requested: id, id, verified: false }, build: { published: true }, changed };
   } finally {
-    launch?.broker.close();
-    fs.rmSync(callRoot, { recursive: true, force: true });
+    try {
+      launch?.broker.close();
+      fs.rmSync(callRoot, { recursive: true, force: true });
+    } finally {
+      if (launch?.broker.events) onBrokerAudit?.(launch.broker.events.slice());
+    }
   }
 }
