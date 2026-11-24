@@ -191,6 +191,9 @@ test('the disposable grade database cannot act as a superuser or reach host cana
   assert.equal(pg.error, undefined, pg.error);
   t.after(() => pg.stop());
   const params = new URLSearchParams(pg.env.GRADE_DATABASE_URL.split('?')[1]);
+  const socketDir = path.dirname(pg.socket);
+  assert.equal(params.get('host'), socketDir);
+  assert.equal(socketDir, fs.realpathSync(socketDir));
   const args = ['-X', '-w', '-h', params.get('host'), '-p', params.get('port'), '-d', 'postgres', '-v', 'ON_ERROR_STOP=1'];
   const query = (user, sql) => spawnSync(path.join(pgBin, 'psql'), [...args, '-U', user, '-Atc', sql], { encoding: 'utf8', timeout: 30_000 });
   const outside = path.join(root, 'canary');
@@ -378,4 +381,88 @@ console.log('git fixture passed');
   assert.match((await runGrade(grade, grade.preflight, repo)).stdout, /git version/);
   assert.match((await runGrade(grade, 'node git-fixture.mjs', repo)).stdout, /git fixture passed/);
   assert.equal(fs.readFileSync(outside, 'utf8'), 'outside canary');
+});
+
+test('Bun confines ICU access and rejects native Unix and TCP connects', async (t) => {
+  const root = fixture(t, 'ng-icu-');
+  const caseDir = path.join(root, 'case');
+  const repo = path.join(caseDir, 'repo');
+  fs.mkdirSync(repo, { recursive: true });
+  const file = path.join(root, 'outside.txt');
+  fs.writeFileSync(file, 'canary');
+  const accepted = { unix: 0, tcp: 0 };
+  const listen = (kind, endpoint) => new Promise((resolve, reject) => {
+    const server = net.createServer((client) => {
+      accepted[kind]++;
+      client.destroy();
+    });
+    t.after(() => server.close());
+    server.once('error', reject);
+    server.listen(endpoint, () => resolve(server.address()));
+  });
+  const unix = await listen('unix', path.join(root, 'neighbor.sock'));
+  const tcp = await listen('tcp', { host: '127.0.0.1', port: 0 });
+  fs.writeFileSync(path.join(repo, 'runtime.mjs'), `
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { dlopen, ptr, read } from 'bun:ffi';
+const library = dlopen('/usr/lib/libSystem.B.dylib', {
+  socket: { args: ['i32', 'i32', 'i32'], returns: 'i32' },
+  connect: { args: ['i32', 'ptr', 'u32'], returns: 'i32' },
+  close: { args: ['i32'], returns: 'i32' },
+  __error: { args: [], returns: 'ptr' },
+});
+const libc = library.symbols;
+const socketPath = new TextEncoder().encode(${JSON.stringify(unix)});
+assert(socketPath.length < 104);
+const local = new Uint8Array(2 + socketPath.length + 1);
+local.set([local.length, 1]);
+local.set(socketPath, 2);
+const loopback = new Uint8Array(16);
+loopback.set([16, 2, 0, 0, 127, 0, 0, 1]);
+new DataView(loopback.buffer).setUint16(2, ${tcp.port}, false);
+assert.equal(libc.connect(-1, ptr(local), local.length), -1);
+assert.equal(read.i32(libc.__error()), 9);
+function connect(address) {
+  const fd = libc.socket(address[1], 1, 0);
+  assert(fd >= 0);
+  try {
+    const result = libc.connect(fd, ptr(address), address.length);
+    return { result, errno: result === -1 ? read.i32(libc.__error()) : null };
+  } finally { libc.close(fd); }
+}
+let outside = 'read';
+try { fs.readFileSync(${JSON.stringify(file)}); } catch (e) { outside = e.code; }
+try { console.log(JSON.stringify({ outside, unix: connect(local), tcp: connect(loopback) })); }
+finally { library.close(); }
+`);
+
+  const command = 'bun runtime.mjs';
+  const grade = prepareNeonGrade(command, { case: caseDir, repo });
+  const invocation = grade.invocation(command);
+  const [mode, profile, shell, ...args] = invocation.args;
+  assert.equal(mode, '-p');
+  assert.equal(profile.split('\n').filter((line) => line.includes('/usr/share/icu/')).join('\n'),
+    '(allow file-read-metadata file-read-data (literal "/usr/share/icu/icudt76l.dat"))');
+  const positive = JSON.parse((await exec(shell, args, { cwd: repo, env: invocation.env, timeout: 30_000 })).stdout);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(positive, { outside: 'read', unix: { result: 0, errno: null }, tcp: { result: 0, errno: null } });
+  assert.deepEqual(accepted, { unix: 1, tcp: 1 });
+  const preflight = grade.invocation(grade.preflight);
+  const [, , preflightShell, ...preflightArgs] = preflight.args;
+  assert.match((await exec(preflightShell, preflightArgs, { cwd: repo, env: preflight.env, timeout: 30_000 })).stdout, /\d+\.\d+\.\d+/);
+  if (fs.existsSync('/usr/share/icu/icudt76l.dat')) {
+    assert.match((await runGrade(grade, grade.preflight, repo)).stdout, /\d+\.\d+\.\d+/);
+  } else {
+    await assert.rejects(runGrade(grade, grade.preflight, repo),
+      (error) => error.code === 1 && /failed to initialize Collator/.test(error.stderr));
+  }
+  const denied = JSON.parse((await runGrade(grade, command, repo)).stdout);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(denied.outside, 'EPERM');
+  for (const connection of [denied.unix, denied.tcp]) {
+    assert.equal(connection.result, -1);
+    assert.ok([1, 13].includes(connection.errno), JSON.stringify(connection));
+  }
+  assert.deepEqual(accepted, { unix: 1, tcp: 1 });
 });
