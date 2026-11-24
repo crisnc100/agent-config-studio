@@ -982,6 +982,10 @@ skill.
   `toolsNote`. It
   cannot be combined with `--investigate`, `--no-tools`, `--min-tools` or
   `--schema`, and any of those, or a non-Grok family, exits 64.
+- `--build` is the one opt-in exception to the read-only rule above: it runs
+  an agy family as a native builder with normal Antigravity permissions, with
+  no deny list or sandbox, in the Git worktree root named by `--cwd`. Read
+  `docs/neon-builder.md` for its requirements and limits before using it.
 - Exit codes: 0 answered, 2 another model answered, 3 the CLI (or node) is
   missing, 4 the call failed or returned an error, 5 files changed under
   `--investigate`, 64 a usage error or a role or family that does not resolve.

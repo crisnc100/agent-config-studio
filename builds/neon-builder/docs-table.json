@@ -1,0 +1,329 @@
+{
+  "rows": [
+    {
+      "behavior": "Opt-in native builder command: explicit worktree root, mode conflicts, agy-only, builder role only",
+      "files": [
+        "tools/ask-model.mjs"
+      ],
+      "docs": [
+        {
+          "path": "README.md",
+          "claims": [
+            {
+              "claim": "--build runs an agy family as a native builder in the Git worktree root named by --cwd, with no deny list",
+              "at": "tools/ask-model.mjs:603"
+            },
+            {
+              "claim": "--build requires an explicit --cwd",
+              "at": "tools/ask-model.mjs:1110"
+            }
+          ]
+        },
+        {
+          "path": "docs/neon-builder.md",
+          "claims": [
+            {
+              "claim": "--cwd must be the canonical Git worktree root; filesystem root, home and a folder holding it are refused",
+              "at": "tools/ask-model.mjs:940"
+            },
+            {
+              "claim": "a --cwd that is not its own git rev-parse --show-toplevel is refused",
+              "at": "tools/ask-model.mjs:951"
+            },
+            {
+              "claim": "the root check runs before the version probe",
+              "at": "tools/ask-model.mjs:1907"
+            },
+            {
+              "claim": "the family or --role builder must resolve to agy; another vendor exits 64",
+              "at": "tools/ask-model.mjs:1859"
+            },
+            {
+              "claim": "--role other than builder is refused with --build",
+              "at": "tools/ask-model.mjs:1111"
+            },
+            {
+              "claim": "--build cannot combine with --investigate, --no-tools, --min-tools, --x-search or --schema",
+              "at": "tools/ask-model.mjs:1112"
+            },
+            {
+              "claim": "ask-model runs the one named family or the builder role's resolved family",
+              "at": "tools/ask-model.mjs:1127"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "behavior": "Native agy invocation: accept-edits, normal HOME and permissions, finite timeout, prompt prefix, no other safeguards",
+      "files": [
+        "tools/ask-model.mjs"
+      ],
+      "docs": [
+        {
+          "path": "docs/neon-builder.md",
+          "claims": [
+            {
+              "claim": "agy runs with --mode accept-edits, the model, effort, stream-json and a print timeout",
+              "at": "tools/ask-model.mjs:601"
+            },
+            {
+              "claim": "the print timeout is finite (1800s)",
+              "at": "tools/ask-model.mjs:190"
+            },
+            {
+              "claim": "the build uses the process env plus AGY_ENV, not the wall's TMPDIR, and no sandbox-exec",
+              "at": "tools/ask-model.mjs:1960"
+            },
+            {
+              "claim": "the build runs the CLI directly (no sandbox-exec wrapper) as a native build",
+              "at": "tools/ask-model.mjs:2005"
+            },
+            {
+              "claim": "the build branch makes no workspace, ~/.gemini/config or wall check, which the read-only branch does",
+              "at": "tools/ask-model.mjs:1906"
+            },
+            {
+              "claim": "the read-only branch makes the workspace, config and wall checks",
+              "at": "tools/ask-model.mjs:1923"
+            },
+            {
+              "claim": "the prompt is prefixed with instructions not to call other models, run reviews or grades, push, open a PR or merge",
+              "at": "tools/ask-model.mjs:1921"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "behavior": "Pinned CLI version and plaintext-token checks before and after the version probe and after the call",
+      "files": [
+        "tools/ask-model.mjs"
+      ],
+      "docs": [
+        {
+          "path": "docs/neon-builder.md",
+          "claims": [
+            {
+              "claim": "agy --version must equal AGY_VERSION or the build does not start",
+              "at": "tools/ask-model.mjs:1914"
+            },
+            {
+              "claim": "the plaintext token file is checked before the version probe",
+              "at": "tools/ask-model.mjs:1909"
+            },
+            {
+              "claim": "the plaintext token file is checked again after the version probe",
+              "at": "tools/ask-model.mjs:1912"
+            },
+            {
+              "claim": "the token file lives at ~/.gemini/antigravity-cli/antigravity-oauth-token",
+              "at": "tools/ask-model.mjs:250"
+            },
+            {
+              "claim": "after the call a token file left behind fails the build",
+              "at": "tools/ask-model.mjs:957"
+            },
+            {
+              "claim": "the per-call log must be a readable regular file owned by the user, opened without following links",
+              "at": "tools/ask-model.mjs:960"
+            },
+            {
+              "claim": "a log that records file-based token storage fails the build",
+              "at": "tools/ask-model.mjs:974"
+            },
+            {
+              "claim": "the postflight runs on every path after the CLI returns, including failure and cancellation, and a sign-in problem exits 4",
+              "at": "tools/ask-model.mjs:2011"
+            },
+            {
+              "claim": "the private per-call log directory is removed after the call",
+              "at": "tools/ask-model.mjs:2013"
+            },
+            {
+              "claim": "read-only calls keep their agy log under ~/.agent-config-studio/logs/agy/",
+              "at": "tools/ask-model.mjs:1946"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "behavior": "Native cancellation, failure and partial edits",
+      "files": [
+        "tools/ask-model.mjs"
+      ],
+      "docs": [
+        {
+          "path": "docs/neon-builder.md",
+          "claims": [
+            {
+              "claim": "INT, TERM and HUP to ask-model are remembered and sent to agy's process group, with a SIGKILL escalation",
+              "at": "tools/ask-model.mjs:1413"
+            },
+            {
+              "claim": "a cancelled call exits 4 with an error and no completion claim even if agy exits 0",
+              "at": "tools/ask-model.mjs:2015"
+            },
+            {
+              "claim": "edits may remain after errors and the worktree must be inspected before retrying; nothing is rolled back",
+              "at": "tools/ask-model.mjs:2012"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "behavior": "Success result: native completion, unverified model, no published claim, changed null, bounded diagnostics",
+      "files": [
+        "tools/ask-model.mjs"
+      ],
+      "docs": [
+        {
+          "path": "docs/neon-builder.md",
+          "claims": [
+            {
+              "claim": "success carries build.execution native and build.completed true",
+              "at": "tools/ask-model.mjs:2039"
+            },
+            {
+              "claim": "served.verified is false and the model is only what was requested",
+              "at": "tools/ask-model.mjs:2038"
+            },
+            {
+              "claim": "no build.published or brokerEvents field is set",
+              "at": "tools/ask-model.mjs:2039"
+            },
+            {
+              "claim": "changed stays null; the build path never snapshots the worktree",
+              "at": "tools/ask-model.mjs:1866"
+            },
+            {
+              "claim": "actions, denied and notes come from bounded parsing of agy's stream",
+              "at": "tools/ask-model.mjs:1599"
+            },
+            {
+              "claim": "a different model echoed by agy fails with exit 2",
+              "at": "tools/ask-model.mjs:1703"
+            },
+            {
+              "claim": "agy reports only the model it was asked for, so identity is unverified",
+              "at": "tools/ask-model.mjs:1660"
+            },
+            {
+              "claim": "the success path prints exit 0 only after the postflight and answer checks pass",
+              "at": "tools/ask-model.mjs:2041"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "behavior": "Default read-only agy behavior retained alongside --build",
+      "files": [
+        "tools/ask-model.mjs"
+      ],
+      "docs": [
+        {
+          "path": "docs/neon-builder.md",
+          "claims": [
+            {
+              "claim": "without --build agy keeps its read-only deny list",
+              "at": "tools/ask-model.mjs:179"
+            },
+            {
+              "claim": "without --build agy runs in the sandbox-exec wall",
+              "at": "tools/ask-model.mjs:202"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "behavior": "Benchmark: native Neon builder availability and accepted completion",
+      "files": [
+        "builds/neon-builder/benchmark-adapter/run.mjs"
+      ],
+      "docs": [
+        {
+          "path": "builds/neon-builder/benchmark-adapter/README.md",
+          "claims": [
+            {
+              "claim": "Neon builds only when agy is on PATH, /usr/bin/sandbox-exec exists on macOS and ask-model advertises --build",
+              "at": "builds/neon-builder/benchmark-adapter/run.mjs:637"
+            },
+            {
+              "claim": "the runner calls ask-model --build in the case repository",
+              "at": "builds/neon-builder/benchmark-adapter/run.mjs:643"
+            },
+            {
+              "claim": "a result is accepted only with mode build, the matching id, served.verified false, execution native, completed true and no published key",
+              "at": "builds/neon-builder/benchmark-adapter/run.mjs:654"
+            },
+            {
+              "claim": "a non-zero exit, a timeout or a missing completion claim stops the family without grading",
+              "at": "builds/neon-builder/benchmark-adapter/run.mjs:653"
+            },
+            {
+              "claim": "the stop is returned for agy before any grade runs",
+              "at": "builds/neon-builder/benchmark-adapter/run.mjs:791"
+            },
+            {
+              "claim": "the recorded build keeps only execution and completed",
+              "at": "builds/neon-builder/benchmark-adapter/run.mjs:660"
+            },
+            {
+              "claim": "agy builds are wired through agyBuilderCall only when agyBuilder is set",
+              "at": "builds/neon-builder/benchmark-adapter/run.mjs:699"
+            },
+            {
+              "claim": "setup and dry-run text describe ask-model --build with an unverified model and a sandboxed final grade",
+              "at": "builds/neon-builder/benchmark-adapter/run.mjs:952"
+            },
+            {
+              "claim": "neon's read-only answer and judge calls still depend on ask-model's config check; the build route does not make it",
+              "at": "tools/ask-model.mjs:1931"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "behavior": "Benchmark: the final grader stays confined and independent",
+      "files": [
+        "builds/neon-builder/benchmark-adapter/run.mjs"
+      ],
+      "docs": [
+        {
+          "path": "builds/neon-builder/benchmark-adapter/README.md",
+          "claims": [
+            {
+              "claim": "the Neon grade preflight and final grade run under sandbox-exec with confinedGrade",
+              "at": "builds/neon-builder/benchmark-adapter/run.mjs:779"
+            },
+            {
+              "claim": "the final grade command runs in the confined invocation for Neon",
+              "at": "builds/neon-builder/benchmark-adapter/run.mjs:821"
+            },
+            {
+              "claim": "the Neon grade is prepared for the agy family and for reference checks",
+              "at": "builds/neon-builder/benchmark-adapter/run.mjs:753"
+            },
+            {
+              "claim": "reference grade tests are copied in from refSha before the grade",
+              "at": "builds/neon-builder/benchmark-adapter/run.mjs:800"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "behavior": "No Neon quality score is claimed",
+      "files": [
+        "docs/neon-builder.md",
+        "builds/neon-builder/benchmark-adapter/README.md"
+      ],
+      "none": "a statement of absence; neither the wrapper nor the runner computes a Neon quality score, so there is no code line to cite"
+    }
+  ]
+}
