@@ -21,6 +21,7 @@ const GOOGLE_ROUTES = {
     '/v1internal:listExperiments': 'POST',
   },
   'oauth2.googleapis.com': { '/token': 'POST' },
+  'play.googleapis.com': { '/log': 'POST' },
 };
 
 const AGY_VERSION = '1.5.14';
