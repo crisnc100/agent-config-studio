@@ -1,0 +1,54 @@
+{
+  "code": 0,
+  "signal": null,
+  "status": "SUCCESS",
+  "turns": 0,
+  "models": 27,
+  "keychainLoaded": true,
+  "keychainAuthenticated": true,
+  "tokenExpired": false,
+  "cleanPostflight": true,
+  "blockedNativeSettingsUpdate": true,
+  "brokerEvents": [
+    {
+      "reason": "CONNECT denied"
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "path": "/v1internal:loadCodeAssist",
+      "status": 200
+    },
+    {
+      "reason": "request denied",
+      "origin": "daily-cloudcode-pa.googleapis.com"
+    },
+    {
+      "reason": "request denied",
+      "origin": "daily-cloudcode-pa.googleapis.com"
+    },
+    {
+      "reason": "request denied",
+      "origin": "daily-cloudcode-pa.googleapis.com"
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "path": "/v1internal:fetchAvailableModels",
+      "status": 200
+    },
+    {
+      "reason": "request denied",
+      "origin": "daily-cloudcode-pa.googleapis.com"
+    },
+    {
+      "reason": "upstream failed",
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "code": "ECONNRESET"
+    },
+    {
+      "reason": "CONNECT denied"
+    },
+    {
+      "reason": "CONNECT denied"
+    }
+  ]
+}
