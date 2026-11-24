@@ -1,0 +1,15 @@
+{
+  "mode": "bind-only",
+  "version": "1.5.14",
+  "listenerDenied": true,
+  "code": 1,
+  "signal": null,
+  "keyringLoaded": false,
+  "keyringAuthenticated": false,
+  "tokenExpired": false,
+  "tokenRefreshed": false,
+  "keyringSaveFailed": false,
+  "cleanPostflight": true,
+  "noPlaintext": true,
+  "brokerEvents": []
+}

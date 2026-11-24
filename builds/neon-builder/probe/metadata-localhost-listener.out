@@ -1,0 +1,59 @@
+{
+  "mode": "localhost-listener",
+  "version": "1.5.14",
+  "listenerDenied": false,
+  "code": 0,
+  "signal": null,
+  "command": "models",
+  "turns": 0,
+  "status": "SUCCESS",
+  "modelCount": 27,
+  "keyringLoaded": true,
+  "keyringAuthenticated": true,
+  "tokenExpired": false,
+  "tokenRefreshed": false,
+  "keyringSaveFailed": false,
+  "cleanPostflight": true,
+  "noPlaintext": true,
+  "brokerEvents": [
+    {
+      "reason": "CONNECT denied"
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "path": "/v1internal:loadCodeAssist",
+      "status": 200
+    },
+    {
+      "reason": "request denied",
+      "origin": "daily-cloudcode-pa.googleapis.com"
+    },
+    {
+      "reason": "request denied",
+      "origin": "daily-cloudcode-pa.googleapis.com"
+    },
+    {
+      "reason": "request denied",
+      "origin": "daily-cloudcode-pa.googleapis.com"
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "path": "/v1internal:fetchAvailableModels",
+      "status": 200
+    },
+    {
+      "reason": "request denied",
+      "origin": "daily-cloudcode-pa.googleapis.com"
+    },
+    {
+      "reason": "request denied",
+      "origin": "daily-cloudcode-pa.googleapis.com"
+    },
+    {
+      "reason": "CONNECT denied"
+    },
+    {
+      "reason": "CONNECT denied"
+    }
+  ]
+}
