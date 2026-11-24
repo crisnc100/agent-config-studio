@@ -1,0 +1,17 @@
+{
+  "f1": {
+    "status": "fixed",
+    "response": "real",
+    "evidence": "39b8734 provisions private Git; reference-check-2 passes all ten cases and324 assertions with zero model calls."
+  },
+  "x1": {
+    "status": "deferred",
+    "reason": "One fix check is complete. Comments still imply confinement although the current README and native guide describe normal permissions. The adapter is not being used for a Neon quality run in this milestone.",
+    "fix": "Scope the confinement comments to Claude/Codex and describe Neon as using normal Antigravity permissions."
+  },
+  "x2": {
+    "status": "deferred",
+    "reason": "One fix check is complete. The benchmark is deferred; its signal handler must forward TERM and await ask-model cleanup before a real Neon benchmark is resumed. Native public CLI cancellation is independently tested.",
+    "fix": "On a signal, send SIGTERM to live children first, wait a few seconds (ask-model escalates to SIGKILL on agy's group after 2s), then SIGKILL what is left, as the timeout path at run.mjs:328-338 already does. This puts an existing pattern on a sibling path; it is not new decision logic."
+  }
+}

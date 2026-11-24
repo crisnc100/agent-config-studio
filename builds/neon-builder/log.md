@@ -9,3 +9,9 @@ The single helper fix check left x1 MEDIUM 15/100 (3/10 x 5/10) deferred, as rec
 Production f1 MEDIUM 14/100 (2/10 x 7/10) and the related s3 LOW 5/100 (1/10 x 5/10) cover interrupts during publication. The builder keeps its handlers through cleanup, refuses cancellation before publication and finishes an in-progress publication or rollback. A subprocess test delivers SIGTERM after the first replacement and verifies that both edits are installed, the broker and stage are cleaned up, and the process reports publication successfully.
 
 No phase has been closed. Public wiring and the final PR review/security/context/fix-check/tip-close remain pending. No Neon inference, live roles, installed runtime changes, pushes or merges have occurred. The existing read-only paths remain unchanged.
+
+## Native final review checkpoint
+
+Cris approved normal native Antigravity permissions. Direct and installed native high-effort edits passed, with unverified model identity and clean token postflight. The installed resolver now matches reviewed source and the builder pool includes Neon at high effort. Default read-only settings, wall and review runtime are byte-identical to main.
+
+Sol-prev xhigh and Mythos high completed the three single final fix checks. Independent test-change checks found no weakened assertions. All original blockers are fixed; the one fix checks leave three MEDIUM and eight LOW findings deferred, detailed with unchanged scores in review-report.md and the three status files. No Neon quality benchmark ran. Full offline ACS suite awaits Cris’s location choice under the working agreement; closes, push, PR and CI are still pending. Never merge.

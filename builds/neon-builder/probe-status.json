@@ -1,0 +1,42 @@
+{
+  "f1": {
+    "status": "fixed",
+    "response": "real",
+    "evidence": "The adapter diff includes the same private Git toolchain repair proven by ten trusted references."
+  },
+  "s1": {
+    "status": "fixed",
+    "response": "real",
+    "evidence": "The complete and alternate-tool refusal checks were strengthened during the first fix round. Current native proofs explicitly make no isolation claim."
+  },
+  "x1": {
+    "status": "deferred",
+    "reason": "One fix check is complete. A real Neon benchmark is deferred. The adapter must preserve its prepared case service environment before FirstCall or any other service-dependent Neon benchmark runs.",
+    "fix": "Pass the prepared env to Neon too; it already retains normal HOME and PATH while adding case services and caches."
+  },
+  "x2": {
+    "status": "deferred",
+    "reason": "One fix check is complete. This is a historical one-shot proof, observed completing without interruption; it is not a reusable cancellation proof. Public CLI cancellation has independent fake regression coverage. Do not reuse this script until cancellation and timeout are recorded separately.",
+    "fix": "Record interruption and timeout separately, include them in the evidence, and require neither occurred before accepting the proof."
+  },
+  "x3": {
+    "status": "deferred",
+    "reason": "One fix check is complete. This completed one-shot proof is not a reusable stop-control harness. Do not reuse it until signals are forwarded and cleanup is awaited.",
+    "fix": "Forward INT, TERM and HUP to ask-model, await its cancellation cleanup, and record the proof as interrupted."
+  },
+  "x4": {
+    "status": "deferred",
+    "reason": "One fix check is complete. This patch mirrors the adapter comment already deferred in its own review. Native permissions are described in the current user docs; no confined-build claim is made for this milestone.",
+    "fix": "Limit the sandbox claim to the Claude/Codex branch or describe only the cache requirement."
+  },
+  "x5": {
+    "status": "deferred",
+    "reason": "One fix check is complete. Same installed-proof signal gap as x3, retained with its independent security score. Do not reuse the historical script until signal forwarding is implemented.",
+    "fix": "Register `stop` for SIGINT, SIGTERM and SIGHUP before awaiting the child and remove the handlers in the `.finally`, as native-session-edit.mjs does, so a cancel reaches ask-model (which then kills the agy group and runs its token postflight) and the scratch cleanup still runs."
+  },
+  "x6": {
+    "status": "deferred",
+    "reason": "One fix check is complete. The retired custom live probe must not be run against native builds. Only its fake self-test is appropriate until the live entry point is explicitly disabled.",
+    "fix": "Make the retirement explicit in code: have `--live` refuse before the attempt record with a message that the custom isolated runtime is retired and native builds do not enforce outside-read, outside-write or network refusal. `--self-test` (fake CLI only, zero provider calls) can stay."
+  }
+}

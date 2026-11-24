@@ -1,0 +1,14 @@
+{
+  "source": "tools/ask-model.mjs",
+  "installed": "/Users/cortega/.agent-config-studio/resolver/bin/ask-model.mjs",
+  "sha256": "e61e8788afa17fac3c809186a818a6cbeb83ddda73c38523fe142276fbeb3581",
+  "advertisesBuild": true,
+  "legacyHelpersAbsent": true,
+  "builderCandidates": [
+    "sol",
+    "opus",
+    "neon"
+  ],
+  "providerCalls": 0,
+  "modelVerified": false
+}
