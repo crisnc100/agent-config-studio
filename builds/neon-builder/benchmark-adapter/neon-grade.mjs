@@ -8,9 +8,10 @@ const SYSTEM_TOOLS = [SHELL, '/bin/bash', '/bin/cat', '/bin/mkdir', '/bin/rm', '
 const SYSTEM_LIBS = ['/usr/lib', '/System/Library/dyld', '/System/Library/Frameworks', '/System/Library/PrivateFrameworks'];
 const SYSTEM_DATA = ['/', '/dev/null', '/dev/urandom', '/dev/random', '/private/var/select/sh',
   '/System/Library/CoreServices/SystemVersion.plist', '/System/Library/OpenSSL/openssl.cnf'];
+const BUN_ICU_DATA = '/usr/share/icu/icudt76l.dat';
 const RUNTIME_PREFLIGHT = {
   uv: 'uv run --no-sync python --version',
-  bun: 'bun -e "console.log(Bun.version)"',
+  bun: 'bun -e "const collator = new Intl.Collator(\'en\'); if (collator.compare(\'a\', \'b\') >= 0) process.exit(1); console.log(Bun.version)"',
   node: 'node -e "require(\'node:crypto\'); console.log(process.version)"',
 };
 const GIT_PREFLIGHT = `node --input-type=module - <<'NODE'
@@ -126,6 +127,7 @@ export function prepareNeonGrade(testCommand, dirs, { needsGit = false } = {}) {
     ...SANDBOX_RULES,
     rule('file-read-metadata', 'literal', ancestors([...paths, ...launchers, ...SYSTEM_DATA, ...templates])),
     rule('file-read*', 'literal', SYSTEM_DATA),
+    ...(runtime === 'bun' ? [rule('file-read-metadata file-read-data', 'literal', [BUN_ICU_DATA])] : []),
     rule('file-read* file-map-executable', 'literal', launchers),
     rule('process-exec', 'literal', launchers),
     ...(git ? [rule('file-read*', 'subpath', templates)] : []),

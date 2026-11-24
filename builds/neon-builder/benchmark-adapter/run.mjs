@@ -450,7 +450,9 @@ async function startPostgres(c, line, dir, { neonGrade = false } = {}) {
   const scheme = String(c.checked?.how ?? '').match(new RegExp(`${varName}=([a-z][a-z0-9+]*)://`))?.[1] ?? 'postgresql';
   const data = path.join(dir, 'pg');
   // A unix socket path is capped near 104 bytes on macOS, so the socket gets its own short folder.
-  const sock = fs.mkdtempSync(path.join(os.tmpdir().length < 60 ? os.tmpdir() : '/tmp', 'bpg-'));
+  const socketDir = fs.mkdtempSync(path.join(os.tmpdir().length < 60 ? os.tmpdir() : '/tmp', 'bpg-'));
+  // Seatbelt can reject a Unix socket connection made through the /var or /tmp alias.
+  const sock = neonGrade ? fs.realpathSync(socketDir) : socketDir;
   const port = String(50000 + crypto.randomInt(10000));
   const env = neonGrade ? { PATH: `${bin}:/usr/bin:/bin`, HOME: dir, TMPDIR: dir, LC_ALL: 'C' } : undefined;
   const init = await runChild(path.join(bin, 'initdb'), ['-D', data, '-U', 'postgres', '--auth=trust', '-E', 'UTF8', '--no-sync'], { env, timeoutMs: 120_000 });

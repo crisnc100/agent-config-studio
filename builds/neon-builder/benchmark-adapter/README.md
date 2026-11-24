@@ -77,6 +77,8 @@ node run.mjs --families neon --kinds builder --jobs 1 --effort neon=high --out ~
 
 The fixture suite uses fake model CLIs and exercises the real macOS grade sandbox. It requires Node, Apple Git from the active Xcode or Command Line Tools installation, Bun, uv with a managed Python 3.12, and PostgreSQL 17.
 
+Confined Bun grades can read metadata and data for the exact system ICU file `/usr/share/icu/icudt76l.dat`. Bun preflight creates and uses an `Intl.Collator` before a model call. A host that uses a different ICU data path can fail this preflight. The confined FirstCall grade connects to the disposable database using its canonical socket directory.
+
 The confined `acs-lockfile-exempt` grade stages copies of Node, Apple Git and its repository templates in the disposable case before the build. Its preflight checks that the private Node can resolve and run Git with the same PATH reset the reference test uses. `/usr/bin/xcrun --find git` must resolve the underlying Git executable.
 
 ## Mac mini setup

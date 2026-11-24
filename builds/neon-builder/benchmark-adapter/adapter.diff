@@ -1,5 +1,5 @@
---- run.mjs.neon-builder-adapter.bak	2026-11-21 12:47:15
-+++ run.mjs	2026-11-23 22:52:31
+--- /Users/cortega/Documents/Projects/personal/skills-work/builds/benchmark/runner/run.mjs.neon-builder-adapter.bak	2026-11-21 12:47:15
++++ /Users/cortega/Documents/Projects/personal/skills-work/builds/benchmark/runner/run.mjs	2026-11-24 08:27:50
 @@ -15,0 +16 @@
 +import { prepareNeonGrade } from './neon-grade.mjs';
 @@ -22,3 +23 @@
@@ -67,7 +67,12 @@
 @@ -409 +444 @@
 -async function startPostgres(c, line, dir) {
 +async function startPostgres(c, line, dir, { neonGrade = false } = {}) {
-@@ -420,2 +455,6 @@
+@@ -418 +453,3 @@
+-  const sock = fs.mkdtempSync(path.join(os.tmpdir().length < 60 ? os.tmpdir() : '/tmp', 'bpg-'));
++  const socketDir = fs.mkdtempSync(path.join(os.tmpdir().length < 60 ? os.tmpdir() : '/tmp', 'bpg-'));
++  // Seatbelt can reject a Unix socket connection made through the /var or /tmp alias.
++  const sock = neonGrade ? fs.realpathSync(socketDir) : socketDir;
+@@ -420,2 +457,6 @@
 -  const init = await runChild(path.join(bin, 'initdb'), ['-D', data, '-U', 'postgres', '--auth=trust', '-E', 'UTF8', '--no-sync'], { timeoutMs: 120_000 });
 -  if (init.code !== 0) return { error: `initdb failed: ${tail(init.stderr || init.error)}` };
 +  const env = neonGrade ? { PATH: `${bin}:/usr/bin:/bin`, HOME: dir, TMPDIR: dir, LC_ALL: 'C' } : undefined;
@@ -76,7 +81,7 @@
 +    if (neonGrade) fs.rmSync(sock, { recursive: true, force: true });
 +    return { error: `initdb failed: ${tail(init.stderr || init.error)}` };
 +  }
-@@ -423,2 +462,6 @@
+@@ -423,2 +464,6 @@
 -    '-o', `-k ${sock} -p ${port} -c listen_addresses=''`, 'start'], { timeoutMs: 120_000 });
 -  if (start.code !== 0) return { error: `pg_ctl start failed: ${tail(start.stderr || start.stdout || start.error)}` };
 +    '-o', `-k ${sock} -p ${port} -c listen_addresses=''`, 'start'], { env, timeoutMs: 120_000 });
@@ -85,17 +90,17 @@
 +    return { error: `pg_ctl start failed: ${tail(start.stderr || start.stdout || start.error)}` };
 +  }
 +  const user = neonGrade ? 'benchmark_grade' : 'postgres';
-@@ -426 +469,2 @@
+@@ -426 +471,2 @@
 -    env: { [varName]: `${scheme}://postgres@/postgres?host=${sock}&port=${port}` },
 +    env: { [varName]: `${scheme}://${user}@/postgres?host=${sock}&port=${port}` },
 +    ...(neonGrade && { socket: path.join(sock, `.s.PGSQL.${port}`) }),
-@@ -429 +473 @@
+@@ -429 +475 @@
 -      await runChild(path.join(bin, 'pg_ctl'), ['-D', data, '-m', 'immediate', 'stop'], { timeoutMs: 60_000 });
 +      await runChild(path.join(bin, 'pg_ctl'), ['-D', data, '-m', 'immediate', 'stop'], { env, timeoutMs: 60_000 });
-@@ -433 +477 @@
+@@ -433 +479 @@
 -      spawnBg(path.join(bin, 'pg_ctl'), ['-D', data, '-m', 'immediate', 'stop'], { stdio: 'ignore', timeout: 30_000 });
 +      spawnBg(path.join(bin, 'pg_ctl'), ['-D', data, '-m', 'immediate', 'stop'], { env, stdio: 'ignore', timeout: 30_000 });
-@@ -437,0 +482,23 @@
+@@ -437,0 +484,23 @@
 +  if (neonGrade) {
 +    let error;
 +    try {
@@ -119,11 +124,11 @@
 +      return { error };
 +    }
 +  }
-@@ -550 +617,2 @@
+@@ -550 +619,2 @@
 -    const out = { family: judge.family, model: got.j.id ?? judge.id, effort: got.j.effort ?? null, rubricHash: rubric.hash, durationMs: got.ms, ...v };
 +    const out = { family: judge.family, model: got.j.id ?? judge.id, effort: got.j.effort ?? null, rubricHash: rubric.hash, durationMs: got.ms,
 +      ...v, ...(judge.vendor === 'agy' && { modelVerified: false }) };
-@@ -565,0 +634,24 @@
+@@ -565,0 +636,24 @@
 +
 +function agyBuilderAvailable() {
 +  if (process.platform !== 'darwin' || !fs.existsSync('/usr/bin/sandbox-exec') || !onPath('agy')) return false;
@@ -148,19 +153,19 @@
 +  }
 +  return { ms: r.ms, report: j.answer, served: j.served, buildAttempted: true };
 +}
-@@ -602,0 +695 @@
+@@ -602,0 +697 @@
 +  if (fam.vendor === 'agy' && fam.agyBuilder) return agyBuilderCall(ctx, fam, dirs, env, logFile);
-@@ -644 +737,2 @@
+@@ -644 +739,2 @@
 -  if (!BUILD_VENDORS.has(fam.vendor)) {
 +  const referenceCheck = ctx.referenceCheck;
 +  if (!referenceCheck && !canBuild(fam)) {
-@@ -646 +740 @@
+@@ -646 +742 @@
 -      ? 'agy has no write mode confined to the work tree: its only containment is a permission deny list, and writes and commands need that list lifted'
 +      ? 'Neon building requires the installed ask-model --build route on macOS'
-@@ -649 +743 @@
+@@ -649 +745 @@
 -  const co = await checkoutAt(c, c.baseSha, dirs.repo, ctx.remotes);
 +  const co = await checkoutAt(c, referenceCheck ? c.refSha : c.baseSha, dirs.repo, ctx.remotes);
-@@ -654,0 +749,7 @@
+@@ -654,0 +751,7 @@
 +    const neon = referenceCheck || fam.vendor === 'agy';
 +    let grade;
 +    if (neon) {
@@ -168,15 +173,15 @@
 +      catch (e) { return { ...record, stop: { why: e.message } }; }
 +      env = { ...env, ...grade.setupEnv };
 +    }
-@@ -657 +758,2 @@
+@@ -657 +760,2 @@
 -        const pg = await startPostgres(c, line, dirs.aux);
 +        const pg = await startPostgres(c, line, dirs.aux, { neonGrade: neon });
 +        if (neon && pg.error) return { ...record, stop: { why: `disposable grade database unavailable: ${pg.error}` } };
-@@ -665 +767,2 @@
+@@ -665 +769,2 @@
 -      const r = await runChild('/bin/sh', ['-c', line], { cwd: dirs.repo, env, timeoutMs: SETUP_TIMEOUT_MS, logFile: ctx.logFile(fam.family, c, rep, `setup-${i + 1}`) });
 +      const setupCommand = neon && line === 'bun install --frozen-lockfile' ? `${line} --backend copyfile --cache-dir "$BUN_INSTALL_CACHE_DIR"` : line;
 +      const r = await runChild('/bin/sh', ['-c', setupCommand], { cwd: dirs.repo, env, timeoutMs: SETUP_TIMEOUT_MS, logFile: ctx.logFile(fam.family, c, rep, `setup-${i + 1}`) });
-@@ -668,12 +771,24 @@
+@@ -668,12 +773,24 @@
 -    const before = snapshot(dirs.repo);
 -    const prompt = buildPrompt(c);
 -    fs.writeFileSync(path.join(dirs.aux, 'prompt.md'), prompt);
@@ -213,7 +218,7 @@
 +      // A failed call that changed nothing is a failed run, not a failed build: it is retried on the next run.
 +      if (b.error && (!files.length || b.otherModel)) return { ...record, outcome: 'errored', error: b.error };
 +    }
-@@ -686 +801,11 @@
+@@ -686 +803,11 @@
 -      fs.mkdirSync(path.dirname(to), { recursive: true });
 +      if (neon) {
 +        if (path.isAbsolute(t) || t.split(path.sep).includes('..') || !fs.lstatSync(dirs.repo).isDirectory()) {
@@ -226,7 +231,7 @@
 +          if (!fs.lstatSync(dir).isDirectory()) return { ...record, stop: { why: `grade test parent is not a directory: ${t}` } };
 +        }
 +      } else fs.mkdirSync(path.dirname(to), { recursive: true });
-@@ -690 +815,6 @@
+@@ -690 +817,6 @@
 -    const g = await runChild('/bin/sh', ['-c', c.testCommand], { cwd: dirs.repo, env, timeoutMs: GRADE_TIMEOUT_MS, logFile: ctx.logFile(fam.family, c, rep, 'grade') });
 +    const invocation = neon ? grade.invocation(c.testCommand, services[0]) : { cmd: '/bin/sh', args: ['-c', c.testCommand], env };
 +    const g = await runChild(invocation.cmd, invocation.args, { cwd: dirs.repo, env: invocation.env, timeoutMs: GRADE_TIMEOUT_MS,
@@ -234,40 +239,40 @@
 +    if (neon && (g.error || /^(?:sandbox-exec:|taskpolicy:)/m.test(g.stderr))) {
 +      return { ...record, stop: { why: `could not start the grade sandbox: ${tail(g.stderr || g.error, 300)}` } };
 +    }
-@@ -695 +825 @@
+@@ -695 +827 @@
 -    return { ...record, outcome: 'built' };
 +    return { ...record, outcome: referenceCheck ? (ok ? 'reference-passed' : 'reference-failed') : 'built' };
-@@ -719 +849 @@
+@@ -719 +851 @@
 -  if (prev.outcome === 'unsupported') return true;
 +  if (prev.outcome === 'unsupported') return !(c.kind === 'builder' && fam.agyBuilder);
-@@ -777 +907 @@
+@@ -777 +909 @@
 -        if (c.kind === 'builder' && !BUILD_VENDORS.has(fam.vendor)) { cell.unsupported++; continue; }
 +        if (c.kind === 'builder' && !canBuild(fam)) { cell.unsupported++; continue; }
-@@ -803 +933 @@
+@@ -803 +935 @@
 -    BUILD_VENDORS.has(fam.vendor) ? effort(fam.buildEffort, fam.buildFrom) : '-',
 +    canBuild(fam) ? effort(fam.buildEffort, fam.buildFrom) : '-',
-@@ -817 +947,3 @@
+@@ -817 +949,3 @@
 -    if (fam.vendor === 'agy' && o.kinds.includes('builder')) notes.push(`${fam.family}: builder unsupported: agy has no write mode confined to the work tree`);
 +    if (fam.vendor === 'agy' && o.kinds.includes('builder')) notes.push(fam.agyBuilder
 +      ? `${fam.family}: ask-model --build with an unverified model and a sandboxed final grade`
 +      : `${fam.family}: builder unsupported without the installed ask-model --build route on macOS`);
-@@ -820 +952 @@
+@@ -820 +954 @@
 -    if (!fam.buildEffort && o.kinds.includes('builder') && BUILD_VENDORS.has(fam.vendor)) notes.push(`${fam.family}: no builder effort; builds run at the CLI's default (--effort ${fam.family}=<e> sets one)`);
 +    if (!fam.buildEffort && o.kinds.includes('builder') && canBuild(fam)) notes.push(`${fam.family}: no builder effort; builds run at the CLI's default (--effort ${fam.family}=<e> sets one)`);
-@@ -822 +954 @@
+@@ -822 +956 @@
 -  const agy = agyMismatch(fams);
 +  const agy = agyMismatch(fams.filter((fam) => fam.agyBuilder || o.kinds.some((kind) => JUDGED.has(kind))));
-@@ -836 +968,3 @@
+@@ -836 +970,3 @@
 -  const fams = o.families.map((f) => resolveFamily(f, o.effort[f], 'reviewer'));
 +  if (o.referenceCheck && skipped.length) die(`could not load every reference case:\n  ${skipped.join('\n  ')}`);
 +  const fams = o.referenceCheck ? [{ family: 'reference-check', vendor: null, id: null }]
 +    : o.families.map((f) => resolveFamily(f, o.effort[f], 'reviewer'));
-@@ -838,2 +972,2 @@
+@@ -838,2 +974,2 @@
 -  const judge = resolveFamily(o.judge, o.effort[o.judge], 'judge,advisor,reviewer');
 -  const bad = [...fams, judge].filter((f) => f.error);
 +  const judge = o.referenceCheck ? null : resolveFamily(o.judge, o.effort[o.judge], 'judge,advisor,reviewer');
 +  const bad = [...fams, judge].filter((f) => f?.error);
-@@ -841,3 +975,14 @@
+@@ -841,3 +977,14 @@
 -  const rubric = loadRubric();
 -  const resultsFile = path.join(o.out, 'results.jsonl');
 -  const latest = o.fresh ? new Map() : readLatest(resultsFile);
@@ -285,33 +290,33 @@
 +    say(`Reference check · cases ${o.cases} · results ${resultsFile}`);
 +    say(`  ${cases.length * o.repeat} grade checks · 0 builder model calls · 0 judge calls`);
 +  };
-@@ -845 +990 @@
+@@ -845 +992 @@
 -  if (o.dryRun) { printPlan(o, fams, judge, cases, skipped, latest, rubric); return 0; }
 +  if (o.dryRun) { printRunPlan(); return 0; }
-@@ -850 +995 @@
+@@ -850 +997 @@
 -    const aside = path.join(o.out, `results-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`);
 +    const aside = path.join(o.out, `${resultName}-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`);
-@@ -862 +1007,2 @@
+@@ -862 +1009,2 @@
 -    warn(`\nstopped by ${sig}. Finished results are in ${resultsFile}; re-run the same command (without --fresh) to resume.`);
 +    warn(`\nstopped by ${sig}. Finished results are in ${resultsFile}.`
 +      + (o.referenceCheck ? '' : ' re-run the same command (without --fresh) to resume.'));
-@@ -869 +1015 @@
+@@ -869 +1017 @@
 -  printPlan(o, fams, judge, cases, skipped, latest, rubric);
 +  printRunPlan();
-@@ -872 +1018 @@
+@@ -872 +1020 @@
 -  for (const c of cases) {
 +  for (const c of o.referenceCheck ? [] : cases) {
-@@ -892 +1038 @@
+@@ -892 +1040 @@
 -    root, remotes, rubric, judge, paced, timeoutMs: o.timeoutMin * 60_000,
 +    root, remotes, rubric, judge, paced, referenceCheck: o.referenceCheck, timeoutMs: o.timeoutMin * 60_000,
-@@ -895,0 +1042 @@
+@@ -895,0 +1044 @@
 +    if (rec.vendor === 'agy') rec.modelVerified = false;
-@@ -899,0 +1047 @@
+@@ -899,0 +1049 @@
 +  let referenceFailures = 0;
-@@ -922 +1070 @@
+@@ -922 +1072 @@
 -        if (isDone(prev, fam, c)) { await judgeAndSave(prev, c, prefix); continue; }
 +        if (!o.referenceCheck && isDone(prev, fam, c)) { await judgeAndSave(prev, c, prefix); continue; }
-@@ -935,0 +1084,10 @@
+@@ -935,0 +1086,10 @@
 +        const resultBase = { type: resultType, ts: new Date().toISOString(), family: fam.family, vendor: fam.vendor,
 +          caseId: c.id, project: c.project, repeat: rep, caseHash: c.hash };
 +        if (o.referenceCheck) {
@@ -322,16 +327,16 @@
 +          say(`${prefix} ${rec.outcome}: ${rec.grade ? `grade ${rec.grade.ok ? 'pass' : 'fail'} (${rec.grade.passed ?? '?'} passed, ${rec.grade.failed ?? '?'} failed)` : lastLine(rec.error)}`);
 +          continue;
 +        }
-@@ -936,0 +1095,4 @@
+@@ -936,0 +1097,4 @@
 +          if (fam.vendor === 'agy' && out.buildAttempted) {
 +            append({ ...resultBase, kind: c.kind, model: fam.id, effort: fam.buildEffort, outcome: 'errored',
 +              durationMs: out.durationMs, error: out.stop.why, stop: out.stop, buildAttempted: true });
 +          }
-@@ -943,2 +1105 @@
+@@ -943,2 +1107 @@
 -        const rec = { type: 'result', ts: new Date().toISOString(), family: fam.family, vendor: fam.vendor, caseId: c.id, project: c.project, repeat: rep,
 -          caseHash: c.hash, ...out };
 +        const rec = { ...resultBase, ...out };
-@@ -959,0 +1121,4 @@
+@@ -959,0 +1123,4 @@
 +  if (o.referenceCheck) {
 +    say(`\ndone · ${referenceFailures} reference checks failed · 0 model calls · results in ${resultsFile}`);
 +    return referenceFailures ? 3 : 0;
