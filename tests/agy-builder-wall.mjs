@@ -83,8 +83,11 @@ test('Google broker checks CONNECT, SNI, Host, method, route and upstream redire
   assert.match(await brokerRequest(broker, { extra: `Host: ${origin}\r\n` }), /^HTTP\/1\.1 403/);
   assert.match(await brokerRequest(broker, { method: 'GET' }), /^HTTP\/1\.1 403/);
   assert.match(await brokerRequest(broker, { pathname: inferencePath + '&other=fixture' }), /^HTTP\/1\.1 403/);
+  assert.match(await brokerRequest(broker, { pathname: '/v1internal:unknownRequest?key=fixture#sensitive' }), /^HTTP\/1\.1 403/);
   assert.match(await brokerRequest(broker, { pathname: '/v1internal:proxyCommand' }), /^HTTP\/1\.1 403/);
   assert.match(await brokerRequest(broker, { pathname: `https://${origin}${firstPath}` }), /^HTTP\/1\.1 403/);
+  const proxyPassword = new URL(broker.url).password;
+  assert.match(await brokerRequest(broker, { pathname: `/v1internal:${proxyPassword}` }), /^HTTP\/1\.1 403/);
   assert.equal(forwarded.length, 0);
 
   const success = await brokerRequest(broker, { extra: 'Authorization: Bearer fixture\r\nProxy-Authorization: fake\r\n' });
@@ -107,7 +110,13 @@ test('Google broker checks CONNECT, SNI, Host, method, route and upstream redire
   assert.match(await brokerRequest(broker, { pathname: inferencePath }), /^HTTP\/1\.1 200/);
   assert.equal(forwarded[2].path, inferencePath);
   assert.ok(broker.events.some((event) => event.reason === 'CONNECT denied'));
-  assert.doesNotMatch(JSON.stringify(broker.events), /Bearer|fixture|sensitive/);
+  assert.ok(broker.events.some((event) => event.reason === 'CONNECT denied' && event.origin === undefined && event.method === 'CONNECT' && event.status === 403));
+  assert.ok(broker.events.some((event) => event.origin === origin && event.method === 'POST' && event.path === '/v1internal:unknownRequest' && event.status === 403 && event.reason === 'request denied'));
+  assert.ok(broker.events.some((event) => event.origin === origin && event.method === 'POST' && event.path === '/v1internal:streamGenerateContent' && event.status === 200));
+  assert.ok(broker.events.some((event) => event.path === modelsPath && event.status === 502 && event.upstreamStatus === 302 && event.reason === 'upstream redirect denied'));
+  const audit = JSON.stringify(broker.events);
+  assert.doesNotMatch(audit, /Bearer|fixture|sensitive|example\.test|\?alt=/);
+  assert.ok(!audit.includes(proxyPassword));
 });
 
 function listen(t, options) {

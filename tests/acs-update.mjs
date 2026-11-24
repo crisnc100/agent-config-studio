@@ -84,6 +84,12 @@ ok('HOME is redirected', tmp !== os.homedir());
   ok('a pull that changes only bin/model-id.mjs says to reinstall it', /acs install-model-id/.test(acs(co).out));
   merge('lib/models.js', '// v2\n', 'models code');
   ok('a pull that changes only lib/models.js says to reinstall it', /acs install-model-id/.test(acs(co).out));
+  for (const helper of ['agy-builder.mjs', 'agy-builder-source.mjs']) {
+    const head = merge(`tools/${helper}`, '// builder helper\n', helper);
+    const updated = acs(co);
+    ok(`a pull that changes only ${helper} says to reinstall the resolver`,
+       updated.code === 0 && git(co, 'rev-parse', 'HEAD') === head && /acs install-model-id/.test(updated.out), updated.out);
+  }
 }
 
 {

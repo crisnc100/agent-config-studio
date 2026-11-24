@@ -8,6 +8,8 @@ import { syncBuiltinESMExports } from 'node:module';
 import { test } from 'node:test';
 import { agyBuildEnv, runAgyBuilder } from '../tools/agy-builder.mjs';
 
+const brokerEvent = { origin: 'daily-cloudcode-pa.googleapis.com', method: 'POST', path: '/v1internal:fixture', status: 403 };
+
 function setup(t) {
   const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-builder-test-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -35,6 +37,7 @@ function setup(t) {
       port: 42402,
       certificate: path.join(layout.ca, 'root.pem'),
       url: 'http://fixture:fixture-secret@127.0.0.1:42402',
+      events: [brokerEvent],
       close() { stopped++; },
     };
     const params = { ...layout, home, bin, certificate: broker.certificate, port: broker.port };
@@ -46,9 +49,13 @@ function setup(t) {
   };
 }
 
-test('builder supplies only walled edit permissions and publishes a labeled answer', async (t) => {
+const macOnly = { skip: process.platform !== 'darwin' && 'requires the macOS builder lifecycle' };
+
+test('builder supplies only walled edit permissions and publishes a labeled answer', macOnly, async (t) => {
   const { opts, home, original, prepare, removed } = setup(t);
   const events = [];
+  let audit;
+  opts.onBrokerAudit = (entries) => { audit = entries; };
   opts.checkConfig = (dir) => { events.push('config'); assert.equal(dir, home); };
   opts.checkWorkspace = (dir) => { events.push('workspace'); assert.equal(dir, opts.root); return []; };
   opts.checkToken = (dir) => { events.push(dir === home ? 'real token' : 'private token'); };
@@ -85,14 +92,17 @@ test('builder supplies only walled edit permissions and publishes a labeled answ
     'real token', 'private token', 'sign-in']);
   assert.deepEqual(result, { answer: 'answer [broker credential]', mode: 'build',
     served: { requested: opts.id, id: opts.id, verified: false }, build: { published: true }, changed: ['file.txt'] });
+  assert.deepEqual(audit, [brokerEvent]);
   assert.equal(original(), 'model edit');
   assert.ok(removed());
 });
 
-test('builder discards staged edits after runtime, sign-in or answer failure', async (t) => {
+test('builder discards staged edits after runtime, sign-in or answer failure', macOnly, async (t) => {
   for (const kind of ['runtime', 'sign-in', 'real plaintext', 'private plaintext', 'log link', 'answer', 'different model', 'spawn']) {
     const { opts, prepare, original, home, removed } = setup(t);
     let invoked = false;
+    let audit;
+    opts.onBrokerAudit = (entries) => { audit = entries; };
     if (kind === 'sign-in') opts.checkSignIn = () => 'log fixture error';
     if (kind === 'real plaintext') opts.checkToken = (dir) => invoked && dir === home;
     if (kind === 'private plaintext') opts.checkToken = (dir) => invoked && dir !== home;
@@ -108,12 +118,13 @@ test('builder discards staged edits after runtime, sign-in or answer failure', a
       return { code: kind === 'runtime' ? 1 : 0, stdout: 'fixture' };
     } }), /failed|valid answer/, kind);
     assert.ok(invoked, kind);
+    assert.deepEqual(audit, [brokerEvent], kind);
     assert.equal(original(), 'operator', kind);
     assert.ok(removed(), kind);
   }
 });
 
-test('builder refuses configuration, unsafe roots, token leftovers and wrong binaries before invocation', async (t) => {
+test('builder refuses configuration, unsafe roots, token leftovers and wrong binaries before invocation', macOnly, async (t) => {
   for (const kind of ['config', 'workspace', 'root', 'token', 'binary']) {
     const { opts, original } = setup(t);
     let prepared = false;
@@ -135,7 +146,7 @@ test('builder refuses configuration, unsafe roots, token leftovers and wrong bin
 });
 
 
-test('cancellation between clean child exit and stream close discards the build', async (t) => {
+test('cancellation between clean child exit and stream close discards the build', macOnly, async (t) => {
   for (const cancellation of ['SIGINT', 'SIGTERM', 'SIGHUP', 'timeout', null]) {
     await t.test(cancellation ?? 'ordinary close', async (t) => {
       const { opts, prepare, original, removed } = setup(t);
