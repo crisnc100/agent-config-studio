@@ -1,0 +1,12 @@
+I’d use the trusted AirFlo reference as the probe. The smallest direct test of the ICU hypothesis is to start from the failing profile and change **only metadata access to the literal `/usr/share/icu/icudt76l.dat` path** in a disposable diagnostic profile. Keep the commit, Bun binary, environment, setup and test command fixed. Record the exit, test count and same-PID denials. If the metadata denial disappears and a new data-read denial appears on that exact file, test that single addition separately.
+
+If the ICU-only run still traps, use a two-factor matrix. The existing baseline and the ICU-only run supply the first two cells. The remaining cells are:
+
+- **Runtime-only.** Allow only the three named sysctl reads and lookups of the two named Mach services, as one diagnostic group.
+- **ICU plus runtime.** Combine the exact changes from the two individual arms.
+
+A 61-test pass in either individual arm shows that arm is sufficient under these conditions. If only the combined arm passes, that supports an interaction. Bisect the runtime group **with the ICU arm held fixed**, then remove each surviving permission individually. If all arms trap, the matrix leaves the cause unresolved. The missing observation for the executable-memory hypothesis is a failing executable-memory operation tied to the trapping thread, or a symbolicated trap site identifying that failure. A negative matrix alone supplies neither.
+
+**Proof bar.** In every candidate passing profile, require all 61 unchanged tests to pass and the unrelated host-file, UNIX-socket and TCP canaries to remain denied. For the smallest passing set, withdraw each member and reproduce the startup trap, then restore the set and reproduce the pass. Verify that each diagnostic rule actually removed its targeted denial before interpreting a failed arm. This establishes a profile dependency for this reference. Attributing it specifically to Unicode normalization, Intl or regex would still require evidence of that call path.
+
+**Reporter’s overclaim.** The `133 / 0 / 133 / 133` result establishes that the trap depends on running under the tested profile and that neither directory grant alone rescued the run. It leaves open a directory dependency in combination with another permission. The denial log also cannot establish that Seatbelt directly issued the trap or that the decisive operation appears among the logged refusals.
