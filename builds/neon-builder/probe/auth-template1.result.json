@@ -1,0 +1,3690 @@
+{
+  "mode": "matched-auth-sinks",
+  "modelsCliResults": 2,
+  "freshPrivateInputsMatched": true,
+  "originalPinVerified": true,
+  "stopped": null,
+  "arms": [
+    {
+      "name": "trace-read-only",
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "interrupted": false,
+      "turns": 0,
+      "reportedZeroTurns": true,
+      "modelCount": 27,
+      "passed": true,
+      "plaintextAbsent": true,
+      "cleanPostflight": true,
+      "aliasMatchesAfter": true,
+      "seedsMatchAfter": false,
+      "anyKeyringPrefix": true,
+      "unknownKeyringPrefix": false,
+      "invalidStoredToken": false,
+      "failedTokenRemoval": false,
+      "failedUserInfo": false,
+      "failedOAuthParams": false,
+      "failedStoredTokenLookup": false,
+      "keychainLoaded": true,
+      "cancelledKeyring": false,
+      "missingWifEmailClaim": false,
+      "keyringTimedOut": false,
+      "keyringValidationNetworkError": false,
+      "incompleteGcpOnboarding": false,
+      "tokenStorageInitializationError": false,
+      "keyringMarkerHomeError": false,
+      "keyringMarkerStatError": false,
+      "keyringMarkerCleanupError": false,
+      "keyringMarkerWriteError": false,
+      "keyringMarkerRenameError": false,
+      "keyringMarkerDirectoryError": false,
+      "keyringMarkerTempCreateError": false,
+      "keyringMarkerTempCloseError": false,
+      "keyringMarkerPermissionsError": false,
+      "recentTimeoutFileFallback": false,
+      "requestedFileFallback": false,
+      "detectedFileFallback": false,
+      "fileFallbackMentioned": false,
+      "failedOnboardingLoad": false,
+      "keychainAuthenticated": true,
+      "signInNeeded": false,
+      "nativeSettingsWriteDenied": false,
+      "seedsChangedAfter": {
+        "installation_id": false,
+        "jetski_state.pbtxt": false,
+        "default_project_id.txt": false,
+        "onboarding.json": false,
+        "settings.json": true
+      },
+      "keychainLookupCommandMentioned": false,
+      "backendAuthSuccessMarker": true,
+      "nonKeyringBackendAuthSuccessMarker": false,
+      "interactiveBackendCompletionMarker": false,
+      "noStoredCredentialMarker": false,
+      "oauthObserved": false,
+      "tokenRefreshMarker": false,
+      "operatorKeychainChanged": false,
+      "operatorSettingsChanged": false,
+      "operatorSeedChanged": false,
+      "brokerEvents": [
+        {
+          "method": "CONNECT",
+          "status": 403
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "path": "/v1internal:loadCodeAssist",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "status": 403
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "status": 403
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "status": 403
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "path": "/v1internal:fetchAvailableModels",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "status": 403
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "path": "/v1internal:listExperiments",
+          "status": 502
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "path": "/v1internal:loadCodeAssist",
+          "status": 200
+        },
+        {
+          "method": "CONNECT",
+          "status": 403
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "path": "/v1internal:loadCodeAssist",
+          "status": 200
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "status": 403
+        },
+        {
+          "origin": "daily-cloudcode-pa.googleapis.com",
+          "method": "POST",
+          "status": 403
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        }
+      ],
+      "sinks": {
+        "stdout": {
+          "nonemptyLines": 1,
+          "unresolvedRetainedLines": 1,
+          "truncated": false,
+          "records": [
+            {
+              "ordinal": 1,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            }
+          ]
+        },
+        "stderr": {
+          "nonemptyLines": 1,
+          "unresolvedRetainedLines": 0,
+          "truncated": false,
+          "records": [
+            {
+              "ordinal": 1,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [
+                "models"
+              ],
+              "errno": null
+            }
+          ]
+        },
+        "ownedLog": {
+          "nonemptyLines": 187,
+          "unresolvedRetainedLines": 58,
+          "truncated": false,
+          "records": [
+            {
+              "ordinal": 1,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 2652,
+              "labels": [],
+              "words": [
+                "language",
+                "server"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 2,
+              "level": "info",
+              "source": "workflow_python.go",
+              "sourceLine": 21,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 3,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 2711,
+              "labels": [],
+              "words": [
+                "language",
+                "server"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 4,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 1290,
+              "labels": [],
+              "words": [
+                "language",
+                "server"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 5,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 1305,
+              "labels": [],
+              "words": [
+                "language",
+                "server",
+                "port"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 6,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 1313,
+              "labels": [],
+              "words": [
+                "language",
+                "server",
+                "port",
+                "http"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 7,
+              "level": "info",
+              "source": "model_configs.go",
+              "sourceLine": 230,
+              "labels": [],
+              "words": [
+                "auth",
+                "empty",
+                "response"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 8,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 9,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "failed",
+                "load",
+                "code",
+                "response",
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 10,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "failed",
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 11,
+              "level": "info",
+              "source": "store_client.go",
+              "sourceLine": 714,
+              "labels": [
+                "conversation-summary-reconcile"
+              ],
+              "words": [
+                "summary"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 12,
+              "level": "info",
+              "source": "store_client.go",
+              "sourceLine": 743,
+              "labels": [],
+              "words": [
+                "summary"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 13,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 14,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 15,
+              "level": "warning",
+              "source": "defaults.go",
+              "sourceLine": 709,
+              "labels": [],
+              "words": [
+                "failed",
+                "path",
+                "path",
+                "invalid"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 16,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 162,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 17,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 18,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 19,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 20,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 21,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 22,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 23,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 24,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 25,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 26,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 27,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 28,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 29,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 4081,
+              "labels": [],
+              "words": [
+                "server"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 30,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 4889,
+              "labels": [],
+              "words": [
+                "auth"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 31,
+              "level": "warning",
+              "source": "rpcs_plugin_auth.go",
+              "sourceLine": 110,
+              "labels": [],
+              "words": [
+                "not",
+                "cannot",
+                "user",
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 32,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 33,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 34,
+              "level": "info",
+              "source": "auto_updater.go",
+              "sourceLine": 285,
+              "labels": [],
+              "words": [
+                "update",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 35,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "failed",
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 36,
+              "level": "info",
+              "source": "common.go",
+              "sourceLine": 193,
+              "labels": [],
+              "words": [
+                "cli"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 37,
+              "level": "error",
+              "source": "launchsteps.go",
+              "sourceLine": 108,
+              "labels": [],
+              "words": [
+                "failed",
+                "resolve",
+                "path",
+                "path",
+                "not",
+                "default"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 38,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 4908,
+              "labels": [],
+              "words": [
+                "state",
+                "refresh"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 39,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 4923,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 40,
+              "level": "info",
+              "source": "common.go",
+              "sourceLine": 214,
+              "labels": [],
+              "words": [
+                "cli",
+                "app",
+                "data",
+                "directory"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 41,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 315,
+              "labels": [],
+              "words": [
+                "cli",
+                "server"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 42,
+              "level": "info",
+              "source": "auth_provider.go",
+              "sourceLine": 816,
+              "labels": [],
+              "words": [
+                "enable"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 43,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 4926,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 44,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 6027,
+              "labels": [],
+              "words": [
+                "session"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 45,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 5705,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 46,
+              "level": "info",
+              "source": "profiler.go",
+              "sourceLine": 231,
+              "labels": [],
+              "words": [
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 47,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 48,
+              "level": "info",
+              "source": "reconcile_summaries.go",
+              "sourceLine": 94,
+              "labels": [],
+              "words": [
+                "cancelled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 49,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 50,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 51,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 52,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 53,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 54,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 55,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 56,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 57,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 58,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 59,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 60,
+              "level": "info",
+              "source": "store_client.go",
+              "sourceLine": 714,
+              "labels": [
+                "conversation-summary-reconcile"
+              ],
+              "words": [
+                "summary"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 61,
+              "level": "warning",
+              "source": "project.go",
+              "sourceLine": 120,
+              "labels": [],
+              "words": [
+                "project",
+                "default",
+                "project",
+                "default",
+                "cli",
+                "project",
+                "found",
+                "cache",
+                "failed",
+                "read",
+                "project",
+                "file",
+                "read",
+                "project",
+                "file",
+                "open",
+                "no",
+                "file"
+              ],
+              "errno": "ENOENT"
+            },
+            {
+              "ordinal": 62,
+              "level": "error",
+              "source": "server.go",
+              "sourceLine": 3376,
+              "labels": [
+                "conversation-directory-read-failed"
+              ],
+              "words": [
+                "failed",
+                "read",
+                "directory",
+                "open",
+                "no",
+                "file",
+                "directory"
+              ],
+              "errno": "ENOENT"
+            },
+            {
+              "ordinal": 63,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 3262,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 64,
+              "level": "info",
+              "source": "store_client.go",
+              "sourceLine": 743,
+              "labels": [],
+              "words": [
+                "summary"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 65,
+              "level": "info",
+              "source": "project.go",
+              "sourceLine": 78,
+              "labels": [],
+              "words": [
+                "project",
+                "project"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 66,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 2366,
+              "labels": [],
+              "words": [
+                "project",
+                "default",
+                "cli",
+                "project"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 67,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 592,
+              "labels": [],
+              "words": [
+                "cli",
+                "workspace"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 68,
+              "level": "error",
+              "source": "server.go",
+              "sourceLine": 3376,
+              "labels": [
+                "conversation-directory-read-failed"
+              ],
+              "words": [
+                "failed",
+                "read",
+                "directory",
+                "open",
+                "no",
+                "file",
+                "directory"
+              ],
+              "errno": "ENOENT"
+            },
+            {
+              "ordinal": 69,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 3262,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 70,
+              "level": "info",
+              "source": "cli_setting_manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "cli",
+                "settings",
+                "write",
+                "file",
+                "read"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 71,
+              "level": "info",
+              "source": "hooks_manager.go",
+              "sourceLine": 54,
+              "labels": [],
+              "words": [
+                "loaded",
+                "file"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 72,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 776,
+              "labels": [],
+              "words": [
+                "cli"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 73,
+              "level": "info",
+              "source": "common.go",
+              "sourceLine": 348,
+              "labels": [],
+              "words": [
+                "cli"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 74,
+              "level": "info",
+              "source": "cli_setting_manager.go",
+              "sourceLine": 228,
+              "labels": [],
+              "words": [
+                "no",
+                "project",
+                "project"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 75,
+              "level": "info",
+              "source": "quota_manager.go",
+              "sourceLine": 36,
+              "labels": [],
+              "words": [
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 76,
+              "level": "info",
+              "source": "keyring.go",
+              "sourceLine": 64,
+              "labels": [
+                "keyring-loaded"
+              ],
+              "words": [
+                "loaded",
+                "token"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 77,
+              "level": "info",
+              "source": "auth.go",
+              "sourceLine": 157,
+              "labels": [
+                "chained-auth-success"
+              ],
+              "words": [
+                "authenticated",
+                "keyring",
+                "keyring"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 78,
+              "level": "info",
+              "source": "server_oauth.go",
+              "sourceLine": 221,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 79,
+              "level": "info",
+              "source": "server_oauth.go",
+              "sourceLine": 226,
+              "labels": [],
+              "words": [
+                "oauth",
+                "authenticated"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 80,
+              "level": "info",
+              "source": "server_oauth.go",
+              "sourceLine": 235,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 81,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 201,
+              "labels": [],
+              "words": [
+                "failed",
+                "refresh",
+                "cache",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 82,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 201,
+              "labels": [],
+              "words": [
+                "failed",
+                "refresh",
+                "cache",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 83,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "forbidden"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 84,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "forbidden"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 85,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 201,
+              "labels": [],
+              "words": [
+                "failed",
+                "refresh",
+                "cache",
+                "forbidden"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 86,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 201,
+              "labels": [],
+              "words": [
+                "failed",
+                "refresh",
+                "cache",
+                "forbidden"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 87,
+              "level": "info",
+              "source": "http_helpers.go",
+              "sourceLine": 760,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 88,
+              "level": "info",
+              "source": "http_helpers.go",
+              "sourceLine": 999,
+              "labels": [
+                "backend-request-failed"
+              ],
+              "words": [
+                "failed",
+                "code",
+                "request"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 89,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 90,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 91,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 201,
+              "labels": [],
+              "words": [
+                "failed",
+                "refresh",
+                "cache",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 92,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 201,
+              "labels": [],
+              "words": [
+                "failed",
+                "refresh",
+                "cache",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 93,
+              "level": "info",
+              "source": "http_helpers.go",
+              "sourceLine": 999,
+              "labels": [
+                "backend-request-failed"
+              ],
+              "words": [
+                "failed",
+                "code",
+                "request"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 94,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 95,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 96,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 201,
+              "labels": [],
+              "words": [
+                "failed",
+                "refresh",
+                "cache",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 97,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 201,
+              "labels": [],
+              "words": [
+                "failed",
+                "refresh",
+                "cache",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 98,
+              "level": "info",
+              "source": "http_helpers.go",
+              "sourceLine": 999,
+              "labels": [
+                "backend-request-failed"
+              ],
+              "words": [
+                "failed",
+                "code",
+                "request"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 99,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 100,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 101,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 201,
+              "labels": [],
+              "words": [
+                "failed",
+                "refresh",
+                "cache",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 102,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 201,
+              "labels": [],
+              "words": [
+                "failed",
+                "refresh",
+                "cache",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 103,
+              "level": "info",
+              "source": "http_helpers.go",
+              "sourceLine": 760,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 104,
+              "level": "info",
+              "source": "model_config_manager.go",
+              "sourceLine": 375,
+              "labels": [],
+              "words": [
+                "model"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 105,
+              "level": "warning",
+              "source": "cli_setting_manager.go",
+              "sourceLine": 1065,
+              "labels": [
+                "telemetry-setting-default-disabled"
+              ],
+              "words": [
+                "failed",
+                "read",
+                "telemetry",
+                "setting",
+                "server",
+                "disabled",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 106,
+              "level": "info",
+              "source": "quota_manager.go",
+              "sourceLine": 45,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 107,
+              "level": "info",
+              "source": "experiment_manager.go",
+              "sourceLine": 66,
+              "labels": [],
+              "words": [
+                "refresh",
+                "after"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 108,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 4514,
+              "labels": [
+                "language-server-shutdown"
+              ],
+              "words": [
+                "language",
+                "server"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 109,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 4554,
+              "labels": [
+                "migration-drain"
+              ],
+              "words": [
+                "migration",
+                "state"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 110,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 6027,
+              "labels": [],
+              "words": [
+                "session"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 111,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 5705,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 112,
+              "level": "info",
+              "source": "experiment_manager.go",
+              "sourceLine": 70,
+              "labels": [],
+              "words": [
+                "after"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 113,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 1683,
+              "labels": [],
+              "words": [
+                "system"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 114,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 1778,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 115,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 1784,
+              "labels": [],
+              "words": [
+                "unavailable",
+                "default"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 116,
+              "level": "info",
+              "source": "http_helpers.go",
+              "sourceLine": 999,
+              "labels": [
+                "backend-request-failed"
+              ],
+              "words": [
+                "failed",
+                "code",
+                "request"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 117,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 118,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 119,
+              "level": "warning",
+              "source": "quota_manager.go",
+              "sourceLine": 57,
+              "labels": [
+                "quota-summary-fetch-failed"
+              ],
+              "words": [
+                "failed",
+                "user",
+                "quota",
+                "summary",
+                "failed",
+                "user",
+                "quota",
+                "summary",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 120,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 201,
+              "labels": [],
+              "words": [
+                "failed",
+                "refresh",
+                "cache",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 121,
+              "level": "info",
+              "source": "http_helpers.go",
+              "sourceLine": 760,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 122,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "forbidden"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 123,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "forbidden"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 124,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 201,
+              "labels": [],
+              "words": [
+                "failed",
+                "refresh",
+                "cache",
+                "forbidden"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 125,
+              "level": "info",
+              "source": "http_helpers.go",
+              "sourceLine": 760,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 126,
+              "level": "info",
+              "source": "http_helpers.go",
+              "sourceLine": 999,
+              "labels": [
+                "backend-request-failed"
+              ],
+              "words": [
+                "failed",
+                "code",
+                "request"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 127,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 128,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 129,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 201,
+              "labels": [],
+              "words": [
+                "failed",
+                "refresh",
+                "cache",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 130,
+              "level": "error",
+              "source": "error_parsing.go",
+              "sourceLine": 87,
+              "labels": [],
+              "words": [
+                "error",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 131,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 132,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 133,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 134,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 135,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 136,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 137,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 138,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 139,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 140,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 141,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 142,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 143,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 144,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 145,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 146,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 147,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 148,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 149,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 150,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 151,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 152,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 153,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 154,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 155,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 156,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 157,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 158,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 159,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 160,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 161,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 162,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 163,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 164,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 165,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 166,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 167,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 168,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 169,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 170,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [
+                "runtime"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 171,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 172,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 173,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [
+                "error"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 174,
+              "level": "error",
+              "source": "server_oauth.go",
+              "sourceLine": 112,
+              "labels": [],
+              "words": [
+                "validation",
+                "failed",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 175,
+              "level": "info",
+              "source": "model_config_manager.go",
+              "sourceLine": 375,
+              "labels": [],
+              "words": [
+                "model"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 176,
+              "level": "warning",
+              "source": "cli_setting_manager.go",
+              "sourceLine": 1065,
+              "labels": [
+                "telemetry-setting-default-disabled"
+              ],
+              "words": [
+                "failed",
+                "read",
+                "telemetry",
+                "setting",
+                "server",
+                "disabled",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 177,
+              "level": "info",
+              "source": "experiment_manager.go",
+              "sourceLine": 66,
+              "labels": [],
+              "words": [
+                "refresh",
+                "after"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 178,
+              "level": "info",
+              "source": "quota_manager.go",
+              "sourceLine": 45,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 179,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 6027,
+              "labels": [],
+              "words": [
+                "session"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 180,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 5705,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 181,
+              "level": "info",
+              "source": "experiment_manager.go",
+              "sourceLine": 70,
+              "labels": [],
+              "words": [
+                "after"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 182,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 1683,
+              "labels": [],
+              "words": [
+                "system"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 183,
+              "level": "info",
+              "source": "http_helpers.go",
+              "sourceLine": 999,
+              "labels": [
+                "backend-request-failed"
+              ],
+              "words": [
+                "failed",
+                "code",
+                "request"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 184,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 185,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 186,
+              "level": "warning",
+              "source": "quota_manager.go",
+              "sourceLine": 57,
+              "labels": [
+                "quota-summary-fetch-failed"
+              ],
+              "words": [
+                "failed",
+                "user",
+                "quota",
+                "summary",
+                "failed",
+                "user",
+                "quota",
+                "summary",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 187,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 201,
+              "labels": [],
+              "words": [
+                "failed",
+                "refresh",
+                "cache",
+                "request",
+                "failed",
+                "empty",
+                "code"
+              ],
+              "errno": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "trace-strict",
+      "code": 1,
+      "signal": null,
+      "timedOut": false,
+      "interrupted": false,
+      "turns": null,
+      "reportedZeroTurns": false,
+      "modelCount": null,
+      "passed": false,
+      "plaintextAbsent": true,
+      "cleanPostflight": true,
+      "aliasMatchesAfter": true,
+      "seedsMatchAfter": true,
+      "anyKeyringPrefix": false,
+      "unknownKeyringPrefix": false,
+      "invalidStoredToken": false,
+      "failedTokenRemoval": false,
+      "failedUserInfo": false,
+      "failedOAuthParams": false,
+      "failedStoredTokenLookup": false,
+      "keychainLoaded": false,
+      "cancelledKeyring": false,
+      "missingWifEmailClaim": false,
+      "keyringTimedOut": false,
+      "keyringValidationNetworkError": false,
+      "incompleteGcpOnboarding": false,
+      "tokenStorageInitializationError": false,
+      "keyringMarkerHomeError": false,
+      "keyringMarkerStatError": false,
+      "keyringMarkerCleanupError": false,
+      "keyringMarkerWriteError": false,
+      "keyringMarkerRenameError": false,
+      "keyringMarkerDirectoryError": false,
+      "keyringMarkerTempCreateError": false,
+      "keyringMarkerTempCloseError": false,
+      "keyringMarkerPermissionsError": false,
+      "recentTimeoutFileFallback": false,
+      "requestedFileFallback": false,
+      "detectedFileFallback": false,
+      "fileFallbackMentioned": false,
+      "failedOnboardingLoad": false,
+      "keychainAuthenticated": false,
+      "signInNeeded": true,
+      "nativeSettingsWriteDenied": true,
+      "seedsChangedAfter": {
+        "installation_id": false,
+        "jetski_state.pbtxt": false,
+        "default_project_id.txt": false,
+        "onboarding.json": false,
+        "settings.json": false
+      },
+      "keychainLookupCommandMentioned": false,
+      "backendAuthSuccessMarker": false,
+      "nonKeyringBackendAuthSuccessMarker": false,
+      "interactiveBackendCompletionMarker": false,
+      "noStoredCredentialMarker": false,
+      "oauthObserved": false,
+      "tokenRefreshMarker": false,
+      "operatorKeychainChanged": false,
+      "operatorSettingsChanged": false,
+      "operatorSeedChanged": false,
+      "brokerEvents": [
+        {
+          "origin": "play.googleapis.com",
+          "method": "CONNECT",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 200
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "POST",
+          "path": "/log",
+          "status": 503
+        },
+        {
+          "origin": "play.googleapis.com",
+          "method": "CONNECT"
+        }
+      ],
+      "sinks": {
+        "stdout": {
+          "nonemptyLines": 0,
+          "unresolvedRetainedLines": 0,
+          "truncated": false,
+          "records": []
+        },
+        "stderr": {
+          "nonemptyLines": 2,
+          "unresolvedRetainedLines": 0,
+          "truncated": false,
+          "records": [
+            {
+              "ordinal": 1,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [],
+              "words": [
+                "models"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 2,
+              "level": "unstructured",
+              "source": null,
+              "sourceLine": null,
+              "labels": [
+                "models-sign-in-needed"
+              ],
+              "words": [
+                "error",
+                "models",
+                "cli",
+                "without"
+              ],
+              "errno": null
+            }
+          ]
+        },
+        "ownedLog": {
+          "nonemptyLines": 79,
+          "unresolvedRetainedLines": 7,
+          "truncated": false,
+          "records": [
+            {
+              "ordinal": 1,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 2652,
+              "labels": [],
+              "words": [
+                "language",
+                "server"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 2,
+              "level": "info",
+              "source": "workflow_python.go",
+              "sourceLine": 21,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 3,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 2711,
+              "labels": [],
+              "words": [
+                "language",
+                "server"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 4,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 1290,
+              "labels": [],
+              "words": [
+                "language",
+                "server"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 5,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 1305,
+              "labels": [],
+              "words": [
+                "language",
+                "server",
+                "port"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 6,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 1313,
+              "labels": [],
+              "words": [
+                "language",
+                "server",
+                "port",
+                "http"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 7,
+              "level": "info",
+              "source": "model_configs.go",
+              "sourceLine": 230,
+              "labels": [],
+              "words": [
+                "auth",
+                "empty",
+                "response"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 8,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 9,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "failed",
+                "load",
+                "code",
+                "response",
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 10,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "failed",
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 11,
+              "level": "info",
+              "source": "store_client.go",
+              "sourceLine": 714,
+              "labels": [
+                "conversation-summary-reconcile"
+              ],
+              "words": [
+                "summary"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 12,
+              "level": "info",
+              "source": "store_client.go",
+              "sourceLine": 743,
+              "labels": [],
+              "words": [
+                "summary"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 13,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 14,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 15,
+              "level": "warning",
+              "source": "defaults.go",
+              "sourceLine": 709,
+              "labels": [],
+              "words": [
+                "failed",
+                "path",
+                "path",
+                "invalid"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 16,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 162,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 17,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 18,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 19,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 20,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 21,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 22,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 23,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 24,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 25,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 26,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 27,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 28,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 29,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 4081,
+              "labels": [],
+              "words": [
+                "server"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 30,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 4889,
+              "labels": [],
+              "words": [
+                "auth"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 31,
+              "level": "warning",
+              "source": "rpcs_plugin_auth.go",
+              "sourceLine": 110,
+              "labels": [],
+              "words": [
+                "not",
+                "cannot",
+                "user",
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 32,
+              "level": "info",
+              "source": "auto_updater.go",
+              "sourceLine": 285,
+              "labels": [],
+              "words": [
+                "update",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 33,
+              "level": "info",
+              "source": "common.go",
+              "sourceLine": 193,
+              "labels": [],
+              "words": [
+                "cli"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 34,
+              "level": "error",
+              "source": "launchsteps.go",
+              "sourceLine": 108,
+              "labels": [],
+              "words": [
+                "failed",
+                "resolve",
+                "path",
+                "path",
+                "not",
+                "default"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 35,
+              "level": "info",
+              "source": "common.go",
+              "sourceLine": 214,
+              "labels": [],
+              "words": [
+                "cli",
+                "app",
+                "data",
+                "directory"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 36,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 315,
+              "labels": [],
+              "words": [
+                "cli",
+                "server"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 37,
+              "level": "warning",
+              "source": "cache.go",
+              "sourceLine": 169,
+              "labels": [],
+              "words": [
+                "cache",
+                "refresh",
+                "failed",
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 38,
+              "level": "info",
+              "source": "auth_provider.go",
+              "sourceLine": 816,
+              "labels": [],
+              "words": [
+                "enable"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 39,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 40,
+              "level": "error",
+              "source": "errorreport.go",
+              "sourceLine": 282,
+              "labels": [],
+              "words": [
+                "failed",
+                "error",
+                "token",
+                "source",
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 41,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 4908,
+              "labels": [],
+              "words": [
+                "state",
+                "refresh"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 42,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 4923,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 43,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 4926,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 44,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 6027,
+              "labels": [],
+              "words": [
+                "session"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 45,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 5705,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 46,
+              "level": "info",
+              "source": "profiler.go",
+              "sourceLine": 231,
+              "labels": [],
+              "words": [
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 47,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 48,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 49,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 50,
+              "level": "info",
+              "source": "reconcile_summaries.go",
+              "sourceLine": 94,
+              "labels": [],
+              "words": [
+                "cancelled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 51,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 52,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 53,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 54,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 55,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 56,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 57,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "migration"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 58,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 107,
+              "labels": [],
+              "words": [
+                "migration",
+                "status"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 59,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 95,
+              "labels": [],
+              "words": [
+                "migration",
+                "disabled"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 60,
+              "level": "info",
+              "source": "store_client.go",
+              "sourceLine": 714,
+              "labels": [
+                "conversation-summary-reconcile"
+              ],
+              "words": [
+                "summary"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 61,
+              "level": "warning",
+              "source": "project.go",
+              "sourceLine": 120,
+              "labels": [],
+              "words": [
+                "project",
+                "default",
+                "project",
+                "default",
+                "cli",
+                "project",
+                "found",
+                "cache",
+                "failed",
+                "read",
+                "project",
+                "file",
+                "read",
+                "project",
+                "file",
+                "open",
+                "no",
+                "file"
+              ],
+              "errno": "ENOENT"
+            },
+            {
+              "ordinal": 62,
+              "level": "error",
+              "source": "server.go",
+              "sourceLine": 3376,
+              "labels": [
+                "conversation-directory-read-failed"
+              ],
+              "words": [
+                "failed",
+                "read",
+                "directory",
+                "open",
+                "no",
+                "file",
+                "directory"
+              ],
+              "errno": "ENOENT"
+            },
+            {
+              "ordinal": 63,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 3262,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 64,
+              "level": "info",
+              "source": "store_client.go",
+              "sourceLine": 743,
+              "labels": [],
+              "words": [
+                "summary"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 65,
+              "level": "info",
+              "source": "project.go",
+              "sourceLine": 78,
+              "labels": [],
+              "words": [
+                "project",
+                "project"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 66,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 2366,
+              "labels": [],
+              "words": [
+                "project",
+                "default",
+                "cli",
+                "project"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 67,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 592,
+              "labels": [],
+              "words": [
+                "cli",
+                "workspace"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 68,
+              "level": "error",
+              "source": "server.go",
+              "sourceLine": 3376,
+              "labels": [
+                "conversation-directory-read-failed"
+              ],
+              "words": [
+                "failed",
+                "read",
+                "directory",
+                "open",
+                "no",
+                "file",
+                "directory"
+              ],
+              "errno": "ENOENT"
+            },
+            {
+              "ordinal": 69,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 3262,
+              "labels": [],
+              "words": [],
+              "errno": null
+            },
+            {
+              "ordinal": 70,
+              "level": "error",
+              "source": "cli_setting_manager.go",
+              "sourceLine": 884,
+              "labels": [
+                "settings-write-failed"
+              ],
+              "words": [
+                "failed",
+                "write",
+                "validated",
+                "settings",
+                "private",
+                "settings",
+                "not"
+              ],
+              "errno": "EPERM"
+            },
+            {
+              "ordinal": 71,
+              "level": "error",
+              "source": "cli_setting_manager.go",
+              "sourceLine": 52,
+              "labels": [
+                "settings-default-fallback"
+              ],
+              "words": [
+                "failed",
+                "load",
+                "cli",
+                "settings",
+                "private",
+                "settings",
+                "not"
+              ],
+              "errno": "EPERM"
+            },
+            {
+              "ordinal": 72,
+              "level": "info",
+              "source": "cli_setting_manager.go",
+              "sourceLine": 98,
+              "labels": [],
+              "words": [
+                "cli",
+                "settings",
+                "write",
+                "file",
+                "read"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 73,
+              "level": "info",
+              "source": "hooks_manager.go",
+              "sourceLine": 54,
+              "labels": [],
+              "words": [
+                "loaded",
+                "file"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 74,
+              "level": "info",
+              "source": "manager.go",
+              "sourceLine": 776,
+              "labels": [],
+              "words": [
+                "cli"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 75,
+              "level": "info",
+              "source": "common.go",
+              "sourceLine": 348,
+              "labels": [],
+              "words": [
+                "cli"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 76,
+              "level": "info",
+              "source": "cli_setting_manager.go",
+              "sourceLine": 228,
+              "labels": [],
+              "words": [
+                "no",
+                "project",
+                "project"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 77,
+              "level": "info",
+              "source": "quota_manager.go",
+              "sourceLine": 36,
+              "labels": [],
+              "words": [
+                "not"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 78,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 4514,
+              "labels": [
+                "language-server-shutdown"
+              ],
+              "words": [
+                "language",
+                "server"
+              ],
+              "errno": null
+            },
+            {
+              "ordinal": 79,
+              "level": "info",
+              "source": "server.go",
+              "sourceLine": 4554,
+              "labels": [
+                "migration-drain"
+              ],
+              "words": [
+                "migration",
+                "state"
+              ],
+              "errno": null
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,5 +1,15 @@
 # Current orchestrator state
 
+## 2026-11-24 10:02 EST: pending Cris scope choice
+
+
+## Latest clarification and final auth trace
+
+Cris clarified that the intended workflow is an ordinary second Antigravity session, prompted and monitored by the orchestrator, followed by the normal review cycle. Root explained that launching and monitoring is straightforward; the complexity comes from the original hard containment requirements. A scope question is pending: use normal Antigravity permissions, or retain the original enforced filesystem and network restrictions. No permission boundary has been removed, and no new build/model probe should run until that choice arrives. This is a pending scope clarification, not an explicit pause or cancellation.
+
+The installed agy help confirms `--prompt-interactive`, `--mode accept-edits`, `--model` and `--effort` exist. No new harness is necessary for the normal session workflow.
+
+The final matched trace completed 14:58:15–26Z: read-only control passed (27 models, zero turns, keyring loaded/authenticated); strict control failed with the sign-in message. The strict log explicitly reports `cli_setting_manager.go:884` settings-write EPERM and `cli_setting_manager.go:52` fallback to defaults, where the read-only control proceeds without those errors and later logs keyring authentication. This identifies a startup difference but does not establish that changing it alone fixes authentication: the earlier settings-only grant did not rescue sign-in. The five-grant group also failed and its permission experiment stopped. There are now 18 Mini metadata-only launches, 3 no-inference print diagnostics and 1 failed live builder attempt. No task generation request was admitted. No roles, installed runtime, push, PR or merge changed.
 ## 2026-11-24 09:52 EST checkpoint (supersedes older sections)
 
 - Tip34f3acf; code48e22c1 and separatetest34f3acf finalized canonicalPGsocket +exactICU76metadata/data grants forNeon/reference grade ONLY. Standalone/snapshotrun/grade/tests/docs/hashes match. Full freshMini reference10/10PASS,324assertions, ZEROmodel/judgecalls. Sanitizedreference-check-2.summary.json ready; neverpublishrawprivatecaseoutput.
