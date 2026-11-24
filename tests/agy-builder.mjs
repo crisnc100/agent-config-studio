@@ -6,7 +6,7 @@ import childProcess, { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { test } from 'node:test';
-import { agyBuildEnv, runAgyBuilder } from '../tools/agy-builder.mjs';
+import { agyBuildEnv, runAgyBuilder } from '../builds/neon-builder/probe/isolated-runtime/agy-builder.mjs';
 
 const brokerEvent = { origin: 'daily-cloudcode-pa.googleapis.com', method: 'POST', path: '/v1internal:fixture', status: 403 };
 
@@ -192,7 +192,7 @@ test('real SIGTERM after the first replacement finishes publication and cleanup'
   const first = path.join(root, 'file.txt');
   const second = path.join(root, 'other.txt');
   fs.writeFileSync(second, 'other operator contents');
-  const helper = new URL('../tools/agy-builder.mjs', import.meta.url).href;
+  const helper = new URL('../builds/neon-builder/probe/isolated-runtime/agy-builder.mjs', import.meta.url).href;
   const fixture = `
     import assert from 'node:assert/strict';
     import fs from 'node:fs';

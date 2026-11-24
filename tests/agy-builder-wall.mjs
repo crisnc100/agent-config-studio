@@ -7,7 +7,7 @@ import tls from 'node:tls';
 import { spawn } from 'node:child_process';
 import { PassThrough, Readable } from 'node:stream';
 import { test } from 'node:test';
-import { agyBuildEnv, agyBuildWall, agyGoogleBroker } from '../tools/agy-builder.mjs';
+import { agyBuildEnv, agyBuildWall, agyGoogleBroker } from '../builds/neon-builder/probe/isolated-runtime/agy-builder.mjs';
 
 const origin = 'daily-cloudcode-pa.googleapis.com';
 const firstPath = '/v1internal:loadCodeAssist';

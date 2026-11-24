@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { captureAgySource } from '../tools/agy-builder-source.mjs';
+import { captureAgySource } from '../builds/neon-builder/probe/isolated-runtime/agy-builder-source.mjs';
 
 const git = (cwd, ...args) => {
   const result = spawnSync('/usr/bin/git', args, {

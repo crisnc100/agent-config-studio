@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
@@ -11,7 +12,7 @@ const installer = path.join(repo, 'bin', 'model-id.mjs');
 const neon = JSON.parse(fs.readFileSync(path.join(repo, 'models.default.json'), 'utf8')).models.neon;
 const helperNames = ['agy-builder.mjs', 'agy-builder-source.mjs'];
 const diagnostic = 'auth-diagnostic-canary';
-const brokerEvent = { origin: 'daily-cloudcode-pa.googleapis.com', method: 'POST', path: '/v1internal:fixture', status: 403, reason: 'request denied' };
+
 
 function fixture(t) {
   const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'acs-ask-build-')));
@@ -29,7 +30,9 @@ function fixture(t) {
   fs.writeFileSync(prompt, '-literal prompt\n');
   const studio = path.join(home, '.agent-config-studio');
   const resolverBin = path.join(studio, 'resolver', 'bin');
-  const env = { HOME: home, PATH: `${stubs}:/usr/bin:/bin`, GIT_CONFIG_NOSYSTEM: '1' };
+  const sessionTmp = path.join(base, 'session-tmp');
+  fs.mkdirSync(sessionTmp);
+  const env = { HOME: home, PATH: `${stubs}:/usr/bin:/bin`, TMPDIR: sessionTmp, GIT_CONFIG_NOSYSTEM: '1' };
   const git = spawnSync('/usr/bin/git', ['init', '-q'], { env, cwd: root, encoding: 'utf8' });
   assert.equal(git.status, 0, git.stderr);
   fs.writeFileSync(path.join(root, 'source.txt'), 'original');
@@ -37,25 +40,51 @@ function fixture(t) {
   const installed = install();
   assert.equal(installed.status, 0, installed.stderr);
   const launch = path.join(home, '.local', 'bin', 'ask-model');
-  const called = path.join(base, 'helper-called');
-  const fakeHelper = (kind = 'success') => {
-    fs.writeFileSync(path.join(resolverBin, 'agy-builder.mjs'), `
-import fs from 'node:fs';
-export async function runAgyBuilder(options, ...overrides) {
-  const { root, bin, id, effort, prompt, readResult, checkWorkspace, checkConfig, checkToken, checkSignIn, onBrokerAudit } = options;
-  const home = ${JSON.stringify(home)};
-  const kind = ${JSON.stringify(kind)};
-  const log = ${JSON.stringify(path.join(base, 'fake-agy.log'))};
-  fs.writeFileSync(log, kind === 'sign-in' ? 'file-based token storage' : 'fixture keychain log');
-  fs.writeFileSync(${JSON.stringify(called)}, JSON.stringify({
-    root, bin, id, effort, prompt, overrides: overrides.length,
-    workspace: checkWorkspace(root), config: checkConfig(home), token: checkToken(home),
-    signInFailed: Boolean(checkSignIn(log, home)),
-  }));
-  fs.unlinkSync(log);
-  onBrokerAudit([${JSON.stringify(brokerEvent)}]);
-  if (kind === 'sign-in') throw new Error('fixture keychain postflight failed');
-  const diagnostic = ${JSON.stringify(diagnostic)};
+  const called = path.join(base, 'agy-called');
+  const versionCalled = path.join(base, 'agy-version-called');
+  const ready = path.join(base, 'agy-ready');
+  const token = path.join(home, '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+  const fakeAgy = (kind = 'success') => {
+    fs.writeFileSync(bin, `#!${process.execPath}
+${`
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const kind = ${JSON.stringify(kind)};
+const diagnostic = ${JSON.stringify(diagnostic)};
+const token = ${JSON.stringify(token)};
+const writeToken = () => {
+  fs.mkdirSync(path.dirname(token), { recursive: true });
+  fs.writeFileSync(token, diagnostic);
+};
+const argv = process.argv.slice(2);
+const value = (flag) => argv.includes(flag) ? argv[argv.indexOf(flag) + 1] : undefined;
+if (argv[0] === '--version') {
+  fs.writeFileSync(${JSON.stringify(versionCalled)}, process.cwd());
+  if (kind === 'version-token') writeToken();
+  console.log(kind === 'wrong-version' ? diagnostic : '1.5.14');
+  process.exit(0);
+}
+const log = value('--log-file');
+const call = {
+  argv, cwd: process.cwd(), home: process.env.HOME, tmp: process.env.TMPDIR,
+  update: process.env.AGY_CLI_DISABLE_AUTO_UPDATE, hooks: process.env.CMUX_ANTIGRAVITY_HOOKS_DISABLED,
+  logMode: fs.statSync(path.dirname(log)).mode & 0o777,
+  nativeConfigPresent: fs.existsSync(path.join(process.env.HOME, '.gemini/config/plugins.json')),
+};
+fs.writeFileSync(${JSON.stringify(called)}, JSON.stringify(call));
+if (kind === 'symlink-log') fs.symlinkSync(${JSON.stringify(prompt)}, log);
+else if (kind === 'directory-log') fs.mkdirSync(log);
+else if (kind === 'fifo-log') {
+  if (spawnSync('/usr/bin/mkfifo', [log]).status) process.exit(88);
+} else if (kind !== 'missing-log') {
+  fs.writeFileSync(log, ['sign-in', 'nonzero-sign-in', 'cancel-sign-in'].includes(kind) ?
+    'file-based token storage ' + diagnostic : 'fixture keychain log ' + diagnostic);
+  if (kind === 'unreadable-log') fs.chmodSync(log, 0);
+}
+if (kind === 'left-token') writeToken();
+fs.writeFileSync('source.txt', 'native fixture edit');
+const id = value('--model');
   const events = [
     { event: 'init', init: { model: kind === 'mismatch' ? 'different-model' : id } },
     { step_update: { step_index: 0, state: 'ERROR', tool_name: 'run_command', tool_info: { error: { message: 'blocked by deny rule' } } } },
@@ -97,36 +126,43 @@ export async function runAgyBuilder(options, ...overrides) {
       parameters: { AbsolutePath: '/fixture/other-project.txt' },
     } } }, result);
   }
-  const got = readResult(id, {
-    code: kind === 'nonzero' ? 7 : 0,
-    stdout: (kind === 'invalid-stream' ? 'incomplete fixture line\\n' : '') +
-      events.map((e) => JSON.stringify(e.step_update ? { event: 'step_update', ...e } : e)).join('\\n'),
-    stderr: diagnostic,
+const emit = () => {
+  console.log((kind === 'invalid-stream' ? 'incomplete fixture line\\n' : '') +
+    events.map((e) => JSON.stringify(e.step_update ? { event: 'step_update', ...e } : e)).join('\\n'));
+  console.error(diagnostic);
+  process.exitCode = ['nonzero', 'nonzero-sign-in'].includes(kind) ? 7 : 0;
+};
+if (kind === 'cancel-sign-in' || kind === 'cancel') {
+  const wait = setInterval(() => {}, 1000);
+  process.on('SIGTERM', () => {
+    clearInterval(wait);
+    fs.appendFileSync('source.txt', ' after SIGTERM');
+    emit();
   });
-  if (got.exit !== undefined) throw new Error(got.error);
-  if (kind === 'publication') throw new Error('fixture publication refused');
-  return { ...got, mode: 'build', served: { requested: id, id, verified: false }, build: { published: true }, changed: ['source.txt'] };
-}
-`);
+  fs.writeFileSync(${JSON.stringify(ready)}, 'ready');
+} else emit();
+`}`, { mode: 0o700 });
   };
-  const ask = (args, { target = root, family = ['--family', 'neon'], json = true, build = true, invoked = launch } = {}) => {
-    fs.rmSync(called, { force: true });
-    fs.rmSync(vendorCalled, { force: true });
-    const flags = [
-      ...family, '--prompt-file', prompt, ...(build ? ['--build'] : []),
-      ...(target === null ? [] : ['--cwd', target]), ...(json ? ['--json'] : []), ...args,
-    ];
-    const r = spawnSync(invoked, flags, { env, cwd: root, encoding: 'utf8', timeout: 15_000 });
+  const askFlags = (args, { target = root, family = ['--family', 'neon'], json = true, build = true } = {}) => [
+    ...family, '--prompt-file', prompt, ...(build ? ['--build'] : []),
+    ...(target === null ? [] : ['--cwd', target]), ...(json ? ['--json'] : []), ...args,
+  ];
+  const ask = (args, { invoked = launch, ...options } = {}) => {
+    for (const file of [called, versionCalled, vendorCalled]) fs.rmSync(file, { force: true });
+    const r = spawnSync(invoked, askFlags(args, options), { env, cwd: root, encoding: 'utf8', timeout: 15_000 });
     assert.ifError(r.error);
     return r;
   };
   const setRoles = (doc) => fs.writeFileSync(path.join(studio, 'roles.json'), JSON.stringify({ version: 1, ...doc }));
-  return { ask, home, root, bin, base, launch, resolverBin, install, fakeHelper, called, vendorCalled, setRoles };
+  const call = () => JSON.parse(fs.readFileSync(called, 'utf8'));
+  const askAsync = () => spawn(launch, askFlags([]), { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  return { ask, askAsync, home, root, base, launch, resolverBin, install, fakeAgy, called, call, versionCalled,
+    ready, token, sessionTmp, vendorCalled, setRoles };
 }
 
 test('build requires an explicit canonical cwd and rejects other modes, roles and vendors before dispatch', (t) => {
   const f = fixture(t);
-  f.fakeHelper();
+  f.fakeAgy();
   const alias = path.join(f.base, 'alias');
   fs.symlinkSync(f.root, alias);
   const cases = [
@@ -147,16 +183,21 @@ test('build requires an explicit canonical cwd and rejects other modes, roles an
     assert.match(r.stderr, message);
     assert.equal(r.stdout, '');
     assert.ok(!fs.existsSync(f.called));
+    assert.ok(!fs.existsSync(f.versionCalled));
     assert.ok(!fs.existsSync(f.vendorCalled));
   }
   const help = spawnSync(f.launch, ['--help'], { encoding: 'utf8' });
   assert.equal(help.status, 0);
-  assert.match(help.stdout, /--build: pinned macOS arm64 agy only/);
+  assert.match(help.stdout, /--build: uses the tested agy version with normal Antigravity permissions/);
 });
 
-test('installed build uses the exact callbacks, preferred builder effort and an unverified publication record', (t) => {
+test('installed build makes a native edit using the exact argv, preferred builder effort and an unverified model record', (t) => {
   const f = fixture(t);
-  f.fakeHelper();
+  f.fakeAgy();
+  fs.mkdirSync(path.join(f.home, '.gemini/config'), { recursive: true });
+  fs.writeFileSync(path.join(f.home, '.gemini/config/plugins.json'), '{}');
+  fs.mkdirSync(path.join(f.root, '.agents'));
+  fs.writeFileSync(path.join(f.root, '.agents/hooks.json'), '{}');
   f.setRoles({
     roles: {
       builder: { use: [{ family: 'neon', effort: 'high' }], effort: 'medium' },
@@ -174,9 +215,13 @@ test('installed build uses the exact callbacks, preferred builder effort and an 
   assert.equal(doc.error, null);
   assert.equal(doc.mode, 'build');
   assert.deepEqual(doc.served, { requested: neon, id: neon, verified: false });
-  assert.deepEqual(doc.build, { published: true });
-  assert.deepEqual(doc.changed, ['source.txt']);
-  assert.deepEqual(doc.brokerEvents, [brokerEvent]);
+  assert.equal(doc.build.execution, 'native');
+  assert.equal(doc.build.completed, true);
+  assert.ok(!Object.hasOwn(doc.build, 'published'));
+  assert.ok(!Object.hasOwn(doc, 'brokerEvents'));
+  assert.ok(!Object.hasOwn(doc, 'logFile'));
+  assert.equal(doc.changed, null);
+  assert.equal(fs.readFileSync(path.join(f.root, 'source.txt'), 'utf8'), 'native fixture edit');
   assert.deepEqual(doc.denied, ['run_command: blocked by deny rule', 'read_url: blocked by deny rule', 'outside read: needed an approval print mode cannot give']);
   assert.deepEqual(doc.actions, [
     { tool: 'run_command', state: 'ERROR', refusal: 'deny-rule' },
@@ -191,11 +236,29 @@ test('installed build uses the exact callbacks, preferred builder effort and an 
   assert.match(r.stderr, /denied run_command: blocked by deny rule/);
   assert.match(r.stderr, /was requested \(unverified\)\./);
   assert.doesNotMatch(r.stderr, /agy\.log/);
-  const called = () => JSON.parse(fs.readFileSync(f.called, 'utf8'));
-  assert.deepEqual(called(), {
-    root: f.root, bin: f.bin, id: neon, effort: 'high', prompt: '\n-literal prompt\n',
-    overrides: 0, workspace: [], config: null, token: null, signInFailed: false,
+  const { argv, ...call } = f.call();
+  const log = argv.at(-1);
+  assert.equal(path.basename(log), 'agy.log');
+  assert.equal(path.dirname(path.dirname(log)), f.sessionTmp);
+  assert.ok(!fs.existsSync(path.dirname(log)));
+  assert.deepEqual(call, {
+    cwd: f.root, home: f.home, tmp: f.sessionTmp, update: 'true', hooks: '1', logMode: 0o700, nativeConfigPresent: true,
   });
+  const versionCwd = fs.readFileSync(f.versionCalled, 'utf8');
+  assert.notEqual(versionCwd, f.root);
+  assert.ok(!fs.existsSync(versionCwd));
+  assert.deepEqual(argv, [
+    '-p', argv[1], '--model', neon, '--effort', 'high', '--output-format', 'stream-json',
+    '--print-timeout', '1800s', '--disable-slash-commands', '--mode', 'accept-edits', '--log-file', log,
+  ]);
+  assert.match(argv[1], /^You are the implementer/);
+  assert.match(argv[1], /Do not invoke other models, delegate, or run reviews or grades/);
+  assert.match(argv[1], /Do not push, open a pull request, or merge/);
+  assert.ok(argv[1].endsWith('\n-literal prompt\n'));
+  const calledFlag = (flag) => {
+    const { argv } = f.call();
+    return argv.includes(flag) ? argv[argv.indexOf(flag) + 1] : undefined;
+  };
   assert.ok(!fs.existsSync(f.vendorCalled));
   const cases = [
     [[], { family: ['--role', 'builder'] }, 'high'],
@@ -208,34 +271,33 @@ test('installed build uses the exact callbacks, preferred builder effort and an 
     const r = f.ask(args, opts);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(JSON.parse(r.stdout).effort, effort);
-    assert.equal(called().effort, effort ?? undefined);
-    assert.equal(called().root, f.root);
+    assert.equal(calledFlag('--effort'), effort ?? undefined);
+    assert.equal(f.call().cwd, f.root);
   }
   f.setRoles({ roles: { builder: { use: 'sol', alt: { family: 'neon', effort: 'xhigh' } } }, flavor: { neon: { effort: 'low' } } });
   assert.equal(JSON.parse(f.ask([]).stdout).effort, 'low');
   assert.equal(JSON.parse(f.ask(['--effort-from', 'builder']).stdout).effort, 'xhigh');
   f.setRoles({});
   assert.equal(JSON.parse(f.ask([]).stdout).effort, null);
-  assert.equal(called().effort, undefined);
+  assert.equal(calledFlag('--effort'), undefined);
 });
 
-test('build keeps denial evidence and never reports a publication after a bad answer or failed publication', (t) => {
+test('build keeps denial evidence and omits completion after unsuccessful model output', (t) => {
   const f = fixture(t);
   for (const [kind, status, error] of [
     ['mismatch', 2, /different-model/],
     ['empty', 4, /empty answer/],
     ['nonzero', 4, /agy builder failed \(exit 7\)/],
     ['bad-status', 4, /did not report a successful result/],
-    ['publication', 4, /publication refused/],
   ]) {
-    f.fakeHelper(kind);
+    f.fakeAgy(kind);
     const r = f.ask([]);
     assert.equal(r.status, status, r.stderr);
     const doc = JSON.parse(r.stdout);
     assert.match(doc.error, error);
     assert.equal(doc.answer, null);
     assert.equal(doc.changed, null);
-    assert.deepEqual(doc.brokerEvents, [brokerEvent]);
+    assert.ok(!Object.hasOwn(doc, 'brokerEvents'));
     assert.ok(!Object.hasOwn(doc, 'build'));
     assert.equal(doc.denied.length, 3);
     assert.equal(doc.notes.length, 1);
@@ -243,23 +305,19 @@ test('build keeps denial evidence and never reports a publication after a bad an
     assert.doesNotMatch(r.stderr + r.stdout, new RegExp(diagnostic));
     assert.match(r.stderr, /denied outside read/);
     assert.ok(!fs.existsSync(f.vendorCalled));
-    assert.equal(fs.readFileSync(path.join(f.root, 'source.txt'), 'utf8'), 'original');
+    assert.match(doc.error, /Inspect the worktree before retrying/);
+    assert.equal(fs.readFileSync(path.join(f.root, 'source.txt'), 'utf8'), 'native fixture edit');
+    assert.deepEqual(fs.readdirSync(f.sessionTmp), []);
   }
-  f.fakeHelper();
+  f.fakeAgy();
   const plain = f.ask([], { json: false });
   assert.equal(plain.status, 0, plain.stderr);
   assert.equal(plain.stdout, 'fixture answer\n');
-  f.fakeHelper('sign-in');
-  const signIn = f.ask([]);
-  assert.equal(signIn.status, 4, signIn.stderr);
-  assert.match(JSON.parse(signIn.stdout).error, /keychain postflight failed/);
-  assert.ok(!Object.hasOwn(JSON.parse(signIn.stdout), 'build'));
-  assert.equal(JSON.parse(fs.readFileSync(f.called, 'utf8')).signInFailed, true);
 });
 
 test('the build trace bounds the number of actions and target length', (t) => {
   const f = fixture(t);
-  f.fakeHelper('large-trace');
+  f.fakeAgy('large-trace');
   const r = f.ask([]);
   assert.equal(r.status, 0, r.stderr);
   const { actions, actionsComplete, actionsTruncated } = JSON.parse(r.stdout);
@@ -274,7 +332,7 @@ test('the build trace bounds the number of actions and target length', (t) => {
 test('build completeness requires a fully parsed stream with unambiguous terminal tool updates', (t) => {
   const f = fixture(t);
   for (const [kind, expected] of [['complete-trace', true], ['ambiguous-trace', false], ['invalid-stream', false], ['unknown-event', false]]) {
-    f.fakeHelper(kind);
+    f.fakeAgy(kind);
     const r = f.ask([]);
     assert.equal(r.status, 0, r.stderr);
     const { actions, actionsComplete, actionsTruncated } = JSON.parse(r.stdout);
@@ -287,59 +345,121 @@ test('build completeness requires a fully parsed stream with unambiguous termina
   }
 });
 
-test('real installed helper refuses unsupported launches before any vendor executable starts', (t) => {
+test('build rejects non-root directories, the home tree and noncanonical Git roots before probing agy', (t) => {
   const f = fixture(t);
-  const r = f.ask([]);
-  assert.equal(r.status, 4, r.stderr);
-  const doc = JSON.parse(r.stdout);
-  assert.match(doc.error, process.platform === 'darwin' ? /tested macOS arm64 agy/ : /requires macOS sandbox-exec/);
-  assert.equal(doc.answer, null);
-  assert.deepEqual(doc.brokerEvents, []);
-  assert.ok(!Object.hasOwn(doc, 'build'));
-  assert.ok(!fs.existsSync(f.vendorCalled));
-  if (process.platform === 'darwin') {
-    const subdir = path.join(f.root, 'nested');
-    fs.mkdirSync(subdir);
-    const sub = f.ask([], { target: subdir });
-    assert.equal(sub.status, 4, sub.stderr);
-    assert.match(JSON.parse(sub.stdout).error, /requires a Git worktree root/);
-    assert.ok(!fs.existsSync(f.vendorCalled));
-    const token = path.join(f.home, '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
-    fs.mkdirSync(path.dirname(token), { recursive: true });
-    fs.writeFileSync(token, diagnostic);
-    const blocked = f.ask([]);
-    assert.equal(blocked.status, 4, blocked.stderr);
-    assert.match(JSON.parse(blocked.stdout).error, /refused a plaintext token/);
-    assert.doesNotMatch(blocked.stderr + blocked.stdout, new RegExp(diagnostic));
-    assert.ok(!fs.existsSync(f.vendorCalled));
+  f.fakeAgy();
+  const nested = path.join(f.root, 'nested');
+  const notGit = path.join(f.base, 'not-git');
+  for (const dir of [nested, notGit]) fs.mkdirSync(dir);
+  const git = spawnSync('/usr/bin/git', ['init', '-q'], { cwd: f.home, encoding: 'utf8' });
+  assert.equal(git.status, 0, git.stderr);
+  for (const [target, error] of [
+    [nested, /requires a canonical Git worktree root/], [notGit, /requires a canonical Git worktree root/],
+    [f.home, /home folder/], [f.base, /folder holding it/], ['/', /filesystem root/],
+  ]) {
+    const r = f.ask([], { target });
+    assert.equal(r.status, 4, r.stderr);
+    assert.match(JSON.parse(r.stdout).error, error);
+    assert.ok(!fs.existsSync(f.versionCalled));
+    assert.ok(!fs.existsSync(f.called));
   }
 });
 
-test('model-id installs both helpers and can reinstall from the copy without the checkout', (t) => {
+test('build checks the token before probing agy and requires the tested version before opening a session', (t) => {
   const f = fixture(t);
-  for (const name of helperNames) {
-    const installed = path.join(f.resolverBin, name);
-    assert.ok(fs.lstatSync(installed).isFile());
-    assert.deepEqual(fs.readFileSync(installed), fs.readFileSync(path.join(repo, 'tools', name)));
+  f.fakeAgy();
+  fs.mkdirSync(path.dirname(f.token), { recursive: true });
+  fs.writeFileSync(f.token, diagnostic);
+  const blocked = f.ask([]);
+  assert.equal(blocked.status, 4, blocked.stderr);
+  assert.match(JSON.parse(blocked.stdout).error, /plain text/);
+  assert.doesNotMatch(blocked.stderr + blocked.stdout, new RegExp(diagnostic));
+  assert.ok(!fs.existsSync(f.versionCalled));
+  assert.ok(!fs.existsSync(f.called));
+  fs.unlinkSync(f.token);
+  for (const [kind, why] of [['wrong-version', /requires the tested CLI version 1.5.14/], ['version-token', /plain text/]]) {
+    f.fakeAgy(kind);
+    const r = f.ask([]);
+    assert.equal(r.status, 4, r.stderr);
+    assert.match(JSON.parse(r.stdout).error, why);
+    assert.ok(!Object.hasOwn(JSON.parse(r.stdout), 'build'));
+    assert.ok(fs.existsSync(f.versionCalled));
+    assert.ok(!fs.existsSync(f.called));
+    assert.doesNotMatch(r.stderr + r.stdout, new RegExp(diagnostic));
+    assert.deepEqual(fs.readdirSync(f.sessionTmp), []);
   }
+});
+
+test('build needs a readable, owned regular log and refuses fallback evidence after success or failure', (t) => {
+  const f = fixture(t);
+  for (const [kind, why] of [
+    ['sign-in', /file-based token storage/], ['nonzero-sign-in', /exit 7.*file-based token storage/],
+    ['missing-log', /readable, owned regular log/], ['unreadable-log', /readable, owned regular log/],
+    ['symlink-log', /readable, owned regular log/], ['directory-log', /readable, owned regular log/],
+    ['fifo-log', /readable, owned regular log/], ['left-token', /plain text/],
+  ]) {
+    f.fakeAgy(kind);
+    const r = f.ask([]);
+    assert.equal(r.status, 4, r.stderr);
+    const doc = JSON.parse(r.stdout);
+    assert.match(doc.error, why);
+    assert.match(doc.error, /Inspect the worktree before retrying/);
+    assert.equal(doc.answer, null);
+    assert.ok(!Object.hasOwn(doc, 'build'));
+    assert.doesNotMatch(r.stderr + r.stdout, new RegExp(diagnostic));
+    assert.deepEqual(fs.readdirSync(f.sessionTmp), []);
+  }
+});
+
+test('cancellation checks the log and fails even if agy catches SIGTERM and exits zero after editing', async (t) => {
+  for (const kind of ['cancel', 'cancel-sign-in']) {
+    const f = fixture(t);
+    f.fakeAgy(kind);
+    const child = f.askAsync();
+    t.after(() => child.kill('SIGKILL'));
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    const finished = new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', (code, signal) => resolve({ code, signal }));
+    });
+    for (let attempt = 0; attempt < 200 && !fs.existsSync(f.ready); attempt++) await delay(10);
+    assert.ok(fs.existsSync(f.ready), stderr);
+    assert.ok(child.kill('SIGTERM'));
+    assert.deepEqual(await finished, { code: 4, signal: null }, stderr);
+    const doc = JSON.parse(stdout);
+    assert.match(doc.error, /cancelled by SIGTERM/);
+    assert.match(doc.error, /Inspect the worktree before retrying/);
+    assert.equal(doc.answer, null);
+    assert.ok(!Object.hasOwn(doc, 'build'));
+    if (kind === 'cancel-sign-in') assert.match(doc.error, /file-based token storage/);
+    assert.doesNotMatch(stderr + stdout, new RegExp(diagnostic));
+    assert.equal(fs.readFileSync(path.join(f.root, 'source.txt'), 'utf8'), 'native fixture edit after SIGTERM');
+    assert.deepEqual(fs.readdirSync(f.sessionTmp), []);
+  }
+});
+
+test('model-id reinstalls the native launcher from the installed copy without either retired helper', (t) => {
+  const f = fixture(t);
+  for (const name of helperNames) assert.ok(!fs.existsSync(path.join(f.resolverBin, name)));
   fs.unlinkSync(f.launch);
   const reinstall = f.install(path.join(f.resolverBin, 'model-id.mjs'));
   assert.equal(reinstall.status, 0, reinstall.stderr);
   assert.ok(fs.lstatSync(f.launch).isSymbolicLink());
-  for (const name of helperNames) {
-    assert.deepEqual(fs.readFileSync(path.join(f.resolverBin, name)), fs.readFileSync(path.join(repo, 'tools', name)));
-  }
-  fs.unlinkSync(path.join(f.resolverBin, 'agy-builder.mjs'));
-  const denied = f.ask([]);
-  assert.equal(denied.status, 4, denied.stderr);
-  assert.match(JSON.parse(denied.stdout).error, /Cannot find module .*agy-builder\.mjs/);
+  for (const name of helperNames) assert.ok(!fs.existsSync(path.join(f.resolverBin, name)));
+  f.fakeAgy();
+  const r = f.ask([]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).build.completed, true);
   assert.ok(!fs.existsSync(f.vendorCalled));
   const ro = f.ask([], { family: ['--family', 'fable'], build: false });
   assert.equal(JSON.parse(ro.stdout).mode, 'read-only');
   assert.ok(fs.existsSync(f.vendorCalled));
 });
 
-test('an npm launch reminds the user to reinstall when either helper alone is stale', (t) => {
+test('an npm launch ignores retired helper copies and reports a stale ask-model copy', (t) => {
   const f = fixture(t);
   const pkg = path.join(f.base, 'node_modules', 'agent-config-studio');
   const bin = path.join(pkg, 'bin');
@@ -359,14 +479,13 @@ test('an npm launch reminds the user to reinstall when either helper alone is st
   assert.equal(clean.status, 0, clean.stderr);
   assert.match(clean.stdout, /npm package/);
   assert.doesNotMatch(clean.stdout, reminder);
-  for (const name of helperNames) {
-    const installed = path.join(f.resolverBin, name);
-    fs.appendFileSync(installed, '// stale copy\n');
-    const stale = start();
-    assert.equal(stale.status, 0, stale.stderr);
-    assert.match(stale.stdout, reminder);
-    const reinstall = f.install();
-    assert.equal(reinstall.status, 0, reinstall.stderr);
-  }
+  for (const name of helperNames) fs.writeFileSync(path.join(f.resolverBin, name), '// stale helper copy\n');
+  assert.doesNotMatch(start().stdout, reminder);
+  fs.appendFileSync(path.join(f.resolverBin, 'ask-model.mjs'), '// stale launcher copy\n');
+  const stale = start();
+  assert.equal(stale.status, 0, stale.stderr);
+  assert.match(stale.stdout, reminder);
+  const reinstall = f.install();
+  assert.equal(reinstall.status, 0, reinstall.stderr);
   assert.doesNotMatch(start().stdout, reminder);
 });
