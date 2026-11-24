@@ -119,6 +119,57 @@ test('Google broker checks CONNECT, SNI, Host, method, route and upstream redire
   assert.ok(!audit.includes(proxyPassword));
 });
 
+test('Google broker allows only authenticated play telemetry on the exact HTTPS route', async (t) => {
+  const play = 'play.googleapis.com';
+  const forwarded = [];
+  let redirect = false;
+  const broker = await agyGoogleBroker(temp(t), {
+    requestUpstream(options, callback) {
+      forwarded.push(options);
+      const response = Readable.from([]);
+      response.statusCode = redirect ? 302 : 200;
+      response.headers = redirect ? { location: 'https://example.test/refused' } : {};
+      queueMicrotask(() => callback(response));
+      return new PassThrough();
+    },
+  });
+  t.after(() => broker.close());
+  const rpc = { authority: play, hostname: play, host: play, pathname: '/log' };
+  assert.equal((await connectBroker(broker, `${play}:443`, false)).status, '403');
+  for (const target of [`${play}:444`, `${play}.example.test:443`, 'other.googleapis.com:443']) {
+    assert.equal((await connectBroker(broker, target)).status, '403', target);
+  }
+  await assert.rejects(brokerRequest(broker, { ...rpc, hostname: origin }));
+  assert.match(await brokerRequest(broker, { ...rpc, host: origin }), /^HTTP\/1[.]1 403/);
+  assert.match(await brokerRequest(broker, { ...rpc, extra: `Host: ${play}\r\n` }), /^HTTP\/1[.]1 403/);
+  assert.match(await brokerRequest(broker, { ...rpc, method: 'GET' }), /^HTTP\/1[.]1 403/);
+  for (const pathname of ['/log?extra=value', '/log/', '/logs', inferencePath]) {
+    assert.match(await brokerRequest(broker, { ...rpc, pathname }), /^HTTP\/1[.]1 403/, pathname);
+  }
+  assert.deepEqual(forwarded, []);
+
+  assert.match(await brokerRequest(broker, rpc), /^HTTP\/1[.]1 200/);
+  assert.equal(forwarded.length, 1);
+  const [request] = forwarded;
+  assert.equal(request.hostname, play);
+  assert.equal(request.servername, play);
+  assert.equal(request.headers.host, play);
+  assert.equal(request.port, 443);
+  assert.equal(request.method, 'POST');
+  assert.equal(request.path, '/log');
+  assert.equal(request.rejectUnauthorized, true);
+  assert.deepEqual(request.ca, tls.rootCertificates);
+  assert.equal(request.agent, false);
+
+  redirect = true;
+  const deniedRedirect = await brokerRequest(broker, rpc);
+  assert.match(deniedRedirect, /^HTTP\/1[.]1 502/);
+  assert.doesNotMatch(deniedRedirect, /example[.]test|location:/i);
+  assert.equal(forwarded.length, 2);
+  assert.ok(broker.events.some((event) => event.origin === play && event.path === '/log' &&
+    event.status === 502 && event.upstreamStatus === 302 && event.reason === 'upstream redirect denied'));
+});
+
 function listen(t, options) {
   const server = net.createServer((socket) => socket.end());
   t.after(() => server.close());
