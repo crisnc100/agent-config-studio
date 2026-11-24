@@ -227,9 +227,14 @@ function runWalled(args, cwd, env) {
     const stop = () => {
       try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch {}
     };
+    let cancelled = false;
+    const cancel = () => {
+      cancelled = true;
+      stop();
+    };
     const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
-    const timer = setTimeout(stop, 1_815_000);
-    for (const signal of signals) process.on(signal, stop);
+    const timer = setTimeout(cancel, 1_815_000);
+    for (const signal of signals) process.on(signal, cancel);
     const out = [];
     const err = [];
     child.stdout.on('data', (bytes) => out.push(bytes));
@@ -238,8 +243,8 @@ function runWalled(args, cwd, env) {
     child.once('error', reject);
     child.once('close', (code, signal) => {
       clearTimeout(timer);
-      for (const name of signals) process.off(name, stop);
-      resolve({ code, signal, stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString() });
+      for (const name of signals) process.off(name, cancel);
+      resolve({ code, signal, cancelled, stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString() });
     });
   });
 }
@@ -317,6 +322,7 @@ export async function runAgyBuilder({ root, bin, id, effort, prompt, home = os.h
     const logFile = path.join(runtime, 'agy.log');
     const args = agyBuildArgs({ id, effort, prompt, logFile, source, runtime, home, certificate: broker.certificate });
     const reply = await (test.invoke ?? runWalled)(agyBuildWall(params, [params.bin, ...args]), source, env);
+    if (reply.cancelled) throw new Error('agy builder invocation cancelled');
     const log = fs.lstatSync(logFile, { throwIfNoEntry: false });
     if (checkToken(home) || checkToken(privateHome) || !log?.isFile() || log.nlink !== 1 ||
         fs.realpathSync.native(logFile) !== logFile || checkSignIn(logFile, privateHome)) {

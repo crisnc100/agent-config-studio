@@ -176,6 +176,8 @@ export function captureAgySource(root, { source, gitState, home }) {
     pinned.set(file, stat?.isDirectory() ? identity(stat) : stamp(stat));
   }
   const readGit = safeGit(root, repo, gitState, ignore);
+  const checkIgnored = (paths) => readGit(['check-ignore', '--no-index', '--stdin', '-z'], paths.join('\0') + '\0')
+    .split('\0').filter(Boolean);
   const tracked = readGit(['ls-files', '--stage', '-z']).split('\0').filter(Boolean);
   const untracked = readGit(['ls-files', '--others', '--exclude-standard', '-z']).split('\0').filter(Boolean);
   for (const entry of tracked) {
@@ -213,6 +215,33 @@ export function captureAgySource(root, { source, gitState, home }) {
     if (capturing && !dirs.has(parent)) dirs.set(parent, id);
     if (dirs.get(parent) !== id) throw new Error(`source directory changed: ${parent}`);
     return stat;
+  }
+
+  // Git lists files, so it supplies no ancestor for a directory with no eligible contents.
+  let parents = [''];
+  while (parents.length) {
+    const candidates = [];
+    for (const parent of parents) {
+      if (parent) guardDirectory(parent);
+      else checkRoot();
+      for (const entry of fs.readdirSync(path.join(root, parent), { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const name = parent ? `${parent}/${entry.name}` : entry.name;
+        if (!blocked(name)) candidates.push(validName(name));
+      }
+    }
+    if (!candidates.length) break;
+    const ignored = new Set(checkIgnored(candidates.map((name) => name + '/')));
+    parents = [];
+    for (const name of candidates) {
+      if (ignored.has(name + '/') || !guardDirectory(name, true)) continue;
+      if (statAt(path.join(root, name, '.git'))) {
+        excluded.add(name);
+        continue;
+      }
+      fs.mkdirSync(path.join(source, name), { mode: 0o700 });
+      parents.push(name);
+    }
   }
 
   for (const name of names) {
@@ -276,7 +305,7 @@ export function captureAgySource(root, { source, gitState, home }) {
       guardTarget(name);
       if (!original.has(name)) added.push(name);
     }
-    if (added.length && readGit(['check-ignore', '--no-index', '--stdin', '-z'], added.join('\0') + '\0')) {
+    if (added.length && checkIgnored(added).length) {
       throw new Error('builder attempted to publish ignored source');
     }
 
