@@ -1,0 +1,125 @@
+{
+  "phase": "print",
+  "parsedPrintResult": true,
+  "events": [
+    {
+      "authorityClass": "named-google",
+      "googleHost": "www.googleapis.com",
+      "portIs443": true,
+      "authorityExact": false,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "daily-cloudcode-pa.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "daily-cloudcode-pa.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "daily-cloudcode-pa.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "daily-cloudcode-pa.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "aicode.googleapis.com",
+      "portIs443": true,
+      "authorityExact": false,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "aicode.googleapis.com",
+      "portIs443": true,
+      "authorityExact": false,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "www.googleapis.com",
+      "portIs443": true,
+      "authorityExact": false,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "aicode.googleapis.com",
+      "portIs443": true,
+      "authorityExact": false,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "play.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    }
+  ],
+  "deniedRequests": [
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "POST",
+      "path": "/v1internal:fetchAdminControls"
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "POST",
+      "path": "/v1internal:retrieveUserQuotaSummary"
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "POST",
+      "path": "/v1internal:fetchUserInfo"
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "POST",
+      "path": "/v1internal:retrieveUserQuotaSummary"
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "POST",
+      "path": "/v1internal:fetchUserInfo"
+    },
+    {
+      "origin": "daily-cloudcode-pa.googleapis.com",
+      "method": "POST",
+      "path": "/v1internal:retrieveUserQuotaSummary"
+    }
+  ],
+  "truncated": false,
+  "metadataCounts": {
+    "bootstrap": 6,
+    "telemetry": 2
+  },
+  "forwardedInference": 0,
+  "noOperatorPlaintext": true
+}

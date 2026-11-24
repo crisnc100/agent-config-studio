@@ -22,6 +22,8 @@ const GOOGLE_ROUTES = {
   },
   'oauth2.googleapis.com': { '/token': 'POST' },
   'play.googleapis.com': { '/log': 'POST' },
+  'www.googleapis.com': { '/oauth2/v2/userinfo': 'GET' },
+  'aicode.googleapis.com': { '/v1alpha:fetchConfig': 'GET' },
 };
 
 const AGY_VERSION = '1.5.14';
@@ -106,7 +108,13 @@ export async function agyGoogleBroker(directory, { requestUpstream = https.reque
     if (/^\/(?!\/)[a-z0-9/_:.-]{0,255}$/i.test(pathname) && !pathname.includes(password) &&
       !pathname.includes(credentials.replace(/=+$/, ''))) evidence.path = pathname;
     const route = Object.hasOwn(GOOGLE_ROUTES[origin], req.url);
-    if (!route || GOOGLE_ROUTES[origin][req.url] !== req.method || req.headersDistinct.host?.length !== 1 ||
+    const contentLengths = req.headersDistinct['content-length'];
+    const unsafeGet = req.method === 'GET' && (
+      Object.hasOwn(req.headersDistinct, 'transfer-encoding') ||
+      (contentLengths && (contentLengths.length !== 1 || contentLengths[0] !== '0')) ||
+      Object.keys(req.headersDistinct).some((name) => /(?:^|[-_])method(?:[-_]|$)|method[-_]?override|override[-_]?method/.test(name))
+    );
+    if (!route || unsafeGet || GOOGLE_ROUTES[origin][req.url] !== req.method || req.headersDistinct.host?.length !== 1 ||
       ![origin, `${origin}:443`].includes(req.headers.host)) {
       record({ ...evidence, status: 403, reason: 'request denied' });
       return res.writeHead(403).end();
@@ -137,7 +145,8 @@ export async function agyGoogleBroker(directory, { requestUpstream = https.reque
     });
     res.on('close', () => upstream.destroy());
     req.on('error', () => upstream.destroy());
-    req.pipe(upstream);
+    if (req.method === 'GET') upstream.end();
+    else req.pipe(upstream);
   });
   processed.on('connect', (_req, socket) => socket.destroy());
   processed.on('upgrade', (_req, socket) => socket.destroy());

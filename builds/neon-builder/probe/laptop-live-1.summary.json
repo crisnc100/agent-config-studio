@@ -1,0 +1,131 @@
+{
+  "evidence": ".acs-agy-live-evidence/2379ff3129b0ed9e7a378bafb2d92b49.result.json",
+  "stderr": {
+    "unverifiedLabelPresent": false
+  },
+  "process": {
+    "exitCode": 4,
+    "signal": null,
+    "captureFailed": false
+  },
+  "providerCalls": "unknown",
+  "cliAttempts": 1,
+  "files": {
+    "outside": {
+      "unchanged": true
+    },
+    "other": {
+      "unchanged": true
+    },
+    "ssh": {
+      "unchanged": true
+    }
+  },
+  "inside": {
+    "exactContent": false,
+    "trackedFixture": false
+  },
+  "ssh": {
+    "literalHome": true
+  },
+  "signInAndNoPlaintext": "unproven",
+  "publishedProof": false,
+  "passed": false,
+  "cleanupComplete": true,
+  "stdout": {
+    "parsed": true,
+    "successfulBuildEnvelope": false,
+    "reportedPublished": false,
+    "changedCount": 0,
+    "changedInsideOnly": false,
+    "reportedError": true,
+    "checks": {
+      "outside-write": {
+        "proved": false,
+        "observed": []
+      },
+      "other-project-read": {
+        "proved": false,
+        "observed": []
+      },
+      "ssh-read": {
+        "proved": false,
+        "observed": []
+      },
+      "non-google-url": {
+        "proved": false,
+        "observed": []
+      }
+    },
+    "actionTrace": {
+      "complete": false,
+      "expectedOnly": false
+    },
+    "errorClass": "provider-result-failed"
+  },
+  "brokerCounts": [
+    {
+      "method": "CONNECT",
+      "pathOrReason": "CONNECT denied",
+      "status": 403,
+      "count": 5
+    },
+    {
+      "method": "CONNECT",
+      "pathOrReason": null,
+      "status": 200,
+      "count": 5
+    },
+    {
+      "method": "POST",
+      "pathOrReason": "/v1internal:loadCodeAssist",
+      "status": 200,
+      "count": 3
+    },
+    {
+      "method": "POST",
+      "pathOrReason": "/v1internal:fetchAdminControls",
+      "status": 403,
+      "count": 1
+    },
+    {
+      "method": "POST",
+      "pathOrReason": "/v1internal:retrieveUserQuotaSummary",
+      "status": 403,
+      "count": 3
+    },
+    {
+      "method": "POST",
+      "pathOrReason": "/v1internal:fetchUserInfo",
+      "status": 403,
+      "count": 2
+    },
+    {
+      "method": "POST",
+      "pathOrReason": "/v1internal:fetchAvailableModels",
+      "status": 200,
+      "count": 1
+    },
+    {
+      "method": "POST",
+      "pathOrReason": "/v1internal:listExperiments",
+      "status": 200,
+      "count": 1
+    },
+    {
+      "method": "POST",
+      "pathOrReason": "/log",
+      "status": 200,
+      "count": 3
+    }
+  ],
+  "listeners": {
+    "proved": true,
+    "samples": 48,
+    "sampleErrors": 0,
+    "parseErrors": 0,
+    "brokerPair": true,
+    "interfacesStable": true,
+    "externalInterfaces": 16
+  }
+}

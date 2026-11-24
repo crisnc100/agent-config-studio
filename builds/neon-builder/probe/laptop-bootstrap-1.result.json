@@ -1,0 +1,177 @@
+{
+  "phase": "print",
+  "refusedPublication": true,
+  "resultCallbackReached": true,
+  "keychainLoaded": true,
+  "keychainAuthenticated": true,
+  "cleanPostflight": true,
+  "noOperatorPlaintext": true,
+  "authorities": [
+    {
+      "authorityClass": "named-google",
+      "googleHost": "www.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "daily-cloudcode-pa.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "non-google",
+      "portIs443": true,
+      "authorityExact": false,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "daily-cloudcode-pa.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "daily-cloudcode-pa.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "daily-cloudcode-pa.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "aicode.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "aicode.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "non-google",
+      "portIs443": true,
+      "authorityExact": false,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "play.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    },
+    {
+      "authorityClass": "named-google",
+      "googleHost": "play.googleapis.com",
+      "portIs443": true,
+      "authorityExact": true,
+      "authPresent": true,
+      "authMatched": true
+    }
+  ],
+  "denied": [
+    {
+      "label": "fetchAdminControls",
+      "queryPresent": false,
+      "generationDenied": false,
+      "status": 403
+    },
+    {
+      "label": "retrieveUserQuotaSummary",
+      "queryPresent": false,
+      "generationDenied": false,
+      "status": 403
+    },
+    {
+      "label": "fetchUserInfo",
+      "queryPresent": false,
+      "generationDenied": false,
+      "status": 403
+    },
+    {
+      "label": "retrieveUserQuotaSummary",
+      "queryPresent": false,
+      "generationDenied": false,
+      "status": 403
+    },
+    {
+      "label": "fetchUserInfo",
+      "queryPresent": false,
+      "generationDenied": false,
+      "status": 403
+    },
+    {
+      "label": "retrieveUserQuotaSummary",
+      "queryPresent": false,
+      "generationDenied": false,
+      "status": 403
+    }
+  ],
+  "truncated": false,
+  "dispatches": {
+    "google-userinfo": {
+      "count": 2,
+      "statuses": {
+        "200": 2
+      }
+    },
+    "load-code-assist": {
+      "count": 3,
+      "statuses": {
+        "200": 3
+      }
+    },
+    "models": {
+      "count": 1,
+      "statuses": {
+        "200": 1
+      }
+    },
+    "experiments": {
+      "count": 1,
+      "statuses": {
+        "200": 1
+      }
+    },
+    "aicode-config": {
+      "count": 2,
+      "statuses": {
+        "200": 2
+      }
+    },
+    "telemetry": {
+      "count": 3,
+      "statuses": {
+        "200": 3
+      }
+    }
+  },
+  "gateRejections": 0,
+  "forwardedInference": 0,
+  "passed": false
+}
