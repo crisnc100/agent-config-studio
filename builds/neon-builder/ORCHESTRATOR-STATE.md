@@ -36,11 +36,10 @@ Use installed /Users/cortega/.agent-config-studio/review-gate/review.mjs only. S
 - Core/benchmark/probe-status.json and review-report.md hold statuses, reasons, fixes and every score. Read report rather than raw review stderr. Benchmark caller SIGKILL and prepared environment gaps need fixing before a Neon benchmark resumes. Historical proof scripts need cancellation hardening before reuse; retired combined live probe must not be run on native permissions.
 - Independent test-change checks: Sol-prev found no weakening in440f0c5,2313428,bec1899,42dec93,34f3acf,1580d7c. Earlier28ef382 independently checked in helper fix check. Listener existing-test review2026-11-24-13-33-12-edac39 is clean. Frozen review.test.mjs untouched. No phase review closes.
 
-## One pending user constraint
+## Mini verification approved
 
-The required full ACS suite placement question is pending: Mini recommended or this laptop. It was repeated after compaction with current loads2.65/1.79 and zero laptop Docker containers. Do not infer approval from its preselected Mini option. ~/.claude/CLAUDE.md:97 requires asking before a full suite and waiting. Latest “yes test please” approved the native session permission test, not this later placement question.
-
-Useful command after answer: ACS_SUITE=offline ACS_LIVE_CHECKS=0 ./verify.sh. No real model calls or Docker startup. Source has no dependencies. Mini /usr/local/bin/node is24.13.1; non-login SSH PATH lacks node. Existing /Users/agents/benchmark/staging/neon-builder/source has no .git; create an isolated fresh checkout/bundle if using Mini, never touch its real checkout or global resolver. Do not start full suite until placement answer.
+Cris answered “lets do mini then” on2026-11-24. Run the full offline suite on an isolated Mini checkout of the final branch tip. No further placement question is needed.
+Verification command: ACS_SUITE=offline ACS_LIVE_CHECKS=0 ./verify.sh. No real model calls or Docker startup. Source has no dependencies. Mini /usr/local/bin/node is24.13.1; non-login SSH PATH lacks node. Existing /Users/agents/benchmark/staging/neon-builder/source has no .git; create an isolated fresh checkout/bundle if using Mini, never touch its real checkout or global resolver. The Mini run is authorized.
 
 Run full suite once at the final HEAD, then close all three originals at that HEAD with explicit --test-cmd (verifyCmd is NONE). Reuse actual exact-HEAD success evidence for subsequent sliced closes; do not run the full suite three times. No --no-tests waiver, no push override, no hooks/config changes. Slice only any actually unseen files the close names.
 

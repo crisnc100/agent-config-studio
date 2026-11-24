@@ -15,3 +15,5 @@ No phase has been closed. Public wiring and the final PR review/security/context
 Cris approved normal native Antigravity permissions. Direct and installed native high-effort edits passed, with unverified model identity and clean token postflight. The installed resolver now matches reviewed source and the builder pool includes Neon at high effort. Default read-only settings, wall and review runtime are byte-identical to main.
 
 Sol-prev xhigh and Mythos high completed the three single final fix checks. Independent test-change checks found no weakened assertions. All original blockers are fixed; the one fix checks leave three MEDIUM and eight LOW findings deferred, detailed with unchanged scores in review-report.md and the three status files. No Neon quality benchmark ran. Full offline ACS suite awaits Cris’s location choice under the working agreement; closes, push, PR and CI are still pending. Never merge.
+
+Cris approved the Mini for final full offline verification (“lets do mini then”). Use an isolated checkout; leave the Mini reporter and actual project/global resolver untouched.
