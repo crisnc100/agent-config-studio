@@ -186,3 +186,65 @@ test('cancellation between clean child exit and stream close discards the build'
     });
   }
 });
+
+test('real SIGTERM after the first replacement finishes publication and cleanup', macOnly, (t) => {
+  const { root, home } = setup(t);
+  const first = path.join(root, 'file.txt');
+  const second = path.join(root, 'other.txt');
+  fs.writeFileSync(second, 'other operator contents');
+  const helper = new URL('../tools/agy-builder.mjs', import.meta.url).href;
+  const fixture = `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import path from 'node:path';
+    import { runAgyBuilder } from ${JSON.stringify(helper)};
+
+    const [root, home] = process.argv.slice(1);
+    const rename = fs.renameSync;
+    let interrupted = false;
+    let brokerClosed = false;
+    let callRoot;
+    fs.renameSync = (from, to) => {
+      rename(from, to);
+      if (to === path.join(root, 'file.txt')) {
+        assert.equal(fs.readFileSync(to, 'utf8'), 'first edit');
+        assert.equal(fs.readFileSync(path.join(root, 'other.txt'), 'utf8'), 'other operator contents');
+        interrupted = process.kill(process.pid, 'SIGTERM');
+      }
+    };
+    const result = await runAgyBuilder({
+      root, home, bin: '/fixture/agy', id: 'fixture-model', prompt: 'fixture prompt',
+      checkWorkspace: () => [], checkConfig: () => null, checkToken: () => null,
+      checkSignIn: () => null, readResult: () => ({ answer: 'fixture answer' }),
+    }, {
+      prepare(layout, bin, home) {
+        callRoot = path.dirname(layout.source);
+        const broker = {
+          port: 42402, certificate: path.join(layout.ca, 'root.pem'),
+          url: 'http://fixture:credential@127.0.0.1:42402',
+          close() { brokerClosed = true; },
+        };
+        return { params: { ...layout, ...broker, bin, home }, broker, env: {} };
+      },
+      invoke(_args, source) {
+        fs.writeFileSync(path.join(path.dirname(source), 'runtime', 'agy.log'), 'fixture log');
+        fs.writeFileSync(path.join(source, 'file.txt'), 'first edit');
+        fs.writeFileSync(path.join(source, 'other.txt'), 'second edit');
+        return { code: 0, signal: null, stdout: 'valid answer' };
+      },
+    });
+    console.log(JSON.stringify({ interrupted, brokerClosed, staged: fs.existsSync(callRoot), result }));
+  `;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', fixture, root, home],
+    { encoding: 'utf8', timeout: 10_000 });
+  assert.equal(child.signal, null, child.stderr);
+  assert.equal(child.status, 0, child.stderr);
+  assert.deepEqual(JSON.parse(child.stdout), {
+    interrupted: true, brokerClosed: true, staged: false,
+    result: { answer: 'fixture answer', mode: 'build',
+      served: { requested: 'fixture-model', id: 'fixture-model', verified: false },
+      build: { published: true }, changed: ['file.txt', 'other.txt'] },
+  });
+  assert.equal(fs.readFileSync(first, 'utf8'), 'first edit');
+  assert.equal(fs.readFileSync(second, 'utf8'), 'second edit');
+});

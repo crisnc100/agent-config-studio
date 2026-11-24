@@ -58,7 +58,7 @@ export async function runAgyBuilder(options, ...overrides) {
   const diagnostic = ${JSON.stringify(diagnostic)};
   const events = [
     { event: 'init', init: { model: kind === 'mismatch' ? 'different-model' : id } },
-    { step_update: { state: 'ERROR', tool_name: 'run_command', tool_info: { error: { message: 'blocked by deny rule' } } } },
+    { step_update: { step_index: 0, state: 'ERROR', tool_name: 'run_command', tool_info: { error: { message: 'blocked by deny rule' } } } },
     { step_update: { step_index: 1, state: 'ACTIVE', tool_name: 'read_file', tool_info: {
       parameters: { AbsolutePath: '/fixture/other-project.txt', Content: diagnostic },
     } } },
@@ -73,7 +73,15 @@ export async function runAgyBuilder(options, ...overrides) {
       parameters: { Url: 'https://user:' + diagnostic + '@example.test/target?token=' + diagnostic + '#' + diagnostic },
       error: { message: 'blocked by deny rule: ' + diagnostic },
     } } },
-    { step_update: { subagent_info: { subagents: [{ type_name: 'fixture worker', log_uri: 'file:///no-such-fixture/transcript.jsonl' }] } } },
+    ...(!['complete-trace', 'ambiguous-trace', 'invalid-stream', 'unknown-event', 'large-trace'].includes(kind) ? [{ step_update: {
+      subagent_info: { subagents: [{ type_name: 'fixture worker', log_uri: 'file:///no-such-fixture/transcript.jsonl' }] },
+    } }] : []),
+    ...(kind === 'ambiguous-trace' ? [{ step_update: { step_index: 1, state: 'DONE', tool_name: 'read_file' } }] : []),
+    ...(kind === 'unknown-event' ? [{ event: 'unclassified_update' }] : []),
+    ...(kind === 'complete-trace' ? [
+      { step_update: { step_index: 4, state: 'DONE', tool_name: 'write_to_file', tool_info: { parameters: { TargetFile: './source.txt' } } } },
+      { step_update: { step_index: 5, state: 'DONE', tool_name: 'finish' } },
+    ] : []),
     { event: 'result', result: {
       status: kind === 'bad-status' ? 'ERROR' : 'SUCCESS',
       response: kind === 'bad-status' ? diagnostic : kind === 'empty' ? '' : 'fixture answer',
@@ -81,13 +89,18 @@ export async function runAgyBuilder(options, ...overrides) {
     } },
   ];
   if (kind === 'large-trace') {
+    const result = events.pop();
     for (let step_index = 10; step_index < 100; step_index++) events.push({ step_update: {
       step_index, tool_name: 'read_file', state: 'DONE', tool_info: { parameters: { AbsolutePath: '/fixture/' + 'x'.repeat(1024) } },
     } });
+    events.push({ step_update: { step_index: 100, state: 'DONE', tool_name: 'view_file_outline', tool_info: {
+      parameters: { AbsolutePath: '/fixture/other-project.txt' },
+    } } }, result);
   }
   const got = readResult(id, {
     code: kind === 'nonzero' ? 7 : 0,
-    stdout: events.map((e) => JSON.stringify(e)).join('\\n'),
+    stdout: (kind === 'invalid-stream' ? 'incomplete fixture line\\n' : '') +
+      events.map((e) => JSON.stringify(e.step_update ? { event: 'step_update', ...e } : e)).join('\\n'),
     stderr: diagnostic,
   });
   if (got.exit !== undefined) throw new Error(got.error);
@@ -171,6 +184,8 @@ test('installed build uses the exact callbacks, preferred builder effort and an 
     { tool: 'write_file', state: 'ERROR', target: '/fixture/outside.txt', refusal: 'approval-required' },
     { tool: 'read_url', state: 'ERROR', target: 'https://example.test/target', refusal: 'deny-rule' },
   ]);
+  assert.equal(doc.actionsComplete, false, 'subagent activity is outside this trace');
+  assert.equal(doc.actionsTruncated, false);
   assert.doesNotMatch(r.stderr + r.stdout, new RegExp(diagnostic));
   assert.match(doc.notes[0], /fixture worker/);
   assert.match(r.stderr, /denied run_command: blocked by deny rule/);
@@ -247,10 +262,29 @@ test('the build trace bounds the number of actions and target length', (t) => {
   f.fakeHelper('large-trace');
   const r = f.ask([]);
   assert.equal(r.status, 0, r.stderr);
-  const { actions } = JSON.parse(r.stdout);
+  const { actions, actionsComplete, actionsTruncated } = JSON.parse(r.stdout);
   assert.equal(actions.length, 64);
   assert.equal(actions[1].target, '/fixture/other-project.txt');
   assert.deepEqual(actions.at(-1), { tool: 'read_file', state: 'DONE' });
+  assert.equal(actionsComplete, false);
+  assert.equal(actionsTruncated, true);
+  assert.ok(!actions.some(({ tool }) => tool === 'view_file_outline'));
+});
+
+test('build completeness requires a fully parsed stream with unambiguous terminal tool updates', (t) => {
+  const f = fixture(t);
+  for (const [kind, expected] of [['complete-trace', true], ['ambiguous-trace', false], ['invalid-stream', false], ['unknown-event', false]]) {
+    f.fakeHelper(kind);
+    const r = f.ask([]);
+    assert.equal(r.status, 0, r.stderr);
+    const { actions, actionsComplete, actionsTruncated } = JSON.parse(r.stdout);
+    assert.equal(actionsComplete, expected, kind);
+    assert.equal(actionsTruncated, false, kind);
+    if (expected) assert.deepEqual(actions.slice(-2), [
+      { tool: 'write_to_file', state: 'DONE', target: './source.txt' },
+      { tool: 'finish', state: 'DONE' },
+    ]);
+  }
 });
 
 test('real installed helper refuses unsupported launches before any vendor executable starts', (t) => {

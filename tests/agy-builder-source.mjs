@@ -254,3 +254,15 @@ test('publication refuses a new file after its previously empty parent is replac
   assert.throws(publish, /source directory changed: empty/);
   assert.equal(fs.existsSync(path.join(root, 'empty/new.txt')), false);
 });
+
+test('publication honors a negated ignore rule for a new child of an existing directory', (t) => {
+  const { root, source, capture, put, get } = workspace(t);
+  put('.gitignore', 'output/*\n!output/new.txt\n');
+  put('output/operator.txt', 'excluded operator contents');
+  const { publish } = capture();
+  assert.deepEqual(fs.readdirSync(path.join(source, 'output')), []);
+  put('output/new.txt', 'allowed addition', source);
+  assert.deepEqual(publish(), ['output/new.txt']);
+  assert.equal(get('output/new.txt', root), 'allowed addition');
+  assert.equal(get('output/operator.txt', root), 'excluded operator contents');
+});

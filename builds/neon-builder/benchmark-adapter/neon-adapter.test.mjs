@@ -315,3 +315,67 @@ console.log('1 passed');
   assert.match(rerun.stdout, /1 grade checks · 0 builder model calls · 0 judge calls/);
   assert.equal(fs.existsSync(contacted), false);
 });
+
+test('private Node can find real Git after a PATH reset and run local hooks and transfers', async (t) => {
+  const root = fixture(t, 'ng-git-');
+  const caseDir = path.join(root, 'case');
+  const repo = path.join(caseDir, 'repo');
+  fs.mkdirSync(repo, { recursive: true });
+  const outside = path.join(root, 'outside.txt');
+  fs.writeFileSync(outside, 'outside canary');
+  const sock = path.join(root, 'outside.sock');
+  const sockets = await Promise.all([sock, { host: '127.0.0.1', port: 0 }].map((location) => new Promise((resolve, reject) => {
+    const server = net.createServer();
+    t.after(() => server.close());
+    server.on('error', reject);
+    server.listen(location, () => resolve(server.address()));
+  })));
+  fs.writeFileSync(path.join(repo, 'git-fixture.mjs'), `
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import net from 'node:net';
+import path from 'node:path';
+const dir = fs.mkdtempSync(path.join(process.env.TMPDIR, 'git-fixture-'));
+const home = path.join(dir, 'home');
+const source = path.join(dir, 'source');
+const remote = path.join(dir, 'remote.git');
+const cloned = path.join(dir, 'checkout');
+for (const p of [home, source]) fs.mkdirSync(p);
+const env = { HOME: home, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(home, 'isolated.gitconfig'),
+  PATH: [path.join(dir, 'stub-bin'), path.dirname(process.execPath), '/usr/bin', '/bin'].join(':') };
+assert.equal(process.execPath.startsWith(${JSON.stringify(caseDir)} + '/grade/bin/'), true, process.execPath);
+const git = (cwd, ...args) => {
+  const r = spawnSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', ...args], { cwd, env, encoding: 'utf8' });
+  assert.equal(r.status, 0, [args, r.error, r.stderr].join('\\n'));
+  return r.stdout.trim();
+};
+git(source, 'init', '-q', '-b', 'main');
+fs.writeFileSync(path.join(source, 'sample.txt'), 'Git sandbox fixture\\n');
+git(source, 'add', 'sample.txt');
+git(source, 'commit', '-qm', 'fixture');
+assert.equal(git(source, 'show', 'HEAD:sample.txt'), 'Git sandbox fixture');
+git(source, 'init', '-q', '--bare', remote);
+const hook = path.join(source, '.git/hooks/pre-push');
+fs.writeFileSync(hook, '#!/bin/sh\\nexec node -e \\'require("node:fs").writeFileSync("pre-push-ran", process.version)\\'\\n', { mode: 0o700 });
+git(source, 'push', '-q', remote, 'HEAD:refs/heads/main');
+assert.match(fs.readFileSync(path.join(source, 'pre-push-ran'), 'utf8'), /^v\\d/);
+git(dir, 'clone', '-q', '--no-local', '-b', 'main', remote, cloned);
+assert.equal(git(cloned, 'show', 'HEAD:sample.txt'), 'Git sandbox fixture');
+assert.throws(() => fs.readFileSync(${JSON.stringify(outside)}), { code: 'EPERM' });
+assert.throws(() => fs.writeFileSync(path.join(path.dirname(process.execPath), 'git'), 'changed'), { code: 'EPERM' });
+const [ipc, tcp] = ${JSON.stringify(sockets)};
+for (const options of [{ path: ipc }, { host: tcp.address, port: tcp.port }]) {
+  await assert.rejects(new Promise((resolve, reject) => {
+    const socket = net.connect(options);
+    socket.once('error', reject);
+    socket.once('connect', () => { socket.destroy(); resolve(); });
+  }), (error) => ['EPERM', 'EACCES'].includes(error.code));
+}
+console.log('git fixture passed');
+`);
+  const grade = prepareNeonGrade('node git-fixture.mjs', { case: caseDir, repo }, { needsGit: true });
+  assert.match((await runGrade(grade, grade.preflight, repo)).stdout, /git version/);
+  assert.match((await runGrade(grade, 'node git-fixture.mjs', repo)).stdout, /git fixture passed/);
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'outside canary');
+});
