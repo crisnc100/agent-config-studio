@@ -1,20 +1,17 @@
 import assert from 'node:assert/strict';
-import { execFile, spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import { METHODS } from 'node:http';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
+import { observe, prepareListenerObservation } from './listener-observation.mjs';
 
 const self = fileURLToPath(import.meta.url);
 const probeDirectory = path.dirname(self);
 const bundle = path.resolve(probeDirectory, '../../..');
 const buildCli = path.join(bundle, 'tools/ask-model.mjs');
-const execute = promisify(execFile);
 const real = fs.realpathSync.native;
 const within = (parent, child) => child === parent || child.startsWith(parent + '/');
 const statAt = (file) => fs.lstatSync(file, { bigint: true, throwIfNoEntry: false });
@@ -234,7 +231,7 @@ function actionEvidence(response, targets, insideName) {
   return { checks, actionTrace: { complete, expectedOnly } };
 }
 
-const googleOrigins = new Set(['daily-cloudcode-pa.googleapis.com', 'oauth2.googleapis.com']);
+const googleOrigins = new Set(['daily-cloudcode-pa.googleapis.com', 'oauth2.googleapis.com', 'play.googleapis.com']);
 const brokerReasons = new Set(['request denied', 'upstream failed', 'client TLS failed', 'CONNECT denied',
   'upstream redirect denied']);
 const statusCode = (value) => Number.isInteger(value) && value >= 100 && value <= 599;
@@ -299,100 +296,7 @@ function projectCliResult(result, expected, targets) {
   };
 }
 
-async function processTree(pid) {
-  const { stdout } = await execute('/bin/ps', ['-axo', 'pid=,ppid='], { timeout: 2500 });
-  const rows = stdout.trim().split('\n').map((line) => line.trim().split(/\s+/).map(Number));
-  const ids = new Set([pid]);
-  for (let expanded = true; expanded;) {
-    expanded = false;
-    for (const [child, parent] of rows) {
-      if (ids.has(parent) && !ids.has(child)) {
-        ids.add(child);
-        expanded = true;
-      }
-    }
-  }
-  return ids;
-}
-
-async function listListeners(ids) {
-  let stdout;
-  try {
-    ({ stdout } = await execute('/usr/sbin/lsof', [
-      '-nP', '-a', '-p', [...ids].join(','), '-iTCP', '-sTCP:LISTEN', '-Fpcn',
-    ], { timeout: 2500 }));
-  } catch (error) {
-    if (error.code === 1 && !error.stdout && !error.stderr) return [];
-    throw error;
-  }
-  const listeners = [];
-  let pid;
-  let command;
-  for (const line of stdout.split('\n')) {
-    if (line.startsWith('p')) pid = Number(line.slice(1));
-    if (line.startsWith('c')) command = line.slice(1);
-    if (line.startsWith('n') && ids.has(pid)) {
-      const endpoint = line.slice(1);
-      const port = Number(/:(\d+)$/.exec(endpoint)?.[1]);
-      const address = port ? endpoint.slice(0, endpoint.lastIndexOf(':')).replace(/^\[|\]$/g, '') : '';
-      const scope = address === '::1' || /^127\./.test(address) ? 'loopback'
-        : ['*', '0.0.0.0', '::'].includes(address) ? 'wildcard' : 'non-loopback';
-      listeners.push({ pid, command, endpoint, port, scope });
-    }
-  }
-  return listeners;
-}
-
-function interfaceAddresses() {
-  return Object.entries(os.networkInterfaces()).flatMap(([name, entries]) => (entries || [])
-    .filter(({ internal, family }) => !internal && ['IPv4', 'IPv6'].includes(family))
-    .map(({ address, family }) => ({
-      family, host: family === 'IPv6' && /^fe[89ab]/i.test(address) ? `${address}%${name}` : address,
-    })));
-}
-
-function connect(host, port) {
-  return new Promise((resolve) => {
-    const socket = net.connect({ host, port });
-    const done = (status) => { socket.destroy(); resolve(status); };
-    socket.setTimeout(400, () => done('timeout'));
-    socket.once('error', ({ code }) => done(code === 'ECONNREFUSED' ? 'refused' : 'other-error'));
-    socket.once('connect', () => done('connected'));
-  });
-}
-
-async function observe(child, closed, stop) {
-  const addresses = interfaceAddresses();
-  const seen = new Map();
-  let samples = 0;
-  let sampleErrors = 0;
-  while (!closed()) {
-    try {
-      const ids = await processTree(child.pid);
-      for (const row of await listListeners(ids)) {
-        const key = `${row.pid}:${row.endpoint}`;
-        if (seen.has(key)) continue;
-        if (row.scope !== 'loopback') stop('SIGTERM');
-        const kind = row.pid === child.pid ? 'broker-process' : row.command === 'agy' ? 'agy' : 'other-descendant';
-        const probes = row.port ? Promise.all(addresses.map(async ({ host, family }) =>
-          ({ via: family, status: await connect(host, row.port) }))) : Promise.resolve([]);
-        seen.set(key, { kind, scope: row.scope, probes });
-      }
-      samples++;
-    } catch {
-      sampleErrors++;
-    }
-    if (!closed()) await delay(100);
-  }
-  const records = await Promise.all([...seen.values()].map(async ({ probes, ...record }) =>
-    ({ ...record, probes: await probes })));
-  const proved = sampleErrors === 0 && records.some(({ kind }) => kind === 'agy') && records.some(({ kind }) => kind === 'broker-process') &&
-    records.every(({ scope, probes }) => scope === 'loopback' && probes.length === addresses.length &&
-      probes.every(({ status }) => status === 'refused'));
-  return { proved, samples, sampleErrors, externalInterfaces: addresses.length, records };
-}
-
-async function runCli(args, control, observeProcess = observe) {
+async function runCli(args, control, observeProcess) {
   const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   control.child = child;
   let closed = false;
@@ -420,7 +324,10 @@ async function runCli(args, control, observeProcess = observe) {
     });
   });
   const observed = child.pid ? observeProcess(child, () => closed, cancel)
-    .catch(() => ({ proved: false, observationError: true })) : Promise.resolve({ proved: false, unavailable: true });
+    .catch(() => {
+      cancel('SIGTERM');
+      return { proved: false, observationError: true };
+    }) : Promise.resolve({ proved: false, unavailable: true });
   const [status, listeners] = await Promise.all([completed, observed]);
   return {
     ...status, listeners, captureFailed,
@@ -544,13 +451,20 @@ async function live({ root, temporaryRoot, family }) {
   const attempt = `${key}.attempt.json`;
   const result = `${key}.result.json`;
   const base = { family, requested: model.id, effort: 'high', rootMode: temporaryRoot ? 'temporary' : 'linked' };
+  let observation;
   const report = await proof({
     root, temporaryRoot, evidenceDir, home, family, id: model.id,
+    setup: async () => {
+      observation = await prepareListenerObservation();
+      if (!observation.ready) throw new Error('local listener controls are incomplete');
+    },
     records: { attempt: () => persist(evidenceDir, attempt, { ...base, startedAt: new Date().toISOString(),
       cliAttempts: 1, successfulPublishedProof: 'unproven', providerCalls: 'unknown' }) },
     invoke: ({ root: selectedRoot, prompt, control }) => runCli([buildCli,
-      '--family', family, '--build', '--cwd', selectedRoot, '--effort', 'high', '--prompt-file', prompt.file, '--json'], control),
+      '--family', family, '--build', '--cwd', selectedRoot, '--effort', 'high', '--prompt-file', prompt.file, '--json'], control,
+    (child, closed, stop) => observe(child, closed, stop, observation)),
   });
+  if (observation && !report.listeners) report.listenerControls = observation.evidence;
   persist(evidenceDir, result, { ...base, finishedAt: new Date().toISOString(),
     attempt: report.cliAttempts ? attempt : null, ...report });
   return { report, evidence: path.relative(probeDirectory, path.join(evidence, result)) };
@@ -583,6 +497,7 @@ console.log(JSON.stringify({ family, id, mode: 'build', effort: 'high', error: n
     { origin: 'daily-cloudcode-pa.googleapis.com', method: 'POST', path: '/v1beta:futureInference', status: 403,
       headers: { authorization: 'fixture secret' } },
     { method: 'CONNECT', reason: 'CONNECT denied', path: '/fixture secret', origin: 'outside.invalid' },
+    { origin: 'play.googleapis.com', method: 'POST', path: '/log', status: 200, body: 'fixture secret' },
   ],
 }));
 console.error('ask-model: agy does not report which model answered; ' + id + ' was requested (unverified).');
@@ -687,6 +602,9 @@ async function selfTest() {
       }
       assert.equal(report.stdout.brokerEvents[0].path, '/v1beta:futureInference');
       assert.equal(report.stdout.brokerEvents[1].origin, undefined);
+      assert.deepEqual(report.stdout.brokerEvents[2], {
+        origin: 'play.googleapis.com', method: 'POST', path: '/log', status: 200,
+      });
       assert.deepEqual(fs.readdirSync(root), before);
       if (scenario === 'fallback-ssh') assert.equal(statAt(path.join(home, '.ssh')), undefined);
       else assert.deepEqual(fs.readdirSync(path.join(home, '.ssh')), beforeSsh);
