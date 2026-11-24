@@ -1,0 +1,20 @@
+{
+  "code": 0,
+  "signal": null,
+  "requested": "gemini-4-neon",
+  "effort": "high",
+  "installedLauncher": true,
+  "helpersAbsent": true,
+  "nativeCompleted": true,
+  "noPublicationClaim": true,
+  "noBrokerClaim": true,
+  "unverified": true,
+  "cleanPostflight": true,
+  "successfulAnswer": true,
+  "file": "builds/neon-builder/probe/installed-native-edit-620c73313b8983fc.txt",
+  "expectedSha256": "15ef5e89fa310c3ae1c0be43a04781eb52540c8cd5d9edce1890037cc0c78620",
+  "actualSha256": "15ef5e89fa310c3ae1c0be43a04781eb52540c8cd5d9edce1890037cc0c78620",
+  "exactEdit": true,
+  "labelPresent": true,
+  "passed": true
+}

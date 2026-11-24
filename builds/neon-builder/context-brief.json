@@ -1,0 +1,61 @@
+{
+  "mode": "pr",
+  "purpose": "Let the orchestrator run Neon as a normal native Antigravity builder at an explicit worktree, while preserving every existing default read-only Neon protection and the unverified model label.",
+  "mechanism": [
+    "Only explicit --build selects the native agy path. It requires an explicit canonical Git top, rejects unsafe roots before even the version probe, rejects conflicting modes, and supports only the agy vendor.",
+    "Native builds reuse the existing runner and invoke agy --mode accept-edits with normal HOME, normal permissions/configuration, resolved model/effort, stream-json and finite print timeout. They do not use a private source copy, OS sandbox, Google broker or custom tool-permission override. Parent instructions prohibit other models/reviews/push/PR/merge; these are instructions, not an OS security boundary.",
+    "The version is pinned to the tested CLI. Plaintext-token preflight runs before the version probe and is checked again after it. Native postflight requires a readable owned regular private per-call log and refuses a plaintext token or logged file-based fallback, even on failure/cancellation. Private logs are removed.",
+    "Native cancellation is remembered independently of the provider exit code. A cancelled child exiting zero still produces failure and no completion claim. Native edits may remain after errors; the caller must inspect the worktree before retrying. There is no rollback or atomic-publication promise.",
+    "Success includes build.execution:native and build.completed:true, plus served.verified:false. It has no build.published or brokerEvents claim. changed:null is informational, not an audit of this session. Safe bounded action parsing/model-echo mismatch checks remain; they do not prove isolation.",
+    "Default read-only argv, AGY_SETTINGS, AGY_WALL, customization refusals and the complete installed review runtime retain their current behavior. Default read-only logs remain under the existing log location; native build logs are temporary.",
+    "The old isolated helper modules are archived under builds/neon-builder/probe/isolated-runtime and not installed or loaded by the public route. Their tests remain active against the archive; all existing test changes are in test-only commits.",
+    "The benchmark snapshot accepts only a matching successful native completion with unverified identity, rejects legacy or mixed publication claims and records native completion. Its independent final grader, reference checks and case commands remain. The final grader is confined; the native builder itself has normal permissions."
+  ],
+  "decisions": [
+    "One concise README pointer and docs/neon-builder.md as the single user-facing home. Qualify default readonly descriptions as needed without touching doc lines pinned by tests.",
+    "Clearly distinguish a worktree scope from an enforced filesystem boundary. No Google-only, outside-file refusal, edit-only/no-shell or OS containment claim for native builders. Normal Antigravity permission prompts still apply; the wrapper does not use dangerously-skip-permissions.",
+    "Roles now contain Sol/Opus at medium and Neon at high through ACS API, with rotation as orchestrator policy and Opus preferred for frontend design taste. The role resolver still chooses first available; no automatic scheduler was built. Do not present local role preferences as repository defaults.",
+    "Two real local native edit calls passed, one direct agy and one freshly installed ask-model launcher. Earlier two custom calls failed. Four live build attempts total; model identity remains unverified. These are capability checks, not a coding-quality benchmark. Mini Neon benchmark is deferred; no Neon quality score is claimed.",
+    "No instruction/generated block, review record, tests, historical probe or hash/diff artifact edits. Report needed instruction changes rather than making them."
+  ],
+  "readers": {
+    "README.md": "People finding ask-model build usage.",
+    "docs/neon-builder.md": "Operators launching and reviewing native Neon builds.",
+    "builds/neon-builder/benchmark-adapter/README.md": "Operator of the external benchmark adapter.",
+    "comments": "Maintainers who need constraints/traps rather than narration."
+  },
+  "base": "origin/main",
+  "docMap": [
+    {
+      "behavior": "Opt-in native builder command, root/version/token checks, cancellation and unverified completion",
+      "docs": [
+        "README.md"
+      ]
+    },
+    {
+      "behavior": "Native permissions, partial edits on failure, ephemeral logs and retained default readonly wall",
+      "docs": []
+    },
+    {
+      "behavior": "Benchmark native completion and independent confined final grading",
+      "docs": [
+        "builds/neon-builder/benchmark-adapter/README.md"
+      ]
+    }
+  ],
+  "untouchable": [
+    "tests/**",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "packs/**/instructions/**",
+    "reviews/**",
+    "builds/neon-builder/probe/**",
+    "builds/neon-builder/benchmark-adapter/adapter.diff",
+    "builds/neon-builder/benchmark-adapter/hashes.json",
+    "builds/neon-builder/benchmark-adapter/neon-adapter.test.mjs",
+    "builds/neon-builder/benchmark-adapter/neon-grade.mjs",
+    "builds/neon-builder/plan.md",
+    "builds/neon-builder/*brief.md",
+    "builds/neon-builder/ORCHESTRATOR-STATE.md"
+  ]
+}
