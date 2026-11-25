@@ -5155,6 +5155,8 @@ function rolesPauseNotice(P) {
   return box;
 }
 
+const BUILDER_SELECTION_LABELS = { ordered: 'First available', random: 'Random per task', jev: 'Jev task fit' };
+
 /** One job: what it is for, its lineup with the effort that applies, its second opinion. */
 function roleRow(role) {
   const open = M.roleOpen.has(role.name);
@@ -5191,10 +5193,13 @@ function roleRow(role) {
     return row;
   }
   const lineup = el('div', 'roles-lineup');
-  membersOf(role).forEach((m, i) => lineup.appendChild(lineupChip(m.family, m.effort, role.ids[i], i ? '' : ' first')));
+  const builder = role.name === 'builder';
+  const mode = role.pick?.mode || 'ordered';
+  membersOf(role).forEach((m, i) => lineup.appendChild(lineupChip(m.family, m.effort, role.ids[i], !i && mode === 'ordered' ? ' first' : '')));
   if (marked('use') || marked('effort')) lineup.appendChild(changedMark());
   row.appendChild(lineup);
-  if (role.use.length > 1) row.appendChild(el('div', 'scope-note roles-hint', 'First is the default; the rest are alternatives.'));
+  if (builder) row.appendChild(el('div', 'scope-note roles-hint', BUILDER_SELECTION_LABELS[mode]));
+  else if (role.use.length > 1) row.appendChild(el('div', 'scope-note roles-hint', 'First is the default; the rest are alternatives.'));
   if (role.alt || marked('alt')) {
     const alt = el('div', 'roles-second');
     alt.appendChild(el('span', 'roles-second-label', role.alt ? 'Second opinion: ' : 'No second opinion'));
@@ -5249,6 +5254,49 @@ function effortOptions(sel, families, value, saved) {
   return saved && offered.includes(saved) ? saved : '';
 }
 
+function builderPickFields(pick, field, families) {
+  const mode = field('Builder selection', el('select', 'models-input roles-select roles-builder-mode'), 'pick');
+  for (const [value, label] of Object.entries(BUILDER_SELECTION_LABELS)) mode.appendChild(el('option', null, label)).value = value;
+  mode.value = pick.mode;
+  mode.onchange = () => { pick.mode = mode.value; };
+
+  const design = field('New frontend visual design preference', el('select', 'models-input roles-select roles-builder-design'));
+  const paintDesign = () => {
+    design.textContent = '';
+    design.appendChild(el('option', null, 'None')).value = '';
+    const choices = families();
+    for (const family of choices) design.appendChild(el('option', null, famLabel(family))).value = family;
+    if (pick.design && !choices.includes(pick.design)) {
+      const option = el('option', null, `${famLabel(pick.design)} (outside builder lineup)`);
+      option.value = pick.design;
+      design.appendChild(option);
+    }
+    design.value = pick.design;
+  };
+  paintDesign();
+  design.onchange = () => { pick.design = design.value; paintDesign(); };
+
+  const usage = field('Check cached usage when picking a builder', el('input', 'roles-builder-usage'));
+  usage.parentNode.classList.add('roles-usage-check');
+  usage.type = 'checkbox';
+  usage.checked = pick.checkUsage;
+  const reserve = field('Reserve (%)', el('input', 'models-input roles-builder-reserve'));
+  reserve.type = 'number';
+  reserve.min = '0';
+  reserve.max = '100';
+  reserve.step = 'any';
+  reserve.value = pick.reserve;
+  reserve.parentNode.hidden = !pick.checkUsage;
+  reserve.oninput = () => { pick.reserve = reserve.value; };
+  usage.onchange = () => {
+    pick.checkUsage = usage.checked;
+    pick.reserve = usage.checked ? '0' : '';
+    reserve.value = pick.reserve;
+    reserve.parentNode.hidden = !usage.checked;
+  };
+  return paintDesign;
+}
+
 /** One role's edit form, right under its row; `role` null is a new role. Drafts are kept in M.roleDrafts. */
 function roleEditor(role) {
   const R = M.roles;
@@ -5258,6 +5306,10 @@ function roleEditor(role) {
       use: role.use.join(', '),
       own: Object.fromEntries(membersOf(role).filter((m) => m.own).map((m) => [m.family, m.own])),
       effort: role.effort, alt: role.alt, altOwn: altMemberOf(role)?.own ? { [role.alt]: altMemberOf(role).own } : {}, note: role.note,
+      pick: role.name === 'builder' ? {
+        mode: role.pick?.mode || 'ordered', design: role.pick?.design || '',
+        checkUsage: role.pick?.reservePercent !== undefined, reserve: String(role.pick?.reservePercent ?? ''), saved: !!role.pick,
+      } : null,
     }
     : { name: '', use: '', own: {}, effort: '', alt: '', altOwn: {}, note: '' };
   const families = () => d.use.split(',').map((x) => x.trim()).filter(Boolean);
@@ -5298,7 +5350,7 @@ function roleEditor(role) {
   // Picked from the known models, never typed: each press adds it to the end of the order, a second press takes it out.
   // A div, not field()'s label: a label would pass every click inside it to its first button.
   const useField = el('div', 'roles-field roles-use-field');
-  const useLabel = el('span', 'roles-label', 'Models, in order (first is the default)');
+  const useLabel = el('span', 'roles-label', d.pick ? 'Builder lineup, in order' : 'Models, in order (first is the default)');
   if (marked('use')) useLabel.appendChild(changedMark());
   useField.appendChild(useLabel);
   const use = el('div', 'roles-use roles-picks');
@@ -5318,7 +5370,7 @@ function roleEditor(role) {
       if (at >= 0) { b.dataset.order = String(at + 1); b.appendChild(el('span', 'roles-pick-n', String(at + 1))); }
       b.appendChild(document.createTextNode(famLabel(f)));
       b.setAttribute('aria-pressed', String(at >= 0));
-      b.title = at === 0 ? 'The default — press to take it out' : at > 0 ? `Choice ${at + 1} — press to take it out` : 'Press to add it to the end of the order';
+      b.title = at === 0 && !d.pick ? 'The default — press to take it out' : at >= 0 ? `Choice ${at + 1} — press to take it out` : 'Press to add it to the end of the order';
       b.onclick = (e) => {
         e.preventDefault();
         const now = families();
@@ -5328,6 +5380,7 @@ function roleEditor(role) {
         paintPicks();
         paintMembers();
         paintEffort();
+        paintDesign?.();
         // The repaint replaced the pressed button: keep keyboard focus on the same model's new one.
         [...use.querySelectorAll('.roles-pick')].find((x) => x.dataset.family === f)?.focus();
       };
@@ -5373,6 +5426,7 @@ function roleEditor(role) {
   paintPicks();
   paintMembers();
   form.appendChild(members);
+  const paintDesign = d.pick ? builderPickFields(d.pick, field, families) : null;
   box.appendChild(form);
 
   const bar = el('div', 'models-edit roles-buttons');
@@ -5387,6 +5441,17 @@ function roleEditor(role) {
     const fields = {
       use: families().map((f) => withOwn(f, d.own[f])), effort: d.effort, alt: d.alt ? withOwn(d.alt, d.altOwn[d.alt]) : '', note: d.note.trim(),
     };
+    const pick = d.pick;
+    if (pick && (pick.saved || pick.mode !== 'ordered' || pick.design || pick.checkUsage)) {
+      const { mode, design, checkUsage, reserve } = pick;
+      const reservePercent = Number(reserve);
+      if (checkUsage && (!reserve.trim() || !Number.isFinite(reservePercent) || reservePercent < 0 || reservePercent > 100)) {
+        M.writeErrors[key] = 'Enter a reserve between 0 and 100%.';
+        paintModels();
+        return;
+      }
+      fields.pick = { mode, ...(design ? { design } : {}), ...(checkUsage ? { reservePercent } : {}) };
+    }
     await rolesWrite('/api/models/roles/set', { name, fields }, `Role ${name} saved.`, () => {
       delete M.roleDrafts[key];
       if (!role) M.adding = false;
