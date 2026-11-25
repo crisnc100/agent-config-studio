@@ -59,14 +59,22 @@ First read the task's plan and latest handoff. If either has a builder record, l
 
 For a new task, an operator-named member of the configured builder lineup wins (`/build <family> [effort]` or plain English). An explicit name follows the direct-family pause behavior. Otherwise use the configured picker once. At Frame, set `NEW_VISUAL_DESIGN=true` only if the task needs genuinely new frontend visual direction. Frontend logic, implementation of a settled design, backend and database work use the regular strategy. When the task-fit strategy is configured, set `TASK_SUMMARY` to the absolute path of a short regular file with the objective and constraints, using the existing build materials.
 
-The commands use Bash or zsh and jq. If jq is unavailable, run the same resolver commands and read their JSON directly. Set `NAMED_BUILDER` and `NAMED_EFFORT` only from the operator's explicit request. Initialize `EXCLUDED=()` for a new task or fill it with the recorded family exclusions for a replacement. Leave `BUILDER_RECORD` empty only when choosing a new owner.
+The commands use Bash or zsh and jq. If jq is unavailable, run the same resolver commands and read their JSON directly. Set `NAMED_BUILDER` and `NAMED_EFFORT` only from the operator's explicit request. Initialize `EXCLUDED=()` for a new task or fill it with the recorded family exclusions for a replacement. Leave `BUILDER_RECORD` empty only when choosing a new owner. Run the selection and record checks in the same shell.
 
 ```bash
+builder_lineup_state() {
+  local role_report
+  role_report=$(model-id --roles --json) || true
+  jq -er --arg family "$1" '.roles.builder |
+    if ((.use // []) | index($family)) != null then "active"
+    elif ([.skipped[]?.family] | index($family)) != null then "paused"
+    else empty end' <<< "$role_report"
+}
+
 if [ -z "${BUILDER_RECORD:-}" ]; then
   if [ -n "${NAMED_BUILDER:-}" ]; then
     BUILDER=$NAMED_BUILDER
-    ROLE_REPORT=$(model-id --roles --json) || true
-    if ! jq -e --arg family "$BUILDER" '.roles.builder | ((.use // []) + [.skipped[]?.family]) | index($family) != null' >/dev/null <<< "$ROLE_REPORT"; then
+    if ! builder_lineup_state "$BUILDER" >/dev/null; then
       printf '%s\n' 'Choose a member of the configured builder lineup in ACS → Models → Roles.' >&2
       exit 2
     fi
@@ -104,15 +112,40 @@ When choosing an owner, apply the operator's requested effort when it applies to
 BUILDER_RECORD=$(jq -ce --arg effort "$EFFORT_OVERRIDE" '. + {effort:$effort,effortOverride:$effort}' <<< "$BUILDER_RECORD") || exit 2
 ```
 
-Save the JSON from `BUILDER_RECORD` in `plan.md` or the existing handoff. It records the family, model ID, effective effort, mode, reason and `operatorNamed`. Keep the Frame decision and cumulative exclusions there as well. In lightweight mode use the existing task brief or handoff. On resume or a fix, use the saved effective effort even when it is empty.
+Save the JSON from `BUILDER_RECORD` in `plan.md` or the existing handoff. It records the family, model ID, effective effort, mode, reason and `operatorNamed`. Keep the Frame decision and cumulative exclusions there as well. In lightweight mode use the existing task brief or handoff. Before dispatch or review attribution, check the record against the currently configured lineup and registry. The membership check includes paused members and excludes the second opinion. Keep the saved effective effort even when it is empty. A failed record check stops routing until the orchestrator reconciles it with the task handoff and configuration.
 
 ```bash
 BUILDER=$(jq -er '.family | strings | select(length > 0)' <<< "$BUILDER_RECORD") || exit 2
 BUILDER_ID=$(jq -er '.id | strings | select(length > 0)' <<< "$BUILDER_RECORD") || exit 2
-EFFORT=$(jq -er '.effort | strings' <<< "$BUILDER_RECORD") || exit 2
+if ! BUILDER_LINEUP_STATE=$(builder_lineup_state "$BUILDER"); then
+  printf '%s\n' 'Recorded builder is outside the configured builder lineup.' >&2
+  exit 2
+fi
+if ! CURRENT_BUILDER_ID=$(model-id "$BUILDER" || exit 2) ||
+   ! jq -e --arg family "$BUILDER" --arg id "$CURRENT_BUILDER_ID" '.family == $family and .id == $id' >/dev/null <<< "$BUILDER_RECORD"; then
+  printf '%s\n' 'Recorded builder family or model ID does not match the current registry.' >&2
+  exit 2
+fi
+if ! EFFORT=$(jq -er '.effort | select(IN("", "low", "medium", "high", "xhigh", "max"))' <<< "$BUILDER_RECORD"); then
+  printf '%s\n' 'Recorded builder effort is invalid.' >&2
+  exit 2
+fi
+if ! OPERATOR_NAMED=$(jq -er 'select(.operatorNamed == (.mode == "explicit")) | .operatorNamed | booleans | tostring' <<< "$BUILDER_RECORD"); then
+  printf '%s\n' 'Recorded builder selection is invalid.' >&2
+  exit 2
+fi
 ```
 
-Log any confirmed quota limit or startup failure before replacing a builder. Check the tool's diagnostics and the worktree. Generic errors, timeouts and cancellation can leave edits. Hand off completed commits, checks and results, remaining work and any partial changes (including untracked files) before dispatching a replacement. Preserve earlier exclusions, add the failed family with the evidence, clear the current record and named-family input for the new pick, and use every exclusion with the original Frame decision. Save the replacement record and report the change. Each failed family is tried at most once in the automatic replacement chain. When the picker reports no eligible builder, show its reasons and stop that chain.
+Before dispatching a worker, check the recorded owner's availability. When an automatic owner is confirmed paused, use the replacement procedure below. For a named override, confirm the explicit request from the task context. Review attribution uses the checked owner record even if that family has since been paused.
+
+```bash
+if [ "$BUILDER_LINEUP_STATE" = paused ] && [ "$OPERATOR_NAMED" = false ]; then
+  printf '%s\n' 'Recorded automatic builder is paused. Follow the recorded replacement procedure.' >&2
+  exit 2
+fi
+```
+
+Log a confirmed pause, quota limit or startup failure before replacing a builder. Check the tool's diagnostics and the worktree. Generic errors, timeouts and cancellation can leave edits. Hand off completed commits, checks and results, remaining work and any partial changes (including untracked files) before dispatching a replacement. Preserve earlier exclusions, add the failed family with the evidence, clear the current record and named-family input for the new pick, and use every exclusion with the original Frame decision. Save the replacement record and report the change. Each failed family is tried at most once in the automatic replacement chain. When the picker reports no eligible builder, show its reasons and stop that chain.
 
 For quality escalation, first fix any gap in the brief and re-issue it to the same family. If an adequate brief still misses the same criterion twice, use another eligible family with the same handoff and record the quality reason. Switch automatically when the picker chose the family. For a quality switch away from an operator-named family, preserve the operator's existing choice to escalate or hold. If both builders miss the criterion, surface the scope issue to the operator.
 
@@ -262,7 +295,7 @@ Work in a folder for the task (e.g. `builds/<slug>/`). Files hold state so each 
 
 ## Hard rules
 
-- **The verifier never edits.** Every gate call — Bounce and Grade — is read-only: an `ask-model` call, never with `--investigate`. The grader observes; it does not fix. `--sandbox workspace-write` appears exactly once in a run: the phase-1 Build call on the codex lane (later phases inherit it via `resume`). If you are writing `workspace-write` on a Bounce or a Grade, you have wired the loop wrong.
+- **The verifier never edits.** Every gate call — Bounce and Grade — is read-only: an `ask-model` call, never with `--investigate`. The grader observes; it does not fix. Use `--sandbox workspace-write` when starting each fresh cross-vendor Codex builder session. Resume inherits that session’s sandbox for callbacks or unfinished work in the same phase.
 - **The builder never grades its own work.** The implementer subagent builds; a judgment-role model grades — cross-vendor preferred, same-vendor allowed per the grader swap rule, and the Judge handoff says which grader ran. The orchestrator that guided the build is not the sole grader either; self-critique is the weak version the whole design avoids.
 - **Never delete, skip, weaken, or narrow tests or checks to make a criterion pass.** A gamed check is a failed build, not a passed one. If a check seems wrong, surface it to the driver instead of dodging it.
 - **Deterministic checks first, the gate model second.** The builder loops against fast local checks; the gate model is the reasoned check on top, called sparingly to control cost.
