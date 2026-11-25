@@ -678,6 +678,9 @@ named builder in the lineup takes precedence. The picker also accepts
 eligible, it exits with the reasons. `model-id --role builder` still reports
 the first unpaused family in the configured order. Run `acs install-model-id`
 and `acs packs update build` to use the current resolver and build skills.
+Saving builder selection settings is refused while the installed `model-id`
+is older than this ACS, because it would stop working with them. Describe
+preserves saved builder settings when its proposal omits them.
 
 **Describe your models** takes a plain-language description and has Claude,
 at the Assist registry's default model and with no tools at all, turn it into
