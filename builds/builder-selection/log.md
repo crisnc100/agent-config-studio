@@ -90,3 +90,33 @@ All three phases committed. Registered offline list now160files; full exact-tip 
 Primary 2026-11-25-15-37-04-f20056 at16601e5: input cap left28paths outside prompt. Remaining-files review 2026-11-25-15-51-39-99e1b8 read all28 without truncation/security debt. Both code reviewerSol-prev and securityMythos ran. One fix round follows for primaryf1/s1(35/100,15/100) and s2(10/100), remainingf1(35/100), f2(9/100), s2(4/100). Remaining securitys1(6/100) is filed caller-steering hardening, no normal-use path; preserve score and report it.
 
 Fix shadowSol0.71, task owner unchanged. Targeted live Claude permission probe effortmedium0.96; no provider call yet. The fixture is outside shipping source; the seat, never builder, runs the probe after the fix. No GUI.
+
+## Review fix round
+
+Commit 7ee0731 addresses primary f1 and s1 and remaining-files f1 with explicit phase-scoped Bash rules on the Codex-to-Claude headless route. The orchestrator lists the literal validation, staging and commit commands from its phase brief in `CLAUDE_BASH_RULES`. The launch passes those rules via `--allowedTools` with `acceptEdits` and an empty strict MCP configuration. The dispatch refuses an empty rule list.
+
+Primary s2 is addressed in both build skills. Reload checks the existing owner against the configured builder lineup and current registry ID and validates the saved effort and boolean selection marker. A paused automatic owner stops before dispatch and follows the existing replacement procedure. A deliberate named override preserves its original behavior. Historical review attribution keeps the validated original author even if the family is now paused. The original restore block at fa1c213 returned both an out-of-lineup family and a mismatched ID. The updated executable fixtures reject both cases before the stub builder or review starts.
+
+The Claude skill's hard rule now matches the fresh workers required by remaining-files f2. Each new cross-vendor Codex phase starts with `workspace-write`. Same-phase resumes inherit the session's sandbox and verifiers stay read-only.
+
+For remaining-files s2, the committed QA projection replaces the SSH login and address with `<mini>` and records the redaction. A JSON comparison with fa1c213 confirmed that only the SSH target and redaction note changed. The script hash, timestamps, scores, and raw local evidence are preserved. The pre-redaction commit still contains the old projection. Remaining-files s1 (LOW 6/100, likelihood 1 × impact 6) remains filed for follow-up. This round left the task-summary reader and its guard unchanged.
+
+Commit a024b1f includes only test changes. The existing effort lookup and raw CLI guard exceptions match the exact new commands, with a new control that rejects dropping the allow-rule flag. Consumer tests retain earlier picker reuse, effort, and replacement assertions. The paused-case fixture now omits `until` to create an effective indefinite pause, exercising both explicit and automatic owner behavior.
+
+Focused checks on Node 23.11.1 passed with zero failures or skips.
+
+| Command | Passed |
+| --- | ---: |
+| `node tests/build-builder-skill.mjs` | 17 |
+| `node packs/review-gate/tests/review.skills.test.mjs` | 26 |
+| `node tests/roles-pick.mjs` | 15 |
+| `node tests/roles.mjs` | 207 |
+| `node tests/guards.mjs` | 11 |
+| `node tests/setup-guards.mjs` | 110 |
+| `node tests/suite-coverage.mjs` | 33 |
+| `node tests/readme.mjs` | 57 |
+| `node tests/no-personal-paths.mjs` | 11 |
+
+`node --check tests/build-builder-skill.mjs`, `node --check packs/review-gate/tests/review.packs.test.mjs`, and `git diff --check` passed. The manual `node packs/review-gate/tests/review.packs.test.mjs` again had 24 passes and the pre-existing model-name lint failure at `packs/KNOWN-LIMITS.md:53–54`. Git confirmed the frozen review.test.mjs and known-limits documentation are unchanged.
+
+The seat's separate live probe uses the resolved Claude builder at medium effort and its isolated fixture brief. The rules for the required commands are `CLAUDE_BASH_RULES=('Bash(node verify.mjs)' 'Bash(git add -- value.txt)' 'Bash(git commit -m builder-permission-smoke)')`. No live model was called in this fix round.
