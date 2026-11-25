@@ -39,7 +39,7 @@ The commands use Bash or zsh and jq. If jq is unavailable, run the same resolver
 ```bash
 builder_lineup_state() {
   local role_report
-  role_report=$(model-id --roles --json) || true
+  role_report=$(model-id --roles --json || true)
   jq -er --arg family "$1" '.roles.builder |
     if ((.use // []) | index($family)) != null then "active"
     elif ([.skipped[]?.family] | index($family)) != null then "paused"
@@ -56,18 +56,18 @@ if [ -z "${BUILDER_RECORD:-}" ]; then
     BUILDER_ID=$(model-id "$BUILDER" || echo "MODEL-ID-UNRESOLVED-$BUILDER")
     case "$BUILDER_ID" in MODEL-ID-UNRESOLVED-*|'') exit 2 ;; esac
     EFFORT=${NAMED_EFFORT:-}
-    [ -n "$EFFORT" ] || EFFORT=$(model-id --effort "$BUILDER" --role builder --no-alt) || exit 2
+    [ -n "$EFFORT" ] || EFFORT=$(model-id --effort "$BUILDER" --role builder --no-alt || exit 2) || exit 2
     BUILDER_RECORD=$(jq -nc --arg family "$BUILDER" --arg id "$BUILDER_ID" --arg effort "$EFFORT" \
       '{family:$family,id:$id,effort:$effort,mode:"explicit",reason:"operator named this builder",operatorNamed:true}')
   else
     PICK_ARGS=(--pick builder --json)
     [ "${NEW_VISUAL_DESIGN:-}" != true ] || PICK_ARGS+=(--design)
     [ -z "${TASK_SUMMARY:-}" ] || PICK_ARGS+=(--task-file "$TASK_SUMMARY")
-    for EXCLUDED_FAMILY in "${EXCLUDED[@]}"; do
+    for EXCLUDED_FAMILY in ${EXCLUDED[@]+"${EXCLUDED[@]}"}; do
       PICK_ARGS+=(--exclude "$EXCLUDED_FAMILY")
     done
     PICK_STATUS=0
-    PICK=$(model-id "${PICK_ARGS[@]}") || PICK_STATUS=$?
+    PICK=$(model-id "${PICK_ARGS[@]}" || exit "$?") || PICK_STATUS=$?
     if ! jq -e '.role == "builder"' >/dev/null 2>&1 <<< "$PICK"; then
       printf '%s\n' 'Builder picker unavailable. Run acs install-model-id.' >&2
       exit 2

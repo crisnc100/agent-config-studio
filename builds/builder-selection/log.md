@@ -146,3 +146,28 @@ At tree2d1f730, Mini passed43files then models.mjs failed shipped-skill lint (63
 The early public-history sanitation was reversed privately with an identical tree to preserve model-review ancestry during the required repair. Final sanitation moves after successful closes and before first push. No protected branch/index or other worktree changed.
 
 Repair shadowneon 0.32; task owner remains Solhigh. ZeroNeoninvocations; alloffered meant configured advisor/reviewer families, not every catalog entry.
+
+## Required suite repair results
+
+Both shipped selection blocks handle each model lookup inside its command substitution. A usable builder lineup still reaches the consumer when an unrelated role fails. Explicit effort bypasses lookup, and a failed default-effort lookup exits the calling shell with status 2. A picker response that identifies the builder role retains its exact nonzero status. Invalid JSON follows the existing upgrade diagnostic and exits 2. Conditional array expansion passes zero exclusions in strict Bash 3 and preserves each populated argument.
+
+With the original skills at ad050db, `node tests/models.mjs` reproduced six shipped-skill lint hits (63 passed, 1 failed). `node --test --test-name-pattern='with strict' tests/build-builder-skill.mjs` passed 16 and failed four. Bash 3.2.57 reported `EXCLUDED[@]: unbound variable` before the picker ran in both skills. The repaired source passed the same contracts under Bash 3.2.57 and native zsh 5.9 with errexit, nounset and pipefail. They check picker stdout and stderr, failure status and dispatch prevention, exact exclusions, named effort, role-report failures and owner reuse across phases, resumes and fixes. All four existing strict Claude dispatch argument cases still passed.
+
+Focused checks ran on Node 23.11.1.
+
+| Command | Passed |
+| --- | ---: |
+| `node tests/models.mjs` | 64 |
+| `node tests/build-builder-skill.mjs` | 36 |
+| `node packs/review-gate/tests/review.skills.test.mjs` | 26 |
+| `node tests/roles-pick.mjs` | 15 |
+| `node tests/readme.mjs` | 57 |
+| `node tests/guards.mjs` | 11 |
+| `node tests/setup-guards.mjs` | 110 |
+| `node tests/suite-coverage.mjs` | 33 |
+| `node tests/no-personal-paths.mjs` | 11 |
+| `node tests/packs-install.mjs` | 93 |
+
+The manual `node packs/review-gate/tests/review.packs.test.mjs` passed 24 checks and reproduced only the baseline model-name lint failure at `packs/KNOWN-LIMITS.md:53–54`. Its named-effort assertion still pins the short circuit, selected builder, `--no-alt` and calling-shell exit 2. It also requires the subshell exit 2. The production model lint and its test are unchanged. `node --check tests/build-builder-skill.mjs`, `node --check packs/review-gate/tests/review.packs.test.mjs` and `git diff --check` passed.
+
+A byte comparison against ad050db confirmed every Bash block outside the two selection blocks is identical, including the live-tested Claude dispatch and scoped rules. The docs-table citation still points to the picker arguments at line 63 of the Codex skill. This repair used fixture tools and the offline resolver. It made zero live provider calls.
