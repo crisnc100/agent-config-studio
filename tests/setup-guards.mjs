@@ -92,6 +92,7 @@ console.log('setup guards\n');
   // reads that only derive counts or metadata and never return or persist
   // the bytes, and the usage CLI child's credential readers (a separate
   // process by design). Anything new fails until it is routed or listed.
+  const taskSummaryRead = ['fs.readSync(fd, buffer)', 'the task picker CLI reads up to 4096 bytes from the regular summary file named explicitly by its caller, only when configured Jev needs a decision'];
   const ALLOW = {
     'lib/agent.js': [
       ['fs.readSync(fd, chunk, 0, length, call.offset)', 'the review watcher\'s incremental transcript tail (a byte offset per file, so a long transcript is never read twice); the descriptor gets openUserFile\'s checks (a regular file, one link, not a credential) and only cleaned, length-capped step lines reach the pane log'],
@@ -186,6 +187,7 @@ console.log('setup guards\n');
       ['fs.readFileSync(out)', 'the backup this installer just wrote, read back to verify it (the user\'s side is openUserFile)'],
     ],
     'bin/model-id': [
+      taskSummaryRead,
       ['fs.readFileSync(rolesSrc)', 'this checkout\'s lib/roles.js, copied out by --install'],
       ['fs.readFileSync(rolesDefaults)', 'this checkout\'s lib/roles.default.json, copied out by --install'],
       ["fs.readFileSync(path.join(src, 'bin', 'model-id.mjs'))", 'this checkout\'s resolver script, copied out by --install'],
@@ -194,6 +196,7 @@ console.log('setup guards\n');
     ],
     // The same file: bin/model-id is a symlink to it (Node 20.0 loads ESM only by extension).
     'bin/model-id.mjs': [
+      taskSummaryRead,
       ['fs.readFileSync(rolesSrc)', 'this checkout\'s lib/roles.js, copied out by --install'],
       ['fs.readFileSync(rolesDefaults)', 'this checkout\'s lib/roles.default.json, copied out by --install'],
       ["fs.readFileSync(path.join(src, 'bin', 'model-id.mjs'))", 'this checkout\'s resolver script, copied out by --install'],
@@ -238,6 +241,7 @@ console.log('setup guards\n');
     ['the test-io call text with the real fs in production code', 'lib/models-catalog.js', "fs.readFileSync(file, 'utf8')"],
     ['a live-file read for a byte comparison (sameBytes)', 'lib/mutate.js', 'fs.readFileSync(abs)'],
     ['a descriptor read (readSync)', 'lib/registry.js', 'fs.readSync(fd, buf, 0, 10, 0)'],
+    ['a second task summary descriptor read', 'bin/model-id.mjs', 'fs.readSync(fd, buffer)'],
     ['a FileHandle read', 'lib/context-map.js', 'await handle.read(buf, 0, 64, 0)'],
     ['a FileHandle readFile', 'server.js', 'await fh.readFile()'],
     ['a stream', 'lib/registry.js', 'fs.createReadStream(abs)'],
@@ -261,6 +265,8 @@ console.log('setup guards\n');
   const origHj = fs.readFileSync(hj, 'utf8');
   const gm = path.join(copy, 'lib', 'usage', 'gemini.js');
   const origGm = fs.readFileSync(gm, 'utf8');
+  const modelId = path.join(copy, 'bin', 'model-id.mjs');
+  const origModelId = fs.readFileSync(modelId, 'utf8');
   const agent = path.join(copy, 'lib', 'agent.js');
   const server = path.join(copy, 'server.js');
   const registry = path.join(copy, 'lib', 'registry.js');
@@ -270,6 +276,9 @@ console.log('setup guards\n');
   const control = guards();
   ok('pins: guards.mjs passes on the unmodified copy (control)', control.status === 0, control.stderr.slice(-400));
   const variants = [
+    ['Jev: a different binary from PATH', modelId, origModelId, t => t.replace("path.join(dir, 'jev')", "path.join(dir, 'codex')")],
+    ['Jev: task content appended to argv', modelId, origModelId, t => t.replace("['--json-out', '--timeout', '4']", "['--json-out', '--timeout', '4', summary]")],
+    ['Jev: a second spawn outside the chooser', modelId, origModelId, t => t + "\nconst another = () => spawnSync('jev', []);\n"],
     ['agent: a harness binary', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawnSync('codex',")],
     ['agent: another literal executable', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawnSync('git',")],
     ['agent: a caller-supplied executable', agent, origAgent, t => t.replace("spawnSync('cmux',", "spawnSync(process.env.AGENT_BINARY,")],
