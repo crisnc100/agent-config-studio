@@ -76,3 +76,11 @@ The new tests run the skills' shell blocks against stub worker CLIs and fixture 
 ## Builder editor guidance
 
 The note beneath the settings explains that a big task keeps its chosen builder through phases, fixes and resumes. It states when the preference applies and which work uses the selected strategy. Focused checks passed with zero failures: `node tests/builder-settings-ui.mjs` (2), `node tests/builder-settings.mjs` (6), `node tests/roles-ui.mjs` (75), and `node tests/models-layout-ui.mjs` (109). `node --check public/app.js` and `git diff --check` passed.
+
+## Final browser acceptance
+
+Private headless Chrome on Mini: Q1-Q6 all PASS at source 1b976d9; six UI/core blob hashes match. No active laptop controls. Original explanatory-copy finding 12/100 (likelihood4 x impact3) fixed by 1b976d9 and independently rechecked in rendered DOM/screenshot; original evidence preserved without rescoring. The helper regex did not recognize selected strategy, so its raw classification is preserved; the final verdict uses the actual rendered text and inspected screenshot. Details qa-final.json.
+
+Jev post-run: all6pass confidence1.0; residual copy severity0.04 on0-4 scale,confidence0.98 (triage only, not a new score for the original finding). QA preflight0.78/0.59; verifier shadowSol-prev0.78. UI-copy builder shadowNeon0.25, ignored: same task owner Sol.
+
+All three phases committed. Registered offline list now160files; full exact-tip suite, combined code/security review, context pass, fix check, close, PR and CI remain pending. New actual Neon probes/calls for this feature:0. Existing read-only agy wall/settings/review runtime are outside this diff. Global selection policy is not activated before a compatible merged installation.

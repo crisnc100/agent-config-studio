@@ -1,0 +1,94 @@
+{
+  "verdict": "PASS \u2014 Q2 clarification is rendered and its persistence behavior remains correct",
+  "criteria": [
+    {
+      "id": "Q1",
+      "verdict": "pass"
+    },
+    {
+      "id": "Q2",
+      "verdict": "pass"
+    },
+    {
+      "id": "Q3",
+      "verdict": "pass"
+    },
+    {
+      "id": "Q4",
+      "verdict": "pass"
+    },
+    {
+      "id": "Q5",
+      "verdict": "pass"
+    },
+    {
+      "id": "Q6",
+      "verdict": "pass"
+    }
+  ],
+  "source": {
+    "head": "1b976d9a62b1ab745fed334480d22f685aede7ff",
+    "uiHashes": {
+      "public/app.js": "0c179e8ce7b04cdc83fada846abad97a11b2f017",
+      "public/styles.css": "4724c27fe2c604beac839ab89cdae9e4dd296f4a",
+      "lib/roles.js": "d978dc03bac2ca7d846628d21efb56df0b78384e",
+      "lib/roles-panel.js": "872d14c02e05c9ad45a754adeeca9535753b93d4",
+      "lib/describe.js": "b5bb86f4a937d7b56a8b77030e01b594edd2e3f2",
+      "lib/models-panel.js": "4fd2f124732e50a14f8e9a36dfed37b1a9ca1607"
+    }
+  },
+  "sourceMatchesFrozenRecheckContract": true,
+  "renderedNote": "The build skill picks one builder per big task and keeps it through phases, fixes and resumes. The design preference applies only when the task needs new frontend visual direction. Frontend logic, implementation of an existing design, backend work and database changes use the selected strategy.",
+  "savedPolicy": {
+    "mode": "random",
+    "design": "opus",
+    "reservePercent": 25
+  },
+  "reloadedControls": {
+    "mode": "random",
+    "modeLabel": "Random per task",
+    "design": "opus",
+    "designLabel": "Opus",
+    "usage": true,
+    "reserve": "25",
+    "reserveVisible": true
+  },
+  "layoutInspection": {
+    "screenshot": "/tmp/builder-selection-headless-recheck-evidence/q2-random-reloaded.editor.png",
+    "viewport": {
+      "width": 1360,
+      "height": 1000
+    },
+    "observed": "The new note is readable below the controls and wraps across two lines. It does not overlap controls or Save; no clipping observed."
+  },
+  "originalFinding": {
+    "status": "fixed",
+    "score": 12,
+    "likelihood": 4,
+    "impact": 3,
+    "originalReport": "/tmp/builder-selection-headless-qa-evidence/summary.json",
+    "originalReportPreserved": true,
+    "rescored": false
+  },
+  "automatedClassificationCaveat": "The reused automated helper marked ordinaryLogic false because its old regex required logic near ordered/random/jev/default and did not recognize selected strategy. The captured DOM and screenshot contain the exact explanatory sentence above; the final criterion verdict is based on that observed text. The raw automation report is preserved separately.",
+  "rawAutomationReport": "/tmp/builder-selection-headless-recheck-evidence/report.json",
+  "validationCommand": "ssh <mini> 'PATH=/usr/local/bin:/usr/bin:/bin node /tmp/builder-selection-headless-recheck.mjs'",
+  "validationCommandRedaction": "The SSH login and address are replaced with <mini> in this public projection. The raw local QA report is preserved.",
+  "scriptSha256": "dfbc9e51136ac8f93adfece5a309c1063e119be9d978906b78c91ccbb7577dab",
+  "marks": [
+    "same-vendor QA; crossFamily off",
+    "reviewer Sol-prev distinct from builder Sol",
+    "no interactive computer-use, real profiles, providers, or model selection invoked"
+  ],
+  "lane": "Private headless Chrome on Mini via SSH",
+  "browserClosed": true,
+  "cleanup": {
+    "isolatedResolverRestored": true,
+    "sourceWorkingTreeClean": true,
+    "serverLeftRunningForParent": true
+  },
+  "pageErrors": [],
+  "consoleObservation": "One expected Q6 409; no other console errors.",
+  "runAt": "2026-11-25T15:25:26.178Z",
+  "finishedAt": "2026-11-25T15:25:33.583Z"
+}

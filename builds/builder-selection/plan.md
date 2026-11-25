@@ -48,3 +48,7 @@ Both build skill variants call the picker once per task, record and reuse the fa
 ## Verification
 
 Use pure policy tests with fixed random inputs, fake cache clocks/windows and stub Jev, installed CLI tests, schema/Describe/guide round-trips and shell-consumer contract tests. Browser QA uses the repo’s isolated-home QA server pattern. No real builders need to run to validate selection. Use the Mini for the portable full-suite work as previously selected, with the already established small laptop-only checks for developer data/new Git; preserve exact-source per-file coverage and home guards. Determine the new registered count after tests are added. Do not repeat the prior host-prerequisite failures.
+
+## Browser verification environment
+
+Cris stopped interactive laptop control during an interview. Browser acceptance runs in private headless Chrome on the Mini, against a temporary HOME, with no active profile or desktop input. qa-final.json records all six passed criteria and the source hashes. This changes the verification environment, not the acceptance bar.

@@ -1,0 +1,94 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "Q1": {
+      "type": "choice",
+      "choice": "pass",
+      "confidence": 1.0,
+      "probabilities": {
+        "pass": 1.0,
+        "fail": 0.0,
+        "blocked": 0.0,
+        "ask_user": 0.0
+      }
+    },
+    "Q2": {
+      "type": "choice",
+      "choice": "pass",
+      "confidence": 1.0,
+      "probabilities": {
+        "pass": 1.0,
+        "fail": 0.0,
+        "blocked": 0.0,
+        "ask_user": 0.0
+      }
+    },
+    "Q3": {
+      "type": "choice",
+      "choice": "pass",
+      "confidence": 1.0,
+      "probabilities": {
+        "pass": 1.0,
+        "fail": 0.0,
+        "blocked": 0.0,
+        "ask_user": 0.0
+      }
+    },
+    "Q4": {
+      "type": "choice",
+      "choice": "pass",
+      "confidence": 1.0,
+      "probabilities": {
+        "pass": 1.0,
+        "fail": 0.0,
+        "blocked": 0.0,
+        "ask_user": 0.0
+      }
+    },
+    "Q5": {
+      "type": "choice",
+      "choice": "pass",
+      "confidence": 1.0,
+      "probabilities": {
+        "pass": 1.0,
+        "fail": 0.0,
+        "blocked": 0.0,
+        "ask_user": 0.0
+      }
+    },
+    "Q6": {
+      "type": "choice",
+      "choice": "pass",
+      "confidence": 1.0,
+      "probabilities": {
+        "pass": 1.0,
+        "fail": 0.0,
+        "blocked": 0.0,
+        "ask_user": 0.0
+      }
+    },
+    "copy_flag_remaining": {
+      "type": "score",
+      "score": 0.04,
+      "confidence": 0.98,
+      "legend": {
+        "0": "0: No remaining issue: fixed and rechecked.",
+        "1": "1: Small unresolved explanation gap.",
+        "2": "2: Functional confusion still changes behavior.",
+        "3": "3: Major workflow failure remains.",
+        "4": "4: Data loss or security failure remains."
+      },
+      "probabilities": {
+        "0": 0.97,
+        "1": 0.03,
+        "2": 0.0,
+        "3": 0.0,
+        "4": 0.0
+      }
+    }
+  },
+  "usage": {
+    "input_tokens": 2691,
+    "output_tokens": 283
+  }
+}
