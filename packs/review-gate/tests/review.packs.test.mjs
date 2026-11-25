@@ -288,8 +288,7 @@ test('every read-only claude -p command in a shipped skill drops MCP tools with 
 
 // A raw model call: claude -p, codex exec or grok -p run as a command (at the start of a line, or after $( | & ; ( ),
 // not named in prose. Two callers write, and ask-model only asks read-only, so they are the exceptions: the build
-// skill's builder calls (codex exec with --sandbox workspace-write, and codex exec resume, which inherits it) and the
-// two exact writer calls in either copy of context-pass.
+// skill's cross-vendor builder calls and the two exact writer calls in either copy of context-pass.
 const RAW_CALL = /(?:^|\$\(|[|&;(])\s*(?:claude\s+-p|codex\s+exec|grok\s+-p)(?:\s|$)/
 const CODEX_WRITER_CALL = 'codex exec --skip-git-repo-check --sandbox workspace-write -m "$id" ${effort:+-c} ${effort:+model_reasoning_effort=$effort} "$(cat builds/<slug>/context-prompt.md)"'
 const CLAUDE_WRITER_CALL = 'claude -p "$(cat builds/<slug>/context-prompt.md)" --model "$id" ${effort:+--effort} $effort --tools Read,Edit,Write,Grep,Glob --permission-mode acceptEdits --strict-mcp-config'
@@ -298,7 +297,10 @@ const CONTEXT_PASS_SKILLS = [
   'review-gate/skills/claude/context-pass/SKILL.md',
   'review-gate/skills/codex/context-pass/SKILL.md',
 ]
+const CODEX_BUILD_SKILL = 'build/skills/codex/build/SKILL.md'
+const CLAUDE_BUILDER_CALL = 'claude -p "$(cat "$BRIEF_FILE")" --model "$BUILDER_ID" "${EFFORT_FLAG[@]}" "${SESSION_FLAG[@]}" --permission-mode acceptEdits --strict-mcp-config --mcp-config \'{"mcpServers":{}}\' --output-format json </dev/null'
 const allowedModelCall = (rel, line) => rel.startsWith('build/') && (/^\s*codex\s+exec\s+resume\b/.test(line) || /^\s*codex\s+exec\b.*\s--sandbox\s+workspace-write\b/.test(line)) ||
+  rel === CODEX_BUILD_SKILL && line === CLAUDE_BUILDER_CALL ||
   CONTEXT_PASS_SKILLS.includes(rel) && WRITER_CALLS.includes(line)
 function rawModelCalls(rel, source) {
   return source.split('\n').flatMap((line, i) => (RAW_CALL.test(line) && !allowedModelCall(rel, line) ? [`${rel}:${i + 1}: ${line.trim().slice(0, 100)}`] : []))
@@ -313,6 +315,10 @@ test('the raw-call lint finds planted calls and allows build calls and the exact
   assert.equal(rawModelCalls('build/skills/claude/build/SKILL.md', `${write}\n${resume}`).length, 0, 'the builder\'s calls in build')
   assert.equal(rawModelCalls('advisor/skills/claude/advisor/SKILL.md', `${write}\n${resume}`).length, 2, 'the same lines anywhere else')
   assert.equal(rawModelCalls('build/skills/claude/build/SKILL.md', 'codex exec --skip-git-repo-check --sandbox read-only -m x "go"').length, 1, 'a read-only gate in build')
+  assert.equal(rawModelCalls(CODEX_BUILD_SKILL, CLAUDE_BUILDER_CALL).length, 0)
+  assert.ok(readFileSync(join(PACKS, CODEX_BUILD_SKILL), 'utf8').split('\n').includes(CLAUDE_BUILDER_CALL))
+  assert.equal(rawModelCalls('build/skills/claude/build/SKILL.md', CLAUDE_BUILDER_CALL).length, 1)
+  assert.equal(rawModelCalls(CODEX_BUILD_SKILL, CLAUDE_BUILDER_CALL.replace(' --strict-mcp-config', '')).length, 1)
   for (const cp of CONTEXT_PASS_SKILLS) {
     const shippedLines = readFileSync(join(PACKS, cp), 'utf8').split('\n')
     for (const call of WRITER_CALLS) {
@@ -354,8 +360,10 @@ test('no shipped skill makes a raw claude -p, codex exec or grok -p model call: 
 // role or flavor JSON piped into jq. ask-model --second and --effort-from, and model-id --effort, are the one place
 // that rule lives (C1 in the reusable-pieces sweep); two jq copies of it had already drifted apart.
 const ROLE_JQ = /\bjq\b[^\n]*(?:\.alt(?:Effort)?\b|\.members\b|\.effort\b|\.flavor\b)|model-id\s+--(?:role|flavor)\b[^\n]*\|\s*jq\b/
+const BUILD_SKILLS = HARNESSES.map((harness) => `build/skills/${harness}/build/SKILL.md`)
+const RECORDED_BUILDER_EFFORT = 'EFFORT=$(jq -er \'.effort | strings\' <<< "$BUILDER_RECORD") || exit 2'
 function roleLookups(rel, source) {
-  return source.split('\n').flatMap((line, i) => (ROLE_JQ.test(line) ? [`${rel}:${i + 1}: ${line.trim().slice(0, 100)}`] : []))
+  return source.split('\n').flatMap((line, i) => (ROLE_JQ.test(line) && !(BUILD_SKILLS.includes(rel) && line === RECORDED_BUILDER_EFFORT) ? [`${rel}:${i + 1}: ${line.trim().slice(0, 100)}`] : []))
 }
 test('the role-lookup lint finds planted jq lookups and lets prose and other jq through (it cannot pass vacuously)', () => {
   for (const planted of [
@@ -368,6 +376,9 @@ test('the role-lookup lint finds planted jq lookups and lets prose and other jq 
     `jq -r '[(.members // [])[] | .effort][0]' role.json`,
     'model-id --role builder --json | jq -r .role',
   ]) assert.equal(roleLookups('advisor/skills/claude/advisor/SKILL.md', planted).length, 1, planted)
+  assert.equal(roleLookups(CODEX_BUILD_SKILL, RECORDED_BUILDER_EFFORT).length, 0)
+  assert.equal(roleLookups(CODEX_BUILD_SKILL, RECORDED_BUILDER_EFFORT.replace('$BUILDER_RECORD', '$ROLE_REPORT')).length, 1)
+  assert.equal(roleLookups('advisor/skills/codex/advisor/SKILL.md', RECORDED_BUILDER_EFFORT).length, 1)
   for (const fine of [
     "Pipe through `head -1` or parse with `jq -r 'select(.type==\"thread.started\").thread_id'`.",
     '| `second` | the role\'s second opinion (`alt`, `altId`, `altEffort` from `model-id --role advisor --json`) | When the user names it. |',
@@ -385,7 +396,11 @@ test('no shipped skill looks up a role\'s alt or a family\'s effort with jq: ask
     assert.match(skill('build', harness), /^ask-model --second --role advisor --prompt-file /m, `build/${harness}: the swapped Grade asks --second`)
     assert.equal(skill('second-opinion', harness).match(/^\s*\(?\s*ask-model --family "\$family" --effort-from advisor,reviewer --prompt-file /gm)?.length, 2, `second-opinion/${harness}: one call and the parallel one`)
   }
-  assert.match(skill('build', 'claude'), /^\[ -n "\$EFFORT" \] \|\| EFFORT=\$\(model-id --effort "\$BUILDER" --role builder --no-alt \|\| true\)$/m, 'build/claude: the builder effort, members only')
+  for (const harness of HARNESSES) {
+    const build = skill('build', harness)
+    assert.match(build, /^    \[ -n "\$EFFORT" \] \|\| EFFORT=\$\(model-id --effort "\$BUILDER" --role builder --no-alt\) \|\| exit 2$/m, `build/${harness}: a named builder's effort, members only`)
+    assert.ok(build.split('\n').includes(RECORDED_BUILDER_EFFORT), `build/${harness}: the selected packet's effort survives resume`)
+  }
 })
 
 test('every shipped advisor contract tells the advisor it may verify but never change any file', () => {

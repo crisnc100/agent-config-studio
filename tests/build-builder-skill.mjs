@@ -1,0 +1,263 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { tempDir } from './fixtures/cleanup.mjs';
+
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
+const models = JSON.parse(fs.readFileSync(path.join(ROOT, 'models.default.json'), 'utf8')).models;
+const source = (harness) => fs.readFileSync(path.join(ROOT, `packs/build/skills/${harness}/build/SKILL.md`), 'utf8');
+
+function snippet(skill, prefix) {
+  const blocks = [...skill.matchAll(/^```bash\n([\s\S]*?)\n^```$/gm)]
+    .map((match) => match[1]).filter((block) => block.startsWith(prefix));
+  assert.equal(blocks.length, 1, prefix);
+  return blocks[0];
+}
+
+const tools = ['model-id', 'codex', 'claude', 'ask-model'];
+const resolver = path.join(ROOT, 'bin/model-id.mjs');
+function fixture() {
+  const root = fs.realpathSync(tempDir('acs-builder-skill-'));
+  const home = path.join(root, 'home');
+  const bin = path.join(root, 'bin');
+  const work = path.join(root, 'fixture worktree');
+  const brief = path.join(work, 'phase brief.md');
+  const plan = path.join(work, 'plan.md');
+  const log = path.join(root, 'calls.jsonl');
+  const review = path.join(bin, 'review.cjs');
+  const roles = path.join(home, '.agent-config-studio', 'roles.json');
+  for (const dir of [path.dirname(roles), bin, work]) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(roles, JSON.stringify({
+    version: 2,
+    roles: { builder: { use: ['neon', { family: 'opus', effort: 'xhigh' }, { family: 'sol', effort: 'high' }], alt: 'terra' } },
+  }));
+  fs.writeFileSync(brief, 'Check the brief with spaces.\nSecond line.');
+  fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+  for (const tool of [...tools, 'review.cjs']) {
+    fs.writeFileSync(path.join(bin, tool), `#!${process.execPath}
+const fs = require('node:fs');
+const [,, ...args] = process.argv;
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({tool:${JSON.stringify(tool)}, args, author:process.env.REVIEW_AUTHOR}) + '\\n');
+if (${JSON.stringify(tool)} === 'model-id') {
+  if (args[0] !== '--pick' || process.env.REAL_PICK === '1') {
+    const result = require('node:child_process').spawnSync(process.execPath, [${JSON.stringify(resolver)}, ...args], {stdio:'inherit'});
+    process.exit(result.status ?? 1);
+  }
+  if (process.env.OLD_PICK === '1') {
+    console.error('usage: model-id <family|raw-id>');
+    console.log('MODEL-ID-UNRESOLVED---pick');
+    process.exit(1);
+  }
+  console.log(process.env.PICK_FIXTURE);
+  process.exit(JSON.parse(process.env.PICK_FIXTURE).error ? 2 : 0);
+}
+if (${JSON.stringify(tool)} === 'ask-model') {
+  if (process.env.PARTIAL_BUILD === '1') {
+    fs.writeFileSync('partial.txt', 'edits before a generic error');
+    process.exit(4);
+  }
+  console.log(JSON.stringify({build:{execution:'native',completed:true},served:{verified:false}}));
+}
+`, { mode: 0o755 });
+  }
+  const env = {
+    HOME: home,
+    PATH: [bin, '/usr/bin', '/bin'].join(':'),
+    BRIEF_FILE: brief,
+    PHASE_RESULT: path.join(work, 'result.md'),
+    REVIEW_SCRIPT: review,
+    PLAN_FILE: plan,
+    REVIEW_INTENT: 'Review the fixture phase',
+  };
+  const git = spawnSync('git', ['init', '--quiet', work], { env, encoding: 'utf8' });
+  assert.equal(git.status, 0, git.stderr);
+
+  function run(script, extra = {}, { cwd = work } = {}) {
+    const shell = spawnSync('/bin/bash', ['-e', '-c', script], { cwd, env: { ...env, ...extra }, encoding: 'utf8', timeout: 10000 });
+    assert.equal(shell.error, undefined, String(shell.error));
+    return shell;
+  }
+  function calls(tool) {
+    const calls = fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse);
+    return calls.filter((call) => call.tool === tool);
+  }
+  function saveOwner(record) {
+    fs.writeFileSync(plan, `# Fixture plan\n\n## Builder\n\n\`\`\`json\n${record}\n\`\`\`\n`);
+    return fs.readFileSync(plan, 'utf8').match(/^```json\n([^\n]+)/m)[1];
+  }
+  return { work, brief, home, roles, run, calls, saveOwner };
+}
+
+const packet = (family, effort) => JSON.stringify({
+  role: 'builder', mode: 'random', selectedBy: 'random', family, id: models[family], effort,
+  effortSource: 'member', reason: 'uniform draw from eligible builders',
+  eligible: ['neon', 'opus', 'sol'], skipped: [], usage: [],
+});
+const picks = (f) => f.calls('model-id').filter(({ args }) => args[0] === '--pick').map(({ args }) => args);
+const flag = (argv, name) => argv[argv.indexOf(name) + 1];
+
+for (const harness of ['codex', 'claude']) {
+  const skill = source(harness);
+  const pick = snippet(skill, 'if [ -z "${BUILDER_RECORD:-}" ]; then');
+  const override = snippet(skill, 'BUILDER_RECORD=$(jq -ce --arg effort');
+  const restore = snippet(skill, 'BUILDER=$(jq -er');
+  const review = snippet(skill, 'REVIEW_AUTHOR="$BUILDER"');
+  const neon = snippet(skill, 'WORKTREE=$(git rev-parse');
+  const prepare = `EXCLUDED=()\n${pick}`;
+  const printRecord = 'printf "%s\\n" "$BUILDER_RECORD"';
+  const native = harness === 'codex' ? 'Codex' : 'Claude';
+  const cli = harness === 'codex' ? 'claude' : 'codex';
+  const family = harness === 'codex' ? 'opus' : 'sol';
+  const effort = harness === 'codex' ? 'xhigh' : 'high';
+  const cliDispatch = harness === 'codex'
+    ? snippet(skill, 'EFFORT_FLAG=()')
+    : [snippet(skill, 'EFFORT_FLAG=()'), snippet(skill, 'codex exec --skip-git-repo-check')].join('\n');
+  const resumeDispatch = harness === 'codex'
+    ? cliDispatch
+    : [snippet(skill, 'EFFORT_FLAG=()'), snippet(skill, 'codex exec resume')].join('\n');
+  const session = harness === 'codex' ? { CLAUDE_SESSION_ID: 'phase-worker-id' } : { THREAD_ID: 'phase-worker-id' };
+
+  test(`${harness}: one picked non-first family owns fresh phases, resume, fixes and review`, () => {
+    const f = fixture();
+    const picked = f.run(`${prepare}\n${printRecord}`, { PICK_FIXTURE: packet(family, effort) });
+    assert.equal(picked.status, 0, picked.stderr);
+    const record = f.saveOwner(picked.stdout.trim());
+    assert.deepEqual(JSON.parse(record), { ...JSON.parse(packet(family, effort)), operatorNamed: false });
+    const dispatch = (body, extra) => f.run(`${prepare}\n${restore}\n${body}\n${review}`, {
+      BUILDER_RECORD: record,
+      PICK_FIXTURE: packet('neon', 'medium'),
+      ...extra,
+    });
+    // These are separate shell invocations loading the same plan, even when the
+    // picker would now return a different family. Stubs exercise argv only.
+    for (const [label, body, extra] of [
+      ['first phase', cliDispatch],
+      ['fresh later phase', cliDispatch],
+      ['unfinished phase resume', resumeDispatch, session],
+      ['fix', cliDispatch],
+    ]) {
+      const result = dispatch(body, extra);
+      assert.equal(result.status, 0, `${label}: ${result.stderr}`);
+    }
+    assert.deepEqual(picks(f), [['--pick', 'builder', '--json']]);
+    const workerCalls = f.calls(cli);
+    assert.equal(workerCalls.length, 4);
+    for (const [index, { args }] of workerCalls.entries()) {
+      assert.equal(flag(args, cli === 'codex' ? '-m' : '--model'), models[family]);
+      assert.equal(flag(args, cli === 'codex' ? '-c' : '--effort'), cli === 'codex' ? `model_reasoning_effort=${effort}` : effort);
+      assert.ok(args.includes('Check the brief with spaces.\nSecond line.'));
+      assert.equal(args.includes('phase-worker-id'), index === 2);
+      if (cli === 'codex') assert.equal(args.includes('workspace-write'), index !== 2);
+      else assert.ok(args.includes('--strict-mcp-config'));
+    }
+    assert.deepEqual(f.calls('review.cjs').map(({ author }) => author), [family, family, family, family]);
+    assert.match(skill, new RegExp(`native ${native} subagent on the recorded model and effort`));
+    assert.match(skill, /fresh worker.+phase|phase boundary/);
+  });
+
+  test(`${harness}: explicit builder in lineup wins, including while paused; effort override persists`, () => {
+    const f = fixture();
+    fs.writeFileSync(path.join(f.home, '.agent-config-studio', 'paused.json'), JSON.stringify({
+      version: 1, paused: ['neon', 'sol', 'opus'].map((name) => ({ name, until: null })),
+    }));
+    const named = f.run(`${prepare}\n${override}\n${printRecord}`, {
+      NAMED_BUILDER: family, NAMED_EFFORT: 'medium', EFFORT_OVERRIDE: 'medium',
+    });
+    assert.equal(named.status, 0, named.stderr);
+    const record = f.saveOwner(named.stdout.trim());
+    assert.deepEqual(JSON.parse(record), {
+      family, id: models[family], effort: 'medium', effortOverride: 'medium',
+      mode: 'explicit', reason: 'operator named this builder', operatorNamed: true,
+    });
+    const resumed = f.run(`${prepare}\n${restore}\n${cliDispatch}\n${review}`, { BUILDER_RECORD: record });
+    assert.equal(resumed.status, 0, resumed.stderr);
+    const args = f.calls(cli)[0].args;
+    assert.equal(flag(args, cli === 'codex' ? '-c' : '--effort'), cli === 'codex' ? 'model_reasoning_effort=medium' : 'medium');
+    assert.equal(f.calls('review.cjs')[0].author, family);
+
+    const alt = f.run(`${prepare}\n${restore}\n${cliDispatch}`, { NAMED_BUILDER: 'terra' });
+    assert.equal(alt.status, 2);
+    assert.match(alt.stderr, /member of the configured builder lineup/);
+    assert.deepEqual(f.calls('model-id').map(({ args }) => args), [['--roles', '--json'], [family], ['--roles', '--json']]);
+    assert.equal(f.calls(cli).length, 1, 'an alt is never dispatched');
+  });
+
+  test(`${harness}: --design is explicit and the optional task summary is one argument`, () => {
+    const f = fixture();
+    for (const [decision, summary] of [['true', f.brief], ['false', '']]) {
+      const result = f.run(`${prepare}\n${printRecord}`, {
+        NEW_VISUAL_DESIGN: decision, TASK_SUMMARY: summary, PICK_FIXTURE: packet(family, effort),
+      });
+      assert.equal(result.status, 0, result.stderr);
+    }
+    assert.deepEqual(picks(f), [
+      ['--pick', 'builder', '--json', '--design', '--task-file', f.brief],
+      ['--pick', 'builder', '--json'],
+    ]);
+    assert.match(skill, /Frontend logic, implementation of a settled design, backend and database work use the regular strategy/);
+  });
+
+  test(`${harness}: legacy picker fails with the upgrade command before any dispatch`, () => {
+    const f = fixture();
+    const stale = f.run(`${prepare}\n${restore}\n${cliDispatch}`, { OLD_PICK: '1' });
+    assert.equal(stale.status, 2);
+    assert.match(stale.stderr, /acs install-model-id/);
+    assert.deepEqual(picks(f), [['--pick', 'builder', '--json']]);
+    assert.deepEqual(f.calls(cli), []);
+  });
+
+  test(`${harness}: Neon uses the canonical worktree, saved effort and explicit family`, () => {
+    const f = fixture();
+    const nested = path.join(f.work, 'nested');
+    fs.mkdirSync(nested);
+    const result = f.run(`${prepare}\n${restore}\n${neon}\n${review}`, {
+      BUILDER_RECORD: packet('neon', ''),
+    }, { cwd: nested });
+    assert.equal(result.status, 0, result.stderr);
+    const [call] = f.calls('ask-model');
+    assert.deepEqual(call.args, ['--family', 'neon', '--build', '--cwd', f.work, '--effort', '', '--prompt-file', f.brief, '--json']);
+    assert.equal(f.calls('review.cjs')[0].author, 'neon');
+    assert.match(skill, /served\.verified: false/);
+  });
+
+  test(`${harness}: replacement uses cumulative exclusions and stops on the real picker's exhaustion`, () => {
+    const f = fixture();
+    const pickWith = (excluded) => f.run(`EXCLUDED=(${excluded.join(' ')})\n${pick}\n${printRecord}`, { REAL_PICK: '1' });
+    const first = pickWith([]);
+    assert.equal(first.status, 0, first.stderr);
+    assert.equal(JSON.parse(first.stdout).family, 'neon');
+
+    // Generic errors may follow edits. The orchestration choice to inspect
+    // and hand them off is in the skill; this is the shell-side consequence.
+    const failed = f.run(`${prepare}\n${restore}\n${neon}`, {
+      BUILDER_RECORD: first.stdout.trim(), PARTIAL_BUILD: '1',
+    });
+    assert.equal(failed.status, 4);
+    assert.equal(fs.readFileSync(path.join(f.work, 'partial.txt'), 'utf8'), 'edits before a generic error');
+    assert.deepEqual(picks(f), [['--pick', 'builder', '--json']], 'the generic error does not repick');
+    assert.match(skill, /Generic errors, timeouts and cancellation can leave edits/);
+    assert.match(skill, /Hand off completed commits, checks and results, remaining work and any partial changes \(including untracked files\)/);
+    assert.match(skill, /confirmed quota limit or startup failure before replacing/);
+
+    const second = pickWith(['neon']);
+    assert.equal(second.status, 0, second.stderr);
+    assert.equal(JSON.parse(second.stdout).family, 'opus');
+    const third = pickWith(['neon', 'opus']);
+    assert.equal(third.status, 0, third.stderr);
+    assert.equal(JSON.parse(third.stdout).family, 'sol');
+    const exhausted = pickWith(['neon', 'opus', 'sol']);
+    assert.equal(exhausted.status, 2);
+    assert.match(exhausted.stderr, /no eligible builder/);
+    assert.match(exhausted.stderr, /explicitly excluded/);
+    assert.doesNotMatch(exhausted.stderr, /acs install-model-id/);
+    assert.deepEqual(picks(f), [
+      ['--pick', 'builder', '--json'],
+      ['--pick', 'builder', '--json', '--exclude', 'neon'],
+      ['--pick', 'builder', '--json', '--exclude', 'neon', '--exclude', 'opus'],
+      ['--pick', 'builder', '--json', '--exclude', 'neon', '--exclude', 'opus', '--exclude', 'sol'],
+    ]);
+  });
+}
