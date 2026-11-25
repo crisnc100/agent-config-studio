@@ -122,7 +122,7 @@ fi
 
 Log a confirmed pause, quota limit or startup failure before replacing a builder. Check the tool's diagnostics and the worktree. Generic errors, timeouts and cancellation can leave edits. Hand off completed commits, checks and results, remaining work and any partial changes (including untracked files) before dispatching a replacement. Preserve earlier exclusions, add the failed family with the evidence, clear the current record and named-family input for the new pick, and use every exclusion with the original Frame decision. Save the replacement record and report the change. Each failed family is tried at most once in the automatic replacement chain. When the picker reports no eligible builder, show its reasons and stop that chain.
 
-For quality escalation, first fix any gap in the brief and re-issue it to the same family. If an adequate brief still misses the same criterion twice, use another eligible family with the same handoff and record the quality reason. Switch automatically when the picker chose the family. For a quality switch away from an operator-named family, preserve the operator's existing choice to escalate or hold. If both builders miss the criterion, surface the scope issue to the operator.
+When output misses the bar, check the brief first. Fix any gap and re-issue it to the same family. If the brief was adequate, automatically redo the work with another eligible builder-role family. Carry forward the handoff and record the reason for the switch. Honor an explicit operator constraint to use only the named family. If the second builder also misses the criterion, surface the scope issue to the operator.
 
 ## Dispatch the recorded builder
 

@@ -120,3 +120,9 @@ Focused checks on Node 23.11.1 passed with zero failures or skips.
 `node --check tests/build-builder-skill.mjs`, `node --check packs/review-gate/tests/review.packs.test.mjs`, and `git diff --check` passed. The manual `node packs/review-gate/tests/review.packs.test.mjs` again had 24 passes and the pre-existing model-name lint failure at `packs/KNOWN-LIMITS.md:53–54`. Git confirmed the frozen review.test.mjs and known-limits documentation are unchanged.
 
 The seat's separate live probe uses the resolved Claude builder at medium effort and its isolated fixture brief. The rules for the required commands are `CLAUDE_BASH_RULES=('Bash(node verify.mjs)' 'Bash(git add -- value.txt)' 'Bash(git commit -m builder-permission-smoke)')`. No live model was called in this fix round.
+
+## Escalation wording in the same fix round
+
+Both build skills follow the standing escalation rule. When output misses the bar, the orchestrator checks the brief first. A gap is fixed and sent back to the same family. An adequate brief moves the work automatically to another eligible builder, with the handoff and reason recorded. Only an explicit instruction to use one family limits that choice.
+
+A byte comparison against 01a29b0 confirmed every Bash block in both skill files is identical, including the headless Claude dispatch and permission rules. `node tests/build-builder-skill.mjs` passed 17 checks, `node packs/review-gate/tests/review.skills.test.mjs` passed 26, and `node tests/guards.mjs` passed 11. `node packs/review-gate/tests/review.packs.test.mjs` passed 24 checks and reproduced the one baseline model-name lint failure in KNOWN-LIMITS.md. `git diff --check` passed.
