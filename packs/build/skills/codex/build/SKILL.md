@@ -152,7 +152,8 @@ EFFORT_FLAG=()
 [ -z "$EFFORT" ] || EFFORT_FLAG=(--effort "$EFFORT")
 SESSION_FLAG=()
 [ -z "${CLAUDE_SESSION_ID:-}" ] || SESSION_FLAG=(--resume "$CLAUDE_SESSION_ID")
-claude -p "$(cat "$BRIEF_FILE")" --model "$BUILDER_ID" "${EFFORT_FLAG[@]}" "${SESSION_FLAG[@]}" --allowedTools "${CLAUDE_BASH_RULES[@]}" --permission-mode acceptEdits --strict-mcp-config --mcp-config '{"mcpServers":{}}' --output-format json </dev/null
+# Bash 3 treats empty arrays as unset under nounset.
+claude -p "$(cat "$BRIEF_FILE")" --model "$BUILDER_ID" ${EFFORT_FLAG[@]+"${EFFORT_FLAG[@]}"} ${SESSION_FLAG[@]+"${SESSION_FLAG[@]}"} --allowedTools "${CLAUDE_BASH_RULES[@]}" --permission-mode acceptEdits --strict-mcp-config --mcp-config '{"mcpServers":{}}' --output-format json </dev/null
 ```
 
 **Antigravity builder.** For a `gemini-…` model, run the recorded family and effort through the native builder wrapper:
