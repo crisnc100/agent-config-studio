@@ -126,3 +126,9 @@ The seat's separate live probe uses the resolved Claude builder at medium effort
 Both build skills follow the standing escalation rule. When output misses the bar, the orchestrator checks the brief first. A gap is fixed and sent back to the same family. An adequate brief moves the work automatically to another eligible builder, with the handoff and reason recorded. Only an explicit instruction to use one family limits that choice.
 
 A byte comparison against 01a29b0 confirmed every Bash block in both skill files is identical, including the headless Claude dispatch and permission rules. `node tests/build-builder-skill.mjs` passed 17 checks, `node packs/review-gate/tests/review.skills.test.mjs` passed 26, and `node tests/guards.mjs` passed 11. `node packs/review-gate/tests/review.packs.test.mjs` passed 24 checks and reproduced the one baseline model-name lint failure in KNOWN-LIMITS.md. `git diff --check` passed.
+
+## Headless dispatch on Bash 3
+
+The initial permission smoke stopped during shell expansion before Claude started. With `set -euo pipefail`, Bash 3.2.57 treats an empty optional array as unset. Commit c79cef7 uses conditional expansion for the effort and session arrays. The dispatch retains the phase-specific Bash rules, strict empty MCP configuration, and named model.
+
+The test-only commit 285cde4 checks the full argv for fresh and resumed dispatches, each with and without an effort, under the same strict shell options. `node --test --test-name-pattern='strict Bash starts' tests/build-builder-skill.mjs` failed on the original block at the empty effort array, then passed after the correction. `node tests/build-builder-skill.mjs` (18), `node packs/review-gate/tests/review.skills.test.mjs` (26), and `node tests/guards.mjs` (11) passed. The manual pack lint reported 24 passes and the existing model-name lint failure in KNOWN-LIMITS.md. Syntax checks for both changed test files and `git diff --check` passed.
