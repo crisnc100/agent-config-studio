@@ -298,7 +298,7 @@ const CONTEXT_PASS_SKILLS = [
   'review-gate/skills/codex/context-pass/SKILL.md',
 ]
 const CODEX_BUILD_SKILL = 'build/skills/codex/build/SKILL.md'
-const CLAUDE_BUILDER_CALL = 'claude -p "$(cat "$BRIEF_FILE")" --model "$BUILDER_ID" "${EFFORT_FLAG[@]}" "${SESSION_FLAG[@]}" --permission-mode acceptEdits --strict-mcp-config --mcp-config \'{"mcpServers":{}}\' --output-format json </dev/null'
+const CLAUDE_BUILDER_CALL = 'claude -p "$(cat "$BRIEF_FILE")" --model "$BUILDER_ID" "${EFFORT_FLAG[@]}" "${SESSION_FLAG[@]}" --allowedTools "${CLAUDE_BASH_RULES[@]}" --permission-mode acceptEdits --strict-mcp-config --mcp-config \'{"mcpServers":{}}\' --output-format json </dev/null'
 const allowedModelCall = (rel, line) => rel.startsWith('build/') && (/^\s*codex\s+exec\s+resume\b/.test(line) || /^\s*codex\s+exec\b.*\s--sandbox\s+workspace-write\b/.test(line)) ||
   rel === CODEX_BUILD_SKILL && line === CLAUDE_BUILDER_CALL ||
   CONTEXT_PASS_SKILLS.includes(rel) && WRITER_CALLS.includes(line)
@@ -319,6 +319,7 @@ test('the raw-call lint finds planted calls and allows build calls and the exact
   assert.ok(readFileSync(join(PACKS, CODEX_BUILD_SKILL), 'utf8').split('\n').includes(CLAUDE_BUILDER_CALL))
   assert.equal(rawModelCalls('build/skills/claude/build/SKILL.md', CLAUDE_BUILDER_CALL).length, 1)
   assert.equal(rawModelCalls(CODEX_BUILD_SKILL, CLAUDE_BUILDER_CALL.replace(' --strict-mcp-config', '')).length, 1)
+  assert.equal(rawModelCalls(CODEX_BUILD_SKILL, CLAUDE_BUILDER_CALL.replace(' --allowedTools "${CLAUDE_BASH_RULES[@]}"', '')).length, 1)
   for (const cp of CONTEXT_PASS_SKILLS) {
     const shippedLines = readFileSync(join(PACKS, cp), 'utf8').split('\n')
     for (const call of WRITER_CALLS) {
@@ -361,7 +362,7 @@ test('no shipped skill makes a raw claude -p, codex exec or grok -p model call: 
 // that rule lives (C1 in the reusable-pieces sweep); two jq copies of it had already drifted apart.
 const ROLE_JQ = /\bjq\b[^\n]*(?:\.alt(?:Effort)?\b|\.members\b|\.effort\b|\.flavor\b)|model-id\s+--(?:role|flavor)\b[^\n]*\|\s*jq\b/
 const BUILD_SKILLS = HARNESSES.map((harness) => `build/skills/${harness}/build/SKILL.md`)
-const RECORDED_BUILDER_EFFORT = 'EFFORT=$(jq -er \'.effort | strings\' <<< "$BUILDER_RECORD") || exit 2'
+const RECORDED_BUILDER_EFFORT = 'if ! EFFORT=$(jq -er \'.effort | select(IN("", "low", "medium", "high", "xhigh", "max"))\' <<< "$BUILDER_RECORD"); then'
 function roleLookups(rel, source) {
   return source.split('\n').flatMap((line, i) => (ROLE_JQ.test(line) && !(BUILD_SKILLS.includes(rel) && line === RECORDED_BUILDER_EFFORT) ? [`${rel}:${i + 1}: ${line.trim().slice(0, 100)}`] : []))
 }

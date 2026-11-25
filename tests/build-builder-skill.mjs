@@ -101,9 +101,10 @@ const flag = (argv, name) => argv[argv.indexOf(name) + 1];
 
 for (const harness of ['codex', 'claude']) {
   const skill = source(harness);
-  const pick = snippet(skill, 'if [ -z "${BUILDER_RECORD:-}" ]; then');
+  const pick = snippet(skill, 'builder_lineup_state() {');
   const override = snippet(skill, 'BUILDER_RECORD=$(jq -ce --arg effort');
   const restore = snippet(skill, 'BUILDER=$(jq -er');
+  const availability = snippet(skill, 'if [ "$BUILDER_LINEUP_STATE" = paused ]');
   const review = snippet(skill, 'REVIEW_AUTHOR="$BUILDER"');
   const neon = snippet(skill, 'WORKTREE=$(git rev-parse');
   const prepare = `EXCLUDED=()\n${pick}`;
@@ -112,8 +113,9 @@ for (const harness of ['codex', 'claude']) {
   const cli = harness === 'codex' ? 'claude' : 'codex';
   const family = harness === 'codex' ? 'opus' : 'sol';
   const effort = harness === 'codex' ? 'xhigh' : 'high';
+  const claudeDispatch = harness === 'codex' ? snippet(skill, 'if [ "${#CLAUDE_BASH_RULES[@]}" -eq 0 ]; then') : null;
   const cliDispatch = harness === 'codex'
-    ? snippet(skill, 'EFFORT_FLAG=()')
+    ? [snippet(skill, 'CLAUDE_BASH_RULES=('), claudeDispatch].join('\n')
     : [snippet(skill, 'EFFORT_FLAG=()'), snippet(skill, 'codex exec --skip-git-repo-check')].join('\n');
   const resumeDispatch = harness === 'codex'
     ? cliDispatch
@@ -126,7 +128,7 @@ for (const harness of ['codex', 'claude']) {
     assert.equal(picked.status, 0, picked.stderr);
     const record = f.saveOwner(picked.stdout.trim());
     assert.deepEqual(JSON.parse(record), { ...JSON.parse(packet(family, effort)), operatorNamed: false });
-    const dispatch = (body, extra) => f.run(`${prepare}\n${restore}\n${body}\n${review}`, {
+    const dispatch = (body, extra) => f.run(`${prepare}\n${restore}\n${availability}\n${body}\n${review}`, {
       BUILDER_RECORD: record,
       PICK_FIXTURE: packet('neon', 'medium'),
       ...extra,
@@ -151,7 +153,15 @@ for (const harness of ['codex', 'claude']) {
       assert.ok(args.includes('Check the brief with spaces.\nSecond line.'));
       assert.equal(args.includes('phase-worker-id'), index === 2);
       if (cli === 'codex') assert.equal(args.includes('workspace-write'), index !== 2);
-      else assert.ok(args.includes('--strict-mcp-config'));
+      else {
+        const rules = args.slice(args.indexOf('--allowedTools') + 1, args.indexOf('--permission-mode'));
+        assert.deepEqual(rules, [
+          'Bash(node --test phase.test.mjs)', 'Bash(git add -- outcome.txt)', 'Bash(git commit -m builder-permission-smoke)',
+        ]);
+        assert.equal(flag(args, '--permission-mode'), 'acceptEdits');
+        assert.ok(args.includes('--strict-mcp-config'));
+        assert.equal(flag(args, '--mcp-config'), '{"mcpServers":{}}');
+      }
     }
     assert.deepEqual(f.calls('review.cjs').map(({ author }) => author), [family, family, family, family]);
     assert.match(skill, new RegExp(`native ${native} subagent on the recorded model and effort`));
@@ -161,7 +171,7 @@ for (const harness of ['codex', 'claude']) {
   test(`${harness}: explicit builder in lineup wins, including while paused; effort override persists`, () => {
     const f = fixture();
     fs.writeFileSync(path.join(f.home, '.agent-config-studio', 'paused.json'), JSON.stringify({
-      version: 1, paused: ['neon', 'sol', 'opus'].map((name) => ({ name, until: null })),
+      version: 1, paused: ['neon', 'sol', 'opus'].map((name) => ({ name })),
     }));
     const named = f.run(`${prepare}\n${override}\n${printRecord}`, {
       NAMED_BUILDER: family, NAMED_EFFORT: 'medium', EFFORT_OVERRIDE: 'medium',
@@ -172,18 +182,75 @@ for (const harness of ['codex', 'claude']) {
       family, id: models[family], effort: 'medium', effortOverride: 'medium',
       mode: 'explicit', reason: 'operator named this builder', operatorNamed: true,
     });
-    const resumed = f.run(`${prepare}\n${restore}\n${cliDispatch}\n${review}`, { BUILDER_RECORD: record });
+    const resumed = f.run(`${prepare}\n${restore}\n${availability}\n${cliDispatch}\n${review}`, { BUILDER_RECORD: record });
     assert.equal(resumed.status, 0, resumed.stderr);
     const args = f.calls(cli)[0].args;
     assert.equal(flag(args, cli === 'codex' ? '-c' : '--effort'), cli === 'codex' ? 'model_reasoning_effort=medium' : 'medium');
     assert.equal(f.calls('review.cjs')[0].author, family);
 
-    const alt = f.run(`${prepare}\n${restore}\n${cliDispatch}`, { NAMED_BUILDER: 'terra' });
+    const alt = f.run(`${prepare}\n${restore}\n${availability}\n${cliDispatch}`, { NAMED_BUILDER: 'terra' });
     assert.equal(alt.status, 2);
     assert.match(alt.stderr, /member of the configured builder lineup/);
-    assert.deepEqual(f.calls('model-id').map(({ args }) => args), [['--roles', '--json'], [family], ['--roles', '--json']]);
+    assert.deepEqual(f.calls('model-id').map(({ args }) => args), [
+      ['--roles', '--json'], [family], ['--roles', '--json'], [family], ['--roles', '--json'],
+    ]);
     assert.equal(f.calls(cli).length, 1, 'an alt is never dispatched');
   });
+
+  test(`${harness}: a reloaded record must match the lineup and current registry before dispatch or review`, () => {
+    const f = fixture();
+    const saved = { ...JSON.parse(packet(family, effort)), operatorNamed: false };
+    const crossVendorId = models[harness === 'codex' ? 'sol' : 'opus'];
+    const invalid = [
+      [{ family: 'terra', id: models.terra }, /outside the configured builder lineup/],
+      [{ id: crossVendorId }, /does not match the current registry/],
+      [{ effort: 'medium\n' }, /effort is invalid/],
+      [{ operatorNamed: 'true' }, /selection is invalid/],
+      [{ operatorNamed: true }, /selection is invalid/],
+    ];
+    for (const [patch, diagnostic] of invalid) {
+      const reloaded = f.run(`${prepare}\n${restore}\n${availability}\n${cliDispatch}\n${review}`, {
+        BUILDER_RECORD: f.saveOwner(JSON.stringify({ ...saved, ...patch })),
+      });
+      assert.equal(reloaded.status, 2);
+      assert.match(reloaded.stderr, diagnostic);
+    }
+    assert.deepEqual(picks(f), [], 'invalid saved records do not cause a fresh pick');
+    assert.deepEqual(f.calls(cli), []);
+    assert.deepEqual(f.calls('review.cjs'), []);
+  });
+
+  test(`${harness}: a paused automatic owner cannot dispatch or gain an explicit override`, () => {
+    const f = fixture();
+    const picked = f.run(`${prepare}\n${printRecord}`, { PICK_FIXTURE: packet(family, effort) });
+    assert.equal(picked.status, 0, picked.stderr);
+    const record = f.saveOwner(picked.stdout.trim());
+    fs.writeFileSync(path.join(f.home, '.agent-config-studio', 'paused.json'), JSON.stringify({
+      version: 1, paused: [{ name: family }],
+    }));
+    const paused = f.run(`${prepare}\n${restore}\n${availability}\n${cliDispatch}`, { BUILDER_RECORD: record });
+    assert.equal(paused.status, 2);
+    assert.match(paused.stderr, /automatic builder is paused/);
+    assert.deepEqual(f.calls(cli), []);
+    assert.deepEqual(picks(f), [['--pick', 'builder', '--json']], 'pause stops this dispatch before any replacement pick');
+
+    const reviewed = f.run(`${prepare}\n${restore}\n${review}`, { BUILDER_RECORD: record });
+    assert.equal(reviewed.status, 0, reviewed.stderr);
+    assert.equal(f.calls('review.cjs')[0].author, family, 'the earlier work retains its author');
+  });
+
+  if (harness === 'codex') {
+    test('codex: headless Claude dispatch requires scoped Bash rules from the phase brief', () => {
+      const f = fixture();
+      const saved = { ...JSON.parse(packet(family, effort)), operatorNamed: false };
+      const missing = f.run(`${prepare}\n${restore}\n${availability}\n${claudeDispatch}`, {
+        BUILDER_RECORD: JSON.stringify(saved),
+      });
+      assert.equal(missing.status, 2);
+      assert.match(missing.stderr, /headless builder Bash rules from the phase brief/);
+      assert.deepEqual(f.calls('claude'), []);
+    });
+  }
 
   test(`${harness}: --design is explicit and the optional task summary is one argument`, () => {
     const f = fixture();
@@ -202,7 +269,7 @@ for (const harness of ['codex', 'claude']) {
 
   test(`${harness}: legacy picker fails with the upgrade command before any dispatch`, () => {
     const f = fixture();
-    const stale = f.run(`${prepare}\n${restore}\n${cliDispatch}`, { OLD_PICK: '1' });
+    const stale = f.run(`${prepare}\n${restore}\n${availability}\n${cliDispatch}`, { OLD_PICK: '1' });
     assert.equal(stale.status, 2);
     assert.match(stale.stderr, /acs install-model-id/);
     assert.deepEqual(picks(f), [['--pick', 'builder', '--json']]);
@@ -213,8 +280,8 @@ for (const harness of ['codex', 'claude']) {
     const f = fixture();
     const nested = path.join(f.work, 'nested');
     fs.mkdirSync(nested);
-    const result = f.run(`${prepare}\n${restore}\n${neon}\n${review}`, {
-      BUILDER_RECORD: packet('neon', ''),
+    const result = f.run(`${prepare}\n${restore}\n${availability}\n${neon}\n${review}`, {
+      BUILDER_RECORD: JSON.stringify({ ...JSON.parse(packet('neon', '')), operatorNamed: false }),
     }, { cwd: nested });
     assert.equal(result.status, 0, result.stderr);
     const [call] = f.calls('ask-model');
@@ -232,7 +299,7 @@ for (const harness of ['codex', 'claude']) {
 
     // Generic errors may follow edits. The orchestration choice to inspect
     // and hand them off is in the skill; this is the shell-side consequence.
-    const failed = f.run(`${prepare}\n${restore}\n${neon}`, {
+    const failed = f.run(`${prepare}\n${restore}\n${availability}\n${neon}`, {
       BUILDER_RECORD: first.stdout.trim(), PARTIAL_BUILD: '1',
     });
     assert.equal(failed.status, 4);
@@ -240,7 +307,7 @@ for (const harness of ['codex', 'claude']) {
     assert.deepEqual(picks(f), [['--pick', 'builder', '--json']], 'the generic error does not repick');
     assert.match(skill, /Generic errors, timeouts and cancellation can leave edits/);
     assert.match(skill, /Hand off completed commits, checks and results, remaining work and any partial changes \(including untracked files\)/);
-    assert.match(skill, /confirmed quota limit or startup failure before replacing/);
+    assert.match(skill, /confirmed pause, quota limit or startup failure before replacing/);
 
     const second = pickWith(['neon']);
     assert.equal(second.status, 0, second.stderr);
