@@ -240,6 +240,30 @@ for (const harness of ['codex', 'claude']) {
   });
 
   if (harness === 'codex') {
+    test('codex: strict Bash starts and resumes Claude without empty arguments', () => {
+      const f = fixture();
+      const cases = [
+        ['', undefined, []],
+        ['medium', undefined, ['--effort', 'medium']],
+        ['', 'phase-worker-id', ['--resume', 'phase-worker-id']],
+        ['medium', 'phase-worker-id', ['--effort', 'medium', '--resume', 'phase-worker-id']],
+      ];
+      for (const [effort, sessionId] of cases) {
+        const result = f.run(`set -euo pipefail\n${cliDispatch}`, {
+          BUILDER_ID: models[family],
+          EFFORT: effort,
+          ...(sessionId ? { CLAUDE_SESSION_ID: sessionId } : {}),
+        });
+        assert.equal(result.status, 0, result.stderr);
+      }
+      assert.deepEqual(f.calls('claude').map(({ args }) => args), cases.map(([, , flags]) => [
+        '-p', 'Check the brief with spaces.\nSecond line.', '--model', models[family],
+        ...flags, '--allowedTools',
+        'Bash(node --test phase.test.mjs)', 'Bash(git add -- outcome.txt)', 'Bash(git commit -m builder-permission-smoke)',
+        '--permission-mode', 'acceptEdits', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--output-format', 'json',
+      ]));
+    });
+
     test('codex: headless Claude dispatch requires scoped Bash rules from the phase brief', () => {
       const f = fixture();
       const saved = { ...JSON.parse(packet(family, effort)), operatorNamed: false };

@@ -298,7 +298,7 @@ const CONTEXT_PASS_SKILLS = [
   'review-gate/skills/codex/context-pass/SKILL.md',
 ]
 const CODEX_BUILD_SKILL = 'build/skills/codex/build/SKILL.md'
-const CLAUDE_BUILDER_CALL = 'claude -p "$(cat "$BRIEF_FILE")" --model "$BUILDER_ID" "${EFFORT_FLAG[@]}" "${SESSION_FLAG[@]}" --allowedTools "${CLAUDE_BASH_RULES[@]}" --permission-mode acceptEdits --strict-mcp-config --mcp-config \'{"mcpServers":{}}\' --output-format json </dev/null'
+const CLAUDE_BUILDER_CALL = 'claude -p "$(cat "$BRIEF_FILE")" --model "$BUILDER_ID" ${EFFORT_FLAG[@]+"${EFFORT_FLAG[@]}"} ${SESSION_FLAG[@]+"${SESSION_FLAG[@]}"} --allowedTools "${CLAUDE_BASH_RULES[@]}" --permission-mode acceptEdits --strict-mcp-config --mcp-config \'{"mcpServers":{}}\' --output-format json </dev/null'
 const allowedModelCall = (rel, line) => rel.startsWith('build/') && (/^\s*codex\s+exec\s+resume\b/.test(line) || /^\s*codex\s+exec\b.*\s--sandbox\s+workspace-write\b/.test(line)) ||
   rel === CODEX_BUILD_SKILL && line === CLAUDE_BUILDER_CALL ||
   CONTEXT_PASS_SKILLS.includes(rel) && WRITER_CALLS.includes(line)
