@@ -84,3 +84,9 @@ Private headless Chrome on Mini: Q1-Q6 all PASS at source 1b976d9; six UI/core b
 Jev post-run: all6pass confidence1.0; residual copy severity0.04 on0-4 scale,confidence0.98 (triage only, not a new score for the original finding). QA preflight0.78/0.59; verifier shadowSol-prev0.78. UI-copy builder shadowNeon0.25, ignored: same task owner Sol.
 
 All three phases committed. Registered offline list now160files; full exact-tip suite, combined code/security review, context pass, fix check, close, PR and CI remain pending. New actual Neon probes/calls for this feature:0. Existing read-only agy wall/settings/review runtime are outside this diff. Global selection policy is not activated before a compatible merged installation.
+
+## Combined PR review and remaining files
+
+Primary 2026-11-25-15-37-04-f20056 at16601e5: input cap left28paths outside prompt. Remaining-files review 2026-11-25-15-51-39-99e1b8 read all28 without truncation/security debt. Both code reviewerSol-prev and securityMythos ran. One fix round follows for primaryf1/s1(35/100,15/100) and s2(10/100), remainingf1(35/100), f2(9/100), s2(4/100). Remaining securitys1(6/100) is filed caller-steering hardening, no normal-use path; preserve score and report it.
+
+Fix shadowSol0.71, task owner unchanged. Targeted live Claude permission probe effortmedium0.96; no provider call yet. The fixture is outside shipping source; the seat, never builder, runs the probe after the fix. No GUI.

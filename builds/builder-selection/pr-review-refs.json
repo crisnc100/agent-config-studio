@@ -1,0 +1,98 @@
+[
+  {
+    "reviewId": "2026-11-25-15-37-04-f20056",
+    "head": "16601e5805602f764615c30aacfabf3073ab4502",
+    "family": "sol-prev",
+    "diffTruncated": true,
+    "security": {
+      "family": "mythos",
+      "status": "ran",
+      "model": "claude-mythos-5-2"
+    },
+    "findings": [
+      {
+        "id": "f1",
+        "risk": 35,
+        "likelihood": 5,
+        "impact": 7,
+        "severity": "medium",
+        "filed": false,
+        "file": "packs/build/skills/codex/build/SKILL.md",
+        "line": "106"
+      },
+      {
+        "id": "s1",
+        "risk": 15,
+        "likelihood": 3,
+        "impact": 5,
+        "severity": "medium",
+        "filed": false,
+        "file": "packs/build/skills/codex/build/SKILL.md",
+        "line": "106"
+      },
+      {
+        "id": "s2",
+        "risk": 10,
+        "likelihood": 2,
+        "impact": 5,
+        "severity": "low",
+        "filed": true,
+        "file": "packs/build/skills/claude/build/SKILL.md",
+        "line": "111"
+      }
+    ]
+  },
+  {
+    "reviewId": "2026-11-25-15-51-39-99e1b8",
+    "head": "16601e5805602f764615c30aacfabf3073ab4502",
+    "family": "sol-prev",
+    "diffTruncated": false,
+    "security": {
+      "family": "mythos",
+      "status": "ran",
+      "model": "claude-mythos-5-2"
+    },
+    "findings": [
+      {
+        "id": "f1",
+        "risk": 35,
+        "likelihood": 5,
+        "impact": 7,
+        "severity": "medium",
+        "filed": false,
+        "file": "packs/build/skills/codex/build/SKILL.md",
+        "line": "106"
+      },
+      {
+        "id": "f2",
+        "risk": 9,
+        "likelihood": 3,
+        "impact": 3,
+        "severity": "low",
+        "filed": true,
+        "file": "packs/build/skills/claude/build/SKILL.md",
+        "line": "181"
+      },
+      {
+        "id": "s1",
+        "risk": 6,
+        "likelihood": 1,
+        "impact": 6,
+        "severity": "low",
+        "filed": true,
+        "file": "tests/setup-guards.mjs",
+        "line": "95"
+      },
+      {
+        "id": "s2",
+        "risk": 4,
+        "likelihood": 2,
+        "impact": 2,
+        "severity": "low",
+        "filed": true,
+        "file": "builds/builder-selection/qa-final.json",
+        "line": "75"
+      }
+    ]
+  }
+]
