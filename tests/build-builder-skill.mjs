@@ -19,7 +19,11 @@ function snippet(skill, prefix) {
 
 const tools = ['model-id', 'codex', 'claude', 'ask-model'];
 const resolver = path.join(ROOT, 'bin/model-id.mjs');
-function fixture() {
+const strictShells = [
+  { name: 'Bash', command: '/bin/bash', options: ['-euo', 'pipefail'] },
+  { name: 'zsh', command: '/bin/zsh', options: ['-f', '-euo', 'pipefail'] },
+];
+function fixture({ command = '/bin/bash', options = ['-e'] } = {}) {
   const root = fs.realpathSync(tempDir('acs-builder-skill-'));
   const home = path.join(root, 'home');
   const bin = path.join(root, 'bin');
@@ -42,6 +46,13 @@ const fs = require('node:fs');
 const [,, ...args] = process.argv;
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({tool:${JSON.stringify(tool)}, args, author:process.env.REVIEW_AUTHOR}) + '\\n');
 if (${JSON.stringify(tool)} === 'model-id') {
+  const responses = JSON.parse(process.env.MODEL_ID_FIXTURES || '{}');
+  if (Object.hasOwn(responses, args[0])) {
+    const response = responses[args[0]];
+    fs.writeSync(1, response.stdout ?? '');
+    fs.writeSync(2, response.stderr ?? '');
+    process.exit(response.status);
+  }
   if (args[0] !== '--pick' || process.env.REAL_PICK === '1') {
     const result = require('node:child_process').spawnSync(process.execPath, [${JSON.stringify(resolver)}, ...args], {stdio:'inherit'});
     process.exit(result.status ?? 1);
@@ -76,7 +87,7 @@ if (${JSON.stringify(tool)} === 'ask-model') {
   assert.equal(git.status, 0, git.stderr);
 
   function run(script, extra = {}, { cwd = work } = {}) {
-    const shell = spawnSync('/bin/bash', ['-e', '-c', script], { cwd, env: { ...env, ...extra }, encoding: 'utf8', timeout: 10000 });
+    const shell = spawnSync(command, [...options, '-c', script], { cwd, env: { ...env, ...extra }, encoding: 'utf8', timeout: 10000 });
     assert.equal(shell.error, undefined, String(shell.error));
     return shell;
   }
@@ -98,6 +109,7 @@ const packet = (family, effort) => JSON.stringify({
 });
 const picks = (f) => f.calls('model-id').filter(({ args }) => args[0] === '--pick').map(({ args }) => args);
 const flag = (argv, name) => argv[argv.indexOf(name) + 1];
+const modelIdFixtures = (responses) => ({ MODEL_ID_FIXTURES: JSON.stringify(responses) });
 
 for (const harness of ['codex', 'claude']) {
   const skill = source(harness);
@@ -122,10 +134,13 @@ for (const harness of ['codex', 'claude']) {
     : [snippet(skill, 'EFFORT_FLAG=()'), snippet(skill, 'codex exec resume')].join('\n');
   const session = harness === 'codex' ? { CLAUDE_SESSION_ID: 'phase-worker-id' } : { THREAD_ID: 'phase-worker-id' };
 
-  test(`${harness}: one picked non-first family owns fresh phases, resume, fixes and review`, () => {
-    const f = fixture();
-    const picked = f.run(`${prepare}\n${printRecord}`, { PICK_FIXTURE: packet(family, effort) });
+  function checkTaskOwner(shell) {
+    const f = fixture(shell);
+    const picked = f.run(`${prepare}\n${printRecord}`, modelIdFixtures({
+      '--pick': { status: 0, stdout: packet(family, effort) + '\n\n', stderr: 'picker diagnostic\n' },
+    }));
     assert.equal(picked.status, 0, picked.stderr);
+    assert.equal(picked.stderr, 'picker diagnostic\n');
     const record = f.saveOwner(picked.stdout.trim());
     assert.deepEqual(JSON.parse(record), { ...JSON.parse(packet(family, effort)), operatorNamed: false });
     const dispatch = (body, extra) => f.run(`${prepare}\n${restore}\n${availability}\n${body}\n${review}`, {
@@ -166,7 +181,91 @@ for (const harness of ['codex', 'claude']) {
     assert.deepEqual(f.calls('review.cjs').map(({ author }) => author), [family, family, family, family]);
     assert.match(skill, new RegExp(`native ${native} subagent on the recorded model and effort`));
     assert.match(skill, /fresh worker.+phase|phase boundary/);
-  });
+  }
+
+  for (const shell of strictShells) {
+    const scope = `${harness} with strict ${shell.name}`;
+    test(`${scope}: one picked non-first family owns fresh phases, resume, fixes and review`, () => checkTaskOwner(shell));
+
+    test(`${scope}: one and two exclusions preserve picker argument boundaries`, () => {
+      const f = fixture(shell);
+      for (const assignment of ['EXCLUDED=("one family")', 'EXCLUDED=("one family" other)']) {
+        const result = f.run(`${assignment}\n${pick}\n${printRecord}`, { PICK_FIXTURE: packet(family, effort) });
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(JSON.parse(result.stdout).family, family);
+      }
+      assert.deepEqual(picks(f), [
+        ['--pick', 'builder', '--json', '--exclude', 'one family'],
+        ['--pick', 'builder', '--json', '--exclude', 'one family', '--exclude', 'other'],
+      ]);
+    });
+
+    test(`${scope}: picker failures never dispatch even with success-shaped stdout`, () => {
+      const f = fixture(shell);
+      const noEligible = JSON.stringify({ role: 'builder', error: 'no eligible builder' });
+      const cases = [
+        [2, noEligible, 2, noEligible + '\n'],
+        [7, packet(family, effort), 7, packet(family, effort) + '\n'],
+        [7, '{"role":"builder"', 2, 'Builder picker unavailable. Run acs install-model-id.\n'],
+      ];
+      for (const [pickerStatus, stdout, status, stderr] of cases) {
+        const result = f.run(`${prepare}\n${restore}\n${availability}\n${cliDispatch}\n${review}`, modelIdFixtures({
+          '--pick': { status: pickerStatus, stdout, stderr: 'picker diagnostic\n' },
+        }));
+        assert.equal(result.status, status, result.stderr);
+        assert.equal(result.stdout, '');
+        assert.equal(result.stderr, 'picker diagnostic\n' + stderr);
+      }
+      assert.deepEqual(picks(f), cases.map(() => ['--pick', 'builder', '--json']));
+      assert.deepEqual(f.calls(cli), []);
+      assert.deepEqual(f.calls('review.cjs'), []);
+    });
+
+    test(`${scope}: named effort bypasses lookup and default effort uses the builder without its alt`, () => {
+      const f = fixture(shell);
+      const report = JSON.stringify({ roles: { builder: { use: [family] }, advisor: { error: 'no eligible advisor' } } });
+      const named = f.run(`${prepare}\n${printRecord}`, {
+        NAMED_BUILDER: family,
+        NAMED_EFFORT: 'medium',
+        ...modelIdFixtures({ '--roles': { status: 2, stdout: report } }),
+      });
+      assert.equal(named.status, 0, named.stderr);
+      assert.equal(JSON.parse(named.stdout).effort, 'medium');
+      const inferred = f.run(`${prepare}\n${printRecord}`, { NAMED_BUILDER: family });
+      assert.equal(inferred.status, 0, inferred.stderr);
+      assert.equal(JSON.parse(inferred.stdout).effort, effort);
+      const failed = f.run(`${prepare}\n${restore}\n${availability}\n${cliDispatch}\n${review}`, {
+        NAMED_BUILDER: family,
+        ...modelIdFixtures({ '--effort': { status: 7, stdout: 'medium\n', stderr: 'effort lookup failed\n' } }),
+      });
+      assert.equal(failed.status, 2, failed.stderr);
+      assert.equal(failed.stdout, '');
+      assert.equal(failed.stderr, 'effort lookup failed\n');
+      assert.deepEqual(f.calls('model-id').map(({ args }) => args), [
+        ['--roles', '--json'], [family],
+        ['--roles', '--json'], [family], ['--effort', family, '--role', 'builder', '--no-alt'],
+        ['--roles', '--json'], [family], ['--effort', family, '--role', 'builder', '--no-alt'],
+      ]);
+      assert.deepEqual(f.calls(cli), []);
+      assert.deepEqual(f.calls('review.cjs'), []);
+    });
+
+    test(`${scope}: an empty or malformed role report rejects a named builder`, () => {
+      const f = fixture(shell);
+      for (const stdout of ['', '{"roles":{"builder":']) {
+        const result = f.run(`${prepare}\n${restore}\n${availability}\n${cliDispatch}\n${review}`, {
+          NAMED_BUILDER: family,
+          ...modelIdFixtures({ '--roles': { status: 2, stdout } }),
+        });
+        assert.equal(result.status, 2, result.stderr);
+        assert.equal(result.stdout, '');
+        assert.match(result.stderr, /member of the configured builder lineup/);
+      }
+      assert.deepEqual(f.calls('model-id').map(({ args }) => args), [['--roles', '--json'], ['--roles', '--json']]);
+      assert.deepEqual(f.calls(cli), []);
+      assert.deepEqual(f.calls('review.cjs'), []);
+    });
+  }
 
   test(`${harness}: explicit builder in lineup wins, including while paused; effort override persists`, () => {
     const f = fixture();

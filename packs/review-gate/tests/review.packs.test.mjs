@@ -399,7 +399,7 @@ test('no shipped skill looks up a role\'s alt or a family\'s effort with jq: ask
   }
   for (const harness of HARNESSES) {
     const build = skill('build', harness)
-    assert.match(build, /^    \[ -n "\$EFFORT" \] \|\| EFFORT=\$\(model-id --effort "\$BUILDER" --role builder --no-alt\) \|\| exit 2$/m, `build/${harness}: a named builder's effort, members only`)
+    assert.match(build, /^    \[ -n "\$EFFORT" \] \|\| EFFORT=\$\(model-id --effort "\$BUILDER" --role builder --no-alt \|\| exit 2\) \|\| exit 2$/m, `build/${harness}: a named builder's effort, members only`)
     assert.ok(build.split('\n').includes(RECORDED_BUILDER_EFFORT), `build/${harness}: the selected packet's effort survives resume`)
   }
 })
