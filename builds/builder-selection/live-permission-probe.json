@@ -1,0 +1,35 @@
+{
+  "exit": 0,
+  "seconds": 15.35,
+  "fixture": "<isolated local Git fixture>",
+  "initialHead": "8ff5e010c6b699a868860903535c57cdcf24e628",
+  "head": "cb51555260d5db6fa8f925ca073b449879409674",
+  "clean": true,
+  "value": "new\n",
+  "fixedTestUnchanged": true,
+  "runProof": {
+    "passed": true,
+    "cwd": "/private/var/folders/8k/8pc_bcd90kv7g5n5jj5gl3v80000gn/T/acs-builder-claude-permission-probe-30_p0is9"
+  },
+  "requestedFamily": "opus",
+  "requestedId": "claude-opus-5-5",
+  "effort": "medium",
+  "modelUsageIds": [
+    "claude-opus-5-5"
+  ],
+  "modelVerified": true,
+  "permissionDenials": [],
+  "isError": false,
+  "result": "The edit, test and commit all worked. `value.txt` now reads `new` followed by a newline, and it is committed on `permission-fixture` as `cb51555`.\n\n| Command | Result |\n|---|---|\n| `node verify.mjs` | Printed `PERMISSION_PROBE_TEST_PASS` |\n| `git add -- value.txt` | Exited cleanly with no output |\n| `git commit -m builder-permission-smoke` | `[permission-fixture cb51555] builder-permission-smoke`, 1 file changed, 1 insertion(+), 1 deletion(-) |\n\nThe commit contains only `value.txt`. Hooks ran normally, with no `--no-verify`. I didn't touch `verify.mjs` or `.gitignore`. The test wrote `run-proof.json`, which `.gitignore` excludes, so it wasn't committed. Nothing was pushed or merged.",
+  "dispatchBlockSha256": "706d7119c0685f6dc3defb17be605e3c80f65f5e9594aef29cdcc87380fc6a0b",
+  "ruleList": [
+    "Bash(node verify.mjs)",
+    "Bash(git add -- value.txt)",
+    "Bash(git commit -m builder-permission-smoke)"
+  ],
+  "sourceHeadAtStart": "3578f246ca38e9947d482e7f5f308dc6e190bfb5",
+  "guiUsed": false,
+  "liveProbeInvocations": 1,
+  "countNote": "One headless CLI probe session, not a count of internal provider API turns.",
+  "evidence": "Unredacted local command output and synthetic fixture are retained under /tmp; this is a public projection."
+}
